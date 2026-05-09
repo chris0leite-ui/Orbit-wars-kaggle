@@ -18,7 +18,17 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
 - **A.1 Orbit prediction**: given `initial_planets` + `angular_velocity`,
   predict orbiting-planet positions at step t with <0.5 unit error
   over 100 turns. Verify against the live env. Load-bearing for any
-  non-myopic agent. `[owner: unclaimed | status: open]`
+  non-myopic agent. `[owner: orbit-wars-bootstrap-irewT | status: done]`
+  → see `scripts/orbit_prediction_check.py` + `audit/2026-05-09-day-1-data-inventory.md`.
+  **Off-by-one finding (load-bearing):** the naive absolute formula
+  `angle = init_angle + omega * N` is WRONG for `env.steps[N]` — it
+  predicts one rotation too many, miss is ~1.27 units on inner planets
+  (orb_r≈31, omega≈0.041). Two correct alternatives:
+  (i) absolute with `omega * (N - 1)` for `N >= 1`;
+  (ii) relative — read planet from current obs and project forward by
+       `omega * lead_turns`. Recommend (ii) for agents (no step counter
+       to track). Verified to 0.0 error on seed 42 across 4 inner planets
+       at step 100, and against env.steps[N] for N in {1,5,10,100,200,499}.
 - **A.2 Fleet speed + travel time**: validate
   `speed = 1 + 5·(log(ships)/log(1000))^1.5` against the env.
   Tabulate (ships → speed → turns-to-cross-board). `[owner: unclaimed | status: open]`
@@ -30,6 +40,18 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
 - **A.5 Sun collision geometry**: continuous path-segment check, not
   endpoint. What's the maximum safe angle from a planet near the sun
   to another planet beyond it? `[owner: unclaimed | status: open]`
+- **A.6 Deterministic self-play P0/P1 asymmetry**: shipped baseline
+  vs itself wins **4/6 for P1** (seeds 42, 7, 31, 100), 1/6 P0 win
+  (seed 1), 1/6 ties (seed 13). All 4 long (500-step) games end with
+  P1 ahead by 20–30% on ship count. Hypothesis: tie-breaking on
+  equidistant targets routes both players' fleets to the same neutral
+  planet, and the lower-id (P0) launches first → fleet arrives first →
+  P0 captures, P1 swerves to second-nearest. P1 ends up "freer." If
+  confirmed, any deterministic agent that mirrors P0 strategy will
+  underperform from P0 slot — must seed-randomise tie-breaks.
+  Implication: validation gate (Kaggle's self-vs-self) PASSES
+  (no crash, all reach DONE) but final-ship parity is NOT preserved.
+  `[owner: unclaimed | status: open]`
 
 ### B. Agent class — pick the simplest class that beats baselines
 

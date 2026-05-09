@@ -10,18 +10,22 @@ slug: orbit-wars
 url: https://www.kaggle.com/competitions/orbit-wars
 title: Orbit Wars
 category: Featured
+sponsor: Google LLC
 task: real-time strategy game (continuous-2D, 2 or 4 players); code/agent submission
 submission_format: main.py with agent(obs) function — single file OR tar.gz with main.py at root
 metric: TrueSkill-style Gaussian rating N(μ, σ²); μ₀=600 on submit
 deadline: 2026-06-23 23:59 UTC
-team_size_limit: TBD                     # confirm via comp rules page
-submission_budget: 5                     # per day, per team
-final_submissions: rolling last 2        # NOT PI-selected; auto-replaced as you submit
-data_license: TBD
-external_data_allowed: TBD
-prize_pool_usd: 50000
-total_teams_at_kickoff: 2382
-local_simulator: kaggle_environments>=1.28.0   # `make("orbit_wars")`; verified working
+team_size_limit: 5                       # rules §2.1.a (verified 2026-05-09)
+submission_budget: 5                     # per day, per team — rules §2.2.a
+final_submissions: rolling last 2        # evaluation page: "we only track the latest 2 submissions"; auto-replaced — NOT PI-selected. (Rules §2.2.b boilerplate phrases this as "select up to 2"; sim-comp evaluation page is the operative spec.)
+post_deadline_eval: ~2 weeks             # additional ladder games after deadline
+data_license: Apache 2.0                 # rules §1.7 + §2.4.a.2 (verified 2026-05-09)
+winner_license: CC-BY 4.0                # rules §1.6 + §2.5.a.1 (winning Submission + source code)
+external_data_allowed: yes               # rules §2.6.a — public + equally-accessible OR meets Reasonableness Standard
+ingress_egress: prohibited_during_eval   # rules §2.12 — submission may not pull or send external info during episode evaluation; runtime models/data MUST ship inside submission
+prize_pool_usd: 50000                    # 10 prizes of $5,000 each (1st-10th place; rules §1.5)
+total_teams_at_kickoff: 2413             # `kaggle competitions list -s orbit` on 2026-05-09 (was 2382 at seed-write time)
+local_simulator: kaggle-environments>=1.28.0  # installed: 1.29.1; `make("orbit_wars")`; verified working
 ```
 
 ## Comp-shipped files (downloaded by `bootstrap.sh` into data/)
@@ -156,7 +160,7 @@ final_evaluation:
 ## Strategic decisions (PI-answered, batched on Day 1)
 
 ```yaml
-external_data_strategy: TBD              # likely none; confirm from comp rules
+external_data_strategy: training_only_offline  # rules §2.6 permits public+accessible external data, BUT §2.12 forbids ingress/egress at evaluation. Practical reading: pretrain/IL on public datasets is fine; runtime models must be embedded in the submission. No live API calls inside agent(obs).
 time_budget_total_days: 45               # 2026-05-09 → 2026-06-23
 compute_budget:
   local_sandbox: cpu_only

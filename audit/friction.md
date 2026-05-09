@@ -45,6 +45,47 @@ does not re-discover them.
   TABULAR-ONLY; R2 has a code-comp default inline. Submission cadence
   is the strategic lever, not endpoint selection.
 
+## 2026-05-09 (day-1 agent — bootstrap branch)
+
+- `tag: kaggle-api-token-required-for-kgat-format` — day-1 bootstrap:
+  `kaggle competitions list -s orbit` returned 401 with only
+  `~/.kaggle/kaggle.json` containing `{"username": ..., "key": "KGAT_..."}`.
+  Auth succeeded immediately after `export KAGGLE_API_TOKEN="$KAGGLE_KEY"`.
+  Root cause: the new KGAT_… personal-access-token format is read by the
+  CLI from `KAGGLE_API_TOKEN` (or `~/.kaggle/access_token`), not from the
+  `key` field of `kaggle.json` — which expects the older 32-hex token.
+  **Fix:** `bootstrap.sh` already sets `KAGGLE_API_TOKEN` from `KAGGLE_KEY`
+  inside its own subshell (line 34-36), but the export does NOT propagate
+  to subsequent shells; downstream `kaggle …` invocations must be prefixed
+  `KAGGLE_API_TOKEN="$KAGGLE_KEY"` or this export must live in the parent
+  session. Consider adding a `.kaggle/access_token` file (mode 600) so the
+  CLI picks it up unconditionally — then no env-var dance is needed.
+- `tag: pip-blinker-system-conflict` — day-1 bootstrap:
+  `pip install -r requirements.txt` aborted with
+  `ERROR: Cannot uninstall blinker 1.7.0, RECORD file not found. Hint:
+  The package was installed by debian.` Root cause: `kaggle` pulls in
+  `flask`/`requests` extras that bump `blinker`; the system-installed
+  Debian `python3-blinker` lacks pip RECORD metadata, so pip refuses to
+  upgrade in place. **Fix:** run `pip install --ignore-installed blinker`
+  first, then retry `pip install -r requirements.txt`. Worth folding into
+  `bootstrap.sh` step 2 as a pre-flight when running on Debian/Ubuntu base
+  images.
+- `tag: seed-repo-out-of-mcp-scope` — bootstrap context: the seed lives at
+  `chris0leite-ui/Kaggle-playground-may-2026`, but this session's MCP
+  scope and local git proxy are both allowlisted only for
+  `chris0leite-ui/Orbit-wars-kaggle`. `mcp__github__get_file_contents` →
+  `Access denied`; `git clone http://local_proxy@127.0.0.1:.../Kaggle-...` →
+  proxy refused with 502 / `Couldn't connect`. Resolved by the PI
+  pointing me at the direct GitHub URL — `git clone -b
+  claude/orbit-war-setup-KbeKq https://github.com/chris0leite-ui/Kaggle-playground-may-2026.git`
+  bypassed both gates because the proxy resolves direct HTTPS to GitHub.
+  Root cause: the per-session repo allowlist is a deliberate sandbox,
+  but cross-repo seeding workflows aren't called out in the kickoff
+  prompt. **Fix:** the `agent-handover-prompt.md` should explicitly state
+  "if you cannot reach the seed repo via the local proxy, fall back to
+  `git clone https://github.com/<owner>/<seed-repo>.git` directly." (Open
+  for next session to PR into the prompt.)
+
 ## Anticipated frictions (likely first-week)
 
 These have not yet fired but are predictable from the comp spec —
