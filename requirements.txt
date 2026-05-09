@@ -1,0 +1,6 @@
+kaggle>=1.6
+kaggle-environments>=1.28.0
+numpy
+pandas
+ipykernel
+pytest
