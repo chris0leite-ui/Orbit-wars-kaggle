@@ -34,6 +34,7 @@ from lib.fleet import speed as fleet_speed
 from lib.geometry import BOARD_SIZE, path_clears_sun
 from lib.intent import Intent, World
 from lib.orbit import is_orbiting, predict_relative
+from lib.world_model import WorldModel
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +461,59 @@ def path_clears_other_planets(intents: list[Intent], world: World) -> list[Inten
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# arrival_ledger — skip intents whose target will already be ours at arrival
+# ---------------------------------------------------------------------------
+
+
+def arrival_ledger(intents: list[Intent], world: World) -> list[Intent]:
+    """Drop intents we don't need: target will be ours with enough ships
+    at our arrival step.
+
+    Builds a `WorldModel` snapshot (in-flight fleet arrival ledger +
+    per-planet timeline) for this turn. For each intent:
+    - Estimate arrival step via straight-line dist / fleet_speed.
+    - Look up `(predicted_owner, predicted_ships)` at that step.
+    - If predicted_owner == us AND predicted_ships >= intent.ships,
+      drop the intent — adding another fleet would double-commit.
+
+    Stronger variants (intercept enemy arrivals, gang-up timing) live
+    in v3 mission classes; this is the minimum-viable v2 use case.
+
+    Cost: O(planets * horizon + fleets * planets) per turn for the
+    WorldModel build (~5 ms on a 40-planet board). Cached for the
+    duration of one mechanism call.
+    """
+    if not intents:
+        return intents
+    wm = WorldModel.from_world(world)
+    out: list[Intent] = []
+    for intent in intents:
+        src = world.planets_by_id.get(intent.src_id)
+        target = world.planets_by_id.get(intent.target_id)
+        if src is None or target is None:
+            out.append(intent)
+            continue
+        # ETA: straight-line center-to-center / fleet_speed(intent.ships).
+        # Rough — doesn't account for orbital motion of target. Adequate
+        # for the "don't double-commit" use case.
+        d = math.hypot(target.x - src.x, target.y - src.y)
+        v = fleet_speed(intent.ships)
+        eta = int(math.ceil(d / max(v, 1e-6))) if v > 0 else 0
+        pred_owner = wm.owner_at(target.id, eta)
+        pred_ships = wm.ships_at(target.id, eta)
+        if (
+            pred_owner == world.my_id
+            and pred_ships is not None
+            and pred_ships >= intent.ships
+        ):
+            # Already going to be ours with surplus garrison; ship would
+            # be wasted on a target we're about to own anyway.
+            continue
+        out.append(intent)
+    return out
+
+
 def oob_guard(intents: list[Intent], world: World) -> list[Intent]:
     """Drop intents whose projected endpoint goes off-board.
 
@@ -525,6 +579,13 @@ DEFAULT_MECHANISMS = [
     path_clears_other_planets,
     oob_guard,
 ]
+# `arrival_ledger` is implemented but EXCLUDED from DEFAULT_MECHANISMS.
+# Local A/B showed it regressed WR from 56% to 50% (Block C audit) because
+# per-source greedy strategies don't re-pick after the mechanism drops an
+# intent: the source planet ends the turn with no action. The mechanism's
+# real value materialises when paired with the v3 planner (Block D), which
+# can re-allocate the freed ships to a different target/mission. Keep here
+# for direct use from the planner; do NOT add to DEFAULT until then.
 
 # Frozen pre-upgrade stack (validate + arrival_size + 2-iter lead_aim only).
 # Used by `agents/simple/roi_baseline.py` for A/B against the upgraded
@@ -548,4 +609,5 @@ __all__ = [
     "sun_avoid",
     "path_clears_other_planets",
     "oob_guard",
+    "arrival_ledger",
 ]
