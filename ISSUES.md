@@ -85,7 +85,7 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
 
 - **D.1 Local-tournament fixture**: `kaggle_environments.evaluate()`
   wrapper that runs N agents × M seeds × pairs, returns winrate
-  matrix. Persistent JSON output for trend tracking. `[owner: unclaimed | status: open]`
+  matrix. Persistent JSON output for trend tracking. `[owner: review-competition-handover-0pGNc | status: wip]`
 - **D.2 Replay logging**: capture `env.steps` + episode metadata for
   every local game. Disk usage: ~1-5 MB per episode JSON. Plan for
   ≥1000 episodes. `[owner: unclaimed | status: open]`

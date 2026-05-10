@@ -87,6 +87,21 @@ does not re-discover them.
   first, then retry `pip install -r requirements.txt`. Worth folding into
   `bootstrap.sh` step 2 as a pre-flight when running on Debian/Ubuntu base
   images.
+- `tag: env-not-fully-seed-deterministic` — Step 0 regression check
+  (re-running `scripts/run_day1_rollouts.py` against the bootstrap-irewT
+  audit JSON): per-seed **rewards / statuses are stable** (P0=6/6 vs
+  random; baseline-vs-baseline P1=4/6, P0=2/6, no ties this run vs 1
+  tie before), but **`final_ships` counts and `n_steps` differ** for
+  every game (e.g. seed 13 went from `n_steps=227 / ships=3532` to
+  `n_steps=399 / ships=3585`). Root cause not yet pinned — likely
+  Python set/dict iteration order (hash randomisation, or
+  unordered-set iteration inside the env) seeded independently of
+  the configured seed. **Fix / implication for D.1:** the tournament
+  fixture must treat **rewards** as the stable signal for winrate gates
+  and treat ship-deltas / turn-counts as **noisy estimators** that
+  need ≥N seeds before reading. Non-byte-equal artifacts are not a
+  regression as long as the rewards counts match. Keep the original
+  audit JSON as the canonical record; do not overwrite on re-run.
 - `tag: seed-repo-out-of-mcp-scope` — bootstrap context: the seed lives at
   `chris0leite-ui/Kaggle-playground-may-2026`, but this session's MCP
   scope and local git proxy are both allowlisted only for
