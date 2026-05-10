@@ -98,13 +98,26 @@ class TournamentResult:
     matrix: dict[str, dict[str, PairStat]]
 
     def to_json_dict(self) -> dict:
+        """JSON snapshot with the per-turn timing arrays dropped.
+
+        `p95_turn_ms` is preserved on each PairStat, so the load-bearing
+        budget gate is still readable. The per-turn arrays would inflate
+        the artifact by ~30x with no analytical benefit.
+        """
+        def _stat(stat: PairStat) -> dict:
+            d = asdict(stat)
+            for game in d.get("games", []):
+                game.pop("p0_turn_ms", None)
+                game.pop("p1_turn_ms", None)
+            return d
+
         return {
             "timestamp_utc": self.timestamp_utc,
             "agents": self.agents,
             "seeds": self.seeds,
             "include_self_play": self.include_self_play,
             "matrix": {
-                a: {b: asdict(stat) for b, stat in row.items()}
+                a: {b: _stat(stat) for b, stat in row.items()}
                 for a, row in self.matrix.items()
             },
         }
