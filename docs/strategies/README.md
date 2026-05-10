@@ -11,6 +11,12 @@ agent (or a returning human) can read **what** the strategy does and
   + tie-break randomisation + production-aware sizing.
 - `roadmap.md` — planned v2 (arrival ledger), v3 (mission classes),
   v4 (opponent modeling or MCTS), with the public-research touchstones.
+- `heuristics-research.md` — universal strategy primitives
+  (deterministic-win predicates, ROI scoring, N-step lookahead, ship
+  bundling, compete-relative play, 15-item brainstorm). §K cross-
+  references panel + Phase 1 verdicts and recommends path A.
+  Companion plan:
+  `audit/2026-05-10-research-driven-next-experiments.md`.
 
 ### Simple-strategy panel (target-selection ablations)
 

@@ -69,6 +69,47 @@ function for picking a target. Run via
   cell). Confirm at 32 seeds — if it does diverge, dig into RNG seed
   ordering or whether `propose_intents` mirrors v1's exactly.
 
+### 2026-05-10 — research-driven extensions (game-strategy-research-8w7EO)
+
+> Source: `docs/strategies/heuristics-research.md` (universal heuristics
+> + 15-item brainstorm). Plan: `audit/2026-05-10-research-driven-next-experiments.md`.
+> All six hypotheses are pre-registered with explicit decision gates;
+> H9 in particular is the immediate-priority Axis 0 (Phase 1 path-A
+> meta-router) and operationalises §F (compete-relative) on top of the
+> Phase 1 fingerprint infra already on main.
+
+- **H4 (research-note §E.3 — Axis 3 in prep doc):** Multi-source
+  simultaneous-arrival timer beats `roi` standalone by ≥55% over 24
+  seeds × both sides. Combat resolver groups same-owner same-step
+  arrivals; timing N source planets to land on the same step gives
+  combat mass without speed loss. Predicted to become v3 mission class
+  `gang_up` (roadmap mechanism 4) if H4 holds.
+- **H5 (research-note §B.2):** The production-dominance lock predicate
+  fires before step 200 in <10% of self-play games but, when it does,
+  switching to defense-only retains the win in ≥95% of cases.
+  Diagnostic-only at v2; policy-actionable at v3.
+- **H6 (research-note §F.3):** A spoiler-vs-leader rule in 4P FFA
+  improves μ by ≥30 vs the always-expand baseline over a 60-game
+  panel. Parked until 4P-FFA panel infra exists
+  (`scripts/strategy_panel_4p.py`).
+- **H7 (research-note §D.1 — Axis 4 in prep doc):** Front-loading
+  neutral capture by re-weighting ROI in steps 0–60 by
+  `(500 − step − eta)^1.5` (vs linear) gains ≥3% winrate over `roi`
+  baseline.
+- **H8 (research-note §G.6):** Replacing greedy per-source-best with
+  Hungarian-assignment solver gains ≥2% winrate at <100 µs added
+  per-step cost. Future axis (heavier than current panel agents).
+- **H9 (NEW — Axis 0 in prep doc):** A 3-class meta-router (Phase 1
+  path-A relabel: nearest+production+roi → `production_aware_greedy`)
+  with the BR table from `heuristics-research.md` §K.5 beats `roi`
+  standalone by ≥3 μ on a 60-game zoo panel including
+  `[weakest, enemy_first, baseline, roi, v1_orbitfix]`. Builds on the
+  existing `lib/fingerprint.py` v1 (15 features) and
+  `scripts/manifold_check.py` already on main; one-line `--label-merge`
+  re-run; predicted RF ≥ 92% at K=100. **Recommended path A on §F's
+  rank-aware-override grounds** — see `heuristics-research.md` §K.4
+  for the rationale vs paths B and C.
+
 ### Pre-existing seeds (carried over from Day 1)
 
 - H-search: A search-based agent (MCTS over short horizons) beats a

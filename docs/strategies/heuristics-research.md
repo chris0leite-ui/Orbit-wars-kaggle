@@ -617,60 +617,164 @@ spec — F and G.12 in particular extend the Roman taxonomy.
 
 ---
 
-## K. Empirical evidence — cross-reference (added 2026-05-10)
+## K. Empirical evidence — cross-reference (last refreshed 2026-05-10 post-merge)
 
-Sister branch `claude/simple-trading-strategies-QS0xV` ran a
-target-selection ablation panel (5 strategies under `agents/simple/*`,
-shared `[validate, arrival_size, lead_aim]` mechanism stack, 7 agents
-× 7 agents × 8 seeds = 392 games). Detailed audit:
-`audit/2026-05-10-simple-strategy-panel.md` (post-merge path). The
-verdicts inform — but do not yet rewrite — the analysis above. **All
-verdicts are 8-seed and await 32-seed confirmation; treat as Bayesian
-priors, not proofs.**
+Now-on-main sources:
+- `agents/simple/*` (5 target-selection ablations) and
+  `scripts/strategy_panel.py` (round-robin runner).
+- `audit/2026-05-10-simple-strategy-panel.md` — 8-seed panel.
+- `audit/tournaments/20260510T140907Z.json` — 32-seed panel
+  (1568 games, the load-bearing capture).
+- `audit/2026-05-10-phase1-manifold-verdict.md` — Phase 1 fingerprint
+  gate result; introduces the AlphaStar-discrete-basins framing.
+- `audit/2026-05-10-meta-strategy-prior-art.md` — Grover 2018 / DRON /
+  AlphaStar / Pluribus / Ganzfried — names §F.6's architecture.
+- `lib/fingerprint.py` (15 hand-designed features, FEATURE_VERSION=1)
+  and `scripts/manifold_check.py` (CV-by-seed RF/LR diagnostic).
+- `state/current.md` — `roi` shipped as v1.2 (#52518060, PENDING).
+  v1.1 settled at μ=597.4 (~500 μ short of top-5%).
 
-### K.1 Per-section cross-reference
+### K.1 Per-section cross-reference (32-seed, post-Phase-1)
 
-| Research-note section | Sister-panel finding | Status |
+| Research-note section | Empirical finding (32-seed) | Status |
 |---|---|---|
-| §C.3 ROI score `value/cost · time_discount` | `roi = production/(dist+1)` 96.9% panel WR / 100% (16/16) vs `v1_orbitfix` | **validated** — strongest 8-seed signal |
-| §C.4 marginal-production-gain | `production` argmax 75.0% panel WR / 69% vs v1 | **validated** — second-strongest signal |
-| §C.4 threat-reduction / denial-value (as primary axis) | `enemy_first` 32.3% panel WR; 8/8 self-play draws (stalemate when both sides starve neutrals) | **falsified for primary use** — needs cost-aware wrapping; see §F caveat below |
-| §D.1 compounding insight (early production captures > late) | Both production-aware variants (`production`, `roi`) decisively beat `nearest`; the gap widens with game length | **validated** indirectly |
-| §F.4 "prefers `deny_enemy_production` over `extend_own_production`" | `enemy_first` falsification implies this rule, run as a *primary scoring axis*, is bad pre-contact | **caveat:** F is rank-aware play; only kicks in late-game when self-rank is locked. As a turn-1-onward rule it loses; as a step-300+ override it may still pay |
-| §G.7 multi-target single-source split | `weakest` (always cheap snipes) 15.6% panel WR; 0% vs `roi` | **falsified** — confirms the §G.7 caveat that fragmenting into cheap targets without ROI gating is bad |
-| §G.11 symmetry-breaking RNG | All sister strategies use seeded per-step RNG; A.6 self-play splits balanced for non-symmetric scorings, but `roi` shows 7/8 draws and `enemy_first` 8/8 — symmetric scorings *with* RNG can still draw mirrored seeds | **partially validated** — RNG breaks asymmetry but not symmetry-of-the-strategy itself |
-| §G.14 comet ROI gate | Sister's `simple-roi.md` notes `roi`'s denominator-only model treats short-lived comets the same as planets; v1's `comet_aim` ablation lost 22.5% (now off-by-default in `lib/mechanism.py`) | **strengthened** — gating logic needed before re-enabling |
-| §J H4 (multi-source simultaneous-arrival) | not yet tested | **next axis** — see prep doc Axis 3 |
+| §C.3 ROI score `value/cost · time_discount` | `roi = production/(dist+1)` 97.1% mean panel WR / 100% (64/64) vs `v1_orbitfix` | **validated and shipped** as v1.2 |
+| §C.4 marginal-production-gain | `production` argmax 67.7% panel WR (regressed from 75.0% at 8 seeds) | **validated** but ROI dominates the same axis better |
+| §C.4 threat-reduction / denial-value (as primary axis) | `enemy_first` 32.3% panel WR (8-seed); 8/8 self-play draws | **falsified for primary use** — see §K.3 for how this reshapes §F |
+| §D.1 compounding insight (early production captures > late) | Production-aware variants beat `nearest` decisively; gap widens with game length | **validated** indirectly |
+| §F.4 "prefers `deny_enemy_production` over `extend_own_production`" | `enemy_first` falsification implies this rule, run as a *primary scoring axis*, is bad pre-contact | **scope-tightened to override** — see §K.3 |
+| §F.5 / §F.6 opponent-modelling architecture | Phase 1 confirms broad-class basins (`weakest` 89.7%, `enemy_first` 83.4%, `baseline` 95% in 7-class) but ROI-family is one basin (12-17% mutual confusion) | **partially validated**; 3-class router buildable today, see §K.4 |
+| §G.7 multi-target single-source split | `weakest` (always cheap snipes) 15.6% panel WR; 0% vs `roi` | **falsified** — confirms the §G.7 caveat |
+| §G.11 symmetry-breaking RNG | Per-step seeded RNG works for non-symmetric strategies; mirror-symmetric scorings still draw on mirrored seeds (`roi` 7/8 self-play draws; `enemy_first` 8/8) | **partially validated** — RNG ≠ symmetry-breaking-of-strategy |
+| §G.14 comet ROI gate | `comet_aim` ablation lost 22.5% — off by default in `lib/mechanism.py`; `simple-roi.md` confirms ROI's lifetime-blindness | **strengthened** — gate change required before re-enable |
+| §J H4 (multi-source simultaneous-arrival) | not yet tested | **next experiment Axis 3** |
 | §J H5 (B.2 dominance-lock) | not yet tested | **deferred to v2** |
-| §J H6 (F.3 spoiler in 4P) | not yet tested; sister panel is 1v1 | **deferred** — needs 4P-FFA panel infra |
-| §J H7 (D.1 early-rush re-weighting) | partially covered by Axis-4 phase-segmentation experiment | **next axis** — see prep doc Axis 4 |
+| §J H6 (F.3 spoiler in 4P) | not yet tested; panel is 1v1 only | **deferred** — needs 4P-FFA infra |
+| §J H7 (D.1 early-rush re-weighting) | partially covered by Axis 4 (phase segmentation) | **next experiment Axis 4** |
 | §J H8 (G.6 bipartite assignment) | not yet tested | **future** — heavier than current panel agents |
 
 ### K.2 What changed in our priors
 
-1. **§C.3 ROI is no longer a hypothesis — it is the working baseline.**
-   Future axis experiments build on top of `roi` target selection
-   unless explicitly testing target selection.
-2. **§F (compete-relative) needs scope-tightening.** "Deny enemy
-   production" as a *headline rule* is falsified. The F-axis is now
-   specifically about **rank-aware override behaviour** — only firing
-   when self-rank is locked into 2nd-or-3rd place mid-game, not as a
-   primary scoring lever from turn 1.
-3. **§D.6 phase segmentation rises in priority.** The fact that
-   `enemy_first` beats no-one until step ~200 (when contact actually
-   happens, per its self-play draws) is consistent with the
-   land-grab-then-frontier phase model. A `landgrab → roi → endgame_burn`
-   schedule is the single cheapest extension to test post-merge
-   (Axis 4 in the prep doc).
-4. **§G.14 comet gate is required before re-enabling `comet_aim`.**
-   The 22.5% ablation hit + sister's note on ROI's lifetime-blindness
-   together imply a single explicit gate change before the mechanism
-   can come back.
+1. **§C.3 ROI is the live champion (v1.2 shipped).** Future axis
+   experiments build on top of `roi` target selection unless explicitly
+   testing target selection.
+2. **§F (compete-relative) is scope-tightened to rank-aware override
+   behaviour.** "Deny enemy production" as a *headline rule* is
+   falsified by `enemy_first`'s 32% panel WR. F-axis only fires when
+   self-rank is locked or a basin-detection fires (see §K.3 below) —
+   not as a turn-1-onward primary scoring lever.
+3. **§D.6 phase segmentation rises in priority.** `enemy_first`'s
+   8/8 self-play draws (no-one expanding pre-contact) is consistent
+   with the land-grab-then-frontier phase model. A
+   `landgrab → roi → endgame_burn` schedule is the cheapest extension.
+4. **§G.14 comet gate required before re-enabling `comet_aim`.** The
+   22.5% ablation hit + ROI's lifetime-blindness imply a single explicit
+   gate change before the mechanism returns.
 
-### K.3 Hand-off to the next-experiments plan
+### K.3 How the Phase 1 manifold verdict reshapes §F
 
-`audit/2026-05-10-merge-prep-next-experiments.md` enumerates **five
-new axes** (sizing, source-selection, coordination, phase, defense)
-that the sister panel did not test but that this note motivates. Axis
-3 (coordination — §E.3) is the highest-expected-value novel claim and
-is sequenced first after the 32-seed confirmation of `roi`/`production`.
+The Phase 1 fingerprint gate failed for the **5-class** problem (RF
+80.5% at K=100, target 90%). The verdict is structurally informative:
+`nearest` / `production` / `roi` collapse into ONE basin
+("production-aware-greedy") while `weakest`, `enemy_first`, and
+`baseline` sit in their **own** basins. This is the AlphaStar
+"discrete basins" framing the prior-art audit predicted (Vinyals
+2019).
+
+Three §F implications follow:
+
+1. **The 3-class manifold IS the right granularity for §F.**
+   §F.4–F.5 always treated compete-relative play as **basin-level
+   override behaviour** (kingmaker, spoiler, leader-attacker), not
+   as fine-grained per-strategy adaptation. Phase 1's failure to
+   discriminate inside the ROI-family is consistent with §F.1's
+   tournament-rating insight: TrueSkill rewards win/loss, so once
+   we're inside the ROI basin our default action (run ROI ourselves)
+   is correct regardless of which ROI-family member the opponent is.
+   *No §F-derived policy distinguishes* `nearest`-style from
+   `roi`-style opponents — and Phase 1 confirms that distinction is
+   noise from a behavioural-fingerprint angle as well.
+
+2. **The submission-incentive argument from the verdict matches §F.**
+   The verdict says "there is no submission incentive to distinguish
+   ROI-family members because ROI dominates them all." That mirrors
+   §F's claim that the F-axis is rank-aware override, not a primary
+   scoring lever. They reach the same conclusion from different
+   directions.
+
+3. **§F.6's opponent-modelling architecture is now buildable today.**
+   The verdict shows `weakest` (89.7%) and `enemy_first` (83.4%) are
+   already cleanly separable at K=100 with the existing
+   `lib/fingerprint.py` v1 features. A 3-class meta-router
+   (`production_aware_greedy / weakest / enemy_first`) is one
+   relabel-script call away — see §K.4.
+
+### K.4 Recommended path: Phase 1 path-A (3-class meta-router)
+
+The Phase 1 verdict offers three paths (A: coarsen ROI-family labels;
+B: bump fingerprint to v2 with distribution-shape features;
+C: learned embedding via Grover 2018 protocol). On §F's
+strategic-policy grounds, **path A is the correct immediate next
+step.** Two reasons:
+
+1. **§F is rank-aware override, not fine-grained scoring.** The BR
+   table at basin granularity is exactly what §F prescribes. There's
+   no §F-derived policy that requires distinguishing `nearest` from
+   `production` — both are "production-aware-greedy" and our best
+   response is the same (continue running ROI). Path B would buy us
+   discrimination we don't actually use at the policy level.
+
+2. **Path A is a one-line cheap experiment.** Per the verdict:
+   `--label-merge nearest=production_aware_greedy
+   production=production_aware_greedy roi=production_aware_greedy`
+   re-runs `manifold_check.py` at predicted ≥92% RF. Compare to
+   half-day for path B and several days for path C. Path A also
+   *unblocks Phase 2/3* immediately while paths B/C are open
+   research questions.
+
+Path B becomes worthwhile only if §F.5 gets developed into per-strategy
+customisations (e.g., learning that `nearest` opponents are
+specifically vulnerable to a counter that `production` opponents
+aren't). That's a v4-grade refinement, not a v3 critical-path item.
+Path C is the right last resort if even path B fails to lift
+fingerprint discrimination on the new basin labels.
+
+### K.5 Initial best-response table (proposed; populates Phase 2)
+
+The 3-class meta-router needs a BR-table column. Populated from §F
++ the panel data:
+
+| Detected basin | Our response | Rationale |
+|---|---|---|
+| `production_aware_greedy` (nearest / production / roi) | run `roi` (current v1.2) | symmetric ROI-vs-ROI converges to RNG-tie-break; panel showed 7/8 draws self-play; default to our champion |
+| `weakest` (cheap-snipes opponent) | `roi` + Axis-4 endgame-burn schedule | weakest's 15.6% panel WR shows they leave high-prod neutrals open; we keep ROI expansion + flush garrison in-flight at step 470+ for free score points |
+| `enemy_first` (pressure-on-opponent) | `roi` + Axis-1 sizing-overshoot on home cluster | they besiege our planets; production-aware overshoot at home absorbs incoming + we continue ROI expansion. Their 32.3% panel WR confirms attrition loses to economy |
+| (4P-FFA only) **leader-locked, self at rank 2** | invoke §F.3 spoiler-mode | attack leader's exposed planet; net rank gain ≥30 μ |
+| (B.2 deterministic-win predicate fires) | switch to defense-only (§B.4) | save garrison; let production lock close the game |
+
+This table is **a starting point, not an endpoint** — `weakest` and
+`enemy_first` rows are extrapolations from §F + panel data,
+validatable on the existing `audit/replays/20260510T132957Z/` corpus
+without new replay capture.
+
+### K.6 Hand-off to the next-experiments plan
+
+The companion forward-looking plan
+`audit/2026-05-10-research-driven-next-experiments.md` enumerates
+**six axes** to pursue in priority order:
+
+- **Axis 0 (NEW; top priority):** Phase 1 path-A 3-class meta-router
+  + §K.5 BR-table — implements §F.6 with infra that already exists
+  on main. ~1–2 days.
+- **Axis 3:** multi-source simultaneous-arrival timing (§E.3) — the
+  biggest novel claim from this note, applicable on top of `roi`.
+- **Axis 4:** phase segmentation, especially `endgame_burn` (likely
+  cheapest free %).
+- **Axis 1:** sizing variants (overshoot, garrison-reserve).
+- **Axis 2:** source-selection variants (drain-low vs launch-high,
+  safe-only).
+- **Axis 5:** defense-heuristic (lift uncertain pre-v2).
+
+Compete-relative 4P (§F.3 spoiler-mode) is parked behind 4P-FFA
+panel infrastructure — out of scope for v2/v3 critical path; v4
+candidate.
