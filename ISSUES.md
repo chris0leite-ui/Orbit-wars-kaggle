@@ -114,13 +114,34 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   wrapper that runs N agents × M seeds × pairs, returns winrate
   matrix. Persistent JSON output for trend tracking. `[owner: review-competition-handover-0pGNc | status: wip]`
 - **D.2 Replay logging**: capture `env.steps` + episode metadata for
-  every local game. Disk usage: ~1-5 MB per episode JSON. Plan for
-  ≥1000 episodes. `[owner: unclaimed | status: open]`
+  every local game. Disk usage: ~250 KB gzipped per 500-step game. `[owner: simple-trading-strategies-QS0xV | status: done]`
+  → `scripts/tournament.py::_build_replay` + `--capture-replays` flag;
+  compact format drops seed-derivable fields. Output:
+  `audit/replays/<utc>/<seed>__<a>__<b>.json.gz` (gitignored).
 - **D.3 Seed budget**: how many seeds before winrate ±2pp confidence?
   Bernoulli at p=0.5 → ~625 games for ±2pp at 95% CI. Cheaper:
   bootstrap-CI on smaller sample. `[owner: unclaimed | status: open]`
 - **D.4 Hold-out opponent**: opponents reserved for end-of-cycle
   eval, never seen during agent design. Prevents overfit-to-panel. `[owner: unclaimed | status: open]`
+- **D.5 Parallel game runner** (deferred — surfaced when we hit
+  panel-wallclock friction). GPU does NOT help: `kaggle_environments`
+  is sequential Python with tiny per-step compute. The right lever is
+  CPU multiprocessing across (seed, pair) — games are independent
+  inside `run_tournament`'s inner loop. Estimated win:
+  ~4-8× on a typical box, ~16× on 16-core. Implementation: `--workers
+  N` flag on `scripts/strategy_panel.py`, `multiprocessing.Pool` over
+  `_run_one`. **Trigger condition:** when Phase 2's expanded-zoo
+  panel (~17×17×32 ≈ 9k games, sequentially ~2.5h) becomes a
+  blocker, OR when we want overnight runs ≥10k games for
+  classifier training data. Don't build it before then — Phase 1
+  capture (1568 games, ~35 min) is below the friction threshold. `[owner: unclaimed | status: open]`
+- **D.6 Behavioural fingerprint + manifold diagnostic**: 15-feature
+  fingerprint (`lib/fingerprint.py`); `scripts/manifold_check.py`
+  classifies opponent strategy from K-turn prefix via RF + LR with
+  GroupKFold-by-seed CV. Phase 1 gate: RF ≥ 90% at K ≤ 100 on the
+  5-strategy zoo. `[owner: simple-trading-strategies-QS0xV | status: wip]`
+  → infrastructure committed (`a0f0b6f`); 32-seed capture running
+  background; report.md verdict pending.
 
 ### E. Submission packaging
 
