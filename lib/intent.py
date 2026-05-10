@@ -24,14 +24,19 @@ class Intent:
 
     `ships` is the strategy's *desired* size; `arrival_size` (the mechanism)
     may revise it upward to account for production growth during flight.
-    `aim_angle` starts None and is populated by `lead_aim` / `comet_aim`.
-    Mechanisms may also drop intents (e.g. `validate`, `sun_avoid` when no
-    detour exists).
+    `aim_angle` starts None and is populated by `lead_aim` / `comet_aim` /
+    `lead_aim_v2`. `arrival_xy` is populated by `lead_aim_v2` (and by
+    `comet_aim` when re-enabled) so downstream mechanisms (`sun_avoid`,
+    `path_clears_other_planets`, `oob_guard`) can check the actual fleet
+    path endpoint rather than the target's current position. Mechanisms
+    may also drop intents (e.g. `validate`, `sun_avoid` when no detour
+    exists).
     """
     src_id: int
     target_id: int
     ships: int
     aim_angle: float | None = None
+    arrival_xy: tuple[float, float] | None = None
     note: str = ""
 
 
