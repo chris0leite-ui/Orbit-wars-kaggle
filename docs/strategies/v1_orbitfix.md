@@ -1,7 +1,9 @@
-# v1 orbitfix — leading the orbit + breaking the mirror
+# v1 / v1.1 orbitfix — leading the orbit + breaking the mirror + production-aware sizing
 
 > File: `agents/v1_orbitfix/main.py`.
-> Submitted as `submissions/v1_orbitfix.py` (bundle of `lib/{geometry,fleet,orbit}` + agent) on 2026-05-10. Live μ TBD pending validation episode + ladder play.
+> Submission history (same `agents/v1_orbitfix/` directory; rebuilt + re-bundled at each version bump):
+> - v1 (commit `17fb9aa`, submission `52507539` 2026-05-10 08:11 UTC) — orbit-aware aim + tiebreak randomisation. **Live μ = 508.1** (started μ₀=600).
+> - v1.1 (commit `9108c2a` lib + `1aa7547` strategy/mechanism refactor, submission `52509319` 2026-05-10 09:28 UTC) — same strategy + the `arrival_size` mechanism (production-aware sizing). Live μ pending.
 
 ## One-liner
 
@@ -83,33 +85,74 @@ Two compounding wins:
   rate suggests this rarely matters against the shipped baseline (it
   doesn't avoid the sun either) but live opponents at μ=1000+ exploit it.
 
+## v1.1 — what arrival_size adds
+
+After Step 3.5's strategy/mechanism refactor, the same agent file gained the
+`arrival_size` mechanism in its `realize()` pipeline. For enemy-owned targets,
+fleet size is bumped from `target.ships + 1` to `target.ships + production *
+eta_turns + 1` so that the production growth during fleet flight is covered.
+Neutrals stay at `+1` (they don't produce). The bump is monotonic — strategies
+asking for an over-sized swarm aren't cut down.
+
+The pipeline order is `[validate, arrival_size, lead_aim]`: arrival_size runs
+BEFORE lead_aim because the lead-time estimate depends on fleet speed, which
+arrival_size revises. If even our full garrison can't cover the
+production-grown target, the intent is dropped (sending under-sized = waste).
+
 ## Evidence
+
+### v1 (orbit-aware aim + tiebreak randomisation only)
 
 - 20 seeds × 4 ordered pairs (random / baseline / v1 / self-play),
   `audit/tournaments/20260510T080307Z.json`:
   - **v1 vs baseline aggregate: 40/40 = 100%** (Wilson 95% 0.84..1.00 each side).
   - v1 self-play: 5 P0 / 4 P1 / 11 draws → A.6 closed.
   - p95 turn = 0.3 ms (1-second budget = ample headroom).
-- Bundled vs unbundled parity: 4/4 seeds matched rewards.
-- E.2 self-vs-self validation gate: 10/10 reached `DONE`.
-- Test suite: 54 green in 46 s; bundler regression test now pins
-  the alias-rebind contract that bit us during build.
+- **Live: μ=508.1** (live ladder, submission 52507539). Predicted Δμ +200-400; landed +205. Mid-range of prediction.
 
-## What it does NOT do (explicit gap → motivates v2)
+### v1.1 (above + arrival_size)
 
-- **No arrival-time ownership forecasting.** Sends a 100-ship fleet
-  to a 50-ship neutral that's about to be reinforced by an enemy
-  500-ship arrival → our fleet dies on contact.
+- 20 seeds × 4 ordered pairs, `audit/tournaments/20260510T085929Z.json`
+  (the arrival_size ablation):
+  - **v1.1 vs v1 aggregate: 32/40 = 80%** (Wilson 95% 0.58..0.92 each side).
+  - Both still 40/40 vs shipped baseline; mechanism doesn't degrade
+    upstream wins.
+- 10 seeds × both sides head-to-head against the actually-submitted-v1
+  bundle: **17/20 = 85%** (Step 3.5.E final gate; Rule 27 code-comp variant
+  ≥55% threshold cleared 30 percentage points over).
+- Bundled-vs-unbundled parity: 4/4 seeds.
+- E.2 self-vs-self: 10/10 DONE.
+- Live: PENDING (submission 52509319).
+- Suite: 111 tests green / 67 s; bundler regression test extended for
+  the new `intent`/`mechanism` lib modules; v1 parity gate pinned to
+  the `[validate, lead_aim]` subset so DEFAULT_MECHANISMS can grow
+  without invalidating the regression catch.
+
+## What v1.1 does NOT do (explicit gap → motivates v2)
+
+- **No arrival-time ownership forecasting.** v1.1 sizes fleets correctly
+  for the target's *own* production growth, but doesn't know that an enemy
+  500-ship fleet is also inbound to that target — our fleet still dies on
+  contact at the combined garrison.
 - **No same-turn combat order simulation** (rule 4: two-way ties
   destroy all attackers — exploitable by sending the *exact* tying
   ship count to neutralise an enemy assault for free).
 - **No fleet coordination.** Each owned planet plans independently.
-  Two of our planets may both target the same neutral with `target.ships+1`
-  ships → wasted overlap.
+  Two of our planets may still both target the same neutral with
+  `target.ships+1` ships each → wasted overlap. (Public top notebooks
+  don't dedupe explicitly either; they let the world-model combat
+  resolver handle it. We defer this to v2.)
 - **No defence.** Garrison stays put. An incoming enemy 200-ship fleet
   walks into our 50-ship home undefended.
+- **No comet-path leading.** v1.1's pipeline aims comets at their current
+  position via `lead_aim`'s atan2 fallback. We have a `comet_aim`
+  mechanism implemented + tested but excluded from `DEFAULT_MECHANISMS`
+  (Step 3.5.C ablation: -22.5% — needs `search_safe_intercept` fallback).
+- **No sun-avoidance.** `sun_avoid` mechanism implemented + tested but
+  excluded (Step 3.5.D ablation: -32.5% on v1 — drop-only locks the
+  agent on a sun-blocked nearest-target. Becomes positive at v2.)
 - **No mission-classification.** Roman 1224 distinguishes snipe /
   rescue / recapture / reinforce / crash-exploit / gang-up / elimination
-  and scores them against a single solver. v1 only does "snipe."
+  and scores them against a single solver. v1.1 only does "snipe."
 
 These gaps are the v2 / v3 build agenda — see `roadmap.md`.
