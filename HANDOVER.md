@@ -201,3 +201,106 @@ is wallclock on local CPU.
 - `audit/replays/20260510T132957Z/` (gitignored, 404 MB) — 1568
   replays for Phase 2 fingerprint reuse.
 - `submissions/roi.py` — staged single-file bundle (PI approval pending).
+
+---
+
+## Day-1 evening improve-strategy-ab-testing-jYA2R
+
+### Where we are
+
+- **v1.2/roi μ=1104.9 confirmed live.** Top-5% threshold ≈1100 (we're
+  at the bracket). #1 = 1641.7. Rolling-last-2 holds `[v1.1 (587),
+  v1.2/roi (1105)]`. **No new submit this session — PI gated.**
+  4/5 submission slots used today; 1 left.
+- **lead_aim ETA bug found and fixed** (commit `cbf142b`). Env spawns
+  fleet at `src + (r_src + 0.1)·dir`, captures when entering
+  `target.radius` — `lead_aim` used center-to-center distance for ETA,
+  putting the lead too far ahead → systematic miss in the orbit-forward
+  direction. Fix subtracts the offset from flight distance. 160 tests
+  pass. A/B vs live: 47/0/53 (tied within Wilson 95% noise) — neutral
+  on self-vs-self, expected to lift against varied ladder opponents.
+- **Strategic direction set (PI):** Take Kaggle simulation as correct
+  and stable (no version-drift hedging). From here, two halves:
+  (1) ensure strategy execution is physically accurate (no ships lost
+  to wrong modelling); (2) move from per-source greedy to look-ahead
+  with joint global decisions, fleet-in-flight awareness, and ROI-
+  threshold pruning. Full voice-dump:
+  `knowledge-base/thoughts/2026-05-10-pi-direction-physics-then-lookahead.md`.
+
+### Today's progress (load-bearing only)
+
+1. **Physics audit + ETA correction (cbf142b).** Read env source
+   (`/usr/local/lib/python3.11/dist-packages/kaggle_environments/envs/
+   orbit_wars/orbit_wars.py`); verified fleet-launch, planet-rotation,
+   sun-collision, swept-pair-collision semantics. Empirical probe
+   confirmed src does NOT rotate between obs step N and the transition
+   to N+1 (consequence of the A.1 off-by-one).
+2. **Tournament loader fix.** `scripts/tournament._load_agent` now
+   registers the module in `sys.modules` before `exec_module` so
+   `@dataclass` resolves inside single-file bundled agents like
+   `submissions/roi.py` (was breaking the A/B harness against the live
+   submission).
+3. **Parallel runner discovered already in place.** `scripts/tournament
+   .run_tournament` accepts `workers: int` and `scripts/strategy_panel
+   .py` exposes `--workers N`. The plan's D.5 is shipped; we were just
+   running default `workers=1`. With `--workers 4` on this 4-core box:
+   32-seed × 4-agent panel in 1m12s vs ~6m sequential.
+4. **Deterministic-correctness ablations** (audit/tournaments/19*.json).
+   sun_avoid in DEFAULT_MECHANISMS + strategy pivot, 32-seed vs live:
+   regresses (42/6/52 with 3-iter; 16/75/9 with 2-iter — heavy
+   stalemate). ETA-fix alone: 47/0/53. Diagnosis: `sun_avoid` checks
+   `target.x, target.y` (current) instead of the lead-predicted
+   arrival point — wrong for orbiting targets. Same flaw in any
+   strategy-side sun pivot.
+
+### Falsified-or-dead
+
+- **sun_avoid in current form** (checks current target position). Two
+  ablation attempts regressed vs v1.2/roi anchor. Mechanism stays
+  EXCLUDED from `DEFAULT_MECHANISMS` until the arrival-point fix
+  lands (punch #7).
+- **3-iter lead_aim, standalone** (without the ETA fix). Regressed
+  42/52. Re-test queued with the ETA fix on top.
+
+### Next-session first-action
+
+PI-ratified order; dependency-respecting:
+
+1. **Sun-avoid arrival-aware fix** (punch #7, ~30 min). Reuse
+   `predict_relative(target, omega, eta)` to compute the arrival point,
+   then `path_clears_sun(src.center, arrival_xy, safety=1.0)`. Both
+   the mechanism and any strategy-side pivot share this helper. Re-
+   promote `sun_avoid` to `DEFAULT_MECHANISMS` and re-A/B.
+2. **3-iter lead_aim retest** combined with the ETA fix (punch #8,
+   ~5 min A/B). Quick check; cheap.
+3. **Capture-success probe** (~20 min). Instrument a roi run; count
+   per-fleet (declared target reached? died in sun? out of bounds?
+   still in flight at episode end?). Quantifies the accuracy story —
+   tells us if #7-#8 are μ-relevant or only theoretical.
+4. **Read `obs.fleets` everywhere.** Today's strategies all ignore
+   in-flight fleets. First use-case: don't double-commit a source's
+   garrison to a target that already has our fleet arriving with
+   enough ships. Lives in a new `arrival_ledger` mechanism — propose
+   only if `mine.ships > target.ships_at_arrival − our_already_arriving`.
+5. **ROI-threshold pruning.** Cheap; isolates action space for later
+   work. Top-K filter on the target list + per-owner-class threshold.
+6. **(Defer)** Joint global decisions (bipartite assignment, gang-up
+   timing). Builds on #4 + #5.
+7. **(Defer)** Look-ahead search (beam / mini-MCTS) — only after the
+   above are stable.
+8. **(Defer)** ROI scoring variants (V1-V5 from earlier plan) — fold
+   into the joint global solver, not as standalone per-source variants.
+9. **(Defer)** Submission cadence: only after the capture-success probe
+   shows the local fixes change game outcomes meaningfully.
+
+### Pointers (added this session)
+
+- `cbf142b` — ETA-offset fix + tournament loader fix + PANEL_OBS
+  redesign + 9 ablation JSONs.
+- `knowledge-base/thoughts/2026-05-10-pi-direction-physics-then-lookahead.md`
+  — PI voice-dump (Rule 35); the north-star reasoning behind the
+  next-session ordering above.
+- `audit/tournaments/20260510T192940Z.json` — ETA-fix A/B vs live
+  (47/0/53, 0 draws, --workers 4 in 19s).
+- `audit/tournaments/20260510T19{0047,0224,0605,0823,1113,1630,1745,1836}Z.json`
+  — the bisection trail through deterministic-fix combinations.

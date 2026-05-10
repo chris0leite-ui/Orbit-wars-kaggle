@@ -60,6 +60,11 @@ SEEDS_32 = [
     91, 113, 137, 149, 167, 181, 199, 211, 233, 257,
     269, 281, 293, 307, 311, 313, 317, 331, 337, 347,
     349, 353,
+    # Extension to 64 seeds for confidence runs (Day-2 A/B testing).
+    359, 367, 373, 379, 383, 389, 397, 401, 409, 419,
+    421, 431, 433, 439, 443, 449, 457, 461, 463, 467,
+    479, 487, 491, 499, 503, 509, 521, 523, 541, 547,
+    557, 563,
 ]
 
 # Default panel — the five simple strategies (target-selection ablations) plus
@@ -73,15 +78,16 @@ def _resolve_agent_path(name: str) -> str:
 
     `baseline` -> data/main.py
     `v1_orbitfix` -> agents/v1_orbitfix/main.py
-    `<strategy>` -> agents/simple/<strategy>.py for `<strategy>` in DEFAULT_STRATEGIES.
+    Any other name -> agents/simple/<name>.py if that file exists,
+    otherwise treat `name` as a literal file path.
     """
     if name == "baseline":
         return str(REPO / "data" / "main.py")
     if name == "v1_orbitfix":
         return str(REPO / "agents" / "v1_orbitfix" / "main.py")
-    if name in DEFAULT_STRATEGIES:
-        return str(REPO / "agents" / "simple" / f"{name}.py")
-    # Allow callers to pass an already-qualified file path (advanced use).
+    candidate = REPO / "agents" / "simple" / f"{name}.py"
+    if candidate.is_file():
+        return str(candidate)
     p = Path(name)
     if p.is_file():
         return str(p)
@@ -233,6 +239,11 @@ def main(argv=None) -> int:
         help="Persist per-game compact replays under audit/replays/<utc>/. "
              "Required for downstream manifold_check / behavioural fingerprinting.",
     )
+    parser.add_argument(
+        "--workers", type=int, default=1,
+        help="Parallel game workers. 1 = sequential (default). >1 uses "
+             "multiprocessing.Pool; agent specs must be string paths.",
+    )
     args = parser.parse_args(argv)
 
     if args.strategies is not None:
@@ -267,6 +278,7 @@ def main(argv=None) -> int:
         out_dir=out_dir,
         progress=not args.quiet,
         capture_replays=args.capture_replays,
+        workers=args.workers,
     )
 
     agg = aggregate_winrates(result, names)

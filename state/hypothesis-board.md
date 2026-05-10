@@ -110,6 +110,55 @@ function for picking a target. Run via
   rank-aware-override grounds** — see `heuristics-research.md` §K.4
   for the rationale vs paths B and C.
 
+### 2026-05-10 evening — physics-correctness + look-ahead north star
+
+> Source: PI voice-dump captured in
+> `knowledge-base/thoughts/2026-05-10-pi-direction-physics-then-lookahead.md`.
+> Two halves of the same plan.
+
+**Half 1 — accuracy (ships don't die to wrong physics):**
+
+- **H-lead-eta (LANDED, neutral A/B):** lead_aim ETA was overestimated
+  by `r_src + r_target + 0.1` because the fleet spawns just outside src
+  and captures when entering target.radius. 32-seed A/B vs live: 47/0/53
+  (Wilson lo 0.35, hi 0.59 — tied within noise; 0 draws). Commit
+  `cbf142b`. Expected lift surfaces against varied ladder opponents,
+  not self-vs-self.
+- **H-sun-arrival (punch #7, open):** Re-promoting `sun_avoid` to
+  DEFAULT_MECHANISMS regressed in two ablation attempts because the
+  mechanism checks `path_clears_sun(src.center, target.xy_current)`
+  but the fleet flies to the lead-predicted arrival point. Fix: pass
+  the same `predict_relative(target, omega, eta)` arrival point.
+  Mechanism + strategy-side pivot share one helper.
+- **H-lead-3iter-with-eta (punch #8, open):** 3 fixed-point iterations
+  alone regressed 42/52 in 32-seed A/B. With the ETA correction in
+  place the fixed point is different — quick re-test queued.
+- **H-capture-success-probe (open):** Instrument a roi run; count per-
+  fleet outcome (declared target reached / died in sun / out of
+  bounds / unreached at episode end). The first direct measure of
+  whether physics fixes change game outcomes at scale.
+
+**Half 2 — look-ahead + global decisions (the ceiling):**
+
+- **H-fleets-in-flight (open, high priority):** Today's strategies all
+  ignore `obs.fleets`. First use case: don't double-commit a source's
+  garrison to a target that already has our fleet arriving with enough
+  ships. Lives in a new `arrival_ledger` mechanism (propose only if
+  `mine.ships > target.ships_at_arrival − our_already_arriving`).
+  Second use case: predict enemy fleet arrivals; defend or counter.
+- **H-roi-threshold (open):** Pre-filter the target list (top-K
+  globally and/or per-source absolute threshold) before any later
+  solver runs. Reduces branching for the joint solver and any search.
+  Cheap to ship; isolates the action space.
+- **H-joint-assignment (open):** Replace per-source greedy with
+  bipartite matching `(sources × targets)` maximising total ROI
+  subject to garrison constraints. Hungarian / LP relaxation; fine at
+  24 planets. Subsumes earlier H4 (gang-up timing) when paired with
+  multi-source same-arrival-step coordination.
+- **H-lookahead-search (deferred):** Beam search or mini-MCTS over
+  pruned target set, scoring via short-horizon rollout against a
+  fixed-policy opponent model. Only after the pieces above are stable.
+
 ### Pre-existing seeds (carried over from Day 1)
 
 - H-search: A search-based agent (MCTS over short horizons) beats a

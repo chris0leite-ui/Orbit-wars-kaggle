@@ -188,6 +188,48 @@ def test_loaded_baseline_beats_random_both_sides():
 
 
 # ---------------------------------------------------------------------------
+# Parallel runner — workers>1 reaches the same reward-level outcome as
+# workers=1 on deterministic agents. Per friction note
+# `env-not-fully-seed-deterministic`, ship counts and step counts are not
+# stable across re-runs even of identical agents, so we compare only the
+# reward signal — that IS stable for deterministic agents.
+# ---------------------------------------------------------------------------
+
+
+def test_parallel_runner_matches_sequential_for_deterministic_agent():
+    REPO_ROOT = Path(__file__).resolve().parents[1]
+    baseline = str(REPO_ROOT / "data" / "main.py")
+    panel = {"baseline": baseline}
+    seeds = [42, 1, 7, 13]
+    seq = tournament.run_tournament(
+        agents=panel, seeds=seeds, include_self_play=True, workers=1,
+    )
+    par = tournament.run_tournament(
+        agents=panel, seeds=seeds, include_self_play=True, workers=2,
+    )
+    seq_stat = seq.matrix["baseline"]["baseline"]
+    par_stat = par.matrix["baseline"]["baseline"]
+    assert seq_stat.n == par_stat.n
+    assert seq_stat.p0_wins == par_stat.p0_wins
+    assert seq_stat.p1_wins == par_stat.p1_wins
+    assert seq_stat.draws == par_stat.draws
+    seq_rewards = sorted((g.seed, tuple(g.rewards)) for g in seq_stat.games)
+    par_rewards = sorted((g.seed, tuple(g.rewards)) for g in par_stat.games)
+    assert seq_rewards == par_rewards
+
+
+def test_parallel_runner_rejects_callable_agent():
+    """workers>1 needs picklable string specs; callables would fail mid-run."""
+    with pytest.raises(ValueError, match="workers>1 requires string"):
+        tournament.run_tournament(
+            agents={"noop": _noop_agent},
+            seeds=[42],
+            include_self_play=True,
+            workers=2,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Test fixture: minimal callable agent
 # ---------------------------------------------------------------------------
 
