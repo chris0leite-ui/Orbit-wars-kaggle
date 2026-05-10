@@ -47,6 +47,23 @@ does not re-discover them.
 
 ## 2026-05-10 (day-1 agent — bootstrap branch)
 
+- `tag: audit-date-must-track-system-currentdate` — wrap-up context: I
+  stamped my Day-1 audit files and friction heading as `2026-05-09`
+  because the kickoff began that local-time evening, but the system
+  reminder's `# currentDate` and the submission's UTC timestamp were
+  both `2026-05-10`. This forced a follow-up rename pass across
+  audit/, HANDOVER.md, ISSUES.md, comp-context.md, scripts/, and
+  state/current.md once the submission landed and the discrepancy
+  surfaced. Root cause: I anchored on my internal narrative ("Day-1
+  started yesterday") instead of the system-provided date, even though
+  Rule 35-style "session-end second-brain" thinking should treat the
+  system clock as canonical. **Fix:** at session start, capture the
+  `# currentDate` value once and use it as the YYYY-MM-DD prefix for
+  every artifact written that session — never the agent's recollection
+  of when work began. If the session crosses 00:00 UTC, prefer the
+  later date because it matches what `git log` and Kaggle CLI will
+  stamp.
+
 - `tag: kaggle-api-token-required-for-kgat-format` — day-1 bootstrap:
   `kaggle competitions list -s orbit` returned 401 with only
   `~/.kaggle/kaggle.json` containing `{"username": ..., "key": "KGAT_..."}`.

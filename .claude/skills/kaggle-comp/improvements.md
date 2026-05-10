@@ -45,6 +45,24 @@ HANDOVER.md ASSUMPTIONS.md` for "Day N" patterns where N >
 days-since-comp-start, and surface as friction. PI noticed the
 regression instantly; one PI override + one session of cleanup.
 
+### [ ] [CROSS-CUTTING] kickoff-runbook.md / WRAPUP.md — anchor every artifact's date on the system `# currentDate`
+
+`tag: audit-date-must-track-system-currentdate`. Origin: Orbit Wars
+2026-05-10 Day-1 wrap-up. The bootstrap agent stamped Day-1 audit
+files and the `audit/friction.md` heading as `2026-05-09` because
+local-time kickoff began that evening, but the system reminder's
+`# currentDate` and the first submission's UTC timestamp were both
+`2026-05-10`. This forced a follow-up rename pass across `audit/`,
+`HANDOVER.md`, `ISSUES.md`, `comp-context.md`, `scripts/`, and
+`state/current.md`. **Rule:** at session start, capture the
+`# currentDate` value once and use it as the YYYY-MM-DD prefix on
+every artifact written that session — never the agent's recollection
+of when work began. If the session crosses 00:00 UTC, prefer the
+later date because that's what `git log` and the Kaggle CLI will
+stamp. Add to kickoff-runbook.md as a Day-1 setup item; add to
+WRAPUP.md step 0 as a session-start sanity check. Cost evidence:
+~10 min of rename + an extra commit to reconcile state.
+
 ### [ ] [CROSS-CUTTING] do-and-dont.md — concurrent-CPU-heavy-job cap
 
 `tag: concurrent-CPU-job-violation`. Origin: s6e5 2026-05-08 PM.
