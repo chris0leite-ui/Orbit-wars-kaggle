@@ -37,6 +37,8 @@ import gzip
 import importlib.util
 import json
 import math
+import multiprocessing as mp
+import os
 import statistics
 import sys
 import time
@@ -315,6 +317,29 @@ def _classify(rewards: list[float | None]) -> str:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Pickleable worker for multiprocessing.Pool — re-loads the agent inside the
+# worker so spec_from_file_location module objects don't have to cross the
+# pickle boundary. `_run_one_task` returns (a, b, GameRecord) so the parent
+# can route results back to the right PairStat.
+# ---------------------------------------------------------------------------
+
+
+def _run_one_task(task: tuple) -> tuple:
+    a, b, p0_spec, p1_spec, seed, replay_path = task
+    rec = _run_one(
+        p0_spec, p1_spec, seed,
+        replay_path=replay_path, p0_name=a, p1_name=b,
+    )
+    return (a, b, rec)
+
+
+# Capture this module instance at load time so the parallel runner can
+# defensively re-pin sys.modules even when a sibling test reloads the file
+# under the same `spec_from_file_location("tournament", ...)` name.
+_THIS_MODULE = sys.modules[__name__]
+
+
 def run_tournament(
     agents: Mapping[str, AgentSpec],
     seeds: Sequence[int],
@@ -324,6 +349,7 @@ def run_tournament(
     progress: bool = False,
     capture_replays: bool = False,
     replay_dir: Path | None = None,
+    workers: int = 1,
 ) -> TournamentResult:
     """Run a round-robin tournament.
 
@@ -332,11 +358,25 @@ def run_tournament(
     Replay format is documented in `_build_replay`. Capture is opt-in to
     keep the existing fast path unchanged for callers that only need
     summary stats.
+
+    `workers=1` keeps the original single-process path. `workers>1` uses
+    `multiprocessing.Pool` to run games in parallel. Parallel mode requires
+    every value in `agents` to be a string (file path or builtin name) —
+    callable agents are not picklable when loaded via
+    `importlib.util.spec_from_file_location`. Per-turn timings recorded
+    in worker processes are preserved on the returned `PairStat`.
     """
     if not agents:
         raise ValueError("agents map is empty")
     if not seeds:
         raise ValueError("seeds is empty")
+    if workers > 1:
+        for name, spec in agents.items():
+            if not isinstance(spec, str):
+                raise ValueError(
+                    f"workers>1 requires string agent specs; "
+                    f"agents[{name!r}] is {type(spec).__name__}"
+                )
 
     names = list(agents.keys())
     matrix: dict[str, dict[str, PairStat]] = {a: {} for a in names}
@@ -346,7 +386,6 @@ def run_tournament(
         for b in names
         if include_self_play or a != b
     )
-    done = 0
 
     # Resolve the replay directory once so every game in this run lands
     # under the same UTC subdir.
@@ -357,19 +396,47 @@ def run_tournament(
         replay_subdir = base / utc
         replay_subdir.mkdir(parents=True, exist_ok=True)
 
+    # Pre-create PairStat slots so workers can dispatch in any order.
     for a in names:
         for b in names:
             if not include_self_play and a == b:
                 continue
-            stat = PairStat(p0_name=a, p1_name=b)
+            matrix[a][b] = PairStat(p0_name=a, p1_name=b)
+
+    # Build the task list (a, b, p0_spec, p1_spec, seed, replay_path).
+    tasks: list[tuple] = []
+    for a in names:
+        for b in names:
+            if not include_self_play and a == b:
+                continue
             for seed in seeds:
                 replay_path: Path | None = None
                 if replay_subdir is not None:
                     replay_path = replay_subdir / f"{seed}__{a}__{b}.json.gz"
-                rec = _run_one(
-                    agents[a], agents[b], seed,
-                    replay_path=replay_path, p0_name=a, p1_name=b,
-                )
+                tasks.append((a, b, agents[a], agents[b], seed, replay_path))
+
+    done = 0
+    if workers > 1:
+        # Fork-context: the script is often loaded by file path
+        # (`spec_from_file_location`) which makes spawn workers unable to
+        # re-import this module. Fork inherits the parent's `tournament`
+        # module object directly. Each `_run_one` call allocates a fresh
+        # `kaggle_environments.make()` env, so there's no shared env state
+        # to be fork-corrupted. chunksize=1 keeps progress ordering useful.
+        #
+        # Defensive: tests load this file via `spec_from_file_location` more
+        # than once across the pytest run (test_fingerprint + test_fixture_smoke
+        # both register `sys.modules["tournament"]` to a *fresh* module
+        # instance). Pickle resolves `_run_one_task` by looking up
+        # `sys.modules[func.__module__].<qualname>` and verifying identity, so
+        # if a later test replaced the entry we get a "not the same object"
+        # error. Re-pin sys.modules to the module instance whose
+        # `_run_one_task` we're actually using.
+        sys.modules[_run_one_task.__module__] = _THIS_MODULE
+        ctx = mp.get_context("fork")
+        with ctx.Pool(processes=workers) as pool:
+            for a, b, rec in pool.imap_unordered(_run_one_task, tasks, chunksize=1):
+                stat = matrix[a][b]
                 stat.games.append(rec)
                 stat.n += 1
                 kind = _classify(rec.rewards)
@@ -382,10 +449,37 @@ def run_tournament(
                 done += 1
                 if progress:
                     print(
-                        f"[{done}/{total_games}] {a} (P0) vs {b} (P1) seed={seed}: "
+                        f"[{done}/{total_games}] {a} (P0) vs {b} (P1) seed={rec.seed}: "
                         f"{kind} steps={rec.n_steps} dShips={rec.final_ship_delta_p0_minus_p1:+.0f}",
                         flush=True,
                     )
+    else:
+        for task in tasks:
+            a, b, rec = _run_one_task(task)
+            stat = matrix[a][b]
+            stat.games.append(rec)
+            stat.n += 1
+            kind = _classify(rec.rewards)
+            if kind == "p0_win":
+                stat.p0_wins += 1
+            elif kind == "p1_win":
+                stat.p1_wins += 1
+            else:
+                stat.draws += 1
+            done += 1
+            if progress:
+                print(
+                    f"[{done}/{total_games}] {a} (P0) vs {b} (P1) seed={rec.seed}: "
+                    f"{kind} steps={rec.n_steps} dShips={rec.final_ship_delta_p0_minus_p1:+.0f}",
+                    flush=True,
+                )
+
+    # Aggregate per-pair derived stats now that all games are in.
+    for a in names:
+        for b in names:
+            if not include_self_play and a == b:
+                continue
+            stat = matrix[a][b]
             stat.mean_ship_delta_p0_minus_p1 = (
                 statistics.fmean(g.final_ship_delta_p0_minus_p1 for g in stat.games)
                 if stat.games
@@ -398,7 +492,6 @@ def run_tournament(
                 [t for g in stat.games for t in g.p1_turn_ms]
             )
             stat.wilson_lo, stat.wilson_hi = _wilson_ci(stat.p0_wins, stat.n)
-            matrix[a][b] = stat
 
     result = TournamentResult(
         timestamp_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
