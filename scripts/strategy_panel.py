@@ -228,6 +228,11 @@ def main(argv=None) -> int:
         "--quiet", action="store_true",
         help="Suppress per-game progress prints.",
     )
+    parser.add_argument(
+        "--capture-replays", action="store_true",
+        help="Persist per-game compact replays under audit/replays/<utc>/. "
+             "Required for downstream manifold_check / behavioural fingerprinting.",
+    )
     args = parser.parse_args(argv)
 
     if args.strategies is not None:
@@ -261,6 +266,7 @@ def main(argv=None) -> int:
         include_self_play=not args.no_self_play,
         out_dir=out_dir,
         progress=not args.quiet,
+        capture_replays=args.capture_replays,
     )
 
     agg = aggregate_winrates(result, names)
