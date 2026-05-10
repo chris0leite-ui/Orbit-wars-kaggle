@@ -1,10 +1,14 @@
 # Day-1 data inventory + baseline probe
 
 **Branch:** `claude/orbit-wars-bootstrap-irewT`
-**Date:** 2026-05-09 (T-45 days; deadline 2026-06-23 23:59 UTC)
+**Date:** 2026-05-10 UTC (T-44 days; deadline 2026-06-23 23:59 UTC).
+Kickoff began 2026-05-09 local time but the submission timestamp and
+the bulk of the audit work crossed 00:00 UTC on 2026-05-10; the
+submission-day stamp is the canonical one and matches `state/current.md`.
 **Scope:** Step 0 prerequisite checks → Step 1 seed import → Step 2 day-1
-discovery (a)–(g). No submissions. No RL training run. No external
-notebooks pulled (deferred per `agent-handover-prompt.md`).
+discovery (a)–(g). **One submission today (calibration probe — shipped
+baseline, ID 52497828).** No RL training run. No external notebooks
+pulled (deferred per `agent-handover-prompt.md`).
 
 ## Environment + creds
 
@@ -46,7 +50,7 @@ Source: `kaggle competitions pages orbit-wars --content --page-name {rules,evalu
 
 ## Comp-shipped data inventory
 
-`data/` (3 files, 16,806 bytes total; downloaded 2026-05-09 via
+`data/` (3 files, 16,806 bytes total; downloaded 2026-05-10 via
 `bootstrap.sh`):
 
 | file | size | sha-ish (md5) | role |
@@ -58,7 +62,7 @@ Source: `kaggle competitions pages orbit-wars --content --page-name {rules,evalu
 ## Shipped-baseline rollouts (6 seeds)
 
 Driver: `scripts/run_day1_rollouts.py`. Seeds: `[42, 1, 7, 13, 31, 100]`.
-Raw JSON: `audit/2026-05-09-day-1-rollouts.json`.
+Raw JSON: `audit/2026-05-10-day-1-rollouts.json`.
 
 ### Baseline (P0) vs `random` (P1) — 6/6 wins for baseline
 
@@ -127,7 +131,7 @@ count at `env.steps[N]` is `N - 1`.
 | artifact | path | status |
 |---|---|---|
 | brief | `data/README.md` | ✅ on disk (DO NOT modify) |
-| io_spec | `audit/2026-05-09-day-1-data-inventory.md` (this file) + `comp-context.md` | ✅ |
+| io_spec | `audit/2026-05-10-day-1-data-inventory.md` (this file) + `comp-context.md` | ✅ |
 | baseline_opponent_panel | `random` + `data/main.py` (Nearest Planet Sniper) | ✅ — both runnable; `our_v0` deferred to next session |
 | reference_kernel_replication | deferred (comp ships its own working baseline; pull external kernels only on plateau) | (skipped per kickoff prompt) |
 | gate_status | TBD — awaiting PI sign-off | open |
@@ -148,5 +152,9 @@ count at `env.steps[N]` is `N - 1`.
 3. **A.6 — investigate self-play asymmetry**: confirm or refute the
    tie-break hypothesis with a 1-line patch (random tie-break) and a
    re-run.
-4. **No submissions today** — first submit waits on PI sign-off after
-   B.1's v0 beats the baseline on D.1's local panel by ≥55%.
+4. **First submission shipped** (PI-approved): submission ID 52497828
+   pushed at 2026-05-10 00:09:54 UTC, file `data/main.py` (shipped
+   baseline, unmodified), status PENDING. Submission slot used today:
+   1/5. Read μ-rating + leaderboard once status flips to COMPLETE
+   (validation episode + first ladder games typically settle within a
+   few hours).

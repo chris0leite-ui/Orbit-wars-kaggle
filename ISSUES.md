@@ -19,7 +19,7 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   predict orbiting-planet positions at step t with <0.5 unit error
   over 100 turns. Verify against the live env. Load-bearing for any
   non-myopic agent. `[owner: orbit-wars-bootstrap-irewT | status: done]`
-  → see `scripts/orbit_prediction_check.py` + `audit/2026-05-09-day-1-data-inventory.md`.
+  → see `scripts/orbit_prediction_check.py` + `audit/2026-05-10-day-1-data-inventory.md`.
   **Off-by-one finding (load-bearing):** the naive absolute formula
   `angle = init_angle + omega * N` is WRONG for `env.steps[N]` — it
   predicts one rotation too many, miss is ~1.27 units on inner planets

@@ -45,7 +45,7 @@ does not re-discover them.
   TABULAR-ONLY; R2 has a code-comp default inline. Submission cadence
   is the strategic lever, not endpoint selection.
 
-## 2026-05-09 (day-1 agent — bootstrap branch)
+## 2026-05-10 (day-1 agent — bootstrap branch)
 
 - `tag: kaggle-api-token-required-for-kgat-format` — day-1 bootstrap:
   `kaggle competitions list -s orbit` returned 401 with only

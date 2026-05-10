@@ -78,7 +78,7 @@ def main():
         "baseline_vs_baseline": bvb,
         "seeds": SEEDS,
     }
-    out_path = REPO / "audit" / "2026-05-09-day-1-rollouts.json"
+    out_path = REPO / "audit" / "2026-05-10-day-1-rollouts.json"
     out_path.write_text(json.dumps(out, indent=2))
     print(f"\nwrote {out_path}")
     return 0

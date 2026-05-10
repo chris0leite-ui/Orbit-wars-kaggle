@@ -1,30 +1,33 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-09 (Day 1) by the bootstrap agent on branch
+> Last written: 2026-05-10 (Day 1) by the bootstrap agent on branch
 > `claude/orbit-wars-bootstrap-irewT`. Format budget ≤150 lines.
 
 ## Where we are
 
 - **Comp:** Orbit Wars (slug `orbit-wars`). Deadline 2026-06-23 23:59 UTC →
-  **45 days remaining**. Sponsor Google. $50k pool, 10×$5k prizes (1st–10th).
-- **Submitted agent:** none. **Submission budget used today: 0/5.**
-  **Total submissions: 0** (PI sign-off required before the first push).
-- **Gap to top-5%:** unknown — leaderboard not yet read this session
-  (next-session first-action #1). Initial μ₀=600 on the first submit;
-  TrueSkill σ shrinks over the first ~24 h of ladder play.
+  **44 days remaining**. Sponsor Google. $50k pool, 10×$5k prizes (1st–10th).
+- **Submitted agent:** comp-shipped `data/main.py` (Nearest Planet Sniper),
+  unmodified, as a calibration probe. **Submission ID 52497828**, pushed
+  2026-05-10 00:09:54 UTC, status `PENDING` (validation episode running).
+  **Submission budget used today: 1/5. Total: 1.**
+- **Gap to top-5%:** unknown — leaderboard not yet read this session.
+  Once submission flips to `COMPLETE`, read μ + LB to populate
+  `state/current.md::tournament_rank_today` and
+  `comp-context.md::headroom_to_top5pct`.
 - **Repo state:** seed imported from
   `chris0leite-ui/Kaggle-playground-may-2026 @ claude/orbit-war-setup-KbeKq:orbit-wars-seed/`,
   pushed to `origin/claude/orbit-wars-bootstrap-irewT`. Day-1 audit
   + scripts added. `data/` populated by `bootstrap.sh`.
-- **Pre-baseline gate:** all artifacts present except `our_v0` (deferred
-  to next session). PI sign-off pending.
+- **Pre-baseline gate:** all artifacts present (`our_v0` not yet built,
+  not gating). Submitted agent serves as the calibration baseline.
 - **Local environment:** Python 3.11, `kaggle 2.1.2`,
   `kaggle-environments 1.29.1`. Kaggle CLI auth requires
   `KAGGLE_API_TOKEN="$KAGGLE_KEY"` to be exported each shell — see friction.
 
 ## Today's progress
 
-Load-bearing only; full detail in `audit/2026-05-09-day-1-data-inventory.md`.
+Load-bearing only; full detail in `audit/2026-05-10-day-1-data-inventory.md`.
 
 1. **Comp-context TBDs filled** (rules + evaluation pages):
    team_size_limit=5, data_license=Apache-2.0, winner_license=CC-BY-4.0,
@@ -45,7 +48,9 @@ Load-bearing only; full detail in `audit/2026-05-09-day-1-data-inventory.md`.
    `ω·(N-1)` for the absolute case, or — preferred — relative projection
    from current obs by `ω·lead_turns`. Static planets confirmed
    non-drifting over 100 steps.
-5. **Frictions logged** (`audit/friction.md`): KGAT_-token vs `kaggle.json`
+5. **First submission shipped (PI-approved):** ID 52497828, calibration
+   probe = shipped baseline. Anchors μ-rating before any variant.
+6. **Frictions logged** (`audit/friction.md`): KGAT_-token vs `kaggle.json`
    401, blinker pip conflict, seed-repo out-of-MCP-scope.
 
 ## Falsified-or-dead
@@ -57,20 +62,21 @@ Load-bearing only; full detail in `audit/2026-05-09-day-1-data-inventory.md`.
 Ranked. EV is qualitative on Day 1 (no calibration ladder yet); cost
 is wallclock on local CPU.
 
-1. **Read the live leaderboard** (cost: <1 min, EV: high).
-   `kaggle competitions leaderboard orbit-wars -s` to learn the
-   top-5%-μ threshold + the typical-bot-name landscape; record in
-   `state/current.md` and update `comp-context.md::our_best_rank`
-   (currently empty).
+1. **Read submission status + leaderboard** (cost: <1 min, EV: high).
+   `kaggle competitions submissions orbit-wars` to confirm 52497828
+   went through validation, then `kaggle competitions leaderboard
+   orbit-wars -s` for the top-5% μ threshold and bot-name landscape.
+   Update `state/current.md::tournament_rank_today` +
+   `comp-context.md::headroom_to_top5pct`.
 2. **B.1 heuristic v0 — overshoot variant** (cost: ~30 min coding +
    ~10 min self-play eval × M seeds, EV: medium-high). Send
    `garrison * 1.10 + 1` instead of `garrison + 1`; this absorbs
-   one or two production ticks during fleet travel and prevents
-   "captured then immediately recaptured" failure mode that the
-   shipped baseline almost certainly exhibits. Check the winrate
-   against the shipped baseline on D.1's panel; goal ≥55% to clear
-   the validation-gate analogue (Rule 3 / G13). **Do NOT submit
-   without PI sign-off.**
+   one or two production ticks during fleet travel. Check the
+   winrate against the shipped baseline on D.1's panel; goal ≥55%
+   to clear the validation-gate analogue (Rule 3 / G13). **Do not
+   submit on the same UTC day as a known-good submit lands** —
+   rolling-last-2 means a third submit evicts the calibration probe
+   before it has accumulated ladder games.
 3. **D.1 local-tournament fixture** (cost: ~30 min, EV: high — every
    later experiment depends on it). Thin wrapper around
    `kaggle_environments.evaluate()` that returns a winrate matrix for
@@ -84,15 +90,13 @@ is wallclock on local CPU.
    measure P0 vs P1 winrate. If it equalises, asymmetry is the
    tie-break; if it doesn't, dig into turn-order semantics.
 5. **(Defer)** RL training (B.4), reference-notebook pull (deferred
-   per kickoff prompt; only on plateau), and any submission. The
-   first submission should wait until step 2 produces a v0 that
-   demonstrably beats the shipped baseline on the local panel.
+   per kickoff prompt; only on plateau).
 
 ## Pointers
 
-- `audit/2026-05-09-day-1-data-inventory.md` — comp data + baseline
-  probe + orbit-math verification.
-- `audit/2026-05-09-day-1-rollouts.json` — raw rollout rewards/ship-counts.
+- `audit/2026-05-10-day-1-data-inventory.md` — comp data + baseline
+  probe + orbit-math verification + first-submission record.
+- `audit/2026-05-10-day-1-rollouts.json` — raw rollout rewards/ship-counts.
 - `scripts/run_day1_rollouts.py` — driver for the 6-seed × 2-pairing rollouts.
 - `scripts/orbit_prediction_check.py` — absolute (off-by-one) and
   relative formula verification on seed 42.
