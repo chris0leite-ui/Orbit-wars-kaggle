@@ -50,25 +50,29 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   v2 needs it for re-targeting around the sun.
 - **A.6 Deterministic self-play P0/P1 asymmetry**: shipped baseline
   vs itself wins **4/6 for P1** (seeds 42, 7, 31, 100), 1/6 P0 win
-  (seed 1), 1/6 ties (seed 13). All 4 long (500-step) games end with
-  P1 ahead by 20–30% on ship count. Hypothesis: tie-breaking on
-  equidistant targets routes both players' fleets to the same neutral
-  planet, and the lower-id (P0) launches first → fleet arrives first →
-  P0 captures, P1 swerves to second-nearest. P1 ends up "freer." If
-  confirmed, any deterministic agent that mirrors P0 strategy will
-  underperform from P0 slot — must seed-randomise tie-breaks.
-  Implication: validation gate (Kaggle's self-vs-self) PASSES
-  (no crash, all reach DONE) but final-ship parity is NOT preserved.
-  `[owner: unclaimed | status: open]`
+  (seed 1), 1/6 ties (seed 13). Hypothesis confirmed by v1 fix:
+  randomising tie-breaks with `random.Random(step ^ player_id_salt)`
+  collapses the asymmetry to 5 P0 / 4 P1 / 11 draws over 20 seeds —
+  |P0-P1|=5%, well within the ±15% gate.
+  `[owner: review-competition-handover-0pGNc | status: done]`
+  → `agents/v1_orbitfix/main.py` line ~63 (rng seeded per turn);
+  `audit/tournaments/20260510T075217Z.json` records the 80-game grid.
 
 ### B. Agent class — pick the simplest class that beats baselines
 
 - **B.1 Heuristic v0**: 1-step improvement on shipped Nearest Planet
   Sniper. Variants: send 110% of garrison instead of +1; weight target
   selection by production rather than distance; ignore home-planet
-  defence. `[owner: unclaimed | status: open]`
+  defence. `[owner: review-competition-handover-0pGNc | status: done]`
+  → folded into v1 (A.6 tie-break randomisation was the live lever;
+  overshoot/production-weight not yet tried — keep as v2/v3 ablations).
 - **B.2 Heuristic v1**: production-aware + orbit-aware (fire at where
-  the planet WILL be at impact, not where it is now). Uses A.1 + A.2. `[owner: unclaimed | status: open]`
+  the planet WILL be at impact, not where it is now). Uses A.1 + A.2.
+  `[owner: review-competition-handover-0pGNc | status: done]`
+  → `agents/v1_orbitfix/main.py::_aim_angle` does one-step fixed-point
+  iteration (arrival_time → lead_position → arrival_time') for
+  orbiting non-comet targets; static targets and comets aim at
+  current position. v1 vs baseline 40/40 wins on 20×2 seed grid.
 - **B.3 Search-based**: minimax / MCTS over short horizons (5-10
   turns) of fleet-launch decisions. Branching factor is huge —
   needs heuristic-pruned action space. `[owner: unclaimed | status: open]`
