@@ -70,6 +70,49 @@ def validate(intents: list[Intent], world: World) -> list[Intent]:
 
 
 # ---------------------------------------------------------------------------
+# arrival_size — production-aware fleet sizing for enemy targets
+# ---------------------------------------------------------------------------
+
+
+def arrival_size(intents: list[Intent], world: World) -> list[Intent]:
+    """Bump `ships` so an enemy-owned target's expected garrison at arrival is
+    captured (covered by `target.ships + production * eta + 1`).
+
+    Neutral targets (`owner == -1`) and friendly targets (`owner == world.my_id`)
+    are pass-through — neutrals don't produce; friendlies are reinforce
+    intents and don't need over-sizing here.
+
+    The bump is monotonic (`max(intent.ships, needed)`), so a strategy that
+    asked for an over-spec'd swarm doesn't get cut down. If even our full
+    garrison can't cover the production-grown target, drop the intent —
+    sending an under-sized fleet would be pure waste.
+
+    ETA is computed from the **current** intent.ships (i.e. the strategy's
+    pre-bump estimate). One pass; the larger fleet would arrive faster
+    and need slightly less of a bump, but the over-budget is safe.
+    """
+    out: list[Intent] = []
+    for intent in intents:
+        src = world.planets_by_id.get(intent.src_id)
+        target = world.planets_by_id.get(intent.target_id)
+        if src is None or target is None:
+            out.append(intent)
+            continue
+        if target.owner == -1 or target.owner == world.my_id:
+            out.append(intent)
+            continue
+        d = math.hypot(target.x - src.x, target.y - src.y)
+        v = fleet_speed(intent.ships)
+        eta = math.ceil(d / v) if v > 0 else 0
+        needed = target.ships + target.production * eta + 1
+        intent.ships = max(intent.ships, needed)
+        if intent.ships > src.ships:
+            continue
+        out.append(intent)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # lead_aim — orbit-aware lead, ports v1's _aim_angle exactly
 # ---------------------------------------------------------------------------
 
@@ -120,7 +163,13 @@ def lead_aim(intents: list[Intent], world: World) -> list[Intent]:
 # Canonical pipeline
 # ---------------------------------------------------------------------------
 
-# Step 3.5.A subset. New mechanisms append in the order documented above.
-DEFAULT_MECHANISMS = [validate, lead_aim]
+# `arrival_size` runs BEFORE `lead_aim` because lead time depends on fleet
+# size, which arrival_size revises. comet_aim/sun_avoid land in 3.5.C/D.
+DEFAULT_MECHANISMS = [validate, arrival_size, lead_aim]
 
-__all__ = ["DEFAULT_MECHANISMS", "validate", "lead_aim"]
+# Pinned subset for the v1 parity gate — must match pre-refactor v1
+# behaviour exactly. Don't add new mechanisms here without bumping the
+# pre-refactor snapshot.
+PARITY_MECHANISMS = [validate, lead_aim]
+
+__all__ = ["DEFAULT_MECHANISMS", "PARITY_MECHANISMS", "validate", "arrival_size", "lead_aim"]
