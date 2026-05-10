@@ -103,3 +103,96 @@ is wallclock on local CPU.
 - `data/README.md` — full game spec, comp-shipped (DO NOT modify).
 - `comp-context.md` — settled facts, now with team_size, licences,
   ingress/egress policy, prize structure.
+
+---
+
+## Day-1 PM simple-trading-strategies-QS0xV
+
+> Per WRAPUP parallel-branch convention. The next morning's scribe
+> consolidates this into the synthesis sections above and removes
+> this block.
+
+### Where we are (PM update)
+
+- v1.1 settled at **μ=597.4** (gain +89 over v1's 508.1). Live ladder
+  rolling-last-2: `[v1 (508.1), v1.1 (597.4)]`. 3/5 submissions used.
+- **`submissions/roi.py` staged** (NOT pushed; awaiting PI approval).
+  E.2 self-play 10/10 DONE; bundled-vs-unbundled parity 4/4.
+- Predicted live μ for ROI: 700–1000 (based on 100% local vs v1 and
+  v1's +205 vs baseline).
+- top-5% threshold ≈ 1100 → roi could close ~half the gap in one push.
+
+### Today's progress (load-bearing only)
+
+1. **Simple-strategy panel** — five target-selection strategies under
+   `agents/simple/` sharing v1.1's mechanism stack. 32-seed result
+   (audit/tournaments/20260510T140907Z.json):
+   - **roi: 97.1% mean panel WR, 100% (64/64) vs v1_orbitfix.**
+   - production 67.7%, nearest 56% (ties v1 by construction),
+     enemy_first 33%, weakest 19% (last two falsified).
+2. **Phase 1 meta-strategy infrastructure** — replay capture
+   (`scripts/tournament.py`), `lib/fingerprint.py` (15-feature
+   behavioural fingerprint), `scripts/manifold_check.py` (RF + LR
+   with GroupKFold-by-seed CV), prior-art survey.
+3. **Phase 1 manifold gate ❌ NOT cleared.** Best K ≤ 100 result on
+   the 5-strategy zoo: RF 80.5%, LR 80.6%; target was 90%. ROI-family
+   (nearest/production/roi) collapses into one basin (12-17% mutual
+   confusion). Cleanly-separated basins: weakest (89.7%), enemy_first
+   (83.4%), baseline (95% in 7-class). Verdict + paths forward in
+   `audit/2026-05-10-phase1-manifold-verdict.md`.
+4. **Bundler extended** to accept flat-file agents
+   (`agents/simple/<n>.py`); 151 tests still green.
+5. **Plan rewritten** to phased 5-step roadmap (replay capture →
+   manifold check → zoo expansion → BR table → meta-router →
+   submission). See `/root/.claude/plans/read-the-handover-next-imperative-whisper.md`.
+
+### Falsified-or-dead
+
+- **simple/weakest** (argmin target.ships, snipe-cheap hypothesis):
+  19% mean WR at 32 seeds; 0/16 vs nearest, production, roi, v1.
+  Kept as opponent-panel diversity (D.4) — strategically distinct
+  weak agent is useful for hold-out eval.
+- **simple/enemy_first** (pressure-on-opponent hypothesis): 33% mean
+  WR at 32 seeds; 8 of 8 self-play seeds → all draws (when both
+  sides ignore neutrals, games stalemate). Kept for D.4 same as above.
+- **Linear small-dim manifold** as the framing for opponent
+  classification — refuted by AlphaStar-style basin clustering at
+  the 7-class level. The "strategies live in discrete basins" version
+  of the hypothesis still holds.
+
+### Next-session first-action
+
+1. **PI submission decision for roi** (cost: 1 submit slot,
+   EV: high — predicted live Δμ ≥ +100 vs v1.1). Bundle is at
+   `submissions/roi.py`. Pushing it evicts v1 from rolling-last-2;
+   v1.1 (μ=597.4) stays. **Do not push on the same UTC day as
+   a future speculative variant unless willing to lose the ladder
+   spot for ~24 h.**
+2. **PI choice on Phase 2 path** (no compute cost; sets next batch).
+   - **A) Coarsen labels** (cheap; merge ROI-family → 3-class router;
+     gate likely clears at ~92%). Recommended first.
+   - **B) Richer fingerprint** (half-day; distribution-shape +
+     temporal-split + target-id Shannon entropy; FEATURE_VERSION→2;
+     gate likely clears full 5-class).
+   - C) Learned embedding (Grover et al.) — last resort.
+3. **Phase 2 zoo expansion** — once path A or B clears the gate,
+   add ~12 more strategies (sizing / coordination / defence / hybrid
+   axes per the plan §"Strategy zoo expansion shape"). Triggers
+   the parallel-runner deferred infra (`ISSUES.md::D.5`) when the
+   ~9k-game panel becomes a wallclock blocker.
+4. **(Defer)** Phase 3 BR table + meta-router; Phase 4 bundle-with-
+   classifier-weights; B.4 RL fallback.
+
+### Pointers (added this session)
+
+- `audit/2026-05-10-simple-strategy-panel.md` — Phase 0 result.
+- `audit/2026-05-10-meta-strategy-prior-art.md` — Grover, DRON, PSRO,
+  AlphaStar, Pluribus, Bayes-Bluff (1-page survey).
+- `audit/2026-05-10-phase1-manifold-verdict.md` — gate failure
+  diagnosis + paths forward.
+- `audit/2026-05-10-postmortem-simple-trading-strategies-QS0xV.md` —
+  this session's postmortem (PI ratification deferred).
+- `audit/tournaments/20260510T140907Z.json` — 32-seed × 7-agent panel.
+- `audit/replays/20260510T132957Z/` (gitignored, 404 MB) — 1568
+  replays for Phase 2 fingerprint reuse.
+- `submissions/roi.py` — staged single-file bundle (PI approval pending).

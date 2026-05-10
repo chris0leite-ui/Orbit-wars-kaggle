@@ -139,9 +139,17 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   fingerprint (`lib/fingerprint.py`); `scripts/manifold_check.py`
   classifies opponent strategy from K-turn prefix via RF + LR with
   GroupKFold-by-seed CV. Phase 1 gate: RF ≥ 90% at K ≤ 100 on the
-  5-strategy zoo. `[owner: simple-trading-strategies-QS0xV | status: wip]`
-  → infrastructure committed (`a0f0b6f`); 32-seed capture running
-  background; report.md verdict pending.
+  5-strategy zoo. `[owner: simple-trading-strategies-QS0xV | status: parked]`
+  → infrastructure shipped (commits `a0f0b6f`, `dd603be`); 32-seed
+  capture done (1568 games, 404 MB at audit/replays/20260510T132957Z/).
+  5-class gate: RF 80.5%, LR 80.6% at K=100 — **NOT cleared** (~10pp
+  short). Verdict: ROI-family (nearest/production/roi) is one basin
+  with 12-17% mutual confusion; weakest, enemy_first, baseline are
+  cleanly separated. PI choice queued in state/hypothesis-board.md
+  between H-coarsen-labels (merge ROI-family → 3-class router; gate
+  likely clears at ~92%) and H-richer-fingerprint (add distribution-
+  shape + temporal-split features; bumps FEATURE_VERSION). Audit:
+  audit/2026-05-10-phase1-manifold-verdict.md.
 
 ### E. Submission packaging
 
