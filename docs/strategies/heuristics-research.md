@@ -9,6 +9,12 @@
 > (heuristic, search, IL, RL, hybrid) can plug in. Each section ends
 > with a hand-off pointer to the roadmap mechanism (1–7) or the v2/v3/v4
 > version that absorbs it.
+>
+> **Update 2026-05-10:** §K (Empirical evidence) added at the bottom
+> after the sister branch's simple-strategy panel produced 8-seed
+> verdicts on five target-selection axes — see also
+> `audit/2026-05-10-merge-prep-next-experiments.md` for the planned
+> next-axis experiments that build on those results.
 
 ---
 
@@ -608,3 +614,63 @@ spec — F and G.12 in particular extend the Roman taxonomy.
   but v0/v1/v1.1 are deployed).
 - Add the four "gaps" identified in §H to `ISSUES.md` as new B.* leaves
   for future claim.
+
+---
+
+## K. Empirical evidence — cross-reference (added 2026-05-10)
+
+Sister branch `claude/simple-trading-strategies-QS0xV` ran a
+target-selection ablation panel (5 strategies under `agents/simple/*`,
+shared `[validate, arrival_size, lead_aim]` mechanism stack, 7 agents
+× 7 agents × 8 seeds = 392 games). Detailed audit:
+`audit/2026-05-10-simple-strategy-panel.md` (post-merge path). The
+verdicts inform — but do not yet rewrite — the analysis above. **All
+verdicts are 8-seed and await 32-seed confirmation; treat as Bayesian
+priors, not proofs.**
+
+### K.1 Per-section cross-reference
+
+| Research-note section | Sister-panel finding | Status |
+|---|---|---|
+| §C.3 ROI score `value/cost · time_discount` | `roi = production/(dist+1)` 96.9% panel WR / 100% (16/16) vs `v1_orbitfix` | **validated** — strongest 8-seed signal |
+| §C.4 marginal-production-gain | `production` argmax 75.0% panel WR / 69% vs v1 | **validated** — second-strongest signal |
+| §C.4 threat-reduction / denial-value (as primary axis) | `enemy_first` 32.3% panel WR; 8/8 self-play draws (stalemate when both sides starve neutrals) | **falsified for primary use** — needs cost-aware wrapping; see §F caveat below |
+| §D.1 compounding insight (early production captures > late) | Both production-aware variants (`production`, `roi`) decisively beat `nearest`; the gap widens with game length | **validated** indirectly |
+| §F.4 "prefers `deny_enemy_production` over `extend_own_production`" | `enemy_first` falsification implies this rule, run as a *primary scoring axis*, is bad pre-contact | **caveat:** F is rank-aware play; only kicks in late-game when self-rank is locked. As a turn-1-onward rule it loses; as a step-300+ override it may still pay |
+| §G.7 multi-target single-source split | `weakest` (always cheap snipes) 15.6% panel WR; 0% vs `roi` | **falsified** — confirms the §G.7 caveat that fragmenting into cheap targets without ROI gating is bad |
+| §G.11 symmetry-breaking RNG | All sister strategies use seeded per-step RNG; A.6 self-play splits balanced for non-symmetric scorings, but `roi` shows 7/8 draws and `enemy_first` 8/8 — symmetric scorings *with* RNG can still draw mirrored seeds | **partially validated** — RNG breaks asymmetry but not symmetry-of-the-strategy itself |
+| §G.14 comet ROI gate | Sister's `simple-roi.md` notes `roi`'s denominator-only model treats short-lived comets the same as planets; v1's `comet_aim` ablation lost 22.5% (now off-by-default in `lib/mechanism.py`) | **strengthened** — gating logic needed before re-enabling |
+| §J H4 (multi-source simultaneous-arrival) | not yet tested | **next axis** — see prep doc Axis 3 |
+| §J H5 (B.2 dominance-lock) | not yet tested | **deferred to v2** |
+| §J H6 (F.3 spoiler in 4P) | not yet tested; sister panel is 1v1 | **deferred** — needs 4P-FFA panel infra |
+| §J H7 (D.1 early-rush re-weighting) | partially covered by Axis-4 phase-segmentation experiment | **next axis** — see prep doc Axis 4 |
+| §J H8 (G.6 bipartite assignment) | not yet tested | **future** — heavier than current panel agents |
+
+### K.2 What changed in our priors
+
+1. **§C.3 ROI is no longer a hypothesis — it is the working baseline.**
+   Future axis experiments build on top of `roi` target selection
+   unless explicitly testing target selection.
+2. **§F (compete-relative) needs scope-tightening.** "Deny enemy
+   production" as a *headline rule* is falsified. The F-axis is now
+   specifically about **rank-aware override behaviour** — only firing
+   when self-rank is locked into 2nd-or-3rd place mid-game, not as a
+   primary scoring lever from turn 1.
+3. **§D.6 phase segmentation rises in priority.** The fact that
+   `enemy_first` beats no-one until step ~200 (when contact actually
+   happens, per its self-play draws) is consistent with the
+   land-grab-then-frontier phase model. A `landgrab → roi → endgame_burn`
+   schedule is the single cheapest extension to test post-merge
+   (Axis 4 in the prep doc).
+4. **§G.14 comet gate is required before re-enabling `comet_aim`.**
+   The 22.5% ablation hit + sister's note on ROI's lifetime-blindness
+   together imply a single explicit gate change before the mechanism
+   can come back.
+
+### K.3 Hand-off to the next-experiments plan
+
+`audit/2026-05-10-merge-prep-next-experiments.md` enumerates **five
+new axes** (sizing, source-selection, coordination, phase, defense)
+that the sister panel did not test but that this note motivates. Axis
+3 (coordination — §E.3) is the highest-expected-value novel claim and
+is sequenced first after the 32-seed confirmation of `roi`/`production`.
