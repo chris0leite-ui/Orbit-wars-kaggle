@@ -7,10 +7,27 @@ agent (or a returning human) can read **what** the strategy does and
 ## Files
 
 - `shipped-baseline.md` — comp-shipped Nearest Planet Sniper. Floor anchor.
-- `v1_orbitfix.md` — first submitted variant. Orbit-aware aim + tie-break
-  randomisation. Beats baseline 40/40 locally; live μ TBD.
+- `v1_orbitfix.md` — first submitted variant (v1, v1.1). Orbit-aware aim
+  + tie-break randomisation + production-aware sizing.
 - `roadmap.md` — planned v2 (arrival ledger), v3 (mission classes),
   v4 (opponent modeling or MCTS), with the public-research touchstones.
+
+### Simple-strategy panel (target-selection ablations)
+
+Five agents under `agents/simple/` share v1.1's mechanism stack and vary
+only the target-selection score function. Run via
+`python -m scripts.strategy_panel`. Plan:
+`/root/.claude/plans/read-the-handover-next-imperative-whisper.md`.
+
+- `simple-nearest.md` — distance-greedy (control; reproduces v1).
+- `simple-production.md` — argmax target.production. **75.0% mean panel
+  winrate at 8 seeds; 69% vs v1_orbitfix.**
+- `simple-roi.md` — argmax production / distance. **96.9% mean panel
+  winrate at 8 seeds; 100% (16/16) vs v1_orbitfix — strongest signal.**
+- `simple-weakest.md` — argmin target.ships. Falsified at 8 seeds
+  (15.6%); kept for opponent-panel diversity.
+- `simple-enemy_first.md` — enemy planets first, then nearest.
+  Falsified at 8 seeds (32.3%); kept for opponent-panel diversity.
 
 ## Naming convention
 

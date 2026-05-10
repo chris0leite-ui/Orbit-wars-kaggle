@@ -66,6 +66,21 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   defence. `[owner: review-competition-handover-0pGNc | status: done]`
   → folded into v1 (A.6 tie-break randomisation was the live lever;
   overshoot/production-weight not yet tried — keep as v2/v3 ablations).
+- **B.1.1 Simple-strategy panel — target-selection ablations.** Five
+  strategies under `agents/simple/` share v1.1's mechanism stack
+  (`[validate, arrival_size, lead_aim]`); only the target-score
+  function differs. Goal: (a) learn which targeting axis matters,
+  (b) diversify the local opponent panel (D.4 dependency),
+  (c) exercise the Strategy/Mechanism abstraction with ≥3
+  instances. `[owner: simple-trading-strategies-QS0xV | status: wip]`
+  → 8-seed smoke (audit/tournaments/20260510T123059Z.json) ranks
+  `roi` 97% panel-winrate / 100% (16/16) vs v1_orbitfix; `production`
+  75% / 69% vs v1; `nearest` 56% (≈ v1); `enemy_first` 32%; `weakest`
+  16%. Pending 32-seed confirmation before any submission decision —
+  rolling-last-2 economy means we cannot evict v1.1 lightly. PI
+  flagged a 6th axis for a follow-up batch (deferred until first
+  panel's results are read). Plan:
+  `/root/.claude/plans/read-the-handover-next-imperative-whisper.md`.
 - **B.2 Heuristic v1**: production-aware + orbit-aware (fire at where
   the planet WILL be at impact, not where it is now). Uses A.1 + A.2.
   `[owner: review-competition-handover-0pGNc | status: done]`
