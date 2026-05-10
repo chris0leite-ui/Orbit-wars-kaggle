@@ -31,7 +31,10 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
        at step 100, and against env.steps[N] for N in {1,5,10,100,200,499}.
 - **A.2 Fleet speed + travel time**: validate
   `speed = 1 + 5·(log(ships)/log(1000))^1.5` against the env.
-  Tabulate (ships → speed → turns-to-cross-board). `[owner: unclaimed | status: open]`
+  Tabulate (ships → speed → turns-to-cross-board). `[owner: review-competition-handover-0pGNc | status: done]`
+  → see `lib/fleet.py` + `tests/test_fleet.py` (12 tests). speed(1)=1.0,
+  speed(1000)=6.0, speed(500)≈5.0 (matches README "~5"), monotonic in
+  ships, clamps at 1000+. `eta_turns` ceils partial turns.
 - **A.3 Combat resolution**: walk through the README rules with 3
   hand-built collision scenarios (single attacker, two same-owner,
   two-way tie). Confirm the env matches. `[owner: unclaimed | status: open]`
@@ -39,7 +42,12 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   ship-count is min-of-4-rolls (heavy-skew low). Worth grabbing? `[owner: unclaimed | status: open]`
 - **A.5 Sun collision geometry**: continuous path-segment check, not
   endpoint. What's the maximum safe angle from a planet near the sun
-  to another planet beyond it? `[owner: unclaimed | status: open]`
+  to another planet beyond it? `[owner: review-competition-handover-0pGNc | status: partial]`
+  → `lib/geometry.path_clears_sun(src, dst, safety)` implements the
+  point-to-segment distance check with an optional safety margin
+  (10 tests in `tests/test_geometry.py`). The "max safe angle"
+  question itself is not yet answered analytically — that lands when
+  v2 needs it for re-targeting around the sun.
 - **A.6 Deterministic self-play P0/P1 asymmetry**: shipped baseline
   vs itself wins **4/6 for P1** (seeds 42, 7, 31, 100), 1/6 P0 win
   (seed 1), 1/6 ties (seed 13). All 4 long (500-step) games end with
