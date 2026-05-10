@@ -2,6 +2,41 @@
 
 ## Open
 
+### 2026-05-10 — Phase 1 manifold hypothesis: partial refute
+
+> Plan: `/root/.claude/plans/read-the-handover-next-imperative-whisper.md`.
+> Audit: `audit/2026-05-10-phase1-manifold-verdict.md`.
+> Reports: `audit/manifold/20260510T141114Z/` (7-class),
+>          `audit/manifold/20260510T141409Z/` (5-class — gate target).
+> Capture: `audit/replays/20260510T132957Z/` (1568 games, gitignored).
+
+The user's hypothesis "competitor strategies live on a small-dim
+manifold so a short prefix is informative enough to identify a class"
+**partially confirmed** at 32 seeds × 5-strategy zoo with 15
+hand-designed features:
+
+- `weakest` (89.7%), `enemy_first` (83.4%), `baseline` (95% in 7-class)
+  sit in their own basins — broad-class routing works.
+- `nearest`, `production`, `roi` form a single "production-aware-
+  greedy" basin with mutual confusion 12-17%; our 15-feature
+  fingerprint can't separate them at K ≤ 200.
+- Best 5-class score: RF 80.5% / LR 80.6% at K=100. Gate target was
+  90%; **gate ❌ NOT cleared.**
+
+**H-coarsen-labels (open, unranked):** merging the ROI-family into
+a single class `production_aware_greedy` likely lifts RF to ≥92%
+at K=100. Lets a 3-class meta-router proceed (broad-class routing
+is what the panel actually needs — there's no submission incentive
+to distinguish ROI-family members because ROI dominates them all).
+
+**H-richer-fingerprint (open, queued behind H-coarsen):** adding
+target-distance/production distribution-shape features + early-vs-
+late split + target-id Shannon entropy plausibly separates the
+ROI-family at K ≤ 100. Bumps `FEATURE_VERSION` to 2.
+
+**H-learned-embedding (parked):** Grover et al. ICML 2018 protocol —
+last resort if H-coarsen and H-richer-fingerprint both fail.
+
 ### 2026-05-10 — simple-strategy panel (target-selection ablations)
 
 Five strategies under `agents/simple/` share v1.1's mechanism stack
