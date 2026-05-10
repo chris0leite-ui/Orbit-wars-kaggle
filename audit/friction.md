@@ -142,3 +142,84 @@ fired once and been logged for-real.
   fleets can blow this on a slow worker. **Anticipated fix:**
   profile worst-case `agent(obs)` locally; any branch >500 ms wallclock
   needs optimisation before submit.
+
+## 2026-05-10 (PM — simple-trading-strategies-QS0xV)
+
+- `tag: requirements-not-installed-on-fresh-shell` — Phase 0 build:
+  fresh container had no `kaggle_environments` / `pytest` /
+  `scikit-learn` available; `pip install -r requirements.txt`
+  failed once on `blinker` system-package conflict. **Fix:** use
+  `pip install -r requirements.txt --break-system-packages
+  --ignore-installed blinker --quiet`. Captured this in the
+  bootstrap workflow rather than per-session friction; future
+  agents can rerun bootstrap.sh to get the same result. The
+  `kaggle_environments` install cascades a noisy 23-line OpenSpiel
+  loader log on every Python import — annoying but harmless.
+- `tag: data-main-py-not-fetched-by-bootstrap` — Phase 0 build:
+  111 existing tests failed with "Could not find :
+  /home/user/Orbit-wars-kaggle/data/main.py" because `bootstrap.sh`'s
+  data-download step does NOT actually run on fresh containers
+  here (the smoke-only path runs but the `kaggle competitions
+  download -c orbit-wars` is gated by an unclear condition).
+  **Fix:** ran `kaggle competitions download -c orbit-wars -p data/`
+  manually + `unzip data/orbit-wars.zip -d data/`. Should be promoted
+  to a session-start hook or to the bootstrap.sh fast-path.
+- `tag: bundler-flat-file-agents-not-supported` — Phase 0 →
+  submission staging: `scripts/bundle_agent.py` hardcoded
+  `<agent_dir>/main.py`, but the simple-strategy panel uses
+  flat-file agents at `agents/simple/<n>.py`. **Fix:** extended
+  `bundle()` in `scripts/bundle_agent.py` to accept either a
+  directory containing `main.py` OR a single `.py` file as the
+  agent entry. Existing dir-mode behaviour preserved.
+- `tag: importlib-spec-no-sys-modules-registration` — Phase 0:
+  loading `submissions/roi.py` via `importlib.util.spec_from_file_location`
+  + `exec_module` raised `AttributeError: 'NoneType' object has no
+  attribute '__dict__'` inside `dataclasses.py::_process_class`.
+  Root cause: dataclasses checks `sys.modules.get(cls.__module__)`
+  for KW_ONLY sentinel, which returns None when the module isn't
+  registered. **Fix:** `sys.modules['<spec_name>'] = mod` before
+  `exec_module(mod)`. Should propagate this pattern into
+  `scripts/tournament.py::_load_agent` if it ever loads bundled
+  submissions directly.
+- `tag: sklearn-1.8-dropped-multi_class-kw` — Phase 1: sklearn 1.8
+  dropped the `multi_class="auto"` keyword on `LogisticRegression`
+  (`TypeError: __init__() got an unexpected keyword argument
+  'multi_class'`). **Fix:** removed the kwarg in
+  `scripts/manifold_check.py`; the new default ("auto" inference
+  by class count) is what we wanted anyway. Code that pinned
+  `multi_class` for older sklearn would need a version guard;
+  this comp doesn't have any other sklearn touchpoints today.
+- `tag: nearest-equals-v1_orbitfix-by-construction` — Phase 1:
+  `agents/simple/nearest.py` deliberately reproduces `agents/v1_orbitfix/`'s
+  targeting + RNG seed as the strategy-panel control. The 7-class
+  manifold check correctly classified them as mutually-confusable
+  (29% mutual confusion) — but this is *correct* in-data behaviour,
+  not a fingerprint failure. **Fix:** the gate target was always
+  the 5-strategy zoo (excluding v1_orbitfix); `manifold_check.py`'s
+  `--strategies` filter handles this. Surfaced in
+  `audit/2026-05-10-phase1-manifold-verdict.md` so future agents
+  reading the 7-class confusion don't re-derive the diagnosis.
+- `tag: roi-family-shares-one-basin` — Phase 1: `nearest`,
+  `production`, `roi` all share `DEFAULT_MECHANISMS` and a
+  distance/production-aware score function, so their behavioural
+  fingerprints overlap (12-17% mutual confusion at K ≤ 200 with
+  the 15-feature design). The `_infer_target` ray-cast proxy is
+  the load-bearing weakness — it loses the "which planet did they
+  attack" signal that would actually separate them. **Fix not yet
+  applied:** queued as H-coarsen-labels (merge ROI-family) or
+  H-richer-fingerprint (target-distance/production distribution
+  shape + early-vs-late split + target-id Shannon entropy) in
+  state/hypothesis-board.md. PI to choose path.
+- `tag: kaggle-oauth-503-on-submit-only` — submission flow:
+  `kaggle competitions submit` returned `requests.exceptions.HTTPError:
+  503 Server Error: Service Unavailable for url:
+  https://api.kaggle.com/v1/security.OAuthService/IntrospectToken`
+  on two consecutive attempts ~5 min apart, while
+  `kaggle competitions submissions` (GET) worked cleanly between them.
+  Root cause: Kaggle's OAuth introspection endpoint flapped
+  specifically on the submit POST path; not our credentials. Verified
+  no slot was consumed via the submissions list. **Fix:** PI-authorized
+  third attempt; succeeded as ID 52518060. Promotion candidate: a
+  small wrapper `scripts/safe_submit.sh` that pre-checks via GET
+  then submits + verifies the new entry appears, surfacing 5xx as
+  "retry, not loop" to keep us inside Rule 1's spirit.

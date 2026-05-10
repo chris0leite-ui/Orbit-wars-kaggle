@@ -121,14 +121,30 @@ def _clean_agent_source(src: str) -> str:
 
 
 def bundle(agent_dir: Path, lib_modules: list[str], out_dir: Path = SUBMISSIONS) -> Path:
-    """Produce `<out_dir>/<basename(agent_dir)>.py` and return its path."""
-    main = agent_dir / "main.py"
-    if not main.is_file():
-        raise FileNotFoundError(f"agent has no main.py: {agent_dir}")
+    """Produce `<out_dir>/<name>.py` and return its path.
+
+    `agent_dir` may be either:
+      - a directory containing `main.py` (canonical multi-file agent shape;
+        `<name>` is the directory name); or
+      - a path to a single `.py` file (flat agent shape used by
+        `agents/simple/<n>.py`; `<name>` is the file stem).
+    """
+    if agent_dir.is_file() and agent_dir.suffix == ".py":
+        main = agent_dir
+        name = agent_dir.stem
+        source_label = agent_dir.relative_to(REPO)
+    elif agent_dir.is_dir():
+        main = agent_dir / "main.py"
+        if not main.is_file():
+            raise FileNotFoundError(f"agent has no main.py: {agent_dir}")
+        name = agent_dir.name
+        source_label = agent_dir.relative_to(REPO)
+    else:
+        raise FileNotFoundError(f"agent path not found: {agent_dir}")
 
     parts: list[str] = []
     parts.append(
-        f"# Bundled by scripts/bundle_agent.py from {agent_dir.relative_to(REPO)} + "
+        f"# Bundled by scripts/bundle_agent.py from {source_label} + "
         f"lib/{{{','.join(lib_modules)}}}.\n"
         f"# Single-file Kaggle submission for Orbit Wars.\n\n"
     )
@@ -145,7 +161,7 @@ def bundle(agent_dir: Path, lib_modules: list[str], out_dir: Path = SUBMISSIONS)
     parts.append(_clean_agent_source(main.read_text()))
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{agent_dir.name}.py"
+    out_path = out_dir / f"{name}.py"
     out_path.write_text("".join(parts))
     return out_path
 
