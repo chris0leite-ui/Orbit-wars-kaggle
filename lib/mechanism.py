@@ -232,10 +232,17 @@ def lead_aim(intents: list[Intent], world: World) -> list[Intent]:
         )
         if is_orbit and world.omega != 0.0:
             v = fleet_speed(intent.ships)
+            # Fleet spawns just outside source (src.radius + 0.1) and
+            # captures when it crosses into target.radius. Subtract both
+            # from center-to-center distance to get actual flight distance.
+            # Without this, ETA overestimates and lead is too far ahead —
+            # systematic miss in the orbit-forward direction.
+            r_offset = src.radius + target.radius + 0.1
             tx, ty = target.x, target.y
             for _ in range(2):
                 d = math.hypot(tx - src.x, ty - src.y)
-                t = d / v
+                flight_d = max(0.0, d - r_offset)
+                t = flight_d / v
                 tx, ty = predict_relative(target_tuple, world.omega, t)
             target_xy = (tx, ty)
         intent.aim_angle = math.atan2(target_xy[1] - src.y, target_xy[0] - src.x)
@@ -310,15 +317,14 @@ def sun_avoid(intents: list[Intent], world: World) -> list[Intent]:
 # log-curve speeds. The 3 public top notebooks (Roman 1224 et al) pair their
 # version with `search_safe_intercept` fallback (try multiple arrival times)
 # which we don't yet implement. Revisit when v3's world-model lands.
-# `sun_avoid` is implemented + unit-tested but EXCLUDED from DEFAULT_MECHANISMS
-# because the 3.5.D ablation tournament (audit/tournaments/...) showed it
-# loses 13/40 = 32.5% vs the parity baseline. Diagnosis: drop-only is correct
-# at the mechanism level (don't lose the fleet to the sun), but v1's
-# nearest-target strategy gets *stuck* — the sun-blocked target stays
-# nearest each turn, sun_avoid keeps dropping, ships pile up in garrison
-# doing nothing. v2's arrival-ledger strategy can pivot to a different
-# target when the nearest is blocked, so sun_avoid will become positive
-# there. Tracked for v2 in DEFAULT_MECHANISMS.
+#
+# `sun_avoid` is implemented + unit-tested but EXCLUDED from DEFAULT_MECHANISMS.
+# Promotion attempts (with and without a strategy-side pivot) regressed in
+# local A/B vs v1.2/roi @ μ=1104.9 — the mechanism checks the line from src to
+# `target.x, target.y` (current position), but orbiting targets have moved by
+# arrival. Outstanding fix: check `path_clears_sun(src.center, lead-predicted
+# arrival point)` so the check matches the actual fleet trajectory. Tracked
+# as issue #7 in the deterministic-correctness punch list.
 DEFAULT_MECHANISMS = [validate, arrival_size, lead_aim]
 
 # Pinned subset for the v1 parity gate — must match pre-refactor v1

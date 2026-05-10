@@ -27,22 +27,25 @@ STRATEGIES = ["nearest", "production", "roi", "weakest", "enemy_first"]
 
 
 # Hand-built obs: one mine + five targets chosen so each strategy picks a
-# DIFFERENT target. See per-strategy comment.
+# DIFFERENT target. All five paths from the mine are sun-clear (sun is at
+# (50, 50) with radius 10) so the score-function tests verify what they
+# intend even after sun_avoid joins DEFAULT_MECHANISMS. The previous layout
+# had p2=(60,60) and p3=(50,50) crossing or hitting the sun from mine=(10,10).
 #
 # Distances from mine (10, 10):
-#   p1=42.4  p2=70.7  p3=56.6  p4=7.07  p5=21.2
+#   p1=30.0  p2=85.0  p3=50.0  p4=7.07  p5=20.0
 # ROI = production / (distance + 1):
-#   p1=0.023 p2=0.07  p3=0.017 p4=0.124 p5=0.180
+#   p1=0.032 p2=0.058 p3=0.020 p4=0.124 p5=0.190
 PANEL_OBS = {
     "player": 0,
     "step": 0,
     "planets": [
         [0, 0,  10.0, 10.0, 2.0, 200, 2],   # MINE (id=0)
-        [1, 1,  40.0, 40.0, 2.0,  99, 1],   # enemy_first picks: only enemy
-        [2, -1, 60.0, 60.0, 2.0,  99, 5],   # production picks: highest prod
-        [3, -1, 50.0, 50.0, 1.0,   1, 1],   # weakest picks: 1 ship
+        [1, 1,  40.0, 10.0, 2.0,  99, 1],   # enemy_first picks: only enemy
+        [2, -1, 10.0, 95.0, 2.0,  99, 5],   # production picks: highest prod
+        [3, -1, 60.0, 10.0, 1.0,   1, 1],   # weakest picks: 1 ship
         [4, -1, 15.0, 15.0, 1.0,  99, 1],   # nearest picks: closest
-        [5, -1, 25.0, 25.0, 2.0,  20, 4],   # roi picks: best prod/dist
+        [5, -1, 10.0, 30.0, 2.0,  20, 4],   # roi picks: best prod/dist
     ],
     "angular_velocity": 0.0,
     "comet_planet_ids": [],
@@ -121,3 +124,5 @@ def test_smoke_game_vs_random_completes(strategy_name):
     assert all(s.status == "DONE" for s in final), (
         f"{strategy_name}: game did not reach DONE — statuses={[s.status for s in final]}"
     )
+
+

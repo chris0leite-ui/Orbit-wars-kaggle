@@ -147,6 +147,10 @@ def _load_agent(spec: AgentSpec) -> AgentSpec:
         if mod_spec is None or mod_spec.loader is None:
             raise ImportError(f"could not import agent at {spec}")
         module = importlib.util.module_from_spec(mod_spec)
+        # Register in sys.modules before exec so @dataclass (and any code
+        # that looks up its own __module__) can resolve names — required
+        # for single-file bundled agents like submissions/*.py.
+        sys.modules[mod_spec.name] = module
         mod_spec.loader.exec_module(module)
         if not hasattr(module, "agent"):
             raise AttributeError(f"{spec} has no `agent` callable")
