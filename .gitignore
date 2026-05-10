@@ -1,0 +1,48 @@
+# Per-comp config (machine-local; created from .comp.env.template)
+.comp.env
+
+# Data — keep placeholder, ignore content
+data/*
+!data/.gitkeep
+
+# Submissions / kernel build artifacts
+submissions/*
+!submissions/.gitkeep
+
+# External Kaggle kernels pulled for reference
+external/kernels/*/
+!external/kernels/.gitkeep
+
+# Replays from local simulator runs
+replays/
+
+# Common data formats
+*.csv
+*.zip
+
+# RL model checkpoints can be large
+*.pkl
+*.pt
+*.pth
+*.onnx
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+.venv/
+venv/
+
+# Kaggle credentials (NEVER commit these)
+.kaggle/
+
+# Claude Code local settings (may contain secrets)
+.claude/settings.local.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS noise
+.DS_Store
+Thumbs.db

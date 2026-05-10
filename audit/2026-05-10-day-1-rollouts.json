@@ -1,0 +1,198 @@
+{
+  "baseline_vs_random": [
+    {
+      "seed": 42,
+      "rewards": [
+        1,
+        -1
+      ],
+      "statuses": [
+        "DONE",
+        "DONE"
+      ],
+      "final_ships": {
+        "0": 2264
+      },
+      "n_steps": 163
+    },
+    {
+      "seed": 1,
+      "rewards": [
+        1,
+        -1
+      ],
+      "statuses": [
+        "DONE",
+        "DONE"
+      ],
+      "final_ships": {
+        "0": 1531
+      },
+      "n_steps": 136
+    },
+    {
+      "seed": 7,
+      "rewards": [
+        1,
+        -1
+      ],
+      "statuses": [
+        "DONE",
+        "DONE"
+      ],
+      "final_ships": {
+        "0": 1844
+      },
+      "n_steps": 111
+    },
+    {
+      "seed": 13,
+      "rewards": [
+        1,
+        -1
+      ],
+      "statuses": [
+        "DONE",
+        "DONE"
+      ],
+      "final_ships": {
+        "0": 3532
+      },
+      "n_steps": 227
+    },
+    {
+      "seed": 31,
+      "rewards": [
+        1,
+        -1
+      ],
+      "statuses": [
+        "DONE",
+        "DONE"
+      ],
+      "final_ships": {
+        "0": 1604
+      },
+      "n_steps": 147
+    },
+    {
+      "seed": 100,
+      "rewards": [
+        1,
+        -1
+      ],
+      "statuses": [
+        "DONE",
+        "DONE"
+      ],
+      "final_ships": {
+        "0": 2208
+      },
+      "n_steps": 309
+    }
+  ],
+  "baseline_vs_baseline": [
+    {
+      "seed": 42,
+      "rewards": [
+        -1,
+        1
+      ],
+      "statuses": [
+        "DONE",
+        "DONE"
+      ],
+      "final_ships": {
+        "0": 661,
+        "1": 855
+      },
+      "n_steps": 500
+    },
+    {
+      "seed": 1,
+      "rewards": [
+        1,
+        -1
+      ],
+      "statuses": [
+        "DONE",
+        "DONE"
+      ],
+      "final_ships": {
+        "0": 4420
+      },
+      "n_steps": 269
+    },
+    {
+      "seed": 7,
+      "rewards": [
+        -1,
+        1
+      ],
+      "statuses": [
+        "DONE",
+        "DONE"
+      ],
+      "final_ships": {
+        "1": 5380
+      },
+      "n_steps": 299
+    },
+    {
+      "seed": 13,
+      "rewards": [
+        1,
+        1
+      ],
+      "statuses": [
+        "DONE",
+        "DONE"
+      ],
+      "final_ships": {
+        "0": 1307,
+        "1": 1307
+      },
+      "n_steps": 500
+    },
+    {
+      "seed": 31,
+      "rewards": [
+        -1,
+        1
+      ],
+      "statuses": [
+        "DONE",
+        "DONE"
+      ],
+      "final_ships": {
+        "0": 828,
+        "1": 1026
+      },
+      "n_steps": 500
+    },
+    {
+      "seed": 100,
+      "rewards": [
+        -1,
+        1
+      ],
+      "statuses": [
+        "DONE",
+        "DONE"
+      ],
+      "final_ships": {
+        "0": 847,
+        "1": 1023
+      },
+      "n_steps": 500
+    }
+  ],
+  "seeds": [
+    42,
+    1,
+    7,
+    13,
+    31,
+    100
+  ]
+}
