@@ -210,3 +210,16 @@ fired once and been logged for-real.
   H-richer-fingerprint (target-distance/production distribution
   shape + early-vs-late split + target-id Shannon entropy) in
   state/hypothesis-board.md. PI to choose path.
+- `tag: kaggle-oauth-503-on-submit-only` — submission flow:
+  `kaggle competitions submit` returned `requests.exceptions.HTTPError:
+  503 Server Error: Service Unavailable for url:
+  https://api.kaggle.com/v1/security.OAuthService/IntrospectToken`
+  on two consecutive attempts ~5 min apart, while
+  `kaggle competitions submissions` (GET) worked cleanly between them.
+  Root cause: Kaggle's OAuth introspection endpoint flapped
+  specifically on the submit POST path; not our credentials. Verified
+  no slot was consumed via the submissions list. **Fix:** PI-authorized
+  third attempt; succeeded as ID 52518060. Promotion candidate: a
+  small wrapper `scripts/safe_submit.sh` that pre-checks via GET
+  then submits + verifies the new entry appears, surfacing 5xx as
+  "retry, not loop" to keep us inside Rule 1's spirit.

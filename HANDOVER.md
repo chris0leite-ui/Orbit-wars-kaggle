@@ -114,13 +114,14 @@ is wallclock on local CPU.
 
 ### Where we are (PM update)
 
-- v1.1 settled at **μ=597.4** (gain +89 over v1's 508.1). Live ladder
-  rolling-last-2: `[v1 (508.1), v1.1 (597.4)]`. 3/5 submissions used.
-- **`submissions/roi.py` staged** (NOT pushed; awaiting PI approval).
-  E.2 self-play 10/10 DONE; bundled-vs-unbundled parity 4/4.
+- **v1.2 simple/roi submitted as ID 52518060** (PENDING; validation
+  episode running). Pushed 14:59 UTC after one Kaggle 503 retry.
+- Rolling-last-2 now: `[v1.1 (μ=597.4), v1.2/roi (PENDING)]`. v1
+  (μ=568.0) evicted. **4/5 submissions used today; 1 slot left.**
+- v1.1 settled at μ=597.4 earlier in the session (gain +89 over v1).
 - Predicted live μ for ROI: 700–1000 (based on 100% local vs v1 and
-  v1's +205 vs baseline).
-- top-5% threshold ≈ 1100 → roi could close ~half the gap in one push.
+  v1's +205 vs baseline). Top-5% threshold ≈ 1100 → roi could close
+  ~half the gap in one push if predictions hold.
 
 ### Today's progress (load-bearing only)
 
@@ -162,12 +163,16 @@ is wallclock on local CPU.
 
 ### Next-session first-action
 
-1. **PI submission decision for roi** (cost: 1 submit slot,
-   EV: high — predicted live Δμ ≥ +100 vs v1.1). Bundle is at
-   `submissions/roi.py`. Pushing it evicts v1 from rolling-last-2;
-   v1.1 (μ=597.4) stays. **Do not push on the same UTC day as
-   a future speculative variant unless willing to lose the ladder
-   spot for ~24 h.**
+1. **Read v1.2/roi μ once validation completes** (cost: <1 min,
+   EV: high — calibration data point for the rest of the comp).
+   `kaggle competitions submissions orbit-wars` should show
+   #52518060 flip from PENDING to COMPLETE with a publicScore.
+   Append the actual μ to `state/calibration-ladder.md` and reconcile
+   against the +200-500 prediction. **Critical:** if μ < 597.4
+   (regression vs v1.1), investigate before pushing any further
+   variant — could be a bundling bug we missed (parity gate was
+   only 4 seeds), or genuine ROI weakness on the live ladder vs
+   a class of opponents our local panel didn't surface.
 2. **PI choice on Phase 2 path** (no compute cost; sets next batch).
    - **A) Coarsen labels** (cheap; merge ROI-family → 3-class router;
      gate likely clears at ~92%). Recommended first.
