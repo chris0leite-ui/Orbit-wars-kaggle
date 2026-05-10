@@ -33,6 +33,7 @@ turn counts are noisy estimators.
 from __future__ import annotations
 
 import argparse
+import gzip
 import importlib.util
 import json
 import math
@@ -194,10 +195,56 @@ def _final_ships_by_owner(state) -> dict[int, int]:
     return by_owner
 
 
+def _build_replay(env, seed: int, p0_name: str, p1_name: str) -> dict:
+    """Compact replay snapshot — drops fields recoverable from the seed.
+
+    See plan: /root/.claude/plans/read-the-handover-next-imperative-whisper.md
+    Phase 1 §architectural-extensions.1. Per-step planets/fleets/actions are
+    kept; initial_planets, angular_velocity, comet paths are seed-deterministic
+    and dropped.
+    """
+    steps_compact: list[dict] = []
+    for i, state in enumerate(env.steps):
+        # state is a 2-element list [p0_state, p1_state]; observation is
+        # the same logical world for both (each player gets full info per
+        # the comp spec), so we read p0's obs only.
+        obs0 = state[0].observation
+        steps_compact.append({
+            "step": i,
+            "planets": [list(p) for p in obs0.get("planets", [])],
+            "fleets":  [list(f) for f in obs0.get("fleets", [])],
+            "action_p0": state[0].action if state[0].action else [],
+            "action_p1": state[1].action if state[1].action else [],
+        })
+    final = env.steps[-1]
+    return {
+        "seed": int(seed),
+        "agent_p0": p0_name,
+        "agent_p1": p1_name,
+        "n_steps": len(env.steps),
+        "rewards": [final[0].reward, final[1].reward],
+        "statuses": [final[0].status, final[1].status],
+        "steps": steps_compact,
+    }
+
+
+def _persist_replay(
+    env, seed: int, p0_name: str, p1_name: str, out_path: Path
+) -> None:
+    """Write the compact replay as gzipped JSON. Caller ensures parent exists."""
+    payload = _build_replay(env, seed, p0_name, p1_name)
+    with gzip.open(out_path, "wt", encoding="utf-8") as fh:
+        json.dump(payload, fh)
+
+
 def _run_one(
     p0_spec: AgentSpec,
     p1_spec: AgentSpec,
     seed: int,
+    *,
+    replay_path: Path | None = None,
+    p0_name: str = "p0",
+    p1_name: str = "p1",
 ) -> GameRecord:
     p0 = _load_agent(p0_spec)
     p1 = _load_agent(p1_spec)
@@ -213,6 +260,8 @@ def _run_one(
     rewards = [s.reward for s in final]
     statuses = [s.status for s in final]
     ships = _final_ships_by_owner(final)
+    if replay_path is not None:
+        _persist_replay(env, seed, p0_name, p1_name, replay_path)
     return GameRecord(
         seed=seed,
         rewards=rewards,
@@ -273,7 +322,17 @@ def run_tournament(
     include_self_play: bool = True,
     out_dir: Path | None = None,
     progress: bool = False,
+    capture_replays: bool = False,
+    replay_dir: Path | None = None,
 ) -> TournamentResult:
+    """Run a round-robin tournament.
+
+    `capture_replays=True` writes a compact `<seed>__<a>__<b>.json.gz` per
+    game into `replay_dir` (default: `<out_dir or audit/replays>/<utc>/`).
+    Replay format is documented in `_build_replay`. Capture is opt-in to
+    keep the existing fast path unchanged for callers that only need
+    summary stats.
+    """
     if not agents:
         raise ValueError("agents map is empty")
     if not seeds:
@@ -289,13 +348,28 @@ def run_tournament(
     )
     done = 0
 
+    # Resolve the replay directory once so every game in this run lands
+    # under the same UTC subdir.
+    replay_subdir: Path | None = None
+    if capture_replays:
+        utc = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        base = replay_dir if replay_dir is not None else (REPO / "audit" / "replays")
+        replay_subdir = base / utc
+        replay_subdir.mkdir(parents=True, exist_ok=True)
+
     for a in names:
         for b in names:
             if not include_self_play and a == b:
                 continue
             stat = PairStat(p0_name=a, p1_name=b)
             for seed in seeds:
-                rec = _run_one(agents[a], agents[b], seed)
+                replay_path: Path | None = None
+                if replay_subdir is not None:
+                    replay_path = replay_subdir / f"{seed}__{a}__{b}.json.gz"
+                rec = _run_one(
+                    agents[a], agents[b], seed,
+                    replay_path=replay_path, p0_name=a, p1_name=b,
+                )
                 stat.games.append(rec)
                 stat.n += 1
                 kind = _classify(rec.rewards)

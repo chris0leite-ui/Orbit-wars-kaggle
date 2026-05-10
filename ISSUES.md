@@ -66,6 +66,21 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   defence. `[owner: review-competition-handover-0pGNc | status: done]`
   → folded into v1 (A.6 tie-break randomisation was the live lever;
   overshoot/production-weight not yet tried — keep as v2/v3 ablations).
+- **B.1.1 Simple-strategy panel — target-selection ablations.** Five
+  strategies under `agents/simple/` share v1.1's mechanism stack
+  (`[validate, arrival_size, lead_aim]`); only the target-score
+  function differs. Goal: (a) learn which targeting axis matters,
+  (b) diversify the local opponent panel (D.4 dependency),
+  (c) exercise the Strategy/Mechanism abstraction with ≥3
+  instances. `[owner: simple-trading-strategies-QS0xV | status: wip]`
+  → 8-seed smoke (audit/tournaments/20260510T123059Z.json) ranks
+  `roi` 97% panel-winrate / 100% (16/16) vs v1_orbitfix; `production`
+  75% / 69% vs v1; `nearest` 56% (≈ v1); `enemy_first` 32%; `weakest`
+  16%. Pending 32-seed confirmation before any submission decision —
+  rolling-last-2 economy means we cannot evict v1.1 lightly. PI
+  flagged a 6th axis for a follow-up batch (deferred until first
+  panel's results are read). Plan:
+  `/root/.claude/plans/read-the-handover-next-imperative-whisper.md`.
 - **B.2 Heuristic v1**: production-aware + orbit-aware (fire at where
   the planet WILL be at impact, not where it is now). Uses A.1 + A.2.
   `[owner: review-competition-handover-0pGNc | status: done]`
@@ -99,13 +114,42 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   wrapper that runs N agents × M seeds × pairs, returns winrate
   matrix. Persistent JSON output for trend tracking. `[owner: review-competition-handover-0pGNc | status: wip]`
 - **D.2 Replay logging**: capture `env.steps` + episode metadata for
-  every local game. Disk usage: ~1-5 MB per episode JSON. Plan for
-  ≥1000 episodes. `[owner: unclaimed | status: open]`
+  every local game. Disk usage: ~250 KB gzipped per 500-step game. `[owner: simple-trading-strategies-QS0xV | status: done]`
+  → `scripts/tournament.py::_build_replay` + `--capture-replays` flag;
+  compact format drops seed-derivable fields. Output:
+  `audit/replays/<utc>/<seed>__<a>__<b>.json.gz` (gitignored).
 - **D.3 Seed budget**: how many seeds before winrate ±2pp confidence?
   Bernoulli at p=0.5 → ~625 games for ±2pp at 95% CI. Cheaper:
   bootstrap-CI on smaller sample. `[owner: unclaimed | status: open]`
 - **D.4 Hold-out opponent**: opponents reserved for end-of-cycle
   eval, never seen during agent design. Prevents overfit-to-panel. `[owner: unclaimed | status: open]`
+- **D.5 Parallel game runner** (deferred — surfaced when we hit
+  panel-wallclock friction). GPU does NOT help: `kaggle_environments`
+  is sequential Python with tiny per-step compute. The right lever is
+  CPU multiprocessing across (seed, pair) — games are independent
+  inside `run_tournament`'s inner loop. Estimated win:
+  ~4-8× on a typical box, ~16× on 16-core. Implementation: `--workers
+  N` flag on `scripts/strategy_panel.py`, `multiprocessing.Pool` over
+  `_run_one`. **Trigger condition:** when Phase 2's expanded-zoo
+  panel (~17×17×32 ≈ 9k games, sequentially ~2.5h) becomes a
+  blocker, OR when we want overnight runs ≥10k games for
+  classifier training data. Don't build it before then — Phase 1
+  capture (1568 games, ~35 min) is below the friction threshold. `[owner: unclaimed | status: open]`
+- **D.6 Behavioural fingerprint + manifold diagnostic**: 15-feature
+  fingerprint (`lib/fingerprint.py`); `scripts/manifold_check.py`
+  classifies opponent strategy from K-turn prefix via RF + LR with
+  GroupKFold-by-seed CV. Phase 1 gate: RF ≥ 90% at K ≤ 100 on the
+  5-strategy zoo. `[owner: simple-trading-strategies-QS0xV | status: parked]`
+  → infrastructure shipped (commits `a0f0b6f`, `dd603be`); 32-seed
+  capture done (1568 games, 404 MB at audit/replays/20260510T132957Z/).
+  5-class gate: RF 80.5%, LR 80.6% at K=100 — **NOT cleared** (~10pp
+  short). Verdict: ROI-family (nearest/production/roi) is one basin
+  with 12-17% mutual confusion; weakest, enemy_first, baseline are
+  cleanly separated. PI choice queued in state/hypothesis-board.md
+  between H-coarsen-labels (merge ROI-family → 3-class router; gate
+  likely clears at ~92%) and H-richer-fingerprint (add distribution-
+  shape + temporal-split features; bumps FEATURE_VERSION). Audit:
+  audit/2026-05-10-phase1-manifold-verdict.md.
 
 ### E. Submission packaging
 
