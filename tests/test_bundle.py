@@ -67,11 +67,15 @@ def test_extract_aliases_returns_empty_for_non_import_line():
 
 @pytest.fixture(scope="module")
 def bundled_v1(tmp_path_factory):
-    """Build the v1 bundle into a tmpdir; return (path, imported module)."""
+    """Build the v1 bundle into a tmpdir; return (path, imported module).
+
+    Uses the bundler's DEFAULT_LIB_ORDER so the test catches drift when new
+    lib modules are added without being included in the default bundle list.
+    """
     out_dir = tmp_path_factory.mktemp("submissions")
     path = bundle_agent.bundle(
         REPO / "agents" / "v1_orbitfix",
-        lib_modules=["geometry", "fleet", "orbit"],
+        lib_modules=bundle_agent.DEFAULT_LIB_ORDER,
         out_dir=out_dir,
     )
     mod = _load_module("bundled_v1_for_tests", path)

@@ -117,15 +117,20 @@ def test_two_agent_grid_skips_self_when_self_play_off():
 
 
 def test_reward_stability_across_runs():
-    """Per friction note: rewards are stable across re-runs at the same seed
-    even though ship counts and step counts are not. The fixture must respect
-    that: the same panel + same seed should produce the same reward classification.
+    """Per friction note `env-not-fully-seed-deterministic`: rewards are stable
+    across re-runs at the same seed for **deterministic** agents (shipped
+    baseline) — even though ship counts and step counts are not. The `random`
+    builtin uses Python's process-global `random` module, so back-to-back
+    runs of `random vs random` are NOT stable across calls and would make a
+    bad fixture for the stability gate.
     """
-    panel = {"random": "random"}
+    REPO_ROOT = Path(__file__).resolve().parents[1]
+    baseline = str(REPO_ROOT / "data" / "main.py")
+    panel = {"baseline": baseline}
     r1 = tournament.run_tournament(agents=panel, seeds=[42], include_self_play=True)
     r2 = tournament.run_tournament(agents=panel, seeds=[42], include_self_play=True)
-    g1 = r1.matrix["random"]["random"].games[0]
-    g2 = r2.matrix["random"]["random"].games[0]
+    g1 = r1.matrix["baseline"]["baseline"].games[0]
+    g2 = r2.matrix["baseline"]["baseline"].games[0]
     assert g1.rewards == g2.rewards
 
 

@@ -22,7 +22,9 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_LIB_ORDER = ["geometry", "fleet", "orbit"]
+# Order matters: each module must come AFTER its lib-internal dependencies.
+# fleet/orbit use geometry; mechanism uses fleet/orbit/intent.
+DEFAULT_LIB_ORDER = ["geometry", "fleet", "orbit", "intent", "mechanism"]
 SUBMISSIONS = REPO / "submissions"
 
 
@@ -59,10 +61,21 @@ def _strip_module_docstring(src: str) -> str:
 
 
 def _clean_lib_source(src: str) -> str:
-    """Drop intra-package imports and `from __future__` lines from a lib module."""
+    """Drop intra-package imports and `from __future__` lines from a lib module,
+    but emit alias rebindings for any aliased intra-imports.
+
+    Without the alias rebind, `from lib.fleet import speed as fleet_speed` in
+    a lib file would silently leave `fleet_speed` undefined in the bundle —
+    NameError at runtime, swallowed by kaggle_environments' try/except. The
+    parity gate catches it but only on integration; cheaper to rebind here.
+    """
     out: list[str] = []
     for line in src.splitlines(keepends=True):
-        if _INTRA_IMPORT_RE.match(line) or _FUTURE_IMPORT_RE.match(line):
+        if _FUTURE_IMPORT_RE.match(line):
+            continue
+        if _INTRA_IMPORT_RE.match(line):
+            for asname, original in _extract_aliases(line):
+                out.append(f"{asname} = {original}\n")
             continue
         out.append(line)
     return _strip_module_docstring("".join(out))
