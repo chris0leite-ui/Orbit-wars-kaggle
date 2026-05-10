@@ -304,3 +304,136 @@ PI-ratified order; dependency-respecting:
   (47/0/53, 0 draws, --workers 4 in 19s).
 - `audit/tournaments/20260510T19{0047,0224,0605,0823,1113,1630,1745,1836}Z.json`
   — the bisection trail through deterministic-fix combinations.
+
+---
+
+## Day-1 night competition-strategy-brainstorm-ZK6XT
+
+> The morning scribe consolidates this into the top-of-file blocks.
+
+### Where we are (night update)
+
+- **Live submission v1.2/roi μ settled at 978.7** (not the evening
+  1105 reading — the LB moved overnight). Rolling-last-2:
+  `[v1.1 (μ=570.2), v1.2/roi (μ=978.7)]`. 4/5 submission slots used
+  today; 1 left but **no submission was pushed this session** (Rule 1,
+  PI did not approve a same-day push of an untested variant).
+- **LB cliff data refreshed:** top-10 cutoff is **μ = 1460** (sash).
+  #1 = bowwowforeach μ=1663.4. Roman public top μ=1224 ≈ rank 70.
+  Gap from us to prize cliff = **+481 μ**. Plan calibration updated
+  in `state/current.md`.
+- **Strategy plan ratified by PI**:
+  `/root/.claude/plans/you-are-a-champion-sprightly-sunset.md`. Target =
+  rank 1-10 prize (μ ≥ 1460). Architecture = adapt Roman 1224 into our
+  Strategy → Intent → realize(mechanisms) pipeline. 2P AND 4P matter
+  (Roman tunes both).
+- **Two ship-ready bundles staged, awaiting PI submit approval:**
+  - `submissions/v1_3_roi_physics.py` — Block A only. h2h vs frozen
+    pre-physics roi = 56% (36/64). Marginal on the panel-WR gate.
+  - `submissions/v2.py` — Block A + C + D. Mean panel WR **64.1%**;
+    h2h vs frozen pre-physics roi = **69% (44/64)**. **Clears both
+    gates.** PRIMARY submit candidate.
+
+### Tonight's progress (load-bearing only)
+
+1. **Strategic-direction plan** (`/root/.claude/plans/you-are-a-champion-sprightly-sunset.md`).
+   Five PI decisions locked: top-10 prize target, capture-probe first,
+   4P matters (Roman has FOUR_PLAYER_ROTATING_* constants), eviction
+   rule ≥60% panel + ≥55% h2h, adapt-Roman architecture.
+2. **Capture-success probe** (`scripts/capture_probe.py`,
+   `audit/2026-05-10-capture-success-probe.md`). 32 seeds roi self-play,
+   24,431 launches: **reached 77.2%, collided_other 10.7%, oob 7.6%,
+   sun 2.1%, alive_at_end 2.4%.** Inverted the punch list: sun-avoid
+   demoted (smallest bucket), path-clears-other-planets + OOB guard
+   promoted.
+3. **Public-kernel teardown** (`audit/2026-05-10-public-kernel-teardown.md`).
+   Pulled `external/kernels/{roman-1224, structured-baseline,
+   physics-accurate-planner, sun-dodging}/` via kaggle CLI. Roman and
+   Pilkwang share the same Strategy/WorldModel/Mission skeleton; Roman
+   adds 4 mission classes (rescue / recapture / reinforce / gang_up /
+   elimination) over Pilkwang's 3. 4P confirmed: Roman tunes
+   `FOUR_PLAYER_ROTATING_*` separately.
+4. **Block A — physics-module upgrade**. New `lib/aim.py`
+   (5-iter aim_with_prediction + search_safe_intercept). Upgraded
+   `lib/mechanism.py`: lead_aim_v2, sun_avoid arrival-aware, new
+   `path_clears_other_planets` + `oob_guard`. Capture probe lift:
+   reached **77.2% → 83.9% (+6.7pp)**, collided_other halved.
+   Bundle: `submissions/v1_3_roi_physics.py`. Audit:
+   `audit/2026-05-10-block-a-physics-upgrade.md`. 160 tests green.
+5. **Block C — arrival-ledger substrate.** New `lib/combat.py`
+   (resolve_arrivals, 11 tests), `lib/world_model.py`
+   (build_arrival_ledger + simulate_planet_timeline +
+   state_at_timeline + WorldModel.from_world, 10 tests). New
+   `arrival_ledger` mechanism implemented but EXCLUDED from
+   DEFAULT_MECHANISMS — regressed WR 56% → 50% without a planner to
+   re-allocate freed ships. 181 tests green.
+6. **Block D — v2 strategy.** New `agents/v2/main.py` — ROI target
+   selection + per-target `WorldModel.owner_at` lookup to drop
+   targets predicted to be ours with surplus garrison.
+   **64.1% mean panel WR, 69% h2h vs frozen pre-physics ROI.**
+   Bundle: `submissions/v2.py` (50 KB, E.2 self-play 5/5 DONE,
+   p95 turn 3.7 ms). Audit:
+   `audit/2026-05-10-block-c-d-arrival-ledger-and-v2.md`.
+
+### Falsified-or-dead (tonight)
+
+- **`arrival_ledger` mechanism in DEFAULT_MECHANISMS** — regressed.
+  Per-source greedy strategies can't re-pick after a mechanism drops
+  their intent, so sources go idle. Mechanism stays in `lib/mechanism.py`
+  for v3 planner use. Trail: `audit/tournaments/20260510T215332Z.json`.
+- **v2 with ship-bumping per WorldModel-predicted defense.** 0/64 WR.
+  Made the strategy prefer low-ROI affordable targets over high-ROI
+  ones the mechanism layer would have allowed through. Rolled back to
+  "skip already-ours only, no bumping". Trail:
+  `audit/tournaments/20260510T215806Z.json`.
+- **Punch #7 (sun-avoid) as the headline physics fix.** Capture probe
+  shows sun = 2.1% — the smallest bucket. Reframed: sun_avoid stays in
+  DEFAULT (low cost, easy to ship) but is no longer load-bearing.
+
+### Next-session first-action
+
+PI-aware order; rolling-last-2 still active.
+
+1. **Submit v2** (cost: <1 min, EV: high). `kaggle competitions submit
+   -c orbit-wars -f submissions/v2.py -m "v2 — worldmodel-aware
+   roi (skip already-ours dedup); 64% mean panel WR, 69% h2h vs frozen
+   v1.2-equiv"`. Expected live μ band 1050-1200 (Wilson 95% CI on
+   44/64 = [57%, 79%]). **Evicts v1.1** (μ=570); rolling pair becomes
+   `[v1.2/roi (978.7), v2 (PENDING)]`.
+2. **Read v2 μ after validation** (~5-30 min for validation; ~24h for
+   ladder games to accumulate). Update `state/calibration-ladder.md`.
+3. **Block E start: mission framework.** With v2 baseline ladder data
+   in hand, begin `lib/mission.py` + `lib/missions/snipe.py` +
+   `lib/planner.py` (settle_plan solver). Snipe-only first; reinforce
+   / recapture / gang_up after that. Predicted μ band for v3 missions
+   1100-1300.
+4. **(Defer)** v1.3 submission. If v2 underperforms expectations,
+   v1.3 (Block A only) is the fallback at `submissions/v1_3_roi_physics.py`.
+5. **(Defer)** Endgame burn-through accounting (cheap; ~2.4pp probe
+   bucket).
+
+### Pointers (added tonight)
+
+- `/root/.claude/plans/you-are-a-champion-sprightly-sunset.md` — the
+  strategic-direction plan + Block A-F implementation outline.
+- `scripts/capture_probe.py` — per-fleet outcome probe; rerunnable.
+- `audit/2026-05-10-capture-success-probe.{json,md,v2.json}` — pre +
+  post-upgrade probe runs.
+- `audit/2026-05-10-public-kernel-teardown.md` — Roman / Pilkwang /
+  sigmaborov / sun-dodging notebooks mapped onto our pipeline.
+- `audit/2026-05-10-block-a-physics-upgrade.md` — physics-module
+  audit; lift = +6.7pp reached.
+- `audit/2026-05-10-block-c-d-arrival-ledger-and-v2.md` — substrate +
+  v2 audit; lift = +64.1% mean panel WR.
+- `external/kernels/{roman-1224, structured-baseline,
+  physics-accurate-planner, sun-dodging}/` — gitignored; re-fetch via
+  `kaggle kernels pull <author>/<slug> -p external/kernels/<slug>/`.
+- `submissions/v2.py` — PRIMARY submit candidate for tomorrow morning.
+- `submissions/v1_3_roi_physics.py` — backup if v2 has unexpected
+  ladder behaviour.
+- `agents/v2/main.py` — v2 source. Strategy = roi + WorldModel-aware
+  dedup. Uses `DEFAULT_MECHANISMS` from `lib/mechanism.py`.
+- `agents/simple/roi_baseline.py` — local A/B control arm; uses
+  `DEFAULT_MECHANISMS_PRE_PHYSICS` to mirror the live v1.2 stack.
+- `audit/tournaments/202605102{14455,15332,15806,20206}Z.json` — the
+  v1.3 / arrival_ledger / v2-bumped / v2-final A/B chain.
