@@ -113,6 +113,88 @@ def arrival_size(intents: list[Intent], world: World) -> list[Intent]:
 
 
 # ---------------------------------------------------------------------------
+# comet_aim — path-indexed lead for comet targets
+# ---------------------------------------------------------------------------
+
+
+def _comet_path_lookup(world: World) -> dict[int, tuple[list, int]]:
+    """Build {planet_id: (path, path_index)} for every comet in the obs.
+
+    `obs["comets"]` is a list of groups, each `{planet_ids, paths, path_index}`.
+    `paths[i]` is the trajectory of `planet_ids[i]` — a list of `[x, y]`
+    pairs. `path_index` is shared across the group; advances 1 per turn.
+    """
+    raw = world.obs_raw
+    comets = (
+        raw.get("comets", []) if isinstance(raw, dict) else getattr(raw, "comets", [])
+    )
+    out: dict[int, tuple[list, int]] = {}
+    for group in comets:
+        if hasattr(group, "keys"):
+            planet_ids = list(group["planet_ids"])
+            paths = list(group["paths"])
+            path_index = int(group["path_index"])
+        else:
+            planet_ids = list(group.planet_ids)
+            paths = list(group.paths)
+            path_index = int(group.path_index)
+        for idx, pid in enumerate(planet_ids):
+            out[int(pid)] = (paths[idx], path_index)
+    return out
+
+
+def comet_aim(intents: list[Intent], world: World) -> list[Intent]:
+    """Populate `aim_angle` for comet targets via the path-indexed lead.
+
+    Comets follow pre-computed elliptical paths, NOT the rotation formula —
+    so `lead_aim`'s orbit prediction would mis-aim them. This mechanism
+    fires on targets in `world.comet_ids`, looks up the comet's path,
+    projects to `path_index + eta_turns`, and aims at the projected point.
+
+    If `path_index + eta_turns` exceeds the path length the comet exits
+    the board before our fleet arrives — drop the intent (sending an
+    on-the-way fleet at an exit-bound comet would be wasted).
+
+    **Status: experimental, NOT in DEFAULT_MECHANISMS.** The 3.5.C ablation
+    tournament showed this single-pass version loses 9/40 = 22.5% vs the
+    parity baseline. See the rationale comment near `DEFAULT_MECHANISMS`
+    for the diagnosis. Kept as a registered mechanism so tournament panels
+    can opt it in for future experiments (e.g. paired with a
+    `search_safe_intercept` fallback at v3).
+    """
+    if not world.comet_ids:
+        return intents
+    paths_by_id = _comet_path_lookup(world)
+
+    out: list[Intent] = []
+    for intent in intents:
+        if intent.target_id not in world.comet_ids:
+            out.append(intent)
+            continue
+        if intent.aim_angle is not None:
+            out.append(intent)
+            continue
+        src = world.planets_by_id.get(intent.src_id)
+        target = world.planets_by_id.get(intent.target_id)
+        path_info = paths_by_id.get(intent.target_id)
+        if src is None or target is None or path_info is None:
+            out.append(intent)
+            continue
+        path, path_index = path_info
+        v = fleet_speed(intent.ships)
+        d = math.hypot(target.x - src.x, target.y - src.y)
+        eta = math.ceil(d / v) if v > 0 else 0
+        future_index = path_index + eta
+        if future_index >= len(path):
+            # Comet exits before the fleet arrives — drop rather than waste ships.
+            continue
+        fx, fy = path[future_index]
+        intent.aim_angle = math.atan2(fy - src.y, fx - src.x)
+        out.append(intent)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # lead_aim — orbit-aware lead, ports v1's _aim_angle exactly
 # ---------------------------------------------------------------------------
 
@@ -163,8 +245,26 @@ def lead_aim(intents: list[Intent], world: World) -> list[Intent]:
 # Canonical pipeline
 # ---------------------------------------------------------------------------
 
-# `arrival_size` runs BEFORE `lead_aim` because lead time depends on fleet
-# size, which arrival_size revises. comet_aim/sun_avoid land in 3.5.C/D.
+# Pipeline order rationale:
+#   validate      — drop unsafe intents up-front so nothing downstream
+#                   computes against bad data.
+#   arrival_size  — bump fleet size for enemy targets BEFORE lead_aim/comet_aim
+#                   because lead time (and thus the projected position) depends
+#                   on fleet size via fleet_speed.
+#   lead_aim      — populates aim_angle for everything else (orbiting non-comets
+#                   get the orbit-fixed-point lead; statics get plain atan2;
+#                   comets get current-position atan2 — see note below).
+#   sun_avoid (3.5.D) — last; needs the angle set by lead_aim/comet_aim.
+#
+# `comet_aim` is implemented + unit-tested but EXCLUDED from DEFAULT_MECHANISMS
+# because the ablation tournament (audit/tournaments/20260510T090723Z.json)
+# showed it loses 9/40 = 22.5% vs the parity baseline. Plausible cause: with a
+# one-shot ETA estimate, the forward projection can overshoot — the env's
+# continuous collision check actually rewards `lead_aim`'s current-position
+# aim more often than `comet_aim`'s far-projection on small fleets at
+# log-curve speeds. The 3 public top notebooks (Roman 1224 et al) pair their
+# version with `search_safe_intercept` fallback (try multiple arrival times)
+# which we don't yet implement. Revisit when v3's world-model lands.
 DEFAULT_MECHANISMS = [validate, arrival_size, lead_aim]
 
 # Pinned subset for the v1 parity gate — must match pre-refactor v1
@@ -172,4 +272,11 @@ DEFAULT_MECHANISMS = [validate, arrival_size, lead_aim]
 # pre-refactor snapshot.
 PARITY_MECHANISMS = [validate, lead_aim]
 
-__all__ = ["DEFAULT_MECHANISMS", "PARITY_MECHANISMS", "validate", "arrival_size", "lead_aim"]
+__all__ = [
+    "DEFAULT_MECHANISMS",
+    "PARITY_MECHANISMS",
+    "validate",
+    "arrival_size",
+    "comet_aim",
+    "lead_aim",
+]
