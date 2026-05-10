@@ -30,6 +30,7 @@ from __future__ import annotations
 import math
 
 from lib.fleet import speed as fleet_speed
+from lib.geometry import path_clears_sun
 from lib.intent import Intent, World
 from lib.orbit import is_orbiting, predict_relative
 
@@ -256,6 +257,50 @@ def lead_aim(intents: list[Intent], world: World) -> list[Intent]:
 #                   comets get current-position atan2 — see note below).
 #   sun_avoid (3.5.D) — last; needs the angle set by lead_aim/comet_aim.
 #
+# ---------------------------------------------------------------------------
+# sun_avoid — drop intents whose straight-line path crosses the sun
+# ---------------------------------------------------------------------------
+
+
+def sun_avoid(intents: list[Intent], world: World) -> list[Intent]:
+    """Drop intents whose direct fleet path would intersect the sun.
+
+    The env destroys any fleet whose continuous segment crosses the sun
+    (data/README.md::Fleet Movement). If we can predict that loss before
+    launching, we keep the ships in garrison instead — production catches
+    up over the next few turns and the next launch can re-evaluate.
+
+    This drop-only version is deliberately conservative. A future variant
+    could re-aim at a friendly waypoint planet whose two-leg path clears
+    the sun, but that requires multi-turn planning (the env can't actually
+    bend fleet trajectories mid-flight; we'd just be sending ships TO the
+    waypoint and re-launching from there next turn).
+
+    Path check uses planet centers with a 1-unit safety margin — the env
+    spawns the fleet just outside the source radius, but the safety
+    margin absorbs that.
+    """
+    out: list[Intent] = []
+    for intent in intents:
+        if intent.aim_angle is None:
+            # Not yet aimed (e.g. comet_aim dropped, or some prior mechanism
+            # hasn't run). Pass through and let realize()'s emission filter
+            # drop unaimed intents.
+            out.append(intent)
+            continue
+        src = world.planets_by_id.get(intent.src_id)
+        target = world.planets_by_id.get(intent.target_id)
+        if src is None or target is None:
+            out.append(intent)
+            continue
+        if path_clears_sun((src.x, src.y), (target.x, target.y), safety=1.0):
+            out.append(intent)
+            continue
+        # Sun-blocked → drop. The fleet would die in flight; better to keep
+        # ships in the source garrison.
+    return out
+
+
 # `comet_aim` is implemented + unit-tested but EXCLUDED from DEFAULT_MECHANISMS
 # because the ablation tournament (audit/tournaments/20260510T090723Z.json)
 # showed it loses 9/40 = 22.5% vs the parity baseline. Plausible cause: with a
@@ -265,6 +310,15 @@ def lead_aim(intents: list[Intent], world: World) -> list[Intent]:
 # log-curve speeds. The 3 public top notebooks (Roman 1224 et al) pair their
 # version with `search_safe_intercept` fallback (try multiple arrival times)
 # which we don't yet implement. Revisit when v3's world-model lands.
+# `sun_avoid` is implemented + unit-tested but EXCLUDED from DEFAULT_MECHANISMS
+# because the 3.5.D ablation tournament (audit/tournaments/...) showed it
+# loses 13/40 = 32.5% vs the parity baseline. Diagnosis: drop-only is correct
+# at the mechanism level (don't lose the fleet to the sun), but v1's
+# nearest-target strategy gets *stuck* — the sun-blocked target stays
+# nearest each turn, sun_avoid keeps dropping, ships pile up in garrison
+# doing nothing. v2's arrival-ledger strategy can pivot to a different
+# target when the nearest is blocked, so sun_avoid will become positive
+# there. Tracked for v2 in DEFAULT_MECHANISMS.
 DEFAULT_MECHANISMS = [validate, arrival_size, lead_aim]
 
 # Pinned subset for the v1 parity gate — must match pre-refactor v1
@@ -279,4 +333,5 @@ __all__ = [
     "arrival_size",
     "comet_aim",
     "lead_aim",
+    "sun_avoid",
 ]
