@@ -1,0 +1,64 @@
+{
+  "generated_utc": "20260511T200722Z",
+  "focals": [
+    "submissions/v3_4.py",
+    "submissions/v3_2.py"
+  ],
+  "background": [
+    "weakest",
+    "enemy_first",
+    "baseline"
+  ],
+  "players": 4,
+  "seeds": [
+    42,
+    1,
+    7,
+    13,
+    31,
+    100,
+    17,
+    23,
+    53,
+    71,
+    91,
+    113,
+    137,
+    149,
+    167,
+    181
+  ],
+  "rotate_seats": true,
+  "results": [
+    {
+      "focal": "submissions/v3_4.py",
+      "focal_spec": "submissions/v3_4.py",
+      "background": [
+        "weakest",
+        "enemy_first",
+        "baseline"
+      ],
+      "n_games": 64,
+      "first_place_count": 61,
+      "first_place_rate": 0.953125,
+      "wilson_lo_95": 0.8710013921145747,
+      "wilson_hi_95": 0.9839312745678148,
+      "p95_focal_turn_ms": 26.784310800076128
+    },
+    {
+      "focal": "submissions/v3_2.py",
+      "focal_spec": "submissions/v3_2.py",
+      "background": [
+        "weakest",
+        "enemy_first",
+        "baseline"
+      ],
+      "n_games": 64,
+      "first_place_count": 60,
+      "first_place_rate": 0.9375,
+      "wilson_lo_95": 0.8500230335750312,
+      "wilson_hi_95": 0.9754291963252071,
+      "p95_focal_turn_ms": 25.518777199988563
+    }
+  ]
+}
