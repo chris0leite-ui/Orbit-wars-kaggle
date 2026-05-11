@@ -102,6 +102,7 @@ def rollout(
     planned_shots: list[intercept.Shot],
     horizon_steps: int = 200,
     track_per_step: bool = False,
+    extra_arrivals: list[Arrival] | None = None,
 ) -> RolloutResult:
     """Forward-roll the world by horizon_steps applying scheduled arrivals.
 
@@ -162,6 +163,11 @@ def rollout(
             continue  # our own (already-launched) fleets, if any
         arr = project_enemy_fleet_arrival(fleet, world, horizon_steps=horizon_steps)
         if arr is not None:
+            schedule(arr)
+
+    # Schedule any caller-supplied extra arrivals (e.g., projected enemy launches).
+    if extra_arrivals:
+        for arr in extra_arrivals:
             schedule(arr)
 
     # Per-step trajectories, only filled when requested (cheap to skip in hot path).
@@ -295,17 +301,33 @@ def planet_garrison_projection(
     return res.planet_timeline.get(planet_id, [])
 
 
+def planet_garrison_projection_with_extras(
+    world: dict,
+    planned_shots: list[intercept.Shot],
+    planet_id: int,
+    horizon_steps: int = 200,
+    extra_arrivals: list[Arrival] | None = None,
+) -> list[tuple[int, int, int]]:
+    """Same as `planet_garrison_projection`, but also folds in extra arrivals
+    (typically projected enemy launches).
+    """
+    res = rollout(world, planned_shots, horizon_steps=horizon_steps, track_per_step=True,
+                  extra_arrivals=extra_arrivals)
+    return res.planet_timeline.get(planet_id, [])
+
+
 def plan_score(
     world: dict,
     planned_shots: list[intercept.Shot],
     horizon_steps: int = 200,
+    extra_arrivals: list[Arrival] | None = None,
 ) -> float:
     """Higher = better for us. Margin = my_score - max(opp_score).
 
     Score is total-ships-on-owned-planets per player after `horizon_steps`.
     """
     me = world["player"]
-    res = rollout(world, planned_shots, horizon_steps=horizon_steps)
+    res = rollout(world, planned_shots, horizon_steps=horizon_steps, extra_arrivals=extra_arrivals)
     my = res.final_score_per_player.get(me, 0)
     opp_max = 0
     for player, sc in res.final_score_per_player.items():

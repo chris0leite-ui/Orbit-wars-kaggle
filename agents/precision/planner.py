@@ -1,44 +1,38 @@
-"""Global joint planner.
+"""Global joint planner — v2.
 
-Each turn, decide the joint set of launches across all our planets to maximize
-long-horizon score margin. v0 uses greedy marginal-value selection over the
-shot menu, with a deadline-aware early exit. Depth-1 minimax is deferred to a
-follow-up — the precision physics + global greedy is already a strong baseline.
+ROI-greedy over single shots + 2-source waves, with robust min-max scoring
+against TWO enemy hypotheses (greedy-theirs and worst-for-us). The plan that
+maximizes its WORST-case score across the two enemy projections wins.
+
+The frozen v1 planner remains available as `plan_turn_v1` for benchmarking.
 """
 from __future__ import annotations
 
 import time
-from agents.precision import intercept, prediction
+from agents.precision import bundling, enemy_model, intercept, prediction, scoring
 
 
-def plan_turn(
+# ---- v1 (frozen baseline for head-to-head) -------------------------------
+
+def plan_turn_v1(
     world: dict,
     deadline: float,
     max_shots: int = 12,
     horizon_steps: int = 200,
 ) -> list[intercept.Shot]:
-    """Return the list of Shots to launch this turn.
-
-    Strategy: greedy add — at each step, pick the shot with highest marginal
-    plan-score improvement, respecting per-source garrison budgets. Stop when
-    no shot improves the score (or deadline approaches).
-    """
+    """The greedy planner committed in iteration 1 (frozen for benchmarking)."""
     me = world["player"]
-
-    # Spend up to 35% of the budget on shot-menu construction; remainder is search.
     menu_deadline = deadline - 0.65 * max(deadline - time.perf_counter(), 0)
     menu = intercept.build_shot_menu(world, deadline=menu_deadline)
     if not menu:
         return []
 
-    # Flatten + deduplicate.
     candidates: list[intercept.Shot] = []
     for shots in menu.values():
         candidates.extend(shots)
     if not candidates:
         return []
 
-    # Track remaining garrison per source.
     src_remaining: dict[int, int] = {}
     for p in world["planets"]:
         if p.owner == me:
@@ -50,8 +44,6 @@ def plan_turn(
     for _ in range(max_shots):
         if time.perf_counter() >= deadline:
             break
-
-        # Find the shot with best marginal improvement.
         best_shot = None
         best_score = base_score
         for shot in candidates:
@@ -67,10 +59,8 @@ def plan_turn(
             if score > best_score:
                 best_score = score
                 best_shot = shot
-
         if best_shot is None:
             break
-
         chosen.append(best_shot)
         src_remaining[best_shot.src_id] -= best_shot.ship_count
         base_score = best_score
@@ -78,6 +68,161 @@ def plan_turn(
     return chosen
 
 
+# ---- v2: ROI + waves + robust min-max ------------------------------------
+
+class _Candidate:
+    """Wraps either a single Shot or a Wave for uniform handling."""
+    __slots__ = ("shots", "tgt_id", "ship_cost_by_src", "total_ships", "arrival_step", "roi")
+
+    def __init__(self, shots: tuple[intercept.Shot, ...], tgt_id: int,
+                 arrival_step: int, roi: float):
+        self.shots = shots
+        self.tgt_id = tgt_id
+        self.arrival_step = arrival_step
+        self.roi = roi
+        cost: dict[int, int] = {}
+        for s in shots:
+            cost[s.src_id] = cost.get(s.src_id, 0) + s.ship_count
+        self.ship_cost_by_src = cost
+        self.total_ships = sum(cost.values())
+
+    def fits(self, src_remaining: dict[int, int]) -> bool:
+        for src, c in self.ship_cost_by_src.items():
+            if src_remaining.get(src, 0) < c:
+                return False
+        return True
+
+    def emit(self) -> list[intercept.Shot]:
+        return list(self.shots)
+
+
+def plan_turn(
+    world: dict,
+    deadline: float,
+    max_picks: int = 8,
+    horizon_steps: int = 200,
+    enable_waves: bool = False,
+) -> list[intercept.Shot]:
+    """ROI-greedy planner with optional wave bundling and robust enemy modeling.
+
+    `enable_waves` defaults to False because initial benchmarking showed wave
+    bundling under-performed simple single-shot ROI against the v1 baseline.
+    The bundling code path remains available for future tuning (e.g., better
+    triggering — only consider waves when no single source can capture).
+    """
+    me = world["player"]
+    obs_step = world["step"]
+    by_id = world["planet_by_id"]
+
+    # 1. Project enemy actions under both hypotheses (modest cost; bounded).
+    end_step = obs_step + horizon_steps  # cap the "lifetime production" value at the horizon
+    enemy_greedy = enemy_model.project_enemy_actions_greedy(world, k_shots_per_player=1, end_step=end_step)
+    enemy_worst = enemy_model.project_enemy_actions_worst_for_us(world, k_shots_per_player=1, end_step=end_step)
+
+    # 2. Defense reserve from the worst-case projection.
+    reserve = scoring.defense_reserve_table(world, enemy_worst, horizon=WAVE_DEFENSE_HORIZON)
+
+    # 3. Build candidate pool: single shots + waves.
+    candidates: list[_Candidate] = []
+
+    # 3a. Single shots — reuse build_shot_menu with reserve.
+    def reserve_fn(p):
+        return reserve.get(p.id, 0)
+    menu_deadline = time.perf_counter() + 0.25 * max(deadline - time.perf_counter(), 0)
+    menu = intercept.build_shot_menu(world, defense_reserve_fn=reserve_fn, deadline=menu_deadline)
+    for (src_id, tgt_id), shots in menu.items():
+        tgt = by_id.get(tgt_id)
+        if tgt is None:
+            continue
+        for shot in shots:
+            roi_g = scoring.shot_roi(shot, tgt, world, end_step=end_step, enemy_arrivals=enemy_greedy)
+            roi_w = scoring.shot_roi(shot, tgt, world, end_step=end_step, enemy_arrivals=enemy_worst)
+            roi = min(roi_g, roi_w)
+            if roi <= 0:
+                continue
+            candidates.append(_Candidate(
+                shots=(shot,), tgt_id=tgt_id,
+                arrival_step=obs_step + shot.eta, roi=roi,
+            ))
+
+    # 3b. Waves (gated; see docstring).
+    if enable_waves:
+        waves_deadline = time.perf_counter() + 0.25 * max(deadline - time.perf_counter(), 0)
+        waves = bundling.candidate_waves(
+            world, defense_reserve=reserve, extra_arrivals=enemy_worst,
+            end_step=end_step, max_sources=2, deadline=waves_deadline,
+        )
+        for w in waves:
+            tgt = by_id.get(w.target_id)
+            if tgt is None:
+                continue
+            roi_g = scoring.wave_roi(list(w.shots), tgt, world, end_step=end_step, enemy_arrivals=enemy_greedy)
+            roi_w = scoring.wave_roi(list(w.shots), tgt, world, end_step=end_step, enemy_arrivals=enemy_worst)
+            roi = min(roi_g, roi_w)
+            if roi <= 0:
+                continue
+            candidates.append(_Candidate(
+                shots=w.shots, tgt_id=w.target_id,
+                arrival_step=w.arrival_step, roi=roi,
+            ))
+
+    if not candidates:
+        return []
+
+    # 4. Greedy add by ROBUST plan-score improvement.
+    src_remaining: dict[int, int] = {}
+    for p in world["planets"]:
+        if p.owner == me:
+            src_remaining[p.id] = p.ships - reserve.get(p.id, 0)
+
+    chosen_shots: list[intercept.Shot] = []
+    chosen_targets: set[int] = set()  # don't double-commit on one target
+
+    def robust_score(plan: list[intercept.Shot]) -> float:
+        sg = prediction.plan_score(world, plan, horizon_steps=horizon_steps,
+                                    extra_arrivals=enemy_greedy)
+        sw = prediction.plan_score(world, plan, horizon_steps=horizon_steps,
+                                    extra_arrivals=enemy_worst)
+        # Weighted: prefer greedy-realistic (70%) but penalize plans that
+        # collapse under worst-case (30%). Avoids over-pessimism vs benign
+        # opponents while still being robust against aggressive ones.
+        return 0.7 * sg + 0.3 * sw
+
+    base = robust_score(chosen_shots)
+
+    # Sort candidates by ROI to give the greedy a strong initial order.
+    candidates.sort(key=lambda c: c.roi, reverse=True)
+
+    picked = 0
+    while picked < max_picks and time.perf_counter() < deadline:
+        best_cand = None
+        best_score = base
+        for cand in candidates:
+            if cand.tgt_id in chosen_targets:
+                continue
+            if not cand.fits(src_remaining):
+                continue
+            if time.perf_counter() >= deadline:
+                break
+            trial = chosen_shots + cand.emit()
+            score = robust_score(trial)
+            if score > best_score:
+                best_score = score
+                best_cand = cand
+        if best_cand is None:
+            break
+        chosen_shots.extend(best_cand.emit())
+        chosen_targets.add(best_cand.tgt_id)
+        for src, c in best_cand.ship_cost_by_src.items():
+            src_remaining[src] -= c
+        base = best_score
+        picked += 1
+
+    return chosen_shots
+
+
+WAVE_DEFENSE_HORIZON = 30
+
+
 def emit_actions(plan: list[intercept.Shot]) -> list[list]:
-    """Convert Shots to the engine's action format."""
     return [[shot.src_id, shot.angle, shot.ship_count] for shot in plan]

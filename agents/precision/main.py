@@ -24,7 +24,7 @@ def agent(obs):
     # Budget: ~0.85s actTimeout, leaving headroom for action serialization.
     deadline = t0 + 0.85
     try:
-        plan = planner.plan_turn(world, deadline=deadline, max_shots=20)
+        plan = planner.plan_turn(world, deadline=deadline)
     except Exception:
         plan = []
     return planner.emit_actions(plan)

@@ -221,6 +221,62 @@ def find_shot(
     return best
 
 
+def find_shot_for_arrival(
+    src: PlanetView,
+    tgt: PlanetView,
+    target_step: int,
+    world: dict,
+    sun_margin: float = sim.SUN_SAFETY_MARGIN,
+    cache: SweepCache | None = None,
+) -> Shot | None:
+    """Inverse intercept: find the ship count that makes the fleet arrive at `target_step`.
+
+    Used for multi-source wave coordination — pick S so that v(S) puts the fleet
+    on the target on the exact engine step requested.
+    """
+    if src.id == tgt.id:
+        return None
+    omega = world["omega"]
+    obs_step = world["step"]
+    if cache is None:
+        cache = SweepCache(omega, obs_step)
+
+    k = target_step - world["step"]
+    if k < 1 or k > MAX_ETA:
+        return None
+
+    # Predict target position at arrival; iterate theta + spawn to fixed point.
+    tgt_arrival = cache.pos(tgt, k)
+    if tgt_arrival is None:
+        return None  # comet expired by then
+    theta, spawn = _converge_theta_and_spawn(src, tgt_arrival)
+    D = math.hypot(tgt_arrival[0] - spawn[0], tgt_arrival[1] - spawn[1])
+    v_req = D / k
+
+    # Find ship count that achieves v_req (or the closest feasible v).
+    if v_req > sim.MAX_SHIP_SPEED + 1e-9:
+        return None  # unreachable by target_step even at max speed
+    S = sim.ships_for_speed(max(1.0, v_req))
+    if S > src.ships:
+        return None  # would exceed available garrison
+
+    # _verify_intercept also tries the exact k. Try ±1 to absorb integer rounding.
+    for k_try in (k, k - 1, k + 1):
+        if k_try < 1 or k_try > MAX_ETA:
+            continue
+        shot = _verify_intercept(src, tgt, S, k_try, world, sun_margin, cache)
+        if shot is not None and shot.eta == k:
+            return shot
+    # Fallback: accept ±1 step from requested if exact-k doesn't verify.
+    for k_try in (k, k - 1, k + 1):
+        if k_try < 1 or k_try > MAX_ETA:
+            continue
+        shot = _verify_intercept(src, tgt, S, k_try, world, sun_margin, cache)
+        if shot is not None:
+            return shot
+    return None
+
+
 def _verify_intercept(
     src: PlanetView,
     tgt: PlanetView,
