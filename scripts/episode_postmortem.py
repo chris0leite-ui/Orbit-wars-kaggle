@@ -208,7 +208,11 @@ def attribute_fleets(replay: dict, our_seat: int, our_player_id: int) -> list:
         owner = init_entry[1]
         x0, y0 = init_entry[2], init_entry[3]
         angle = init_entry[4]
-        ships_launch = init_entry[5]
+        # Fleet schema: [id, owner, x, y, angle, from_planet_id, ships].
+        # (env source: orbit_wars.py:13. Earlier this script used [5] for
+        # ships which was actually from_planet_id — invalidates any
+        # ships-based aggregation in older roll-ups.)
+        ships_launch = init_entry[6]
 
         last_seen_t = t_launch
         last_entry = init_entry
