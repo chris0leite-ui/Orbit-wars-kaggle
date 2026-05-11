@@ -26,6 +26,11 @@ went 18%→9%) for an under-sized-fleet bucket. 4P FFA is the worst seat
    firing too rarely to defend home planets in time. (`lib/world_model.py:34`,
    `lib/missions/reinforce.py`)
 
+**Parallel-architecture A/B settled:** the precision-physics agent
+(parallel branch) lost 6/16 to v3_snipe AND its p95 turn time (1444ms)
+exceeds the 1s `actTimeout` — not submittable as-is. Keep v3_snipe in
+the rolling-last-2 slot. Details in §6.5.
+
 ## 1. Live data (34 episodes, first ~26 h after submit)
 
 ```
@@ -219,13 +224,33 @@ process is brittle.
 A sibling branch shipped a deterministic intercept solver + global greedy
 planner (`agents/precision/`, 5 commits, last 12:41 UTC). It has 11
 tests including 4P + packaged-submission, an explicit 0.85s per-turn
-deadline, and **beats v3_snipe in the first smoke seed (seed 42,
-200 steps)**. A full local A/B is in progress (16 seeds × 2 seats).
-Its `state/current.md` is stale (claims v2 PENDING from 04:04 UTC);
-**there is no submitted precision agent on Kaggle**, but if it does
-beat v3_snipe locally with a Wilson-lo ≥50%, the next slot decision
-becomes "submit precision and evict v3_snipe vs keep v3_snipe and
-iterate on §4.1." Surface this trade-off **before** any push.
+deadline, and won the first smoke seed (seed 42, 200 steps) against
+v3_snipe. The full **8-seed 2P A/B (workers=4, 500 steps, both seats)
+result:**
+
+```
+v3_snipe P0 vs precision P1: v3=5, prec=3, draws=0   (v3 P0 WR 62.5%, Wilson [30.6%, 86.3%])
+precision P0 vs v3_snipe P1: prec=3, v3=5, draws=0   (prec P0 WR 37.5%, Wilson [13.7%, 69.4%])
+OVERALL: precision wins 6/16 = 37.5% vs v3_snipe
+v3_snipe p95 turn time: 32.9 ms     precision p95 turn time: 1444.6 ms
+```
+
+**Verdict: precision is NOT submittable as-is.** Two blockers:
+1. **Loses head-to-head locally (37.5%).** seed-42 was noise.
+2. **p95 turn time exceeds the 1s `actTimeout` by 44%.** Live env will
+   timeout some turns (env-enforced 1s) and likely fail the validation
+   episode. Even though the agent has a 0.85s internal deadline, the
+   measured p95 is 1.4s — suggests the deadline check is happening
+   AFTER the per-turn planner has already done its expensive work, or
+   the local hardware is slower than the agent assumes.
+
+**Slot recommendation:** keep v3_snipe in the rolling-last-2; spend the
+next slot on §7-P1 (`arrival_size` fix). Do NOT submit precision until
+both blockers are addressed. The precision branch may have value as a
+SCORING ENGINE we adopt (its enemy-projection logic could inform §4.1),
+but as a full-agent submission it's a regression.
+
+Tournament artifact: `audit/tournaments/20260511T143953Z.json`.
 
 ## 7. Improvement directions ranked by EV/cost
 
@@ -234,7 +259,7 @@ iterate on §4.1." Surface this trade-off **before** any push.
 | **P1** | Fix `arrival_size` to account for adversary same-step stacking (`+1` cushion → `+ max(predicted_enemy_arrivals)`) | `lib/mechanism.py::arrival_size` | High (+30–60μ) — addresses doubled bounce rate | 2-4h | Low; localised; gate via 32-seed A/B + live |
 | **P2** | Raise `DEFAULT_HORIZON` 110 → 250, re-test reinforce candidate rate | `lib/world_model.py:34` | Medium (+10–25μ) — defence rarely triggers today | 1h + retiming | Low; turn budget still 50× under timeout |
 | **P3** | Bundler reproducibility hash + post-bundle parity check vs source | `scripts/bundle_agent.py` | High (unlocks reliable replay analysis) | 3-4h | Low; tooling |
-| **P4** | Run A/B precision vs v3_snipe 32-seed both seats; if precision wins, prep for slot decision | `scripts/tournament.py` + `agents/precision/` | High (architecture pivot signal) | 1-2h compute | Medium; commits a slot if pushed |
+| ~~P4~~ | ~~A/B precision vs v3_snipe~~ | resolved | precision loses 6/16 + timeout violation | done | n/a |
 | **P5** | 4P-specific logic: when ranked 3rd-or-worse, withhold attacks against the strongest player ("spoiler" mode) | new `lib/missions/spoiler.py` | Medium (+10–20μ on 50% of games) | 4-6h | Medium; needs panel infra for 4P |
 | **P6** | Add `+1` cushion → +k buffer ablation on `lib/missions/reinforce.py:84`, switch survivor→pre-flip sizing | `lib/missions/reinforce.py` | Medium (+5–15μ) | 1h | Low |
 | **P7** | Comet aim re-enable (currently excluded); fast comets miss with lead_aim_v2 | `lib/mechanism.py:503` | Low-Medium (+5–10μ) | 2h | Needs ablation pair |
