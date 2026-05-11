@@ -17,7 +17,7 @@ TAR="$REPO/submissions/precision_v2.tar.gz"
 mkdir -p "$DST"
 rm -f "$DST"/*.py "$TAR"
 
-MODULES=(main sim intercept prediction planner scoring enemy_model bundling)
+MODULES=(main sim intercept prediction fast_sim planner scoring enemy_model bundling)
 
 for m in "${MODULES[@]}"; do
     cp "$SRC/$m.py" "$DST/$m.py"

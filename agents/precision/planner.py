@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
-from agents.precision import bundling, enemy_model, intercept, prediction, scoring
+from agents.precision import bundling, enemy_model, fast_sim, intercept, prediction, scoring
 
 
 # ---- v1 (frozen baseline for head-to-head) -------------------------------
@@ -40,7 +40,7 @@ def plan_turn_v1(
             src_remaining[p.id] = p.ships
 
     chosen: list[intercept.Shot] = []
-    base_score = prediction.plan_score(world, chosen, horizon_steps=horizon_steps)
+    base_score = fast_sim.plan_score(world, chosen, horizon_steps=horizon_steps)
 
     for _ in range(max_shots):
         if time.perf_counter() >= deadline:
@@ -56,7 +56,7 @@ def plan_turn_v1(
             if shot.ship_count > avail:
                 continue
             trial = chosen + [shot]
-            score = prediction.plan_score(world, trial, horizon_steps=horizon_steps)
+            score = fast_sim.plan_score(world, trial, horizon_steps=horizon_steps)
             if score > best_score:
                 best_score = score
                 best_shot = shot
@@ -106,22 +106,17 @@ STRIKE_WINDOW_DELTAS = (1, 2, 3, 5)   # ticks after projected enemy arrival
 STRIKE_WINDOW_MAX_HORIZON = 100   # cap arrival_step at obs_step + this
 
 
-def plan_turn(
+def plan_turn_v2_frozen(
     world: dict,
     deadline: float,
     max_picks: int = 15,
     horizon_steps: int = 200,
     enable_waves: bool = False,
 ) -> list[intercept.Shot]:
-    """ROI-greedy planner with optional wave bundling and robust enemy modeling.
+    """FROZEN snapshot of plan_turn after iteration 4 — pre-merge baseline.
 
-    Wave gating (when enabled): emit a 2-source wave only when no single-source
-    shot captures the target. Single shots are preferred whenever they suffice.
-
-    `enable_waves` defaults to False: even with the strict no-single-shot gate,
-    empirically waves commit ships from two sources prematurely and reduce later
-    flexibility against v1. Capability remains for follow-up tuning (e.g., once
-    multi-turn commitment continuation is added).
+    Kept for regression benchmarking (`tests/test_precision_v3_vs_v2_frozen.py`).
+    The current `plan_turn` (defined below) IS the iteration-5 merge target.
     """
     me = world["player"]
     obs_step = world["step"]
@@ -270,9 +265,9 @@ def plan_turn(
     chosen_targets: set[int] = set()  # don't double-commit on one target
 
     def robust_score(plan: list[intercept.Shot]) -> float:
-        sg = prediction.plan_score(world, plan, horizon_steps=horizon_steps,
+        sg = fast_sim.plan_score(world, plan, horizon_steps=horizon_steps,
                                     extra_arrivals=enemy_greedy)
-        sw = prediction.plan_score(world, plan, horizon_steps=horizon_steps,
+        sw = fast_sim.plan_score(world, plan, horizon_steps=horizon_steps,
                                     extra_arrivals=enemy_worst)
         # Weighted: prefer greedy-realistic (70%) but penalize plans that
         # collapse under worst-case (30%). Avoids over-pessimism vs benign
@@ -366,6 +361,309 @@ def plan_turn(
 
 
 WAVE_DEFENSE_HORIZON = 30
+
+
+# ---- v3 (merged): best-of-both-worlds, evolved across phases -------------
+
+# Min-keep floor: each source must retain at least the configured fraction of
+# its current garrison after picking a candidate. Tuned to balance defense
+# (against the mid-game collapse seen vs main_v2) with offensive throughput.
+# Empirical: 0.30 → too passive (0W-6L vs main); 0.10 → less passive; 0.0 →
+# disabled (relies only on the reserve table).
+MIN_KEEP_FRACTION = 0.0  # disabled by default; floor came from reserve table only
+
+
+def _greedy_pick(world, candidates, reserve, robust_score, max_picks, deadline,
+                 me, seeded_chosen=None, swap_passes: int = 1):
+    """Greedy ROI selection with min-keep floor + optional swap-improvement.
+
+    Returns (chosen_shots, chosen_cands, src_remaining, base_score).
+    """
+    src_remaining: dict[int, int] = {}
+    src_keep_floor: dict[int, int] = {}
+    for p in world["planets"]:
+        if p.owner == me:
+            r = reserve.get(p.id, 0)
+            src_remaining[p.id] = p.ships - r
+            # Floor is an ADDITIONAL safety margin on top of the reserve. The
+            # reserve is already subtracted from src_remaining once — don't
+            # apply it again here or we double-count. With MIN_KEEP_FRACTION=0
+            # the floor is disabled, matching v2_frozen behaviour.
+            src_keep_floor[p.id] = int(MIN_KEEP_FRACTION * p.ships)
+
+    chosen_shots: list[intercept.Shot] = []
+    chosen_cands: list = []
+    chosen_targets: set[int] = set()
+
+    # Pre-commit any seeded candidates (commitment continuation, Phase 3).
+    if seeded_chosen:
+        for cand in seeded_chosen:
+            # Re-validate budget under current floor.
+            ok = True
+            for src, cost in cand.ship_cost_by_src.items():
+                planet = world["planet_by_id"].get(src)
+                if planet is None or planet.owner != me:
+                    ok = False; break
+                # After this commit, ensure source stays above floor.
+                if src_remaining.get(src, 0) - cost < 0:
+                    ok = False; break
+                if planet.ships - cost < src_keep_floor.get(src, 0):
+                    ok = False; break
+            if not ok or cand.tgt_id in chosen_targets:
+                continue
+            chosen_shots.extend(cand.emit())
+            chosen_cands.append(cand)
+            chosen_targets.add(cand.tgt_id)
+            for src, c in cand.ship_cost_by_src.items():
+                src_remaining[src] -= c
+
+    base = robust_score(chosen_shots)
+    candidates_sorted = sorted(candidates, key=lambda c: c.roi, reverse=True)
+
+    picked = len(chosen_cands)
+    while picked < max_picks and time.perf_counter() < deadline:
+        best_cand = None
+        best_score = base
+        for cand in candidates_sorted:
+            if cand.tgt_id in chosen_targets:
+                continue
+            # Budget check + min-keep floor.
+            ok = True
+            for src, cost in cand.ship_cost_by_src.items():
+                if src_remaining.get(src, 0) < cost:
+                    ok = False; break
+                planet = world["planet_by_id"].get(src)
+                if planet is None:
+                    ok = False; break
+                already_spent = planet.ships - src_remaining[src]
+                if planet.ships - already_spent - cost < src_keep_floor.get(src, 0):
+                    ok = False; break
+            if not ok:
+                continue
+            if time.perf_counter() >= deadline:
+                break
+            trial = chosen_shots + cand.emit()
+            score = robust_score(trial)
+            if score > best_score:
+                best_score = score
+                best_cand = cand
+        if best_cand is None:
+            break
+        chosen_shots.extend(best_cand.emit())
+        chosen_cands.append(best_cand)
+        chosen_targets.add(best_cand.tgt_id)
+        for src, c in best_cand.ship_cost_by_src.items():
+            src_remaining[src] -= c
+        base = best_score
+        picked += 1
+
+    # Swap-improvement pass: replace each chosen candidate with an alternative
+    # if it improves robust_score. Matches v2_frozen's behaviour.
+    for _ in range(swap_passes):
+        if time.perf_counter() >= deadline:
+            break
+        improved = False
+        for i in range(len(chosen_cands)):
+            if time.perf_counter() >= deadline:
+                break
+            cur = chosen_cands[i]
+            best_alt = None
+            best_alt_score = base
+            budget_without = dict(src_remaining)
+            for src, c in cur.ship_cost_by_src.items():
+                budget_without[src] = budget_without.get(src, 0) + c
+            chosen_without = [c for j, c in enumerate(chosen_cands) if j != i]
+            shots_without = [s for c in chosen_without for s in c.emit()]
+            targets_without = {c.tgt_id for c in chosen_without}
+            for alt in candidates_sorted:
+                if alt is cur or alt.tgt_id in targets_without:
+                    continue
+                # Budget + min-keep floor check.
+                ok = True
+                for src, cost in alt.ship_cost_by_src.items():
+                    if budget_without.get(src, 0) < cost:
+                        ok = False; break
+                    planet = world["planet_by_id"].get(src)
+                    if planet is None:
+                        ok = False; break
+                    already = planet.ships - budget_without[src]
+                    if planet.ships - already - cost < src_keep_floor.get(src, 0):
+                        ok = False; break
+                if not ok:
+                    continue
+                if time.perf_counter() >= deadline:
+                    break
+                trial = shots_without + alt.emit()
+                score = robust_score(trial)
+                if score > best_alt_score:
+                    best_alt_score = score
+                    best_alt = alt
+            if best_alt is not None:
+                chosen_cands[i] = best_alt
+                chosen_shots = [s for c in chosen_cands for s in c.emit()]
+                chosen_targets = {c.tgt_id for c in chosen_cands}
+                src_remaining = {p.id: p.ships - reserve.get(p.id, 0)
+                                  for p in world["planets"] if p.owner == me}
+                for c in chosen_cands:
+                    for src, ships in c.ship_cost_by_src.items():
+                        src_remaining[src] -= ships
+                base = best_alt_score
+                improved = True
+        if not improved:
+            break
+
+    return chosen_shots, chosen_cands, src_remaining, base
+
+
+def plan_turn(
+    world: dict,
+    deadline: float,
+    max_picks: int = 15,
+    horizon_steps: int = 200,
+) -> list[intercept.Shot]:
+    """Iteration-5 merged planner: fast-sim + extended defense + min-keep floor.
+
+    Phases applied:
+      1. Fast forward-sim (already swapped in via scoring/planner imports).
+      2. Defense horizon 60 ticks, in-flight enemy fleets folded in,
+         k_shots_per_player=2, min-keep floor on each source.
+      3. Commitment continuation (deferred to next phase).
+      4. Wave bundling with post-commitment projection (deferred).
+    """
+    me = world["player"]
+    obs_step = world["step"]
+    by_id = world["planet_by_id"]
+    end_step = obs_step + horizon_steps
+
+    # 1. Project enemy actions (k=2 per player) under both hypotheses.
+    enemy_greedy = enemy_model.project_enemy_actions_greedy(world, end_step=end_step)
+    enemy_worst = enemy_model.project_enemy_actions_worst_for_us(world, end_step=end_step)
+
+    # 2. Defense reserves: 30-tick horizon (matches v2_frozen baseline; longer
+    # horizons made us too passive vs same-aggression opponents). In-flight
+    # enemy fleets NOT included in the reserve — relying on production
+    # growth + counter-attack as in v2.
+    reserve = scoring.defense_reserve_table(world, enemy_worst, horizon=30,
+                                             include_in_flight=False)
+
+    # 3. Build candidate pool (single shots + strike-window only for now;
+    #    waves return in Phase 4 with the fixed gate).
+    candidates: list[_Candidate] = []
+    best_single_roi_per_target: dict[int, float] = {}
+
+    def reserve_fn(p):
+        return reserve.get(p.id, 0)
+
+    menu_deadline = time.perf_counter() + 0.25 * max(deadline - time.perf_counter(), 0)
+    menu = intercept.build_shot_menu(world, defense_reserve_fn=reserve_fn,
+                                       deadline=menu_deadline)
+    for (src_id, tgt_id), shots in menu.items():
+        tgt = by_id.get(tgt_id)
+        if tgt is None:
+            continue
+        for shot in shots:
+            roi_g = scoring.shot_roi(shot, tgt, world, end_step=end_step, enemy_arrivals=enemy_greedy)
+            roi_w = scoring.shot_roi(shot, tgt, world, end_step=end_step, enemy_arrivals=enemy_worst)
+            roi = min(roi_g, roi_w)
+            if roi <= 0:
+                continue
+            candidates.append(_Candidate(
+                shots=(shot,), tgt_id=tgt_id,
+                arrival_step=obs_step + shot.eta, roi=roi,
+            ))
+            if roi > best_single_roi_per_target.get(tgt_id, 0.0):
+                best_single_roi_per_target[tgt_id] = roi
+
+    # 3-bis. Strike-window candidates (iter 4 mechanic, kept).
+    my_planets_owned = [p for p in world["planets"] if p.owner == me]
+    sw_seen: set[tuple[int, int]] = set()
+    sw_cache = intercept.SweepCache(world["omega"], obs_step)
+    for arr in list(enemy_greedy) + list(enemy_worst):
+        if (arr.planet_id, arr.step) in sw_seen:
+            continue
+        sw_seen.add((arr.planet_id, arr.step))
+        target = by_id.get(arr.planet_id)
+        if target is None or target.owner == me:
+            continue
+        for delta in STRIKE_WINDOW_DELTAS:
+            arrival_step = arr.step + delta
+            if arrival_step <= obs_step or arrival_step > obs_step + STRIKE_WINDOW_MAX_HORIZON:
+                continue
+            for src in my_planets_owned:
+                if src.id == target.id:
+                    continue
+                avail = src.ships - reserve.get(src.id, 0)
+                if avail < 1:
+                    continue
+                src_view = dataclasses.replace(src, ships=avail)
+                shot = intercept.find_shot_for_arrival(
+                    src_view, target, arrival_step, world, cache=sw_cache,
+                )
+                if shot is None:
+                    continue
+                roi_g = scoring.shot_roi(shot, target, world, end_step=end_step, enemy_arrivals=enemy_greedy)
+                roi_w = scoring.shot_roi(shot, target, world, end_step=end_step, enemy_arrivals=enemy_worst)
+                roi = min(roi_g, roi_w)
+                if roi <= 0:
+                    continue
+                damped = STRIKE_WINDOW_ALPHA * roi
+                candidates.append(_Candidate(
+                    shots=(shot,), tgt_id=target.id,
+                    arrival_step=arrival_step, roi=damped,
+                ))
+                if damped > best_single_roi_per_target.get(target.id, 0.0):
+                    best_single_roi_per_target[target.id] = damped
+
+    # 3b. Wave bundling — gated strictly: only emit a wave when NO single-source
+    # shot for that target has positive ROI. Single shots dominate when they
+    # suffice; bundling is reserved for targets beyond reach of any one source.
+    waves_deadline = time.perf_counter() + 0.15 * max(deadline - time.perf_counter(), 0)
+    waves = bundling.candidate_waves(
+        world, defense_reserve=reserve, extra_arrivals=enemy_worst,
+        end_step=end_step, max_sources=2, deadline=waves_deadline,
+    )
+    for wv in waves:
+        tgt = by_id.get(wv.target_id)
+        if tgt is None:
+            continue
+        # Strict gate: skip the wave if any single-shot already captures it.
+        if best_single_roi_per_target.get(wv.target_id, 0.0) > 0:
+            continue
+        roi_g = scoring.wave_roi(list(wv.shots), tgt, world, end_step=end_step, enemy_arrivals=enemy_greedy)
+        roi_w = scoring.wave_roi(list(wv.shots), tgt, world, end_step=end_step, enemy_arrivals=enemy_worst)
+        roi = min(roi_g, roi_w)
+        if roi <= 0:
+            continue
+        candidates.append(_Candidate(
+            shots=wv.shots, tgt_id=wv.target_id,
+            arrival_step=wv.arrival_step, roi=roi,
+        ))
+
+    # 3c. Dedup by sorted shot signature.
+    def _cand_key(c: _Candidate) -> tuple:
+        return tuple(sorted((s.src_id, s.tgt_id, s.eta, s.ship_count) for s in c.shots))
+    deduped: dict[tuple, _Candidate] = {}
+    for c in candidates:
+        k = _cand_key(c)
+        if k not in deduped or c.roi > deduped[k].roi:
+            deduped[k] = c
+    candidates = list(deduped.values())
+
+    if not candidates:
+        return []
+
+    def robust_score(plan: list[intercept.Shot]) -> float:
+        sg = fast_sim.plan_score(world, plan, horizon_steps=horizon_steps,
+                                  extra_arrivals=enemy_greedy)
+        sw = fast_sim.plan_score(world, plan, horizon_steps=horizon_steps,
+                                  extra_arrivals=enemy_worst)
+        return 0.7 * sg + 0.3 * sw
+
+    chosen_shots, chosen_cands, src_remaining, base = _greedy_pick(
+        world, candidates, reserve, robust_score, max_picks, deadline, me,
+    )
+
+    return chosen_shots
 
 
 def emit_actions(plan: list[intercept.Shot]) -> list[list]:

@@ -8,7 +8,7 @@ ROI = value / cost, with rejection if predicted defender > attacker.
 from __future__ import annotations
 
 import math
-from agents.precision import intercept, prediction, sim
+from agents.precision import fast_sim, intercept, prediction, sim
 
 
 def _capture_value(
@@ -29,7 +29,7 @@ def _capture_value(
     # Determine projected owner at arrival.
     projected_owner = target.owner  # fallback if no world context provided
     if world is not None:
-        timeline = prediction.planet_garrison_projection_with_extras(
+        timeline = fast_sim.planet_garrison_projection(
             world, [], target.id,
             horizon_steps=arrival_step - world["step"] + 2,
             extra_arrivals=enemy_arrivals or [],
@@ -51,9 +51,9 @@ def _defender_at(target: intercept.PlanetView, arrival_step: int, world: dict,
     enemy launches (if provided). Assumes no other action by us."""
     plan = []
     extra = enemy_arrivals or []
-    timeline = prediction.planet_garrison_projection_with_extras(world, plan, target.id,
-                                                                  horizon_steps=arrival_step - world["step"] + 2,
-                                                                  extra_arrivals=extra)
+    timeline = fast_sim.planet_garrison_projection(world, plan, target.id,
+                                                   horizon_steps=arrival_step - world["step"] + 2,
+                                                   extra_arrivals=extra)
     pre = [t for t in timeline if t[0] < arrival_step]
     if not pre:
         return target.ships
@@ -106,24 +106,43 @@ def wave_roi(
 
 
 def defense_reserve_table(world: dict, projected_enemy_arrivals: list[prediction.Arrival],
-                          horizon: int = 30) -> dict[int, int]:
+                          horizon: int = 60,
+                          include_in_flight: bool = True) -> dict[int, int]:
     """For each owned planet, ships to hold back to survive the worst projected
-    enemy arrival in the next `horizon` ticks.
+    enemy arrival within `horizon` ticks.
+
+    Sources of threats considered:
+      - Projected future enemy launches (from `enemy_model`).
+      - In-flight enemy fleets currently observable in `world["fleets"]`
+        (projected to their first-impact planet via
+        `prediction.project_enemy_fleet_arrival`).
 
     reserve = max(0, max_simultaneous_enemy_arrival - growth_to_that_step - 1)
     """
     me = world["player"]
-    reserve: dict[int, int] = {}
-    by_planet: dict[int, list[prediction.Arrival]] = {}
-    for arr in projected_enemy_arrivals:
-        if arr.owner == me:
-            continue
-        by_planet.setdefault(arr.planet_id, []).append(arr)
+    threats_by_planet: dict[int, list[prediction.Arrival]] = {}
 
+    def _add(arr: prediction.Arrival):
+        if arr.owner == me:
+            return
+        threats_by_planet.setdefault(arr.planet_id, []).append(arr)
+
+    for arr in projected_enemy_arrivals:
+        _add(arr)
+
+    if include_in_flight:
+        for fleet in world["fleets"]:
+            if fleet[1] == me or fleet[1] == -1:
+                continue
+            arr = prediction.project_enemy_fleet_arrival(fleet, world, horizon_steps=horizon)
+            if arr is not None:
+                _add(arr)
+
+    reserve: dict[int, int] = {}
     for p in world["planets"]:
         if p.owner != me:
             continue
-        threats = by_planet.get(p.id, [])
+        threats = threats_by_planet.get(p.id, [])
         worst = 0
         for arr in threats:
             ticks = arr.step - world["step"]
