@@ -96,19 +96,25 @@ class _Candidate:
         return list(self.shots)
 
 
+WAVE_MARGIN = 1.10  # wave ROI must beat best single-source ROI by this factor
+
+
 def plan_turn(
     world: dict,
     deadline: float,
-    max_picks: int = 8,
+    max_picks: int = 15,
     horizon_steps: int = 200,
     enable_waves: bool = False,
 ) -> list[intercept.Shot]:
     """ROI-greedy planner with optional wave bundling and robust enemy modeling.
 
-    `enable_waves` defaults to False because initial benchmarking showed wave
-    bundling under-performed simple single-shot ROI against the v1 baseline.
-    The bundling code path remains available for future tuning (e.g., better
-    triggering — only consider waves when no single source can capture).
+    Wave gating (when enabled): emit a 2-source wave only when no single-source
+    shot captures the target. Single shots are preferred whenever they suffice.
+
+    `enable_waves` defaults to False: even with the strict no-single-shot gate,
+    empirically waves commit ships from two sources prematurely and reduce later
+    flexibility against v1. Capability remains for follow-up tuning (e.g., once
+    multi-turn commitment continuation is added).
     """
     me = world["player"]
     obs_step = world["step"]
@@ -122,8 +128,9 @@ def plan_turn(
     # 2. Defense reserve from the worst-case projection.
     reserve = scoring.defense_reserve_table(world, enemy_worst, horizon=WAVE_DEFENSE_HORIZON)
 
-    # 3. Build candidate pool: single shots + waves.
+    # 3. Build candidate pool: single shots + (gated) waves.
     candidates: list[_Candidate] = []
+    best_single_roi_per_target: dict[int, float] = {}
 
     # 3a. Single shots — reuse build_shot_menu with reserve.
     def reserve_fn(p):
@@ -144,8 +151,11 @@ def plan_turn(
                 shots=(shot,), tgt_id=tgt_id,
                 arrival_step=obs_step + shot.eta, roi=roi,
             ))
+            if roi > best_single_roi_per_target.get(tgt_id, 0.0):
+                best_single_roi_per_target[tgt_id] = roi
 
-    # 3b. Waves (gated; see docstring).
+    # 3b. Waves — gated: emit only if no single-shot captures OR wave beats best
+    # single-source ROI for that target by WAVE_MARGIN.
     if enable_waves:
         waves_deadline = time.perf_counter() + 0.25 * max(deadline - time.perf_counter(), 0)
         waves = bundling.candidate_waves(
@@ -160,6 +170,12 @@ def plan_turn(
             roi_w = scoring.wave_roi(list(w.shots), tgt, world, end_step=end_step, enemy_arrivals=enemy_worst)
             roi = min(roi_g, roi_w)
             if roi <= 0:
+                continue
+            best_single = best_single_roi_per_target.get(w.target_id, 0.0)
+            # Strict gate: only emit a wave when NO single-source shot captures
+            # this target (best_single == 0). Single shots are preferred whenever
+            # they suffice — bundling is for targets out of reach to any one source.
+            if best_single > 0:
                 continue
             candidates.append(_Candidate(
                 shots=w.shots, tgt_id=w.target_id,
@@ -193,6 +209,9 @@ def plan_turn(
     # Sort candidates by ROI to give the greedy a strong initial order.
     candidates.sort(key=lambda c: c.roi, reverse=True)
 
+    # Track which Candidate produced each shot so we can swap chosen-out later.
+    chosen_cands: list[_Candidate] = []
+
     picked = 0
     while picked < max_picks and time.perf_counter() < deadline:
         best_cand = None
@@ -212,11 +231,61 @@ def plan_turn(
         if best_cand is None:
             break
         chosen_shots.extend(best_cand.emit())
+        chosen_cands.append(best_cand)
         chosen_targets.add(best_cand.tgt_id)
         for src, c in best_cand.ship_cost_by_src.items():
             src_remaining[src] -= c
         base = best_score
         picked += 1
+
+    # 5. One-pass swap-improvement: for each chosen candidate, try replacing it
+    # with any unchosen one. Accept the swap if robust_score improves and the
+    # deadline allows. Cheap insurance against early-greedy lock-in.
+    swap_improved = True
+    swap_passes = 0
+    while swap_improved and swap_passes < 1 and time.perf_counter() < deadline:
+        swap_improved = False
+        swap_passes += 1
+        for i in range(len(chosen_cands)):
+            if time.perf_counter() >= deadline:
+                break
+            cur = chosen_cands[i]
+            best_alt = None
+            best_alt_score = base
+            # Reconstruct ship budget without `cur`.
+            budget_without = dict(src_remaining)
+            for src, c in cur.ship_cost_by_src.items():
+                budget_without[src] = budget_without.get(src, 0) + c
+            chosen_without = [c for j, c in enumerate(chosen_cands) if j != i]
+            shots_without = [s for c in chosen_without for s in c.emit()]
+            targets_without = {c.tgt_id for c in chosen_without}
+            for alt in candidates:
+                if alt is cur:
+                    continue
+                if alt.tgt_id in targets_without:
+                    continue
+                if not alt.fits(budget_without):
+                    continue
+                if time.perf_counter() >= deadline:
+                    break
+                trial = shots_without + alt.emit()
+                score = robust_score(trial)
+                if score > best_alt_score:
+                    best_alt_score = score
+                    best_alt = alt
+            if best_alt is not None:
+                # Commit the swap.
+                chosen_cands[i] = best_alt
+                chosen_shots = [s for c in chosen_cands for s in c.emit()]
+                chosen_targets = {c.tgt_id for c in chosen_cands}
+                # Rebuild remaining budget from scratch (cheaper than diff).
+                src_remaining = {p.id: p.ships - reserve.get(p.id, 0)
+                                 for p in world["planets"] if p.owner == me}
+                for c in chosen_cands:
+                    for src, ships in c.ship_cost_by_src.items():
+                        src_remaining[src] -= ships
+                base = best_alt_score
+                swap_improved = True
 
     return chosen_shots
 
