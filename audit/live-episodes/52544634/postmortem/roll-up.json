@@ -15,7 +15,7 @@
     }
   },
   "n_turns": 6974,
-  "action_match_rate": 0.7761686263263551,
+  "action_match_rate": 0.9406366504158302,
   "n_turns_compared": 6974,
   "candidates_per_turn": {
     "snipe": 115.681244622885,
@@ -25,19 +25,19 @@
   "idle_source_rate": 0.1405927081302398,
   "drops_per_turn": {
     "validate": 2.040149125322627,
-    "arrival_size": 3.691138514482363,
+    "arrival_size": 3.638801261829653,
     "lead_aim_v2": 0.0,
-    "sun_avoid": 0.04158302265557786,
-    "path_clears_other_planets": 0.11600229423573272,
-    "oob_guard": 0.021795239460854602
+    "sun_avoid": 0.04258675078864353,
+    "path_clears_other_planets": 0.12173788356753656,
+    "oob_guard": 0.021651849727559506
   },
   "drops_total": {
     "validate": 14228,
-    "arrival_size": 25742,
+    "arrival_size": 25377,
     "lead_aim_v2": 0,
-    "sun_avoid": 290,
-    "path_clears_other_planets": 809,
-    "oob_guard": 152
+    "sun_avoid": 297,
+    "path_clears_other_planets": 849,
+    "oob_guard": 151
   },
   "fleet_outcomes_total": {
     "captured": 1406,
@@ -48,9 +48,9 @@
     "arrived_but_lost": 9,
     "alive_at_end": 113
   },
-  "dt_ms_p95": 12.57,
-  "dt_ms_p99": 24.0,
+  "dt_ms_p95": 15.22,
+  "dt_ms_p99": 28.64,
   "submission_id": "52544634",
   "team_name": "ChrisLeiteScha",
-  "elapsed_s": 38.5
+  "elapsed_s": 47.7
 }

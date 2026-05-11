@@ -81,11 +81,10 @@ def test_arrival_size_bumps_enemy_target_for_production_growth():
     world = _world([_src(garrison=9999), target], my_id=0)
     intent = Intent(src_id=0, target_id=1, ships=21)   # current target ships + 1
     out = arrival_size([intent], world)
-    # eta = ceil(85 / fleet_speed(21)); env runs production (eta + 1) times
-    # during flight (per-turn production tick, including the arrival turn).
+    # eta = ceil(85 / fleet_speed(21))
     v = fleet_speed(21)
     eta = math.ceil(85.0 / v)
-    expected = 20 + 2 * (eta + 1) + 1
+    expected = 20 + 2 * eta + 1
     assert out[0].ships == expected
     assert out[0].ships > 21   # actually grew
 
@@ -97,7 +96,7 @@ def test_arrival_size_zero_production_means_no_bump_for_enemy():
     intent = Intent(src_id=0, target_id=1, ships=21)
     out = arrival_size([intent], world)
     eta = math.ceil(30.0 / fleet_speed(21))
-    expected = 20 + 0 * (eta + 1) + 1
+    expected = 20 + 0 * eta + 1
     assert out[0].ships == max(21, expected)   # equals 21
 
 
@@ -120,7 +119,7 @@ def test_arrival_size_preserves_oversize_strategy_intent():
     intent = Intent(src_id=0, target_id=1, ships=500)   # over-spec swarm
     out = arrival_size([intent], world)
     eta = math.ceil(30.0 / fleet_speed(500))
-    needed = 20 + 2 * (eta + 1) + 1
+    needed = 20 + 2 * eta + 1
     assert out[0].ships == max(500, needed)   # 500 stays
     assert out[0].ships >= 500
 
@@ -193,7 +192,7 @@ def test_arrival_size_falls_back_to_static_when_model_under_predicts():
     intent = Intent(src_id=0, target_id=1, ships=21)
     out = arrival_size([intent], world, model)
     eta = math.ceil(30.0 / fleet_speed(21))
-    static_needed = 30 + 2 * (eta + 1) + 1
+    static_needed = 30 + 2 * eta + 1
     assert out[0].ships == static_needed
 
 
@@ -205,27 +204,3 @@ def test_arrival_size_no_model_keeps_static_only_behavior():
     out_no_model = arrival_size([Intent(src_id=0, target_id=1, ships=21)], world)
     out_with_none = arrival_size([Intent(src_id=0, target_id=1, ships=21)], world, None)
     assert out_no_model[0].ships == out_with_none[0].ships
-
-
-def test_arrival_size_covers_env_extra_production_tick():
-    """Regression: env runs production (eta + 1) times during flight, not eta.
-
-    Live-replay analysis of v3_snipe (52544634) found 38 of 518 enemy
-    bounces at margin ∈ {+0, +1} where the agent sent exactly the
-    target.ships + production*eta + 1 prediction but combat tied or
-    came up 1 short because one extra production tick happened during
-    the arrival turn. audit/2026-05-11-v3-snipe-critical-review.md §4.6.
-
-    This test checks our `needed` formula now uses (eta + 1).
-    """
-    target = _target(1, owner=1, ships=20, production=3, x=10.0 + 30.0, y=10.0)
-    world = _world([_src(garrison=9999), target], my_id=0)
-    intent = Intent(src_id=0, target_id=1, ships=21)
-    out = arrival_size([intent], world)
-    v = fleet_speed(21)
-    eta = math.ceil(30.0 / v)
-    # Production must run (eta + 1) times, not eta.
-    assert out[0].ships == 20 + 3 * (eta + 1) + 1
-    # Sanity: result strictly exceeds old formula by exactly `production`.
-    old_formula = 20 + 3 * eta + 1
-    assert out[0].ships == old_formula + 3
