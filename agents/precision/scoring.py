@@ -11,13 +11,38 @@ import math
 from agents.precision import intercept, prediction, sim
 
 
-def _capture_value(target: intercept.PlanetView, arrival_step: int, end_step: int) -> int:
-    """Lifetime production value of capturing this target at arrival_step."""
+def _capture_value(
+    target: intercept.PlanetView,
+    arrival_step: int,
+    end_step: int,
+    world: dict | None = None,
+    enemy_arrivals: list[prediction.Arrival] | None = None,
+) -> int:
+    """Lifetime production value of capturing this target at arrival_step.
+
+    Uses the PROJECTED owner at arrival (not target.owner from the current obs).
+    A neutral planet about to be captured by an enemy fleet IS effectively
+    enemy-owned at our arrival — doubled value for capturing it from them.
+    """
     remaining = max(0, end_step - arrival_step)
     base = target.production * remaining
-    if target.owner == -1:
+    # Determine projected owner at arrival.
+    projected_owner = target.owner  # fallback if no world context provided
+    if world is not None:
+        timeline = prediction.planet_garrison_projection_with_extras(
+            world, [], target.id,
+            horizon_steps=arrival_step - world["step"] + 2,
+            extra_arrivals=enemy_arrivals or [],
+        )
+        pre = [t for t in timeline if t[0] < arrival_step]
+        if pre:
+            projected_owner = pre[-1][1]
+    me = world["player"] if world is not None else None
+    if projected_owner == -1:
         return base
-    return 2 * base  # enemy: we gain production, they lose it
+    if me is not None and projected_owner == me:
+        return 0  # capturing our own planet has no value
+    return 2 * base  # enemy-owned (current or projected): denied + acquired
 
 
 def _defender_at(target: intercept.PlanetView, arrival_step: int, world: dict,
@@ -51,7 +76,8 @@ def shot_roi(
     # Strictly more to flip ownership (engine line 672).
     if shot.ship_count <= defender:
         return 0.0
-    value = _capture_value(target, arrival_step, end_step)
+    value = _capture_value(target, arrival_step, end_step, world=world,
+                          enemy_arrivals=enemy_arrivals)
     cost = max(1, shot.ship_count)
     return float(value) / float(cost)
 
@@ -74,7 +100,8 @@ def wave_roi(
     defender = _defender_at(target, arrival_step, world, enemy_arrivals)
     if total <= defender:
         return 0.0
-    value = _capture_value(target, arrival_step, end_step)
+    value = _capture_value(target, arrival_step, end_step, world=world,
+                          enemy_arrivals=enemy_arrivals)
     return float(value) / float(total)
 
 

@@ -8,6 +8,7 @@ The frozen v1 planner remains available as `plan_turn_v1` for benchmarking.
 """
 from __future__ import annotations
 
+import dataclasses
 import time
 from agents.precision import bundling, enemy_model, intercept, prediction, scoring
 
@@ -98,6 +99,12 @@ class _Candidate:
 
 WAVE_MARGIN = 1.10  # wave ROI must beat best single-source ROI by this factor
 
+# Strike-window timing on enemy captures: schedule shots to land just after a
+# projected enemy capture, when the post-capture garrison is at its weakest.
+STRIKE_WINDOW_ALPHA = 0.7   # confidence damping: enemy may not actually launch
+STRIKE_WINDOW_DELTAS = (1, 2, 3, 5)   # ticks after projected enemy arrival
+STRIKE_WINDOW_MAX_HORIZON = 100   # cap arrival_step at obs_step + this
+
 
 def plan_turn(
     world: dict,
@@ -154,6 +161,62 @@ def plan_turn(
             if roi > best_single_roi_per_target.get(tgt_id, 0.0):
                 best_single_roi_per_target[tgt_id] = roi
 
+    # 3a-bis. Strike-window candidates — shots timed to land just AFTER a
+    # projected enemy capture, when the target's defender is at its absolute
+    # weakest. The post-capture garrison projection is already handled by
+    # scoring._defender_at; we just need to propose the candidate shots that
+    # arrive in that window.
+    my_planets_owned = [p for p in world["planets"] if p.owner == me]
+    # Dedup projected arrivals by (planet, step) so greedy + worst overlaps
+    # don't duplicate work.
+    sw_seen: set[tuple[int, int]] = set()
+    sw_cache = intercept.SweepCache(world["omega"], obs_step)
+    for arr in list(enemy_greedy) + list(enemy_worst):
+        if (arr.planet_id, arr.step) in sw_seen:
+            continue
+        sw_seen.add((arr.planet_id, arr.step))
+        target = by_id.get(arr.planet_id)
+        if target is None:
+            continue
+        # Target shouldn't be one of OUR planets (we don't strike-window our own).
+        if target.owner == me:
+            continue
+        for delta in STRIKE_WINDOW_DELTAS:
+            arrival_step = arr.step + delta
+            if arrival_step <= obs_step or arrival_step > obs_step + STRIKE_WINDOW_MAX_HORIZON:
+                continue
+            for src in my_planets_owned:
+                if src.id == target.id:
+                    continue
+                # Respect defense reserve: find_shot_for_arrival sees src.ships
+                # but we must subtract the reserve manually since find_shot_for_arrival
+                # doesn't take a reserve. Build a synthetic source with reduced ships.
+                avail = src.ships - reserve.get(src.id, 0)
+                if avail < 1:
+                    continue
+                src_view = dataclasses.replace(src, ships=avail)
+                shot = intercept.find_shot_for_arrival(
+                    src_view, target, arrival_step, world, cache=sw_cache,
+                )
+                if shot is None:
+                    continue
+                # Score under both enemy hypotheses (defender prediction uses
+                # the same enemy_arrivals to keep the post-capture state).
+                roi_g = scoring.shot_roi(shot, target, world,
+                                          end_step=end_step, enemy_arrivals=enemy_greedy)
+                roi_w = scoring.shot_roi(shot, target, world,
+                                          end_step=end_step, enemy_arrivals=enemy_worst)
+                roi = min(roi_g, roi_w)
+                if roi <= 0:
+                    continue
+                damped = STRIKE_WINDOW_ALPHA * roi
+                candidates.append(_Candidate(
+                    shots=(shot,), tgt_id=target.id,
+                    arrival_step=arrival_step, roi=damped,
+                ))
+                if damped > best_single_roi_per_target.get(target.id, 0.0):
+                    best_single_roi_per_target[target.id] = damped
+
     # 3b. Waves — gated: emit only if no single-shot captures OR wave beats best
     # single-source ROI for that target by WAVE_MARGIN.
     if enable_waves:
@@ -181,6 +244,18 @@ def plan_turn(
                 shots=w.shots, tgt_id=w.target_id,
                 arrival_step=w.arrival_step, roi=roi,
             ))
+
+    # 3c. Deduplicate candidates by (sorted shot signature). Strike-window may
+    # produce a shot identical to one already in build_shot_menu (same src,
+    # tgt, eta, ship_count) — keep the higher-ROI one.
+    def _cand_key(c: _Candidate) -> tuple:
+        return tuple(sorted((s.src_id, s.tgt_id, s.eta, s.ship_count) for s in c.shots))
+    deduped: dict[tuple, _Candidate] = {}
+    for c in candidates:
+        k = _cand_key(c)
+        if k not in deduped or c.roi > deduped[k].roi:
+            deduped[k] = c
+    candidates = list(deduped.values())
 
     if not candidates:
         return []
