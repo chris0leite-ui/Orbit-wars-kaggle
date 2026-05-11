@@ -199,6 +199,44 @@ def test_endgame_neutral_outscores_endgame_enemy_at_equal_distance():
     assert ratio >= 1.3, f"expected endgame neutral preference; got ratio={ratio:.3f}"
 
 
+def test_affordability_filter_off_keeps_all_proposals():
+    """With PROPOSER_AFFORDABILITY_FILTER=False (default), the proposer
+    emits Missions even when src.ships < base_ships. Validates default
+    behaviour is unchanged."""
+    import lib.missions.snipe as snipe_mod
+    assert snipe_mod.PROPOSER_AFFORDABILITY_FILTER is False
+    world = _world(my_id=0, planets=[
+        _planet(0, 0, 0.0, 0.0, ships=3),                # small source
+        _planet(1, 1, 50.0, 0.0, ships=20, production=2),  # large target
+    ])
+    model = WorldModel.from_world(world)
+    ms = propose_snipe_missions(world, model)
+    assert len(ms) == 1
+    assert ms[0].ships == 21   # base_ships = target.ships + 1
+
+
+def test_affordability_filter_on_skips_unaffordable_pair():
+    """With PROPOSER_AFFORDABILITY_FILTER=True, the proposer skips
+    pairs where base_ships > src.ships."""
+    import lib.missions.snipe as snipe_mod
+    original = snipe_mod.PROPOSER_AFFORDABILITY_FILTER
+    try:
+        snipe_mod.PROPOSER_AFFORDABILITY_FILTER = True
+        world = _world(my_id=0, planets=[
+            _planet(0, 0, 0.0, 0.0, ships=3),                   # small
+            _planet(1, 1, 50.0, 0.0, ships=20, production=2),   # unaffordable
+            _planet(2, 1, 30.0, 0.0, ships=2, production=1),    # affordable
+        ])
+        model = WorldModel.from_world(world)
+        ms = propose_snipe_missions(world, model)
+        # Source 0 (3 ships) can't fund target 1 (needs 21) but can fund target 2 (needs 3).
+        targets = {m.target_id for m in ms}
+        assert 2 in targets
+        assert 1 not in targets
+    finally:
+        snipe_mod.PROPOSER_AFFORDABILITY_FILTER = original
+
+
 def test_endgame_boost_does_not_fire_pre_endgame():
     """Below ENDGAME_STEP, no endgame boost — neutral score uses
     NEUTRAL_BONUS only."""

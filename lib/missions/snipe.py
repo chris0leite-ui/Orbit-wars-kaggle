@@ -79,6 +79,18 @@ AIRTIME_PENALTY_WEIGHT = 1.0
 ENDGAME_STEP = 470
 ENDGAME_NEUTRAL_BONUS = 1.5
 
+# Affordability filter (v3.5+): when True, propose a Mission only if the
+# source planet can fund the base capture (target.ships + 1) ALONE. Phase-0
+# idle-trace showed ~45% of all idle classifications are
+# MECHANISM_DROP:validate, which fires on `intent.ships > src.ships`.
+# Filtering at proposal time lets the source's runner-up affordable target
+# win settle_plan's per-source greedy instead of being silently dropped
+# downstream. Drawback: blocks gang-up (multiple sources contributing to
+# one target) — but gang-up doesn't actually work today (each intent is
+# independently sized by arrival_size), so the filter is a near-pure
+# improvement to idle rate. Default OFF until validated by A/B.
+PROPOSER_AFFORDABILITY_FILTER = False
+
 
 def _player_totals(world: World) -> dict[int, float]:
     """Aggregate ships across planets + in-flight fleets for each player.
@@ -147,6 +159,10 @@ def propose_snipe_missions(world: World, model: WorldModel) -> list[Mission]:
         for t in targets:
             d = math.hypot(t.x - src.x, t.y - src.y)
             base_ships = max(1, int(t.ships) + 1)
+            if PROPOSER_AFFORDABILITY_FILTER and base_ships > src.ships:
+                # Source can't fund this capture alone; let its smaller
+                # affordable runner-up win settle_plan's per-source greedy.
+                continue
             v = fleet_speed(base_ships)
             eta = int(math.ceil(d / max(v, 1e-6))) if v > 0 else 0
             pred_owner = model.owner_at(t.id, eta)
