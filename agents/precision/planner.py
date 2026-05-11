@@ -72,15 +72,26 @@ def plan_turn_v1(
 # ---- v2: ROI + waves + robust min-max ------------------------------------
 
 class _Candidate:
-    """Wraps either a single Shot or a Wave for uniform handling."""
-    __slots__ = ("shots", "tgt_id", "ship_cost_by_src", "total_ships", "arrival_step", "roi")
+    """Wraps either a single Shot or a Wave for uniform handling.
+
+    `extra_threats` is the post-commitment enemy projection that the planner
+    attaches to wave candidates (iter 6 — closes the v2_frozen regression).
+    Single-shot candidates leave it as `()`. When the greedy/swap scores a
+    plan including this candidate, these arrivals are added to the worst-case
+    enemy projection so the wave's depletion of source planets is priced
+    correctly in the rollout.
+    """
+    __slots__ = ("shots", "tgt_id", "ship_cost_by_src", "total_ships",
+                  "arrival_step", "roi", "extra_threats")
 
     def __init__(self, shots: tuple[intercept.Shot, ...], tgt_id: int,
-                 arrival_step: int, roi: float):
+                 arrival_step: int, roi: float,
+                 extra_threats: tuple = ()):
         self.shots = shots
         self.tgt_id = tgt_id
         self.arrival_step = arrival_step
         self.roi = roi
+        self.extra_threats = extra_threats
         cost: dict[int, int] = {}
         for s in shots:
             cost[s.src_id] = cost.get(s.src_id, 0) + s.ship_count
@@ -443,7 +454,11 @@ def _greedy_pick(world, candidates, reserve, robust_score, max_picks, deadline,
             if time.perf_counter() >= deadline:
                 break
             trial = chosen_shots + cand.emit()
-            score = robust_score(trial)
+            # Aggregate all chosen candidates' extra_threats + this candidate's.
+            # Single-shot candidates have empty extra_threats; only waves carry
+            # non-empty post-commitment threat lists (iter 6).
+            agg_extras = tuple(t for c in chosen_cands for t in c.extra_threats) + cand.extra_threats
+            score = robust_score(trial, extra_threats=agg_extras)
             if score > best_score:
                 best_score = score
                 best_cand = cand
@@ -494,7 +509,9 @@ def _greedy_pick(world, candidates, reserve, robust_score, max_picks, deadline,
                 if time.perf_counter() >= deadline:
                     break
                 trial = shots_without + alt.emit()
-                score = robust_score(trial)
+                # Same as greedy: aggregate extra_threats of the surviving picks + alt.
+                agg_extras = tuple(t for c in chosen_without for t in c.extra_threats) + alt.extra_threats
+                score = robust_score(trial, extra_threats=agg_extras)
                 if score > best_alt_score:
                     best_alt_score = score
                     best_alt = alt
@@ -513,6 +530,34 @@ def _greedy_pick(world, candidates, reserve, robust_score, max_picks, deadline,
             break
 
     return chosen_shots, chosen_cands, src_remaining, base
+
+
+def _world_after_wave(world: dict, wave) -> dict:
+    """Build a shallow-cloned world dict with each wave source's `ships`
+    debited by its contribution to the wave.
+
+    Used by the iter-6 post-commitment projection: project the enemy's
+    response to our DEPLETED state. Only `planets` + `planet_by_id` are
+    re-built; other fields (omega, step, fleets, comets, …) are aliased,
+    which is safe because the enemy projection only reads them.
+    """
+    new_planets = []
+    new_by_id: dict[int, intercept.PlanetView] = {}
+    for p in world["planets"]:
+        delta = wave.shots and sum(
+            s.ship_count for s in wave.shots if s.src_id == p.id
+        )
+        if delta:
+            p_new = dataclasses.replace(p, ships=max(0, p.ships - delta))
+        else:
+            p_new = p
+        new_planets.append(p_new)
+        new_by_id[p_new.id] = p_new
+    return {
+        **world,
+        "planets": new_planets,
+        "planet_by_id": new_by_id,
+    }
 
 
 def plan_turn(
@@ -617,11 +662,45 @@ def plan_turn(
     # 3b. Wave bundling — gated strictly: only emit a wave when NO single-source
     # shot for that target has positive ROI. Single shots dominate when they
     # suffice; bundling is reserved for targets beyond reach of any one source.
+    #
+    # Iter-6: each emitted wave carries `extra_threats` = the enemy's worst
+    # response projected from the POST-WAVE world. This is folded into the
+    # rollout's worst-case projection when the greedy scores this candidate,
+    # so the wave pays for the depletion it creates at its sources.
     waves_deadline = time.perf_counter() + 0.15 * max(deadline - time.perf_counter(), 0)
     waves = bundling.candidate_waves(
         world, defense_reserve=reserve, extra_arrivals=enemy_worst,
         end_step=end_step, max_sources=2, deadline=waves_deadline,
     )
+    # Cache the post-wave projection by (src_id, post_wave_ships) signature.
+    # Many waves share source sets; this keeps the extra cost bounded.
+    post_resp_cache: dict[tuple, tuple] = {}
+
+    def _post_wave_threats(wv) -> tuple:
+        # Cache key: (src_id, ships_after_wave) per participating source.
+        # Different waves depleting the same sources to the same garrison level
+        # produce the same enemy response (which only depends on our resources).
+        per_src_cost: dict[int, int] = {}
+        for s in wv.shots:
+            per_src_cost[s.src_id] = per_src_cost.get(s.src_id, 0) + s.ship_count
+        sig = tuple(sorted(
+            (src, max(0, by_id[src].ships - cost))
+            for src, cost in per_src_cost.items()
+        ))
+        if sig in post_resp_cache:
+            return post_resp_cache[sig]
+        # Skip the extra projection if we're tight on time; fall back to ().
+        if time.perf_counter() >= deadline - 0.20:
+            post_resp_cache[sig] = ()
+            return ()
+        post_world = _world_after_wave(world, wv)
+        resp = enemy_model.project_enemy_actions_worst_for_us(
+            post_world, end_step=end_step,
+        )
+        resp_tup = tuple(resp)
+        post_resp_cache[sig] = resp_tup
+        return resp_tup
+
     for wv in waves:
         tgt = by_id.get(wv.target_id)
         if tgt is None:
@@ -629,14 +708,34 @@ def plan_turn(
         # Strict gate: skip the wave if any single-shot already captures it.
         if best_single_roi_per_target.get(wv.target_id, 0.0) > 0:
             continue
+        # Robustness gate: each source must retain at least 3× its wave
+        # contribution post-firing — i.e. spending ≤ 25% of garrison per
+        # source per wave. Empirically tuned to close the v2_frozen
+        # regression: the 50%-spend threshold was too generous and left
+        # sources captureable by same-aggression opponents.
+        per_src_cost: dict[int, int] = {}
+        for s in wv.shots:
+            per_src_cost[s.src_id] = per_src_cost.get(s.src_id, 0) + s.ship_count
+        too_thin = False
+        for src_id, cost in per_src_cost.items():
+            src = by_id.get(src_id)
+            if src is None or src.ships - cost < 3 * cost:
+                too_thin = True
+                break
+        if too_thin:
+            continue
+        # Post-commitment projection: enemy's counter-strikes after our wave.
+        post_threats = _post_wave_threats(wv)
+        enriched_worst = list(enemy_worst) + list(post_threats)
         roi_g = scoring.wave_roi(list(wv.shots), tgt, world, end_step=end_step, enemy_arrivals=enemy_greedy)
-        roi_w = scoring.wave_roi(list(wv.shots), tgt, world, end_step=end_step, enemy_arrivals=enemy_worst)
+        roi_w = scoring.wave_roi(list(wv.shots), tgt, world, end_step=end_step, enemy_arrivals=enriched_worst)
         roi = min(roi_g, roi_w)
         if roi <= 0:
             continue
         candidates.append(_Candidate(
             shots=wv.shots, tgt_id=wv.target_id,
             arrival_step=wv.arrival_step, roi=roi,
+            extra_threats=post_threats,
         ))
 
     # 3c. Dedup by sorted shot signature.
@@ -652,11 +751,20 @@ def plan_turn(
     if not candidates:
         return []
 
-    def robust_score(plan: list[intercept.Shot]) -> float:
+    def robust_score(plan: list[intercept.Shot],
+                     extra_threats: tuple = ()) -> float:
+        """Score a plan under both enemy hypotheses.
+
+        `extra_threats` is an optional list of additional projected enemy
+        Arrivals (typically wave-specific post-commitment counter-strikes).
+        Folded into the worst-case projection only, since they represent
+        adversarial response to OUR commitments.
+        """
+        enriched_worst = enemy_worst + list(extra_threats)
         sg = fast_sim.plan_score(world, plan, horizon_steps=horizon_steps,
                                   extra_arrivals=enemy_greedy)
         sw = fast_sim.plan_score(world, plan, horizon_steps=horizon_steps,
-                                  extra_arrivals=enemy_worst)
+                                  extra_arrivals=enriched_worst)
         return 0.7 * sg + 0.3 * sw
 
     chosen_shots, chosen_cands, src_remaining, base = _greedy_pick(
