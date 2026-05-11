@@ -1,144 +1,139 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-11 (Day 2 wrap) by the bootstrap-agentic-systems-lqnm6
-> branch. Format budget ≤150 lines. Prior bootstrap-day-1 + competition-
-> strategy-brainstorm sections archived to
-> `audit/archive-2026-05-11-handover-day1-bootstrap.md`.
+> Last written: 2026-05-11 PM (Day 2 wrap PM) by the
+> `claude/analyze-submission-logs-dFHeS` branch. Format budget ≤150 lines.
+> Prior `bootstrap-agentic-systems-lqnm6` wrap archived to
+> `audit/archive-2026-05-11-handover-lqnm6.md`.
 
 ## Where we are
 
 - **Comp:** Orbit Wars (slug `orbit-wars`). Deadline 2026-06-23 23:59 UTC →
   **43 days remaining.**
-- **Submitted agent:** v3_snipe — `submissions/v3_snipe.py` (61.7 KB).
-  Submission **ID 52544634**, pushed 2026-05-11 12:16:01 UTC, status
-  **PENDING** at wrap time (kaggle CLI 503 on re-poll; will check next
-  session). Rolling-last-2: `[v2 (μ=974.3), v3_snipe (PENDING)]`.
-  v1.2/roi (μ=1006.9) evicted by the v3 push.
-- **Gap to top-10 prize:** v2 at 974.3 → +473μ to cliff at 1447.6
-  (ShunkiKyoya). v3 expected to lift +30-80μ; not enough alone — see
-  next-session #5 below.
-- **Daily submission budget:** 2/5 used today (v2 04:04 UTC + v3_snipe
-  12:16 UTC). 3 slots remain.
-- **Test suite:** 228/228 green. Bundle E.2 self-play 0/10 crashes.
+- **Submitted agent:** v3_snipe, **submission #52544634**, status COMPLETE
+  with **publicScore μ=1055.5** (+90.2 over v2). Rolling-last-2:
+  `[v2 (μ=965.3), v3_snipe (μ=1055.5)]`. v1.2/roi (μ=1006.9) was evicted.
+- **Gap to top-10 prize:** v3_snipe at 1055.5 → **+392 μ** to cliff at
+  1447.6 (ShunkiKyoya).
+- **Daily submission budget:** 0/5 used today. 5 slots remain.
+- **Live winrate** (34 games): 14W/20L (41.2%); 2P 47.1% / 4P 35.3%.
+  TrueSkill places us against stronger opponents than the absolute
+  winrate suggests.
+- **PR #10 open** to main: 100%-parity gates + v3.2 (arrival_size adversary
+  stacking + DEFAULT_HORIZON 250) + v3.4 partial (4P spoiler retained,
+  neutral/comet bonus disabled after regression). Awaiting merge —
+  direct push blocked by branch protection (403).
+- **Test suite:** 232/232 non-slow tests green.
 
-## Today's progress
+## Today's PM progress
 
-14 commits on this branch (657cddd .. f43e23f). Load-bearing only:
+Branch `claude/analyze-submission-logs-dFHeS`, ~14 commits this session.
+Load-bearing only:
 
-1. **Bootstrap infra hardening:** workers default = `cpu_count()`,
-   `scripts/_agent_paths.py` (shared resolver), `scripts/ffa_tournament.py`
-   + `scripts/ffa_panel.py` (4P FFA fixture — 33% of ladder games are 4P
-   per live-replay analysis), `scripts/live_episode_summary.py` (post-
-   submit diagnostic).
-2. **Block E mission framework lands:** `lib/{mission,planner,missions/
-   snipe,missions/reinforce}.py` + `agents/v3_snipe/`. Initial v3.0 was
-   bit-for-bit parity with v2 (32/32 draws at step 500); v3.1 fills out
-   the portfolio with reinforce + same-turn ledger.
-3. **Lookahead probes (Phase 1a/1b/2):** static WorldModel captures
-   only 14% of available predictive signal at step 50; one-turn action
-   injection adds nothing (falsified); `env.clone()` + K-step forward
-   sim closes the gap completely — **Sim<K=50> AUC = 0.952, matches
-   perfect oracle.** Cheapest cost: 280 ms per evaluation. Audit:
-   `audit/2026-05-11-lookahead-phase{1a,1b,2}-*.md`.
-4. **v3.1 v3_lookahead MVP:** drop-one candidate enumerator + Sim<K=10>
-   scorer. 8-seed showed 68.8% lift; 32-seed retest = 50/50 parity.
-   Framework works; candidate set is too narrow. Audit:
-   `audit/2026-05-11-v3-lookahead-mvp-parity.md`.
-5. **Live fleet-loss fix:** `lib/trajectory.predict_fleet_fate` ray-casts
-   the FULL fleet trajectory until first collision. Replaces endpoint-only
-   sun_avoid / oob_guard / path_clears_other_planets. **Capture probe:
-   reached 77.2% → 93.0% → 97.2%; OOB 7.5% → 2.6% → 0.3%; sun 3.2% →
-   0.1% → 0.0%.**
-6. **The four ROI-doc shortcomings:** all fixed.
-   - Comet lifetime: `comet_remaining_lifetime` helper; time_to_hold caps
-     by `len(path) - path_index` for comet targets.
-   - Defence: new `lib/missions/reinforce.py` builds reinforcement
-     missions when WorldModel timeline predicts our planet to flip.
-   - Same-turn ledger: `settle_plan` tracks per-target pending-arrivals
-     from earlier this-turn picks; gang-up allowed, overcommit skipped.
-   - Mission classification: v3_snipe now calls snipe + reinforce
-     builders, settle_plan arbitrates across classes.
-7. **v3_snipe verification:** 32-seed 2P vs v2 = 37/64 = **57.8%**
-   (Wilson [45.6, 69.2]); 16-seed 4P FFA = 58/64 = 90.6% (parity within
-   Wilson overlap vs v2 92.2% / roi_baseline 93.8%). E.2 gate 0/10.
-8. **Bundler fix:** twice in one day, new lib modules silently broke
-   bundles. First bundle attempt crashed 10/10 (`NameError: 'propose_
-   snipe_missions' is not defined`); `DEFAULT_LIB_ORDER` now includes
-   `mission`, `missions/snipe`, `missions/reinforce`, `planner`.
+1. **Local↔live parity 100%.** Two postmortem bugs fixed: off-by-one
+   on `steps[t].action` indexing (kaggle_environments stores action at
+   `steps[t+1]`) and missing `obs.step` backfill for non-seat-0 obs.
+   Self-play match rate jumped from 33.9% to **100%**; live replays
+   from 53% to 100%. Permanent gates: `tests/test_replay_parity.py`,
+   post-bundle self-play parity check in `scripts/bundle_agent.py`,
+   sha256 bundle hash printed at bundle time.
+2. **v3.2 lib changes** (`lib/mechanism.py::arrival_size` adversary-
+   stacking via WorldModel + `lib/world_model.DEFAULT_HORIZON` 110→250).
+   2P 32-seed A/B vs frozen v3_snipe: **57.8% Wilson [45.6%, 69.1%]**
+   (matches v3_snipe's pre-live calibration). 4P FFA 16-seed: **93.8%
+   vs frozen 90.6%** (+3.2pp directional lift).
+3. **v3.3 blanket off-by-one fix REVERTED.** 32-seed A/B: 27/64=42.2%
+   Wilson [30.9%, 54.4%]. Static targets get over-sized because the
+   env's center-to-center distance over-estimates eta by
+   `(r_src + r_target)/v`.
+4. **v3.4 neutral/comet bonus REVERTED.** Tried `NEUTRAL_BONUS=1.5,
+   COMET_BONUS=1.3` based on live finding "78.6% of comets sit
+   neutral, only 4.9% to us." 32-seed A/B regressed to 28.1% Wilson
+   [18.6%, 40.1%] — flat multiplier tips target selection toward easy
+   neutrals when contested enemy planets are the binding constraint.
+5. **v3.4 4P SPOILER** (`LEADER_MULTIPLIER=1.5` when our rank≥2 in
+   ≥3P games): kept; 2P A/B confirmed no-op in 2P (54/64 draws).
+   **Pointed 4P FFA test** (v3.4 focal vs 3×v3.2 background) was
+   running at session wrap — read its result before deciding whether
+   to retain or revert.
+6. **Postmortem Fleet-schema fix** (scripts/episode_postmortem.py:211):
+   `init_entry[5]` → `init_entry[6]` (Fleet schema is `[id, owner, x,
+   y, angle, from_planet_id, ships]`; we were reading from_planet_id).
+   Per-episode `fleet['ships']` field is now meaningful; aggregate
+   outcome categorization (captured/bounced/etc.) was unaffected.
+7. **Games analysis write-up** (`audit/2026-05-11-v3-snipe-games-
+   analysis.md`): five distinct weakness patterns + ranked improvement
+   backlog. Plus the original critical review (`audit/2026-05-11-v3-
+   snipe-critical-review.md`).
 
-## Falsified-or-dead
+## Falsified-or-dead this session
 
-- **One-turn action injection** as a cheap lookahead extension (Phase
-  1b). Hours50 ≈ Hall50 ≈ H50 within 0.005 AUC across the whole probe
-  table. The 32pp oracle gap lives in the SEQUENCE of K future turns,
-  not the boundary turn.
-- **Drop-one candidate enumerator** as a Sim<K> lift mechanism (v3.1
-  lookahead MVP). 32-seed 50/50 parity vs v2. Drop-one is purely
-  subtractive — never proposes candidates v3_snipe didn't already
-  consider; v2's launches are mostly individually positive-EV so the
-  scorer rarely disagrees enough to flip a decision.
-- **No-double-commit as a planner-level filter** (first settle_plan
-  attempt at Block E). Hurt parity with v2 on dense boards where
-  legitimate gang-up was being prevented. Replaced with same-turn
-  arrival ledger (gang-up allowed when defender exceeds one source's
-  fleet).
+- **Blanket `+1` production tick in `arrival_size`** (v3.3): regressed
+  in 32-seed A/B because static targets are already over-sized by the
+  center-to-center distance estimate.
+- **Flat `NEUTRAL_BONUS=1.5` + `COMET_BONUS=1.3`** in snipe scoring
+  (v3.4 first pass): regressed in 32-seed 2P A/B.
+- **The "one ship too little" near-miss claim from the critical
+  review §4.6** is real (106 of 518 enemy bounces within ±5 of
+  threshold) but doesn't admit a flat-formula fix. Needs a
+  selective approach.
 
 ## Next-session first-action
 
-Ranked. EV is from local-panel + live-data evidence; cost is wallclock.
+Ranked. EV-priority, cost on local CPU.
 
-1. **Pull v3 live μ + episode summary** (cost: 5 min, EV: high).
-   `KAGGLE_API_TOKEN="$KAGGLE_KEY" kaggle competitions submissions
-   orbit-wars` confirm v3 reached COMPLETE. Then
-   `python -m scripts.live_episode_summary 52544634 --pull` for the
-   2P/4P split + who-beats-us breakdown. **Calibration:** does the
-   32-seed 2P 57.8% point estimate translate to a live μ lift, or
-   does the Wilson lo at 45.6% land us at parity with v2 (974)?
-2. **Comet_aim re-enablement test** (cost: ~1h, EV: medium). The
-   mechanism was excluded for a 22.5% ablation regression; the
-   regression was likely caused by the same endpoint-only path-check
-   bug we fixed today. Add to DEFAULT_MECHANISMS in a v3.2 build;
-   local A/B vs v3_snipe; ship if lift.
-3. **Recapture mission class** (cost: ~2-3h, EV: medium). Sibling
-   to reinforce — for planets we recently lost (or are about to lose
-   despite reinforce being too late), score "can we re-take this
-   before the enemy fortifies?" Roman has this; known-value mission
-   class.
-4. **(THE CEILING-RAISER) Richer Sim<K> candidate enumerator**
-   (cost: 1-2 days, EV: high but uncertain). Two principled options:
-   (a) sibling-strategy candidate — score v3_snipe's choice AND a
-   different strategy's choice via Sim<K>, pick best. (b) per-source
-   top-2 swap — for sources where the top mission has the smallest
-   margin over its second-best, propose swapping. Phase 2 oracle gap
-   was 32pp; this is mathematically the only path with enough headroom
-   to close the +473μ gap to top-10.
-5. **(Defer)** RL training (B.4), 4P-specific tuning (premature until
-   we see actual 4P ladder behaviour of v3), full Roman mission portfolio
-   (gang_up / elimination — diminishing returns past recapture without
-   lookahead in the loop).
+1. **Read the pointed 4P FFA result** (cost: <1 min, EV: decides
+   v3.4 fate). `cat /tmp/claude-0/.../tasks/b84x27box.output` or
+   `ls -la audit/tournaments/ffa-panel-*.json`. If v3.4-spoiler
+   wins >30% (chance vs 3 identical = 25%), bundle as v3.4 and
+   stage for submit. If parity/regression, revert spoiler (one-line
+   constant change in `lib/missions/snipe.py`).
+2. **Merge PR #10.** Direct push to main is 403-blocked. PR is
+   the only path. Branch:
+   `claude/analyze-submission-logs-dFHeS`.
+3. **PI submit decision** for v3.2 (or v3.4). Rule 1 requires
+   PI-authorized push. Bundle paths:
+   - v3.2: `submissions/v3_2.py` sha256:`ce304fff67c5f879`
+   - v3.4-spoiler-only: `submissions/v3_4.py` sha256:`410b3c2ee370f943`
+   Rolling-last-2 eviction record per the §6.3 critique discipline.
+4. **Selective comet/neutral engagement** (v3.5). Flat multiplier
+   regressed; try distance-bounded (`d < 30`) or opening-phase
+   (`step < 50`) variants. The 78.6% neutral-comet finding is real
+   but the shape matters.
+5. **Recapture mission class** (P4 from games analysis). Most
+   relevant improvement for the comeback-gap finding: in wins after
+   home loss, we recover to 28 planets; in losses, 6. Roman has
+   recapture; we don't. ~4-6h.
+6. **(DEFER)** RL training; gang_up mission class (H4); 4P score-
+   function rebalance for bigger fleets (P3).
 
-## Pointers (added today)
+## Pointers (added/updated this session)
 
-- `audit/2026-05-11-lookahead-phase1a-substrate-fitness.md` — oracle
-  gap measurement: static WorldModel captures 14% of available signal.
-- `audit/2026-05-11-lookahead-phase1b-action-injection.md` — one-turn
-  action injection falsified; signal lives in K-turn sequence.
-- `audit/2026-05-11-lookahead-phase2-forward-sim.md` — env.clone() +
-  step() Sim<K> matches perfect oracle (AUC 0.952).
-- `audit/2026-05-11-v3-lookahead-mvp-parity.md` — drop-one candidates
-  yield parity; framework needs richer enumerator.
-- `audit/2026-05-11-block-e-snipe-mvp.md` — Block E v3.0 refactor parity
-  vs v2; no-double-commit planner rule falsified.
-- `audit/2026-05-11-postmortem-bootstrap-agentic-systems-lqnm6.md` —
-  this session's decision-quality review. Three promotion candidates
-  awaiting PI ratification.
-- `audit/tournaments/20260511T{052542,055428,055652,064949,070745,
-  102311,112936}Z.json` + `ffa-panel-*` — all today's tournament JSONs.
-- `audit/lookahead/20260511T0{61813,62658,63556}Z.json` — Phase 1a/1b/2
-  probe artifacts.
-- `audit/2026-05-11-capture-success-probe.json` — capture probe
-  after-the-fix (97.2% reached).
-- `audit/live-episodes/52532938/summary.json` — v2 live-episode
-  aggregator output (15/21 wins, 2P 64% / 4P 86% split).
-- `submissions/v3_snipe.py` — 61.7 KB bundle, gitignored; rebuild via
-  `python -m scripts.bundle_agent agents/v3_snipe`.
+- `audit/2026-05-11-v3-snipe-critical-review.md` — critical review of
+  submission 52544634 (live μ + error breakdown + project critique).
+- `audit/2026-05-11-v3-snipe-games-analysis.md` — five distinct
+  weakness patterns + ranked improvement backlog.
+- `audit/archive-2026-05-11-handover-lqnm6.md` — prior session's
+  HANDOVER.
+- `audit/live-episodes/52544634/` + `52532938/` — pulled + postmortem-
+  processed live replays (100% action match).
+- `audit/live-episodes/SELFPLAY/` — gold-standard parity test fixture.
+- `audit/tournaments/20260511T1[5-9]*Z.json` + `ffa-panel-*` —
+  A/B + FFA artifacts for v3.2, v3.3 (regressed), v3.4.
+- `scripts/episode_postmortem.py` — new replay-driven instrumentation
+  diagnostic (100% action match on live replays).
+- `tests/test_replay_parity.py` — permanent parity gate against
+  `submissions/v3_snipe_frozen.py`.
+- `tests/test_mission_snipe_priority.py` — 7 tests for the neutral/
+  comet bonus + 4P spoiler (bonuses disabled, spoiler active).
+- `submissions/v3_2.py` — v3.2 bundle (validated, ready to submit).
+- `submissions/v3_4.py` — v3.4 spoiler-only bundle (pending 4P
+  pointed-test validation).
+- `submissions/v3_snipe_frozen.py` — frozen v3_snipe baseline (parity
+  test pin).
+
+## PR status
+
+**PR #10** (https://github.com/chris0leite-ui/Orbit-wars-kaggle/pull/10):
+`claude/analyze-submission-logs-dFHeS` → `main`. Contains all of:
+parity infrastructure, v3.2 (validated), v3.3 (reverted), v3.4
+(spoiler retained, bonuses disabled). Awaiting human merge.

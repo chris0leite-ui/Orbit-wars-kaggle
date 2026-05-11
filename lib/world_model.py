@@ -29,9 +29,13 @@ from dataclasses import dataclass
 from lib.combat import resolve_arrivals
 from lib.fleet import speed as fleet_speed
 
-# Match Roman's SIM_HORIZON. Long enough to cover most fleet flights;
-# short enough that timeline-build is cheap.
-DEFAULT_HORIZON = 110
+# Raised 110 → 250 (2026-05-11): reinforce class was firing 0.2
+# candidates/turn because long-runway threats were invisible past
+# step 110 + eta. Matches the EPISODE_STEPS/2 framing in the score
+# formula (`time_to_hold = 500 - step - eta`); timeline-build cost
+# scales linearly so per-turn p95 should remain well under the 1s
+# actTimeout. See audit/2026-05-11-v3-snipe-critical-review.md §P2.
+DEFAULT_HORIZON = 250
 
 
 def fleet_target_planet(fleet, planets, max_horizon: int = DEFAULT_HORIZON):

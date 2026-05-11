@@ -1,0 +1,49 @@
+{
+  "n_episodes": 1,
+  "by_result": {
+    "win": 1
+  },
+  "by_size_result": {
+    "2": {
+      "win": 1
+    }
+  },
+  "n_turns": 499,
+  "action_match_rate": 1.0,
+  "n_turns_compared": 499,
+  "candidates_per_turn": {
+    "snipe": 223.93587174348698,
+    "reinforce": 0.6092184368737475
+  },
+  "settled_per_turn": 11.995991983967937,
+  "idle_source_rate": 0.0,
+  "drops_per_turn": {
+    "validate": 5.915831663326653,
+    "arrival_size": 5.028056112224449,
+    "lead_aim_v2": 0.0,
+    "sun_avoid": 0.022044088176352707,
+    "path_clears_other_planets": 0.10420841683366733,
+    "oob_guard": 0.03406813627254509
+  },
+  "drops_total": {
+    "validate": 2952,
+    "arrival_size": 2509,
+    "lead_aim_v2": 0,
+    "sun_avoid": 11,
+    "path_clears_other_planets": 52,
+    "oob_guard": 17
+  },
+  "fleet_outcomes_total": {
+    "captured": 186,
+    "reinforced_self": 189,
+    "bounced_enemy": 47,
+    "bounced_neutral": 3,
+    "vanished_in_space": 14,
+    "alive_at_end": 3
+  },
+  "dt_ms_p95": 20.48,
+  "dt_ms_p99": 27.16,
+  "submission_id": "SELFPLAY",
+  "team_name": "ChrisLeiteScha",
+  "elapsed_s": 4.3
+}

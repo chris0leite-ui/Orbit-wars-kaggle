@@ -86,7 +86,8 @@ def pull_missing_replays(submission_id: str, sub_dir: Path,
     """
     pulled = 0
     for row in episode_rows:
-        if "COMPLETED" not in row.get("state", ""):
+        state = row.get("state") or ""
+        if "COMPLETED" not in state:
             continue
         eid = row["id"]
         out = sub_dir / f"episode-{eid}-replay.json"
