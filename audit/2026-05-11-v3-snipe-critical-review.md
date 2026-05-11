@@ -15,6 +15,33 @@ planets (v2: 7.6%), having traded the physics-loss bucket (vanish/sun/oob
 went 18%→9%) for an under-sized-fleet bucket. 4P FFA is the worst seat
 (35.3%, sharply below 2P's 47.1%), reversing a v2 anecdotal high-water mark.
 
+## Update — Phase 1 remediation status (2026-05-11 PM)
+
+1. **Local↔live parity gap closed.** Diagnostic landed at 100% action-match
+   for v3_snipe's 34 live replays after two postmortem bugs were fixed:
+   off-by-one on `steps[t].action` indexing (kaggle_environments stores
+   the action at the NEXT step) and missing `obs.step` backfill for
+   non-seat-0 observations (JSON serialization strips it). See commit
+   "parity: 100% local↔live action match for v3_snipe replays" and
+   `tests/test_replay_parity.py`. The 53% rate that opened this review
+   was instrumentation noise, not a v3_snipe / env divergence.
+2. **P1 + P2 landed.** `arrival_size` now uses `WorldModel.ships_at` for
+   adversary stacking; `DEFAULT_HORIZON` raised 110 → 250. Tests cover
+   the new behaviour (12 arrival_size cases total, 4 new). 225/225
+   non-slow tests pass.
+3. **32-seed 2P A/B v3.2 vs v3_snipe_frozen: 57.8% (37/64), Wilson
+   [45.6%, 69.1%].** Same point estimate as v3_snipe's local-vs-v2
+   (which lifted +90.2μ live). Wilson-lo is below the 50% gate but
+   the calibration argument is "v3_snipe's pre-submit local A/B
+   produced this exact same signal."
+4. **P3 retracted.** `lib/missions/reinforce.py:84` sizing
+   (`cost = post_flip + 1`) is mathematically correct for the
+   single-enemy-attacker case. The §4.1 critique below needs a
+   correction — no code change pending a concrete failure case from
+   live data.
+
+## TL;DR (original, retained for continuity)
+
 **Three concrete defects, ordered by EV/cost:**
 1. `arrival_size` is mis-calibrated for v3's more-ambitious target selection
    — fleets arrive too small and bounce. (`lib/mechanism.py::arrival_size`)
