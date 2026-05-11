@@ -34,7 +34,13 @@ went 18%→9%) for an under-sized-fleet bucket. 4P FFA is the worst seat
    (which lifted +90.2μ live). Wilson-lo is below the 50% gate but
    the calibration argument is "v3_snipe's pre-submit local A/B
    produced this exact same signal."
-4. **P3 retracted.** `lib/missions/reinforce.py:84` sizing
+   Tournament artifact: `audit/tournaments/20260511T152648Z.json`.
+4. **16-seed 4P FFA panel: v3.2 60/64 (93.8%, Wilson [85.0, 97.5])
+   vs frozen 58/64 (90.6%, Wilson [81.0, 95.6])** against the
+   `{weakest, enemy_first, baseline}` background. +3.2pp directional
+   lift, no regression — the 4P-worst-seat concern from §6.5 doesn't
+   materialise. Tournament: `audit/tournaments/ffa-panel-20260511T185817Z.json`.
+5. **P3 retracted.** `lib/missions/reinforce.py:84` sizing
    (`cost = post_flip + 1`) is mathematically correct for the
    single-enemy-attacker case. The §4.1 critique below needs a
    correction — no code change pending a concrete failure case from
