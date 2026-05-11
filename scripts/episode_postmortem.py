@@ -117,13 +117,33 @@ def install_hooks() -> None:
     orig_mechs = list(M.DEFAULT_MECHANISMS)
 
     def _wrap_mech(name, fn):
-        def shim(intents, world):
+        # Preserve the wrapped mechanism's arg-count so realize() routes
+        # the optional `model` argument correctly (mechanisms with 3-arg
+        # signature get model passed; 2-arg ones don't). Without this,
+        # arrival_size silently runs in model=None mode under the postmortem.
+        code = getattr(fn, "__code__", None)
+        argcount = code.co_argcount if code is not None else 2
+
+        if argcount >= 3:
+            def shim3(intents, world, model=None):
+                n_in = len(intents)
+                out = fn(intents, world, model)
+                TELEMETRY["drops"][name] += max(0, n_in - len(out))
+                return out
+            shim3.__name__ = name
+            # Force co_argcount to 3 via a code-object hack? No — Python
+            # exposes __code__ as immutable. The dispatcher in
+            # lib/intent.realize already reads __code__.co_argcount;
+            # this nested def has co_argcount=3 because of the signature.
+            return shim3
+
+        def shim2(intents, world):
             n_in = len(intents)
             out = fn(intents, world)
             TELEMETRY["drops"][name] += max(0, n_in - len(out))
             return out
-        shim.__name__ = name
-        return shim
+        shim2.__name__ = name
+        return shim2
 
     M.DEFAULT_MECHANISMS[:] = [_wrap_mech(f.__name__, f) for f in orig_mechs]
 
@@ -324,7 +344,16 @@ def analyse_episode(path: Path, team_name: str) -> dict:
         if ours["status"] != "ACTIVE":
             continue
         obs = ours["observation"]
-        recorded_action = ours.get("action") or []
+        # kaggle_environments serialization strips `step` from non-seat-0
+        # observations even though the live env populates it for every agent.
+        # Backfill so the agent sees the same step it saw live.
+        if obs.get("step") is None:
+            obs = dict(obs)
+            obs["step"] = t
+        # kaggle_environments stores the action that PRODUCED the NEXT step's
+        # state. The agent observing steps[t] emits an action that lands at
+        # steps[t+1][seat]["action"]. (Confirmed via self-play trace.)
+        recorded_action = (steps[t + 1][our_seat].get("action") or []) if t + 1 < n_steps else []
 
         reset_telemetry()
         t0 = time.perf_counter()
