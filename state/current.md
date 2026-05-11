@@ -9,7 +9,7 @@ days_to_deadline: 43                     # 2026-06-23 23:59 UTC minus today
 current_submitted_agent: precision_v3    # rolling-last-2: [v3_snipe (1014.7), precision_v3 (PENDING)]; v2 (966.1) evicted
 last_kernel_push: 2026-05-11 17:00 UTC   # precision_v3 single-file
 last_submission_id: 52552139             # iter 7: depth-2 minimax + cumulative iter-1..6 work
-last_submission_status: PENDING          # validation episode running
+last_submission_status: COMPLETE         # validation passed; μ₀=600.0; ladder rating will update over hours/days
 last_submission_file: submissions/precision_v3.py  # single-file bundle from agents/precision/{sim,prediction,fast_sim,intercept,scoring,enemy_model,bundling,planner}.py + agent(obs) at bottom. Built via scripts/pack_precision_single.sh.
 last_submission_message: |
   precision_v3 single-file (iter 7): event-driven sim, post-commitment wave
