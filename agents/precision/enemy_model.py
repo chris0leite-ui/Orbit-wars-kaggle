@@ -162,3 +162,68 @@ def project_enemy_actions_worst_for_us(
             ew, "worst_for_us", k_shots_per_player, end_step, our_player=our,
         ))
     return arrivals
+
+
+import dataclasses as _dc
+
+
+def _apply_arrivals(world: dict, arrivals: list[prediction.Arrival]) -> dict:
+    """Return a shallow-cloned world with each arrival's combat resolved on its
+    target planet. Source garrisons are NOT debited here (the projected fleet
+    has already been "launched" — we only model its impact).
+
+    Used by `project_two_turns` to advance the world after the first round of
+    enemy launches, so the second round projects from a realistic future state.
+    """
+    if not arrivals:
+        return world
+    by_planet: dict[int, list[tuple[int, int]]] = {}
+    for arr in arrivals:
+        by_planet.setdefault(arr.planet_id, []).append((arr.owner, arr.ships))
+
+    new_planets = []
+    new_by_id: dict = {}
+    for p in world["planets"]:
+        atks = by_planet.get(p.id)
+        if atks:
+            new_owner, new_ships = sim.combat_resolve(p.owner, p.ships, atks)
+            p_new = _dc.replace(p, owner=new_owner, ships=new_ships)
+        else:
+            p_new = p
+        new_planets.append(p_new)
+        new_by_id[p_new.id] = p_new
+
+    # Advance step to the latest arrival step (worst-case for "what does
+    # the enemy do next?"). Bounded; no further computation depends on it
+    # except for end_step ROI horizon.
+    new_step = max(world["step"], max(arr.step for arr in arrivals))
+    return {
+        **world,
+        "planets": new_planets,
+        "planet_by_id": new_by_id,
+        "step": new_step,
+    }
+
+
+def project_two_turns(
+    world: dict,
+    k_shots_per_player: int = 1,
+    end_step: int = sim.EPISODE_STEPS,
+) -> list[prediction.Arrival]:
+    """Two-turn lookahead worst-for-us enemy projection.
+
+    t1: project enemy's worst response to the CURRENT world.
+    t2: project enemy's worst response to the post-t1 world (assuming t1
+        landed and resolved combat).
+
+    Returns a list of Arrivals from BOTH t+1 and t+2. The second-turn
+    projections catch threats that emerge when our position is weakened by
+    the first round (e.g., a fleet we couldn't capture this turn becomes
+    cheap to capture after their first-turn strike).
+    """
+    t1 = project_enemy_actions_worst_for_us(world, k_shots_per_player, end_step)
+    if not t1:
+        return []  # no first-turn threat → no second-turn cascade either
+    world_t1 = _apply_arrivals(world, t1)
+    t2 = project_enemy_actions_worst_for_us(world_t1, k_shots_per_player, end_step)
+    return list(t1) + list(t2)

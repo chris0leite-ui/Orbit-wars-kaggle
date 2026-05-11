@@ -6,22 +6,23 @@
 ```yaml
 date: 2026-05-11
 days_to_deadline: 43                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v2              # rolling-last-2: [v1.2/roi (996.5), v2 (PENDING)]; v1.1 EVICTED
-last_kernel_push: 2026-05-11 04:04:07 UTC
-last_submission_id: 52532938             # `kaggle competitions submissions orbit-wars`
+current_submitted_agent: precision_v3    # rolling-last-2: [v3_snipe (1014.7), precision_v3 (PENDING)]; v2 (966.1) evicted
+last_kernel_push: 2026-05-11 17:00 UTC   # precision_v3 single-file
+last_submission_id: 52552139             # iter 7: depth-2 minimax + cumulative iter-1..6 work
 last_submission_status: PENDING          # validation episode running
-last_submission_file: submissions/v2.py  # bundle of agents/v2/main.py + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,mechanism}; targeting = roi + WorldModel.owner_at predictive dedup; mechanism set = [validate, arrival_size, lead_aim_v2, sun_avoid, path_clears_other_planets, oob_guard]
+last_submission_file: submissions/precision_v3.py  # single-file bundle from agents/precision/{sim,prediction,fast_sim,intercept,scoring,enemy_model,bundling,planner}.py + agent(obs) at bottom. Built via scripts/pack_precision_single.sh.
 last_submission_message: |
-  v2: WorldModel-aware roi (skip targets predicted ours at arrival; per-source
-  re-pick). Block A physics upgrade (5-iter aim+search_safe_intercept,
-  sun-safe arrival-aware, path_clears_other_planets, oob_guard) + Block D
-  worldmodel dedup. 64% mean panel WR, 69% h2h vs frozen v1.2-equiv,
-  86% vs broader panel. audit/2026-05-10-block-c-d-arrival-ledger-and-v2.md
-tournament_rank_today: v1.2/roi=996.5, v2=PENDING   # rolling-last-2 active; v1.1 (565.7) evicted by v2 submit
-our_best_rank: μ=996.5 (#52518060, v1.2/roi) — pending v2 validation
+  precision_v3 single-file (iter 7): event-driven sim, post-commitment wave
+  gate (3x source-retention), strike-window timing, depth-2 enemy minimax.
+  83% vs main_v2 in 6 mirror games (ship-ratio 2.04). 100% intercept landing
+  rate across every (src x tgt) motion combo. Max ~250ms/turn under 1s budget.
+  Code: agents/precision/ on branch claude/precision-physics-engine-ymJkA.
+prior_failed_submission_id: 52551945     # tar.gz format - FAILED validation episode (cause unknown; switched to single-file .py for #52552139)
+tournament_rank_today: v3_snipe=1014.7, precision_v3=PENDING   # rolling-last-2; v1.2/roi=1006.9 from earlier submits still on leaderboard but outside the rolling pair
+our_best_rank: μ=1014.7 (#52544634, v3_snipe) — pending precision_v3 validation
 lb_top10_cliff: 1460.0                   # sash, 2026-05-10 PM. #1 = bowwowforeach 1663.4
-submissions_used_today: 1                # v2 (04:04 UTC, 2026-05-11)
-submissions_used_total: 5
+submissions_used_today: 3                # 1 prior + #52551945 (FAILED tar.gz) + #52552139 (PENDING single-file)
+submissions_used_total: 7
 plateau_days: 0
 saturation_count: 0
 session_log:

@@ -582,7 +582,12 @@ def plan_turn(
 
     # 1. Project enemy actions (k=2 per player) under both hypotheses.
     enemy_greedy = enemy_model.project_enemy_actions_greedy(world, end_step=end_step)
-    enemy_worst = enemy_model.project_enemy_actions_worst_for_us(world, end_step=end_step)
+    # Depth-2 enemy minimax: project two turns of worst-for-us enemy actions.
+    # Catches cascading threats — same-aggression opponents (e.g. v2_frozen)
+    # attack our depleted sources on turn t+1 then exploit further on t+2,
+    # which the depth-1 projection couldn't see. Replaces the prior depth-1
+    # `project_enemy_actions_worst_for_us` for ALL candidate scoring.
+    enemy_worst = enemy_model.project_two_turns(world, end_step=end_step)
 
     # 2. Defense reserves: 30-tick horizon (matches v2_frozen baseline; longer
     # horizons made us too passive vs same-aggression opponents). In-flight
@@ -694,9 +699,10 @@ def plan_turn(
             post_resp_cache[sig] = ()
             return ()
         post_world = _world_after_wave(world, wv)
-        resp = enemy_model.project_enemy_actions_worst_for_us(
-            post_world, end_step=end_step,
-        )
+        # Depth-2: project two turns of enemy response from the post-wave world.
+        # Wave commits ships from two sources; same-aggression opponents pick on
+        # the weaker of the two on t+1, then sweep further on t+2.
+        resp = enemy_model.project_two_turns(post_world, end_step=end_step)
         resp_tup = tuple(resp)
         post_resp_cache[sig] = resp_tup
         return resp_tup
