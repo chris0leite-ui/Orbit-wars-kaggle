@@ -6,23 +6,27 @@
 ```yaml
 date: 2026-05-11
 days_to_deadline: 43                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v3_snipe        # rolling-last-2: [v2 (974.3), v3_snipe (PENDING)]; v1.2/roi (1006.9) evicted by v3 push
-last_kernel_push: 2026-05-11 12:16:01 UTC
-last_submission_id: 52544634
-last_submission_status: PENDING          # validation episode running; kaggle CLI 503 at wrap time, will re-poll
-last_submission_file: submissions/v3_snipe.py  # 61.7 KB bundle of agents/v3_snipe/main.py + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe,missions/reinforce,planner}. Strategy = snipe + reinforce mission classes through settle_plan (same-turn arrival ledger). Mechanism stack = DEFAULT_MECHANISMS with full-trajectory predict_fleet_fate guards.
+current_submitted_agent: precision_v3    # rolling-last-2: [v3_snipe (1014.7), precision_v3 (PENDING)]; v2 (966.1) evicted
+last_kernel_push: 2026-05-11 17:00 UTC   # precision_v3 single-file (depth-2 minimax + iter 1-7 stack)
+last_submission_id: 52552139             # iter 7: depth-2 minimax + cumulative iter-1..6 work
+last_submission_status: COMPLETE         # validation passed; μ₀=600.0; ladder rating will update over hours/days
+last_submission_file: submissions/precision_v3.py  # single-file bundle from agents/precision/{sim,prediction,fast_sim,intercept,scoring,enemy_model,bundling,planner}.py + agent(obs) at bottom. Built via scripts/pack_precision_single.sh.
 last_submission_message: |
-  v3_snipe: Block E missions (snipe + reinforce) + cost-aware ROI +
-  comet-lifetime + same-turn ledger + full-trajectory ray-cast guards.
-  Capture-probe reached 77.2% (pre-fix) → 93.0% (trajectory) → 97.2%
-  (this build). 32-seed 2P vs v2 = 57.8% (Wilson [45.6, 69.2]);
-  16-seed 4P FFA parity. audit/2026-05-11-v3-lookahead-mvp-parity.md
-  + tournaments/20260511T112936Z.json
-tournament_rank_today: v2=974.3, v3_snipe=PENDING   # v1.2/roi (1006.9) evicted by v3 push; v2 dropping from 1025.5 → 974.3 over day
-our_best_rank: μ=974.3 (#52532938, v2) — pending v3 validation
-lb_top10_cliff: 1447.6                   # ShunkiKyoya, 2026-05-11. #1 = bowwowforeach 1697.7
-submissions_used_today: 2                # v2 (04:04 UTC) + v3_snipe (12:16 UTC)
-submissions_used_total: 6
+  precision_v3 single-file (iter 7): event-driven sim, post-commitment wave
+  gate (3x source-retention), strike-window timing, depth-2 enemy minimax.
+  83% vs main_v2 in 6 mirror games (ship-ratio 2.04). 100% intercept landing
+  rate across every (src x tgt) motion combo. Max ~250ms/turn under 1s budget.
+  Code: agents/precision/ (on main after merge of claude/precision-physics-engine-ymJkA).
+prior_submissions_today: |
+  - #52552139 (precision_v3) — COMPLETE 17:00 UTC, μ₀=600. SINGLE-FILE bundle of agents/precision/.
+  - #52551945 (precision_v3.tar.gz) — FAILED validation episode (cause unknown; tar.gz path appears broken for this comp; switched to .py).
+  - #52544634 (v3_snipe) — COMPLETE 12:16 UTC, μ=1014.7. Bundle of agents/v3_snipe/ + lib/. Now in rolling-last-2 alongside precision_v3.
+  - #52532938 (v2) — μ=966.1, evicted by precision_v3 push (rolling-last-2 only keeps the most recent two).
+tournament_rank_today: v3_snipe=1014.7, precision_v3=PENDING   # rolling-last-2; v1.2/roi=1006.9 from earlier submits still visible on leaderboard but outside the rolling pair
+our_best_rank: μ=1014.7 (#52544634, v3_snipe) — pending precision_v3 validation
+lb_top10_cliff: 1460.0                   # sash, 2026-05-10 PM. #1 = bowwowforeach 1663.4
+submissions_used_today: 4                # v2 (#52532938, 04:04) + v3_snipe (#52544634, 12:16) + precision_v3 tar.gz (#52551945, FAILED) + precision_v3 .py (#52552139, COMPLETE 17:00)
+submissions_used_total: 8
 plateau_days: 0
 saturation_count: 0
 session_log:
