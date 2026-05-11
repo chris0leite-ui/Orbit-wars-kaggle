@@ -4,22 +4,24 @@
 > populated it is updated at every wrap-up (WRAPUP.md step 3).
 
 ```yaml
-date: 2026-05-10
-days_to_deadline: 44                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v1.2_simple_roi # rolling-last-2: [v1.1 (570.2), v1.2/roi (978.7)]; v1 EVICTED
-last_kernel_push: 2026-05-10 14:59:32 UTC
-last_submission_id: 52518060             # `kaggle competitions submissions orbit-wars`
-last_submission_status: COMPLETE         # validation passed; ladder play active
-last_submission_file: submissions/roi.py # bundle of agents/simple/roi.py + lib/{geometry,fleet,orbit,intent,mechanism}; targeting = argmax production/distance, mechanism set = [validate, arrival_size, lead_aim]
+date: 2026-05-11
+days_to_deadline: 43                     # 2026-06-23 23:59 UTC minus today
+current_submitted_agent: v2              # rolling-last-2: [v1.2/roi (996.5), v2 (PENDING)]; v1.1 EVICTED
+last_kernel_push: 2026-05-11 04:04:07 UTC
+last_submission_id: 52532938             # `kaggle competitions submissions orbit-wars`
+last_submission_status: PENDING          # validation episode running
+last_submission_file: submissions/v2.py  # bundle of agents/v2/main.py + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,mechanism}; targeting = roi + WorldModel.owner_at predictive dedup; mechanism set = [validate, arrival_size, lead_aim_v2, sun_avoid, path_clears_other_planets, oob_guard]
 last_submission_message: |
-  v1.2 simple/roi: production/distance ROI targeting; same DEFAULT_MECHANISMS
-  as v1.1; 32-seed local 100% (64/64) vs v1_orbitfix; 97.1% mean panel WR.
-  audit/2026-05-10-phase1-manifold-verdict.md
-tournament_rank_today: v1.1=570.2, v1.2/roi=978.7   # 2026-05-10 PM read; rolling-last-2 active; v1.2 dropped from evening 1105 to 978.7 as ladder games accumulated
-our_best_rank: μ=978.7 (#52518060, v1.2/roi)
-lb_top10_cliff: 1460.0                   # sash, 2026-05-10 PM. #1 = bowwowforeach 1663.4; gap from us = +481 μ
-submissions_used_today: 4                # baseline (00:09) + v1 (08:11) + v1.1 (09:28) + roi (14:59); 1 slot left
-submissions_used_total: 4
+  v2: WorldModel-aware roi (skip targets predicted ours at arrival; per-source
+  re-pick). Block A physics upgrade (5-iter aim+search_safe_intercept,
+  sun-safe arrival-aware, path_clears_other_planets, oob_guard) + Block D
+  worldmodel dedup. 64% mean panel WR, 69% h2h vs frozen v1.2-equiv,
+  86% vs broader panel. audit/2026-05-10-block-c-d-arrival-ledger-and-v2.md
+tournament_rank_today: v1.2/roi=996.5, v2=PENDING   # rolling-last-2 active; v1.1 (565.7) evicted by v2 submit
+our_best_rank: μ=996.5 (#52518060, v1.2/roi) — pending v2 validation
+lb_top10_cliff: 1460.0                   # sash, 2026-05-10 PM. #1 = bowwowforeach 1663.4
+submissions_used_today: 1                # v2 (04:04 UTC, 2026-05-11)
+submissions_used_total: 5
 plateau_days: 0
 saturation_count: 0
 session_log:
