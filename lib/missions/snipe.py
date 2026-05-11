@@ -54,6 +54,31 @@ COMET_BONUS = 1.0
 # are below 2nd place). 2P games are unaffected. Pending 4P FFA validation.
 LEADER_MULTIPLIER = 1.5
 
+# Airtime penalty (v3.5, 2026-05-11): ships in flight are committed-cost.
+# A fleet en route can't defend its home planet, can't be redirected, and
+# may bounce if the world-state has shifted. Phase-0 idle-source decomposition
+# (audit/2026-05-11-idle-breakdown-v3-snipe-phase0.md) showed ~96% of all
+# idle classifications come from `intent.ships > src.ships` in validate +
+# arrival_size, and the worst offenders are LONG-eta targets where
+# arrival_size's `target.ships + production * eta + 1` over-estimates the
+# source garrison. Penalising airtime in the score formula shifts target
+# selection toward closer (lower-eta) captures, reducing both opportunity
+# cost AND the dominant mechanism-drop bucket.
+#
+# Coefficient interpretation: adds `AIRTIME_PENALTY_WEIGHT * eta` to the
+# denominator. eta is bounded in [1, ~30] for the 100x100 board, so at
+# weight=1.0 the penalty caps at ~30 vs typical denominators of 50-150 — a
+# moderate soft penalty.
+AIRTIME_PENALTY_WEIGHT = 1.0
+
+# Endgame burn (v3.5, Exp 1): in the final ~30 turns of a game, neutrals
+# matter more than enemy captures because (a) neutrals don't grow ships
+# (no arrival_size bump → reliably launchable), (b) we have little time
+# left to extract production value from contested captures. Boost neutral
+# target priority by ENDGAME_NEUTRAL_BONUS once step >= ENDGAME_STEP.
+ENDGAME_STEP = 470
+ENDGAME_NEUTRAL_BONUS = 1.5
+
 
 def _player_totals(world: World) -> dict[int, float]:
     """Aggregate ships across planets + in-flight fleets for each player.
@@ -147,9 +172,22 @@ def propose_snipe_missions(world: World, model: WorldModel) -> list[Mission]:
                 # Unclaimed: no garrison growth during flight, no opponent
                 # competition. Bonus reflects the easier capture.
                 priority *= COMET_BONUS if is_comet else NEUTRAL_BONUS
+                if step_now >= ENDGAME_STEP:
+                    # Late-game burn: neutrals stay launchable (no
+                    # production growth → no arrival_size bump), so prefer
+                    # them over high-growth enemy captures we likely can't
+                    # afford in the remaining turn budget.
+                    priority *= ENDGAME_NEUTRAL_BONUS
             if spoiler_on and t.owner == leader_pid:
                 priority *= LEADER_MULTIPLIER
-            score = priority * value / (base_ships + d + 1.0)
+            # Airtime-penalised cost-aware ROI. The `AIRTIME_PENALTY_WEIGHT
+            # * eta` term in the denominator shifts target selection toward
+            # closer captures: cheaper to fund (less arrival_size growth)
+            # and lower opportunity cost (ships return to play sooner if
+            # the capture succeeds).
+            score = priority * value / (
+                base_ships + d + AIRTIME_PENALTY_WEIGHT * eta + 1.0
+            )
 
             missions.append(Mission(
                 mission_class="snipe",
