@@ -241,9 +241,9 @@ def main(argv=None) -> int:
              "Required for downstream manifold_check / behavioural fingerprinting.",
     )
     parser.add_argument(
-        "--workers", type=int, default=max(1, mp.cpu_count() - 1),
-        help="Parallel game workers. Default = cpu_count() - 1 (leave one "
-             "core free). Pass --workers 1 for sequential. >1 uses "
+        "--workers", type=int, default=mp.cpu_count() or 1,
+        help="Parallel game workers. Default = os.cpu_count() (use all "
+             "cores). Pass --workers 1 for sequential debugging. >1 uses "
              "multiprocessing.Pool; agent specs must be string paths.",
     )
     args = parser.parse_args(argv)

@@ -1,0 +1,252 @@
+{
+  "submission_id": "52532938",
+  "generated_utc": "2026-05-11T05:44:38Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 21,
+  "n_played": 21,
+  "wins_total": 15,
+  "winrate_total": 0.7142857142857143,
+  "by_size": {
+    "2": {
+      "n": 14,
+      "wins": 9,
+      "winrate": 0.6428571428571429
+    },
+    "4": {
+      "n": 7,
+      "wins": 6,
+      "winrate": 0.8571428571428571
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 7,
+    "1": 11,
+    "2": 2,
+    "3": 4
+  },
+  "episode_length_steps": {
+    "n": 21,
+    "min": 130,
+    "q1": 158,
+    "median": 192,
+    "q3": 215,
+    "max": 500,
+    "mean": 206.42857142857142
+  },
+  "opponents": [
+    {
+      "name": "Maxs 7003",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "jamm1412",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Sivic",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Trackko",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "isaki",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "XiaokangWang",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "tomo0608",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "shilehaoduomingzile",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Alvin",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Aatif Fraz",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "saeNeko",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "JeremyH43",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "AkiraIshikawa",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Monica",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kerem Ali AVCIO\u011eLU",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "[ODS] waniz",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "imakn0907",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "josh mathers",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Yuta Tomimasu",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Shota Shibata",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Stands for one and only",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "JLiu24",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Nabid Nur",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Karan Bhatti",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Chalyx",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Matt Hods",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Kronki",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "bndoss",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "lmao3322",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Bryan Gregory",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Caiden Matthews",
+      "seen": 1,
+      "beat_us": 0
+    }
+  ],
+  "losses": [
+    {
+      "episode": "episode-76275257",
+      "size": 2,
+      "opponents": [
+        "saeNeko"
+      ],
+      "winner": "saeNeko",
+      "steps": 193
+    },
+    {
+      "episode": "episode-76275495",
+      "size": 2,
+      "opponents": [
+        "JeremyH43"
+      ],
+      "winner": "JeremyH43",
+      "steps": 135
+    },
+    {
+      "episode": "episode-76275727",
+      "size": 2,
+      "opponents": [
+        "AkiraIshikawa"
+      ],
+      "winner": "AkiraIshikawa",
+      "steps": 179
+    },
+    {
+      "episode": "episode-76276257",
+      "size": 2,
+      "opponents": [
+        "Shota Shibata"
+      ],
+      "winner": "Shota Shibata",
+      "steps": 280
+    },
+    {
+      "episode": "episode-76276971",
+      "size": 2,
+      "opponents": [
+        "Chalyx"
+      ],
+      "winner": "Chalyx",
+      "steps": 141
+    },
+    {
+      "episode": "episode-76277128",
+      "size": 4,
+      "opponents": [
+        "Matt Hods",
+        "Kronki",
+        "bndoss"
+      ],
+      "winner": "Matt Hods",
+      "steps": 282
+    }
+  ]
+}
