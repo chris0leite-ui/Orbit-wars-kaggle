@@ -43,9 +43,16 @@ from lib.world_model import WorldModel, comet_remaining_lifetime
 EPISODE_STEPS = 500
 
 # Priority multipliers (calibrated from games analysis).
-NEUTRAL_BONUS = 1.5     # uncontested planet: no garrison growth, no opponent claim
-COMET_BONUS = 1.3       # short-lived but free if uncontested; live data shows 78% neutral
-LEADER_MULTIPLIER = 1.5  # 4P spoiler: attack the leader when ranked 3rd+
+# NEUTRAL_BONUS and COMET_BONUS were attempted at 1.5 / 1.3 but regressed in
+# 32-seed 2P A/B (28.1% Wilson [18.6%, 40.1%]); they tipped the scorer toward
+# easy neutrals when contested enemy planets were the binding constraint.
+# Disabled (= 1.0) pending a more selective heuristic (opening-only, or
+# distance-conditioned). See audit/2026-05-11-v3-snipe-games-analysis.md.
+NEUTRAL_BONUS = 1.0
+COMET_BONUS = 1.0
+# LEADER_MULTIPLIER only fires when our_rank >= 2 (4P/larger games where we
+# are below 2nd place). 2P games are unaffected. Pending 4P FFA validation.
+LEADER_MULTIPLIER = 1.5
 
 
 def _player_totals(world: World) -> dict[int, float]:
