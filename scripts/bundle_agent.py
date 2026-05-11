@@ -23,7 +23,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 # Order matters: each module must come AFTER its lib-internal dependencies.
-# fleet/orbit use geometry; aim uses fleet/orbit; mechanism uses fleet/orbit/aim/intent.
+# fleet/orbit use geometry; aim uses fleet/orbit; trajectory uses aim/fleet/
+# geometry/orbit; mechanism uses fleet/orbit/aim/intent/trajectory.
 DEFAULT_LIB_ORDER = [
     "geometry",
     "fleet",
@@ -32,6 +33,7 @@ DEFAULT_LIB_ORDER = [
     "combat",
     "world_model",
     "intent",
+    "trajectory",
     "mechanism",
 ]
 SUBMISSIONS = REPO / "submissions"

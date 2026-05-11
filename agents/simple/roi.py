@@ -1,29 +1,47 @@
-"""roi — target the highest production-per-distance planet.
+"""roi — target by COST-AWARE return on investment.
 
-HYPOTHESIS: production-per-distance is the right travel-adjusted ROI
-signal; pure-production (production.py) over-commits to far targets and
-pure-nearest under-commits to high-yield ones. ROI should sit in the
-middle and beat both.
+HYPOTHESIS (revised 2026-05-11): the score must capture both VALUE
+(production × time we'll hold the planet) and COST (ships we spend to
+capture). The original `production / (distance + 1)` ignored cost
+entirely; a production-5 planet with 99 ships outranked three
+production-3 planets with 10 ships even though the latter trio yields
+more total ships per invested ship (`docs/strategies/simple-roi.md`
+"Where ROI can lose" lines 64-69).
 
-Score: production / (distance + 1.0). The +1 prevents division-by-zero
-when a target sits at the source's coordinates (degenerate, but defensive).
-Tiebreaker: distance ascending.
+Score (additive cost so it doesn't dominate ranking the way pure
+value/cost does — pure value/cost picks 1-ship 1-prod targets over
+20-ship 5-prod targets, which over-corrects):
+
+    value = production × max(1, 500 - step - eta)
+    score = value / (ships_to_send + distance + 1)
+
+`eta` uses `fleet_speed(cost)` for the launched fleet size. Tiebreaker:
+distance ascending.
 """
 
 from __future__ import annotations
 
+import math
 import random
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
 
+from lib.fleet import speed as fleet_speed
 from lib.geometry import dist
 from lib.intent import Intent, realize
 from lib.mechanism import DEFAULT_MECHANISMS
 
+EPISODE_STEPS = 500
 
-def _score(mine: Planet, target: Planet) -> tuple:
+
+def _score(mine: Planet, target: Planet, step: int) -> tuple:
     d = dist((mine.x, mine.y), (target.x, target.y))
-    roi = target.production / (d + 1.0)
+    cost = max(1, int(target.ships) + 1)
+    v = fleet_speed(cost)
+    eta = int(math.ceil(d / max(v, 1e-6)))
+    time_to_hold = max(1, EPISODE_STEPS - step - eta)
+    value = target.production * time_to_hold
+    roi = value / (cost + d + 1.0)
     return (-roi, d)   # argmax roi, tiebreak: nearest
 
 
@@ -45,7 +63,7 @@ def propose_intents(obs) -> list[Intent]:
     rng = random.Random(step ^ (player + 1) * 1009)
     intents: list[Intent] = []
     for mine in my_planets:
-        scored = [(_score(mine, t), rng.random(), t) for t in targets]
+        scored = [(_score(mine, t, step), rng.random(), t) for t in targets]
         scored.sort(key=lambda e: (e[0], e[1]))
         target = scored[0][2]
         intents.append(

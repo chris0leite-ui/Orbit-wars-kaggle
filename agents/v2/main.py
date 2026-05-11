@@ -77,7 +77,13 @@ def propose_intents(obs) -> list[Intent]:
             # 0/64 WR (audit/tournaments/20260510T215806Z.json). Roll back.
             if pred_owner == world.my_id and pred_ships >= base_ships:
                 continue
-            roi = t.production / (d + 1.0)
+            # Cost-aware ROI (2026-05-11 fix per docs/strategies/simple-roi.md
+            # "Where ROI can lose"): value = production × time-we-hold-it,
+            # cost = ships-we-send + distance (additive, not pure value/cost
+            # which over-corrects toward 1-ship targets).
+            time_to_hold = max(1, 500 - world.step - eta)
+            value = t.production * time_to_hold
+            roi = value / (base_ships + d + 1.0)
             scored.append(((-roi, d), rng.random(), t, base_ships))
 
         if not scored:

@@ -1,16 +1,19 @@
-"""Snipe mission builder — capture enemy / neutral planets via straight ROI.
+"""Snipe mission builder — capture enemy / neutral planets via cost-aware ROI.
 
-For every (our-planet, non-our-planet) pair, produce one Mission candidate
-with score = `target.production / (dist + 1.0)` (the same ROI metric the
-v1.2/roi / v2 strategies use, now exposed as a typed mission).
+For every (our-planet, non-our-planet) pair, produce one Mission candidate.
+**2026-05-11 ROI upgrade**: the score now trades off VALUE against COST
+in ships (and travel time), addressing the gap the doc flagged
+(`docs/strategies/simple-roi.md` "Where ROI can lose" lines 64-69):
+
+    value = production × max(1, 500 - step - eta)
+    score = value / (ships_to_send + distance + 1)
+
+Additive (not multiplicative) cost in the denominator: pure value/cost
+over-corrects toward 1-ship 1-prod targets, which is a different bug.
+Keeping distance in the denominator preserves the travel-time discount.
 
 Filter: drop pairs where the WorldModel predicts the target will already
-be ours with surplus garrison at our fleet's arrival step (the
-don't-double-commit rule). Identical logic to the v2 strategy-level
-filter — moved here so the planner sees only viable candidates.
-
-Pure function of `(world, model)`. Both are constructed once per turn by
-the agent entry point; this builder is O(my_planets * enemy_planets).
+be ours with surplus garrison at our fleet's arrival step.
 """
 
 from __future__ import annotations
@@ -21,6 +24,9 @@ from lib.fleet import speed as fleet_speed
 from lib.intent import World
 from lib.mission import Mission
 from lib.world_model import WorldModel
+
+# Total game length in steps (Configuration table, data/README.md).
+EPISODE_STEPS = 500
 
 
 def propose_snipe_missions(world: World, model: WorldModel) -> list[Mission]:
@@ -38,6 +44,7 @@ def propose_snipe_missions(world: World, model: WorldModel) -> list[Mission]:
     if not targets:
         return []
 
+    step_now = int(world.step)
     missions: list[Mission] = []
     for src in my_planets:
         for t in targets:
@@ -50,7 +57,11 @@ def propose_snipe_missions(world: World, model: WorldModel) -> list[Mission]:
             if pred_owner == world.my_id and pred_ships >= base_ships:
                 # Target will be ours with surplus garrison; redundant.
                 continue
-            score = t.production / (d + 1.0)
+            # Cost-aware ROI: value / (cost + distance + 1). Additive cost
+            # avoids the pure-value/cost over-correction toward 1-ship targets.
+            time_to_hold = max(1, EPISODE_STEPS - step_now - eta)
+            value = t.production * time_to_hold
+            score = value / (base_ships + d + 1.0)
             missions.append(Mission(
                 mission_class="snipe",
                 src_id=src.id,
