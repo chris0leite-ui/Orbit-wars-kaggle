@@ -18,6 +18,10 @@ replays/
 audit/replays/
 audit/manifold/
 
+# Live ladder episode replays pulled via `kaggle competitions replay`
+# (~4MB per game; *.csv index files are already covered by the rule below)
+audit/live-episodes/*/episode-*.json
+
 # Common data formats
 *.csv
 *.zip

@@ -1,0 +1,100 @@
+{
+  "timestamp_utc": "2026-05-11T05:20:28Z",
+  "agents": {
+    "roi": "/home/user/Orbit-wars-kaggle/agents/simple/roi.py",
+    "agents/v2/main.py": "agents/v2/main.py"
+  },
+  "seeds": [
+    42,
+    1
+  ],
+  "include_self_play": false,
+  "matrix": {
+    "roi": {
+      "agents/v2/main.py": {
+        "p0_name": "roi",
+        "p1_name": "agents/v2/main.py",
+        "n": 2,
+        "p0_wins": 1,
+        "p1_wins": 1,
+        "draws": 0,
+        "mean_ship_delta_p0_minus_p1": -925.5,
+        "p0_p95_turn_ms": 0.6408688999613332,
+        "p1_p95_turn_ms": 2.094364499976109,
+        "wilson_lo": 0.09452865480086614,
+        "wilson_hi": 0.9054713451991339,
+        "games": [
+          {
+            "seed": 42,
+            "rewards": [
+              1,
+              -1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 254,
+            "final_ship_delta_p0_minus_p1": 1878.0
+          },
+          {
+            "seed": 1,
+            "rewards": [
+              -1,
+              1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 333,
+            "final_ship_delta_p0_minus_p1": -3729.0
+          }
+        ]
+      }
+    },
+    "agents/v2/main.py": {
+      "roi": {
+        "p0_name": "agents/v2/main.py",
+        "p1_name": "roi",
+        "n": 2,
+        "p0_wins": 1,
+        "p1_wins": 1,
+        "draws": 0,
+        "mean_ship_delta_p0_minus_p1": -694.0,
+        "p0_p95_turn_ms": 1.993673400033913,
+        "p1_p95_turn_ms": 1.003506400002152,
+        "wilson_lo": 0.09452865480086614,
+        "wilson_hi": 0.9054713451991339,
+        "games": [
+          {
+            "seed": 1,
+            "rewards": [
+              1,
+              -1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 205,
+            "final_ship_delta_p0_minus_p1": 2193.0
+          },
+          {
+            "seed": 42,
+            "rewards": [
+              -1,
+              1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 284,
+            "final_ship_delta_p0_minus_p1": -3581.0
+          }
+        ]
+      }
+    }
+  }
+}
