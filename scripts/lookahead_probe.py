@@ -45,8 +45,10 @@ The probe writes audit/lookahead/<utc>.json with one row per
 from __future__ import annotations
 
 import argparse
+import copy
 import importlib.util
 import json
+import math
 import statistics
 import sys
 import time
@@ -112,6 +114,51 @@ def _predicted_ship_total_by_player(
         if owner >= 0:
             totals[owner] = totals.get(owner, 0.0) + float(ships)
     return totals
+
+
+def _obs_with_phantom_fleets(
+    obs: dict, actions_by_owner: dict[int, list], start_id: int = 10_000_000,
+) -> dict:
+    """Return a deep-copied obs with phantom fleets appended.
+
+    Each (owner, action) launch is converted to a fleet entry matching
+    the env's spawn rule:
+        (id, owner, start_x, start_y, angle, from_planet_id, ships)
+        start_x = src.x + cos(angle) * (src.radius + 0.1)
+
+    Skips invalid moves (wrong owner, insufficient ships, malformed).
+    """
+    out = copy.deepcopy(obs if isinstance(obs, dict) else dict(obs))
+    out_fleets = list(out.get("fleets", []))
+    planets_by_id = {p[0]: list(p) for p in out.get("planets", [])}
+    next_id = start_id
+    for owner, action in actions_by_owner.items():
+        if not action:
+            continue
+        for move in action:
+            if not move or len(move) != 3:
+                continue
+            try:
+                from_id, angle, ships = move
+                ships = int(ships)
+            except (TypeError, ValueError):
+                continue
+            p = planets_by_id.get(int(from_id))
+            if p is None:
+                continue
+            if int(p[1]) != int(owner):
+                continue
+            if int(p[5]) < ships or ships <= 0:
+                continue
+            start_x = p[2] + math.cos(float(angle)) * (p[4] + 0.1)
+            start_y = p[3] + math.sin(float(angle)) * (p[4] + 0.1)
+            out_fleets.append([
+                next_id, int(owner), float(start_x), float(start_y),
+                float(angle), int(from_id), int(ships),
+            ])
+            next_id += 1
+    out["fleets"] = out_fleets
+    return out
 
 
 def _winner_label_from_rewards(rewards: list[float], pov_player: int) -> int | None:
@@ -186,20 +233,45 @@ def run_probe(
             wm = WorldModel.from_world(world, horizon=wm_horizon)
             horizon_build_times.append((time.perf_counter() - t0) * 1000.0)
 
+            # ── Phase 1b: add this-turn launches as phantom fleets ───────
+            # The agent's action at this step is `env.steps[step_now][p].action`.
+            # We build two augmented WorldModels:
+            #   `wm_ours` — only OUR (POV) actions injected.
+            #   `wm_all`  — BOTH players' actions injected (counterfactual
+            #              ceiling — we wouldn't normally know opp's launch).
+            our_action = state[pov].action or []
+            opp_action = state[1 - pov].action or []
+            obs_dict = obs if isinstance(obs, dict) else dict(obs)
+            obs_ours = _obs_with_phantom_fleets(obs_dict, {pov: our_action})
+            obs_all = _obs_with_phantom_fleets(
+                obs_dict, {pov: our_action, 1 - pov: opp_action}
+            )
+            world_ours = World.from_obs(obs_ours)
+            world_all = World.from_obs(obs_all)
+            wm_ours = WorldModel.from_world(world_ours, horizon=wm_horizon)
+            wm_all = WorldModel.from_world(world_all, horizon=wm_horizon)
+
             now_totals = _current_ship_total_by_player(world)
             naive = (now_totals.get(pov, 0.0)
                      - now_totals.get(1 - pov, 0.0))
             horizon_scores = {}
+            ours_scores = {}
+            all_scores = {}
             oracle_scores = {}
             for H in horizons:
                 pred = _predicted_ship_total_by_player(world, wm, H)
                 horizon_scores[H] = (
                     pred.get(pov, 0.0) - pred.get(1 - pov, 0.0)
                 )
-                # PERFECT ORACLE: read the actual ship delta at step+H from
-                # the replay. Upper bound on what any single-scalar predictor
-                # of "delta at H" could achieve; anything below this is
-                # information left on the table by the static projector.
+                pred_ours = _predicted_ship_total_by_player(world_ours, wm_ours, H)
+                ours_scores[H] = (
+                    pred_ours.get(pov, 0.0) - pred_ours.get(1 - pov, 0.0)
+                )
+                pred_all = _predicted_ship_total_by_player(world_all, wm_all, H)
+                all_scores[H] = (
+                    pred_all.get(pov, 0.0) - pred_all.get(1 - pov, 0.0)
+                )
+                # PERFECT ORACLE: actual ship delta at step+H from the replay.
                 future_idx = min(step_now + H, n_steps - 1)
                 future_state = env.steps[future_idx]
                 future_obs = future_state[pov].observation
@@ -215,7 +287,11 @@ def run_probe(
                 "step_now": step_now,
                 "pov": pov,
                 "naive_delta": naive,
+                "n_our_launches": len(our_action),
+                "n_opp_launches": len(opp_action),
                 **{f"horizon_{H}_delta": horizon_scores[H] for H in horizons},
+                **{f"ours_{H}_delta": ours_scores[H] for H in horizons},
+                **{f"all_{H}_delta": all_scores[H] for H in horizons},
                 **{f"oracle_{H}_delta": oracle_scores[H] for H in horizons},
                 "actual_winner_pov_label": label,
             })
@@ -229,6 +305,8 @@ def run_probe(
         row = {"naive": _auc([r["naive_delta"] for r in rows], labels)}
         for H in horizons:
             row[f"H{H}"] = _auc([r[f"horizon_{H}_delta"] for r in rows], labels)
+            row[f"Hours{H}"] = _auc([r[f"ours_{H}_delta"] for r in rows], labels)
+            row[f"Hall{H}"] = _auc([r[f"all_{H}_delta"] for r in rows], labels)
             row[f"O{H}"] = _auc([r[f"oracle_{H}_delta"] for r in rows], labels)
         aucs_by_step[step_now] = row
 
@@ -254,17 +332,20 @@ def run_probe(
 
 def _print_auc_table(aucs_by_step: dict, horizons: list[int]) -> None:
     print("\n=== AUC by (probe step, horizon) — pred. of game winner from POV ===")
-    print("  H<n> = WorldModel static projection.  O<n> = perfect oracle (future ship delta read from replay).")
-    cols = ["step", "naive"]
+    print("  H<n>     = static WorldModel projection (no future actions)")
+    print("  Hours<n> = WorldModel + OUR this-turn launches as phantoms")
+    print("  Hall<n>  = WorldModel + BOTH players' this-turn launches (counterfactual ceiling)")
+    print("  O<n>     = perfect oracle (future ship delta read from replay)")
     for H in horizons:
-        cols += [f"H{H}", f"O{H}"]
-    print("  " + "  ".join(f"{c:>7s}" for c in cols))
-    for step_now in sorted(aucs_by_step):
-        row = aucs_by_step[step_now]
-        vals = [f"{step_now:>7d}"] + [
-            f"{row.get(c, float('nan')):>7.3f}" for c in cols[1:]
-        ]
-        print("  " + "  ".join(vals))
+        print(f"\n  --- horizon = {H} ---")
+        cols = ["step", "naive", f"H{H}", f"Hours{H}", f"Hall{H}", f"O{H}"]
+        print("  " + "  ".join(f"{c:>8s}" for c in cols))
+        for step_now in sorted(aucs_by_step):
+            row = aucs_by_step[step_now]
+            vals = [f"{step_now:>8d}"] + [
+                f"{row.get(c, float('nan')):>8.3f}" for c in cols[1:]
+            ]
+            print("  " + "  ".join(vals))
     print("\n(AUC 0.5 = no signal; 1.0 = perfect; for each row higher is better)")
 
 
