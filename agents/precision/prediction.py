@@ -32,6 +32,16 @@ class RolloutResult:
     final_owner: dict[int, int]
     final_ships: dict[int, int]
     final_score_per_player: dict[int, int]
+    # When `track_per_step=True`, these are populated; otherwise empty.
+    # step_state[step][planet_id] = (owner, ships) snapshot AFTER step processing.
+    step_state: dict[int, dict[int, tuple[int, int]]] = field(default_factory=dict)
+    # arrivals_by_step[step] = list of Arrival impacting that step.
+    arrivals_by_step: dict[int, list["Arrival"]] = field(default_factory=dict)
+    # Per-player production rate over time: production_per_player[step][player] = int.
+    production_per_player: dict[int, dict[int, int]] = field(default_factory=dict)
+    # Per-planet timeline (only with track_per_step=True): planet_timeline[pid] = list of
+    # (step, owner, ships) tuples — one entry per processed step.
+    planet_timeline: dict[int, list[tuple[int, int, int]]] = field(default_factory=dict)
 
 
 def _planet_pos_at_abs_step(initial_x, initial_y, planet_radius, omega, abs_step):
@@ -154,6 +164,13 @@ def rollout(
         if arr is not None:
             schedule(arr)
 
+    # Per-step trajectories, only filled when requested (cheap to skip in hot path).
+    step_state: dict[int, dict[int, tuple[int, int]]] = {}
+    production_per_player: dict[int, dict[int, int]] = {}
+    planet_timeline: dict[int, list[tuple[int, int, int]]] = {}
+    if track_per_step:
+        planet_timeline = {pid: [] for pid in state}
+
     # Advance step-by-step.
     for s in range(cur_step + 1, end_step + 1):
         # Comet exits at start of step (engine line 410+).
@@ -183,6 +200,16 @@ def rollout(
                 state[pid][0] = new_owner
                 state[pid][1] = new_ships
 
+        if track_per_step:
+            step_state[s] = {pid: (v[0], v[1]) for pid, v in state.items()}
+            prod_per: dict[int, int] = {}
+            for pid, (owner, _, prod) in state.items():
+                if owner != -1:
+                    prod_per[owner] = prod_per.get(owner, 0) + prod
+            production_per_player[s] = prod_per
+            for pid, v in state.items():
+                planet_timeline[pid].append((s, v[0], v[1]))
+
     # Compute scores: total ships on owned planets per player.
     score: dict[int, int] = {}
     for pid, (owner, ships, _) in state.items():
@@ -197,7 +224,75 @@ def rollout(
         final_owner=final_owner,
         final_ships=final_ships,
         final_score_per_player=score,
+        step_state=step_state,
+        arrivals_by_step=arrivals_by_step,
+        production_per_player=production_per_player,
+        planet_timeline=planet_timeline,
     )
+
+
+def production_by_player(world: dict) -> dict[int, int]:
+    """Aggregate production rate per player from the CURRENT observation.
+
+    Returns {player_id: total_production_ships_per_turn} including neutral
+    keyed under -1 if any neutral planets exist (neutrals don't actually
+    produce — engine line 513 skips owner=-1 — but useful for diagnostics).
+    """
+    totals: dict[int, int] = {}
+    for p in world["planets"]:
+        if p.owner == -1:
+            continue
+        totals[p.owner] = totals.get(p.owner, 0) + p.production
+    return totals
+
+
+def planet_arrivals_timeline(
+    world: dict,
+    planned_shots: list[intercept.Shot],
+    horizon_steps: int = 200,
+) -> dict[int, list[Arrival]]:
+    """For each planet, list every scheduled arrival sorted by step.
+
+    Includes our planned launches (this turn) + projected enemy-fleet impacts.
+    Does NOT include future enemy launches (they're not yet observable).
+    Lookup: timeline[planet_id] -> [Arrival(step, planet_id, owner, ships), ...]
+    """
+    cur_step = world["step"]
+    by_planet: dict[int, list[Arrival]] = {p.id: [] for p in world["planets"]}
+
+    for shot in planned_shots:
+        by_planet.setdefault(shot.tgt_id, []).append(Arrival(
+            step=cur_step + shot.eta,
+            planet_id=shot.tgt_id,
+            owner=world["player"],
+            ships=shot.arrival_ships,
+        ))
+
+    for fleet in world["fleets"]:
+        if fleet[1] == world["player"]:
+            continue
+        arr = project_enemy_fleet_arrival(fleet, world, horizon_steps=horizon_steps)
+        if arr is not None:
+            by_planet.setdefault(arr.planet_id, []).append(arr)
+
+    for pid in by_planet:
+        by_planet[pid].sort(key=lambda a: a.step)
+    return by_planet
+
+
+def planet_garrison_projection(
+    world: dict,
+    planned_shots: list[intercept.Shot],
+    planet_id: int,
+    horizon_steps: int = 200,
+) -> list[tuple[int, int, int]]:
+    """For a single planet, return the (step, owner, ships) trajectory.
+
+    Combines production accrual + scheduled-arrival combat. Useful for
+    "will I still own this planet at step k? How many ships?"
+    """
+    res = rollout(world, planned_shots, horizon_steps=horizon_steps, track_per_step=True)
+    return res.planet_timeline.get(planet_id, [])
 
 
 def plan_score(
