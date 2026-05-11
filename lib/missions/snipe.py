@@ -35,6 +35,7 @@ from __future__ import annotations
 import math
 
 from lib.fleet import speed as fleet_speed
+from lib.geometry import sym_hypot
 from lib.intent import World
 from lib.mission import Mission
 from lib.world_model import WorldModel, comet_remaining_lifetime
@@ -203,7 +204,7 @@ def propose_snipe_missions(
     missions: list[Mission] = []
     for src in my_planets:
         for t in targets:
-            d = math.hypot(t.x - src.x, t.y - src.y)
+            d = sym_hypot(t.x - src.x, t.y - src.y)
             target_min = max(1, int(t.ships) + 1)
             if aggressive and src.ships > AGGRESSIVE_MIN_GARRISON:
                 fraction_size = max(1, int(src.ships * AGGRESSIVE_FRACTION))
