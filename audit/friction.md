@@ -1,5 +1,47 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-11 PM (analyze-submission-logs-dFHeS)
+
+- `tag: stale-rolling-last-2-pre-submit` — submission flow: pushed
+  v3.4 (52556866) at 21:19 UTC believing the rolling-last-2 was
+  `[v2 (965.3), v3_snipe (1055.5)]`. Actual state from a fresh
+  `kaggle competitions submissions orbit-wars` query was
+  `[v3_snipe (1005.7), precision_v3 (984.6)]` — the parallel branch
+  `precision-physics-engine-ymJkA` had pushed `precision_v3.py` at
+  17:00 UTC, 4h before my push, silently evicting v2. My push then
+  evicted v3_snipe (the strongest live entry), not v2. **Fix:** every
+  pre-submit decision record MUST include a fresh
+  `kaggle competitions submissions orbit-wars` query taken within the
+  last 10 minutes. Branch-local state and HANDOVER files are
+  unreliable indicators when multiple agents push in parallel. Add
+  this as a Rule 12 sub-clause. Net impact this time: v3.4 should
+  still settle ≥ v3_snipe (it's a strict extension), so the worst
+  case is parity. But the principle is load-bearing.
+
+- `tag: postmortem-fleet-schema-off-by-one` — analysis context:
+  `scripts/episode_postmortem.py:211` unpacked `ships_launch =
+  init_entry[5]` but the Fleet schema is `[id, owner, x, y, angle,
+  from_planet_id, ships]` — index 5 is `from_planet_id`. Per-episode
+  postmortem `fleet['ships']` was therefore meaningless. Fleet OUTCOME
+  categorization (captured/bounced) was unaffected since it's based
+  on planet ownership flips. **Fix:** changed to `init_entry[6]`;
+  added a comment citing the env source. Promotion candidate: add a
+  smoke test that asserts a known launch's recorded `ships` equals
+  the action's emitted ship count.
+
+- `tag: blanket-formula-fix-without-targeted-evidence` — investigation
+  flow: confirmed real "one ship too little" near-miss bounces (38 of
+  518 bounces at margin {+0, +1}), built a blanket fix
+  `needed = G + production * (eta + 1) + 1`. 32-seed A/B regressed
+  to 42.2% Wilson [30.9%, 54.4%]. Root cause: env's center-to-center
+  distance over-estimates eta by `(r_src + r_target)/v` for static
+  targets; the blanket fix wastes ships there. **Fix:** when a finding
+  identifies a small minority of cases (here 7% of bounces), do NOT
+  apply a fix that affects 100% of cases. Targeted heuristic only.
+  Same lesson re-fired with the flat `NEUTRAL_BONUS=1.5 /
+  COMET_BONUS=1.3` fix (also 28.1% regression). Promotion candidate:
+  "if the finding is local, the fix must be local."
+
 ## 2026-05-11 (bootstrap-agentic-systems-lqnm6)
 
 - `tag: guard-mechanisms-check-only-to-predicted-endpoint` — wrap-up

@@ -6,10 +6,10 @@
 ```yaml
 date: 2026-05-11
 days_to_deadline: 43                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v3_snipe        # rolling-last-2: [v2 (965.3), v3_snipe (1055.5)]; v1.2/roi (1006.9) evicted by v3 push
-last_kernel_push: 2026-05-11 12:16:01 UTC
-last_submission_id: 52544634
-last_submission_status: COMPLETE         # publicScore 1055.5 (+90.2 over v2). 34 games played, 14 wins (41.2%); 2P 47.1% 4P 35.3%. See audit/2026-05-11-v3-snipe-critical-review.md.
+current_submitted_agent: v3_4            # rolling-last-2 NOW: [precision_v3 (52552139, μ=984.6, pushed 17:00 by parallel branch precision-physics-engine-ymJkA), v3_4 (52556866, PENDING)]. v3_snipe (52544634, μ=1005.7→peak 1055.5) was evicted by my push — see friction.md tag stale-rolling-last-2-pre-submit.
+last_kernel_push: 2026-05-11 21:19:13 UTC
+last_submission_id: 52556866
+last_submission_status: PENDING          # v3.4 = v3.2 + 4P spoiler. Bundle sha256:410b3c2ee370f943. See audit/2026-05-11-v3-snipe-games-analysis.md for the validation evidence + friction.md for the eviction post-mortem.
 last_submission_file: submissions/v3_snipe.py  # 61.7 KB bundle of agents/v3_snipe/main.py + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe,missions/reinforce,planner}. Strategy = snipe + reinforce mission classes through settle_plan (same-turn arrival ledger). Mechanism stack = DEFAULT_MECHANISMS with full-trajectory predict_fleet_fate guards.
 last_submission_message: |
   v3_snipe: Block E missions (snipe + reinforce) + cost-aware ROI +
@@ -18,11 +18,11 @@ last_submission_message: |
   (this build). 32-seed 2P vs v2 = 57.8% (Wilson [45.6, 69.2]);
   16-seed 4P FFA parity. audit/2026-05-11-v3-lookahead-mvp-parity.md
   + tournaments/20260511T112936Z.json
-tournament_rank_today: v2=965.3, v3_snipe=1055.5   # v3_snipe is best slot; live winrate 41.2% (lower than v2's 50.9%) but matched against stronger opponents per TrueSkill
-our_best_rank: μ=1055.5 (#52544634, v3_snipe)      # +90.2 over v2; +392 to top-10 cliff
+tournament_rank_today: v3_snipe=1005.7 (evicted), precision_v3=984.6, v3_4=PENDING
+our_best_rank: μ=PENDING (#52556866, v3_4)         # v3_snipe (now evicted) was the peak at μ=1055.5 earlier today; v3.4 is a strict extension of the same line so expected to settle ≥1005.
 lb_top10_cliff: 1447.6                   # ShunkiKyoya, 2026-05-11. #1 = bowwowforeach 1697.7
-submissions_used_today: 2                # v2 (04:04 UTC) + v3_snipe (12:16 UTC)
-submissions_used_total: 6
+submissions_used_today: 3                # v2 (04:04 UTC) + v3_snipe (12:16 UTC) + v3_4 (21:19 UTC). Plus 2 parallel-branch pushes (precision_v3 17:00 UTC, precision_v3.tar.gz 16:50 UTC ERRORED).
+submissions_used_total: 7
 plateau_days: 0
 saturation_count: 0
 session_log:
