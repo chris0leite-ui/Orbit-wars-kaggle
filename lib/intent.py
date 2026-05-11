@@ -87,17 +87,25 @@ class World:
         )
 
 
-def realize(intents, obs, *, mechanisms) -> list[list]:
+def realize(intents, obs, *, mechanisms, model=None) -> list[list]:
     """Apply the mechanism pipeline and emit env-format actions.
 
     Final emission to `[src_id, aim_angle, ships]` lists is hard-coded —
     NOT a user-pluggable mechanism. Intents missing `aim_angle` or with
-    `ships <= 0` after the pipeline are silently dropped (treated as
-    validation failures).
+    `ships <= 0` after the pipeline are silently dropped.
+
+    `model` is the per-turn WorldModel snapshot. Mechanisms that need it
+    (e.g. `arrival_size` to size against adversary stacking) accept a
+    3-arg signature; mechanisms that don't are still called as
+    `(intents, world)` for backwards-compatibility.
     """
     world = World.from_obs(obs)
     for m in mechanisms:
-        intents = m(intents, world)
+        code = getattr(m, "__code__", None)
+        if code is not None and code.co_argcount >= 3:
+            intents = m(intents, world, model)
+        else:
+            intents = m(intents, world)
     return [
         [i.src_id, i.aim_angle, i.ships]
         for i in intents
