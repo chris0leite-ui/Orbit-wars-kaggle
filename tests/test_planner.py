@@ -1,14 +1,14 @@
-"""Tests for lib/planner.settle_plan — per-source top-score selection.
+"""Tests for lib/planner.settle_plan — per-source greedy + same-turn ledger.
 
-v0 solver semantics:
+v3.1 solver semantics:
 - Exactly one Intent per source that produced at least one mission.
-- Picks the mission with the highest `score` for that source.
-- Returns Intents ordered by source-best-score descending.
-
-No-double-commit / multi-source coordination is intentionally NOT enforced
-in v0 — see lib/planner.py docstring. v3.1 gang_up will introduce
-coordinated multi-source arrivals through a mission class, not a planner-
-level filter.
+- Sources processed in priority order (highest top-mission score first).
+- Each source's first non-over-committed mission wins.
+- Two sources MAY pick the same target if a single source's contribution
+  is insufficient (gang-up scenario).
+- A target is "over-committed" when the cumulative this-turn arrivals by
+  some eta already exceed the predicted enemy garrison + 1 buffer; the
+  subsequent source falls back to its next candidate.
 """
 
 from __future__ import annotations
@@ -72,10 +72,13 @@ def test_one_intent_per_source_top_score_wins():
     assert by_src[1].target_id == 3
 
 
-def test_both_sources_may_pick_same_target():
-    """v0 lets two sources concentrate on the same target — gang-up is the
-    right play on dense boards; v3.1's gang_up class formalises it but
-    nothing in v0 prevents it."""
+def test_gangup_when_single_source_insufficient():
+    """Two sources stack on the same heavily-defended target when one
+    source's contribution alone wouldn't capture it. With target.ships=5
+    + production=2, the predicted defender at eta=10 is ~25 ships — one
+    6-ship fleet leaves ~19 defenders, so the second source's 6 ships
+    is still useful (12 vs ~26 still doesn't capture, but the planner
+    can't predict perfectly; it just refuses to over-commit)."""
     world, model = _setup_world()
     missions = [
         Mission("snipe", src_id=0, target_id=2, ships=6, score=0.95, eta=10),
@@ -84,6 +87,44 @@ def test_both_sources_may_pick_same_target():
     intents = settle_plan(missions, world, model)
     assert len(intents) == 2
     assert {i.target_id for i in intents} == {2}
+
+
+def test_skip_overcommit_when_one_source_already_suffices():
+    """Source 0 commits 50 ships to target 2 (5-ship garrison + 20 growth
+    over 10 turns ≈ 25 defenders). The first 50-ship fleet alone is more
+    than enough. Source 1 should NOT also commit 50 — instead it falls
+    back to its second-best target."""
+    world, model = _setup_world()
+    missions = [
+        # Source 0: 50 ships at target 2 → cumulative will exceed
+        # pred_enemy + 1 (~26) by a wide margin.
+        Mission("snipe", src_id=0, target_id=2, ships=50, score=0.95, eta=10),
+        # Source 1 also wants target 2 with 50 ships. Should be skipped.
+        Mission("snipe", src_id=1, target_id=2, ships=50, score=0.90, eta=11),
+        # Source 1's fallback — target 3 (a different lightly-defended planet).
+        Mission("snipe", src_id=1, target_id=3, ships=6, score=0.50, eta=12),
+    ]
+    intents = settle_plan(missions, world, model)
+    by_src = {i.src_id: i for i in intents}
+    assert by_src[0].target_id == 2
+    # Source 1 fell back to target 3, NOT redundantly stacking on 2.
+    assert by_src[1].target_id == 3
+
+
+def test_source_with_no_fallback_drops_when_overcommitted():
+    """When a source's ONLY candidate is already over-committed by an
+    earlier pick, that source emits no intent (rather than firing a
+    wasted fleet at an already-handled target)."""
+    world, model = _setup_world()
+    missions = [
+        Mission("snipe", src_id=0, target_id=2, ships=50, score=0.95, eta=10),
+        # Source 1's only candidate is the over-committed target.
+        Mission("snipe", src_id=1, target_id=2, ships=50, score=0.90, eta=11),
+    ]
+    intents = settle_plan(missions, world, model)
+    # Only source 0's intent survives; source 1 has no fallback.
+    assert len(intents) == 1
+    assert intents[0].src_id == 0
 
 
 def test_intents_ordered_by_source_top_score_desc():

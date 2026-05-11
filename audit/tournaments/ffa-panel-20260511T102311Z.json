@@ -1,0 +1,72 @@
+{
+  "generated_utc": "20260511T102311Z",
+  "focals": [
+    "v3_snipe",
+    "v2",
+    "roi_baseline"
+  ],
+  "background": [
+    "weakest",
+    "enemy_first",
+    "baseline"
+  ],
+  "players": 4,
+  "seeds": [
+    42,
+    1,
+    7,
+    13,
+    31,
+    100,
+    17,
+    23
+  ],
+  "rotate_seats": true,
+  "results": [
+    {
+      "focal": "v3_snipe",
+      "focal_spec": "v3_snipe",
+      "background": [
+        "weakest",
+        "enemy_first",
+        "baseline"
+      ],
+      "n_games": 32,
+      "first_place_count": 26,
+      "first_place_rate": 0.8125,
+      "wilson_lo_95": 0.6469050424507756,
+      "wilson_hi_95": 0.9111057606383721,
+      "p95_focal_turn_ms": 55.32933755002318
+    },
+    {
+      "focal": "v2",
+      "focal_spec": "v2",
+      "background": [
+        "weakest",
+        "enemy_first",
+        "baseline"
+      ],
+      "n_games": 32,
+      "first_place_count": 27,
+      "first_place_rate": 0.84375,
+      "wilson_lo_95": 0.6824550744643347,
+      "wilson_hi_95": 0.9313568089337279,
+      "p95_focal_turn_ms": 65.02379490004842
+    },
+    {
+      "focal": "roi_baseline",
+      "focal_spec": "roi_baseline",
+      "background": [
+        "weakest",
+        "enemy_first",
+        "baseline"
+      ],
+      "n_games": 32,
+      "first_place_count": 28,
+      "first_place_rate": 0.875,
+      "wilson_lo_95": 0.7193135021517204,
+      "wilson_hi_95": 0.950299461555257,
+      "p95_focal_turn_ms": 0.4947348500422777
+    }
+  ]
+}

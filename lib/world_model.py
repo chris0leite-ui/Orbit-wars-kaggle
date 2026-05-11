@@ -184,3 +184,60 @@ class WorldModel:
         if tl is None:
             return None
         return state_at_timeline(tl, step)[1]
+
+
+# ---------------------------------------------------------------------------
+# Comet lifetime — public helper used by ROI scoring sites
+# ---------------------------------------------------------------------------
+
+
+def _comet_paths_by_id(world) -> dict[int, tuple[list, int]]:
+    """{planet_id: (path, path_index)} for every comet in `world.obs_raw`.
+
+    `obs["comets"]` is a list of groups, each `{planet_ids, paths,
+    path_index}`. `paths[i]` is the trajectory of `planet_ids[i]` — a
+    list of `[x, y]` pairs. `path_index` is shared across the group.
+
+    Mirrors `lib/mechanism._comet_path_lookup` but promoted to a public
+    helper because ROI scoring now needs it as well.
+    """
+    raw = world.obs_raw
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        comets = raw.get("comets", [])
+    else:
+        comets = getattr(raw, "comets", [])
+    out: dict[int, tuple[list, int]] = {}
+    for group in comets or []:
+        if hasattr(group, "keys"):
+            planet_ids = list(group["planet_ids"])
+            paths = list(group["paths"])
+            path_index = int(group["path_index"])
+        else:
+            planet_ids = list(group.planet_ids)
+            paths = list(group.paths)
+            path_index = int(group.path_index)
+        for idx, pid in enumerate(planet_ids):
+            out[int(pid)] = (paths[idx], path_index)
+    return out
+
+
+def comet_remaining_lifetime(planet_id: int, world) -> int | None:
+    """Steps until `planet_id` leaves the board.
+
+    Returns `len(path) - path_index` for comets, or `None` for non-comet
+    planets (which have no finite lifetime in this sense — the static /
+    orbiting planets stay until end-of-game).
+
+    Used by ROI scoring sites (`lib/missions/snipe.py`,
+    `agents/simple/roi.py`, `agents/v2/main.py`) to cap `time_to_hold`
+    on comet targets: sending a fleet to a comet that leaves before we
+    arrive is wasted ships.
+    """
+    paths_by_id = _comet_paths_by_id(world)
+    entry = paths_by_id.get(int(planet_id))
+    if entry is None:
+        return None
+    path, path_index = entry
+    return max(0, len(path) - path_index)

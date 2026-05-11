@@ -23,7 +23,7 @@ import math
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
 from lib.mission import Mission
-from lib.world_model import WorldModel
+from lib.world_model import WorldModel, comet_remaining_lifetime
 
 # Total game length in steps (Configuration table, data/README.md).
 EPISODE_STEPS = 500
@@ -59,7 +59,15 @@ def propose_snipe_missions(world: World, model: WorldModel) -> list[Mission]:
                 continue
             # Cost-aware ROI: value / (cost + distance + 1). Additive cost
             # avoids the pure-value/cost over-correction toward 1-ship targets.
-            time_to_hold = max(1, EPISODE_STEPS - step_now - eta)
+            # Comet-lifetime correction: comets leave the board at
+            # `len(path) - path_index` steps from now; capping time_to_hold
+            # by remaining lifetime stops us scoring "long-run yield" on a
+            # comet that's about to depart.
+            if t.id in world.comet_ids:
+                rem = comet_remaining_lifetime(t.id, world)
+                time_to_hold = max(0, (rem or 0) - eta)
+            else:
+                time_to_hold = max(1, EPISODE_STEPS - step_now - eta)
             value = t.production * time_to_hold
             score = value / (base_ships + d + 1.0)
             missions.append(Mission(

@@ -34,18 +34,31 @@ from lib.mechanism import DEFAULT_MECHANISMS
 EPISODE_STEPS = 500
 
 
-def _score(mine: Planet, target: Planet, step: int) -> tuple:
+def _score(mine: Planet, target: Planet, step: int,
+           comet_lifetime: int | None) -> tuple:
     d = dist((mine.x, mine.y), (target.x, target.y))
     cost = max(1, int(target.ships) + 1)
     v = fleet_speed(cost)
     eta = int(math.ceil(d / max(v, 1e-6)))
-    time_to_hold = max(1, EPISODE_STEPS - step - eta)
+    # Comets leave the board on a fixed schedule; if the comet exits
+    # before our fleet arrives, time_to_hold collapses to 0 and the
+    # score correctly drops to 0 (don't send to dying comets).
+    if comet_lifetime is not None:
+        time_to_hold = max(0, comet_lifetime - eta)
+    else:
+        time_to_hold = max(1, EPISODE_STEPS - step - eta)
     value = target.production * time_to_hold
     roi = value / (cost + d + 1.0)
     return (-roi, d)   # argmax roi, tiebreak: nearest
 
 
 def propose_intents(obs) -> list[Intent]:
+    # Local import (not module-top) so simple/roi.py stays bundlable —
+    # bundle_agent.DEFAULT_LIB_ORDER inlines world_model before
+    # mechanism, so this resolves correctly post-bundle.
+    from lib.intent import World
+    from lib.world_model import comet_remaining_lifetime
+
     player = obs.get("player", 0) if isinstance(obs, dict) else obs.player
     raw_planets = obs.get("planets", []) if isinstance(obs, dict) else obs.planets
     step = (
@@ -60,10 +73,17 @@ def propose_intents(obs) -> list[Intent]:
     if not my_planets or not targets:
         return []
 
+    world = World.from_obs(obs)  # for comet-lifetime lookup
     rng = random.Random(step ^ (player + 1) * 1009)
     intents: list[Intent] = []
     for mine in my_planets:
-        scored = [(_score(mine, t, step), rng.random(), t) for t in targets]
+        scored = []
+        for t in targets:
+            lifetime = (
+                comet_remaining_lifetime(t.id, world)
+                if t.id in world.comet_ids else None
+            )
+            scored.append((_score(mine, t, step, lifetime), rng.random(), t))
         scored.sort(key=lambda e: (e[0], e[1]))
         target = scored[0][2]
         intents.append(

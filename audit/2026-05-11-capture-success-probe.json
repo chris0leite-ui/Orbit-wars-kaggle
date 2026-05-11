@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-05-11T07:39:49Z",
+  "timestamp_utc": "2026-05-11T10:19:18Z",
   "agent": "agents/simple/roi.py",
   "opponent": "agents/simple/roi.py (self-play)",
   "n_seeds": 8,
@@ -14,36 +14,32 @@
     8
   ],
   "totals": {
-    "reached": 6186,
-    "collided_other": 145,
-    "oob": 172,
-    "sun": 8,
-    "alive_at_end": 144
+    "reached": 6284,
+    "collided_other": 42,
+    "alive_at_end": 114,
+    "oob": 20,
+    "sun": 2
   },
-  "total_launches_logged": 6679,
-  "total_launches_matched": 6655,
-  "total_launches_unmatched": 24,
+  "total_launches_logged": 6470,
+  "total_launches_matched": 6462,
+  "total_launches_unmatched": 8,
   "games": [
     {
       "seed": 1,
       "n_steps": 500,
-      "n_launches_logged": 660,
-      "n_matched": 660,
+      "n_launches_logged": 590,
+      "n_matched": 590,
       "n_unmatched": 0,
       "outcomes_per_player": {
         "0": {
-          "reached": 306,
-          "collided_other": 7,
-          "oob": 10,
-          "sun": 1,
-          "alive_at_end": 6
+          "reached": 287,
+          "collided_other": 1,
+          "alive_at_end": 7
         },
         "1": {
-          "reached": 306,
-          "collided_other": 7,
-          "oob": 10,
-          "sun": 1,
-          "alive_at_end": 6
+          "reached": 287,
+          "collided_other": 1,
+          "alive_at_end": 7
         }
       },
       "unmatched_sample": [],
@@ -82,74 +78,23 @@
             "hit": 21,
             "intended_target": 15
           }
-        },
-        {
-          "fleet_id": 407,
-          "launch": {
-            "step": 354,
-            "player": 0,
-            "src_id": 8,
-            "target_id": 21,
-            "ships": 7,
-            "aim_angle": -2.809677702323414
-          },
-          "result": {
-            "outcome": "collided_other",
-            "last_step": 367,
-            "hit": 23,
-            "intended_target": 21
-          }
-        },
-        {
-          "fleet_id": 409,
-          "launch": {
-            "step": 354,
-            "player": 1,
-            "src_id": 11,
-            "target_id": 22,
-            "ships": 7,
-            "aim_angle": 0.3319149512663794
-          },
-          "result": {
-            "outcome": "collided_other",
-            "last_step": 367,
-            "hit": 20,
-            "intended_target": 22
-          }
-        },
-        {
-          "fleet_id": 414,
-          "launch": {
-            "step": 356,
-            "player": 0,
-            "src_id": 16,
-            "target_id": 21,
-            "ships": 7,
-            "aim_angle": -0.9758712938815236
-          },
-          "result": {
-            "outcome": "collided_other",
-            "last_step": 372,
-            "hit": 4,
-            "intended_target": 21
-          }
         }
       ]
     },
     {
       "seed": 2,
-      "n_steps": 172,
-      "n_launches_logged": 232,
-      "n_matched": 232,
+      "n_steps": 193,
+      "n_launches_logged": 294,
+      "n_matched": 294,
       "n_unmatched": 0,
       "outcomes_per_player": {
         "0": {
-          "reached": 116,
+          "reached": 154,
           "collided_other": 2,
-          "alive_at_end": 6
+          "alive_at_end": 15
         },
         "1": {
-          "reached": 108
+          "reached": 123
         }
       },
       "unmatched_sample": [],
@@ -173,7 +118,7 @@
           }
         },
         {
-          "fleet_id": 103,
+          "fleet_id": 104,
           "launch": {
             "step": 56,
             "player": 0,
@@ -193,9 +138,9 @@
     },
     {
       "seed": 3,
-      "n_steps": 229,
-      "n_launches_logged": 435,
-      "n_matched": 435,
+      "n_steps": 236,
+      "n_launches_logged": 428,
+      "n_matched": 428,
       "n_unmatched": 0,
       "outcomes_per_player": {
         "0": {
@@ -203,9 +148,9 @@
           "collided_other": 3
         },
         "1": {
-          "reached": 245,
-          "collided_other": 4,
-          "alive_at_end": 34
+          "reached": 254,
+          "collided_other": 3,
+          "alive_at_end": 19
         }
       },
       "unmatched_sample": [],
@@ -301,47 +246,26 @@
     {
       "seed": 4,
       "n_steps": 500,
-      "n_launches_logged": 764,
-      "n_matched": 762,
-      "n_unmatched": 2,
+      "n_launches_logged": 746,
+      "n_matched": 746,
+      "n_unmatched": 0,
       "outcomes_per_player": {
         "0": {
-          "reached": 356,
-          "oob": 9,
-          "collided_other": 6,
-          "alive_at_end": 10
+          "reached": 364,
+          "collided_other": 3,
+          "alive_at_end": 6
         },
         "1": {
-          "reached": 356,
-          "oob": 9,
-          "collided_other": 6,
-          "alive_at_end": 10
+          "reached": 364,
+          "collided_other": 3,
+          "alive_at_end": 6
         }
       },
-      "unmatched_sample": [
-        {
-          "reason": "no_birth_match",
-          "step": 179,
-          "player": 0,
-          "src_id": 10,
-          "target_id": 14,
-          "ships": 52,
-          "aim_angle": 2.6622861231659356
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 179,
-          "player": 1,
-          "src_id": 9,
-          "target_id": 13,
-          "ships": 52,
-          "aim_angle": -0.47930653042385746
-        }
-      ],
+      "unmatched_sample": [],
       "vanished_unknown_sample": [],
       "collided_other_sample": [
         {
-          "fleet_id": 84,
+          "fleet_id": 82,
           "launch": {
             "step": 74,
             "player": 0,
@@ -358,7 +282,7 @@
           }
         },
         {
-          "fleet_id": 85,
+          "fleet_id": 83,
           "launch": {
             "step": 74,
             "player": 1,
@@ -375,54 +299,54 @@
           }
         },
         {
-          "fleet_id": 96,
+          "fleet_id": 266,
           "launch": {
-            "step": 81,
+            "step": 176,
             "player": 0,
-            "src_id": 8,
-            "target_id": 22,
-            "ships": 12,
-            "aim_angle": -1.5071097358372243
+            "src_id": 17,
+            "target_id": 9,
+            "ships": 38,
+            "aim_angle": 2.383786573555108
           },
           "result": {
             "outcome": "collided_other",
-            "last_step": 95,
-            "hit": 6,
-            "intended_target": 22
+            "last_step": 178,
+            "hit": 20,
+            "intended_target": 9
           }
         },
         {
-          "fleet_id": 97,
+          "fleet_id": 267,
           "launch": {
-            "step": 81,
+            "step": 176,
             "player": 1,
-            "src_id": 11,
-            "target_id": 21,
-            "ships": 12,
-            "aim_angle": 1.634482917752569
+            "src_id": 18,
+            "target_id": 10,
+            "ships": 38,
+            "aim_angle": -0.7578060800346856
           },
           "result": {
             "outcome": "collided_other",
-            "last_step": 95,
-            "hit": 5,
-            "intended_target": 21
+            "last_step": 178,
+            "hit": 23,
+            "intended_target": 10
           }
         },
         {
-          "fleet_id": 397,
+          "fleet_id": 336,
           "launch": {
-            "step": 267,
+            "step": 246,
             "player": 0,
-            "src_id": 16,
-            "target_id": 13,
-            "ships": 67,
-            "aim_angle": -1.0716210745965453
+            "src_id": 18,
+            "target_id": 2,
+            "ships": 121,
+            "aim_angle": -1.4161035003903928
           },
           "result": {
             "outcome": "collided_other",
-            "last_step": 273,
-            "hit": 21,
-            "intended_target": 13
+            "last_step": 253,
+            "hit": 20,
+            "intended_target": 2
           }
         }
       ]
@@ -430,164 +354,146 @@
     {
       "seed": 5,
       "n_steps": 500,
-      "n_launches_logged": 1490,
-      "n_matched": 1484,
-      "n_unmatched": 6,
+      "n_launches_logged": 1390,
+      "n_matched": 1386,
+      "n_unmatched": 4,
       "outcomes_per_player": {
         "0": {
-          "reached": 675,
-          "oob": 23,
-          "collided_other": 32,
-          "alive_at_end": 12
+          "reached": 678,
+          "collided_other": 3,
+          "oob": 2,
+          "alive_at_end": 10
         },
         "1": {
-          "reached": 675,
-          "oob": 23,
-          "collided_other": 32,
-          "alive_at_end": 12
+          "reached": 678,
+          "collided_other": 3,
+          "oob": 2,
+          "alive_at_end": 10
         }
       },
       "unmatched_sample": [
         {
           "reason": "no_birth_match",
-          "step": 182,
+          "step": 178,
           "player": 0,
-          "src_id": 1,
-          "target_id": 36,
-          "ships": 16,
-          "aim_angle": -0.01871901810845056
+          "src_id": 36,
+          "target_id": 32,
+          "ships": 4,
+          "aim_angle": 1.1154746429088385
         },
         {
           "reason": "no_birth_match",
-          "step": 182,
+          "step": 178,
           "player": 1,
-          "src_id": 2,
-          "target_id": 39,
-          "ships": 16,
-          "aim_angle": 3.122873635481343
+          "src_id": 39,
+          "target_id": 35,
+          "ships": 4,
+          "aim_angle": -2.026118010680959
         },
         {
           "reason": "no_birth_match",
-          "step": 481,
+          "step": 355,
           "player": 0,
-          "src_id": 0,
-          "target_id": 38,
-          "ships": 9,
-          "aim_angle": -1.5615822694107808
+          "src_id": 12,
+          "target_id": 16,
+          "ships": 35,
+          "aim_angle": -1.7934301763564298
         },
         {
           "reason": "no_birth_match",
-          "step": 481,
-          "player": 0,
-          "src_id": 1,
-          "target_id": 36,
-          "ships": 9,
-          "aim_angle": 0.009214057384115825
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 481,
+          "step": 355,
           "player": 1,
-          "src_id": 2,
-          "target_id": 39,
-          "ships": 9,
-          "aim_angle": -3.1323785962056774
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 481,
-          "player": 1,
-          "src_id": 3,
-          "target_id": 37,
-          "ships": 9,
-          "aim_angle": 1.5800103841790125
+          "src_id": 15,
+          "target_id": 19,
+          "ships": 35,
+          "aim_angle": 1.3481624772333627
         }
       ],
       "vanished_unknown_sample": [],
       "collided_other_sample": [
         {
-          "fleet_id": 56,
+          "fleet_id": 274,
           "launch": {
-            "step": 51,
+            "step": 154,
             "player": 0,
-            "src_id": 8,
-            "target_id": 37,
-            "ships": 6,
-            "aim_angle": -0.26313383623180714
+            "src_id": 18,
+            "target_id": 22,
+            "ships": 44,
+            "aim_angle": -0.3980806490030746
           },
           "result": {
             "outcome": "collided_other",
-            "last_step": 59,
-            "hit": 20,
-            "intended_target": 37
+            "last_step": 155,
+            "hit": 36,
+            "intended_target": 22
           }
         },
         {
-          "fleet_id": 57,
+          "fleet_id": 275,
           "launch": {
-            "step": 51,
-            "player": 0,
-            "src_id": 9,
-            "target_id": 39,
-            "ships": 6,
-            "aim_angle": 1.3076624905630896
-          },
-          "result": {
-            "outcome": "collided_other",
-            "last_step": 59,
-            "hit": 21,
-            "intended_target": 39
-          }
-        },
-        {
-          "fleet_id": 59,
-          "launch": {
-            "step": 51,
-            "player": 0,
-            "src_id": 21,
-            "target_id": 39,
-            "ships": 6,
-            "aim_angle": -1.8816946212262549
-          },
-          "result": {
-            "outcome": "collided_other",
-            "last_step": 59,
-            "hit": 9,
-            "intended_target": 39
-          }
-        },
-        {
-          "fleet_id": 60,
-          "launch": {
-            "step": 51,
+            "step": 154,
             "player": 1,
-            "src_id": 10,
-            "target_id": 36,
-            "ships": 6,
-            "aim_angle": -1.8339301630267035
+            "src_id": 17,
+            "target_id": 21,
+            "ships": 44,
+            "aim_angle": 2.743512004586719
           },
           "result": {
             "outcome": "collided_other",
-            "last_step": 59,
-            "hit": 22,
-            "intended_target": 36
+            "last_step": 155,
+            "hit": 39,
+            "intended_target": 21
           }
         },
         {
-          "fleet_id": 61,
+          "fleet_id": 317,
           "launch": {
-            "step": 51,
-            "player": 1,
-            "src_id": 11,
-            "target_id": 38,
-            "ships": 6,
-            "aim_angle": 2.8784588173579864
+            "step": 165,
+            "player": 0,
+            "src_id": 16,
+            "target_id": 17,
+            "ships": 80,
+            "aim_angle": -2.4052028092137565
           },
           "result": {
             "outcome": "collided_other",
-            "last_step": 59,
-            "hit": 23,
-            "intended_target": 38
+            "last_step": 169,
+            "hit": 38,
+            "intended_target": 17
+          }
+        },
+        {
+          "fleet_id": 320,
+          "launch": {
+            "step": 165,
+            "player": 1,
+            "src_id": 19,
+            "target_id": 18,
+            "ships": 80,
+            "aim_angle": 0.7363898443760372
+          },
+          "result": {
+            "outcome": "collided_other",
+            "last_step": 169,
+            "hit": 37,
+            "intended_target": 18
+          }
+        },
+        {
+          "fleet_id": 584,
+          "launch": {
+            "step": 246,
+            "player": 0,
+            "src_id": 6,
+            "target_id": 17,
+            "ships": 74,
+            "aim_angle": 1.594624697820972
+          },
+          "result": {
+            "outcome": "collided_other",
+            "last_step": 254,
+            "hit": 36,
+            "intended_target": 17
           }
         }
       ]
@@ -595,23 +501,23 @@
     {
       "seed": 6,
       "n_steps": 500,
-      "n_launches_logged": 666,
-      "n_matched": 662,
-      "n_unmatched": 4,
+      "n_launches_logged": 638,
+      "n_matched": 636,
+      "n_unmatched": 2,
       "outcomes_per_player": {
         "0": {
-          "reached": 297,
-          "oob": 12,
-          "collided_other": 10,
+          "reached": 301,
+          "oob": 6,
+          "collided_other": 4,
           "sun": 1,
-          "alive_at_end": 11
+          "alive_at_end": 6
         },
         "1": {
-          "reached": 297,
-          "oob": 12,
-          "collided_other": 10,
+          "reached": 301,
+          "oob": 6,
+          "collided_other": 4,
           "sun": 1,
-          "alive_at_end": 11
+          "alive_at_end": 6
         }
       },
       "unmatched_sample": [
@@ -632,111 +538,93 @@
           "target_id": 15,
           "ships": 123,
           "aim_angle": -2.979434282165233
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 470,
-          "player": 0,
-          "src_id": 22,
-          "target_id": 14,
-          "ships": 62,
-          "aim_angle": 0.8909516981862483
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 470,
-          "player": 1,
-          "src_id": 21,
-          "target_id": 13,
-          "ships": 62,
-          "aim_angle": -2.2506409554035445
         }
       ],
       "vanished_unknown_sample": [],
       "collided_other_sample": [
         {
-          "fleet_id": 432,
+          "fleet_id": 558,
           "launch": {
-            "step": 355,
+            "step": 451,
             "player": 0,
-            "src_id": 13,
-            "target_id": 20,
+            "src_id": 8,
+            "target_id": 21,
             "ships": 3,
-            "aim_angle": -2.0324256045577465
+            "aim_angle": -0.2528404954311892
           },
           "result": {
             "outcome": "collided_other",
-            "last_step": 378,
-            "hit": 2,
-            "intended_target": 20
+            "last_step": 462,
+            "hit": 4,
+            "intended_target": 21
           }
         },
         {
-          "fleet_id": 434,
+          "fleet_id": 563,
           "launch": {
-            "step": 355,
+            "step": 451,
             "player": 1,
-            "src_id": 14,
-            "target_id": 23,
-            "ships": 3,
-            "aim_angle": 1.1091670490320469
-          },
-          "result": {
-            "outcome": "collided_other",
-            "last_step": 378,
-            "hit": 1,
-            "intended_target": 23
-          }
-        },
-        {
-          "fleet_id": 448,
-          "launch": {
-            "step": 376,
-            "player": 0,
-            "src_id": 12,
-            "target_id": 23,
-            "ships": 3,
-            "aim_angle": -2.874519727780272
-          },
-          "result": {
-            "outcome": "collided_other",
-            "last_step": 393,
-            "hit": 14,
-            "intended_target": 23
-          }
-        },
-        {
-          "fleet_id": 449,
-          "launch": {
-            "step": 376,
-            "player": 0,
-            "src_id": 13,
+            "src_id": 11,
             "target_id": 22,
             "ships": 3,
-            "aim_angle": -1.3037234009853793
+            "aim_angle": 2.888752158158604
           },
           "result": {
             "outcome": "collided_other",
-            "last_step": 393,
-            "hit": 12,
+            "last_step": 462,
+            "hit": 7,
             "intended_target": 22
           }
         },
         {
-          "fleet_id": 450,
+          "fleet_id": 567,
           "launch": {
-            "step": 376,
-            "player": 1,
-            "src_id": 14,
+            "step": 452,
+            "player": 0,
+            "src_id": 4,
             "target_id": 21,
             "ships": 3,
-            "aim_angle": 1.8378692526044147
+            "aim_angle": -2.84392308964581
           },
           "result": {
             "outcome": "collided_other",
-            "last_step": 393,
-            "hit": 15,
+            "last_step": 475,
+            "hit": 22,
             "intended_target": 21
+          }
+        },
+        {
+          "fleet_id": 568,
+          "launch": {
+            "step": 452,
+            "player": 0,
+            "src_id": 5,
+            "target_id": 23,
+            "ships": 3,
+            "aim_angle": -1.2731267628509135
+          },
+          "result": {
+            "outcome": "collided_other",
+            "last_step": 475,
+            "hit": 20,
+            "intended_target": 23
+          }
+        },
+        {
+          "fleet_id": 573,
+          "launch": {
+            "step": 452,
+            "player": 1,
+            "src_id": 6,
+            "target_id": 20,
+            "ships": 3,
+            "aim_angle": 1.8684658907388798
+          },
+          "result": {
+            "outcome": "collided_other",
+            "last_step": 475,
+            "hit": 23,
+            "intended_target": 20
           }
         }
       ]
@@ -744,184 +632,109 @@
     {
       "seed": 7,
       "n_steps": 500,
-      "n_launches_logged": 980,
-      "n_matched": 972,
-      "n_unmatched": 8,
+      "n_launches_logged": 982,
+      "n_matched": 982,
+      "n_unmatched": 0,
       "outcomes_per_player": {
         "0": {
-          "reached": 467,
-          "oob": 12,
-          "collided_other": 4,
-          "sun": 2,
-          "alive_at_end": 1
+          "reached": 484,
+          "collided_other": 3,
+          "oob": 2,
+          "alive_at_end": 2
         },
         "1": {
-          "reached": 467,
-          "oob": 12,
-          "collided_other": 4,
-          "sun": 2,
-          "alive_at_end": 1
+          "reached": 484,
+          "collided_other": 3,
+          "oob": 2,
+          "alive_at_end": 2
         }
       },
-      "unmatched_sample": [
-        {
-          "reason": "no_birth_match",
-          "step": 255,
-          "player": 0,
-          "src_id": 17,
-          "target_id": 26,
-          "ships": 4,
-          "aim_angle": -2.0364826688878934
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 255,
-          "player": 0,
-          "src_id": 19,
-          "target_id": 24,
-          "ships": 4,
-          "aim_angle": -0.46568634209299853
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 255,
-          "player": 1,
-          "src_id": 16,
-          "target_id": 27,
-          "ships": 4,
-          "aim_angle": 2.6759063114967945
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 255,
-          "player": 1,
-          "src_id": 18,
-          "target_id": 25,
-          "ships": 4,
-          "aim_angle": 1.1051099847018981
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 475,
-          "player": 0,
-          "src_id": 19,
-          "target_id": 26,
-          "ships": 9,
-          "aim_angle": 1.9481679447865687
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 475,
-          "player": 1,
-          "src_id": 16,
-          "target_id": 25,
-          "ships": 9,
-          "aim_angle": -1.1934247088032186
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 480,
-          "player": 0,
-          "src_id": 24,
-          "target_id": 1,
-          "ships": 26,
-          "aim_angle": 2.6146260202993368
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 480,
-          "player": 1,
-          "src_id": 27,
-          "target_id": 2,
-          "ships": 26,
-          "aim_angle": -0.5269666332904563
-        }
-      ],
+      "unmatched_sample": [],
       "vanished_unknown_sample": [],
       "collided_other_sample": [
         {
-          "fleet_id": 286,
+          "fleet_id": 308,
           "launch": {
-            "step": 155,
-            "player": 0,
-            "src_id": 13,
-            "target_id": 25,
-            "ships": 11,
-            "aim_angle": 2.8379042979693314
-          },
-          "result": {
-            "outcome": "collided_other",
-            "last_step": 177,
-            "hit": 1,
-            "intended_target": 25
-          }
-        },
-        {
-          "fleet_id": 287,
-          "launch": {
-            "step": 155,
+            "step": 174,
             "player": 0,
             "src_id": 15,
-            "target_id": 27,
-            "ships": 11,
-            "aim_angle": -1.8744846824153583
+            "target_id": 3,
+            "ships": 70,
+            "aim_angle": -1.8004263501127726
           },
           "result": {
             "outcome": "collided_other",
             "last_step": 177,
-            "hit": 3,
-            "intended_target": 27
+            "hit": 25,
+            "intended_target": 3
           }
         },
         {
-          "fleet_id": 288,
+          "fleet_id": 309,
           "launch": {
-            "step": 155,
+            "step": 174,
             "player": 1,
             "src_id": 12,
-            "target_id": 24,
-            "ships": 11,
-            "aim_angle": 1.267107971174435
+            "target_id": 0,
+            "ships": 70,
+            "aim_angle": 1.3411663034770205
           },
           "result": {
             "outcome": "collided_other",
             "last_step": 177,
-            "hit": 0,
-            "intended_target": 24
+            "hit": 26,
+            "intended_target": 0
           }
         },
         {
-          "fleet_id": 289,
+          "fleet_id": 310,
           "launch": {
-            "step": 155,
-            "player": 1,
-            "src_id": 14,
-            "target_id": 26,
-            "ships": 11,
-            "aim_angle": -0.30368835562046137
-          },
-          "result": {
-            "outcome": "collided_other",
-            "last_step": 177,
-            "hit": 2,
-            "intended_target": 26
-          }
-        },
-        {
-          "fleet_id": 506,
-          "launch": {
-            "step": 256,
+            "step": 175,
             "player": 0,
-            "src_id": 16,
-            "target_id": 27,
-            "ships": 6,
-            "aim_angle": 1.4182457411722778
+            "src_id": 0,
+            "target_id": 12,
+            "ships": 70,
+            "aim_angle": -1.8824705586489288
           },
           "result": {
             "outcome": "collided_other",
-            "last_step": 275,
-            "hit": 1,
-            "intended_target": 27
+            "last_step": 177,
+            "hit": 26,
+            "intended_target": 12
+          }
+        },
+        {
+          "fleet_id": 311,
+          "launch": {
+            "step": 175,
+            "player": 1,
+            "src_id": 3,
+            "target_id": 15,
+            "ships": 70,
+            "aim_angle": 1.259122094940865
+          },
+          "result": {
+            "outcome": "collided_other",
+            "last_step": 177,
+            "hit": 25,
+            "intended_target": 15
+          }
+        },
+        {
+          "fleet_id": 509,
+          "launch": {
+            "step": 252,
+            "player": 0,
+            "src_id": 14,
+            "target_id": 18,
+            "ships": 29,
+            "aim_angle": 3.078261778969541
+          },
+          "result": {
+            "outcome": "collided_other",
+            "last_step": 255,
+            "hit": 25,
+            "intended_target": 18
           }
         }
       ]
@@ -929,59 +742,39 @@
     {
       "seed": 8,
       "n_steps": 500,
-      "n_launches_logged": 1452,
-      "n_matched": 1448,
-      "n_unmatched": 4,
+      "n_launches_logged": 1402,
+      "n_matched": 1400,
+      "n_unmatched": 2,
       "outcomes_per_player": {
         "0": {
-          "reached": 683,
-          "collided_other": 9,
-          "oob": 20,
-          "alive_at_end": 12
+          "reached": 688,
+          "collided_other": 3,
+          "alive_at_end": 9
         },
         "1": {
-          "reached": 683,
-          "collided_other": 9,
-          "oob": 20,
-          "alive_at_end": 12
+          "reached": 688,
+          "collided_other": 3,
+          "alive_at_end": 9
         }
       },
       "unmatched_sample": [
         {
           "reason": "no_birth_match",
-          "step": 76,
+          "step": 356,
           "player": 0,
-          "src_id": 27,
-          "target_id": 15,
-          "ships": 29,
-          "aim_angle": -2.5551019910084283
+          "src_id": 20,
+          "target_id": 24,
+          "ships": 31,
+          "aim_angle": 0.8270219796227193
         },
         {
           "reason": "no_birth_match",
-          "step": 76,
+          "step": 356,
           "player": 1,
-          "src_id": 24,
-          "target_id": 12,
-          "ships": 29,
-          "aim_angle": 0.5864906625813652
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 152,
-          "player": 0,
-          "src_id": 26,
-          "target_id": 7,
-          "ships": 49,
-          "aim_angle": -2.2929038780441284
-        },
-        {
-          "reason": "no_birth_match",
-          "step": 152,
-          "player": 1,
-          "src_id": 25,
-          "target_id": 4,
-          "ships": 49,
-          "aim_angle": 0.848688775545665
+          "src_id": 23,
+          "target_id": 27,
+          "ships": 31,
+          "aim_angle": -2.314570673967074
         }
       ],
       "vanished_unknown_sample": [],
@@ -1021,54 +814,54 @@
           }
         },
         {
-          "fleet_id": 179,
+          "fleet_id": 398,
           "launch": {
-            "step": 77,
+            "step": 169,
             "player": 0,
-            "src_id": 26,
-            "target_id": 28,
-            "ships": 1,
-            "aim_angle": 0.08158985773497006
+            "src_id": 7,
+            "target_id": 15,
+            "ships": 83,
+            "aim_angle": 1.491660050159201
           },
           "result": {
             "outcome": "collided_other",
-            "last_step": 82,
-            "hit": 22,
-            "intended_target": 28
-          }
-        },
-        {
-          "fleet_id": 183,
-          "launch": {
-            "step": 77,
-            "player": 1,
-            "src_id": 25,
-            "target_id": 31,
-            "ships": 1,
-            "aim_angle": -3.060002795854822
-          },
-          "result": {
-            "outcome": "collided_other",
-            "last_step": 82,
-            "hit": 21,
-            "intended_target": 31
-          }
-        },
-        {
-          "fleet_id": 646,
-          "launch": {
-            "step": 254,
-            "player": 0,
-            "src_id": 22,
-            "target_id": 20,
-            "ships": 146,
-            "aim_angle": 3.096597393242854
-          },
-          "result": {
-            "outcome": "collided_other",
-            "last_step": 258,
+            "last_step": 175,
             "hit": 29,
-            "intended_target": 20
+            "intended_target": 15
+          }
+        },
+        {
+          "fleet_id": 400,
+          "launch": {
+            "step": 169,
+            "player": 1,
+            "src_id": 4,
+            "target_id": 12,
+            "ships": 83,
+            "aim_angle": -1.6499326034305923
+          },
+          "result": {
+            "outcome": "collided_other",
+            "last_step": 175,
+            "hit": 30,
+            "intended_target": 12
+          }
+        },
+        {
+          "fleet_id": 613,
+          "launch": {
+            "step": 249,
+            "player": 0,
+            "src_id": 7,
+            "target_id": 15,
+            "ships": 107,
+            "aim_angle": 0.5202535999908601
+          },
+          "result": {
+            "outcome": "collided_other",
+            "last_step": 255,
+            "hit": 30,
+            "intended_target": 15
           }
         }
       ]
