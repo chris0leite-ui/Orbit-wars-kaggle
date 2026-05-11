@@ -187,6 +187,79 @@ def bundle(agent_dir: Path, lib_modules: list[str], out_dir: Path = SUBMISSIONS)
     return out_path
 
 
+def _bundle_hash(path: Path) -> str:
+    import hashlib
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+
+
+def _parity_gate(bundle_path: Path, agent_dir: Path, seeds=(0,)) -> bool:
+    """Compare source-agent vs bundle-agent on self-play obs streams.
+
+    For each seed, generate a self-play game using the SOURCE agent, then
+    feed each turn's observation to BOTH the source and the bundle and
+    assert they emit identical actions. The bundle is meant to be a
+    syntactic restamp of the source — if they diverge, the bundler has
+    a bug (silent intra-import strip, name collision, ordering).
+
+    Returns True if all seeds match perfectly.
+    """
+    import importlib.util
+    import sys
+    repo = Path(__file__).resolve().parents[1]
+    if str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
+    from kaggle_environments import make
+
+    # Load source agent
+    if agent_dir.is_file():
+        agent_module_name = agent_dir.stem
+        source_agent = _load_module_from_file(agent_dir, agent_module_name).agent
+    else:
+        source_agent = _load_module_from_file(agent_dir / "main.py", agent_dir.name + "_source").agent
+
+    # Load bundle (registered in sys.modules first so dataclasses resolve)
+    bundle_module = _load_module_from_file(bundle_path, "_bundle_" + bundle_path.stem)
+    bundle_agent = bundle_module.agent
+
+    mismatches = 0
+    compared = 0
+    for seed in seeds:
+        env = make("orbit_wars", configuration={"seed": seed})
+        env.run([source_agent, source_agent])
+        steps = env.toJSON()["steps"]
+        for t in range(len(steps) - 1):
+            for seat in (0, 1):
+                if steps[t][seat]["status"] != "ACTIVE":
+                    continue
+                obs = steps[t][seat]["observation"]
+                if obs.get("step") is None:
+                    obs = dict(obs)
+                    obs["step"] = t
+                src_out = source_agent(obs)
+                bnd_out = bundle_agent(obs)
+                compared += 1
+                if src_out != bnd_out:
+                    mismatches += 1
+                    if mismatches <= 3:
+                        print(f"  MISMATCH seed={seed} t={t} seat={seat}: src={src_out} bundle={bnd_out}",
+                              file=sys.stderr)
+    if mismatches:
+        print(f"  PARITY FAIL: {mismatches}/{compared} mismatched turns", file=sys.stderr)
+        return False
+    print(f"  parity OK: {compared} turns matched across {len(seeds)} self-play seed(s)")
+    return True
+
+
+def _load_module_from_file(path: Path, name: str):
+    import importlib.util
+    import sys
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("agent_dir", type=Path, help="path to agents/<name>/")
@@ -197,9 +270,20 @@ def main(argv: list[str] | None = None) -> int:
         help=f"lib modules to inline, in order (default: {' '.join(DEFAULT_LIB_ORDER)})",
     )
     parser.add_argument("--out-dir", type=Path, default=SUBMISSIONS)
+    parser.add_argument(
+        "--skip-parity-gate", action="store_true",
+        help="skip the post-bundle self-play parity check (NOT recommended)",
+    )
     args = parser.parse_args(argv)
     out = bundle(args.agent_dir.resolve(), args.lib, out_dir=args.out_dir.resolve())
-    print(f"wrote {out} ({out.stat().st_size} bytes)")
+    h = _bundle_hash(out)
+    print(f"wrote {out} ({out.stat().st_size} bytes) sha256:{h}")
+    if not args.skip_parity_gate:
+        ok = _parity_gate(out, args.agent_dir.resolve())
+        if not ok:
+            print(f"REFUSING TO LEAVE BUNDLE: removing {out}", file=sys.stderr)
+            out.unlink()
+            return 1
     return 0
 
 

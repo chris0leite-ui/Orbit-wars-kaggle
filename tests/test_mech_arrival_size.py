@@ -138,3 +138,69 @@ def test_arrival_size_preserves_intent_order():
     ]
     out = arrival_size(intents, world)
     assert [i.note for i in out] == ["a", "b", "c"]
+
+
+# ---------------------------------------------------------------------------
+# WorldModel-aware cases (the v3.2 adversary-stacking fix)
+# ---------------------------------------------------------------------------
+
+
+class _StubModel:
+    """Minimal WorldModel stub: (owner, ships) lookup by planet_id."""
+
+    def __init__(self, owners: dict, ships: dict):
+        self._owners = owners
+        self._ships = ships
+
+    def owner_at(self, planet_id, step):
+        return self._owners.get(planet_id)
+
+    def ships_at(self, planet_id, step):
+        return self._ships.get(planet_id)
+
+
+def test_arrival_size_uses_model_predicted_ships_when_higher_than_static():
+    """With two enemy fleets in-flight, the static estimate
+    (target.ships + production*eta + 1) under-counts. The WorldModel
+    predicts the post-stacking garrison; arrival_size must respect it."""
+    target = _target(1, owner=1, ships=20, production=1, x=10.0 + 30.0, y=10.0)
+    world = _world([_src(garrison=9999), target], my_id=0)
+    # Model says garrison will be 80 by the time we arrive.
+    model = _StubModel(owners={1: 1}, ships={1: 80.0})
+    intent = Intent(src_id=0, target_id=1, ships=21)
+    out = arrival_size([intent], world, model)
+    assert out[0].ships == 81   # max(static~25, 80+1)
+
+
+def test_arrival_size_skips_intent_when_model_predicts_target_already_ours():
+    """If a teammate / earlier mission flips the target to us en route,
+    sending more ships is wasted — let the planner re-allocate."""
+    target = _target(1, owner=1, ships=20, production=1, x=10.0 + 30.0, y=10.0)
+    world = _world([_src(garrison=9999), target], my_id=0)
+    model = _StubModel(owners={1: 0}, ships={1: 50.0})   # 0 = us
+    intent = Intent(src_id=0, target_id=1, ships=21)
+    out = arrival_size([intent], world, model)
+    assert out == []
+
+
+def test_arrival_size_falls_back_to_static_when_model_under_predicts():
+    """Defensive: orbiting-planet eta is noisy (lib/world_model.py:46-51).
+    Static lower bound must be respected."""
+    target = _target(1, owner=1, ships=30, production=2, x=10.0 + 30.0, y=10.0)
+    world = _world([_src(garrison=9999), target], my_id=0)
+    model = _StubModel(owners={1: 1}, ships={1: 5.0})   # under-predicts
+    intent = Intent(src_id=0, target_id=1, ships=21)
+    out = arrival_size([intent], world, model)
+    eta = math.ceil(30.0 / fleet_speed(21))
+    static_needed = 30 + 2 * eta + 1
+    assert out[0].ships == static_needed
+
+
+def test_arrival_size_no_model_keeps_static_only_behavior():
+    """Backwards-compat: pass-through to the original static formula
+    when model is None."""
+    target = _target(1, owner=1, ships=20, production=2, x=10.0 + 30.0, y=10.0)
+    world = _world([_src(garrison=9999), target], my_id=0)
+    out_no_model = arrival_size([Intent(src_id=0, target_id=1, ships=21)], world)
+    out_with_none = arrival_size([Intent(src_id=0, target_id=1, ships=21)], world, None)
+    assert out_no_model[0].ships == out_with_none[0].ships

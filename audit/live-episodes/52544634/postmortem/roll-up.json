@@ -1,0 +1,56 @@
+{
+  "n_episodes": 34,
+  "by_result": {
+    "win": 14,
+    "loss": 20
+  },
+  "by_size_result": {
+    "4": {
+      "win": 6,
+      "loss": 11
+    },
+    "2": {
+      "win": 8,
+      "loss": 9
+    }
+  },
+  "n_turns": 6974,
+  "action_match_rate": 0.8077143676512761,
+  "n_turns_compared": 6974,
+  "candidates_per_turn": {
+    "snipe": 115.681244622885,
+    "reinforce": 0.17794665901921422
+  },
+  "settled_per_turn": 6.32018927444795,
+  "idle_source_rate": 0.14063170208617665,
+  "drops_per_turn": {
+    "validate": 2.132492113564669,
+    "arrival_size": 3.3487238313736736,
+    "lead_aim_v2": 0.0,
+    "sun_avoid": 0.05276742185259536,
+    "path_clears_other_planets": 0.14181244622885,
+    "oob_guard": 0.02480642386005162
+  },
+  "drops_total": {
+    "validate": 14872,
+    "arrival_size": 23354,
+    "lead_aim_v2": 0,
+    "sun_avoid": 368,
+    "path_clears_other_planets": 989,
+    "oob_guard": 173
+  },
+  "fleet_outcomes_total": {
+    "captured": 1406,
+    "reinforced_self": 1163,
+    "bounced_enemy": 518,
+    "vanished_in_space": 309,
+    "bounced_neutral": 14,
+    "arrived_but_lost": 9,
+    "alive_at_end": 113
+  },
+  "dt_ms_p95": 22.04,
+  "dt_ms_p99": 37.79,
+  "submission_id": "52544634",
+  "team_name": "ChrisLeiteScha",
+  "elapsed_s": 66.8
+}

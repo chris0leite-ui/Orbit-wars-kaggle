@@ -24,6 +24,15 @@ audit/manifold/
 # (diagnosis history is worth keeping in git).
 audit/live-episodes/*/episode-*.json
 !audit/live-episodes/*/summary.json
+# Per-episode postmortem outputs from scripts/episode_postmortem.py are
+# 100-500 KB each; keep only the aggregated roll-up.json in git.
+audit/live-episodes/*/postmortem/postmortem-*.json
+!audit/live-episodes/*/postmortem/roll-up.json
+
+# Parallel-branch agents extracted via `git show` for cross-architecture
+# A/B comparisons (see audit/2026-05-11-v3-snipe-critical-review.md §6.5).
+# Source of truth lives on its own branch; we don't track a copy here.
+agents/precision/
 
 # Common data formats
 *.csv

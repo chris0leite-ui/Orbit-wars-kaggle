@@ -78,22 +78,31 @@ def validate(intents: list[Intent], world: World) -> list[Intent]:
 # ---------------------------------------------------------------------------
 
 
-def arrival_size(intents: list[Intent], world: World) -> list[Intent]:
-    """Bump `ships` so an enemy-owned target's expected garrison at arrival is
-    captured (covered by `target.ships + production * eta + 1`).
+def arrival_size(intents: list[Intent], world: World, model=None) -> list[Intent]:
+    """Bump `ships` so an enemy-owned target's expected garrison at arrival
+    is covered, accounting for in-flight adversary fleet stacking.
 
-    Neutral targets (`owner == -1`) and friendly targets (`owner == world.my_id`)
-    are pass-through — neutrals don't produce; friendlies are reinforce
-    intents and don't need over-sizing here.
+    Two sources for the "expected garrison at arrival":
+    1. **Static estimate** (always available): `target.ships +
+       target.production * eta + 1`. Assumes no enemy fleets reach the
+       target before we do.
+    2. **WorldModel estimate** (when `model` is provided): the simulator
+       in `lib/world_model.py` already integrates in-flight adversary
+       fleets and same-step combat into `ships_at(target_id, eta)`. This
+       is the fix for the v3_snipe bounce-rate doubling
+       (audit/2026-05-11-v3-snipe-critical-review.md §4.1): without the
+       model, a two-attacker stack walking into our target leaves our
+       arriving fleet under-sized by exactly the second attacker's count.
 
-    The bump is monotonic (`max(intent.ships, needed)`), so a strategy that
-    asked for an over-spec'd swarm doesn't get cut down. If even our full
-    garrison can't cover the production-grown target, drop the intent —
-    sending an under-sized fleet would be pure waste.
+    We take `max(static, model)` so we never go below the static estimate
+    (defensive against WorldModel mis-predictions for orbiting planets,
+    `lib/world_model.py:46-51`). If `owner_at(target, eta) == world.my_id`
+    the planet flips to us en route — drop the intent.
 
-    ETA is computed from the **current** intent.ships (i.e. the strategy's
-    pre-bump estimate). One pass; the larger fleet would arrive faster
-    and need slightly less of a bump, but the over-budget is safe.
+    Neutral targets and our own planets are pass-through.
+
+    The bump is monotonic. If even our full garrison can't cover the
+    needed size, drop — sending an under-sized fleet is pure waste.
     """
     out: list[Intent] = []
     for intent in intents:
@@ -108,7 +117,16 @@ def arrival_size(intents: list[Intent], world: World) -> list[Intent]:
         d = math.hypot(target.x - src.x, target.y - src.y)
         v = fleet_speed(intent.ships)
         eta = math.ceil(d / v) if v > 0 else 0
-        needed = target.ships + target.production * eta + 1
+        static_needed = target.ships + target.production * eta + 1
+        needed = static_needed
+        if model is not None:
+            pred_owner = model.owner_at(target.id, eta)
+            if pred_owner == world.my_id:
+                # Already ours by then — let the planner skip.
+                continue
+            pred_ships = model.ships_at(target.id, eta)
+            if pred_ships is not None:
+                needed = max(static_needed, int(math.ceil(pred_ships)) + 1)
         intent.ships = max(intent.ships, needed)
         if intent.ships > src.ships:
             continue
