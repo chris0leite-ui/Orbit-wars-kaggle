@@ -56,8 +56,6 @@ venv/
 .DS_Store
 Thumbs.db
 
-# External Kaggle data pulled for analysis (large)
-audit/external/replays/
-audit/external/episodes/
-audit/external/lb.zip
-audit/external/kernels-listing/
+# External Kaggle data pulled for analysis (~350 MB bulk fetch).
+# Analysis products live in audit/*.json + knowledge-base/concepts/.
+audit/external/
