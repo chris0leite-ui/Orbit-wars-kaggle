@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import multiprocessing as mp
 import sys
 from pathlib import Path
 
@@ -73,25 +74,10 @@ DEFAULT_STRATEGIES = ["nearest", "production", "roi", "weakest", "enemy_first"]
 DEFAULT_REFS = ["baseline", "v1_orbitfix"]
 
 
-def _resolve_agent_path(name: str) -> str:
-    """Map a panel-name to the file path the tournament fixture loads.
-
-    `baseline` -> data/main.py
-    `v1_orbitfix` -> agents/v1_orbitfix/main.py
-    Any other name -> agents/simple/<name>.py if that file exists,
-    otherwise treat `name` as a literal file path.
-    """
-    if name == "baseline":
-        return str(REPO / "data" / "main.py")
-    if name == "v1_orbitfix":
-        return str(REPO / "agents" / "v1_orbitfix" / "main.py")
-    candidate = REPO / "agents" / "simple" / f"{name}.py"
-    if candidate.is_file():
-        return str(candidate)
-    p = Path(name)
-    if p.is_file():
-        return str(p)
-    raise ValueError(f"unknown strategy / agent: {name}")
+# Name resolution is shared with scripts/ffa_panel.py via
+# scripts/_agent_paths.py so 2P and 4P panels accept the same strategy
+# names (e.g. `v2`, `v3_snipe`, `roi`, `baseline`).
+from scripts._agent_paths import resolve_agent_path as _resolve_agent_path  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -240,8 +226,9 @@ def main(argv=None) -> int:
              "Required for downstream manifold_check / behavioural fingerprinting.",
     )
     parser.add_argument(
-        "--workers", type=int, default=1,
-        help="Parallel game workers. 1 = sequential (default). >1 uses "
+        "--workers", type=int, default=mp.cpu_count() or 1,
+        help="Parallel game workers. Default = os.cpu_count() (use all "
+             "cores). Pass --workers 1 for sequential debugging. >1 uses "
              "multiprocessing.Pool; agent specs must be string paths.",
     )
     args = parser.parse_args(argv)

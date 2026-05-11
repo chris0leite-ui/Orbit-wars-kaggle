@@ -1,5 +1,71 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-11 (bootstrap-agentic-systems-lqnm6)
+
+- `tag: guard-mechanisms-check-only-to-predicted-endpoint` — wrap-up
+  context: live-replay analysis of 21 v2 episodes found 7.5% of our
+  fleets flew OOB, 3.2% died in the sun. All three guards
+  (`sun_avoid`, `path_clears_other_planets`, `oob_guard`) only
+  simulated the fleet path up to the predicted target arrival step
+  (`max_steps ≈ total_dist / speed`). When the lead-prediction missed
+  (orbital drift, tangent shot), the fleet kept flying through empty
+  space past the predicted spot until OOB/sun, but the guards stopped
+  checking. **Fix:** new `lib/trajectory.predict_fleet_fate(src,
+  target, angle, ships, world)` ray-casts the FULL trajectory until
+  the first collision (target / planet / sun / OOB). All three guards
+  delegate to it. Capture probe: OOB 7.5% → 2.6% → 0.3%; sun 3.2% →
+  0.1% → 0.0%; reached 77.2% → 93.0% → 97.2% across the three fix
+  waves of today.
+
+- `tag: bundler-missing-block-e-modules` — submission flow: first
+  `python -m scripts.bundle_agent agents/v3_snipe` produced a 53KB
+  bundle that crashed 10/10 self-play with `NameError: 'propose_
+  snipe_missions' is not defined`. Root cause: `DEFAULT_LIB_ORDER`
+  in `scripts/bundle_agent.py` didn't include `lib/mission.py`,
+  `lib/missions/snipe.py`, `lib/missions/reinforce.py`, or
+  `lib/planner.py` — these Block E modules were added since the
+  bundler was last touched, and `_INTRA_IMPORT_RE` silently strips
+  intra-package imports so the symbols just go undefined. **Fix:**
+  `DEFAULT_LIB_ORDER` now includes the four Block E modules
+  (subpackage paths like `"missions/snipe"` resolve via pathlib
+  transparently). Bundle E.2 gate cleared 0/10 after the fix.
+  *Promotion candidate*: the bundler should auto-discover required
+  modules via AST analysis of the agent's imports rather than
+  relying on a hand-maintained list.
+
+- `tag: 8-seed-mvp-result-is-noise` — Block E v3.1 lookahead MVP
+  showed 11/16 = 68.8% lift over v2 in an 8-seed panel; PI excitement
+  level was high. 32-seed retest collapsed to 50/50 parity (16 wins
+  in either direction, all draws at step 500). Wilson 95% CI on 11/16
+  is [44%, 86%] — already wide enough to encompass parity. **Fix:**
+  do not publish lift headlines from n ≤ 16 seeds. The plan file's
+  recommended gate was always 32 seeds × both seats; I jumped ahead.
+  Same pattern likely to recur — promotion candidate to encode "≥32
+  seeds for any lift claim" as a gate rule.
+
+- `tag: until-loop-spurious-process-detection` — wrap-up context:
+  `until [ -z "$(pgrep -f 'scripts.strategy_panel' 2>/dev/null)" ];
+  do sleep 30; done` exited early during a 32-seed panel run because
+  pgrep briefly returned empty during a worker-process transition.
+  Reported "BOTH DONE" while the panel was actually still at game
+  23/64; led me to a false "panel was killed" diagnosis and a
+  redundant duplicate panel start (which then competed for CPU with
+  the original). **Fix:** prefer the background-task `run_in_background`
+  + auto-notification path over manual pgrep polling. If polling is
+  unavoidable, require N consecutive empty pgrep checks before
+  concluding the process has finished.
+
+- `tag: rolling-last-2-tradeoff-needs-explicit-decision-record` —
+  submission flow: v3_snipe push at 12:16 UTC evicted v1.2/roi
+  (μ=1006.9, the OLDER and higher-rated of the two prior slots),
+  leaving rolling pair = [v2 (974.3, BUGGY guards), v3_snipe
+  (PENDING)]. The choice was rational (v3 ≫ v1.2 locally at 97%
+  in 2P; v2's buggy guards are an active drag) but the trade-off
+  wasn't recorded as a deliberate decision until the wrap-up. **Fix:**
+  before every submit, write a one-line decision record citing the
+  evicted submission and the expected-Δμ. Promotion candidate to
+  formalise as a Rule 12 sub-clause.
+
 > One entry per distinct friction event, grouped under a `## YYYY-MM-DD`
 > heading. Format:
 >

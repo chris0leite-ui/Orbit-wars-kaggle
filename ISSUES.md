@@ -90,7 +90,14 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   current position. v1 vs baseline 40/40 wins on 20×2 seed grid.
 - **B.3 Search-based**: minimax / MCTS over short horizons (5-10
   turns) of fleet-launch decisions. Branching factor is huge —
-  needs heuristic-pruned action space. `[owner: unclaimed | status: open]`
+  needs heuristic-pruned action space. `[owner: bootstrap-agentic-systems-lqnm6 | status: parked]`
+  → Lookahead Phase 2 (2026-05-11) established the framework via
+  `env.clone()` + K-step forward sim. `lib/lookahead.py::score_action`
+  + `agents/v3_lookahead/main.py`. AUC 0.952 ≈ oracle. Drop-one
+  candidate enumerator hit 50/50 parity vs v2 at 32 seeds. Next:
+  richer enumerator (sibling-strategy / per-source swap / bipartite).
+  See audit/2026-05-11-lookahead-phase{1a,1b,2}-*.md +
+  audit/2026-05-11-v3-lookahead-mvp-parity.md.
 - **B.4 RL**: PPO/IMPALA self-play with opponent-pool curriculum.
   Heavy compute; defer until heuristic plateau. `[owner: unclaimed | status: open]`
 - **B.5 Hybrid**: heuristic policy with learned value head, OR IL
@@ -112,7 +119,13 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
 
 - **D.1 Local-tournament fixture**: `kaggle_environments.evaluate()`
   wrapper that runs N agents × M seeds × pairs, returns winrate
-  matrix. Persistent JSON output for trend tracking. `[owner: review-competition-handover-0pGNc | status: wip]`
+  matrix. Persistent JSON output for trend tracking. `[owner: bootstrap-agentic-systems-lqnm6 | status: done]`
+  → `scripts/tournament.py` (2P primitive) + `scripts/strategy_panel.py`
+  (2P round-robin) + `scripts/ffa_tournament.py` + `scripts/ffa_panel.py`
+  (4P focal-vs-background) + `scripts/_agent_paths.py` (shared
+  agent-name resolver). Workers default = cpu_count(). 4P fixture
+  added 2026-05-11 based on live-replay finding that 33% of ladder
+  games are 4P FFA.
 - **D.2 Replay logging**: capture `env.steps` + episode metadata for
   every local game. Disk usage: ~250 KB gzipped per 500-step game. `[owner: simple-trading-strategies-QS0xV | status: done]`
   → `scripts/tournament.py::_build_replay` + `--capture-replays` flag;
