@@ -25,6 +25,12 @@ REPO = Path(__file__).resolve().parents[1]
 # Order matters: each module must come AFTER its lib-internal dependencies.
 # fleet/orbit use geometry; aim uses fleet/orbit; trajectory uses aim/fleet/
 # geometry/orbit; mechanism uses fleet/orbit/aim/intent/trajectory.
+# Block E mission framework (2026-05-11):
+#   mission (dataclass) needs intent;
+#   missions/snipe + missions/reinforce need fleet/intent/mission/world_model;
+#   planner needs intent/mission/world_model.
+# Subpackage paths like "missions/snipe" resolve to lib/missions/snipe.py
+# via pathlib's `/` operator transparently.
 DEFAULT_LIB_ORDER = [
     "geometry",
     "fleet",
@@ -35,6 +41,10 @@ DEFAULT_LIB_ORDER = [
     "intent",
     "trajectory",
     "mechanism",
+    "mission",
+    "missions/snipe",
+    "missions/reinforce",
+    "planner",
 ]
 SUBMISSIONS = REPO / "submissions"
 
