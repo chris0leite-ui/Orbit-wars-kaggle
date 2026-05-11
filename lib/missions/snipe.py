@@ -88,8 +88,10 @@ ENDGAME_NEUTRAL_BONUS = 1.5
 # downstream. Drawback: blocks gang-up (multiple sources contributing to
 # one target) — but gang-up doesn't actually work today (each intent is
 # independently sized by arrival_size), so the filter is a near-pure
-# improvement to idle rate. Default OFF until validated by A/B.
-PROPOSER_AFFORDABILITY_FILTER = False
+# improvement to idle rate. Default OFF (= 0) until validated by A/B.
+# Stored as int so scripts/ab_variants.py can patch it (its regex requires
+# a numeric literal).
+PROPOSER_AFFORDABILITY_FILTER = 0
 
 
 def _player_totals(world: World) -> dict[int, float]:

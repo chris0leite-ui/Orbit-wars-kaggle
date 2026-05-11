@@ -204,7 +204,7 @@ def test_affordability_filter_off_keeps_all_proposals():
     emits Missions even when src.ships < base_ships. Validates default
     behaviour is unchanged."""
     import lib.missions.snipe as snipe_mod
-    assert snipe_mod.PROPOSER_AFFORDABILITY_FILTER is False
+    assert not snipe_mod.PROPOSER_AFFORDABILITY_FILTER
     world = _world(my_id=0, planets=[
         _planet(0, 0, 0.0, 0.0, ships=3),                # small source
         _planet(1, 1, 50.0, 0.0, ships=20, production=2),  # large target
