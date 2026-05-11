@@ -39,8 +39,8 @@ from lib.world_model import WorldModel
 
 # Per-turn wallclock budget for the lookahead loop. Leaves margin for the
 # v3_snipe baseline computation + env reconstruction + return overhead.
-_TIME_LIMIT_MS = 500.0
-_SIM_K_DEFAULT = 10
+_TIME_LIMIT_MS = 400.0
+_SIM_K_DEFAULT = 8
 
 
 def _incumbent_action(obs):
