@@ -55,3 +55,9 @@ venv/
 # OS noise
 .DS_Store
 Thumbs.db
+
+# External Kaggle data pulled for analysis (large)
+audit/external/replays/
+audit/external/episodes/
+audit/external/lb.zip
+audit/external/kernels-listing/
