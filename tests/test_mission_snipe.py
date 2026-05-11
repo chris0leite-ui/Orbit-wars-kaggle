@@ -179,24 +179,33 @@ def test_endgame_neutral_outscores_pre_endgame_neutral():
 def test_endgame_neutral_outscores_endgame_enemy_at_equal_distance():
     """At endgame, identical-distance neutral target beats identical-
     distance enemy target because endgame neutrals get the burn bonus
-    and enemies don't."""
+    and enemies don't.
+
+    Default `ENDGAME_NEUTRAL_BONUS=1.0` after the v3.5 A/B reverted to
+    identity (the boost was statistically tied with baseline at 64-seed,
+    audit/2026-05-11-v3.5-airtime-and-endgame-burn.md). Override the
+    constant locally so the code path is still exercised.
+    """
     import lib.missions.snipe as snipe_mod
-    src = _planet(0, 0, 0.0, 0.0, ships=100)
-    neutral = _planet(1, -1, 30.0, 0.0, ships=2, production=2)
-    enemy = _planet(2, 1, 30.0, 5.0, ships=2, production=2)  # ~same distance
-    world = _world(
-        my_id=0,
-        planets=[src, neutral, enemy],
-        step=snipe_mod.ENDGAME_STEP,
-    )
-    model = WorldModel.from_world(world)
-    ms = propose_snipe_missions(world, model)
-    by_t = {m.target_id: m for m in ms}
-    assert by_t[1].score > by_t[2].score
-    # Ratio should be ~ENDGAME_NEUTRAL_BONUS (modulo the slight distance
-    # difference; floor to 1.3 keeps the test robust).
-    ratio = by_t[1].score / by_t[2].score
-    assert ratio >= 1.3, f"expected endgame neutral preference; got ratio={ratio:.3f}"
+    original = snipe_mod.ENDGAME_NEUTRAL_BONUS
+    try:
+        snipe_mod.ENDGAME_NEUTRAL_BONUS = 1.5
+        src = _planet(0, 0, 0.0, 0.0, ships=100)
+        neutral = _planet(1, -1, 30.0, 0.0, ships=2, production=2)
+        enemy = _planet(2, 1, 30.0, 5.0, ships=2, production=2)  # ~same distance
+        world = _world(
+            my_id=0,
+            planets=[src, neutral, enemy],
+            step=snipe_mod.ENDGAME_STEP,
+        )
+        model = WorldModel.from_world(world)
+        ms = propose_snipe_missions(world, model)
+        by_t = {m.target_id: m for m in ms}
+        assert by_t[1].score > by_t[2].score
+        ratio = by_t[1].score / by_t[2].score
+        assert ratio >= 1.3, f"expected endgame neutral preference; got ratio={ratio:.3f}"
+    finally:
+        snipe_mod.ENDGAME_NEUTRAL_BONUS = original
 
 
 def test_affordability_filter_off_keeps_all_proposals():

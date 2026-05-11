@@ -69,15 +69,29 @@ LEADER_MULTIPLIER = 1.5
 # denominator. eta is bounded in [1, ~30] for the 100x100 board, so at
 # weight=1.0 the penalty caps at ~30 vs typical denominators of 50-150 — a
 # moderate soft penalty.
-AIRTIME_PENALTY_WEIGHT = 1.0
+#
+# **v3.5 A/B verdict (audit/2026-05-11-v3.5-airtime-and-endgame-burn.md):**
+# - AIRTIME=1.0 regresses heavily vs v3.4 baseline (43.8% Wilson at 32-seed).
+# - AIRTIME=0.5 looked like +4.7pp lift at 32-seed but converged to 52.3%
+#   Wilson=[43.7, 60.8] at 64-seed — statistically indistinguishable from
+#   baseline.
+# - Default reverted to 0.0 (identity). Constant kept for future research
+#   (e.g., phase-decay variant, src-conditional variant, multiplicative form).
+AIRTIME_PENALTY_WEIGHT = 0.0
 
 # Endgame burn (v3.5, Exp 1): in the final ~30 turns of a game, neutrals
 # matter more than enemy captures because (a) neutrals don't grow ships
 # (no arrival_size bump → reliably launchable), (b) we have little time
 # left to extract production value from contested captures. Boost neutral
 # target priority by ENDGAME_NEUTRAL_BONUS once step >= ENDGAME_STEP.
+#
+# **v3.5 A/B verdict:** as part of the airtime+endgame composite at 64-seed,
+# the lift was indistinguishable from baseline. Standalone (eg_only, no
+# airtime) saw 40 draws / 64 games = stalemate. Default reverted to 1.0
+# (identity). Constant kept for future research (e.g., size-conditional
+# burn, neutrals-near-source-only).
 ENDGAME_STEP = 470
-ENDGAME_NEUTRAL_BONUS = 1.5
+ENDGAME_NEUTRAL_BONUS = 1.0
 
 # Affordability filter (v3.5+): when True, propose a Mission only if the
 # source planet can fund the base capture (target.ships + 1) ALONE. Phase-0
