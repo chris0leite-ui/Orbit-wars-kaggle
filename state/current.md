@@ -4,8 +4,8 @@
 > populated it is updated at every wrap-up (WRAPUP.md step 3).
 
 ```yaml
-date: 2026-05-11
-days_to_deadline: 43                     # 2026-06-23 23:59 UTC minus today
+date: 2026-05-12
+days_to_deadline: 42                     # 2026-06-23 23:59 UTC minus today
 current_submitted_agent: v3_snipe        # rolling-last-2: [v2 (965.3), v3_snipe (1055.5)]; v1.2/roi (1006.9) evicted by v3 push
 last_kernel_push: 2026-05-11 12:16:01 UTC
 last_submission_id: 52544634
@@ -21,11 +21,12 @@ last_submission_message: |
 tournament_rank_today: v2=965.3, v3_snipe=1055.5   # v3_snipe is best slot; live winrate 41.2% (lower than v2's 50.9%) but matched against stronger opponents per TrueSkill
 our_best_rank: μ=1055.5 (#52544634, v3_snipe)      # +90.2 over v2; +392 to top-10 cliff
 lb_top10_cliff: 1447.6                   # ShunkiKyoya, 2026-05-11. #1 = bowwowforeach 1697.7
-submissions_used_today: 2                # v2 (04:04 UTC) + v3_snipe (12:16 UTC)
+submissions_used_today: 0                # v3.5 built locally; not submitted (regression vs v3_snipe)
 submissions_used_total: 6
 plateau_days: 0
 saturation_count: 0
 session_log:
+  - 2026-05-12 — analyze-leaderboard-strategies-sdZlE (THIS SESSION). Two waves: (a) **top-performer leaderboard analysis** — pulled Kaggle top-30 (CSV), BFS-crawled to identify all top-10 submission IDs (bowwowforeach #1 μ=1683 through 3Comets #10 μ=1440), downloaded 50 top-10 replays + 10 midpack control replays, computed 15-feature behavioural fingerprints + 10 extended features. Findings (knowledge-base/concepts/top-performer-strategies.md): top-10 launches 2× more often (1.20 vs 0.63), with larger fleets (38 vs 29), emptier sources (11 vs 22 ships), 2.3× more enemy targets, opens at step 4 (mid 11), comet-capture only 3% (mid 13%). Pulled 14 public kernels including @konbu17 hybrid (ML shot-validator, #1 in @marcodg 50-agent panel at 85.4%). (b) **v3.5 stack implementation** — translated findings to mission classes: targeted off-by-one for orbiting/comet (NEUTRAL), denominator rebalance 0.5×ships (NEUTRAL), opening/drain/gang_up/recapture Mission classes, shot-validator labeling pipeline (37k examples). 32-seed 2P A/B v3.5 vs v3_snipe = **39.1% Wilson lo 28.1% — GATE FAIL**. Per-wave 16-seed ablation: opening_only 40.6%, drain_only 46.9%, gangup_only 50.0%, recapture_only 53.1% — none clear 55% gate. v3.5 NOT submitted; code retained on branch. Debug hypotheses in audit/2026-05-12-v3.5-stack-results.md. 4 commits on this branch. 0 submissions used.
   - 2026-05-11 PM — analyze-submission-logs-dFHeS: (a) live data pull for v3_snipe (52544634, μ=1055.5 +90.2 over v2) + v2 (52532938, μ=965.3); (b) replay-driven instrumented postmortem (scripts/episode_postmortem.py) — fleet outcome attribution + drop telemetry; v3 bounces enemy 2x as often as v2 (14.7% vs 7.6%); (c) precision-physics A/B (parallel branch claude/precision-physics-engine-ymJkA) — v3_snipe wins 10/16, precision p95=1444ms > 1s actTimeout — NOT submittable as-is; (d) audit/2026-05-11-v3-snipe-critical-review.md; (e) parity gap closed: 53% match was instrumentation bugs (off-by-one + missing obs.step backfill), now 100% on all 34 v3_snipe replays + 998-turn self-play; (f) permanent gates: tests/test_replay_parity.py, scripts/bundle_agent.py post-bundle parity + sha256 hash; (g) v3.2 lib changes — arrival_size now consults WorldModel.ships_at for adversary stacking (lib/mechanism.py), DEFAULT_HORIZON 110→250 (lib/world_model.py), realize() takes optional model kwarg (lib/intent.py); (h) 32-seed 2P A/B v3.2 vs v3_snipe_frozen = 57.8% (37/64) Wilson [45.6, 69.1] (audit/tournaments/20260511T152648Z.json); 16-seed 4P FFA panel v3.2 93.8% vs frozen 90.6% (audit/tournaments/ffa-panel-20260511T185817Z.json); (i) v3.2 not yet submitted — PI to authorize a slot per Rule 1.
   - 2026-05-11 — bootstrap-agentic-systems-lqnm6 (prior): bootstrap infra, Block E mission framework MVP, lookahead probes (env.clone() Sim<K=50> AUC=0.952), v3.1 drop-one parity, live fleet-loss fix (predict_fleet_fate), ROI cost-awareness, four remaining ROI-doc shortcomings (comet lifetime / reinforce / arrival-ledger / mission classification), v3_snipe submitted as #52544634. Total: 14 commits on lqnm6 branch.
   - 2026-05-10 PM — competition-strategy-brainstorm-ZK6XT (prior): strategic-direction plan + Block A physics + Blocks C+D arrival-ledger + v2 strategy. v1.2/roi μ settled at 978.7. Top-10 cliff = 1460. (Older entries archived to audit/archive-2026-05-10-handover-prior-pm-sessions.md.)
@@ -44,6 +45,9 @@ mechanism_families_explored:
   - cost-aware-roi-additive-denominator     # score = (production × time_to_hold) / (ships_to_send + distance + 1). Additive cost avoids pure-value/cost over-correction toward 1-ship targets
   - comet-lifetime-correction                # comet_remaining_lifetime helper; time_to_hold caps at len(path) - path_index for comet targets
   - mission-framework-snipe-plus-reinforce  # v3.1 v3_snipe: snipe + reinforce mission classes through settle_plan (with same-turn arrival ledger). 32-seed 2P 57.8% vs v2 (Wilson lo 45.6%); 16-seed 4P FFA parity. Submitted as #52544634.
+  - top-performer-fingerprint-analysis      # 2026-05-12: 50 top-10 replays + 10 midpack, 15+10 features. Top-10 distinguishing qualities: 2× launch rate, 33% bigger fleets, half mean garrison-at-launch, 2.3× enemy-target focus, step-4 opening, 3% comet rate. knowledge-base/concepts/top-performer-strategies.md.
+  - v3.5-ambitious-mission-portfolio        # 2026-05-12: opening + drain + gang_up + recapture Mission classes built; 32-seed 2P A/B = 39.1% (FAIL); per-wave ablation all <55% Wilson lo. v3.5 NOT submitted. Code retained on claude/analyze-leaderboard-strategies-sdZlE. audit/2026-05-12-v3.5-stack-results.md.
+  - shot-validator-labeling-pipeline        # 2026-05-12: scripts/label_shot_outcomes.py + data/shot_validator/{schema.json,README.md}; 37k labeled (24-dim features, 0/1 outcome) examples from top-10 + midpack replay corpus. MLP training deferred per PI directive.
 gate_status: cleared                      # 228/228 tests green; bundle E.2 self-play 0/10 crashes; bundle-vs-unbundled parity 10/10; 32-seed 2P + 16-seed 4P panels run
 headroom_to_top5pct: deprecated            # no longer the binding target — top-10 prize cliff is
 headroom_to_top10_prize: +392 μ           # top-10 cliff at 1447.6 (ShunkiKyoya, 2026-05-11). v3_snipe at 1055.5 → +392μ.
