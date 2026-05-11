@@ -95,12 +95,22 @@ def settle_plan(
         ky = (src.y - 50.0) * (tgt.y - 50.0)
         return (-kx, -ky, m.target_id)
 
+    # Round the primary score to 6 decimal places before tie-breaking.
+    # The env stores planet coordinates with up to 1-ULP σ-asymmetries
+    # (e.g. seed 1: planet 15.y = 30.384005553010518 vs σ-expected
+    # 30.38400555301052). These propagate through distance → score with
+    # 1-ULP differences, defeating the σ-equivariant tie-break above
+    # because the primary -score key already orders the "near-ties" as
+    # distinct. Rounding to 6 places treats sub-ULP-noise as a true
+    # tie, allowing _tb to actually fire.
+    SCORE_ROUND = 6
+
     for src_id in by_src:
-        by_src[src_id].sort(key=lambda m: (-m.score, _tb(m)))
+        by_src[src_id].sort(key=lambda m: (-round(m.score, SCORE_ROUND), _tb(m)))
 
     source_order = sorted(
         by_src.keys(),
-        key=lambda s: (-by_src[s][0].score, _tb(by_src[s][0])),
+        key=lambda s: (-round(by_src[s][0].score, SCORE_ROUND), _tb(by_src[s][0])),
     )
 
     # target_id -> list of (eta, ships) for this-turn pending arrivals.
