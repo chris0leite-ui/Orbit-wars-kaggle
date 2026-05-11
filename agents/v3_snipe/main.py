@@ -47,4 +47,4 @@ def agent(obs):
         + propose_reinforce_missions(world, model)
     )
     intents = settle_plan(missions, world, model)
-    return realize(intents, obs, mechanisms=DEFAULT_MECHANISMS)
+    return realize(intents, obs, mechanisms=DEFAULT_MECHANISMS, model=model)
