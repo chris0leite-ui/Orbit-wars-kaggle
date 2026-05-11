@@ -16,7 +16,73 @@ or required a human nag. See self-improvement.md for the full distillation proto
 
 ## Pending (not yet applied to skill files)
 
-### [ ] [TABULAR-ONLY] kickoff-runbook.md / day-1: pool eff-rank diagnostic on Day 1
+### [ ] [CODE-COMP-DISCOVERED] bundle_agent.py: auto-discover required lib modules from agent imports
+
+`tag: bundler-missing-block-e-modules` (and earlier
+`bundler-missing-trajectory`). Origin: Orbit Wars 2026-05-11.
+Twice in one day a new `lib/*.py` module was added (`lib/trajectory`,
+`lib/mission` + `lib/missions/*` + `lib/planner`) and the bundler's
+hand-maintained `DEFAULT_LIB_ORDER` wasn't updated. First time the
+bundle parity test caught it (bundled v1 produced different game
+outcomes than unbundled v1). Second time the E.2 self-play gate
+caught it (bundled v3_snipe crashed 10/10 with `NameError:
+'propose_snipe_missions' is not defined`). Pattern: any module
+added to `lib/` since the bundler was last touched silently breaks
+bundles when imported transitively — `_INTRA_IMPORT_RE` strips
+the import line and assumes the symbol is defined elsewhere in
+the bundle.
+
+Fix: replace the `DEFAULT_LIB_ORDER` constant in
+`scripts/bundle_agent.py` with AST-based discovery. Parse the
+agent's `main.py`, traverse `from lib... import ...` statements,
+recursively collect their lib-module dependencies, build a
+topologically-sorted module list, bundle in order. Eliminates the
+manual maintenance burden and the failure mode where adding a new
+lib module silently breaks production bundles.
+
+### [ ] [CROSS-CUTTING] CLAUDE.md / Rule 19 addendum: ≥32 seeds for any lift claim
+
+`tag: 8-seed-mvp-result-is-noise`. Origin: Orbit Wars 2026-05-11.
+The Block E v3.1 lookahead MVP's 8-seed result (11/16 = 68.8%
+h2h vs v2) was reported as a positive lift; 32-seed retest
+collapsed to 50/50 parity. Wilson 95% CI on 8-seed = [44%, 86%]
+is already wide enough to contain parity. The plan file's
+recommended gate was always 32 seeds × both seats; the agent
+jumped ahead. Cost here was attention diverted to a "why did v3.1
+lift?" investigation that turned out to have nothing to investigate,
+plus a misleading commit message.
+
+Fix: encode in Rule 19 (Experimentation harness) — "A lift claim
+(vs control or PRIMARY) requires ≥32 seeds × both-seats, unless
+the point estimate is ≥75% with n ≥ 16 AND the Wilson lower bound
+is ≥55%. Smaller-n results must be labelled 'smoke' not 'lift' in
+all prose, commit messages, and audit docs." This is structurally
+the same pattern as `tabular-only` Rule 24's "fold-safe" gate but
+for code-comp panel results.
+
+### [ ] [CODE-COMP-DISCOVERED] CLAUDE.md / Rule 12 addendum: pre-submit eviction record
+
+`tag: rolling-last-2-tradeoff-needs-explicit-decision-record`.
+Origin: Orbit Wars 2026-05-11. v3_snipe push at 12:16 UTC evicted
+v1.2/roi (μ=1006.9, the older and HIGHER-rated of the two prior
+slots), leaving rolling pair = [v2 (974.3, with the buggy guards),
+v3_snipe (PENDING)]. The choice was rational (v3 ≫ v1.2 locally
+at 97% h2h; v2's buggy guards are an active drag) but the
+trade-off wasn't pre-registered as a deliberate decision until the
+wrap-up. Pattern: rolling-last-2 makes every submission an explicit
+trade between known and unknown; without pre-registration, the
+agent can default to "ship the new thing" without sizing whether
+the expected lift justifies the eviction.
+
+Fix: Rule 12 sub-clause — "Before every Orbit Wars submission,
+write a one-line decision record citing (i) the submission_id and
+μ being evicted, (ii) the expected Δμ over the surviving slot
+(based on local panel), and (iii) the rationale if the evicted
+submission has higher μ than what stays. Append to
+state/current.md::last_submission_message before the
+`kaggle competitions submit` call."
+
+
 
 `tag: pool-rank-lock-at-logit-direction-not-rank-correlation`.
 Origin: s6e5 2026-05-08 PM postmortem. Run SVD eff-rank on the

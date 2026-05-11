@@ -149,10 +149,12 @@ calibration: if expected-Δμ doesn't justify the eviction, don't push.
 
 ## PI additions (from step 4)
 
-> PI: pending PI input. Block until PI replies via WRAPUP-step-4 ask.
-
-(If PI does not surface additions, the three candidates above stand
-as drafted, awaiting yes/no/edit ratification.)
+PI ratified all three promotion candidates verbatim ("promote
+candidates the merge to main", 2026-05-11 wrap). All three entries
+applied to `.claude/skills/kaggle-comp/improvements.md` under
+"Pending (not yet applied to skill files)" — they'll cascade into
+the skill files themselves on the next self-improvement distillation
+pass.
 
 ## Framework version at session-end
 
