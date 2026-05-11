@@ -149,7 +149,16 @@ def propose_snipe_missions(world: World, model: WorldModel) -> list[Mission]:
                 priority *= COMET_BONUS if is_comet else NEUTRAL_BONUS
             if spoiler_on and t.owner == leader_pid:
                 priority *= LEADER_MULTIPLIER
-            score = priority * value / (base_ships + d + 1.0)
+            # Denominator rebalance: halve the ship-cost weight.
+            # Top-10 fingerprint shows mean fleet 38 (vs midpack 29);
+            # the linear (base_ships + d + 1) penalty made the scorer
+            # prefer tiny fleets. TrueSkill rewards win/loss only —
+            # overwhelming-force is essentially free.
+            # Implicitly favors contested enemy targets (high base_ships)
+            # over easy neutrals WITHOUT a flat priority multiplier
+            # (which v3.4 disproved at 28.1% A/B). Conditional via the
+            # denominator shape, not a flat bonus.
+            score = priority * value / (0.5 * base_ships + d + 1.0)
 
             missions.append(Mission(
                 mission_class="snipe",

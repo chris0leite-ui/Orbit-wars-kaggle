@@ -117,7 +117,27 @@ def arrival_size(intents: list[Intent], world: World, model=None) -> list[Intent
         d = math.hypot(target.x - src.x, target.y - src.y)
         v = fleet_speed(intent.ships)
         eta = math.ceil(d / v) if v > 0 else 0
-        static_needed = target.ships + target.production * eta + 1
+        # Targeted off-by-one for dynamic targets (orbiting + comets):
+        # the swept-pair collision check resolves combat at the entry-turn
+        # position, which is one production tick AFTER the production tick
+        # computed at eta. For static planets, eta is over-estimated by
+        # (r_src + r_target)/v (fleet captures on radius-entry), so adding
+        # the extra tick over-sizes. Audit:
+        # `audit/2026-05-11-v3-snipe-games-analysis.md` items A + games §5.
+        target_tuple = [
+            target.id, target.owner, target.x, target.y,
+            target.radius, target.ships, target.production,
+        ]
+        # is_orbiting() is geometric (target sits inside the rotation
+        # radius); a target actually MOVES only when world.omega != 0.
+        # Match lead_aim's gate (mechanism.py:254) so static-from-zero-omega
+        # tests stay unchanged.
+        is_dynamic = (
+            target.id in world.comet_ids
+            or (is_orbiting(target_tuple) and world.omega != 0.0)
+        )
+        prod_ticks = eta + (1 if is_dynamic else 0)
+        static_needed = target.ships + target.production * prod_ticks + 1
         needed = static_needed
         if model is not None:
             pred_owner = model.owner_at(target.id, eta)

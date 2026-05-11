@@ -4,6 +4,11 @@
 # Data — keep placeholder, ignore content
 data/*
 !data/.gitkeep
+# Shot-validator dataset: ship the spec + README, not the large jsonl.
+!data/shot_validator
+data/shot_validator/*
+!data/shot_validator/README.md
+!data/shot_validator/schema.json
 
 # Submissions / kernel build artifacts
 submissions/*

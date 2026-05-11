@@ -100,7 +100,12 @@ def test_comet_target_gets_comet_bonus_not_neutral_bonus():
     # No regular neutral to compare against directly here; instead check
     # the priority is exactly COMET_BONUS by deriving from baseline.
     base_value = comet.production * max(0, 80 - missions[0].eta)
-    base_score = base_value / (max(1, comet.ships + 1) + ((70.0 - 10.0)) + 1.0)
+    # v3.5: denominator rebalanced from `(ships + d + 1)` to
+    # `(0.5*ships + d + 1)` to favor overwhelming-force commits over
+    # tiny fleets (top-10 fingerprint mean fleet 38 vs midpack 29;
+    # `audit/2026-05-12-v3.5-stack-results.md`).
+    base_ships = max(1, comet.ships + 1)
+    base_score = base_value / (0.5 * base_ships + (70.0 - 10.0) + 1.0)
     assert abs(missions[0].score - COMET_BONUS * base_score) < 1e-6
 
 
