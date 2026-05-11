@@ -36,16 +36,20 @@ STRATEGIES = ["nearest", "production", "roi", "weakest", "enemy_first"]
 #   p1=30.0  p2=85.0  p3=50.0  p4=7.07  p5=20.0
 # ROI = production / (distance + 1):
 #   p1=0.032 p2=0.058 p3=0.020 p4=0.124 p5=0.190
+# 2026-05-10 PM: nudged p1 to (40,13) and p5 to (13,30) so paths from mine
+# don't run THROUGH another planet — `path_clears_other_planets` joined
+# DEFAULT_MECHANISMS and would otherwise correctly drop those intents.
+# Target IDs / rankings unchanged (verified in test_picks_expected_target_on_panel_obs).
 PANEL_OBS = {
     "player": 0,
     "step": 0,
     "planets": [
         [0, 0,  10.0, 10.0, 2.0, 200, 2],   # MINE (id=0)
-        [1, 1,  40.0, 10.0, 2.0,  99, 1],   # enemy_first picks: only enemy
+        [1, 1,  40.0, 13.0, 2.0,  99, 1],   # enemy_first picks: only enemy
         [2, -1, 10.0, 95.0, 2.0,  99, 5],   # production picks: highest prod
         [3, -1, 60.0, 10.0, 1.0,   1, 1],   # weakest picks: 1 ship
         [4, -1, 15.0, 15.0, 1.0,  99, 1],   # nearest picks: closest
-        [5, -1, 10.0, 30.0, 2.0,  20, 4],   # roi picks: best prod/dist
+        [5, -1, 13.0, 30.0, 2.0,  20, 4],   # roi picks: best prod/dist
     ],
     "angular_velocity": 0.0,
     "comet_planet_ids": [],

@@ -29,10 +29,12 @@ from __future__ import annotations
 
 import math
 
+from lib.aim import aim_orbiting, swept_pair_hit
 from lib.fleet import speed as fleet_speed
-from lib.geometry import path_clears_sun
+from lib.geometry import BOARD_SIZE, path_clears_sun
 from lib.intent import Intent, World
 from lib.orbit import is_orbiting, predict_relative
+from lib.world_model import WorldModel
 
 
 # ---------------------------------------------------------------------------
@@ -270,29 +272,24 @@ def lead_aim(intents: list[Intent], world: World) -> list[Intent]:
 
 
 def sun_avoid(intents: list[Intent], world: World) -> list[Intent]:
-    """Drop intents whose direct fleet path would intersect the sun.
+    """Drop intents whose actual fleet path would intersect the sun.
 
-    The env destroys any fleet whose continuous segment crosses the sun
-    (data/README.md::Fleet Movement). If we can predict that loss before
-    launching, we keep the ships in garrison instead — production catches
-    up over the next few turns and the next launch can re-evaluate.
+    Punch-#7 upgrade (2026-05-10 PM): use the lead-predicted arrival point
+    if `intent.arrival_xy` is set (populated by `lead_aim_v2`); otherwise
+    fall back to the target's current xy (matches the pre-upgrade behaviour
+    and keeps the old test suite green).
 
-    This drop-only version is deliberately conservative. A future variant
-    could re-aim at a friendly waypoint planet whose two-leg path clears
-    the sun, but that requires multi-turn planning (the env can't actually
-    bend fleet trajectories mid-flight; we'd just be sending ships TO the
-    waypoint and re-launching from there next turn).
+    The check is against the fleet's straight-line segment from the actual
+    spawn point (just outside src.radius along aim_angle) to the arrival
+    endpoint. 1-unit safety margin absorbs float drift on tangent cases.
 
-    Path check uses planet centers with a 1-unit safety margin — the env
-    spawns the fleet just outside the source radius, but the safety
-    margin absorbs that.
+    Drop-only — re-routing via a waypoint planet is a v3 mission concern
+    (`stage_then_strike`), not a mechanism. Sun-blocked intents keep their
+    ships in garrison; the next launch re-evaluates.
     """
     out: list[Intent] = []
     for intent in intents:
         if intent.aim_angle is None:
-            # Not yet aimed (e.g. comet_aim dropped, or some prior mechanism
-            # hasn't run). Pass through and let realize()'s emission filter
-            # drop unaimed intents.
             out.append(intent)
             continue
         src = world.planets_by_id.get(intent.src_id)
@@ -300,32 +297,300 @@ def sun_avoid(intents: list[Intent], world: World) -> list[Intent]:
         if src is None or target is None:
             out.append(intent)
             continue
-        if path_clears_sun((src.x, src.y), (target.x, target.y), safety=1.0):
+        # Endpoint: lead-predicted arrival if available, else target.xy.
+        end_xy = intent.arrival_xy if intent.arrival_xy is not None else (target.x, target.y)
+        if path_clears_sun((src.x, src.y), end_xy, safety=1.0):
             out.append(intent)
             continue
-        # Sun-blocked → drop. The fleet would die in flight; better to keep
-        # ships in the source garrison.
+        # Sun-blocked → drop.
     return out
 
 
-# `comet_aim` is implemented + unit-tested but EXCLUDED from DEFAULT_MECHANISMS
-# because the ablation tournament (audit/tournaments/20260510T090723Z.json)
-# showed it loses 9/40 = 22.5% vs the parity baseline. Plausible cause: with a
-# one-shot ETA estimate, the forward projection can overshoot — the env's
-# continuous collision check actually rewards `lead_aim`'s current-position
-# aim more often than `comet_aim`'s far-projection on small fleets at
-# log-curve speeds. The 3 public top notebooks (Roman 1224 et al) pair their
-# version with `search_safe_intercept` fallback (try multiple arrival times)
-# which we don't yet implement. Revisit when v3's world-model lands.
-#
-# `sun_avoid` is implemented + unit-tested but EXCLUDED from DEFAULT_MECHANISMS.
-# Promotion attempts (with and without a strategy-side pivot) regressed in
-# local A/B vs v1.2/roi @ μ=1104.9 — the mechanism checks the line from src to
-# `target.x, target.y` (current position), but orbiting targets have moved by
-# arrival. Outstanding fix: check `path_clears_sun(src.center, lead-predicted
-# arrival point)` so the check matches the actual fleet trajectory. Tracked
-# as issue #7 in the deterministic-correctness punch list.
-DEFAULT_MECHANISMS = [validate, arrival_size, lead_aim]
+# ---------------------------------------------------------------------------
+# lead_aim_v2 — 5-iter fixed-point + search_safe_intercept fallback
+# ---------------------------------------------------------------------------
+
+
+def lead_aim_v2(intents: list[Intent], world: World) -> list[Intent]:
+    """Populate `aim_angle` AND `arrival_xy` for each intent via the
+    public-kernel pattern: 5-iter fixed-point + safe-intercept fallback.
+
+    Differences from the legacy `lead_aim`:
+    - 5 iterations (was 2) with explicit XY convergence check.
+    - `search_safe_intercept` fallback when the fixed-point doesn't
+      converge (orbital targets at long range, where eta oscillates).
+    - Populates `intent.arrival_xy` so `sun_avoid`, `path_clears_other_planets`,
+      and `oob_guard` downstream can reason about the actual fleet endpoint.
+    - For static targets and comets, falls through to atan2 of current
+      target position (same as legacy lead_aim; `comet_aim` overrides
+      comets when enabled).
+
+    Intents that already have `aim_angle` set are left untouched
+    (mechanism ordering: a future planner-set aim shouldn't be clobbered).
+    """
+    for intent in intents:
+        if intent.aim_angle is not None:
+            continue
+        src = world.planets_by_id.get(intent.src_id)
+        target = world.planets_by_id.get(intent.target_id)
+        if src is None or target is None:
+            continue
+
+        target_tuple = [
+            target.id, target.owner, target.x, target.y,
+            target.radius, target.ships, target.production,
+        ]
+        is_orbit = (
+            is_orbiting(target_tuple)
+            and target.id not in world.comet_ids
+        )
+
+        if is_orbit and world.omega != 0.0:
+            result = aim_orbiting(
+                (src.x, src.y), src.radius,
+                target_tuple, target.radius,
+                intent.ships, world.omega,
+            )
+            if result is None:
+                # No valid intercept — let realize() drop the intent
+                # via the aim_angle=None gate.
+                continue
+            intent.aim_angle, intent.arrival_xy, _eta = result
+        else:
+            # Static or comet → aim at current; record arrival_xy for
+            # downstream sun/OOB/path checks even though there's no lead.
+            intent.aim_angle = math.atan2(target.y - src.y, target.x - src.x)
+            intent.arrival_xy = (target.x, target.y)
+    return intents
+
+
+# ---------------------------------------------------------------------------
+# path_clears_other_planets — drop intents swept by a non-target planet
+# ---------------------------------------------------------------------------
+
+
+def path_clears_other_planets(intents: list[Intent], world: World) -> list[Intent]:
+    """Drop intents whose flight path collides with a non-target planet.
+
+    Capture-probe (audit/2026-05-10-capture-success-probe.md) showed
+    10.7% of roi's fleets hit a non-target planet mid-flight — the
+    biggest physics-loss bucket. This mechanism replays the env's
+    `swept_pair_hit(fleet_seg, planet_seg, planet.radius)` check at each
+    step of the fleet's projected flight, against every planet's
+    projected per-step segment (orbital chord).
+
+    Precomputes per-planet trajectories over a SEARCH_HORIZON of 60
+    steps once per turn to amortise the cos/sin cost.
+    """
+    if not intents:
+        return intents
+
+    SEARCH_HORIZON = 60
+    omega = world.omega
+
+    # Precompute per-planet (positions[0..H], radius) once per turn.
+    planet_traj: dict[int, tuple[list, float]] = {}
+    for pid, p in world.planets_by_id.items():
+        p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
+        if is_orbiting(p_tuple) and omega != 0.0:
+            positions = [
+                predict_relative(p_tuple, omega, t) for t in range(SEARCH_HORIZON + 1)
+            ]
+        else:
+            positions = [(p.x, p.y)] * (SEARCH_HORIZON + 1)
+        planet_traj[pid] = (positions, p.radius)
+
+    out: list[Intent] = []
+    for intent in intents:
+        if intent.aim_angle is None:
+            out.append(intent)
+            continue
+        src = world.planets_by_id.get(intent.src_id)
+        target = world.planets_by_id.get(intent.target_id)
+        if src is None or target is None:
+            out.append(intent)
+            continue
+
+        speed_val = fleet_speed(intent.ships)
+        cos_a = math.cos(intent.aim_angle)
+        sin_a = math.sin(intent.aim_angle)
+        # Fleet spawn point (env: source + (r_src + 0.1) * direction).
+        spawn_x = src.x + cos_a * (src.radius + 0.1)
+        spawn_y = src.y + sin_a * (src.radius + 0.1)
+
+        # Endpoint for distance estimate — predicted arrival if available.
+        end_xy = intent.arrival_xy if intent.arrival_xy is not None else (target.x, target.y)
+        total_dist = math.hypot(end_xy[0] - spawn_x, end_xy[1] - spawn_y)
+        max_steps = min(
+            SEARCH_HORIZON, int(math.ceil(total_dist / max(speed_val, 1e-6))) + 1,
+        )
+
+        collided = False
+        for step in range(max_steps):
+            fleet_old = (
+                spawn_x + cos_a * speed_val * step,
+                spawn_y + sin_a * speed_val * step,
+            )
+            fleet_new = (
+                spawn_x + cos_a * speed_val * (step + 1),
+                spawn_y + sin_a * speed_val * (step + 1),
+            )
+            for pid, (positions, prad) in planet_traj.items():
+                if pid == target.id:
+                    continue
+                if pid == src.id and step == 0:
+                    # First-step spawn is exactly outside src.radius — env
+                    # explicitly does not let the fleet collide with its
+                    # own source on the spawn step. Skip.
+                    continue
+                p_old = positions[step]
+                p_new = positions[step + 1]
+                if swept_pair_hit(fleet_old, fleet_new, p_old, p_new, prad):
+                    collided = True
+                    break
+            if collided:
+                break
+        if not collided:
+            out.append(intent)
+        # Collided → drop. Ships stay in garrison for next-turn re-evaluation.
+    return out
+
+
+# ---------------------------------------------------------------------------
+# oob_guard — drop intents whose projected endpoint exits the board
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# arrival_ledger — skip intents whose target will already be ours at arrival
+# ---------------------------------------------------------------------------
+
+
+def arrival_ledger(intents: list[Intent], world: World) -> list[Intent]:
+    """Drop intents we don't need: target will be ours with enough ships
+    at our arrival step.
+
+    Builds a `WorldModel` snapshot (in-flight fleet arrival ledger +
+    per-planet timeline) for this turn. For each intent:
+    - Estimate arrival step via straight-line dist / fleet_speed.
+    - Look up `(predicted_owner, predicted_ships)` at that step.
+    - If predicted_owner == us AND predicted_ships >= intent.ships,
+      drop the intent — adding another fleet would double-commit.
+
+    Stronger variants (intercept enemy arrivals, gang-up timing) live
+    in v3 mission classes; this is the minimum-viable v2 use case.
+
+    Cost: O(planets * horizon + fleets * planets) per turn for the
+    WorldModel build (~5 ms on a 40-planet board). Cached for the
+    duration of one mechanism call.
+    """
+    if not intents:
+        return intents
+    wm = WorldModel.from_world(world)
+    out: list[Intent] = []
+    for intent in intents:
+        src = world.planets_by_id.get(intent.src_id)
+        target = world.planets_by_id.get(intent.target_id)
+        if src is None or target is None:
+            out.append(intent)
+            continue
+        # ETA: straight-line center-to-center / fleet_speed(intent.ships).
+        # Rough — doesn't account for orbital motion of target. Adequate
+        # for the "don't double-commit" use case.
+        d = math.hypot(target.x - src.x, target.y - src.y)
+        v = fleet_speed(intent.ships)
+        eta = int(math.ceil(d / max(v, 1e-6))) if v > 0 else 0
+        pred_owner = wm.owner_at(target.id, eta)
+        pred_ships = wm.ships_at(target.id, eta)
+        if (
+            pred_owner == world.my_id
+            and pred_ships is not None
+            and pred_ships >= intent.ships
+        ):
+            # Already going to be ours with surplus garrison; ship would
+            # be wasted on a target we're about to own anyway.
+            continue
+        out.append(intent)
+    return out
+
+
+def oob_guard(intents: list[Intent], world: World) -> list[Intent]:
+    """Drop intents whose projected endpoint goes off-board.
+
+    Capture-probe showed 7.6% OOB. The cause is usually that lead_aim
+    overshoots: the fleet flies past the target in a straight line and
+    exits the [0, BOARD_SIZE] box. We drop those intents — the ships
+    are wasted otherwise.
+
+    Cheap endpoint test. Since fleets travel in straight lines and
+    targets sit inside [0, BOARD_SIZE], if BOTH spawn and endpoint are
+    inside the box, the path is inside too.
+    """
+    out: list[Intent] = []
+    for intent in intents:
+        if intent.aim_angle is None:
+            out.append(intent)
+            continue
+        src = world.planets_by_id.get(intent.src_id)
+        target = world.planets_by_id.get(intent.target_id)
+        if src is None or target is None:
+            out.append(intent)
+            continue
+        cos_a = math.cos(intent.aim_angle)
+        sin_a = math.sin(intent.aim_angle)
+        spawn_x = src.x + cos_a * (src.radius + 0.1)
+        spawn_y = src.y + sin_a * (src.radius + 0.1)
+        end_xy = intent.arrival_xy if intent.arrival_xy is not None else (target.x, target.y)
+        total_dist = math.hypot(end_xy[0] - spawn_x, end_xy[1] - spawn_y)
+        end_x = spawn_x + cos_a * total_dist
+        end_y = spawn_y + sin_a * total_dist
+        if (
+            end_x < 0.0
+            or end_x > BOARD_SIZE
+            or end_y < 0.0
+            or end_y > BOARD_SIZE
+        ):
+            continue
+        out.append(intent)
+    return out
+
+
+# 2026-05-10 PM physics upgrade (capture-probe + Roman teardown):
+# - `lead_aim_v2` replaces `lead_aim` in DEFAULT_MECHANISMS. 5-iter
+#   fixed-point + `search_safe_intercept` fallback (lib/aim.py). Populates
+#   `intent.arrival_xy` so downstream checks reason about the actual
+#   flight endpoint.
+# - `sun_avoid` re-enabled with the punch-#7 fix: uses `intent.arrival_xy`
+#   if set (lead-predicted arrival) instead of `target.xy`. Previous
+#   regressions are addressed because the check now matches the actual
+#   fleet trajectory.
+# - `path_clears_other_planets` added: addresses the 10.7% collided_other
+#   bucket from the capture probe. Replays the env's swept-pair check
+#   against every non-target planet's projected orbital chord.
+# - `oob_guard` added: addresses the 7.6% OOB bucket. Drops intents whose
+#   projected endpoint exits the board.
+# - `comet_aim` remains EXCLUDED pending a comet-gated re-enable
+#   (research-note §G.14: gate on `production * expected_lifetime > ships`).
+DEFAULT_MECHANISMS = [
+    validate,
+    arrival_size,
+    lead_aim_v2,
+    sun_avoid,
+    path_clears_other_planets,
+    oob_guard,
+]
+# `arrival_ledger` is implemented but EXCLUDED from DEFAULT_MECHANISMS.
+# Local A/B showed it regressed WR from 56% to 50% (Block C audit) because
+# per-source greedy strategies don't re-pick after the mechanism drops an
+# intent: the source planet ends the turn with no action. The mechanism's
+# real value materialises when paired with the v3 planner (Block D), which
+# can re-allocate the freed ships to a different target/mission. Keep here
+# for direct use from the planner; do NOT add to DEFAULT until then.
+
+# Frozen pre-upgrade stack (validate + arrival_size + 2-iter lead_aim only).
+# Used by `agents/simple/roi_baseline.py` for A/B against the upgraded
+# DEFAULT_MECHANISMS without round-tripping through a bundled submission.
+DEFAULT_MECHANISMS_PRE_PHYSICS = [validate, arrival_size, lead_aim]
 
 # Pinned subset for the v1 parity gate — must match pre-refactor v1
 # behaviour exactly. Don't add new mechanisms here without bumping the
@@ -334,10 +599,15 @@ PARITY_MECHANISMS = [validate, lead_aim]
 
 __all__ = [
     "DEFAULT_MECHANISMS",
+    "DEFAULT_MECHANISMS_PRE_PHYSICS",
     "PARITY_MECHANISMS",
     "validate",
     "arrival_size",
     "comet_aim",
     "lead_aim",
+    "lead_aim_v2",
     "sun_avoid",
+    "path_clears_other_planets",
+    "oob_guard",
+    "arrival_ledger",
 ]
