@@ -1,0 +1,93 @@
+{
+  "n_episodes": 4,
+  "by_result": {
+    "win": 4
+  },
+  "by_size_result": {
+    "2": {
+      "win": 4
+    }
+  },
+  "n_turns": 1686,
+  "action_match_rate": 1.0,
+  "n_turns_compared": 1686,
+  "candidates_per_turn": {
+    "snipe": 205.72775800711744,
+    "reinforce": 0.7514827995255041
+  },
+  "settled_per_turn": 12.666666666666666,
+  "idle_source_rate": 0.0,
+  "drops_per_turn": {
+    "validate": 5.732502965599051,
+    "arrival_size": 5.890865954922894,
+    "lead_aim_v2": 0.0,
+    "sun_avoid": 0.021352313167259787,
+    "path_clears_other_planets": 0.15183867141162516,
+    "oob_guard": 0.004151838671411625
+  },
+  "drops_total": {
+    "validate": 9665,
+    "arrival_size": 9932,
+    "lead_aim_v2": 0,
+    "sun_avoid": 36,
+    "path_clears_other_planets": 256,
+    "oob_guard": 7
+  },
+  "fleet_outcomes_total": {
+    "captured": 721,
+    "reinforced_self": 542,
+    "bounced_enemy": 61,
+    "vanished_in_space": 110,
+    "bounced_neutral": 5,
+    "alive_at_end": 11,
+    "arrived_but_lost": 5
+  },
+  "dt_ms_p95": 28.11,
+  "dt_ms_p99": 44.09,
+  "idle_buckets_total": {
+    "MECHANISM_DROP": 19896
+  },
+  "idle_buckets_by_size": {
+    "2": {
+      "MECHANISM_DROP": 19896
+    }
+  },
+  "idle_buckets_by_phase": {
+    "early": {
+      "MECHANISM_DROP": 5453
+    },
+    "mid": {
+      "MECHANISM_DROP": 10421
+    },
+    "late": {
+      "MECHANISM_DROP": 4022
+    }
+  },
+  "idle_buckets_by_size_phase": {
+    "2p_early": {
+      "MECHANISM_DROP": 5453
+    },
+    "2p_mid": {
+      "MECHANISM_DROP": 10421
+    },
+    "2p_late": {
+      "MECHANISM_DROP": 4022
+    }
+  },
+  "idle_buckets_by_result": {
+    "win": {
+      "MECHANISM_DROP": 19896
+    }
+  },
+  "idle_subcounters": {
+    "MECHANISM_DROP:validate": 9665,
+    "MECHANISM_DROP:arrival_size": 9932,
+    "MECHANISM_DROP:sun_avoid": 36,
+    "MECHANISM_DROP:path_clears_other_planets": 256,
+    "MECHANISM_DROP:oob_guard": 7
+  },
+  "idle_total_classified": 19896,
+  "submission_id": "SELFPLAY_PHASE0_2P",
+  "team_name": "chrisLeiteScha",
+  "elapsed_s": 19.3
+}

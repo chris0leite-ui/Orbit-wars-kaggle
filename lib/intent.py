@@ -87,7 +87,7 @@ class World:
         )
 
 
-def realize(intents, obs, *, mechanisms, model=None) -> list[list]:
+def realize(intents, obs, *, mechanisms, model=None, reasons=None) -> list[list]:
     """Apply the mechanism pipeline and emit env-format actions.
 
     Final emission to `[src_id, aim_angle, ships]` lists is hard-coded —
@@ -98,16 +98,34 @@ def realize(intents, obs, *, mechanisms, model=None) -> list[list]:
     (e.g. `arrival_size` to size against adversary stacking) accept a
     3-arg signature; mechanisms that don't are still called as
     `(intents, world)` for backwards-compatibility.
+
+    Idle-source tracing (opt-in): pass a `reasons` dict to receive
+    per-source `MECHANISM_DROP:<mech_name>` attributions for intents
+    dropped by any mechanism or by the final emit filter. Pairs with
+    `lib.planner.settle_plan`'s reasons capture; downstream tooling
+    can merge both dicts to bucket every idle source.
     """
     world = World.from_obs(obs)
     for m in mechanisms:
         code = getattr(m, "__code__", None)
+        if reasons is not None:
+            srcs_before = {i.src_id for i in intents}
         if code is not None and code.co_argcount >= 3:
             intents = m(intents, world, model)
         else:
             intents = m(intents, world)
-    return [
-        [i.src_id, i.aim_angle, i.ships]
-        for i in intents
-        if i.ships > 0 and i.aim_angle is not None
-    ]
+        if reasons is not None:
+            srcs_after = {i.src_id for i in intents}
+            mech_name = getattr(m, "__name__", "unknown")
+            for dropped in srcs_before - srcs_after:
+                reasons[dropped] = f"MECHANISM_DROP:{mech_name}"
+    out = []
+    for i in intents:
+        if i.ships > 0 and i.aim_angle is not None:
+            out.append([i.src_id, i.aim_angle, i.ships])
+        elif reasons is not None:
+            if i.aim_angle is None:
+                reasons[i.src_id] = "MECHANISM_DROP:final_emit_no_aim"
+            else:
+                reasons[i.src_id] = "MECHANISM_DROP:final_emit_zero_ships"
+    return out

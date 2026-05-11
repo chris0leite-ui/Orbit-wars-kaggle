@@ -41,6 +41,7 @@ def settle_plan(
     missions: list[Mission],
     world: World,
     model: WorldModel,
+    reasons: dict[int, str] | None = None,
 ) -> list[Intent]:
     """Pick at most one mission per source under a same-turn ledger.
 
@@ -51,8 +52,21 @@ def settle_plan(
        the first one whose target isn't already over-committed by
        prior this-turn picks.
     4. After accepting a mission, register its arrival in the ledger.
+
+    Idle-source tracing (opt-in): pass a `reasons` dict to receive a
+    classification of why each non-emitting owned-and-shipped source
+    went idle this turn. Keys are planet ids; values are one of:
+
+    - `"NO_PROPOSALS"` — no proposer emitted a Mission for this source.
+    - `"LEDGER_LOSS"` — proposer(s) emitted Mission(s) but all were
+      skipped because earlier this-turn picks already covered every
+      candidate target.
+
+    `MECHANISM_DROP` (intent built but dropped by the realize pipeline)
+    is set by `lib.intent.realize`, not here, since this function returns
+    before mechanisms run.
     """
-    if not missions:
+    if reasons is None and not missions:
         return []
 
     by_src: dict[int, list[Mission]] = defaultdict(list)
@@ -70,6 +84,7 @@ def settle_plan(
     pending: dict[int, list[tuple[int, int]]] = defaultdict(list)
     chosen: list[Mission] = []
     for src_id in source_order:
+        selected = False
         for m in by_src[src_id]:
             # Ships our prior this-turn picks have committed to land at
             # m.target_id by step m.eta (or earlier). A defender at
@@ -93,6 +108,18 @@ def settle_plan(
                 continue
             chosen.append(m)
             pending[m.target_id].append((m.eta, m.ships))
+            selected = True
             break
+        if reasons is not None and not selected and by_src[src_id]:
+            reasons[src_id] = "LEDGER_LOSS"
+
+    if reasons is not None:
+        chosen_srcs = {m.src_id for m in chosen}
+        for p in world.planets_by_id.values():
+            if p.owner != world.my_id or p.ships <= 0:
+                continue
+            if p.id in chosen_srcs or p.id in reasons:
+                continue
+            reasons[p.id] = "NO_PROPOSALS"
 
     return [m.to_intent() for m in chosen]

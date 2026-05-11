@@ -1,0 +1,97 @@
+{
+  "n_episodes": 4,
+  "by_result": {
+    "win": 4
+  },
+  "by_size_result": {
+    "4": {
+      "win": 4
+    }
+  },
+  "n_turns": 1145,
+  "action_match_rate": 1.0,
+  "n_turns_compared": 1145,
+  "candidates_per_turn": {
+    "snipe": 126.14410480349345,
+    "reinforce": 0.1388646288209607
+  },
+  "settled_per_turn": 6.0174672489082965,
+  "idle_source_rate": 0.29362312897272913,
+  "drops_per_turn": {
+    "validate": 2.2069868995633186,
+    "arrival_size": 3.2270742358078603,
+    "lead_aim_v2": 0.0,
+    "sun_avoid": 0.01834061135371179,
+    "path_clears_other_planets": 0.11266375545851529,
+    "oob_guard": 0.027074235807860263
+  },
+  "drops_total": {
+    "validate": 2527,
+    "arrival_size": 3695,
+    "lead_aim_v2": 0,
+    "sun_avoid": 21,
+    "path_clears_other_planets": 129,
+    "oob_guard": 31
+  },
+  "fleet_outcomes_total": {
+    "captured": 231,
+    "reinforced_self": 144,
+    "vanished_in_space": 76,
+    "bounced_enemy": 15,
+    "hit_planet_unknown_flip": 1,
+    "bounced_neutral": 2,
+    "alive_at_end": 13
+  },
+  "dt_ms_p95": 24.63,
+  "dt_ms_p99": 43.3,
+  "idle_buckets_total": {
+    "MECHANISM_DROP": 6403,
+    "LEDGER_LOSS": 2628,
+    "NO_PROPOSALS": 236
+  },
+  "idle_buckets_by_size": {
+    "4": {
+      "MECHANISM_DROP": 6403,
+      "LEDGER_LOSS": 2628,
+      "NO_PROPOSALS": 236
+    }
+  },
+  "idle_buckets_by_phase": {
+    "early": {
+      "MECHANISM_DROP": 2628
+    },
+    "mid": {
+      "MECHANISM_DROP": 3775,
+      "LEDGER_LOSS": 2628,
+      "NO_PROPOSALS": 236
+    }
+  },
+  "idle_buckets_by_size_phase": {
+    "4p_early": {
+      "MECHANISM_DROP": 2628
+    },
+    "4p_mid": {
+      "MECHANISM_DROP": 3775,
+      "LEDGER_LOSS": 2628,
+      "NO_PROPOSALS": 236
+    }
+  },
+  "idle_buckets_by_result": {
+    "win": {
+      "MECHANISM_DROP": 6403,
+      "LEDGER_LOSS": 2628,
+      "NO_PROPOSALS": 236
+    }
+  },
+  "idle_subcounters": {
+    "MECHANISM_DROP:validate": 2527,
+    "MECHANISM_DROP:arrival_size": 3695,
+    "MECHANISM_DROP:path_clears_other_planets": 129,
+    "MECHANISM_DROP:sun_avoid": 21,
+    "MECHANISM_DROP:oob_guard": 31
+  },
+  "idle_total_classified": 9267,
+  "submission_id": "SELFPLAY_PHASE0_4P",
+  "team_name": "chrisLeiteScha",
+  "elapsed_s": 11.0
+}
