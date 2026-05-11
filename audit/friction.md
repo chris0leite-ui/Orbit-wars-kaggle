@@ -223,3 +223,66 @@ fired once and been logged for-real.
   small wrapper `scripts/safe_submit.sh` that pre-checks via GET
   then submits + verifies the new entry appears, surfacing 5xx as
   "retry, not loop" to keep us inside Rule 1's spirit.
+
+## 2026-05-10 (evening — competition-strategy-brainstorm-ZK6XT)
+
+- `tag: arrival-ledger-mechanism-without-planner-regresses` — Block C
+  integration: putting `arrival_ledger` inside `DEFAULT_MECHANISMS`
+  regressed v2 WR from 56% to 50% in A/B
+  (audit/tournaments/20260510T215332Z.json). Root cause: per-source
+  greedy strategies don't re-pick after a mechanism drops their
+  intent; sources go idle for the turn. The "don't double-commit"
+  filter is correct in principle but starves productive turns
+  without a planner that re-allocates freed ships across mission
+  classes. **Fix:** kept `arrival_ledger` implemented but EXCLUDED
+  from `DEFAULT_MECHANISMS`. Moved the dedup logic to strategy level
+  in `agents/v2/main.py` where each source can re-rank and re-pick.
+  v3 planner will use the mechanism directly inside settle_plan
+  where re-allocation IS available.
+- `tag: strategy-level-affordability-filter-prefers-low-roi` — Block D
+  first attempt: v2 bumped intent.ships per `WorldModel`-predicted
+  defense AND filtered out targets whose bumped-ships exceeded
+  src.ships. Resulted in 0/64 WR vs both roi and roi_baseline
+  (audit/tournaments/20260510T215806Z.json) because the agent
+  preferred LOW-ROI affordable targets over HIGH-ROI ones that the
+  mechanism layer's `arrival_size` would have let through unchanged.
+  Root cause: `propose_intents` should never filter on affordability
+  — that's `validate`'s job. **Fix:** rolled back to "skip
+  already-ours only, no bumping". Strategy-level WorldModel use is
+  read-only (dedup); ship-sizing stays in the mechanism layer.
+  Pattern lesson queued as a promotion candidate (see
+  `audit/2026-05-10-postmortem-competition-strategy-brainstorm-ZK6XT.md`).
+- `tag: bundle-output-clobbers-prior-bundles` — Block A bundling:
+  `python -m scripts.bundle_agent agents/simple/roi.py --out
+  submissions/` wrote to `submissions/roi.py` and silently
+  overwrote the frozen v1.2 bundle that submission #52518060 was
+  built from. The bundler computes the output filename from
+  `<agent_dir>.stem` which collides for any re-bundle of the same
+  agent. Recoverable here because v1.2 is on Kaggle; would have
+  been a real loss if we'd needed a local A/B against the frozen
+  prior. **Fix:** renamed the new bundle to
+  `submissions/v1_3_roi_physics.py` manually; promotion candidate
+  in postmortem to default the bundler's output path to a
+  versioned filename (suggested `<agent>-<git-short-sha>.py`) or
+  to refuse to overwrite an existing file without `--force`.
+- `tag: handover-md-over-line-cap` — wrap-up: HANDOVER.md grew to
+  439 lines this session — well over WRAPUP.md's 150-line cap —
+  because each of three prior PM-branch session-end blocks
+  appended without archive. Per WRAPUP step 5, oldest sections
+  should be archived to `audit/archive-YYYY-MM-DD-<topic>.md`
+  before commit. **Fix this session:** archive the three completed
+  prior PM-branch blocks (review-competition-handover-0pGNc,
+  simple-trading-strategies-QS0xV, improve-strategy-ab-testing-jYA2R)
+  to `audit/archive-2026-05-10-handover-prior-pm-sessions.md`,
+  retain only the bootstrap morning sections + tonight's
+  competition-strategy-brainstorm-ZK6XT block.
+- `tag: time-estimates-too-pessimistic-by-5x` — strategy-direction
+  plan v1: original draft estimated Roman-equivalent v3 in **12-15
+  days**. PI overrode: "your time estimates are off. tomorrow
+  morning you will be done." Actual delivery from PI ratification
+  to v2 ladder push: ~6 hours. Calibration: my budget for
+  code-comp implementation work was ~5x too pessimistic. **Fix:**
+  carry this calibration forward — when scoping subsequent Blocks
+  (E1 mission framework, E2 gang_up, etc.), estimate in hours not
+  days. The Block E1 plan budget of "4-6 hours" reflects the
+  re-calibration.
