@@ -6,10 +6,10 @@
 ```yaml
 date: 2026-05-11
 days_to_deadline: 43                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v3_snipe        # rolling-last-2: [v2 (974.3), v3_snipe (PENDING)]; v1.2/roi (1006.9) evicted by v3 push
+current_submitted_agent: v3_snipe        # rolling-last-2: [v2 (965.3), v3_snipe (1055.5)]; v1.2/roi (1006.9) evicted by v3 push
 last_kernel_push: 2026-05-11 12:16:01 UTC
 last_submission_id: 52544634
-last_submission_status: PENDING          # validation episode running; kaggle CLI 503 at wrap time, will re-poll
+last_submission_status: COMPLETE         # publicScore 1055.5 (+90.2 over v2). 34 games played, 14 wins (41.2%); 2P 47.1% 4P 35.3%. See audit/2026-05-11-v3-snipe-critical-review.md.
 last_submission_file: submissions/v3_snipe.py  # 61.7 KB bundle of agents/v3_snipe/main.py + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe,missions/reinforce,planner}. Strategy = snipe + reinforce mission classes through settle_plan (same-turn arrival ledger). Mechanism stack = DEFAULT_MECHANISMS with full-trajectory predict_fleet_fate guards.
 last_submission_message: |
   v3_snipe: Block E missions (snipe + reinforce) + cost-aware ROI +
@@ -18,8 +18,8 @@ last_submission_message: |
   (this build). 32-seed 2P vs v2 = 57.8% (Wilson [45.6, 69.2]);
   16-seed 4P FFA parity. audit/2026-05-11-v3-lookahead-mvp-parity.md
   + tournaments/20260511T112936Z.json
-tournament_rank_today: v2=974.3, v3_snipe=PENDING   # v1.2/roi (1006.9) evicted by v3 push; v2 dropping from 1025.5 → 974.3 over day
-our_best_rank: μ=974.3 (#52532938, v2) — pending v3 validation
+tournament_rank_today: v2=965.3, v3_snipe=1055.5   # v3_snipe is best slot; live winrate 41.2% (lower than v2's 50.9%) but matched against stronger opponents per TrueSkill
+our_best_rank: μ=1055.5 (#52544634, v3_snipe)      # +90.2 over v2; +392 to top-10 cliff
 lb_top10_cliff: 1447.6                   # ShunkiKyoya, 2026-05-11. #1 = bowwowforeach 1697.7
 submissions_used_today: 2                # v2 (04:04 UTC) + v3_snipe (12:16 UTC)
 submissions_used_total: 6
@@ -45,6 +45,6 @@ mechanism_families_explored:
   - mission-framework-snipe-plus-reinforce  # v3.1 v3_snipe: snipe + reinforce mission classes through settle_plan (with same-turn arrival ledger). 32-seed 2P 57.8% vs v2 (Wilson lo 45.6%); 16-seed 4P FFA parity. Submitted as #52544634.
 gate_status: cleared                      # 228/228 tests green; bundle E.2 self-play 0/10 crashes; bundle-vs-unbundled parity 10/10; 32-seed 2P + 16-seed 4P panels run
 headroom_to_top5pct: deprecated            # no longer the binding target — top-10 prize cliff is
-headroom_to_top10_prize: +473 μ           # top-10 cliff at 1447.6 (ShunkiKyoya, 2026-05-11). v2 at 974.3 → +473μ. v3 PENDING.
+headroom_to_top10_prize: +392 μ           # top-10 cliff at 1447.6 (ShunkiKyoya, 2026-05-11). v3_snipe at 1055.5 → +392μ.
 headroom_to_roman_public: +250 μ          # Roman published 1224; we are 250 μ below his ceiling. Block E missions narrow this; v3.1 candidate enumerator for lookahead is the next ceiling-raiser.
 ```
