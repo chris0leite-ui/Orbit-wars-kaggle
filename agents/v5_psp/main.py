@@ -33,7 +33,7 @@ import random
 import time
 from pathlib import Path
 
-from lib.lookahead import enumerate_drop_one_candidates, env_from_obs, score_action
+from lib.lookahead import env_from_obs, score_action
 
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -45,8 +45,14 @@ _ENDGAME = None
 K_HIGH = 50
 K_LOW = 30
 WALLCLOCK_GUARD_MS = 700.0  # downshift to K_LOW after this much elapsed
-MAX_CANDIDATES = 6
-TAU_NEAR_TIE = 5.0  # ship-units; top-2 within τ → mixed sample
+MAX_CANDIDATES = 3
+TAU_NEAR_TIE = 0.0  # 0 = deterministic top pick (mixed strategies fold the
+                    # self-play draw symmetry; keep off until we have a
+                    # shared-seed scheme for it)
+DEVIATION_MARGIN = 20.0  # only deviate from v3 incumbent if alt-Sim<K> >
+                          # incumbent-Sim<K> by this many ship-units. Without
+                          # this, near-ties on the alt side dominate the
+                          # mix and degrade play vs v3.
 
 
 def _obs_get(obs, key, default=None):
@@ -90,15 +96,17 @@ def _detect_num_players(planets) -> int:
     return len({p[1] for p in planets if p[1] != -1})
 
 
-def _candidate_actions(obs, v3_action: list, roi_action: list) -> list[list]:
+def _candidate_actions(v3_action: list, roi_action: list) -> list[list]:
     """Build the candidate set we'll score via Sim<K>.
 
-    {v3 incumbent} ∪ {ROI sibling action} ∪ {drop-one variants of v3}.
-    Deduplicated by repr; capped at MAX_CANDIDATES.
+    {v3 incumbent} ∪ {ROI sibling action}. Drop-one variants are
+    omitted (per audit/2026-05-11-v3-lookahead-mvp-parity.md they're
+    too narrow — yield 50/50 parity with v2 because v3's per-source
+    greedy already filters positive-EV launches). Deduplicated.
     """
     seen = set()
     out: list[list] = []
-    for cand in [v3_action, roi_action] + enumerate_drop_one_candidates(v3_action):
+    for cand in (v3_action, roi_action):
         key = repr(cand)
         if key in seen:
             continue
@@ -160,10 +168,10 @@ def agent(obs):
     except Exception:
         roi_action = v3_action  # if roi breaks for some reason, dedup'd out
 
-    candidates = _candidate_actions(obs, v3_action, roi_action)
+    candidates = _candidate_actions(v3_action, roi_action)
 
-    # If only one candidate (e.g., v3 emitted nothing and dedup collapsed all
-    # variants), skip Sim<K> — there's nothing to compare.
+    # If only one candidate (e.g., v3 == roi or v3 emitted nothing),
+    # skip Sim<K> — there's nothing to compare against.
     if len(candidates) <= 1:
         return candidates[0] if candidates else []
 
@@ -173,13 +181,25 @@ def agent(obs):
     except Exception:
         return v3_action  # if env rebuild fails, fall back safely
 
-    # Sim<K> scoring with v3 as the rollout policy for both sides.
-    # (This is the "predictive opp modeling" — opp plays v3 in the
-    # rollout, so we choose actions that beat v3 in expectation.)
-    scored = _score_candidates(env, my_id, candidates, policy=_v3())
+    # Sim<K> scoring with ROI as the rollout policy for both sides.
+    # ROI is a simpler / faster policy (~5-10ms per call) than v3, so
+    # K=50 stays within budget. v3-vs-v3 rollout was 1.5+s per turn in
+    # the first smoke run (audit's 280ms benchmark used v2-self-play,
+    # not v3). The substantive question — "does our action survive
+    # the next 50 turns of competent play?" — is unchanged by using
+    # ROI in rollout, since ROI vs ROI is a known draw lock too.
+    scored = _score_candidates(env, my_id, candidates, policy=_roi())
 
-    # Per-turn RNG seeded by step + player so two PSPs in self-play
-    # randomize independently but each is reproducible per game.
-    step = int(_obs_get(obs, "step", 0))
-    rng = random.Random((step + 1) * 1009 + (my_id + 1) * 17)
-    return _pick_with_mix(scored, rng)
+    # Find v3-incumbent's score in the sorted list; only deviate if
+    # an alternative beats it by DEVIATION_MARGIN. Otherwise return v3.
+    # This biases conservatively toward our strongest single agent.
+    v3_score = next((s for s, c in scored if c == v3_action), None)
+    if v3_score is None:
+        # Defensive: v3_action wasn't in scored (shouldn't happen).
+        return scored[0][1] if scored else v3_action
+    best_score, best_cand = scored[0]
+    if best_cand == v3_action:
+        return v3_action
+    if best_score - v3_score > DEVIATION_MARGIN:
+        return best_cand
+    return v3_action
