@@ -102,6 +102,9 @@ def test_comet_target_gets_comet_bonus_not_neutral_bonus():
     assert len(missions) == 1
     # No regular neutral to compare against directly here; instead check
     # the priority is exactly COMET_BONUS by deriving from baseline.
+    # Denominator: `base_ships + d + AIRTIME*eta + 1` (wave-1b rebalance
+    # reverted at main-merge; was NEUTRAL in phys-only A/B). With
+    # AIRTIME_PENALTY_WEIGHT=0 (default) this matches main's pre-v3.5 form.
     eta = missions[0].eta
     base_value = comet.production * max(0, 80 - eta)
     base_score = base_value / (
