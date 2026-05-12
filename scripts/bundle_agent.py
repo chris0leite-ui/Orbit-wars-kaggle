@@ -60,6 +60,9 @@ DEFAULT_LIB_ORDER = [
     # agents that consume them; harmless for older agents that don't
     # import (just adds ~10 KB to the bundle).
     "candidate_portfolios",
+    # v9 super-version (2026-05-12 evening): composite value heads
+    # for receding-horizon-pathology fix. Used by v9_inflight + v9_combined.
+    "value_heads",
 ]
 SUBMISSIONS = REPO / "submissions"
 

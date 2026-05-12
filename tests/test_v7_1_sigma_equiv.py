@@ -89,6 +89,11 @@ def _world_for_planet_layout(planets, my_id=0):
     return world, model
 
 
+@pytest.mark.skip(
+    reason="σ-equiv reverted for v9 (2026-05-12) — v7.6 bisect found "
+           "the layer regresses v7_0 architecture by ~54pp. Test "
+           "kept for historical reference; assertion no longer holds."
+)
 def test_settle_plan_sigma_tie_break_picks_pair():
     """On a 4-planet σ-symmetric board with two equal-score missions
     from the same source to σ-paired targets, settle_plan picks the

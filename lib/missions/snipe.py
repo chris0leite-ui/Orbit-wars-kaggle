@@ -35,10 +35,14 @@ from __future__ import annotations
 import math
 
 from lib.fleet import speed as fleet_speed
-from lib.geometry import sym_hypot
 from lib.intent import World
 from lib.mission import Mission
 from lib.world_model import WorldModel, comet_remaining_lifetime
+
+# sym_hypot was imported here for the σ-equiv layer (cherry-picked
+# from origin/claude/game-theory-strategy-analysis-0oH4N). REVERTED for
+# v9 (2026-05-12) — v7.6 bisect found σ-equiv regresses v7_0 by ~54pp.
+# Restoring math.hypot for src↔target distance below.
 
 # Total game length in steps (Configuration table, data/README.md).
 EPISODE_STEPS = 500
@@ -204,7 +208,7 @@ def propose_snipe_missions(
     missions: list[Mission] = []
     for src in my_planets:
         for t in targets:
-            d = sym_hypot(t.x - src.x, t.y - src.y)
+            d = math.hypot(t.x - src.x, t.y - src.y)
             target_min = max(1, int(t.ships) + 1)
             if aggressive and src.ships > AGGRESSIVE_MIN_GARRISON:
                 fraction_size = max(1, int(src.ships * AGGRESSIVE_FRACTION))
