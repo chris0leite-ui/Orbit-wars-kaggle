@@ -1,0 +1,15 @@
+[
+  {
+    "variant": "v7_0_drop_one",
+    "wins": 4,
+    "losses": 0,
+    "draws": 0,
+    "n": 4,
+    "winrate": 1.0,
+    "wilson_lo": 0.5100999795960008,
+    "verdict": "NEUTRAL",
+    "variant_p95_turn_ms": 645.6130078499882,
+    "elapsed_s": 98.9819871310001,
+    "json_artifact": "20260512T090300Z.json"
+  }
+]
