@@ -55,6 +55,11 @@ DEFAULT_LIB_ORDER = [
     "fast_sim",
     "opp_model",
     "v7_search",
+    # v4_planner brain (2026-05-12 evening): candidate portfolios +
+    # adaptive K + production-share value head. Inlined for v8_*
+    # agents that consume them; harmless for older agents that don't
+    # import (just adds ~10 KB to the bundle).
+    "candidate_portfolios",
 ]
 SUBMISSIONS = REPO / "submissions"
 
