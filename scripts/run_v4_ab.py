@@ -23,6 +23,7 @@ from scripts.tournament import run_tournament
 
 AGENT_PATHS = {
     "v4_planner": str(REPO / "agents" / "v4_planner" / "main.py"),
+    "v4_pef": str(REPO / "agents" / "v4_pef" / "main.py"),
     "v3.5.1": str(REPO / "agents" / "v3.5.1" / "main.py"),
     "v7_minimax": str(REPO / "agents" / "v7_minimax" / "main.py"),
     "v3_snipe": str(REPO / "agents" / "v3_snipe" / "main.py"),
@@ -37,15 +38,20 @@ def main(argv=None) -> int:
                         help="multiprocessing workers (fork)")
     parser.add_argument("--out-dir", type=str, default=None,
                         help="directory for JSON artifact")
+    parser.add_argument("--challenger", type=str, default="v4_planner",
+                        choices=sorted(AGENT_PATHS.keys()),
+                        help="agent under test (the one we count wins for)")
     parser.add_argument("--opponent", type=str, default="v3.5.1",
-                        choices=sorted(k for k in AGENT_PATHS if k != "v4_planner"),
-                        help="agent to A/B v4_planner against")
+                        choices=sorted(AGENT_PATHS.keys()),
+                        help="agent to A/B the challenger against")
     args = parser.parse_args(argv)
+    if args.challenger == args.opponent:
+        parser.error("--challenger and --opponent must differ")
 
     out_dir = Path(args.out_dir) if args.out_dir else (REPO / "audit" / "tournaments")
     result = run_tournament(
         agents={
-            "v4_planner": AGENT_PATHS["v4_planner"],
+            args.challenger: AGENT_PATHS[args.challenger],
             args.opponent: AGENT_PATHS[args.opponent],
         },
         seeds=list(range(args.seeds)),
@@ -55,8 +61,8 @@ def main(argv=None) -> int:
         workers=args.workers,
     )
     print()
-    print(f"=== v4_planner vs v3.5.1 ({args.seeds} seeds, both seats) ===")
-    total_v4_wins = 0
+    print(f"=== {args.challenger} vs {args.opponent} ({args.seeds} seeds, both seats) ===")
+    challenger_wins = 0
     total_games = 0
     for row in result.matrix:
         for col, stat in result.matrix[row].items():
@@ -66,20 +72,19 @@ def main(argv=None) -> int:
                 f"p95 P0={stat.p0_p95_turn_ms:.1f}ms P1={stat.p1_p95_turn_ms:.1f}ms; "
                 f"draws={stat.draws}"
             )
-            if row == "v4_planner":
-                total_v4_wins += stat.p0_wins
+            if row == args.challenger:
+                challenger_wins += stat.p0_wins
                 total_games += stat.n
-            if col == "v4_planner":
-                total_v4_wins += stat.p1_wins
+            if col == args.challenger:
+                challenger_wins += stat.p1_wins
                 total_games += stat.n
     if total_games > 0:
-        # Pooled Wilson over both seats.
         from scripts.tournament import _wilson_ci
-        lo, hi = _wilson_ci(total_v4_wins, total_games)
+        lo, hi = _wilson_ci(challenger_wins, total_games)
         print()
         print(
-            f"POOLED: v4_planner {total_v4_wins}/{total_games} "
-            f"= {total_v4_wins/total_games:.1%}, Wilson 95% [{lo:.3f}, {hi:.3f}]"
+            f"POOLED: {args.challenger} {challenger_wins}/{total_games} "
+            f"= {challenger_wins/total_games:.1%}, Wilson 95% [{lo:.3f}, {hi:.3f}]"
         )
     return 0
 

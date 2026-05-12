@@ -8,6 +8,9 @@ from lib.lookahead_planner import (
     COMET_SPAWN_STEPS,
     K_MAX,
     K_MIN,
+    _cluster_cohesion,
+    _frontier_exposure,
+    _reach,
     adaptive_K,
     evaluate_value,
     truncate_K_to_comet_boundary,
@@ -218,3 +221,193 @@ def test_truncate_K_never_crosses_any_boundary(boundary):
     K_in = 100
     K_out = truncate_K_to_comet_boundary(K_in, step)
     assert step + K_out < boundary
+
+
+# ---------------------------------------------------------------------------
+# PEF positional terms: cluster cohesion / frontier exposure / reach
+# ---------------------------------------------------------------------------
+
+
+def test_cluster_cohesion_empty_world_is_zero():
+    assert _cluster_cohesion([], my_id=0) == 0.0
+
+
+def test_cluster_cohesion_no_my_planets_is_zero():
+    planets = [[0, 1, 50.0, 50.0, 3.0, 5, 2.0]]
+    assert _cluster_cohesion(planets, my_id=0) == 0.0
+
+
+def test_cluster_cohesion_isolated_my_planet_no_neighbours_is_zero():
+    """My planet in a corner with no other planets within radius → 0."""
+    planets = [
+        [0, 0, 10.0, 10.0, 3.0, 5, 2.0],
+        [1, 1, 90.0, 90.0, 3.0, 5, 2.0],  # ~113 away, outside R=25
+    ]
+    assert _cluster_cohesion(planets, my_id=0) == 0.0
+
+
+def test_cluster_cohesion_dense_friendly_cluster_approaches_one():
+    """My 3 planets cluster tightly, no enemies nearby → cohesion near 1.0."""
+    planets = [
+        [0, 0, 50.0, 50.0, 3.0, 5, 2.0],
+        [1, 0, 52.0, 52.0, 3.0, 5, 2.0],
+        [2, 0, 48.0, 52.0, 3.0, 5, 2.0],
+    ]
+    c = _cluster_cohesion(planets, my_id=0)
+    assert c == pytest.approx(1.0)
+
+
+def test_cluster_cohesion_mixed_neighbourhood_intermediate():
+    """My 2 planets + 1 enemy interleaved → cohesion strictly in (0, 1)."""
+    planets = [
+        [0, 0, 50.0, 50.0, 3.0, 5, 2.0],
+        [1, 0, 52.0, 52.0, 3.0, 5, 2.0],
+        [2, 1, 51.0, 51.0, 3.0, 5, 2.0],  # enemy interleaved
+    ]
+    c = _cluster_cohesion(planets, my_id=0)
+    assert 0.0 < c < 1.0
+
+
+def test_cluster_cohesion_strictly_higher_when_more_friendly_neighbours():
+    """A→B: replace an enemy neighbour with a friendly one. Cohesion must rise."""
+    state_a = [
+        [0, 0, 50.0, 50.0, 3.0, 5, 2.0],
+        [1, 1, 53.0, 53.0, 3.0, 5, 2.0],  # enemy at d≈4.2
+    ]
+    state_b = [
+        [0, 0, 50.0, 50.0, 3.0, 5, 2.0],
+        [1, 0, 53.0, 53.0, 3.0, 5, 2.0],  # same place, now ours
+    ]
+    assert _cluster_cohesion(state_b, my_id=0) > _cluster_cohesion(state_a, my_id=0)
+
+
+def test_frontier_exposure_empty_or_no_mine_is_zero():
+    assert _frontier_exposure([], my_id=0) == 0.0
+    assert _frontier_exposure([[0, 1, 50.0, 50.0, 3.0, 5, 2.0]], my_id=0) == 0.0
+
+
+def test_frontier_exposure_no_enemies_nearby_is_zero():
+    """My planet alone in its neighbourhood → no exposure."""
+    planets = [
+        [0, 0, 50.0, 50.0, 3.0, 5, 2.0],
+        [1, -1, 90.0, 90.0, 3.0, 5, 2.0],  # neutral, far AND neutrals don't threaten
+    ]
+    assert _frontier_exposure(planets, my_id=0) == 0.0
+
+
+def test_frontier_exposure_enemy_outnumbering_us_locally_is_high():
+    """My planet with 1 ship, enemy with 100 ships adjacent → exposure ≈ 1."""
+    planets = [
+        [0, 0, 50.0, 50.0, 3.0, 1, 2.0],     # me: 1 ship
+        [1, 1, 53.0, 50.0, 3.0, 100, 2.0],   # enemy: 100 ships, d=3
+    ]
+    f = _frontier_exposure(planets, my_id=0)
+    assert f > 0.9
+
+
+def test_frontier_exposure_we_outnumber_enemy_locally_is_low():
+    """My planet with 100 ships, enemy with 1 ship adjacent → exposure ≈ small."""
+    planets = [
+        [0, 0, 50.0, 50.0, 3.0, 100, 2.0],
+        [1, 1, 53.0, 50.0, 3.0, 1, 2.0],
+    ]
+    f = _frontier_exposure(planets, my_id=0)
+    assert f < 0.1
+
+
+def test_frontier_exposure_monotone_in_enemy_proximity():
+    """Closer enemy fleet → higher exposure (exp-decay weighting)."""
+    far = [
+        [0, 0, 50.0, 50.0, 3.0, 10, 2.0],
+        [1, 1, 70.0, 50.0, 3.0, 100, 2.0],  # d=20
+    ]
+    near = [
+        [0, 0, 50.0, 50.0, 3.0, 10, 2.0],
+        [1, 1, 60.0, 50.0, 3.0, 100, 2.0],  # d=10
+    ]
+    assert _frontier_exposure(near, my_id=0) > _frontier_exposure(far, my_id=0)
+
+
+def test_reach_empty_or_no_targets_is_zero():
+    assert _reach([], my_id=0) == 0.0
+    only_mine = [[0, 0, 50.0, 50.0, 3.0, 5, 2.0]]
+    assert _reach(only_mine, my_id=0) == 0.0
+
+
+def test_reach_all_targets_within_radius_is_one():
+    planets = [
+        [0, 0, 50.0, 50.0, 3.0, 5, 2.0],
+        [1, 1, 55.0, 50.0, 3.0, 5, 2.0],   # d=5
+        [2, -1, 60.0, 50.0, 3.0, 5, 2.0],  # d=10
+    ]
+    assert _reach(planets, my_id=0) == pytest.approx(1.0)
+
+
+def test_reach_no_targets_within_radius_is_zero():
+    planets = [
+        [0, 0, 5.0, 5.0, 3.0, 5, 2.0],
+        [1, 1, 95.0, 95.0, 3.0, 5, 2.0],   # d≈127, outside R=40
+    ]
+    assert _reach(planets, my_id=0) == 0.0
+
+
+def test_reach_production_weighted_not_count_weighted():
+    """Reachable planet with prod=3 + unreachable with prod=1 → 3/4 = 0.75."""
+    planets = [
+        [0, 0, 50.0, 50.0, 3.0, 5, 2.0],
+        [1, 1, 55.0, 50.0, 3.0, 5, 3.0],   # reachable, prod 3
+        [2, -1, 99.0, 99.0, 3.0, 5, 1.0],  # unreachable, prod 1
+    ]
+    assert _reach(planets, my_id=0) == pytest.approx(0.75)
+
+
+# ---------------------------------------------------------------------------
+# evaluate_value with PEF terms: composition + backward-compat
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_value_backward_compat_with_default_pef_weights():
+    """With cluster/frontier/reach weights all zero, output bit-identical
+    to the original v4_planner value head."""
+    planets = [
+        [0, 0, 50.0, 50.0, 3.0, 10, 2.0],
+        [1, 1, 60.0, 50.0, 3.0, 5, 1.0],
+        [2, -1, 70.0, 70.0, 3.0, 5, 1.0],
+    ]
+    v_default = evaluate_value(_obs(planets), my_id=0)
+    v_explicit_zero = evaluate_value(
+        _obs(planets), my_id=0,
+        cluster_weight=0.0, frontier_weight=0.0, reach_weight=0.0,
+    )
+    assert v_default == v_explicit_zero
+
+
+def test_evaluate_value_cluster_lifts_dense_position():
+    """All other terms held constant: a tighter friendly cluster lifts V
+    when cluster_weight > 0."""
+    # Two states with identical prod/ships totals, but B is geometrically
+    # clustered while A is spread out.
+    spread = [
+        [0, 0, 10.0, 10.0, 3.0, 5, 2.0],
+        [1, 0, 90.0, 90.0, 3.0, 5, 2.0],
+    ]
+    clustered = [
+        [0, 0, 50.0, 50.0, 3.0, 5, 2.0],
+        [1, 0, 53.0, 50.0, 3.0, 5, 2.0],
+    ]
+    w = {"cluster_weight": 0.5}
+    assert evaluate_value(_obs(clustered), my_id=0, **w) > evaluate_value(_obs(spread), my_id=0, **w)
+
+
+def test_evaluate_value_frontier_penalises_exposed_position():
+    """Exposed planet (enemy nearby outnumbering us) yields lower V."""
+    safe = [
+        [0, 0, 50.0, 50.0, 3.0, 50, 2.0],
+        [1, 1, 90.0, 90.0, 3.0, 50, 2.0],  # far
+    ]
+    exposed = [
+        [0, 0, 50.0, 50.0, 3.0, 1, 2.0],
+        [1, 1, 53.0, 50.0, 3.0, 100, 2.0],  # close + outnumbered
+    ]
+    w = {"frontier_weight": 0.5}
+    assert evaluate_value(_obs(safe), my_id=0, **w) > evaluate_value(_obs(exposed), my_id=0, **w)

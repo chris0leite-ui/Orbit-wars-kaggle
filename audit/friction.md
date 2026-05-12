@@ -1,5 +1,53 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-12 PM (kaggle-roi-strategy-duU0I — PEF pivot)
+
+- `tag: kaggle-cli-uses-bearer-not-basic-auth` — bootstrap: the API token
+  in env vars `KaggleAPIToke` (note: not `KAGGLE_KEY`) is the new-style
+  prefix-tagged Kaggle token (`KGAT_<32-hex>`). The pip-installed
+  `kaggle` CLI uses HTTP Basic auth by default (LEGACY_API_KEY mode)
+  which **silently returns 503** when fed a Bearer-style token — the
+  gRPC endpoints reply 503, REST endpoints reply 401 with no hint
+  that the token format is the issue. Lost ~5 min chasing what
+  looked like an outage. **Fix:** for KGAT_-prefixed tokens use the
+  Bearer-auth path directly (`curl -H "Authorization: Bearer
+  $KaggleAPIToke" ...`); the kaggle CLI works once `KAGGLE_API_TOKEN`
+  env var is set with the full prefixed value and `~/.kaggle/kaggle.json`
+  is removed (so the CLI falls through to Bearer). Promotion
+  candidate: add a one-line bootstrap check to SETUP.md that exits
+  loudly if the token format and chosen auth method disagree.
+
+- `tag: state-current-md-was-stale-by-one-submission-and-one-rating` —
+  the local `state/current.md` showed v3.5.1 as the current submitted
+  agent at PENDING with predicted μ≈1090. The live Kaggle ladder
+  showed v4_planner (from parallel branch
+  `claude/research-lookahead-strategy-kfRsy`) settled at μ=1107.0 as
+  the current rolling-last-2 entry, and v3.5.1 had settled at μ=952.4
+  (50-150 μ lower than predicted — a real live regression vs local
+  68.8% A/B). I had been about to start designing variants on top of
+  v3.5.1 — the wrong baseline by ~155 μ. **Fix this session:** ran
+  the Kaggle CLI ladder pull BEFORE any code design; merged the
+  lookahead branch in to inherit its corrected state file. Promotion
+  candidate: a hard rule that any new session's first compute is
+  `kaggle competitions submissions -c <slug>` to refresh state, even
+  when state/current.md was edited within the last 24h. Multiple
+  prior sessions hit this same trap (logged in earlier blocks below).
+
+- `tag: parallel-branches-create-orphan-rolling-last-2-evictions` —
+  the rolling-last-2 ladder slot is global per user, not per branch.
+  Three branches have been racing to submit
+  (kaggle-roi-strategy-duU0I, research-lookahead-strategy-kfRsy,
+  game-theory-strategy-analysis-0oH4N) without cross-branch
+  coordination. v4_planner from the lookahead branch evicted v3.4 +
+  v3.5.1 from kaggle-roi-strategy's intended slots. Any new submit
+  from this branch would now evict v4_planner (the current ladder
+  best). **Fix this session:** explicit AskUserQuestion to PI before
+  any code direction was chosen — pivoted from "build on v3.5.1" to
+  "build on v4_planner". Promotion candidate: a single
+  per-repository `state/rolling-pair.md` updated atomically by any
+  branch that submits, so cross-branch sessions can see who'd be
+  evicted by the next push.
+
 ## 2026-05-11/12 (optimize-ship-strategy-tDPXx)
 
 - `tag: idle-bucket-reduction-is-misleading-proxy` — methodology:
