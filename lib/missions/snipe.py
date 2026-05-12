@@ -98,8 +98,38 @@ def _leader_pid(world: World) -> tuple[int | None, int | None]:
     return leader_pid, our_rank
 
 
-def propose_snipe_missions(world: World, model: WorldModel) -> list[Mission]:
-    """Build one snipe Mission per (our source, non-our target) pair."""
+# Aggressive sizing (added 2026-05-12 for v3.5.1):
+# Top-10 fingerprint analysis (knowledge-base/concepts/top-performer-strategies.md)
+# shows mean fleet 38 vs midpack 29 (+33%) and mean garrison-at-launch 11
+# vs midpack 22 (half). Translating: top-10 sends a higher FRACTION of
+# source garrison per launch. When `aggressive=True` and the source has
+# more than AGGRESSIVE_MIN_GARRISON ships, base_ships is set to
+# `min(src.ships * AGGRESSIVE_FRACTION, src.ships - AGGRESSIVE_RESERVE)`
+# capped above by target_min — so we always send at least what's needed
+# to capture, and at most a fixed fraction of garrison.
+#
+# Parameter sweep (audit/tournaments/sizing-sweep-20260512T044157Z.json):
+# 0.7 dominates 0.6 / 0.8 / 0.9 in both vs-baseline winrate and
+# head-to-head. 32-seed 2P A/B vs v3_snipe: 68.8% Wilson lo 56.6% [PASS].
+# 8-seed × 4-seat 4P FFA vs weak background: 96.9% (vs v3_snipe baseline
+# 93.8% in same panel).
+AGGRESSIVE_FRACTION = 0.7
+AGGRESSIVE_RESERVE = 5
+AGGRESSIVE_MIN_GARRISON = 12
+
+
+def propose_snipe_missions(
+    world: World,
+    model: WorldModel,
+    aggressive: bool = False,
+) -> list[Mission]:
+    """Build one snipe Mission per (our source, non-our target) pair.
+
+    `aggressive=False` (default) uses the v3.4 minimum-viable formula
+    `max(1, t.ships + 1)` — preserves the parity-gated v3_snipe bundle.
+    `aggressive=True` uses the top-10-aligned sizing formula. v3.5.1
+    is the first agent to pass aggressive=True.
+    """
     if not world.planets_by_id:
         return []
     my_planets = [
@@ -121,7 +151,13 @@ def propose_snipe_missions(world: World, model: WorldModel) -> list[Mission]:
     for src in my_planets:
         for t in targets:
             d = math.hypot(t.x - src.x, t.y - src.y)
-            base_ships = max(1, int(t.ships) + 1)
+            target_min = max(1, int(t.ships) + 1)
+            if aggressive and src.ships > AGGRESSIVE_MIN_GARRISON:
+                fraction_size = max(1, int(src.ships * AGGRESSIVE_FRACTION))
+                cap = max(1, int(src.ships) - AGGRESSIVE_RESERVE)
+                base_ships = max(target_min, min(fraction_size, cap))
+            else:
+                base_ships = target_min
             v = fleet_speed(base_ships)
             eta = int(math.ceil(d / max(v, 1e-6))) if v > 0 else 0
             pred_owner = model.owner_at(t.id, eta)
