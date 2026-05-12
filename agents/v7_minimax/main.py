@@ -36,16 +36,17 @@ correct in their own right.
 
 from __future__ import annotations
 
-import importlib.util
 import time
-from pathlib import Path
 
+from lib.intent import World, realize
 from lib.lookahead import env_from_obs, score_joint_action_symmetric
+from lib.mechanism import DEFAULT_MECHANISMS
+from lib.missions.reinforce import propose_reinforce_missions
+from lib.missions.snipe import propose_snipe_missions
+from lib.planner import settle_plan
+from lib.world_model import WorldModel
 
 
-_REPO = Path(__file__).resolve().parents[2]
-_V3_AGENT = None
-_ROI_AGENT = None
 
 # Maximin parameters — see plan
 # After self-play gate failure (1/8 draws) we switched to
@@ -65,18 +66,29 @@ def _obs_get(obs, key, default=None):
     return getattr(obs, key, default)
 
 
-def _load(name: str, relpath: str):
-    spec = importlib.util.spec_from_file_location(name, _REPO / relpath)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+def _v3_agent_impl(obs):
+    """v3_snipe's agent function, inlined for bundle compatibility.
+
+    Mirrors `agents/v3_snipe/main.py:agent` exactly. We can't `importlib`
+    the v3_snipe file at runtime in the Kaggle-bundled environment
+    because only this file + lib/* gets uploaded. Calling the lib
+    primitives directly is the bundle-friendly path.
+    """
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    model = WorldModel.from_world(world)
+    missions = (
+        propose_snipe_missions(world, model)
+        + propose_reinforce_missions(world, model)
+    )
+    intents = settle_plan(missions, world, model)
+    return realize(intents, obs, mechanisms=DEFAULT_MECHANISMS, model=model)
 
 
 def _v3():
-    global _V3_AGENT
-    if _V3_AGENT is None:
-        _V3_AGENT = _load("_v7_v3", "agents/v3_snipe/main.py").agent
-    return _V3_AGENT
+    """Compatibility wrapper — returns the inlined v3 callable."""
+    return _v3_agent_impl
 
 
 def _detect_num_players(planets) -> int:
