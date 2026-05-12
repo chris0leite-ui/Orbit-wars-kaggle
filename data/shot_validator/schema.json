@@ -1,0 +1,42 @@
+{
+  "FEATURE_VERSION": 1,
+  "n_features": 24,
+  "label_buffer_steps": 10,
+  "feature_names": [
+    "src_ships",
+    "src_production",
+    "src_radius",
+    "tgt_ships",
+    "tgt_production",
+    "tgt_radius",
+    "tgt_owner_mine",
+    "tgt_owner_neutral",
+    "tgt_owner_enemy",
+    "shot_ships_sent",
+    "shot_ship_fraction",
+    "shot_distance",
+    "shot_eta",
+    "shot_fleet_speed",
+    "in_flight_n_allied",
+    "in_flight_ship_total_allied",
+    "in_flight_n_enemy",
+    "in_flight_ship_total_enemy",
+    "meta_turn",
+    "meta_my_total_ships",
+    "meta_enemy_total_ships",
+    "meta_ship_diff",
+    "meta_my_planet_count",
+    "meta_enemy_planet_count"
+  ],
+  "feature_normalisation_constants": {
+    "max_ships": 2000,
+    "max_production": 5,
+    "max_radius": 3.0,
+    "max_fleet_speed": 6.0,
+    "max_eta": 200,
+    "board_diagonal": 141.42,
+    "max_planets": 40,
+    "episode_steps": 500
+  },
+  "label_definition": "target planet owned by launching player at step min(launch_step + eta + 10, end_of_game)"
+}

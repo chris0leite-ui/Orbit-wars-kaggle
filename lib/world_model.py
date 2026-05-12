@@ -189,6 +189,22 @@ class WorldModel:
             return None
         return state_at_timeline(tl, step)[1]
 
+    def incoming_enemy_eta(self, planet_id: int, my_id: int) -> int | None:
+        """Min ETA among in-flight fleets owned by a non-`my_id` player
+        currently targeting `planet_id`. None if no enemy fleet is
+        inbound within the horizon.
+
+        Used by the source-drain mission to gate "is this planet safe
+        to empty"; safe iff `incoming_enemy_eta is None or eta >
+        our_attack_eta + buffer`."""
+        arrivals = self.ledger.get(planet_id)
+        if not arrivals:
+            return None
+        enemy_etas = [eta for (eta, owner, ships) in arrivals if owner != my_id and ships > 0]
+        if not enemy_etas:
+            return None
+        return min(enemy_etas)
+
 
 # ---------------------------------------------------------------------------
 # Comet lifetime — public helper used by ROI scoring sites

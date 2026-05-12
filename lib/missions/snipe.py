@@ -151,8 +151,38 @@ def _leader_pid(world: World) -> tuple[int | None, int | None]:
     return leader_pid, our_rank
 
 
-def propose_snipe_missions(world: World, model: WorldModel) -> list[Mission]:
-    """Build one snipe Mission per (our source, non-our target) pair."""
+# Aggressive sizing (added 2026-05-12 for v3.5.1):
+# Top-10 fingerprint analysis (knowledge-base/concepts/top-performer-strategies.md)
+# shows mean fleet 38 vs midpack 29 (+33%) and mean garrison-at-launch 11
+# vs midpack 22 (half). Translating: top-10 sends a higher FRACTION of
+# source garrison per launch. When `aggressive=True` and the source has
+# more than AGGRESSIVE_MIN_GARRISON ships, base_ships is set to
+# `min(src.ships * AGGRESSIVE_FRACTION, src.ships - AGGRESSIVE_RESERVE)`
+# capped above by target_min — so we always send at least what's needed
+# to capture, and at most a fixed fraction of garrison.
+#
+# Parameter sweep (audit/tournaments/sizing-sweep-20260512T044157Z.json):
+# 0.7 dominates 0.6 / 0.8 / 0.9 in both vs-baseline winrate and
+# head-to-head. 32-seed 2P A/B vs v3_snipe: 68.8% Wilson lo 56.6% [PASS].
+# 8-seed × 4-seat 4P FFA vs weak background: 96.9% (vs v3_snipe baseline
+# 93.8% in same panel).
+AGGRESSIVE_FRACTION = 0.7
+AGGRESSIVE_RESERVE = 5
+AGGRESSIVE_MIN_GARRISON = 12
+
+
+def propose_snipe_missions(
+    world: World,
+    model: WorldModel,
+    aggressive: bool = False,
+) -> list[Mission]:
+    """Build one snipe Mission per (our source, non-our target) pair.
+
+    `aggressive=False` (default) uses the v3.4 minimum-viable formula
+    `max(1, t.ships + 1)` — preserves the parity-gated v3_snipe bundle.
+    `aggressive=True` uses the top-10-aligned sizing formula. v3.5.1
+    is the first agent to pass aggressive=True.
+    """
     if not world.planets_by_id:
         return []
     my_planets = [
@@ -174,10 +204,18 @@ def propose_snipe_missions(world: World, model: WorldModel) -> list[Mission]:
     for src in my_planets:
         for t in targets:
             d = math.hypot(t.x - src.x, t.y - src.y)
-            base_ships = max(1, int(t.ships) + 1)
+            target_min = max(1, int(t.ships) + 1)
+            if aggressive and src.ships > AGGRESSIVE_MIN_GARRISON:
+                fraction_size = max(1, int(src.ships * AGGRESSIVE_FRACTION))
+                cap = max(1, int(src.ships) - AGGRESSIVE_RESERVE)
+                base_ships = max(target_min, min(fraction_size, cap))
+            else:
+                base_ships = target_min
             if PROPOSER_AFFORDABILITY_FILTER and base_ships > src.ships:
                 # Source can't fund this capture alone; let its smaller
                 # affordable runner-up win settle_plan's per-source greedy.
+                # OFF by default (regressed in 64-seed A/B); kept for
+                # future ablation. See main's optimize-ship-strategy-tDPXx.
                 continue
             v = fleet_speed(base_ships)
             eta = int(math.ceil(d / max(v, 1e-6))) if v > 0 else 0
@@ -212,11 +250,15 @@ def propose_snipe_missions(world: World, model: WorldModel) -> list[Mission]:
                     priority *= ENDGAME_NEUTRAL_BONUS
             if spoiler_on and t.owner == leader_pid:
                 priority *= LEADER_MULTIPLIER
-            # Airtime-penalised cost-aware ROI. The `AIRTIME_PENALTY_WEIGHT
-            # * eta` term in the denominator shifts target selection toward
-            # closer captures: cheaper to fund (less arrival_size growth)
-            # and lower opportunity cost (ships return to play sooner if
-            # the capture succeeds).
+            # Cost-aware ROI denominator (legacy) + optional airtime term.
+            # - base_ships + d + 1: original v3.4 form. Wave-1b's
+            #   `0.5 × base_ships` rebalance was NEUTRAL at 50% in phys-only
+            #   A/B (audit/2026-05-12-v3.5-stack-results.md); reverted on
+            #   merge to preserve main's parity invariants. v3.5.1's
+            #   value driver was the AGGRESSIVE_FRACTION ship sizing, not
+            #   this denominator.
+            # - AIRTIME_PENALTY_WEIGHT × eta: optional discount for far
+            #   targets. Default weight=0 (identity).
             score = priority * value / (
                 base_ships + d + AIRTIME_PENALTY_WEIGHT * eta + 1.0
             )

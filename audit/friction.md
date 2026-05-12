@@ -124,6 +124,102 @@
   COMET_BONUS=1.3` fix (also 28.1% regression). Promotion candidate:
   "if the finding is local, the fix must be local."
 
+## 2026-05-12 (analyze-leaderboard-strategies-sdZlE)
+
+- `tag: stack-first-ablate-later-is-the-wrong-order` — iter-1 v3.5
+  build: I composed all four new Mission classes (opening, drain,
+  gang_up, recapture) into v3.5's `agents/v3.5/main.py` and ran a
+  32-seed A/B before any individual ablation. Stack failed at 39.1%
+  (Wilson lo 28.1%). The PER-MISSION ablation (run AFTER the fail)
+  showed each class individually failed too. Had I run the per-mission
+  ablation FIRST I'd have saved the full-stack tournament (~64 games)
+  AND identified that NONE of the four would have lifted, redirecting
+  to the surgical-edits approach (iter-2) hours earlier. The priors
+  were available: v3.3 blanket-eta-fix regressed (42.2%) and v3.4
+  NEUTRAL_BONUS=1.5 regressed (28.1%) — same pattern, both in main's
+  audit. **Fix:** when adding ≥2 new Mission classes or proposers
+  simultaneously, ALWAYS run per-class ablation panel BEFORE the
+  stacked full-agent A/B. Time saved: 1× tournament = ~5-10 min in
+  this case, but the strategic redirect is the bigger win. *Promotion
+  candidate (in-comp; PI declined cross-comp earlier today).*
+
+- `tag: module-mutation-patching-has-worker-reuse-race` — iter-2
+  parameter sweep build: first cut of the agg_06 / agg_08 / agg_09
+  variant agents set `base.SHIP_FRACTION = X` at module-import time
+  (the `aggressive_sizing` base module was imported once per worker,
+  then mutated). In multiprocessing's worker-reuse mode, a worker
+  loaded with `aggressive_sizing_06` (sets fraction=0.6), then
+  reused for `aggressive_sizing_08`, would observe the LATER
+  value because both modules mutated the shared base. Caught at
+  design time before launching the sweep; fixed by moving the
+  assignment inside `agent(obs)`. **Fix already applied this
+  session:** variant agents set the constant inside agent() so every
+  call resets it; safe within a single-threaded worker process.
+  Promotion candidate: avoid module-level constant mutation as a
+  parameter-sweep mechanism; prefer either (a) function parameters
+  threaded through, or (b) full per-variant copies of the proposer.
+
+- `tag: data-main-py-not-fetched-by-bootstrap-recurrence` —
+  iter-2 4P FFA: `scripts/run_ffa_agg.py` failed with
+  `FileNotFoundError: agent file not found: data/main.py` because
+  bootstrap.sh's data download path didn't run on this fresh
+  container. SAME issue as the 2026-05-10 PM friction
+  `data-main-py-not-fetched-by-bootstrap`. Fix-this-session: ran
+  `KAGGLE_API_TOKEN="$KAGGLE_KEY" kaggle competitions download -c
+  orbit-wars -p data/ && unzip` manually. **Recurrence count: 2 this
+  comp.** Bootstrap.sh fast-path remains broken; the data step is
+  gated behind an unclear condition. *Promotion candidate (in-comp,
+  re-promote): bootstrap.sh should unconditionally run the
+  competitions-download step on a missing data/main.py — no
+  conditional gates.*
+
+- `tag: multi-mission-stack-regresses-even-with-conditional-gates` —
+  v3.5 build: I added four new Mission classes (opening / drain /
+  gang_up / recapture) on top of v3_snipe + reinforce, each with
+  what I believed were tight conditional gates (step-window,
+  garrison threshold, eta-window, recently-lost-window). 32-seed
+  full-stack A/B vs v3_snipe = 39.1% (Wilson lo 28.1%, FAIL).
+  16-seed per-wave ablation: opening 40.6%, drain 46.9%, gangup 50.0%,
+  recapture 53.1% — NONE clears the 55% Wilson lo gate individually.
+  Same family as the v3.4 NEUTRAL_BONUS=1.5 regression (28.1% A/B) and
+  the v3.3 blanket-(eta+1) regression (42.2% A/B). Root cause: the
+  per-source-greedy planner is unexpectedly sensitive — adding ONE
+  Mission class shifts the proposal distribution enough to displace
+  higher-EV snipe picks at the same source. Mission classes are NOT
+  independent through settle_plan. **Fix this session:** v3.5 NOT
+  submitted; code retained on branch; debug hypotheses written to
+  `audit/2026-05-12-v3.5-stack-results.md`. *Promotion candidate*:
+  "New mission classes must clear a 16-seed Wilson lo ≥ 0.55 ABLATION
+  gate (variant ⊕ v3_snipe vs v3_snipe alone) BEFORE being stacked
+  into a multi-class agent." Three consecutive sessions have learned
+  the same lesson; encode as a rule.
+
+- `tag: ab-harness-not-reusable-for-arbitrary-pairs` — v3.5 ablation:
+  `scripts/tournament.py` has only a `smoke` CLI subcommand (random vs
+  baseline, 4 seeds). To run v3.5-vs-v3_snipe at 32 seeds and four
+  per-wave ablations vs the same baseline I had to write THREE thin
+  drivers (`scripts/run_v35_ab.py`, `scripts/run_ablation_panel.py`,
+  `scripts/run_phys_ab.py`) — ~70-90 lines each, all nearly identical
+  argparse + Wilson-lo + tournament-result-dump scaffolding. **Fix:**
+  promote a generic `scripts/run_ab.py --agents A=path B=path
+  [C=...] --seeds N --workers W --gate-baseline A` that prints the
+  Wilson-lo verdict per pair. Should subsume `run_v35_ab.py`,
+  `run_phys_ab.py`, `run_ablation_panel.py` (all deletable). Promotion
+  candidate; deferred to a session that touches `scripts/tournament.py`
+  proper.
+
+- `tag: kaggle-env-var-case-confusion` — analysis-pull bootstrap:
+  spent ~15 min before realising that `$KAGGLE_key` (lowercase, what
+  I'd assumed) was empty while `$KAGGLE_KEY` (uppercase, what
+  bash-lc-shells actually see) had the value. The
+  `tag: kaggle-api-token-required-for-kgat-format` entry (2026-05-10)
+  already covers the KGAT_ token-format issue but NOT the env-var
+  case-sensitivity foot-gun. **Fix:** the bootstrap.sh comment block
+  that documents `KAGGLE_API_TOKEN="$KAGGLE_KEY"` should NOT use
+  variable substitution case-variants near each other; the kickoff
+  agent-handover prompt could include `bash -lc 'env | grep -i kaggle'`
+  as the canonical "what credentials do I have" check.
+
 ## 2026-05-11 (bootstrap-agentic-systems-lqnm6)
 
 - `tag: guard-mechanisms-check-only-to-predicted-endpoint` — wrap-up
