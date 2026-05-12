@@ -10,17 +10,19 @@ Pipeline:
         -> settle_plan(combined, world, model)        [same-turn ledger]
         -> realize(intents, mechanisms=DEFAULT_MECHANISMS)
 
-Mission classes (2026-05-12):
+Mission classes (2026-05-11):
 - **snipe**: capture non-our planets. Cost-aware ROI + comet-lifetime
   correction (don't target departing comets).
 - **reinforce**: defend our planets predicted to flip to an enemy this
   horizon. Detected via `WorldModel.owner_at` timeline scan; addresses
   the "no defence" gap in `docs/strategies/simple-roi.md` line 130.
-- **recapture**: retake planets we lost in the last 50 turns. Carries
-  a time-decaying 1.5×-peak bonus on top of standard snipe scoring,
-  capped on garrisons > 50. Closes the comeback gap documented in
-  `audit/2026-05-11-v3-snipe-games-analysis.md` §2 (wins recover to
-  median 28 planets after home loss; losses peak at 6).
+
+NOTE (2026-05-12): a naive wire-up of `propose_recapture_missions`
+regressed the agent to 36% winrate over 200 self-play games (see
+`audit/2026-05-12-recapture-wireup-ab.md`). Adding the proposer
+without tuning the score scale or capping the per-turn proposal volume
+drowns out higher-value snipe/reinforce picks at `settle_plan`. Kept
+out of the agent loop until score-scale calibration is done.
 
 Solver (`lib/planner.settle_plan`): per-source greedy with a same-turn
 arrival ledger. Each source picks its highest-score mission whose target
@@ -36,7 +38,6 @@ from __future__ import annotations
 
 from lib.intent import World, realize
 from lib.mechanism import DEFAULT_MECHANISMS
-from lib.missions.recapture import propose_recapture_missions
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.missions.snipe import propose_snipe_missions
 from lib.planner import settle_plan
@@ -51,7 +52,6 @@ def agent(obs):
     missions = (
         propose_snipe_missions(world, model)
         + propose_reinforce_missions(world, model)
-        + propose_recapture_missions(world, model)
     )
     intents = settle_plan(missions, world, model)
     return realize(intents, obs, mechanisms=DEFAULT_MECHANISMS, model=model)
