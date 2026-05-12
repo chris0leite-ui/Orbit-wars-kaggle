@@ -19,10 +19,14 @@ agent.py`) — no bundling step.
 
 from __future__ import annotations
 
+import copy
 import math
+import time
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import Callable
 
+from kaggle_environments import make
 from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
 
 
@@ -1036,11 +1040,18 @@ def realize(intents, obs, *, mechanisms=DEFAULT_MECHANISMS, model=None) -> list[
 
 
 # ---------------------------------------------------------------------------
-# Agent entry point.
+# v3-class baseline agent — used as the rollout policy by the v7 maximin
+# layer below, and as the 4P fallback (maximin doesn't extend to n>=3).
 # ---------------------------------------------------------------------------
 
 
-def agent(obs):
+def _v3_agent_impl(obs):
+    """v3-class agent: aggressive-snipe sizing + 4P spoiler + σ-equiv tie-break.
+
+    This is the policy used inside the v7 Sim<K> rollouts. Identical to
+    the pre-merge top-level `agent(obs)` before the v7_minimax layer was
+    bolted on.
+    """
     world = World.from_obs(obs)
     if not world.planets_by_id:
         return []
@@ -1051,3 +1062,293 @@ def agent(obs):
     )
     intents = settle_plan(missions, world, model)
     return realize(intents, obs, mechanisms=DEFAULT_MECHANISMS, model=model)
+
+
+def _v3() -> Callable:
+    """Accessor — the callable v7's `policy` argument expects."""
+    return _v3_agent_impl
+
+
+# ---------------------------------------------------------------------------
+# Sim<K> forward-simulation scorer.
+#
+# env.clone() + env.step() repeated for K turns under a fixed rollout
+# policy is statistically indistinguishable from the perfect oracle at
+# step 50 (AUC matched O50 to 0.000 in the Phase-2 lookahead probe).
+# Used by v7_minimax to fill an N×M payoff matrix.
+# ---------------------------------------------------------------------------
+
+
+def env_from_obs(obs, configuration: dict | None = None):
+    """Rebuild a steppable env mirroring the agent-visible state.
+
+    Future-comet RNG is the single fidelity gap (steps 50/150/250/350/450);
+    rollouts that don't cross a spawn boundary are bit-exact.
+    """
+    cfg = dict(configuration or {})
+    env = make("orbit_wars", configuration=cfg, debug=False)
+    env.reset(num_agents=2)
+    snapshot_keys = (
+        "planets", "fleets", "comets", "comet_planet_ids",
+        "initial_planets", "angular_velocity", "step", "next_fleet_id",
+    )
+    obs_dict = obs if isinstance(obs, dict) else {
+        k: getattr(obs, k, None) for k in snapshot_keys + ("remainingOverageTime",)
+    }
+    public = {k: copy.deepcopy(obs_dict[k]) for k in snapshot_keys if obs_dict.get(k) is not None}
+    for i in range(2):
+        env.state[i].observation.update(public)
+        env.state[i].observation["player"] = i
+        env.state[i].observation["remainingOverageTime"] = obs_dict.get(
+            "remainingOverageTime", 60.0
+        )
+        env.state[i].status = "ACTIVE"
+        env.state[i].reward = 0
+        env.state[i].action = None
+    return env
+
+
+def _ship_total_by_owner(observation) -> dict[int, float]:
+    totals: dict[int, float] = {}
+    for p in observation.get("planets", []):
+        owner = int(p[1])
+        if owner >= 0:
+            totals[owner] = totals.get(owner, 0.0) + float(p[5])
+    for f in observation.get("fleets", []):
+        owner = int(f[1])
+        if owner >= 0:
+            totals[owner] = totals.get(owner, 0.0) + float(f[6])
+    return totals
+
+
+def score_joint_action(
+    env,
+    our_action: list,
+    opp_action: list,
+    K: int,
+    my_id: int,
+    policy: Callable,
+) -> float:
+    """Sim<K> with BOTH first-turn actions injected; (our - opp) at horizon."""
+    clone = env.clone()
+    opp_id = 1 - my_id
+    actions = [None, None]
+    actions[my_id] = our_action
+    actions[opp_id] = opp_action
+    if not clone.done:
+        clone.step(actions)
+    for _ in range(max(0, K - 1)):
+        if clone.done:
+            break
+        a0 = policy(clone.state[0].observation)
+        a1 = policy(clone.state[1].observation)
+        clone.step([a0, a1])
+    totals = _ship_total_by_owner(clone.state[my_id].observation)
+    return totals.get(my_id, 0.0) - totals.get(opp_id, 0.0)
+
+
+def score_joint_action_symmetric(
+    env,
+    our_action: list,
+    opp_action: list,
+    K: int,
+    policy: Callable,
+) -> float:
+    """Average over both seat assignments to cancel env's P1-favoring tie-break.
+
+    The Orbit Wars env has a documented seat asymmetry (P1 favored ~4:1 in
+    identical self-play, audit/2026-05-10-day-1-data-inventory.md:98).
+    Without this averaging, P0 and P1's maximin payoff matrices diverge
+    and self-play games stop drawing.
+    """
+    a = score_joint_action(env, our_action, opp_action, K, my_id=0, policy=policy)
+    b = score_joint_action(env, our_action, opp_action, K, my_id=1, policy=policy)
+    return (a + b) / 2.0
+
+
+# ---------------------------------------------------------------------------
+# v7_minimax — K-step maximin agent (real game theory at action level).
+#
+# Per-turn algorithm:
+#   1. Generate N=2 candidates: [v3 incumbent, drop-smallest-launch]
+#   2. Generate M=2 opp models: [v3 from opp POV, drop-smallest of that]
+#   3. Fill N×M payoff matrix via score_joint_action_symmetric.
+#   4. Pick i* = argmax_i (min_j P[i,j]) — maximin, tie-break lower index.
+# 4P fallback to v3 (no Nash guarantee for n>=3).
+#
+# Local A/B (game-theory branch commit 59ffd85):
+#   v7 vs v3.4:         6W/0D/2L = 75% (8 games both sides)
+#   v7 vs precision_v3: 6W/0D/2L = 75% (8 games both sides)
+#   144 ms/turn avg, K=3→2 adaptive downshift, 700 ms hard deadline.
+# ---------------------------------------------------------------------------
+
+N_CANDS = 2
+M_OPPS = 2
+K_INIT = 3
+K_FALLBACK = 2
+DOWNSHIFT_MS = 300.0
+HARD_DEADLINE_MS = 750.0
+
+
+def _obs_get(obs, key, default=None):
+    if isinstance(obs, dict):
+        return obs.get(key, default)
+    return getattr(obs, key, default)
+
+
+def _detect_num_players(planets) -> int:
+    return len({p[1] for p in planets if p[1] != -1})
+
+
+def _drop_smallest(action: list) -> list:
+    """Return `action` with its smallest-ship launch removed.
+
+    Ties broken σ-deterministically by removing the EARLIEST among smallest.
+    Empty or single-launch input returns the empty list (maximum drop).
+    """
+    if not action:
+        return []
+    if len(action) == 1:
+        return []
+    min_idx = 0
+    min_ships = int(action[0][2])
+    for i, la in enumerate(action[1:], start=1):
+        if int(la[2]) < min_ships:
+            min_ships = int(la[2])
+            min_idx = i
+    return [la for i, la in enumerate(action) if i != min_idx]
+
+
+def _swap_obs_player(obs, opp_id: int):
+    """Shallow-copy obs with `player` set to opp_id (for opp-POV invocation)."""
+    if isinstance(obs, dict):
+        obs2 = dict(obs)
+        obs2["player"] = opp_id
+        return obs2
+    keys = (
+        "player", "planets", "fleets", "angular_velocity",
+        "initial_planets", "comet_planet_ids", "comets",
+        "step", "next_fleet_id", "remainingOverageTime",
+    )
+    obs2 = {}
+    for k in keys:
+        v = getattr(obs, k, None)
+        if v is not None:
+            obs2[k] = v
+    obs2["player"] = opp_id
+    return obs2
+
+
+def _our_candidates(obs) -> list[list]:
+    """N=2 candidates: v3 incumbent + drop-smallest variant. Dedup by repr."""
+    c1 = _v3()(obs)
+    c2 = _drop_smallest(c1)
+    seen = set()
+    out: list[list] = []
+    for c in (c1, c2):
+        k = repr(c)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(c)
+        if len(out) >= N_CANDS:
+            break
+    return out
+
+
+def _opp_candidates(obs, opp_id: int) -> list[list]:
+    """M=2 opp models: v3-from-opp-POV + drop-smallest. Dedup by repr."""
+    swapped = _swap_obs_player(obs, opp_id)
+    try:
+        o1 = _v3()(swapped)
+    except Exception:
+        return [[]]
+    o2 = _drop_smallest(o1)
+    seen = set()
+    out: list[list] = []
+    for o in (o1, o2):
+        k = repr(o)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(o)
+        if len(out) >= M_OPPS:
+            break
+    return out
+
+
+def _maximin_pick(matrix: list[list[float]], unfilled: list[list[bool]]) -> int:
+    """argmax_i (min_j P[i,j]). Ties → lower row index. Rows with all
+    columns unfilled get worst = -inf (won't win unless they're the only row).
+    """
+    best_i = 0
+    best_worst = float("-inf")
+    n = len(matrix)
+    if n == 0:
+        return 0
+    m = len(matrix[0]) if matrix[0] else 0
+    for i in range(n):
+        evaluated = [matrix[i][j] for j in range(m) if not unfilled[i][j]]
+        worst = min(evaluated) if evaluated else float("-inf")
+        if worst > best_worst:
+            best_worst = worst
+            best_i = i
+    return best_i
+
+
+def agent(obs):
+    """v7_minimax: 2-step lookahead, maximin over a 2-element opp class.
+
+    4P (or n>=3) falls back to the v3 baseline (no Nash guarantee).
+    """
+    my_id = int(_obs_get(obs, "player", 0))
+    planets = _obs_get(obs, "planets", []) or []
+
+    if _detect_num_players(planets) != 2:
+        return _v3()(obs)
+
+    opp_id = 1 - my_id
+
+    C = _our_candidates(obs)
+    if len(C) <= 1:
+        return C[0] if C else []
+    O = _opp_candidates(obs, opp_id)
+
+    try:
+        env = env_from_obs(obs)
+    except Exception:
+        return C[0]
+
+    N = len(C)
+    M = len(O)
+    P: list[list[float]] = [[0.0] * M for _ in range(N)]
+    unfilled: list[list[bool]] = [[True] * M for _ in range(N)]
+
+    t0 = time.monotonic()
+    K = K_INIT
+
+    # Row 0 (v3 incumbent) evaluated first and in full — its worst-case
+    # has to be honest because it's the conservative tie-break fallback.
+    # Row 1+ runs O0 → O1 (most aggressive opp first) so a mid-row bail
+    # still leaves the row's worst-against-aggression honest.
+    for i in range(N):
+        for j in range(M):
+            elapsed_ms = (time.monotonic() - t0) * 1000.0
+            if i > 0 and elapsed_ms > HARD_DEADLINE_MS:
+                break
+            if i > 0 and elapsed_ms > DOWNSHIFT_MS and K == K_INIT:
+                K = K_FALLBACK
+            try:
+                P[i][j] = score_joint_action_symmetric(
+                    env, C[i], O[j], K=K, policy=_v3(),
+                )
+                unfilled[i][j] = False
+            except Exception:
+                P[i][j] = float("-inf")
+                unfilled[i][j] = False
+        else:
+            continue
+        break  # exited inner loop via budget bail
+
+    i_star = _maximin_pick(P, unfilled)
+    return C[i_star]
