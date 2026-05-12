@@ -1,5 +1,73 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-12 (analyze-minimax-weaknesses-sgmXB)
+
+- `tag: 8-seed-mvp-result-is-noise` — v7 scoring-head A/B smoke
+  (4 seeds × 2 sides = 8 games) returned variant 6W/0D/2L = 75%, fully
+  balanced across seats; promoted to 32-seed thinking the lift was
+  real. 32-seed full came in at 32W/4D/28L = 56% W-D, Wilson 95%
+  [0.44, 0.68]: NEUTRAL, fails the 0.55 gate. The 75% was a 3-of-4-
+  favorable-seed accident (seed bag {42, 1, 7, 13} happens to align
+  with the planet-production scoring; on the wider 32-seed bag the
+  edge dissolves). Reuses the existing tag; this is the second
+  occurrence in two days (v3.5 ablation at 84.4% n=16 → 39.1% n=32
+  was the first). **Fix:** keep the rule strict — n=8 is for "does
+  it run + within budget," not for direction. Wilson lo on the smoke
+  must be reported alongside the win rate, and direction calls
+  require n≥32 with Wilson lo > 0.55.
+
+- `tag: bundler-default-lib-missing-new-modules` — `scripts/
+  bundle_agent.py:DEFAULT_LIB_ORDER` does not include `lookahead`,
+  even though the σ-equiv branch added `score_joint_action` and
+  `score_joint_action_symmetric` to `lib/lookahead.py` and
+  `agents/v7_minimax/main.py` imports both. Bundling v7 without
+  `--lib ... lookahead` produced a 75.4 KB bundle missing the
+  scoring head (vs the live 81.8 KB). Caught only because I
+  cross-checked the live sha256. Same pattern as the historical
+  `tag: bundler-missing-block-e-modules` friction. **Fix:** when
+  adding any new lib module that agents will import, also append
+  it to `DEFAULT_LIB_ORDER`. Promotion candidate: add a CI smoke
+  that bundle parity-checks every `agents/<name>/main.py` against
+  its imported `lib.*` modules and fails if any are missing from
+  the default lib order.
+
+- `tag: v3.5.1-gate-calibration-miss` — v3.5.1 cleared 32-seed
+  Wilson lo 0.566 (PASS) at the standard project gate, predicted
+  ladder lift ~+30-50μ vs v3_snipe baseline (1005.7). Actual live
+  μ=943.1 — a **-62 μ regression**, **-112μ vs prediction**. The
+  local-vs-frozen-v3_snipe A/B is not a reliable ladder predictor
+  in either direction (σ-equiv-v1 was *under-*predicted by +47 μ on
+  the ladder, v3.5.1 *over-*predicted by -112 μ). Across both
+  signs, error magnitude is ≥50 μ — comparable to a top-10 cliff
+  rung. **Fix:** before any further submissions, run a calibration
+  probe — A/B every previously-shipped agent (v3_snipe, v3.4,
+  σ-equiv, v3.5.1, v7) against a frozen panel of varied opponents
+  (not just v3_snipe) and regress on the known live μ. If the
+  local-rate-to-ladder-μ slope is meaningfully non-monotonic, we
+  need a better gate before spending submission slots.
+
+- `tag: kaggle-api-download-needs-www-basic-auth` — `kaggle
+  competitions submissions <slug>` via the installed CLI returns
+  401 with our env-var token format (`KGAT_...`), but `curl -u
+  $KaggleUserName:$KaggleAPIToke https://www.kaggle.com/api/v1/...`
+  works for listing. The download endpoint (`/submissions/<id>/
+  <id>.raw`) returned HTML (login page) under both. We worked
+  around by reconstructing the v7 bundle locally from the
+  parallel branch. **Fix:** document that the bundled `.py`
+  source for submitted agents is NOT directly downloadable via API
+  with the env token — agents needing the live artifact should
+  build the bundle from the branch the submission was authored
+  on, then verify by sha256.
+
+- `tag: tournament-buffered-stdout-no-progress` — running `scripts/
+  v7_scorehead_ab.py full` in background gave 30+ seconds of zero
+  per-game stdout because `progress=True` writes via tqdm to
+  stderr and the inner game-result `print()` line buffers when its
+  stdout is piped to a file/tail. Made progress observation
+  difficult during the 16-min run. **Fix:** in any new tournament
+  driver script, force-flush stdout (`flush=True`) on per-game
+  prints, or wire progress via a JSONL-on-disk side-channel.
+
 ## 2026-05-11/12 (optimize-ship-strategy-tDPXx)
 
 - `tag: idle-bucket-reduction-is-misleading-proxy` — methodology:

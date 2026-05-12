@@ -6,30 +6,29 @@
 ```yaml
 date: 2026-05-12
 days_to_deadline: 42                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v3.5.1          # rolling-last-2: [σ-equivariance (976.3, #52565034), v3.5.1 (PENDING, #52565976)]; v3.4 (995.4, #52556866) evicted by this push
-last_kernel_push: 2026-05-12 05:20:09 UTC
-last_submission_id: 52565976
-last_submission_status: PENDING          # validation episode running
-last_submission_file: submissions/v3.5.1.py  # 69.7 KB bundle; sha256 in audit/2026-05-12-iter2-ablation-results.md
+current_submitted_agent: v7_minimax      # rolling-last-2: [v3.5.1 (943.1, #52565976), v7_minimax (1063.0, #52568317)]; σ-equivariance (1041.4, #52565034) evicted by v7 push
+last_kernel_push: 2026-05-12 06:50:06 UTC
+last_submission_id: 52568317
+last_submission_status: complete
+last_submission_file: v7_minimax.py      # 81.8 KB bundle; sha256:1393d32b1f4e691d; lives on origin/claude/game-theory-strategy-analysis-0oH4N (parallel branch)
 last_submission_message: |
-  v3.5.1: aggressive snipe ship sizing. base_ships = min(0.7*src.ships,
-  src.ships-5) when src.ships>12 (else minimum-viable). Single
-  conditional inside lib/missions/snipe.py with aggressive=True flag;
-  default unchanged → v3_snipe parity preserved. Translates top-10
-  fingerprint (mean fleet 38 vs midpack 29; garrison-at-launch 11 vs 22)
-  into one sizing change. Gates: 32-seed 2P vs v3_snipe 68.8% Wilson lo
-  56.6% PASS; 4P FFA 31/32=96.9% (vs v3_snipe baseline 93.8%);
-  parameter sweep confirms 0.7 dominates 0.6/0.8/0.9; bundler parity OK;
-  10/10 self-play DONE. audit/2026-05-12-iter2-ablation-results.md.
-tournament_rank_today: rolling-last-2 = [σ-equivariance #52565034 μ=976.3 (parallel-branch), v3.5.1 #52565976 PENDING (this branch)]; v3.4 #52556866 μ=995.4 evicted by this push
-our_best_rank: PENDING (v3.5.1 #52565976); fallback μ=976.3 (σ-equivariance)   # top-10 cliff +464μ from σ-equivariance fallback; v3.5.1 expected ~1090-1100 from local A/B math
+  v7_minimax: K-step maximin agent (real game theory). v3+σ-equiv base
+  + maximin overlay: enumerate N=2 our candidates × M=2 opp models ×
+  Sim<K=3> with v3 as rollout policy, pick action whose worst-case
+  payoff is highest. score_joint_action_symmetric averages over
+  seat-flipped rollouts to cancel env's P1-favoring tie-break. Local
+  4-seed both-sides (8 games each): 75% W/D vs v3.4; 75% W/D vs
+  precision_v3. Live μ=1063.0 (+22 μ over σ-equiv alone, μ=1041.4).
+tournament_rank_today: rolling-last-2 = [v3.5.1 (943.1, #52565976; REGRESSED from predicted ~1090), v7_minimax (1063.0, #52568317; this branch's calibration anchor)]
+our_best_rank: v7_minimax #52568317 μ=1063.0   # top-10 cliff +385 μ; v7 +22 μ over σ-equiv (its sub-component), +57 μ over v3_snipe baseline (μ=1005.7)
 lb_top10_cliff: 1447.6                   # ShunkiKyoya, 2026-05-11. #1 = bowwowforeach 1697.7
-submissions_used_today: 1                # v3.5.1 #52565976 (05:20 UTC) — PI-approved single shot
-submissions_used_total: 7
+submissions_used_today: 0                # analyze-minimax-weaknesses-sgmXB ran no submissions; analysis-only
+submissions_used_total: 12
 plateau_days: 0
 saturation_count: 0
 session_log:
-  - 2026-05-12 PM — analyze-leaderboard-strategies-sdZlE iter-2: after iter-1's v3.5 stack regression (39.1%), pivoted to 4 surgical single-edit variants. 16-seed ablation results: aggressive_sizing PASS 84.4% (Wilson lo 68.2%); endgame_burn FAIL 18.8%; frontier_keep FAIL 25.0%; recapture_tight FAIL 50.0%. 32-seed confirmation of aggressive_sizing: 68.8% Wilson lo 56.6% [PASS]. Parameter sweep (SHIP_FRACTION 0.6/0.7/0.8/0.9): 0.7 dominates by both vs-baseline AND head-to-head (0.6/0.8 NEUTRAL, 0.9 FAIL). 8-seed × 4-seat 4P FFA: 31/32=96.9% (vs v3_snipe baseline 93.8% same panel). Promoted aggressive=True parameter into `lib/missions/snipe.py` (default unchanged — v3_snipe parity preserved); 18/18 snipe tests green. Bundled v3.5.1 (69.7 KB) — bundler parity OK, 10/10 self-play DONE. Ready to submit pending PI sign-off. audit/2026-05-12-iter2-ablation-results.md.
+  - 2026-05-12 PM-late — analyze-minimax-weaknesses-sgmXB: (a) **v7_minimax structural analysis** — v7 source/lookahead/audit pulled from `origin/claude/game-theory-strategy-analysis-0oH4N`; 10-item structural-weakness writeup at `audit/2026-05-12-v7-minimax-structural-weaknesses.md` covering the 3-turn ship-delta scoring head, N=2 candidate set as strict v3 subset, M=2 opp class as pure v3, K=3 horizon vs step-158 loss median, 4P fallback to v3 (inherits 35% 4P WR), budget-bail collapse to v3, and the σ-equiv-overlay-only +22 μ ladder lift. (b) **scoring-head A/B** — baseline bundled bit-exact to live #52568317 (sha256:1393d32b1f4e691d); variant patched `lib/lookahead.py:_ship_total_by_owner` to `ships + 50 × planet.production + fleet_ships`. Smoke n=8: variant 6W/0D/2L = 75% (3W in each seat; balanced). **Full 32-seed n=64: variant 32W/4D/28L = 56% W-D, 50% W. Wilson 95% W-D [0.44, 0.68] — NEUTRAL, fails 0.55 gate.** Not submitted; rolling-last-2 preserved. Smoke→full divergence (75 → 56) confirms Rule 2 (no commit on n=8). Three live hypotheses on negative outcome: weight=50 swamps ship term, K=3 too short for production accumulation, σ-equiv tie-break dominates. audit/2026-05-12-v7-scorehead-ab-results.md.
+  - 2026-05-12 PM — analyze-leaderboard-strategies-sdZlE iter-2: after iter-1's v3.5 stack regression (39.1%), pivoted to 4 surgical single-edit variants. 16-seed ablation results: aggressive_sizing PASS 84.4% (Wilson lo 68.2%); endgame_burn FAIL 18.8%; frontier_keep FAIL 25.0%; recapture_tight FAIL 50.0%. 32-seed confirmation of aggressive_sizing: 68.8% Wilson lo 56.6% [PASS]. v3.5.1 submitted as #52565976; **LIVE μ=943.1, regressed -112μ vs predicted 1090-1100. Gate-calibration miss: 32-seed Wilson lo 0.566 → ladder -62μ vs v3_snipe baseline.**
   - 2026-05-11/12 — optimize-ship-strategy-tDPXx (parallel branch, merged via main): (a) Phase-0 idle-source decomposition shipped — lib/{planner,intent}.py gain opt-in `reasons` out-param + scripts/episode_postmortem.py classifies idle sources into 5 buckets; (b) v3.5 attempt (different from this branch's) — airtime penalty + endgame neutral burn — REGRESSED 43.8% at 32-seed; (c) scripts/ab_variants.py bundle-isolated A/B harness; (d) PROPOSER_AFFORDABILITY_FILTER 64-seed 21.1% BROKEN; (e) all four scoring/filter knobs REVERTED to identity defaults; (f) gang_up_size mechanism (substrate bug: arrival_size re-bumps throttled shares); (g) reverted GANG_UP_ENABLED=0; (h) meta-lesson: Phase-0 bucket-reduction was a misleading proxy. Their v3.4 submitted as #52556866 (μ=995.4); EVICTED by v3.5.1 push from this branch.
   - 2026-05-12 — analyze-leaderboard-strategies-sdZlE iter-1: Two waves: (a) **top-performer leaderboard analysis** — pulled Kaggle top-30 (CSV), BFS-crawled to identify all top-10 submission IDs (bowwowforeach #1 μ=1683 through 3Comets #10 μ=1440), downloaded 50 top-10 replays + 10 midpack control replays, computed 15-feature behavioural fingerprints + 10 extended features. Findings (knowledge-base/concepts/top-performer-strategies.md): top-10 launches 2× more often (1.20 vs 0.63), with larger fleets (38 vs 29), emptier sources (11 vs 22 ships), 2.3× more enemy targets, opens at step 4 (mid 11), comet-capture only 3% (mid 13%). Pulled 14 public kernels including @konbu17 hybrid (ML shot-validator, #1 in @marcodg 50-agent panel at 85.4%). (b) **v3.5 stack implementation** — translated findings to mission classes: targeted off-by-one for orbiting/comet (NEUTRAL), denominator rebalance 0.5×ships (NEUTRAL), opening/drain/gang_up/recapture Mission classes, shot-validator labeling pipeline (37k examples). 32-seed 2P A/B v3.5 vs v3_snipe = **39.1% Wilson lo 28.1% — GATE FAIL**. Per-wave 16-seed ablation: opening_only 40.6%, drain_only 46.9%, gangup_only 50.0%, recapture_only 53.1% — none clear 55% gate. v3.5 NOT submitted; code retained on branch. Debug hypotheses in audit/2026-05-12-v3.5-stack-results.md. 4 commits on this branch. 0 submissions used.
   - 2026-05-11 PM — analyze-submission-logs-dFHeS: (a) live data pull for v3_snipe (52544634, μ=1055.5 +90.2 over v2) + v2 (52532938, μ=965.3); (b) replay-driven instrumented postmortem (scripts/episode_postmortem.py) — fleet outcome attribution + drop telemetry; v3 bounces enemy 2x as often as v2 (14.7% vs 7.6%); (c) precision-physics A/B (parallel branch claude/precision-physics-engine-ymJkA) — v3_snipe wins 10/16, precision p95=1444ms > 1s actTimeout — NOT submittable as-is; (d) audit/2026-05-11-v3-snipe-critical-review.md; (e) parity gap closed: 53% match was instrumentation bugs (off-by-one + missing obs.step backfill), now 100% on all 34 v3_snipe replays + 998-turn self-play; (f) permanent gates: tests/test_replay_parity.py, scripts/bundle_agent.py post-bundle parity + sha256 hash; (g) v3.2 lib changes — arrival_size now consults WorldModel.ships_at for adversary stacking (lib/mechanism.py), DEFAULT_HORIZON 110→250 (lib/world_model.py), realize() takes optional model kwarg (lib/intent.py); (h) 32-seed 2P A/B v3.2 vs v3_snipe_frozen = 57.8% (37/64) Wilson [45.6, 69.1] (audit/tournaments/20260511T152648Z.json); 16-seed 4P FFA panel v3.2 93.8% vs frozen 90.6% (audit/tournaments/ffa-panel-20260511T185817Z.json); (i) v3.2 not yet submitted — PI to authorize a slot per Rule 1.
@@ -60,8 +59,11 @@ mechanism_families_explored:
   - proposer-affordability-filter           # lib/missions/snipe.py PROPOSER_AFFORDABILITY_FILTER. 64-seed 21.1% BROKEN. Default 0.
   - bundle-isolated-ab-harness              # scripts/ab_variants.py — per-variant bundle, no module-state leak. Tools, not strategy.
   - gang-up-shared-sizing-mechanism         # lib/mechanism.py gang_up_size: anchor-on-slowest, throttle faster. v1 regressed (43.8% / 45.3% / 43.8%). Substrate bug: arrival_size re-inflates shares. Default 0.
+  - sigma-equivariance-tie-break            # σ-equiv-v1 (parallel branch, #52565034): lib/planner σ-equiv tie-break + lib/geometry sym_hypot + score round to 6 dp. v3-vs-v3 self-play 16/16 draws (provable cannot-lose). LIVE μ=1041.4 (+47 over v3.4 baseline).
+  - k-step-maximin-overlay                  # v7_minimax (parallel branch, #52568317): σ-equiv base + maximin N=2 our × M=2 opp × Sim<K=3> with v3 rollout policy + score_joint_action_symmetric seat-bias cancel. LIVE μ=1063.0 (+22 over σ-equiv alone). PSRO iter-1 produced degenerate Nash (pure v7). 4P fallback to v3.
+  - v7-scorehead-planet-production-ab       # 2026-05-12: A/B'd v7 baseline vs variant with PRODUCTION_WEIGHT=50 in lib/lookahead.py:_ship_total_by_owner. Smoke n=8 = 75% (noise); full n=64 = 56.3% W-D Wilson 95% [0.44, 0.68] **NEUTRAL — gate FAIL**. Not submitted. audit/2026-05-12-v7-scorehead-ab-results.md.
 gate_status: cleared                      # 228/228 tests green; bundle E.2 self-play 0/10 crashes; bundle-vs-unbundled parity 10/10; 32-seed 2P + 16-seed 4P panels run
 headroom_to_top5pct: deprecated            # no longer the binding target — top-10 prize cliff is
-headroom_to_top10_prize: +392 μ           # top-10 cliff at 1447.6 (ShunkiKyoya, 2026-05-11). v3_snipe at 1055.5 → +392μ.
-headroom_to_roman_public: +250 μ          # Roman published 1224; we are 250 μ below his ceiling. Block E missions narrow this; v3.1 candidate enumerator for lookahead is the next ceiling-raiser.
+headroom_to_top10_prize: +385 μ           # top-10 cliff at 1447.6 (ShunkiKyoya, 2026-05-11). v7_minimax at 1063.0 → +385μ.
+headroom_to_roman_public: +161 μ          # Roman published 1224; we are 161 μ below his ceiling. v7_minimax narrows this further than v3_snipe did.
 ```
