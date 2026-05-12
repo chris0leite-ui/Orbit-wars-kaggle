@@ -58,37 +58,71 @@ SEEDS_64 = [
 ]
 
 
-SNIPE_PATH = REPO / "lib" / "missions" / "snipe.py"
+# Lib files we look in for top-level `NAME = NUMBER` constants. Order
+# matters only for shadowed names (rare in this codebase); we error if a
+# constant is defined in multiple files.
+PATCHABLE_PATHS = [
+    REPO / "lib" / "missions" / "snipe.py",
+    REPO / "lib" / "missions" / "reinforce.py",
+    REPO / "lib" / "mechanism.py",
+    REPO / "lib" / "planner.py",
+]
 BUNDLE_OUT = REPO / "submissions" / "_ab"
 
 
-def _patch_constants(source: str, overrides: dict[str, float]) -> str:
-    """Apply `NAME = NUMBER` overrides via line-anchored regex.
+def _constant_pattern(name: str) -> "re.Pattern[str]":
+    # Match `NAME = <number>` allowing a trailing inline comment, e.g.
+    # `GANG_UP_ENABLED = 0  # opt-in`. The trailing `\s*(?:#.*)?$` group
+    # is captured so the substitution can drop the comment cleanly.
+    return re.compile(
+        rf"^(?P<lead>\s*){re.escape(name)}\s*=\s*[-+0-9.eE]+(?P<tail>\s*(?:#.*)?)$",
+        re.MULTILINE,
+    )
 
-    Only replaces lines whose first non-whitespace tokens are exactly
-    `NAME = <number>` (handles ints + floats). Comment lines, function
-    bodies, and assignments to attributes are untouched.
+
+def _find_constant_path(name: str) -> Path:
+    """Locate which lib file defines `name = <number>` at top level.
+
+    Raises ValueError if not found in any path or found in multiple.
     """
-    patched = source
-    for name, value in overrides.items():
-        pattern = re.compile(
-            rf"^(?P<lead>\s*){re.escape(name)}\s*=\s*[-+0-9.eE]+\s*$",
-            re.MULTILINE,
+    pattern = _constant_pattern(name)
+    hits = [p for p in PATCHABLE_PATHS if pattern.search(p.read_text())]
+    if not hits:
+        raise ValueError(
+            f"variant override `{name}` not found as a top-level "
+            f"assignment in any of {[str(p) for p in PATCHABLE_PATHS]}"
         )
-        if not pattern.search(patched):
-            raise ValueError(
-                f"variant override `{name}` not found as a top-level "
-                f"assignment in {SNIPE_PATH.name}"
-            )
-        patched = pattern.sub(rf"\g<lead>{name} = {value}", patched)
-    return patched
+    if len(hits) > 1:
+        raise ValueError(
+            f"variant override `{name}` is defined in multiple files: "
+            f"{[str(p) for p in hits]}. Disambiguate by removing one."
+        )
+    return hits[0]
+
+
+def _patch_one_file(path: Path, overrides: dict[str, float]) -> str:
+    """Apply this file's overrides; return original source for restore."""
+    original = path.read_text()
+    patched = original
+    for name, value in overrides.items():
+        pattern = _constant_pattern(name)
+        patched = pattern.sub(rf"\g<lead>{name} = {value}\g<tail>", patched)
+    path.write_text(patched)
+    return original
 
 
 def _bundle_variant(name: str, overrides: dict[str, float]) -> Path:
-    """Patch → bundle → restore. Returns the bundle path."""
-    original = SNIPE_PATH.read_text()
+    """Patch → bundle → restore across whichever lib files own each
+    overridden constant. Returns the bundle path."""
+    # Group overrides by source file.
+    by_file: dict[Path, dict[str, float]] = {}
+    for k, v in overrides.items():
+        owner = _find_constant_path(k)
+        by_file.setdefault(owner, {})[k] = v
+    originals: dict[Path, str] = {}
     try:
-        SNIPE_PATH.write_text(_patch_constants(original, overrides))
+        for path, file_overrides in by_file.items():
+            originals[path] = _patch_one_file(path, file_overrides)
         BUNDLE_OUT.mkdir(parents=True, exist_ok=True)
         out_path = bundle_agent.bundle(
             REPO / "agents" / "v3_snipe",
@@ -100,7 +134,8 @@ def _bundle_variant(name: str, overrides: dict[str, float]) -> Path:
         out_path.rename(renamed)
         return renamed
     finally:
-        SNIPE_PATH.write_text(original)
+        for path, original in originals.items():
+            path.write_text(original)
 
 
 def _parse_variant_args(specs: list[list[str]]) -> dict[str, dict[str, float]]:
