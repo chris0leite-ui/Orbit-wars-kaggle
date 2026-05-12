@@ -3468,6 +3468,109 @@ def choose_4p(
     return best_action
 
 
+def choose_simple_2p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K: int = 10,
+    wallclock_ms: float = 700.0,
+    my_id: int | None = None,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """2P drop-one chooser WITHOUT maximin overlay.
+
+    This is what v7.1 maximin should have been but wasn't: pure
+    argmax over drop-one candidates with σ-equiv-enabled incumbent.
+    The maximin variant (`choose_maximin`) lost the A/B because
+    its 2×N × symmetric-scoring budget blew the wallclock; the
+    simple variant has the same per-candidate cost as v7_0 (proven
+    fast enough at 746-816 ms p95) while still getting σ-equiv,
+    recapture, and value_fn for free.
+    """
+    t_start = time.perf_counter()
+
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    if my_id is None:
+        my_id = world.my_id
+    model = WorldModel.from_world(world)
+
+    incumbent_intents = _build_incumbent_intents(
+        world, model, include_recapture=include_recapture,
+    )
+    incumbent_action = _action_from_intents(incumbent_intents, obs, model)
+
+    candidates = _enumerate_drop_one(incumbent_action)
+    if len(candidates) <= 1:
+        return incumbent_action
+
+    snap = fs_from_obs(obs, configuration, episode_seed=0, num_seats=2)
+    best_action = incumbent_action
+    best_score = float("-inf")
+    incumbent_scored = False
+    for cand in candidates:
+        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+        if elapsed_ms > wallclock_ms:
+            break
+        try:
+            score = score_candidate(
+                snap, cand, my_id=my_id, K=K, opp_tier=1, value_fn=value_fn,
+            )
+        except Exception:
+            continue
+        if not incumbent_scored:
+            incumbent_scored = True
+            best_score = score
+            best_action = list(cand)
+            continue
+        if score > best_score:
+            best_score = score
+            best_action = list(cand)
+    return best_action
+
+
+def choose_simple_with_4p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K_2p: int = 10,
+    K_4p: int = 8,
+    wallclock_ms: float = 700.0,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """v7.5 entry — auto-routes 2P→choose_simple_2p, 4P→choose_4p.
+
+    No maximin overlay (which regressed at v7.1 A/B). σ-equiv layer
+    is library-level (lib/planner + lib/geometry + lib/missions/snipe)
+    so it's automatically present. Recapture + value_fn pluggable.
+    """
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    n_seats = _infer_num_seats(world)
+    if n_seats == 2:
+        return choose_simple_2p(
+            obs, configuration,
+            K=K_2p, wallclock_ms=wallclock_ms,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    if n_seats == 4:
+        return choose_4p(
+            obs, configuration,
+            K=K_4p, wallclock_ms=wallclock_ms,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    # 3P or 1P: rare; fall back to incumbent.
+    model = WorldModel.from_world(world)
+    intents = _build_incumbent_intents(world, model, include_recapture=include_recapture)
+    return _action_from_intents(intents, obs, model)
+
+
 def choose_with_4p(
     obs: Any,
     configuration: Any = None,
@@ -3582,42 +3685,34 @@ def choose(
     return best_action
 
 # === agent ===
-"""v7.5 — final combined agent (σ-equiv + maximin + recapture + 4P).
+"""v7.5 — final combined (σ-equiv + recapture + 4P-aware, NO maximin).
 
-Stacks every load-bearing improvement from v7.1–v7.4 into a single
-agent. Final entry point for PI submit authorisation.
+v7.1's 2×N maximin matrix lost the A/B against v7_0 by 6/24 = 25%.
+Diagnosis: 2×N cells × symmetric scoring (2× cost) = 4× more rollouts
+per turn → 700 ms watchdog truncates → maximin defaults to incumbent
+(conservative) → loses to v7_0's actual rollout-veto over a single
+fixed opponent.
 
-What's stacked:
-- σ-equivariance (sym_hypot in lib/geometry + _tb tie-break +
-  SCORE_ROUND=6 in lib/planner). Audit attributes ~+45 μ over v3.4
-  baseline to σ-equiv alone.
-- Symmetric scoring (`score_joint_symmetric`) — cancels env P1-bias
-  in 2P rollouts.
-- 2×2 maximin overlay in 2P — worst-case-best over opp class
-  {v3.5.1, drop-smallest(v3.5.1)}.
-- Recapture mission class with snipe-scale denominator + top-K cap
-  (fixes the regressions documented in
-  audit/2026-05-12-recapture-wireup-ab.md).
-- 4P-aware drop-one rollout (`score_candidate_4p`) — no more
-  pass-through-to-v3.5.1 on the missing half of the ladder. Uses
-  best-remaining-opp scoring head.
-
-The scoring head defaults to `delta_us_minus_them`; v7.3's
-`evaluate_value` (production-share) is ALSO available and gets
-A/B'd separately. v7.5 picks whichever ships PASS.
+v7.5 drops the maximin overlay, keeps everything else:
+- σ-equiv layer (lib/geometry sym_hypot + lib/planner _tb + SCORE_ROUND=6
+  + lib/missions/snipe sym_hypot for distance). Library-level: free.
+- Recapture mission class (calibrated: snipe-scale denom + top-K=5).
+- 4P-aware drop-one rollout with 3 top_tier_mirror opps (replaces
+  v7_0's "fall back to v3.5.1 in 4P").
+- Single-rollout-per-candidate scoring (no maximin matrix; no
+  symmetric scoring → no budget blow-up).
 """
 
 
-# from lib.v7_search import choose_with_4p  # inlined by bundle_agent.py
+# from lib.v7_search import choose_simple_with_4p  # inlined by bundle_agent.py
 
 
 def agent(obs, configuration=None):
-    return choose_with_4p(
+    return choose_simple_with_4p(
         obs, configuration,
         K_2p=10,
         K_4p=8,
         wallclock_ms=700.0,
-        use_symmetric=True,
         include_recapture=True,
-        value_fn=None,   # default = delta_us_minus_them; v7.5 picks ship-delta unless v7.3 PASS swings it
+        value_fn=None,  # ship-delta head; A/B vs prod-head is v7.3
     )

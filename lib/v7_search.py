@@ -858,6 +858,109 @@ def choose_4p(
     return best_action
 
 
+def choose_simple_2p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K: int = 10,
+    wallclock_ms: float = 700.0,
+    my_id: int | None = None,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """2P drop-one chooser WITHOUT maximin overlay.
+
+    This is what v7.1 maximin should have been but wasn't: pure
+    argmax over drop-one candidates with σ-equiv-enabled incumbent.
+    The maximin variant (`choose_maximin`) lost the A/B because
+    its 2×N × symmetric-scoring budget blew the wallclock; the
+    simple variant has the same per-candidate cost as v7_0 (proven
+    fast enough at 746-816 ms p95) while still getting σ-equiv,
+    recapture, and value_fn for free.
+    """
+    t_start = time.perf_counter()
+
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    if my_id is None:
+        my_id = world.my_id
+    model = WorldModel.from_world(world)
+
+    incumbent_intents = _build_incumbent_intents(
+        world, model, include_recapture=include_recapture,
+    )
+    incumbent_action = _action_from_intents(incumbent_intents, obs, model)
+
+    candidates = _enumerate_drop_one(incumbent_action)
+    if len(candidates) <= 1:
+        return incumbent_action
+
+    snap = fs_from_obs(obs, configuration, episode_seed=0, num_seats=2)
+    best_action = incumbent_action
+    best_score = float("-inf")
+    incumbent_scored = False
+    for cand in candidates:
+        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+        if elapsed_ms > wallclock_ms:
+            break
+        try:
+            score = score_candidate(
+                snap, cand, my_id=my_id, K=K, opp_tier=1, value_fn=value_fn,
+            )
+        except Exception:
+            continue
+        if not incumbent_scored:
+            incumbent_scored = True
+            best_score = score
+            best_action = list(cand)
+            continue
+        if score > best_score:
+            best_score = score
+            best_action = list(cand)
+    return best_action
+
+
+def choose_simple_with_4p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K_2p: int = 10,
+    K_4p: int = 8,
+    wallclock_ms: float = 700.0,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """v7.5 entry — auto-routes 2P→choose_simple_2p, 4P→choose_4p.
+
+    No maximin overlay (which regressed at v7.1 A/B). σ-equiv layer
+    is library-level (lib/planner + lib/geometry + lib/missions/snipe)
+    so it's automatically present. Recapture + value_fn pluggable.
+    """
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    n_seats = _infer_num_seats(world)
+    if n_seats == 2:
+        return choose_simple_2p(
+            obs, configuration,
+            K=K_2p, wallclock_ms=wallclock_ms,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    if n_seats == 4:
+        return choose_4p(
+            obs, configuration,
+            K=K_4p, wallclock_ms=wallclock_ms,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    # 3P or 1P: rare; fall back to incumbent.
+    model = WorldModel.from_world(world)
+    intents = _build_incumbent_intents(world, model, include_recapture=include_recapture)
+    return _action_from_intents(intents, obs, model)
+
+
 def choose_with_4p(
     obs: Any,
     configuration: Any = None,
