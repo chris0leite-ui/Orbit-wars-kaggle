@@ -1,0 +1,23 @@
+{
+  "label": "smoke-4",
+  "variant_wins": 6,
+  "draws": 0,
+  "variant_losses": 2,
+  "total": 8,
+  "win_draw_rate": 0.75,
+  "win_rate": 0.75,
+  "pair_baseline_as_p0": {
+    "p0_wins": 1,
+    "draws": 0,
+    "n": 4,
+    "wilson_lo": 0.045586062644636216,
+    "wilson_hi": 0.6993639475573634
+  },
+  "pair_variant_as_p0": {
+    "p0_wins": 3,
+    "draws": 0,
+    "n": 4,
+    "wilson_lo": 0.3006360524426366,
+    "wilson_hi": 0.9544139373553637
+  }
+}
