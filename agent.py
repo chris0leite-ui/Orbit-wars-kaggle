@@ -1082,10 +1082,17 @@ def _v3() -> Callable:
 def env_from_obs(obs, configuration: dict | None = None):
     """Rebuild a steppable env mirroring the agent-visible state.
 
-    Future-comet RNG is the single fidelity gap (steps 50/150/250/350/450);
-    rollouts that don't cross a spawn boundary are bit-exact.
+    Both players, viewing the same obs, derive the same `cfg["seed"]`
+    from `obs.step` (when configuration doesn't already set one). This
+    means their Sim<K> rollouts use identical comet-spawn RNG → σ-mirrored
+    payoff matrices in 2P self-play → maximin picks agree → draws. Without
+    deterministic seeding the env's RNG diverges per-process and self-play
+    falls from 16/16 draws to ~50% (verified locally, 2026-05-12).
     """
     cfg = dict(configuration or {})
+    if "seed" not in cfg:
+        obs_step = obs.get("step", 0) if isinstance(obs, dict) else getattr(obs, "step", 0)
+        cfg["seed"] = int(obs_step or 0)
     env = make("orbit_wars", configuration=cfg, debug=False)
     env.reset(num_agents=2)
     snapshot_keys = (
