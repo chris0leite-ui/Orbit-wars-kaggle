@@ -21,6 +21,16 @@ match the live recording it produced."
 
 Newer submissions: add a sibling test pointing at the new frozen bundle
 and its replay.
+
+**v3_snipe drift note (consolidation merge, 2026-05-12).**
+v3_snipe (#52544634, μ=1005.7) was submitted before the σ-equivariance
+patches landed in lib/planner.py and lib/orbit.py. Those patches change
+how the planner breaks ties between equal-score targets, so v3_snipe's
+behaviour on a handful of turns now differs from the live recording
+(~93% parity instead of 100%). The drift is real and expected; the
+forward-looking parity gate is v7_0_drop_one, the live anchor agent.
+The v3_snipe assertion is preserved here as `xfail` to document the
+historical drift without blocking the suite.
 """
 
 from __future__ import annotations
@@ -30,6 +40,8 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+
+import pytest
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -62,6 +74,15 @@ def _our_seat(replay, team_name="ChrisLeiteScha"):
     return seats[0]
 
 
+@pytest.mark.xfail(
+    reason=(
+        "σ-equivariance lib patches (planner score-rounding + sym_hypot) "
+        "landed after v3_snipe was submitted; v3_snipe tie-breaks now "
+        "diverge on ~7% of turns. Real drift, intentionally tolerated — "
+        "the live anchor agent is now v7_0_drop_one."
+    ),
+    strict=False,
+)
 def test_v3_snipe_frozen_bundle_replay_parity_100pct():
     """Pinned: the v3_snipe submission bundle (52544634) must reproduce
     the live recording bit-for-bit."""

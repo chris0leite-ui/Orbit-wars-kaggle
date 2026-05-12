@@ -1,139 +1,145 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-11 PM (Day 2 wrap PM) by the
-> `claude/analyze-submission-logs-dFHeS` branch. Format budget ≤150 lines.
-> Prior `bootstrap-agentic-systems-lqnm6` wrap archived to
-> `audit/archive-2026-05-11-handover-lqnm6.md`.
+> Last written: 2026-05-12 EVE by `claude/consolidate-fast-simulation-ysd9M`.
+> Format budget ≤ 160 lines. Prior wraps archived under
+> `audit/archive-2026-05-1*-handover-*.md`.
 
 ## Where we are
 
 - **Comp:** Orbit Wars (slug `orbit-wars`). Deadline 2026-06-23 23:59 UTC →
-  **43 days remaining.**
-- **Submitted agent:** v3_snipe, **submission #52544634**, status COMPLETE
-  with **publicScore μ=1055.5** (+90.2 over v2). Rolling-last-2:
-  `[v2 (μ=965.3), v3_snipe (μ=1055.5)]`. v1.2/roi (μ=1006.9) was evicted.
-- **Gap to top-10 prize:** v3_snipe at 1055.5 → **+392 μ** to cliff at
-  1447.6 (ShunkiKyoya).
-- **Daily submission budget:** 0/5 used today. 5 slots remain.
-- **Live winrate** (34 games): 14W/20L (41.2%); 2P 47.1% / 4P 35.3%.
-  TrueSkill places us against stronger opponents than the absolute
-  winrate suggests.
-- **PR #10 open** to main: 100%-parity gates + v3.2 (arrival_size adversary
-  stacking + DEFAULT_HORIZON 250) + v3.4 partial (4P spoiler retained,
-  neutral/comet bonus disabled after regression). Awaiting merge —
-  direct push blocked by branch protection (403).
-- **Test suite:** 232/232 non-slow tests green.
+  **42 days remaining.**
+- **Live submitted agent:** `v7_0_drop_one`, **submission #52588156**,
+  status COMPLETE with **publicScore 1094.9 — team peak.**
+- **Rolling-last-2 (Kaggle's auto-evaluation pair):**
+  `[v4_planner #52579863 (1038.6), v7_0_drop_one #52588156 (1094.9)]`.
+- **Public-LB rank:** **109 / 2587 teams** (top 4.2%).
+- **Gap to top-10 prize:** +336 to 3Comets (#10) at 1430.9. #1 =
+  bowwowforeach 1675.9.
+- **Daily submission budget:** 2/5 used today already (#52565976 v3.5.1
+  + #52588156 v7_0_drop_one).
+- **Test suite:** 373 pass / 2 skipped / 1 xfailed (v3_snipe replay-
+  parity drift from σ-equiv lib patches — documented in
+  `tests/test_replay_parity.py`).
+- **σ-awareness:** Kaggle's published Score = μ − κσ. v7_0_drop_one is
+  at 64 evaluation episodes (≈ 4 h since submit at the snapshot),
+  σ-band ~6 Score points. The +56 lead over v4_planner is real, not
+  σ-shimmer.
 
-## Today's PM progress
+## This session — consolidation only
 
-Branch `claude/analyze-submission-logs-dFHeS`, ~14 commits this session.
-Load-bearing only:
+Branch `claude/consolidate-fast-simulation-ysd9M`. One thick merge plus
+prune and state rewrite. No new submission.
 
-1. **Local↔live parity 100%.** Two postmortem bugs fixed: off-by-one
-   on `steps[t].action` indexing (kaggle_environments stores action at
-   `steps[t+1]`) and missing `obs.step` backfill for non-seat-0 obs.
-   Self-play match rate jumped from 33.9% to **100%**; live replays
-   from 53% to 100%. Permanent gates: `tests/test_replay_parity.py`,
-   post-bundle self-play parity check in `scripts/bundle_agent.py`,
-   sha256 bundle hash printed at bundle time.
-2. **v3.2 lib changes** (`lib/mechanism.py::arrival_size` adversary-
-   stacking via WorldModel + `lib/world_model.DEFAULT_HORIZON` 110→250).
-   2P 32-seed A/B vs frozen v3_snipe: **57.8% Wilson [45.6%, 69.1%]**
-   (matches v3_snipe's pre-live calibration). 4P FFA 16-seed: **93.8%
-   vs frozen 90.6%** (+3.2pp directional lift).
-3. **v3.3 blanket off-by-one fix REVERTED.** 32-seed A/B: 27/64=42.2%
-   Wilson [30.9%, 54.4%]. Static targets get over-sized because the
-   env's center-to-center distance over-estimates eta by
-   `(r_src + r_target)/v`.
-4. **v3.4 neutral/comet bonus REVERTED.** Tried `NEUTRAL_BONUS=1.5,
-   COMET_BONUS=1.3` based on live finding "78.6% of comets sit
-   neutral, only 4.9% to us." 32-seed A/B regressed to 28.1% Wilson
-   [18.6%, 40.1%] — flat multiplier tips target selection toward easy
-   neutrals when contested enemy planets are the binding constraint.
-5. **v3.4 4P SPOILER** (`LEADER_MULTIPLIER=1.5` when our rank≥2 in
-   ≥3P games): kept; 2P A/B confirmed no-op in 2P (54/64 draws).
-   **Pointed 4P FFA test** (v3.4 focal vs 3×v3.2 background) was
-   running at session wrap — read its result before deciding whether
-   to retain or revert.
-6. **Postmortem Fleet-schema fix** (scripts/episode_postmortem.py:211):
-   `init_entry[5]` → `init_entry[6]` (Fleet schema is `[id, owner, x,
-   y, angle, from_planet_id, ships]`; we were reading from_planet_id).
-   Per-episode `fleet['ships']` field is now meaningful; aggregate
-   outcome categorization (captured/bounced/etc.) was unaffected.
-7. **Games analysis write-up** (`audit/2026-05-11-v3-snipe-games-
-   analysis.md`): five distinct weakness patterns + ranked improvement
-   backlog. Plus the original critical review (`audit/2026-05-11-v3-
-   snipe-critical-review.md`).
+1. **Merged `claude/game-theory-strategy-analysis-0oH4N`** (which itself
+   merged `claude/game-ai-lookahead-3ucqH`) onto this branch. Brings:
+   - **Fast brain core:** `lib/fast_sim.py` (183× faster than env.clone +
+     step; bit-exact Snapshot wrapper around
+     `kaggle_environments.envs.orbit_wars.orbit_wars.interpreter()`),
+     `lib/opp_model.py` (Tier 0 v3_snipe / Tier 1 v3.5.1 opponent
+     policies), `lib/v7_search.py` (chooser: enumerate candidates,
+     score each via fast_sim rollout, pick best),
+     `lib/lookahead_planner.py` (value head + adaptive K + comet-
+     boundary truncation), `lib/value_heads.py`,
+     `lib/candidate_portfolios.py`, `lib/mirror.py`.
+   - **σ-equivariance patches:** score rounding to 6 decimals + symmetric
+     tie-break in `lib/planner.py`, `sym_hypot` in `lib/orbit.py` for
+     bit-exact paired distances.
+   - **Anchor agent:** `agents/v7_ablations/v7_0_drop_one/main.py` +
+     `submissions/v7_0_drop_one.py` (the live μ=1094.9 bundle,
+     sha256 `bb7ab23a75bc5865`).
+   - **Knowledge:** `knowledge-base/concepts/lookahead-simulator-
+     architecture.md` (permanent reference for the fast-brain stack).
+2. **Pruned dead and intermediate variants:** failed v7 sweeps
+   (`v7_1_minimax`..`v7_6_no_recapture`, `v7_combined`, plus
+   `v7_ablations/v7_1`..`v7_4`), parked v8 PSRO stack
+   (`v8_fastbrain`, `v8_minimal`, `v8_psro_meta`), failed v9 super-
+   versions (`v9_combined`, `v9_inflight`, `v9_k15`, `v9_opening`),
+   v10 variants (`v10_evaluate` FAIL, `v10_opening` not validated),
+   intermediate v3.5 scaffolding (`v3.5`, `v35_ablations`,
+   `v35_iter2`), intermediate v4 sweeps (`v4_endgame`, `v4_hybrid`,
+   `v4_mirror`, `v4_mirror_t1`, `v4_mirror_t2`), and dead A/B harness
+   scripts (`psro_*`, `run_v7_ablation`, `run_iter2_ablation`,
+   `run_v35_ab`, `run_sizing_sweep`, `run_aggressive_sizing_32`,
+   `run_ablation_panel`, `run_ffa_agg`, `opening_probe`, `bench_v7`).
+3. **State docs rewritten** to true live scores. `state/current.md`
+   now carries the full live submission ladder (13 entries from
+   day-1 baseline through v7_0_drop_one), σ-proxy episode counts,
+   and the corrected top-10 cliff (1430.9, not 1447.6).
 
-## Falsified-or-dead this session
+## What's kept (the minimum that matters)
 
-- **Blanket `+1` production tick in `arrival_size`** (v3.3): regressed
-  in 32-seed A/B because static targets are already over-sized by the
-  center-to-center distance estimate.
-- **Flat `NEUTRAL_BONUS=1.5` + `COMET_BONUS=1.3`** in snipe scoring
-  (v3.4 first pass): regressed in 32-seed 2P A/B.
-- **The "one ship too little" near-miss claim from the critical
-  review §4.6** is real (106 of 518 enemy bounces within ±5 of
-  threshold) but doesn't admit a flat-formula fix. Needs a
-  selective approach.
+`agents/`: `simple`, `v1_orbitfix`, `v2`, `v3_lookahead`, `v3_snipe`,
+`v3.5.1`, `v7_ablations/v7_0_drop_one`, `v7_minimax`.
 
-## Next-session first-action
+`submissions/`: `v3.5.1.py`, `v3_snipe_frozen.py` (parity test
+fixture, regenerated post-merge), `v4_planner.py`, `v7_0_drop_one.py`
+(live anchor), `v7_minimax.py`.
 
-Ranked. EV-priority, cost on local CPU.
+`lib/`: full mission framework (`missions/{snipe, reinforce, gang_up,
+recapture, drain, opening}.py`), full physics
+(`{aim, combat, fleet, geometry, mechanism, orbit, trajectory,
+world_model}.py`), the fast-brain stack listed above, plus
+`{intent, mission, planner, scoring, fingerprint}.py`.
 
-1. **Read the pointed 4P FFA result** (cost: <1 min, EV: decides
-   v3.4 fate). `cat /tmp/claude-0/.../tasks/b84x27box.output` or
-   `ls -la audit/tournaments/ffa-panel-*.json`. If v3.4-spoiler
-   wins >30% (chance vs 3 identical = 25%), bundle as v3.4 and
-   stage for submit. If parity/regression, revert spoiler (one-line
-   constant change in `lib/missions/snipe.py`).
-2. **Merge PR #10.** Direct push to main is 403-blocked. PR is
-   the only path. Branch:
-   `claude/analyze-submission-logs-dFHeS`.
-3. **PI submit decision** for v3.2 (or v3.4). Rule 1 requires
-   PI-authorized push. Bundle paths:
-   - v3.2: `submissions/v3_2.py` sha256:`ce304fff67c5f879`
-   - v3.4-spoiler-only: `submissions/v3_4.py` sha256:`410b3c2ee370f943`
-   Rolling-last-2 eviction record per the §6.3 critique discipline.
-4. **Selective comet/neutral engagement** (v3.5). Flat multiplier
-   regressed; try distance-bounded (`d < 30`) or opening-phase
-   (`step < 50`) variants. The 78.6% neutral-comet finding is real
-   but the shape matters.
-5. **Recapture mission class** (P4 from games analysis). Most
-   relevant improvement for the comeback-gap finding: in wins after
-   home loss, we recover to 28 planets; in losses, 6. Roman has
-   recapture; we don't. ~4-6h.
-6. **(DEFER)** RL training; gang_up mission class (H4); 4P score-
-   function rebalance for bigger fleets (P3).
+## Next phase — research the fast-simulation rebuild
 
-## Pointers (added/updated this session)
+The user's stated next step is a **100%-accurate pure-Python rebuild
+of the orbit-wars game itself**, so we can iterate without the
+`kaggle_environments` dependency or its per-step framework overhead.
+`lib/fast_sim.py` already bypasses ~99% of the Environment wrapper
+but still calls `orbit_wars.interpreter()` from the kaggle package.
+The next step replaces THAT.
 
-- `audit/2026-05-11-v3-snipe-critical-review.md` — critical review of
-  submission 52544634 (live μ + error breakdown + project critique).
-- `audit/2026-05-11-v3-snipe-games-analysis.md` — five distinct
-  weakness patterns + ranked improvement backlog.
-- `audit/archive-2026-05-11-handover-lqnm6.md` — prior session's
-  HANDOVER.
-- `audit/live-episodes/52544634/` + `52532938/` — pulled + postmortem-
-  processed live replays (100% action match).
-- `audit/live-episodes/SELFPLAY/` — gold-standard parity test fixture.
-- `audit/tournaments/20260511T1[5-9]*Z.json` + `ffa-panel-*` —
-  A/B + FFA artifacts for v3.2, v3.3 (regressed), v3.4.
-- `scripts/episode_postmortem.py` — new replay-driven instrumentation
-  diagnostic (100% action match on live replays).
-- `tests/test_replay_parity.py` — permanent parity gate against
-  `submissions/v3_snipe_frozen.py`.
-- `tests/test_mission_snipe_priority.py` — 7 tests for the neutral/
-  comet bonus + 4P spoiler (bonuses disabled, spoiler active).
-- `submissions/v3_2.py` — v3.2 bundle (validated, ready to submit).
-- `submissions/v3_4.py` — v3.4 spoiler-only bundle (pending 4P
-  pointed-test validation).
-- `submissions/v3_snipe_frozen.py` — frozen v3_snipe baseline (parity
-  test pin).
+Research questions for the next session — answer before writing code:
 
-## PR status
+1. **What does `orbit_wars.interpreter()` actually do?** Already on
+   disk at `/usr/local/lib/python3.11/dist-packages/kaggle_environments/
+   envs/orbit_wars/orbit_wars.py` (~750 lines). Map the entry points
+   (`interpreter`, `random_agent`, `starter_agent`,
+   `generate_planets`, `generate_comet_paths`, `swept_pair_hit`,
+   `renderer`) and the physics constants
+   (`COMET_SPAWN_STEPS = [50, 150, 250, 350, 450]`,
+   `BOARD_SIZE = 100`, `SUN_RADIUS = 10`, `ROTATION_RADIUS_LIMIT = 50`,
+   `PLANET_CLEARANCE = 7`, etc.).
+2. **What parity test design do we need?** Run our re-impl side-by-
+   side with `interpreter()` on the same `(state, env.info[seed])`
+   stream, assert state-for-state equality through full 500-step
+   episodes. Already have a fixture corpus
+   (`audit/live-episodes/52544634/`, `52532938/`, `SELFPLAY/`)
+   that can serve as the gate.
+3. **What's the performance target?** `fast_sim.step()` is 0.12 ms
+   per simulated step today (Environment overhead removed). A pure-
+   Python re-impl that drops the `Struct` boxing and the in-package
+   import overhead could plausibly hit 0.05 ms; a numpy-vectorised
+   batch could push 10-100× on parallel rollouts.
+4. **Vectorise or stay scalar?** A scalar pure-Python re-impl is
+   the smallest scope and the simplest parity-test target.
+   Vectorising over planets and fleets is a separate, later step
+   once the scalar version is locked.
 
-**PR #10** (https://github.com/chris0leite-ui/Orbit-wars-kaggle/pull/10):
-`claude/analyze-submission-logs-dFHeS` → `main`. Contains all of:
-parity infrastructure, v3.2 (validated), v3.3 (reverted), v3.4
-(spoiler retained, bonuses disabled). Awaiting human merge.
+Output for that session: a short design doc + a parity-test rig
++ a stub `lib/sim.py` that imports the real interpreter for now.
+Don't write the replacement on day one — research first.
+
+## Out of scope for any session before that work lands
+
+- No new submission from this branch. v7_0_drop_one #52588156 is
+  the live anchor; the rolling-last-2 holds.
+- No PR to main from this branch yet. Open a PR only when the PI
+  authorises promotion.
+
+## Pointers — new or updated this session
+
+- `lib/fast_sim.py`, `lib/opp_model.py`, `lib/v7_search.py`,
+  `lib/lookahead_planner.py`, `lib/value_heads.py`,
+  `lib/candidate_portfolios.py`, `lib/mirror.py` — fast-brain stack.
+- `lib/planner.py`, `lib/orbit.py` — σ-equivariance patches.
+- `agents/v7_ablations/v7_0_drop_one/main.py` — anchor agent source.
+- `submissions/v7_0_drop_one.py` — anchor bundle sha
+  `bb7ab23a75bc5865`.
+- `submissions/v4_planner.py` — rolling-last-2 pair.
+- `knowledge-base/concepts/lookahead-simulator-architecture.md` —
+  fast-brain reference doc (read this first next session).
+- `tests/test_replay_parity.py` — xfail note on v3_snipe drift.
+- `audit/2026-05-12-v4-planner-receding-horizon-pathology.md` —
+  why v4_planner under-performs v7_0 in drop-one regime.
