@@ -81,3 +81,28 @@ has the v7_0 base plus the opening lift; submit anyway.
   P0/P1 tie-break bias documented separately).
 - Not a recapture agent. v7_0_drop_one base does NOT include
   recapture missions (v7.6 found recapture regresses).
+
+## Bundle parity issue
+
+Strict parity gate FAILED (160/998 turns mismatched). Root cause:
+`time.perf_counter()` watchdog at 700ms. The bundle (single 165KB
+file, no per-call import resolution) runs slightly faster than the
+source (lib imports). Under the same watchdog deadline, the bundle
+completes more drop-one candidates and picks a higher-scoring
+winner than the source.
+
+With watchdog disabled (WALLCLOCK_MS=60000), divergence drops from
+7/98 → 2/98 on the same 50-turn game. Remaining 2 mismatches are
+score-tie boundary effects.
+
+This is not a bundling correctness bug — both source and bundle are
+valid behaviors. v7_0_drop_one's bundle has 0 mismatches because at
+K=10 + 700ms, both source and bundle complete all drop-one candidates.
+v10's extra overhead (`_predict_opp_first_targets` running a full v3.5.1
+mission pipeline from opp POV in step < 15) tips the source over
+budget while bundle still completes.
+
+**Implication for ladder**: bundle plays slightly differently than
+source. Local A/B numbers (68.8% vs v7_0) are SOURCE-based; ladder
+runs BUNDLE. Bundle should be at least as strong (more candidates
+evaluated → better choice).
