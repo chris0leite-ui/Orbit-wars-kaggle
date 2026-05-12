@@ -1,10 +1,10 @@
-"""A/B harness for v4.5_robust vs v4_planner + diverse-panel gate.
+"""A/B harness — focal agent vs v4_planner + diverse-panel gate.
 
 Two modes:
 
-  --mode ab     16-32 seed head-to-head v4.5_robust vs v4_planner.
+  --mode ab     16-32 seed head-to-head <focal> vs --opponent.
                 Wilson lo gate (≥ 55% to clear).
-  --mode panel  16-seed diverse-panel: v4.5_robust vs each of
+  --mode panel  16-seed diverse-panel: focal vs each of
                 {v4_planner, v7_minimax, v3_snipe, v3.5.1}.
                 Promoted "diverse-panel" rule: focal must beat
                 ≥ 50 % of panel agents at Wilson lo ≥ 55 %
@@ -23,13 +23,11 @@ sys.path.insert(0, str(REPO))
 
 from scripts.tournament import run_tournament, _wilson_ci  # noqa: E402
 
-AGENT_PATHS = {
-    "v4.5_robust": str(REPO / "agents" / "v4.5_robust" / "main.py"),
-    "v4_planner":  str(REPO / "agents" / "v4_planner"  / "main.py"),
-    "v7_minimax":  str(REPO / "agents" / "v7_minimax"  / "main.py"),
-    "v3_snipe":    str(REPO / "agents" / "v3_snipe"    / "main.py"),
-    "v3.5.1":      str(REPO / "agents" / "v3.5.1"      / "main.py"),
-}
+ALL_AGENTS = ("v4.5_robust", "v4.6_drop_smallest", "v4_planner", "v7_minimax", "v3_snipe", "v3.5.1")
+
+
+def _agent_paths():
+    return {name: str(REPO / "agents" / name / "main.py") for name in ALL_AGENTS}
 
 
 def _pooled(matrix, focal: str) -> tuple[int, int]:
@@ -47,11 +45,12 @@ def _pooled(matrix, focal: str) -> tuple[int, int]:
     return wins, n
 
 
-def _ab(seeds: int, workers: int, opponent: str, out_dir: Path):
+def _ab(focal: str, seeds: int, workers: int, opponent: str, out_dir: Path):
+    paths = _agent_paths()
     result = run_tournament(
         agents={
-            "v4.5_robust": AGENT_PATHS["v4.5_robust"],
-            opponent:      AGENT_PATHS[opponent],
+            focal:    paths[focal],
+            opponent: paths[opponent],
         },
         seeds=list(range(seeds)),
         include_self_play=False,
@@ -60,7 +59,7 @@ def _ab(seeds: int, workers: int, opponent: str, out_dir: Path):
         workers=workers,
     )
     print()
-    print(f"=== v4.5_robust vs {opponent} ({seeds} seeds, both seats) ===")
+    print(f"=== {focal} vs {opponent} ({seeds} seeds, both seats) ===")
     for row in result.matrix:
         for col, stat in result.matrix[row].items():
             print(
@@ -69,25 +68,28 @@ def _ab(seeds: int, workers: int, opponent: str, out_dir: Path):
                 f"Wilson95% [{stat.wilson_lo:.3f}, {stat.wilson_hi:.3f}]; "
                 f"p95 P0={stat.p0_p95_turn_ms:.1f}ms P1={stat.p1_p95_turn_ms:.1f}ms"
             )
-    wins, n = _pooled(result.matrix, "v4.5_robust")
+    wins, n = _pooled(result.matrix, focal)
     lo, hi = _wilson_ci(wins, n)
     rate = wins / n if n else 0.0
     verdict = "PASS" if lo >= 0.55 else ("NEUTRAL" if lo >= 0.45 else "FAIL")
     print()
     print(
-        f"POOLED v4.5_robust: {wins}/{n} = {rate*100:.1f}% "
+        f"POOLED {focal}: {wins}/{n} = {rate*100:.1f}% "
         f"Wilson95% [{lo*100:.1f}%, {hi*100:.1f}%]  → {verdict} (gate 55% Wilson lo)"
     )
 
 
-def _panel(seeds: int, workers: int, out_dir: Path):
+def _panel(focal: str, seeds: int, workers: int, out_dir: Path):
+    paths = _agent_paths()
     opponents = ["v4_planner", "v7_minimax", "v3_snipe", "v3.5.1"]
     rows = {}
     for opp in opponents:
+        if opp == focal:
+            continue
         result = run_tournament(
             agents={
-                "v4.5_robust": AGENT_PATHS["v4.5_robust"],
-                opp:           AGENT_PATHS[opp],
+                focal: paths[focal],
+                opp:   paths[opp],
             },
             seeds=list(range(seeds)),
             include_self_play=False,
@@ -95,11 +97,11 @@ def _panel(seeds: int, workers: int, out_dir: Path):
             progress=True,
             workers=workers,
         )
-        wins, n = _pooled(result.matrix, "v4.5_robust")
+        wins, n = _pooled(result.matrix, focal)
         lo, hi = _wilson_ci(wins, n)
         rows[opp] = (wins, n, lo, hi)
     print()
-    print("=== v4.5_robust vs diverse panel ({} seeds × 2 seats each) ===".format(seeds))
+    print(f"=== {focal} vs diverse panel ({seeds} seeds × 2 seats each) ===")
     pass_cells = 0
     for opp, (wins, n, lo, hi) in rows.items():
         rate = wins / n if n else 0.0
@@ -119,19 +121,21 @@ def _panel(seeds: int, workers: int, out_dir: Path):
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--focal", type=str, default="v4.5_robust",
+                        choices=ALL_AGENTS, help="agent under test")
     parser.add_argument("--mode", choices=["ab", "panel"], default="ab")
     parser.add_argument("--seeds", type=int, default=32)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--opponent", type=str, default="v4_planner",
-                        choices=[k for k in AGENT_PATHS if k != "v4.5_robust"])
+                        choices=ALL_AGENTS)
     parser.add_argument("--out-dir", type=str, default=None)
     args = parser.parse_args(argv)
     out_dir = Path(args.out_dir) if args.out_dir else (REPO / "audit" / "tournaments")
 
     if args.mode == "ab":
-        _ab(args.seeds, args.workers, args.opponent, out_dir)
+        _ab(args.focal, args.seeds, args.workers, args.opponent, out_dir)
     else:
-        _panel(args.seeds, args.workers, out_dir)
+        _panel(args.focal, args.seeds, args.workers, out_dir)
     return 0
 
 
