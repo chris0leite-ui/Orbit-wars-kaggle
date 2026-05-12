@@ -7,8 +7,10 @@ test asserts the proposer:
 2. Does NOT fire for step > 5
 3. Skips owned planets with ≤ 8 ships
 4. Skips comet targets (none active in opening window anyway)
-5. Skips targets that would strand the source (capture cost ≥ src.ships)
+5. Skips targets the source can't capture at all (cost > src.ships)
 6. Uses front-loaded value: production × (remaining)^1.5
+7. Sizes launches to drain the source to OPENING_RESERVE ships
+   (bowwowforeach #1 archetype, garrison-at-launch ~7.7 vs midpack 22)
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from lib.intent import World
 from lib.missions.opening import (
     EPISODE_STEPS,
     MIN_LAUNCH_GARRISON,
+    OPENING_RESERVE,
     OPENING_WINDOW,
     propose_opening_missions,
 )
@@ -113,7 +116,7 @@ def test_skips_comet_targets_in_opening_window():
     assert out == []
 
 
-def test_skips_target_that_would_strand_source():
+def test_skips_uncapturable_target():
     """Source has 10 ships; target has 50 ships (would need 51 to capture)."""
     planets = [
         _planet(0, owner=0, ships=10, x=10.0, y=10.0),
@@ -122,6 +125,47 @@ def test_skips_target_that_would_strand_source():
     w = _world(planets, step=0)
     out = propose_opening_missions(w, _model(w))
     assert out == []
+
+
+def test_drains_source_to_opening_reserve():
+    """Bowwowforeach archetype: 10-ship home sends ~8 ships at step 0,
+    leaving OPENING_RESERVE=2 garrison at the source."""
+    planets = [
+        _planet(0, owner=0, ships=10, x=10.0, y=10.0),
+        _planet(1, owner=-1, ships=0, prod=2, x=30.0, y=10.0),  # easy neutral
+    ]
+    w = _world(planets, step=0)
+    out = propose_opening_missions(w, _model(w))
+    assert len(out) == 1
+    assert out[0].ships == 10 - OPENING_RESERVE  # = 8
+    # Sanity: post-launch garrison equals OPENING_RESERVE.
+    assert 10 - out[0].ships == OPENING_RESERVE
+
+
+def test_sizing_caps_at_source_garrison():
+    """Source has 30 ships; target needs only 3 to capture.
+    With drain-to-reserve sizing, we send 28 (not capped down to 3)."""
+    planets = [
+        _planet(0, owner=0, ships=30, x=10.0, y=10.0),
+        _planet(1, owner=-1, ships=2, prod=2, x=30.0, y=10.0),
+    ]
+    w = _world(planets, step=0)
+    out = propose_opening_missions(w, _model(w))
+    assert len(out) == 1
+    assert out[0].ships == 30 - OPENING_RESERVE  # = 28
+
+
+def test_sizing_respects_target_min_when_larger():
+    """Source has 20 ships, target needs 19 to capture (ships=18).
+    target_min=19 > src-reserve=18, so we send 19 (capture cost wins)."""
+    planets = [
+        _planet(0, owner=0, ships=20, x=10.0, y=10.0),
+        _planet(1, owner=-1, ships=18, prod=2, x=30.0, y=10.0),
+    ]
+    w = _world(planets, step=0)
+    out = propose_opening_missions(w, _model(w))
+    assert len(out) == 1
+    assert out[0].ships == 19  # max(target_min=19, src-reserve=18)
 
 
 def test_skips_enemy_target():
@@ -150,7 +194,12 @@ def test_skips_our_own_target():
 
 
 def test_score_uses_front_loaded_value():
-    """value = production × (500 - step - eta)^1.5; score = value / (d + 1)."""
+    """value = production × (500 - step - eta)^1.5; score = value / (d + 1).
+
+    With bowwowforeach-style sizing (drain to OPENING_RESERVE), a 30-
+    ship source sends max(target_min, 30 - 2) = 28 ships, not the
+    minimum-viable 3.
+    """
     planets = [
         _planet(0, owner=0, ships=30, x=10.0, y=10.0),
         _planet(1, owner=-1, ships=2, prod=3, x=70.0, y=10.0),
@@ -160,7 +209,8 @@ def test_score_uses_front_loaded_value():
     assert len(out) == 1
     m = out[0]
     d = 60.0
-    base_ships = 3
+    base_ships = max(3, 30 - OPENING_RESERVE)  # = 28
+    assert m.ships == base_ships, f"expected ships={base_ships}, got {m.ships}"
     v = fleet_speed(base_ships)
     eta = int(math.ceil(d / v))
     remaining = EPISODE_STEPS - 0 - eta

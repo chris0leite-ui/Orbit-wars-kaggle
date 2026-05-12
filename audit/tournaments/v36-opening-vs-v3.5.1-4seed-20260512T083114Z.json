@@ -1,0 +1,154 @@
+{
+  "timestamp_utc": "2026-05-12T08:31:14Z",
+  "agents": {
+    "v3.6_opening": "/home/user/Orbit-wars-kaggle/agents/v3.6_opening/main.py",
+    "v3.5.1": "/home/user/Orbit-wars-kaggle/agents/v3.5.1/main.py"
+  },
+  "seeds": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "include_self_play": false,
+  "matrix": {
+    "v3.6_opening": {
+      "v3.5.1": {
+        "p0_name": "v3.6_opening",
+        "p1_name": "v3.5.1",
+        "n": 4,
+        "p0_wins": 2,
+        "p1_wins": 2,
+        "draws": 0,
+        "mean_ship_delta_p0_minus_p1": 779.5,
+        "p0_p95_turn_ms": 24.540743249986008,
+        "p1_p95_turn_ms": 16.635078250146762,
+        "wilson_lo": 0.15003570882017148,
+        "wilson_hi": 0.8499642911798285,
+        "games": [
+          {
+            "seed": 2,
+            "rewards": [
+              -1,
+              1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 125,
+            "final_ship_delta_p0_minus_p1": -1957.0
+          },
+          {
+            "seed": 1,
+            "rewards": [
+              -1,
+              1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 170,
+            "final_ship_delta_p0_minus_p1": -2872.0
+          },
+          {
+            "seed": 0,
+            "rewards": [
+              1,
+              -1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 247,
+            "final_ship_delta_p0_minus_p1": 1577.0
+          },
+          {
+            "seed": 3,
+            "rewards": [
+              1,
+              -1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 266,
+            "final_ship_delta_p0_minus_p1": 6370.0
+          }
+        ]
+      }
+    },
+    "v3.5.1": {
+      "v3.6_opening": {
+        "p0_name": "v3.5.1",
+        "p1_name": "v3.6_opening",
+        "n": 4,
+        "p0_wins": 1,
+        "p1_wins": 3,
+        "draws": 0,
+        "mean_ship_delta_p0_minus_p1": -1881.25,
+        "p0_p95_turn_ms": 12.295227099912154,
+        "p1_p95_turn_ms": 31.920365599876277,
+        "wilson_lo": 0.045586062644636216,
+        "wilson_hi": 0.6993639475573634,
+        "games": [
+          {
+            "seed": 1,
+            "rewards": [
+              -1,
+              1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 194,
+            "final_ship_delta_p0_minus_p1": -3019.0
+          },
+          {
+            "seed": 2,
+            "rewards": [
+              1,
+              -1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 129,
+            "final_ship_delta_p0_minus_p1": 2277.0
+          },
+          {
+            "seed": 0,
+            "rewards": [
+              -1,
+              1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 299,
+            "final_ship_delta_p0_minus_p1": -4037.0
+          },
+          {
+            "seed": 3,
+            "rewards": [
+              -1,
+              1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 199,
+            "final_ship_delta_p0_minus_p1": -2746.0
+          }
+        ]
+      }
+    }
+  }
+}

@@ -3,16 +3,24 @@
 Top-10 fingerprint analysis (`knowledge-base/concepts/top-performer-strategies.md`)
 finds that ladder leaders' median first-launch step = 4.1 while midpack
 sits at 10.5. Six wasted opening turns forfeit ~6× per-planet
-production ≈ 30 ships of board control. The Mission's job is to
-guarantee that EVERY owned planet with ships > 8 launches in the
-opening window, even if no other Mission class would.
+production ≈ 30 ships of board control.
+
+**2026-05-12 sizing fix (bowwowforeach archetype).** The prior
+implementation sent `max(1, t.ships + 1)` ships — for the typical
+step-0 neutral with 0 ships, that meant a **1-ship launch**, identical
+to v3_snipe. Ablation showed `opening_only` regressed (40.6% Wilson
+lo, audit/2026-05-12-v3.5-stack-results.md); the firing trigger
+worked but the launch itself did nothing differentiating.
+
+Top-10 fingerprint: garrison-at-launch 7.7 (bowwowforeach #1) vs
+midpack 22. Translating: send ~all-but-2 of a 10-ship home source.
+The new sizing is `max(target_min, src.ships - OPENING_RESERVE)` —
+fleet large enough to capture AND large enough to drain the source.
 
 Scoring uses **H7 front-loaded value**: `(remaining_steps)^1.5` instead
 of linear, weighted toward nearby high-production neutrals. Distance
 in the denominator only — no ship-cost weight, because we deliberately
-WANT to drain home garrisons in the opening (top-10 mean
-garrison-at-launch = 11, midpack 22; opening is the cheapest place
-to align that gap).
+WANT to drain home garrisons in the opening.
 
 Settle_plan arbitrates if the same source has both an opening and a
 snipe candidate — opening's higher score will typically win in the
@@ -21,8 +29,8 @@ linear discount.
 
 Conditional, not flat-multiplier:
 - Only fires when `world.step <= OPENING_WINDOW`.
-- Skips sources with `ships <= 8` (don't strand a defender on a
-  high-prod planet just to grab another).
+- Skips sources with `ships <= MIN_LAUNCH_GARRISON` (8 is the home-
+  planet starting count minus 2-ship reserve).
 - Skips targets in the comet set (comets at step 50, 150, ... — no
   comets exist during the opening window).
 """
@@ -38,14 +46,16 @@ from lib.world_model import WorldModel
 
 EPISODE_STEPS = 500
 OPENING_WINDOW = 5            # inclusive; fires for steps 0..5
-MIN_LAUNCH_GARRISON = 8       # don't strand a defender below this
+MIN_LAUNCH_GARRISON = 8       # source must hold > MIN to launch
+OPENING_RESERVE = 2           # ships left at source post-launch
 FRONT_LOAD_EXPONENT = 1.5     # H7 from main's hypothesis board
 
 
 def propose_opening_missions(world: World, model: WorldModel) -> list[Mission]:
-    """One Mission per (our source with ships>8, neutral target) pair,
-    fired only during the opening window. Score = production ×
-    (remaining_steps)^1.5 / (distance + 1)."""
+    """One Mission per (our source with ships>MIN_LAUNCH_GARRISON,
+    neutral target) pair, fired only during the opening window. Sized
+    to drain the source down to OPENING_RESERVE ships (bowwowforeach
+    archetype). Score = production × (remaining_steps)^1.5 / (distance + 1)."""
     if int(world.step) > OPENING_WINDOW:
         return []
     my_planets = [
@@ -73,12 +83,14 @@ def propose_opening_missions(world: World, model: WorldModel) -> list[Mission]:
         # target.
         for t in neutrals:
             d = math.hypot(t.x - src.x, t.y - src.y)
-            # Ships = target garrison + 1 (no production growth: neutrals
-            # don't produce during flight).
-            base_ships = max(1, int(t.ships) + 1)
-            if base_ships >= src.ships:
-                # Source can't cover this target without stranding itself.
+            target_min = max(1, int(t.ships) + 1)
+            if target_min > src.ships:
+                # Source can't capture this target at all — skip.
                 continue
+            # Bowwowforeach-style empty-the-source sizing: send the
+            # MAX of (capture-cost, src - reserve). For a 10-ship home
+            # targeting a 0-ship neutral that's max(1, 8) = 8.
+            base_ships = min(src.ships, max(target_min, src.ships - OPENING_RESERVE))
             v = fleet_speed(base_ships)
             eta = int(math.ceil(d / max(v, 1e-6))) if v > 0 else 0
             remaining = max(1, EPISODE_STEPS - step_now - eta)
