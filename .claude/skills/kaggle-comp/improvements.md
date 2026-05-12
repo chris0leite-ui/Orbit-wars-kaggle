@@ -16,33 +16,105 @@ or required a human nag. See self-improvement.md for the full distillation proto
 
 ## Pending (not yet applied to skill files)
 
-### [ ] [CODE-COMP-DISCOVERED] Pull live Kaggle scores at session start
+### [~] [CODE-COMP-DISCOVERED] Pull live Kaggle scores at session start (must be BLOCKING)
 
-`tag: live-mu-pull-at-session-start`. Origin: Orbit Wars 2026-05-12
-(fix-early-game-strategy-YSClQ).
+`tag: live-mu-pull-must-be-blocking-step` (upgrades original
+`live-mu-pull-at-session-start`). Origin: Orbit Wars 2026-05-12
+(fix-early-game-strategy-YSClQ session 1 created the rule; session 2
+saw the rule FAIL TO FIRE and re-promoted with stricter acceptance).
 
 In a code/agent comp with rolling-last-2 final selection, the live μ
 of yesterday's submissions can drift overnight (TrueSkill keeps
-matching new opponents). Iterating on local A/B without knowing
-TODAY's live μ mismatches the priors. Friction this session: spent
-~1 h on opener variants believing v3.5.1 was our strong baseline;
-v3.5.1 had actually regressed to μ=943.1, 62μ BELOW v3_snipe's
-1005.7. PI override required to surface the regression
-(`tag: local-ab-doesnt-transfer-to-ladder`).
+matching new opponents) AND parallel branches may submit between
+sessions. Iterating on local A/B without knowing TODAY's live μ
+mismatches the priors.
 
-Fix: add a session-start hook (or a step in WRAPUP / the handover
-read pattern) that GETs `/api/v1/competitions/submissions/list/<comp>`
-via bearer-auth curl and parses current μ for each recent submit.
-Auto-update `state/current.md::our_best_rank` if the latest μ differs
-from the recorded value by > 10. Cost: 1 curl + 1 jq parse (≤ 5 s).
-Token format: most Kaggle harness tokens use `KGAT_<...>` and authenticate
-via `Authorization: Bearer <token>` (the standard `kaggle` CLI's
-`{"username","key"}` JSON form rejects KGAT-format tokens with 401).
+**Session-1 friction:** spent ~1 h on opener variants believing
+v3.5.1 was our strong baseline; v3.5.1 had actually regressed to
+μ=943.1, 62μ BELOW v3_snipe's 1005.7.
 
-Promoted via postmortem 2026-05-12. Acceptance:
-`scripts/<session_start_hook>.py` exists and is wired in via
-`.claude/settings.json` or the WRAPUP read-pattern; running it
-prints a μ-drift line for each rolling-last-2 entry.
+**Session-2 friction (same day, after promotion):** at session start
+this branch's `state/current.md` claimed v7_minimax (μ=1063.0) was
+TEAM PEAK. PI surfaced that v4_planner (#52579863, **μ=1118.8**) had
+been submitted earlier today at 14:25 UTC from the parallel branch
+`claude/research-lookahead-strategy-kfRsy`. **+83 μ unaccounted for.**
+The session-1 promotion existed as a `[ ]` candidate but was never
+implemented; nothing automatic fired at session start.
+
+Fix: implement `scripts/check_live_mu.py` that GETs
+`/api/v1/competitions/submissions/list/<comp>` via bearer-auth curl
+(token format `KGAT_<...>` via `Authorization: Bearer <token>`; the
+standard `kaggle` CLI's `{"username","key"}` JSON form rejects
+KGAT-format tokens with 401). Parses current μ for each rolling-last-2
+entry; emits a `MU-DRIFT` warning line if any submission's μ differs
+from `state/current.md::our_best_rank` (or session-tracked μ) by > 10.
+Wire it in via `.claude/settings.json` SessionStart hook so it runs
+BEFORE the agent answers the first user prompt.
+
+**Acceptance (stricter than original):**
+1. `scripts/check_live_mu.py` exists and runs from CLI.
+2. `.claude/settings.json` `SessionStart` hook invokes it.
+3. The hook output reaches the agent's first context window.
+4. Running it on this repo today prints both rolling-last-2 entries
+   with their actual live μ.
+
+Cost: 1 curl + 1 jq parse (≤ 5 s). Re-promoted 2026-05-12 PM late.
+
+### [ ] [CROSS-CUTTING] Ablate dual changes separately before stacking
+
+`tag: dont-stack-design-changes-without-component-ablation`. Origin:
+Orbit Wars 2026-05-12 (fix-early-game-strategy-YSClQ session 2).
+
+When a design change has TWO simultaneous components (e.g. v4.5_robust
+= "maximin-over-opp-models scoring" + "K reduced 6-10 → 4-7 to fit
+budget"), require ≥ 1 ablation per hypothesis isolated from the other
+before combining them. If the joint variant FAILS a gate, you cannot
+diagnose which component is responsible.
+
+**Friction this session:** v4.5_robust failed its 16-seed A/B vs
+v4_planner at exactly 50.0 % pooled WR (Wilson lo 33.6 %). The result
+is consistent with EITHER (a) maximin neutral + K-cut hurts, (b) K-cut
+neutral + maximin hurts, or (c) both hurt slightly. The postmortem
+cannot distinguish, so the next pivot has no data-driven direction.
+
+Fix: extend CLAUDE.md Rule 21 ("Family falsification requires ≥3
+variants of the key hyperparameter") with a sub-clause: **"If a
+candidate combines ≥2 hypotheses, require ≥1 ablation per hypothesis
+isolated from the others — total ≥3 variants when you include the
+joint."** Cost is 2× the variant-build budget but recovers
+diagnosability; without it you are spending submissions / compute
+without learning anything from a fail.
+
+Promoted via postmortem 2026-05-12 PM late. Acceptance: rule text
+added to CLAUDE.md and a "did you ablate components?" question added
+to the Rule 16 6-question pre-flight check.
+
+### [ ] [CODE-COMP-DISCOVERED] Bundle parity check needs built-in timeout
+
+`tag: bundle-parity-check-runaway`. Origin: Orbit Wars 2026-05-12
+(fix-early-game-strategy-YSClQ session 2).
+
+`scripts/bundle_agent.py`'s post-bundle parity-validation loop has no
+timeout. Today two stale bundle invocations sat at 99 % CPU each for
+> 5 minutes past artifact write, on a parity-check loop competing
+with the in-progress 16-seed A/B. The A/B workers dropped from ~95 %
+to ~64 % CPU each as a result, extending wallclock by ~30 %.
+
+The bundle artifact is already written when the parity check starts;
+if the check times out the bundle is still usable (we have a separate
+manual parity test in `scripts/run_*_ab.py` flows and the bundler
+itself writes a sha256). Stalled bundle processes are silently the
+most common form of "why is my A/B running so slowly?" friction this
+comp.
+
+Fix: wrap the post-bundle parity-validation in a `signal.alarm(60)`
+or equivalent (or use `subprocess.run(..., timeout=60)` if the check
+forks a subprocess). On timeout, log a warning and exit clean.
+
+Promoted via postmortem 2026-05-12 PM late. Acceptance: bundler can
+be force-completed in ≤ 60 s; running it does not stall past artifact
+write; `ps aux` after a normal bundle invocation shows no leftover
+`bundle_agent.py` processes after 60 s.
 
 ### [ ] [CROSS-CUTTING] Diverse-panel test required before submit (in-class A/B win ≠ ladder lift)
 

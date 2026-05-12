@@ -68,7 +68,7 @@ YSClQ session 2)` in `audit/friction.md`:
 - `v4.5-robust-design-hypothesis-falsified`
 - `seat-symmetric-scoring-doesnt-fully-cancel-bias`
 
-## Promotion candidates (PI ratified: pending)
+## Promotion candidates (drafted)
 
 ### [ ] [CODE-COMP-DISCOVERED] WRAPUP step 1: enforce live-μ pull (not pending TODO)
 
@@ -138,9 +138,20 @@ usable (we already have a separate manual parity test in
 **Why:** stalled bundle processes are silently the most common form
 of "why is my A/B running so slowly?" friction this comp.
 
+## Promotion candidates (PI ratified: all three)
+
+**All three promoted to `.claude/skills/kaggle-comp/improvements.md`:**
+
+- ✅ (1) `live-mu-pull-must-be-blocking-step` — upgrades the existing
+  `live-mu-pull-at-session-start` entry with stricter acceptance.
+- ✅ (2) `dont-stack-design-changes-without-component-ablation` —
+  Rule 21 sub-clause.
+- ✅ (3) `bundle-parity-check-runaway` — bundle script timeout.
+
 ## PI additions (from step 4)
 
-(pending — will be filled in after PI replies)
+PI: "promote your suggestions, I have nothing to add." Postmortem
+stands as drafted.
 
 ## Framework version at session-end
 
