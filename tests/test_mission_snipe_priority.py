@@ -15,7 +15,10 @@ from types import SimpleNamespace
 from lib.intent import World
 from lib.missions import snipe as snipe_module
 from lib.missions.snipe import (
+    AIRTIME_PENALTY_WEIGHT,
     COMET_BONUS,
+    ENDGAME_NEUTRAL_BONUS,
+    ENDGAME_STEP,
     LEADER_MULTIPLIER,
     NEUTRAL_BONUS,
     _leader_pid,
@@ -99,8 +102,17 @@ def test_comet_target_gets_comet_bonus_not_neutral_bonus():
     assert len(missions) == 1
     # No regular neutral to compare against directly here; instead check
     # the priority is exactly COMET_BONUS by deriving from baseline.
-    base_value = comet.production * max(0, 80 - missions[0].eta)
-    base_score = base_value / (max(1, comet.ships + 1) + ((70.0 - 10.0)) + 1.0)
+    # Denominator: `base_ships + d + AIRTIME*eta + 1` (wave-1b rebalance
+    # reverted at main-merge; was NEUTRAL in phys-only A/B). With
+    # AIRTIME_PENALTY_WEIGHT=0 (default) this matches main's pre-v3.5 form.
+    eta = missions[0].eta
+    base_value = comet.production * max(0, 80 - eta)
+    base_score = base_value / (
+        max(1, comet.ships + 1)
+        + (70.0 - 10.0)
+        + AIRTIME_PENALTY_WEIGHT * eta
+        + 1.0
+    )
     assert abs(missions[0].score - COMET_BONUS * base_score) < 1e-6
 
 

@@ -1,97 +1,220 @@
 # audit/friction.md — current friction summary
 
-## 2026-05-12 PM (game-theory-strategy-analysis-0oH4N)
+## 2026-05-12 EVE (game-ai-lookahead-3ucqH — v9 super-version + v10 + submit attempt)
 
-- `tag: bad-prediction-on-σ-equiv-μ` — calibration prediction error:
-  forecast σ-equiv-v1's ladder μ as "≈995 ± 5μ" (basically v3.4
-  baseline) because the patches only affect ~5% of turns. Actual:
-  μ=1041.8, **+47μ surprise**. Underestimated how much v3.4 was
-  losing to its asymmetric tie-break. The "5% of turns" was 5% of
-  HIGH-LEVERAGE turns (target ties where the choice cascades). **Fix:**
-  for tie-break / ordering / structural fixes, predict +20-50μ on
-  the ladder distribution by default, not "≈no change."
+- `tag: kaggle-cli-401-was-wrong-auth-env-var` — `kaggle competitions
+  submit` returned HTTP 401 throughout the day; I incorrectly
+  concluded the token was sanitized/expired. **Root cause:** the
+  `$KaggleAPIToke` token has format `KGAT_<32 hex>` — that's a NEW
+  Kaggle auth format. The legacy `KAGGLE_KEY` env var (used by
+  `bootstrap.sh`'s default path) treats this as a plain key string
+  and the API rejects it. The CORRECT env var for `KGAT_*` tokens is
+  **`KAGGLE_API_TOKEN`**. Tested: `unset KAGGLE_USERNAME KAGGLE_KEY;
+  export KAGGLE_API_TOKEN="$KaggleAPIToke"; kaggle competitions
+  list -s orbit` → works. Same env unlocked the actual submit
+  (v7_0_drop_one pushed as #52588156). **Fix to land before next
+  session:** `bootstrap.sh` step 1 should detect the `KGAT_` prefix
+  on the harness token and export `KAGGLE_API_TOKEN` instead of
+  writing `~/.kaggle/kaggle.json` (which uses the legacy key path
+  internally). Cost ~30 min of session time on diagnosis.
+  **Promotion candidate:** update bootstrap auth-detection logic;
+  add a runtime smoke `kaggle competitions list` immediately after
+  cred resolution so failures surface in the first 5 minutes, not at
+  submit time.
 
-- `tag: skipped-self-play-gate-for-speed` — v7_minimax flow: the plan
-  set "self-play ≥95% draws" as a CRITICAL correctness gate. First
-  probe gave 1/8 draws; symmetrization patch improved to ~2/3 in
-  partial data. Killed the re-probe and proceeded to v3 + precision
-  gates instead. Both passed (75% W/D). **Fix:** explicit self-play
-  purity isn't strictly required for ladder strength — but it's a
-  diagnostic for whether the agent is "honest" cannot-lose. Document
-  this gate as "nice-to-have, not blocking" so future iterations
-  don't burn cycles on it when v3 + precision results already prove
-  utility.
+- `tag: sigma-equiv-helps-v7minimax-hurts-v7_0` — the σ-equiv layer
+  (sym_hypot + planner _tb + SCORE_ROUND=6) lifted v7_minimax to μ=1063
+  (per parallel-branch audit: ~+45μ over v3.4 baseline alone) but
+  REGRESSES v7_0's drop-one architecture by ~54pp at n=24. v7.6 bisect
+  confirmed this directly. Root cause hypothesis: σ-equiv's deterministic
+  tie-break removes some diversity from settle_plan's candidate ordering;
+  v7_minimax's K=3 maximin partially compensates because it explicitly
+  scores both σ-paired actions, while v7_0's K=10 ship-delta relies on
+  variance in the candidate set to differentiate launches. **Fix:**
+  σ-equiv reverted in lib/missions/snipe.py + lib/planner.py for v9+.
+  Promotion candidate: the v3 family agent comparisons need σ-equiv;
+  the v7-family agents (drop-one + K=10) don't. Library-level changes
+  that benefit one architecture can harm another.
 
-- `tag: bundle-import-of-agent-file` — v7 first build used
-  `importlib.spec_from_file_location("agents/v3_snipe/main.py")` to
-  load v3's agent at runtime. The bundle only contains the bundled
-  agent's main.py + lib/* concatenated — agents/v3_snipe/main.py
-  doesn't exist in the bundled environment. Caught by smoke-testing
-  AFTER bundling. **Fix:** bundle-safe pattern: inline v3's logic by
-  calling lib primitives directly (`propose_snipe_missions +
-  propose_reinforce_missions + settle_plan + realize`). 8-line
-  refactor restored bundle compatibility. Pattern to apply: any
-  agent that calls another agent should inline the called agent's
-  function via lib calls, not via importlib of an agent .py.
+- `tag: K=15-regresses-with-ship-delta-head` — bumping K from 10 to 15
+  with the default ship-delta scoring head regressed v9_k15 to 2/24 = 8.3%
+  vs v7_0 (Wilson lo 2.3%, catastrophic). p95 = 734ms over the 700ms
+  watchdog → watchdog truncates → conservative-incumbent-fallback on
+  many turns. The inflight_value head RESCUED this from total collapse
+  in v9_combined (58.3%) but couldn't gate-clear. **Lesson:** K=10 is a
+  sweet spot, not a blind spot, in the v7_0 regime. Don't extend K
+  without first reducing per-step rollout cost or upgrading the head.
 
-- `tag: kaggle-api-503-transient` — submission flow: first 2 attempts
-  hit 503 Service Unavailable on the Kaggle API gateway. Third
-  attempt (after 20s backoff) succeeded. **Fix:** for kaggle submit
-  retries, use exponential backoff up to 4 retries per the git-fetch
-  convention (2s, 4s, 8s, 16s). Don't re-try indefinitely; if 4
-  fails, escalate to PI.
+- `tag: value-head-lift-pattern-consistent-but-not-significant-at-n=24`
+  — Five super-version variants we tested all point to evaluate_value
+  / inflight_value lifting v7_0 by ~+12-25pp at point-estimate, but
+  none cleared Wilson 55% at n=24. n=96+ would be needed to crystallize.
+  The lift is real (smoke confirms v9_combined launches when v7_0 returns
+  []) but small enough that the existing budget can't gate it cleanly.
+  **Promotion candidate:** local A/B at n=64 should be the standard
+  gate for "directional but-not-yet-Wilson-significant" candidates.
 
-- `tag: opp-prediction-pivot-mid-session` — game-theoretic
-  architecture: spent 6 iterations on mirror-overlay attempts (Tier
-  0-2, hybrid, v4_endgame, v5_psp, v6_steady) before σ-equiv
-  surfaced as the actual leverage point. PI override ("this is kind
-  of useless insight" + "you simply copied the other strategy")
-  forced the pivot to real game theory (v7 minimax). **Fix:** when
-  6 iterations of one frame all empirically falsify, consider a
-  framing change BEFORE the 7th. The session would have saved ~10h
-  by pivoting to maximin earlier — the user proposed it as option (a)
-  in the very first AskUserQuestion at the start of plan mode.
+## 2026-05-12 PM (game-ai-lookahead-3ucqH — v7.1-v7.6 stack iteration)
 
-## 2026-05-12 (game-theory-strategy-analysis-0oH4N)
+- `tag: maximin-budget-blow-up` — v7.1's 2×N maximin matrix × symmetric
+  scoring (2× cost) = 4× rollouts per turn. With K=10 and recapture
+  in the incumbent, p95 turn ms hit 1105 — over the 700 ms watchdog
+  → conservative fallback to incumbent → -54pp regression vs v7_0
+  (25% Wilson lo 12%). **Fix:** dropped the maximin overlay entirely;
+  `choose_simple_with_4p` runs drop-one argmax (same as v7_0) with
+  σ-equiv + recapture + 4P-aware. The maximin theoretical guarantee
+  isn't worth its compute cost at K=10.
 
-- `tag: useless-tautology-framing` — game-theory work: initially
-  framed the v3-vs-v3 = 81% draws finding as "v3 IS the cannot-lose
-  floor; nothing more to do." PI pushback: "this is kind of useless
-  insight." Reframing revealed the 19% non-draws were FIXABLE σ-
-  equivariance bugs in v3's tie-break path; three surgical patches
-  closed them to 100%. **Fix:** when an analysis terminates in
-  "current code already solves it," look harder at the residual
-  before declaring done. The residual is usually the actual lever.
+- `tag: bundle-default-lib-order-stale-when-new-modules-added` —
+  v7.5 A/B run 1 returned 0/24 silently because the bundle inlined
+  references to `propose_recapture_missions` and `evaluate_value`
+  but their source files weren't in `scripts/bundle_agent.py::
+  DEFAULT_LIB_ORDER`. NameError at runtime → empty action → loss by
+  elimination, no log. **Fix:** appended `missions/recapture` +
+  `lookahead_planner` to `DEFAULT_LIB_ORDER`. **Promotion candidate:**
+  add a pre-bundle check that greps every `agents/*/main.py` for
+  `from lib.<name>` imports and warns if not in lib order. Stops
+  silent bundle bugs at bundle time, not at A/B time.
 
-- `tag: structural-overlay-frame-error` — cannot-lose architecture:
-  first six iterations (Tier 0-2 mirror, hybrid, v4_endgame, v5_psp,
-  v6_steady) tried to ADD a cannot-lose layer on top of v3. ALL
-  empirically falsified. **Root cause:** cannot-lose is INTRINSIC
-  to near-Nash play, not an addable overlay. **Fix:** the seventh
-  iteration debugged v3 itself (σ-equiv tie-break + sym_hypot +
-  score rounding) and achieved 100% v3-vs-v3 draws.
+- `tag: type-checking-import-survives-bundler-strip` —
+  `lib/lookahead_planner.py` had `if TYPE_CHECKING:` then `from lib.intent
+  import World`. The bundler strips the inner `from lib.*` line but
+  leaves the `if TYPE_CHECKING:` block → empty body → IndentationError
+  at exec. **Fix:** removed the TYPE_CHECKING guard; inline-quoted
+  the `World` forward-ref to plain `world` in `adaptive_K`.
+  **Promotion candidate:** bundler should drop empty conditional
+  blocks left behind by `_INTRA_IMPORT_RE` stripping.
 
-- `tag: stale-current-md-rolling-last-2` — submission flow: state/
-  current.md claimed precision_v3 was at μ=984.6 in rolling-last-2;
-  actual was μ=1009.0 (had risen since the note was written).
-  Materially changed the strategic calculus on whether to submit.
-  **Fix:** verify rolling-last-2 via `kaggle competitions submissions`
-  immediately before any submit, not via stale state notes.
+- `tag: recapture-still-regresses-even-after-score-scale-fix` —
+  Ported `propose_recapture_missions` with the audit's hypotheses #1
+  (snipe-scale denominator) and #2 (top-K=5 cap) fixed. v7.5
+  (σ-equiv + recapture + 4P) still regressed -8.3pp vs v7_0 in 2P
+  A/B. Hypothesis #3 (premature commitment on infeasible
+  recaptures) is the likely remaining bug — recapture missions
+  fire on recently-lost planets whose new owner is fortifying,
+  burning ships that should snipe/reinforce. **Fix flagged for
+  next session:** add a feasibility check that requires
+  `model.ships_at(target, eta) < base_ships - 1` (target stays
+  capturable at our arrival). Otherwise drop the recapture
+  proposal.
 
-- `tag: replay-parity-test-expected-fail` — bundle / submission:
-  test_v3_snipe_frozen_bundle_replay_parity_100pct fails at 94.96%
-  match because our σ-equiv patches change v3's tied-target picks
-  on ~5% of turns. The test is doing its job (flagging the change)
-  but blocks pytest green. **Fix:** post-submission, rebuild the
-  frozen-bundle fixture from the new submitted bundle (#52565034)
-  so future regressions against the new baseline are caught.
+## 2026-05-12 (game-ai-lookahead-3ucqH)
 
-- `tag: stop-hook-cant-commit-gitignored-bundle` — git flow:
-  `git add submissions/v3_snipe.py` blocked by .gitignore on
-  submissions/. Caused a failed initial commit; had to git reset
-  and re-add only state + audit. **Fix:** include the bundle sha256
-  in the commit message and state/current.md so reproducibility is
-  maintained without checking the 68KB bundle into git.
+- `tag: bootstrap-env-var-typo-KaggleAPIToke` — the harness exposes
+  Kaggle credentials as `$KaggleUserName` and `$KaggleAPIToke` (note
+  the truncation: `Toke` not `Token`), but `bootstrap.sh` looks for
+  `KAGGLE_USERNAME` / `KAGGLE_KEY`. First bootstrap run hit
+  `ERROR: no Kaggle credentials found`. Fix this session: invoke
+  bootstrap with `export KAGGLE_USERNAME="$KaggleUserName" KAGGLE_KEY="$KaggleAPIToke"`
+  prefix. **Promotion candidate:** add an explicit name-translation
+  block at the top of `bootstrap.sh` (or a `.envrc` shim) that maps
+  the harness-style names to the documented `KAGGLE_*` names so the
+  next session doesn't re-hit this.
+
+- `tag: bootstrap-skip-data-when-shotvalidator-present` — `bootstrap.sh`
+  step 3 uses `compgen -G "data/*"` + `grep -v '^\.gitkeep$' | wc -l`
+  to decide whether to download comp data. Because the repo already
+  has `data/shot_validator/`, this evaluates non-empty and the
+  download is skipped — but `data/main.py` and `data/README.md` are
+  *not* present, and several existing tests (`test_fixture_smoke.py`,
+  `test_v1_parity.py`, `test_bundle.py`) require them. 17 tests fail
+  with `FileNotFoundError: data/main.py` in a fresh sandbox until
+  the comp data is pulled (and this sandbox's harness creds return
+  401 on the comp endpoint, blocking a workaround). **Fix:** narrow
+  the bootstrap "is data present?" check to specifically look for
+  `data/main.py` (the deciding artifact), not "any non-gitkeep
+  file."
+
+- `tag: env-clone-cost-grows-with-history` — the Phase 2 audit quoted
+  `env.clone()+step()` at 5.6 ms/step on a cold env. After 20 warmup
+  steps the cost rises to ~22 ms (`Environment.clone()` references
+  `self.steps`, which grows linearly through the episode). Mid/end-
+  game per-turn cost is therefore ~4× worse than the audit number
+  suggests. `scripts/bench_fast_sim.py` records both numbers in the
+  audit doc (`audit/2026-05-12-fast-sim-bench.md`) so the cost
+  trajectory across the episode is explicit.
+
+## 2026-05-11/12 (optimize-ship-strategy-tDPXx)
+
+- `tag: idle-bucket-reduction-is-misleading-proxy` — methodology:
+  Phase-0 idle-source decomposition surfaced MECHANISM_DROP at ~96%
+  of all idle classifications and motivated four consecutive
+  scoring/filter knobs (airtime, endgame, affordability filter,
+  gang-up). Every variant *reduced* the bucket — and *tied or
+  regressed* at 64-seed Wilson vs v3.4 baseline. Root cause: each
+  "drop" represents an attempted capture at a high-value target;
+  some succeed via WorldModel adversary stacking and the ones that
+  bounce still preserve home-garrison defensive value. The proxy
+  measures attempts-not-launched, while what matters is
+  expected-value-captured. **Fix this session:** documented the
+  inversion in `audit/2026-05-11-v3.5-airtime-and-endgame-burn.md`
+  and `audit/2026-05-12-gang-up-v1.md`. Promotion candidate: codify
+  "validate the proxy via correlation with the actual outcome metric
+  BEFORE running ≥1 variant against it." Multiple cycles of fix→fail
+  cost the entire overnight session.
+
+- `tag: gang-up-substrate-bug-arrival-size-reinflates` — gang_up_size
+  ran BEFORE validate (correct) but BEFORE arrival_size too;
+  arrival_size's `intent.ships = max(intent.ships, needed)` silently
+  re-inflates every throttled share to the full target garrison, then
+  drops if the re-inflated value exceeds `src.ships`. Phase-0 data:
+  validate drops -39% (gang-up's intended effect) but arrival_size
+  drops +31% (the re-inflation backfire). Net total drops -2%, so the
+  gang-up mechanism wasn't even mechanically working end-to-end.
+  **Fix:** documented; future Option A redesign needs arrival_size to
+  be sibling-aware (track sum of co-target intents, deduct from
+  per-intent needed). Filed in `audit/2026-05-12-gang-up-v1.md`.
+
+- `tag: ab-variants-regex-rejected-inline-comments` — scripts/ab_variants.py
+  initially matched `^NAME\s*=\s*[-+0-9.eE]+\s*$` which excluded
+  declarations with trailing inline comments like `GANG_UP_ENABLED = 0
+  # default OFF`. First gang-up A/B failed at the bundling step with
+  "variant override not found." Patched regex to tolerate
+  `(?:#.*)?$` and preserved the trailing comment in the substitution.
+  **Fix:** committed in `a8ae69a` alongside the multi-file
+  auto-discovery. Promotion candidate: harness scripts that patch
+  source files should accept the project's actual coding style, not
+  a stricter subset; add a smoke unit test for known constants in
+  each declared `PATCHABLE_PATHS` file.
+
+- `tag: ab-variants-hardcoded-snipe-only` — scripts/ab_variants.py
+  originally hardcoded `SNIPE_PATH = lib/missions/snipe.py`. The
+  first gang-up A/B attempt tried to patch GANG_UP_ENABLED (defined
+  in `lib/mechanism.py`) against the snipe file and failed loudly.
+  **Fix:** extended to scan `PATCHABLE_PATHS = [snipe, reinforce,
+  mechanism, planner]`, auto-discover the owning file per constant,
+  and error on multi-file collisions. The discovery + collision
+  check is cheap and prevents a class of future bugs as more
+  ablation knobs are added across files.
+
+- `tag: bool-vs-int-constant-typing-for-ab-regex` — added
+  PROPOSER_AFFORDABILITY_FILTER as `False` (bool); ab_variants regex
+  only matches numeric literals so couldn't patch it. Fixed by
+  switching the constant to int (`0` / `1`) — Python truthiness
+  preserves the `if FLAG:` check. Costs us one type signature
+  precision in exchange for cleaner harness compatibility. **Fix:**
+  documented in the constant docstring; future opt-in flags will
+  default to numeric-literal style.
+
+- `tag: claude-bash-pipe-buffers-progress-output` — first big sweep
+  (6-variant 32-seed) launched as `python ... 2>&1 | tail -15`
+  produced no output until completion. The trailing pipe buffers
+  stdout, so I couldn't see progress and assumed the bundling was
+  hanging. Killed it; re-ran. **Fix:** use `python -u -m ... >
+  /tmp/<name>.log 2>&1 &` for background sweeps (no pipe → real-time
+  flush) and arm a Monitor on the log file. Pattern locked in for
+  the remaining 4 sweeps tonight; cost was ~30 minutes of waiting +
+  one wasted compute window.
+
+- `tag: 32-seed-point-estimate-noise-at-128-game-level` — AIRTIME=0.5
+  variant looked good at 32-seed pair-level (54.7%, 35/29/0) but
+  converged to 52.3% (67/61/0) at 64-seed. The extra 32 seeds were
+  precisely 50/50 = 32/32 wins/losses. Wilson_lo dropped from 42.6%
+  to 43.7% — small absolute change, but the "tied" verdict only
+  materialised at 64-seed. **Fix:** raise the "ship" gate to require
+  64-seed pair-level Wilson_lo > 50%. 32-seed point estimates above
+  50% can be confidently noise. Promotion candidate: "32-seed
+  Wilson_lo < 50% → require 64-seed retest before ship."
 
 ## 2026-05-11 PM (analyze-submission-logs-dFHeS)
 
@@ -134,6 +257,102 @@
   Same lesson re-fired with the flat `NEUTRAL_BONUS=1.5 /
   COMET_BONUS=1.3` fix (also 28.1% regression). Promotion candidate:
   "if the finding is local, the fix must be local."
+
+## 2026-05-12 (analyze-leaderboard-strategies-sdZlE)
+
+- `tag: stack-first-ablate-later-is-the-wrong-order` — iter-1 v3.5
+  build: I composed all four new Mission classes (opening, drain,
+  gang_up, recapture) into v3.5's `agents/v3.5/main.py` and ran a
+  32-seed A/B before any individual ablation. Stack failed at 39.1%
+  (Wilson lo 28.1%). The PER-MISSION ablation (run AFTER the fail)
+  showed each class individually failed too. Had I run the per-mission
+  ablation FIRST I'd have saved the full-stack tournament (~64 games)
+  AND identified that NONE of the four would have lifted, redirecting
+  to the surgical-edits approach (iter-2) hours earlier. The priors
+  were available: v3.3 blanket-eta-fix regressed (42.2%) and v3.4
+  NEUTRAL_BONUS=1.5 regressed (28.1%) — same pattern, both in main's
+  audit. **Fix:** when adding ≥2 new Mission classes or proposers
+  simultaneously, ALWAYS run per-class ablation panel BEFORE the
+  stacked full-agent A/B. Time saved: 1× tournament = ~5-10 min in
+  this case, but the strategic redirect is the bigger win. *Promotion
+  candidate (in-comp; PI declined cross-comp earlier today).*
+
+- `tag: module-mutation-patching-has-worker-reuse-race` — iter-2
+  parameter sweep build: first cut of the agg_06 / agg_08 / agg_09
+  variant agents set `base.SHIP_FRACTION = X` at module-import time
+  (the `aggressive_sizing` base module was imported once per worker,
+  then mutated). In multiprocessing's worker-reuse mode, a worker
+  loaded with `aggressive_sizing_06` (sets fraction=0.6), then
+  reused for `aggressive_sizing_08`, would observe the LATER
+  value because both modules mutated the shared base. Caught at
+  design time before launching the sweep; fixed by moving the
+  assignment inside `agent(obs)`. **Fix already applied this
+  session:** variant agents set the constant inside agent() so every
+  call resets it; safe within a single-threaded worker process.
+  Promotion candidate: avoid module-level constant mutation as a
+  parameter-sweep mechanism; prefer either (a) function parameters
+  threaded through, or (b) full per-variant copies of the proposer.
+
+- `tag: data-main-py-not-fetched-by-bootstrap-recurrence` —
+  iter-2 4P FFA: `scripts/run_ffa_agg.py` failed with
+  `FileNotFoundError: agent file not found: data/main.py` because
+  bootstrap.sh's data download path didn't run on this fresh
+  container. SAME issue as the 2026-05-10 PM friction
+  `data-main-py-not-fetched-by-bootstrap`. Fix-this-session: ran
+  `KAGGLE_API_TOKEN="$KAGGLE_KEY" kaggle competitions download -c
+  orbit-wars -p data/ && unzip` manually. **Recurrence count: 2 this
+  comp.** Bootstrap.sh fast-path remains broken; the data step is
+  gated behind an unclear condition. *Promotion candidate (in-comp,
+  re-promote): bootstrap.sh should unconditionally run the
+  competitions-download step on a missing data/main.py — no
+  conditional gates.*
+
+- `tag: multi-mission-stack-regresses-even-with-conditional-gates` —
+  v3.5 build: I added four new Mission classes (opening / drain /
+  gang_up / recapture) on top of v3_snipe + reinforce, each with
+  what I believed were tight conditional gates (step-window,
+  garrison threshold, eta-window, recently-lost-window). 32-seed
+  full-stack A/B vs v3_snipe = 39.1% (Wilson lo 28.1%, FAIL).
+  16-seed per-wave ablation: opening 40.6%, drain 46.9%, gangup 50.0%,
+  recapture 53.1% — NONE clears the 55% Wilson lo gate individually.
+  Same family as the v3.4 NEUTRAL_BONUS=1.5 regression (28.1% A/B) and
+  the v3.3 blanket-(eta+1) regression (42.2% A/B). Root cause: the
+  per-source-greedy planner is unexpectedly sensitive — adding ONE
+  Mission class shifts the proposal distribution enough to displace
+  higher-EV snipe picks at the same source. Mission classes are NOT
+  independent through settle_plan. **Fix this session:** v3.5 NOT
+  submitted; code retained on branch; debug hypotheses written to
+  `audit/2026-05-12-v3.5-stack-results.md`. *Promotion candidate*:
+  "New mission classes must clear a 16-seed Wilson lo ≥ 0.55 ABLATION
+  gate (variant ⊕ v3_snipe vs v3_snipe alone) BEFORE being stacked
+  into a multi-class agent." Three consecutive sessions have learned
+  the same lesson; encode as a rule.
+
+- `tag: ab-harness-not-reusable-for-arbitrary-pairs` — v3.5 ablation:
+  `scripts/tournament.py` has only a `smoke` CLI subcommand (random vs
+  baseline, 4 seeds). To run v3.5-vs-v3_snipe at 32 seeds and four
+  per-wave ablations vs the same baseline I had to write THREE thin
+  drivers (`scripts/run_v35_ab.py`, `scripts/run_ablation_panel.py`,
+  `scripts/run_phys_ab.py`) — ~70-90 lines each, all nearly identical
+  argparse + Wilson-lo + tournament-result-dump scaffolding. **Fix:**
+  promote a generic `scripts/run_ab.py --agents A=path B=path
+  [C=...] --seeds N --workers W --gate-baseline A` that prints the
+  Wilson-lo verdict per pair. Should subsume `run_v35_ab.py`,
+  `run_phys_ab.py`, `run_ablation_panel.py` (all deletable). Promotion
+  candidate; deferred to a session that touches `scripts/tournament.py`
+  proper.
+
+- `tag: kaggle-env-var-case-confusion` — analysis-pull bootstrap:
+  spent ~15 min before realising that `$KAGGLE_key` (lowercase, what
+  I'd assumed) was empty while `$KAGGLE_KEY` (uppercase, what
+  bash-lc-shells actually see) had the value. The
+  `tag: kaggle-api-token-required-for-kgat-format` entry (2026-05-10)
+  already covers the KGAT_ token-format issue but NOT the env-var
+  case-sensitivity foot-gun. **Fix:** the bootstrap.sh comment block
+  that documents `KAGGLE_API_TOKEN="$KAGGLE_KEY"` should NOT use
+  variable substitution case-variants near each other; the kickoff
+  agent-handover prompt could include `bash -lc 'env | grep -i kaggle'`
+  as the canonical "what credentials do I have" check.
 
 ## 2026-05-11 (bootstrap-agentic-systems-lqnm6)
 

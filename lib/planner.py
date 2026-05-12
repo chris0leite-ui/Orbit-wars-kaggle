@@ -41,6 +41,7 @@ def settle_plan(
     missions: list[Mission],
     world: World,
     model: WorldModel,
+    reasons: dict[int, str] | None = None,
 ) -> list[Intent]:
     """Pick at most one mission per source under a same-turn ledger.
 
@@ -51,58 +52,41 @@ def settle_plan(
        the first one whose target isn't already over-committed by
        prior this-turn picks.
     4. After accepting a mission, register its arrival in the ledger.
+
+    Idle-source tracing (opt-in): pass a `reasons` dict to receive a
+    classification of why each non-emitting owned-and-shipped source
+    went idle this turn. Keys are planet ids; values are one of:
+
+    - `"NO_PROPOSALS"` — no proposer emitted a Mission for this source.
+    - `"LEDGER_LOSS"` — proposer(s) emitted Mission(s) but all were
+      skipped because earlier this-turn picks already covered every
+      candidate target.
+
+    `MECHANISM_DROP` (intent built but dropped by the realize pipeline)
+    is set by `lib.intent.realize`, not here, since this function returns
+    before mechanisms run.
     """
-    if not missions:
+    if reasons is None and not missions:
         return []
 
     by_src: dict[int, list[Mission]] = defaultdict(list)
     for m in missions:
         by_src[m.src_id].append(m)
-
-    # σ-equivariant tie-break on equal-score targets. Without this, ties
-    # default to insertion order (= target.id ascending), which makes
-    # σ-paired sources pick the SAME target instead of σ-paired targets.
-    # That single-turn asymmetry cascades to elimination over 500 steps;
-    # it's the cause of the 19% non-draws in v3-vs-v3 self-play
-    # (audit/2026-05-11-cannot-lose-final-finding.md).
-    #
-    # Key: -(src.x - CENTER) * (target.x - CENTER). σ negates both
-    # factors → product invariant → σ-paired (src, target) get the
-    # same key. Within a source's tied targets, T and σ(T) get
-    # opposite-sign keys → consistent σ-equivariant choice.
-    # Falls back to y-axis product when degenerate (planets on x=50 axis),
-    # then target.id for full determinism.
-    def _tb(m: Mission):
-        src = world.planets_by_id.get(m.src_id)
-        tgt = world.planets_by_id.get(m.target_id)
-        if src is None or tgt is None:
-            return (0.0, 0.0, m.target_id)
-        kx = (src.x - 50.0) * (tgt.x - 50.0)
-        ky = (src.y - 50.0) * (tgt.y - 50.0)
-        return (-kx, -ky, m.target_id)
-
-    # Round the primary score to 6 decimal places before tie-breaking.
-    # The env stores planet coordinates with up to 1-ULP σ-asymmetries
-    # (e.g. seed 1: planet 15.y = 30.384005553010518 vs σ-expected
-    # 30.38400555301052). These propagate through distance → score with
-    # 1-ULP differences, defeating the σ-equivariant tie-break above
-    # because the primary -score key already orders the "near-ties" as
-    # distinct. Rounding to 6 places treats sub-ULP-noise as a true
-    # tie, allowing _tb to actually fire.
-    SCORE_ROUND = 6
-
+    # σ-equiv tie-break REVERTED (v7.6 bisect: ~54pp regression of v7_0
+    # drop-one architecture). Plain score sort.
     for src_id in by_src:
-        by_src[src_id].sort(key=lambda m: (-round(m.score, SCORE_ROUND), _tb(m)))
+        by_src[src_id].sort(key=lambda m: -m.score)
 
     source_order = sorted(
         by_src.keys(),
-        key=lambda s: (-round(by_src[s][0].score, SCORE_ROUND), _tb(by_src[s][0])),
+        key=lambda s: -by_src[s][0].score,
     )
 
     # target_id -> list of (eta, ships) for this-turn pending arrivals.
     pending: dict[int, list[tuple[int, int]]] = defaultdict(list)
     chosen: list[Mission] = []
     for src_id in source_order:
+        selected = False
         for m in by_src[src_id]:
             # Ships our prior this-turn picks have committed to land at
             # m.target_id by step m.eta (or earlier). A defender at
@@ -126,6 +110,18 @@ def settle_plan(
                 continue
             chosen.append(m)
             pending[m.target_id].append((m.eta, m.ships))
+            selected = True
             break
+        if reasons is not None and not selected and by_src[src_id]:
+            reasons[src_id] = "LEDGER_LOSS"
+
+    if reasons is not None:
+        chosen_srcs = {m.src_id for m in chosen}
+        for p in world.planets_by_id.values():
+            if p.owner != world.my_id or p.ships <= 0:
+                continue
+            if p.id in chosen_srcs or p.id in reasons:
+                continue
+            reasons[p.id] = "NO_PROPOSALS"
 
     return [m.to_intent() for m in chosen]

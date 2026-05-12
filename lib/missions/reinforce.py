@@ -29,7 +29,6 @@ from __future__ import annotations
 import math
 
 from lib.fleet import speed as fleet_speed
-from lib.geometry import sym_hypot
 from lib.intent import World
 from lib.mission import Mission
 from lib.world_model import WorldModel
@@ -84,7 +83,7 @@ def propose_reinforce_missions(
             # +1 is the same convention snipe uses for capture overhead.
             cost = max(1, int(attacker_strength) + 1)
             v = fleet_speed(cost)
-            d_dist = sym_hypot(d.x - s.x, d.y - s.y)
+            d_dist = math.hypot(d.x - s.x, d.y - s.y)
             eta = int(math.ceil(d_dist / max(v, 1e-6))) if v > 0 else horizon + 1
             if eta >= t_loss:
                 # We can't get there in time — the planet falls before

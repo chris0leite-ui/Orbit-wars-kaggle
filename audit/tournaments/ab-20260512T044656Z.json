@@ -1,0 +1,126 @@
+{
+  "utc": "20260512T044656Z",
+  "variants": {
+    "baseline": {
+      "GANG_UP_ENABLED": 0.0
+    },
+    "gangup_v1": {
+      "GANG_UP_ENABLED": 1.0
+    },
+    "gangup_loose": {
+      "GANG_UP_ENABLED": 1.0,
+      "GANG_UP_ETA_TOLERANCE": 1.0
+    },
+    "gangup_reserve": {
+      "GANG_UP_ENABLED": 1.0,
+      "GANG_UP_RESERVE": 3.0
+    }
+  },
+  "seeds": [
+    42,
+    1,
+    7,
+    13,
+    31,
+    100,
+    17,
+    23,
+    53,
+    71,
+    89,
+    97,
+    113,
+    137,
+    149,
+    167,
+    181,
+    197,
+    211,
+    233,
+    257,
+    269,
+    283,
+    307,
+    331,
+    347,
+    367,
+    383,
+    401,
+    419,
+    433,
+    449,
+    463,
+    487,
+    503,
+    521,
+    541,
+    557,
+    569,
+    587,
+    599,
+    613,
+    631,
+    647,
+    661,
+    677,
+    691,
+    709,
+    733,
+    751,
+    761,
+    787,
+    809,
+    823,
+    839,
+    857,
+    877,
+    887,
+    907,
+    919,
+    937,
+    953,
+    967,
+    977
+  ],
+  "include_self_play": false,
+  "summary": {
+    "baseline": {
+      "wins": 214,
+      "losses": 170,
+      "draws": 0,
+      "n": 384,
+      "winrate": 0.5572916666666666,
+      "wilson_lo": 0.5072865618712289,
+      "wilson_hi": 0.6061618149919027
+    },
+    "gangup_v1": {
+      "wins": 183,
+      "losses": 201,
+      "draws": 0,
+      "n": 384,
+      "winrate": 0.4765625,
+      "wilson_lo": 0.42708668768652236,
+      "wilson_hi": 0.5265026126876511
+    },
+    "gangup_loose": {
+      "wins": 190,
+      "losses": 194,
+      "draws": 0,
+      "n": 384,
+      "winrate": 0.4947916666666667,
+      "wilson_lo": 0.44508380793812224,
+      "wilson_hi": 0.5446027032561386
+    },
+    "gangup_reserve": {
+      "wins": 181,
+      "losses": 203,
+      "draws": 0,
+      "n": 384,
+      "winrate": 0.4713541666666667,
+      "wilson_lo": 0.42195670987798595,
+      "wilson_hi": 0.5213191016904484
+    }
+  },
+  "tournament_json": "/home/user/Orbit-wars-kaggle/audit/tournaments/2026-05-12T04:46:55Z.json",
+  "elapsed_s": 853.4
+}

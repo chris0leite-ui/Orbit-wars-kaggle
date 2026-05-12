@@ -32,11 +32,14 @@ def sym_hypot(dx: float, dy: float) -> float:
     `a² + b²` and `b² + a²` can differ by 1 ULP because the addition
     is non-associative. Over thousands of mission-score comparisons,
     this 1-ULP noise turns near-ties into strict orderings, defeating
-    σ-equivariant tie-breaks (audit/2026-05-11-cannot-lose-final-finding.md
-    addendum: 1 ULP score difference made tie-break never fire).
+    σ-equivariant tie-breaks. `sym_hypot` canonicalises arguments to
+    `hypot(min(|dx|,|dy|), max(|dx|,|dy|))` so σ-paired (src, target)
+    pairs produce bit-equal distances.
 
-    `sym_hypot` canonicalises arguments to `hypot(min(|dx|,|dy|), max(|dx|,|dy|))`
-    so σ-paired (src, target) pairs produce bit-equal distances.
+    Ported from `origin/claude/game-theory-strategy-analysis-0oH4N`
+    where the σ-equiv layer (this + planner _tb + score rounding) was
+    the load-bearing change behind σ-equiv-v1 (μ=1041.4) and
+    v7_minimax (μ=1063).
     """
     ax = abs(dx)
     ay = abs(dy)

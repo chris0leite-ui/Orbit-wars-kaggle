@@ -159,6 +159,49 @@ function for picking a target. Run via
   pruned target set, scoring via short-horizon rollout against a
   fixed-policy opponent model. Only after the pieces above are stable.
 
+### 2026-05-11 — top-performer replay analysis (H10-H15)
+
+> Source: `knowledge-base/concepts/top-performer-strategies.md`. 50
+> top-10 replays + 10 midpack replays fingerprinted. The fingerprint
+> features where top-10 differ ≥1.5× from midpack are the H10-H15
+> targets. See doc for fingerprint table + per-team profiles.
+
+- **H10 (high-EV, ~3 days):** **Enemy-target multiplier in v3_snipe ROI.**
+  Top-10 picks enemy targets at 32% vs midpack 14% (×2.3 gap). Multiply
+  `target.value` by 1.3-1.5 when `target.owner ≠ ourselves AND
+  target.owner ≠ -1`. Decision gate: 32-seed 2P vs v3_snipe ≥55%
+  Wilson-lo; 4P FFA parity-or-better.
+- **H11 (medium-EV, ~5 days):** **Opening-only first-fleet rule.**
+  Top-10 first-launches at step 4.1; midpack at step 10.5. The 6-step
+  gap forfeits ~30 ships of production. New Mission class
+  `opening_landgrab` fires once if `step <= 5 AND ours.ships > 8` from
+  every near-home planet. Decision gate: 32-seed 2P winrate vs v3_snipe
+  ≥55%; first-launch-step measured ≤3.
+- **H12 (medium-EV, ~5 days):** **Source-emptying `drain` mission.**
+  Top-10 mean garrison-at-launch = 11; we leave ~25. Trigger when
+  `ours.ships > 30 AND no incoming enemy fleet within ETA+5`. Decision
+  gate: mean_garrison_at_launch drops from ~25 to ≤15 without
+  fleets_lost_to_enemy_recapture rising by >2 per game.
+- **H13 (high-EV, larger build, ~10 days):** **Multi-source same-turn
+  arrival as Mission class (`swarm` / `gang_up`).** yijue1 and
+  yuriygreben both ship this; v3_snipe is per-source greedy. In
+  settle_plan, after per-source scoring, run second pass on pairs whose
+  ETAs to the same target are within ±2 turns; bonus if combined ships
+  > predicted-defenders-at-arrival. Decision gate: gang_up_rate rises
+  from ~35% to ≥50%; 32-seed 2P winrate ≥55%.
+- **H14 (high-EV, ML workstream, ~15 days):** **konbu17-style shot
+  validator.** A small numpy MLP (24-dim input, 32-16-8-1, sigmoid)
+  drops shots predicted to fail. Train from our replay corpus, label
+  by "target was ours 10 turns later." Conservative: only reject,
+  never propose. konbu17's hybrid wins 84% vs 65% pure rule-base
+  (+19pp panel). Decision gate: +5pp panel winrate over v3_snipe;
+  no regression vs Roman-1224.
+- **H15 (cheap probe, ~½ day):** **Drop comet chasing entirely.**
+  Top-10 comet-capture rate = 3.4%; midpack = 13.4%. emanuellcs
+  formalises a break-even filter (`eta + cost/prod < remaining_path`).
+  Hard filter on comet targets. Decision gate: panel winrate
+  parity-or-better with v3_snipe; comet_capture_rate ≤ 5%.
+
 ### Pre-existing seeds (carried over from Day 1)
 
 - H-search: A search-based agent (MCTS over short horizons) beats a
@@ -166,8 +209,10 @@ function for picking a target. Run via
 - H-rl-curriculum: An RL agent trained on self-play overfits to
   symmetric strategies and loses to rule-based opponents — needs
   opponent-curriculum diversity.
-- H-replay-mining: Replay statistics from top public-LB agents reveal
-  a load-bearing tactic that no public notebook documents.
+- H-replay-mining: **PARTIALLY CONFIRMED.** Replay statistics from top
+  public-LB agents reveal a load-bearing tactic that no public notebook
+  documents — see top-performer-strategies.md §6 (within-top-10
+  archetypes) and §8 (what unpublished top-10 likely add on top).
 
 ## Killed
 

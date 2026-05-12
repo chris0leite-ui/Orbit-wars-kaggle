@@ -44,7 +44,25 @@ DEFAULT_LIB_ORDER = [
     "mission",
     "missions/snipe",
     "missions/reinforce",
+    "missions/recapture",
     "planner",
+    "lookahead_planner",
+    # v7 lookahead substrate (2026-05-12). Order matters:
+    # fast_sim is foundational; opp_model uses missions/* + planner +
+    # intent + mechanism + world_model; v7_search uses everything.
+    # Inlining these is a no-op for non-v7 agents (their agent() never
+    # imports from them) — they bloat the bundle by ~35 KB. Acceptable.
+    "fast_sim",
+    "opp_model",
+    "v7_search",
+    # v4_planner brain (2026-05-12 evening): candidate portfolios +
+    # adaptive K + production-share value head. Inlined for v8_*
+    # agents that consume them; harmless for older agents that don't
+    # import (just adds ~10 KB to the bundle).
+    "candidate_portfolios",
+    # v9 super-version (2026-05-12 evening): composite value heads
+    # for receding-horizon-pathology fix. Used by v9_inflight + v9_combined.
+    "value_heads",
 ]
 SUBMISSIONS = REPO / "submissions"
 

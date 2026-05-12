@@ -4,6 +4,11 @@
 # Data — keep placeholder, ignore content
 data/*
 !data/.gitkeep
+# Shot-validator dataset: ship the spec + README, not the large jsonl.
+!data/shot_validator
+data/shot_validator/*
+!data/shot_validator/README.md
+!data/shot_validator/schema.json
 
 # Submissions / kernel build artifacts
 submissions/*
@@ -64,3 +69,7 @@ venv/
 # OS noise
 .DS_Store
 Thumbs.db
+
+# External Kaggle data pulled for analysis (~350 MB bulk fetch).
+# Analysis products live in audit/*.json + knowledge-base/concepts/.
+audit/external/

@@ -124,13 +124,11 @@ def score_joint_action(
     `score_joint_action` forces both `our_action` and `opp_action` on
     turn 0, then rolls forward K-1 turns under `policy` as both players.
 
-    Used by maximin agents (e.g. agents/v7_minimax) to score a full
-    N×M payoff matrix where both players' first moves are explicit
-    candidates. Returns (our_ships - opp_ships) at the rollout's final
-    state — same scoring head as `score_action`.
+    Used by maximin agents (e.g. v7.1+) to score a full N×M payoff
+    matrix where both players' first moves are explicit candidates.
+    Returns `(our_ships - opp_ships)` at the rollout's final state.
 
-    Cost: identical to `score_action` (K env.step calls + 2*(K-1) policy
-    calls). Clones `env` so callers can reuse it across (our, opp) pairs.
+    Ported from `origin/claude/game-theory-strategy-analysis-0oH4N`.
     """
     clone = env.clone()
     opp_id = 1 - my_id
@@ -156,28 +154,19 @@ def score_joint_action_symmetric(
     K: int,
     policy: Callable,
 ) -> float:
-    """Seat-symmetric variant of `score_joint_action` — averages over the
-    two possible seat assignments of (our_action, opp_action).
+    """Seat-symmetric variant of `score_joint_action` — averages over
+    the two seat assignments of `(our_action, opp_action)`.
 
-    Motivation: the Orbit Wars env has a documented seat-asymmetry —
-    audit/2026-05-10-day-1-data-inventory.md:98 reports P1 systematically
-    favored in identical self-play (P1 4/6, P0 1/6, draw 1/6) due to
-    action-processing-order and combat-tie-break effects internal to
-    `kaggle_environments`. v7_minimax's first self-play probe (8 seeds,
-    1/8 draws) showed this asymmetry leaks through Sim<K> into the
-    maximin payoff matrix: P0's matrix is NOT simply the seat-flip of
-    P1's, so their maximin picks diverge → game diverges from σ-mirror
-    → seat-biased outcomes.
+    Motivation: the Orbit Wars env has a documented seat asymmetry
+    (P1-favoring tie-breaks in identical self-play). Without
+    symmetrization, that asymmetry leaks through Sim<K> into the
+    maximin payoff matrix; both seats' matrices stop being seat-flips
+    of each other, and the maximin picks diverge from the σ-mirror.
+    Averaging the two seat assignments cancels the env-internal bias.
 
-    Fix: for each (our, opp) cell, run the rollout TWICE — once with
-    our_action at seat 0 (our_seat=0), once with our_action at seat 1
-    (our_seat=1). Both calls return "(our_ships - opp_ships) at horizon"
-    from our POV; we average. In a perfectly seat-symmetric env this
-    returns the same value either way; in our asymmetric env the
-    average cancels the env-internal seat bias.
+    Cost: 2× `score_joint_action`. Calling code budgets accordingly.
 
-    Cost: 2x score_joint_action. Calling code must budget accordingly
-    (typical: drop K from 5 → 3 → 2 to fit actTimeout=1s).
+    Ported from `origin/claude/game-theory-strategy-analysis-0oH4N`.
     """
     a = score_joint_action(env, our_action, opp_action, K, my_id=0, policy=policy)
     b = score_joint_action(env, our_action, opp_action, K, my_id=1, policy=policy)
