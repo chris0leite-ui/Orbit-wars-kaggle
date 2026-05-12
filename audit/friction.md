@@ -124,6 +124,53 @@
   COMET_BONUS=1.3` fix (also 28.1% regression). Promotion candidate:
   "if the finding is local, the fix must be local."
 
+## 2026-05-12 PM (game-strategy-analysis-XXxEK)
+
+- `tag: recapture-prior-too-high-ignoring-planner-arbitration` — plan
+  mode: Plan-agent gave Option A (recapture wire-up) prior HIGH
+  (+100-150 μ) based on the games-analysis comeback gap (wins recover
+  to 28 planets, losses to 6). Empirical 200-game A/B regressed to
+  **36% (Wilson [0.297, 0.429])** — a 14 pp absolute hit. Root cause:
+  same pattern as the SAME-DAY friction
+  `multi-mission-stack-regresses-even-with-conditional-gates` —
+  settle_plan's per-source greedy is NOT mission-class-additive;
+  registering a new proposer with un-calibrated score scale displaces
+  higher-EV snipe picks. The friction was already in audit/friction.md
+  and I read it during planning; I weighted the games-analysis gap
+  evidence too heavily and the planner-non-additivity evidence too
+  little. **Fix this session:** reverted wire-up, kept module on disk,
+  audit/2026-05-12-recapture-wireup-ab.md documents the three
+  diagnostic probes (volume cap, score-scale calibration, feasibility
+  filter). **Promotion candidate:** any plan-mode prior on adding a new
+  mission class to settle_plan caps at MED unless the class has cleared
+  a 16-seed Wilson lo ≥ 0.55 ablation gate (variant ⊕ v3_snipe vs
+  v3_snipe alone). Encode in the Plan agent's prompt — same family as
+  `multi-mission-stack-regresses-even-with-conditional-gates`.
+
+- `tag: env-step-0-vs-step-1-zero-rotation-quirk` — orbit_lead test
+  build: anchored property test on obs0 + lead_turns=t and saw 0.11
+  board-unit drift vs actual env state at step t. Root cause:
+  env.steps[0] and env.steps[1] both have 0 rotations applied (per the
+  N-1 quirk in lib/orbit.py::predict_absolute). predict_relative from
+  obs0 with lead_turns=t aligns to env.steps[t+1], not env.steps[t].
+  Already-documented behaviour but no one had hit it in test code
+  before. **Fix this session:** test anchored on obs1 (env.steps[1]),
+  which is when an agent actually acts; library is exact from step 1
+  onward. Documented inline in
+  tests/test_orbit_lead.py::test_closest_approach_matches_env_seed42.
+  Not promotion-worthy — agents already act from step ≥1, so the quirk
+  only bites test code.
+
+- `tag: drive-by-validation-picked-wrong-home-planet` — orbit_lead
+  empirical validation: ad-hoc Python snippet used `obs0['planets'][0]`
+  as "my home" but at seed 0 that planet has owner=-1 (neutral). The
+  earlier geometry script `_orbit_sweep_stats` correctly filtered by
+  `h[1] == 0` — I just didn't copy that pattern. Wasted ~5 minutes
+  chasing a phantom 23 pp gap between library and report before
+  realising. **Fix:** propose a tiny `lib/intent.my_home(world)` helper
+  whenever the next mission-class touch happens; same pattern likely
+  recurs.
+
 ## 2026-05-12 (analyze-leaderboard-strategies-sdZlE)
 
 - `tag: stack-first-ablate-later-is-the-wrong-order` — iter-1 v3.5
