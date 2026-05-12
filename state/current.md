@@ -6,23 +6,26 @@
 ```yaml
 date: 2026-05-12
 days_to_deadline: 42                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v3_snipe        # rolling-last-2: [v2 (965.3), v3_snipe (1055.5)]; v1.2/roi (1006.9) evicted by v3 push
-last_kernel_push: 2026-05-11 12:16:01 UTC
-last_submission_id: 52544634
-last_submission_status: COMPLETE         # publicScore 1055.5 (+90.2 over v2). 34 games played, 14 wins (41.2%); 2P 47.1% 4P 35.3%. See audit/2026-05-11-v3-snipe-critical-review.md.
-last_submission_file: submissions/v3_snipe.py  # 61.7 KB bundle of agents/v3_snipe/main.py + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe,missions/reinforce,planner}. Strategy = snipe + reinforce mission classes through settle_plan (same-turn arrival ledger). Mechanism stack = DEFAULT_MECHANISMS with full-trajectory predict_fleet_fate guards.
+current_submitted_agent: v3.5.1          # rolling-last-2: [σ-equivariance (976.3, #52565034), v3.5.1 (PENDING, #52565976)]; v3.4 (995.4, #52556866) evicted by this push
+last_kernel_push: 2026-05-12 05:20:09 UTC
+last_submission_id: 52565976
+last_submission_status: PENDING          # validation episode running
+last_submission_file: submissions/v3.5.1.py  # 69.7 KB bundle; sha256 in audit/2026-05-12-iter2-ablation-results.md
 last_submission_message: |
-  v3_snipe: Block E missions (snipe + reinforce) + cost-aware ROI +
-  comet-lifetime + same-turn ledger + full-trajectory ray-cast guards.
-  Capture-probe reached 77.2% (pre-fix) → 93.0% (trajectory) → 97.2%
-  (this build). 32-seed 2P vs v2 = 57.8% (Wilson [45.6, 69.2]);
-  16-seed 4P FFA parity. audit/2026-05-11-v3-lookahead-mvp-parity.md
-  + tournaments/20260511T112936Z.json
-tournament_rank_today: v2=965.3, v3_snipe=1055.5   # v3_snipe is best slot; live winrate 41.2% (lower than v2's 50.9%) but matched against stronger opponents per TrueSkill
-our_best_rank: μ=1055.5 (#52544634, v3_snipe)      # +90.2 over v2; +392 to top-10 cliff
+  v3.5.1: aggressive snipe ship sizing. base_ships = min(0.7*src.ships,
+  src.ships-5) when src.ships>12 (else minimum-viable). Single
+  conditional inside lib/missions/snipe.py with aggressive=True flag;
+  default unchanged → v3_snipe parity preserved. Translates top-10
+  fingerprint (mean fleet 38 vs midpack 29; garrison-at-launch 11 vs 22)
+  into one sizing change. Gates: 32-seed 2P vs v3_snipe 68.8% Wilson lo
+  56.6% PASS; 4P FFA 31/32=96.9% (vs v3_snipe baseline 93.8%);
+  parameter sweep confirms 0.7 dominates 0.6/0.8/0.9; bundler parity OK;
+  10/10 self-play DONE. audit/2026-05-12-iter2-ablation-results.md.
+tournament_rank_today: rolling-last-2 = [σ-equivariance #52565034 μ=976.3 (parallel-branch), v3.5.1 #52565976 PENDING (this branch)]; v3.4 #52556866 μ=995.4 evicted by this push
+our_best_rank: PENDING (v3.5.1 #52565976); fallback μ=976.3 (σ-equivariance)   # top-10 cliff +464μ from σ-equivariance fallback; v3.5.1 expected ~1090-1100 from local A/B math
 lb_top10_cliff: 1447.6                   # ShunkiKyoya, 2026-05-11. #1 = bowwowforeach 1697.7
-submissions_used_today: 0                # v3.5 built locally; not submitted (regression vs v3_snipe)
-submissions_used_total: 6
+submissions_used_today: 1                # v3.5.1 #52565976 (05:20 UTC) — PI-approved single shot
+submissions_used_total: 7
 plateau_days: 0
 saturation_count: 0
 session_log:
