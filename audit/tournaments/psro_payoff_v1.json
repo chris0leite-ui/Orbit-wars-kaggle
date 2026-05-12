@@ -1,0 +1,379 @@
+{
+  "policies": [
+    "v7_minimax",
+    "v3_snipe",
+    "precision",
+    "roi"
+  ],
+  "P": [
+    [
+      0.0,
+      1.0,
+      0.3333333333333333,
+      0.6666666666666666
+    ],
+    [
+      -1.0,
+      0.0,
+      0.3333333333333333,
+      1.0
+    ],
+    [
+      -0.3333333333333333,
+      -0.3333333333333333,
+      0.0,
+      -0.3333333333333333
+    ],
+    [
+      -0.6666666666666666,
+      -1.0,
+      0.3333333333333333,
+      0.0
+    ]
+  ],
+  "wins": [
+    [
+      0,
+      6,
+      4,
+      5
+    ],
+    [
+      0,
+      0,
+      4,
+      6
+    ],
+    [
+      2,
+      2,
+      0,
+      2
+    ],
+    [
+      1,
+      0,
+      4,
+      0
+    ]
+  ],
+  "games": [
+    [
+      0,
+      6,
+      6,
+      6
+    ],
+    [
+      6,
+      0,
+      6,
+      6
+    ],
+    [
+      6,
+      6,
+      0,
+      6
+    ],
+    [
+      6,
+      6,
+      6,
+      0
+    ]
+  ],
+  "n_seeds": 3,
+  "episode_steps": 500,
+  "elapsed_total_s": 1728.0,
+  "raw": [
+    {
+      "i": "v7_minimax",
+      "j": "v3_snipe",
+      "side": "i=P0",
+      "seed": 0,
+      "outcome": 1,
+      "elapsed_s": 97.0
+    },
+    {
+      "i": "v7_minimax",
+      "j": "v3_snipe",
+      "side": "i=P1",
+      "seed": 0,
+      "outcome": -1,
+      "elapsed_s": 100.3
+    },
+    {
+      "i": "v7_minimax",
+      "j": "v3_snipe",
+      "side": "i=P0",
+      "seed": 1,
+      "outcome": 1,
+      "elapsed_s": 63.4
+    },
+    {
+      "i": "v7_minimax",
+      "j": "v3_snipe",
+      "side": "i=P1",
+      "seed": 1,
+      "outcome": -1,
+      "elapsed_s": 64.5
+    },
+    {
+      "i": "v7_minimax",
+      "j": "v3_snipe",
+      "side": "i=P0",
+      "seed": 2,
+      "outcome": 1,
+      "elapsed_s": 31.4
+    },
+    {
+      "i": "v7_minimax",
+      "j": "v3_snipe",
+      "side": "i=P1",
+      "seed": 2,
+      "outcome": -1,
+      "elapsed_s": 31.4
+    },
+    {
+      "i": "v7_minimax",
+      "j": "precision",
+      "side": "i=P0",
+      "seed": 0,
+      "outcome": 1,
+      "elapsed_s": 109.8
+    },
+    {
+      "i": "v7_minimax",
+      "j": "precision",
+      "side": "i=P1",
+      "seed": 0,
+      "outcome": -1,
+      "elapsed_s": 108.3
+    },
+    {
+      "i": "v7_minimax",
+      "j": "precision",
+      "side": "i=P0",
+      "seed": 1,
+      "outcome": 1,
+      "elapsed_s": 49.7
+    },
+    {
+      "i": "v7_minimax",
+      "j": "precision",
+      "side": "i=P1",
+      "seed": 1,
+      "outcome": -1,
+      "elapsed_s": 49.5
+    },
+    {
+      "i": "v7_minimax",
+      "j": "precision",
+      "side": "i=P0",
+      "seed": 2,
+      "outcome": -1,
+      "elapsed_s": 44.2
+    },
+    {
+      "i": "v7_minimax",
+      "j": "precision",
+      "side": "i=P1",
+      "seed": 2,
+      "outcome": 1,
+      "elapsed_s": 68.6
+    },
+    {
+      "i": "v7_minimax",
+      "j": "roi",
+      "side": "i=P0",
+      "seed": 0,
+      "outcome": -1,
+      "elapsed_s": 82.6
+    },
+    {
+      "i": "v7_minimax",
+      "j": "roi",
+      "side": "i=P1",
+      "seed": 0,
+      "outcome": -1,
+      "elapsed_s": 115.7
+    },
+    {
+      "i": "v7_minimax",
+      "j": "roi",
+      "side": "i=P0",
+      "seed": 1,
+      "outcome": 1,
+      "elapsed_s": 29.4
+    },
+    {
+      "i": "v7_minimax",
+      "j": "roi",
+      "side": "i=P1",
+      "seed": 1,
+      "outcome": -1,
+      "elapsed_s": 30.3
+    },
+    {
+      "i": "v7_minimax",
+      "j": "roi",
+      "side": "i=P0",
+      "seed": 2,
+      "outcome": 1,
+      "elapsed_s": 25.6
+    },
+    {
+      "i": "v7_minimax",
+      "j": "roi",
+      "side": "i=P1",
+      "seed": 2,
+      "outcome": -1,
+      "elapsed_s": 24.7
+    },
+    {
+      "i": "v3_snipe",
+      "j": "precision",
+      "side": "i=P0",
+      "seed": 0,
+      "outcome": 1,
+      "elapsed_s": 59.5
+    },
+    {
+      "i": "v3_snipe",
+      "j": "precision",
+      "side": "i=P1",
+      "seed": 0,
+      "outcome": -1,
+      "elapsed_s": 59.8
+    },
+    {
+      "i": "v3_snipe",
+      "j": "precision",
+      "side": "i=P0",
+      "seed": 1,
+      "outcome": 1,
+      "elapsed_s": 40.9
+    },
+    {
+      "i": "v3_snipe",
+      "j": "precision",
+      "side": "i=P1",
+      "seed": 1,
+      "outcome": -1,
+      "elapsed_s": 40.4
+    },
+    {
+      "i": "v3_snipe",
+      "j": "precision",
+      "side": "i=P0",
+      "seed": 2,
+      "outcome": -1,
+      "elapsed_s": 29.5
+    },
+    {
+      "i": "v3_snipe",
+      "j": "precision",
+      "side": "i=P1",
+      "seed": 2,
+      "outcome": 1,
+      "elapsed_s": 46.9
+    },
+    {
+      "i": "v3_snipe",
+      "j": "roi",
+      "side": "i=P0",
+      "seed": 0,
+      "outcome": 1,
+      "elapsed_s": 6.8
+    },
+    {
+      "i": "v3_snipe",
+      "j": "roi",
+      "side": "i=P1",
+      "seed": 0,
+      "outcome": -1,
+      "elapsed_s": 7.0
+    },
+    {
+      "i": "v3_snipe",
+      "j": "roi",
+      "side": "i=P0",
+      "seed": 1,
+      "outcome": 1,
+      "elapsed_s": 2.0
+    },
+    {
+      "i": "v3_snipe",
+      "j": "roi",
+      "side": "i=P1",
+      "seed": 1,
+      "outcome": -1,
+      "elapsed_s": 2.0
+    },
+    {
+      "i": "v3_snipe",
+      "j": "roi",
+      "side": "i=P0",
+      "seed": 2,
+      "outcome": 1,
+      "elapsed_s": 1.3
+    },
+    {
+      "i": "v3_snipe",
+      "j": "roi",
+      "side": "i=P1",
+      "seed": 2,
+      "outcome": -1,
+      "elapsed_s": 1.2
+    },
+    {
+      "i": "precision",
+      "j": "roi",
+      "side": "i=P0",
+      "seed": 0,
+      "outcome": -1,
+      "elapsed_s": 78.3
+    },
+    {
+      "i": "precision",
+      "j": "roi",
+      "side": "i=P1",
+      "seed": 0,
+      "outcome": 1,
+      "elapsed_s": 89.6
+    },
+    {
+      "i": "precision",
+      "j": "roi",
+      "side": "i=P0",
+      "seed": 1,
+      "outcome": -1,
+      "elapsed_s": 42.8
+    },
+    {
+      "i": "precision",
+      "j": "roi",
+      "side": "i=P1",
+      "seed": 1,
+      "outcome": 1,
+      "elapsed_s": 43.0
+    },
+    {
+      "i": "precision",
+      "j": "roi",
+      "side": "i=P0",
+      "seed": 2,
+      "outcome": 1,
+      "elapsed_s": 26.2
+    },
+    {
+      "i": "precision",
+      "j": "roi",
+      "side": "i=P1",
+      "seed": 2,
+      "outcome": -1,
+      "elapsed_s": 24.0
+    }
+  ]
+}

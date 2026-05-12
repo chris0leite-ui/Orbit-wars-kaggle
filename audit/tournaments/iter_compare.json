@@ -1,0 +1,92 @@
+{
+  "t0_mirror": {
+    "p0": {
+      "W": 0,
+      "D": 0,
+      "L": 8
+    },
+    "p1": {
+      "W": 0,
+      "D": 0,
+      "L": 8
+    },
+    "total_W": 0,
+    "total_D": 0,
+    "total_L": 16,
+    "win_pct": 0.0,
+    "wd_pct": 0.0,
+    "elapsed_s": 72.71715068817139
+  },
+  "t1_mirror_lagfix": {
+    "p0": {
+      "W": 0,
+      "D": 0,
+      "L": 8
+    },
+    "p1": {
+      "W": 0,
+      "D": 0,
+      "L": 8
+    },
+    "total_W": 0,
+    "total_D": 0,
+    "total_L": 16,
+    "win_pct": 0.0,
+    "wd_pct": 0.0,
+    "elapsed_s": 53.125738859176636
+  },
+  "t2_mirror_lag_sun": {
+    "p0": {
+      "W": 0,
+      "D": 0,
+      "L": 8
+    },
+    "p1": {
+      "W": 0,
+      "D": 0,
+      "L": 8
+    },
+    "total_W": 0,
+    "total_D": 0,
+    "total_L": 16,
+    "win_pct": 0.0,
+    "wd_pct": 0.0,
+    "elapsed_s": 42.64630460739136
+  },
+  "hybrid_v3_mirror": {
+    "p0": {
+      "W": 1,
+      "D": 0,
+      "L": 7
+    },
+    "p1": {
+      "W": 1,
+      "D": 0,
+      "L": 7
+    },
+    "total_W": 2,
+    "total_D": 0,
+    "total_L": 14,
+    "win_pct": 12.5,
+    "wd_pct": 12.5,
+    "elapsed_s": 45.36246156692505
+  },
+  "endgame_v3_endgame": {
+    "p0": {
+      "W": 2,
+      "D": 1,
+      "L": 5
+    },
+    "p1": {
+      "W": 2,
+      "D": 1,
+      "L": 5
+    },
+    "total_W": 4,
+    "total_D": 2,
+    "total_L": 10,
+    "win_pct": 25.0,
+    "wd_pct": 37.5,
+    "elapsed_s": 141.7694799900055
+  }
+}

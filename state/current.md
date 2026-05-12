@@ -6,26 +6,23 @@
 ```yaml
 date: 2026-05-12
 days_to_deadline: 42                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v3.5.1          # rolling-last-2: [σ-equivariance (976.3, #52565034), v3.5.1 (PENDING, #52565976)]; v3.4 (995.4, #52556866) evicted by this push
-last_kernel_push: 2026-05-12 05:20:09 UTC
-last_submission_id: 52565976
-last_submission_status: PENDING          # validation episode running
-last_submission_file: submissions/v3.5.1.py  # 69.7 KB bundle; sha256 in audit/2026-05-12-iter2-ablation-results.md
+current_submitted_agent: v7_minimax      # rolling-last-2 NOW: [v3.5.1 (52565976, μ=943.1 ⚠ REGRESSED), v7_minimax (52568317, μ=1063.0 ✓ TEAM PEAK)]. σ-equiv-v1 (52565034, μ=1041.4) evicted by v7 push.
+last_kernel_push: 2026-05-12 06:50:06 UTC
+last_submission_id: 52568317
+last_submission_status: complete         # v7_minimax LIVE μ=1063.0 — TEAM PEAK. +57μ over v3_snipe (1005.7), +22μ over σ-equiv-v1 (1041.4). Maximin overlay confirmed live.
+last_submission_file: submissions/v7_minimax.py  # 81.8 KB bundle. sha256:1393d32b1f4e691d.
 last_submission_message: |
-  v3.5.1: aggressive snipe ship sizing. base_ships = min(0.7*src.ships,
-  src.ships-5) when src.ships>12 (else minimum-viable). Single
-  conditional inside lib/missions/snipe.py with aggressive=True flag;
-  default unchanged → v3_snipe parity preserved. Translates top-10
-  fingerprint (mean fleet 38 vs midpack 29; garrison-at-launch 11 vs 22)
-  into one sizing change. Gates: 32-seed 2P vs v3_snipe 68.8% Wilson lo
-  56.6% PASS; 4P FFA 31/32=96.9% (vs v3_snipe baseline 93.8%);
-  parameter sweep confirms 0.7 dominates 0.6/0.8/0.9; bundler parity OK;
-  10/10 self-play DONE. audit/2026-05-12-iter2-ablation-results.md.
-tournament_rank_today: rolling-last-2 = [σ-equivariance #52565034 μ=976.3 (parallel-branch), v3.5.1 #52565976 PENDING (this branch)]; v3.4 #52556866 μ=995.4 evicted by this push
-our_best_rank: PENDING (v3.5.1 #52565976); fallback μ=976.3 (σ-equivariance)   # top-10 cliff +464μ from σ-equivariance fallback; v3.5.1 expected ~1090-1100 from local A/B math
-lb_top10_cliff: 1447.6                   # ShunkiKyoya, 2026-05-11. #1 = bowwowforeach 1697.7
-submissions_used_today: 1                # v3.5.1 #52565976 (05:20 UTC) — PI-approved single shot
-submissions_used_total: 7
+  v7_minimax: K-step maximin agent. v3+σ-equiv base + K=3 maximin
+  overlay enumerating N=2 our × M=2 opp candidates via
+  score_joint_action_symmetric. LIVE μ=1063.0 — TEAM PEAK.
+tournament_rank_today: v7_minimax=1063.0 ✓ best, v3.5.1=943.1 ⚠ regressed (rolling-2). All others evicted from rolling-2: σ-equiv-v1=1041.4, precision_v3=1011.4, v3_snipe=1005.7, v3_4=995.4.
+our_best_rank: μ=1063.0 (#52568317 v7_minimax)  # +369.5μ gap to top-10 cliff (3Comets 1432.5)
+lb_top10_cliff: 1432.5                   # 3Comets 2026-05-12. #1 = bowwowforeach μ=1674.6.
+submissions_used_today: 2                # σ-equiv-v1 (04:39) + v7_minimax (06:50)
+submissions_used_total: 9
+# Eviction risk: v3.5.1 (943.1) is the lower of rolling-2. Next push
+# evicts v3.5.1 (good — it's dragging fallback). v7 stays until 2nd push.
+# All v7 improvements should A/B against frozen v7_minimax bundle.
 plateau_days: 0
 saturation_count: 0
 session_log:

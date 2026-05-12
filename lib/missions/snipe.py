@@ -35,6 +35,7 @@ from __future__ import annotations
 import math
 
 from lib.fleet import speed as fleet_speed
+from lib.geometry import sym_hypot
 from lib.intent import World
 from lib.mission import Mission
 from lib.world_model import WorldModel, comet_remaining_lifetime
@@ -203,19 +204,24 @@ def propose_snipe_missions(
     missions: list[Mission] = []
     for src in my_planets:
         for t in targets:
-            d = math.hypot(t.x - src.x, t.y - src.y)
+            # Use σ-equivariance-safe symmetric distance (from
+            # claude/game-theory-strategy-analysis-0oH4N merge).
+            d = sym_hypot(t.x - src.x, t.y - src.y)
             target_min = max(1, int(t.ships) + 1)
             if aggressive and src.ships > AGGRESSIVE_MIN_GARRISON:
+                # v3.5.1 aggressive sizing — REGRESSED live (μ=943.1 vs
+                # v3_snipe's 1005.7). Kept the code path for any agent
+                # that explicitly opts in via aggressive=True, but the
+                # default-False posture is now strongly recommended.
+                # See audit/2026-05-12-opening-variants-and-bounce-telemetry.md.
                 fraction_size = max(1, int(src.ships * AGGRESSIVE_FRACTION))
                 cap = max(1, int(src.ships) - AGGRESSIVE_RESERVE)
                 base_ships = max(target_min, min(fraction_size, cap))
             else:
                 base_ships = target_min
             if PROPOSER_AFFORDABILITY_FILTER and base_ships > src.ships:
-                # Source can't fund this capture alone; let its smaller
-                # affordable runner-up win settle_plan's per-source greedy.
-                # OFF by default (regressed in 64-seed A/B); kept for
-                # future ablation. See main's optimize-ship-strategy-tDPXx.
+                # Source can't fund this capture alone; OFF by default
+                # (regressed in 64-seed A/B); kept for future ablation.
                 continue
             v = fleet_speed(base_ships)
             eta = int(math.ceil(d / max(v, 1e-6))) if v > 0 else 0
