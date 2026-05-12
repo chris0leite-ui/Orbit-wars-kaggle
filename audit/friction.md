@@ -2,6 +2,53 @@
 
 ## 2026-05-12 (analyze-leaderboard-strategies-sdZlE)
 
+- `tag: stack-first-ablate-later-is-the-wrong-order` — iter-1 v3.5
+  build: I composed all four new Mission classes (opening, drain,
+  gang_up, recapture) into v3.5's `agents/v3.5/main.py` and ran a
+  32-seed A/B before any individual ablation. Stack failed at 39.1%
+  (Wilson lo 28.1%). The PER-MISSION ablation (run AFTER the fail)
+  showed each class individually failed too. Had I run the per-mission
+  ablation FIRST I'd have saved the full-stack tournament (~64 games)
+  AND identified that NONE of the four would have lifted, redirecting
+  to the surgical-edits approach (iter-2) hours earlier. The priors
+  were available: v3.3 blanket-eta-fix regressed (42.2%) and v3.4
+  NEUTRAL_BONUS=1.5 regressed (28.1%) — same pattern, both in main's
+  audit. **Fix:** when adding ≥2 new Mission classes or proposers
+  simultaneously, ALWAYS run per-class ablation panel BEFORE the
+  stacked full-agent A/B. Time saved: 1× tournament = ~5-10 min in
+  this case, but the strategic redirect is the bigger win. *Promotion
+  candidate (in-comp; PI declined cross-comp earlier today).*
+
+- `tag: module-mutation-patching-has-worker-reuse-race` — iter-2
+  parameter sweep build: first cut of the agg_06 / agg_08 / agg_09
+  variant agents set `base.SHIP_FRACTION = X` at module-import time
+  (the `aggressive_sizing` base module was imported once per worker,
+  then mutated). In multiprocessing's worker-reuse mode, a worker
+  loaded with `aggressive_sizing_06` (sets fraction=0.6), then
+  reused for `aggressive_sizing_08`, would observe the LATER
+  value because both modules mutated the shared base. Caught at
+  design time before launching the sweep; fixed by moving the
+  assignment inside `agent(obs)`. **Fix already applied this
+  session:** variant agents set the constant inside agent() so every
+  call resets it; safe within a single-threaded worker process.
+  Promotion candidate: avoid module-level constant mutation as a
+  parameter-sweep mechanism; prefer either (a) function parameters
+  threaded through, or (b) full per-variant copies of the proposer.
+
+- `tag: data-main-py-not-fetched-by-bootstrap-recurrence` —
+  iter-2 4P FFA: `scripts/run_ffa_agg.py` failed with
+  `FileNotFoundError: agent file not found: data/main.py` because
+  bootstrap.sh's data download path didn't run on this fresh
+  container. SAME issue as the 2026-05-10 PM friction
+  `data-main-py-not-fetched-by-bootstrap`. Fix-this-session: ran
+  `KAGGLE_API_TOKEN="$KAGGLE_KEY" kaggle competitions download -c
+  orbit-wars -p data/ && unzip` manually. **Recurrence count: 2 this
+  comp.** Bootstrap.sh fast-path remains broken; the data step is
+  gated behind an unclear condition. *Promotion candidate (in-comp,
+  re-promote): bootstrap.sh should unconditionally run the
+  competitions-download step on a missing data/main.py — no
+  conditional gates.*
+
 - `tag: multi-mission-stack-regresses-even-with-conditional-gates` —
   v3.5 build: I added four new Mission classes (opening / drain /
   gang_up / recapture) on top of v3_snipe + reinforce, each with
