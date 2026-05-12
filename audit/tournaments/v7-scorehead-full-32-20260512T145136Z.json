@@ -1,0 +1,23 @@
+{
+  "label": "full-32",
+  "variant_wins": 32,
+  "draws": 4,
+  "variant_losses": 28,
+  "total": 64,
+  "win_draw_rate": 0.5625,
+  "win_rate": 0.5,
+  "pair_baseline_as_p0": {
+    "p0_wins": 15,
+    "draws": 2,
+    "n": 32,
+    "wilson_lo": 0.30869129901682335,
+    "wilson_hi": 0.6355076206742619
+  },
+  "pair_variant_as_p0": {
+    "p0_wins": 17,
+    "draws": 2,
+    "n": 32,
+    "wilson_lo": 0.3644923793257382,
+    "wilson_hi": 0.6913087009831766
+  }
+}
