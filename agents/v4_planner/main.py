@@ -45,11 +45,7 @@ import time
 from lib.candidate_portfolios import generate_portfolios
 from lib.intent import World, realize
 from lib.lookahead import env_from_obs, score_action
-from lib.lookahead_planner import (
-    adaptive_K,
-    evaluate_value,
-    truncate_K_to_comet_boundary,
-)
+from lib.lookahead_planner import adaptive_K, evaluate_value, truncate_K_to_comet_boundary
 from lib.mechanism import DEFAULT_MECHANISMS
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.missions.snipe import propose_snipe_missions
