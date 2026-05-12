@@ -16,6 +16,69 @@ or required a human nag. See self-improvement.md for the full distillation proto
 
 ## Pending (not yet applied to skill files)
 
+### [ ] [CODE-COMP-DISCOVERED] CLAUDE.md / Rule 32 addendum: session-start MUST pull live Kaggle submissions, not just git fetch
+
+`tag: state-current-md-was-stale-by-one-submission-and-one-rating`.
+Origin: Orbit Wars 2026-05-12 (kaggle-roi-strategy-duU0I). Local
+`state/current.md` showed v3.5.1 PENDING and predicted μ ≈ 1090.
+Live Kaggle API showed v4_planner (from a parallel branch)
+already settled at μ=1107 as the current ladder leader, and
+v3.5.1 had settled at μ=952 — a real live regression vs the local
+68.8% A/B. I had been about to design new variants on top of
+v3.5.1, the wrong baseline by ~155 μ. Pattern: existing friction
+entries show this same trap hit prior sessions where parallel
+branches submitted between state-file writes. `git fetch +
+HANDOVER.md diff` (Rule 32) doesn't catch ladder drift because
+parallel branches update their own state files, not main's.
+
+Fix: extend Rule 32 to require, before any new compute on a
+non-trivial design decision, the literal command
+`kaggle competitions submissions -c <slug>` and a comparison
+against `state/current.md`'s `last_submission_id` and
+`tournament_rank_today`. If they disagree, **update state/current.md
+first** (or merge the producing branch's state file), then design.
+
+### [ ] [CODE-COMP-DISCOVERED] CLAUDE.md addendum: per-repo rolling-pair coordination file
+
+`tag: parallel-branches-create-orphan-rolling-last-2-evictions`.
+Origin: Orbit Wars 2026-05-12 (kaggle-roi-strategy-duU0I). The
+rolling-last-2 ladder slot is global per user, not per branch.
+Three branches raced to submit
+(kaggle-roi-strategy-duU0I, research-lookahead-strategy-kfRsy,
+game-theory-strategy-analysis-0oH4N) without cross-branch
+coordination. v4_planner from the lookahead branch evicted
+v3.4 + v3.5.1 from kaggle-roi-strategy's intended slot, then
+this session's planned submit (had it gone ahead unguarded)
+would have evicted v4_planner — the current ladder best — and
+likely degraded the public score.
+
+Fix: introduce `state/rolling-pair.md` (single file at repo root,
+atomic write per submission). Any branch that submits writes a
+3-line YAML block (timestamp, agent name, submission ID, μ if
+known). Session-start sequence: read this file alongside
+`state/current.md`; if the live Kaggle API rolling pair disagrees
+with the file, refresh the file before deciding to submit. Cost
+of bypassing this rule = up to one ladder-best slot evicted by
+an inferior submit (24h on-ladder lockout).
+
+### [ ] [CROSS-CUTTING] do-and-dont.md — long-running background commands redirect stdout to file; never `| tail`
+
+`tag: tail-buffer-hides-progress-on-background-runs`. Origin:
+Orbit Wars 2026-05-12 (kaggle-roi-strategy-duU0I). Launched a
+16-seed A/B with `python -m scripts.run_v4_ab ... 2>&1 | tail -25`
+intending to print the final summary. tail buffers until the
+producing process closes its stdout — so when the outer `timeout
+600` SIGTERM'd the run at 10 min, the captured log file was
+0 bytes and I couldn't tell whether the job had crashed, hung,
+or just exceeded the budget. Re-ran at smaller scope to
+diagnose; ~30 min and 1 round of false-alarm investigation lost.
+
+Fix: for any background or long-running command, redirect stdout
+to a real file (`> /tmp/<probe>.log 2>&1`) rather than piping
+through `tail`. The final-summary view is then `tail -25
+/tmp/<probe>.log`, run after-the-fact. Pattern: `tail -f` and
+`tail -N` are display tools, not capture tools.
+
 ### [ ] [CODE-COMP-DISCOVERED] bundle_agent.py: auto-discover required lib modules from agent imports
 
 `tag: bundler-missing-block-e-modules` (and earlier
