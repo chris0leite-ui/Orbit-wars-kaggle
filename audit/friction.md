@@ -124,6 +124,58 @@
   COMET_BONUS=1.3` fix (also 28.1% regression). Promotion candidate:
   "if the finding is local, the fix must be local."
 
+## 2026-05-12 PM (competitive-programming-strategies-5LK11)
+
+- `tag: variant-agent-constant-reset-bug` — strategy panel build: PI
+  asked for parameter variants of `local_blitz` (different LENGTH_SCALE
+  values). I added `_steep` and `_wide` variants that set
+  `_base.LENGTH_SCALE = <new>` then delegated to `_base.agent(obs)`. The
+  base `agent()` function had a `global LENGTH_SCALE; LENGTH_SCALE = 15.0`
+  reset (added to defend against worker-reuse leakage, friction
+  `module-mutation-patching-has-worker-reuse-race` from earlier
+  this session) which clobbered the variant's setting before
+  `propose_intents` ran. First 16-seed panel showed all three L
+  values tying 50/50 — looked like an interesting finding ("distance
+  shape doesn't matter") but was actually all three running L=15.
+  Caught by adding instrumentation that printed LENGTH_SCALE from
+  inside `_base.propose_intents`. **Root cause:** worker-reuse
+  defense (reset state on every call) and per-variant configuration
+  (mutate then delegate) are incompatible patterns when the variant
+  goes through the same entry point as the base. **Fix:** variants
+  now call `_base.propose_intents + _base.realize` directly,
+  bypassing `_base.agent`'s reset. Base `agent()` retains its reset
+  for self-protection. **Cost:** one 27-minute panel × 4 workers =
+  ~108 min of compute returning a misleading result, plus the second
+  16-seed panel needed to actually answer the L question (which we
+  then deprioritised in favour of the floor sweep). *Promotion
+  candidate:* when a base agent normalises state on every call,
+  variants that mutate that state MUST call the base's internal
+  API directly. Document this pattern explicitly so the next agent
+  building variants doesn't repeat the trap.
+
+- `tag: bash-background-and-wait-confusion` — strategy panel ops:
+  launched the 16-seed panel as
+  `python -u -m scripts.strategy_panel ... > /tmp/blitz_panel.log 2>&1 &`
+  in a Bash tool call, then a follow-up Bash call with
+  `until ! pgrep -f scripts.strategy_panel; do sleep ...; done`.
+  The `&` made the launch bash return immediately, firing a
+  "completed (exit code 0)" task notification while the python was
+  still running. The follow-up `until` loop itself was then
+  auto-backgrounded by the harness, so its notification fired before
+  the loop finished, leading me to inspect a half-written log,
+  conclude the panel had crashed, and launch a redundant 4-seed
+  diagnostic panel (later killed). **Root cause:** mixed two
+  backgrounding mechanisms — manual `&` plus the harness's
+  auto-background — neither communicated end-of-actual-work. **Fix:**
+  use `run_in_background: true` on the launch Bash call (no `&`)
+  and trust the harness's completion notification on the python
+  process; OR use Monitor on the log file for line-by-line streaming.
+  **Cost:** ~10 min of human-side confusion + one redundant
+  small panel. *Promotion candidate:* the Bash tool's
+  `run_in_background` flag is the right pattern for long-running
+  compute — encode this as a rule rather than discovering it
+  again next session.
+
 ## 2026-05-12 (analyze-leaderboard-strategies-sdZlE)
 
 - `tag: stack-first-ablate-later-is-the-wrong-order` — iter-1 v3.5
