@@ -44,9 +44,14 @@ INFLIGHT_EXTRA_HORIZON: int = 30
 INFLIGHT_WEIGHT: float = 0.5
 
 
-def delta_us_minus_them(obs: Any, my_id: int) -> float:
+def delta_us_minus_them_obs(obs: Any, my_id: int) -> float:
     """Plain `(our ships) − (their ships)` from a Snapshot's primary
     observation. Phase 2 validated this at AUC ≈ oracle for K=50.
+
+    Renamed from `delta_us_minus_them` to avoid bundle-shadow collision
+    with the identically-named `lib.fast_sim.delta_us_minus_them(snap, ...)`.
+    The fast_sim version takes a Snapshot; this one takes an obs.
+    Same logic, different first-arg type.
 
     `obs` is `snap.state[my_id].observation` (a `Struct`). Sums
     planet garrisons + in-flight fleet ship counts for owned planets/
@@ -92,7 +97,7 @@ def inflight_value(
     Empty world (no planets) → returns the base ship-delta only
     (which is 0).
     """
-    base = delta_us_minus_them(obs, my_id)
+    base = delta_us_minus_them_obs(obs, my_id)
     # Build World from the terminal observation. fast_sim's Snapshot
     # uses Struct, so World.from_obs accepts it.
     world = World.from_obs(obs)

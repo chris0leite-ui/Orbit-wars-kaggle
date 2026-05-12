@@ -12,7 +12,7 @@ from lib import fast_sim
 from lib.value_heads import (
     INFLIGHT_EXTRA_HORIZON,
     INFLIGHT_WEIGHT,
-    delta_us_minus_them,
+    delta_us_minus_them_obs,
     inflight_value,
 )
 
@@ -36,15 +36,15 @@ def _warmed_snap(seed: int = 42, warmup: int = 15):
 
 
 # ---------------------------------------------------------------------------
-# delta_us_minus_them
+# delta_us_minus_them_obs
 # ---------------------------------------------------------------------------
 
 
 def test_delta_us_minus_them_basic():
     """Total ships per side; us minus them."""
     snap = _warmed_snap()
-    d0 = delta_us_minus_them(snap.state[0].observation, my_id=0)
-    d1 = delta_us_minus_them(snap.state[1].observation, my_id=1)
+    d0 = delta_us_minus_them_obs(snap.state[0].observation, my_id=0)
+    d1 = delta_us_minus_them_obs(snap.state[1].observation, my_id=1)
     # Antisymmetric: from seat 0 it's us-them; from seat 1 it's them-us.
     # The MAGNITUDES match (one observation, two POVs).
     assert d0 == -d1
@@ -53,7 +53,7 @@ def test_delta_us_minus_them_basic():
 def test_delta_us_minus_them_empty_obs():
     """Empty world → 0.0."""
     obs = {"planets": [], "fleets": []}
-    assert delta_us_minus_them(obs, my_id=0) == 0.0
+    assert delta_us_minus_them_obs(obs, my_id=0) == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +77,7 @@ def test_inflight_value_credits_predicted_capture():
     snap = _warmed_snap(seed=7, warmup=20)
     obs = snap.state[0].observation
 
-    base = delta_us_minus_them(obs, my_id=0)
+    base = delta_us_minus_them_obs(obs, my_id=0)
     composite = inflight_value(obs, my_id=0)
 
     # The composite is base + bonus ≥ 0 (bonus is non-negative).
@@ -88,7 +88,7 @@ def test_inflight_value_weight_calibration():
     """Setting weight=0 reduces inflight_value to base ship-delta."""
     snap = _warmed_snap()
     obs = snap.state[0].observation
-    base = delta_us_minus_them(obs, my_id=0)
+    base = delta_us_minus_them_obs(obs, my_id=0)
     zero_bonus = inflight_value(obs, my_id=0, weight=0.0)
     assert base == zero_bonus
 
