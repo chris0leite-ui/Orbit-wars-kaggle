@@ -72,12 +72,45 @@ def settle_plan(
     by_src: dict[int, list[Mission]] = defaultdict(list)
     for m in missions:
         by_src[m.src_id].append(m)
+
+    # σ-equivariant tie-break on equal-score targets. Without this, ties
+    # default to insertion order (= target.id ascending), which makes
+    # σ-paired sources pick the SAME target instead of σ-paired targets.
+    # That single-turn asymmetry cascades to elimination over 500 steps;
+    # it's the cause of the 19% non-draws in v3-vs-v3 self-play
+    # (audit/2026-05-11-cannot-lose-final-finding.md).
+    #
+    # Key: -(src.x - CENTER) * (target.x - CENTER). σ negates both
+    # factors → product invariant → σ-paired (src, target) get the
+    # same key. Within a source's tied targets, T and σ(T) get
+    # opposite-sign keys → consistent σ-equivariant choice.
+    # Falls back to y-axis product when degenerate (planets on x=50 axis),
+    # then target.id for full determinism.
+    def _tb(m: Mission):
+        src = world.planets_by_id.get(m.src_id)
+        tgt = world.planets_by_id.get(m.target_id)
+        if src is None or tgt is None:
+            return (0.0, 0.0, m.target_id)
+        kx = (src.x - 50.0) * (tgt.x - 50.0)
+        ky = (src.y - 50.0) * (tgt.y - 50.0)
+        return (-kx, -ky, m.target_id)
+
+    # Round the primary score to 6 decimal places before tie-breaking.
+    # The env stores planet coordinates with up to 1-ULP σ-asymmetries
+    # (e.g. seed 1: planet 15.y = 30.384005553010518 vs σ-expected
+    # 30.38400555301052). These propagate through distance → score with
+    # 1-ULP differences, defeating the σ-equivariant tie-break above
+    # because the primary -score key already orders the "near-ties" as
+    # distinct. Rounding to 6 places treats sub-ULP-noise as a true
+    # tie, allowing _tb to actually fire.
+    SCORE_ROUND = 6
+
     for src_id in by_src:
-        by_src[src_id].sort(key=lambda m: -m.score)
+        by_src[src_id].sort(key=lambda m: (-round(m.score, SCORE_ROUND), _tb(m)))
 
     source_order = sorted(
         by_src.keys(),
-        key=lambda s: -by_src[s][0].score,
+        key=lambda s: (-round(by_src[s][0].score, SCORE_ROUND), _tb(by_src[s][0])),
     )
 
     # target_id -> list of (eta, ships) for this-turn pending arrivals.

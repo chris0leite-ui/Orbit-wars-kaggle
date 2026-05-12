@@ -24,6 +24,27 @@ def dist(a: Point, b: Point) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
+def sym_hypot(dx: float, dy: float) -> float:
+    """Order-independent hypot — same bits for (dx, dy) and (dy, dx).
+
+    Standard `math.hypot(a, b) = sqrt(a² + b²)` is mathematically
+    symmetric in its arguments but NOT bit-exact under FP rounding:
+    `a² + b²` and `b² + a²` can differ by 1 ULP because the addition
+    is non-associative. Over thousands of mission-score comparisons,
+    this 1-ULP noise turns near-ties into strict orderings, defeating
+    σ-equivariant tie-breaks (audit/2026-05-11-cannot-lose-final-finding.md
+    addendum: 1 ULP score difference made tie-break never fire).
+
+    `sym_hypot` canonicalises arguments to `hypot(min(|dx|,|dy|), max(|dx|,|dy|))`
+    so σ-paired (src, target) pairs produce bit-equal distances.
+    """
+    ax = abs(dx)
+    ay = abs(dy)
+    if ax > ay:
+        ax, ay = ay, ax
+    return math.hypot(ax, ay)
+
+
 def point_to_segment_distance(p: Point, a: Point, b: Point) -> float:
     """Shortest distance from point `p` to segment a->b.
 
