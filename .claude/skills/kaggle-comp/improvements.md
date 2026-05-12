@@ -16,6 +16,66 @@ or required a human nag. See self-improvement.md for the full distillation proto
 
 ## Pending (not yet applied to skill files)
 
+### [ ] [CODE-COMP-DISCOVERED] Pull live Kaggle scores at session start
+
+`tag: live-mu-pull-at-session-start`. Origin: Orbit Wars 2026-05-12
+(fix-early-game-strategy-YSClQ).
+
+In a code/agent comp with rolling-last-2 final selection, the live μ
+of yesterday's submissions can drift overnight (TrueSkill keeps
+matching new opponents). Iterating on local A/B without knowing
+TODAY's live μ mismatches the priors. Friction this session: spent
+~1 h on opener variants believing v3.5.1 was our strong baseline;
+v3.5.1 had actually regressed to μ=943.1, 62μ BELOW v3_snipe's
+1005.7. PI override required to surface the regression
+(`tag: local-ab-doesnt-transfer-to-ladder`).
+
+Fix: add a session-start hook (or a step in WRAPUP / the handover
+read pattern) that GETs `/api/v1/competitions/submissions/list/<comp>`
+via bearer-auth curl and parses current μ for each recent submit.
+Auto-update `state/current.md::our_best_rank` if the latest μ differs
+from the recorded value by > 10. Cost: 1 curl + 1 jq parse (≤ 5 s).
+Token format: most Kaggle harness tokens use `KGAT_<...>` and authenticate
+via `Authorization: Bearer <token>` (the standard `kaggle` CLI's
+`{"username","key"}` JSON form rejects KGAT-format tokens with 401).
+
+Promoted via postmortem 2026-05-12. Acceptance:
+`scripts/<session_start_hook>.py` exists and is wired in via
+`.claude/settings.json` or the WRAPUP read-pattern; running it
+prints a μ-drift line for each rolling-last-2 entry.
+
+### [ ] [CROSS-CUTTING] Diverse-panel test required before submit (in-class A/B win ≠ ladder lift)
+
+`tag: local-ab-doesnt-transfer-to-ladder`. Origin: Orbit Wars
+2026-05-12 (fix-early-game-strategy-YSClQ).
+
+v3.5.1 cleared the canonical 32-seed Wilson-lo gate vs v3_snipe
+(68.8 % / Wilson lo 56.6 %, PASS) but regressed on the ladder
+to μ=943.1 — **62μ below** v3_snipe's 1005.7. The aggressive
+ship-sizing edge in intra-family A/B did not transfer to the
+diverse ladder opponent pool. The 4P FFA panel (which DID include
+diverse opponents) had given v3.5.1 96.9 % vs 93.8 % — a marginal
+parity result that should have been a warning, not a confirmation.
+
+Fix: before submitting any agent that only cleared an intra-family
+A/B (focal vs single frozen prior), require ALSO a diverse-panel
+test. Minimum panel:
+- comp-shipped baseline (e.g. `data/main.py`)
+- ≥ 1 prior-class agent (v3_snipe for code-comp, roi for tabular)
+- the frozen prior already tested
+
+Submission only authorised if focal beats ≥ 50 % of panel agents
+at Wilson lo ≥ 55 % (each pairwise), OR mean panel WR ≥ frozen
+prior's mean panel WR with no panel-cell regression > 5pp.
+
+Codify in `scripts/strategy_panel.py` — add `--gate` mode that
+exits non-zero unless the above is satisfied. Existing
+`strategy_panel.py` already runs the panel; add the gate logic.
+
+Promoted via postmortem 2026-05-12. Acceptance: a published v3.5.1-
+shaped regression cannot pass `--gate`; v7_minimax-shaped lift (live
++57μ over v3_snipe) can.
+
 ### [ ] [CODE-COMP-DISCOVERED] bundle_agent.py: auto-discover required lib modules from agent imports
 
 `tag: bundler-missing-block-e-modules` (and earlier

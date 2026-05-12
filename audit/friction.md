@@ -667,3 +667,57 @@ fired once and been logged for-real.
   (E1 mission framework, E2 gang_up, etc.), estimate in hours not
   days. The Block E1 plan budget of "4-6 hours" reflects the
   re-calibration.
+
+
+## 2026-05-12 (PM — fix-early-game-strategy-YSClQ)
+
+- `tag: local-ab-doesnt-transfer-to-ladder` — v3.5.1 cleared 32-seed
+  2P A/B vs v3_snipe at 68.8% Wilson lo 56.6% (PASS), but live μ
+  settled at **943.1 — 62μ below v3_snipe's 1005.7**. The aggressive
+  ship-sizing change that won locally regressed on the ladder.
+  **Root cause:** in-class self-play A/B measures intra-family edge,
+  but the ladder pits us against agents with different physics +
+  scoring profiles where over-sized fleets become a liability (less
+  defense, fewer launches per source). **Fix:** before submitting,
+  run vs a DIVERSE panel including comp-shipped baseline + Roman-
+  equivalent if available, not just frozen prior. Treat in-family
+  Wilson-lo PASS as necessary-but-insufficient for ladder lift.
+- `tag: small-sample-wilson-lo-misleading` — v7.1_oppaware A/B
+  smokes: 2-seed (4/4 wins, 100%), 4-seed (8/8 wins, 100%,
+  Wilson lo 67.6% — looked like clear PASS). 32-seed binding
+  result: 36/64 = 56.2% raw, Wilson lo **44.1%** (BELOW
+  the 45% NEUTRAL threshold). The small-sample wins were variance.
+  **Root cause:** Wilson interval narrows with √n; at n=8 a single
+  loss flips the verdict. Reporting 8/8 = 67.6% as "PASS" was
+  technically correct on the lower bound but misleadingly framed.
+  **Fix:** never call a result PASS off < 32 seeds. Smokes are for
+  "is it worth running 32?", not for verdicts. State sample size
+  prominently in every verdict line.
+- `tag: 32-seed-w4-silent-crash` — two consecutive 32-seed A/B runs
+  with `--workers 4` exited after 23-24 minutes with empty log
+  files and no result JSON. 32-seed `--workers 2` ran longer
+  (~26 min for 16-seed) but the 4-seed run did succeed. Likely
+  cause: memory pressure or worker-pool deadlock at higher
+  parallelism on the multi-agent maximin path (v7.1's env.clone()
+  per rollout × 4 workers × 64 games). **Fix:** for v7-family A/Bs,
+  default `--workers 2`. Investigation TODO if it recurs: profile
+  memory and consider `--workers 1` for safety on >32-seed runs.
+- `tag: empty-redirect-log-on-bg-failure` — multiple background
+  `python ... > /tmp/log.log 2>&1 &` invocations left empty log
+  files when the python crashed silently. Bash's `&` decoupling
+  may not flush the redirect on abnormal exit. **Fix:** for any
+  A/B run we plan to trust, run foreground OR use Monitor with
+  the python's own stdout, not a shell-redirected log. The
+  artifact JSON written by the script itself is the more reliable
+  evidence.
+- `tag: opening-mission-class-doesnt-help-v7-family` — three
+  opener variants (drain step-0, timing-matched bowwow, drain+
+  enemy targets) all FAILED the 55% Wilson-lo gate. v3.5.1's
+  built-in aggressive=True already does the bowwow trick at step
+  2-3 once src.ships > 12; an opener Mission class duplicates the
+  work without adding edge. **Fix (forward):** stop iterating on
+  the opener at the proposer level. Either (a) make opener a
+  CANDIDATE in v7's maximin enumeration (so it only fires when
+  the rollout sees it survives), or (b) accept the opening is
+  bottlenecked by something other than proposer logic and pivot
+  to the bounce work or v7 candidate-set widening.
