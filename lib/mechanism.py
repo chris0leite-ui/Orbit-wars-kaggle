@@ -39,6 +39,25 @@ from lib.world_model import WorldModel
 
 
 # ---------------------------------------------------------------------------
+# gang_up_size constants — v3.6 multi-source coordination (Plan: 7-step
+# problem-solving iteration). Off by default; opt-in for A/B.
+# ---------------------------------------------------------------------------
+# Phase-0 idle-source decomposition (audit/2026-05-11-idle-breakdown-v3-snipe-
+# phase0.md) showed ~96% of all idle classifications come from `intent.ships
+# > src.ships` in validate + arrival_size — a single source can't fund the
+# capture alone. The combat rule (lib/combat.py::resolve_arrivals) confirms
+# same-owner same-step arrivals sum ships before combat resolution, so two
+# small sources arriving simultaneously CAN cover a target neither alone
+# could. `gang_up_size` is a new mechanism that runs BEFORE `validate` so
+# unaffordable single-source intents survive long enough to be paired.
+GANG_UP_ENABLED = 0              # default OFF; opt-in for A/B
+GANG_UP_ETA_TOLERANCE = 0        # ±turns allowed in shared-eta match
+GANG_UP_MIN_SHARE_THRESHOLD = 2  # min sources to form a gang
+GANG_UP_RESERVE = 0              # garrison kept home per source (defense)
+GANG_UP_MAX_PASSES = 3           # convergence safety belt
+
+
+# ---------------------------------------------------------------------------
 # validate — drop intents that violate ownership / garrison constraints
 # ---------------------------------------------------------------------------
 
@@ -135,8 +154,185 @@ def arrival_size(intents: list[Intent], world: World, model=None) -> list[Intent
 
 
 # ---------------------------------------------------------------------------
-# comet_aim — path-indexed lead for comet targets
+# gang_up_size — multi-source coordination (v3.6)
 # ---------------------------------------------------------------------------
+
+
+def _max_ships_for_eta(distance: float, target_eta: int) -> int:
+    """Return the largest ship count whose fleet_speed yields eta == target_eta.
+
+    `fleet_speed(s)` is monotone non-decreasing in s and bounded above
+    (max_speed). To get a specific eta we want the LARGEST s such that
+    `ceil(distance / fleet_speed(s)) <= target_eta`. Larger ships → faster →
+    smaller eta, so we binary-search the upper bound.
+
+    Returns 1 if even 1 ship would still beat target_eta (target_eta is too
+    generous; caller should accept the lone ship which arrives earlier).
+    Returns 1000 (the saturation point of fleet_speed) if even max_speed
+    can't reach target_eta — caller will need to widen tolerance.
+    """
+    if target_eta <= 0:
+        return 1
+    lo, hi = 1, 1000
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        v = fleet_speed(mid)
+        eta = math.ceil(distance / v) if v > 0 else target_eta + 1
+        if eta <= target_eta:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+
+def gang_up_size(
+    intents: list[Intent], world: World, model: WorldModel | None = None,
+) -> list[Intent]:
+    """Coordinate multiple this-turn intents at the same target so their
+    combined ships cover the predicted garrison.
+
+    Default-off (`GANG_UP_ENABLED = 0`): pure pass-through. When enabled,
+    runs BEFORE `validate` in `DEFAULT_MECHANISMS` so unaffordable single-
+    source intents (which `validate` would otherwise drop on `intent.ships
+    > src.ships`) survive long enough to be paired with siblings.
+
+    Algorithm per target group of size >= GANG_UP_MIN_SHARE_THRESHOLD:
+    1. Anchor eta = max(eta_solo) across the group. Slower sources can't
+       speed up by sending more ships (fleet_speed is bounded), but
+       faster sources CAN slow down by sending fewer ships.
+    2. needed_total = max(static_at_anchor + 1, model.ships_at(target,
+       anchor) + 1). Static = target.ships + production*anchor + 1.
+    3. share_i proportional to src_i.ships, capped at src_i.ships -
+       GANG_UP_RESERVE. Throttled DOWN so the source arrives at anchor
+       (via _max_ships_for_eta).
+    4. Up to GANG_UP_MAX_PASSES iterations: any source whose share_i
+       implies a higher eta than the anchor → re-anchor up. Cap at 3;
+       on failure to converge, drop the gang group (per-intent
+       arrival_size handles them individually as today).
+    5. Sources with share_i < 1 after capping are dropped from the gang
+       and redistributed. If survivors == 1, the lone intent exits
+       gang-up unmodified (preserves sole-source bit-identity).
+
+    Single-intent targets pass through unmodified — sole-source path is
+    a no-op (assertion enforced by test_gangup_sole_source_noop).
+    """
+    if not GANG_UP_ENABLED or not intents:
+        return intents
+
+    # Bucket intents by target_id.
+    by_target: dict[int, list[Intent]] = {}
+    for intent in intents:
+        by_target.setdefault(intent.target_id, []).append(intent)
+
+    # Process each multi-source group; collect modified intents.
+    modified_intent_ids: set[int] = set()
+    for target_id, group in by_target.items():
+        if len(group) < GANG_UP_MIN_SHARE_THRESHOLD:
+            continue
+        target = world.planets_by_id.get(target_id)
+        if target is None:
+            continue
+        # Neutrals don't grow during flight; gang-up is mostly relevant
+        # for enemy targets, but we still allow it for neutrals when a
+        # single source can't afford the static cost (very rare but
+        # possible for early-game large neutrals).
+        # Compute per-source eta_solo using their CURRENT intent.ships.
+        infos = []
+        for intent in group:
+            src = world.planets_by_id.get(intent.src_id)
+            if src is None:
+                continue
+            d = math.hypot(target.x - src.x, target.y - src.y)
+            v = fleet_speed(intent.ships)
+            eta_solo = math.ceil(d / v) if v > 0 else 0
+            infos.append({
+                "intent": intent, "src": src, "distance": d, "eta": eta_solo,
+            })
+        if len(infos) < GANG_UP_MIN_SHARE_THRESHOLD:
+            continue
+
+        # Convergence loop: anchor on slowest source; shrink faster
+        # siblings to match; re-check until stable (or give up).
+        converged = False
+        for _ in range(GANG_UP_MAX_PASSES):
+            anchor_eta = max(info["eta"] for info in infos)
+            # needed_total at anchor_eta.
+            if target.owner == -1 or target.owner == world.my_id:
+                # Neutrals & own planets: no production growth during
+                # flight; needed is just target.ships + 1.
+                needed_total = max(1, int(target.ships) + 1)
+            else:
+                static_needed = (
+                    int(target.ships)
+                    + int(target.production) * anchor_eta
+                    + 1
+                )
+                needed_total = static_needed
+                if model is not None:
+                    pred_ships = model.ships_at(target.id, anchor_eta)
+                    if pred_ships is not None:
+                        needed_total = max(
+                            static_needed, int(math.ceil(pred_ships)) + 1,
+                        )
+
+            # Allocate shares proportional to src.ships, capped by
+            # src.ships - reserve.
+            total_src_ships = sum(info["src"].ships for info in infos)
+            if total_src_ships <= 0:
+                converged = True
+                break
+
+            new_etas = []
+            for info in infos:
+                raw_share = math.ceil(
+                    needed_total * info["src"].ships / total_src_ships
+                )
+                cap = max(0, info["src"].ships - GANG_UP_RESERVE)
+                # Also cap by _max_ships_for_eta so this source actually
+                # arrives at anchor_eta (slower fleets need fewer ships).
+                throttle = _max_ships_for_eta(info["distance"], anchor_eta)
+                share = min(raw_share, cap, throttle)
+                info["share"] = max(0, share)
+                # Recompute eta with new share.
+                v = fleet_speed(max(1, info["share"]))
+                new_eta = math.ceil(info["distance"] / v) if v > 0 else 0
+                new_etas.append(new_eta)
+
+            new_anchor = max(new_etas)
+            if new_anchor <= anchor_eta + GANG_UP_ETA_TOLERANCE:
+                # Update anchor and apply throttles definitively.
+                converged = True
+                # Apply shares to intents; drop any source with share==0
+                # from the gang (re-routed to per-intent arrival_size).
+                gang_share_total = 0
+                survivors = []
+                for i, info in enumerate(infos):
+                    info["eta"] = new_etas[i]
+                    if info["share"] <= 0:
+                        continue
+                    survivors.append(info)
+                    gang_share_total += info["share"]
+                # If combined survivors still cover needed AND we have
+                # ≥ min sources, write the throttled ships back to each
+                # intent. Otherwise drop the gang (fall back to per-
+                # intent arrival_size handling).
+                if (
+                    len(survivors) >= GANG_UP_MIN_SHARE_THRESHOLD
+                    and gang_share_total >= needed_total
+                ):
+                    for info in survivors:
+                        info["intent"].ships = int(info["share"])
+                        modified_intent_ids.add(id(info["intent"]))
+                break
+            # Re-anchor on the new max eta and retry.
+            for i, info in enumerate(infos):
+                info["eta"] = new_etas[i]
+
+        # If we ran out of passes without converging, leave intents
+        # unmodified — per-intent arrival_size will drop them as today.
+        _ = converged
+
+    return intents
 
 
 def _comet_path_lookup(world: World) -> dict[int, tuple[list, int]]:
@@ -521,6 +717,7 @@ def oob_guard(intents: list[Intent], world: World) -> list[Intent]:
 # - `comet_aim` remains EXCLUDED pending a comet-gated re-enable
 #   (research-note §G.14: gate on `production * expected_lifetime > ships`).
 DEFAULT_MECHANISMS = [
+    gang_up_size,                 # v3.6: no-op when GANG_UP_ENABLED=0
     validate,
     arrival_size,
     lead_aim_v2,
@@ -552,6 +749,7 @@ __all__ = [
     "PARITY_MECHANISMS",
     "validate",
     "arrival_size",
+    "gang_up_size",
     "comet_aim",
     "lead_aim",
     "lead_aim_v2",

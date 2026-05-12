@@ -1,0 +1,85 @@
+{
+  "utc": "20260511T221955Z",
+  "variants": {
+    "baseline": {
+      "AIRTIME_PENALTY_WEIGHT": 0.0,
+      "ENDGAME_NEUTRAL_BONUS": 1.0
+    },
+    "airtime_only": {
+      "AIRTIME_PENALTY_WEIGHT": 1.0,
+      "ENDGAME_NEUTRAL_BONUS": 1.0
+    },
+    "endgame_only": {
+      "AIRTIME_PENALTY_WEIGHT": 0.0,
+      "ENDGAME_NEUTRAL_BONUS": 1.5
+    },
+    "air05_eg": {
+      "AIRTIME_PENALTY_WEIGHT": 0.5,
+      "ENDGAME_NEUTRAL_BONUS": 1.5
+    },
+    "air10_eg": {
+      "AIRTIME_PENALTY_WEIGHT": 1.0,
+      "ENDGAME_NEUTRAL_BONUS": 1.5
+    }
+  },
+  "seeds": [
+    42,
+    1,
+    7,
+    13,
+    31,
+    100,
+    17,
+    23
+  ],
+  "include_self_play": false,
+  "summary": {
+    "baseline": {
+      "wins": 33,
+      "losses": 25,
+      "draws": 6,
+      "n": 64,
+      "winrate": 0.515625,
+      "wilson_lo": 0.3958139224399903,
+      "wilson_hi": 0.6336665143421609
+    },
+    "airtime_only": {
+      "wins": 22,
+      "losses": 32,
+      "draws": 10,
+      "n": 64,
+      "winrate": 0.34375,
+      "wilson_lo": 0.2392297503546903,
+      "wilson_hi": 0.46596588182379606
+    },
+    "endgame_only": {
+      "wins": 33,
+      "losses": 25,
+      "draws": 6,
+      "n": 64,
+      "winrate": 0.515625,
+      "wilson_lo": 0.3958139224399903,
+      "wilson_hi": 0.6336665143421609
+    },
+    "air05_eg": {
+      "wins": 34,
+      "losses": 30,
+      "draws": 0,
+      "n": 64,
+      "winrate": 0.53125,
+      "wilson_lo": 0.41071875000475133,
+      "wilson_hi": 0.6482421235595515
+    },
+    "air10_eg": {
+      "wins": 22,
+      "losses": 32,
+      "draws": 10,
+      "n": 64,
+      "winrate": 0.34375,
+      "wilson_lo": 0.2392297503546903,
+      "wilson_hi": 0.46596588182379606
+    }
+  },
+  "tournament_json": "/home/user/Orbit-wars-kaggle/audit/tournaments/2026-05-11T22:19:55Z.json",
+  "elapsed_s": 230.8
+}

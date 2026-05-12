@@ -38,14 +38,33 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 # Imports below depend on sys.path containing the repo root.
+import csv  # noqa: E402
 import lib.mechanism as M  # noqa: E402
 import lib.missions.snipe as MS  # noqa: E402
 import lib.missions.reinforce as MR  # noqa: E402
 import lib.planner as MP  # noqa: E402
+import lib.intent as LI  # noqa: E402
 from lib.intent import World, realize  # noqa: E402
 from lib.world_model import WorldModel  # noqa: E402
 import agents.v3_snipe.main as AGENT  # noqa: E402
 from scripts.live_episode_summary import detect_team_name  # noqa: E402
+
+
+# Top-level idle-source bucket names (Phase 0 instrumentation). The full
+# reason strings produced by `lib.planner.settle_plan` and `lib.intent.realize`
+# may contain a `:<sub-mech>` suffix; aggregations collapse on the prefix.
+IDLE_BUCKETS = (
+    "NO_PROPOSALS",
+    "GATE_REJECTED",      # reserved — no current proposer threshold-rejects
+    "LEDGER_LOSS",
+    "MECHANISM_DROP",
+    "RESERVE_HELD",       # reserved — no current reserve dial
+)
+
+
+def bucket_of(reason: str) -> str:
+    """Collapse `MECHANISM_DROP:arrival_size` → `MECHANISM_DROP`, etc."""
+    return reason.split(":", 1)[0] if reason else "UNKNOWN"
 
 
 TELEMETRY: dict = {}
@@ -61,6 +80,8 @@ def reset_telemetry() -> None:
     TELEMETRY["drops"] = collections.Counter()
     TELEMETRY["picked_scores"] = []
     TELEMETRY["runnerup_margin"] = []
+    # Phase 0 idle-source classification: src_id -> reason string.
+    TELEMETRY["idle_reasons"] = {}
 
 
 def install_hooks() -> None:
@@ -73,6 +94,7 @@ def install_hooks() -> None:
     orig_propose_snipe = MS.propose_snipe_missions
     orig_propose_reinforce = MR.propose_reinforce_missions
     orig_settle = MP.settle_plan
+    orig_realize = LI.realize
 
     def wrapped_snipe(world, model):
         out = orig_propose_snipe(world, model)
@@ -84,9 +106,11 @@ def install_hooks() -> None:
         TELEMETRY["n_reinforce_candidates"] += len(out)
         return out
 
-    def wrapped_settle(missions, world, model):
-        # Count sources and idle sources after the planner runs.
-        intents = orig_settle(missions, world, model)
+    def wrapped_settle(missions, world, model, reasons=None):
+        # Capture settle-time idle reasons (NO_PROPOSALS / LEDGER_LOSS).
+        capture: dict = reasons if reasons is not None else {}
+        intents = orig_settle(missions, world, model, reasons=capture)
+        TELEMETRY["idle_reasons"].update(capture)
         TELEMETRY["n_settled"] += len(intents)
         my_planets = [p for p in world.planets_by_id.values() if p.owner == world.my_id]
         n_sources = len(my_planets)
@@ -105,13 +129,22 @@ def install_hooks() -> None:
                 TELEMETRY["runnerup_margin"].append(scores[0] - scores[1])
         return intents
 
+    def wrapped_realize(intents, obs, *, mechanisms, model=None, reasons=None):
+        # Capture realize-time idle reasons (MECHANISM_DROP:<mech_name>).
+        capture: dict = reasons if reasons is not None else {}
+        out = orig_realize(intents, obs, mechanisms=mechanisms, model=model, reasons=capture)
+        TELEMETRY["idle_reasons"].update(capture)
+        return out
+
     # In-place patch (the agent imports symbols by name, not module).
     MS.propose_snipe_missions = wrapped_snipe
     MR.propose_reinforce_missions = wrapped_reinforce
     MP.settle_plan = wrapped_settle
+    LI.realize = wrapped_realize
     AGENT.propose_snipe_missions = wrapped_snipe
     AGENT.propose_reinforce_missions = wrapped_reinforce
     AGENT.settle_plan = wrapped_settle
+    AGENT.realize = wrapped_realize
 
     # Wrap each mechanism in DEFAULT_MECHANISMS by mutating the list in-place.
     orig_mechs = list(M.DEFAULT_MECHANISMS)
@@ -380,6 +413,11 @@ def analyse_episode(path: Path, team_name: str) -> dict:
             if not recorded_action and predicted == []:
                 n_emit_match += 1
 
+        # Serialise idle reasons with int keys → str (JSON-safe).
+        idle_reasons_serialised = {
+            str(k): v for k, v in TELEMETRY["idle_reasons"].items()
+        }
+
         per_turn.append({
             "t": t,
             "n_snipe": TELEMETRY["n_snipe_candidates"],
@@ -390,6 +428,7 @@ def analyse_episode(path: Path, team_name: str) -> dict:
             "drops": dict(TELEMETRY["drops"]),
             "picked_scores": TELEMETRY["picked_scores"],
             "runnerup_margin": TELEMETRY["runnerup_margin"],
+            "idle_reasons": idle_reasons_serialised,
             "agent_action_matches_recorded": match,
             "dt_ms": round(dt_ms, 2),
             "err": err,
@@ -417,6 +456,14 @@ def analyse_episode(path: Path, team_name: str) -> dict:
     }
 
 
+def _phase_of(t: int) -> str:
+    if t < 150:
+        return "early"
+    if t < 400:
+        return "mid"
+    return "late"
+
+
 def aggregate(per_episode: list) -> dict:
     """Roll-up across episodes."""
     drops_total: collections.Counter = collections.Counter()
@@ -432,6 +479,13 @@ def aggregate(per_episode: list) -> dict:
     match_total = 0
     by_result: collections.Counter = collections.Counter()
     by_size_result: dict = collections.defaultdict(collections.Counter)
+    # Phase 0 idle-source classification.
+    idle_buckets_total: collections.Counter = collections.Counter()
+    idle_buckets_by_size: dict = collections.defaultdict(collections.Counter)
+    idle_buckets_by_phase: dict = collections.defaultdict(collections.Counter)
+    idle_buckets_by_size_phase: dict = collections.defaultdict(collections.Counter)
+    idle_subcounters: collections.Counter = collections.Counter()
+    idle_buckets_by_result: dict = collections.defaultdict(collections.Counter)
 
     for ep in per_episode:
         if "error" in ep:
@@ -440,6 +494,8 @@ def aggregate(per_episode: list) -> dict:
         by_size_result[ep["size"]][ep["result"]] += 1
         for k, v in (ep.get("fleet_outcomes") or {}).items():
             fleet_outcomes_total[k] += v
+        ep_size = ep.get("size")
+        ep_result = ep.get("result")
         for pt in ep.get("per_turn", []):
             n_turns += 1
             for k, v in pt.get("drops", {}).items():
@@ -454,9 +510,21 @@ def aggregate(per_episode: list) -> dict:
                 match_ok += 1
             if pt.get("predicted_n_launches") is not None:
                 match_total += 1
+            phase = _phase_of(pt.get("t", 0))
+            for src_id, reason in pt.get("idle_reasons", {}).items():
+                bucket = bucket_of(reason)
+                idle_buckets_total[bucket] += 1
+                idle_buckets_by_size[str(ep_size)][bucket] += 1
+                idle_buckets_by_phase[phase][bucket] += 1
+                idle_buckets_by_size_phase[f"{ep_size}p_{phase}"][bucket] += 1
+                idle_buckets_by_result[ep_result][bucket] += 1
+                # Track the full reason (with sub-mech) for MECHANISM_DROP.
+                if reason != bucket:
+                    idle_subcounters[reason] += 1
 
     p95 = sorted(dt_ms_all)[int(0.95 * (len(dt_ms_all) - 1))] if dt_ms_all else 0
     p99 = sorted(dt_ms_all)[int(0.99 * (len(dt_ms_all) - 1))] if dt_ms_all else 0
+    total_idle_classified = sum(idle_buckets_total.values())
     return {
         "n_episodes": len([e for e in per_episode if "error" not in e]),
         "by_result": dict(by_result),
@@ -475,7 +543,48 @@ def aggregate(per_episode: list) -> dict:
         "fleet_outcomes_total": dict(fleet_outcomes_total),
         "dt_ms_p95": round(p95, 2),
         "dt_ms_p99": round(p99, 2),
+        # Phase 0 idle-source decomposition.
+        "idle_buckets_total": dict(idle_buckets_total),
+        "idle_buckets_by_size": {k: dict(v) for k, v in idle_buckets_by_size.items()},
+        "idle_buckets_by_phase": {k: dict(v) for k, v in idle_buckets_by_phase.items()},
+        "idle_buckets_by_size_phase": {k: dict(v) for k, v in idle_buckets_by_size_phase.items()},
+        "idle_buckets_by_result": {k: dict(v) for k, v in idle_buckets_by_result.items()},
+        "idle_subcounters": dict(idle_subcounters),
+        "idle_total_classified": total_idle_classified,
     }
+
+
+def write_idle_trace_csv(per_episode: list, out_path: Path) -> int:
+    """Emit one row per (episode, turn, idle-source) into a flat CSV.
+
+    Columns: episode_id, size, result, t, phase, src_id, reason_full, reason_bucket.
+    Returns the number of rows written.
+    """
+    n_rows = 0
+    with out_path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow([
+            "episode_id", "size", "result", "t", "phase",
+            "src_id", "reason_full", "reason_bucket",
+        ])
+        for ep in per_episode:
+            if "error" in ep:
+                continue
+            for pt in ep.get("per_turn", []):
+                phase = _phase_of(pt.get("t", 0))
+                for src_id, reason in pt.get("idle_reasons", {}).items():
+                    writer.writerow([
+                        ep.get("episode_id", ""),
+                        ep.get("size", ""),
+                        ep.get("result", ""),
+                        pt.get("t", ""),
+                        phase,
+                        src_id,
+                        reason,
+                        bucket_of(reason),
+                    ])
+                    n_rows += 1
+    return n_rows
 
 
 def main(argv=None) -> int:
@@ -531,6 +640,11 @@ def main(argv=None) -> int:
     roll["team_name"] = team_name
     roll["elapsed_s"] = round(time.perf_counter() - t0, 1)
     (out_dir / "roll-up.json").write_text(json.dumps(roll, indent=2) + "\n")
+
+    csv_path = out_dir / "idle-trace.csv"
+    n_rows = write_idle_trace_csv(per_episode, csv_path)
+    roll["idle_trace_csv_rows"] = n_rows
+
     print()
     print(f"=== ROLL-UP submission {args.submission_id} ===")
     print(f"  episodes={roll['n_episodes']}  by_result={roll['by_result']}")
@@ -544,6 +658,26 @@ def main(argv=None) -> int:
     print(f"  fleet_outcomes = {roll['fleet_outcomes_total']}")
     print(f"  agent dt p95={roll['dt_ms_p95']}ms  p99={roll['dt_ms_p99']}ms")
     print(f"  elapsed: {roll['elapsed_s']}s")
+    print()
+    print(f"=== IDLE-SOURCE BUCKETS (Phase 0 instrumentation) ===")
+    total = roll["idle_total_classified"]
+    print(f"  total idle classifications: {total} (across {roll['n_turns']} turns)")
+    for bucket in IDLE_BUCKETS:
+        c = roll["idle_buckets_total"].get(bucket, 0)
+        pct = (100.0 * c / total) if total else 0
+        print(f"    {bucket:<14} {c:>7} ({pct:5.1f}%)")
+    print(f"  by 2P/4P × phase:")
+    for key in sorted(roll["idle_buckets_by_size_phase"].keys()):
+        sub = roll["idle_buckets_by_size_phase"][key]
+        n_sub = sum(sub.values())
+        line = ", ".join(
+            f"{b}={sub.get(b, 0)/n_sub*100:.0f}%" for b in IDLE_BUCKETS if sub.get(b, 0)
+        )
+        print(f"    {key:<14} n={n_sub:<6} {line}")
+    print(f"  top MECHANISM_DROP sub-causes:")
+    for sub, c in sorted(roll["idle_subcounters"].items(), key=lambda kv: -kv[1])[:8]:
+        print(f"    {sub:<40} {c}")
+    print(f"  idle-trace CSV: {csv_path} ({n_rows} rows)")
     return 0
 
 

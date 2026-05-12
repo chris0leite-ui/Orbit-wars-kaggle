@@ -1,0 +1,96 @@
+{
+  "utc": "20260511T224629Z",
+  "variants": {
+    "baseline": {
+      "AIRTIME_PENALTY_WEIGHT": 0.0,
+      "ENDGAME_NEUTRAL_BONUS": 1.0
+    },
+    "a05_eg": {
+      "AIRTIME_PENALTY_WEIGHT": 0.5,
+      "ENDGAME_NEUTRAL_BONUS": 1.5
+    },
+    "a025_eg": {
+      "AIRTIME_PENALTY_WEIGHT": 0.25,
+      "ENDGAME_NEUTRAL_BONUS": 1.5
+    },
+    "eg_only": {
+      "AIRTIME_PENALTY_WEIGHT": 0.0,
+      "ENDGAME_NEUTRAL_BONUS": 1.5
+    }
+  },
+  "seeds": [
+    42,
+    1,
+    7,
+    13,
+    31,
+    100,
+    17,
+    23,
+    53,
+    71,
+    89,
+    97,
+    113,
+    137,
+    149,
+    167,
+    181,
+    197,
+    211,
+    233,
+    257,
+    269,
+    283,
+    307,
+    331,
+    347,
+    367,
+    383,
+    401,
+    419,
+    433,
+    449
+  ],
+  "include_self_play": false,
+  "summary": {
+    "baseline": {
+      "wins": 76,
+      "losses": 76,
+      "draws": 40,
+      "n": 192,
+      "winrate": 0.3958333333333333,
+      "wilson_lo": 0.3293544452532885,
+      "wilson_hi": 0.4663988574158072
+    },
+    "a05_eg": {
+      "wins": 97,
+      "losses": 95,
+      "draws": 0,
+      "n": 192,
+      "winrate": 0.5052083333333334,
+      "wilson_lo": 0.4350815894143847,
+      "wilson_hi": 0.5751307454521606
+    },
+    "a025_eg": {
+      "wins": 103,
+      "losses": 89,
+      "draws": 0,
+      "n": 192,
+      "winrate": 0.5364583333333334,
+      "wilson_lo": 0.46589762049580147,
+      "wilson_hi": 0.605588723570015
+    },
+    "eg_only": {
+      "wins": 68,
+      "losses": 84,
+      "draws": 40,
+      "n": 192,
+      "winrate": 0.3541666666666667,
+      "wilson_lo": 0.2899827813782738,
+      "wilson_hi": 0.4240718423584603
+    }
+  },
+  "tournament_json": "/home/user/Orbit-wars-kaggle/audit/tournaments/2026-05-11T22:46:28Z.json",
+  "elapsed_s": 583.9
+}

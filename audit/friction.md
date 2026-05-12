@@ -1,5 +1,87 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-11/12 (optimize-ship-strategy-tDPXx)
+
+- `tag: idle-bucket-reduction-is-misleading-proxy` — methodology:
+  Phase-0 idle-source decomposition surfaced MECHANISM_DROP at ~96%
+  of all idle classifications and motivated four consecutive
+  scoring/filter knobs (airtime, endgame, affordability filter,
+  gang-up). Every variant *reduced* the bucket — and *tied or
+  regressed* at 64-seed Wilson vs v3.4 baseline. Root cause: each
+  "drop" represents an attempted capture at a high-value target;
+  some succeed via WorldModel adversary stacking and the ones that
+  bounce still preserve home-garrison defensive value. The proxy
+  measures attempts-not-launched, while what matters is
+  expected-value-captured. **Fix this session:** documented the
+  inversion in `audit/2026-05-11-v3.5-airtime-and-endgame-burn.md`
+  and `audit/2026-05-12-gang-up-v1.md`. Promotion candidate: codify
+  "validate the proxy via correlation with the actual outcome metric
+  BEFORE running ≥1 variant against it." Multiple cycles of fix→fail
+  cost the entire overnight session.
+
+- `tag: gang-up-substrate-bug-arrival-size-reinflates` — gang_up_size
+  ran BEFORE validate (correct) but BEFORE arrival_size too;
+  arrival_size's `intent.ships = max(intent.ships, needed)` silently
+  re-inflates every throttled share to the full target garrison, then
+  drops if the re-inflated value exceeds `src.ships`. Phase-0 data:
+  validate drops -39% (gang-up's intended effect) but arrival_size
+  drops +31% (the re-inflation backfire). Net total drops -2%, so the
+  gang-up mechanism wasn't even mechanically working end-to-end.
+  **Fix:** documented; future Option A redesign needs arrival_size to
+  be sibling-aware (track sum of co-target intents, deduct from
+  per-intent needed). Filed in `audit/2026-05-12-gang-up-v1.md`.
+
+- `tag: ab-variants-regex-rejected-inline-comments` — scripts/ab_variants.py
+  initially matched `^NAME\s*=\s*[-+0-9.eE]+\s*$` which excluded
+  declarations with trailing inline comments like `GANG_UP_ENABLED = 0
+  # default OFF`. First gang-up A/B failed at the bundling step with
+  "variant override not found." Patched regex to tolerate
+  `(?:#.*)?$` and preserved the trailing comment in the substitution.
+  **Fix:** committed in `a8ae69a` alongside the multi-file
+  auto-discovery. Promotion candidate: harness scripts that patch
+  source files should accept the project's actual coding style, not
+  a stricter subset; add a smoke unit test for known constants in
+  each declared `PATCHABLE_PATHS` file.
+
+- `tag: ab-variants-hardcoded-snipe-only` — scripts/ab_variants.py
+  originally hardcoded `SNIPE_PATH = lib/missions/snipe.py`. The
+  first gang-up A/B attempt tried to patch GANG_UP_ENABLED (defined
+  in `lib/mechanism.py`) against the snipe file and failed loudly.
+  **Fix:** extended to scan `PATCHABLE_PATHS = [snipe, reinforce,
+  mechanism, planner]`, auto-discover the owning file per constant,
+  and error on multi-file collisions. The discovery + collision
+  check is cheap and prevents a class of future bugs as more
+  ablation knobs are added across files.
+
+- `tag: bool-vs-int-constant-typing-for-ab-regex` — added
+  PROPOSER_AFFORDABILITY_FILTER as `False` (bool); ab_variants regex
+  only matches numeric literals so couldn't patch it. Fixed by
+  switching the constant to int (`0` / `1`) — Python truthiness
+  preserves the `if FLAG:` check. Costs us one type signature
+  precision in exchange for cleaner harness compatibility. **Fix:**
+  documented in the constant docstring; future opt-in flags will
+  default to numeric-literal style.
+
+- `tag: claude-bash-pipe-buffers-progress-output` — first big sweep
+  (6-variant 32-seed) launched as `python ... 2>&1 | tail -15`
+  produced no output until completion. The trailing pipe buffers
+  stdout, so I couldn't see progress and assumed the bundling was
+  hanging. Killed it; re-ran. **Fix:** use `python -u -m ... >
+  /tmp/<name>.log 2>&1 &` for background sweeps (no pipe → real-time
+  flush) and arm a Monitor on the log file. Pattern locked in for
+  the remaining 4 sweeps tonight; cost was ~30 minutes of waiting +
+  one wasted compute window.
+
+- `tag: 32-seed-point-estimate-noise-at-128-game-level` — AIRTIME=0.5
+  variant looked good at 32-seed pair-level (54.7%, 35/29/0) but
+  converged to 52.3% (67/61/0) at 64-seed. The extra 32 seeds were
+  precisely 50/50 = 32/32 wins/losses. Wilson_lo dropped from 42.6%
+  to 43.7% — small absolute change, but the "tied" verdict only
+  materialised at 64-seed. **Fix:** raise the "ship" gate to require
+  64-seed pair-level Wilson_lo > 50%. 32-seed point estimates above
+  50% can be confidently noise. Promotion candidate: "32-seed
+  Wilson_lo < 50% → require 64-seed retest before ship."
+
 ## 2026-05-11 PM (analyze-submission-logs-dFHeS)
 
 - `tag: stale-rolling-last-2-pre-submit` — submission flow: pushed

@@ -1,0 +1,95 @@
+{
+  "n_episodes": 4,
+  "by_result": {
+    "win": 4
+  },
+  "by_size_result": {
+    "4": {
+      "win": 4
+    }
+  },
+  "n_turns": 923,
+  "action_match_rate": 1.0,
+  "n_turns_compared": 923,
+  "candidates_per_turn": {
+    "snipe": 100.06283856988082,
+    "reinforce": 0.14734561213434452
+  },
+  "settled_per_turn": 4.581798483206934,
+  "idle_source_rate": 0.08145091225021721,
+  "drops_per_turn": {
+    "validate": 1.7031419284940412,
+    "arrival_size": 2.531960996749729,
+    "lead_aim_v2": 0.0,
+    "sun_avoid": 0.007583965330444204,
+    "path_clears_other_planets": 0.024918743228602384,
+    "oob_guard": 0.0
+  },
+  "drops_total": {
+    "validate": 1572,
+    "arrival_size": 2337,
+    "lead_aim_v2": 0,
+    "sun_avoid": 7,
+    "path_clears_other_planets": 23,
+    "oob_guard": 0
+  },
+  "fleet_outcomes_total": {
+    "captured": 153,
+    "bounced_enemy": 10,
+    "reinforced_self": 74,
+    "vanished_in_space": 47,
+    "arrived_but_lost": 3,
+    "alive_at_end": 3
+  },
+  "dt_ms_p95": 11.67,
+  "dt_ms_p99": 16.44,
+  "idle_buckets_total": {
+    "MECHANISM_DROP": 3939,
+    "LEDGER_LOSS": 222,
+    "NO_PROPOSALS": 153
+  },
+  "idle_buckets_by_size": {
+    "4": {
+      "MECHANISM_DROP": 3939,
+      "LEDGER_LOSS": 222,
+      "NO_PROPOSALS": 153
+    }
+  },
+  "idle_buckets_by_phase": {
+    "early": {
+      "MECHANISM_DROP": 2726
+    },
+    "mid": {
+      "MECHANISM_DROP": 1213,
+      "LEDGER_LOSS": 222,
+      "NO_PROPOSALS": 153
+    }
+  },
+  "idle_buckets_by_size_phase": {
+    "4p_early": {
+      "MECHANISM_DROP": 2726
+    },
+    "4p_mid": {
+      "MECHANISM_DROP": 1213,
+      "LEDGER_LOSS": 222,
+      "NO_PROPOSALS": 153
+    }
+  },
+  "idle_buckets_by_result": {
+    "win": {
+      "MECHANISM_DROP": 3939,
+      "LEDGER_LOSS": 222,
+      "NO_PROPOSALS": 153
+    }
+  },
+  "idle_subcounters": {
+    "MECHANISM_DROP:validate": 1572,
+    "MECHANISM_DROP:arrival_size": 2337,
+    "MECHANISM_DROP:path_clears_other_planets": 23,
+    "MECHANISM_DROP:sun_avoid": 7
+  },
+  "idle_total_classified": 4314,
+  "submission_id": "SELFPLAY_PHASE0_V35_4P",
+  "team_name": "chrisLeiteScha",
+  "elapsed_s": 6.2
+}

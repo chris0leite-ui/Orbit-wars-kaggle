@@ -1,0 +1,95 @@
+{
+  "n_episodes": 4,
+  "by_result": {
+    "win": 4
+  },
+  "by_size_result": {
+    "2": {
+      "win": 4
+    }
+  },
+  "n_turns": 1656,
+  "action_match_rate": 1.0,
+  "n_turns_compared": 1656,
+  "candidates_per_turn": {
+    "snipe": 207.21678743961354,
+    "reinforce": 0.7493961352657005
+  },
+  "settled_per_turn": 12.515096618357488,
+  "idle_source_rate": 0.0,
+  "drops_per_turn": {
+    "gang_up_size": 0.0,
+    "validate": 3.5392512077294684,
+    "arrival_size": 7.841787439613527,
+    "lead_aim_v2": 0.0,
+    "sun_avoid": 0.03985507246376811,
+    "path_clears_other_planets": 0.1539855072463768,
+    "oob_guard": 0.00785024154589372
+  },
+  "drops_total": {
+    "gang_up_size": 0,
+    "validate": 5861,
+    "arrival_size": 12986,
+    "lead_aim_v2": 0,
+    "sun_avoid": 66,
+    "path_clears_other_planets": 255,
+    "oob_guard": 13
+  },
+  "fleet_outcomes_total": {
+    "captured": 644,
+    "reinforced_self": 629,
+    "bounced_enemy": 102,
+    "vanished_in_space": 115,
+    "arrived_but_lost": 19,
+    "alive_at_end": 20,
+    "bounced_neutral": 9
+  },
+  "dt_ms_p95": 22.0,
+  "dt_ms_p99": 31.51,
+  "idle_buckets_total": {
+    "MECHANISM_DROP": 19181
+  },
+  "idle_buckets_by_size": {
+    "2": {
+      "MECHANISM_DROP": 19181
+    }
+  },
+  "idle_buckets_by_phase": {
+    "early": {
+      "MECHANISM_DROP": 4957
+    },
+    "mid": {
+      "MECHANISM_DROP": 10137
+    },
+    "late": {
+      "MECHANISM_DROP": 4087
+    }
+  },
+  "idle_buckets_by_size_phase": {
+    "2p_early": {
+      "MECHANISM_DROP": 4957
+    },
+    "2p_mid": {
+      "MECHANISM_DROP": 10137
+    },
+    "2p_late": {
+      "MECHANISM_DROP": 4087
+    }
+  },
+  "idle_buckets_by_result": {
+    "win": {
+      "MECHANISM_DROP": 19181
+    }
+  },
+  "idle_subcounters": {
+    "MECHANISM_DROP:validate": 5861,
+    "MECHANISM_DROP:arrival_size": 12986,
+    "MECHANISM_DROP:sun_avoid": 66,
+    "MECHANISM_DROP:path_clears_other_planets": 255,
+    "MECHANISM_DROP:oob_guard": 13
+  },
+  "idle_total_classified": 19181,
+  "submission_id": "SELFPLAY_GANGUP_2P",
+  "team_name": "chrisLeiteScha",
+  "elapsed_s": 13.8
+}
