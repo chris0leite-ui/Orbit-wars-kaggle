@@ -1,5 +1,48 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-12 EVE (game-ai-lookahead-3ucqH — v9 super-version + v10 + submit attempt)
+
+- `tag: kaggle-cli-401-from-sandbox` — `kaggle competitions submit`
+  returned HTTP 401 from this sandbox throughout the day, including
+  on the authorized v7_0_drop_one push at session end. The
+  `KaggleAPIToke` env var is sanitized for the sandbox; the actual
+  push must be made from a credentialed machine. **Fix:** documented
+  in audit; PI to push externally. Promotion candidate: pre-session
+  cred check would surface this before the agent commits time to
+  building agents that can't be pushed.
+
+- `tag: sigma-equiv-helps-v7minimax-hurts-v7_0` — the σ-equiv layer
+  (sym_hypot + planner _tb + SCORE_ROUND=6) lifted v7_minimax to μ=1063
+  (per parallel-branch audit: ~+45μ over v3.4 baseline alone) but
+  REGRESSES v7_0's drop-one architecture by ~54pp at n=24. v7.6 bisect
+  confirmed this directly. Root cause hypothesis: σ-equiv's deterministic
+  tie-break removes some diversity from settle_plan's candidate ordering;
+  v7_minimax's K=3 maximin partially compensates because it explicitly
+  scores both σ-paired actions, while v7_0's K=10 ship-delta relies on
+  variance in the candidate set to differentiate launches. **Fix:**
+  σ-equiv reverted in lib/missions/snipe.py + lib/planner.py for v9+.
+  Promotion candidate: the v3 family agent comparisons need σ-equiv;
+  the v7-family agents (drop-one + K=10) don't. Library-level changes
+  that benefit one architecture can harm another.
+
+- `tag: K=15-regresses-with-ship-delta-head` — bumping K from 10 to 15
+  with the default ship-delta scoring head regressed v9_k15 to 2/24 = 8.3%
+  vs v7_0 (Wilson lo 2.3%, catastrophic). p95 = 734ms over the 700ms
+  watchdog → watchdog truncates → conservative-incumbent-fallback on
+  many turns. The inflight_value head RESCUED this from total collapse
+  in v9_combined (58.3%) but couldn't gate-clear. **Lesson:** K=10 is a
+  sweet spot, not a blind spot, in the v7_0 regime. Don't extend K
+  without first reducing per-step rollout cost or upgrading the head.
+
+- `tag: value-head-lift-pattern-consistent-but-not-significant-at-n=24`
+  — Five super-version variants we tested all point to evaluate_value
+  / inflight_value lifting v7_0 by ~+12-25pp at point-estimate, but
+  none cleared Wilson 55% at n=24. n=96+ would be needed to crystallize.
+  The lift is real (smoke confirms v9_combined launches when v7_0 returns
+  []) but small enough that the existing budget can't gate it cleanly.
+  **Promotion candidate:** local A/B at n=64 should be the standard
+  gate for "directional but-not-yet-Wilson-significant" candidates.
+
 ## 2026-05-12 PM (game-ai-lookahead-3ucqH — v7.1-v7.6 stack iteration)
 
 - `tag: maximin-budget-blow-up` — v7.1's 2×N maximin matrix × symmetric
