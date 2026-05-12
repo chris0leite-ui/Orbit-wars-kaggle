@@ -168,6 +168,44 @@ def test_combined_deduplicates():
     assert len(keys) == len(set(keys)), "combined produced duplicates"
 
 
+def test_choose_falls_back_to_incumbent_in_4p():
+    """The rollout machinery assumes 2P. In 4P, choose() must return
+    the v3.5.1 incumbent without invoking score_candidate (which would
+    raise ValueError on num_seats != 2)."""
+    from kaggle_environments import make
+    from lib.v7_search import choose, _build_incumbent_intents, _action_from_intents
+    from lib.intent import World
+    from lib.world_model import WorldModel
+
+    env = make("orbit_wars", configuration={"seed": 42}, debug=False)
+    env.reset(num_agents=4)
+    # Warm to get a non-trivial state
+    import random
+    rng = random.Random(1)
+    for _ in range(20):
+        acts = []
+        for p in range(4):
+            ll = [
+                [pl[0], rng.uniform(0, 6.28), int(pl[5] // 3)]
+                for pl in env.state[0].observation["planets"]
+                if pl[1] == p and pl[5] > 10 and rng.random() < 0.3
+            ]
+            acts.append(ll)
+        env.step(acts)
+
+    obs = env.state[0].observation
+    # Compute incumbent directly for comparison
+    world = World.from_obs(obs)
+    model = WorldModel.from_world(world)
+    incumbent_intents = _build_incumbent_intents(world, model)
+    expected_incumbent = _action_from_intents(incumbent_intents, obs, model)
+
+    action = choose(obs, env.configuration, enumerator_mode="drop_one",
+                    K=10, wallclock_ms=700.0)
+    # In 4P, action must equal the incumbent verbatim.
+    assert action == expected_incumbent
+
+
 def test_score_candidate_is_deterministic():
     env = _warmup_env()
     obs = env.state[0].observation

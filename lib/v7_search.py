@@ -419,6 +419,31 @@ def _action_key(action: list[list]) -> tuple:
     )
 
 
+def _infer_num_seats(world: World) -> int:
+    """Best-effort player-count inference from the obs.
+
+    The kaggle_environments obs doesn't directly expose `num_agents` —
+    only `player` (our seat). We infer from the highest owner ID seen
+    across planets + fleets. 2P games yield owners in {0, 1} ∪ {-1};
+    4P yields {0, 1, 2, 3} ∪ {-1}.
+    """
+    max_owner = world.my_id
+    for p in world.planets_by_id.values():
+        if p.owner > max_owner:
+            max_owner = p.owner
+    raw = world.obs_raw
+    fleets = (
+        raw.get("fleets", [])
+        if isinstance(raw, dict)
+        else getattr(raw, "fleets", [])
+    )
+    for f in fleets or []:
+        owner = int(f[1])
+        if owner > max_owner:
+            max_owner = owner
+    return max_owner + 1 if max_owner >= 0 else 1
+
+
 def score_candidate(
     snap: Snapshot,
     action: list[list],
@@ -488,6 +513,14 @@ def choose(
 
     incumbent_intents = _build_incumbent_intents(world, model)
     incumbent_action = _action_from_intents(incumbent_intents, obs, model)
+
+    # 2P-only guard: the rollout's opp_model assumes a single opponent
+    # seat. In 4P games we'd need to model 3 opponents simultaneously,
+    # and the 2P Snapshot of a 4P obs systematically prefers "do
+    # nothing" (the other 2 opponents are invisible to the simulator).
+    # Fall back to the v3.5.1 incumbent — parity floor preserved.
+    if _infer_num_seats(world) != 2:
+        return incumbent_action
 
     # Snapshot for rollout. Episode seed unknown on the live ladder; this
     # is the same caveat documented in lib/lookahead.py and lib/fast_sim.
