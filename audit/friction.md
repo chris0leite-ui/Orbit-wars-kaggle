@@ -1,5 +1,46 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-12 (game-theory-strategy-analysis-0oH4N)
+
+- `tag: useless-tautology-framing` — game-theory work: initially
+  framed the v3-vs-v3 = 81% draws finding as "v3 IS the cannot-lose
+  floor; nothing more to do." PI pushback: "this is kind of useless
+  insight." Reframing revealed the 19% non-draws were FIXABLE σ-
+  equivariance bugs in v3's tie-break path; three surgical patches
+  closed them to 100%. **Fix:** when an analysis terminates in
+  "current code already solves it," look harder at the residual
+  before declaring done. The residual is usually the actual lever.
+
+- `tag: structural-overlay-frame-error` — cannot-lose architecture:
+  first six iterations (Tier 0-2 mirror, hybrid, v4_endgame, v5_psp,
+  v6_steady) tried to ADD a cannot-lose layer on top of v3. ALL
+  empirically falsified. **Root cause:** cannot-lose is INTRINSIC
+  to near-Nash play, not an addable overlay. **Fix:** the seventh
+  iteration debugged v3 itself (σ-equiv tie-break + sym_hypot +
+  score rounding) and achieved 100% v3-vs-v3 draws.
+
+- `tag: stale-current-md-rolling-last-2` — submission flow: state/
+  current.md claimed precision_v3 was at μ=984.6 in rolling-last-2;
+  actual was μ=1009.0 (had risen since the note was written).
+  Materially changed the strategic calculus on whether to submit.
+  **Fix:** verify rolling-last-2 via `kaggle competitions submissions`
+  immediately before any submit, not via stale state notes.
+
+- `tag: replay-parity-test-expected-fail` — bundle / submission:
+  test_v3_snipe_frozen_bundle_replay_parity_100pct fails at 94.96%
+  match because our σ-equiv patches change v3's tied-target picks
+  on ~5% of turns. The test is doing its job (flagging the change)
+  but blocks pytest green. **Fix:** post-submission, rebuild the
+  frozen-bundle fixture from the new submitted bundle (#52565034)
+  so future regressions against the new baseline are caught.
+
+- `tag: stop-hook-cant-commit-gitignored-bundle` — git flow:
+  `git add submissions/v3_snipe.py` blocked by .gitignore on
+  submissions/. Caused a failed initial commit; had to git reset
+  and re-add only state + audit. **Fix:** include the bundle sha256
+  in the commit message and state/current.md so reproducibility is
+  maintained without checking the 68KB bundle into git.
+
 ## 2026-05-11 PM (analyze-submission-logs-dFHeS)
 
 - `tag: stale-rolling-last-2-pre-submit` — submission flow: pushed
