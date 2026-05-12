@@ -37,6 +37,11 @@ from lib.mechanism import (
 
 # exp(-d/L): d=15 keeps 37%, d=30 keeps 14%, d=45 keeps 5%.
 LENGTH_SCALE = 15.0
+# Ships kept at the source after every launch. 0 = empty source every turn
+# (the PI's original direction). Variants set higher floors (5, 10) to test
+# whether reserving a small defender garrison saves enough planets to win
+# more games against ROI-class agents.
+GARRISON_FLOOR = 0
 EPISODE_STEPS = 500
 
 MECHANISMS = [
@@ -62,11 +67,14 @@ def propose_intents(obs) -> list[Intent]:
 
     intents: list[Intent] = []
     for src in my_planets:
-        if src.ships <= 0:
+        # Available ships to launch = garrison above the floor. If we don't
+        # have at least 1 ship over the floor, skip this source entirely.
+        available = int(src.ships) - GARRISON_FLOOR
+        if available <= 0:
             continue
 
         # 1. Attack: best affordable enemy/neutral by exp-weighted ROI.
-        v = fleet_speed(int(src.ships))
+        v = fleet_speed(available)
         best_target = None
         best_score = -1.0
         for t in enemies:
@@ -77,7 +85,7 @@ def propose_intents(obs) -> list[Intent]:
             else:
                 # Enemy: account for production growth during flight.
                 cost = max(1, int(t.ships) + int(t.production) * eta + 1)
-            if cost > src.ships:
+            if cost > available:
                 continue
             value = t.production * max(1, time_left - eta)
             score = value * math.exp(-d / LENGTH_SCALE) / (cost + 1.0)
@@ -89,7 +97,7 @@ def propose_intents(obs) -> list[Intent]:
             intents.append(Intent(
                 src_id=src.id,
                 target_id=best_target.id,
-                ships=int(src.ships),
+                ships=available,
                 note="attack",
             ))
             continue
@@ -113,17 +121,18 @@ def propose_intents(obs) -> list[Intent]:
         intents.append(Intent(
             src_id=src.id,
             target_id=best_ally.id,
-            ships=int(src.ships),
+            ships=available,
             note="reinforce",
         ))
     return intents
 
 
 def agent(obs):
-    # Re-anchor LENGTH_SCALE on every call so variants in agents/simple/
-    # that import this module and mutate _base.LENGTH_SCALE can't leak
-    # across calls in a re-used multiprocessing worker (see friction
-    # 2026-05-12: module-mutation-patching-has-worker-reuse-race).
-    global LENGTH_SCALE
+    # Re-anchor module constants on every call so variants in agents/simple/
+    # that import this module and mutate them can't leak across calls in a
+    # re-used multiprocessing worker (see friction 2026-05-12:
+    # module-mutation-patching-has-worker-reuse-race).
+    global LENGTH_SCALE, GARRISON_FLOOR
     LENGTH_SCALE = 15.0
+    GARRISON_FLOOR = 0
     return realize(propose_intents(obs), obs, mechanisms=MECHANISMS)

@@ -1,15 +1,17 @@
-"""local_blitz_wide — same as local_blitz but with LENGTH_SCALE = 25 (gentler falloff).
+"""local_blitz_wide — LENGTH_SCALE = 25 (gentler distance penalty).
 
-See agents/simple/local_blitz.py for the strategy description.
+Calls _base.propose_intents + _base.realize directly to bypass _base.agent's
+constant-reset, which would otherwise clobber the variant's settings.
 """
 
 from __future__ import annotations
 
 from agents.simple import local_blitz as _base
 
-LENGTH_SCALE = 25.0
-
 
 def agent(obs):
-    _base.LENGTH_SCALE = LENGTH_SCALE
-    return _base.agent(obs)
+    _base.LENGTH_SCALE = 25.0
+    _base.GARRISON_FLOOR = 0
+    return _base.realize(
+        _base.propose_intents(obs), obs, mechanisms=_base.MECHANISMS,
+    )
