@@ -51,28 +51,48 @@ OPENING_RESERVE = 2           # ships left at source post-launch
 FRONT_LOAD_EXPONENT = 1.5     # H7 from main's hypothesis board
 
 
-def propose_opening_missions(world: World, model: WorldModel) -> list[Mission]:
-    """One Mission per (our source with ships>MIN_LAUNCH_GARRISON,
-    neutral target) pair, fired only during the opening window. Sized
-    to drain the source down to OPENING_RESERVE ships (bowwowforeach
-    archetype). Score = production × (remaining_steps)^1.5 / (distance + 1)."""
-    if int(world.step) > OPENING_WINDOW:
+def propose_opening_missions(
+    world: World,
+    model: WorldModel,
+    *,
+    window: int = OPENING_WINDOW,
+    min_garrison: int = MIN_LAUNCH_GARRISON,
+    reserve: int = OPENING_RESERVE,
+    allow_enemies: bool = False,
+) -> list[Mission]:
+    """One Mission per (our source with ships>min_garrison, eligible
+    target) pair, fired only during steps 0..window. Sized to drain
+    the source down to `reserve` ships (bowwowforeach archetype).
+    Score = production × (remaining_steps)^1.5 / (distance + 1).
+
+    Variants:
+    - **A (default, FAILED 2026-05-12):** window=5, min_garrison=8,
+      reserve=2, allow_enemies=False. Drains step-0 home from 10→2.
+    - **B (timing-matched bowwow):** window=5, min_garrison=14,
+      reserve=7, allow_enemies=False. Waits 2-3 steps for production,
+      then sends a built-up fleet, leaving ~bowwow's measured 7.7-ship
+      garrison-at-launch.
+    - **C (enemy-target allowed):** window=5, min_garrison=8,
+      reserve=2, allow_enemies=True. Bowwow picks 42% enemy targets;
+      this variant lets the opener cover enemy-home raids.
+    """
+    if int(world.step) > window:
         return []
     my_planets = [
         p for p in world.planets_by_id.values()
-        if p.owner == world.my_id and p.ships > MIN_LAUNCH_GARRISON
+        if p.owner == world.my_id and p.ships > min_garrison
     ]
     if not my_planets:
         return []
-    # Opening is neutral-only — enemies in the opening window are far
-    # behind their own home cluster, distance dominates ROI, and
-    # contested captures are rare. The snipe mission class still
-    # proposes enemy targets if any are viable.
-    neutrals = [
+    # Eligible targets: non-comet planets that aren't ours. Neutral-only
+    # by default; allow_enemies=True opens up enemy-home raids.
+    targets = [
         p for p in world.planets_by_id.values()
-        if p.owner == -1 and p.id not in world.comet_ids
+        if p.id not in world.comet_ids
+        and p.owner != world.my_id
+        and (allow_enemies or p.owner == -1)
     ]
-    if not neutrals:
+    if not targets:
         return []
 
     step_now = int(world.step)
@@ -81,7 +101,7 @@ def propose_opening_missions(world: World, model: WorldModel) -> list[Mission]:
         # Each source picks its single best opening shot; settle_plan
         # arbitrates further when multiple Missions converge on one
         # target.
-        for t in neutrals:
+        for t in targets:
             d = math.hypot(t.x - src.x, t.y - src.y)
             target_min = max(1, int(t.ships) + 1)
             if target_min > src.ships:
@@ -89,8 +109,8 @@ def propose_opening_missions(world: World, model: WorldModel) -> list[Mission]:
                 continue
             # Bowwowforeach-style empty-the-source sizing: send the
             # MAX of (capture-cost, src - reserve). For a 10-ship home
-            # targeting a 0-ship neutral that's max(1, 8) = 8.
-            base_ships = min(src.ships, max(target_min, src.ships - OPENING_RESERVE))
+            # targeting a 0-ship neutral with reserve=2 that's max(1, 8) = 8.
+            base_ships = min(src.ships, max(target_min, src.ships - reserve))
             v = fleet_speed(base_ships)
             eta = int(math.ceil(d / max(v, 1e-6))) if v > 0 else 0
             remaining = max(1, EPISODE_STEPS - step_now - eta)

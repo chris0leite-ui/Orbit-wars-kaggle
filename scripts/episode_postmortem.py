@@ -264,6 +264,14 @@ def attribute_fleets(replay: dict, our_seat: int, our_player_id: int) -> list:
         outcome = "unknown"
         target_id = None
         flipped_to_us = False
+        # Bounce-margin telemetry (2026-05-12, "variant D"). For
+        # bounced_enemy / bounced_neutral fleets, capture the defender
+        # count at arrival so margin = ships_sent - defender shows how
+        # close we came. ±0 / ±1 bounces are the PI-flagged loss class
+        # (audit/2026-05-11-v3-snipe-critical-review.md §4.1).
+        target_owner_before = None
+        target_ships_before = None
+        margin = None
         if vanish_t is None:
             outcome = "alive_at_end"
         else:
@@ -293,6 +301,8 @@ def attribute_fleets(replay: dict, our_seat: int, our_player_id: int) -> list:
                 # Did ownership change in our favour?
                 owner_before, ships_before = _planet_owner_at(_global_obs(vanish_t - 1), best_pid)
                 owner_after, ships_after = _planet_owner_at(obs_vanish, best_pid)
+                target_owner_before = owner_before
+                target_ships_before = ships_before
                 if owner_after == our_player_id and owner_before != our_player_id:
                     outcome = "captured"
                     flipped_to_us = True
@@ -309,6 +319,14 @@ def attribute_fleets(replay: dict, our_seat: int, our_player_id: int) -> list:
                     outcome = "arrived_but_lost"
                 else:
                     outcome = "hit_planet_unknown_flip"
+                # margin = ships_sent − defender_ships_pre_combat.
+                # Positive ⇒ overkill (ships left after capture).
+                # Zero / negative ⇒ bounce (combat rule: attackers must
+                # strictly exceed garrison to flip; same-step adversary
+                # arrivals further raise the effective defender count
+                # but aren't captured here).
+                if ships_before is not None:
+                    margin = int(ships_launch) - int(ships_before)
             else:
                 outcome = "vanished_in_space"
 
@@ -323,6 +341,9 @@ def attribute_fleets(replay: dict, our_seat: int, our_player_id: int) -> list:
             "target_id": target_id,
             "outcome": outcome,
             "flipped_to_us": flipped_to_us,
+            "target_owner_before": target_owner_before,
+            "target_ships_before": target_ships_before,
+            "margin": margin,
         })
 
     return fleets_out
@@ -487,6 +508,13 @@ def aggregate(per_episode: list) -> dict:
     idle_subcounters: collections.Counter = collections.Counter()
     idle_buckets_by_result: dict = collections.defaultdict(collections.Counter)
 
+    # Bounce-margin histogram (2026-05-12, "variant D"). Buckets are
+    # the signed margin (ships_sent − target_ships_before). Bounces
+    # sit at margin ≤ 0; ±1 captures sit at margin 1-2.
+    bounce_margins: collections.Counter = collections.Counter()
+    bounce_margin_total = 0
+    bounce_margin_by_eta: dict = collections.defaultdict(collections.Counter)
+
     for ep in per_episode:
         if "error" in ep:
             continue
@@ -494,6 +522,23 @@ def aggregate(per_episode: list) -> dict:
         by_size_result[ep["size"]][ep["result"]] += 1
         for k, v in (ep.get("fleet_outcomes") or {}).items():
             fleet_outcomes_total[k] += v
+        # Per-fleet bounce-margin distribution. eta proxy = lifetime.
+        for f in ep.get("fleets", []):
+            if f.get("outcome") not in ("bounced_enemy", "bounced_neutral"):
+                continue
+            m = f.get("margin")
+            if m is None:
+                continue
+            # Clamp the histogram to [-15, +15] to keep keys bounded;
+            # tail buckets capture extreme outliers without unbounded
+            # dict growth.
+            m_bucket = max(-15, min(15, int(m)))
+            bounce_margins[m_bucket] += 1
+            bounce_margin_total += 1
+            eta_bucket = "short" if f.get("lifetime", 0) <= 15 else (
+                "med" if f.get("lifetime", 0) <= 30 else "long"
+            )
+            bounce_margin_by_eta[eta_bucket][m_bucket] += 1
         ep_size = ep.get("size")
         ep_result = ep.get("result")
         for pt in ep.get("per_turn", []):
@@ -541,6 +586,14 @@ def aggregate(per_episode: list) -> dict:
         "drops_per_turn": {k: v / n_turns for k, v in drops_total.items()} if n_turns else {},
         "drops_total": dict(drops_total),
         "fleet_outcomes_total": dict(fleet_outcomes_total),
+        # Bounce-margin histogram (signed; m≤0 are bounces, m=0 is the
+        # canonical "one ship short" case).
+        "bounce_margin_total": bounce_margin_total,
+        "bounce_margin_hist": {str(k): bounce_margins[k] for k in sorted(bounce_margins)},
+        "bounce_margin_by_eta": {
+            eta: {str(k): v for k, v in sorted(hist.items())}
+            for eta, hist in bounce_margin_by_eta.items()
+        },
         "dt_ms_p95": round(p95, 2),
         "dt_ms_p99": round(p99, 2),
         # Phase 0 idle-source decomposition.
