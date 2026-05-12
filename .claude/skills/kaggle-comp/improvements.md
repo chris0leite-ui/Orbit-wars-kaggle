@@ -530,6 +530,68 @@ explain it to me in simple terms and for abbreviations always tell
 me what it is." This is a load-bearing communication rule, not a
 one-off ask.
 
+### [ ] [CROSS-CUTTING] CLAUDE.md — session-start live-ladder μ refresh
+
+`tag: state-file-mu-lags-live` (Orbit Wars 2026-05-12 evening, branch
+`research-lookahead-strategy-kfRsy`). State/current.md tracked v3_snipe
+μ=1055.5, σ-equivariance μ=976.3, and v3.5.1 "expected 1090–1100" — all
+wrong. Live `kaggle competitions submissions orbit-wars` returned
+v3_snipe μ=1005.7, σ-equiv μ=1041.4, v3.5.1 μ=952.4 (a regression).
+v7_minimax (μ=1034.5, current live leader) was missing from state
+entirely because it was submitted from a parallel branch.
+
+Plan-mode baselined v4_planner against v3.5.1 on this stale data; PI
+had to intervene mid-execution ("compare with our 7 submissions / look
+at kaggle directly") to redirect the baseline to v7_minimax. Cost:
+~5 plan-steps of plumbing built against the wrong baseline + strategic
+risk of submitting a v4 that beat v3.5.1 but not v7.
+
+**Where to insert:** CLAUDE.md operating rules, new rule (~Rule 37)
+or sub-bullet on Rule 32.
+
+**What to add:**
+```
+**Session-start live-ladder μ refresh.** Before any plan-mode design
+that baselines against a prior submission, run
+`KAGGLE_API_TOKEN="$KAGGLE_KEY" kaggle competitions submissions
+<comp>` and reconcile state/current.md μ values for every listed
+agent. State files are eventually-consistent across parallel branches
+and may have stale μ from a prior PENDING status; the live ladder is
+the source of truth. Out-of-band submissions from parallel branches
+must be added to state on the first session that observes them.
+```
+
+**Why:** state diverged from the live ladder by 50+ μ on two agents
+and entirely missed one (parallel-branch submission). Pattern recurs
+in any multi-branch comp.
+
+### [ ] [CROSS-CUTTING] CLAUDE.md / do-and-dont.md — credentials never echoed
+
+`tag: credentials-leaked-to-chat` (Orbit Wars 2026-05-12 evening,
+branch `research-lookahead-strategy-kfRsy`). Debugging Kaggle CLI
+auth, I echoed `cat ~/.kaggle/kaggle.json` and `curl -u
+"user:token" ...` strings to chat to diagnose 401 errors. Both
+printed the full Kaggle API token in the transcript. PI hard-blocked:
+"never again print credentials".
+
+**Where to insert:** CLAUDE.md operating rules (new rule) or
+`do-and-dont.md` ground rules.
+
+**What to add:**
+```
+**Credentials are never echoed.** API tokens, kaggle.json contents,
+auth headers, .env values must never appear in chat output (this
+includes Bash command output that contains them, even indirectly).
+When debugging auth, redact via
+`sed 's/[A-Za-z0-9_]\{20,\}/[REDACTED]/g'` or run the command
+silently and report only the HTTP status code. Treat session
+credentials as PII; the chat transcript is durable and externally
+visible.
+```
+
+**Why:** chat output is logged. Credentials in transcripts are a
+real security exposure. Applies to every comp / every session.
+
 ---
 
 ## Applied

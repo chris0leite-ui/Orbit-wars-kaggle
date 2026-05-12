@@ -170,3 +170,43 @@ def test_score_action_runs_K_steps_and_returns_finite_scalar():
     # The clone is independent of the source env — the real env's state
     # mustn't have advanced.
     assert real.state[0].observation["step"] == 20
+
+
+@pytest.mark.slow
+def test_score_action_with_value_fn_returns_value_not_ship_delta():
+    """When `value_fn` is supplied, score is the value function's scalar
+    applied to the leaf observation — not (us - opp) ship total."""
+    import sys, importlib.util
+    from kaggle_environments import make
+    from lib.lookahead_planner import evaluate_value
+
+    spec = importlib.util.spec_from_file_location(
+        "_v2_under_test_3", "agents/v2/main.py"
+    )
+    v2 = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = v2
+    spec.loader.exec_module(v2)
+
+    real = make("orbit_wars", configuration={"seed": 42}, debug=False)
+    real.reset(num_agents=2)
+    for _ in range(20):
+        a0 = v2.agent(real.state[0].observation)
+        a1 = v2.agent(real.state[1].observation)
+        real.step([a0, a1])
+
+    obs = real.state[0].observation
+    cfg = real.configuration
+    recon = env_from_obs(obs, cfg)
+    incumbent = v2.agent(obs)
+
+    # Default path: ship-delta. With value_fn=evaluate_value: bounded value.
+    score_delta = score_action(recon, incumbent, K=8, my_id=0, policy=v2.agent)
+    score_value = score_action(
+        recon, incumbent, K=8, my_id=0, policy=v2.agent, value_fn=evaluate_value
+    )
+    # evaluate_value with default coefs caps at 6.45 even in a perfect state.
+    # Ship-delta is on the scale of total ship count (O(100)).
+    # Both finite; value_fn output is in [0, 6.45], ship-delta is anywhere.
+    assert math.isfinite(score_value)
+    assert 0.0 <= score_value <= 6.45
+    assert math.isfinite(score_delta)

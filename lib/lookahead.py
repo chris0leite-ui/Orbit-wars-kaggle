@@ -31,6 +31,7 @@ candidate set: the incumbent action + each "drop one launch" variant.
 from __future__ import annotations
 
 import copy
+import time
 from typing import Callable, Sequence
 
 from kaggle_environments import make
@@ -83,9 +84,23 @@ def score_action(
     K: int,
     my_id: int,
     policy: Callable,
+    value_fn: Callable | None = None,
+    deadline: float | None = None,
 ) -> float:
     """Sim<K> score of taking `action` this turn, then K-1 turns of
-    `policy` as both players. Returns (our - opp) total ships.
+    `policy` as both players.
+
+    If `value_fn` is None (default — backward-compat for v3_lookahead),
+    returns (our - opp) total ships. If `value_fn(observation, my_id)`
+    is supplied, returns its scalar applied to the leaf observation —
+    used by v4_planner with the production-share/denial head.
+
+    `deadline` is an optional `time.perf_counter()` timestamp; the
+    rollout loop checks before each remaining step and aborts early
+    (returning the value at the partial-leaf state). This is the
+    load-bearing robustness mechanism — without it a slow rollout
+    can blow past the 1 s actTimeout regardless of the caller's
+    pre-call budget estimate.
 
     Caller is responsible for passing `env` already-reconstructed; this
     function clones it so the caller can reuse `env` across candidates.
@@ -103,10 +118,15 @@ def score_action(
     for _ in range(max(0, K - 1)):
         if clone.done:
             break
+        if deadline is not None and time.perf_counter() > deadline:
+            break
         a0 = policy(clone.state[0].observation)
         a1 = policy(clone.state[1].observation)
         clone.step([a0, a1])
-    totals = _ship_total_by_owner(clone.state[my_id].observation)
+    leaf_obs = clone.state[my_id].observation
+    if value_fn is not None:
+        return value_fn(leaf_obs, my_id)
+    totals = _ship_total_by_owner(leaf_obs)
     return totals.get(my_id, 0.0) - totals.get(opp_id, 0.0)
 
 
@@ -128,9 +148,6 @@ def score_joint_action(
     N×M payoff matrix where both players' first moves are explicit
     candidates. Returns (our_ships - opp_ships) at the rollout's final
     state — same scoring head as `score_action`.
-
-    Cost: identical to `score_action` (K env.step calls + 2*(K-1) policy
-    calls). Clones `env` so callers can reuse it across (our, opp) pairs.
     """
     clone = env.clone()
     opp_id = 1 - my_id
@@ -156,28 +173,13 @@ def score_joint_action_symmetric(
     K: int,
     policy: Callable,
 ) -> float:
-    """Seat-symmetric variant of `score_joint_action` — averages over the
-    two possible seat assignments of (our_action, opp_action).
+    """Seat-symmetric variant — averages over both seat assignments.
 
-    Motivation: the Orbit Wars env has a documented seat-asymmetry —
-    audit/2026-05-10-day-1-data-inventory.md:98 reports P1 systematically
-    favored in identical self-play (P1 4/6, P0 1/6, draw 1/6) due to
-    action-processing-order and combat-tie-break effects internal to
-    `kaggle_environments`. v7_minimax's first self-play probe (8 seeds,
-    1/8 draws) showed this asymmetry leaks through Sim<K> into the
-    maximin payoff matrix: P0's matrix is NOT simply the seat-flip of
-    P1's, so their maximin picks diverge → game diverges from σ-mirror
-    → seat-biased outcomes.
-
-    Fix: for each (our, opp) cell, run the rollout TWICE — once with
-    our_action at seat 0 (our_seat=0), once with our_action at seat 1
-    (our_seat=1). Both calls return "(our_ships - opp_ships) at horizon"
-    from our POV; we average. In a perfectly seat-symmetric env this
-    returns the same value either way; in our asymmetric env the
-    average cancels the env-internal seat bias.
-
-    Cost: 2x score_joint_action. Calling code must budget accordingly
-    (typical: drop K from 5 → 3 → 2 to fit actTimeout=1s).
+    Cancels the documented P1-favoring seat bias in `kaggle_environments`
+    so v7_minimax's payoff matrix is invariant under seat-flip; without
+    this, P0 and P1's maximin picks diverge and σ-equiv self-play
+    breaks. Cost is 2x score_joint_action; callers must budget K
+    accordingly (v7 drops K from 5 → 3 → 2 under deadline pressure).
     """
     a = score_joint_action(env, our_action, opp_action, K, my_id=0, policy=policy)
     b = score_joint_action(env, our_action, opp_action, K, my_id=1, policy=policy)
