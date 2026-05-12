@@ -35,10 +35,22 @@ from typing import Callable
 # ───────────────────────────────────────────────────────────────────────────
 # EMBEDDED NASH DISTRIBUTION
 # Re-paste from `scripts/psro_solve.py` output after each tournament re-run.
+#
+# 2026-05-12 first tournament result (audit/tournaments/psro_payoff_v1.json):
+# Pool {v7_minimax, v3_snipe, precision, roi}, 3 seeds × 2 sides = 6 games/pair.
+# Nash mixture: {v7_minimax: 1.0, v3_snipe: 0.0, precision: 0.0, roi: 0.0}
+# Game value: +1.0 (v7 wins ALL pool members)
+#
+# Pool was NOT DIVERSE ENOUGH. v7 dominates everyone. PSRO = pure v7.
+# Submitting this meta-agent would be functionally identical to v7_minimax
+# (already submitted as #52568317). NOT RECOMMENDED to submit until the
+# pool includes anti-v7 policies — see audit/2026-05-12-psro-iter1-degenerate.md.
+#
+# Until pool diversity is added (next iteration), this agent IS v7.
 # ───────────────────────────────────────────────────────────────────────────
 
 POOL_NAMES: list[str] = ["v7_minimax", "v3_snipe", "roi"]
-NASH_PROBS: list[float] = [0.5, 0.5, 0.0]    # placeholder; replace after solving
+NASH_PROBS: list[float] = [1.0, 0.0, 0.0]   # degenerate: pure v7
 
 assert abs(sum(NASH_PROBS) - 1.0) < 1e-6, "Nash probs must sum to 1"
 assert len(POOL_NAMES) == len(NASH_PROBS)
