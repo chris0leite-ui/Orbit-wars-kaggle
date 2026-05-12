@@ -90,7 +90,7 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   current position. v1 vs baseline 40/40 wins on 20×2 seed grid.
 - **B.3 Search-based**: minimax / MCTS over short horizons (5-10
   turns) of fleet-launch decisions. Branching factor is huge —
-  needs heuristic-pruned action space. `[owner: bootstrap-agentic-systems-lqnm6 | status: parked]`
+  needs heuristic-pruned action space. `[owner: game-ai-lookahead-3ucqH | status: wip]`
   → Lookahead Phase 2 (2026-05-11) established the framework via
   `env.clone()` + K-step forward sim. `lib/lookahead.py::score_action`
   + `agents/v3_lookahead/main.py`. AUC 0.952 ≈ oracle. Drop-one
@@ -98,6 +98,12 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   richer enumerator (sibling-strategy / per-source swap / bipartite).
   See audit/2026-05-11-lookahead-phase{1a,1b,2}-*.md +
   audit/2026-05-11-v3-lookahead-mvp-parity.md.
+  → 2026-05-12: foundation laid (`lib/fast_sim.py`, `lib/opp_model.py`
+  in commit d054f18 — 183× per-step speedup unlocks richer enumeration).
+  v7 minimax iteration in progress on this branch per plan
+  `reflective-dazzling-flask.md`: 5 variants (drop_one, target_swap,
+  ship_sweep, archetype, hungarian) + combined, 32-seed 2P A/B vs
+  `submissions/v3.5.1.py`, Wilson lo ≥ 55% gate, 4P FFA on PASS.
 - **B.4 RL**: PPO/IMPALA self-play with opponent-pool curriculum.
   Heavy compute; defer until heuristic plateau. `[owner: unclaimed | status: open]`
 - **B.5 Hybrid**: heuristic policy with learned value head, OR IL

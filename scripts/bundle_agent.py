@@ -45,6 +45,14 @@ DEFAULT_LIB_ORDER = [
     "missions/snipe",
     "missions/reinforce",
     "planner",
+    # v7 lookahead substrate (2026-05-12). Order matters:
+    # fast_sim is foundational; opp_model uses missions/* + planner +
+    # intent + mechanism + world_model; v7_search uses everything.
+    # Inlining these is a no-op for non-v7 agents (their agent() never
+    # imports from them) — they bloat the bundle by ~35 KB. Acceptable.
+    "fast_sim",
+    "opp_model",
+    "v7_search",
 ]
 SUBMISSIONS = REPO / "submissions"
 
