@@ -1,5 +1,41 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-12 (game-ai-lookahead-3ucqH)
+
+- `tag: bootstrap-env-var-typo-KaggleAPIToke` — the harness exposes
+  Kaggle credentials as `$KaggleUserName` and `$KaggleAPIToke` (note
+  the truncation: `Toke` not `Token`), but `bootstrap.sh` looks for
+  `KAGGLE_USERNAME` / `KAGGLE_KEY`. First bootstrap run hit
+  `ERROR: no Kaggle credentials found`. Fix this session: invoke
+  bootstrap with `export KAGGLE_USERNAME="$KaggleUserName" KAGGLE_KEY="$KaggleAPIToke"`
+  prefix. **Promotion candidate:** add an explicit name-translation
+  block at the top of `bootstrap.sh` (or a `.envrc` shim) that maps
+  the harness-style names to the documented `KAGGLE_*` names so the
+  next session doesn't re-hit this.
+
+- `tag: bootstrap-skip-data-when-shotvalidator-present` — `bootstrap.sh`
+  step 3 uses `compgen -G "data/*"` + `grep -v '^\.gitkeep$' | wc -l`
+  to decide whether to download comp data. Because the repo already
+  has `data/shot_validator/`, this evaluates non-empty and the
+  download is skipped — but `data/main.py` and `data/README.md` are
+  *not* present, and several existing tests (`test_fixture_smoke.py`,
+  `test_v1_parity.py`, `test_bundle.py`) require them. 17 tests fail
+  with `FileNotFoundError: data/main.py` in a fresh sandbox until
+  the comp data is pulled (and this sandbox's harness creds return
+  401 on the comp endpoint, blocking a workaround). **Fix:** narrow
+  the bootstrap "is data present?" check to specifically look for
+  `data/main.py` (the deciding artifact), not "any non-gitkeep
+  file."
+
+- `tag: env-clone-cost-grows-with-history` — the Phase 2 audit quoted
+  `env.clone()+step()` at 5.6 ms/step on a cold env. After 20 warmup
+  steps the cost rises to ~22 ms (`Environment.clone()` references
+  `self.steps`, which grows linearly through the episode). Mid/end-
+  game per-turn cost is therefore ~4× worse than the audit number
+  suggests. `scripts/bench_fast_sim.py` records both numbers in the
+  audit doc (`audit/2026-05-12-fast-sim-bench.md`) so the cost
+  trajectory across the episode is explicit.
+
 ## 2026-05-11/12 (optimize-ship-strategy-tDPXx)
 
 - `tag: idle-bucket-reduction-is-misleading-proxy` — methodology:
