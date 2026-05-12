@@ -780,3 +780,72 @@ fired once and been logged for-real.
   the rollout sees it survives), or (b) accept the opening is
   bottlenecked by something other than proposer logic and pivot
   to the bounce work or v7 candidate-set widening.
+
+
+## 2026-05-12 (PM late — fix-early-game-strategy-YSClQ session 2)
+
+- `tag: stale-state-missed-parallel-branch-submission` — at session
+  start my state/current.md claimed v7_minimax (μ=1063.0) was TEAM
+  PEAK. PI surfaced that we actually had a v4_planner submission
+  (#52579863, **μ=1118.8**) from a parallel branch
+  `claude/research-lookahead-strategy-kfRsy` made earlier today at
+  14:25 UTC. **Live μ=1118.8 was +83μ above what my state file
+  tracked.** This is exactly the failure mode the
+  `live-mu-pull-at-session-start` rule I promoted at 15:27 was
+  designed to catch — yet the rule wasn't applied at session start.
+  **Root cause:** the rule was filed in improvements.md as
+  `[ ]` pending; no session-start hook implements it yet. **Fix:**
+  build the actual hook (`scripts/check_live_mu.py` or
+  `.claude/hooks/session-start.sh` calling the curl pattern) before
+  next session. Promotion candidate: WRAPUP.md step 1 should add
+  "run the live-μ check" as a hard step, not a TODO.
+- `tag: bundle-DEFAULT_LIB_ORDER-still-not-auto-discovered` —
+  v4.5_robust's first bundle (`python scripts/bundle_agent.py
+  agents/v4.5_robust`, no --lib flag) silently produced a 95.7 KB
+  artifact MISSING three required modules (lookahead,
+  lookahead_planner, candidate_portfolios) because they're not in
+  the hand-maintained DEFAULT_LIB_ORDER. The bundle imported
+  cleanly (no error) but would have crashed at first use of
+  `score_joint_action_symmetric`. Caught by counting `# === inlined`
+  markers vs v4_planner's bundle. **This is the THIRD time** the
+  manual DEFAULT_LIB_ORDER list has bit us this comp (filed twice
+  before as `bundler-missing-trajectory` and
+  `bundler-missing-block-e-modules`). The auto-AST-discovery fix is
+  already a top-priority promotion candidate in improvements.md.
+  **Cost this time:** 2 extra bundle iterations + need to manually
+  pass 16-element --lib list. **Fix:** prioritize implementing the
+  AST-walk bundler in the next session.
+- `tag: stale-bundle-process-eats-AB-cpu` — two earlier bundle runs
+  (one with default --lib, one with explicit --lib) stayed alive
+  past artifact-write, sitting at 99% CPU each for >5 minutes
+  each on the bundler's post-bundle parity-check loop. They were
+  competing with my running A/B's 4 workers (which dropped from
+  ~95% to ~64% CPU each as a result). Workflow lesson:
+  long-running parity checks should not run automatically after
+  bundling, or should be killable with a timeout.
+- `tag: v4.5-robust-design-hypothesis-falsified` — v4.5_robust
+  (v4_planner framework + v7's maximin-over-opp-models scoring)
+  FAILED the 55% Wilson-lo gate at 16-seed (32-game) A/B vs
+  v4_planner: **50.0% pooled WR, Wilson95% [33.6%, 66.4%]**. Strong
+  seat asymmetry: P0 = 7/16 (44%), P1 = 9/16 (56%) despite using
+  `score_joint_action_symmetric` for scoring. Loss-magnitude
+  (~-3500) > win-magnitude (~+2900), consistent with K-cap-depth-
+  loss hypothesis (v4.5 K=4-7 vs v4 K=6-10). **Decision-quality
+  reflection:** at design-time, both K reduction and maximin
+  robustness were known-cost-unknown-benefit. The fail tells us
+  the robustness gain is smaller than the K reduction cost. Lesson
+  for future: when doubling per-portfolio scoring cost requires K
+  cuts, the marginal robustness gain must outweigh the marginal
+  depth loss — test K-only-cut and maximin-only-add as separate
+  ablations before stacking them.
+- `tag: seat-symmetric-scoring-doesnt-fully-cancel-bias` —
+  `score_joint_action_symmetric` is supposed to average over both
+  seat assignments and cancel env's documented P1-favoring bias.
+  v4.5's 44% / 56% seat split shows this doesn't fully transfer to
+  the agent's win-rate. Hypothesis: σ-equiv patches on the value
+  head and rollout policy (v3.5.1) leave residual asymmetry; only
+  the OUTER scoring averaging is symmetric. **Fix (forward):** if
+  σ-equiv matters for a future iteration, audit ALL scoring
+  pathways — value_fn application, rollout-policy invocations,
+  per-turn policy calls — for seat-equivariance, not just the
+  outer score_joint_action wrapper.
