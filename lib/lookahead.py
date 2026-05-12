@@ -137,6 +137,8 @@ def score_joint_action(
     K: int,
     my_id: int,
     policy: Callable,
+    value_fn: Callable | None = None,
+    deadline: float | None = None,
 ) -> float:
     """Sim<K> score with BOTH first-turn actions injected.
 
@@ -144,10 +146,15 @@ def score_joint_action(
     `score_joint_action` forces both `our_action` and `opp_action` on
     turn 0, then rolls forward K-1 turns under `policy` as both players.
 
-    Used by maximin agents (e.g. agents/v7_minimax) to score a full
-    N×M payoff matrix where both players' first moves are explicit
-    candidates. Returns (our_ships - opp_ships) at the rollout's final
-    state — same scoring head as `score_action`.
+    If `value_fn` is None (default — backward-compat for v7_minimax),
+    returns (our_ships - opp_ships) at the rollout's leaf. If
+    `value_fn(observation, my_id)` is supplied, returns its scalar
+    applied to the leaf observation — used by v4.5_robust with v4's
+    production-share / denial head.
+
+    `deadline` is an optional `time.perf_counter()` timestamp; the
+    rollout aborts early if exceeded, returning the value at the
+    partial-leaf state.
     """
     clone = env.clone()
     opp_id = 1 - my_id
@@ -159,10 +166,15 @@ def score_joint_action(
     for _ in range(max(0, K - 1)):
         if clone.done:
             break
+        if deadline is not None and time.perf_counter() > deadline:
+            break
         a0 = policy(clone.state[0].observation)
         a1 = policy(clone.state[1].observation)
         clone.step([a0, a1])
-    totals = _ship_total_by_owner(clone.state[my_id].observation)
+    leaf_obs = clone.state[my_id].observation
+    if value_fn is not None:
+        return value_fn(leaf_obs, my_id)
+    totals = _ship_total_by_owner(leaf_obs)
     return totals.get(my_id, 0.0) - totals.get(opp_id, 0.0)
 
 
@@ -172,6 +184,8 @@ def score_joint_action_symmetric(
     opp_action: list,
     K: int,
     policy: Callable,
+    value_fn: Callable | None = None,
+    deadline: float | None = None,
 ) -> float:
     """Seat-symmetric variant — averages over both seat assignments.
 
@@ -180,9 +194,19 @@ def score_joint_action_symmetric(
     this, P0 and P1's maximin picks diverge and σ-equiv self-play
     breaks. Cost is 2x score_joint_action; callers must budget K
     accordingly (v7 drops K from 5 → 3 → 2 under deadline pressure).
+
+    Forwards `value_fn` + `deadline` to both inner calls so v4.5_robust
+    can score a maximin-over-opp-models matrix with v4's goal-shaped
+    value head.
     """
-    a = score_joint_action(env, our_action, opp_action, K, my_id=0, policy=policy)
-    b = score_joint_action(env, our_action, opp_action, K, my_id=1, policy=policy)
+    a = score_joint_action(
+        env, our_action, opp_action, K, my_id=0, policy=policy,
+        value_fn=value_fn, deadline=deadline,
+    )
+    b = score_joint_action(
+        env, our_action, opp_action, K, my_id=1, policy=policy,
+        value_fn=value_fn, deadline=deadline,
+    )
     return (a + b) / 2.0
 
 
