@@ -11,7 +11,7 @@ Hand-built scenarios covering each rule branch:
 
 from __future__ import annotations
 
-from lib.combat import resolve_arrivals
+from agent import resolve_arrivals
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-# Bundled by scripts/bundle_agent.py from agents/v3.5.1 + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe,missions/reinforce,planner}.
+# Bundled by scripts/bundle_agent.py from agents/v3_snipe + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe,missions/reinforce,planner}.
 # Single-file Kaggle submission for Orbit Wars.
 
 from __future__ import annotations
@@ -693,7 +693,7 @@ class World:
         )
 
 
-def realize(intents, obs, *, mechanisms, model=None) -> list[list]:
+def realize(intents, obs, *, mechanisms, model=None, reasons=None) -> list[list]:
     """Apply the mechanism pipeline and emit env-format actions.
 
     Final emission to `[src_id, aim_angle, ships]` lists is hard-coded —
@@ -704,19 +704,37 @@ def realize(intents, obs, *, mechanisms, model=None) -> list[list]:
     (e.g. `arrival_size` to size against adversary stacking) accept a
     3-arg signature; mechanisms that don't are still called as
     `(intents, world)` for backwards-compatibility.
+
+    Idle-source tracing (opt-in): pass a `reasons` dict to receive
+    per-source `MECHANISM_DROP:<mech_name>` attributions for intents
+    dropped by any mechanism or by the final emit filter. Pairs with
+    `lib.planner.settle_plan`'s reasons capture; downstream tooling
+    can merge both dicts to bucket every idle source.
     """
     world = World.from_obs(obs)
     for m in mechanisms:
         code = getattr(m, "__code__", None)
+        if reasons is not None:
+            srcs_before = {i.src_id for i in intents}
         if code is not None and code.co_argcount >= 3:
             intents = m(intents, world, model)
         else:
             intents = m(intents, world)
-    return [
-        [i.src_id, i.aim_angle, i.ships]
-        for i in intents
-        if i.ships > 0 and i.aim_angle is not None
-    ]
+        if reasons is not None:
+            srcs_after = {i.src_id for i in intents}
+            mech_name = getattr(m, "__name__", "unknown")
+            for dropped in srcs_before - srcs_after:
+                reasons[dropped] = f"MECHANISM_DROP:{mech_name}"
+    out = []
+    for i in intents:
+        if i.ships > 0 and i.aim_angle is not None:
+            out.append([i.src_id, i.aim_angle, i.ships])
+        elif reasons is not None:
+            if i.aim_angle is None:
+                reasons[i.src_id] = "MECHANISM_DROP:final_emit_no_aim"
+            else:
+                reasons[i.src_id] = "MECHANISM_DROP:final_emit_zero_ships"
+    return out
 
 # === inlined: lib/trajectory.py ===
 
@@ -855,6 +873,25 @@ fleet_speed = speed
 
 
 # ---------------------------------------------------------------------------
+# gang_up_size constants — v3.6 multi-source coordination (Plan: 7-step
+# problem-solving iteration). Off by default; opt-in for A/B.
+# ---------------------------------------------------------------------------
+# Phase-0 idle-source decomposition (audit/2026-05-11-idle-breakdown-v3-snipe-
+# phase0.md) showed ~96% of all idle classifications come from `intent.ships
+# > src.ships` in validate + arrival_size — a single source can't fund the
+# capture alone. The combat rule (lib/combat.py::resolve_arrivals) confirms
+# same-owner same-step arrivals sum ships before combat resolution, so two
+# small sources arriving simultaneously CAN cover a target neither alone
+# could. `gang_up_size` is a new mechanism that runs BEFORE `validate` so
+# unaffordable single-source intents survive long enough to be paired.
+GANG_UP_ENABLED = 0              # default OFF; opt-in for A/B
+GANG_UP_ETA_TOLERANCE = 0        # ±turns allowed in shared-eta match
+GANG_UP_MIN_SHARE_THRESHOLD = 2  # min sources to form a gang
+GANG_UP_RESERVE = 0              # garrison kept home per source (defense)
+GANG_UP_MAX_PASSES = 3           # convergence safety belt
+
+
+# ---------------------------------------------------------------------------
 # validate — drop intents that violate ownership / garrison constraints
 # ---------------------------------------------------------------------------
 
@@ -971,8 +1008,185 @@ def arrival_size(intents: list[Intent], world: World, model=None) -> list[Intent
 
 
 # ---------------------------------------------------------------------------
-# comet_aim — path-indexed lead for comet targets
+# gang_up_size — multi-source coordination (v3.6)
 # ---------------------------------------------------------------------------
+
+
+def _max_ships_for_eta(distance: float, target_eta: int) -> int:
+    """Return the largest ship count whose fleet_speed yields eta == target_eta.
+
+    `fleet_speed(s)` is monotone non-decreasing in s and bounded above
+    (max_speed). To get a specific eta we want the LARGEST s such that
+    `ceil(distance / fleet_speed(s)) <= target_eta`. Larger ships → faster →
+    smaller eta, so we binary-search the upper bound.
+
+    Returns 1 if even 1 ship would still beat target_eta (target_eta is too
+    generous; caller should accept the lone ship which arrives earlier).
+    Returns 1000 (the saturation point of fleet_speed) if even max_speed
+    can't reach target_eta — caller will need to widen tolerance.
+    """
+    if target_eta <= 0:
+        return 1
+    lo, hi = 1, 1000
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        v = fleet_speed(mid)
+        eta = math.ceil(distance / v) if v > 0 else target_eta + 1
+        if eta <= target_eta:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+
+def gang_up_size(
+    intents: list[Intent], world: World, model: WorldModel | None = None,
+) -> list[Intent]:
+    """Coordinate multiple this-turn intents at the same target so their
+    combined ships cover the predicted garrison.
+
+    Default-off (`GANG_UP_ENABLED = 0`): pure pass-through. When enabled,
+    runs BEFORE `validate` in `DEFAULT_MECHANISMS` so unaffordable single-
+    source intents (which `validate` would otherwise drop on `intent.ships
+    > src.ships`) survive long enough to be paired with siblings.
+
+    Algorithm per target group of size >= GANG_UP_MIN_SHARE_THRESHOLD:
+    1. Anchor eta = max(eta_solo) across the group. Slower sources can't
+       speed up by sending more ships (fleet_speed is bounded), but
+       faster sources CAN slow down by sending fewer ships.
+    2. needed_total = max(static_at_anchor + 1, model.ships_at(target,
+       anchor) + 1). Static = target.ships + production*anchor + 1.
+    3. share_i proportional to src_i.ships, capped at src_i.ships -
+       GANG_UP_RESERVE. Throttled DOWN so the source arrives at anchor
+       (via _max_ships_for_eta).
+    4. Up to GANG_UP_MAX_PASSES iterations: any source whose share_i
+       implies a higher eta than the anchor → re-anchor up. Cap at 3;
+       on failure to converge, drop the gang group (per-intent
+       arrival_size handles them individually as today).
+    5. Sources with share_i < 1 after capping are dropped from the gang
+       and redistributed. If survivors == 1, the lone intent exits
+       gang-up unmodified (preserves sole-source bit-identity).
+
+    Single-intent targets pass through unmodified — sole-source path is
+    a no-op (assertion enforced by test_gangup_sole_source_noop).
+    """
+    if not GANG_UP_ENABLED or not intents:
+        return intents
+
+    # Bucket intents by target_id.
+    by_target: dict[int, list[Intent]] = {}
+    for intent in intents:
+        by_target.setdefault(intent.target_id, []).append(intent)
+
+    # Process each multi-source group; collect modified intents.
+    modified_intent_ids: set[int] = set()
+    for target_id, group in by_target.items():
+        if len(group) < GANG_UP_MIN_SHARE_THRESHOLD:
+            continue
+        target = world.planets_by_id.get(target_id)
+        if target is None:
+            continue
+        # Neutrals don't grow during flight; gang-up is mostly relevant
+        # for enemy targets, but we still allow it for neutrals when a
+        # single source can't afford the static cost (very rare but
+        # possible for early-game large neutrals).
+        # Compute per-source eta_solo using their CURRENT intent.ships.
+        infos = []
+        for intent in group:
+            src = world.planets_by_id.get(intent.src_id)
+            if src is None:
+                continue
+            d = math.hypot(target.x - src.x, target.y - src.y)
+            v = fleet_speed(intent.ships)
+            eta_solo = math.ceil(d / v) if v > 0 else 0
+            infos.append({
+                "intent": intent, "src": src, "distance": d, "eta": eta_solo,
+            })
+        if len(infos) < GANG_UP_MIN_SHARE_THRESHOLD:
+            continue
+
+        # Convergence loop: anchor on slowest source; shrink faster
+        # siblings to match; re-check until stable (or give up).
+        converged = False
+        for _ in range(GANG_UP_MAX_PASSES):
+            anchor_eta = max(info["eta"] for info in infos)
+            # needed_total at anchor_eta.
+            if target.owner == -1 or target.owner == world.my_id:
+                # Neutrals & own planets: no production growth during
+                # flight; needed is just target.ships + 1.
+                needed_total = max(1, int(target.ships) + 1)
+            else:
+                static_needed = (
+                    int(target.ships)
+                    + int(target.production) * anchor_eta
+                    + 1
+                )
+                needed_total = static_needed
+                if model is not None:
+                    pred_ships = model.ships_at(target.id, anchor_eta)
+                    if pred_ships is not None:
+                        needed_total = max(
+                            static_needed, int(math.ceil(pred_ships)) + 1,
+                        )
+
+            # Allocate shares proportional to src.ships, capped by
+            # src.ships - reserve.
+            total_src_ships = sum(info["src"].ships for info in infos)
+            if total_src_ships <= 0:
+                converged = True
+                break
+
+            new_etas = []
+            for info in infos:
+                raw_share = math.ceil(
+                    needed_total * info["src"].ships / total_src_ships
+                )
+                cap = max(0, info["src"].ships - GANG_UP_RESERVE)
+                # Also cap by _max_ships_for_eta so this source actually
+                # arrives at anchor_eta (slower fleets need fewer ships).
+                throttle = _max_ships_for_eta(info["distance"], anchor_eta)
+                share = min(raw_share, cap, throttle)
+                info["share"] = max(0, share)
+                # Recompute eta with new share.
+                v = fleet_speed(max(1, info["share"]))
+                new_eta = math.ceil(info["distance"] / v) if v > 0 else 0
+                new_etas.append(new_eta)
+
+            new_anchor = max(new_etas)
+            if new_anchor <= anchor_eta + GANG_UP_ETA_TOLERANCE:
+                # Update anchor and apply throttles definitively.
+                converged = True
+                # Apply shares to intents; drop any source with share==0
+                # from the gang (re-routed to per-intent arrival_size).
+                gang_share_total = 0
+                survivors = []
+                for i, info in enumerate(infos):
+                    info["eta"] = new_etas[i]
+                    if info["share"] <= 0:
+                        continue
+                    survivors.append(info)
+                    gang_share_total += info["share"]
+                # If combined survivors still cover needed AND we have
+                # ≥ min sources, write the throttled ships back to each
+                # intent. Otherwise drop the gang (fall back to per-
+                # intent arrival_size handling).
+                if (
+                    len(survivors) >= GANG_UP_MIN_SHARE_THRESHOLD
+                    and gang_share_total >= needed_total
+                ):
+                    for info in survivors:
+                        info["intent"].ships = int(info["share"])
+                        modified_intent_ids.add(id(info["intent"]))
+                break
+            # Re-anchor on the new max eta and retry.
+            for i, info in enumerate(infos):
+                info["eta"] = new_etas[i]
+
+        # If we ran out of passes without converging, leave intents
+        # unmodified — per-intent arrival_size will drop them as today.
+        _ = converged
+
+    return intents
 
 
 def _comet_path_lookup(world: World) -> dict[int, tuple[list, int]]:
@@ -1357,6 +1571,7 @@ def oob_guard(intents: list[Intent], world: World) -> list[Intent]:
 # - `comet_aim` remains EXCLUDED pending a comet-gated re-enable
 #   (research-note §G.14: gate on `production * expected_lifetime > ships`).
 DEFAULT_MECHANISMS = [
+    gang_up_size,                 # v3.6: no-op when GANG_UP_ENABLED=0
     validate,
     arrival_size,
     lead_aim_v2,
@@ -1388,6 +1603,7 @@ __all__ = [
     "PARITY_MECHANISMS",
     "validate",
     "arrival_size",
+    "gang_up_size",
     "comet_aim",
     "lead_aim",
     "lead_aim_v2",
@@ -1451,6 +1667,59 @@ COMET_BONUS = 1.0
 # LEADER_MULTIPLIER only fires when our_rank >= 2 (4P/larger games where we
 # are below 2nd place). 2P games are unaffected. Pending 4P FFA validation.
 LEADER_MULTIPLIER = 1.5
+
+# Airtime penalty (v3.5, 2026-05-11): ships in flight are committed-cost.
+# A fleet en route can't defend its home planet, can't be redirected, and
+# may bounce if the world-state has shifted. Phase-0 idle-source decomposition
+# (audit/2026-05-11-idle-breakdown-v3-snipe-phase0.md) showed ~96% of all
+# idle classifications come from `intent.ships > src.ships` in validate +
+# arrival_size, and the worst offenders are LONG-eta targets where
+# arrival_size's `target.ships + production * eta + 1` over-estimates the
+# source garrison. Penalising airtime in the score formula shifts target
+# selection toward closer (lower-eta) captures, reducing both opportunity
+# cost AND the dominant mechanism-drop bucket.
+#
+# Coefficient interpretation: adds `AIRTIME_PENALTY_WEIGHT * eta` to the
+# denominator. eta is bounded in [1, ~30] for the 100x100 board, so at
+# weight=1.0 the penalty caps at ~30 vs typical denominators of 50-150 — a
+# moderate soft penalty.
+#
+# **v3.5 A/B verdict (audit/2026-05-11-v3.5-airtime-and-endgame-burn.md):**
+# - AIRTIME=1.0 regresses heavily vs v3.4 baseline (43.8% Wilson at 32-seed).
+# - AIRTIME=0.5 looked like +4.7pp lift at 32-seed but converged to 52.3%
+#   Wilson=[43.7, 60.8] at 64-seed — statistically indistinguishable from
+#   baseline.
+# - Default reverted to 0.0 (identity). Constant kept for future research
+#   (e.g., phase-decay variant, src-conditional variant, multiplicative form).
+AIRTIME_PENALTY_WEIGHT = 0.0
+
+# Endgame burn (v3.5, Exp 1): in the final ~30 turns of a game, neutrals
+# matter more than enemy captures because (a) neutrals don't grow ships
+# (no arrival_size bump → reliably launchable), (b) we have little time
+# left to extract production value from contested captures. Boost neutral
+# target priority by ENDGAME_NEUTRAL_BONUS once step >= ENDGAME_STEP.
+#
+# **v3.5 A/B verdict:** as part of the airtime+endgame composite at 64-seed,
+# the lift was indistinguishable from baseline. Standalone (eg_only, no
+# airtime) saw 40 draws / 64 games = stalemate. Default reverted to 1.0
+# (identity). Constant kept for future research (e.g., size-conditional
+# burn, neutrals-near-source-only).
+ENDGAME_STEP = 470
+ENDGAME_NEUTRAL_BONUS = 1.0
+
+# Affordability filter (v3.5+): when True, propose a Mission only if the
+# source planet can fund the base capture (target.ships + 1) ALONE. Phase-0
+# idle-trace showed ~45% of all idle classifications are
+# MECHANISM_DROP:validate, which fires on `intent.ships > src.ships`.
+# Filtering at proposal time lets the source's runner-up affordable target
+# win settle_plan's per-source greedy instead of being silently dropped
+# downstream. Drawback: blocks gang-up (multiple sources contributing to
+# one target) — but gang-up doesn't actually work today (each intent is
+# independently sized by arrival_size), so the filter is a near-pure
+# improvement to idle rate. Default OFF (= 0) until validated by A/B.
+# Stored as int so scripts/ab_variants.py can patch it (its regex requires
+# a numeric literal).
+PROPOSER_AFFORDABILITY_FILTER = 0
 
 
 def _player_totals(world: World) -> dict[int, float]:
@@ -1556,6 +1825,12 @@ def propose_snipe_missions(
                 base_ships = max(target_min, min(fraction_size, cap))
             else:
                 base_ships = target_min
+            if PROPOSER_AFFORDABILITY_FILTER and base_ships > src.ships:
+                # Source can't fund this capture alone; let its smaller
+                # affordable runner-up win settle_plan's per-source greedy.
+                # OFF by default (regressed in 64-seed A/B); kept for
+                # future ablation. See main's optimize-ship-strategy-tDPXx.
+                continue
             v = fleet_speed(base_ships)
             eta = int(math.ceil(d / max(v, 1e-6))) if v > 0 else 0
             pred_owner = model.owner_at(t.id, eta)
@@ -1581,18 +1856,26 @@ def propose_snipe_missions(
                 # Unclaimed: no garrison growth during flight, no opponent
                 # competition. Bonus reflects the easier capture.
                 priority *= COMET_BONUS if is_comet else NEUTRAL_BONUS
+                if step_now >= ENDGAME_STEP:
+                    # Late-game burn: neutrals stay launchable (no
+                    # production growth → no arrival_size bump), so prefer
+                    # them over high-growth enemy captures we likely can't
+                    # afford in the remaining turn budget.
+                    priority *= ENDGAME_NEUTRAL_BONUS
             if spoiler_on and t.owner == leader_pid:
                 priority *= LEADER_MULTIPLIER
-            # Denominator rebalance: halve the ship-cost weight.
-            # Top-10 fingerprint shows mean fleet 38 (vs midpack 29);
-            # the linear (base_ships + d + 1) penalty made the scorer
-            # prefer tiny fleets. TrueSkill rewards win/loss only —
-            # overwhelming-force is essentially free.
-            # Implicitly favors contested enemy targets (high base_ships)
-            # over easy neutrals WITHOUT a flat priority multiplier
-            # (which v3.4 disproved at 28.1% A/B). Conditional via the
-            # denominator shape, not a flat bonus.
-            score = priority * value / (0.5 * base_ships + d + 1.0)
+            # Cost-aware ROI denominator (legacy) + optional airtime term.
+            # - base_ships + d + 1: original v3.4 form. Wave-1b's
+            #   `0.5 × base_ships` rebalance was NEUTRAL at 50% in phys-only
+            #   A/B (audit/2026-05-12-v3.5-stack-results.md); reverted on
+            #   merge to preserve main's parity invariants. v3.5.1's
+            #   value driver was the AGGRESSIVE_FRACTION ship sizing, not
+            #   this denominator.
+            # - AIRTIME_PENALTY_WEIGHT × eta: optional discount for far
+            #   targets. Default weight=0 (identity).
+            score = priority * value / (
+                base_ships + d + AIRTIME_PENALTY_WEIGHT * eta + 1.0
+            )
 
             missions.append(Mission(
                 mission_class="snipe",
@@ -1692,6 +1975,7 @@ def settle_plan(
     missions: list[Mission],
     world: World,
     model: WorldModel,
+    reasons: dict[int, str] | None = None,
 ) -> list[Intent]:
     """Pick at most one mission per source under a same-turn ledger.
 
@@ -1702,8 +1986,21 @@ def settle_plan(
        the first one whose target isn't already over-committed by
        prior this-turn picks.
     4. After accepting a mission, register its arrival in the ledger.
+
+    Idle-source tracing (opt-in): pass a `reasons` dict to receive a
+    classification of why each non-emitting owned-and-shipped source
+    went idle this turn. Keys are planet ids; values are one of:
+
+    - `"NO_PROPOSALS"` — no proposer emitted a Mission for this source.
+    - `"LEDGER_LOSS"` — proposer(s) emitted Mission(s) but all were
+      skipped because earlier this-turn picks already covered every
+      candidate target.
+
+    `MECHANISM_DROP` (intent built but dropped by the realize pipeline)
+    is set by `lib.intent.realize`, not here, since this function returns
+    before mechanisms run.
     """
-    if not missions:
+    if reasons is None and not missions:
         return []
 
     by_src: dict[int, list[Mission]] = defaultdict(list)
@@ -1721,6 +2018,7 @@ def settle_plan(
     pending: dict[int, list[tuple[int, int]]] = defaultdict(list)
     chosen: list[Mission] = []
     for src_id in source_order:
+        selected = False
         for m in by_src[src_id]:
             # Ships our prior this-turn picks have committed to land at
             # m.target_id by step m.eta (or earlier). A defender at
@@ -1744,38 +2042,50 @@ def settle_plan(
                 continue
             chosen.append(m)
             pending[m.target_id].append((m.eta, m.ships))
+            selected = True
             break
+        if reasons is not None and not selected and by_src[src_id]:
+            reasons[src_id] = "LEDGER_LOSS"
+
+    if reasons is not None:
+        chosen_srcs = {m.src_id for m in chosen}
+        for p in world.planets_by_id.values():
+            if p.owner != world.my_id or p.ships <= 0:
+                continue
+            if p.id in chosen_srcs or p.id in reasons:
+                continue
+            reasons[p.id] = "NO_PROPOSALS"
 
     return [m.to_intent() for m in chosen]
 
 # === agent ===
-"""v3.5.1 — v3_snipe + aggressive snipe ship sizing.
+"""v3_snipe — mission-framework agent (snipe + reinforce as of 2026-05-11).
 
-Single surgical change vs v3_snipe: snipe now sends a larger fraction
-of source garrison per launch (top-10 fingerprint-aligned per
-`knowledge-base/concepts/top-performer-strategies.md`).
+Despite the directory name "v3_snipe" (kept for bundle continuity), this
+agent now exercises the full Block E mission-class portfolio:
 
 Pipeline:
     obs -> World.from_obs -> WorldModel.from_world
-        -> propose_snipe_missions(world, model, aggressive=True)
-        -> propose_reinforce_missions(world, model)
-        -> settle_plan(combined, world, model)
+        -> propose_snipe_missions(world, model)       [snipe class]
+        -> propose_reinforce_missions(world, model)   [reinforce class]
+        -> settle_plan(combined, world, model)        [same-turn ledger]
         -> realize(intents, mechanisms=DEFAULT_MECHANISMS)
 
-Gate results (audit/2026-05-12-iter2-ablation-results.md):
-- 32-seed 2P vs v3_snipe: 44/64 = 68.8%, Wilson lo 56.6%  [PASS]
-- 8-seed × 4-seat 4P FFA vs weak background: 31/32 = 96.9%  [PASS]
-  (v3_snipe baseline in same panel: 93.8%)
-- Parameter sweep (audit/tournaments/sizing-sweep-20260512T044157Z.json):
-  fraction=0.7 dominates 0.6, 0.8, 0.9 both vs-baseline and head-to-head.
+Mission classes (2026-05-11):
+- **snipe**: capture non-our planets. Cost-aware ROI + comet-lifetime
+  correction (don't target departing comets).
+- **reinforce**: defend our planets predicted to flip to an enemy this
+  horizon. Detected via `WorldModel.owner_at` timeline scan; addresses
+  the "no defence" gap in `docs/strategies/simple-roi.md` line 130.
 
-What's UNCHANGED from v3_snipe:
-- DEFAULT_MECHANISMS (validate → arrival_size → lead_aim_v2 →
-  sun_avoid → path_clears_other_planets → oob_guard).
-- snipe scoring formula, denominator, LEADER_MULTIPLIER 4P spoiler.
-- reinforce Mission class.
-- Per-source-greedy settle_plan with same-turn arrival ledger.
-- All trajectory-ray-cast guards.
+Solver (`lib/planner.settle_plan`): per-source greedy with a same-turn
+arrival ledger. Each source picks its highest-score mission whose target
+isn't already over-committed by earlier-this-turn picks. Addresses the
+"no same-turn ledger" gap (`simple-roi.md` line 127).
+
+Mechanism stack: unchanged Block A physics (validate -> arrival_size ->
+lead_aim_v2 -> sun_avoid -> path_clears_other_planets -> oob_guard).
+The 2026-05-11 trajectory-ray-cast fixes apply automatically.
 """
 
 
@@ -1793,7 +2103,7 @@ def agent(obs):
         return []
     model = WorldModel.from_world(world)
     missions = (
-        propose_snipe_missions(world, model, aggressive=True)
+        propose_snipe_missions(world, model)
         + propose_reinforce_missions(world, model)
     )
     intents = settle_plan(missions, world, model)

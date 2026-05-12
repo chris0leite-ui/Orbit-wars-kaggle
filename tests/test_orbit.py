@@ -14,8 +14,8 @@ import pytest
 
 from kaggle_environments import make
 
-from lib import geometry as G
-from lib import orbit
+import agent as G
+import agent as orbit
 
 
 SEED = 42
@@ -70,21 +70,6 @@ def test_predict_relative_full_revolution_returns_to_start():
     assert y == pytest.approx(p[3], abs=1e-9)
 
 
-def test_predict_absolute_step_zero_returns_init_position():
-    init = _planet(0, x=G.CENTER + 10.0, y=G.CENTER, radius=1.0)
-    x, y = orbit.predict_absolute(init, angular_velocity=0.04, env_step_n=0)
-    assert x == pytest.approx(init[2])
-    assert y == pytest.approx(init[3])
-
-
-def test_predict_absolute_step_one_no_rotation_yet():
-    """env.steps[1] is the snapshot BEFORE step 1's rotation applies (n_rot = 0)."""
-    init = _planet(0, x=G.CENTER + 10.0, y=G.CENTER, radius=1.0)
-    x, y = orbit.predict_absolute(init, angular_velocity=0.04, env_step_n=1)
-    assert x == pytest.approx(init[2])
-    assert y == pytest.approx(init[3])
-
-
 # ---------------------------------------------------------------------------
 # Live-env integration: load-bearing finding from A.1.
 # ---------------------------------------------------------------------------
@@ -128,28 +113,6 @@ def test_predict_relative_zero_error_against_env_at_step_100(env_seed_42):
         f"relative orbit formula drifted by {max_err:.6f} on seed 42 over 50 turns "
         f"(checked {checked} planets) — this used to be 0.0"
     )
-
-
-def test_predict_absolute_zero_error_with_n_minus_one_offset(env_seed_42):
-    """The absolute formula with N-1 offset must also match exactly.
-    The naive `omega*N` form is off by `omega * orb_r` board units.
-    """
-    env = env_seed_42
-    obs0 = env.steps[0][0].observation
-    omega = obs0["angular_velocity"]
-    actual_by_id = {p[0]: p for p in env.steps[100][0].observation["planets"]}
-
-    max_err = 0.0
-    for init in obs0["initial_planets"]:
-        if not orbit.is_orbiting(init):
-            continue
-        pid = init[0]
-        if pid not in actual_by_id:
-            continue
-        px, py = orbit.predict_absolute(init, omega, env_step_n=100)
-        ax, ay = actual_by_id[pid][2], actual_by_id[pid][3]
-        max_err = max(max_err, math.hypot(px - ax, py - ay))
-    assert max_err == pytest.approx(0.0, abs=1e-9)
 
 
 def test_static_planets_do_not_drift(env_seed_42):

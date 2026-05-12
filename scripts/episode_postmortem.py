@@ -38,16 +38,39 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 # Imports below depend on sys.path containing the repo root.
+import collections as _collections  # noqa: E402
 import csv  # noqa: E402
-import lib.mechanism as M  # noqa: E402
-import lib.missions.snipe as MS  # noqa: E402
-import lib.missions.reinforce as MR  # noqa: E402
-import lib.planner as MP  # noqa: E402
-import lib.intent as LI  # noqa: E402
-from lib.intent import World, realize  # noqa: E402
-from lib.world_model import WorldModel  # noqa: E402
-import agents.v3_snipe.main as AGENT  # noqa: E402
-from scripts.live_episode_summary import detect_team_name  # noqa: E402
+import agent as AGENT  # noqa: E402
+import agent as M  # alias used by mechanism-list monkey-patch  # noqa: E402
+import agent as MS  # alias used by snipe-proposer monkey-patch  # noqa: E402
+import agent as MR  # alias used by reinforce-proposer monkey-patch  # noqa: E402
+import agent as MP  # alias used by settle_plan monkey-patch  # noqa: E402
+import agent as LI  # alias used by realize monkey-patch  # noqa: E402
+from agent import World, WorldModel, realize  # noqa: E402
+
+
+def detect_team_name(replays: list[Path], hint: str | None = None) -> str:
+    """Pick the TeamNames entry that appears in >=80% of episodes."""
+    counts: _collections.Counter[str] = _collections.Counter()
+    for f in replays:
+        teams = json.load(open(f))["info"]["TeamNames"]
+        for name in set(teams):
+            counts[name] += 1
+    if not counts:
+        raise RuntimeError(f"no replays in {replays}")
+    total = len(replays)
+    for name, n in counts.most_common():
+        if n / total >= 0.8:
+            return name
+    if hint:
+        hint_low = hint.lower()
+        for name in counts:
+            if name.lower() == hint_low:
+                return name
+    raise RuntimeError(
+        f"could not auto-detect team name; pass --team explicitly. "
+        f"Observed: {dict(counts.most_common(5))}"
+    )
 
 
 # Top-level idle-source bucket names (Phase 0 instrumentation). The full
@@ -106,11 +129,11 @@ def install_hooks() -> None:
         TELEMETRY["n_reinforce_candidates"] += len(out)
         return out
 
-    def wrapped_settle(missions, world, model, reasons=None):
-        # Capture settle-time idle reasons (NO_PROPOSALS / LEDGER_LOSS).
-        capture: dict = reasons if reasons is not None else {}
-        intents = orig_settle(missions, world, model, reasons=capture)
-        TELEMETRY["idle_reasons"].update(capture)
+    def wrapped_settle(missions, world, model):
+        # Idle-source bucket tracing was dropped along with the rest of the
+        # Phase-0 diagnostic in the agent.py collapse — bucket-reduction
+        # proved a misleading proxy at 64-seed.
+        intents = orig_settle(missions, world, model)
         TELEMETRY["n_settled"] += len(intents)
         my_planets = [p for p in world.planets_by_id.values() if p.owner == world.my_id]
         n_sources = len(my_planets)
@@ -129,12 +152,8 @@ def install_hooks() -> None:
                 TELEMETRY["runnerup_margin"].append(scores[0] - scores[1])
         return intents
 
-    def wrapped_realize(intents, obs, *, mechanisms, model=None, reasons=None):
-        # Capture realize-time idle reasons (MECHANISM_DROP:<mech_name>).
-        capture: dict = reasons if reasons is not None else {}
-        out = orig_realize(intents, obs, mechanisms=mechanisms, model=model, reasons=capture)
-        TELEMETRY["idle_reasons"].update(capture)
-        return out
+    def wrapped_realize(intents, obs, *, mechanisms, model=None):
+        return orig_realize(intents, obs, mechanisms=mechanisms, model=model)
 
     # In-place patch (the agent imports symbols by name, not module).
     MS.propose_snipe_missions = wrapped_snipe

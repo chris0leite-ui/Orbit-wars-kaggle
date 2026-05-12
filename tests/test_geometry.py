@@ -9,7 +9,7 @@ import math
 
 import pytest
 
-from lib import geometry as G
+import agent as G
 
 
 def test_constants_match_readme():

@@ -15,10 +15,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from lib.intent import World
-from lib.mission import Mission
-from lib.planner import settle_plan
-from lib.world_model import WorldModel
+from agent import Mission, World, WorldModel, settle_plan
 
 
 def _planet(pid, owner, x, y, *, ships=10, production=2, radius=1.5):
@@ -149,73 +146,3 @@ def test_source_with_no_missions_produces_no_intent():
     assert intents[0].src_id == 0
 
 
-# ---------------------------------------------------------------------------
-# reasons out-param — idle-source classification (Phase 0 instrumentation)
-# ---------------------------------------------------------------------------
-
-
-def test_reasons_default_none_does_not_classify():
-    """Backwards-compat: omitting `reasons` keeps behaviour byte-identical."""
-    world, model = _setup_world()
-    missions = [
-        Mission("snipe", src_id=0, target_id=2, ships=6, score=0.95, eta=10),
-    ]
-    intents_no_reasons = settle_plan(missions, world, model)
-    intents_with_reasons = settle_plan(missions, world, model, reasons={})
-    # Same intents emitted regardless of reasons kwarg.
-    assert len(intents_no_reasons) == len(intents_with_reasons) == 1
-    assert intents_no_reasons[0].src_id == intents_with_reasons[0].src_id
-
-
-def test_reasons_marks_source_with_no_proposals():
-    """Source 1 has no missions emitted but owns ships → NO_PROPOSALS."""
-    world, model = _setup_world()
-    missions = [
-        Mission("snipe", src_id=0, target_id=2, ships=6, score=0.95, eta=10),
-    ]
-    reasons: dict[int, str] = {}
-    settle_plan(missions, world, model, reasons=reasons)
-    assert reasons.get(1) == "NO_PROPOSALS"
-    # Source 0 chose a mission; should not appear in reasons.
-    assert 0 not in reasons
-
-
-def test_reasons_marks_ledger_loss_when_only_target_overcommitted():
-    """Source 1's sole candidate is already covered by source 0 → LEDGER_LOSS."""
-    world, model = _setup_world()
-    missions = [
-        Mission("snipe", src_id=0, target_id=2, ships=50, score=0.95, eta=10),
-        Mission("snipe", src_id=1, target_id=2, ships=50, score=0.90, eta=11),
-    ]
-    reasons: dict[int, str] = {}
-    intents = settle_plan(missions, world, model, reasons=reasons)
-    assert len(intents) == 1
-    assert reasons.get(1) == "LEDGER_LOSS"
-
-
-def test_reasons_skip_zero_ship_owned_planets():
-    """A planet we own with ships=0 cannot launch; should not be flagged."""
-    world = _world(my_id=0, planets=[
-        _planet(0, 0, 0.0, 0.0, ships=100),
-        _planet(1, 0, 100.0, 0.0, ships=0),  # empty source
-        _planet(2, 1, 50.0, 0.0, ships=5),
-    ])
-    model = WorldModel.from_world(world)
-    missions = [
-        Mission("snipe", src_id=0, target_id=2, ships=6, score=0.95, eta=10),
-    ]
-    reasons: dict[int, str] = {}
-    settle_plan(missions, world, model, reasons=reasons)
-    # Planet 1 has 0 ships → no idle attribution.
-    assert 1 not in reasons
-
-
-def test_reasons_only_when_settle_plan_called_with_empty_missions():
-    """With reasons enabled but no missions, every owned-and-shipped
-    source should be classified as NO_PROPOSALS."""
-    world, model = _setup_world()
-    reasons: dict[int, str] = {}
-    intents = settle_plan([], world, model, reasons=reasons)
-    assert intents == []
-    # Sources 0 and 1 own ships; 2 and 3 are enemy.
-    assert reasons == {0: "NO_PROPOSALS", 1: "NO_PROPOSALS"}

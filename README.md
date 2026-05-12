@@ -50,7 +50,8 @@ Kaggle credentials must be in place at `~/.kaggle/kaggle.json` (mode
 | `state/` | Mutable session state (current agent, calibration ladder, hypotheses, mechanism ledger) |
 | `audit/` | Dated probe + friction notes |
 | `knowledge-base/` | PI second-brain (permanent — Rules 35-36) |
+| `agent.py` | Single-file submission (source of truth) |
+| `opponents/` | Frozen A/B baselines (v3_snipe_frozen.py, …) |
 | `data/` | Comp data downloaded by `bootstrap.sh` |
 | `external/kernels/` | Reference notebooks pulled via `kaggle kernels pull` |
-| `submissions/` | Kernel build artifacts |
 | `.claude/skills/` | `kaggle-comp` (process loops) and `postmortem` |

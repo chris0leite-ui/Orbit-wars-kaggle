@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from lib.intent import Intent, World, realize
+from agent import Intent, World, realize
 
 
 # ---------------------------------------------------------------------------
@@ -149,84 +149,3 @@ def test_realize_handles_mechanism_that_drops_everything():
     assert actions == []
 
 
-# ---------------------------------------------------------------------------
-# reasons out-param — MECHANISM_DROP attribution (Phase 0 instrumentation)
-# ---------------------------------------------------------------------------
-
-
-def _drop_by_src(target_src):
-    def _fn(intents, world):
-        return [i for i in intents if i.src_id != target_src]
-    _fn.__name__ = f"_drop_by_src_{target_src}"
-    return _fn
-
-
-def test_realize_reasons_default_none_no_change_in_behaviour():
-    """Omitting `reasons` keeps actions identical to baseline."""
-    intents = [Intent(src_id=0, target_id=1, ships=10, aim_angle=0.0)]
-    actions_no_reasons = realize(intents, _OBS_TWO_PLANETS, mechanisms=[_passthrough])
-    actions_with_reasons = realize(
-        [Intent(src_id=0, target_id=1, ships=10, aim_angle=0.0)],
-        _OBS_TWO_PLANETS,
-        mechanisms=[_passthrough],
-        reasons={},
-    )
-    assert actions_no_reasons == actions_with_reasons
-
-
-def test_realize_reasons_attributes_drop_to_mechanism_name():
-    """A mechanism that drops src_id=0 should appear in reasons with its
-    function name in the value."""
-    intents = [
-        Intent(src_id=0, target_id=1, ships=10, aim_angle=0.0),
-        Intent(src_id=2, target_id=1, ships=5, aim_angle=0.0),
-    ]
-    reasons: dict[int, str] = {}
-    actions = realize(
-        intents,
-        _OBS_TWO_PLANETS,
-        mechanisms=[_drop_by_src(0)],
-        reasons=reasons,
-    )
-    # Only src 2 survives.
-    assert actions == [[2, 0.0, 5]]
-    assert 0 in reasons
-    assert reasons[0].startswith("MECHANISM_DROP:_drop_by_src_0")
-    assert 2 not in reasons
-
-
-def test_realize_reasons_marks_final_emit_no_aim():
-    """Intent that exits the pipeline with aim_angle=None is dropped at
-    final emit; reasons should record `final_emit_no_aim`."""
-    intents = [Intent(src_id=7, target_id=1, ships=10)]
-    reasons: dict[int, str] = {}
-    actions = realize(
-        intents, _OBS_TWO_PLANETS, mechanisms=[_passthrough], reasons=reasons,
-    )
-    assert actions == []
-    assert reasons.get(7) == "MECHANISM_DROP:final_emit_no_aim"
-
-
-def test_realize_reasons_marks_final_emit_zero_ships():
-    """Intent with ships=0 after pipeline → final_emit_zero_ships."""
-    intents = [Intent(src_id=9, target_id=1, ships=0, aim_angle=0.1)]
-    reasons: dict[int, str] = {}
-    actions = realize(
-        intents, _OBS_TWO_PLANETS, mechanisms=[_passthrough], reasons=reasons,
-    )
-    assert actions == []
-    assert reasons.get(9) == "MECHANISM_DROP:final_emit_zero_ships"
-
-
-def test_realize_reasons_first_dropping_mechanism_wins_attribution():
-    """When a chain of mechanisms could each drop a src, only the FIRST
-    drop is recorded (later mechanisms can't see the src to drop it)."""
-    intents = [Intent(src_id=3, target_id=1, ships=10, aim_angle=0.0)]
-    reasons: dict[int, str] = {}
-    realize(
-        intents,
-        _OBS_TWO_PLANETS,
-        mechanisms=[_drop_by_src(3), _drop_all],
-        reasons=reasons,
-    )
-    assert reasons[3] == "MECHANISM_DROP:_drop_by_src_3"

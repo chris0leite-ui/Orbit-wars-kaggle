@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from lib.intent import World
-from lib.missions.reinforce import propose_reinforce_missions
-from lib.world_model import WorldModel
+from agent import World, WorldModel, propose_reinforce_missions
 
 
 def _planet(pid, owner, x, y, *, ships=10, production=2, radius=1.5):

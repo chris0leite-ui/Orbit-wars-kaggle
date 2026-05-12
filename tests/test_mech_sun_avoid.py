@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import math
 
-from lib.geometry import CENTER, SUN_RADIUS
-from lib.intent import Intent, World
-from lib.mechanism import sun_avoid
+from agent import CENTER, SUN_RADIUS, Intent, World, sun_avoid
 
 
 def _world(planets, *, my_id=0):

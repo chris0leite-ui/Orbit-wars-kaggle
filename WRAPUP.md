@@ -14,10 +14,11 @@ Cap ≤150 lines. This is a checklist agents follow verbatim.
    one-line summary (branch, ahead/behind, modified count) to PI.
 
 2. **Stage tracked work.** `git add` only these paths if changed:
+   - `agent.py`
+   - `opponents/`
+   - `tests/`
    - `audit/`
    - `scripts/`
-   - `kernels/`
-   - `submissions/`
    - `requirements.txt`
    - `CLAUDE.md`
    - `HANDOVER.md`

@@ -125,7 +125,7 @@ def test_reward_stability_across_runs():
     bad fixture for the stability gate.
     """
     REPO_ROOT = Path(__file__).resolve().parents[1]
-    baseline = str(REPO_ROOT / "data" / "main.py")
+    baseline = str(REPO_ROOT / "opponents" / "v3_snipe_frozen.py")
     panel = {"baseline": baseline}
     r1 = tournament.run_tournament(agents=panel, seeds=[42], include_self_play=True)
     r2 = tournament.run_tournament(agents=panel, seeds=[42], include_self_play=True)
@@ -172,7 +172,7 @@ def test_loaded_baseline_beats_random_both_sides():
     baseline > random on the published seeds; if this test ever fails with
     baseline going 0/N, suspect a wrapper signature regression first.
     """
-    baseline = str(REPO / "data" / "main.py")
+    baseline = str(REPO / "opponents" / "v3_snipe_frozen.py")
     result = tournament.run_tournament(
         agents={"random": "random", "baseline": baseline},
         seeds=[42, 1],
@@ -198,7 +198,7 @@ def test_loaded_baseline_beats_random_both_sides():
 
 def test_parallel_runner_matches_sequential_for_deterministic_agent():
     REPO_ROOT = Path(__file__).resolve().parents[1]
-    baseline = str(REPO_ROOT / "data" / "main.py")
+    baseline = str(REPO_ROOT / "opponents" / "v3_snipe_frozen.py")
     panel = {"baseline": baseline}
     seeds = [42, 1, 7, 13]
     seq = tournament.run_tournament(

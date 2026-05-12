@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from lib.intent import Intent
-from lib.mission import Mission
+from agent import Intent
+from agent import Mission
 
 
 def test_mission_to_intent_preserves_core_fields():

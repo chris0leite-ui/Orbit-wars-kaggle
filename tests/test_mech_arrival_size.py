@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import math
 
-from lib.fleet import speed as fleet_speed
-from lib.intent import Intent, World
-from lib.mechanism import arrival_size
+from agent import Intent, World, arrival_size, fleet_speed
 
 
 def _world(planets, *, my_id=0, omega=0.0):

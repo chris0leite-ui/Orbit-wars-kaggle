@@ -12,8 +12,7 @@ from __future__ import annotations
 import math
 from types import SimpleNamespace
 
-from lib.intent import World
-from lib.trajectory import predict_fleet_fate
+from agent import World, predict_fleet_fate
 
 
 def _world(my_id, planets, omega=0.0):

@@ -11,9 +11,7 @@ import math
 
 import pytest
 
-from lib.geometry import CENTER
-from lib.intent import Intent, World
-from lib.mechanism import lead_aim
+from agent import CENTER, Intent, World, lead_aim
 
 
 def _make_obs(target_x, target_y, *, target_owner=-1, omega=0.04, comet_ids=()):

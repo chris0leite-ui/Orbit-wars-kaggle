@@ -15,8 +15,8 @@ from __future__ import annotations
 import math
 from types import SimpleNamespace
 
-from lib.intent import World
-from lib.world_model import (
+from agent import (
+    World,
     WorldModel,
     build_arrival_ledger,
     fleet_target_planet,

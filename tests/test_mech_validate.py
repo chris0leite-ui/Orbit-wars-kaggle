@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from lib.intent import Intent, World
-from lib.mechanism import validate
+from agent import Intent, World
+from agent import validate
 
 
 _OBS = {
