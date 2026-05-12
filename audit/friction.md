@@ -1,5 +1,49 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-12 PM (game-ai-lookahead-3ucqH — v7.1-v7.6 stack iteration)
+
+- `tag: maximin-budget-blow-up` — v7.1's 2×N maximin matrix × symmetric
+  scoring (2× cost) = 4× rollouts per turn. With K=10 and recapture
+  in the incumbent, p95 turn ms hit 1105 — over the 700 ms watchdog
+  → conservative fallback to incumbent → -54pp regression vs v7_0
+  (25% Wilson lo 12%). **Fix:** dropped the maximin overlay entirely;
+  `choose_simple_with_4p` runs drop-one argmax (same as v7_0) with
+  σ-equiv + recapture + 4P-aware. The maximin theoretical guarantee
+  isn't worth its compute cost at K=10.
+
+- `tag: bundle-default-lib-order-stale-when-new-modules-added` —
+  v7.5 A/B run 1 returned 0/24 silently because the bundle inlined
+  references to `propose_recapture_missions` and `evaluate_value`
+  but their source files weren't in `scripts/bundle_agent.py::
+  DEFAULT_LIB_ORDER`. NameError at runtime → empty action → loss by
+  elimination, no log. **Fix:** appended `missions/recapture` +
+  `lookahead_planner` to `DEFAULT_LIB_ORDER`. **Promotion candidate:**
+  add a pre-bundle check that greps every `agents/*/main.py` for
+  `from lib.<name>` imports and warns if not in lib order. Stops
+  silent bundle bugs at bundle time, not at A/B time.
+
+- `tag: type-checking-import-survives-bundler-strip` —
+  `lib/lookahead_planner.py` had `if TYPE_CHECKING:` then `from lib.intent
+  import World`. The bundler strips the inner `from lib.*` line but
+  leaves the `if TYPE_CHECKING:` block → empty body → IndentationError
+  at exec. **Fix:** removed the TYPE_CHECKING guard; inline-quoted
+  the `World` forward-ref to plain `world` in `adaptive_K`.
+  **Promotion candidate:** bundler should drop empty conditional
+  blocks left behind by `_INTRA_IMPORT_RE` stripping.
+
+- `tag: recapture-still-regresses-even-after-score-scale-fix` —
+  Ported `propose_recapture_missions` with the audit's hypotheses #1
+  (snipe-scale denominator) and #2 (top-K=5 cap) fixed. v7.5
+  (σ-equiv + recapture + 4P) still regressed -8.3pp vs v7_0 in 2P
+  A/B. Hypothesis #3 (premature commitment on infeasible
+  recaptures) is the likely remaining bug — recapture missions
+  fire on recently-lost planets whose new owner is fortifying,
+  burning ships that should snipe/reinforce. **Fix flagged for
+  next session:** add a feasibility check that requires
+  `model.ships_at(target, eta) < base_ships - 1` (target stays
+  capturable at our arrival). Otherwise drop the recapture
+  proposal.
+
 ## 2026-05-12 (game-ai-lookahead-3ucqH)
 
 - `tag: bootstrap-env-var-typo-KaggleAPIToke` — the harness exposes

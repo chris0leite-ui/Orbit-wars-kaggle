@@ -90,7 +90,7 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   current position. v1 vs baseline 40/40 wins on 20×2 seed grid.
 - **B.3 Search-based**: minimax / MCTS over short horizons (5-10
   turns) of fleet-launch decisions. Branching factor is huge —
-  needs heuristic-pruned action space. `[owner: game-ai-lookahead-3ucqH | status: wip]`
+  needs heuristic-pruned action space. `[owner: game-ai-lookahead-3ucqH | status: parked]`
   → Lookahead Phase 2 (2026-05-11) established the framework via
   `env.clone()` + K-step forward sim. `lib/lookahead.py::score_action`
   + `agents/v3_lookahead/main.py`. AUC 0.952 ≈ oracle. Drop-one
@@ -100,10 +100,17 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   audit/2026-05-11-v3-lookahead-mvp-parity.md.
   → 2026-05-12: foundation laid (`lib/fast_sim.py`, `lib/opp_model.py`
   in commit d054f18 — 183× per-step speedup unlocks richer enumeration).
-  v7 minimax iteration in progress on this branch per plan
-  `reflective-dazzling-flask.md`: 5 variants (drop_one, target_swap,
-  ship_sweep, archetype, hungarian) + combined, 32-seed 2P A/B vs
-  `submissions/v3.5.1.py`, Wilson lo ≥ 55% gate, 4P FFA on PASS.
+  v7_0_drop_one (1-ply drop-one chooser with fast_sim) clears Wilson lo
+  59.5% vs v7_minimax (live μ=1063); NOT submitted per PI hold.
+  → 2026-05-12 late: full v7.1–v7.6 ablation stack on this branch
+  (audit/2026-05-12-v7-stack-iteration.md). **v7.1 maximin overlay
+  FAIL** (6/24 = 25% vs v7_0; budget blow-up). **v7.5 combined
+  (σ-equiv + recapture + 4P-aware) FAIL -8.3pp vs v7_0.** v7.6 bisect
+  (recapture OFF) PENDING at session-end. **Best local candidate
+  remains v7_0_drop_one (sha bb7ab23a75bc5865); waiting on PI to
+  decide submission slot.** Status downgraded to `parked` pending
+  next-session bisect resolution and/or different paradigm
+  (depth-2 minimax, learned value head).
 - **B.4 RL**: PPO/IMPALA self-play with opponent-pool curriculum.
   Heavy compute; defer until heuristic plateau. `[owner: unclaimed | status: open]`
 - **B.5 Hybrid**: heuristic policy with learned value head, OR IL
