@@ -40,7 +40,7 @@ import importlib.util
 import time
 from pathlib import Path
 
-from lib.lookahead import env_from_obs, score_joint_action
+from lib.lookahead import env_from_obs, score_joint_action_symmetric
 
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -48,12 +48,15 @@ _V3_AGENT = None
 _ROI_AGENT = None
 
 # Maximin parameters — see plan
+# After self-play gate failure (1/8 draws) we switched to
+# score_joint_action_symmetric to cancel env seat-bias. That doubles
+# per-cell rollout cost, so K had to drop from 5→3→2 to fit actTimeout.
 N_CANDS = 2
 M_OPPS = 2
-K_INIT = 5
-K_FALLBACK = 3
-DOWNSHIFT_MS = 400.0    # downshift K if elapsed > this after first sim
-HARD_DEADLINE_MS = 700.0  # bail remaining sims past this
+K_INIT = 3            # was 5; symmetric score is 2× cost
+K_FALLBACK = 2        # was 3
+DOWNSHIFT_MS = 300.0    # downshift K if elapsed > this after first sim
+HARD_DEADLINE_MS = 750.0  # bail remaining sims past this
 
 
 def _obs_get(obs, key, default=None):
@@ -232,8 +235,11 @@ def agent(obs):
             if i > 0 and elapsed_ms > DOWNSHIFT_MS and K == K_INIT:
                 K = K_FALLBACK
             try:
-                P[i][j] = score_joint_action(
-                    env, C[i], O[j], K=K, my_id=my_id, policy=_v3(),
+                # score_joint_action_symmetric: averages over seat-flipped
+                # rollouts to cancel env's documented P1-favoring tie-break
+                # asymmetry. Returns ship-delta from OUR POV (seat-invariant).
+                P[i][j] = score_joint_action_symmetric(
+                    env, C[i], O[j], K=K, policy=_v3(),
                 )
                 unfilled[i][j] = False
             except Exception:

@@ -149,6 +149,41 @@ def score_joint_action(
     return totals.get(my_id, 0.0) - totals.get(opp_id, 0.0)
 
 
+def score_joint_action_symmetric(
+    env,
+    our_action: list,
+    opp_action: list,
+    K: int,
+    policy: Callable,
+) -> float:
+    """Seat-symmetric variant of `score_joint_action` — averages over the
+    two possible seat assignments of (our_action, opp_action).
+
+    Motivation: the Orbit Wars env has a documented seat-asymmetry —
+    audit/2026-05-10-day-1-data-inventory.md:98 reports P1 systematically
+    favored in identical self-play (P1 4/6, P0 1/6, draw 1/6) due to
+    action-processing-order and combat-tie-break effects internal to
+    `kaggle_environments`. v7_minimax's first self-play probe (8 seeds,
+    1/8 draws) showed this asymmetry leaks through Sim<K> into the
+    maximin payoff matrix: P0's matrix is NOT simply the seat-flip of
+    P1's, so their maximin picks diverge → game diverges from σ-mirror
+    → seat-biased outcomes.
+
+    Fix: for each (our, opp) cell, run the rollout TWICE — once with
+    our_action at seat 0 (our_seat=0), once with our_action at seat 1
+    (our_seat=1). Both calls return "(our_ships - opp_ships) at horizon"
+    from our POV; we average. In a perfectly seat-symmetric env this
+    returns the same value either way; in our asymmetric env the
+    average cancels the env-internal seat bias.
+
+    Cost: 2x score_joint_action. Calling code must budget accordingly
+    (typical: drop K from 5 → 3 → 2 to fit actTimeout=1s).
+    """
+    a = score_joint_action(env, our_action, opp_action, K, my_id=0, policy=policy)
+    b = score_joint_action(env, our_action, opp_action, K, my_id=1, policy=policy)
+    return (a + b) / 2.0
+
+
 def enumerate_drop_one_candidates(action: list) -> list[list]:
     """Generate the smallest non-trivial candidate set.
 
