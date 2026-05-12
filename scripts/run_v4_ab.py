@@ -21,8 +21,12 @@ sys.path.insert(0, str(REPO))
 
 from scripts.tournament import run_tournament
 
-V4_PATH = str(REPO / "agents" / "v4_planner" / "main.py")
-V351_PATH = str(REPO / "agents" / "v3.5.1" / "main.py")
+AGENT_PATHS = {
+    "v4_planner": str(REPO / "agents" / "v4_planner" / "main.py"),
+    "v3.5.1": str(REPO / "agents" / "v3.5.1" / "main.py"),
+    "v7_minimax": str(REPO / "agents" / "v7_minimax" / "main.py"),
+    "v3_snipe": str(REPO / "agents" / "v3_snipe" / "main.py"),
+}
 
 
 def main(argv=None) -> int:
@@ -33,11 +37,17 @@ def main(argv=None) -> int:
                         help="multiprocessing workers (fork)")
     parser.add_argument("--out-dir", type=str, default=None,
                         help="directory for JSON artifact")
+    parser.add_argument("--opponent", type=str, default="v3.5.1",
+                        choices=sorted(k for k in AGENT_PATHS if k != "v4_planner"),
+                        help="agent to A/B v4_planner against")
     args = parser.parse_args(argv)
 
     out_dir = Path(args.out_dir) if args.out_dir else (REPO / "audit" / "tournaments")
     result = run_tournament(
-        agents={"v4_planner": V4_PATH, "v3.5.1": V351_PATH},
+        agents={
+            "v4_planner": AGENT_PATHS["v4_planner"],
+            args.opponent: AGENT_PATHS[args.opponent],
+        },
         seeds=list(range(args.seeds)),
         include_self_play=False,
         out_dir=out_dir,
