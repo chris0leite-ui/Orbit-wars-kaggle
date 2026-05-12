@@ -44,6 +44,7 @@ from lib.fleet import speed as fleet_speed
 from lib.intent import Intent, World, realize
 from lib.mechanism import DEFAULT_MECHANISMS
 from lib.mission import Mission
+from lib.missions.recapture import propose_recapture_missions
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.missions.snipe import propose_snipe_missions
 from lib.opp_model import make_opp_policy, top_tier_mirror_policy
@@ -127,14 +128,23 @@ def _aggressive_size(
 
 
 def _build_incumbent_intents(
-    world: World, model: WorldModel,
+    world: World, model: WorldModel, *, include_recapture: bool = False,
 ) -> list[Intent]:
     """v3.5.1's mission set: aggressive snipe + reinforce, run through
-    settle_plan. Used as the parity-floor candidate."""
+    settle_plan. Used as the parity-floor candidate.
+
+    `include_recapture=True` (v7.2+) also adds recapture missions.
+    The recapture proposer's score is calibrated to snipe scale and
+    top-K capped (see lib/missions/recapture.py); without those fixes
+    recapture dominates settle_plan and regresses
+    (audit/2026-05-12-recapture-wireup-ab.md).
+    """
     missions = (
         propose_snipe_missions(world, model, aggressive=True)
         + propose_reinforce_missions(world, model)
     )
+    if include_recapture:
+        missions = missions + propose_recapture_missions(world, model)
     chosen = settle_plan(missions, world, model)
     return chosen
 
@@ -451,13 +461,20 @@ def score_candidate(
     my_id: int = 0,
     K: int = 10,
     opp_tier: int = 1,
+    value_fn: Callable | None = None,
 ) -> float:
     """Rollout score for `action` under our seat.
 
     The opponent plays the requested tier policy throughout the
     rollout. Our seat plays `action` on the first tick, then the
-    top-tier mirror policy thereafter (mirrors `lib/lookahead.py::
-    score_action`'s convention)."""
+    top-tier mirror policy thereafter.
+
+    `value_fn(observation, my_id) -> float` is the leaf-state scoring
+    head. Defaults to `delta_us_minus_them` (our minus their total
+    ships) — the Phase-2-validated scalar. v7.3+ passes
+    `lib.lookahead_planner.evaluate_value` for production-share +
+    denial + survivor bonus.
+    """
     if snap.num_seats != 2:
         raise ValueError(f"v7 score_candidate is 2P only (got {snap.num_seats})")
     clone = fs_clone(snap)
@@ -482,7 +499,405 @@ def score_candidate(
         a1 = our_followup_policy(clone.state[1].observation)
         clone = fs_step(clone, [a0, a1], in_place=True)
 
-    return delta_us_minus_them(clone, my_id)
+    if value_fn is None:
+        return delta_us_minus_them(clone, my_id)
+    return value_fn(clone.state[my_id].observation, my_id)
+
+
+def score_candidate_symmetric(
+    snap: Snapshot,
+    action: list[list],
+    *,
+    K: int = 10,
+    opp_tier: int = 1,
+) -> float:
+    """Seat-symmetric variant of `score_candidate`.
+
+    Runs the rollout twice — once with us at seat 0 (opp at seat 1)
+    and once with us at seat 1 (opp at seat 0) — and averages the
+    `delta_us_minus_them` results from our POV in each. Cancels the
+    env's documented P1-favoring tie-break bias that otherwise leaks
+    into the maximin payoff matrix.
+
+    Ported from `score_joint_action_symmetric` in
+    `origin/claude/game-theory-strategy-analysis-0oH4N` but adapted
+    to operate on Snapshots (so we keep fast_sim's 183× speedup).
+
+    Cost: 2× score_candidate.
+    """
+    a = score_candidate(snap, action, my_id=0, K=K, opp_tier=opp_tier)
+    b = score_candidate(snap, action, my_id=1, K=K, opp_tier=opp_tier)
+    return (a + b) / 2.0
+
+
+def score_joint(
+    snap: Snapshot,
+    our_action: list[list],
+    opp_action: list[list],
+    *,
+    my_id: int = 0,
+    K: int = 10,
+    value_fn: Callable | None = None,
+) -> float:
+    """Snapshot variant of `lib/lookahead.score_joint_action`.
+
+    Both first-turn actions are forced; turns 2..K both seats play
+    top_tier_mirror. Returns the leaf-state value via `value_fn`
+    (default: `delta_us_minus_them`).
+    """
+    if snap.num_seats != 2:
+        raise ValueError(f"score_joint is 2P only (got {snap.num_seats})")
+    clone = fs_clone(snap)
+    opp_id = 1 - my_id
+    actions = [None, None]
+    actions[my_id] = our_action
+    actions[opp_id] = opp_action
+    if not clone.done:
+        clone = fs_step(clone, actions, in_place=True)
+    for _ in range(max(0, K - 1)):
+        if clone.done:
+            break
+        a0 = top_tier_mirror_policy(clone.state[0].observation)
+        a1 = top_tier_mirror_policy(clone.state[1].observation)
+        clone = fs_step(clone, [a0, a1], in_place=True)
+    if value_fn is None:
+        return delta_us_minus_them(clone, my_id)
+    return value_fn(clone.state[my_id].observation, my_id)
+
+
+def score_joint_symmetric(
+    snap: Snapshot,
+    our_action: list[list],
+    opp_action: list[list],
+    *,
+    K: int = 10,
+    value_fn: Callable | None = None,
+) -> float:
+    """Seat-symmetric joint scorer. Used by the maximin overlay."""
+    a = score_joint(snap, our_action, opp_action, my_id=0, K=K, value_fn=value_fn)
+    b = score_joint(snap, our_action, opp_action, my_id=1, K=K, value_fn=value_fn)
+    return (a + b) / 2.0
+
+
+def _drop_smallest(action: list[list]) -> list[list]:
+    """Return `action` with its smallest-ship launch removed.
+
+    Mirrors the drop_smallest function in v7_minimax (ported from
+    `origin/claude/game-theory-strategy-analysis-0oH4N`'s
+    agents/v7_minimax/main.py:98-117). Ties broken by removing the
+    EARLIEST launch among smallest, which is σ-deterministic given
+    upstream ordering.
+    """
+    if not action:
+        return []
+    if len(action) == 1:
+        return []
+    min_idx = 0
+    min_ships = int(action[0][2])
+    for i, la in enumerate(action[1:], start=1):
+        if int(la[2]) < min_ships:
+            min_ships = int(la[2])
+            min_idx = i
+    return [la for i, la in enumerate(action) if i != min_idx]
+
+
+def _opp_incumbent_action(world: World, obs: Any, opp_id: int) -> list[list]:
+    """Compute the opponent's incumbent action via v3.5.1 pipeline
+    from the opp's POV.
+
+    We don't have a clean way to swap `world.my_id` (it's frozen at
+    construction), so we rebuild World from a copy of obs with
+    `player=opp_id`. This is the same technique v7_minimax uses
+    (`_swap_obs_player` in their main.py).
+    """
+    if isinstance(obs, dict):
+        obs2 = dict(obs)
+        obs2["player"] = opp_id
+    else:
+        keys = (
+            "player", "planets", "fleets", "angular_velocity",
+            "initial_planets", "comet_planet_ids", "comets",
+            "step", "next_fleet_id",
+        )
+        obs2 = {}
+        for k in keys:
+            v = getattr(obs, k, None)
+            if v is not None:
+                obs2[k] = v
+        obs2["player"] = opp_id
+    opp_world = World.from_obs(obs2)
+    if not opp_world.planets_by_id:
+        return []
+    opp_model = WorldModel.from_world(opp_world)
+    missions = (
+        propose_snipe_missions(opp_world, opp_model, aggressive=True)
+        + propose_reinforce_missions(opp_world, opp_model)
+    )
+    intents = settle_plan(missions, opp_world, opp_model)
+    return realize(intents, obs2, mechanisms=DEFAULT_MECHANISMS, model=opp_model)
+
+
+def choose_maximin(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K: int = 10,
+    wallclock_ms: float = 700.0,
+    my_id: int | None = None,
+    use_symmetric: bool = True,
+    include_recapture: bool = False,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """v7.1 maximin overlay.
+
+    Per turn:
+      1. Build N=N+1 our candidates via `_enumerate_drop_one(incumbent)`
+         (incumbent + drop-each-launch).
+      2. Build M=2 opp candidates: opp's v3.5.1 incumbent + drop-smallest.
+      3. Score every (our_i, opp_j) cell via `score_joint_symmetric`
+         (Snapshot, K-step rollout, symmetric average).
+      4. Pick i* = argmax_i (min_j P[i,j]). Tie-break: prefer row 0
+         (= our incumbent) — σ-equivariant fallback.
+
+    Wallclock watchdog (`wallclock_ms`, default 700) bails the inner
+    loop if budget exhausted. Row 0 (incumbent) is ALWAYS evaluated
+    in full first so its worst-case is honest. 4P games fall back to
+    the incumbent (no maximin guarantee at n>2).
+    """
+    t_start = time.perf_counter()
+
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    if my_id is None:
+        my_id = world.my_id
+    model = WorldModel.from_world(world)
+
+    incumbent_intents = _build_incumbent_intents(
+        world, model, include_recapture=include_recapture,
+    )
+    incumbent_action = _action_from_intents(incumbent_intents, obs, model)
+
+    # 4P fallback — maximin is 2P-only.
+    if _infer_num_seats(world) != 2:
+        return incumbent_action
+
+    opp_id = 1 - my_id
+    # Our candidate class: incumbent + each drop-one variant.
+    C = _enumerate_drop_one(incumbent_action)
+    if len(C) <= 1:
+        return incumbent_action
+    # Opp candidate class M=2.
+    O_inc = _opp_incumbent_action(world, obs, opp_id)
+    O_drop = _drop_smallest(O_inc)
+    O = [O_inc] if not O_drop or O_drop == O_inc else [O_inc, O_drop]
+
+    snap = fs_from_obs(obs, configuration, episode_seed=0, num_seats=2)
+    if use_symmetric:
+        def score_fn(s, ours, opps, *, K=K):
+            return score_joint_symmetric(s, ours, opps, K=K, value_fn=value_fn)
+    else:
+        def score_fn(s, ours, opps, *, K=K):
+            return score_joint(s, ours, opps, my_id=my_id, K=K, value_fn=value_fn)
+
+    N = len(C)
+    M = len(O)
+    P: list[list[float]] = [[float("-inf")] * M for _ in range(N)]
+    unfilled: list[list[bool]] = [[True] * M for _ in range(N)]
+
+    # Row 0 (incumbent) first, full row. Then i>=1 row-by-row with bail.
+    for i in range(N):
+        for j in range(M):
+            elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+            if i > 0 and elapsed_ms > wallclock_ms:
+                break
+            try:
+                P[i][j] = score_fn(snap, C[i], O[j], K=K)
+                unfilled[i][j] = False
+            except Exception:
+                P[i][j] = float("-inf")
+                unfilled[i][j] = False
+        else:
+            continue
+        break  # exited inner via budget bail
+
+    # Maximin: argmax_i (min_j P[i,j]) over evaluated cells, tie → row 0.
+    best_i = 0
+    best_worst = float("-inf")
+    for i in range(N):
+        evaluated = [P[i][j] for j in range(M) if not unfilled[i][j]]
+        if not evaluated:
+            worst = float("-inf")
+        else:
+            worst = min(evaluated)
+        if worst > best_worst:
+            best_worst = worst
+            best_i = i
+    return C[best_i]
+
+
+def score_candidate_4p(
+    snap: Snapshot,
+    action: list[list],
+    *,
+    my_id: int,
+    K: int = 8,
+    value_fn: Callable | None = None,
+) -> float:
+    """Rollout score for a 4P candidate action.
+
+    All 3 non-pov seats play `top_tier_mirror_policy`. Our seat plays
+    `action` on tick 0, then `top_tier_mirror_policy` for the rest.
+    Scoring head: `value_fn(state[my_id].observation, my_id)` at
+    terminal — defaults to "our ships − max(other seat ships)" which
+    rewards keeping the lead vs the best-remaining-opponent (better
+    proxy for 4P first-place than total-sum-of-them).
+    """
+    if snap.num_seats != 4:
+        raise ValueError(f"score_candidate_4p needs num_seats=4 (got {snap.num_seats})")
+    clone = fs_clone(snap)
+
+    # First step: forced action for us; all 3 opps play top_tier_mirror.
+    actions: list[list[list]] = [[] for _ in range(4)]
+    for seat in range(4):
+        if seat == my_id:
+            actions[seat] = action
+        else:
+            actions[seat] = top_tier_mirror_policy(clone.state[seat].observation)
+    if not clone.done:
+        clone = fs_step(clone, actions, in_place=True)
+
+    # Remaining K-1 steps: all 4 seats play top_tier_mirror.
+    for _ in range(max(0, K - 1)):
+        if clone.done:
+            break
+        acts = [top_tier_mirror_policy(clone.state[seat].observation) for seat in range(4)]
+        clone = fs_step(clone, acts, in_place=True)
+
+    if value_fn is not None:
+        return value_fn(clone.state[my_id].observation, my_id)
+
+    # Default 4P scoring: our ships − max(other seat ships).
+    # Better proxy for "did we keep the lead vs the best-remaining-
+    # opponent" than (our − sum_others), which is dominated by total
+    # ship counts.
+    from collections import defaultdict
+    totals: dict[int, float] = defaultdict(float)
+    obs0 = clone.state[my_id].observation
+    for p in obs0.planets:
+        if int(p[1]) >= 0:
+            totals[int(p[1])] += float(p[5])
+    for f in obs0.fleets:
+        if int(f[1]) >= 0:
+            totals[int(f[1])] += float(f[6])
+    ours = totals.get(my_id, 0.0)
+    others = [v for k, v in totals.items() if k != my_id and k >= 0]
+    best_opp = max(others) if others else 0.0
+    return ours - best_opp
+
+
+def choose_4p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K: int = 8,
+    wallclock_ms: float = 700.0,
+    my_id: int | None = None,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """v7.4 — 4P drop-one chooser.
+
+    No maximin (no Nash guarantee at n>2). All 3 opps modeled as
+    top_tier_mirror; we score drop-one candidates and pick argmax.
+    Falls back to incumbent if the watchdog trips or no candidate
+    strictly beats it.
+    """
+    t_start = time.perf_counter()
+
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    if my_id is None:
+        my_id = world.my_id
+    model = WorldModel.from_world(world)
+
+    incumbent_intents = _build_incumbent_intents(
+        world, model, include_recapture=include_recapture,
+    )
+    incumbent_action = _action_from_intents(incumbent_intents, obs, model)
+
+    # Build candidate set: incumbent + drop-each-launch.
+    candidates = _enumerate_drop_one(incumbent_action)
+    if len(candidates) <= 1:
+        return incumbent_action
+
+    snap = fs_from_obs(obs, configuration, episode_seed=0, num_seats=4)
+
+    best_action = incumbent_action
+    best_score = float("-inf")
+    incumbent_scored = False
+    for cand in candidates:
+        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+        if elapsed_ms > wallclock_ms:
+            break
+        try:
+            score = score_candidate_4p(
+                snap, cand, my_id=my_id, K=K, value_fn=value_fn,
+            )
+        except Exception:
+            continue
+        if not incumbent_scored:
+            incumbent_scored = True
+            best_score = score
+            best_action = list(cand)
+            continue
+        if score > best_score:
+            best_score = score
+            best_action = list(cand)
+    return best_action
+
+
+def choose_with_4p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K_2p: int = 10,
+    K_4p: int = 8,
+    wallclock_ms: float = 700.0,
+    use_symmetric: bool = True,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """Auto-routes 2P → choose_maximin, 4P → choose_4p.
+
+    Combines the v7.1 maximin overlay (with σ-equiv + symmetric
+    scoring) for 2P and the v7.4 4-seat drop-one rollout for 4P. v7.5
+    final agent uses this entry point.
+    """
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    n_seats = _infer_num_seats(world)
+    if n_seats == 2:
+        return choose_maximin(
+            obs, configuration,
+            K=K_2p, wallclock_ms=wallclock_ms,
+            use_symmetric=use_symmetric,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    if n_seats == 4:
+        return choose_4p(
+            obs, configuration,
+            K=K_4p, wallclock_ms=wallclock_ms,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    # 3P or 1P: rare; fall back to incumbent (safest).
+    model = WorldModel.from_world(world)
+    intents = _build_incumbent_intents(world, model, include_recapture=include_recapture)
+    return _action_from_intents(intents, obs, model)
 
 
 def choose(

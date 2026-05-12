@@ -72,12 +72,41 @@ def settle_plan(
     by_src: dict[int, list[Mission]] = defaultdict(list)
     for m in missions:
         by_src[m.src_id].append(m)
+
+    # σ-equivariant tie-break (ported from
+    # origin/claude/game-theory-strategy-analysis-0oH4N's σ-equiv-v1).
+    # Without this, equal-score ties default to insertion order which
+    # makes σ-paired (src, target) pairs pick the SAME target instead
+    # of σ-paired targets — that single-turn asymmetry cascades over
+    # 500 steps to non-draws in v3-vs-v3 self-play and presumably
+    # leaks ladder lift away. Key uses
+    # `-(src.x-CENTER) * (target.x-CENTER)`: σ negates both factors
+    # → product invariant → σ-paired pairs get the same key. Within
+    # a source's tied targets, T and σ(T) get opposite-sign keys →
+    # deterministic σ-equivariant choice. Falls back to y-axis
+    # product then target.id for full determinism. The score is
+    # rounded to 6 dp before tie-breaking because 1-ULP coordinate
+    # asymmetries in the env (some seeds: y=30.384005553010518 vs
+    # σ-expected 30.38400555301052) propagate through distance →
+    # score with 1-ULP differences that defeat the tie-break unless
+    # rounded.
+    def _tb(m: Mission):
+        src = world.planets_by_id.get(m.src_id)
+        tgt = world.planets_by_id.get(m.target_id)
+        if src is None or tgt is None:
+            return (0.0, 0.0, m.target_id)
+        kx = (src.x - 50.0) * (tgt.x - 50.0)
+        ky = (src.y - 50.0) * (tgt.y - 50.0)
+        return (-kx, -ky, m.target_id)
+
+    SCORE_ROUND = 6
+
     for src_id in by_src:
-        by_src[src_id].sort(key=lambda m: -m.score)
+        by_src[src_id].sort(key=lambda m: (-round(m.score, SCORE_ROUND), _tb(m)))
 
     source_order = sorted(
         by_src.keys(),
-        key=lambda s: -by_src[s][0].score,
+        key=lambda s: (-round(by_src[s][0].score, SCORE_ROUND), _tb(by_src[s][0])),
     )
 
     # target_id -> list of (eta, ships) for this-turn pending arrivals.
