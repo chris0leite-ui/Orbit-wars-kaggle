@@ -2,14 +2,25 @@
 
 ## 2026-05-12 EVE (game-ai-lookahead-3ucqH — v9 super-version + v10 + submit attempt)
 
-- `tag: kaggle-cli-401-from-sandbox` — `kaggle competitions submit`
-  returned HTTP 401 from this sandbox throughout the day, including
-  on the authorized v7_0_drop_one push at session end. The
-  `KaggleAPIToke` env var is sanitized for the sandbox; the actual
-  push must be made from a credentialed machine. **Fix:** documented
-  in audit; PI to push externally. Promotion candidate: pre-session
-  cred check would surface this before the agent commits time to
-  building agents that can't be pushed.
+- `tag: kaggle-cli-401-was-wrong-auth-env-var` — `kaggle competitions
+  submit` returned HTTP 401 throughout the day; I incorrectly
+  concluded the token was sanitized/expired. **Root cause:** the
+  `$KaggleAPIToke` token has format `KGAT_<32 hex>` — that's a NEW
+  Kaggle auth format. The legacy `KAGGLE_KEY` env var (used by
+  `bootstrap.sh`'s default path) treats this as a plain key string
+  and the API rejects it. The CORRECT env var for `KGAT_*` tokens is
+  **`KAGGLE_API_TOKEN`**. Tested: `unset KAGGLE_USERNAME KAGGLE_KEY;
+  export KAGGLE_API_TOKEN="$KaggleAPIToke"; kaggle competitions
+  list -s orbit` → works. Same env unlocked the actual submit
+  (v7_0_drop_one pushed as #52588156). **Fix to land before next
+  session:** `bootstrap.sh` step 1 should detect the `KGAT_` prefix
+  on the harness token and export `KAGGLE_API_TOKEN` instead of
+  writing `~/.kaggle/kaggle.json` (which uses the legacy key path
+  internally). Cost ~30 min of session time on diagnosis.
+  **Promotion candidate:** update bootstrap auth-detection logic;
+  add a runtime smoke `kaggle competitions list` immediately after
+  cred resolution so failures surface in the first 5 minutes, not at
+  submit time.
 
 - `tag: sigma-equiv-helps-v7minimax-hurts-v7_0` — the σ-equiv layer
   (sym_hypot + planner _tb + SCORE_ROUND=6) lifted v7_minimax to μ=1063

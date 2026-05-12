@@ -6,11 +6,11 @@
 ```yaml
 date: 2026-05-12
 days_to_deadline: 42                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v4_planner      # rolling-last-2: [v7_minimax (#52568317, μ=1063.0), v4_planner (#52579863, PENDING — pushed 14:25 UTC from parallel branch claude/research-lookahead-strategy-kfRsy)]. v3.5.1 (#52565976, μ=943.1 ⚠ REGRESSED) and σ-equiv-v1 (#52565034, μ=1041.4) both evicted. **v7_0_drop_one (sha bb7ab23a75bc5865) ready for PI submit authorization** — local A/Bs prove +Wilson-significant lift over BOTH live agents (79% vs v7_minimax Wlo 59.5%, 75% vs v4_planner Wlo 55.1%). Submit attempted from sandbox: HTTP 401 (creds expired in this env). PI to push from a credentialed machine.
-last_kernel_push: 2026-05-12 05:20:09 UTC
-last_submission_id: 52565976
+current_submitted_agent: v7_0_drop_one   # rolling-last-2: [v4_planner (#52579863, μ=1058.1), v7_0_drop_one (#52588156, PENDING)]; v7_minimax (#52568317, μ=1040.8) evicted by this push. **PUSHED 17:36 UTC** from this branch: v7_0_drop_one.py 121KB sha256:bb7ab23a75bc5865. Local A/B evidence: 79% vs v7_minimax (Wlo 59.5% PASS), 75% vs v4_planner (Wlo 55.1% PASS). Predicted live μ 1065-1085. v3.5.1 #52565976 converged at μ=945.6 (regressed from predicted ~1090). Auth fix: KGAT_* tokens need KAGGLE_API_TOKEN env var (not KAGGLE_KEY — the legacy key auth path returns 401 on KGAT_ tokens).
+last_kernel_push: 2026-05-12 17:36:01 UTC
+last_submission_id: 52588156
 last_submission_status: PENDING          # validation episode running
-last_submission_file: submissions/v3.5.1.py  # 69.7 KB bundle; sha256 in audit/2026-05-12-iter2-ablation-results.md
+last_submission_file: submissions/v7_0_drop_one.py  # 121 KB bundle; sha256:bb7ab23a75bc5865
 last_submission_message: |
   v3.5.1: aggressive snipe ship sizing. base_ships = min(0.7*src.ships,
   src.ships-5) when src.ships>12 (else minimum-viable). Single
@@ -24,8 +24,8 @@ last_submission_message: |
 tournament_rank_today: rolling-last-2 = [v3.5.1 #52565976 PENDING (this branch's earlier push), v7_minimax #52568317 μ=1063.0 (parallel-branch game-theory-strategy-analysis-0oH4N, 06:50 UTC)]; σ-equiv-v1 #52565034 μ=1041.4 evicted by the v7_minimax push.
 our_best_rank: v7_minimax μ=1063 (#52568317, converged). v3.5.1 #52565976 still PENDING. Top-10 cliff at μ=1447.6 = +384 short of v7_minimax.
 lb_top10_cliff: 1447.6                   # ShunkiKyoya, 2026-05-11. #1 = bowwowforeach 1697.7
-submissions_used_today: 1                # v3.5.1 #52565976 (05:20 UTC) — PI-approved single shot. v7_minimax #52568317 was pushed from parallel branch (game-theory-strategy-analysis-0oH4N).
-submissions_used_total: 8                # +v7_minimax #52568317
+submissions_used_today: 2                # v3.5.1 #52565976 (05:20 UTC) + v7_0_drop_one #52588156 (17:36 UTC) from this branch. v7_minimax #52568317 + v4_planner #52579863 from parallel branches.
+submissions_used_total: 9                # +v7_0_drop_one #52588156
 plateau_days: 0
 saturation_count: 0
 session_log:
