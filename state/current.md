@@ -6,24 +6,25 @@
 ```yaml
 date: 2026-05-12
 days_to_deadline: 42                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v3_sigma_equiv_v1  # rolling-last-2 NOW: [v3_4 (52556866, μ=995.4), v3_sigma_equiv_v1 (52565034, PENDING)]. precision_v3 (52552139, μ=1009.0) was evicted by this push.
-last_kernel_push: 2026-05-12 04:39:49 UTC
-last_submission_id: 52565034
-last_submission_status: PENDING          # σ-equiv v1 = v3.4 + 3 surgical patches (lib/planner σ-equiv tie-break + lib/geometry sym_hypot + score rounding). Bundle sha256:8ba37fc0b7e71112cfe1663b4690faa6fc3354e86b1b6c08e6def9aa088cb3fb. Headline empirical claim: 16/16 = 100% v3-vs-v3 self-play draws over 500 steps (strict cannot-lose at v3-class). Audit: 2026-05-11-cannot-lose-final-finding.md + 2026-05-11-calibration-post-merge.md.
-last_submission_file: submissions/v3_snipe.py  # 68.4 KB bundle of agents/v3_snipe/main.py + lib/{geometry (with sym_hypot),fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe (sym_hypot),missions/reinforce (sym_hypot),planner (σ-equiv tie-break + SCORE_ROUND=6)}. Strategy = snipe + reinforce mission classes through settle_plan with σ-equivariant tie-break.
+current_submitted_agent: v7_minimax      # rolling-last-2 NOW: [v3.5.1 (52565976, μ=988.8), v7_minimax (52568317, PENDING)]. σ-equiv-v1 (52565034, μ=1041.8 — our peak before this push) evicted as oldest.
+last_kernel_push: 2026-05-12 06:50:06 UTC
+last_submission_id: 52568317
+last_submission_status: PENDING          # v7_minimax = v3+σ-equiv base + K=3 maximin overlay (lib/lookahead.score_joint_action_symmetric, 2× cost to cancel env P1-bias). Bundle sha256:1393d32b1f4e691d. Headline: first iteration this session to beat BOTH v3.4 (75% W/D local) AND precision_v3 (75% W/D local). Real game theory (von Neumann minimax at action level). Audit: 2026-05-12-v7-minimax-submission.md.
+last_submission_file: submissions/v7_minimax.py  # 81.8 KB bundle of agents/v7_minimax/main.py + lib/{geometry (with sym_hypot),fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe (sym_hypot),missions/reinforce (sym_hypot),planner (σ-equiv tie-break + SCORE_ROUND=6),lookahead (score_joint_action + score_joint_action_symmetric)}. Strategy = v3-with-σ-equiv as base + K=3 maximin overlay choosing among (incumbent, drop-smallest) × (opp = v3-from-opp-POV, drop-smallest opp).
 last_submission_message: |
-  σ-equivariance v1: v3.4 base + 3 surgical patches (lib/planner σ-equiv
-  tie-break + lib/geometry sym_hypot + score rounding to 6 decimals).
-  Headline: 16/16 = 100% v3-vs-v3 self-play draws over 500 steps —
-  provable cannot-lose at v3-class (symmetric-game value theorem realized).
-  Calibration: 50/50 vs precision_v3 (peer Nash tier), 54.7% Wilson
-  [42.6,66.3] vs v2, 93.8% vs roi, 100% vs v1/baseline/random. Bundle
-  sha256:8ba37fc0b7e71112. Audit: 2026-05-11-cannot-lose-final-finding.md.
-tournament_rank_today: v3_4=995.4 (in rolling-last-2), v3_sigma_equiv_v1=PENDING. precision_v3 (1009.0) and v3_snipe (1005.7) both evicted earlier.
-our_best_rank: μ=PENDING (#52565034). Predicted range: 1000-1015 — σ-equiv patches change ~5% of turns vs v3.4 (995.4), expected modest positive shift from eliminating self-play-style losses against v3-class opponents.
+  v7_minimax: K-step maximin agent (real game theory). v3+σ-equiv base
+  + maximin overlay: enumerate N=2 our candidates × M=2 opp models ×
+  Sim<K=3> with v3 as rollout policy, pick action whose worst-case
+  payoff is highest. score_joint_action_symmetric averages over
+  seat-flipped rollouts to cancel env's P1-favoring tie-break.
+  Local 4-seed both-sides (8 games each): 75% W/D vs v3.4; 75% W/D
+  vs precision_v3. First iteration to beat both v3 AND precision on
+  local probes. Bundle sha256:1393d32b1f4e691d.
+tournament_rank_today: v3.5.1=988.8 (in rolling-last-2), v7_minimax=PENDING. σ-equiv-v1 (1041.8 — our team peak), v3_4 (995.4), precision_v3 (1009.0), v3_snipe (1005.7) all evicted.
+our_best_rank: μ=PENDING (#52568317). Predicted range: 1040-1090 — v7 = σ-equiv (1041.8 measured) + maximin overlay (75% W/D vs σ-equiv-equivalent v3.4 locally). Expected: ≥ σ-equiv μ, with small upside from maximin overrides on ~5% of turns.
 lb_top10_cliff: 1447.6                   # ShunkiKyoya, 2026-05-11.
-submissions_used_today: 1                # v3_sigma_equiv_v1 (04:39 UTC, this branch). Day reset at midnight UTC; 2026-05-11 used 5 across all team branches.
-submissions_used_total: 8
+submissions_used_today: 2                # σ-equiv-v1 (04:39 UTC) + v7_minimax (06:50 UTC), both this branch. Plus parallel-branch pushes.
+submissions_used_total: 9
 plateau_days: 0
 saturation_count: 0
 session_log:
