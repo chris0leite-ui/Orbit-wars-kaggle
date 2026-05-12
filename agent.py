@@ -42,6 +42,24 @@ def dist(a: Point, b: Point) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
+def sym_hypot(dx: float, dy: float) -> float:
+    """Order-independent hypot — bit-equal for (dx, dy) and (dy, dx).
+
+    `math.hypot(a, b)` is mathematically symmetric in its arguments but
+    not bit-exact under FP rounding (a² + b² and b² + a² can differ by
+    1 ULP, since the addition is non-associative). For σ-paired (src,
+    target) pairs in 2P self-play, the (dx, dy) arguments are permutations
+    of each other, hitting this exact case. Without canonicalisation,
+    a 1-ULP score difference defeats the σ-equivariant tie-break in
+    settle_plan. See submission #52565034 (μ=1063.2).
+    """
+    ax = abs(dx)
+    ay = abs(dy)
+    if ax > ay:
+        ax, ay = ay, ax
+    return math.hypot(ax, ay)
+
+
 def point_to_segment_distance(p: Point, a: Point, b: Point) -> float:
     ax, ay = a
     bx, by = b
@@ -643,7 +661,7 @@ def propose_snipe_missions(world: World, model: WorldModel) -> list[Mission]:
     missions: list[Mission] = []
     for src in my_planets:
         for t in targets:
-            d = math.hypot(t.x - src.x, t.y - src.y)
+            d = sym_hypot(t.x - src.x, t.y - src.y)
             target_min = max(1, int(t.ships) + 1)
             if src.ships > AGGRESSIVE_MIN_GARRISON:
                 fraction_size = max(1, int(src.ships * AGGRESSIVE_FRACTION))
@@ -725,7 +743,7 @@ def propose_reinforce_missions(world: World, model: WorldModel) -> list[Mission]
                 continue
             cost = max(1, int(attacker_strength) + 1)
             v = fleet_speed(cost)
-            d_dist = math.hypot(dp.x - s.x, dp.y - s.y)
+            d_dist = sym_hypot(dp.x - s.x, dp.y - s.y)
             eta = int(math.ceil(d_dist / max(v, 1e-6))) if v > 0 else horizon + 1
             if eta >= t_loss:
                 continue
@@ -766,10 +784,36 @@ def settle_plan(
     by_src: dict[int, list[Mission]] = defaultdict(list)
     for m in missions:
         by_src[m.src_id].append(m)
-    for src_id in by_src:
-        by_src[src_id].sort(key=lambda m: -m.score)
 
-    source_order = sorted(by_src.keys(), key=lambda s: -by_src[s][0].score)
+    # σ-equivariant tie-break + score rounding (submission #52565034, μ=1063.2).
+    # Without these two, tied or near-tied mission scores defaulted to
+    # insertion-order ascending-target.id, which made σ-paired sources pick
+    # the SAME target instead of σ-paired targets. That single-turn asymmetry
+    # cascades to elimination over 500 steps and shows up as ~20% non-draws
+    # in self-play. The geometric key -(src.x-CENTER)*(tgt.x-CENTER) negates
+    # under σ (mirror through the sun), so σ-paired (src, tgt) pairs get
+    # opposite-sign keys and consistent σ-equivariant choices. Score is
+    # rounded to 6 decimal places so 1-ULP env-coord asymmetries (e.g. seed
+    # 1's planet 12.y vs 100-planet 15.y differ by 1 ULP) don't defeat the
+    # tie-break with a "false" non-tie at the primary key.
+    SCORE_ROUND = 6
+
+    def _tb(m: "Mission") -> tuple[float, float, int]:
+        src = world.planets_by_id.get(m.src_id)
+        tgt = world.planets_by_id.get(m.target_id)
+        if src is None or tgt is None:
+            return (0.0, 0.0, m.target_id)
+        kx = (src.x - CENTER) * (tgt.x - CENTER)
+        ky = (src.y - CENTER) * (tgt.y - CENTER)
+        return (-kx, -ky, m.target_id)
+
+    for src_id in by_src:
+        by_src[src_id].sort(key=lambda m: (-round(m.score, SCORE_ROUND), _tb(m)))
+
+    source_order = sorted(
+        by_src.keys(),
+        key=lambda s: (-round(by_src[s][0].score, SCORE_ROUND), _tb(by_src[s][0])),
+    )
 
     pending: dict[int, list[tuple[int, int]]] = defaultdict(list)
     chosen: list[Mission] = []

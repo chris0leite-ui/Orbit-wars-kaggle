@@ -5,6 +5,73 @@
 > `audit/archive-2026-05-11-handover-dFHeS.md` (informally — the file
 > itself wasn't archived this session because the rewrite is total).
 
+## Live-score correction (pulled via `kaggle competitions submissions`)
+
+State files reported v3.5.1 PENDING with predicted μ=1090-1100 and
+σ-equivariance v1 at μ=976.3. Both turned out wrong. Actual live scores:
+
+| Submission | Live μ | State-file μ |
+|---|---|---|
+| σ-equivariance v1 (#52565034) | **1063.2** | 976.3 |
+| v3.5.1 aggressive (#52565976) | **994.7** | predicted 1090-1100 |
+| v3.4 (#52556866) | 995.4 | 995.4 |
+| precision_v3 (#52552139) | 1011.4 | 1009.0 |
+| v3_snipe (#52544634) | 1005.7 | 1055.5 |
+
+**σ-equivariance v1 is the best-scoring submission, +68.5μ above v3.5.1
+aggressive.** The "μ-floor not μ-ceiling" framing in the original commit
+was wrong on the ladder — σ-equivariance is a real μ-lift. Aggressive
+sizing actually *regressed* on the live ladder (994.7 < the no-aggressive
+v3_snipe at 1005.7).
+
+## σ-equivariance merged into agent.py
+
+Three surgical patches from `claude/game-theory-strategy-analysis-0oH4N`
+(commits `6c12b9f`, `7b60938`, `24bae06`) merged in. Net diff in
+`agent.py`: +50 LOC.
+
+1. **`sym_hypot(dx, dy)`** (new helper): order-independent hypot. Wired
+   into `propose_snipe_missions` distance calc (`d = sym_hypot(...)`)
+   and `propose_reinforce_missions` (`d_dist = sym_hypot(...)`).
+   Cancels 1-ULP score noise from `math.hypot`'s arg-order rounding.
+2. **σ-equivariant tie-break** in `settle_plan`: secondary sort key
+   `(-kx, -ky, target_id)` where `kx = (src.x - 50) * (tgt.x - 50)`.
+   Under σ (180° rotation around the sun) both factors negate → product
+   invariant → σ-paired (src, tgt) pairs get consistent picks.
+3. **Score rounding to 6 dp** in `settle_plan` primary sort key. The env
+   itself stores planet coords with up to 1-ULP σ-asymmetries that
+   propagate through `distance → score`; rounding treats sub-ULP as
+   true ties so `_tb` can fire.
+
+### Local verification of the merge
+
+- `pytest tests/ -q` — **140/140 green** in 76 s.
+- **Self-play preserved:** `agent.py` vs `agent.py` 16-seed bidirectional
+  = **16/16 draws** (full determinism, σ-equivariance does not break
+  pre-existing determinism).
+- **A/B vs `opponents/v3_snipe_frozen.py` lifted:**
+  - Before merge: 15/32 = 46.9% Wilson [30.9%, 63.6%]
+  - After merge: **18/32 = 56.2%** Wilson [39.3%, 71.8%]
+  - **+9.4pp lift; consistent with σ-equiv neutralizing tie-break wins
+    the frozen bundle was previously claiming via asymmetric tie-breaking.**
+
+## Next-session first-action (REVISED)
+
+1. **PI submit decision** for the new agent.py. Hypothesis: σ-equivariance
+   merged on top of aggressive sizing recaptures v3.5.1's drop and
+   may reach or exceed σ-equivariance v1's 1063.2 μ. Rolling-last-2
+   eviction: v3.5.1 (#52565976, 994.7) → eviction candidate; σ-equiv v1
+   (#52565034, 1063.2) → retained automatically if we submit.
+2. **Decision: keep aggressive sizing or revert?** Live μ data suggests
+   aggressive sizing regressed (-11μ vs v3_snipe, -68μ vs σ-equiv). But
+   single-submission μ values have ±20μ noise and our pre-merge A/B vs
+   frozen v3_snipe (which now includes σ-equiv-aligned mechanisms inadvertently
+   via v3.2 lib changes) saw 56% lift. If PI wants to A/B clean: bundle
+   two variants (with-aggressive, without-aggressive), submit one and
+   the other after observation. Defer to PI.
+3. **Refresh the parity fixture** before tightening test_replay_parity's
+   floor from 0.9 → 1.0.
+
 ## Where we are
 
 - **Comp:** Orbit Wars (slug `orbit-wars`). Deadline 2026-06-23 23:59 UTC ->
