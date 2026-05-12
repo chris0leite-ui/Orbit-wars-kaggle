@@ -27,7 +27,7 @@ Cross-linked to today's `audit/friction.md` `## 2026-05-12 (simplify-codebase-p3
 - `thin-local-gates-drove-500-LOC-merge`
 - `accepted-upstream-correctness-claim-at-face`
 
-## Promotion candidates (drafted; PI ratification pending)
+## Promotion candidates (PI ratified: yes for both)
 
 ### [ ] [CROSS-CUTTING] CLAUDE.md / Rule 32 addendum — pull live submission scores at session-start
 
@@ -62,7 +62,11 @@ Cross-linked to today's `audit/friction.md` `## 2026-05-12 (simplify-codebase-p3
 
 ## PI additions
 
-_pending; appended after PI replies to step 4 of the postmortem skill._
+PI's response to "anything you'd add to the postmortem?" was implicit
+in the session flow (no separate text additions surfaced — PI
+ratified both promotions). Both promotion candidates appended to
+`.claude/skills/kaggle-comp/improvements.md` Pending list in the
+same commit as this postmortem.
 
 ## Framework version at session-end
 

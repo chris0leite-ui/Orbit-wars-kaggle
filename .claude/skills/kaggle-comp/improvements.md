@@ -470,6 +470,56 @@ explain it to me in simple terms and for abbreviations always tell
 me what it is." This is a load-bearing communication rule, not a
 one-off ask.
 
+### [ ] [CROSS-CUTTING] CLAUDE.md / Rule 32 addendum: pull live submission scores at session-start
+
+`tag: state-files-out-of-date-vs-live-mu`. Origin: Orbit Wars 2026-05-12.
+State files (state/current.md, HANDOVER.md) reported v3.5.1 PENDING
+with predicted μ=1090-1100 and σ-equivariance v1 at μ=976.3. PI prompted
+a live API check mid-session. Actual live μ: v3.5.1=994.7 (−95 from
+prediction), σ-equiv=1063.2 (+87 from state-file claim). The whole
+v7-merge decision would have been planned against wrong priors if the
+PI hadn't pushed for the check; the agent was about to commit to
+"aggressive sizing is our best bet" when the live ladder showed
+aggressive was actually regressing. Pattern: predicted-μ stays in
+state files long after live μ has moved; subsequent session decisions
+inherit stale priors. State-file freshness has no automatic gate.
+
+Fix: extend Rule 32 ("Session-start git fetch") with a live-μ pull.
+After the current `git fetch / git log / git diff HANDOVER.md` lines,
+add: "Then pull live submission scores from the Kaggle API and
+reconcile against state/current.md / HANDOVER.md claims. Any
+session decision that conditions on 'what's our best submission' must
+use the live number, not the state-file number. One-shot:
+`curl -s -u $KAGGLE_USERNAME:$KAGGLE_KEY https://www.kaggle.com/api/v1/competitions/submissions/list/$COMP | python -m json.tool | head -200`."
+
+### [ ] [CROSS-CUTTING] do-and-dont.md — probe before fix on empirical-symmetry breaks
+
+`tag: probe-before-fix-on-empirical-symmetry-breaks`. Origin: Orbit Wars
+2026-05-12. v7 self-play dropped from 16/16 draws (σ-equiv lock) to
+8/16. I hypothesised env-RNG drift between processes and applied a
+`cfg["seed"] = obs.step` fix to env_from_obs. Post-fix self-play was
+**bit-identical** to pre-fix — the env was already deterministic via
+the tournament harness's `make(configuration={"seed": ...})` call, so
+my inner-env seed never mattered. Real cause was algorithmic:
+maximin and minimax responses to the same payoff matrix diverge when
+there's no pure saddle point (max-min ≠ min-max in mixed-strategy
+cases). A 10-line probe comparing P0's and P1's payoff matrices on a
+single divergent seed would have shown they were *identical*,
+immediately ruling out RNG drift and pointing at the real cause.
+Cost: 30 min eval compute + a stale `7c1e078` commit on the branch.
+Pattern: when an empirical symmetry breaks, the first hypothesis is
+usually wrong; without probing the actual intermediate artifact, the
+agent applies a "fix" that doesn't engage the real failure mode.
+
+Fix: add to `do-and-dont.md` under "Common antipatterns": **When an
+empirical symmetry property breaks (self-play stops drawing,
+σ-equiv lock falls below 100%, A vs A diverges), do NOT immediately
+apply a fix based on the first hypothesis. Write a 5-10 line probe
+that examines the actual artifact (payoff matrices, action diffs,
+intermediate scores) on a single divergent example before changing
+code. Mismatched hypotheses lead to no-op commits that look like
+fixes and obscure the real cause.**
+
 ---
 
 ## Applied
