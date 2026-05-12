@@ -39,6 +39,11 @@ from lib.intent import World
 from lib.mission import Mission
 from lib.world_model import WorldModel, comet_remaining_lifetime
 
+# sym_hypot was imported here for the σ-equiv layer (cherry-picked
+# from origin/claude/game-theory-strategy-analysis-0oH4N). REVERTED for
+# v9 (2026-05-12) — v7.6 bisect found σ-equiv regresses v7_0 by ~54pp.
+# Restoring math.hypot for src↔target distance below.
+
 # Total game length in steps (Configuration table, data/README.md).
 EPISODE_STEPS = 500
 

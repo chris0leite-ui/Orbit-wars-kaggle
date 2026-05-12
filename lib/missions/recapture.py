@@ -40,6 +40,17 @@ EPISODE_STEPS = 500
 RECAPTURE_WINDOW = 50          # turns after loss within which to recapture
 RECAPTURE_BONUS_PEAK = 1.5     # multiplier at the moment of loss
 RECENTLY_LOST_GARRISON_MAX = 50  # don't bother recapturing if enemy fortified
+# Calibration fixes ported with the file from origin/main (post-revert).
+# The 200-game A/B that triggered the revert (audit/...recapture-wireup-ab.md)
+# identified three failure modes: score-scale mismatch with snipe, proposal-
+# volume dilution (80-160 per turn), and infeasible commits. Knobs below let
+# the v7.2 integration A/B re-test with corrected defaults; the gate is
+# Wilson lo ≥ 55% at 24 seeds × both sides.
+RECAPTURE_SCORE_DENOM_MATCHES_SNIPE = 1  # 1 = use (base_ships + d + 1)
+                                          # (snipe-aligned); 0 = legacy
+                                          # (0.5*base_ships + d + 1).
+RECAPTURE_TOPK_PER_TURN = 5    # cap on proposals returned per turn
+                                # (0 = no cap; replicates the regression).
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +153,15 @@ def propose_recapture_missions(world: World, model: WorldModel) -> list[Mission]
                 continue
             time_to_hold = max(1, EPISODE_STEPS - step_now - eta)
             value = t.production * time_to_hold
-            score = bonus * value / (0.5 * base_ships + d + 1.0)
+            # Denominator: aligned with snipe by default (audit hypothesis
+            # 1 fix). Set RECAPTURE_SCORE_DENOM_MATCHES_SNIPE=0 to
+            # reproduce the legacy 0.5×base_ships denominator that
+            # over-weighted recapture vs snipe in the original A/B.
+            if RECAPTURE_SCORE_DENOM_MATCHES_SNIPE:
+                denom = base_ships + d + 1.0
+            else:
+                denom = 0.5 * base_ships + d + 1.0
+            score = bonus * value / denom
             missions.append(Mission(
                 mission_class="recapture",
                 src_id=src.id,
@@ -151,4 +170,10 @@ def propose_recapture_missions(world: World, model: WorldModel) -> list[Mission]
                 score=score,
                 eta=eta,
             ))
+    # Audit hypothesis 2 fix: cap per-turn proposal volume so settle_plan
+    # isn't drowned in low-value recapture variants. K=5 retains the
+    # urgent / high-prod / nearby options; legacy was uncapped (80-160/turn).
+    if RECAPTURE_TOPK_PER_TURN > 0 and len(missions) > RECAPTURE_TOPK_PER_TURN:
+        missions.sort(key=lambda m: -m.score)
+        missions = missions[:RECAPTURE_TOPK_PER_TURN]
     return missions

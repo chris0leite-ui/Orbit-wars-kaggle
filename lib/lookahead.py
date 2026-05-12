@@ -110,6 +110,69 @@ def score_action(
     return totals.get(my_id, 0.0) - totals.get(opp_id, 0.0)
 
 
+def score_joint_action(
+    env,
+    our_action: list,
+    opp_action: list,
+    K: int,
+    my_id: int,
+    policy: Callable,
+) -> float:
+    """Sim<K> score with BOTH first-turn actions injected.
+
+    Unlike `score_action` (which lets `policy` choose opp's first move),
+    `score_joint_action` forces both `our_action` and `opp_action` on
+    turn 0, then rolls forward K-1 turns under `policy` as both players.
+
+    Used by maximin agents (e.g. v7.1+) to score a full N×M payoff
+    matrix where both players' first moves are explicit candidates.
+    Returns `(our_ships - opp_ships)` at the rollout's final state.
+
+    Ported from `origin/claude/game-theory-strategy-analysis-0oH4N`.
+    """
+    clone = env.clone()
+    opp_id = 1 - my_id
+    actions = [None, None]
+    actions[my_id] = our_action
+    actions[opp_id] = opp_action
+    if not clone.done:
+        clone.step(actions)
+    for _ in range(max(0, K - 1)):
+        if clone.done:
+            break
+        a0 = policy(clone.state[0].observation)
+        a1 = policy(clone.state[1].observation)
+        clone.step([a0, a1])
+    totals = _ship_total_by_owner(clone.state[my_id].observation)
+    return totals.get(my_id, 0.0) - totals.get(opp_id, 0.0)
+
+
+def score_joint_action_symmetric(
+    env,
+    our_action: list,
+    opp_action: list,
+    K: int,
+    policy: Callable,
+) -> float:
+    """Seat-symmetric variant of `score_joint_action` — averages over
+    the two seat assignments of `(our_action, opp_action)`.
+
+    Motivation: the Orbit Wars env has a documented seat asymmetry
+    (P1-favoring tie-breaks in identical self-play). Without
+    symmetrization, that asymmetry leaks through Sim<K> into the
+    maximin payoff matrix; both seats' matrices stop being seat-flips
+    of each other, and the maximin picks diverge from the σ-mirror.
+    Averaging the two seat assignments cancels the env-internal bias.
+
+    Cost: 2× `score_joint_action`. Calling code budgets accordingly.
+
+    Ported from `origin/claude/game-theory-strategy-analysis-0oH4N`.
+    """
+    a = score_joint_action(env, our_action, opp_action, K, my_id=0, policy=policy)
+    b = score_joint_action(env, our_action, opp_action, K, my_id=1, policy=policy)
+    return (a + b) / 2.0
+
+
 def enumerate_drop_one_candidates(action: list) -> list[list]:
     """Generate the smallest non-trivial candidate set.
 

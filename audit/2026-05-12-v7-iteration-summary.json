@@ -1,0 +1,80 @@
+[
+  {
+    "variant": "v7_0_drop_one",
+    "wins": 20,
+    "losses": 4,
+    "draws": 0,
+    "n": 24,
+    "winrate": 0.8333333333333334,
+    "wilson_lo": 0.6414652961213058,
+    "verdict": "PASS",
+    "variant_p95_turn_ms": 780.7622511000545,
+    "elapsed_s": 337.39721487199995,
+    "json_artifact": "20260512T090901Z.json"
+  },
+  {
+    "variant": "v7_1_target_swap",
+    "wins": 14,
+    "losses": 10,
+    "draws": 0,
+    "n": 24,
+    "winrate": 0.5833333333333334,
+    "wilson_lo": 0.3883433764938864,
+    "verdict": "FAIL",
+    "variant_p95_turn_ms": 899.6849223000027,
+    "elapsed_s": 896.4756560639998,
+    "json_artifact": "20260512T092357Z.json"
+  },
+  {
+    "variant": "v7_2_ship_sweep",
+    "wins": 12,
+    "losses": 12,
+    "draws": 0,
+    "n": 24,
+    "winrate": 0.5,
+    "wilson_lo": 0.3142713162776308,
+    "verdict": "FAIL",
+    "variant_p95_turn_ms": 843.1177748498158,
+    "elapsed_s": 323.1678107759999,
+    "json_artifact": "20260512T092920Z.json"
+  },
+  {
+    "variant": "v7_3_archetype",
+    "wins": 12,
+    "losses": 12,
+    "draws": 0,
+    "n": 24,
+    "winrate": 0.5,
+    "wilson_lo": 0.3142713162776308,
+    "verdict": "FAIL",
+    "variant_p95_turn_ms": 877.4819866995587,
+    "elapsed_s": 739.3988850530004,
+    "json_artifact": "20260512T094140Z.json"
+  },
+  {
+    "variant": "v7_4_hungarian",
+    "wins": 11,
+    "losses": 13,
+    "draws": 0,
+    "n": 24,
+    "winrate": 0.4583333333333333,
+    "wilson_lo": 0.2789105835168143,
+    "verdict": "FAIL",
+    "variant_p95_turn_ms": 430.65497075040184,
+    "elapsed_s": 177.54413003699938,
+    "json_artifact": "20260512T094437Z.json"
+  },
+  {
+    "variant": "v7_combined",
+    "wins": 17,
+    "losses": 7,
+    "draws": 0,
+    "n": 24,
+    "winrate": 0.7083333333333334,
+    "wilson_lo": 0.5083193634129031,
+    "verdict": "NEUTRAL",
+    "variant_p95_turn_ms": 866.1319458003619,
+    "elapsed_s": 532.2243081339993,
+    "json_artifact": "20260512T095330Z.json"
+  }
+]
