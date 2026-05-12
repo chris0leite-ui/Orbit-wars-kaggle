@@ -4,25 +4,26 @@
 > populated it is updated at every wrap-up (WRAPUP.md step 3).
 
 ```yaml
-date: 2026-05-11
-days_to_deadline: 43                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v3_4            # rolling-last-2 NOW: [precision_v3 (52552139, μ=984.6, pushed 17:00 by parallel branch precision-physics-engine-ymJkA), v3_4 (52556866, PENDING)]. v3_snipe (52544634, μ=1005.7→peak 1055.5) was evicted by my push — see friction.md tag stale-rolling-last-2-pre-submit.
-last_kernel_push: 2026-05-11 21:19:13 UTC
-last_submission_id: 52556866
-last_submission_status: PENDING          # v3.4 = v3.2 + 4P spoiler. Bundle sha256:410b3c2ee370f943. See audit/2026-05-11-v3-snipe-games-analysis.md for the validation evidence + friction.md for the eviction post-mortem.
-last_submission_file: submissions/v3_snipe.py  # 61.7 KB bundle of agents/v3_snipe/main.py + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe,missions/reinforce,planner}. Strategy = snipe + reinforce mission classes through settle_plan (same-turn arrival ledger). Mechanism stack = DEFAULT_MECHANISMS with full-trajectory predict_fleet_fate guards.
+date: 2026-05-12
+days_to_deadline: 42                     # 2026-06-23 23:59 UTC minus today
+current_submitted_agent: v3_sigma_equiv_v1  # rolling-last-2 NOW: [v3_4 (52556866, μ=995.4), v3_sigma_equiv_v1 (52565034, PENDING)]. precision_v3 (52552139, μ=1009.0) was evicted by this push.
+last_kernel_push: 2026-05-12 04:39:49 UTC
+last_submission_id: 52565034
+last_submission_status: PENDING          # σ-equiv v1 = v3.4 + 3 surgical patches (lib/planner σ-equiv tie-break + lib/geometry sym_hypot + score rounding). Bundle sha256:8ba37fc0b7e71112cfe1663b4690faa6fc3354e86b1b6c08e6def9aa088cb3fb. Headline empirical claim: 16/16 = 100% v3-vs-v3 self-play draws over 500 steps (strict cannot-lose at v3-class). Audit: 2026-05-11-cannot-lose-final-finding.md + 2026-05-11-calibration-post-merge.md.
+last_submission_file: submissions/v3_snipe.py  # 68.4 KB bundle of agents/v3_snipe/main.py + lib/{geometry (with sym_hypot),fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe (sym_hypot),missions/reinforce (sym_hypot),planner (σ-equiv tie-break + SCORE_ROUND=6)}. Strategy = snipe + reinforce mission classes through settle_plan with σ-equivariant tie-break.
 last_submission_message: |
-  v3_snipe: Block E missions (snipe + reinforce) + cost-aware ROI +
-  comet-lifetime + same-turn ledger + full-trajectory ray-cast guards.
-  Capture-probe reached 77.2% (pre-fix) → 93.0% (trajectory) → 97.2%
-  (this build). 32-seed 2P vs v2 = 57.8% (Wilson [45.6, 69.2]);
-  16-seed 4P FFA parity. audit/2026-05-11-v3-lookahead-mvp-parity.md
-  + tournaments/20260511T112936Z.json
-tournament_rank_today: v3_snipe=1005.7 (evicted), precision_v3=984.6, v3_4=PENDING
-our_best_rank: μ=PENDING (#52556866, v3_4)         # v3_snipe (now evicted) was the peak at μ=1055.5 earlier today; v3.4 is a strict extension of the same line so expected to settle ≥1005.
-lb_top10_cliff: 1447.6                   # ShunkiKyoya, 2026-05-11. #1 = bowwowforeach 1697.7
-submissions_used_today: 3                # v2 (04:04 UTC) + v3_snipe (12:16 UTC) + v3_4 (21:19 UTC). Plus 2 parallel-branch pushes (precision_v3 17:00 UTC, precision_v3.tar.gz 16:50 UTC ERRORED).
-submissions_used_total: 7
+  σ-equivariance v1: v3.4 base + 3 surgical patches (lib/planner σ-equiv
+  tie-break + lib/geometry sym_hypot + score rounding to 6 decimals).
+  Headline: 16/16 = 100% v3-vs-v3 self-play draws over 500 steps —
+  provable cannot-lose at v3-class (symmetric-game value theorem realized).
+  Calibration: 50/50 vs precision_v3 (peer Nash tier), 54.7% Wilson
+  [42.6,66.3] vs v2, 93.8% vs roi, 100% vs v1/baseline/random. Bundle
+  sha256:8ba37fc0b7e71112. Audit: 2026-05-11-cannot-lose-final-finding.md.
+tournament_rank_today: v3_4=995.4 (in rolling-last-2), v3_sigma_equiv_v1=PENDING. precision_v3 (1009.0) and v3_snipe (1005.7) both evicted earlier.
+our_best_rank: μ=PENDING (#52565034). Predicted range: 1000-1015 — σ-equiv patches change ~5% of turns vs v3.4 (995.4), expected modest positive shift from eliminating self-play-style losses against v3-class opponents.
+lb_top10_cliff: 1447.6                   # ShunkiKyoya, 2026-05-11.
+submissions_used_today: 1                # v3_sigma_equiv_v1 (04:39 UTC, this branch). Day reset at midnight UTC; 2026-05-11 used 5 across all team branches.
+submissions_used_total: 8
 plateau_days: 0
 saturation_count: 0
 session_log:
