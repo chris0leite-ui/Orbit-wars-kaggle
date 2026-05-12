@@ -1,0 +1,158 @@
+{
+  "n_episodes": 4,
+  "by_result": {
+    "win": 4
+  },
+  "by_size_result": {
+    "2": {
+      "win": 4
+    }
+  },
+  "n_turns": 1364,
+  "action_match_rate": 1.0,
+  "n_turns_compared": 1364,
+  "candidates_per_turn": {
+    "snipe": 180.20821114369502,
+    "reinforce": 0.5623167155425219
+  },
+  "settled_per_turn": 11.22507331378299,
+  "idle_source_rate": 0.022036280020439447,
+  "drops_per_turn": {
+    "gang_up_size": 0.0,
+    "validate": 4.810117302052786,
+    "arrival_size": 5.493401759530792,
+    "lead_aim_v2": 0.0,
+    "sun_avoid": 0.030791788856304986,
+    "path_clears_other_planets": 0.09017595307917889,
+    "oob_guard": 0.06378299120234604
+  },
+  "drops_total": {
+    "gang_up_size": 0,
+    "validate": 6561,
+    "arrival_size": 7493,
+    "lead_aim_v2": 0,
+    "sun_avoid": 42,
+    "path_clears_other_planets": 123,
+    "oob_guard": 87
+  },
+  "fleet_outcomes_total": {
+    "captured": 490,
+    "bounced_enemy": 57,
+    "reinforced_self": 306,
+    "bounced_neutral": 7,
+    "vanished_in_space": 125,
+    "arrived_but_lost": 5,
+    "alive_at_end": 15
+  },
+  "bounce_margin_total": 64,
+  "bounce_margin_hist": {
+    "-15": 27,
+    "-11": 2,
+    "-10": 2,
+    "-9": 2,
+    "-8": 1,
+    "-7": 2,
+    "-6": 1,
+    "-5": 1,
+    "-2": 1,
+    "-1": 3,
+    "0": 3,
+    "1": 7,
+    "3": 3,
+    "4": 1,
+    "6": 1,
+    "7": 1,
+    "11": 1,
+    "13": 1,
+    "15": 4
+  },
+  "bounce_margin_by_eta": {
+    "long": {
+      "-15": 2,
+      "-10": 1
+    },
+    "med": {
+      "-15": 9,
+      "-11": 2,
+      "-8": 1,
+      "-6": 1,
+      "-1": 1,
+      "0": 2,
+      "1": 1,
+      "15": 2
+    },
+    "short": {
+      "-15": 16,
+      "-10": 1,
+      "-9": 2,
+      "-7": 2,
+      "-5": 1,
+      "-2": 1,
+      "-1": 2,
+      "0": 1,
+      "1": 6,
+      "3": 3,
+      "4": 1,
+      "6": 1,
+      "7": 1,
+      "11": 1,
+      "13": 1,
+      "15": 2
+    }
+  },
+  "dt_ms_p95": 24.96,
+  "dt_ms_p99": 38.0,
+  "idle_buckets_total": {
+    "MECHANISM_DROP": 14306,
+    "LEDGER_LOSS": 345
+  },
+  "idle_buckets_by_size": {
+    "2": {
+      "MECHANISM_DROP": 14306,
+      "LEDGER_LOSS": 345
+    }
+  },
+  "idle_buckets_by_phase": {
+    "early": {
+      "MECHANISM_DROP": 4543,
+      "LEDGER_LOSS": 132
+    },
+    "mid": {
+      "MECHANISM_DROP": 7018,
+      "LEDGER_LOSS": 213
+    },
+    "late": {
+      "MECHANISM_DROP": 2745
+    }
+  },
+  "idle_buckets_by_size_phase": {
+    "2p_early": {
+      "MECHANISM_DROP": 4543,
+      "LEDGER_LOSS": 132
+    },
+    "2p_mid": {
+      "MECHANISM_DROP": 7018,
+      "LEDGER_LOSS": 213
+    },
+    "2p_late": {
+      "MECHANISM_DROP": 2745
+    }
+  },
+  "idle_buckets_by_result": {
+    "win": {
+      "MECHANISM_DROP": 14306,
+      "LEDGER_LOSS": 345
+    }
+  },
+  "idle_subcounters": {
+    "MECHANISM_DROP:validate": 6561,
+    "MECHANISM_DROP:arrival_size": 7493,
+    "MECHANISM_DROP:path_clears_other_planets": 123,
+    "MECHANISM_DROP:oob_guard": 87,
+    "MECHANISM_DROP:sun_avoid": 42
+  },
+  "idle_total_classified": 14651,
+  "submission_id": "SELFPLAY_MARGIN",
+  "team_name": "v3_snipe",
+  "elapsed_s": 14.4
+}

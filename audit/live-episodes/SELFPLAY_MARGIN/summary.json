@@ -1,0 +1,31 @@
+{
+  "generated_at_utc": "20260512T085618Z",
+  "agent": "v3_snipe",
+  "n_episodes": 4,
+  "episodes": [
+    {
+      "episode_id": "sp1000",
+      "seed": 1000,
+      "result": "draw",
+      "n_steps": 500
+    },
+    {
+      "episode_id": "sp1001",
+      "seed": 1001,
+      "result": "p0_win",
+      "n_steps": 174
+    },
+    {
+      "episode_id": "sp1002",
+      "seed": 1002,
+      "result": "p1_win",
+      "n_steps": 194
+    },
+    {
+      "episode_id": "sp1003",
+      "seed": 1003,
+      "result": "draw",
+      "n_steps": 500
+    }
+  ]
+}
