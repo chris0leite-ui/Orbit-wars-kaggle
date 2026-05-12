@@ -114,17 +114,50 @@ def _drop_weakest_source(missions: list[Mission]) -> list[Mission] | None:
     return [m for m in missions if m.src_id != weakest_src]
 
 
+def _drop_smallest_launch(missions: list[Mission]) -> list[Mission] | None:
+    """Drop the single mission with the fewest ships (across all sources).
+
+    Different from `_drop_weakest_source` (which drops ALL missions from
+    one source). This drops exactly one mission — the one with the
+    smallest ship count — wherever it sits. Captures "hold the most
+    marginal ship contribution back" — a defensive perturbation that
+    v4.5_robust's opp-model O1 used. Ties broken by lowest src_id then
+    target_id for σ-determinism.
+
+    Returns None if there are fewer than 2 missions (dropping the only
+    one = noop, the noop portfolio covers it).
+    """
+    if not missions or len(missions) < 2:
+        return None
+    # Sort by (ships, src_id, target_id) ascending; first is smallest.
+    sorted_idx = sorted(
+        range(len(missions)),
+        key=lambda i: (missions[i].ships, missions[i].src_id, missions[i].target_id),
+    )
+    drop_idx = sorted_idx[0]
+    return [m for i, m in enumerate(missions) if i != drop_idx]
+
+
 def generate_portfolios(
     world: World,
     model: WorldModel,
     incumbent_missions: list[Mission] | None = None,
+    *,
+    include_drop_smallest: bool = False,
 ) -> list[Portfolio]:
-    """Build ≤ 5 mission portfolios for the lookahead scorer to rank.
+    """Build ≤ 5 (or ≤ 6 with `include_drop_smallest`) mission portfolios.
 
     `incumbent_missions` may be passed in if the caller already built
     them (avoiding a duplicate proposer call); otherwise this rebuilds
     them. The incumbent is always portfolios[0] so the scorer's "score
     incumbent first" loop has a safe fallback.
+
+    `include_drop_smallest` (default False; bit-identical to v4_planner)
+    adds a 6th portfolio that drops the single mission with the fewest
+    ships. Lesson 1 from the v4.5_robust postmortem: a fine-grained
+    "drop the most marginal launch" perturbation is different from
+    `drop_weakest_source` and meaningfully expands portfolio diversity
+    at one extra Sim call per turn.
     """
     incumbent = (
         incumbent_missions
@@ -146,6 +179,22 @@ def generate_portfolios(
     drop_weak = _drop_weakest_source(incumbent)
     if drop_weak is not None and drop_weak != incumbent:
         portfolios.append(Portfolio("drop_weakest_source", drop_weak))
+
+    if include_drop_smallest:
+        drop_smallest = _drop_smallest_launch(incumbent)
+        if drop_smallest is not None and drop_smallest != incumbent:
+            # Also dedupe against any prior portfolio that happens to
+            # produce the same mission set (e.g. per_source_swap on a
+            # 2-mission source could collide).
+            sigs = {
+                tuple(sorted((m.src_id, m.target_id, m.ships) for m in p.missions))
+                for p in portfolios
+            }
+            ds_sig = tuple(sorted(
+                (m.src_id, m.target_id, m.ships) for m in drop_smallest
+            ))
+            if ds_sig not in sigs:
+                portfolios.append(Portfolio("drop_smallest_launch", drop_smallest))
 
     portfolios.append(Portfolio("noop", []))
     return portfolios
