@@ -27,12 +27,6 @@ and bit-equivalent.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from lib.intent import World
-
-
 COMET_SPAWN_STEPS: tuple[int, ...] = (50, 150, 250, 350, 450)
 
 # K bounds calibrated to the local box's measured per-step cost (~10 ms
@@ -115,7 +109,7 @@ def evaluate_value(
     )
 
 
-def adaptive_K(world: "World") -> int:
+def adaptive_K(world) -> int:
     """Entropy-adaptive rollout depth.
 
     entropy = fleets_in_flight + 0.5 * contested_planets

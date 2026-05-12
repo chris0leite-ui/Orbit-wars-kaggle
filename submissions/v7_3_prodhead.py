@@ -1,4 +1,4 @@
-# Bundled by scripts/bundle_agent.py from agents/v7_3_prodhead + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe,missions/reinforce,planner,fast_sim,opp_model,v7_search}.
+# Bundled by scripts/bundle_agent.py from agents/v7_3_prodhead + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe,missions/reinforce,missions/recapture,planner,lookahead_planner,fast_sim,opp_model,v7_search}.
 # Single-file Kaggle submission for Orbit Wars.
 
 from __future__ import annotations
@@ -1988,6 +1988,155 @@ def propose_reinforce_missions(
             ))
     return missions
 
+# === inlined: lib/missions/recapture.py ===
+
+
+import math
+
+fleet_speed = speed
+
+EPISODE_STEPS = 500
+RECAPTURE_WINDOW = 50          # turns after loss within which to recapture
+RECAPTURE_BONUS_PEAK = 1.5     # multiplier at the moment of loss
+RECENTLY_LOST_GARRISON_MAX = 50  # don't bother recapturing if enemy fortified
+# Calibration fixes ported with the file from origin/main (post-revert).
+# The 200-game A/B that triggered the revert (audit/...recapture-wireup-ab.md)
+# identified three failure modes: score-scale mismatch with snipe, proposal-
+# volume dilution (80-160 per turn), and infeasible commits. Knobs below let
+# the v7.2 integration A/B re-test with corrected defaults; the gate is
+# Wilson lo ≥ 55% at 24 seeds × both sides.
+RECAPTURE_SCORE_DENOM_MATCHES_SNIPE = 1  # 1 = use (base_ships + d + 1)
+                                          # (snipe-aligned); 0 = legacy
+                                          # (0.5*base_ships + d + 1).
+RECAPTURE_TOPK_PER_TURN = 5    # cap on proposals returned per turn
+                                # (0 = no cap; replicates the regression).
+
+
+# ---------------------------------------------------------------------------
+# Module-level state — persists across turns of a single game.
+# Key: planet_id; Value: step_lost (int).
+# ---------------------------------------------------------------------------
+
+
+class _RecaptureState:
+    """Mutable state owned by THIS module. Reset when a step-0 obs arrives."""
+
+    def __init__(self):
+        self.last_step: int = -1
+        self.last_ownership: dict[int, int] = {}
+        # planet_id -> step we lost it
+        self.lost_at: dict[int, int] = {}
+
+    def reset(self):
+        self.last_step = -1
+        self.last_ownership = {}
+        self.lost_at = {}
+
+    def update(self, world: World) -> None:
+        """Compare current planet ownership to last-call snapshot;
+        record any planet that was ours and is now an enemy's."""
+        step = int(world.step)
+        if step == 0 or step < self.last_step:
+            self.reset()
+        current_ownership = {
+            p.id: p.owner for p in world.planets_by_id.values()
+        }
+        # Detect losses since last call.
+        my_id = world.my_id
+        for pid, prev_owner in self.last_ownership.items():
+            cur_owner = current_ownership.get(pid)
+            if cur_owner is None:
+                continue
+            if prev_owner == my_id and cur_owner != my_id and cur_owner != -1:
+                self.lost_at[pid] = step
+            # If a planet flipped back to us, drop its lost record.
+            if prev_owner != my_id and cur_owner == my_id and pid in self.lost_at:
+                del self.lost_at[pid]
+        # Also evict lost-records older than RECAPTURE_WINDOW.
+        cutoff = step - RECAPTURE_WINDOW
+        stale = [pid for pid, s in self.lost_at.items() if s < cutoff]
+        for pid in stale:
+            del self.lost_at[pid]
+        # Update snapshot.
+        self.last_step = step
+        self.last_ownership = current_ownership
+
+
+_STATE = _RecaptureState()
+
+
+def _reset_state_for_tests() -> None:
+    """Reset between independent test cases (the module-level state
+    bleeds across pytest cases otherwise)."""
+    _STATE.reset()
+
+
+def propose_recapture_missions(world: World, model: WorldModel) -> list[Mission]:
+    """One Mission per (recently-lost target, viable source) pair, with
+    a time-decaying RECAPTURE_BONUS."""
+    _STATE.update(world)
+    if not _STATE.lost_at:
+        return []
+    step_now = int(world.step)
+    my_planets = [
+        p for p in world.planets_by_id.values() if p.owner == world.my_id
+    ]
+    if not my_planets:
+        return []
+    missions: list[Mission] = []
+    for lost_pid, step_lost in _STATE.lost_at.items():
+        t = world.planets_by_id.get(lost_pid)
+        if t is None:
+            continue
+        # If target is back to us (race condition / mid-update), skip.
+        if t.owner == world.my_id:
+            continue
+        # If target is fortified beyond what we'd consider, skip.
+        if t.ships > RECENTLY_LOST_GARRISON_MAX:
+            continue
+        # Recapture urgency: 1.0 at loss-step → 0.0 at end of window.
+        elapsed = step_now - step_lost
+        urgency = max(0.0, 1.0 - elapsed / RECAPTURE_WINDOW)
+        bonus = 1.0 + (RECAPTURE_BONUS_PEAK - 1.0) * urgency
+
+        for src in my_planets:
+            d = math.hypot(t.x - src.x, t.y - src.y)
+            base_ships = max(1, int(t.ships) + 1)
+            if base_ships >= src.ships:
+                # Source can't afford this recapture.
+                continue
+            v = fleet_speed(base_ships)
+            eta = int(math.ceil(d / max(v, 1e-6))) if v > 0 else 0
+            pred_owner = model.owner_at(t.id, eta)
+            if pred_owner == world.my_id:
+                continue
+            time_to_hold = max(1, EPISODE_STEPS - step_now - eta)
+            value = t.production * time_to_hold
+            # Denominator: aligned with snipe by default (audit hypothesis
+            # 1 fix). Set RECAPTURE_SCORE_DENOM_MATCHES_SNIPE=0 to
+            # reproduce the legacy 0.5×base_ships denominator that
+            # over-weighted recapture vs snipe in the original A/B.
+            if RECAPTURE_SCORE_DENOM_MATCHES_SNIPE:
+                denom = base_ships + d + 1.0
+            else:
+                denom = 0.5 * base_ships + d + 1.0
+            score = bonus * value / denom
+            missions.append(Mission(
+                mission_class="recapture",
+                src_id=src.id,
+                target_id=t.id,
+                ships=base_ships,
+                score=score,
+                eta=eta,
+            ))
+    # Audit hypothesis 2 fix: cap per-turn proposal volume so settle_plan
+    # isn't drowned in low-value recapture variants. K=5 retains the
+    # urgent / high-prod / nearby options; legacy was uncapped (80-160/turn).
+    if RECAPTURE_TOPK_PER_TURN > 0 and len(missions) > RECAPTURE_TOPK_PER_TURN:
+        missions.sort(key=lambda m: -m.score)
+        missions = missions[:RECAPTURE_TOPK_PER_TURN]
+    return missions
+
 # === inlined: lib/planner.py ===
 
 
@@ -2110,6 +2259,132 @@ def settle_plan(
             reasons[p.id] = "NO_PROPOSALS"
 
     return [m.to_intent() for m in chosen]
+
+# === inlined: lib/lookahead_planner.py ===
+
+
+COMET_SPAWN_STEPS: tuple[int, ...] = (50, 150, 250, 350, 450)
+
+# K bounds calibrated to the local box's measured per-step cost (~10 ms
+# per forward step including 2x v3.5.1 policy calls). With env_from_obs
+# ~105 ms one-time + ~24 ms clone() per candidate, the per-candidate
+# wallclock is roughly (24 + 10*K) ms. At K_MAX=12 the budget supports
+# ~5 candidates under 1 s; the watchdog in v4_planner cuts later
+# candidates if needed. Phase 2 audit measurements (~5.6 ms/step) were
+# on a faster 4-core box; these bounds adapt without changing the
+# algorithm.
+K_MIN = 6
+K_MAX = 10
+
+
+def evaluate_value(
+    observation,
+    my_id: int,
+    *,
+    denial_weight: float = 0.4,
+    ships_weight: float = 0.05,
+    survivor_bonus: float = 5.0,
+) -> float:
+    """V(s) = prod_share + denial * prod_denied + ships * ships_share + survivor.
+
+    `observation` is the kaggle env's per-seat observation dict (the same
+    shape `agent(obs)` receives). Fields used: `planets` (list of
+    [id, owner, x, y, radius, ships, production]) and `fleets`
+    (list of [id, owner, x, y, angle, from_planet_id, ships]).
+
+    Empty world (no planets) → 0.0. Total production zero (all planets
+    have prod=0, which doesn't happen in practice but bounds the math)
+    → 0.0 share components, only survivor bonus can fire.
+    """
+    planets = observation.get("planets", []) if isinstance(observation, dict) else getattr(observation, "planets", [])
+    if not planets:
+        return 0.0
+
+    total_prod = 0.0
+    my_prod = 0.0
+    opp_prod = 0.0
+    owners_with_planets: set[int] = set()
+    garrison: dict[int, float] = {}
+    for p in planets:
+        owner = int(p[1])
+        ships = float(p[5])
+        prod = float(p[6])
+        total_prod += prod
+        if owner >= 0:
+            owners_with_planets.add(owner)
+            garrison[owner] = garrison.get(owner, 0.0) + ships
+            if owner == my_id:
+                my_prod += prod
+            else:
+                opp_prod += prod
+
+    fleets = observation.get("fleets", []) if isinstance(observation, dict) else getattr(observation, "fleets", [])
+    fleet_totals: dict[int, float] = {}
+    for f in fleets:
+        owner = int(f[1])
+        ships = float(f[6])
+        if owner >= 0:
+            fleet_totals[owner] = fleet_totals.get(owner, 0.0) + ships
+
+    totals: dict[int, float] = dict(garrison)
+    for owner, ships in fleet_totals.items():
+        totals[owner] = totals.get(owner, 0.0) + ships
+    total_ships = sum(totals.values())
+    my_ships = totals.get(my_id, 0.0)
+
+    prod_share = (my_prod / total_prod) if total_prod > 0 else 0.0
+    prod_denied = ((total_prod - opp_prod) / total_prod) if total_prod > 0 else 0.0
+    ships_share = (my_ships / total_ships) if total_ships > 0 else 0.0
+    lone = 1.0 if owners_with_planets == {my_id} else 0.0
+
+    return (
+        prod_share
+        + denial_weight * prod_denied
+        + ships_weight * ships_share
+        + survivor_bonus * lone
+    )
+
+
+def adaptive_K(world) -> int:
+    """Entropy-adaptive rollout depth.
+
+    entropy = fleets_in_flight + 0.5 * contested_planets
+    K = clamp(round(8 + 1.5 * entropy), 8, 30)
+
+    Empty boards bottom at K=8 (the floor). The 0.5 weighting on neutral
+    planets reflects that they're potential rather than active conflict —
+    they raise entropy less than an already-launched fleet.
+    """
+    raw = getattr(world, "obs_raw", None)
+    if raw is None:
+        return K_MIN
+    fleets_raw = (
+        raw.get("fleets", []) if isinstance(raw, dict) else getattr(raw, "fleets", [])
+    )
+    fleets_in_flight = len(fleets_raw)
+    contested = 0
+    for p in world.planets_by_id.values():
+        if p.owner == -1:
+            contested += 1
+    entropy = fleets_in_flight + 0.5 * contested
+    K = int(round(K_MIN + 0.5 * entropy))
+    return max(K_MIN, min(K, K_MAX))
+
+
+def truncate_K_to_comet_boundary(K: int, step: int) -> int:
+    """Shorten K so rollout doesn't cross a comet spawn boundary.
+
+    Spawn boundaries are at steps in `COMET_SPAWN_STEPS`. `env_from_obs`
+    is bit-exact within an inter-boundary segment; crossing a boundary
+    re-rolls the env's comet RNG, which diverges from the real game. We
+    cap K so the clone's `step + K` stays strictly below the next
+    boundary. Floor at 1 — we always apply at least our chosen action.
+    """
+    for boundary in COMET_SPAWN_STEPS:
+        if boundary > step:
+            allowed = boundary - step - 1
+            return max(1, min(K, allowed))
+    return K
 
 # === inlined: lib/fast_sim.py ===
 
@@ -3466,6 +3741,109 @@ def choose_4p(
             best_score = score
             best_action = list(cand)
     return best_action
+
+
+def choose_simple_2p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K: int = 10,
+    wallclock_ms: float = 700.0,
+    my_id: int | None = None,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """2P drop-one chooser WITHOUT maximin overlay.
+
+    This is what v7.1 maximin should have been but wasn't: pure
+    argmax over drop-one candidates with σ-equiv-enabled incumbent.
+    The maximin variant (`choose_maximin`) lost the A/B because
+    its 2×N × symmetric-scoring budget blew the wallclock; the
+    simple variant has the same per-candidate cost as v7_0 (proven
+    fast enough at 746-816 ms p95) while still getting σ-equiv,
+    recapture, and value_fn for free.
+    """
+    t_start = time.perf_counter()
+
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    if my_id is None:
+        my_id = world.my_id
+    model = WorldModel.from_world(world)
+
+    incumbent_intents = _build_incumbent_intents(
+        world, model, include_recapture=include_recapture,
+    )
+    incumbent_action = _action_from_intents(incumbent_intents, obs, model)
+
+    candidates = _enumerate_drop_one(incumbent_action)
+    if len(candidates) <= 1:
+        return incumbent_action
+
+    snap = fs_from_obs(obs, configuration, episode_seed=0, num_seats=2)
+    best_action = incumbent_action
+    best_score = float("-inf")
+    incumbent_scored = False
+    for cand in candidates:
+        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+        if elapsed_ms > wallclock_ms:
+            break
+        try:
+            score = score_candidate(
+                snap, cand, my_id=my_id, K=K, opp_tier=1, value_fn=value_fn,
+            )
+        except Exception:
+            continue
+        if not incumbent_scored:
+            incumbent_scored = True
+            best_score = score
+            best_action = list(cand)
+            continue
+        if score > best_score:
+            best_score = score
+            best_action = list(cand)
+    return best_action
+
+
+def choose_simple_with_4p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K_2p: int = 10,
+    K_4p: int = 8,
+    wallclock_ms: float = 700.0,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """v7.5 entry — auto-routes 2P→choose_simple_2p, 4P→choose_4p.
+
+    No maximin overlay (which regressed at v7.1 A/B). σ-equiv layer
+    is library-level (lib/planner + lib/geometry + lib/missions/snipe)
+    so it's automatically present. Recapture + value_fn pluggable.
+    """
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    n_seats = _infer_num_seats(world)
+    if n_seats == 2:
+        return choose_simple_2p(
+            obs, configuration,
+            K=K_2p, wallclock_ms=wallclock_ms,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    if n_seats == 4:
+        return choose_4p(
+            obs, configuration,
+            K=K_4p, wallclock_ms=wallclock_ms,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    # 3P or 1P: rare; fall back to incumbent.
+    model = WorldModel.from_world(world)
+    intents = _build_incumbent_intents(world, model, include_recapture=include_recapture)
+    return _action_from_intents(intents, obs, model)
 
 
 def choose_with_4p(

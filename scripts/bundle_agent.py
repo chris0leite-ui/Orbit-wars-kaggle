@@ -44,7 +44,9 @@ DEFAULT_LIB_ORDER = [
     "mission",
     "missions/snipe",
     "missions/reinforce",
+    "missions/recapture",
     "planner",
+    "lookahead_planner",
     # v7 lookahead substrate (2026-05-12). Order matters:
     # fast_sim is foundational; opp_model uses missions/* + planner +
     # intent + mechanism + world_model; v7_search uses everything.
