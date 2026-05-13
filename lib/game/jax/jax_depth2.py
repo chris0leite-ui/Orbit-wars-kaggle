@@ -151,28 +151,24 @@ def score_depth2_payoff_matrix(
     my_use_opening: bool = True,
     opp_use_opening: bool = True,
 ) -> jnp.ndarray:
-    """Compute the (N, M) payoff matrix via `lax.scan` over the
-    `N*M` flat (our_i, opp_j) cell index.
+    """Compute the (N, M) payoff matrix via nested vmap over the
+    pre-truncated `our_v_*` and `opp_v_*` candidate sets.
+
+    The caller is responsible for truncating the variant tensors to a
+    SMALL fixed shape (e.g., 4 × 2) before calling this function —
+    `policy_emit_depth2_jax_pure` below does that via simple top-N
+    slicing. Untruncated (`MAX_LAUNCH+1)² = 441` cells per state OOMs
+    a T4 GPU under game-vmap (see friction
+    `scale-without-smoke-burned-90min-t4`, 2026-05-13).
 
     Cell (i, j):
       t=1: our seat plays our_v[i]; opp plays opp_inc (turn-1 incumbent).
       t=2: our seat passes; opp plays opp_v[j].
       t=3..K_tail+2: both seats play single-ply mirror.
       leaf: ship-delta from `my_id`'s POV.
-
-    Implementation: replaced an earlier `vmap(vmap(cell))` nested-vmap
-    that OOMed on T4 (16 GB) during JIT compile of the game-vmap'd
-    rollout — the cell-state Pytrees were materialised for all `N*M`
-    cells in parallel per game per step, blowing the memory budget at
-    K_tail≥4. `lax.scan` evaluates cells SEQUENTIALLY within a game;
-    games are still vmap'd in parallel outside this function (via the
-    kernel's game-axis vmap). Memory per game collapses to one
-    cell-state at a time; runtime grows ~N*M× per game but stays
-    O(N) instead of O(N*M) in compile-time tracing.
     """
     opp_id = (my_id + 1) % num_agents
     L = MAX_LAUNCH_PER_AGENT
-    L1 = L + 1  # candidate count per side (drop-one variants)
 
     def cell(
         u_p: jnp.ndarray, u_a: jnp.ndarray, u_s: jnp.ndarray,
@@ -211,19 +207,15 @@ def score_depth2_payoff_matrix(
         final, _ = jax.lax.scan(step_fn, st2, None, length=K_tail)
         return value_delta_ships(final, my_id=my_id).astype(jnp.float32)
 
-    def scan_body(carry, idx):
-        # Decode flat cell index into (i, j). `idx` is JAX int32.
-        i = idx // L1
-        j = idx % L1
-        score = cell(
-            our_v_pids[i], our_v_angles[i], our_v_ships[i],
-            opp_v_pids[j], opp_v_angles[j], opp_v_ships[j],
-        )
-        return carry, score
-
-    indices = jnp.arange(L1 * L1, dtype=jnp.int32)
-    _, payoff_flat = jax.lax.scan(scan_body, None, indices)
-    return payoff_flat.reshape((L1, L1))
+    # Nested vmap: inner varies the opp axis (axis 0 of opp_v_*),
+    # outer varies our axis. Inputs are pre-truncated, so the unrolled
+    # cell graph stays small.
+    inner = jax.vmap(cell, in_axes=(None, None, None, 0, 0, 0))
+    outer = jax.vmap(inner, in_axes=(0, 0, 0, None, None, None))
+    return outer(
+        our_v_pids, our_v_angles, our_v_ships,
+        opp_v_pids, opp_v_angles, opp_v_ships,
+    )
 
 
 def policy_emit_depth2_jax_pure(
@@ -235,13 +227,26 @@ def policy_emit_depth2_jax_pure(
     my_aggressive: bool = True,
     my_use_opening: bool = True,
     opp_use_opening: bool = True,
+    n_our: int = 4,
+    m_opp: int = 2,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Depth-2 maximin chooser as a pure-JAX policy_emit replacement.
 
     Builds both seats' incumbents, generates drop-one variant sets,
-    scores the full payoff matrix via `score_depth2_payoff_matrix`,
-    and returns the maximin-best action for `my_id`. Argmax tie-break:
-    `jnp.argmax` returns the FIRST max — row 0 (incumbent) wins ties.
+    truncates each to `n_our` × `m_opp` cells (default 4 × 2 = 8),
+    scores the payoff matrix via nested-vmap, and returns the
+    maximin-best action for `my_id`. Argmax tie-break: `jnp.argmax`
+    returns the FIRST max — row 0 (incumbent) wins ties.
+
+    The truncation is mandatory for game-vmap on T4: the full
+    `(MAX_LAUNCH+1)² = 441`-cell variant set OOMs the GPU at K_tail≥4
+    (16 GB single-tensor allocation; see friction
+    `scale-without-smoke-burned-90min-t4`, 2026-05-13). Defaults
+    n_our=4, m_opp=2 mirror the scalar `choose_depth2`'s 8 × 4
+    runtime caps scaled to a tractable JAX shape: row 0 = incumbent,
+    rows 1..n_our-1 = drops of the first n_our-1 slots. Slots
+    beyond that (or sentinel slots) are dropped from consideration
+    — this is a deliberate approximation vs the scalar version.
     """
     opp_id = (my_id + 1) % num_agents
 
@@ -266,6 +271,15 @@ def policy_emit_depth2_jax_pure(
     opp_v_p, opp_v_a, opp_v_s = jax_drop_one_variants(
         opp_inc_p, opp_inc_a, opp_inc_s,
     )
+    # Truncate to (n_our, _) × (m_opp, _) to fit the T4 memory budget.
+    # Static slicing (`n_our`/`m_opp` are tracer-free Python ints) keeps
+    # the resulting nested-vmap shape compile-time-fixed.
+    our_v_p = our_v_p[:n_our]
+    our_v_a = our_v_a[:n_our]
+    our_v_s = our_v_s[:n_our]
+    opp_v_p = opp_v_p[:m_opp]
+    opp_v_a = opp_v_a[:m_opp]
+    opp_v_s = opp_v_s[:m_opp]
 
     payoff = score_depth2_payoff_matrix(
         state,
@@ -280,7 +294,7 @@ def policy_emit_depth2_jax_pure(
     # Maximin: argmax over min-per-row. `jnp.argmax` ties → first match,
     # which is row 0 (incumbent) — preserves the scalar choose_depth2
     # parity-floor tie-break.
-    worst_per_row = jnp.min(payoff, axis=1)  # (L+1,)
+    worst_per_row = jnp.min(payoff, axis=1)
     best_i = jnp.argmax(worst_per_row)
 
     return our_v_p[best_i], our_v_a[best_i], our_v_s[best_i]
@@ -295,6 +309,8 @@ def rollout_step_depth2_jax_pure(
     my_aggressive: bool = True,
     my_use_opening: bool = True,
     opp_use_opening: bool = True,
+    n_our: int = 4,
+    m_opp: int = 2,
 ):
     """Single env tick: `my_id` plays depth-2; opp plays single-ply mirror.
 
@@ -313,6 +329,7 @@ def rollout_step_depth2_jax_pure(
         state, my_id=my_id, K_tail=K_tail, num_agents=num_agents,
         opp_aggressive=opp_aggressive, my_aggressive=my_aggressive,
         my_use_opening=my_use_opening, opp_use_opening=opp_use_opening,
+        n_our=n_our, m_opp=m_opp,
     )
 
     # Opp seat: single-ply mirror (matches v7_0 / v7_1 behaviour).
@@ -337,6 +354,7 @@ policy_emit_depth2_jit = jax.jit(
         "my_id", "K_tail", "num_agents",
         "opp_aggressive", "my_aggressive",
         "my_use_opening", "opp_use_opening",
+        "n_our", "m_opp",
     ),
 )
 rollout_step_depth2_jit = jax.jit(
@@ -345,5 +363,6 @@ rollout_step_depth2_jit = jax.jit(
         "my_id", "K_tail", "num_agents",
         "opp_aggressive", "my_aggressive",
         "my_use_opening", "opp_use_opening",
+        "n_our", "m_opp",
     ),
 )

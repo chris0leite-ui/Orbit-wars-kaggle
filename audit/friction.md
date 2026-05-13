@@ -258,6 +258,33 @@
   COMET_BONUS=1.3` fix (also 28.1% regression). Promotion candidate:
   "if the finding is local, the fix must be local."
 
+## 2026-05-13 LATE-2 (claude/read-handover-iLWTq — depth-2 JAX kernel)
+
+- `tag: scale-without-smoke-burned-90min-t4` — pushed
+  `chrisleitescha/orbit-wars-jax-depth2-a-b` to T4 with the full
+  `(MAX_LAUNCH+1)² = 441`-cell nested vmap and got an OOM (16 GB
+  single-tensor allocation). Refactored to `lax.scan` over flat
+  cell index to bound memory; re-pushed. Second kernel sat in
+  XLA JIT compile for **90 minutes** before PI killed it — scan
+  of (rollout_step × K_tail × cells × game-vmap) is too deep an
+  XLA graph. **Root cause:** no local smoke before scaling to a
+  64-game GPU run. A 1-game CPU smoke would have surfaced both
+  the memory blow-up estimate (count the parallel cells) AND
+  the JIT compile slowness in 5-10 minutes, not 90+. Cost: ~90 min
+  of T4 quota (≈ 30 h/week tier) for zero result. **Fix this
+  session:** kill the kernel; re-architect depth-2 to truncate
+  the candidate set (e.g., 4 × 2 = 8 cells) so nested vmap fits
+  in T4 memory; CPU smoke FIRST (1 game / 1 step), THEN small-
+  scale GPU smoke (low NUM_SEEDS / EPISODE_STEPS on T4) before
+  the production 64 × 500 push — GPU XLA's compile path differs
+  from CPU's (memory layout, block-size kernels, OOM behaviour),
+  so a CPU-clean graph can still blow up at GPU scale.
+  **Promotion candidate (PI raised):** for any new Kaggle kernel
+  compute pattern, MANDATORY two-tier smoke: (1) local CPU
+  single-state with wallclock + memory; (2) small-scale GPU
+  (≤ 4 games × ≤ 50 turns), both clean before any production-
+  scale push. Encode in WRAPUP / kernel-push checklist.
+
 ## 2026-05-13 LATE (claude/read-handover-iLWTq — stale handover read)
 
 - `tag: handover-stale-at-session-start-no-git-log-check` — session
