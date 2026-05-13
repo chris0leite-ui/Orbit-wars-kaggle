@@ -25,6 +25,36 @@
   so they don't appear as regressions on fresh clones. Not blocking
   this session.
 
+- `tag: bootstrap-data-check-false-positive` — `bootstrap.sh` step 3
+  decides whether to skip the comp-shipped data download with
+  `[[ "$(ls -A data 2>/dev/null | grep -v '^\.gitkeep$' | wc -l)" -gt 0 ]]`.
+  This matches ANY non-`.gitkeep` content. The repo currently ships
+  `data/shot_validator/` (the IL-pipeline spec dir) as tracked content,
+  so on a fresh clone the check is always true and `main.py`,
+  `README.md`, `agents.md` are NEVER downloaded. I had to manually
+  run `kaggle competitions download -c orbit-wars -p data/` and
+  unzip. The user caught this with "have you bootstrapped carefully?"
+  before I'd noticed the gap. Cost: 3 failing tests, ~10 min of
+  scripted runs that would have produced wrong results, and a credibility
+  hit. **Fix:** change the data-presence guard to check for one of
+  the canonical comp-shipped files specifically (`[[ -f data/main.py ]]`
+  is the most load-bearing — every tournament needs it as the
+  random/baseline opponent). **Promotion candidate.**
+
+- `tag: agent-introspection-skipped-bootstrap` — I assessed the
+  task as "Day-1 audits = read-only grep, no bootstrap needed" and
+  ran the cgroup probe + new [G] tests without verifying the rest
+  of the environment was ready. Worked by luck (the probe used
+  `submissions/v7_0_drop_one.py` which is self-contained, the
+  audits used grep on lib/, and the [G] gate tests are pure
+  helpers with no env runs). But the next item — [A] PV target
+  valuation — needed `data/main.py` for the baseline anchor in any
+  full A/B. **Fix for future sessions:** run `bash bootstrap.sh`
+  + `python -m pytest tests/ -q` as the FIRST action of any session
+  that's going to touch test/A-B infrastructure, even if the
+  immediate task looks like read-only. Cost: ~5 min recovery; user
+  trust hit.
+
 - `tag: no-cgroup-v2-no-systemd-bus` — Day-1 eval-cost probe (K)
   tried `systemd-run --user --scope -p CPUQuota=60%` for a true
   0.6-CPU limit (matching Kaggle eval). Failed with "Failed to
