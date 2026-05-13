@@ -41,6 +41,12 @@ NUM_SEEDS = int(os.environ.get("NUM_SEEDS", "32"))      # × 2 mirror seats = 64
 EPISODE_STEPS = int(os.environ.get("EPISODE_STEPS", "500"))
 A_AGGRESSIVE = bool(int(os.environ.get("A_AGGRESSIVE", "0")))   # 0 = v7_0 style
 B_AGGRESSIVE = bool(int(os.environ.get("B_AGGRESSIVE", "1")))   # 1 = v3.5.1 style
+# H16 (PV target valuation). Default 1.0 = linear horizon = pre-H16
+# behaviour. Set to 0.99 (or other γ<1.0) to enable PV discount. Both
+# A and B use the same PV_GAMMA because the kernel currently compiles a
+# single vmap'd rollout; for PV-vs-PV-at-different-γ A/Bs, run the
+# kernel twice with PV_GAMMA=γ_A then PV_GAMMA=γ_B and compare.
+PV_GAMMA = float(os.environ.get("PV_GAMMA", "1.0"))
 
 
 def _ensure_kaggle_environments():
@@ -92,6 +98,10 @@ def main():
     print(f"Inserted {repo_root} into sys.path")
     from lib.game.jax import scalar_to_jax
     from lib.game.jax.jax_score import rollout_step_jax_pure, value_delta_ships
+    # H16: patch PV_GAMMA into the JAX missions module BEFORE any JIT
+    # trace so the geometric discount bakes into the compiled graph.
+    import lib.game.jax.jax_missions as _jm
+    _jm.PV_GAMMA = PV_GAMMA
 
     info = {
         "install_msg": install_msg,
@@ -102,6 +112,7 @@ def main():
         "episode_steps": EPISODE_STEPS,
         "a_aggressive": A_AGGRESSIVE,
         "b_aggressive": B_AGGRESSIVE,
+        "pv_gamma": PV_GAMMA,
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     print(json.dumps({"setup": info}, indent=2))
