@@ -60,6 +60,7 @@ if str(REPO) not in sys.path:
 _BASELINES: dict[str, str] = {
     # Bundled, parity-tested, primary baseline.
     "v7_0":       str(REPO / "submissions" / "v7_0_drop_one.py"),
+    "v7_1":       str(REPO / "submissions" / "v7_1_open_drop_comets.py"),
     "v4_planner": str(REPO / "submissions" / "v4_planner.py"),
     "v7_minimax": str(REPO / "submissions" / "v7_minimax.py"),
     "v3.5.1":     str(REPO / "submissions" / "v3.5.1.py"),
