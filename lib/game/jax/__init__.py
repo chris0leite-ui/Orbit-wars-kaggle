@@ -34,10 +34,14 @@ from lib.game.jax.jax_interpreter import (
     production_tick,
     planet_path_compute,
     comet_expire,
+    comet_path_advance,
+    swept_pair_hit_batch,
     jax_step_partial,
     production_tick_jit,
     planet_path_compute_jit,
     comet_expire_jit,
+    comet_path_advance_jit,
+    swept_pair_hit_batch_jit,
     jax_step_partial_jit,
 )
 
@@ -46,8 +50,10 @@ __all__ = [
     "MAX_PLANETS", "MAX_FLEETS", "MAX_COMET_GROUPS",
     "MAX_COMET_PATH_LEN", "NUM_COMET_SPAWNS",
     "scalar_to_jax", "jax_to_scalar",
-    "production_tick", "planet_path_compute", "comet_expire",
+    "production_tick", "planet_path_compute",
+    "comet_expire", "comet_path_advance", "swept_pair_hit_batch",
     "jax_step_partial",
     "production_tick_jit", "planet_path_compute_jit",
-    "comet_expire_jit", "jax_step_partial_jit",
+    "comet_expire_jit", "comet_path_advance_jit",
+    "swept_pair_hit_batch_jit", "jax_step_partial_jit",
 ]

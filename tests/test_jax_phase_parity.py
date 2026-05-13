@@ -151,3 +151,94 @@ def test_comet_expire_no_op_at_start():
         np.asarray(new_gs.planets_alive),
         np.asarray(gs.planets_alive),
     )
+
+
+# ---------------------------------------------------------------------------
+# swept_pair_hit_batch parity
+# ---------------------------------------------------------------------------
+
+
+def _scalar_swept(A, B, P0, P1, r):
+    """The exact scalar from lib/game/interpreter.py, inlined here for
+    bit-exact reference. Includes the AABB prune since the scalar
+    function applies it before the discriminant check."""
+    from lib.game.interpreter import swept_pair_hit
+    return swept_pair_hit(A, B, P0, P1, r)
+
+
+def test_swept_pair_hit_batch_matches_scalar():
+    """Vectorised swept_pair test matches the scalar implementation on
+    a battery of synthetic (fleet, planet) configurations."""
+    from lib.game.jax import swept_pair_hit_batch
+    import random as _rnd
+
+    rng = _rnd.Random(42)
+    # 8 fleet trajectories and 6 planet trajectories, mix of near/far.
+    fold_list = []
+    fnew_list = []
+    for _ in range(8):
+        ox = rng.uniform(0, 100); oy = rng.uniform(0, 100)
+        nx = ox + rng.uniform(-6, 6); ny = oy + rng.uniform(-6, 6)
+        fold_list.append((ox, oy)); fnew_list.append((nx, ny))
+    pold_list = []
+    pnew_list = []
+    pr_list = []
+    for _ in range(6):
+        ox = rng.uniform(0, 100); oy = rng.uniform(0, 100)
+        nx = ox + rng.uniform(-1, 1); ny = oy + rng.uniform(-1, 1)
+        r = rng.uniform(1, 4)
+        pold_list.append((ox, oy)); pnew_list.append((nx, ny))
+        pr_list.append(r)
+
+    # Include one guaranteed-hit case (fleet sits on planet).
+    fold_list.append(pold_list[0]); fnew_list.append(pold_list[0])
+    pr_arr_list = pr_list
+
+    fold = jnp.asarray(fold_list, dtype=jnp.float32)
+    fnew = jnp.asarray(fnew_list, dtype=jnp.float32)
+    pold = jnp.asarray(pold_list, dtype=jnp.float32)
+    pnew = jnp.asarray(pnew_list, dtype=jnp.float32)
+    pr = jnp.asarray(pr_arr_list, dtype=jnp.float32)
+
+    jax_hits = np.asarray(swept_pair_hit_batch(fold, fnew, pold, pnew, pr))
+
+    F = fold.shape[0]; P = pold.shape[0]
+    for i in range(F):
+        for j in range(P):
+            scalar_hit = _scalar_swept(
+                (float(fold[i, 0]), float(fold[i, 1])),
+                (float(fnew[i, 0]), float(fnew[i, 1])),
+                (float(pold[j, 0]), float(pold[j, 1])),
+                (float(pnew[j, 0]), float(pnew[j, 1])),
+                float(pr[j]),
+            )
+            assert bool(jax_hits[i, j]) == scalar_hit, (
+                f"fleet[{i}] x planet[{j}]: jax={bool(jax_hits[i,j])} "
+                f"scalar={scalar_hit}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# comet_path_advance parity (no-spawn-yet smoke)
+# ---------------------------------------------------------------------------
+
+
+def test_comet_path_advance_no_op_at_start():
+    """At step 0 with no comets spawned, comet_path_advance leaves the
+    state unchanged (no comets to advance)."""
+    env, gs = _build_state(42)
+    from lib.game.jax import comet_path_advance
+    new_gs = comet_path_advance(gs)
+    np.testing.assert_array_equal(
+        np.asarray(new_gs.planets_x), np.asarray(gs.planets_x)
+    )
+    np.testing.assert_array_equal(
+        np.asarray(new_gs.planets_y), np.asarray(gs.planets_y)
+    )
+    np.testing.assert_array_equal(
+        np.asarray(new_gs.planets_alive), np.asarray(gs.planets_alive)
+    )
+    np.testing.assert_array_equal(
+        np.asarray(new_gs.comet_path_index),
+        np.asarray(gs.comet_path_index),
+    )
