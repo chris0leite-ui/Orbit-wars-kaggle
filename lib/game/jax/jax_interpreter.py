@@ -87,6 +87,9 @@ def planet_path_compute(state: GameState) -> GameState:
         & ~state.is_comet
     )
 
+    # Write to planets_new_*; planets_x/y stay at OLD positions until
+    # apply_planet_movement (so fleet_movement's sweep-pair sees the
+    # correct old→new planet segment, mirroring scalar interpreter).
     new_x = jnp.where(
         is_rotating,
         CENTER + r * jnp.cos(current_angle),
@@ -97,7 +100,7 @@ def planet_path_compute(state: GameState) -> GameState:
         CENTER + r * jnp.sin(current_angle),
         state.planets_y,
     )
-    return state._replace(planets_x=new_x, planets_y=new_y)
+    return state._replace(planets_new_x=new_x, planets_new_y=new_y)
 
 
 def comet_expire(state: GameState) -> GameState:
@@ -189,17 +192,40 @@ def comet_path_advance(state: GameState) -> GameState:
     looked_up_x = state.comet_paths_xy[safe_spawn, safe_path, safe_idx, 0]
     looked_up_y = state.comet_paths_xy[safe_spawn, safe_path, safe_idx, 1]
 
-    # Update positions: only move non-expired live comets.
+    # Update positions: only move non-expired live comets. Write to
+    # planets_new_* (deferred application via apply_planet_movement).
+    # We seed from the EXISTING planets_new_* (which the scalar-equivalent
+    # planet_path_compute writes for non-comets); this way the dict
+    # represents "where everything will be after movement".
     movable = is_a_comet & ~expired
-    new_x = jnp.where(movable, looked_up_x, state.planets_x)
-    new_y = jnp.where(movable, looked_up_y, state.planets_y)
+    new_x = jnp.where(movable, looked_up_x, state.planets_new_x)
+    new_y = jnp.where(movable, looked_up_y, state.planets_new_y)
     new_alive = state.planets_alive & ~expired
 
     return state._replace(
-        planets_x=new_x,
-        planets_y=new_y,
+        planets_new_x=new_x,
+        planets_new_y=new_y,
         planets_alive=new_alive,
         comet_path_index=new_path_index,
+    )
+
+
+def apply_planet_movement(state: GameState) -> GameState:
+    """Copy `planets_new_x/y` → `planets_x/y` for surviving planets.
+
+    Mirror of `lib/game/interpreter.py:611-615`:
+        for planet in obs0.planets:
+            path = planet_paths.get(planet[0])
+            if path is not None:
+                planet[2], planet[3] = path[1]
+
+    Vectorised: just write planets_new_* over planets_*. Dead planets
+    keep their stale values but planets_alive=False masks them out
+    everywhere else, so no harm.
+    """
+    return state._replace(
+        planets_x=state.planets_new_x,
+        planets_y=state.planets_new_y,
     )
 
 
@@ -254,6 +280,9 @@ def comet_spawn(state: GameState) -> GameState:
     planets_alive = state.planets_alive
     planets_x = state.planets_x
     planets_y = state.planets_y
+    planets_new_x = state.planets_new_x
+    planets_new_y = state.planets_new_y
+    planets_id = state.planets_id
     planets_owner = state.planets_owner
     planets_ships = state.planets_ships
     planets_prod = state.planets_prod
@@ -263,6 +292,13 @@ def comet_spawn(state: GameState) -> GameState:
     initial_y = state.initial_y
     planet_comet_spawn = state.planet_comet_spawn
     planet_comet_path = state.planet_comet_path
+
+    # Synthetic pid for new comet planets: pack (spawn_k, path_j) into
+    # a high range so it doesn't collide with the original 0..P_init-1
+    # ids. Encoding: 100_000 + 10*k + j. This is internal-only — agents
+    # never see these ids; they go through obs.planets[i][0] which we
+    # rebuild in jax_to_scalar.
+    base_comet_pid = 100_000 + 10 * safe_k
 
     # Constants matching scalar interpreter's comet template.
     COMET_X_PLACEHOLDER = jnp.float32(-99.0)
@@ -283,6 +319,17 @@ def comet_spawn(state: GameState) -> GameState:
         )
         planets_y = planets_y.at[slot].set(
             jnp.where(any_spawn, COMET_Y_PLACEHOLDER, planets_y[slot])
+        )
+        # Seed planets_new_* to the placeholder too; comet_path_advance
+        # will overwrite with the path[0] position later this step.
+        planets_new_x = planets_new_x.at[slot].set(
+            jnp.where(any_spawn, COMET_X_PLACEHOLDER, planets_new_x[slot])
+        )
+        planets_new_y = planets_new_y.at[slot].set(
+            jnp.where(any_spawn, COMET_Y_PLACEHOLDER, planets_new_y[slot])
+        )
+        planets_id = planets_id.at[slot].set(
+            jnp.where(any_spawn, base_comet_pid + j, planets_id[slot])
         )
         planets_owner = planets_owner.at[slot].set(
             jnp.where(any_spawn, jnp.int32(-1), planets_owner[slot])
@@ -323,6 +370,8 @@ def comet_spawn(state: GameState) -> GameState:
     return state._replace(
         planets_alive=planets_alive,
         planets_x=planets_x, planets_y=planets_y,
+        planets_new_x=planets_new_x, planets_new_y=planets_new_y,
+        planets_id=planets_id,
         planets_owner=planets_owner, planets_ships=planets_ships,
         planets_prod=planets_prod, planets_radius=planets_radius,
         is_comet=is_comet_arr,
@@ -406,5 +455,6 @@ planet_path_compute_jit = jax.jit(planet_path_compute)
 comet_expire_jit = jax.jit(comet_expire)
 comet_path_advance_jit = jax.jit(comet_path_advance)
 comet_spawn_jit = jax.jit(comet_spawn)
+apply_planet_movement_jit = jax.jit(apply_planet_movement)
 swept_pair_hit_batch_jit = jax.jit(swept_pair_hit_batch)
 jax_step_partial_jit = jax.jit(jax_step_partial)

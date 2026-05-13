@@ -46,8 +46,18 @@ class GameState(NamedTuple):
     # --- Planets (initial + comet-spawned, all in one padded array) ---
     # Index 0..P_initial-1 are the initial generated planets; comets
     # added during the episode occupy higher indices.
-    planets_x: jnp.ndarray         # (P_max,) float32
-    planets_y: jnp.ndarray         # (P_max,) float32
+    planets_x: jnp.ndarray         # (P_max,) float32 — CURRENT (post-applied) x
+    planets_y: jnp.ndarray         # (P_max,) float32 — CURRENT (post-applied) y
+    # Deferred new positions — written by planet_path_compute and
+    # comet_path_advance, read by fleet_movement's sweep-pair check,
+    # applied to planets_x/y by apply_planet_movement at end of step.
+    # Mirrors the scalar interpreter's `planet_paths` dict.
+    planets_new_x: jnp.ndarray     # (P_max,) float32
+    planets_new_y: jnp.ndarray     # (P_max,) float32
+    # Scalar planet IDs (the int returned by `obs.planets[i][0]`).
+    # Lets fleet_launch translate action pid → JAX slot via comparison
+    # against this array. -1 in dead slots.
+    planets_id: jnp.ndarray        # (P_max,) int32
     planets_owner: jnp.ndarray     # (P_max,) int32 — -1 = neutral
     planets_ships: jnp.ndarray     # (P_max,) int32
     planets_prod: jnp.ndarray      # (P_max,) int32
@@ -119,6 +129,9 @@ class GameState(NamedTuple):
 SHAPES = {
     "planets_x": (MAX_PLANETS,),
     "planets_y": (MAX_PLANETS,),
+    "planets_new_x": (MAX_PLANETS,),
+    "planets_new_y": (MAX_PLANETS,),
+    "planets_id": (MAX_PLANETS,),
     "planets_owner": (MAX_PLANETS,),
     "planets_ships": (MAX_PLANETS,),
     "planets_prod": (MAX_PLANETS,),

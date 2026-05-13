@@ -124,8 +124,11 @@ def test_planet_path_compute_parity(seed, step):
     new_gs = planet_path_compute(gs)
     expected = _scalar_planet_path(env)
 
-    new_x = np.asarray(new_gs.planets_x)
-    new_y = np.asarray(new_gs.planets_y)
+    # planet_path_compute now writes to planets_new_x/y (deferred
+    # application). The OLD planets_x/y are unchanged; apply_planet_
+    # movement copies new → x/y at the end of the step.
+    new_x = np.asarray(new_gs.planets_new_x)
+    new_y = np.asarray(new_gs.planets_new_y)
     for i, (ex, ey) in enumerate(expected):
         if not gs.planets_alive[i]:
             continue
@@ -299,8 +302,10 @@ def test_comet_spawn_then_advance_positions_at_path0(seed=42):
         slot = int(spawned.comet_planet_idx[0, j])
         expected_x = float(gs.comet_paths_xy[0, j, 0, 0])
         expected_y = float(gs.comet_paths_xy[0, j, 0, 1])
-        assert float(advanced.planets_x[slot]) == pytest.approx(expected_x)
-        assert float(advanced.planets_y[slot]) == pytest.approx(expected_y)
+        # planets_new_x/y holds the post-advance position; planets_x/y
+        # would only be updated after apply_planet_movement.
+        assert float(advanced.planets_new_x[slot]) == pytest.approx(expected_x)
+        assert float(advanced.planets_new_y[slot]) == pytest.approx(expected_y)
     # Path index should now be 0 (incremented from -1).
     assert int(advanced.comet_path_index[0]) == 0
 
@@ -311,11 +316,12 @@ def test_comet_path_advance_no_op_at_start():
     env, gs = _build_state(42)
     from lib.game.jax import comet_path_advance
     new_gs = comet_path_advance(gs)
+    # planets_new_x/y stay at their seeded values (== planets_x/y at init).
     np.testing.assert_array_equal(
-        np.asarray(new_gs.planets_x), np.asarray(gs.planets_x)
+        np.asarray(new_gs.planets_new_x), np.asarray(gs.planets_new_x)
     )
     np.testing.assert_array_equal(
-        np.asarray(new_gs.planets_y), np.asarray(gs.planets_y)
+        np.asarray(new_gs.planets_new_y), np.asarray(gs.planets_new_y)
     )
     np.testing.assert_array_equal(
         np.asarray(new_gs.planets_alive), np.asarray(gs.planets_alive)

@@ -36,6 +36,7 @@ from lib.game.jax.jax_interpreter import (
     comet_expire,
     comet_path_advance,
     comet_spawn,
+    apply_planet_movement,
     swept_pair_hit_batch,
     jax_step_partial,
     production_tick_jit,
@@ -43,6 +44,7 @@ from lib.game.jax.jax_interpreter import (
     comet_expire_jit,
     comet_path_advance_jit,
     comet_spawn_jit,
+    apply_planet_movement_jit,
     swept_pair_hit_batch_jit,
     jax_step_partial_jit,
 )
@@ -54,9 +56,11 @@ __all__ = [
     "scalar_to_jax", "jax_to_scalar",
     "production_tick", "planet_path_compute",
     "comet_expire", "comet_path_advance", "comet_spawn",
+    "apply_planet_movement",
     "swept_pair_hit_batch",
     "jax_step_partial",
     "production_tick_jit", "planet_path_compute_jit",
     "comet_expire_jit", "comet_path_advance_jit", "comet_spawn_jit",
+    "apply_planet_movement_jit",
     "swept_pair_hit_batch_jit", "jax_step_partial_jit",
 ]

@@ -56,6 +56,9 @@ def scalar_to_jax(state, episode_seed: int) -> GameState:
 
     planets_x = np.zeros(MAX_PLANETS, dtype=np.float32)
     planets_y = np.zeros(MAX_PLANETS, dtype=np.float32)
+    planets_new_x = np.zeros(MAX_PLANETS, dtype=np.float32)
+    planets_new_y = np.zeros(MAX_PLANETS, dtype=np.float32)
+    planets_id = -np.ones(MAX_PLANETS, dtype=np.int32)
     planets_owner = -np.ones(MAX_PLANETS, dtype=np.int32)
     planets_ships = np.zeros(MAX_PLANETS, dtype=np.int32)
     planets_prod = np.zeros(MAX_PLANETS, dtype=np.int32)
@@ -76,6 +79,10 @@ def scalar_to_jax(state, episode_seed: int) -> GameState:
         pid_to_idx[pid] = i
         planets_x[i] = p[2]
         planets_y[i] = p[3]
+        # Initialise new_x/new_y to current (no movement applied yet).
+        planets_new_x[i] = p[2]
+        planets_new_y[i] = p[3]
+        planets_id[i] = pid
         planets_owner[i] = p[1]
         planets_ships[i] = p[5]
         planets_prod[i] = p[6]
@@ -176,6 +183,9 @@ def scalar_to_jax(state, episode_seed: int) -> GameState:
     return GameState(
         planets_x=jnp.asarray(planets_x),
         planets_y=jnp.asarray(planets_y),
+        planets_new_x=jnp.asarray(planets_new_x),
+        planets_new_y=jnp.asarray(planets_new_y),
+        planets_id=jnp.asarray(planets_id),
         planets_owner=jnp.asarray(planets_owner),
         planets_ships=jnp.asarray(planets_ships),
         planets_prod=jnp.asarray(planets_prod),
