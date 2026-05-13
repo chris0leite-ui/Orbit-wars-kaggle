@@ -58,6 +58,20 @@ GANG_UP_MAX_PASSES = 3           # convergence safety belt
 
 
 # ---------------------------------------------------------------------------
+# Fleet-size over-commit (H19 / TID 697397). Per Gemini's Day-2 writeup,
+# sending 10 % more ships than the minimum capture amount gives a
+# log-curve speed boost (fleet_speed = 1.0 + (max_speed-1.0) ·
+# (log(ships)/log(1000))^1.5) — earlier arrival, more reliable captures,
+# small extra defender on arrival. Off by default (= 1.0 identity).
+# A/B candidate values: 1.10 (per TID 697397), 1.05 conservative, 1.15
+# aggressive. Cap at src.ships so we never claim more than the garrison.
+# Applies to NON-REINFORCE intents (target.owner != world.my_id) — for
+# reinforce, sending more ships home doesn't help and crowds the
+# planet's combat resolution.
+FLEET_OVERCOMMIT = 1.0
+
+
+# ---------------------------------------------------------------------------
 # validate — drop intents that violate ownership / garrison constraints
 # ---------------------------------------------------------------------------
 
@@ -130,7 +144,18 @@ def arrival_size(intents: list[Intent], world: World, model=None) -> list[Intent
         if src is None or target is None:
             out.append(intent)
             continue
-        if target.owner == -1 or target.owner == world.my_id:
+        if target.owner == world.my_id:
+            # Reinforce — pass through unchanged (boost would just crowd
+            # the home combat resolution).
+            out.append(intent)
+            continue
+        if target.owner == -1:
+            # Neutral target — no garrison growth to integrate, but still
+            # apply the over-commit boost so the fleet-speed bonus kicks
+            # in and we deposit a non-trivial defender on arrival.
+            if FLEET_OVERCOMMIT > 1.0:
+                boosted = math.ceil(FLEET_OVERCOMMIT * intent.ships)
+                intent.ships = min(boosted, int(src.ships))
             out.append(intent)
             continue
         d = math.hypot(target.x - src.x, target.y - src.y)
@@ -167,6 +192,12 @@ def arrival_size(intents: list[Intent], world: World, model=None) -> list[Intent
             if pred_ships is not None:
                 needed = max(static_needed, int(math.ceil(pred_ships)) + 1)
         intent.ships = max(intent.ships, needed)
+        # 1.1× over-commit AFTER the production-aware sizing. Reach a
+        # higher fleet_speed tier and arrive sooner; capture leaves a
+        # small garrison instead of 1 ship.
+        if FLEET_OVERCOMMIT > 1.0:
+            boosted = math.ceil(FLEET_OVERCOMMIT * intent.ships)
+            intent.ships = min(boosted, int(src.ships))
         if intent.ships > src.ships:
             continue
         out.append(intent)

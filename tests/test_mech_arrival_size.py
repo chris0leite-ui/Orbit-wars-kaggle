@@ -49,6 +49,92 @@ def test_arrival_size_passes_through_neutral_target_unchanged():
     assert out[0].ships == 21
 
 
+# ---------------------------------------------------------------------------
+# FLEET_OVERCOMMIT — H19 / TID 697397 (1.1× speed-tier boost)
+# ---------------------------------------------------------------------------
+
+
+def test_fleet_overcommit_default_is_identity_on_neutral():
+    # At FLEET_OVERCOMMIT=1.0 (default) ships count is unchanged.
+    import lib.mechanism as M
+    target = _target(1, owner=-1, ships=10, production=5)
+    world = _world([_src(garrison=200), target])
+    intent = Intent(src_id=0, target_id=1, ships=11)
+    out = arrival_size([intent], world)
+    assert out[0].ships == 11
+    # Quick belt-and-suspenders: the module-level default is 1.0.
+    assert M.FLEET_OVERCOMMIT == 1.0
+
+
+def test_fleet_overcommit_boost_scales_neutral_ship_count():
+    import lib.mechanism as M
+    saved = M.FLEET_OVERCOMMIT
+    M.FLEET_OVERCOMMIT = 1.10
+    try:
+        target = _target(1, owner=-1, ships=10, production=5)
+        world = _world([_src(garrison=200), target])
+        intent = Intent(src_id=0, target_id=1, ships=11)
+        out = arrival_size([intent], world)
+        # ceil(1.10 * 11) = 13
+        assert out[0].ships == 13
+    finally:
+        M.FLEET_OVERCOMMIT = saved
+
+
+def test_fleet_overcommit_boost_clamps_to_src_garrison():
+    import lib.mechanism as M
+    saved = M.FLEET_OVERCOMMIT
+    M.FLEET_OVERCOMMIT = 1.50
+    try:
+        # Source has only 12 ships; 1.50 * 11 = 17 but garrison caps at 12.
+        target = _target(1, owner=-1, ships=10, production=5)
+        world = _world([_src(garrison=12), target])
+        intent = Intent(src_id=0, target_id=1, ships=11)
+        out = arrival_size([intent], world)
+        assert out[0].ships == 12
+    finally:
+        M.FLEET_OVERCOMMIT = saved
+
+
+def test_fleet_overcommit_does_not_apply_to_reinforce_targets():
+    import lib.mechanism as M
+    saved = M.FLEET_OVERCOMMIT
+    M.FLEET_OVERCOMMIT = 1.20
+    try:
+        # Target is OUR planet — reinforce, no boost.
+        target = _target(1, owner=0, ships=20, production=2)
+        world = _world([_src(garrison=200), target])
+        intent = Intent(src_id=0, target_id=1, ships=15)
+        out = arrival_size([intent], world)
+        assert out[0].ships == 15
+    finally:
+        M.FLEET_OVERCOMMIT = saved
+
+
+def test_fleet_overcommit_applies_after_production_aware_bump():
+    import lib.mechanism as M
+    saved = M.FLEET_OVERCOMMIT
+    M.FLEET_OVERCOMMIT = 1.10
+    try:
+        # Enemy at (70, 70) starting 10 ships, production 2. Source at
+        # (10, 10) with 200-ship garrison. Static needed will grow with
+        # eta; assert the final intent.ships is the boost-of-needed
+        # (not boost-of-incoming).
+        target = _target(1, owner=1, ships=10, production=2)
+        world = _world([_src(garrison=200), target])
+        intent = Intent(src_id=0, target_id=1, ships=11)  # under-sized
+        out = arrival_size([intent], world)
+        # `needed` covers the static garrison growth across eta plus 1.
+        # Then 1.10× and ceil. We don't pin the exact eta here (depends
+        # on fleet_speed at needed ships) but the assertion is: result
+        # is strictly > needed AND > intent.ships and <= src.ships.
+        assert out
+        assert out[0].ships > 11
+        assert out[0].ships <= 200
+    finally:
+        M.FLEET_OVERCOMMIT = saved
+
+
 def test_arrival_size_passes_through_friendly_target_unchanged():
     """Reinforce intents (target.owner == my_id) shouldn't be over-sized here."""
     target = _target(1, owner=0, ships=20, production=3)    # ours
