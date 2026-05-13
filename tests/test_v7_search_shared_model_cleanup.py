@@ -75,3 +75,29 @@ def test_detach_tolerates_external_deletion_inside_body():
         del a._shared_world_model
     assert not hasattr(a, "_shared_world_model")
     assert not hasattr(b, "_shared_world_model")
+
+
+# ---------------------------------------------------------------------------
+# _effective_wallclock_ms — parity-test budget override
+# ---------------------------------------------------------------------------
+
+
+def test_effective_wallclock_returns_arg_when_env_unset(monkeypatch):
+    monkeypatch.delenv("ORBIT_WARS_PARITY_WALLCLOCK_MS", raising=False)
+    assert v7_search._effective_wallclock_ms(700.0) == 700.0
+
+
+def test_effective_wallclock_honors_env_override(monkeypatch):
+    monkeypatch.setenv("ORBIT_WARS_PARITY_WALLCLOCK_MS", "60000")
+    assert v7_search._effective_wallclock_ms(700.0) == 60000.0
+
+
+def test_effective_wallclock_falls_back_on_invalid_env(monkeypatch):
+    monkeypatch.setenv("ORBIT_WARS_PARITY_WALLCLOCK_MS", "not-a-number")
+    # Invalid value must not crash the agent — fall back to the caller's.
+    assert v7_search._effective_wallclock_ms(700.0) == 700.0
+
+
+def test_effective_wallclock_treats_empty_string_as_unset(monkeypatch):
+    monkeypatch.setenv("ORBIT_WARS_PARITY_WALLCLOCK_MS", "")
+    assert v7_search._effective_wallclock_ms(700.0) == 700.0

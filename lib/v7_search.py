@@ -33,9 +33,34 @@ the variation lives in `enumerate_candidates`.
 from __future__ import annotations
 
 import math
+import os
 import time
 from contextlib import contextmanager
 from typing import Any, Callable, Iterable
+
+# Env-var override for the wallclock budget used by every `choose_*` entry
+# point. **Only consulted at the top of each chooser**, never inside the
+# search loop, so the production path's `time.perf_counter()` watchdog
+# is unchanged. Set by `scripts/bundle_agent.py::_parity_gate` to make
+# source-vs-bundle parity tests deterministic: with the default 700 ms
+# budget, a chooser may bail mid-candidate-list on system jitter, leaving
+# argmax to pick over a different subset of candidates each run. Setting
+# the budget effectively unbounded lets every candidate be scored, so
+# the agent becomes a pure function of its inputs.
+_WALLCLOCK_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
+
+
+def _effective_wallclock_ms(wallclock_ms: float) -> float:
+    """Return `wallclock_ms` unless the parity-test env var is set, in
+    which case use the env-var value. Invalid values fall back to the
+    caller's number rather than crashing the agent."""
+    override = os.environ.get(_WALLCLOCK_ENV_VAR)
+    if not override:
+        return wallclock_ms
+    try:
+        return float(override)
+    except ValueError:
+        return wallclock_ms
 
 from lib.fast_sim import Snapshot, delta_us_minus_them
 from lib.fast_sim import clone as fs_clone
@@ -732,6 +757,7 @@ def choose_maximin(
     in full first so its worst-case is honest. 4P games fall back to
     the incumbent (no maximin guarantee at n>2).
     """
+    wallclock_ms = _effective_wallclock_ms(wallclock_ms)
     t_start = time.perf_counter()
 
     world = World.from_obs(obs)
@@ -881,6 +907,7 @@ def choose_4p(
     Falls back to incumbent if the watchdog trips or no candidate
     strictly beats it.
     """
+    wallclock_ms = _effective_wallclock_ms(wallclock_ms)
     t_start = time.perf_counter()
 
     world = World.from_obs(obs)
@@ -946,6 +973,7 @@ def choose_simple_2p(
     fast enough at 746-816 ms p95) while still getting σ-equiv,
     recapture, and value_fn for free.
     """
+    wallclock_ms = _effective_wallclock_ms(wallclock_ms)
     t_start = time.perf_counter()
 
     world = World.from_obs(obs)
@@ -1058,6 +1086,7 @@ def choose_depth2(
     4P fallback: return the incumbent (depth-2 minimax is 2P-only —
     Nash maximin doesn't generalise cleanly to n > 2).
     """
+    wallclock_ms = _effective_wallclock_ms(wallclock_ms)
     t_start = time.perf_counter()
 
     world = World.from_obs(obs)
@@ -1332,6 +1361,7 @@ def choose(
     head. Defaults to `delta_us_minus_them` (Phase-2-validated baseline).
     Phase 3c uses a composite (ship_delta + denial + survivor) blend.
     """
+    wallclock_ms = _effective_wallclock_ms(wallclock_ms)
     t_start = time.perf_counter()
     if opp_tiers is None:
         opp_tiers = [1]
