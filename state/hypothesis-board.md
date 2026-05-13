@@ -265,11 +265,21 @@ I-M = data-driven; K = realism check already cleared.
   Source: TID 699003 author claims this shape alone hits ~1000 μ.
   Decision gate: `ab_variants.py --candidate pv` vs
   `{v3_snipe, v4_planner, v7_minimax}` Wilson-lo ≥ 0.55 each.
-- **H17 [B] (½ day):** **3-closest-planet hardcoded danger map.**
-  `_danger_score(pid, world) = Σ_{p ∈ 3-nearest} w[p.owner]/(d+1)`,
-  `w = {ally: +1, neutral: 0, enemy: −1}`. Multiplicative penalty on
-  snipe + reinforce score. Source: TID 699003 (16-0 vs gradient
-  variant). Decision gate: 32-seed multi-anchor as above.
+- **H17 [B] (½ day, FALSIFIED 2026-05-13):** **3-closest-planet
+  hardcoded danger map.** Implemented as count-based 3-NN with sign
+  +1/0/−1 per ally/neutral/enemy; multiplicative on snipe + reinforce
+  score via `DANGER3_KAPPA · danger_3nn(target)`. Tested at
+  κ ∈ {0.1, 0.3} on top of PV (PV_GAMMA=0.99), 8 seeds × both seats
+  vs `v7_pv` (κ=0). Result: κ=0.3 → 37.5% (Wilson [18.5%, 61.4%]);
+  κ=0.1 → 43.8% (Wilson [23.1%, 66.8%]). Monotonic regression with κ.
+  Falsified: danger3 does not stack on top of v7's K=10 rollout —
+  the rollout already evaluates contested-territory dynamics, so
+  over-penalising contested snipes at proposal time drops candidates
+  the rollout would correctly score as good. Audit:
+  `audit/tournaments/ab-20260513T19{53,58}*.json`. Code retained
+  (flag defaults to 0.0 = identity) for future use on simpler
+  agents like v3_snipe, where the smoke at v3_snipe-tier did show
+  56.2% directionally.
 - **H18 [C] (~1 day inc. audit):** **Comet arrival synchronization.**
   Audit `lib/trajectory.py:predict_fleet_fate` for comet motion
   awareness; extend ray-cast to advance comet path-index per step.
