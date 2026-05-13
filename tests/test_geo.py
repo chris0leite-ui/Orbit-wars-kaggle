@@ -273,6 +273,24 @@ def test_agent_runs_full_game_without_error():
     assert final[1].reward is not None
 
 
+def test_agent_runs_4p_game_without_error():
+    """The agent should play a 4P FFA game without crashing.
+
+    v7_0 falls back to v3.5.1 in 4P; geo runs score_candidate_4p
+    lookahead in 4P. Validates the 4P branch.
+    """
+    pytest.importorskip("kaggle_environments")
+    from kaggle_environments import make
+    from agents.geo.main import agent as geo_agent
+
+    env = make("orbit_wars", configuration={"seed": 0}, debug=False)
+    env.run([geo_agent, "random", "random", "random"])
+    final = env.steps[-1]
+    # All four players returned a final reward.
+    for seat in range(4):
+        assert final[seat].reward is not None, f"seat {seat} crashed"
+
+
 def test_agent_returns_action_list_at_step_0():
     """Calling agent on a step-0 obs returns a list (possibly empty)."""
     pytest.importorskip("kaggle_environments")

@@ -1,4 +1,10 @@
-"""geo v2.2 — geometric sense + K=10 lookahead + top-10 archetype blend.
+"""geo v2.3 — geometric sense + K=10 lookahead + top-10 archetypes + 4P support.
+
+KEY EDGE OVER v7_0: v7_0 falls back to v3.5.1 incumbent in 4P games
+(33% of live ladder per HANDOVER). This agent runs lookahead-validated
+candidate selection in BOTH 2P and 4P via score_candidate_4p
+(K=8, "us minus best-other-opp" scoring head, all-3-opps as Tier-1 mirror).
+
 
 Combines:
 - v7's K=10 forward-sim lookahead (`lib/v7_search.py:score_candidate`)
@@ -45,7 +51,10 @@ from lib.missions.opening import propose_opening_missions
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.missions.snipe import propose_snipe_missions
 from lib.planner import settle_plan
-from lib.v7_search import _action_from_intents, score_candidate
+from lib.v7_search import (
+    _action_from_intents, _infer_num_seats,
+    score_candidate, score_candidate_4p,
+)
 from lib.world_model import WorldModel
 
 from lib.geo.sense import SenseState, sense_state
@@ -55,10 +64,11 @@ from lib.geo.sense import SenseState, sense_state
 # Tunables
 # ---------------------------------------------------------------------------
 
-K_LOOKAHEAD = 10
-WALLCLOCK_MS = 500.0          # hard pre-candidate gate (ladder limit 1000)
+K_LOOKAHEAD = 10        # 2P depth
+K_LOOKAHEAD_4P = 8      # 4P shallower (3 opponents = more compute per step)
+WALLCLOCK_MS = 500.0    # hard pre-candidate gate (ladder limit 1000)
 TIE_TOLERANCE = 1e-6
-MAX_DROP_ONE_VARIANTS = 2     # capped to 2 (was 3); 2 archetype tilts replace the budget
+MAX_DROP_ONE_VARIANTS = 2   # capped to 2; 2 archetype tilts replace the budget
 
 # Tilt magnitudes — the K=10 lookahead validates each, so 1.5-2x is safe.
 TILT_OPENING_BOOST = 2.0      # opening missions, steps 0-15 (68% opening losses signal)
@@ -295,9 +305,16 @@ def agent(obs, configuration=None):
             candidates.append(("drop_one", variant))
             seen.add(key)
 
-    # Score in order; HARD pre-candidate gate so a slow score can't push the
-    # next one over the ladder timeout.
-    snap = fs_from_obs(obs, configuration, episode_seed=0, num_seats=2)
+    # Score in order; HARD pre-candidate gate so a slow score can't push
+    # the next one over the ladder timeout.
+    # 2P / 4P dispatch: v7_0 falls back to v3.5.1 incumbent in 4P (per
+    # lib/v7_search.py:choose line 1384). 33% of live games are 4P, so
+    # this is a real edge: we get lookahead-validated candidates in both.
+    num_seats = _infer_num_seats(world)
+    if num_seats not in (2, 4):
+        # 3P or other oddity — bail to incumbent.
+        return incumbent_action
+    snap = fs_from_obs(obs, configuration, episode_seed=0, num_seats=num_seats)
     best_action = incumbent_action
     best_score = float("-inf")
     scored_any = False
@@ -306,7 +323,14 @@ def agent(obs, configuration=None):
         if elapsed_ms > WALLCLOCK_MS:
             break
         try:
-            score = score_candidate(snap, cand, my_id=my_id, K=K_LOOKAHEAD, opp_tier=1)
+            if num_seats == 2:
+                score = score_candidate(
+                    snap, cand, my_id=my_id, K=K_LOOKAHEAD, opp_tier=1,
+                )
+            else:  # 4P
+                score = score_candidate_4p(
+                    snap, cand, my_id=my_id, K=K_LOOKAHEAD_4P,
+                )
         except Exception:
             continue
         if not scored_any:
