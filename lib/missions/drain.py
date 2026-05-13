@@ -37,6 +37,9 @@ RESERVE_KEEP = 8               # always leave a defender behind
 SAFE_ETA_BUFFER = 5            # require enemy ETA > our ETA + this
 DRAIN_BONUS = 1.10             # mild bonus for using SAFE surplus
 
+# Mission Renaissance gate. Default 0 = disabled. A/B candidate: 1.
+USE_DRAIN_MISSION = 0
+
 
 def propose_drain_missions(world: World, model: WorldModel) -> list[Mission]:
     """One drain Mission per (safe high-garrison source, best target) pair.
@@ -44,6 +47,8 @@ def propose_drain_missions(world: World, model: WorldModel) -> list[Mission]:
     Skips sources that have any inbound enemy within a short window;
     skips targets that the source can't afford after RESERVE_KEEP.
     """
+    if not USE_DRAIN_MISSION:
+        return []
     my_planets = [
         p for p in world.planets_by_id.values()
         if p.owner == world.my_id and p.ships > MIN_DRAIN_SHIPS

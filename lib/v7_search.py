@@ -44,6 +44,9 @@ from lib.fleet import speed as fleet_speed
 from lib.intent import Intent, World, realize
 from lib.mechanism import DEFAULT_MECHANISMS
 from lib.mission import Mission
+from lib.missions.drain import propose_drain_missions
+from lib.missions.gang_up import propose_gang_up_missions
+from lib.missions.opening import propose_opening_missions
 from lib.missions.recapture import propose_recapture_missions
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.missions.snipe import propose_snipe_missions
@@ -145,6 +148,15 @@ def _build_incumbent_intents(
     )
     if include_recapture:
         missions = missions + propose_recapture_missions(world, model)
+    # Mission Renaissance: opening + drain + gang_up proposers each
+    # return [] when their USE_*_MISSION flag is 0 (default), so v7
+    # parity is preserved until the A/B flips a flag.
+    missions = (
+        missions
+        + propose_opening_missions(world, model)
+        + propose_drain_missions(world, model)
+        + propose_gang_up_missions(world, model)
+    )
     chosen = settle_plan(missions, world, model)
     return chosen
 

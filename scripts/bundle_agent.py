@@ -49,6 +49,13 @@ DEFAULT_LIB_ORDER = [
     "missions/snipe",
     "missions/reinforce",
     "missions/recapture",
+    # Mission Renaissance proposers — pulled in unconditionally because
+    # v7_search now imports them (see lib/v7_search.py). Each guards
+    # itself with a USE_*_MISSION flag (default 0 = no-op), so bundles
+    # built without the flag are byte-equivalent to pre-Renaissance.
+    "missions/opening",
+    "missions/drain",
+    "missions/gang_up",
     "planner",
     "lookahead_planner",
     # Pure-Python rebuild of the orbit_wars game engine (Phase 2 of the

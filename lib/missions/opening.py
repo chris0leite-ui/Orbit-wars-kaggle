@@ -41,11 +41,17 @@ OPENING_WINDOW = 5            # inclusive; fires for steps 0..5
 MIN_LAUNCH_GARRISON = 8       # don't strand a defender below this
 FRONT_LOAD_EXPONENT = 1.5     # H7 from main's hypothesis board
 
+# Mission Renaissance gate. Default 0 = disabled (caller still gets an
+# empty list, so v7's pipeline is unchanged). A/B candidate: 1.
+USE_OPENING_MISSION = 0
+
 
 def propose_opening_missions(world: World, model: WorldModel) -> list[Mission]:
     """One Mission per (our source with ships>8, neutral target) pair,
     fired only during the opening window. Score = production ×
     (remaining_steps)^1.5 / (distance + 1)."""
+    if not USE_OPENING_MISSION:
+        return []
     if int(world.step) > OPENING_WINDOW:
         return []
     my_planets = [

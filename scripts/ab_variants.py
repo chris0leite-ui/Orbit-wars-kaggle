@@ -64,6 +64,9 @@ SEEDS_64 = [
 PATCHABLE_PATHS = [
     REPO / "lib" / "missions" / "snipe.py",
     REPO / "lib" / "missions" / "reinforce.py",
+    REPO / "lib" / "missions" / "opening.py",
+    REPO / "lib" / "missions" / "drain.py",
+    REPO / "lib" / "missions" / "gang_up.py",
     REPO / "lib" / "mechanism.py",
     REPO / "lib" / "planner.py",
     REPO / "lib" / "scoring.py",
