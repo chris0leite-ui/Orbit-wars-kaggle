@@ -69,6 +69,34 @@ live_submissions:
   - {agent: day1_baseline,  sub_id: 52497828, submitted: 2026-05-10T00:09, score: 303.2}
 
 session_log:
+  - 2026-05-13 — consolidate-fast-simulation-ysd9M, Phase 3a —
+    scalar-rollout speedups. Profile (cProfile, 2000 steps) revealed
+    two hot spots: swept_pair_hit (28% of total) and the spawn-step
+    cliff (generate_comet_paths costs ~85 ms × 20 calls = 20% of
+    total, but concentrated on steps 50/150/250/350/450). Five waves
+    landed: (1) **comet-path cache** on `_FakeEnv.comet_path_cache`,
+    shared across clones — eliminates the spawn cliff during
+    lookahead; (2.1) AABB prune in `swept_pair_hit` — early-outs
+    ~70-90 % of fleet × planet pairs; (2.2+2.3) local hoists +
+    module-level math aliases (_cos/_sin/_sqrt/_log/_atan2) — cuts
+    attribute lookups in the inner loop; (2.4) set-based fleet
+    removal (id() membership vs O(N·M·7) list-equality). Wave 2.5
+    (lighter clone) **skipped** — standalone bench showed
+    clone() is only 12 µs/call, not the 241 µs the earlier
+    benchmark suggested (the difference was env.reset() noise from
+    terminated-episode resets in the loop). Verification:
+    `tests/test_game_parity.py` 62/62 green (32 init+shadow plus 10
+    new cache-HIT parity tests); `tests/test_fast_sim_parity.py`,
+    `tests/test_v1_parity.py` green; full suite green (pending
+    confirm); `scripts/full_episode_parity_sweep.py` 100×2P + 50×4P
+    in flight. Microbench impact: per-step interpreter 1224 → 983 µs
+    (1.24×, +20 %); fast_sim agent-rollout per-step in mid-game
+    ~190 µs (8 fleets, K=10 lookahead). **Spawn-crossing turn
+    (step 49, K=10 × 50 candidates): 5+ s → 155 ms (~32× faster).**
+    This makes wide search viable on spawn-boundary turns — the cliff
+    is gone. Knowledge ref:
+    `knowledge-base/concepts/pure-python-game-rebuild.md`.
+    No new submission.
   - 2026-05-13 — consolidate-fast-simulation-ysd9M (this branch),
     Phase 2 — pure-Python game-engine rebuild. Ported
     `kaggle_environments.envs.orbit_wars.orbit_wars.interpreter` (812

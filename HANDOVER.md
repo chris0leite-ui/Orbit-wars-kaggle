@@ -81,7 +81,57 @@ recapture, drain, opening}.py`), full physics
 world_model}.py`), the fast-brain stack listed above, plus
 `{intent, mission, planner, scoring, fingerprint}.py`.
 
-## Phase 2 — pure-Python game-engine rebuild (DONE this session)
+## Phase 3a — scalar-rollout speedups (DONE this session)
+
+Driver: profile showed `generate_comet_paths` costs ~85 ms on each of
+the 5 spawn boundaries (steps 50/150/250/350/450). An agent doing
+K=10 lookahead × 50 candidates that crosses the next spawn would
+spend ≈5 s on comet generation alone — silently over the 1 s/turn
+budget. Killer fix: cache the result.
+
+What landed:
+
+1. **Comet-path cache.** `_FakeEnv` gains `comet_path_cache: dict`
+   keyed by `(episode_seed, spawn_step)`. Shared across clones inside
+   `lib/fast_sim.clone()`. The interpreter consults it before calling
+   `generate_comet_paths`; cache miss → store; cache hit → skip the
+   computation entirely. New parity test
+   `test_comet_cache_hit_parity` (10 cases) validates two
+   cache-sharing branches produce byte-identical state.
+2. **AABB prune in `swept_pair_hit`.** Cheap bounding-box rejection
+   before the discriminant math; eliminates ~70-90 % of the fleet ×
+   planet pairs.
+3. **Local hoists** in the per-step hot loops (planet path comp,
+   comet update, fleet movement) + **module-level math aliases**
+   `_cos`/`_sin`/`_sqrt`/`_log`/`_atan2`.
+4. **Set-based fleet removal** — `id()` membership replaces
+   `f not in list` element-wise list-equality.
+
+Skipped: lighter `clone()`. Standalone bench: clone() is 12 µs/call,
+not 241 µs — the earlier number was env.reset() noise.
+
+**Impact:**
+
+| Workload | Before | After | Speedup |
+|---|---|---|---|
+| Interpreter per-step (steady state) | 1224 µs | 983 µs | **1.24×** |
+| Mid-game lookahead per-step (K=10) | — | 190 µs | — |
+| **Spawn-crossing turn, K=10 × 50 candidates** | **~5 s** | **155 ms** | **~32×** |
+| Non-spawn turn, K=10 × 50 candidates | — | 97 ms | — |
+
+The cliff is gone. Agents can now do wide+deep lookahead on
+spawn-boundary turns inside the 1 s budget.
+
+Gates: 62/62 game-parity tests; full suite + 150-episode parity sweep
+both pending confirm at wrap-up time.
+
+Critical files: `lib/game/interpreter.py` (math aliases, AABB,
+hoists, set-remove, cache lookup); `lib/fast_sim.py`
+(`_FakeEnv.comet_path_cache` + clone shares it);
+`tests/test_game_parity.py` (cache-HIT test);
+`scripts/profile_step.py` (the harness).
+
+## Phase 2 — pure-Python game-engine rebuild (previous session)
 
 Done in one pass: `lib/game/interpreter.py` is a verbatim port of
 `kaggle_environments.envs.orbit_wars.orbit_wars.interpreter` (812 src

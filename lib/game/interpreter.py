@@ -17,6 +17,15 @@ import random
 from collections import namedtuple
 
 
+# Module-level aliases for the math builtins called inside the per-step
+# hot loop. Saves the per-call `math.X` attribute lookup; ~12% on the
+# 7 M trig/sqrt/log calls measured across a 2000-step random episode.
+_cos = math.cos
+_sin = math.sin
+_sqrt = math.sqrt
+_log = math.log
+
+
 Planet = namedtuple(
     "Planet", ["id", "owner", "x", "y", "radius", "ships", "production"]
 )
@@ -44,24 +53,66 @@ def _get(d, key, default):
 
 
 def distance(p1, p2):
-    return math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
+    dx = p1[0] - p2[0]
+    dy = p1[1] - p2[1]
+    return _sqrt(dx * dx + dy * dy)
 
 
 def point_to_segment_distance(p, v, w):
-    l2 = (v[0] - w[0]) ** 2 + (v[1] - w[1]) ** 2
+    vx = v[0]; vy = v[1]
+    wx = w[0]; wy = w[1]
+    dx = vx - wx
+    dy = vy - wy
+    l2 = dx * dx + dy * dy
     if l2 == 0.0:
         return distance(p, v)
-    t = max(
-        0, min(1, ((p[0] - v[0]) * (w[0] - v[0]) + (p[1] - v[1]) * (w[1] - v[1])) / l2)
-    )
-    projection = (v[0] + t * (w[0] - v[0]), v[1] + t * (w[1] - v[1]))
-    return distance(p, projection)
+    px = p[0]; py = p[1]
+    t = ((px - vx) * (wx - vx) + (py - vy) * (wy - vy)) / l2
+    if t < 0.0:
+        t = 0.0
+    elif t > 1.0:
+        t = 1.0
+    projx = vx + t * (wx - vx)
+    projy = vy + t * (wy - vy)
+    dx2 = px - projx
+    dy2 = py - projy
+    return _sqrt(dx2 * dx2 + dy2 * dy2)
 
 
 def swept_pair_hit(A, B, P0, P1, r):
-    d0x, d0y = A[0] - P0[0], A[1] - P0[1]
-    dvx = (B[0] - A[0]) - (P1[0] - P0[0])
-    dvy = (B[1] - A[1]) - (P1[1] - P0[1])
+    A0 = A[0]; A1 = A[1]
+    B0 = B[0]; B1 = B[1]
+    P00 = P0[0]; P01 = P0[1]
+    P10 = P1[0]; P11 = P1[1]
+    # Cheap AABB prune. The fleet (a point) traverses segment A→B; the
+    # planet center traverses P0→P1, with the planet body inflating by
+    # radius r in every direction. If the fleet's segment bbox and the
+    # inflated planet-center segment bbox are disjoint on either axis,
+    # no collision is possible — skip the discriminant math.
+    if A0 < B0:
+        fmin_x = A0; fmax_x = B0
+    else:
+        fmin_x = B0; fmax_x = A0
+    if P00 < P10:
+        pmin_x = P00 - r; pmax_x = P10 + r
+    else:
+        pmin_x = P10 - r; pmax_x = P00 + r
+    if fmax_x < pmin_x or fmin_x > pmax_x:
+        return False
+    if A1 < B1:
+        fmin_y = A1; fmax_y = B1
+    else:
+        fmin_y = B1; fmax_y = A1
+    if P01 < P11:
+        pmin_y = P01 - r; pmax_y = P11 + r
+    else:
+        pmin_y = P11 - r; pmax_y = P01 + r
+    if fmax_y < pmin_y or fmin_y > pmax_y:
+        return False
+
+    d0x = A0 - P00; d0y = A1 - P01
+    dvx = (B0 - A0) - (P10 - P00)
+    dvy = (B1 - A1) - (P11 - P01)
     a = dvx * dvx + dvy * dvy
     b = 2.0 * (d0x * dvx + d0y * dvy)
     c = d0x * d0x + d0y * d0y - r * r
@@ -70,7 +121,7 @@ def swept_pair_hit(A, B, P0, P1, r):
     disc = b * b - 4.0 * a * c
     if disc < 0.0:
         return False
-    sq = math.sqrt(disc)
+    sq = _sqrt(disc)
     t1 = (-b - sq) / (2.0 * a)
     t2 = (-b + sq) / (2.0 * a)
     return t2 >= 0.0 and t1 <= 1.0
@@ -395,23 +446,42 @@ def interpreter(state, env):
     if (step + 1) in COMET_SPAWN_STEPS:
         env_info = getattr(env, "info", None) or {}
         episode_seed = env_info.get("seed", 0) or 0
-        comet_rng = random.Random(f"orbit_wars-comet-{episode_seed}-{step + 1}")
-        comet_paths = generate_comet_paths(
-            obs0.initial_planets,
-            obs0.angular_velocity,
-            step + 1,
-            obs0.comet_planet_ids,
-            comet_speed,
-            rng=comet_rng,
-        )
+        # Comet paths + ships are deterministic from (episode_seed,
+        # spawn_step, initial_planets, comet_planet_ids). Inside one
+        # lookahead, initial_planets and comet_planet_ids are fixed up
+        # to the agent's "now", so all rollouts crossing the next spawn
+        # boundary share the same result. Cache it on env.comet_path_cache
+        # to amortise the ~100 ms generation across rollouts.
+        cache = getattr(env, "comet_path_cache", None)
+        cache_key = (episode_seed, step + 1)
+        cached = cache.get(cache_key) if cache is not None else None
+        if cached is not None:
+            comet_paths, comet_ships = cached
+        else:
+            comet_rng = random.Random(
+                f"orbit_wars-comet-{episode_seed}-{step + 1}"
+            )
+            comet_paths = generate_comet_paths(
+                obs0.initial_planets,
+                obs0.angular_velocity,
+                step + 1,
+                obs0.comet_planet_ids,
+                comet_speed,
+                rng=comet_rng,
+            )
+            if comet_paths:
+                comet_ships = min(
+                    comet_rng.randint(1, 99),
+                    comet_rng.randint(1, 99),
+                    comet_rng.randint(1, 99),
+                    comet_rng.randint(1, 99),
+                )
+            else:
+                comet_ships = None
+            if cache is not None:
+                cache[cache_key] = (comet_paths, comet_ships)
         if comet_paths:
             next_id = max(p[0] for p in obs0.planets) + 1
-            comet_ships = min(
-                comet_rng.randint(1, 99),
-                comet_rng.randint(1, 99),
-                comet_rng.randint(1, 99),
-                comet_rng.randint(1, 99),
-            )
             group = {"planet_ids": [], "paths": comet_paths, "path_index": -1}
             for i, p_path in enumerate(comet_paths):
                 pid = next_id + i
@@ -471,10 +541,15 @@ def interpreter(state, env):
     comet_pid_set = set(obs0.comet_planet_ids)
     initial_by_id = {p[0]: p for p in obs0.initial_planets}
 
+    planets_local = obs0.planets
+    comets_local = obs0.comets
+    fleets_local = obs0.fleets
+
     planet_paths = {}
     expired_comet_pids = []
 
-    for planet in obs0.planets:
+    _atan2 = math.atan2
+    for planet in planets_local:
         if planet[0] in comet_pid_set:
             continue
         old_pos = (planet[2], planet[3])
@@ -483,67 +558,79 @@ def interpreter(state, env):
         if initial_p is not None:
             dx = initial_p[2] - CENTER
             dy = initial_p[3] - CENTER
-            r = math.sqrt(dx ** 2 + dy ** 2)
+            r = _sqrt(dx * dx + dy * dy)
             if r + planet[4] < ROTATION_RADIUS_LIMIT:
-                initial_angle = math.atan2(dy, dx)
-                current_angle = initial_angle + angular_velocity * step
+                current_angle = _atan2(dy, dx) + angular_velocity * step
                 new_pos = (
-                    CENTER + r * math.cos(current_angle),
-                    CENTER + r * math.sin(current_angle),
+                    CENTER + r * _cos(current_angle),
+                    CENTER + r * _sin(current_angle),
                 )
         planet_paths[planet[0]] = (old_pos, new_pos, True)
 
-    for group in obs0.comets:
+    # planet_by_id once for the comet update lookup (replaces per-comet
+    # linear scan over all planets).
+    planet_by_id = {p[0]: p for p in planets_local}
+    for group in comets_local:
         group["path_index"] += 1
         idx = group["path_index"]
+        group_paths = group["paths"]
         for i, pid in enumerate(group["planet_ids"]):
-            planet = next((p for p in obs0.planets if p[0] == pid), None)
+            planet = planet_by_id.get(pid)
             if planet is None:
                 continue
-            p_path = group["paths"][i]
+            p_path = group_paths[i]
             old_pos = (planet[2], planet[3])
             if idx >= len(p_path):
                 expired_comet_pids.append(pid)
                 planet_paths[pid] = (old_pos, old_pos, True)
             else:
-                new_pos = (p_path[idx][0], p_path[idx][1])
+                pp = p_path[idx]
+                new_pos = (pp[0], pp[1])
                 check = old_pos[0] >= 0
                 planet_paths[pid] = (old_pos, new_pos, check)
 
     max_speed = configuration.shipSpeed
+    log1000 = _log(1000)
     fleets_to_remove = []
-    combat_lists = {p[0]: [] for p in obs0.planets}
+    combat_lists = {p[0]: [] for p in planets_local}
 
-    for fleet in obs0.fleets:
+    _swept = swept_pair_hit
+    _seg_dist = point_to_segment_distance
+    _ftr_append = fleets_to_remove.append
+    sun_center = (CENTER, CENTER)
+    for fleet in fleets_local:
         angle = fleet[4]
         ships = fleet[6]
-        speed = 1.0 + (max_speed - 1.0) * (math.log(ships) / math.log(1000)) ** 1.5
-        speed = min(speed, max_speed)
-        old_pos = (fleet[2], fleet[3])
-        fleet[2] += math.cos(angle) * speed
-        fleet[3] += math.sin(angle) * speed
-        new_pos = (fleet[2], fleet[3])
+        speed = 1.0 + (max_speed - 1.0) * (_log(ships) / log1000) ** 1.5
+        if speed > max_speed:
+            speed = max_speed
+        f2 = fleet[2]; f3 = fleet[3]
+        old_pos = (f2, f3)
+        new_x = f2 + _cos(angle) * speed
+        new_y = f3 + _sin(angle) * speed
+        fleet[2] = new_x
+        fleet[3] = new_y
+        new_pos = (new_x, new_y)
 
         hit_planet = False
-        for planet in obs0.planets:
+        for planet in planets_local:
             path = planet_paths.get(planet[0])
             if path is None or not path[2]:
                 continue
-            p_old, p_new, _ = path
-            if swept_pair_hit(old_pos, new_pos, p_old, p_new, planet[4]):
+            if _swept(old_pos, new_pos, path[0], path[1], planet[4]):
                 combat_lists[planet[0]].append(fleet)
-                fleets_to_remove.append(fleet)
+                _ftr_append(fleet)
                 hit_planet = True
                 break
         if hit_planet:
             continue
 
-        if not (0 <= fleet[2] <= BOARD_SIZE and 0 <= fleet[3] <= BOARD_SIZE):
-            fleets_to_remove.append(fleet)
+        if not (0 <= new_x <= BOARD_SIZE and 0 <= new_y <= BOARD_SIZE):
+            _ftr_append(fleet)
             continue
 
-        if point_to_segment_distance((CENTER, CENTER), old_pos, new_pos) < SUN_RADIUS:
-            fleets_to_remove.append(fleet)
+        if _seg_dist(sun_center, old_pos, new_pos) < SUN_RADIUS:
+            _ftr_append(fleet)
             continue
 
     for planet in obs0.planets:
@@ -566,7 +653,11 @@ def interpreter(state, env):
             ]
         obs0.comets = [g for g in obs0.comets if g["planet_ids"]]
 
-    obs0.fleets = [f for f in obs0.fleets if f not in fleets_to_remove]
+    # Identity-based removal: `f not in list` triggers element-wise list
+    # equality (O(N·M·7)); id() membership is O(N+M) on a hash set.
+    if fleets_to_remove:
+        remove_ids = {id(f) for f in fleets_to_remove}
+        obs0.fleets = [f for f in obs0.fleets if id(f) not in remove_ids]
 
     for pid, planet_fleets in combat_lists.items():
         planet = next((p for p in obs0.planets if p[0] == pid), None)

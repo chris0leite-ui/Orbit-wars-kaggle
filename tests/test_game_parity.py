@@ -179,6 +179,67 @@ def test_shadow_parity_500_steps(seed, num_agents):
     _run_shadow_parity(seed, num_agents, num_steps=500)
 
 
+# ---------------------------------------------------------------------------
+# Comet-path cache HIT parity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", [0, 1, 7, 42, 137])
+@pytest.mark.parametrize("num_agents", [2, 4])
+def test_comet_cache_hit_parity(seed, num_agents):
+    """Two parallel game state branches sharing one comet_path_cache must
+    produce byte-identical state across a spawn boundary — even though
+    only one of them does the expensive generate_comet_paths call.
+
+    This validates that the cached value is correctly reused on cache hit.
+    """
+    import copy as _copy
+
+    # Build state A and state B with a SHARED cache dict
+    state_a, env_a = _fresh_state_and_env(num_agents, seed)
+    state_b, env_b = _fresh_state_and_env(num_agents, seed)
+    shared_cache = {}
+    env_a.comet_path_cache = shared_cache
+    env_b.comet_path_cache = shared_cache
+
+    # Init both (no comet spawn here; step 0)
+    ours_interpreter(state_a, env_a)
+    ours_interpreter(state_b, env_b)
+
+    # Fast-forward both to step 48 with empty actions
+    for _ in range(49):
+        for s in state_a + state_b:
+            s.action = []
+        ours_interpreter(state_a, env_a)
+        ours_interpreter(state_b, env_b)
+        _bookkeeping(state_a, env_a)
+        _bookkeeping(state_b, env_b)
+        if env_a.done or env_b.done:
+            pytest.skip("episode ended before reaching spawn boundary")
+
+    # Both states should still be identical (no actions, deterministic init)
+    diff = _state_diff(state_a, state_b)
+    assert not diff, f"pre-spawn divergence (seed={seed}): {diff}"
+    assert len(shared_cache) == 0, "cache should be empty before first spawn"
+
+    # Cross step 49→50: state A computes (cache miss → store), state B then reads (hit)
+    for s in state_a:
+        s.action = []
+    ours_interpreter(state_a, env_a)
+    _bookkeeping(state_a, env_a)
+    assert len(shared_cache) == 1, "cache miss should have populated"
+
+    for s in state_b:
+        s.action = []
+    ours_interpreter(state_b, env_b)
+    _bookkeeping(state_b, env_b)
+
+    diff = _state_diff(state_a, state_b)
+    assert not diff, (
+        f"cache-hit divergence at spawn (seed={seed}, n={num_agents}): {diff}"
+    )
+
+
 def _run_shadow_parity(seed: int, num_agents: int, num_steps: int):
     # Init both
     state_k, env_k = _fresh_state_and_env(num_agents, seed)

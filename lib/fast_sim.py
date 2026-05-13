@@ -67,13 +67,20 @@ class _FakeEnv:
     just those three attributes. `info["seed"]` is read once per comet
     spawn (orbit_wars.py:438-440) — passing it through keeps comet RNG
     deterministic.
+
+    `comet_path_cache` is a dict {(episode_seed, spawn_step):
+    (comet_paths_or_None, comet_ships_or_None)} populated lazily by the
+    interpreter. It's SHARED across clones so all branches of a
+    lookahead inherit the same cache and amortise the ~100 ms
+    generate_comet_paths cost across rollouts.
     """
-    __slots__ = ("configuration", "info", "done")
+    __slots__ = ("configuration", "info", "done", "comet_path_cache")
 
     def __init__(self, configuration: Struct, episode_seed: int) -> None:
         self.configuration = configuration
         self.info = {"seed": episode_seed}
         self.done = False
+        self.comet_path_cache = {}
 
 
 @dataclass
@@ -293,6 +300,9 @@ def clone(snap: Snapshot) -> Snapshot:
 
     fake_env = _FakeEnv(snap.fake_env.configuration, snap.episode_seed)
     fake_env.done = snap.fake_env.done
+    # Share the comet-path cache with the parent so all lookahead branches
+    # benefit from a single generate_comet_paths call per spawn boundary.
+    fake_env.comet_path_cache = snap.fake_env.comet_path_cache
     return Snapshot(state=new_state, fake_env=fake_env, episode_seed=snap.episode_seed)
 
 
