@@ -47,26 +47,16 @@ from lib.geo.sense import sense_state
 # in this posture."
 
 POSTURE_WEIGHTS: dict[Posture, dict[str, float]] = {
-    # EXPAND (~90% of turns) must match v3.5.1 verbatim: snipe + reinforce,
-    # weights 1.0, NO recapture (recapture is added in v1.5 once we can
-    # bound its candidate explosion). DEFEND/BREAK/OPENING are the
-    # situational overrides — small, targeted bias, not domination.
-    Posture.OPENING: {
-        "snipe":     1.0,
-        "reinforce": 1.0,
-    },
-    Posture.EXPAND: {
-        "snipe":     1.0,
-        "reinforce": 1.0,
-    },
-    Posture.DEFEND: {
-        "snipe":     0.5,   # only enemy targets (see _enemy_only_filter)
-        "reinforce": 2.0,   # boost defense
-    },
-    Posture.BREAK: {
-        "snipe":     1.5,   # enemy-only
-        "reinforce": 0.5,
-    },
+    # ISOLATION TEST: all multipliers 1.0 across all postures.
+    # The posture decision still happens (sense_state, decide_posture)
+    # but doesn't bias mission selection. If this evals ~46% (= bisect-2
+    # baseline), posture decision is innocent and the multipliers were
+    # the regression cause. If it evals <40%, the _enemy_only_filter
+    # in DEFEND/BREAK is the bug (filters out valid neutral captures).
+    Posture.OPENING: {"snipe": 1.0, "reinforce": 1.0},
+    Posture.EXPAND:  {"snipe": 1.0, "reinforce": 1.0},
+    Posture.DEFEND:  {"snipe": 1.0, "reinforce": 1.0},  # no enemy-only filter, no boost
+    Posture.BREAK:   {"snipe": 1.0, "reinforce": 1.0},
 }
 
 
@@ -116,8 +106,10 @@ def collect_posture_weighted_missions(
         snipe = propose_snipe_missions(
             world, model, aggressive=_aggressive_for(posture)
         )
-        if posture in (Posture.DEFEND, Posture.BREAK):
-            snipe = _enemy_only_filter(snipe, world)
+        # ISOLATION TEST: enemy-only filter disabled to verify posture
+        # decision is the only difference vs bisect-2 baseline.
+        # if posture in (Posture.DEFEND, Posture.BREAK):
+        #     snipe = _enemy_only_filter(snipe, world)
         bag.extend(_scale_scores(snipe, weights["snipe"]))
 
     if "reinforce" in weights:
