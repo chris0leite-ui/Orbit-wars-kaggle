@@ -175,6 +175,38 @@ def scalar_to_jax(state, episode_seed: int) -> GameState:
         else:
             comet_valid_arr[k] = False
 
+    # --- In-flight comets: link existing comet planets back to spawn groups ---
+    # When converting a mid-game state, comets may already be on the board.
+    # The pre-baked spawn tables are populated, but `planet_comet_spawn`,
+    # `planet_comet_path`, `comet_planet_idx`, `comet_path_index`, and
+    # `comet_spawned` need to be wired up so that downstream code (missions,
+    # path advance, expiration) sees the correct group/path mapping.
+    current_step = int(obs0.get("step", 0))
+    spawn_step_to_k = {int(s): k for k, s in enumerate(COMET_SPAWN_STEPS)}
+    for group in (obs0.comets or []):
+        if hasattr(group, "keys"):
+            g_planet_ids = list(group["planet_ids"])
+            g_path_index = int(group["path_index"])
+        else:
+            g_planet_ids = list(group.planet_ids)
+            g_path_index = int(group.path_index)
+        # Spawn step = current step - path_index advances. Each path_advance
+        # increments by 1, and the first advance happens on the spawn step.
+        spawn_step = current_step - g_path_index
+        k = spawn_step_to_k.get(int(spawn_step))
+        if k is None:
+            # Comet group whose spawn step doesn't match the schedule; skip.
+            continue
+        comet_path_index[k] = g_path_index
+        comet_spawned_arr[k] = True
+        for j, pid in enumerate(g_planet_ids[:MAX_COMET_PATHS_PER_GROUP]):
+            slot = pid_to_idx.get(int(pid))
+            if slot is None:
+                continue
+            planet_comet_spawn[slot] = k
+            planet_comet_path[slot] = j
+            comet_planet_idx[k, j] = slot
+
     # --- Scalars + rewards ---
     rewards = np.zeros(4, dtype=np.int32)
     for i in range(min(num_agents, 4)):
