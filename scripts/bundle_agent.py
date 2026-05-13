@@ -47,6 +47,11 @@ DEFAULT_LIB_ORDER = [
     "missions/recapture",
     "planner",
     "lookahead_planner",
+    # Pure-Python rebuild of the orbit_wars game engine (Phase 2 of the
+    # consolidate-fast-simulation work; 2026-05-12). fast_sim imports
+    # `interpreter` from here, so it must precede fast_sim in the bundle.
+    # Byte-exact parity is enforced by tests/test_game_parity.py.
+    "game/interpreter",
     # v7 lookahead substrate (2026-05-12). Order matters:
     # fast_sim is foundational; opp_model uses missions/* + planner +
     # intent + mechanism + world_model; v7_search uses everything.

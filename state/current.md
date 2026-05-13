@@ -69,6 +69,27 @@ live_submissions:
   - {agent: day1_baseline,  sub_id: 52497828, submitted: 2026-05-10T00:09, score: 303.2}
 
 session_log:
+  - 2026-05-13 — consolidate-fast-simulation-ysd9M (this branch),
+    Phase 2 — pure-Python game-engine rebuild. Ported
+    `kaggle_environments.envs.orbit_wars.orbit_wars.interpreter` (812
+    lines) verbatim into `lib/game/interpreter.py` — same RNG path,
+    same combat semantics, same termination logic. Wired
+    `lib/fast_sim.py` to import from `lib.game.interpreter` instead of
+    `kaggle_environments`. Added `lib/game/` (package) to bundler
+    DEFAULT_LIB_ORDER ahead of fast_sim so submission bundles inline
+    our interpreter (+12 KB per bundle, negligible). Parity gates:
+    `tests/test_game_parity.py` (init-parity over 8 seeds × 2/4
+    agents + shadow-parity over 60 and 500 step episodes) green at
+    32/32. `scripts/full_episode_parity_sweep.py` (100 × 2P + 50 ×
+    4P × 500 steps) green. All pre-existing parity gates
+    (`test_fast_sim_parity`, `test_v1_parity`, bundle tests) stay
+    green. Full suite: 405 passed / 2 skipped / 1 xfail (replay-parity
+    pre-existing). Microbenchmark: ours @ 1088 µs/step vs Kaggle @
+    1103 µs/step — 1.01× (parity-bound, not faster yet; performance
+    is Phase 3). Knowledge doc:
+    `knowledge-base/concepts/pure-python-game-rebuild.md`. Next: defer
+    vectorised batch simulator and RL training substrate to a future
+    phase. No new submission this phase.
   - 2026-05-12 EVE — consolidate-fast-simulation-ysd9M (this branch).
     Merged origin/claude/game-theory-strategy-analysis-0oH4N which itself
     merged claude/game-ai-lookahead-3ucqH. Result: one branch carrying

@@ -39,10 +39,9 @@ import copy
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
-from kaggle_environments.envs.orbit_wars.orbit_wars import (
-    interpreter as _orbit_wars_interpreter,
-)
 from kaggle_environments.utils import Struct
+
+from lib.game.interpreter import interpreter as _orbit_wars_interpreter
 
 
 # Default configuration matching kaggle_environments.envs.orbit_wars's

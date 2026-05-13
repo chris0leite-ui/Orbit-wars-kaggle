@@ -81,45 +81,49 @@ recapture, drain, opening}.py`), full physics
 world_model}.py`), the fast-brain stack listed above, plus
 `{intent, mission, planner, scoring, fingerprint}.py`.
 
-## Next phase — research the fast-simulation rebuild
+## Phase 2 — pure-Python game-engine rebuild (DONE this session)
 
-The user's stated next step is a **100%-accurate pure-Python rebuild
-of the orbit-wars game itself**, so we can iterate without the
-`kaggle_environments` dependency or its per-step framework overhead.
-`lib/fast_sim.py` already bypasses ~99% of the Environment wrapper
-but still calls `orbit_wars.interpreter()` from the kaggle package.
-The next step replaces THAT.
+Done in one pass: `lib/game/interpreter.py` is a verbatim port of
+`kaggle_environments.envs.orbit_wars.orbit_wars.interpreter` (812 src
+lines → 569 LOC port; same RNG path, same combat, same termination).
+`lib/fast_sim.py` now imports from `lib.game.interpreter` instead of
+`kaggle_environments`. The bundler inlines `lib/game/interpreter.py`
+into every submission bundle (added to DEFAULT_LIB_ORDER ahead of
+`fast_sim`; +12 KB / bundle).
 
-Research questions for the next session — answer before writing code:
+Parity gates (all green):
 
-1. **What does `orbit_wars.interpreter()` actually do?** Already on
-   disk at `/usr/local/lib/python3.11/dist-packages/kaggle_environments/
-   envs/orbit_wars/orbit_wars.py` (~750 lines). Map the entry points
-   (`interpreter`, `random_agent`, `starter_agent`,
-   `generate_planets`, `generate_comet_paths`, `swept_pair_hit`,
-   `renderer`) and the physics constants
-   (`COMET_SPAWN_STEPS = [50, 150, 250, 350, 450]`,
-   `BOARD_SIZE = 100`, `SUN_RADIUS = 10`, `ROTATION_RADIUS_LIMIT = 50`,
-   `PLANET_CLEARANCE = 7`, etc.).
-2. **What parity test design do we need?** Run our re-impl side-by-
-   side with `interpreter()` on the same `(state, env.info[seed])`
-   stream, assert state-for-state equality through full 500-step
-   episodes. Already have a fixture corpus
-   (`audit/live-episodes/52544634/`, `52532938/`, `SELFPLAY/`)
-   that can serve as the gate.
-3. **What's the performance target?** `fast_sim.step()` is 0.12 ms
-   per simulated step today (Environment overhead removed). A pure-
-   Python re-impl that drops the `Struct` boxing and the in-package
-   import overhead could plausibly hit 0.05 ms; a numpy-vectorised
-   batch could push 10-100× on parallel rollouts.
-4. **Vectorise or stay scalar?** A scalar pure-Python re-impl is
-   the smallest scope and the simplest parity-test target.
-   Vectorising over planets and fleets is a separate, later step
-   once the scalar version is locked.
+- `tests/test_game_parity.py` — 32 tests: init (8 seeds × 2/4 agents)
+  + 60-step shadow (5 × 2/4) + 500-step shadow (3 × 2/4).
+- `scripts/full_episode_parity_sweep.py` — 100 × 2P + 50 × 4P × 500
+  step random-policy episodes, byte-exact parity.
+- Existing gates: `test_fast_sim_parity`, `test_v1_parity`, all bundle
+  tests (10/10), full suite 405 passed.
 
-Output for that session: a short design doc + a parity-test rig
-+ a stub `lib/sim.py` that imports the real interpreter for now.
-Don't write the replacement on day one — research first.
+Microbenchmark: ours 1088 µs/step vs Kaggle 1103 µs/step (1.01×).
+**Parity is the win this phase; speed is not.** Optimisation is
+Phase 3 (vectorise the fleet × planet sweep collision in
+`interpreter()` — the O(F·P) hot loop).
+
+Knowledge ref: `knowledge-base/concepts/pure-python-game-rebuild.md`.
+
+## Next phase — Phase 3 candidates
+
+Three orthogonal directions, pick one per session:
+
+1. **Vectorise the hot loop.** Profile `lib/game/interpreter.py`,
+   replace the `for fleet in fleets: for planet in planets:` swept-pair
+   loop with a numpy batch. Target: ≥ 10× per-step speedup at fleet
+   counts ≥ 20. Parity gate stays green or revert.
+2. **Batched simulator.** Build `lib/game/batch_interpreter.py` that
+   runs N games in parallel via a `(N, P, 7)` ndarray for planets and
+   a `(N, F, 7)` ndarray for fleets. Unlocks RL training and large-N
+   tournaments. Parity test: per-game outputs match the scalar
+   interpreter byte-for-byte.
+3. **Drop the kaggle_environments init handshake.** Today we still use
+   `make("orbit_wars",...).reset()` to bootstrap. Replace with a
+   thin local helper that calls `lib.game.interpreter` in init mode.
+   Removes the last kaggle_environments dependency from offline play.
 
 ## Out of scope for any session before that work lands
 
@@ -128,7 +132,18 @@ Don't write the replacement on day one — research first.
 - No PR to main from this branch yet. Open a PR only when the PI
   authorises promotion.
 
-## Pointers — new or updated this session
+## Pointers — Phase 2 additions
+
+- `lib/game/interpreter.py` — pure-Python interpreter port
+- `lib/game/__init__.py` — package re-exports
+- `tests/test_game_parity.py` — shadow-step parity harness
+- `scripts/full_episode_parity_sweep.py` — ad-hoc N-seed parity sweep
+- `lib/fast_sim.py` — flipped to import from `lib.game.interpreter`
+- `scripts/bundle_agent.py` — `game/interpreter` added to
+  DEFAULT_LIB_ORDER before `fast_sim`
+- `knowledge-base/concepts/pure-python-game-rebuild.md` — concept doc
+
+## Pointers — Phase 1 (consolidation, prior in this session)
 
 - `lib/fast_sim.py`, `lib/opp_model.py`, `lib/v7_search.py`,
   `lib/lookahead_planner.py`, `lib/value_heads.py`,
