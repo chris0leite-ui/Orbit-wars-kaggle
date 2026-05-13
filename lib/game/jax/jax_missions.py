@@ -242,12 +242,15 @@ def compute_reinforce_score_matrix(
     src isn't ours, src==D, or we can't reach D before t_loss.
     """
     P = state.planets_x.shape[0]
+    # Use the static shape of owners_at (not the dynamic `horizon` field,
+    # which is a traced int and breaks jnp.arange under jit).
+    H_plus_1 = world_model.owners_at.shape[1]
     H = world_model.horizon
 
     # Threatened-target detection: first t ∈ [1, H] where owner != my_id.
     flip_mask = world_model.owners_at != jnp.int32(my_id)       # (P, H+1) bool
     # We only care about t >= 1. Zero out t=0 column.
-    t_idx = jnp.arange(H + 1)[None, :]                          # (1, H+1)
+    t_idx = jnp.arange(H_plus_1)[None, :]                       # (1, H+1)
     flip_mask = flip_mask & (t_idx >= 1)
     # argmax on bool returns first True index; if all False returns 0.
     t_loss_raw = jnp.argmax(flip_mask, axis=1).astype(jnp.int32)  # (P,)
