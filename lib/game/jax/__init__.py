@@ -31,7 +31,7 @@ from lib.game.jax.jax_types import (
     MAX_LAUNCH_PER_AGENT,
     MAX_AGENTS,
 )
-from lib.game.jax.conversions import scalar_to_jax, jax_to_scalar
+from lib.game.jax.conversions import scalar_to_jax, jax_to_scalar, actions_to_jax
 from lib.game.jax.jax_interpreter import (
     production_tick,
     planet_path_compute,
@@ -65,7 +65,7 @@ __all__ = [
     "MAX_PLANETS", "MAX_FLEETS", "MAX_COMET_GROUPS",
     "MAX_COMET_PATH_LEN", "NUM_COMET_SPAWNS",
     "MAX_LAUNCH_PER_AGENT", "MAX_AGENTS",
-    "scalar_to_jax", "jax_to_scalar",
+    "scalar_to_jax", "jax_to_scalar", "actions_to_jax",
     "production_tick", "planet_path_compute",
     "comet_expire", "comet_path_advance", "comet_spawn",
     "apply_planet_movement",

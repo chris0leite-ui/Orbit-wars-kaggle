@@ -681,12 +681,12 @@ def comet_spawn(state: GameState) -> GameState:
     planet_comet_spawn = state.planet_comet_spawn
     planet_comet_path = state.planet_comet_path
 
-    # Synthetic pid for new comet planets: pack (spawn_k, path_j) into
-    # a high range so it doesn't collide with the original 0..P_init-1
-    # ids. Encoding: 100_000 + 10*k + j. This is internal-only — agents
-    # never see these ids; they go through obs.planets[i][0] which we
-    # rebuild in jax_to_scalar.
-    base_comet_pid = 100_000 + 10 * safe_k
+    # New comet pid mirrors the scalar interpreter: `next_id =
+    # max(planets_id where alive) + 1`. Path j gets next_id + j.
+    max_pid = jnp.max(
+        jnp.where(state.planets_alive, state.planets_id, jnp.int32(-1))
+    )
+    base_comet_pid = max_pid + jnp.int32(1)
 
     # Constants matching scalar interpreter's comet template.
     COMET_X_PLACEHOLDER = jnp.float32(-99.0)

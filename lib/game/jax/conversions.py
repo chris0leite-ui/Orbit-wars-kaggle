@@ -222,6 +222,33 @@ def scalar_to_jax(state, episode_seed: int) -> GameState:
     )
 
 
+def actions_to_jax(per_agent_actions: list, num_agents: int = 2):
+    """Convert per-agent scalar actions (list of [pid, angle, ships] per
+    agent) into the three padded JAX tensors that `jax_step` expects.
+
+    Each tensor shape: `(MAX_AGENTS, MAX_LAUNCH_PER_AGENT)`. Sentinel
+    `pid == -1` flags unused slots.
+    """
+    from lib.game.jax.jax_types import MAX_AGENTS, MAX_LAUNCH_PER_AGENT
+    pids = -np.ones((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=np.int32)
+    angles = np.zeros((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=np.float32)
+    ships = np.zeros((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=np.int32)
+    for a, agent_actions in enumerate(per_agent_actions[:MAX_AGENTS]):
+        if not agent_actions or not isinstance(agent_actions, list):
+            continue
+        for k, mv in enumerate(agent_actions[:MAX_LAUNCH_PER_AGENT]):
+            if len(mv) != 3:
+                continue
+            pids[a, k] = int(mv[0])
+            angles[a, k] = float(mv[1])
+            ships[a, k] = int(mv[2])
+    return (
+        jnp.asarray(pids),
+        jnp.asarray(angles),
+        jnp.asarray(ships),
+    )
+
+
 def jax_to_scalar_obs(s: GameState) -> dict:
     """Convert a JAX GameState back to a scalar-style observation dict.
 
