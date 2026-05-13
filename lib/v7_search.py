@@ -1011,6 +1011,8 @@ def choose(
     K: int = 10,
     wallclock_ms: float = 700.0,
     my_id: int | None = None,
+    opp_tiers: list[int] | None = None,
+    value_fn: Callable | None = None,
 ) -> list[list]:
     """End-to-end: build incumbent, enumerate, score with watchdog,
     return argmax. Always returns the incumbent if no candidate
@@ -1019,8 +1021,20 @@ def choose(
     `my_id` defaults to `obs.player`. `configuration` is forwarded to
     `fs_from_obs`; if `None`, defaults are used (live ladder
     scrubs the episode seed anyway).
+
+    `opp_tiers` is the opponent-policy pool used to score each
+    candidate. Defaults to `[1]` (Tier-1 v3.5.1 mirror, v7_0 default).
+    With multiple tiers, the chooser uses MAXIMIN — pick the candidate
+    whose MIN-over-tiers score is highest. Robust to opp-policy
+    uncertainty across the live ladder.
+
+    `value_fn(observation, my_id) -> float` is the leaf-state scoring
+    head. Defaults to `delta_us_minus_them` (Phase-2-validated baseline).
+    Phase 3c uses a composite (ship_delta + denial + survivor) blend.
     """
     t_start = time.perf_counter()
+    if opp_tiers is None:
+        opp_tiers = [1]
 
     world = World.from_obs(obs)
     if not world.planets_by_id:
@@ -1061,7 +1075,19 @@ def choose(
         elapsed_ms = (time.perf_counter() - t_start) * 1000.0
         if elapsed_ms > wallclock_ms:
             break
-        score = score_candidate(snap, cand, my_id=my_id, K=K, opp_tier=1)
+        # Maximin: score this candidate against every opp tier in the
+        # pool, take the WORST (min) score. Picking the candidate that
+        # maximises this worst-case is the maximin / game-theoretic
+        # robust choice against opp-policy uncertainty. For a single
+        # tier (the v7_0 default) min-of-one is just the score itself.
+        per_tier = []
+        for tier in opp_tiers:
+            s = score_candidate(
+                snap, cand, my_id=my_id, K=K,
+                opp_tier=tier, value_fn=value_fn,
+            )
+            per_tier.append(s)
+        score = min(per_tier)
         if not incumbent_scored:
             # The first candidate is the incumbent — pin its score so
             # ties prefer the parity floor.
