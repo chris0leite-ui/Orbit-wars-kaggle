@@ -1,0 +1,48 @@
+{
+  "generated_utc": "20260512T101253Z",
+  "focals": [
+    "submissions/v7_0_drop_one.py"
+  ],
+  "background": [
+    "submissions/v3.5.1.py",
+    "submissions/v3_snipe_frozen.py",
+    "weakest"
+  ],
+  "players": 4,
+  "seeds": [
+    42,
+    1,
+    7,
+    13,
+    31,
+    100,
+    17,
+    23,
+    53,
+    71,
+    91,
+    113,
+    137,
+    149,
+    167,
+    181
+  ],
+  "rotate_seats": true,
+  "results": [
+    {
+      "focal": "submissions/v7_0_drop_one.py",
+      "focal_spec": "submissions/v7_0_drop_one.py",
+      "background": [
+        "submissions/v3.5.1.py",
+        "submissions/v3_snipe_frozen.py",
+        "weakest"
+      ],
+      "n_games": 64,
+      "first_place_count": 24,
+      "first_place_rate": 0.375,
+      "wilson_lo_95": 0.2666580388810532,
+      "wilson_hi_95": 0.4974984668617358,
+      "p95_focal_turn_ms": 13.786688250092993
+    }
+  ]
+}

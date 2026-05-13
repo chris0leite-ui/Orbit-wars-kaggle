@@ -72,6 +72,8 @@ def settle_plan(
     by_src: dict[int, list[Mission]] = defaultdict(list)
     for m in missions:
         by_src[m.src_id].append(m)
+    # σ-equiv tie-break REVERTED (v7.6 bisect: ~54pp regression of v7_0
+    # drop-one architecture). Plain score sort.
     for src_id in by_src:
         by_src[src_id].sort(key=lambda m: -m.score)
 

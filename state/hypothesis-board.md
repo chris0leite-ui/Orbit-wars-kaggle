@@ -1,6 +1,53 @@
 # state/hypothesis-board.md — open agent-design hypotheses
 
-## Open
+## Open — consolidation branch wrap (2026-05-12 EVE)
+
+### Lead hypothesis: a 100%-accurate pure-Python game rebuild is the next-tier substrate
+
+> Plan target: research-first session before any code lands.
+
+`lib/fast_sim.py` already bypasses ~99% of the Environment overhead but
+still calls `kaggle_environments.envs.orbit_wars.orbit_wars.interpreter()`
+for physics. The next phase replaces that call with our own
+re-implementation, parity-tested against the recorded live episodes in
+`audit/live-episodes/`. Expected wins:
+
+- 2-4× another speedup over `fast_sim` (no `Struct` boxing, no package
+  import overhead).
+- Vectorisation hook: a numpy-batched version can roll N independent
+  rollouts in parallel inside one process, opening the door to wider
+  candidate enumeration in `lib/v7_search.py`.
+- Independence from `kaggle_environments` updates — current package
+  releases have already broken parity once via `Planet` namedtuple
+  changes.
+
+**Not yet started.** First session task is a design doc + parity rig,
+not code. See `HANDOVER.md` for the research questions.
+
+### Tactical hypothesis: v7_0_drop_one's σ band tightens further over the next 24 h
+
+v7_0_drop_one is at 64 evaluation episodes (Score 1094.9). TrueSkill σ
+shrinks ∝ 1/√N. By the next session the σ band should fall from ~6 to
+~4 Score points. **Do not push a new submission that would auto-evict
+v7_0_drop_one** until the next agent's expected gain is convincingly
+above that band.
+
+### Falsified this session
+
+- **Aggressive snipe sizing (v3.5.1) generalises to live ladder.**
+  Local 32-seed 68.8% Wilson lo 56.6% PASS. Live: 945.6, **regression
+  of −60 vs v3_snipe**. Lesson: σ-equiv-base agents draw tightly
+  against v3_snipe but lose against the broader ladder. Future local
+  gates should panel against ≥ 3 distinct opponent classes, not just
+  the in-family baseline.
+- **σ-equivariance helps in drop-one regime.** v7.6 bisect: σ-equiv
+  layer regresses drop-one architecture by −54 pp. σ-equiv stays in
+  the v3_snipe / v7_minimax / v4_planner lineage but is REVERTED out
+  of v7_0_drop_one.
+
+---
+
+## Older / archived
 
 ### 2026-05-10 — Phase 1 manifold hypothesis: partial refute
 

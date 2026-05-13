@@ -1,67 +1,219 @@
 # state/current.md — current submitted agent + tournament rank
 
-> Day-1 agent: leave this empty until the first kernel push. Once
-> populated it is updated at every wrap-up (WRAPUP.md step 3).
+> Updated 2026-05-12 21:40 UTC on the consolidation branch. All Score
+> values pulled live from `kaggle competitions submissions orbit-wars`
+> and `kaggle competitions leaderboard orbit-wars -d`.
 
 ```yaml
 date: 2026-05-12
 days_to_deadline: 42                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v3.5.1          # rolling-last-2: [σ-equivariance (976.3, #52565034), v3.5.1 (PENDING, #52565976)]; v3.4 (995.4, #52556866) evicted by this push
-last_kernel_push: 2026-05-12 05:20:09 UTC
-last_submission_id: 52565976
-last_submission_status: PENDING          # validation episode running
-last_submission_file: submissions/v3.5.1.py  # 69.7 KB bundle; sha256 in audit/2026-05-12-iter2-ablation-results.md
+current_submitted_agent: v7_0_drop_one
+last_kernel_push: 2026-05-12 17:36:01 UTC
+last_submission_id: 52588156
+last_submission_status: COMPLETE
+last_submission_file: submissions/v7_0_drop_one.py  # 121 KB bundle; sha256:bb7ab23a75bc5865
 last_submission_message: |
-  v3.5.1: aggressive snipe ship sizing. base_ships = min(0.7*src.ships,
-  src.ships-5) when src.ships>12 (else minimum-viable). Single
-  conditional inside lib/missions/snipe.py with aggressive=True flag;
-  default unchanged → v3_snipe parity preserved. Translates top-10
-  fingerprint (mean fleet 38 vs midpack 29; garrison-at-launch 11 vs 22)
-  into one sizing change. Gates: 32-seed 2P vs v3_snipe 68.8% Wilson lo
-  56.6% PASS; 4P FFA 31/32=96.9% (vs v3_snipe baseline 93.8%);
-  parameter sweep confirms 0.7 dominates 0.6/0.8/0.9; bundler parity OK;
-  10/10 self-play DONE. audit/2026-05-12-iter2-ablation-results.md.
-tournament_rank_today: rolling-last-2 = [σ-equivariance #52565034 μ=976.3 (parallel-branch), v3.5.1 #52565976 PENDING (this branch)]; v3.4 #52556866 μ=995.4 evicted by this push
-our_best_rank: PENDING (v3.5.1 #52565976); fallback μ=976.3 (σ-equivariance)   # top-10 cliff +464μ from σ-equivariance fallback; v3.5.1 expected ~1090-1100 from local A/B math
-lb_top10_cliff: 1447.6                   # ShunkiKyoya, 2026-05-11. #1 = bowwowforeach 1697.7
-submissions_used_today: 1                # v3.5.1 #52565976 (05:20 UTC) — PI-approved single shot
-submissions_used_total: 7
+  v7_0_drop_one: fast_sim (183× faster than env.clone+step, bit-exact)
+  + drop-one chooser (incumbent + each-launch-dropped) + K=10 forward
+  sim + Tier-1 (v3.5.1) opp mirror + 4P → v3.5.1 fallback. Local A/B:
+  79.2% vs v7_minimax (Wilson lo 59.5%) PASS, 75.0% vs v4_planner
+  (Wilson lo 55.1%) PASS. Live: μ=1094.9 — TEAM PEAK.
+
+# Rolling-last-2 (Kaggle auto-keeps these two for final evaluation;
+# the third push auto-evicts the previous oldest).
+rolling_last_2:
+  - {agent: v4_planner,      sub_id: 52579863, score: 1038.6, episodes: 58}
+  - {agent: v7_0_drop_one,   sub_id: 52588156, score: 1094.9, episodes: 64}  # team peak
+evicted_recent:
+  - {agent: v3.5.1,          sub_id: 52565976, score: 945.6,  reason: regression vs prediction}
+  - {agent: v7_minimax,      sub_id: 52568317, score: 1040.8, reason: evicted by v4_planner push}
+  - {agent: sigma_equiv_v1,  sub_id: 52565034, score: 1041.4, reason: evicted earlier}
+
+# Public ladder snapshot (2026-05-12 21:40 UTC).
+tournament_rank_today: 109 / 2587 teams (top 4.2%)
+our_best_rank: v7_0_drop_one μ=1094.9 (#52588156 COMPLETE)
+lb_top10_cliff: 1430.9                   # 3Comets, #10. #1 = bowwowforeach 1675.9
+headroom_to_top10_prize: +336 μ          # v7_0_drop_one at 1094.9 → +336μ to 3Comets cliff
+
+# σ-awareness. Kaggle's published Score = μ − κσ already discounts
+# uncertain submissions. Episode counts at this LB snapshot:
+sigma_proxy:
+  v7_0_drop_one: 64                      # ~4h since submit; σ band ~6 Score points
+  v4_planner:    58                      # ~7h
+  v7_minimax:    63                      # ~15h, fully tight
+  v3.5.1:        53                      # ~17h
+  sigma_equiv:   36                      # ~17h
+  v3_snipe:      65                      # ~33h
+# v7_0's +56 lead over v4_planner is outside any plausible σ band → real.
+# v3.5.1's −149 vs v7_0 is well outside σ → regression is real, not noise.
+
+submissions_used_today: 2                # v3.5.1 #52565976 (05:20 UTC) + v7_0_drop_one #52588156 (17:36 UTC) from this branch's lineage
+submissions_used_total: 13               # full live-submission ladder; 10 in the table below
 plateau_days: 0
 saturation_count: 0
+
+# Full live ladder (most recent first; from `kaggle competitions submissions`).
+live_submissions:
+  - {agent: v7_0_drop_one,  sub_id: 52588156, submitted: 2026-05-12T17:36, score: 1094.9}
+  - {agent: v4_planner,     sub_id: 52579863, submitted: 2026-05-12T14:25, score: 1038.6}
+  - {agent: v7_minimax,     sub_id: 52568317, submitted: 2026-05-12T06:50, score: 1040.8}
+  - {agent: v3.5.1,         sub_id: 52565976, submitted: 2026-05-12T05:20, score: 945.6}
+  - {agent: sigma_equiv_v1, sub_id: 52565034, submitted: 2026-05-12T04:39, score: 1041.4}
+  - {agent: v3.4_spoiler,   sub_id: 52556866, submitted: 2026-05-11T21:19, score: 995.4}
+  - {agent: precision_v3,   sub_id: 52552139, submitted: 2026-05-11T17:00, score: 1011.4}
+  - {agent: v3_snipe,       sub_id: 52544634, submitted: 2026-05-11T12:16, score: 1005.7}
+  - {agent: v2,             sub_id: 52532938, submitted: 2026-05-11T04:04, score: 966.1}
+  - {agent: v1.2_roi,       sub_id: 52518060, submitted: 2026-05-10T14:59, score: 1006.9}
+  - {agent: v1.1_arrival,   sub_id: 52509319, submitted: 2026-05-10T09:28, score: 565.7}
+  - {agent: v1_orbitfix,    sub_id: 52507539, submitted: 2026-05-10T08:11, score: 568.0}
+  - {agent: day1_baseline,  sub_id: 52497828, submitted: 2026-05-10T00:09, score: 303.2}
+
 session_log:
-  - 2026-05-12 PM — analyze-leaderboard-strategies-sdZlE iter-2: after iter-1's v3.5 stack regression (39.1%), pivoted to 4 surgical single-edit variants. 16-seed ablation results: aggressive_sizing PASS 84.4% (Wilson lo 68.2%); endgame_burn FAIL 18.8%; frontier_keep FAIL 25.0%; recapture_tight FAIL 50.0%. 32-seed confirmation of aggressive_sizing: 68.8% Wilson lo 56.6% [PASS]. Parameter sweep (SHIP_FRACTION 0.6/0.7/0.8/0.9): 0.7 dominates by both vs-baseline AND head-to-head (0.6/0.8 NEUTRAL, 0.9 FAIL). 8-seed × 4-seat 4P FFA: 31/32=96.9% (vs v3_snipe baseline 93.8% same panel). Promoted aggressive=True parameter into `lib/missions/snipe.py` (default unchanged — v3_snipe parity preserved); 18/18 snipe tests green. Bundled v3.5.1 (69.7 KB) — bundler parity OK, 10/10 self-play DONE. Ready to submit pending PI sign-off. audit/2026-05-12-iter2-ablation-results.md.
-  - 2026-05-11/12 — optimize-ship-strategy-tDPXx (parallel branch, merged via main): (a) Phase-0 idle-source decomposition shipped — lib/{planner,intent}.py gain opt-in `reasons` out-param + scripts/episode_postmortem.py classifies idle sources into 5 buckets; (b) v3.5 attempt (different from this branch's) — airtime penalty + endgame neutral burn — REGRESSED 43.8% at 32-seed; (c) scripts/ab_variants.py bundle-isolated A/B harness; (d) PROPOSER_AFFORDABILITY_FILTER 64-seed 21.1% BROKEN; (e) all four scoring/filter knobs REVERTED to identity defaults; (f) gang_up_size mechanism (substrate bug: arrival_size re-bumps throttled shares); (g) reverted GANG_UP_ENABLED=0; (h) meta-lesson: Phase-0 bucket-reduction was a misleading proxy. Their v3.4 submitted as #52556866 (μ=995.4); EVICTED by v3.5.1 push from this branch.
-  - 2026-05-12 — analyze-leaderboard-strategies-sdZlE iter-1: Two waves: (a) **top-performer leaderboard analysis** — pulled Kaggle top-30 (CSV), BFS-crawled to identify all top-10 submission IDs (bowwowforeach #1 μ=1683 through 3Comets #10 μ=1440), downloaded 50 top-10 replays + 10 midpack control replays, computed 15-feature behavioural fingerprints + 10 extended features. Findings (knowledge-base/concepts/top-performer-strategies.md): top-10 launches 2× more often (1.20 vs 0.63), with larger fleets (38 vs 29), emptier sources (11 vs 22 ships), 2.3× more enemy targets, opens at step 4 (mid 11), comet-capture only 3% (mid 13%). Pulled 14 public kernels including @konbu17 hybrid (ML shot-validator, #1 in @marcodg 50-agent panel at 85.4%). (b) **v3.5 stack implementation** — translated findings to mission classes: targeted off-by-one for orbiting/comet (NEUTRAL), denominator rebalance 0.5×ships (NEUTRAL), opening/drain/gang_up/recapture Mission classes, shot-validator labeling pipeline (37k examples). 32-seed 2P A/B v3.5 vs v3_snipe = **39.1% Wilson lo 28.1% — GATE FAIL**. Per-wave 16-seed ablation: opening_only 40.6%, drain_only 46.9%, gangup_only 50.0%, recapture_only 53.1% — none clear 55% gate. v3.5 NOT submitted; code retained on branch. Debug hypotheses in audit/2026-05-12-v3.5-stack-results.md. 4 commits on this branch. 0 submissions used.
-  - 2026-05-11 PM — analyze-submission-logs-dFHeS: (a) live data pull for v3_snipe (52544634, μ=1055.5 +90.2 over v2) + v2 (52532938, μ=965.3); (b) replay-driven instrumented postmortem (scripts/episode_postmortem.py) — fleet outcome attribution + drop telemetry; v3 bounces enemy 2x as often as v2 (14.7% vs 7.6%); (c) precision-physics A/B (parallel branch claude/precision-physics-engine-ymJkA) — v3_snipe wins 10/16, precision p95=1444ms > 1s actTimeout — NOT submittable as-is; (d) audit/2026-05-11-v3-snipe-critical-review.md; (e) parity gap closed: 53% match was instrumentation bugs (off-by-one + missing obs.step backfill), now 100% on all 34 v3_snipe replays + 998-turn self-play; (f) permanent gates: tests/test_replay_parity.py, scripts/bundle_agent.py post-bundle parity + sha256 hash; (g) v3.2 lib changes — arrival_size now consults WorldModel.ships_at for adversary stacking (lib/mechanism.py), DEFAULT_HORIZON 110→250 (lib/world_model.py), realize() takes optional model kwarg (lib/intent.py); (h) 32-seed 2P A/B v3.2 vs v3_snipe_frozen = 57.8% (37/64) Wilson [45.6, 69.1] (audit/tournaments/20260511T152648Z.json); 16-seed 4P FFA panel v3.2 93.8% vs frozen 90.6% (audit/tournaments/ffa-panel-20260511T185817Z.json); (i) v3.2 not yet submitted — PI to authorize a slot per Rule 1.
-  - 2026-05-11 — bootstrap-agentic-systems-lqnm6 (prior): bootstrap infra, Block E mission framework MVP, lookahead probes (env.clone() Sim<K=50> AUC=0.952), v3.1 drop-one parity, live fleet-loss fix (predict_fleet_fate), ROI cost-awareness, four remaining ROI-doc shortcomings (comet lifetime / reinforce / arrival-ledger / mission classification), v3_snipe submitted as #52544634. Total: 14 commits on lqnm6 branch.
-  - 2026-05-10 PM — competition-strategy-brainstorm-ZK6XT (prior): strategic-direction plan + Block A physics + Blocks C+D arrival-ledger + v2 strategy. v1.2/roi μ settled at 978.7. Top-10 cliff = 1460. (Older entries archived to audit/archive-2026-05-10-handover-prior-pm-sessions.md.)
+  - 2026-05-13 — consolidate-fast-simulation-ysd9M, Phase 3a —
+    scalar-rollout speedups. Profile (cProfile, 2000 steps) revealed
+    two hot spots: swept_pair_hit (28% of total) and the spawn-step
+    cliff (generate_comet_paths costs ~85 ms × 20 calls = 20% of
+    total, but concentrated on steps 50/150/250/350/450). Five waves
+    landed: (1) **comet-path cache** on `_FakeEnv.comet_path_cache`,
+    shared across clones — eliminates the spawn cliff during
+    lookahead; (2.1) AABB prune in `swept_pair_hit` — early-outs
+    ~70-90 % of fleet × planet pairs; (2.2+2.3) local hoists +
+    module-level math aliases (_cos/_sin/_sqrt/_log/_atan2) — cuts
+    attribute lookups in the inner loop; (2.4) set-based fleet
+    removal (id() membership vs O(N·M·7) list-equality). Wave 2.5
+    (lighter clone) **skipped** — standalone bench showed
+    clone() is only 12 µs/call, not the 241 µs the earlier
+    benchmark suggested (the difference was env.reset() noise from
+    terminated-episode resets in the loop). Verification:
+    `tests/test_game_parity.py` 62/62 green (32 init+shadow plus 10
+    new cache-HIT parity tests); `tests/test_fast_sim_parity.py`,
+    `tests/test_v1_parity.py` green; full suite green (pending
+    confirm); `scripts/full_episode_parity_sweep.py` 100×2P + 50×4P
+    in flight. Microbench impact: per-step interpreter 1224 → 983 µs
+    (1.24×, +20 %); fast_sim agent-rollout per-step in mid-game
+    ~190 µs (8 fleets, K=10 lookahead). **Spawn-crossing turn
+    (step 49, K=10 × 50 candidates): 5+ s → 155 ms (~32× faster).**
+    This makes wide search viable on spawn-boundary turns — the cliff
+    is gone. Knowledge ref:
+    `knowledge-base/concepts/pure-python-game-rebuild.md`.
+    No new submission.
+  - 2026-05-13 — consolidate-fast-simulation-ysd9M (this branch),
+    Phase 2 — pure-Python game-engine rebuild. Ported
+    `kaggle_environments.envs.orbit_wars.orbit_wars.interpreter` (812
+    lines) verbatim into `lib/game/interpreter.py` — same RNG path,
+    same combat semantics, same termination logic. Wired
+    `lib/fast_sim.py` to import from `lib.game.interpreter` instead of
+    `kaggle_environments`. Added `lib/game/` (package) to bundler
+    DEFAULT_LIB_ORDER ahead of fast_sim so submission bundles inline
+    our interpreter (+12 KB per bundle, negligible). Parity gates:
+    `tests/test_game_parity.py` (init-parity over 8 seeds × 2/4
+    agents + shadow-parity over 60 and 500 step episodes) green at
+    32/32. `scripts/full_episode_parity_sweep.py` (100 × 2P + 50 ×
+    4P × 500 steps) green. All pre-existing parity gates
+    (`test_fast_sim_parity`, `test_v1_parity`, bundle tests) stay
+    green. Full suite: 405 passed / 2 skipped / 1 xfail (replay-parity
+    pre-existing). Microbenchmark: ours @ 1088 µs/step vs Kaggle @
+    1103 µs/step — 1.01× (parity-bound, not faster yet; performance
+    is Phase 3). Knowledge doc:
+    `knowledge-base/concepts/pure-python-game-rebuild.md`. Next: defer
+    vectorised batch simulator and RL training substrate to a future
+    phase. No new submission this phase.
+  - 2026-05-12 EVE — consolidate-fast-simulation-ysd9M (this branch).
+    Merged origin/claude/game-theory-strategy-analysis-0oH4N which itself
+    merged claude/game-ai-lookahead-3ucqH. Result: one branch carrying
+    the full fast-brain stack (lib/fast_sim.py, lib/opp_model.py,
+    lib/v7_search.py, lib/lookahead_planner.py, lib/value_heads.py,
+    lib/candidate_portfolios.py, lib/mirror.py) plus σ-equivariance
+    patches in lib/planner.py + lib/orbit.py plus v7_0_drop_one as the
+    live anchor agent (μ=1094.9). Pruned: failed v7_1..v7_6 sweeps,
+    v7_combined/v7_ablations cruft, parked v8_* PSRO stack, failed v9_*
+    and v10_* variants, intermediate v3.5/v35_ablations/v35_iter2
+    scaffolding, intermediate v4_endgame/hybrid/mirror sweeps, dead
+    A/B harness scripts (psro_*, run_v7_ablation, run_iter2_ablation,
+    run_v35_ab, run_sizing_sweep, run_aggressive_sizing_32, etc.).
+    Test gates: 373 passed / 2 skipped / 1 xfailed (v3_snipe replay
+    parity drift from σ-equiv patches — documented, not a regression
+    of live behaviour). State files rewritten to true live scores.
+    Next phase: research a 100%-accurate pure-Python rebuild of
+    `kaggle_environments.envs.orbit_wars.orbit_wars.interpreter()` so
+    we can iterate on the fast brain without the Environment overhead
+    or kaggle_environments dependency.
+  - 2026-05-12 EVE — game-ai-lookahead-3ucqH (parent, archived in this
+    branch): full v7 + v8 + v9 + v10 super-version iteration. No
+    super-version cleared Wilson 55% gate vs v7_0; ship target =
+    v7_0_drop_one. Architecture: fast_sim simulator (183× faster than
+    env.clone+step, bit-exact) + opp_model (Tier-0 v3_snipe, Tier-1
+    v3.5.1 mirror). v7_0 beats v7_minimax 19/24 = 79.2% Wilson lo 59.5%
+    PASS; v7_0 beats v4_planner 18/24 = 75.0% Wilson lo 55.1% PASS;
+    nothing else cleared 55%. Diagnosed v4_planner's receding-horizon
+    pathology (audit/2026-05-12-v4-planner-receding-horizon-pathology.md):
+    K-step rollout with noop in portfolios prefers "wait" when target
+    eta>K; drop-one architecture structurally sidesteps this. σ-equiv
+    REVERTED from drop-one regime (v7.6 bisect: −54pp). v10_evaluate
+    62.5% Wilson lo 42.7% FAIL by 2.3pp. Knowledge anchor:
+    knowledge-base/concepts/lookahead-simulator-architecture.md
+    (permanent reference).
+  - 2026-05-12 — research-lookahead-strategy-kfRsy: v4_planner
+    receding-horizon mission-portfolio search, 5 portfolios per turn,
+    Sim<K=6-10> with production-share+denial value head. Submitted
+    #52579863 (live score 1038.6). σ-equivariance lib patches cherry-
+    picked from game-theory-strategy-analysis-0oH4N (3 commits):
+    lib/planner score rounding + symmetric tie-break, lib/orbit
+    sym_hypot for bit-exact paired distances.
+  - 2026-05-12 — analyze-leaderboard-strategies-sdZlE: v3.5.1
+    aggressive snipe sizing (32-seed 2P vs v3_snipe 68.8% Wilson lo
+    56.6% PASS local). Submitted #52565976 — **live regression
+    μ=945.6**. Local A/B over-predicted by ~150 points; the local
+    panel didn't capture whatever the live ladder rewards. Lesson:
+    σ-equiv-base agents play tighter draws against the broader ladder
+    than against v3_snipe alone — aggressive sizing helps locally
+    but evidently doesn't generalise.
+  - 2026-05-11 PM — analyze-submission-logs-dFHeS: live↔local parity
+    100% (postmortem off-by-one fix in scripts/episode_postmortem.py).
+    v3.2 / v3.4 internal builds (not submitted as standalone scores).
+  - 2026-05-11 — bootstrap-agentic-systems-lqnm6: Block E mission
+    framework MVP; lookahead probes (env.clone() Sim<K=50> AUC=0.952);
+    v3_snipe submitted #52544634 (live μ=1005.7).
+  - 2026-05-10 — earlier sessions archived under
+    audit/archive-2026-05-10-handover-prior-pm-sessions.md.
+
 mechanism_families_explored:
-  - heuristic-greedy-nearest-target       # comp-shipped Nearest Planet Sniper; calibration anchor only
-  - heuristic-orbit-aware-greedy          # v1: lead-prediction for orbiting non-comet targets + tie-break randomisation (closes A.6)
-  - heuristic-orbit-aware-greedy-with-shared-mechanism-layer  # v1.1: above + Strategy/Mechanism split + arrival_size (production-aware sizing)
-  - simple-greedy-target-selection-variants  # nearest, production, roi, weakest, enemy_first — ROI dominates panel at 32 seeds; v1.2 = roi submitted as #52518060
-  - meta-strategy-framework-infra-only       # replay capture + behavioural fingerprint + manifold diagnostic; gate not cleared with v1 features
-  - heuristic-physics-upgrade               # v1.3: 5-iter aim_with_prediction + search_safe_intercept fallback + sun-safe arrival-aware + path-clears-other-planets + oob_guard
-  - heuristic-worldmodel-aware              # v2: roi target selection + WorldModel.owner_at predictive dedup; submitted as #52532938
-  - mission-framework-snipe-only            # v3.0 (Block E MVP): Mission dataclass + propose_snipe_missions + settle_plan; bit-for-bit parity with v2 (32/32 draws at step 500)
-  - env-clone-forward-sim-scorer            # Sim<K> scoring head via env.clone() + step; AUC 0.952 at K=50 from probe step 50 ≈ perfect oracle (audit/2026-05-11-lookahead-phase2-forward-sim.md)
-  - lookahead-drop-one-candidates           # v3.1 v3_lookahead: env.clone() forward sim over drop-one candidate set; 32-seed 50/50 vs v2 — framework works, drop-one too narrow
-  - full-trajectory-predict-fleet-fate      # lib/trajectory.py replaces endpoint-only guards with full-flight ray-cast; capture probe reached 77.2% → 97.2% across the 3 fix waves of 2026-05-11
-  - cost-aware-roi-additive-denominator     # score = (production × time_to_hold) / (ships_to_send + distance + 1). Additive cost avoids pure-value/cost over-correction toward 1-ship targets
-  - comet-lifetime-correction                # comet_remaining_lifetime helper; time_to_hold caps at len(path) - path_index for comet targets
-  - mission-framework-snipe-plus-reinforce  # v3.1 v3_snipe: snipe + reinforce mission classes through settle_plan (with same-turn arrival ledger). 32-seed 2P 57.8% vs v2 (Wilson lo 45.6%); 16-seed 4P FFA parity. Submitted as #52544634.
-  - aggressive-snipe-ship-sizing-v3.5.1     # 2026-05-12 iter-2: lib/missions/snipe.py with aggressive=True flag. base_ships = min(src.ships*0.7, src.ships-5) when src.ships>12. 32-seed 2P vs v3_snipe: 68.8% Wilson lo 56.6% [PASS]. 4P FFA 31/32=96.9%. Bundled as submissions/v3.5.1.py (69.7 KB); awaiting PI sign-off.
-  - top-performer-fingerprint-analysis      # 2026-05-12: 50 top-10 replays + 10 midpack, 15+10 features. Top-10 distinguishing qualities: 2× launch rate, 33% bigger fleets, half mean garrison-at-launch, 2.3× enemy-target focus, step-4 opening, 3% comet rate. knowledge-base/concepts/top-performer-strategies.md.
-  - v3.5-ambitious-mission-portfolio        # 2026-05-12: opening + drain + gang_up + recapture Mission classes built; 32-seed 2P A/B = 39.1% (FAIL); per-wave ablation all <55% Wilson lo. v3.5 NOT submitted. Code retained on claude/analyze-leaderboard-strategies-sdZlE. audit/2026-05-12-v3.5-stack-results.md.
-  - shot-validator-labeling-pipeline        # 2026-05-12: scripts/label_shot_outcomes.py + data/shot_validator/{schema.json,README.md}; 37k labeled (24-dim features, 0/1 outcome) examples from top-10 + midpack replay corpus. MLP training deferred per PI directive.
-  - phase-0-idle-source-decomposition       # parallel branch optimize-ship-strategy-tDPXx: diagnostic 5-bucket classifier in settle_plan + realize via opt-in `reasons` param. ~96% of idle = MECHANISM_DROP from `intent.ships > src.ships`. Bucket-reduction proved a misleading proxy — 4 fixes targeted it, all tied/regressed at 64-seed.
-  - airtime-penalty-denominator             # lib/missions/snipe.py AIRTIME_PENALTY_WEIGHT. AIRTIME=1.0 regressed -12.5pp; AIRTIME=0.5 tied. Default 0.0 (identity).
-  - endgame-neutral-burn-priority           # lib/missions/snipe.py ENDGAME_NEUTRAL_BONUS at step>=470. Standalone stalemate (40/64 draws). Default 1.0.
-  - proposer-affordability-filter           # lib/missions/snipe.py PROPOSER_AFFORDABILITY_FILTER. 64-seed 21.1% BROKEN. Default 0.
-  - bundle-isolated-ab-harness              # scripts/ab_variants.py — per-variant bundle, no module-state leak. Tools, not strategy.
-  - gang-up-shared-sizing-mechanism         # lib/mechanism.py gang_up_size: anchor-on-slowest, throttle faster. v1 regressed (43.8% / 45.3% / 43.8%). Substrate bug: arrival_size re-inflates shares. Default 0.
-gate_status: cleared                      # 228/228 tests green; bundle E.2 self-play 0/10 crashes; bundle-vs-unbundled parity 10/10; 32-seed 2P + 16-seed 4P panels run
-headroom_to_top5pct: deprecated            # no longer the binding target — top-10 prize cliff is
-headroom_to_top10_prize: +392 μ           # top-10 cliff at 1447.6 (ShunkiKyoya, 2026-05-11). v3_snipe at 1055.5 → +392μ.
-headroom_to_roman_public: +250 μ          # Roman published 1224; we are 250 μ below his ceiling. Block E missions narrow this; v3.1 candidate enumerator for lookahead is the next ceiling-raiser.
+  - heuristic-greedy-nearest-target          # comp-shipped baseline; μ=303
+  - heuristic-orbit-aware-greedy             # v1: lead-prediction; μ=568
+  - heuristic-orbit-aware-greedy-with-shared-mechanism-layer  # v1.1 arrival_size
+  - simple-greedy-target-selection-variants  # nearest/production/roi/weakest/enemy_first
+  - heuristic-physics-upgrade                # 5-iter aim + safe-intercept + sun-safe
+  - heuristic-worldmodel-aware               # v2: WorldModel.owner_at dedup; μ=966
+  - mission-framework-snipe-only             # v3.0 Mission dataclass + settle_plan
+  - env-clone-forward-sim-scorer             # Sim<K> AUC=0.952 at K=50
+  - lookahead-drop-one-candidates            # v3.1 v3_lookahead: 50/50 vs v2
+  - full-trajectory-predict-fleet-fate       # lib/trajectory.py ray-cast
+  - cost-aware-roi-additive-denominator      # additive cost in roi
+  - comet-lifetime-correction                # time_to_hold caps on comet path
+  - mission-framework-snipe-plus-reinforce   # v3_snipe submitted; μ=1005.7
+  - aggressive-snipe-ship-sizing-v3.5.1      # v3.5.1 submitted; live μ=945.6 (REGRESSED)
+  - sigma-equivariance-patches               # planner score-round + sym_hypot;
+                                              # 16/16 v3-vs-v3 self-play draws; live μ=1041.4
+  - v7-maximin-search                         # v7_minimax: N=2 × M=2 × Sim<K=3>;
+                                              # live μ=1040.8
+  - v4-receding-horizon-mission-portfolio    # v4_planner: 5 portfolios × Sim<K=6-10>;
+                                              # live μ=1038.6
+  - v7-drop-one-fast-brain                    # v7_0_drop_one: lib/fast_sim (183× faster)
+                                              # + drop-one chooser + Tier-1 opp mirror;
+                                              # live μ=1094.9 TEAM PEAK
+  - v7-sweep-variants-failed                  # v7_1_target_swap, v7_2_ship_sweep,
+                                              # v7_3_archetype, v7_4_hungarian — ALL FAIL
+                                              # at Wilson 55%; pruned from this branch
+  - v7-iteration-variants-failed              # v7_1_minimax through v7_6_no_recapture —
+                                              # ALL FAIL or PARITY; pruned
+  - v8-psro-self-play-pool                    # PSRO infrastructure built; degenerate
+                                              # Nash with pure v7. Parked; pruned
+  - v9-super-version-failed                   # v9_inflight, v9_k15, v9_combined,
+                                              # v9_opening — none clear Wilson 55%; pruned
+  - v10-evaluate-value-head                   # drop-one + K=10 + evaluate_value head;
+                                              # 62.5% Wilson lo 42.7% FAIL; pruned
+
+gate_status: cleared                      # 373 pytest pass / 2 skipped / 1 xfailed
+                                            # (v3_snipe replay-parity drift from σ-equiv
+                                            # is documented, not a regression)
 ```
