@@ -46,10 +46,11 @@ exactly the fix; ship it.
 - New tests: `tests/test_mission_opening_wireup.py` (4 cases),
   `tests/test_snipe_comet_reject.py` (5 cases). All green.
 - Bundles: `submissions/v7_1_open_drop_comets.py` (209 KB).
-- **Scalar A/B (4 seeds × 2 seats = 8 games):** v7_1 5W-3L vs v7_0 =
-  **62.5 %, Wilson lo 30.6 %.** Positive directional signal but
-  underpowered. A 16-seed run is in flight; if it clears Wilson lo
-  ≥ 55 % a v7_1 submission is justified.
+- **Scalar A/B (16 seeds × 2 seats = 32 games, 13 min wallclock):**
+  v7_1 17W-13L-2D vs v7_0 = **53.1 %, Wilson lo 36.4 %.** Directional
+  signal positive but **BELOW the 55 % gate.** No submission justified
+  on this sample. **A 64-seed A/B is required** before any push — on
+  the Kaggle T4 vmap kernel with the new JAX port that's ~1.5 min.
 
 ### Track C — brute-force game-theory search
 
@@ -97,21 +98,23 @@ exactly the fix; ship it.
 
 ## Next-session first-actions
 
-1. **Read the 16-seed A/B result** (in flight; will be in
-   `/tmp/ab_v7_1_16seed.log` and `/tmp/result.json`). If it clears
-   55 % Wilson lo, submit `v7_1_open_drop_comets`. Otherwise bisect
-   H11 alone vs H15 alone.
-2. **Investigate the bundler parity-gate divergence.** Either fix the
-   stale module state or relax the parity gate to allow ≤ 1 / 1000
-   non-determinism on launch lists. Without that fix, every future
-   bundle needs `--skip-parity-gate`.
-3. **Run the JAX A/B for H11** (`A_USE_OPENING=1 B_USE_OPENING=0`).
-   On the Kaggle T4 vmap kernel it's ~1.5 min vs ~30 min CPU. With
-   the H11 + comet-reject in the JAX path, this is now fast iteration
-   territory.
-4. **Port `choose_depth2` to JAX** for JAX-fast A/B testing of v7_2.
+1. **Run the JAX A/B for v7_1 vs v7_0 at 64 games on Kaggle T4.**
+   `scripts/kaggle_ab_kernel/run_jax_ab.py` now has `A_USE_OPENING=1
+   B_USE_OPENING=0` knobs. ~1.5 min wallclock on T4 (vs the 13 min CPU
+   run we did). The scalar 32-game result (53.1 %, Wilson lo 36.4 %)
+   is underpowered; the 64-game JAX result is the gate decision.
+2. **If JAX A/B clears Wilson lo ≥ 55 %, submit
+   `v7_1_open_drop_comets`** (#3rd push, evicts v4_planner from
+   rolling-last-2). Decision must be PI-signed; the diagnostic
+   confirms H11 is targeting the right loss bucket (68 % opening-lost).
+3. **Investigate the bundler parity-gate divergence.** Module-level
+   mutable state causes 1/528-turn launch-list non-determinism
+   between source and bundle when called in the same process. v7_1
+   and v7_2 currently bundled via `--skip-parity-gate`. Either fix
+   the state or relax the gate threshold.
+4. **Port `choose_depth2` to JAX** for fast A/B testing of v7_2.
    Nested vmap over (our_cand × opp_cand). ~250 LOC; deferred this
-   session due to time.
+   session.
 5. **If v7_1 ships and lifts μ, queue v7_2 (depth-2 chooser) gated by
    a 64-seed A/B vs the new v7_1 incumbent.** The 14.8 % oracle
    disagreement suggests +5-10 pp expected lift if the depth-2 picks
