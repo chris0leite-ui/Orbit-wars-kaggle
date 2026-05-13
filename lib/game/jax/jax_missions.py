@@ -520,3 +520,116 @@ def settle_plan_from_matrices(
             break
 
     return chosen
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 8b: JAX-scan settle_plan (vmap-able)
+# ---------------------------------------------------------------------------
+
+
+def merge_class_matrices(class_outputs):
+    """Per-(src, tgt) max-over-classes reduction of score/ships/eta/valid.
+
+    Inputs: list of dicts (each with score/ships/eta/valid JAX arrays of
+    shape `(P, P)`).
+
+    Returns a single dict where each cell takes its values from whichever
+    class had the highest valid score. Used as the input to
+    `settle_plan_jax`.
+    """
+    # Stack along a new "class" axis so we can argmax across it.
+    scores = jnp.stack([o["score"] for o in class_outputs], axis=0)   # (C, P, P)
+    ships = jnp.stack([o["ships"] for o in class_outputs], axis=0)
+    etas = jnp.stack([o["eta"] for o in class_outputs], axis=0)
+    valids = jnp.stack([o["valid"] for o in class_outputs], axis=0)
+    # argmax over the class axis. Invalid (-inf) cells argmax to class 0
+    # but the merged_valid below catches that.
+    best_class = jnp.argmax(scores, axis=0)                          # (P, P)
+    P = scores.shape[1]
+    i_idx = jnp.arange(P)[:, None]
+    j_idx = jnp.arange(P)[None, :]
+    merged_score = scores[best_class, i_idx, j_idx]
+    merged_ships = ships[best_class, i_idx, j_idx]
+    merged_eta = etas[best_class, i_idx, j_idx]
+    merged_valid = valids[best_class, i_idx, j_idx]
+    return {
+        "score": merged_score,
+        "ships": merged_ships,
+        "eta": merged_eta,
+        "valid": merged_valid,
+    }
+
+
+def settle_plan_jax(
+    score_mat: jnp.ndarray,           # (P, P) float32 (-inf for invalid)
+    ships_mat: jnp.ndarray,           # (P, P) int32
+    eta_mat: jnp.ndarray,             # (P, P) int32
+    valid_mat: jnp.ndarray,           # (P, P) bool
+    world_ships_at: jnp.ndarray,      # (P, H+1) int32
+):
+    """Per-source greedy with same-turn arrival ledger (JAX form).
+
+    Pure JAX mirror of `settle_plan_from_matrices`. Uses `lax.scan` over
+    sources in best-score-desc order so the whole function is vmap-able.
+
+    Returns 4 `(P,)` int32 arrays in src-order (NOT slot order):
+        - src:    slot index of the chosen source (or -1 for "no pick")
+        - tgt:    slot index of the chosen target (or -1)
+        - ships:  ship count chosen (or 0)
+        - eta:    arrival step (or 0)
+
+    Entries with tgt == -1 are non-picks (source had no feasible target).
+    """
+    P = score_mat.shape[0]
+    H_plus_1 = world_ships_at.shape[1]
+    H = H_plus_1 - 1
+
+    # Per-source best score across targets (only over valid cells).
+    masked_score = jnp.where(valid_mat, score_mat, jnp.float32(-jnp.inf))
+    best_per_src = jnp.max(masked_score, axis=1)                    # (P,)
+    src_order = jnp.argsort(-best_per_src)                          # (P,) int32
+
+    init_ledger = jnp.zeros((P, H_plus_1), dtype=jnp.int32)
+    p_idx = jnp.arange(P, dtype=jnp.int32)
+    e_idx = jnp.arange(H_plus_1, dtype=jnp.int32)
+
+    def scan_step(ledger, src):
+        score_row = score_mat[src]                                  # (P,)
+        ships_row = ships_mat[src]
+        eta_row = eta_mat[src]
+        valid_row = valid_mat[src]
+
+        safe_eta = jnp.clip(eta_row, jnp.int32(0), jnp.int32(H))
+        ledger_at = ledger[p_idx, safe_eta]                         # (P,)
+        pred_enemy_at = world_ships_at[p_idx, safe_eta]             # (P,)
+
+        feasible = (
+            valid_row
+            & (ledger_at < pred_enemy_at + jnp.int32(1))
+        )
+        feasible_score = jnp.where(
+            feasible, score_row, jnp.float32(-jnp.inf),
+        )
+        best_tgt = jnp.argmax(feasible_score).astype(jnp.int32)
+        chose = feasible_score[best_tgt] > jnp.float32(-jnp.inf)
+
+        chosen_tgt = jnp.where(chose, best_tgt, jnp.int32(-1))
+        chosen_ships = jnp.where(chose, ships_row[best_tgt], jnp.int32(0))
+        chosen_eta = jnp.where(chose, eta_row[best_tgt], jnp.int32(0))
+
+        # Ledger update: add chosen_ships to (chosen_tgt, e) for e >= chosen_eta.
+        mask_p = (p_idx[:, None] == chosen_tgt)                     # (P, 1)
+        mask_e = (e_idx[None, :] >= chosen_eta)                     # (1, H+1)
+        update_mask = mask_p & mask_e & chose                       # (P, H+1)
+        new_ledger = ledger + update_mask.astype(jnp.int32) * chosen_ships
+
+        chosen_src = jnp.where(chose, src.astype(jnp.int32), jnp.int32(-1))
+        return new_ledger, (chosen_src, chosen_tgt, chosen_ships, chosen_eta)
+
+    _, (chosen_src, chosen_tgt, chosen_ships, chosen_eta) = jax.lax.scan(
+        scan_step, init_ledger, src_order,
+    )
+    return chosen_src, chosen_tgt, chosen_ships, chosen_eta
+
+
+settle_plan_jax_jit = jax.jit(settle_plan_jax)

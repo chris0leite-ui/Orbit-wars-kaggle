@@ -36,6 +36,8 @@ from lib.game.jax.jax_missions import (
     compute_reinforce_score_matrix,
     compute_recapture_score_matrix,
     settle_plan_from_matrices,
+    merge_class_matrices,
+    settle_plan_jax,
 )
 from lib.planner import settle_plan
 import jax.numpy as jnp
@@ -535,3 +537,68 @@ def test_settle_plan_from_matrices_parity_snipe_reinforce(seed):
     assert not msg_lines, (
         f"settle_plan divergence (seed {seed}):\n" + "\n".join(msg_lines)
     )
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 8b: JAX-scan settle_plan parity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", [3, 11, 42])
+def test_settle_plan_jax_matches_numpy(seed):
+    """JAX-scan settle_plan picks the same (src, target) set as the
+    numpy reference (settle_plan_from_matrices). Operates on the
+    merged snipe+reinforce score matrix per cell."""
+    env = make("orbit_wars", configuration={"seed": seed})
+    env.reset(num_agents=2)
+    _spawn_in_flight_fleets(env, num_agents=2, n_steps=25, rng_seed=seed * 41)
+    if env.state[0].status != "ACTIVE":
+        pytest.skip(f"seed {seed} terminated early")
+
+    my_id = 0
+    gs = scalar_to_jax(env.state, env.info["seed"])
+    jax_wm = build_world_model(gs, max_horizon=DEFAULT_HORIZON, num_agents=4)
+    snipe_out = compute_snipe_score_matrix(gs, jax_wm, my_id=my_id)
+    reinforce_out = compute_reinforce_score_matrix(gs, jax_wm, my_id=my_id)
+
+    # Numpy reference (separate classes, internal merge).
+    chosen_numpy = settle_plan_from_matrices(
+        class_outputs=[snipe_out, reinforce_out],
+        class_names=["snipe", "reinforce"],
+        planets_id=gs.planets_id,
+        world_owners_at=jax_wm.owners_at,
+        world_ships_at=jax_wm.ships_at,
+        my_id=my_id,
+    )
+    pid_to_slot = {
+        int(pid): slot
+        for slot, pid in enumerate(np.asarray(gs.planets_id))
+        if pid >= 0
+    }
+    numpy_pairs = {
+        (pid_to_slot[c["src_pid"]], pid_to_slot[c["target_pid"]])
+        for c in chosen_numpy
+    }
+
+    # JAX-scan version (merge → scan).
+    merged = merge_class_matrices([snipe_out, reinforce_out])
+    src_arr, tgt_arr, ships_arr, eta_arr = settle_plan_jax(
+        merged["score"], merged["ships"], merged["eta"], merged["valid"],
+        jax_wm.ships_at,
+    )
+    src_arr = np.asarray(src_arr)
+    tgt_arr = np.asarray(tgt_arr)
+    jax_pairs = {
+        (int(s), int(t))
+        for s, t in zip(src_arr, tgt_arr)
+        if s >= 0 and t >= 0
+    }
+
+    only_numpy = numpy_pairs - jax_pairs
+    only_jax = jax_pairs - numpy_pairs
+    msg = []
+    for pair in only_numpy:
+        msg.append(f"  numpy picked {pair} but JAX did not")
+    for pair in only_jax:
+        msg.append(f"  JAX picked {pair} but numpy did not")
+    assert not msg, "settle_plan_jax divergence:\n" + "\n".join(msg)

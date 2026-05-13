@@ -23,17 +23,26 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from lib.game.jax.jax_interpreter import jax_step_jit
-from lib.game.jax.jax_world_model import build_world_model_jit, DEFAULT_HORIZON
+from lib.game.jax.jax_interpreter import jax_step, jax_step_jit
+from lib.game.jax.jax_world_model import (
+    build_world_model, build_world_model_jit, DEFAULT_HORIZON,
+)
 from lib.game.jax.jax_missions import (
+    compute_snipe_score_matrix,
     compute_snipe_score_matrix_jit,
+    compute_reinforce_score_matrix,
     compute_reinforce_score_matrix_jit,
     settle_plan_from_matrices,
+    merge_class_matrices,
+    settle_plan_jax,
 )
 from lib.game.jax.jax_mechanisms import (
     apply_mechanisms_numpy,
+    apply_mechanisms_jax,
+    pack_per_agent_actions_jax,
     emitted_to_jax_action_tensors,
 )
+from lib.game.jax.jax_types import MAX_AGENTS, MAX_LAUNCH_PER_AGENT
 
 
 def policy_step_jax(
@@ -168,3 +177,107 @@ def score_candidate_jax(
             opp_aggressive=opp_aggressive,
         )
     return float(value_delta_ships(s, my_id=my_id))
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 8b: fully-JAX policy + rollout (vmap-able)
+# ---------------------------------------------------------------------------
+
+
+def policy_emit_jax_pure(
+    state,
+    world_model,
+    my_id: int,
+    aggressive: bool,
+    num_agents: int,
+):
+    """Pure JAX: state + WorldModel → packed per-agent action tensors.
+
+    No Python control flow on traced values; jit/vmap compatible.
+    Returns three `(MAX_LAUNCH_PER_AGENT,)` arrays: pids, angles, ships.
+    """
+    snipe = compute_snipe_score_matrix(
+        state, world_model, my_id=my_id,
+        aggressive=aggressive, num_agents=num_agents,
+    )
+    reinforce = compute_reinforce_score_matrix(state, world_model, my_id=my_id)
+    merged = merge_class_matrices([snipe, reinforce])
+    src, tgt, ships, eta = settle_plan_jax(
+        merged["score"], merged["ships"], merged["eta"], merged["valid"],
+        world_model.ships_at,
+    )
+    final_src, final_angle, final_ships = apply_mechanisms_jax(
+        state, world_model, src, tgt, ships, eta, my_id=my_id,
+    )
+    return pack_per_agent_actions_jax(
+        final_src, final_angle, final_ships, state.planets_id,
+    )
+
+
+def rollout_step_jax_pure(
+    state,
+    my_id: int,
+    num_agents: int = 2,
+    opp_aggressive: bool = True,
+):
+    """One env tick, fully JAX (no numpy / no Python control flow).
+
+    Builds the WorldModel once, runs policy_emit_jax_pure for both
+    seats, packs the per-agent action tensors, then jax_step.
+    """
+    wm = build_world_model(state, max_horizon=DEFAULT_HORIZON, num_agents=4)
+    pids_my, ang_my, sh_my = policy_emit_jax_pure(
+        state, wm, my_id=my_id, aggressive=False, num_agents=num_agents,
+    )
+    # For 2P games only: opp_id = 1 - my_id.
+    opp_id = 1 - my_id
+    pids_op, ang_op, sh_op = policy_emit_jax_pure(
+        state, wm, my_id=opp_id, aggressive=opp_aggressive,
+        num_agents=num_agents,
+    )
+    # Pack into (MAX_AGENTS, MAX_LAUNCH_PER_AGENT) tensors.
+    pids_full = jnp.full((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), -1, dtype=jnp.int32)
+    ang_full = jnp.zeros((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.float32)
+    sh_full = jnp.zeros((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.int32)
+    pids_full = pids_full.at[my_id].set(pids_my)
+    pids_full = pids_full.at[opp_id].set(pids_op)
+    ang_full = ang_full.at[my_id].set(ang_my)
+    ang_full = ang_full.at[opp_id].set(ang_op)
+    sh_full = sh_full.at[my_id].set(sh_my)
+    sh_full = sh_full.at[opp_id].set(sh_op)
+    return jax_step(state, pids_full, ang_full, sh_full)
+
+
+def score_candidate_jax_pure(
+    state,
+    K: int,
+    my_id: int,
+    num_agents: int = 2,
+    opp_aggressive: bool = True,
+):
+    """Fully-JAX K-step rollout from `state` returning ship-delta.
+
+    Self plays its own policy (not a candidate override — for the
+    drop-one chooser, the caller mutates state's planets_ships /
+    settle_plan output before calling this). Mostly used as the
+    vmap-able primitive for the GPU A/B path.
+    """
+    def step_fn(s, _):
+        new_s = rollout_step_jax_pure(
+            s, my_id=my_id, num_agents=num_agents,
+            opp_aggressive=opp_aggressive,
+        )
+        return new_s, None
+
+    final_s, _ = jax.lax.scan(step_fn, state, None, length=K)
+    return value_delta_ships(final_s, my_id=my_id)
+
+
+# JIT-compile entry points.
+rollout_step_jax_pure_jit = jax.jit(
+    rollout_step_jax_pure, static_argnames=("my_id", "num_agents", "opp_aggressive"),
+)
+score_candidate_jax_pure_jit = jax.jit(
+    score_candidate_jax_pure,
+    static_argnames=("K", "my_id", "num_agents", "opp_aggressive"),
+)

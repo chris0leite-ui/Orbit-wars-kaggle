@@ -29,6 +29,9 @@ import math
 
 import numpy as np
 
+import jax
+import jax.numpy as jnp
+
 from lib.fleet import speed as fleet_speed
 from lib.game.jax.jax_types import MAX_AGENTS, MAX_LAUNCH_PER_AGENT
 
@@ -232,6 +235,158 @@ def _predict_fleet_fate_numpy(
             return outcome, hit_idx, step + 1
 
     return "timeout", -1, max_steps
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 8b: JAX-vmap-compatible mechanism stack
+# ---------------------------------------------------------------------------
+
+
+def apply_mechanisms_jax(
+    state,                            # GameState
+    world_model,                      # JaxWorldModel
+    chosen_src,                       # int32 (P,) — src slots (or -1)
+    chosen_tgt,                       # int32 (P,) — target slots (or -1)
+    chosen_ships,                     # int32 (P,) — pre-arrival_size ships
+    chosen_eta,                       # int32 (P,) — pre-arrival_size eta
+    my_id: int,
+):
+    """Pure-JAX mechanism stack: arrival_size + atan2/lead-aim + ship
+    validate. Returns per-source emit tensors:
+
+      - final_src:    (P,) int32 — slot or -1 if dropped
+      - final_angle:  (P,) float32 — aim_angle
+      - final_ships:  (P,) int32 — post-bump ships (0 if dropped)
+
+    Coverage relative to scalar `realize(mechanisms=DEFAULT_MECHANISMS)`:
+      - validate ✓ (ownership / ships budget enforced)
+      - arrival_size ✓ (static + WorldModel form)
+      - lead_aim_v2 ✓ (5-iter fixed-point; no search_safe_intercept
+        fallback — that's data-dependent, falls back to atan2)
+      - sun_avoid / path_clears_other_planets / oob_guard ✗
+        (drops moved into jax_step's swept-pair collision; ships still
+        spawn but die on impact. Costs ~10 % wasted fleets vs scalar;
+        signal-preserving for candidate ordering.)
+    """
+    P = chosen_src.shape[0]
+    H = world_model.ships_at.shape[1] - 1
+
+    planets_x = state.planets_x
+    planets_y = state.planets_y
+    planets_owner = state.planets_owner
+    planets_ships = state.planets_ships
+    planets_prod = state.planets_prod
+    planets_radius = state.planets_radius
+    planets_alive = state.planets_alive
+    is_comet = state.is_comet
+    omega = state.angular_velocity
+    ships_at = world_model.ships_at
+    owners_at = world_model.owners_at
+
+    # Resolve safe slot lookups (default to slot 0 when -1).
+    safe_src = jnp.where(chosen_src >= 0, chosen_src, jnp.int32(0))
+    safe_tgt = jnp.where(chosen_tgt >= 0, chosen_tgt, jnp.int32(0))
+
+    sx = planets_x[safe_src]
+    sy = planets_y[safe_src]
+    s_radius = planets_radius[safe_src]
+    tx = planets_x[safe_tgt]
+    ty = planets_y[safe_tgt]
+    t_radius = planets_radius[safe_tgt]
+    target_owner = planets_owner[safe_tgt]
+    target_is_comet = is_comet[safe_tgt]
+
+    # arrival_size: bump for non-neutral, non-self targets.
+    # Static needed: target.ships + target.prod * eta + 1
+    static_needed = (
+        planets_ships[safe_tgt]
+        + planets_prod[safe_tgt] * chosen_eta
+        + jnp.int32(1)
+    )
+    safe_eta = jnp.clip(chosen_eta, jnp.int32(0), jnp.int32(H))
+    pred_owner = owners_at[safe_tgt, safe_eta]
+    pred_ships = ships_at[safe_tgt, safe_eta]
+    wm_needed = pred_ships + jnp.int32(1)
+    needed = jnp.maximum(static_needed, wm_needed)
+    bump_active = (
+        (target_owner != jnp.int32(-1))
+        & (target_owner != jnp.int32(my_id))
+    )
+    bumped_ships = jnp.where(bump_active, jnp.maximum(chosen_ships, needed), chosen_ships)
+    # Drop if target will already be ours at arrival.
+    drop_redundant = bump_active & (pred_owner == jnp.int32(my_id))
+
+    # lead_aim_v2 5-iter fixed-point for orbiting non-comet targets.
+    orb_r = jnp.sqrt((tx - 50.0) ** 2 + (ty - 50.0) ** 2)
+    is_orbit = (orb_r + t_radius < 50.0) & (~target_is_comet) & (omega != 0.0)
+
+    r_offset = s_radius + t_radius + jnp.float32(0.1)
+
+    def fleet_speed_jax(ships):
+        # Mirror lib.fleet.speed: 1 + (max_speed-1) * (log(ships)/log(1000))^1.5
+        # max_speed=6.0 by env default. Saturates at ships=1000.
+        ships_f = ships.astype(jnp.float32)
+        log_ships = jnp.log(jnp.maximum(ships_f, jnp.float32(1.0)))
+        log_1000 = jnp.log(jnp.float32(1000.0))
+        ratio = jnp.clip(log_ships / log_1000, jnp.float32(0.0), jnp.float32(1.0))
+        return jnp.float32(1.0) + jnp.float32(5.0) * ratio ** jnp.float32(1.5)
+
+    v = fleet_speed_jax(bumped_ships)
+    safe_v = jnp.maximum(v, jnp.float32(1e-6))
+
+    # Lead-aim 5-iter fixed point (unrolled).
+    cx = tx
+    cy = ty
+    cur_angle = jnp.arctan2(ty - 50.0, tx - 50.0)
+    for _ in range(5):
+        d = jnp.sqrt((cx - sx) ** 2 + (cy - sy) ** 2)
+        flight_d = jnp.maximum(jnp.float32(0.0), d - r_offset)
+        eta_f = flight_d / safe_v
+        new_angle = cur_angle + omega * eta_f
+        ntx = jnp.float32(50.0) + orb_r * jnp.cos(new_angle)
+        nty = jnp.float32(50.0) + orb_r * jnp.sin(new_angle)
+        cx = jnp.where(is_orbit, ntx, cx)
+        cy = jnp.where(is_orbit, nty, cy)
+
+    angle = jnp.arctan2(cy - sy, cx - sx)
+
+    # validate: keep only if chosen_src >= 0 (real pick) AND ships > 0 AND
+    # ships ≤ src.ships AND src alive + owned by my_id AND target alive
+    # AND not redundant.
+    real = chosen_src >= 0
+    src_alive_ok = planets_alive[safe_src] & (planets_owner[safe_src] == jnp.int32(my_id))
+    tgt_alive_ok = planets_alive[safe_tgt]
+    ships_ok = (bumped_ships > 0) & (bumped_ships <= planets_ships[safe_src])
+    keep = real & src_alive_ok & tgt_alive_ok & ships_ok & (~drop_redundant)
+
+    final_src = jnp.where(keep, chosen_src, jnp.int32(-1))
+    final_angle = jnp.where(keep, angle, jnp.float32(0.0))
+    final_ships = jnp.where(keep, bumped_ships, jnp.int32(0))
+    return final_src, final_angle, final_ships
+
+
+def pack_per_agent_actions_jax(
+    final_src,           # (P,) int32 (-1 = no action)
+    final_angle,         # (P,) float32
+    final_ships,         # (P,) int32
+    planets_id,          # (P,) int32 — slot → planet_id
+):
+    """Pack per-source emit arrays into a single agent's action tensors
+    of shape `(MAX_LAUNCH_PER_AGENT,)`.
+
+    Compaction via sort: real picks (final_src >= 0) sort before -1
+    sentinels, so taking the first MAX_LAUNCH_PER_AGENT preserves them.
+    """
+    keep = final_src >= 0
+    # argsort with True before False: sort by ~keep ascending.
+    order = jnp.argsort(~keep)
+    sorted_src = final_src[order]
+    sorted_angle = final_angle[order]
+    sorted_ships = final_ships[order]
+    safe_src = jnp.where(sorted_src >= 0, sorted_src, jnp.int32(0))
+    src_pids = jnp.where(sorted_src >= 0, planets_id[safe_src], jnp.int32(-1))
+    M = MAX_LAUNCH_PER_AGENT
+    return src_pids[:M], sorted_angle[:M], sorted_ships[:M]
 
 
 def _build_planet_orbits(planets_x, planets_y, planets_radius, omega, max_steps=_PATH_MAX_STEPS):
