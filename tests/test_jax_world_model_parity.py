@@ -261,3 +261,65 @@ def test_simulate_all_timelines_parity(seed):
         if len(diffs) >= 5:
             break
     assert not diffs, "timeline divergence:\n" + "\n".join(diffs)
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 2d: JaxWorldModel + query helpers
+# ---------------------------------------------------------------------------
+
+
+def test_jax_world_model_queries_parity():
+    """JaxWorldModel.owner_at / ships_at / incoming_enemy_eta match the
+    scalar WorldModel API for a mid-game state."""
+    from lib.world_model import WorldModel, DEFAULT_HORIZON
+    from lib.intent import World
+    from lib.game.jax.jax_world_model import (
+        build_world_model, owner_at, ships_at, incoming_enemy_eta,
+    )
+    from lib.game.jax import scalar_to_jax
+
+    env = make("orbit_wars", configuration={"seed": 42})
+    env.reset(num_agents=2)
+    _spawn_in_flight_fleets(env, num_agents=2, n_steps=25, rng_seed=99)
+
+    # Scalar WorldModel.
+    obs = env.state[0].observation
+    scalar_world = World.from_obs(obs)
+    scalar_wm = WorldModel.from_world(scalar_world)
+
+    # JAX equivalent.
+    gs = scalar_to_jax(env.state, env.info["seed"])
+    jax_wm = build_world_model(gs, max_horizon=DEFAULT_HORIZON, num_agents=4)
+
+    pid_to_slot = {
+        int(pid): slot
+        for slot, pid in enumerate(np.asarray(gs.planets_id))
+        if pid >= 0
+    }
+    diffs = []
+    for pid in scalar_wm.timelines.keys():
+        slot = pid_to_slot[int(pid)]
+        for t in (0, 1, 25, 100, 250):
+            so = scalar_wm.owner_at(pid, t)
+            ss = int(scalar_wm.ships_at(pid, t))
+            jo = int(owner_at(jax_wm, jnp.int32(slot), jnp.int32(t)))
+            js = int(ships_at(jax_wm, jnp.int32(slot), jnp.int32(t)))
+            if so != jo or ss != js:
+                diffs.append(
+                    f"  pid={pid} step={t}: scalar=({so},{ss}) jax=({jo},{js})"
+                )
+        # incoming_enemy_eta vs scalar (or horizon+1 sentinel).
+        scalar_eta = scalar_wm.incoming_enemy_eta(pid, my_id=0)
+        jax_eta = int(incoming_enemy_eta(jax_wm, jnp.int32(slot), jnp.int32(0)))
+        if scalar_eta is None:
+            if jax_eta <= DEFAULT_HORIZON:
+                diffs.append(
+                    f"  pid={pid} incoming_enemy_eta: scalar=None jax={jax_eta}"
+                )
+        else:
+            if jax_eta != int(scalar_eta):
+                diffs.append(
+                    f"  pid={pid} incoming_enemy_eta: scalar={scalar_eta} jax={jax_eta}"
+                )
+
+    assert not diffs, "JaxWorldModel divergence:\n" + "\n".join(diffs[:5])

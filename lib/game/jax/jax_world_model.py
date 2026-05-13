@@ -322,3 +322,99 @@ def simulate_all_timelines(
 simulate_all_timelines_jit = jax.jit(
     simulate_all_timelines, static_argnames=("max_horizon",)
 )
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 2d: JaxWorldModel (Pytree wrapping timelines + queries)
+# ---------------------------------------------------------------------------
+
+
+from typing import NamedTuple
+
+
+class JaxWorldModel(NamedTuple):
+    """JAX analogue of `lib.world_model.WorldModel`. Carries the
+    pre-computed per-planet timelines + arrival grid; sub-phase 3
+    (JAX missions) consumes via the query helpers below.
+
+    Pytree-compatible (jit/vmap'd). Build via `build_world_model()`.
+    """
+
+    # (P_max, H+1) int32 — owner per (planet_slot, step).
+    owners_at: jnp.ndarray
+    # (P_max, H+1) int32 — ships per (planet_slot, step).
+    ships_at: jnp.ndarray
+    # (P_max, H+1, A) int32 — incoming ships per (planet, step, owner).
+    arrival_grid: jnp.ndarray
+    # () int32 — the horizon used.
+    horizon: jnp.ndarray
+
+
+def build_world_model(
+    state,                              # GameState
+    max_horizon: int = DEFAULT_HORIZON,
+    num_agents: int = 4,
+) -> JaxWorldModel:
+    """End-to-end build: scalar_to_jax → grid → timelines → JaxWorldModel.
+
+    Equivalent to `lib.world_model.WorldModel.from_world(world)`. Costs
+    one F×P raycast + a 3D scatter + a vmap'd lax.scan over horizon.
+    """
+    arrival_grid = build_arrival_grid(
+        state, max_horizon=max_horizon, num_agents=num_agents
+    )
+    owners_at, ships_at = simulate_all_timelines(
+        state, arrival_grid, max_horizon=max_horizon
+    )
+    return JaxWorldModel(
+        owners_at=owners_at,
+        ships_at=ships_at,
+        arrival_grid=arrival_grid,
+        horizon=jnp.int32(max_horizon),
+    )
+
+
+build_world_model_jit = jax.jit(
+    build_world_model, static_argnames=("max_horizon", "num_agents")
+)
+
+
+# ---------------------------------------------------------------------------
+# Query helpers — mirror WorldModel.owner_at / ships_at / incoming_enemy_eta
+# ---------------------------------------------------------------------------
+
+
+def owner_at(world: JaxWorldModel, planet_slot: jnp.ndarray, step: jnp.ndarray):
+    """Predicted owner of `planet_slot` at `step`. Clamps step to
+    [0, horizon]. Returns int32 (-1 = neutral)."""
+    t = jnp.clip(step, jnp.int32(0), world.horizon)
+    return world.owners_at[planet_slot, t]
+
+
+def ships_at(world: JaxWorldModel, planet_slot: jnp.ndarray, step: jnp.ndarray):
+    """Predicted garrison at `planet_slot` at `step`."""
+    t = jnp.clip(step, jnp.int32(0), world.horizon)
+    return world.ships_at[planet_slot, t]
+
+
+def incoming_enemy_eta(
+    world: JaxWorldModel,
+    planet_slot: jnp.ndarray,    # () int32
+    my_id: jnp.ndarray,          # () int32
+):
+    """Min step at which a non-`my_id` fleet arrives at `planet_slot`.
+
+    Returns `horizon + 1` sentinel if no enemy arrival within horizon.
+    """
+    # arrival_grid[p, t, a]: ships from `a` arriving at `p` at step `t`.
+    # Want: min t > 0 where sum_{a != my_id} arrival_grid[p, t, a] > 0.
+    grid_p = world.arrival_grid[planet_slot]  # (H+1, A)
+    A = grid_p.shape[1]
+    # Mask out our own arrivals.
+    other_mask = jnp.arange(A) != my_id
+    other_ships = jnp.sum(grid_p * other_mask[None, :].astype(grid_p.dtype), axis=1)
+    has = other_ships > 0
+    # First True along the step axis.
+    any_hit = jnp.any(has)
+    first = jnp.argmax(has.astype(jnp.int32))
+    return jnp.where(any_hit, first, world.horizon + jnp.int32(1))
