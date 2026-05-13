@@ -16,7 +16,12 @@ Status:
 - ✅ Sub-phase 3d: `compute_reinforce_score_matrix` +
   `compute_recapture_score_matrix` (recapture-state tracking stays in
   Python; only the per-pair score math is JAX-vectorised).
-- ⏳ Sub-phase 3e: settle_plan (per-source greedy with arrival ledger)
+- ✅ Sub-phase 3e (numpy form): `settle_plan_from_matrices` —
+  per-source greedy with same-turn arrival ledger, operating on the
+  stacked score/ships/eta/valid matrices from 3a-3d. JAX-vectorised
+  scan form is deferred to sub-phase 5 (when score_candidate composes
+  the full per-step decision and we know whether the numpy form fits
+  in the per-game budget).
 """
 
 from __future__ import annotations
@@ -422,3 +427,93 @@ def compute_recapture_score_matrix(
 compute_recapture_score_matrix_jit = jax.jit(
     compute_recapture_score_matrix, static_argnames=("my_id",)
 )
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 3e: settle_plan (numpy form, operating on JAX matrices)
+# ---------------------------------------------------------------------------
+
+
+import numpy as _np
+
+
+def settle_plan_from_matrices(
+    class_outputs: list,                # list of dicts with score/ships/eta/valid
+    class_names: list,                  # parallel list of class name strings
+    planets_id,                         # int32 (P_max,) JAX or numpy
+    world_owners_at,                    # (P_max, H+1) JAX or numpy
+    world_ships_at,                     # (P_max, H+1) JAX or numpy
+    my_id: int,
+):
+    """Per-source greedy with same-turn arrival ledger.
+
+    Pure numpy mirror of `lib.planner.settle_plan` operating on the
+    JAX score/ships/eta/valid matrices. Returns a list of dicts:
+        [{"src_pid", "target_pid", "mission_class", "ships", "eta", "score"}, ...]
+
+    Algorithm (verbatim port of scalar):
+    1. Build candidate list per source from each class's valid cells.
+    2. Sort each source's candidates by score descending.
+    3. Order sources by their top candidate's score (descending).
+    4. Per source in order, walk candidates; accept first whose target
+       passes the ledger check (cumulative prior arrivals by step ≤ eta
+       < pred_enemy at eta + 1). Update ledger on accept.
+    """
+    planets_id = _np.asarray(planets_id)
+    ships_at = _np.asarray(world_ships_at)
+    P = planets_id.shape[0]
+    H = ships_at.shape[1] - 1
+
+    # Flatten all classes into a (src_slot -> list of candidate tuples).
+    # Each tuple: (score, target_slot, ships, eta, class_name).
+    by_src: dict[int, list[tuple]] = {}
+    for cls_name, out in zip(class_names, class_outputs):
+        score = _np.asarray(out["score"])
+        ships_m = _np.asarray(out["ships"])
+        eta_m = _np.asarray(out["eta"])
+        valid_m = _np.asarray(out["valid"])
+        valid_idx = _np.argwhere(valid_m)
+        for s, t in valid_idx:
+            tup = (
+                float(score[s, t]),
+                int(t),
+                int(ships_m[s, t]),
+                int(eta_m[s, t]),
+                cls_name,
+            )
+            by_src.setdefault(int(s), []).append(tup)
+
+    # Sort each source's candidates by score descending.
+    for s in by_src:
+        by_src[s].sort(key=lambda x: -x[0])
+
+    # Order sources by top-candidate score desc.
+    src_order = sorted(by_src.keys(), key=lambda s: -by_src[s][0][0])
+
+    # Ledger: per-target list of (eta, ships).
+    pending: dict[int, list[tuple[int, int]]] = {}
+    chosen = []
+    for src_slot in src_order:
+        for (sc, t_slot, ships_v, eta_v, cls_name) in by_src[src_slot]:
+            # Sum of prior arrivals at this target with eta_prior ≤ eta_v.
+            already = 0
+            for (e_prior, s_prior) in pending.get(t_slot, []):
+                if e_prior <= eta_v:
+                    already += s_prior
+            # pred_enemy at the chosen eta. Clip to horizon.
+            e_clamp = min(max(eta_v, 0), H)
+            pred_enemy = float(ships_at[t_slot, e_clamp])
+            if already >= pred_enemy + 1.0:
+                continue
+            chosen.append({
+                "src_pid": int(planets_id[src_slot]),
+                "target_pid": int(planets_id[t_slot]),
+                "mission_class": cls_name,
+                "ships": int(ships_v),
+                "eta": int(eta_v),
+                "score": float(sc),
+            })
+            pending.setdefault(t_slot, []).append((eta_v, ships_v))
+            break
+
+    return chosen

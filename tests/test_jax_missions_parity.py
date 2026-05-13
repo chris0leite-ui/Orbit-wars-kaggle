@@ -35,7 +35,9 @@ from lib.game.jax.jax_missions import (
     compute_snipe_score_matrix,
     compute_reinforce_score_matrix,
     compute_recapture_score_matrix,
+    settle_plan_from_matrices,
 )
+from lib.planner import settle_plan
 import jax.numpy as jnp
 
 
@@ -471,3 +473,65 @@ def test_compute_recapture_score_matrix_parity():
             break
 
     assert not diffs, "recapture divergence:\n" + "\n".join(diffs)
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 3e: settle_plan parity (snipe + reinforce only;
+# recapture stays in Python state for now)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", [3, 11, 42])
+def test_settle_plan_from_matrices_parity_snipe_reinforce(seed):
+    """JAX-matrix-driven settle_plan picks the same (src, target) pairs
+    as scalar `settle_plan` over the combined snipe+reinforce list.
+
+    Scope: 2P games (no spoiler), non-aggressive sizing. Comet
+    targets are filtered to keep parity with scalar; recapture is
+    deferred to its own test since it depends on per-turn state.
+    """
+    env = make("orbit_wars", configuration={"seed": seed})
+    env.reset(num_agents=2)
+    _spawn_in_flight_fleets(env, num_agents=2, n_steps=25, rng_seed=seed * 29)
+    if env.state[0].status != "ACTIVE":
+        pytest.skip(f"seed {seed} terminated early")
+
+    my_id = 0
+    obs = env.state[my_id].observation
+    scalar_world = World.from_obs(obs)
+    scalar_wm = WorldModel.from_world(scalar_world)
+    scalar_missions = (
+        propose_snipe_missions(scalar_world, scalar_wm, aggressive=False)
+        + propose_reinforce_missions(scalar_world, scalar_wm)
+    )
+    scalar_intents = settle_plan(scalar_missions, scalar_world, scalar_wm)
+
+    gs = scalar_to_jax(env.state, env.info["seed"])
+    jax_wm = build_world_model(gs, max_horizon=DEFAULT_HORIZON, num_agents=4)
+    snipe_out = compute_snipe_score_matrix(gs, jax_wm, my_id=my_id)
+    reinforce_out = compute_reinforce_score_matrix(gs, jax_wm, my_id=my_id)
+    chosen = settle_plan_from_matrices(
+        class_outputs=[snipe_out, reinforce_out],
+        class_names=["snipe", "reinforce"],
+        planets_id=gs.planets_id,
+        world_owners_at=jax_wm.owners_at,
+        world_ships_at=jax_wm.ships_at,
+        my_id=my_id,
+    )
+
+    # Build (src_pid, target_pid) sets — order-independent comparison.
+    scalar_pairs = {(int(i.src_id), int(i.target_id)) for i in scalar_intents}
+    jax_pairs = {(c["src_pid"], c["target_pid"]) for c in chosen}
+
+    only_scalar = scalar_pairs - jax_pairs
+    only_jax = jax_pairs - scalar_pairs
+
+    msg_lines = []
+    for pair in only_scalar:
+        msg_lines.append(f"  scalar picked {pair} but JAX did not")
+    for pair in only_jax:
+        msg_lines.append(f"  JAX picked {pair} but scalar did not")
+
+    assert not msg_lines, (
+        f"settle_plan divergence (seed {seed}):\n" + "\n".join(msg_lines)
+    )
