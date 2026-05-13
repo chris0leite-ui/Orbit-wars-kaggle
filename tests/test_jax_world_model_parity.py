@@ -1,0 +1,130 @@
+"""Sub-phase 2 parity: JAX WorldModel pieces vs scalar `lib.world_model`.
+
+Currently tests:
+- `fleet_target_planet_batch` vs scalar `fleet_target_planet`
+
+Future sub-phases test build_arrival_ledger and simulate_planet_timeline.
+"""
+
+from __future__ import annotations
+
+import math
+import random
+
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from kaggle_environments import make
+from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
+
+from lib.world_model import fleet_target_planet
+from lib.game.jax.jax_world_model import (
+    fleet_speed_batch, fleet_target_planet_batch,
+    DEFAULT_HORIZON,
+)
+
+
+def _spawn_in_flight_fleets(env, num_agents: int = 2, n_steps: int = 15, rng_seed: int = 7):
+    """Run N steps with random-policy launches so the env has live fleets."""
+    rng = random.Random(rng_seed)
+    for _ in range(n_steps):
+        if env.state[0].status != "ACTIVE":
+            break
+        actions = []
+        for pid_seat in range(num_agents):
+            moves = []
+            obs = env.state[pid_seat].observation
+            for p in obs.planets:
+                if p[1] == pid_seat and p[5] > 0 and rng.random() < 0.5:
+                    angle = rng.uniform(0, 2 * math.pi)
+                    ships = max(1, int(p[5] * rng.uniform(0.1, 0.7)))
+                    if 0 < ships <= p[5]:
+                        moves.append([p[0], angle, ships])
+            actions.append(moves)
+        env.step(actions)
+
+
+@pytest.mark.parametrize("seed", [0, 7, 42, 137])
+def test_fleet_target_planet_batch_parity(seed):
+    """JAX raycast finds the same target + ETA as the scalar version
+    for every in-flight fleet in a mid-game state.
+    """
+    env = make("orbit_wars", configuration={"seed": seed})
+    env.reset(num_agents=2)
+    _spawn_in_flight_fleets(env, num_agents=2)
+
+    obs = env.state[0].observation
+    fleets_raw = list(obs.fleets)
+    planets_raw = list(obs.planets)
+    if not fleets_raw:
+        pytest.skip(f"seed {seed} produced no in-flight fleets")
+
+    # Scalar reference: per-fleet scan.
+    fleet_named = [Fleet(*f) for f in fleets_raw]
+    planet_named = [Planet(*p) for p in planets_raw]
+    scalar_targets = []
+    scalar_etas = []
+    for f in fleet_named:
+        t, e = fleet_target_planet(f, planet_named, DEFAULT_HORIZON)
+        scalar_targets.append(t.id if t is not None else None)
+        scalar_etas.append(e)
+
+    # JAX inputs: build arrays from the obs raw data.
+    fleets_x = jnp.array([float(f[2]) for f in fleets_raw], dtype=jnp.float32)
+    fleets_y = jnp.array([float(f[3]) for f in fleets_raw], dtype=jnp.float32)
+    fleets_angle = jnp.array([float(f[4]) for f in fleets_raw], dtype=jnp.float32)
+    fleets_ships = jnp.array([int(f[6]) for f in fleets_raw], dtype=jnp.int32)
+    fleets_alive = jnp.ones(len(fleets_raw), dtype=bool)
+    planets_x = jnp.array([float(p[2]) for p in planets_raw], dtype=jnp.float32)
+    planets_y = jnp.array([float(p[3]) for p in planets_raw], dtype=jnp.float32)
+    planets_radius = jnp.array([float(p[4]) for p in planets_raw], dtype=jnp.float32)
+    planets_alive = jnp.ones(len(planets_raw), dtype=bool)
+
+    jax_target_idx, jax_eta = fleet_target_planet_batch(
+        fleets_x, fleets_y, fleets_angle, fleets_ships, fleets_alive,
+        planets_x, planets_y, planets_radius, planets_alive,
+        max_horizon=DEFAULT_HORIZON,
+    )
+    jax_target_arr = np.asarray(jax_target_idx)
+    jax_eta_arr = np.asarray(jax_eta)
+
+    # JAX returns SLOT index in the local-build planets array; map
+    # to planet ids via the same input ordering used to build the arrays.
+    planet_ids = [int(p[0]) for p in planets_raw]
+    for i, f in enumerate(fleet_named):
+        scalar_t = scalar_targets[i]
+        scalar_e = scalar_etas[i]
+        jax_idx = int(jax_target_arr[i])
+        jax_e = int(jax_eta_arr[i])
+
+        if scalar_t is None:
+            assert jax_idx == -1, (
+                f"fleet[{i}] scalar=no-hit but jax={planet_ids[jax_idx] if jax_idx >= 0 else 'no-hit'}"
+            )
+            continue
+        assert jax_idx >= 0, (
+            f"fleet[{i}] scalar hit pid={scalar_t} but jax=no-hit"
+        )
+        jax_pid = planet_ids[jax_idx]
+        assert jax_pid == scalar_t, (
+            f"fleet[{i}] target diverges: scalar pid={scalar_t}, jax pid={jax_pid}"
+        )
+        # ETA: tolerance ±1 (scalar uses int(ceil(turns)); float32 vs
+        # float64 may flip the ceil at boundary cases). Most cases match exactly.
+        assert abs(jax_e - scalar_e) <= 1, (
+            f"fleet[{i}] eta diverges: scalar={scalar_e}, jax={jax_e}"
+        )
+
+
+def test_fleet_speed_batch_parity():
+    """Vectorised fleet_speed matches scalar formula for a battery of
+    ship counts."""
+    from lib.fleet import speed as scalar_speed
+    ships = jnp.array([1, 5, 10, 25, 50, 100, 500, 999, 1000], dtype=jnp.int32)
+    jax_speeds = np.asarray(fleet_speed_batch(ships))
+    for i, n in enumerate(np.asarray(ships)):
+        expected = float(scalar_speed(int(n)))
+        assert abs(float(jax_speeds[i]) - expected) < 1e-4, (
+            f"ships={n}: jax={jax_speeds[i]}, scalar={expected}"
+        )
