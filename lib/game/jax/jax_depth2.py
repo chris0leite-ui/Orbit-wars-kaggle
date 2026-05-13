@@ -151,17 +151,28 @@ def score_depth2_payoff_matrix(
     my_use_opening: bool = True,
     opp_use_opening: bool = True,
 ) -> jnp.ndarray:
-    """Compute the (N, M) payoff matrix via nested vmap over our × opp
-    drop-one variants.
+    """Compute the (N, M) payoff matrix via `lax.scan` over the
+    `N*M` flat (our_i, opp_j) cell index.
 
     Cell (i, j):
       t=1: our seat plays our_v[i]; opp plays opp_inc (turn-1 incumbent).
       t=2: our seat passes; opp plays opp_v[j].
       t=3..K_tail+2: both seats play single-ply mirror.
       leaf: ship-delta from `my_id`'s POV.
+
+    Implementation: replaced an earlier `vmap(vmap(cell))` nested-vmap
+    that OOMed on T4 (16 GB) during JIT compile of the game-vmap'd
+    rollout — the cell-state Pytrees were materialised for all `N*M`
+    cells in parallel per game per step, blowing the memory budget at
+    K_tail≥4. `lax.scan` evaluates cells SEQUENTIALLY within a game;
+    games are still vmap'd in parallel outside this function (via the
+    kernel's game-axis vmap). Memory per game collapses to one
+    cell-state at a time; runtime grows ~N*M× per game but stays
+    O(N) instead of O(N*M) in compile-time tracing.
     """
     opp_id = (my_id + 1) % num_agents
-    L1 = MAX_LAUNCH_PER_AGENT
+    L = MAX_LAUNCH_PER_AGENT
+    L1 = L + 1  # candidate count per side (drop-one variants)
 
     def cell(
         u_p: jnp.ndarray, u_a: jnp.ndarray, u_s: jnp.ndarray,
@@ -176,9 +187,9 @@ def score_depth2_payoff_matrix(
         st1 = jax_step(state, p1, a1, s1)
 
         # Turn 2: us pass (no action), opp plays forced opp_v[j].
-        zero_p = jnp.full((L1,), -1, dtype=jnp.int32)
-        zero_a = jnp.zeros((L1,), dtype=jnp.float32)
-        zero_s = jnp.zeros((L1,), dtype=jnp.int32)
+        zero_p = jnp.full((L,), -1, dtype=jnp.int32)
+        zero_a = jnp.zeros((L,), dtype=jnp.float32)
+        zero_s = jnp.zeros((L,), dtype=jnp.int32)
         p2, a2, s2 = _pack_two_seat_action(
             zero_p, zero_a, zero_s,
             o_p, o_a, o_s,
@@ -200,15 +211,19 @@ def score_depth2_payoff_matrix(
         final, _ = jax.lax.scan(step_fn, st2, None, length=K_tail)
         return value_delta_ships(final, my_id=my_id).astype(jnp.float32)
 
-    # Inner vmap: vary opp axis (axis 0 of opp_v_*); fix our.
-    inner = jax.vmap(cell, in_axes=(None, None, None, 0, 0, 0))
-    # Outer vmap: vary our axis; broadcast opp inputs across.
-    outer = jax.vmap(inner, in_axes=(0, 0, 0, None, None, None))
-    payoff = outer(
-        our_v_pids, our_v_angles, our_v_ships,
-        opp_v_pids, opp_v_angles, opp_v_ships,
-    )
-    return payoff  # shape (L+1, L+1)
+    def scan_body(carry, idx):
+        # Decode flat cell index into (i, j). `idx` is JAX int32.
+        i = idx // L1
+        j = idx % L1
+        score = cell(
+            our_v_pids[i], our_v_angles[i], our_v_ships[i],
+            opp_v_pids[j], opp_v_angles[j], opp_v_ships[j],
+        )
+        return carry, score
+
+    indices = jnp.arange(L1 * L1, dtype=jnp.int32)
+    _, payoff_flat = jax.lax.scan(scan_body, None, indices)
+    return payoff_flat.reshape((L1, L1))
 
 
 def policy_emit_depth2_jax_pure(
