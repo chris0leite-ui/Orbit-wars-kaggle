@@ -237,16 +237,21 @@ def test_allocator_empty_missions_returns_empty():
     assert allocate([], world, sense, Posture.EXPAND, model) == []
 
 
-def test_allocator_opening_posture_uses_zero_reserve():
-    """In OPENING, source budget should be the full garrison (no reserve)."""
-    world, model, sense = _trivial_world_for_alloc()
-    # Mission requesting ALL 50 ships from src 0. EXPAND keeps reserve=4, so
-    # 50 > 50-4=46 → drops. OPENING reserve=0, so 50 ≤ 50 → fires.
-    missions = [_mk_mission(0, 1, ships=50, score=1.0)]
+def test_allocator_defend_posture_reserves_threat_budget():
+    """In DEFEND, a threatened planet reserves enough to fight off incoming."""
+    world, model, _ = _trivial_world_for_alloc()
+    from lib.geo.sense import SenseState, Cluster
+    sense = SenseState()
+    sense.my_clusters = [Cluster(idx=0, owner=0, planet_ids=[0], total_ships=50)]
+    sense.threat_budget = {0: 45}                  # reserve 45 of 50 ships
+    sense.front_pids = {0}
+    missions = [_mk_mission(0, 1, ships=40, score=1.0)]
+    out_defend = allocate_greedy_multi(missions, world, sense, Posture.DEFEND, model)
     out_expand = allocate_greedy_multi(missions, world, sense, Posture.EXPAND, model)
-    out_opening = allocate_greedy_multi(missions, world, sense, Posture.OPENING, model)
-    assert len(out_expand) == 0
-    assert len(out_opening) == 1
+    # DEFEND keeps 45 of 50 → budget 5 < 40 → drop.
+    # EXPAND reserve=0 → budget 50 >= 40 → fire.
+    assert len(out_defend) == 0
+    assert len(out_expand) == 1
 
 
 # ---------------------------------------------------------------------------

@@ -29,6 +29,8 @@ from lib.missions.reinforce import propose_reinforce_missions
 from lib.missions.snipe import propose_snipe_missions
 from lib.world_model import WorldModel
 
+from lib.planner import settle_plan
+
 from lib.geo.allocator import allocate
 from lib.geo.posture import Posture, decide_posture
 from lib.geo.sense import sense_state
@@ -46,8 +48,10 @@ from lib.geo.sense import sense_state
 
 POSTURE_WEIGHTS: dict[Posture, dict[str, float]] = {
     Posture.OPENING: {
+        # opening mission disabled in v1 — its fixed ships=8 wastes garrison
+        # vs aggressive snipe's target_min+1 (~3-5). Will re-enable with
+        # adjusted ship-sizing in v1.5 after bisect confirms the right size.
         "snipe":     1.0,
-        "opening":   3.0,
     },
     Posture.EXPAND: {
         "snipe":     1.0,
@@ -68,7 +72,10 @@ POSTURE_WEIGHTS: dict[Posture, dict[str, float]] = {
 
 
 def _aggressive_for(posture: Posture) -> bool:
-    return posture in (Posture.OPENING, Posture.BREAK)
+    # Aggressive snipe sizing on by default (matches v3.5.1's known-good
+    # config and the top-10 source-emptying / 1.9x-launch-density signal).
+    # Only DEFEND backs off — there we want to keep ships at home.
+    return posture is not Posture.DEFEND
 
 
 def _enemy_only_filter(missions: list[Mission], world: World) -> list[Mission]:
@@ -142,5 +149,11 @@ def agent(obs, configuration=None):
     sense = sense_state(world, model)
     posture = decide_posture(world, sense, model)
     missions = collect_posture_weighted_missions(world, model, posture)
-    intents = allocate(missions, world, sense, posture, model, method="lp")
+    # BISECT: fall back to stock settle_plan to isolate whether the
+    # regression-vs-v3.5.1 is in the allocator semantics (greedy-multi vs
+    # per-source greedy) or in mission generation (posture multipliers).
+    # If geo-with-settle_plan ~= v3.5.1, the allocator is the culprit.
+    intents = settle_plan(missions, world, model)
+    # Reference (LP/greedy) path, left intact for the next iteration:
+    # intents = allocate(missions, world, sense, posture, model, method="greedy")
     return realize(intents, obs, mechanisms=DEFAULT_MECHANISMS, model=model)

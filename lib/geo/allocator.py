@@ -43,7 +43,7 @@ from lib.geo.sense import SenseState
 # Tunables
 # ---------------------------------------------------------------------------
 
-MIN_GARRISON_EXPAND = 4    # small reserve in EXPAND posture
+MIN_GARRISON_EXPAND = 0    # empty everything — top-10 signal (garrison 10.6 vs midpack 22)
 LP_WALLCLOCK_CAP_MS = 200  # hard cap on LP solve time; fall back to greedy beyond
 
 
