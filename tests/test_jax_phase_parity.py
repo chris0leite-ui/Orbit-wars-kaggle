@@ -381,6 +381,52 @@ def test_fleet_launch_subtracts_ships_and_creates_fleet():
     assert float(new_gs.fleets_y[new_slot]) == pytest.approx(expected_sy, abs=1e-5)
 
 
+def test_fleet_movement_no_fleets_is_noop():
+    """fleet_movement with no live fleets returns same state + all -1 hits."""
+    from lib.game.jax import fleet_movement
+    env, gs = _build_state(42)
+    new_gs, hits = fleet_movement(gs)
+    # No live fleets at game start.
+    assert int(np.sum(np.asarray(gs.fleets_alive))) == 0
+    assert int(np.sum(np.asarray(new_gs.fleets_alive))) == 0
+    # All hit slots are -1 (no collisions).
+    assert int(np.max(np.asarray(hits))) == -1
+
+
+def test_fleet_movement_single_fleet_moves():
+    """Launch one fleet, then move — expect new position = old + cos/sin*speed."""
+    from lib.game.jax import fleet_launch, fleet_movement
+    env, gs = _build_state(42)
+    # Find an owned planet and launch a fleet aimed at angle = 0 (east).
+    my_p = next(p for p in env.state[0].observation.planets if p[1] == 0 and p[5] > 5)
+    pid = my_p[0]
+    ships = int(my_p[5]) // 2
+    actions = _build_padded_actions([[(pid, 0.0, ships)], []])
+    after_launch = fleet_launch(gs, *actions)
+
+    # Find the launched fleet's slot.
+    new_slot = int(np.argmax(
+        np.asarray(after_launch.fleets_alive) & ~np.asarray(gs.fleets_alive)
+    ))
+    ox = float(after_launch.fleets_x[new_slot])
+    oy = float(after_launch.fleets_y[new_slot])
+
+    after_move, hits = fleet_movement(after_launch)
+    nx = float(after_move.fleets_x[new_slot])
+    ny = float(after_move.fleets_y[new_slot])
+
+    # Expected speed: 1 + (6-1) * (log(ships)/log(1000))^1.5, capped at 6
+    speed = 1.0 + (6.0 - 1.0) * (math.log(ships) / math.log(1000)) ** 1.5
+    speed = min(speed, 6.0)
+    # Angle was 0 → moves east (+x).
+    assert nx == pytest.approx(ox + math.cos(0.0) * speed, abs=1e-4)
+    assert ny == pytest.approx(oy + math.sin(0.0) * speed, abs=1e-4)
+    # Should NOT hit a planet on the first move (immediate ejection).
+    assert int(hits[new_slot]) == -1
+    # Fleet still alive (unless launched into sun/OOB — unlikely at game start).
+    assert bool(after_move.fleets_alive[new_slot]) is True
+
+
 def test_fleet_launch_rejects_unowned_overlimit_zero_ship():
     """fleet_launch validation: rejects launches that violate constraints."""
     from lib.game.jax import fleet_launch

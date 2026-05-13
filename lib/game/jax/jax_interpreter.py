@@ -330,6 +330,101 @@ def fleet_launch(
     )
 
 
+def fleet_movement(
+    state: GameState,
+    max_speed: float = 6.0,
+) -> tuple[GameState, jnp.ndarray]:
+    """Move fleets, detect planet/OOB/sun collisions, return new state +
+    `fleet_hits_planet[F]` (planet slot index per fleet, or -1).
+
+    Mirror of `lib/game/interpreter.py:568-609`. Three checks per fleet,
+    in scalar interpreter order:
+      1. Sweep collision against every planet → first hit consumes the
+         fleet AND queues it for combat at that planet.
+      2. OOB (post-move position outside board) → fleet just dies.
+      3. Sun (path-segment crosses sun) → fleet just dies.
+
+    Uses OLD planet positions (`planets_x/y`) as segment start and NEW
+    planet positions (`planets_new_x/y` written by planet_path_compute
+    + comet_path_advance earlier this step) as segment end. This
+    matches the scalar interpreter's "swept-pair over the tick" math.
+
+    `swept_pair_hit_batch` handles the F×P broadcast on numpy/JAX —
+    JIT-friendly; vmap'd it scales naturally with N games.
+    """
+    # Per-fleet speed: 1 + (max_speed-1) * (log(ships)/log(1000))^1.5,
+    # capped at max_speed. Mirrors scalar interpreter:574-578.
+    max_speed_f = jnp.float32(max_speed)
+    log1000 = jnp.log(jnp.float32(1000.0))
+    ships_f = state.fleets_ships.astype(jnp.float32)
+    # Guard log(0) for dead-slot fleets (ships=0). Their speed is
+    # irrelevant since fleets_alive masks them out everywhere.
+    log_ships = jnp.log(jnp.maximum(ships_f, jnp.float32(1.0)))
+    speed = jnp.float32(1.0) + (max_speed_f - 1.0) * (log_ships / log1000) ** 1.5
+    speed = jnp.minimum(speed, max_speed_f)
+
+    fold_x = state.fleets_x
+    fold_y = state.fleets_y
+    fnew_x = fold_x + jnp.cos(state.fleets_angle) * speed
+    fnew_y = fold_y + jnp.sin(state.fleets_angle) * speed
+
+    # Build planet arrays for swept-pair: OLD = planets_x/y, NEW = planets_new_x/y.
+    pold = jnp.stack([state.planets_x, state.planets_y], axis=-1)
+    pnew = jnp.stack([state.planets_new_x, state.planets_new_y], axis=-1)
+    pr = state.planets_radius
+    fold = jnp.stack([fold_x, fold_y], axis=-1)
+    fnew = jnp.stack([fnew_x, fnew_y], axis=-1)
+
+    # F×P collision. Mask dead planets + first-spawn comets (old_x = -99).
+    raw_hit = swept_pair_hit_batch(fold, fnew, pold, pnew, pr)  # (F, P) bool
+    planet_check = state.planets_alive & (state.planets_x >= jnp.float32(0.0))
+    hit_matrix = raw_hit & planet_check[None, :] & state.fleets_alive[:, None]
+
+    # First-hit per fleet.
+    fleet_any_hit = jnp.any(hit_matrix, axis=1)
+    fleet_first_hit = jnp.argmax(hit_matrix.astype(jnp.int32), axis=1)
+    fleet_hits_planet = jnp.where(fleet_any_hit, fleet_first_hit, jnp.int32(-1))
+
+    # OOB on NEW position.
+    in_bounds = (
+        (fnew_x >= jnp.float32(0.0)) & (fnew_x <= jnp.float32(BOARD_SIZE))
+        & (fnew_y >= jnp.float32(0.0)) & (fnew_y <= jnp.float32(BOARD_SIZE))
+    )
+
+    # Sun: inline `point_to_segment_distance((CENTER, CENTER), old, new)`.
+    cx = jnp.float32(CENTER); cy = jnp.float32(CENTER)
+    vx = fold_x; vy = fold_y
+    wx = fnew_x; wy = fnew_y
+    dxs = vx - wx
+    dys = vy - wy
+    l2 = dxs * dxs + dys * dys
+    l2_safe = jnp.maximum(l2, jnp.float32(1e-12))
+    t = ((cx - vx) * (wx - vx) + (cy - vy) * (wy - vy)) / l2_safe
+    t = jnp.clip(t, jnp.float32(0.0), jnp.float32(1.0))
+    px = vx + t * (wx - vx)
+    py = vy + t * (wy - vy)
+    sun_dist_seg = jnp.sqrt((px - cx) ** 2 + (py - cy) ** 2)
+    # Degenerate l2 ≈ 0: distance is just |v - center|.
+    sun_dist_pt = jnp.sqrt((vx - cx) ** 2 + (vy - cy) ** 2)
+    sun_dist = jnp.where(l2 < jnp.float32(1e-12), sun_dist_pt, sun_dist_seg)
+    sun_hit = sun_dist < jnp.float32(SUN_RADIUS)
+
+    # Update fleet positions (only live fleets).
+    new_fleets_x = jnp.where(state.fleets_alive, fnew_x, state.fleets_x)
+    new_fleets_y = jnp.where(state.fleets_alive, fnew_y, state.fleets_y)
+
+    # Dead this step: hit planet OR OOB OR sun. (Of live fleets.)
+    dies = state.fleets_alive & (fleet_any_hit | ~in_bounds | sun_hit)
+    new_fleets_alive = state.fleets_alive & ~dies
+
+    new_state = state._replace(
+        fleets_x=new_fleets_x,
+        fleets_y=new_fleets_y,
+        fleets_alive=new_fleets_alive,
+    )
+    return new_state, fleet_hits_planet
+
+
 def apply_planet_movement(state: GameState) -> GameState:
     """Copy `planets_new_x/y` → `planets_x/y` for surviving planets.
 
@@ -577,5 +672,6 @@ comet_path_advance_jit = jax.jit(comet_path_advance)
 comet_spawn_jit = jax.jit(comet_spawn)
 apply_planet_movement_jit = jax.jit(apply_planet_movement)
 fleet_launch_jit = jax.jit(fleet_launch)
+fleet_movement_jit = jax.jit(fleet_movement)
 swept_pair_hit_batch_jit = jax.jit(swept_pair_hit_batch)
 jax_step_partial_jit = jax.jit(jax_step_partial)
