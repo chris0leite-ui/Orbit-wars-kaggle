@@ -84,6 +84,18 @@ def horizon(step: int, eta: int, t_total: int = T_TOTAL_DEFAULT) -> int:
 PV_GAMMA = 1.0
 
 
+# Sensitivity coefficient for the 3-NN allegiance danger field (H17 /
+# TID 699003). Multiplicative on snipe + reinforce score:
+#     score *= max(MIN_DANGER3_MULT, 1.0 + DANGER3_KAPPA · danger_3nn(target))
+# At κ=0 the field has no effect — preserves the snipe/reinforce score
+# numerics for the existing parity tests. Typical A/B candidate values
+# are 0.1-0.3 (each ally-neighbour boosts score by 10-30 %, each enemy
+# discounts it by the same). `MIN_DANGER3_MULT` clamps the multiplier
+# above zero so a 3-enemy neighbourhood at κ ≥ 1/3 doesn't zero the score.
+DANGER3_KAPPA = 0.0
+MIN_DANGER3_MULT = 0.05
+
+
 def pv_horizon(
     step: int, eta: int, gamma: float = PV_GAMMA,
     t_total: int = T_TOTAL_DEFAULT,

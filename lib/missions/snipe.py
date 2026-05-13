@@ -35,9 +35,10 @@ from __future__ import annotations
 import math
 
 from lib.fleet import speed as fleet_speed
+from lib.geometry import danger_3nn
 from lib.intent import World
 from lib.mission import Mission
-from lib.scoring import PV_GAMMA, pv_horizon
+from lib.scoring import DANGER3_KAPPA, MIN_DANGER3_MULT, PV_GAMMA, pv_horizon
 from lib.world_model import WorldModel, comet_remaining_lifetime
 
 # sym_hypot was imported here for the σ-equiv layer (cherry-picked
@@ -273,6 +274,15 @@ def propose_snipe_missions(
             score = priority * value / (
                 base_ships + d + AIRTIME_PENALTY_WEIGHT * eta + 1.0
             )
+            # 3-NN allegiance danger map (H17). At κ=0 (default) the
+            # multiplier is exactly 1.0 — no effect on existing tests.
+            if DANGER3_KAPPA != 0.0:
+                d3 = danger_3nn(
+                    (t.x, t.y), t.id,
+                    list(world.planets_by_id.values()),
+                    world.my_id,
+                )
+                score *= max(MIN_DANGER3_MULT, 1.0 + DANGER3_KAPPA * d3)
 
             missions.append(Mission(
                 mission_class="snipe",

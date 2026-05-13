@@ -29,9 +29,10 @@ from __future__ import annotations
 import math
 
 from lib.fleet import speed as fleet_speed
+from lib.geometry import danger_3nn
 from lib.intent import World
 from lib.mission import Mission
-from lib.scoring import PV_GAMMA, pv_horizon
+from lib.scoring import DANGER3_KAPPA, MIN_DANGER3_MULT, PV_GAMMA, pv_horizon
 from lib.world_model import WorldModel
 
 EPISODE_STEPS = 500
@@ -96,6 +97,19 @@ def propose_reinforce_missions(
             )
             value = d.production * time_to_hold
             score = value / (cost + d_dist + 1.0)
+            # 3-NN allegiance danger map (H17). κ=0 (default) is identity.
+            # Same sign as snipe: a planet in our cluster is worth more
+            # to defend (we'll hold it and gain a contiguous block);
+            # a planet surrounded by enemies is harder to keep — even
+            # if defended now, it'll cycle back to them in a few turns,
+            # so de-prioritise reinforcement of isolated salient planets.
+            if DANGER3_KAPPA != 0.0:
+                d3 = danger_3nn(
+                    (d.x, d.y), d.id,
+                    list(world.planets_by_id.values()),
+                    world.my_id,
+                )
+                score *= max(MIN_DANGER3_MULT, 1.0 + DANGER3_KAPPA * d3)
             missions.append(Mission(
                 mission_class="reinforce",
                 src_id=s.id,
