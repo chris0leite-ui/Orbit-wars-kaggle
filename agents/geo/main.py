@@ -146,14 +146,14 @@ def agent(obs, configuration=None):
     if not world.planets_by_id:
         return []
     model = WorldModel.from_world(world)
-    sense = sense_state(world, model)
-    posture = decide_posture(world, sense, model)
-    missions = collect_posture_weighted_missions(world, model, posture)
-    # BISECT: fall back to stock settle_plan to isolate whether the
-    # regression-vs-v3.5.1 is in the allocator semantics (greedy-multi vs
-    # per-source greedy) or in mission generation (posture multipliers).
-    # If geo-with-settle_plan ~= v3.5.1, the allocator is the culprit.
+    # BISECT 2: geo == v3.5.1 source-pipeline EXACTLY (no posture, no
+    # recapture, no allocator, no sense). Establishes whether the source
+    # pipeline matches the bundled v3.5.1 (~50% self-play) or has drifted
+    # since the bundle was frozen (loses systematically). Establishes the
+    # ceiling against which we layer back posture / recapture / allocator.
+    missions = (
+        propose_snipe_missions(world, model, aggressive=True)
+        + propose_reinforce_missions(world, model)
+    )
     intents = settle_plan(missions, world, model)
-    # Reference (LP/greedy) path, left intact for the next iteration:
-    # intents = allocate(missions, world, sense, posture, model, method="greedy")
     return realize(intents, obs, mechanisms=DEFAULT_MECHANISMS, model=model)
