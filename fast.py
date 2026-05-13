@@ -137,6 +137,10 @@ def resolve_agent_spec(spec: str) -> tuple[str, str]:
             raise FileNotFoundError(f"{p} is a directory but has no main.py")
         return (p.name, str(main_py.resolve()))
     if p.is_file():
+        # Prefer the agents/<dir>/main.py convention's directory name
+        # over the literal "main" stem for display.
+        if p.name == "main.py" and p.parent != p.parent.parent:
+            return (p.parent.name, str(p.resolve()))
         return (p.stem, str(p.resolve()))
     raise FileNotFoundError(f"unknown agent spec: {spec!r}")
 
