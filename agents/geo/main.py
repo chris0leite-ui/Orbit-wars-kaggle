@@ -61,10 +61,14 @@ POSTURE_WEIGHTS: dict[Posture, dict[str, float]] = {
 
 
 def _aggressive_for(posture: Posture) -> bool:
-    # Aggressive snipe sizing on by default (matches v3.5.1's known-good
-    # config and the top-10 source-emptying / 1.9x-launch-density signal).
-    # Only DEFEND backs off — there we want to keep ships at home.
-    return posture is not Posture.DEFEND
+    # Always aggressive=True. The "back off to non-aggressive in DEFEND"
+    # heuristic regressed -22pp in isolation testing because non-aggressive
+    # sizing is dominated by aggressive in every situation we have data for
+    # (v3_snipe vs v3.5.1: 56.6% Wilson lower bound).
+    # Defensive shaping in v1.5 happens via per-source SHIP RESERVE in the
+    # allocator, not by changing the snipe sizing formula.
+    _ = posture
+    return True
 
 
 def _enemy_only_filter(missions: list[Mission], world: World) -> list[Mission]:
