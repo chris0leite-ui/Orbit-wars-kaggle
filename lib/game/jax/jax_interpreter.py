@@ -425,6 +425,179 @@ def fleet_movement(
     return new_state, fleet_hits_planet
 
 
+def combat_resolution(
+    state: GameState,
+    fleet_hits_planet: jnp.ndarray,
+) -> GameState:
+    """Apply combat at every planet that took incoming fleets.
+
+    Mirror of `lib/game/interpreter.py:635-675`. Per-planet:
+      1. Sum incoming ships per owner.
+      2. Top owner wins with `top_ships - second_ships` survivors;
+         tie (top == second) means all-out, survivors = 0.
+      3. If survivors > 0 vs current planet:
+         - same owner → ships += survivors
+         - different owner → ships -= survivors; if goes negative,
+           flip owner and ships = abs(remaining).
+
+    `fleet_hits_planet[F]` is from `fleet_movement` — entry i is the
+    planet slot fleet i collided with, or -1 if no collision.
+
+    Vectorised: scatter-sum ships into a (P, MAX_AGENTS) grid keyed by
+    (hit_planet, fleet_owner), then vmap the per-planet resolution.
+    """
+    # Build (P, A) grid of incoming ships per (planet, owner).
+    P, A = MAX_PLANETS, MAX_AGENTS
+
+    hit_valid = fleet_hits_planet >= 0
+    owner_valid = state.fleets_owner >= 0
+    valid = hit_valid & owner_valid
+
+    safe_p = jnp.where(valid, fleet_hits_planet, jnp.int32(0))
+    safe_o = jnp.where(valid, state.fleets_owner, jnp.int32(0))
+    contribution = jnp.where(valid, state.fleets_ships, jnp.int32(0))
+
+    ships_grid = jnp.zeros((P, A), dtype=jnp.int32)
+    ships_grid = ships_grid.at[safe_p, safe_o].add(contribution)
+    # shape (P, A) — ships_grid[p, o] = ships owner `o` sent to planet `p`.
+
+    # Per-planet resolution: vmap over P axis.
+    def _resolve_one(owner_now, ships_now, by_owner):
+        # by_owner: (A,) int32, ships per attacker
+        top_owner = jnp.argmax(by_owner)
+        top_ships = by_owner[top_owner]
+        # Mask top owner out to find runner-up; -1 sentinel becomes 0
+        # after maximum(., 0) so single-attacker case has second=0.
+        masked = by_owner.at[top_owner].set(jnp.int32(-1))
+        second_owner = jnp.argmax(masked)
+        second_ships = jnp.maximum(masked[second_owner], jnp.int32(0))
+
+        has_combat = top_ships > 0
+        is_tie = top_ships == second_ships
+        survivor_ships = jnp.where(
+            is_tie, jnp.int32(0), top_ships - second_ships
+        )
+        survivor_owner = jnp.where(
+            survivor_ships > 0, top_owner, jnp.int32(-1)
+        )
+
+        # Resolve ownership change.
+        same_owner = owner_now == survivor_owner
+        attacker_overflow = survivor_ships - ships_now  # if positive, attacker wins
+
+        # If survivor_ships > 0 and survivor_owner != current:
+        #   ships_now -= survivor_ships
+        #   if ships_now < 0:
+        #     planet owner = survivor_owner
+        #     planet ships = abs(remaining)
+        new_ships_same = ships_now + survivor_ships
+        new_ships_diff_held = ships_now - survivor_ships  # still owned by current
+        new_ships_diff_flip = jnp.abs(new_ships_diff_held)
+        ships_overflow = ships_now < survivor_ships
+        new_ships_diff = jnp.where(
+            ships_overflow, new_ships_diff_flip, new_ships_diff_held
+        )
+        new_owner_diff = jnp.where(ships_overflow, survivor_owner, owner_now)
+
+        applies = has_combat & (survivor_ships > 0)
+        new_ships = jnp.where(
+            applies,
+            jnp.where(same_owner, new_ships_same, new_ships_diff),
+            ships_now,
+        )
+        new_owner = jnp.where(
+            applies & ~same_owner, new_owner_diff, owner_now
+        )
+        return new_owner, new_ships
+
+    new_owners, new_ships = jax.vmap(_resolve_one)(
+        state.planets_owner, state.planets_ships, ships_grid
+    )
+
+    # Mask updates: only apply to planets that took fleets AND are alive.
+    any_incoming = jnp.any(ships_grid > 0, axis=1)
+    update_mask = any_incoming & state.planets_alive
+    final_owner = jnp.where(update_mask, new_owners, state.planets_owner)
+    final_ships = jnp.where(update_mask, new_ships, state.planets_ships)
+
+    return state._replace(
+        planets_owner=final_owner,
+        planets_ships=final_ships,
+    )
+
+
+def terminate(state: GameState, episode_steps: int = 500) -> GameState:
+    """Check termination + compute rewards.
+
+    Mirror of `lib/game/interpreter.py:684-717`. Terminates if:
+      - step >= episodeSteps - 2 (time limit), OR
+      - ≤ 1 alive player remains (alive = owns a planet or has a fleet).
+
+    On termination: scores[i] = sum of (planets_ships) on planets owned
+    by i + sum of fleets_ships of fleets owned by i. Max scorer gets
+    reward +1 (if max > 0); others get -1. If max == 0 all -1.
+    """
+    # Alive player set: anyone who owns a planet OR has a fleet in flight.
+    A = MAX_AGENTS
+    agent_ids = jnp.arange(A)
+    owns_planet = jnp.any(
+        (state.planets_owner[None, :] == agent_ids[:, None])
+        & state.planets_alive[None, :],
+        axis=1,
+    )  # (A,)
+    has_fleet = jnp.any(
+        (state.fleets_owner[None, :] == agent_ids[:, None])
+        & state.fleets_alive[None, :],
+        axis=1,
+    )  # (A,)
+    alive_players = owns_planet | has_fleet
+    n_alive = jnp.sum(alive_players.astype(jnp.int32))
+
+    time_up = state.step >= jnp.int32(episode_steps - 2)
+    is_terminated = time_up | (n_alive <= 1)
+
+    # Scores per agent: sum planets_ships where owner == agent
+    #                 + sum fleets_ships where owner == agent
+    planet_scores = jnp.zeros(A, dtype=jnp.int32)
+    fleet_scores = jnp.zeros(A, dtype=jnp.int32)
+
+    # Vectorised: for each agent, mask + sum
+    def _agent_score(a):
+        p_mask = (state.planets_owner == a) & state.planets_alive
+        p_sum = jnp.sum(jnp.where(p_mask, state.planets_ships, jnp.int32(0)))
+        f_mask = (state.fleets_owner == a) & state.fleets_alive
+        f_sum = jnp.sum(jnp.where(f_mask, state.fleets_ships, jnp.int32(0)))
+        return p_sum + f_sum
+
+    scores = jax.vmap(_agent_score)(jnp.arange(A))  # (A,)
+    max_score = jnp.max(scores)
+    is_winner = (scores == max_score) & (max_score > 0)
+    new_rewards = jnp.where(
+        is_terminated,
+        jnp.where(is_winner, jnp.int32(1), jnp.int32(-1)),
+        state.rewards,
+    )
+
+    return state._replace(done=is_terminated, rewards=new_rewards)
+
+
+def remove_expired_comets_mid_step(state: GameState) -> GameState:
+    """Second-pass comet expiration after fleet movement.
+
+    Mirror of `lib/game/interpreter.py:617-633`. The scalar code's
+    first comet-expire pass (at top of step) catches comets whose
+    path index ran out BEFORE this step. The second pass — here —
+    catches comets that ran out AFTER comet_path_advance bumped their
+    index this step.
+
+    In our JAX flow, `comet_path_advance` already marks newly-expired
+    comets as not-alive (planets_alive=False). So this second pass is
+    structurally a no-op — but we keep the function as a clear
+    semantic checkpoint in `jax_step` and for future bugfixes.
+    """
+    return state
+
+
 def apply_planet_movement(state: GameState) -> GameState:
     """Copy `planets_new_x/y` → `planets_x/y` for surviving planets.
 
@@ -647,6 +820,52 @@ def swept_pair_hit_batch(
     return jnp.where(a_small, hit_degenerate, hit_full)
 
 
+def jax_step(
+    state: GameState,
+    actions_pid: jnp.ndarray,
+    actions_angle: jnp.ndarray,
+    actions_ships: jnp.ndarray,
+    max_speed: float = 6.0,
+    episode_steps: int = 500,
+) -> GameState:
+    """Apply one full game tick. Mirror of `lib/game/interpreter.py`
+    (post-init body, lines 406-717). Chains all 11 phases in scalar
+    order:
+
+      1. comet_expire (first pass)
+      2. comet_spawn (if step+1 in COMET_SPAWN_STEPS)
+      3. fleet_launch (from actions)
+      4. production_tick (per-planet ships += prod)
+      5. planet_path_compute (writes planets_new_*)
+      6. comet_path_advance (writes planets_new_* + path_index)
+      7. fleet_movement (uses planets_new_* for sweep collision)
+      8. apply_planet_movement (planets_* := planets_new_*)
+      9. remove_expired_comets_mid_step
+     10. combat_resolution (per-planet ownership flip from fleet hits)
+     11. terminate (max-score → rewards if done)
+
+    Then step += 1.
+
+    Bit-exact-ish parity with the scalar interpreter — modulo JAX
+    float-ordering on the few reductions (segment_sum, max). The
+    end-to-end parity test in `tests/test_jax_full_step_parity.py`
+    enforces zero combat divergence and float tolerance ≤ 1e-5 for
+    positions.
+    """
+    state = comet_expire(state)
+    state = comet_spawn(state)
+    state = fleet_launch(state, actions_pid, actions_angle, actions_ships)
+    state = production_tick(state)
+    state = planet_path_compute(state)
+    state = comet_path_advance(state)
+    state, fleet_hits_planet = fleet_movement(state, max_speed=max_speed)
+    state = apply_planet_movement(state)
+    state = remove_expired_comets_mid_step(state)
+    state = combat_resolution(state, fleet_hits_planet)
+    state = terminate(state, episode_steps=episode_steps)
+    return state._replace(step=state.step + jnp.int32(1))
+
+
 # Convenience: a partial `jax_step` covering ONLY the phases ported so
 # far. Useful for parity-testing the implemented phases in isolation.
 # The full jax_step (sub-phase 1c) will chain ALL phases.
@@ -673,5 +892,8 @@ comet_spawn_jit = jax.jit(comet_spawn)
 apply_planet_movement_jit = jax.jit(apply_planet_movement)
 fleet_launch_jit = jax.jit(fleet_launch)
 fleet_movement_jit = jax.jit(fleet_movement)
+combat_resolution_jit = jax.jit(combat_resolution)
+terminate_jit = jax.jit(terminate)
+jax_step_jit = jax.jit(jax_step)
 swept_pair_hit_batch_jit = jax.jit(swept_pair_hit_batch)
 jax_step_partial_jit = jax.jit(jax_step_partial)

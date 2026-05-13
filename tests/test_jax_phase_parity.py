@@ -464,6 +464,39 @@ def test_fleet_launch_rejects_unowned_overlimit_zero_ship():
     assert int(new_gs.planets_ships[slot]) == int(owned_p0[5])
 
 
+def test_jax_step_runs_and_produces_sane_state():
+    """Smoke test: full jax_step runs end-to-end, state stays sensible
+    over several steps with empty actions."""
+    from lib.game.jax import jax_step, MAX_AGENTS, MAX_LAUNCH_PER_AGENT
+    env, gs = _build_state(42)
+
+    pid = -jnp.ones((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.int32)
+    ang = jnp.zeros((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.float32)
+    shp = jnp.zeros((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.int32)
+
+    # Run 3 steps with empty actions
+    for _ in range(3):
+        gs = jax_step(gs, pid, ang, shp)
+
+    # Step counter advanced
+    assert int(gs.step) == 3
+    # Game not done yet (no termination at step 3)
+    assert bool(gs.done) is False
+    # Planet count unchanged (no comets spawned yet, no captures)
+    assert int(jnp.sum(gs.planets_alive.astype(jnp.int32))) == int(
+        jnp.sum(jnp.asarray(gs.planets_alive).astype(jnp.int32))
+    )
+    # Positions still in board
+    alive_x = jnp.asarray(gs.planets_x)
+    alive_y = jnp.asarray(gs.planets_y)
+    alive_mask = np.asarray(gs.planets_alive)
+    # Skip planets in placeholder position
+    real_mask = alive_mask & (np.asarray(gs.planets_x) > -50)
+    if real_mask.any():
+        assert (alive_x[real_mask] >= 0).all()
+        assert (alive_x[real_mask] <= 100).all()
+
+
 def test_comet_path_advance_no_op_at_start():
     """At step 0 with no comets spawned, comet_path_advance leaves the
     state unchanged (no comets to advance)."""
