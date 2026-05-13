@@ -1,6 +1,6 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-13 LATE by `claude/read-handover-iLWTq`.
+> Last written: 2026-05-13 LATE-2 by `claude/read-handover-iLWTq`.
 > Format budget ≤ 160 lines. Prior wraps archived under
 > `audit/archive-2026-05-1*-handover-*.md`.
 
@@ -82,19 +82,26 @@ exactly the fix; ship it.
 
 ## Falsified / risks
 
-- **Bundler parity gate fails on v7_1 / v7_2** with non-deterministic
-  divergence on 1 / 528 turns. Root cause: module-level mutable state
-  somewhere (suspected: a downstream consumer of mission `note` field,
-  or `_RecaptureState` in `lib/missions/recapture.py` despite v7_0's
-  `include_recapture=False`). **Workaround:** `--skip-parity-gate`
-  during bundling. The agent behaves identically in repeated games (the
-  divergence is between source-on-one-process and bundle-on-another).
-  Live ladder games run a single process per agent, so the divergence
-  is harmless on Kaggle. **Investigate before submitting.**
-- **The 10-min 16-seed A/B got stuck on CPU contention** with parallel
-  pytest + JAX A/B. Killed; rerunning standalone in background. If the
-  standalone 16-seed clears Wilson lo ≥ 55 % vs v7_0, the v7_1 submit
-  decision is made.
+- ~~Bundler parity gate fails on v7_1 / v7_2 with non-deterministic
+  divergence on 1 / 528 turns. Suspected module-level mutable state.~~
+  **FIXED this session (commit `07ef918`).** Real root cause was the
+  `time.perf_counter()`-based wallclock watchdog in `lib/v7_search`
+  choosers: when the 700 ms budget bailed mid-candidate-list under CPU
+  jitter, argmax ranged over different subsets and picked differently.
+  Same `obs`, same process — different output. Fix: new
+  `_effective_wallclock_ms` helper consults an `ORBIT_WARS_PARITY_
+  WALLCLOCK_MS` env var; `_parity_gate` in `scripts/bundle_agent.py`
+  sets it to 60000 ms via try/finally. Production-path wallclock is
+  unchanged. Verified: end-to-end gate clean on seed 0; multi-seed
+  probe sweep (find_parity_bug) clean across 2480 turns on seeds 0–2
+  (seed 3 hit a probe timeout under the now-slower unbounded budget;
+  no mismatches emitted before cutoff).
+- A prior commit (`5ae24a1`) added an exception-safe context manager
+  for the `_shared_world_model` attach/detach. That fix is correct on
+  engineering grounds (replaces a bare-`del` with try/finally) but
+  was a misdiagnosis of the parity bug — kept for the defensive
+  cleanup; not load-bearing for parity. See postmortem
+  `audit/2026-05-13-postmortem-read-handover-iLWTq.md`.
 
 ## Next-session first-actions
 
@@ -103,22 +110,24 @@ exactly the fix; ship it.
    B_USE_OPENING=0` knobs. ~1.5 min wallclock on T4 (vs the 13 min CPU
    run we did). The scalar 32-game result (53.1 %, Wilson lo 36.4 %)
    is underpowered; the 64-game JAX result is the gate decision.
+   Bundler parity is now clean — submissions can drop the
+   `--skip-parity-gate` workaround.
 2. **If JAX A/B clears Wilson lo ≥ 55 %, submit
    `v7_1_open_drop_comets`** (#3rd push, evicts v4_planner from
    rolling-last-2). Decision must be PI-signed; the diagnostic
    confirms H11 is targeting the right loss bucket (68 % opening-lost).
-3. **Investigate the bundler parity-gate divergence.** Module-level
-   mutable state causes 1/528-turn launch-list non-determinism
-   between source and bundle when called in the same process. v7_1
-   and v7_2 currently bundled via `--skip-parity-gate`. Either fix
-   the state or relax the gate threshold.
-4. **Port `choose_depth2` to JAX** for fast A/B testing of v7_2.
+3. **Port `choose_depth2` to JAX** for fast A/B testing of v7_2.
    Nested vmap over (our_cand × opp_cand). ~250 LOC; deferred this
    session.
-5. **If v7_1 ships and lifts μ, queue v7_2 (depth-2 chooser) gated by
+4. **If v7_1 ships and lifts μ, queue v7_2 (depth-2 chooser) gated by
    a 64-seed A/B vs the new v7_1 incumbent.** The 14.8 % oracle
    disagreement suggests +5-10 pp expected lift if the depth-2 picks
    are systematically better.
+5. **Decide on a "reproduce-before-fix" rule for non-deterministic
+   bugs.** PI declined to promote this session, but the misdiagnosis
+   cost ~1 h. See postmortem
+   `audit/2026-05-13-postmortem-read-handover-iLWTq.md` if you want
+   to revisit.
 
 ## Out of scope for next session
 
@@ -130,7 +139,16 @@ exactly the fix; ship it.
 ## Pointers — this-session deliverables
 
 - `lib/v7_search.py` — opening wire (line 50, 142); `choose_depth2` +
-  `choose_depth2_with_4p` (~200 LOC).
+  `choose_depth2_with_4p` (~200 LOC); `_bind_shared_world_model`
+  context manager + `_effective_wallclock_ms` env-var override
+  helper.
+- `scripts/bundle_agent.py` — `_parity_gate` now sets
+  `ORBIT_WARS_PARITY_WALLCLOCK_MS=60000` for the parity comparison
+  via try/finally.
+- `tests/test_v7_search_shared_model_cleanup.py` — 9 unit tests
+  pinning both invariants (5 cleanup, 4 wallclock override).
+- `audit/2026-05-13-postmortem-read-handover-iLWTq.md` — this
+  session's postmortem.
 - `lib/missions/snipe.py:236-243` — H15 hard reject.
 - `lib/missions/opening.py` — unchanged (built in prior session;
   unit-tested).
