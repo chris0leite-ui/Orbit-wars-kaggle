@@ -128,3 +128,73 @@ def test_fleet_speed_batch_parity():
         assert abs(float(jax_speeds[i]) - expected) < 1e-4, (
             f"ships={n}: jax={jax_speeds[i]}, scalar={expected}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 2b: build_arrival_grid parity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", [0, 7, 42])
+def test_build_arrival_grid_parity(seed):
+    """JAX arrival grid (P, H+1, A) matches scalar `build_arrival_ledger`
+    when aggregated by owner per (planet, step). Tests post-mid-game
+    state with multiple in-flight fleets."""
+    from lib.world_model import build_arrival_ledger, DEFAULT_HORIZON
+    from lib.game.jax.jax_world_model import build_arrival_grid
+    from lib.game.jax import scalar_to_jax
+
+    env = make("orbit_wars", configuration={"seed": seed})
+    env.reset(num_agents=2)
+    _spawn_in_flight_fleets(env, num_agents=2, n_steps=20, rng_seed=seed * 7 + 1)
+    fleets_raw = list(env.state[0].observation.fleets)
+    if not fleets_raw:
+        pytest.skip(f"seed {seed} produced no in-flight fleets")
+
+    # Build the JAX GameState + arrival grid.
+    gs = scalar_to_jax(env.state, env.info["seed"])
+    H = DEFAULT_HORIZON
+    A = 4
+    jax_grid = np.asarray(build_arrival_grid(gs, max_horizon=H, num_agents=A))
+    # shape: (MAX_PLANETS, H+1, A)
+
+    # Scalar reference ledger.
+    fleet_named = [Fleet(*f) for f in fleets_raw]
+    planet_named = [Planet(*p) for p in env.state[0].observation.planets]
+    scalar_ledger = build_arrival_ledger(fleet_named, planet_named, H)
+
+    # Compare: for each (planet_id, eta, owner) in the scalar dict,
+    # find the corresponding (planet_slot, eta, owner) JAX cell.
+    pid_to_slot = {int(pid): slot for slot, pid in enumerate(np.asarray(gs.planets_id)) if pid >= 0}
+
+    # Build a parallel (P, H+1, A) grid from the scalar ledger.
+    P_max = jax_grid.shape[0]
+    scalar_grid = np.zeros_like(jax_grid)
+    for planet_id, arrivals in scalar_ledger.items():
+        slot = pid_to_slot.get(int(planet_id))
+        if slot is None:
+            continue
+        for eta, owner, ships in arrivals:
+            if ships <= 0:
+                continue
+            bucket = max(1, int(math.ceil(eta)))
+            if bucket > H:
+                continue
+            scalar_grid[slot, bucket, int(owner)] += int(ships)
+
+    # Per-cell comparison.
+    diff_count = 0
+    for p in range(P_max):
+        if not bool(gs.planets_alive[p]):
+            continue
+        for t in range(H + 1):
+            for a in range(A):
+                if scalar_grid[p, t, a] != jax_grid[p, t, a]:
+                    diff_count += 1
+                    if diff_count <= 3:
+                        print(
+                            f"  diff at slot={p} (pid={int(gs.planets_id[p])}) "
+                            f"step={t} owner={a}: scalar={scalar_grid[p, t, a]} "
+                            f"jax={jax_grid[p, t, a]}"
+                        )
+    assert diff_count == 0, f"{diff_count} cells differ between scalar/JAX grid"

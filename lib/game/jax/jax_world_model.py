@@ -124,3 +124,63 @@ fleet_target_planet_batch_jit = jax.jit(
     fleet_target_planet_batch, static_argnames=("max_horizon",)
 )
 fleet_speed_batch_jit = jax.jit(fleet_speed_batch)
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 2b: build_arrival_grid
+# ---------------------------------------------------------------------------
+
+
+def build_arrival_grid(
+    state,                               # GameState (sub-phase 1 type)
+    max_horizon: int = DEFAULT_HORIZON,
+    num_agents: int = 4,
+) -> jnp.ndarray:
+    """Per-(planet, step, owner) total incoming ships from in-flight fleets.
+
+    Returns int32 grid shape `(MAX_PLANETS, max_horizon+1, num_agents)`.
+    `grid[p, t, a]` = sum of ships owned by player `a` arriving at planet
+    slot `p` at step `t` (1-indexed; t=0 unused).
+
+    Equivalent to scalar `lib.world_model.build_arrival_ledger` but
+    pre-aggregated by owner (which is what `resolve_arrivals` does as
+    its first step in `simulate_planet_timeline`).
+
+    Implementation: per-fleet raycast → 3D scatter-add into the grid.
+    Dead / unowned / out-of-horizon / no-hit fleets are masked out.
+    """
+    from lib.game.jax.jax_types import MAX_PLANETS
+
+    target_idx, eta = fleet_target_planet_batch(
+        state.fleets_x, state.fleets_y, state.fleets_angle,
+        state.fleets_ships, state.fleets_alive,
+        state.planets_x, state.planets_y, state.planets_radius,
+        state.planets_alive, max_horizon=max_horizon,
+    )
+    # Scalar buckets ceil(eta) to max(1, ceil(eta)) before storing.
+    bucketed = jnp.maximum(eta, jnp.int32(1))
+
+    valid = (
+        (target_idx >= 0)
+        & state.fleets_alive
+        & (state.fleets_ships > 0)
+        & (state.fleets_owner >= 0)
+        & (state.fleets_owner < jnp.int32(num_agents))
+        & (bucketed <= jnp.int32(max_horizon))
+    )
+
+    safe_p = jnp.where(valid, target_idx, jnp.int32(0))
+    safe_t = jnp.where(valid, bucketed, jnp.int32(0))
+    safe_a = jnp.where(valid, state.fleets_owner, jnp.int32(0))
+    safe_ships = jnp.where(valid, state.fleets_ships, jnp.int32(0))
+
+    P = MAX_PLANETS
+    H = max_horizon + 1
+    grid = jnp.zeros((P, H, num_agents), dtype=jnp.int32)
+    grid = grid.at[safe_p, safe_t, safe_a].add(safe_ships)
+    return grid
+
+
+build_arrival_grid_jit = jax.jit(
+    build_arrival_grid, static_argnames=("max_horizon", "num_agents")
+)
