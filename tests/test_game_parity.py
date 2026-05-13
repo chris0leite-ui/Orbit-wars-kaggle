@@ -180,6 +180,74 @@ def test_shadow_parity_500_steps(seed, num_agents):
 
 
 # ---------------------------------------------------------------------------
+# Planet-position cache HIT parity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", [0, 1, 7, 42, 137])
+@pytest.mark.parametrize("num_agents", [2, 4])
+def test_planet_position_cache_hit_parity(seed, num_agents):
+    """A state with a populated planet_position_cache (the from_obs path)
+    must produce byte-identical step output to a state with an empty
+    cache (the fresh-init path). This validates the interpreter's
+    cache-vs-fallthrough branch.
+    """
+    import math as _math
+    from lib.game.interpreter import (
+        BOARD_SIZE as _BS, CENTER as _CTR,
+        ROTATION_RADIUS_LIMIT as _RRL,
+    )
+
+    state_a, env_a = _fresh_state_and_env(num_agents, seed)
+    state_b, env_b = _fresh_state_and_env(num_agents, seed)
+    ours_interpreter(state_a, env_a)
+    ours_interpreter(state_b, env_b)
+
+    # Populate state B's planet_position_cache from initial_planets,
+    # exactly mimicking lib/fast_sim._populate_planet_position_cache.
+    obs0_b = state_b[0].observation
+    angular_velocity = float(obs0_b.angular_velocity)
+    episode_steps = 500
+    comet_pid_set = set(obs0_b.comet_planet_ids)
+    for ip in obs0_b.initial_planets:
+        pid = ip[0]
+        if pid in comet_pid_set:
+            continue
+        dx = ip[2] - _CTR
+        dy = ip[3] - _CTR
+        r = _math.sqrt(dx * dx + dy * dy)
+        if r + ip[4] >= _RRL:
+            continue
+        initial_angle = _math.atan2(dy, dx)
+        positions = []
+        for s in range(episode_steps + 1):
+            theta = initial_angle + angular_velocity * s
+            positions.append(
+                (_CTR + r * _math.cos(theta), _CTR + r * _math.sin(theta))
+            )
+        env_b.planet_position_cache[pid] = positions
+
+    # Now step both with identical empty actions and verify byte-exact parity.
+    action_rng = random.Random(seed * 65537 + 3)
+    for step_idx in range(80):
+        actions = _random_actions(state_a, action_rng, num_agents)
+        for i, a in enumerate(actions):
+            state_a[i].action = a
+            state_b[i].action = list(a)
+        ours_interpreter(state_a, env_a)
+        ours_interpreter(state_b, env_b)
+        _bookkeeping(state_a, env_a)
+        _bookkeeping(state_b, env_b)
+        diff = _state_diff(state_a, state_b)
+        assert not diff, (
+            f"planet-cache-hit divergence at step {step_idx} "
+            f"(seed={seed}, n={num_agents}): {diff}"
+        )
+        if env_a.done or env_b.done:
+            break
+
+
+# ---------------------------------------------------------------------------
 # Comet-path cache HIT parity
 # ---------------------------------------------------------------------------
 

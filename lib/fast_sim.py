@@ -42,6 +42,9 @@ from typing import Any, Callable, Sequence
 from kaggle_environments.utils import Struct
 
 from lib.game.interpreter import interpreter as _orbit_wars_interpreter
+from lib.game.interpreter import BOARD_SIZE as _GAME_BOARD_SIZE
+from lib.game.interpreter import CENTER as _GAME_CENTER
+from lib.game.interpreter import ROTATION_RADIUS_LIMIT as _GAME_RRL
 
 
 # Default configuration matching kaggle_environments.envs.orbit_wars's
@@ -73,14 +76,24 @@ class _FakeEnv:
     interpreter. It's SHARED across clones so all branches of a
     lookahead inherit the same cache and amortise the ~100 ms
     generate_comet_paths cost across rollouts.
+
+    `planet_position_cache` is a dict {planet_id: list[(x, y)]} keyed
+    by initial-planet id, indexed by absolute step. Pre-computed once
+    in `from_obs()` for every rotating planet; the interpreter uses it
+    instead of recomputing `atan2/cos/sin` each step. SHARED across
+    clones too. ~240 KB at 30 rotating planets × 500 steps.
     """
-    __slots__ = ("configuration", "info", "done", "comet_path_cache")
+    __slots__ = (
+        "configuration", "info", "done",
+        "comet_path_cache", "planet_position_cache",
+    )
 
     def __init__(self, configuration: Struct, episode_seed: int) -> None:
         self.configuration = configuration
         self.info = {"seed": episode_seed}
         self.done = False
         self.comet_path_cache = {}
+        self.planet_position_cache = {}
 
 
 @dataclass
@@ -223,7 +236,43 @@ def from_obs(
         ))
 
     fake_env = _FakeEnv(config_struct, episode_seed)
+    _populate_planet_position_cache(fake_env, obs0)
     return Snapshot(state=state, fake_env=fake_env, episode_seed=episode_seed)
+
+
+def _populate_planet_position_cache(fake_env, obs0) -> None:
+    """Pre-compute orbital positions for every rotating planet at every
+    step of the episode. Eliminates per-step atan2/cos/sin for the planet
+    path computation. Storage ~240 KB at 30 planets × 500 steps.
+    """
+    import math as _math
+    cache = fake_env.planet_position_cache
+    angular_velocity = float(obs0.angular_velocity)
+    episode_steps = int(fake_env.configuration.episodeSteps)
+    initial_planets = obs0.initial_planets
+    comet_pid_set = set(obs0.comet_planet_ids)
+    sqrt = _math.sqrt
+    cos = _math.cos
+    sin = _math.sin
+    atan2 = _math.atan2
+    for ip in initial_planets:
+        pid = ip[0]
+        if pid in comet_pid_set:
+            continue
+        dx = ip[2] - _GAME_CENTER
+        dy = ip[3] - _GAME_CENTER
+        r = sqrt(dx * dx + dy * dy)
+        if r + ip[4] >= _GAME_RRL:
+            # Non-rotating; no cache entry needed (interpreter keeps the
+            # static position).
+            continue
+        initial_angle = atan2(dy, dx)
+        # Index 0 is the position AT step 0 (which equals initial position).
+        positions = []
+        for s in range(episode_steps + 1):
+            theta = initial_angle + angular_velocity * s
+            positions.append((_GAME_CENTER + r * cos(theta), _GAME_CENTER + r * sin(theta)))
+        cache[pid] = positions
 
 
 # ---------------------------------------------------------------------------
@@ -300,9 +349,10 @@ def clone(snap: Snapshot) -> Snapshot:
 
     fake_env = _FakeEnv(snap.fake_env.configuration, snap.episode_seed)
     fake_env.done = snap.fake_env.done
-    # Share the comet-path cache with the parent so all lookahead branches
-    # benefit from a single generate_comet_paths call per spawn boundary.
+    # Share both caches with the parent so all lookahead branches benefit
+    # from work done by any one of them (comet generation, planet orbits).
     fake_env.comet_path_cache = snap.fake_env.comet_path_cache
+    fake_env.planet_position_cache = snap.fake_env.planet_position_cache
     return Snapshot(state=new_state, fake_env=fake_env, episode_seed=snap.episode_seed)
 
 

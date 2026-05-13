@@ -16,6 +16,8 @@ import math
 import random
 from collections import namedtuple
 
+import numpy as np
+
 
 # Module-level aliases for the math builtins called inside the per-step
 # hot loop. Saves the per-call `math.X` attribute lookup; ~12% on the
@@ -24,6 +26,118 @@ _cos = math.cos
 _sin = math.sin
 _sqrt = math.sqrt
 _log = math.log
+
+
+# Threshold below which scalar `swept_pair_hit` beats the numpy batch
+# (numpy dispatch overhead exceeds savings). Measured empirically.
+_BATCH_FLEETxPLANET_THRESHOLD = 60
+
+
+def _fleet_planet_first_hits(
+    fleets_local: list,
+    planets_local: list,
+    planet_paths: dict,
+    max_speed: float,
+    log1000: float,
+):
+    """For each fleet, return the index of the FIRST planet it collides with
+    over this tick (preserves scalar early-break semantics), or -1.
+
+    Vectorises across BOTH fleets and planets in one numpy pass. Falls back
+    to a per-fleet scalar loop on tiny workloads where dispatch overhead
+    exceeds the savings.
+
+    Bit-exact with the scalar `swept_pair_hit`; parity-gated by
+    `tests/test_game_parity.py`.
+    """
+    n_fleets = len(fleets_local)
+    n_planets = len(planets_local)
+    if n_fleets * n_planets < _BATCH_FLEETxPLANET_THRESHOLD:
+        # Per-fleet scalar fallback; mirrors the original loop's order.
+        results: list[int] = [-1] * n_fleets
+        for f_idx, fleet in enumerate(fleets_local):
+            f2 = fleet[2]; f3 = fleet[3]
+            angle = fleet[4]; ships = fleet[6]
+            speed = 1.0 + (max_speed - 1.0) * (_log(ships) / log1000) ** 1.5
+            if speed > max_speed:
+                speed = max_speed
+            new_x = f2 + _cos(angle) * speed
+            new_y = f3 + _sin(angle) * speed
+            for p_idx, planet in enumerate(planets_local):
+                path = planet_paths.get(planet[0])
+                if path is None or not path[2]:
+                    continue
+                if swept_pair_hit(
+                    (f2, f3), (new_x, new_y), path[0], path[1], planet[4]
+                ):
+                    results[f_idx] = p_idx
+                    break
+        return results
+
+    # Build planet arrays (P,).
+    pold_x = np.empty(n_planets); pold_y = np.empty(n_planets)
+    pnew_x = np.empty(n_planets); pnew_y = np.empty(n_planets)
+    pr_arr = np.empty(n_planets)
+    pcheck_arr = np.zeros(n_planets, dtype=bool)
+    for i, p in enumerate(planets_local):
+        path = planet_paths.get(p[0])
+        if path is None:
+            continue
+        pold_x[i] = path[0][0]; pold_y[i] = path[0][1]
+        pnew_x[i] = path[1][0]; pnew_y[i] = path[1][1]
+        pr_arr[i] = p[4]
+        pcheck_arr[i] = path[2]
+
+    # Build fleet arrays (F,) and compute new positions in vectorised form.
+    fold_x = np.empty(n_fleets); fold_y = np.empty(n_fleets)
+    angles = np.empty(n_fleets); ships_arr = np.empty(n_fleets)
+    for i, f in enumerate(fleets_local):
+        fold_x[i] = f[2]; fold_y[i] = f[3]
+        angles[i] = f[4]; ships_arr[i] = f[6]
+    speeds = 1.0 + (max_speed - 1.0) * (np.log(ships_arr) / log1000) ** 1.5
+    np.minimum(speeds, max_speed, out=speeds)
+    fnew_x = fold_x + np.cos(angles) * speeds
+    fnew_y = fold_y + np.sin(angles) * speeds
+
+    # AABB prune across the (F, P) grid.
+    f_min_x = np.minimum(fold_x, fnew_x)[:, None]
+    f_max_x = np.maximum(fold_x, fnew_x)[:, None]
+    f_min_y = np.minimum(fold_y, fnew_y)[:, None]
+    f_max_y = np.maximum(fold_y, fnew_y)[:, None]
+    p_min_x = (np.minimum(pold_x, pnew_x) - pr_arr)[None, :]
+    p_max_x = (np.maximum(pold_x, pnew_x) + pr_arr)[None, :]
+    p_min_y = (np.minimum(pold_y, pnew_y) - pr_arr)[None, :]
+    p_max_y = (np.maximum(pold_y, pnew_y) + pr_arr)[None, :]
+    candidate = (
+        pcheck_arr[None, :]
+        & (f_max_x >= p_min_x) & (f_min_x <= p_max_x)
+        & (f_max_y >= p_min_y) & (f_min_y <= p_max_y)
+    )
+
+    # Full discriminant check (F, P) over the AABB candidates.
+    d0x = fold_x[:, None] - pold_x[None, :]
+    d0y = fold_y[:, None] - pold_y[None, :]
+    dvx = (fnew_x - fold_x)[:, None] - (pnew_x - pold_x)[None, :]
+    dvy = (fnew_y - fold_y)[:, None] - (pnew_y - pold_y)[None, :]
+    a = dvx * dvx + dvy * dvy
+    b = 2.0 * (d0x * dvx + d0y * dvy)
+    c = d0x * d0x + d0y * d0y - (pr_arr * pr_arr)[None, :]
+
+    a_small = a < 1e-12
+    disc = b * b - 4.0 * a * c
+    disc_ok = disc >= 0.0
+    sq = np.sqrt(np.where(disc_ok, disc, 0.0))
+    denom = np.where(a_small, 1.0, 2.0 * a)
+    t1 = (-b - sq) / denom
+    t2 = (-b + sq) / denom
+    hit_full = disc_ok & (t2 >= 0.0) & (t1 <= 1.0)
+    hit = candidate & np.where(a_small, c <= 0.0, hit_full)
+
+    any_hit = hit.any(axis=1)
+    first_hit = hit.argmax(axis=1)
+    # argmax returns 0 when no True; mask those out.
+    results_arr = np.where(any_hit, first_hit, -1)
+    return results_arr.tolist()
 
 
 Planet = namedtuple(
@@ -263,24 +377,42 @@ def generate_comet_paths(
         c_val = a * e
         phi = rng.uniform(math.pi / 6, math.pi / 3)
 
-        dense = []
+        # Vectorised dense-sample loop (formerly 5000 trig calls per iter
+        # × 4 trig calls each). Bit-exact with the scalar version: numpy
+        # uses the same libm cos/sin/sqrt and we keep float64 throughout.
         num = 5000
-        for i in range(num):
-            t = 0.3 * math.pi + 1.4 * math.pi * i / (num - 1)
-            ex = c_val + a * math.cos(t)
-            ey = b * math.sin(t)
-            x = CENTER + ex * math.cos(phi) - ey * math.sin(phi)
-            y = CENTER + ex * math.sin(phi) + ey * math.cos(phi)
-            dense.append((x, y))
+        idx = np.arange(num, dtype=np.float64)
+        t = 0.3 * math.pi + 1.4 * math.pi * idx / (num - 1)
+        ex = c_val + a * np.cos(t)
+        ey = b * np.sin(t)
+        cos_phi = math.cos(phi)
+        sin_phi = math.sin(phi)
+        x_arr = CENTER + ex * cos_phi - ey * sin_phi
+        y_arr = CENTER + ex * sin_phi + ey * cos_phi
+        dense_x = x_arr.tolist()
+        dense_y = y_arr.tolist()
+        dense = list(zip(dense_x, dense_y))
 
-        path = [dense[0]]
-        cum = 0.0
-        target = comet_speed
-        for i in range(1, len(dense)):
-            cum += distance(dense[i], dense[i - 1])
-            if cum >= target:
-                path.append(dense[i])
-                target += comet_speed
+        # Vectorised re-sample at constant comet_speed arc-length intervals.
+        # The scalar code maintains a running cumulative distance and
+        # appends dense[i] whenever cum >= target = k*comet_speed for the
+        # next k. Equivalent: for each k=1..K, find smallest i such that
+        # cum_dist[i] >= k*comet_speed; append dense[i+1] (using cum_dist
+        # being length len(dense)-1, indexed from dense[1] to dense[-1]).
+        diffs = np.sqrt(
+            (x_arr[1:] - x_arr[:-1]) ** 2 + (y_arr[1:] - y_arr[:-1]) ** 2
+        )
+        cum_dist = np.cumsum(diffs)
+        total_dist = float(cum_dist[-1]) if cum_dist.size else 0.0
+        max_k = int(total_dist // comet_speed)
+        if max_k > 0:
+            targets = comet_speed * np.arange(1, max_k + 1, dtype=np.float64)
+            search_idx = np.searchsorted(cum_dist, targets, side="left")
+            # cum_dist[j] >= target → append dense[j+1] in original indexing.
+            picked = (search_idx + 1).tolist()
+            path = [dense[0]] + [dense[i] for i in picked if i < num]
+        else:
+            path = [dense[0]]
 
         board_start = None
         board_end = None
@@ -549,11 +681,21 @@ def interpreter(state, env):
     expired_comet_pids = []
 
     _atan2 = math.atan2
+    # Optional pre-computed planet positions (populated by fast_sim).
+    pos_cache = getattr(env, "planet_position_cache", None)
     for planet in planets_local:
         if planet[0] in comet_pid_set:
             continue
         old_pos = (planet[2], planet[3])
         new_pos = old_pos
+        # Cache hit: read pre-computed (x, y) for this step. Falls through
+        # to the trig path on miss (non-rotating planets, or absent cache).
+        if pos_cache is not None:
+            cached = pos_cache.get(planet[0])
+            if cached is not None and step < len(cached):
+                new_pos = cached[step]
+                planet_paths[planet[0]] = (old_pos, new_pos, True)
+                continue
         initial_p = initial_by_id.get(planet[0])
         if initial_p is not None:
             dx = initial_p[2] - CENTER

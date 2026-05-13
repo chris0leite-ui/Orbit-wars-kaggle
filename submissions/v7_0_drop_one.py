@@ -1,4 +1,4 @@
-# Bundled by scripts/bundle_agent.py from agents/v7_ablations/v7_0_drop_one + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe,missions/reinforce,planner,fast_sim,opp_model,v7_search}.
+# Bundled by scripts/bundle_agent.py from agents/v7_ablations/v7_0_drop_one + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,missions/snipe,missions/reinforce,missions/recapture,planner,lookahead_planner,game/interpreter,fast_sim,opp_model,v7_search,candidate_portfolios,value_heads}.
 # Single-file Kaggle submission for Orbit Wars.
 
 from __future__ import annotations
@@ -21,6 +21,30 @@ Point = tuple[float, float]
 def dist(a: Point, b: Point) -> float:
     """Euclidean distance between two 2D points."""
     return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def sym_hypot(dx: float, dy: float) -> float:
+    """Order-independent hypot — same bits for (dx, dy) and (dy, dx).
+
+    Standard `math.hypot(a, b) = sqrt(a² + b²)` is mathematically
+    symmetric in its arguments but NOT bit-exact under FP rounding:
+    `a² + b²` and `b² + a²` can differ by 1 ULP because the addition
+    is non-associative. Over thousands of mission-score comparisons,
+    this 1-ULP noise turns near-ties into strict orderings, defeating
+    σ-equivariant tie-breaks. `sym_hypot` canonicalises arguments to
+    `hypot(min(|dx|,|dy|), max(|dx|,|dy|))` so σ-paired (src, target)
+    pairs produce bit-equal distances.
+
+    Ported from `origin/claude/game-theory-strategy-analysis-0oH4N`
+    where the σ-equiv layer (this + planner _tb + score rounding) was
+    the load-bearing change behind σ-equiv-v1 (μ=1041.4) and
+    v7_minimax (μ=1063).
+    """
+    ax = abs(dx)
+    ay = abs(dy)
+    if ax > ay:
+        ax, ay = ay, ax
+    return math.hypot(ax, ay)
 
 
 def point_to_segment_distance(p: Point, a: Point, b: Point) -> float:
@@ -1653,6 +1677,11 @@ import math
 
 fleet_speed = speed
 
+# sym_hypot was imported here for the σ-equiv layer (cherry-picked
+# from origin/claude/game-theory-strategy-analysis-0oH4N). REVERTED for
+# v9 (2026-05-12) — v7.6 bisect found σ-equiv regresses v7_0 by ~54pp.
+# Restoring math.hypot for src↔target distance below.
+
 # Total game length in steps (Configuration table, data/README.md).
 EPISODE_STEPS = 500
 
@@ -1964,6 +1993,155 @@ def propose_reinforce_missions(
             ))
     return missions
 
+# === inlined: lib/missions/recapture.py ===
+
+
+import math
+
+fleet_speed = speed
+
+EPISODE_STEPS = 500
+RECAPTURE_WINDOW = 50          # turns after loss within which to recapture
+RECAPTURE_BONUS_PEAK = 1.5     # multiplier at the moment of loss
+RECENTLY_LOST_GARRISON_MAX = 50  # don't bother recapturing if enemy fortified
+# Calibration fixes ported with the file from origin/main (post-revert).
+# The 200-game A/B that triggered the revert (audit/...recapture-wireup-ab.md)
+# identified three failure modes: score-scale mismatch with snipe, proposal-
+# volume dilution (80-160 per turn), and infeasible commits. Knobs below let
+# the v7.2 integration A/B re-test with corrected defaults; the gate is
+# Wilson lo ≥ 55% at 24 seeds × both sides.
+RECAPTURE_SCORE_DENOM_MATCHES_SNIPE = 1  # 1 = use (base_ships + d + 1)
+                                          # (snipe-aligned); 0 = legacy
+                                          # (0.5*base_ships + d + 1).
+RECAPTURE_TOPK_PER_TURN = 5    # cap on proposals returned per turn
+                                # (0 = no cap; replicates the regression).
+
+
+# ---------------------------------------------------------------------------
+# Module-level state — persists across turns of a single game.
+# Key: planet_id; Value: step_lost (int).
+# ---------------------------------------------------------------------------
+
+
+class _RecaptureState:
+    """Mutable state owned by THIS module. Reset when a step-0 obs arrives."""
+
+    def __init__(self):
+        self.last_step: int = -1
+        self.last_ownership: dict[int, int] = {}
+        # planet_id -> step we lost it
+        self.lost_at: dict[int, int] = {}
+
+    def reset(self):
+        self.last_step = -1
+        self.last_ownership = {}
+        self.lost_at = {}
+
+    def update(self, world: World) -> None:
+        """Compare current planet ownership to last-call snapshot;
+        record any planet that was ours and is now an enemy's."""
+        step = int(world.step)
+        if step == 0 or step < self.last_step:
+            self.reset()
+        current_ownership = {
+            p.id: p.owner for p in world.planets_by_id.values()
+        }
+        # Detect losses since last call.
+        my_id = world.my_id
+        for pid, prev_owner in self.last_ownership.items():
+            cur_owner = current_ownership.get(pid)
+            if cur_owner is None:
+                continue
+            if prev_owner == my_id and cur_owner != my_id and cur_owner != -1:
+                self.lost_at[pid] = step
+            # If a planet flipped back to us, drop its lost record.
+            if prev_owner != my_id and cur_owner == my_id and pid in self.lost_at:
+                del self.lost_at[pid]
+        # Also evict lost-records older than RECAPTURE_WINDOW.
+        cutoff = step - RECAPTURE_WINDOW
+        stale = [pid for pid, s in self.lost_at.items() if s < cutoff]
+        for pid in stale:
+            del self.lost_at[pid]
+        # Update snapshot.
+        self.last_step = step
+        self.last_ownership = current_ownership
+
+
+_STATE = _RecaptureState()
+
+
+def _reset_state_for_tests() -> None:
+    """Reset between independent test cases (the module-level state
+    bleeds across pytest cases otherwise)."""
+    _STATE.reset()
+
+
+def propose_recapture_missions(world: World, model: WorldModel) -> list[Mission]:
+    """One Mission per (recently-lost target, viable source) pair, with
+    a time-decaying RECAPTURE_BONUS."""
+    _STATE.update(world)
+    if not _STATE.lost_at:
+        return []
+    step_now = int(world.step)
+    my_planets = [
+        p for p in world.planets_by_id.values() if p.owner == world.my_id
+    ]
+    if not my_planets:
+        return []
+    missions: list[Mission] = []
+    for lost_pid, step_lost in _STATE.lost_at.items():
+        t = world.planets_by_id.get(lost_pid)
+        if t is None:
+            continue
+        # If target is back to us (race condition / mid-update), skip.
+        if t.owner == world.my_id:
+            continue
+        # If target is fortified beyond what we'd consider, skip.
+        if t.ships > RECENTLY_LOST_GARRISON_MAX:
+            continue
+        # Recapture urgency: 1.0 at loss-step → 0.0 at end of window.
+        elapsed = step_now - step_lost
+        urgency = max(0.0, 1.0 - elapsed / RECAPTURE_WINDOW)
+        bonus = 1.0 + (RECAPTURE_BONUS_PEAK - 1.0) * urgency
+
+        for src in my_planets:
+            d = math.hypot(t.x - src.x, t.y - src.y)
+            base_ships = max(1, int(t.ships) + 1)
+            if base_ships >= src.ships:
+                # Source can't afford this recapture.
+                continue
+            v = fleet_speed(base_ships)
+            eta = int(math.ceil(d / max(v, 1e-6))) if v > 0 else 0
+            pred_owner = model.owner_at(t.id, eta)
+            if pred_owner == world.my_id:
+                continue
+            time_to_hold = max(1, EPISODE_STEPS - step_now - eta)
+            value = t.production * time_to_hold
+            # Denominator: aligned with snipe by default (audit hypothesis
+            # 1 fix). Set RECAPTURE_SCORE_DENOM_MATCHES_SNIPE=0 to
+            # reproduce the legacy 0.5×base_ships denominator that
+            # over-weighted recapture vs snipe in the original A/B.
+            if RECAPTURE_SCORE_DENOM_MATCHES_SNIPE:
+                denom = base_ships + d + 1.0
+            else:
+                denom = 0.5 * base_ships + d + 1.0
+            score = bonus * value / denom
+            missions.append(Mission(
+                mission_class="recapture",
+                src_id=src.id,
+                target_id=t.id,
+                ships=base_ships,
+                score=score,
+                eta=eta,
+            ))
+    # Audit hypothesis 2 fix: cap per-turn proposal volume so settle_plan
+    # isn't drowned in low-value recapture variants. K=5 retains the
+    # urgent / high-prod / nearby options; legacy was uncapped (80-160/turn).
+    if RECAPTURE_TOPK_PER_TURN > 0 and len(missions) > RECAPTURE_TOPK_PER_TURN:
+        missions.sort(key=lambda m: -m.score)
+        missions = missions[:RECAPTURE_TOPK_PER_TURN]
+    return missions
+
 # === inlined: lib/planner.py ===
 
 
@@ -2006,6 +2184,8 @@ def settle_plan(
     by_src: dict[int, list[Mission]] = defaultdict(list)
     for m in missions:
         by_src[m.src_id].append(m)
+    # σ-equiv tie-break REVERTED (v7.6 bisect: ~54pp regression of v7_0
+    # drop-one architecture). Plain score sort.
     for src_id in by_src:
         by_src[src_id].sort(key=lambda m: -m.score)
 
@@ -2058,6 +2238,1006 @@ def settle_plan(
 
     return [m.to_intent() for m in chosen]
 
+# === inlined: lib/lookahead_planner.py ===
+
+
+COMET_SPAWN_STEPS: tuple[int, ...] = (50, 150, 250, 350, 450)
+
+# K bounds calibrated to the local box's measured per-step cost (~10 ms
+# per forward step including 2x v3.5.1 policy calls). With env_from_obs
+# ~105 ms one-time + ~24 ms clone() per candidate, the per-candidate
+# wallclock is roughly (24 + 10*K) ms. At K_MAX=12 the budget supports
+# ~5 candidates under 1 s; the watchdog in v4_planner cuts later
+# candidates if needed. Phase 2 audit measurements (~5.6 ms/step) were
+# on a faster 4-core box; these bounds adapt without changing the
+# algorithm.
+K_MIN = 6
+K_MAX = 10
+
+
+def evaluate_value(
+    observation,
+    my_id: int,
+    *,
+    denial_weight: float = 0.4,
+    ships_weight: float = 0.05,
+    survivor_bonus: float = 5.0,
+) -> float:
+    """V(s) = prod_share + denial * prod_denied + ships * ships_share + survivor.
+
+    `observation` is the kaggle env's per-seat observation dict (the same
+    shape `agent(obs)` receives). Fields used: `planets` (list of
+    [id, owner, x, y, radius, ships, production]) and `fleets`
+    (list of [id, owner, x, y, angle, from_planet_id, ships]).
+
+    Empty world (no planets) → 0.0. Total production zero (all planets
+    have prod=0, which doesn't happen in practice but bounds the math)
+    → 0.0 share components, only survivor bonus can fire.
+    """
+    planets = observation.get("planets", []) if isinstance(observation, dict) else getattr(observation, "planets", [])
+    if not planets:
+        return 0.0
+
+    total_prod = 0.0
+    my_prod = 0.0
+    opp_prod = 0.0
+    owners_with_planets: set[int] = set()
+    garrison: dict[int, float] = {}
+    for p in planets:
+        owner = int(p[1])
+        ships = float(p[5])
+        prod = float(p[6])
+        total_prod += prod
+        if owner >= 0:
+            owners_with_planets.add(owner)
+            garrison[owner] = garrison.get(owner, 0.0) + ships
+            if owner == my_id:
+                my_prod += prod
+            else:
+                opp_prod += prod
+
+    fleets = observation.get("fleets", []) if isinstance(observation, dict) else getattr(observation, "fleets", [])
+    fleet_totals: dict[int, float] = {}
+    for f in fleets:
+        owner = int(f[1])
+        ships = float(f[6])
+        if owner >= 0:
+            fleet_totals[owner] = fleet_totals.get(owner, 0.0) + ships
+
+    totals: dict[int, float] = dict(garrison)
+    for owner, ships in fleet_totals.items():
+        totals[owner] = totals.get(owner, 0.0) + ships
+    total_ships = sum(totals.values())
+    my_ships = totals.get(my_id, 0.0)
+
+    prod_share = (my_prod / total_prod) if total_prod > 0 else 0.0
+    prod_denied = ((total_prod - opp_prod) / total_prod) if total_prod > 0 else 0.0
+    ships_share = (my_ships / total_ships) if total_ships > 0 else 0.0
+    lone = 1.0 if owners_with_planets == {my_id} else 0.0
+
+    return (
+        prod_share
+        + denial_weight * prod_denied
+        + ships_weight * ships_share
+        + survivor_bonus * lone
+    )
+
+
+def adaptive_K(world) -> int:
+    """Entropy-adaptive rollout depth.
+
+    entropy = fleets_in_flight + 0.5 * contested_planets
+    K = clamp(round(8 + 1.5 * entropy), 8, 30)
+
+    Empty boards bottom at K=8 (the floor). The 0.5 weighting on neutral
+    planets reflects that they're potential rather than active conflict —
+    they raise entropy less than an already-launched fleet.
+    """
+    raw = getattr(world, "obs_raw", None)
+    if raw is None:
+        return K_MIN
+    fleets_raw = (
+        raw.get("fleets", []) if isinstance(raw, dict) else getattr(raw, "fleets", [])
+    )
+    fleets_in_flight = len(fleets_raw)
+    contested = 0
+    for p in world.planets_by_id.values():
+        if p.owner == -1:
+            contested += 1
+    entropy = fleets_in_flight + 0.5 * contested
+    K = int(round(K_MIN + 0.5 * entropy))
+    return max(K_MIN, min(K, K_MAX))
+
+
+def truncate_K_to_comet_boundary(K: int, step: int) -> int:
+    """Shorten K so rollout doesn't cross a comet spawn boundary.
+
+    Spawn boundaries are at steps in `COMET_SPAWN_STEPS`. `env_from_obs`
+    is bit-exact within an inter-boundary segment; crossing a boundary
+    re-rolls the env's comet RNG, which diverges from the real game. We
+    cap K so the clone's `step + K` stays strictly below the next
+    boundary. Floor at 1 — we always apply at least our chosen action.
+    """
+    for boundary in COMET_SPAWN_STEPS:
+        if boundary > step:
+            allowed = boundary - step - 1
+            return max(1, min(K, allowed))
+    return K
+
+# === inlined: lib/game/interpreter.py ===
+
+
+import math
+import random
+from collections import namedtuple
+
+import numpy as np
+
+
+# Module-level aliases for the math builtins called inside the per-step
+# hot loop. Saves the per-call `math.X` attribute lookup; ~12% on the
+# 7 M trig/sqrt/log calls measured across a 2000-step random episode.
+_cos = math.cos
+_sin = math.sin
+_sqrt = math.sqrt
+_log = math.log
+
+
+# Threshold below which scalar `swept_pair_hit` beats the numpy batch
+# (numpy dispatch overhead exceeds savings). Measured empirically.
+_BATCH_FLEETxPLANET_THRESHOLD = 60
+
+
+def _fleet_planet_first_hits(
+    fleets_local: list,
+    planets_local: list,
+    planet_paths: dict,
+    max_speed: float,
+    log1000: float,
+):
+    """For each fleet, return the index of the FIRST planet it collides with
+    over this tick (preserves scalar early-break semantics), or -1.
+
+    Vectorises across BOTH fleets and planets in one numpy pass. Falls back
+    to a per-fleet scalar loop on tiny workloads where dispatch overhead
+    exceeds the savings.
+
+    Bit-exact with the scalar `swept_pair_hit`; parity-gated by
+    `tests/test_game_parity.py`.
+    """
+    n_fleets = len(fleets_local)
+    n_planets = len(planets_local)
+    if n_fleets * n_planets < _BATCH_FLEETxPLANET_THRESHOLD:
+        # Per-fleet scalar fallback; mirrors the original loop's order.
+        results: list[int] = [-1] * n_fleets
+        for f_idx, fleet in enumerate(fleets_local):
+            f2 = fleet[2]; f3 = fleet[3]
+            angle = fleet[4]; ships = fleet[6]
+            speed = 1.0 + (max_speed - 1.0) * (_log(ships) / log1000) ** 1.5
+            if speed > max_speed:
+                speed = max_speed
+            new_x = f2 + _cos(angle) * speed
+            new_y = f3 + _sin(angle) * speed
+            for p_idx, planet in enumerate(planets_local):
+                path = planet_paths.get(planet[0])
+                if path is None or not path[2]:
+                    continue
+                if swept_pair_hit(
+                    (f2, f3), (new_x, new_y), path[0], path[1], planet[4]
+                ):
+                    results[f_idx] = p_idx
+                    break
+        return results
+
+    # Build planet arrays (P,).
+    pold_x = np.empty(n_planets); pold_y = np.empty(n_planets)
+    pnew_x = np.empty(n_planets); pnew_y = np.empty(n_planets)
+    pr_arr = np.empty(n_planets)
+    pcheck_arr = np.zeros(n_planets, dtype=bool)
+    for i, p in enumerate(planets_local):
+        path = planet_paths.get(p[0])
+        if path is None:
+            continue
+        pold_x[i] = path[0][0]; pold_y[i] = path[0][1]
+        pnew_x[i] = path[1][0]; pnew_y[i] = path[1][1]
+        pr_arr[i] = p[4]
+        pcheck_arr[i] = path[2]
+
+    # Build fleet arrays (F,) and compute new positions in vectorised form.
+    fold_x = np.empty(n_fleets); fold_y = np.empty(n_fleets)
+    angles = np.empty(n_fleets); ships_arr = np.empty(n_fleets)
+    for i, f in enumerate(fleets_local):
+        fold_x[i] = f[2]; fold_y[i] = f[3]
+        angles[i] = f[4]; ships_arr[i] = f[6]
+    speeds = 1.0 + (max_speed - 1.0) * (np.log(ships_arr) / log1000) ** 1.5
+    np.minimum(speeds, max_speed, out=speeds)
+    fnew_x = fold_x + np.cos(angles) * speeds
+    fnew_y = fold_y + np.sin(angles) * speeds
+
+    # AABB prune across the (F, P) grid.
+    f_min_x = np.minimum(fold_x, fnew_x)[:, None]
+    f_max_x = np.maximum(fold_x, fnew_x)[:, None]
+    f_min_y = np.minimum(fold_y, fnew_y)[:, None]
+    f_max_y = np.maximum(fold_y, fnew_y)[:, None]
+    p_min_x = (np.minimum(pold_x, pnew_x) - pr_arr)[None, :]
+    p_max_x = (np.maximum(pold_x, pnew_x) + pr_arr)[None, :]
+    p_min_y = (np.minimum(pold_y, pnew_y) - pr_arr)[None, :]
+    p_max_y = (np.maximum(pold_y, pnew_y) + pr_arr)[None, :]
+    candidate = (
+        pcheck_arr[None, :]
+        & (f_max_x >= p_min_x) & (f_min_x <= p_max_x)
+        & (f_max_y >= p_min_y) & (f_min_y <= p_max_y)
+    )
+
+    # Full discriminant check (F, P) over the AABB candidates.
+    d0x = fold_x[:, None] - pold_x[None, :]
+    d0y = fold_y[:, None] - pold_y[None, :]
+    dvx = (fnew_x - fold_x)[:, None] - (pnew_x - pold_x)[None, :]
+    dvy = (fnew_y - fold_y)[:, None] - (pnew_y - pold_y)[None, :]
+    a = dvx * dvx + dvy * dvy
+    b = 2.0 * (d0x * dvx + d0y * dvy)
+    c = d0x * d0x + d0y * d0y - (pr_arr * pr_arr)[None, :]
+
+    a_small = a < 1e-12
+    disc = b * b - 4.0 * a * c
+    disc_ok = disc >= 0.0
+    sq = np.sqrt(np.where(disc_ok, disc, 0.0))
+    denom = np.where(a_small, 1.0, 2.0 * a)
+    t1 = (-b - sq) / denom
+    t2 = (-b + sq) / denom
+    hit_full = disc_ok & (t2 >= 0.0) & (t1 <= 1.0)
+    hit = candidate & np.where(a_small, c <= 0.0, hit_full)
+
+    any_hit = hit.any(axis=1)
+    first_hit = hit.argmax(axis=1)
+    # argmax returns 0 when no True; mask those out.
+    results_arr = np.where(any_hit, first_hit, -1)
+    return results_arr.tolist()
+
+
+Planet = namedtuple(
+    "Planet", ["id", "owner", "x", "y", "radius", "ships", "production"]
+)
+Fleet = namedtuple(
+    "Fleet", ["id", "owner", "x", "y", "angle", "from_planet_id", "ships"]
+)
+
+BOARD_SIZE = 100.0
+CENTER = BOARD_SIZE / 2.0
+SUN_RADIUS = 10.0
+ROTATION_RADIUS_LIMIT = 50.0
+COMET_RADIUS = 1.0
+COMET_PRODUCTION = 1
+PLANET_CLEARANCE = 7
+MIN_PLANET_GROUPS = 5
+MAX_PLANET_GROUPS = 10
+MIN_STATIC_GROUPS = 3
+COMET_SPAWN_STEPS = [50, 150, 250, 350, 450]
+
+
+def _get(d, key, default):
+    if isinstance(d, dict):
+        return d.get(key, default)
+    return getattr(d, key, default)
+
+
+def distance(p1, p2):
+    dx = p1[0] - p2[0]
+    dy = p1[1] - p2[1]
+    return _sqrt(dx * dx + dy * dy)
+
+
+def point_to_segment_distance(p, v, w):
+    vx = v[0]; vy = v[1]
+    wx = w[0]; wy = w[1]
+    dx = vx - wx
+    dy = vy - wy
+    l2 = dx * dx + dy * dy
+    if l2 == 0.0:
+        return distance(p, v)
+    px = p[0]; py = p[1]
+    t = ((px - vx) * (wx - vx) + (py - vy) * (wy - vy)) / l2
+    if t < 0.0:
+        t = 0.0
+    elif t > 1.0:
+        t = 1.0
+    projx = vx + t * (wx - vx)
+    projy = vy + t * (wy - vy)
+    dx2 = px - projx
+    dy2 = py - projy
+    return _sqrt(dx2 * dx2 + dy2 * dy2)
+
+
+def swept_pair_hit(A, B, P0, P1, r):
+    A0 = A[0]; A1 = A[1]
+    B0 = B[0]; B1 = B[1]
+    P00 = P0[0]; P01 = P0[1]
+    P10 = P1[0]; P11 = P1[1]
+    # Cheap AABB prune. The fleet (a point) traverses segment A→B; the
+    # planet center traverses P0→P1, with the planet body inflating by
+    # radius r in every direction. If the fleet's segment bbox and the
+    # inflated planet-center segment bbox are disjoint on either axis,
+    # no collision is possible — skip the discriminant math.
+    if A0 < B0:
+        fmin_x = A0; fmax_x = B0
+    else:
+        fmin_x = B0; fmax_x = A0
+    if P00 < P10:
+        pmin_x = P00 - r; pmax_x = P10 + r
+    else:
+        pmin_x = P10 - r; pmax_x = P00 + r
+    if fmax_x < pmin_x or fmin_x > pmax_x:
+        return False
+    if A1 < B1:
+        fmin_y = A1; fmax_y = B1
+    else:
+        fmin_y = B1; fmax_y = A1
+    if P01 < P11:
+        pmin_y = P01 - r; pmax_y = P11 + r
+    else:
+        pmin_y = P11 - r; pmax_y = P01 + r
+    if fmax_y < pmin_y or fmin_y > pmax_y:
+        return False
+
+    d0x = A0 - P00; d0y = A1 - P01
+    dvx = (B0 - A0) - (P10 - P00)
+    dvy = (B1 - A1) - (P11 - P01)
+    a = dvx * dvx + dvy * dvy
+    b = 2.0 * (d0x * dvx + d0y * dvy)
+    c = d0x * d0x + d0y * d0y - r * r
+    if a < 1e-12:
+        return c <= 0.0
+    disc = b * b - 4.0 * a * c
+    if disc < 0.0:
+        return False
+    sq = _sqrt(disc)
+    t1 = (-b - sq) / (2.0 * a)
+    t2 = (-b + sq) / (2.0 * a)
+    return t2 >= 0.0 and t1 <= 1.0
+
+
+def generate_planets(rng=None):
+    if rng is None:
+        rng = random
+    planets = []
+    num_q1 = rng.randint(MIN_PLANET_GROUPS, MAX_PLANET_GROUPS)
+    id_counter = 0
+
+    static_groups = 0
+    for _ in range(5000):
+        if static_groups >= MIN_STATIC_GROUPS:
+            break
+        prod = rng.randint(1, 5)
+        r = 1 + math.log(prod)
+        angle = rng.uniform(0, math.pi / 2)
+        min_orbital = ROTATION_RADIUS_LIMIT - r
+        max_orbital = (BOARD_SIZE - CENTER - r) / max(math.cos(angle), math.sin(angle))
+        if min_orbital > max_orbital:
+            continue
+        orbital_r = rng.uniform(min_orbital, max_orbital)
+        x = CENTER + orbital_r * math.cos(angle)
+        y = CENTER + orbital_r * math.sin(angle)
+
+        if x + r > BOARD_SIZE or x - r < 0 or y + r > BOARD_SIZE or y - r < 0:
+            continue
+        if (BOARD_SIZE - x) - r < 0 or (BOARD_SIZE - y) - r < 0:
+            continue
+        if (x - CENTER) < r + 5 or (y - CENTER) < r + 5:
+            continue
+
+        ships = min(rng.randint(5, 99), rng.randint(5, 99))
+        temp_planets = [
+            [id_counter, -1, y, x, r, ships, prod],
+            [id_counter + 1, -1, BOARD_SIZE - x, y, r, ships, prod],
+            [id_counter + 2, -1, x, BOARD_SIZE - y, r, ships, prod],
+            [id_counter + 3, -1, BOARD_SIZE - y, BOARD_SIZE - x, r, ships, prod],
+        ]
+
+        valid = True
+        for tp in temp_planets:
+            for p in planets:
+                if distance((p[2], p[3]), (tp[2], tp[3])) < p[4] + tp[4] + PLANET_CLEARANCE:
+                    valid = False
+                    break
+            if not valid:
+                break
+
+        if valid:
+            planets.extend(temp_planets)
+            id_counter += 4
+            static_groups += 1
+
+    attempts = 0
+    max_attempts = 5000
+    has_orbiting = False
+
+    while len(planets) < num_q1 * 4 or (not has_orbiting and attempts < max_attempts):
+        attempts += 1
+        if attempts >= max_attempts:
+            break
+        prod = rng.randint(1, 5)
+        r = 1 + math.log(prod)
+        x = rng.uniform(CENTER + 15, BOARD_SIZE - r - 5)
+        y = rng.uniform(CENTER + 15, BOARD_SIZE - r - 5)
+
+        orbital_radius = distance((x, y), (CENTER, CENTER))
+
+        if orbital_radius < SUN_RADIUS + r + 10:
+            continue
+
+        if orbital_radius + r >= ROTATION_RADIUS_LIMIT:
+            if x + r > BOARD_SIZE or x - r < 0 or y + r > BOARD_SIZE or y - r < 0:
+                continue
+
+        valid = True
+        ships = rng.randint(5, 30)
+        temp_planets = [
+            [id_counter, -1, y, x, r, ships, prod],
+            [id_counter + 1, -1, BOARD_SIZE - x, y, r, ships, prod],
+            [id_counter + 2, -1, x, BOARD_SIZE - y, r, ships, prod],
+            [id_counter + 3, -1, BOARD_SIZE - y, BOARD_SIZE - x, r, ships, prod],
+        ]
+
+        for tp in temp_planets:
+            tp_orbital = distance((tp[2], tp[3]), (CENTER, CENTER))
+            tp_is_rotating = tp_orbital + tp[4] < ROTATION_RADIUS_LIMIT
+
+            for p in planets:
+                p_orbital = distance((p[2], p[3]), (CENTER, CENTER))
+                p_is_rotating = p_orbital + p[4] < ROTATION_RADIUS_LIMIT
+
+                if distance((p[2], p[3]), (tp[2], tp[3])) < p[4] + tp[4] + PLANET_CLEARANCE:
+                    valid = False
+                    break
+
+                if tp_is_rotating != p_is_rotating:
+                    if abs(tp_orbital - p_orbital) < tp[4] + p[4] + PLANET_CLEARANCE:
+                        valid = False
+                        break
+
+            if not valid:
+                break
+
+        if valid:
+            if orbital_radius + r < ROTATION_RADIUS_LIMIT:
+                has_orbiting = True
+            planets.extend(temp_planets)
+            id_counter += 4
+
+    return planets
+
+
+def generate_comet_paths(
+    initial_planets,
+    angular_velocity,
+    spawn_step,
+    comet_planet_ids=None,
+    comet_speed=4.0,
+    rng=None,
+):
+    if rng is None:
+        rng = random
+    if comet_planet_ids is None:
+        comet_planet_ids = set()
+    else:
+        comet_planet_ids = set(comet_planet_ids)
+    for _ in range(300):
+        e = rng.uniform(0.75, 0.93)
+        a = rng.uniform(60, 150)
+        perihelion = a * (1 - e)
+        if perihelion < SUN_RADIUS + COMET_RADIUS:
+            continue
+
+        b = a * math.sqrt(1 - e**2)
+        c_val = a * e
+        phi = rng.uniform(math.pi / 6, math.pi / 3)
+
+        # Vectorised dense-sample loop (formerly 5000 trig calls per iter
+        # × 4 trig calls each). Bit-exact with the scalar version: numpy
+        # uses the same libm cos/sin/sqrt and we keep float64 throughout.
+        num = 5000
+        idx = np.arange(num, dtype=np.float64)
+        t = 0.3 * math.pi + 1.4 * math.pi * idx / (num - 1)
+        ex = c_val + a * np.cos(t)
+        ey = b * np.sin(t)
+        cos_phi = math.cos(phi)
+        sin_phi = math.sin(phi)
+        x_arr = CENTER + ex * cos_phi - ey * sin_phi
+        y_arr = CENTER + ex * sin_phi + ey * cos_phi
+        dense_x = x_arr.tolist()
+        dense_y = y_arr.tolist()
+        dense = list(zip(dense_x, dense_y))
+
+        # Vectorised re-sample at constant comet_speed arc-length intervals.
+        # The scalar code maintains a running cumulative distance and
+        # appends dense[i] whenever cum >= target = k*comet_speed for the
+        # next k. Equivalent: for each k=1..K, find smallest i such that
+        # cum_dist[i] >= k*comet_speed; append dense[i+1] (using cum_dist
+        # being length len(dense)-1, indexed from dense[1] to dense[-1]).
+        diffs = np.sqrt(
+            (x_arr[1:] - x_arr[:-1]) ** 2 + (y_arr[1:] - y_arr[:-1]) ** 2
+        )
+        cum_dist = np.cumsum(diffs)
+        total_dist = float(cum_dist[-1]) if cum_dist.size else 0.0
+        max_k = int(total_dist // comet_speed)
+        if max_k > 0:
+            targets = comet_speed * np.arange(1, max_k + 1, dtype=np.float64)
+            search_idx = np.searchsorted(cum_dist, targets, side="left")
+            # cum_dist[j] >= target → append dense[j+1] in original indexing.
+            picked = (search_idx + 1).tolist()
+            path = [dense[0]] + [dense[i] for i in picked if i < num]
+        else:
+            path = [dense[0]]
+
+        board_start = None
+        board_end = None
+        for i, (x, y) in enumerate(path):
+            if 0 <= x <= BOARD_SIZE and 0 <= y <= BOARD_SIZE:
+                if board_start is None:
+                    board_start = i
+                board_end = i
+
+        if board_start is None:
+            continue
+        visible = path[board_start : board_end + 1]
+        if not (5 <= len(visible) <= 40):
+            continue
+
+        paths = [
+            [[y, x] for x, y in visible],
+            [[BOARD_SIZE - x, y] for x, y in visible],
+            [[x, BOARD_SIZE - y] for x, y in visible],
+            [[BOARD_SIZE - y, BOARD_SIZE - x] for x, y in visible],
+        ]
+
+        static_planets = []
+        orbiting_planets = []
+        for planet in initial_planets:
+            if planet[0] in comet_planet_ids:
+                continue
+            pr = distance((planet[2], planet[3]), (CENTER, CENTER))
+            if pr + planet[4] < ROTATION_RADIUS_LIMIT:
+                orbiting_planets.append(planet)
+            else:
+                static_planets.append(planet)
+
+        valid = True
+        buf = COMET_RADIUS + 0.5
+        for k, (cx, cy) in enumerate(visible):
+            if distance((cx, cy), (CENTER, CENTER)) < SUN_RADIUS + COMET_RADIUS:
+                valid = False
+                break
+
+            sym_pts = [
+                (cy, cx),
+                (BOARD_SIZE - cx, cy),
+                (cx, BOARD_SIZE - cy),
+                (BOARD_SIZE - cy, BOARD_SIZE - cx),
+            ]
+            for planet in static_planets:
+                for sp in sym_pts:
+                    if distance(sp, (planet[2], planet[3])) < planet[4] + buf:
+                        valid = False
+                        break
+                if not valid:
+                    break
+            if not valid:
+                break
+
+            game_step = spawn_step - 1 + k
+            for planet in orbiting_planets:
+                dx = planet[2] - CENTER
+                dy = planet[3] - CENTER
+                orb_r = math.sqrt(dx**2 + dy**2)
+                init_angle = math.atan2(dy, dx)
+                cur_angle = init_angle + angular_velocity * game_step
+                px = CENTER + orb_r * math.cos(cur_angle)
+                py = CENTER + orb_r * math.sin(cur_angle)
+                for sp in sym_pts:
+                    if distance(sp, (px, py)) < planet[4] + COMET_RADIUS:
+                        valid = False
+                        break
+                if not valid:
+                    break
+            if not valid:
+                break
+
+        if valid:
+            return paths
+    return None
+
+
+def interpreter(state, env):
+    configuration = env.configuration
+    num_agents = len(state)
+    obs0 = state[0].observation
+
+    if not hasattr(obs0, "planets") or not obs0.planets:
+        if not hasattr(env, "info") or env.info is None:
+            env.info = {}
+        seed = env.info.get("seed")
+        if seed is None:
+            seed = _get(configuration, "seed", None)
+        if seed is None:
+            seed = random.randrange(2**31)
+        try:
+            configuration.seed = None
+        except (AttributeError, TypeError):
+            configuration["seed"] = None
+        env.info["seed"] = seed
+        init_rng = random.Random(seed)
+
+        angular_velocity = init_rng.uniform(0.025, 0.05)
+        obs0.angular_velocity = angular_velocity
+        obs0.planets = generate_planets(init_rng)
+        obs0.initial_planets = [p.copy() for p in obs0.planets]
+        obs0.fleets = []
+        obs0.next_fleet_id = 0
+        obs0.comets = []
+        obs0.comet_planet_ids = []
+
+        num_groups = len(obs0.planets) // 4
+        if num_groups > 0:
+            home_group = init_rng.randint(0, num_groups - 1)
+            base = home_group * 4
+
+            if num_agents == 2:
+                obs0.planets[base][1] = 0
+                obs0.planets[base][5] = 10
+                obs0.planets[base + 3][1] = 1
+                obs0.planets[base + 3][5] = 10
+            elif num_agents == 4:
+                for j in range(4):
+                    obs0.planets[base + j][1] = j
+                    obs0.planets[base + j][5] = 10
+
+        for i in range(num_agents):
+            state[i].observation.player = i
+            if i > 0:
+                state[i].observation.angular_velocity = obs0.angular_velocity
+                state[i].observation.planets = obs0.planets
+                state[i].observation.initial_planets = obs0.initial_planets
+                state[i].observation.fleets = obs0.fleets
+                state[i].observation.next_fleet_id = obs0.next_fleet_id
+                state[i].observation.comets = obs0.comets
+                state[i].observation.comet_planet_ids = obs0.comet_planet_ids
+
+        return state
+
+    if env.done:
+        return state
+
+    expired_comet_pids = []
+    for group in obs0.comets:
+        idx = group["path_index"]
+        for i, pid in enumerate(group["planet_ids"]):
+            if idx >= len(group["paths"][i]):
+                expired_comet_pids.append(pid)
+    if expired_comet_pids:
+        expired_set = set(expired_comet_pids)
+        obs0.planets = [p for p in obs0.planets if p[0] not in expired_set]
+        obs0.initial_planets = [
+            p for p in obs0.initial_planets if p[0] not in expired_set
+        ]
+        obs0.comet_planet_ids = [
+            pid for pid in obs0.comet_planet_ids if pid not in expired_set
+        ]
+        for group in obs0.comets:
+            group["planet_ids"] = [
+                pid for pid in group["planet_ids"] if pid not in expired_set
+            ]
+        obs0.comets = [g for g in obs0.comets if g["planet_ids"]]
+
+    step = _get(obs0, "step", 0)
+    comet_speed = configuration.cometSpeed
+    if (step + 1) in COMET_SPAWN_STEPS:
+        env_info = getattr(env, "info", None) or {}
+        episode_seed = env_info.get("seed", 0) or 0
+        # Comet paths + ships are deterministic from (episode_seed,
+        # spawn_step, initial_planets, comet_planet_ids). Inside one
+        # lookahead, initial_planets and comet_planet_ids are fixed up
+        # to the agent's "now", so all rollouts crossing the next spawn
+        # boundary share the same result. Cache it on env.comet_path_cache
+        # to amortise the ~100 ms generation across rollouts.
+        cache = getattr(env, "comet_path_cache", None)
+        cache_key = (episode_seed, step + 1)
+        cached = cache.get(cache_key) if cache is not None else None
+        if cached is not None:
+            comet_paths, comet_ships = cached
+        else:
+            comet_rng = random.Random(
+                f"orbit_wars-comet-{episode_seed}-{step + 1}"
+            )
+            comet_paths = generate_comet_paths(
+                obs0.initial_planets,
+                obs0.angular_velocity,
+                step + 1,
+                obs0.comet_planet_ids,
+                comet_speed,
+                rng=comet_rng,
+            )
+            if comet_paths:
+                comet_ships = min(
+                    comet_rng.randint(1, 99),
+                    comet_rng.randint(1, 99),
+                    comet_rng.randint(1, 99),
+                    comet_rng.randint(1, 99),
+                )
+            else:
+                comet_ships = None
+            if cache is not None:
+                cache[cache_key] = (comet_paths, comet_ships)
+        if comet_paths:
+            next_id = max(p[0] for p in obs0.planets) + 1
+            group = {"planet_ids": [], "paths": comet_paths, "path_index": -1}
+            for i, p_path in enumerate(comet_paths):
+                pid = next_id + i
+                group["planet_ids"].append(pid)
+                obs0.comet_planet_ids.append(pid)
+                planet = [
+                    pid,
+                    -1,
+                    -99,
+                    -99,
+                    COMET_RADIUS,
+                    comet_ships,
+                    COMET_PRODUCTION,
+                ]
+                obs0.planets.append(planet)
+                obs0.initial_planets.append(planet[:])
+            obs0.comets.append(group)
+
+    def process_moves(player_id, action):
+        if not action or not isinstance(action, list):
+            return
+        for move in action:
+            if len(move) != 3:
+                continue
+            from_id, angle, ships = move
+            ships = int(ships)
+
+            from_planet = next((p for p in obs0.planets if p[0] == from_id), None)
+
+            if from_planet and from_planet[1] == player_id:
+                if from_planet[5] >= ships and ships > 0:
+                    from_planet[5] -= ships
+                    start_x = from_planet[2] + math.cos(angle) * (from_planet[4] + 0.1)
+                    start_y = from_planet[3] + math.sin(angle) * (from_planet[4] + 0.1)
+                    obs0.fleets.append(
+                        [
+                            obs0.next_fleet_id,
+                            player_id,
+                            start_x,
+                            start_y,
+                            angle,
+                            from_id,
+                            ships,
+                        ]
+                    )
+                    obs0.next_fleet_id += 1
+
+    for i in range(num_agents):
+        process_moves(i, state[i].action)
+
+    for planet in obs0.planets:
+        if planet[1] != -1:
+            planet[5] += planet[6]
+
+    angular_velocity = obs0.angular_velocity
+    step = _get(obs0, "step", 1)
+    comet_pid_set = set(obs0.comet_planet_ids)
+    initial_by_id = {p[0]: p for p in obs0.initial_planets}
+
+    planets_local = obs0.planets
+    comets_local = obs0.comets
+    fleets_local = obs0.fleets
+
+    planet_paths = {}
+    expired_comet_pids = []
+
+    _atan2 = math.atan2
+    # Optional pre-computed planet positions (populated by fast_sim).
+    pos_cache = getattr(env, "planet_position_cache", None)
+    for planet in planets_local:
+        if planet[0] in comet_pid_set:
+            continue
+        old_pos = (planet[2], planet[3])
+        new_pos = old_pos
+        # Cache hit: read pre-computed (x, y) for this step. Falls through
+        # to the trig path on miss (non-rotating planets, or absent cache).
+        if pos_cache is not None:
+            cached = pos_cache.get(planet[0])
+            if cached is not None and step < len(cached):
+                new_pos = cached[step]
+                planet_paths[planet[0]] = (old_pos, new_pos, True)
+                continue
+        initial_p = initial_by_id.get(planet[0])
+        if initial_p is not None:
+            dx = initial_p[2] - CENTER
+            dy = initial_p[3] - CENTER
+            r = _sqrt(dx * dx + dy * dy)
+            if r + planet[4] < ROTATION_RADIUS_LIMIT:
+                current_angle = _atan2(dy, dx) + angular_velocity * step
+                new_pos = (
+                    CENTER + r * _cos(current_angle),
+                    CENTER + r * _sin(current_angle),
+                )
+        planet_paths[planet[0]] = (old_pos, new_pos, True)
+
+    # planet_by_id once for the comet update lookup (replaces per-comet
+    # linear scan over all planets).
+    planet_by_id = {p[0]: p for p in planets_local}
+    for group in comets_local:
+        group["path_index"] += 1
+        idx = group["path_index"]
+        group_paths = group["paths"]
+        for i, pid in enumerate(group["planet_ids"]):
+            planet = planet_by_id.get(pid)
+            if planet is None:
+                continue
+            p_path = group_paths[i]
+            old_pos = (planet[2], planet[3])
+            if idx >= len(p_path):
+                expired_comet_pids.append(pid)
+                planet_paths[pid] = (old_pos, old_pos, True)
+            else:
+                pp = p_path[idx]
+                new_pos = (pp[0], pp[1])
+                check = old_pos[0] >= 0
+                planet_paths[pid] = (old_pos, new_pos, check)
+
+    max_speed = configuration.shipSpeed
+    log1000 = _log(1000)
+    fleets_to_remove = []
+    combat_lists = {p[0]: [] for p in planets_local}
+
+    _swept = swept_pair_hit
+    _seg_dist = point_to_segment_distance
+    _ftr_append = fleets_to_remove.append
+    sun_center = (CENTER, CENTER)
+    for fleet in fleets_local:
+        angle = fleet[4]
+        ships = fleet[6]
+        speed = 1.0 + (max_speed - 1.0) * (_log(ships) / log1000) ** 1.5
+        if speed > max_speed:
+            speed = max_speed
+        f2 = fleet[2]; f3 = fleet[3]
+        old_pos = (f2, f3)
+        new_x = f2 + _cos(angle) * speed
+        new_y = f3 + _sin(angle) * speed
+        fleet[2] = new_x
+        fleet[3] = new_y
+        new_pos = (new_x, new_y)
+
+        hit_planet = False
+        for planet in planets_local:
+            path = planet_paths.get(planet[0])
+            if path is None or not path[2]:
+                continue
+            if _swept(old_pos, new_pos, path[0], path[1], planet[4]):
+                combat_lists[planet[0]].append(fleet)
+                _ftr_append(fleet)
+                hit_planet = True
+                break
+        if hit_planet:
+            continue
+
+        if not (0 <= new_x <= BOARD_SIZE and 0 <= new_y <= BOARD_SIZE):
+            _ftr_append(fleet)
+            continue
+
+        if _seg_dist(sun_center, old_pos, new_pos) < SUN_RADIUS:
+            _ftr_append(fleet)
+            continue
+
+    for planet in obs0.planets:
+        path = planet_paths.get(planet[0])
+        if path is not None:
+            planet[2], planet[3] = path[1]
+
+    if expired_comet_pids:
+        expired_set = set(expired_comet_pids)
+        obs0.planets = [p for p in obs0.planets if p[0] not in expired_set]
+        obs0.initial_planets = [
+            p for p in obs0.initial_planets if p[0] not in expired_set
+        ]
+        obs0.comet_planet_ids = [
+            pid for pid in obs0.comet_planet_ids if pid not in expired_set
+        ]
+        for group in obs0.comets:
+            group["planet_ids"] = [
+                pid for pid in group["planet_ids"] if pid not in expired_set
+            ]
+        obs0.comets = [g for g in obs0.comets if g["planet_ids"]]
+
+    # Identity-based removal: `f not in list` triggers element-wise list
+    # equality (O(N·M·7)); id() membership is O(N+M) on a hash set.
+    if fleets_to_remove:
+        remove_ids = {id(f) for f in fleets_to_remove}
+        obs0.fleets = [f for f in obs0.fleets if id(f) not in remove_ids]
+
+    for pid, planet_fleets in combat_lists.items():
+        planet = next((p for p in obs0.planets if p[0] == pid), None)
+        if not planet or not planet_fleets:
+            continue
+
+        player_ships = {}
+        for fleet in planet_fleets:
+            owner = fleet[1]
+            player_ships[owner] = player_ships.get(owner, 0) + fleet[6]
+
+        if not player_ships:
+            continue
+
+        sorted_players = sorted(
+            player_ships.items(), key=lambda item: item[1], reverse=True
+        )
+        top_player, top_ships = sorted_players[0]
+
+        if len(sorted_players) > 1:
+            second_ships = sorted_players[1][1]
+            survivor_ships = top_ships - second_ships
+
+            if sorted_players[0][1] == sorted_players[1][1]:
+                survivor_ships = 0
+
+            survivor_owner = top_player if survivor_ships > 0 else -1
+        else:
+            survivor_owner = top_player
+            survivor_ships = top_ships
+
+        if survivor_ships > 0:
+            if planet[1] == survivor_owner:
+                planet[5] += survivor_ships
+            else:
+                planet[5] -= survivor_ships
+                if planet[5] < 0:
+                    planet[1] = survivor_owner
+                    planet[5] = abs(planet[5])
+
+    for i in range(1, num_agents):
+        state[i].observation.planets = obs0.planets
+        state[i].observation.initial_planets = obs0.initial_planets
+        state[i].observation.fleets = obs0.fleets
+        state[i].observation.next_fleet_id = obs0.next_fleet_id
+        state[i].observation.comets = obs0.comets
+        state[i].observation.comet_planet_ids = obs0.comet_planet_ids
+
+    terminated = False
+    step = _get(obs0, "step", 0)
+    if step >= configuration.episodeSteps - 2:
+        terminated = True
+
+    alive_players = set()
+    for p in obs0.planets:
+        if p[1] != -1:
+            alive_players.add(p[1])
+    for f in obs0.fleets:
+        alive_players.add(f[1])
+
+    if len(alive_players) <= 1:
+        terminated = True
+
+    if terminated:
+        for s in state:
+            s.status = "DONE"
+
+        scores = [0] * num_agents
+        for p in obs0.planets:
+            if p[1] != -1:
+                scores[p[1]] += p[5]
+        for f in obs0.fleets:
+            scores[f[1]] += f[6]
+
+        max_score = max(scores)
+        for i in range(num_agents):
+            if scores[i] == max_score and max_score > 0:
+                state[i].reward = 1
+            else:
+                state[i].reward = -1
+
+    return state
+
 # === inlined: lib/fast_sim.py ===
 
 
@@ -2065,10 +3245,12 @@ import copy
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
-from kaggle_environments.envs.orbit_wars.orbit_wars import (
-    interpreter as _orbit_wars_interpreter,
-)
 from kaggle_environments.utils import Struct
+
+_orbit_wars_interpreter = interpreter
+_GAME_BOARD_SIZE = BOARD_SIZE
+_GAME_CENTER = CENTER
+_GAME_RRL = ROTATION_RADIUS_LIMIT
 
 
 # Default configuration matching kaggle_environments.envs.orbit_wars's
@@ -2094,13 +3276,30 @@ class _FakeEnv:
     just those three attributes. `info["seed"]` is read once per comet
     spawn (orbit_wars.py:438-440) — passing it through keeps comet RNG
     deterministic.
+
+    `comet_path_cache` is a dict {(episode_seed, spawn_step):
+    (comet_paths_or_None, comet_ships_or_None)} populated lazily by the
+    interpreter. It's SHARED across clones so all branches of a
+    lookahead inherit the same cache and amortise the ~100 ms
+    generate_comet_paths cost across rollouts.
+
+    `planet_position_cache` is a dict {planet_id: list[(x, y)]} keyed
+    by initial-planet id, indexed by absolute step. Pre-computed once
+    in `from_obs()` for every rotating planet; the interpreter uses it
+    instead of recomputing `atan2/cos/sin` each step. SHARED across
+    clones too. ~240 KB at 30 rotating planets × 500 steps.
     """
-    __slots__ = ("configuration", "info", "done")
+    __slots__ = (
+        "configuration", "info", "done",
+        "comet_path_cache", "planet_position_cache",
+    )
 
     def __init__(self, configuration: Struct, episode_seed: int) -> None:
         self.configuration = configuration
         self.info = {"seed": episode_seed}
         self.done = False
+        self.comet_path_cache = {}
+        self.planet_position_cache = {}
 
 
 @dataclass
@@ -2243,7 +3442,43 @@ def from_obs(
         ))
 
     fake_env = _FakeEnv(config_struct, episode_seed)
+    _populate_planet_position_cache(fake_env, obs0)
     return Snapshot(state=state, fake_env=fake_env, episode_seed=episode_seed)
+
+
+def _populate_planet_position_cache(fake_env, obs0) -> None:
+    """Pre-compute orbital positions for every rotating planet at every
+    step of the episode. Eliminates per-step atan2/cos/sin for the planet
+    path computation. Storage ~240 KB at 30 planets × 500 steps.
+    """
+    import math as _math
+    cache = fake_env.planet_position_cache
+    angular_velocity = float(obs0.angular_velocity)
+    episode_steps = int(fake_env.configuration.episodeSteps)
+    initial_planets = obs0.initial_planets
+    comet_pid_set = set(obs0.comet_planet_ids)
+    sqrt = _math.sqrt
+    cos = _math.cos
+    sin = _math.sin
+    atan2 = _math.atan2
+    for ip in initial_planets:
+        pid = ip[0]
+        if pid in comet_pid_set:
+            continue
+        dx = ip[2] - _GAME_CENTER
+        dy = ip[3] - _GAME_CENTER
+        r = sqrt(dx * dx + dy * dy)
+        if r + ip[4] >= _GAME_RRL:
+            # Non-rotating; no cache entry needed (interpreter keeps the
+            # static position).
+            continue
+        initial_angle = atan2(dy, dx)
+        # Index 0 is the position AT step 0 (which equals initial position).
+        positions = []
+        for s in range(episode_steps + 1):
+            theta = initial_angle + angular_velocity * s
+            positions.append((_GAME_CENTER + r * cos(theta), _GAME_CENTER + r * sin(theta)))
+        cache[pid] = positions
 
 
 # ---------------------------------------------------------------------------
@@ -2320,6 +3555,10 @@ def clone(snap: Snapshot) -> Snapshot:
 
     fake_env = _FakeEnv(snap.fake_env.configuration, snap.episode_seed)
     fake_env.done = snap.fake_env.done
+    # Share both caches with the parent so all lookahead branches benefit
+    # from work done by any one of them (comet generation, planet orbits).
+    fake_env.comet_path_cache = snap.fake_env.comet_path_cache
+    fake_env.planet_position_cache = snap.fake_env.planet_position_cache
     return Snapshot(state=new_state, fake_env=fake_env, episode_seed=snap.episode_seed)
 
 
@@ -2685,14 +3924,23 @@ def _aggressive_size(
 
 
 def _build_incumbent_intents(
-    world: World, model: WorldModel,
+    world: World, model: WorldModel, *, include_recapture: bool = False,
 ) -> list[Intent]:
     """v3.5.1's mission set: aggressive snipe + reinforce, run through
-    settle_plan. Used as the parity-floor candidate."""
+    settle_plan. Used as the parity-floor candidate.
+
+    `include_recapture=True` (v7.2+) also adds recapture missions.
+    The recapture proposer's score is calibrated to snipe scale and
+    top-K capped (see lib/missions/recapture.py); without those fixes
+    recapture dominates settle_plan and regresses
+    (audit/2026-05-12-recapture-wireup-ab.md).
+    """
     missions = (
         propose_snipe_missions(world, model, aggressive=True)
         + propose_reinforce_missions(world, model)
     )
+    if include_recapture:
+        missions = missions + propose_recapture_missions(world, model)
     chosen = settle_plan(missions, world, model)
     return chosen
 
@@ -3009,13 +4257,20 @@ def score_candidate(
     my_id: int = 0,
     K: int = 10,
     opp_tier: int = 1,
+    value_fn: Callable | None = None,
 ) -> float:
     """Rollout score for `action` under our seat.
 
     The opponent plays the requested tier policy throughout the
     rollout. Our seat plays `action` on the first tick, then the
-    top-tier mirror policy thereafter (mirrors `lib/lookahead.py::
-    score_action`'s convention)."""
+    top-tier mirror policy thereafter.
+
+    `value_fn(observation, my_id) -> float` is the leaf-state scoring
+    head. Defaults to `delta_us_minus_them` (our minus their total
+    ships) — the Phase-2-validated scalar. v7.3+ passes
+    `lib.lookahead_planner.evaluate_value` for production-share +
+    denial + survivor bonus.
+    """
     if snap.num_seats != 2:
         raise ValueError(f"v7 score_candidate is 2P only (got {snap.num_seats})")
     clone = fs_clone(snap)
@@ -3040,7 +4295,508 @@ def score_candidate(
         a1 = our_followup_policy(clone.state[1].observation)
         clone = fs_step(clone, [a0, a1], in_place=True)
 
-    return delta_us_minus_them(clone, my_id)
+    if value_fn is None:
+        return delta_us_minus_them(clone, my_id)
+    return value_fn(clone.state[my_id].observation, my_id)
+
+
+def score_candidate_symmetric(
+    snap: Snapshot,
+    action: list[list],
+    *,
+    K: int = 10,
+    opp_tier: int = 1,
+) -> float:
+    """Seat-symmetric variant of `score_candidate`.
+
+    Runs the rollout twice — once with us at seat 0 (opp at seat 1)
+    and once with us at seat 1 (opp at seat 0) — and averages the
+    `delta_us_minus_them` results from our POV in each. Cancels the
+    env's documented P1-favoring tie-break bias that otherwise leaks
+    into the maximin payoff matrix.
+
+    Ported from `score_joint_action_symmetric` in
+    `origin/claude/game-theory-strategy-analysis-0oH4N` but adapted
+    to operate on Snapshots (so we keep fast_sim's 183× speedup).
+
+    Cost: 2× score_candidate.
+    """
+    a = score_candidate(snap, action, my_id=0, K=K, opp_tier=opp_tier)
+    b = score_candidate(snap, action, my_id=1, K=K, opp_tier=opp_tier)
+    return (a + b) / 2.0
+
+
+def score_joint(
+    snap: Snapshot,
+    our_action: list[list],
+    opp_action: list[list],
+    *,
+    my_id: int = 0,
+    K: int = 10,
+    value_fn: Callable | None = None,
+) -> float:
+    """Snapshot variant of `lib/lookahead.score_joint_action`.
+
+    Both first-turn actions are forced; turns 2..K both seats play
+    top_tier_mirror. Returns the leaf-state value via `value_fn`
+    (default: `delta_us_minus_them`).
+    """
+    if snap.num_seats != 2:
+        raise ValueError(f"score_joint is 2P only (got {snap.num_seats})")
+    clone = fs_clone(snap)
+    opp_id = 1 - my_id
+    actions = [None, None]
+    actions[my_id] = our_action
+    actions[opp_id] = opp_action
+    if not clone.done:
+        clone = fs_step(clone, actions, in_place=True)
+    for _ in range(max(0, K - 1)):
+        if clone.done:
+            break
+        a0 = top_tier_mirror_policy(clone.state[0].observation)
+        a1 = top_tier_mirror_policy(clone.state[1].observation)
+        clone = fs_step(clone, [a0, a1], in_place=True)
+    if value_fn is None:
+        return delta_us_minus_them(clone, my_id)
+    return value_fn(clone.state[my_id].observation, my_id)
+
+
+def score_joint_symmetric(
+    snap: Snapshot,
+    our_action: list[list],
+    opp_action: list[list],
+    *,
+    K: int = 10,
+    value_fn: Callable | None = None,
+) -> float:
+    """Seat-symmetric joint scorer. Used by the maximin overlay."""
+    a = score_joint(snap, our_action, opp_action, my_id=0, K=K, value_fn=value_fn)
+    b = score_joint(snap, our_action, opp_action, my_id=1, K=K, value_fn=value_fn)
+    return (a + b) / 2.0
+
+
+def _drop_smallest(action: list[list]) -> list[list]:
+    """Return `action` with its smallest-ship launch removed.
+
+    Mirrors the drop_smallest function in v7_minimax (ported from
+    `origin/claude/game-theory-strategy-analysis-0oH4N`'s
+    agents/v7_minimax/main.py:98-117). Ties broken by removing the
+    EARLIEST launch among smallest, which is σ-deterministic given
+    upstream ordering.
+    """
+    if not action:
+        return []
+    if len(action) == 1:
+        return []
+    min_idx = 0
+    min_ships = int(action[0][2])
+    for i, la in enumerate(action[1:], start=1):
+        if int(la[2]) < min_ships:
+            min_ships = int(la[2])
+            min_idx = i
+    return [la for i, la in enumerate(action) if i != min_idx]
+
+
+def _opp_incumbent_action(world: World, obs: Any, opp_id: int) -> list[list]:
+    """Compute the opponent's incumbent action via v3.5.1 pipeline
+    from the opp's POV.
+
+    We don't have a clean way to swap `world.my_id` (it's frozen at
+    construction), so we rebuild World from a copy of obs with
+    `player=opp_id`. This is the same technique v7_minimax uses
+    (`_swap_obs_player` in their main.py).
+    """
+    if isinstance(obs, dict):
+        obs2 = dict(obs)
+        obs2["player"] = opp_id
+    else:
+        keys = (
+            "player", "planets", "fleets", "angular_velocity",
+            "initial_planets", "comet_planet_ids", "comets",
+            "step", "next_fleet_id",
+        )
+        obs2 = {}
+        for k in keys:
+            v = getattr(obs, k, None)
+            if v is not None:
+                obs2[k] = v
+        obs2["player"] = opp_id
+    opp_world = World.from_obs(obs2)
+    if not opp_world.planets_by_id:
+        return []
+    opp_model = WorldModel.from_world(opp_world)
+    missions = (
+        propose_snipe_missions(opp_world, opp_model, aggressive=True)
+        + propose_reinforce_missions(opp_world, opp_model)
+    )
+    intents = settle_plan(missions, opp_world, opp_model)
+    return realize(intents, obs2, mechanisms=DEFAULT_MECHANISMS, model=opp_model)
+
+
+def choose_maximin(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K: int = 10,
+    wallclock_ms: float = 700.0,
+    my_id: int | None = None,
+    use_symmetric: bool = True,
+    include_recapture: bool = False,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """v7.1 maximin overlay.
+
+    Per turn:
+      1. Build N=N+1 our candidates via `_enumerate_drop_one(incumbent)`
+         (incumbent + drop-each-launch).
+      2. Build M=2 opp candidates: opp's v3.5.1 incumbent + drop-smallest.
+      3. Score every (our_i, opp_j) cell via `score_joint_symmetric`
+         (Snapshot, K-step rollout, symmetric average).
+      4. Pick i* = argmax_i (min_j P[i,j]). Tie-break: prefer row 0
+         (= our incumbent) — σ-equivariant fallback.
+
+    Wallclock watchdog (`wallclock_ms`, default 700) bails the inner
+    loop if budget exhausted. Row 0 (incumbent) is ALWAYS evaluated
+    in full first so its worst-case is honest. 4P games fall back to
+    the incumbent (no maximin guarantee at n>2).
+    """
+    t_start = time.perf_counter()
+
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    if my_id is None:
+        my_id = world.my_id
+    model = WorldModel.from_world(world)
+
+    incumbent_intents = _build_incumbent_intents(
+        world, model, include_recapture=include_recapture,
+    )
+    incumbent_action = _action_from_intents(incumbent_intents, obs, model)
+
+    # 4P fallback — maximin is 2P-only.
+    if _infer_num_seats(world) != 2:
+        return incumbent_action
+
+    opp_id = 1 - my_id
+    # Our candidate class: incumbent + each drop-one variant.
+    C = _enumerate_drop_one(incumbent_action)
+    if len(C) <= 1:
+        return incumbent_action
+    # Opp candidate class M=2.
+    O_inc = _opp_incumbent_action(world, obs, opp_id)
+    O_drop = _drop_smallest(O_inc)
+    O = [O_inc] if not O_drop or O_drop == O_inc else [O_inc, O_drop]
+
+    snap = fs_from_obs(obs, configuration, episode_seed=0, num_seats=2)
+    if use_symmetric:
+        def score_fn(s, ours, opps, *, K=K):
+            return score_joint_symmetric(s, ours, opps, K=K, value_fn=value_fn)
+    else:
+        def score_fn(s, ours, opps, *, K=K):
+            return score_joint(s, ours, opps, my_id=my_id, K=K, value_fn=value_fn)
+
+    N = len(C)
+    M = len(O)
+    P: list[list[float]] = [[float("-inf")] * M for _ in range(N)]
+    unfilled: list[list[bool]] = [[True] * M for _ in range(N)]
+
+    # Row 0 (incumbent) first, full row. Then i>=1 row-by-row with bail.
+    for i in range(N):
+        for j in range(M):
+            elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+            if i > 0 and elapsed_ms > wallclock_ms:
+                break
+            try:
+                P[i][j] = score_fn(snap, C[i], O[j], K=K)
+                unfilled[i][j] = False
+            except Exception:
+                P[i][j] = float("-inf")
+                unfilled[i][j] = False
+        else:
+            continue
+        break  # exited inner via budget bail
+
+    # Maximin: argmax_i (min_j P[i,j]) over evaluated cells, tie → row 0.
+    best_i = 0
+    best_worst = float("-inf")
+    for i in range(N):
+        evaluated = [P[i][j] for j in range(M) if not unfilled[i][j]]
+        if not evaluated:
+            worst = float("-inf")
+        else:
+            worst = min(evaluated)
+        if worst > best_worst:
+            best_worst = worst
+            best_i = i
+    return C[best_i]
+
+
+def score_candidate_4p(
+    snap: Snapshot,
+    action: list[list],
+    *,
+    my_id: int,
+    K: int = 8,
+    value_fn: Callable | None = None,
+) -> float:
+    """Rollout score for a 4P candidate action.
+
+    All 3 non-pov seats play `top_tier_mirror_policy`. Our seat plays
+    `action` on tick 0, then `top_tier_mirror_policy` for the rest.
+    Scoring head: `value_fn(state[my_id].observation, my_id)` at
+    terminal — defaults to "our ships − max(other seat ships)" which
+    rewards keeping the lead vs the best-remaining-opponent (better
+    proxy for 4P first-place than total-sum-of-them).
+    """
+    if snap.num_seats != 4:
+        raise ValueError(f"score_candidate_4p needs num_seats=4 (got {snap.num_seats})")
+    clone = fs_clone(snap)
+
+    # First step: forced action for us; all 3 opps play top_tier_mirror.
+    actions: list[list[list]] = [[] for _ in range(4)]
+    for seat in range(4):
+        if seat == my_id:
+            actions[seat] = action
+        else:
+            actions[seat] = top_tier_mirror_policy(clone.state[seat].observation)
+    if not clone.done:
+        clone = fs_step(clone, actions, in_place=True)
+
+    # Remaining K-1 steps: all 4 seats play top_tier_mirror.
+    for _ in range(max(0, K - 1)):
+        if clone.done:
+            break
+        acts = [top_tier_mirror_policy(clone.state[seat].observation) for seat in range(4)]
+        clone = fs_step(clone, acts, in_place=True)
+
+    if value_fn is not None:
+        return value_fn(clone.state[my_id].observation, my_id)
+
+    # Default 4P scoring: our ships − max(other seat ships).
+    # Better proxy for "did we keep the lead vs the best-remaining-
+    # opponent" than (our − sum_others), which is dominated by total
+    # ship counts.
+    from collections import defaultdict
+    totals: dict[int, float] = defaultdict(float)
+    obs0 = clone.state[my_id].observation
+    for p in obs0.planets:
+        if int(p[1]) >= 0:
+            totals[int(p[1])] += float(p[5])
+    for f in obs0.fleets:
+        if int(f[1]) >= 0:
+            totals[int(f[1])] += float(f[6])
+    ours = totals.get(my_id, 0.0)
+    others = [v for k, v in totals.items() if k != my_id and k >= 0]
+    best_opp = max(others) if others else 0.0
+    return ours - best_opp
+
+
+def choose_4p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K: int = 8,
+    wallclock_ms: float = 700.0,
+    my_id: int | None = None,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """v7.4 — 4P drop-one chooser.
+
+    No maximin (no Nash guarantee at n>2). All 3 opps modeled as
+    top_tier_mirror; we score drop-one candidates and pick argmax.
+    Falls back to incumbent if the watchdog trips or no candidate
+    strictly beats it.
+    """
+    t_start = time.perf_counter()
+
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    if my_id is None:
+        my_id = world.my_id
+    model = WorldModel.from_world(world)
+
+    incumbent_intents = _build_incumbent_intents(
+        world, model, include_recapture=include_recapture,
+    )
+    incumbent_action = _action_from_intents(incumbent_intents, obs, model)
+
+    # Build candidate set: incumbent + drop-each-launch.
+    candidates = _enumerate_drop_one(incumbent_action)
+    if len(candidates) <= 1:
+        return incumbent_action
+
+    snap = fs_from_obs(obs, configuration, episode_seed=0, num_seats=4)
+
+    best_action = incumbent_action
+    best_score = float("-inf")
+    incumbent_scored = False
+    for cand in candidates:
+        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+        if elapsed_ms > wallclock_ms:
+            break
+        try:
+            score = score_candidate_4p(
+                snap, cand, my_id=my_id, K=K, value_fn=value_fn,
+            )
+        except Exception:
+            continue
+        if not incumbent_scored:
+            incumbent_scored = True
+            best_score = score
+            best_action = list(cand)
+            continue
+        if score > best_score:
+            best_score = score
+            best_action = list(cand)
+    return best_action
+
+
+def choose_simple_2p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K: int = 10,
+    wallclock_ms: float = 700.0,
+    my_id: int | None = None,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """2P drop-one chooser WITHOUT maximin overlay.
+
+    This is what v7.1 maximin should have been but wasn't: pure
+    argmax over drop-one candidates with σ-equiv-enabled incumbent.
+    The maximin variant (`choose_maximin`) lost the A/B because
+    its 2×N × symmetric-scoring budget blew the wallclock; the
+    simple variant has the same per-candidate cost as v7_0 (proven
+    fast enough at 746-816 ms p95) while still getting σ-equiv,
+    recapture, and value_fn for free.
+    """
+    t_start = time.perf_counter()
+
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    if my_id is None:
+        my_id = world.my_id
+    model = WorldModel.from_world(world)
+
+    incumbent_intents = _build_incumbent_intents(
+        world, model, include_recapture=include_recapture,
+    )
+    incumbent_action = _action_from_intents(incumbent_intents, obs, model)
+
+    candidates = _enumerate_drop_one(incumbent_action)
+    if len(candidates) <= 1:
+        return incumbent_action
+
+    snap = fs_from_obs(obs, configuration, episode_seed=0, num_seats=2)
+    best_action = incumbent_action
+    best_score = float("-inf")
+    incumbent_scored = False
+    for cand in candidates:
+        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+        if elapsed_ms > wallclock_ms:
+            break
+        try:
+            score = score_candidate(
+                snap, cand, my_id=my_id, K=K, opp_tier=1, value_fn=value_fn,
+            )
+        except Exception:
+            continue
+        if not incumbent_scored:
+            incumbent_scored = True
+            best_score = score
+            best_action = list(cand)
+            continue
+        if score > best_score:
+            best_score = score
+            best_action = list(cand)
+    return best_action
+
+
+def choose_simple_with_4p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K_2p: int = 10,
+    K_4p: int = 8,
+    wallclock_ms: float = 700.0,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """v7.5 entry — auto-routes 2P→choose_simple_2p, 4P→choose_4p.
+
+    No maximin overlay (which regressed at v7.1 A/B). σ-equiv layer
+    is library-level (lib/planner + lib/geometry + lib/missions/snipe)
+    so it's automatically present. Recapture + value_fn pluggable.
+    """
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    n_seats = _infer_num_seats(world)
+    if n_seats == 2:
+        return choose_simple_2p(
+            obs, configuration,
+            K=K_2p, wallclock_ms=wallclock_ms,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    if n_seats == 4:
+        return choose_4p(
+            obs, configuration,
+            K=K_4p, wallclock_ms=wallclock_ms,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    # 3P or 1P: rare; fall back to incumbent.
+    model = WorldModel.from_world(world)
+    intents = _build_incumbent_intents(world, model, include_recapture=include_recapture)
+    return _action_from_intents(intents, obs, model)
+
+
+def choose_with_4p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K_2p: int = 10,
+    K_4p: int = 8,
+    wallclock_ms: float = 700.0,
+    use_symmetric: bool = True,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """Auto-routes 2P → choose_maximin, 4P → choose_4p.
+
+    Combines the v7.1 maximin overlay (with σ-equiv + symmetric
+    scoring) for 2P and the v7.4 4-seat drop-one rollout for 4P. v7.5
+    final agent uses this entry point.
+    """
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    n_seats = _infer_num_seats(world)
+    if n_seats == 2:
+        return choose_maximin(
+            obs, configuration,
+            K=K_2p, wallclock_ms=wallclock_ms,
+            use_symmetric=use_symmetric,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    if n_seats == 4:
+        return choose_4p(
+            obs, configuration,
+            K=K_4p, wallclock_ms=wallclock_ms,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    # 3P or 1P: rare; fall back to incumbent (safest).
+    model = WorldModel.from_world(world)
+    intents = _build_incumbent_intents(world, model, include_recapture=include_recapture)
+    return _action_from_intents(intents, obs, model)
 
 
 def choose(
@@ -3113,6 +4869,228 @@ def choose(
             best_score = score
             best_action = list(cand)
     return best_action
+
+# === inlined: lib/candidate_portfolios.py ===
+
+
+from collections import defaultdict
+from dataclasses import dataclass
+
+
+
+@dataclass
+class Portfolio:
+    """A labelled mission list to be ranked by the Sim<K> scorer."""
+
+    label: str
+    missions: list[Mission]
+
+
+def _incumbent_missions(world: World, model: WorldModel) -> list[Mission]:
+    """v3.5.1's mission set — aggressive snipe + reinforce."""
+    return (
+        propose_snipe_missions(world, model, aggressive=True)
+        + propose_reinforce_missions(world, model)
+    )
+
+
+def _conservative_missions(world: World, model: WorldModel) -> list[Mission]:
+    """v3_snipe's mission set — minimum-viable snipe + reinforce."""
+    return (
+        propose_snipe_missions(world, model, aggressive=False)
+        + propose_reinforce_missions(world, model)
+    )
+
+
+def _per_source_swap(missions: list[Mission]) -> list[Mission] | None:
+    """Drop top-1 for the source with the smallest top-1 / top-2 score gap.
+
+    Returns None if no source has at least 2 missions (no swap possible)
+    or if there are no missions at all.
+    """
+    if not missions:
+        return None
+    by_src: dict[int, list[Mission]] = defaultdict(list)
+    for m in missions:
+        by_src[m.src_id].append(m)
+    # Sort each bucket high → low by score, find the source with
+    # the smallest (top1 - top2) gap.
+    candidates = []
+    for src_id, bucket in by_src.items():
+        if len(bucket) < 2:
+            continue
+        bucket.sort(key=lambda m: -m.score)
+        gap = bucket[0].score - bucket[1].score
+        candidates.append((gap, src_id, bucket[0]))
+    if not candidates:
+        return None
+    # Smallest gap = most-marginal greedy decision.
+    _gap, swap_src, top1 = min(candidates, key=lambda t: t[0])
+    return [m for m in missions if not (m.src_id == swap_src and m is top1)]
+
+
+def _drop_weakest_source(missions: list[Mission]) -> list[Mission] | None:
+    """Drop ALL missions from the source whose best score is the lowest.
+
+    Equivalent to "idle the weakest source this turn." Returns None if
+    there are fewer than 2 sources (dropping the only source = no-op
+    duplicate, the noop portfolio covers it).
+    """
+    if not missions:
+        return None
+    by_src: dict[int, list[Mission]] = defaultdict(list)
+    for m in missions:
+        by_src[m.src_id].append(m)
+    if len(by_src) < 2:
+        return None
+    # Best score per source; weakest is the one whose best is lowest.
+    weakest_src = min(
+        by_src.keys(), key=lambda s: max(m.score for m in by_src[s])
+    )
+    return [m for m in missions if m.src_id != weakest_src]
+
+
+def generate_portfolios(
+    world: World,
+    model: WorldModel,
+    incumbent_missions: list[Mission] | None = None,
+) -> list[Portfolio]:
+    """Build ≤ 5 mission portfolios for the lookahead scorer to rank.
+
+    `incumbent_missions` may be passed in if the caller already built
+    them (avoiding a duplicate proposer call); otherwise this rebuilds
+    them. The incumbent is always portfolios[0] so the scorer's "score
+    incumbent first" loop has a safe fallback.
+    """
+    incumbent = (
+        incumbent_missions
+        if incumbent_missions is not None
+        else _incumbent_missions(world, model)
+    )
+    portfolios: list[Portfolio] = [Portfolio("incumbent", incumbent)]
+
+    conservative = _conservative_missions(world, model)
+    # Only add conservative if it differs in at least one ship count from
+    # incumbent — otherwise it would settle to the same action.
+    if _missions_differ(conservative, incumbent):
+        portfolios.append(Portfolio("conservative", conservative))
+
+    swap = _per_source_swap(incumbent)
+    if swap is not None and swap != incumbent:
+        portfolios.append(Portfolio("per_source_swap", swap))
+
+    drop_weak = _drop_weakest_source(incumbent)
+    if drop_weak is not None and drop_weak != incumbent:
+        portfolios.append(Portfolio("drop_weakest_source", drop_weak))
+
+    portfolios.append(Portfolio("noop", []))
+    return portfolios
+
+
+def _missions_differ(a: list[Mission], b: list[Mission]) -> bool:
+    """Cheap structural compare on (src, target, ships) keys.
+
+    score / mission_class metadata is irrelevant for whether settle_plan
+    would emit a different action — only the launch tuple matters.
+    """
+    def key(ms: list[Mission]):
+        return sorted((m.src_id, m.target_id, m.ships) for m in ms)
+    return key(a) != key(b)
+
+# === inlined: lib/value_heads.py ===
+
+
+from typing import Any
+
+
+
+# Phase 2 audit established AUC ≈ oracle at K=50. K=10 + 30 extra of
+# static substrate ≈ K=40 effective; close enough.
+INFLIGHT_EXTRA_HORIZON: int = 30
+
+# How much weight to give the in-flight production credit relative to
+# ship-delta. 0.5 chosen so a captured 3-production planet (worth
+# ~3*30=90 production-points) approximately balances 90 ships of
+# delta. Calibration knob.
+INFLIGHT_WEIGHT: float = 0.5
+
+
+def delta_us_minus_them_obs(obs: Any, my_id: int) -> float:
+    """Plain `(our ships) − (their ships)` from a Snapshot's primary
+    observation. Phase 2 validated this at AUC ≈ oracle for K=50.
+
+    Renamed from `delta_us_minus_them` to avoid bundle-shadow collision
+    with the identically-named `lib.fast_sim.delta_us_minus_them(snap, ...)`.
+    The fast_sim version takes a Snapshot; this one takes an obs.
+    Same logic, different first-arg type.
+
+    `obs` is `snap.state[my_id].observation` (a `Struct`). Sums
+    planet garrisons + in-flight fleet ship counts for owned planets/
+    fleets; subtracts each other seat's total.
+    """
+    planets = obs.get("planets", []) if isinstance(obs, dict) else getattr(obs, "planets", [])
+    fleets = obs.get("fleets", []) if isinstance(obs, dict) else getattr(obs, "fleets", [])
+    ours = 0.0
+    theirs = 0.0
+    for p in planets:
+        owner = int(p[1])
+        if owner == my_id:
+            ours += float(p[5])
+        elif owner >= 0:
+            theirs += float(p[5])
+    for f in fleets:
+        owner = int(f[1])
+        if owner == my_id:
+            ours += float(f[6])
+        elif owner >= 0:
+            theirs += float(f[6])
+    return ours - theirs
+
+
+def inflight_value(
+    obs: Any, my_id: int,
+    *, extra_horizon: int = INFLIGHT_EXTRA_HORIZON,
+    weight: float = INFLIGHT_WEIGHT,
+) -> float:
+    """Composite scoring head: `delta_us_minus_them + weight × inflight_credit`.
+
+    The credit term reads the predicted owner of each planet at
+    `step + extra_horizon` from the terminal Snapshot's WorldModel
+    (which integrates in-flight fleets). For planets that flip TO
+    us within the extended horizon, the credit is `production`.
+    Sum across all such planets, weight by `weight`.
+
+    The default weight=0.5 is the calibration knob the v9_inflight
+    A/B is gated on. Phase 2 said AUC≈oracle at K=50; this head
+    effectively extends K from 10 to ~40 via the static substrate
+    while keeping the same rollout cost.
+
+    Empty world (no planets) → returns the base ship-delta only
+    (which is 0).
+    """
+    base = delta_us_minus_them_obs(obs, my_id)
+    # Build World from the terminal observation. fast_sim's Snapshot
+    # uses Struct, so World.from_obs accepts it.
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return base
+
+    # Build a per-planet timeline that integrates current in-flight
+    # fleets out to `extra_horizon`. WorldModel.simulate_planet_timeline
+    # is O(horizon) per planet and ~1ms total at horizon=30 for a
+    # typical board (see audit/2026-05-12-fast-sim-bench.md).
+    model = WorldModel.from_world(world, horizon=extra_horizon)
+
+    bonus = 0.0
+    for p in world.planets_by_id.values():
+        if p.owner == my_id:
+            # Already ours; no in-flight credit needed (counted in base).
+            continue
+        pred_owner = model.owner_at(p.id, extra_horizon)
+        if pred_owner == my_id:
+            # We'll own it within extra_horizon → credit the production.
+            bonus += float(p.production)
+    return base + weight * bonus
 
 # === agent ===
 """v7.0 — drop-one enumerator under the new fast_sim scorer.
