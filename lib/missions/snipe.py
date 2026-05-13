@@ -37,6 +37,7 @@ import math
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
 from lib.mission import Mission
+from lib.scoring import PV_GAMMA, pv_horizon
 from lib.world_model import WorldModel, comet_remaining_lifetime
 
 # sym_hypot was imported here for the σ-equiv layer (cherry-picked
@@ -232,13 +233,18 @@ def propose_snipe_missions(
             # Comet-lifetime correction: comets leave the board at
             # `len(path) - path_index` steps from now; capping time_to_hold
             # by remaining lifetime stops us scoring "long-run yield" on a
-            # comet that's about to depart.
+            # comet that's about to depart. `pv_horizon` with PV_GAMMA=1.0
+            # is identity to the prior linear `max(0, lifetime − eta)`
+            # form; PV_GAMMA<1.0 discounts future production geometrically
+            # (TID 699003).
             is_comet = t.id in world.comet_ids
             if is_comet:
                 rem = comet_remaining_lifetime(t.id, world)
-                time_to_hold = max(0, (rem or 0) - eta)
+                time_to_hold = max(0.0, pv_horizon(0, eta, PV_GAMMA, rem or 0))
             else:
-                time_to_hold = max(1, EPISODE_STEPS - step_now - eta)
+                time_to_hold = max(
+                    1.0, pv_horizon(step_now, eta, PV_GAMMA, EPISODE_STEPS)
+                )
             value = t.production * time_to_hold
 
             # Cost-aware ROI baseline + priority modifiers.

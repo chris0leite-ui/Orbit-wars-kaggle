@@ -42,6 +42,10 @@ DEFAULT_LIB_ORDER = [
     "trajectory",
     "mechanism",
     "mission",
+    # `scoring` exposes `pv_horizon` + `PV_GAMMA` used by missions/snipe
+    # and missions/reinforce since H16 (2026-05-13). Must precede the
+    # mission modules so the inlined symbols are visible at parse time.
+    "scoring",
     "missions/snipe",
     "missions/reinforce",
     "missions/recapture",

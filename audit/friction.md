@@ -55,6 +55,35 @@
   immediate task looks like read-only. Cost: ~5 min recovery; user
   trust hit.
 
+- `tag: new-lib-module-silently-broken-bundle` — H16 (PV target
+  valuation) added `lib/scoring.py:pv_horizon` + `PV_GAMMA`, and
+  imported them into `lib/missions/snipe.py` and `reinforce.py`. All
+  unit tests passed including `test_bundle.py`, and the bundler ran
+  cleanly (199 770 B output, agent callable importable). But every
+  game in the 8-seed smoke A/B ended in a `draw at step 2` because
+  `pv_horizon` was undefined at runtime: the bundler's
+  `_INTRA_IMPORT_RE` strips `from lib.scoring import ...` while
+  `lib/scoring.py` was not in `DEFAULT_LIB_ORDER`, so the symbol
+  vanished. `test_bundle.py`'s parity gate uses v1_orbitfix, which
+  doesn't use snipe missions — so the regression was invisible to the
+  test suite. **Fix landed:** added `"scoring"` to `DEFAULT_LIB_ORDER`
+  immediately before `missions/snipe` (commit pending in this
+  session). **Promotion candidates:** (a) the bundle parity gate
+  should cover at least one agent that exercises the full mission
+  proposer pipeline (v3_snipe is a natural choice); (b) the bundler
+  could lint stripped `from lib.X` imports and error if `X` is not in
+  the lib-order list — fail loud at bundle time, not silent at
+  inference. Cost: ~10 min diagnose + 1 wasted 8-seed A/B run.
+
+- `tag: ab_variants-hardcoded-v3_snipe-agent` — `scripts/ab_variants.py`
+  was hardcoded to bundle `agents/v3_snipe`. For H16-H29 we need to
+  A/B inside `agents/v7_ablations/v7_0_drop_one` (the drop-one
+  rollout) because ROI-formula changes are most meaningful where they
+  feed candidate selection into the rollout scorer. Added `--agent
+  PATH` flag (defaults to v3_snipe for back-compat). **Note:** this
+  was a small extension but should have been part of [G]'s scope, not
+  discovered mid-A.
+
 - `tag: no-cgroup-v2-no-systemd-bus` — Day-1 eval-cost probe (K)
   tried `systemd-run --user --scope -p CPUQuota=60%` for a true
   0.6-CPU limit (matching Kaggle eval). Failed with "Failed to

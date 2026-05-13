@@ -75,6 +75,36 @@ def horizon(step: int, eta: int, t_total: int = T_TOTAL_DEFAULT) -> int:
     return max(0, t_total - step - eta)
 
 
+# Discount factor for present-value horizon valuation. With γ < 1, future
+# production is discounted at γ per turn from the arrival step. At γ = 1.0
+# (the default) the function reduces to the linear horizon above; that
+# preserves the pre-PV scoring shape so existing snipe/reinforce tests pass
+# unchanged. A/B candidates set γ < 1 (typically 0.99 per discussion-thread
+# TID 699003) via `scripts/ab_variants.py --variant pv PV_GAMMA=0.99`.
+PV_GAMMA = 1.0
+
+
+def pv_horizon(
+    step: int, eta: int, gamma: float = PV_GAMMA,
+    t_total: int = T_TOTAL_DEFAULT,
+) -> float:
+    """Present-value of a unit production stream starting at `step + eta`.
+
+    With γ < 1: `γ^eta · Σ_{k=0}^{h-1} γ^k = γ^eta · (1-γ^h)/(1-γ)` where
+    `h = t_total - step - eta`. The early arrival turns count for full
+    γ^eta weight; far-future production is exponentially discounted. At
+    γ = 1.0 the formula degenerates to the linear horizon (`h` turns of
+    equal weight), matching `horizon()` above modulo floating-point cast.
+    Returns 0 when no production turns remain.
+    """
+    h = t_total - step - eta
+    if h <= 0:
+        return 0.0
+    if gamma >= 1.0:
+        return float(h)
+    return (gamma ** eta) * (1.0 - gamma ** h) / (1.0 - gamma)
+
+
 def margin_multiplier(target: Planet, my_id: int) -> int:
     """Owner-flip multiplier for margin-based scoring.
 

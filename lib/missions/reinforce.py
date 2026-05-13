@@ -31,6 +31,7 @@ import math
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
 from lib.mission import Mission
+from lib.scoring import PV_GAMMA, pv_horizon
 from lib.world_model import WorldModel
 
 EPISODE_STEPS = 500
@@ -90,7 +91,9 @@ def propose_reinforce_missions(
                 # we arrive. Skip; a recapture mission (v3.2) would pick
                 # this up instead.
                 continue
-            time_to_hold = max(1, EPISODE_STEPS - step_now - eta)
+            time_to_hold = max(
+                1.0, pv_horizon(step_now, eta, PV_GAMMA, EPISODE_STEPS)
+            )
             value = d.production * time_to_hold
             score = value / (cost + d_dist + 1.0)
             missions.append(Mission(

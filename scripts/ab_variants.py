@@ -66,6 +66,7 @@ PATCHABLE_PATHS = [
     REPO / "lib" / "missions" / "reinforce.py",
     REPO / "lib" / "mechanism.py",
     REPO / "lib" / "planner.py",
+    REPO / "lib" / "scoring.py",
 ]
 BUNDLE_OUT = REPO / "submissions" / "_ab"
 
@@ -111,9 +112,17 @@ def _patch_one_file(path: Path, overrides: dict[str, float]) -> str:
     return original
 
 
-def _bundle_variant(name: str, overrides: dict[str, float]) -> Path:
+def _bundle_variant(
+    name: str,
+    overrides: dict[str, float],
+    agent_dir: Path = REPO / "agents" / "v3_snipe",
+) -> Path:
     """Patch → bundle → restore across whichever lib files own each
-    overridden constant. Returns the bundle path."""
+    overridden constant. Returns the bundle path. `agent_dir` defaults
+    to v3_snipe for backwards compatibility; pass `--agent <path>` to
+    A/B variants of any other agent (e.g. v7_0_drop_one for ROI changes
+    that need the drop-one rollout to see the new candidate set).
+    """
     # Group overrides by source file.
     by_file: dict[Path, dict[str, float]] = {}
     for k, v in overrides.items():
@@ -125,12 +134,15 @@ def _bundle_variant(name: str, overrides: dict[str, float]) -> Path:
             originals[path] = _patch_one_file(path, file_overrides)
         BUNDLE_OUT.mkdir(parents=True, exist_ok=True)
         out_path = bundle_agent.bundle(
-            REPO / "agents" / "v3_snipe",
+            agent_dir,
             bundle_agent.DEFAULT_LIB_ORDER,
             out_dir=BUNDLE_OUT,
         )
-        # bundle_agent names the file by agent_dir.name = "v3_snipe".
+        # bundle_agent names the file by agent_dir.name. Rename to the
+        # variant name so each --variant gets a distinct file.
         renamed = BUNDLE_OUT / f"{name}.py"
+        if renamed.exists():
+            renamed.unlink()
         out_path.rename(renamed)
         return renamed
     finally:
@@ -292,19 +304,34 @@ def main(argv=None) -> int:
         help="Per-anchor Wilson-lo gate (default 0.55). Only used when "
              "--candidate is set.",
     )
+    parser.add_argument(
+        "--agent", default=str(REPO / "agents" / "v3_snipe"),
+        help="Path to the agent directory to bundle for every variant. "
+             "Default `agents/v3_snipe`. Pass e.g. "
+             "`agents/v7_ablations/v7_0_drop_one` to A/B candidate "
+             "Missions inside the drop-one rollout.",
+    )
     args = parser.parse_args(argv)
+    agent_dir = Path(args.agent).resolve()
+    if not agent_dir.is_dir():
+        raise SystemExit(f"--agent {args.agent}: not a directory")
+    if not (agent_dir / "main.py").is_file():
+        raise SystemExit(f"--agent {args.agent}: missing main.py")
 
     variants = _parse_variant_args(args.variant)
     if args.seeds > len(SEEDS_64):
         raise SystemExit(f"--seeds {args.seeds} exceeds SEEDS_64 size {len(SEEDS_64)}")
     seeds = SEEDS_64[: args.seeds]
 
-    print(f"--- ab_variants: {len(variants)} variants × {args.seeds} seeds")
+    print(
+        f"--- ab_variants: {len(variants)} variants × {args.seeds} seeds "
+        f"(agent: {agent_dir.name})"
+    )
     bundles: dict[str, str] = {}
     for name, overrides in variants.items():
         ov_str = ", ".join(f"{k}={v}" for k, v in overrides.items()) or "(no overrides)"
         print(f"  bundling {name} [{ov_str}]")
-        bundles[name] = str(_bundle_variant(name, overrides))
+        bundles[name] = str(_bundle_variant(name, overrides, agent_dir=agent_dir))
 
     out_dir = REPO / "audit" / "tournaments"
     out_dir.mkdir(parents=True, exist_ok=True)
