@@ -1,36 +1,36 @@
-"""geo v2.1 — geometric sense + K=10 lookahead, ladder-safe wallclock.
+"""geo v2.2 — geometric sense + K=10 lookahead + top-10 archetype blend.
 
 Combines:
 - v7's K=10 forward-sim lookahead (`lib/v7_search.py:score_candidate`)
-- v7's drop-one candidate enumeration (the proven floor; capped to top 3)
-- Geometric extras: 4 tilts, scored in priority order, dropped under budget pressure
+- v7's drop-one candidate enumeration (capped to top 2)
+- Geometric extras: 4 sense-driven tilts
+- TOP-10 ARCHETYPE BLEND: concentrated artillery + saturation pressure
 - "Avoid comets" — all comet targets filtered before settlement
 
-The K=10 lookahead is the SAFETY NET: each tilt is scored against the
-incumbent. If a tilt regresses, the incumbent wins argmax and the tilt
-is silently discarded. This sidesteps the v1 lesson that "2x cross-class
-multipliers regress -37pp": with the lookahead validating, we can push
-tilts up to 2x because the floor is protected.
+The K=10 lookahead is the SAFETY NET: each candidate is scored against
+the incumbent. If a candidate regresses, the incumbent wins argmax and
+the candidate is silently discarded.
 
-Pipeline per turn:
+Pipeline per turn (priority-ordered candidate set):
     obs -> World + WorldModel + sense_state
     -> base missions (snipe aggressive + reinforce + opening), no comets
     -> incumbent_action via settle_plan
-    -> priority-ordered candidate set:
+    -> candidates in priority order:
          0. incumbent              (always; floor)
          1. opening-boost tilt     (steps 0-15; 68% opening losses)
          2. enemy-focus tilt       (top-10 targets enemy 2.3x more)
-         3. front-reinforce tilt   (geometric defense bias)
-         4. voronoi-filter tilt    (geometric attack bias)
-         5. drop-one variants      (top 3 by score-per-ship)
+         3. concentrated archetype (snipe ships scaled to 0.9 of garrison)
+         4. saturation archetype   (multi-launch per source via greedy-multi)
+         5. front-reinforce tilt   (geometric defense bias)
+         6. voronoi-filter tilt    (geometric attack bias)
+         7. drop-one variants      (top 2)
     -> score each via fast_sim K=10 + Tier-1 opp mirror
-    -> HARD wallclock gate: skip remaining if elapsed > WALLCLOCK_MS BEFORE scoring
+    -> HARD wallclock gate BEFORE each score; skip if elapsed > WALLCLOCK_MS
     -> argmax -> action
 
-Wallclock. WALLCLOCK_MS=500 (down from 700) and the gate is BEFORE
-score_candidate (not after), so a slow score can't push the next one
-into the ladder timeout. Test bench (v3.5.1 eval pre-tightening):
-p95=820ms / max=1919ms. Target after tightening: p95<700ms / max<950ms.
+Both top-10 archetypes (concentrated artillery, saturation pressure)
+co-exist at the top per knowledge-base/concepts/top-performer-strategies.md.
+This agent generates one candidate of each, lets the lookahead pick.
 """
 
 from __future__ import annotations
@@ -56,16 +56,17 @@ from lib.geo.sense import SenseState, sense_state
 # ---------------------------------------------------------------------------
 
 K_LOOKAHEAD = 10
-WALLCLOCK_MS = 500.0          # hard pre-candidate gate (was 700; ladder limit 1000)
+WALLCLOCK_MS = 500.0          # hard pre-candidate gate (ladder limit 1000)
 TIE_TOLERANCE = 1e-6
-MAX_DROP_ONE_VARIANTS = 3     # cap drop-one to top-3 by ships dropped (smallest fleets first)
+MAX_DROP_ONE_VARIANTS = 2     # capped to 2 (was 3); 2 archetype tilts replace the budget
 
 # Tilt magnitudes — the K=10 lookahead validates each, so 1.5-2x is safe.
-# Reference: v1 bisect found cross-class >=2x regressed -37pp WITHOUT lookahead.
 TILT_OPENING_BOOST = 2.0      # opening missions, steps 0-15 (68% opening losses signal)
 TILT_OPENING_STEP_LIMIT = 15
 TILT_ENEMY_FOCUS = 1.5        # snipe targeting enemy-owned planets (2.3x top-10 signal)
 TILT_FRONT_REINFORCE = 1.5    # reinforce missions targeting front planets
+CONCENTRATED_FRACTION = 0.9   # snipe ship-fraction (vs default aggressive 0.7)
+# saturation archetype: multi-launch per source via lib/geo/allocator.py:allocate_greedy_multi
 # voronoi-filter tilt: drops snipe missions to neutrals NOT in our cell (binary)
 
 
@@ -128,6 +129,36 @@ def _front_reinforce_tilt(sense: SenseState) -> Callable[[Mission], Mission | No
     return tilt
 
 
+def _concentrated_archetype_tilt(world: World) -> Callable[[Mission], Mission | None]:
+    """Top-10 'concentrated artillery' — same targets, BIGGER fleets.
+
+    Rescales snipe missions' ship counts toward CONCENTRATED_FRACTION (0.9)
+    of source garrison, vs the default aggressive 0.7. Same target, same
+    score (settle_plan picks the same mission); the source just sends a
+    larger fraction of its garrison. Top-10 #1 / #4 / #6 fingerprint.
+    """
+    pbi = world.planets_by_id
+    def tilt(m: Mission) -> Mission | None:
+        if m.mission_class != "snipe":
+            return m
+        src = pbi.get(m.src_id)
+        if src is None:
+            return m
+        garrison = int(src.ships)
+        if garrison <= m.ships:
+            return m
+        big = max(m.ships, int(garrison * CONCENTRATED_FRACTION))
+        big = min(big, garrison - 1)  # leave at least 1 to keep the planet
+        if big <= m.ships:
+            return m
+        return Mission(
+            mission_class=m.mission_class,
+            src_id=m.src_id, target_id=m.target_id,
+            ships=big, score=m.score, eta=m.eta, note=m.note,
+        )
+    return tilt
+
+
 def _voronoi_filter_tilt(sense: SenseState, world: World
                          ) -> Callable[[Mission], Mission | None]:
     """Drop snipe missions targeting neutrals NOT in our Voronoi cell."""
@@ -163,6 +194,26 @@ def _settle_with_tilt(
 ) -> list[list]:
     tilted = [out for out in (tilt(m) for m in base) if out is not None]
     intents = settle_plan(tilted, world, model)
+    return _action_from_intents(intents, world.obs_raw, model)
+
+
+def _saturation_archetype_action(
+    base: list[Mission], world: World, model: WorldModel, sense: SenseState,
+) -> list[list]:
+    """Top-10 'saturation pressure' — multi-launch per source.
+
+    Uses lib/geo/allocator.py:allocate_greedy_multi (global score-sort,
+    multi-launch-per-source within source garrison). v1 bisect found this
+    settlement loses -31pp standalone, but as ONE candidate validated by
+    K=10 lookahead, the lookahead drops it on turns where it overcommits.
+    On turns where multi-launch is genuinely better (large garrisons,
+    multiple high-value targets), the lookahead picks it.
+    """
+    # Local import keeps this candidate optional: any import error or
+    # allocator failure falls back to the incumbent floor via try/except.
+    from lib.geo.allocator import allocate_greedy_multi
+    from lib.geo.posture import Posture
+    intents = allocate_greedy_multi(base, world, sense, Posture.EXPAND, model)
     return _action_from_intents(intents, world.obs_raw, model)
 
 
@@ -224,6 +275,16 @@ def agent(obs, configuration=None):
 
     _add_tilt("opening_boost", _opening_boost_tilt(world))
     _add_tilt("enemy_focus",   _enemy_focus_tilt(world))
+    _add_tilt("concentrated",  _concentrated_archetype_tilt(world))
+    # Saturation uses a different SETTLEMENT (multi-launch), not a per-mission tilt.
+    try:
+        sat_action = _saturation_archetype_action(base_missions, world, model, sense)
+        key = _action_key(sat_action)
+        if key not in seen:
+            candidates.append(("saturation", sat_action))
+            seen.add(key)
+    except Exception:
+        pass
     _add_tilt("front_reinforce", _front_reinforce_tilt(sense))
     _add_tilt("voronoi_filter",  _voronoi_filter_tilt(sense, world))
 
