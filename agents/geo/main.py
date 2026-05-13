@@ -31,7 +31,7 @@ from lib.world_model import WorldModel
 
 from lib.planner import settle_plan
 
-from lib.geo.allocator import allocate
+from lib.geo.allocator import allocate, allocate_greedy_multi
 from lib.geo.posture import Posture, decide_posture
 from lib.geo.sense import sense_state
 
@@ -47,26 +47,25 @@ from lib.geo.sense import sense_state
 # in this posture."
 
 POSTURE_WEIGHTS: dict[Posture, dict[str, float]] = {
+    # EXPAND (~90% of turns) must match v3.5.1 verbatim: snipe + reinforce,
+    # weights 1.0, NO recapture (recapture is added in v1.5 once we can
+    # bound its candidate explosion). DEFEND/BREAK/OPENING are the
+    # situational overrides — small, targeted bias, not domination.
     Posture.OPENING: {
-        # opening mission disabled in v1 — its fixed ships=8 wastes garrison
-        # vs aggressive snipe's target_min+1 (~3-5). Will re-enable with
-        # adjusted ship-sizing in v1.5 after bisect confirms the right size.
         "snipe":     1.0,
+        "reinforce": 1.0,
     },
     Posture.EXPAND: {
         "snipe":     1.0,
         "reinforce": 1.0,
-        "recapture": 1.0,
     },
     Posture.DEFEND: {
         "snipe":     0.5,   # only enemy targets (see _enemy_only_filter)
-        "reinforce": 3.0,
-        "recapture": 1.5,
+        "reinforce": 2.0,   # boost defense
     },
     Posture.BREAK: {
         "snipe":     1.5,   # enemy-only
         "reinforce": 0.5,
-        "recapture": 2.5,
     },
 }
 
@@ -146,14 +145,14 @@ def agent(obs, configuration=None):
     if not world.planets_by_id:
         return []
     model = WorldModel.from_world(world)
-    # BISECT 2: geo == v3.5.1 source-pipeline EXACTLY (no posture, no
-    # recapture, no allocator, no sense). Establishes whether the source
-    # pipeline matches the bundled v3.5.1 (~50% self-play) or has drifted
-    # since the bundle was frozen (loses systematically). Establishes the
-    # ceiling against which we layer back posture / recapture / allocator.
-    missions = (
-        propose_snipe_missions(world, model, aggressive=True)
-        + propose_reinforce_missions(world, model)
-    )
+    # LAYER 2: posture-weighted missions, settled by settle_plan.
+    # In EXPAND (the default), this is FUNCTIONALLY EQUIVALENT to v3.5.1
+    # (multipliers 1.0, same proposers). DEFEND / BREAK adjust mid-game
+    # priorities. The greedy-multi allocator is deferred to v1.5 (Layer 1
+    # bisect: it regressed 46.9% -> 15.6% due to over-concentration of
+    # launches at strong sources).
+    sense = sense_state(world, model)
+    posture = decide_posture(world, sense, model)
+    missions = collect_posture_weighted_missions(world, model, posture)
     intents = settle_plan(missions, world, model)
     return realize(intents, obs, mechanisms=DEFAULT_MECHANISMS, model=model)
