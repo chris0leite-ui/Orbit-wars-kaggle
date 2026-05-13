@@ -462,6 +462,7 @@ def score_candidate(
     K: int = 10,
     opp_tier: int = 1,
     value_fn: Callable | None = None,
+    followup_policy: Callable | None = None,
 ) -> float:
     """Rollout score for `action` under our seat.
 
@@ -474,6 +475,14 @@ def score_candidate(
     ships) — the Phase-2-validated scalar. v7.3+ passes
     `lib.lookahead_planner.evaluate_value` for production-share +
     denial + survivor bonus.
+
+    `followup_policy(observation) -> list` is the policy applied to
+    BOTH seats for the K-1 follow-up steps after our forced action.
+    Defaults to `top_tier_mirror_policy` (v3.5.1 pipeline, ~10 ms /
+    call). Pass `lite_greedy_policy` (~1 ms / call) when the rollout
+    only needs to estimate trajectory direction and bit-fidelity to
+    v3.5.1 isn't required — typically the case for wider/deeper
+    multi-candidate search.
     """
     if snap.num_seats != 2:
         raise ValueError(f"v7 score_candidate is 2P only (got {snap.num_seats})")
@@ -481,7 +490,8 @@ def score_candidate(
     opp_id = 1 - my_id
 
     opp_policy = make_opp_policy(opp_tier)
-    our_followup_policy = top_tier_mirror_policy
+    if followup_policy is None:
+        followup_policy = top_tier_mirror_policy
 
     # First step: forced action for us; opp plays its policy.
     a_opp = opp_policy(clone.state[opp_id].observation)
@@ -491,12 +501,35 @@ def score_candidate(
     if not clone.done:
         clone = fs_step(clone, actions, in_place=True)
 
-    # Remaining K-1 steps: both seats play top-tier mirror.
+    # Remaining K-1 steps: both seats play follow-up policy.
+    # OPTIMIZATION (Phase 3c): both seats see the same planets/fleets/
+    # comets/angular_velocity, so `WorldModel.from_world` produces the
+    # SAME object regardless of which seat's obs we built it from. We
+    # build it once per step and stash it on both seats' observations
+    # via the `_shared_world_model` attribute; mirror-style policies
+    # (lib.opp_model.top_tier_mirror_policy / mirror_self_policy) check
+    # for this attribute and skip the expensive rebuild (~3.8 ms each).
+    # Net savings: ~3.8 ms per rollout step. Bit-exact parity preserved
+    # because the same model object is used either way.
     for _ in range(max(0, K - 1)):
         if clone.done:
             break
-        a0 = our_followup_policy(clone.state[0].observation)
-        a1 = our_followup_policy(clone.state[1].observation)
+        obs0 = clone.state[0].observation
+        obs1 = clone.state[1].observation
+        # Build shared World/Model once. Cheap to construct World per
+        # seat (it's a tiny dataclass); the expensive part is WorldModel.
+        shared_world = World.from_obs(obs0)
+        if shared_world.planets_by_id:
+            shared_model = WorldModel.from_world(shared_world)
+            obs0._shared_world_model = shared_model
+            obs1._shared_world_model = shared_model
+        a0 = followup_policy(obs0)
+        a1 = followup_policy(obs1)
+        # Clear cache attribute so the obs is clean for downstream consumers.
+        if hasattr(obs0, "_shared_world_model"):
+            del obs0._shared_world_model
+        if hasattr(obs1, "_shared_world_model"):
+            del obs1._shared_world_model
         clone = fs_step(clone, [a0, a1], in_place=True)
 
     if value_fn is None:
@@ -1013,6 +1046,7 @@ def choose(
     my_id: int | None = None,
     opp_tiers: list[int] | None = None,
     value_fn: Callable | None = None,
+    followup_policy: Callable | None = None,
 ) -> list[list]:
     """End-to-end: build incumbent, enumerate, score with watchdog,
     return argmax. Always returns the incumbent if no candidate
@@ -1085,6 +1119,7 @@ def choose(
             s = score_candidate(
                 snap, cand, my_id=my_id, K=K,
                 opp_tier=tier, value_fn=value_fn,
+                followup_policy=followup_policy,
             )
             per_tier.append(s)
         score = min(per_tier)

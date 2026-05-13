@@ -40,6 +40,7 @@ the knowledge-base.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Callable
 
 from lib.intent import World, realize
@@ -64,11 +65,16 @@ def mirror_self_policy(obs: Any) -> list:
 
     Drop-in replacement for `lib.lookahead.score_action`'s `policy`
     argument when you want the Phase 2 default ("opponent plays v2").
+
+    Phase 3c: reuses `_shared_world_model` from the obs if present
+    (saves ~3.8 ms WorldModel rebuild when score_candidate has already
+    computed it for the OTHER seat at the same step).
     """
     world = World.from_obs(obs)
     if not world.planets_by_id:
         return []
-    model = WorldModel.from_world(world)
+    cached = getattr(obs, "_shared_world_model", None)
+    model = cached if cached is not None else WorldModel.from_world(world)
     missions = (
         propose_snipe_missions(world, model, aggressive=False)
         + propose_reinforce_missions(world, model)
@@ -95,11 +101,16 @@ def top_tier_mirror_policy(obs: Any) -> list:
     Use Tier 1 as the rollout policy when modelling opponents above the
     μ≈1100 band; use Tier 0 for parity with prior probes / lower-ladder
     self-play.
+
+    Phase 3c: reuses `_shared_world_model` from the obs if present
+    (saves ~3.8 ms WorldModel rebuild when score_candidate has already
+    computed it for the OTHER seat at the same step).
     """
     world = World.from_obs(obs)
     if not world.planets_by_id:
         return []
-    model = WorldModel.from_world(world)
+    cached = getattr(obs, "_shared_world_model", None)
+    model = cached if cached is not None else WorldModel.from_world(world)
     missions = (
         propose_snipe_missions(world, model, aggressive=True)
         + propose_reinforce_missions(world, model)
@@ -138,6 +149,57 @@ _TIER_REGISTRY: dict[int, Policy] = {
     1: top_tier_mirror_policy,
     2: trained_logreg_policy,
 }
+
+
+def lite_greedy_policy(obs: Any) -> list:
+    """Cheap opp policy: ROI-greedy launch picker, no WorldModel.
+
+    Per-call cost is ~1-2 ms (raw obs only; no World object,
+    no WorldModel.from_world, no mission framework, no mechanism stack).
+    The mirror policies (tier 0, 1) take ~10 ms because they rebuild
+    the WorldModel timeline every step. For the K-1 FOLLOWUP steps
+    inside `score_candidate` (where bit-identical opp behaviour
+    matters less than rollout-completion speed), the lite policy lets
+    a candidate × tier pair complete in ~50 ms vs ~250 ms.
+
+    Behaviour: for each owned planet with ships >= 5, find the
+    enemy/neutral target with the best production/distance ratio and
+    launch 0.7 * source.ships at it (mirrors v3.5.1's aggressive
+    sizing). Conservative on ship floor (>= 5) so it doesn't dribble.
+    """
+    player = obs.get("player", 0) if isinstance(obs, dict) else getattr(obs, "player", 0)
+    planets = obs.get("planets") if isinstance(obs, dict) else getattr(obs, "planets", None)
+    if not planets:
+        return []
+    targets = [p for p in planets if p[1] != player]
+    moves: list = []
+    for src in planets:
+        if src[1] != player or src[5] < 10:
+            continue
+        best = None
+        best_score = -1.0
+        sx = src[2]; sy = src[3]
+        for t in targets:
+            if t[0] == src[0]:
+                continue
+            dx = t[2] - sx; dy = t[3] - sy
+            d = math.sqrt(dx * dx + dy * dy)
+            if d < 1e-6:
+                continue
+            score = float(t[6]) / (d + 1.0)
+            if score > best_score:
+                best_score = score
+                best = t
+        if best is None:
+            continue
+        ships = max(1, int(src[5] * 0.7))
+        if ships > src[5]:
+            ships = src[5]
+        if ships < 5:
+            continue
+        angle = math.atan2(best[3] - sy, best[2] - sx)
+        moves.append([src[0], angle, ships])
+    return moves
 
 
 def make_opp_policy(tier: int = 1) -> Policy:

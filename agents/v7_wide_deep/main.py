@@ -1,33 +1,38 @@
-"""v7_wide_deep — Phase 3c kitchen-sink agent.
+"""v7_wide_deep — Phase 3c agent, budget-aware kitchen-sink.
 
-Re-spends the compute headroom from Phase 3a/3b on four levers
-simultaneously, layered on top of v7_0_drop_one's drop-one chooser:
+Re-spends the compute headroom from Phase 3a/3b on FOUR decision-quality
+levers layered on top of v7_0_drop_one (live μ=1094.9). Per the profile
+(audit 2026-05-13), the agent-inference bottleneck is the opp-policy
+itself (~10 ms / call building WorldModel every step), not the physics.
+We work around that two ways:
 
-  1. WIDER candidate set — `enumerator_mode="combined"` unions
-     drop_one + target_swap + ship_sweep + archetype + hungarian,
-     producing ~17 candidates vs v7_0's ~5.
-  2. DEEPER lookahead — K=25 forward-sim steps (vs v7_0's K=10).
-     Sees comet windows, recapture chains, multi-turn gang-ups.
-  3. MAXIMIN over an opp pool — score each candidate against
-     Tier-0 (v3_snipe defensive) AND Tier-1 (v3.5.1 aggressive);
-     pick the candidate whose WORST-case score is highest. Robust
-     to opp-policy uncertainty across the heterogeneous live ladder.
-  4. RICHER value function — composite of ship-delta (baseline)
-     and `evaluate_value` (production-share + denial + survivor
-     bonus). Captures non-myopic value at the K-step horizon.
+  - SHARED WorldModel across the two seats' opp_policy calls per step
+    (~3.8 ms saved per step). Implemented in `lib.v7_search.score_candidate`
+    and `lib.opp_model.{top_tier_mirror,mirror_self}_policy`.
+  - LITE follow-up policy (`lib.opp_model.lite_greedy_policy`) for the
+    K-1 steps after step 0 — ROI-greedy, no WorldModel, ~1-2 ms / call.
 
-Per the audit, the v7_minimax / v7_1..v7_6 ablations all failed in
-the prior compute budget (K=3). Phase 3a/3b headroom lets us run
-maximin AND K=25 AND wider candidates simultaneously — the
-combination the previous attempts couldn't afford.
+Levers vs v7_0_drop_one:
 
-Budget envelope (200 µs/step typical):
-  17 candidates × 25 steps × 2 opp tiers × 200 µs = ~170 ms
-  + enumeration ~5 ms + value-fn ~negligible
-  = ~180 ms / turn (20 % of 1 s actTimeout)
+  1. WIDER candidate set. `enumerator_mode="combined"` unions
+     drop_one + target_swap + ship_sweep + archetype + hungarian
+     (~17 candidates vs v7_0's ~5). Addresses the "narrow enumeration"
+     gap — top-10 players launch 3.5× more often per game.
+  2. DEEPER lookahead. K=15 vs v7_0's K=10. Sees one more comet
+     capture / recapture cycle.
+  3. MAXIMIN over opp pool. Score each candidate against Tier-0
+     (v3_snipe defensive) AND Tier-1 (v3.5.1 aggressive) at step 0;
+     pick the candidate whose worst-case score is highest. Robust to
+     opp-policy uncertainty across the heterogeneous live ladder.
+  4. RICHER value function. Composite of ship-delta (baseline) and
+     `evaluate_value` (production-share + denial + survivor bonus).
+
+Measured turn timing (80-turn self-play vs v3.5.1, this CPU):
+  mean=156 ms, p50=179 ms, p95=461 ms, max=597 ms.
+  v7_0 baseline same workload: mean=73, p50=4, p95=342, max=472.
 
 Parity floor: always falls back to v3.5.1 incumbent if no candidate
-strictly beats it (preserves the v7_0 safety net).
+strictly beats it.
 """
 
 from __future__ import annotations
@@ -35,21 +40,15 @@ from __future__ import annotations
 from lib.v7_search import choose
 from lib.value_heads import delta_us_minus_them_obs
 from lib.lookahead_planner import evaluate_value
+from lib.opp_model import lite_greedy_policy
 
 
-# Value-function weights. Start point; can be tuned via A/B.
 _SHIP_DELTA_WEIGHT = 0.6
 _RICH_VALUE_WEIGHT = 0.4
 
 
 def _value_fn(observation, my_id):
-    """Composite value head used by v7_wide_deep's rollout scorer.
-
-    Blends the Phase-2-validated ship-delta with `evaluate_value`'s
-    production-share + denial + survivor-bonus signal. The blend
-    weighting (0.6 / 0.4) is the start point; Phase 3c A/B can
-    re-tune.
-    """
+    """Composite value head: ship-delta + production/denial/survivor."""
     d = delta_us_minus_them_obs(observation, my_id)
     e = evaluate_value(
         observation, my_id,
@@ -64,8 +63,9 @@ def agent(obs, configuration=None):
     return choose(
         obs, configuration,
         enumerator_mode="combined",
-        K=25,
+        K=15,
         opp_tiers=[0, 1],
         value_fn=_value_fn,
-        wallclock_ms=800.0,
+        followup_policy=lite_greedy_policy,
+        wallclock_ms=700.0,
     )
