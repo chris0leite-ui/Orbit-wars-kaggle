@@ -258,6 +258,33 @@
   COMET_BONUS=1.3` fix (also 28.1% regression). Promotion candidate:
   "if the finding is local, the fix must be local."
 
+## 2026-05-13 LATE (claude/read-handover-iLWTq — stale handover read)
+
+- `tag: handover-stale-at-session-start-no-git-log-check` — session
+  start: I read HANDOVER.md ("Last written: 2026-05-13 EVE by
+  consolidate-fast-simulation-ysd9M") and built a full plan-mode
+  design for diagnostic + cheap wins + brute-force search, including
+  writing the plan file at
+  `/root/.claude/plans/go-diagnostic-cheap-wins-woolly-rose.md`. After
+  ExitPlanMode, `git log --oneline` revealed the branch tip already
+  carried `cb02fd9 diagnostic + cheap wins + brute-force search` and
+  `4ba55f4 A/B result: v7_1 (H11+H15) ... Wilson lo 36.4%` — i.e. the
+  entire plan had been executed earlier on the same branch, with the
+  Track B A/B already returning a below-gate verdict. A newer
+  HANDOVER.md ("Last written: 2026-05-13 LATE by
+  claude/read-handover-iLWTq") was on disk by the second read pass
+  and reflected the real state. Root cause: I treated HANDOVER.md as
+  canonical without cross-checking against `git log` to verify the
+  handover matches the branch tip's commits. Rule 32 mandates
+  session-start git fetch + log diff, which I skipped. **Fix this
+  session:** noted here and pivoting to the actions in the current
+  handover (JAX 64-game A/B for v7_1, parity-gate divergence
+  investigation). **Promotion candidate:** add a pre-handover-read
+  step in the kaggle-comp skill (or CLAUDE.md prelude) that runs
+  `git log -5 --oneline HEAD` and reconciles its subjects against
+  the handover's "This session" section before reading anything
+  else. Time cost: ~30 min designing work that was already done.
+
 ## 2026-05-13 (consolidate-fast-simulation-ysd9M — JAX sprint wrap)
 
 - `tag: silent-engine-capacity-loss` — JAX `fleet_launch` slot

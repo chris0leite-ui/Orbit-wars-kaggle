@@ -35,10 +35,12 @@ from lib.game.jax.jax_missions import (
     compute_snipe_score_matrix,
     compute_reinforce_score_matrix,
     compute_recapture_score_matrix,
+    compute_opening_score_matrix,
     settle_plan_from_matrices,
     merge_class_matrices,
     settle_plan_jax,
 )
+from lib.missions.opening import propose_opening_missions
 from lib.planner import settle_plan
 import jax.numpy as jnp
 
@@ -212,6 +214,105 @@ def test_compute_snipe_score_matrix_with_comet_targets(seed):
     diffs, extra = _check_snipe_parity(env, my_id=0, aggressive=False)
     assert not diffs, "comet-aware snipe divergence:\n" + "\n".join(diffs)
     assert not extra, "JAX has extra valid pairs:\n" + "\n".join(extra)
+
+
+@pytest.mark.parametrize("seed", [0, 7, 42, 137])
+def test_compute_opening_score_matrix_parity(seed):
+    """H11 (2026-05-13): JAX opening proposer matches scalar
+    `propose_opening_missions` per (src, target) pair.
+
+    The opening proposer fires only at step <= 5; we run from a fresh
+    reset (step 0) and check both step 0 and step 3 to exercise the
+    in-window path. After step 5 the proposer must emit zero missions.
+    """
+    env = make("orbit_wars", configuration={"seed": seed})
+    env.reset(num_agents=2)
+
+    # Two checks per seed: step 0 and step 5 (boundary).
+    for step in (0, 5):
+        # Advance the env without launches until target step.
+        while env.state[0].observation.step < step:
+            if env.state[0].status != "ACTIVE":
+                pytest.skip(f"seed {seed} terminated before step {step}")
+            env.step([[], []])
+        if env.state[0].status != "ACTIVE":
+            pytest.skip(f"seed {seed} terminated before step {step}")
+
+        obs = env.state[0].observation
+        sw = World.from_obs(obs)
+        if not sw.planets_by_id:
+            continue
+        swm = WorldModel.from_world(sw)
+        scalar_missions = propose_opening_missions(sw, swm)
+
+        gs = scalar_to_jax(env.state, env.info["seed"])
+        jax_wm = build_world_model(gs, max_horizon=DEFAULT_HORIZON, num_agents=4)
+        out = compute_opening_score_matrix(gs, jax_wm, my_id=0)
+        score = np.asarray(out["score"])
+        ships = np.asarray(out["ships"])
+        valid = np.asarray(out["valid"])
+        pid_to_slot = {
+            int(pid): slot
+            for slot, pid in enumerate(np.asarray(gs.planets_id))
+            if pid >= 0
+        }
+
+        # Every scalar mission has a matching JAX valid cell.
+        for m in scalar_missions:
+            s_slot = pid_to_slot[m.src_id]
+            t_slot = pid_to_slot[m.target_id]
+            assert bool(valid[s_slot, t_slot]), (
+                f"seed={seed} step={step} pid={m.src_id}->{m.target_id}: "
+                f"scalar emits but JAX valid=False"
+            )
+            assert int(ships[s_slot, t_slot]) == int(m.ships), (
+                f"seed={seed} step={step} pid={m.src_id}->{m.target_id}: "
+                f"ships scalar={m.ships} jax={int(ships[s_slot, t_slot])}"
+            )
+            rel = abs(float(score[s_slot, t_slot]) - m.score) / max(abs(m.score), 1e-6)
+            assert rel < 1e-3, (
+                f"seed={seed} step={step} pid={m.src_id}->{m.target_id}: "
+                f"score scalar={m.score:.4f} jax={float(score[s_slot, t_slot]):.4f}"
+            )
+
+        # No extra JAX valid cells.
+        scalar_pairs = {
+            (pid_to_slot[m.src_id], pid_to_slot[m.target_id])
+            for m in scalar_missions
+        }
+        P = score.shape[0]
+        for s in range(P):
+            for t in range(P):
+                if not bool(valid[s, t]):
+                    continue
+                assert (s, t) in scalar_pairs, (
+                    f"seed={seed} step={step}: JAX valid at slot ({s},{t}) "
+                    f"(pid {int(gs.planets_id[s])}->{int(gs.planets_id[t])}) "
+                    f"but scalar didn't emit"
+                )
+
+
+@pytest.mark.parametrize("seed", [0, 7, 42])
+def test_compute_opening_score_matrix_inactive_after_window(seed):
+    """Opening proposer must emit nothing at step > OPENING_WINDOW (5)."""
+    env = make("orbit_wars", configuration={"seed": seed})
+    env.reset(num_agents=2)
+    # Advance past the opening window.
+    for _ in range(8):
+        if env.state[0].status != "ACTIVE":
+            pytest.skip(f"seed {seed} terminated early")
+        env.step([[], []])
+    if env.state[0].status != "ACTIVE":
+        pytest.skip(f"seed {seed} terminated early")
+
+    gs = scalar_to_jax(env.state, env.info["seed"])
+    jax_wm = build_world_model(gs, max_horizon=DEFAULT_HORIZON, num_agents=4)
+    out = compute_opening_score_matrix(gs, jax_wm, my_id=0)
+    valid = np.asarray(out["valid"])
+    assert int(valid.sum()) == 0, (
+        f"seed={seed} step={int(gs.step)}: opening must emit nothing "
+        f"after window, got {int(valid.sum())} valid cells"
+    )
 
 
 def test_compute_snipe_score_matrix_4p_spoiler():
