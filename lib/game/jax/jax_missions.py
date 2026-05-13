@@ -13,7 +13,9 @@ Status:
 - ✅ Sub-phase 3b: `aggressive=True` sizing variant.
 - ✅ Sub-phase 3c: comet-lifetime correction + neutral/comet/endgame
   bonus + leader-spoiler (4P, rank ≥ 2).
-- ⏳ Sub-phase 3d: reinforce + recapture
+- ✅ Sub-phase 3d: `compute_reinforce_score_matrix` +
+  `compute_recapture_score_matrix` (recapture-state tracking stays in
+  Python; only the per-pair score math is JAX-vectorised).
 - ⏳ Sub-phase 3e: settle_plan (per-source greedy with arrival ledger)
 """
 
@@ -207,4 +209,216 @@ def compute_snipe_score_matrix(
 compute_snipe_score_matrix_jit = jax.jit(
     compute_snipe_score_matrix,
     static_argnames=("my_id", "aggressive", "num_agents"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 3d: reinforce score matrix
+# ---------------------------------------------------------------------------
+
+
+def compute_reinforce_score_matrix(
+    state,                            # GameState
+    world_model: JaxWorldModel,
+    my_id: int,
+):
+    """Vectorised `propose_reinforce_missions` over (src, defended).
+
+    For each of OUR planets D, find the first step `t_loss` in
+    `[1, horizon]` at which `owners_at[D, t] != my_id`. For each (src,
+    D) pair where src is also ours (src != D) and eta < t_loss, build:
+
+        cost = max(1, ships_at[D, t_loss] + 1)
+        value = D.production × max(1, EPISODE_STEPS - step - eta)
+        score = value / (cost + d + 1)
+
+    Returns dict of `(P_max, P_max)` arrays — same shape contract as
+    `compute_snipe_score_matrix`. `valid=False` if D isn't threatened,
+    src isn't ours, src==D, or we can't reach D before t_loss.
+    """
+    P = state.planets_x.shape[0]
+    H = world_model.horizon
+
+    # Threatened-target detection: first t ∈ [1, H] where owner != my_id.
+    flip_mask = world_model.owners_at != jnp.int32(my_id)       # (P, H+1) bool
+    # We only care about t >= 1. Zero out t=0 column.
+    t_idx = jnp.arange(H + 1)[None, :]                          # (1, H+1)
+    flip_mask = flip_mask & (t_idx >= 1)
+    # argmax on bool returns first True index; if all False returns 0.
+    t_loss_raw = jnp.argmax(flip_mask, axis=1).astype(jnp.int32)  # (P,)
+    has_loss = jnp.any(flip_mask, axis=1)                        # (P,)
+    # If no loss, set t_loss to H+1 (sentinel that always fails eta < t_loss).
+    t_loss = jnp.where(has_loss, t_loss_raw, jnp.int32(H + 1))   # (P,)
+
+    # Attacker strength at t_loss: post-flip ships on D.
+    safe_t = jnp.clip(t_loss, jnp.int32(0), H)
+    p_idx = jnp.arange(P)
+    attacker_ships = world_model.ships_at[p_idx, safe_t]         # (P,)
+
+    cost_col = jnp.maximum(jnp.int32(1), attacker_ships + jnp.int32(1))  # (P,)
+
+    # Pairwise distance d[src, tgt].
+    dx = state.planets_x[None, :] - state.planets_x[:, None]
+    dy = state.planets_y[None, :] - state.planets_y[:, None]
+    d = jnp.sqrt(dx * dx + dy * dy)                              # (P, P)
+
+    # Cost per (src, tgt) is set by the TARGET column (defender).
+    cost = jnp.broadcast_to(cost_col[None, :], (P, P))           # (P, P)
+    speed_flat = fleet_speed_batch(cost.reshape(-1))
+    speed = speed_flat.reshape(P, P)
+    eta = jnp.ceil(d / jnp.maximum(speed, jnp.float32(1e-6))).astype(jnp.int32)
+
+    # Value: defender's production × time_to_hold (we keep D alive for
+    # the rest of the game — non-comet form is fine here, defenders
+    # aren't comets).
+    step_now = state.step
+    time_to_hold = jnp.maximum(
+        jnp.int32(1),
+        jnp.int32(EPISODE_STEPS) - step_now - eta,
+    )
+    value = state.planets_prod[None, :].astype(jnp.float32) * time_to_hold.astype(jnp.float32)
+
+    denom = cost.astype(jnp.float32) + d + jnp.float32(1.0)
+    score = value / denom
+
+    # Validity:
+    src_mask = (state.planets_owner == my_id) & state.planets_alive
+    tgt_mask = (state.planets_owner == my_id) & state.planets_alive & has_loss
+    eye = jnp.eye(P, dtype=bool)
+    can_arrive_in_time = eta < t_loss[None, :]                   # (P, P)
+    valid = (
+        src_mask[:, None] & tgt_mask[None, :] & ~eye & can_arrive_in_time
+    )
+    score = jnp.where(valid, score, jnp.float32(-jnp.inf))
+
+    return {
+        "score": score,
+        "ships": cost,
+        "eta": eta,
+        "valid": valid,
+        "t_loss": t_loss,                                        # (P,) per-target
+    }
+
+
+compute_reinforce_score_matrix_jit = jax.jit(
+    compute_reinforce_score_matrix, static_argnames=("my_id",)
+)
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 3d: recapture score matrix
+# ---------------------------------------------------------------------------
+
+RECAPTURE_WINDOW = 50
+RECAPTURE_BONUS_PEAK = 1.5
+RECENTLY_LOST_GARRISON_MAX = 50
+
+
+def compute_recapture_score_matrix(
+    state,                            # GameState
+    world_model: JaxWorldModel,
+    my_id: int,
+    lost_at_step: jnp.ndarray,        # int32 (P_max,) — -1 if not lost
+):
+    """Vectorised `propose_recapture_missions` over (src, recently-lost).
+
+    The recapture-state tracker (which planets we've recently lost +
+    at which step) stays in Python — it's a per-turn ownership-diff
+    O(P) dictionary update, no JAX win there. The caller passes
+    `lost_at_step[i] = step we lost planet at slot i` (or `-1` if the
+    planet isn't a recapture target).
+
+    Targets are valid when:
+      - lost_at_step >= 0
+      - elapsed = step - lost_at_step ∈ [0, RECAPTURE_WINDOW]
+      - target.owner != my_id (still lost)
+      - target.ships ≤ RECENTLY_LOST_GARRISON_MAX (not fortified)
+      - target alive
+
+    Affordability: base_ships < src.ships (matches scalar).
+    Redundancy: target predicted ours at arrival → drop.
+    """
+    P = state.planets_x.shape[0]
+
+    src_mask = (
+        (state.planets_owner == my_id)
+        & state.planets_alive
+        & (state.planets_ships > 0)
+    )
+
+    elapsed = state.step - lost_at_step  # (P,) int32, large if lost_at_step == -1
+    recently_lost = (
+        (lost_at_step >= jnp.int32(0))
+        & (elapsed >= jnp.int32(0))
+        & (elapsed <= jnp.int32(RECAPTURE_WINDOW))
+    )
+    not_fortified = state.planets_ships <= jnp.int32(RECENTLY_LOST_GARRISON_MAX)
+    still_lost = state.planets_owner != my_id
+    tgt_mask = (
+        state.planets_alive & recently_lost & not_fortified & still_lost
+    )
+
+    # Pairwise distance.
+    dx = state.planets_x[None, :] - state.planets_x[:, None]
+    dy = state.planets_y[None, :] - state.planets_y[:, None]
+    d = jnp.sqrt(dx * dx + dy * dy)
+
+    target_ships_row = state.planets_ships[None, :].astype(jnp.int32)
+    target_min_row = jnp.maximum(target_ships_row + 1, jnp.int32(1))
+    base_ships = jnp.broadcast_to(target_min_row, (P, P))
+
+    speed_flat = fleet_speed_batch(base_ships.reshape(-1))
+    speed = speed_flat.reshape(P, P)
+    eta = jnp.ceil(d / jnp.maximum(speed, jnp.float32(1e-6))).astype(jnp.int32)
+
+    # Affordability: base_ships < src.ships (NOTE: scalar uses strict <).
+    src_ships_col = state.planets_ships[:, None].astype(jnp.int32)
+    affordable = base_ships < src_ships_col
+
+    # Redundancy: target predicted ours at arrival.
+    H = world_model.horizon
+    safe_eta = jnp.clip(eta, jnp.int32(0), H)
+    tgt_idx_col = jnp.arange(P)[None, :]
+    tgt_idx_grid = jnp.broadcast_to(tgt_idx_col, eta.shape)
+    pred_owner = world_model.owners_at[tgt_idx_grid, safe_eta]
+    redundant = pred_owner == jnp.int32(my_id)
+
+    # Urgency / bonus.
+    elapsed_f = elapsed.astype(jnp.float32)
+    urgency_per_target = jnp.maximum(
+        jnp.float32(0.0),
+        jnp.float32(1.0) - elapsed_f / jnp.float32(RECAPTURE_WINDOW),
+    )                                                            # (P,)
+    bonus_per_target = (
+        jnp.float32(1.0) + (jnp.float32(RECAPTURE_BONUS_PEAK) - jnp.float32(1.0))
+        * urgency_per_target
+    )                                                            # (P,)
+    bonus = bonus_per_target[None, :]                            # (1, P) → broadcast
+
+    step_now = state.step
+    time_to_hold = jnp.maximum(
+        jnp.int32(1),
+        jnp.int32(EPISODE_STEPS) - step_now - eta,
+    )
+    value = state.planets_prod[None, :].astype(jnp.float32) * time_to_hold.astype(jnp.float32)
+
+    # Denominator follows snipe-aligned form (RECAPTURE_SCORE_DENOM_MATCHES_SNIPE=1).
+    denom = base_ships.astype(jnp.float32) + d + jnp.float32(1.0)
+    score = bonus * value / denom
+
+    valid = (
+        src_mask[:, None] & tgt_mask[None, :] & affordable & ~redundant
+    )
+    score = jnp.where(valid, score, jnp.float32(-jnp.inf))
+
+    return {
+        "score": score,
+        "ships": base_ships,
+        "eta": eta,
+        "valid": valid,
+    }
+
+
+compute_recapture_score_matrix_jit = jax.jit(
+    compute_recapture_score_matrix, static_argnames=("my_id",)
 )
