@@ -36,8 +36,14 @@ from lib.game.jax.jax_mechanisms import (
 )
 
 
-def policy_step_jax(state, my_id: int, num_agents: int = 2):
+def policy_step_jax(
+    state, my_id: int, num_agents: int = 2, aggressive: bool = False,
+):
     """Compute one agent's per-turn emitted intent list from a JAX state.
+
+    `aggressive=False` (default) mirrors v7_0's self-side (Tier-0 /
+    v3_snipe-style sizing). `aggressive=True` mirrors v3.5.1 / Tier-1
+    opp policy (top_tier_mirror_policy) — used for the rollout's opp.
 
     Returns (emitted: list[dict], world_model). The caller composes
     emitted-per-agent lists across both agents and packs to action
@@ -45,7 +51,7 @@ def policy_step_jax(state, my_id: int, num_agents: int = 2):
     """
     wm = build_world_model_jit(state, max_horizon=DEFAULT_HORIZON, num_agents=4)
     snipe = compute_snipe_score_matrix_jit(
-        state, wm, my_id=my_id, aggressive=False, num_agents=num_agents,
+        state, wm, my_id=my_id, aggressive=aggressive, num_agents=num_agents,
     )
     reinforce = compute_reinforce_score_matrix_jit(state, wm, my_id=my_id)
     chosen = settle_plan_from_matrices(
@@ -60,15 +66,26 @@ def policy_step_jax(state, my_id: int, num_agents: int = 2):
     return emitted, wm
 
 
-def rollout_step_jax(state, my_id: int, num_agents: int = 2):
-    """One full env tick: self + opp policies, action pack, jax_step."""
-    my_emit, _ = policy_step_jax(state, my_id=my_id, num_agents=num_agents)
+def rollout_step_jax(
+    state, my_id: int, num_agents: int = 2, opp_aggressive: bool = True,
+):
+    """One full env tick: self + opp policies, action pack, jax_step.
+
+    `opp_aggressive=True` matches v7_0's default Tier-1 opp model
+    (top_tier_mirror_policy with aggressive=True snipe sizing).
+    """
+    my_emit, _ = policy_step_jax(
+        state, my_id=my_id, num_agents=num_agents, aggressive=False,
+    )
     per_agent = [[] for _ in range(num_agents)]
     per_agent[my_id] = my_emit
     for opp_id in range(num_agents):
         if opp_id == my_id:
             continue
-        opp_emit, _ = policy_step_jax(state, my_id=opp_id, num_agents=num_agents)
+        opp_emit, _ = policy_step_jax(
+            state, my_id=opp_id, num_agents=num_agents,
+            aggressive=opp_aggressive,
+        )
         per_agent[opp_id] = opp_emit
     pids, angles, ships = emitted_to_jax_action_tensors(per_agent, num_agents=num_agents)
     new_state = jax_step_jit(
@@ -121,29 +138,33 @@ def score_candidate_jax(
     K: int,
     my_id: int,
     num_agents: int = 2,
+    opp_aggressive: bool = True,
 ):
     """Apply `candidate_emit` as our turn-1 action, simulate K-1 more
     turns of self vs opp self-play, return ship-delta at the end.
 
+    `opp_aggressive=True` matches v7_0's default Tier-1 mirror.
     Returns a Python float (value_delta_ships scalarised).
     """
-    # Step 1: apply the candidate's action together with opp's policy step.
-    opp_emit_all = []
     per_agent = [[] for _ in range(num_agents)]
     per_agent[my_id] = candidate_emit
     for opp_id in range(num_agents):
         if opp_id == my_id:
             continue
-        opp_emit, _ = policy_step_jax(state, my_id=opp_id, num_agents=num_agents)
+        opp_emit, _ = policy_step_jax(
+            state, my_id=opp_id, num_agents=num_agents,
+            aggressive=opp_aggressive,
+        )
         per_agent[opp_id] = opp_emit
-        opp_emit_all.append(opp_emit)
     pids, angles, ships = emitted_to_jax_action_tensors(per_agent, num_agents=num_agents)
     s = jax_step_jit(
         state, jnp.asarray(pids), jnp.asarray(angles), jnp.asarray(ships),
     )
-    # Steps 2..K: self vs opp rollout.
     for _ in range(K - 1):
         if bool(s.done):
             break
-        s = rollout_step_jax(s, my_id=my_id, num_agents=num_agents)
+        s = rollout_step_jax(
+            s, my_id=my_id, num_agents=num_agents,
+            opp_aggressive=opp_aggressive,
+        )
     return float(value_delta_ships(s, my_id=my_id))

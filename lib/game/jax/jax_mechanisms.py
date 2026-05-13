@@ -35,10 +35,14 @@ from lib.game.jax.jax_types import MAX_AGENTS, MAX_LAUNCH_PER_AGENT
 _CENTER = 50.0
 _ROTATION_RADIUS_LIMIT = 50.0
 _SUN_RADIUS = 10.0
+_SUN_SAFETY = 0.5            # mirror lib.trajectory.SUN_SAFETY
 _MAX_AIM_ITERATIONS = 5
 _AIM_CONVERGE_XY_TOL = 0.5
 _BOARD_LO = 0.0
 _BOARD_HI = 100.0
+_PATH_MAX_STEPS = 200        # mirror lib.trajectory.DEFAULT_MAX_STEPS
+_INTERCEPT_TOLERANCE = 1     # mirror lib.aim.INTERCEPT_TOLERANCE
+_SEARCH_HORIZON = 60         # mirror lib.aim.SEARCH_HORIZON
 
 
 def _is_orbiting(px, py, pr):
@@ -53,16 +57,46 @@ def _predict_relative(tx, ty, omega, lead_turns):
     return _CENTER + orb_r * math.cos(new_angle), _CENTER + orb_r * math.sin(new_angle)
 
 
-def _aim_orbiting_inline(sx, sy, src_r, tx, ty, tgt_r, ships, omega):
-    """5-iter fixed-point lead. Returns (angle, arrival_x, arrival_y).
+def _search_safe_intercept(sx, sy, src_r, tx, ty, tgt_r, ships, omega):
+    """Self-consistent intercept search across candidate arrival turns.
 
-    Mirror of `lib.aim.aim_orbiting`'s main loop, without the rare
-    search_safe_intercept fallback (covers ~1% of cases; the iteration
-    eventually settles in the remaining 99%).
+    Mirror of `lib.aim.search_safe_intercept`. Fallback for cases where
+    the 5-iter fixed-point oscillates rather than converges (typically
+    orbital targets at very long range). Returns
+    `(angle, arrival_x, arrival_y)` for the best self-consistent
+    candidate, or `None` if none of `[1, SEARCH_HORIZON]` is consistent.
+    """
+    r_offset = src_r + tgt_r + 0.1
+    v = fleet_speed(int(ships))
+    if v <= 0:
+        return None
+    best = None
+    best_score = None
+    for cand_t in range(1, _SEARCH_HORIZON + 1):
+        ptx, pty = _predict_relative(tx, ty, omega, cand_t)
+        d = math.hypot(ptx - sx, pty - sy)
+        flight_d = max(0.0, d - r_offset)
+        eta = flight_d / v
+        delta = abs(eta - cand_t)
+        if delta > _INTERCEPT_TOLERANCE:
+            continue
+        score = (delta, cand_t)
+        if best is None or score < best_score:
+            best_score = score
+            angle = math.atan2(pty - sy, ptx - sx)
+            best = (angle, ptx, pty)
+    return best
+
+
+def _aim_orbiting_inline(sx, sy, src_r, tx, ty, tgt_r, ships, omega):
+    """5-iter fixed-point lead + safe-intercept fallback.
+
+    Mirror of `lib.aim.aim_orbiting`. Returns (angle, arrival_x, arrival_y).
     """
     r_offset = src_r + tgt_r + 0.1
     cx, cy = tx, ty                  # working "predicted target" position
     last_eta = None
+    converged = False
     v = fleet_speed(int(ships))
     for _ in range(_MAX_AIM_ITERATIONS):
         d = math.hypot(cx - sx, cy - sy)
@@ -77,9 +111,15 @@ def _aim_orbiting_inline(sx, sy, src_r, tx, ty, tgt_r, ships, omega):
             and abs(nty - cy) < _AIM_CONVERGE_XY_TOL
         ):
             cx, cy = ntx, nty
+            converged = True
             break
         cx, cy = ntx, nty
         last_eta = eta
+    if not converged:
+        # Fallback to self-consistent intercept search.
+        fb = _search_safe_intercept(sx, sy, src_r, tx, ty, tgt_r, ships, omega)
+        if fb is not None:
+            return fb
     angle = math.atan2(cy - sy, cx - sx)
     return angle, cx, cy
 
@@ -104,6 +144,119 @@ def _hits_sun(sx, sy, ax, ay):
 def _path_oob(ax, ay):
     """True if endpoint (ax, ay) is outside the 100×100 board."""
     return not (_BOARD_LO <= ax <= _BOARD_HI and _BOARD_LO <= ay <= _BOARD_HI)
+
+
+def _predict_fleet_fate_numpy(
+    src_x, src_y, src_r, src_slot, target_slot,
+    aim_angle, ships,
+    planets_x, planets_y, planets_radius, planets_alive,
+    planet_orbits, omega,
+    max_steps=_PATH_MAX_STEPS,
+):
+    """Inline numpy port of `lib.trajectory.predict_fleet_fate`.
+
+    Returns ("target" | "planet" | "sun" | "oob" | "timeout",
+             hit_planet_slot or -1, step_of_hit).
+
+    `planet_orbits[slot]` is a precomputed (max_steps+1, 2) array of
+    (x, y) per step for orbiting planets (rotated chord positions);
+    for static planets the array is just (planets_x[slot], planets_y[slot])
+    repeated. Pre-computing once amortizes across all intents in this
+    apply_mechanisms_numpy call.
+    """
+    cos_a = math.cos(aim_angle)
+    sin_a = math.sin(aim_angle)
+    spawn_x = src_x + cos_a * (src_r + 0.1)
+    spawn_y = src_y + sin_a * (src_r + 0.1)
+    speed_val = fleet_speed(int(ships))
+    if speed_val <= 0:
+        return "oob", -1, 0
+
+    P = planets_x.shape[0]
+
+    for step in range(max_steps):
+        fold_x = spawn_x + cos_a * speed_val * step
+        fold_y = spawn_y + sin_a * speed_val * step
+        fnew_x = spawn_x + cos_a * speed_val * (step + 1)
+        fnew_y = spawn_y + sin_a * speed_val * (step + 1)
+
+        # Sun check (segment-to-point distance ≤ SUN_RADIUS + SUN_SAFETY).
+        sun_d = _segment_to_point_distance(
+            fold_x, fold_y, fnew_x, fnew_y, _CENTER, _CENTER,
+        )
+        if sun_d < _SUN_RADIUS + _SUN_SAFETY:
+            return "sun", -1, step + 1
+
+        # OOB endpoint check.
+        if (
+            fnew_x < _BOARD_LO or fnew_x > _BOARD_HI
+            or fnew_y < _BOARD_LO or fnew_y > _BOARD_HI
+        ):
+            return "oob", -1, step + 1
+
+        # Swept-pair check vs every alive planet (vectorised over P).
+        # Skip own source planet on step 0 (env doesn't collide with src
+        # on the first move).
+        p_old = planet_orbits[:, step, :]            # (P, 2)
+        p_new = planet_orbits[:, step + 1, :]        # (P, 2)
+        d0x = fold_x - p_old[:, 0]
+        d0y = fold_y - p_old[:, 1]
+        dvx = (fnew_x - fold_x) - (p_new[:, 0] - p_old[:, 0])
+        dvy = (fnew_y - fold_y) - (p_new[:, 1] - p_old[:, 1])
+        a = dvx * dvx + dvy * dvy
+        b = 2.0 * (d0x * dvx + d0y * dvy)
+        c = d0x * d0x + d0y * d0y - planets_radius * planets_radius
+        # Swept-pair semantics: hit iff t in [0,1] segment of quadratic
+        # has a root with c <= 0 (already inside) or disc >= 0.
+        # Following lib.aim.swept_pair_hit:
+        disc = b * b - 4.0 * a * c
+        # For a < 1e-12 (parallel), the answer is c <= 0.
+        # Else: roots t1 = (-b - sqrt(disc))/(2a), t2 = (-b + sqrt(disc))/(2a).
+        # Hit iff t2 >= 0 AND t1 <= 1.
+        import numpy as _np_local
+        sq = _np_local.where(disc >= 0.0, _np_local.sqrt(_np_local.maximum(disc, 0.0)), 0.0)
+        t1 = _np_local.where(a > 1e-12, (-b - sq) / _np_local.maximum(2.0 * a, 1e-12), 0.0)
+        t2 = _np_local.where(a > 1e-12, (-b + sq) / _np_local.maximum(2.0 * a, 1e-12), 0.0)
+        parallel_hit = (a <= 1e-12) & (c <= 0.0)
+        nonparallel_hit = (a > 1e-12) & (disc >= 0.0) & (t2 >= 0.0) & (t1 <= 1.0)
+        hit_mask = (parallel_hit | nonparallel_hit) & planets_alive
+        # Skip src planet on step 0.
+        if step == 0:
+            hit_mask = hit_mask.copy()
+            hit_mask[src_slot] = False
+        if hit_mask.any():
+            # Return FIRST hit by planet index (matches scalar dict
+            # iteration order which is insertion order = planet id order).
+            hit_idx = int(_np_local.argmax(hit_mask))
+            outcome = "target" if hit_idx == target_slot else "planet"
+            return outcome, hit_idx, step + 1
+
+    return "timeout", -1, max_steps
+
+
+def _build_planet_orbits(planets_x, planets_y, planets_radius, omega, max_steps=_PATH_MAX_STEPS):
+    """Pre-compute per-step (x, y) position for each planet over
+    [0, max_steps]. Orbiting planets rotate; static planets stay put.
+
+    Returns array shape `(P, max_steps+1, 2)` float32.
+    """
+    import numpy as _np
+    P = planets_x.shape[0]
+    orbits = _np.zeros((P, max_steps + 1, 2), dtype=_np.float64)
+    for slot in range(P):
+        px, py, pr = float(planets_x[slot]), float(planets_y[slot]), float(planets_radius[slot])
+        if _is_orbiting(px, py, pr) and omega != 0.0:
+            dx, dy = px - _CENTER, py - _CENTER
+            orb_r = math.hypot(dx, dy)
+            cur_angle = math.atan2(dy, dx)
+            ts = _np.arange(max_steps + 1, dtype=_np.float64)
+            angles = cur_angle + omega * ts
+            orbits[slot, :, 0] = _CENTER + orb_r * _np.cos(angles)
+            orbits[slot, :, 1] = _CENTER + orb_r * _np.sin(angles)
+        else:
+            orbits[slot, :, 0] = px
+            orbits[slot, :, 1] = py
+    return orbits
 
 
 def apply_mechanisms_numpy(
@@ -135,6 +288,15 @@ def apply_mechanisms_numpy(
     H = ships_at.shape[1] - 1
 
     pid_to_slot = {int(pid): slot for slot, pid in enumerate(planets_id) if pid >= 0}
+
+    # Pre-compute planet orbital trajectories once for the path-clears check.
+    # Only do this if there are any candidate intents (skip on empty input).
+    planet_orbits = None
+    if chosen:
+        planet_orbits = _build_planet_orbits(
+            planets_x, planets_y, planets_radius, omega,
+            max_steps=_PATH_MAX_STEPS,
+        )
 
     # Track per-source ship-budget so a single source can't be over-allocated
     # across two mission classes (settle_plan picks one per source, but
@@ -205,14 +367,17 @@ def apply_mechanisms_numpy(
             angle = math.atan2(ty - sy, tx - sx)
             arrival_x, arrival_y = tx, ty
 
-        # sun_avoid: drop if the straight-line path hits the sun.
-        if _hits_sun(sx, sy, arrival_x, arrival_y):
+        # Full-trajectory ray-cast (sun_avoid + path_clears_other_planets
+        # + oob_guard rolled together — mirrors lib.trajectory.predict_fleet_fate).
+        outcome, hit_slot, _hit_step = _predict_fleet_fate_numpy(
+            sx, sy, src_r, src_slot, tgt_slot,
+            angle, ships,
+            planets_x, planets_y, planets_radius, planets_alive,
+            planet_orbits, omega,
+        )
+        if outcome in ("sun", "oob", "planet"):
             # Reclaim the per-source budget; the source effectively did
             # not launch.
-            src_remaining[src_slot] = src_remaining.get(src_slot, 0) + ships
-            continue
-        # oob_guard: drop if arrival endpoint is off-board.
-        if _path_oob(arrival_x, arrival_y):
             src_remaining[src_slot] = src_remaining.get(src_slot, 0) + ships
             continue
 

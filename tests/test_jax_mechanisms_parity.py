@@ -183,7 +183,7 @@ def test_mechanism_pipeline_angles_within_tolerance(seed):
         # Wrap difference to [-π, π].
         delta = math.atan2(math.sin(scalar_ang - jax_ang),
                            math.cos(scalar_ang - jax_ang))
-        if abs(delta) > 0.05:
+        if abs(delta) > 0.02:
             diffs.append(
                 f"  src={src_pid}: scalar_ang={scalar_ang:.3f} "
                 f"jax_ang={jax_ang:.3f} delta={delta:.3f}"
