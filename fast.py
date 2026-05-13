@@ -143,6 +143,14 @@ def resolve_agent_spec(spec: str) -> tuple[str, str]:
         if p.name == "main.py" and p.parent != p.parent.parent:
             return (p.parent.name, str(p.resolve()))
         return (p.stem, str(p.resolve()))
+    # Convention fallback: `geo` -> `agents/geo/main.py`, `roi` -> `agents/simple/roi.py`.
+    # Matches scripts/_agent_paths.py resolution order.
+    dir_main = REPO / "agents" / spec / "main.py"
+    if dir_main.is_file():
+        return (spec, str(dir_main.resolve()))
+    simple_py = REPO / "agents" / "simple" / f"{spec}.py"
+    if simple_py.is_file():
+        return (spec, str(simple_py.resolve()))
     raise FileNotFoundError(f"unknown agent spec: {spec!r}")
 
 
