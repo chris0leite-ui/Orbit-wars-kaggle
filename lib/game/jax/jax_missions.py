@@ -9,11 +9,9 @@ first, then reinforce, then settle_plan (the per-source greedy
 chooser).
 
 Status:
-- ✅ Sub-phase 3a: `compute_snipe_score_matrix` (base form, no
-  aggressive/spoiler/comet — those are multiplicative bonuses
-  layered later).
-- ⏳ Sub-phase 3b: aggressive sizing variant
-- ⏳ Sub-phase 3c: leader-spoiler + neutral/comet bonus
+- ✅ Sub-phase 3a: `compute_snipe_score_matrix` base form.
+- ✅ Sub-phase 3b: `aggressive=True` sizing variant.
+- ⏳ Sub-phase 3c: leader-spoiler + neutral/comet bonus + comet lifetime
 - ⏳ Sub-phase 3d: reinforce + recapture
 - ⏳ Sub-phase 3e: settle_plan (per-source greedy with arrival ledger)
 """
@@ -30,28 +28,37 @@ from lib.game.jax.jax_world_model import (
 
 EPISODE_STEPS = 500
 
+# Mirror lib/missions/snipe.py aggressive-sizing constants.
+AGGRESSIVE_FRACTION = 0.7
+AGGRESSIVE_RESERVE = 5
+AGGRESSIVE_MIN_GARRISON = 12
+
 
 def compute_snipe_score_matrix(
     state,                            # GameState
     world_model: JaxWorldModel,
     my_id: int,
+    aggressive: bool = False,
 ):
     """Vectorised `propose_snipe_missions` over (src_planet, tgt_planet).
 
     Returns a dict of `(P_max, P_max)` arrays:
         - "score" float32 — score per (src, tgt). `-inf` for invalid.
-        - "ships" int32 — ship count (target_min = max(1, t.ships + 1)).
+        - "ships" int32 — ship count.
         - "eta"   int32 — ceil(distance / fleet_speed(ships)).
         - "valid" bool  — pair is a usable snipe candidate.
 
     Mirror of scalar `propose_snipe_missions` with:
-      - non-aggressive sizing (`base_ships = max(1, target_ships + 1)`)
+      - `aggressive=False` (default): `base_ships = max(1, target_ships + 1)`.
+      - `aggressive=True`: src-conditioned top-10 sizing — when source
+        garrison > AGGRESSIVE_MIN_GARRISON, base_ships scales with
+        AGGRESSIVE_FRACTION × src.ships, capped above by src.ships -
+        AGGRESSIVE_RESERVE, capped below by target_min.
       - NEUTRAL_BONUS = COMET_BONUS = 1.0 (default identity multipliers)
       - LEADER_MULTIPLIER skipped (2P games only for now)
       - non-comet `time_to_hold = max(1, EPISODE_STEPS - step - eta)`
 
-    Aggressive sizing + bonuses + comet lifetime handling land in
-    sub-phases 3b/3c.
+    Bonuses + comet lifetime handling land in sub-phase 3c.
     """
     P = state.planets_x.shape[0]
 
@@ -69,10 +76,25 @@ def compute_snipe_score_matrix(
     dy = state.planets_y[None, :] - state.planets_y[:, None]
     d = jnp.sqrt(dx * dx + dy * dy)  # (P, P)
 
-    # Base ships: target_min = max(1, target.ships + 1).
+    # Base ships.
     target_ships_row = state.planets_ships[None, :].astype(jnp.int32)  # (1, P)
     target_min_row = jnp.maximum(target_ships_row + 1, jnp.int32(1))   # (1, P)
-    base_ships = jnp.broadcast_to(target_min_row, (P, P))               # (P, P)
+    if aggressive:
+        # int(src.ships * 0.7) and int(src.ships) - 5, per src.
+        src_ships_col = state.planets_ships[:, None].astype(jnp.int32)  # (P, 1)
+        fraction_size = jnp.maximum(
+            jnp.int32(1),
+            (src_ships_col.astype(jnp.float32) * jnp.float32(AGGRESSIVE_FRACTION)).astype(jnp.int32),
+        )
+        cap = jnp.maximum(jnp.int32(1), src_ships_col - jnp.int32(AGGRESSIVE_RESERVE))
+        aggressive_size = jnp.maximum(
+            target_min_row,
+            jnp.minimum(fraction_size, cap),
+        )                                                                # (P, P)
+        eligible = src_ships_col > jnp.int32(AGGRESSIVE_MIN_GARRISON)     # (P, 1)
+        base_ships = jnp.where(eligible, aggressive_size, target_min_row) # (P, P)
+    else:
+        base_ships = jnp.broadcast_to(target_min_row, (P, P))             # (P, P)
 
     # Fleet speed per (src, tgt). speed depends on ship count.
     speed_flat = fleet_speed_batch(base_ships.reshape(-1))
@@ -117,5 +139,5 @@ def compute_snipe_score_matrix(
 
 
 compute_snipe_score_matrix_jit = jax.jit(
-    compute_snipe_score_matrix, static_argnames=("my_id",)
+    compute_snipe_score_matrix, static_argnames=("my_id", "aggressive")
 )

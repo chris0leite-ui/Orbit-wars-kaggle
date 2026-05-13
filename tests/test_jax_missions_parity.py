@@ -48,57 +48,41 @@ def _spawn_in_flight_fleets(env, num_agents: int = 2, n_steps: int = 15, rng_see
         env.step(actions)
 
 
-@pytest.mark.parametrize("seed", [0, 7, 42])
-def test_compute_snipe_score_matrix_parity(seed):
-    """JAX snipe score matrix matches scalar `propose_snipe_missions`
-    (non-aggressive base form) per (src, target) pair.
+def _check_snipe_parity(env, my_id: int, aggressive: bool):
+    """Run scalar `propose_snipe_missions` and JAX `compute_snipe_score_matrix`
+    on the same state, return (diffs, extra) lists.
 
-    Scope (sub-phase 3a):
-    - 2-player games (LEADER_MULTIPLIER never fires).
-    - aggressive=False (matches JAX base form).
-    - Comet targets are skipped — JAX uses non-comet time_to_hold; the
-      comet-lifetime correction lands in sub-phase 3c.
+    Comet targets are skipped on the scalar side — JAX base form uses
+    non-comet time_to_hold; the comet-lifetime correction lands in 3c.
     """
-    env = make("orbit_wars", configuration={"seed": seed})
-    env.reset(num_agents=2)
-    _spawn_in_flight_fleets(env, num_agents=2, n_steps=25, rng_seed=seed * 13 + 1)
-    if env.state[0].status != "ACTIVE":
-        pytest.skip(f"seed {seed} terminated before mid-game")
-
-    my_id = 0
     obs = env.state[my_id].observation
-    if not any(p[1] == my_id for p in obs.planets):
-        pytest.skip(f"seed {seed}: agent {my_id} owns no planets")
-    if not any(p[1] != my_id and p[1] != -1 or p[1] == -1 for p in obs.planets):
-        pytest.skip(f"seed {seed}: no non-self planets")
-
-    # Scalar reference: build World + WorldModel + missions.
     scalar_world = World.from_obs(obs)
     scalar_wm = WorldModel.from_world(scalar_world)
-    scalar_missions = propose_snipe_missions(scalar_world, scalar_wm, aggressive=False)
+    scalar_missions = propose_snipe_missions(
+        scalar_world, scalar_wm, aggressive=aggressive,
+    )
 
-    # JAX equivalent.
     gs = scalar_to_jax(env.state, env.info["seed"])
     jax_wm = build_world_model(gs, max_horizon=DEFAULT_HORIZON, num_agents=4)
-    out = compute_snipe_score_matrix(gs, jax_wm, my_id=my_id)
+    out = compute_snipe_score_matrix(
+        gs, jax_wm, my_id=my_id, aggressive=aggressive,
+    )
     score = np.asarray(out["score"])
     ships = np.asarray(out["ships"])
     eta = np.asarray(out["eta"])
     valid = np.asarray(out["valid"])
 
-    # planet_id ↔ JAX slot mapping.
     pid_to_slot = {
         int(pid): slot
         for slot, pid in enumerate(np.asarray(gs.planets_id))
         if pid >= 0
     }
 
-    # Verify every scalar non-comet mission has a matching JAX cell.
     diffs = []
     matched_pairs = set()
     for m in scalar_missions:
         if m.target_id in scalar_world.comet_ids:
-            continue  # JAX base form doesn't handle comet lifetime (3c).
+            continue
         if m.src_id not in pid_to_slot or m.target_id not in pid_to_slot:
             continue
         s_slot = pid_to_slot[m.src_id]
@@ -111,19 +95,16 @@ def test_compute_snipe_score_matrix_parity(seed):
                 f"(score={m.score:.4f}) but JAX valid=False"
             )
             continue
-        # Ships exact.
         if int(ships[s_slot, t_slot]) != int(m.ships):
             diffs.append(
                 f"  pid={m.src_id}->{m.target_id}: ships scalar={m.ships} "
                 f"jax={int(ships[s_slot, t_slot])}"
             )
-        # ETA: tolerance ±1 (float32 vs float64 boundary on ceil).
         if abs(int(eta[s_slot, t_slot]) - int(m.eta)) > 1:
             diffs.append(
                 f"  pid={m.src_id}->{m.target_id}: eta scalar={m.eta} "
                 f"jax={int(eta[s_slot, t_slot])}"
             )
-        # Score: float32 vs float64 → relative tolerance 1e-3.
         jax_score = float(score[s_slot, t_slot])
         rel = abs(jax_score - m.score) / max(abs(m.score), 1e-6)
         if rel > 1e-3 and abs(jax_score - m.score) > 1e-3:
@@ -134,8 +115,6 @@ def test_compute_snipe_score_matrix_parity(seed):
         if len(diffs) >= 6:
             break
 
-    # Verify JAX cells flagged valid correspond to scalar missions
-    # (modulo comet targets, which we'd allow JAX to also score).
     comet_slots = {pid_to_slot[c] for c in scalar_world.comet_ids if c in pid_to_slot}
     P = score.shape[0]
     extra = []
@@ -146,10 +125,7 @@ def test_compute_snipe_score_matrix_parity(seed):
             if (s, t) in matched_pairs:
                 continue
             if t in comet_slots:
-                continue  # JAX may legitimately keep comets; scalar excluded.
-            # JAX valid but scalar didn't produce mission. Allowed cause:
-            # neither the redundancy filter nor the affordability filter
-            # would have dropped it scalar-side — so this is a real diff.
+                continue
             extra.append(
                 f"  src_slot={s} (pid={int(gs.planets_id[s])}) "
                 f"-> tgt_slot={t} (pid={int(gs.planets_id[t])}): "
@@ -160,5 +136,41 @@ def test_compute_snipe_score_matrix_parity(seed):
         if len(extra) >= 3:
             break
 
+    return diffs, extra
+
+
+@pytest.mark.parametrize("seed", [0, 7, 42])
+def test_compute_snipe_score_matrix_parity(seed):
+    """Sub-phase 3a: JAX snipe score matrix matches scalar
+    `propose_snipe_missions(aggressive=False)` per (src, target) pair.
+
+    Scope: 2-player games (LEADER_MULTIPLIER never fires); base form.
+    """
+    env = make("orbit_wars", configuration={"seed": seed})
+    env.reset(num_agents=2)
+    _spawn_in_flight_fleets(env, num_agents=2, n_steps=25, rng_seed=seed * 13 + 1)
+    if env.state[0].status != "ACTIVE":
+        pytest.skip(f"seed {seed} terminated before mid-game")
+
+    diffs, extra = _check_snipe_parity(env, my_id=0, aggressive=False)
     assert not diffs, "snipe score matrix divergence:\n" + "\n".join(diffs)
     assert not extra, "JAX snipe matrix has extra valid pairs:\n" + "\n".join(extra)
+
+
+@pytest.mark.parametrize("seed", [0, 7, 42])
+def test_compute_snipe_score_matrix_aggressive_parity(seed):
+    """Sub-phase 3b: aggressive=True (top-10 fraction sizing) matches scalar.
+
+    Verifies src-conditioned base_ships:
+      - garrison ≤ AGGRESSIVE_MIN_GARRISON → falls back to target_min
+      - else → max(target_min, min(int(src.ships * 0.7), src.ships - 5))
+    """
+    env = make("orbit_wars", configuration={"seed": seed})
+    env.reset(num_agents=2)
+    _spawn_in_flight_fleets(env, num_agents=2, n_steps=25, rng_seed=seed * 17 + 5)
+    if env.state[0].status != "ACTIVE":
+        pytest.skip(f"seed {seed} terminated before mid-game")
+
+    diffs, extra = _check_snipe_parity(env, my_id=0, aggressive=True)
+    assert not diffs, "aggressive snipe matrix divergence:\n" + "\n".join(diffs)
+    assert not extra, "JAX aggressive matrix has extra valid pairs:\n" + "\n".join(extra)
