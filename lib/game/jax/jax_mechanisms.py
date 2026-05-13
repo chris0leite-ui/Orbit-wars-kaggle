@@ -32,6 +32,79 @@ import numpy as np
 from lib.fleet import speed as fleet_speed
 from lib.game.jax.jax_types import MAX_AGENTS, MAX_LAUNCH_PER_AGENT
 
+_CENTER = 50.0
+_ROTATION_RADIUS_LIMIT = 50.0
+_SUN_RADIUS = 10.0
+_MAX_AIM_ITERATIONS = 5
+_AIM_CONVERGE_XY_TOL = 0.5
+_BOARD_LO = 0.0
+_BOARD_HI = 100.0
+
+
+def _is_orbiting(px, py, pr):
+    return math.hypot(px - _CENTER, py - _CENTER) + pr < _ROTATION_RADIUS_LIMIT
+
+
+def _predict_relative(tx, ty, omega, lead_turns):
+    dx, dy = tx - _CENTER, ty - _CENTER
+    orb_r = math.hypot(dx, dy)
+    cur_angle = math.atan2(dy, dx)
+    new_angle = cur_angle + omega * lead_turns
+    return _CENTER + orb_r * math.cos(new_angle), _CENTER + orb_r * math.sin(new_angle)
+
+
+def _aim_orbiting_inline(sx, sy, src_r, tx, ty, tgt_r, ships, omega):
+    """5-iter fixed-point lead. Returns (angle, arrival_x, arrival_y).
+
+    Mirror of `lib.aim.aim_orbiting`'s main loop, without the rare
+    search_safe_intercept fallback (covers ~1% of cases; the iteration
+    eventually settles in the remaining 99%).
+    """
+    r_offset = src_r + tgt_r + 0.1
+    cx, cy = tx, ty                  # working "predicted target" position
+    last_eta = None
+    v = fleet_speed(int(ships))
+    for _ in range(_MAX_AIM_ITERATIONS):
+        d = math.hypot(cx - sx, cy - sy)
+        flight_d = max(0.0, d - r_offset)
+        if v <= 0:
+            break
+        eta = flight_d / v
+        ntx, nty = _predict_relative(tx, ty, omega, eta)
+        if (
+            last_eta is not None
+            and abs(ntx - cx) < _AIM_CONVERGE_XY_TOL
+            and abs(nty - cy) < _AIM_CONVERGE_XY_TOL
+        ):
+            cx, cy = ntx, nty
+            break
+        cx, cy = ntx, nty
+        last_eta = eta
+    angle = math.atan2(cy - sy, cx - sx)
+    return angle, cx, cy
+
+
+def _segment_to_point_distance(sx, sy, ex, ey, px, py):
+    """Min distance from point (px, py) to segment (sx, sy)→(ex, ey)."""
+    dx, dy = ex - sx, ey - sy
+    denom = dx * dx + dy * dy
+    if denom < 1e-12:
+        return math.hypot(px - sx, py - sy)
+    t = ((px - sx) * dx + (py - sy) * dy) / denom
+    t = max(0.0, min(1.0, t))
+    cx, cy = sx + t * dx, sy + t * dy
+    return math.hypot(px - cx, py - cy)
+
+
+def _hits_sun(sx, sy, ax, ay):
+    """True if straight-line segment (sx,sy)→(ax,ay) intersects sun."""
+    return _segment_to_point_distance(sx, sy, ax, ay, _CENTER, _CENTER) < _SUN_RADIUS
+
+
+def _path_oob(ax, ay):
+    """True if endpoint (ax, ay) is outside the 100×100 board."""
+    return not (_BOARD_LO <= ax <= _BOARD_HI and _BOARD_LO <= ay <= _BOARD_HI)
+
 
 def apply_mechanisms_numpy(
     chosen: list[dict],                # output of settle_plan_from_matrices
@@ -53,7 +126,10 @@ def apply_mechanisms_numpy(
     planets_owner = np.asarray(state.planets_owner)
     planets_ships = np.asarray(state.planets_ships)
     planets_prod = np.asarray(state.planets_prod)
+    planets_radius = np.asarray(state.planets_radius)
     planets_alive = np.asarray(state.planets_alive)
+    is_comet = np.asarray(state.is_comet)
+    omega = float(state.angular_velocity)
     owners_at = np.asarray(world_model.owners_at)
     ships_at = np.asarray(world_model.ships_at)
     H = ships_at.shape[1] - 1
@@ -114,14 +190,35 @@ def apply_mechanisms_numpy(
             continue
         src_remaining[src_slot] = remaining - ships
 
-        # atan2 aim (no lead).
+        # Aim: orbiting non-comet → 5-iter fixed-point; else plain atan2.
         sx, sy = float(planets_x[src_slot]), float(planets_y[src_slot])
         tx, ty = float(planets_x[tgt_slot]), float(planets_y[tgt_slot])
-        angle = math.atan2(ty - sy, tx - sx)
+        src_r = float(planets_radius[src_slot])
+        tgt_r = float(planets_radius[tgt_slot])
+        target_is_comet = bool(is_comet[tgt_slot])
+        orbit = _is_orbiting(tx, ty, tgt_r) and not target_is_comet
+        if orbit and omega != 0.0:
+            angle, arrival_x, arrival_y = _aim_orbiting_inline(
+                sx, sy, src_r, tx, ty, tgt_r, ships, omega,
+            )
+        else:
+            angle = math.atan2(ty - sy, tx - sx)
+            arrival_x, arrival_y = tx, ty
+
+        # sun_avoid: drop if the straight-line path hits the sun.
+        if _hits_sun(sx, sy, arrival_x, arrival_y):
+            # Reclaim the per-source budget; the source effectively did
+            # not launch.
+            src_remaining[src_slot] = src_remaining.get(src_slot, 0) + ships
+            continue
+        # oob_guard: drop if arrival endpoint is off-board.
+        if _path_oob(arrival_x, arrival_y):
+            src_remaining[src_slot] = src_remaining.get(src_slot, 0) + ships
+            continue
 
         # Re-eta with the bumped ship count (in case arrival_size bumped).
         v = fleet_speed(ships)
-        d = math.hypot(tx - sx, ty - sy)
+        d = math.hypot(arrival_x - sx, arrival_y - sy)
         new_eta = int(math.ceil(d / max(v, 1e-6)))
 
         out.append({
