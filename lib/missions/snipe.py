@@ -60,6 +60,12 @@ COMET_BONUS = 1.0
 # LEADER_MULTIPLIER only fires when our_rank >= 2 (4P/larger games where we
 # are below 2nd place). 2P games are unaffected. Pending 4P FFA validation.
 LEADER_MULTIPLIER = 1.5
+# NON_LEADER_MULTIPLIER — H20 / [E] / TID 697397: Gemini's Day-2 4P
+# kingmaker logic boosts the leader (×1.5, above) AND down-weights
+# non-leader opponents (×0.8). Default 1.0 = no down-weighting (current
+# behaviour). A/B candidate: 0.8. Like LEADER_MULTIPLIER, only fires
+# when our_rank >= 2 — 2P unaffected.
+NON_LEADER_MULTIPLIER = 1.0
 
 # Airtime penalty (v3.5, 2026-05-11): ships in flight are committed-cost.
 # A fleet en route can't defend its home planet, can't be redirected, and
@@ -277,8 +283,14 @@ def propose_snipe_missions(
                     # them over high-growth enemy captures we likely can't
                     # afford in the remaining turn budget.
                     priority *= ENDGAME_NEUTRAL_BONUS
-            if spoiler_on and t.owner == leader_pid:
-                priority *= LEADER_MULTIPLIER
+            if spoiler_on:
+                if t.owner == leader_pid:
+                    priority *= LEADER_MULTIPLIER
+                elif t.owner != -1 and t.owner != world.my_id:
+                    # Non-leader other player's planet — Gemini-style 4P
+                    # kingmaker down-weight (H20). Neutrals + our own
+                    # planets are unaffected.
+                    priority *= NON_LEADER_MULTIPLIER
             # Cost-aware ROI denominator (legacy) + optional airtime term.
             # - base_ships + d + 1: original v3.4 form. Wave-1b's
             #   `0.5 × base_ships` rebalance was NEUTRAL at 50% in phys-only

@@ -10,6 +10,7 @@ Audit reference: audit/2026-05-11-v3-snipe-games-analysis.md §P1/P2.
 
 from __future__ import annotations
 
+import math
 from types import SimpleNamespace
 
 from lib.intent import World
@@ -239,3 +240,74 @@ def test_spoiler_does_not_fire_when_we_are_leader():
     # No leader bonus → near-identical scores (only distance differs slightly).
     ratio = max(s1, s2) / min(s1, s2)
     assert ratio < 1.1  # within 10% — no big multiplier difference
+
+
+def test_non_leader_multiplier_default_is_identity():
+    """At NON_LEADER_MULTIPLIER=1.0 (default), the kingmaker change has
+    no effect — non-leader 4P targets score the same as before."""
+    import lib.missions.snipe as snipe
+    assert snipe.NON_LEADER_MULTIPLIER == 1.0
+    # Reuse the spoiler-fires fixture and verify non-leader scores match
+    # the no-multiplier baseline (i.e., ratio leader/non-leader is still
+    # just LEADER_MULTIPLIER, not LEADER_MULTIPLIER / NON_LEADER_MULTIPLIER).
+    src = _planet(0, owner=0, x=10.0, y=10.0, ships=50)
+    p1_planet = _planet(1, owner=1, x=90.0, y=10.0, ships=10, production=2)
+    p1_home = _planet(5, owner=1, x=10.0, y=90.0, ships=190, production=2)
+    leader_target = _planet(2, owner=2, x=90.0, y=20.0, ships=10, production=2)
+    leader_home = _planet(3, owner=2, x=20.0, y=90.0, ships=290, production=2)
+    p3_planet = _planet(4, owner=3, x=30.0, y=90.0, ships=10, production=2)
+    world = _world(my_id=0, planets=[src, p1_planet, p1_home, leader_target, leader_home, p3_planet])
+    model = WorldModel.from_world(world)
+    missions = propose_snipe_missions(world, model)
+    by_target = {m.target_id: m for m in missions}
+    # Ratio leader/non-leader should be ≈ LEADER_MULTIPLIER (no NON_LEADER
+    # dampening at default 1.0).
+    ratio = by_target[2].score / by_target[1].score
+    assert 1.4 < ratio < 1.6
+
+
+def test_non_leader_multiplier_dampens_non_leader_in_4p():
+    """With NON_LEADER_MULTIPLIER=0.8, non-leader targets score lower
+    relative to leader targets, and lower than at default 1.0."""
+    import lib.missions.snipe as snipe
+    saved = snipe.NON_LEADER_MULTIPLIER
+    snipe.NON_LEADER_MULTIPLIER = 0.8
+    try:
+        src = _planet(0, owner=0, x=10.0, y=10.0, ships=50)
+        p1_planet = _planet(1, owner=1, x=90.0, y=10.0, ships=10, production=2)
+        p1_home = _planet(5, owner=1, x=10.0, y=90.0, ships=190, production=2)
+        leader_target = _planet(2, owner=2, x=90.0, y=20.0, ships=10, production=2)
+        leader_home = _planet(3, owner=2, x=20.0, y=90.0, ships=290, production=2)
+        p3_planet = _planet(4, owner=3, x=30.0, y=90.0, ships=10, production=2)
+        world = _world(my_id=0, planets=[src, p1_planet, p1_home, leader_target, leader_home, p3_planet])
+        model = WorldModel.from_world(world)
+        missions = propose_snipe_missions(world, model)
+        by_target = {m.target_id: m for m in missions}
+        # With 0.8 dampener: ratio leader/non-leader = 1.5 / 0.8 ≈ 1.875.
+        ratio = by_target[2].score / by_target[1].score
+        assert 1.75 < ratio < 2.0
+    finally:
+        snipe.NON_LEADER_MULTIPLIER = saved
+
+
+def test_non_leader_multiplier_unaffected_in_2p():
+    """In 2P, _leader_pid returns (None, None) so spoiler_on=False.
+    NON_LEADER_MULTIPLIER must be inert."""
+    import lib.missions.snipe as snipe
+    saved = snipe.NON_LEADER_MULTIPLIER
+    snipe.NON_LEADER_MULTIPLIER = 0.5  # extreme value to make detection easy
+    try:
+        src = _planet(0, owner=0, x=10.0, y=50.0, ships=50)
+        enemy = _planet(1, owner=1, x=90.0, y=50.0, ships=10, production=2)
+        world = _world(my_id=0, planets=[src, enemy])
+        model = WorldModel.from_world(world)
+        missions = propose_snipe_missions(world, model)
+        # Score is the raw cost-aware ROI with no multipliers applied.
+        # If NON_LEADER had fired (it shouldn't in 2P), the score would
+        # be 0.5× lower. Reconstruct the un-dampened expected score:
+        eta = missions[0].eta
+        expected_value = enemy.production * max(1.0, 500 - 10 - eta)
+        denom = (enemy.ships + 1) + math.hypot(90 - 10, 50 - 50) + 1.0
+        assert abs(missions[0].score - expected_value / denom) < 1e-6
+    finally:
+        snipe.NON_LEADER_MULTIPLIER = saved
