@@ -74,10 +74,20 @@ def main():
     import jax.numpy as jnp
     from kaggle_environments import make
 
-    # Lazy-import our JAX code only after kaggle_environments is ready
-    # (avoids JAX init cost if the env probe fails).
-    sys.path.insert(0, "/kaggle/input/orbit-wars-jax-repo")  # noqa: E402
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+    # Lazy-import our JAX code only after kaggle_environments is ready.
+    # On Kaggle the repo lives under /kaggle/input; locally the path
+    # resolves from this script's location.
+    # Locate the dataset root: look for any directory under
+    # /kaggle/input/** that contains lib/game/jax/.
+    repo_root = None
+    for candidate in Path("/kaggle/input").rglob("lib/game/jax") if Path("/kaggle/input").exists() else []:
+        repo_root = str(candidate.parent.parent.parent)  # up past lib/game
+        break
+    if repo_root is None:
+        # Local fallback: walk up from this script.
+        repo_root = str(Path(__file__).resolve().parent.parent.parent)
+    sys.path.insert(0, repo_root)
+    print(f"Inserted {repo_root} into sys.path")
     from lib.game.jax import scalar_to_jax
     from lib.game.jax.jax_score import rollout_step_jax_pure, value_delta_ships
 
