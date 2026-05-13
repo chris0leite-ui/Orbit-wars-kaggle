@@ -198,3 +198,58 @@ def test_jax_step_vs_scalar_60_random(seed):
         assert not diff, diff
         diff = _compare_fleets(env.state[0].observation, gs, step_idx, seed)
         assert not diff, diff
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 8f bug C1: fleet_launch must pack live fleets contiguously
+# from slot 0 (no gaps). The pre-fix code skipped every other slot.
+# ---------------------------------------------------------------------------
+
+
+def test_fleet_launch_packs_slots_contiguously():
+    """After K consecutive single-turn launches on a fresh game, the
+    `fleets_alive` mask must show contiguous True from slot 0 through
+    slot K-1 (no gaps). Pre-C1 fix this would have failed at K=2.
+    """
+    import jax.numpy as jnp
+    import numpy as np
+    from lib.game.jax import scalar_to_jax
+    from lib.game.jax.jax_interpreter import fleet_launch
+    from lib.game.jax.jax_types import MAX_AGENTS, MAX_LAUNCH_PER_AGENT
+
+    env = make("orbit_wars", configuration={"seed": 7})
+    env.reset(num_agents=2)
+    gs = scalar_to_jax(env.state, env.info["seed"])
+
+    # Find 4 owned planets for seat 0 with enough ships.
+    planets_owner = np.asarray(gs.planets_owner)
+    planets_ships = np.asarray(gs.planets_ships)
+    planets_id = np.asarray(gs.planets_id)
+    owned = [
+        (i, int(planets_id[i]))
+        for i in range(len(planets_owner))
+        if planets_owner[i] == 0 and planets_ships[i] >= 2
+    ]
+    if len(owned) < 4:
+        pytest.skip("need 4 owned planets with ships >= 2")
+    chosen = owned[:4]
+
+    # Build action tensors: seat 0 launches 4 single-ship fleets.
+    pids = -np.ones((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=np.int32)
+    angles = np.zeros((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=np.float32)
+    ships = np.zeros((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=np.int32)
+    for k, (_slot, pid) in enumerate(chosen):
+        pids[0, k] = pid
+        angles[0, k] = 0.5
+        ships[0, k] = 1
+
+    s = fleet_launch(
+        gs, jnp.asarray(pids), jnp.asarray(angles), jnp.asarray(ships),
+    )
+    alive = np.asarray(s.fleets_alive)
+    # Expect: slots 0..3 alive, 4..9 dead. (Pre-fix this packed at
+    # 0, 2, 4, 6.)
+    for k in range(4):
+        assert alive[k], f"slot {k} should be alive (launch {k})"
+    for k in range(4, 10):
+        assert not alive[k], f"slot {k} should be dead (no gap)"

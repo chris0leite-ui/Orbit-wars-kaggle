@@ -40,7 +40,7 @@ _ROTATION_RADIUS_LIMIT = 50.0
 _SUN_RADIUS = 10.0
 _SUN_SAFETY = 0.5            # mirror lib.trajectory.SUN_SAFETY
 _MAX_AIM_ITERATIONS = 5
-_AIM_CONVERGE_XY_TOL = 0.5
+_AIM_CONVERGE_XY_TOL = 0.3   # mirror lib.aim.CONVERGENCE_XY_TOL (was 0.5; bug C2)
 _BOARD_LO = 0.0
 _BOARD_HI = 100.0
 _PATH_MAX_STEPS = 200        # mirror lib.trajectory.DEFAULT_MAX_STEPS
@@ -216,10 +216,9 @@ def _predict_fleet_fate_numpy(
         # For a < 1e-12 (parallel), the answer is c <= 0.
         # Else: roots t1 = (-b - sqrt(disc))/(2a), t2 = (-b + sqrt(disc))/(2a).
         # Hit iff t2 >= 0 AND t1 <= 1.
-        import numpy as _np_local
-        sq = _np_local.where(disc >= 0.0, _np_local.sqrt(_np_local.maximum(disc, 0.0)), 0.0)
-        t1 = _np_local.where(a > 1e-12, (-b - sq) / _np_local.maximum(2.0 * a, 1e-12), 0.0)
-        t2 = _np_local.where(a > 1e-12, (-b + sq) / _np_local.maximum(2.0 * a, 1e-12), 0.0)
+        sq = np.where(disc >= 0.0, np.sqrt(np.maximum(disc, 0.0)), 0.0)
+        t1 = np.where(a > 1e-12, (-b - sq) / np.maximum(2.0 * a, 1e-12), 0.0)
+        t2 = np.where(a > 1e-12, (-b + sq) / np.maximum(2.0 * a, 1e-12), 0.0)
         parallel_hit = (a <= 1e-12) & (c <= 0.0)
         nonparallel_hit = (a > 1e-12) & (disc >= 0.0) & (t2 >= 0.0) & (t1 <= 1.0)
         hit_mask = (parallel_hit | nonparallel_hit) & planets_alive
@@ -230,7 +229,7 @@ def _predict_fleet_fate_numpy(
         if hit_mask.any():
             # Return FIRST hit by planet index (matches scalar dict
             # iteration order which is insertion order = planet id order).
-            hit_idx = int(_np_local.argmax(hit_mask))
+            hit_idx = int(np.argmax(hit_mask))
             outcome = "target" if hit_idx == target_slot else "planet"
             return outcome, hit_idx, step + 1
 
@@ -301,6 +300,13 @@ def predict_fleet_fate_batch_jax(
     the returned outcome codes drive the mechanism's drop mask. Inputs
     are `(I,)`-shaped intent vectors plus the precomputed planet
     trajectory.
+
+    `hit_planet` is a slot index in the JAX state — NOT a planet id.
+    For simultaneous multi-planet hits at the same step we return the
+    lowest-slot hit (via `argmax` on the bool mask); the scalar
+    reference returns the lowest-PID hit via dict-iteration order.
+    Slot order usually equals PID order, but for comets that re-use
+    earlier slots they can diverge — extremely rare in practice. (I)
 
     Returns:
       - outcome: int32 (I,) ∈ {TARGET, PLANET, SUN, OOB, TIMEOUT}
@@ -517,6 +523,7 @@ def apply_mechanisms_jax(
     chosen_ships,                     # int32 (P,) — pre-arrival_size ships
     chosen_eta,                       # int32 (P,) — pre-arrival_size eta
     my_id: int,
+    planet_orbits=None,               # optional pre-built (P, T+1, 2) orbits
 ):
     """Pure-JAX mechanism stack: arrival_size + atan2/lead-aim + ship
     validate. Returns per-source emit tensors:
@@ -647,7 +654,12 @@ def apply_mechanisms_jax(
 
     # predict_fleet_fate ray-cast: drop intents whose path hits sun,
     # non-target planet, or off-board edge before reaching the target.
-    planet_orbits = _build_planet_orbits_jax(state, max_steps=_PATH_MAX_STEPS)
+    # planet_orbits depends only on `state`, not on `my_id` — when
+    # rolling out a step we call this function twice (one per agent)
+    # so the caller can pass the pre-built orbits to amortise the
+    # 32K × T trig ops (P1).
+    if planet_orbits is None:
+        planet_orbits = _build_planet_orbits_jax(state, max_steps=_PATH_MAX_STEPS)
     outcome, _hit_pid, _hit_step = predict_fleet_fate_batch_jax(
         sx, sy, s_radius, safe_src, safe_tgt,
         angle, bumped_ships,

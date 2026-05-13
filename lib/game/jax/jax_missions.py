@@ -536,6 +536,17 @@ def merge_class_matrices(class_outputs):
     Returns a single dict where each cell takes its values from whichever
     class had the highest valid score. Used as the input to
     `settle_plan_jax`.
+
+    Parity note (8f finding A): the numpy reference
+    `settle_plan_from_matrices` walks per-source candidates across
+    classes WITHOUT collapsing — it can fall through to a different
+    class's variant when the higher-score class is ledger-blocked.
+    Collapsing here is byte-equivalent IFF the class target sets are
+    disjoint, which they are for the current pair: snipe targets
+    enemy/neutral planets (`owner != my_id`), reinforce targets OUR
+    planets (`owner == my_id`). For future class additions that share
+    target sets, this merger would silently drop the lower-score
+    variant — revisit then.
     """
     # Stack along a new "class" axis so we can argmax across it.
     scores = jnp.stack([o["score"] for o in class_outputs], axis=0)   # (C, P, P)

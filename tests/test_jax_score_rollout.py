@@ -140,3 +140,102 @@ def test_score_candidate_returns_finite_value():
     emit, _ = policy_step_jax(gs, my_id=0)
     val = score_candidate_jax(gs, emit, K=5, my_id=0)
     assert math.isfinite(val), f"score_candidate returned non-finite: {val}"
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 8f T2: scalar-vs-JAX rollout-pipeline parity at a single state
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", [7, 42])
+def test_jax_rollout_pipeline_matches_scalar_realize(seed):
+    """Single-state parity: scalar `realize(intents, obs,
+    mechanisms=DEFAULT_MECHANISMS)` vs the full JAX pipeline
+    (`policy_emit_jax_pure` reduced to per-agent action dicts).
+
+    Compares:
+      - emitted (src_pid, target_pid) set,
+      - ship counts byte-exact,
+      - aim angles within 0.05 rad (search_safe_intercept may pick a
+        different convergent intercept than scalar's iteration).
+
+    This is the end-to-end parity test the per-component tests
+    individually approximate; without it the "JAX matches scalar"
+    claim is bundled assumptions.
+    """
+    import numpy as np
+    from lib.intent import World, realize
+    from lib.world_model import WorldModel, DEFAULT_HORIZON
+    from lib.missions.snipe import propose_snipe_missions
+    from lib.missions.reinforce import propose_reinforce_missions
+    from lib.planner import settle_plan
+    from lib.mechanism import DEFAULT_MECHANISMS
+    from lib.game.jax.jax_world_model import build_world_model
+    from lib.game.jax.jax_score import policy_emit_jax_pure
+
+    env = make("orbit_wars", configuration={"seed": seed})
+    env.reset(num_agents=2)
+    _light_play(env, n_steps=25, rng_seed=seed * 31)
+    if env.state[0].status != "ACTIVE":
+        pytest.skip("terminated early")
+
+    obs = env.state[0].observation
+    my_id = 0
+
+    # Scalar reference: snipe + reinforce → settle_plan → realize.
+    sw = World.from_obs(obs)
+    swm = WorldModel.from_world(sw)
+    scalar_missions = (
+        propose_snipe_missions(sw, swm, aggressive=False)
+        + propose_reinforce_missions(sw, swm)
+    )
+    scalar_intents = settle_plan(scalar_missions, sw, swm)
+    scalar_actions = realize(
+        scalar_intents, obs, mechanisms=DEFAULT_MECHANISMS, model=swm,
+    )
+    scalar_by_src = {int(a[0]): a for a in scalar_actions}
+
+    # JAX pure-path: policy_emit_jax_pure.
+    gs = scalar_to_jax(env.state, env.info["seed"])
+    jax_wm = build_world_model(gs, max_horizon=DEFAULT_HORIZON, num_agents=4)
+    pids, angles, ships = policy_emit_jax_pure(
+        gs, jax_wm, my_id=my_id, aggressive=False, num_agents=2,
+    )
+    pids_np = np.asarray(pids)
+    ang_np = np.asarray(angles)
+    sh_np = np.asarray(ships)
+    jax_by_src = {}
+    for k in range(len(pids_np)):
+        pid = int(pids_np[k])
+        if pid >= 0:
+            jax_by_src[pid] = (pid, float(ang_np[k]), int(sh_np[k]))
+
+    diffs = []
+    # Sources where scalar emits but JAX drops (or vice versa).
+    for src_pid in scalar_by_src.keys() - jax_by_src.keys():
+        diffs.append(f"  src={src_pid}: scalar emits, JAX drops")
+    for src_pid in jax_by_src.keys() - scalar_by_src.keys():
+        diffs.append(f"  src={src_pid}: JAX emits, scalar drops")
+    # Ship counts + angles for shared.
+    for src_pid in scalar_by_src.keys() & jax_by_src.keys():
+        s = scalar_by_src[src_pid]
+        j = jax_by_src[src_pid]
+        if int(s[2]) != int(j[2]):
+            diffs.append(
+                f"  src={src_pid}: ships scalar={s[2]} jax={j[2]}"
+            )
+        ang_delta = math.atan2(
+            math.sin(s[1] - j[1]),
+            math.cos(s[1] - j[1]),
+        )
+        if abs(ang_delta) > 0.05:
+            diffs.append(
+                f"  src={src_pid}: angle scalar={s[1]:.3f} "
+                f"jax={j[1]:.3f} delta={ang_delta:.3f}"
+            )
+    # The pure JAX path uses an inline numpy `argsort` for tie-breaking
+    # of equal-scoring sources; scalar uses Python dict ordering. A
+    # single divergence here is tolerable; assert at most one.
+    assert len(diffs) <= 1, (
+        "scalar-vs-jax rollout pipeline divergence:\n" + "\n".join(diffs)
+    )

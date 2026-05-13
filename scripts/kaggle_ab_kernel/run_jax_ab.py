@@ -34,6 +34,8 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
+
 
 NUM_SEEDS = int(os.environ.get("NUM_SEEDS", "32"))      # × 2 mirror seats = 64 games
 EPISODE_STEPS = int(os.environ.get("EPISODE_STEPS", "500"))
@@ -115,7 +117,9 @@ def main():
             "seed": i, "episodeSteps": EPISODE_STEPS,
         })
         env.reset(num_agents=2)
-        gs = scalar_to_jax(env.state, env.info["seed"])
+        # Thread cometSpeed from configuration (bug J).
+        env_comet_speed = float(env.configuration.get("cometSpeed", 4.0))
+        gs = scalar_to_jax(env.state, env.info["seed"], comet_speed=env_comet_speed)
         states.append(gs)
         a_seats.append(0)
     # Mirror half.
@@ -124,7 +128,8 @@ def main():
             "seed": i, "episodeSteps": EPISODE_STEPS,
         })
         env.reset(num_agents=2)
-        gs = scalar_to_jax(env.state, env.info["seed"])
+        env_comet_speed = float(env.configuration.get("cometSpeed", 4.0))
+        gs = scalar_to_jax(env.state, env.info["seed"], comet_speed=env_comet_speed)
         states.append(gs)
         a_seats.append(1)
     N = len(states)
@@ -137,26 +142,21 @@ def main():
     a_seats_arr = jnp.asarray(a_seats, dtype=jnp.int32)
 
     # ---- Build vmap'd rollout ----
+    # A is always the "my" side (at seat my_id ∈ {0,1} per the mirror
+    # split). Plumb A_AGGRESSIVE → my_aggressive and B_AGGRESSIVE →
+    # opp_aggressive so both knobs are real (bug G fix).
     def run_episode(state, my_id):
         """Single-game scan over EPISODE_STEPS turns."""
         def step(s, _):
-            # When my_id (= A's seat) is 0, opp_aggressive=B_AGG.
-            # When my_id is 1, the rollout's "my" is at seat 1 (A), so
-            # opp_aggressive is also B_AGG. Either way, A is the "my"
-            # side here.
             new_s = rollout_step_jax_pure(
                 s, my_id=my_id, num_agents=2,
                 opp_aggressive=B_AGGRESSIVE,
+                my_aggressive=A_AGGRESSIVE,
             )
             return new_s, None
         final, _ = jax.lax.scan(step, state, None, length=EPISODE_STEPS)
         return final
 
-    # NOTE: A_AGGRESSIVE is currently always False in rollout_step_jax_pure
-    # (hardcoded). For sub-phase 8c MVP, we accept that and treat the
-    # A/B as "v7_0 style (aggressive=False) at seat my_id vs v3.5.1 style
-    # at the opp seat". Future sub-phase 8d will plumb the A_AGGRESSIVE
-    # flag through too.
     run_batch_jit = jax.jit(jax.vmap(run_episode))
 
     print()
@@ -178,24 +178,19 @@ def main():
     print(f"  done in {info['hot_run_s']:.1f} s ({info['hot_run_s']*1000/N:.1f} ms/game amortized)")
 
     # ---- Score outcomes ----
-    # For each game, A is at seat a_seats[i]. Compare A's ships vs B's
-    # ships at the end (planets + alive fleets).
-    a_wins = 0
-    b_wins = 0
-    draws = 0
-    for i in range(N):
-        a_seat = int(a_seats_arr[i])
-        my_val = float(value_delta_ships(
-            jax.tree.map(lambda x: x[i], final_batch),
-            my_id=a_seat,
-        ))
-        # my_val > 0 means A wins (more ships from A's perspective).
-        if my_val > 0:
-            a_wins += 1
-        elif my_val < 0:
-            b_wins += 1
-        else:
-            draws += 1
+    # Use the engine's terminate() reward directly (bug H). Scalar
+    # `interpreter` and JAX `terminate` set rewards[i] = +1 for the
+    # max-score seat (when max > 0), -1 otherwise; ties resolve to
+    # BOTH sides losing. That matches kaggle_environments' winrate
+    # accounting and is materially different from a ship-delta proxy
+    # in exactly-zero edge cases.
+    rewards_np = np.asarray(final_batch.rewards)             # (N, MAX_AGENTS)
+    a_seats_np = np.asarray(a_seats_arr)
+    a_rewards = rewards_np[np.arange(N), a_seats_np]         # (N,) ∈ {-1,0,+1}
+    b_rewards = rewards_np[np.arange(N), 1 - a_seats_np]     # opp seat
+    a_wins = int(np.sum(a_rewards > b_rewards))
+    b_wins = int(np.sum(b_rewards > a_rewards))
+    draws = N - a_wins - b_wins
 
     info["a_wins"] = a_wins
     info["b_wins"] = b_wins

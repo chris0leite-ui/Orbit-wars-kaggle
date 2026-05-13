@@ -269,14 +269,19 @@ def fleet_launch(
             )
 
             # Allocate next free fleet slot from CURRENT fleets_alive
-            # (which has been updated by previous iterations of this loop).
+            # (already reflects prior in-loop launches). We want the
+            # first currently-free slot, so target_count = 1 — NOT
+            # launches_so_far + 1, which would skip slots and silently
+            # waste capacity (sub-phase 8f bug C1).
             is_free = ~fleets_alive
             cum_free = jnp.cumsum(is_free.astype(jnp.int32))
-            target_count = launches_so_far + 1
-            slot_mask = (cum_free == target_count) & is_free
+            slot_mask = (cum_free == jnp.int32(1)) & is_free
+            has_free_slot = jnp.any(slot_mask)
             fleet_slot = jnp.argmax(slot_mask.astype(jnp.int32))
 
-            do_launch = is_valid
+            # Guard: if no free slot is available, do NOT launch
+            # (would otherwise overwrite slot 0's existing fleet).
+            do_launch = is_valid & has_free_slot
 
             # Subtract ships from source planet.
             planets_ships = planets_ships.at[slot].set(
@@ -570,32 +575,23 @@ def terminate(state: GameState, episode_steps: int = 500) -> GameState:
         return p_sum + f_sum
 
     scores = jax.vmap(_agent_score)(jnp.arange(A))  # (A,)
-    max_score = jnp.max(scores)
-    is_winner = (scores == max_score) & (max_score > 0)
+    # Scope the max to ACTIVE seats only so the inactive seat's score=0
+    # doesn't artificially become a tie/winner in a sparsely-owned game.
+    active_seat = agent_ids < state.num_agents                # (A,)
+    masked_scores = jnp.where(active_seat, scores, jnp.int32(-1))
+    max_score = jnp.max(masked_scores)
+    is_winner = (scores == max_score) & (max_score > 0) & active_seat
+    # Only OVERWRITE rewards for active seats. Inactive seats (e.g. 2-3
+    # in a 2P game) keep whatever they had (typically 0); without this
+    # they'd get -1, polluting any cross-seat aggregation. (bug C4)
+    seat_reward = jnp.where(is_winner, jnp.int32(1), jnp.int32(-1))
     new_rewards = jnp.where(
-        is_terminated,
-        jnp.where(is_winner, jnp.int32(1), jnp.int32(-1)),
+        is_terminated & active_seat,
+        seat_reward,
         state.rewards,
     )
 
     return state._replace(done=is_terminated, rewards=new_rewards)
-
-
-def remove_expired_comets_mid_step(state: GameState) -> GameState:
-    """Second-pass comet expiration after fleet movement.
-
-    Mirror of `lib/game/interpreter.py:617-633`. The scalar code's
-    first comet-expire pass (at top of step) catches comets whose
-    path index ran out BEFORE this step. The second pass — here —
-    catches comets that ran out AFTER comet_path_advance bumped their
-    index this step.
-
-    In our JAX flow, `comet_path_advance` already marks newly-expired
-    comets as not-alive (planets_alive=False). So this second pass is
-    structurally a no-op — but we keep the function as a clear
-    semantic checkpoint in `jax_step` and for future bugfixes.
-    """
-    return state
 
 
 def apply_planet_movement(state: GameState) -> GameState:
@@ -840,9 +836,12 @@ def jax_step(
       6. comet_path_advance (writes planets_new_* + path_index)
       7. fleet_movement (uses planets_new_* for sweep collision)
       8. apply_planet_movement (planets_* := planets_new_*)
-      9. remove_expired_comets_mid_step
-     10. combat_resolution (per-planet ownership flip from fleet hits)
-     11. terminate (max-score → rewards if done)
+      9. combat_resolution (per-planet ownership flip from fleet hits)
+     10. terminate (max-score → rewards if done)
+
+    (Scalar's second-pass "remove expired comets" after fleet movement
+    is structurally a no-op in JAX form: comet_path_advance already
+    marks newly-expired comets as not-alive.)
 
     Then step += 1.
 
@@ -860,7 +859,6 @@ def jax_step(
     state = comet_path_advance(state)
     state, fleet_hits_planet = fleet_movement(state, max_speed=max_speed)
     state = apply_planet_movement(state)
-    state = remove_expired_comets_mid_step(state)
     state = combat_resolution(state, fleet_hits_planet)
     state = terminate(state, episode_steps=episode_steps)
     return state._replace(step=state.step + jnp.int32(1))

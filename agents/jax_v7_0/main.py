@@ -45,6 +45,7 @@ def _state_from_obs_only(obs, configuration):
     fake_state = types.SimpleNamespace(observation=obs, reward=0)
     # Episode seed lives in configuration when available; otherwise 0.
     seed = 0
+    comet_speed = 4.0
     if configuration is not None:
         raw_seed = (
             configuration.get("seed", 0)
@@ -52,7 +53,15 @@ def _state_from_obs_only(obs, configuration):
             else getattr(configuration, "seed", 0)
         )
         seed = int(raw_seed) if raw_seed is not None else 0
-    return scalar_to_jax([fake_state], episode_seed=seed)
+        raw_cs = (
+            configuration.get("cometSpeed", 4.0)
+            if hasattr(configuration, "get")
+            else getattr(configuration, "cometSpeed", 4.0)
+        )
+        comet_speed = float(raw_cs) if raw_cs is not None else 4.0
+    return scalar_to_jax(
+        [fake_state], episode_seed=seed, comet_speed=comet_speed,
+    )
 
 
 def agent(obs, configuration=None, K=DEFAULT_K, wallclock_ms=DEFAULT_WALLCLOCK_MS):

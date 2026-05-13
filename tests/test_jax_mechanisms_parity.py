@@ -140,10 +140,9 @@ def test_mechanism_pipeline_ship_pairs_parity(seed):
 
 @pytest.mark.parametrize("seed", [3, 11, 42])
 def test_mechanism_pipeline_angles_within_tolerance(seed):
-    """Per-source aim angles: tolerance 0.2 rad (~12°). JAX uses atan2
-    of current target position; scalar uses lead_aim_v2 for moving
-    orbiting targets. Wide tolerance acknowledged; sub-phase 7 closes
-    the gap with a full lead_aim port.
+    """Per-source aim angles: tolerance 0.02 rad (~1.15°). JAX numpy
+    mirror uses the same 5-iter fixed-point + search_safe_intercept
+    fallback as scalar lead_aim_v2; angles should match closely.
     """
     env = make("orbit_wars", configuration={"seed": seed})
     env.reset(num_agents=2)
@@ -196,7 +195,7 @@ def test_mechanism_pipeline_angles_within_tolerance(seed):
                 f"  src={src_pid}: scalar_ang={scalar_ang:.3f} "
                 f"jax_ang={jax_ang:.3f} delta={delta:.3f}"
             )
-    assert not diffs, "angle divergence > 0.2 rad:\n" + "\n".join(diffs)
+    assert not diffs, "angle divergence > 0.02 rad:\n" + "\n".join(diffs)
 
 
 # ---------------------------------------------------------------------------

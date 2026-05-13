@@ -41,6 +41,7 @@ from lib.game.jax.jax_mechanisms import (
     apply_mechanisms_jax,
     pack_per_agent_actions_jax,
     emitted_to_jax_action_tensors,
+    _build_planet_orbits_jax,
 )
 from lib.game.jax.jax_types import MAX_AGENTS, MAX_LAUNCH_PER_AGENT
 
@@ -169,9 +170,12 @@ def score_candidate_jax(
     s = jax_step_jit(
         state, jnp.asarray(pids), jnp.asarray(angles), jnp.asarray(ships),
     )
+    # Run all K-1 follow-up steps unconditionally. jax_step is safe on a
+    # done state (terminate is idempotent), and the per-iter
+    # `bool(s.done)` we had here forced a device→host sync at every
+    # step — at K=10 × 5 candidates × 500 turns that's ~25k host trips
+    # per agent process. Removing it (bug D) is a net latency win.
     for _ in range(K - 1):
-        if bool(s.done):
-            break
         s = rollout_step_jax(
             s, my_id=my_id, num_agents=num_agents,
             opp_aggressive=opp_aggressive,
@@ -190,11 +194,16 @@ def policy_emit_jax_pure(
     my_id: int,
     aggressive: bool,
     num_agents: int,
+    planet_orbits=None,
 ):
     """Pure JAX: state + WorldModel → packed per-agent action tensors.
 
     No Python control flow on traced values; jit/vmap compatible.
     Returns three `(MAX_LAUNCH_PER_AGENT,)` arrays: pids, angles, ships.
+
+    `planet_orbits` is optional; if provided, `apply_mechanisms_jax`
+    reuses it instead of rebuilding the `(P, T+1, 2)` orbit table
+    (saves the trig sweep on the second call per step, bug P1).
     """
     snipe = compute_snipe_score_matrix(
         state, world_model, my_id=my_id,
@@ -208,6 +217,7 @@ def policy_emit_jax_pure(
     )
     final_src, final_angle, final_ships = apply_mechanisms_jax(
         state, world_model, src, tgt, ships, eta, my_id=my_id,
+        planet_orbits=planet_orbits,
     )
     return pack_per_agent_actions_jax(
         final_src, final_angle, final_ships, state.planets_id,
@@ -219,21 +229,37 @@ def rollout_step_jax_pure(
     my_id: int,
     num_agents: int = 2,
     opp_aggressive: bool = True,
+    my_aggressive: bool = False,
 ):
     """One env tick, fully JAX (no numpy / no Python control flow).
 
-    Builds the WorldModel once, runs policy_emit_jax_pure for both
-    seats, packs the per-agent action tensors, then jax_step.
+    Builds the WorldModel + planet orbits once, runs
+    `policy_emit_jax_pure` for both seats (sharing the precomputed
+    orbits, bug P1), packs the per-agent action tensors, then
+    `jax_step`.
+
+    Both seats' `aggressive` flags are exposed so an A/B harness can
+    swap them independently (bug G fix; was previously hardcoded to
+    `aggressive=False` for the my-side and `opp_aggressive` for the
+    opp-side, regardless of caller).
+
+    2P-only: the function hardcodes `opp_id = 1 - my_id` (bug B).
+    Asserted via the static `num_agents` argname at trace time.
     """
-    wm = build_world_model(state, max_horizon=DEFAULT_HORIZON, num_agents=4)
-    pids_my, ang_my, sh_my = policy_emit_jax_pure(
-        state, wm, my_id=my_id, aggressive=False, num_agents=num_agents,
+    assert num_agents == 2, (
+        "rollout_step_jax_pure currently supports only 2P games "
+        "(opp_id = 1 - my_id). For 4P, generalise the opp loop."
     )
-    # For 2P games only: opp_id = 1 - my_id.
+    wm = build_world_model(state, max_horizon=DEFAULT_HORIZON, num_agents=4)
+    planet_orbits = _build_planet_orbits_jax(state)
+    pids_my, ang_my, sh_my = policy_emit_jax_pure(
+        state, wm, my_id=my_id, aggressive=my_aggressive,
+        num_agents=num_agents, planet_orbits=planet_orbits,
+    )
     opp_id = 1 - my_id
     pids_op, ang_op, sh_op = policy_emit_jax_pure(
         state, wm, my_id=opp_id, aggressive=opp_aggressive,
-        num_agents=num_agents,
+        num_agents=num_agents, planet_orbits=planet_orbits,
     )
     # Pack into (MAX_AGENTS, MAX_LAUNCH_PER_AGENT) tensors.
     pids_full = jnp.full((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), -1, dtype=jnp.int32)
@@ -254,18 +280,25 @@ def score_candidate_jax_pure(
     my_id: int,
     num_agents: int = 2,
     opp_aggressive: bool = True,
+    my_aggressive: bool = False,
 ):
-    """Fully-JAX K-step rollout from `state` returning ship-delta.
+    """Self-play a K-step rollout from `state` and return ship-delta.
 
-    Self plays its own policy (not a candidate override — for the
-    drop-one chooser, the caller mutates state's planets_ships /
-    settle_plan output before calling this). Mostly used as the
-    vmap-able primitive for the GPU A/B path.
+    NOTE: this does NOT take a candidate override — it just rolls
+    forward under the natural self-policy for K steps. The drop-one
+    chooser uses `score_candidate_jax` (numpy mechanism path), which
+    DOES accept a candidate emit list. (bug C — docstring corrected.)
+
+    Both seats' aggressive flags are exposed so the kernel A/B harness
+    can swap them independently (bug G fix).
+
+    2P-only via `rollout_step_jax_pure`.
     """
     def step_fn(s, _):
         new_s = rollout_step_jax_pure(
             s, my_id=my_id, num_agents=num_agents,
             opp_aggressive=opp_aggressive,
+            my_aggressive=my_aggressive,
         )
         return new_s, None
 
@@ -275,9 +308,10 @@ def score_candidate_jax_pure(
 
 # JIT-compile entry points.
 rollout_step_jax_pure_jit = jax.jit(
-    rollout_step_jax_pure, static_argnames=("my_id", "num_agents", "opp_aggressive"),
+    rollout_step_jax_pure,
+    static_argnames=("my_id", "num_agents", "opp_aggressive", "my_aggressive"),
 )
 score_candidate_jax_pure_jit = jax.jit(
     score_candidate_jax_pure,
-    static_argnames=("K", "my_id", "num_agents", "opp_aggressive"),
+    static_argnames=("K", "my_id", "num_agents", "opp_aggressive", "my_aggressive"),
 )

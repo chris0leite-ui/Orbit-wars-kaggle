@@ -547,8 +547,16 @@ def test_settle_plan_from_matrices_parity_snipe_reinforce(seed):
 @pytest.mark.parametrize("seed", [3, 11, 42])
 def test_settle_plan_jax_matches_numpy(seed):
     """JAX-scan settle_plan picks the same (src, target) set as the
-    numpy reference (settle_plan_from_matrices). Operates on the
-    merged snipe+reinforce score matrix per cell."""
+    numpy reference (settle_plan_from_matrices).
+
+    Scope: the JAX form takes a `merge_class_matrices` collapse of
+    per-cell max-class score, NOT the full per-source candidate list
+    walk that the numpy form does. The two are byte-equivalent ONLY
+    when class target sets are disjoint — which they are for the
+    current (snipe, reinforce) pair: snipe excludes our planets,
+    reinforce only targets our planets. See the comment in
+    `merge_class_matrices` for the full argument. (T3)
+    """
     env = make("orbit_wars", configuration={"seed": seed})
     env.reset(num_agents=2)
     _spawn_in_flight_fleets(env, num_agents=2, n_steps=25, rng_seed=seed * 41)

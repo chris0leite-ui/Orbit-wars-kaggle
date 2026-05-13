@@ -17,6 +17,7 @@ parity testing.
 
 from __future__ import annotations
 
+import functools
 import random
 from typing import Any
 
@@ -34,7 +35,73 @@ from lib.game.jax.jax_types import (
 )
 
 
-def scalar_to_jax(state, episode_seed: int) -> GameState:
+# Cache key for the comet-schedule pre-compute: (episode_seed,
+# angular_velocity, comet_speed, hashable-tuple of initial planets,
+# hashable-tuple of comet planet ids). The pre-compute is deterministic
+# in these inputs and is the dominant cost in `scalar_to_jax` (replays
+# generate_comet_paths × 5). Keying lets the agent-wrapper conversion
+# reuse the result across the 500 turns of a single game. (bug P4)
+@functools.lru_cache(maxsize=64)
+def _precompute_comet_schedule_cached(
+    episode_seed: int,
+    angular_velocity: float,
+    comet_speed: float,
+    initial_planets_tuple,
+    comet_planet_ids_tuple,
+):
+    """Returns numpy arrays: comet_paths_xy, comet_paths_len,
+    comet_ships, comet_valid, comet_step. Same shapes as in
+    scalar_to_jax; keyed for cache reuse."""
+    comet_paths_xy = np.zeros(
+        (NUM_COMET_SPAWNS, MAX_COMET_PATHS_PER_GROUP, MAX_COMET_PATH_LEN, 2),
+        dtype=np.float32,
+    )
+    comet_paths_len = np.zeros(
+        (NUM_COMET_SPAWNS, MAX_COMET_PATHS_PER_GROUP), dtype=np.int32,
+    )
+    comet_ships_arr = np.zeros(NUM_COMET_SPAWNS, dtype=np.int32)
+    comet_valid_arr = np.zeros(NUM_COMET_SPAWNS, dtype=bool)
+    comet_step = np.zeros(NUM_COMET_SPAWNS, dtype=np.int32)
+    # Reconstruct list-of-lists from the tuple-of-tuples cache key.
+    initial_planets = [list(p) for p in initial_planets_tuple]
+    comet_planet_ids = list(comet_planet_ids_tuple)
+    for k, spawn_step in enumerate(COMET_SPAWN_STEPS):
+        comet_step[k] = spawn_step
+        rng = random.Random(f"orbit_wars-comet-{episode_seed}-{spawn_step}")
+        paths = generate_comet_paths(
+            initial_planets,
+            angular_velocity,
+            spawn_step,
+            comet_planet_ids,
+            comet_speed,
+            rng=rng,
+        )
+        if paths:
+            comet_valid_arr[k] = True
+            for j, path in enumerate(paths[:MAX_COMET_PATHS_PER_GROUP]):
+                L = min(len(path), MAX_COMET_PATH_LEN)
+                comet_paths_len[k, j] = L
+                for t in range(L):
+                    comet_paths_xy[k, j, t, 0] = path[t][0]
+                    comet_paths_xy[k, j, t, 1] = path[t][1]
+            cs = min(
+                rng.randint(1, 99),
+                rng.randint(1, 99),
+                rng.randint(1, 99),
+                rng.randint(1, 99),
+            )
+            comet_ships_arr[k] = cs
+        else:
+            comet_valid_arr[k] = False
+    return (
+        comet_paths_xy, comet_paths_len, comet_ships_arr,
+        comet_valid_arr, comet_step,
+    )
+
+
+def scalar_to_jax(
+    state, episode_seed: int, comet_speed: float = 4.0,
+) -> GameState:
     """Build a JAX GameState from a scalar `state` (list of Struct, one
     per seat) after the init phase has run.
 
@@ -123,57 +190,36 @@ def scalar_to_jax(state, episode_seed: int) -> GameState:
         fleets_alive[i] = True
 
     # --- Comet schedule: pre-compute the 5 spawn results -----------
-    # Each spawn at step S uses `random.Random(f"orbit_wars-comet-{seed}-{S+1}")`.
-    # We replay that exactly here (Python), capture the paths + ship
-    # count, and store in JAX state for jax_step to look up.
-    comet_step = np.zeros(NUM_COMET_SPAWNS, dtype=np.int32)
-    comet_paths_xy = np.zeros(
-        (NUM_COMET_SPAWNS, MAX_COMET_PATHS_PER_GROUP, MAX_COMET_PATH_LEN, 2),
-        dtype=np.float32,
+    # The pre-compute (replay generate_comet_paths × 5) is deterministic
+    # in (seed, omega, comet_speed, initial planets, comet planet ids)
+    # and is the dominant cost per agent turn (~70% of the 700 ms
+    # budget). Cached via lru_cache keyed by those inputs. (bug P4)
+    angular_velocity = float(obs0.angular_velocity)
+    initial_planets_tuple = tuple(
+        tuple(p) for p in initial_planets
     )
-    comet_paths_len = np.zeros(
-        (NUM_COMET_SPAWNS, MAX_COMET_PATHS_PER_GROUP), dtype=np.int32,
+    comet_planet_ids_tuple = tuple(
+        int(c) for c in (obs0.comet_planet_ids or [])
     )
-    comet_ships_arr = np.zeros(NUM_COMET_SPAWNS, dtype=np.int32)
-    comet_valid_arr = np.zeros(NUM_COMET_SPAWNS, dtype=bool)
+    (
+        comet_paths_xy, comet_paths_len, comet_ships_arr,
+        comet_valid_arr, comet_step,
+    ) = _precompute_comet_schedule_cached(
+        int(episode_seed), angular_velocity, float(comet_speed),
+        initial_planets_tuple, comet_planet_ids_tuple,
+    )
+    # Copy out of the cached arrays so downstream mutations (next
+    # block, for in-flight comet wiring) don't poison the cache.
+    comet_paths_xy = comet_paths_xy.copy()
+    comet_paths_len = comet_paths_len.copy()
+    comet_ships_arr = comet_ships_arr.copy()
+    comet_valid_arr = comet_valid_arr.copy()
+    comet_step = comet_step.copy()
     comet_path_index = -np.ones(NUM_COMET_SPAWNS, dtype=np.int32)
     comet_spawned_arr = np.zeros(NUM_COMET_SPAWNS, dtype=bool)
     comet_planet_idx = -np.ones(
         (NUM_COMET_SPAWNS, MAX_COMET_PATHS_PER_GROUP), dtype=np.int32,
     )
-
-    comet_speed = 4.0  # default; matches DEFAULT_CONFIG in fast_sim.py
-    angular_velocity = float(obs0.angular_velocity)
-    for k, spawn_step in enumerate(COMET_SPAWN_STEPS):
-        comet_step[k] = spawn_step
-        # Replay scalar comet generation deterministically.
-        rng = random.Random(f"orbit_wars-comet-{episode_seed}-{spawn_step}")
-        paths = generate_comet_paths(
-            initial_planets,
-            angular_velocity,
-            spawn_step,
-            list(obs0.comet_planet_ids) if obs0.comet_planet_ids else [],
-            comet_speed,
-            rng=rng,
-        )
-        if paths:
-            comet_valid_arr[k] = True
-            for j, path in enumerate(paths[:MAX_COMET_PATHS_PER_GROUP]):
-                L = min(len(path), MAX_COMET_PATH_LEN)
-                comet_paths_len[k, j] = L
-                for t in range(L):
-                    comet_paths_xy[k, j, t, 0] = path[t][0]
-                    comet_paths_xy[k, j, t, 1] = path[t][1]
-            # 4 randint(1, 99) draws — same as scalar interpreter.
-            cs = min(
-                rng.randint(1, 99),
-                rng.randint(1, 99),
-                rng.randint(1, 99),
-                rng.randint(1, 99),
-            )
-            comet_ships_arr[k] = cs
-        else:
-            comet_valid_arr[k] = False
 
     # --- In-flight comets: link existing comet planets back to spawn groups ---
     # When converting a mid-game state, comets may already be on the board.
