@@ -1,5 +1,44 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-13 (claude/research-competition-analysis-2R8I3 — Day-1 audits + 3-anchor gate)
+
+- `tag: fresh-sandbox-no-deps-installed` — `kaggle_environments`,
+  `pytest`, and other `requirements.txt` packages were not present
+  on session start. `pip install -r requirements.txt` failed with
+  `Cannot uninstall blinker 1.7.0, RECORD file not found` (blinker
+  was installed by the OS package manager). **Workaround:**
+  `pip install --quiet --ignore-installed <pkg>` succeeds. Cost
+  ~3 min. **Promotion candidate:** add `--ignore-installed` to a
+  hint in `SETUP.md`, or add an `apt remove python3-blinker` step
+  to `bootstrap.sh` before the pip install.
+
+- `tag: data-main-py-missing-on-fresh-clone` — three tests in
+  `tests/test_fixture_smoke.py` fail with `FileNotFoundError:
+  /home/user/Orbit-wars-kaggle/data/main.py` because `bootstrap.sh`
+  hasn't run (needs Kaggle creds, none configured in this sandbox).
+  Affects: `test_reward_stability_across_runs`,
+  `test_loaded_baseline_beats_random_both_sides`,
+  `test_parallel_runner_matches_sequential_for_deterministic_agent`.
+  All other 11 tests in that file (the pure helpers — Wilson CI,
+  p95) pass. **Fix:** these tests should be marked
+  `@pytest.mark.skipif(not (REPO / "data" / "main.py").is_file(), ...)`
+  so they don't appear as regressions on fresh clones. Not blocking
+  this session.
+
+- `tag: no-cgroup-v2-no-systemd-bus` — Day-1 eval-cost probe (K)
+  tried `systemd-run --user --scope -p CPUQuota=60%` for a true
+  0.6-CPU limit (matching Kaggle eval). Failed with "Failed to
+  connect to bus: No medium found" (no systemd in this container).
+  `/sys/fs/cgroup/cgroup.controllers` is also absent (cgroup v2 not
+  exposed). **Workaround:** ran `taskset -c 0 yes >/dev/null` as a
+  background CPU burner sharing core 0 with the probe — empirically
+  forced a ~50 % share (perfect linear: wallclock 64.7 s → 128.9 s).
+  This is conservative vs eval's 0.6 CPU. Adequate for the verdict
+  but not exact. **Note for future cgroup-aware harnessing:** use a
+  Docker container (`docker run --cpus=0.6 --memory=8g`) — Docker IS
+  installed; we just didn't try it because the contention probe was
+  faster to validate.
+
 ## 2026-05-12 EVE (game-ai-lookahead-3ucqH — v9 super-version + v10 + submit attempt)
 
 - `tag: kaggle-cli-401-was-wrong-auth-env-var` — `kaggle competitions

@@ -198,6 +198,64 @@ def _summarise(result: tournament.TournamentResult, names: list[str]) -> dict:
     return rows
 
 
+def _per_anchor_summarise(
+    result: tournament.TournamentResult,
+    candidate: str,
+    anchors: list[str],
+) -> dict[str, dict]:
+    """Pool-by-seat head-to-head Wilson CI for `candidate` vs each anchor.
+
+    For each anchor, sums candidate-as-P0 + candidate-as-P1 results
+    (matrix[candidate][anchor] and matrix[anchor][candidate]). Returns
+    one row per anchor with wins/losses/draws/n/winrate/wilson_lo/hi.
+
+    Use this instead of `_summarise` when you want to detect non-
+    transitive A>B>C>A loops: a candidate can be ≥55% pooled across
+    three anchors and still regress on one of them.
+    """
+    rows: dict[str, dict] = {}
+    for anchor in anchors:
+        wins = losses = draws = 0
+        # candidate as P0 vs anchor as P1
+        sp = result.matrix.get(candidate, {}).get(anchor)
+        if sp is not None:
+            wins += sp.p0_wins
+            losses += sp.p1_wins
+            draws += sp.draws
+        # candidate as P1 vs anchor as P0
+        sp = result.matrix.get(anchor, {}).get(candidate)
+        if sp is not None:
+            wins += sp.p1_wins
+            losses += sp.p0_wins
+            draws += sp.draws
+        n = wins + losses + draws
+        lo, hi = _wilson_ci(wins, n)
+        rows[anchor] = {
+            "wins": wins, "losses": losses, "draws": draws, "n": n,
+            "winrate": wins / n if n else 0.0,
+            "wilson_lo": lo, "wilson_hi": hi,
+        }
+    return rows
+
+
+def _anchor_gate(per_anchor: dict[str, dict], threshold: float) -> dict:
+    """Verdict on a per-anchor breakdown: PASS iff every anchor's
+    Wilson lower bound meets `threshold`. Empty anchor set → PASS.
+    """
+    failing = [
+        name for name, r in per_anchor.items() if r["wilson_lo"] < threshold
+    ]
+    passing = [
+        name for name, r in per_anchor.items() if r["wilson_lo"] >= threshold
+    ]
+    return {
+        "threshold": threshold,
+        "pass": len(failing) == 0,
+        "passing_anchors": passing,
+        "failing_anchors": failing,
+    }
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -220,6 +278,19 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--include-self-play", action="store_true",
         help="Run a-vs-a self-play cells too (sanity baseline).",
+    )
+    parser.add_argument(
+        "--candidate", default=None, metavar="NAME",
+        help="Name of the variant under test (must match a --variant). "
+             "All other variants are treated as anchors; the gate "
+             "requires Wilson-lo >= --gate-threshold against EACH "
+             "anchor individually (catches non-transitive A>B>C>A loops). "
+             "Exit code is 1 on gate failure when --candidate is set.",
+    )
+    parser.add_argument(
+        "--gate-threshold", type=float, default=0.55,
+        help="Per-anchor Wilson-lo gate (default 0.55). Only used when "
+             "--candidate is set.",
     )
     args = parser.parse_args(argv)
 
@@ -259,10 +330,41 @@ def main(argv=None) -> int:
         )
     print(f"  elapsed: {elapsed:.1f}s")
 
+    # Per-anchor breakdown + gate verdict (only when --candidate is set).
+    per_anchor: dict[str, dict] | None = None
+    gate: dict | None = None
+    if args.candidate is not None:
+        if args.candidate not in variants:
+            raise SystemExit(
+                f"--candidate {args.candidate!r} is not among the "
+                f"declared --variant names {list(variants.keys())}"
+            )
+        anchors = [n for n in variants.keys() if n != args.candidate]
+        per_anchor = _per_anchor_summarise(result, args.candidate, anchors)
+        gate = _anchor_gate(per_anchor, args.gate_threshold)
+        print()
+        print(
+            f"=== per-anchor gate (candidate={args.candidate}, "
+            f"threshold Wilson-lo >= {args.gate_threshold:.2f}) ==="
+        )
+        for anchor, r in per_anchor.items():
+            verdict = "PASS" if r["wilson_lo"] >= args.gate_threshold else "FAIL"
+            print(
+                f"  vs {anchor:<12} winrate={r['winrate']*100:5.1f}%  "
+                f"Wilson95=[{r['wilson_lo']*100:5.1f}%, "
+                f"{r['wilson_hi']*100:5.1f}%]  "
+                f"W/L/D={r['wins']}/{r['losses']}/{r['draws']}  "
+                f"N={r['n']}  [{verdict}]"
+            )
+        verdict = "PASS" if gate["pass"] else "FAIL"
+        print(f"  overall: [{verdict}]")
+        if not gate["pass"]:
+            print(f"  failing anchors: {gate['failing_anchors']}")
+
     # Persist summary alongside the tournament JSON.
     utc = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     summary_path = out_dir / f"ab-{utc}.json"
-    summary_path.write_text(json.dumps({
+    payload: dict = {
         "utc": utc,
         "variants": variants,
         "seeds": seeds,
@@ -270,9 +372,14 @@ def main(argv=None) -> int:
         "summary": rows,
         "tournament_json": str(out_dir / f"{result.timestamp_utc}.json"),
         "elapsed_s": round(elapsed, 1),
-    }, indent=2) + "\n")
+    }
+    if args.candidate is not None:
+        payload["candidate"] = args.candidate
+        payload["per_anchor"] = per_anchor
+        payload["gate"] = gate
+    summary_path.write_text(json.dumps(payload, indent=2) + "\n")
     print(f"  summary: {summary_path}")
-    return 0
+    return 0 if (gate is None or gate["pass"]) else 1
 
 
 if __name__ == "__main__":
