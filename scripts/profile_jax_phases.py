@@ -126,10 +126,37 @@ def bench_swept_pair():
         )
 
 
+def bench_full_step():
+    print("\n=== Full jax_step JIT'd (all 11 phases chained) ===")
+    from lib.game.jax import jax_step, jax_step_jit, MAX_AGENTS, MAX_LAUNCH_PER_AGENT
+    import jax
+
+    states = _build_n_states(1)
+    gs = states[0]
+    pid = -jnp.ones((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.int32)
+    ang = jnp.zeros((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.float32)
+    shp = jnp.zeros((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.int32)
+
+    _time(lambda: jax_step_jit(gs, pid, ang, shp), "N=1 (single game)")
+
+    for N in [4, 16, 64]:
+        states = _build_n_states(N)
+        batch = _stack(states)
+        pid_b = jnp.broadcast_to(pid, (N,) + pid.shape)
+        ang_b = jnp.broadcast_to(ang, (N,) + ang.shape)
+        shp_b = jnp.broadcast_to(shp, (N,) + shp.shape)
+        step_v = jax.jit(jax.vmap(jax_step))
+        _time(
+            lambda: step_v(batch, pid_b, ang_b, shp_b),
+            f"N={N} (vmap'd over games)",
+        )
+
+
 def main():
     bench_n1()
     bench_n64()
     bench_swept_pair()
+    bench_full_step()
 
 
 if __name__ == "__main__":
