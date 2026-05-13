@@ -64,6 +64,8 @@ def scalar_to_jax(state, episode_seed: int) -> GameState:
     initial_x = np.zeros(MAX_PLANETS, dtype=np.float32)
     initial_y = np.zeros(MAX_PLANETS, dtype=np.float32)
     is_comet = np.zeros(MAX_PLANETS, dtype=bool)
+    planet_comet_spawn = -np.ones(MAX_PLANETS, dtype=np.int32)
+    planet_comet_path = -np.ones(MAX_PLANETS, dtype=np.int32)
 
     # Build pid -> array index map (scalar uses arbitrary planet ids; we
     # pack into 0..P-1 for the JAX array). NOTE: this means
@@ -181,6 +183,8 @@ def scalar_to_jax(state, episode_seed: int) -> GameState:
         initial_x=jnp.asarray(initial_x),
         initial_y=jnp.asarray(initial_y),
         is_comet=jnp.asarray(is_comet),
+        planet_comet_spawn=jnp.asarray(planet_comet_spawn),
+        planet_comet_path=jnp.asarray(planet_comet_path),
         fleets_x=jnp.asarray(fleets_x),
         fleets_y=jnp.asarray(fleets_y),
         fleets_angle=jnp.asarray(fleets_angle),

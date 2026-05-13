@@ -30,10 +30,24 @@ from lib.game.jax.jax_types import (
     NUM_COMET_SPAWNS,
 )
 from lib.game.jax.conversions import scalar_to_jax, jax_to_scalar
+from lib.game.jax.jax_interpreter import (
+    production_tick,
+    planet_path_compute,
+    comet_expire,
+    jax_step_partial,
+    production_tick_jit,
+    planet_path_compute_jit,
+    comet_expire_jit,
+    jax_step_partial_jit,
+)
 
 __all__ = [
     "GameState",
     "MAX_PLANETS", "MAX_FLEETS", "MAX_COMET_GROUPS",
     "MAX_COMET_PATH_LEN", "NUM_COMET_SPAWNS",
     "scalar_to_jax", "jax_to_scalar",
+    "production_tick", "planet_path_compute", "comet_expire",
+    "jax_step_partial",
+    "production_tick_jit", "planet_path_compute_jit",
+    "comet_expire_jit", "jax_step_partial_jit",
 ]

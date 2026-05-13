@@ -59,6 +59,11 @@ class GameState(NamedTuple):
     initial_y: jnp.ndarray         # (P_max,) float32
     # Whether each planet is a comet (rotates differently / can expire).
     is_comet: jnp.ndarray          # (P_max,) bool
+    # For comet planets, which spawn (0..S-1) and which path (0..3) it
+    # came from — used by the per-step expiration check. -1 for
+    # non-comet planets.
+    planet_comet_spawn: jnp.ndarray  # (P_max,) int32
+    planet_comet_path: jnp.ndarray   # (P_max,) int32
 
     # --- In-flight fleets ---
     fleets_x: jnp.ndarray          # (F_max,) float32
@@ -115,6 +120,8 @@ SHAPES = {
     "initial_x": (MAX_PLANETS,),
     "initial_y": (MAX_PLANETS,),
     "is_comet": (MAX_PLANETS,),
+    "planet_comet_spawn": (MAX_PLANETS,),
+    "planet_comet_path": (MAX_PLANETS,),
     "fleets_x": (MAX_FLEETS,),
     "fleets_y": (MAX_FLEETS,),
     "fleets_angle": (MAX_FLEETS,),
