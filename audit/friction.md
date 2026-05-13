@@ -25,6 +25,8 @@
   so they don't appear as regressions on fresh clones. Not blocking
   this session.
 
+- `tag: bundler-overwrites-tracked-submission` — `bundle_agent.bundle(agent_dir=v7_0_drop_one, out_dir=submissions/)` outputs `submissions/v7_0_drop_one.py` (named by agent_dir.name), then my inline PV bundling helper renamed THAT to `submissions/v7_pv.py`. Side effect: the existing live-reference bundle at `submissions/v7_0_drop_one.py` (a tracked file) was deleted. Caught by the stop-hook. **Recovery:** `git checkout HEAD -- submissions/v7_0_drop_one.py`. **Fix forward:** when bundling for submission, output to a temp filename first (e.g. `submissions/_pending_{name}.py`), then atomic-rename to the final filename only AFTER confirming no name collision with a tracked bundle. Promotion candidate for `bundle_agent.bundle`: add `output_name=` kwarg.
+
 - `tag: bootstrap-data-check-false-positive` — `bootstrap.sh` step 3
   decides whether to skip the comp-shipped data download with
   `[[ "$(ls -A data 2>/dev/null | grep -v '^\.gitkeep$' | wc -l)" -gt 0 ]]`.
