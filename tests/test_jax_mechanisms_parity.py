@@ -33,7 +33,15 @@ from lib.game.jax.jax_missions import (
     compute_reinforce_score_matrix,
     settle_plan_from_matrices,
 )
-from lib.game.jax.jax_mechanisms import apply_mechanisms_numpy
+from lib.game.jax.jax_mechanisms import (
+    apply_mechanisms_numpy,
+    apply_mechanisms_jax,
+)
+from lib.game.jax.jax_missions import (
+    merge_class_matrices,
+    settle_plan_jax,
+)
+import jax.numpy as jnp
 
 
 def _spawn_in_flight_fleets(env, num_agents=2, n_steps=15, rng_seed=7):
@@ -189,3 +197,202 @@ def test_mechanism_pipeline_angles_within_tolerance(seed):
                 f"jax_ang={jax_ang:.3f} delta={delta:.3f}"
             )
     assert not diffs, "angle divergence > 0.2 rad:\n" + "\n".join(diffs)
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 8e: apply_mechanisms_jax (pure-JAX path) parity
+# ---------------------------------------------------------------------------
+
+
+def _run_apply_mechanisms_jax(env, my_id: int):
+    """Drive the full pure-JAX mechanism path from an env state.
+
+    Returns:
+      - emitted_jax: list of dicts {src_pid, angle, ships} from the
+        JAX path (after settle_plan_jax + apply_mechanisms_jax).
+      - emitted_numpy: list of dicts from the numpy path
+        (apply_mechanisms_numpy) for the same settle output.
+    """
+    gs = scalar_to_jax(env.state, env.info["seed"])
+    jax_wm = build_world_model(gs, max_horizon=DEFAULT_HORIZON, num_agents=4)
+    snipe_out = compute_snipe_score_matrix(gs, jax_wm, my_id=my_id)
+    reinforce_out = compute_reinforce_score_matrix(gs, jax_wm, my_id=my_id)
+    merged = merge_class_matrices([snipe_out, reinforce_out])
+    src, tgt, ships, eta = settle_plan_jax(
+        merged["score"], merged["ships"], merged["eta"], merged["valid"],
+        jax_wm.ships_at,
+    )
+
+    # JAX path: apply_mechanisms_jax (now includes ray-cast).
+    final_src, final_angle, final_ships = apply_mechanisms_jax(
+        gs, jax_wm, src, tgt, ships, eta, my_id=my_id,
+    )
+    planets_id = np.asarray(gs.planets_id)
+    emitted_jax = []
+    for i in range(len(final_src)):
+        if int(final_src[i]) >= 0:
+            emitted_jax.append({
+                "src_pid": int(planets_id[int(final_src[i])]),
+                "angle": float(final_angle[i]),
+                "ships": int(final_ships[i]),
+            })
+
+    # Numpy path: apply_mechanisms_numpy on the same settle output.
+    chosen_np = []
+    for i in range(len(src)):
+        if int(src[i]) >= 0:
+            chosen_np.append({
+                "src_pid": int(planets_id[int(src[i])]),
+                "target_pid": int(planets_id[int(tgt[i])]),
+                "ships": int(ships[i]),
+                "eta": int(eta[i]),
+            })
+    emitted_numpy = apply_mechanisms_numpy(chosen_np, gs, jax_wm, my_id=my_id)
+    return emitted_jax, emitted_numpy
+
+
+@pytest.mark.parametrize("seed", [3, 11, 42])
+def test_apply_mechanisms_jax_path_clears_parity(seed):
+    """JAX-path emit matches numpy-path emit after the ray-cast lands.
+
+    Compares the src-set, ship counts, and angles. Tolerance:
+      - drop sets exactly equal (same intents survive),
+      - ship counts byte-exact,
+      - angles within 0.02 rad (search_safe_intercept fallback may
+        pick a different convergent candidate than scalar's iter).
+    """
+    env = make("orbit_wars", configuration={"seed": seed})
+    env.reset(num_agents=2)
+    _spawn_in_flight_fleets(env, num_agents=2, n_steps=25, rng_seed=seed * 31)
+    if env.state[0].status != "ACTIVE":
+        pytest.skip(f"seed {seed} terminated early")
+
+    emitted_jax, emitted_numpy = _run_apply_mechanisms_jax(env, my_id=0)
+    jax_by_src = {e["src_pid"]: e for e in emitted_jax}
+    np_by_src = {e["src_pid"]: e for e in emitted_numpy}
+
+    diffs = []
+    for src_pid in np_by_src.keys() - jax_by_src.keys():
+        diffs.append(f"  src={src_pid}: numpy emits but JAX drops")
+    for src_pid in jax_by_src.keys() - np_by_src.keys():
+        diffs.append(f"  src={src_pid}: JAX emits but numpy drops")
+    for src_pid in np_by_src.keys() & jax_by_src.keys():
+        n = np_by_src[src_pid]
+        j = jax_by_src[src_pid]
+        if int(n["ships"]) != int(j["ships"]):
+            diffs.append(
+                f"  src={src_pid}: ships numpy={n['ships']} jax={j['ships']}"
+            )
+        ang_delta = math.atan2(
+            math.sin(n["angle"] - j["angle"]),
+            math.cos(n["angle"] - j["angle"]),
+        )
+        if abs(ang_delta) > 0.02:
+            diffs.append(
+                f"  src={src_pid}: angle numpy={n['angle']:.3f} "
+                f"jax={j['angle']:.3f} delta={ang_delta:.3f}"
+            )
+    assert not diffs, "JAX-path emit divergence:\n" + "\n".join(diffs)
+
+
+def test_apply_mechanisms_jax_sun_avoid():
+    """Inject an intent aimed straight through the sun; assert it's
+    dropped by predict_fleet_fate_batch_jax's sun check."""
+    from lib.game.jax.jax_mechanisms import (
+        predict_fleet_fate_batch_jax,
+        _build_planet_orbits_jax,
+        OUTCOME_SUN,
+    )
+    env = make("orbit_wars", configuration={"seed": 42})
+    env.reset(num_agents=2)
+    _spawn_in_flight_fleets(env, num_agents=2, n_steps=10, rng_seed=42)
+    if env.state[0].status != "ACTIVE":
+        pytest.skip("terminated early")
+
+    gs = scalar_to_jax(env.state, env.info["seed"])
+    planets_id = np.asarray(gs.planets_id)
+    # Find any owned planet to use as source.
+    planets_owner = np.asarray(gs.planets_owner)
+    planets_alive = np.asarray(gs.planets_alive)
+    src_slot = next(
+        i for i in range(len(planets_id))
+        if planets_owner[i] == 0 and planets_alive[i]
+    )
+    sx = float(np.asarray(gs.planets_x)[src_slot])
+    sy = float(np.asarray(gs.planets_y)[src_slot])
+    # Aim straight at the sun (CENTER, CENTER).
+    sun_aim = math.atan2(50.0 - sy, 50.0 - sx)
+
+    planet_orbits = _build_planet_orbits_jax(gs, max_steps=200)
+    outcome, _, _ = predict_fleet_fate_batch_jax(
+        src_x=jnp.array([sx], dtype=jnp.float32),
+        src_y=jnp.array([sy], dtype=jnp.float32),
+        src_r=jnp.array([float(np.asarray(gs.planets_radius)[src_slot])],
+                        dtype=jnp.float32),
+        src_slot=jnp.array([src_slot], dtype=jnp.int32),
+        target_slot=jnp.array([-1], dtype=jnp.int32),
+        aim_angle=jnp.array([sun_aim], dtype=jnp.float32),
+        ships=jnp.array([20], dtype=jnp.int32),
+        planet_orbits=planet_orbits,
+        planets_alive=gs.planets_alive,
+        planets_radius=gs.planets_radius,
+        intent_active=jnp.array([True]),
+        max_steps=200,
+    )
+    assert int(outcome[0]) == OUTCOME_SUN, (
+        f"expected OUTCOME_SUN ({OUTCOME_SUN}) got {int(outcome[0])}"
+    )
+
+
+def test_apply_mechanisms_jax_oob():
+    """Inject an intent aimed off-board; assert OOB."""
+    from lib.game.jax.jax_mechanisms import (
+        predict_fleet_fate_batch_jax,
+        _build_planet_orbits_jax,
+        OUTCOME_OOB,
+    )
+    env = make("orbit_wars", configuration={"seed": 42})
+    env.reset(num_agents=2)
+    _spawn_in_flight_fleets(env, num_agents=2, n_steps=10, rng_seed=42)
+    if env.state[0].status != "ACTIVE":
+        pytest.skip("terminated early")
+
+    gs = scalar_to_jax(env.state, env.info["seed"])
+    planets_owner = np.asarray(gs.planets_owner)
+    planets_alive = np.asarray(gs.planets_alive)
+    planets_x = np.asarray(gs.planets_x)
+    planets_y = np.asarray(gs.planets_y)
+    # Find a planet near the edge so its aim "outward" hits OOB quickly,
+    # and choose a direction that avoids the sun (perpendicular to
+    # center).
+    src_slot = next(
+        i for i in range(len(planets_owner))
+        if planets_owner[i] == 0 and planets_alive[i]
+    )
+    sx, sy = float(planets_x[src_slot]), float(planets_y[src_slot])
+    # Aim AWAY from the board center (i.e. opposite direction of sun).
+    outward_aim = math.atan2(sy - 50.0, sx - 50.0)
+
+    planet_orbits = _build_planet_orbits_jax(gs, max_steps=200)
+    outcome, _, _ = predict_fleet_fate_batch_jax(
+        src_x=jnp.array([sx], dtype=jnp.float32),
+        src_y=jnp.array([sy], dtype=jnp.float32),
+        src_r=jnp.array([float(np.asarray(gs.planets_radius)[src_slot])],
+                        dtype=jnp.float32),
+        src_slot=jnp.array([src_slot], dtype=jnp.int32),
+        target_slot=jnp.array([-1], dtype=jnp.int32),
+        aim_angle=jnp.array([outward_aim], dtype=jnp.float32),
+        ships=jnp.array([20], dtype=jnp.int32),
+        planet_orbits=planet_orbits,
+        planets_alive=gs.planets_alive,
+        planets_radius=gs.planets_radius,
+        intent_active=jnp.array([True]),
+        max_steps=200,
+    )
+    # OOB or PLANET (might hit a planet on the way out). Either is a
+    # drop; just confirm it's not TARGET or TIMEOUT.
+    from lib.game.jax.jax_mechanisms import OUTCOME_TARGET, OUTCOME_TIMEOUT
+    code = int(outcome[0])
+    assert code != OUTCOME_TARGET and code != OUTCOME_TIMEOUT, (
+        f"expected drop outcome (OOB/SUN/PLANET) got {code}"
+    )

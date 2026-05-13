@@ -242,6 +242,273 @@ def _predict_fleet_fate_numpy(
 # ---------------------------------------------------------------------------
 
 
+# Outcome codes for predict_fleet_fate_batch_jax. Lower wins on tie
+# (matches scalar `predict_fleet_fate`'s in-step priority: sun > oob >
+# planet — though within a single fleet's flight, the first STEP wins
+# globally, so the in-step priority only matters when two events fire
+# at the same step).
+OUTCOME_TARGET = 0
+OUTCOME_PLANET = 1
+OUTCOME_SUN = 2
+OUTCOME_OOB = 3
+OUTCOME_TIMEOUT = 4
+
+
+def _build_planet_orbits_jax(state, max_steps: int = _PATH_MAX_STEPS):
+    """Pre-compute per-step (x, y) for each planet over [0, max_steps]
+    (JAX form).
+
+    Orbiting non-comet planets rotate via the same `predict_relative`
+    formula in `lib/orbit.py`; static planets repeat their current
+    `(x, y)`. Returns `(P, max_steps+1, 2)` float32.
+    """
+    px = state.planets_x.astype(jnp.float32)
+    py = state.planets_y.astype(jnp.float32)
+    pr = state.planets_radius.astype(jnp.float32)
+    omega = state.angular_velocity.astype(jnp.float32)
+    dx = px - jnp.float32(_CENTER)
+    dy = py - jnp.float32(_CENTER)
+    orb_r = jnp.sqrt(dx * dx + dy * dy)
+    cur_angle = jnp.arctan2(dy, dx)
+    # is_orbiting: orbital radius + planet radius < ROTATION_RADIUS_LIMIT.
+    is_orbit = (orb_r + pr) < jnp.float32(_ROTATION_RADIUS_LIMIT)
+    is_orbit = is_orbit & (omega != jnp.float32(0.0))
+    ts = jnp.arange(max_steps + 1, dtype=jnp.float32)            # (T,)
+    angles = cur_angle[:, None] + omega * ts[None, :]            # (P, T)
+    rot_x = jnp.float32(_CENTER) + orb_r[:, None] * jnp.cos(angles)
+    rot_y = jnp.float32(_CENTER) + orb_r[:, None] * jnp.sin(angles)
+    # Where the planet doesn't orbit, broadcast static (x, y).
+    static_x = jnp.broadcast_to(px[:, None], rot_x.shape)
+    static_y = jnp.broadcast_to(py[:, None], rot_y.shape)
+    xs = jnp.where(is_orbit[:, None], rot_x, static_x)
+    ys = jnp.where(is_orbit[:, None], rot_y, static_y)
+    return jnp.stack([xs, ys], axis=-1)                          # (P, T, 2)
+
+
+def predict_fleet_fate_batch_jax(
+    src_x, src_y, src_r, src_slot,        # (I,) floats / int32
+    target_slot,                          # (I,) int32
+    aim_angle, ships,                     # (I,) float / int32
+    planet_orbits,                        # (P, T, 2) float32
+    planets_alive, planets_radius,        # (P,) bool / float32
+    intent_active,                        # (I,) bool — gates the ray-cast
+    max_steps: int = _PATH_MAX_STEPS,
+):
+    """Vectorised port of `lib/trajectory.py::predict_fleet_fate` over
+    `I` intents.
+
+    Subsumes `sun_avoid` + `path_clears_other_planets` + `oob_guard`:
+    the returned outcome codes drive the mechanism's drop mask. Inputs
+    are `(I,)`-shaped intent vectors plus the precomputed planet
+    trajectory.
+
+    Returns:
+      - outcome: int32 (I,) ∈ {TARGET, PLANET, SUN, OOB, TIMEOUT}
+      - hit_planet: int32 (I,) — planet slot for target/planet hits, -1 else
+      - hit_step:   int32 (I,) — 1-indexed step of the first hit
+    """
+    I = src_x.shape[0]
+    P = planet_orbits.shape[0]
+
+    cos_a = jnp.cos(aim_angle)
+    sin_a = jnp.sin(aim_angle)
+    spawn_x = src_x + cos_a * (src_r + jnp.float32(0.1))
+    spawn_y = src_y + sin_a * (src_r + jnp.float32(0.1))
+
+    # Fleet speed (JAX form mirrors lib.fleet.speed).
+    ships_f = ships.astype(jnp.float32)
+    log_ships = jnp.log(jnp.maximum(ships_f, jnp.float32(1.0)))
+    log_1000 = jnp.log(jnp.float32(1000.0))
+    ratio = jnp.clip(log_ships / log_1000, jnp.float32(0.0), jnp.float32(1.0))
+    speed_val = jnp.float32(1.0) + jnp.float32(5.0) * ratio ** jnp.float32(1.5)
+    # If ships <= 0 (sentinel for "no intent") force speed to 0 so the
+    # fleet never moves and the OOB check trivially fires.
+    speed_val = jnp.where(ships > 0, speed_val, jnp.float32(0.0))
+
+    p_idx = jnp.arange(P)
+    src_one_hot = (p_idx[None, :] == src_slot[:, None])         # (I, P)
+
+    # Scan carry: (outcome, hit_planet, hit_step). Initialise to TIMEOUT.
+    init = (
+        jnp.full((I,), OUTCOME_TIMEOUT, dtype=jnp.int32),
+        jnp.full((I,), -1, dtype=jnp.int32),
+        jnp.full((I,), max_steps, dtype=jnp.int32),
+    )
+
+    def scan_body(carry, step):
+        outcome, hit_planet, hit_step = carry
+        not_done = outcome == OUTCOME_TIMEOUT                    # (I,)
+
+        # Fleet (old, new) at this step.
+        step_f = step.astype(jnp.float32)
+        fold_x = spawn_x + cos_a * speed_val * step_f
+        fold_y = spawn_y + sin_a * speed_val * step_f
+        fnew_x = spawn_x + cos_a * speed_val * (step_f + jnp.float32(1.0))
+        fnew_y = spawn_y + sin_a * speed_val * (step_f + jnp.float32(1.0))
+
+        # Sun check via segment-to-point distance.
+        dx_seg = fnew_x - fold_x
+        dy_seg = fnew_y - fold_y
+        seg_len2 = dx_seg * dx_seg + dy_seg * dy_seg
+        px_rel = jnp.float32(_CENTER) - fold_x
+        py_rel = jnp.float32(_CENTER) - fold_y
+        t_param = jnp.where(
+            seg_len2 > jnp.float32(1e-12),
+            (px_rel * dx_seg + py_rel * dy_seg) / jnp.maximum(seg_len2, jnp.float32(1e-12)),
+            jnp.float32(0.0),
+        )
+        t_param = jnp.clip(t_param, jnp.float32(0.0), jnp.float32(1.0))
+        cx_seg = fold_x + t_param * dx_seg
+        cy_seg = fold_y + t_param * dy_seg
+        sun_d = jnp.sqrt(
+            (cx_seg - jnp.float32(_CENTER)) ** 2
+            + (cy_seg - jnp.float32(_CENTER)) ** 2
+        )
+        sun_hit = sun_d < jnp.float32(_SUN_RADIUS + _SUN_SAFETY)
+
+        # OOB endpoint check.
+        oob_hit = (
+            (fnew_x < jnp.float32(_BOARD_LO))
+            | (fnew_x > jnp.float32(_BOARD_HI))
+            | (fnew_y < jnp.float32(_BOARD_LO))
+            | (fnew_y > jnp.float32(_BOARD_HI))
+        )
+
+        # Swept-pair: vectorised across (I, P).
+        p_old = planet_orbits[:, step, :]                         # (P, 2)
+        p_new = planet_orbits[:, step + 1, :]                     # (P, 2)
+        d0x = fold_x[:, None] - p_old[None, :, 0]                # (I, P)
+        d0y = fold_y[:, None] - p_old[None, :, 1]
+        dvx = (fnew_x - fold_x)[:, None] - (p_new[None, :, 0] - p_old[None, :, 0])
+        dvy = (fnew_y - fold_y)[:, None] - (p_new[None, :, 1] - p_old[None, :, 1])
+        a = dvx * dvx + dvy * dvy
+        b = jnp.float32(2.0) * (d0x * dvx + d0y * dvy)
+        c = d0x * d0x + d0y * d0y - (planets_radius[None, :]) ** 2
+        disc = b * b - jnp.float32(4.0) * a * c
+        safe_disc = jnp.maximum(disc, jnp.float32(0.0))
+        sq = jnp.sqrt(safe_disc)
+        a_safe = jnp.maximum(jnp.float32(2.0) * a, jnp.float32(1e-12))
+        t1 = (-b - sq) / a_safe
+        t2 = (-b + sq) / a_safe
+        parallel_hit = (a <= jnp.float32(1e-12)) & (c <= jnp.float32(0.0))
+        nonparallel_hit = (
+            (a > jnp.float32(1e-12))
+            & (disc >= jnp.float32(0.0))
+            & (t2 >= jnp.float32(0.0))
+            & (t1 <= jnp.float32(1.0))
+        )
+        planet_hit_matrix = (parallel_hit | nonparallel_hit) & planets_alive[None, :]
+        # Skip src planet on step 0.
+        skip_mask = (step == jnp.int32(0)) & src_one_hot          # (I, P)
+        planet_hit_matrix = planet_hit_matrix & ~skip_mask
+        any_planet = jnp.any(planet_hit_matrix, axis=1)          # (I,)
+        # First-hit planet index via argmax on bool.
+        first_planet_slot = jnp.argmax(planet_hit_matrix.astype(jnp.int32), axis=1).astype(jnp.int32)
+        first_planet_slot = jnp.where(any_planet, first_planet_slot, jnp.int32(-1))
+        is_target_hit = any_planet & (first_planet_slot == target_slot)
+
+        # Resolve this step's outcome per intent. Sun > oob > planet in
+        # the priority order if multiple fire (matches scalar's check
+        # order inside one step).
+        step_outcome = jnp.where(
+            sun_hit, jnp.int32(OUTCOME_SUN),
+            jnp.where(
+                oob_hit, jnp.int32(OUTCOME_OOB),
+                jnp.where(
+                    is_target_hit, jnp.int32(OUTCOME_TARGET),
+                    jnp.where(any_planet, jnp.int32(OUTCOME_PLANET), jnp.int32(OUTCOME_TIMEOUT)),
+                ),
+            ),
+        )
+        step_hit_planet = jnp.where(
+            sun_hit | oob_hit,
+            jnp.int32(-1),
+            jnp.where(any_planet, first_planet_slot, jnp.int32(-1)),
+        )
+        fires = (step_outcome != jnp.int32(OUTCOME_TIMEOUT)) & not_done & intent_active
+        new_outcome = jnp.where(fires, step_outcome, outcome)
+        new_hit_planet = jnp.where(fires, step_hit_planet, hit_planet)
+        new_hit_step = jnp.where(fires, step + jnp.int32(1), hit_step)
+        return (new_outcome, new_hit_planet, new_hit_step), None
+
+    steps = jnp.arange(max_steps, dtype=jnp.int32)
+    (outcome, hit_planet, hit_step), _ = jax.lax.scan(scan_body, init, steps)
+    return outcome, hit_planet, hit_step
+
+
+def _search_safe_intercept_jax(
+    sx, sy, src_r, tx, ty, tgt_r, ships, omega, is_orbit_mask,
+    search_horizon: int = 60,
+):
+    """Vectorised fallback for non-convergent orbital fixed-point.
+
+    Mirrors `lib/aim.py::search_safe_intercept:56-97`. For each
+    `cand_t ∈ [1, search_horizon]`, predicts target position and
+    estimates ETA at that distance. If `|ETA - cand_t| <=
+    INTERCEPT_TOLERANCE`, the candidate is self-consistent. Returns
+    the best (smallest delta, then smallest cand_t) intercept per
+    intent.
+
+    Inputs are `(I,)` shaped. `is_orbit_mask` gates the search — for
+    non-orbit intents the result is ignored.
+
+    Returns (angle, arrival_x, arrival_y, found) where `found` is bool
+    indicating whether a self-consistent candidate was located.
+    """
+    INTERCEPT_TOLERANCE = jnp.float32(1.0)
+    r_offset = src_r + tgt_r + jnp.float32(0.1)
+    ships_f = ships.astype(jnp.float32)
+    log_ships = jnp.log(jnp.maximum(ships_f, jnp.float32(1.0)))
+    ratio = jnp.clip(log_ships / jnp.log(jnp.float32(1000.0)),
+                     jnp.float32(0.0), jnp.float32(1.0))
+    v = jnp.float32(1.0) + jnp.float32(5.0) * ratio ** jnp.float32(1.5)
+    safe_v = jnp.maximum(v, jnp.float32(1e-6))
+
+    I = sx.shape[0]
+    init = (
+        jnp.full((I,), jnp.inf, dtype=jnp.float32),     # best_delta
+        jnp.zeros((I,), dtype=jnp.float32),             # best_angle
+        tx, ty,                                          # best_arrival_xy
+        jnp.zeros((I,), dtype=bool),                    # found
+    )
+
+    def body(carry, cand_t):
+        best_delta, best_angle, best_ax, best_ay, found = carry
+        cand_t_f = cand_t.astype(jnp.float32)
+        # predict_relative on (tx, ty) at omega * cand_t.
+        dx_t = tx - jnp.float32(_CENTER)
+        dy_t = ty - jnp.float32(_CENTER)
+        orb_r = jnp.sqrt(dx_t * dx_t + dy_t * dy_t)
+        cur_angle = jnp.arctan2(dy_t, dx_t)
+        new_angle = cur_angle + omega * cand_t_f
+        ptx = jnp.float32(_CENTER) + orb_r * jnp.cos(new_angle)
+        pty = jnp.float32(_CENTER) + orb_r * jnp.sin(new_angle)
+
+        # ETA = flight_distance / speed.
+        d = jnp.sqrt((ptx - sx) ** 2 + (pty - sy) ** 2)
+        flight_d = jnp.maximum(jnp.float32(0.0), d - r_offset)
+        eta = flight_d / safe_v
+        delta = jnp.abs(eta - cand_t_f)
+        within_tol = (delta <= INTERCEPT_TOLERANCE) & is_orbit_mask
+        is_better = within_tol & (delta < best_delta)
+        new_angle_a = jnp.arctan2(pty - sy, ptx - sx)
+        new_best_delta = jnp.where(is_better, delta, best_delta)
+        new_best_angle = jnp.where(is_better, new_angle_a, best_angle)
+        new_best_ax = jnp.where(is_better, ptx, best_ax)
+        new_best_ay = jnp.where(is_better, pty, best_ay)
+        new_found = found | is_better
+        return (new_best_delta, new_best_angle, new_best_ax, new_best_ay, new_found), None
+
+    cands = jnp.arange(1, search_horizon + 1, dtype=jnp.int32)
+    (_, best_angle, best_ax, best_ay, found), _ = jax.lax.scan(body, init, cands)
+    return best_angle, best_ax, best_ay, found
+
+
+# ---------------------------------------------------------------------------
+# apply_mechanisms_jax
+# ---------------------------------------------------------------------------
+
+
 def apply_mechanisms_jax(
     state,                            # GameState
     world_model,                      # JaxWorldModel
@@ -258,15 +525,18 @@ def apply_mechanisms_jax(
       - final_angle:  (P,) float32 — aim_angle
       - final_ships:  (P,) int32 — post-bump ships (0 if dropped)
 
-    Coverage relative to scalar `realize(mechanisms=DEFAULT_MECHANISMS)`:
+    Coverage relative to scalar `realize(mechanisms=DEFAULT_MECHANISMS)`
+    (sub-phase 8e closed the path-clears gap):
       - validate ✓ (ownership / ships budget enforced)
       - arrival_size ✓ (static + WorldModel form)
-      - lead_aim_v2 ✓ (5-iter fixed-point; no search_safe_intercept
-        fallback — that's data-dependent, falls back to atan2)
-      - sun_avoid / path_clears_other_planets / oob_guard ✗
-        (drops moved into jax_step's swept-pair collision; ships still
-        spawn but die on impact. Costs ~10 % wasted fleets vs scalar;
-        signal-preserving for candidate ordering.)
+      - lead_aim_v2 ✓ (5-iter fixed-point + search_safe_intercept
+        fallback when not converged)
+      - sun_avoid + path_clears_other_planets + oob_guard ✓
+        (predict_fleet_fate_batch_jax full-trajectory ray-cast drops
+        intents whose path hits sun, non-target planet, or board edge)
+    Remaining gap (out of scope for this pass):
+      - Recapture state tracking — v7_0_drop_one uses include_recapture
+        =False, so this path is parity-clean for the target agent.
     """
     P = chosen_src.shape[0]
     H = world_model.ships_at.shape[1] - 1
@@ -334,11 +604,16 @@ def apply_mechanisms_jax(
     v = fleet_speed_jax(bumped_ships)
     safe_v = jnp.maximum(v, jnp.float32(1e-6))
 
-    # Lead-aim 5-iter fixed point (unrolled).
+    # Lead-aim 5-iter fixed point (unrolled). Track the last two
+    # iterates so we can detect non-convergence per intent.
     cx = tx
     cy = ty
     cur_angle = jnp.arctan2(ty - 50.0, tx - 50.0)
+    prev_cx = cx
+    prev_cy = cy
     for _ in range(5):
+        prev_cx = cx
+        prev_cy = cy
         d = jnp.sqrt((cx - sx) ** 2 + (cy - sy) ** 2)
         flight_d = jnp.maximum(jnp.float32(0.0), d - r_offset)
         eta_f = flight_d / safe_v
@@ -347,7 +622,18 @@ def apply_mechanisms_jax(
         nty = jnp.float32(50.0) + orb_r * jnp.sin(new_angle)
         cx = jnp.where(is_orbit, ntx, cx)
         cy = jnp.where(is_orbit, nty, cy)
-
+    converged = (
+        (jnp.abs(cx - prev_cx) < jnp.float32(_AIM_CONVERGE_XY_TOL))
+        & (jnp.abs(cy - prev_cy) < jnp.float32(_AIM_CONVERGE_XY_TOL))
+    )
+    # search_safe_intercept fallback for non-convergent orbital cases.
+    fb_angle, fb_ax, fb_ay, fb_found = _search_safe_intercept_jax(
+        sx, sy, s_radius, tx, ty, t_radius, bumped_ships, omega,
+        is_orbit_mask=is_orbit & ~converged,
+    )
+    use_fallback = is_orbit & ~converged & fb_found
+    cx = jnp.where(use_fallback, fb_ax, cx)
+    cy = jnp.where(use_fallback, fb_ay, cy)
     angle = jnp.arctan2(cy - sy, cx - sx)
 
     # validate: keep only if chosen_src >= 0 (real pick) AND ships > 0 AND
@@ -357,7 +643,20 @@ def apply_mechanisms_jax(
     src_alive_ok = planets_alive[safe_src] & (planets_owner[safe_src] == jnp.int32(my_id))
     tgt_alive_ok = planets_alive[safe_tgt]
     ships_ok = (bumped_ships > 0) & (bumped_ships <= planets_ships[safe_src])
-    keep = real & src_alive_ok & tgt_alive_ok & ships_ok & (~drop_redundant)
+    keep_basic = real & src_alive_ok & tgt_alive_ok & ships_ok & (~drop_redundant)
+
+    # predict_fleet_fate ray-cast: drop intents whose path hits sun,
+    # non-target planet, or off-board edge before reaching the target.
+    planet_orbits = _build_planet_orbits_jax(state, max_steps=_PATH_MAX_STEPS)
+    outcome, _hit_pid, _hit_step = predict_fleet_fate_batch_jax(
+        sx, sy, s_radius, safe_src, safe_tgt,
+        angle, bumped_ships,
+        planet_orbits, planets_alive, planets_radius,
+        intent_active=keep_basic,
+        max_steps=_PATH_MAX_STEPS,
+    )
+    path_safe = (outcome == jnp.int32(OUTCOME_TARGET)) | (outcome == jnp.int32(OUTCOME_TIMEOUT))
+    keep = keep_basic & path_safe
 
     final_src = jnp.where(keep, chosen_src, jnp.int32(-1))
     final_angle = jnp.where(keep, angle, jnp.float32(0.0))
