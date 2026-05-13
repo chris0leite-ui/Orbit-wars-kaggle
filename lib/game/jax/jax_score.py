@@ -32,6 +32,8 @@ from lib.game.jax.jax_missions import (
     compute_snipe_score_matrix_jit,
     compute_reinforce_score_matrix,
     compute_reinforce_score_matrix_jit,
+    compute_opening_score_matrix,
+    compute_opening_score_matrix_jit,
     settle_plan_from_matrices,
     merge_class_matrices,
     settle_plan_jax,
@@ -195,6 +197,7 @@ def policy_emit_jax_pure(
     aggressive: bool,
     num_agents: int,
     planet_orbits=None,
+    use_opening: bool = True,
 ):
     """Pure JAX: state + WorldModel → packed per-agent action tensors.
 
@@ -204,13 +207,22 @@ def policy_emit_jax_pure(
     `planet_orbits` is optional; if provided, `apply_mechanisms_jax`
     reuses it instead of rebuilding the `(P, T+1, 2)` orbit table
     (saves the trig sweep on the second call per step, bug P1).
+
+    `use_opening` toggles H11 (opening-landgrab proposer). Default True;
+    set to False to reproduce pre-H11 v7_0 behaviour for A/B comparisons.
+    H15 (departing-comet hard reject) is always on — it lives inside
+    `compute_snipe_score_matrix` and has no off-switch.
     """
     snipe = compute_snipe_score_matrix(
         state, world_model, my_id=my_id,
         aggressive=aggressive, num_agents=num_agents,
     )
     reinforce = compute_reinforce_score_matrix(state, world_model, my_id=my_id)
-    merged = merge_class_matrices([snipe, reinforce])
+    if use_opening:
+        opening = compute_opening_score_matrix(state, world_model, my_id=my_id)
+        merged = merge_class_matrices([opening, snipe, reinforce])
+    else:
+        merged = merge_class_matrices([snipe, reinforce])
     src, tgt, ships, eta = settle_plan_jax(
         merged["score"], merged["ships"], merged["eta"], merged["valid"],
         world_model.ships_at,
@@ -230,6 +242,8 @@ def rollout_step_jax_pure(
     num_agents: int = 2,
     opp_aggressive: bool = True,
     my_aggressive: bool = False,
+    my_use_opening: bool = True,
+    opp_use_opening: bool = True,
 ):
     """One env tick, fully JAX (no numpy / no Python control flow).
 
@@ -243,6 +257,11 @@ def rollout_step_jax_pure(
     `aggressive=False` for the my-side and `opp_aggressive` for the
     opp-side, regardless of caller).
 
+    H11 toggle: `my_use_opening` / `opp_use_opening` independently turn
+    the opening-landgrab proposer on/off per seat. Default both on (v7_1
+    behaviour); set my_use_opening=False to A/B v7_0 (no opening) vs
+    v7_1 baseline opp.
+
     2P-only: the function hardcodes `opp_id = 1 - my_id` (bug B).
     Asserted via the static `num_agents` argname at trace time.
     """
@@ -255,11 +274,13 @@ def rollout_step_jax_pure(
     pids_my, ang_my, sh_my = policy_emit_jax_pure(
         state, wm, my_id=my_id, aggressive=my_aggressive,
         num_agents=num_agents, planet_orbits=planet_orbits,
+        use_opening=my_use_opening,
     )
     opp_id = 1 - my_id
     pids_op, ang_op, sh_op = policy_emit_jax_pure(
         state, wm, my_id=opp_id, aggressive=opp_aggressive,
         num_agents=num_agents, planet_orbits=planet_orbits,
+        use_opening=opp_use_opening,
     )
     # Pack into (MAX_AGENTS, MAX_LAUNCH_PER_AGENT) tensors.
     pids_full = jnp.full((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), -1, dtype=jnp.int32)
@@ -281,6 +302,8 @@ def score_candidate_jax_pure(
     num_agents: int = 2,
     opp_aggressive: bool = True,
     my_aggressive: bool = False,
+    my_use_opening: bool = True,
+    opp_use_opening: bool = True,
 ):
     """Self-play a K-step rollout from `state` and return ship-delta.
 
@@ -292,6 +315,9 @@ def score_candidate_jax_pure(
     Both seats' aggressive flags are exposed so the kernel A/B harness
     can swap them independently (bug G fix).
 
+    `my_use_opening` / `opp_use_opening` toggle H11 per seat for the
+    A/B knob (default both True = v7_1).
+
     2P-only via `rollout_step_jax_pure`.
     """
     def step_fn(s, _):
@@ -299,6 +325,8 @@ def score_candidate_jax_pure(
             s, my_id=my_id, num_agents=num_agents,
             opp_aggressive=opp_aggressive,
             my_aggressive=my_aggressive,
+            my_use_opening=my_use_opening,
+            opp_use_opening=opp_use_opening,
         )
         return new_s, None
 
@@ -309,9 +337,15 @@ def score_candidate_jax_pure(
 # JIT-compile entry points.
 rollout_step_jax_pure_jit = jax.jit(
     rollout_step_jax_pure,
-    static_argnames=("my_id", "num_agents", "opp_aggressive", "my_aggressive"),
+    static_argnames=(
+        "my_id", "num_agents", "opp_aggressive", "my_aggressive",
+        "my_use_opening", "opp_use_opening",
+    ),
 )
 score_candidate_jax_pure_jit = jax.jit(
     score_candidate_jax_pure,
-    static_argnames=("K", "my_id", "num_agents", "opp_aggressive", "my_aggressive"),
+    static_argnames=(
+        "K", "my_id", "num_agents", "opp_aggressive", "my_aggressive",
+        "my_use_opening", "opp_use_opening",
+    ),
 )

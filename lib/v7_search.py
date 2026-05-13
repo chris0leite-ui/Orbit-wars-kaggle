@@ -44,6 +44,7 @@ from lib.fleet import speed as fleet_speed
 from lib.intent import Intent, World, realize
 from lib.mechanism import DEFAULT_MECHANISMS
 from lib.mission import Mission
+from lib.missions.opening import propose_opening_missions
 from lib.missions.recapture import propose_recapture_missions
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.missions.snipe import propose_snipe_missions
@@ -140,7 +141,8 @@ def _build_incumbent_intents(
     (audit/2026-05-12-recapture-wireup-ab.md).
     """
     missions = (
-        propose_snipe_missions(world, model, aggressive=True)
+        propose_opening_missions(world, model)
+        + propose_snipe_missions(world, model, aggressive=True)
         + propose_reinforce_missions(world, model)
     )
     if include_recapture:
@@ -952,6 +954,237 @@ def choose_simple_2p(
             best_score = score
             best_action = list(cand)
     return best_action
+
+
+def _score_after_opp_response(
+    snap_i: Snapshot,
+    opp_act: list[list],
+    *,
+    my_id: int,
+    opp_id: int,
+    K_tail: int,
+    value_fn: Callable | None = None,
+) -> float:
+    """Score after a forced opp response on turn 2.
+
+    From `snap_i` (a snapshot that has already been advanced one turn by
+    our forced action paired with the opp's incumbent), force the opp's
+    response action `opp_act` on this turn (we pass — we've committed),
+    then run `K_tail` mirror-mirror follow-up steps. Score from `my_id`'s
+    POV via `value_fn` (default `delta_us_minus_them`).
+
+    Used by `choose_depth2` to fill the maximin payoff matrix.
+    """
+    clone = fs_clone(snap_i)
+    if not clone.done:
+        actions: list[Any] = [None, None]
+        actions[my_id] = []  # we pass
+        actions[opp_id] = opp_act
+        clone = fs_step(clone, actions, in_place=True)
+
+    for _ in range(max(0, K_tail)):
+        if clone.done:
+            break
+        a0 = top_tier_mirror_policy(clone.state[0].observation)
+        a1 = top_tier_mirror_policy(clone.state[1].observation)
+        clone = fs_step(clone, [a0, a1], in_place=True)
+
+    if value_fn is None:
+        return delta_us_minus_them(clone, my_id)
+    return value_fn(clone.state[my_id].observation, my_id)
+
+
+def choose_depth2(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K: int = 6,
+    wallclock_ms: float = 700.0,
+    my_id: int | None = None,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+    max_our_candidates: int = 8,
+    max_opp_candidates: int = 4,
+) -> list[list]:
+    """v7 depth-2 maximin (action-SEQUENCE depth-2, not joint-1-ply).
+
+    Algorithm:
+    1. Enumerate our drop-one candidate set (≤ `max_our_candidates`).
+    2. For each our candidate i:
+       a. Step the snapshot one turn with [our_i, opp_initial_incumbent].
+       b. From the post-step state, recompute the opp's incumbent and
+          enumerate the opp's drop-one set (≤ `max_opp_candidates`).
+       c. For each opp candidate j, force it on turn 2 (we pass), then
+          rollout `K-2` mirror-mirror steps. Record payoff[i][j].
+    3. Maximin: argmax_i min_j payoff[i][j]. Tie → row 0 (incumbent).
+
+    Budget shape (defaults): 8 × 4 × ~15 ms = ~500 ms wall; under 700 ms
+    actTimeout. Watchdog: bail outer rows past 0.5 × wallclock_ms (row 0
+    always evaluated in full first), bail inner cells past wallclock_ms.
+
+    4P fallback: return the incumbent (depth-2 minimax is 2P-only —
+    Nash maximin doesn't generalise cleanly to n > 2).
+    """
+    t_start = time.perf_counter()
+
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    if my_id is None:
+        my_id = world.my_id
+    model = WorldModel.from_world(world)
+
+    incumbent_intents = _build_incumbent_intents(
+        world, model, include_recapture=include_recapture,
+    )
+    incumbent_action = _action_from_intents(incumbent_intents, obs, model)
+
+    # 4P fallback — depth-2 maximin is 2P only.
+    if _infer_num_seats(world) != 2:
+        return incumbent_action
+
+    our_C = _enumerate_drop_one(incumbent_action)
+    if max_our_candidates and len(our_C) > max_our_candidates:
+        our_C = our_C[:max_our_candidates]
+    if len(our_C) <= 1:
+        return incumbent_action
+
+    snap = fs_from_obs(obs, configuration, episode_seed=0, num_seats=2)
+    opp_id = 1 - my_id
+
+    # Opp plays its v3.5.1 incumbent on turn 1 against every one of our
+    # candidates (same opp action across all rows — keeps the matrix
+    # comparable to v7_0_drop_one's evaluation).
+    opp_initial_action = _opp_incumbent_action(world, obs, opp_id)
+
+    K_tail = max(0, K - 2)
+    N = len(our_C)
+    P: list[list[float]] = [[] for _ in range(N)]
+
+    for i in range(N):
+        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+        if i > 0 and elapsed_ms > 0.5 * wallclock_ms:
+            # Row 0 (incumbent) is always evaluated in full first; later
+            # rows bail if half the budget is gone.
+            P[i] = []
+            continue
+
+        try:
+            snap_i = fs_clone(snap)
+            if not snap_i.done:
+                actions: list[Any] = [None, None]
+                actions[my_id] = our_C[i]
+                actions[opp_id] = opp_initial_action
+                snap_i = fs_step(snap_i, actions, in_place=True)
+        except Exception:
+            P[i] = []
+            continue
+
+        if snap_i.done:
+            # Game ended in turn 1 — score the leaf directly. Same
+            # payoff for any opp_C[j] since there's no turn 2.
+            try:
+                terminal = (
+                    delta_us_minus_them(snap_i, my_id)
+                    if value_fn is None
+                    else value_fn(snap_i.state[my_id].observation, my_id)
+                )
+            except Exception:
+                terminal = float("-inf")
+            P[i] = [terminal]
+            continue
+
+        # Recompute opp's incumbent from the post-turn-1 state.
+        opp_obs_after = snap_i.state[opp_id].observation
+        try:
+            opp_world = World.from_obs(opp_obs_after)
+            opp_model = WorldModel.from_world(opp_world)
+            opp_inc_intents = _build_incumbent_intents(
+                opp_world, opp_model, include_recapture=include_recapture,
+            )
+            opp_inc_action = _action_from_intents(
+                opp_inc_intents, opp_obs_after, opp_model,
+            )
+            opp_C = _enumerate_drop_one(opp_inc_action)
+            if max_opp_candidates and len(opp_C) > max_opp_candidates:
+                opp_C = opp_C[:max_opp_candidates]
+        except Exception:
+            opp_C = [[]]
+        if not opp_C:
+            opp_C = [[]]
+
+        row_scores: list[float] = []
+        for j, opp_act in enumerate(opp_C):
+            elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+            if elapsed_ms > wallclock_ms:
+                break
+            try:
+                payoff = _score_after_opp_response(
+                    snap_i, opp_act,
+                    my_id=my_id, opp_id=opp_id, K_tail=K_tail,
+                    value_fn=value_fn,
+                )
+            except Exception:
+                payoff = float("-inf")
+            row_scores.append(payoff)
+
+        P[i] = row_scores
+
+    # Maximin over the evaluated rows.
+    NEG_INF = float("-inf")
+    best_i = 0
+    best_worst = NEG_INF
+    for i in range(N):
+        if not P[i]:
+            continue
+        worst = min(P[i])
+        if worst > best_worst:
+            best_worst = worst
+            best_i = i
+
+    return our_C[best_i] if best_worst > NEG_INF else incumbent_action
+
+
+def choose_depth2_with_4p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K_2p: int = 6,
+    K_4p: int = 8,
+    wallclock_ms: float = 700.0,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """v7 depth-2 entry that auto-routes 2P → choose_depth2, 4P → choose_4p.
+
+    Use this as the agent's `agent(obs, configuration)` entry point when
+    bundling a depth-2 variant. 4P games fall through to the drop-one
+    chooser (no maximin guarantee at n > 2).
+    """
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    n_seats = _infer_num_seats(world)
+    if n_seats == 2:
+        return choose_depth2(
+            obs, configuration,
+            K=K_2p, wallclock_ms=wallclock_ms,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    if n_seats == 4:
+        return choose_4p(
+            obs, configuration,
+            K=K_4p, wallclock_ms=wallclock_ms,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    # 3P or 1P: rare; fall back to incumbent.
+    model = WorldModel.from_world(world)
+    intents = _build_incumbent_intents(
+        world, model, include_recapture=include_recapture,
+    )
+    return _action_from_intents(intents, obs, model)
 
 
 def choose_simple_with_4p(

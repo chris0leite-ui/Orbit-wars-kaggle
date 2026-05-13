@@ -85,15 +85,18 @@ def test_paths_by_id_handles_empty_comets():
     assert _comet_paths_by_id(world) == {}
 
 
-def test_snipe_score_zero_for_comet_departing_before_arrival():
-    """A comet that leaves before our fleet arrives should score 0."""
+def test_snipe_no_mission_for_comet_departing_before_arrival():
+    """H15: a comet that leaves before our fleet arrives must not even
+    emit a Mission. The proposer-level hard reject lets settle_plan
+    pick the source's runner-up target instead of consuming the source
+    slot with a degenerate score≈0 candidate."""
     from lib.missions.snipe import propose_snipe_missions
     from lib.world_model import WorldModel
 
     # Source at (0,0), comet at (10,0) with 5 steps remaining.
     # Fleet of cost ships travels at fleet_speed(cost); with ships=11
-    # (target.ships=10 + 1), eta = ceil(10 / ~2.0) = 5. So time_to_hold
-    # = max(0, 5 - 5) = 0 → score = 0.
+    # (target.ships=10 + 1), eta = ceil(10 / ~2.0) = 5. rem (5) <= eta (5)
+    # → mission is rejected at proposer level (no Mission emitted).
     path = [[float(i), 0.0] for i in range(20)]
     comet_group = {
         "planet_ids": [1],
@@ -111,11 +114,10 @@ def test_snipe_score_zero_for_comet_departing_before_arrival():
     model = WorldModel.from_world(world)
     missions = propose_snipe_missions(world, model)
     comet_missions = [m for m in missions if m.target_id == 1]
-    assert len(comet_missions) == 1
-    # Score may be 0 if eta >= remaining_lifetime, but in any case
-    # should be much smaller than a comparable mission against a
-    # static target with the same distance/cost.
-    assert comet_missions[0].score == 0.0 or comet_missions[0].score < 1.0
+    assert comet_missions == [], (
+        "H15: departing-comet missions must be rejected at proposer "
+        f"level, but got {comet_missions}"
+    )
 
 
 def test_snipe_score_long_lived_comet_higher_than_short_lived():

@@ -41,6 +41,11 @@ NUM_SEEDS = int(os.environ.get("NUM_SEEDS", "32"))      # × 2 mirror seats = 64
 EPISODE_STEPS = int(os.environ.get("EPISODE_STEPS", "500"))
 A_AGGRESSIVE = bool(int(os.environ.get("A_AGGRESSIVE", "0")))   # 0 = v7_0 style
 B_AGGRESSIVE = bool(int(os.environ.get("B_AGGRESSIVE", "1")))   # 1 = v3.5.1 style
+# H11 (2026-05-13): opening-landgrab proposer toggle per seat. v7_1 sets
+# A_USE_OPENING=1 to test H11 + H15 (the comet reject is always-on inside
+# `compute_snipe_score_matrix`). B_USE_OPENING=0 reproduces v7_0 baseline.
+A_USE_OPENING = bool(int(os.environ.get("A_USE_OPENING", "1")))
+B_USE_OPENING = bool(int(os.environ.get("B_USE_OPENING", "0")))
 
 
 def _ensure_kaggle_environments():
@@ -102,6 +107,8 @@ def main():
         "episode_steps": EPISODE_STEPS,
         "a_aggressive": A_AGGRESSIVE,
         "b_aggressive": B_AGGRESSIVE,
+        "a_use_opening": A_USE_OPENING,
+        "b_use_opening": B_USE_OPENING,
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     print(json.dumps({"setup": info}, indent=2))
@@ -152,6 +159,8 @@ def main():
                 s, my_id=my_id, num_agents=2,
                 opp_aggressive=B_AGGRESSIVE,
                 my_aggressive=A_AGGRESSIVE,
+                my_use_opening=A_USE_OPENING,
+                opp_use_opening=B_USE_OPENING,
             )
             return new_s, None
         final, _ = jax.lax.scan(step, state, None, length=EPISODE_STEPS)

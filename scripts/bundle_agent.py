@@ -45,6 +45,11 @@ DEFAULT_LIB_ORDER = [
     "missions/snipe",
     "missions/reinforce",
     "missions/recapture",
+    # H11 (2026-05-13): opening-landgrab proposer wired into v7's
+    # _build_incumbent_intents. v7_0 and later bundles need this inlined
+    # ahead of v7_search; v3.* bundles never call it, so it's harmless
+    # weight there (~3 KB).
+    "missions/opening",
     "planner",
     "lookahead_planner",
     # Pure-Python rebuild of the orbit_wars game engine (Phase 2 of the
