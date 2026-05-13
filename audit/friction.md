@@ -258,6 +258,46 @@
   COMET_BONUS=1.3` fix (also 28.1% regression). Promotion candidate:
   "if the finding is local, the fix must be local."
 
+## 2026-05-13 (consolidate-fast-simulation-ysd9M — JAX sprint wrap)
+
+- `tag: silent-engine-capacity-loss` — JAX `fleet_launch` slot
+  allocator used `target_count = launches_so_far + 1` against a
+  cumsum that was recomputed each iter from already-updated
+  fleets_alive. After launch 0 lands at slot 0, the second launch
+  steered to cum_free==2 (slot 2), wasting slot 1. Half the fleet
+  capacity silently lost; tests passed because they compare by
+  fleet id, not slot density. **Root cause:** off-by-one in a
+  Python-unrolled inner loop that mutated state in flight. **Fix:**
+  set `target_count = jnp.int32(1)`, add `slot_mask.any()` guard so
+  a full fleet array doesn't overwrite slot 0. The new
+  `test_fleet_launch_packs_slots_contiguously` would have caught
+  this. Promotion candidate: any in-loop-mutating state needs a
+  contiguous-packing test, not just a per-element parity test.
+- `tag: parity-tests-vs-mirror-not-source-of-truth` — three places
+  where "JAX matches scalar" parity tests actually compared
+  JAX-vmap form against the numpy-mirror form (which inherits the
+  same constants). The 0.5-vs-0.3 lead-aim tolerance bug (8f-C2)
+  passed tests for that reason. **Fix:** added a single-state
+  scalar-vs-JAX rollout test (`test_jax_rollout_pipeline_matches_
+  scalar_realize`). Promotion candidate: when porting algorithm
+  X to platform Y, the parity test must compare Y-output against
+  X-output, not Y-output against a-second-port-of-X.
+- `tag: harness-knob-without-plumbing` — `run_jax_ab.py` exposed
+  `A_AGGRESSIVE` env var, but `rollout_step_jax_pure` accepted
+  only `opp_aggressive`. The var was silently ignored. The kernel
+  ran 4 versions before this surfaced. **Fix:** plumbed through
+  `my_aggressive` parameter end-to-end. Promotion candidate: every
+  exposed CLI/env knob should be exercised by a smoke test that
+  flips it and asserts the rollout output diverges.
+- `tag: kaggle-cli-kgat-auth-2hr-detour` — `kaggle kernels push`
+  failed with 401 for ~30 min before I found the new KGAT token
+  needs `KAGGLE_API_TOKEN` env var, not `kaggle.json`. The CLI's
+  `auth_method: LEGACY_API_KEY` config was misleading. **Fix:**
+  documented in `scripts/kaggle_ab_kernel/run_ab.py` doc; mental
+  model: KGAT tokens need bearer-style env vars. Promotion
+  candidate: when an auth path fails, grep the CLI source for env
+  vars before fighting the credentials file.
+
 ## 2026-05-12 (analyze-leaderboard-strategies-sdZlE)
 
 - `tag: stack-first-ablate-later-is-the-wrong-order` — iter-1 v3.5
