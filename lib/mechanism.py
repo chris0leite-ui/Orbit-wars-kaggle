@@ -63,12 +63,23 @@ GANG_UP_MAX_PASSES = 3           # convergence safety belt
 # log-curve speed boost (fleet_speed = 1.0 + (max_speed-1.0) ·
 # (log(ships)/log(1000))^1.5) — earlier arrival, more reliable captures,
 # small extra defender on arrival. Off by default (= 1.0 identity).
-# A/B candidate values: 1.10 (per TID 697397), 1.05 conservative, 1.15
-# aggressive. Cap at src.ships so we never claim more than the garrison.
-# Applies to NON-REINFORCE intents (target.owner != world.my_id) — for
-# reinforce, sending more ships home doesn't help and crowds the
-# planet's combat resolution.
+# 2026-05-13 falsified on v7 (3-variant Rule-21 sweep) — the K=10 rollout
+# already sizes optimally; pre-rollout inflation drains source garrisons
+# without producing the lift Gemini's heuristic-only setup observed.
+# Kept as a flag for future use on simpler agents.
 FLEET_OVERCOMMIT = 1.0
+
+
+# ---------------------------------------------------------------------------
+# Pre-reinforce window (H21 / TID 698478). The discussion thread describes
+# the "you take it, they take it back at no cost" pattern: we capture a
+# planet at t=eta with the minimum garrison, then enemy fleet arrives at
+# t=eta+1 and recaptures because our post-capture garrison is ~0. The fix
+# is to query the WorldModel arrival ledger for enemy fleets landing in
+# the window (eta, eta+window] and add buffer to our intent so the
+# post-capture garrison survives them. Off by default (= 0). A/B
+# candidate values: 2 (one production tick + one arrival), 3, 5.
+PRE_REINFORCE_WINDOW = 0
 
 
 # ---------------------------------------------------------------------------
@@ -192,9 +203,29 @@ def arrival_size(intents: list[Intent], world: World, model=None) -> list[Intent
             if pred_ships is not None:
                 needed = max(static_needed, int(math.ceil(pred_ships)) + 1)
         intent.ships = max(intent.ships, needed)
-        # 1.1× over-commit AFTER the production-aware sizing. Reach a
-        # higher fleet_speed tier and arrive sooner; capture leaves a
-        # small garrison instead of 1 ship.
+        # H21 / [F] pre-reinforce: scan the WorldModel arrival ledger
+        # for ENEMY fleets landing in (eta, eta + PRE_REINFORCE_WINDOW]
+        # and add buffer to our intent so the post-capture garrison
+        # survives the strongest such follow-up (TID 698478, "they
+        # take it back at no cost" pattern). Per-target production
+        # during the window offsets some of the threat.
+        if PRE_REINFORCE_WINDOW > 0 and model is not None:
+            strongest = 0
+            strongest_eta = eta + 1
+            for f_eta, f_owner, f_ships in model.ledger.get(target.id, ()):
+                if f_owner == world.my_id:
+                    continue
+                if eta < f_eta <= eta + PRE_REINFORCE_WINDOW and f_ships > strongest:
+                    strongest = int(f_ships)
+                    strongest_eta = int(f_eta)
+            if strongest > 0:
+                # During (eta, strongest_eta] we own + grow the planet.
+                prod_during = int(target.production) * (strongest_eta - eta)
+                deficit = strongest - prod_during
+                if deficit > 0:
+                    intent.ships = max(intent.ships, intent.ships + deficit + 1)
+        # 1.1× over-commit AFTER the production-aware sizing. Falsified
+        # at v7; preserved as a dormant flag.
         if FLEET_OVERCOMMIT > 1.0:
             boosted = math.ceil(FLEET_OVERCOMMIT * intent.ships)
             intent.ships = min(boosted, int(src.ships))
