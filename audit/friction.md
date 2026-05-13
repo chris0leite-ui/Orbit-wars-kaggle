@@ -1,5 +1,25 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-13 (claude/simplify-fast-setup-azW8T — fast.py landed)
+
+- `tag: fast-py-is-now-canonical-iteration-entry-point` — single-file
+  `fast.py` at repo root replaces the diffuse iteration harnesses with
+  one CLI: `python fast.py {smoke,eval,play,bench,baselines} <agent>`.
+  Adaptive Wilson-gated A/B (16 → 32 → 64 tiers, early-stop on
+  Wlo≥gate or Whi<gate). Plain-function agents anywhere
+  (`def agent(obs, configuration=None)`) — no directory ceremony.
+  **Superseded** for the iteration loop (NOT deleted, will rot):
+  `scripts/run_ablations.py`, `scripts/run_v7_wide_deep_smoke.py`,
+  `scripts/run_v7_wide_deep_ab.py`, `scripts/ab_variants.py`,
+  `scripts/eval_v1.py`, `scripts/strategy_panel.py`. `scripts/tournament.py`
+  and `scripts/ffa_tournament.py` are kept for 4P FFA panels (fast.py
+  is 2P-only in v1). `scripts/bundle_agent.py` is unchanged — fast.py
+  evaluates source-tree or bundled files, but submission still goes
+  through the bundler. Verified: smoke / eval / play / bench all run
+  green against `random`, `nearest`, `v7_0_drop_one`. Deferred v1.5:
+  full-episode play through `lib/fast_sim.py` (skips `env.run` overhead)
+  and a `--jax` vmap-over-games fast path.
+
 ## 2026-05-12 EVE (game-ai-lookahead-3ucqH — v9 super-version + v10 + submit attempt)
 
 - `tag: kaggle-cli-401-was-wrong-auth-env-var` — `kaggle competitions
