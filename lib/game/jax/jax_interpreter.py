@@ -159,9 +159,10 @@ def comet_path_advance(state: GameState) -> GameState:
     Comets whose new index overruns their path length get marked
     expired (planets_alive set False, position unchanged).
     """
-    # Per-spawn index increment (only for spawns that have been
-    # spawned, i.e. comet_path_index >= 0).
-    spawned = state.comet_path_index >= 0
+    # Per-spawn index increment (only for spawns that have FIRED, per
+    # the `comet_spawned` flag). Newly-spawned comets have
+    # `comet_path_index = -1`; first increment puts them at 0 (path[0]).
+    spawned = state.comet_spawned
     new_path_index = jnp.where(
         spawned,
         state.comet_path_index + 1,
@@ -199,6 +200,137 @@ def comet_path_advance(state: GameState) -> GameState:
         planets_y=new_y,
         planets_alive=new_alive,
         comet_path_index=new_path_index,
+    )
+
+
+def comet_spawn(state: GameState) -> GameState:
+    """Instantiate 4 comet planets at the appropriate spawn boundary.
+
+    Mirror of `lib/game/interpreter.py:431-474` — the lookup version,
+    using the pre-computed `comet_paths_xy` + `comet_ships` from state
+    (built in Python at game init by `scalar_to_jax`, which replays
+    the scalar `generate_comet_paths` deterministically).
+
+    Triggered when `state.step + 1 == comet_step[k]` for some valid k
+    that hasn't fired yet. At most one spawn per step (the 5 spawn
+    boundaries are distinct).
+
+    Adds 4 new comet planets in the first 4 `~planets_alive` slots.
+    Scalar interpreter starts them at `(-99, -99)`; `comet_path_advance`
+    later that same step increments their path index from -1 to 0 and
+    moves them to `paths[k, j, 0]`.
+    """
+    step_plus_1 = state.step + 1
+
+    # Which spawn (if any) fires now? Per-spawn predicate:
+    should_spawn_per_k = (
+        (state.comet_step == step_plus_1)
+        & state.comet_valid
+        & ~state.comet_spawned
+    )
+    any_spawn = jnp.any(should_spawn_per_k)
+    active_k = jnp.argmax(should_spawn_per_k.astype(jnp.int32))  # safe: 0 if no True
+    safe_k = jnp.where(any_spawn, active_k, jnp.int32(0))
+
+    # Find first 4 free planet slots via cumsum of ~alive mask.
+    is_free = ~state.planets_alive
+    cum_free = jnp.cumsum(is_free.astype(jnp.int32))
+
+    def _first_idx_where(target: int):
+        # First i where cum_free[i] == target and is_free[i].
+        target_mask = (cum_free == target) & is_free
+        return jnp.argmax(target_mask.astype(jnp.int32))
+
+    slot0 = _first_idx_where(1)
+    slot1 = _first_idx_where(2)
+    slot2 = _first_idx_where(3)
+    slot3 = _first_idx_where(4)
+    slots = jnp.stack([slot0, slot1, slot2, slot3])  # (4,)
+
+    new_ships = state.comet_ships[safe_k]
+
+    # Per-planet update: at slot j, if any_spawn, overwrite with comet
+    # template; else keep current value.
+    planets_alive = state.planets_alive
+    planets_x = state.planets_x
+    planets_y = state.planets_y
+    planets_owner = state.planets_owner
+    planets_ships = state.planets_ships
+    planets_prod = state.planets_prod
+    planets_radius = state.planets_radius
+    is_comet_arr = state.is_comet
+    initial_x = state.initial_x
+    initial_y = state.initial_y
+    planet_comet_spawn = state.planet_comet_spawn
+    planet_comet_path = state.planet_comet_path
+
+    # Constants matching scalar interpreter's comet template.
+    COMET_X_PLACEHOLDER = jnp.float32(-99.0)
+    COMET_Y_PLACEHOLDER = jnp.float32(-99.0)
+    COMET_RADIUS_F = jnp.float32(1.0)         # COMET_RADIUS
+    COMET_PRODUCTION_I = jnp.int32(1)         # COMET_PRODUCTION
+
+    new_comet_planet_idx = state.comet_planet_idx
+
+    for j in range(4):
+        slot = slots[j]
+        # mask_at_slot is True iff this slot will be written this step.
+        planets_alive = planets_alive.at[slot].set(
+            jnp.where(any_spawn, True, planets_alive[slot])
+        )
+        planets_x = planets_x.at[slot].set(
+            jnp.where(any_spawn, COMET_X_PLACEHOLDER, planets_x[slot])
+        )
+        planets_y = planets_y.at[slot].set(
+            jnp.where(any_spawn, COMET_Y_PLACEHOLDER, planets_y[slot])
+        )
+        planets_owner = planets_owner.at[slot].set(
+            jnp.where(any_spawn, jnp.int32(-1), planets_owner[slot])
+        )
+        planets_ships = planets_ships.at[slot].set(
+            jnp.where(any_spawn, new_ships, planets_ships[slot])
+        )
+        planets_prod = planets_prod.at[slot].set(
+            jnp.where(any_spawn, COMET_PRODUCTION_I, planets_prod[slot])
+        )
+        planets_radius = planets_radius.at[slot].set(
+            jnp.where(any_spawn, COMET_RADIUS_F, planets_radius[slot])
+        )
+        is_comet_arr = is_comet_arr.at[slot].set(
+            jnp.where(any_spawn, True, is_comet_arr[slot])
+        )
+        initial_x = initial_x.at[slot].set(
+            jnp.where(any_spawn, COMET_X_PLACEHOLDER, initial_x[slot])
+        )
+        initial_y = initial_y.at[slot].set(
+            jnp.where(any_spawn, COMET_Y_PLACEHOLDER, initial_y[slot])
+        )
+        planet_comet_spawn = planet_comet_spawn.at[slot].set(
+            jnp.where(any_spawn, safe_k, planet_comet_spawn[slot])
+        )
+        planet_comet_path = planet_comet_path.at[slot].set(
+            jnp.where(any_spawn, jnp.int32(j), planet_comet_path[slot])
+        )
+        new_comet_planet_idx = new_comet_planet_idx.at[active_k, j].set(
+            jnp.where(any_spawn, slot, new_comet_planet_idx[active_k, j])
+        )
+
+    # Flip the spawned flag for active_k.
+    new_comet_spawned = state.comet_spawned.at[active_k].set(
+        jnp.where(any_spawn, True, state.comet_spawned[active_k])
+    )
+
+    return state._replace(
+        planets_alive=planets_alive,
+        planets_x=planets_x, planets_y=planets_y,
+        planets_owner=planets_owner, planets_ships=planets_ships,
+        planets_prod=planets_prod, planets_radius=planets_radius,
+        is_comet=is_comet_arr,
+        initial_x=initial_x, initial_y=initial_y,
+        planet_comet_spawn=planet_comet_spawn,
+        planet_comet_path=planet_comet_path,
+        comet_spawned=new_comet_spawned,
+        comet_planet_idx=new_comet_planet_idx,
     )
 
 
@@ -273,5 +405,6 @@ production_tick_jit = jax.jit(production_tick)
 planet_path_compute_jit = jax.jit(planet_path_compute)
 comet_expire_jit = jax.jit(comet_expire)
 comet_path_advance_jit = jax.jit(comet_path_advance)
+comet_spawn_jit = jax.jit(comet_spawn)
 swept_pair_hit_batch_jit = jax.jit(swept_pair_hit_batch)
 jax_step_partial_jit = jax.jit(jax_step_partial)

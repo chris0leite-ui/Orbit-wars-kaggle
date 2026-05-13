@@ -90,8 +90,15 @@ class GameState(NamedTuple):
     comet_paths_len: jnp.ndarray         # (S, 4) int32
     comet_ships: jnp.ndarray             # (S,) int32
     comet_valid: jnp.ndarray             # (S,) bool
-    # Per spawn: current path index (post-init). -1 if not spawned yet.
+    # Per spawn: current path index. Starts at -1 (interpretation:
+    # "not yet advanced"); first `comet_path_advance` call after spawn
+    # increments to 0, which selects `paths[k, j, 0]`. The
+    # `comet_spawned` flag distinguishes "has this spawn fired" from
+    # "what's the current index": both pre-spawn and just-spawned states
+    # have `comet_path_index == -1`, but only the latter has
+    # `comet_spawned == True`, so only the latter increments.
     comet_path_index: jnp.ndarray        # (S,) int32
+    comet_spawned: jnp.ndarray           # (S,) bool — True after spawn fired
     # Planet indices (into planets_* arrays) for each spawn's 4 comets.
     # -1 if not spawned. Lets us look up "is this planet a comet from
     # spawn k path j" without scanning.
@@ -136,6 +143,7 @@ SHAPES = {
     "comet_ships": (NUM_COMET_SPAWNS,),
     "comet_valid": (NUM_COMET_SPAWNS,),
     "comet_path_index": (NUM_COMET_SPAWNS,),
+    "comet_spawned": (NUM_COMET_SPAWNS,),
     "comet_planet_idx": (NUM_COMET_SPAWNS, MAX_COMET_PATHS_PER_GROUP),
     "step": (),
     "angular_velocity": (),

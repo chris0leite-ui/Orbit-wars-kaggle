@@ -223,6 +223,88 @@ def test_swept_pair_hit_batch_matches_scalar():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("seed", [0, 7, 42, 137])
+def test_comet_spawn_at_step_49(seed):
+    """At step 49 (one before COMET_SPAWN_STEPS[0]=50), comet_spawn
+    instantiates 4 comet planets if the seed produced valid paths.
+    Validates: 4 new planets alive, owners = -1, ships matches
+    pre-computed comet_ships, planet_comet_spawn=0, planet_comet_path
+    is 0/1/2/3, comet_spawned[0]=True, comet_planet_idx[0] populated.
+    """
+    from lib.game.jax import comet_spawn
+    env, gs = _build_state(seed)
+    # Force step = 49 so step+1 = 50 = COMET_SPAWN_STEPS[0].
+    gs = gs._replace(step=jnp.asarray(49, dtype=jnp.int32))
+    new_gs = comet_spawn(gs)
+
+    # If the seed produced valid paths for spawn 0, we should see 4
+    # new alive planets; else no change.
+    valid_0 = bool(gs.comet_valid[0])
+    alive_before = int(jnp.sum(gs.planets_alive.astype(jnp.int32)))
+    alive_after = int(jnp.sum(new_gs.planets_alive.astype(jnp.int32)))
+
+    if valid_0:
+        assert alive_after == alive_before + 4, (
+            f"valid spawn should add 4 alive planets; got "
+            f"before={alive_before} after={alive_after}"
+        )
+        assert bool(new_gs.comet_spawned[0]) is True
+        # Per-path index lookup
+        idx_arr = np.asarray(new_gs.comet_planet_idx[0])
+        for j in range(4):
+            slot = int(idx_arr[j])
+            assert slot >= 0, f"comet_planet_idx[0, {j}] should be set"
+            assert bool(new_gs.planets_alive[slot]) is True
+            assert int(new_gs.planets_owner[slot]) == -1
+            assert int(new_gs.planets_ships[slot]) == int(gs.comet_ships[0])
+            assert int(new_gs.planet_comet_spawn[slot]) == 0
+            assert int(new_gs.planet_comet_path[slot]) == j
+            assert bool(new_gs.is_comet[slot]) is True
+            assert float(new_gs.planets_x[slot]) == pytest.approx(-99.0)
+            assert float(new_gs.planets_y[slot]) == pytest.approx(-99.0)
+    else:
+        assert alive_after == alive_before, "invalid spawn should be no-op"
+        assert bool(new_gs.comet_spawned[0]) is False
+
+
+def test_comet_spawn_no_double_fire():
+    """Calling comet_spawn again at the same step (already-spawned k)
+    is a no-op."""
+    from lib.game.jax import comet_spawn
+    env, gs = _build_state(42)
+    if not bool(gs.comet_valid[0]):
+        pytest.skip("seed 42 doesn't produce valid spawn 0")
+    gs = gs._replace(step=jnp.asarray(49, dtype=jnp.int32))
+    once = comet_spawn(gs)
+    twice = comet_spawn(once)
+    # Same alive count after second call.
+    assert int(jnp.sum(once.planets_alive.astype(jnp.int32))) == (
+        int(jnp.sum(twice.planets_alive.astype(jnp.int32)))
+    )
+
+
+def test_comet_spawn_then_advance_positions_at_path0(seed=42):
+    """After spawn at step 49, comet_path_advance moves the 4 comets
+    from (-99, -99) to `comet_paths_xy[0, j, 0, :]`.
+    """
+    from lib.game.jax import comet_spawn, comet_path_advance
+    env, gs = _build_state(seed)
+    if not bool(gs.comet_valid[0]):
+        pytest.skip("seed 42 doesn't produce valid spawn 0")
+    gs = gs._replace(step=jnp.asarray(49, dtype=jnp.int32))
+    spawned = comet_spawn(gs)
+    advanced = comet_path_advance(spawned)
+
+    for j in range(4):
+        slot = int(spawned.comet_planet_idx[0, j])
+        expected_x = float(gs.comet_paths_xy[0, j, 0, 0])
+        expected_y = float(gs.comet_paths_xy[0, j, 0, 1])
+        assert float(advanced.planets_x[slot]) == pytest.approx(expected_x)
+        assert float(advanced.planets_y[slot]) == pytest.approx(expected_y)
+    # Path index should now be 0 (incremented from -1).
+    assert int(advanced.comet_path_index[0]) == 0
+
+
 def test_comet_path_advance_no_op_at_start():
     """At step 0 with no comets spawned, comet_path_advance leaves the
     state unchanged (no comets to advance)."""

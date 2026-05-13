@@ -130,6 +130,7 @@ def scalar_to_jax(state, episode_seed: int) -> GameState:
     comet_ships_arr = np.zeros(NUM_COMET_SPAWNS, dtype=np.int32)
     comet_valid_arr = np.zeros(NUM_COMET_SPAWNS, dtype=bool)
     comet_path_index = -np.ones(NUM_COMET_SPAWNS, dtype=np.int32)
+    comet_spawned_arr = np.zeros(NUM_COMET_SPAWNS, dtype=bool)
     comet_planet_idx = -np.ones(
         (NUM_COMET_SPAWNS, MAX_COMET_PATHS_PER_GROUP), dtype=np.int32,
     )
@@ -199,6 +200,7 @@ def scalar_to_jax(state, episode_seed: int) -> GameState:
         comet_ships=jnp.asarray(comet_ships_arr),
         comet_valid=jnp.asarray(comet_valid_arr),
         comet_path_index=jnp.asarray(comet_path_index),
+        comet_spawned=jnp.asarray(comet_spawned_arr),
         comet_planet_idx=jnp.asarray(comet_planet_idx),
         step=jnp.asarray(int(obs0.get("step", 0)), dtype=jnp.int32),
         angular_velocity=jnp.asarray(angular_velocity, dtype=jnp.float32),
