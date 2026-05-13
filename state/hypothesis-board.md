@@ -306,11 +306,25 @@ I-M = data-driven; K = realism check already cleared.
   `lib/missions/snipe.py:_leader_pid` to flag leader (×1.5) and
   non-leader (×0.8) targets in 4P. FFA panel gate via
   `scripts/ffa_panel.py`. Source: TIDs 697397, 698659.
-- **H21 [F] (½ day):** **Pre-reinforce against visible enemy
-  arrival.** Extend `lib/missions/reinforce.py` to detect
-  `enemy_arrival = our_capture + 1` patterns via
-  `world_model.ledger.get(planet_id)` and propose a
-  `pre_reinforce` mission at `eta = enemy_eta − 1`. Source: TID 698478.
+- **H21 [F] (½ day, FALSIFIED 2026-05-13):** **Pre-reinforce against
+  visible enemy arrival.** Implemented as a ledger-scan inside
+  `lib/mechanism.arrival_size` (window-bounded enemy follow-up
+  detection → bump intent.ships to absorb the strongest in-window
+  arrival). Tested 3 windows on top of PV, 8 seeds × both seats vs
+  `v7_pv` (window=0): 0=50% identity, 1=43.8% (Wilson [23.1, 66.8],
+  7-7-2), 3=25.0% (Wilson [10.2, 49.5], 4-12-0). Monotonic
+  regression. Audits: `audit/tournaments/ab-20260513T202{1,9}*.json`.
+  Same K-rollout-dominance lesson: fast_sim.rollout walks K=10 of
+  the actual game engine; forcing an upfront bump removes the
+  rollout's degrees of freedom. Code retained (flag defaults to 0 =
+  identity).
+
+  **Cross-cutting note (after H17, H19, H21 all falsified the same
+  way):** three independent "reweight/bump" mechanism-layer additions
+  on top of v7 + PV all regress monotonically. The K=10 drop-one
+  rollout is the binding constraint. Productive interventions for v7
+  should PRUNE the candidate pool (drop comets, etc.) or RESHAPE
+  value upstream (PV in H16) rather than reweight at proposal time.
 - **H22 [G] (½ day, LANDED 2026-05-13):** **3-anchor Wilson gate.**
   Per-anchor Wilson-lo ≥0.55 instead of pooled. Catches non-transitive
   A>B>C>A loops at high μ. Done — `scripts/ab_variants.py
