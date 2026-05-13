@@ -30,6 +30,7 @@ from lib.game.interpreter import (
 from lib.game.jax.jax_types import (
     GameState, MAX_PLANETS, MAX_FLEETS, NUM_COMET_SPAWNS,
     MAX_COMET_PATH_LEN, MAX_COMET_PATHS_PER_GROUP,
+    MAX_LAUNCH_PER_AGENT, MAX_AGENTS,
 )
 
 
@@ -207,6 +208,125 @@ def comet_path_advance(state: GameState) -> GameState:
         planets_new_y=new_y,
         planets_alive=new_alive,
         comet_path_index=new_path_index,
+    )
+
+
+def fleet_launch(
+    state: GameState,
+    actions_pid: jnp.ndarray,    # (MAX_AGENTS, MAX_LAUNCH_PER_AGENT) int32
+    actions_angle: jnp.ndarray,  # (MAX_AGENTS, MAX_LAUNCH_PER_AGENT) float32
+    actions_ships: jnp.ndarray,  # (MAX_AGENTS, MAX_LAUNCH_PER_AGENT) int32
+) -> GameState:
+    """Process per-seat launch actions; allocate fleets in free slots.
+
+    Mirror of `lib/game/interpreter.py:476-509` (process_moves).
+
+    Action format is THREE parallel padded tensors (not packed) because
+    pid + ships are int32 and angle is float32. Sentinel: `pid == -1`
+    marks an unused action slot.
+
+    For each potential launch (agent × k):
+      1. Find planet slot whose `planets_id == pid`.
+      2. Validate: planet alive, owner == agent_id, ships > 0,
+         source ships >= requested ships.
+      3. If valid: subtract ships from source planet, allocate next
+         free fleet slot, write fleet fields.
+
+    Slot allocation uses the cumsum-of-~alive trick: launches numbered
+    1..N consume the 1st..Nth free fleet slots in order. JIT-friendly
+    via fixed unrolled loop (MAX_AGENTS × MAX_LAUNCH_PER_AGENT = 80).
+    """
+    # Running state through the unrolled loop.
+    planets_ships = state.planets_ships
+    fleets_x = state.fleets_x
+    fleets_y = state.fleets_y
+    fleets_angle = state.fleets_angle
+    fleets_owner = state.fleets_owner
+    fleets_ships = state.fleets_ships
+    fleets_from_planet = state.fleets_from_planet
+    fleets_id = state.fleets_id
+    fleets_alive = state.fleets_alive
+    next_fleet_id = state.next_fleet_id
+    launches_so_far = jnp.int32(0)
+
+    for agent_id_py in range(MAX_AGENTS):
+        for k in range(MAX_LAUNCH_PER_AGENT):
+            pid_action = actions_pid[agent_id_py, k]
+            angle_f = actions_angle[agent_id_py, k]
+            ships_action = actions_ships[agent_id_py, k]
+
+            # Find planet slot where planets_id == pid_action.
+            match = (state.planets_id == pid_action) & state.planets_alive
+            any_match = jnp.any(match)
+            slot = jnp.argmax(match.astype(jnp.int32))
+
+            is_valid = (
+                (pid_action >= 0)
+                & (ships_action > 0)
+                & any_match
+                & (state.planets_owner[slot] == agent_id_py)
+                & (planets_ships[slot] >= ships_action)
+            )
+
+            # Allocate next free fleet slot from CURRENT fleets_alive
+            # (which has been updated by previous iterations of this loop).
+            is_free = ~fleets_alive
+            cum_free = jnp.cumsum(is_free.astype(jnp.int32))
+            target_count = launches_so_far + 1
+            slot_mask = (cum_free == target_count) & is_free
+            fleet_slot = jnp.argmax(slot_mask.astype(jnp.int32))
+
+            do_launch = is_valid
+
+            # Subtract ships from source planet.
+            planets_ships = planets_ships.at[slot].set(
+                jnp.where(
+                    do_launch,
+                    planets_ships[slot] - ships_action,
+                    planets_ships[slot],
+                )
+            )
+
+            # Compute fleet starting position from planet CURRENT pos +
+            # r * (cos, sin) of angle, offset by (radius + 0.1).
+            r_off = state.planets_radius[slot] + jnp.float32(0.1)
+            sx = state.planets_x[slot] + jnp.cos(angle_f) * r_off
+            sy = state.planets_y[slot] + jnp.sin(angle_f) * r_off
+
+            fleets_x = fleets_x.at[fleet_slot].set(
+                jnp.where(do_launch, sx, fleets_x[fleet_slot])
+            )
+            fleets_y = fleets_y.at[fleet_slot].set(
+                jnp.where(do_launch, sy, fleets_y[fleet_slot])
+            )
+            fleets_angle = fleets_angle.at[fleet_slot].set(
+                jnp.where(do_launch, angle_f, fleets_angle[fleet_slot])
+            )
+            fleets_owner = fleets_owner.at[fleet_slot].set(
+                jnp.where(do_launch, jnp.int32(agent_id_py),
+                          fleets_owner[fleet_slot])
+            )
+            fleets_ships = fleets_ships.at[fleet_slot].set(
+                jnp.where(do_launch, ships_action, fleets_ships[fleet_slot])
+            )
+            fleets_from_planet = fleets_from_planet.at[fleet_slot].set(
+                jnp.where(do_launch, pid_action, fleets_from_planet[fleet_slot])
+            )
+            fleets_id = fleets_id.at[fleet_slot].set(
+                jnp.where(do_launch, next_fleet_id, fleets_id[fleet_slot])
+            )
+            fleets_alive = fleets_alive.at[fleet_slot].set(
+                jnp.where(do_launch, True, fleets_alive[fleet_slot])
+            )
+            next_fleet_id = next_fleet_id + jnp.where(do_launch, 1, 0)
+            launches_so_far = launches_so_far + jnp.where(do_launch, 1, 0)
+
+    return state._replace(
+        planets_ships=planets_ships,
+        fleets_x=fleets_x, fleets_y=fleets_y, fleets_angle=fleets_angle,
+        fleets_owner=fleets_owner, fleets_ships=fleets_ships,
+        fleets_from_planet=fleets_from_planet, fleets_id=fleets_id,
+        fleets_alive=fleets_alive, next_fleet_id=next_fleet_id,
     )
 
 
@@ -456,5 +576,6 @@ comet_expire_jit = jax.jit(comet_expire)
 comet_path_advance_jit = jax.jit(comet_path_advance)
 comet_spawn_jit = jax.jit(comet_spawn)
 apply_planet_movement_jit = jax.jit(apply_planet_movement)
+fleet_launch_jit = jax.jit(fleet_launch)
 swept_pair_hit_batch_jit = jax.jit(swept_pair_hit_batch)
 jax_step_partial_jit = jax.jit(jax_step_partial)

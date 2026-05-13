@@ -310,6 +310,114 @@ def test_comet_spawn_then_advance_positions_at_path0(seed=42):
     assert int(advanced.comet_path_index[0]) == 0
 
 
+def _build_padded_actions(per_agent_moves, num_agents=2):
+    """Helper: pack a list-of-lists of [pid, angle, ships] per agent
+    into the (MAX_AGENTS, MAX_LAUNCH_PER_AGENT) padded action tensors.
+    """
+    from lib.game.jax import MAX_AGENTS, MAX_LAUNCH_PER_AGENT
+    pids = -np.ones((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=np.int32)
+    angles = np.zeros((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=np.float32)
+    ships = np.zeros((MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=np.int32)
+    for a, moves in enumerate(per_agent_moves[:MAX_AGENTS]):
+        for k, m in enumerate(moves[:MAX_LAUNCH_PER_AGENT]):
+            pids[a, k] = int(m[0])
+            angles[a, k] = float(m[1])
+            ships[a, k] = int(m[2])
+    return jnp.asarray(pids), jnp.asarray(angles), jnp.asarray(ships)
+
+
+def test_fleet_launch_subtracts_ships_and_creates_fleet():
+    """JAX fleet_launch on a single agent-0 launch matches scalar:
+    - Source planet's ships decremented
+    - A new fleet appears with correct owner, ships, from_planet
+    - Fleet starting position matches the scalar formula
+    """
+    from lib.game.jax import fleet_launch
+    env, gs = _build_state(42)
+
+    # Find one planet owned by player 0; build a launch action from it.
+    my_planet = None
+    for p in env.state[0].observation.planets:
+        if p[1] == 0 and p[5] > 5:
+            my_planet = p
+            break
+    assert my_planet is not None, "no owned planet to launch from"
+    pid, owner, x, y, radius, ships, prod = my_planet
+    launch_ships = int(ships) // 2
+    launch_angle = 1.234
+
+    actions = _build_padded_actions(
+        [[(pid, launch_angle, launch_ships)], []],
+        num_agents=2,
+    )
+    pid_arr, ang_arr, ship_arr = actions
+    new_gs = fleet_launch(gs, pid_arr, ang_arr, ship_arr)
+
+    # Source ships decremented.
+    # Find planet slot for pid.
+    source_slot = int(np.argmax(np.asarray(gs.planets_id) == pid))
+    assert int(new_gs.planets_ships[source_slot]) == int(ships) - launch_ships
+
+    # Exactly one new fleet alive.
+    n_before = int(np.sum(np.asarray(gs.fleets_alive)))
+    n_after = int(np.sum(np.asarray(new_gs.fleets_alive)))
+    assert n_after == n_before + 1
+
+    # The new fleet's slot is the lowest index where fleets_alive
+    # flipped False → True.
+    diff = np.asarray(new_gs.fleets_alive) & ~np.asarray(gs.fleets_alive)
+    new_slot = int(np.argmax(diff))
+    assert bool(diff[new_slot])
+
+    # Fleet fields.
+    assert int(new_gs.fleets_owner[new_slot]) == 0
+    assert int(new_gs.fleets_ships[new_slot]) == launch_ships
+    assert int(new_gs.fleets_from_planet[new_slot]) == pid
+    assert float(new_gs.fleets_angle[new_slot]) == pytest.approx(launch_angle)
+    # Starting position: planet.x + cos(angle) * (radius + 0.1)
+    expected_sx = x + math.cos(launch_angle) * (radius + 0.1)
+    expected_sy = y + math.sin(launch_angle) * (radius + 0.1)
+    assert float(new_gs.fleets_x[new_slot]) == pytest.approx(expected_sx, abs=1e-5)
+    assert float(new_gs.fleets_y[new_slot]) == pytest.approx(expected_sy, abs=1e-5)
+
+
+def test_fleet_launch_rejects_unowned_overlimit_zero_ship():
+    """fleet_launch validation: rejects launches that violate constraints."""
+    from lib.game.jax import fleet_launch
+    env, gs = _build_state(42)
+
+    # Build 3 invalid launches: unowned planet, ships=0, overlimit ships.
+    # Find an unowned-by-player-0 planet for case 1.
+    unowned_pid = None
+    for p in env.state[0].observation.planets:
+        if p[1] != 0:
+            unowned_pid = p[0]
+            break
+    # Find player 0's planet for ships=0 and overlimit.
+    owned_p0 = None
+    for p in env.state[0].observation.planets:
+        if p[1] == 0:
+            owned_p0 = p
+            break
+    assert unowned_pid is not None and owned_p0 is not None
+
+    actions = _build_padded_actions(
+        [[(unowned_pid, 0.0, 5),         # rejected: not our planet
+          (owned_p0[0], 0.0, 0),         # rejected: ships <= 0
+          (owned_p0[0], 0.0, 100_000)],  # rejected: ships > planet ships
+         []],
+    )
+    new_gs = fleet_launch(gs, *actions)
+
+    # No new fleets.
+    assert int(np.sum(np.asarray(new_gs.fleets_alive))) == int(
+        np.sum(np.asarray(gs.fleets_alive))
+    )
+    # Source planet ships unchanged.
+    slot = int(np.argmax(np.asarray(gs.planets_id) == owned_p0[0]))
+    assert int(new_gs.planets_ships[slot]) == int(owned_p0[5])
+
+
 def test_comet_path_advance_no_op_at_start():
     """At step 0 with no comets spawned, comet_path_advance leaves the
     state unchanged (no comets to advance)."""

@@ -28,6 +28,8 @@ from lib.game.jax.jax_types import (
     MAX_COMET_GROUPS,
     MAX_COMET_PATH_LEN,
     NUM_COMET_SPAWNS,
+    MAX_LAUNCH_PER_AGENT,
+    MAX_AGENTS,
 )
 from lib.game.jax.conversions import scalar_to_jax, jax_to_scalar
 from lib.game.jax.jax_interpreter import (
@@ -37,6 +39,7 @@ from lib.game.jax.jax_interpreter import (
     comet_path_advance,
     comet_spawn,
     apply_planet_movement,
+    fleet_launch,
     swept_pair_hit_batch,
     jax_step_partial,
     production_tick_jit,
@@ -45,6 +48,7 @@ from lib.game.jax.jax_interpreter import (
     comet_path_advance_jit,
     comet_spawn_jit,
     apply_planet_movement_jit,
+    fleet_launch_jit,
     swept_pair_hit_batch_jit,
     jax_step_partial_jit,
 )
@@ -53,14 +57,16 @@ __all__ = [
     "GameState",
     "MAX_PLANETS", "MAX_FLEETS", "MAX_COMET_GROUPS",
     "MAX_COMET_PATH_LEN", "NUM_COMET_SPAWNS",
+    "MAX_LAUNCH_PER_AGENT", "MAX_AGENTS",
     "scalar_to_jax", "jax_to_scalar",
     "production_tick", "planet_path_compute",
     "comet_expire", "comet_path_advance", "comet_spawn",
     "apply_planet_movement",
+    "fleet_launch",
     "swept_pair_hit_batch",
     "jax_step_partial",
     "production_tick_jit", "planet_path_compute_jit",
     "comet_expire_jit", "comet_path_advance_jit", "comet_spawn_jit",
-    "apply_planet_movement_jit",
+    "apply_planet_movement_jit", "fleet_launch_jit",
     "swept_pair_hit_batch_jit", "jax_step_partial_jit",
 ]

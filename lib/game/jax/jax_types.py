@@ -34,6 +34,14 @@ MAX_COMET_PATHS_PER_GROUP = 4         # 4-fold symmetry — always 4
 # Per `generate_comet_paths`, paths are validated to 5 ≤ len ≤ 40.
 MAX_COMET_PATH_LEN = 40
 
+# Max simultaneous launches per agent per turn. v3.5.1 typically
+# launches 2-4; v7_0 lookahead candidates can produce up to ~6.
+# 20 is a comfortable upper bound.
+MAX_LAUNCH_PER_AGENT = 20
+
+# Max number of agents (2P or 4P games).
+MAX_AGENTS = 4
+
 
 class GameState(NamedTuple):
     """Padded JAX game state. Mirrors lib/game/interpreter.py's mutable
