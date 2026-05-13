@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import math
 import time
+from contextlib import contextmanager
 from typing import Any, Callable, Iterable
 
 from lib.fast_sim import Snapshot, delta_us_minus_them
@@ -154,6 +155,42 @@ def _build_incumbent_intents(
 # ---------------------------------------------------------------------------
 # Enumerators (one per mode)
 # ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _bind_shared_world_model(obs_list, model):
+    """Temporarily attach ``model`` to each observation in ``obs_list`` as
+    the ``_shared_world_model`` attribute so mirror-style policies can
+    skip the expensive ``WorldModel.from_world`` rebuild
+    (`lib/opp_model.py:76, 112`). Exception-safe — the attribute is
+    always removed on exit, even if a policy raises.
+
+    Why this matters: the previous bare ``del obs._shared_world_model``
+    cleanup ran only on the happy path. A raise inside the followup
+    policy left the attribute on the cloned observation Struct, which
+    is then garbage-collected — but in the parity-gate setting where
+    the source and bundle agents are called back-to-back in the same
+    process on the same input ``obs``, any leaked side-channel state on
+    a Struct that participates in both calls is a parity risk. Encoding
+    the lifetime as a context manager makes the invariant impossible
+    to violate accidentally.
+    """
+    if model is None or not obs_list:
+        yield
+        return
+    for obs in obs_list:
+        obs._shared_world_model = model
+    try:
+        yield
+    finally:
+        for obs in obs_list:
+            # Use try/except (rather than __dict__.pop) to mirror the
+            # same access path that __setattr__ took; Struct's attribute
+            # storage isn't guaranteed to be __dict__.
+            try:
+                del obs._shared_world_model
+            except AttributeError:
+                pass
 
 
 def _enumerate_drop_one(incumbent_action: list[list]) -> list[list[list]]:
@@ -521,17 +558,13 @@ def score_candidate(
         # Build shared World/Model once. Cheap to construct World per
         # seat (it's a tiny dataclass); the expensive part is WorldModel.
         shared_world = World.from_obs(obs0)
-        if shared_world.planets_by_id:
-            shared_model = WorldModel.from_world(shared_world)
-            obs0._shared_world_model = shared_model
-            obs1._shared_world_model = shared_model
-        a0 = followup_policy(obs0)
-        a1 = followup_policy(obs1)
-        # Clear cache attribute so the obs is clean for downstream consumers.
-        if hasattr(obs0, "_shared_world_model"):
-            del obs0._shared_world_model
-        if hasattr(obs1, "_shared_world_model"):
-            del obs1._shared_world_model
+        shared_model = (
+            WorldModel.from_world(shared_world)
+            if shared_world.planets_by_id else None
+        )
+        with _bind_shared_world_model((obs0, obs1), shared_model):
+            a0 = followup_policy(obs0)
+            a1 = followup_policy(obs1)
         clone = fs_step(clone, [a0, a1], in_place=True)
 
     if value_fn is None:
