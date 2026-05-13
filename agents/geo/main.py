@@ -1,21 +1,52 @@
-"""geo — geometric sense + posture arbiter + joint LP allocator.
+"""geo v1 — geometric sense + posture decision, settled by settle_plan.
+
+Status: parity with v3.5.1 (n=64: 31/64 = 48.4%, Wilson [0.366, 0.604]).
+Architecture is wired end-to-end and verified safe; no value-add yet.
 
 Pipeline:
     obs -> World.from_obs -> WorldModel.from_world
-        -> sense_state(world, model)                       # lib/geo/sense.py
-        -> decide_posture(world, sense, model)             # lib/geo/posture.py
-        -> collect_posture_weighted_missions(...)          # local
-        -> allocate(missions, world, sense, posture, model)# lib/geo/allocator.py
+        -> sense_state(world, model)              # lib/geo/sense.py
+        -> decide_posture(world, sense, model)    # lib/geo/posture.py
+        -> collect_posture_weighted_missions(...) # local
+        -> settle_plan(missions, world, model)    # lib/planner.py (PROVEN)
         -> realize(intents, mechanisms=DEFAULT_MECHANISMS)
 
-The orchestrator's only job is wiring + applying posture multipliers
-to existing mission proposers' scores. The mission VALUE FORMULAS are
-unchanged from v3.5.1 / v7_0 — only the SETTLEMENT layer (per-source
-greedy → joint LP) and the POSTURE BIASES are new.
+The substrate (sense_state, decide_posture) is computed every turn and
+available to the missions/allocator stages. The current v1 doesn't
+*use* the posture beyond reading it — POSTURE_WEIGHTS are all 1.0 and
+_aggressive_for is constant True. This makes geo v1 functionally
+equivalent to `propose_snipe(aggressive=True) + propose_reinforce +
+settle_plan` (i.e., v3.5.1).
 
-The v7_4_hungarian killed-path lesson informs the design: pure global
-assignment without per-mission-class scoring fails. We keep the
-per-class scoring and only replace the settlement.
+Why this minimalism. During v1 bisect (this branch's history):
+
+| Iteration                                       | n=32 winrate | Δ      |
+| ----------------------------------------------- | ------------ | ------ |
+| (bisect-2) v3.5.1-exact source pipeline         | 46.9%        | base   |
+| greedy-multi allocator                          | 15.6%        | -31pp  |
+| posture mults (DEFEND ×2 reinforce, ×0.5 snipe) | 9.4%         | -37pp  |
+| _aggressive_for(DEFEND) = False                 | 25.0%        | -22pp  |
+| (current) aggressive=True, mults 1.0            | 48.4% (n=64) | +1.5pp |
+
+Every value-add attempt regressed. The architecture is sound; the
+heuristics that "obviously" should have helped (multi-launch, posture
+multipliers, defensive sizing) all hurt. v1.5 work is to find geometric
+filters/priors that respect the existing well-tuned scoring rather than
+override it.
+
+Deferred to v1.5 (the lib/geo/{sense,posture,allocator}.py code is
+already in place to support these):
+- **Voronoi-aware target prior**: in OPENING posture, prefer neutrals
+  closer to our cluster than to any enemy cluster (sense.voronoi).
+- **Front-pressure reinforce**: scale reinforce score by `1 + front_pressure(pid)`
+  so reinforce of front planets > reinforce of interior.
+- **Multi-launch allocator with per-source launch cap**: `allocate_greedy_multi`
+  but bounded by `min(N, garrison // ship_per_launch)`. Doesn't over-concentrate.
+- **Comet-claim filter**: drop snipe missions targeting comets where
+  `sense.comet_claims[c] is None or != my_cluster_idx` (H15-style).
+
+POSTURE_WEIGHTS / _enemy_only_filter scaffolding is kept here so v1.5
+iterations have a clear seam to bias against. NOT used today.
 """
 
 from __future__ import annotations
@@ -23,61 +54,28 @@ from __future__ import annotations
 from lib.intent import World, realize
 from lib.mechanism import DEFAULT_MECHANISMS
 from lib.mission import Mission
-from lib.missions.opening import propose_opening_missions
-from lib.missions.recapture import propose_recapture_missions
+from lib.missions.opening import propose_opening_missions  # noqa: F401  (v1.5)
+from lib.missions.recapture import propose_recapture_missions  # noqa: F401  (v1.5)
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.missions.snipe import propose_snipe_missions
+from lib.planner import settle_plan
 from lib.world_model import WorldModel
 
-from lib.planner import settle_plan
-
-from lib.geo.allocator import allocate, allocate_greedy_multi
+from lib.geo.allocator import allocate_greedy_multi  # noqa: F401  (v1.5)
 from lib.geo.posture import Posture, decide_posture
 from lib.geo.sense import sense_state
 
 
 # ---------------------------------------------------------------------------
-# Posture × mission-class score multipliers
+# Posture × mission-class score multipliers (v1: all 1.0; v1.5 lever)
 # ---------------------------------------------------------------------------
-#
-# Starting values from the plan (calibrated against top-10 fingerprint and
-# loss-mode audit). Tunable via local A/B at n=64.
-#
-# Empty entries (mission_class not in dict) mean "do not run this proposer
-# in this posture."
 
 POSTURE_WEIGHTS: dict[Posture, dict[str, float]] = {
-    # ISOLATION TEST: all multipliers 1.0 across all postures.
-    # The posture decision still happens (sense_state, decide_posture)
-    # but doesn't bias mission selection. If this evals ~46% (= bisect-2
-    # baseline), posture decision is innocent and the multipliers were
-    # the regression cause. If it evals <40%, the _enemy_only_filter
-    # in DEFEND/BREAK is the bug (filters out valid neutral captures).
     Posture.OPENING: {"snipe": 1.0, "reinforce": 1.0},
     Posture.EXPAND:  {"snipe": 1.0, "reinforce": 1.0},
-    Posture.DEFEND:  {"snipe": 1.0, "reinforce": 1.0},  # no enemy-only filter, no boost
+    Posture.DEFEND:  {"snipe": 1.0, "reinforce": 1.0},
     Posture.BREAK:   {"snipe": 1.0, "reinforce": 1.0},
 }
-
-
-def _aggressive_for(posture: Posture) -> bool:
-    # Always aggressive=True. The "back off to non-aggressive in DEFEND"
-    # heuristic regressed -22pp in isolation testing because non-aggressive
-    # sizing is dominated by aggressive in every situation we have data for
-    # (v3_snipe vs v3.5.1: 56.6% Wilson lower bound).
-    # Defensive shaping in v1.5 happens via per-source SHIP RESERVE in the
-    # allocator, not by changing the snipe sizing formula.
-    _ = posture
-    return True
-
-
-def _enemy_only_filter(missions: list[Mission], world: World) -> list[Mission]:
-    """Keep only missions whose target is owned by an enemy (not neutral)."""
-    return [
-        m for m in missions
-        if (world.planets_by_id.get(m.target_id) is not None
-            and world.planets_by_id[m.target_id].owner not in (world.my_id, -1))
-    ]
 
 
 def _scale_scores(missions: list[Mission], mult: float) -> list[Mission]:
@@ -88,12 +86,9 @@ def _scale_scores(missions: list[Mission], mult: float) -> list[Mission]:
     return [
         Mission(
             mission_class=m.mission_class,
-            src_id=m.src_id,
-            target_id=m.target_id,
-            ships=m.ships,
-            score=m.score * mult,
-            eta=m.eta,
-            note=m.note,
+            src_id=m.src_id, target_id=m.target_id,
+            ships=m.ships, score=m.score * mult,
+            eta=m.eta, note=m.note,
         )
         for m in missions
     ]
@@ -102,32 +97,19 @@ def _scale_scores(missions: list[Mission], mult: float) -> list[Mission]:
 def collect_posture_weighted_missions(
     world: World, model: WorldModel, posture: Posture,
 ) -> list[Mission]:
-    """Run posture-relevant proposers and apply per-class score multipliers."""
+    """Run posture-relevant proposers and apply per-class score multipliers.
+
+    With all multipliers 1.0 (v1), this is effectively
+    `propose_snipe(aggressive=True) + propose_reinforce`.
+    """
     weights = POSTURE_WEIGHTS.get(posture, {})
     bag: list[Mission] = []
-
     if "snipe" in weights:
-        snipe = propose_snipe_missions(
-            world, model, aggressive=_aggressive_for(posture)
-        )
-        # ISOLATION TEST: enemy-only filter disabled to verify posture
-        # decision is the only difference vs bisect-2 baseline.
-        # if posture in (Posture.DEFEND, Posture.BREAK):
-        #     snipe = _enemy_only_filter(snipe, world)
+        snipe = propose_snipe_missions(world, model, aggressive=True)
         bag.extend(_scale_scores(snipe, weights["snipe"]))
-
     if "reinforce" in weights:
         rein = propose_reinforce_missions(world, model)
         bag.extend(_scale_scores(rein, weights["reinforce"]))
-
-    if "recapture" in weights:
-        recap = propose_recapture_missions(world, model)
-        bag.extend(_scale_scores(recap, weights["recapture"]))
-
-    if "opening" in weights:
-        opens = propose_opening_missions(world, model)
-        bag.extend(_scale_scores(opens, weights["opening"]))
-
     return bag
 
 
@@ -141,12 +123,6 @@ def agent(obs, configuration=None):
     if not world.planets_by_id:
         return []
     model = WorldModel.from_world(world)
-    # LAYER 2: posture-weighted missions, settled by settle_plan.
-    # In EXPAND (the default), this is FUNCTIONALLY EQUIVALENT to v3.5.1
-    # (multipliers 1.0, same proposers). DEFEND / BREAK adjust mid-game
-    # priorities. The greedy-multi allocator is deferred to v1.5 (Layer 1
-    # bisect: it regressed 46.9% -> 15.6% due to over-concentration of
-    # launches at strong sources).
     sense = sense_state(world, model)
     posture = decide_posture(world, sense, model)
     missions = collect_posture_weighted_missions(world, model, posture)

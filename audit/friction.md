@@ -1,5 +1,27 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-13 (claude/simplify-fast-setup-azW8T — geo v1 bisect: parity ceiling)
+
+- `tag: geo-v1-substrate-correct-heuristics-regress` — built geo agent
+  (lib/geo/{sense,posture,allocator}.py + agents/geo/main.py) per the
+  approved plan. ALL "obvious" value-add heuristics regressed vs v3.5.1
+  bundle. Final state at parity (48.4% / Wilson [0.366, 0.604] at n=64);
+  no beat. Detailed bisect table and lessons in
+  `knowledge-base/thoughts/2026-05-13-geo-v1-bisect-lessons.md`.
+  **Key takeaways:**
+  (1) Replacing settle_plan with global score-sort multi-launch
+      regresses -31pp because it concentrates force at strong sources
+      instead of spreading.
+  (2) Cross-class score multipliers >= 2× regress -37pp because they
+      crush settle_plan's per-source best-mission selection.
+  (3) Non-aggressive snipe sizing in any posture regresses -22pp
+      because v3_snipe loses to v3.5.1 by 56.6%.
+  **Promotion candidate**: before bolting "obviously helpful" heuristics
+  onto a tuned baseline, test each one in ISOLATION against the baseline.
+  bisect-2 (v3.5.1 source-pipeline) confirmed the substrate is correct at
+  46.9%; without that anchor I'd have spent more cycles chasing a
+  source-vs-bundle drift hypothesis.
+
 ## 2026-05-13 (claude/simplify-fast-setup-azW8T — fast.py landed)
 
 - `tag: fast-py-is-now-canonical-iteration-entry-point` — single-file
