@@ -19,12 +19,36 @@ import json
 import multiprocessing as mp
 import os
 import platform
+import subprocess
 import sys
 import time
 
 
+def _ensure_orbit_wars():
+    """Kaggle Kernels ship kaggle_environments==1.27.3 which doesn't
+    include orbit_wars. Pip-install the version our local code targets."""
+    try:
+        from kaggle_environments import make
+        make("orbit_wars", configuration={"seed": 0})
+        return None  # already works
+    except Exception:
+        pass
+    print("Installing kaggle_environments==1.29.1 ...")
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "-q",
+         "kaggle_environments==1.29.1"],
+    )
+    # Re-import in a fresh process is cleanest, but a module reload
+    # generally works for top-level packages.
+    import importlib, kaggle_environments
+    importlib.reload(kaggle_environments)
+    return "installed 1.29.1"
+
+
 def main():
+    install_msg = _ensure_orbit_wars()
     info = {
+        "install_msg": install_msg,
         "python_version": platform.python_version(),
         "machine": platform.machine(),
         "cpu_count_logical": os.cpu_count(),
