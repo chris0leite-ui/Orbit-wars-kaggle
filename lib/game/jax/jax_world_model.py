@@ -184,3 +184,141 @@ def build_arrival_grid(
 build_arrival_grid_jit = jax.jit(
     build_arrival_grid, static_argnames=("max_horizon", "num_agents")
 )
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 2c: simulate_planet_timeline (lax.scan over horizon)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_arrivals_jax(
+    garrison_owner: jnp.ndarray,   # () int32
+    garrison_ships: jnp.ndarray,   # () int32
+    by_owner: jnp.ndarray,         # (A,) int32
+):
+    """JAX equivalent of `lib.combat.resolve_arrivals` for a single
+    (planet, step). Pure-functional, scalar inputs (use vmap to batch).
+
+    Rules (mirror `data/README.md` + scalar implementation):
+      1. Same-step arrivals are already grouped by owner (caller's
+         responsibility — passed as `by_owner[A]`).
+      2. Largest attacker fights second-largest; survivor = top - second.
+      3. Two-way tie (top == second) → all attackers destroyed
+         (survivor_ships = 0).
+      4. survivor vs garrison:
+         - same owner → garrison += survivor_ships
+         - different owner → garrison -= survivor_ships; if negative,
+           owner flips and ships = |remaining|.
+    """
+    top_owner = jnp.argmax(by_owner)
+    top_ships = by_owner[top_owner]
+    masked = by_owner.at[top_owner].set(jnp.int32(-1))
+    second_owner = jnp.argmax(masked)
+    second_ships = jnp.maximum(masked[second_owner], jnp.int32(0))
+
+    has_attackers = top_ships > 0
+    tie = (top_ships == second_ships) & has_attackers
+    survivor_ships = jnp.where(tie, jnp.int32(0), top_ships - second_ships)
+    has_survivor = survivor_ships > 0
+    survivor_owner = jnp.where(has_survivor, top_owner, jnp.int32(-1))
+
+    has_combat = has_attackers & has_survivor
+    same = garrison_owner == survivor_owner
+    diff = garrison_ships - survivor_ships
+    flip = diff < 0
+
+    new_ships_same = garrison_ships + survivor_ships
+    new_ships_diff_keep = diff
+    new_ships_diff_flip = -diff
+    new_ships_diff = jnp.where(flip, new_ships_diff_flip, new_ships_diff_keep)
+    new_owner_diff = jnp.where(flip, survivor_owner, garrison_owner)
+
+    new_ships = jnp.where(
+        has_combat,
+        jnp.where(same, new_ships_same, new_ships_diff),
+        garrison_ships,
+    )
+    new_owner = jnp.where(
+        has_combat & ~same, new_owner_diff, garrison_owner,
+    )
+    new_ships = jnp.maximum(new_ships, jnp.int32(0))
+    return new_owner, new_ships
+
+
+def simulate_planet_timeline_jax(
+    initial_owner: jnp.ndarray,   # () int32
+    initial_ships: jnp.ndarray,   # () int32
+    production: jnp.ndarray,      # () int32
+    arrivals_by_step: jnp.ndarray,  # (max_horizon+1, num_agents) int32
+    max_horizon: int = DEFAULT_HORIZON,
+):
+    """For ONE planet, step-by-step ownership/garrison simulation over
+    `max_horizon` steps. Mirror of `lib.world_model.simulate_planet_timeline`.
+
+    Per step t in [1, horizon]:
+      1. If owned (owner != -1): ships += production.
+      2. Apply combat with `arrivals_by_step[t, :]` (a per-owner ship
+         total) via `_resolve_arrivals_jax`.
+      3. Record (owner, ships).
+
+    Returns `(owner_per_step, ships_per_step)` both of shape
+    `(max_horizon+1,)`. Index 0 is the initial state.
+
+    Vmap over the P axis to batch across planets.
+    """
+    def body(carry, t):
+        owner, ships = carry
+        # Production: only if owned.
+        ships = jnp.where(
+            owner != jnp.int32(-1),
+            ships + production,
+            ships,
+        )
+        by_owner = arrivals_by_step[t, :]
+        new_owner, new_ships = _resolve_arrivals_jax(owner, ships, by_owner)
+        return (new_owner, new_ships), (new_owner, new_ships)
+
+    steps = jnp.arange(1, max_horizon + 1)
+    _, (owners_stream, ships_stream) = jax.lax.scan(
+        body, (initial_owner, jnp.maximum(initial_ships, jnp.int32(0))), steps
+    )
+    # Prepend initial state for owner_per_step[0] / ships_per_step[0].
+    owners_per_step = jnp.concatenate(
+        [jnp.array([initial_owner], dtype=jnp.int32), owners_stream]
+    )
+    ships_per_step = jnp.concatenate(
+        [jnp.array([jnp.maximum(initial_ships, jnp.int32(0))], dtype=jnp.int32), ships_stream]
+    )
+    return owners_per_step, ships_per_step
+
+
+simulate_planet_timeline_jax_jit = jax.jit(
+    simulate_planet_timeline_jax, static_argnames=("max_horizon",)
+)
+
+
+def simulate_all_timelines(
+    state,                            # GameState
+    arrival_grid: jnp.ndarray,        # (P_max, H+1, A) int32
+    max_horizon: int = DEFAULT_HORIZON,
+):
+    """Per-planet vmap'd version. Returns:
+      - `owners_per_step[P_max, H+1]` int32
+      - `ships_per_step[P_max, H+1]`  int32
+    """
+    # vmap over P. arrival_grid is (P, H+1, A); take per-planet slice.
+    sim_one = lambda owner, ships, prod, arrivals: simulate_planet_timeline_jax(
+        owner, ships, prod, arrivals, max_horizon=max_horizon,
+    )
+    owners_stream, ships_stream = jax.vmap(sim_one)(
+        state.planets_owner,
+        state.planets_ships,
+        state.planets_prod,
+        arrival_grid,
+    )
+    return owners_stream, ships_stream
+
+
+simulate_all_timelines_jit = jax.jit(
+    simulate_all_timelines, static_argnames=("max_horizon",)
+)

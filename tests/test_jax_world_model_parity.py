@@ -198,3 +198,66 @@ def test_build_arrival_grid_parity(seed):
                             f"jax={jax_grid[p, t, a]}"
                         )
     assert diff_count == 0, f"{diff_count} cells differ between scalar/JAX grid"
+
+
+# ---------------------------------------------------------------------------
+# Sub-phase 2c: simulate_planet_timeline parity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", [0, 7, 42])
+def test_simulate_all_timelines_parity(seed):
+    """Per-planet timelines (owner_at, ships_at over [0, horizon])
+    match scalar `simulate_planet_timeline` for every alive planet."""
+    from lib.world_model import (
+        build_arrival_ledger, simulate_planet_timeline, DEFAULT_HORIZON,
+    )
+    from lib.game.jax.jax_world_model import (
+        build_arrival_grid, simulate_all_timelines,
+    )
+    from lib.game.jax import scalar_to_jax
+
+    env = make("orbit_wars", configuration={"seed": seed})
+    env.reset(num_agents=2)
+    _spawn_in_flight_fleets(env, num_agents=2, n_steps=20, rng_seed=seed * 11 + 3)
+
+    fleets_raw = list(env.state[0].observation.fleets)
+    if not fleets_raw:
+        pytest.skip("no in-flight fleets")
+
+    gs = scalar_to_jax(env.state, env.info["seed"])
+    H = DEFAULT_HORIZON
+    arrival_grid = build_arrival_grid(gs, max_horizon=H, num_agents=4)
+    owners_jax, ships_jax = simulate_all_timelines(gs, arrival_grid, max_horizon=H)
+    owners_jax = np.asarray(owners_jax)
+    ships_jax = np.asarray(ships_jax)
+
+    # Scalar reference.
+    fleet_named = [Fleet(*f) for f in fleets_raw]
+    planet_named = [Planet(*p) for p in env.state[0].observation.planets]
+    ledger = build_arrival_ledger(fleet_named, planet_named, H)
+
+    pid_to_slot = {
+        int(pid): slot
+        for slot, pid in enumerate(np.asarray(gs.planets_id))
+        if pid >= 0
+    }
+    diffs = []
+    for p in planet_named:
+        scalar_tl = simulate_planet_timeline(p, ledger[p.id], H)
+        slot = pid_to_slot[int(p.id)]
+        # Sample a handful of steps (0, 50, 100, 250) for comparison.
+        for t in (0, 1, 10, 50, 100, 150, 250):
+            so = scalar_tl["owner_at"][t]
+            ss = int(scalar_tl["ships_at"][t])
+            jo = int(owners_jax[slot, t])
+            js = int(ships_jax[slot, t])
+            if so != jo or ss != js:
+                diffs.append(
+                    f"  pid={p.id} step={t}: scalar=({so}, {ss}) jax=({jo}, {js})"
+                )
+            if len(diffs) >= 5:
+                break
+        if len(diffs) >= 5:
+            break
+    assert not diffs, "timeline divergence:\n" + "\n".join(diffs)
