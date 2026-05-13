@@ -100,6 +100,20 @@ AIRTIME_PENALTY_WEIGHT = 0.0
 ENDGAME_STEP = 470
 ENDGAME_NEUTRAL_BONUS = 1.0
 
+
+# Drop comet chasing entirely (H15 / H18). The top-10 capture-rate
+# fingerprint is 3.4 % vs midpack 13.4 %; emanuellcs's public spoofing
+# agent formalises a break-even filter. Additionally, our [C] audit on
+# 2026-05-13 confirmed that `lib/trajectory.predict_fleet_fate` treats
+# comets as STATIC (the `is_orbiting` gate excludes comets — they
+# follow path indices, not orbital math), so the fleet's aim assumes
+# the comet stays put for the entire flight. By the time the fleet
+# arrives, the comet has moved `eta * cometSpeed ≈ eta * 4` units
+# along its path. Most comet captures silently fail this way.
+# DROP_COMET_TARGETS = 1 filters comet targets out of the proposer
+# entirely. Default 0 = current behaviour.
+DROP_COMET_TARGETS = 0
+
 # Affordability filter (v3.5+): when True, propose a Mission only if the
 # source planet can fund the base capture (target.ships + 1) ALONE. Phase-0
 # idle-trace showed ~45% of all idle classifications are
@@ -210,6 +224,9 @@ def propose_snipe_missions(
     missions: list[Mission] = []
     for src in my_planets:
         for t in targets:
+            if DROP_COMET_TARGETS and t.id in world.comet_ids:
+                # H15/H18 — drop comet targets entirely (see flag docstring).
+                continue
             d = math.hypot(t.x - src.x, t.y - src.y)
             target_min = max(1, int(t.ships) + 1)
             if aggressive and src.ships > AGGRESSIVE_MIN_GARRISON:

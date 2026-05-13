@@ -74,6 +74,48 @@ def test_neutral_target_gets_bonus_over_identical_enemy_target():
     assert by_target[1].score == NEUTRAL_BONUS * by_target[2].score
 
 
+def test_drop_comet_targets_filters_comets_out():
+    """When DROP_COMET_TARGETS=1 the proposer skips comet targets
+    entirely; non-comet neutrals still propose. Default (0) is unchanged."""
+    import lib.missions.snipe as snipe
+    src = _planet(0, owner=0, x=10.0, y=50.0, ships=100)
+    comet = _planet(1, owner=-1, x=70.0, y=50.0, ships=5, production=1)
+    neutral = _planet(2, owner=-1, x=70.0, y=10.0, ships=5, production=1)
+    obs = {
+        "player": 0,
+        "planets": [
+            (src.id, src.owner, src.x, src.y, src.radius, src.ships, src.production),
+            (comet.id, comet.owner, comet.x, comet.y, comet.radius, comet.ships, comet.production),
+            (neutral.id, neutral.owner, neutral.x, neutral.y, neutral.radius, neutral.ships, neutral.production),
+        ],
+        "fleets": [],
+        "angular_velocity": 0.0,
+        "comet_planet_ids": [1],
+        "step": 10,
+        "comets": [{
+            "planet_ids": [1],
+            "paths": [[[70.0, 50.0]] * 80],
+            "path_index": 0,
+        }],
+    }
+    world = World.from_obs(obs)
+    model = WorldModel.from_world(world)
+    # Default: both comet (id=1) and neutral (id=2) propose.
+    missions_default = propose_snipe_missions(world, model)
+    target_ids = {m.target_id for m in missions_default}
+    assert 1 in target_ids and 2 in target_ids
+    # Enable drop: comet (id=1) is filtered out, neutral (id=2) survives.
+    saved = snipe.DROP_COMET_TARGETS
+    snipe.DROP_COMET_TARGETS = 1
+    try:
+        missions_drop = propose_snipe_missions(world, model)
+        target_ids_drop = {m.target_id for m in missions_drop}
+        assert 1 not in target_ids_drop
+        assert 2 in target_ids_drop
+    finally:
+        snipe.DROP_COMET_TARGETS = saved
+
+
 def test_comet_target_gets_comet_bonus_not_neutral_bonus():
     """Comets and non-comet neutrals both get a bonus, but the comet
     bonus is its own constant (calibrated separately to reflect
