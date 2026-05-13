@@ -286,11 +286,22 @@ I-M = data-driven; K = realism check already cleared.
   Source: TID 697397 Day-2 finding. Cross-check with
   `scripts/lookahead_probe.py` on spawn boundary turns
   (50/150/250/350/450).
-- **H19 [D] (½ day):** **1.1× fleet-speed over-commitment.**
-  Post-WorldModel scale step in `lib/mechanism.py:arrival_size`:
-  bump non-reinforce intents to
-  `max(ships_needed + margin, ceil(1.1 · ships_needed))`. Pair-eval
-  with H12 source-emptying — they're in tension. Source: TID 697397.
+- **H19 [D] (½ day, FALSIFIED 2026-05-13):** **1.1× fleet-speed
+  over-commitment.** Implemented as `FLEET_OVERCOMMIT` flag in
+  `lib/mechanism.arrival_size` (applies to enemy + neutral intents,
+  skips reinforce, clamps to src.ships). Tested 3 variants on top of
+  PV (PV_GAMMA=0.99), 8 seeds × both seats vs `v7_pv` (1.00×):
+  1.00× = 50% (identity), 1.05× = 43.8%, 1.10× = 37.5%. Monotonic
+  regression with the multiplier. Same architectural lesson as H17:
+  v7's K=10 drop-one rollout already sizes fleets to optimum;
+  forcing +X% ship inflation pre-rollout drains source garrisons
+  without producing the lift Gemini's heuristic-only Day-2 setup
+  observed. Audits: `audit/tournaments/ab-20260513T20{05,10}*.json`.
+  Code retained (flag defaults to 1.0 = identity) for future use on
+  simpler agents. **Conjecture:** mechanisms that REWEIGHT signals
+  the rollout already evaluates regress on v7; mechanisms that ADD
+  new signal (e.g. F/pre-reinforce, E/kingmaker) or CONSTRAIN the
+  candidate set (e.g. C/drop-comets) are more promising.
 - **H20 [E] (½ day):** **4P kingmaker multipliers.** Extend
   `lib/missions/snipe.py:_leader_pid` to flag leader (×1.5) and
   non-leader (×0.8) targets in 4P. FFA panel gate via
