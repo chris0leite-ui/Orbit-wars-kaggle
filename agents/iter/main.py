@@ -21,7 +21,8 @@ from __future__ import annotations
 # ITER KNOBS — edit these for a knob sweep, one line per variant.
 # ============================================================================
 K = 10                          # lookahead horizon (8 / 10 / 12 / 15)
-WALLCLOCK_MS = 600.0            # per-turn budget (ms); lowered for adaptive K safety vs Kaggle's 1000 ms cap
+WALLCLOCK_MS = 700.0            # per-turn budget (ms); matches iter_v1. Worst-case wallclock =
+                                # WALLCLOCK_MS + K_CAP×20ms = 700+280 = 980 ms, safely under Kaggle's 1000.
 ENUMERATOR_MODE = "drop_one"    # see lib.v7_search proposers
 OPP_TIERS = (1,)                # opp-model tier(s); >1 entry => MAXIMIN
 PV_GAMMA = 0.99                 # 1.0 = v7_0_drop_one; 0.99 = v7_pv equivalent
@@ -32,10 +33,9 @@ TERRITORY_WEIGHT = 0.01         # production×hold sums to ~5k-10k mid-game; 0.0
 K_4P = 8                        # 4P-branch lookahead (choose_4p default); kept separate from K (2P)
 
 # --- Adaptive K (Option A — 2026-05-15) -------------------------------------
-K_CAP = 20                      # ceiling on effective K. We can afford a larger ceiling because
-                                # _max_inflight_eta is RELEVANCE-FILTERED — only fleets targeting
-                                # planets we care about contribute to K_eff. Irrelevant fleets to
-                                # obscure corners don't inflate K, so wallclock stays sub-1000 ms.
+K_CAP = 14                      # ceiling on effective K. Set by wallclock math: WALLCLOCK_MS=700 +
+                                # K_CAP×20ms must stay under Kaggle's 1000 ms hard cap. K_CAP=14 ⇒
+                                # worst-case 980 ms. Two-phase scoring would unlock K_CAP=20+ — parked.
 K_BUFFER = 2                    # extra steps past max in-flight ETA, for post-arrival evaluation
 RELEVANCE_PROD_FRACTION = 0.5   # treat planets with production >= max_production × this as "high-value"
                                 # and count fleets targeting them in K_eff. 0.5 = top half by prod.
