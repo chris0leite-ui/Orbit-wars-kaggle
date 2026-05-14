@@ -25,8 +25,8 @@ WALLCLOCK_MS = 700.0            # per-turn budget (ms)
 ENUMERATOR_MODE = "drop_one"    # see lib.v7_search proposers
 OPP_TIERS = (1,)                # opp-model tier(s); >1 entry => MAXIMIN
 PV_GAMMA = 0.99                 # 1.0 = v7_0_drop_one; 0.99 = v7_pv equivalent
-VALUE_FN = "defensibility"      # "default" (delta_us_minus_them) | "composite" | "defensibility" | "composite_plus_defensibility"
-DEFENSIBILITY_ALPHA = 1.0       # coefficient for defensibility penalty (sweep: 0.5 / 1.0 / 2.0)
+VALUE_FN = "composite_plus_defensibility"   # "default" | "composite" | "defensibility" | "composite_plus_defensibility"
+DEFENSIBILITY_ALPHA = 0.2       # SMALL coefficient — V2 α=1.0 over-penalised; V3 uses defens as tiebreaker only
 # ============================================================================
 
 # Dev-mode: override lib.scoring.PV_GAMMA BEFORE v7_search imports propagate
