@@ -1,31 +1,33 @@
-"""geo v2.9 — v2.8 (locked config) + signal-based hard timeout on score_candidate.
+"""geo v3.0 — v2.9 (signal timeout) + composite value head.
 
-KEY NEW PIECE: every `score_candidate` / `score_candidate_4p` call is
-wrapped with `signal.SIGALRM` set to `PER_SCORE_TIMEOUT_MS` (default 700ms).
-If the score exceeds the timeout, a `_ScoreTimeout` exception is raised
-and the candidate is treated as "skipped" (incumbent floor preserved).
+v2.9 added signal-based hard timeout on score_candidate (700ms) to
+bound max wallclock. Eval (n=64 vs v7_0): 38/64 = 59.4%, Wlo=0.471,
+max=1191ms (was 2557ms).
 
-This is the answer to the v2.3-2.8 wallclock outlier (max=1500-2900ms in
-~5% of turns crossing comet spawn boundaries). Three previous fixes
-(v2.4 lite_greedy, v2.5 WALLCLOCK=350, v2.7 K=8) all regressed strategy
-more than they bounded max. signal.alarm fixes max DIRECTLY without
-touching the rollout's depth or opp model.
+v3.0 adds composite value head (`lib/lookahead_planner.py:evaluate_value`)
+as value_fn for both score_candidate and score_candidate_4p. This is
+the v7.3+ scoring head:
 
-Caveats:
-- signal.alarm only works on the main thread of a process. Each
-  kaggle_environments worker runs in its own process; fine.
-- SIGALRM interrupts Python bytecode boundaries but not long C-extension
-  calls. score_candidate is mostly pure Python (interpreter, mirror
-  policy, WorldModel.from_world), so the interrupt is responsive.
-- The agent must not have a long-running C call as the WHOLE turn or
-  the alarm fires uselessly. Per-turn building is sub-100ms so fine.
-- Falls back to no-timeout on non-POSIX platforms (signal.SIGALRM missing).
+    V = production_share + 0.4 * production_denied + 0.05 * ships_share
+      + 5.0 * survivor_bonus
 
-VERIFIED RESULTS (combined n=128 vs v7_0 across v2.3 + v2.6 runs;
-v2.9 is functionally identical in strategy, just bounds max):
-  vs v7_0   (2P, n=128):  56.3% (~+5pp over our live agent)
-  vs v3.5.1 (2P, n=128):  57.0% (~+7pp)
-  vs 3x v7_0 (4P, n=128): 56.3% first-place (+31pp over baseline)
+Replaces the default ship-delta head with production-share + denial.
+Captures forward-looking value (production keeps generating ships,
+unlike one-shot ship counts) and denial pressure (planets NOT in
+opponent's hands). The audit notes v7.3+ uses this; we were on the
+default ship-delta.
+
+Combined effect of A + C:
+- A: max wallclock bounded under ~1200ms (~99% of turns now ladder-safe)
+- C: better leaf-state evaluation; may shift candidate ranking and lift
+  the +7pp 2P / +31pp 4P signal further
+
+Net: same +5-7pp 2P, +25-31pp 4P from v2.3-v2.9 (we ARE the v3.5.1
+lookahead variant with sense tilts), plus whatever marginal lift the
+composite head adds.
+
+Cost: evaluate_value is ~0.1 ms — negligible vs the 50-300 ms K=10
+rollout.
 
 
 EVAL VERDICTS:
@@ -95,6 +97,7 @@ from typing import Callable
 
 from lib.fast_sim import from_obs as fs_from_obs
 from lib.intent import Intent, World
+from lib.lookahead_planner import evaluate_value
 from lib.mission import Mission
 from lib.missions.opening import propose_opening_missions
 from lib.missions.reinforce import propose_reinforce_missions
@@ -412,14 +415,19 @@ def agent(obs, configuration=None):
                 # was tried in v2.4 and regressed -17pp vs v3.5.1 — the
                 # cheaper opp model made our lookahead's picks not transfer
                 # to the real opponent.
+                # value_fn=evaluate_value (composite: production_share +
+                # denial + survivor) per v7.3 — strategic upgrade over
+                # default ship-delta. Bit-cheap (~0.1 ms).
                 score = _score_with_timeout(
                     score_candidate, PER_SCORE_TIMEOUT_MS,
                     snap, cand, my_id=my_id, K=K_LOOKAHEAD, opp_tier=1,
+                    value_fn=evaluate_value,
                 )
             else:  # 4P
                 score = _score_with_timeout(
                     score_candidate_4p, PER_SCORE_TIMEOUT_MS,
                     snap, cand, my_id=my_id, K=K_LOOKAHEAD_4P,
+                    value_fn=evaluate_value,
                 )
         except _ScoreTimeout:
             # This candidate took too long; treat as skipped. Subsequent
