@@ -77,6 +77,13 @@ _KAGGLE_BUILTINS = {"random", "starter"}
 # Smoke panel: two cheap floors for "dead-on-arrival" triage.
 SMOKE_OPPONENTS = ["random", "nearest"]
 DEFAULT_BASELINE = "v7_0"
+# Pre-submit calibration panel: 3 architecturally distinct opponents
+# covering the live ladder's distribution (drop-one chooser / receding-
+# horizon planner / aggressive snipe). Closes the
+# `local-overpredict-2x` friction: v3.5.1 (5/12) and geo v3.1 (5/14)
+# both passed single-opponent A/Bs vs v7_0 but regressed on the ladder
+# because the panel was a monoculture. Use via `fast.py eval --vs-panel`.
+DEFAULT_PANEL = ["v7_0", "v4_planner", "v3.5.1"]
 
 
 # ---------------------------------------------------------------------------
@@ -394,37 +401,39 @@ def cmd_smoke(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def cmd_eval(args: argparse.Namespace) -> int:
-    focal_name, focal_path = resolve_agent_spec(args.agent)
-    opp_name,   opp_path   = resolve_agent_spec(args.vs)
-    gate = float(args.gate)
-    print(f"== eval {focal_name} vs {opp_name}  gate Wlo≥{gate:.2f} ==")
+def _eval_vs_one(focal_path: str, focal_name: str,
+                 opp_path: str, opp_name: str,
+                 max_seeds: int, gate: float, workers: int
+                 ) -> tuple[str, float, float, int, int, list[float], float]:
+    """Run the adaptive Wilson-gated A/B vs a single opponent.
 
-    # Adaptive tiers: 16 → 32 → 64 (or whatever max_seeds caps to).
-    tiers = []
+    Returns: (verdict, wlo, whi, wins, n, focal_turn_ms, total_elapsed_s).
+    """
+    tiers: list[int] = []
     n = 16
-    while n <= args.max_seeds:
+    while n <= max_seeds:
         tiers.append(n)
-        if n >= args.max_seeds:
+        if n >= max_seeds:
             break
-        n = min(args.max_seeds, n * 2)
-    if tiers and tiers[-1] < args.max_seeds:
-        tiers.append(args.max_seeds)
+        n = min(max_seeds, n * 2)
+    if tiers and tiers[-1] < max_seeds:
+        tiers.append(max_seeds)
     if not tiers:
-        tiers = [args.max_seeds]
+        tiers = [max_seeds]
 
     cumulative_wins = 0
     cumulative_n = 0
     cumulative_times: list[float] = []
     total_elapsed = 0.0
     last_seed_idx = 0
+    verdict = "FAIL"
 
     for tier_n in tiers:
         new_seeds = list(range(last_seed_idx, tier_n))
         if not new_seeds:
             continue
         stat = play_panel(focal_path, focal_name, opp_path, opp_name,
-                          new_seeds, args.workers)
+                          new_seeds, workers)
         cumulative_wins += stat.focal_wins
         cumulative_n += stat.n
         cumulative_times.extend(stat.focal_turn_ms)
@@ -437,24 +446,99 @@ def cmd_eval(args: argparse.Namespace) -> int:
               f"({100*wr:>5.1f}%)  Wlo={lo:.3f}  Whi={hi:.3f}  "
               f"elapsed={stat.elapsed_s:.1f}s", end="  ")
         if lo >= gate:
+            verdict = "PASS"
             print(f"-> STOP  verdict=PASS  (Wlo≥{gate})")
             break
         if hi < gate:
+            verdict = "FAIL"
             print(f"-> STOP  verdict=FAIL  (Whi<{gate})")
             break
-        if tier_n >= args.max_seeds:
+        if tier_n >= max_seeds:
             verdict = "INCONCLUSIVE" if hi >= gate else "FAIL"
             print(f"-> STOP  verdict={verdict}  (max seeds reached)")
             break
         print("-> CONTINUE  (CI brackets gate)")
 
-    p50 = p_quantile(cumulative_times, 0.50)
-    p95 = p_quantile(cumulative_times, 0.95)
-    pmax = max(cumulative_times) if cumulative_times else 0.0
+    lo, hi = wilson_ci(cumulative_wins, cumulative_n)
+    return (verdict, lo, hi, cumulative_wins, cumulative_n,
+            cumulative_times, total_elapsed)
+
+
+def _parse_panel_arg(s: str | None) -> list[str]:
+    """Parse a --vs-panel argument string into a list of opponent specs.
+
+    Accepts 'default' (use DEFAULT_PANEL) or comma-separated names like
+    'v7_0,v4_planner,v3.5.1'. Whitespace around commas is tolerated.
+    """
+    if not s or s == "default":
+        return list(DEFAULT_PANEL)
+    return [tok.strip() for tok in s.split(",") if tok.strip()]
+
+
+def cmd_eval(args: argparse.Namespace) -> int:
+    focal_name, focal_path = resolve_agent_spec(args.agent)
+    gate = float(args.gate)
+
+    panel: list[str]
+    if args.vs_panel is not None:
+        panel = _parse_panel_arg(args.vs_panel)
+        if args.vs != DEFAULT_BASELINE:
+            print(f"WARNING: --vs {args.vs!r} ignored when --vs-panel is set")
+    else:
+        panel = [args.vs]
+
+    if len(panel) > 1:
+        print(f"== panel-eval {focal_name} vs [{', '.join(panel)}]  "
+              f"gate Wlo≥{gate:.2f} per opponent ==")
+        print("   (3-opponent calibration panel; closes local-overpredict-2x friction)")
+
+    per_opponent_results: list[tuple[str, str, float, float, int, int]] = []
+    overall_times: list[float] = []
+    overall_elapsed = 0.0
+
+    for opp_spec in panel:
+        opp_name, opp_path = resolve_agent_spec(opp_spec)
+        if opp_name == focal_name:
+            print(f"-- skipping {opp_name}: same agent as focal --")
+            continue
+        if len(panel) > 1:
+            print(f"\n-- vs {opp_name} --")
+        else:
+            print(f"== eval {focal_name} vs {opp_name}  gate Wlo≥{gate:.2f} ==")
+        verdict, lo, hi, wins, n, times, elapsed = _eval_vs_one(
+            focal_path, focal_name, opp_path, opp_name,
+            args.max_seeds, gate, args.workers,
+        )
+        per_opponent_results.append((opp_name, verdict, lo, hi, wins, n))
+        overall_times.extend(times)
+        overall_elapsed += elapsed
+
+    p50 = p_quantile(overall_times, 0.50)
+    p95 = p_quantile(overall_times, 0.95)
+    pmax = max(overall_times) if overall_times else 0.0
     print(f"\n   focal turn-ms  p50={p50:.0f}  p95={p95:.0f}  max={pmax:.0f}"
-          f"   total elapsed {total_elapsed:.1f}s")
-    lo, _ = wilson_ci(cumulative_wins, cumulative_n)
-    return 0 if lo >= gate else 1
+          f"   total elapsed {overall_elapsed:.1f}s")
+
+    if len(per_opponent_results) > 1:
+        print("\n   per-opponent summary:")
+        for opp_name, verdict, lo, hi, wins, n in per_opponent_results:
+            wr = (100 * wins / n) if n else 0.0
+            print(f"     {opp_name:>14s}  {wins:>3d}/{n:<3d} ({wr:>5.1f}%)  "
+                  f"Wlo={lo:.3f}  Whi={hi:.3f}  -> {verdict}")
+        # Panel verdict: PASS iff every opponent cleared Wlo≥gate.
+        # Catches non-transitive A>B>C>A loops (H22 rationale).
+        all_pass = all(v == "PASS" for _, v, _, _, _, _ in per_opponent_results)
+        any_fail = any(v == "FAIL" for _, v, _, _, _, _ in per_opponent_results)
+        worst_lo = min((lo for _, _, lo, _, _, _ in per_opponent_results),
+                       default=0.0)
+        panel_verdict = "PASS" if all_pass else ("FAIL" if any_fail else "INCONCLUSIVE")
+        print(f"   panel verdict: {panel_verdict}  (worst Wlo={worst_lo:.3f})")
+        return 0 if all_pass else 1
+
+    if not per_opponent_results:
+        print("WARNING: no opponents to evaluate")
+        return 1
+    return 0 if per_opponent_results[0][1] == "PASS" else 1
 
 
 # ---------------------------------------------------------------------------
@@ -566,7 +650,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("eval", help="adaptive Wilson-gated A/B")
     sp.add_argument("agent")
     sp.add_argument("--vs", default=DEFAULT_BASELINE,
-                    help=f"opponent baseline (default: {DEFAULT_BASELINE})")
+                    help=f"single opponent (default: {DEFAULT_BASELINE}); "
+                         f"ignored if --vs-panel is set")
+    sp.add_argument("--vs-panel", default=None,
+                    help=f"multi-opponent calibration panel — required before any "
+                         f"submission. 'default' = {','.join(DEFAULT_PANEL)}, "
+                         f"or pass a comma-separated list of agent names")
     sp.add_argument("--max-seeds", type=int, default=64)
     sp.add_argument("--gate", type=float, default=0.55,
                     help="Wilson 95%% lower-bound gate (default: 0.55)")

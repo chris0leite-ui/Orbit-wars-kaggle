@@ -29,6 +29,12 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
    if 5-fold projection ≥ 1 hour, shrink. Kill any kernel that
    pre-processes ≥30 min without fold output. (Code-comps: substitute
    "1-fold" with "1 self-play episode batch ≈100 games"; the 1h cap stays.)
+   **Kaggle GPU kernel two-tier smoke (added 2026-05-14):** for any new
+   GPU kernel compute pattern, MANDATORY tiers before production push —
+   (i) local CPU single-state with JIT compile + memory recorded;
+   (ii) small-scale GPU ≤4 games × ≤50 turns, completes inside 10 min.
+   Skip-the-smoke cost evidence: 90 min T4 quota on a JIT compile that
+   a 5-min CPU run would have flagged.
 3. [TABULAR-ONLY — N/A for Orbit Wars. Code-comp analogue: baseline-opponent-panel beat-rate gate; see guardrails.md G13.] **4-gate leakage filter pre-LB-probe** (G1 OOF clears anchor; G2 blend
    lift; G3 net rare-class flip ratio ≥0.5; G4 direction asymmetry).
 4. **Never give up; saturation is bounded.** After every null, brainstorm
@@ -123,6 +129,30 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
 36. **Session-end second-brain update.** Before wrap-up, add at least
     one entry to `knowledge-base/thoughts/`; log open questions in
     `questions/`; surface persistent flags in `flags/`.
+37. **Consecutive-falsification cap.** When 3+ consecutive variants in
+    the SAME design axis fail the gate, STOP iterating on that axis.
+    Either pivot to a different axis or escalate to PI. "Axis" = any
+    single dimension of the chooser / proposer / value-function stack
+    (e.g. value-function-only, action-space-only, opp-model-only,
+    coefficient-only). The pattern "the next variant will save it" is
+    invariably wrong past N=3; cumulative cost over N=5-7 attempts is
+    one full session. Complements Rule 4 (never-give-up applies to
+    *families*; Rule 37 caps *axes within* a family). Origin: 2026-05-14
+    chooser-axis exhaustion postmortem; PI-ratified.
+38. **Fix-verification reproduces the failure state.** When you fix a
+    friction, the verification step is: (a) reproduce the failing
+    state the friction was originally observed in, (b) apply the fix,
+    (c) confirm the original failure mode is gone. Unit-testing the
+    new code path in isolation (synthetic inputs, `--help` output,
+    AST guards) is NECESSARY but NOT SUFFICIENT — it cannot detect
+    fix-doesn't-apply-to-real-environment. Origin: 2026-05-14
+    audit-pass session — patched `bootstrap.sh`, then watched 16
+    pytest failures with the exact error string the fix targeted, and
+    categorised them as "pre-existing, not regression" instead of
+    running the fixed bootstrap. Same pattern as
+    `agent-introspection-skipped-bootstrap` (2026-05-13). The friction
+    log already had the rule written; it bound nothing because it
+    lived in a notes file, not in CLAUDE.md.
 
 ## Defaults from prior-comp postmortem
 
