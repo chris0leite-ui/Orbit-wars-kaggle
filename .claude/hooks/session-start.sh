@@ -49,10 +49,12 @@ echo
 # --- Step 2: bootstrap (data + creds + deps) ----------------------------
 echo "--- bootstrap.sh ---"
 if [[ -x bootstrap.sh ]]; then
-    # Run bootstrap, capture stdout/stderr, print a tight summary.
     # Filter the kaggle_environments OpenSpiel banner (23+ lines of noise on
-    # every import) so the agent sees the actually-relevant lines.
-    if bash bootstrap.sh 2>&1 | grep -v "open_spiel_env" | tail -15; then
+    # every import). Do NOT pipe through tail — truncation has hidden real
+    # errors (kaggle auth tracebacks, pip install failures) in past sessions.
+    # The filtered bootstrap output is ~12-15 lines normally, ~30 with errors;
+    # both are fine to show in full.
+    if bash bootstrap.sh 2>&1 | grep -v "open_spiel_env"; then
         :
     else
         echo "  WARN: bootstrap.sh exited non-zero. Investigate before"

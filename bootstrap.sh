@@ -80,7 +80,10 @@ if kaggle competitions list -s orbit > "$_cred_tmp" 2>&1; then
     head -3 "$_cred_tmp"
 else
     echo "WARNING: kaggle CLI smoke failed; submit-time will also fail."
-    head -5 "$_cred_tmp"
+    echo "        Full error below — do not truncate; Python tracebacks"
+    echo "        run 6-20 lines and head -5 hid real auth diagnoses in"
+    echo "        prior sessions."
+    cat "$_cred_tmp"
 fi
 rm -f "$_cred_tmp"
 
