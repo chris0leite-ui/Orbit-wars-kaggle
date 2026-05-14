@@ -282,6 +282,114 @@ def _enumerate_add_one(
     return cands
 
 
+def _enumerate_split_source(
+    world: World, model: WorldModel,
+    incumbent_intents: list[Intent], incumbent_action: list[list],
+    obs: Any,
+    *,
+    min_leftover_ships: int = 5,
+) -> list[list[list]]:
+    """Multi-launch from one source — emits incumbent + extra launch from
+    each source that has leftover garrison after its incumbent launch.
+
+    Different from `_enumerate_add_one`: that one extends from IDLE
+    sources (planets with no incumbent launch). This one extends from
+    ACTIVE sources (planets with an incumbent launch that didn't drain
+    them). The env supports the same `src_id` appearing multiple times
+    in an action — `process_moves` in the interpreter decrements the
+    source's garrison per launch, so two launches from one source share
+    a budget.
+
+    Motivation: the loss-mode diagnostic
+    (`audit/2026-05-13-v7-0-loss-modes.md`) showed top-10 has mean
+    garrison-at-launch ~11, midpack ~22. v7_0_drop_one with
+    `aggressive=True` launches 0.7 × ships and leaves 0.3 × ships idle.
+    For a source with 30 ships that's ~9 leftover — enough for a small
+    second launch toward a runner-up target.
+
+    Algorithm per source `src` in the incumbent:
+      1. Compute `leftover = src.ships − incumbent_launch.ships`.
+      2. If `leftover < min_leftover_ships`, skip (not worth a second
+         launch).
+      3. Find this source's TOP runner-up snipe target whose required
+         `ship_count <= leftover`, excluding the incumbent's target.
+      4. Append that intent to the incumbent intents and emit the
+         realised action.
+
+    At most one split variant per source is emitted. Combined with
+    drop-one via `_enumerate_drop_or_split` for argmax over the union.
+    """
+    if not world.planets_by_id or not incumbent_intents:
+        return [list(incumbent_action)]
+    incumbent_by_src = {int(i.src_id): i for i in incumbent_intents}
+
+    # Pre-compute all snipe missions once and bucket by source.
+    snipe_missions = propose_snipe_missions(
+        world, model, aggressive=True,
+    )
+    by_src: dict[int, list[Mission]] = {}
+    for m in snipe_missions:
+        by_src.setdefault(int(m.src_id), []).append(m)
+
+    cands: list[list[list]] = [list(incumbent_action)]
+    seen_keys = {_action_key(incumbent_action)}
+    for src_id, intent in incumbent_by_src.items():
+        src = world.planets_by_id.get(src_id)
+        if src is None:
+            continue
+        leftover = int(src.ships) - int(intent.ships)
+        if leftover < min_leftover_ships:
+            continue
+        # Pick the top-scored runner-up target this source could afford.
+        ranked = sorted(by_src.get(src_id, []), key=lambda m: -m.score)
+        runner_up: Mission | None = None
+        cur_target = int(intent.target_id)
+        for m in ranked:
+            if int(m.target_id) == cur_target:
+                continue
+            if int(m.ships) > leftover:
+                continue
+            runner_up = m
+            break
+        if runner_up is None:
+            continue
+        new_intents = list(incumbent_intents) + [runner_up.to_intent()]
+        new_action = _action_from_intents(new_intents, obs, model)
+        if not new_action:
+            continue
+        k = _action_key(new_action)
+        if k in seen_keys:
+            continue
+        seen_keys.add(k)
+        cands.append(new_action)
+    return cands
+
+
+def _enumerate_drop_or_split(
+    world: World, model: WorldModel,
+    incumbent_intents: list[Intent], incumbent_action: list[list],
+    obs: Any,
+) -> list[list[list]]:
+    """Union of drop-one and split-source. Strictly wider than either."""
+    cands: list[list[list]] = [list(incumbent_action)]
+    seen_keys = {_action_key(incumbent_action)}
+    for cand in _enumerate_drop_one(incumbent_action):
+        k = _action_key(cand)
+        if k in seen_keys:
+            continue
+        seen_keys.add(k)
+        cands.append(cand)
+    for cand in _enumerate_split_source(
+        world, model, incumbent_intents, incumbent_action, obs,
+    ):
+        k = _action_key(cand)
+        if k in seen_keys:
+            continue
+        seen_keys.add(k)
+        cands.append(cand)
+    return cands
+
+
 def _enumerate_drop_or_add_one(
     world: World, model: WorldModel,
     incumbent_intents: list[Intent], incumbent_action: list[list],
@@ -539,6 +647,14 @@ def enumerate_candidates(
         )
     if enumerator_mode == "drop_or_add_one":
         return _enumerate_drop_or_add_one(
+            world, model, incumbent_intents, incumbent_action, obs,
+        )
+    if enumerator_mode == "split_source":
+        return _enumerate_split_source(
+            world, model, incumbent_intents, incumbent_action, obs,
+        )
+    if enumerator_mode == "drop_or_split":
+        return _enumerate_drop_or_split(
             world, model, incumbent_intents, incumbent_action, obs,
         )
     if enumerator_mode == "target_swap":
