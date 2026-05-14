@@ -497,8 +497,13 @@ def agent(obs, configuration=None):
     except Exception:
         pass
     _add_tilt("front_reinforce", _front_reinforce_tilt(sense))
-    _add_tilt("empty_out",       _empty_out_tilt(sense, world))
-    _add_tilt("tap_capture",     _tap_capture_tilt(world, model))
+    # empty_out / tap_capture tilts: BUILT but unwired in v3.2 final.
+    # v3.2c n=32 trajectory (v3.2a 59.4% -> v3.2b 56.2% -> v3.2c 53.1%)
+    # showed combined regression; under-noise individually, real
+    # cumulatively. Helpers retained in source for future revival once
+    # we have a stronger candidate-prioritization scheme.
+    # _add_tilt("empty_out",     _empty_out_tilt(sense, world))
+    # _add_tilt("tap_capture",   _tap_capture_tilt(world, model))
     # voronoi_filter removed in v3.2: weakest signal (settle_plan ledger
     # already covers it). Frees a candidate slot for gang_up/empty_out/tap.
 
