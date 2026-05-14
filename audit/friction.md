@@ -1,5 +1,20 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-14 (claude/simplify-fast-setup-azW8T — geo v2 iteration: 4P edge + 5pp 2P lift)
+
+- `tag: geo-v2-three-failed-wallclock-fixes` — geo v2.3 (K=10 lookahead
+  + sense tilts + archetypes + 4P branch) gives ~+5pp 2P lift over v7_0
+  (n=128) and +25pp 4P first-place lift (n=64). But max=1500-2900ms in
+  5% of turns risks ladder forfeit. Three iterations to "fix" the
+  wallclock all regressed strategy more than they bounded max:
+  v2.4 lite_greedy follow-up (-17pp), v2.5 WALLCLOCK 350 (-20pp),
+  v2.7 K=8 (-20pp). v2.3/v2.6/v2.8 = same code = local optimum.
+  **Promotion candidate**: when a single-knob change costs more than
+  it saves in three orthogonal directions, the config IS the local
+  optimum — stop tuning, submit if positive, find structurally
+  different lever otherwise. Detailed bisect in
+  `knowledge-base/thoughts/2026-05-14-geo-v2-iteration-results.md`.
+
 ## 2026-05-13 (claude/simplify-fast-setup-azW8T — geo v1 bisect: parity ceiling)
 
 - `tag: geo-v1-substrate-correct-heuristics-regress` — built geo agent

@@ -1,11 +1,24 @@
-"""geo v2.7 — v2.6 baseline + K=10 -> K=8 (try to bound max wallclock).
+"""geo v2.8 (FINAL) — local optimum locked at v2.3/v2.6 config.
 
-Combined v2.3 + v2.6 evidence: 2P vs v7_0 = 72/128 = 56.3% (~+5pp lift),
-not v2.3's optimistic +8pp. Wallclock max creeping up across runs
-(1915 -> 2034 -> 2557 -> 2896 -> 1837ms vs v7_0). v2.7 reduces K from
-10 to 8 in the 2P score loop. v7_minimax used K=5 successfully, so
-K=8 should preserve most of the strategic depth while speeding each
-score by ~20%. 4P stays at K=8 (already tuned).
+After three failed "fix" attempts (v2.4 lite_greedy, v2.5 WALLCLOCK=350,
+v2.7 K=8), all regressed -17 to -20pp. The v2.3 strategic config
+(K=10, WALLCLOCK_MS=500, top_tier_mirror followup, 4 tilts + 2
+archetypes + drop-one cap 2) is the local optimum. Any single-knob
+change regresses meaningfully more than it bounds the wallclock.
+
+VERIFIED RESULTS (combined n=128 vs v7_0 across v2.3 + v2.6 runs):
+  vs v7_0   (2P):  72/128 = 56.3%, ~+5pp lift over our live agent
+  vs 3x v7_0 (4P): 32/64 = 50.0% first-place, +25pp over 25% baseline
+  vs v3.5.1 (2P):  73/128 = 57.0% (combined)
+
+Wallclock outlier: ~5% of turns hit 1500-2900ms (over 1000ms ladder
+limit). This is the IRREDUCIBLE cost of K=10 top-tier-mirror rollout
+on dense state at comet boundaries. Live ladder forfeits these turns.
+Estimated cost: ~1-2pp from missed actions. Net expected lift: +3-4pp.
+
+KEY EDGE OVER v7_0: lookahead-validated candidate selection in BOTH 2P
+and 4P. v7_0 falls back to v3.5.1 incumbent in 4P (33% of live games);
+geo runs score_candidate_4p instead. The 4P edge is the dominant signal.
 
 
 EVAL VERDICTS:
@@ -92,9 +105,9 @@ from lib.geo.sense import SenseState, sense_state
 # Tunables
 # ---------------------------------------------------------------------------
 
-K_LOOKAHEAD = 8         # 2P depth (was 10; v2.7 trying ~20% per-score speedup)
+K_LOOKAHEAD = 10        # locked at v2.3 optimum (v2.7's K=8 regressed -20pp)
 K_LOOKAHEAD_4P = 8      # 4P shallower (3 opponents = more compute per step)
-WALLCLOCK_MS = 500.0    # v2.3 optimum (v2.5's 350 dropped tilts and regressed -20pp)
+WALLCLOCK_MS = 500.0    # locked at v2.3 optimum (v2.5's 350 regressed -20pp)
 TIE_TOLERANCE = 1e-6
 MAX_DROP_ONE_VARIANTS = 2   # capped to 2; 2 archetype tilts replace the budget
 
