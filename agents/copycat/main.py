@@ -125,17 +125,19 @@ def _roster_policies() -> dict[str, Callable]:
         """K=10 drop-one chooser (mirrors agents/v7_ablations/v7_0_drop_one).
 
         Its chosen action IS the K=10 argmax over v3.5.1's mission set +
-        drop-one variants. Adding it as a roster member makes copycat's
-        floor at-least-as-good as v7_0_drop_one, with the sigma-pair
-        deviation budget on top.
+        drop-one variants. Used as singleton roster, copycat becomes
+        "v7_0_drop_one + sigma-equivariant deviation budget on top".
+
+        Wallclock 550ms leaves ~300ms for our score_candidate roster
+        comparison + sigma-pair search + safety margin to the 1000ms
+        ladder cap. Tuned against Panel #2 wallclock_ms=350 regression
+        (truncated v7_0 search hurt more than budget savings helped).
         """
         return v7_choose(
             obs, configuration,
             enumerator_mode="drop_one",
             K=10,
-            wallclock_ms=350.0,  # halved from default 700ms; we still need
-                                  # budget left for our own score_candidate
-                                  # roster-comparison and sigma-pair search.
+            wallclock_ms=550.0,
         )
 
     return {
