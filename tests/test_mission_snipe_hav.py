@@ -85,11 +85,10 @@ def test_default_flags_emit_one_mission_per_pair():
 # ---------------------------------------------------------------------------
 
 
-def test_hav_drops_mission_when_expected_hold_is_zero():
-    """A target enemy can reach BEFORE we arrive should be dropped."""
-    snipe_mod.USE_HAV = 1
-    # Our source is far west; target is dead-centre; enemy is RIGHT
-    # next to the target → enemy threat-eta is tiny, our eta is large.
+def test_hav_compresses_value_for_contested_target():
+    """A target where an enemy is right next to it should have a much
+    lower HAV score than the un-HAV (full-horizon) score. The Mission
+    is still proposed (soft floor) — the score is what differs."""
     planets = [
         _planet(0, 0, 5.0, 50.0, ships=100),
         _planet(1, -1, 70.0, 50.0, ships=5),     # neutral target
@@ -97,19 +96,28 @@ def test_hav_drops_mission_when_expected_hold_is_zero():
     ]
     world = _world(planets)
     model = WorldModel.from_world(world)
-    missions = propose_snipe_missions(world, model)
-    # Target's expected_hold will be 0 (enemy is closer than we are)
-    # → tactical tier should drop it. But the enemy planet itself is
-    # also a target → that one might survive. Verify the neutral (id=1)
-    # is dropped.
-    target_ids = {m.target_id for m in missions}
-    assert 1 not in target_ids
 
-
-def test_hav_off_keeps_target_that_hav_would_drop():
-    """Mirror of the above with USE_HAV=0 — the neutral target survives
-    because the proposer uses the full-game horizon."""
     snipe_mod.USE_HAV = 0
+    base_missions = propose_snipe_missions(world, model)
+    base_score = next(m.score for m in base_missions if m.target_id == 1)
+
+    snipe_mod.USE_HAV = 1
+    hav_missions = propose_snipe_missions(world, model)
+    hav_score = next(m.score for m in hav_missions if m.target_id == 1)
+
+    # HAV-capped score must be lower than the full-horizon score.
+    assert hav_score < base_score
+    # And meaningfully so: at HAV_MIN_HOLD=5 vs full horizon, the
+    # capped value is ~5/100 of the asymptote, so score ratio is
+    # well under 0.5.
+    assert hav_score < 0.5 * base_score
+
+
+def test_hav_floor_keeps_mission_alive_when_enemy_could_reach_first():
+    """Soft floor: even when an enemy could realistically beat us,
+    the Mission is STILL proposed (settle_plan can pick it if no
+    better option). Pure binary drop was too aggressive (0.0 % live)."""
+    snipe_mod.USE_HAV = 1
     planets = [
         _planet(0, 0, 5.0, 50.0, ships=100),
         _planet(1, -1, 70.0, 50.0, ships=5),
@@ -119,7 +127,10 @@ def test_hav_off_keeps_target_that_hav_would_drop():
     model = WorldModel.from_world(world)
     missions = propose_snipe_missions(world, model)
     target_ids = {m.target_id for m in missions}
-    assert 1 in target_ids  # default behaviour proposes it
+    # Both the neutral (id=1) and the enemy (id=2) should still be
+    # proposed; HAV just compresses their scores.
+    assert 1 in target_ids
+    assert 2 in target_ids
 
 
 # ---------------------------------------------------------------------------

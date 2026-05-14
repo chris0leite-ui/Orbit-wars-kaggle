@@ -162,6 +162,11 @@ MIN_FOLLOWON_HOLD = 10         # don't propose op-tier if followon is shaky
 FOOTHOLD_DISCOUNT = 0.5        # follow-on value weighted at half-credit
 HOLD_WINDOW = 10               # look this many turns past arrival for counter-attack
 FOLLOWON_RADIUS = 40.0         # max distance from target → followon
+HAV_MIN_HOLD = 5               # floor on HAV expected-hold (turns).
+                               # `time_to_enemy_threat` is conservative
+                               # (any nearby enemy "could" launch);
+                               # the floor prevents over-pruning of
+                               # contested-but-still-valuable targets.
 
 
 def _max_enemy_arrival_within(
@@ -398,11 +403,15 @@ def propose_snipe_missions(
             else:
                 if USE_HAV:
                     # HAV-1: cap PV horizon by predicted hold window
-                    # (time-to-enemy-threat at target). When eh = 0 the
-                    # value falls to zero → drop this Mission entirely.
+                    # (time-to-enemy-threat at target). Soft floor at
+                    # HAV_MIN_HOLD turns rather than dropping the
+                    # Mission — `time_to_enemy_threat` is over-pessimistic
+                    # for centrally-located targets (it assumes enemy
+                    # will dedicate full garrison to this target which
+                    # isn't realistic). Floor lets settle_plan pick a
+                    # contested target if it's still the best option.
                     eh = expected_hold(t.id, eta, world, model, EPISODE_STEPS)
-                    if eh <= 0:
-                        continue
+                    eh = max(HAV_MIN_HOLD, eh)
                     time_to_hold = max(1.0, pv_horizon(0, 0, PV_GAMMA, eh))
                 else:
                     time_to_hold = max(
