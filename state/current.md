@@ -158,6 +158,12 @@ mechanism_families_explored:
   - composite-capture-value-head              # lib/value_heads.py composite_capture_value;
                                               # +9pp local in v7_4 vs v7_2 (32-game); but
                                               # v7_4 vs v7_0 = 40.6% FAIL. Reusable head.
+  - v7-iteration-scaffold                     # agents/iter/ fork of v7_pv with knob surface
+                                              # (K, WALLCLOCK_MS, ENUMERATOR_MODE, OPP_TIERS,
+                                              # PV_GAMMA, VALUE_FN) + pre/post hooks. Day-zero
+                                              # functionally equivalent to v7_pv. Loss-mode
+                                              # helper scripts/iter_losses.sh chains
+                                              # live_episode_summary + classify_losses.
 
 gate_status: cleared                        # full pytest passes;
                                             # geo's 17 tests + parallel branches' tests all green
