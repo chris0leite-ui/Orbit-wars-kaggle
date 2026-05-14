@@ -119,9 +119,29 @@ _OPP_TIER = _env_int("COPYCAT_OPP_TIER", 1)
 def _roster_policies() -> dict[str, Callable]:
     """Resolve roster members lazily so unit tests can stub them."""
     from lib.opp_model import mirror_self_policy, top_tier_mirror_policy
+    from lib.v7_search import choose as v7_choose
+
+    def v7_0_drop_one(obs, configuration=None):
+        """K=10 drop-one chooser (mirrors agents/v7_ablations/v7_0_drop_one).
+
+        Its chosen action IS the K=10 argmax over v3.5.1's mission set +
+        drop-one variants. Adding it as a roster member makes copycat's
+        floor at-least-as-good as v7_0_drop_one, with the sigma-pair
+        deviation budget on top.
+        """
+        return v7_choose(
+            obs, configuration,
+            enumerator_mode="drop_one",
+            K=10,
+            wallclock_ms=350.0,  # halved from default 700ms; we still need
+                                  # budget left for our own score_candidate
+                                  # roster-comparison and sigma-pair search.
+        )
+
     return {
-        "v3_5_1":     top_tier_mirror_policy,
-        "v7_0_base":  mirror_self_policy,
+        "v3_5_1":         top_tier_mirror_policy,
+        "v7_0_base":      mirror_self_policy,
+        "v7_0_drop_one":  v7_0_drop_one,
     }
 
 
@@ -342,7 +362,14 @@ def agent(obs, configuration=None):
         if fn is None:
             continue
         try:
-            action = fn(obs) or []
+            # Pass configuration when the policy accepts it (v7_0_drop_one
+            # uses it for seed -> fast_sim). top_tier_mirror_policy and
+            # mirror_self_policy take only obs.
+            inner_argcount = (
+                fn.__code__.co_argcount if hasattr(fn, "__code__") else 1
+            )
+            args = (obs, configuration)[:inner_argcount]
+            action = fn(*args) or []
         except Exception:
             continue
         roster_actions.append((member, action))
