@@ -23,6 +23,9 @@ replays/
 audit/replays/
 audit/manifold/
 
+# In-progress local panel logs (final summaries are committed separately)
+audit/**/panel.log
+
 # Live ladder episode replays pulled via `kaggle competitions replay`
 # (~4MB per game; *.csv index files are already covered by the rule below).
 # Allow the small `summary.json` aggregated by scripts/live_episode_summary.py
