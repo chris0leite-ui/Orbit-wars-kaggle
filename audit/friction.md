@@ -1,31 +1,29 @@
 # audit/friction.md — current friction summary
 
-## 2026-05-14 (claude/simplify-fast-setup-azW8T — geo v3.1 live regression + lessons)
+## 2026-05-14 (claude/simplify-fast-setup-azW8T — geo iteration + ladder regression)
 
 - `tag: local-vs-v7_0-only-misses-ladder-distribution` — geo v3.1 was
-  tested locally vs v7_0 only (n=192: 57.3% / Wlo 0.50; +7pp 2P)
-  and vs 3x v7_0 in 4P (n=128: 56.3% first-place / +31pp over baseline).
-  Live ladder result: μ=984.0 σ-discounted floor (-80μ from v7_pv's 1064.4).
-  Same pattern as v3.5.1 on 2026-05-12 (-150μ vs local +56.6% Wlo). The
-  v7_0 self-panel doesn't reflect the live ladder distribution
-  (v3.5.1, v7_pv, v7_0_drop_one_rebuilt, top-10 archetypes).
+  tested locally vs v7_0 only (n=192: 57.3% / Wlo 0.50; +7pp 2P) and
+  vs 3x v7_0 in 4P (n=128: 56.3% first-place / +31pp over baseline).
+  Live ladder result: μ=984.0 σ-discounted floor (-80μ from v7_pv's
+  1064.4). Same pattern as v3.5.1 on 2026-05-12 (-150μ vs local
+  +56.6% Wlo). The v7_0 self-panel doesn't reflect the live ladder
+  distribution (v3.5.1, v7_pv, v7_0_drop_one_rebuilt, top-10 archetypes).
   **Promotion candidate**: future local A/B must span ≥3 opponent
   classes before any submission. Add `--vs-panel` flag to `fast.py
-  eval` that runs a 3-opponent panel by default. Cost: 3× current
-  eval wallclock but eliminates the local-overpredict bias.
+  eval` that runs a 3-opponent panel by default.
 
 - `tag: geo-v2-iteration-trajectory-downward-not-individually-regressing` —
   v3.2 batch (gang_up + empty_out + tap_capture): each addition was
   within the 5pp drop threshold individually (v3.1 57.3% → v3.2a 59.4%
   → v3.2b 56.2% → v3.2c 53.1%), but cumulative -4pp from v3.1 baseline.
   Adding more candidates of similar score makes the K=10 lookahead's
-  ranking noisier, even when each tilt is "fine" in isolation.
+  ranking noisier even when each tilt is "fine" in isolation.
   **Fix**: test each batch component vs the FINAL baseline (not
-  step-by-step) before stacking. Or: cap candidate count so adding
-  one drops another (rather than appending).
+  step-by-step) before stacking. Or: cap candidate count.
 
 - `tag: jax-vmap-already-wired` — I claimed "B: JAX vmap deferred,
-  4-6 hour integration" earlier in the session, citing missing
+  4-6 hour integration" earlier in the session citing missing
   obs→GameState converter. WRONG. `agents/jax_v7_0/main.py` and
   `lib/game/jax/conversions.py:scalar_to_jax` already implement the
   path. Measured: JIT compile 1.8s (one-time, pre-warmable at import),
@@ -35,59 +33,123 @@
   flag on jax_v7_0 is a parity concern, not an integration block.
 
 - `tag: geo-v2-three-failed-wallclock-fixes` — geo v2.3 (K=10 lookahead
-  + sense tilts + archetypes + 4P branch) gives ~+5pp 2P lift over v7_0
-  (n=128) and +25pp 4P first-place lift (n=64). But max=1500-2900ms in
-  5% of turns risks ladder forfeit. Three iterations to "fix" the
-  wallclock all regressed strategy more than they bounded max:
-  v2.4 lite_greedy follow-up (-17pp), v2.5 WALLCLOCK 350 (-20pp),
-  v2.7 K=8 (-20pp). v2.3/v2.6/v2.8 = same code = local optimum.
+  + sense tilts + archetypes + 4P branch) gives ~+5-7pp 2P lift over
+  v7_0 (n=192) and +31pp 4P first-place lift (n=128). But max=1500-
+  2900ms in 5% of turns risks ladder forfeit. Three iterations to
+  "fix" the wallclock all regressed strategy more than they bounded
+  max: v2.4 lite_greedy follow-up (-17pp), v2.5 WALLCLOCK 350 (-20pp),
+  v2.7 K=8 (-20pp). v2.3/v2.6/v2.8/v3.1 = same code = local optimum.
   **Promotion candidate**: when a single-knob change costs more than
   it saves in three orthogonal directions, the config IS the local
   optimum — stop tuning, submit if positive, find structurally
-  different lever otherwise. Detailed bisect in
-  `knowledge-base/thoughts/2026-05-14-geo-v2-iteration-results.md`.
+  different lever otherwise.
 
-## 2026-05-13 (claude/simplify-fast-setup-azW8T — geo v1 bisect: parity ceiling)
+- `tag: signal-alarm-bounds-wallclock-outliers` — geo v2.9 added
+  SIGALRM-based per-score timeout (700ms cap) to score_candidate.
+  Bounded max wallclock from 1500-2900ms to 1100-1200ms with NO
+  strategic regression (v2.9 vs v7_0 n=64: 59.4%, ~+9pp vs baseline).
+  POSIX-only; falls back gracefully on Windows. This pattern is
+  reusable for any future agent that has K=10+ lookahead outliers.
 
-- `tag: geo-v1-substrate-correct-heuristics-regress` — built geo agent
-  (lib/geo/{sense,posture,allocator}.py + agents/geo/main.py) per the
-  approved plan. ALL "obvious" value-add heuristics regressed vs v3.5.1
-  bundle. Final state at parity (48.4% / Wilson [0.366, 0.604] at n=64);
-  no beat. Detailed bisect table and lessons in
-  `knowledge-base/thoughts/2026-05-13-geo-v1-bisect-lessons.md`.
-  **Key takeaways:**
-  (1) Replacing settle_plan with global score-sort multi-launch
-      regresses -31pp because it concentrates force at strong sources
-      instead of spreading.
-  (2) Cross-class score multipliers >= 2× regress -37pp because they
-      crush settle_plan's per-source best-mission selection.
-  (3) Non-aggressive snipe sizing in any posture regresses -22pp
-      because v3_snipe loses to v3.5.1 by 56.6%.
-  **Promotion candidate**: before bolting "obviously helpful" heuristics
-  onto a tuned baseline, test each one in ISOLATION against the baseline.
-  bisect-2 (v3.5.1 source-pipeline) confirmed the substrate is correct at
-  46.9%; without that anchor I'd have spent more cycles chasing a
-  source-vs-bundle drift hypothesis.
+## 2026-05-13 (claude/research-competition-analysis-2R8I3 — Day-1 audits + 3-anchor gate)
 
-## 2026-05-13 (claude/simplify-fast-setup-azW8T — fast.py landed)
+- `tag: fresh-sandbox-no-deps-installed` — `kaggle_environments`,
+  `pytest`, and other `requirements.txt` packages were not present
+  on session start. `pip install -r requirements.txt` failed with
+  `Cannot uninstall blinker 1.7.0, RECORD file not found` (blinker
+  was installed by the OS package manager). **Workaround:**
+  `pip install --quiet --ignore-installed <pkg>` succeeds. Cost
+  ~3 min. **Promotion candidate:** add `--ignore-installed` to a
+  hint in `SETUP.md`, or add an `apt remove python3-blinker` step
+  to `bootstrap.sh` before the pip install.
 
-- `tag: fast-py-is-now-canonical-iteration-entry-point` — single-file
-  `fast.py` at repo root replaces the diffuse iteration harnesses with
-  one CLI: `python fast.py {smoke,eval,play,bench,baselines} <agent>`.
-  Adaptive Wilson-gated A/B (16 → 32 → 64 tiers, early-stop on
-  Wlo≥gate or Whi<gate). Plain-function agents anywhere
-  (`def agent(obs, configuration=None)`) — no directory ceremony.
-  **Superseded** for the iteration loop (NOT deleted, will rot):
-  `scripts/run_ablations.py`, `scripts/run_v7_wide_deep_smoke.py`,
-  `scripts/run_v7_wide_deep_ab.py`, `scripts/ab_variants.py`,
-  `scripts/eval_v1.py`, `scripts/strategy_panel.py`. `scripts/tournament.py`
-  and `scripts/ffa_tournament.py` are kept for 4P FFA panels (fast.py
-  is 2P-only in v1). `scripts/bundle_agent.py` is unchanged — fast.py
-  evaluates source-tree or bundled files, but submission still goes
-  through the bundler. Verified: smoke / eval / play / bench all run
-  green against `random`, `nearest`, `v7_0_drop_one`. Deferred v1.5:
-  full-episode play through `lib/fast_sim.py` (skips `env.run` overhead)
-  and a `--jax` vmap-over-games fast path.
+- `tag: data-main-py-missing-on-fresh-clone` — three tests in
+  `tests/test_fixture_smoke.py` fail with `FileNotFoundError:
+  /home/user/Orbit-wars-kaggle/data/main.py` because `bootstrap.sh`
+  hasn't run (needs Kaggle creds, none configured in this sandbox).
+  Affects: `test_reward_stability_across_runs`,
+  `test_loaded_baseline_beats_random_both_sides`,
+  `test_parallel_runner_matches_sequential_for_deterministic_agent`.
+  All other 11 tests in that file (the pure helpers — Wilson CI,
+  p95) pass. **Fix:** these tests should be marked
+  `@pytest.mark.skipif(not (REPO / "data" / "main.py").is_file(), ...)`
+  so they don't appear as regressions on fresh clones. Not blocking
+  this session.
+
+- `tag: bundler-overwrites-tracked-submission` — `bundle_agent.bundle(agent_dir=v7_0_drop_one, out_dir=submissions/)` outputs `submissions/v7_0_drop_one.py` (named by agent_dir.name), then my inline PV bundling helper renamed THAT to `submissions/v7_pv.py`. Side effect: the existing live-reference bundle at `submissions/v7_0_drop_one.py` (a tracked file) was deleted. Caught by the stop-hook. **Recovery:** `git checkout HEAD -- submissions/v7_0_drop_one.py`. **Fix forward:** when bundling for submission, output to a temp filename first (e.g. `submissions/_pending_{name}.py`), then atomic-rename to the final filename only AFTER confirming no name collision with a tracked bundle. Promotion candidate for `bundle_agent.bundle`: add `output_name=` kwarg.
+
+- `tag: bootstrap-data-check-false-positive` — `bootstrap.sh` step 3
+  decides whether to skip the comp-shipped data download with
+  `[[ "$(ls -A data 2>/dev/null | grep -v '^\.gitkeep$' | wc -l)" -gt 0 ]]`.
+  This matches ANY non-`.gitkeep` content. The repo currently ships
+  `data/shot_validator/` (the IL-pipeline spec dir) as tracked content,
+  so on a fresh clone the check is always true and `main.py`,
+  `README.md`, `agents.md` are NEVER downloaded. I had to manually
+  run `kaggle competitions download -c orbit-wars -p data/` and
+  unzip. The user caught this with "have you bootstrapped carefully?"
+  before I'd noticed the gap. Cost: 3 failing tests, ~10 min of
+  scripted runs that would have produced wrong results, and a credibility
+  hit. **Fix:** change the data-presence guard to check for one of
+  the canonical comp-shipped files specifically (`[[ -f data/main.py ]]`
+  is the most load-bearing — every tournament needs it as the
+  random/baseline opponent). **Promotion candidate.**
+
+- `tag: agent-introspection-skipped-bootstrap` — I assessed the
+  task as "Day-1 audits = read-only grep, no bootstrap needed" and
+  ran the cgroup probe + new [G] tests without verifying the rest
+  of the environment was ready. Worked by luck (the probe used
+  `submissions/v7_0_drop_one.py` which is self-contained, the
+  audits used grep on lib/, and the [G] gate tests are pure
+  helpers with no env runs). But the next item — [A] PV target
+  valuation — needed `data/main.py` for the baseline anchor in any
+  full A/B. **Fix for future sessions:** run `bash bootstrap.sh`
+  + `python -m pytest tests/ -q` as the FIRST action of any session
+  that's going to touch test/A-B infrastructure, even if the
+  immediate task looks like read-only. Cost: ~5 min recovery; user
+  trust hit.
+
+- `tag: new-lib-module-silently-broken-bundle` — H16 (PV target
+  valuation) added `lib/scoring.py:pv_horizon` + `PV_GAMMA`, and
+  imported them into `lib/missions/snipe.py` and `reinforce.py`. All
+  unit tests passed including `test_bundle.py`, and the bundler ran
+  cleanly (199 770 B output, agent callable importable). But every
+  game in the 8-seed smoke A/B ended in a `draw at step 2` because
+  `pv_horizon` was undefined at runtime: the bundler's
+  `_INTRA_IMPORT_RE` strips `from lib.scoring import ...` while
+  `lib/scoring.py` was not in `DEFAULT_LIB_ORDER`, so the symbol
+  vanished. `test_bundle.py`'s parity gate uses v1_orbitfix, which
+  doesn't use snipe missions — so the regression was invisible to the
+  test suite. **Fix landed:** added `"scoring"` to `DEFAULT_LIB_ORDER`
+  immediately before `missions/snipe` (commit pending in this
+  session). **Promotion candidates:** (a) the bundle parity gate
+  should cover at least one agent that exercises the full mission
+  proposer pipeline (v3_snipe is a natural choice); (b) the bundler
+  could lint stripped `from lib.X` imports and error if `X` is not in
+  the lib-order list — fail loud at bundle time, not silent at
+  inference. Cost: ~10 min diagnose + 1 wasted 8-seed A/B run.
+
+- `tag: ab_variants-hardcoded-v3_snipe-agent` — `scripts/ab_variants.py`
+  was hardcoded to bundle `agents/v3_snipe`. For H16-H29 we need to
+  A/B inside `agents/v7_ablations/v7_0_drop_one` (the drop-one
+  rollout) because ROI-formula changes are most meaningful where they
+  feed candidate selection into the rollout scorer. Added `--agent
+  PATH` flag (defaults to v3_snipe for back-compat). **Note:** this
+  was a small extension but should have been part of [G]'s scope, not
+  discovered mid-A.
+
+- `tag: no-cgroup-v2-no-systemd-bus` — Day-1 eval-cost probe (K)
+  tried `systemd-run --user --scope -p CPUQuota=60%` for a true
+  0.6-CPU limit (matching Kaggle eval). Failed with "Failed to
+  connect to bus: No medium found" (no systemd in this container).
+  `/sys/fs/cgroup/cgroup.controllers` is also absent (cgroup v2 not
+  exposed). **Workaround:** ran `taskset -c 0 yes >/dev/null` as a
+  background CPU burner sharing core 0 with the probe — empirically
+  forced a ~50 % share (perfect linear: wallclock 64.7 s → 128.9 s).
+  This is conservative vs eval's 0.6 CPU. Adequate for the verdict
+  but not exact. **Note for future cgroup-aware harnessing:** use a
+  Docker container (`docker run --cpus=0.6 --memory=8g`) — Docker IS
+  installed; we just didn't try it because the contention probe was
+  faster to validate.
 
 ## 2026-05-12 EVE (game-ai-lookahead-3ucqH — v9 super-version + v10 + submit attempt)
 
@@ -346,6 +408,69 @@
   Same lesson re-fired with the flat `NEUTRAL_BONUS=1.5 /
   COMET_BONUS=1.3` fix (also 28.1% regression). Promotion candidate:
   "if the finding is local, the fix must be local."
+
+## 2026-05-14 (claude/read-handover-iLWTq — chooser-axis exhaustion)
+
+- `tag: chooser-axis-exhausted-after-7-falsifications` — 32-game
+  scalar A/B vs `v7_0_drop_one` for seven variants in this session:
+  v7_1 (H11 opening, 35.9 %), v7_2 (depth-2 over v3.5.1 drop-ones,
+  31.3 %), v7_3 (min-regret over hand-crafted opp archetypes,
+  28.1 %), v7_4 (composite capture-value head, 40.6 %), v7_5
+  (+ ADD-one widening, 37.5 %), v7_6 (+ split-source multi-launch,
+  40.6 %), v7_7 (enemy multiplier ×1.3, 28.1 %). ALL Wilson lo
+  below 0.55 gate; best (v7_4 = v7_6) ties at 40.6 % vs 50 %
+  baseline. Pattern: v7_0_drop_one is a robust local optimum; the
+  per-source-greedy-ROI proposer is doing ~95 % of the agent's
+  work. Chooser-axis refinements (value head, action space, opp
+  model, scoring multipliers) produce small noise-dominated
+  deltas, never gate-clearing lift. **Cost:** ~6 h session capacity
+  on diminishing-EV experiments past v7_3 (where the pattern was
+  already visible). **Fix this session:** stopped iteration after
+  v7_7; PI signed off on lock-the-rank or architectural pivot for
+  next session. **Promotion ratified:** Rule 37 (consecutive-
+  falsification cap) — `consecutive-falsification-cap` — pending
+  in `.claude/skills/kaggle-comp/improvements.md`.
+
+- `tag: bundler-text-inline-shadow-of-module-constants` — v7_7
+  agent first attempt set `lib.missions.snipe.ENEMY_MULTIPLIER = 1.3`
+  via runtime monkey-patch in `agent(obs)`. Source agent (using real
+  `lib.missions.snipe`) saw 1.3; bundle agent (using its own inlined
+  copy of snipe.py at module level) saw the pre-baked 1.0. Parity
+  gate caught it: 99/450 mismatched turns. **Fix this session:**
+  abandoned the runtime patch; bumped the constant in source
+  (`lib/missions/snipe.py`) to 1.3, bundled v7_7, then reverted the
+  source to 1.0 so future bundles stay at baseline. **Rule
+  candidate (drafted, NOT promoted this session):** module-mutation
+  monkey-patches must verify parity-gate-clean before push; the
+  bundler text-inline pattern systematically shadows lib-module
+  globals.
+
+## 2026-05-13 LATE-2 (claude/read-handover-iLWTq — depth-2 JAX kernel)
+
+- `tag: scale-without-smoke-burned-90min-t4` — pushed
+  `chrisleitescha/orbit-wars-jax-depth2-a-b` to T4 with the full
+  `(MAX_LAUNCH+1)² = 441`-cell nested vmap and got an OOM (16 GB
+  single-tensor allocation). Refactored to `lax.scan` over flat
+  cell index to bound memory; re-pushed. Second kernel sat in
+  XLA JIT compile for **90 minutes** before PI killed it — scan
+  of (rollout_step × K_tail × cells × game-vmap) is too deep an
+  XLA graph. **Root cause:** no local smoke before scaling to a
+  64-game GPU run. A 1-game CPU smoke would have surfaced both
+  the memory blow-up estimate (count the parallel cells) AND
+  the JIT compile slowness in 5-10 minutes, not 90+. Cost: ~90 min
+  of T4 quota (≈ 30 h/week tier) for zero result. **Fix this
+  session:** kill the kernel; re-architect depth-2 to truncate
+  the candidate set (e.g., 4 × 2 = 8 cells) so nested vmap fits
+  in T4 memory; CPU smoke FIRST (1 game / 1 step), THEN small-
+  scale GPU smoke (low NUM_SEEDS / EPISODE_STEPS on T4) before
+  the production 64 × 500 push — GPU XLA's compile path differs
+  from CPU's (memory layout, block-size kernels, OOM behaviour),
+  so a CPU-clean graph can still blow up at GPU scale.
+  **Promotion candidate (PI raised):** for any new Kaggle kernel
+  compute pattern, MANDATORY two-tier smoke: (1) local CPU
+  single-state with wallclock + memory; (2) small-scale GPU
+  (≤ 4 games × ≤ 50 turns), both clean before any production-
+  scale push. Encode in WRAPUP / kernel-push checklist.
 
 ## 2026-05-13 LATE (claude/read-handover-iLWTq — stale handover read)
 

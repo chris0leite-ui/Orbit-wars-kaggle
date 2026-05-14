@@ -72,3 +72,33 @@ def path_clears_sun(src: Point, dst: Point, safety: float = 0.0) -> bool:
     from the sun. `safety` is a margin in board units (default 0 = exact rule).
     """
     return point_to_segment_distance((CENTER, CENTER), src, dst) > SUN_RADIUS + safety
+
+
+def danger_3nn(
+    target_xy: Point, target_id: int, planets: list, my_id: int
+) -> int:
+    """Signed allegiance count over the 3 planets nearest `target_xy`.
+
+    Skips the target itself (matched by `target_id`). Returns an int in
+    [-3, +3]: +1 per ally planet, -1 per enemy, 0 per neutral. Used as
+    a stepwise spatial-danger feature for snipe / reinforce scoring
+    (H17 / TID 699003). The discussion-reported result was that a
+    count-based 3-NN hardcoded scoring beat a distance- and ship-weighted
+    gradient form 16-0; this is the count-based form.
+
+    `planets` is any iterable yielding objects with `.id`, `.x`, `.y`,
+    and `.owner` attrs (e.g. our `lib.intent.Planet` view). Owner
+    convention matches the env: -1 = neutral, otherwise = player id.
+    """
+    tx, ty = target_xy
+    others = [p for p in planets if p.id != target_id]
+    if not others:
+        return 0
+    others.sort(key=lambda p: math.hypot(p.x - tx, p.y - ty))
+    score = 0
+    for p in others[:3]:
+        if p.owner == my_id:
+            score += 1
+        elif p.owner != -1:
+            score -= 1
+    return score

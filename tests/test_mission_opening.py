@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
+import lib.missions.opening as _opening_mod
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
 from lib.missions.opening import (
@@ -24,6 +27,18 @@ from lib.missions.opening import (
     propose_opening_missions,
 )
 from lib.world_model import WorldModel
+
+
+@pytest.fixture(autouse=True)
+def _enable_opening_mission():
+    """Mission Renaissance gate is off by default in production; flip it
+    on for the duration of each test in this file."""
+    saved = _opening_mod.USE_OPENING_MISSION
+    _opening_mod.USE_OPENING_MISSION = 1
+    try:
+        yield
+    finally:
+        _opening_mod.USE_OPENING_MISSION = saved
 
 
 def _world(planets, *, my_id=0, step=0, comet_ids=()):

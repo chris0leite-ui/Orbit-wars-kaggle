@@ -1,16 +1,18 @@
 # state/current.md — current submitted agent + tournament rank
 
-> Updated 2026-05-14 by autonomous geo iteration session.
-> Most recent submission appended at the top.
+> Updated 2026-05-14 by `claude/simplify-fast-setup-azW8T` (geo iteration).
+> Merged forward from `claude/research-competition-analysis-2R8I3` +
+> `claude/read-handover-iLWTq`. All Score values pulled live from
+> `kaggle competitions submissions orbit-wars`.
 
 ```yaml
 date: 2026-05-14
-days_to_deadline: 40
-current_submitted_agent: geo  (v3.1: signal-timeout + sense + 4P lookahead)
+days_to_deadline: 40                     # 2026-06-23 23:59 UTC minus today
+current_submitted_agent: geo             # v3.1 (most recent); σ-discounted floor
 last_kernel_push: 2026-05-14 09:10:03 UTC
 last_submission_id: 52643676
-last_submission_status: PENDING  # awaiting Kaggle ladder games
-last_submission_file: submissions/geo.py  # 238 KB bundle; sha256:1babc39d9907ee18
+last_submission_status: COMPLETE
+last_submission_file: submissions/geo.py # 238 KB bundle; sha256:1babc39d9907ee18
 last_submission_message: |
   geo v3.1: geometric sense (clusters/Voronoi/front) + 4 lookahead-validated tilts
   (opening-boost 2.0x, enemy-focus 1.5x, front-reinforce 1.5x, voronoi-filter)
@@ -19,205 +21,102 @@ last_submission_message: |
   Local A/B vs v7_0_drop_one (n=192): 57.3% (~+7pp 2P).
   Local A/B 4P vs 3× v7_0 (n=128): 56.3% first-place (+31pp over baseline).
 
-# Rolling-last-2 (Kaggle keeps these two for final eval; 3rd push evicts oldest):
-rolling_last_2:
-  - {agent: geo,                sub_id: 52643676, score: 984.0, status: COMPLETE,
-     episodes: ~80-130, note: 'sigma-discounted floor; mu not settled (~5h post-submit)'}
-  - {agent: v7_pv,              sub_id: 52630118, score: 1064.4}
-evicted_recent:
-  - {agent: v7_0_drop_one_rebuilt, sub_id: 52607699, score: 1056.6, reason: evicted by geo push}
-
-# Team leaderboard score = max(rolling_last_2) = 1064.4 (UNCHANGED by geo push).
-# Public-LB rank: 125 / 2667 (top 4.7%; slipped from 109/2587 due to total-team growth).
-
-# Calibration warning: local A/B over-predicted ladder for 2 consecutive submissions
-# (v3.5.1 on 5/12 = -150mu; geo v3.1 on 5/14 = TBD but floor -80mu). Local panel
-# was vs v7_0 only; ladder has v3.5.1/v7_pv/top-10 distribution. Future: broaden
-# to >=3 opponent classes before submit. See audit/2026-05-14-postmortem-geo-session.md.
-
-# v3.2 (gang_up only on top of v3.1) is built + bundled locally but NOT submitted.
-# Eviction math: next push removes v7_pv (1064.4); only submit if new agent
-# scores decisively above 1064.4.
-
-# Branch claude/simplify-fast-setup-azW8T merged to main on 2026-05-14.
-```
-
----
-
-## Prior state (preserved as-is; pre-geo session)
-
-```yaml
-date: 2026-05-12
-days_to_deadline: 42                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v7_0_drop_one
-last_kernel_push: 2026-05-12 17:36:01 UTC
-last_submission_id: 52588156
-last_submission_status: COMPLETE
-last_submission_file: submissions/v7_0_drop_one.py  # 121 KB bundle; sha256:bb7ab23a75bc5865
-last_submission_message: |
-  v7_0_drop_one: fast_sim (183× faster than env.clone+step, bit-exact)
-  + drop-one chooser (incumbent + each-launch-dropped) + K=10 forward
-  sim + Tier-1 (v3.5.1) opp mirror + 4P → v3.5.1 fallback. Local A/B:
-  79.2% vs v7_minimax (Wilson lo 59.5%) PASS, 75.0% vs v4_planner
-  (Wilson lo 55.1%) PASS. Live: μ=1094.9 — TEAM PEAK.
-
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation;
 # the third push auto-evicts the previous oldest).
 rolling_last_2:
-  - {agent: v4_planner,      sub_id: 52579863, score: 1038.6, episodes: 58}
-  - {agent: v7_0_drop_one,   sub_id: 52588156, score: 1094.9, episodes: 64}  # team peak
+  - {agent: geo,    sub_id: 52643676, score: 984.0, status: COMPLETE,
+     episodes: ~80-130, note: 'σ-discounted floor; μ not settled (~5h post-submit)'}
+  - {agent: v7_pv,  sub_id: 52630118, score: 1064.4,  episodes: ~80}  # carrying team score
 evicted_recent:
-  - {agent: v3.5.1,          sub_id: 52565976, score: 945.6,  reason: regression vs prediction}
-  - {agent: v7_minimax,      sub_id: 52568317, score: 1040.8, reason: evicted by v4_planner push}
-  - {agent: sigma_equiv_v1,  sub_id: 52565034, score: 1041.4, reason: evicted earlier}
+  - {agent: v7_0_drop_one_rebuilt, sub_id: 52607699, score: 1056.6, reason: evicted by geo push}
+  - {agent: v7_0_drop_one_original, sub_id: 52588156, score: 1081.5, reason: evicted by v7_0_rebuilt push}
+  - {agent: v4_planner,             sub_id: 52579863, score: 1038.6, reason: evicted by v7_pv push}
 
-# Public ladder snapshot (2026-05-12 21:40 UTC).
-tournament_rank_today: 109 / 2587 teams (top 4.2%)
-our_best_rank: v7_0_drop_one μ=1094.9 (#52588156 COMPLETE)
-lb_top10_cliff: 1430.9                   # 3Comets, #10. #1 = bowwowforeach 1675.9
-headroom_to_top10_prize: +336 μ          # v7_0_drop_one at 1094.9 → +336μ to 3Comets cliff
+# Team leaderboard score = max(rolling_last_2) = 1064.4 (UNCHANGED by geo push).
+tournament_rank_today: 125 / 2667 (top 4.7%)
+our_best_rank: v7_pv μ=1064.4 (#52630118 COMPLETE)
+lb_top10_cliff: 1430                     # approx; refresh next session
+headroom_to_top10_prize: ~+366 μ         # v7_pv to top-10 cliff
 
-# σ-awareness. Kaggle's published Score = μ − κσ already discounts
-# uncertain submissions. Episode counts at this LB snapshot:
+# CALIBRATION WARNING. Local A/B over-predicted ladder for 2 consecutive submissions:
+# - v3.5.1 (5/12): local +56.6% Wlo vs v3_snipe → live μ=945.6 (-150μ)
+# - geo v3.1 (5/14): local +7pp / +31pp vs v7_0 → live μ=984.0 floor (TBD whether σ tightens)
+# Both panels were vs v7_0 only. Ladder has v3.5.1/v7_pv/v7_0_drop_one_rebuilt/top-10
+# distribution. Fix: future local A/B must span ≥3 opponent classes before submit.
+# See audit/2026-05-14-postmortem-geo-session.md.
+
+# σ-awareness. Kaggle's published Score = μ − κσ already discounts uncertain submissions.
 sigma_proxy:
-  v7_0_drop_one: 64                      # ~4h since submit; σ band ~6 Score points
-  v4_planner:    58                      # ~7h
-  v7_minimax:    63                      # ~15h, fully tight
-  v3.5.1:        53                      # ~17h
-  sigma_equiv:   36                      # ~17h
-  v3_snipe:      65                      # ~33h
-# v7_0's +56 lead over v4_planner is outside any plausible σ band → real.
-# v3.5.1's −149 vs v7_0 is well outside σ → regression is real, not noise.
+  geo: 80-130              # ~5h since submit; σ band ~10-12 Score points
+  v7_pv: ~80               # ~13h since submit; tightening
+  # v7_0 family fully tight at ~64 episodes (σ band ~6 Score points).
 
-submissions_used_today: 2                # v3.5.1 #52565976 (05:20 UTC) + v7_0_drop_one #52588156 (17:36 UTC) from this branch's lineage
-submissions_used_total: 13               # full live-submission ladder; 10 in the table below
+submissions_used_today: 1                # geo #52643676 (09:10 UTC)
+submissions_used_total: 16               # full live-submission ladder
 plateau_days: 0
 saturation_count: 0
 
+# v3.2 (geo + gang_up only on top of v3.1) is built + bundled locally but NOT submitted.
+# Eviction math: next push removes v7_pv (1064.4); only submit if new agent
+# is decisively above 1064.4. Currently NOT proven.
+
 # Full live ladder (most recent first; from `kaggle competitions submissions`).
 live_submissions:
-  - {agent: v7_0_drop_one,  sub_id: 52588156, submitted: 2026-05-12T17:36, score: 1094.9}
-  - {agent: v4_planner,     sub_id: 52579863, submitted: 2026-05-12T14:25, score: 1038.6}
-  - {agent: v7_minimax,     sub_id: 52568317, submitted: 2026-05-12T06:50, score: 1040.8}
-  - {agent: v3.5.1,         sub_id: 52565976, submitted: 2026-05-12T05:20, score: 945.6}
-  - {agent: sigma_equiv_v1, sub_id: 52565034, submitted: 2026-05-12T04:39, score: 1041.4}
-  - {agent: v3.4_spoiler,   sub_id: 52556866, submitted: 2026-05-11T21:19, score: 995.4}
-  - {agent: precision_v3,   sub_id: 52552139, submitted: 2026-05-11T17:00, score: 1011.4}
-  - {agent: v3_snipe,       sub_id: 52544634, submitted: 2026-05-11T12:16, score: 1005.7}
-  - {agent: v2,             sub_id: 52532938, submitted: 2026-05-11T04:04, score: 966.1}
-  - {agent: v1.2_roi,       sub_id: 52518060, submitted: 2026-05-10T14:59, score: 1006.9}
-  - {agent: v1.1_arrival,   sub_id: 52509319, submitted: 2026-05-10T09:28, score: 565.7}
-  - {agent: v1_orbitfix,    sub_id: 52507539, submitted: 2026-05-10T08:11, score: 568.0}
-  - {agent: day1_baseline,  sub_id: 52497828, submitted: 2026-05-10T00:09, score: 303.2}
+  - {agent: geo,                    sub_id: 52643676, submitted: 2026-05-14T09:10, score: 984.0}  # σ-floor
+  - {agent: v7_pv,                  sub_id: 52630118, submitted: 2026-05-13T23:31, score: 1064.4}
+  - {agent: v7_0_drop_one_rebuilt,  sub_id: 52607699, submitted: 2026-05-13T08:33, score: 1056.6}
+  - {agent: v7_0_drop_one_original, sub_id: 52588156, submitted: 2026-05-12T17:36, score: 1081.5}
+  - {agent: v4_planner,             sub_id: 52579863, submitted: 2026-05-12T14:25, score: 1038.6}
+  - {agent: v7_minimax,             sub_id: 52568317, submitted: 2026-05-12T06:50, score: 1040.8}
+  - {agent: v3.5.1,                 sub_id: 52565976, submitted: 2026-05-12T05:20, score: 945.6}
+  - {agent: sigma_equiv_v1,         sub_id: 52565034, submitted: 2026-05-12T04:39, score: 1041.4}
+  - {agent: v3.4_spoiler,           sub_id: 52556866, submitted: 2026-05-11T21:19, score: 995.4}
+  - {agent: precision_v3,           sub_id: 52552139, submitted: 2026-05-11T17:00, score: 1011.4}
+  - {agent: v3_snipe,               sub_id: 52544634, submitted: 2026-05-11T12:16, score: 1005.7}
+  - {agent: v2,                     sub_id: 52532938, submitted: 2026-05-11T04:04, score: 966.1}
+  - {agent: v1.2_roi,               sub_id: 52518060, submitted: 2026-05-10T14:59, score: 1006.9}
+  - {agent: v1.1_arrival,           sub_id: 52509319, submitted: 2026-05-10T09:28, score: 565.7}
+  - {agent: v1_orbitfix,            sub_id: 52507539, submitted: 2026-05-10T08:11, score: 568.0}
+  - {agent: day1_baseline,          sub_id: 52497828, submitted: 2026-05-10T00:09, score: 303.2}
 
 session_log:
-  - 2026-05-13 — consolidate-fast-simulation-ysd9M, Phase 3a —
-    scalar-rollout speedups. Profile (cProfile, 2000 steps) revealed
-    two hot spots: swept_pair_hit (28% of total) and the spawn-step
-    cliff (generate_comet_paths costs ~85 ms × 20 calls = 20% of
-    total, but concentrated on steps 50/150/250/350/450). Five waves
-    landed: (1) **comet-path cache** on `_FakeEnv.comet_path_cache`,
-    shared across clones — eliminates the spawn cliff during
-    lookahead; (2.1) AABB prune in `swept_pair_hit` — early-outs
-    ~70-90 % of fleet × planet pairs; (2.2+2.3) local hoists +
-    module-level math aliases (_cos/_sin/_sqrt/_log/_atan2) — cuts
-    attribute lookups in the inner loop; (2.4) set-based fleet
-    removal (id() membership vs O(N·M·7) list-equality). Wave 2.5
-    (lighter clone) **skipped** — standalone bench showed
-    clone() is only 12 µs/call, not the 241 µs the earlier
-    benchmark suggested (the difference was env.reset() noise from
-    terminated-episode resets in the loop). Verification:
-    `tests/test_game_parity.py` 62/62 green (32 init+shadow plus 10
-    new cache-HIT parity tests); `tests/test_fast_sim_parity.py`,
-    `tests/test_v1_parity.py` green; full suite green (pending
-    confirm); `scripts/full_episode_parity_sweep.py` 100×2P + 50×4P
-    in flight. Microbench impact: per-step interpreter 1224 → 983 µs
-    (1.24×, +20 %); fast_sim agent-rollout per-step in mid-game
-    ~190 µs (8 fleets, K=10 lookahead). **Spawn-crossing turn
-    (step 49, K=10 × 50 candidates): 5+ s → 155 ms (~32× faster).**
-    This makes wide search viable on spawn-boundary turns — the cliff
-    is gone. Knowledge ref:
-    `knowledge-base/concepts/pure-python-game-rebuild.md`.
-    No new submission.
-  - 2026-05-13 — consolidate-fast-simulation-ysd9M (this branch),
-    Phase 2 — pure-Python game-engine rebuild. Ported
-    `kaggle_environments.envs.orbit_wars.orbit_wars.interpreter` (812
-    lines) verbatim into `lib/game/interpreter.py` — same RNG path,
-    same combat semantics, same termination logic. Wired
-    `lib/fast_sim.py` to import from `lib.game.interpreter` instead of
-    `kaggle_environments`. Added `lib/game/` (package) to bundler
-    DEFAULT_LIB_ORDER ahead of fast_sim so submission bundles inline
-    our interpreter (+12 KB per bundle, negligible). Parity gates:
-    `tests/test_game_parity.py` (init-parity over 8 seeds × 2/4
-    agents + shadow-parity over 60 and 500 step episodes) green at
-    32/32. `scripts/full_episode_parity_sweep.py` (100 × 2P + 50 ×
-    4P × 500 steps) green. All pre-existing parity gates
-    (`test_fast_sim_parity`, `test_v1_parity`, bundle tests) stay
-    green. Full suite: 405 passed / 2 skipped / 1 xfail (replay-parity
-    pre-existing). Microbenchmark: ours @ 1088 µs/step vs Kaggle @
-    1103 µs/step — 1.01× (parity-bound, not faster yet; performance
-    is Phase 3). Knowledge doc:
-    `knowledge-base/concepts/pure-python-game-rebuild.md`. Next: defer
-    vectorised batch simulator and RL training substrate to a future
-    phase. No new submission this phase.
-  - 2026-05-12 EVE — consolidate-fast-simulation-ysd9M (this branch).
-    Merged origin/claude/game-theory-strategy-analysis-0oH4N which itself
-    merged claude/game-ai-lookahead-3ucqH. Result: one branch carrying
-    the full fast-brain stack (lib/fast_sim.py, lib/opp_model.py,
-    lib/v7_search.py, lib/lookahead_planner.py, lib/value_heads.py,
-    lib/candidate_portfolios.py, lib/mirror.py) plus σ-equivariance
-    patches in lib/planner.py + lib/orbit.py plus v7_0_drop_one as the
-    live anchor agent (μ=1094.9). Pruned: failed v7_1..v7_6 sweeps,
-    v7_combined/v7_ablations cruft, parked v8_* PSRO stack, failed v9_*
-    and v10_* variants, intermediate v3.5/v35_ablations/v35_iter2
-    scaffolding, intermediate v4_endgame/hybrid/mirror sweeps, dead
-    A/B harness scripts (psro_*, run_v7_ablation, run_iter2_ablation,
-    run_v35_ab, run_sizing_sweep, run_aggressive_sizing_32, etc.).
-    Test gates: 373 passed / 2 skipped / 1 xfailed (v3_snipe replay
-    parity drift from σ-equiv patches — documented, not a regression
-    of live behaviour). State files rewritten to true live scores.
-    Next phase: research a 100%-accurate pure-Python rebuild of
-    `kaggle_environments.envs.orbit_wars.orbit_wars.interpreter()` so
-    we can iterate on the fast brain without the Environment overhead
-    or kaggle_environments dependency.
-  - 2026-05-12 EVE — game-ai-lookahead-3ucqH (parent, archived in this
-    branch): full v7 + v8 + v9 + v10 super-version iteration. No
-    super-version cleared Wilson 55% gate vs v7_0; ship target =
-    v7_0_drop_one. Architecture: fast_sim simulator (183× faster than
-    env.clone+step, bit-exact) + opp_model (Tier-0 v3_snipe, Tier-1
-    v3.5.1 mirror). v7_0 beats v7_minimax 19/24 = 79.2% Wilson lo 59.5%
-    PASS; v7_0 beats v4_planner 18/24 = 75.0% Wilson lo 55.1% PASS;
-    nothing else cleared 55%. Diagnosed v4_planner's receding-horizon
-    pathology (audit/2026-05-12-v4-planner-receding-horizon-pathology.md):
-    K-step rollout with noop in portfolios prefers "wait" when target
-    eta>K; drop-one architecture structurally sidesteps this. σ-equiv
-    REVERTED from drop-one regime (v7.6 bisect: −54pp). v10_evaluate
-    62.5% Wilson lo 42.7% FAIL by 2.3pp. Knowledge anchor:
-    knowledge-base/concepts/lookahead-simulator-architecture.md
-    (permanent reference).
-  - 2026-05-12 — research-lookahead-strategy-kfRsy: v4_planner
-    receding-horizon mission-portfolio search, 5 portfolios per turn,
-    Sim<K=6-10> with production-share+denial value head. Submitted
-    #52579863 (live score 1038.6). σ-equivariance lib patches cherry-
-    picked from game-theory-strategy-analysis-0oH4N (3 commits):
-    lib/planner score rounding + symmetric tie-break, lib/orbit
-    sym_hypot for bit-exact paired distances.
-  - 2026-05-12 — analyze-leaderboard-strategies-sdZlE: v3.5.1
-    aggressive snipe sizing (32-seed 2P vs v3_snipe 68.8% Wilson lo
-    56.6% PASS local). Submitted #52565976 — **live regression
-    μ=945.6**. Local A/B over-predicted by ~150 points; the local
-    panel didn't capture whatever the live ladder rewards. Lesson:
-    σ-equiv-base agents play tighter draws against the broader ladder
-    than against v3_snipe alone — aggressive sizing helps locally
-    but evidently doesn't generalise.
-  - 2026-05-11 PM — analyze-submission-logs-dFHeS: live↔local parity
-    100% (postmortem off-by-one fix in scripts/episode_postmortem.py).
-    v3.2 / v3.4 internal builds (not submitted as standalone scores).
-  - 2026-05-11 — bootstrap-agentic-systems-lqnm6: Block E mission
-    framework MVP; lookahead probes (env.clone() Sim<K=50> AUC=0.952);
-    v3_snipe submitted #52544634 (live μ=1005.7).
-  - 2026-05-10 — earlier sessions archived under
-    audit/archive-2026-05-10-handover-prior-pm-sessions.md.
+  - 2026-05-14 — simplify-fast-setup-azW8T (this branch's most recent session).
+    Built fast.py (single-file iteration entry point, validated bit-identical
+    vs audit-logged v7_1 result) + lib/geo/{sense,posture,allocator}.py
+    (geometric primitives: clustering, Voronoi, front, threat, comet claims,
+    posture arbiter, LP/greedy-multi allocators) + agents/geo/main.py v3.2
+    (K=10 lookahead + 4 sense tilts + 2 archetypes + gang_up + 4P branch
+    + SIGALRM timeout). 29 commits, 17 unit tests. Local A/B: vs v7_0
+    n=192 = 57.3% (~+7pp), vs v3.5.1 n=128 = 57.0%, 4P vs 3×v7_0 n=128
+    = 56.3% first-place (+31pp). Submitted as geo #52643676 → live
+    μ=984.0 σ-discounted floor (not settled). Team score unchanged at
+    1064.4 (v7_pv carries us). Five "fixes" REGRESSED: v2.4 lite_greedy
+    (-17pp), v2.5 WALLCLOCK 350 (-20pp), v2.7 K=8 (-20pp), v3.0
+    composite head (-19pp), v3.2 empty_out+tap_capture cumulative (-4pp).
+    SIGALRM-based per-score timeout (v2.9) bounded wallclock max
+    1500-2900ms → 1100-1200ms with no strategic cost.
+    Postmortem: audit/2026-05-14-postmortem-geo-session.md.
+    Knowledge: knowledge-base/thoughts/2026-05-14-geo-v2-iteration-results.md,
+    knowledge-base/thoughts/2026-05-13-geo-v1-bisect-lessons.md.
+    Frictions: 5 entries under `## 2026-05-14` in audit/friction.md.
+  - 2026-05-13/14 — research-competition-analysis-2R8I3 (parallel branch,
+    merged into main first). PV target valuation passes 32-seed local A/B
+    68.8% vs v7_0 (Wilson [56.6, 78.8]); LIVE submitted as v7_pv #52630118
+    at μ=1061.8 climbing → 1064.4 settled. Eight other interventions
+    FALSIFIED monotonically. Architectural finding: v7 + PV is a tight
+    local optimum for the K=10 drop-one chooser. Plumbing landed:
+    3-anchor Wilson gate, PV_GAMMA in JAX, HAV helpers, Mission
+    Renaissance flags. Postmortem:
+    audit/2026-05-14-postmortem-research-competition-analysis-2R8I3.md.
+  - 2026-05-14 — read-handover-iLWTq (parallel branch, merged into main).
+    Seven v7_X variants (chooser-axis sweep) all FALSIFIED at 32-game
+    scalar A/B vs v7_0. Best v7_4 = v7_6 = 40.6%. Chooser-axis design
+    space EXHAUSTED — further refinements have negative marginal EV.
+    Side wins: bundler parity-gate non-determinism fixed (env-var
+    override); composite_capture_value value head; 3 new
+    action-primitive enumerators; opp-archetype set. JAX depth-2
+    parked (GPU compile too slow). Postmortem:
+    audit/2026-05-14-postmortem-read-handover-iLWTq.md.
 
 mechanism_families_explored:
   - heuristic-greedy-nearest-target          # comp-shipped baseline; μ=303
@@ -236,26 +135,30 @@ mechanism_families_explored:
   - aggressive-snipe-ship-sizing-v3.5.1      # v3.5.1 submitted; live μ=945.6 (REGRESSED)
   - sigma-equivariance-patches               # planner score-round + sym_hypot;
                                               # 16/16 v3-vs-v3 self-play draws; live μ=1041.4
-  - v7-maximin-search                         # v7_minimax: N=2 × M=2 × Sim<K=3>;
-                                              # live μ=1040.8
-  - v4-receding-horizon-mission-portfolio    # v4_planner: 5 portfolios × Sim<K=6-10>;
-                                              # live μ=1038.6
-  - v7-drop-one-fast-brain                    # v7_0_drop_one: lib/fast_sim (183× faster)
-                                              # + drop-one chooser + Tier-1 opp mirror;
-                                              # live μ=1094.9 TEAM PEAK
-  - v7-sweep-variants-failed                  # v7_1_target_swap, v7_2_ship_sweep,
-                                              # v7_3_archetype, v7_4_hungarian — ALL FAIL
-                                              # at Wilson 55%; pruned from this branch
-  - v7-iteration-variants-failed              # v7_1_minimax through v7_6_no_recapture —
-                                              # ALL FAIL or PARITY; pruned
-  - v8-psro-self-play-pool                    # PSRO infrastructure built; degenerate
-                                              # Nash with pure v7. Parked; pruned
-  - v9-super-version-failed                   # v9_inflight, v9_k15, v9_combined,
-                                              # v9_opening — none clear Wilson 55%; pruned
-  - v10-evaluate-value-head                   # drop-one + K=10 + evaluate_value head;
-                                              # 62.5% Wilson lo 42.7% FAIL; pruned
+  - v7-maximin-search                         # v7_minimax: live μ=1040.8
+  - v4-receding-horizon-mission-portfolio    # v4_planner: live μ=1038.6
+  - v7-drop-one-fast-brain                    # v7_0_drop_one: live μ=1081.5
+  - v7-sweep-variants-failed                  # v7_1..v7_4 — all FAIL
+  - v7-iteration-variants-failed              # v7.1..v7.6 super-versions — all FAIL
+  - v8-psro-self-play-pool                    # parked
+  - v9-super-version-failed                   # all FAIL
+  - v10-evaluate-value-head                   # FAIL
+  - pv-target-valuation                       # H16: live v7_pv μ=1064.4 (only winner since v7_0)
+  - danger3-allegiance-multiplier             # H17: FALSIFIED
+  - fleet-overcommit                          # H19: FALSIFIED
+  - pre-reinforce-window                      # H21: FALSIFIED
+  - drop-comet-targets                        # H15/H18: INCONCLUSIVE
+  - mission-renaissance-trio                  # H30: FALSIFIED
+  - hav-hold-aware-value                      # FALSIFIED
+  - hav-holding-tier                          # FALSIFIED
+  - chooser-axis-sweep-7-variants             # claude/read-handover-iLWTq: v7_1..v7_7 all FAIL
+  - geometric-strategy-with-lookahead         # claude/simplify-fast-setup-azW8T:
+                                              # geo v3.1 local +7pp 2P / +31pp 4P first-place;
+                                              # live μ=984.0 σ-floor (TBD if settles higher)
+  - composite-capture-value-head              # lib/value_heads.py composite_capture_value;
+                                              # +9pp local in v7_4 vs v7_2 (32-game); but
+                                              # v7_4 vs v7_0 = 40.6% FAIL. Reusable head.
 
-gate_status: cleared                      # 373 pytest pass / 2 skipped / 1 xfailed
-                                            # (v3_snipe replay-parity drift from σ-equiv
-                                            # is documented, not a regression)
+gate_status: cleared                        # full pytest passes;
+                                            # geo's 17 tests + parallel branches' tests all green
 ```

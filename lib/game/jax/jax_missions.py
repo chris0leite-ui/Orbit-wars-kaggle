@@ -36,6 +36,33 @@ from lib.game.jax.jax_world_model import (
 
 EPISODE_STEPS = 500
 
+# H16 (PV target valuation) — geometric discount of future production.
+# At PV_GAMMA = 1.0 the helper degenerates to the linear horizon
+# `max(0, t_total - step - eta)`, preserving the pre-PV scoring shape
+# and the existing parity tests. A/B candidate value: 0.99.
+# Mirror of `lib/scoring.py:PV_GAMMA` for the JAX rollout path.
+PV_GAMMA = 1.0
+
+
+def _pv_horizon_jax(step_now, eta, t_total, gamma: float = None):
+    """JAX mirror of `lib.scoring.pv_horizon`.
+
+    `step_now`, `eta`, `t_total` are JAX int32 arrays (or scalars).
+    `gamma` is a Python float (resolved at trace time). When gamma >= 1.0
+    the function returns the linear horizon `max(0, t_total - step - eta)`
+    as float32; when gamma < 1.0 it returns the geometric series
+    `gamma^eta · (1 − gamma^h) / (1 − gamma)` where `h = t_total - step - eta`.
+    """
+    if gamma is None:
+        gamma = PV_GAMMA
+    h = jnp.maximum(jnp.int32(0), t_total - step_now - eta)
+    if gamma >= 1.0:
+        return h.astype(jnp.float32)
+    h_f = h.astype(jnp.float32)
+    eta_f = eta.astype(jnp.float32)
+    return (gamma ** eta_f) * (1.0 - gamma ** h_f) / (1.0 - gamma)
+
+
 # Mirror lib/missions/snipe.py aggressive-sizing constants.
 AGGRESSIVE_FRACTION = 0.7
 AGGRESSIVE_RESERVE = 5
@@ -129,13 +156,15 @@ def compute_snipe_score_matrix(
     redundant = (pred_owner == jnp.int32(my_id)) & (pred_ships >= base_ships)
 
     # Value: production × time_to_hold.
-    # For non-comet targets: max(1, EPISODE_STEPS - step - eta).
-    # For comet targets: max(0, remaining_lifetime - eta).
+    # For non-comet targets: pv_horizon(step, eta, EPISODE_STEPS), clamped >=1.
+    # For comet targets: pv_horizon(0, eta, rem_lifetime), no clamp.
+    # At PV_GAMMA=1.0 (default), pv_horizon collapses to the linear form
+    # `max(0, t_total - step - eta)`, preserving the pre-PV parity.
     step_now = state.step
-    non_comet_tth = jnp.maximum(
-        jnp.int32(1),
-        jnp.int32(EPISODE_STEPS) - step_now - eta,
+    non_comet_pv = _pv_horizon_jax(
+        step_now, eta, jnp.int32(EPISODE_STEPS), gamma=PV_GAMMA,
     )
+    non_comet_tth = jnp.maximum(jnp.float32(1.0), non_comet_pv)
     # Per-planet comet remaining lifetime: paths_len[g, j] - path_index[g],
     # or 0 for non-comet planets.
     g = jnp.maximum(state.planet_comet_spawn, jnp.int32(0))
@@ -147,10 +176,15 @@ def compute_snipe_score_matrix(
         jnp.maximum(jnp.int32(0), path_len - path_idx),
         jnp.int32(0),
     )                                                      # (P_max,)
-    comet_tth = jnp.maximum(jnp.int32(0), rem_lifetime[None, :] - eta)
+    # Comet: PV-discounted lifetime, step component is 0 (we time-travel
+    # from now), clamp at 0 (no min-1 — comet expires before arrival → 0).
+    comet_pv = _pv_horizon_jax(
+        jnp.int32(0), eta, rem_lifetime[None, :], gamma=PV_GAMMA,
+    )
+    comet_tth = jnp.maximum(jnp.float32(0.0), comet_pv)
     is_comet_tgt_row = state.is_comet[None, :]            # (1, P)
     time_to_hold = jnp.where(is_comet_tgt_row, comet_tth, non_comet_tth)
-    value = state.planets_prod[None, :].astype(jnp.float32) * time_to_hold.astype(jnp.float32)
+    value = state.planets_prod[None, :].astype(jnp.float32) * time_to_hold
 
     # Priority modifiers (per scalar `propose_snipe_missions`).
     # Neutral/comet bonuses are identity (=1.0) by default; leader-spoiler
@@ -383,13 +417,13 @@ def compute_reinforce_score_matrix(
 
     # Value: defender's production × time_to_hold (we keep D alive for
     # the rest of the game — non-comet form is fine here, defenders
-    # aren't comets).
+    # aren't comets). PV-discounted; identity at PV_GAMMA=1.0.
     step_now = state.step
-    time_to_hold = jnp.maximum(
-        jnp.int32(1),
-        jnp.int32(EPISODE_STEPS) - step_now - eta,
+    reinforce_pv = _pv_horizon_jax(
+        step_now, eta, jnp.int32(EPISODE_STEPS), gamma=PV_GAMMA,
     )
-    value = state.planets_prod[None, :].astype(jnp.float32) * time_to_hold.astype(jnp.float32)
+    time_to_hold = jnp.maximum(jnp.float32(1.0), reinforce_pv)
+    value = state.planets_prod[None, :].astype(jnp.float32) * time_to_hold
 
     denom = cost.astype(jnp.float32) + d + jnp.float32(1.0)
     score = value / denom

@@ -69,3 +69,91 @@ def test_path_clears_sun_safety_margin_tightens_check():
     src = (66.0, 0.0)
     dst = (66.0, 100.0)
     assert G.path_clears_sun(src, dst, safety=5.0) is True
+
+
+# ---------------------------------------------------------------------------
+# danger_3nn — 3-NN allegiance count (H17 / TID 699003)
+# ---------------------------------------------------------------------------
+
+
+class _P:
+    """Minimal duck-typed planet for danger_3nn tests."""
+    __slots__ = ("id", "x", "y", "owner")
+    def __init__(self, pid, x, y, owner):
+        self.id = pid
+        self.x = x
+        self.y = y
+        self.owner = owner
+
+
+def test_danger_3nn_excludes_the_target_itself():
+    # Target at origin; the only planets are at large distances. Target's
+    # own owner field must not contribute (we exclude by id).
+    target = _P(0, 0.0, 0.0, owner=0)
+    others = [_P(1, 5.0, 0.0, owner=0), _P(2, 10.0, 0.0, owner=1)]
+    score = G.danger_3nn((target.x, target.y), target.id, [target, *others], my_id=0)
+    assert score == 0  # +1 ally, -1 enemy = 0
+
+
+def test_danger_3nn_all_three_neighbours_are_allies():
+    target = _P(0, 0.0, 0.0, owner=-1)
+    allies = [_P(i, i + 1.0, 0.0, owner=0) for i in (1, 2, 3)]
+    far_enemy = _P(99, 50.0, 50.0, owner=1)
+    score = G.danger_3nn((0.0, 0.0), 0, [target, *allies, far_enemy], my_id=0)
+    assert score == 3
+
+
+def test_danger_3nn_all_three_neighbours_are_enemies():
+    target = _P(0, 0.0, 0.0, owner=-1)
+    enemies = [_P(i, i + 1.0, 0.0, owner=1) for i in (1, 2, 3)]
+    far_ally = _P(99, 50.0, 50.0, owner=0)
+    score = G.danger_3nn((0.0, 0.0), 0, [target, *enemies, far_ally], my_id=0)
+    assert score == -3
+
+
+def test_danger_3nn_neutrals_contribute_zero():
+    target = _P(0, 0.0, 0.0, owner=-1)
+    near = [
+        _P(1, 1.0, 0.0, owner=-1),    # neutral → +0
+        _P(2, 2.0, 0.0, owner=0),     # ally → +1
+        _P(3, 3.0, 0.0, owner=1),     # enemy → -1
+    ]
+    score = G.danger_3nn((0.0, 0.0), 0, [target, *near], my_id=0)
+    assert score == 0
+
+
+def test_danger_3nn_uses_only_the_three_nearest():
+    target = _P(0, 0.0, 0.0, owner=-1)
+    near_allies = [_P(i, i + 1.0, 0.0, owner=0) for i in (1, 2, 3)]
+    # 4th and 5th planet are enemies but FARTHER — they should be ignored.
+    far_enemies = [_P(i, i + 10.0, 0.0, owner=1) for i in (4, 5)]
+    score = G.danger_3nn(
+        (target.x, target.y), target.id,
+        [target, *near_allies, *far_enemies], my_id=0,
+    )
+    assert score == 3  # only the 3 near allies count
+
+
+def test_danger_3nn_empty_or_single_planet_returns_zero():
+    only_target = _P(0, 0.0, 0.0, owner=0)
+    assert G.danger_3nn((0.0, 0.0), 0, [only_target], my_id=0) == 0
+    assert G.danger_3nn((0.0, 0.0), 0, [], my_id=0) == 0
+
+
+def test_danger_3nn_my_id_matches_perspective():
+    # Same board, different "me": +1 becomes -1.
+    target = _P(0, 0.0, 0.0, owner=-1)
+    p0_planet = _P(1, 1.0, 0.0, owner=0)
+    p1_planet = _P(2, 2.0, 0.0, owner=1)
+    planets = [target, p0_planet, p1_planet]
+    assert G.danger_3nn((0.0, 0.0), 0, planets, my_id=0) == 0
+    # Flip perspective: same planets, but we are P1 now.
+    # Wait — we only have 2 non-target neighbours. p0 was ally for my_id=0;
+    # for my_id=1 the ally is p1 and enemy is p0 → still net 0.
+    assert G.danger_3nn((0.0, 0.0), 0, planets, my_id=1) == 0
+    # Add an extra: a third planet owned by P0. From P0's POV: 2 allies + 1
+    # enemy = +1. From P1's POV: 1 ally + 2 enemies = -1.
+    p0b = _P(3, 3.0, 0.0, owner=0)
+    planets.append(p0b)
+    assert G.danger_3nn((0.0, 0.0), 0, planets, my_id=0) == 1
+    assert G.danger_3nn((0.0, 0.0), 0, planets, my_id=1) == -1
