@@ -80,6 +80,25 @@ live_submissions:
   - {agent: day1_baseline,          sub_id: 52497828, submitted: 2026-05-10T00:09, score: 303.2}
 
 session_log:
+  - 2026-05-14 — game-strategy-eda-roatN (this branch). Pulled v7_pv's
+    own 30W + 42L corpus (sub 52630118) and re-ran Mine 4 on both
+    buckets. Headline: median episode in our ladder is 180 turns, so
+    the "last-100-turn endgame" Mine 4 was framed against doesn't
+    occur — W/L split is decided by turn 100 (+30pp ship-share gap).
+    v7_pv launches 0.44/turn in wins, 0.29 in losses, vs top-10's
+    0.70. Wired --panel hardened preset (v7_0_drop_one + v3.5.1 +
+    roi + baseline); 32-seed calibration: v7_0 mean_wr 78.6%,
+    worst-Wilson-lo 53.4% (vs v3.5.1). Built cluster-conditional
+    opening overlay (lib/opening_overlay.py + agents/v7_opening) —
+    FALSIFIED: 17W/15L = 53% vs v7_0 on n=32, overlay-active games
+    46%, pure-v7 fallback 80%. v2 sweep's apparent 67% was a
+    broken-orbital_frac proxy forcing every board into the
+    high-cadence cluster 3 — fixed but variant doesn't survive
+    correct classification. 3 frictions logged (helper-reimplemented-
+    inline-silently-wrong; broken-mechanism-yields-fake-positive-
+    signal; soft-clusters-need-confidence-fallback). Findings:
+    audit/2026-05-14-loss-mode-mine.md. Postmortem:
+    knowledge-base/thoughts/2026-05-14-overlay-postmortem.md.
   - 2026-05-14 — simplify-fast-setup-azW8T (this branch's most recent session).
     Built fast.py (single-file iteration entry point, validated bit-identical
     vs audit-logged v7_1 result) + lib/geo/{sense,posture,allocator}.py
@@ -158,6 +177,13 @@ mechanism_families_explored:
   - composite-capture-value-head              # lib/value_heads.py composite_capture_value;
                                               # +9pp local in v7_4 vs v7_2 (32-game); but
                                               # v7_4 vs v7_0 = 40.6% FAIL. Reusable head.
+  - cluster-conditional-opening-overlay       # claude/game-strategy-eda-roatN: KMeans(k=4)
+                                              # on 60 top-10 boards + ROI-style proposer for
+                                              # turns 0-30. FALSIFIED: 17W/15L = 53% vs v7_0
+                                              # on n=32 (Wilson-lo 36%), overlay-active 46%,
+                                              # pure-v7-fallback 80%. v2 sweep's 67% was a
+                                              # broken-orbital_frac proxy. Code stays on
+                                              # branch; learnings ported to main.
 
 gate_status: cleared                        # full pytest passes;
                                             # geo's 17 tests + parallel branches' tests all green
