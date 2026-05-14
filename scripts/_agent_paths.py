@@ -24,7 +24,9 @@ def resolve_agent_path(name: str) -> str:
     3. `agents/<name>/main.py` (directory-style agents like v1_orbitfix,
        v2, v3_snipe).
     4. `agents/simple/<name>.py` (flat-file strategies: roi, nearest, …).
-    5. Literal path (e.g. `submissions/v2.py`, `agents/v2/main.py`).
+    5. `agents/v7_ablations/<name>/main.py` (nested v7-family ablations
+       like v7_0_drop_one — the post-2026-05-14 'hardened' panel anchor).
+    6. Literal path (e.g. `submissions/v2.py`, `agents/v2/main.py`).
 
     Raises ValueError if no match.
     """
@@ -40,6 +42,10 @@ def resolve_agent_path(name: str) -> str:
     simple = REPO / "agents" / "simple" / f"{name}.py"
     if simple.is_file():
         return str(simple)
+    # agents/v7_ablations/<name>/main.py — nested v7-family ablations.
+    nested = REPO / "agents" / "v7_ablations" / name / "main.py"
+    if nested.is_file():
+        return str(nested)
     # Literal path.
     p = Path(name)
     if p.is_file():

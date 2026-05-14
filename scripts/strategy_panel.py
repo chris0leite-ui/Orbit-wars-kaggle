@@ -73,6 +73,19 @@ SEEDS_32 = [
 DEFAULT_STRATEGIES = ["nearest", "production", "roi", "weakest", "enemy_first"]
 DEFAULT_REFS = ["baseline", "v1_orbitfix"]
 
+# Named panel presets — pick with `--panel <name>`. Each preset is the full
+# agent list; `--panel hardened` is the post-2026-05-14 pre-submit minimum
+# (≥3 opponent classes: v7 search, v3 lookahead, aggressive simple, comp
+# reference). Origin: audit/2026-05-14-postmortem-geo-session.md
+# ("panel MUST include ≥3 opponent classes") + audit/2026-05-14-loss-mode-mine.md
+# (v7_pv's t=100 ship-share gap of 30pp is decided in the opening — any
+# pre-submit gate needs an aggressive close-arm opponent on the panel,
+# not just v7-family search agents).
+PANEL_PRESETS: dict[str, list[str]] = {
+    "hardened": ["v7_0_drop_one", "v3.5.1", "roi", "baseline"],
+    "default":  DEFAULT_STRATEGIES + DEFAULT_REFS,
+}
+
 
 # Name resolution is shared with scripts/ffa_panel.py via
 # scripts/_agent_paths.py so 2P and 4P panels accept the same strategy
@@ -209,6 +222,12 @@ def main(argv=None) -> int:
         help=f"Override the strategy list (default: {DEFAULT_STRATEGIES + DEFAULT_REFS}).",
     )
     parser.add_argument(
+        "--panel", choices=sorted(PANEL_PRESETS),
+        help="Named preset (overrides --strategies). 'hardened' = the "
+             "post-2026-05-14 pre-submit minimum (v7_0_drop_one + v3.5.1 "
+             "+ roi + baseline; ≥3 opponent classes).",
+    )
+    parser.add_argument(
         "--no-refs", action="store_true",
         help="Skip the comp-shipped baseline + v1_orbitfix reference agents.",
     )
@@ -233,7 +252,9 @@ def main(argv=None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.strategies is not None:
+    if args.panel is not None:
+        names = list(PANEL_PRESETS[args.panel])
+    elif args.strategies is not None:
         names = list(args.strategies)
     else:
         names = list(DEFAULT_STRATEGIES)
