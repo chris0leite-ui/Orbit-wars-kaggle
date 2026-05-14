@@ -249,6 +249,151 @@ function for picking a target. Run via
   Hard filter on comet targets. Decision gate: panel winrate
   parity-or-better with v3_snipe; comet_capture_rate ≤ 5%.
 
+### 2026-05-13 — discussion + dataset re-read (H16-H29)
+
+Source: `/root/.claude/plans/taking-the-role-of-buzzing-rossum.md`
+(approved round-2). Each hypothesis maps to an `Idea X` letter in that
+plan; full file:function adapt points + test routes are there.
+A-G = scalar pipeline tweaks; H/N = read-only audits already cleared;
+I-M = data-driven; K = realism check already cleared.
+
+- **H16 [A] (½ day):** **Present-value target valuation.** Replace
+  the linear `(500 − step − eta)` horizon factor in
+  `lib/missions/snipe.py:7-9` (and the mirror in
+  `lib/missions/reinforce.py:94`) with a geometric series
+  `γ^eta · (1 − γ^(horizon−eta+1)) / (1 − γ)`, γ=0.99.
+  Source: TID 699003 author claims this shape alone hits ~1000 μ.
+  Decision gate: `ab_variants.py --candidate pv` vs
+  `{v3_snipe, v4_planner, v7_minimax}` Wilson-lo ≥ 0.55 each.
+- **H17 [B] (½ day, FALSIFIED 2026-05-13):** **3-closest-planet
+  hardcoded danger map.** Implemented as count-based 3-NN with sign
+  +1/0/−1 per ally/neutral/enemy; multiplicative on snipe + reinforce
+  score via `DANGER3_KAPPA · danger_3nn(target)`. Tested at
+  κ ∈ {0.1, 0.3} on top of PV (PV_GAMMA=0.99), 8 seeds × both seats
+  vs `v7_pv` (κ=0). Result: κ=0.3 → 37.5% (Wilson [18.5%, 61.4%]);
+  κ=0.1 → 43.8% (Wilson [23.1%, 66.8%]). Monotonic regression with κ.
+  Falsified: danger3 does not stack on top of v7's K=10 rollout —
+  the rollout already evaluates contested-territory dynamics, so
+  over-penalising contested snipes at proposal time drops candidates
+  the rollout would correctly score as good. Audit:
+  `audit/tournaments/ab-20260513T19{53,58}*.json`. Code retained
+  (flag defaults to 0.0 = identity) for future use on simpler
+  agents like v3_snipe, where the smoke at v3_snipe-tier did show
+  56.2% directionally.
+- **H18 [C] (~1 day inc. audit):** **Comet arrival synchronization.**
+  Audit `lib/trajectory.py:predict_fleet_fate` for comet motion
+  awareness; extend ray-cast to advance comet path-index per step.
+  Source: TID 697397 Day-2 finding. Cross-check with
+  `scripts/lookahead_probe.py` on spawn boundary turns
+  (50/150/250/350/450).
+- **H19 [D] (½ day, FALSIFIED 2026-05-13):** **1.1× fleet-speed
+  over-commitment.** Implemented as `FLEET_OVERCOMMIT` flag in
+  `lib/mechanism.arrival_size` (applies to enemy + neutral intents,
+  skips reinforce, clamps to src.ships). Tested 3 variants on top of
+  PV (PV_GAMMA=0.99), 8 seeds × both seats vs `v7_pv` (1.00×):
+  1.00× = 50% (identity), 1.05× = 43.8%, 1.10× = 37.5%. Monotonic
+  regression with the multiplier. Same architectural lesson as H17:
+  v7's K=10 drop-one rollout already sizes fleets to optimum;
+  forcing +X% ship inflation pre-rollout drains source garrisons
+  without producing the lift Gemini's heuristic-only Day-2 setup
+  observed. Audits: `audit/tournaments/ab-20260513T20{05,10}*.json`.
+  Code retained (flag defaults to 1.0 = identity) for future use on
+  simpler agents. **Conjecture:** mechanisms that REWEIGHT signals
+  the rollout already evaluates regress on v7; mechanisms that ADD
+  new signal (e.g. F/pre-reinforce, E/kingmaker) or CONSTRAIN the
+  candidate set (e.g. C/drop-comets) are more promising.
+- **H20 [E] (½ day):** **4P kingmaker multipliers.** Extend
+  `lib/missions/snipe.py:_leader_pid` to flag leader (×1.5) and
+  non-leader (×0.8) targets in 4P. FFA panel gate via
+  `scripts/ffa_panel.py`. Source: TIDs 697397, 698659.
+### 2026-05-14 — Mission Renaissance (H30): all 3 missions fail on top of v7 drop-one
+
+- **H30 [Renaissance] (1 day, FALSIFIED 2026-05-14):** Enabling
+  `propose_opening_missions` + `propose_drain_missions` +
+  `propose_gang_up_missions` simultaneously on top of v7+PV. 16-seed
+  v7_pv_all vs v7_pv: **9.4% (Wilson [3.2, 24.2], 3-29-0)** —
+  catastrophic. Per-mission 8-seed ablation (pooled 4-way
+  tournament, 48 games per variant) shows: opening 62.5% (Wilson
+  [48.4, 74.8], parity-ish with 68.8% baseline); drain 41.7%
+  (Wilson [28.8, 55.7], real regression); **gang-up 12.5%** (Wilson
+  [5.9, 24.7], catastrophic). Audits:
+  `audit/tournaments/ab-20260513T235144Z.json` (all-on),
+  `audit/tournaments/ab-20260514T001616Z.json` (per-mission).
+
+  **Architectural read.** v7's drop-one chooser is a local-edit
+  operator on an incumbent plan from `settle_plan`. Gang-up's
+  `GANG_UP_BONUS=1.30` dominates settle_plan's per-source greedy,
+  forcing 2-source commits to one target. Drop-one can then only
+  consider "what if we drop ONE of those launches" — it can't
+  undo the whole pairing decision. Drain similarly locks
+  `src.ships - 8 ≈ 30+` ships from a source in one mission. The
+  K=10 rollout sees the *forced* state and can't unlock it.
+
+  **Productive next step (not this session):** wire the three
+  missions through a PORTFOLIO search architecture
+  (`lib/candidate_portfolios.py` — partially built). Each portfolio
+  is a DIFFERENT incumbent plan (drop-one-style, opening-heavy,
+  gang-up-heavy, drain-heavy); drop-one runs within each; score
+  across all and pick the best. This way the Renaissance missions
+  populate ALTERNATIVE plans rather than forcing themselves into
+  the single incumbent.
+
+  Flags retained at default 0 (= disabled). Re-enable opening
+  alone for a 32-seed gate if portfolio search lands.
+
+- **H21 [F] (½ day, FALSIFIED 2026-05-13):** **Pre-reinforce against
+  visible enemy arrival.** Implemented as a ledger-scan inside
+  `lib/mechanism.arrival_size` (window-bounded enemy follow-up
+  detection → bump intent.ships to absorb the strongest in-window
+  arrival). Tested 3 windows on top of PV, 8 seeds × both seats vs
+  `v7_pv` (window=0): 0=50% identity, 1=43.8% (Wilson [23.1, 66.8],
+  7-7-2), 3=25.0% (Wilson [10.2, 49.5], 4-12-0). Monotonic
+  regression. Audits: `audit/tournaments/ab-20260513T202{1,9}*.json`.
+  Same K-rollout-dominance lesson: fast_sim.rollout walks K=10 of
+  the actual game engine; forcing an upfront bump removes the
+  rollout's degrees of freedom. Code retained (flag defaults to 0 =
+  identity).
+
+  **Cross-cutting note (after H17, H19, H21 all falsified the same
+  way):** three independent "reweight/bump" mechanism-layer additions
+  on top of v7 + PV all regress monotonically. The K=10 drop-one
+  rollout is the binding constraint. Productive interventions for v7
+  should PRUNE the candidate pool (drop comets, etc.) or RESHAPE
+  value upstream (PV in H16) rather than reweight at proposal time.
+- **H22 [G] (½ day, LANDED 2026-05-13):** **3-anchor Wilson gate.**
+  Per-anchor Wilson-lo ≥0.55 instead of pooled. Catches non-transitive
+  A>B>C>A loops at high μ. Done — `scripts/ab_variants.py
+  --candidate NAME --gate-threshold 0.55`. Sources: TIDs 698478/698512
+  + our own v3.5.1 live regression (`state/current.md:171`).
+- **H23 [H] (audit, CLEARED 2026-05-13):** Y-axis convention audit.
+  Result: clean. No render-style `+y down` flips anywhere in scalar
+  engine, JAX engine, or orbit math. See
+  `audit/2026-05-13-day-1-audits.md`.
+- **H24 [I] (~3 days):** **Konbu17-style shot-validator MLP** trained
+  on Bovard's CC0 top-10% replays. Uses existing
+  `scripts/label_shot_outcomes.py` (24-d features, LABEL_BUFFER=10).
+  Inline as `lib/missions/shot_validator.py`; weights as static numpy
+  arrays in the bundle. Offline gate: val-AUC ≥ 0.92.
+- **H25 [J] (~1 day post-data):** **Opening classifier** trained on
+  `(initial_planets, angular_velocity)` + first-10 winner actions.
+  Apply only at `obs.step ≤ 5` to set a cached opening recipe.
+- **H26 [K] (probe, CLEARED 2026-05-13):** Eval-cost cgroup probe.
+  Result: v7_0_drop_one single-threaded, scales linearly with CPU
+  share. Extrapolated to eval's 0.6 CPU: p99 ≈ 444 ms, max ≈ 676 ms.
+  Zero overage. See `audit/2026-05-13-day-1-audits.md`.
+- **H27 [L] (~1 day):** **Arrival-window candidate enumerator.**
+  Add `_enumerate_arrival_windows` mode to `lib/v7_search.py` —
+  sweep ship-counts s.t. arrival ∈ [enemy_eta − 2, enemy_eta + 2];
+  prefer smallest fleet landing ≤ enemy_eta. Combines with H18 / H21.
+- **H28 [M] (~3 days post-data):** **Archetype meta-selector.**
+  Cluster Bovard fingerprints to 3-5 archetypes;
+  `lib/opp_model.classify_opponent_from_history(obs_history)` →
+  archetype tag; `v7_search` picks K + value_fn per-archetype.
+  Offline gate: 3-class accuracy ≥ 0.92 at turn 50.
+- **H29 [N] (audit, CLEARED 2026-05-13):** Sun-gravity + fog-of-war
+  zeroing audits. Both clean. See
+  `audit/2026-05-13-day-1-audits.md`.
+
 ### Pre-existing seeds (carried over from Day 1)
 
 - H-search: A search-based agent (MCTS over short horizons) beats a

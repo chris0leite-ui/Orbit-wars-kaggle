@@ -1,5 +1,105 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-13 (claude/research-competition-analysis-2R8I3 — Day-1 audits + 3-anchor gate)
+
+- `tag: fresh-sandbox-no-deps-installed` — `kaggle_environments`,
+  `pytest`, and other `requirements.txt` packages were not present
+  on session start. `pip install -r requirements.txt` failed with
+  `Cannot uninstall blinker 1.7.0, RECORD file not found` (blinker
+  was installed by the OS package manager). **Workaround:**
+  `pip install --quiet --ignore-installed <pkg>` succeeds. Cost
+  ~3 min. **Promotion candidate:** add `--ignore-installed` to a
+  hint in `SETUP.md`, or add an `apt remove python3-blinker` step
+  to `bootstrap.sh` before the pip install.
+
+- `tag: data-main-py-missing-on-fresh-clone` — three tests in
+  `tests/test_fixture_smoke.py` fail with `FileNotFoundError:
+  /home/user/Orbit-wars-kaggle/data/main.py` because `bootstrap.sh`
+  hasn't run (needs Kaggle creds, none configured in this sandbox).
+  Affects: `test_reward_stability_across_runs`,
+  `test_loaded_baseline_beats_random_both_sides`,
+  `test_parallel_runner_matches_sequential_for_deterministic_agent`.
+  All other 11 tests in that file (the pure helpers — Wilson CI,
+  p95) pass. **Fix:** these tests should be marked
+  `@pytest.mark.skipif(not (REPO / "data" / "main.py").is_file(), ...)`
+  so they don't appear as regressions on fresh clones. Not blocking
+  this session.
+
+- `tag: bundler-overwrites-tracked-submission` — `bundle_agent.bundle(agent_dir=v7_0_drop_one, out_dir=submissions/)` outputs `submissions/v7_0_drop_one.py` (named by agent_dir.name), then my inline PV bundling helper renamed THAT to `submissions/v7_pv.py`. Side effect: the existing live-reference bundle at `submissions/v7_0_drop_one.py` (a tracked file) was deleted. Caught by the stop-hook. **Recovery:** `git checkout HEAD -- submissions/v7_0_drop_one.py`. **Fix forward:** when bundling for submission, output to a temp filename first (e.g. `submissions/_pending_{name}.py`), then atomic-rename to the final filename only AFTER confirming no name collision with a tracked bundle. Promotion candidate for `bundle_agent.bundle`: add `output_name=` kwarg.
+
+- `tag: bootstrap-data-check-false-positive` — `bootstrap.sh` step 3
+  decides whether to skip the comp-shipped data download with
+  `[[ "$(ls -A data 2>/dev/null | grep -v '^\.gitkeep$' | wc -l)" -gt 0 ]]`.
+  This matches ANY non-`.gitkeep` content. The repo currently ships
+  `data/shot_validator/` (the IL-pipeline spec dir) as tracked content,
+  so on a fresh clone the check is always true and `main.py`,
+  `README.md`, `agents.md` are NEVER downloaded. I had to manually
+  run `kaggle competitions download -c orbit-wars -p data/` and
+  unzip. The user caught this with "have you bootstrapped carefully?"
+  before I'd noticed the gap. Cost: 3 failing tests, ~10 min of
+  scripted runs that would have produced wrong results, and a credibility
+  hit. **Fix:** change the data-presence guard to check for one of
+  the canonical comp-shipped files specifically (`[[ -f data/main.py ]]`
+  is the most load-bearing — every tournament needs it as the
+  random/baseline opponent). **Promotion candidate.**
+
+- `tag: agent-introspection-skipped-bootstrap` — I assessed the
+  task as "Day-1 audits = read-only grep, no bootstrap needed" and
+  ran the cgroup probe + new [G] tests without verifying the rest
+  of the environment was ready. Worked by luck (the probe used
+  `submissions/v7_0_drop_one.py` which is self-contained, the
+  audits used grep on lib/, and the [G] gate tests are pure
+  helpers with no env runs). But the next item — [A] PV target
+  valuation — needed `data/main.py` for the baseline anchor in any
+  full A/B. **Fix for future sessions:** run `bash bootstrap.sh`
+  + `python -m pytest tests/ -q` as the FIRST action of any session
+  that's going to touch test/A-B infrastructure, even if the
+  immediate task looks like read-only. Cost: ~5 min recovery; user
+  trust hit.
+
+- `tag: new-lib-module-silently-broken-bundle` — H16 (PV target
+  valuation) added `lib/scoring.py:pv_horizon` + `PV_GAMMA`, and
+  imported them into `lib/missions/snipe.py` and `reinforce.py`. All
+  unit tests passed including `test_bundle.py`, and the bundler ran
+  cleanly (199 770 B output, agent callable importable). But every
+  game in the 8-seed smoke A/B ended in a `draw at step 2` because
+  `pv_horizon` was undefined at runtime: the bundler's
+  `_INTRA_IMPORT_RE` strips `from lib.scoring import ...` while
+  `lib/scoring.py` was not in `DEFAULT_LIB_ORDER`, so the symbol
+  vanished. `test_bundle.py`'s parity gate uses v1_orbitfix, which
+  doesn't use snipe missions — so the regression was invisible to the
+  test suite. **Fix landed:** added `"scoring"` to `DEFAULT_LIB_ORDER`
+  immediately before `missions/snipe` (commit pending in this
+  session). **Promotion candidates:** (a) the bundle parity gate
+  should cover at least one agent that exercises the full mission
+  proposer pipeline (v3_snipe is a natural choice); (b) the bundler
+  could lint stripped `from lib.X` imports and error if `X` is not in
+  the lib-order list — fail loud at bundle time, not silent at
+  inference. Cost: ~10 min diagnose + 1 wasted 8-seed A/B run.
+
+- `tag: ab_variants-hardcoded-v3_snipe-agent` — `scripts/ab_variants.py`
+  was hardcoded to bundle `agents/v3_snipe`. For H16-H29 we need to
+  A/B inside `agents/v7_ablations/v7_0_drop_one` (the drop-one
+  rollout) because ROI-formula changes are most meaningful where they
+  feed candidate selection into the rollout scorer. Added `--agent
+  PATH` flag (defaults to v3_snipe for back-compat). **Note:** this
+  was a small extension but should have been part of [G]'s scope, not
+  discovered mid-A.
+
+- `tag: no-cgroup-v2-no-systemd-bus` — Day-1 eval-cost probe (K)
+  tried `systemd-run --user --scope -p CPUQuota=60%` for a true
+  0.6-CPU limit (matching Kaggle eval). Failed with "Failed to
+  connect to bus: No medium found" (no systemd in this container).
+  `/sys/fs/cgroup/cgroup.controllers` is also absent (cgroup v2 not
+  exposed). **Workaround:** ran `taskset -c 0 yes >/dev/null` as a
+  background CPU burner sharing core 0 with the probe — empirically
+  forced a ~50 % share (perfect linear: wallclock 64.7 s → 128.9 s).
+  This is conservative vs eval's 0.6 CPU. Adequate for the verdict
+  but not exact. **Note for future cgroup-aware harnessing:** use a
+  Docker container (`docker run --cpus=0.6 --memory=8g`) — Docker IS
+  installed; we just didn't try it because the contention probe was
+  faster to validate.
+
 ## 2026-05-12 EVE (game-ai-lookahead-3ucqH — v9 super-version + v10 + submit attempt)
 
 - `tag: kaggle-cli-401-was-wrong-auth-env-var` — `kaggle competitions

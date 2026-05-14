@@ -1,0 +1,80 @@
+{
+  "utc": "20260514T001616Z",
+  "variants": {
+    "v7_pv_baseline": {
+      "PV_GAMMA": 0.99,
+      "USE_OPENING_MISSION": 0.0,
+      "USE_DRAIN_MISSION": 0.0,
+      "USE_GANG_UP_MISSION": 0.0
+    },
+    "v7_pv_open": {
+      "PV_GAMMA": 0.99,
+      "USE_OPENING_MISSION": 1.0,
+      "USE_DRAIN_MISSION": 0.0,
+      "USE_GANG_UP_MISSION": 0.0
+    },
+    "v7_pv_drain": {
+      "PV_GAMMA": 0.99,
+      "USE_OPENING_MISSION": 0.0,
+      "USE_DRAIN_MISSION": 1.0,
+      "USE_GANG_UP_MISSION": 0.0
+    },
+    "v7_pv_gangup": {
+      "PV_GAMMA": 0.99,
+      "USE_OPENING_MISSION": 0.0,
+      "USE_DRAIN_MISSION": 0.0,
+      "USE_GANG_UP_MISSION": 1.0
+    }
+  },
+  "seeds": [
+    42,
+    1,
+    7,
+    13,
+    31,
+    100,
+    17,
+    23
+  ],
+  "include_self_play": false,
+  "summary": {
+    "v7_pv_baseline": {
+      "wins": 33,
+      "losses": 8,
+      "draws": 7,
+      "n": 48,
+      "winrate": 0.6875,
+      "wilson_lo": 0.5466666274950367,
+      "wilson_hi": 0.800544878322685
+    },
+    "v7_pv_open": {
+      "wins": 30,
+      "losses": 11,
+      "draws": 7,
+      "n": 48,
+      "winrate": 0.625,
+      "wilson_lo": 0.48362506125249566,
+      "wilson_hi": 0.7478492759593187
+    },
+    "v7_pv_drain": {
+      "wins": 20,
+      "losses": 28,
+      "draws": 0,
+      "n": 48,
+      "winrate": 0.4166666666666667,
+      "wilson_lo": 0.28849459734577015,
+      "wilson_hi": 0.5571891778463536
+    },
+    "v7_pv_gangup": {
+      "wins": 6,
+      "losses": 42,
+      "draws": 0,
+      "n": 48,
+      "winrate": 0.125,
+      "wilson_lo": 0.05856971750400844,
+      "wilson_hi": 0.24700727086054822
+    }
+  },
+  "tournament_json": "/home/user/Orbit-wars-kaggle/audit/tournaments/2026-05-14T00:16:16Z.json",
+  "elapsed_s": 1445.8
+}

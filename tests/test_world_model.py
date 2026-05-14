@@ -170,3 +170,94 @@ def test_world_model_lookups_match_timelines():
     # The flight is ~80 units at speed v(50) ≈ 3.0 → eta ≈ 27 steps. By
     # step 80 the planet should be ours.
     assert owner_late == 0
+
+
+# ---------------------------------------------------------------------------
+# time_to_enemy_threat — HAV helper (2026-05-14 plan)
+# ---------------------------------------------------------------------------
+
+
+def _world_for_threat(planets, fleets=(), my_id=0):
+    obs = {
+        "player": my_id,
+        "planets": [
+            [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
+            for p in planets
+        ],
+        "fleets": list(fleets),
+        "angular_velocity": 0.0,
+        "comet_planet_ids": [],
+        "step": 0,
+    }
+    return World.from_obs(obs)
+
+
+def test_time_to_enemy_threat_returns_none_when_no_enemy_exists():
+    # Only us + a neutral. No threat to the neutral.
+    mine = _planet(0, 0, 10.0, 10.0, ships=100)
+    neutral = _planet(1, -1, 90.0, 90.0, ships=5)
+    world = _world_for_threat([mine, neutral])
+    wm = WorldModel.from_world(world)
+    assert wm.time_to_enemy_threat(neutral.id, my_id=0, world=world) is None
+
+
+def test_time_to_enemy_threat_uses_inflight_enemy_fleet():
+    # Enemy fleet inbound at target's planet id.
+    mine = _planet(0, 0, 10.0, 10.0, ships=100)
+    target = _planet(1, -1, 90.0, 50.0, ships=20, radius=2.0)
+    # Enemy fleet at (10, 50) flying east toward target.
+    obs = {
+        "player": 0,
+        "planets": [
+            [mine.id, mine.owner, mine.x, mine.y, mine.radius, mine.ships, mine.production],
+            [target.id, target.owner, target.x, target.y, target.radius, target.ships, target.production],
+        ],
+        "fleets": [[200, 1, 10.0, 50.0, 0.0, 99, 50]],  # enemy id=200, ships=50
+        "angular_velocity": 0.0,
+        "comet_planet_ids": [],
+        "step": 0,
+    }
+    world = World.from_obs(obs)
+    wm = WorldModel.from_world(world)
+    threat = wm.time_to_enemy_threat(target.id, my_id=0, world=world)
+    assert threat is not None
+    assert threat > 0
+
+
+def test_time_to_enemy_threat_uses_potential_enemy_launch():
+    # No in-flight fleets but a nearby enemy planet could launch.
+    mine = _planet(0, 0, 5.0, 50.0, ships=100)
+    target = _planet(1, -1, 50.0, 50.0, ships=10)
+    enemy = _planet(2, 1, 95.0, 50.0, ships=80, radius=2.0)  # to the east of target
+    world = _world_for_threat([mine, target, enemy])
+    wm = WorldModel.from_world(world)
+    threat = wm.time_to_enemy_threat(target.id, my_id=0, world=world)
+    # The enemy is 45 units away from the target; with 80 ships its
+    # fleet_speed is well above 1, so ETA must be > 0 and finite.
+    assert threat is not None
+    assert threat > 0
+
+
+def test_time_to_enemy_threat_picks_minimum_across_sources():
+    # Two enemy planets — one close, one far. We want the closer one.
+    mine = _planet(0, 0, 5.0, 50.0, ships=100)
+    target = _planet(1, -1, 50.0, 50.0, ships=10)
+    near = _planet(2, 1, 60.0, 50.0, ships=20)
+    far = _planet(3, 1, 95.0, 95.0, ships=20)
+    world = _world_for_threat([mine, target, near, far])
+    wm = WorldModel.from_world(world)
+    threat = wm.time_to_enemy_threat(target.id, my_id=0, world=world)
+    # Sanity: threat ETA should be small (near planet is 10 units off).
+    assert threat is not None
+    assert threat < 30
+
+
+def test_time_to_enemy_threat_skips_neutral_and_self_planets():
+    # Only neutrals + our own planets — no enemy threat.
+    mine1 = _planet(0, 0, 10.0, 10.0, ships=100)
+    mine2 = _planet(1, 0, 20.0, 20.0, ships=50)
+    target = _planet(2, -1, 50.0, 50.0, ships=10)
+    neutral2 = _planet(3, -1, 90.0, 90.0, ships=5)
+    world = _world_for_threat([mine1, mine2, target, neutral2])
+    wm = WorldModel.from_world(world)
+    assert wm.time_to_enemy_threat(target.id, my_id=0, world=world) is None
