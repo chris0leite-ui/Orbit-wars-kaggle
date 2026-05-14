@@ -79,6 +79,45 @@ fix forward AND add a test.
   CLAUDE.md Rule 38; bumped SessionStart bootstrap hook to top
   pending in `improvements.md`.
 
+- `tag: helper-reimplemented-inline-silently-wrong` — 2026-05-14
+  game-strategy-eda-roatN: bundling-friendly inline rewrite of
+  `lib.orbit.is_orbiting` checked `dist_from_sun > 0.5 AND radius > 0`
+  instead of `orb_r + planet_radius < ROTATION_RADIUS_LIMIT`. Every
+  self-play board reported `orbital_frac=1.00` (training corpus
+  0.27-0.44); KMeans nearest-centroid put every board in cluster 3.
+  v2 sweep ran at 67% vs v7_0 — looked encouraging — actually noise
+  from the forced-C3 high-cadence template. **Root cause:** I
+  paraphrased the library invariant instead of inlining the formula
+  verbatim. **Fix this session:** corrected the proxy + added an
+  outlier-distance threshold; the broader fix needed is a project
+  rule like "when inlining for bundling, paste the source line, not
+  a proxy" — promotion candidate for `improvements.md`.
+
+- `tag: broken-mechanism-yields-fake-positive-signal` — 2026-05-14
+  same session: the v2 sweep's 67% point estimate against v7_0 was
+  taken as "directionally encouraging" support for the cluster-
+  conditional overlay. After fixing the underlying classifier bug
+  (above), v3 sweep collapsed to 53% with overlay-active games at
+  46% and pure-v7-fallback at 80%. The "encouraging" result was the
+  bug. **Root cause:** acted on a positive sweep result without
+  verifying the upstream mechanism (the classifier) was actually
+  classifying. **Fix forward:** any "we beat the panel by X%"
+  reading requires a 30-second sanity print of what the agent
+  actually does (cluster distribution, launch count distribution)
+  before treating the number as signal.
+
+- `tag: soft-clusters-need-confidence-fallback` — 2026-05-14 same
+  session: Mine 1 had already flagged silhouette ≈0.17 ("clusters
+  are real but not sharply separated") as a risk; I treated the
+  k=4 KMeans output as a usable categorical anyway. With centroid
+  distances spread training p25=2.05 → p95=3.30, marginal boards
+  get force-routed into a wrong template. **Root cause:** soft
+  clusters + hard nearest-centroid classification = templates
+  applied where they don't fit. **Fix forward:** when silhouette
+  < 0.20, the classifier ships with a confidence threshold (defer
+  to a default policy beyond p90 distance) from day 1, not after
+  a failed sweep.
+
 ## Still-open patterns (next-session priority)
 
 - `tag: handover-stale-at-session-start-no-git-log-check` — Rule 32

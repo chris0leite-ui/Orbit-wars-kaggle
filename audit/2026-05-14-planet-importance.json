@@ -1,0 +1,59 @@
+{
+  "mine": "2 - per-planet importance features",
+  "date": "2026-05-14",
+  "corpus": {
+    "replays": 60,
+    "rows_after_filter": 1482,
+    "filter": "non-home planets with non-null winner label",
+    "label": "captured by eventual winner within first 100 turns",
+    "label_positive_rate": 0.567
+  },
+  "features": [
+    "production", "radius", "starting_ships", "centrality (sum of 1/(1+travel_time) to all others)",
+    "visibility (frac of others reachable without sun block)",
+    "min_home_dist", "max_home_dist", "prod_density",
+    "denial_score (rahul-style nearby-neutral production blocked)",
+    "perp_signed_dist (Voronoi front for 2P)",
+    "orbital_reach_seat0 (frac of orbital period closer to seat-0 home)",
+    "is_orbiting (binary)"
+  ],
+  "model": "logistic regression (sklearn LogisticRegression, C=1.0), 5-fold stratified CV, StandardScaler",
+  "auc_per_fold": [0.7759, 0.7688, 0.7925, 0.7635, 0.7514],
+  "mean_5fold_auc": 0.7704,
+  "falsification_gate": {
+    "description": "Mean 5-fold AUC >= 0.70 indicates geometric features genuinely predict capture priority.",
+    "passed": true
+  },
+  "standardised_coefficients_sorted": {
+    "radius": 0.7786,
+    "starting_ships": -0.7086,
+    "orbital_reach_seat0": 0.3981,
+    "min_home_dist": 0.2137,
+    "visibility": -0.1205,
+    "production": -0.0670,
+    "centrality": -0.0554,
+    "prod_density": 0.0519,
+    "is_orbiting": 0.0357,
+    "denial_score": -0.0350,
+    "perp_signed_dist": 0.0100,
+    "max_home_dist": -0.0003
+  },
+  "raw_means_by_label": {
+    "radius": {"captured": 1.982, "not_captured": 1.637},
+    "starting_ships": {"captured": 21.84, "not_captured": 33.37},
+    "orbital_reach_seat0": {"captured": 0.498, "not_captured": 0.499}
+  },
+  "headline_findings": [
+    "AUC 0.77 confirms geometric features carry real signal for capture priority.",
+    "Two features dominate (>0.7 absolute coefficient): planet RADIUS (production proxy via radius = 1 + ln(prod)) and STARTING SHIPS (lower garrison -> more likely captured).",
+    "production's raw coefficient (-0.07) is misleading — it is fully absorbed by `radius`, which is collinear and scaled. The real production signal is +0.78 via radius.",
+    "min_home_dist (+0.21) is positive: top-10 winners reach FAR planets by step 100, not just close ones. The closer planets are taken in the opening (Mine 3); the longer-arm captures are what separate winners from losers.",
+    "orbital_reach (+0.40, but raw means tied at 0.498) — sklearn picks up an interaction; raw univariate inspection shows the marginal is noise. Coefficient may be a high-variance fit; do NOT use this term standalone.",
+    "DENIAL_SCORE (rahul-style neutral-denial near enemy) is effectively ZERO (-0.035). Either our formulation is wrong or this is not a winner-distinguishing feature in the top-10 corpus. Reformulate or drop."
+  ],
+  "downstream_uses": [
+    "Feeds Experiment Option 2 (planet-value head replacement) — use the standardised coefficients above as initial weights.",
+    "Production-weighting via radius (not production directly) is the cleanest single signal.",
+    "Garrison-aware target selection deserves a dedicated 'easy-pickings' bonus already in ROI; this validates the coefficient sign."
+  ]
+}

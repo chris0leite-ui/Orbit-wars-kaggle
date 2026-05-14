@@ -57,6 +57,17 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   `[owner: review-competition-handover-0pGNc | status: done]`
   → `agents/v1_orbitfix/main.py` line ~63 (rng seeded per turn);
   `audit/tournaments/20260510T075217Z.json` records the 80-game grid.
+- **A.7 Geometry-conditional strategy EDA**: mine ~500 self-play
+  replays + the 50-game top-10 corpus to test the hypothesis that the
+  optimal strategy is map-conditional. Five mines: (1) board-geometry
+  taxonomy, (2) per-planet importance features, (3) opening atlas
+  (first 30 turns), (4) endgame anatomy (last 100 turns),
+  (5) sun-shadow exploitation. Pre-EDA public-notebook scan: see
+  `audit/2026-05-14-public-notebook-scan.md`. Each mine writes one
+  audit JSON with an explicit pass/fail falsification gate. Feeds at
+  least one experimental option from a list of five (see plan file
+  `you-are-a-senior-woolly-nest.md` in claude plans dir).
+  `[owner: game-strategy-eda-roatN | status: wip]`
 
 ### B. Agent class — pick the simplest class that beats baselines
 

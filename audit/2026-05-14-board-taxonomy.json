@@ -1,0 +1,84 @@
+{
+  "mine": "1 - board taxonomy",
+  "date": "2026-05-14",
+  "corpus": {
+    "top10_replays": 60,
+    "two_player_replays_used": 37,
+    "self_play_status": "in_progress_at_audit_time; gate already cleared on top-10 alone"
+  },
+  "features_used": [
+    "n_planets", "orbital_frac", "mean_prod", "std_prod",
+    "sun_shadow_frac", "home_pair_min_dist", "home_dist_sun",
+    "prod_centroid_dist_sun", "perp_bisector_median_dist",
+    "angular_velocity"
+  ],
+  "k_chosen": 4,
+  "silhouette_at_k_4": 0.165,
+  "silhouette_sweep": {"k=3": 0.176, "k=4": 0.165, "k=5": 0.174, "k=6": 0.138},
+  "cluster_archetypes": {
+    "0": {
+      "name": "wide-and-sparse",
+      "n": 10,
+      "home_pair_dist_mean": 108,
+      "mean_prod": 2.5,
+      "orbital_frac": 0.35,
+      "n_planets_mean": 28.4,
+      "opening_first_launch_med": 4.0,
+      "opening_target_prod_med": 3.0,
+      "opening_target_dist_med": 37.4,
+      "opening_n_launches_30_med": 7
+    },
+    "1": {
+      "name": "close-quarters-orbital",
+      "n": 10,
+      "home_pair_dist_mean": 66,
+      "mean_prod": 2.5,
+      "orbital_frac": 0.44,
+      "n_planets_mean": 29.2,
+      "opening_first_launch_med": 3.5,
+      "opening_target_prod_med": 3.0,
+      "opening_target_dist_med": 29.6,
+      "opening_n_launches_30_med": 6
+    },
+    "2": {
+      "name": "wide-and-rich",
+      "n": 13,
+      "home_pair_dist_mean": 109,
+      "mean_prod": 3.0,
+      "orbital_frac": 0.41,
+      "n_planets_mean": 29.5,
+      "opening_first_launch_med": 3.0,
+      "opening_target_prod_med": 4.0,
+      "opening_target_dist_med": 20.1,
+      "opening_n_launches_30_med": 10
+    },
+    "3": {
+      "name": "sparse-static-rich",
+      "n": 4,
+      "home_pair_dist_mean": 89,
+      "mean_prod": 3.0,
+      "orbital_frac": 0.23,
+      "n_planets_mean": 21.0,
+      "opening_first_launch_med": 4.0,
+      "opening_target_prod_med": 4.2,
+      "opening_target_dist_med": 37.0,
+      "opening_n_launches_30_med": 6
+    }
+  },
+  "falsification_gate": {
+    "description": "At least one pairwise cluster diff in median target production (>=1.0) OR median target distance (>=1.0). Tests whether geometry meaningfully drives the opening.",
+    "prod_spread_across_clusters": 1.25,
+    "dist_spread_across_clusters": 17.27,
+    "passed": true
+  },
+  "headline_findings": [
+    "Boards cluster into 4 archetypes that produce visibly different openings.",
+    "The 'wide-and-rich' archetype (C2, n=13) gets >50% MORE launches in the first 30 turns than other clusters (10 vs 6-7) and targets the closest, highest-production planets — top-performer 'opening blitz' regime.",
+    "The 'close-quarters-orbital' archetype (C1, n=10) has the closest median target distance (29.6) and fewest distinct targets — opening focused, geometry-cramped.",
+    "Silhouette is modest (~0.17); clusters are statistically meaningful but soft. A meta-router classifier may need to predict cluster *probability* rather than hard label."
+  ],
+  "downstream_uses": [
+    "Mine 3 opening atlas already cross-references cluster -> opening template.",
+    "Feeds Experiment Option 1 (map-type-conditional opening book) and Experiment Option 5 (meta-router refresh)."
+  ]
+}

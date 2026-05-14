@@ -1,5 +1,46 @@
 # state/hypothesis-board.md — open agent-design hypotheses
 
+## Open — Geometry-conditional EDA (2026-05-14)
+
+> Five-mine EDA on 60 top-10 replays + (in-progress) ~500 self-play games.
+> Full roll-up: `audit/2026-05-14-eda-rollup.md`.
+
+### H40 — Map-type-conditional opening book lifts winrate vs v7_pv
+
+Mine 1 + Mine 3 found 4 board archetypes that produce visibly different
+top-10 opening templates (target prod spread 1.25, target distance spread
+17.3 — both clear the falsification gate). Tier-1 experiment: classify
+board at t=0, override the proposer's first 30 turns with a
+cluster-specific template (target distance + target production), then
+let v7_pv take over. Falsification: ≥55% Wilson on 3-agent panel
+(v7_pv, v7_0, v3.5.1).
+
+### H41 — v7_pv depreciates late-game expansion (worth checking before any new submit)
+
+Mine 4 shows 76% of top-10 winners EXPAND ship-share by >2pp in the
+last 100 turns; only 1.7% contract. If v7's value head treats late
+turns as low-leverage, we are losing late-game ship-share gains. Tier-1
+diagnostic: 32-game self-play instrumentation of value-head outputs
+across the last 100 turns. No code change yet, just measurement.
+
+### H42 — Planet value head = standardised LR coefficients from Mine 2
+
+Mine 2 logistic regression hit 0.77 AUC on "captured by winner by step
+100". Dominant features: radius (+0.78, production proxy), starting_ships
+(-0.71, prefer low-garrison), min_home_dist (+0.21, long-arm reach
+matters). Tier-2 experiment: replace v7's per-planet score with these
+coefficients. Defer until H40 is on the LB to avoid axis collision.
+
+### Killed by this EDA (do not re-attempt without new data)
+
+- Sun-shadow valuation bonus — Mine 5 mean Spearman 0.025; planets are
+  shielded only 6.1% of owned-turns. Not a strategic axis.
+- Endgame consolidation switch — Mine 4 contradicts; throttling late
+  costs ship-share.
+- Rahul-style "neutral denial" term — Mine 2 coefficient -0.035, essentially
+  zero. May still work tactically for leading player but does not
+  predict capture priority.
+
 ## Open — consolidation branch wrap (2026-05-12 EVE)
 
 ### Lead hypothesis: a 100%-accurate pure-Python game rebuild is the next-tier substrate
