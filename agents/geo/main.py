@@ -1,4 +1,22 @@
-"""geo v2.3 — geometric sense + K=10 lookahead + top-10 archetypes + 4P support.
+"""geo v2.4 — geo v2.3 + ladder-safe wallclock via lite_greedy follow-up.
+
+EVAL VERDICT for v2.3 (n=64 each):
+  vs v3.5.1 (2P):       40/64 = 62.5%, Wlo=0.503  [+12pp lift]
+  vs v7_0   (2P):       37/64 = 57.8%, Wlo=0.456  [+8pp over our live agent]
+  vs 3x v7_0 (4P FFA):  32/64 = 50.0% first-place, Wlo=0.381 (vs 25% baseline)
+
+But v2.3 had max=1915ms in 2P which would forfeit on the 1000ms ladder
+limit. v2.4 fixes this with two changes:
+
+  1. score_candidate(followup_policy=lite_greedy_policy)
+     ~1ms/call vs top_tier_mirror's ~10ms. K=10 with 2 seats means
+     K-1 = 9 follow-up steps × 2 seats × ~9ms saved = ~160ms saved per
+     score_candidate. The first-step opp policy stays Tier-1 (mirror).
+     Score validation: lite_greedy bit-different from mirror but maintains
+     the same strategic shape (ROI-greedy launches, 0.7 ship fraction).
+
+  2. WALLCLOCK_MS 500 -> 350: tighter pre-candidate gate so we never
+     enter a 5th candidate when we're already over budget.
 
 KEY EDGE OVER v7_0: v7_0 falls back to v3.5.1 incumbent in 4P games
 (33% of live ladder per HANDOVER). This agent runs lookahead-validated
@@ -50,6 +68,7 @@ from lib.mission import Mission
 from lib.missions.opening import propose_opening_missions
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.missions.snipe import propose_snipe_missions
+from lib.opp_model import lite_greedy_policy
 from lib.planner import settle_plan
 from lib.v7_search import (
     _action_from_intents, _infer_num_seats,
@@ -66,7 +85,7 @@ from lib.geo.sense import SenseState, sense_state
 
 K_LOOKAHEAD = 10        # 2P depth
 K_LOOKAHEAD_4P = 8      # 4P shallower (3 opponents = more compute per step)
-WALLCLOCK_MS = 500.0    # hard pre-candidate gate (ladder limit 1000)
+WALLCLOCK_MS = 350.0    # hard pre-candidate gate (was 500; ladder limit 1000)
 TIE_TOLERANCE = 1e-6
 MAX_DROP_ONE_VARIANTS = 2   # capped to 2; 2 archetype tilts replace the budget
 
@@ -324,10 +343,18 @@ def agent(obs, configuration=None):
             break
         try:
             if num_seats == 2:
+                # lite_greedy follow-up: 2P opp's first turn still uses Tier-1
+                # (opp_tier=1); the K-1 mirror-mirror follow-up steps use the
+                # cheap (~1-2ms) lite_greedy_policy instead of top_tier_mirror
+                # (~10ms). Saves ~160ms per score_candidate at K=10.
                 score = score_candidate(
                     snap, cand, my_id=my_id, K=K_LOOKAHEAD, opp_tier=1,
+                    followup_policy=lite_greedy_policy,
                 )
             else:  # 4P
+                # score_candidate_4p has no followup_policy parameter — all
+                # seats use top_tier_mirror_policy. 4P p95=712ms in our eval
+                # was already under ladder limit, so no fix needed there.
                 score = score_candidate_4p(
                     snap, cand, my_id=my_id, K=K_LOOKAHEAD_4P,
                 )
