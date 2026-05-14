@@ -1,28 +1,30 @@
 """main.py — our Orbit Wars agent (kaggle-submittable as-is).
 
-v1 — favor-driven chooser. Per turn, per owned planet:
+v2 — multi-step rollout chooser. Per turn:
 
-    candidates = [do_nothing]
-              + [(target, ship_size) for target in K nearest non-owned
-                 for ship_size in {just-enough-to-capture, send-all}]
-    pick argmax(Δfavor); if best Δfavor ≤ 0, hold.
+  1. Enumerate candidate (src, tgt, ships) triples (8 nearest targets
+     per owned source, min-capture sizing, threat-aware defensive
+     reserve). Pre-filter via analytic Δfavor (`score_action`).
+  2. For the top-K candidates by analytic score, run an N-turn
+     forward rollout via `lib.fast_sim` with `nearest_sniper` policy
+     for the opponent (and for our other sources beyond the candidate).
+     Score = favor(leaf_state, me) − favor(current_state, me).
+  3. Greedy non-dogpile match: walk candidates rollout-score-desc;
+     each source used at most once, each target hit at most once.
 
-Δfavor is computed analytically from the comp's documented combat rules
-(no forward-sim needed). See `score_action()` below for the full table.
-
-This replaces the nearest-sniper (greedy local target) baseline. The
-core change: actions are scored by "does this make the *world* more
-favorable for us?", with "do nothing" always an option. Saves ships
-from wasted launches, avoids sun-crossing routes, and accounts for
-travel time vs production-window gain.
+Why rollout: the favor function predicts winners at AUC 0.945 on
+saved states but greedy 1-step Δfavor cannot beat v7_0 (0 / 24).
+Greedy on V is suboptimal when V ≠ V*; multi-step lookahead lets the
+chooser see consequences (e.g., enemy recapturing a weakly-held
+new planet) that 1-step misses.
 
 Submit with:  ./submit.sh "message describing the change"
 Eval with:    python eval.py --vs nearest -n 24
               python eval.py --vs v7_0 -n 24
               python eval.py --panel -n 24
 
-Favor function lives in favor.py; weights match its FavorConfig
-defaults (α=1.0 ship lead, β=1.0 production×horizon).
+Favor function: `favor.py`. Simulator: `lib/fast_sim.py` (parity-tested
+vs the kaggle env; see `tests/test_fast_sim_parity.py`).
 """
 
 from __future__ import annotations
@@ -30,6 +32,9 @@ from __future__ import annotations
 import math
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
+
+from favor import favor
+from lib.fast_sim import from_obs, step as fs_step, clone as fs_clone
 
 # --- comp constants (from data/README.md) ----------------------------------
 EPISODE_STEPS = 500
@@ -45,6 +50,8 @@ BETA = 1.0    # weight on (production lead × turns_remaining) Δ
 # --- chooser config --------------------------------------------------------
 NUM_TARGETS_PER_SOURCE = 8     # K nearest non-owned planets considered
 MIN_FLEET_SIZE = 2             # 1-ship fleets move at speed 1; rarely useful
+ROLLOUT_TURNS = 10             # depth of forward simulation per candidate
+ROLLOUT_TOP_K = 20             # top-K analytic-scored candidates that get rolled
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +234,87 @@ def _enumerate_candidates(
 
 
 # ---------------------------------------------------------------------------
+# Rollout scoring (uses lib.fast_sim, parity-tested vs the kaggle env)
+# ---------------------------------------------------------------------------
+
+
+def _nearest_sniper_moves(obs_struct, player: int) -> list[list]:
+    """Re-implementation of `baselines/nearest.py` operating on a
+    Snapshot's observation (Struct or dict). Used as the rollout
+    policy for both the opponent and our own non-candidate sources.
+    """
+    raw_planets = (
+        obs_struct.planets if hasattr(obs_struct, "planets")
+        else obs_struct.get("planets", [])
+    )
+    planets = [Planet(*p) for p in raw_planets]
+    my_planets = [p for p in planets if p.owner == player]
+    targets = [p for p in planets if p.owner != player]
+    if not my_planets or not targets:
+        return []
+    moves = []
+    for mine in my_planets:
+        nearest = min(targets, key=lambda t: math.hypot(mine.x - t.x, mine.y - t.y))
+        ships_needed = nearest.ships + 1
+        if mine.ships >= ships_needed:
+            angle = math.atan2(nearest.y - mine.y, nearest.x - mine.x)
+            moves.append([mine.id, angle, ships_needed])
+    return moves
+
+
+def _num_seats(planets: list[Planet], fleets: list[Fleet]) -> int:
+    """Detect 2P vs 4P from the obs (orbit-wars supports only those)."""
+    max_owner = -1
+    for p in planets:
+        if p.owner > max_owner:
+            max_owner = p.owner
+    for f in fleets:
+        if f.owner > max_owner:
+            max_owner = f.owner
+    return 4 if max_owner >= 2 else 2
+
+
+def _rollout_score(
+    snap_base,
+    our_action: list | None,
+    me: int,
+    num_seats: int,
+    n_turns: int,
+) -> float:
+    """Run an N-turn rollout starting from `snap_base`, applying
+    `our_action` on the first turn for seat `me` and `nearest_sniper`
+    for everyone else (and for seat `me` on all subsequent turns).
+    Return favor(leaf_state, me).
+
+    Holds opponent + our-other-sources to a fixed nearest-sniper
+    policy so candidate scores are comparable. Pessimistic vs our
+    actual chooser, but correct for ranking.
+    """
+    snap = fs_clone(snap_base)
+
+    # Turn 0: candidate action for me; nearest for everyone else.
+    actions = []
+    for seat in range(num_seats):
+        if seat == me:
+            actions.append([our_action] if our_action else [])
+        else:
+            actions.append(_nearest_sniper_moves(snap.state[seat].observation, seat))
+    snap = fs_step(snap, actions, in_place=True)
+
+    # Turns 1..n_turns-1: everyone plays nearest.
+    for _ in range(n_turns - 1):
+        if snap.fake_env.done:
+            break
+        actions = [
+            _nearest_sniper_moves(snap.state[seat].observation, seat)
+            for seat in range(num_seats)
+        ]
+        snap = fs_step(snap, actions, in_place=True)
+
+    return favor(snap.state[me].observation, me)
+
+
+# ---------------------------------------------------------------------------
 # Public agent
 # ---------------------------------------------------------------------------
 
@@ -235,9 +323,9 @@ def agent(obs):
     player = obs.get("player", 0) if isinstance(obs, dict) else obs.player
     step = int(obs.get("step", 0)) if isinstance(obs, dict) else int(getattr(obs, "step", 0))
     raw_planets = obs.get("planets", []) if isinstance(obs, dict) else obs.planets
+    raw_fleets = obs.get("fleets", []) if isinstance(obs, dict) else obs.fleets
 
     planets = [Planet(*p) for p in raw_planets]
-    raw_fleets = obs.get("fleets", []) if isinstance(obs, dict) else obs.fleets
     fleets = [Fleet(*f) for f in raw_fleets]
     my_planets = [p for p in planets if p.owner == player]
     targets = [p for p in planets if p.owner != player]
@@ -245,16 +333,41 @@ def agent(obs):
     if not my_planets or not targets:
         return []
 
-    # Global candidate enumeration + greedy non-dogpile matching:
-    # walk candidates highest-score first; each source planet emits at
-    # most one fleet per turn; each target is hit by at most one source
-    # per turn. Prevents wasting ships when multiple owned planets all
-    # see the same neutral as their best move.
-    candidates = _enumerate_candidates(my_planets, targets, fleets, step, player)
+    # Pre-filter candidates with cheap analytic Δfavor (existing v1 logic).
+    analytic = _enumerate_candidates(my_planets, targets, fleets, step, player)
+    if not analytic:
+        return []  # no positive-analytic-score candidate; hold
+
+    # Cap to the top-K analytic-score candidates so rollout cost stays
+    # under budget. ~20 candidates × 10 turns × ~1 ms = ~200 ms / turn.
+    analytic = analytic[:ROLLOUT_TOP_K]
+
+    # Build the Snapshot once for this turn; clone-per-candidate is cheap.
+    num_seats = _num_seats(planets, fleets)
+    snap_base = from_obs(obs, num_seats=num_seats)
+
+    # Baseline rollout: do nothing this turn; everyone plays nearest going
+    # forward. Candidates must beat this baseline to be worth launching.
+    baseline_favor = _rollout_score(snap_base, None, player, num_seats, ROLLOUT_TURNS)
+
+    # Rollout-score each candidate.
+    rolled: list[tuple[float, Planet, Planet, int]] = []
+    for _analytic_s, src, tgt, ships in analytic:
+        angle = math.atan2(tgt.y - src.y, tgt.x - src.x)
+        action = [src.id, angle, ships]
+        leaf = _rollout_score(snap_base, action, player, num_seats, ROLLOUT_TURNS)
+        delta = leaf - baseline_favor
+        if delta > 0:
+            rolled.append((delta, src, tgt, ships))
+
+    rolled.sort(key=lambda c: -c[0])
+
+    # Greedy non-dogpile: each source emits at most one fleet; each target
+    # is the destination of at most one fleet this turn.
     used_srcs: set[int] = set()
     used_tgts: set[int] = set()
     moves: list[list] = []
-    for _score, src, tgt, ships in candidates:
+    for _delta, src, tgt, ships in rolled:
         if src.id in used_srcs or tgt.id in used_tgts:
             continue
         used_srcs.add(src.id)
