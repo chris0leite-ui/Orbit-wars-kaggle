@@ -338,3 +338,109 @@ def composite_plus_defensibility(
     )
     base = delta_us_minus_them_obs(obs, my_id)
     return composite + (defensibility_full - base)
+
+
+# ---------------------------------------------------------------------------
+# territory_value — production-weighted ongoing position quality
+# ---------------------------------------------------------------------------
+
+
+# Cap on expected-hold turns so a planet deep in our own cluster (no enemy
+# threat → expected_hold saturates at remaining_episode) doesn't explode the
+# magnitude. EPISODE_STEPS_TOTAL=500 already exists above; reusing it here
+# under a clearer name for the head.
+TERRITORY_HORIZON_CAP: int = EPISODE_STEPS_TOTAL
+
+# Outer coefficient. production×hold can sum to ~5000-10000 across our planets
+# in mid-game; delta is ~10-100. Caller (the iter dispatcher) is expected to
+# pass a small weight (typical 0.005-0.02) so the territory term and delta
+# end up at comparable magnitudes.
+TERRITORY_WEIGHT: float = 1.0
+
+
+def territory_value(
+    obs: Any, my_id: int,
+    *,
+    weight: float = TERRITORY_WEIGHT,
+    horizon_cap: int = TERRITORY_HORIZON_CAP,
+) -> float:
+    """Ship-delta + weight × (my territorial production-time − their territorial production-time).
+
+    For each non-neutral planet, compute `production × expected_hold` where
+    expected_hold is the number of turns the current owner retains the planet
+    given predicted threats from the OPPOSITE side. Sum for our planets,
+    subtract for enemy planets, scale by `weight`.
+
+    Targets the conquer-then-undefend pathology: a planet just captured with
+    1 ship in enemy reach has expected_hold ~5; the same planet with 50 ships
+    has expected_hold capped at remaining-episode. The leaf head sees the
+    difference and the chooser prefers candidates that produce DEFENSIBLE
+    captures, not just any capture.
+
+    We inline the threat-eta computation (rather than call
+    `lib.scoring.expected_hold`) because that helper hard-codes `world.my_id`
+    in its threat lookup — useless for an enemy planet. The reused helper
+    `model.time_to_enemy_threat(p.id, p.owner, world)` returns "earliest
+    threat from any non-owner", which is correct for both our and enemy
+    planets (in 2P it's symmetric; in 4P it's the worst-case across the
+    3 non-owners, an appropriate conservatism).
+
+    Cost: ~one WorldModel build (~1-3 ms) + a planet loop. Comparable to
+    composite_capture_value; fits inside the 700 ms per-turn budget.
+    """
+    base = delta_us_minus_them_obs(obs, my_id)
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return base
+    model = WorldModel.from_world(world)
+    step_now = int(world.step)
+    remaining = max(0, horizon_cap - step_now)
+    if remaining == 0:
+        return base
+
+    me_value = 0.0
+    them_value = 0.0
+    for p in world.planets_by_id.values():
+        if p.owner == -1:
+            continue  # neutrals contribute nothing
+        threat = model.time_to_enemy_threat(p.id, p.owner, world)
+        if threat is None:
+            hold = remaining
+        else:
+            hold = min(remaining, max(0, int(threat)))
+        contribution = float(p.production) * float(hold)
+        if p.owner == my_id:
+            me_value += contribution
+        else:
+            them_value += contribution
+    return base + weight * (me_value - them_value)
+
+
+def composite_plus_territory(
+    obs: Any, my_id: int,
+    *,
+    capture_weight: float = CAPTURE_REWARD_WEIGHT,
+    waste_weight: float = WASTE_PENALTY_WEIGHT,
+    territory_weight: float = TERRITORY_WEIGHT,
+    territory_horizon_cap: int = TERRITORY_HORIZON_CAP,
+) -> float:
+    """Layered head: composite_capture_value increment + territory_value increment.
+
+    Both heads include the same `delta_us_minus_them_obs` base. We subtract
+    the base from each so the combined return is `base + composite_incr +
+    territory_incr` — counting delta once. The two increments measure
+    orthogonal signals (launch quality vs ongoing position) so layering
+    should lift more than either alone.
+    """
+    base = delta_us_minus_them_obs(obs, my_id)
+    composite = composite_capture_value(
+        obs, my_id,
+        capture_weight=capture_weight,
+        waste_weight=waste_weight,
+    )
+    territory = territory_value(
+        obs, my_id,
+        weight=territory_weight,
+        horizon_cap=territory_horizon_cap,
+    )
+    return base + (composite - base) + (territory - base)

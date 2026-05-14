@@ -14,7 +14,10 @@ a multi-opponent panel; bundle when a variant passes.
 | `ENUMERATOR_MODE` | `"drop_one"` | see `lib.v7_search` | Candidate proposer. |
 | `OPP_TIERS` | `(1,)` | `(1,)` / `(1,2)` / `(0,1,2)` | >1 entry triggers MAXIMIN robustness. |
 | `PV_GAMMA` | 0.99 | 0.95-1.0 | 1.0 reverts to plain v7_0_drop_one. |
-| `VALUE_FN` | `"default"` | `"default"` / `"composite"` | Leaf-state head. |
+| `VALUE_FN` | `"composite"` | `"default"` / `"composite"` / `"defensibility"` / `"composite_plus_defensibility"` / `"territory"` / `"composite_plus_territory"` | Leaf-state head. |
+| `DEFENSIBILITY_ALPHA` | 0.2 | 0.1 / 0.2 / 0.5 | Coefficient for defensibility-tagged variants. V2 α=1.0 over-penalised. |
+| `TERRITORY_WEIGHT` | 0.01 | 0.005 / 0.01 / 0.02 | Outer coefficient for territory-tagged variants. production×hold sums to ~5k-10k; 0.01 keeps the term ≈ ±50, comparable to delta. |
+| `K_4P` | 8 | 6 / 8 / 10 | 4P-branch lookahead (`choose_4p` default). Kept separate from 2P `K`. |
 
 ## Patch surfaces (four places to hook)
 
@@ -26,6 +29,25 @@ a multi-opponent panel; bundle when a variant passes.
    `lib.trajectory`.
 4. **New value head** — add a function to `lib/value_heads.py`, extend
    `_resolve_value_fn` here, set `VALUE_FN = "your_head"`.
+
+## 2P / 4P routing
+
+iter dispatches at the agent layer based on `_detect_num_seats(world)`:
+
+- **2P** → `choose(enumerator_mode=ENUMERATOR_MODE, opp_tiers=list(OPP_TIERS))`
+  — the same path iter_v1 was validated on. Preserves iter_v1's 2P strength
+  exactly. (We do NOT use `choose_with_4p` because its 2P branch is
+  `choose_maximin`, whose σ-equiv 2-opp maximin is historically a regression
+  vs single-tier scoring per the v7.1+ chooser-axis sweep.)
+- **4P** → `choose_4p(K=K_4P, include_recapture=True)` — drop-one chooser
+  with all 3 opponents modelled as `top_tier_mirror`. Pre-swap iter silently
+  fell back to the v3.5.1 incumbent in 4P; the new dispatcher fixes that.
+
+Verify 4P with:
+
+```bash
+python -m scripts.ffa_panel --focals agents/iter/main.py --seeds 16
+```
 
 ## Eval (Wilson-gated, ~3-8 min wallclock)
 
