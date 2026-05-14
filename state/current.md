@@ -24,17 +24,21 @@ last_submission_message: |
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation;
 # the third push auto-evicts the previous oldest).
 rolling_last_2:
-  - {agent: geo,    sub_id: 52643676, score: 984.0, status: COMPLETE,
-     episodes: ~80-130, note: 'σ-discounted floor; μ not settled (~5h post-submit)'}
-  - {agent: v7_pv,  sub_id: 52630118, score: 1064.4,  episodes: ~80}  # carrying team score
+  - {agent: iter_v1, sub_id: 52661990, score: PENDING, status: PENDING,
+     episodes: 0, note: 'just submitted 21:48 UTC; V1 = v7_0_drop_one + PV_GAMMA=0.99 + composite_capture_value'}
+  - {agent: geo,     sub_id: 52643676, score: 988.9,   status: COMPLETE,
+     episodes: '~140 (12h since submit)', note: 'σ tightening; will be evicted next push'}
 evicted_recent:
-  - {agent: v7_0_drop_one_rebuilt, sub_id: 52607699, score: 1056.6, reason: evicted by geo push}
+  - {agent: v7_pv,                  sub_id: 52630118, score: 1055.2, reason: evicted by iter_v1 push (lost team-best)}
+  - {agent: v7_0_drop_one_rebuilt,  sub_id: 52607699, score: 1056.6, reason: evicted by geo push}
   - {agent: v7_0_drop_one_original, sub_id: 52588156, score: 1081.5, reason: evicted by v7_0_rebuilt push}
-  - {agent: v4_planner,             sub_id: 52579863, score: 1038.6, reason: evicted by v7_pv push}
 
-# Team leaderboard score = max(rolling_last_2) = 1064.4 (UNCHANGED by geo push).
-tournament_rank_today: 125 / 2667 (top 4.7%)
-our_best_rank: v7_pv μ=1064.4 (#52630118 COMPLETE)
+# Team leaderboard score = max(rolling_last_2). With iter pending it floats:
+# - lower bound = geo 988.9 (if iter regresses below)
+# - upper bound = iter expected ~1040-1090 (panel +10pp lift, calibration-discounted)
+# - v7_pv 1055.2 is the floor we beat-or-not when iter settles.
+tournament_rank_today: 125 / 2667 (top 4.7%)  # pre-iter; will move on iter settle
+our_best_rank: iter_v1 PENDING (#52661990); previous v7_pv μ=1055.2 EVICTED
 lb_top10_cliff: 1430                     # approx; refresh next session
 headroom_to_top10_prize: ~+366 μ         # v7_pv to top-10 cliff
 
@@ -51,8 +55,8 @@ sigma_proxy:
   v7_pv: ~80               # ~13h since submit; tightening
   # v7_0 family fully tight at ~64 episodes (σ band ~6 Score points).
 
-submissions_used_today: 1                # geo #52643676 (09:10 UTC)
-submissions_used_total: 16               # full live-submission ladder
+submissions_used_today: 2                # geo #52643676 (09:10 UTC); iter_v1 #52661990 (21:48 UTC)
+submissions_used_total: 17               # full live-submission ladder
 plateau_days: 0
 saturation_count: 0
 
@@ -62,8 +66,9 @@ saturation_count: 0
 
 # Full live ladder (most recent first; from `kaggle competitions submissions`).
 live_submissions:
-  - {agent: geo,                    sub_id: 52643676, submitted: 2026-05-14T09:10, score: 984.0}  # σ-floor
-  - {agent: v7_pv,                  sub_id: 52630118, submitted: 2026-05-13T23:31, score: 1064.4}
+  - {agent: iter_v1,                sub_id: 52661990, submitted: 2026-05-14T21:48, score: PENDING}  # composite head; just pushed
+  - {agent: geo,                    sub_id: 52643676, submitted: 2026-05-14T09:10, score: 988.9}  # σ-tightening
+  - {agent: v7_pv,                  sub_id: 52630118, submitted: 2026-05-13T23:31, score: 1055.2}  # EVICTED by iter_v1 push
   - {agent: v7_0_drop_one_rebuilt,  sub_id: 52607699, submitted: 2026-05-13T08:33, score: 1056.6}
   - {agent: v7_0_drop_one_original, sub_id: 52588156, submitted: 2026-05-12T17:36, score: 1081.5}
   - {agent: v4_planner,             sub_id: 52579863, submitted: 2026-05-12T14:25, score: 1038.6}

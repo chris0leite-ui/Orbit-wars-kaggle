@@ -25,7 +25,7 @@ WALLCLOCK_MS = 700.0            # per-turn budget (ms)
 ENUMERATOR_MODE = "drop_one"    # see lib.v7_search proposers
 OPP_TIERS = (1,)                # opp-model tier(s); >1 entry => MAXIMIN
 PV_GAMMA = 0.99                 # 1.0 = v7_0_drop_one; 0.99 = v7_pv equivalent
-VALUE_FN = "composite"          # PARITY TEST: V1 head on same 4-seed schedule as V3 smoke
+VALUE_FN = "composite"          # V1 — composite_capture_value (waste-aware) on stock v7_0_drop_one chooser
 DEFENSIBILITY_ALPHA = 0.2       # SMALL coefficient — V2 α=1.0 over-penalised; V3 uses defens as tiebreaker only
 # ============================================================================
 
