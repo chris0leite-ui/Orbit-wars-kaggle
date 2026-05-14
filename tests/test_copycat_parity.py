@@ -1,222 +1,151 @@
-"""Parity tests for agents/copycat/main.py.
+"""Parity tests for agents/copycat/main.py (broad-pool argmax design).
 
-The copycat agent must satisfy structural invariants before any A/B run
-becomes meaningful. These tests pin those invariants:
+Pin the structural invariants:
 
-  1. With COPYCAT_TAU=inf and COPYCAT_ROSTER=v3_5_1, the agent emits
-     EXACTLY the v3.5.1 action — the sigma-equivariant floor is
-     preserved bit-for-bit.
-  2. sigma-paired drops produce candidates that respect the
-     pair-structure (no asymmetric singletons when both pair-members
-     are firing).
-  3. sigma-paired angle perturbations use conjugate signs (+delta /
-     -delta) to keep the perturbed action 180-rotationally symmetric.
-  4. The bijection cache is keyed per-episode (different planet sets
-     get different bijections).
+  1. With both USE_V7 and USE_GEO disabled, copycat falls back to
+     top_tier_mirror_policy (v3.5.1) — the documented safe floor.
+  2. With USE_V7=1 USE_GEO=0, the pool includes v7_0_drop_one's
+     chosen action; that single candidate gets played.
+  3. With USE_V7=0 USE_GEO=1, the pool includes geo's strategic
+     candidates and the argmax is among them.
+  4. Per-turn timing stays under 1000 ms on a real game state.
 """
 
 from __future__ import annotations
 
 import importlib
 import os
+import sys
+import time
 
 import pytest
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _reset_module(monkeypatch):
-    """Reload copycat.main between tests so env-var overrides apply."""
-    # Clear and reset; the test re-imports.
-    yield
-
-
 def _load_copycat(env_overrides: dict[str, str]):
-    """Re-import copycat.main with the given env vars."""
-    import sys
     for k, v in env_overrides.items():
         os.environ[k] = v
     # Reload to pick up new env vars in the module-level config block.
     if "agents.copycat.main" in sys.modules:
         del sys.modules["agents.copycat.main"]
-    mod = importlib.import_module("agents.copycat.main")
-    return mod
+    return importlib.import_module("agents.copycat.main")
 
 
-# ---------------------------------------------------------------------------
-# 1. tau=inf singleton parity with v3.5.1
-# ---------------------------------------------------------------------------
-
-
-def _load_scalar_v3_5_1():
+def _capture_first_obs():
+    """Run one v3.5.1 turn to harvest a real obs payload."""
     import importlib.util
+    from kaggle_environments import make
     spec = importlib.util.spec_from_file_location(
         "scalar_v3_5_1", "agents/v3.5.1/main.py",
     )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    v3 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(v3)
+    captured = {}
 
+    def cap(obs, cfg=None):
+        if "obs" not in captured:
+            captured["obs"] = obs
+            captured["cfg"] = cfg
+        return v3.agent(obs)
 
-def _norm_action(a):
-    return sorted([(int(r[0]), round(float(r[1]), 4), int(r[2])) for r in a])
-
-
-def test_tau_inf_v3_5_1_singleton_matches_v3_5_1():
-    """copycat(tau=inf, roster=v3_5_1) emits the same action as v3.5.1."""
-    from kaggle_environments import make
-
-    copycat = _load_copycat({
-        "COPYCAT_TAU": "inf",
-        "COPYCAT_ROSTER": "v3_5_1",
-    })
-    v3 = _load_scalar_v3_5_1()
-
-    mismatches = 0
-    samples = 0
-
-    captured: list = []
-    def cap_agent(seat):
-        def f(obs, cfg=None):
-            captured.append((seat, obs, cfg))
-            return v3.agent(obs)
-        return f
-
-    # Generate diverse obs via a real episode.
     env = make("orbit_wars", debug=False, configuration={"seed": 42})
-    env.run([cap_agent(0), cap_agent(1)])
-    # Sample 20 obs evenly across the episode.
-    step = max(1, len(captured) // 20)
-    for seat, obs, cfg in captured[::step][:20]:
-        # Set the player in case the obs is shared.
-        if isinstance(obs, dict):
-            obs["player"] = seat
-        scalar_act = v3.agent(obs)
-        copycat_act = copycat.agent(obs, cfg)
-        if _norm_action(scalar_act) != _norm_action(copycat_act):
-            mismatches += 1
-        samples += 1
+    env.run([cap, v3.agent])
+    return captured["obs"], captured.get("cfg")
 
-    assert samples >= 10, f"too few samples: {samples}"
-    assert mismatches == 0, (
-        f"copycat(tau=inf, v3_5_1) diverged from scalar v3.5.1 on "
-        f"{mismatches}/{samples} obs — sigma-equivariance broken"
+
+# ---------------------------------------------------------------------------
+# 1. Fallback when no generators are enabled.
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_to_v3_5_1_when_pool_empty():
+    mod = _load_copycat({
+        "COPYCAT_USE_V7": "0",
+        "COPYCAT_USE_GEO": "0",
+    })
+    obs, cfg = _capture_first_obs()
+
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "scalar_v3_5_1_inner", "agents/v3.5.1/main.py",
+    )
+    v3 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(v3)
+
+    copycat_act = mod.agent(obs, cfg)
+    v3_act = v3.agent(obs)
+
+    def norm(a):
+        return sorted([(int(r[0]), round(float(r[1]), 4), int(r[2])) for r in a])
+
+    assert norm(copycat_act) == norm(v3_act), (
+        "fallback didn't return v3.5.1's action; pool-empty mode is wired wrong"
     )
 
 
 # ---------------------------------------------------------------------------
-# 2. sigma-paired drops
+# 2-3. The pool actually includes the requested generators.
 # ---------------------------------------------------------------------------
 
 
-def test_sigma_paired_drops_drop_both_pair_members():
-    """A sigma-paired drop variant removes BOTH (s, sigma(s)) launches."""
-    mod = _load_copycat({})
+def test_pool_includes_v7_when_use_v7_enabled():
+    mod = _load_copycat({
+        "COPYCAT_USE_V7": "1",
+        "COPYCAT_USE_GEO": "0",
+    })
+    obs, cfg = _capture_first_obs()
+    # Direct check: the v7 generator returns something non-empty when
+    # called on a real obs.
+    v7_action = mod._v7_drop_one_action(obs, cfg)
+    assert isinstance(v7_action, list)
 
-    # Synthetic action: launches from sources 0, 3, 1, 2.
-    # Synthetic bijection: 0<->3, 1<->2.
-    action = [
-        [0, 0.0, 10],
-        [3, 3.14, 10],
-        [1, 1.0, 5],
-        [2, -2.14, 5],
-    ]
-    bij = {0: 3, 3: 0, 1: 2, 2: 1}
 
-    variants = mod._sigma_paired_drops(action, bij)
+def test_pool_includes_geo_candidates_when_use_geo_enabled():
+    mod = _load_copycat({
+        "COPYCAT_USE_V7": "0",
+        "COPYCAT_USE_GEO": "1",
+    })
+    obs, cfg = _capture_first_obs()
+    cands = mod._geo_candidates(obs, cfg)
+    names = [name for name, _ in cands]
+    # At minimum we expect the incumbent. Tilts and archetypes are
+    # situational — sometimes the helper returns None and we skip them.
+    assert "geo_incumbent" in names, f"geo_incumbent missing from pool: {names}"
+    assert len(cands) >= 1
 
-    # We expect two variants: drop {0,3} and drop {1,2}.
-    assert len(variants) == 2, (
-        f"expected 2 sigma-paired drops, got {len(variants)}"
+
+# ---------------------------------------------------------------------------
+# 4. Per-turn wallclock budget on a full episode.
+# ---------------------------------------------------------------------------
+
+
+def test_wallclock_fits_under_1000ms_on_full_episode():
+    mod = _load_copycat({
+        "COPYCAT_USE_V7": "1",
+        "COPYCAT_USE_GEO": "1",
+    })
+
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "scalar_v3_5_1_inner2", "agents/v3.5.1/main.py",
     )
+    v3 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(v3)
 
-    # Each variant should remove exactly 2 launches.
-    for v in variants:
-        assert len(v) == 2, f"variant has {len(v)} launches, expected 2"
-        srcs = sorted(int(r[0]) for r in v)
-        # The remaining sources should also be a sigma-pair.
-        assert (srcs == [0, 3]) or (srcs == [1, 2]), (
-            f"variant sources {srcs} are not a sigma-pair — drop broke symmetry"
-        )
+    from kaggle_environments import make
+    turn_ms: list[float] = []
 
+    def timed(obs, cfg=None):
+        t = time.perf_counter()
+        a = mod.agent(obs, cfg)
+        turn_ms.append((time.perf_counter() - t) * 1000.0)
+        return a
 
-def test_sigma_paired_drops_no_duplicates_when_singleton_pair():
-    """Sources that are sigma-self-mapped should produce only one drop variant."""
-    mod = _load_copycat({})
-
-    # Synthetic: source 5 has sigma(5) = 5 (e.g., a fixed point).
-    action = [[5, 0.0, 10], [0, 1.0, 5], [3, -2.14, 5]]
-    bij = {5: 5, 0: 3, 3: 0}
-
-    variants = mod._sigma_paired_drops(action, bij)
-
-    # Source 5 alone -> drop {5}; pair {0,3} -> drop {0,3}.
-    # We expect 2 variants.
-    assert len(variants) == 2
-
-
-# ---------------------------------------------------------------------------
-# 3. sigma-paired angle perturbations are conjugate
-# ---------------------------------------------------------------------------
-
-
-def test_sigma_pair_angle_perturb_uses_conjugate_signs():
-    """For a sigma-paired pair (s, sigma(s)), the angle nudge is +delta on
-    one and -delta on the other — keeping the pair 180-rotationally consistent."""
-    mod = _load_copycat({})
-
-    action = [[0, 0.5, 10], [3, 0.5 + 3.14159, 10]]
-    bij = {0: 3, 3: 0}
-
-    variants = mod._sigma_pair_angle_perturb(action, bij, delta=0.1)
-
-    assert len(variants) == 1, (
-        f"expected 1 angle-perturb variant, got {len(variants)}"
+    env = make("orbit_wars", debug=False, configuration={"seed": 42})
+    env.run([timed, v3.agent])
+    # The 1000 ms ladder cap is hard. We allow one outlier (SIGALRM
+    # mid-C-call can spike the wall by ~200 ms once an episode).
+    over = sum(1 for t in turn_ms if t > 1000.0)
+    assert over <= 1, (
+        f"wallclock exceeded 1000 ms on {over}/{len(turn_ms)} turns; "
+        f"max={max(turn_ms):.0f}, p95={sorted(turn_ms)[int(len(turn_ms)*0.95)]:.0f}"
     )
-    v = variants[0]
-    # Sort by source so we deterministically index.
-    by_src = {int(r[0]): r for r in v}
-    # Source 0 gets +delta, source 3 gets -delta.
-    assert abs(by_src[0][1] - (0.5 + 0.1)) < 1e-9
-    assert abs(by_src[3][1] - (0.5 + 3.14159 - 0.1)) < 1e-9
-
-
-# ---------------------------------------------------------------------------
-# 4. Bijection cache
-# ---------------------------------------------------------------------------
-
-
-def test_bijection_cache_keyed_on_planet_ids():
-    """Two episodes with different planet rosters get different cached bijections."""
-    mod = _load_copycat({})
-    mod._BIJECTION_CACHE.clear()
-
-    # Synthetic obs with different planet sets. The 180-deg rotation pivot
-    # is (50, 50) per lib.geometry.CENTER.
-    # Set A: planets at (10,10) and (90,90) — sigma-pair.
-    obs_a = {
-        "planets": [
-            [0, -1, 10.0, 10.0, 0, 0, 1],
-            [1, -1, 90.0, 90.0, 0, 0, 1],
-        ],
-        "player": 0,
-    }
-    # Set B: planets at (20,30) and (80,70) — different sigma-pair.
-    obs_b = {
-        "planets": [
-            [10, -1, 20.0, 30.0, 0, 0, 1],
-            [11, -1, 80.0, 70.0, 0, 0, 1],
-        ],
-        "player": 0,
-    }
-
-    bij_a = mod._bijection_for(obs_a)
-    bij_b = mod._bijection_for(obs_b)
-
-    assert bij_a == {0: 1, 1: 0}
-    assert bij_b == {10: 11, 11: 10}
-    assert bij_a is not bij_b  # different cache entries

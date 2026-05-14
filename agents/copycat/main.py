@@ -1,65 +1,48 @@
-"""copycat — mimic a roster of strong opponents, search for clearly better.
+"""copycat — broad candidate enumeration + K=10 fast-brain argmax.
 
-Strategy (plain English):
+The strategy PI described: don't IMPOSE structure (e.g., sigma-pair),
+let the strongest move EMERGE from a decision process that compares
+candidates by projected gain. We just give the search a rich,
+diverse candidate set and pick the highest-scoring one.
 
-  Each turn, ask each member of a strong-agent roster what THEY would do
-  from our current observation. Score every roster output with the v7
-  fast brain (`lib/v7_search.score_candidate`, K-step lookahead on
-  `lib/fast_sim`'s 183x-faster-than-env.clone snapshot engine). The
-  highest-scoring roster output is the "floor" — what we play unless we
-  find something measurably better. Then enumerate sigma-equivariant
-  perturbations of the floor (drop {M, sigma(M)} together, swap targets
-  in sigma-paired pairs). Score those too. Take the best alternative
-  only if it beats the floor by `tau * tau_unit`; otherwise play the
-  floor.
+Architecture:
 
-Game-theory framing:
-  - Roster gives a per-state-adaptive Nash floor — strategy-agnostic.
-  - sigma-equivariance keeps every candidate inside the v3-class draw
-    lock basin (lib/planner.py + sym_hypot + SCORE_ROUND=6 patches —
-    100% self-play draw rate verified for v3-class scalar policies in
-    audit/2026-05-11-cannot-lose-final-finding.md).
-  - tau gate prevents asymmetric overlays from cascading. The historical
-    overlay failure (same audit) was overlays firing without a
-    significance gate; tau is the structural fix.
+  Each turn, build a candidate pool from multiple sources:
+    1. geo-style strategic stances - incumbent + tilts (opening_boost,
+       enemy_focus, front_reinforce) + archetypes (concentrated,
+       saturation, gang_up) + drop-one variants. Each is a genuinely
+       different strategic shape.
+    2. v7_0_drop_one's chosen action - the K=10 argmax over v3.5.1's
+       mission set + drop-one variants. A solid heuristic floor.
 
-Why scalar, not JAX, for the MVP brain:
-  - We measured that JAX `policy_step_jax(aggressive=True)` diverges
-    from scalar v3.5.1 on ~11% of turns by ~4 ships each, due to the
-    arrival_size approximation in `lib/game/jax/jax_mechanisms.py`
-    (documented as "Parity hit <= 1 ship; acceptable").
-  - That breaks sigma-equivariance (postmortem: "Even 1 divergent launch
-    breaks the symmetric self-play draw lock").
-  - The scalar pipeline (lib.opp_model.top_tier_mirror_policy +
-    lib.v7_search.score_candidate) inherits the sigma-equivariance
-    patches and is what v7 already calls "the fast brain" (vs the
-    old env.clone path).
-  - JAX vmap brain is a Phase 3 upgrade once we've validated the
-    architecture and have a parity-preserving JAX path.
+  Score every candidate via lib.v7_search.score_candidate at K=10
+  (the scalar fast brain on lib/fast_sim's 183x snapshot engine).
+  Take the argmax. No tau gate, no sigma-pair constraint.
 
-Build-on / not-rebuild:
-  - lib.opp_model.{mirror_self_policy, top_tier_mirror_policy} — v7_0
-    base / v3.5.1 roster members.
-  - lib.fast_sim.from_obs — Snapshot construction.
-  - lib.v7_search.score_candidate — K-step rollout scorer.
-  - lib.mirror.{build_bijection, rotate_angle, diagonal_opponent} —
-    sigma-pair primitives.
+History note (this branch, ceb0710..50a0a3e): an earlier design used
+sigma-paired perturbations as the candidate set. Phase 2 showed those
+perturbations contributed zero net wins - the tweaks (angle nudges,
++-15% ship counts, drop-pair) were too cosmetic to materially change
+the strategic shape and beat the floor. Removed in this revision per
+PI directive: "don't impose; let it emerge from gain."
 
-Configurable env vars:
-  COPYCAT_TAU       float (default 1.0)  — deviation gate in tau-units.
-  COPYCAT_K         int   (default 10)   — lookahead depth.
-  COPYCAT_TAU_UNIT  float (default 1.0)  — score-noise unit. Phase-0 fits.
-                                            Default 1 = "1 ship of advantage".
-  COPYCAT_ROSTER    csv   (default "v3_5_1,v7_0_base")
-                     Members: v3_5_1 (=top_tier_mirror_policy),
-                              v7_0_base (=mirror_self_policy).
-  COPYCAT_WALLCLOCK_MS  float (default 700.0) — per-turn budget.
-  COPYCAT_MAX_CANDS     int   (default 16)    — cap on sigma-pair variants.
-  COPYCAT_OPP_TIER  int   (default 1)    — opp tier in score_candidate
-                                            (1 = top_tier_mirror, 0 = mirror_self).
+Per-turn budget:
+  - sense_state + WorldModel build:    ~10 ms
+  - geo-style tilt application (6-8):  ~15 ms
+  - v7_0_drop_one chooser (capped):    ~400 ms
+  - score_candidate K=10 x 8-10:       ~240-300 ms
+  - Total:                              ~700 ms (under 1000 ms cap)
 
-2P only for the deviation search. In 4P we fall back to the
-highest-scoring roster member with no perturbation search.
+Env vars:
+  COPYCAT_K                int   (default 10) - lookahead depth.
+  COPYCAT_WALLCLOCK_MS     float (default 750) - total turn budget.
+  COPYCAT_V7_WALLCLOCK_MS  float (default 400) - cap on v7_0_drop_one's
+                                                 internal chooser.
+  COPYCAT_USE_V7           "1"/"0" (default "1") - include v7_0_drop_one.
+  COPYCAT_USE_GEO          "1"/"0" (default "1") - include geo-style
+                                                   enumeration.
+
+2P uses K=10; 4P uses K=8 (matches geo).
 """
 
 from __future__ import annotations
@@ -70,279 +53,181 @@ import time
 from typing import Callable, Optional
 
 
-# ---------------------------------------------------------------------------
-# Config.
-# ---------------------------------------------------------------------------
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
+def _env_float(name, default):
+    v = os.environ.get(name)
     try:
-        return float(raw)
+        return float(v) if v is not None else default
     except ValueError:
         return default
 
 
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
+def _env_int(name, default):
+    v = os.environ.get(name)
     try:
-        return int(raw)
+        return int(v) if v is not None else default
     except ValueError:
         return default
 
 
-def _env_str(name: str, default: str) -> str:
-    return os.environ.get(name, default)
+def _env_bool(name, default):
+    v = os.environ.get(name, default)
+    return str(v).strip() not in ("0", "false", "False", "")
 
 
-_TAU = _env_float("COPYCAT_TAU", 1.0)
 _K = _env_int("COPYCAT_K", 10)
-_TAU_UNIT = _env_float("COPYCAT_TAU_UNIT", 1.0)
-_ROSTER = tuple(
-    s.strip() for s in _env_str("COPYCAT_ROSTER", "v3_5_1,v7_0_base").split(",")
-    if s.strip()
-)
-_WALLCLOCK_MS = _env_float("COPYCAT_WALLCLOCK_MS", 700.0)
-_MAX_CANDS = _env_int("COPYCAT_MAX_CANDS", 16)
-_OPP_TIER = _env_int("COPYCAT_OPP_TIER", 1)
+_K_4P = _env_int("COPYCAT_K_4P", 8)
+_WALLCLOCK_MS = _env_float("COPYCAT_WALLCLOCK_MS", 750.0)
+_V7_WALLCLOCK_MS = _env_float("COPYCAT_V7_WALLCLOCK_MS", 400.0)
+_USE_V7 = _env_bool("COPYCAT_USE_V7", "1")
+_USE_GEO = _env_bool("COPYCAT_USE_GEO", "1")
+_PER_SCORE_TIMEOUT_MS = _env_float("COPYCAT_PER_SCORE_TIMEOUT_MS", 700.0)
 
 
 # ---------------------------------------------------------------------------
-# Roster registry: name -> callable(obs) -> action list.
+# Action helpers.
 # ---------------------------------------------------------------------------
 
 
-def _roster_policies() -> dict[str, Callable]:
-    """Resolve roster members lazily so unit tests can stub them."""
-    from lib.opp_model import mirror_self_policy, top_tier_mirror_policy
-    from lib.v7_search import choose as v7_choose
-
-    def v7_0_drop_one(obs, configuration=None):
-        """K=10 drop-one chooser (mirrors agents/v7_ablations/v7_0_drop_one).
-
-        Its chosen action IS the K=10 argmax over v3.5.1's mission set +
-        drop-one variants. Used as singleton roster, copycat becomes
-        "v7_0_drop_one + sigma-equivariant deviation budget on top".
-
-        Wallclock 550ms leaves ~300ms for our score_candidate roster
-        comparison + sigma-pair search + safety margin to the 1000ms
-        ladder cap. Tuned against Panel #2 wallclock_ms=350 regression
-        (truncated v7_0 search hurt more than budget savings helped).
-        """
-        return v7_choose(
-            obs, configuration,
-            enumerator_mode="drop_one",
-            K=10,
-            wallclock_ms=550.0,
-        )
-
-    return {
-        "v3_5_1":         top_tier_mirror_policy,
-        "v7_0_base":      mirror_self_policy,
-        "v7_0_drop_one":  v7_0_drop_one,
-    }
+def _action_key(action):
+    return tuple((int(r[0]), round(float(r[1]), 5), int(r[2])) for r in action)
 
 
 # ---------------------------------------------------------------------------
-# sigma-bijection cache (built lazily from the first obs's initial_planets).
+# Candidate generators (lazy-imported so unit tests can stub).
 # ---------------------------------------------------------------------------
 
 
-_BIJECTION_CACHE: dict[tuple, dict[int, int]] = {}
+def _geo_candidates(obs, configuration):
+    """Build geo's full candidate set WITHOUT geo's K=10 lookahead.
 
-
-def _planets_from_obs(obs):
-    if isinstance(obs, dict):
-        return obs.get("planets", [])
-    return list(getattr(obs, "planets", []) or [])
-
-
-def _initial_planets_from_obs(obs):
-    """Prefer `obs.initial_planets` (set by fast_sim and the live env).
-    Fall back to the current `obs.planets` snapshot (the bijection is
-    time-invariant under uniform orbital rotation; see lib.mirror)."""
-    if isinstance(obs, dict):
-        ip = obs.get("initial_planets")
-    else:
-        ip = getattr(obs, "initial_planets", None)
-    if ip:
-        return list(ip)
-    return _planets_from_obs(obs)
-
-
-def _bijection_for(obs) -> dict[int, int]:
-    """Return the 180-deg sigma-bijection {planet_id -> sigma(planet_id)}.
-
-    Cached per-episode keyed on the sorted planet-id tuple. Built from
-    initial planet positions; lib.mirror.build_bijection guarantees
-    that orbital pairs remain mirror images for the whole episode.
+    Returns list[(name, action)]. We reuse geo's proposers + tilts +
+    archetypes + drop-one helpers directly; the scoring happens later
+    in our pool.
     """
-    from lib.mirror import build_bijection
+    from agents.geo.main import (
+        _action_from_intents,
+        _build_base_missions,
+        _concentrated_archetype_tilt,
+        _drop_one_capped,
+        _enemy_focus_tilt,
+        _front_reinforce_tilt,
+        _gang_up_action,
+        _opening_boost_tilt,
+        _saturation_archetype_action,
+        _settle_with_tilt,
+        MAX_DROP_ONE_VARIANTS,
+    )
+    from lib.geo.sense import sense_state
+    from lib.intent import World
+    from lib.planner import settle_plan
+    from lib.world_model import WorldModel
 
-    planets = _initial_planets_from_obs(obs)
-    if not planets:
-        return {}
-    key = tuple(sorted(int(p[0]) for p in planets))
-    cached = _BIJECTION_CACHE.get(key)
-    if cached is not None:
-        return cached
-    bij = build_bijection(planets, tol=1.0)
-    _BIJECTION_CACHE[key] = bij
-    return bij
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    model = WorldModel.from_world(world)
+    sense = sense_state(world, model)
+
+    base = _build_base_missions(world, model)
+    incumbent_intents = settle_plan(base, world, model)
+    incumbent_action = _action_from_intents(incumbent_intents, obs, model)
+
+    seen: set[tuple] = {_action_key(incumbent_action)}
+    out: list[tuple[str, list]] = [("geo_incumbent", incumbent_action)]
+
+    def add(name: str, action):
+        if not action:
+            return
+        k = _action_key(action)
+        if k in seen:
+            return
+        seen.add(k)
+        out.append((name, action))
+
+    # Tilts (per-mission transforms).
+    for name, tilt_fn in [
+        ("opening_boost", _opening_boost_tilt(world)),
+        ("enemy_focus", _enemy_focus_tilt(world)),
+        ("concentrated", _concentrated_archetype_tilt(world)),
+        ("front_reinforce", _front_reinforce_tilt(sense)),
+    ]:
+        if tilt_fn is None:
+            continue
+        try:
+            add(name, _settle_with_tilt(base, world, model, tilt_fn))
+        except Exception:
+            continue
+
+    # Archetypes (alternative settlements).
+    try:
+        gu = _gang_up_action(base, world, model)
+        if gu is not None:
+            add("gang_up", gu)
+    except Exception:
+        pass
+    try:
+        sat = _saturation_archetype_action(base, world, model, sense)
+        add("saturation", sat)
+    except Exception:
+        pass
+
+    # Drop-one variants of the incumbent (proven v7_0 floor).
+    for variant in _drop_one_capped(incumbent_action, MAX_DROP_ONE_VARIANTS):
+        add("drop_one", variant)
+
+    return out
 
 
-# ---------------------------------------------------------------------------
-# Action helpers (kaggle-action format: [[src_pid, angle, ships], ...]).
-# ---------------------------------------------------------------------------
+def _v7_drop_one_action(obs, configuration):
+    """Run v7_0_drop_one and return its chosen action.
 
-
-def _action_key(action: list) -> tuple:
-    return tuple(
-        (int(m[0]), round(float(m[1]), 5), int(m[2])) for m in action
+    Capped internal wallclock to fit our total turn budget.
+    """
+    from lib.v7_search import choose
+    return choose(
+        obs, configuration,
+        enumerator_mode="drop_one",
+        K=10,
+        wallclock_ms=_V7_WALLCLOCK_MS,
     )
 
 
 # ---------------------------------------------------------------------------
-# sigma-equivariant perturbations on the kaggle action format.
+# Scoring with per-call SIGALRM safety (copy of geo's _score_with_timeout).
 # ---------------------------------------------------------------------------
 
 
-def _sigma_paired_drops(action: list, bij: dict[int, int]) -> list[list]:
-    """Drop each sigma-paired source pair from the action.
-
-    For an action with launches from sources {s, sigma(s)}, build the
-    variant that drops both pair-members. If only one of (s, sigma(s))
-    appears in the action, we still drop just s (it's an asymmetric
-    drop, but the floor's own sigma-equivariance means s and sigma(s)
-    will both be in the action when the policy itself is sigma-equiv).
-    """
-    if not action:
-        return []
-    by_src: dict[int, list[int]] = {}
-    for i, row in enumerate(action):
-        by_src.setdefault(int(row[0]), []).append(i)
-    sources = sorted(by_src.keys())
-    seen_pairs: set[tuple[int, int]] = set()
-    out: list[list] = []
-    for s in sources:
-        sigma_s = bij.get(s, s)
-        key = (min(s, sigma_s), max(s, sigma_s))
-        if key in seen_pairs:
-            continue
-        seen_pairs.add(key)
-        to_drop = set(by_src.get(s, [])) | set(by_src.get(sigma_s, []))
-        variant = [row for j, row in enumerate(action) if j not in to_drop]
-        if 0 < len(variant) < len(action):
-            out.append(variant)
-    return out
+class _ScoreTimeout(Exception):
+    pass
 
 
-def _sigma_pair_angle_perturb(action: list, bij: dict[int, int],
-                              delta: float) -> list[list]:
-    """Generate variants that perturb the launch angle in sigma-paired pairs.
-
-    For each (s, sigma(s)) pair with both endpoints firing, generate ONE
-    variant that nudges the s-source's angle by +delta and the sigma(s)-
-    source's angle by -delta (the sigma-conjugate perturbation, preserving
-    180-deg symmetry).
-    """
-    if not action:
-        return []
-    out: list[list] = []
-    seen_pairs: set[tuple[int, int]] = set()
-    indexed_by_src: dict[int, int] = {}
-    for i, row in enumerate(action):
-        indexed_by_src.setdefault(int(row[0]), i)
-    for src, i in sorted(indexed_by_src.items()):
-        sigma_src = bij.get(src, src)
-        if sigma_src == src or sigma_src not in indexed_by_src:
-            continue
-        pair_key = (min(src, sigma_src), max(src, sigma_src))
-        if pair_key in seen_pairs:
-            continue
-        seen_pairs.add(pair_key)
-        j = indexed_by_src[sigma_src]
-        v = [list(row) for row in action]
-        # Conjugate sign: applying +delta on src and -delta on sigma(src)
-        # keeps the launch pair sigma-equivariant under rotate_angle
-        # (theta -> theta + pi, so the pair's relative orientation is
-        # preserved). Yes, this is a small angle nudge; the lookahead
-        # decides whether it helps.
-        v[i][1] = float(v[i][1]) + delta
-        v[j][1] = float(v[j][1]) - delta
-        out.append(v)
-    return out
-
-
-def _sigma_pair_ship_perturb(action: list, bij: dict[int, int],
-                             frac: float) -> list[list]:
-    """Generate variants that scale ship counts on sigma-paired pairs.
-
-    For each (s, sigma(s)) pair both firing, build ONE variant with
-    ships scaled by `frac` (clamped to >= 1) on both pair-members.
-    """
-    if not action or frac <= 0:
-        return []
-    out: list[list] = []
-    seen_pairs: set[tuple[int, int]] = set()
-    indexed_by_src: dict[int, list[int]] = {}
-    for i, row in enumerate(action):
-        indexed_by_src.setdefault(int(row[0]), []).append(i)
-    for src in sorted(indexed_by_src.keys()):
-        sigma_src = bij.get(src, src)
-        if sigma_src == src or sigma_src not in indexed_by_src:
-            continue
-        pair_key = (min(src, sigma_src), max(src, sigma_src))
-        if pair_key in seen_pairs:
-            continue
-        seen_pairs.add(pair_key)
-        v = [list(row) for row in action]
-        for i in indexed_by_src[src] + indexed_by_src[sigma_src]:
-            new_ships = max(1, int(round(float(v[i][2]) * frac)))
-            v[i][2] = new_ships
-        out.append(v)
-    return out
-
-
-# ---------------------------------------------------------------------------
-# Scoring (scalar fast brain).
-# ---------------------------------------------------------------------------
-
-
-def _score_action(snap, action, K: int, my_id: int, opp_tier: int) -> Optional[float]:
-    """Score one candidate action. Returns None on failure."""
-    from lib.v7_search import score_candidate
+def _score_with_timeout(score_fn, timeout_ms, *args, **kwargs):
+    import signal
     try:
-        return float(score_candidate(
-            snap, action, my_id=my_id, K=K, opp_tier=opp_tier,
-        ))
-    except Exception:
-        return None
+        signal.signal
+    except AttributeError:
+        return score_fn(*args, **kwargs)
+    if timeout_ms <= 0:
+        return score_fn(*args, **kwargs)
+
+    def _handler(signum, frame):
+        raise _ScoreTimeout()
+
+    old = signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, timeout_ms / 1000.0)
+    try:
+        return score_fn(*args, **kwargs)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
 
 
 # ---------------------------------------------------------------------------
-# Entry point.
+# Fallback (when scoring fails).
 # ---------------------------------------------------------------------------
-
-
-def _player_id(obs) -> int:
-    if isinstance(obs, dict):
-        return int(obs.get("player", 0))
-    return int(getattr(obs, "player", 0))
-
-
-def _num_seats(obs) -> int:
-    from lib.mirror import detect_num_players
-    n = detect_num_players(_planets_from_obs(obs))
-    return n if n in (2, 4) else 2
 
 
 def _fallback(obs):
-    """Pure v3.5.1 fallback when anything fails. Always sigma-equivariant."""
     from lib.opp_model import top_tier_mirror_policy
     try:
         return top_tier_mirror_policy(obs)
@@ -350,126 +235,104 @@ def _fallback(obs):
         return []
 
 
-def agent(obs, configuration=None):
-    t_start = time.perf_counter()
+def _planets_from_obs(obs):
+    if isinstance(obs, dict):
+        return obs.get("planets", []) or []
+    return list(getattr(obs, "planets", []) or [])
 
+
+def _player_id(obs):
+    if isinstance(obs, dict):
+        return int(obs.get("player", 0))
+    return int(getattr(obs, "player", 0))
+
+
+def _num_seats(obs):
+    from lib.mirror import detect_num_players
+    n = detect_num_players(_planets_from_obs(obs))
+    return n if n in (2, 4) else 2
+
+
+# ---------------------------------------------------------------------------
+# Agent entry.
+# ---------------------------------------------------------------------------
+
+
+def agent(obs, configuration=None):
+    t0 = time.perf_counter()
     num_seats = _num_seats(obs)
     my_id = _player_id(obs)
 
-    # ----- Roster evaluation (kaggle action format throughout) -------
-    policies = _roster_policies()
-    roster_actions: list[tuple[str, list]] = []
-    for member in _ROSTER:
-        fn = policies.get(member)
-        if fn is None:
-            continue
-        try:
-            # Pass configuration when the policy accepts it (v7_0_drop_one
-            # uses it for seed -> fast_sim). top_tier_mirror_policy and
-            # mirror_self_policy take only obs.
-            inner_argcount = (
-                fn.__code__.co_argcount if hasattr(fn, "__code__") else 1
-            )
-            args = (obs, configuration)[:inner_argcount]
-            action = fn(*args) or []
-        except Exception:
-            continue
-        roster_actions.append((member, action))
+    # 1. Build the candidate pool.
+    candidates: list[tuple[str, list]] = []
+    seen: set[tuple] = set()
 
-    if not roster_actions:
+    def add(name, action):
+        if not action:
+            # Empty is a valid candidate (stand pat); allow once.
+            k = ()
+        else:
+            k = _action_key(action)
+        if k in seen:
+            return
+        seen.add(k)
+        candidates.append((name, action))
+
+    if _USE_GEO:
+        try:
+            for name, act in _geo_candidates(obs, configuration):
+                add(name, act)
+        except Exception:
+            pass
+
+    if _USE_V7:
+        try:
+            v7_action = _v7_drop_one_action(obs, configuration)
+            add("v7_0_drop_one", v7_action)
+        except Exception:
+            pass
+
+    if not candidates:
         return _fallback(obs)
 
-    # 4P short-path: pick by simple heuristic (no Snapshot scoring; the
-    # K-step rollout is 2P-only in score_candidate). Return the first
-    # roster member's action as a reasonable default. v3.5.1 already
-    # has 4P logic (LEADER_MULTIPLIER spoiler).
-    if num_seats != 2:
-        for _, action in roster_actions:
-            if action:
-                return action
-        return roster_actions[0][1]
-
-    # ----- Build Snapshot for scoring --------------------------------
+    # 2. Score the pool.
     try:
         from lib.fast_sim import from_obs as fs_from_obs
         snap = fs_from_obs(obs, configuration, num_seats=num_seats)
     except Exception:
-        # Snapshot build failed — fall back to the first roster member.
-        return roster_actions[0][1]
+        # Snapshot failed - play the first candidate (incumbent-like).
+        return candidates[0][1]
 
-    # Dedup roster actions (it's common for v7_0_base and v3_5_1 to
-    # produce identical output on quiet states).
-    seen: set[tuple] = set()
-    deduped: list[tuple[str, list]] = []
-    for name, action in roster_actions:
-        k = _action_key(action)
-        if k in seen:
-            continue
-        seen.add(k)
-        deduped.append((name, action))
-    roster_actions = deduped
+    if num_seats == 2:
+        from lib.v7_search import score_candidate as score_fn
+        K = _K
+        score_kwargs = {"my_id": my_id, "K": K, "opp_tier": 1}
+    elif num_seats == 4:
+        from lib.v7_search import score_candidate_4p as score_fn
+        K = _K_4P
+        score_kwargs = {"my_id": my_id, "K": K}
+    else:
+        return candidates[0][1]
 
-    # ----- Score roster, pick the floor ------------------------------
-    scored: list[tuple[float, str, list]] = []
-    for name, action in roster_actions:
-        s = _score_action(snap, action, K=_K, my_id=my_id, opp_tier=_OPP_TIER)
-        if s is None:
-            continue
-        scored.append((s, name, action))
-        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+    best_action = candidates[0][1]
+    best_score = -math.inf
+    scored_any = False
+    for name, action in candidates:
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
         if elapsed_ms > _WALLCLOCK_MS:
             break
-
-    if not scored:
-        return roster_actions[0][1]
-
-    # Sigma-canonical tie-break: highest score first, then by roster
-    # order (stable from _ROSTER tuple).
-    member_rank = {m: i for i, m in enumerate(_ROSTER)}
-    scored.sort(key=lambda r: (-r[0], member_rank.get(r[1], 999)))
-    floor_score, floor_name, floor_action = scored[0]
-
-    # ----- sigma-paired perturbations of the floor -------------------
-    bij = _bijection_for(obs)
-    perturbations: list[list] = []
-    if bij:
-        perturbations.extend(_sigma_paired_drops(floor_action, bij))
-        perturbations.extend(_sigma_pair_angle_perturb(floor_action, bij, delta=0.10))
-        perturbations.extend(_sigma_pair_angle_perturb(floor_action, bij, delta=-0.10))
-        perturbations.extend(_sigma_pair_ship_perturb(floor_action, bij, frac=0.85))
-        perturbations.extend(_sigma_pair_ship_perturb(floor_action, bij, frac=1.15))
-
-    # Dedup against floor + already-tried.
-    seen.clear()
-    seen.update(_action_key(a) for _, _, a in scored)
-    candidates: list[list] = []
-    for variant in perturbations:
-        k = _action_key(variant)
-        if k in seen:
+        try:
+            s = _score_with_timeout(
+                score_fn, _PER_SCORE_TIMEOUT_MS,
+                snap, action, **score_kwargs,
+            )
+        except _ScoreTimeout:
             continue
-        seen.add(k)
-        candidates.append(variant)
-        if len(candidates) >= _MAX_CANDS:
-            break
-
-    # ----- Score perturbations with wallclock guard ------------------
-    best_alt_score = -math.inf
-    best_alt_action = floor_action
-    for variant in candidates:
-        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
-        if elapsed_ms > _WALLCLOCK_MS:
-            break
-        s = _score_action(snap, variant, K=_K, my_id=my_id, opp_tier=_OPP_TIER)
-        if s is None:
+        except Exception:
             continue
-        if s > best_alt_score:
-            best_alt_score = s
-            best_alt_action = variant
+        if not scored_any or s > best_score:
+            scored_any = True
+            best_score = float(s)
+            best_action = action
 
-    # ----- tau deviation gate ----------------------------------------
-    if math.isinf(_TAU) or math.isinf(best_alt_score):
-        return floor_action
-
-    if (best_alt_score - floor_score) > _TAU * _TAU_UNIT:
-        return best_alt_action
-    return floor_action
+    return best_action
