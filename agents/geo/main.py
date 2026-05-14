@@ -189,6 +189,41 @@ def _enemy_focus_tilt(world: World) -> Callable[[Mission], Mission | None]:
     return tilt
 
 
+def _tap_capture_tilt(world: World, model: WorldModel
+                      ) -> Callable[[Mission], Mission | None]:
+    """Send minimum-to-capture for undefended targets.
+
+    For a 10-ship source aimed at a 0-defender neutral, the default
+    aggressive sizing sends 7 ships; only 2 are needed to capture
+    (target_min + 1 buffer over predicted production growth). The
+    saved 5 ships stay home and CAN fund another launch this turn
+    via the saturation archetype's multi-launch per source.
+
+    Uses WorldModel.ships_at(pid, eta) for predicted defender garrison
+    at arrival (accounts for in-flight enemy arrivals). Only rescales
+    when prediction <= 3 (essentially undefended).
+    """
+    pbi = world.planets_by_id
+    def tilt(m: Mission) -> Mission | None:
+        if m.mission_class != "snipe":
+            return m
+        t = pbi.get(m.target_id)
+        if t is None:
+            return m
+        pred = model.ships_at(m.target_id, m.eta) or 0.0
+        if pred >= 3:
+            return m  # not "undefended"; default sizing applies
+        tap = max(2, int(pred) + 2)
+        if tap >= m.ships:
+            return m
+        return Mission(
+            mission_class=m.mission_class,
+            src_id=m.src_id, target_id=m.target_id,
+            ships=tap, score=m.score, eta=m.eta, note=m.note,
+        )
+    return tilt
+
+
 def _empty_out_tilt(sense: SenseState, world: World
                     ) -> Callable[[Mission], Mission | None] | None:
     """Top-10 garrison-emptying for safe sources.
@@ -463,6 +498,7 @@ def agent(obs, configuration=None):
         pass
     _add_tilt("front_reinforce", _front_reinforce_tilt(sense))
     _add_tilt("empty_out",       _empty_out_tilt(sense, world))
+    _add_tilt("tap_capture",     _tap_capture_tilt(world, model))
     # voronoi_filter removed in v3.2: weakest signal (settle_plan ledger
     # already covers it). Frees a candidate slot for gang_up/empty_out/tap.
 
