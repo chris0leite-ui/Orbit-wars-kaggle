@@ -233,8 +233,14 @@ def compute_snipe_score_matrix(
     denom = base_ships.astype(jnp.float32) + d + jnp.float32(1.0)
     score = priority * value / denom
 
+    # H15: hard-reject snipe missions against comets that depart before
+    # arrival. Mirror scalar `lib/missions/snipe.py`:
+    #     if is_comet and (rem or 0) <= eta: continue
+    # In JAX the mission is "rejected" by flipping `valid` to False.
+    departing_comet = is_comet_tgt_row & (rem_lifetime[None, :] <= eta)
+
     # Final validity + masking.
-    valid = src_mask[:, None] & tgt_mask[None, :] & ~redundant
+    valid = src_mask[:, None] & tgt_mask[None, :] & ~redundant & ~departing_comet
     score = jnp.where(valid, score, jnp.float32(-jnp.inf))
 
     return {
@@ -248,6 +254,105 @@ def compute_snipe_score_matrix(
 compute_snipe_score_matrix_jit = jax.jit(
     compute_snipe_score_matrix,
     static_argnames=("my_id", "aggressive", "num_agents"),
+)
+
+
+# ---------------------------------------------------------------------------
+# H11 (2026-05-13): opening-landgrab proposer
+# ---------------------------------------------------------------------------
+
+# Mirror lib/missions/opening.py constants.
+OPENING_WINDOW = 5             # inclusive; fires for steps 0..5
+MIN_LAUNCH_GARRISON = 8        # don't strand a defender below this
+FRONT_LOAD_EXPONENT = 1.5      # H7 from main's hypothesis board
+
+
+def compute_opening_score_matrix(
+    state,                            # GameState
+    world_model: JaxWorldModel,
+    my_id: int,
+):
+    """Vectorised `propose_opening_missions` over (src, neutral target).
+
+    Returns the same `(P, P)` dict contract as `compute_snipe_score_matrix`.
+    Fires only at `step <= OPENING_WINDOW` and only from sources with
+    `ships > MIN_LAUNCH_GARRISON`. Targets are neutral non-comet planets
+    only (mirrors the scalar proposer).
+
+    Score: `production × (EPISODE_STEPS - step - eta)^FRONT_LOAD_EXPONENT
+    / (d + 1)`. Pure distance discount — no ship-cost in the denominator,
+    because the opening is the cheapest place to drain home garrisons.
+
+    base_ships = max(1, target.ships + 1). Skips pairs where
+    `base_ships >= src.ships` (would strand the source).
+    """
+    P = state.planets_x.shape[0]
+    step_now = state.step
+
+    # Window mask: scalar bool, broadcast to (P, P) at the end.
+    in_window = step_now <= jnp.int32(OPENING_WINDOW)
+
+    # Source mask: owned + alive + ships > 8.
+    src_mask = (
+        (state.planets_owner == my_id)
+        & state.planets_alive
+        & (state.planets_ships > jnp.int32(MIN_LAUNCH_GARRISON))
+    )
+    # Target mask: alive + neutral (owner=-1) + NOT a comet.
+    tgt_mask = (
+        state.planets_alive
+        & (state.planets_owner == jnp.int32(-1))
+        & ~state.is_comet
+    )
+
+    # Pairwise distance d[src, tgt].
+    dx = state.planets_x[None, :] - state.planets_x[:, None]
+    dy = state.planets_y[None, :] - state.planets_y[:, None]
+    d = jnp.sqrt(dx * dx + dy * dy)                          # (P, P)
+
+    # base_ships = max(1, target.ships + 1).
+    target_ships_row = state.planets_ships[None, :].astype(jnp.int32)  # (1, P)
+    base_ships = jnp.maximum(target_ships_row + 1, jnp.int32(1))       # (1, P)
+    base_ships_full = jnp.broadcast_to(base_ships, (P, P))              # (P, P)
+
+    # Affordability — drop pairs where base_ships >= src.ships.
+    src_ships_col = state.planets_ships[:, None].astype(jnp.int32)     # (P, 1)
+    affordable = base_ships_full < src_ships_col                       # (P, P)
+
+    # ETA via fleet_speed.
+    speed = fleet_speed_batch(base_ships_full.reshape(-1)).reshape(P, P)
+    eta = jnp.ceil(d / jnp.maximum(speed, jnp.float32(1e-6))).astype(jnp.int32)
+
+    # Front-loaded value.
+    remaining = jnp.maximum(
+        jnp.int32(1), jnp.int32(EPISODE_STEPS) - step_now - eta,
+    ).astype(jnp.float32)
+    value = state.planets_prod[None, :].astype(jnp.float32) * (
+        remaining ** jnp.float32(FRONT_LOAD_EXPONENT)
+    )
+
+    # Score = value / (d + 1).
+    score = value / (d + jnp.float32(1.0))
+
+    valid = (
+        in_window
+        & src_mask[:, None]
+        & tgt_mask[None, :]
+        & affordable
+    )
+    score = jnp.where(valid, score, jnp.float32(-jnp.inf))
+
+    return {
+        "score": score,          # (P, P) float32
+        "ships": base_ships_full, # (P, P) int32
+        "eta": eta,               # (P, P) int32
+        "valid": valid,           # (P, P) bool
+    }
+
+
+compute_opening_score_matrix_jit = jax.jit(
+    compute_opening_score_matrix,
+    static_argnames=("my_id",),
 )
 
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import os
 import re
 import sys
 from pathlib import Path
@@ -49,10 +50,12 @@ DEFAULT_LIB_ORDER = [
     "missions/snipe",
     "missions/reinforce",
     "missions/recapture",
-    # Mission Renaissance proposers — pulled in unconditionally because
-    # v7_search now imports them (see lib/v7_search.py). Each guards
-    # itself with a USE_*_MISSION flag (default 0 = no-op), so bundles
-    # built without the flag are byte-equivalent to pre-Renaissance.
+    # Mission proposers wired into v7_search (lib/v7_search.py imports
+    # all three). Opening: wired live by main's cb02fd9 (H11). Drain
+    # and gang_up: wired this session (Mission Renaissance) behind
+    # USE_*_MISSION flags (drain/gang_up default 0 — both falsified;
+    # opening default 1 to preserve main's intent). Bundles built
+    # without flag overrides keep main's v7_1 behaviour.
     "missions/opening",
     "missions/drain",
     "missions/gang_up",
@@ -255,28 +258,45 @@ def _parity_gate(bundle_path: Path, agent_dir: Path, seeds=(0,)) -> bool:
     bundle_module = _load_module_from_file(bundle_path, "_bundle_" + bundle_path.stem)
     bundle_agent = bundle_module.agent
 
-    mismatches = 0
-    compared = 0
-    for seed in seeds:
-        env = make("orbit_wars", configuration={"seed": seed})
-        env.run([source_agent, source_agent])
-        steps = env.toJSON()["steps"]
-        for t in range(len(steps) - 1):
-            for seat in (0, 1):
-                if steps[t][seat]["status"] != "ACTIVE":
-                    continue
-                obs = steps[t][seat]["observation"]
-                if obs.get("step") is None:
-                    obs = dict(obs)
-                    obs["step"] = t
-                src_out = source_agent(obs)
-                bnd_out = bundle_agent(obs)
-                compared += 1
-                if src_out != bnd_out:
-                    mismatches += 1
-                    if mismatches <= 3:
-                        print(f"  MISMATCH seed={seed} t={t} seat={seat}: src={src_out} bundle={bnd_out}",
-                              file=sys.stderr)
+    # Override the chooser wallclock for the duration of the parity check.
+    # Without this, `lib.v7_search.choose*` bails its candidate-scoring
+    # loop on the 700 ms watchdog mid-list, so argmax picks over a subset
+    # that depends on CPU jitter — source and bundle then disagree on
+    # ~0.2 % of turns purely from timing noise. Setting the budget
+    # effectively unbounded makes each call a pure function of `obs`,
+    # which is what the parity contract should be testing.
+    parity_env_var = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
+    prior = os.environ.get(parity_env_var)
+    os.environ[parity_env_var] = "60000"
+    try:
+        mismatches = 0
+        compared = 0
+        for seed in seeds:
+            env = make("orbit_wars", configuration={"seed": seed})
+            env.run([source_agent, source_agent])
+            steps = env.toJSON()["steps"]
+            for t in range(len(steps) - 1):
+                for seat in (0, 1):
+                    if steps[t][seat]["status"] != "ACTIVE":
+                        continue
+                    obs = steps[t][seat]["observation"]
+                    if obs.get("step") is None:
+                        obs = dict(obs)
+                        obs["step"] = t
+                    src_out = source_agent(obs)
+                    bnd_out = bundle_agent(obs)
+                    compared += 1
+                    if src_out != bnd_out:
+                        mismatches += 1
+                        if mismatches <= 3:
+                            print(f"  MISMATCH seed={seed} t={t} seat={seat}: src={src_out} bundle={bnd_out}",
+                                  file=sys.stderr)
+    finally:
+        if prior is None:
+            os.environ.pop(parity_env_var, None)
+        else:
+            os.environ[parity_env_var] = prior
+
     if mismatches:
         print(f"  PARITY FAIL: {mismatches}/{compared} mismatched turns", file=sys.stderr)
         return False

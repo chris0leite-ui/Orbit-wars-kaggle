@@ -47,6 +47,12 @@ B_AGGRESSIVE = bool(int(os.environ.get("B_AGGRESSIVE", "1")))   # 1 = v3.5.1 sty
 # single vmap'd rollout; for PV-vs-PV-at-different-γ A/Bs, run the
 # kernel twice with PV_GAMMA=γ_A then PV_GAMMA=γ_B and compare.
 PV_GAMMA = float(os.environ.get("PV_GAMMA", "1.0"))
+# H11 (main 2026-05-13 cb02fd9): opening-landgrab proposer toggle per
+# seat. v7_1 sets A_USE_OPENING=1 to test H11 + H15 (the comet reject
+# is always-on inside `compute_snipe_score_matrix`). B_USE_OPENING=0
+# reproduces v7_0 baseline.
+A_USE_OPENING = bool(int(os.environ.get("A_USE_OPENING", "1")))
+B_USE_OPENING = bool(int(os.environ.get("B_USE_OPENING", "0")))
 
 
 def _ensure_kaggle_environments():
@@ -113,6 +119,8 @@ def main():
         "a_aggressive": A_AGGRESSIVE,
         "b_aggressive": B_AGGRESSIVE,
         "pv_gamma": PV_GAMMA,
+        "a_use_opening": A_USE_OPENING,
+        "b_use_opening": B_USE_OPENING,
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     print(json.dumps({"setup": info}, indent=2))
@@ -163,6 +171,8 @@ def main():
                 s, my_id=my_id, num_agents=2,
                 opp_aggressive=B_AGGRESSIVE,
                 my_aggressive=A_AGGRESSIVE,
+                my_use_opening=A_USE_OPENING,
+                opp_use_opening=B_USE_OPENING,
             )
             return new_s, None
         final, _ = jax.lax.scan(step, state, None, length=EPISODE_STEPS)

@@ -399,6 +399,15 @@ def propose_snipe_missions(
             is_comet = t.id in world.comet_ids
             if is_comet:
                 rem = comet_remaining_lifetime(t.id, world)
+                if (rem or 0) <= eta:
+                    # H15 (main 2026-05-13 cb02fd9): comet leaves the
+                    # board before our fleet arrives — don't emit a
+                    # Mission. Lets the source's runner-up win the
+                    # per-source slot in settle_plan instead of
+                    # consuming it with a degenerate score≈0 candidate.
+                    continue
+                # PV horizon over the remaining-lifetime budget; identity
+                # to `max(0, rem - eta)` at PV_GAMMA=1.0.
                 time_to_hold = max(0.0, pv_horizon(0, eta, PV_GAMMA, rem or 0))
             else:
                 if USE_HAV:

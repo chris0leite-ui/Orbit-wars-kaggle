@@ -1,0 +1,22 @@
+{
+  "install_msg": null,
+  "python_version": "3.11.15",
+  "machine": "x86_64",
+  "cpu_count_logical": 4,
+  "cpu_count_mp": 4,
+  "bundle_a": "/home/user/Orbit-wars-kaggle/submissions/v7_1_open_drop_comets.py",
+  "bundle_b": "/home/user/Orbit-wars-kaggle/submissions/v7_0_drop_one.py",
+  "num_seeds": 16,
+  "episode_steps": 500,
+  "started_utc": "2026-05-13T18:04:15Z",
+  "pool_wallclock_s": 785.1362489590001,
+  "a_wins": 17,
+  "b_wins": 13,
+  "draws": 2,
+  "failures": 0,
+  "n": 32,
+  "a_winrate": 0.53125,
+  "a_wilson_lo": 0.3644923793257382,
+  "avg_game_s": 93.39355966718743,
+  "pool_speedup": 3.806465327912866
+}
