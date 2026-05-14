@@ -110,6 +110,30 @@ def _arrival_turns(src: Planet, tgt: Planet, ships: int) -> int:
     return max(1, math.ceil(dist / _speed(ships)))
 
 
+def _build_idle_baseline(snap_base, me: int, num_seats: int, horizon: int) -> list[float]:
+    """Run an idle-everyone sim from snap_base for `horizon` turns,
+    recording favor(me) at every step. Returns a list of length
+    horizon + 1: index 0 is "now," index k is "k idle turns ahead."
+
+    This is the correct baseline for marginal-Δfavor scoring: a
+    candidate that takes A turns to arrive must be compared against
+    "what would my favor be if I just sat for A turns?", NOT against
+    favor at the current state. Production naturally accrues during
+    those A turns whether I act or not.
+    """
+    snap = fs_clone(snap_base)
+    me_obs = snap.state[me].observation
+    out: list[float] = [favor(me_obs, me)]
+    idle_actions = [[] for _ in range(num_seats)]
+    for _ in range(horizon):
+        if snap.fake_env.done:
+            out.append(out[-1])
+            continue
+        snap = fs_step(snap, idle_actions, in_place=True)
+        out.append(favor(snap.state[me].observation, me))
+    return out
+
+
 def score_action(
     src: Planet,
     tgt: Planet,
@@ -118,40 +142,38 @@ def score_action(
     me: int,
     snap_base=None,
     num_seats: int = 2,
-    favor_before: float | None = None,
+    baseline_favors: list[float] | None = None,
 ) -> float:
-    """Δfavor for launching `ships` from src toward tgt — computed
-    via the parity-tested physics simulator (`lib/fast_sim`), not an
-    analytic approximation.
+    """Marginal Δfavor for launching `ships` from src toward tgt —
+    computed via the parity-tested physics simulator.
 
-    Steps:
-      1. Clone `snap_base` (the agent's current Snapshot).
-      2. Apply my candidate as turn-0 action; all opp seats IDLE.
-      3. Step idly for `arrival + SIM_SETTLE_TURNS` more turns so
-         my fleet arrives, combat resolves, and accumulated
-         production is recorded exactly. (Orbital motion, sun
-         crossing, multi-fleet collisions all handled by the engine.)
-      4. Return favor(leaf, me) − favor_before.
+    Compares `favor(leaf_after_action_at_horizon_H)` against
+    `favor(leaf_after_idle_at_same_horizon_H)`, where H = arrival +
+    SIM_SETTLE_TURNS. This isolates the ACTION'S contribution from
+    the natural favor growth that would occur during the same H
+    turns even without acting.
 
-    Idle opp during arrival is intentional: this measures what THIS
-    action accomplishes against a stationary world. Opp's actual
-    response is captured by next-turn re-evaluation (the action is
-    re-decided every turn from the live obs). Cascading speculative
-    opp policies (favor-greedy in v2-rollout) introduced noise that
-    overrode genuine analytic-positive captures (audit notes in v3
-    commit message).
-
-    `snap_base`, `num_seats`, and `favor_before` are computed once
-    per agent turn and passed in to avoid per-candidate rebuilding.
+    PRIOR BUG (this commit fixes): comparing to favor_before
+    (i.e. the current state) inflated every candidate by the
+    growth-over-H-turns. The Δ "value" was essentially the agent's
+    own production accumulated during the sim, not the action's
+    effect. Discovered turn 2 of seed 1003: launching a redundant
+    fleet at P10 (already targeted) scored +2873 because both leaf
+    states have identical 143 my-ships and identical favor; the
+    +2873 was just my production over 24 sim turns, attributed to
+    the action.
     """
     if ships < MIN_FLEET_SIZE or ships > src.ships or src.id == tgt.id:
         return float("-inf")
     if tgt.owner == me:
         return 0.0
-    if snap_base is None or favor_before is None:
-        raise ValueError("score_action requires snap_base and favor_before")
+    if snap_base is None or baseline_favors is None:
+        raise ValueError("score_action requires snap_base and baseline_favors")
 
     arrival = _arrival_turns(src, tgt, ships)
+    horizon = arrival + SIM_SETTLE_TURNS
+    if horizon >= len(baseline_favors):
+        horizon = len(baseline_favors) - 1
     angle = math.atan2(tgt.y - src.y, tgt.x - src.x)
 
     snap = fs_clone(snap_base)
@@ -160,12 +182,12 @@ def score_action(
     snap = fs_step(snap, actions, in_place=True)
 
     idle_actions = [[] for _ in range(num_seats)]
-    for _ in range(arrival - 1 + SIM_SETTLE_TURNS):
+    for _ in range(horizon - 1):
         if snap.fake_env.done:
             break
         snap = fs_step(snap, idle_actions, in_place=True)
 
-    return favor(snap.state[me].observation, me) - favor_before
+    return favor(snap.state[me].observation, me) - baseline_favors[horizon]
 
 
 # ---------------------------------------------------------------------------
@@ -238,14 +260,14 @@ def _enumerate_candidates(
     me: int,
     snap_base,
     num_seats: int,
-    favor_before: float,
+    baseline_favors: list[float],
 ) -> list[tuple[float, Planet, Planet, int]]:
     """All (Δfavor, src, tgt, ships) triples with Δfavor > 0.
 
-    Δfavor is the simulator-based delta: clone snap_base, apply my
-    candidate at turn 0, idle through arrival, compute v1 favor at
-    leaf, subtract favor_before. Defense: reserve garrison against
-    incoming enemy fleets aimed at the source.
+    Δfavor is the marginal contribution of THIS action vs idle for
+    the same arrival horizon (see score_action's docstring for the
+    prior bug fix). Defense: reserve garrison against incoming
+    enemy fleets aimed at the source.
     """
     out: list[tuple[float, Planet, Planet, int]] = []
     for src in my_planets:
@@ -276,7 +298,7 @@ def _enumerate_candidates(
                 s = score_action(
                     src, tgt, ships, step, me,
                     snap_base=snap_base, num_seats=num_seats,
-                    favor_before=favor_before,
+                    baseline_favors=baseline_favors,
                 )
                 if s > 0.0:
                     out.append((s, src, tgt, ships))
@@ -303,13 +325,17 @@ def agent(obs):
     if not my_planets or not targets:
         return []
 
-    # Build snap_base once per turn; per-candidate clone is cheap.
+    # Build snap_base + idle baseline once per turn; per-candidate
+    # clone is cheap. MAX_HORIZON is the deepest sim any candidate
+    # will request (arrival can be ~25 turns for a slow long-distance
+    # fleet; SIM_SETTLE_TURNS extra to let combat resolve).
     num_seats = _num_seats(planets, fleets)
     snap_base = from_obs(obs, num_seats=num_seats)
-    favor_before = favor(obs, player)
+    max_horizon = 40
+    baseline_favors = _build_idle_baseline(snap_base, player, num_seats, max_horizon)
     candidates = _enumerate_candidates(
         my_planets, targets, fleets, step, player,
-        snap_base, num_seats, favor_before,
+        snap_base, num_seats, baseline_favors,
     )
     if not candidates:
         return []   # no positive-Δfavor candidate; hold

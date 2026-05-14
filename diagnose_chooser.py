@@ -59,10 +59,13 @@ def dump_chooser(seed, target_turn, my_slot=0):
     bd = favor_breakdown(obs, player)
     print(f"\nfavor breakdown: {bd}")
 
-    print("\n--- v2 F3-aware analytic candidates (Δfavor > 0) ---")
+    print("\n--- v4 fast_sim Δfavor candidates (> 0) ---")
     favor_before = favor(obs, player)
+    num_seats = main._num_seats(planets, fleets)
+    snap_base = main.from_obs(obs, num_seats=num_seats)
     cands = main._enumerate_candidates(
-        my_planets, targets, fleets, t, player, obs, favor_before=favor_before
+        my_planets, targets, fleets, t, player,
+        snap_base, num_seats, favor_before
     )
     print(f"   {len(cands)} candidates would be LAUNCHED")
     for i, (score, src, tgt, ships) in enumerate(cands[:15]):
@@ -80,7 +83,9 @@ def dump_chooser(seed, target_turn, my_slot=0):
                 cap = main._capture_size_guess(src, tgt)
                 if cap < main.MIN_FLEET_SIZE:
                     cap = main.MIN_FLEET_SIZE
-                s = main.score_action(src, tgt, cap, t, player, obs=obs, favor_before=favor_before)
+                s = main.score_action(src, tgt, cap, t, player,
+                                       snap_base=snap_base, num_seats=num_seats,
+                                       favor_before=favor_before)
                 print(f"     P{src.id:2d}→P{tgt.id:2d}  cap={cap:3d} (src.ships={src.ships}) "
                       f"  Δfavor = {s:+10.1f}  "
                       f"(tgt: owner={tgt.owner} ships={tgt.ships} prod={tgt.production})")
