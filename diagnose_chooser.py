@@ -63,9 +63,10 @@ def dump_chooser(seed, target_turn, my_slot=0):
     favor_before = favor(obs, player)
     num_seats = main._num_seats(planets, fleets)
     snap_base = main.from_obs(obs, num_seats=num_seats)
+    baseline_favors = main._build_idle_baseline(snap_base, player, num_seats, 40)
     cands = main._enumerate_candidates(
         my_planets, targets, fleets, t, player,
-        snap_base, num_seats, favor_before
+        snap_base, num_seats, baseline_favors
     )
     print(f"   {len(cands)} candidates would be LAUNCHED")
     for i, (score, src, tgt, ships) in enumerate(cands[:15]):
@@ -85,7 +86,7 @@ def dump_chooser(seed, target_turn, my_slot=0):
                     cap = main.MIN_FLEET_SIZE
                 s = main.score_action(src, tgt, cap, t, player,
                                        snap_base=snap_base, num_seats=num_seats,
-                                       favor_before=favor_before)
+                                       baseline_favors=baseline_favors)
                 print(f"     P{src.id:2d}→P{tgt.id:2d}  cap={cap:3d} (src.ships={src.ships}) "
                       f"  Δfavor = {s:+10.1f}  "
                       f"(tgt: owner={tgt.owner} ships={tgt.ships} prod={tgt.production})")
