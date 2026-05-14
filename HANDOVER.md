@@ -1,169 +1,144 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-13 LATE-2 by `claude/read-handover-iLWTq`.
-> Format budget ≤ 160 lines. Prior wraps archived under
-> `audit/archive-2026-05-1*-handover-*.md`.
+> Last written: 2026-05-14 by `claude/read-handover-iLWTq`.
+> Prior handover archived as
+> `audit/archive-2026-05-14-handover-pre-search-exhaustion.md`.
 
 ## Where we are
 
-- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC → **41 days remaining.**
+- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC → **40 days
+  remaining.**
 - **Live submitted agent:** `v7_0_drop_one`, **submission #52588156**,
-  publicScore **μ=1094.9** (team peak). Public-LB rank **109 / 2587**
-  (top 4.2 %). Gap to top-10 prize: +336 μ.
+  μ=**1094.9** (team peak). Rank **109 / 2587** (top 4.2 %). Gap to
+  top-10 prize: +336 μ.
 - **Rolling-last-2:** `[v4_planner #52579863, v7_0_drop_one #52588156]`.
-- **No new submission this session.** All work is local; ladder anchor
-  preserved.
+- **No new submission this session.** Anchor preserved.
 
-## This session — diagnostic + cheap wins + brute-force search
+## This session — 7 falsifications on the chooser/proposer axis
 
-Plan: `/root/.claude/plans/go-diagnostic-cheap-wins-woolly-rose.md`.
+Seven controlled scalar 32-game A/Bs vs `v7_0_drop_one`. **All lost.**
+v7_0 is robustly the best policy in this design space.
 
-### Track A — loss-mode diagnostic
+| Variant | Axis | Change | Winrate | Wilson lo |
+|---|---|---|---:|---:|
+| v7_1 | proposer | H11 opening grab | 35.9 % * | 25.3 % |
+| v7_2 | search | depth-2 over v3.5.1 drop-ones | 31.3 % | 18.0 % |
+| v7_3 | opp model | min-regret over hand-crafted archetypes | 28.1 % | 15.6 % |
+| **v7_4** | value head | composite capture-value | **40.6 %** | **25.5 %** |
+| v7_5 | action space | + ADD-one widening | 37.5 % | 22.9 % |
+| **v7_6** | action primitive | + split-source (multi-launch) | **40.6 %** | **25.5 %** |
+| v7_7 | proposer coef | enemy multiplier ×1.3 | 28.1 % | 15.6 % |
 
-`audit/2026-05-13-v7-0-loss-modes.md`. 97 live replays pulled via
-`scripts/live_episode_summary.py`. 50 losses classified with
-`scripts/classify_losses.py` (new, 5 buckets).
+\* v7_1 measured in JAX 64-game A/B (35.9 % / Wilson lo 25.3 %);
+   scalar 32-game showed 53.1 % / Wilson lo 36.4 % — underpowered.
 
-| Bucket | Count | Cross-tab (2P / 4P) |
-|---|---:|---|
-| `opening_lost` | 34 (68 %) | 8 / 26 |
-| `mid_economy_lost` | 16 (32 %) | 13 / 3 |
-| other 3 buckets | 0 | — |
+Best: v7_4 = v7_6 = 40.6 %, ~10 pp below 50 % baseline. **Per-source
+greedy ROI proposer is doing 95 % of the work**; the chooser's added
+value is small and noise-dominated. The chooser-axis design space is
+**exhausted** — further refinements have negative marginal EV.
 
-**Headline:** 4P games are 90 % opening-determined (26/29). H11 is
-exactly the fix; ship it.
+## Side wins this session (not a v7_X)
 
-### Track B — cheap wins (H11 + H15)
+- **Bundler parity-gate non-determinism fixed** (commit `07ef918`).
+  Root cause was wallclock-budget bail, not module-level mutable
+  state. New `_effective_wallclock_ms` helper + env-var override
+  (`ORBIT_WARS_PARITY_WALLCLOCK_MS`) lets `_parity_gate` run under
+  unbounded budget while production agents keep the 700 ms watchdog.
+  9 unit tests in `tests/test_v7_search_shared_model_cleanup.py`.
+- **`composite_capture_value` value head** (`lib/value_heads.py`).
+  Rewards predicted captures via `WorldModel`-based fleet-fate
+  attribution; penalises bouncing / OOB / sun trajectories. Net
+  +9 pp over plain ship-delta in 32-game A/B (v7_4 vs v7_2). Kept
+  in the lib for any future chooser that wants it.
+- **3 new action-primitive enumerators** (`_enumerate_add_one`,
+  `_enumerate_split_source`, `_enumerate_drop_or_add_one`,
+  `_enumerate_drop_or_split`). Wired into `enumerate_candidates`;
+  available for any future variant. Not load-bearing — v7_5 / v7_6
+  showed them not productive under the current proposer / value head.
+- **Hand-crafted opp-archetype set** (`lib/missions/opp_archetypes.py`).
+  5 archetypes (no-launch / v3.5.1 / counter-reinforce /
+  counter-snipe / cross-attack) for maximin / min-regret aggregation.
+  v7_3 used it; falsified, but the module is reusable.
+- **JAX depth-2 (parked).** `lib/game/jax/jax_depth2.py` (~340 LOC)
+  with capped 4×2 nested-vmap. Compiles + runs single-state on CPU
+  in ~110 s JIT + 20 s hot. **GPU compile fundamentally too slow**
+  even at small scale (PI killed at 35 min); see friction
+  `scale-without-smoke-burned-90min-t4`. Don't push to T4 without
+  the two-tier-smoke rule that PI ratified this postmortem.
 
-- **H11 opening grab.** `propose_opening_missions` is now wired into
-  `lib/v7_search.py::_build_incumbent_intents` (1-line addition, plus
-  import). The proposer was already built and tested
-  (`tests/test_mission_opening.py`); only the wire was missing.
-- **H15 comet reject.** `lib/missions/snipe.py:236-243` now hard-rejects
-  comet targets where `remaining_lifetime <= eta`. Previously the
-  mission was emitted with score≈0, consuming a per-source slot in
-  `settle_plan`.
-- New tests: `tests/test_mission_opening_wireup.py` (4 cases),
-  `tests/test_snipe_comet_reject.py` (5 cases). All green.
-- Bundles: `submissions/v7_1_open_drop_comets.py` (209 KB).
-- **Scalar A/B (16 seeds × 2 seats = 32 games, 13 min wallclock):**
-  v7_1 17W-13L-2D vs v7_0 = **53.1 %, Wilson lo 36.4 %.** Directional
-  signal positive but **BELOW the 55 % gate.** No submission justified
-  on this sample. **A 64-seed A/B is required** before any push — on
-  the Kaggle T4 vmap kernel with the new JAX port that's ~1.5 min.
+## Falsified / dead
 
-### Track C — brute-force game-theory search
-
-- **C1 runtime depth-2 maximin** (`lib/v7_search.py::choose_depth2`,
-  ~200 LOC). Outer = our drop-one set (≤ 8); inner = opp drop-one set
-  (≤ 4) recomputed from post-turn-1 state. Payoff matrix → maximin pick.
-  Budget shape 32 cells × ~15 ms = ~500 ms wall. Tests in
-  `tests/test_v7_depth2.py` (5 pass).
-- **C2 JAX candidate-axis vmap brute scorer**
-  (`lib/game/jax/jax_brute_search.py`, ~180 LOC). vmaps
-  `score_candidate_jax_pure` across C candidates on a fixed state.
-  Used as the leaf engine for offline brute search. Parity test
-  `tests/test_jax_brute_search.py` 3 pass (serial vs vmap argmax
-  matches, max-diff < 1e-2 float32).
-- **C3 N-step path-search oracle**
-  (`scripts/jax_path_search.py`, ~270 LOC). 32-seed N=2 oracle ran in
-  9 s; **v7_0 single-ply matches the depth-2 maximin choice 85.2 %
-  of the time (4/27 disagreements; 3 of 4 say "drop one more launch").**
-  Modest but real head-room for depth-2; CSV at
-  `audit/2026-05-13-depth2-oracle-32seeds.csv`.
-- **JAX port for H11/H15** (`compute_opening_score_matrix` in
-  `lib/game/jax/jax_missions.py`; `use_opening` knob on
-  `policy_emit_jax_pure` / `rollout_step_jax_pure` /
-  `score_candidate_jax_pure`). Smoke parity vs scalar matches
-  bit-exactly (seed 42, step 0: src=0 → tgt=8, ships=6, score=1226.79).
-  Knob plumbed through `scripts/kaggle_ab_kernel/run_jax_ab.py` via
-  `A_USE_OPENING` / `B_USE_OPENING` env vars.
-- Bundle: `submissions/v7_2_depth2.py` (209 KB; depth-2 chooser).
-
-## Falsified / risks
-
-- ~~Bundler parity gate fails on v7_1 / v7_2 with non-deterministic
-  divergence on 1 / 528 turns. Suspected module-level mutable state.~~
-  **FIXED this session (commit `07ef918`).** Real root cause was the
-  `time.perf_counter()`-based wallclock watchdog in `lib/v7_search`
-  choosers: when the 700 ms budget bailed mid-candidate-list under CPU
-  jitter, argmax ranged over different subsets and picked differently.
-  Same `obs`, same process — different output. Fix: new
-  `_effective_wallclock_ms` helper consults an `ORBIT_WARS_PARITY_
-  WALLCLOCK_MS` env var; `_parity_gate` in `scripts/bundle_agent.py`
-  sets it to 60000 ms via try/finally. Production-path wallclock is
-  unchanged. Verified: end-to-end gate clean on seed 0; multi-seed
-  probe sweep (find_parity_bug) clean across 2480 turns on seeds 0–2
-  (seed 3 hit a probe timeout under the now-slower unbounded budget;
-  no mismatches emitted before cutoff).
-- A prior commit (`5ae24a1`) added an exception-safe context manager
-  for the `_shared_world_model` attach/detach. That fix is correct on
-  engineering grounds (replaces a bare-`del` with try/finally) but
-  was a misdiagnosis of the parity bug — kept for the defensive
-  cleanup; not load-bearing for parity. See postmortem
-  `audit/2026-05-13-postmortem-read-handover-iLWTq.md`.
+- All seven v7_X variants above. Mechanism families: H11-only,
+  depth-2-maximin, archetype-min-regret, drop-one + capture-value,
+  drop-or-add-one, split-source, enemy-multiplier-×1.3. Falsified
+  at 32-game scalar A/B vs v7_0 with Wilson lo < 0.55 across the
+  board.
+- JAX depth-2 game-vmap'd kernel at 64 games × 500 turns — both
+  full nested vmap (OOM) and `lax.scan` refactor (90-min stall)
+  proven not to compile within practical limits on T4.
 
 ## Next-session first-actions
 
-1. **Run the JAX A/B for v7_1 vs v7_0 at 64 games on Kaggle T4.**
-   `scripts/kaggle_ab_kernel/run_jax_ab.py` now has `A_USE_OPENING=1
-   B_USE_OPENING=0` knobs. ~1.5 min wallclock on T4 (vs the 13 min CPU
-   run we did). The scalar 32-game result (53.1 %, Wilson lo 36.4 %)
-   is underpowered; the 64-game JAX result is the gate decision.
-   Bundler parity is now clean — submissions can drop the
-   `--skip-parity-gate` workaround.
-2. **If JAX A/B clears Wilson lo ≥ 55 %, submit
-   `v7_1_open_drop_comets`** (#3rd push, evicts v4_planner from
-   rolling-last-2). Decision must be PI-signed; the diagnostic
-   confirms H11 is targeting the right loss bucket (68 % opening-lost).
-3. **Port `choose_depth2` to JAX** for fast A/B testing of v7_2.
-   Nested vmap over (our_cand × opp_cand). ~250 LOC; deferred this
-   session.
-4. **If v7_1 ships and lifts μ, queue v7_2 (depth-2 chooser) gated by
-   a 64-seed A/B vs the new v7_1 incumbent.** The 14.8 % oracle
-   disagreement suggests +5-10 pp expected lift if the depth-2 picks
-   are systematically better.
-5. **Decide on a "reproduce-before-fix" rule for non-deterministic
-   bugs.** PI declined to promote this session, but the misdiagnosis
-   cost ~1 h. See postmortem
-   `audit/2026-05-13-postmortem-read-handover-iLWTq.md` if you want
-   to revisit.
+The chooser/proposer axis is exhausted. Real lift requires
+architectural change. Three viable paths, ranked by tractability:
+
+1. **Target-set planner** (~3-5 days, mid-risk). Replace
+   `_build_incumbent_intents` with a planner that picks PLANET
+   SETS to conquer (combinations like "opp's 2-planet home
+   cluster + 1 neutral support"), then solves the source → target
+   assignment for each set. Score each set via `fast_sim` K=10
+   rollout with `composite_capture_value`. New action primitive:
+   a coherent multi-launch plan rather than per-source greedy
+   picks. Most likely to produce real lift; PI's framing of
+   "combinations of planets we need to conquer" maps directly.
+
+2. **Learned policy / shot validator** (~weeks, high-risk).
+   The H14 workstream: train a small classifier (30-50 feature
+   logreg or MLP) on the 37 k labeled examples in
+   `data/shot_validator/` to predict launch-outcome
+   (capture / bounce / sun / OOB). Use as a candidate-rejector
+   inside the chooser. Concretely actionable: data exists,
+   schema documented, just no training pipeline yet.
+
+3. **Self-play RL fine-tuning on JAX** (~weeks, highest-risk).
+   The JAX engine is bit-exact and game-vmappable; PPO or DQN
+   fine-tuning a small policy net against frozen v7_0 is in
+   reach. Multi-week investment with binary outcome.
+
+If none of those are appetising: **lock the rank** at μ=1094.9
+top 4.2 %, 40 days. Save remaining capacity for ladder-shift
+response (if competitors push and we drop, re-investigate).
 
 ## Out of scope for next session
 
-- The five-experiment platform refactor from the previous handover.
-  Two of the five (opening, comet) just shipped via Track B; depth-2
-  shipped via Track C1. Re-prioritise the remaining three (multi-launch,
-  opening classifier, strategy library) only after v7_1 ladder result.
+- More chooser refinements. The 7-falsification pattern is
+  conclusive. Rule 37 (consecutive-falsification-cap, ratified
+  this postmortem) explicitly forbids this.
+- Pushing JAX depth-2 to T4 without the two-tier-smoke checklist
+  (also ratified this postmortem).
 
 ## Pointers — this-session deliverables
 
-- `lib/v7_search.py` — opening wire (line 50, 142); `choose_depth2` +
-  `choose_depth2_with_4p` (~200 LOC); `_bind_shared_world_model`
-  context manager + `_effective_wallclock_ms` env-var override
-  helper.
-- `scripts/bundle_agent.py` — `_parity_gate` now sets
-  `ORBIT_WARS_PARITY_WALLCLOCK_MS=60000` for the parity comparison
-  via try/finally.
-- `tests/test_v7_search_shared_model_cleanup.py` — 9 unit tests
-  pinning both invariants (5 cleanup, 4 wallclock override).
-- `audit/2026-05-13-postmortem-read-handover-iLWTq.md` — this
-  session's postmortem.
-- `lib/missions/snipe.py:236-243` — H15 hard reject.
-- `lib/missions/opening.py` — unchanged (built in prior session;
-  unit-tested).
-- `lib/game/jax/jax_missions.py` — `compute_opening_score_matrix` +
-  H15 reject in `compute_snipe_score_matrix`.
-- `lib/game/jax/jax_score.py` — `use_opening` knobs plumbed through.
-- `lib/game/jax/jax_brute_search.py` — candidate-axis vmap scorer.
-- `scripts/classify_losses.py` — 5-bucket loss-mode classifier.
-- `scripts/jax_path_search.py` — offline depth-2 oracle.
-- `scripts/bundle_agent.py` — opening added to DEFAULT_LIB_ORDER.
-- `scripts/kaggle_ab_kernel/run_jax_ab.py` — `A_USE_OPENING` /
-  `B_USE_OPENING` env knobs.
-- `agents/v7_1_open_drop_comets/main.py`, `agents/v7_2_depth2/main.py`.
-- `audit/2026-05-13-v7-0-loss-modes.md` — loss-mode audit.
-- `audit/2026-05-13-depth2-oracle-32seeds.csv` — oracle output.
-- `audit/2026-05-13-loss-modes-52588156.csv` — per-game classifier output.
-- Tests: `test_v7_depth2`, `test_jax_brute_search`,
-  `test_mission_opening_wireup`, `test_snipe_comet_reject`.
+- `lib/value_heads.py::composite_capture_value` + 4 tests.
+- `lib/missions/opp_archetypes.py` (5 archetypes) + 7 tests.
+- `lib/v7_search.py::_enumerate_add_one`, `_enumerate_split_source`,
+  `_enumerate_drop_or_add_one`, `_enumerate_drop_or_split`,
+  `choose_archetype_minregret`, `choose_archetype_minregret_with_4p`,
+  `_effective_wallclock_ms`, `_bind_shared_world_model`.
+- `lib/missions/snipe.py::ENEMY_MULTIPLIER` constant (default 1.0;
+  bundle build workflow documented in `v7_7_enemy_mult/main.py`).
+- `lib/game/jax/jax_depth2.py` (parked).
+- `scripts/bundle_agent.py` — `_parity_gate` env-var override;
+  `opp_archetypes` and (already-landed) `opening` in
+  `DEFAULT_LIB_ORDER`.
+- `agents/v7_3_minregret/`, `v7_4_capture_value/`,
+  `v7_5_drop_add_capture/`, `v7_6_split_source/`,
+  `v7_7_enemy_mult/`. (Bundles in `submissions/` are gitignored.)
+- Tests: `test_v7_search_shared_model_cleanup`,
+  `test_opp_archetypes`, `test_composite_capture_value`,
+  `test_enumerator_add_one`, `test_enumerator_split_source`,
+  `test_jax_depth2`.
+- `audit/2026-05-14-postmortem-read-handover-iLWTq.md`.
+- `.claude/skills/kaggle-comp/improvements.md` — Rule 37
+  (consecutive-falsification cap) + mandatory-two-tier-smoke
+  promoted this postmortem.

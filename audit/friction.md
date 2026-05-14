@@ -258,6 +258,42 @@
   COMET_BONUS=1.3` fix (also 28.1% regression). Promotion candidate:
   "if the finding is local, the fix must be local."
 
+## 2026-05-14 (claude/read-handover-iLWTq — chooser-axis exhaustion)
+
+- `tag: chooser-axis-exhausted-after-7-falsifications` — 32-game
+  scalar A/B vs `v7_0_drop_one` for seven variants in this session:
+  v7_1 (H11 opening, 35.9 %), v7_2 (depth-2 over v3.5.1 drop-ones,
+  31.3 %), v7_3 (min-regret over hand-crafted opp archetypes,
+  28.1 %), v7_4 (composite capture-value head, 40.6 %), v7_5
+  (+ ADD-one widening, 37.5 %), v7_6 (+ split-source multi-launch,
+  40.6 %), v7_7 (enemy multiplier ×1.3, 28.1 %). ALL Wilson lo
+  below 0.55 gate; best (v7_4 = v7_6) ties at 40.6 % vs 50 %
+  baseline. Pattern: v7_0_drop_one is a robust local optimum; the
+  per-source-greedy-ROI proposer is doing ~95 % of the agent's
+  work. Chooser-axis refinements (value head, action space, opp
+  model, scoring multipliers) produce small noise-dominated
+  deltas, never gate-clearing lift. **Cost:** ~6 h session capacity
+  on diminishing-EV experiments past v7_3 (where the pattern was
+  already visible). **Fix this session:** stopped iteration after
+  v7_7; PI signed off on lock-the-rank or architectural pivot for
+  next session. **Promotion ratified:** Rule 37 (consecutive-
+  falsification cap) — `consecutive-falsification-cap` — pending
+  in `.claude/skills/kaggle-comp/improvements.md`.
+
+- `tag: bundler-text-inline-shadow-of-module-constants` — v7_7
+  agent first attempt set `lib.missions.snipe.ENEMY_MULTIPLIER = 1.3`
+  via runtime monkey-patch in `agent(obs)`. Source agent (using real
+  `lib.missions.snipe`) saw 1.3; bundle agent (using its own inlined
+  copy of snipe.py at module level) saw the pre-baked 1.0. Parity
+  gate caught it: 99/450 mismatched turns. **Fix this session:**
+  abandoned the runtime patch; bumped the constant in source
+  (`lib/missions/snipe.py`) to 1.3, bundled v7_7, then reverted the
+  source to 1.0 so future bundles stay at baseline. **Rule
+  candidate (drafted, NOT promoted this session):** module-mutation
+  monkey-patches must verify parity-gate-clean before push; the
+  bundler text-inline pattern systematically shadows lib-module
+  globals.
+
 ## 2026-05-13 LATE-2 (claude/read-handover-iLWTq — depth-2 JAX kernel)
 
 - `tag: scale-without-smoke-burned-90min-t4` — pushed
