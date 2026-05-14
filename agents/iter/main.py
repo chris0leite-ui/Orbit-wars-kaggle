@@ -25,7 +25,7 @@ WALLCLOCK_MS = 700.0            # per-turn budget (ms)
 ENUMERATOR_MODE = "drop_one"    # see lib.v7_search proposers
 OPP_TIERS = (1,)                # opp-model tier(s); >1 entry => MAXIMIN
 PV_GAMMA = 0.99                 # 1.0 = v7_0_drop_one; 0.99 = v7_pv equivalent
-VALUE_FN = "composite"          # "default" (delta_us_minus_them) | "composite" | "defensibility" | "composite_plus_defensibility"
+VALUE_FN = "defensibility"      # "default" (delta_us_minus_them) | "composite" | "defensibility" | "composite_plus_defensibility"
 DEFENSIBILITY_ALPHA = 1.0       # coefficient for defensibility penalty (sweep: 0.5 / 1.0 / 2.0)
 # ============================================================================
 
