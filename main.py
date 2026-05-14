@@ -1,48 +1,51 @@
 """main.py — our Orbit Wars agent (kaggle-submittable as-is).
 
-v3 — formula-consistent analytic chooser. Per turn, per (src, tgt, ships):
+v4 — exact-physics chooser. Per turn, per candidate (src, tgt, ships):
 
-  1. Enumerate candidate (src, tgt, ships) triples (8 nearest targets
-     per owned source, min-capture sizing, threat-aware defensive
-     reserve).
-  2. For each candidate, apply the action analytically and compute
-     Δfavor = favor(obs_after_action) − favor(obs). Uses the SAME
-     F3-aware favor formula end-to-end — pre-filter, scoring, and
-     leaf-eval are now one consistent function.
-  3. Greedy non-dogpile match: walk candidates Δfavor-desc; each
-     source emits at most one fleet; each target hit at most once.
+  1. Build a fast_sim Snapshot from the obs (parity-tested byte-exact
+     with kaggle env; `lib/fast_sim.py`).
+  2. Apply my candidate action via `fs_step` for turn 0, with all
+     other seats IDLE.
+  3. Continue idle stepping for `arrival + 2` turns so my fleet
+     reaches the target (or is destroyed) and combat resolves
+     EXACTLY (no analytic approximation of orbital motion / fleet-
+     in-flight collisions / multi-fleet arrivals).
+  4. Score = favor(leaf_state, me) − favor(obs, me). Uses v1 F1+F2
+     formula (AUC 0.945 on saved snapshots).
 
-Why this replaces v2 (10-turn fast_sim rollout chooser):
+Why this replaces v3 (analytic _apply_action) and v2 (fwd-sim rollout
+with favor-greedy opp):
 
-Diagnostic dump at seed 1003 turn 30 (where my agent under-launches
-vs v7_0) showed three different formulas being applied to the same
-Δfavor question:
-  - pre-filter score_action used v1 F2 (prod × full_horizon)
-  - leaf-eval favor() used v2 F2* (prod × hold_time)
-  - rollout cascade of favor-greedy actions then overrode both with
-    pure simulation noise (every launch leaf_favor = baseline − 2672,
-    regardless of which candidate; the 10-turn fwd-sim converged to
-    similar states because favor-greedy plays the same way no matter
-    the turn-0 candidate).
+The PI's framing: we have two proven foundations — the parity-tested
+physics engine (`fast_sim`, 62/62 parity tests) AND the validated
+F1+F2 favor formula. Stop reinventing approximations.
 
-Result: 5 candidates passed v1 pre-filter; 1 was genuinely positive
-under the v2 formula (P12→P20 ×26 at +1864); rollout rejected ALL 5
-because the cascade-of-favor-greedy-launches drained ships in turns
-1-9 of every simulation. Hence the under-launch behaviour observed
-in 3 seeds vs v7_0 — and the 0/96 across 5 favor-axis variants.
+v3 used `_apply_action` (an analytic mutation of the obs):
+  - ignored orbital motion (planets rotate during fleet travel)
+  - ignored existing in-flight fleets
+  - ignored multi-fleet combat arrivals same turn
+  - flat-added production × arrival to every owned planet
+v3 result: 79.2 % vs nearest (regressed from 100 %), 0/24 vs v7_0.
 
-The fix: trust the formula. F3 already encodes expected hold-time
-multi-turn; F2*'s prod × hold_time term already accounts for capture
-duration; horizon already shrinks as the game progresses. Layering a
-10-turn favor-greedy simulator on top is double-counting that gets
-overridden by simulation noise.
+v2 used 10-turn rollout with favor-greedy opp:
+  - speculative opp model caused cascade losses
+  - leaf converged to baseline-minus-combat-cost for ALL candidates
+  - rollout overrode positive analytic Δfavor predictions
+v2 result: 100 % vs nearest, 0/24 vs v7_0.
 
-Submit with:  ./submit.sh "message describing the change"
+This version: physics simulator handles arrival window EXACTLY; opp
+is IDLE during my arrival (no speculative counter-recapture model);
+v1 favor formula scores the leaf (proven AUC). The Δ tells me what
+this action accomplishes against a stationary baseline; opp's actual
+response is delegated to the next turn's decision.
+
+F3 was reverted in favor.py — it was a closed-form *approximation*
+of what the simulator computes exactly. With the simulator, F3 is
+redundant and (per AUC 0.912 vs 0.945) actively miscalibrated.
+
+Submit with:  ./submit.sh "message"
 Eval with:    python eval.py --vs nearest -n 24
               python eval.py --vs v7_0 -n 24
-
-Favor function: `favor.py`. (lib/fast_sim is no longer imported here;
-the rollout layer was removed.)
 """
 
 from __future__ import annotations
@@ -52,6 +55,7 @@ import math
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from favor import favor
+from lib.fast_sim import from_obs, step as fs_step, clone as fs_clone
 
 # --- comp constants (from data/README.md) ----------------------------------
 EPISODE_STEPS = 500
@@ -63,6 +67,7 @@ SUN_R = 10.0
 # --- chooser config --------------------------------------------------------
 NUM_TARGETS_PER_SOURCE = 8     # K nearest non-owned planets considered
 MIN_FLEET_SIZE = 2             # 1-ship fleets move at speed 1; rarely useful
+SIM_SETTLE_TURNS = 2           # extra idle turns after arrival to let combat resolve
 
 
 # ---------------------------------------------------------------------------
@@ -96,56 +101,13 @@ def _crosses_sun(sx: float, sy: float, tx: float, ty: float) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _apply_action(obs, src: Planet, tgt: Planet, ships: int, arrival: int, me: int) -> dict:
-    """Build the post-action observation analytically: src loses `ships`
-    in garrison and gains arrival-turns of production; tgt becomes me
-    (with surplus garrison) if capture succeeds, or keeps its owner
-    (with reduced garrison) if the fleet is defeated; all other owned
-    planets accumulate arrival-turns of production.
-
-    Sun-crossing destroys the fleet — src still loses the ships, tgt is
-    untouched.
+def _arrival_turns(src: Planet, tgt: Planet, ships: int) -> int:
+    """Estimated turns for a fleet of `ships` to fly from src to tgt
+    (centre-to-centre minus both radii, at `_speed(ships)`).
+    Used to set the sim horizon per candidate.
     """
-    raw_planets = obs["planets"] if isinstance(obs, dict) else obs.planets
-    sun_kill = _crosses_sun(src.x, src.y, tgt.x, tgt.y)
-
-    if tgt.owner == -1:
-        garrison_at_arrival = int(tgt.ships)
-    else:
-        garrison_at_arrival = int(tgt.ships) + int(tgt.production) * arrival
-
-    captured = (not sun_kill) and (ships > garrison_at_arrival)
-
-    new_planets = []
-    for p in raw_planets:
-        p = list(p)
-        if p[0] == src.id:
-            p[5] = int(p[5]) - ships + int(p[6]) * arrival
-        elif p[0] == tgt.id:
-            if sun_kill:
-                if int(p[1]) >= 0:
-                    p[5] = int(p[5]) + int(p[6]) * arrival
-            elif captured:
-                p[1] = me
-                p[5] = ships - garrison_at_arrival
-            else:
-                # Fleet defeated. Garrison soaks `ships`; owner unchanged.
-                p[5] = max(0, garrison_at_arrival - ships)
-        else:
-            if int(p[1]) >= 0:
-                p[5] = int(p[5]) + int(p[6]) * arrival
-        new_planets.append(p)
-
-    return {
-        "planets": new_planets,
-        "fleets": obs["fleets"] if isinstance(obs, dict) else obs.fleets,
-        "comets": obs["comets"] if isinstance(obs, dict) else getattr(obs, "comets", []),
-        "comet_planet_ids": (
-            obs["comet_planet_ids"] if isinstance(obs, dict)
-            else getattr(obs, "comet_planet_ids", [])
-        ),
-        "step": int(obs["step"] if isinstance(obs, dict) else getattr(obs, "step", 0)) + arrival,
-    }
+    dist = max(0.0, math.hypot(src.x - tgt.x, src.y - tgt.y) - src.radius - tgt.radius)
+    return max(1, math.ceil(dist / _speed(ships)))
 
 
 def score_action(
@@ -154,41 +116,56 @@ def score_action(
     ships: int,
     step: int,
     me: int,
-    obs=None,
+    snap_base=None,
+    num_seats: int = 2,
     favor_before: float | None = None,
 ) -> float:
-    """Δfavor for launching `ships` from src toward tgt.
+    """Δfavor for launching `ships` from src toward tgt — computed
+    via the parity-tested physics simulator (`lib/fast_sim`), not an
+    analytic approximation.
 
-    Computed by applying the action analytically and returning
-    favor(post_action_obs, me) − favor(obs, me). Uses the F3-aware
-    favor end-to-end — same formula governs candidate ranking and
-    leaf evaluation (the v2-rollout chooser had three different
-    formulas in three places; root cause of 0/96 vs v7_0).
+    Steps:
+      1. Clone `snap_base` (the agent's current Snapshot).
+      2. Apply my candidate as turn-0 action; all opp seats IDLE.
+      3. Step idly for `arrival + SIM_SETTLE_TURNS` more turns so
+         my fleet arrives, combat resolves, and accumulated
+         production is recorded exactly. (Orbital motion, sun
+         crossing, multi-fleet collisions all handled by the engine.)
+      4. Return favor(leaf, me) − favor_before.
 
-    `obs` is REQUIRED. Optional `favor_before` lets callers cache the
-    pre-action favor across the candidate enumeration (called once
-    per planet-state instead of per candidate).
+    Idle opp during arrival is intentional: this measures what THIS
+    action accomplishes against a stationary world. Opp's actual
+    response is captured by next-turn re-evaluation (the action is
+    re-decided every turn from the live obs). Cascading speculative
+    opp policies (favor-greedy in v2-rollout) introduced noise that
+    overrode genuine analytic-positive captures (audit notes in v3
+    commit message).
+
+    `snap_base`, `num_seats`, and `favor_before` are computed once
+    per agent turn and passed in to avoid per-candidate rebuilding.
     """
     if ships < MIN_FLEET_SIZE or ships > src.ships or src.id == tgt.id:
         return float("-inf")
-
     if tgt.owner == me:
-        return 0.0   # reinforce own planet — neutral
+        return 0.0
+    if snap_base is None or favor_before is None:
+        raise ValueError("score_action requires snap_base and favor_before")
 
-    if obs is None:
-        raise ValueError("score_action requires obs for analytic Δfavor")
+    arrival = _arrival_turns(src, tgt, ships)
+    angle = math.atan2(tgt.y - src.y, tgt.x - src.x)
 
-    dist = max(
-        0.0,
-        math.hypot(src.x - tgt.x, src.y - tgt.y) - src.radius - tgt.radius,
-    )
-    speed = _speed(ships)
-    arrival = max(1, math.ceil(dist / speed))
+    snap = fs_clone(snap_base)
+    actions = [[] for _ in range(num_seats)]
+    actions[me] = [[src.id, angle, ships]]
+    snap = fs_step(snap, actions, in_place=True)
 
-    post_obs = _apply_action(obs, src, tgt, ships, arrival, me)
-    if favor_before is None:
-        favor_before = favor(obs, me)
-    return favor(post_obs, me) - favor_before
+    idle_actions = [[] for _ in range(num_seats)]
+    for _ in range(arrival - 1 + SIM_SETTLE_TURNS):
+        if snap.fake_env.done:
+            break
+        snap = fs_step(snap, idle_actions, in_place=True)
+
+    return favor(snap.state[me].observation, me) - favor_before
 
 
 # ---------------------------------------------------------------------------
@@ -241,23 +218,35 @@ def _capture_size_guess(src: Planet, tgt: Planet) -> int:
     return int(tgt.ships) + int(tgt.production) * arrival + 1
 
 
+def _num_seats(planets: list[Planet], fleets: list[Fleet]) -> int:
+    """Detect 2P vs 4P from the obs (orbit-wars supports only those)."""
+    max_owner = -1
+    for p in planets:
+        if p.owner > max_owner:
+            max_owner = p.owner
+    for f in fleets:
+        if f.owner > max_owner:
+            max_owner = f.owner
+    return 4 if max_owner >= 2 else 2
+
+
 def _enumerate_candidates(
     my_planets: list[Planet],
     targets: list[Planet],
     fleets: list[Fleet],
     step: int,
     me: int,
-    obs,
-    favor_before: float | None = None,
+    snap_base,
+    num_seats: int,
+    favor_before: float,
 ) -> list[tuple[float, Planet, Planet, int]]:
     """All (Δfavor, src, tgt, ships) triples with Δfavor > 0.
 
-    Δfavor is the v2 F3-aware analytic delta — same formula as
-    `favor()` itself. Defense: if an enemy fleet is aimed at the
-    source, reserve enough garrison to repel it.
+    Δfavor is the simulator-based delta: clone snap_base, apply my
+    candidate at turn 0, idle through arrival, compute v1 favor at
+    leaf, subtract favor_before. Defense: reserve garrison against
+    incoming enemy fleets aimed at the source.
     """
-    if favor_before is None:
-        favor_before = favor(obs, me)
     out: list[tuple[float, Planet, Planet, int]] = []
     for src in my_planets:
         if src.ships < MIN_FLEET_SIZE:
@@ -274,10 +263,23 @@ def _enumerate_candidates(
             capture_size = _capture_size_guess(src, tgt)
             if capture_size < MIN_FLEET_SIZE or capture_size > launch_budget:
                 continue
-            ships = capture_size  # min-capture; matches nearest's expansion velocity
-            s = score_action(src, tgt, ships, step, me, obs=obs, favor_before=favor_before)
-            if s > 0.0:
-                out.append((s, src, tgt, ships))
+            # Multi-size enumeration: let the formula pick the best size
+            # per (src, tgt). min-cap is the cheapest capture; 2× provides
+            # post-capture defensibility against opp counter; launch_budget
+            # is overwhelming force (useful when opp likely contests).
+            sizes = {capture_size}
+            if 2 * capture_size <= launch_budget:
+                sizes.add(2 * capture_size)
+            if launch_budget >= capture_size + 5:
+                sizes.add(launch_budget)
+            for ships in sizes:
+                s = score_action(
+                    src, tgt, ships, step, me,
+                    snap_base=snap_base, num_seats=num_seats,
+                    favor_before=favor_before,
+                )
+                if s > 0.0:
+                    out.append((s, src, tgt, ships))
     out.sort(key=lambda c: -c[0])
     return out
 
@@ -301,12 +303,13 @@ def agent(obs):
     if not my_planets or not targets:
         return []
 
-    # Score every candidate with the v2 F3-aware analytic Δfavor (the
-    # SAME function favor() uses at the leaf). No second-pass rollout —
-    # the formula already encodes hold-time and horizon multi-turn.
+    # Build snap_base once per turn; per-candidate clone is cheap.
+    num_seats = _num_seats(planets, fleets)
+    snap_base = from_obs(obs, num_seats=num_seats)
     favor_before = favor(obs, player)
     candidates = _enumerate_candidates(
-        my_planets, targets, fleets, step, player, obs, favor_before=favor_before
+        my_planets, targets, fleets, step, player,
+        snap_base, num_seats, favor_before,
     )
     if not candidates:
         return []   # no positive-Δfavor candidate; hold
