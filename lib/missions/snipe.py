@@ -38,7 +38,7 @@ from lib.fleet import speed as fleet_speed
 from lib.geometry import danger_3nn
 from lib.intent import World
 from lib.mission import Mission
-from lib.scoring import DANGER3_KAPPA, MIN_DANGER3_MULT, PV_GAMMA, pv_horizon
+from lib.scoring import DANGER3_KAPPA, MIN_DANGER3_MULT, PV_GAMMA, expected_hold, pv_horizon
 from lib.world_model import WorldModel, comet_remaining_lifetime
 
 # sym_hypot was imported here for the σ-equiv layer (cherry-picked
@@ -133,6 +133,136 @@ DROP_COMET_TARGETS = 0
 # Stored as int so scripts/ab_variants.py can patch it (its regex requires
 # a numeric literal).
 PROPOSER_AFFORDABILITY_FILTER = 0
+
+
+# HAV (Hold-Aware Value) — see plan file 2026-05-14 section.
+# USE_HAV=1 caps each target's PV horizon by the time-to-enemy-threat
+# at that target. Targets in enemy territory get shortened hold, often
+# dropping value to zero (proposer skips). Default 0 = identity (PV
+# at full remaining-game horizon).
+USE_HAV = 0
+
+# Tiered Mission emission. When USE_HOLDING_TIER=1, additionally emit
+# a "holding" Mission per (src, target) sized to absorb expected
+# enemy counter-attack within HOLD_WINDOW turns. When
+# USE_OPERATIONAL_TIER=1, additionally emit an "operational" Mission
+# sized to also project a follow-on capture from the captured target
+# to its cheapest reachable nearby unowned planet within
+# FOLLOWON_RADIUS. settle_plan picks the highest-scoring tier per
+# source. Defaults 0 = no extra tiers, current behaviour.
+USE_HOLDING_TIER = 0
+USE_OPERATIONAL_TIER = 0
+
+# Tier constants — see plan file for derivation. All tunable via
+# ab_variants. The defaults are conservative starting points; expect
+# to sweep them after a binary on/off PASS.
+SOURCE_DEFENSE_RESERVE = 8     # never strand the source below this
+OP_RESERVE = 5                 # extra ships in operational fleet
+MIN_FOLLOWON_HOLD = 10         # don't propose op-tier if followon is shaky
+FOOTHOLD_DISCOUNT = 0.5        # follow-on value weighted at half-credit
+HOLD_WINDOW = 10               # look this many turns past arrival for counter-attack
+FOLLOWON_RADIUS = 40.0         # max distance from target → followon
+
+
+def _max_enemy_arrival_within(
+    ledger_entries: list, my_id: int, eta_lo: int, eta_hi: int,
+) -> int:
+    """Sum of enemy ship counts in the ledger arriving within
+    `[eta_lo, eta_hi]` (inclusive). Used by the holding tier to
+    estimate the counter-attack the post-capture garrison must
+    survive."""
+    if not ledger_entries:
+        return 0
+    total = 0
+    for f_eta, f_owner, f_ships in ledger_entries:
+        if f_owner == my_id:
+            continue
+        if eta_lo <= f_eta <= eta_hi:
+            total += int(f_ships)
+    return total
+
+
+def _followon_hold_estimate(
+    followon, target, world: World, model: WorldModel, my_id: int, f_eta: int,
+) -> int:
+    """Estimate how many turns we'd hold `followon` after capturing it
+    from `target` (the about-to-be-captured forward base).
+
+    Like `expected_hold` but explicitly EXCLUDES `target` from the
+    enemy threat set, because we're about to flip target to our side.
+    """
+    step_now = int(world.step)
+    remaining = max(0, EPISODE_STEPS - step_now - f_eta)
+    if remaining == 0:
+        return 0
+
+    # In-flight enemy fleets toward followon — keep as-is.
+    best: int | None = model.incoming_enemy_eta(followon.id, my_id)
+
+    # Potential launches from each enemy planet EXCEPT the target.
+    for p in world.planets_by_id.values():
+        if p.id == followon.id or p.id == target.id:
+            continue
+        if p.owner == my_id or p.owner == -1:
+            continue
+        if p.ships <= 0:
+            continue
+        dx = followon.x - p.x
+        dy = followon.y - p.y
+        d = math.hypot(dx, dy)
+        v = fleet_speed(int(p.ships))
+        if v <= 0:
+            continue
+        eta = int(math.ceil(d / v))
+        if best is None or eta < best:
+            best = eta
+
+    if best is None:
+        return remaining
+    hold = max(0, int(best) - int(f_eta))
+    return min(remaining, hold)
+
+
+def _best_followon(target, world: World, model: WorldModel, my_id: int,
+                   radius: float):
+    """Find the cheapest reachable nearby unowned planet from `target`,
+    returning `(followon_planet, capture_cost, eta_from_target,
+    expected_hold)` or `None` if no follow-on qualifies.
+
+    Used by the operational tier: the captured `target` becomes a
+    forward base; the follow-on is the next move from there. Only
+    considers planets that are NOT ours, NOT comets, within `radius`
+    units of `target`, and predicted to be holdable for at least
+    `MIN_FOLLOWON_HOLD` turns after the follow-on arrives (computed
+    AS IF target were already ours).
+    """
+    candidates = []
+    for n in world.planets_by_id.values():
+        if n.id == target.id:
+            continue
+        if n.owner == my_id:
+            continue
+        if n.id in world.comet_ids:
+            continue
+        dx = n.x - target.x
+        dy = n.y - target.y
+        d = math.hypot(dx, dy)
+        if d > radius:
+            continue
+        cost = max(1, int(n.ships) + 1)
+        v = fleet_speed(cost)
+        if v <= 0:
+            continue
+        f_eta = int(math.ceil(d / v))
+        eh = _followon_hold_estimate(n, target, world, model, my_id, f_eta)
+        if eh < MIN_FOLLOWON_HOLD:
+            continue
+        candidates.append((n, cost, f_eta, eh))
+    if not candidates:
+        return None
+    # Pick the highest production/cost ratio — best per-ship payoff.
+    candidates.sort(key=lambda x: x[0].production / max(1, x[1]), reverse=True)
+    return candidates[0]
 
 
 def _player_totals(world: World) -> dict[int, float]:
@@ -266,9 +396,18 @@ def propose_snipe_missions(
                 rem = comet_remaining_lifetime(t.id, world)
                 time_to_hold = max(0.0, pv_horizon(0, eta, PV_GAMMA, rem or 0))
             else:
-                time_to_hold = max(
-                    1.0, pv_horizon(step_now, eta, PV_GAMMA, EPISODE_STEPS)
-                )
+                if USE_HAV:
+                    # HAV-1: cap PV horizon by predicted hold window
+                    # (time-to-enemy-threat at target). When eh = 0 the
+                    # value falls to zero → drop this Mission entirely.
+                    eh = expected_hold(t.id, eta, world, model, EPISODE_STEPS)
+                    if eh <= 0:
+                        continue
+                    time_to_hold = max(1.0, pv_horizon(0, 0, PV_GAMMA, eh))
+                else:
+                    time_to_hold = max(
+                        1.0, pv_horizon(step_now, eta, PV_GAMMA, EPISODE_STEPS)
+                    )
             value = t.production * time_to_hold
 
             # Cost-aware ROI baseline + priority modifiers.
@@ -321,4 +460,101 @@ def propose_snipe_missions(
                 score=score,
                 eta=eta,
             ))
+
+            # --------- Tier 2: Holding (2026-05-14 plan, HAV-2) ----------
+            # Size the fleet to absorb the strongest expected enemy
+            # arrival within HOLD_WINDOW turns of our capture. Skip
+            # comets (their threat model is dominated by lifetime, not
+            # counter-attack).
+            S_hold: int | None = None
+            if USE_HOLDING_TIER and not is_comet:
+                counter = _max_enemy_arrival_within(
+                    model.ledger.get(t.id, []),
+                    my_id=world.my_id,
+                    eta_lo=eta + 1, eta_hi=eta + HOLD_WINDOW,
+                )
+                if counter > 0:
+                    prod_during = int(t.production) * HOLD_WINDOW
+                    deficit = counter - prod_during
+                    if deficit > 0:
+                        S_hold = base_ships + int(deficit) + 1
+                if S_hold is not None and S_hold > base_ships:
+                    if int(src.ships) - S_hold >= SOURCE_DEFENSE_RESERVE:
+                        src_threat = model.incoming_enemy_eta(src.id, world.my_id)
+                        if src_threat is None or src_threat > eta:
+                            # Holding tier permanently denies the
+                            # planet to enemy → use full remaining-game
+                            # horizon (not the HAV-capped one).
+                            hold_t = max(
+                                1.0,
+                                pv_horizon(step_now, eta, PV_GAMMA, EPISODE_STEPS),
+                            )
+                            hold_value = t.production * hold_t
+                            hold_score = priority * hold_value / (
+                                S_hold + d + AIRTIME_PENALTY_WEIGHT * eta + 1.0
+                            )
+                            if DANGER3_KAPPA != 0.0:
+                                hold_score *= max(
+                                    MIN_DANGER3_MULT,
+                                    1.0 + DANGER3_KAPPA * danger_3nn(
+                                        (t.x, t.y), t.id,
+                                        list(world.planets_by_id.values()),
+                                        world.my_id,
+                                    ),
+                                )
+                            missions.append(Mission(
+                                mission_class="snipe",
+                                src_id=src.id,
+                                target_id=t.id,
+                                ships=S_hold,
+                                score=hold_score,
+                                eta=eta,
+                                note="hold",
+                            ))
+                    else:
+                        S_hold = None  # source can't afford the holding tier
+
+            # --------- Tier 3: Operational / foothold (HAV-3) -----------
+            if USE_OPERATIONAL_TIER and not is_comet:
+                foothold = _best_followon(
+                    t, world, model, world.my_id, FOLLOWON_RADIUS,
+                )
+                if foothold is not None:
+                    f_target, f_cost, f_eta_from_t, f_hold = foothold
+                    base_for_op = S_hold if S_hold is not None else base_ships
+                    S_op = base_for_op + f_cost + OP_RESERVE
+                    if S_op > base_ships and int(src.ships) - S_op >= SOURCE_DEFENSE_RESERVE:
+                        src_threat = model.incoming_enemy_eta(src.id, world.my_id)
+                        if src_threat is None or src_threat > eta:
+                            # Capture value: full hold (we're holding +
+                            # projecting from this base).
+                            op_t = max(
+                                1.0,
+                                pv_horizon(step_now, eta, PV_GAMMA, EPISODE_STEPS),
+                            )
+                            op_value = t.production * op_t
+                            # Foothold value: discounted follow-on PV.
+                            f_pv = pv_horizon(0, 0, PV_GAMMA, f_hold)
+                            op_value += FOOTHOLD_DISCOUNT * f_target.production * f_pv
+                            op_score = priority * op_value / (
+                                S_op + d + AIRTIME_PENALTY_WEIGHT * eta + 1.0
+                            )
+                            if DANGER3_KAPPA != 0.0:
+                                op_score *= max(
+                                    MIN_DANGER3_MULT,
+                                    1.0 + DANGER3_KAPPA * danger_3nn(
+                                        (t.x, t.y), t.id,
+                                        list(world.planets_by_id.values()),
+                                        world.my_id,
+                                    ),
+                                )
+                            missions.append(Mission(
+                                mission_class="snipe",
+                                src_id=src.id,
+                                target_id=t.id,
+                                ships=S_op,
+                                score=op_score,
+                                eta=eta,
+                                note=f"op→{f_target.id}",
+                            ))
     return missions

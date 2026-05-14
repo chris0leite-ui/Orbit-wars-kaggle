@@ -28,6 +28,7 @@ from dataclasses import dataclass
 
 from lib.combat import resolve_arrivals
 from lib.fleet import speed as fleet_speed
+from lib.fleet import speed as fleet_speed
 
 # Raised 110 → 250 (2026-05-11): reinforce class was firing 0.2
 # candidates/turn because long-runway threats were invisible past
@@ -204,6 +205,56 @@ class WorldModel:
         if not enemy_etas:
             return None
         return min(enemy_etas)
+
+    def time_to_enemy_threat(self, planet_id: int, my_id: int, world) -> int | None:
+        """Earliest turn at which an enemy could have a fleet at
+        `planet_id`. Considers BOTH (a) in-flight enemy fleets
+        currently inbound, and (b) potential launches from every
+        currently-stationary enemy-owned planet at its present
+        garrison.
+
+        Returns `None` if no enemy can plausibly threaten the planet
+        (caller should treat as "saturate at game horizon").
+
+        H22 helper for Hold-Aware Value scoring. See plan file
+        2026-05-14 HAV section. The "potential launch" leg uses
+        `lib.scoring.eta_proxy(enemy_planet, target_planet)` — that
+        helper already estimates ETA from `ceil(dist / fleet_speed(
+        target.ships+1))`. We override its target argument so the
+        ship-count proxy is the LAUNCHING planet's garrison, not the
+        target's.
+        """
+        target = world.planets_by_id.get(planet_id)
+        if target is None:
+            return None
+
+        best: int | None = None
+
+        # (a) in-flight enemy fleets — reuse existing helper.
+        inbound = self.incoming_enemy_eta(planet_id, my_id)
+        if inbound is not None:
+            best = inbound
+
+        # (b) potential launches from each enemy planet at its current
+        #     garrison.
+        for p in world.planets_by_id.values():
+            if p.id == planet_id:
+                continue
+            if p.owner == my_id or p.owner == -1:
+                continue
+            if p.ships <= 0:
+                continue
+            dx = target.x - p.x
+            dy = target.y - p.y
+            dist = (dx * dx + dy * dy) ** 0.5
+            v = fleet_speed(int(p.ships))
+            if v <= 0:
+                continue
+            eta = int(-(-dist // v))  # math.ceil without import
+            if best is None or eta < best:
+                best = eta
+
+        return best
 
 
 # ---------------------------------------------------------------------------

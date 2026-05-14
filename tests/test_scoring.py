@@ -105,3 +105,59 @@ def test_pv_horizon_strictly_monotone_in_gamma_for_fixed_step_eta():
     # decreasing in γ — more patient discounting => more total value.
     vals = [scoring.pv_horizon(step=0, eta=10, gamma=g) for g in [0.90, 0.95, 0.99, 1.0]]
     assert vals == sorted(vals)
+
+
+# ---------------------------------------------------------------------------
+# expected_hold — HAV horizon cap (2026-05-14 plan, HAV-1)
+# ---------------------------------------------------------------------------
+
+
+class _FakeModel:
+    """Minimal WorldModel stub: time_to_enemy_threat returns whatever
+    is preset; other methods unused by expected_hold."""
+    def __init__(self, threat_eta=None):
+        self._threat = threat_eta
+    def time_to_enemy_threat(self, planet_id, my_id, world):
+        return self._threat
+
+
+class _FakeWorld:
+    def __init__(self, step=10, my_id=0):
+        self.step = step
+        self.my_id = my_id
+
+
+def test_expected_hold_saturates_at_remaining_game_when_no_threat():
+    world = _FakeWorld(step=100)
+    model = _FakeModel(threat_eta=None)
+    # remaining_game = 500 - 100 - 20 = 380.
+    assert scoring.expected_hold(target_id=7, eta=20, world=world, model=model) == 380
+
+
+def test_expected_hold_caps_by_threat_eta_when_threat_arrives_soon():
+    world = _FakeWorld(step=100)
+    model = _FakeModel(threat_eta=30)  # threat in 30 turns from now
+    # eta=20, threat=30 → hold = 30 - 20 = 10.
+    assert scoring.expected_hold(target_id=7, eta=20, world=world, model=model) == 10
+
+
+def test_expected_hold_zero_when_threat_arrives_before_us():
+    world = _FakeWorld(step=100)
+    model = _FakeModel(threat_eta=15)  # threat arrives BEFORE our eta
+    assert scoring.expected_hold(target_id=7, eta=20, world=world, model=model) == 0
+
+
+def test_expected_hold_zero_at_game_end():
+    world = _FakeWorld(step=499)
+    model = _FakeModel(threat_eta=None)
+    assert scoring.expected_hold(target_id=7, eta=1, world=world, model=model) == 0
+
+
+def test_expected_hold_respects_smaller_remaining_game():
+    # Game has 50 turns left after our arrival; threat would saturate
+    # at 200 turns out. Hold caps at remaining game.
+    world = _FakeWorld(step=440)
+    model = _FakeModel(threat_eta=200)
+    # remaining_game = 500 - 440 - 10 = 50; hold via threat = 200 - 10 = 190.
+    # min(50, 190) = 50.
+    assert scoring.expected_hold(target_id=7, eta=10, world=world, model=model) == 50
