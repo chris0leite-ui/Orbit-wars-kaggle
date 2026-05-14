@@ -8,11 +8,18 @@
 
 - **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC → **40 days
   remaining.**
-- **Live submitted agent:** `v7_0_drop_one`, **submission #52588156**,
-  μ=**1094.9** (team peak). Rank **109 / 2587** (top 4.2 %). Gap to
-  top-10 prize: +336 μ.
-- **Rolling-last-2:** `[v4_planner #52579863, v7_0_drop_one #52588156]`.
-- **No new submission this session.** Anchor preserved.
+- **Live submitted agent** (per state/current.md post-merge):
+  **`v7_pv` #52630118** (v7_0_drop_one + present-value horizon
+  scoring, γ=0.99), live μ ≈ **1061.8 and climbing**. Shipped by the
+  parallel `claude/research-competition-analysis-2R8I3` branch this
+  same session (PR #17), passed 32-seed scalar A/B at 68.8 %
+  Wilson lo 56.6 %.
+- **Rolling-last-2:** `[v7_0_drop_one_rebuilt #52607699 μ≈1043.4,
+  v7_pv #52630118 μ≈1061.8]`. The original `v7_0_drop_one #52588156`
+  (μ=1094.9 at our session-start) was evicted by the rebuild push.
+- **No submission from THIS branch.** All 7 v7_X variants this
+  branch built failed their gates; live anchor is from the parallel
+  branch.
 
 ## This session — 7 falsifications on the chooser/proposer axis
 
