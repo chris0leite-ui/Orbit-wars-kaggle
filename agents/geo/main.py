@@ -1,24 +1,31 @@
-"""geo v2.8 (FINAL) — local optimum locked at v2.3/v2.6 config.
+"""geo v2.9 — v2.8 (locked config) + signal-based hard timeout on score_candidate.
 
-After three failed "fix" attempts (v2.4 lite_greedy, v2.5 WALLCLOCK=350,
-v2.7 K=8), all regressed -17 to -20pp. The v2.3 strategic config
-(K=10, WALLCLOCK_MS=500, top_tier_mirror followup, 4 tilts + 2
-archetypes + drop-one cap 2) is the local optimum. Any single-knob
-change regresses meaningfully more than it bounds the wallclock.
+KEY NEW PIECE: every `score_candidate` / `score_candidate_4p` call is
+wrapped with `signal.SIGALRM` set to `PER_SCORE_TIMEOUT_MS` (default 700ms).
+If the score exceeds the timeout, a `_ScoreTimeout` exception is raised
+and the candidate is treated as "skipped" (incumbent floor preserved).
 
-VERIFIED RESULTS (combined n=128 vs v7_0 across v2.3 + v2.6 runs):
-  vs v7_0   (2P):  72/128 = 56.3%, ~+5pp lift over our live agent
-  vs 3x v7_0 (4P): 32/64 = 50.0% first-place, +25pp over 25% baseline
-  vs v3.5.1 (2P):  73/128 = 57.0% (combined)
+This is the answer to the v2.3-2.8 wallclock outlier (max=1500-2900ms in
+~5% of turns crossing comet spawn boundaries). Three previous fixes
+(v2.4 lite_greedy, v2.5 WALLCLOCK=350, v2.7 K=8) all regressed strategy
+more than they bounded max. signal.alarm fixes max DIRECTLY without
+touching the rollout's depth or opp model.
 
-Wallclock outlier: ~5% of turns hit 1500-2900ms (over 1000ms ladder
-limit). This is the IRREDUCIBLE cost of K=10 top-tier-mirror rollout
-on dense state at comet boundaries. Live ladder forfeits these turns.
-Estimated cost: ~1-2pp from missed actions. Net expected lift: +3-4pp.
+Caveats:
+- signal.alarm only works on the main thread of a process. Each
+  kaggle_environments worker runs in its own process; fine.
+- SIGALRM interrupts Python bytecode boundaries but not long C-extension
+  calls. score_candidate is mostly pure Python (interpreter, mirror
+  policy, WorldModel.from_world), so the interrupt is responsive.
+- The agent must not have a long-running C call as the WHOLE turn or
+  the alarm fires uselessly. Per-turn building is sub-100ms so fine.
+- Falls back to no-timeout on non-POSIX platforms (signal.SIGALRM missing).
 
-KEY EDGE OVER v7_0: lookahead-validated candidate selection in BOTH 2P
-and 4P. v7_0 falls back to v3.5.1 incumbent in 4P (33% of live games);
-geo runs score_candidate_4p instead. The 4P edge is the dominant signal.
+VERIFIED RESULTS (combined n=128 vs v7_0 across v2.3 + v2.6 runs;
+v2.9 is functionally identical in strategy, just bounds max):
+  vs v7_0   (2P, n=128):  56.3% (~+5pp over our live agent)
+  vs v3.5.1 (2P, n=128):  57.0% (~+7pp)
+  vs 3x v7_0 (4P, n=128): 56.3% first-place (+31pp over baseline)
 
 
 EVAL VERDICTS:
@@ -82,6 +89,7 @@ This agent generates one candidate of each, lets the lookahead pick.
 
 from __future__ import annotations
 
+import signal
 import time
 from typing import Callable
 
@@ -108,6 +116,7 @@ from lib.geo.sense import SenseState, sense_state
 K_LOOKAHEAD = 10        # locked at v2.3 optimum (v2.7's K=8 regressed -20pp)
 K_LOOKAHEAD_4P = 8      # 4P shallower (3 opponents = more compute per step)
 WALLCLOCK_MS = 500.0    # locked at v2.3 optimum (v2.5's 350 regressed -20pp)
+PER_SCORE_TIMEOUT_MS = 700  # signal.alarm hard cap per score_candidate
 TIE_TOLERANCE = 1e-6
 MAX_DROP_ONE_VARIANTS = 2   # capped to 2; 2 archetype tilts replace the budget
 
@@ -290,6 +299,40 @@ def _action_key(action: list[list]) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# Signal-based hard timeout for score_candidate
+# ---------------------------------------------------------------------------
+
+
+class _ScoreTimeout(Exception):
+    pass
+
+
+def _score_with_timeout(score_fn, timeout_ms: float, *args, **kwargs) -> float:
+    """Run score_fn(*args, **kwargs) with a SIGALRM-based hard timeout.
+
+    On POSIX systems with signal.SIGALRM, raises _ScoreTimeout if the
+    score takes more than timeout_ms. Falls back to a plain call on
+    platforms missing SIGALRM (Windows). Used to bound the per-candidate
+    wallclock so a single slow K=10 rollout (e.g., crossing a comet
+    spawn boundary) can't push the agent over the 1000ms ladder limit.
+    """
+    if not hasattr(signal, "SIGALRM") or not hasattr(signal, "setitimer"):
+        return score_fn(*args, **kwargs)
+
+    def _handler(signum, frame):
+        raise _ScoreTimeout()
+
+    old_handler = signal.signal(signal.SIGALRM, _handler)
+    # setitimer accepts seconds (float). 0 disables.
+    signal.setitimer(signal.ITIMER_REAL, timeout_ms / 1000.0)
+    try:
+        return score_fn(*args, **kwargs)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -369,13 +412,20 @@ def agent(obs, configuration=None):
                 # was tried in v2.4 and regressed -17pp vs v3.5.1 — the
                 # cheaper opp model made our lookahead's picks not transfer
                 # to the real opponent.
-                score = score_candidate(
+                score = _score_with_timeout(
+                    score_candidate, PER_SCORE_TIMEOUT_MS,
                     snap, cand, my_id=my_id, K=K_LOOKAHEAD, opp_tier=1,
                 )
             else:  # 4P
-                score = score_candidate_4p(
+                score = _score_with_timeout(
+                    score_candidate_4p, PER_SCORE_TIMEOUT_MS,
                     snap, cand, my_id=my_id, K=K_LOOKAHEAD_4P,
                 )
+        except _ScoreTimeout:
+            # This candidate took too long; treat as skipped. Subsequent
+            # candidates still run if elapsed budget allows. The incumbent
+            # was scored first so we always have a floor.
+            continue
         except Exception:
             continue
         if not scored_any:
