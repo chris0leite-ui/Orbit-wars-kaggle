@@ -53,6 +53,16 @@ import time
 from typing import Callable, Optional
 
 
+# Adopt v7_pv's PV-discounted mission-proposer behavior. lib.scoring reads
+# this env var when imported; we set the default BEFORE any lib.* import so
+# every downstream proposer (snipe + reinforce, used by both v7_0_drop_one
+# and the geo-style tilts) sees PV_GAMMA=0.99. `setdefault` lets a caller
+# pin PV_GAMMA=1.0 explicitly (e.g., for parity tests). The empirical
+# evidence for this knob: v7_pv = v7_0_drop_one + PV_GAMMA=0.99 sits on
+# the live ladder at μ=1064.4 (vs v7_0_drop_one ~1000-1030).
+os.environ.setdefault("PV_GAMMA", "0.99")
+
+
 def _env_float(name, default):
     v = os.environ.get(name)
     try:

@@ -93,10 +93,11 @@ def test_pv_horizon_asymptotes_to_one_over_one_minus_gamma():
 
 
 def test_pv_horizon_default_gamma_is_linear_for_backwards_compat():
-    # Module-level PV_GAMMA defaults to 1.0 so snipe/reinforce keep
-    # their current behaviour and the existing parity tests pass.
-    assert scoring.PV_GAMMA == 1.0
-    pv = scoring.pv_horizon(step=100, eta=10)
+    # Behaviour test independent of module-level PV_GAMMA (which is now
+    # env-var configurable; another agent imported in the same process
+    # might have set PV_GAMMA=0.99). Pass gamma=1.0 explicitly so this
+    # test pins the linear-horizon equivalence regardless of env state.
+    pv = scoring.pv_horizon(step=100, eta=10, gamma=1.0)
     assert pv == 390.0
 
 
