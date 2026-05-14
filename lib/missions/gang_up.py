@@ -45,10 +45,17 @@ PAIR_SHARE = 0.7               # each paired source sends 70% of its garrison
 SINGLE_SOURCE_AFFORDABLE_RATIO = 0.85  # below this, target is "out of reach for one"
 GANG_UP_BONUS = 1.30           # timed arrivals > staggered
 
+# Mission Renaissance gate. Distinct from mechanism.GANG_UP_ENABLED
+# (which gates the post-Mission gang_up_size mechanism). This flag
+# gates the *proposer*. Default 0 = disabled. A/B candidate: 1.
+USE_GANG_UP_MISSION = 0
+
 
 def propose_gang_up_missions(world: World, model: WorldModel) -> list[Mission]:
     """Pair our top two reachable sources at any target where a single
     source's affordable fleet falls short."""
+    if not USE_GANG_UP_MISSION:
+        return []
     my_planets = [
         p for p in world.planets_by_id.values() if p.owner == world.my_id
     ]

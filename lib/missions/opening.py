@@ -41,11 +41,21 @@ OPENING_WINDOW = 5            # inclusive; fires for steps 0..5
 MIN_LAUNCH_GARRISON = 8       # don't strand a defender below this
 FRONT_LOAD_EXPONENT = 1.5     # H7 from main's hypothesis board
 
+# Mission Renaissance gate. Default 1 — Opening proposer is enabled in
+# v7's pipeline per main's cb02fd9 (H11 wired into _build_incumbent_intents
+# and shipped as v7_1). Set to 0 explicitly to ablate Opening for an
+# A/B (e.g. the Mission Renaissance per-mission run found Opening
+# borderline at 62.5% Wilson [48.4, 74.8] on top of PV, but main's
+# v7_1 ships with it on, so the default mirrors that.)
+USE_OPENING_MISSION = 1
+
 
 def propose_opening_missions(world: World, model: WorldModel) -> list[Mission]:
     """One Mission per (our source with ships>8, neutral target) pair,
     fired only during the opening window. Score = production ×
     (remaining_steps)^1.5 / (distance + 1)."""
+    if not USE_OPENING_MISSION:
+        return []
     if int(world.step) > OPENING_WINDOW:
         return []
     my_planets = [

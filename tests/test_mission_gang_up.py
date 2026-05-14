@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
+import lib.missions.gang_up as _gang_up_mod
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
 from lib.missions.gang_up import (
@@ -17,6 +20,16 @@ from lib.missions.gang_up import (
     propose_gang_up_missions,
 )
 from lib.world_model import WorldModel
+
+
+@pytest.fixture(autouse=True)
+def _enable_gang_up_mission():
+    saved = _gang_up_mod.USE_GANG_UP_MISSION
+    _gang_up_mod.USE_GANG_UP_MISSION = 1
+    try:
+        yield
+    finally:
+        _gang_up_mod.USE_GANG_UP_MISSION = saved
 
 
 def _world(planets, *, my_id=0, step=20, fleets=()):

@@ -43,14 +43,22 @@ DEFAULT_LIB_ORDER = [
     "trajectory",
     "mechanism",
     "mission",
+    # `scoring` exposes `pv_horizon` + `PV_GAMMA` used by missions/snipe
+    # and missions/reinforce since H16 (2026-05-13). Must precede the
+    # mission modules so the inlined symbols are visible at parse time.
+    "scoring",
     "missions/snipe",
     "missions/reinforce",
     "missions/recapture",
-    # H11 (2026-05-13): opening-landgrab proposer wired into v7's
-    # _build_incumbent_intents. v7_0 and later bundles need this inlined
-    # ahead of v7_search; v3.* bundles never call it, so it's harmless
-    # weight there (~3 KB).
+    # Mission proposers wired into v7_search (lib/v7_search.py imports
+    # all three). Opening: wired live by main's cb02fd9 (H11). Drain
+    # and gang_up: wired this session (Mission Renaissance) behind
+    # USE_*_MISSION flags (drain/gang_up default 0 — both falsified;
+    # opening default 1 to preserve main's intent). Bundles built
+    # without flag overrides keep main's v7_1 behaviour.
     "missions/opening",
+    "missions/drain",
+    "missions/gang_up",
     "planner",
     "lookahead_planner",
     # Pure-Python rebuild of the orbit_wars game engine (Phase 2 of the

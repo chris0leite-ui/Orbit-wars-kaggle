@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
+import lib.missions.drain as _drain_mod
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
 from lib.missions.drain import (
@@ -18,6 +21,16 @@ from lib.missions.drain import (
     propose_drain_missions,
 )
 from lib.world_model import WorldModel
+
+
+@pytest.fixture(autouse=True)
+def _enable_drain_mission():
+    saved = _drain_mod.USE_DRAIN_MISSION
+    _drain_mod.USE_DRAIN_MISSION = 1
+    try:
+        yield
+    finally:
+        _drain_mod.USE_DRAIN_MISSION = saved
 
 
 def _world(planets, *, my_id=0, step=20, fleets=()):

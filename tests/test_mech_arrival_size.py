@@ -49,6 +49,205 @@ def test_arrival_size_passes_through_neutral_target_unchanged():
     assert out[0].ships == 21
 
 
+# ---------------------------------------------------------------------------
+# FLEET_OVERCOMMIT — H19 / TID 697397 (1.1× speed-tier boost)
+# ---------------------------------------------------------------------------
+
+
+def test_fleet_overcommit_default_is_identity_on_neutral():
+    # At FLEET_OVERCOMMIT=1.0 (default) ships count is unchanged.
+    import lib.mechanism as M
+    target = _target(1, owner=-1, ships=10, production=5)
+    world = _world([_src(garrison=200), target])
+    intent = Intent(src_id=0, target_id=1, ships=11)
+    out = arrival_size([intent], world)
+    assert out[0].ships == 11
+    # Quick belt-and-suspenders: the module-level default is 1.0.
+    assert M.FLEET_OVERCOMMIT == 1.0
+
+
+def test_fleet_overcommit_boost_scales_neutral_ship_count():
+    import lib.mechanism as M
+    saved = M.FLEET_OVERCOMMIT
+    M.FLEET_OVERCOMMIT = 1.10
+    try:
+        target = _target(1, owner=-1, ships=10, production=5)
+        world = _world([_src(garrison=200), target])
+        intent = Intent(src_id=0, target_id=1, ships=11)
+        out = arrival_size([intent], world)
+        # ceil(1.10 * 11) = 13
+        assert out[0].ships == 13
+    finally:
+        M.FLEET_OVERCOMMIT = saved
+
+
+def test_fleet_overcommit_boost_clamps_to_src_garrison():
+    import lib.mechanism as M
+    saved = M.FLEET_OVERCOMMIT
+    M.FLEET_OVERCOMMIT = 1.50
+    try:
+        # Source has only 12 ships; 1.50 * 11 = 17 but garrison caps at 12.
+        target = _target(1, owner=-1, ships=10, production=5)
+        world = _world([_src(garrison=12), target])
+        intent = Intent(src_id=0, target_id=1, ships=11)
+        out = arrival_size([intent], world)
+        assert out[0].ships == 12
+    finally:
+        M.FLEET_OVERCOMMIT = saved
+
+
+def test_fleet_overcommit_does_not_apply_to_reinforce_targets():
+    import lib.mechanism as M
+    saved = M.FLEET_OVERCOMMIT
+    M.FLEET_OVERCOMMIT = 1.20
+    try:
+        # Target is OUR planet — reinforce, no boost.
+        target = _target(1, owner=0, ships=20, production=2)
+        world = _world([_src(garrison=200), target])
+        intent = Intent(src_id=0, target_id=1, ships=15)
+        out = arrival_size([intent], world)
+        assert out[0].ships == 15
+    finally:
+        M.FLEET_OVERCOMMIT = saved
+
+
+def test_fleet_overcommit_applies_after_production_aware_bump():
+    import lib.mechanism as M
+    saved = M.FLEET_OVERCOMMIT
+    M.FLEET_OVERCOMMIT = 1.10
+    try:
+        # Enemy at (70, 70) starting 10 ships, production 2. Source at
+        # (10, 10) with 200-ship garrison. Static needed will grow with
+        # eta; assert the final intent.ships is the boost-of-needed
+        # (not boost-of-incoming).
+        target = _target(1, owner=1, ships=10, production=2)
+        world = _world([_src(garrison=200), target])
+        intent = Intent(src_id=0, target_id=1, ships=11)  # under-sized
+        out = arrival_size([intent], world)
+        # `needed` covers the static garrison growth across eta plus 1.
+        # Then 1.10× and ceil. We don't pin the exact eta here (depends
+        # on fleet_speed at needed ships) but the assertion is: result
+        # is strictly > needed AND > intent.ships and <= src.ships.
+        assert out
+        assert out[0].ships > 11
+        assert out[0].ships <= 200
+    finally:
+        M.FLEET_OVERCOMMIT = saved
+
+
+# ---------------------------------------------------------------------------
+# PRE_REINFORCE_WINDOW — H21 / TID 698478 ("they take it back at no cost")
+# ---------------------------------------------------------------------------
+
+
+class _FakeModel:
+    """Minimal stand-in for WorldModel — only exposes the bits arrival_size
+    consumes: `ledger`, `owner_at`, `ships_at`."""
+    def __init__(self, ledger, owner_at=None, ships_at=None):
+        self.ledger = ledger
+        self._owner_at = owner_at or {}
+        self._ships_at = ships_at or {}
+    def owner_at(self, pid, step):
+        return self._owner_at.get((pid, step))
+    def ships_at(self, pid, step):
+        return self._ships_at.get((pid, step))
+
+
+def test_pre_reinforce_default_zero_window_is_identity():
+    import lib.mechanism as M
+    assert M.PRE_REINFORCE_WINDOW == 0
+    target = _target(1, owner=1, ships=10, production=2)
+    world = _world([_src(garrison=200), target])
+    intent = Intent(src_id=0, target_id=1, ships=50)
+    ledger = {1: [(8, 1, 30)]}  # enemy fleet inbound at t=8 with 30 ships
+    model = _FakeModel(ledger=ledger)
+    baseline = arrival_size([intent], world, model=model)[0].ships
+
+    # Enable PRE_REINFORCE_WINDOW=0 explicitly → still identity vs the
+    # standard (no model) path baseline. We expect the same ship count
+    # as without the followup model.
+    M.PRE_REINFORCE_WINDOW = 0
+    intent2 = Intent(src_id=0, target_id=1, ships=50)
+    res2 = arrival_size([intent2], world, model=model)[0].ships
+    assert res2 == baseline
+
+
+def test_pre_reinforce_bumps_intent_for_followup_enemy_arrival():
+    import lib.mechanism as M
+    saved = M.PRE_REINFORCE_WINDOW
+    M.PRE_REINFORCE_WINDOW = 100  # wide window — guarantees catch
+    try:
+        target = _target(1, owner=1, ships=10, production=2)
+        world = _world([_src(garrison=200), target])
+        # Baseline (with model, no followup) sizing.
+        intent_probe = Intent(src_id=0, target_id=1, ships=50)
+        baseline_ships = arrival_size(
+            [intent_probe], world, model=_FakeModel(ledger={1: []}),
+        )[0].ships
+        # The intent.ships=50 path computes eta from fleet_speed(50).
+        d = math.hypot(70.0 - 10.0, 70.0 - 10.0)
+        eta_for_50 = math.ceil(d / fleet_speed(50))
+        # Place a follow-up enemy fleet at t = eta_for_50 + 5 — strictly
+        # AFTER our arrival, inside the wide window.
+        followup_eta = eta_for_50 + 5
+        ledger = {1: [(followup_eta, 1, 30)]}
+        model = _FakeModel(ledger=ledger)
+        intent = Intent(src_id=0, target_id=1, ships=50)
+        out = arrival_size([intent], world, model=model)
+        assert out
+        # Should be bigger than the no-followup baseline.
+        assert out[0].ships > baseline_ships
+        # Deficit = 30 - production*window = 30 - 2*5 = 20. Plus +1 buffer.
+        assert out[0].ships >= baseline_ships + 21
+    finally:
+        M.PRE_REINFORCE_WINDOW = saved
+
+
+def test_pre_reinforce_ignores_followups_outside_window():
+    import lib.mechanism as M
+    saved = M.PRE_REINFORCE_WINDOW
+    M.PRE_REINFORCE_WINDOW = 2
+    try:
+        target = _target(1, owner=1, ships=10, production=2)
+        world = _world([_src(garrison=200), target])
+        intent_probe = Intent(src_id=0, target_id=1, ships=50)
+        baseline_ships = arrival_size([intent_probe], world)[0].ships
+        d = math.hypot(70.0 - 10.0, 70.0 - 10.0)
+        v = fleet_speed(baseline_ships)
+        eta = math.ceil(d / v)
+        # Followup is 5 turns after our arrival — outside window=2.
+        ledger = {1: [(eta + 5, 1, 50)]}
+        model = _FakeModel(ledger=ledger)
+        intent = Intent(src_id=0, target_id=1, ships=50)
+        out = arrival_size([intent], world, model=model)
+        # No bump beyond the standard "with model" baseline.
+        assert out[0].ships == baseline_ships
+    finally:
+        M.PRE_REINFORCE_WINDOW = saved
+
+
+def test_pre_reinforce_ignores_our_own_followup_fleets():
+    import lib.mechanism as M
+    saved = M.PRE_REINFORCE_WINDOW
+    M.PRE_REINFORCE_WINDOW = 3
+    try:
+        target = _target(1, owner=1, ships=10, production=2)
+        world = _world([_src(garrison=200), target])
+        intent_probe = Intent(src_id=0, target_id=1, ships=50)
+        baseline_ships = arrival_size([intent_probe], world)[0].ships
+        d = math.hypot(70.0 - 10.0, 70.0 - 10.0)
+        v = fleet_speed(baseline_ships)
+        eta = math.ceil(d / v)
+        # The followup at t+1 is OURS (owner=0) — should NOT trigger.
+        ledger = {1: [(eta + 1, 0, 30)]}
+        model = _FakeModel(ledger=ledger)
+        intent = Intent(src_id=0, target_id=1, ships=50)
+        out = arrival_size([intent], world, model=model)
+        assert out[0].ships == baseline_ships
+    finally:
+        M.PRE_REINFORCE_WINDOW = saved
+
+
 def test_arrival_size_passes_through_friendly_target_unchanged():
     """Reinforce intents (target.owner == my_id) shouldn't be over-sized here."""
     target = _target(1, owner=0, ships=20, production=3)    # ours

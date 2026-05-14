@@ -1,0 +1,66 @@
+{
+  "utc": "20260513T201052Z",
+  "variants": {
+    "v7_pv_oc_lo": {
+      "PV_GAMMA": 0.99,
+      "FLEET_OVERCOMMIT": 1.05
+    },
+    "v7_pv": {
+      "PV_GAMMA": 0.99,
+      "FLEET_OVERCOMMIT": 1.0
+    }
+  },
+  "seeds": [
+    42,
+    1,
+    7,
+    13,
+    31,
+    100,
+    17,
+    23
+  ],
+  "include_self_play": false,
+  "summary": {
+    "v7_pv_oc_lo": {
+      "wins": 7,
+      "losses": 9,
+      "draws": 0,
+      "n": 16,
+      "winrate": 0.4375,
+      "wilson_lo": 0.2309836333518552,
+      "wilson_hi": 0.6682180439322347
+    },
+    "v7_pv": {
+      "wins": 9,
+      "losses": 7,
+      "draws": 0,
+      "n": 16,
+      "winrate": 0.5625,
+      "wilson_lo": 0.33178195606776517,
+      "wilson_hi": 0.7690163666481448
+    }
+  },
+  "tournament_json": "/home/user/Orbit-wars-kaggle/audit/tournaments/2026-05-13T20:10:52Z.json",
+  "elapsed_s": 293.9,
+  "candidate": "v7_pv_oc_lo",
+  "per_anchor": {
+    "v7_pv": {
+      "wins": 7,
+      "losses": 9,
+      "draws": 0,
+      "n": 16,
+      "winrate": 0.4375,
+      "wilson_lo": 0.2309836333518552,
+      "wilson_hi": 0.6682180439322347
+    }
+  },
+  "gate": {
+    "threshold": 0.55,
+    "pass": false,
+    "passing_anchors": [],
+    "failing_anchors": [
+      "v7_pv"
+    ]
+  }
+}
