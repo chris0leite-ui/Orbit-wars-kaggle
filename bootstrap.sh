@@ -70,9 +70,19 @@ else
 fi
 
 # Cred smoke: surface 401s in the first 5 minutes, not at submit time.
+# NOTE: `set -o pipefail` makes `cmd | head -3` propagate SIGPIPE from the
+# upstream when head closes the pipe early — looks like a CLI failure when
+# it's actually success-with-trimmed-output. Capture full output to a tmp,
+# then head-display, and check the CLI's actual exit code separately.
 echo "--- credentials smoke: kaggle competitions list -s orbit ---"
-kaggle competitions list -s orbit 2>&1 | head -3 || \
+_cred_tmp=$(mktemp)
+if kaggle competitions list -s orbit > "$_cred_tmp" 2>&1; then
+    head -3 "$_cred_tmp"
+else
     echo "WARNING: kaggle CLI smoke failed; submit-time will also fail."
+    head -5 "$_cred_tmp"
+fi
+rm -f "$_cred_tmp"
 
 # ---------------------------------------------------------------------------
 # Step 2 — Python deps
