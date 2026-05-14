@@ -73,3 +73,7 @@ Thumbs.db
 # External Kaggle data pulled for analysis (~350 MB bulk fetch).
 # Analysis products live in audit/*.json + knowledge-base/concepts/.
 audit/external/
+
+# Local validation state snapshots (reproducible from validate_favor.py;
+# ~10MB, not worth tracking).
+audit/favor-states*.jsonl
