@@ -106,6 +106,7 @@ from typing import Callable
 from lib.fast_sim import from_obs as fs_from_obs
 from lib.intent import Intent, World
 from lib.mission import Mission
+from lib.missions.gang_up import propose_gang_up_missions
 from lib.missions.opening import propose_opening_missions
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.missions.snipe import propose_snipe_missions
@@ -267,6 +268,29 @@ def _settle_with_tilt(
     return _action_from_intents(intents, world.obs_raw, model)
 
 
+def _gang_up_action(
+    base: list[Mission], world: World, model: WorldModel,
+) -> list[list] | None:
+    """Top-10 active multi-source-per-target coordination.
+
+    Adds `propose_gang_up_missions` candidates to the base mission pool
+    and runs settle_plan. The gang_up proposer already comet-filters,
+    bounds ETA gaps at MAX_DELAY=3, and gates on single-source
+    affordability — see lib/missions/gang_up.py. Returns None on turns
+    where no gang-up opportunities exist (lets the priority gate skip
+    a candidate slot).
+
+    Roman's μ=1224 public agent uses active gang-up; v7_0 doesn't.
+    The K=10 lookahead validates each turn whether gang-up beats the
+    incumbent's single-source plays.
+    """
+    extra = propose_gang_up_missions(world, model)
+    if not extra:
+        return None
+    intents = settle_plan(base + extra, world, model)
+    return _action_from_intents(intents, world.obs_raw, model)
+
+
 def _saturation_archetype_action(
     base: list[Mission], world: World, model: WorldModel, sense: SenseState,
 ) -> list[list]:
@@ -379,6 +403,18 @@ def agent(obs, configuration=None):
 
     _add_tilt("opening_boost", _opening_boost_tilt(world))
     _add_tilt("enemy_focus",   _enemy_focus_tilt(world))
+    # Gang-up: multi-source-per-target coordination. Settlement variant
+    # like saturation (not a per-mission tilt). Skipped on turns with no
+    # gang-up opportunities (~50% of turns mid-game).
+    try:
+        gu_action = _gang_up_action(base_missions, world, model)
+        if gu_action is not None:
+            key = _action_key(gu_action)
+            if key not in seen:
+                candidates.append(("gang_up", gu_action))
+                seen.add(key)
+    except Exception:
+        pass
     _add_tilt("concentrated",  _concentrated_archetype_tilt(world))
     # Saturation uses a different SETTLEMENT (multi-launch), not a per-mission tilt.
     try:
@@ -390,7 +426,8 @@ def agent(obs, configuration=None):
     except Exception:
         pass
     _add_tilt("front_reinforce", _front_reinforce_tilt(sense))
-    _add_tilt("voronoi_filter",  _voronoi_filter_tilt(sense, world))
+    # voronoi_filter removed in v3.2: weakest signal (settle_plan ledger
+    # already covers it). Frees a candidate slot for gang_up/empty_out/tap.
 
     # Drop-one variants (capped) — proven v7_0 floor.
     for variant in _drop_one_capped(incumbent_action, MAX_DROP_ONE_VARIANTS):
