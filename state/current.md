@@ -1,8 +1,40 @@
 # state/current.md — current submitted agent + tournament rank
 
-> Updated 2026-05-12 21:40 UTC on the consolidation branch. All Score
-> values pulled live from `kaggle competitions submissions orbit-wars`
-> and `kaggle competitions leaderboard orbit-wars -d`.
+> Updated 2026-05-14 by autonomous geo iteration session.
+> Most recent submission appended at the top.
+
+```yaml
+date: 2026-05-14
+days_to_deadline: 40
+current_submitted_agent: geo  (v3.1: signal-timeout + sense + 4P lookahead)
+last_kernel_push: 2026-05-14 09:10:03 UTC
+last_submission_id: 52643676
+last_submission_status: PENDING  # awaiting Kaggle ladder games
+last_submission_file: submissions/geo.py  # 238 KB bundle; sha256:1babc39d9907ee18
+last_submission_message: |
+  geo v3.1: geometric sense (clusters/Voronoi/front) + 4 lookahead-validated tilts
+  (opening-boost 2.0x, enemy-focus 1.5x, front-reinforce 1.5x, voronoi-filter)
+  + concentrated/saturation top-10 archetypes + 4P branch via score_candidate_4p
+  (v7_0 falls back to v3.5.1 in 4P, geo runs lookahead).
+  Signal-based SIGALRM timeout (700ms per score) bounds wallclock max.
+  Local A/B vs v7_0_drop_one (n=192): 57.3% (~+7pp 2P).
+  Local A/B 4P vs 3× v7_0 (n=128): 56.3% first-place (+31pp over baseline).
+
+# Rolling-last-2 (Kaggle keeps these two for final eval; 3rd push evicts oldest):
+rolling_last_2:
+  - {agent: geo,                sub_id: 52643676, score: PENDING, episodes: 0}
+  - {agent: v7_pv,              sub_id: 52630118, score: 1064.4,  episodes: ~30}
+evicted_recent:
+  - {agent: v7_0_drop_one_rebuilt, sub_id: 52607699, score: 1056.6, reason: evicted by geo push}
+
+# All v3.1 iteration details + bisect lessons in:
+#   knowledge-base/thoughts/2026-05-14-geo-v2-iteration-results.md
+#   audit/friction.md (under 2026-05-14)
+```
+
+---
+
+## Prior state (preserved as-is; pre-geo session)
 
 ```yaml
 date: 2026-05-12
