@@ -22,6 +22,19 @@ terminal Snapshot and reading predicted ownership at terminal+30.
 Fleets that arrive within that extended horizon and flip ownership
 in our favour contribute their target's production × time-to-hold
 to the score.
+
+`composite_capture_value` (2026-05-14) extends this with two more
+terms motivated by the PI observation that depth-2 search was biased
+toward passive play and we were wasting ships:
+- **Capture bonus:** for each of our in-flight fleets, predict whether
+  it will land successfully and, if so, credit the captured planet's
+  production × remaining episode steps. Directly rewards "go conquer
+  the right planets."
+- **Waste penalty:** subtract a fraction of ship counts for fleets
+  that won't capture — either because they're targeting nothing
+  (OOB / sun trajectory) or because they'll bounce off a stronger
+  defender. Directly penalises "don't waste ships by sending too few
+  or by not conquering."
 """
 
 from __future__ import annotations
@@ -30,7 +43,7 @@ from typing import Any
 
 from lib.fast_sim import ship_totals
 from lib.intent import World
-from lib.world_model import WorldModel
+from lib.world_model import DEFAULT_HORIZON, WorldModel, fleet_target_planet
 
 
 # Phase 2 audit established AUC ≈ oracle at K=50. K=10 + 30 extra of
@@ -120,3 +133,90 @@ def inflight_value(
             # We'll own it within extra_horizon → credit the production.
             bonus += float(p.production)
     return base + weight * bonus
+
+
+# ---------------------------------------------------------------------------
+# composite_capture_value — anti-waste + capture-aware (v7.4)
+# ---------------------------------------------------------------------------
+
+
+# Coefficients tuned so the three terms are comparable in scale on a
+# typical mid-game board (ship-delta in the ~10-50 range, capture bonus
+# ~0.05 × 3 × 300 = 45 per high-value capture, waste penalty ~0.5 × ships).
+CAPTURE_REWARD_WEIGHT: float = 0.05
+WASTE_PENALTY_WEIGHT: float = 0.5
+EPISODE_STEPS_TOTAL: int = 500
+
+
+def composite_capture_value(
+    obs: Any, my_id: int,
+    *,
+    horizon: int = DEFAULT_HORIZON,
+    capture_weight: float = CAPTURE_REWARD_WEIGHT,
+    waste_weight: float = WASTE_PENALTY_WEIGHT,
+) -> float:
+    """Ship-delta + per-fleet capture/waste credit.
+
+    For each of OUR in-flight fleets:
+    - Predict the target planet via ray-cast (`fleet_target_planet`).
+    - If no target → fleet will OOB or hit sun. Penalise `waste_weight × ships`.
+    - If target exists and we'll successfully capture (our ships > predicted
+      defenders at arrival, AND target won't already be ours) →
+      reward `capture_weight × production × (episode_remaining)`.
+    - If target exists but we'll bounce (our ships ≤ predicted defenders) →
+      penalise `waste_weight × ships`.
+    - If target will already be ours by ETA (over-reinforcement) → no
+      reward, no penalty (neutral).
+
+    This directly addresses two pathologies of `delta_us_minus_them`:
+    (i) ships in flight count as "lost" in the terminal sum, biasing
+    the chooser toward not launching; and (ii) there's no signal that
+    a launch is *failing* (bouncing or escaping to OOB), so the chooser
+    can't differentiate productive launches from wasteful ones.
+    """
+    base = delta_us_minus_them_obs(obs, my_id)
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return base
+
+    raw = world.obs_raw
+    fleets_raw = (
+        raw.get("fleets", []) if isinstance(raw, dict)
+        else getattr(raw, "fleets", [])
+    )
+    if not fleets_raw:
+        return base
+
+    # Reuse the kaggle namedtuple so `fleet_target_planet` gets the same
+    # type it expects.
+    from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet  # noqa: E402
+    fleets = [Fleet(*f) for f in fleets_raw]
+    planets_list = list(world.planets_by_id.values())
+    model = WorldModel.from_world(world, horizon=horizon)
+    step_now = int(world.step)
+
+    delta = 0.0
+    for f in fleets:
+        if int(f.owner) != my_id:
+            continue
+        ships = float(f.ships)
+        target, eta = fleet_target_planet(f, planets_list)
+        if target is None:
+            # No planet on our trajectory — destined for OOB or sun.
+            delta -= waste_weight * ships
+            continue
+        # Predict ownership and garrison at ETA.
+        pred_owner = model.owner_at(target.id, eta)
+        pred_ships = model.ships_at(target.id, eta) or 0.0
+        if pred_owner == my_id:
+            # Already ours — reinforcement; no extra credit (already in base).
+            continue
+        if ships > pred_ships:
+            # Will capture. Credit by production × remaining game time.
+            time_remaining = max(0, EPISODE_STEPS_TOTAL - step_now - eta)
+            delta += capture_weight * float(target.production) * float(time_remaining)
+        else:
+            # Will bounce — wasted attack.
+            delta -= waste_weight * ships
+
+    return base + delta

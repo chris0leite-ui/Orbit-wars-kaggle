@@ -470,6 +470,65 @@ explain it to me in simple terms and for abbreviations always tell
 me what it is." This is a load-bearing communication rule, not a
 one-off ask.
 
+### [ ] [CROSS-CUTTING] CLAUDE.md — consecutive-falsification cap
+
+`tag: consecutive-falsification-cap`. When 3+ consecutive variants in
+the SAME design axis (value function, action space, opp model, scoring
+multipliers) fail the gate, STOP iterating on that axis. Either pivot
+or escalate to PI. The marginal EV of variant N+1 in a falsifying axis
+is dominated by the expected cost of session time. **Origin:** Orbit
+Wars 2026-05-13/14 single-session run: v7_1 → v7_7 = 7 consecutive
+falsifications across 4 adjacent axes; PI had to step in 3 times to
+pivot ("opp model → value function → action primitive → coefficient
+tune"). ~6 h of session capacity burned past the first 2-3 falsifications
+where the pattern was already visible. Promotion ratified by PI in the
+2026-05-14 postmortem.
+
+**Where to insert:** alongside Rule 21 (family falsification requires
+≥3 variants), as a new rule.
+
+**What to add:**
+
+> **Rule 37 — consecutive-falsification cap.** When 3+ consecutive
+> variants in the SAME design axis fail the gate, STOP iterating on
+> that axis. Either pivot to a different axis or escalate to PI.
+> Define "axis" as any single dimension of the chooser / proposer /
+> value-function stack (e.g., value-function-only, action-space-only,
+> opp-model-only, coefficient-only). The pattern "the next variant
+> will save it" is invariably wrong past N=3; cumulative cost over
+> N=5-7 attempts is one full session.
+
+### [ ] [CROSS-CUTTING] kaggle-comp skill — mandatory two-tier smoke for new kernel compute patterns
+
+`tag: kaggle-kernel-mandatory-two-tier-smoke`. For any new Kaggle
+kernel compute pattern, MANDATORY two-tier smoke: (1) local CPU
+single-state with wallclock + memory recorded; (2) small-scale GPU
+(≤ 4 games × ≤ 50 turns); both clean before any production-scale push.
+**Origin:** Orbit Wars 2026-05-13/14: pushed JAX depth-2 kernel to T4
+with full 21×21 nested vmap, OOM'd at 16 GB; refactored to `lax.scan`,
+re-pushed, sat in XLA JIT compile for 90 min before PI killed. Both
+pushes ate T4 quota for zero result. A 1-game CPU smoke would have
+surfaced both the memory blow-up estimate AND the JIT slowness in
+5-10 min, not 90+. PI raised this verbatim mid-session: "also GPU
+smoke test always as our rules say." Promotion ratified in the
+2026-05-14 postmortem.
+
+**Where to insert:** kaggle-comp skill `SKILL.md` (or a new
+`kernel-push-checklist.md`), alongside the existing Rule 2 (smoke +
+1-fold time-probe).
+
+**What to add:** mandatory two-tier smoke before any kernel push:
+
+> 1. **Tier 1 — local CPU single-state.** Run the new kernel
+>    function on one game state. Record JIT compile time + memory
+>    + per-call hot time. ABORT if compile > 5 min or memory
+>    pressure unclear.
+> 2. **Tier 2 — small-scale GPU.** Push a smoke kernel with
+>    `NUM_SEEDS ≤ 4` and `EPISODE_STEPS ≤ 50` to T4. Confirm
+>    compile + run completes inside 10 min wallclock. ABORT if
+>    either trips the slow-compile alarm.
+> 3. **Tier 3 — production push.** Only after tiers 1 + 2 clean.
+
 ---
 
 ## Applied

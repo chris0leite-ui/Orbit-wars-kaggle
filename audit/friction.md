@@ -358,6 +358,69 @@
   COMET_BONUS=1.3` fix (also 28.1% regression). Promotion candidate:
   "if the finding is local, the fix must be local."
 
+## 2026-05-14 (claude/read-handover-iLWTq — chooser-axis exhaustion)
+
+- `tag: chooser-axis-exhausted-after-7-falsifications` — 32-game
+  scalar A/B vs `v7_0_drop_one` for seven variants in this session:
+  v7_1 (H11 opening, 35.9 %), v7_2 (depth-2 over v3.5.1 drop-ones,
+  31.3 %), v7_3 (min-regret over hand-crafted opp archetypes,
+  28.1 %), v7_4 (composite capture-value head, 40.6 %), v7_5
+  (+ ADD-one widening, 37.5 %), v7_6 (+ split-source multi-launch,
+  40.6 %), v7_7 (enemy multiplier ×1.3, 28.1 %). ALL Wilson lo
+  below 0.55 gate; best (v7_4 = v7_6) ties at 40.6 % vs 50 %
+  baseline. Pattern: v7_0_drop_one is a robust local optimum; the
+  per-source-greedy-ROI proposer is doing ~95 % of the agent's
+  work. Chooser-axis refinements (value head, action space, opp
+  model, scoring multipliers) produce small noise-dominated
+  deltas, never gate-clearing lift. **Cost:** ~6 h session capacity
+  on diminishing-EV experiments past v7_3 (where the pattern was
+  already visible). **Fix this session:** stopped iteration after
+  v7_7; PI signed off on lock-the-rank or architectural pivot for
+  next session. **Promotion ratified:** Rule 37 (consecutive-
+  falsification cap) — `consecutive-falsification-cap` — pending
+  in `.claude/skills/kaggle-comp/improvements.md`.
+
+- `tag: bundler-text-inline-shadow-of-module-constants` — v7_7
+  agent first attempt set `lib.missions.snipe.ENEMY_MULTIPLIER = 1.3`
+  via runtime monkey-patch in `agent(obs)`. Source agent (using real
+  `lib.missions.snipe`) saw 1.3; bundle agent (using its own inlined
+  copy of snipe.py at module level) saw the pre-baked 1.0. Parity
+  gate caught it: 99/450 mismatched turns. **Fix this session:**
+  abandoned the runtime patch; bumped the constant in source
+  (`lib/missions/snipe.py`) to 1.3, bundled v7_7, then reverted the
+  source to 1.0 so future bundles stay at baseline. **Rule
+  candidate (drafted, NOT promoted this session):** module-mutation
+  monkey-patches must verify parity-gate-clean before push; the
+  bundler text-inline pattern systematically shadows lib-module
+  globals.
+
+## 2026-05-13 LATE-2 (claude/read-handover-iLWTq — depth-2 JAX kernel)
+
+- `tag: scale-without-smoke-burned-90min-t4` — pushed
+  `chrisleitescha/orbit-wars-jax-depth2-a-b` to T4 with the full
+  `(MAX_LAUNCH+1)² = 441`-cell nested vmap and got an OOM (16 GB
+  single-tensor allocation). Refactored to `lax.scan` over flat
+  cell index to bound memory; re-pushed. Second kernel sat in
+  XLA JIT compile for **90 minutes** before PI killed it — scan
+  of (rollout_step × K_tail × cells × game-vmap) is too deep an
+  XLA graph. **Root cause:** no local smoke before scaling to a
+  64-game GPU run. A 1-game CPU smoke would have surfaced both
+  the memory blow-up estimate (count the parallel cells) AND
+  the JIT compile slowness in 5-10 minutes, not 90+. Cost: ~90 min
+  of T4 quota (≈ 30 h/week tier) for zero result. **Fix this
+  session:** kill the kernel; re-architect depth-2 to truncate
+  the candidate set (e.g., 4 × 2 = 8 cells) so nested vmap fits
+  in T4 memory; CPU smoke FIRST (1 game / 1 step), THEN small-
+  scale GPU smoke (low NUM_SEEDS / EPISODE_STEPS on T4) before
+  the production 64 × 500 push — GPU XLA's compile path differs
+  from CPU's (memory layout, block-size kernels, OOM behaviour),
+  so a CPU-clean graph can still blow up at GPU scale.
+  **Promotion candidate (PI raised):** for any new Kaggle kernel
+  compute pattern, MANDATORY two-tier smoke: (1) local CPU
+  single-state with wallclock + memory; (2) small-scale GPU
+  (≤ 4 games × ≤ 50 turns), both clean before any production-
+  scale push. Encode in WRAPUP / kernel-push checklist.
+
 ## 2026-05-13 LATE (claude/read-handover-iLWTq — stale handover read)
 
 - `tag: handover-stale-at-session-start-no-git-log-check` — session

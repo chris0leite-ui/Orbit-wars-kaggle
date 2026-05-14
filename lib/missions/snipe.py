@@ -67,6 +67,18 @@ LEADER_MULTIPLIER = 1.5
 # when our_rank >= 2 — 2P unaffected.
 NON_LEADER_MULTIPLIER = 1.0
 
+# H10 (2026-05-14): enemy-target multiplier. Top-10 replay analysis
+# (knowledge-base/concepts/top-performer-strategies.md §H10) finds
+# enemy-target picks at 32% vs midpack 14% — a ×2.3 gap. Multiplying
+# the snipe priority by ENEMY_MULTIPLIER when `t.owner ≠ ourselves
+# AND t.owner ≠ -1` shifts the scorer toward enemy captures over
+# neutral expansion. Default 1.0 (identity) so v7_0 / v3.5.1 baselines
+# stay unchanged; v7_7 sets it to 1.3 inside `agent(obs)` per the
+# safe-monkey-patch friction pattern (set per-agent-call, never
+# persists across processes; see `module-mutation-patching-has-
+# worker-reuse-race`, 2026-05-12).
+ENEMY_MULTIPLIER = 1.0
+
 # Airtime penalty (v3.5, 2026-05-11): ships in flight are committed-cost.
 # A fleet en route can't defend its home planet, can't be redirected, and
 # may bounce if the world-state has shifted. Phase-0 idle-source decomposition
@@ -448,6 +460,13 @@ def propose_snipe_missions(
                     # kingmaker down-weight (H20). Neutrals + our own
                     # planets are unaffected.
                     priority *= NON_LEADER_MULTIPLIER
+            # H10 enemy-target multiplier (default 1.0 = no change).
+            # Applies whenever the target is owned by an enemy (not us,
+            # not neutral). v7_7 sets ENEMY_MULTIPLIER=1.3 to bias
+            # toward enemy snipes. Composes multiplicatively with the
+            # H20 NON_LEADER_MULTIPLIER above when both fire.
+            if t.owner >= 0 and t.owner != world.my_id:
+                priority *= ENEMY_MULTIPLIER
             # Cost-aware ROI denominator (legacy) + optional airtime term.
             # - base_ships + d + 1: original v3.4 form. Wave-1b's
             #   `0.5 × base_ships` rebalance was NEUTRAL at 50% in phys-only
