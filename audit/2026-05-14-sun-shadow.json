@@ -1,0 +1,29 @@
+{
+  "mine": "5 - sun-shadow exploitation audit",
+  "date": "2026-05-14",
+  "corpus": {"replays": 60, "with_winner": 59},
+  "method": "Per-replay, per-turn: for every winner-owned planet, compute whether the nearest enemy-owned planet's straight line is blocked by the sun. Aggregate shielded-turn count per planet. Spearman correlation of shielded-fraction vs survived-to-end (per replay).",
+  "aggregate_stats": {
+    "mean_shielded_frac_per_game": 0.061,
+    "per_game_total_shielded_turns_range": [0, 2105],
+    "winner_planet_survival_rate_mean": 0.892,
+    "spearman_shielded_vs_survived_mean": 0.025,
+    "spearman_median": -0.039,
+    "spearman_range": [-0.418, 0.700]
+  },
+  "falsification_gate": {
+    "description": "Mean Spearman correlation >=0.2 between shielded-turn fraction and planet survival, across top-10 games.",
+    "observed_mean_spearman": 0.025,
+    "passed": false,
+    "verdict": "DROP this strategy axis."
+  },
+  "headline_findings": [
+    "Sun-shadow signal is essentially zero: mean Spearman 0.025, median is even slightly negative.",
+    "Planets are shielded by the sun on only 6.1% of owned-turns on average. The sun's coverage is too small for shielding to be a significant strategic factor over a 500-turn game.",
+    "Planet survival rate (89.2%) is so high in top-10 wins that there is little variance to correlate with anything.",
+    "Decision: do NOT add a sun-shielded-turn bonus to the v7 value head. `lib/geometry.path_clears_sun` remains correct for short-term path planning but should not influence target priority."
+  ],
+  "downstream_uses": [
+    "Experiment Option 3 (sun-shadow valuation bonus) is KILLED. No further work on this axis."
+  ]
+}
