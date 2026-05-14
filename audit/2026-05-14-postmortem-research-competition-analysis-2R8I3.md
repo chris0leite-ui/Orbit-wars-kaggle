@@ -195,7 +195,11 @@ vs opponent ensemble). Audit cross-links:
 
 ## PI additions (from step 4)
 
-(pending — see "Anything you'd add?" prompt below)
+PI declined additions and promotions: "nothing to add or promote".
+
+The five drafted candidates stay parked here in the postmortem as
+historical record. None applied to `.claude/skills/kaggle-comp/improvements.md`
+this session.
 
 ## Framework version at session-end
 
