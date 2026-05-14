@@ -1,33 +1,41 @@
-"""geo v3.0 — v2.9 (signal timeout) + composite value head.
+"""geo v3.1 (FINAL) — v2.9 baseline (signal timeout); composite head reverted.
 
-v2.9 added signal-based hard timeout on score_candidate (700ms) to
-bound max wallclock. Eval (n=64 vs v7_0): 38/64 = 59.4%, Wlo=0.471,
-max=1191ms (was 2557ms).
+v3.0 attempted to add the composite value head (lib/lookahead_planner.py:
+evaluate_value) as value_fn for score_candidate. REGRESSED:
+  vs v7_0 (n=32):   14/32 = 43.8%  (was v2.9's 62.5% at same n)
+  vs 3x v7_0 (n=64): 31/64 = 48.4% (within noise of v2.3-v2.8 4P band)
 
-v3.0 adds composite value head (`lib/lookahead_planner.py:evaluate_value`)
-as value_fn for both score_candidate and score_candidate_4p. This is
-the v7.3+ scoring head:
+The composite head's survivor_bonus (5.0×) and production-based
+scaling (range 0-6.5) interacted poorly with geo's tilt-based candidate
+set: candidates ranked by composite head don't transfer the same way
+ship-delta picks do, same trap as v2.4's lite_greedy follow-up.
 
-    V = production_share + 0.4 * production_denied + 0.05 * ships_share
-      + 5.0 * survivor_bonus
+Composite head reverted. v3.1 = v2.9 exact behavior.
 
-Replaces the default ship-delta head with production-share + denial.
-Captures forward-looking value (production keeps generating ships,
-unlike one-shot ship counts) and denial pressure (planets NOT in
-opponent's hands). The audit notes v7.3+ uses this; we were on the
-default ship-delta.
+FINAL SUBMISSION CANDIDATE (v3.1 / v2.9):
+- A: signal-based hard timeout per score_candidate (700ms cap).
+  Max bounded under ~1200ms vs v7_0 eval (was 2900ms in v2.6).
+- All v2.3 strategic config retained:
+  K=10, top_tier_mirror followup, WALLCLOCK_MS=500, default ship-delta
+  value, 4 sense tilts (opening boost, enemy focus, front reinforce,
+  voronoi filter), 2 archetypes (concentrated, saturation), drop-one
+  cap 2.
+- 4P branch via score_candidate_4p (K=8).
+- comets filtered.
 
-Combined effect of A + C:
-- A: max wallclock bounded under ~1200ms (~99% of turns now ladder-safe)
-- C: better leaf-state evaluation; may shift candidate ranking and lift
-  the +7pp 2P / +31pp 4P signal further
+VERIFIED RESULTS:
+  vs v3.5.1 (2P, n=128):  73/128 = 57.0%, ~+7pp lift
+  vs v7_0   (2P, n=192):  148/192 = 57.3%, ~+7pp over live agent
+                          (combined v2.3 + v2.6 + v2.9 runs)
+  vs 3x v7_0 (4P, n=128): 72/128 = 56.3% first-place, +31pp vs 25% baseline
 
-Net: same +5-7pp 2P, +25-31pp 4P from v2.3-v2.9 (we ARE the v3.5.1
-lookahead variant with sense tilts), plus whatever marginal lift the
-composite head adds.
+Wallclock now ladder-safe (~99% of turns under 1000ms). Max=1191ms in
+the most stressful eval (vs v7_0); some outliers persist when SIGALRM
+hits mid-C-call but the rate is ~1% (was ~5% pre-A).
 
-Cost: evaluate_value is ~0.1 ms — negligible vs the 50-300 ms K=10
-rollout.
+Deferred (next session):
+- B: JAX vmap brute scorer. 4-6 hr integration (no obs->GameState
+  converter in repo). Could ~2-3× the candidates per turn.
 
 
 EVAL VERDICTS:
@@ -97,7 +105,6 @@ from typing import Callable
 
 from lib.fast_sim import from_obs as fs_from_obs
 from lib.intent import Intent, World
-from lib.lookahead_planner import evaluate_value
 from lib.mission import Mission
 from lib.missions.opening import propose_opening_missions
 from lib.missions.reinforce import propose_reinforce_missions
@@ -412,22 +419,17 @@ def agent(obs, configuration=None):
         try:
             if num_seats == 2:
                 # top_tier_mirror follow-up (default). lite_greedy_policy
-                # was tried in v2.4 and regressed -17pp vs v3.5.1 — the
-                # cheaper opp model made our lookahead's picks not transfer
-                # to the real opponent.
-                # value_fn=evaluate_value (composite: production_share +
-                # denial + survivor) per v7.3 — strategic upgrade over
-                # default ship-delta. Bit-cheap (~0.1 ms).
+                # tried in v2.4: regressed -17pp vs v3.5.1.
+                # value_fn=evaluate_value tried in v3.0: regressed -19pp
+                # vs v7_0. Default ship-delta value head is correct here.
                 score = _score_with_timeout(
                     score_candidate, PER_SCORE_TIMEOUT_MS,
                     snap, cand, my_id=my_id, K=K_LOOKAHEAD, opp_tier=1,
-                    value_fn=evaluate_value,
                 )
             else:  # 4P
                 score = _score_with_timeout(
                     score_candidate_4p, PER_SCORE_TIMEOUT_MS,
                     snap, cand, my_id=my_id, K=K_LOOKAHEAD_4P,
-                    value_fn=evaluate_value,
                 )
         except _ScoreTimeout:
             # This candidate took too long; treat as skipped. Subsequent
