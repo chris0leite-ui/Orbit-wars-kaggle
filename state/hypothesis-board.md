@@ -306,6 +306,41 @@ I-M = data-driven; K = realism check already cleared.
   `lib/missions/snipe.py:_leader_pid` to flag leader (×1.5) and
   non-leader (×0.8) targets in 4P. FFA panel gate via
   `scripts/ffa_panel.py`. Source: TIDs 697397, 698659.
+### 2026-05-14 — Mission Renaissance (H30): all 3 missions fail on top of v7 drop-one
+
+- **H30 [Renaissance] (1 day, FALSIFIED 2026-05-14):** Enabling
+  `propose_opening_missions` + `propose_drain_missions` +
+  `propose_gang_up_missions` simultaneously on top of v7+PV. 16-seed
+  v7_pv_all vs v7_pv: **9.4% (Wilson [3.2, 24.2], 3-29-0)** —
+  catastrophic. Per-mission 8-seed ablation (pooled 4-way
+  tournament, 48 games per variant) shows: opening 62.5% (Wilson
+  [48.4, 74.8], parity-ish with 68.8% baseline); drain 41.7%
+  (Wilson [28.8, 55.7], real regression); **gang-up 12.5%** (Wilson
+  [5.9, 24.7], catastrophic). Audits:
+  `audit/tournaments/ab-20260513T235144Z.json` (all-on),
+  `audit/tournaments/ab-20260514T001616Z.json` (per-mission).
+
+  **Architectural read.** v7's drop-one chooser is a local-edit
+  operator on an incumbent plan from `settle_plan`. Gang-up's
+  `GANG_UP_BONUS=1.30` dominates settle_plan's per-source greedy,
+  forcing 2-source commits to one target. Drop-one can then only
+  consider "what if we drop ONE of those launches" — it can't
+  undo the whole pairing decision. Drain similarly locks
+  `src.ships - 8 ≈ 30+` ships from a source in one mission. The
+  K=10 rollout sees the *forced* state and can't unlock it.
+
+  **Productive next step (not this session):** wire the three
+  missions through a PORTFOLIO search architecture
+  (`lib/candidate_portfolios.py` — partially built). Each portfolio
+  is a DIFFERENT incumbent plan (drop-one-style, opening-heavy,
+  gang-up-heavy, drain-heavy); drop-one runs within each; score
+  across all and pick the best. This way the Renaissance missions
+  populate ALTERNATIVE plans rather than forcing themselves into
+  the single incumbent.
+
+  Flags retained at default 0 (= disabled). Re-enable opening
+  alone for a 32-seed gate if portfolio search lands.
+
 - **H21 [F] (½ day, FALSIFIED 2026-05-13):** **Pre-reinforce against
   visible enemy arrival.** Implemented as a ledger-scan inside
   `lib/mechanism.arrival_size` (window-bounded enemy follow-up
