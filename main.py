@@ -6,7 +6,7 @@ v2 — multi-step rollout chooser. Per turn:
      per owned source, min-capture sizing, threat-aware defensive
      reserve). Pre-filter via analytic Δfavor (`score_action`).
   2. For the top-K candidates by analytic score, run an N-turn
-     forward rollout via `lib.fast_sim` with `nearest_sniper` policy
+     forward rollout via `lib.fast_sim` with `favor-greedy` policy
      for the opponent (and for our other sources beyond the candidate).
      Score = favor(leaf_state, me) − favor(current_state, me).
   3. Greedy non-dogpile match: walk candidates rollout-score-desc;
@@ -238,27 +238,46 @@ def _enumerate_candidates(
 # ---------------------------------------------------------------------------
 
 
-def _nearest_sniper_moves(obs_struct, player: int) -> list[list]:
-    """Re-implementation of `baselines/nearest.py` operating on a
-    Snapshot's observation (Struct or dict). Used as the rollout
-    policy for both the opponent and our own non-candidate sources.
+def _favor_greedy_moves(obs_struct, player: int) -> list[list]:
+    """v1's analytic Δfavor chooser as a rollout policy.
+
+    Strictly stronger than nearest-sniper (87.5 % winrate vs nearest at
+    commit 98441bd). Used as the rollout opponent + our-other-sources
+    policy so the lookahead doesn't underestimate adversarial play.
+
+    Reuses `_enumerate_candidates` + greedy non-dogpile match. No
+    nested rollouts (would be recursive) — uses analytic score_action
+    as the score.
     """
     raw_planets = (
         obs_struct.planets if hasattr(obs_struct, "planets")
         else obs_struct.get("planets", [])
     )
+    raw_fleets = (
+        obs_struct.fleets if hasattr(obs_struct, "fleets")
+        else obs_struct.get("fleets", [])
+    )
+    step = (
+        int(obs_struct.step) if hasattr(obs_struct, "step")
+        else int(obs_struct.get("step", 0))
+    )
     planets = [Planet(*p) for p in raw_planets]
+    fleets = [Fleet(*f) for f in raw_fleets]
     my_planets = [p for p in planets if p.owner == player]
     targets = [p for p in planets if p.owner != player]
     if not my_planets or not targets:
         return []
-    moves = []
-    for mine in my_planets:
-        nearest = min(targets, key=lambda t: math.hypot(mine.x - t.x, mine.y - t.y))
-        ships_needed = nearest.ships + 1
-        if mine.ships >= ships_needed:
-            angle = math.atan2(nearest.y - mine.y, nearest.x - mine.x)
-            moves.append([mine.id, angle, ships_needed])
+    candidates = _enumerate_candidates(my_planets, targets, fleets, step, player)
+    used_srcs: set[int] = set()
+    used_tgts: set[int] = set()
+    moves: list[list] = []
+    for _s, src, tgt, ships in candidates:
+        if src.id in used_srcs or tgt.id in used_tgts:
+            continue
+        used_srcs.add(src.id)
+        used_tgts.add(tgt.id)
+        angle = math.atan2(tgt.y - src.y, tgt.x - src.x)
+        moves.append([src.id, angle, ships])
     return moves
 
 
@@ -282,7 +301,7 @@ def _rollout_score(
     n_turns: int,
 ) -> float:
     """Run an N-turn rollout starting from `snap_base`, applying
-    `our_action` on the first turn for seat `me` and `nearest_sniper`
+    `our_action` on the first turn for seat `me` and `favor-greedy`
     for everyone else (and for seat `me` on all subsequent turns).
     Return favor(leaf_state, me).
 
@@ -298,7 +317,7 @@ def _rollout_score(
         if seat == me:
             actions.append([our_action] if our_action else [])
         else:
-            actions.append(_nearest_sniper_moves(snap.state[seat].observation, seat))
+            actions.append(_favor_greedy_moves(snap.state[seat].observation, seat))
     snap = fs_step(snap, actions, in_place=True)
 
     # Turns 1..n_turns-1: everyone plays nearest.
@@ -306,7 +325,7 @@ def _rollout_score(
         if snap.fake_env.done:
             break
         actions = [
-            _nearest_sniper_moves(snap.state[seat].observation, seat)
+            _favor_greedy_moves(snap.state[seat].observation, seat)
             for seat in range(num_seats)
         ]
         snap = fs_step(snap, actions, in_place=True)
