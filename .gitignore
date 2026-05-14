@@ -73,3 +73,7 @@ Thumbs.db
 # External Kaggle data pulled for analysis (~350 MB bulk fetch).
 # Analysis products live in audit/*.json + knowledge-base/concepts/.
 audit/external/
+
+# EDA work-dirs: raw self-play / scratch replays per session. Analysis
+# products land in audit/<date>-*.json which IS tracked.
+audit/eda-*/
