@@ -1,22 +1,25 @@
-"""geo v2.5 — geo v2.3 strategic + tightened wallclock.
+"""geo v2.6 — restored v2.3 baseline (WALLCLOCK=500, top_tier_mirror).
 
-EVAL VERDICT (v2.3, n=64):
-  vs v3.5.1 (2P):       40/64 = 62.5%, Wlo=0.503  [+12pp lift]
-  vs v7_0   (2P):       37/64 = 57.8%, Wlo=0.456  [+8pp over live agent]
-  vs 3x v7_0 (4P FFA):  32/64 = 50.0% first-place, Wlo=0.381 (vs 25% baseline)
+EVAL VERDICTS:
+  v2.3 (this code, WALLCLOCK=500, n=64):
+    vs v3.5.1 (2P):       40/64 = 62.5%, Wlo=0.503  [+12pp lift]
+    vs v7_0   (2P):       37/64 = 57.8%, Wlo=0.456  [+8pp over live agent]
+    vs 3x v7_0 (4P FFA):  32/64 = 50.0% first-place, Wlo=0.381 (vs 25%)
 
-v2.4 attempted to fix v2.3's max=1915ms wallclock spike by switching
-follow-up policy to lite_greedy_policy. REGRESSED -17pp vs v3.5.1
-(45.3% Wlo=0.337) — the cheaper opp simulation made the lookahead
-pick candidates that exploited a weaker model than the real opponent.
-Reverted. Lesson: rollout policy must match expected opposition strength.
+Two iteration attempts both hurt:
+  v2.4 (lite_greedy follow-up): -17pp vs v3.5.1 (62.5% -> 45.3%)
+       Cheaper opp model made lookahead pick non-transferring candidates.
+  v2.5 (WALLCLOCK 500 -> 350): -20pp vs v7_0 (57.8% -> 37.5%)
+       Tighter gate dropped valuable tilts without fixing max (first
+       score is always run regardless of gate, ~2000ms outliers persist).
 
-v2.5 keeps v2.3's strategic shape (top_tier_mirror follow-up) and only
-tightens WALLCLOCK_MS from 500 to 350. This caps multi-candidate
-turns better but doesn't bound the FIRST candidate's score. Outlier
-turns (max=1915ms) come from K=10 rollouts on dense state at comet
-spawn boundaries — ~5% of turns. Acceptable risk: the +8pp 2P lift
-and +25pp 4P lift dominate the ~1-2% expected forfeit cost.
+LESSON CRYSTALLIZED: max=1915ms outlier is the IRREDUCIBLE cost of K=10
+top-tier rollout on dense state with comet boundaries. It happens ~5% of
+turns. Trying to fix it by changing WALLCLOCK / follow-up policy COSTS
+more strategic value than it saves in forfeit avoidance.
+
+Net: keep v2.3 strategic shape verbatim. Submission viability rests on
+the +8pp 2P / +25pp 4P lift outweighing ~1-2% game-loss from forfeits.
 
 KEY EDGE OVER v7_0: v7_0 falls back to v3.5.1 incumbent in 4P games
 (33% of live ladder per HANDOVER). This agent runs lookahead-validated
@@ -83,7 +86,7 @@ from lib.geo.sense import SenseState, sense_state
 
 K_LOOKAHEAD = 10        # 2P depth
 K_LOOKAHEAD_4P = 8      # 4P shallower (3 opponents = more compute per step)
-WALLCLOCK_MS = 350.0    # hard pre-candidate gate (was 500; ladder limit 1000)
+WALLCLOCK_MS = 500.0    # v2.3 optimum (v2.5's 350 dropped tilts and regressed -20pp)
 TIE_TOLERANCE = 1e-6
 MAX_DROP_ONE_VARIANTS = 2   # capped to 2; 2 archetype tilts replace the budget
 
