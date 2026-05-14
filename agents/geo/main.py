@@ -189,6 +189,42 @@ def _enemy_focus_tilt(world: World) -> Callable[[Mission], Mission | None]:
     return tilt
 
 
+def _empty_out_tilt(sense: SenseState, world: World
+                    ) -> Callable[[Mission], Mission | None] | None:
+    """Top-10 garrison-emptying for safe sources.
+
+    When a source has zero incoming enemy ships within THREAT_HORIZON
+    (per sense.threat_budget), holding garrison is wasted potential.
+    Top-10 mean garrison is 10.6 vs mid-pack 22.0; default 0.7 fraction
+    + AGGRESSIVE_RESERVE=5 keeps too many ships home.
+
+    Rescales snipe missions from safe sources to send `garrison - 1`
+    (leave 1 to retain ownership). K=10 lookahead validates — bad
+    turns fall back to incumbent. Returns None when no safe sources.
+    """
+    pbi = world.planets_by_id
+    safe = {p.id for p in pbi.values()
+            if p.owner == world.my_id
+            and sense.threat_budget.get(p.id, 0) == 0}
+    if not safe:
+        return None
+    def tilt(m: Mission) -> Mission | None:
+        if m.mission_class != "snipe" or m.src_id not in safe:
+            return m
+        src = pbi.get(m.src_id)
+        if src is None:
+            return m
+        full = max(m.ships, int(src.ships) - 1)
+        if full <= m.ships:
+            return m
+        return Mission(
+            mission_class=m.mission_class,
+            src_id=m.src_id, target_id=m.target_id,
+            ships=full, score=m.score, eta=m.eta, note=m.note,
+        )
+    return tilt
+
+
 def _front_reinforce_tilt(sense: SenseState) -> Callable[[Mission], Mission | None]:
     front = sense.front_pids
     if not front:
@@ -426,6 +462,7 @@ def agent(obs, configuration=None):
     except Exception:
         pass
     _add_tilt("front_reinforce", _front_reinforce_tilt(sense))
+    _add_tilt("empty_out",       _empty_out_tilt(sense, world))
     # voronoi_filter removed in v3.2: weakest signal (settle_plan ledger
     # already covers it). Frees a candidate slot for gang_up/empty_out/tap.
 
