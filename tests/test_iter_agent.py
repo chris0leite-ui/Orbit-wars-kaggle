@@ -53,8 +53,139 @@ def test_iter_knob_constants_present(iter_agent_module):
     # If any knob name disappears, downstream sweep scripts will need
     # updating — surface it here instead of via silent agent regression.
     for knob in ("K", "WALLCLOCK_MS", "ENUMERATOR_MODE", "OPP_TIERS",
-                 "PV_GAMMA", "VALUE_FN", "TERRITORY_WEIGHT", "K_4P"):
+                 "PV_GAMMA", "VALUE_FN", "TERRITORY_WEIGHT", "K_4P",
+                 "K_CAP", "K_BUFFER", "RELEVANCE_PROD_FRACTION",
+                 "COMET_MAX_LAUNCHES_PER_TURN",
+                 "COMET_EVAC_THRESHOLD", "COMET_EVAC_RESERVE"):
         assert hasattr(iter_agent_module, knob), f"missing knob: {knob}"
+
+
+def test_max_inflight_eta_zero_when_no_fleets(iter_agent_module):
+    # Fresh env has no in-flight fleets ⇒ max_eta=0 ⇒ K_eff falls back to K.
+    from kaggle_environments import make
+    from lib.intent import World
+    env = make("orbit_wars", debug=False)
+    env.reset(2)
+    obs = env.state[0]["observation"]
+    world = World.from_obs(obs)
+    assert iter_agent_module._max_inflight_eta(world) == 0
+
+
+def test_max_inflight_eta_positive_mid_game(iter_agent_module):
+    # After a few turns of self-play there should be at least one fleet
+    # in flight ⇒ max_eta > 0.
+    from kaggle_environments import make
+    from lib.intent import World
+    env = make("orbit_wars", debug=False)
+    env.reset(2)
+    for _ in range(40):
+        if env.done:
+            break
+        env.step([iter_agent_module.agent(env.state[0]["observation"], env.configuration),
+                  None])
+    obs = env.state[0]["observation"]
+    world = World.from_obs(obs)
+    # Either the game is over already (very rare in 40 turns) or there's a
+    # fleet inbound somewhere. Both states are valid for this assertion.
+    if env.done:
+        return
+    eta = iter_agent_module._max_inflight_eta(world)
+    # Allow 0 only if obs.fleets is literally empty at this step.
+    fleets_raw = (obs.get("fleets", []) if isinstance(obs, dict)
+                  else getattr(obs, "fleets", []))
+    if fleets_raw:
+        assert eta > 0, f"fleets={len(fleets_raw)} but max_eta={eta}"
+
+
+def test_cap_comet_launches_keeps_only_n_per_comet(iter_agent_module, monkeypatch):
+    # Synthetic: 4 launches all target the same comet (id=99). Cap=2 ⇒
+    # we should keep the 2 with shortest ETA. Monkeypatch _launch_eta so
+    # the test doesn't depend on actual ray-cast geometry.
+
+    class FakePlanet:
+        def __init__(self, pid, owner=-1, ships=10, x=0.0, y=0.0):
+            self.id = pid
+            self.owner = owner
+            self.ships = ships
+            self.x = x
+            self.y = y
+
+    class FakeWorld:
+        my_id = 0
+        comet_ids = frozenset({99})
+        planets_by_id = {
+            99: FakePlanet(99, owner=1, ships=15, x=10, y=0),
+            0: FakePlanet(0, owner=0, ships=20, x=0, y=0),
+            1: FakePlanet(1, owner=0, ships=20, x=2, y=0),
+            2: FakePlanet(2, owner=0, ships=20, x=4, y=0),
+            3: FakePlanet(3, owner=0, ships=20, x=6, y=0),
+        }
+
+    def fake_launch_eta(src, angle, ships, planets_list):
+        # All launches "hit" the comet; ETA = src.id, so srcs 0 and 1 win.
+        comet = next(p for p in planets_list if p.id == 99)
+        return comet, src.id
+
+    monkeypatch.setattr(iter_agent_module, "_launch_eta", fake_launch_eta)
+    action = [[i, 0.0, 5] for i in range(4)]
+    capped = iter_agent_module._cap_comet_launches(action, FakeWorld(), 2)
+    assert len(capped) == 2, f"expected 2 launches, got {len(capped)}: {capped}"
+    kept_srcs = {e[0] for e in capped}
+    assert kept_srcs == {0, 1}, f"expected sources {{0,1}} (shortest ETA), got {kept_srcs}"
+
+
+def test_cap_comet_launches_passes_non_comet_through(iter_agent_module, monkeypatch):
+    # Launches that don't target a comet should pass through unchanged.
+    class FakePlanet:
+        def __init__(self, pid, owner=-1, x=0.0, y=0.0, ships=10):
+            self.id = pid; self.owner = owner; self.x = x; self.y = y; self.ships = ships
+
+    class FakeWorld:
+        my_id = 0
+        comet_ids = frozenset({99})  # no entries in action target this
+        planets_by_id = {
+            99: FakePlanet(99, owner=1, x=10, y=0),
+            5: FakePlanet(5, owner=1, x=5, y=0),
+            0: FakePlanet(0, owner=0, x=0, y=0),
+            1: FakePlanet(1, owner=0, x=1, y=0),
+        }
+
+    def fake_launch_eta(src, angle, ships, planets_list):
+        # Both launches target planet id=5 (non-comet).
+        non_comet = next(p for p in planets_list if p.id == 5)
+        return non_comet, 3
+    monkeypatch.setattr(iter_agent_module, "_launch_eta", fake_launch_eta)
+    action = [[0, 0.0, 5], [1, 0.0, 5]]
+    capped = iter_agent_module._cap_comet_launches(action, FakeWorld(), 2)
+    assert capped == action, f"non-comet launches should pass through; got {capped}"
+
+
+def test_comet_evacuation_emits_when_lifetime_short(iter_agent_module):
+    # We can't force ownership of a comet from a fresh env easily.
+    # Smoke test: the helper returns a list (possibly empty) without
+    # crashing on a normal mid-game state. The action-variance test in
+    # 4P+2P smokes already exercises the merge path at runtime.
+    from kaggle_environments import make
+    from lib.intent import World
+    env = make("orbit_wars", debug=False)
+    env.reset(2)
+    for _ in range(40):
+        if env.done:
+            break
+        env.step([iter_agent_module.agent(env.state[0]["observation"], env.configuration),
+                  None])
+    obs = env.state[0]["observation"]
+    world = World.from_obs(obs)
+    out = iter_agent_module._comet_evacuation_launches(world, 0)
+    assert isinstance(out, list)
+    for entry in out:
+        assert len(entry) == 3, f"evac launch wrong shape: {entry}"
+        src_id, angle, ships = entry
+        # Ship count is meaningful and the source is one of our comets.
+        assert ships >= 1
+        src = world.planets_by_id.get(int(src_id))
+        assert src is not None and src.owner == 0
+        assert src.id in world.comet_ids
 
 
 def test_iter_smoke_one_game_completes(iter_agent_module):

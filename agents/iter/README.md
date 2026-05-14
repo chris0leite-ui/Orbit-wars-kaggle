@@ -18,6 +18,17 @@ a multi-opponent panel; bundle when a variant passes.
 | `DEFENSIBILITY_ALPHA` | 0.2 | 0.1 / 0.2 / 0.5 | Coefficient for defensibility-tagged variants. V2 α=1.0 over-penalised. |
 | `TERRITORY_WEIGHT` | 0.01 | 0.005 / 0.01 / 0.02 | Outer coefficient for territory-tagged variants. production×hold sums to ~5k-10k; 0.01 keeps the term ≈ ±50, comparable to delta. |
 | `K_4P` | 8 | 6 / 8 / 10 | 4P-branch lookahead (`choose_4p` default). Kept separate from 2P `K`. |
+| `K_CAP` | 24 | 18 / 24 / 30 | Hard ceiling on adaptive K. Wallclock watchdog handles the rest. |
+| `K_BUFFER` | 2 | 1 / 2 / 4 | Extra rollout steps past the max in-flight fleet ETA. |
+| `COMET_MAX_LAUNCHES_PER_TURN` | 2 | 1 / 2 / 3 | Cap on how many of our launches target the SAME comet per turn (Bug 2 anti-panic). Set to 999 to disable. |
+| `COMET_EVAC_THRESHOLD` | 5 | 0 / 3 / 5 / 8 | Lifetime turns at which to evacuate ships off our comets (Bug 3). Set to 0 to disable. |
+| `COMET_EVAC_RESERVE` | 1 | 0 / 1 / 3 | Min garrison left on the comet after evac. |
+
+## Hooks (2026-05-15)
+
+- **`_max_inflight_eta(world)`** — ray-casts every in-flight fleet; returns max ETA. Used to set `K_eff = min(K_CAP, max(K, max_eta + K_BUFFER))` once per turn at agent entry.
+- **`_cap_comet_launches(action, world, cap)`** (POST-PROCESS) — groups launches by ray-cast target; for comet targets keeps at most `cap` (shortest ETA wins).
+- **`_comet_evacuation_launches(world, my_id)`** (PRE-FILTER) — for each of our comets with `remaining_lifetime ≤ COMET_EVAC_THRESHOLD`, emits a launch toward the nearest non-comet planet carrying all but `COMET_EVAC_RESERVE` ships. Merged with the chooser's action only when source is not already used (no double-spend).
 
 ## Patch surfaces (four places to hook)
 
