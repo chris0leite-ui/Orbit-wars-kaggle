@@ -1,4 +1,12 @@
-"""geo v2.6 — restored v2.3 baseline (WALLCLOCK=500, top_tier_mirror).
+"""geo v2.7 — v2.6 baseline + K=10 -> K=8 (try to bound max wallclock).
+
+Combined v2.3 + v2.6 evidence: 2P vs v7_0 = 72/128 = 56.3% (~+5pp lift),
+not v2.3's optimistic +8pp. Wallclock max creeping up across runs
+(1915 -> 2034 -> 2557 -> 2896 -> 1837ms vs v7_0). v2.7 reduces K from
+10 to 8 in the 2P score loop. v7_minimax used K=5 successfully, so
+K=8 should preserve most of the strategic depth while speeding each
+score by ~20%. 4P stays at K=8 (already tuned).
+
 
 EVAL VERDICTS:
   v2.3 (this code, WALLCLOCK=500, n=64):
@@ -84,7 +92,7 @@ from lib.geo.sense import SenseState, sense_state
 # Tunables
 # ---------------------------------------------------------------------------
 
-K_LOOKAHEAD = 10        # 2P depth
+K_LOOKAHEAD = 8         # 2P depth (was 10; v2.7 trying ~20% per-score speedup)
 K_LOOKAHEAD_4P = 8      # 4P shallower (3 opponents = more compute per step)
 WALLCLOCK_MS = 500.0    # v2.3 optimum (v2.5's 350 dropped tilts and regressed -20pp)
 TIE_TOLERANCE = 1e-6
