@@ -220,3 +220,121 @@ def composite_capture_value(
             delta -= waste_weight * ships
 
     return base + delta
+
+
+# ---------------------------------------------------------------------------
+# defensibility_value — penalise undefended captures (2026-05-14 PI obs.)
+# ---------------------------------------------------------------------------
+
+
+# Horizon over which we score "could an enemy plausibly recapture this
+# planet?". 20 steps ≈ the time a mid-distance enemy planet needs to
+# launch a fleet that arrives. Short enough that close-by threats
+# dominate, long enough that "leave 1 ship, get recaptured" cases fire.
+DEFENSIBILITY_HORIZON: int = 20
+
+# Coefficient on the per-planet vulnerability penalty. Sweep candidate.
+DEFENSIBILITY_WEIGHT: float = 1.0
+
+
+def defensibility_value(
+    obs: Any, my_id: int,
+    *,
+    horizon: int = DEFENSIBILITY_HORIZON,
+    weight: float = DEFENSIBILITY_WEIGHT,
+) -> float:
+    """Ship-delta minus production-weighted per-planet vulnerability.
+
+    For each of OUR planets:
+    - `threat_eta = WorldModel.time_to_enemy_threat(p, my_id, world)` —
+      earliest turn any enemy could plausibly arrive (combines in-flight
+      fleets + worst-case launches from each enemy planet at current
+      garrison).
+    - If `threat_eta` is `None` or beyond `horizon`, the planet is safe.
+    - Otherwise estimate vulnerability as `our_garrison_at_eta - max_enemy_ships`
+      where `max_enemy_ships` is the largest single enemy garrison
+      (pessimistic single-source threat — fast and pessimistic-correct
+      for ranking candidates against each other).
+    - Sum the NEGATIVE part of the margin, weighted by planet production.
+
+    Pathology this targets (2026-05-14 PI observation): the chooser
+    completes a successful capture of a neutral planet but leaves only
+    a handful of garrison ships behind. With `delta_us_minus_them`,
+    that capture scores well (+production for ship gain, no cost for
+    low garrison). The enemy then recaptures cheaply on the next turn.
+    Defensibility penalises this *at the leaf state* so the chooser
+    prefers candidates that either (a) commit enough ships to hold
+    the captured planet or (b) capture planets that aren't in
+    enemy reach.
+
+    Cost: ~3-5 ms per call (WorldModel build + planet loop). value_fn
+    is called once per candidate at the rollout leaf, so the per-turn
+    overhead is ~50-100 ms for typical candidate counts — fits inside
+    the 700 ms wallclock budget.
+    """
+    base = delta_us_minus_them_obs(obs, my_id)
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return base
+    model = WorldModel.from_world(world, horizon=horizon)
+
+    # Max single-source enemy threat (worst-case single-planet launch).
+    max_enemy_ships = 0.0
+    for pp in world.planets_by_id.values():
+        if pp.owner == my_id or pp.owner == -1:
+            continue
+        if pp.ships > max_enemy_ships:
+            max_enemy_ships = float(pp.ships)
+
+    penalty = 0.0
+    for p in world.planets_by_id.values():
+        if p.owner != my_id:
+            continue
+        threat_eta = model.time_to_enemy_threat(p.id, my_id, world)
+        if threat_eta is None or threat_eta > horizon:
+            continue
+        # Our garrison at the threat-arrival time (accounts for in-flight
+        # friendly reinforcements). Fall back to current garrison if the
+        # timeline is unavailable.
+        our_garrison = model.ships_at(p.id, threat_eta)
+        if our_garrison is None:
+            our_garrison = float(p.ships)
+        margin = float(our_garrison) - max_enemy_ships
+        if margin < 0:
+            # Vulnerable. Magnitude scales with severity (margin) and
+            # planet value (production).
+            penalty += margin * float(p.production)  # margin<0 ⇒ negative
+
+    return base + weight * penalty
+
+
+def composite_plus_defensibility(
+    obs: Any, my_id: int,
+    *,
+    capture_weight: float = CAPTURE_REWARD_WEIGHT,
+    waste_weight: float = WASTE_PENALTY_WEIGHT,
+    defensibility_horizon: int = DEFENSIBILITY_HORIZON,
+    defensibility_weight: float = DEFENSIBILITY_WEIGHT,
+) -> float:
+    """Layered head: composite_capture_value + defensibility penalty.
+
+    Combines waste-aware launch scoring (composite) with
+    undefended-capture penalty (defensibility). Use when V1 and V2 both
+    lift independently — the combined signal should lift more than
+    either alone.
+    """
+    composite = composite_capture_value(
+        obs, my_id,
+        capture_weight=capture_weight,
+        waste_weight=waste_weight,
+    )
+    # Subtract the base (delta_us_minus_them_obs) from defensibility
+    # because composite already includes it; we want to add only the
+    # defensibility *increment*.
+    defensibility_full = defensibility_value(
+        obs, my_id,
+        horizon=defensibility_horizon,
+        weight=defensibility_weight,
+    )
+    base = delta_us_minus_them_obs(obs, my_id)
+    return composite + (defensibility_full - base)

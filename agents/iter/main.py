@@ -25,7 +25,8 @@ WALLCLOCK_MS = 700.0            # per-turn budget (ms)
 ENUMERATOR_MODE = "drop_one"    # see lib.v7_search proposers
 OPP_TIERS = (1,)                # opp-model tier(s); >1 entry => MAXIMIN
 PV_GAMMA = 0.99                 # 1.0 = v7_0_drop_one; 0.99 = v7_pv equivalent
-VALUE_FN = "default"            # "default" (delta_us_minus_them) | "composite"
+VALUE_FN = "composite"          # "default" (delta_us_minus_them) | "composite" | "defensibility" | "composite_plus_defensibility"
+DEFENSIBILITY_ALPHA = 1.0       # coefficient for defensibility penalty (sweep: 0.5 / 1.0 / 2.0)
 # ============================================================================
 
 # Dev-mode: override lib.scoring.PV_GAMMA BEFORE v7_search imports propagate
@@ -49,6 +50,14 @@ def _resolve_value_fn(name):
     if name == "composite":
         from lib.value_heads import composite_capture_value
         return composite_capture_value
+    if name == "defensibility":
+        from lib.value_heads import defensibility_value
+        return lambda obs, mid: defensibility_value(obs, mid, weight=DEFENSIBILITY_ALPHA)
+    if name == "composite_plus_defensibility":
+        from lib.value_heads import composite_plus_defensibility
+        return lambda obs, mid: composite_plus_defensibility(
+            obs, mid, defensibility_weight=DEFENSIBILITY_ALPHA
+        )
     raise ValueError(f"unknown VALUE_FN: {name!r}")
 
 
