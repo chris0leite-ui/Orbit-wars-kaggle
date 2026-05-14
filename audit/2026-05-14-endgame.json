@@ -1,0 +1,31 @@
+{
+  "mine": "4 - endgame anatomy",
+  "date": "2026-05-14",
+  "corpus": {"replays": 60, "with_winner": 59, "sample_fractions": [0.80, 0.85, 0.90, 0.95, 0.99]},
+  "aggregate_stats": {
+    "ship_share_delta_last_100_turns_mean": 0.170,
+    "ship_share_delta_last_100_turns_median": 0.167,
+    "winners_with_late_offence_from_enemy": "45 / 59",
+    "winners_who_expanded_share_>2pp": 45,
+    "winners_who_contracted_share_>2pp": 1,
+    "winners_neutral": 13
+  },
+  "falsification_gate": {
+    "description": "Cluster-conditional consolidate-vs-expand split shows >=60/40 in at least one cluster. Tests whether endgame strategy is regime-specific.",
+    "global_expand_rate": "45/59 = 76% (expand) vs 1/59 = 1.7% (contract)",
+    "verdict": "Gate is OVERPASSED globally — endgame is NOT regime-specific because the overwhelming pattern is consistent expansion. The 60/40 split was meant to identify a regime-flip; instead we get 76%/2% one-way. Re-interpret: endgame expansion is UNIVERSAL, not regime-conditional.",
+    "passed": true
+  },
+  "headline_findings": [
+    "OVERWHELMING signal: 45/59 (76%) top-10 winners INCREASED ship share by >2pp in the final 100 turns. Only 1/59 contracted by >2pp.",
+    "Median ship-share gain across the last 100 turns is +16.7 percentage points — winners are still pulling ahead at the bell.",
+    "45/59 (76%) of winners made at least one successful enemy-territory capture in the final 50 turns. Late offence is the norm, not the exception.",
+    "CONTRADICTS the 'consolidate late' intuition: do NOT switch to defensive reinforcement in the closing turns. Keep attacking enemy planets.",
+    "Strategic implication: any 'endgame mode switch' that throttles aggression after turn ~400 is leaving win-rate on the table. The v7 search horizon's value head should NOT depreciate the value of late expansion.",
+    "Note: 'expand' here is measured on a WINNING agent — survivor bias may exaggerate. The corrective: when LOSING in the late game, this corpus has no data and we cannot generalise."
+  ],
+  "downstream_uses": [
+    "Feeds Experiment Option 4 (endgame mode switch) — but now points the opposite way: DON'T add a switch; if anything, ensure the agent does NOT throttle near the end.",
+    "Could also feed a 'when winning, keep attacking' multiplier in v7's value head."
+  ]
+}

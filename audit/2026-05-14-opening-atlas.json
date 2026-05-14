@@ -1,0 +1,65 @@
+{
+  "mine": "3 - opening atlas",
+  "date": "2026-05-14",
+  "corpus": {"replays": 60, "with_winner": 59, "opening_window_turns": 30},
+  "aggregate_stats": {
+    "first_launch_step_median": 3.5,
+    "first_launch_step_range": [1, 22],
+    "n_launches_in_first_30_median": 6,
+    "n_distinct_targets_in_first_30_median": 5,
+    "neutral_target_frac_median": 0.845,
+    "enemy_target_frac_median": 0.000,
+    "median_target_production_med_of_meds": 3.0
+  },
+  "per_cluster_template": {
+    "0_wide_and_sparse": {
+      "first_launch_step": 4.0,
+      "median_target_production": 3.0,
+      "median_target_distance": 37.4,
+      "n_launches_in_first_30": 7,
+      "distinct_targets": 6,
+      "playbook": "moderate-tempo expansion to medium-production planets, long reach"
+    },
+    "1_close_quarters_orbital": {
+      "first_launch_step": 3.5,
+      "median_target_production": 3.0,
+      "median_target_distance": 29.6,
+      "n_launches_in_first_30": 6,
+      "distinct_targets": 5.5,
+      "playbook": "compact orbit-aware grab; closer targets, fewer but focused"
+    },
+    "2_wide_and_rich": {
+      "first_launch_step": 3.0,
+      "median_target_production": 4.0,
+      "median_target_distance": 20.1,
+      "n_launches_in_first_30": 10,
+      "distinct_targets": 7,
+      "playbook": "OPENING BLITZ — fastest first launch, most launches, highest-production nearby targets"
+    },
+    "3_sparse_static_rich": {
+      "first_launch_step": 4.0,
+      "median_target_production": 4.2,
+      "median_target_distance": 37.0,
+      "n_launches_in_first_30": 6,
+      "distinct_targets": 4.5,
+      "playbook": "patient long-arm strike to highest-production planet on the map"
+    }
+  },
+  "falsification_gate": {
+    "description": "At least two clusters differ by >=1 in median target production OR >=1 in median ETA-equivalent target distance.",
+    "max_pairwise_prod_diff": 1.25,
+    "max_pairwise_dist_diff": 17.27,
+    "passed": true
+  },
+  "headline_findings": [
+    "Top-10 winners fire by median step 3.5 — confirms prior fingerprint observation (4.1) on a fresh extraction.",
+    "Openings target NEUTRALS overwhelmingly (84.5% median, 0% enemy median) — early aggression is the LAND GRAB, not raiding.",
+    "5 distinct targets in 6 launches: minimal double-tap. Top players spread, do not concentrate fire in the opening.",
+    "Cluster-conditional openings are real: 'wide-and-rich' boards (C2) get 10 launches and target highest-prod planets; 'sparse-static-rich' (C3) get only 6 launches at LONG distance to the single highest-prod planet.",
+    "Resolves the melccoro tension: melccoro's '+2-5%pp from early_off_until=50' makes sense only against a weak baseline where the agent would fire wastefully. Top-10 winners do NOT delay; they fire CORRECTLY."
+  ],
+  "downstream_uses": [
+    "Feeds Experiment Option 1 (map-type-conditional opening book) — the four per-cluster playbooks above are the templates.",
+    "Direct opening-book first move: classify board into cluster, then launch from the home planet at the cluster's median target distance to its highest-production reachable planet, using the median ships-sent count."
+  ]
+}
