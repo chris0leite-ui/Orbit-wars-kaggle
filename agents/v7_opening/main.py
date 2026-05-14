@@ -77,7 +77,13 @@ def agent(obs, configuration=None):
     _episode_reset_if_needed(obs, configuration, state)
     step = int(_read_obs(obs, "step", 0))
 
-    if step < OVERLAY_HORIZON:
+    if step < OVERLAY_HORIZON and state.cluster >= 0:
+        # cluster == -1 means classify_board flagged the board as an
+        # outlier (beyond p90 centroid distance on training corpus);
+        # skip overlay entirely and use pure v7. Origin: v2 sweep
+        # diagnostic — seed 100 had d_min=6.11 vs training p90=4.31
+        # and the cluster-1 template over-fired on its sparse 1.62
+        # mean_prod board.
         actions = propose_opening_actions(
             obs, my_seat, state.cluster, state.launches,
         )

@@ -110,16 +110,21 @@ def _board_fingerprint(planets, omega: float) -> dict:
     # from CENTER (50, 50) since fixed planets in this comp are
     # axis-aligned). This proxy yielded the same cluster assignments
     # in the smoke test below (cf. unit test).
+    # Inlined from lib.orbit.is_orbiting (kept inline so a bundled
+    # single-file agent doesn't need lib/orbit at runtime). A planet
+    # orbits iff orbital_radius + planet_radius < ROTATION_RADIUS_LIMIT
+    # (50.0 in lib.geometry); static planets sit outside that ring.
+    # The earlier sentinel-based heuristic counted every non-centre
+    # planet as orbital and inflated orbital_frac to 1.00 on every
+    # self-play board (vs the training corpus's 0.27-0.44), pushing
+    # the runtime feature distribution 7+ sigma from any centroid.
     cx_sun, cy_sun = 50.0, 50.0
+    rotation_radius_limit = 50.0
     orb_count = 0
     for p in planets:
-        # Approximate is_orbiting: planet not at center, has non-zero
-        # initial offset that the env uses to spin.
-        if math.hypot(p[2] - cx_sun, p[3] - cy_sun) > 0.5 and omega != 0:
-            # Fixed planets in this comp have a stable position record;
-            # orbiting planets have radius != 0. The radius field is p[4].
-            if p[4] > 0:
-                orb_count += 1
+        orb_r = math.hypot(p[2] - cx_sun, p[3] - cy_sun)
+        if (orb_r + p[4]) < rotation_radius_limit:
+            orb_count += 1
     orbital_frac = orb_count / n if n else 0.0
     # Sun-shadow: planet pair blocked by the sun. Linear sun_radius=5.
     SUN_R = 5.0
@@ -187,19 +192,35 @@ def _board_fingerprint(planets, omega: float) -> dict:
     }
 
 
+# Distance threshold beyond which a board is too far from any training
+# centroid to trust the template. Set to the training-set p90 (4.31)
+# measured on the 60 top-10 win replays — beyond this the overlay
+# returns -1 ("unknown / no overlay") and the agent falls back to pure
+# v7. Origin: 2026-05-14 within-cluster heterogeneity diagnostic on
+# the v2 sweep losing seeds (seed 100: d_min=6.11, well past p90).
+OUTLIER_DISTANCE_THRESHOLD = 4.31
+
+
 def classify_board(planets, omega: float) -> int:
-    """Nearest-centroid classifier on the 10-feature board fingerprint."""
+    """Nearest-centroid classifier on the 10-feature board fingerprint.
+
+    Returns the cluster id (0-3) for in-distribution boards, or -1
+    when the board is beyond `OUTLIER_DISTANCE_THRESHOLD` from any
+    centroid (caller must fall back to a default policy in this case).
+    """
     feats = _board_fingerprint(planets, omega)
     x = [feats[f] for f in _MODEL["features"]]
     sm = _MODEL["scaler_mean"]
     ss = _MODEL["scaler_std"]
     xz = [(x[i] - sm[i]) / ss[i] for i in range(len(x))]
-    best, best_d = 0, float("inf")
+    best, best_d2 = 0, float("inf")
     for c_id, c in enumerate(_MODEL["centroids"]):
         d2 = sum((xz[i] - c[i]) ** 2 for i in range(len(c)))
-        if d2 < best_d:
-            best_d = d2
+        if d2 < best_d2:
+            best_d2 = d2
             best = c_id
+    if best_d2 > OUTLIER_DISTANCE_THRESHOLD * OUTLIER_DISTANCE_THRESHOLD:
+        return -1
     return best
 
 
