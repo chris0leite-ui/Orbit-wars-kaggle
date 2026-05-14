@@ -15,21 +15,31 @@ last_submission_message: |
   geo v3.1: geometric sense (clusters/Voronoi/front) + 4 lookahead-validated tilts
   (opening-boost 2.0x, enemy-focus 1.5x, front-reinforce 1.5x, voronoi-filter)
   + concentrated/saturation top-10 archetypes + 4P branch via score_candidate_4p
-  (v7_0 falls back to v3.5.1 in 4P, geo runs lookahead).
-  Signal-based SIGALRM timeout (700ms per score) bounds wallclock max.
+  + signal-timeout per score (700ms).
   Local A/B vs v7_0_drop_one (n=192): 57.3% (~+7pp 2P).
   Local A/B 4P vs 3× v7_0 (n=128): 56.3% first-place (+31pp over baseline).
 
 # Rolling-last-2 (Kaggle keeps these two for final eval; 3rd push evicts oldest):
 rolling_last_2:
-  - {agent: geo,                sub_id: 52643676, score: PENDING, episodes: 0}
-  - {agent: v7_pv,              sub_id: 52630118, score: 1064.4,  episodes: ~30}
+  - {agent: geo,                sub_id: 52643676, score: 984.0, status: COMPLETE,
+     episodes: ~80-130, note: 'sigma-discounted floor; mu not settled (~5h post-submit)'}
+  - {agent: v7_pv,              sub_id: 52630118, score: 1064.4}
 evicted_recent:
   - {agent: v7_0_drop_one_rebuilt, sub_id: 52607699, score: 1056.6, reason: evicted by geo push}
 
-# All v3.1 iteration details + bisect lessons in:
-#   knowledge-base/thoughts/2026-05-14-geo-v2-iteration-results.md
-#   audit/friction.md (under 2026-05-14)
+# Team leaderboard score = max(rolling_last_2) = 1064.4 (UNCHANGED by geo push).
+# Public-LB rank: 125 / 2667 (top 4.7%; slipped from 109/2587 due to total-team growth).
+
+# Calibration warning: local A/B over-predicted ladder for 2 consecutive submissions
+# (v3.5.1 on 5/12 = -150mu; geo v3.1 on 5/14 = TBD but floor -80mu). Local panel
+# was vs v7_0 only; ladder has v3.5.1/v7_pv/top-10 distribution. Future: broaden
+# to >=3 opponent classes before submit. See audit/2026-05-14-postmortem-geo-session.md.
+
+# v3.2 (gang_up only on top of v3.1) is built + bundled locally but NOT submitted.
+# Eviction math: next push removes v7_pv (1064.4); only submit if new agent
+# scores decisively above 1064.4.
+
+# Branch claude/simplify-fast-setup-azW8T merged to main on 2026-05-14.
 ```
 
 ---

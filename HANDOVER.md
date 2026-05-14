@@ -1,169 +1,136 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-13 LATE-2 by `claude/read-handover-iLWTq`.
-> Format budget ≤ 160 lines. Prior wraps archived under
-> `audit/archive-2026-05-1*-handover-*.md`.
+> Last written: 2026-05-14 by `claude/simplify-fast-setup-azW8T` (geo
+> iteration + first ladder result). Length budget ≤ 160 lines.
+> Prior wraps under `audit/archive-2026-05-1*-handover-*.md`.
 
 ## Where we are
 
-- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC → **41 days remaining.**
-- **Live submitted agent:** `v7_0_drop_one`, **submission #52588156**,
-  publicScore **μ=1094.9** (team peak). Public-LB rank **109 / 2587**
-  (top 4.2 %). Gap to top-10 prize: +336 μ.
-- **Rolling-last-2:** `[v4_planner #52579863, v7_0_drop_one #52588156]`.
-- **No new submission this session.** All work is local; ladder anchor
-  preserved.
+- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC → **40 days remaining.**
+- **Team leaderboard score:** **μ=1064.4** (= max of rolling-last-2 =
+  v7_pv). **Rank 125 / 2667** (top 4.7 %). Slipped from 109/2587
+  because of new entrants + lower current rolling slot.
+- **Rolling-last-2:** `[geo v3.1 #52643676 (μ=984.0, σ-discounted floor),
+  v7_pv #52630118 (μ=1064.4)]`. geo's μ is NOT settled — ~5-6 h since
+  submit ≈ 80-130 episodes; σ still large. Could move +50-100 over
+  next 24h.
+- **Daily submission budget:** used 1/5 today (geo). 4 remaining but
+  **every new push evicts v7_pv (our best)** unless the new score
+  decisively exceeds 1064.4.
 
-## This session — diagnostic + cheap wins + brute-force search
+## Day-N PM simplify-fast-setup-azW8T
 
-Plan: `/root/.claude/plans/go-diagnostic-cheap-wins-woolly-rose.md`.
+The session goal evolved: fast-iteration framework (`fast.py`) →
+geometric strategy → game-theoretic combination → ladder submission.
 
-### Track A — loss-mode diagnostic
+### Shipped to the codebase (29 commits)
 
-`audit/2026-05-13-v7-0-loss-modes.md`. 97 live replays pulled via
-`scripts/live_episode_summary.py`. 50 losses classified with
-`scripts/classify_losses.py` (new, 5 buckets).
+1. **`fast.py`** — single-file iteration entry point: `smoke / eval /
+   play / bench / baselines` with adaptive Wilson-gated A/B. Validated
+   bit-identical against audit-logged v7_1 result. Replaces 31 scripts
+   for the inner loop. **(Approved Plan #1)**
 
-| Bucket | Count | Cross-tab (2P / 4P) |
-|---|---:|---|
-| `opening_lost` | 34 (68 %) | 8 / 26 |
-| `mid_economy_lost` | 16 (32 %) | 13 / 3 |
-| other 3 buckets | 0 | — |
+2. **`lib/geo/{sense, posture, allocator}.py`** — geometric primitives:
+   single-link clustering on ETA, Voronoi cells over neutrals, front
+   detection, threat budget (reuses `WorldModel.ledger`), comet claims,
+   4-mode posture arbiter, LP and greedy-multi allocators.
 
-**Headline:** 4P games are 90 % opening-determined (26/29). H11 is
-exactly the fix; ship it.
+3. **`agents/geo/main.py` (v3.2 final)** — the geo agent:
+   - Pipeline: `obs → sense_state + decide_posture → incumbent (snipe
+     aggressive + reinforce + opening, comets filtered) settled by
+     `settle_plan` → 5-7 candidate variants (opening boost, enemy
+     focus, gang_up multi-source, concentrated/saturation archetypes,
+     front-reinforce) → score each via `score_candidate` (K=10
+     top_tier_mirror, opp_tier=1) or `score_candidate_4p` (K=8) →
+     argmax`.
+   - **`SIGALRM`-based hard timeout** per `score_candidate` (700 ms cap)
+     — bounded max from ~2900 ms to ~1200 ms.
+   - **4P branch** via `score_candidate_4p` — geo runs lookahead in 4P
+     where v7_0 falls back to v3.5.1 (per `lib/v7_search.py:choose:1384`).
 
-### Track B — cheap wins (H11 + H15)
+4. **17 unit + e2e tests** in `tests/test_geo.py` (incl. 4P e2e).
 
-- **H11 opening grab.** `propose_opening_missions` is now wired into
-  `lib/v7_search.py::_build_incumbent_intents` (1-line addition, plus
-  import). The proposer was already built and tested
-  (`tests/test_mission_opening.py`); only the wire was missing.
-- **H15 comet reject.** `lib/missions/snipe.py:236-243` now hard-rejects
-  comet targets where `remaining_lifetime <= eta`. Previously the
-  mission was emitted with score≈0, consuming a per-source slot in
-  `settle_plan`.
-- New tests: `tests/test_mission_opening_wireup.py` (4 cases),
-  `tests/test_snipe_comet_reject.py` (5 cases). All green.
-- Bundles: `submissions/v7_1_open_drop_comets.py` (209 KB).
-- **Scalar A/B (16 seeds × 2 seats = 32 games, 13 min wallclock):**
-  v7_1 17W-13L-2D vs v7_0 = **53.1 %, Wilson lo 36.4 %.** Directional
-  signal positive but **BELOW the 55 % gate.** No submission justified
-  on this sample. **A 64-seed A/B is required** before any push — on
-  the Kaggle T4 vmap kernel with the new JAX port that's ~1.5 min.
+5. **`submissions/geo.py`** — bundle (240 KB, sha256:1babc39d) submitted
+   as #52643676.
 
-### Track C — brute-force game-theory search
+### Local A/B results (substrate IS good vs v7_0; live-ladder generalization is the open question)
 
-- **C1 runtime depth-2 maximin** (`lib/v7_search.py::choose_depth2`,
-  ~200 LOC). Outer = our drop-one set (≤ 8); inner = opp drop-one set
-  (≤ 4) recomputed from post-turn-1 state. Payoff matrix → maximin pick.
-  Budget shape 32 cells × ~15 ms = ~500 ms wall. Tests in
-  `tests/test_v7_depth2.py` (5 pass).
-- **C2 JAX candidate-axis vmap brute scorer**
-  (`lib/game/jax/jax_brute_search.py`, ~180 LOC). vmaps
-  `score_candidate_jax_pure` across C candidates on a fixed state.
-  Used as the leaf engine for offline brute search. Parity test
-  `tests/test_jax_brute_search.py` 3 pass (serial vs vmap argmax
-  matches, max-diff < 1e-2 float32).
-- **C3 N-step path-search oracle**
-  (`scripts/jax_path_search.py`, ~270 LOC). 32-seed N=2 oracle ran in
-  9 s; **v7_0 single-ply matches the depth-2 maximin choice 85.2 %
-  of the time (4/27 disagreements; 3 of 4 say "drop one more launch").**
-  Modest but real head-room for depth-2; CSV at
-  `audit/2026-05-13-depth2-oracle-32seeds.csv`.
-- **JAX port for H11/H15** (`compute_opening_score_matrix` in
-  `lib/game/jax/jax_missions.py`; `use_opening` knob on
-  `policy_emit_jax_pure` / `rollout_step_jax_pure` /
-  `score_candidate_jax_pure`). Smoke parity vs scalar matches
-  bit-exactly (seed 42, step 0: src=0 → tgt=8, ships=6, score=1226.79).
-  Knob plumbed through `scripts/kaggle_ab_kernel/run_jax_ab.py` via
-  `A_USE_OPENING` / `B_USE_OPENING` env vars.
-- Bundle: `submissions/v7_2_depth2.py` (209 KB; depth-2 chooser).
+| Matchup | n | winrate | Wlo | Notes |
+|---|---|---|---|---|
+| vs v3.5.1 (2P) | 128 | 57.0 % | ~0.48 | Combined v2.3/v2.6 runs |
+| vs v7_0 (2P) | 192 | 57.3 % | ~0.50 | Combined v2.3/v2.6/v2.9 runs |
+| vs 3× v7_0 (4P first-place) | 128 | 56.3 % | 0.48 | +31 pp over 25 % baseline |
 
-## Falsified / risks
+### Live ladder result
 
-- ~~Bundler parity gate fails on v7_1 / v7_2 with non-deterministic
-  divergence on 1 / 528 turns. Suspected module-level mutable state.~~
-  **FIXED this session (commit `07ef918`).** Real root cause was the
-  `time.perf_counter()`-based wallclock watchdog in `lib/v7_search`
-  choosers: when the 700 ms budget bailed mid-candidate-list under CPU
-  jitter, argmax ranged over different subsets and picked differently.
-  Same `obs`, same process — different output. Fix: new
-  `_effective_wallclock_ms` helper consults an `ORBIT_WARS_PARITY_
-  WALLCLOCK_MS` env var; `_parity_gate` in `scripts/bundle_agent.py`
-  sets it to 60000 ms via try/finally. Production-path wallclock is
-  unchanged. Verified: end-to-end gate clean on seed 0; multi-seed
-  probe sweep (find_parity_bug) clean across 2480 turns on seeds 0–2
-  (seed 3 hit a probe timeout under the now-slower unbounded budget;
-  no mismatches emitted before cutoff).
-- A prior commit (`5ae24a1`) added an exception-safe context manager
-  for the `_shared_world_model` attach/detach. That fix is correct on
-  engineering grounds (replaces a bare-`del` with try/finally) but
-  was a misdiagnosis of the parity bug — kept for the defensive
-  cleanup; not load-bearing for parity. See postmortem
-  `audit/2026-05-13-postmortem-read-handover-iLWTq.md`.
+- **geo v3.1: μ=984.0 (σ-discounted early floor, ~80-130 episodes)**.
+- Local A/B predicted +7 pp 2P / +31 pp 4P. Live floor is 80 below
+  v7_pv. **Could rise as σ tightens** OR could settle low (real
+  regression).
+- Same pattern as **v3.5.1 on 2026-05-12**: local +56.6 % Wlo vs
+  v3_snipe → live μ=945.6. The local panel didn't reflect ladder
+  distribution.
 
-## Next-session first-actions
+## Falsified or dead (this session)
 
-1. **Run the JAX A/B for v7_1 vs v7_0 at 64 games on Kaggle T4.**
-   `scripts/kaggle_ab_kernel/run_jax_ab.py` now has `A_USE_OPENING=1
-   B_USE_OPENING=0` knobs. ~1.5 min wallclock on T4 (vs the 13 min CPU
-   run we did). The scalar 32-game result (53.1 %, Wilson lo 36.4 %)
-   is underpowered; the 64-game JAX result is the gate decision.
-   Bundler parity is now clean — submissions can drop the
-   `--skip-parity-gate` workaround.
-2. **If JAX A/B clears Wilson lo ≥ 55 %, submit
-   `v7_1_open_drop_comets`** (#3rd push, evicts v4_planner from
-   rolling-last-2). Decision must be PI-signed; the diagnostic
-   confirms H11 is targeting the right loss bucket (68 % opening-lost).
-3. **Port `choose_depth2` to JAX** for fast A/B testing of v7_2.
-   Nested vmap over (our_cand × opp_cand). ~250 LOC; deferred this
-   session.
-4. **If v7_1 ships and lifts μ, queue v7_2 (depth-2 chooser) gated by
-   a 64-seed A/B vs the new v7_1 incumbent.** The 14.8 % oracle
-   disagreement suggests +5-10 pp expected lift if the depth-2 picks
-   are systematically better.
-5. **Decide on a "reproduce-before-fix" rule for non-deterministic
-   bugs.** PI declined to promote this session, but the misdiagnosis
-   cost ~1 h. See postmortem
-   `audit/2026-05-13-postmortem-read-handover-iLWTq.md` if you want
-   to revisit.
+| Attempt | Result | Lesson |
+|---|---|---|
+| **v1**: posture multipliers + LP allocator | -37 pp vs v3.5.1 | Cross-class multipliers ≥2× crush settle_plan's per-source ranking. Global score-sort multi-launch over-concentrates at strong sources. |
+| **v2.4**: lite_greedy follow-up | -17 pp | Cheaper opp model → lookahead picks candidates that don't transfer to the real opponent. |
+| **v2.5**: WALLCLOCK_MS 500→350 | -20 pp | Tighter gate drops valuable tilts; first-score is unbounded by gate anyway. |
+| **v2.7**: K=10→K=8 | -20 pp | Too shallow for geo's candidate count. |
+| **v3.0**: composite value head (`evaluate_value`) | -19 pp | Survivor_bonus (5×) dominates small-scale composite; candidate ranking gets noisy. |
+| **v3.2c**: empty_out + tap_capture combined | -4 pp cumulative | Individually within noise; combined dragged candidate ranking. Reverted both; gang_up kept. |
 
-## Out of scope for next session
+**The v2.3 config (K=10, top_tier_mirror, WALLCLOCK=500, default
+ship-delta, 4 tilts + 2 archetypes + drop-one cap 2) is a tight local
+optimum.** All single-knob changes regressed. Documented in
+`knowledge-base/thoughts/2026-05-14-geo-v2-iteration-results.md`.
 
-- The five-experiment platform refactor from the previous handover.
-  Two of the five (opening, comet) just shipped via Track B; depth-2
-  shipped via Track C1. Re-prioritise the remaining three (multi-launch,
-  opening classifier, strategy library) only after v7_1 ladder result.
+## Deferred
 
-## Pointers — this-session deliverables
+- **JAX vmap scoring** — `agents/jax_v7_0/main.py` shows the
+  `scalar_to_jax(...)` integration path; `score_candidate_jax_pure_jit`
+  is 6 ms after JIT vs ~200-400 ms scalar (~30-70× speedup). Blocker:
+  jax_v7_0 is flagged "OFFLINE-ONLY" by its author (parity risk).
+  Wire-up is ~1-2 h once parity is verified; would let us score ALL
+  candidates without a wallclock gate.
+- **v3.2 (gang_up only)** ready in source + bundle, NOT submitted.
+  v3.1 just regressed live; pushing v3.2 evicts v7_pv. Hold until
+  geo's μ settles (24-48 h).
+- **B and C of the user's A/B/C plan** — JAX vmap deferred, composite
+  value head failed.
 
-- `lib/v7_search.py` — opening wire (line 50, 142); `choose_depth2` +
-  `choose_depth2_with_4p` (~200 LOC); `_bind_shared_world_model`
-  context manager + `_effective_wallclock_ms` env-var override
-  helper.
-- `scripts/bundle_agent.py` — `_parity_gate` now sets
-  `ORBIT_WARS_PARITY_WALLCLOCK_MS=60000` for the parity comparison
-  via try/finally.
-- `tests/test_v7_search_shared_model_cleanup.py` — 9 unit tests
-  pinning both invariants (5 cleanup, 4 wallclock override).
-- `audit/2026-05-13-postmortem-read-handover-iLWTq.md` — this
-  session's postmortem.
-- `lib/missions/snipe.py:236-243` — H15 hard reject.
-- `lib/missions/opening.py` — unchanged (built in prior session;
-  unit-tested).
-- `lib/game/jax/jax_missions.py` — `compute_opening_score_matrix` +
-  H15 reject in `compute_snipe_score_matrix`.
-- `lib/game/jax/jax_score.py` — `use_opening` knobs plumbed through.
-- `lib/game/jax/jax_brute_search.py` — candidate-axis vmap scorer.
-- `scripts/classify_losses.py` — 5-bucket loss-mode classifier.
-- `scripts/jax_path_search.py` — offline depth-2 oracle.
-- `scripts/bundle_agent.py` — opening added to DEFAULT_LIB_ORDER.
-- `scripts/kaggle_ab_kernel/run_jax_ab.py` — `A_USE_OPENING` /
-  `B_USE_OPENING` env knobs.
-- `agents/v7_1_open_drop_comets/main.py`, `agents/v7_2_depth2/main.py`.
-- `audit/2026-05-13-v7-0-loss-modes.md` — loss-mode audit.
-- `audit/2026-05-13-depth2-oracle-32seeds.csv` — oracle output.
-- `audit/2026-05-13-loss-modes-52588156.csv` — per-game classifier output.
-- Tests: `test_v7_depth2`, `test_jax_brute_search`,
-  `test_mission_opening_wireup`, `test_snipe_comet_reject`.
+## Next-session first-action (ranked by EV / cost)
+
+1. **Re-check geo's ladder Score** (5 sec). If μ has climbed to 1050+,
+   the substrate is fine and we iterate. If <1000 after 24 h, it's a
+   real regression and we diagnose.
+2. **Loss-mode diagnostic on geo's live replays.** Pull via
+   `scripts/live_episode_summary.py` + `scripts/classify_losses.py`.
+   The 5/13 audit showed v7_0 was 68 % opening-determined; geo's
+   losses likely cluster differently (we DO opening-grab heavily;
+   weakness may be mid-game vs top archetypes we never tested locally).
+3. **Broaden local A/B panel.** v3.5.1's regression (-150 μ on
+   2026-05-12) and now geo's (-80 floor) both came from vs-v7_0-only
+   panels. **Future local A/B must include ≥3 opponent classes**
+   covering v3.5.1, v7_pv, v7_0_drop_one, ideally a top-10 bundle (e.g.,
+   Roman-1224 from `external/kernels/`). Friction rule:
+   **`tag: local-vs-v7_0-only-misses-ladder-distribution`**.
+4. **JAX vmap proof-of-concept.** If diagnostic confirms the architecture
+   is sound and only compute is the limit, JAX unlocks deeper/wider
+   search. If diagnostic shows strategic gap, JAX scoring won't help.
+
+## Pointers (added today)
+
+- `knowledge-base/thoughts/2026-05-14-geo-v2-iteration-results.md` —
+  full bisect tables + lessons.
+- `knowledge-base/thoughts/2026-05-13-geo-v1-bisect-lessons.md` — v1
+  parity bisect (3 layers, all regressing).
+- `audit/friction.md` — entries under 2026-05-13 + 2026-05-14.
+- `agents/geo/main.py` — current geo, 5+ tilt helpers retained for
+  future revival even if unwired.
+- `lib/geo/{sense,posture,allocator}.py` — reusable primitives, 17
+  unit tests.
+- `fast.py` — the iteration entry point.
+- `audit/2026-05-14-postmortem-geo-session.md` — session postmortem.
