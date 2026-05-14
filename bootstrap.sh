@@ -31,11 +31,28 @@ echo "--- comp: $COMP"
 # ---------------------------------------------------------------------------
 KAGGLE_JSON="$HOME/.kaggle/kaggle.json"
 
+# Harness env-var name fall-through: $KaggleUserName / $KaggleAPIToke (sic)
+# come from the Claude Code harness; map them to the canonical names so
+# downstream code stays single-sourced.
+if [[ -z "${KAGGLE_USERNAME:-}" && -n "${KaggleUserName:-}" ]]; then
+    export KAGGLE_USERNAME="$KaggleUserName"
+fi
+if [[ -z "${KAGGLE_KEY:-}" && -n "${KaggleAPIToke:-}" ]]; then
+    export KAGGLE_KEY="$KaggleAPIToke"
+fi
+
 if [[ -z "${KAGGLE_API_TOKEN:-}" && -n "${KAGGLE_KEY:-}" ]]; then
     export KAGGLE_API_TOKEN="$KAGGLE_KEY"
 fi
 
-if [[ -f "$KAGGLE_JSON" ]]; then
+# KGAT_-prefixed tokens are the new Kaggle personal-access-token format
+# and must be read from $KAGGLE_API_TOKEN, NOT from the `key` field of
+# kaggle.json (which routes through the legacy 32-hex auth path and
+# returns 401). When we see a KGAT_ token, skip the kaggle.json write
+# and use the env-var path unconditionally.
+if [[ "${KAGGLE_API_TOKEN:-}" == KGAT_* || "${KAGGLE_KEY:-}" == KGAT_* ]]; then
+    echo "--- credentials: KGAT_-prefix token; using KAGGLE_API_TOKEN env path ---"
+elif [[ -f "$KAGGLE_JSON" ]]; then
     echo "--- credentials: $KAGGLE_JSON found, using it ---"
 elif [[ -n "${KAGGLE_USERNAME:-}" && -n "${KAGGLE_KEY:-}" ]]; then
     echo "--- credentials: writing $KAGGLE_JSON from KAGGLE_USERNAME + KAGGLE_KEY ---"
@@ -52,11 +69,20 @@ else
     exit 2
 fi
 
+# Cred smoke: surface 401s in the first 5 minutes, not at submit time.
+echo "--- credentials smoke: kaggle competitions list -s orbit ---"
+kaggle competitions list -s orbit 2>&1 | head -3 || \
+    echo "WARNING: kaggle CLI smoke failed; submit-time will also fail."
+
 # ---------------------------------------------------------------------------
 # Step 2 — Python deps
 # ---------------------------------------------------------------------------
 if [[ -f requirements.txt ]]; then
     echo "--- installing requirements ---"
+    # On Debian/Ubuntu base images, pip can't uninstall the OS-installed
+    # `python3-blinker` (no RECORD metadata) and aborts the whole install.
+    # Pre-replace it with a pip-managed copy so `pip install -r ...` succeeds.
+    pip install -q --ignore-installed blinker 2>/dev/null || true
     pip install -q -r requirements.txt
 else
     echo "--- (no requirements.txt; skipping pip install) ---"
@@ -66,8 +92,13 @@ fi
 # Step 3 — competition data
 # ---------------------------------------------------------------------------
 mkdir -p data
-if compgen -G "data/*" > /dev/null 2>&1 && [[ "$(ls -A data 2>/dev/null | grep -v '^\.gitkeep$' | wc -l)" -gt 0 ]]; then
-    echo "--- data: already present, skipping download ---"
+# Canonical-file check: the comp ships data/main.py (the baseline opponent
+# every tournament uses). The repo also tracks data/shot_validator/ (the
+# IL-pipeline spec dir), so the older "any non-gitkeep file" heuristic
+# always evaluated true on fresh clones and silently skipped the download.
+# Friction recurrences: 2026-05-10, 2026-05-12, 2026-05-13.
+if [[ -f data/main.py ]]; then
+    echo "--- data: data/main.py present, skipping download ---"
 else
     echo "--- data: downloading $COMP ---"
     kaggle competitions download -c "$COMP" -p data/ || {

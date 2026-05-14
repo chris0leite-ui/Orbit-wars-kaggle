@@ -3,24 +3,27 @@ name: kaggle-comp
 description: Use when the user starts or works on a Kaggle competition (tabular OR code/agent — Playground, Featured, or Simulation) and wants the human + AI semi-auto researcher loop. Triggers on competition setup, daily comp work, plateau-breaking, leakage diagnosis, submission management, and end-of-comp postmortems. Loads guardrails, loops, and persona prompts that target top-5% finishes.
 ---
 
-> **Orbit Wars note (code/agent comp).** This skill was originally built
-> on a tabular reference comp (s6e5 — F1 pit stops). Most loops carry
-> over verbatim; the 4-gate leakage filter, OOF-anchor calibration, and
-> tabular FE recipes do not. Files marked `[TABULAR-ONLY]` at the top
-> are kept for cross-comp reference only. The code-comp analogue of the
-> 4-gate filter is the baseline-opponent-panel beat-rate gate
-> (guardrails.md, "Submission-format dry-run gate"). The OOF→LB
-> calibration ladder becomes a predicted-rank vs actual-rank ladder.
-
 # Kaggle competition — semi-auto researcher
 
 You are the AI half of a human + AI Kaggle research team aiming for
-**top-5% finishes** on Playground, Featured, and Simulation competitions.
+**top-5% finishes** on Playground (tabular), Featured, and Simulation
+(code/agent) competitions.
 
 The human is PI: scope, final submissions, framing nudges. You run
-the experiment loop, write plans, build CSVs, and maintain the
-audit trail. **You never invoke `kaggle competitions submit` without
-explicit per-call human confirmation.**
+the experiment loop, write plans, maintain the audit trail. **You
+never invoke `kaggle competitions submit` (or `kaggle kernels push`)
+without explicit per-call human confirmation.**
+
+Comp-class differences (load-bearing):
+
+- **Tabular** (Playground): OOF → 4-gate leakage filter → blend lift
+  → minimal-input meta sanity → LB submit. Calibration anchor: OOF→LB.
+- **Code/agent** (Simulation): bundle → local 3-opponent panel
+  (Wilson-lo ≥ 0.55 per opponent) → kernel push. Calibration anchor:
+  predicted-rank vs actual TrueSkill μ.
+
+Files marked `[TABULAR-ONLY]` apply only to tabular comps; skip on
+Orbit Wars and successors.
 
 ## When to invoke this skill
 
@@ -68,18 +71,27 @@ If CLAUDE.md is > 50k tokens, archive it before doing anything else.
 ## What to do, in priority order
 
 1. **Check submission status** (Haiku-tier, read-only). What's been
-   probed today? How many slots remain?
+   probed today? How many slots remain? (Orbit Wars: rolling-last-2
+   means the third push evicts a slot — surface what's at risk.)
 2. **Re-read [guardrails.md](guardrails.md)** if you have not in this
    session. Especially: ask-first/no-loop, NEVER-LOCK-FINALS,
-   research-before-saturation.
+   research-before-saturation, consecutive-falsification cap (Rule 37).
 3. **Pick an experiment** from the queue OR generate one via the
-   appropriate loop ([loops.md](loops.md)).
+   appropriate loop ([loops.md](loops.md)). Heuristic-first.
 4. **If at a plateau (3+ nulls or 5+ saturations)**: trigger the
    Research-loop. Do NOT skip — every plateau-break in our reference
    competition came from external research.
-5. **Execute** with smoke + 1-fold time-probe gates.
-6. **Pre-LB-probe**: 4-gate leakage filter + minimal-input meta
-   sanity check.
+5. **Execute with smoke + time-probe gates.**
+   - Tabular: smoke @ 50k rows → 1-fold time-probe → 5-fold production.
+   - Code-comp: smoke vs cheap floor (random + nearest) → local A/B vs
+     incumbent → calibration panel.
+   - Kaggle GPU kernels: two-tier smoke required (CPU single-state →
+     small-scale GPU ≤ 4 games × 50 turns → production). See Rule 2.
+6. **Pre-submit gate.**
+   - Tabular: 4-gate leakage filter + minimal-input meta sanity check.
+   - Code-comp: `fast.py eval --vs-panel` (3-opponent calibration
+     panel); panel verdict PASS requires Wilson-lo ≥ 0.55 per opponent,
+     not pooled. Catches non-transitive A>B>C>A loops.
 7. **Ask PI** before any submit. Single-shot, never loop.
 8. **Audit**: write `audit/YYYY-MM-DD-<topic>.md` end-of-session.
 9. **Log friction** as one-liners to `audit/friction.md` whenever

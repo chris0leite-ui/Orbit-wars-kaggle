@@ -19,6 +19,7 @@ import argparse
 import ast
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -63,6 +64,13 @@ DEFAULT_LIB_ORDER = [
     # maximin depth-2 search. Replaces the v3.5.1-mirror opp model.
     "missions/opp_archetypes",
     "planner",
+    # lib/lookahead.py — env-clone-based forward sim used by
+    # v7_minimax (env_from_obs, score_joint_action_symmetric). Distinct
+    # from lookahead_planner.py. Latent bug surfaced by the 2026-05-14
+    # loud-error guard: the existing tracked v7_minimax bundle has these
+    # symbols undefined; agent's wallclock fallback masked the NameError
+    # on the live ladder. Future bundles get them inlined correctly.
+    "lookahead",
     "lookahead_planner",
     # Pure-Python rebuild of the orbit_wars game engine (Phase 2 of the
     # consolidate-fast-simulation work; 2026-05-12). fast_sim imports
@@ -90,8 +98,75 @@ SUBMISSIONS = REPO / "submissions"
 
 
 _INTRA_IMPORT_RE = re.compile(r"^\s*from (lib|\.)[\w.]*\s+import\b.*$")
+# Captures the lib-relative module path so we can verify it's in the bundle
+# order list. Friction: `bundler-missing-block-e-modules`,
+# `new-lib-module-silently-broken-bundle`, `bundle-default-lib-order-stale-...`
+# — three classes of the same silent failure mode.
+_LIB_IMPORT_MODULE_RE = re.compile(r"^\s*from\s+lib\.([\w.]+)\s+import\b")
 _FUTURE_IMPORT_RE = re.compile(r"^\s*from __future__\s+import\b.*$")
 _DOCSTRING_OPENER_RE = re.compile(r'^\s*("""|\'\'\')')
+
+
+def _extract_lib_module(line: str) -> str | None:
+    """Return the `lib.X.Y` module name from a `from lib.X.Y import ...` line.
+
+    Returns the bundle-order form (e.g. `missions/snipe` for `lib.missions.snipe`),
+    or None if the line doesn't match the lib-import pattern.
+    """
+    m = _LIB_IMPORT_MODULE_RE.match(line)
+    if not m:
+        return None
+    return m.group(1).replace(".", "/")
+
+
+def _assert_lib_imports_resolved(src: str, lib_modules: list[str], source_label: str) -> None:
+    """Loud-error if a `from lib.X import Y` line strips to a module not in lib_modules.
+
+    The bundler's `_INTRA_IMPORT_RE` strips intra-package imports and assumes
+    the referenced symbols are already in scope from a preceding inlined
+    module. When `lib/X.py` isn't in `lib_modules`, the symbols are never
+    defined — the bundle runs but blows up with NameError on the first call
+    that hits them. Tests using a non-exercising agent (e.g. v1_orbitfix
+    against the snipe-stack mission framework) don't catch this.
+
+    Friction recurrences this comp: 2026-05-11 (block E), 2026-05-12 (v7.5),
+    2026-05-13 (H16 PV target valuation — silent draws in 8-seed A/B).
+    """
+    lib_set = set(lib_modules)
+    missing: list[tuple[int, str]] = []
+    for lineno, line in enumerate(src.splitlines(), start=1):
+        mod = _extract_lib_module(line)
+        if mod is None:
+            continue
+        if mod not in lib_set:
+            missing.append((lineno, mod))
+    if missing:
+        lines = "\n".join(
+            f"  {source_label}:{lineno}: from lib.{mod.replace('/', '.')} import ..."
+            f"  (lib/{mod}.py not in --lib order)"
+            for lineno, mod in missing
+        )
+        raise RuntimeError(
+            "bundler: lib import(s) without a corresponding module in --lib order:\n"
+            f"{lines}\n"
+            "Add the module(s) to DEFAULT_LIB_ORDER in scripts/bundle_agent.py "
+            "(or pass --lib explicitly). Stripping these imports without an "
+            "inlined source would NameError at runtime."
+        )
+
+
+def _is_tracked(path: Path) -> bool:
+    """True iff `path` is tracked by git in the repo. False on git failure."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", str(path)],
+            cwd=REPO,
+            capture_output=True,
+            check=False,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, OSError):
+        return False
 
 
 def _strip_module_docstring(src: str) -> str:
@@ -181,7 +256,12 @@ def _clean_agent_source(src: str) -> str:
     return "".join(out)
 
 
-def bundle(agent_dir: Path, lib_modules: list[str], out_dir: Path = SUBMISSIONS) -> Path:
+def bundle(
+    agent_dir: Path,
+    lib_modules: list[str],
+    out_dir: Path = SUBMISSIONS,
+    force: bool = False,
+) -> Path:
     """Produce `<out_dir>/<name>.py` and return its path.
 
     `agent_dir` may be either:
@@ -189,6 +269,12 @@ def bundle(agent_dir: Path, lib_modules: list[str], out_dir: Path = SUBMISSIONS)
         `<name>` is the directory name); or
       - a path to a single `.py` file (flat agent shape used by
         `agents/simple/<n>.py`; `<name>` is the file stem).
+
+    Raises:
+      RuntimeError if any `from lib.X import ...` strips to an X not in
+        `lib_modules` (would NameError silently at runtime).
+      FileExistsError if `<out_dir>/<name>.py` is tracked by git and
+        `force` is False (would silently clobber a known-good submission).
     """
     if agent_dir.is_file() and agent_dir.suffix == ".py":
         main = agent_dir
@@ -203,6 +289,34 @@ def bundle(agent_dir: Path, lib_modules: list[str], out_dir: Path = SUBMISSIONS)
     else:
         raise FileNotFoundError(f"agent path not found: {agent_dir}")
 
+    # Pre-flight: verify every stripped lib import has an inlined target.
+    # Check the agent first (most common failure mode), then each lib module
+    # in turn (a new lib module may itself import another new lib module).
+    agent_src = main.read_text()
+    _assert_lib_imports_resolved(agent_src, lib_modules, str(source_label))
+    lib_srcs: list[tuple[str, str]] = []
+    for mod in lib_modules:
+        path = REPO / "lib" / f"{mod}.py"
+        if not path.is_file():
+            raise FileNotFoundError(f"lib module missing: {path}")
+        src = path.read_text()
+        _assert_lib_imports_resolved(src, lib_modules, f"lib/{mod}.py")
+        lib_srcs.append((mod, src))
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{name}.py"
+
+    # Overwrite protection: a tracked submission file is a known-good
+    # bundle for a live Kaggle entry. Silent overwrite has clobbered live
+    # references twice (`bundle-output-clobbers-prior-bundles` 2026-05-10,
+    # `bundler-overwrites-tracked-submission` 2026-05-13).
+    if out_path.exists() and _is_tracked(out_path) and not force:
+        raise FileExistsError(
+            f"refusing to overwrite tracked file {out_path.relative_to(REPO)} "
+            f"(it backs a live submission). Pass --force to override, or write "
+            f"the new bundle to a different name."
+        )
+
     parts: list[str] = []
     parts.append(
         f"# Bundled by scripts/bundle_agent.py from {source_label} + "
@@ -211,18 +325,13 @@ def bundle(agent_dir: Path, lib_modules: list[str], out_dir: Path = SUBMISSIONS)
     )
     parts.append("from __future__ import annotations\n")
 
-    for mod in lib_modules:
-        path = REPO / "lib" / f"{mod}.py"
-        if not path.is_file():
-            raise FileNotFoundError(f"lib module missing: {path}")
+    for mod, src in lib_srcs:
         parts.append(f"\n# === inlined: lib/{mod}.py ===\n")
-        parts.append(_clean_lib_source(path.read_text()))
+        parts.append(_clean_lib_source(src))
 
     parts.append("\n# === agent ===\n")
-    parts.append(_clean_agent_source(main.read_text()))
+    parts.append(_clean_agent_source(agent_src))
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{name}.py"
     out_path.write_text("".join(parts))
     return out_path
 
@@ -331,8 +440,17 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-parity-gate", action="store_true",
         help="skip the post-bundle self-play parity check (NOT recommended)",
     )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="overwrite an existing git-tracked submission file (DEFAULT: refuse)",
+    )
     args = parser.parse_args(argv)
-    out = bundle(args.agent_dir.resolve(), args.lib, out_dir=args.out_dir.resolve())
+    out = bundle(
+        args.agent_dir.resolve(),
+        args.lib,
+        out_dir=args.out_dir.resolve(),
+        force=args.force,
+    )
     h = _bundle_hash(out)
     print(f"wrote {out} ({out.stat().st_size} bytes) sha256:{h}")
     if not args.skip_parity_gate:
