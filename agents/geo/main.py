@@ -92,10 +92,10 @@ from lib.missions.opening import propose_opening_missions
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.missions.snipe import propose_snipe_missions
 from lib.planner import settle_plan
-from lib.v7_search import (
-    _action_from_intents, _infer_num_seats,
-    score_candidate, score_candidate_4p,
-)
+from lib.v7_search import _action_from_intents
+from lib.v7_search import _infer_num_seats
+from lib.v7_search import score_candidate
+from lib.v7_search import score_candidate_4p
 from lib.world_model import WorldModel
 
 from lib.geo.sense import SenseState, sense_state
