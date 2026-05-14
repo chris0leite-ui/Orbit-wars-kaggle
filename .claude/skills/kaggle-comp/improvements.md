@@ -19,19 +19,32 @@
 
 ## Pending — promotion needed
 
-### [ ] [CROSS-CUTTING] SessionStart hook to enforce Rule 32 (git fetch at session start)
+### [ ] [CROSS-CUTTING] **TOP PRIORITY** SessionStart hook: bootstrap + git fetch
 
-`tag: handover-stale-at-session-start-no-git-log-check`. Origin:
-Orbit Wars 2026-05-13. Rule 32 already requires session-start
-`git fetch + git log HEAD..origin/main + diff HANDOVER.md`. It is
-skipped in practice — 5/13 LATE wrote a full plan-mode design for
-work already completed on the branch (`cb02fd9`, `4ba55f4`). Cost
-~30 min designing duplicated work + PI trust hit.
+`tag: fix-not-validated-against-real-failing-state` (2026-05-14),
+`tag: agent-introspection-skipped-bootstrap` (2026-05-13),
+`tag: handover-stale-at-session-start-no-git-log-check` (2026-05-13).
+Three same-class incidents in two days. Pattern: a rule written in
+friction.md doesn't bind because friction notes don't gate behaviour.
+Promoted to CLAUDE.md Rule 38 (fix-verification reproduces failure
+state) but that still relies on the agent remembering. The structural
+fix is a SessionStart hook.
 
-**Fix:** add a SessionStart hook (use the `session-start-hook` skill
-in this environment) that runs `git fetch origin && git log -5
---oneline HEAD` and posts the result before the first agent
-response. Stops the aspirational-rule problem at the source.
+**Fix:** create `.claude/skills/session-start-hook` content that runs:
+1. `git fetch origin && git log -5 --oneline HEAD`
+2. `bash bootstrap.sh` (idempotent — guards skip if already present)
+3. `python -m pytest tests/ -q --no-header -x --tb=line 2>&1 | tail -5`
+
+Each step's output posted before the first agent response. Stops:
+- Handover-staleness (git step)
+- Bootstrap-skipped (bootstrap step; runs unconditionally because
+  the patched bootstrap.sh internally checks for `data/main.py`)
+- Test-baseline-unknown (pytest step; gives the agent a fresh
+  "16 fail" or "0 fail" reading)
+
+Cost evidence (3 incidents): ~30 min designing duplicated work + 16
+spurious pytest failures the agent labelled "pre-existing" + 10 min
+manual recovery on day-1 audit branch.
 
 ### [ ] [CODE-COMP-DISCOVERED] AST-walk import discovery in bundle_agent.py
 

@@ -139,6 +139,20 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
     one full session. Complements Rule 4 (never-give-up applies to
     *families*; Rule 37 caps *axes within* a family). Origin: 2026-05-14
     chooser-axis exhaustion postmortem; PI-ratified.
+38. **Fix-verification reproduces the failure state.** When you fix a
+    friction, the verification step is: (a) reproduce the failing
+    state the friction was originally observed in, (b) apply the fix,
+    (c) confirm the original failure mode is gone. Unit-testing the
+    new code path in isolation (synthetic inputs, `--help` output,
+    AST guards) is NECESSARY but NOT SUFFICIENT — it cannot detect
+    fix-doesn't-apply-to-real-environment. Origin: 2026-05-14
+    audit-pass session — patched `bootstrap.sh`, then watched 16
+    pytest failures with the exact error string the fix targeted, and
+    categorised them as "pre-existing, not regression" instead of
+    running the fixed bootstrap. Same pattern as
+    `agent-introspection-skipped-bootstrap` (2026-05-13). The friction
+    log already had the rule written; it bound nothing because it
+    lived in a notes file, not in CLAUDE.md.
 
 ## Defaults from prior-comp postmortem
 

@@ -61,6 +61,24 @@ fix forward AND add a test.
   **Open follow-up:** make `--vs-panel` mandatory before submission
   (workflow rule, not yet hard-gated in source).
 
+## Newly-fired patterns (this session)
+
+- `tag: fix-not-validated-against-real-failing-state` — 2026-05-14
+  audit-pass: I patched `bootstrap.sh` for `data-main-py-missing-on-
+  fresh-clone`, ran the unit guards (syntax check, AST tests, --help
+  output), saw 16 pytest failures with the exact `data/main.py` error
+  string the patch was meant to neutralise, and categorised them as
+  "pre-existing, not regression" instead of running the patched
+  bootstrap. PI caught it: "you have not been able to bootstrap
+  properly even though you noticed the friction." Same pattern as
+  `agent-introspection-skipped-bootstrap` (2026-05-13). **Root cause:**
+  fix-verification protocol was "unit-test the new code path" rather
+  than "reproduce the failure state and confirm fix neutralises it."
+  The rule was written in friction.md but never bound because friction
+  notes don't gate behaviour. **Fix this session:** promoted to
+  CLAUDE.md Rule 38; bumped SessionStart bootstrap hook to top
+  pending in `improvements.md`.
+
 ## Still-open patterns (next-session priority)
 
 - `tag: handover-stale-at-session-start-no-git-log-check` — Rule 32
