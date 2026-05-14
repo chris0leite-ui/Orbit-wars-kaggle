@@ -64,7 +64,11 @@ def test_ship_lead_dominant():
     assert f0 - f1 > 0, f"player 0 should be favored; got f0={f0}, f1={f1}"
     bd = favor_breakdown(obs, 0)
     assert bd["F1_ship_lead"] == 95
-    assert bd["F2_prod_lead_x_horizon"] == 0  # production tied
+    # Raw production is tied (3 each) but production-VALUE is now
+    # defensibility-discounted: with 100 vs 5 ships and equal prod,
+    # player 1's planet is vulnerable, so opp_prod_value < my_prod_value
+    # → F2_prod_value_lead > 0 (further amplifying our advantage).
+    assert bd["F2_prod_value_lead"] >= 0
 
 
 def test_production_lead_scales_with_horizon():
@@ -112,6 +116,36 @@ def test_comet_decay():
     assert f_fresh > f_exp, (
         f"fresh comet should be worth more than expiring; "
         f"fresh_diff={f_fresh}, expiring_diff={f_exp}"
+    )
+
+
+def test_f3_close_enemy_discounts_production():
+    """F3 (defensibility): an undefendable planet's production gets
+    discounted by `prod × expected_hold_time` instead of `prod × full_horizon`.
+
+    Compare two states where player 0 owns the same prod-3 planet:
+      - safe: only far away weak enemy → hold ≈ full horizon
+      - threatened: very close enemy with overwhelming ships → hold ≈ 1
+    F2_prod_value_lead should collapse in the threatened state.
+    """
+    safe_planets = [
+        (0, 0, 20.0, 20.0, 2.0, 2, 3),
+        (1, 1, 90.0, 90.0, 2.0, 100, 1),   # 100 ships but far + weak prod
+    ]
+    threatened_planets = [
+        (0, 0, 20.0, 20.0, 2.0, 2, 3),
+        (1, 1, 26.0, 26.0, 2.0, 100, 1),   # 100 ships and close
+    ]
+    obs_safe = _obs(planets=safe_planets, step=100)
+    obs_threatened = _obs(planets=threatened_planets, step=100)
+    bd_safe = favor_breakdown(obs_safe, 0)
+    bd_threatened = favor_breakdown(obs_threatened, 0)
+    assert (
+        bd_threatened["F2_prod_value_lead"] < bd_safe["F2_prod_value_lead"]
+    ), (
+        f"close-enemy threat should discount my planet's production; "
+        f"safe={bd_safe['F2_prod_value_lead']}, "
+        f"threatened={bd_threatened['F2_prod_value_lead']}"
     )
 
 
