@@ -1,5 +1,56 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-14 (claude/simplify-fast-setup-azW8T — geo iteration + ladder regression)
+
+- `tag: local-vs-v7_0-only-misses-ladder-distribution` — geo v3.1 was
+  tested locally vs v7_0 only (n=192: 57.3% / Wlo 0.50; +7pp 2P) and
+  vs 3x v7_0 in 4P (n=128: 56.3% first-place / +31pp over baseline).
+  Live ladder result: μ=984.0 σ-discounted floor (-80μ from v7_pv's
+  1064.4). Same pattern as v3.5.1 on 2026-05-12 (-150μ vs local
+  +56.6% Wlo). The v7_0 self-panel doesn't reflect the live ladder
+  distribution (v3.5.1, v7_pv, v7_0_drop_one_rebuilt, top-10 archetypes).
+  **Promotion candidate**: future local A/B must span ≥3 opponent
+  classes before any submission. Add `--vs-panel` flag to `fast.py
+  eval` that runs a 3-opponent panel by default.
+
+- `tag: geo-v2-iteration-trajectory-downward-not-individually-regressing` —
+  v3.2 batch (gang_up + empty_out + tap_capture): each addition was
+  within the 5pp drop threshold individually (v3.1 57.3% → v3.2a 59.4%
+  → v3.2b 56.2% → v3.2c 53.1%), but cumulative -4pp from v3.1 baseline.
+  Adding more candidates of similar score makes the K=10 lookahead's
+  ranking noisier even when each tilt is "fine" in isolation.
+  **Fix**: test each batch component vs the FINAL baseline (not
+  step-by-step) before stacking. Or: cap candidate count.
+
+- `tag: jax-vmap-already-wired` — I claimed "B: JAX vmap deferred,
+  4-6 hour integration" earlier in the session citing missing
+  obs→GameState converter. WRONG. `agents/jax_v7_0/main.py` and
+  `lib/game/jax/conversions.py:scalar_to_jax` already implement the
+  path. Measured: JIT compile 1.8s (one-time, pre-warmable at import),
+  cached score 6ms (30-70× faster than scalar score_candidate's
+  ~200-400ms). **Fix**: when claiming integration is missing, READ
+  agents/*_v*_*/main.py to check for prior wrappers. The "OFFLINE-ONLY"
+  flag on jax_v7_0 is a parity concern, not an integration block.
+
+- `tag: geo-v2-three-failed-wallclock-fixes` — geo v2.3 (K=10 lookahead
+  + sense tilts + archetypes + 4P branch) gives ~+5-7pp 2P lift over
+  v7_0 (n=192) and +31pp 4P first-place lift (n=128). But max=1500-
+  2900ms in 5% of turns risks ladder forfeit. Three iterations to
+  "fix" the wallclock all regressed strategy more than they bounded
+  max: v2.4 lite_greedy follow-up (-17pp), v2.5 WALLCLOCK 350 (-20pp),
+  v2.7 K=8 (-20pp). v2.3/v2.6/v2.8/v3.1 = same code = local optimum.
+  **Promotion candidate**: when a single-knob change costs more than
+  it saves in three orthogonal directions, the config IS the local
+  optimum — stop tuning, submit if positive, find structurally
+  different lever otherwise.
+
+- `tag: signal-alarm-bounds-wallclock-outliers` — geo v2.9 added
+  SIGALRM-based per-score timeout (700ms cap) to score_candidate.
+  Bounded max wallclock from 1500-2900ms to 1100-1200ms with NO
+  strategic regression (v2.9 vs v7_0 n=64: 59.4%, ~+9pp vs baseline).
+  POSIX-only; falls back gracefully on Windows. This pattern is
+  reusable for any future agent that has K=10+ lookahead outliers.
+
 ## 2026-05-13 (claude/research-competition-analysis-2R8I3 — Day-1 audits + 3-anchor gate)
 
 - `tag: fresh-sandbox-no-deps-installed` — `kaggle_environments`,

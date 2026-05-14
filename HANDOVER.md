@@ -1,151 +1,142 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-14 by `claude/read-handover-iLWTq`.
-> Prior handover archived as
-> `audit/archive-2026-05-14-handover-pre-search-exhaustion.md`.
+> Last written: 2026-05-14 by `claude/simplify-fast-setup-azW8T` (merge of
+> `claude/research-competition-analysis-2R8I3` +
+> `claude/read-handover-iLWTq` + this branch's geo iteration).
+> Prior wraps: `audit/archive-2026-05-14-handover-pre-search-exhaustion.md`,
+> `audit/archive-2026-05-1*-handover-*.md`.
 
 ## Where we are
 
-- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC → **40 days
-  remaining.**
-- **Live submitted agent** (per state/current.md post-merge):
-  **`v7_pv` #52630118** (v7_0_drop_one + present-value horizon
-  scoring, γ=0.99), live μ ≈ **1061.8 and climbing**. Shipped by the
-  parallel `claude/research-competition-analysis-2R8I3` branch this
-  same session (PR #17), passed 32-seed scalar A/B at 68.8 %
-  Wilson lo 56.6 %.
-- **Rolling-last-2:** `[v7_0_drop_one_rebuilt #52607699 μ≈1043.4,
-  v7_pv #52630118 μ≈1061.8]`. The original `v7_0_drop_one #52588156`
-  (μ=1094.9 at our session-start) was evicted by the rebuild push.
-- **No submission from THIS branch.** All 7 v7_X variants this
-  branch built failed their gates; live anchor is from the parallel
-  branch.
+- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC → **40 days remaining.**
+- **Team leaderboard score:** **μ=1064.4** (= max of rolling-last-2 = v7_pv).
+  **Rank 125 / 2667** (top 4.7 %). Slipped from 109/2587 since 5/12 due
+  to total-team growth and lower current rolling-slot.
+- **Rolling-last-2:** `[geo v3.1 #52643676 (μ=984.0, σ-discounted floor),
+  v7_pv #52630118 (μ=1064.4)]`. geo just submitted ~5h ago; μ still
+  settling.
+- **Daily submission budget:** 1/5 used today (geo). 4 remaining but
+  **every new push evicts v7_pv (our best)** unless the new score
+  decisively exceeds 1064.4.
+- **Calibration warning** (`tag: local-overpredict-2x`): local A/B
+  over-predicted ladder for 2 consecutive submissions (v3.5.1 5/12 =
+  −150μ; geo v3.1 5/14 = TBD but −80μ floor). Both panels were vs
+  v7_0 only. Future submissions need ≥3-opponent local panel.
 
-## This session — 7 falsifications on the chooser/proposer axis
+## Day-N PM simplify-fast-setup-azW8T (this branch — geo iteration)
+
+The session evolved: fast-iteration framework → geometric strategy →
+game-theoretic combination → ladder submission.
+
+**Shipped (29 commits):**
+
+1. `fast.py` — one-file iteration entry point. Replaces 31 scripts.
+   Validated bit-identical against audit-logged v7_1 reproduction.
+2. `lib/geo/{sense,posture,allocator}.py` — geometric primitives:
+   clustering, Voronoi, front detection, threat budget, posture
+   arbiter, LP + greedy-multi allocators. 17 unit tests.
+3. `agents/geo/main.py` v3.2 — K=10 lookahead + 4 sense tilts + 2
+   archetypes + gang_up + 4P branch (`score_candidate_4p`)
+   + **SIGALRM per-score timeout** (700 ms cap; bounded max from
+   1500-2900 ms to 1100-1200 ms with no strategic cost).
+4. `submissions/geo.py` — bundled (sha256:1babc39d), submitted as
+   #52643676.
+
+**Local A/B (combined runs, n large):**
+
+| Matchup | n | winrate | Wlo |
+|---|---|---|---|
+| vs v7_0 (2P) | 192 | 57.3 % | ~0.50 |
+| vs v3.5.1 (2P) | 128 | 57.0 % | ~0.48 |
+| vs 3× v7_0 (4P 1st-place) | 128 | 56.3 % | 0.48 |
+
+**Live ladder:** geo v3.1 μ=984.0 σ-discounted floor (~80-130 episodes).
+Same local→live overpredict pattern as v3.5.1.
+
+## Day-N PM read-handover-iLWTq (parallel branch — chooser-axis exhaustion)
 
 Seven controlled scalar 32-game A/Bs vs `v7_0_drop_one`. **All lost.**
-v7_0 is robustly the best policy in this design space.
 
-| Variant | Axis | Change | Winrate | Wilson lo |
-|---|---|---|---:|---:|
-| v7_1 | proposer | H11 opening grab | 35.9 % * | 25.3 % |
-| v7_2 | search | depth-2 over v3.5.1 drop-ones | 31.3 % | 18.0 % |
-| v7_3 | opp model | min-regret over hand-crafted archetypes | 28.1 % | 15.6 % |
-| **v7_4** | value head | composite capture-value | **40.6 %** | **25.5 %** |
-| v7_5 | action space | + ADD-one widening | 37.5 % | 22.9 % |
-| **v7_6** | action primitive | + split-source (multi-launch) | **40.6 %** | **25.5 %** |
-| v7_7 | proposer coef | enemy multiplier ×1.3 | 28.1 % | 15.6 % |
+| Variant | Axis | Change | Winrate |
+|---|---|---|---:|
+| v7_1 | proposer | H11 opening grab | 35.9 % * |
+| v7_2 | search | depth-2 over drop-ones | 31.3 % |
+| v7_3 | opp model | min-regret over archetypes | 28.1 % |
+| **v7_4** | value head | composite capture-value | **40.6 %** |
+| v7_5 | action space | + ADD-one widening | 37.5 % |
+| **v7_6** | action primitive | + split-source | **40.6 %** |
+| v7_7 | proposer coef | enemy multiplier ×1.3 | 28.1 % |
 
-\* v7_1 measured in JAX 64-game A/B (35.9 % / Wilson lo 25.3 %);
-   scalar 32-game showed 53.1 % / Wilson lo 36.4 % — underpowered.
+Best ~10 pp below 50 % baseline. **Chooser-axis design space is
+exhausted.** Side wins: bundler parity-gate fix (env-var override),
+composite_capture_value value head, 3 new action enumerators,
+opp-archetype set, JAX depth-2 parked (GPU compile too slow).
 
-Best: v7_4 = v7_6 = 40.6 %, ~10 pp below 50 % baseline. **Per-source
-greedy ROI proposer is doing 95 % of the work**; the chooser's added
-value is small and noise-dominated. The chooser-axis design space is
-**exhausted** — further refinements have negative marginal EV.
+## Day-N PM research-competition-analysis-2R8I3 (parallel branch — PV win + 8 falsifications)
 
-## Side wins this session (not a v7_X)
+**v7_pv (PV target valuation, γ=0.99) shipped to ladder at μ=1064.4.**
+Eight other interventions monotonically FALSIFIED:
+danger3 (×3 κ), FLEET_OVERCOMMIT (×3 mults), PRE_REINFORCE (×3
+windows), Renaissance trio + per-mission ablation, HAV-1 binary +
+soft-floor ×2, Holding-tier alone.
 
-- **Bundler parity-gate non-determinism fixed** (commit `07ef918`).
-  Root cause was wallclock-budget bail, not module-level mutable
-  state. New `_effective_wallclock_ms` helper + env-var override
-  (`ORBIT_WARS_PARITY_WALLCLOCK_MS`) lets `_parity_gate` run under
-  unbounded budget while production agents keep the 700 ms watchdog.
-  9 unit tests in `tests/test_v7_search_shared_model_cleanup.py`.
-- **`composite_capture_value` value head** (`lib/value_heads.py`).
-  Rewards predicted captures via `WorldModel`-based fleet-fate
-  attribution; penalises bouncing / OOB / sun trajectories. Net
-  +9 pp over plain ship-delta in 32-game A/B (v7_4 vs v7_2). Kept
-  in the lib for any future chooser that wants it.
-- **3 new action-primitive enumerators** (`_enumerate_add_one`,
-  `_enumerate_split_source`, `_enumerate_drop_or_add_one`,
-  `_enumerate_drop_or_split`). Wired into `enumerate_candidates`;
-  available for any future variant. Not load-bearing — v7_5 / v7_6
-  showed them not productive under the current proposer / value head.
-- **Hand-crafted opp-archetype set** (`lib/missions/opp_archetypes.py`).
-  5 archetypes (no-launch / v3.5.1 / counter-reinforce /
-  counter-snipe / cross-attack) for maximin / min-regret aggregation.
-  v7_3 used it; falsified, but the module is reusable.
-- **JAX depth-2 (parked).** `lib/game/jax/jax_depth2.py` (~340 LOC)
-  with capped 4×2 nested-vmap. Compiles + runs single-state on CPU
-  in ~110 s JIT + 20 s hot. **GPU compile fundamentally too slow**
-  even at small scale (PI killed at 35 min); see friction
-  `scale-without-smoke-burned-90min-t4`. Don't push to T4 without
-  the two-tier-smoke rule that PI ratified this postmortem.
+**Architectural finding:** v7 + PV is a tight local optimum; pre-
+discounting scoring/proposer signals the rollout already evaluates
+→ monotonic regression. Productive next move is architectural.
 
-## Falsified / dead
+Plumbing: 3-anchor Wilson gate, PV_GAMMA in JAX, HAV helpers,
+Renaissance flags (default-off), snipe tier emission framework.
 
-- All seven v7_X variants above. Mechanism families: H11-only,
-  depth-2-maximin, archetype-min-regret, drop-one + capture-value,
-  drop-or-add-one, split-source, enemy-multiplier-×1.3. Falsified
-  at 32-game scalar A/B vs v7_0 with Wilson lo < 0.55 across the
-  board.
-- JAX depth-2 game-vmap'd kernel at 64 games × 500 turns — both
-  full nested vmap (OOM) and `lax.scan` refactor (90-min stall)
-  proven not to compile within practical limits on T4.
+## Falsified or dead (across all three branches today)
 
-## Next-session first-actions
+- All 7 v7_X chooser-axis variants (chooser-axis exhausted)
+- All 8 R2R3 proposer/scoring variants (PV local optimum)
+- geo v1's posture multipliers, greedy-multi allocator (~-30 pp each)
+- geo v2.4-2.7 wallclock "fixes" (-17 to -20 pp each)
+- geo v3.0 composite value head as agent value_fn (-19 pp)
+- geo v3.2 empty_out + tap_capture cumulative (-4 pp)
+- JAX depth-2 game-vmap (GPU compile fundamentally too slow)
 
-The chooser/proposer axis is exhausted. Real lift requires
-architectural change. Three viable paths, ranked by tractability:
+## Next-session first-action (ranked by EV / cost)
 
-1. **Target-set planner** (~3-5 days, mid-risk). Replace
-   `_build_incumbent_intents` with a planner that picks PLANET
-   SETS to conquer (combinations like "opp's 2-planet home
-   cluster + 1 neutral support"), then solves the source → target
-   assignment for each set. Score each set via `fast_sim` K=10
-   rollout with `composite_capture_value`. New action primitive:
-   a coherent multi-launch plan rather than per-source greedy
-   picks. Most likely to produce real lift; PI's framing of
-   "combinations of planets we need to conquer" maps directly.
+1. **Re-check geo's ladder Score** (5 sec). If μ has climbed to 1050+,
+   substrate fine and we iterate. If <1000 after 24h, real regression
+   → diagnose.
 
-2. **Learned policy / shot validator** (~weeks, high-risk).
-   The H14 workstream: train a small classifier (30-50 feature
-   logreg or MLP) on the 37 k labeled examples in
-   `data/shot_validator/` to predict launch-outcome
-   (capture / bounce / sun / OOB). Use as a candidate-rejector
-   inside the chooser. Concretely actionable: data exists,
-   schema documented, just no training pipeline yet.
+2. **Loss-mode diagnostic on geo's live replays** (~30 min). Pull via
+   `scripts/live_episode_summary.py` + `scripts/classify_losses.py`.
+   The 5/13 audit showed v7_0 was 68 % opening-determined; geo's
+   losses likely cluster differently — we DO opening-grab heavily,
+   weakness may be mid-game vs top archetypes we never tested locally.
 
-3. **Self-play RL fine-tuning on JAX** (~weeks, highest-risk).
-   The JAX engine is bit-exact and game-vmappable; PPO or DQN
-   fine-tuning a small policy net against frozen v7_0 is in
-   reach. Multi-week investment with binary outcome.
+3. **Broaden local A/B panel** (`tag: local-overpredict-2x`). Add a
+   `--vs-panel` flag to `fast.py eval` that runs 3-opponent panel
+   (v3.5.1, v7_pv, v7_0_drop_one_rebuilt) by default. Eliminates the
+   v7_0-only blind spot.
 
-If none of those are appetising: **lock the rank** at μ=1094.9
-top 4.2 %, 40 days. Save remaining capacity for ladder-shift
-response (if competitors push and we drop, re-investigate).
+4. **JAX vmap scoring on geo** (~1-2 h). `agents/jax_v7_0/main.py` shows
+   the integration path; `score_candidate_jax_pure_jit` is 6 ms after
+   JIT (30-70× speedup). Pre-warm at import. Lets us score ALL
+   candidates without wallclock gate; could enable K=15+ lookahead.
 
-## Out of scope for next session
+5. **Architectural search** (per R2R3's exhaustion finding). Portfolio
+   search across opp ensembles, JAX-batched depth-2 with the GPU
+   compile constraint fixed, or imitation learning from top-10 replays
+   (Bovard IL is referenced in audit).
 
-- More chooser refinements. The 7-falsification pattern is
-  conclusive. Rule 37 (consecutive-falsification-cap, ratified
-  this postmortem) explicitly forbids this.
-- Pushing JAX depth-2 to T4 without the two-tier-smoke checklist
-  (also ratified this postmortem).
+## Pointers (this session)
 
-## Pointers — this-session deliverables
-
-- `lib/value_heads.py::composite_capture_value` + 4 tests.
-- `lib/missions/opp_archetypes.py` (5 archetypes) + 7 tests.
-- `lib/v7_search.py::_enumerate_add_one`, `_enumerate_split_source`,
-  `_enumerate_drop_or_add_one`, `_enumerate_drop_or_split`,
-  `choose_archetype_minregret`, `choose_archetype_minregret_with_4p`,
-  `_effective_wallclock_ms`, `_bind_shared_world_model`.
-- `lib/missions/snipe.py::ENEMY_MULTIPLIER` constant (default 1.0;
-  bundle build workflow documented in `v7_7_enemy_mult/main.py`).
-- `lib/game/jax/jax_depth2.py` (parked).
-- `scripts/bundle_agent.py` — `_parity_gate` env-var override;
-  `opp_archetypes` and (already-landed) `opening` in
-  `DEFAULT_LIB_ORDER`.
-- `agents/v7_3_minregret/`, `v7_4_capture_value/`,
-  `v7_5_drop_add_capture/`, `v7_6_split_source/`,
-  `v7_7_enemy_mult/`. (Bundles in `submissions/` are gitignored.)
-- Tests: `test_v7_search_shared_model_cleanup`,
-  `test_opp_archetypes`, `test_composite_capture_value`,
-  `test_enumerator_add_one`, `test_enumerator_split_source`,
-  `test_jax_depth2`.
-- `audit/2026-05-14-postmortem-read-handover-iLWTq.md`.
-- `.claude/skills/kaggle-comp/improvements.md` — Rule 37
-  (consecutive-falsification cap) + mandatory-two-tier-smoke
-  promoted this postmortem.
+- `audit/2026-05-14-postmortem-geo-session.md` — geo iteration
+  postmortem (this branch).
+- `audit/2026-05-14-postmortem-read-handover-iLWTq.md` — chooser-axis
+  exhaustion postmortem.
+- `audit/2026-05-14-postmortem-research-competition-analysis-2R8I3.md`
+  — PV win + 8 falsifications postmortem.
+- `knowledge-base/thoughts/2026-05-14-geo-v2-iteration-results.md` —
+  geo bisect tables.
+- `knowledge-base/thoughts/2026-05-13-geo-v1-bisect-lessons.md` — v1
+  parity bisect.
+- `agents/geo/main.py` + `lib/geo/*` — geo agent + reusable primitives.
+- `submissions/geo.py` — live submission #52643676.
+- `submissions/v7_pv.py` — live submission #52630118 (team-best).
+- `fast.py` — single-file iteration entry point.
