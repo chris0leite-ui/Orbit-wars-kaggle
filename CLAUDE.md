@@ -153,6 +153,17 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
     `agent-introspection-skipped-bootstrap` (2026-05-13). The friction
     log already had the rule written; it bound nothing because it
     lived in a notes file, not in CLAUDE.md.
+39. **No Claude session URLs in commits / PR bodies.** Do NOT append
+    `https://claude.ai/code/session_…` (or any equivalent session
+    identifier) to commit messages, PR titles, PR bodies, issue
+    comments, or any artifact pushed to a repository. Reason: the
+    repo is public-leaderboard-adjacent, commit history is immutable
+    once pushed, and a session URL is a permanent index from a
+    public artifact to (potentially) a viewable transcript. The
+    standing commit-template instruction asks for the URL; this
+    rule overrides. Keep session identifiers to chat replies only.
+    Origin: 2026-05-14 audit-pass session; PI-ratified after PR #20
+    merged with three commits carrying the link.
 
 ## Defaults from prior-comp postmortem
 
