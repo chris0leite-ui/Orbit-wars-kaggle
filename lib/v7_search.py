@@ -1207,6 +1207,222 @@ def choose_depth2(
     return our_C[best_i] if best_worst > NEG_INF else incumbent_action
 
 
+def choose_archetype_minregret(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K: int = 6,
+    wallclock_ms: float = 700.0,
+    my_id: int | None = None,
+    use_min_regret: bool = True,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+    max_our_candidates: int = 8,
+) -> list[list]:
+    """Depth-2 chooser using hand-crafted opp archetypes (not v3.5.1
+    drop-ones) as the opp candidate set, with either min-regret or
+    maximin row aggregation.
+
+    Why this exists: the prior `choose_depth2` derives `opp_C` from
+    v3.5.1's incumbent via drop-one. Both v7_1 and v7_2 failed in
+    scalar A/B against v7_0_drop_one — strong evidence the v3.5.1
+    opp assumption is biased (the live ladder is heterogeneous). The
+    archetype set (`lib.missions.opp_archetypes`) gives 5 distinct
+    opp threat patterns: no-launch / v3.5.1 / counter-reinforce /
+    counter-snipe / cross-attack. Min-regret aggregation picks our
+    action with the smallest worst-case gap from its best response
+    over any of those archetypes — robust under opp uncertainty.
+
+    `use_min_regret=True` (default) uses min-regret aggregation:
+      regret[i] = max_j (max_k P[k][j] - P[i][j])
+      return argmin_i regret[i]
+    `use_min_regret=False` falls back to maximin:
+      return argmax_i min_j P[i][j]
+
+    4P fallback: depth-2 game-theory is 2P only; 4P returns incumbent.
+    """
+    wallclock_ms = _effective_wallclock_ms(wallclock_ms)
+    t_start = time.perf_counter()
+
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    if my_id is None:
+        my_id = world.my_id
+    model = WorldModel.from_world(world)
+
+    incumbent_intents = _build_incumbent_intents(
+        world, model, include_recapture=include_recapture,
+    )
+    incumbent_action = _action_from_intents(incumbent_intents, obs, model)
+
+    if _infer_num_seats(world) != 2:
+        return incumbent_action
+
+    our_C = _enumerate_drop_one(incumbent_action)
+    if max_our_candidates and len(our_C) > max_our_candidates:
+        our_C = our_C[:max_our_candidates]
+    if len(our_C) <= 1:
+        return incumbent_action
+
+    snap = fs_from_obs(obs, configuration, episode_seed=0, num_seats=2)
+    opp_id = 1 - my_id
+
+    # Opp plays their natural incumbent on turn 1. Same as choose_depth2.
+    opp_initial_action = _opp_incumbent_action(world, obs, opp_id)
+
+    K_tail = max(0, K - 2)
+    N = len(our_C)
+    P: list[list[float]] = [[] for _ in range(N)]
+
+    # Lazy import — keeps the existing lib graph clean.
+    from lib.missions.opp_archetypes import build_opp_archetypes, opp_pov_obs
+
+    for i in range(N):
+        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+        if i > 0 and elapsed_ms > 0.5 * wallclock_ms:
+            P[i] = []
+            continue
+
+        # Forced turn 1.
+        try:
+            snap_i = fs_clone(snap)
+            if not snap_i.done:
+                actions: list[Any] = [None, None]
+                actions[my_id] = our_C[i]
+                actions[opp_id] = opp_initial_action
+                snap_i = fs_step(snap_i, actions, in_place=True)
+        except Exception:
+            P[i] = []
+            continue
+
+        if snap_i.done:
+            try:
+                terminal = (
+                    delta_us_minus_them(snap_i, my_id)
+                    if value_fn is None
+                    else value_fn(snap_i.state[my_id].observation, my_id)
+                )
+            except Exception:
+                terminal = float("-inf")
+            P[i] = [terminal]
+            continue
+
+        # Build opp archetypes from the POST-turn-1 state. Counter-
+        # reinforce uses the OPP's intents that would best counter our
+        # turn-1 launches, so we pass the incumbent intents (we already
+        # committed to a subset of these on this candidate row).
+        opp_obs_after = opp_pov_obs(snap_i.state[opp_id].observation, opp_id)
+        try:
+            opp_archetypes = build_opp_archetypes(
+                opp_obs_after, our_intents=incumbent_intents,
+            )
+        except Exception:
+            opp_archetypes = [[]]
+        if not opp_archetypes:
+            opp_archetypes = [[]]
+
+        row_scores: list[float] = []
+        for j, opp_act in enumerate(opp_archetypes):
+            elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+            if elapsed_ms > wallclock_ms:
+                break
+            try:
+                payoff = _score_after_opp_response(
+                    snap_i, opp_act,
+                    my_id=my_id, opp_id=opp_id, K_tail=K_tail,
+                    value_fn=value_fn,
+                )
+            except Exception:
+                payoff = float("-inf")
+            row_scores.append(payoff)
+
+        P[i] = row_scores
+
+    # Aggregate the payoff matrix.
+    NEG_INF = float("-inf")
+
+    if not use_min_regret:
+        # Maximin: argmax_i min_j P[i][j].
+        best_i = 0
+        best_worst = NEG_INF
+        for i in range(N):
+            if not P[i]:
+                continue
+            worst = min(P[i])
+            if worst > best_worst:
+                best_worst = worst
+                best_i = i
+        return our_C[best_i] if best_worst > NEG_INF else incumbent_action
+
+    # Min-regret: column-wise best response (only over fully-scored rows
+    # so a budget-bailed row doesn't poison the column best), then pick
+    # the row whose worst regret is smallest.
+    M = max((len(row) for row in P), default=0)
+    if M == 0:
+        return incumbent_action
+    col_best: list[float] = []
+    for j in range(M):
+        vals = [P[i][j] for i in range(N) if j < len(P[i])]
+        col_best.append(max(vals) if vals else NEG_INF)
+
+    best_i = 0
+    best_regret = float("inf")
+    for i in range(N):
+        if not P[i] or len(P[i]) < M:
+            # Skip rows that didn't complete every column — would give
+            # pessimistic regret. The incumbent (i=0) is fully evaluated
+            # by the budget-first guarantee above, so the safe default
+            # of `best_i = 0` survives.
+            continue
+        regret_i = max(col_best[j] - P[i][j] for j in range(M))
+        # Tie-break: lower index wins (=row 0 incumbent).
+        if regret_i < best_regret:
+            best_regret = regret_i
+            best_i = i
+
+    return our_C[best_i] if best_regret < float("inf") else incumbent_action
+
+
+def choose_archetype_minregret_with_4p(
+    obs: Any,
+    configuration: Any = None,
+    *,
+    K: int = 6,
+    K_4p: int = 8,
+    wallclock_ms: float = 700.0,
+    use_min_regret: bool = True,
+    include_recapture: bool = True,
+    value_fn: Callable | None = None,
+) -> list[list]:
+    """v7.3 entry that auto-routes 2P → `choose_archetype_minregret`,
+    4P → `choose_4p` (no maximin / regret in 4P)."""
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    n_seats = _infer_num_seats(world)
+    if n_seats == 2:
+        return choose_archetype_minregret(
+            obs, configuration,
+            K=K, wallclock_ms=wallclock_ms,
+            use_min_regret=use_min_regret,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    if n_seats == 4:
+        return choose_4p(
+            obs, configuration,
+            K=K_4p, wallclock_ms=wallclock_ms,
+            include_recapture=include_recapture,
+            value_fn=value_fn,
+        )
+    model = WorldModel.from_world(world)
+    intents = _build_incumbent_intents(
+        world, model, include_recapture=include_recapture,
+    )
+    return _action_from_intents(intents, obs, model)
+
+
 def choose_depth2_with_4p(
     obs: Any,
     configuration: Any = None,

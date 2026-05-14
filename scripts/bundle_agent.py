@@ -51,6 +51,9 @@ DEFAULT_LIB_ORDER = [
     # ahead of v7_search; v3.* bundles never call it, so it's harmless
     # weight there (~3 KB).
     "missions/opening",
+    # v7.3 (2026-05-14): hand-crafted opp archetypes for min-regret /
+    # maximin depth-2 search. Replaces the v3.5.1-mirror opp model.
+    "missions/opp_archetypes",
     "planner",
     "lookahead_planner",
     # Pure-Python rebuild of the orbit_wars game engine (Phase 2 of the
