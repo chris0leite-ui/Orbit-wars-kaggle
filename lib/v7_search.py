@@ -228,6 +228,88 @@ def _enumerate_drop_one(incumbent_action: list[list]) -> list[list[list]]:
     return cands
 
 
+def _enumerate_add_one(
+    world: World, model: WorldModel,
+    incumbent_intents: list[Intent], incumbent_action: list[list],
+    obs: Any,
+) -> list[list[list]]:
+    """Extend the incumbent by one launch from a source the proposer
+    didn't pick. Generates at most one variant per *idle* owned source.
+
+    Why this complements drop-one: `_enumerate_drop_one` is monotonically
+    narrower than the incumbent — it can only suppress launches. The
+    chooser cannot reach moves the proposer skipped. Per the diagnostic
+    audit (`audit/2026-05-13-v7-0-loss-modes.md`) and the H11 / depth-2
+    failures, the action-space width is plausibly the binding constraint.
+
+    For each owned source NOT already in the incumbent, find that
+    source's top-scored snipe-or-reinforce mission and append it to the
+    incumbent action. The result is `incumbent + one_more_launch`. The
+    caller composes this with drop-one for a union enumerator.
+    """
+    if not world.planets_by_id:
+        return [list(incumbent_action)]
+    incumbent_src_ids = {int(intent.src_id) for intent in incumbent_intents}
+
+    # Score per-source missions once; pick each idle source's top.
+    candidate_missions = (
+        propose_snipe_missions(world, model, aggressive=True)
+        + propose_reinforce_missions(world, model)
+    )
+    by_src: dict[int, list[Mission]] = {}
+    for m in candidate_missions:
+        src_id = int(m.src_id)
+        if src_id in incumbent_src_ids:
+            continue
+        by_src.setdefault(src_id, []).append(m)
+
+    cands: list[list[list]] = [list(incumbent_action)]
+    seen_keys = {_action_key(incumbent_action)}
+    for src_id, ranked in by_src.items():
+        if not ranked:
+            continue
+        ranked.sort(key=lambda m: -m.score)
+        top = ranked[0]
+        new_intents = list(incumbent_intents) + [top.to_intent()]
+        new_action = _action_from_intents(new_intents, obs, model)
+        if not new_action:
+            continue
+        k = _action_key(new_action)
+        if k in seen_keys:
+            continue
+        seen_keys.add(k)
+        cands.append(new_action)
+    return cands
+
+
+def _enumerate_drop_or_add_one(
+    world: World, model: WorldModel,
+    incumbent_intents: list[Intent], incumbent_action: list[list],
+    obs: Any,
+) -> list[list[list]]:
+    """Union of `_enumerate_drop_one` and `_enumerate_add_one`. Strictly
+    wider than either alone: incumbent + (drop each launch) + (add one
+    launch from each idle source). Deduplicates exact matches.
+    """
+    cands: list[list[list]] = [list(incumbent_action)]
+    seen_keys = {_action_key(incumbent_action)}
+    for cand in _enumerate_drop_one(incumbent_action):
+        k = _action_key(cand)
+        if k in seen_keys:
+            continue
+        seen_keys.add(k)
+        cands.append(cand)
+    for cand in _enumerate_add_one(
+        world, model, incumbent_intents, incumbent_action, obs,
+    ):
+        k = _action_key(cand)
+        if k in seen_keys:
+            continue
+        seen_keys.add(k)
+        cands.append(cand)
+    return cands
+
+
 def _enumerate_target_swap(
     world: World, model: WorldModel,
     incumbent_intents: list[Intent], incumbent_action: list[list],
@@ -451,6 +533,14 @@ def enumerate_candidates(
     so the watchdog fallback never regresses below v3.5.1."""
     if enumerator_mode == "drop_one":
         return _enumerate_drop_one(incumbent_action)
+    if enumerator_mode == "add_one":
+        return _enumerate_add_one(
+            world, model, incumbent_intents, incumbent_action, obs,
+        )
+    if enumerator_mode == "drop_or_add_one":
+        return _enumerate_drop_or_add_one(
+            world, model, incumbent_intents, incumbent_action, obs,
+        )
     if enumerator_mode == "target_swap":
         return _enumerate_target_swap(
             world, model, incumbent_intents, incumbent_action, obs,
