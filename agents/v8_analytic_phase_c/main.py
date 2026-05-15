@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 
 # Importing the strategy module triggers `register_strategy(...)`.
-from lib.foundation.strategies import analytic_joint  # noqa: F401
+from lib.foundation.strategies import analytic_joint
 
 from lib.foundation import StrategyCtx, get_strategy
 from lib.foundation.agent_loop import (
@@ -27,6 +27,22 @@ from lib.foundation.obs_to_state import my_id_from_obs, obs_to_jax_state
 
 
 _STRATEGY_NAME = "v8_analytic_phase_c"
+
+
+# Pay the ~30-45 s Tier-1 + Tier-2 JIT compile cost at agent-init time
+# (Kaggle's ~60 s budget), so live `agent(obs)` calls hit the JAX cache
+# and complete within the 1 s per-turn budget from turn 0. Opt out via
+# env var for the local A/B harness where the warmup overhead is
+# undesirable (compile is amortised across many games anyway).
+import os as _os
+if _os.environ.get("V8_ANALYTIC_PHASE_C_WARMUP", "1") != "0":
+    try:
+        analytic_joint.warmup_jits()
+    except Exception:
+        # Warmup is an optimisation, not a correctness requirement.
+        # If it fails for any reason, the first live emit() will pay
+        # the cold compile cost itself.
+        pass
 
 
 def agent(obs: Any, configuration: Any = None) -> list[list]:

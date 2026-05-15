@@ -169,9 +169,17 @@ def test_archetype_panel_builds_on_seeded_obs():
 # ---------------------------------------------------------------------------
 
 
-def test_phase_c_agent_runs_one_turn_e2e():
+def test_phase_c_agent_runs_one_turn_e2e(monkeypatch):
     """`agents/v8_analytic_phase_c/main.py::agent` returns a valid
-    env-format action list. This is the integration smoke."""
+    env-format action list. This is the integration smoke.
+
+    The agent module triggers JIT warmup at import time. Skip it for
+    pytest (the warmup costs ~45 s and re-tests nothing the unit-test
+    suite doesn't already cover — the first call to `agent(obs)`
+    will pay the cold compile cost itself, which is fine for a single
+    test invocation).
+    """
+    monkeypatch.setenv("V8_ANALYTIC_PHASE_C_WARMUP", "0")
     from agents.v8_analytic_phase_c.main import agent
 
     reset_memory()

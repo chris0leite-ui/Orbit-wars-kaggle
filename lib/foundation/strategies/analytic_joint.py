@@ -415,3 +415,73 @@ def _recover_target_for_launch(
 
 
 register_strategy("v8_analytic_phase_c", AnalyticJointStrategy())
+
+
+def warmup_jits() -> None:
+    """Trigger both Tier-1 (Phase A K=5 scorer) and Tier-2 (multi-turn
+    H=2 rollout) JIT compilations against a real seed-42 init state.
+
+    Cost: ~30-45 s total (one trace each); subsequent live `emit` calls
+    hit the JAX cache and complete in ~300-500 ms warm.
+
+    NOT called at module import — pytest imports of the strategy
+    module shouldn't pay the cost. The Kaggle agent main module
+    (`agents/v8_analytic_phase_c/main.py`) calls this AT IMPORT time
+    so the 45 s lands inside the ~60 s Kaggle agent-init budget,
+    not the 1 s per-turn budget.
+
+    Idempotent: subsequent calls within the same process hit the JAX
+    cache and return immediately.
+    """
+    import jax.numpy as jnp
+    from kaggle_environments import make
+
+    from lib.foundation.obs_to_state import obs_to_jax_state
+    from lib.foundation.strategies.analytic_score import (
+        action_specs_to_candidate_arrays,
+        score_candidates_vmap_value_prod_jit,
+    )
+    from lib.foundation.strategies.analytic_score_rollout import (
+        score_candidates_multi_turn_rollout_jit,
+    )
+    from lib.foundation.strategies.joint_beam import (
+        FIXED_CANDIDATE_BATCH,
+        TIER2_BATCH,
+        _action_specs_to_multi_turn_arrays,
+    )
+    from lib.game.jax.jax_types import MAX_LAUNCH_PER_AGENT
+
+    env = make("orbit_wars", configuration={"seed": 42}, debug=False)
+    env.reset(num_agents=2)
+    obs = env.state[0].observation
+    state = obs_to_jax_state(obs, configuration=env.configuration)
+
+    # Tier-1: compile at the exact (FIXED_CANDIDATE_BATCH, ...) shape
+    # used during the live beam.
+    empty_padded = [[]] * FIXED_CANDIDATE_BATCH
+    pids, angles, ships = action_specs_to_candidate_arrays(empty_padded)
+    _ = score_candidates_vmap_value_prod_jit(
+        state,
+        jnp.asarray(pids), jnp.asarray(angles), jnp.asarray(ships),
+        K=5, my_id=0, num_agents=2,
+        opp_aggressive=True,
+    )
+
+    # Tier-2: compile at (TIER2_BATCH, H, MAX_LAUNCH_PER_AGENT).
+    empty_sets: list[list] = [[] for _ in range(TIER2_BATCH)]
+    my_pids_ch, my_angles_ch, my_ships_ch = _action_specs_to_multi_turn_arrays(
+        empty_sets, H=2,
+    )
+    opp_pids_h = -np.ones((2, MAX_LAUNCH_PER_AGENT), dtype=np.int32)
+    opp_angles_h = np.zeros((2, MAX_LAUNCH_PER_AGENT), dtype=np.float32)
+    opp_ships_h = np.zeros((2, MAX_LAUNCH_PER_AGENT), dtype=np.int32)
+    _ = score_candidates_multi_turn_rollout_jit(
+        state,
+        jnp.asarray(my_pids_ch),
+        jnp.asarray(my_angles_ch),
+        jnp.asarray(my_ships_ch),
+        jnp.asarray(opp_pids_h),
+        jnp.asarray(opp_angles_h),
+        jnp.asarray(opp_ships_h),
+        H=2, my_id=0, num_agents=2,
+    )
