@@ -63,6 +63,22 @@ fix forward AND add a test.
 
 ## Newly-fired patterns (this session)
 
+- `tag: ab-strong-opp-before-smoke-against-floor` — 2026-05-15
+  v8_analytic_phase_c session. Spent ~5 hours on three sequential
+  A/B compute jobs (32-game Phase C vs B.1 = 2h26m; two 4-seed
+  ablations restarted twice each after container reclaims) without
+  first checking whether Phase C even beats simple floor opponents
+  (`random` / `nearest` / `roi` — 5-10 s/game each). The 43.8%
+  point-estimate against B.1 (a strong opp) gave no information about
+  whether Phase C was beating ANYTHING; for all we knew the agent
+  was randomly worse than every opponent. PI directive after the
+  third failed iteration: "next time first smoke test by playing
+  against simple opponents." Rule: before any A/B vs a strong opp
+  (B.1, v7_0, iter_v2, etc.), run `fast.py smoke <focal>` which
+  pits against `random` + `nearest` (cheap floors). Only proceed to
+  strong-opp A/B if smoke passes. Lift to CLAUDE.md if it survives a
+  session (currently audit-only).
+
 - `tag: fix-not-validated-against-real-failing-state` — 2026-05-14
   audit-pass: I patched `bootstrap.sh` for `data-main-py-missing-on-
   fresh-clone`, ran the unit guards (syntax check, AST tests, --help
