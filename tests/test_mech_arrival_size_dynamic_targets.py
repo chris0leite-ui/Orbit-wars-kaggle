@@ -8,8 +8,9 @@ non-comet planets and comets) via `DYNAMIC_PROD_BUFFER`.
 
 PI observation 2026-05-15: +1 tick was sometimes insufficient because
 `fleet_target_planet` is a non-orbiting ray-cast that can be off by
-"a step or two" for fast-moving planets. `DYNAMIC_PROD_BUFFER` bumped
-from 1 to 2 to cover that worst case. These tests now assert +2.
+"a step or two" for fast-moving planets. We TRIED +2 but it regressed
+23 pp vs v7_0 — the +1 calibration is load-bearing. `DYNAMIC_PROD_BUFFER`
+is exposed as a constant so the test reads from it (currently 1).
 
 Tests:
 - static targets: unchanged from pre-fix behaviour (no extra ticks)

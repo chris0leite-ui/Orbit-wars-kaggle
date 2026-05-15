@@ -89,7 +89,8 @@ PRE_REINFORCE_WINDOW = 0
 # ray-cast that can be off by "a step or two" (lib/world_model.py:51-54). +2
 # covers the worst case; +1 left us bouncing when actual arrival was 2 ticks
 # past the ray-cast eta. Sweep candidates: 1 / 2 / 3.
-DYNAMIC_PROD_BUFFER = 2
+DYNAMIC_PROD_BUFFER = 1   # bumped to 2 on 2026-05-15 regressed 23pp vs v7_0; reverted to 1.
+                          # The +1 was carefully calibrated in v3.3 — see test docstring.
 
 
 # ---------------------------------------------------------------------------
