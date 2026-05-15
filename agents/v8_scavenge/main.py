@@ -49,9 +49,7 @@ from lib.fast_sim import from_obs as fs_from_obs
 from lib.fast_sim import step as fs_step
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
-from lib.mission import Mission
 from lib.orbit import is_orbiting as _is_orbiting
-from lib.planner import settle_plan
 from lib.world_model import WorldModel
 
 # ---------------------------------------------------------------------------
@@ -397,44 +395,21 @@ def agent(obs, configuration=None):
                     horizon, baseline_favors,
                 )
                 if delta > 0:
-                    candidates.append((delta, src, tgt, ships, angle, eta))
+                    candidates.append((delta, src, tgt, ships, angle))
 
     if not candidates:
         return []
 
-    # Emission via lib.planner.settle_plan: per-source greedy with a
-    # same-turn arrival ledger. Two behavioural improvements over the
-    # old "one per src / one per tgt" greedy:
-    # 1. Gang-up enabled: when source A's contribution to target X is
-    #    insufficient, source B's mission for X is ACCEPTED (the
-    #    ledger sees A's pending ships are below the defender threshold).
-    # 2. No surplus: if A's contribution suffices, B's mission for X
-    #    is skipped — same as the old greedy, expressed via ledger.
-    # See lib/planner.py module docstring for the full invariants.
-    my_id_set = {int(p.id) for p in my_planets}
-    missions = []
-    angle_by_key = {}  # (src_id, target_id, ships) → precomputed lead angle
-    for _delta, src, tgt, ships, angle, eta in candidates:
+    # Greedy non-dogpile emit: max 1 launch per source / per target per turn.
+    candidates.sort(key=lambda c: -c[0])
+    used_srcs, used_tgts = set(), set()
+    moves = []
+    for _delta, src, tgt, ships, angle in candidates:
         sid = int(src.id)
         tid = int(tgt.id)
-        ships_i = int(ships)
-        mclass = "reinforce" if tid in my_id_set else "snipe"
-        missions.append(Mission(
-            mission_class=mclass,
-            src_id=sid,
-            target_id=tid,
-            ships=ships_i,
-            score=float(_delta),
-            eta=int(eta),
-        ))
-        angle_by_key[(sid, tid, ships_i)] = float(angle)
-
-    intents = settle_plan(missions, world, model)
-    moves = []
-    for i in intents:
-        key = (int(i.src_id), int(i.target_id), int(i.ships))
-        angle = angle_by_key.get(key)
-        if angle is None:
-            continue  # shouldn't happen — every mission was built with an angle
-        moves.append([int(i.src_id), float(angle), int(i.ships)])
+        if sid in used_srcs or tid in used_tgts:
+            continue
+        used_srcs.add(sid)
+        used_tgts.add(tid)
+        moves.append([sid, float(angle), int(ships)])
     return moves
