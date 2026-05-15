@@ -89,14 +89,29 @@ MAX_HORIZON = 30                 # baseline cache depth — covers most candidat
                                  # Was 50; lowered to reduce per-turn baseline
                                  # build cost + bound per-candidate rollout.
 
-# Wallclock safety. The env's actTimeout is 1000ms. Panel calibration
-# at n=192 observed p95=812ms, max=3116ms — outliers blow past the
-# budget when the candidate pool is large (many sources × targets ×
-# ship-counts × long-K rollouts at mid-game with many in-flight fleets).
-# Tightened from 750→600ms AND deadline-check moved inside the ship-
-# count inner loop so a single expensive rollout can't push past the
-# budget.
+# Wallclock safety. The env's actTimeout is 1000ms. Two-stage scoring
+# brought max from 1494ms (single-stage) down to 1131ms (Iter 1 panel)
+# — still occasional outliers because the deadline check fires BETWEEN
+# candidates, and a single fast_sim K-step rollout in mid-late game with
+# many in-flight fleets can take 200-300ms (per-step cost ~10ms instead
+# of the docs-stated 0.12ms with few fleets). Worst case used to be:
+# budget(600) + one-slow-candidate(~300) + overhead(~30) = ~930ms in
+# theory, but panel showed 1131ms outliers — slower per-step cost in
+# practice.
+#
+# Adaptive fix (Iteration 1.1, 2026-05-16): measure per-step cost ONCE
+# at the start of agent(), use it to compute N_AFFORDABLE_VALIDATE.
+# Effective cap = min(N_VALIDATE, N_AFFORDABLE). Bounds the worst
+# case to ~(budget + 1 candidate worth) ≈ 700ms reliably.
 WALLCLOCK_BUDGET_MS = 600.0
+
+# Safety factor on the per-candidate cost estimate. fast_sim's per-step
+# cost varies within a rollout (combat steps are slower than no-combat
+# steps), so a one-shot measurement underestimates. 1.5× covers the
+# variance.
+_PER_CANDIDATE_SAFETY = 1.5
+# Reserved for non-validate work (pre-rank, baseline build, emit).
+_RESERVED_OVERHEAD_MS = 50.0
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +431,26 @@ def agent(obs, configuration=None):
     # Build the fast_sim snapshot once per turn (~1 ms).
     snap_base = fs_from_obs(obs, num_seats=num_seats)
 
-    # Idle baseline at horizons 0..MAX_HORIZON (~6 ms for 50 steps).
+    # Probe fast_sim per-step cost for THIS board state — used to bound
+    # how many candidates we can afford to validate inside the wallclock
+    # budget. Per-step cost varies with the number of in-flight fleets
+    # (mid-late game can be 5-15× the empty-board cost). One step + a
+    # clock measurement, ~1-3ms total.
+    t_probe = time.perf_counter()
+    probe_snap = fs_clone(snap_base)
+    probe_snap = fs_step(probe_snap, [[] for _ in range(num_seats)],
+                         in_place=True)
+    per_step_ms = max(0.05, (time.perf_counter() - t_probe) * 1000.0)
+    # Expected per-candidate cost: K steps × per_step_ms × safety
+    # factor. Use the AVERAGE expected K (MIN_HORIZON + a few) as the
+    # estimate; outliers get caught by the post-loop deadline guard.
+    avg_K = (MIN_HORIZON + MAX_HORIZON) / 2.0
+    per_cand_ms = per_step_ms * avg_K * _PER_CANDIDATE_SAFETY
+    # How many candidates fit inside the budget AFTER reserving overhead?
+    budget_for_validate = WALLCLOCK_BUDGET_MS - _RESERVED_OVERHEAD_MS
+    n_affordable = max(8, int(budget_for_validate / per_cand_ms))
+
+    # Idle baseline at horizons 0..MAX_HORIZON (~6 ms for 30 steps).
     baseline_favors = _build_idle_baseline(snap_base, me, num_seats, MAX_HORIZON)
 
     # ---------------------------------------------------------------
@@ -465,11 +499,15 @@ def agent(obs, configuration=None):
             best_per_pair[key] = entry
     deduped = list(best_per_pair.values())
 
-    # Stage 3: validate the top N_VALIDATE candidates via fast_sim
-    # K-step rollout (the ground truth). Deadline-guarded at three
-    # levels so a single expensive rollout can't push past budget.
+    # Stage 3: validate the top candidates via fast_sim K-step rollout.
+    # Effective cap = min(N_VALIDATE, n_affordable). The adaptive cap
+    # bounds wallclock by ESTIMATING per-candidate cost from a one-step
+    # probe and dividing the wallclock budget. In mid-late game with
+    # many fleets, n_affordable shrinks (per-step cost rises), keeping
+    # max turn-ms below WALLCLOCK_BUDGET_MS + ~1 candidate of slop.
     deduped.sort(key=lambda e: -e[0])
-    top = deduped[:N_VALIDATE]
+    effective_cap = min(N_VALIDATE, n_affordable)
+    top = deduped[:effective_cap]
 
     t_deadline = time.perf_counter() + WALLCLOCK_BUDGET_MS / 1000.0
     candidates = []  # validated (delta, src, tgt, ships, angle)
