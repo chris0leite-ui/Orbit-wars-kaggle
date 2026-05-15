@@ -165,7 +165,41 @@ and PI-decided priority:
    **Panel verdict: PASS (worst Wlo=0.566).** All three opponents
    clear the strict 0.55 gate. Wallclock tightened: p95=618ms,
    max=1494ms across 128 games — still has occasional outliers >
-   1000ms but no longer the 3-second spikes from H=50.
+   1000ms.
+
+2. **Iteration 1 — two-stage scoring (8778f8f)**. Cheap pre-rank
+   (~0.1ms each via WorldModel.owner_at/ships_at) filters candidates;
+   only top N_VALIDATE=60 get the expensive fast_sim K-step rollout.
+   Per-(src, tgt) dedup keeps the best ship-size only. Cheap-rank
+   filter `cheap > -10` lets borderline candidates through (the cheap
+   formula misattributes orbital captures via straight ray-cast;
+   fast_sim is ground truth for the final decision).
+
+   Panel results:
+   - vs v7_0:       47/64 = **73.4%**, Wilson [0.615, 0.827] → PASS
+   - vs v4_planner: 46/64 = **71.9%**, Wilson [0.599, 0.814] → PASS
+   - vs v3.5.1:     24/32 = **75.0%**, Wilson [0.579, 0.867] → PASS
+
+   **Panel verdict: PASS (worst Wlo=0.579).** Wallclock dramatically
+   improved: p95=236ms, max=1131ms across 160 games (was max=1494ms);
+   bench (3 games, 500 turns): p95=34ms, max=120ms.
+
+   First attempt with N_VALIDATE=30 and `cheap > 0` filter regressed
+   to 65.6% (Wlo 0.534) — too aggressive. Widened thresholds (60 / -10)
+   recovered.
+
+3. **Iteration 2 — lite_greedy mirror opp on rollout step 0 (REVERTED)**.
+   Replaced strict-idle opp with `lib/opp_model.lite_greedy_policy`
+   on step 0 of both candidate and baseline rollouts (v7's pattern).
+   Cost +30-60ms per turn.
+
+   A/B vs v7_0 n=64: **44/64 = 68.8%, Wilson [0.566, 0.788] → PASS**.
+   Slight regression from Iter 1's 71.9%. Wallclock OK: p95=306ms,
+   max=945ms (under 1000ms ceiling).
+
+   Mirror-opp speculation noise > prediction benefit. Same "rollout
+   noise" pathology the bootstrap session explicitly avoided.
+   REVERTED. Iter 1 is the submit-ready state.
 
 2. **settle_plan emission**. Replaces greedy non-dogpile; allows
    useful same-turn follow-on launches.
