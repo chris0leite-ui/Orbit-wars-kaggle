@@ -24,21 +24,21 @@ last_submission_message: |
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation;
 # the third push auto-evicts the previous oldest).
 rolling_last_2:
-  - {agent: iter_v1, sub_id: 52661990, score: PENDING, status: PENDING,
-     episodes: 0, note: 'just submitted 21:48 UTC; V1 = v7_0_drop_one + PV_GAMMA=0.99 + composite_capture_value'}
-  - {agent: geo,     sub_id: 52643676, score: 988.9,   status: COMPLETE,
-     episodes: '~140 (12h since submit)', note: 'σ tightening; will be evicted next push'}
+  - {agent: iter_v2, sub_id: 52678866, score: PENDING, status: PENDING,
+     episodes: 0, note: 'submitted 2026-05-15 11:34 UTC; iter_v1 brain + real 4P chooser (choose_4p, value_fn=None for 4P-aware default scorer). Fixes iter_v1 silently playing v3.5.1 in 4P (~36% of ladder games).'}
+  - {agent: iter_v1, sub_id: 52661990, score: 1014.5, status: COMPLETE,
+     episodes: '~80 (most recent settled)', note: 'composite head + PV_GAMMA. Drifted from 1020.7 to 1014.5 as σ tightens.'}
 evicted_recent:
-  - {agent: v7_pv,                  sub_id: 52630118, score: 1055.2, reason: evicted by iter_v1 push (lost team-best)}
+  - {agent: geo,                    sub_id: 52643676, score: 1001.7, reason: evicted by iter_v2 push 2026-05-15}
+  - {agent: v7_pv,                  sub_id: 52630118, score: 1053.5, reason: evicted by iter_v1 push (lost team-best)}
   - {agent: v7_0_drop_one_rebuilt,  sub_id: 52607699, score: 1056.6, reason: evicted by geo push}
-  - {agent: v7_0_drop_one_original, sub_id: 52588156, score: 1081.5, reason: evicted by v7_0_rebuilt push}
 
-# Team leaderboard score = max(rolling_last_2). With iter pending it floats:
-# - lower bound = geo 988.9 (if iter regresses below)
-# - upper bound = iter expected ~1040-1090 (panel +10pp lift, calibration-discounted)
-# - v7_pv 1055.2 is the floor we beat-or-not when iter settles.
-tournament_rank_today: 125 / 2667 (top 4.7%)  # pre-iter; will move on iter settle
-our_best_rank: iter_v1 PENDING (#52661990); previous v7_pv μ=1055.2 EVICTED
+# Team leaderboard score = max(rolling_last_2). With iter_v2 pending it floats:
+# - lower bound = iter_v1 1014.5 (if iter_v2 regresses below)
+# - upper bound = iter_v2 expected ~1020-1060 (2P parity + 4P upside)
+# - geo 1001.7 was evicted; can no longer fall back to that.
+tournament_rank_today: TBD / 2716 (refresh after iter_v2 settles)
+our_best_rank: iter_v1 μ=1014.5 (#52661990) until iter_v2 settles
 lb_top10_cliff: 1430                     # approx; refresh next session
 headroom_to_top10_prize: ~+366 μ         # v7_pv to top-10 cliff
 
@@ -55,8 +55,8 @@ sigma_proxy:
   v7_pv: ~80               # ~13h since submit; tightening
   # v7_0 family fully tight at ~64 episodes (σ band ~6 Score points).
 
-submissions_used_today: 2                # geo #52643676 (09:10 UTC); iter_v1 #52661990 (21:48 UTC)
-submissions_used_total: 17               # full live-submission ladder
+submissions_used_today: 1                # iter_v2 #52678866 (11:34 UTC). Yesterday: 2.
+submissions_used_total: 18               # full live-submission ladder
 plateau_days: 0
 saturation_count: 0
 
@@ -66,7 +66,8 @@ saturation_count: 0
 
 # Full live ladder (most recent first; from `kaggle competitions submissions`).
 live_submissions:
-  - {agent: iter_v1,                sub_id: 52661990, submitted: 2026-05-14T21:48, score: PENDING}  # composite head; just pushed
+  - {agent: iter_v2,                sub_id: 52678866, submitted: 2026-05-15T11:34, score: PENDING}  # + real 4P chooser
+  - {agent: iter_v1,                sub_id: 52661990, submitted: 2026-05-14T21:48, score: 1014.5}  # composite head; 2P only
   - {agent: geo,                    sub_id: 52643676, submitted: 2026-05-14T09:10, score: 988.9}  # σ-tightening
   - {agent: v7_pv,                  sub_id: 52630118, submitted: 2026-05-13T23:31, score: 1055.2}  # EVICTED by iter_v1 push
   - {agent: v7_0_drop_one_rebuilt,  sub_id: 52607699, submitted: 2026-05-13T08:33, score: 1056.6}
