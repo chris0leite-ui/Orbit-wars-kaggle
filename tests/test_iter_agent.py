@@ -280,6 +280,158 @@ def test_shrink_to_min_viable_no_op_on_safe_target(iter_agent_module):
     assert out == action, f"safe target should pass through; got {out}"
 
 
+def test_mission_persistence_schedules_launch_when_unaffordable_at_step_0(iter_agent_module):
+    """Reproduce the iter_v1 opening_lost pattern: our 10-ship home cannot
+    afford a 15-ship neutral at step 0. Mission persistence should still
+    SCHEDULE a launch at an earliest-feasible later turn (~step 7) instead
+    of waiting until OPENING_WINDOW expires."""
+    from types import SimpleNamespace
+    from lib.intent import World
+
+    me = SimpleNamespace(id=23, owner=0, x=18.9, y=33.1, radius=1.5, ships=10, production=1)
+    # Closest neutral with 15 ships (matches replay 76573558 layout).
+    nearest_neutral = SimpleNamespace(id=19, owner=-1, x=25.8, y=23.0, radius=1.5,
+                                       ships=15, production=2)
+    far_neutral = SimpleNamespace(id=21, owner=-1, x=33.1, y=81.1, radius=1.5,
+                                   ships=17, production=1)
+    obs = {
+        "player": 0,
+        "planets": [(p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production)
+                    for p in (me, nearest_neutral, far_neutral)],
+        "fleets": [], "angular_velocity": 0.0, "comet_planet_ids": [], "step": 0,
+    }
+    world = World.from_obs(obs)
+    plan = iter_agent_module._build_opening_plan(world, my_id=0)
+    assert plan.get("target_id") == 19, (
+        f"plan should target nearest high-prod neutral; got {plan}"
+    )
+    sched = plan.get("scheduled_launches", [])
+    assert len(sched) == 1, f"expected 1 scheduled launch; got {sched}"
+    fire_turn, src_id, angle, ships = sched[0]
+    # src.ships=10, neutral.ships=15, production=1. Need ships=16+1+SAFETY=18.
+    # Earliest turn: (18 - 10 + 1 - 1) / 1 = 8 → step 8.
+    assert fire_turn == 8, f"expected fire_turn 8 (10 + 8 production = 18); got {fire_turn}"
+    assert src_id == 23
+    assert ships >= 16, f"ships must overpower a 15-garrison neutral; got {ships}"
+
+
+def test_mission_persistence_invalidates_when_target_captured_by_other(iter_agent_module):
+    """If the target planet gets captured by an enemy between turns, the
+    plan must invalidate so we can re-plan."""
+    iter_agent_module._PLAN_STATE = {
+        "epoch": 0,
+        "target_id": 19,
+        "src_ids": [23],
+        "scheduled_launches": [(7, 23, 0.0, 16)],
+    }
+    from types import SimpleNamespace
+    from lib.intent import World
+
+    me = SimpleNamespace(id=23, owner=0, x=18.9, y=33.1, radius=1.5, ships=12, production=1)
+    target_captured = SimpleNamespace(id=19, owner=1, x=25.8, y=23.0,  # opp owns now
+                                       radius=1.5, ships=5, production=2)
+    obs = {
+        "player": 0,
+        "planets": [(p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production)
+                    for p in (me, target_captured)],
+        "fleets": [], "angular_velocity": 0.0, "comet_planet_ids": [], "step": 4,
+    }
+    world = World.from_obs(obs)
+    assert iter_agent_module._is_plan_invalid(world, my_id=0), (
+        "plan should invalidate when target is owned by another player"
+    )
+
+
+def test_multi_source_allocation_combines_two_planets(iter_agent_module):
+    """PI scenario: two of our planets (8 + 10 ships) coordinate to capture
+    a 15-ship neutral. Combined we need >= target.ships + 1 + SAFETY = 18.
+    8 + 10 = 18 → both sources should be scheduled at step 0."""
+    from types import SimpleNamespace
+    from lib.intent import World
+
+    src_a = SimpleNamespace(id=10, owner=0, x=0.0, y=0.0, radius=1.5, ships=10, production=1)
+    src_b = SimpleNamespace(id=11, owner=0, x=5.0, y=0.0, radius=1.5, ships=10, production=1)
+    neutral = SimpleNamespace(id=20, owner=-1, x=10.0, y=0.0, radius=1.5, ships=15, production=2)
+    obs = {
+        "player": 0,
+        "planets": [(p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production)
+                    for p in (src_a, src_b, neutral)],
+        "fleets": [], "angular_velocity": 0.0, "comet_planet_ids": [], "step": 0,
+    }
+    world = World.from_obs(obs)
+    plan = iter_agent_module._build_opening_plan(world, my_id=0)
+    assert plan["target_id"] == 20, f"target must be the neutral; got {plan}"
+    assert set(plan["src_ids"]) == {10, 11}, (
+        f"multi-source: both planets must contribute; got {plan['src_ids']}"
+    )
+    total_ships = sum(int(entry[3]) for entry in plan["scheduled_launches"])
+    assert total_ships >= 18, (
+        f"combined ships must overpower 15-garrison target + safety; got {total_ships}"
+    )
+    # All allocations should fire at step 0 since both sources have 10 ships
+    # and only need to send a portion of their garrison.
+    fire_turns = {entry[0] for entry in plan["scheduled_launches"]}
+    assert fire_turns == {0}, (
+        f"both sources can afford launches at step 0; got fire turns {fire_turns}"
+    )
+
+
+def test_plan_stays_alive_while_fleet_in_flight(iter_agent_module):
+    """After all scheduled launches have fired, the plan must NOT invalidate
+    until either the target ownership changes or the in-flight fleet stops
+    targeting it. Tests `_has_inflight_us_toward`."""
+    iter_agent_module._PLAN_STATE = {
+        "epoch": 0,
+        "target_id": 20,
+        "src_ids": [10],
+        "scheduled_launches": [],  # all fired
+    }
+    from types import SimpleNamespace
+    from lib.intent import World
+    import math as _m
+
+    me = SimpleNamespace(id=10, owner=0, x=0.0, y=0.0, radius=1.5, ships=2, production=1)
+    neutral = SimpleNamespace(id=20, owner=-1, x=10.0, y=0.0, radius=1.5, ships=8, production=2)
+    # Our 16-ship fleet from (0,0) at angle 0 toward (10,0) hitting planet 20.
+    fleet = (0, 0, 1.0, 0.0, 0.0, 10, 16)  # id, owner, x, y, angle, from_planet, ships
+    obs = {
+        "player": 0,
+        "planets": [(p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production)
+                    for p in (me, neutral)],
+        "fleets": [fleet], "angular_velocity": 0.0, "comet_planet_ids": [], "step": 5,
+    }
+    world = World.from_obs(obs)
+    assert not iter_agent_module._is_plan_invalid(world, my_id=0), (
+        "plan should remain alive while our fleet is in flight toward the target"
+    )
+
+
+def test_plan_rebuilds_after_target_capture(iter_agent_module):
+    """When our fleet successfully captures the target, target.owner == my_id
+    → plan invalidates so we can rebuild for the next target."""
+    iter_agent_module._PLAN_STATE = {
+        "epoch": 0,
+        "target_id": 20,
+        "src_ids": [10],
+        "scheduled_launches": [],
+    }
+    from types import SimpleNamespace
+    from lib.intent import World
+
+    me = SimpleNamespace(id=10, owner=0, x=0.0, y=0.0, radius=1.5, ships=2, production=1)
+    captured = SimpleNamespace(id=20, owner=0, x=10.0, y=0.0, radius=1.5, ships=1, production=2)
+    obs = {
+        "player": 0,
+        "planets": [(p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production)
+                    for p in (me, captured)],
+        "fleets": [], "angular_velocity": 0.0, "comet_planet_ids": [], "step": 12,
+    }
+    world = World.from_obs(obs)
+    assert iter_agent_module._is_plan_invalid(world, my_id=0), (
+        "captured-by-us target → plan must invalidate to rebuild for next target"
+    )
+
+
 def test_territory_value_runs_under_5ms(iter_agent_module):
     # Bench gate: territory head must not blow the per-call budget. value_fn
     # is invoked once per candidate at rollout leaf; ~50 candidates per turn
