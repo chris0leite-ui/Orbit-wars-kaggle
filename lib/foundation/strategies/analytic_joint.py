@@ -416,6 +416,25 @@ def _recover_target_for_launch(
 
 register_strategy("v8_analytic_phase_c", AnalyticJointStrategy())
 
+# Ablation A1: only the `no_launch` archetype. Tests whether the
+# joint-scoring layer (3-archetype min-regret) is the regression vs
+# B.1. Min over 1 archetype degenerates to "argmax of value-vs-opp-noop",
+# so this variant isolates "multi-turn enum + Tier-2 rollout" as the
+# only added mechanism over Phase A.
+register_strategy(
+    "v8_phase_c_no_panel",
+    AnalyticJointStrategy(archetype_names=("no_launch",)),
+)
+
+# Ablation A2: H=1 (no multi-turn atoms). Tests whether multi-turn
+# enumeration is the regression vs B.1. Keeps the 3-archetype panel
+# and the joint-scoring layer (now single-turn rollout against the
+# panel).
+register_strategy(
+    "v8_phase_c_h1",
+    AnalyticJointStrategy(H=1),
+)
+
 
 def warmup_jits() -> None:
     """Trigger both Tier-1 (Phase A K=5 scorer) and Tier-2 (multi-turn
