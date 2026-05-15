@@ -60,6 +60,15 @@ def test_pred_ships_unused_when_no_inbound_fleets():
     assert m.ships >= 16, f"expected ≥16; got {m.ships}"
 
 
+import pytest
+from lib.missions.snipe import USE_PRED_SHIPS_FOR_SIZING
+
+
+@pytest.mark.skipif(
+    not USE_PRED_SHIPS_FOR_SIZING,
+    reason="USE_PRED_SHIPS_FOR_SIZING is False (regressed -23pp vs v7_0 in 32-seed eval; "
+           "needs decoupling of scoring from sizing before re-enabling)",
+)
 def test_pred_ships_downsizes_neutral_with_inbound_enemy():
     """PI scenario: neutral close to us is being attacked by an enemy fleet
     that will reduce its garrison below current before we arrive.

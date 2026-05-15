@@ -43,7 +43,7 @@ USE_DRAIN_MISSION = 0
 # Mirror snipe.py: when True, drain's affordability check uses
 # pred_ships at our ETA, not current garrison. Avoids skipping targets
 # that an inbound enemy will reduce below current ships by our arrival.
-USE_PRED_SHIPS_FOR_SIZING = True
+USE_PRED_SHIPS_FOR_SIZING = False   # same revert as snipe.py (2026-05-15 panel regression).
 
 
 def propose_drain_missions(world: World, model: WorldModel) -> list[Mission]:

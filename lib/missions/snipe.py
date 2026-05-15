@@ -138,7 +138,13 @@ DROP_COMET_TARGETS = 0
 # (PI observation 2026-05-14: "we sent 16 ships at a 15-ship neutral; the
 # opponent already had a 1-ship attack inbound; 15 would have sufficed").
 # Default ON; toggle to False to A/B-test against legacy sizing.
-USE_PRED_SHIPS_FOR_SIZING = True
+USE_PRED_SHIPS_FOR_SIZING = False   # downsize-only fix regressed -23 pp vs v7_0 in 32-seed eval
+                                     # (2026-05-15). Root cause: smaller target_min → smaller
+                                     # base_ships → slower fleet → larger ETA → smaller value →
+                                     # settle_plan deprioritizes the mission entirely. The fix
+                                     # needs to decouple SCORING from SIZING (downsize only the
+                                     # final ship count in mechanism.arrival_size). Reverted to
+                                     # legacy current+1 sizing.
 
 # Affordability filter (v3.5+): when True, propose a Mission only if the
 # source planet can fund the base capture (target.ships + 1) ALONE. Phase-0
