@@ -779,12 +779,18 @@ def agent(obs, configuration=None):
     n_seats = _detect_num_seats(world)
     value_fn = _resolve_value_fn(VALUE_FN)
     if n_seats == 4:
+        # Use score_candidate_4p's BUILT-IN 4P-aware leaf scorer
+        # ("our ships - max(other seat ships)") instead of the 2P-tuned
+        # composite_capture_value. composite's base (delta_us_minus_them)
+        # is "us - sum(3 opps)" in 4P — biases toward defensive play
+        # because we look outnumbered 3:1. The 4P default is structurally
+        # aligned with first-place: beat the SINGLE strongest opponent.
         action = choose_4p(
             obs, configuration,
             K=K_eff_4p,
             wallclock_ms=WALLCLOCK_MS,
             include_recapture=True,
-            value_fn=value_fn,
+            value_fn=None,
         )
     elif TWO_PHASE:
         # Two-phase: cheap analytical Phase 1 ranks ALL candidates,
