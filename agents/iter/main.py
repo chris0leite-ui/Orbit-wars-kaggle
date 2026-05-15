@@ -41,7 +41,8 @@ RELEVANCE_PROD_FRACTION = 0.5   # treat planets with production >= max_productio
                                 # and count fleets targeting them in K_eff. 0.5 = top half by prod.
 
 # --- Comet anti-panic (Bug 2 POST-PROCESS) ----------------------------------
-COMET_MAX_LAUNCHES_PER_TURN = 2 # max # of our launches targeting the SAME comet per turn
+COMET_MAX_LAUNCHES_PER_TURN = 999  # cap effectively disabled; ablation showed it costs 8-9 pp
+                                    # vs v7_0/v4_planner (chooser's multi-source choice was usually right)
 
 # --- Comet evacuation (Bug 3 PRE-FILTER) ------------------------------------
 COMET_EVAC_THRESHOLD = 5        # if our comet has < N steps remaining, evac ships off it
