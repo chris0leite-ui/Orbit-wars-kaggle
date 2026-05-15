@@ -37,11 +37,18 @@ class StrategyCtx:
         world_model    : optional precomputed `WorldModel` (or JAX
                          equivalent) handle to avoid rebuilding inside
                          the strategy.
+        raw_obs        : the original Kaggle obs (dict or Struct) that
+                         was used to derive the JAX `GameState`. Phase C
+                         needs this to build opp-archetype panels via
+                         `lib.missions.opp_archetypes`, which operate
+                         on env-format observations rather than JAX
+                         state. None for non-Phase-C strategies.
     """
 
     turn_budget_ms: float = 1000.0
     rng_key: Optional[Any] = None
     world_model: Optional[Any] = None
+    raw_obs: Optional[Any] = None
 
 
 @runtime_checkable
