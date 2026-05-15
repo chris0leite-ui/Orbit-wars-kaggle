@@ -118,6 +118,49 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-15 (claude/bootstrap-read-handover-HjcdN — copycat branch)
+
+- `tag: pv-broadpool-incompatible` — Phase 3 copycat with
+  `PV_GAMMA=0.99` + broad-pool argmax (geo tilts + v7_0_drop_one)
+  regressed to 12/32 = 37.5% vs v7_0_drop_one (FAIL Wlo=0.23) after
+  the no-PV broad-pool was 50% n=8 and the prior σ-pair config was
+  57.8% n=64. PV-aware proposers favour early captures; geo's
+  concentrated/saturation tilts favour different shapes; the
+  `delta_us_minus_them` judge can't reconcile. **Fix:** the PV lever
+  belongs with a focused proposer (v7_pv = v7_0_drop_one + PV); do
+  not stack it on a broad enumerator.
+- `tag: same-process-pv-shared-state` — testing PV vs non-PV by
+  running both agents in the SAME Python process is a false A/B:
+  `lib.scoring.PV_GAMMA` is a module-level constant set once at
+  import, so whichever agent triggers the import first wins for both.
+  My in-process diagnostic of "PV-copycat vs vanilla v7_0_drop_one"
+  was actually "PV-copycat vs PV-v7_0_drop_one." **Fix:** always
+  run cross-config A/Bs through `fast.py eval` (separate workers, env
+  inherited per process); never trust same-process numbers when
+  agents need different env vars.
+- `tag: wallclock-truncation-in-roster-wrappers` — wrapping
+  `lib.v7_search.choose(K=10, wallclock_ms=350)` inside a copycat
+  roster member to leave budget for outer scoring truncated v7's
+  drop-one search badly enough to lose 8/32 = 25% (Panel #2). Bumped
+  to 550 ms in commit `50a0a3e` and recovered to 57.8%. **Fix:** if
+  you wrap a strong K=N chooser as a roster candidate, give it the
+  FULL ladder budget (700 ms) and trim outer cost elsewhere; or skip
+  re-scoring when there's only one candidate.
+- `tag: small-n-ab-noise-misled-panel` — saw 5/8 = 62.5% on a
+  Phase-3 PV smoke and immediately escalated to a 70-min full panel.
+  Wilson 95% CI on 5/8 is roughly [0.30, 0.86]; the panel landed at
+  12/32 = 37.5%. False confidence cost ~70 min. **Fix:** require
+  n≥16 (or Wilson Whi-Wlo width < 0.40) before promoting a smoke
+  to a full panel.
+- `tag: worktree-signing-fails` — committing on a `git worktree`
+  (used to isolate the behavioral-mimic branch from the running
+  copycat panel) fails with `signing server returned 400 missing
+  source`. The Anthropic commit signer expects the standard repo
+  layout, not the worktree's pointer-`.git`. **Workaround:** after
+  the panel finishes, switch the main checkout to the new branch
+  and commit from there. **Fix forward:** investigate signer's
+  source-discovery; configure it to accept worktrees.
+
 ## Still-open patterns (next-session priority)
 
 - `tag: handover-stale-at-session-start-no-git-log-check` — Rule 32
