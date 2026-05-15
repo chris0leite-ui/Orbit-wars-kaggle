@@ -199,7 +199,56 @@ and PI-decided priority:
 
    Mirror-opp speculation noise > prediction benefit. Same "rollout
    noise" pathology the bootstrap session explicitly avoided.
-   REVERTED. Iter 1 is the submit-ready state.
+   REVERTED. Iter 1 was submit-ready but with max=1131ms outliers.
+
+4. **Adaptive N_VALIDATE cap (8d7b1ca)**. Root cause of max=1131ms
+   outlier: deadline check fires BETWEEN candidates; a single
+   fast_sim K-step rollout in mid-late game (many fleets, per-step
+   cost ~10ms) takes 200-300ms uninterruptibly. Worst case ≈
+   budget + slowest-candidate ≈ 930ms theory, 1131ms observed.
+
+   Fix: measure fast_sim per-step cost ONCE at agent() start via
+   no-op probe. Estimate per-candidate = K × per_step × 1.5
+   safety. Cap effective N_VALIDATE so all-candidates-at-this-rate
+   stays under budget. Adaptive — empty boards keep N_VALIDATE=60;
+   mid-late game drops to 3-8.
+
+   Panel re-run with adaptive cap:
+   - vs v7_0:       44/64 = **68.8%**, Wilson [0.566, 0.788] → PASS
+   - vs v4_planner: 48/64 = **75.0%**, Wilson [0.632, 0.840] → PASS
+   - vs v3.5.1:     24/32 = **75.0%**, Wilson [0.579, 0.867] → PASS
+
+   **Panel verdict: PASS (worst Wlo=0.566).** Wallclock:
+   p95=235ms, **max=891ms across 160 games** — 0 turns exceed
+   1000ms ceiling. Was max=1131ms pre-fix → 21% reduction.
+
+   This is the submit-ready state.
+
+## Submission readiness (state as of 8d7b1ca)
+
+- **Bundle:** `submissions/v8_scavenge.py` (302KB, sha256
+  86565447ab0e108e). Parity gate: 542 turns matched in self-play.
+- **Local panel:** PASS across v7_0 / v4_planner / v3.5.1; worst
+  Wlo=0.566.
+- **Wallclock:** max=891ms (under the 1000ms actTimeout).
+- **Kaggle API:** 401 Unauthorized on env-var auth in this session
+  (`KaggleUserName` / `KaggleAPIToke` env vars — name truncated;
+  token may be invalid). Cannot check submitted state via CLI.
+  Last known state per `state/current.md` 2026-05-14:
+  - rolling-last-2: geo (sub 52643676, μ=984) + v7_pv (sub 52630118,
+    μ=1064.4 — team's best)
+  - team rank: 125/2667 (top 4.7%)
+- **Pre-submit Rule 27 check:** NOT run vs v7_pv (= v7_0 +
+  PV_GAMMA=0.99). The v7_pv variant doesn't exist as a separate
+  baseline in this repo; would need a 1-line wrapper.
+
+Recommended pre-submission steps:
+1. Build a `baselines/v7_pv.py` wrapper (just `os.environ.setdefault
+   ("PV_GAMMA", "0.99")` before importing v7_0_drop_one). 5 LoC.
+2. A/B `agents/v8_scavenge` vs `baselines/v7_pv` at n=32-48. Expect
+   Wlo ≥ 0.55 (we beat v7_pv decisively → submit slot worth it) or
+   Wlo around 0.50 (sideways → reconsider).
+3. PI sign-off for the actual kaggle submit.
 
 2. **settle_plan emission**. Replaces greedy non-dogpile; allows
    useful same-turn follow-on launches.
