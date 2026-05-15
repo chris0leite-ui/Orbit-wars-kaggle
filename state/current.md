@@ -6,8 +6,8 @@
 > `kaggle competitions submissions orbit-wars`.
 
 ```yaml
-date: 2026-05-14
-days_to_deadline: 40                     # 2026-06-23 23:59 UTC minus today
+date: 2026-05-15
+days_to_deadline: 39                     # 2026-06-23 23:59 UTC minus today
 current_submitted_agent: geo             # v3.1 (most recent); σ-discounted floor
 last_kernel_push: 2026-05-14 09:10:03 UTC
 last_submission_id: 52643676
@@ -24,17 +24,21 @@ last_submission_message: |
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation;
 # the third push auto-evicts the previous oldest).
 rolling_last_2:
-  - {agent: geo,    sub_id: 52643676, score: 984.0, status: COMPLETE,
-     episodes: ~80-130, note: 'σ-discounted floor; μ not settled (~5h post-submit)'}
-  - {agent: v7_pv,  sub_id: 52630118, score: 1064.4,  episodes: ~80}  # carrying team score
+  - {agent: iter_v2, sub_id: 52678866, score: PENDING, status: PENDING,
+     episodes: 0, note: 'submitted 2026-05-15 11:34 UTC; iter_v1 brain + real 4P chooser (choose_4p, value_fn=None for 4P-aware default scorer). Fixes iter_v1 silently playing v3.5.1 in 4P (~36% of ladder games).'}
+  - {agent: iter_v1, sub_id: 52661990, score: 1014.5, status: COMPLETE,
+     episodes: '~80 (most recent settled)', note: 'composite head + PV_GAMMA. Drifted from 1020.7 to 1014.5 as σ tightens.'}
 evicted_recent:
-  - {agent: v7_0_drop_one_rebuilt, sub_id: 52607699, score: 1056.6, reason: evicted by geo push}
-  - {agent: v7_0_drop_one_original, sub_id: 52588156, score: 1081.5, reason: evicted by v7_0_rebuilt push}
-  - {agent: v4_planner,             sub_id: 52579863, score: 1038.6, reason: evicted by v7_pv push}
+  - {agent: geo,                    sub_id: 52643676, score: 1001.7, reason: evicted by iter_v2 push 2026-05-15}
+  - {agent: v7_pv,                  sub_id: 52630118, score: 1053.5, reason: evicted by iter_v1 push (lost team-best)}
+  - {agent: v7_0_drop_one_rebuilt,  sub_id: 52607699, score: 1056.6, reason: evicted by geo push}
 
-# Team leaderboard score = max(rolling_last_2) = 1064.4 (UNCHANGED by geo push).
-tournament_rank_today: 125 / 2667 (top 4.7%)
-our_best_rank: v7_pv μ=1064.4 (#52630118 COMPLETE)
+# Team leaderboard score = max(rolling_last_2). With iter_v2 pending it floats:
+# - lower bound = iter_v1 1014.5 (if iter_v2 regresses below)
+# - upper bound = iter_v2 expected ~1020-1060 (2P parity + 4P upside)
+# - geo 1001.7 was evicted; can no longer fall back to that.
+tournament_rank_today: TBD / 2716 (refresh after iter_v2 settles)
+our_best_rank: iter_v1 μ=1014.5 (#52661990) until iter_v2 settles
 lb_top10_cliff: 1430                     # approx; refresh next session
 headroom_to_top10_prize: ~+366 μ         # v7_pv to top-10 cliff
 
@@ -51,8 +55,8 @@ sigma_proxy:
   v7_pv: ~80               # ~13h since submit; tightening
   # v7_0 family fully tight at ~64 episodes (σ band ~6 Score points).
 
-submissions_used_today: 1                # geo #52643676 (09:10 UTC)
-submissions_used_total: 16               # full live-submission ladder
+submissions_used_today: 1                # iter_v2 #52678866 (11:34 UTC). Yesterday: 2.
+submissions_used_total: 18               # full live-submission ladder
 plateau_days: 0
 saturation_count: 0
 
@@ -62,8 +66,10 @@ saturation_count: 0
 
 # Full live ladder (most recent first; from `kaggle competitions submissions`).
 live_submissions:
-  - {agent: geo,                    sub_id: 52643676, submitted: 2026-05-14T09:10, score: 984.0}  # σ-floor
-  - {agent: v7_pv,                  sub_id: 52630118, submitted: 2026-05-13T23:31, score: 1064.4}
+  - {agent: iter_v2,                sub_id: 52678866, submitted: 2026-05-15T11:34, score: PENDING}  # + real 4P chooser
+  - {agent: iter_v1,                sub_id: 52661990, submitted: 2026-05-14T21:48, score: 1014.5}  # composite head; 2P only
+  - {agent: geo,                    sub_id: 52643676, submitted: 2026-05-14T09:10, score: 988.9}  # σ-tightening
+  - {agent: v7_pv,                  sub_id: 52630118, submitted: 2026-05-13T23:31, score: 1055.2}  # EVICTED by iter_v1 push
   - {agent: v7_0_drop_one_rebuilt,  sub_id: 52607699, submitted: 2026-05-13T08:33, score: 1056.6}
   - {agent: v7_0_drop_one_original, sub_id: 52588156, submitted: 2026-05-12T17:36, score: 1081.5}
   - {agent: v4_planner,             sub_id: 52579863, submitted: 2026-05-12T14:25, score: 1038.6}
@@ -80,25 +86,26 @@ live_submissions:
   - {agent: day1_baseline,          sub_id: 52497828, submitted: 2026-05-10T00:09, score: 303.2}
 
 session_log:
-  - 2026-05-14 — game-strategy-eda-roatN (this branch). Pulled v7_pv's
-    own 30W + 42L corpus (sub 52630118) and re-ran Mine 4 on both
-    buckets. Headline: median episode in our ladder is 180 turns, so
-    the "last-100-turn endgame" Mine 4 was framed against doesn't
-    occur — W/L split is decided by turn 100 (+30pp ship-share gap).
-    v7_pv launches 0.44/turn in wins, 0.29 in losses, vs top-10's
-    0.70. Wired --panel hardened preset (v7_0_drop_one + v3.5.1 +
-    roi + baseline); 32-seed calibration: v7_0 mean_wr 78.6%,
-    worst-Wilson-lo 53.4% (vs v3.5.1). Built cluster-conditional
-    opening overlay (lib/opening_overlay.py + agents/v7_opening) —
-    FALSIFIED: 17W/15L = 53% vs v7_0 on n=32, overlay-active games
-    46%, pure-v7 fallback 80%. v2 sweep's apparent 67% was a
-    broken-orbital_frac proxy forcing every board into the
-    high-cadence cluster 3 — fixed but variant doesn't survive
-    correct classification. 3 frictions logged (helper-reimplemented-
-    inline-silently-wrong; broken-mechanism-yields-fake-positive-
-    signal; soft-clusters-need-confidence-fallback). Findings:
-    audit/2026-05-14-loss-mode-mine.md. Postmortem:
-    knowledge-base/thoughts/2026-05-14-overlay-postmortem.md.
+  - 2026-05-15 — competitive-programmer-setup-LHyoP (this branch).
+    Three architectural attempts, all default OFF (iter behavior unchanged).
+    (1) MSP scaffolding (multi-step plan ROI scorer, ~250 LOC, 4 templates):
+    DORMANT — 0/40 turns emitted a plan beating incumbent. (2) Geo allocator
+    candidate: 8-seed A/B vs v7_0 = 5/8 (62.5%) vs baseline 6/8 (75.0%);
+    TWO_PHASE decomposition confirmed geo is the −12.5pp cause, not TP.
+    (3) Cluster-aware leaf head (cluster_value + composite_plus_cluster):
+    8-seed A/B = 4/8 (50%); frontier_discount=1.0 also 4/8 → design wrong.
+    Two architectural axes definitively exhausted (Rule 37):
+    "additive candidate" (3/3 fail: MSP/geo/mission-persistence),
+    "hand-designed leaf head" (2/3 since composite WIN: territory/cluster).
+    PI behavior-hypothesis ("start too late, garrison too high") refuted
+    by 9-game live audit (median first launch step 3.3, 12.9 ships vs 11.5,
+    1.7 ships at home). Next swing must be IL leaf head; structurally
+    unexplored.
+    Audits: audit/2026-05-15-additive-and-leaf-falsifications.md,
+    audit/2026-05-15-postmortem-competitive-programmer-setup-LHyoP.md.
+    Frictions: 5 new entries under ## 2026-05-15 in audit/friction.md.
+    Improvements: 1 promotion candidate added to
+    .claude/skills/kaggle-comp/improvements.md (PI-hypothesis-unaudited).
   - 2026-05-14 — simplify-fast-setup-azW8T (this branch's most recent session).
     Built fast.py (single-file iteration entry point, validated bit-identical
     vs audit-logged v7_1 result) + lib/geo/{sense,posture,allocator}.py
@@ -177,28 +184,12 @@ mechanism_families_explored:
   - composite-capture-value-head              # lib/value_heads.py composite_capture_value;
                                               # +9pp local in v7_4 vs v7_2 (32-game); but
                                               # v7_4 vs v7_0 = 40.6% FAIL. Reusable head.
-  - cluster-conditional-opening-overlay       # claude/game-strategy-eda-roatN: KMeans(k=4)
-                                              # on 60 top-10 boards + ROI-style proposer for
-                                              # turns 0-30. FALSIFIED: 17W/15L = 53% vs v7_0
-                                              # on n=32 (Wilson-lo 36%), overlay-active 46%,
-                                              # pure-v7-fallback 80%. v2 sweep's 67% was a
-                                              # broken-orbital_frac proxy. Code stays on
-                                              # branch; learnings ported to main.
-  - recapture-mission-class-wired             # claude/fix-weak-game-starts-NhDQ3:
-                                              # geo_recap = geo + propose_recapture_missions
-                                              # in base pool. 3-opp panel 2/3 PASS, mean 60.9%
-                                              # (v7_0 64.1%, v3.5.1 62.5%, v4_planner 56.2%
-                                              # INCONCL). HELD from submit — eviction risk
-                                              # vs v7_pv. 2026-05-15 wrap.
-  - drift-discount-voronoi-scoring            # same branch: geo_drift: 3-opp panel FAIL
-                                              # (32.8/31.2/43.8%). K=10 already prices
-                                              # keepability via ship-delta; pre-discount
-                                              # double-counts. Same regression family as
-                                              # v7_1..v7_7 + v3.0 composite head. H30 killed.
-                                              # Code on branch only, not merged.
-  - garrison-on-capture-mission-class         # same branch: geo_garrison: 3-opp INCONCLUSIVE
-                                              # ~52% mean. Untested on top of recap;
-                                              # geo_recap_garrison queued for next session.
+  - v7-iteration-scaffold                     # agents/iter/ fork of v7_pv with knob surface
+                                              # (K, WALLCLOCK_MS, ENUMERATOR_MODE, OPP_TIERS,
+                                              # PV_GAMMA, VALUE_FN) + pre/post hooks. Day-zero
+                                              # functionally equivalent to v7_pv. Loss-mode
+                                              # helper scripts/iter_losses.sh chains
+                                              # live_episode_summary + classify_losses.
 
 gate_status: cleared                        # full pytest passes;
                                             # geo's 17 tests + parallel branches' tests all green

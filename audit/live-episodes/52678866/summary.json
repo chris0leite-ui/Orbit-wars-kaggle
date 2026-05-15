@@ -1,0 +1,178 @@
+{
+  "submission_id": "52678866",
+  "generated_utc": "2026-05-15T12:40:55Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 15,
+  "n_played": 15,
+  "wins_total": 10,
+  "winrate_total": 0.6666666666666666,
+  "by_size": {
+    "2": {
+      "n": 12,
+      "wins": 8,
+      "winrate": 0.6666666666666666
+    },
+    "4": {
+      "n": 3,
+      "wins": 2,
+      "winrate": 0.6666666666666666
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 8,
+    "1": 7,
+    "2": 2,
+    "3": 1
+  },
+  "episode_length_steps": {
+    "n": 15,
+    "min": 82,
+    "q1": 129,
+    "median": 138,
+    "q3": 182,
+    "max": 370,
+    "mean": 167.46666666666667
+  },
+  "opponents": [
+    {
+      "name": "Baseline Junkie",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "xixi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "lemon",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Tony Li",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "saihyou",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "S. Mujtaba Hussain",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Rasmus Larsen",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Joshua CHOI Kui-Wang",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "HassenHamdi Winning InchaAllah",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "rick",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "YUYUTA",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "K_ChanHo",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Hem Viramgama",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "keyrox",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Jun Peng #2",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Komil Parmar",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "bengle",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "wala",
+      "seen": 1,
+      "beat_us": 0
+    }
+  ],
+  "losses": [
+    {
+      "episode": "episode-76633043",
+      "size": 2,
+      "opponents": [
+        "saihyou"
+      ],
+      "winner": "saihyou",
+      "steps": 283
+    },
+    {
+      "episode": "episode-76635122",
+      "size": 2,
+      "opponents": [
+        "YUYUTA"
+      ],
+      "winner": "YUYUTA",
+      "steps": 82
+    },
+    {
+      "episode": "episode-76635469",
+      "size": 2,
+      "opponents": [
+        "K_ChanHo"
+      ],
+      "winner": "K_ChanHo",
+      "steps": 130
+    },
+    {
+      "episode": "episode-76636155",
+      "size": 2,
+      "opponents": [
+        "keyrox"
+      ],
+      "winner": "keyrox",
+      "steps": 134
+    },
+    {
+      "episode": "episode-76636868",
+      "size": 4,
+      "opponents": [
+        "Komil Parmar",
+        "bengle",
+        "wala"
+      ],
+      "winner": "Komil Parmar",
+      "steps": 138
+    }
+  ]
+}
