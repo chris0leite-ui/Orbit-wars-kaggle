@@ -87,6 +87,46 @@ discounting scoring/proposer signals the rollout already evaluates
 Plumbing: 3-anchor Wilson gate, PV_GAMMA in JAX, HAV helpers,
 Renaissance flags (default-off), snipe tier emission framework.
 
+## Day-N PM fix-weak-game-starts-NhDQ3 (this branch — capture-and-secure probe)
+
+Live geo v3.1 (#52643676) settled at **985.5 μ** (−77 μ vs v7_pv).
+Reframed PI's "weak starts" lens via loss-mode classifier on 52 live
+replays (`scripts/classify_losses.py`):
+
+| Bucket | geo 5/14 | v7_0 5/13 |
+|---|---:|---:|
+| `opening_lost` | 33 % | 68 % |
+| `mid_economy_lost` | **67 %** | 32 % |
+
+Openings already work — opening_boost dropped opening-lost share 35 pp
+vs v7_0. The bottleneck is **post-capture security**:
+`lost_back_rate` median = **100 %** in losses vs 30 % in wins; median
+turns-held before flip-back = **13**. Three lib proposers shipped but
+**not wired in geo**: `propose_recapture_missions`,
+`propose_drain_missions`, and any pre-emptive garrison. PI's two
+observations (bounced fleets ~+11 % ships/cap gap; orbital-drift
+1.10× over-rep in capture-then-lost) compound but each ~10 % effect.
+
+**4 variants built, 3-opp panel (gate Wlo ≥ 0.50):**
+
+| Variant | vs v7_0 | vs v4_planner | vs v3.5.1 | Verdict |
+|---|---|---|---|---|
+| **geo_recap** | **64.1 % PASS** | 56.2 % INCONCL | **62.5 % PASS** | **2/3 PASS, mean 60.9 %** |
+| geo_garrison | 42.2 % INCONCL | 56.2 % INCONCL | 56.2 % INCONCL | flat ~52 % |
+| geo_drift | 32.8 % **FAIL** | 31.2 % **FAIL** | 43.8 % INCONCL | panel FAIL |
+| geo_all | 26.6 % **FAIL** | (running) | (running) | drift-poisoned |
+
+**Did NOT submit** — geo_recap mean 60.9 % minus the local-overpredict-2x
+~6–7 pp discount ≈ ~54 % live, not decisively above v7_pv's 1062.2 μ.
+Pushing would evict v7_pv (Rule 12 caveat).
+
+Audit: `audit/2026-05-15-secure-variants-wrap.md` (load-bearing wrap-up,
+merge-to-main recommendations, and the JAX next-step queued).
+
+**Falsified this branch:** drift-discount scoring axis
+(`agents/geo_drift/main.py`); geo_all combined (drift-contaminated, not
+an independent axis falsification per Rule 37).
+
 ## Falsified or dead (across all three branches today)
 
 - All 7 v7_X chooser-axis variants (chooser-axis exhausted)
@@ -96,10 +136,33 @@ Renaissance flags (default-off), snipe tier emission framework.
 - geo v3.0 composite value head as agent value_fn (-19 pp)
 - geo v3.2 empty_out + tap_capture cumulative (-4 pp)
 - JAX depth-2 game-vmap (GPU compile fundamentally too slow)
+- geo_drift (drift-discount Voronoi scoring, panel FAIL on v7_0 + v4_planner)
+- geo_all (drift-contaminated combined; not an axis falsification per Rule 37)
 
 ## Next-session first-action (ranked by EV / cost)
 
-1. **Re-check geo's ladder Score** (5 sec). If μ has climbed to 1050+,
+1. **Bundle + submit `geo_recap`** (~20 min). 3-opp panel pre-submit
+   parity gate. Will evict v7_pv from rolling-last-2 — explicit PI
+   approval required. Expected live ~54 % vs panel (calibrated for
+   local-overpredict-2x). Builder: `scripts/bundle_agent.py
+   agents/geo_recap`.
+
+2. **JAX-port `score_candidate` inside the winner** (~1–2 h + smoke).
+   `lib/game/jax/jax_score.py` has `score_candidate_jax_pure_jit`
+   (30–70× speedup claim from 2026-05-13 sub-phase 1 audit). CPU-only
+   on the ladder; the win is JIT-fused-Python, not GPU. Costs:
+   first-turn cold compile (mitigated by import-time pre-warm),
+   ~150 MB bundle (kernel-push path), float-parity drift (1e-3 tolerance
+   vs scalar env). Payoff: per-turn 500 ms → 10–80 ms, frees K=15+
+   search and depth-2 maximin within the same 1 s actTimeout. Template:
+   `agents/jax_v7_0/main.py`. Gates: Rule 2 + Rule 30 two-tier smoke.
+
+3. **Re-test garrison on top of recap as `geo_recap_garrison`**
+   (~30 min). The 5/14 garrison probe was tested vs vanilla geo, not
+   on top of recap. Combined "recap captures lost ground, garrison
+   holds new ground" has plausible additivity.
+
+4. **Re-check geo's ladder Score** (5 sec). If μ has climbed to 1050+,
    substrate fine and we iterate. If <1000 after 24h, real regression
    → diagnose.
 

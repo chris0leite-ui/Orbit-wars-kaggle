@@ -63,6 +63,28 @@ fix forward AND add a test.
 
 ## Newly-fired patterns (this session)
 
+- `tag: detached-bg-killed-on-session-resume` — 2026-05-15
+  capture-and-secure session: panel suite launched via Bash tool's
+  `run_in_background` at 18:27 UTC ran ~3 h, but the resume-script
+  variant (using `nohup setsid ... & disown`) was killed at the next
+  SessionStart hook ~10 h later. Both ran fine while the launching
+  session was alive; both died across the session boundary. **Root
+  cause:** the harness's session-reset appears to reap the process
+  group regardless of `setsid`/`disown`. **Fix:** for long jobs that
+  must cross a session boundary, the bash-tool `run_in_background`
+  path is the only one I've seen survive; relaunch on each resume if
+  it dies. Possibly worth a guarded session-start re-launcher that
+  detects an interrupted `panel.log` and resumes the missing variants.
+- `tag: local-overpredict-2x` (3rd recurrence) — 2026-05-15 secure-
+  variants: geo_recap panel mean 60.9 % across 192 games. Local
+  experience says the live discount is ~6–7 pp (v3.5.1 5/12: −15 pp;
+  geo v3.1 5/14: −7 pp). Submission was held because expected live
+  ~54 % is not decisively above v7_pv's 1062.2 μ; eviction risk
+  dominates EV. **Tag fired 3×:** v3.5.1, geo v3.1, geo_recap-decision.
+  **Promotion candidate:** local A/B mean must clear (gate + discount)
+  before submission, not just gate alone. To `.claude/skills/kaggle-
+  comp/improvements.md`.
+
 - `tag: fix-not-validated-against-real-failing-state` — 2026-05-14
   audit-pass: I patched `bootstrap.sh` for `data-main-py-missing-on-
   fresh-clone`, ran the unit guards (syntax check, AST tests, --help

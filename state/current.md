@@ -158,6 +158,17 @@ mechanism_families_explored:
   - composite-capture-value-head              # lib/value_heads.py composite_capture_value;
                                               # +9pp local in v7_4 vs v7_2 (32-game); but
                                               # v7_4 vs v7_0 = 40.6% FAIL. Reusable head.
+  - recapture-mission-class-wired             # geo_recap: 3-opp panel 2/3 PASS,
+                                              # mean 60.9% (v7_0 64.1%, v3.5.1 62.5%,
+                                              # v4_planner 56.2% INCONCL). HELD from submit
+                                              # (eviction risk vs v7_pv). 2026-05-15 wrap.
+  - drift-discount-voronoi-scoring            # geo_drift: 3-opp panel FAIL (32.8/31.2/43.8%);
+                                              # falsified axis. K=10 already prices keepability
+                                              # via ship-delta. Same regression family as
+                                              # v7_1..v7_7 + v3.0 composite head. H30 killed.
+  - garrison-on-capture-mission-class         # geo_garrison: 3-opp panel all INCONCLUSIVE
+                                              # (~52% mean). Untested on top of recap;
+                                              # geo_recap_garrison queued for next session.
 
 gate_status: cleared                        # full pytest passes;
                                             # geo's 17 tests + parallel branches' tests all green
