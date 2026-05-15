@@ -34,7 +34,7 @@ Cost analysis (target budget 1500 ms cold / 800 ms warm):
 from __future__ import annotations
 
 import time
-from typing import Optional
+from typing import Optional, Sequence
 
 import jax.numpy as jnp
 import numpy as np
@@ -65,6 +65,7 @@ def beam_search(
     num_agents: int = 2,
     opp_aggressive: bool = True,
     budget_ms: float = 800.0,
+    pre_committed: Sequence[ActionSpec] = (),
 ) -> list[ActionSpec]:
     """Beam search for the best action set; returns the winning set.
 
@@ -72,13 +73,21 @@ def beam_search(
     `depth` — max launches per action set.
     `K` — rollout depth used inside the scorer (defaults to 5).
     `budget_ms` — wall-clock cap. Beam exits early on budget.
+    `pre_committed` — launches already locked in (e.g., from
+        `MissionMemory.waves_to_fire`); the beam SEEDS from this set
+        rather than the empty set and only extends from non-committed
+        sources (the existing `_filter_compatible` enforces
+        one-launch-per-source). The returned set is guaranteed to
+        contain `pre_committed` as a prefix; `winning_set[len(
+        pre_committed):]` are the beam-added launches.
     """
     if num_agents != 2:
         raise ValueError(
             "beam_search currently requires 2P "
             "(score_candidates_vmap_value_prod is 2P-only)."
         )
-    if not atomic_launches:
+    seeded = list(pre_committed)
+    if not atomic_launches and not seeded:
         return []
 
     t_start = time.perf_counter()
@@ -106,13 +115,15 @@ def beam_search(
             cursor += real_n
         return out
 
-    # Score the empty (no-launch) action set as baseline. Uses the
-    # same FIXED batch shape as every subsequent call.
-    baseline_score = float(_score_padded([[]])[0])
+    # Score the seeded (pre-committed) action set as baseline. When
+    # `pre_committed=()` this reduces to the empty set — the original
+    # Phase A behaviour. Uses the same FIXED batch shape as every
+    # subsequent call.
+    baseline_score = float(_score_padded([seeded])[0])
 
-    best_set: list[ActionSpec] = []
+    best_set: list[ActionSpec] = list(seeded)
     best_score: float = baseline_score
-    beam: list[list[ActionSpec]] = [[]]
+    beam: list[list[ActionSpec]] = [list(seeded)]
 
     for d in range(depth):
         elapsed_ms = (time.perf_counter() - t_start) * 1000.0
