@@ -34,7 +34,7 @@ from typing import Any
 
 from lib.candidate_portfolios import generate_portfolios
 from lib.intent import World, realize
-from lib.lookahead import env_from_obs, score_action
+from lib.lookahead import env_from_obs, record_opp_traj, score_action_crn
 from lib.lookahead_planner import (
     adaptive_K,
     evaluate_value,
@@ -147,6 +147,19 @@ def agent(obs, configuration=None):
     best_v = float("-inf")
 
     hard_deadline = t_start + _HARD_DEADLINE_MS / 1000.0
+
+    # CRN: record opp's K-step trajectory once (under "me idle" baseline),
+    # then replay it for every portfolio. Removes opp-policy variance
+    # from the cross-portfolio argmax. ~60-100 ms one-shot cost.
+    try:
+        opp_traj = record_opp_traj(
+            sim_env, K=K, my_id=my_id,
+            policy=_v351_action, deadline=hard_deadline,
+        )
+    except Exception:
+        # If trajectory recording fails, fall back to incumbent.
+        return incumbent_action
+
     for portfolio in portfolios:
         elapsed = (time.perf_counter() - t_start) * 1000.0
         # Skip starting a new candidate once we're past the start watchdog.
@@ -164,11 +177,12 @@ def agent(obs, configuration=None):
                 action = realize(
                     intents, obs, mechanisms=DEFAULT_MECHANISMS, model=model
                 )
-            v = score_action(
+            v = score_action_crn(
                 sim_env,
                 action,
                 K=K,
                 my_id=my_id,
+                opp_traj=opp_traj,
                 policy=_v351_action,
                 value_fn=evaluate_value,
                 deadline=hard_deadline,

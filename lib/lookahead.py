@@ -128,6 +128,111 @@ def score_action(
     return totals.get(my_id, 0.0) - totals.get(opp_id, 0.0)
 
 
+def record_opp_traj(
+    env,
+    K: int,
+    my_id: int,
+    policy: Callable,
+    deadline: float | None = None,
+) -> list:
+    """Run a canonical "me idle, opp policy" rollout for K steps; record
+    opp's per-step actions into a list of length ≤ K.
+
+    Caller passes `env` already reconstructed; we clone it (so the
+    original is unchanged) and step forward. The resulting `opp_traj`
+    is intended to be replayed by `score_action_crn` across multiple
+    portfolio evaluations so opp's reactive variance cancels in the
+    argmax — common random numbers, but applied to opp's policy rather
+    than env RNG.
+
+    Modeling caveat: opp doesn't see my action when we replay opp_traj,
+    so opp is effectively reacting to my "would idle" baseline rather
+    than my actual portfolio. This is a deliberate variance/bias
+    trade-off — opp's plans against my baseline approximate opp's plans
+    against my chosen action over K ≤ 10 steps. Falsified by the panel
+    + Felipe / Maruichi gates if the trade-off is wrong.
+
+    Returns: list of opp actions, one per step taken. Length may be
+    < K if `clone.done` or deadline hits early.
+    """
+    clone = env.clone()
+    opp_id = 1 - my_id
+    traj: list = []
+    for _ in range(K):
+        if clone.done:
+            break
+        if deadline is not None and time.perf_counter() > deadline:
+            break
+        a_opp = policy(clone.state[opp_id].observation)
+        traj.append(a_opp)
+        actions = [None, None]
+        actions[my_id] = []     # me idle in the canonical recording
+        actions[opp_id] = a_opp
+        clone.step(actions)
+    return traj
+
+
+def score_action_crn(
+    env,
+    action: list,
+    K: int,
+    my_id: int,
+    opp_traj: list,
+    policy: Callable,
+    value_fn: Callable | None = None,
+    deadline: float | None = None,
+) -> float:
+    """Sim<K> score with opp's actions REPLAYED from `opp_traj` instead
+    of computed live by `policy`. Reduces variance across portfolio
+    evaluations (same opp sequence → only my action varies).
+
+    Step 0: my action = `action`; opp action = opp_traj[0] (or [] if
+            opp_traj exhausted).
+    Step i>0: my action = policy(my_obs); opp action = opp_traj[i]
+            (or [] if exhausted).
+
+    My subsequent actions are still computed via `policy` so each
+    portfolio's branch tests my actual reactive behavior; opp is the
+    only thing being held fixed for CRN.
+
+    Returns the same scalar as `score_action` (value_fn-applied or
+    ships-balance fallback).
+    """
+    clone = env.clone()
+    opp_id = 1 - my_id
+
+    def _opp_action_at(step_i: int) -> list:
+        if step_i < len(opp_traj):
+            return opp_traj[step_i]
+        return []
+
+    # First step: forced my-action + replayed opp.
+    actions = [None, None]
+    actions[my_id] = action
+    actions[opp_id] = _opp_action_at(0)
+    if not clone.done:
+        clone.step(actions)
+
+    # Remaining K-1 steps: me via policy, opp via opp_traj.
+    for i in range(1, K):
+        if clone.done:
+            break
+        if deadline is not None and time.perf_counter() > deadline:
+            break
+        a_me = policy(clone.state[my_id].observation)
+        a_opp = _opp_action_at(i)
+        actions = [None, None]
+        actions[my_id] = a_me
+        actions[opp_id] = a_opp
+        clone.step(actions)
+
+    leaf_obs = clone.state[my_id].observation
+    if value_fn is not None:
+        return value_fn(leaf_obs, my_id)
+    totals = _ship_total_by_owner(leaf_obs)
+    return totals.get(my_id, 0.0) - totals.get(opp_id, 0.0)
+
+
 def score_joint_action(
     env,
     our_action: list,
