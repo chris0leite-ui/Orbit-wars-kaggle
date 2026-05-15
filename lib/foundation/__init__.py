@@ -23,6 +23,12 @@ from lib.foundation.actions import (
     tensor_to_specs,
 )
 from lib.foundation.memory import EmptyMemory, Memory
+from lib.foundation.memory_impls import (
+    CommittedMission,
+    CompositeMemory,
+    JitCacheMemory,
+    MissionMemory,
+)
 from lib.foundation.strategy import (
     Strategy,
     StrategyCtx,
@@ -39,6 +45,10 @@ __all__ = [
     "tensor_to_specs",
     "Memory",
     "EmptyMemory",
+    "JitCacheMemory",
+    "MissionMemory",
+    "CommittedMission",
+    "CompositeMemory",
     "Strategy",
     "StrategyCtx",
     "register_strategy",
