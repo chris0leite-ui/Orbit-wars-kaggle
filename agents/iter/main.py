@@ -67,22 +67,20 @@ LATEST_LAUNCH_ENABLED = False
 LATEST_LAUNCH_BUFFER_TURNS = 1  # safety margin: arrive at threat_eta - this
 LATEST_LAUNCH_MIN_FLEET = 2     # never shrink below this (avoid degenerate 1-ship near-zero-speed fleets)
 
-# --- Mission persistence + multi-source coordination (2026-05-15) -----------
-# Plan-style commitment across turns. At turn 0 (or whenever the plan
-# invalidates) we pick a best opening target and allocate ships from multiple
-# of our planets to combine against that target. Each source's launch is
-# scheduled at its earliest feasible turn (now if affordable, growth-delayed
-# otherwise). The plan persists across turns until the target is captured
-# (by us or enemy) — fixes the "hesitate past OPENING_WINDOW" pattern in
-# 61% of iter_v1's ladder losses + matches top players' multi-source
-# whittling pattern.
-MISSION_PERSISTENCE_ENABLED = False  # disabled 2026-05-15: panel -42 pp vs v7_0 in 32-seed eval
-MP_OPENING_WINDOW = 12          # plan-builder only fires at step <= this (vs lib's OPENING_WINDOW=5)
-MP_SHIPS_SAFETY = 2             # add this to base capture cost (= t.ships+1+safety) for buffer
-MP_SOURCE_RESERVE = 0           # leave at least this many ships behind on each source. 0 in opening
-                                # matches top players emptying homes; sweep candidate (0/2/5).
-MP_DELAY_PENALTY_PER_TURN = 0.05  # plan-builder ROI penalises late launches
-MP_MAX_SOURCES_PER_TARGET = 3   # cap how many of our planets contribute to one capture
+# --- Multi-step plan ROI scorer (2026-05-15) --------------------------------
+# Score MULTI-TURN action sequences ("first conquer A from X, then B from Y in
+# 4 turns once Y has grown, then T1→T3 once captured") as a whole, not per-
+# turn atomic missions. The plan candidate is emitted as ONE entry in the
+# chooser's drop-one candidate list; the K=10 rollout scores it like any
+# other candidate. No cross-turn state.
+MULTI_STEP_PLAN_ENABLED = False         # default OFF; flip to True for A/B
+MSP_TEMPLATES = ("saturation_strike", "near_chain", "high_prod_chain", "cluster_complete")
+MSP_PLAN_LENGTH = 3                     # max missions per plan (saturation_strike uses 1)
+MSP_HORIZON = 50                        # match PHASE1_HORIZON
+MSP_DELAY_BUDGET = 12                   # max future-turn delay we'll schedule into
+MSP_TOP_K_TARGETS = 4                   # per-template target shortlist size
+MSP_MAX_SOURCES_PER_TARGET = 3          # saturation_strike: planets contributing per target
+MSP_SHIPS_SAFETY = 2                    # add this to base capture cost for buffer
 # ============================================================================
 
 # Dev-mode: override lib.scoring.PV_GAMMA BEFORE v7_search imports propagate
@@ -109,223 +107,6 @@ from lib.intent import World
 from lib.world_model import fleet_target_planet, comet_remaining_lifetime, fleet_speed, WorldModel, simulate_planet_timeline
 import math
 import time
-
-
-# ============================================================================
-# Mission persistence — module-level plan state (carries across turns within
-# one game; reset at turn 0). Architecturally distinct from per-turn missions.
-# ============================================================================
-_PLAN_STATE: dict = {
-    "epoch": -1,              # turn when plan was built
-    "target_id": None,         # planet id we committed to capture
-    "src_ids": [],             # planet ids contributing ships to the capture
-    "scheduled_launches": [],  # list of (fire_turn, src_id, angle, ships)
-}
-
-
-def _has_inflight_us_toward(world, my_id: int, target_id: int) -> bool:
-    """True if any of our in-flight fleets ray-casts to `target_id`.
-
-    Used by `_is_plan_invalid` to keep the plan alive while our fleets
-    are still in transit toward the committed target (avoids re-planning
-    mid-execution and double-allocating ships).
-    """
-    from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet
-    fleets_raw = _fleets_raw_from_world(world)
-    if not fleets_raw:
-        return False
-    planets_list = list(world.planets_by_id.values())
-    if not planets_list:
-        return False
-    for f_raw in fleets_raw:
-        try:
-            f = Fleet(*f_raw)
-        except TypeError:
-            continue
-        if int(f.owner) != my_id:
-            continue
-        tgt, _eta = fleet_target_planet(f, planets_list)
-        if tgt is not None and int(tgt.id) == int(target_id):
-            return True
-    return False
-
-
-def _is_plan_invalid(world, my_id: int) -> bool:
-    """Plan invalidates when: target is captured by anyone (us or enemy),
-    target planet vanished, all our committed sources are lost, OR all
-    scheduled launches have fired AND no inflight friendly fleet is still
-    heading to the target (so the plan has fully resolved).
-    """
-    target_id = _PLAN_STATE.get("target_id")
-    if target_id is None:
-        return True
-    target = world.planets_by_id.get(target_id)
-    if target is None:
-        return True
-    if target.owner == my_id:
-        # We captured it — plan succeeded; rebuild for next target.
-        return True
-    if target.owner != -1 and target.owner != my_id:
-        # An enemy took it — plan failed; rebuild.
-        return True
-    src_ids = _PLAN_STATE.get("src_ids", [])
-    if not src_ids:
-        return True
-    sources_alive = False
-    for sid in src_ids:
-        s = world.planets_by_id.get(int(sid))
-        if s is not None and s.owner == my_id:
-            sources_alive = True
-            break
-    if not sources_alive and not _has_inflight_us_toward(world, my_id, target_id):
-        return True
-    # Resolution check: all launches fired AND no friendly fleet still
-    # heading to the target → time to plan the next move.
-    if (not _PLAN_STATE.get("scheduled_launches")
-            and not _has_inflight_us_toward(world, my_id, target_id)):
-        return True
-    return False
-
-
-def _build_opening_plan(world, my_id: int) -> dict:
-    """Multi-source coordinated opening plan.
-
-    For each candidate target, greedily allocate ships from the closest
-    `MP_MAX_SOURCES_PER_TARGET` sources until the sum exceeds the target's
-    garrison + safety buffer. Each source's launch is scheduled at the
-    earliest turn it can afford its allocation (`src.ships >= ships`),
-    growth-delayed if needed. The plan persists across turns; each launch
-    fires when its scheduled turn arrives.
-
-    Multi-source coordination means: even when no single planet alone has
-    enough ships, multiple planets combine their fleets toward one target.
-    Fleets that bounce off the target's garrison still WHITTLE it, so a
-    subsequent wave captures cheaply. (We don't model the bouncing
-    explicitly here — we just sum the ship contributions; the mission
-    framework's combat resolution handles the rest.)
-
-    Returns a plan dict with `target_id`, `src_ids`, `scheduled_launches`.
-    Returns an empty plan if no target is reachable with our combined
-    ship budget within the opening window.
-    """
-    plan = {"epoch": int(world.step), "target_id": None, "src_ids": [],
-            "scheduled_launches": []}
-    if int(world.step) > MP_OPENING_WINDOW:
-        return plan
-    my_planets = [p for p in world.planets_by_id.values() if p.owner == my_id]
-    targets = [
-        p for p in world.planets_by_id.values()
-        if p.owner == -1 and p.id not in world.comet_ids
-    ]
-    if not my_planets or not targets:
-        return plan
-
-    step_now = int(world.step)
-    best_plan = None
-    best_score = float("-inf")
-
-    for t in targets:
-        base_capture = int(t.ships) + 1 + MP_SHIPS_SAFETY
-        sources_by_dist = sorted(
-            my_planets,
-            key=lambda s: math.hypot(t.x - s.x, t.y - s.y),
-        )[:MP_MAX_SOURCES_PER_TARGET]
-        # Find the earliest step at which our combined available ships
-        # from these sources reach `base_capture`. All launches fire at
-        # that single feasible turn (simpler than per-source timing;
-        # whittle-and-finish is a future iteration).
-        feasible_turn = None
-        for step_t in range(step_now, MP_OPENING_WINDOW + 1):
-            total_avail = 0
-            for src in sources_by_dist:
-                ships_at_t = int(src.ships) + (step_t - step_now) * max(1, int(src.production))
-                total_avail += max(0, ships_at_t - MP_SOURCE_RESERVE)
-                if total_avail >= base_capture:
-                    break
-            if total_avail >= base_capture:
-                feasible_turn = step_t
-                break
-        if feasible_turn is None:
-            continue   # can't cover this target within opening window
-        # Allocate ships from sources, all firing at feasible_turn.
-        allocations = []
-        total_attack = 0
-        for src in sources_by_dist:
-            if total_attack >= base_capture:
-                break
-            ships_at_t = int(src.ships) + (feasible_turn - step_now) * max(1, int(src.production))
-            avail = max(0, ships_at_t - MP_SOURCE_RESERVE)
-            if avail <= 0:
-                continue
-            ships_send = min(avail, base_capture - total_attack)
-            if ships_send <= 0:
-                continue
-            allocations.append((src, ships_send, feasible_turn))
-            total_attack += ships_send
-        if total_attack < base_capture:
-            continue
-        # ROI: production-of-target divided by closest source distance,
-        # penalised by feasible launch turn (later is worse).
-        closest_d = math.hypot(t.x - sources_by_dist[0].x, t.y - sources_by_dist[0].y)
-        score = (float(t.production) / (closest_d + 1.0)
-                 - feasible_turn * MP_DELAY_PENALTY_PER_TURN)
-        if score > best_score:
-            best_score = score
-            best_plan = (t, allocations)
-
-    if best_plan is None:
-        return plan
-    target, allocations = best_plan
-    plan["target_id"] = int(target.id)
-    plan["src_ids"] = sorted({int(s.id) for (s, _n, _l) in allocations})
-    plan["scheduled_launches"] = [
-        (int(launch_turn), int(s.id),
-         float(math.atan2(target.y - s.y, target.x - s.x)),
-         int(ships_send))
-        for (s, ships_send, launch_turn) in allocations
-    ]
-    return plan
-
-
-def _execute_planned_launches(world, current_turn: int, my_id: int) -> list:
-    """Return launches in _PLAN_STATE scheduled for `current_turn` that pass
-    a final-validity gate (source still ours with enough ships). Mutates
-    `_PLAN_STATE["scheduled_launches"]` to drop fired/invalid entries."""
-    scheduled = _PLAN_STATE.get("scheduled_launches", [])
-    if not scheduled:
-        return []
-    fired: list = []
-    remaining: list = []
-    for entry in scheduled:
-        try:
-            fire_turn, src_id, angle, ships = entry
-        except (ValueError, TypeError):
-            continue
-        if int(fire_turn) > current_turn:
-            remaining.append(entry)
-            continue
-        if int(fire_turn) < current_turn:
-            # Expired — skip (might have been blocked by an earlier turn's check).
-            continue
-        src = world.planets_by_id.get(int(src_id))
-        if src is None or src.owner != my_id:
-            continue
-        if int(src.ships) < int(ships):
-            continue
-        fired.append([int(src_id), float(angle), int(ships)])
-    _PLAN_STATE["scheduled_launches"] = remaining
-    return fired
-
-
-def _merge_planned_with_action(action: list, planned: list) -> list:
-    """Merge planned launches with the chooser's action. Each source can only
-    launch once per turn — planned launches take precedence and replace any
-    chooser launches from the same source."""
-    if not planned:
-        return action or []
-    plan_srcs = {int(p[0]) for p in planned}
-    base = [a for a in (action or []) if a and int(a[0]) not in plan_srcs]
-    return base + planned
 
 
 def _resolve_value_fn(name):
@@ -601,6 +382,311 @@ def _score_phase1_analytical(world, action, my_id: int, horizon: int) -> float:
     return score
 
 
+# ============================================================================
+# Multi-step plan ROI scorer (2026-05-15)
+# ============================================================================
+# Score MULTI-TURN action sequences as a whole, not per-turn atomic missions.
+# A "plan" is a list of (fire_turn, src_id, angle, ships) tuples representing
+# scheduled launches across the next MSP_DELAY_BUDGET turns. The plan scorer
+# extends _score_phase1_analytical to support FUTURE-turn launches.
+# The orchestrator emits ONE candidate (the first-turn launches of the best
+# plan) into the chooser's candidate list; the K=10 rollout argmax-selects.
+# No cross-turn state. No post-hoc merging. Strictly additive.
+
+
+def _plan_first_turn_action(plan_launches, world):
+    """Extract launches that fire THIS turn as a [src_id, angle, ships] list.
+
+    Plan format: list of (fire_turn_absolute, src_id, angle, ships).
+    Anything with fire_turn == world.step is emitted as a chooser candidate.
+    """
+    now = int(world.step)
+    out = []
+    for fire_turn, src_id, angle, ships in plan_launches:
+        if int(fire_turn) != now:
+            continue
+        out.append([int(src_id), float(angle), int(ships)])
+    return out
+
+
+def _score_plan_analytical(world, plan_launches, my_id: int, horizon: int) -> float:
+    """Analytical leaf score for a multi-turn plan.
+
+    Extends _score_phase1_analytical to support future-turn launches.
+    Each plan launch (fire_turn, src_id, angle, ships) contributes one
+    synthetic arrival at (delay + ray_cast_eta) where delay = fire_turn -
+    world.step. simulate_planet_timeline correctly buckets arrivals at any
+    future step <= horizon.
+
+    Returns production-weighted us-minus-them differential to `horizon`.
+    """
+    from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet
+    planets_list = list(world.planets_by_id.values())
+    if not planets_list:
+        return 0.0
+
+    base_model = WorldModel.from_world(world, horizon=horizon)
+    synthetic_ledger = {pid: list(arr) for pid, arr in base_model.ledger.items()}
+
+    now = int(world.step)
+    for fire_turn, src_id, angle, ships in plan_launches:
+        delay = int(fire_turn) - now
+        if delay < 0 or ships <= 0:
+            continue
+        src = world.planets_by_id.get(int(src_id))
+        if src is None:
+            continue
+        spd = fleet_speed(int(ships))
+        if spd <= 0:
+            continue
+        f = Fleet(-1, my_id, float(src.x), float(src.y), float(angle), int(src_id), int(ships))
+        tgt, eta = fleet_target_planet(f, planets_list)
+        if tgt is None or eta is None:
+            continue
+        arrival_turn = delay + int(eta)
+        if arrival_turn > horizon:
+            continue
+        synthetic_ledger.setdefault(int(tgt.id), []).append(
+            (arrival_turn, my_id, int(ships)))
+
+    score = 0.0
+    for p in planets_list:
+        arrivals = synthetic_ledger.get(int(p.id), [])
+        tl = simulate_planet_timeline(p, arrivals, horizon=horizon)
+        owner_at = tl["owner_at"]
+        for t in range(1, horizon + 1):
+            owner = owner_at.get(t, p.owner)
+            if owner == my_id:
+                score += float(p.production)
+            elif owner is not None and owner >= 0 and owner != my_id:
+                score -= float(p.production)
+    return score
+
+
+def _eligible_neutral_targets(world):
+    """Non-comet neutral planets, sorted by (distance-to-nearest-ours / production)."""
+    my_id = world.my_id
+    my_planets = [p for p in world.planets_by_id.values() if p.owner == my_id]
+    if not my_planets:
+        return []
+    targets = []
+    for t in world.planets_by_id.values():
+        if t.owner != -1:
+            continue
+        if t.id in world.comet_ids:
+            continue
+        min_d = min(math.hypot(t.x - s.x, t.y - s.y) for s in my_planets)
+        roi = float(t.production) / (min_d + 1.0)
+        targets.append((roi, min_d, t))
+    targets.sort(key=lambda x: (-x[0], x[1]))
+    return [t for _r, _d, t in targets]
+
+
+def _build_saturation_strike_plan(world, my_id: int) -> list:
+    """Single-target multi-source saturation. Addresses opening fleet-size gap.
+
+    Picks the highest-ROI neutral target reachable RIGHT NOW (turn=world.step)
+    with combined ships from up to MSP_MAX_SOURCES_PER_TARGET nearest sources.
+    All launches fire at world.step. Returns [] if no target is fundable now.
+    """
+    targets = _eligible_neutral_targets(world)
+    if not targets:
+        return []
+    my_planets = [p for p in world.planets_by_id.values() if p.owner == my_id]
+    if not my_planets:
+        return []
+    now = int(world.step)
+    for t in targets[:MSP_TOP_K_TARGETS]:
+        base_capture = int(t.ships) + 1 + MSP_SHIPS_SAFETY
+        sources = sorted(my_planets,
+                         key=lambda s: math.hypot(t.x - s.x, t.y - s.y)
+                         )[:MSP_MAX_SOURCES_PER_TARGET]
+        total_avail = sum(int(s.ships) for s in sources)
+        if total_avail < base_capture:
+            continue
+        plan_launches = []
+        remaining = base_capture
+        for s in sources:
+            if remaining <= 0:
+                break
+            send = min(int(s.ships), remaining)
+            if send <= 0:
+                continue
+            angle = math.atan2(t.y - s.y, t.x - s.x)
+            plan_launches.append((now, int(s.id), float(angle), int(send)))
+            remaining -= send
+        if remaining > 0:
+            continue
+        return plan_launches
+    return []
+
+
+def _build_chain_plan(world, my_id: int, target_order, length: int, delay_budget: int):
+    """Generic chain builder used by near_chain and high_prod_chain.
+
+    `target_order` is a pre-sorted list of target planets. For each in order,
+    allocate the closest owned source not yet locked, schedule fire_turn at
+    earliest turn where source has ships >= capture cost (or fail if outside
+    delay_budget). Stop after `length` missions.
+    """
+    if not target_order:
+        return []
+    my_planets = [p for p in world.planets_by_id.values() if p.owner == my_id]
+    if not my_planets:
+        return []
+    now = int(world.step)
+    plan_launches: list = []
+    used_src_turns: set = set()   # (src_id, fire_turn) — one launch per slot
+
+    for t in target_order[:length]:
+        base_capture = int(t.ships) + 1 + MSP_SHIPS_SAFETY
+        # Try sources nearest to t.
+        candidates = sorted(my_planets,
+                            key=lambda s: math.hypot(t.x - s.x, t.y - s.y))
+        scheduled = False
+        for src in candidates:
+            # Earliest turn this source has enough ships (production-grown).
+            prod = max(1, int(src.production))
+            for delay in range(delay_budget + 1):
+                fire_turn = now + delay
+                if (int(src.id), fire_turn) in used_src_turns:
+                    continue
+                ships_at_t = int(src.ships) + delay * prod
+                if ships_at_t >= base_capture:
+                    angle = math.atan2(t.y - src.y, t.x - src.x)
+                    plan_launches.append((fire_turn, int(src.id), float(angle), base_capture))
+                    used_src_turns.add((int(src.id), fire_turn))
+                    scheduled = True
+                    break
+            if scheduled:
+                break
+        # If no source can fund this target within delay_budget, skip it.
+    return plan_launches
+
+
+def _build_near_chain_plan(world, my_id: int, length: int, delay_budget: int):
+    """Capture `length` closest non-comet neutrals in distance order."""
+    my_planets = [p for p in world.planets_by_id.values() if p.owner == my_id]
+    if not my_planets:
+        return []
+    neutrals = [p for p in world.planets_by_id.values()
+                if p.owner == -1 and p.id not in world.comet_ids]
+    if not neutrals:
+        return []
+    def _min_d(t):
+        return min(math.hypot(t.x - s.x, t.y - s.y) for s in my_planets)
+    neutrals.sort(key=_min_d)
+    return _build_chain_plan(world, my_id, neutrals, length, delay_budget)
+
+
+def _build_high_prod_chain_plan(world, my_id: int, length: int, delay_budget: int):
+    """Capture `length` highest-production non-comet neutrals (production desc,
+    distance tiebreak)."""
+    my_planets = [p for p in world.planets_by_id.values() if p.owner == my_id]
+    if not my_planets:
+        return []
+    neutrals = [p for p in world.planets_by_id.values()
+                if p.owner == -1 and p.id not in world.comet_ids]
+    if not neutrals:
+        return []
+    def _key(t):
+        min_d = min(math.hypot(t.x - s.x, t.y - s.y) for s in my_planets)
+        return (-float(t.production), min_d)
+    neutrals.sort(key=_key)
+    return _build_chain_plan(world, my_id, neutrals, length, delay_budget)
+
+
+def _build_cluster_complete_plan(world, model, my_id: int, length: int, delay_budget: int):
+    """Find an our-cluster, capture adjacent unclaimed neutrals to complete it.
+
+    Uses lib.geo.sense.sense_state for cluster geometry. Picks the cluster
+    with the highest production-weighted neighbour shortlist; captures up to
+    `length` of those neutrals in distance order. Returns [] if sense_state
+    finds no qualifying cluster.
+    """
+    try:
+        from lib.geo.sense import sense_state
+    except ImportError:
+        return []
+    try:
+        sense = sense_state(world, model)
+    except Exception:
+        return []
+    our_clusters = getattr(sense, "our_clusters", None) or getattr(sense, "my_clusters", None)
+    if not our_clusters:
+        return []
+    # For each cluster, find adjacent unclaimed neutrals (within some radius
+    # of the cluster's centroid). Sort by total production captured.
+    best_cluster_targets = []
+    best_score = 0.0
+    for cluster in our_clusters:
+        member_ids = getattr(cluster, "planet_ids", None) or getattr(cluster, "members", None)
+        if not member_ids:
+            continue
+        members = [world.planets_by_id.get(int(pid)) for pid in member_ids]
+        members = [m for m in members if m is not None]
+        if not members:
+            continue
+        cx = sum(m.x for m in members) / len(members)
+        cy = sum(m.y for m in members) / len(members)
+        # Adjacent neutrals = closest non-comet neutrals to cluster centroid.
+        neutrals = [p for p in world.planets_by_id.values()
+                    if p.owner == -1 and p.id not in world.comet_ids]
+        if not neutrals:
+            continue
+        neutrals.sort(key=lambda t: math.hypot(t.x - cx, t.y - cy))
+        candidates = neutrals[:length]
+        score = sum(float(t.production) for t in candidates)
+        if score > best_score:
+            best_score = score
+            best_cluster_targets = candidates
+    if not best_cluster_targets:
+        return []
+    return _build_chain_plan(world, my_id, best_cluster_targets, length, delay_budget)
+
+
+def multi_step_plan_candidate(world, model, my_id: int, incumbent_action):
+    """Build one plan per enabled template; score each analytically; return
+    the FIRST-TURN action of the highest-scoring plan as ONE chooser candidate.
+
+    Returns None if no template yields a plan that scores higher than the
+    incumbent's analytical Phase-1 score.
+    """
+    incumbent_score = _score_phase1_analytical(world, incumbent_action, my_id, MSP_HORIZON)
+    builders = {
+        "saturation_strike": lambda: _build_saturation_strike_plan(world, my_id),
+        "near_chain": lambda: _build_near_chain_plan(
+            world, my_id, MSP_PLAN_LENGTH, MSP_DELAY_BUDGET),
+        "high_prod_chain": lambda: _build_high_prod_chain_plan(
+            world, my_id, MSP_PLAN_LENGTH, MSP_DELAY_BUDGET),
+        "cluster_complete": lambda: _build_cluster_complete_plan(
+            world, model, my_id, MSP_PLAN_LENGTH, MSP_DELAY_BUDGET),
+    }
+    best_first_action = None
+    best_score = incumbent_score
+    for template_name in MSP_TEMPLATES:
+        builder = builders.get(template_name)
+        if builder is None:
+            continue
+        try:
+            plan_launches = builder()
+        except Exception:
+            continue
+        if not plan_launches:
+            continue
+        first_action = _plan_first_turn_action(plan_launches, world)
+        if not first_action:
+            continue
+        try:
+            plan_score = _score_plan_analytical(world, plan_launches, my_id, MSP_HORIZON)
+        except Exception:
+            continue
+        if plan_score > best_score:
+            best_score = plan_score
+            best_first_action = first_action
+    return best_first_action
+
+
 def _choose_two_phase(obs, configuration, *, K_deep: int, wallclock_ms: float,
                        phase1_horizon: int, phase2_top_k: int,
                        opp_tier: int, value_fn, world):
@@ -615,10 +701,20 @@ def _choose_two_phase(obs, configuration, *, K_deep: int, wallclock_ms: float,
     incumbent_intents = _v7_build_incumbent(world, model, include_recapture=True)
     incumbent_action = _v7_action_from_intents(incumbent_intents, obs, model)
     candidates = _v7_enumerate_drop_one(incumbent_action)
+    my_id = world.my_id
+
+    # Multi-step plan candidate: emits one extra candidate from the best-
+    # scoring multi-turn plan. The chooser still gates via K=10 rollout.
+    if MULTI_STEP_PLAN_ENABLED:
+        try:
+            plan_action = multi_step_plan_candidate(world, model, my_id, incumbent_action)
+        except Exception:
+            plan_action = None
+        if plan_action is not None:
+            candidates.append(plan_action)
+
     if len(candidates) <= 1:
         return incumbent_action
-
-    my_id = world.my_id
 
     # Phase 1: analytical scores on every candidate.
     p1_scores = [
@@ -739,21 +835,7 @@ def _shrink_to_min_viable(action, world, model):
 
 
 def agent(obs, configuration=None):
-    global _PLAN_STATE
     world = World.from_obs(obs)
-    current_turn = int(world.step)
-
-    # ------------------------------------------------------------------
-    # Mission persistence — opening commitment across turns.
-    # Reset at turn 0 (new game), rebuild on invalidation. Scheduled
-    # launches for THIS turn are extracted and merged with the chooser
-    # action below (taking precedence per source).
-    # ------------------------------------------------------------------
-    planned_launches: list = []
-    if MISSION_PERSISTENCE_ENABLED:
-        if current_turn == 0 or _is_plan_invalid(world, world.my_id):
-            _PLAN_STATE = _build_opening_plan(world, world.my_id)
-        planned_launches = _execute_planned_launches(world, current_turn, world.my_id)
 
     # ------------------------------------------------------------------
     # PRE-FILTER HOOK — Bug 3: comet evacuation
@@ -823,12 +905,6 @@ def agent(obs, configuration=None):
     # COMET_MAX_LAUNCHES_PER_TURN (shortest ETA wins the slots).
     # ------------------------------------------------------------------
     action = _cap_comet_launches(action, world, COMET_MAX_LAUNCHES_PER_TURN)
-
-    # ------------------------------------------------------------------
-    # Merge planned launches (mission persistence) — take precedence per
-    # source over the chooser's launches.
-    # ------------------------------------------------------------------
-    action = _merge_planned_with_action(action, planned_launches)
 
     # ------------------------------------------------------------------
     # Merge evacuation launches (Bug 3) — only for sources the chooser
