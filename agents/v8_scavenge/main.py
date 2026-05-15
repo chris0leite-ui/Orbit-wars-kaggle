@@ -64,8 +64,11 @@ MIN_FLEET_SIZE = 2               # 1-ship fleets are slow + rarely useful
 SIM_SETTLE_TURNS = 2             # extra idle turns after arrival to settle combat
 MIN_HORIZON = 15                 # floor — must cover incoming threats arriving
                                  # at our source planets in ~time for fast fleet
-MAX_HORIZON = 50                 # baseline cache depth (long enough for any
-                                 # plausible candidate eta + settle)
+MAX_HORIZON = 30                 # baseline cache depth — covers most candidate
+                                 # etas (typical eta range 5-25); long-arc
+                                 # candidates get clipped to MAX_HORIZON.
+                                 # Was 50; lowered to reduce per-turn baseline
+                                 # build cost + bound per-candidate rollout.
 
 # Wallclock safety. The env's actTimeout is 1000ms. Panel calibration
 # at n=192 observed p95=812ms, max=3116ms — outliers blow past the
