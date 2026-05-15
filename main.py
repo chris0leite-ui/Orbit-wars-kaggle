@@ -55,6 +55,7 @@ import math
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from favor import favor
+from lib.aim import aim_orbiting
 from lib.fast_sim import from_obs, step as fs_step, clone as fs_clone
 
 # --- comp constants (from data/README.md) ----------------------------------
@@ -104,6 +105,42 @@ def _crosses_sun(sx: float, sy: float, tx: float, ty: float) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _lead_aimed_angle(
+    src: Planet, tgt: Planet, ships: int, ang_vel: float,
+) -> float:
+    """Bearing from src to tgt's predicted position at arrival.
+
+    For ORBITING targets, delegates to `lib.aim.aim_orbiting`
+    (5-iter fixed-point lead + safe-intercept fallback, parity-
+    tested in `tests/test_orbit.py`). For static targets, returns
+    current-position bearing.
+
+    Diagnosed at seed 1003 turn 16: P12 → P22 ×26 MISSED because
+    P22 drifted 13.1 units during 11-turn flight while the fleet
+    aimed at where P22 *was*. Lead-aim closes that gap.
+    """
+    if not _is_orbiting(tgt):
+        return math.atan2(tgt.y - src.y, tgt.x - src.x)
+
+    # aim_orbiting expects planet as `[id, owner, x, y, radius, ships, prod]`;
+    # Planet is a namedtuple with that exact field order, so list(tgt) works.
+    src_xy = (src.x, src.y)
+    tgt_tuple = list(tgt)
+    result = aim_orbiting(
+        src_xy, src.radius, tgt_tuple, tgt.radius, ships, ang_vel
+    )
+    if result is None:
+        return math.atan2(tgt.y - src.y, tgt.x - src.x)
+    angle, _arrival_xy, _eta = result
+    return angle
+
+
+def _is_orbiting(planet: Planet) -> bool:
+    """True iff the planet is inside the rotation-radius envelope."""
+    from lib.orbit import is_orbiting as _io
+    return _io(list(planet))
+
+
 def _arrival_turns(src: Planet, tgt: Planet, ships: int) -> int:
     """Estimated turns for a fleet of `ships` to fly from src to tgt
     (centre-to-centre minus both radii, at `_speed(ships)`).
@@ -146,6 +183,7 @@ def score_action(
     snap_base=None,
     num_seats: int = 2,
     baseline_favors: list[float] | None = None,
+    ang_vel: float = 0.0,
 ) -> float:
     """Marginal Δfavor for launching `ships` from src toward tgt —
     computed via the parity-tested physics simulator.
@@ -183,7 +221,7 @@ def score_action(
     horizon = max(arrival + SIM_SETTLE_TURNS, MIN_HORIZON)
     if horizon >= len(baseline_favors):
         horizon = len(baseline_favors) - 1
-    angle = math.atan2(tgt.y - src.y, tgt.x - src.x)
+    angle = _lead_aimed_angle(src, tgt, ships, ang_vel)
 
     snap = fs_clone(snap_base)
     actions = [[] for _ in range(num_seats)]
@@ -270,6 +308,7 @@ def _enumerate_candidates(
     snap_base,
     num_seats: int,
     baseline_favors: list[float],
+    ang_vel: float,
 ) -> list[tuple[float, Planet, Planet, int]]:
     """All (Δfavor, src, tgt, ships) triples with Δfavor > 0.
 
@@ -313,6 +352,7 @@ def _enumerate_candidates(
                     src, tgt, ships, step, me,
                     snap_base=snap_base, num_seats=num_seats,
                     baseline_favors=baseline_favors,
+                    ang_vel=ang_vel,
                 )
                 if s > 0.0:
                     out.append((s, src, tgt, ships))
@@ -346,15 +386,18 @@ def agent(obs):
     num_seats = _num_seats(planets, fleets)
     snap_base = from_obs(obs, num_seats=num_seats)
     baseline_favors = _build_idle_baseline(snap_base, player, num_seats, MAX_HORIZON)
+    ang_vel = float(obs.get("angular_velocity", 0.0)) if isinstance(obs, dict) else float(getattr(obs, "angular_velocity", 0.0))
     candidates = _enumerate_candidates(
         my_planets, targets, fleets, step, player,
-        snap_base, num_seats, baseline_favors,
+        snap_base, num_seats, baseline_favors, ang_vel,
     )
     if not candidates:
         return []   # no positive-Δfavor candidate; hold
 
     # Greedy non-dogpile: each source emits at most one fleet; each target
-    # is the destination of at most one fleet this turn.
+    # is the destination of at most one fleet this turn. Final action uses
+    # the SAME lead-aimed angle the chooser scored against — otherwise the
+    # simulator's prediction wouldn't match the action's real trajectory.
     used_srcs: set[int] = set()
     used_tgts: set[int] = set()
     moves: list[list] = []
@@ -363,6 +406,6 @@ def agent(obs):
             continue
         used_srcs.add(src.id)
         used_tgts.add(tgt.id)
-        angle = math.atan2(tgt.y - src.y, tgt.x - src.x)
+        angle = _lead_aimed_angle(src, tgt, ships, ang_vel)
         moves.append([src.id, angle, ships])
     return moves
