@@ -49,7 +49,10 @@ from lib.foundation.memory_impls import (
     CompositeMemory,
     MissionMemory,
 )
-from lib.foundation.strategies.analytic_score import enumerate_atomic_launches
+from lib.foundation.strategies.analytic_score import (
+    enumerate_atomic_launches,
+    enumerate_defensive_reinforce,
+)
 from lib.foundation.strategies.beam_search import beam_search
 from lib.foundation.strategy import StrategyCtx, register_strategy
 from lib.game.jax.jax_types import GameState
@@ -111,6 +114,10 @@ class AnalyticStrategy:
         # fall back to Phase A behaviour: no missions, no chainer.
         if not isinstance(memory, CompositeMemory):
             atomics = enumerate_atomic_launches(state, my_id)
+            atomics = atomics + enumerate_defensive_reinforce(
+                state, my_id,
+                world_model=ctx.world_model, raw_obs=ctx.raw_obs,
+            )
             winning_set = beam_search(
                 state, atomics, my_id,
                 width=self._width, depth=self._depth, K=self._K,
@@ -150,6 +157,10 @@ class AnalyticStrategy:
         else:
             # 4. Run beam SEEDED with pre-commits.
             atomics = enumerate_atomic_launches(state, my_id)
+            atomics = atomics + enumerate_defensive_reinforce(
+                state, my_id,
+                world_model=ctx.world_model, raw_obs=ctx.raw_obs,
+            )
             atomics = [a for a in atomics if a.from_planet_id not in used_sources]
             winning_set = beam_search(
                 state, atomics, my_id,

@@ -46,7 +46,7 @@ def agent(obs: Any, configuration: Any = None) -> list[list]:
     state = obs_to_jax_state(obs, configuration=configuration)
     my_id = my_id_from_obs(obs)
 
-    ctx = StrategyCtx(turn_budget_ms=1000.0)
+    ctx = StrategyCtx(turn_budget_ms=1000.0, raw_obs=obs)
     strategy = get_strategy(_STRATEGY_NAME)
     action_tensor, new_memory = strategy.emit(state, my_id, ctx, memory)
 

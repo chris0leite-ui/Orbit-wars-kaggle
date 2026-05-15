@@ -57,6 +57,8 @@ from lib.game.jax.jax_types import (
     MAX_AGENTS,
     MAX_LAUNCH_PER_AGENT,
 )
+from lib.intent import World
+from lib.world_model import WorldModel
 
 
 EPISODE_STEPS = 500
@@ -199,6 +201,146 @@ def enumerate_atomic_launches(
                     launch_turn=0,
                     agent_id=my_id,
                 ))
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Defensive-reinforce enumeration (Commit 1 of v8_scavenge port)
+# ---------------------------------------------------------------------------
+
+# Sized to match v8_scavenge's `MAX_HORIZON=30` minus a small margin; any
+# threat further out than this gets handled on a later turn (the chooser
+# revisits every step). Tighter than 30 to avoid generating reinforce
+# atoms for far-future threats that are noise more than signal.
+_K_THREAT_HORIZON = 25
+
+# A 1-ship "reinforce" can't survive combat resolution; matches v8_scavenge.
+_MIN_REINFORCE_SHIPS = 2
+
+
+def enumerate_defensive_reinforce(
+    state: GameState,
+    my_id: int,
+    world_model: Optional[WorldModel] = None,
+    raw_obs: Optional[object] = None,
+    *,
+    max_eta: int = 80,
+) -> list[ActionSpec]:
+    """Generate `ActionSpec` atoms aimed at my own threatened planets.
+
+    Ports v8_scavenge's M2 fix (commit 82b5526): the standard offensive
+    enumerator never proposes "send a fleet to defend my own planet,"
+    so the beam can't choose defence even though the action space
+    allows it. Without this, opp's continuous fleet pressure flips
+    captured planets back and eliminates us mid-game — observed as the
+    0/32 smoke loss vs `nearest`.
+
+    Threat is detected via `WorldModel.incoming_enemy_eta`. For each
+    own planet with at least one inbound enemy fleet arriving within
+    `_K_THREAT_HORIZON` turns, we (a) sum the incoming enemy ships
+    that land at or before that ETA, (b) predict our garrison at the
+    same ETA (`current + prod × eta`), (c) compute the shortfall, and
+    (d) for every OTHER owned planet with a usable garrison, propose a
+    reinforce fleet sized to close the gap. The fleet must be able to
+    arrive at-or-before the threat lands (`reinforce_eta ≤ enemy_eta`).
+
+    `world_model` is preferred (caller-precomputed). When `None`, we
+    fall back to building one from `raw_obs` — slightly slower but
+    keeps the entry point usable from any agent that passes obs.
+
+    Returns the new atoms; the caller concatenates them with the
+    offensive output of `enumerate_atomic_launches`.
+    """
+    if world_model is None:
+        if raw_obs is None:
+            return []
+        world_model = WorldModel.from_world(World.from_obs(raw_obs))
+
+    alive = np.asarray(state.planets_alive)
+    ids = np.asarray(state.planets_id)
+    owner = np.asarray(state.planets_owner)
+    ships = np.asarray(state.planets_ships)
+    x = np.asarray(state.planets_x)
+    y = np.asarray(state.planets_y)
+    radius = np.asarray(state.planets_radius)
+    prod = np.asarray(state.planets_prod)
+    omega = float(state.angular_velocity)
+
+    P = len(alive)
+    my_planets = [
+        i for i in range(P)
+        if bool(alive[i]) and int(owner[i]) == my_id
+    ]
+    if len(my_planets) < 2:
+        # Need at least one source and one target; if we own ≤1 planet
+        # nothing else can reinforce it.
+        return []
+
+    out: list[ActionSpec] = []
+
+    for tgt_i in my_planets:
+        tgt_id = int(ids[tgt_i])
+        enemy_eta = world_model.incoming_enemy_eta(tgt_id, my_id)
+        if enemy_eta is None or enemy_eta > _K_THREAT_HORIZON:
+            continue
+
+        arrivals = world_model.ledger.get(tgt_id) or []
+        enemy_ships = sum(
+            int(a_ships) for (a_eta, a_owner, a_ships) in arrivals
+            if a_owner != my_id and a_eta <= enemy_eta + 1 and a_ships > 0
+        )
+        if enemy_ships <= 0:
+            continue
+
+        my_garrison_at_eta = int(ships[tgt_i]) + int(prod[tgt_i]) * int(enemy_eta)
+        shortfall = enemy_ships - my_garrison_at_eta + 1
+        if shortfall <= 0:
+            continue
+
+        tgt_tuple = (
+            tgt_id,
+            int(owner[tgt_i]),
+            float(x[tgt_i]),
+            float(y[tgt_i]),
+            float(radius[tgt_i]),
+            int(ships[tgt_i]),
+            int(prod[tgt_i]),
+        )
+        tgt_radius = float(radius[tgt_i])
+
+        for src_i in my_planets:
+            if src_i == tgt_i:
+                continue
+            src_ships = int(ships[src_i])
+            if src_ships <= _MIN_REINFORCE_SHIPS:
+                continue
+
+            fleet_ships = min(int(math.ceil(shortfall)), src_ships - 1)
+            if fleet_ships < _MIN_REINFORCE_SHIPS:
+                continue
+
+            src_pos = (float(x[src_i]), float(y[src_i]))
+            src_radius = float(radius[src_i])
+            aim = aim_orbiting(
+                src_pos, src_radius, tgt_tuple, tgt_radius,
+                fleet_ships, omega,
+            )
+            if aim is None:
+                continue
+            aim_angle, _arrival, eta = aim
+            if eta is None or eta > max_eta or eta > enemy_eta:
+                # Must arrive before the threat lands; otherwise the
+                # reinforce can't help.
+                continue
+
+            out.append(ActionSpec(
+                from_planet_id=int(ids[src_i]),
+                dir_angle=float(aim_angle),
+                ships=fleet_ships,
+                launch_turn=0,
+                agent_id=my_id,
+            ))
 
     return out
 
