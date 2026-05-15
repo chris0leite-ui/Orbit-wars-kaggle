@@ -83,9 +83,9 @@ class AnalyticStrategy:
     def __init__(
         self,
         *,
-        width: int = 4,
-        depth: int = 4,
-        K: int = 5,
+        width: int = 3,
+        depth: int = 3,
+        K: int = 4,
         budget_ms: float = 800.0,
         opp_aggressive: bool = True,
         enable_chainer: bool = True,

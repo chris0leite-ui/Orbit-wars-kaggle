@@ -63,27 +63,49 @@ from lib.world_model import WorldModel
 
 EPISODE_STEPS = 500
 
+# Geometric production-value discount (Piece B.2 of the v8_scavenge port).
+# Matches `lib/scoring.py:PV_GAMMA` convention. The closed-form horizon
+# factor `gamma_h = (1 - PV_GAMMA**remaining) / (1 - PV_GAMMA)` weights
+# early-turn production much more than late-turn production, which adds
+# (i) own-planet retention signal (`prod_my` drops when a planet flips
+# during the K-step rollout) and (ii) early-capture compounding signal
+# (the maruichi01 pattern: grabbing high-prod planets at turn 5 is
+# worth materially more than turn 50).
+PV_GAMMA = 0.99
+
 
 # ---------------------------------------------------------------------------
-# Value head: ship-delta + future production
+# Value head: ship-balance + γ-discounted production (favor)
 # ---------------------------------------------------------------------------
 
 
 def value_with_future_production(state, my_id: int, episode_steps: int = EPISODE_STEPS):
-    """`(my_ships + my_prod × remaining) - (opp_ships + opp_prod × remaining)`.
+    """γ-discounted favor: `(my_ships + my_prod × γ_h) - (opp_ships + opp_prod × γ_h)`.
 
-    JAX-pure; differentiable through state's continuous fields if
-    needed downstream. `remaining = max(0, episode_steps - state.step)`.
+    `γ_h = sum_{t=0..remaining-1} PV_GAMMA**t = (1 - PV_GAMMA**remaining)
+    / (1 - PV_GAMMA)`. Mathematically equivalent to v8_scavenge's
+    `F1 + F2 × pv_horizon(γ=0.99)` factored across both seats.
 
-    Improves on `value_delta_ships` by counting *future production* on
-    held planets — v7's K=10 rollout sees the ship count at turn 10,
-    but a planet captured on turn 10 is worth `production × 490` ships
-    by game end, not just its turn-10 garrison.
+    Two signals emerge naturally when paired with a K-step rollout:
+    - Defensive: when one of my planets flips at turn t ≤ K, `prod_my`
+      drops by that planet's production for the remainder of the
+      rollout horizon, and the leaf value drops by
+      `prod[tgt] × γ_h × (1 - t/K)`.
+    - Compounding: production accrued near `state.step` is worth much
+      more than production accrued near `EPISODE_STEPS`. A 3-prod
+      capture at step 5 vs step 50 sees a meaningful γ-discount gap,
+      where the previous linear-`remaining` head saw only ~10%.
+
+    JAX-pure; JIT-compatible. Name preserved for caller compatibility.
     """
     my_id_jnp = jnp.int32(my_id)
     remaining = jnp.maximum(
         jnp.int32(0), jnp.int32(episode_steps) - state.step
     ).astype(jnp.float32)
+    gamma = jnp.float32(PV_GAMMA)
+    # Closed-form geometric sum; at γ=0.99 and remaining=500, gamma_h≈
+    # (1 − 0.99**500)/0.01 ≈ 99.3, vs the prior linear value of 500.
+    gamma_h = (jnp.float32(1.0) - jnp.power(gamma, remaining)) / (jnp.float32(1.0) - gamma)
 
     mine_p = (state.planets_owner == my_id_jnp) & state.planets_alive
     opp_p = (
@@ -110,7 +132,7 @@ def value_with_future_production(state, my_id: int, episode_steps: int = EPISODE
     prod_my = jnp.sum(jnp.where(mine_p, state.planets_prod, jnp.int32(0))).astype(jnp.float32)
     prod_opp = jnp.sum(jnp.where(opp_p, state.planets_prod, jnp.int32(0))).astype(jnp.float32)
 
-    return (ships_my + prod_my * remaining) - (ships_opp + prod_opp * remaining)
+    return (ships_my + prod_my * gamma_h) - (ships_opp + prod_opp * gamma_h)
 
 
 # ---------------------------------------------------------------------------
@@ -367,18 +389,19 @@ def score_candidates_vmap_value_prod(
       `my_pids_c, my_angles_c, my_ships_c` — shape `(C, MAX_LAUNCH_
         PER_AGENT)`. Our action for each candidate; sentinel `-1`
         marks no-launch slots.
-      `K` — RESERVED. Currently ignored; Phase B will use it for the
-        mirror-rollout depth. See module docstring.
+      `K` — rollout horizon in turns. Turn 0 applies my candidate
+        action; turns 1..K-1 are strict-idle (both seats no-op). This
+        lets the value head observe enemy fleet arrivals at ETAs up
+        to K-1, which is required for defensive reinforce candidates
+        to win argmax over offensive captures (Piece B of the
+        v8_scavenge port).
       `my_id` — our seat (0 or 1; 2P-only).
-      `opp_aggressive` — RESERVED for Phase B; currently ignored
-        (opp plays no-op at turn 0).
+      `opp_aggressive` — RESERVED. Strict-idle in the scan body; the
+        v8_scavenge wallclock budget tolerates this and a later
+        iteration can swap in a Tier-1 mirror policy.
 
     Returns shape `(C,)` float32 scores from
-    `value_with_future_production`.
-
-    Performance (Phase A scope): one `jax_step` per candidate + one
-    value-head eval per candidate. Cold compile ~18 s on CPU,
-    warm ~30-50 ms per call at C=128.
+    `value_with_future_production` evaluated at the K-step leaf.
     """
     if num_agents != 2:
         raise ValueError(
@@ -386,6 +409,19 @@ def score_candidates_vmap_value_prod(
             f"(got num_agents={num_agents}); 4P support follows the "
             f"Phase B opp-mirror generalisation."
         )
+
+    # Strict-idle action tensors used for turns 1..K-1. Same shape as
+    # the live tensors but with -1 pids and zeros; `jax_step` interprets
+    # this as "no launches this turn from any seat."
+    idle_pids = jnp.full(
+        (MAX_AGENTS, MAX_LAUNCH_PER_AGENT), -1, dtype=jnp.int32,
+    )
+    idle_ang = jnp.zeros(
+        (MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.float32,
+    )
+    idle_sh = jnp.zeros(
+        (MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.int32,
+    )
 
     def score_one(my_pids, my_angles, my_ships):
         pids_full = jnp.full(
@@ -401,7 +437,13 @@ def score_candidates_vmap_value_prod(
         ang_full = ang_full.at[my_id].set(my_angles)
         sh_full = sh_full.at[my_id].set(my_ships)
 
+        # Turn 0: my candidate action.
         s = jax_step(state, pids_full, ang_full, sh_full)
+        # Turns 1..K-1: strict-idle, so threats inbound at ETA ≤ K-1
+        # land and any planet flips become visible to the leaf head.
+        def idle_body(s_in, _):
+            return jax_step(s_in, idle_pids, idle_ang, idle_sh), None
+        s, _ = jax.lax.scan(idle_body, s, None, length=K - 1)
         return value_with_future_production(s, my_id=my_id)
 
     return jax.vmap(score_one, in_axes=(0, 0, 0))(
