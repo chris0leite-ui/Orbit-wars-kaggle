@@ -4,3 +4,4 @@ numpy
 pandas
 ipykernel
 pytest
+hypothesis
