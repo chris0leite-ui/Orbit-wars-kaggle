@@ -50,6 +50,7 @@ from lib.fast_sim import step as fs_step
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
 from lib.orbit import is_orbiting as _is_orbiting
+from lib.orbit import predict_relative as _orbit_predict_relative
 from lib.scoring import pv_horizon
 from lib.world_model import WorldModel
 
@@ -162,7 +163,7 @@ def _num_seats(planets, fleets):
 # ---------------------------------------------------------------------------
 
 
-def _aim_and_eta(src, tgt, ships, omega):
+def _aim_and_eta(src, tgt, ships, omega, wait_N=0):
     """Return (lead_aim_angle, integer_eta) for one candidate fleet.
 
     For ORBITING targets, `lib.aim.aim_orbiting` jointly solves the
@@ -170,11 +171,39 @@ def _aim_and_eta(src, tgt, ships, omega):
     a naïve `distance / speed` is wrong by 3-4× for orbital targets
     (Phase 1 bug, fixed 2026-05-16).
 
-    Falls back to straight-aim + straight-eta for non-orbiting targets.
+    For wait-then-fire candidates (wait_N > 0): the fleet fires
+    `wait_N` turns AFTER the current step. By then an ORBITING target
+    has rotated `omega * wait_N` further. Pre-rotate the target's
+    position via `predict_relative` so aim_orbiting computes the
+    angle from src to "where the target will be at firing time +
+    eta," not "where it is now + eta." Without this shift, wait-N
+    candidates fire at the WRONG location and never capture
+    (root-caused on Felipe seed 1492346051: turn-15 wait-6 candidate
+    for tgt=15 fired but tgt stayed neutral at leaf).
+
+    Falls back to straight-aim + straight-eta for non-orbiting
+    targets (static planets don't rotate; wait_N is a no-op for aim).
     """
     if _is_orbiting(list(tgt)):
+        tgt_list = list(tgt)
+        if wait_N > 0:
+            # Rotate target forward to its position at firing time.
+            # Empirically (verified for seed 1492346051): the env's
+            # actual position at env-step N equals predict_relative(N-1)
+            # — there's an off-by-one between predict_relative's lead
+            # parameter and env.steps[N] (also noted in lib/orbit.py
+            # docstring for predict_absolute). So a fleet that fires
+            # after `wait_N` rollout steps lands on a target whose
+            # position is `predict_relative(wait_N - 1)` of the
+            # current obs. Use that as the firing-time target tuple
+            # before aim_orbiting predicts the further eta rotation.
+            lead = max(0, wait_N - 1)
+            fx, fy = _orbit_predict_relative(tgt_list, omega, lead)
+            tgt_list = list(tgt_list)
+            tgt_list[2] = fx
+            tgt_list[3] = fy
         res = aim_orbiting(
-            (src.x, src.y), src.radius, list(tgt), tgt.radius, ships, omega,
+            (src.x, src.y), src.radius, tgt_list, tgt.radius, ships, omega,
         )
         if res is not None:
             return float(res[0]), max(1, int(math.ceil(float(res[2]))))
@@ -317,9 +346,14 @@ def _wait_then_fire_candidate(src, tgt, model, omega, me):
     if wait_N < 1 or wait_N > MAX_WAIT:
         return None
 
-    # Newton step at post-wait arrival.
+    # Newton step at post-wait arrival. Pass wait_N to _aim_and_eta so
+    # the orbital lead-prediction accounts for the target's rotation
+    # DURING the wait phase — otherwise the angle is correct for
+    # "fire now, intercept at eta" but wrong for "fire at wait_N,
+    # intercept at wait_N + eta". Bug root-caused on Felipe seed
+    # 1492346051 turn 15: fleet fired but tgt stayed neutral at leaf.
     ships_attempt = cap_now + 1
-    angle, eta = _aim_and_eta(src, tgt, ships_attempt, omega)
+    angle, eta = _aim_and_eta(src, tgt, ships_attempt, omega, wait_N=wait_N)
     pred_at_arr = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
     cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arr)) + 1)
 
