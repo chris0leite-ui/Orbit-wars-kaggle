@@ -83,6 +83,17 @@ MSP_MAX_SOURCES_PER_TARGET = 3          # saturation_strike: planets contributin
 MSP_SHIPS_SAFETY = 2                    # add this to base capture cost for buffer
 # ============================================================================
 
+# --- Geo allocator candidate (2026-05-15) -----------------------------------
+# Generates ONE additional candidate via lib.geo.allocator.allocate_greedy_multi
+# under posture-aware reserves. Joint multi-launch generation that snipe's
+# settle_plan often misses (snipe is one launch per source per turn). Default
+# OFF; requires TWO_PHASE=True (only _choose_two_phase exposes the candidate
+# list). Live-game evidence: iter already empties opening garrisons (1.7
+# ships at home); geo's value here is multi-source coordination, NOT lower
+# garrisons.
+GEO_ALLOCATOR_CANDIDATE_ENABLED = False   # default OFF; flip for A/B
+# ============================================================================
+
 # Dev-mode: override lib.scoring.PV_GAMMA BEFORE v7_search imports propagate
 # the `from lib.scoring import PV_GAMMA` bindings into snipe/reinforce.
 # Bundled form: lib.scoring is not a separate module (concatenated above),
@@ -687,6 +698,52 @@ def multi_step_plan_candidate(world, model, my_id: int, incumbent_action):
     return best_first_action
 
 
+def geo_allocator_candidate(world, model, my_id, obs):
+    """Build one joint-multi-launch candidate via lib.geo.allocator.
+
+    Uses posture-aware reserves: OPENING/EXPAND/BREAK leave reserve=0;
+    DEFEND uses per-planet threat_budget. Builds a Mission pool from the
+    same proposers iter's incumbent uses (snipe aggressive + reinforce +
+    opening), then asks `allocate_greedy_multi` to assign sources greedily
+    under the posture's budget. Returns the launch list or None if the
+    allocator yields nothing.
+    """
+    try:
+        from lib.geo.sense import sense_state
+        from lib.geo.posture import decide_posture
+        from lib.geo.allocator import allocate_greedy_multi
+        from lib.missions.snipe import propose_snipe_missions
+        from lib.missions.reinforce import propose_reinforce_missions
+        from lib.missions.opening import propose_opening_missions
+    except ImportError:
+        return None
+    try:
+        sense = sense_state(world, model)
+        posture = decide_posture(world, sense, model)
+    except Exception:
+        return None
+    try:
+        missions = (
+            propose_opening_missions(world, model)
+            + propose_snipe_missions(world, model, aggressive=True)
+            + propose_reinforce_missions(world, model)
+        )
+        # Strip comet targets — geo's _drop_comet_missions does this; we
+        # mirror it to avoid the chooser proposing pile-on at comets.
+        missions = [m for m in missions if m.target_id not in world.comet_ids]
+    except Exception:
+        return None
+    if not missions:
+        return None
+    try:
+        new_intents = allocate_greedy_multi(missions, world, sense, posture, model)
+    except Exception:
+        return None
+    if not new_intents:
+        return None
+    return _v7_action_from_intents(new_intents, obs, model)
+
+
 def _choose_two_phase(obs, configuration, *, K_deep: int, wallclock_ms: float,
                        phase1_horizon: int, phase2_top_k: int,
                        opp_tier: int, value_fn, world):
@@ -712,6 +769,16 @@ def _choose_two_phase(obs, configuration, *, K_deep: int, wallclock_ms: float,
             plan_action = None
         if plan_action is not None:
             candidates.append(plan_action)
+
+    # Geo allocator candidate: joint multi-launch under posture-aware reserves
+    # (OPENING/EXPAND/BREAK = 0; DEFEND = per-planet threat budget).
+    if GEO_ALLOCATOR_CANDIDATE_ENABLED:
+        try:
+            geo_action = geo_allocator_candidate(world, model, my_id, obs)
+        except Exception:
+            geo_action = None
+        if geo_action is not None:
+            candidates.append(geo_action)
 
     if len(candidates) <= 1:
         return incumbent_action

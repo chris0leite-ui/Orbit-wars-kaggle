@@ -63,12 +63,39 @@ def test_iter_knob_constants_present(iter_agent_module):
                  "LATEST_LAUNCH_MIN_FLEET",
                  "MULTI_STEP_PLAN_ENABLED", "MSP_TEMPLATES", "MSP_PLAN_LENGTH",
                  "MSP_HORIZON", "MSP_DELAY_BUDGET", "MSP_TOP_K_TARGETS",
-                 "MSP_MAX_SOURCES_PER_TARGET", "MSP_SHIPS_SAFETY"):
+                 "MSP_MAX_SOURCES_PER_TARGET", "MSP_SHIPS_SAFETY",
+                 "GEO_ALLOCATOR_CANDIDATE_ENABLED"):
         assert hasattr(iter_agent_module, knob), f"missing knob: {knob}"
 
 
 def test_msp_disabled_by_default(iter_agent_module):
     assert iter_agent_module.MULTI_STEP_PLAN_ENABLED is False
+
+
+def test_geo_allocator_candidate_disabled_by_default(iter_agent_module):
+    assert iter_agent_module.GEO_ALLOCATOR_CANDIDATE_ENABLED is False
+
+
+def test_geo_allocator_candidate_returns_launches_or_none(iter_agent_module):
+    """Smoke: the helper must return either None or a list of [src_id, angle,
+    ships] entries on a fresh env state. Not testing strategic value here —
+    that's what the A/B is for."""
+    from kaggle_environments import make
+    from lib.intent import World
+    from lib.world_model import WorldModel
+
+    env = make("orbit_wars", debug=False)
+    env.reset(2)
+    obs = env.state[0]["observation"]
+    world = World.from_obs(obs)
+    model = WorldModel.from_world(world)
+    result = iter_agent_module.geo_allocator_candidate(world, model, world.my_id, obs)
+    assert result is None or isinstance(result, list), (
+        f"expected None or list; got {type(result).__name__}: {result!r}"
+    )
+    if isinstance(result, list):
+        for entry in result:
+            assert len(entry) == 3, f"launch entry must be [src_id, angle, ships]; got {entry!r}"
 
 
 def test_max_inflight_eta_zero_when_no_fleets(iter_agent_module):
