@@ -166,3 +166,36 @@ PI is right. The fix is rollout-aware opp modeling with common random
 numbers, not bumping the caps. Landing Layer 1+2 as the bug-fix and
 half-measure increment; planning the principled refactor for next
 session.
+
+## Update 2026-05-18 — diagnostic cross-game evidence
+
+Pulled 66 v8 (#52684059) + 60 v9 (#52687411) live replays and ran the
+phase classifier. Findings (full notes
+`audit/2026-05-18-loss-mode-v8-v9.md`):
+
+- Felipe is NOT representative. v8 loss distribution is **84 %
+  mid_economy_lost**, only 16 % opening_lost. v9 is 57 % / 43 %.
+- Per-game emission-rate tables across 4 sample losses (Felipe 2P,
+  Naoism 2P, dekaineko-led 4P, Troups-led 4P) all show the same
+  pattern: **top opponents ramp launches 3–5/window → 19–25/window
+  as their planet count grows; we stay flat at 8–13/window.** The
+  defect manifests as mid-game launch-rate ceiling, not opening
+  cadence.
+- All three downstream symptoms (opening misses, mid-game holds,
+  reinforce starvation) route to the same upstream defect: **the
+  strict-idle baseline lies about opp's behavior, so most candidates
+  score Δ ≤ 0 against the lying baseline.**
+
+This sharpens the principled-fix design but doesn't change it: the
+opp-trajectory + CRN refactor is the single highest-leverage
+intervention. The `pv_horizon` strategic-horizon fix (t_total
+500 → 200) becomes additionally justified by the empirical median
+game length (v8 171, v9 206) — the integration window is genuinely
+mismatched, not a theoretical concern.
+
+Verification gate adjustments:
+- Felipe primary gate stays (0/2 → ≥1/2 vs v7_0).
+- Add an emission-rate diagnostic: post-fix, our launch rate in the
+  step 50–125 decision window should match ≥ 80 % of opp's rate on
+  panel games. This is a direct measurable of "did the chooser see
+  the pressure."
