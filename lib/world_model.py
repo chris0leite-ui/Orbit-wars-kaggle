@@ -28,7 +28,6 @@ from dataclasses import dataclass
 
 from lib.combat import resolve_arrivals
 from lib.fleet import speed as fleet_speed
-from lib.fleet import speed as fleet_speed
 
 # Raised 110 → 250 (2026-05-11): reinforce class was firing 0.2
 # candidates/turn because long-runway threats were invisible past
@@ -39,27 +38,65 @@ from lib.fleet import speed as fleet_speed
 DEFAULT_HORIZON = 250
 
 
-def fleet_target_planet(fleet, planets, max_horizon: int = DEFAULT_HORIZON):
+class _MiniWorld:
+    """Minimal duck-typed `World` for delegating to
+    `lib.trajectory.predict_fleet_fate`. Carries only `omega` and
+    `planets_by_id` — the two fields predict_fleet_fate reads."""
+
+    __slots__ = ("omega", "planets_by_id")
+
+    def __init__(self, omega: float, planets):
+        self.omega = omega
+        self.planets_by_id = {p.id: p for p in planets}
+
+
+def fleet_target_planet(
+    fleet,
+    planets,
+    max_horizon: int = DEFAULT_HORIZON,
+    omega: float = 0.0,
+):
     """Trace `fleet` along its angle, find first planet it'd hit.
 
-    Returns `(target_planet, eta_turns)` or `(None, None)` if no planet
-    intersects the fleet's trajectory within `max_horizon` steps.
+    Returns `(target_planet, eta_turns)` or `(None, None)` if no
+    planet intersects the fleet's trajectory within `max_horizon`
+    steps.
 
     Used to build the arrival ledger from in-flight fleets — the env
     doesn't expose a fleet's intended target, only its angle.
 
-    Note: this is a *non-orbiting* ray-cast — it doesn't account for
-    target planets moving while the fleet is in flight. For inner
-    orbiting planets the attribution can be off by a step or two. The
-    arrival ledger uses these eta estimates to *roughly* predict
-    ownership; sub-step precision matters less than not double-committing.
+    Two paths:
+
+    * `omega == 0.0` (default; non-rotating games) — fast static
+      raycast (the pre-2026-05-15 behaviour). O(planets) per fleet.
+    * `omega != 0.0` — orbit-aware step-by-step walk via
+      `lib.trajectory.predict_fleet_fate`, which mirrors the env's
+      collision semantics (orbital chord per step, swept-pair hit
+      against every planet). Closes the documented inner-orbiting-
+      target gap: for long-range fleets aimed at an inner planet, the
+      planet has rotated away by arrival, and the static raycast
+      mistakenly attributes the planet as the target.
+
+    The orbital path is O(planets × min(max_horizon, board_diagonal /
+    speed)) per fleet with early termination on first collision /
+    OOB. Typical cost is ~1-2 ms per fleet on a 24-planet board.
     """
-    dir_x = math.cos(fleet.angle)
-    dir_y = math.sin(fleet.angle)
     spd = fleet_speed(fleet.ships)
     if spd <= 0:
         return None, None
 
+    if omega == 0.0:
+        return _static_first_hit(fleet, planets, max_horizon, spd)
+    return _orbital_first_hit(fleet, planets, max_horizon, omega)
+
+
+def _static_first_hit(fleet, planets, max_horizon: int, spd: float):
+    """Original static raycast — preserved verbatim for the
+    no-rotation fast path. Does NOT account for orbital drift; only
+    valid when no planet rotates (`omega == 0.0`).
+    """
+    dir_x = math.cos(fleet.angle)
+    dir_y = math.sin(fleet.angle)
     best_planet = None
     best_turns = None
     for p in planets:
@@ -82,16 +119,71 @@ def fleet_target_planet(fleet, planets, max_horizon: int = DEFAULT_HORIZON):
     return best_planet, int(math.ceil(best_turns))
 
 
-def build_arrival_ledger(fleets, planets, horizon: int = DEFAULT_HORIZON):
-    """{planet_id: [(eta, owner, ships), ...]} for in-flight fleets.
+def _orbital_first_hit(fleet, planets, max_horizon: int, omega: float):
+    """Orbit-aware first-hit via `predict_fleet_fate`. Synthesises a
+    zero-radius source at the fleet's current position so the
+    function's spawn-offset computation yields the fleet's actual
+    (x, y); reads `hit_planet_id` regardless of whether
+    `predict_fleet_fate` labels the hit `"target"` or `"planet"` (the
+    `target=` arg is irrelevant for our which-planet-does-it-hit
+    question).
+    """
+    if not planets:
+        return None, None
 
-    Fleets that won't hit any planet within `horizon` are dropped (they
-    will exit the board or die in sun/non-target collision — out of
-    scope for the timeline).
+    # Local import to avoid a circular if lib.trajectory ever imports
+    # lib.world_model in the future.
+    from kaggle_environments.envs.orbit_wars.orbit_wars import Planet as _Planet
+    from lib.trajectory import predict_fleet_fate
+
+    cos_a = math.cos(fleet.angle)
+    sin_a = math.sin(fleet.angle)
+    # Position the synthetic source so `spawn = src + (r+0.1)*direction`
+    # in predict_fleet_fate lands at the fleet's actual (x, y).
+    fake_src = _Planet(
+        id=-1,
+        owner=fleet.owner,
+        x=fleet.x - cos_a * 0.1,
+        y=fleet.y - sin_a * 0.1,
+        radius=0.0,
+        ships=0,
+        production=0,
+    )
+    mini_world = _MiniWorld(omega=omega, planets=planets)
+    fate = predict_fleet_fate(
+        src=fake_src,
+        target=planets[0],  # dummy; we only read hit_planet_id
+        aim_angle=fleet.angle,
+        ships=fleet.ships,
+        world=mini_world,
+        max_steps=max_horizon,
+    )
+    if fate.outcome in ("target", "planet") and fate.hit_planet_id is not None:
+        return mini_world.planets_by_id[fate.hit_planet_id], int(fate.step)
+    return None, None
+
+
+def build_arrival_ledger(
+    fleets,
+    planets,
+    horizon: int = DEFAULT_HORIZON,
+    omega: float = 0.0,
+):
+    """`{planet_id: [(eta, owner, ships), ...]}` for in-flight fleets.
+
+    Fleets that won't hit any planet within `horizon` are dropped
+    (they will exit the board or die in sun/non-target collision —
+    out of scope for the timeline).
+
+    `omega` is forwarded to `fleet_target_planet` so inner orbiting
+    planets are attributed correctly. Pass `world.omega` from the
+    caller (`WorldModel.from_world` does this); leaving it at the
+    default `0.0` preserves the pre-2026-05-15 static raycast for
+    callers in non-rotating games.
     """
     ledger: dict[int, list[tuple[int, int, int]]] = {p.id: [] for p in planets}
     for fleet in fleets:
-        target, eta = fleet_target_planet(fleet, planets, horizon)
+        target, eta = fleet_target_planet(fleet, planets, horizon, omega=omega)
         if target is None:
             continue
         ledger[target.id].append((eta, int(fleet.owner), int(fleet.ships)))
@@ -170,7 +262,8 @@ class WorldModel:
         from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet  # local import — keeps lib/ env-free
         fleets = [Fleet(*f) for f in fleets_raw]
         planets = list(world.planets_by_id.values())
-        ledger = build_arrival_ledger(fleets, planets, horizon)
+        omega = float(getattr(world, "omega", 0.0))
+        ledger = build_arrival_ledger(fleets, planets, horizon, omega=omega)
         timelines = {
             p.id: simulate_planet_timeline(p, ledger[p.id], horizon) for p in planets
         }
