@@ -449,9 +449,19 @@ I-M = data-driven; K = realism check already cleared.
 
 ## Killed
 
-(empty — `weakest` and `enemy_first` are leaning falsified at 8 seeds
-but stay in **Open** until 32-seed confirmation. Falsified entries get
-moved here with the audit-JSON path attached.)
+- **H30 — drift-discount Voronoi scoring (2026-05-15, claude/fix-weak-
+  game-starts-NhDQ3).** Hypothesis: orbiting captures drift into enemy
+  halves; pre-discount mission scores by `hold_prob` (predicted future-
+  Voronoi share over 25-turn horizon). **Result:** 3-opp panel FAIL —
+  32.8 % vs v7_0, 31.2 % vs v4_planner, 43.8 % vs v3.5.1 (worst Wlo =
+  0.180). Same family-of-regression as v7_1–v7_7 chooser-axis + v3.0
+  composite-value-head: adding scoring terms in front of K=10 rollout
+  consistently hurts; the rollout already prices keepability via
+  ship-delta. Code on branch in `agents/geo_drift/main.py`; **not
+  merged to main**. See `audit/2026-05-15-secure-variants-wrap.md`.
+
+(`weakest` and `enemy_first` lean-falsified at 8 seeds remain in
+**Open** until 32-seed confirmation.)
 
 ## Hedge ladder
 

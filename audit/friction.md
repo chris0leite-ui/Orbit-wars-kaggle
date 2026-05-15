@@ -188,6 +188,25 @@ fix forward AND add a test.
   first ~24 h after submit (initial σ≈300, shrinks ∝ 1/√N). Wait
   ≥24 h before reading rank delta into strategy decisions.
 
+## 2026-05-15 (claude/fix-weak-game-starts-NhDQ3 — capture-and-secure)
+
+- `tag: detached-bg-killed-on-session-resume` — Long-running panel
+  suite died across two session boundaries despite `nohup setsid …
+  & disown`. The bash-tool's own `run_in_background` survived ~3 h
+  on the first run, but the next session's harness reset killed
+  the resume-script. **Root cause:** harness reaps process groups
+  at session-start regardless of detachment. **Fix:** for jobs
+  that must cross sessions, prefer the bash-tool `run_in_background`
+  + idempotent resume scripts that detect interrupted logs and
+  pick up missing variants. Logged on branch wrap-doc.
+- `tag: local-overpredict-2x` (3rd recurrence) — geo_recap panel
+  mean 60.9 % across 192 games. Pattern: v3.5.1 5/12 −15 pp,
+  geo v3.1 5/14 −7 pp, recap held from submit because expected
+  live ~54 % is not decisively above v7_pv's 1062.2 μ. **3× fired
+  ⇒ promotion candidate.** **Fix:** add a hard rule — local A/B
+  mean must clear (gate + discount), not gate alone. Promote to
+  `.claude/skills/kaggle-comp/improvements.md`.
+
 ## How to add an entry
 
 ```
