@@ -145,9 +145,22 @@ Not yet integrated (post-PASS optional lifts):
 The PASS gate is cleared at n=64. Further lifts (if time permits)
 and PI-decided priority:
 
-1. **Panel calibration** (Phase A — running at session end). Verify
-   the 71.9% lift transfers to v4_planner and v3.5.1. Closes the
-   `local-overpredict-2x` friction.
+1. **Panel calibration** — DONE. Results:
+   - vs v7_0:       47/64 = **73.4%**, Wilson [0.615, 0.827] → PASS
+   - vs v4_planner: 46/64 = **71.9%**, Wilson [0.599, 0.814] → PASS
+   - vs v3.5.1:     42/64 = 65.6%,    Wilson [0.534, 0.761] → INCONCLUSIVE (1.6pp under 0.55 gate; passes audit's "Wlo ≥ 0.50 vs each" criterion)
+
+   Panel verdict by strict 0.55 gate: INCONCLUSIVE (worst Wlo=0.534).
+   By relaxed 0.50 criterion: PASS (all three Wlo > 0.50). The
+   v3.5.1 result tells us we don't dominate every architecture —
+   v3.5.1's aggressive snipe + 4P branch make it the strongest
+   cross-opponent. Still a clear win in expectation (65.6% > 50%).
+
+   **WALLCLOCK CONCERN:** p95=812ms / max=3116ms over 192 games.
+   The max exceeds the 1000ms actTimeout — that turn would time out
+   on the live ladder. Need to tighten `WALLCLOCK_BUDGET_MS` or
+   the per-candidate K bound before submit.
+
 2. **settle_plan emission**. Replaces greedy non-dogpile; allows
    useful same-turn follow-on launches.
 3. **Opp-aware rollout** (single-step mirror or

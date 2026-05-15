@@ -67,11 +67,14 @@ MIN_HORIZON = 15                 # floor — must cover incoming threats arrivin
 MAX_HORIZON = 50                 # baseline cache depth (long enough for any
                                  # plausible candidate eta + settle)
 
-# Wallclock safety. The env's actTimeout is 1000ms; observed p95 of
-# fast_sim rollout per turn ~265ms with one outlier at 1643ms. Cap
-# candidate enumeration at WALLCLOCK_BUDGET_MS so a turn never times
-# out. If we hit the cap mid-enumeration, we emit what we have.
-WALLCLOCK_BUDGET_MS = 750.0
+# Wallclock safety. The env's actTimeout is 1000ms. Panel calibration
+# at n=192 observed p95=812ms, max=3116ms — outliers blow past the
+# budget when the candidate pool is large (many sources × targets ×
+# ship-counts × long-K rollouts at mid-game with many in-flight fleets).
+# Tightened from 750→600ms AND deadline-check moved inside the ship-
+# count inner loop so a single expensive rollout can't push past the
+# budget.
+WALLCLOCK_BUDGET_MS = 600.0
 
 
 # ---------------------------------------------------------------------------
@@ -356,11 +359,16 @@ def agent(obs, configuration=None):
     baseline_favors = _build_idle_baseline(snap_base, me, num_seats, MAX_HORIZON)
 
     # Enumerate + score candidates via fast_sim rollout.
+    # Deadline checked at THREE levels (source / target / ship-count)
+    # so no single expensive rollout pushes us past the budget. Panel
+    # n=192 had max=3116ms with only source/target guards; checking
+    # inside the ship-count loop bounds the outlier.
     t_deadline = time.perf_counter() + WALLCLOCK_BUDGET_MS / 1000.0
     candidates = []
     bailed = False
     for src in my_planets:
-        if bailed:
+        if bailed or time.perf_counter() > t_deadline:
+            bailed = True
             break
         if int(src.ships) < MIN_FLEET_SIZE:
             continue
@@ -372,6 +380,9 @@ def agent(obs, configuration=None):
             if int(tgt.id) == int(src.id):
                 continue
             for ships in _enumerate_ship_counts_basic(src, tgt, model, omega, me):
+                if time.perf_counter() > t_deadline:
+                    bailed = True
+                    break
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
                 angle, eta = _aim_and_eta(src, tgt, ships, omega)
