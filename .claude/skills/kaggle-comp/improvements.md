@@ -113,6 +113,33 @@ in HANDOVER.md prose specifically (the doc the PI actually reads
 between sessions). State files MAY stay coded for agent-to-agent
 reference.
 
+### [ ] [CROSS-CUTTING] Audit live games before architecting around a PI behavior-hypothesis
+
+`tag: pi-hypothesis-unaudited-pre-architecture`. Origin: Orbit Wars
+2026-05-15 (claude/competitive-programmer-setup-LHyoP). PI proposed
+"iter starts too late, garrison too high" as a root cause for ladder
+losses; agent started planning architecture around it. Live-game audit
+of 9× iter_v2 2P games refuted all three claims (median first launch
+step 3.3 vs PI claim "too late"; 12.9 ships vs opponents 11.5 vs PI
+claim "not enough"; 1.7 ships at home in steps 0–5 vs PI claim
+"garrison too high"). PI was acting on a mental model out of date
+with live behavior. Without the mid-plan audit, would have wasted
+hours tuning AGGRESSIVE_FRACTION or similar.
+
+**Fix:** add a CLAUDE.md sub-clause to Rule 26 (PI is read+strategy):
+when PI proposes a hypothesis ABOUT AGENT BEHAVIOR (not strategy),
+the agent must audit ≥5 recent live games (via
+`scripts/live_episode_summary.py` or `audit/external/replays/` if
+available) BEFORE planning architectural work around the hypothesis.
+If audit refutes the hypothesis, surface it via AskUserQuestion before
+proposing a plan. This is distinct from strategy hypotheses ("we
+should X"), where PI judgement is load-bearing.
+
+Cost evidence (1 incident this session, recurrence likely): ~30 min
+exploring + a wrong-framed plan recovered mid-stream via the audit
+agent. Pattern is general — PI mental model of agent behavior drifts
+between sessions; live games are the ground truth.
+
 ### [ ] [CROSS-CUTTING] Unify Rule 7 + 14 + 22 into single plateau-runbook
 
 `tag: plateau-response-fragmented`. Three separate rules all fire on

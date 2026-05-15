@@ -6,8 +6,8 @@
 > `kaggle competitions submissions orbit-wars`.
 
 ```yaml
-date: 2026-05-14
-days_to_deadline: 40                     # 2026-06-23 23:59 UTC minus today
+date: 2026-05-15
+days_to_deadline: 39                     # 2026-06-23 23:59 UTC minus today
 current_submitted_agent: geo             # v3.1 (most recent); σ-discounted floor
 last_kernel_push: 2026-05-14 09:10:03 UTC
 last_submission_id: 52643676
@@ -86,6 +86,26 @@ live_submissions:
   - {agent: day1_baseline,          sub_id: 52497828, submitted: 2026-05-10T00:09, score: 303.2}
 
 session_log:
+  - 2026-05-15 — competitive-programmer-setup-LHyoP (this branch).
+    Three architectural attempts, all default OFF (iter behavior unchanged).
+    (1) MSP scaffolding (multi-step plan ROI scorer, ~250 LOC, 4 templates):
+    DORMANT — 0/40 turns emitted a plan beating incumbent. (2) Geo allocator
+    candidate: 8-seed A/B vs v7_0 = 5/8 (62.5%) vs baseline 6/8 (75.0%);
+    TWO_PHASE decomposition confirmed geo is the −12.5pp cause, not TP.
+    (3) Cluster-aware leaf head (cluster_value + composite_plus_cluster):
+    8-seed A/B = 4/8 (50%); frontier_discount=1.0 also 4/8 → design wrong.
+    Two architectural axes definitively exhausted (Rule 37):
+    "additive candidate" (3/3 fail: MSP/geo/mission-persistence),
+    "hand-designed leaf head" (2/3 since composite WIN: territory/cluster).
+    PI behavior-hypothesis ("start too late, garrison too high") refuted
+    by 9-game live audit (median first launch step 3.3, 12.9 ships vs 11.5,
+    1.7 ships at home). Next swing must be IL leaf head; structurally
+    unexplored.
+    Audits: audit/2026-05-15-additive-and-leaf-falsifications.md,
+    audit/2026-05-15-postmortem-competitive-programmer-setup-LHyoP.md.
+    Frictions: 5 new entries under ## 2026-05-15 in audit/friction.md.
+    Improvements: 1 promotion candidate added to
+    .claude/skills/kaggle-comp/improvements.md (PI-hypothesis-unaudited).
   - 2026-05-14 — simplify-fast-setup-azW8T (this branch's most recent session).
     Built fast.py (single-file iteration entry point, validated bit-identical
     vs audit-logged v7_1 result) + lib/geo/{sense,posture,allocator}.py

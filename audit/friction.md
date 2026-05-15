@@ -61,6 +61,61 @@ fix forward AND add a test.
   **Open follow-up:** make `--vs-panel` mandatory before submission
   (workflow rule, not yet hard-gated in source).
 
+## 2026-05-15
+
+- `tag: pi-hypothesis-unaudited-pre-architecture` — PI proposed
+  "iter starts too late, garrison too high" as a root cause for ladder
+  losses. I started planning the geo allocator candidate around it.
+  Live-game audit (9× iter_v2 2P games) **refuted all three claims**:
+  median first launch at step 3.3, 12.9 ships vs opponents' 11.5, 1.7
+  ships left at home in steps 0–5 (7.5× drain ratio). **Root cause:**
+  no rule requires verifying a PI behavior-hypothesis against recent
+  live games before building architecture for it. Rule 26 says "PI is
+  read+strategy" but doesn't mandate hypothesis-data verification.
+  **Fix:** AskUserQuestion surfaced the contradiction mid-session;
+  refine to a pre-architecture audit step. Promotion candidate.
+
+- `tag: build-large-architecture-without-probe-of-value-gradient` —
+  MSP shipped ~250 LOC across 4 templates + analytical scorer +
+  orchestrator BEFORE testing whether any plan would emit a step-0
+  action that beats incumbent's analytical score. Trace at completion:
+  0/40 turns produced a winning plan. **Root cause:** built breadth
+  (4 templates) before depth (one template's value gradient). Could
+  have surfaced the "first-turn action collapses to incumbent" failure
+  mode in a 30-min probe. Same pattern as mission-persistence v1
+  (−42pp shipped before probe). **Fix:** probe-before-build rule for
+  >50 LOC architectural additions. Promotion candidate.
+
+- `tag: value-head-magnitude-uncalibrated` — wired `cluster_value` at
+  weight=1.0 in iter without comparing its increment over base to
+  `composite_capture_value`'s increment. At +30 turns: cluster
+  increment = 164, composite increment = 53.6; cluster dominates
+  composite 3:1 in the layered head. First A/B was confounded by
+  scale. **Root cause:** TERRITORY_WEIGHT=0.01 is the existing
+  scaling precedent for high-magnitude heads, but no rule requires
+  checking magnitude before A/B. **Fix:** magnitude-comparison gate
+  before any new value-head A/B. Promotion candidate.
+
+- `tag: a-b-compute-budget-not-pretimed` — 32-seed A/B was scoped in
+  the plan as "~12 min" but each game with TWO_PHASE=True takes 139s
+  (256 turns × 544ms/turn-pair). 600s wallclock budget for 32 games ÷
+  4 workers was insufficient; first A/B timed out producing zero
+  data. **Root cause:** estimated A/B time without timing one game
+  first. **Fix:** before scoping multi-seed A/B compute, time a
+  single game with the variant config. Single-event; not yet a
+  promotion candidate but flag.
+
+- `tag: chooser-leaf-noise-resists-additive-candidates` — 3 strict-
+  additive candidate generators (mission persistence, geo allocator,
+  MSP) all failed to lift despite chooser argmax-gating. Decomposed
+  geo allocator's −12.5pp at 8 seeds: TWO_PHASE alone is byte-
+  identical to baseline; the regression is from the chooser picking
+  geo's over-extension candidate in seed=5. **Root cause:** the K=10
+  leaf scorer's accuracy is the bottleneck; additive candidates
+  amplify ranking error rather than fix it. **Fix:** Rule 37 cap
+  fired on this axis; next swing must NOT be another additive
+  candidate. Promotion candidate.
+
 ## Newly-fired patterns (this session)
 
 - `tag: fix-not-validated-against-real-failing-state` — 2026-05-14
