@@ -20,33 +20,33 @@ from __future__ import annotations
 # ============================================================================
 # ITER KNOBS — edit these for a knob sweep, one line per variant.
 # ============================================================================
-K = 10                          # lookahead horizon (8 / 10 / 12 / 15)
-WALLCLOCK_MS = 700.0            # per-turn budget (ms); matches iter_v1. Worst-case wallclock =
-                                # WALLCLOCK_MS + K_CAP×20ms = 700+280 = 980 ms, safely under Kaggle's 1000.
-ENUMERATOR_MODE = "drop_one"    # see lib.v7_search proposers
-OPP_TIERS = (1,)                # opp-model tier(s); >1 entry => MAXIMIN
-PV_GAMMA = 0.99                 # 1.0 = v7_0_drop_one; 0.99 = v7_pv equivalent
-VALUE_FN = "composite"          # "default" | "composite" | "defensibility" | "composite_plus_defensibility"
-                                # | "territory" | "composite_plus_territory"
-DEFENSIBILITY_ALPHA = 0.2       # SMALL coefficient — V2 α=1.0 over-penalised; V3 uses defens as tiebreaker only
-TERRITORY_WEIGHT = 0.01         # production×hold sums to ~5k-10k mid-game; 0.01 keeps the term ≈ ±50, comparable to delta
-K_4P = 8                        # 4P-branch lookahead (choose_4p default); kept separate from K (2P)
+K = 10                          # lookahead horizon — matches iter_v1's shipped config
+WALLCLOCK_MS = 700.0            # per-turn budget (ms); matches iter_v1
+ENUMERATOR_MODE = "drop_one"    # iter_v1 default
+OPP_TIERS = (1,)                # iter_v1 default
+PV_GAMMA = 0.99                 # iter_v1 / v7_pv equivalent
+VALUE_FN = "composite"          # iter_v1 VALIDATED head (composite_capture_value)
+DEFENSIBILITY_ALPHA = 0.2       # inert (VALUE_FN=composite)
+TERRITORY_WEIGHT = 0.01         # inert (VALUE_FN=composite)
+K_4P = 8                        # 4P-branch lookahead — IS USED by 4P dispatch (the new piece)
 
-# --- Adaptive K (Option A — 2026-05-15) -------------------------------------
-K_CAP = 14                      # ceiling on effective K. Set by wallclock math: WALLCLOCK_MS=700 +
-                                # K_CAP×20ms must stay under Kaggle's 1000 ms hard cap. K_CAP=14 ⇒
-                                # worst-case 980 ms. Two-phase scoring would unlock K_CAP=20+ — parked.
-K_BUFFER = 2                    # extra steps past max in-flight ETA, for post-arrival evaluation
-RELEVANCE_PROD_FRACTION = 0.5   # treat planets with production >= max_production × this as "high-value"
-                                # and count fleets targeting them in K_eff. 0.5 = top half by prod.
+# --- Adaptive K — DISABLED (2026-05-15 strip back) --------------------------
+# K_CAP=K means K_eff = K = 10 always; relevance-filter is inert. Set to
+# match iter_v1 behaviour exactly for the 2P branch. Adaptive K had neutral
+# panel signal but adds variance; stripping for the conservative submit.
+K_CAP = 10                      # = K → K_eff is always K
+K_BUFFER = 0
+RELEVANCE_PROD_FRACTION = 0.5   # inert when K_CAP = K
 
 # --- Comet anti-panic (Bug 2 POST-PROCESS) ----------------------------------
 COMET_MAX_LAUNCHES_PER_TURN = 999  # cap effectively disabled; ablation showed it costs 8-9 pp
                                     # vs v7_0/v4_planner (chooser's multi-source choice was usually right)
 
-# --- Comet evacuation (Bug 3 PRE-FILTER) ------------------------------------
-COMET_EVAC_THRESHOLD = 5        # if our comet has < N steps remaining, evac ships off it
-COMET_EVAC_RESERVE = 1          # min garrison left on the comet after evac
+# --- Comet evacuation — DISABLED (2026-05-15 strip back) --------------------
+# THRESHOLD=0 means evac never fires. Was neutral in panel; removing for the
+# conservative submit to match iter_v1 behaviour exactly.
+COMET_EVAC_THRESHOLD = 0
+COMET_EVAC_RESERVE = 1
 
 # --- Two-phase scoring (2026-05-15) -----------------------------------------
 # Phase 1: cheap analytical leaf evaluation on ALL drop-one candidates via
@@ -76,7 +76,7 @@ LATEST_LAUNCH_MIN_FLEET = 2     # never shrink below this (avoid degenerate 1-sh
 # (by us or enemy) — fixes the "hesitate past OPENING_WINDOW" pattern in
 # 61% of iter_v1's ladder losses + matches top players' multi-source
 # whittling pattern.
-MISSION_PERSISTENCE_ENABLED = True
+MISSION_PERSISTENCE_ENABLED = False  # disabled 2026-05-15: panel -42 pp vs v7_0 in 32-seed eval
 MP_OPENING_WINDOW = 12          # plan-builder only fires at step <= this (vs lib's OPENING_WINDOW=5)
 MP_SHIPS_SAFETY = 2             # add this to base capture cost (= t.ships+1+safety) for buffer
 MP_SOURCE_RESERVE = 0           # leave at least this many ships behind on each source. 0 in opening
