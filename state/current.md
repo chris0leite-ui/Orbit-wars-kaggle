@@ -184,6 +184,21 @@ mechanism_families_explored:
                                               # pure-v7-fallback 80%. v2 sweep's 67% was a
                                               # broken-orbital_frac proxy. Code stays on
                                               # branch; learnings ported to main.
+  - recapture-mission-class-wired             # claude/fix-weak-game-starts-NhDQ3:
+                                              # geo_recap = geo + propose_recapture_missions
+                                              # in base pool. 3-opp panel 2/3 PASS, mean 60.9%
+                                              # (v7_0 64.1%, v3.5.1 62.5%, v4_planner 56.2%
+                                              # INCONCL). HELD from submit — eviction risk
+                                              # vs v7_pv. 2026-05-15 wrap.
+  - drift-discount-voronoi-scoring            # same branch: geo_drift: 3-opp panel FAIL
+                                              # (32.8/31.2/43.8%). K=10 already prices
+                                              # keepability via ship-delta; pre-discount
+                                              # double-counts. Same regression family as
+                                              # v7_1..v7_7 + v3.0 composite head. H30 killed.
+                                              # Code on branch only, not merged.
+  - garrison-on-capture-mission-class         # same branch: geo_garrison: 3-opp INCONCLUSIVE
+                                              # ~52% mean. Untested on top of recap;
+                                              # geo_recap_garrison queued for next session.
 
 gate_status: cleared                        # full pytest passes;
                                             # geo's 17 tests + parallel branches' tests all green
