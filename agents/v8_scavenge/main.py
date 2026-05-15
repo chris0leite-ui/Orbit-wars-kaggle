@@ -1,66 +1,77 @@
-"""v8_scavenge — analytic event-horizon chooser ("macro moves").
+"""v8_scavenge — fast-sim K-step chooser with idle-baseline subtraction.
 
-Approach (PI direction, 2026-05-16):
-1. Score each candidate launch by its END-STATE marginal value vs idle.
-   The BASELINE `WorldModel` (built once per turn from current obs)
-   predicts per-planet ownership + garrison at any future step. For a
-   candidate (src, tgt, ships), our fleet's eta is deterministic; the
-   model tells us who would own tgt at that eta WITHOUT our fleet, and
-   how many ships would defend.
-2. If baseline predicts tgt would be ours → reinforcement, zero credit.
-   If our ships beat the predicted defenders → we'd capture; credit by
-   `production × time_remaining` (production lead until end-of-game),
-   double for enemy captures (we gain prod, they lose prod), single
-   for neutrals. Subtract combat ship-cost.
-   If we'd bounce → all our ships lost; pure cost.
-3. No turn-by-turn fast_sim rollout. The WorldModel is analytic and
-   captures the "macro view": who owns what at the terminal horizon.
-4. Opponent idles in our model — we don't speculate about their next
-   action; we delegate that to next turn's chooser.
-5. Greedy non-dogpile emit (Phase 1; Phase 3 will use `settle_plan`):
-   max one launch per source, max one per target per turn.
+Approach (PI direction; Fix A on the 2026-05-16 falsification):
 
-Phase 1 (this file) — basic enumeration only:
-  for src in my_planets:
-    for tgt in nearest-K non-owned:
-      for ships in {capture_size, 2x, full_budget}:
-        score and pick argmax via marginal_value()
+Phase 1's depth-0 analytic chooser failed (0/32 vs v7_0) because
+`lib.world_model.WorldModel.fleet_target_planet` uses a NON-orbital
+straight ray-cast for fleet attribution. For orbiting fleet-target
+combos the ray-cast misses (the fleet is AIMED via aim_orbiting at the
+target's future position, but the ray-cast checks the planet's
+current position). Predictions of "will my fleet capture?" were
+unreliable.
 
-Phase 2 will append scavenge ship-counts (sizes timed to arrive at
-predicted enemy-capture eta + small delta — captures the planet just
-after the enemy takes it, beating the depleted post-capture garrison).
-That mechanic emerges naturally because WorldModel sees the enemy
-capture in its timeline; our marginal_value reads the post-capture
-predicted garrison and scores accordingly.
+Fix A: instead of analytic prediction, run `lib.fast_sim` (the parity-
+tested simulator — same physics as the env) for K turns per candidate,
+where K = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON). The simulator
+correctly handles orbital motion, swept-pair collisions, sun crossings,
+and combat resolution — no ray-cast attribution needed.
+
+Scoring:
+  Δ = favor(leaf_after_my_action_and_K-1_idle_steps) − favor(leaf_after_K_idle_steps)
+
+Both leaves are at the same horizon, so natural production growth
+cancels and the Δ reflects only the action's marginal effect. Bootstrap
+session's bug-1 fix: the baseline must be idle-at-same-horizon, NOT
+favor-at-current-state (would over-credit by the natural growth during
+the K-turn fly time).
+
+The "macro moves" framing is preserved: we don't speculate about opp's
+new actions; opp idles inside our rollout. What CAN'T be deferred is
+the simulator's exact prediction of where my fleet ends up — which
+the analytic ray-cast got wrong for orbital cases. fast_sim is the
+right primitive for that prediction.
+
+Phase 1 enumerates basic ship sizes (capture, 2×, full budget); Phase
+2 will add scavenge-timed sizes. Phase 3 will use settle_plan instead
+of greedy non-dogpile emit.
 """
 
 from __future__ import annotations
 
 import math
+import time
 
-from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
+from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from lib.aim import aim_orbiting
+from lib.fast_sim import clone as fs_clone
+from lib.fast_sim import from_obs as fs_from_obs
+from lib.fast_sim import step as fs_step
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
 from lib.orbit import is_orbiting as _is_orbiting
 from lib.world_model import WorldModel
 
 # ---------------------------------------------------------------------------
-# Tunable knobs (defaults chosen to keep the structural choice in focus;
-# tuning is a separate phase if Phase 1 lifts).
+# Tunable knobs
 # ---------------------------------------------------------------------------
 
+EPISODE_STEPS = 500
 NUM_TARGETS_PER_SOURCE = 8       # K nearest non-owned planets per source
 MIN_FLEET_SIZE = 2               # 1-ship fleets are slow + rarely useful
 
-EPISODE_STEPS = 500
-# Match lib.value_heads.composite_capture_value's tuned weights
-# (v7_4_capture_value used these to credit predicted captures and
-# penalise bounces). Calibration: 0.05 × prod × 500 ≈ 25-75 per
-# high-value capture; 0.5 × ships ≈ 5-50 per bounce. Same scale.
-CAPTURE_WEIGHT = 0.05
-WASTE_WEIGHT = 0.5
+# Forward-sim horizon parameters
+SIM_SETTLE_TURNS = 2             # extra idle turns after arrival to settle combat
+MIN_HORIZON = 15                 # floor — must cover incoming threats arriving
+                                 # at our source planets in ~time for fast fleet
+MAX_HORIZON = 50                 # baseline cache depth (long enough for any
+                                 # plausible candidate eta + settle)
+
+# Wallclock safety. The env's actTimeout is 1000ms; observed p95 of
+# fast_sim rollout per turn ~265ms with one outlier at 1643ms. Cap
+# candidate enumeration at WALLCLOCK_BUDGET_MS so a turn never times
+# out. If we hit the cap mid-enumeration, we emit what we have.
+WALLCLOCK_BUDGET_MS = 750.0
 
 
 # ---------------------------------------------------------------------------
@@ -69,12 +80,7 @@ WASTE_WEIGHT = 0.5
 
 
 def _as_dict(obs):
-    """Coerce an obs (Struct or dict) into a dict.
-
-    Kaggle passes a Struct in production; tests sometimes pass a dict.
-    Both work with the foundation primitives but consistent access via
-    a dict makes downstream helpers simpler.
-    """
+    """Coerce an obs (Struct or dict) into a dict for consistent access."""
     if isinstance(obs, dict):
         return obs
     return {
@@ -88,6 +94,18 @@ def _as_dict(obs):
     }
 
 
+def _num_seats(planets, fleets):
+    """Detect 2P vs 4P from the obs."""
+    max_owner = -1
+    for p in planets:
+        if int(p.owner) > max_owner:
+            max_owner = int(p.owner)
+    for f in fleets:
+        if int(f.owner) > max_owner:
+            max_owner = int(f.owner)
+    return 4 if max_owner >= 2 else 2
+
+
 # ---------------------------------------------------------------------------
 # Geometry / timing primitives
 # ---------------------------------------------------------------------------
@@ -97,23 +115,11 @@ def _aim_and_eta(src, tgt, ships, omega):
     """Return (lead_aim_angle, integer_eta) for one candidate fleet.
 
     For ORBITING targets, `lib.aim.aim_orbiting` jointly solves the
-    aim angle AND the arrival eta (the lead-prediction's fixed point
-    is `eta = dist_to_predicted_position / speed`). Using its eta is
-    load-bearing: an orbiting target ~40 units from the sun at eta=5
-    has moved ~10 units along its orbit; a fleet aimed at the
-    predicted position must fly a longer arc, so the actual arrival
-    turn can be 3-4× the naïve `distance / speed`.
+    aim angle AND the arrival eta. Using its eta is load-bearing —
+    a naïve `distance / speed` is wrong by 3-4× for orbital targets
+    (Phase 1 bug, fixed 2026-05-16).
 
-    Bug fixed (Phase 1 v8.6, 2026-05-16): previously this module used
-    separate `_aim_angle` (orbital lead) and `_arrival_eta` (straight
-    distance). The disagreement meant `model.ships_at(tgt, naïve_eta)`
-    queried the WRONG turn for the marginal_value scoring — chooser
-    scored captures based on a state that didn't match the actual
-    arrival turn. Symptom: 0/32 vs v7_0 on seed 0 because the fleet
-    aimed at (33.7, 85.9) [arrival in 20 turns] was scored as if
-    arriving at (68.8, 84.7) [naïve eta=5].
-
-    Fall back to straight-aim + straight-eta for non-orbiting targets.
+    Falls back to straight-aim + straight-eta for non-orbiting targets.
     """
     if _is_orbiting(list(tgt)):
         res = aim_orbiting(
@@ -141,20 +147,23 @@ def _nearest_k(targets, src, k):
 
 
 # ---------------------------------------------------------------------------
-# Capture-size + ship-count enumeration
+# Sizing
 # ---------------------------------------------------------------------------
 
 
 def _capture_size(src, tgt, model, omega):
     """WorldModel-aware minimum capture size.
 
-    One Newton-style iteration: pick an initial size from current tgt
-    garrison, use the orbital-aware `_aim_and_eta` to find arrival
-    turn, query model for predicted garrison at that eta, derive
-    final size from prediction.
+    One Newton-style iteration: initial size from current tgt garrison,
+    use orbital-aware `_aim_and_eta` for arrival turn, query model for
+    predicted defenders at that eta, derive final size.
 
-    This incorporates BOTH production growth / incoming reinforcement
-    (via WorldModel) AND orbital lead-prediction (via aim_orbiting).
+    WorldModel's defender prediction accounts for production growth +
+    incoming reinforcement analytically. Note WorldModel's attribution
+    of in-flight fleets is a non-orbital ray-cast (it can miss orbital
+    targets), so this estimate is a HEURISTIC starting point — the
+    fast_sim rollout downstream is the ground truth for whether the
+    capture succeeds.
     """
     initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
     _angle, eta = _aim_and_eta(src, tgt, initial, omega)
@@ -164,11 +173,7 @@ def _capture_size(src, tgt, model, omega):
 
 
 def _enumerate_ship_counts_basic(src, tgt, model, omega):
-    """Phase 1 ship-count set: capture, 2×capture, full launch budget.
-
-    Scavenge sizes (Phase 2) — ship counts timed to arrive at predicted
-    enemy-capture eta + δ — appended in a later phase.
-    """
+    """Phase 1 ship-count set: capture, 2×capture, full launch budget."""
     cap = _capture_size(src, tgt, model, omega)
     budget = int(src.ships)
     sizes = set()
@@ -182,53 +187,106 @@ def _enumerate_ship_counts_basic(src, tgt, model, omega):
 
 
 # ---------------------------------------------------------------------------
-# Marginal end-state value
+# Favor (F1 + F2) — bootstrap's proven leaf scorer
 # ---------------------------------------------------------------------------
 
 
-def _marginal_value(src, tgt, ships, eta, world, model, my_id):
-    """End-state Δ value from launching `ships` from src to tgt.
+def _favor(obs, me):
+    """F1 + F2 favor.
 
-    Reads the BASELINE WorldModel timeline (built once per turn, before
-    any candidate is considered) for the predicted state at our arrival.
-    Critically: this is NOT the model with our hypothetical fleet added.
-    The "marginal" semantics require comparing "future with my fleet"
-    vs "future without my fleet" — using the baseline model gives us
-    the latter directly.
+    F1 = (my ships on planets + in-flight) − (max-opp ships on planets
+         + in-flight). For 2P this is just (my − opp); for 4P it's
+         strongest-opp.
+    F2 = (my production − max-opp production) × turns_remaining.
 
-    Scoring:
-    - pred_owner == my_id → planet would already be ours; no credit.
-    - ships > pred_defenders at eta → CAPTURE. Credit by
-        capture_weight × prod_factor × tgt.production × time_remaining
-      minus combat ship-cost (= pred_defenders ships lost from our
-      fleet). prod_factor = 2 for enemy captures (we gain prod, they
-      lose prod = double swing on production lead), 1 for neutrals.
-    - ships ≤ pred_defenders → BOUNCE. All ships lost.
-
-    Note: Phase 1 ignores hold-time uncertainty (treats capture credit
-    as if held to end-game). CAPTURE_WEIGHT=0.5 builds in a coarse
-    hold-prob discount. Phase 2+ may refine with model.owner_at lookups
-    at eta+δ to penalise quick recaptures.
+    Bootstrap session validated AUC ≈ 0.945 on saved snapshots.
+    No comet-decay term here — fast_sim handles comet lifetime exactly
+    in the rollout, so by the leaf the comet's ownership is "real."
     """
-    pred_owner = model.owner_at(int(tgt.id), eta)
-    pred_ships = float(model.ships_at(int(tgt.id), eta) or 0.0)
+    planets = obs.planets if hasattr(obs, "planets") else obs.get("planets", [])
+    fleets = obs.fleets if hasattr(obs, "fleets") else obs.get("fleets", [])
+    step = obs.step if hasattr(obs, "step") else obs.get("step", 0)
+    turns_remaining = max(0, EPISODE_STEPS - int(step))
 
-    if pred_owner == my_id:
-        return 0.0  # already ours; my fleet is reinforcement only
+    # Per-owner totals
+    ships_by_owner = {}
+    prod_by_owner = {}
+    for p in planets:
+        owner = int(p[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(p[5])
+        prod_by_owner[owner] = prod_by_owner.get(owner, 0.0) + float(p[6])
+    for f in fleets:
+        owner = int(f[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(f[6])
 
-    time_remaining = max(0, EPISODE_STEPS - int(world.step) - eta)
-    production = float(tgt.production)
+    my_ships = ships_by_owner.get(me, 0.0)
+    my_prod = prod_by_owner.get(me, 0.0)
+    opp_ships_max = max(
+        (v for k, v in ships_by_owner.items() if k != me),
+        default=0.0,
+    )
+    opp_prod_max = max(
+        (v for k, v in prod_by_owner.items() if k != me),
+        default=0.0,
+    )
 
-    if ships > pred_ships:
-        # CAPTURE — credit production × time_remaining (matches
-        # composite_capture_value's formula exactly; the combat
-        # ship-cost is implicit in the constants and not separately
-        # accounted, by design).
-        production_gain = production * float(time_remaining)
-        return CAPTURE_WEIGHT * production_gain
+    return (my_ships - opp_ships_max) + (my_prod - opp_prod_max) * turns_remaining
 
-    # BOUNCE — fleet won't capture; penalise wasted ships.
-    return -WASTE_WEIGHT * float(ships)
+
+# ---------------------------------------------------------------------------
+# Idle baseline + per-candidate score
+# ---------------------------------------------------------------------------
+
+
+def _build_idle_baseline(snap_base, me, num_seats, max_horizon):
+    """Pre-compute favor at every idle horizon 0..max_horizon.
+
+    Run all-idle fast_sim from snap_base, recording favor(me) at each
+    step. The baseline_favors[k] is the favor when no one acts for k
+    turns. Used for per-candidate horizon-matched Δ.
+    """
+    snap = fs_clone(snap_base)
+    out = [_favor(snap.state[me].observation, me)]
+    idle = [[] for _ in range(num_seats)]
+    for _ in range(max_horizon):
+        if snap.fake_env.done:
+            out.append(out[-1])
+            continue
+        snap = fs_step(snap, idle, in_place=True)
+        out.append(_favor(snap.state[me].observation, me))
+    return out
+
+
+def _score_action(snap_base, me, num_seats, src_id, angle, ships,
+                  horizon, baseline_favors):
+    """Δ favor at horizon = (leaf with my action + idle rest) − idle baseline.
+
+    Step 0: apply my candidate launch (rest idle).
+    Steps 1..horizon-1: idle.
+    Return favor at the leaf − baseline_favors[horizon].
+
+    The simulator handles orbital motion, swept-pair collisions, sun
+    avoidance, and combat resolution EXACTLY (parity-tested vs the env).
+    So the leaf state correctly reflects whether my fleet actually
+    captures the intended target.
+    """
+    snap = fs_clone(snap_base)
+    actions = [[] for _ in range(num_seats)]
+    actions[me] = [[int(src_id), float(angle), int(ships)]]
+    snap = fs_step(snap, actions, in_place=True)
+
+    idle = [[] for _ in range(num_seats)]
+    for _ in range(horizon - 1):
+        if snap.fake_env.done:
+            break
+        snap = fs_step(snap, idle, in_place=True)
+
+    leaf_favor = _favor(snap.state[me].observation, me)
+    return leaf_favor - baseline_favors[horizon]
 
 
 # ---------------------------------------------------------------------------
@@ -240,10 +298,12 @@ def agent(obs, configuration=None):
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
     raw_planets = obs_d.get("planets", []) or []
+    raw_fleets = obs_d.get("fleets", []) or []
     if not raw_planets:
         return []
 
     planets = [Planet(*p) for p in raw_planets]
+    fleets = [Fleet(*f) for f in raw_fleets]
     my_planets = [p for p in planets if int(p.owner) == me]
     targets = [p for p in planets if int(p.owner) != me]
     if not my_planets or not targets:
@@ -252,28 +312,46 @@ def agent(obs, configuration=None):
     world = World.from_obs(obs_d)
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
+    num_seats = _num_seats(planets, fleets)
 
-    # Enumerate + score candidates
-    candidates = []  # list of (delta, src, tgt, ships, angle)
+    # Build the fast_sim snapshot once per turn (~1 ms).
+    snap_base = fs_from_obs(obs, num_seats=num_seats)
+
+    # Idle baseline at horizons 0..MAX_HORIZON (~6 ms for 50 steps).
+    baseline_favors = _build_idle_baseline(snap_base, me, num_seats, MAX_HORIZON)
+
+    # Enumerate + score candidates via fast_sim rollout.
+    t_deadline = time.perf_counter() + WALLCLOCK_BUDGET_MS / 1000.0
+    candidates = []
+    bailed = False
     for src in my_planets:
+        if bailed:
+            break
         if int(src.ships) < MIN_FLEET_SIZE:
             continue
         for tgt in _nearest_k(targets, src, NUM_TARGETS_PER_SOURCE):
+            if time.perf_counter() > t_deadline:
+                bailed = True
+                break
             for ships in _enumerate_ship_counts_basic(src, tgt, model, omega):
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
                 angle, eta = _aim_and_eta(src, tgt, ships, omega)
-                delta = _marginal_value(src, tgt, ships, eta, world, model, me)
+                horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
+                if horizon >= len(baseline_favors):
+                    horizon = len(baseline_favors) - 1
+                delta = _score_action(
+                    snap_base, me, num_seats,
+                    int(src.id), angle, ships,
+                    horizon, baseline_favors,
+                )
                 if delta > 0:
                     candidates.append((delta, src, tgt, ships, angle))
 
     if not candidates:
         return []
 
-    # Greedy non-dogpile: max 1 launch per source / per target per turn.
-    # Multi-launch-per-source (per-target dedup with budget) was tried
-    # and slightly regressed in n=32 vs-nearest A/B; reverted. Phase 3
-    # will use settle_plan, which has its own arrival ledger.
+    # Greedy non-dogpile emit: max 1 launch per source / per target per turn.
     candidates.sort(key=lambda c: -c[0])
     used_srcs, used_tgts = set(), set()
     moves = []
