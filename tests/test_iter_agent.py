@@ -64,7 +64,8 @@ def test_iter_knob_constants_present(iter_agent_module):
                  "MULTI_STEP_PLAN_ENABLED", "MSP_TEMPLATES", "MSP_PLAN_LENGTH",
                  "MSP_HORIZON", "MSP_DELAY_BUDGET", "MSP_TOP_K_TARGETS",
                  "MSP_MAX_SOURCES_PER_TARGET", "MSP_SHIPS_SAFETY",
-                 "GEO_ALLOCATOR_CANDIDATE_ENABLED"):
+                 "GEO_ALLOCATOR_CANDIDATE_ENABLED",
+                 "CLUSTER_WEIGHT", "CLUSTER_FRONTIER_DISCOUNT"):
         assert hasattr(iter_agent_module, knob), f"missing knob: {knob}"
 
 
@@ -338,3 +339,34 @@ def test_territory_value_runs_under_5ms(iter_agent_module):
         territory_value(obs, 0, weight=0.01)
     avg_ms = (time.perf_counter() - t0) * 1000.0 / 20
     assert avg_ms < 5.0, f"territory_value too slow: {avg_ms:.2f} ms/call"
+
+
+def test_cluster_value_runs_under_8ms(iter_agent_module):
+    # Cluster value head must fit the leaf budget. sense_state ~5 ms + per-
+    # cluster loop ~2 ms ≈ 7 ms; cap at 8 ms with margin.
+    import time
+    from kaggle_environments import make
+    from lib.value_heads import cluster_value
+
+    env = make("orbit_wars", debug=False)
+    env.reset(2)
+    # Roll forward 30 turns so the obs has real ownership / in-flight state.
+    for _ in range(30):
+        if env.done:
+            break
+        env.step([iter_agent_module.agent(env.state[0]["observation"], env.configuration),
+                  None])
+    obs = env.state[0]["observation"]
+
+    t0 = time.perf_counter()
+    for _ in range(10):
+        cluster_value(obs, 0, weight=1.0)
+    avg_ms = (time.perf_counter() - t0) * 1000.0 / 10
+    assert avg_ms < 8.0, f"cluster_value too slow: {avg_ms:.2f} ms/call"
+
+
+def test_resolve_value_fn_cluster_variants(iter_agent_module):
+    # Both new value_fn names must resolve to a callable.
+    for name in ("cluster", "composite_plus_cluster"):
+        fn = iter_agent_module._resolve_value_fn(name)
+        assert callable(fn), f"VALUE_FN={name!r} must resolve to callable; got {fn!r}"

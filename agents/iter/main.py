@@ -28,6 +28,8 @@ PV_GAMMA = 0.99                 # iter_v1 / v7_pv equivalent
 VALUE_FN = "composite"          # iter_v1 VALIDATED head (composite_capture_value)
 DEFENSIBILITY_ALPHA = 0.2       # inert (VALUE_FN=composite)
 TERRITORY_WEIGHT = 0.01         # inert (VALUE_FN=composite)
+CLUSTER_WEIGHT = 1.0            # cluster_value weight (inert unless VALUE_FN uses cluster)
+CLUSTER_FRONTIER_DISCOUNT = 0.5 # frontier planets contribute at this fraction in cluster head
 K_4P = 8                        # 4P-branch lookahead — IS USED by 4P dispatch (the new piece)
 
 # --- Adaptive K — DISABLED (2026-05-15 strip back) --------------------------
@@ -141,6 +143,18 @@ def _resolve_value_fn(name):
         from lib.value_heads import composite_plus_territory
         return lambda obs, mid: composite_plus_territory(
             obs, mid, territory_weight=TERRITORY_WEIGHT
+        )
+    if name == "cluster":
+        from lib.value_heads import cluster_value
+        return lambda obs, mid: cluster_value(
+            obs, mid, weight=CLUSTER_WEIGHT,
+            frontier_discount=CLUSTER_FRONTIER_DISCOUNT
+        )
+    if name == "composite_plus_cluster":
+        from lib.value_heads import composite_plus_cluster
+        return lambda obs, mid: composite_plus_cluster(
+            obs, mid, cluster_weight=CLUSTER_WEIGHT,
+            cluster_frontier_discount=CLUSTER_FRONTIER_DISCOUNT
         )
     raise ValueError(f"unknown VALUE_FN: {name!r}")
 

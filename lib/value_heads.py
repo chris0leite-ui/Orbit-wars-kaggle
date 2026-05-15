@@ -444,3 +444,126 @@ def composite_plus_territory(
         horizon_cap=territory_horizon_cap,
     )
     return base + (composite - base) + (territory - base)
+
+
+CLUSTER_WEIGHT: float = 1.0
+CLUSTER_FRONTIER_DISCOUNT: float = 0.5
+CLUSTER_HORIZON_CAP: int = EPISODE_STEPS_TOTAL
+
+
+def cluster_value(
+    obs: Any, my_id: int,
+    *,
+    weight: float = CLUSTER_WEIGHT,
+    frontier_discount: float = CLUSTER_FRONTIER_DISCOUNT,
+    horizon_cap: int = CLUSTER_HORIZON_CAP,
+) -> float:
+    """Ship-delta + weight × cluster-aware position quality.
+
+    Compositional position score that scores CLUSTERS (not individual
+    planets) by their weakest-link defensibility. A cluster captured
+    cleanly inside our Voronoi cell scores high; a cluster with one
+    front-pid member scores low (worst link drags the cluster down).
+    Frontier planets get a `frontier_discount` multiplier (default 0.5)
+    on their per-planet production-time contribution.
+
+    Targets the root failure mode seen with the geo allocator's seed=5
+    regression: over-extension captures a frontier planet by emptying
+    multiple sources. Per-planet heads (composite, territory) score the
+    capture positively; the cluster head sees the new planet is on the
+    front AND the emptied sources have higher threat ratio, scoring the
+    over-extended position DOWN. Chooser then rejects the over-extension.
+
+    Cost: ~5 ms sense_state + ~2 ms cluster loops. Fits leaf budget.
+    """
+    base = delta_us_minus_them_obs(obs, my_id)
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return base
+    model = WorldModel.from_world(world)
+    step_now = int(world.step)
+    remaining = max(0, horizon_cap - step_now)
+    if remaining == 0:
+        return base
+
+    try:
+        from lib.geo.sense import sense_state
+        sense = sense_state(world, model)
+    except Exception:
+        return base
+
+    me_value = 0.0
+    them_value = 0.0
+
+    # Per-cluster production-time, weakest-link defensibility.
+    for cluster in sense.my_clusters:
+        if not cluster.planet_ids:
+            continue
+        min_threat = remaining
+        for pid in cluster.planet_ids:
+            t = model.time_to_enemy_threat(int(pid), my_id, world)
+            if t is None:
+                continue
+            t_int = max(0, int(t))
+            if t_int < min_threat:
+                min_threat = t_int
+        me_value += float(cluster.total_production) * float(min_threat)
+
+    for cluster in sense.enemy_clusters:
+        if not cluster.planet_ids:
+            continue
+        owner = cluster.owner
+        min_threat = remaining
+        for pid in cluster.planet_ids:
+            t = model.time_to_enemy_threat(int(pid), owner, world)
+            if t is None:
+                continue
+            t_int = max(0, int(t))
+            if t_int < min_threat:
+                min_threat = t_int
+        them_value += float(cluster.total_production) * float(min_threat)
+
+    # Frontier discount: our planets in sense.front_pids get a
+    # (frontier_discount - 1.0) × production × remaining penalty, so a
+    # frontier planet contributes only `frontier_discount` of its full
+    # production-time to me_value (effective via the subtraction).
+    front_penalty = 0.0
+    for p in world.planets_by_id.values():
+        if p.owner == my_id and int(p.id) in sense.front_pids:
+            front_penalty += float(p.production) * float(remaining)
+    me_value -= (1.0 - frontier_discount) * front_penalty
+
+    return base + weight * (me_value - them_value)
+
+
+def composite_plus_cluster(
+    obs: Any, my_id: int,
+    *,
+    capture_weight: float = CAPTURE_REWARD_WEIGHT,
+    waste_weight: float = WASTE_PENALTY_WEIGHT,
+    cluster_weight: float = CLUSTER_WEIGHT,
+    cluster_frontier_discount: float = CLUSTER_FRONTIER_DISCOUNT,
+    cluster_horizon_cap: int = CLUSTER_HORIZON_CAP,
+) -> float:
+    """Layered head: composite_capture_value increment + cluster_value increment.
+
+    Same shape as composite_plus_territory: subtract the shared base
+    (delta_us_minus_them_obs) so the combined return is
+    `base + composite_incr + cluster_incr`. composite captures launch
+    quality (rewards captures, penalises bounces); cluster captures
+    position quality (cluster cohesion, frontier discount). Layering
+    should lift more than either alone if the signals are orthogonal.
+    """
+    base = delta_us_minus_them_obs(obs, my_id)
+    composite = composite_capture_value(
+        obs, my_id,
+        capture_weight=capture_weight,
+        waste_weight=waste_weight,
+    )
+    cluster = cluster_value(
+        obs, my_id,
+        weight=cluster_weight,
+        frontier_discount=cluster_frontier_discount,
+        horizon_cap=cluster_horizon_cap,
+    )
+    return base + (composite - base) + (cluster - base)
