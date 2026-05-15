@@ -31,6 +31,7 @@ candidate set: the incumbent action + each "drop one launch" variant.
 from __future__ import annotations
 
 import copy
+import time
 from typing import Callable, Sequence
 
 from kaggle_environments import make
@@ -83,9 +84,21 @@ def score_action(
     K: int,
     my_id: int,
     policy: Callable,
+    value_fn: Callable | None = None,
+    deadline: float | None = None,
 ) -> float:
     """Sim<K> score of taking `action` this turn, then K-1 turns of
-    `policy` as both players. Returns (our - opp) total ships.
+    `policy` as both players.
+
+    If `value_fn` is None (default — backward-compat for v3_lookahead),
+    returns (our - opp) total ships. If `value_fn(observation, my_id)`
+    is supplied, returns its scalar applied to the leaf observation —
+    used by v4_planner with the production-share/denial head.
+
+    `deadline` is an optional `time.perf_counter()` timestamp; the
+    rollout loop checks before each remaining step and aborts early
+    (returning the value at the partial-leaf state). Load-bearing
+    robustness without it a slow rollout can blow past 1 s actTimeout.
 
     Caller is responsible for passing `env` already-reconstructed; this
     function clones it so the caller can reuse `env` across candidates.
@@ -103,10 +116,15 @@ def score_action(
     for _ in range(max(0, K - 1)):
         if clone.done:
             break
+        if deadline is not None and time.perf_counter() > deadline:
+            break
         a0 = policy(clone.state[0].observation)
         a1 = policy(clone.state[1].observation)
         clone.step([a0, a1])
-    totals = _ship_total_by_owner(clone.state[my_id].observation)
+    leaf_obs = clone.state[my_id].observation
+    if value_fn is not None:
+        return value_fn(leaf_obs, my_id)
+    totals = _ship_total_by_owner(leaf_obs)
     return totals.get(my_id, 0.0) - totals.get(opp_id, 0.0)
 
 
