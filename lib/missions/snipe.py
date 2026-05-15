@@ -132,6 +132,14 @@ ENDGAME_NEUTRAL_BONUS = 1.0
 # entirely. Default 0 = current behaviour.
 DROP_COMET_TARGETS = 0
 
+# Use predicted-arrival garrison (`pred_ships`) for `target_min` instead of
+# CURRENT garrison (`t.ships`). The current-garrison path over-commits when
+# an inbound enemy fleet will reduce the target's garrison before our arrival
+# (PI observation 2026-05-14: "we sent 16 ships at a 15-ship neutral; the
+# opponent already had a 1-ship attack inbound; 15 would have sufficed").
+# Default ON; toggle to False to A/B-test against legacy sizing.
+USE_PRED_SHIPS_FOR_SIZING = True
+
 # Affordability filter (v3.5+): when True, propose a Mission only if the
 # source planet can fund the base capture (target.ships + 1) ALONE. Phase-0
 # idle-trace showed ~45% of all idle classifications are
@@ -381,7 +389,30 @@ def propose_snipe_missions(
                 # H15/H18 — drop comet targets entirely (see flag docstring).
                 continue
             d = math.hypot(t.x - src.x, t.y - src.y)
+            # Launch sizing: compute pred_ships at a PROXY eta (using a
+            # conservative ship count) so the proposer accounts for inbound
+            # enemy fleets that will reduce/eliminate the target's garrison
+            # before we arrive. Falls back to current `t.ships` if pred is
+            # unavailable. Re-queried after final eta below for the
+            # redundancy filter; the safety net is `mechanism.arrival_size`
+            # which bumps the intent up if production growth changes the
+            # picture between proxy and final eta.
             target_min = max(1, int(t.ships) + 1)
+            if USE_PRED_SHIPS_FOR_SIZING:
+                # DOWNSIZE-only fix: when an inbound enemy fleet will reduce
+                # the target's garrison before our arrival, use the reduced
+                # value. We do NOT use pred_ships when it's HIGHER than
+                # current (production growth on owned targets) — that case
+                # is already handled by `lib.mechanism.arrival_size`. Using
+                # pred_ships there would double-count with mechanism's
+                # production-aware upsize and bloat fleet sizes.
+                proxy_v = fleet_speed(target_min)
+                proxy_eta = (
+                    int(math.ceil(d / max(proxy_v, 1e-6))) if proxy_v > 0 else 0
+                )
+                proxy_pred = model.ships_at(t.id, proxy_eta)
+                if proxy_pred is not None and proxy_pred < float(t.ships):
+                    target_min = max(1, int(math.ceil(float(proxy_pred))) + 1)
             if aggressive and src.ships > AGGRESSIVE_MIN_GARRISON:
                 fraction_size = max(1, int(src.ships * AGGRESSIVE_FRACTION))
                 cap = max(1, int(src.ships) - AGGRESSIVE_RESERVE)

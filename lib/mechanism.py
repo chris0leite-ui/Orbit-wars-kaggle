@@ -82,6 +82,16 @@ FLEET_OVERCOMMIT = 1.0
 PRE_REINFORCE_WINDOW = 0
 
 
+# Extra production-tick buffer applied in `arrival_size` for dynamic targets
+# (comets or orbiting planets with non-zero world.omega). Was hard-coded to 1
+# at line 194 ("prod_ticks = eta + 1 if is_dynamic"). PI observed under-commit
+# by 1 ship on moving planets — `fleet_target_planet` is a non-orbiting
+# ray-cast that can be off by "a step or two" (lib/world_model.py:51-54). +2
+# covers the worst case; +1 left us bouncing when actual arrival was 2 ticks
+# past the ray-cast eta. Sweep candidates: 1 / 2 / 3.
+DYNAMIC_PROD_BUFFER = 2
+
+
 # ---------------------------------------------------------------------------
 # validate — drop intents that violate ownership / garrison constraints
 # ---------------------------------------------------------------------------
@@ -191,7 +201,7 @@ def arrival_size(intents: list[Intent], world: World, model=None) -> list[Intent
             target.id in world.comet_ids
             or (is_orbiting(target_tuple) and world.omega != 0.0)
         )
-        prod_ticks = eta + (1 if is_dynamic else 0)
+        prod_ticks = eta + (DYNAMIC_PROD_BUFFER if is_dynamic else 0)
         static_needed = target.ships + target.production * prod_ticks + 1
         needed = static_needed
         if model is not None:

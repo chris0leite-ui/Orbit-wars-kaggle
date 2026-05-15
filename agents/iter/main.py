@@ -47,6 +47,25 @@ COMET_MAX_LAUNCHES_PER_TURN = 999  # cap effectively disabled; ablation showed i
 # --- Comet evacuation (Bug 3 PRE-FILTER) ------------------------------------
 COMET_EVAC_THRESHOLD = 5        # if our comet has < N steps remaining, evac ships off it
 COMET_EVAC_RESERVE = 1          # min garrison left on the comet after evac
+
+# --- Two-phase scoring (2026-05-15) -----------------------------------------
+# Phase 1: cheap analytical leaf evaluation on ALL drop-one candidates via
+# WorldModel timeline propagation (no rollout, no opp model). Phase 2: deep
+# K_DEEP rollout via lib.v7_search.score_candidate on the top-PHASE2_TOP_K
+# Phase-1 candidates only. Unlocks K_DEEP=18-22 within the 700 ms budget
+# because we don't burn rollout cost on obviously-weak candidates.
+TWO_PHASE = False               # default OFF — eval baseline (sizing fixes only) first
+PHASE1_HORIZON = 50             # horizon for Phase 1 analytical evaluation
+PHASE2_TOP_K = 3                # # of top Phase-1 finalists to deep-score (always includes incumbent)
+K_DEEP = 18                     # deep K for Phase 2 (overrides K when TWO_PHASE=True; K_CAP still bounds)
+
+# --- Latest-launch heuristic (2026-05-15) -----------------------------------
+# POST-PROCESS shrink: for each launch in the chooser's action, binary-search
+# the smallest ship count whose ETA still beats threat_eta - LATEST_LAUNCH_BUFFER_TURNS
+# at the target. Conserves ships without losing the engagement. Default OFF.
+LATEST_LAUNCH_ENABLED = False
+LATEST_LAUNCH_BUFFER_TURNS = 1  # safety margin: arrive at threat_eta - this
+LATEST_LAUNCH_MIN_FLEET = 2     # never shrink below this (avoid degenerate 1-ship near-zero-speed fleets)
 # ============================================================================
 
 # Dev-mode: override lib.scoring.PV_GAMMA BEFORE v7_search imports propagate
@@ -62,9 +81,17 @@ except ImportError:
     pass
 
 from lib.v7_search import choose, choose_4p
+# Private helpers imported at module scope so the bundler preserves indent
+# semantics inside `_choose_two_phase`.
+from lib.v7_search import _build_incumbent_intents as _v7_build_incumbent
+from lib.v7_search import _action_from_intents as _v7_action_from_intents
+from lib.v7_search import _enumerate_drop_one as _v7_enumerate_drop_one
+from lib.v7_search import score_candidate as _v7_score_candidate
+from lib.fast_sim import from_obs as _v7_fs_from_obs
 from lib.intent import World
-from lib.world_model import fleet_target_planet, comet_remaining_lifetime, fleet_speed
+from lib.world_model import fleet_target_planet, comet_remaining_lifetime, fleet_speed, WorldModel, simulate_planet_timeline
 import math
+import time
 
 
 def _resolve_value_fn(name):
@@ -279,6 +306,204 @@ def _comet_evacuation_launches(world, my_id: int):
     return launches
 
 
+def _score_phase1_analytical(world, action, my_id: int, horizon: int) -> float:
+    """Cheap analytical leaf score for one candidate action.
+
+    Builds a SYNTHETIC arrival ledger by adding the candidate's launches
+    (ray-cast to find their targets + ETAs) to the real in-flight fleets'
+    ledger, then re-simulates per-planet timelines out to `horizon`. Score
+    = production-weighted territorial differential summed across horizon
+    turns: +production per turn our planets are predicted to be ours,
+    -production per turn enemy planets stay enemy.
+
+    No step-by-step rollout, no opp policy — pure deterministic propagation
+    of CURRENT in-flight fleets + the candidate's hypothetical launches.
+    """
+    from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet
+    planets_list = list(world.planets_by_id.values())
+    if not planets_list:
+        return 0.0
+
+    # Base ledger from real in-flight fleets.
+    base_model = WorldModel.from_world(world, horizon=horizon)
+    # Shallow-copy the ledger so we can extend per-target arrival lists.
+    synthetic_ledger = {pid: list(arr) for pid, arr in base_model.ledger.items()}
+
+    # Add the candidate's launches to the ledger.
+    for entry in action or []:
+        try:
+            src_id = int(entry[0])
+            angle = float(entry[1])
+            ships = int(entry[2])
+        except (ValueError, TypeError, IndexError):
+            continue
+        if ships <= 0:
+            continue
+        src = world.planets_by_id.get(src_id)
+        if src is None:
+            continue
+        spd = fleet_speed(ships)
+        if spd <= 0:
+            continue
+        f = Fleet(-1, my_id, float(src.x), float(src.y), float(angle), src_id, ships)
+        tgt, eta = fleet_target_planet(f, planets_list)
+        if tgt is None or eta is None:
+            continue
+        synthetic_ledger.setdefault(int(tgt.id), []).append((int(eta), my_id, ships))
+
+    # Re-simulate each planet's timeline with the augmented ledger.
+    # Cost: O(N_planets * horizon). Cheap (~few ms for N≈30, H=50).
+    score = 0.0
+    for p in planets_list:
+        arrivals = synthetic_ledger.get(int(p.id), [])
+        tl = simulate_planet_timeline(p, arrivals, horizon=horizon)
+        owner_at = tl["owner_at"]
+        for t in range(1, horizon + 1):
+            owner = owner_at.get(t, p.owner)
+            if owner == my_id:
+                score += float(p.production)
+            elif owner is not None and owner >= 0 and owner != my_id:
+                score -= float(p.production)
+    return score
+
+
+def _choose_two_phase(obs, configuration, *, K_deep: int, wallclock_ms: float,
+                       phase1_horizon: int, phase2_top_k: int,
+                       opp_tier: int, value_fn, world):
+    """Phase 1 analytical triage + Phase 2 deep rollout on top-K survivors.
+
+    Always preserves the incumbent (candidate 0) as a parity floor — it
+    is scored in Phase 2 first so the watchdog can't drop it. If Phase 1
+    can't rank candidates, falls back to the incumbent.
+    """
+    t_start = time.perf_counter()
+    model = WorldModel.from_world(world)
+    incumbent_intents = _v7_build_incumbent(world, model, include_recapture=True)
+    incumbent_action = _v7_action_from_intents(incumbent_intents, obs, model)
+    candidates = _v7_enumerate_drop_one(incumbent_action)
+    if len(candidates) <= 1:
+        return incumbent_action
+
+    my_id = world.my_id
+
+    # Phase 1: analytical scores on every candidate.
+    p1_scores = [
+        _score_phase1_analytical(world, c, my_id, phase1_horizon)
+        for c in candidates
+    ]
+    # Rank by Phase-1 score, descending. Survivors = top-K UNION incumbent (idx 0).
+    ranked = sorted(range(len(candidates)), key=lambda i: p1_scores[i], reverse=True)
+    survivors_idx = list(dict.fromkeys([0] + ranked[: max(1, phase2_top_k)]))
+
+    # Phase 2: deep rollout on survivors.
+    snap = _v7_fs_from_obs(obs, configuration, episode_seed=0, num_seats=2)
+    best_action = incumbent_action
+    best_score = float("-inf")
+    incumbent_scored = False
+    for i in survivors_idx:
+        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+        if elapsed_ms > wallclock_ms:
+            break
+        try:
+            s = _v7_score_candidate(
+                snap, candidates[i], my_id=my_id, K=K_deep,
+                opp_tier=opp_tier, value_fn=value_fn,
+            )
+        except Exception:
+            continue
+        if not incumbent_scored:
+            incumbent_scored = True
+            best_score = s
+            best_action = list(candidates[i])
+            continue
+        if s > best_score:
+            best_score = s
+            best_action = list(candidates[i])
+    return best_action
+
+
+def _shrink_to_min_viable(action, world, model):
+    """Latest-launch heuristic: for each enemy-targeted launch, shrink the
+    fleet to the smallest ship count that still arrives BEFORE the target's
+    earliest enemy-threat (or before our predicted-flip-to-us if attacking).
+
+    For each launch entry [src_id, angle, ships]:
+    - Ray-cast (via _launch_eta) to find the target and our predicted ETA.
+    - Look up the target's threat_eta via WorldModel.time_to_enemy_threat.
+      Where the threat is OUR own threat (i.e., for an enemy-owned target
+      that WE threaten), we instead use the planet's predicted-flip-to-us
+      step.
+    - Binary-search S in [LATEST_LAUNCH_MIN_FLEET, current_ships] for the
+      smallest S where eta_at_S < threat_eta - LATEST_LAUNCH_BUFFER_TURNS
+      AND S still covers the predicted defenders at eta_at_S (via
+      model.ships_at).
+
+    Skip launches that touch unknown / safe planets (no threat_eta).
+    """
+    if not action:
+        return action
+    planets_list = list(world.planets_by_id.values())
+    if not planets_list:
+        return action
+
+    def _sufficient(planet_id, eta, S):
+        pred = model.ships_at(planet_id, eta)
+        if pred is None:
+            return True   # no info ⇒ assume safe
+        return S >= int(math.ceil(float(pred))) + 1
+
+    out = []
+    for entry in action:
+        try:
+            src_id = int(entry[0])
+            angle = float(entry[1])
+            ships = int(entry[2])
+        except (ValueError, TypeError, IndexError):
+            out.append(entry)
+            continue
+        src = world.planets_by_id.get(src_id)
+        if src is None or ships <= LATEST_LAUNCH_MIN_FLEET:
+            out.append(entry)
+            continue
+        tgt, eta = _launch_eta(src, angle, ships, planets_list)
+        if tgt is None or eta is None or tgt.id == src_id:
+            out.append(entry)
+            continue
+        # Threat ETA: for non-our targets, query enemy threat (other than us).
+        # For our targets (reinforce), we don't shrink — would risk losing
+        # the defense.
+        if tgt.owner == world.my_id:
+            out.append(entry)
+            continue
+        threat_eta = model.time_to_enemy_threat(int(tgt.id), int(tgt.owner), world)
+        if threat_eta is None:
+            out.append(entry)
+            continue
+        deadline = int(threat_eta) - int(LATEST_LAUNCH_BUFFER_TURNS)
+        if deadline <= 0:
+            out.append(entry)
+            continue
+
+        # Binary search smallest viable S.
+        d = math.hypot(tgt.x - src.x, tgt.y - src.y)
+        lo, hi = LATEST_LAUNCH_MIN_FLEET, ships
+        best_S = ships  # default: keep original size
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            v_mid = fleet_speed(mid)
+            eta_mid = int(math.ceil(d / max(v_mid, 1e-6))) if v_mid > 0 else 999
+            if eta_mid <= deadline and _sufficient(int(tgt.id), eta_mid, mid):
+                best_S = mid
+                hi = mid - 1
+            else:
+                lo = mid + 1
+        if best_S < ships:
+            out.append([src_id, angle, best_S])
+        else:
+            out.append(entry)
+    return out
+
+
 def agent(obs, configuration=None):
     world = World.from_obs(obs)
 
@@ -313,6 +538,21 @@ def agent(obs, configuration=None):
             include_recapture=True,
             value_fn=value_fn,
         )
+    elif TWO_PHASE:
+        # Two-phase: cheap analytical Phase 1 ranks ALL candidates,
+        # deep K_DEEP rollout on the top survivors. Bounded by K_CAP
+        # for wallclock safety.
+        K_deep_eff = min(K_CAP, max(K_DEEP, max_eta + K_BUFFER))
+        action = _choose_two_phase(
+            obs, configuration,
+            K_deep=K_deep_eff,
+            wallclock_ms=WALLCLOCK_MS,
+            phase1_horizon=PHASE1_HORIZON,
+            phase2_top_k=PHASE2_TOP_K,
+            opp_tier=OPP_TIERS[0],
+            value_fn=value_fn,
+            world=world,
+        )
     else:
         action = choose(
             obs, configuration,
@@ -339,5 +579,15 @@ def agent(obs, configuration=None):
         for ev in evac_launches:
             if int(ev[0]) not in chosen_sources:
                 action.append(ev)
+
+    # ------------------------------------------------------------------
+    # POST-PROCESS — latest-launch shrink (default OFF).
+    # For each enemy-targeted launch, shrink to the smallest fleet that
+    # still arrives in time. Conserves ships. Reuses the same WorldModel
+    # we built earlier for adaptive K relevance filtering.
+    # ------------------------------------------------------------------
+    if LATEST_LAUNCH_ENABLED:
+        model = WorldModel.from_world(world)
+        action = _shrink_to_min_viable(action, world, model)
 
     return action

@@ -40,6 +40,11 @@ DRAIN_BONUS = 1.10             # mild bonus for using SAFE surplus
 # Mission Renaissance gate. Default 0 = disabled. A/B candidate: 1.
 USE_DRAIN_MISSION = 0
 
+# Mirror snipe.py: when True, drain's affordability check uses
+# pred_ships at our ETA, not current garrison. Avoids skipping targets
+# that an inbound enemy will reduce below current ships by our arrival.
+USE_PRED_SHIPS_FOR_SIZING = True
+
 
 def propose_drain_missions(world: World, model: WorldModel) -> list[Mission]:
     """One drain Mission per (safe high-garrison source, best target) pair.
@@ -80,13 +85,23 @@ def propose_drain_missions(world: World, model: WorldModel) -> list[Mission]:
             if enemy_eta is not None and enemy_eta <= our_eta + SAFE_ETA_BUFFER:
                 # Source has imminent enemy arrival — don't strand it.
                 continue
-            # Quick sanity: target must be capturable by our drain force.
-            base_capture = max(1, int(t.ships) + 1)
-            if drain_ships < base_capture:
-                continue
-            # Predicted ownership at arrival — skip if already ours.
+            # Predicted ownership/garrison at arrival — skip if already
+            # ours; otherwise use pred_ships (not current `t.ships`) for
+            # the affordability gate so an inbound enemy fleet shrinking
+            # the target before our arrival doesn't bar capturing it.
             pred_owner = model.owner_at(t.id, our_eta)
             if pred_owner == world.my_id:
+                continue
+            base_capture = max(1, int(t.ships) + 1)
+            if USE_PRED_SHIPS_FOR_SIZING:
+                # DOWNSIZE-only: mirror snipe.py. Use pred_ships only when
+                # it's LOWER than current (inbound enemy fleet reducing the
+                # target's garrison). Production growth on owned targets is
+                # arrival_size's job; double-counting bloats fleet sizes.
+                pred_ships = model.ships_at(t.id, our_eta)
+                if pred_ships is not None and pred_ships < float(t.ships):
+                    base_capture = max(1, int(math.ceil(float(pred_ships))) + 1)
+            if drain_ships < base_capture:
                 continue
             # Score uses the standard cost-aware ROI shape (rebalanced
             # denominator from wave 1b), bumped by DRAIN_BONUS because

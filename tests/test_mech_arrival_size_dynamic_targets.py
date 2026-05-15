@@ -2,19 +2,20 @@
 
 Backlog item A from `audit/2026-05-11-v3-snipe-games-analysis.md`. The
 blanket `(eta + 1)` fix tried in v3.3 regressed 42.2% in 32-seed 2P
-A/B because it over-sized static-target launches (whose ETA already
-overshoots by (r_src + r_target)/v thanks to radius-entry capture).
-The targeted fix applies the extra production tick ONLY to dynamic
-targets (orbiting non-comet planets and comets) — which the swept-pair
-collision resolves at the entry-turn position, exactly one prod-tick
-later than the static formula models.
+A/B because it over-sized static-target launches. The targeted fix
+applies extra production ticks ONLY to dynamic targets (orbiting
+non-comet planets and comets) via `DYNAMIC_PROD_BUFFER`.
 
-These tests assert:
-- static targets: unchanged from pre-fix behaviour
-- orbiting non-comet targets: +production × 1 ships extra
-- comet targets: +production × 1 ships extra (even when not flagged as orbiting)
-- the WorldModel branch still gates on max(static, model) and the
-  static now includes the extra tick for dynamic targets
+PI observation 2026-05-15: +1 tick was sometimes insufficient because
+`fleet_target_planet` is a non-orbiting ray-cast that can be off by
+"a step or two" for fast-moving planets. `DYNAMIC_PROD_BUFFER` bumped
+from 1 to 2 to cover that worst case. These tests now assert +2.
+
+Tests:
+- static targets: unchanged from pre-fix behaviour (no extra ticks)
+- orbiting non-comet targets: +production × DYNAMIC_PROD_BUFFER extra
+- comet targets: +production × DYNAMIC_PROD_BUFFER extra
+- the WorldModel branch still gates on max(static-with-buffer, model)
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import math
 
 from lib.fleet import speed as fleet_speed
 from lib.intent import Intent, World
-from lib.mechanism import arrival_size
+from lib.mechanism import arrival_size, DYNAMIC_PROD_BUFFER
 
 
 def _world(planets, *, my_id=0, omega=0.05, comet_ids=()):
@@ -81,9 +82,9 @@ def test_static_enemy_target_no_extra_tick():
 # ---------------------------------------------------------------------------
 
 
-def test_orbiting_enemy_target_adds_one_extra_tick():
+def test_orbiting_enemy_target_adds_dynamic_buffer_ticks():
     """Orbiting planet at inner-radius — the swept-pair collision resolves
-    at entry-turn position, one prod tick after the static formula."""
+    at entry-turn position, DYNAMIC_PROD_BUFFER prod ticks after static."""
     src = _src()
     target = _orbiting_enemy(1, ships=20, production=2)
     world = _world([src, target])
@@ -92,10 +93,10 @@ def test_orbiting_enemy_target_adds_one_extra_tick():
     d = math.hypot(target[2] - src[2], target[3] - src[3])
     v = fleet_speed(21)
     eta = math.ceil(d / v)
-    expected_dynamic = 20 + 2 * (eta + 1) + 1
+    expected_dynamic = 20 + 2 * (eta + DYNAMIC_PROD_BUFFER) + 1
     assert out[0].ships == expected_dynamic, (
-        f"Orbiting target should add one prod tick; got {out[0].ships}, "
-        f"expected {expected_dynamic}"
+        f"Orbiting target should add {DYNAMIC_PROD_BUFFER} prod ticks; "
+        f"got {out[0].ships}, expected {expected_dynamic}"
     )
 
 
@@ -104,9 +105,9 @@ def test_orbiting_enemy_target_adds_one_extra_tick():
 # ---------------------------------------------------------------------------
 
 
-def test_comet_target_adds_one_extra_tick():
+def test_comet_target_adds_dynamic_buffer_ticks():
     """Comet planet (flagged via comet_planet_ids), production=1, ships=15.
-    Adds +1 prod tick regardless of orbital geometry."""
+    Adds DYNAMIC_PROD_BUFFER prod ticks regardless of orbital geometry."""
     src = _src()
     # Comet placed at static-ring coords — only the comet_ids flag matters
     target = _static_enemy(7, ships=15, production=1, x=80.0, y=20.0)
@@ -116,9 +117,10 @@ def test_comet_target_adds_one_extra_tick():
     d = math.hypot(target[2] - src[2], target[3] - src[3])
     v = fleet_speed(16)
     eta = math.ceil(d / v)
-    expected = 15 + 1 * (eta + 1) + 1
+    expected = 15 + 1 * (eta + DYNAMIC_PROD_BUFFER) + 1
     assert out[0].ships == expected, (
-        f"Comet should add one prod tick; got {out[0].ships}, expected {expected}"
+        f"Comet should add {DYNAMIC_PROD_BUFFER} prod ticks; "
+        f"got {out[0].ships}, expected {expected}"
     )
 
 
@@ -173,7 +175,7 @@ def test_orbiting_target_with_model_takes_max_of_static_with_tick_and_model():
     d = math.hypot(target[2] - src[2], target[3] - src[3])
     v = fleet_speed(21)
     eta = math.ceil(d / v)
-    static_with_tick = 20 + 2 * (eta + 1) + 1
+    static_with_tick = 20 + 2 * (eta + DYNAMIC_PROD_BUFFER) + 1
     model_needed = 51
     expected = max(static_with_tick, model_needed)
     assert out[0].ships == expected

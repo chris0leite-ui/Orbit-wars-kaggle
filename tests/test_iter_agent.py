@@ -16,6 +16,7 @@ invariants we guard:
 from __future__ import annotations
 
 import importlib
+import math
 import sys
 from pathlib import Path
 
@@ -56,7 +57,10 @@ def test_iter_knob_constants_present(iter_agent_module):
                  "PV_GAMMA", "VALUE_FN", "TERRITORY_WEIGHT", "K_4P",
                  "K_CAP", "K_BUFFER", "RELEVANCE_PROD_FRACTION",
                  "COMET_MAX_LAUNCHES_PER_TURN",
-                 "COMET_EVAC_THRESHOLD", "COMET_EVAC_RESERVE"):
+                 "COMET_EVAC_THRESHOLD", "COMET_EVAC_RESERVE",
+                 "TWO_PHASE", "PHASE1_HORIZON", "PHASE2_TOP_K", "K_DEEP",
+                 "LATEST_LAUNCH_ENABLED", "LATEST_LAUNCH_BUFFER_TURNS",
+                 "LATEST_LAUNCH_MIN_FLEET"):
         assert hasattr(iter_agent_module, knob), f"missing knob: {knob}"
 
 
@@ -225,6 +229,55 @@ def test_iter_smoke_4p_game_completes(iter_agent_module):
         f"iter returned only {len(distinct)} distinct action(s) across 20 turns; "
         f"likely fell to incumbent fallback. Actions: {actions_p0[:5]}"
     )
+
+
+def test_phase1_analytical_returns_finite_score(iter_agent_module):
+    # Smoke: Phase 1 analytical scoring runs on a real mid-game obs without
+    # crashing and returns a finite float. Both empty action (incumbent
+    # equivalent of "do nothing") and a non-trivial action must work.
+    from kaggle_environments import make
+    from lib.intent import World
+    env = make("orbit_wars", debug=False)
+    env.reset(2)
+    for _ in range(30):
+        if env.done:
+            break
+        env.step([iter_agent_module.agent(env.state[0]["observation"], env.configuration),
+                  None])
+    obs = env.state[0]["observation"]
+    world = World.from_obs(obs)
+    s_empty = iter_agent_module._score_phase1_analytical(world, [], world.my_id, 50)
+    assert math.isfinite(s_empty), f"empty-action score not finite: {s_empty}"
+    # A 1-launch action from our first owned planet at a default angle.
+    mine = [p for p in world.planets_by_id.values() if p.owner == world.my_id]
+    if mine:
+        s_action = iter_agent_module._score_phase1_analytical(
+            world, [[int(mine[0].id), 0.0, 5]], world.my_id, 50
+        )
+        assert math.isfinite(s_action), f"action score not finite: {s_action}"
+
+
+def test_shrink_to_min_viable_no_op_on_safe_target(iter_agent_module):
+    # If no enemy threat → time_to_enemy_threat returns None → no shrinking.
+    from types import SimpleNamespace
+    from lib.intent import World
+
+    me = SimpleNamespace(id=0, owner=0, x=0.0, y=0.0, radius=1.5, ships=50, production=2)
+    enemy = SimpleNamespace(id=1, owner=1, x=20.0, y=0.0, radius=1.5, ships=10, production=2)
+    obs = {
+        "player": 0,
+        "planets": [(p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production)
+                    for p in (me, enemy)],
+        "fleets": [], "angular_velocity": 0.0, "comet_planet_ids": [], "step": 0,
+    }
+    world = World.from_obs(obs)
+    from lib.world_model import WorldModel
+    model = WorldModel.from_world(world)
+    action = [[0, 0.0, 20]]   # send 20 ships from our planet
+    out = iter_agent_module._shrink_to_min_viable(action, world, model)
+    # No threat to enemy planet (we ARE the only threat) → time_to_enemy_threat
+    # returns None for the enemy planet's perspective → no shrink.
+    assert out == action, f"safe target should pass through; got {out}"
 
 
 def test_territory_value_runs_under_5ms(iter_agent_module):
