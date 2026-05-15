@@ -43,6 +43,7 @@ from __future__ import annotations
 import math
 from typing import Any, Callable
 
+from lib.fleet import speed as _fleet_speed
 from lib.intent import World, realize
 from lib.mechanism import DEFAULT_MECHANISMS
 from lib.missions.reinforce import propose_reinforce_missions
@@ -157,15 +158,16 @@ def lite_greedy_policy(obs: Any) -> list:
     Per-call cost is ~1-2 ms (raw obs only; no World object,
     no WorldModel.from_world, no mission framework, no mechanism stack).
     The mirror policies (tier 0, 1) take ~10 ms because they rebuild
-    the WorldModel timeline every step. For the K-1 FOLLOWUP steps
-    inside `score_candidate` (where bit-identical opp behaviour
-    matters less than rollout-completion speed), the lite policy lets
-    a candidate × tier pair complete in ~50 ms vs ~250 ms.
+    the WorldModel timeline every step. Use this when wallclock budget
+    matters more than bit-identical top-tier behaviour (e.g. as the
+    per-step opp policy in lookahead rollouts).
 
     Behaviour: for each owned planet with ships >= 5, find the
     enemy/neutral target with the best production/distance ratio and
-    launch 0.7 * source.ships at it (mirrors v3.5.1's aggressive
-    sizing). Conservative on ship floor (>= 5) so it doesn't dribble.
+    launch enough to win the capture, sized by max(aggressive=0.7×src,
+    capture_size). Skips if the source can't afford the capture
+    (defenders+production_during_flight+1 > src.ships), avoiding the
+    bouncing-fleet failure mode where 0.7×src.ships < defenders.
     """
     player = obs.get("player", 0) if isinstance(obs, dict) else getattr(obs, "player", 0)
     planets = obs.get("planets") if isinstance(obs, dict) else getattr(obs, "planets", None)
@@ -192,9 +194,28 @@ def lite_greedy_policy(obs: Any) -> list:
                 best = t
         if best is None:
             continue
-        ships = max(1, int(src[5] * 0.7))
-        if ships > src[5]:
-            ships = src[5]
+        # Capture-size estimate: predict defenders at straight-line ETA
+        # for an aggressive-sized fleet, only launch if affordable.
+        # Straight-line aim/eta — adequate for static targets; orbital
+        # targets misaim but the rollout simulator catches the miss.
+        budget = int(src[5])
+        agg_ships = max(5, int(budget * 0.7))
+        if agg_ships > budget:
+            agg_ships = budget
+        spd = _fleet_speed(agg_ships)
+        if spd <= 0:
+            continue
+        dx = best[2] - sx; dy = best[3] - sy
+        d = math.sqrt(dx * dx + dy * dy)
+        flight = max(0.0, d - float(src[4]) - float(best[4]) - 0.1)
+        eta = max(1, int(math.ceil(flight / spd)))
+        defenders_at_eta = float(best[5]) + float(best[6]) * eta
+        needed = int(math.ceil(defenders_at_eta)) + 1
+        if needed > budget:
+            continue  # can't afford the capture — skip, don't bounce
+        ships = max(agg_ships, needed)
+        if ships > budget:
+            ships = budget
         if ships < 5:
             continue
         angle = math.atan2(best[3] - sy, best[2] - sx)

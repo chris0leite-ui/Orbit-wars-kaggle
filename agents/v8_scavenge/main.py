@@ -1,39 +1,31 @@
-"""v8_scavenge — fast-sim K-step chooser with idle-baseline subtraction.
+"""v8_scavenge — fast-sim chooser with opp-trajectory baseline subtraction.
 
-Approach (PI direction; Fix A on the 2026-05-16 falsification):
+Pipeline:
+  Δ = favor(leaf with my_action at wait_N + opp_traj replayed)
+      − favor(leaf with me idle, same opp_traj replayed)
 
-Phase 1's depth-0 analytic chooser failed (0/32 vs v7_0) because
-`lib.world_model.WorldModel.fleet_target_planet` uses a NON-orbital
-straight ray-cast for fleet attribution. For orbiting fleet-target
-combos the ray-cast misses (the fleet is AIMED via aim_orbiting at the
-target's future position, but the ray-cast checks the planet's
-current position). Predictions of "will my fleet capture?" were
-unreliable.
+`opp_traj` is pre-computed once per turn via `_opp_policy` (lite_greedy
+with bounce-check) on each non-me seat's observation. Both baseline and
+every candidate replay this SAME trajectory — common random numbers —
+so opp's expansion cancels in Δ and only my action's marginal value
+remains. The wait-N candidate's value emerges from this evaluation:
+long waits are correctly penalised when opp's expansion outpaces my
+hoarding, and rewarded when waiting unlocks a high-value near target
+that fire-now can't afford.
 
-Fix A: instead of analytic prediction, run `lib.fast_sim` (the parity-
-tested simulator — same physics as the env) for K turns per candidate,
-where K = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON). The simulator
-correctly handles orbital motion, swept-pair collisions, sun crossings,
-and combat resolution — no ray-cast attribution needed.
+Why the prior strict-idle baseline failed: when opp_idle was assumed,
+my "fire fast at far-prod-target" candidate scored +386 at horizon=30
+because the baseline saw no opp captures. In reality (Felipe seed
+1492346051), opp captures 4 planets in those 30 turns and the right
+play is "wait 17 turns, accumulate 31 ships, fire at near prod-5
+neutral" (Δ=+475 under the corrected baseline). With the opp_traj fix
+the chooser picks the wait-then-fire candidate naturally.
 
-Scoring:
-  Δ = favor(leaf_after_my_action_and_K-1_idle_steps) − favor(leaf_after_K_idle_steps)
-
-Both leaves are at the same horizon, so natural production growth
-cancels and the Δ reflects only the action's marginal effect. Bootstrap
-session's bug-1 fix: the baseline must be idle-at-same-horizon, NOT
-favor-at-current-state (would over-credit by the natural growth during
-the K-turn fly time).
-
-The "macro moves" framing is preserved: we don't speculate about opp's
-new actions; opp idles inside our rollout. What CAN'T be deferred is
-the simulator's exact prediction of where my fleet ends up — which
-the analytic ray-cast got wrong for orbital cases. fast_sim is the
-right primitive for that prediction.
-
-Phase 1 enumerates basic ship sizes (capture, 2×, full budget); Phase
-2 will add scavenge-timed sizes. Phase 3 will use settle_plan instead
-of greedy non-dogpile emit.
+For ORBITING wait-N candidates the aim must rotate BOTH src and tgt
+forward by omega*wait_N (the planets co-rotate, so relative geometry
+is preserved at fire time). Rotating only the target — the prior code —
+gave wildly wrong angles and inflated eta, blocking the wait-N
+candidate via the MAX_HORIZON check.
 """
 
 from __future__ import annotations
@@ -49,7 +41,7 @@ from lib.fast_sim import from_obs as fs_from_obs
 from lib.fast_sim import step as fs_step
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
-from lib.opp_model import top_tier_mirror_policy as _opp_mirror
+from lib.opp_model import lite_greedy_policy as _opp_policy
 from lib.orbit import is_orbiting as _is_orbiting
 from lib.orbit import predict_relative as _orbit_predict_relative
 from lib.scoring import pv_horizon
@@ -116,26 +108,14 @@ _PER_CANDIDATE_SAFETY = 1.5
 # Reserved for non-validate work (pre-rank, baseline build, emit).
 _RESERVED_OVERHEAD_MS = 50.0
 
-# v10: max turns to wait before firing on an INFEASIBLE-NOW target.
-# Generates ONE wait-N candidate per (src, tgt) where capture_size >
-# src.ships and src can accumulate the shortfall within MAX_WAIT turns.
-# Origin: Felipe Ferreira 2P loss (replay 76655989) where my chooser
-# fired at far prod-2 target (eta=26) instead of waiting 6 turns to
-# fire at near prod-4 (eta=10, ~2× more valuable).
-# Bound at 10 to limit per-candidate rollout cost (horizon = wait + eta
-# + SETTLE must stay ≤ MAX_HORIZON=30).
-#
-# NOTE (2026-05-17 PI feedback): "not waiting should emerge from a proper
-# modeling not from a restriction." The MAX_WAIT cap (and the
-# MAX_HORIZON cap, and MIN_FLEET_SIZE, and the cheap-rank thresholds)
-# are all tweaks layered on a state function that misvalues actions
-# because opp is modeled as strict-idle for K turns. The correct fix is
-# a proper opp rollout (deterministic policy + common random numbers)
-# so the chooser sees opp's actual expansion and decides waiting
-# vs. firing on the merits. Tracked as next-iteration work — keeping
-# MAX_WAIT=10 here as the SESSION-START value, not bumping it as a
-# band-aid.
-MAX_WAIT = 10
+# v12: there is no hard MAX_WAIT cap. With the full opp_trajectory
+# replayed in baseline + every candidate (common random numbers),
+# wait-N's value emerges from evaluation; long waits are correctly
+# penalised when opp's expansion outpaces my hoarding, and rewarded
+# when waiting unlocks a high-prod near target that fire-now can't
+# afford. The only remaining cap on wait_N is structural:
+# `wait_N + eta + SIM_SETTLE_TURNS ≤ MAX_HORIZON` — a computational
+# horizon bound, not a behavioural restriction.
 
 
 # ---------------------------------------------------------------------------
@@ -179,42 +159,39 @@ def _aim_and_eta(src, tgt, ships, omega, wait_N=0):
     """Return (lead_aim_angle, integer_eta) for one candidate fleet.
 
     For ORBITING targets, `lib.aim.aim_orbiting` jointly solves the
-    aim angle AND the arrival eta. Using its eta is load-bearing —
-    a naïve `distance / speed` is wrong by 3-4× for orbital targets
-    (Phase 1 bug, fixed 2026-05-16).
+    aim angle AND the arrival eta via fixed-point iteration.
 
     For wait-then-fire candidates (wait_N > 0): the fleet fires
-    `wait_N` turns AFTER the current step. By then an ORBITING target
-    has rotated `omega * wait_N` further. Pre-rotate the target's
-    position via `predict_relative` so aim_orbiting computes the
-    angle from src to "where the target will be at firing time +
-    eta," not "where it is now + eta." Without this shift, wait-N
-    candidates fire at the WRONG location and never capture
-    (root-caused on Felipe seed 1492346051: turn-15 wait-6 candidate
-    for tgt=15 fired but tgt stayed neutral at leaf).
+    `wait_N` turns AFTER the current step. By then BOTH src and tgt
+    have rotated by `omega * wait_N` around the center. We pre-rotate
+    BOTH endpoints via `predict_relative` so aim_orbiting operates on
+    the geometry that will hold at fire time (verified empirically on
+    Felipe seed 1492346051: at step 4 with wait_N=17, shifting both
+    matches the step-21 ground-truth aim to 0.001 rad). Rotating only
+    the target — as the prior code did — gave a wildly wrong aim
+    because it computed "from src at step 4 toward tgt at step 21,"
+    which is not what the fleet would do when launched at step 21.
 
     Falls back to straight-aim + straight-eta for non-orbiting
     targets (static planets don't rotate; wait_N is a no-op for aim).
     """
     if _is_orbiting(list(tgt)):
         tgt_list = list(tgt)
+        src_x, src_y = float(src.x), float(src.y)
         if wait_N > 0:
-            # Rotate target forward to its position at firing time.
-            # predict_relative from a mid-game obs at env.steps[K] with
-            # lead=N gives the position at env.steps[K+N] exactly
-            # (verified seed 1492346051, env.steps[15] → env.steps[21],
-            # err=0.0000 — see audit/2026-05-17-orbital-aim-verification.md).
-            # The prior `lead = wait_N - 1` used here was based on a
-            # flawed env.steps[0] test where env.steps[0] and env.steps[1]
-            # are positionally identical (env initializes before any
-            # rotation), making a 1-step off-by-one undetectable from
-            # step 0. From mid-game obs the off-by-one disappears.
+            # Rotate both endpoints to their position at fire time.
+            # Co-rotating planets preserve their relative geometry,
+            # so the angle returned by aim_orbiting from rotated_src
+            # to rotated_tgt is the correct world-frame aim at step
+            # (current_step + wait_N) — exactly what fast_sim will
+            # use when it replays wait_N idle steps then fires.
             fx, fy = _orbit_predict_relative(tgt_list, omega, wait_N)
             tgt_list = list(tgt_list)
             tgt_list[2] = fx
             tgt_list[3] = fy
+            src_x, src_y = _orbit_predict_relative(list(src), omega, wait_N)
         res = aim_orbiting(
-            (src.x, src.y), src.radius, tgt_list, tgt.radius, ships, omega,
+            (src_x, src_y), src.radius, tgt_list, tgt.radius, ships, omega,
         )
         if res is not None:
             return float(res[0]), max(1, int(math.ceil(float(res[2]))))
@@ -325,8 +302,9 @@ def _wait_then_fire_candidate(src, tgt, model, omega, me):
     - tgt is not mine (reinforces are deadline-bound; can't wait)
     - src.production > 0 (otherwise can't accumulate)
     - capture-size NOW exceeds src.ships (infeasible-now)
-    - wait_N to afford capture is within [1, MAX_WAIT]
-    - wait_N + eta + SETTLE ≤ MAX_HORIZON (horizon stays in bounds)
+    - wait_N ≥ 1 (otherwise the fire-now path covers this pair)
+    - wait_N + eta + SETTLE ≤ MAX_HORIZON (computational cap;
+      beyond MAX_HORIZON we cannot evaluate the leaf state)
 
     Returns (ships, wait_N, angle, eta) for the validate stage.
 
@@ -354,7 +332,7 @@ def _wait_then_fire_candidate(src, tgt, model, omega, me):
 
     shortfall = cap_now - int(src.ships)
     wait_N = (shortfall + prod - 1) // prod  # ceil
-    if wait_N < 1 or wait_N > MAX_WAIT:
+    if wait_N < 1:
         return None
 
     # Newton step at post-wait arrival. Pass wait_N to _aim_and_eta so
@@ -511,94 +489,88 @@ def _favor(obs, me, num_seats=2):
 # ---------------------------------------------------------------------------
 
 
-def _build_idle_baseline(snap_base, me, num_seats, max_horizon,
-                         opp_step0_actions=None):
-    """Pre-compute favor at every idle horizon 0..max_horizon.
+def _build_opp_trajectory(snap_base, me, num_seats, max_horizon):
+    """Pre-compute the opp's action sequence over [0, max_horizon).
 
-    Run fast_sim from snap_base, recording favor(me) at each step.
-    The baseline_favors[k] is favor at idle horizon k.
+    Each step: run `_opp_policy` (lite_greedy) against each non-me
+    seat's observation, store the actions, advance the snapshot with
+    those actions (me's slot is []). The returned `opp_traj[k]` is the
+    per-seat action list to apply at step k of any rollout.
 
-    `opp_step0_actions` (Layer 2): per-seat dict {opp_id: action_list}
-    applied on the FIRST fs_step only. Models "opp grabs something while
-    I idle." Both this baseline and the candidate rollouts get the SAME
-    opp_step0_actions so opp's action cancels in the Δ subtraction
-    (common random numbers — but deterministic here since lite_greedy is
-    deterministic given the obs). Subsequent steps idle for everyone.
+    Both baseline and every candidate rollout replay this same
+    trajectory — common random numbers. Opp's contribution to favor is
+    identical in baseline and candidate, so it cancels in Δ and only
+    my action's marginal effect remains.
 
-    With opp_step0_actions=None, behaves as the original strict-idle
-    baseline (kept for tests).
+    Cost: ~1ms × num_opps × max_horizon = ~30ms (2P) / ~90ms (4P) at
+    max_horizon=30. Dominant cost is the in-step opp policy call, not
+    the fs_step advance (which would happen for the baseline anyway).
+    """
+    snap = fs_clone(snap_base)
+    out = []
+    for _step_i in range(max_horizon):
+        if snap.fake_env.done:
+            out.append([[] for _ in range(num_seats)])
+            continue
+        actions = [[] for _ in range(num_seats)]
+        for opp_id in range(num_seats):
+            if opp_id == me:
+                continue
+            try:
+                actions[opp_id] = _opp_policy(snap.state[opp_id].observation) or []
+            except Exception:
+                actions[opp_id] = []
+        out.append(actions)
+        snap = fs_step(snap, actions, in_place=True)
+    return out
+
+
+def _build_idle_baseline(snap_base, me, num_seats, max_horizon, opp_traj):
+    """Pre-compute favor at every horizon 0..max_horizon under opp_traj.
+
+    Run fast_sim from snap_base applying opp_traj[k] at step k (with
+    me's slot empty). Record favor(me) at each leaf. `baseline_favors[k]`
+    is the favor I would have if I idled while opp followed opp_traj.
+
+    By matching opp_traj across baseline and candidates, opp's expansion
+    is cancelled in Δ — what remains is the marginal effect of my action.
     """
     snap = fs_clone(snap_base)
     out = [_favor(snap.state[me].observation, me, num_seats)]
-    idle = [[] for _ in range(num_seats)]
     for step_i in range(max_horizon):
         if snap.fake_env.done:
             out.append(out[-1])
             continue
-        if step_i == 0 and opp_step0_actions:
-            actions = [list(opp_step0_actions.get(i, [])) for i in range(num_seats)]
-        else:
-            actions = idle
+        actions = [list(a) for a in opp_traj[step_i]]
+        actions[me] = []
         snap = fs_step(snap, actions, in_place=True)
         out.append(_favor(snap.state[me].observation, me, num_seats))
     return out
 
 
 def _score_action(snap_base, me, num_seats, src_id, angle, ships,
-                  horizon, baseline_favors, wait_N=0,
-                  opp_step0_actions=None):
-    """Δ favor at horizon = (leaf with my plan + opp's step-0 action) − baseline.
+                  horizon, baseline_favors, opp_traj, wait_N=0):
+    """Δ favor at horizon = leaf(me_action @ wait_N + opp_traj) − baseline.
 
-    For wait_N=0 (fire-now): step 0 = [me_fire, opp_step0]; rest idle.
-    For wait_N>0 (wait-then-fire): step 0 = [me_idle, opp_step0];
-    steps 1..wait_N-1 idle; step wait_N fires; rest idle.
+    Replay `opp_traj` step-by-step. My slot is empty except at step
+    `wait_N`, where I splice in `[[src_id, angle, ships]]`. The
+    candidate spans exactly `horizon` steps; the baseline at the same
+    horizon is in `baseline_favors[horizon]`.
 
-    Both branches apply `opp_step0_actions` exactly once at step 0 of
-    the rollout — matching the baseline's step-0 application — so opp's
-    move cancels in the Δ subtraction. The Δ measures my action's
-    marginal value GIVEN that opp will grab on step 0.
-
-    Same `horizon` and same `baseline_favors[horizon]` regardless of
-    wait_N — both leaf and baseline span the same total turns so the
-    natural production growth cancels in the Δ.
+    Since opp's per-step actions are identical between baseline and
+    candidate, opp's effect on favor cancels in the Δ — what's measured
+    is the marginal value of my action under a realistic opp model.
     """
     snap = fs_clone(snap_base)
-    idle_actions = [[] for _ in range(num_seats)]
-
-    if int(wait_N) == 0:
-        # Fire on step 0 alongside opp's step-0 move.
-        if not snap.fake_env.done:
-            actions = [list(opp_step0_actions.get(i, [])) if opp_step0_actions else []
-                       for i in range(num_seats)]
-            actions[me] = [[int(src_id), float(angle), int(ships)]]
-            snap = fs_step(snap, actions, in_place=True)
-        # Settle: idle remaining horizon-1 turns.
-        remaining = horizon - 1
-    else:
-        # Step 0: me idle, opp acts (mirror).
-        if not snap.fake_env.done:
-            actions = [list(opp_step0_actions.get(i, [])) if opp_step0_actions else []
-                       for i in range(num_seats)]
-            actions[me] = []
-            snap = fs_step(snap, actions, in_place=True)
-        # Continue waiting for wait_N - 1 more idle steps.
-        for _ in range(int(wait_N) - 1):
-            if snap.fake_env.done:
-                break
-            snap = fs_step(snap, idle_actions, in_place=True)
-        # Fire phase: apply my launch one step.
-        if not snap.fake_env.done:
-            actions = [[] for _ in range(num_seats)]
-            actions[me] = [[int(src_id), float(angle), int(ships)]]
-            snap = fs_step(snap, actions, in_place=True)
-        # Settle: idle remaining turns.
-        remaining = horizon - int(wait_N) - 1
-
-    for _ in range(max(0, remaining)):
+    for step_i in range(horizon):
         if snap.fake_env.done:
             break
-        snap = fs_step(snap, idle_actions, in_place=True)
-
+        actions = [list(a) for a in opp_traj[step_i]]
+        if step_i == int(wait_N):
+            actions[me] = [[int(src_id), float(angle), int(ships)]]
+        else:
+            actions[me] = []
+        snap = fs_step(snap, actions, in_place=True)
     leaf_favor = _favor(snap.state[me].observation, me, num_seats)
     return leaf_favor - baseline_favors[horizon]
 
@@ -664,40 +636,27 @@ def agent(obs, configuration=None):
     budget_for_validate = WALLCLOCK_BUDGET_MS - _RESERVED_OVERHEAD_MS
     n_affordable = max(8, int(budget_for_validate / per_cand_ms))
 
-    # Layer-2 mirror-opp: pre-compute each opponent's mirror action given
-    # their obs. Apply ONCE on step 0 of every rollout (baseline + each
-    # candidate). Models "opp grabs something while I decide" — no more
-    # strict-idle blindness. Uses top_tier_mirror_policy (v3.5.1 pipeline,
-    # aggressive sizing) instead of lite_greedy — lite_greedy sizes
-    # launches at 0.7×src.ships, which at turn 0 produces 7-ship fleets
-    # that BOUNCE off 30-defender neutrals, making the baseline LESS
-    # threatening than it should be. top_tier_mirror routes through
-    # propose_snipe_missions with the actual capture-size machinery.
-    # Cost ~10ms per opp at turn 0; deterministic given the obs.
-    opp_step0_actions: dict[int, list] = {}
-    for opp_id in range(num_seats):
-        if opp_id == me:
-            continue
-        opp_obs = snap_base.state[opp_id].observation
-        try:
-            opp_action = _opp_mirror(opp_obs) or []
-        except Exception:
-            opp_action = []
-        if opp_action:
-            opp_step0_actions[opp_id] = opp_action
+    # v12: full opp trajectory via lite_greedy_policy. Replayed
+    # identically in baseline and every candidate (common random
+    # numbers) so opp's expansion contribution cancels in Δ. No more
+    # strict-idle blindness: a candidate that "wastes 17 turns waiting"
+    # is correctly penalised by opp's planet captures during the wait;
+    # a candidate that captures a near target is correctly rewarded.
+    # lite_greedy uses straight-line aim/capture-size, sufficient for
+    # static targets (the env's combat resolution inside fast_sim
+    # catches any orbital miss-aim).
+    opp_traj = _build_opp_trajectory(snap_base, me, num_seats, MAX_HORIZON)
 
-    # Baseline favor at horizons 0..MAX_HORIZON (~6 ms for 30 steps),
-    # with opp's step-0 mirror action applied.
+    # Baseline favor at horizons 0..MAX_HORIZON, replaying opp_traj.
     baseline_favors = _build_idle_baseline(
-        snap_base, me, num_seats, MAX_HORIZON,
-        opp_step0_actions=opp_step0_actions,
+        snap_base, me, num_seats, MAX_HORIZON, opp_traj,
     )
 
     # ---------------------------------------------------------------
     # Stage 1: cheap pre-rank via analytic marginal_value (~0.1ms each).
     # Enumerate every (src, tgt, ships) candidate, rank by approximate Δ.
-    # v10: also append ONE "wait-then-fire" candidate per (src, tgt)
-    # where capture is INFEASIBLE-NOW but feasible within MAX_WAIT.
+    # Also append ONE "wait-then-fire" candidate per (src, tgt) where
+    # capture is INFEASIBLE-NOW but feasible inside MAX_HORIZON.
     # ---------------------------------------------------------------
     # Prerank tuple: (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N).
     # wait_N=0 means fire-now; wait_N>0 means idle-then-fire.
@@ -766,8 +725,7 @@ def agent(obs, configuration=None):
         delta = _score_action(
             snap_base, me, num_seats,
             int(src.id), angle, ships,
-            horizon, baseline_favors, wait_N=wait_N,
-            opp_step0_actions=opp_step0_actions,
+            horizon, baseline_favors, opp_traj, wait_N=wait_N,
         )
         if delta > 0:
             candidates.append((delta, src, tgt, ships, angle, wait_N))
