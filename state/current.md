@@ -1,49 +1,63 @@
 # state/current.md — current submitted agent + tournament rank
 
-> Updated 2026-05-14 by `claude/simplify-fast-setup-azW8T` (geo iteration).
-> Merged forward from `claude/research-competition-analysis-2R8I3` +
-> `claude/read-handover-iLWTq`. All Score values pulled live from
-> `kaggle competitions submissions orbit-wars`.
+> Updated 2026-05-16 by `claude/recover-main-foundations-MV0e2` (v8_scavenge submit).
+> Previous update 2026-05-14 by `claude/simplify-fast-setup-azW8T`.
+> All Score values pulled live from `kaggle competitions submissions orbit-wars`.
 
 ```yaml
-date: 2026-05-14
-days_to_deadline: 40                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: geo             # v3.1 (most recent); σ-discounted floor
-last_kernel_push: 2026-05-14 09:10:03 UTC
-last_submission_id: 52643676
-last_submission_status: COMPLETE
-last_submission_file: submissions/geo.py # 238 KB bundle; sha256:1babc39d9907ee18
+date: 2026-05-16
+days_to_deadline: 38                     # 2026-06-23 23:59 UTC minus today
+current_submitted_agent: v8_scavenge     # PENDING; structurally new chooser
+last_kernel_push: 2026-05-16 15:05:57 UTC
+last_submission_id: 52684059
+last_submission_status: PENDING
+last_submission_file: submissions/v8_scavenge.py  # 302 KB bundle; sha256:86565447ab0e108e
 last_submission_message: |
-  geo v3.1: geometric sense (clusters/Voronoi/front) + 4 lookahead-validated tilts
-  (opening-boost 2.0x, enemy-focus 1.5x, front-reinforce 1.5x, voronoi-filter)
-  + concentrated/saturation top-10 archetypes + 4P branch via score_candidate_4p
-  + signal-timeout per score (700ms).
-  Local A/B vs v7_0_drop_one (n=192): 57.3% (~+7pp 2P).
-  Local A/B 4P vs 3× v7_0 (n=128): 56.3% first-place (+31pp over baseline).
+  v8_scavenge: depth-0 marginal-delta chooser (fast_sim K-step +
+  idle-baseline subtraction) + F1+F2 favor leaf + WorldModel-aware
+  reinforce missions for threatened planets. STRUCTURALLY DIFFERENT
+  from v7 stack: no mirror opp (strict idle in rollout), no PV_GAMMA,
+  custom per-source nearest-K × ship-grid enumerator, two-stage
+  scoring (cheap analytic pre-rank + fast_sim validate top-N),
+  adaptive N_VALIDATE from per-step probe. Hand-rolled
+  lib.aim.aim_orbiting emit (no mechanism pipeline).
+  Local panel n=64: v7_0 68.8% Wlo=0.566, v4_planner 75.0% Wlo=0.632,
+  v3.5.1 75.0% Wlo=0.579. Wallclock p95=235ms max=891ms.
+  Submitted for diversification: iter v1/v2 are small tweaks on v7
+  stack; v8 is structurally distinct so the live signal informs new
+  directions.
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation;
 # the third push auto-evicts the previous oldest).
 rolling_last_2:
-  - {agent: geo,    sub_id: 52643676, score: 984.0, status: COMPLETE,
-     episodes: ~80-130, note: 'σ-discounted floor; μ not settled (~5h post-submit)'}
-  - {agent: v7_pv,  sub_id: 52630118, score: 1064.4,  episodes: ~80}  # carrying team score
+  - {agent: v8_scavenge, sub_id: 52684059, score: PENDING, status: PENDING,
+     episodes: 0, note: 'just submitted; initial μ in 5-10 min, σ settles 5-6h'}
+  - {agent: iter_v2,     sub_id: 52678866, score: 1028.2,  status: COMPLETE,
+     episodes: ~80, note: 'carrying team score floor until v8 settles'}
 evicted_recent:
-  - {agent: v7_0_drop_one_rebuilt, sub_id: 52607699, score: 1056.6, reason: evicted by geo push}
-  - {agent: v7_0_drop_one_original, sub_id: 52588156, score: 1081.5, reason: evicted by v7_0_rebuilt push}
-  - {agent: v4_planner,             sub_id: 52579863, score: 1038.6, reason: evicted by v7_pv push}
+  - {agent: iter_v1, sub_id: 52661990, score: 1034.7, reason: evicted by v8_scavenge push}
+  - {agent: geo,     sub_id: 52643676, score: 1004.9, reason: evicted by iter_v1 push (2026-05-14)}
+  - {agent: v7_pv,   sub_id: 52630118, score: 1053.5, reason: evicted by iter_v2 push (2026-05-15)}
 
-# Team leaderboard score = max(rolling_last_2) = 1064.4 (UNCHANGED by geo push).
-tournament_rank_today: 125 / 2667 (top 4.7%)
-our_best_rank: v7_pv μ=1064.4 (#52630118 COMPLETE)
-lb_top10_cliff: 1430                     # approx; refresh next session
-headroom_to_top10_prize: ~+366 μ         # v7_pv to top-10 cliff
+# Team leaderboard score = max(rolling_last_2) = max(v8, 1028.2)
+# Until v8 settles: team floor = 1028.2 (iter_v2)
+# If v8 > 1028.2 live: team score improves
+# Was 1053.5 (v7_pv) before the iter_v1/v2 churn; team net regressed
+# ~25μ over the past 2 days due to local-overpredicts-live calibration
+# failures (see warning below).
+tournament_rank_today: TBD / 2729 (await v8 settle)
+our_best_rank: iter_v1 μ=1034.7 (#52661990 COMPLETE, NOW EVICTED)
+lb_top10_cliff: 1430                     # refresh on next pull
 
-# CALIBRATION WARNING. Local A/B over-predicted ladder for 2 consecutive submissions:
-# - v3.5.1 (5/12): local +56.6% Wlo vs v3_snipe → live μ=945.6 (-150μ)
-# - geo v3.1 (5/14): local +7pp / +31pp vs v7_0 → live μ=984.0 floor (TBD whether σ tightens)
-# Both panels were vs v7_0 only. Ladder has v3.5.1/v7_pv/v7_0_drop_one_rebuilt/top-10
-# distribution. Fix: future local A/B must span ≥3 opponent classes before submit.
-# See audit/2026-05-14-postmortem-geo-session.md.
+# CALIBRATION WARNING (3 consecutive submissions over-predicted live):
+# - v3.5.1 (5/12): local +56.6% Wlo vs v3_snipe → live μ=945.6 (-150μ vs expected)
+# - geo v3.1 (5/14): local +7pp / +31pp vs v7_0 → live μ=1004.9 (settled at floor)
+# - iter v1 (5/14): local +10pp panel over v7_pv → live μ=1034.7 (-18μ vs v7_pv 1053.5)
+# - iter v2 (5/15): structural 4P fix on iter_v1 → live μ=1028.2 (modest decline)
+# Local-vs-live mapping has been roughly -20 to -30pp on every recent submission.
+# v8_scavenge local panel +5-10pp over iter_v1; with same calibration shift,
+# live could land 1010-1030 (sideways), 1030-1050 (modest gain), or
+# 1050+ (recover v7_pv level). Floor: 1028.2 (iter_v2 stays).
 
 # σ-awareness. Kaggle's published Score = μ − κσ already discounts uncertain submissions.
 sigma_proxy:
