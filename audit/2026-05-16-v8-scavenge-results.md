@@ -151,15 +151,21 @@ and PI-decided priority:
    - vs v3.5.1:     42/64 = 65.6%,    Wilson [0.534, 0.761] → INCONCLUSIVE (1.6pp under 0.55 gate; passes audit's "Wlo ≥ 0.50 vs each" criterion)
 
    Panel verdict by strict 0.55 gate: INCONCLUSIVE (worst Wlo=0.534).
-   By relaxed 0.50 criterion: PASS (all three Wlo > 0.50). The
-   v3.5.1 result tells us we don't dominate every architecture —
-   v3.5.1's aggressive snipe + 4P branch make it the strongest
-   cross-opponent. Still a clear win in expectation (65.6% > 50%).
+   By relaxed 0.50 criterion: PASS (all three Wlo > 0.50).
 
    **WALLCLOCK CONCERN:** p95=812ms / max=3116ms over 192 games.
    The max exceeds the 1000ms actTimeout — that turn would time out
-   on the live ladder. Need to tighten `WALLCLOCK_BUDGET_MS` or
-   the per-candidate K bound before submit.
+   on the live ladder.
+
+   **Re-run with MAX_HORIZON 50→30 (2458e85):**
+   - vs v7_0:       24/32 = **75.0%**, Wilson [0.579, 0.867] → PASS
+   - vs v4_planner: 25/32 = **78.1%**, Wilson [0.612, 0.890] → PASS
+   - vs v3.5.1:     44/64 = **68.8%**, Wilson [0.566, 0.788] → PASS
+
+   **Panel verdict: PASS (worst Wlo=0.566).** All three opponents
+   clear the strict 0.55 gate. Wallclock tightened: p95=618ms,
+   max=1494ms across 128 games — still has occasional outliers >
+   1000ms but no longer the 3-second spikes from H=50.
 
 2. **settle_plan emission**. Replaces greedy non-dogpile; allows
    useful same-turn follow-on launches.
