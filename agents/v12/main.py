@@ -37,7 +37,7 @@ from lib.intent import World, realize
 from lib.lookahead import env_from_obs, record_opp_traj, score_action_crn
 from lib.lookahead_planner import (
     adaptive_K,
-    evaluate_value,
+    evaluate_value_v12,
     truncate_K_to_comet_boundary,
 )
 from lib.mechanism import DEFAULT_MECHANISMS
@@ -184,7 +184,7 @@ def agent(obs, configuration=None):
                 my_id=my_id,
                 opp_traj=opp_traj,
                 policy=_v351_action,
-                value_fn=evaluate_value,
+                value_fn=evaluate_value_v12,
                 deadline=hard_deadline,
             )
         except Exception:

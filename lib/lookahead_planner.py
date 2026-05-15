@@ -109,6 +109,83 @@ def evaluate_value(
     )
 
 
+def evaluate_value_v12(
+    observation,
+    my_id: int,
+    *,
+    denial_weight: float = 0.4,
+    ship_balance_weight: float = 0.3,
+    survivor_bonus: float = 5.0,
+) -> float:
+    """v12 leaf-value head — replaces evaluate_value's ships_share
+    (which underweights ship-mass differential at ~5%) with a signed
+    ship-balance term (my_ships - opp_ships) / total_ships normalized
+    to [-1, +1].
+
+    Designed to address the maruichi/Felipe class of mid-economy
+    losses (audit/2026-05-18-loss-mode-v8-v9.md) where the leaf has
+    similar prod_share but very different ship-mass — opponent has
+    stockpiled an invasion fleet that prod_share alone doesn't see.
+
+    Why no pv_horizon term: pv_horizon at the leaf is constant across
+    portfolios (same step), so a `pv * (my_prod - opp_prod)` term is
+    just a re-scaling of prod_denied. Information's already there.
+    The missing signal is ship-balance, not future-production.
+
+    Returns: scalar with same scale as evaluate_value (range ~[-0.3,
+    +1.4] + 5.0 on lone survivor).
+    """
+    planets = observation.get("planets", []) if isinstance(observation, dict) else getattr(observation, "planets", [])
+    if not planets:
+        return 0.0
+
+    total_prod = 0.0
+    my_prod = 0.0
+    opp_prod = 0.0
+    owners_with_planets: set[int] = set()
+    garrison: dict[int, float] = {}
+    for p in planets:
+        owner = int(p[1])
+        ships = float(p[5])
+        prod = float(p[6])
+        total_prod += prod
+        if owner >= 0:
+            owners_with_planets.add(owner)
+            garrison[owner] = garrison.get(owner, 0.0) + ships
+            if owner == my_id:
+                my_prod += prod
+            else:
+                opp_prod += prod
+
+    fleets = observation.get("fleets", []) if isinstance(observation, dict) else getattr(observation, "fleets", [])
+    fleet_totals: dict[int, float] = {}
+    for f in fleets:
+        owner = int(f[1])
+        ships = float(f[6])
+        if owner >= 0:
+            fleet_totals[owner] = fleet_totals.get(owner, 0.0) + ships
+
+    totals: dict[int, float] = dict(garrison)
+    for owner, ships in fleet_totals.items():
+        totals[owner] = totals.get(owner, 0.0) + ships
+    total_ships = sum(totals.values())
+    my_ships = totals.get(my_id, 0.0)
+    opp_ships = sum(s for o, s in totals.items() if o != my_id)
+
+    prod_share = (my_prod / total_prod) if total_prod > 0 else 0.0
+    prod_denied = ((total_prod - opp_prod) / total_prod) if total_prod > 0 else 0.0
+    # Signed ship-balance in [-1, +1]: positive when I have more ships.
+    ship_balance = ((my_ships - opp_ships) / total_ships) if total_ships > 0 else 0.0
+    lone = 1.0 if owners_with_planets == {my_id} else 0.0
+
+    return (
+        prod_share
+        + denial_weight * prod_denied
+        + ship_balance_weight * ship_balance
+        + survivor_bonus * lone
+    )
+
+
 def adaptive_K(world) -> int:
     """Entropy-adaptive rollout depth.
 
