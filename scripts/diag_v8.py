@@ -49,19 +49,10 @@ def play_and_diag(seed: int, opp: str = "nearest", max_turns: int = 30, only_whe
         model = WorldModel.from_world(world)
         omega = float(obs_d.get("angular_velocity", 0.0))
 
+        # Diag: just count planets and emitted action. Detailed scoring
+        # is now via fast_sim rollout (too expensive to re-enumerate here).
         candidates = []
-        for src in my_planets:
-            if int(src.ships) < v8_main.MIN_FLEET_SIZE:
-                continue
-            for tgt in v8_main._nearest_k(targets, src, v8_main.NUM_TARGETS_PER_SOURCE):
-                for ships in v8_main._enumerate_ship_counts_basic(src, tgt, model, omega):
-                    if ships < v8_main.MIN_FLEET_SIZE or ships > int(src.ships):
-                        continue
-                    angle, eta = v8_main._aim_and_eta(src, tgt, ships, omega)
-                    delta = v8_main._marginal_value(src, tgt, ships, eta, world, model, me)
-                    candidates.append((delta, int(src.id), int(tgt.id), ships, eta))
-        candidates.sort(key=lambda c: -c[0])
-        positive = [c for c in candidates if c[0] > 0]
+        positive = []
         # Counts
         my_total_ships = sum(int(p.ships) for p in my_planets)
         opp_planets = [p for p in planets if int(p.owner) != me and int(p.owner) >= 0]

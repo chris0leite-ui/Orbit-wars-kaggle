@@ -151,20 +151,38 @@ def _nearest_k(targets, src, k):
 # ---------------------------------------------------------------------------
 
 
-def _capture_size(src, tgt, model, omega):
+def _capture_size(src, tgt, model, omega, me):
     """WorldModel-aware minimum capture size.
+
+    For NON-MINE targets (capture): predicted defenders at eta + 1.
+    For MINE targets (reinforce): the predicted SHORTFALL against the
+      strongest incoming enemy fleet, i.e. enough ships to win the
+      defense at the moment of conflict. If no incoming threat,
+      returns 0 (no reinforce needed).
 
     One Newton-style iteration: initial size from current tgt garrison,
     use orbital-aware `_aim_and_eta` for arrival turn, query model for
-    predicted defenders at that eta, derive final size.
-
-    WorldModel's defender prediction accounts for production growth +
-    incoming reinforcement analytically. Note WorldModel's attribution
-    of in-flight fleets is a non-orbital ray-cast (it can miss orbital
-    targets), so this estimate is a HEURISTIC starting point — the
-    fast_sim rollout downstream is the ground truth for whether the
-    capture succeeds.
+    predicted defenders at that eta.
     """
+    if int(tgt.owner) == me:
+        # Reinforce: size to make defense survive predicted enemy arrival
+        enemy_eta = model.incoming_enemy_eta(int(tgt.id), me)
+        if enemy_eta is None:
+            return 0  # no incoming threat; reinforce unnecessary
+        # Predicted enemy ships arriving at tgt at enemy_eta (sum across
+        # in-flight enemy fleets aimed at tgt within that window).
+        enemy_arrivals = model.ledger.get(int(tgt.id), [])
+        enemy_ship_sum = sum(
+            ships for (eta, owner, ships) in enemy_arrivals
+            if owner != me and eta <= enemy_eta + 1
+        )
+        # Predicted defender at enemy_eta (with production accrual
+        # but BEFORE enemy combat applied). Approximation: current
+        # garrison + production × enemy_eta.
+        my_garrison_at_eta = float(tgt.ships) + float(tgt.production) * enemy_eta
+        shortfall = enemy_ship_sum - my_garrison_at_eta + 1
+        return max(0, int(math.ceil(shortfall)))
+    # Capture (non-mine target)
     initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
     _angle, eta = _aim_and_eta(src, tgt, initial, omega)
     pred = float(model.ships_at(int(tgt.id), eta) or 0.0)
@@ -172,10 +190,15 @@ def _capture_size(src, tgt, model, omega):
     return max(MIN_FLEET_SIZE, size)
 
 
-def _enumerate_ship_counts_basic(src, tgt, model, omega):
-    """Phase 1 ship-count set: capture, 2×capture, full launch budget."""
-    cap = _capture_size(src, tgt, model, omega)
+def _enumerate_ship_counts_basic(src, tgt, model, omega, me):
+    """Phase 1 ship-count set: capture/reinforce size, 2×, full budget.
+
+    For reinforce (my own target), size 0 means no threat → skip.
+    """
+    cap = _capture_size(src, tgt, model, omega, me)
     budget = int(src.ships)
+    if cap == 0:
+        return []  # no threat; don't reinforce
     sizes = set()
     if MIN_FLEET_SIZE <= cap <= budget:
         sizes.add(cap)
@@ -305,14 +328,26 @@ def agent(obs, configuration=None):
     planets = [Planet(*p) for p in raw_planets]
     fleets = [Fleet(*f) for f in raw_fleets]
     my_planets = [p for p in planets if int(p.owner) == me]
-    targets = [p for p in planets if int(p.owner) != me]
-    if not my_planets or not targets:
+    other_planets = [p for p in planets if int(p.owner) != me]
+    if not my_planets or not other_planets:
         return []
 
     world = World.from_obs(obs_d)
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
     num_seats = _num_seats(planets, fleets)
+
+    # Identify threatened MY planets (predicted incoming enemy fleet).
+    # Reinforce candidates target these; defensive fleets keep them
+    # alive through enemy waves. Mine session diag (2026-05-16): every
+    # loss vs v7_0 was "0 planets left, eliminated mid-game" — opp's
+    # multi-wave attacks wipe undefended captures. Reinforce closes that.
+    threatened_mine = [
+        p for p in my_planets
+        if model.incoming_enemy_eta(int(p.id), me) is not None
+    ]
+    # Target pool = capture targets + defensive reinforce targets
+    target_pool = other_planets + threatened_mine
 
     # Build the fast_sim snapshot once per turn (~1 ms).
     snap_base = fs_from_obs(obs, num_seats=num_seats)
@@ -329,11 +364,14 @@ def agent(obs, configuration=None):
             break
         if int(src.ships) < MIN_FLEET_SIZE:
             continue
-        for tgt in _nearest_k(targets, src, NUM_TARGETS_PER_SOURCE):
+        for tgt in _nearest_k(target_pool, src, NUM_TARGETS_PER_SOURCE):
             if time.perf_counter() > t_deadline:
                 bailed = True
                 break
-            for ships in _enumerate_ship_counts_basic(src, tgt, model, omega):
+            # Skip self-reinforce (a planet can't reinforce itself).
+            if int(tgt.id) == int(src.id):
+                continue
+            for ships in _enumerate_ship_counts_basic(src, tgt, model, omega, me):
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
                 angle, eta = _aim_and_eta(src, tgt, ships, omega)
