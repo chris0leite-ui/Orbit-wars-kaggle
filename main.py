@@ -68,6 +68,9 @@ SUN_R = 10.0
 NUM_TARGETS_PER_SOURCE = 8     # K nearest non-owned planets considered
 MIN_FLEET_SIZE = 2             # 1-ship fleets move at speed 1; rarely useful
 SIM_SETTLE_TURNS = 2           # extra idle turns after arrival to let combat resolve
+MIN_HORIZON = 15               # floor for sim horizon — must cover incoming threats
+                               # (~time for fast cross-board fleet)
+MAX_HORIZON = 50               # baseline_favors cache depth (≥ any candidate horizon)
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +174,13 @@ def score_action(
         raise ValueError("score_action requires snap_base and baseline_favors")
 
     arrival = _arrival_turns(src, tgt, ships)
-    horizon = arrival + SIM_SETTLE_TURNS
+    # Floor the horizon at MIN_HORIZON so the sim runs long enough to
+    # see any incoming enemy fleet resolve at the source planet. We
+    # dropped the `_incoming_threat` defensive reserve; without it, a
+    # short offensive-arrival sim would miss the threat landing at my
+    # source planet a few turns later. MIN_HORIZON ≈ time for a fast
+    # cross-board fleet at typical comp distances.
+    horizon = max(arrival + SIM_SETTLE_TURNS, MIN_HORIZON)
     if horizon >= len(baseline_favors):
         horizon = len(baseline_favors) - 1
     angle = math.atan2(tgt.y - src.y, tgt.x - src.x)
@@ -273,10 +282,13 @@ def _enumerate_candidates(
     for src in my_planets:
         if src.ships < MIN_FLEET_SIZE:
             continue
-        threat = _incoming_threat(src, fleets, me)
-        launch_budget = max(0, src.ships - threat)
-        if launch_budget < MIN_FLEET_SIZE:
-            continue
+        # Trust the simulator: the simulator's leaf will show defeat
+        # if the threat overruns my source. The _incoming_threat
+        # heuristic was over-cautious — at seed 1003 turn 20 it
+        # blocked a +2320-favor capture from P8 because of a 10-ship
+        # threat that P8's own production would have repelled. See
+        # the v6 plan in /root/.claude/plans/do-it-jolly-sprout.md.
+        launch_budget = src.ships
         ranked = sorted(
             targets,
             key=lambda t: math.hypot(src.x - t.x, src.y - t.y),
@@ -285,14 +297,16 @@ def _enumerate_candidates(
             capture_size = _capture_size_guess(src, tgt)
             if capture_size < MIN_FLEET_SIZE or capture_size > launch_budget:
                 continue
-            # Multi-size enumeration: let the formula pick the best size
-            # per (src, tgt). min-cap is the cheapest capture; 2× provides
-            # post-capture defensibility against opp counter; launch_budget
-            # is overwhelming force (useful when opp likely contests).
+            # Multi-size enumeration: let the formula pick the best
+            # size per (src, tgt). The `+5` gate previously kept the
+            # launch_budget candidate out when budget was close to
+            # capture_size; that prevented the chooser from trying
+            # the faster-speed full-send option (+6 favor at turn 0
+            # of seed 1003). Drop it; trust the simulator.
             sizes = {capture_size}
             if 2 * capture_size <= launch_budget:
                 sizes.add(2 * capture_size)
-            if launch_budget >= capture_size + 5:
+            if launch_budget > capture_size:
                 sizes.add(launch_budget)
             for ships in sizes:
                 s = score_action(
@@ -331,8 +345,7 @@ def agent(obs):
     # fleet; SIM_SETTLE_TURNS extra to let combat resolve).
     num_seats = _num_seats(planets, fleets)
     snap_base = from_obs(obs, num_seats=num_seats)
-    max_horizon = 40
-    baseline_favors = _build_idle_baseline(snap_base, player, num_seats, max_horizon)
+    baseline_favors = _build_idle_baseline(snap_base, player, num_seats, MAX_HORIZON)
     candidates = _enumerate_candidates(
         my_planets, targets, fleets, step, player,
         snap_base, num_seats, baseline_favors,
