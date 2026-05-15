@@ -35,9 +35,24 @@ from lib.foundation import (
 
 @pytest.fixture(autouse=True)
 def _clean_registry():
+    """Snapshot the global strategy registry, run the test in a
+    cleared state, then restore the snapshot.
+
+    Restoring (rather than just clearing on teardown) is required so
+    other test files whose modules registered strategies at import
+    time — e.g. `agents/v8_*/main.py` chains that register
+    `v8_greedy_roi` / `v8_analytic` — still see their entries after
+    this file's tests have run. Without restore, those test files
+    fail when run later in the same pytest session.
+    """
+    from lib.foundation.strategy import _REGISTRY
+    saved = dict(_REGISTRY)
     clear_registry()
-    yield
-    clear_registry()
+    try:
+        yield
+    finally:
+        clear_registry()
+        _REGISTRY.update(saved)
 
 
 class _DummyStrategy:
