@@ -24,11 +24,20 @@ on Snapshots, not Environments):
 Caveats:
 - The `episode_seed` is not exposed in the live ladder's
   `configuration` (scrubbed at env init for fairness). Without it,
-  future comet spawns at steps 50/150/250/350/450 will use seed=0 and
-  diverge from the real game. For sims that don't cross a spawn
-  boundary (≤ ~50 steps from a current step that isn't 49/149/...)
-  the rebuild is bit-exact regardless. Phase 2 probe accepted this
-  trade-off (audit:14-19).
+  future comet spawns at steps 50/150/250/350/450 will be drawn from
+  `random.Random("orbit_wars-comet-0-50")` and diverge from the real
+  game's spawn schedule. This is an information-theoretic limit, not
+  a fixable defect — no code change can predict the right spawns
+  without the seed. Practical guarantees:
+
+    * Offline self-play / parity tests: pass the real
+      `episode_seed=env.info["seed"]` and the sim is bit-exact through
+      every spawn boundary. See
+      `tests/test_fast_sim_parity_comet_pre50.py`.
+    * Live ladder: lookahead within a horizon that doesn't cross the
+      next spawn boundary is bit-exact even with `episode_seed=0`.
+      Past a boundary, comets will differ.
+
 - `lib.lookahead.env_from_obs` does the same with an `Environment`;
   this is the same idea reduced to its physics-only core.
 """
