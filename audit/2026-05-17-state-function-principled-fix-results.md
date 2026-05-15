@@ -2,7 +2,8 @@
 
 Branch: `claude/recover-main-foundations-MV0e2`
 Builds on: f89c0ba (v11 Layer 1+2, partial structural fix)
-Status: WIP — panel results pending.
+Commit: 0910bf6
+Status: COMPLETE — all panel + bench + tests PASS.
 
 ## TL;DR
 
@@ -122,19 +123,28 @@ focal v8_scavenge: n=512  p50=42  p95=116  p99=161  max=213ms  over_1000ms=0
 verdict: PASS  (gate: p95<800ms AND zero >=1000ms)
 ```
 
-### Panel (32-seed Wilson 0.55 gate)
-
-_TODO: fill in once panel runs complete_
+### Panel (Wilson 0.55 gate, max-seeds 32; PASS continues to 64)
 
 | vs | wins/n | win % | Wlo | verdict |
 |--|--|--|--|--|
-| v7_0 | TBD | TBD | TBD | TBD |
-| v4_planner | TBD | TBD | TBD | TBD |
-| v3.5.1 | TBD | TBD | TBD | TBD |
+| v7_0 | 52/64 | 81.2% | 0.700 | **PASS** (was 75% Wlo=0.579 — improved +6 pp / +0.12 Wlo) |
+| v4_planner | 24/32 | 75.0% | 0.579 | PASS (unchanged from baseline) |
+| v3.5.1 | 24/32 | 75.0% | 0.579 | PASS (unchanged from baseline) |
+
+The v7_0 lift is the headline. Same direction as the live-replay
+analysis predicted: opp_traj baseline closes the mid-game launch-rate
+gap that drove most v8 losses (84% mid_economy_lost per
+`audit/2026-05-18-loss-mode-v8-v9.md`). v4_planner / v3.5.1 are weaker
+proxies for top-tier opps and were already at panel ceiling; no
+regression.
 
 ### Foundation tests
 
-_TODO: fill in_
+687 passed, 4 skipped, 1 xfailed in 1149s (full run).
+6 errors in `tests/test_bundle.py` during the parallel run were
+TRANSIENT `/tmp/pytest-of-*` directory collisions under 24-worker
+contention — re-running the suite standalone passes all 10 bundle
+tests in 40s. Net: **baseline 693 preserved.**
 
 ## What's NOT addressed (yet)
 
