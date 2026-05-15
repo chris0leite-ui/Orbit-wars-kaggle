@@ -57,11 +57,7 @@ from lib.world_model import WorldModel
 # ---------------------------------------------------------------------------
 
 EPISODE_STEPS = 500
-NUM_TARGETS_PER_SOURCE = 12      # K nearest non-owned planets per source
-                                 # (raised 8→12 to broaden the candidate
-                                 # pool; more fast_sim rollouts but the
-                                 # ledger check at three levels still
-                                 # bounds wallclock)
+NUM_TARGETS_PER_SOURCE = 8       # K nearest non-owned planets per source
 MIN_FLEET_SIZE = 2               # 1-ship fleets are slow + rarely useful
 
 # Forward-sim horizon parameters
