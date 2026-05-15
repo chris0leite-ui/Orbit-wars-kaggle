@@ -50,6 +50,7 @@ from lib.fast_sim import step as fs_step
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
 from lib.orbit import is_orbiting as _is_orbiting
+from lib.scoring import pv_horizon
 from lib.world_model import WorldModel
 
 # ---------------------------------------------------------------------------
@@ -191,7 +192,7 @@ def _nearest_k(targets, src, k):
 # ---------------------------------------------------------------------------
 
 
-def _capture_size(src, tgt, model, omega, me):
+def _capture_size(src, tgt, model, omega, me, world):
     """WorldModel-aware minimum capture size.
 
     For NON-MINE targets (capture): predicted defenders at eta + 1.
@@ -205,22 +206,39 @@ def _capture_size(src, tgt, model, omega, me):
     predicted defenders at that eta.
     """
     if int(tgt.owner) == me:
-        # Reinforce: size to make defense survive predicted enemy arrival
-        enemy_eta = model.incoming_enemy_eta(int(tgt.id), me)
+        # Reinforce: size to survive the predicted enemy threat. Uses
+        # `time_to_enemy_threat` which covers both in-flight fleets AND
+        # potential launches from stationary enemy planets at current
+        # garrisons (Fix 2 of v9). Drop-in widening of the threat pool.
+        enemy_eta = model.time_to_enemy_threat(int(tgt.id), me, world)
         if enemy_eta is None:
-            return 0  # no incoming threat; reinforce unnecessary
-        # Predicted enemy ships arriving at tgt at enemy_eta (sum across
-        # in-flight enemy fleets aimed at tgt within that window).
+            return 0  # no near-term threat; reinforce unnecessary
+        # Sum in-flight enemy ships landing at-or-before enemy_eta + 1.
         enemy_arrivals = model.ledger.get(int(tgt.id), [])
-        enemy_ship_sum = sum(
-            ships for (eta, owner, ships) in enemy_arrivals
-            if owner != me and eta <= enemy_eta + 1
+        enemy_ship_sum_inflight = sum(
+            ships for (eta_arr, owner, ships) in enemy_arrivals
+            if owner != me and eta_arr <= enemy_eta + 1
         )
-        # Predicted defender at enemy_eta (with production accrual
-        # but BEFORE enemy combat applied). Approximation: current
-        # garrison + production × enemy_eta.
+        # If no in-flight threat (preemptive case), the threat is a
+        # potential launch from a stationary enemy planet. Estimate the
+        # threat magnitude as the nearest enemy planet's CURRENT garrison
+        # (worst-case full send).
+        enemy_potential = 0.0
+        if enemy_ship_sum_inflight <= 0:
+            tgt_x, tgt_y = float(tgt.x), float(tgt.y)
+            best_enemy_ships = 0.0
+            for p in world.planets_by_id.values():
+                if int(p.owner) < 0 or int(p.owner) == me:
+                    continue
+                # Match the enemy's eta range — they could have launched
+                # at most enemy_eta turns ago from any of their planets.
+                if int(p.ships) > best_enemy_ships:
+                    best_enemy_ships = float(p.ships)
+            enemy_potential = best_enemy_ships
+        enemy_strength = max(enemy_ship_sum_inflight, enemy_potential)
+        # Predicted defender at enemy_eta (with production accrual).
         my_garrison_at_eta = float(tgt.ships) + float(tgt.production) * enemy_eta
-        shortfall = enemy_ship_sum - my_garrison_at_eta + 1
+        shortfall = enemy_strength - my_garrison_at_eta + 1
         return max(0, int(math.ceil(shortfall)))
     # Capture (non-mine target)
     initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
@@ -230,12 +248,12 @@ def _capture_size(src, tgt, model, omega, me):
     return max(MIN_FLEET_SIZE, size)
 
 
-def _enumerate_ship_counts_basic(src, tgt, model, omega, me):
+def _enumerate_ship_counts_basic(src, tgt, model, omega, me, world):
     """Phase 1 ship-count set: capture/reinforce size, 2×, full budget.
 
     For reinforce (my own target), size 0 means no threat → skip.
     """
-    cap = _capture_size(src, tgt, model, omega, me)
+    cap = _capture_size(src, tgt, model, omega, me, world)
     budget = int(src.ships)
     if cap == 0:
         return []  # no threat; don't reinforce
@@ -258,32 +276,51 @@ def _cheap_marginal_value(src, tgt, ships, eta, world, model, me):
     """Approximate Δ value for ranking only — NOT the final score.
 
     Reads the BASELINE WorldModel (built once per turn) to predict
-    pred_owner + pred_ships at our arrival eta. Mirrors
-    `composite_capture_value`'s per-fleet formula:
-    - If pred_owner == me → 0 (planet already ours; reinforcement-only).
-    - Else if our ships > pred_ships → CAPTURE credit
-        = capture_weight × production × time_remaining
-    - Else → BOUNCE penalty = −waste_weight × ships
+    pred_owner + pred_ships at our arrival eta.
+
+    Three cases:
+    - **CAPTURE** (pred_owner != me, ships > pred_ships): credit by
+      capture_weight × production × time_remaining.
+    - **BOUNCE** (pred_owner != me, ships ≤ pred_ships): penalty
+      = −waste_weight × ships.
+    - **REINFORCE** (pred_owner == me): if WorldModel.time_to_enemy_threat
+      predicts an enemy could attack this planet within a relevant
+      horizon (eta + 30), score as "value of preventing loss" =
+      capture_weight × production × pv_horizon(threat_eta).
+      Otherwise return 0 (no near-term threat → reinforce unnecessary).
+
+    The reinforce branch is Fix 1 of the v9 iteration: previously
+    returned 0 for all reinforce, which caused them to be cut from
+    the validate stage by the adaptive wallclock cap in late game.
+    Now reinforce candidates RANK competitive with captures so they
+    reach fast_sim validation.
 
     Known weakness: `fleet_target_planet` does a non-orbital ray-cast,
     so for orbital captures the model's predicted state at our eta is
     off by 1-2 turns of orbital drift. This is acceptable for RANKING:
     relative ordering is mostly preserved. The fast_sim downstream is
     the ground truth for the FINAL decision.
-
-    O(2) per candidate (two model lookups + arithmetic). ~0.1 ms.
     """
     pred_owner = model.owner_at(int(tgt.id), eta)
     pred_ships = float(model.ships_at(int(tgt.id), eta) or 0.0)
 
     if pred_owner == me:
-        return 0.0
+        # REINFORCE: score value of preventing loss of this planet.
+        t_to_threat = model.time_to_enemy_threat(int(tgt.id), me, world)
+        if t_to_threat is None or t_to_threat > eta + 30:
+            return 0.0  # no near-term threat → reinforce truly unnecessary
+        # Loss-prevention credit: planet's pv-discounted production
+        # stream from threat onward, scaled by capture_weight (0.05) to
+        # match the offensive capture-credit scale.
+        pv = pv_horizon(int(world.step), int(t_to_threat),
+                        gamma=0.99, t_total=EPISODE_STEPS)
+        return 0.05 * float(tgt.production) * float(pv)
 
-    time_remaining = max(0, EPISODE_STEPS - int(world.step) - eta)
     if ships > pred_ships:
-        # CAPTURE credit. Same constants composite_capture_value uses
-        # (capture_weight=0.05, prod × time_remaining).
-        return 0.05 * float(tgt.production) * float(time_remaining)
+        # CAPTURE credit. PV-discounted production stream from arrival.
+        pv = pv_horizon(int(world.step), int(eta),
+                        gamma=0.99, t_total=EPISODE_STEPS)
+        return 0.05 * float(tgt.production) * float(pv)
     # BOUNCE penalty (waste_weight=0.5).
     return -0.5 * float(ships)
 
@@ -293,22 +330,28 @@ def _cheap_marginal_value(src, tgt, ships, eta, world, model, me):
 # ---------------------------------------------------------------------------
 
 
-def _favor(obs, me):
-    """F1 + F2 favor.
+def _favor(obs, me, num_seats=2):
+    """F1 + F2 favor with PV-discount and 4P-aware opp aggregation.
 
-    F1 = (my ships on planets + in-flight) − (max-opp ships on planets
-         + in-flight). For 2P this is just (my − opp); for 4P it's
-         strongest-opp.
-    F2 = (my production − max-opp production) × turns_remaining.
+    F1 = my_ships − opp_ships_agg (in-flight + planets).
+    F2 = (my_prod − opp_prod_agg) × pv_horizon(step, 0, γ=0.99).
 
-    Bootstrap session validated AUC ≈ 0.945 on saved snapshots.
-    No comet-decay term here — fast_sim handles comet lifetime exactly
-    in the rollout, so by the leaf the comet's ownership is "real."
+    PV-discount (Fix 3 of v9): linear `turns_remaining` over-weights
+    far-future production. In late-game with opp prod-lead, F2 dominates
+    F1 by 100× and the chooser stops valuing ship preservation. PV
+    with γ=0.99 makes a unit production stream worth ~99 (vs 500), so
+    F1 and F2 are on comparable scales.
+
+    4P-aware opp aggregation (Fix 4 of v9): in 2P use max-of-opps
+    (identical to "the only opp"); in 4P use SUM-of-opps so capturing
+    from a weak opp gets 2× credit (my +prod AND their −prod),
+    matching the credit for capturing from the leader. This corrects
+    the systematic under-credit of non-leader captures that left v8
+    passive in 4P.
     """
     planets = obs.planets if hasattr(obs, "planets") else obs.get("planets", [])
     fleets = obs.fleets if hasattr(obs, "fleets") else obs.get("fleets", [])
     step = obs.step if hasattr(obs, "step") else obs.get("step", 0)
-    turns_remaining = max(0, EPISODE_STEPS - int(step))
 
     # Per-owner totals
     ships_by_owner = {}
@@ -327,16 +370,23 @@ def _favor(obs, me):
 
     my_ships = ships_by_owner.get(me, 0.0)
     my_prod = prod_by_owner.get(me, 0.0)
-    opp_ships_max = max(
-        (v for k, v in ships_by_owner.items() if k != me),
-        default=0.0,
-    )
-    opp_prod_max = max(
-        (v for k, v in prod_by_owner.items() if k != me),
-        default=0.0,
-    )
+    if num_seats <= 2:
+        opp_ships = max(
+            (v for k, v in ships_by_owner.items() if k != me),
+            default=0.0,
+        )
+        opp_prod = max(
+            (v for k, v in prod_by_owner.items() if k != me),
+            default=0.0,
+        )
+    else:
+        # 4P / 3P: sum across all opps. Capturing from any weakens the
+        # collective; same credit as capturing from the leader.
+        opp_ships = sum(v for k, v in ships_by_owner.items() if k != me)
+        opp_prod = sum(v for k, v in prod_by_owner.items() if k != me)
 
-    return (my_ships - opp_ships_max) + (my_prod - opp_prod_max) * turns_remaining
+    pv = pv_horizon(int(step), 0, gamma=0.99, t_total=EPISODE_STEPS)
+    return (my_ships - opp_ships) + (my_prod - opp_prod) * pv
 
 
 # ---------------------------------------------------------------------------
@@ -352,14 +402,14 @@ def _build_idle_baseline(snap_base, me, num_seats, max_horizon):
     turns. Used for per-candidate horizon-matched Δ.
     """
     snap = fs_clone(snap_base)
-    out = [_favor(snap.state[me].observation, me)]
+    out = [_favor(snap.state[me].observation, me, num_seats)]
     idle = [[] for _ in range(num_seats)]
     for _ in range(max_horizon):
         if snap.fake_env.done:
             out.append(out[-1])
             continue
         snap = fs_step(snap, idle, in_place=True)
-        out.append(_favor(snap.state[me].observation, me))
+        out.append(_favor(snap.state[me].observation, me, num_seats))
     return out
 
 
@@ -387,7 +437,7 @@ def _score_action(snap_base, me, num_seats, src_id, angle, ships,
             break
         snap = fs_step(snap, idle, in_place=True)
 
-    leaf_favor = _favor(snap.state[me].observation, me)
+    leaf_favor = _favor(snap.state[me].observation, me, num_seats)
     return leaf_favor - baseline_favors[horizon]
 
 
@@ -416,14 +466,16 @@ def agent(obs, configuration=None):
     omega = float(obs_d.get("angular_velocity", 0.0))
     num_seats = _num_seats(planets, fleets)
 
-    # Identify threatened MY planets (predicted incoming enemy fleet).
-    # Reinforce candidates target these; defensive fleets keep them
-    # alive through enemy waves. Mine session diag (2026-05-16): every
-    # loss vs v7_0 was "0 planets left, eliminated mid-game" — opp's
-    # multi-wave attacks wipe undefended captures. Reinforce closes that.
+    # Identify threatened MY planets via WorldModel.time_to_enemy_threat,
+    # which considers BOTH (a) in-flight enemy fleets AND (b) potential
+    # launches from stationary enemy planets at current garrison sizes.
+    # The previous version used `incoming_enemy_eta` (only in-flight)
+    # and missed preemptive threats from large enemy garrisons that
+    # could launch any turn — the dominant failure mode in the Naoism
+    # 2P loss (turn 70-95 attrition). Fix 2 of v9 iteration.
     threatened_mine = [
         p for p in my_planets
-        if model.incoming_enemy_eta(int(p.id), me) is not None
+        if model.time_to_enemy_threat(int(p.id), me, world) is not None
     ]
     # Target pool = capture targets + defensive reinforce targets
     target_pool = other_planets + threatened_mine
@@ -464,7 +516,7 @@ def agent(obs, configuration=None):
         for tgt in _nearest_k(target_pool, src, NUM_TARGETS_PER_SOURCE):
             if int(tgt.id) == int(src.id):
                 continue
-            for ships in _enumerate_ship_counts_basic(src, tgt, model, omega, me):
+            for ships in _enumerate_ship_counts_basic(src, tgt, model, omega, me, world):
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
                 angle, eta = _aim_and_eta(src, tgt, ships, omega)
