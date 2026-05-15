@@ -21,6 +21,7 @@ explicitly.
 from __future__ import annotations
 
 import math
+import os
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
 
@@ -81,7 +82,11 @@ def horizon(step: int, eta: int, t_total: int = T_TOTAL_DEFAULT) -> int:
 # preserves the pre-PV scoring shape so existing snipe/reinforce tests pass
 # unchanged. A/B candidates set γ < 1 (typically 0.99 per discussion-thread
 # TID 699003) via `scripts/ab_variants.py --variant pv PV_GAMMA=0.99`.
-PV_GAMMA = 1.0
+#
+# Env-var override (PV_GAMMA): an agent that wants PV-aware proposers can
+# `os.environ.setdefault("PV_GAMMA", "0.99")` BEFORE this module is
+# imported. v7_pv (live μ=1064.4) is v7_0_drop_one + this single config.
+PV_GAMMA = float(os.environ.get("PV_GAMMA", "1.0"))
 
 
 # Sensitivity coefficient for the 3-NN allegiance danger field (H17 /
