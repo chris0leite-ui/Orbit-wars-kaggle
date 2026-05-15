@@ -54,11 +54,10 @@ def play_and_diag(seed: int, opp: str = "nearest", max_turns: int = 30, only_whe
             if int(src.ships) < v8_main.MIN_FLEET_SIZE:
                 continue
             for tgt in v8_main._nearest_k(targets, src, v8_main.NUM_TARGETS_PER_SOURCE):
-                for ships in v8_main._enumerate_ship_counts_basic(src, tgt, model):
+                for ships in v8_main._enumerate_ship_counts_basic(src, tgt, model, omega):
                     if ships < v8_main.MIN_FLEET_SIZE or ships > int(src.ships):
                         continue
-                    angle = v8_main._aim_angle(src, tgt, ships, omega)
-                    eta = v8_main._arrival_eta(src, tgt, ships)
+                    angle, eta = v8_main._aim_and_eta(src, tgt, ships, omega)
                     delta = v8_main._marginal_value(src, tgt, ships, eta, world, model, me)
                     candidates.append((delta, int(src.id), int(tgt.id), ships, eta))
         candidates.sort(key=lambda c: -c[0])
@@ -99,4 +98,5 @@ def play_and_diag(seed: int, opp: str = "nearest", max_turns: int = 30, only_whe
 if __name__ == "__main__":
     seed = int(sys.argv[1]) if len(sys.argv) > 1 else 4
     opp = sys.argv[2] if len(sys.argv) > 2 else "nearest"
-    play_and_diag(seed, opp=opp, max_turns=30, only_when_active=False)
+    max_t = int(sys.argv[3]) if len(sys.argv) > 3 else 30
+    play_and_diag(seed, opp=opp, max_turns=max_t, only_when_active=False)

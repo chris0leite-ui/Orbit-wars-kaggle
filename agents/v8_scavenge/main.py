@@ -93,25 +93,35 @@ def _as_dict(obs):
 # ---------------------------------------------------------------------------
 
 
-def _aim_angle(src, tgt, ships, omega):
-    """Lead-aim for orbiting targets; straight-aim for static.
+def _aim_and_eta(src, tgt, ships, omega):
+    """Return (lead_aim_angle, integer_eta) for one candidate fleet.
 
-    Wraps `lib.aim.aim_orbiting` (5-iter fixed-point + safe-intercept
-    fallback). Returns the angle that the simulator will actually fly.
+    For ORBITING targets, `lib.aim.aim_orbiting` jointly solves the
+    aim angle AND the arrival eta (the lead-prediction's fixed point
+    is `eta = dist_to_predicted_position / speed`). Using its eta is
+    load-bearing: an orbiting target ~40 units from the sun at eta=5
+    has moved ~10 units along its orbit; a fleet aimed at the
+    predicted position must fly a longer arc, so the actual arrival
+    turn can be 3-4× the naïve `distance / speed`.
+
+    Bug fixed (Phase 1 v8.6, 2026-05-16): previously this module used
+    separate `_aim_angle` (orbital lead) and `_arrival_eta` (straight
+    distance). The disagreement meant `model.ships_at(tgt, naïve_eta)`
+    queried the WRONG turn for the marginal_value scoring — chooser
+    scored captures based on a state that didn't match the actual
+    arrival turn. Symptom: 0/32 vs v7_0 on seed 0 because the fleet
+    aimed at (33.7, 85.9) [arrival in 20 turns] was scored as if
+    arriving at (68.8, 84.7) [naïve eta=5].
+
+    Fall back to straight-aim + straight-eta for non-orbiting targets.
     """
     if _is_orbiting(list(tgt)):
         res = aim_orbiting(
             (src.x, src.y), src.radius, list(tgt), tgt.radius, ships, omega,
         )
         if res is not None:
-            return float(res[0])
-    return math.atan2(tgt.y - src.y, tgt.x - src.x)
-
-
-def _arrival_eta(src, tgt, ships):
-    """Integer-turn arrival eta. Matches `lib.aim.flight_distance`'s
-    accounting (centre distance minus radii minus 0.1 spawn offset).
-    """
+            return float(res[0]), max(1, int(math.ceil(float(res[2]))))
+    angle = math.atan2(tgt.y - src.y, tgt.x - src.x)
     flight = max(
         0.0,
         math.hypot(src.x - tgt.x, src.y - tgt.y)
@@ -119,8 +129,8 @@ def _arrival_eta(src, tgt, ships):
     )
     spd = fleet_speed(ships)
     if spd <= 0:
-        return 999
-    return int(math.ceil(flight / spd))
+        return angle, 999
+    return angle, int(math.ceil(flight / spd))
 
 
 def _nearest_k(targets, src, k):
@@ -135,31 +145,31 @@ def _nearest_k(targets, src, k):
 # ---------------------------------------------------------------------------
 
 
-def _capture_size(src, tgt, model):
+def _capture_size(src, tgt, model, omega):
     """WorldModel-aware minimum capture size.
 
     One Newton-style iteration: pick an initial size from current tgt
-    garrison, compute eta, query model for predicted garrison at THAT
-    eta, derive final size from prediction.
+    garrison, use the orbital-aware `_aim_and_eta` to find arrival
+    turn, query model for predicted garrison at that eta, derive
+    final size from prediction.
 
-    This already incorporates production growth + incoming reinforcement
-    in the predicted defender count — the WorldModel timeline accounts
-    for them analytically.
+    This incorporates BOTH production growth / incoming reinforcement
+    (via WorldModel) AND orbital lead-prediction (via aim_orbiting).
     """
     initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
-    eta = _arrival_eta(src, tgt, initial)
+    _angle, eta = _aim_and_eta(src, tgt, initial, omega)
     pred = float(model.ships_at(int(tgt.id), eta) or 0.0)
     size = int(math.ceil(pred)) + 1
     return max(MIN_FLEET_SIZE, size)
 
 
-def _enumerate_ship_counts_basic(src, tgt, model):
+def _enumerate_ship_counts_basic(src, tgt, model, omega):
     """Phase 1 ship-count set: capture, 2×capture, full launch budget.
 
     Scavenge sizes (Phase 2) — ship counts timed to arrive at predicted
     enemy-capture eta + δ — appended in a later phase.
     """
-    cap = _capture_size(src, tgt, model)
+    cap = _capture_size(src, tgt, model, omega)
     budget = int(src.ships)
     sizes = set()
     if MIN_FLEET_SIZE <= cap <= budget:
@@ -249,11 +259,10 @@ def agent(obs, configuration=None):
         if int(src.ships) < MIN_FLEET_SIZE:
             continue
         for tgt in _nearest_k(targets, src, NUM_TARGETS_PER_SOURCE):
-            for ships in _enumerate_ship_counts_basic(src, tgt, model):
+            for ships in _enumerate_ship_counts_basic(src, tgt, model, omega):
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
-                angle = _aim_angle(src, tgt, ships, omega)
-                eta = _arrival_eta(src, tgt, ships)
+                angle, eta = _aim_and_eta(src, tgt, ships, omega)
                 delta = _marginal_value(src, tgt, ships, eta, world, model, me)
                 if delta > 0:
                     candidates.append((delta, src, tgt, ships, angle))
