@@ -164,6 +164,19 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
     rule overrides. Keep session identifiers to chat replies only.
     Origin: 2026-05-14 audit-pass session; PI-ratified after PR #20
     merged with three commits carrying the link.
+40. **Prefer modeling-correctness over restriction-tuning.** When a
+    failure mode can be addressed by either (a) a constant bump
+    (MAX_*, MIN_*, threshold filter, hard-cap) or (b) a fix to the
+    underlying model (better opp model, better leaf scoring, better
+    target prediction), prefer (b). Restrictions are band-aids on a
+    model that misvalues actions; the right behaviour should emerge
+    from a correct model, not from artificial caps. The "easy fix
+    bump-a-constant" instinct is consistently wrong; the modeling
+    fix takes longer but ships cleanly. Origin: 2026-05-16
+    v13 session; PI re-articulated this principle 3 times across
+    the v10-v13 iteration line (MAX_WAIT, MAX_HORIZON, MIN_FLEET_SIZE
+    were all candidate bumps PI rejected in favour of modeling fixes
+    that made the symptom emerge naturally).
 
 ## Defaults from prior-comp postmortem
 

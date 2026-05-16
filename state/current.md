@@ -1,49 +1,69 @@
 # state/current.md — current submitted agent + tournament rank
 
-> Updated 2026-05-14 by `claude/simplify-fast-setup-azW8T` (geo iteration).
-> Merged forward from `claude/research-competition-analysis-2R8I3` +
-> `claude/read-handover-iLWTq`. All Score values pulled live from
-> `kaggle competitions submissions orbit-wars`.
+> Updated 2026-05-16 by `claude/recover-main-foundations-MV0e2` (v20 submit).
+> Previous update 2026-05-16 (v15 submit).
+> All Score values pulled live from `kaggle competitions submissions orbit-wars`.
 
 ```yaml
-date: 2026-05-14
-days_to_deadline: 40                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: geo             # v3.1 (most recent); σ-discounted floor
-last_kernel_push: 2026-05-14 09:10:03 UTC
-last_submission_id: 52643676
-last_submission_status: COMPLETE
-last_submission_file: submissions/geo.py # 238 KB bundle; sha256:1babc39d9907ee18
+date: 2026-05-16
+days_to_deadline: 37                     # 2026-06-23 23:59 UTC minus today
+current_submitted_agent: v20_dogpile     # PENDING; per-target dedup removed
+last_kernel_push: 2026-05-16 21:57:08 UTC
+last_submission_id: 52721807
+last_submission_status: PENDING
+last_submission_file: submissions/v20.py  # 317 KB bundle; parity OK 858 turns
 last_submission_message: |
-  geo v3.1: geometric sense (clusters/Voronoi/front) + 4 lookahead-validated tilts
-  (opening-boost 2.0x, enemy-focus 1.5x, front-reinforce 1.5x, voronoi-filter)
-  + concentrated/saturation top-10 archetypes + 4P branch via score_candidate_4p
-  + signal-timeout per score (700ms).
-  Local A/B vs v7_0_drop_one (n=192): 57.3% (~+7pp 2P).
-  Local A/B 4P vs 3× v7_0 (n=128): 56.3% first-place (+31pp over baseline).
+  v20: chooser dogpile (remove per-target dedup). v15 emit-cap
+  bottleneck diagnosed: chooser found 6-16 positive-Δ candidates per
+  turn but per-target dedup capped emit at 1-3 because top-Δ
+  candidates cluster on a few high-value planets. Single-line change
+  in agents/v20/main.py (the emit-loop's `if sid in used_srcs or tid
+  in used_tgts:` → `if sid in used_srcs:`). Each candidate's Δ was
+  already validated independently by the rollout, so dogpile is
+  self-balancing under the validated-Δ filter (the 2nd launch at the
+  same target was judged net-positive given the 1st landing).
+  Forrest replay funnel step 120/190 emit: 2→4 and 2→5 (other
+  steps unchanged). Felipe 2/2 (v15 was 1/2); 213tubo 2/2.
+  Bench 3 games: p50=103 p95=288 max=367; over_1000ms=0.
+  Head-to-head v20 vs v15 n=32: 65.6% (21/32) Wlo=0.483 Whi=0.796
+  INCONCLUSIVE per harness gate (Wlo just under 0.55) but 65.6%
+  clearly above noise vs v17 (40.6%) / v18 (34.4%) / v19 (12.5%)
+  on same axis attempts.
+  Wallclock caveat: max=1090ms in one h2h turn (deadline-check fires
+  BEFORE iteration, last candidate can overshoot). Bench vs v7_0
+  max=367ms — live games likely between bench and h2h-density.
+  Risk accepted by PI.
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation;
 # the third push auto-evicts the previous oldest).
 rolling_last_2:
-  - {agent: geo,    sub_id: 52643676, score: 984.0, status: COMPLETE,
-     episodes: ~80-130, note: 'σ-discounted floor; μ not settled (~5h post-submit)'}
-  - {agent: v7_pv,  sub_id: 52630118, score: 1064.4,  episodes: ~80}  # carrying team score
+  - {agent: v20_dogpile,  sub_id: 52721807, score: PENDING, status: PENDING,
+     episodes: 0, note: 'just submitted; initial μ in 5-10 min, σ settles 5-6h'}
+  - {agent: v15_banded,   sub_id: 52710995, score: PENDING, status: PENDING,
+     episodes: 0, note: 'no live data yet from earlier session push'}
 evicted_recent:
-  - {agent: v7_0_drop_one_rebuilt, sub_id: 52607699, score: 1056.6, reason: evicted by geo push}
-  - {agent: v7_0_drop_one_original, sub_id: 52588156, score: 1081.5, reason: evicted by v7_0_rebuilt push}
-  - {agent: v4_planner,             sub_id: 52579863, score: 1038.6, reason: evicted by v7_pv push}
+  - {agent: v13_reactive,   sub_id: 52704189, score: 1063.8, reason: evicted by v20 push}
+  - {agent: v12_principled, sub_id: 52699232, score: 1095.4, reason: evicted by v15 push}
+  - {agent: v9_scavenge,    sub_id: 52687411, score: 1119.9, reason: evicted by v13 push}
+  - {agent: v8_scavenge,    sub_id: 52684059, score: 1065.8, reason: evicted by v12 push}
 
-# Team leaderboard score = max(rolling_last_2) = 1064.4 (UNCHANGED by geo push).
-tournament_rank_today: 125 / 2667 (top 4.7%)
-our_best_rank: v7_pv μ=1064.4 (#52630118 COMPLETE)
-lb_top10_cliff: 1430                     # approx; refresh next session
-headroom_to_top10_prize: ~+366 μ         # v7_pv to top-10 cliff
+# Team leaderboard score = max(rolling_last_2) = max(v15, v13=1063.8)
+# Until v15 settles: team floor = 1063.8 (v13_reactive)
+# Floor-protected: v15 cannot bring team below v13's 1063.8.
+# v13 → v15 prediction: median 1100-1150, range 1050-1200.
+tournament_rank_today: TBD / 2779 (await v15 settle)
+our_best_rank: v13_reactive μ=1063.8 (#52704189 COMPLETE, ROLLING)
+lb_top10_cliff: 1430                     # refresh on next pull
 
-# CALIBRATION WARNING. Local A/B over-predicted ladder for 2 consecutive submissions:
-# - v3.5.1 (5/12): local +56.6% Wlo vs v3_snipe → live μ=945.6 (-150μ)
-# - geo v3.1 (5/14): local +7pp / +31pp vs v7_0 → live μ=984.0 floor (TBD whether σ tightens)
-# Both panels were vs v7_0 only. Ladder has v3.5.1/v7_pv/v7_0_drop_one_rebuilt/top-10
-# distribution. Fix: future local A/B must span ≥3 opponent classes before submit.
-# See audit/2026-05-14-postmortem-geo-session.md.
+# CALIBRATION WARNING (3 consecutive submissions over-predicted live):
+# - v3.5.1 (5/12): local +56.6% Wlo vs v3_snipe → live μ=945.6 (-150μ vs expected)
+# - geo v3.1 (5/14): local +7pp / +31pp vs v7_0 → live μ=1004.9 (settled at floor)
+# - iter v1 (5/14): local +10pp panel over v7_pv → live μ=1034.7 (-18μ vs v7_pv 1053.5)
+# - iter v2 (5/15): structural 4P fix on iter_v1 → live μ=1028.2 (modest decline)
+# Local-vs-live mapping has been roughly -20 to -30pp on every recent submission.
+# v8_scavenge local panel +5-10pp over iter_v1; with same calibration shift,
+# live could land 1010-1030 (sideways), 1030-1050 (modest gain), or
+# 1050+ (recover v7_pv level). Floor: 1028.2 (iter_v2 stays).
 
 # σ-awareness. Kaggle's published Score = μ − κσ already discounts uncertain submissions.
 sigma_proxy:
@@ -184,21 +204,6 @@ mechanism_families_explored:
                                               # pure-v7-fallback 80%. v2 sweep's 67% was a
                                               # broken-orbital_frac proxy. Code stays on
                                               # branch; learnings ported to main.
-  - recapture-mission-class-wired             # claude/fix-weak-game-starts-NhDQ3:
-                                              # geo_recap = geo + propose_recapture_missions
-                                              # in base pool. 3-opp panel 2/3 PASS, mean 60.9%
-                                              # (v7_0 64.1%, v3.5.1 62.5%, v4_planner 56.2%
-                                              # INCONCL). HELD from submit — eviction risk
-                                              # vs v7_pv. 2026-05-15 wrap.
-  - drift-discount-voronoi-scoring            # same branch: geo_drift: 3-opp panel FAIL
-                                              # (32.8/31.2/43.8%). K=10 already prices
-                                              # keepability via ship-delta; pre-discount
-                                              # double-counts. Same regression family as
-                                              # v7_1..v7_7 + v3.0 composite head. H30 killed.
-                                              # Code on branch only, not merged.
-  - garrison-on-capture-mission-class         # same branch: geo_garrison: 3-opp INCONCLUSIVE
-                                              # ~52% mean. Untested on top of recap;
-                                              # geo_recap_garrison queued for next session.
 
 gate_status: cleared                        # full pytest passes;
                                             # geo's 17 tests + parallel branches' tests all green

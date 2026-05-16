@@ -19,6 +19,26 @@
 
 ## Pending — promotion needed
 
+### [ ] [CROSS-CUTTING] Stop-hook should not force commit-before-verify
+
+`tag: stop-hook-pressure-commits-speculative-WIP` (2026-05-16,
+v13 session).
+
+Stop-hook `~/.claude/stop-hook-git-check.sh` warns on every turn
+with uncommitted changes. Pattern: agent commits speculative work
+to silence the hook, then has to revert when verification reveals
+regression. Cost: 1 wasted commit/revert pair in the v13 session
+(lite_greedy-neutral-fix committed before panel ran; panel showed
+Wlo 0.700 → 0.483; reverted).
+
+**Fix:** when a change is being VERIFIED (panel running, tests
+running), use `git stash` to silence the stop-hook without
+committing speculative work. Stash, run verification, pop+commit
+only on PASS. Document this in CLAUDE.md or kaggle-comp skill so
+the pattern doesn't recur. Alternative: extend stop-hook to skip
+warning when a background verification job is in flight (less
+robust; relies on detecting in-flight jobs).
+
 ### [ ] [CROSS-CUTTING] **TOP PRIORITY** SessionStart hook: bootstrap + git fetch
 
 `tag: fix-not-validated-against-real-failing-state` (2026-05-14),
