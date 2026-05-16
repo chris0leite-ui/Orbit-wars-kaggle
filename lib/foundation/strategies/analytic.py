@@ -50,8 +50,8 @@ from lib.foundation.memory_impls import (
     MissionMemory,
 )
 from lib.foundation.strategies.analytic_score import (
-    enumerate_atomic_launches,
-    enumerate_defensive_reinforce,
+    DEFAULT_ATOM_CAP,
+    enumerate_capped,
 )
 from lib.foundation.strategies.beam_search import beam_search
 from lib.foundation.strategy import StrategyCtx, register_strategy
@@ -89,6 +89,7 @@ class AnalyticStrategy:
         budget_ms: float = 800.0,
         opp_aggressive: bool = True,
         enable_chainer: bool = True,
+        atom_cap: int = DEFAULT_ATOM_CAP,
     ) -> None:
         self._width = width
         self._depth = depth
@@ -96,6 +97,7 @@ class AnalyticStrategy:
         self._budget_ms = budget_ms
         self._opp_aggressive = opp_aggressive
         self._enable_chainer = enable_chainer
+        self._atom_cap = atom_cap
 
     def emit(
         self,
@@ -113,10 +115,10 @@ class AnalyticStrategy:
         # If memory isn't a CompositeMemory (e.g., tests pass EmptyMemory),
         # fall back to Phase A behaviour: no missions, no chainer.
         if not isinstance(memory, CompositeMemory):
-            atomics = enumerate_atomic_launches(state, my_id)
-            atomics = atomics + enumerate_defensive_reinforce(
+            atomics = enumerate_capped(
                 state, my_id,
                 world_model=ctx.world_model, raw_obs=ctx.raw_obs,
+                max_n=self._atom_cap,
             )
             winning_set = beam_search(
                 state, atomics, my_id,
@@ -156,10 +158,10 @@ class AnalyticStrategy:
             winning_set = list(pre_committed)
         else:
             # 4. Run beam SEEDED with pre-commits.
-            atomics = enumerate_atomic_launches(state, my_id)
-            atomics = atomics + enumerate_defensive_reinforce(
+            atomics = enumerate_capped(
                 state, my_id,
                 world_model=ctx.world_model, raw_obs=ctx.raw_obs,
+                max_n=self._atom_cap,
             )
             atomics = [a for a in atomics if a.from_planet_id not in used_sources]
             winning_set = beam_search(

@@ -241,6 +241,206 @@ def enumerate_atomic_launches(
     return out
 
 
+def _cheap_score_offensive(
+    prod_tgt: int, fleet_ships: int, tgt_ships: int, tgt_owner: int, my_id: int,
+) -> float:
+    """Cheap pre-rank score for an offensive atom. Used to top-N filter
+    before the JAX vmap'd value head burns time on every atom.
+
+    Capture value ≈ `prod[tgt]` (we gain this production) minus
+    `ship_cost` (we pay these ships) minus an `enemy_garrison` penalty
+    (combat eats our ships when the planet is hostile). Weights are
+    O(1) chosen so the top-64 cap matches v8_scavenge's N_VALIDATE=60
+    selection band — fine-tune via re-bench.
+    """
+    enemy_garrison = float(tgt_ships) if (tgt_owner != -1 and tgt_owner != my_id) else 0.0
+    return float(prod_tgt) * 1.0 - 0.05 * float(fleet_ships) - 0.5 * enemy_garrison
+
+
+# Default top-N cap on the candidate pool flowing into the beam.
+# Set to match v8_scavenge's `N_VALIDATE=60` band; bench shows the
+# atom count grows to 500+ mid/late game which busts the budget when
+# vmap'd at C=128 per chunk × 2 beam levels (measured: p50=1359ms
+# warm vs 1000ms cap at top-N=unbounded; capping to 64 cuts cost
+# back into budget without dropping any high-value candidates per
+# the cheap-rank ordering).
+DEFAULT_ATOM_CAP = 128
+
+
+def enumerate_capped(
+    state: GameState,
+    my_id: int,
+    world_model: Optional[WorldModel] = None,
+    raw_obs: Optional[object] = None,
+    *,
+    max_n: int = DEFAULT_ATOM_CAP,
+    ship_fractions: tuple[float, ...] = (0.5, 1.0),
+    max_eta: int = 80,
+    nearest_k_per_source: int = 8,
+) -> list[ActionSpec]:
+    """Enumerate offensive + defensive atoms with cheap pre-ranking,
+    return top-`max_n` overall.
+
+    Single pass over (src, tgt) planet pairs — no second pass to
+    re-derive target info. Cheap score per atom:
+      - offensive: `_cheap_score_offensive(prod_tgt, fleet_ships, tgt_ships, tgt_owner, my_id)`
+      - defensive reinforce: `2.0 × prod_tgt + shortfall` (priority boost
+        so defensive atoms aren't crowded out by high-prod captures)
+
+    Wraps the legacy `enumerate_atomic_launches` + `enumerate_defensive_
+    reinforce` pair. The legacy functions are kept for test compatibility
+    but no longer called from the live strategy emit path.
+
+    `max_n=None` or `max_n<=0` disables the cap (returns all atoms).
+    """
+    out: list[tuple[ActionSpec, float]] = []
+
+    alive = np.asarray(state.planets_alive)
+    ids = np.asarray(state.planets_id)
+    owner = np.asarray(state.planets_owner)
+    ships = np.asarray(state.planets_ships)
+    x = np.asarray(state.planets_x)
+    y = np.asarray(state.planets_y)
+    radius = np.asarray(state.planets_radius)
+    prod = np.asarray(state.planets_prod)
+    omega = float(state.angular_velocity)
+
+    P = len(alive)
+    my_planets = [
+        i for i in range(P)
+        if bool(alive[i]) and int(owner[i]) == my_id and int(ships[i]) > 1
+    ]
+    all_targets = [
+        i for i in range(P) if bool(alive[i]) and int(ids[i]) >= 0
+    ]
+
+    # -- Offensive atoms (matches enumerate_atomic_launches semantics) --
+    for src_i in my_planets:
+        src_id = int(ids[src_i])
+        src_pos = (float(x[src_i]), float(y[src_i]))
+        src_radius = float(radius[src_i])
+        src_ships = int(ships[src_i])
+
+        candidates = [t for t in all_targets if t != src_i]
+        candidates.sort(
+            key=lambda t: (x[t] - x[src_i]) ** 2 + (y[t] - y[src_i]) ** 2
+        )
+        candidates = candidates[:nearest_k_per_source]
+
+        for tgt_i in candidates:
+            tgt_id = int(ids[tgt_i])
+            tgt_owner_i = int(owner[tgt_i])
+            tgt_ships_i = int(ships[tgt_i])
+            tgt_prod_i = int(prod[tgt_i])
+            tgt_tuple = (
+                tgt_id, tgt_owner_i,
+                float(x[tgt_i]), float(y[tgt_i]),
+                float(radius[tgt_i]), tgt_ships_i, tgt_prod_i,
+            )
+            tgt_radius = float(radius[tgt_i])
+
+            for fraction in ship_fractions:
+                fleet_ships = max(1, int(src_ships * fraction))
+                if fleet_ships > src_ships:
+                    continue
+
+                aim = aim_orbiting(
+                    src_pos, src_radius, tgt_tuple, tgt_radius,
+                    fleet_ships, omega,
+                )
+                if aim is None:
+                    continue
+                aim_angle, _arrival, eta = aim
+                if eta is None or eta > max_eta:
+                    continue
+
+                atom = ActionSpec(
+                    from_planet_id=src_id,
+                    dir_angle=float(aim_angle),
+                    ships=fleet_ships,
+                    launch_turn=0,
+                    agent_id=my_id,
+                )
+                score = _cheap_score_offensive(
+                    tgt_prod_i, fleet_ships, tgt_ships_i, tgt_owner_i, my_id,
+                )
+                out.append((atom, score))
+
+    # -- Defensive atoms (matches enumerate_defensive_reinforce semantics) --
+    if world_model is None and raw_obs is not None:
+        world_model = WorldModel.from_world(World.from_obs(raw_obs))
+
+    if world_model is not None and len(my_planets) >= 2:
+        my_planet_set = my_planets  # alias for clarity
+        for tgt_i in my_planet_set:
+            tgt_id = int(ids[tgt_i])
+            enemy_eta = world_model.incoming_enemy_eta(tgt_id, my_id)
+            if enemy_eta is None or enemy_eta > _K_THREAT_HORIZON:
+                continue
+
+            arrivals = world_model.ledger.get(tgt_id) or []
+            enemy_ships = sum(
+                int(a_ships) for (a_eta, a_owner, a_ships) in arrivals
+                if a_owner != my_id and a_eta <= enemy_eta + 1 and a_ships > 0
+            )
+            if enemy_ships <= 0:
+                continue
+
+            my_garrison_at_eta = int(ships[tgt_i]) + int(prod[tgt_i]) * int(enemy_eta)
+            shortfall = enemy_ships - my_garrison_at_eta + 1
+            if shortfall <= 0:
+                continue
+
+            tgt_prod_i = int(prod[tgt_i])
+            tgt_tuple = (
+                tgt_id, int(owner[tgt_i]),
+                float(x[tgt_i]), float(y[tgt_i]),
+                float(radius[tgt_i]), int(ships[tgt_i]), tgt_prod_i,
+            )
+            tgt_radius = float(radius[tgt_i])
+
+            for src_i in my_planet_set:
+                if src_i == tgt_i:
+                    continue
+                src_ships_i = int(ships[src_i])
+                if src_ships_i <= _MIN_REINFORCE_SHIPS:
+                    continue
+                fleet_ships = min(int(math.ceil(shortfall)), src_ships_i - 1)
+                if fleet_ships < _MIN_REINFORCE_SHIPS:
+                    continue
+
+                src_pos = (float(x[src_i]), float(y[src_i]))
+                src_radius = float(radius[src_i])
+                aim = aim_orbiting(
+                    src_pos, src_radius, tgt_tuple, tgt_radius,
+                    fleet_ships, omega,
+                )
+                if aim is None:
+                    continue
+                aim_angle, _arrival, eta = aim
+                if eta is None or eta > max_eta or eta > enemy_eta:
+                    continue
+
+                atom = ActionSpec(
+                    from_planet_id=int(ids[src_i]),
+                    dir_angle=float(aim_angle),
+                    ships=fleet_ships,
+                    launch_turn=0,
+                    agent_id=my_id,
+                )
+                # Defensive priority: 2× prod weight + raw shortfall.
+                # Keeps own-planet retention atoms competitive with
+                # high-prod captures in the top-N cut.
+                score = 2.0 * float(tgt_prod_i) + float(shortfall)
+                out.append((atom, score))
+
+    # Top-N by cheap score (no cap when max_n is None or <= 0).
+    if max_n is None or max_n <= 0 or len(out) <= max_n:
+        return [a for a, _s in out]
+    out.sort(key=lambda pair: pair[1], reverse=True)
+    return [a for a, _s in out[:max_n]]
+
+
 # ---------------------------------------------------------------------------
 # Defensive-reinforce enumeration (Commit 1 of v8_scavenge port)
 # ---------------------------------------------------------------------------
