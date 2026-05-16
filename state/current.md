@@ -1,61 +1,70 @@
 # state/current.md — current submitted agent + tournament rank
 
-> Updated 2026-05-16 by `claude/recover-main-foundations-MV0e2` (v13 submit).
-> Previous update 2026-05-17 (v12 submit; v12 settled at μ=1142.3).
+> Updated 2026-05-16 by `claude/recover-main-foundations-MV0e2` (v15 submit).
+> Previous update 2026-05-16 (v13 submit). Live μ has shifted since:
+> v12 1142.3 → 1095.4 (more games settled lower); v13 793.2 → 1063.8 (more games settled).
 > All Score values pulled live from `kaggle competitions submissions orbit-wars`.
 
 ```yaml
 date: 2026-05-16
 days_to_deadline: 37                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v13_reactive    # PENDING; reactive opp model
-last_kernel_push: 2026-05-16 09:07:04 UTC
-last_submission_id: 52704189
+current_submitted_agent: v15_banded      # PENDING; multi-wait + banded dedup
+last_kernel_push: 2026-05-16 13:43:40 UTC
+last_submission_id: 52710995
 last_submission_status: PENDING
-last_submission_file: submissions/v8_scavenge.py  # 307 KB bundle; parity OK 516 turns
+last_submission_file: submissions/v15.py  # 309 KB bundle; parity OK 458 turns
 last_submission_message: |
-  v12: principled state-function fix on v8_scavenge base.
-  Three coordinated changes:
-  (1) Replaced strict-idle/step-0-mirror baseline with full opp
-      trajectory via lite_greedy_policy (bounce-fix added) replayed
-      identically in baseline + every candidate — common random
-      numbers, so opp's expansion cancels in Δ.
-  (2) Removed MAX_WAIT behavioural cap (PI directive: "not waiting
-      should emerge from a proper modeling not from a restriction").
-      Only structural wait_N + eta + SETTLE ≤ MAX_HORIZON cap remains.
-  (3) Fixed orbital aim for wait_N > 0: rotate BOTH src and tgt by
-      omega × wait_N (co-rotating planets preserve relative geometry).
-      Prior code rotated only target → wildly wrong angles.
-  Felipe seed 1492346051: 0/2 → 2/2 wins vs v7_0.
-  v13 = v12 + reactive opp in rollouts (dropped CRN/precomputed
-  opp_traj; _opp_actions_for_snap called inline per step in both
-  baseline and candidate rollouts so opp counter-launches react
-  to my captures, collapsing F2 over-credit on fragile captures).
-  Also includes lite_greedy neutral-fix (env rule: neutrals don't
-  accrue production). Local panel n=32: v7_0 78.1% Wlo=0.666 (was
-  v12's 0.700), v4_planner 87.5% Wlo=0.719 (was 0.579), v3.5.1
-  90.6% Wlo=0.758 (was 0.579). Big wins on v4/v3.5.1; small dip
-  on v7_0; all PASS. Bench 2P p95=210 max=273; 4P p95=178 max=342.
-  Felipe 2/2, 213tubo 2/2 (v12 was 0/2 on 213tubo seed).
-  Audit: audit/2026-05-17-state-function-principled-fix-results.md
+  v15: multi-wait grid + wait-N for feasible-now pairs + banded
+  (src, tgt, wait_band) dedup. Addresses PI directive on opening-game
+  premature convergence: "chooser converges too early; we do not wait
+  long enough; consider more actions."
+  Three coordinated changes (agents/v15/main.py):
+  (1) _wait_then_fire_candidate returns a list of variants (was single
+      tuple or None). _WAIT_EXTRA_SURPLUS = (0, 5, 12) — three fleet
+      sizes: just-enough, +5 surplus, +12 surplus. Larger fleet means
+      longer wait but more robust capture less prone to opp counter-
+      recapture in reactive-opp rollouts.
+  (2) Generate wait-N candidates for FEASIBLE-now pairs too (the
+      previous infeasible-only guard is gone). Feasible pairs now also
+      get the multi-wait grid, so the chooser sees "wait longer to
+      accumulate extra surplus" on planets it could otherwise fire-now
+      at.
+  (3) Stage-2 dedup changed from per-(src, tgt) → per-(src, tgt,
+      wait_band) where wait_band buckets wait_N: 0 (fire-now), 1..7
+      (short wait), >=8 (long wait). Load-bearing change: the rollout
+      validator now compares fire-now vs short-wait vs long-wait for
+      the same target. Previously cheap-Δ pre-selected wait_min (since
+      cheap-Δ strictly decreases in wait_N for the same tgt) and longer
+      waits never validated.
+  Funnel A/B Forrest seed step 80: 27 wait variants survived dedup
+  vs 10 in v13. 213tubo seed P1 flipped LOSS→WIN.
+  Panel n=32: v7_0 84.4% Wlo=0.682, v4_planner 90.6% Wlo=0.758,
+  v3.5.1 87.5% Wlo=0.719; worst Wlo 0.682 (v13's 0.666). PASS.
+  Head-to-head v15 vs v12 n=32: 68.8% Wlo=0.514 INCONCLUSIVE.
+  Head-to-head v15 vs v13 n=32: 68.8% Wlo=0.514 INCONCLUSIVE.
+  Bench 3 games: p50=90 p95=258 max=480; over_1000ms=0.
+  Panel max=906ms; head-to-head max=1245ms (occasional 4P outlier
+  above 1000ms ceiling — PI accepted risk).
+  Audit: f315dc7 commit + this session's diagnostic of Forrest 2P loss.
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation;
 # the third push auto-evicts the previous oldest).
 rolling_last_2:
-  - {agent: v13_reactive,   sub_id: 52704189, score: PENDING, status: PENDING,
+  - {agent: v15_banded,   sub_id: 52710995, score: PENDING, status: PENDING,
      episodes: 0, note: 'just submitted; initial μ in 5-10 min, σ settles 5-6h'}
-  - {agent: v12_principled, sub_id: 52699232, score: 1142.3, status: COMPLETE,
-     episodes: '~hundreds', note: 'team floor; v13 builds on v12 base'}
+  - {agent: v13_reactive, sub_id: 52704189, score: 1063.8, status: COMPLETE,
+     episodes: '~tens', note: 'current floor; v15 builds on v13 base'}
 evicted_recent:
-  - {agent: v9_scavenge, sub_id: 52687411, score: 1123.1, reason: evicted by v13 push}
-  - {agent: v8_scavenge, sub_id: 52684059, score: 1065.8, reason: evicted by v12 push}
-  - {agent: iter_v2,     sub_id: 52678866, score: 1036.0, reason: evicted by v9 push}
+  - {agent: v12_principled, sub_id: 52699232, score: 1095.4, reason: evicted by v15 push}
+  - {agent: v9_scavenge,    sub_id: 52687411, score: 1119.9, reason: evicted by v13 push}
+  - {agent: v8_scavenge,    sub_id: 52684059, score: 1065.8, reason: evicted by v12 push}
 
-# Team leaderboard score = max(rolling_last_2) = max(v13, 1142.3)
-# Until v13 settles: team floor = 1142.3 (v12_principled)
-# Floor-protected: v13 cannot bring team below v12's 1142.3.
-# v12 → v13 prediction: median 1150-1170, range 1120-1200.
-tournament_rank_today: TBD / 2768 (await v13 settle)
-our_best_rank: v12_principled μ=1142.3 (#52699232 COMPLETE, ROLLING)
+# Team leaderboard score = max(rolling_last_2) = max(v15, v13=1063.8)
+# Until v15 settles: team floor = 1063.8 (v13_reactive)
+# Floor-protected: v15 cannot bring team below v13's 1063.8.
+# v13 → v15 prediction: median 1100-1150, range 1050-1200.
+tournament_rank_today: TBD / 2779 (await v15 settle)
+our_best_rank: v13_reactive μ=1063.8 (#52704189 COMPLETE, ROLLING)
 lb_top10_cliff: 1430                     # refresh on next pull
 
 # CALIBRATION WARNING (3 consecutive submissions over-predicted live):
