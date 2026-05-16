@@ -493,7 +493,15 @@ def _planet_threat_eta(planet, planets, fleets, owner):
         eta = int(d / spd) + 1
         if eta < best:
             best = eta
-    # (b) potential launches from stationary enemy planets.
+    # (b) potential launches from stationary enemy planets. Tightening
+    # over naive "every enemy is a threat": only count as a threat if
+    # the launching planet has enough ships to plausibly CAPTURE us
+    # (e_ships > our_garrison + production_during_flight). Avoids
+    # treating every nearby enemy as imminent danger when they're not
+    # actually big enough to launch a winning attack -- the
+    # pessimism trap that breaks aggressive plays.
+    p_ships = float(planet[5])
+    p_prod = float(planet[6])
     for ep in planets:
         ep_owner = int(ep[1])
         if ep_owner == owner or ep_owner < 0:
@@ -509,6 +517,11 @@ def _planet_threat_eta(planet, planets, fleets, owner):
         # larger fleets slower; floor at 0.5.
         spd = max(0.5, 6.0 / max(1.0, e_ships ** 0.25))
         eta = int(d / spd) + 1
+        # Capture-feasibility check: enemy must outgun our garrison
+        # at arrival (garrison + production_during_flight + 1).
+        defenders_at_eta = p_ships + p_prod * eta + 1.0
+        if e_ships <= defenders_at_eta:
+            continue
         if eta < best:
             best = eta
     return best
