@@ -1,5 +1,43 @@
 # state/hypothesis-board.md — open agent-design hypotheses
 
+## Open — v21_compound proposer-augmentation (2026-05-16)
+
+> Source: PI session brief 2026-05-16 — "fleets should know what mission
+> they're on, be efficient, and actions should compound through
+> geometry." Built on top of v20 dogpile (which 65.6% h2h vs v15).
+> Audit: `audit/2026-05-16-v21-compound-plan.md`.
+
+### H-compound — proposer-time efficiency + compounding bonus + TTL persistence
+
+Three new axes bundled in `agents/v21_compound`:
+
+1. **Sun-safe pre-filter at proposer time** (`lib/compound.fleet_path_safe`).
+   Drops candidates whose straight-line trajectory crosses the sun before
+   they reach the K-rollout validate stage. Verified by Rule 38: v20
+   sends 3 fleets / 3 games into the sun; v21 sends 0.
+
+2. **Compound bonus on cheap_marginal_value** (`lib/compound.compound_bonus`):
+   - rotation_alignment × production × 0.02 (planets drifting toward
+     our cluster centroid get a bonus)
+   - chain_bonus = 0.30 × follow-on PV (if capture unlocks a 15-turn
+     follow-on capture)
+   - carryforward_bonus (TTL-decayed nudge for live MissionBook commits)
+
+3. **MissionBook TTL persistence** (`lib/mission_book.py`). Commits each
+   chosen (src, tgt) with TTL=3 turns. Next turn's prerank pass adds a
+   carryforward bonus to matching candidates, reducing per-turn churn.
+   Commits expire on TTL=0, src-lost, or target-fulfilled.
+
+Falsification gate (deferred to next session per PI build-only):
+3-anchor Wilson-lo ≥ 0.55 panel vs `[v20, v15, v7_0]`. Per 5/16 lesson 2,
+h2h vs v20 is the FIRST gate. Submission decision waits for live v15/v20
+settle data.
+
+Rule 37 status: all three sub-axes are FRESH. Previous chooser-axis
+saturation (v7_1..v7_7), value-function asymmetric-compounding
+(v17/v18/v19), and chooser banded multi-wait (v14/v15) all live in a
+different axis class.
+
 ## Open — Geometry-conditional EDA (2026-05-14)
 
 > Five-mine EDA on 60 top-10 replays + (in-progress) ~500 self-play games.

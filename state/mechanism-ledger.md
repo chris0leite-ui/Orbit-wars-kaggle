@@ -40,6 +40,7 @@
 | v7_7-enemy-multiplier | v7_7_enemy_mult (drop-one + capture value + snipe ENEMY_MULTIPLIER=1.3) | 28.1% Wilson lo 15.6% FAIL | dead, pruned | H10 single-coef. Top-10's enemy-bias doesn't transfer as a blanket multiplier — likely emerges from BETTER targeting, not a priority shift. 2026-05-14. |
 | meta-strategy-framework (infra only) | replay capture, fingerprint (15 features, FEATURE_VERSION=1), manifold diagnostic | 5-class RF 80.5% at K=100 — gate (90%) not cleared | paused | ROI-family is one basin with 12-17% mutual confusion; broad-class routing partially works. |
 | shot-validator-labeling-pipeline | scripts/label_shot_outcomes.py + data/shot_validator/{schema.json, README.md} | 37k labeled examples (24-dim, 0/1) | parked | MLP training deferred. Tier-2 opp_model slot reserved. |
+| **v21-compound-proposer-augmentation** | v21_compound (sun-safe pre-filter + rotation_alignment bonus + chain_bonus + MissionBook TTL persistence on top of v20 dogpile) | Rule 38 sun-bug VERIFIED: v20 sends 3 fleets/3 games to sun; v21 sends 0/3. h2h A/B running. | **local-only (this session)** | Three NEW axes vs all prior chooser/value-function exhaustion (Rule 37): proposer-time filtering, geometric rotation awareness, mission persistence. `agents/v21_compound/main.py` + `lib/{compound,mission_book}.py` + `lib/geo/rotation.py`. Submission deferred (PI build-only). 2026-05-16. |
 
 ## Family taxonomy (seed list — expand as tried)
 

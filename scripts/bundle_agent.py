@@ -44,10 +44,19 @@ DEFAULT_LIB_ORDER = [
     "trajectory",
     "mechanism",
     "mission",
+    # v21_compound (2026-05-16): geo/rotation reuses orbit + geometry;
+    # mission_book has no lib deps; compound depends on geometry, fleet,
+    # geo/rotation, scoring (added below at line 50). Order matters:
+    # rotation before compound; mission_book anywhere (independent).
+    "geo/rotation",
+    "mission_book",
     # `scoring` exposes `pv_horizon` + `PV_GAMMA` used by missions/snipe
     # and missions/reinforce since H16 (2026-05-13). Must precede the
     # mission modules so the inlined symbols are visible at parse time.
     "scoring",
+    # compound depends on geo/rotation + scoring (pv_horizon) — must
+    # follow both.
+    "compound",
     "missions/snipe",
     "missions/reinforce",
     "missions/recapture",

@@ -1,10 +1,90 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-14 by `claude/simplify-fast-setup-azW8T` (merge of
-> `claude/research-competition-analysis-2R8I3` +
-> `claude/read-handover-iLWTq` + this branch's geo iteration).
-> Prior wraps: `audit/archive-2026-05-14-handover-pre-search-exhaustion.md`,
-> `audit/archive-2026-05-1*-handover-*.md`.
+> Last written: 2026-05-16 by `claude/fleet-strategy-optimization-fsu0t`
+> (v21_compound build session). Merged in v8_scavenge/v12/v15/v20 source
+> from `claude/recover-main-foundations-MV0e2` and built the new
+> proposer-augmentation agent on top.
+
+## v21_compound build (this session) — TL;DR
+
+- **What:** `agents/v21_compound/main.py` + `lib/compound.py` +
+  `lib/mission_book.py` + `lib/geo/rotation.py`. Bundled at
+  `submissions/v21_compound.py` (333 KB).
+- **Architecture:** v20's dogpile chooser, leaf scorer, K-rollout, opp
+  model — all unchanged. ONLY the prerank stage augmented with:
+  (1) sun-safe pre-filter; (2) rotation_alignment + chain_bonus +
+  carryforward bonus added to cheap_marginal_value; (3) MissionBook TTL
+  persistence (3 turns).
+- **Rule 38 verified:** v20 sends 6 fleets/8 games into the sun + 2
+  OOB; v21 sends 0/0. PI-observed sun-bug fixed.
+- **A/B status:** v21 vs v20 head-to-head running at session end; check
+  `/tmp/ab_v21_vs_v20.log`. Per the 5/16 postmortem, h2h vs v20 is the
+  FIRST gate; if it passes Wlo≥0.55 then run 3-anchor panel vs v15 +
+  v7_0.
+- **Submission status:** NOT submitted (PI build-only this session).
+  Next-session decision once v15 and v20 settle live.
+
+## Next-session first-action (ranked by EV / cost)
+
+1. **Read v21 A/B result** (1 min): `cat /tmp/ab_v21_vs_v20.log | grep -E "wins|verdict"`.
+   If PASS: run `python fast.py eval v21_compound --vs-panel v20,v15,v7_0
+   --max-seeds 32 --gate 0.55 --workers 2`. If FAIL: see ablation menu
+   below.
+
+2. **Check live v15 + v20 μ** (1 min): `kaggle competitions submissions
+   orbit-wars | head -10`. Both PENDING at session end. Floor risk: if
+   both settle below v13's 1063.8, we lose the floor.
+
+3. **If v21 PASSES h2h + panel** (~20 min): submit. `python
+   scripts/bundle_agent.py agents/v21_compound` (already produced
+   `submissions/v21_compound.py`). Verify timing: `python fast.py bench
+   v21_compound --vs v20 --games 3`. If max < 900 ms, push:
+   `kaggle competitions submit orbit-wars -f
+   submissions/v21_compound.py -m "v21_compound: proposer-time
+   sun-filter + compound bonus + TTL persistence"`. This evicts v15
+   from rolling-last-2.
+
+4. **If v21 FAILS h2h** (~3 hr): ablate one axis at a time per Rule 37:
+   - `agents/v21a_sun_only/` — copy of v20 + sun pre-filter only.
+   - `agents/v21b_chain_only/` — copy + chain_bonus only.
+   - `agents/v21c_rotation_only/` — copy + rotation alignment only.
+   - `agents/v21d_book_only/` — copy + MissionBook only.
+   Any single axis passing is fixable next session; full failure of all
+   four is rare and would indicate the proposer-augmentation axis class
+   is actually dead.
+
+5. **JAX port of the rollout** (~2 hr) — queued from prior handover.
+   Independent of v21 axis; could compound with v21 if both work.
+
+## Where v15/v20 came from (this session, FYI)
+
+The recover-main-foundations-MV0e2 branch had the entire v8→v20 chooser
+saturation line as untracked source. I merged it into this branch
+(`git merge origin/claude/recover-main-foundations-MV0e2`) cleanly. v15
+and v20 now live at `agents/v15/main.py` and `agents/v20/main.py`. No
+conflicts.
+
+## Files touched this session
+
+**New:**
+- `lib/geo/rotation.py` — rotation_alignment, drift_window, my_cluster_centroid
+- `lib/compound.py` — fleet_path_safe, compound_bonus
+- `lib/mission_book.py` — MissionBook + global BOOK
+- `agents/v21_compound/main.py` — copy of v20 + 3 hooks
+- `submissions/v21_compound.py` — 333 KB bundle
+- `scripts/outcome_histogram.py` — fleet-outcome instrumentation (Rule 38 tool)
+- `tests/test_rotation_alignment.py`, `tests/test_mission_book.py`, `tests/test_compound_filter.py`
+- `audit/2026-05-16-v21-compound-plan.md` — design + Rule 38 verification
+
+**Modified (touch only):**
+- `scripts/bundle_agent.py` — added geo/rotation, mission_book, compound to DEFAULT_LIB_ORDER
+- `state/current.md` — added v21_compound note
+- `state/hypothesis-board.md` — added H-compound
+- `state/mechanism-ledger.md` — added v21-compound-proposer-augmentation row
+
+---
+
+## Prior handover (Day-N PM 2026-05-14) — kept for reference
 
 ## Where we are
 

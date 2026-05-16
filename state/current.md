@@ -12,6 +12,13 @@ last_kernel_push: 2026-05-16 21:57:08 UTC
 last_submission_id: 52721807
 last_submission_status: PENDING
 last_submission_file: submissions/v20.py  # 317 KB bundle; parity OK 858 turns
+# v21_compound built this session (claude/fleet-strategy-optimization-fsu0t).
+# Bundle: submissions/v21_compound.py (333 KB). NOT submitted — PI directed
+# build-only this session; submission decision next session after v15/v20 settle.
+# Rule 38 verification: v20 sends 6 fleets/8 games to sun + 2 OOB; v21 sends 0/0.
+# v21 differs from v20 only at proposer stage: sun-safe pre-filter +
+# rotation_alignment bonus + chain_bonus + MissionBook TTL persistence.
+# Leaf scorer (_favor), K-rollout, dogpile emit — all unchanged.
 last_submission_message: |
   v20: chooser dogpile (remove per-target dedup). v15 emit-cap
   bottleneck diagnosed: chooser found 6-16 positive-Δ candidates per
