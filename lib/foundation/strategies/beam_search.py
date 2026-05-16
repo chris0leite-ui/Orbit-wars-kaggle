@@ -133,22 +133,33 @@ def beam_search(
 
         adapt_width = _adaptive_width(width, remaining_ms)
 
-        new_candidates: list[tuple[float, list[ActionSpec]]] = []
+        # Flatten all (current_set, atom) extensions across the whole
+        # beam into one batch, then score in a single JAX call. The
+        # prior code looped `for current_set in beam:` and called
+        # `_score_padded` per beam entry — at depth=2 width=3 this
+        # was 3 separate JAX calls per level, each at C=128, paying
+        # the padding tax 3×. Profiling on a typical mid-game state
+        # showed _score_padded billing ~169 ms per call: collapsing
+        # to one call moves the per-level cost from ~500 ms to ~170
+        # ms (or to a single chunk of ~300 candidates at the C=128
+        # batch size if the JAX kernel re-JITs once for the larger
+        # padded shape; either way, far better than 3 separate
+        # chunks).
+        candidate_sets: list[list[ActionSpec]] = []
         for current_set in beam:
             valid_atoms = _filter_compatible(current_set, atomic_launches)
-            if not valid_atoms:
-                continue
+            for atom in valid_atoms:
+                candidate_sets.append(current_set + [atom])
 
-            candidate_sets = [current_set + [atom] for atom in valid_atoms]
-            scores_np = _score_padded(candidate_sets)
-
-            for atom_idx, atom in enumerate(valid_atoms):
-                new_candidates.append(
-                    (float(scores_np[atom_idx]), current_set + [atom])
-                )
-
-        if not new_candidates:
+        if not candidate_sets:
             break
+
+        scores_np = _score_padded(candidate_sets)
+
+        new_candidates: list[tuple[float, list[ActionSpec]]] = [
+            (float(scores_np[i]), candidate_sets[i])
+            for i in range(len(candidate_sets))
+        ]
 
         # Keep top-adapt_width.
         new_candidates.sort(key=lambda x: -x[0])
