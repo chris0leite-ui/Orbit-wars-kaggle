@@ -658,6 +658,7 @@ def _score_action(snap_base, me, num_seats, src_id, angle, ships,
 
 
 def agent(obs, configuration=None):
+    t_agent_start = time.perf_counter()
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
     raw_planets = obs_d.get("planets", []) or []
@@ -822,7 +823,16 @@ def agent(obs, configuration=None):
     candidates.sort(key=lambda c: -c[0])
     k_maximin = _K_MAXIMIN_2P if num_seats == 2 else _K_MAXIMIN_4P
     short_list = candidates[:k_maximin]
-    if len(short_list) >= 2:
+    # Hard wallclock cap: maximin must finish before
+    # t_agent_start + (wallclock_ms - safety_ms). Safety margin
+    # accommodates the greedy emit + return overhead and one
+    # in-flight _score_action that's already past the check.
+    # 4P needs more safety because each fs_step is ~3x slower.
+    _maximin_safety_ms = 200.0 if num_seats == 2 else 300.0
+    t_hard_cap = t_agent_start + (
+        max(50.0, _effective_wallclock_ms() - _maximin_safety_ms) / 1000.0
+    )
+    if len(short_list) >= 2 and time.perf_counter() < t_hard_cap:
         # Extract our intents from the short list for counter_reinforce.
         our_intents = [
             [int(c[1].id), float(c[4]), int(c[3])]
@@ -842,7 +852,7 @@ def agent(obs, configuration=None):
         # (= v12 behavior).
         scores = [[c[0]] for c in short_list]  # seed with v12's delta
         for fn in archetype_fns:
-            if time.perf_counter() > t_deadline:
+            if time.perf_counter() > t_hard_cap:
                 break
             try:
                 arch_traj = _build_archetype_traj(
@@ -854,7 +864,7 @@ def agent(obs, configuration=None):
             except Exception:
                 continue
             for i, (_delta, src, _tgt, ships, angle, wait_N, horizon) in enumerate(short_list):
-                if time.perf_counter() > t_deadline:
+                if time.perf_counter() > t_hard_cap:
                     break
                 try:
                     d = _score_action(
