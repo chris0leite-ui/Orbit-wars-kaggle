@@ -493,37 +493,16 @@ def _planet_threat_eta(planet, planets, fleets, owner):
         eta = int(d / spd) + 1
         if eta < best:
             best = eta
-    # (b) potential launches from stationary enemy planets. Tightening
-    # over naive "every enemy is a threat": only count as a threat if
-    # the launching planet has enough ships to plausibly CAPTURE us
-    # (e_ships > our_garrison + production_during_flight). Avoids
-    # treating every nearby enemy as imminent danger when they're not
-    # actually big enough to launch a winning attack -- the
-    # pessimism trap that breaks aggressive plays.
-    p_ships = float(planet[5])
-    p_prod = float(planet[6])
-    for ep in planets:
-        ep_owner = int(ep[1])
-        if ep_owner == owner or ep_owner < 0:
-            continue
-        if int(ep[0]) == pid:
-            continue
-        e_ships = float(ep[5])
-        if e_ships <= 0:
-            continue
-        dx, dy = px - ep[2], py - ep[3]
-        d = (dx * dx + dy * dy) ** 0.5
-        # Cheap fleet-speed proxy (qualitative match to lib.fleet.speed):
-        # larger fleets slower; floor at 0.5.
-        spd = max(0.5, 6.0 / max(1.0, e_ships ** 0.25))
-        eta = int(d / spd) + 1
-        # Capture-feasibility check: enemy must outgun our garrison
-        # at arrival (garrison + production_during_flight + 1).
-        defenders_at_eta = p_ships + p_prod * eta + 1.0
-        if e_ships <= defenders_at_eta:
-            continue
-        if eta < best:
-            best = eta
+    # NOTE: deliberately ONLY in-flight fleets. The "potential launch
+    # from a stationary enemy planet" leg was tried in v15 Iter 1.0 +
+    # 1.1 and regressed Felipe/Naoism: F4 then discounted our SOURCE
+    # planet's production after we launched (because the depleted
+    # source looked vulnerable to a hypothetical counter-launch from
+    # the nearest enemy planet), so the chooser saw any aggressive
+    # launch as a self-inflicted favor penalty. Only treating
+    # IN-FLIGHT enemy fleets as threats keeps F4's value (correctly
+    # devaluing planets that are actually committed-to-be-lost)
+    # without punishing our own moves.
     return best
 
 
