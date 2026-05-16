@@ -539,8 +539,23 @@ def _favor(obs, me, num_seats=2):
     fleets = obs.fleets if hasattr(obs, "fleets") else obs.get("fleets", [])
     step = obs.step if hasattr(obs, "step") else obs.get("step", 0)
 
-    # Per-owner totals. v15 F4: weight each planet's production by
-    # how secure it is from opposing-color threats.
+    # v15 Iter 1 F4 vulnerability penalty REVERTED — three threat
+    # formulations (potential-launch + capture-feasibility; in-flight
+    # only; in-flight + capture-feasibility) all regressed Felipe /
+    # Naoism. Per CLAUDE.md Rule 37 (3-consecutive-falsification cap),
+    # F4 axis is empirically dead.
+    #
+    # Diagnosis: opp_traj's CRN cancellation makes F4 mostly add
+    # noise rather than signal. Δ favor between baseline (me=idle)
+    # and candidate replays the SAME opp_traj, so the planets opp
+    # threatens are identical in both leaves -> F4 discount applies
+    # equally -> cancels in Δ. F4 only differentiates candidates
+    # when our action CHANGES the threat landscape (e.g., depleting
+    # a source makes it vulnerable to in-flight fleets) -- and that
+    # second-order effect was net-negative empirically.
+    #
+    # Helper `_planet_threat_eta` kept for potential future use
+    # (e.g., F-other features that aren't about discounting prod).
     ships_by_owner = {}
     prod_by_owner = {}
     for p in planets:
@@ -548,19 +563,7 @@ def _favor(obs, me, num_seats=2):
         if owner < 0:
             continue
         ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(p[5])
-        # F4 weight: 1.0 if no threat; linearly decays to 0 as
-        # threat_eta approaches F4_THREAT_DEADLINE.
-        threat_eta = _planet_threat_eta(p, planets, fleets, owner)
-        if threat_eta < F4_THREAT_HORIZON:
-            weight = max(
-                0.0,
-                (threat_eta - F4_THREAT_DEADLINE) / F4_DECAY_WIDTH,
-            )
-        else:
-            weight = 1.0
-        prod_by_owner[owner] = (
-            prod_by_owner.get(owner, 0.0) + float(p[6]) * weight
-        )
+        prod_by_owner[owner] = prod_by_owner.get(owner, 0.0) + float(p[6])
     for f in fleets:
         owner = int(f[1])
         if owner < 0:
