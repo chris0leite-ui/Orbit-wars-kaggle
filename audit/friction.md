@@ -118,6 +118,74 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-16 (claude/recover-main-foundations-MV0e2 — v13 session)
+
+- `tag: restriction-tuning-before-modeling-fix` — when a failure
+  mode admits both a constant bump (MAX_*/MIN_*/threshold) and a
+  modeling fix (better opp/leaf/prediction), my default was to
+  propose the bump. PI re-articulated 3+ times this branch
+  (MAX_WAIT, MAX_HORIZON, MIN_FLEET_SIZE). **Fix:** promoted to
+  CLAUDE.md Rule 40 (prefer modeling-correctness over restriction-
+  tuning).
+- `tag: stop-hook-pressure-commits-speculative-WIP` — Stop-hook
+  warned on every uncommitted-changes turn; pressed me to commit
+  lite_greedy-neutral-fix before the v7_0 panel finished. Panel
+  showed Wlo 0.700 → 0.483; reverted (1c5e059). **Fix:** when a
+  change is being verified (panel/tests running), use `git stash`
+  to silence the hook without committing speculative work. Added
+  to kaggle-comp/improvements.md pending list.
+
+## 2026-05-16 (claude/recover-main-foundations-MV0e2 — v20 session)
+
+- `tag: panel-pass-without-h2h-vs-current` — v17 and v18 both
+  panel-PASSED against the legacy panel (v7_0, v4_planner, v3.5.1)
+  but FAILED head-to-head vs v15 (40.6%, 34.4%). I burned 30+ min
+  per panel run before checking the h2h vs same-family current
+  agent. **Fix:** make h2h vs current submitted agent the FIRST
+  gate (~15 min n=16 triage), not the LAST. Panel is a smoke test
+  for "not catastrophically broken," not a quality test. Promotion
+  candidate for `.claude/skills/kaggle-comp/improvements.md`.
+- `tag: value-function-change-without-calibration-baseline` — v15's
+  F2 = `(my_prod − opp_prod) × pv(500)` over-credits both sides
+  equally; the difference cancels the over-credit. Three F2-axis
+  changes (v16/17/18) shrunk F2 magnitude per planet → F1 ship
+  balance over-weighted → chooser became more conservative.
+  Never measured v15's F1:F2 ratio before proposing changes.
+  **Fix:** before any value-function change, run a single game
+  with v15 and log per-turn F1, F2, and F2/F1 ratio. Establish
+  the calibration baseline. Same applies to baseline rollout
+  changes (v19: me-policy made baseline "too good", chooser
+  emit-rate collapsed).
+- `tag: explicit-rewrite-of-implicit-behavior` — PI's "asymmetric
+  reach × defend" was ALREADY encoded in v15: rollout's reactive
+  opp catches fragile captures → leaf shows opp owning → my F2
+  drops via owner-flip. My explicit `_favor` rewrites were
+  REDUNDANT with this implicit handling AND broke F2 calibration.
+  **Fix:** before adding an explicit term, search the existing
+  agent for whether the rollout, the cheap-rank, or some other
+  pre-existing structure already encodes the behavior. Trust
+  "the simulator IS the value function" — if the simulator is
+  correct, value function changes are usually wrong.
+- `tag: sequential-falsification-across-axes-no-stopping-rule` —
+  Burned through v16 (F2 multiplier) → v17 (F2 hold-cap) → v18
+  (F2 prop-split) → v19 (baseline me-policy) all in one session.
+  Rule 37 caps at 3 on SAME axis but I jumped axes when 3 failed,
+  rationalizing each pivot as principled. The actual signal was
+  "stop and dig" not "try a different lever." **Fix:** when 3+
+  variants on any axis fail head-to-head, the next move is
+  instrumentation + write-up, NOT another axis. Promotion
+  candidate.
+- `tag: kaggle-cli-auth-needs-fresh-bootstrap-source` — `kaggle
+  competitions submit` returned auth error in main Bash session
+  even though session-start hook reported credentials OK.
+  KAGGLE_USERNAME/KAGGLE_KEY env vars aren't inherited across
+  Bash tool subprocesses; bootstrap.sh creates ~/.kaggle/kaggle.json
+  but the file wasn't present (rwxr-xr-x but no kaggle.json
+  inside). **Fix:** always wrap kaggle commands as
+  `bash -c 'source bootstrap.sh > /dev/null 2>&1 && kaggle …'`
+  to ensure credentials are mounted into the subprocess.
+
+
 ## 2026-05-15 (claude/bootstrap-read-handover-HjcdN — copycat branch)
 
 - `tag: pv-broadpool-incompatible` — Phase 3 copycat with
@@ -187,25 +255,6 @@ fix forward AND add a test.
 - `tag: trueskill-noise-vs-signal` — TrueSkill σ is large for the
   first ~24 h after submit (initial σ≈300, shrinks ∝ 1/√N). Wait
   ≥24 h before reading rank delta into strategy decisions.
-
-## 2026-05-15 (claude/fix-weak-game-starts-NhDQ3 — capture-and-secure)
-
-- `tag: detached-bg-killed-on-session-resume` — Long-running panel
-  suite died across two session boundaries despite `nohup setsid …
-  & disown`. The bash-tool's own `run_in_background` survived ~3 h
-  on the first run, but the next session's harness reset killed
-  the resume-script. **Root cause:** harness reaps process groups
-  at session-start regardless of detachment. **Fix:** for jobs
-  that must cross sessions, prefer the bash-tool `run_in_background`
-  + idempotent resume scripts that detect interrupted logs and
-  pick up missing variants. Logged on branch wrap-doc.
-- `tag: local-overpredict-2x` (3rd recurrence) — geo_recap panel
-  mean 60.9 % across 192 games. Pattern: v3.5.1 5/12 −15 pp,
-  geo v3.1 5/14 −7 pp, recap held from submit because expected
-  live ~54 % is not decisively above v7_pv's 1062.2 μ. **3× fired
-  ⇒ promotion candidate.** **Fix:** add a hard rule — local A/B
-  mean must clear (gate + discount), not gate alone. Promote to
-  `.claude/skills/kaggle-comp/improvements.md`.
 
 ## How to add an entry
 
