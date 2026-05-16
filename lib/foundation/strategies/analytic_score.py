@@ -51,7 +51,7 @@ import numpy as np
 
 from lib.aim import aim_orbiting
 from lib.foundation.actions import ActionSpec
-from lib.game.jax.jax_interpreter import jax_step
+from lib.game.jax.jax_interpreter import jax_step, jax_step_no_launch
 from lib.game.jax.jax_types import (
     GameState,
     MAX_AGENTS,
@@ -424,19 +424,6 @@ def score_candidates_vmap_value_prod(
             f"Phase B opp-mirror generalisation."
         )
 
-    # Strict-idle action tensors used for turns 1..K-1. Same shape as
-    # the live tensors but with -1 pids and zeros; `jax_step` interprets
-    # this as "no launches this turn from any seat."
-    idle_pids = jnp.full(
-        (MAX_AGENTS, MAX_LAUNCH_PER_AGENT), -1, dtype=jnp.int32,
-    )
-    idle_ang = jnp.zeros(
-        (MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.float32,
-    )
-    idle_sh = jnp.zeros(
-        (MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.int32,
-    )
-
     def score_one(my_pids, my_angles, my_ships):
         pids_full = jnp.full(
             (MAX_AGENTS, MAX_LAUNCH_PER_AGENT), -1, dtype=jnp.int32,
@@ -451,12 +438,15 @@ def score_candidates_vmap_value_prod(
         ang_full = ang_full.at[my_id].set(my_angles)
         sh_full = sh_full.at[my_id].set(my_ships)
 
-        # Turn 0: my candidate action.
+        # Turn 0: my candidate action via full jax_step.
         s = jax_step(state, pids_full, ang_full, sh_full)
         # Turns 1..K-1: strict-idle, so threats inbound at ETA ≤ K-1
         # land and any planet flips become visible to the leaf head.
+        # `jax_step_no_launch` omits `fleet_launch` — the dominant
+        # phase (55% of per-step cost) — since no seat launches on
+        # idle steps. Cuts the K-scan body roughly in half.
         def idle_body(s_in, _):
-            return jax_step(s_in, idle_pids, idle_ang, idle_sh), None
+            return jax_step_no_launch(s_in), None
         s, _ = jax.lax.scan(idle_body, s, None, length=K - 1)
         return value_with_future_production(s, my_id=my_id)
 

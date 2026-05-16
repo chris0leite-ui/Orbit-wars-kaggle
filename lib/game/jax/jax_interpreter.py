@@ -864,6 +864,40 @@ def jax_step(
     return state._replace(step=state.step + jnp.int32(1))
 
 
+def jax_step_no_launch(
+    state: GameState,
+    max_speed: float = 6.0,
+    episode_steps: int = 500,
+) -> GameState:
+    """Idle-step variant of `jax_step`: same physics, no `fleet_launch`.
+
+    For multi-turn rollouts where the candidate's action is applied on
+    turn 0 only and turns 1..K-1 are strict-idle (no launches from
+    either seat), running the full `jax_step` is wasteful — its
+    `fleet_launch` phase is 55% of per-step cost on a typical
+    mid-game state (2.78 ms / 5.05 ms profiled 2026-05-16). That phase
+    runs a Python-unrolled `MAX_AGENTS × MAX_LAUNCH_PER_AGENT = 16`
+    iteration loop with a `cumsum` over `MAX_FLEETS=256` and seven
+    `at[].set` scatter writes per iteration, even when every action
+    slot holds the sentinel `pid=-1`.
+
+    Skipping `fleet_launch` on idle steps cuts per-K-scan compute
+    roughly in half. Used by `score_candidates_vmap_value_prod` to
+    keep the K-step value-head rollout under the live 1000 ms budget.
+    """
+    state = comet_expire(state)
+    state = comet_spawn(state)
+    # `fleet_launch` skipped — all actions are sentinel-only on idle steps.
+    state = production_tick(state)
+    state = planet_path_compute(state)
+    state = comet_path_advance(state)
+    state, fleet_hits_planet = fleet_movement(state, max_speed=max_speed)
+    state = apply_planet_movement(state)
+    state = combat_resolution(state, fleet_hits_planet)
+    state = terminate(state, episode_steps=episode_steps)
+    return state._replace(step=state.step + jnp.int32(1))
+
+
 # Convenience: a partial `jax_step` covering ONLY the phases ported so
 # far. Useful for parity-testing the implemented phases in isolation.
 # The full jax_step (sub-phase 1c) will chain ALL phases.

@@ -85,7 +85,7 @@ class AnalyticStrategy:
         *,
         width: int = 3,
         depth: int = 2,
-        K: int = 6,
+        K: int = 8,
         budget_ms: float = 800.0,
         opp_aggressive: bool = True,
         enable_chainer: bool = True,
