@@ -23,8 +23,29 @@
   v7_0.
 - **Submission status:** NOT submitted (PI build-only this session).
   Next-session decision once v15 and v20 settle live.
+- **⚠️ BUNDLE PARITY BROKEN:** `submissions/v21_compound.py` on seed 1
+  loses where `agents/v21_compound/main.py` wins (1/1 MISMATCH probed
+  before parity-check timed out at 5 min). Bundle is NOT safe to submit
+  until parity is fixed. Likely cause: bundle's adaptive
+  `n_affordable_validate` differs from source's because per-step
+  wallclock cost is measured slightly differently in the inlined
+  context. See "Next-session first action" item 0.
 
 ## Next-session first-action (ranked by EV / cost)
+
+0. **Fix bundle-source parity for v21_compound** (~1 hr). Probe: run
+   `python -c "from kaggle_environments import make; e=make('orbit_wars',
+   configuration={'seed':1}); e.run(['agents/v21_compound/main.py',
+   'agents/v20/main.py']); print(e.steps[-1][0].reward)"` and the bundle
+   equivalent — one returns 1, the other -1. v20's bundle (when it
+   existed) had a `ORBIT_WARS_PARITY_WALLCLOCK_MS` env var override
+   exactly for this reason — see `agents/v20/main.py` for the
+   `_effective_wallclock_ms()` function. The v21 source inherits this
+   knob unchanged. Suspect: bundle's import overhead at session start
+   shifts the per-step probe, changing n_affordable, changing which
+   candidates get validated, changing emit decisions. Fix: re-bundle
+   with explicit wallclock cap, or inline _effective_wallclock_ms with
+   a hardcoded value matching what the source observed in bench.
 
 1. **Read v21 A/B result** (1 min): `cat /tmp/ab_v21_vs_v20.log | grep -E "wins|verdict"`.
    If PASS: run `python fast.py eval v21_compound --vs-panel v20,v15,v7_0
