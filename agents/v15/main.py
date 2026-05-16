@@ -958,6 +958,36 @@ def agent(obs, configuration=None):
     if not candidates:
         return []
 
+    # v15 Iter 2.1 opportunity-cost filter for joint candidates.
+    # A joint candidate reserves 2 sources; its Δ must beat the SUM of
+    # the best alternative singles from those sources -- otherwise we
+    # could have made 2 separate moves with higher combined value.
+    # Without this filter, high-Δ joints get sorted first and crowd
+    # out 1-2 good singles each turn, regressing head-to-head.
+    best_single_by_src = {}  # src_id -> best Δ among singles
+    for c in candidates:
+        if c[6] is None:  # single
+            src_id = int(c[1].id)
+            d = c[0]
+            if best_single_by_src.get(src_id, -1e9) < d:
+                best_single_by_src[src_id] = d
+    filtered = []
+    for c in candidates:
+        if c[6] is None:
+            filtered.append(c)
+            continue
+        # Joint: c[1] is src1, c[6] is src2
+        s1_id = int(c[1].id)
+        s2_id = int(c[6].id)
+        alt = best_single_by_src.get(s1_id, 0.0) + best_single_by_src.get(s2_id, 0.0)
+        if c[0] > alt:
+            filtered.append(c)
+        # else: skip joint — sum of singles would do better.
+    candidates = filtered
+
+    if not candidates:
+        return []
+
     # Greedy non-dogpile emit: max 1 launch per source / per target per turn.
     # Joint candidates reserve BOTH sources and the target; if accepted,
     # both intents are emitted on this turn.
