@@ -1,0 +1,607 @@
+{
+  "submission_id": "52699232",
+  "generated_utc": "2026-05-16T08:31:06Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 43,
+  "n_played": 43,
+  "wins_total": 20,
+  "winrate_total": 0.46511627906976744,
+  "by_size": {
+    "2": {
+      "n": 24,
+      "wins": 13,
+      "winrate": 0.5416666666666666
+    },
+    "4": {
+      "n": 19,
+      "wins": 7,
+      "winrate": 0.3684210526315789
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 18,
+    "1": 15,
+    "2": 9,
+    "3": 4
+  },
+  "episode_length_steps": {
+    "n": 43,
+    "min": 108,
+    "q1": 145,
+    "median": 190,
+    "q3": 245,
+    "max": 358,
+    "mean": 203.86046511627907
+  },
+  "opponents": [
+    {
+      "name": "unosss",
+      "seen": 3,
+      "beat_us": 0
+    },
+    {
+      "name": "Dapp",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "213tubo",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "sash",
+      "seen": 2,
+      "beat_us": 2
+    },
+    {
+      "name": "ReLU",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "Komil Parmar",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "Boey",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "aDg4b",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "Kha Vo",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "DONJYARAHOI",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "liujiujiu",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Event Horizon",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "[RU] Nikita Kuznetsov",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "qinfuyao",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "bgsszsa",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Cyril Vincler",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "gasin",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Retlinac",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Andnat Peace",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "[Deleted] 99262de5-02e8-402e-bb87-1cb3f2e93528",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "lucataco",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Leszek G\u00f3ra",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "SamaReddy94",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Claws",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "zorac",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Forrest",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "amoshyc",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "koh",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "montplusa",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\u5bff!",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Lucas Boesen",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "TonyK",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Roche Overflow",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "mmath2",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ush",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Vincent Schuler",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kevin Cao",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "\u8036\u270c",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ra5anchor",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Sheeesh---",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Hailstorm",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "\ud83d\udef0\ufe0f Low-Orbit Losers",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Mooegi",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "SiestaGuru",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "hazy_viper",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Nandodemo",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "ichiro_9023",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "c-number",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "DustyRusty",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Chalyx",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "SonOfNike",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Anh Ph\u00e1t T\u00f4",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Oleh Patsan",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Maruichi01",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "nesya",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "kishizaki-sci",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Gypaets",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "GURUSU",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "asdf",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "bengle",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Qixiu",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "\u65b0\u7c73\u30a8\u30f3\u30b8\u30cb\u30a2\u5341\u4e00\u53f7",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ryusei_0612",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "01123",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Tim Krige",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Mahdieh Rezaie",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ha Quang Minh",
+      "seen": 1,
+      "beat_us": 0
+    }
+  ],
+  "losses": [
+    {
+      "episode": "episode-76715073",
+      "size": 2,
+      "opponents": [
+        "213tubo"
+      ],
+      "winner": "213tubo",
+      "steps": 128
+    },
+    {
+      "episode": "episode-76715424",
+      "size": 4,
+      "opponents": [
+        "SamaReddy94",
+        "Claws",
+        "zorac"
+      ],
+      "winner": "SamaReddy94",
+      "steps": 345
+    },
+    {
+      "episode": "episode-76715670",
+      "size": 4,
+      "opponents": [
+        "Forrest",
+        "213tubo",
+        "sash"
+      ],
+      "winner": "sash",
+      "steps": 142
+    },
+    {
+      "episode": "episode-76715920",
+      "size": 4,
+      "opponents": [
+        "amoshyc",
+        "ReLU",
+        "koh"
+      ],
+      "winner": "ReLU",
+      "steps": 113
+    },
+    {
+      "episode": "episode-76717220",
+      "size": 4,
+      "opponents": [
+        "TonyK",
+        "Roche Overflow",
+        "mmath2"
+      ],
+      "winner": "TonyK",
+      "steps": 179
+    },
+    {
+      "episode": "episode-76717474",
+      "size": 4,
+      "opponents": [
+        "ush",
+        "sash",
+        "unosss"
+      ],
+      "winner": "sash",
+      "steps": 286
+    },
+    {
+      "episode": "episode-76718078",
+      "size": 2,
+      "opponents": [
+        "Kevin Cao"
+      ],
+      "winner": "Kevin Cao",
+      "steps": 183
+    },
+    {
+      "episode": "episode-76718450",
+      "size": 4,
+      "opponents": [
+        "\u8036\u270c",
+        "ra5anchor",
+        "Sheeesh---"
+      ],
+      "winner": "ra5anchor",
+      "steps": 358
+    },
+    {
+      "episode": "episode-76719023",
+      "size": 2,
+      "opponents": [
+        "Hailstorm"
+      ],
+      "winner": "Hailstorm",
+      "steps": 108
+    },
+    {
+      "episode": "episode-76719045",
+      "size": 2,
+      "opponents": [
+        "\ud83d\udef0\ufe0f Low-Orbit Losers"
+      ],
+      "winner": "\ud83d\udef0\ufe0f Low-Orbit Losers",
+      "steps": 174
+    },
+    {
+      "episode": "episode-76719397",
+      "size": 4,
+      "opponents": [
+        "Mooegi",
+        "SiestaGuru",
+        "hazy_viper"
+      ],
+      "winner": "Mooegi",
+      "steps": 245
+    },
+    {
+      "episode": "episode-76719645",
+      "size": 2,
+      "opponents": [
+        "Nandodemo"
+      ],
+      "winner": "Nandodemo",
+      "steps": 111
+    },
+    {
+      "episode": "episode-76719987",
+      "size": 2,
+      "opponents": [
+        "ichiro_9023"
+      ],
+      "winner": "ichiro_9023",
+      "steps": 256
+    },
+    {
+      "episode": "episode-76720593",
+      "size": 2,
+      "opponents": [
+        "c-number"
+      ],
+      "winner": "c-number",
+      "steps": 123
+    },
+    {
+      "episode": "episode-76720991",
+      "size": 2,
+      "opponents": [
+        "aDg4b"
+      ],
+      "winner": "aDg4b",
+      "steps": 226
+    },
+    {
+      "episode": "episode-76721351",
+      "size": 2,
+      "opponents": [
+        "DustyRusty"
+      ],
+      "winner": "DustyRusty",
+      "steps": 128
+    },
+    {
+      "episode": "episode-76721703",
+      "size": 2,
+      "opponents": [
+        "Dapp"
+      ],
+      "winner": "Dapp",
+      "steps": 229
+    },
+    {
+      "episode": "episode-76722765",
+      "size": 4,
+      "opponents": [
+        "Boey",
+        "Anh Ph\u00e1t T\u00f4",
+        "Oleh Patsan"
+      ],
+      "winner": "Boey",
+      "steps": 233
+    },
+    {
+      "episode": "episode-76723007",
+      "size": 2,
+      "opponents": [
+        "Kha Vo"
+      ],
+      "winner": "Kha Vo",
+      "steps": 190
+    },
+    {
+      "episode": "episode-76723356",
+      "size": 4,
+      "opponents": [
+        "ReLU",
+        "Maruichi01",
+        "DONJYARAHOI"
+      ],
+      "winner": "DONJYARAHOI",
+      "steps": 162
+    },
+    {
+      "episode": "episode-76723610",
+      "size": 4,
+      "opponents": [
+        "nesya",
+        "kishizaki-sci",
+        "Gypaets"
+      ],
+      "winner": "kishizaki-sci",
+      "steps": 227
+    },
+    {
+      "episode": "episode-76724210",
+      "size": 4,
+      "opponents": [
+        "asdf",
+        "bengle",
+        "Qixiu"
+      ],
+      "winner": "Qixiu",
+      "steps": 195
+    },
+    {
+      "episode": "episode-76724703",
+      "size": 4,
+      "opponents": [
+        "01123",
+        "Kha Vo",
+        "Tim Krige"
+      ],
+      "winner": "Tim Krige",
+      "steps": 144
+    }
+  ]
+}
