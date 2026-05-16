@@ -1,52 +1,54 @@
 # state/current.md — current submitted agent + tournament rank
 
-> Updated 2026-05-16 by `claude/recover-main-foundations-MV0e2` (v8_scavenge submit).
-> Previous update 2026-05-14 by `claude/simplify-fast-setup-azW8T`.
+> Updated 2026-05-17 by `claude/recover-main-foundations-MV0e2` (v12 submit).
+> Previous update 2026-05-16 (v8_scavenge submit).
 > All Score values pulled live from `kaggle competitions submissions orbit-wars`.
 
 ```yaml
-date: 2026-05-16
-days_to_deadline: 38                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v8_scavenge     # PENDING; structurally new chooser
-last_kernel_push: 2026-05-16 15:05:57 UTC
-last_submission_id: 52684059
+date: 2026-05-17
+days_to_deadline: 37                     # 2026-06-23 23:59 UTC minus today
+current_submitted_agent: v12_principled  # PENDING; principled state-function fix
+last_kernel_push: 2026-05-16 05:37:03 UTC
+last_submission_id: 52699232
 last_submission_status: PENDING
-last_submission_file: submissions/v8_scavenge.py  # 302 KB bundle; sha256:86565447ab0e108e
+last_submission_file: submissions/v8_scavenge.py  # 308 KB bundle; parity OK 794 turns
 last_submission_message: |
-  v8_scavenge: depth-0 marginal-delta chooser (fast_sim K-step +
-  idle-baseline subtraction) + F1+F2 favor leaf + WorldModel-aware
-  reinforce missions for threatened planets. STRUCTURALLY DIFFERENT
-  from v7 stack: no mirror opp (strict idle in rollout), no PV_GAMMA,
-  custom per-source nearest-K × ship-grid enumerator, two-stage
-  scoring (cheap analytic pre-rank + fast_sim validate top-N),
-  adaptive N_VALIDATE from per-step probe. Hand-rolled
-  lib.aim.aim_orbiting emit (no mechanism pipeline).
-  Local panel n=64: v7_0 68.8% Wlo=0.566, v4_planner 75.0% Wlo=0.632,
-  v3.5.1 75.0% Wlo=0.579. Wallclock p95=235ms max=891ms.
-  Submitted for diversification: iter v1/v2 are small tweaks on v7
-  stack; v8 is structurally distinct so the live signal informs new
-  directions.
+  v12: principled state-function fix on v8_scavenge base.
+  Three coordinated changes:
+  (1) Replaced strict-idle/step-0-mirror baseline with full opp
+      trajectory via lite_greedy_policy (bounce-fix added) replayed
+      identically in baseline + every candidate — common random
+      numbers, so opp's expansion cancels in Δ.
+  (2) Removed MAX_WAIT behavioural cap (PI directive: "not waiting
+      should emerge from a proper modeling not from a restriction").
+      Only structural wait_N + eta + SETTLE ≤ MAX_HORIZON cap remains.
+  (3) Fixed orbital aim for wait_N > 0: rotate BOTH src and tgt by
+      omega × wait_N (co-rotating planets preserve relative geometry).
+      Prior code rotated only target → wildly wrong angles.
+  Felipe seed 1492346051: 0/2 → 2/2 wins vs v7_0.
+  Local panel n=32: v7_0 81.2% Wlo=0.700 (up from v8's 75% Wlo=0.579),
+  v4_planner 75% Wlo=0.579, v3.5.1 75% Wlo=0.579.
+  Bench p95=116ms max=213ms zero over 1000ms.
+  Audit: audit/2026-05-17-state-function-principled-fix-results.md
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation;
 # the third push auto-evicts the previous oldest).
 rolling_last_2:
-  - {agent: v8_scavenge, sub_id: 52684059, score: PENDING, status: PENDING,
+  - {agent: v12_principled, sub_id: 52699232, score: PENDING, status: PENDING,
      episodes: 0, note: 'just submitted; initial μ in 5-10 min, σ settles 5-6h'}
-  - {agent: iter_v2,     sub_id: 52678866, score: 1028.2,  status: COMPLETE,
-     episodes: ~80, note: 'carrying team score floor until v8 settles'}
+  - {agent: v9_scavenge,    sub_id: 52687411, score: 1120.6, status: COMPLETE,
+     episodes: '~hundreds', note: 'team floor; principled-fix builds on v9 base'}
 evicted_recent:
-  - {agent: iter_v1, sub_id: 52661990, score: 1034.7, reason: evicted by v8_scavenge push}
-  - {agent: geo,     sub_id: 52643676, score: 1004.9, reason: evicted by iter_v1 push (2026-05-14)}
-  - {agent: v7_pv,   sub_id: 52630118, score: 1053.5, reason: evicted by iter_v2 push (2026-05-15)}
+  - {agent: v8_scavenge, sub_id: 52684059, score: 1068.6, reason: evicted by v12 push}
+  - {agent: iter_v2,     sub_id: 52678866, score: 1036.0, reason: evicted by v9 push}
+  - {agent: iter_v1,     sub_id: 52661990, score: 1034.7, reason: evicted earlier}
 
-# Team leaderboard score = max(rolling_last_2) = max(v8, 1028.2)
-# Until v8 settles: team floor = 1028.2 (iter_v2)
-# If v8 > 1028.2 live: team score improves
-# Was 1053.5 (v7_pv) before the iter_v1/v2 churn; team net regressed
-# ~25μ over the past 2 days due to local-overpredicts-live calibration
-# failures (see warning below).
-tournament_rank_today: TBD / 2729 (await v8 settle)
-our_best_rank: iter_v1 μ=1034.7 (#52661990 COMPLETE, NOW EVICTED)
+# Team leaderboard score = max(rolling_last_2) = max(v12, 1120.6)
+# Until v12 settles: team floor = 1120.6 (v9_scavenge)
+# If v12 > 1120.6 live: team score improves
+# v9 raised the team well above prior best (v7_pv 1053.5).
+tournament_rank_today: TBD / 2760 (await v12 settle)
+our_best_rank: v9_scavenge μ=1120.6 (#52687411 COMPLETE, ROLLING)
 lb_top10_cliff: 1430                     # refresh on next pull
 
 # CALIBRATION WARNING (3 consecutive submissions over-predicted live):
