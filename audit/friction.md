@@ -268,6 +268,96 @@ tag fires 3+ times, it goes to
 `.claude/skills/kaggle-comp/improvements.md` and then into the
 relevant skill file or source code, not back into friction.md.
 
+## 2026-05-16 (claude/review-foundations-progress-14HXp — v13/v14/v15 chooser saturation)
+
+- `tag: panel-misleads-head-to-head` (4th recurrence) — v13's
+  hybrid-policy panel showed 75 → 94% vs v3.5.1; head-to-head vs
+  v12 was 47%. v14 maximin panel similar, h2h 50%. v15 Iter 3
+  reactive opp panel preserved, h2h 45%. **Root cause:** panel
+  measures vs ONE opponent class at a time; ladder is a mixture
+  AND a same-family agent (v12) plays moves the panel doesn't.
+  When opp model in opp_traj matches a panel opponent's pipeline,
+  panel gain is panel-specific overfitting that doesn't transfer.
+  **Fix:** require head-to-head Wlo>0.50 vs the same-family agent
+  (v12) at n≥32 as a hard gate before submission. Panel is
+  necessary but NOT sufficient. 4× fired ⇒ promotion candidate.
+  Promote to `.claude/skills/kaggle-comp/improvements.md` as a
+  rule: panel without v12-h2h gate is incomplete.
+- `tag: crn-cancellation-blunts-leaf-scorer-features` — Adding F4
+  (vulnerability penalty) to `_favor` regressed Felipe / Naoism
+  / head-to-head across 3 threat-formulation variants. **Root
+  cause:** opp_traj is replayed identically in baseline + every
+  candidate (CRN variance reduction). Same threatened planets
+  appear in both leaves → F4 discount applies equally → cancels
+  in Δ. F4 only differentiates via second-order effects (our
+  launch depletes a source → source vulnerable in candidate but
+  not baseline) — which is net-NEGATIVE (punishes aggressive
+  plays). **Fix:** leaf-scorer modifications need to evaluate
+  via h2h vs v12, not via lift on panel. Hand-crafted features
+  on top of v9 `_favor` are unlikely to lift — CRN invariance
+  is a structural barrier. Path forward: learned value head
+  (replaces scorer entirely) or empirical loss-pattern analysis.
+- `tag: agent-exception-swallowed-by-kaggle-env` — v15 Iter 3
+  maximin code referenced `t_agent_start` without setting it
+  at agent() entry. Silently NameError'd in 2P games where
+  short_list >= 2 → agent returned [] → games lost. Diagnostic
+  signal: turn-ms p95 = 13ms (way below normal 50-150ms) =
+  agent crashing early. **Root cause:** kaggle_environments
+  catches all agent exceptions and treats them as the agent
+  returning nothing. Errors don't surface in fast.py output.
+  **Fix:** when adding new code paths into agent(), smoke-test
+  by inspecting turn-ms — anything < 30ms p95 means the agent
+  is short-circuiting (crashing OR returning [] for a non-
+  trivial reason). Inspect for silent exception swallowing.
+- `tag: dogpile-overestimates-without-reactive-opp` — v15 Iter 2
+  joint candidates (multi-source → single target) regressed
+  head-to-head 28-31% vs v12, both raw and with opp-cost filter.
+  **Root cause:** joint Δ at horizon K assumes opp_traj built
+  once at turn start — opp doesn't react to our dogpile, so
+  leaf state shows us "owning" a far-away hard-to-defend capture
+  without accounting for opp's counter-attack. Δ over-estimates
+  joint value. **Fix:** action-space expansion (dogpile,
+  coordinated multi-target) needs reactive opp model FIRST.
+  Cross-iteration learning: the three diagnosed root causes
+  (scorer/action/opp) are NOT independent — they compose via
+  the K-step fixed-opp-rollout invariance. Order of fix
+  attempts matters: opp reactivity must come before action-
+  space expansion.
+- `tag: chooser-family-structural-saturation` — Three iterations
+  (F4×3, dogpile×2, reactive-step-0×1) across all three
+  diagnosed root cause axes. Best result: parity (45%). None
+  lifted head-to-head vs v12. **Empirical conclusion:**
+  v9-family chooser (candidate enumeration + _favor + opp_traj
+  + K-step rollout) is structurally saturated at μ~1120. Surface
+  modifications cannot break the ceiling. **Fix:** future
+  sessions should not iterate on v9-family components without
+  first running an empirical loss-pattern analysis (path A) or
+  pivoting to a learned value head (path B) or different
+  chooser family (path C). Promote: add to standard practice —
+  any new chooser variant must beat v12 h2h at n≥32 before
+  expecting ladder lift. The 7 iterations this session are a
+  cautionary tale.
+- `tag: early-trueskill-mu-unreliable` — v12's ladder score
+  settled from 1217.7 → 1099.3 as more games accumulated.
+  The +97μ "huge gain" was an early-window low-sample
+  artifact. Caused us to over-estimate v12 → over-estimate
+  v13/v14/v15 expected lift. **Fix:** wait 6h+ post-submit
+  before basing strategic decisions on a new submission's μ.
+  TrueSkill needs ~50+ games to converge; first 10 games can
+  be off by ±80μ. Document in WRAPUP that the team-floor
+  calculation uses SETTLED μ, not first-read μ.
+
+
+```
+- `tag: <kebab-slug>` — <session context>: <what happened>.
+  <Root cause>. **Fix:** <concrete action>.
+```
+
+Reuse tags. New tags get one cycle of grace before promotion. If a
+tag fires 3+ times, it goes to
+`.claude/skills/kaggle-comp/improvements.md` and then into the
+relevant skill file or source code, not back into friction.md.
+
 ## Anti-spam — what does NOT belong here
 
 - Successful experiments → `audit/YYYY-MM-DD-*.md`.
