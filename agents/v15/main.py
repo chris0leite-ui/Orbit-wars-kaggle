@@ -932,59 +932,24 @@ def agent(obs, configuration=None):
                 (delta, src, tgt, ships, angle, wait_N, None, 0, 0.0)
             )
 
-    # ---------------------------------------------------------------
-    # v15 Iter 2: dogpile candidates. For targets where no single
-    # source can capture alone, enumerate the smallest 2-source pair
-    # that can fund the capture. Score via _score_joint_action.
-    # ---------------------------------------------------------------
-    dogpile_cands = _enumerate_dogpile(
-        my_planets, target_pool, model, omega, me, world,
-    )
-    for cheap, s1, s2, tgt, sh1, sh2, a1, a2, horizon in dogpile_cands:
-        if time.perf_counter() > t_deadline:
-            break
-        if horizon >= len(baseline_favors):
-            horizon = len(baseline_favors) - 1
-        delta = _score_joint_action(
-            snap_base, me, num_seats,
-            [(int(s1.id), a1, sh1), (int(s2.id), a2, sh2)],
-            horizon, baseline_favors, opp_traj,
-        )
-        if delta > 0:
-            candidates.append(
-                (delta, s1, tgt, sh1, a1, 0, s2, sh2, a2)
-            )
-
-    if not candidates:
-        return []
-
-    # v15 Iter 2.1 opportunity-cost filter for joint candidates.
-    # A joint candidate reserves 2 sources; its Δ must beat the SUM of
-    # the best alternative singles from those sources -- otherwise we
-    # could have made 2 separate moves with higher combined value.
-    # Without this filter, high-Δ joints get sorted first and crowd
-    # out 1-2 good singles each turn, regressing head-to-head.
-    best_single_by_src = {}  # src_id -> best Δ among singles
-    for c in candidates:
-        if c[6] is None:  # single
-            src_id = int(c[1].id)
-            d = c[0]
-            if best_single_by_src.get(src_id, -1e9) < d:
-                best_single_by_src[src_id] = d
-    filtered = []
-    for c in candidates:
-        if c[6] is None:
-            filtered.append(c)
-            continue
-        # Joint: c[1] is src1, c[6] is src2
-        s1_id = int(c[1].id)
-        s2_id = int(c[6].id)
-        alt = best_single_by_src.get(s1_id, 0.0) + best_single_by_src.get(s2_id, 0.0)
-        if c[0] > alt:
-            filtered.append(c)
-        # else: skip joint — sum of singles would do better.
-    candidates = filtered
-
+    # v15 Iter 2 dogpile REMOVED — both raw (commit feda378) and
+    # opportunity-cost-filtered (commit 2c5b03f) versions regressed
+    # v15 vs v12 head-to-head: 10/32 (31.2%) and 9/32 (28.1%).
+    #
+    # Diagnosis (well-defined structural reason): a joint candidate
+    # commits 2 sources to attack 1 target where no single source
+    # can capture alone. The Δ favor at horizon K assumes opp_traj
+    # (built once at turn start) — opp does NOT react to our
+    # dogpile, so the leaf state shows us "owning" the captured
+    # planet without accounting for opp's counter-attack on what
+    # would be a far-away, hard-to-defend new acquisition. The Δ
+    # over-estimates dogpile's value because opp's reactive defense
+    # isn't modeled.
+    #
+    # Resolution: this is exactly the problem Iter 3 (reactive
+    # step-0 opp model) was designed to address. Dogpile may become
+    # viable once opp_traj reacts to specific candidate commitments.
+    # Defer dogpile to a future iteration on top of Iter 3.
     if not candidates:
         return []
 
