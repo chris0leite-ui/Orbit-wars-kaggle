@@ -1,43 +1,53 @@
 {
   "submission_id": "52699232",
-  "generated_utc": "2026-05-16T08:31:06Z",
+  "generated_utc": "2026-05-16T08:52:07Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 43,
-  "n_played": 43,
-  "wins_total": 20,
-  "winrate_total": 0.46511627906976744,
+  "n_episodes": 49,
+  "n_played": 49,
+  "wins_total": 25,
+  "winrate_total": 0.5102040816326531,
   "by_size": {
     "2": {
-      "n": 24,
-      "wins": 13,
-      "winrate": 0.5416666666666666
+      "n": 26,
+      "wins": 15,
+      "winrate": 0.5769230769230769
     },
     "4": {
-      "n": 19,
-      "wins": 7,
-      "winrate": 0.3684210526315789
+      "n": 23,
+      "wins": 10,
+      "winrate": 0.43478260869565216
     }
   },
   "self_match_episodes": 1,
   "seat_distribution": {
-    "0": 18,
-    "1": 15,
-    "2": 9,
+    "0": 21,
+    "1": 16,
+    "2": 11,
     "3": 4
   },
   "episode_length_steps": {
-    "n": 43,
+    "n": 49,
     "min": 108,
     "q1": 145,
-    "median": 190,
-    "q3": 245,
+    "median": 195,
+    "q3": 262,
     "max": 358,
-    "mean": 203.86046511627907
+    "mean": 209.6122448979592
   },
   "opponents": [
     {
       "name": "unosss",
       "seen": 3,
+      "beat_us": 0
+    },
+    {
+      "name": "Boey",
+      "seen": 3,
+      "beat_us": 1
+    },
+    {
+      "name": "Leszek G\u00f3ra",
+      "seen": 2,
       "beat_us": 0
     },
     {
@@ -47,6 +57,11 @@
     },
     {
       "name": "213tubo",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "Forrest",
       "seen": 2,
       "beat_us": 1
     },
@@ -61,12 +76,22 @@
       "beat_us": 1
     },
     {
+      "name": "\u8036\u270c",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
       "name": "Komil Parmar",
       "seen": 2,
       "beat_us": 0
     },
     {
-      "name": "Boey",
+      "name": "SiestaGuru",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "c-number",
       "seen": 2,
       "beat_us": 1
     },
@@ -74,6 +99,11 @@
       "name": "aDg4b",
       "seen": 2,
       "beat_us": 1
+    },
+    {
+      "name": "Anh Ph\u00e1t T\u00f4",
+      "seen": 2,
+      "beat_us": 0
     },
     {
       "name": "Kha Vo",
@@ -84,6 +114,11 @@
       "name": "DONJYARAHOI",
       "seen": 2,
       "beat_us": 1
+    },
+    {
+      "name": "Talim Aushakhman",
+      "seen": 2,
+      "beat_us": 0
     },
     {
       "name": "liujiujiu",
@@ -141,11 +176,6 @@
       "beat_us": 0
     },
     {
-      "name": "Leszek G\u00f3ra",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "SamaReddy94",
       "seen": 1,
       "beat_us": 1
@@ -157,11 +187,6 @@
     },
     {
       "name": "zorac",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
-      "name": "Forrest",
       "seen": 1,
       "beat_us": 0
     },
@@ -221,11 +246,6 @@
       "beat_us": 1
     },
     {
-      "name": "\u8036\u270c",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "ra5anchor",
       "seen": 1,
       "beat_us": 1
@@ -251,11 +271,6 @@
       "beat_us": 1
     },
     {
-      "name": "SiestaGuru",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "hazy_viper",
       "seen": 1,
       "beat_us": 0
@@ -271,11 +286,6 @@
       "beat_us": 1
     },
     {
-      "name": "c-number",
-      "seen": 1,
-      "beat_us": 1
-    },
-    {
       "name": "DustyRusty",
       "seen": 1,
       "beat_us": 1
@@ -287,11 +297,6 @@
     },
     {
       "name": "SonOfNike",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
-      "name": "Anh Ph\u00e1t T\u00f4",
       "seen": 1,
       "beat_us": 0
     },
@@ -367,6 +372,31 @@
     },
     {
       "name": "Ha Quang Minh",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "arcobi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Felipe Ferreira",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Klgv Klgv",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mille Initiate",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "marsianenergy",
       "seen": 1,
       "beat_us": 0
     }
@@ -602,6 +632,17 @@
       ],
       "winner": "Tim Krige",
       "steps": 144
+    },
+    {
+      "episode": "episode-76725965",
+      "size": 4,
+      "opponents": [
+        "Mille Initiate",
+        "Forrest",
+        "c-number"
+      ],
+      "winner": "Forrest",
+      "steps": 285
     }
   ]
 }
