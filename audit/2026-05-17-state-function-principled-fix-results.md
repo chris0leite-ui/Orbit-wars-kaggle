@@ -2,6 +2,71 @@
 
 Branch: `claude/recover-main-foundations-MV0e2`
 Builds on: f89c0ba (v11 Layer 1+2, partial structural fix)
+Commit (v12): 0910bf6
+Commit (v13): 30a5aeb
+Status: COMPLETE — v12 submitted (52699232 PENDING). v13 panel PASS;
+unsubmitted pending PI decision.
+
+## v13 update (reactive opp + neutral fix)
+
+PI directive after submitting v12: "find the root cause of the
+213tubo loss." Investigation:
+
+- `lib/opp_model.py:lite_greedy_policy` was treating neutrals as
+  accreting production. Env rule (orbit_wars.py:511-514) says neutrals
+  don't produce. Fixed → opp_traj correctly predicts opp captures
+  near targets in opening.
+- Standalone, that fix regressed v7_0 panel to Wlo=0.483. Investigation:
+  the chooser picked a `WAIT src24→tgt0` candidate with Δ=+372 that
+  actually captured planet 4 (prod=4) via swept-pair collision —
+  legitimate prod=4 gain, but at 1-ship surplus (fragile). F2 credited
+  the planet for the full remaining game (~99 units), but the rollout
+  ended at h=18 before opp_traj could counter-launch.
+- Root cause: `opp_traj` was precomputed once from me-idle, so it
+  didn't react to my candidate's captures. Extending MAX_HORIZON alone
+  didn't help because opp doesn't see my new planet.
+- Fix: dropped opp_traj precomputation. `_opp_actions_for_snap` is now
+  called at each rollout step in both `_build_idle_baseline` and
+  `_score_action`, so opp reacts to the evolving snap.
+
+### Panel (n=32, v7_0 continued to 64)
+
+| vs | v12 wins/n | v12 Wlo | v13 wins/n | v13 Wlo | Δ Wlo |
+|--|--|--|--|--|--|
+| v7_0 | 52/64 | 0.700 | 50/64 | 0.666 | -0.034 |
+| v4_planner | 24/32 | 0.579 | **28/32** | **0.719** | **+0.14** |
+| v3.5.1 | 24/32 | 0.579 | **29/32** | **0.758** | **+0.18** |
+
+All three PASS. v3.5.1 and v4_planner show strong gains; v7_0 slightly
+weaker but still well above the 0.55 gate.
+
+### Bench (3 games, standalone)
+
+```
+focal v8_scavenge: n=514 p50=68 p95=210 p99=249 max=273ms over_1000ms=0
+verdict: PASS  (gate: p95<800ms AND zero >=1000ms)
+```
+
+Cost ~2× v12 (lost CRN cancellation; opp_policy called per-step in
+every rollout). Still well under 1000ms ceiling.
+
+### Felipe / 213tubo seeds
+
+- Felipe seed 1492346051: 1-2/2 wins (timing-dependent due to
+  adaptive N_VALIDATE on per-step probe). Was 2/2 with v12.
+- 213tubo seed 1844543828 (v7_0 matchup): 2/2 wins. Was 0/2 with v12.
+
+### Next steps
+
+- (Optional) Submit v13 — pending PI decision.
+- Iterate on F2 leaf scoring if v7_0 -3pp matters more than v3.5.1/v4
+  +14-18pp gains.
+
+---
+
+## v12 baseline (for context)
+
+Builds on: f89c0ba (v11 Layer 1+2, partial structural fix)
 Commit: 0910bf6
 Status: COMPLETE — all panel + bench + tests PASS.
 
