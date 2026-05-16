@@ -156,3 +156,84 @@ If v13 regresses live (μ < v12 by ≥30 points):
 2. Diagnose: pull v13 ladder losses, classify by phase, look for
    opening-window failures (where top_tier_mirror_policy may have
    miscalibrated the chooser).
+
+---
+
+## ADDENDUM 2026-05-16 (post-head-to-head)
+
+### v12 ladder score settled lower
+
+Kaggle re-pull shows TrueSkill has settled with more games:
+- v12 sub 52699232: 1217.7 -> **1119.0** (the +97 mu was an early
+  low-sample snapshot)
+- v9  sub 52687411: 1120.6 -> **1123.1**
+- v8  sub 52684059: 1065.8 unchanged
+
+Team floor is NOT 1217.7. It is max(v9, v12) ~ 1123.
+
+### v13 vs v12 head-to-head
+
+```
+2P (fast.py eval, n=32):
+  v13 wins 15/32 (46.9%)  Wlo=0.309 Whi=0.636  INCONCLUSIVE
+  focal turn-ms p95=395 max=872
+
+4P (scripts/play4p.py, 5 seeds * 4 seats = 20 games):
+  v13 wins 7/20 (35.0%)  Wilson95=[18.1%, 56.7%]
+  4P random baseline = 25%; v13 only 10pp above random
+```
+
+Both tests put v13 indistinguishable from v12 (2P: CI straddles 50%;
+4P: CI straddles 25%).
+
+### Why the panel signal didn't generalize
+
+The v3.5.1 panel jump (75 -> 94%) was a panel-specific effect, not a
+generalizable improvement:
+
+- top_tier_mirror_policy IS v3.5.1's pipeline (aggressive snipe +
+  reinforce). When v13 builds opp_traj with top_tier_mirror for
+  steps 0-9, it predicts v3.5.1's exact moves. The chooser exploits
+  this perfectly -> 94% vs v3.5.1.
+- Against v12 (which uses v9's chooser + lite_greedy opp_traj),
+  top_tier_mirror_policy is a WRONG model. v12 doesn't play like
+  v3.5.1 -- it plays like v9. Modeling v12 as v3.5.1 is no more
+  accurate than modeling it as lite_greedy.
+- Hence: panel-vs-v3.5.1 +19pp, but head-to-head-vs-v12 +0pp.
+
+This is a textbook training-distribution-fit pattern. Lesson: panel
+results vs ONE opponent class don't predict ladder population perf.
+
+### Recommendation update
+
+**HOLD v13.** Submission would:
+- Evict v9 (1123) from rolling-last-2
+- v13 expected mu: ~1100-1130 (head-to-head says it's no better than
+  v12=1119 or v9=1123)
+- Net team-floor change: 0 to slightly negative
+
+Save today's 4 remaining slots for an idea with non-marginal lift.
+
+### What to try next (post-v13 paths)
+
+The v13 attempt taught us:
+1. v3.5.1 in opp_traj overfits to v3.5.1 panel; need a model that
+   generalizes to the ladder population (mixed v9-style, v3.5.1-style,
+   custom heuristics, etc.)
+2. The chooser-side improvements (v9's 4-fix stack, v12's opp_traj
+   baseline, hybrid policy) have plateaued at mu ~ 1120 -- diminishing
+   returns within this family.
+
+Promising directions:
+- **Different opp model** for opp_traj: not v3.5.1, not lite_greedy --
+  a small ML model trained on Maruichi/Felipe/Naoism actions from
+  ladder replays. The chooser is sound; the modeling layer needs
+  ladder-distribution-aware predictions.
+- **Receding-horizon planner upgrade** (v4_planner family) with v9-
+  chooser's 4 fixes ported in. v4_planner is structurally different;
+  may unlock different ladder behavior.
+- **MCTS / minimax chooser** at depth=2 with v9's leaf scorer (v7_minimax
+  exists; 4-fix port + opp_traj baseline TBD).
+- **Look at v12 ladder losses directly.** Pull 10-20 v12 ladder losses,
+  classify by phase, target the dominant failure mode. (Same methodology
+  that produced the 4-fix stack.)
