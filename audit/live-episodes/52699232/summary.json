@@ -1,16 +1,16 @@
 {
   "submission_id": "52699232",
-  "generated_utc": "2026-05-16T08:52:07Z",
+  "generated_utc": "2026-05-16T09:20:43Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 49,
-  "n_played": 49,
-  "wins_total": 25,
-  "winrate_total": 0.5102040816326531,
+  "n_episodes": 52,
+  "n_played": 52,
+  "wins_total": 26,
+  "winrate_total": 0.5,
   "by_size": {
     "2": {
-      "n": 26,
-      "wins": 15,
-      "winrate": 0.5769230769230769
+      "n": 29,
+      "wins": 16,
+      "winrate": 0.5517241379310345
     },
     "4": {
       "n": 23,
@@ -20,25 +20,30 @@
   },
   "self_match_episodes": 1,
   "seat_distribution": {
-    "0": 21,
-    "1": 16,
+    "0": 23,
+    "1": 17,
     "2": 11,
     "3": 4
   },
   "episode_length_steps": {
-    "n": 49,
+    "n": 52,
     "min": 108,
-    "q1": 145,
-    "median": 195,
+    "q1": 162,
+    "median": 204,
     "q3": 262,
-    "max": 358,
-    "mean": 209.6122448979592
+    "max": 500,
+    "mean": 216.98076923076923
   },
   "opponents": [
     {
       "name": "unosss",
       "seen": 3,
       "beat_us": 0
+    },
+    {
+      "name": "Forrest",
+      "seen": 3,
+      "beat_us": 2
     },
     {
       "name": "Boey",
@@ -57,11 +62,6 @@
     },
     {
       "name": "213tubo",
-      "seen": 2,
-      "beat_us": 1
-    },
-    {
-      "name": "Forrest",
       "seen": 2,
       "beat_us": 1
     },
@@ -112,6 +112,11 @@
     },
     {
       "name": "DONJYARAHOI",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "Tim Krige",
       "seen": 2,
       "beat_us": 1
     },
@@ -361,11 +366,6 @@
       "beat_us": 0
     },
     {
-      "name": "Tim Krige",
-      "seen": 1,
-      "beat_us": 1
-    },
-    {
       "name": "Mahdieh Rezaie",
       "seen": 1,
       "beat_us": 0
@@ -399,6 +399,11 @@
       "name": "marsianenergy",
       "seen": 1,
       "beat_us": 0
+    },
+    {
+      "name": "Naoism",
+      "seen": 1,
+      "beat_us": 1
     }
   ],
   "losses": [
@@ -643,6 +648,24 @@
       ],
       "winner": "Forrest",
       "steps": 285
+    },
+    {
+      "episode": "episode-76726921",
+      "size": 2,
+      "opponents": [
+        "Naoism"
+      ],
+      "winner": "Naoism",
+      "steps": 500
+    },
+    {
+      "episode": "episode-76727858",
+      "size": 2,
+      "opponents": [
+        "Forrest"
+      ],
+      "winner": "Forrest",
+      "steps": 256
     }
   ]
 }
