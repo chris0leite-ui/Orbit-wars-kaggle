@@ -1,17 +1,17 @@
 # state/current.md — current submitted agent + tournament rank
 
-> Updated 2026-05-17 by `claude/recover-main-foundations-MV0e2` (v12 submit).
-> Previous update 2026-05-16 (v8_scavenge submit).
+> Updated 2026-05-16 by `claude/recover-main-foundations-MV0e2` (v13 submit).
+> Previous update 2026-05-17 (v12 submit; v12 settled at μ=1142.3).
 > All Score values pulled live from `kaggle competitions submissions orbit-wars`.
 
 ```yaml
-date: 2026-05-17
+date: 2026-05-16
 days_to_deadline: 37                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v12_principled  # PENDING; principled state-function fix
-last_kernel_push: 2026-05-16 05:37:03 UTC
-last_submission_id: 52699232
+current_submitted_agent: v13_reactive    # PENDING; reactive opp model
+last_kernel_push: 2026-05-16 09:07:04 UTC
+last_submission_id: 52704189
 last_submission_status: PENDING
-last_submission_file: submissions/v8_scavenge.py  # 308 KB bundle; parity OK 794 turns
+last_submission_file: submissions/v8_scavenge.py  # 307 KB bundle; parity OK 516 turns
 last_submission_message: |
   v12: principled state-function fix on v8_scavenge base.
   Three coordinated changes:
@@ -26,29 +26,36 @@ last_submission_message: |
       omega × wait_N (co-rotating planets preserve relative geometry).
       Prior code rotated only target → wildly wrong angles.
   Felipe seed 1492346051: 0/2 → 2/2 wins vs v7_0.
-  Local panel n=32: v7_0 81.2% Wlo=0.700 (up from v8's 75% Wlo=0.579),
-  v4_planner 75% Wlo=0.579, v3.5.1 75% Wlo=0.579.
-  Bench p95=116ms max=213ms zero over 1000ms.
+  v13 = v12 + reactive opp in rollouts (dropped CRN/precomputed
+  opp_traj; _opp_actions_for_snap called inline per step in both
+  baseline and candidate rollouts so opp counter-launches react
+  to my captures, collapsing F2 over-credit on fragile captures).
+  Also includes lite_greedy neutral-fix (env rule: neutrals don't
+  accrue production). Local panel n=32: v7_0 78.1% Wlo=0.666 (was
+  v12's 0.700), v4_planner 87.5% Wlo=0.719 (was 0.579), v3.5.1
+  90.6% Wlo=0.758 (was 0.579). Big wins on v4/v3.5.1; small dip
+  on v7_0; all PASS. Bench 2P p95=210 max=273; 4P p95=178 max=342.
+  Felipe 2/2, 213tubo 2/2 (v12 was 0/2 on 213tubo seed).
   Audit: audit/2026-05-17-state-function-principled-fix-results.md
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation;
 # the third push auto-evicts the previous oldest).
 rolling_last_2:
-  - {agent: v12_principled, sub_id: 52699232, score: PENDING, status: PENDING,
+  - {agent: v13_reactive,   sub_id: 52704189, score: PENDING, status: PENDING,
      episodes: 0, note: 'just submitted; initial μ in 5-10 min, σ settles 5-6h'}
-  - {agent: v9_scavenge,    sub_id: 52687411, score: 1120.6, status: COMPLETE,
-     episodes: '~hundreds', note: 'team floor; principled-fix builds on v9 base'}
+  - {agent: v12_principled, sub_id: 52699232, score: 1142.3, status: COMPLETE,
+     episodes: '~hundreds', note: 'team floor; v13 builds on v12 base'}
 evicted_recent:
-  - {agent: v8_scavenge, sub_id: 52684059, score: 1068.6, reason: evicted by v12 push}
+  - {agent: v9_scavenge, sub_id: 52687411, score: 1123.1, reason: evicted by v13 push}
+  - {agent: v8_scavenge, sub_id: 52684059, score: 1065.8, reason: evicted by v12 push}
   - {agent: iter_v2,     sub_id: 52678866, score: 1036.0, reason: evicted by v9 push}
-  - {agent: iter_v1,     sub_id: 52661990, score: 1034.7, reason: evicted earlier}
 
-# Team leaderboard score = max(rolling_last_2) = max(v12, 1120.6)
-# Until v12 settles: team floor = 1120.6 (v9_scavenge)
-# If v12 > 1120.6 live: team score improves
-# v9 raised the team well above prior best (v7_pv 1053.5).
-tournament_rank_today: TBD / 2760 (await v12 settle)
-our_best_rank: v9_scavenge μ=1120.6 (#52687411 COMPLETE, ROLLING)
+# Team leaderboard score = max(rolling_last_2) = max(v13, 1142.3)
+# Until v13 settles: team floor = 1142.3 (v12_principled)
+# Floor-protected: v13 cannot bring team below v12's 1142.3.
+# v12 → v13 prediction: median 1150-1170, range 1120-1200.
+tournament_rank_today: TBD / 2768 (await v13 settle)
+our_best_rank: v12_principled μ=1142.3 (#52699232 COMPLETE, ROLLING)
 lb_top10_cliff: 1430                     # refresh on next pull
 
 # CALIBRATION WARNING (3 consecutive submissions over-predicted live):
