@@ -14,10 +14,14 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-import agents.v12.main as v12
+# Default target is v12; can be overridden via --agent.
+import importlib
+v12 = None  # set in instrument() based on --agent
 
 
-def instrument(steps_to_probe, replay_path, seat):
+def instrument(steps_to_probe, replay_path, seat, agent_module="agents.v12.main"):
+    global v12
+    v12 = importlib.import_module(agent_module)
     r = json.load(open(replay_path))
     rows = []
     for step in steps_to_probe:
@@ -143,9 +147,11 @@ def main():
     ap.add_argument("--replay", required=True)
     ap.add_argument("--seat", type=int, default=0)
     ap.add_argument("--steps", type=str, default="50,80,120,150,170,190")
+    ap.add_argument("--agent", default="agents.v12.main",
+                    help="Importable agent module (e.g. agents.v15.main)")
     args = ap.parse_args()
     steps = [int(s) for s in args.steps.split(",")]
-    rows = instrument(steps, args.replay, args.seat)
+    rows = instrument(steps, args.replay, args.seat, args.agent)
 
     print(f"{'step':>4} {'myP':>3} {'otP':>3} {'myS':>5} "
           f"{'enum':>5} {'cheap':>5} {'pairs':>5} {'wait':>4} "
