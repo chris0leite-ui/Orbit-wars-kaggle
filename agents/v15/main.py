@@ -596,6 +596,90 @@ def _favor(obs, me, num_seats=2):
 # ---------------------------------------------------------------------------
 
 
+def _build_reactive_traj(snap_base, me, num_seats, max_horizon,
+                         step0_override):
+    """v15 Iter 3: opp_traj where step 0 is OVERRIDDEN by step0_override
+    (dict {opp_id: action_list}) and steps 1..K-1 use lite_greedy.
+
+    Used to model opp's REACTIVE response to a specific candidate at
+    step 0 (e.g., defending the planet we attacked, attacking our
+    depleted source). Steps 1..K-1 stay lite_greedy for CRN: variance
+    reduction on the tail where candidate-specific effects fade.
+
+    If step0_override is None, behaves identically to
+    `_build_opp_trajectory` (lite_greedy throughout).
+    """
+    snap = fs_clone(snap_base)
+    out = []
+    for step_i in range(max_horizon):
+        if snap.fake_env.done:
+            out.append([[] for _ in range(num_seats)])
+            continue
+        actions = [[] for _ in range(num_seats)]
+        if step_i == 0 and step0_override is not None:
+            for opp_id in range(num_seats):
+                if opp_id == me:
+                    continue
+                actions[opp_id] = step0_override.get(opp_id, []) or []
+        else:
+            for opp_id in range(num_seats):
+                if opp_id == me:
+                    continue
+                try:
+                    actions[opp_id] = _opp_policy(snap.state[opp_id].observation) or []
+                except Exception:
+                    actions[opp_id] = []
+        out.append(actions)
+        snap = fs_step(snap, actions, in_place=True)
+    return out
+
+
+def _counter_reinforce_step0(target_id, target_planets, ships_we_send,
+                             num_seats, me):
+    """Compute step-0 action per opp_id where opp's nearest source to
+    `target_id` (with enough ships to fund our_ships + 1) sends that
+    fleet to defend. Returns dict {opp_id: [[src, angle, ships]]}.
+
+    Uses cheap straight-line aim/eta proxy; if the opp source's nearest
+    planet to target_id is far, opp may not actually be able to
+    reinforce in time — that's caught by the K-step rollout. The point
+    is to test the chooser against a PLAUSIBLE worst-case response,
+    not to perfectly model opp's behavior.
+    """
+    # Locate the target planet's (x, y).
+    target = None
+    for p in target_planets:
+        if int(p[0]) == int(target_id):
+            target = p
+            break
+    if target is None:
+        return {}
+    tx, ty = target[2], target[3]
+    out = {}
+    needed = max(1, int(ships_we_send) + 1)
+    for opp_id in range(num_seats):
+        if opp_id == me:
+            continue
+        # Find opp_id's planets and pick the nearest to target with
+        # enough ships.
+        opp_planets = [
+            p for p in target_planets
+            if int(p[1]) == opp_id and int(p[5]) >= needed
+        ]
+        if not opp_planets:
+            continue
+        nearest = min(
+            opp_planets,
+            key=lambda p: (p[2] - tx) ** 2 + (p[3] - ty) ** 2,
+        )
+        # Aim straight at target (cheap; orbit miss caught by rollout).
+        dx = tx - nearest[2]
+        dy = ty - nearest[3]
+        angle = math.atan2(dy, dx)
+        out[opp_id] = [[int(nearest[0]), float(angle), int(needed)]]
+    return out
+
+
 def _build_opp_trajectory(snap_base, me, num_seats, max_horizon):
     """Pre-compute the opp's action sequence over [0, max_horizon).
 
@@ -776,6 +860,7 @@ def _score_action(snap_base, me, num_seats, src_id, angle, ships,
 
 
 def agent(obs, configuration=None):
+    t_agent_start = time.perf_counter()
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
     raw_planets = obs_d.get("planets", []) or []
@@ -953,10 +1038,105 @@ def agent(obs, configuration=None):
     if not candidates:
         return []
 
+    # ---------------------------------------------------------------
+    # v15 Iter 3: reactive step-0 opp maximin reranking.
+    # For top-K validated candidates, score against 2 additional
+    # CANDIDATE-SPECIFIC opp_trajs (no_launch + counter_reinforce_target)
+    # alongside the existing lite_greedy traj. Pick the candidate
+    # with the best WORST-CASE score across the 3 scenarios.
+    # Differs from v14's maximin: counter_reinforce targets THE
+    # CANDIDATE'S target (not a fixed turn-state target), so opp_traj
+    # is candidate-reactive instead of candidate-static.
+    # ---------------------------------------------------------------
+    candidates.sort(key=lambda c: -c[0])
+    k_maximin = 3 if num_seats == 2 else 1  # 4P wallclock guardrail
+    short_list = candidates[:k_maximin]
+    if len(short_list) >= 2:
+        _maximin_safety_ms = 200.0 if num_seats == 2 else 300.0
+        t_hard_cap = t_agent_start + (
+            max(50.0, _effective_wallclock_ms() - _maximin_safety_ms) / 1000.0
+        )
+        if time.perf_counter() < t_hard_cap:
+            # Pre-build no_launch opp_traj (independent of candidate).
+            no_launch_override = {
+                opp_id: [] for opp_id in range(num_seats) if opp_id != me
+            }
+            try:
+                no_launch_traj = _build_reactive_traj(
+                    snap_base, me, num_seats, MAX_HORIZON, no_launch_override,
+                )
+                no_launch_baseline = _build_idle_baseline(
+                    snap_base, me, num_seats, MAX_HORIZON, no_launch_traj,
+                )
+            except Exception:
+                no_launch_traj = None
+                no_launch_baseline = None
+
+            # Per-candidate counter_reinforce scoring.
+            obs_planets = obs_d.get("planets", []) or []
+            new_scores = []  # parallel to short_list
+            for (delta_lg, src1, tgt, ships1, angle1, wait_N,
+                 src2, ships2, angle2) in short_list:
+                worst = delta_lg  # baseline score under lite_greedy
+                if time.perf_counter() > t_hard_cap:
+                    new_scores.append(worst)
+                    continue
+                horizon = max(MIN_HORIZON, MIN_HORIZON)
+                # Recompute horizon from the candidate's effective
+                # eta. We don't have it stored, so use a default.
+                # Score under no_launch.
+                if no_launch_traj is not None and no_launch_baseline is not None:
+                    try:
+                        # Need horizon. Use MAX_HORIZON - 1 as a safe
+                        # upper bound; same horizon for all scenarios.
+                        h = MAX_HORIZON - 1
+                        d_nl = _score_action(
+                            snap_base, me, num_seats,
+                            int(src1.id), angle1, ships1,
+                            h, no_launch_baseline, no_launch_traj,
+                            wait_N=wait_N,
+                        )
+                        if d_nl < worst:
+                            worst = d_nl
+                    except Exception:
+                        pass
+                # Score under counter_reinforce (candidate-specific).
+                if time.perf_counter() < t_hard_cap:
+                    try:
+                        cr_override = _counter_reinforce_step0(
+                            int(tgt.id), obs_planets, int(ships1),
+                            num_seats, me,
+                        )
+                        if cr_override:
+                            cr_traj = _build_reactive_traj(
+                                snap_base, me, num_seats, MAX_HORIZON,
+                                cr_override,
+                            )
+                            cr_baseline = _build_idle_baseline(
+                                snap_base, me, num_seats, MAX_HORIZON, cr_traj,
+                            )
+                            h = MAX_HORIZON - 1
+                            d_cr = _score_action(
+                                snap_base, me, num_seats,
+                                int(src1.id), angle1, ships1,
+                                h, cr_baseline, cr_traj, wait_N=wait_N,
+                            )
+                            if d_cr < worst:
+                                worst = d_cr
+                    except Exception:
+                        pass
+                new_scores.append(worst)
+
+            # Reorder short_list by worst-case scores; merge with tail.
+            if len(new_scores) == len(short_list):
+                best_i = max(range(len(short_list)), key=lambda i: new_scores[i])
+                chosen = short_list[best_i]
+                remaining = [c for i, c in enumerate(short_list) if i != best_i]
+                candidates = [chosen] + remaining + candidates[k_maximin:]
+
     # Greedy non-dogpile emit: max 1 launch per source / per target per turn.
     # Joint candidates reserve BOTH sources and the target; if accepted,
     # both intents are emitted on this turn.
-    candidates.sort(key=lambda c: -c[0])
     used_srcs, used_tgts = set(), set()
     moves = []
     for (_delta, src1, tgt, ships1, angle1, wait_N,
