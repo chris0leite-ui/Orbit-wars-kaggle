@@ -146,6 +146,7 @@ def enumerate_atomic_launches(
     *,
     ship_fractions: tuple[float, ...] = (0.5, 1.0),
     max_eta: int = 80,
+    nearest_k_per_source: int = 8,
 ) -> list[ActionSpec]:
     """Strategy-agnostic action enumeration.
 
@@ -154,8 +155,16 @@ def enumerate_atomic_launches(
     compute the orbit-aware aim angle via `lib.aim.aim_orbiting`. Drop
     if no valid intercept exists or ETA exceeds `max_eta`.
 
+    `nearest_k_per_source` caps targets per source to the `K` closest
+    by Euclidean distance. Matches v8_scavenge's `NUM_TARGETS_PER_SOURCE
+    =8` — keeps the beam budget bounded by reducing total atoms from
+    `|sources|×|alive|×|fractions|` to `|sources|×K×|fractions|`. The
+    nearest planets are also the ones a fleet can plausibly reach with
+    a usable ETA, so this trims mostly atoms that the `max_eta` filter
+    would have dropped anyway.
+
     Returns a list of `ActionSpec` (de-duplicated by (src, target,
-    fraction)). ~200-600 per typical mid-game state.
+    fraction)). ~80-200 per typical mid-game state with the cap.
 
     Strategy-agnostic: no mission framework, no proposer ranking. The
     beam search picks among these.
@@ -187,9 +196,14 @@ def enumerate_atomic_launches(
         src_radius = float(radius[src_i])
         src_ships = int(ships[src_i])
 
-        for tgt_i in all_targets:
-            if tgt_i == src_i:
-                continue
+        # Cap targets per source to the K closest by Euclidean distance.
+        candidates = [t for t in all_targets if t != src_i]
+        candidates.sort(
+            key=lambda t: (x[t] - x[src_i]) ** 2 + (y[t] - y[src_i]) ** 2
+        )
+        candidates = candidates[:nearest_k_per_source]
+
+        for tgt_i in candidates:
             tgt_tuple = (
                 int(ids[tgt_i]),
                 int(owner[tgt_i]),
