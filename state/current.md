@@ -1,6 +1,23 @@
 # state/current.md — current submitted agent + tournament rank
 
-> Updated 2026-05-14 by `claude/simplify-fast-setup-azW8T` (geo iteration).
+> Updated 2026-05-16 by `claude/review-foundations-progress-14HXp`
+> (v15 chooser-saturation iteration).
+>
+> **2026-05-16 status (rolling-last-2):**
+> - v13 (parallel branch's sub 52704189, 09:07 UTC): μ=1057.4
+> - v12 (sub 52699232): μ=1099.3 (settled lower from initial 1217.7)
+> - Team floor = max(rolling-last-2) = **1099.3** (v12 carries us)
+> - v9 (μ=1119.9) EVICTED today by the parallel branch's v13 push
+> - This branch (review-foundations-progress) made 0 submissions
+>   today: v15 across 7 iterations (F4×3, dogpile×2, reactive×1)
+>   produced parity at best vs v12 in h2h n=64. HOLD decision.
+> - Empirical conclusion: v9-family chooser is structurally
+>   saturated. See knowledge-base/thoughts/2026-05-16-chooser-family-
+>   saturation.md and audit/2026-05-16-v15-final-results.md.
+> - Next-session recommendation: Path A (v12 ladder-loss replay-pull
+>   classification) before any further chooser-variant iteration.
+
+> Original update 2026-05-14 by `claude/simplify-fast-setup-azW8T` (geo iteration).
 > Merged forward from `claude/research-competition-analysis-2R8I3` +
 > `claude/read-handover-iLWTq`. All Score values pulled live from
 > `kaggle competitions submissions orbit-wars`.
