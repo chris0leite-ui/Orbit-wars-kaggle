@@ -313,66 +313,94 @@ def _enumerate_ship_counts_basic(src, tgt, model, omega, me, world):
     return sorted(sizes)
 
 
-def _wait_then_fire_candidate(src, tgt, model, omega, me):
-    """Generate a single "wait N turns then fire" candidate for one
-    (src, tgt) pair, OR None if not applicable. v10 mechanism.
+_WAIT_EXTRA_SURPLUS = (0, 5, 12)  # multi-wait grid: 3 variants per pair
 
-    Triggers ONLY when:
+
+def _wait_then_fire_candidate(src, tgt, model, omega, me):
+    """Generate "wait N turns then fire" candidates for one (src, tgt)
+    pair. Returns a list of (ships, wait_N, angle, eta) tuples — one
+    per surplus target in `_WAIT_EXTRA_SURPLUS`. Empty list if no
+    variant is applicable.
+
+    v15: extended in two ways from the v10 mechanism:
+    1. Multi-wait grid: instead of one wait_N (just enough to capture),
+       generate variants with extra surplus = 0, 5, 12 — fleet sizes
+       cap+surplus. Longer waits = more robust captures less prone to
+       counter-recapture.
+    2. Wait-N for feasible-now pairs too: previously skipped pairs
+       where the source could fire now; now generates wait variants
+       with extra surplus even for feasible pairs (the user's
+       opening-game directive: "consider more actions, don't converge
+       prematurely on something he could do").
+
+    Common preconditions still hold:
     - tgt is not mine (reinforces are deadline-bound; can't wait)
     - src.production > 0 (otherwise can't accumulate)
-    - capture-size NOW exceeds src.ships (infeasible-now)
-    - wait_N ≥ 1 (otherwise the fire-now path covers this pair)
-    - wait_N + eta + SETTLE ≤ MAX_HORIZON (computational cap;
-      beyond MAX_HORIZON we cannot evaluate the leaf state)
+    - wait_N ≥ 1 (wait_N=0 is covered by fire-now path)
+    - wait_N + eta + SETTLE ≤ MAX_HORIZON (computational cap)
 
-    Returns (ships, wait_N, angle, eta) for the validate stage.
-
-    Newton-iteration like `_capture_size` non-mine branch: estimate
-    cap at NOW eta, derive wait_N, then re-iterate eta/cap at the
-    post-wait arrival time (a larger fleet arrives faster).
-
-    Targets the Felipe-Ferreira 2P loss pattern (replay 76655989):
-    the prod-4 near target was infeasible-now (cap=20 > 14 budget) so
-    v8 dropped it. With this enumerator, the wait-6-then-fire variant
-    enters the candidate pool and fast_sim picks it if Δ > fire-now.
+    For each surplus target s, compute:
+    - target fleet = cap_after_wait + s (where cap_after_wait depends on wait_N)
+    - wait_N = ceil((target_fleet - src.ships) / prod), bumped to 1 minimum
+    - re-aim/eta at the post-wait arrival
     """
     if int(tgt.owner) == me:
-        return None
+        return []
     prod = int(src.production)
     if prod <= 0:
-        return None
+        return []
 
+    # Initial estimate at fire-now eta (used to seed Newton iteration).
     initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
     _a0, eta0 = _aim_and_eta(src, tgt, initial, omega)
     pred_now = float(model.ships_at(int(tgt.id), eta0) or 0.0)
     cap_now = max(MIN_FLEET_SIZE, int(math.ceil(pred_now)) + 1)
-    if cap_now <= int(src.ships):
-        return None  # feasible-now; fire-now path covers this pair
 
-    shortfall = cap_now - int(src.ships)
-    wait_N = (shortfall + prod - 1) // prod  # ceil
-    if wait_N < 1:
-        return None
+    variants = []
+    seen_wait_ships = set()  # dedup variants that collapse to the same (wait_N, ships)
+    for extra_surplus in _WAIT_EXTRA_SURPLUS:
+        # Target fleet size = capture-size + extra_surplus. Wait long
+        # enough for src to accumulate that many ships from current
+        # garrison + production.
+        target_fleet = cap_now + extra_surplus
+        shortfall = target_fleet - int(src.ships)
+        if shortfall <= 0:
+            # Feasible-now even with surplus → wait_N would be 0;
+            # bump to 1 so this is distinct from fire-now.
+            wait_N = 1
+        else:
+            wait_N = (shortfall + prod - 1) // prod  # ceil
+        if wait_N < 1:
+            continue
 
-    # Newton step at post-wait arrival. Pass wait_N to _aim_and_eta so
-    # the orbital lead-prediction accounts for the target's rotation
-    # DURING the wait phase — otherwise the angle is correct for
-    # "fire now, intercept at eta" but wrong for "fire at wait_N,
-    # intercept at wait_N + eta". Bug root-caused on Felipe seed
-    # 1492346051 turn 15: fleet fired but tgt stayed neutral at leaf.
-    ships_attempt = cap_now + 1
-    angle, eta = _aim_and_eta(src, tgt, ships_attempt, omega, wait_N=wait_N)
-    pred_at_arr = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
-    cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arr)) + 1)
+        # Newton step at post-wait arrival: a bigger fleet may arrive
+        # faster (or slower), so cap_final may differ from cap_now.
+        # Pass wait_N to _aim_and_eta so orbital lead accounts for
+        # target rotation DURING the wait phase.
+        ships_attempt = target_fleet
+        angle, eta = _aim_and_eta(src, tgt, ships_attempt, omega, wait_N=wait_N)
+        pred_at_arr = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
+        cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arr)) + 1)
+        # Final fleet honors extra surplus relative to the refined cap.
+        final_fleet = cap_final + extra_surplus
 
-    budget_at_wait = int(src.ships) + prod * wait_N
-    if cap_final > budget_at_wait:
-        return None
+        budget_at_wait = int(src.ships) + prod * wait_N
+        if final_fleet > budget_at_wait:
+            # Can't accumulate enough during this wait — clamp to the
+            # budget and re-derive wait_N if needed.
+            final_fleet = budget_at_wait
 
-    if wait_N + eta + SIM_SETTLE_TURNS > MAX_HORIZON:
-        return None
+        if wait_N + eta + SIM_SETTLE_TURNS > MAX_HORIZON:
+            continue
 
-    return cap_final, wait_N, angle, eta
+        key = (wait_N, final_fleet)
+        if key in seen_wait_ships:
+            continue
+        seen_wait_ships.add(key)
+
+        variants.append((final_fleet, wait_N, angle, eta))
+
+    return variants
 
 
 # ---------------------------------------------------------------------------
@@ -669,31 +697,50 @@ def agent(obs, configuration=None):
                     prerank.append(
                         (cheap, src, tgt, ships, angle, eta, horizon, 0)
                     )
-            # v10 wait-then-fire candidate (one per pair when applicable).
-            wt = _wait_then_fire_candidate(src, tgt, model, omega, me)
-            if wt is not None:
-                w_ships, w_wait_N, w_angle, w_eta = wt
+            # v15 wait-then-fire candidates (multi-wait grid per pair,
+            # including feasible-now pairs — see _wait_then_fire_candidate).
+            for w_ships, w_wait_N, w_angle, w_eta in _wait_then_fire_candidate(
+                src, tgt, model, omega, me,
+            ):
                 w_horizon = max(w_wait_N + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)
-                if w_horizon < len(baseline_favors):
-                    w_cheap = _cheap_marginal_value(
-                        src, tgt, w_ships, w_eta, world, model, me,
-                        wait_N=w_wait_N,
+                if w_horizon >= len(baseline_favors):
+                    continue
+                w_cheap = _cheap_marginal_value(
+                    src, tgt, w_ships, w_eta, world, model, me,
+                    wait_N=w_wait_N,
+                )
+                if w_cheap > -10.0:
+                    prerank.append(
+                        (w_cheap, src, tgt, w_ships, w_angle, w_eta,
+                         w_horizon, w_wait_N)
                     )
-                    if w_cheap > -10.0:
-                        prerank.append(
-                            (w_cheap, src, tgt, w_ships, w_angle, w_eta,
-                             w_horizon, w_wait_N)
-                        )
 
     if not prerank:
         return []
 
-    # Stage 2: per-(src, tgt) deduplication — for each (src, tgt), keep the
-    # best-cheap-ranked candidate (fire-now OR wait-N — they compete).
-    best_per_pair = {}  # (src_id, tgt_id) → entry
+    # Stage 2: per-(src, tgt, wait_band) deduplication. v15 (option 3):
+    # buckets wait_N into bands so multiple wait variants per pair
+    # survive into validation. The previous per-(src, tgt) dedup
+    # collapsed every wait variant to wait_min via cheap-Δ ranking
+    # (cheap-Δ is strictly decreasing in wait_N for the same target),
+    # so the chooser never validated "wait longer for a more robust
+    # capture against the same target". With banded dedup, the cheap
+    # rank still picks the BEST within each band, but the rollout
+    # validator gets to compare fire-now vs short-wait vs long-wait.
+    #
+    # Bands (chosen to match _WAIT_EXTRA_SURPLUS = (0, 5, 12)):
+    #   band 0: wait_N == 0  (fire-now)
+    #   band 1: 1..7        (short wait — extra_surplus≈5 territory)
+    #   band 2: >= 8        (long wait — extra_surplus≈12 territory)
+    def _wait_band(w):
+        if w == 0:
+            return 0
+        return 1 if w <= 7 else 2
+
+    best_per_pair = {}  # (src_id, tgt_id, wait_band) → entry
     for entry in prerank:
-        cheap, src, tgt, _ships, _angle, _eta, _horizon, _wait_N = entry
-        key = (int(src.id), int(tgt.id))
+        cheap, src, tgt, _ships, _angle, _eta, _horizon, wait_N = entry
+        key = (int(src.id), int(tgt.id), _wait_band(int(wait_N)))
         prev = best_per_pair.get(key)
         if prev is None or cheap > prev[0]:
             best_per_pair[key] = entry
@@ -714,13 +761,8 @@ def agent(obs, configuration=None):
             int(src.id), angle, ships,
             horizon, baseline_favors, wait_N=wait_N,
         )
-        # v15a: keep every validated candidate. The `delta > 0` gate
-        # filtered out "least-bad" actions when the idle baseline was
-        # itself a losing trajectory — the dominant failure mode in
-        # the Forrest 2P loss (31/32 candidates failed `> 0` at step
-        # 190 with 13P/365 ships). Best-per-source dogpile dedup below
-        # decides which Δ ≤ 0 actions actually emit.
-        candidates.append((delta, src, tgt, ships, angle, wait_N))
+        if delta > 0:
+            candidates.append((delta, src, tgt, ships, angle, wait_N))
 
     if not candidates:
         return []
@@ -729,24 +771,14 @@ def agent(obs, configuration=None):
     # A wait-N candidate that "wins" a source RESERVES it — emit nothing
     # this turn; next turn the chooser re-evaluates with one less wait
     # turn needed. The actual launch happens when wait_N decays to 0.
-    #
-    # v15a: per-source surplus guard. A Δ ≤ 0 candidate is allowed to
-    # emit only when the source has enough ships to absorb the loss
-    # without crippling itself — guards against early-game weak
-    # sources draining on -100 Δ candidates. Late-game large-garrison
-    # sources clear the guard easily and always launch their best.
     candidates.sort(key=lambda c: -c[0])
     used_srcs, used_tgts = set(), set()
     moves = []
-    for delta, src, tgt, ships, angle, wait_N in candidates:
+    for _delta, src, tgt, ships, angle, wait_N in candidates:
         sid = int(src.id)
         tid = int(tgt.id)
         if sid in used_srcs or tid in used_tgts:
             continue
-        if delta <= 0.0:
-            surplus_floor = max(MIN_FLEET_SIZE * 3, int(src.production) * 5)
-            if int(src.ships) < surplus_floor:
-                continue
         used_srcs.add(sid)
         used_tgts.add(tid)
         if wait_N == 0:

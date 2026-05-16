@@ -120,8 +120,17 @@ def instrument(steps_to_probe, replay_path, seat, agent_module="agents.v12.main"
                     if cheap > -10.0:
                         prerank.append((cheap, src, tgt, ships, angle, eta, horizon, 0))
                 wt = v12._wait_then_fire_candidate(src, tgt, model, omega, seat)
-                if wt is not None:
-                    w_ships, w_wait_N, w_angle, w_eta = wt
+                # v12 returned a single 4-tuple-or-None; v15 returns a list. Normalize.
+                if wt is None:
+                    wt_list = []
+                elif isinstance(wt, (list, tuple)) and wt and isinstance(wt[0], (list, tuple)):
+                    wt_list = wt
+                elif isinstance(wt, list):
+                    wt_list = wt  # could be empty list (v15 no-variants)
+                else:
+                    wt_list = [wt]
+                for w in wt_list:
+                    w_ships, w_wait_N, w_angle, w_eta = w
                     w_horizon = max(w_wait_N + w_eta + v12.SIM_SETTLE_TURNS, v12.MIN_HORIZON)
                     if w_horizon < v12.MAX_HORIZON + 1:
                         w_cheap = orig_cheap(src, tgt, w_ships, w_eta, world, model, seat, wait_N=w_wait_N)
@@ -130,12 +139,24 @@ def instrument(steps_to_probe, replay_path, seat, agent_module="agents.v12.main"
 
         counts["n_cheap_kept"] = len(prerank)
         best_per_pair = {}
+        # Mirror v15's banded dedup: (src, tgt, wait_band). Old per-(src,tgt)
+        # dedup is shown as `n_pair_only` for the v12/v13 comparison.
+        def _band(w):
+            if w == 0: return 0
+            return 1 if w <= 7 else 2
+        pair_only = {}
         for entry in prerank:
             key = (int(entry[1].id), int(entry[2].id))
+            prev = pair_only.get(key)
+            if prev is None or entry[0] > prev[0]:
+                pair_only[key] = entry
+        for entry in prerank:
+            key = (int(entry[1].id), int(entry[2].id), _band(int(entry[7])))
             prev = best_per_pair.get(key)
             if prev is None or entry[0] > prev[0]:
                 best_per_pair[key] = entry
         counts["n_after_pair_dedup"] = len(best_per_pair)
+        counts["n_pair_only_dedup"] = len(pair_only)
         counts["n_wait_in_dedup"] = sum(1 for e in best_per_pair.values() if e[7] > 0)
 
         rows.append((step, counts))
@@ -154,13 +175,15 @@ def main():
     rows = instrument(steps, args.replay, args.seat, args.agent)
 
     print(f"{'step':>4} {'myP':>3} {'otP':>3} {'myS':>5} "
-          f"{'enum':>5} {'cheap':>5} {'pairs':>5} {'wait':>4} "
+          f"{'enum':>5} {'cheap':>5} {'banded':>6} {'pair':>4} {'wait':>4} "
           f"{'val':>4} {'d>0':>4} {'d<=0':>5} {'dogpile':>7} {'emit':>4}")
     for step, c in rows:
         print(f"{step:>4d} {c['n_planets_mine']:>3d} {c['n_planets_other']:>3d} "
               f"{c['n_my_ships']:>5d} "
               f"{c['n_enumerated']:>5d} {c['n_cheap_kept']:>5d} "
-              f"{c['n_after_pair_dedup']:>5d} {c['n_wait_in_dedup']:>4d} "
+              f"{c['n_after_pair_dedup']:>6d} "
+              f"{c.get('n_pair_only_dedup', 0):>4d} "
+              f"{c['n_wait_in_dedup']:>4d} "
               f"{c['n_validated']:>4d} {c['n_delta_pos']:>4d} "
               f"{c['n_delta_neg']:>5d} {c['n_lost_to_dogpile']:>7d} "
               f"{c['n_emitted']:>4d}")
