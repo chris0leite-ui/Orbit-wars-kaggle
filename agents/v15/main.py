@@ -655,6 +655,94 @@ def _build_idle_baseline(snap_base, me, num_seats, max_horizon, opp_traj):
     return out
 
 
+def _score_joint_action(snap_base, me, num_seats, intents, horizon,
+                        baseline_favors, opp_traj):
+    """Δ favor at horizon for a MULTI-INTENT action at step 0.
+
+    Like `_score_action` but `intents` is a list of (src_id, angle,
+    ships) tuples — all fire simultaneously on turn 0. Used for
+    dogpile candidates (v15 Iter 2): 2+ sources committing to the
+    same target where no single source can capture alone.
+    """
+    snap = fs_clone(snap_base)
+    for step_i in range(horizon):
+        if snap.fake_env.done:
+            break
+        actions = [list(a) for a in opp_traj[step_i]]
+        if step_i == 0:
+            actions[me] = [
+                [int(sid), float(ang), int(sh)]
+                for (sid, ang, sh) in intents
+            ]
+        else:
+            actions[me] = []
+        snap = fs_step(snap, actions, in_place=True)
+    leaf_favor = _favor(snap.state[me].observation, me, num_seats)
+    return leaf_favor - baseline_favors[horizon]
+
+
+def _enumerate_dogpile(my_planets, target_pool, model, omega, me, world):
+    """v15 Iter 2: yield 2-source joint candidates.
+
+    Only emits joints where (a) the target can NOT be captured by any
+    single source alone (target_min > max single src.ships) AND
+    (b) two sources combined have enough ships. For each such target,
+    yields the smallest valid pair (largest two sources) — at most one
+    joint candidate per target to bound enumeration cost.
+
+    Yields: (cheap_score, src1, src2, tgt, ships1, ships2, angle1,
+             angle2, horizon)
+    """
+    out = []
+    if len(my_planets) < 2:
+        return out
+    sources_sorted = sorted(
+        (p for p in my_planets if int(p.ships) >= MIN_FLEET_SIZE),
+        key=lambda p: -int(p.ships),
+    )
+    if len(sources_sorted) < 2:
+        return out
+    for tgt in target_pool:
+        if int(tgt.owner) == me:
+            continue
+        # Use the largest source to estimate target_min (it has the
+        # closest ETA → lowest production-during-flight defenders).
+        s_largest = sources_sorted[0]
+        target_min = _capture_size(s_largest, tgt, model, omega, me, world)
+        if target_min <= 0:
+            continue
+        if int(s_largest.ships) >= target_min:
+            continue  # single-source capture feasible; skip joint.
+        # Find the smallest pair (largest two) that can fund target_min.
+        s1, s2 = sources_sorted[0], sources_sorted[1]
+        if int(s1.ships) + int(s2.ships) < target_min:
+            continue
+        ships1 = min(int(s1.ships), target_min)
+        ships2 = max(MIN_FLEET_SIZE, target_min - ships1)
+        if ships2 > int(s2.ships):
+            continue
+        angle1, eta1 = _aim_and_eta(s1, tgt, ships1, omega)
+        angle2, eta2 = _aim_and_eta(s2, tgt, ships2, omega)
+        # Use max ETA for horizon: both fleets must land before we
+        # evaluate capture. Add SIM_SETTLE_TURNS for post-arrival.
+        eta_max = max(eta1, eta2)
+        horizon = max(eta_max + SIM_SETTLE_TURNS, MIN_HORIZON)
+        if horizon >= MAX_HORIZON:
+            horizon = MAX_HORIZON - 1
+        # Cheap score: sum of per-source marginal values.
+        cv1 = _cheap_marginal_value(s1, tgt, ships1, eta1, world,
+                                    model, me, wait_N=0)
+        cv2 = _cheap_marginal_value(s2, tgt, ships2, eta2, world,
+                                    model, me, wait_N=0)
+        cheap = cv1 + cv2
+        if cheap > -10.0:
+            out.append(
+                (cheap, s1, s2, tgt, ships1, ships2,
+                 angle1, angle2, horizon)
+            )
+    return out
+
+
 def _score_action(snap_base, me, num_seats, src_id, angle, ships,
                   horizon, baseline_favors, opp_traj, wait_N=0):
     """Δ favor at horizon = leaf(me_action @ wait_N + opp_traj) − baseline.
@@ -826,7 +914,11 @@ def agent(obs, configuration=None):
     top = deduped[:effective_cap]
 
     t_deadline = time.perf_counter() + wallclock_ms / 1000.0
-    candidates = []  # validated (delta, src, tgt, ships, angle, wait_N)
+    # Unified candidate tuple (length 9):
+    #   (delta, src1, tgt, ships1, angle1, wait_N,
+    #    src2_or_None, ships2, angle2)
+    # Singles have src2=None. Joints have src2=non-None and wait_N=0.
+    candidates = []
     for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
         if time.perf_counter() > t_deadline:
             break
@@ -836,26 +928,61 @@ def agent(obs, configuration=None):
             horizon, baseline_favors, opp_traj, wait_N=wait_N,
         )
         if delta > 0:
-            candidates.append((delta, src, tgt, ships, angle, wait_N))
+            candidates.append(
+                (delta, src, tgt, ships, angle, wait_N, None, 0, 0.0)
+            )
+
+    # ---------------------------------------------------------------
+    # v15 Iter 2: dogpile candidates. For targets where no single
+    # source can capture alone, enumerate the smallest 2-source pair
+    # that can fund the capture. Score via _score_joint_action.
+    # ---------------------------------------------------------------
+    dogpile_cands = _enumerate_dogpile(
+        my_planets, target_pool, model, omega, me, world,
+    )
+    for cheap, s1, s2, tgt, sh1, sh2, a1, a2, horizon in dogpile_cands:
+        if time.perf_counter() > t_deadline:
+            break
+        if horizon >= len(baseline_favors):
+            horizon = len(baseline_favors) - 1
+        delta = _score_joint_action(
+            snap_base, me, num_seats,
+            [(int(s1.id), a1, sh1), (int(s2.id), a2, sh2)],
+            horizon, baseline_favors, opp_traj,
+        )
+        if delta > 0:
+            candidates.append(
+                (delta, s1, tgt, sh1, a1, 0, s2, sh2, a2)
+            )
 
     if not candidates:
         return []
 
     # Greedy non-dogpile emit: max 1 launch per source / per target per turn.
-    # A wait-N candidate that "wins" a source RESERVES it — emit nothing
-    # this turn; next turn the chooser re-evaluates with one less wait
-    # turn needed. The actual launch happens when wait_N decays to 0.
+    # Joint candidates reserve BOTH sources and the target; if accepted,
+    # both intents are emitted on this turn.
     candidates.sort(key=lambda c: -c[0])
     used_srcs, used_tgts = set(), set()
     moves = []
-    for _delta, src, tgt, ships, angle, wait_N in candidates:
-        sid = int(src.id)
+    for (_delta, src1, tgt, ships1, angle1, wait_N,
+         src2, ships2, angle2) in candidates:
+        s1id = int(src1.id)
         tid = int(tgt.id)
-        if sid in used_srcs or tid in used_tgts:
+        if s1id in used_srcs or tid in used_tgts:
             continue
-        used_srcs.add(sid)
-        used_tgts.add(tid)
-        if wait_N == 0:
-            moves.append([sid, float(angle), int(ships)])
-        # else: wait-N picked → reserve src/tgt, emit nothing this turn.
+        if src2 is not None:
+            s2id = int(src2.id)
+            if s2id in used_srcs:
+                continue
+            used_srcs.add(s1id)
+            used_srcs.add(s2id)
+            used_tgts.add(tid)
+            moves.append([s1id, float(angle1), int(ships1)])
+            moves.append([s2id, float(angle2), int(ships2)])
+        else:
+            used_srcs.add(s1id)
+            used_tgts.add(tid)
+            if wait_N == 0:
+                moves.append([s1id, float(angle1), int(ships1)])
+            # else: wait-N picked → reserve src/tgt, emit nothing this turn.
     return moves
