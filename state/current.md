@@ -1,14 +1,18 @@
 # state/current.md — current submitted agent + tournament rank
 
-> Updated 2026-05-14 by `claude/simplify-fast-setup-azW8T` (geo iteration).
-> Merged forward from `claude/research-competition-analysis-2R8I3` +
-> `claude/read-handover-iLWTq`. All Score values pulled live from
-> `kaggle competitions submissions orbit-wars`.
+> Updated 2026-05-16 by `claude/space-fleet-physics-engine-lrLE6` (v8_analytic
+> structural recovery; NO submission this session).
+> Live leaderboard owned by `claude/recover-main-foundations-MV0e2` —
+> `v8_scavenge.py` sub #52687411 score 1089.0 is the actual carrying
+> agent; the `current_submitted_agent` field below reflects what
+> THIS branch knows, not the live leaderboard. Pull
+> `kaggle competitions submissions -c orbit-wars` for ground truth.
 
 ```yaml
-date: 2026-05-14
-days_to_deadline: 40                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: geo             # v3.1 (most recent); σ-discounted floor
+date: 2026-05-16
+days_to_deadline: 38                     # 2026-06-23 23:59 UTC minus today
+current_submitted_agent: v8_scavenge     # sub #52687411 score 1089.0 (LIVE, on other branch)
+note_branch_focal: v8_analytic           # this branch's focal — NOT submitted, below v7_0 floor
 last_kernel_push: 2026-05-14 09:10:03 UTC
 last_submission_id: 52643676
 last_submission_status: COMPLETE
@@ -80,6 +84,33 @@ live_submissions:
   - {agent: day1_baseline,          sub_id: 52497828, submitted: 2026-05-10T00:09, score: 303.2}
 
 session_log:
+  - 2026-05-16 — space-fleet-physics-engine-lrLE6. Discovered focal
+    agent v8_analytic (Phase B.1) was below smoke floor: 0/32 vs
+    `nearest` baseline; never previously smoke-tested. Live Kaggle
+    leaderboard shows v8_scavenge.py (sub #52687411, score 1089.0,
+    submitted 2026-05-15 17:41 UTC on branch `claude/recover-main-
+    foundations-MV0e2`); state/current.md was stale by ~36 hours.
+    Per PI directive, ported v8_scavenge's defensive mechanism into
+    the v8_analytic beam-search architecture instead of switching
+    branches. Five commits: (cd602f4) defensive reinforce candidate
+    atoms via `enumerate_defensive_reinforce` using `WorldModel.
+    incoming_enemy_eta`; (601018f) K-step rollout + γ-discounted
+    favor head (γ=0.99); (f3b18cd) batch all level-2+ beam
+    extensions into one JAX call; (c5e12eb) `jax_step_no_launch`
+    skips fleet_launch on idle K-scan steps; (67e5eca) fleet_launch
+    rewritten as `lax.scan` body, 6× faster (2.78 ms → 0.46 ms
+    standalone). Per-chunk K=8 cost: 167 ms → 88 ms. Cold JIT: 15 s
+    → 2.6 s. Vs nearest 4-seed eval: 0/4 → 3/4 wins (8-seed extension:
+    4/7 plus 1 timeout). **Regression vs v7_0: 0/4** (mid-game
+    elimination). Likely γ-discount over-shifted production weight,
+    OR strict-idle K-rollout underestimates v7_0's aggression.
+    Frictions: 7 entries under 2026-05-16 in audit/friction.md
+    (focal-agent-never-smoke-tested-against-floor, state-current-md-
+    stale-vs-leaderboard, lax-cond-inside-vmap-evaluates-both-
+    branches, python-unroll-inside-jit-quadratic-cost, idle-step-
+    runs-expensive-launch-phase, multiprocess-smoke-killed-in-
+    sandbox, defense-port-regresses-vs-aggressive-strong-opp).
+    No submission this session; v8_analytic still below v7_0 floor.
   - 2026-05-14 — game-strategy-eda-roatN (this branch). Pulled v7_pv's
     own 30W + 42L corpus (sub 52630118) and re-ran Mine 4 on both
     buckets. Headline: median episode in our ladder is 180 turns, so

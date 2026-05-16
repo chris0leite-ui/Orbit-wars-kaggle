@@ -177,7 +177,95 @@ fix forward AND add a test.
   and commit from there. **Fix forward:** investigate signer's
   source-discovery; configure it to accept worktrees.
 
-## Still-open patterns (next-session priority)
+## 2026-05-16 (claude/space-fleet-physics-engine-lrLE6 — v8_analytic structural recovery)
+
+- `tag: focal-agent-never-smoke-tested-against-floor` — opened the
+  branch's focal agent `v8_analytic` (Phase B.1) and discovered it
+  loses 32/0 to the trivial `nearest` baseline in the smoke floor.
+  The agent had never been submitted, never been smoke-tested
+  against random+nearest before; multiple ablations layered on top
+  (v8_phase_c, v8_phase_c_h1, v8_phase_c_no_panel) without anyone
+  noticing the underlying agent was below the smoke floor. Root
+  cause: same pattern as the `ab-strong-opp-before-smoke-against-
+  floor` friction logged 2026-05-14 — every new branch jumps to A/B
+  vs `iter_v2` / `v7_0` and never runs the cheap-floor probe. **Fix:**
+  on first session of any new branch developing a focal agent, the
+  *very first* probe must be `python fast.py smoke <focal>`, BEFORE
+  any A/B against strong opponents. The friction is now bound in
+  CLAUDE.md Rule 2 (Kaggle GPU kernel two-tier smoke); same
+  discipline should apply to any focal agent on any branch.
+- `tag: state-current-md-stale-vs-leaderboard` — `state/current.md`
+  last updated 2026-05-14 by a different branch, listed `geo` as
+  the current submission. Live Kaggle showed the actual leaderboard
+  agent is `v8_scavenge.py` (sub #52687411, score 1089.0, submitted
+  2026-05-15 17:41 UTC on branch `claude/recover-main-foundations-
+  MV0e2`). Two sessions of v8_analytic iteration on a different
+  branch missed this entirely. Root cause: state/current.md is owned
+  by whatever branch last submitted; parallel-development branches
+  have no signal that the leaderboard has moved. **Fix:** every
+  session-start hook should pull `kaggle competitions submissions
+  -c orbit-wars` and diff the latest entry against
+  state/current.md's `last_submission_id`. If mismatched, surface a
+  warning before any compute.
+- `tag: lax-cond-inside-vmap-evaluates-both-branches` — attempted
+  to short-circuit `comet_spawn` on non-boundary steps (99% of
+  steps) via `jax.lax.cond(any_spawn, _do_spawn, identity, state)`,
+  expecting the fast path to skip the spawn body. Per-chunk K=8
+  cost REGRESSED 40% (88 ms → 125 ms) because under `vmap`, JAX
+  lowers `lax.cond` to `lax.select` — both branches are evaluated
+  unconditionally and one result is chosen. The "skip work"
+  intuition is wrong inside vmap. **Fix:** to actually skip work,
+  the predicate must be evaluated at the Python orchestration level
+  *outside* the vmap, dispatching to one of two pre-JIT'd kernels.
+  Reverted via `git checkout`.
+- `tag: python-unroll-inside-jit-quadratic-cost` — `fleet_launch`
+  unrolled a `MAX_AGENTS × MAX_LAUNCH_PER_AGENT = 16` action loop
+  in Python at trace time, producing a straight-line HLO graph
+  with 16 separate `jnp.cumsum(~fleets_alive)` over MAX_FLEETS=256
+  + 16 × 7 `at[].set` scatters. Phase profile showed fleet_launch
+  at 55-58% of `jax_step` cost even on sentinel-only actions.
+  Refactoring to a single `lax.scan` body (traced once) dropped
+  fleet_launch from 2.78 ms → 0.46 ms (6×) and per-chunk K=8
+  scoring from 167 ms → 88 ms (33%). **Fix established as
+  pattern:** any per-step JAX function with a Python `for` loop
+  over a small dimension should be `lax.scan` instead — the scan
+  body is traced once, the compiled binary is much smaller, and
+  XLA on CPU runs it faster. Audit other `jax_*.py` modules for
+  similar unrolls.
+- `tag: idle-step-runs-expensive-launch-phase` — the K-step rollout
+  in `score_one` calls full `jax_step` for K-1 strict-idle turns,
+  each running `fleet_launch` on sentinel-only actions. With
+  vmap C=128 K=8, that's 896 wasted `fleet_launch` invocations per
+  chunk (out of 1024 total). **Fix:** introduced `jax_step_no_launch`
+  variant that omits the fleet_launch phase. Used as scan body for
+  idle steps; turn 0 still uses full `jax_step` with the candidate
+  action. Cut per-chunk cost 22%. Generalisable pattern: in any
+  multi-step rollout, separate the "applies action" step from the
+  "no-action" steps and route them to different JAX kernels.
+- `tag: multiprocess-smoke-killed-in-sandbox` — `python fast.py
+  smoke` consistently SIGTERM'd within seconds in the current
+  remote-execution session, regardless of `--workers` setting
+  (tried 4, 2, 1). Background tasks via Bash tool got killed
+  almost immediately. Foreground play loops (`for s in 0 1 2 3;
+  do python fast.py play ...`) worked fine. Root cause unclear —
+  possibly multiprocess spawn pattern, possibly per-process resource
+  limits in the sandbox. **Fix:** for now, use serial play-loop
+  evaluations instead of multiprocess smoke when working from this
+  session type. n=8 single-game loop is the practical max within
+  one Bash call's 10-minute timeout.
+- `tag: defense-port-regresses-vs-aggressive-strong-opp` — the
+  v8_scavenge mechanism port (defensive reinforce + γ-discounted
+  favor + K-step idle rollout) recovered the smoke floor (0/4 → 4/7
+  vs nearest) but regressed 0/4 vs v7_0. Three suspected culprits:
+  (1) γ=0.99 production discount weights prod ~5× less than the
+  prior linear `prod × remaining`; (2) strict-idle K-rollout ignores
+  v7_0's 7 turns of aggressive actions; (3) nearest-K=8 atom cap
+  drops far-target opportunities v7_0 exploits. Not yet ablated.
+  **Fix:** next session, run a 3-variant γ sweep + a Tier-1-mirror
+  K-rollout variant. Phase B.1's original justification was beating
+  v7_0; the port can't lose that.
+
+
 
 - `tag: handover-stale-at-session-start-no-git-log-check` — Rule 32
   already requires session-start `git fetch + git log HEAD..origin/main`.
