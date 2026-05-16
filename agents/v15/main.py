@@ -478,19 +478,29 @@ def _planet_threat_eta(planet, planets, fleets, owner):
     """
     px, py = planet[2], planet[3]
     pid = int(planet[0])
+    p_ships = float(planet[5])
+    p_prod = float(planet[6])
     best = 10**9
-    # (a) in-flight enemy fleets — eta ~ remaining_dist / speed.
+    # (a) in-flight enemy fleets — eta ~ remaining_dist / speed. Only
+    # count as a threat if the fleet has enough ships to capture us
+    # at its arrival ETA (defenders + production_during_flight + 1).
+    # Small harassment fleets that can't actually take the planet
+    # shouldn't trigger production discount.
     for f in fleets:
         f_owner = int(f[1])
         if f_owner == owner or f_owner < 0:
             continue
         fx, fy, fvx, fvy = f[2], f[3], f[4], f[5]
+        f_ships = float(f[6])
         dx, dy = px - fx, py - fy
         d = (dx * dx + dy * dy) ** 0.5
         spd = (fvx * fvx + fvy * fvy) ** 0.5
         if spd <= 0:
             continue
         eta = int(d / spd) + 1
+        defenders_at_eta = p_ships + p_prod * eta + 1.0
+        if f_ships <= defenders_at_eta:
+            continue
         if eta < best:
             best = eta
     # NOTE: deliberately ONLY in-flight fleets. The "potential launch
