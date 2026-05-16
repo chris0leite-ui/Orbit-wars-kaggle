@@ -135,6 +135,57 @@ fix forward AND add a test.
   to silence the hook without committing speculative work. Added
   to kaggle-comp/improvements.md pending list.
 
+## 2026-05-16 (claude/recover-main-foundations-MV0e2 — v20 session)
+
+- `tag: panel-pass-without-h2h-vs-current` — v17 and v18 both
+  panel-PASSED against the legacy panel (v7_0, v4_planner, v3.5.1)
+  but FAILED head-to-head vs v15 (40.6%, 34.4%). I burned 30+ min
+  per panel run before checking the h2h vs same-family current
+  agent. **Fix:** make h2h vs current submitted agent the FIRST
+  gate (~15 min n=16 triage), not the LAST. Panel is a smoke test
+  for "not catastrophically broken," not a quality test. Promotion
+  candidate for `.claude/skills/kaggle-comp/improvements.md`.
+- `tag: value-function-change-without-calibration-baseline` — v15's
+  F2 = `(my_prod − opp_prod) × pv(500)` over-credits both sides
+  equally; the difference cancels the over-credit. Three F2-axis
+  changes (v16/17/18) shrunk F2 magnitude per planet → F1 ship
+  balance over-weighted → chooser became more conservative.
+  Never measured v15's F1:F2 ratio before proposing changes.
+  **Fix:** before any value-function change, run a single game
+  with v15 and log per-turn F1, F2, and F2/F1 ratio. Establish
+  the calibration baseline. Same applies to baseline rollout
+  changes (v19: me-policy made baseline "too good", chooser
+  emit-rate collapsed).
+- `tag: explicit-rewrite-of-implicit-behavior` — PI's "asymmetric
+  reach × defend" was ALREADY encoded in v15: rollout's reactive
+  opp catches fragile captures → leaf shows opp owning → my F2
+  drops via owner-flip. My explicit `_favor` rewrites were
+  REDUNDANT with this implicit handling AND broke F2 calibration.
+  **Fix:** before adding an explicit term, search the existing
+  agent for whether the rollout, the cheap-rank, or some other
+  pre-existing structure already encodes the behavior. Trust
+  "the simulator IS the value function" — if the simulator is
+  correct, value function changes are usually wrong.
+- `tag: sequential-falsification-across-axes-no-stopping-rule` —
+  Burned through v16 (F2 multiplier) → v17 (F2 hold-cap) → v18
+  (F2 prop-split) → v19 (baseline me-policy) all in one session.
+  Rule 37 caps at 3 on SAME axis but I jumped axes when 3 failed,
+  rationalizing each pivot as principled. The actual signal was
+  "stop and dig" not "try a different lever." **Fix:** when 3+
+  variants on any axis fail head-to-head, the next move is
+  instrumentation + write-up, NOT another axis. Promotion
+  candidate.
+- `tag: kaggle-cli-auth-needs-fresh-bootstrap-source` — `kaggle
+  competitions submit` returned auth error in main Bash session
+  even though session-start hook reported credentials OK.
+  KAGGLE_USERNAME/KAGGLE_KEY env vars aren't inherited across
+  Bash tool subprocesses; bootstrap.sh creates ~/.kaggle/kaggle.json
+  but the file wasn't present (rwxr-xr-x but no kaggle.json
+  inside). **Fix:** always wrap kaggle commands as
+  `bash -c 'source bootstrap.sh > /dev/null 2>&1 && kaggle …'`
+  to ensure credentials are mounted into the subprocess.
+
+
 ## 2026-05-15 (claude/bootstrap-read-handover-HjcdN — copycat branch)
 
 - `tag: pv-broadpool-incompatible` — Phase 3 copycat with

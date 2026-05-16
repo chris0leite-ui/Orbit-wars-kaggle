@@ -1,60 +1,48 @@
 # state/current.md — current submitted agent + tournament rank
 
-> Updated 2026-05-16 by `claude/recover-main-foundations-MV0e2` (v15 submit).
-> Previous update 2026-05-16 (v13 submit). Live μ has shifted since:
-> v12 1142.3 → 1095.4 (more games settled lower); v13 793.2 → 1063.8 (more games settled).
+> Updated 2026-05-16 by `claude/recover-main-foundations-MV0e2` (v20 submit).
+> Previous update 2026-05-16 (v15 submit).
 > All Score values pulled live from `kaggle competitions submissions orbit-wars`.
 
 ```yaml
 date: 2026-05-16
 days_to_deadline: 37                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v15_banded      # PENDING; multi-wait + banded dedup
-last_kernel_push: 2026-05-16 13:43:40 UTC
-last_submission_id: 52710995
+current_submitted_agent: v20_dogpile     # PENDING; per-target dedup removed
+last_kernel_push: 2026-05-16 21:57:08 UTC
+last_submission_id: 52721807
 last_submission_status: PENDING
-last_submission_file: submissions/v15.py  # 309 KB bundle; parity OK 458 turns
+last_submission_file: submissions/v20.py  # 317 KB bundle; parity OK 858 turns
 last_submission_message: |
-  v15: multi-wait grid + wait-N for feasible-now pairs + banded
-  (src, tgt, wait_band) dedup. Addresses PI directive on opening-game
-  premature convergence: "chooser converges too early; we do not wait
-  long enough; consider more actions."
-  Three coordinated changes (agents/v15/main.py):
-  (1) _wait_then_fire_candidate returns a list of variants (was single
-      tuple or None). _WAIT_EXTRA_SURPLUS = (0, 5, 12) — three fleet
-      sizes: just-enough, +5 surplus, +12 surplus. Larger fleet means
-      longer wait but more robust capture less prone to opp counter-
-      recapture in reactive-opp rollouts.
-  (2) Generate wait-N candidates for FEASIBLE-now pairs too (the
-      previous infeasible-only guard is gone). Feasible pairs now also
-      get the multi-wait grid, so the chooser sees "wait longer to
-      accumulate extra surplus" on planets it could otherwise fire-now
-      at.
-  (3) Stage-2 dedup changed from per-(src, tgt) → per-(src, tgt,
-      wait_band) where wait_band buckets wait_N: 0 (fire-now), 1..7
-      (short wait), >=8 (long wait). Load-bearing change: the rollout
-      validator now compares fire-now vs short-wait vs long-wait for
-      the same target. Previously cheap-Δ pre-selected wait_min (since
-      cheap-Δ strictly decreases in wait_N for the same tgt) and longer
-      waits never validated.
-  Funnel A/B Forrest seed step 80: 27 wait variants survived dedup
-  vs 10 in v13. 213tubo seed P1 flipped LOSS→WIN.
-  Panel n=32: v7_0 84.4% Wlo=0.682, v4_planner 90.6% Wlo=0.758,
-  v3.5.1 87.5% Wlo=0.719; worst Wlo 0.682 (v13's 0.666). PASS.
-  Head-to-head v15 vs v12 n=32: 68.8% Wlo=0.514 INCONCLUSIVE.
-  Head-to-head v15 vs v13 n=32: 68.8% Wlo=0.514 INCONCLUSIVE.
-  Bench 3 games: p50=90 p95=258 max=480; over_1000ms=0.
-  Panel max=906ms; head-to-head max=1245ms (occasional 4P outlier
-  above 1000ms ceiling — PI accepted risk).
-  Audit: f315dc7 commit + this session's diagnostic of Forrest 2P loss.
+  v20: chooser dogpile (remove per-target dedup). v15 emit-cap
+  bottleneck diagnosed: chooser found 6-16 positive-Δ candidates per
+  turn but per-target dedup capped emit at 1-3 because top-Δ
+  candidates cluster on a few high-value planets. Single-line change
+  in agents/v20/main.py (the emit-loop's `if sid in used_srcs or tid
+  in used_tgts:` → `if sid in used_srcs:`). Each candidate's Δ was
+  already validated independently by the rollout, so dogpile is
+  self-balancing under the validated-Δ filter (the 2nd launch at the
+  same target was judged net-positive given the 1st landing).
+  Forrest replay funnel step 120/190 emit: 2→4 and 2→5 (other
+  steps unchanged). Felipe 2/2 (v15 was 1/2); 213tubo 2/2.
+  Bench 3 games: p50=103 p95=288 max=367; over_1000ms=0.
+  Head-to-head v20 vs v15 n=32: 65.6% (21/32) Wlo=0.483 Whi=0.796
+  INCONCLUSIVE per harness gate (Wlo just under 0.55) but 65.6%
+  clearly above noise vs v17 (40.6%) / v18 (34.4%) / v19 (12.5%)
+  on same axis attempts.
+  Wallclock caveat: max=1090ms in one h2h turn (deadline-check fires
+  BEFORE iteration, last candidate can overshoot). Bench vs v7_0
+  max=367ms — live games likely between bench and h2h-density.
+  Risk accepted by PI.
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation;
 # the third push auto-evicts the previous oldest).
 rolling_last_2:
-  - {agent: v15_banded,   sub_id: 52710995, score: PENDING, status: PENDING,
+  - {agent: v20_dogpile,  sub_id: 52721807, score: PENDING, status: PENDING,
      episodes: 0, note: 'just submitted; initial μ in 5-10 min, σ settles 5-6h'}
-  - {agent: v13_reactive, sub_id: 52704189, score: 1063.8, status: COMPLETE,
-     episodes: '~tens', note: 'current floor; v15 builds on v13 base'}
+  - {agent: v15_banded,   sub_id: 52710995, score: PENDING, status: PENDING,
+     episodes: 0, note: 'no live data yet from earlier session push'}
 evicted_recent:
+  - {agent: v13_reactive,   sub_id: 52704189, score: 1063.8, reason: evicted by v20 push}
   - {agent: v12_principled, sub_id: 52699232, score: 1095.4, reason: evicted by v15 push}
   - {agent: v9_scavenge,    sub_id: 52687411, score: 1119.9, reason: evicted by v13 push}
   - {agent: v8_scavenge,    sub_id: 52684059, score: 1065.8, reason: evicted by v12 push}
