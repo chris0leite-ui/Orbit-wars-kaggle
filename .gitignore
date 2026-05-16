@@ -32,6 +32,9 @@ audit/**/panel.log
 # (diagnosis history is worth keeping in git).
 audit/live-episodes/*/episode-*.json
 !audit/live-episodes/*/summary.json
+# `kaggle competitions replay` also drops a `data/` subdir of comp metadata
+# (README.md + agents.md) inside each pull dir — duplicate of repo-level data/.
+audit/live-episodes/*/data/
 # Per-episode postmortem outputs from scripts/episode_postmortem.py are
 # 100-500 KB each; keep only the aggregated roll-up.json in git.
 audit/live-episodes/*/postmortem/postmortem-*.json
