@@ -209,7 +209,17 @@ def lite_greedy_policy(obs: Any) -> list:
         d = math.sqrt(dx * dx + dy * dy)
         flight = max(0.0, d - float(src[4]) - float(best[4]) - 0.1)
         eta = max(1, int(math.ceil(flight / spd)))
-        defenders_at_eta = float(best[5]) + float(best[6]) * eta
+        # Production accrues only for OWNED planets (env rule:
+        # orbit_wars.py:511-514 — neutrals stay at their current count).
+        # Treating neutrals as accreting was the bug that made lite_greedy
+        # skip capturable openings (e.g. 13-defender prod=1 neutral at
+        # d=12 looked like 19 defenders at eta=6, so the policy idled
+        # in opp_traj rollouts). Real opps grab near targets at step 4
+        # and snowball.
+        if int(best[1]) == -1:
+            defenders_at_eta = float(best[5])
+        else:
+            defenders_at_eta = float(best[5]) + float(best[6]) * eta
         needed = int(math.ceil(defenders_at_eta)) + 1
         if needed > budget:
             continue  # can't afford the capture — skip, don't bounce

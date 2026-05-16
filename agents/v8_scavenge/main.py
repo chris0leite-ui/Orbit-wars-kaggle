@@ -77,13 +77,12 @@ N_VALIDATE = 60
 
 # Forward-sim horizon parameters
 SIM_SETTLE_TURNS = 2             # extra idle turns after arrival to settle combat
-MIN_HORIZON = 15                 # floor — must cover incoming threats arriving
-                                 # at our source planets in ~time for fast fleet
-MAX_HORIZON = 30                 # baseline cache depth — covers most candidate
-                                 # etas (typical eta range 5-25); long-arc
-                                 # candidates get clipped to MAX_HORIZON.
-                                 # Was 50; lowered to reduce per-turn baseline
-                                 # build cost + bound per-candidate rollout.
+MIN_HORIZON = 25                 # Every candidate's rollout runs at least
+                                 # this many steps. Long enough for a typical
+                                 # capture to be exposed to opp's reactive
+                                 # counter-launch (which is the real test
+                                 # of whether a captured planet "sticks").
+MAX_HORIZON = 40                 # baseline cache depth.
 
 # Wallclock safety. The env's actTimeout is 1000ms. Two-stage scoring
 # brought max from 1494ms (single-stage) down to 1131ms (Iter 1 panel)
@@ -509,87 +508,60 @@ def _favor(obs, me, num_seats=2):
 # ---------------------------------------------------------------------------
 
 
-def _build_opp_trajectory(snap_base, me, num_seats, max_horizon):
-    """Pre-compute the opp's action sequence over [0, max_horizon).
-
-    Each step: run `_opp_policy` (lite_greedy) against each non-me
-    seat's observation, store the actions, advance the snapshot with
-    those actions (me's slot is []). The returned `opp_traj[k]` is the
-    per-seat action list to apply at step k of any rollout.
-
-    Both baseline and every candidate rollout replay this same
-    trajectory — common random numbers. Opp's contribution to favor is
-    identical in baseline and candidate, so it cancels in Δ and only
-    my action's marginal effect remains.
-
-    Cost: ~1ms × num_opps × max_horizon = ~30ms (2P) / ~90ms (4P) at
-    max_horizon=30. Dominant cost is the in-step opp policy call, not
-    the fs_step advance (which would happen for the baseline anyway).
-    """
-    snap = fs_clone(snap_base)
-    out = []
-    for _step_i in range(max_horizon):
-        if snap.fake_env.done:
-            out.append([[] for _ in range(num_seats)])
+def _opp_actions_for_snap(snap, me, num_seats):
+    """Compute each non-me seat's lite_greedy action against the CURRENT
+    snap. Used inline by both baseline and candidate rollouts so opp
+    reacts to the evolving state (including my fleets and captures)
+    rather than replaying a precomputed trajectory."""
+    actions = [[] for _ in range(num_seats)]
+    for opp_id in range(num_seats):
+        if opp_id == me:
             continue
-        actions = [[] for _ in range(num_seats)]
-        for opp_id in range(num_seats):
-            if opp_id == me:
-                continue
-            try:
-                actions[opp_id] = _opp_policy(snap.state[opp_id].observation) or []
-            except Exception:
-                actions[opp_id] = []
-        out.append(actions)
-        snap = fs_step(snap, actions, in_place=True)
-    return out
+        try:
+            actions[opp_id] = _opp_policy(snap.state[opp_id].observation) or []
+        except Exception:
+            actions[opp_id] = []
+    return actions
 
 
-def _build_idle_baseline(snap_base, me, num_seats, max_horizon, opp_traj):
-    """Pre-compute favor at every horizon 0..max_horizon under opp_traj.
+def _build_idle_baseline(snap_base, me, num_seats, max_horizon):
+    """Pre-compute favor at every horizon 0..max_horizon under me-idle.
 
-    Run fast_sim from snap_base applying opp_traj[k] at step k (with
-    me's slot empty). Record favor(me) at each leaf. `baseline_favors[k]`
-    is the favor I would have if I idled while opp followed opp_traj.
-
-    By matching opp_traj across baseline and candidates, opp's expansion
-    is cancelled in Δ — what remains is the marginal effect of my action.
+    Opp acts REACTIVELY at each step via `_opp_policy` against the
+    evolving snap. Lost CRN cancellation (vs precomputed opp_traj),
+    gained: opp counter-attacks against my captures in candidate
+    rollouts emerge naturally, so F2 over-credit on fragile captures
+    is corrected at the leaf.
     """
     snap = fs_clone(snap_base)
     out = [_favor(snap.state[me].observation, me, num_seats)]
-    for step_i in range(max_horizon):
+    for _step_i in range(max_horizon):
         if snap.fake_env.done:
             out.append(out[-1])
             continue
-        actions = [list(a) for a in opp_traj[step_i]]
-        actions[me] = []
+        actions = _opp_actions_for_snap(snap, me, num_seats)
+        # me slot stays [] (idle baseline)
         snap = fs_step(snap, actions, in_place=True)
         out.append(_favor(snap.state[me].observation, me, num_seats))
     return out
 
 
 def _score_action(snap_base, me, num_seats, src_id, angle, ships,
-                  horizon, baseline_favors, opp_traj, wait_N=0):
-    """Δ favor at horizon = leaf(me_action @ wait_N + opp_traj) − baseline.
+                  horizon, baseline_favors, wait_N=0):
+    """Δ favor at horizon = leaf(me_action @ wait_N + reactive opp) − baseline.
 
-    Replay `opp_traj` step-by-step. My slot is empty except at step
-    `wait_N`, where I splice in `[[src_id, angle, ships]]`. The
-    candidate spans exactly `horizon` steps; the baseline at the same
-    horizon is in `baseline_favors[horizon]`.
-
-    Since opp's per-step actions are identical between baseline and
-    candidate, opp's effect on favor cancels in the Δ — what's measured
-    is the marginal value of my action under a realistic opp model.
+    Opp acts reactively at each step (lite_greedy on opp's evolving obs),
+    so my captured planets DO trigger opp counter-launches in the rollout
+    — which collapses F2's over-credit on fragile (low-garrison) captures.
     """
     snap = fs_clone(snap_base)
     for step_i in range(horizon):
         if snap.fake_env.done:
             break
-        actions = [list(a) for a in opp_traj[step_i]]
+        actions = _opp_actions_for_snap(snap, me, num_seats)
         if step_i == int(wait_N):
             actions[me] = [[int(src_id), float(angle), int(ships)]]
-        else:
-            actions[me] = []
+        # else: actions[me] stays []
         snap = fs_step(snap, actions, in_place=True)
     leaf_favor = _favor(snap.state[me].observation, me, num_seats)
     return leaf_favor - baseline_favors[horizon]
@@ -657,20 +629,14 @@ def agent(obs, configuration=None):
     budget_for_validate = wallclock_ms - _RESERVED_OVERHEAD_MS
     n_affordable = max(8, int(budget_for_validate / per_cand_ms))
 
-    # v12: full opp trajectory via lite_greedy_policy. Replayed
-    # identically in baseline and every candidate (common random
-    # numbers) so opp's expansion contribution cancels in Δ. No more
-    # strict-idle blindness: a candidate that "wastes 17 turns waiting"
-    # is correctly penalised by opp's planet captures during the wait;
-    # a candidate that captures a near target is correctly rewarded.
-    # lite_greedy uses straight-line aim/capture-size, sufficient for
-    # static targets (the env's combat resolution inside fast_sim
-    # catches any orbital miss-aim).
-    opp_traj = _build_opp_trajectory(snap_base, me, num_seats, MAX_HORIZON)
-
-    # Baseline favor at horizons 0..MAX_HORIZON, replaying opp_traj.
+    # v13: reactive opp inside every rollout. lite_greedy is recomputed
+    # against the evolving snap at each step, so my captured planets
+    # trigger opp counter-launches in the rollout — collapsing F2's
+    # over-credit on fragile (low-garrison) captures. Drops the
+    # precomputed opp_traj and common-random-numbers cancellation;
+    # accepts more Δ variance for realistic counter-attacks.
     baseline_favors = _build_idle_baseline(
-        snap_base, me, num_seats, MAX_HORIZON, opp_traj,
+        snap_base, me, num_seats, MAX_HORIZON,
     )
 
     # ---------------------------------------------------------------
@@ -746,7 +712,7 @@ def agent(obs, configuration=None):
         delta = _score_action(
             snap_base, me, num_seats,
             int(src.id), angle, ships,
-            horizon, baseline_favors, opp_traj, wait_N=wait_N,
+            horizon, baseline_favors, wait_N=wait_N,
         )
         if delta > 0:
             candidates.append((delta, src, tgt, ships, angle, wait_N))
