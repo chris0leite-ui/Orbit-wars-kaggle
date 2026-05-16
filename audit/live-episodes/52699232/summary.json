@@ -1,0 +1,172 @@
+{
+  "submission_id": "52699232",
+  "generated_utc": "2026-05-16T06:27:25Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 12,
+  "n_played": 12,
+  "wins_total": 9,
+  "winrate_total": 0.75,
+  "by_size": {
+    "2": {
+      "n": 6,
+      "wins": 5,
+      "winrate": 0.8333333333333334
+    },
+    "4": {
+      "n": 6,
+      "wins": 4,
+      "winrate": 0.6666666666666666
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 7,
+    "1": 4,
+    "2": 3,
+    "3": 1
+  },
+  "episode_length_steps": {
+    "n": 12,
+    "min": 109,
+    "q1": 142,
+    "median": 173,
+    "q3": 227,
+    "max": 345,
+    "mean": 189.83333333333334
+  },
+  "opponents": [
+    {
+      "name": "213tubo",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "liujiujiu",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Event Horizon",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "[RU] Nikita Kuznetsov",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "qinfuyao",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "bgsszsa",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Cyril Vincler",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "gasin",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Retlinac",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Andnat Peace",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "[Deleted] 99262de5-02e8-402e-bb87-1cb3f2e93528",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "unosss",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "lucataco",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Leszek G\u00f3ra",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Dapp",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "SamaReddy94",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Claws",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "zorac",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Forrest",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "sash",
+      "seen": 1,
+      "beat_us": 1
+    }
+  ],
+  "losses": [
+    {
+      "episode": "episode-76715073",
+      "size": 2,
+      "opponents": [
+        "213tubo"
+      ],
+      "winner": "213tubo",
+      "steps": 128
+    },
+    {
+      "episode": "episode-76715424",
+      "size": 4,
+      "opponents": [
+        "SamaReddy94",
+        "Claws",
+        "zorac"
+      ],
+      "winner": "SamaReddy94",
+      "steps": 345
+    },
+    {
+      "episode": "episode-76715670",
+      "size": 4,
+      "opponents": [
+        "Forrest",
+        "213tubo",
+        "sash"
+      ],
+      "winner": "sash",
+      "steps": 142
+    }
+  ]
+}
