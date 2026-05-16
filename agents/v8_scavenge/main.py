@@ -31,6 +31,7 @@ candidate via the MAX_HORIZON check.
 from __future__ import annotations
 
 import math
+import os
 import time
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
@@ -99,6 +100,25 @@ MAX_HORIZON = 30                 # baseline cache depth — covers most candidat
 # Effective cap = min(N_VALIDATE, N_AFFORDABLE). Bounds the worst
 # case to ~(budget + 1 candidate worth) ≈ 700ms reliably.
 WALLCLOCK_BUDGET_MS = 600.0
+
+# Parity-test override: the bundle-parity gate sets this env var to
+# effectively unbound the budget, so every candidate is scored and the
+# agent becomes a pure function of `obs`. Otherwise mid-candidate-list
+# deadline bails create source-vs-bundle action drift from CPU jitter
+# alone — exactly what the parity gate is designed to catch as a real
+# bundling defect, but timing isn't one. Pattern lifted from
+# `lib/v7_search.py::_WALLCLOCK_ENV_VAR`.
+_WALLCLOCK_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
+
+
+def _effective_wallclock_ms() -> float:
+    override = os.environ.get(_WALLCLOCK_ENV_VAR)
+    if not override:
+        return WALLCLOCK_BUDGET_MS
+    try:
+        return float(override)
+    except ValueError:
+        return WALLCLOCK_BUDGET_MS
 
 # Safety factor on the per-candidate cost estimate. fast_sim's per-step
 # cost varies within a rollout (combat steps are slower than no-combat
@@ -633,7 +653,8 @@ def agent(obs, configuration=None):
     avg_K = (MIN_HORIZON + MAX_HORIZON) / 2.0
     per_cand_ms = per_step_ms * avg_K * _PER_CANDIDATE_SAFETY
     # How many candidates fit inside the budget AFTER reserving overhead?
-    budget_for_validate = WALLCLOCK_BUDGET_MS - _RESERVED_OVERHEAD_MS
+    wallclock_ms = _effective_wallclock_ms()
+    budget_for_validate = wallclock_ms - _RESERVED_OVERHEAD_MS
     n_affordable = max(8, int(budget_for_validate / per_cand_ms))
 
     # v12: full opp trajectory via lite_greedy_policy. Replayed
@@ -717,7 +738,7 @@ def agent(obs, configuration=None):
     effective_cap = min(N_VALIDATE, n_affordable)
     top = deduped[:effective_cap]
 
-    t_deadline = time.perf_counter() + WALLCLOCK_BUDGET_MS / 1000.0
+    t_deadline = time.perf_counter() + wallclock_ms / 1000.0
     candidates = []  # validated (delta, src, tgt, ships, angle, wait_N)
     for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
         if time.perf_counter() > t_deadline:
