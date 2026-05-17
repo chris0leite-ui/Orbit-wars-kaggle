@@ -14,11 +14,14 @@ Pipeline per turn:
 from __future__ import annotations
 
 import math
+import os
 
 from lib.aim import aim_orbiting
 from lib.fleet import speed as fleet_speed
 from lib.orbit import is_orbiting, predict_relative
 from lib.scoring import pv_horizon
+from lib.trajectory import predict_fleet_fate
+from lib.world_model import comet_remaining_lifetime
 
 NUM_TARGETS_PER_SOURCE = 8
 MIN_FLEET_SIZE = 2
@@ -258,5 +261,43 @@ def propose(my_planets, target_pool, world, model, me: int,
             best_per_band[key] = entry
 
     deduped = list(best_per_band.values())
+
+    # Trajectory admissibility filter (opt-in via env var, default off).
+    # Drops candidates whose straight-line trajectory hits the sun, OOB,
+    # or a comet/wrong-planet before reaching the intended target — all
+    # are deterministic-zero-success launches the chooser would otherwise
+    # waste rollout time on (and the existing leaf-value heads don't
+    # always penalise them). Uses lib.trajectory.predict_fleet_fate,
+    # which mirrors the engine's swept-pair / point-to-segment-distance
+    # rules. Filter runs ONLY on fire-now candidates (wait_N==0); wait-N
+    # variants have time-shifted geometry the static fate-predictor
+    # doesn't model.
+    #
+    # Origin: PI critique 2026-05-17 PM. Full design at
+    # knowledge-base/concepts/trajectory-first-architecture.md;
+    # in-chooser variant (chooser_trajectory.py) lost A/B vs v15
+    # because it discarded strategic depth; this proposer-side filter
+    # keeps the K-step rollout and only PRUNES doomed candidates.
+    if os.environ.get("PROPOSER_TRAJECTORY_FILTER", "").strip().lower() == "on":
+        filtered: list = []
+        for entry in deduped:
+            _cheap, src, tgt, ships, angle, eta, _horizon, w = entry
+            if int(w) != 0:
+                # Wait-then-fire: trajectory geometry depends on the
+                # launch-time orbital state; the static fate-predictor
+                # would mis-classify. Pass through unfiltered.
+                filtered.append(entry)
+                continue
+            fate = predict_fleet_fate(src, tgt, float(angle), int(ships), world)
+            if fate.outcome != "target":
+                continue  # sun / oob / hits wrong planet / timeout — drop
+            # Target reached. If it's a comet, also gate on lifetime.
+            if int(tgt.id) in world.comet_ids:
+                life = comet_remaining_lifetime(int(tgt.id), world)
+                if life is None or life <= int(fate.step):
+                    continue
+            filtered.append(entry)
+        deduped = filtered
+
     deduped.sort(key=lambda e: -e[0])
     return deduped
