@@ -106,6 +106,16 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
     ritual on the strongest current recommendation.
 27. [TABULAR-ONLY — N/A for Orbit Wars. Code-comp analogue: `kaggle_environments.evaluate()` head-to-head ≥10 games against the previously-submitted agent — if winrate is 50%±5%, the new agent likely doesn't outclass it; reconsider the slot spend.] **Pre-submit prediction diff is mandatory.** `scripts/pre_submit_diff.py`
     against the previous submit. If Spearman > 0.999, abort — LB will tie.
+    **27a [ORBIT-WARS]. H2H-vs-rolling-champion is the FIRST submission
+    gate.** `fast.py eval <candidate> --vs <champion_bundle> --n 64`
+    with Wilson lo > 0.50 is required BEFORE the 3-opp panel — not
+    after. Panel passes do NOT predict ladder outcomes (recurrence
+    count = 4: v13, v14, v15, v17/v18 all panel-PASSED and lost h2h vs
+    the current champion). The champion is read from `kaggle competitions
+    submissions orbit-wars` (Rule 32), bundled from git history if its
+    source is absent from the working tree. If h2h fails, do NOT
+    submit — re-diagnose before consuming a slot. Origin: 2026-05-17
+    public-notebook research + 4-recurrence friction record. PI-ratified.
 28. **Subagent dispatch limits.** Don't dispatch general-purpose subagents
     for Python jobs > 5 min. Long-running compute launches from the main
     thread.
