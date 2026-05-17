@@ -2,6 +2,10 @@
 
 > Last written: 2026-05-17 by `claude/kaggle-baseline-strategy-lO4mm`
 > (clean modular re-baseline of v15).
+> Day-N PM addendum: `claude/improve-fleet-efficiency-cQXg4` —
+> 7 variants across 2 axes (chooser-filter + opening-overlay) all
+> falsified at n=32 vs v15. See `## Day-N PM improve-fleet-efficiency-cQXg4`
+> section below.
 > Prior session: `claude/recover-main-foundations-MV0e2` and
 > `claude/merge-2026-05-16-knowledge` (the v9 → v15 → v20 chooser line).
 
@@ -126,3 +130,54 @@ Local validation (run again at session start to refresh):
   work must pivot to a different axis.
 - Rule 40: prefer modeling-correctness over restriction-tuning
   (no MAX_WAIT / MAX_HORIZON / MIN_FLEET_SIZE bumps to fix symptoms).
+
+## Day-N PM improve-fleet-efficiency-cQXg4
+
+Session goal (from PI): minimise wasted fleets — fleets that fail
+their missions (defending, capturing, sabotage). Investigation +
+sustainable fix on evaluation and choice among candidate actions.
+
+**Diagnostic landed:** mined 16 v15/v20 live replays (8 each).
+Empirical waste rates:
+- **15% of launches target comets; 100% MISS** (~20 ships/game).
+- **60–70% of CAPTUREs lost back within 50 turns**; median hold = 8.
+- **43–53% of lost-backs are UNDEFENSIBLE** (outnumbered locally
+  at recapture in R=30 neighborhood).
+
+**Iterations tried (all FAILED at n=32 vs v15):**
+
+| Variant | Axis | Approach | n=32 winrate |
+|---|---|---|---:|
+| v21 | chooser filter (3-layer) | A (joint-emit) + E1 (cheap target-quality prefilter) + E2 (rollout hold-check) | 31.2% Wlo=0.18 |
+| v21_a/_ae/_solo | chooser filter | ablations of v21 | 43.8% n=16 |
+| v22 | rollout opp | counter-recapture in lite_greedy at every rollout step | 25.0% Wlo=0.13 |
+| v23 (w=15) | opening overlay | propose_opening_missions for turns 0..15 of 2P games | 15.6% Wlo=0.07 |
+| v23 (w=10) | opening overlay | retry with smaller window per plan's falsification path | 25.0% Wlo=0.13 |
+
+**Conclusion:** v15 is structurally the local optimum for this
+codebase. Surface modifications across the chooser-filter and
+opening-overlay axes lose by 25–35 pp. Patterns identified:
+- `pattern-overlay-on-tuned-baseline-doesnt-lift` (3× recurrence)
+- `launch-rate-is-symptom-not-cause`
+- `explicit-rewrite-of-implicit-behavior` (2× recurrence — promoted)
+- `n16-falsely-shows-parity` (Wilson CI width 0.45 hides 20pp regressions)
+
+**Artifacts on the branch:**
+- `agents/v{21,21_a,21_ae,21_solo,22,23}/` + dependency variants
+- `agents/v23` short-circuit pattern + `lib/missions/opening.py`
+  `window` parameter (backward-compatible)
+- `audit/2026-05-17-v21-pivot.md` (v21/v22 postmortem)
+- `audit/2026-05-17-v23-postmortem.md` (axis-pivot postmortem)
+- `scripts/instrument_v21.py`, `scripts/diag_v21_vs_v15.py` (diagnostics)
+- 5 new friction entries in `audit/friction.md`
+
+**Live ladder unchanged through session:** v15 floor μ≈1112; v20
+rolling μ≈1094; v9_scavenge ceiling μ≈1120 unbreached.
+
+**Next-session recommendation (after PI direction):** stop iterating
+on v15. Wholesale architectural pivot — three candidates:
+1. **Portfolio search across multiple value heads** (smallest lift)
+2. **Imitation learning from top-10 replays** (biggest upside, multi-day)
+3. **4P-specific chooser** (~36% of ladder games, orthogonal axis)
+
+No submissions burned this session.
