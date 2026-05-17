@@ -401,6 +401,19 @@ relevant skill file or source code, not back into friction.md.
   `favor`). Flag filed at `knowledge-base/flags/
   2026-05-17-composite-value-head-2p-only.md`. Do NOT
   submit composite-default agent without 4P-aware variant.
+- `tag: composite-head-wallclock-over-1000ms-on-heavy-turns`
+  — composite A/B vs panel/peaks hit max turn-ms 1183/1292
+  (env budget 1000ms). Root cause:
+  `agents/baseline/chooser.affordable_validate_cap`
+  (lines 78-90) probes per-step `fs_step` cost only — fine
+  for `favor` (100 µs leaf) but undercounts
+  `composite_capture_value` (~2-5 ms leaf — builds World
+  + ray-casts every fleet) by ~95%. `N_VALIDATE` cap stays
+  large, candidate budget overruns. **Fix:** probe one
+  leaf eval too; per-candidate cost becomes
+  `per_step_ms × avg_K + per_leaf_ms`. Caller signature
+  picks up `me` and `gamma` (both already in scope at
+  `chooser.choose:100`). Verified by re-running A/B after.
 
 ## 2026-05-17 (claude/improve-fleet-efficiency-cQXg4 — 7 variants falsified)
 

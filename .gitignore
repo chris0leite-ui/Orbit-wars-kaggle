@@ -25,6 +25,8 @@ audit/replays/*
 # Keep replay-mine summaries (small, PI-readable; scripts/replay_mine.py).
 !audit/replays/replay-mine-*.json
 !audit/replays/replay-mine-*.md
+# Keep agent-A/B summaries (small, hand-written; one per session).
+!audit/replays/*-ab-*.md
 audit/manifold/
 
 # In-progress local panel logs (final summaries are committed separately)
