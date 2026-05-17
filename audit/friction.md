@@ -433,6 +433,40 @@ relevant skill file or source code, not back into friction.md.
   for verdicts. Promotion candidate: bump `fast.py eval` default
   `--max-seeds` from 8 (= n=16 with 2-seat balance) to 16 (= n=32).
 
+## 2026-05-17 (claude/space-fleet-physics-engine-lrLE6 — v8_analytic value-head pivot to fast_sim)
+
+- `tag: K-shorter-than-launch-eta-makes-value-head-blind` — JAX K=8
+  rollout couldn't distinguish 38 of 40 candidate atoms from no-op
+  (delta = 0.0000 exactly) at seed 1 turn 80. Root cause: in-flight
+  fleets count as `my_ships` in the leaf, so any launch with ETA > K
+  produces a bit-identical leaf state. Median launch ETA = 10-30
+  turns; K=8 catches almost nothing. All prior tuning operated on the
+  candidate pool BEFORE the leaf or on opp simulation INSIDE the K
+  window — never touched leaf representation. **Fix:** new value
+  head must either (a) extend K past the median launch ETA, or (b)
+  credit in-flight aimed fleets with their expected production gain
+  (cheap-rank's pv_horizon). Diagnosed via /tmp/micro_trace.py;
+  fixed via fast_sim+lite_greedy pivot at branch commit `7e511a0`
+  (K=15). Architecture concept doc:
+  `knowledge-base/concepts/v8-analytic-architecture-state.md`.
+- `tag: copy-K-from-jax-budget-to-fastsim` — initial fast_sim port
+  inherited K=8 from the JAX-budget-constrained config. Predictable
+  consequence: same horizon-too-short failure mode as JAX, manifested
+  as 2/8 vs nearest (REGRESSED from JAX baseline 4/8). Per-step cost
+  on fast_sim is ~10-30× cheaper than JAX, so K=15-25 is actually
+  affordable. **Fix:** when porting an algorithm between cost
+  regimes, re-derive budget-derived constants (K, batch size, cap)
+  from the new regime's per-call timing; never copy from the old one.
+- `tag: rule-37-strict-kill-vs-pi-override` — plan-mode WRAPUP gate
+  was "Wilson 95% LB < 40% vs nearest → kill". 4/8 wins gives LB=21.5%
+  which triggers kill, but n=8 is too small for the LB to clear 40%
+  unless ≥7/8 wins. PI overrode the strict-read gate with "we don't
+  need to win, we need to know if architecture is buildable-on" —
+  reframed verdict from outcome-based to substrate-viability-based.
+  **Fix (promotion candidate):** dual-gate kill-or-keep at small n
+  with both Wilson LB and substrate-viability checks (knob
+  responsiveness, predicted-outcome-matched, timing headroom).
+
 
 ```
 - `tag: <kebab-slug>` — <session context>: <what happened>.
