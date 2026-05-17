@@ -1,5 +1,26 @@
 # QUESTION — what causes `vanished_in_space` in live replays?
 
+> **RESOLVED 2026-05-17** — Investigation revealed a **classifier bug**,
+> not a strategy gap. The 838 `vanished_in_space` fleets were mostly
+> fleets that DID hit orbital planets, but `attribute_fleets:290`'s
+> static `best_d < 5.0` check (from fleet old position to planet new
+> position) missed them because the planet had orbited >5 units between
+> obs_prev and obs_vanish.
+>
+> Fix: `_swept_pair_planet_hit` uses the engine's exact `swept_pair_hit`
+> primitive against every planet in obs_prev, with the planet's new
+> position from obs_vanish (or from the comet path for comets that
+> expired same-tick). Re-run on v15: only 12/9,507 fleets (0.1%) are
+> actual comet collisions. The remaining ~830 migrated to win
+> (+4.6pp) / defense (+2.4pp) / waste_attack (+1.0pp).
+>
+> PI's comet hypothesis was directionally interesting (it prompted the
+> investigation) but quantitatively wrong. See
+> `knowledge-base/thoughts/2026-05-17-comet-hypothesis-falsified-classifier-fixed.md`.
+
+---
+
+
 Date: 2026-05-17
 Filed-by: claude/audit-workflow-performance-btjeK
 Source data: `audit/replays/replay-mine-2026-05-17.{json,md}`

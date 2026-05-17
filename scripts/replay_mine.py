@@ -54,6 +54,7 @@ BUCKET_OF: dict[str, str] = {
     "bounced_neutral": "waste_attack",
     "bounced_enemy": "waste_attack",
     "arrived_but_lost": "waste_attack",
+    "comet_collision": "waste_comet",
     "sun": "waste_trajectory",
     "oob": "waste_trajectory",
     "vanished_in_space": "waste_trajectory",
@@ -62,8 +63,8 @@ BUCKET_OF: dict[str, str] = {
     "unknown": "unknown",
 }
 
-BUCKETS = ("win", "defense", "waste_attack", "waste_trajectory",
-           "inflight", "unknown")
+BUCKETS = ("win", "defense", "waste_attack", "waste_comet",
+           "waste_trajectory", "inflight", "unknown")
 
 
 def mine_one_submission(sub_id: str, team_name: str | None = None,
@@ -201,13 +202,15 @@ def render_markdown(rollup: dict) -> str:
     lines.append(f"# replay-mine — {rollup['date']}")
     lines.append("")
     lines.append("PI buckets: `win`=captured, `defense`=reinforced own, "
-                 "`waste_attack`=bounced, `waste_trajectory`=sun/oob/vanished, "
+                 "`waste_attack`=bounced, `waste_comet`=killed by comet "
+                 "swept-pair, `waste_trajectory`=sun/oob/vanished, "
                  "`inflight`=alive at end, `unknown`=other.")
     lines.append("")
     lines.append("## per-submission roll-up")
     lines.append("")
     headers = ["sub_id", "ep", "fleets", "win%", "def%",
-               "waste_atk%", "waste_traj%", "inflight%", "unknown%"]
+               "waste_atk%", "waste_comet%", "waste_traj%",
+               "inflight%", "unknown%"]
     lines.append("| " + " | ".join(headers) + " |")
     lines.append("|" + "|".join(["---"] * len(headers)) + "|")
     for sub in rollup["submissions"]:
@@ -224,6 +227,7 @@ def render_markdown(rollup: dict) -> str:
             f"{p.get('win', 0):.1f}",
             f"{p.get('defense', 0):.1f}",
             f"{p.get('waste_attack', 0):.1f}",
+            f"{p.get('waste_comet', 0):.1f}",
             f"{p.get('waste_trajectory', 0):.1f}",
             f"{p.get('inflight', 0):.1f}",
             f"{p.get('unknown', 0):.1f}",
@@ -358,6 +362,7 @@ def main(argv=None) -> int:
         print(f"  win={p.get('win', 0):.1f}%  "
               f"defense={p.get('defense', 0):.1f}%  "
               f"waste_attack={p.get('waste_attack', 0):.1f}%  "
+              f"waste_comet={p.get('waste_comet', 0):.1f}%  "
               f"waste_trajectory={p.get('waste_trajectory', 0):.1f}%  "
               f"inflight={p.get('inflight', 0):.1f}%  "
               f"unknown={p.get('unknown', 0):.1f}%")

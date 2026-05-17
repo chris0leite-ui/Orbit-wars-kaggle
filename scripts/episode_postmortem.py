@@ -46,6 +46,8 @@ import lib.planner as MP  # noqa: E402
 import lib.intent as LI  # noqa: E402
 from lib.intent import World, realize  # noqa: E402
 from lib.world_model import WorldModel  # noqa: E402
+from lib.game.interpreter import swept_pair_hit, COMET_RADIUS  # noqa: E402
+from lib.fleet import speed as fleet_speed  # noqa: E402
 import agents.v3_snipe.main as AGENT  # noqa: E402
 from scripts.live_episode_summary import detect_team_name  # noqa: E402
 
@@ -197,6 +199,103 @@ def _fleet_in_step(step_obs: dict, fleet_id: int):
     return None
 
 
+def _fleet_new_pos(last_entry) -> tuple[float, float, float, float]:
+    """Extrapolate fleet (f_old, f_new) for the tick after `last_entry`.
+
+    Returns `(fx, fy, nx, ny)` — old/new positions after one tick at the
+    standard ships-scaled speed.
+    """
+    angle = float(last_entry[4])
+    ships = float(last_entry[6])
+    spd = fleet_speed(ships)
+    fx, fy = float(last_entry[2]), float(last_entry[3])
+    return fx, fy, fx + math.cos(angle) * spd, fy + math.sin(angle) * spd
+
+
+def _comet_old_new_by_pid(obs_prev) -> dict:
+    """Build {planet_id: (old_xy, new_xy)} for every comet in `obs_prev`.
+
+    Uses the comet path: old = path[path_index], new = path[path_index+1]
+    (or path[path_index] if the comet just expired this tick — the
+    engine's "stays put" behaviour from orbit_wars.py:558-561). Handles
+    both dict- and Struct-shaped obs.
+    """
+    comets = obs_prev.get("comets", []) if isinstance(obs_prev, dict) \
+        else getattr(obs_prev, "comets", [])
+    out: dict[int, tuple[tuple[float, float], tuple[float, float]]] = {}
+    for group in comets or []:
+        if hasattr(group, "keys"):
+            pids = group["planet_ids"]
+            paths = group["paths"]
+            idx = int(group["path_index"])
+        else:
+            pids = group.planet_ids
+            paths = group.paths
+            idx = int(group.path_index)
+        for ci, pid in enumerate(pids):
+            path = paths[ci]
+            if idx >= len(path):
+                continue
+            old = (float(path[idx][0]), float(path[idx][1]))
+            new = (float(path[idx + 1][0]), float(path[idx + 1][1])) \
+                if idx + 1 < len(path) else old
+            out[int(pid)] = (old, new)
+    return out
+
+
+def _swept_pair_planet_hit(obs_prev, obs_curr, last_entry,
+                           ) -> tuple[int | None, bool]:
+    """Return `(planet_id, was_comet)` for the planet our fleet's swept
+    segment hits during the obs_prev → obs_curr tick, or `(None, False)`.
+
+    Runs the engine's exact primitive (`swept_pair_hit`) against every
+    planet from `obs_prev`. Planet's old position comes from obs_prev;
+    its new position comes from obs_curr (matches the orbital / static
+    move resolved this tick). For comets that expired by obs_curr, the
+    new position comes from `obs_prev`'s comet path (`path[idx+1]`).
+
+    This matches what the engine does at orbit_wars.py:584-599.
+    """
+    fx, fy, nx, ny = _fleet_new_pos(last_entry)
+    f_old, f_new = (fx, fy), (nx, ny)
+
+    comet_pids = set(obs_prev.get("comet_planet_ids", [])
+                     if isinstance(obs_prev, dict)
+                     else getattr(obs_prev, "comet_planet_ids", []))
+    comet_paths = _comet_old_new_by_pid(obs_prev)
+
+    planets_curr = {int(p[0]): p for p in (
+        obs_curr.get("planets", []) if isinstance(obs_curr, dict)
+        else getattr(obs_curr, "planets", []))}
+
+    for p_old_full in (obs_prev.get("planets", []) if isinstance(obs_prev, dict)
+                       else getattr(obs_prev, "planets", [])):
+        pid = int(p_old_full[0])
+        p_old = (float(p_old_full[2]), float(p_old_full[3]))
+        radius = float(p_old_full[4])
+        is_comet = pid in comet_pids
+        if is_comet and pid in comet_paths:
+            # Use the comet path — most accurate when comet expired by obs_curr.
+            _, p_new = comet_paths[pid]
+            radius = COMET_RADIUS  # canonical comet radius
+        else:
+            p_curr = planets_curr.get(pid)
+            p_new = (float(p_curr[2]), float(p_curr[3])) if p_curr is not None \
+                else p_old
+        if swept_pair_hit(f_old, f_new, p_old, p_new, radius):
+            return pid, is_comet
+    return None, False
+
+
+def _new_pos_oob(last_entry) -> bool:
+    """True if the fleet's NEW position (one tick forward) is OOB.
+    The existing in_bounds check at attribute_fleets:284 used the OLD
+    position only; this catches the residual OOB-on-new misclassification.
+    """
+    _, _, nx, ny = _fleet_new_pos(last_entry)
+    return not (0.0 <= nx <= 100.0 and 0.0 <= ny <= 100.0)
+
+
 def attribute_fleets(replay: dict, our_seat: int, our_player_id: int) -> list:
     """Classify every fleet WE launched into outcome buckets.
 
@@ -310,7 +409,40 @@ def attribute_fleets(replay: dict, our_seat: int, our_player_id: int) -> list:
                 else:
                     outcome = "hit_planet_unknown_flip"
             else:
-                outcome = "vanished_in_space"
+                # The existing best_d < 5.0 + sun + in_bounds checks
+                # missed this. Re-run the engine's actual collision
+                # primitive (swept_pair_hit) over the killing tick:
+                # the planet may have orbited away by obs_vanish, the
+                # comet may have expired, or the fleet's NEW position
+                # may be OOB (the in_bounds check used the OLD position).
+                obs_prev = _global_obs(last_seen_t)
+                hit_pid, is_comet = _swept_pair_planet_hit(
+                    obs_prev, obs_vanish, last_entry,
+                )
+                if hit_pid is not None:
+                    target_id = hit_pid
+                    if is_comet:
+                        outcome = "comet_collision"
+                    else:
+                        # Orbital planet collision: re-derive flip from
+                        # ownership change.
+                        owner_before, _ = _planet_owner_at(obs_prev, hit_pid)
+                        owner_after, _ = _planet_owner_at(obs_vanish, hit_pid)
+                        if owner_after == our_player_id and owner_before != our_player_id:
+                            outcome = "captured"
+                            flipped_to_us = True
+                        elif owner_after == our_player_id and owner_before == our_player_id:
+                            outcome = "reinforced_self"
+                        elif owner_before == -1:
+                            outcome = "bounced_neutral"
+                        elif owner_before == our_player_id:
+                            outcome = "arrived_but_lost"
+                        else:
+                            outcome = "bounced_enemy"
+                elif _new_pos_oob(last_entry):
+                    outcome = "oob"
+                else:
+                    outcome = "vanished_in_space"
 
         fleets_out.append({
             "fleet_id": fid,

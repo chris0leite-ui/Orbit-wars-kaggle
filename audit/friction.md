@@ -375,14 +375,22 @@ relevant skill file or source code, not back into friction.md.
   that re-derives `KAGGLE_API_TOKEN` from harness var
   `$KaggleAPIToke` on every invocation. Verified in fresh
   shell; survives across Bash tool calls.
-- `tag: vanished-in-space-dominates-trajectory-waste` —
-  replay-mine of v15's 92 live games shows `vanished_in_space`
-  at 838 fleets (8.8%, 18% ships-weighted) vs sun-death at
-  13 (0.14%). Sun was the salient PI hypothesis; the real
-  ship-leak is whatever causes mid-flight vanish (comet
-  collision suspected). **Fix:** before sun-fix (pivot #5)
-  is worthwhile, identify the vanish mechanism — it's the
-  dominant ship-waste category by ~6x.
+- `tag: vanished-in-space-was-classifier-bug-not-comets` —
+  replay-mine of v15's 92 live games initially showed
+  `vanished_in_space` at 838 fleets (8.8%). PI hypothesised
+  comet collision; investigation revealed the existing
+  `attribute_fleets:290` check used static `best_d < 5.0`
+  from fleet OLD position to planet NEW position — orbital
+  planets that moved >5 units between obs_prev and obs_vanish
+  were misclassified as vanishes. **Fix:** replaced single-
+  point distance with engine's `swept_pair_hit` primitive
+  against every planet in obs_prev (with planet new positions
+  from obs_vanish, and comet new positions from the comet
+  path for expired-same-tick comets). Result: win 42.8 → 47.4%,
+  defense 32.8 → 35.2%, waste_traj 9.0 → 0.9%, waste_comet
+  = 0.1% (12/9507). PI's comet hypothesis falsified
+  quantitatively; v15 was already cleaner than measured.
+  Permanent measurement-honesty improvement.
 - `tag: composite-head-2p-only-no-4p-opp-aggregation` —
   wiring `lib.value_heads.composite_capture_value` into
   `agents/baseline/value.favor_composite`: composite
