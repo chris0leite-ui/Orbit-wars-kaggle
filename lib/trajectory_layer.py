@@ -35,6 +35,7 @@ The `_effective_t` helper below encodes exactly this. Pinned by
 
 from __future__ import annotations
 
+import enum
 import math
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
@@ -708,11 +709,135 @@ class LaunchSpec:
     launch_turn: int = 0
 
 
+# ---------------------------------------------------------------------------
+# PHASE 4 — SunFilter (closed-form, no false negatives)
+# ---------------------------------------------------------------------------
+
+
+class SunVerdict(enum.Enum):
+    """Result of a SunFilter check.
+
+    `SAFE` — the spec's fleet provably does NOT pass through the sun
+    on its full infinite forward ray (zero false negatives).
+    `HITS_SUN` — the fleet's ray intersects the sun's safety disc and
+    the intersection lies ahead of the spawn.
+    `UNCERTAIN` — reserved for future extensions where the closed-form
+    can't decide (e.g. interaction with a moving target inside the sun
+    zone). Phase 4 never returns this; callers should treat it as
+    "not SAFE" via `SunFilter.is_safe`.
+    """
+    SAFE = 0
+    HITS_SUN = 1
+    UNCERTAIN = 2
+
+
+@dataclass(frozen=True)
+class SunFilter:
+    """Hard O(1) sun-safety predicate.
+
+    Closed-form ray-vs-disc geometry: a launch from `spawn` along
+    `direction` traces an infinite half-line; the sun is a disc of
+    radius `SUN_RADIUS + safety_margin` centered at `(CENTER, CENTER)`.
+    The fleet's ray crosses the disc iff the projection of
+    `(sun_center - spawn)` onto `direction` is non-negative AND the
+    perpendicular distance from `sun_center` to the line is less than
+    `SUN_RADIUS + safety_margin`.
+
+    This covers the full overshoot tail — the existing
+    `lib/geometry.path_clears_sun` only checks the segment from
+    source to the lead-aim target, missing the case where the fleet
+    over-shoots through the sun BEYOND the target. That gap is the
+    documented load-bearing source of the 6%+ sun-clip rate.
+
+    Invariant (enforced by Hypothesis fuzz): if `is_safe(spec) is
+    True`, the fleet provably does NOT die in the sun on its
+    forward ray. Zero false negatives.
+
+    `safety_margin` defaults to 0.5 to match
+    `lib/trajectory.SUN_SAFETY` (the cushion that absorbs float drift
+    on tangent paths). Tuning upward (e.g. 1.0) increases conservatism
+    at the cost of rejecting more borderline-safe launches.
+    """
+    world: "World"
+    safety_margin: float = SUN_SAFETY
+
+    def check(self,
+              spec: LaunchSpec,
+              *,
+              arrival_xy: Optional[tuple[float, float]] = None,
+              ) -> SunVerdict:
+        """Verdict for `spec`. Pure function of (spec, world).
+
+        `arrival_xy` is accepted for API compatibility with callers
+        that pass the lead-aim target endpoint (e.g. mechanism layer);
+        Phase 4's implementation ignores it because the closed-form
+        on the infinite ray is strictly safer (covers overshoot).
+        Phase 5+ may use it to bound the check window.
+        """
+        src = self.world.planet_by_id(spec.src_id)
+        if src is None:
+            # Unknown source — can't predict; bias toward UNCERTAIN
+            # (callers treat as not-safe via is_safe).
+            return SunVerdict.UNCERTAIN
+        return _ray_sun_verdict(
+            src_x=src.current_x,
+            src_y=src.current_y,
+            src_radius=src.radius,
+            aim_angle=spec.aim_angle,
+            safety_margin=self.safety_margin,
+        )
+
+    def is_safe(self, spec: LaunchSpec) -> bool:
+        """Convenience: True iff `check(spec) == SAFE`. Treats
+        UNCERTAIN as not-safe — the load-bearing invariant is that
+        TRUE means provably-safe."""
+        return self.check(spec) == SunVerdict.SAFE
+
+
+def _ray_sun_verdict(*,
+                     src_x: float,
+                     src_y: float,
+                     src_radius: float,
+                     aim_angle: float,
+                     safety_margin: float = SUN_SAFETY,
+                     ) -> SunVerdict:
+    """Pure-geometry ray-vs-sun check. Spawn position = source center
+    + (radius + 0.1) * direction (mirrors env's process_moves).
+
+    Returns SAFE iff (proj < 0) OR (perp_dist² >= threshold²).
+    Returns HITS_SUN otherwise.
+    """
+    cos_a = math.cos(aim_angle)
+    sin_a = math.sin(aim_angle)
+    spawn_x = src_x + cos_a * (src_radius + 0.1)
+    spawn_y = src_y + sin_a * (src_radius + 0.1)
+
+    # Vector from spawn to sun center.
+    dx = CENTER - spawn_x
+    dy = CENTER - spawn_y
+
+    # Projection of (sun - spawn) onto direction = signed forward
+    # distance to the closest-approach point.
+    proj = dx * cos_a + dy * sin_a
+    if proj < 0.0:
+        # Sun is behind the fleet's heading — the forward ray never
+        # gets any closer than the spawn distance, which is > 0.
+        return SunVerdict.SAFE
+
+    # Perpendicular distance² from sun center to the fleet's line.
+    perp_sq = dx * dx + dy * dy - proj * proj
+    threshold = SUN_RADIUS + safety_margin
+    if perp_sq >= threshold * threshold:
+        return SunVerdict.SAFE
+    return SunVerdict.HITS_SUN
+
+
 __all__ = [
     "BOARD_SIZE", "CENTER", "SUN_RADIUS", "ROTATION_RADIUS_LIMIT",
     "SUN_SAFETY", "DEFAULT_LEDGER_HORIZON", "DEFAULT_RAYCAST_STEPS",
     "GameConfig",
     "PlanetView", "FleetView", "CometPathView", "Arrival", "LaunchSpec",
+    "SunVerdict", "SunFilter",
     "World",
 ]
 
