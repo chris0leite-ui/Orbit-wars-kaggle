@@ -243,3 +243,77 @@ def test_favor_hybrid_dispatches_4p_to_favor():
     h = favor_hybrid(obs_4p, me=0, num_seats=4, gamma=0.99)
     f = canonical(obs_4p, me=0, num_seats=4, gamma=0.99)
     assert h == f, f"4P hybrid should match canonical favor; got h={h} f={f}"
+
+
+# ---------------------------------------------------------------------------
+# favor_hybrid_spatial — positional pull toward non-our planets
+# ---------------------------------------------------------------------------
+
+
+def test_positional_ship_value_zero_when_no_non_our_planets():
+    """Degenerate end-state (everything ours): spatial term is zero."""
+    from agents.baseline.value import _positional_ship_value
+    obs = _obs([(0, 0, 10, 50, 1.0, 100, 5), (1, 0, 90, 50, 1.0, 50, 3)])
+    assert _positional_ship_value(obs, me=0) == 0.0
+
+
+def test_positional_ship_value_higher_near_opp():
+    """Same ship count: planet adjacent to opp > planet far from opp."""
+    from agents.baseline.value import _positional_ship_value
+    # Opp planet at (50, 50). My planet 10 units away => high spatial value.
+    near = _obs([(0, 0, 50, 60, 1.0, 50, 0), (1, 1, 50, 50, 1.0, 10, 0)])
+    far = _obs([(0, 0, 5, 5, 1.0, 50, 0), (1, 1, 50, 50, 1.0, 10, 0)])
+    v_near = _positional_ship_value(near, me=0)
+    v_far = _positional_ship_value(far, me=0)
+    assert v_near > v_far, f"near={v_near} far={v_far}"
+
+
+def test_favor_hybrid_spatial_reduces_to_hybrid_when_weight_zero():
+    """SPATIAL_WEIGHT=0 short-circuits → output equals favor_hybrid exactly."""
+    import agents.baseline.value as bv
+    obs = _obs([(0, 0, 10, 50, 1.0, 30, 1), (1, 1, 90, 50, 1.0, 10, 1)])
+    old_weight = bv.SPATIAL_WEIGHT
+    try:
+        bv.SPATIAL_WEIGHT = 0.0
+        s = bv.favor_hybrid_spatial(obs, me=0, num_seats=2, gamma=0.99)
+        h = bv.favor_hybrid(obs, me=0, num_seats=2, gamma=0.99)
+        assert s == h, f"weight=0 should pass through; s={s} h={h}"
+    finally:
+        bv.SPATIAL_WEIGHT = old_weight
+
+
+def test_favor_hybrid_spatial_adds_positional_pull():
+    """SPATIAL_WEIGHT>0: spatial head > hybrid head (positive spatial value)."""
+    import agents.baseline.value as bv
+    obs = _obs([(0, 0, 10, 50, 1.0, 30, 1), (1, 1, 90, 50, 1.0, 10, 1)])
+    old_weight = bv.SPATIAL_WEIGHT
+    try:
+        bv.SPATIAL_WEIGHT = 1.0
+        s = bv.favor_hybrid_spatial(obs, me=0, num_seats=2, gamma=0.99)
+        h = bv.favor_hybrid(obs, me=0, num_seats=2, gamma=0.99)
+        assert s > h, f"spatial should add positive pull; s={s} h={h}"
+    finally:
+        bv.SPATIAL_WEIGHT = old_weight
+
+
+def test_select_favor_fn_hybrid_spatial_path():
+    """BASELINE_VALUE_HEAD=hybrid_spatial dispatches to favor_hybrid_spatial."""
+    import os
+    from agents.baseline.value import select_favor_fn, favor_hybrid_spatial
+    os.environ["BASELINE_VALUE_HEAD"] = "hybrid_spatial"
+    try:
+        assert select_favor_fn() is favor_hybrid_spatial
+    finally:
+        os.environ.pop("BASELINE_VALUE_HEAD", None)
+
+
+def test_positional_ship_value_counts_in_flight_fleets():
+    """In-flight fleets at the fleet's current xy contribute spatial value."""
+    from agents.baseline.value import _positional_ship_value
+    # No on-planet ships; one in-flight fleet near opp planet.
+    obs = _obs(
+        [(0, 0, 5, 5, 1.0, 0, 0), (1, 1, 50, 50, 1.0, 0, 0)],
+        fleets=[(0, 0, 48, 50, 0.0, 0, 30)],  # 30 ships, 2 units from opp
+    )
+    v = _positional_ship_value(obs, me=0)
+    assert v > 0.0

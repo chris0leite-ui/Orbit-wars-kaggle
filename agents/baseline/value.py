@@ -35,6 +35,7 @@ distinguish opp identity in 4P. Default remains `favor` with A2.
 
 from __future__ import annotations
 
+import math
 import os
 
 from lib.scoring import pv_horizon
@@ -47,6 +48,15 @@ WEAK_ENEMY_THRESHOLD = 110.0
 WEAKEST_ENEMY_MULT_4P = 1.5
 ELIMINATION_GATE_RATIO = 0.9
 STRENGTH_PROD_WEIGHT = 15.0
+
+# Spatial leaf params (favor_hybrid_spatial only).
+# Idle-trajectory audit 2026-05-17 on submission 52754310 (mu=1271.8)
+# showed 43.8% of our ship-turns were on planets >50 units from any
+# non-our planet. Spatial term rewards positioning ships near
+# capturable targets so the chooser naturally drains rear/isolated
+# garrisons forward.
+SPATIAL_WEIGHT = float(os.environ.get("BASELINE_SPATIAL_WEIGHT", "0.5"))
+SPATIAL_DECAY = float(os.environ.get("BASELINE_SPATIAL_DECAY", "30.0"))
 
 
 def _read(obs, attr, default):
@@ -133,6 +143,51 @@ def favor_composite(obs, me: int, num_seats: int = 2,
     return composite_capture_value(obs, me)
 
 
+def _positional_ship_value(obs, me: int) -> float:
+    """Sum over my ships (on-planet + in-flight) of
+    1.0 / (1.0 + d_min / SPATIAL_DECAY), where d_min = distance to
+    nearest non-our planet. Value ranges 0..1 per ship:
+    1.0 when adjacent (d=0), 0.5 at d=SPATIAL_DECAY, ~0.2 at d=120.
+
+    Returns 0.0 if no non-our planet remains (degenerate end-state).
+    """
+    planets = _read(obs, "planets", []) or []
+    fleets = _read(obs, "fleets", []) or []
+    non_our = [(float(p[2]), float(p[3])) for p in planets if int(p[1]) != me]
+    if not non_our:
+        return 0.0
+    total = 0.0
+    for p in planets:
+        if int(p[1]) != me:
+            continue
+        x, y = float(p[2]), float(p[3])
+        d_min = min(math.hypot(x - tx, y - ty) for tx, ty in non_our)
+        weight = 1.0 / (1.0 + d_min / SPATIAL_DECAY)
+        total += float(p[5]) * weight
+    for f in fleets:
+        if int(f[1]) != me:
+            continue
+        x, y = float(f[2]), float(f[3])
+        d_min = min(math.hypot(x - tx, y - ty) for tx, ty in non_our)
+        weight = 1.0 / (1.0 + d_min / SPATIAL_DECAY)
+        total += float(f[6]) * weight
+    return total
+
+
+def favor_hybrid_spatial(obs, me: int, num_seats: int = 2,
+                         gamma: float = DEFAULT_GAMMA) -> float:
+    """favor_hybrid + positional pull toward non-our planets.
+
+    Layered on top of the validated hybrid head (composite in 2P,
+    A2-favor in 4P). The spatial term is purely additive — when
+    SPATIAL_WEIGHT=0 it equals favor_hybrid exactly.
+    """
+    base = favor_hybrid(obs, me, num_seats, gamma)
+    if SPATIAL_WEIGHT == 0.0:
+        return base
+    return base + SPATIAL_WEIGHT * _positional_ship_value(obs, me)
+
+
 def favor_hybrid(obs, me: int, num_seats: int = 2,
                  gamma: float = DEFAULT_GAMMA) -> float:
     """2P uses composite (waste-aware, validated by audit-workflow A/B:
@@ -165,4 +220,6 @@ def select_favor_fn():
         return favor_composite
     if choice == "hybrid":
         return favor_hybrid
+    if choice == "hybrid_spatial":
+        return favor_hybrid_spatial
     return favor

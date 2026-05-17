@@ -374,6 +374,24 @@ relevant skill file or source code, not back into friction.md.
   Rule 40 applies: restriction-tuning (cap-the-cap) was the wrong
   lever; the modeling fix is "let the real budget bind, don't pre-
   estimate it conservatively."
+- `tag: env-var-shared-process-breaks-ab-isolation` — spatial-leaf
+  A/B session: tried to A/B `BASELINE_VALUE_HEAD=hybrid_spatial` vs
+  reference clone with `os.environ["BASELINE_VALUE_HEAD"]="hybrid"`.
+  fast.py loads both agents into the SAME worker process via
+  `importlib.util.spec_from_file_location`. The two top-level
+  modules are distinct, but the inner `agents.baseline.value`
+  module is cached in `sys.modules` by name and shared. `os.environ`
+  is process-wide. Whichever main.py loads SECOND overwrites the
+  env, then both agents' per-turn `select_favor_fn()` reads the
+  same value → both play with the same head. The A/B result is
+  uninformative (~50%, not a real comparison). **Fix:** for A/B
+  isolation, patch the BUNDLE's `select_favor_fn` to hard-code the
+  head choice (bypass env entirely). Loaded bundles via
+  `importlib.util.spec_from_file_location` ARE module-level isolated
+  (unique module names). Env-based dispatch is fine for production
+  (single agent per process) but breaks within-process A/B. Rule 38
+  cousin: verify your A/B harness ACTUALLY tests two different
+  configurations before trusting the winrate.
 - `tag: kaggle-cli-401-in-followup-shells` — diagnostic
   session: bootstrap.sh exports `KAGGLE_API_TOKEN` inside
   its own shell only; every subsequent Bash tool call comes
