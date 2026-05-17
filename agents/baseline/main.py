@@ -26,6 +26,16 @@ import os
 # of the box. See agents/baseline/value.select_favor_fn for the dispatch.
 os.environ.setdefault("BASELINE_VALUE_HEAD", "hybrid")
 
+# Production default: trajectory chooser. v4 with wait_N>0 + wallclock
+# budgeting hits 42/64 = 65.6pct Wlo=0.534 vs v15 (n=64), point-estimate
+# +3pp over composite_a2's 40/64 = 62.5pct in the same A/B, with better
+# max-turn-ms (1077 vs 1292). The trajectory path is deterministic on
+# sun/oob/expired-comet failure modes (predict_fleet_fate filter) and
+# was the architectural reframe completed in this session. Local A/B
+# drivers can force the composite path by setting BASELINE_CHOOSER to
+# any value other than "trajectory" (e.g. "composite").
+os.environ.setdefault("BASELINE_CHOOSER", "trajectory")
+
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from lib.fast_sim import from_obs as fs_from_obs
