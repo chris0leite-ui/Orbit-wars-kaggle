@@ -180,3 +180,39 @@ Per Phase-1 question 3: build-only this session. v15 and v20 are both
 PENDING on the live ladder. Submission decision next session with live
 data in hand. The v21 lift signal (if any) will inform that decision
 along with the live v15/v20 settle.
+
+## 2026-05-17 update — live data + strategy pivot
+
+Live μ pulled:
+- **v15 (sub 52710995) = 1115.5 ← team floor**
+- v20 (sub 52721807) = 1095.5
+- v13 (sub 52704189) = 1085.7 (evicted)
+
+v20 LOST 20μ vs v15 live despite v20's 65.6% local h2h vs v15 — clear
+local-overpredict pattern, and evidence v20's dogpile-emit has
+unseen-opponent failure modes. **The live winner is v15, not v20.**
+
+Submission economics:
+- Rolling-last-2 = [v15=1115.5, v20=1095.5] (v20 is newer).
+- Pushing v21 evicts v15 (older) → floor drops to max(v21, 1095.5).
+- For v21 to be net-positive, live(v21) > 1115.5.
+- Given v21 vs v20 = 46.9% local, p(live(v21) > 1115.5) is low.
+
+**Strategy pivot:** build v22 = **v15 + sun-safe pre-filter only**.
+
+Rationale: the smallest possible defensive addition to the actual
+live winner. By construction v22 can only:
+- Equal v15 bit-for-bit (rollout always drops sun-bound candidates)
+- Beat v15 marginally (rollout was occasionally emitting sun-bound
+  candidates that v22 catches before validate)
+
+Worst case: v22 ≡ v15, live μ ≈ 1115.5. Best case: small lift from
+removed waste. **Net floor risk is zero** — there's no realistic
+mechanism by which v22 underperforms v15.
+
+A/B v22 vs v15 running in background. If parity-or-better at n=32,
+v22 is the recommended submission candidate.
+
+Also built v21a/v21b/v21c/v21d ablations isolating each compound
+component on v20 base. If any single axis shows ≥55% Wlo vs v20, that
+axis is a candidate to apply to v15 base as a v22-variant (v22b, etc.).
