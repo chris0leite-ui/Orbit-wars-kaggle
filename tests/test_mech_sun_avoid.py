@@ -87,21 +87,27 @@ def test_sun_avoid_drops_diagonal_through_sun():
     assert out == []
 
 
-def test_sun_avoid_drops_path_grazing_safety_margin():
-    """Path that grazes within 1 unit of the sun edge. With safety=1.0, this
-    is too close — drop."""
-    # Path at x=60 (10 units perpendicular distance from sun centre = exact sun radius).
+def test_sun_avoid_keeps_path_tangent_to_sun():
+    """Path tangent to the sun (perpendicular distance = exactly
+    SUN_RADIUS). Engine uses strict `< SUN_RADIUS` check so tangent
+    paths are NOT killed. With SUN_SAFETY=0.0 (post-2026-05-17 fix
+    that matches engine truth) sun_avoid must KEEP this intent.
+
+    The prior SUN_SAFETY=0.5 cushion caused ~14pp of false-rejects in
+    the v4 trajectory chooser A/B vs v15 — same primitive, same bug
+    surface here.
+    """
+    # Path at x=60 = 10 units perpendicular distance from sun centre.
     src = _src_at(60.0, 0.0)
     target = _target_at(1, 60.0, 100.0)
     world = _world([src, target])
     intent = Intent(src_id=0, target_id=1, ships=10, aim_angle=math.pi / 2)
     out = sun_avoid([intent], world)
-    assert out == []   # tangent to sun + 1-unit safety = still inside
+    assert len(out) == 1  # tangent — engine accepts; we must too
 
 
-def test_sun_avoid_keeps_path_just_outside_safety_margin():
-    """11 units away from sun centre = clears 10 + 1 safety. Pass."""
-    # Move past 11.5 to clearly clear safety=1.0.
+def test_sun_avoid_keeps_path_just_outside_sun():
+    """11.5 units from sun centre = clearly outside the 10-unit radius. Pass."""
     src = _src_at(CENTER + SUN_RADIUS + 1.5, 0.0)
     target = _target_at(1, CENTER + SUN_RADIUS + 1.5, 100.0)
     world = _world([src, target])

@@ -44,9 +44,16 @@ from lib.orbit import is_orbiting, predict_relative
 DEFAULT_MAX_STEPS = 200
 
 # Safety margin around the sun (units). The env's sun-check uses
-# point-to-segment distance; we add a 0.5-unit cushion so float drift
-# on tangent paths doesn't flip the verdict between sim and reality.
-SUN_SAFETY = 0.5
+# point-to-segment distance < SUN_RADIUS strict; we MUST match exactly
+# or we false-reject trajectories that pass within 10.0-10.5 units of
+# centre (the engine accepts them).
+#
+# Origin: 2026-05-17 Direction A A/B. v4 with this cushion at 0.5 cost
+# ~14pp of winrate vs v15 (n=64: 31/64 filter-OFF → 22/64 filter-ON,
+# ~10pp difference; the 14pp is including some non-sun rejections).
+# The 0.5 cushion was filed in 2026-05-11 as a "float drift cushion"
+# but in fact created systematic false-rejections.
+SUN_SAFETY = 0.0
 
 
 @dataclass(frozen=True)
