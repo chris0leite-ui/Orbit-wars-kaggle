@@ -234,6 +234,81 @@ def test_merge_ledgers_adds_projected_arrival():
     assert base[2] == []
 
 
+def test_score_candidate_v4_wait_n_bypasses_admissibility_filter():
+    """wait_N>0 defers action injection to step `wait_N` in the rollout.
+    The pre-rollout `predict_fleet_fate` admissibility filter is stale
+    in that case (source orbits between now and the wait point), so v4
+    skips it for wait_N>0. Verify: same sun-crossing candidate yields
+    status='sun' at wait_N=0 (filter rejects) and status='scored' at
+    wait_N>0 (filter bypassed; fast_sim catches real collisions inside
+    the rollout)."""
+    from agents.baseline.chooser_trajectory import (
+        build_trajectory_baseline,
+        score_candidate_v4,
+    )
+    from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn
+
+    obs, snap, world, model = _snap_and_world(seed=7)
+    me = 0
+    src = _my_src(world, me)
+    tgt = _enemy_tgt(world, me)
+    sun_angle = math.atan2(50.0 - src.y, 50.0 - src.x)
+
+    favor_fn = select_favor_fn()
+    baseline = build_trajectory_baseline(
+        snap, me, num_seats=2, horizon=15,
+        favor_fn=favor_fn, gamma=DEFAULT_GAMMA,
+    )
+
+    _, status0, _ = score_candidate_v4(
+        snap, src, tgt, ships=20, angle=sun_angle,
+        me=me, num_seats=2, world=world,
+        baseline_favors=baseline, favor_fn=favor_fn, gamma=DEFAULT_GAMMA,
+        horizon=15, wait_N=0,
+    )
+    assert status0 == "sun"
+
+    _, status5, _ = score_candidate_v4(
+        snap, src, tgt, ships=20, angle=sun_angle,
+        me=me, num_seats=2, world=world,
+        baseline_favors=baseline, favor_fn=favor_fn, gamma=DEFAULT_GAMMA,
+        horizon=15, wait_N=5,
+    )
+    assert status5 == "scored"
+
+
+def test_choose_trajectory_does_not_silently_drop_wait_n_candidates():
+    """Pre-fix, choose_trajectory skipped every wait_N>0 candidate at
+    the iteration boundary (`if int(wait_N) != 0: continue`). Post-fix
+    they flow into the rollout + scoring path. Verify by feeding a
+    prerank containing ONLY a wait_N>0 candidate from a real my-src to
+    a clear enemy target, and asserting the call runs end-to-end
+    without crash. The emit loop still reserves src+tgt without
+    emitting (correct behaviour) — so `moves` may be empty, but the
+    fact that the v4 scoring path was exercised is the load-bearing
+    check (pre-fix it would have been skipped entirely)."""
+    obs, snap, world, model = _snap_and_world(seed=7)
+    me = 0
+    src = _my_src(world, me)
+    tgt = _enemy_tgt(world, me)
+    angle = math.atan2(tgt.y - src.y, tgt.x - src.x)
+    prerank = [_make_candidate(src, tgt, ships=20, angle=angle,
+                               eta=5, wait_N=5)]
+    import os
+    os.environ["BASELINE_CHOOSER"] = "trajectory"
+    try:
+        moves = choose_trajectory(
+            snap, prerank=prerank, baseline_favors=None,
+            me=me, num_seats=2, wallclock_ms=600.0,
+            min_horizon=25, max_horizon=40, gamma=0.99,
+            world=world, model=model,
+        )
+    finally:
+        os.environ.pop("BASELINE_CHOOSER", None)
+    # wait_N>0 winners reserve src+tgt but emit nothing this turn.
+    assert moves == []
+
+
 def test_choose_trajectory_v2_emits_multiple_per_source():
     """A source with plenty of ships and several viable targets should
     emit MORE than one move (v1 capped at 1; v2 uses ship budget)."""

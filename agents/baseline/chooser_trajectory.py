@@ -304,6 +304,7 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                        favor_fn, gamma: float,
                        horizon: int,
                        skip_admissibility: bool = False,
+                       wait_N: int = 0,
                        ) -> tuple[float, str, int | None]:
     """v4 scoring: same admissibility filter + fast_sim rollout as v3,
     but the leaf is `favor_fn` instead of a binary owner-check, and the
@@ -317,9 +318,17 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     (env var TRAJECTORY_SKIP_ADMISSIBILITY=on) to isolate whether the
     filter is false-rejecting valid candidates that composite_a2 lets
     through.
+
+    `wait_N>0` defers action injection to step `wait_N` in the rollout
+    (matches composite chooser's `score_action` pattern at
+    `agents/baseline/chooser.py:60-73`). Admissibility filter only runs
+    for `wait_N==0` (the source planet orbits between now and the wait
+    point, so the pre-launch trajectory analysis is stale); for wait>0
+    candidates, fast_sim's collision resolution catches real sun/oob/
+    comet hits inside the rollout.
     """
     eta = 0
-    if not skip_admissibility:
+    if not skip_admissibility and int(wait_N) == 0:
         fate = predict_fleet_fate(src, tgt, angle, ships, world)
         if fate.outcome == "sun":
             return (float("-inf"), "sun", fate.step)
@@ -347,7 +356,7 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
         if snap.fake_env.done:
             break
         actions = opp_actions_for_snap(snap, me, num_seats)
-        if t == 0:
+        if t == int(wait_N):
             actions[me] = [[int(src.id), float(angle), int(ships)]]
         snap = fs_step(snap, actions, in_place=True)
 
@@ -458,13 +467,11 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     favor_fn = select_favor_fn()  # honours BASELINE_VALUE_HEAD env var
 
     # Pre-pass: find the largest horizon we'll need so the baseline runs
-    # deep enough for every fire-now candidate. Use proposer's horizon
-    # field (= max(eta+2, MIN_HORIZON=25)) — same depth v15 uses, lets
-    # captured-planet production accumulate enough to register positively.
+    # deep enough for every candidate (including wait_N>0, whose proposer
+    # horizon already accounts for the wait via
+    # `w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)`).
     max_horizon_seen = 0
     for cheap_delta, src, tgt, ships, angle, eta_hint, h, wait_N in prerank:
-        if int(wait_N) != 0:
-            continue
         if int(h) > max_horizon_seen:
             max_horizon_seen = int(h)
 
@@ -476,12 +483,11 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
 
     scored: list[tuple] = []
     for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
-        # wait_N>0: fast_sim'ing across a wait doesn't trivially
-        # generalise (the wait builds ships at src while opp acts).
-        # Deferred; first cut is fire-now-only.
-        if int(wait_N) != 0:
-            continue
         if use_v3:
+            # v3 path: fire-now-only (binary leaf doesn't generalise to
+            # wait_N>0 trivially). Skip wait_N>0 in the v3 path.
+            if int(wait_N) != 0:
+                continue
             score, status, _ = score_candidate_dyn(
                 snap_base, src, tgt, int(ships), float(angle),
                 me, num_seats, world,
@@ -495,6 +501,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 baseline_favors, favor_fn, gamma,
                 horizon=int(prop_horizon),
                 skip_admissibility=skip_filter,
+                wait_N=int(wait_N),
             )
             if status == "scored" and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))
