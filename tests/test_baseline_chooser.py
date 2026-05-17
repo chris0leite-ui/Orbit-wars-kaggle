@@ -58,9 +58,48 @@ def test_affordable_cap_has_floor_of_eight():
     """Even with an extreme budget the cap is bounded below by 8."""
     _obs, snap = _snapshot_from_seed(7)
     cap = affordable_validate_cap(
-        snap, num_seats=2, max_horizon=10, wallclock_ms=50.0, min_horizon=5,
+        snap, me=0, num_seats=2, max_horizon=10, wallclock_ms=50.0,
+        min_horizon=5, gamma=0.99,
     )
     assert cap >= 8
+
+
+def test_affordable_cap_shrinks_under_composite_head():
+    """The cap probe measures per-leaf cost — composite_capture_value is
+    heavier per call than favor (builds a World + ray-casts every fleet).
+    Under composite the cap should be smaller than under favor at the
+    same wallclock budget. Documents the 2026-05-17 timing fix.
+
+    Each branch is measured 3x with a warmup; we take the MEDIAN cap.
+    Real usage warms favor_fn heavily via build_idle_baseline before
+    reaching the probe; cold-cache noise in a one-shot test misleads.
+    """
+    import os
+    import statistics
+    _obs, snap = _snapshot_from_seed(7)
+    args = dict(me=0, num_seats=2, max_horizon=40, wallclock_ms=600.0,
+                min_horizon=25, gamma=0.99)
+
+    def median_cap(env_value):
+        if env_value is None:
+            os.environ.pop("BASELINE_VALUE_HEAD", None)
+        else:
+            os.environ["BASELINE_VALUE_HEAD"] = env_value
+        # Warmup so module-import + WorldModel-build aren't on the path.
+        affordable_validate_cap(snap, **args)
+        samples = [affordable_validate_cap(snap, **args) for _ in range(3)]
+        return statistics.median(samples)
+
+    try:
+        cap_favor = median_cap(None)
+        cap_composite = median_cap("composite")
+    finally:
+        os.environ.pop("BASELINE_VALUE_HEAD", None)
+
+    assert cap_composite <= cap_favor, (
+        f"composite cap ({cap_composite}) should be <= favor cap "
+        f"({cap_favor}) because composite leaf is heavier"
+    )
 
 
 def test_choose_empty_prerank_returns_empty():

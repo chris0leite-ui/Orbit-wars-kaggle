@@ -109,3 +109,37 @@ def test_favor_composite_returns_float_on_simple_board():
     assert isinstance(v, float)
     # No fleets => composite collapses to the ship-delta term: 30 - 10 = 20.
     assert v == 20.0
+
+
+def test_favor_composite_4p_delegates_to_favor():
+    """4P games should bypass composite and use favor (sum-of-opps).
+    composite_capture_value has no opp-seat differentiation; in 4P
+    that collapses signal vs favor's sum-of-opps."""
+    from agents.baseline.value import favor_composite
+    obs_4p = _obs([
+        (0, 0, 10, 10, 1.0, 50, 1),
+        (1, 1, 90, 10, 1.0, 50, 1),
+        (2, 2, 10, 90, 1.0, 50, 1),
+        (3, 3, 90, 90, 1.0, 50, 1),
+    ])
+    # In 4P, favor_composite must return the same value as favor(num_seats=4).
+    composite_4p = favor_composite(obs_4p, me=0, num_seats=4, gamma=0.99)
+    favor_4p = favor(obs_4p, me=0, num_seats=4, gamma=0.99)
+    assert composite_4p == favor_4p
+
+
+def test_favor_composite_2p_does_not_match_favor():
+    """In 2P, favor_composite uses the composite head — value should
+    differ from favor on a non-trivial board (different scoring).
+    Sanity: confirms the 4P branch is the ONLY one delegating."""
+    from agents.baseline.value import favor_composite
+    # Board with one of our fleets in flight — composite credits the
+    # in-flight capture, favor counts the fleet's ships in F1 only.
+    obs = _obs(
+        planets=[(0, 0, 10, 50, 1.0, 30, 1), (1, 1, 90, 50, 1.0, 5, 3)],
+        fleets=[(0, 0, 50, 50, 0.0, 0, 30)],
+    )
+    composite_2p = favor_composite(obs, me=0, num_seats=2, gamma=0.99)
+    favor_2p = favor(obs, me=0, num_seats=2, gamma=0.99)
+    # Composite's capture-credit should make these different.
+    assert composite_2p != favor_2p

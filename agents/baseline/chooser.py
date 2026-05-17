@@ -75,17 +75,31 @@ def score_action(snap_base, me: int, num_seats: int,
     return leaf - baseline_favors[horizon]
 
 
-def affordable_validate_cap(snap_base, num_seats: int, max_horizon: int,
-                            wallclock_ms: float, min_horizon: int) -> int:
-    """Probe per-step cost on the current board, derive a safe candidate
-    cap that fits inside the wallclock budget. Min cap = 8.
+def affordable_validate_cap(snap_base, me: int, num_seats: int,
+                            max_horizon: int, wallclock_ms: float,
+                            min_horizon: int, gamma: float) -> int:
+    """Probe per-step + per-leaf cost on the current board, derive a
+    safe candidate cap that fits inside the wallclock budget. Min cap = 8.
+
+    Probing per-leaf cost matters because the leaf eval cost varies
+    by ~50x between value heads (favor ~100µs vs composite_capture_value
+    ~2-5ms — it builds a World + ray-casts every fleet). Without the
+    leaf probe the cap stayed sized for favor and composite blew the
+    1000ms env budget on heavy turns (max 1292ms vs v15 / v9_scavenge,
+    2026-05-17 A/B).
     """
+    favor_fn = select_favor_fn()
     t0 = time.perf_counter()
     probe = fs_clone(snap_base)
     probe = fs_step(probe, [[] for _ in range(num_seats)], in_place=True)
     per_step_ms = max(0.05, (time.perf_counter() - t0) * 1000.0)
+
+    t0 = time.perf_counter()
+    favor_fn(probe.state[me].observation, me, num_seats, gamma=gamma)
+    per_leaf_ms = max(0.05, (time.perf_counter() - t0) * 1000.0)
+
     avg_K = (min_horizon + max_horizon) / 2.0
-    per_cand_ms = per_step_ms * avg_K * PER_CANDIDATE_SAFETY
+    per_cand_ms = (per_step_ms * avg_K + per_leaf_ms) * PER_CANDIDATE_SAFETY
     budget = wallclock_ms - RESERVED_OVERHEAD_MS
     return max(8, int(budget / per_cand_ms))
 
@@ -98,7 +112,8 @@ def choose(snap_base, prerank, baseline_favors: list[float],
         return []
 
     n_aff = affordable_validate_cap(
-        snap_base, num_seats, max_horizon, wallclock_ms, min_horizon,
+        snap_base, me, num_seats, max_horizon, wallclock_ms,
+        min_horizon, gamma,
     )
     top = prerank[: min(N_VALIDATE, n_aff)]
 
