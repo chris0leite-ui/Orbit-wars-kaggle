@@ -1,0 +1,105 @@
+{
+  "submission_id": "52754310",
+  "generated_utc": "2026-05-17T22:41:50Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 8,
+  "n_played": 8,
+  "wins_total": 8,
+  "winrate_total": 1.0,
+  "by_size": {
+    "2": {
+      "n": 5,
+      "wins": 5,
+      "winrate": 1.0
+    },
+    "4": {
+      "n": 3,
+      "wins": 3,
+      "winrate": 1.0
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 5,
+    "1": 2,
+    "2": 1,
+    "3": 1
+  },
+  "episode_length_steps": {
+    "n": 8,
+    "min": 122,
+    "q1": 208,
+    "median": 280,
+    "q3": 335,
+    "max": 500,
+    "mean": 272.625
+  },
+  "opponents": [
+    {
+      "name": "JosephErikRibeiro",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "mdirf4nuddin",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Yuanshuo Gou",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "yossi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Baidalin Adilzhan [dsmlkz]",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "LEEKANG",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Shota Shibata",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "wack_wack",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Longkun Shi (Candyman)",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "HassenHamdi Winning InchaAllah",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Vasil Yordanov",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Hit Imai",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Qixiu",
+      "seen": 1,
+      "beat_us": 0
+    }
+  ],
+  "losses": []
+}
