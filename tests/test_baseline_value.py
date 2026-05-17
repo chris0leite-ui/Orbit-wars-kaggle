@@ -1,8 +1,19 @@
-"""Unit tests for agents/baseline/value.favor."""
+"""Unit tests for agents/baseline/value.favor.
+
+A2 — 4P weakness exploitation only. 2P path is UNCHANGED from baseline.
+History: A 2P uniform bias (1.25x) was tested and rolled back after
+h2h vs v15 showed 25/64 (39.1%) INCONCLUSIVE — the uniform bias makes
+the chooser over-aggressive against v15's well-tuned strategy.
+"""
 
 from __future__ import annotations
 
-from agents.baseline.value import favor
+from agents.baseline.value import (
+    ELIMINATION_BONUS,
+    WEAK_ENEMY_THRESHOLD,
+    WEAKEST_ENEMY_MULT_4P,
+    favor,
+)
 
 
 def _obs(planets, fleets=None, step=0, player=0):
@@ -32,32 +43,28 @@ def test_favor_uses_pv_discount_on_production():
     )
     hi = favor(obs, me=0, num_seats=2, gamma=1.0)
     lo = favor(obs, me=0, num_seats=2, gamma=0.99)
-    assert hi >= lo  # γ=1.0 weights future-prod more
+    assert hi >= lo
 
 
-def test_favor_2p_max_of_opps():
-    """In 2P, opp_agg = the only opp. Symmetry: favor(me=0) == -favor(me=1)
-    when ship/prod are balanced.
+def test_favor_2p_unchanged_balanced_state_is_zero():
+    """2P path is UNCHANGED from baseline: balanced state -> favor=0
+    from either seat. Anti-symmetric, no bias.
     """
     obs = _obs([(0, 0, 10, 50, 1.0, 50, 2), (1, 1, 90, 50, 1.0, 50, 2)])
     assert abs(favor(obs, me=0, num_seats=2)) < 1e-9
     assert abs(favor(obs, me=1, num_seats=2)) < 1e-9
 
 
-def test_favor_4p_sum_of_opps_not_max():
-    """In 4P, opps aggregate by SUM not MAX — capturing a weak opp counts
-    for the full prod delta, not just the leader's portion.
-    """
-    # me has 50 ships, each of 3 opps has 50 — sum=150 vs max=50
+def test_favor_4p_weighted_sum_harsher_than_2p_max():
+    """In 4P, opps aggregate by WEIGHTED-SUM (weakest 1.5x); 2P uses max."""
     obs_4p = _obs([
         (0, 0, 10, 10, 1.0, 50, 1),
         (1, 1, 90, 10, 1.0, 50, 1),
         (2, 2, 10, 90, 1.0, 50, 1),
         (3, 3, 90, 90, 1.0, 50, 1),
     ])
-    v_2p = favor(obs_4p, me=0, num_seats=2)  # treats opp=max=50
-    v_4p = favor(obs_4p, me=0, num_seats=4)  # treats opp=sum=150
-    # 4P aggregation is harsher (we're behind sum-of-three, not max-of-one)
+    v_2p = favor(obs_4p, me=0, num_seats=2)
+    v_4p = favor(obs_4p, me=0, num_seats=4)
     assert v_4p < v_2p
 
 
@@ -75,6 +82,97 @@ def test_favor_ignores_neutral_owners():
     """owner == -1 must not contribute to either side."""
     only_neutral = _obs([(0, -1, 50, 50, 1.0, 99, 9)])
     assert favor(only_neutral, me=0, num_seats=2) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# A2 — 4P weakness exploitation (4P only)
+# ---------------------------------------------------------------------------
+
+
+def test_a2_weakest_enemy_gets_multiplier_in_4p():
+    """In 4P, attacking the weakest opp gives more favor than the strongest."""
+    a_kill_weakest = _obs([
+        (0, 0, 10, 10, 1.0, 100, 1),
+        (1, 1, 90, 10, 1.0, 0,   0),   # weakest eliminated
+        (2, 2, 10, 90, 1.0, 100, 1),
+        (3, 3, 90, 90, 1.0, 100, 1),
+    ])
+    b_hurt_strongest = _obs([
+        (0, 0, 10, 10, 1.0, 100, 1),
+        (1, 1, 90, 10, 1.0, 10,  1),   # weakest still alive
+        (2, 2, 10, 90, 1.0, 90,  0),   # strongest hurt same gross amount
+        (3, 3, 90, 90, 1.0, 100, 1),
+    ])
+    fa = favor(a_kill_weakest, me=0, num_seats=4)
+    fb = favor(b_hurt_strongest, me=0, num_seats=4)
+    assert fa > fb
+
+
+def test_a2_2p_path_no_bonus_no_mult():
+    """2P path: no weakness mult, no elim bonus — UNCHANGED from baseline."""
+    # 2P balanced state — should be exactly 0 (no bias).
+    obs_balanced = _obs([(0, 0, 10, 50, 1.0, 100, 5), (1, 1, 90, 50, 1.0, 100, 5)])
+    assert abs(favor(obs_balanced, me=0, num_seats=2)) < 1e-9
+
+    # 2P state where opp is below WEAK_ENEMY_THRESHOLD — bonus must NOT fire
+    # in 2P (4P-only feature).
+    obs_weak_opp = _obs([
+        (0, 0, 10, 50, 1.0, 500, 0),
+        (1, 1, 90, 50, 1.0, 50, 0),  # strength=50, well below 110
+    ])
+    f = favor(obs_weak_opp, me=0, num_seats=2)
+    # Without bonus: favor = 500 - 50 + 0 = 450
+    assert abs(f - 450.0) < 1e-6, f"2P should have no bonus; got {f}"
+
+
+def test_a2_elimination_bonus_fires_when_weakest_below_threshold_4p():
+    """In 4P, weakest below threshold AND we're strong enough -> +55 bonus."""
+    obs_below = _obs([
+        (0, 0, 10, 10, 1.0, 500, 0),
+        (1, 1, 90, 10, 1.0, int(WEAK_ENEMY_THRESHOLD - 10.0), 0),
+        (2, 2, 10, 90, 1.0, 500, 0),
+        (3, 3, 90, 90, 1.0, 500, 0),
+    ])
+    obs_above = _obs([
+        (0, 0, 10, 10, 1.0, 500, 0),
+        (1, 1, 90, 10, 1.0, int(WEAK_ENEMY_THRESHOLD + 20.0), 0),
+        (2, 2, 10, 90, 1.0, 500, 0),
+        (3, 3, 90, 90, 1.0, 500, 0),
+    ])
+    delta = favor(obs_below, me=0, num_seats=4) - favor(obs_above, me=0, num_seats=4)
+    assert delta > ELIMINATION_BONUS - 5
+
+
+def test_a2_elimination_bonus_does_not_fire_when_we_are_too_weak_4p():
+    """In 4P, gate withholds bonus when my_strength < 0.9 * weakest's."""
+    weak_me = _obs([
+        (0, 0, 10, 10, 1.0, 50, 0),
+        (1, 1, 90, 10, 1.0, 100, 0),
+        (2, 2, 10, 90, 1.0, 500, 0),
+        (3, 3, 90, 90, 1.0, 500, 0),
+    ])
+    strong_me = _obs([
+        (0, 0, 10, 10, 1.0, 500, 0),
+        (1, 1, 90, 10, 1.0, 100, 0),
+        (2, 2, 10, 90, 1.0, 500, 0),
+        (3, 3, 90, 90, 1.0, 500, 0),
+    ])
+    diff = favor(strong_me, me=0, num_seats=4) - favor(weak_me, me=0, num_seats=4)
+    assert diff >= 450 + ELIMINATION_BONUS - 1
+
+
+def test_a2_constants_match_lb_max_calibration():
+    """Constants are documented load-bearing; assert they match the
+    romantamrazov LB-MAX-1224 calibration (4P only, 2P bias rolled back).
+    """
+    assert WEAKEST_ENEMY_MULT_4P == 1.5
+    assert WEAK_ENEMY_THRESHOLD == 110.0
+    assert ELIMINATION_BONUS == 55.0
+
+
+# ---------------------------------------------------------------------------
+# select_favor_fn dispatcher (PR #29 — BASELINE_VALUE_HEAD opt-in toggle)
+# ---------------------------------------------------------------------------
 
 
 def test_select_favor_fn_default_returns_favor():
@@ -111,35 +209,37 @@ def test_favor_composite_returns_float_on_simple_board():
     assert v == 20.0
 
 
-def test_favor_composite_4p_delegates_to_favor():
-    """4P games should bypass composite and use favor (sum-of-opps).
-    composite_capture_value has no opp-seat differentiation; in 4P
-    that collapses signal vs favor's sum-of-opps."""
-    from agents.baseline.value import favor_composite
+def test_select_favor_fn_hybrid_path():
+    """BASELINE_VALUE_HEAD=hybrid swaps to favor_hybrid."""
+    import os
+    from agents.baseline.value import select_favor_fn, favor_hybrid
+    os.environ["BASELINE_VALUE_HEAD"] = "hybrid"
+    try:
+        assert select_favor_fn() is favor_hybrid
+    finally:
+        os.environ.pop("BASELINE_VALUE_HEAD", None)
+
+
+def test_favor_hybrid_dispatches_2p_to_composite():
+    """Hybrid in 2P must match favor_composite output (no A2 effect)."""
+    from agents.baseline.value import favor_hybrid, favor_composite
+    obs = _obs([(0, 0, 10, 50, 1.0, 30, 1), (1, 1, 90, 50, 1.0, 10, 1)])
+    h = favor_hybrid(obs, me=0, num_seats=2, gamma=0.99)
+    c = favor_composite(obs, me=0, num_seats=2, gamma=0.99)
+    assert h == c, f"2P hybrid should match composite; got h={h} c={c}"
+
+
+def test_favor_hybrid_dispatches_4p_to_favor():
+    """Hybrid in 4P must match `favor` output (A2 4P-weakness multiplier
+    fires; composite would be incorrect here per the 2P-only flag).
+    """
+    from agents.baseline.value import favor_hybrid, favor as canonical
     obs_4p = _obs([
         (0, 0, 10, 10, 1.0, 50, 1),
         (1, 1, 90, 10, 1.0, 50, 1),
         (2, 2, 10, 90, 1.0, 50, 1),
         (3, 3, 90, 90, 1.0, 50, 1),
     ])
-    # In 4P, favor_composite must return the same value as favor(num_seats=4).
-    composite_4p = favor_composite(obs_4p, me=0, num_seats=4, gamma=0.99)
-    favor_4p = favor(obs_4p, me=0, num_seats=4, gamma=0.99)
-    assert composite_4p == favor_4p
-
-
-def test_favor_composite_2p_does_not_match_favor():
-    """In 2P, favor_composite uses the composite head — value should
-    differ from favor on a non-trivial board (different scoring).
-    Sanity: confirms the 4P branch is the ONLY one delegating."""
-    from agents.baseline.value import favor_composite
-    # Board with one of our fleets in flight — composite credits the
-    # in-flight capture, favor counts the fleet's ships in F1 only.
-    obs = _obs(
-        planets=[(0, 0, 10, 50, 1.0, 30, 1), (1, 1, 90, 50, 1.0, 5, 3)],
-        fleets=[(0, 0, 50, 50, 0.0, 0, 30)],
-    )
-    composite_2p = favor_composite(obs, me=0, num_seats=2, gamma=0.99)
-    favor_2p = favor(obs, me=0, num_seats=2, gamma=0.99)
-    # Composite's capture-credit should make these different.
-    assert composite_2p != favor_2p
+    h = favor_hybrid(obs_4p, me=0, num_seats=4, gamma=0.99)
+    f = canonical(obs_4p, me=0, num_seats=4, gamma=0.99)
+    assert h == f, f"4P hybrid should match canonical favor; got h={h} f={f}"

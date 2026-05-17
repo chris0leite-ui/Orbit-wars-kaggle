@@ -65,6 +65,34 @@ will exceed Kaggle's 1000ms actTimeout. Submission could still work
 those turns play idle. Risk: a high-impact turn timing out = lost
 game. Worth a final tighten before live ladder.
 
+## Post-merge — A2 4P from `claude/kaggle-baseline-strategy-lO4mm`
+
+Pulled in `agents/baseline/value.py` + `tests/test_baseline_value.py`
+from the sibling branch (commit `a97806a`). The branch independently
+extracted **A2** from public notebook
+`romantamrazov/orbit-star-wars-lb-max-1224` (peak LB μ=1224, +116
+above v15 at 1108). A2 mechanic (4P only, default-on):
+
+- 1.5× bias on weakest opp's contribution (other opps unweighted)
+- +55 elimination bonus when weakest strength ≤110 AND my strength
+  ≥0.9 × weakest
+- 2P branch unchanged from v15 baseline (their 2P uniform-bias test
+  regressed 25/64 = 39.1% vs v15 — INCONCLUSIVE).
+
+`select_favor_fn` gains a `BASELINE_VALUE_HEAD=hybrid` option:
+- `unset` → favor (default; A2 in 4P, vanilla in 2P).
+- `composite` → favor_composite (composite_capture_value, 2P-only).
+- `hybrid` → favor_hybrid (composite in 2P, A2-favor in 4P) — the
+  recommended production dispatch.
+
+The composite head numbers above stay valid (panel + peaks were 2P
+games; A2 doesn't affect them). The merge upgrades the 4P side that
+my `favor_composite` previously fell back to vanilla favor for — and
+according to their FFA at n=128, A2-favor in 4P is directionally +2.3
+pp vs v15 (within noise but positive sign). Test coverage: 17 tests
+on value.py (theirs) + my 6 chooser timing/dispatch tests, 51 green
+total.
+
 ## Caveat: missing in-family h2h
 
 `--require-h2h agents/baseline` was passed but the fast.py gate's

@@ -6,12 +6,31 @@ F2 = (my_prod - opp_prod_agg) * pv     (pv = pv_horizon discount)
 PV-discount keeps F2 on a comparable scale to F1; without it the future-
 production term over-weights captures by ~100x in late game and the
 chooser stops valuing ship preservation. opp aggregation is max-of-opps
-in 2P and sum-of-opps in 4P (weak-opp captures get full credit).
+in 2P (unchanged from baseline) and weighted-sum-of-opps in 4P
+(weakest opp 1.5x).
 
-Opt-in alternative: `BASELINE_VALUE_HEAD=composite` switches the chooser to
-`lib.value_heads.composite_capture_value` (waste + capture-aware per-fleet
-credit). 2P-only — composite does not distinguish opp identity in 4P.
-Default remains `favor` (proven on v15 line at live μ~1108).
+A2 (4P weakness exploitation) derives from
+romantamrazov/orbit-star-wars-lb-max-1224 (peak LB μ=1224, +109 above
+our v15 ceiling).
+
+  - 4P: 1.5x bias on the WEAKEST opponent's contribution; other opps
+    unweighted. Biases leaf valuation toward states that further
+    weaken (or eliminate) them.
+  - Elimination bonus: +55 when weakest's strength (ships + 15*prod)
+    <= 110 AND my_strength >= 0.9 * weakest's (only fire when WE can
+    finish — no elim-then-die bias). 4P only.
+
+History — 2P bias was tested and rolled back: a uniform 1.25x
+multiplier on the single opp regressed h2h vs v15 in 2P (25/64,
+39.1%, Wlo=0.281, Whi=0.513 INCONCLUSIVE) because v15 is well-tuned
+and biasing the chooser toward attacks degrades its calibration.
+The "weakness exploitation" thesis is 4P-specific (per-weakest, not
+uniform); the 2P path is unchanged from the original baseline.
+
+Opt-in alternative head: `BASELINE_VALUE_HEAD=composite` switches the
+chooser to `lib.value_heads.composite_capture_value` (waste +
+capture-aware per-fleet credit). 2P-only — composite does not
+distinguish opp identity in 4P. Default remains `favor` with A2.
 """
 
 from __future__ import annotations
@@ -22,6 +41,12 @@ from lib.scoring import pv_horizon
 
 EPISODE_STEPS = 500
 DEFAULT_GAMMA = 0.99
+
+ELIMINATION_BONUS = 55.0
+WEAK_ENEMY_THRESHOLD = 110.0
+WEAKEST_ENEMY_MULT_4P = 1.5
+ELIMINATION_GATE_RATIO = 0.9
+STRENGTH_PROD_WEIGHT = 15.0
 
 
 def _read(obs, attr, default):
@@ -52,54 +77,92 @@ def favor(obs, me: int, num_seats: int = 2, gamma: float = DEFAULT_GAMMA) -> flo
     my_ships = ships_by_owner.get(me, 0.0)
     my_prod = prod_by_owner.get(me, 0.0)
 
-    if num_seats <= 2:
-        opp_ships = max(
-            (v for k, v in ships_by_owner.items() if k != me), default=0.0,
-        )
-        opp_prod = max(
-            (v for k, v in prod_by_owner.items() if k != me), default=0.0,
-        )
+    opps = sorted(
+        o for o in (set(ships_by_owner) | set(prod_by_owner))
+        if o != me and o >= 0
+    )
+
+    elim_bonus = 0.0
+    if num_seats <= 2 or len(opps) < 2:
+        # 2P (or degenerate <=1 opp survives): UNCHANGED from baseline —
+        # max-of-opps, no bias, no bonus. The 2P uniform bias was tested
+        # and rolled back (regresses vs v15).
+        opp_ships = max((ships_by_owner.get(o, 0.0) for o in opps), default=0.0)
+        opp_prod = max((prod_by_owner.get(o, 0.0) for o in opps), default=0.0)
     else:
-        opp_ships = sum(v for k, v in ships_by_owner.items() if k != me)
-        opp_prod = sum(v for k, v in prod_by_owner.items() if k != me)
+        # 4P: weighted sum (weakest 1.5x) + elim bonus when we can finish.
+        opp_strengths = {
+            o: ships_by_owner.get(o, 0.0)
+               + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT
+            for o in opps
+        }
+        weakest = min(opps, key=lambda o: opp_strengths[o])
+        weakest_str = opp_strengths[weakest]
+        opp_ships = sum(
+            ships_by_owner.get(o, 0.0)
+            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
+            for o in opps
+        )
+        opp_prod = sum(
+            prod_by_owner.get(o, 0.0)
+            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
+            for o in opps
+        )
+        my_strength = my_ships + my_prod * STRENGTH_PROD_WEIGHT
+        if (weakest_str <= WEAK_ENEMY_THRESHOLD
+                and my_strength >= ELIMINATION_GATE_RATIO * weakest_str):
+            elim_bonus = ELIMINATION_BONUS
 
     pv = pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS)
-    return (my_ships - opp_ships) + (my_prod - opp_prod) * pv
+    return (my_ships - opp_ships) + (my_prod - opp_prod) * pv + elim_bonus
 
 
 def favor_composite(obs, me: int, num_seats: int = 2,
                     gamma: float = DEFAULT_GAMMA) -> float:
-    """4P-aware composite: `composite_capture_value` in 2P, fall back
-    to the proven `favor` (sum-of-opps) in 4P.
+    """`composite_capture_value` adapted to the (obs, me, num_seats, gamma)
+    signature `chooser` expects. `gamma` is intentionally ignored —
+    composite uses linear time-remaining weighting instead of γ-discount.
+    `num_seats` is ignored — composite doesn't differentiate opps.
 
-    `composite_capture_value` collapses all non-me planets into one
-    "enemy" bucket — it has no opp-seat differentiation. `favor` uses
-    `max-of-opps` in 2P and `sum-of-opps` in 4P, where the latter
-    gives weak-opp captures full credit. ~36% of ladder games are 4P;
-    routing those to `favor` avoids regression.
-
-    Validated 2P A/B (2026-05-17):
-    - vs v9_scavenge (μ=1119.9 team peak): 30/32 = 93.8% (Wlo=0.799)
-    - vs v15 (μ=1108.4 champion):         43/64 = 67.2% (Wlo=0.550)
-    - vs v7_0 / v4_planner / v3.5.1:      ≥87% all PASS
-
-    See knowledge-base/thoughts/2026-05-17-composite-head-beats-team-peaks.md.
+    Prior live evidence (iter_v1 sub 52661990, 2026-05-14):
+    composite head on the v7_0 chooser → ladder μ 1034.7 (vs v15 1108.4).
+    Wire only as an opt-in A/B; do NOT default this on. The clean
+    baseline value is `favor` (with A2 4P-weakness exploitation).
     """
-    if num_seats >= 4:
-        return favor(obs, me, num_seats, gamma=gamma)
     from lib.value_heads import composite_capture_value
     return composite_capture_value(obs, me)
 
 
-def select_favor_fn():
-    """Pick the leaf value function. Default = `favor` (the v15 baseline).
+def favor_hybrid(obs, me: int, num_seats: int = 2,
+                 gamma: float = DEFAULT_GAMMA) -> float:
+    """2P uses composite (waste-aware, validated by audit-workflow A/B:
+    93.8% vs v9_scavenge, 67.2% vs v15). 4P uses `favor` with A2
+    4P-weakness exploitation. Domains are disjoint by construction —
+    composite has no 4P opp aggregation (`composite-value-head-2p-only.md`
+    flag), and A2's per-weakest multiplier + elim bonus only fire when
+    num_seats > 2.
+    """
+    if num_seats <= 2:
+        return favor_composite(obs, me, num_seats, gamma)
+    return favor(obs, me, num_seats, gamma)
 
-    Switch via env var `BASELINE_VALUE_HEAD=composite`. Anything else
-    falls through to the default. The chooser uses the SAME function for
-    both `build_idle_baseline` and `score_action` so the Δ stays well-
-    defined.
+
+def select_favor_fn():
+    """Pick the leaf value function.
+
+    Env var `BASELINE_VALUE_HEAD`:
+      - unset / anything else -> `favor` (default, v15 baseline + A2 4P).
+      - "composite"           -> `favor_composite` (2P waste-aware,
+                                  composite_capture_value head).
+      - "hybrid"              -> `favor_hybrid` (composite in 2P,
+                                  A2-favor in 4P).
+
+    The chooser uses the same function for both `build_idle_baseline` and
+    `score_action` so the Δ stays well-defined.
     """
     choice = os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower()
     if choice == "composite":
         return favor_composite
+    if choice == "hybrid":
+        return favor_hybrid
     return favor
