@@ -40,14 +40,20 @@ DEFAULT_HORIZON = 250
 
 class _MiniWorld:
     """Minimal duck-typed `World` for delegating to
-    `lib.trajectory.predict_fleet_fate`. Carries only `omega` and
-    `planets_by_id` — the two fields predict_fleet_fate reads."""
+    `lib.trajectory.predict_fleet_fate`. Carries the three fields the
+    target reads: `omega`, `planets_by_id`, and `step` (the env's
+    observed step number — needed so `predict_fleet_fate` can apply
+    its `obs.step == 0` stationary-first-tick parity shift)."""
 
-    __slots__ = ("omega", "planets_by_id")
+    __slots__ = ("omega", "planets_by_id", "step")
 
-    def __init__(self, omega: float, planets):
+    def __init__(self, omega: float, planets, step: int = 1):
         self.omega = omega
         self.planets_by_id = {p.id: p for p in planets}
+        # Default 1 = "assume obs.step >= 1 behaviour" (no parity
+        # shift). Callers that have a real obs.step value (notably
+        # `WorldModel.from_world`) should pass it explicitly.
+        self.step = int(step)
 
 
 def fleet_target_planet(
@@ -55,6 +61,7 @@ def fleet_target_planet(
     planets,
     max_horizon: int = DEFAULT_HORIZON,
     omega: float = 0.0,
+    obs_step: int = 1,
 ):
     """Trace `fleet` along its angle, find first planet it'd hit.
 
@@ -87,7 +94,7 @@ def fleet_target_planet(
 
     if omega == 0.0:
         return _static_first_hit(fleet, planets, max_horizon, spd)
-    return _orbital_first_hit(fleet, planets, max_horizon, omega)
+    return _orbital_first_hit(fleet, planets, max_horizon, omega, obs_step)
 
 
 def _static_first_hit(fleet, planets, max_horizon: int, spd: float):
@@ -119,7 +126,8 @@ def _static_first_hit(fleet, planets, max_horizon: int, spd: float):
     return best_planet, int(math.ceil(best_turns))
 
 
-def _orbital_first_hit(fleet, planets, max_horizon: int, omega: float):
+def _orbital_first_hit(fleet, planets, max_horizon: int, omega: float,
+                        obs_step: int = 1):
     """Orbit-aware first-hit via `predict_fleet_fate`. Synthesises a
     zero-radius source at the fleet's current position so the
     function's spawn-offset computation yields the fleet's actual
@@ -149,7 +157,7 @@ def _orbital_first_hit(fleet, planets, max_horizon: int, omega: float):
         ships=0,
         production=0,
     )
-    mini_world = _MiniWorld(omega=omega, planets=planets)
+    mini_world = _MiniWorld(omega=omega, planets=planets, step=obs_step)
     fate = predict_fleet_fate(
         src=fake_src,
         target=planets[0],  # dummy; we only read hit_planet_id
@@ -168,6 +176,7 @@ def build_arrival_ledger(
     planets,
     horizon: int = DEFAULT_HORIZON,
     omega: float = 0.0,
+    obs_step: int = 1,
 ):
     """`{planet_id: [(eta, owner, ships), ...]}` for in-flight fleets.
 
@@ -183,7 +192,9 @@ def build_arrival_ledger(
     """
     ledger: dict[int, list[tuple[int, int, int]]] = {p.id: [] for p in planets}
     for fleet in fleets:
-        target, eta = fleet_target_planet(fleet, planets, horizon, omega=omega)
+        target, eta = fleet_target_planet(
+            fleet, planets, horizon, omega=omega, obs_step=obs_step,
+        )
         if target is None:
             continue
         ledger[target.id].append((eta, int(fleet.owner), int(fleet.ships)))
@@ -263,7 +274,10 @@ class WorldModel:
         fleets = [Fleet(*f) for f in fleets_raw]
         planets = list(world.planets_by_id.values())
         omega = float(getattr(world, "omega", 0.0))
-        ledger = build_arrival_ledger(fleets, planets, horizon, omega=omega)
+        obs_step = int(getattr(world, "step", 1))
+        ledger = build_arrival_ledger(
+            fleets, planets, horizon, omega=omega, obs_step=obs_step,
+        )
         timelines = {
             p.id: simulate_planet_timeline(p, ledger[p.id], horizon) for p in planets
         }

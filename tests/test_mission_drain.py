@@ -144,7 +144,11 @@ def test_skips_target_already_predicted_ours():
     ]
     # Friendly fleet 100 ships nearly at target → flips to ours within eta
     fleets = [_fleet(0, owner=0, x=65.0, y=10.0, angle=0.0, from_pid=2, ships=100)]
-    w = _world(planets, fleets=fleets)
+    # step=0: the fixture sets initial_planets == current; that's only
+    # physically consistent at game start. (Default step=20 with
+    # initial_planets=current is a non-physical state — the env would
+    # teleport the orbital target on the next tick.)
+    w = _world(planets, fleets=fleets, step=0)
     out = propose_drain_missions(w, _model(w))
     # Drain may still propose against other (no other targets here) — empty.
     assert out == []

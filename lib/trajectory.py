@@ -78,8 +78,25 @@ def predict_fleet_fate(
 
     O(max_steps * planets) per call. On a 24-planet mid-game board with
     max_steps=200 that's ~4800 swept_pair_hit calls = ~1-2 ms.
+
+    Env-parity note: the env's interpreter rotates planets by
+    `omega * obs.step`, so at `obs.step == 0` the first tick keeps
+    planets stationary (rotation count 0). At every subsequent
+    `obs.step >= 1` the agent's current planet position already
+    absorbs the `(N-1)*omega` rotation that prior ticks applied, so
+    `predict_relative(current, omega, t)` correctly gives the
+    position `t` ticks ahead. At `obs.step == 0`, however, applying
+    the same formula over-rotates by one step; the env's first tick
+    will be stationary while this function would otherwise advance
+    the planet by `omega`. The `rot_offset` shift below mirrors
+    `lib/trajectory_layer.py::_effective_t_for_orbital` so both
+    code paths agree at game start. `world.step` is read via
+    `getattr(..., 1)` so callers passing mock worlds without a step
+    attribute get the `obs.step >= 1` behaviour.
     """
     omega = world.omega
+    obs_step = int(getattr(world, "step", 1))
+    rot_offset = 1 if obs_step == 0 else 0
 
     # Spawn position (env: src.center + (radius + 0.1) * direction).
     cos_a = math.cos(aim_angle)
@@ -97,7 +114,7 @@ def predict_fleet_fate(
         p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
         if is_orbiting(p_tuple) and omega != 0.0:
             planet_positions[pid] = [
-                predict_relative(p_tuple, omega, t)
+                predict_relative(p_tuple, omega, max(t - rot_offset, 0))
                 for t in range(max_steps + 1)
             ]
         else:
