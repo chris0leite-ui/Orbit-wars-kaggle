@@ -36,8 +36,12 @@ The `_effective_t` helper below encodes exactly this. Pinned by
 from __future__ import annotations
 
 import math
+from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Mapping, Optional
+
+from lib.aim import swept_pair_hit
+from lib.combat import resolve_arrivals
 
 # ---------------------------------------------------------------------------
 # Constants — must match `lib/game/interpreter.py` exactly
@@ -47,6 +51,22 @@ BOARD_SIZE: float = 100.0
 CENTER: float = 50.0
 SUN_RADIUS: float = 10.0
 ROTATION_RADIUS_LIMIT: float = 50.0  # orbital_radius + planet_radius < this → rotating
+
+# Sun safety cushion for ray-casting (matches `lib/trajectory.SUN_SAFETY`).
+# A fleet's swept segment touching within (SUN_RADIUS + SUN_SAFETY) of
+# CENTER is considered sun-killed. The 0.5-unit cushion absorbs float
+# drift on tangent paths so the new ray-cast doesn't disagree with the
+# env's collision verdict at the edge.
+SUN_SAFETY: float = 0.5
+
+# Default horizon for ledger / timeline queries. Matches
+# `lib/world_model.DEFAULT_HORIZON`.
+DEFAULT_LEDGER_HORIZON: int = 250
+
+# Max step depth for per-fleet ray-cast. Matches
+# `lib/trajectory.DEFAULT_MAX_STEPS`. 1-ship fleets at speed 1.0
+# cross the 141-unit board diagonal in ~142 steps; 200 leaves margin.
+DEFAULT_RAYCAST_STEPS: int = 200
 
 # Default game configuration (mirrors `lib/fast_sim.DEFAULT_CONFIG`).
 _DEFAULT_CFG = {
@@ -231,6 +251,16 @@ class World:
     _planet_by_id: dict[int, PlanetView] = field(default_factory=dict, compare=False, repr=False)
     _fleet_by_id: dict[int, FleetView] = field(default_factory=dict, compare=False, repr=False)
     _comet_by_planet_id: dict[int, CometPathView] = field(default_factory=dict, compare=False, repr=False)
+    # Phase 2 caches (lazily populated by the ledger methods):
+    # `_ledger_cache_built` is a list with one bool (mutable through
+    # the frozen wrapper). Indexed by horizon to avoid re-building
+    # for different horizons on the same World.
+    _ledger_cache: dict[int, dict[int, tuple["Arrival", ...]]] = field(
+        default_factory=dict, compare=False, repr=False,
+    )
+    _timeline_cache: dict[tuple[int, int], dict] = field(
+        default_factory=dict, compare=False, repr=False,
+    )
 
     # ---------------------------------------------------------------
     # Construction
@@ -358,6 +388,8 @@ class World:
             _planet_by_id=planet_by_id,
             _fleet_by_id=fleet_by_id,
             _comet_by_planet_id=comet_by_pid,
+            _ledger_cache={},
+            _timeline_cache={},
         )
 
     # ---------------------------------------------------------------
@@ -424,10 +456,325 @@ class World:
     def is_comet(self, planet_id: int) -> bool:
         return planet_id in self._comet_by_planet_id
 
+    # ---------------------------------------------------------------
+    # Phase 2 — Arrival ledger + per-planet timelines
+    # ---------------------------------------------------------------
+
+    def _full_ledger(self,
+                     horizon: int,
+                     ) -> dict[int, tuple[Arrival, ...]]:
+        """Internal: get the full ledger for a horizon, building once
+        and caching per-horizon."""
+        cached = self._ledger_cache.get(horizon)
+        if cached is not None:
+            return cached
+        built = _build_full_ledger(self, horizon)
+        self._ledger_cache[horizon] = built
+        return built
+
+    def ledger_for(self, planet_id: int,
+                   horizon: int = DEFAULT_LEDGER_HORIZON,
+                   ) -> tuple[Arrival, ...]:
+        """Arrivals destined for `planet_id` within `horizon` turns.
+
+        Returns `()` for unknown `planet_id` or no inbound fleets.
+        Arrivals are sorted by `(eta, fleet_id)` for deterministic
+        iteration. The first call for a horizon builds the full
+        ledger (eager); subsequent calls hit the cache.
+        """
+        return self._full_ledger(horizon).get(planet_id, ())
+
+    def ledger_all(self,
+                   horizon: int = DEFAULT_LEDGER_HORIZON,
+                   ) -> Mapping[int, tuple[Arrival, ...]]:
+        """Full ledger view as a read-only mapping. Built once per
+        horizon; subsequent calls hit the cache. Returned mapping is
+        the cached dict; callers MUST NOT mutate."""
+        return self._full_ledger(horizon)
+
+    def _timeline_for(self, planet_id: int,
+                      horizon: int,
+                      ) -> Optional[dict]:
+        """Internal: get the per-planet timeline for a horizon,
+        building once and caching per (planet, horizon)."""
+        key = (planet_id, horizon)
+        cached = self._timeline_cache.get(key)
+        if cached is not None:
+            return cached
+        planet = self._planet_by_id.get(planet_id)
+        if planet is None:
+            # No PlanetView (could be a comet — comets don't carry
+            # garrison/owner in a meaningful sense post-arrival;
+            # combat for comets resolves the same way, so we still
+            # need a timeline if asked).
+            comet = self._comet_by_planet_id.get(planet_id)
+            if comet is None:
+                return None
+            # Synthesise a minimal PlanetView for the comet from the
+            # `planets` tuple (every comet IS a planet in obs.planets;
+            # find it). The conditional ensures we don't reach here
+            # unless the comet is in the comet_paths but missing from
+            # `planets` — practically impossible in real obs, but
+            # defensive.
+            for p in self.planets:
+                if p.id == planet_id:
+                    planet = p
+                    break
+            if planet is None:
+                return None
+        arrivals = self.ledger_for(planet_id, horizon)
+        timeline = _simulate_planet_timeline(planet, arrivals, horizon)
+        self._timeline_cache[key] = timeline
+        return timeline
+
+    def ownership_at(self, planet_id: int, t: int,
+                     horizon: int = DEFAULT_LEDGER_HORIZON,
+                     ) -> tuple[int, float]:
+        """`(owner, ships)` at relative turn `t`. Returns the current
+        snapshot for `t=0`; walks the planet's timeline for `t>0`.
+
+        Returns `(-1, 0.0)` for unknown `planet_id`. Clamps `t` to
+        `[0, horizon]` (queries past `horizon` return the horizon
+        endpoint's state — analogous to
+        `lib/world_model.state_at_timeline`).
+        """
+        if t < 0:
+            t = 0
+        timeline = self._timeline_for(planet_id, horizon)
+        if timeline is None:
+            return (-1, 0.0)
+        h = timeline["horizon"]
+        clamped = min(t, h)
+        return (timeline["owner_at"][clamped],
+                float(timeline["ships_at"][clamped]))
+
+    def incoming_enemy_eta(self, planet_id: int, my_id: int,
+                           horizon: int = DEFAULT_LEDGER_HORIZON,
+                           ) -> Optional[int]:
+        """Min ETA among arrivals to `planet_id` not owned by `my_id`.
+        Returns `None` if no enemy fleet is inbound within `horizon`.
+
+        Mirrors `WorldModel.incoming_enemy_eta` semantics (drops
+        zero-ship arrivals; counts neutral attackers as enemies)."""
+        arrivals = self.ledger_for(planet_id, horizon)
+        if not arrivals:
+            return None
+        enemy_etas = [a.eta for a in arrivals
+                      if a.owner != my_id and a.ships > 0]
+        if not enemy_etas:
+            return None
+        return min(enemy_etas)
+
 
 __all__ = [
     "BOARD_SIZE", "CENTER", "SUN_RADIUS", "ROTATION_RADIUS_LIMIT",
+    "SUN_SAFETY", "DEFAULT_LEDGER_HORIZON", "DEFAULT_RAYCAST_STEPS",
     "GameConfig",
-    "PlanetView", "FleetView", "CometPathView",
+    "PlanetView", "FleetView", "CometPathView", "Arrival",
     "World",
 ]
+
+
+# ---------------------------------------------------------------------------
+# PHASE 2 — Arrival ledger (sparse + eager) and per-planet timelines
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Arrival:
+    """One predicted fleet arrival at a planet.
+
+    `eta` is in turns relative to the snapshot's `obs.step`; eta>=1
+    (a fleet arriving on the same step it was launched has eta=1
+    in the env, because movement happens BEFORE rotation+combat).
+    """
+    eta: int
+    owner: int
+    ships: int
+    fleet_id: int
+
+    # Compatibility with the legacy ledger's `(eta, owner, ships)` triples.
+    def to_legacy_tuple(self) -> tuple[int, int, int]:
+        return (self.eta, self.owner, self.ships)
+
+
+# Module-level helpers (fresh-build implementations of the orchestration;
+# the combat primitive `lib.combat.resolve_arrivals` and the geometry
+# primitive `lib.aim.swept_pair_hit` are reused unchanged — they're
+# env-faithful and bit-tested).
+
+
+def _fleet_target_planet(
+    world: "World",
+    fleet: "FleetView",
+    *,
+    max_steps: int = DEFAULT_RAYCAST_STEPS,
+    sun_safety: float = SUN_SAFETY,
+) -> tuple[Optional[int], Optional[int]]:
+    """Per-fleet ray-cast: returns `(planet_id, eta_steps)` of the first
+    planet the fleet collides with, or `(None, None)` if the fleet dies
+    in sun / OOB / times out without hitting any planet.
+
+    Walks the fleet forward step-by-step. At each turn `t in [1,
+    max_steps]`:
+      - Fleet position at t-1 and t (straight-line, no collisions yet).
+      - Sun: point-to-segment distance from the fleet's swept segment to
+        CENTER must be >= SUN_RADIUS + sun_safety. Else: dies in sun.
+      - OOB: position at t outside [0, BOARD_SIZE]² → dies OOB.
+      - Planet collision: for every planet, `swept_pair_hit` between
+        the fleet's (old, new) segment and the planet's (old, new)
+        chord, with the planet's radius. First hit wins.
+
+    Spawn-step source-planet skip is NOT applied here — this function
+    operates on already-in-flight fleets; the fleet's `current_x/y` is
+    already past its source. (For NEW launches in Phase 3, the overlay
+    constructor handles the spawn-offset and skip explicitly.)
+    """
+    if fleet.speed <= 0:
+        return None, None
+
+    # Pre-compute the planets we'll check against. Comets count as
+    # planets for collision purposes (the env's interpreter checks
+    # against every entry in `obs.planets`, including comet pids).
+    planet_ids: list[int] = [p.id for p in world.planets]
+
+    for t in range(1, max_steps + 1):
+        f_old = fleet.position_at(t - 1)
+        f_new = fleet.position_at(t)
+
+        # Sun check (matches lib/trajectory.predict_fleet_fate).
+        if _segment_to_point_distance(f_old, f_new, (CENTER, CENTER)) \
+                < SUN_RADIUS + sun_safety:
+            return None, None
+
+        # OOB check.
+        if (f_new[0] < 0.0 or f_new[0] > BOARD_SIZE
+                or f_new[1] < 0.0 or f_new[1] > BOARD_SIZE):
+            return None, None
+
+        # Planet collision.
+        for pid in planet_ids:
+            p_old = world.planet_position(pid, t - 1)
+            p_new = world.planet_position(pid, t)
+            if p_old is None or p_new is None:
+                # Comet that's expired or planet that doesn't exist; skip.
+                continue
+            p = world.planet_by_id(pid)
+            if p is None:
+                # Could be a comet (no PlanetView).
+                comet = world.comet_by_planet_id(pid)
+                if comet is None:
+                    continue
+                # Comets have a fixed radius of 1.0 per the env.
+                prad = 1.0
+            else:
+                prad = p.radius
+            if swept_pair_hit(f_old, f_new, p_old, p_new, prad):
+                return pid, t
+
+    return None, None  # timeout
+
+
+def _segment_to_point_distance(
+    a: tuple[float, float],
+    b: tuple[float, float],
+    p: tuple[float, float],
+) -> float:
+    """Shortest distance from segment a->b to point p. Mirrors
+    `lib/trajectory._segment_to_point_distance` for parity."""
+    ax, ay = a
+    bx, by = b
+    px, py = p
+    dx, dy = bx - ax, by - ay
+    seg_len2 = dx * dx + dy * dy
+    if seg_len2 == 0.0:
+        return math.hypot(px - ax, py - ay)
+    t = ((px - ax) * dx + (py - ay) * dy) / seg_len2
+    t = max(0.0, min(1.0, t))
+    cx = ax + t * dx
+    cy = ay + t * dy
+    return math.hypot(px - cx, py - cy)
+
+
+def _build_full_ledger(
+    world: "World",
+    horizon: int,
+) -> dict[int, tuple[Arrival, ...]]:
+    """Build the per-planet ledger by ray-casting every in-flight fleet.
+
+    Returns `{planet_id: (Arrival, ...), ...}` keyed by every planet
+    that has at least one arrival; planets with no inbound fleet are
+    NOT in the dict (callers query with `.get(pid, ())` for graceful
+    empties — done by `World.ledger_for`).
+
+    Fleets that don't hit any planet within `horizon` (sun / OOB /
+    timeout) are dropped — they exit the simulation without affecting
+    any planet's timeline.
+    """
+    buckets: dict[int, list[Arrival]] = defaultdict(list)
+    max_steps = min(int(horizon), DEFAULT_RAYCAST_STEPS)
+    for fleet in world.fleets:
+        if fleet.ships <= 0:
+            continue
+        target_id, eta = _fleet_target_planet(
+            world, fleet, max_steps=max_steps,
+        )
+        if target_id is None or eta is None:
+            continue
+        if eta > horizon:
+            continue
+        buckets[target_id].append(Arrival(
+            eta=int(eta),
+            owner=int(fleet.owner),
+            ships=int(fleet.ships),
+            fleet_id=int(fleet.id),
+        ))
+    # Sort arrivals per planet by eta for deterministic iteration.
+    return {
+        pid: tuple(sorted(arrs, key=lambda a: (a.eta, a.fleet_id)))
+        for pid, arrs in buckets.items()
+    }
+
+
+def _simulate_planet_timeline(
+    planet: "PlanetView",
+    arrivals: Iterable[Arrival],
+    horizon: int,
+) -> dict:
+    """Per-planet ownership/garrison timeline under integer-tick semantics.
+
+    Mirrors `lib/world_model.simulate_planet_timeline` exactly:
+      1. At t=0, record current (owner, ships).
+      2. For t in [1, horizon]:
+         a. If currently owned (owner != -1), garrison += production.
+         b. Resolve same-step arrivals via `lib.combat.resolve_arrivals`.
+         c. Record (owner_at[t], ships_at[t]).
+
+    Returns `{owner_at: dict[int, int], ships_at: dict[int, float],
+              horizon: int}`. The legacy format kept for parity.
+    """
+    h = max(0, int(math.ceil(horizon)))
+    by_turn: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    for arr in arrivals:
+        if arr.ships <= 0:
+            continue
+        bucket = max(1, int(math.ceil(arr.eta)))
+        if bucket > h:
+            continue
+        by_turn[bucket].append((arr.owner, int(arr.ships)))
+
+    owner = planet.owner
+    garrison = float(planet.ships)
+    owner_at = {0: owner}
+    ships_at = {0: max(0.0, garrison)}
+
+    for t in range(1, h + 1):
+        if owner != -1:
+            garrison += planet.production
+        group = by_turn.get(t, [])
+        if group:
+            owner, garrison = resolve_arrivals(owner, garrison, group)
+        owner_at[t] = owner
+        ships_at[t] = max(0.0, garrison)
+
+    return {"owner_at": owner_at, "ships_at": ships_at, "horizon": h}
