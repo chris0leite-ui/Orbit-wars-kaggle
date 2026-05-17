@@ -118,7 +118,12 @@ Drops beam_search; the file stays on disk but no longer imported.
 |---|---:|---:|
 | JAX baseline (`c89eb71`) | 4/8 (50 %) | 2/8 (25 %) |
 | fast_sim K=8 (intermediate) | 2/8 (25 %) | 0/8 (0 %) |
-| **fast_sim K=15 N=25** (`7e511a0`) | **4/8 (50 %)** | in-progress |
+| **fast_sim K=15 N=25** (`7e511a0`) | **4/8 (50 %)** | **0/8 (0 %)** |
+
+vs v7_0 regressed 2/8 → 0/8 while vs nearest held flat. K=15 is
+still too short for v7_0's longer-payoff plays AND `lite_greedy`
+mispredicts v7_0's reaction. Both addressable via next-session
+extensions (wallclock-guarded K, `top_tier_mirror_policy` swap).
 
 Same aggregate as JAX, but the WIN PATTERN shifted: seed 1 went
 0/2 → 2/2 (genuine progress — predicted exactly from K-sweep

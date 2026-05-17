@@ -64,9 +64,26 @@ Selected K=15 N=25 as the budget-fitting balance.
 
 | Variant | vs nearest | vs v7_0 | Note |
 |---|---|---|---|
-| JAX baseline (width=3, single-wave mirror) | **4/8** (50%) | 2/8 (25%) | committed `c89eb71` |
+| JAX baseline (width=3, single-wave mirror) | **4/8** (50%) | **2/8** (25%) | committed `c89eb71` |
 | fast_sim K=8 (regressed) | 2/8 (25%) | 0/8 (0%) | uncommitted intermediate |
-| fast_sim K=15 N=25 | **4/8** (50%) | 0/6 partial (running) | committed `7e511a0` |
+| fast_sim K=15 N=25 | **4/8** (50%) | **0/8** (0%) | committed `7e511a0` |
+
+**vs v7_0 regressed (2/8 → 0/8)** while vs nearest held flat (4/8 →
+4/8). Two explanations consistent with the data:
+
+1. **K=15 is still too short for the longer-ETA captures v7_0
+   doesn't punish.** v7_0 is a lookahead agent that anticipates
+   far-future moves; my K=15 leaf doesn't see those moves. The
+   value head systematically misjudges actions that pay off after
+   K, and v7_0 exploits that gap more than nearest does.
+2. **`lite_greedy` is a poor opp model for v7_0.** lite_greedy is
+   nearest-style; v7_0 plays differently. The reactive baseline
+   predicts opp's response wrong, so my candidates' delta-favor
+   isn't calibrated to the real opponent.
+
+Both are addressable via the listed "Where to go next" extensions
+(wallclock-guarded K extension lifts (1); `top_tier_mirror_policy`
+swap addresses (2)).
 
 Same point estimate vs nearest (4/8). Wilson 95% LB = 21.5%; n=8 too
 small to clear the strict 40% LB threshold from the original plan.
