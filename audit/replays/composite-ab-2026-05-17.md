@@ -41,6 +41,30 @@ Cross-eval focal turn-ms:
    - composite has no 4P opp-aggregation. 4P games are ~36% of the
      ladder; default-on without 4P-aware dispatch would regress.
 
+## Retest after 4P-aware + timing-aware fixes (same day, evening)
+
+After landing the 4P-favor dispatch in `favor_composite` and the
+per-leaf-cost probe in `affordable_validate_cap` (commit `6aba319`),
+re-ran the borderline opponent only:
+
+| opponent | n | wins | rate | Wlo | Whi | verdict |
+|---|---:|---:|---:|---:|---:|---|
+| v15 (μ=1108.4 champion) | 32 | 24 | **75.0%** | **0.579** | 0.867 | **PASS** |
+
+- max turn-ms 1196 (was 1292) — 96ms improvement but still over the
+  1000ms env hard cap on heavy turns.
+- p95 turn-ms 721 (was 757).
+- Verdict crossed from INCONCLUSIVE → PASS. Point estimate moved up
+  (67.2% → 75.0%), but at n=32 the CI is wide; the meaningful change
+  is that Wlo cleared 0.55 deterministically.
+
+**Submission readiness:** A/B-wise yes (panel + h2h vs both peaks now
+PASS). Wallclock-wise borderline — max=1196 means occasional turns
+will exceed Kaggle's 1000ms actTimeout. Submission could still work
+(the engine drops actions over budget; doesn't kill the agent), but
+those turns play idle. Risk: a high-impact turn timing out = lost
+game. Worth a final tighten before live ladder.
+
 ## Caveat: missing in-family h2h
 
 `--require-h2h agents/baseline` was passed but the fast.py gate's
