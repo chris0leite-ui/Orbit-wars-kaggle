@@ -984,7 +984,7 @@ __all__ = [
     "PlanetView", "FleetView", "CometPathView", "Arrival", "LaunchSpec",
     "SunVerdict", "SunFilter",
     "CombatOutcome",
-    "Bundle", "BundleScore", "BundleEvaluator",
+    "Bundle", "BundleScore", "BundleEvaluator", "BundleSearch",
     "World",
 ]
 
@@ -1497,3 +1497,155 @@ class BundleEvaluator:
             eliminations=eliminations,
             total=total,
         )
+
+
+# ---------------------------------------------------------------------------
+# PHASE 7c — BundleSearch (trajectory-native chooser)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BundleSearch:
+    """Beam search over candidate bundles. Replaces the drop-one
+    chooser as the trajectory-native action-selection primitive.
+
+    Algorithm (v1):
+      1. Score the empty bundle as the baseline.
+      2. Enumerate candidate single-spec extensions: for each owned
+         source, propose launches at the top-N closest non-friendly
+         targets. Filter via SunFilter.
+      3. Beam-extend the current frontier: for each (score, bundle) in
+         the beam, try adding each candidate, score the extended
+         bundle. Keep top-`beam_width` extensions globally.
+      4. Track the highest-scoring bundle ever seen across all
+         iterations (including the baseline).
+      5. Repeat up to `max_depth` times.
+
+    Beam search (not greedy) is required because gang-up patterns are
+    structurally invisible to greedy: a single 25-ship launch at a
+    40-ship target FAILS and scores worse than no-op; but TWO 25-ship
+    launches together succeed and score above no-op. Beam width >= 2
+    lets the search keep the (otherwise pruned) first launch alive
+    long enough to discover the gang-up.
+
+    Phase 7c v1 supports `launch_turn=0` candidates only. Phase 7d
+    adds delayed-launch (long-range coordinated arrival) enumeration
+    and incremental scoring for performance.
+
+    Knobs:
+    - `max_depth`: max bundle size. Each iteration extends the beam,
+      so search cost is O(max_depth · beam_width · candidates ·
+      score_time).
+    - `beam_width`: how many partial-bundles to keep between
+      iterations. Must be >= 2 to discover gang-ups.
+    - `candidates_per_source`: top-N closest targets per source.
+    - `min_source_ships`: skip sources too weak to launch from.
+    - `ship_count_multiplier`: ships to commit per launch as a
+      multiple of (target.ships + 1). 1.0 = "just enough"; >1 = "buffer."
+    """
+    evaluator: BundleEvaluator = field(default_factory=BundleEvaluator)
+    max_depth: int = 3
+    beam_width: int = 4
+    candidates_per_source: int = 3
+    min_source_ships: int = 2
+    ship_count_multiplier: float = 1.0
+    sun_safety: float = SUN_SAFETY
+
+    def search(self, world: "World",
+               *, my_id: Optional[int] = None,
+               ) -> Bundle:
+        """Return the highest-scoring Bundle for this turn.
+
+        Caller is the agent's per-turn loop. `Bundle.specs_at_turn(0)`
+        on the result gives the launches to emit as this turn's
+        action; future-turn specs persist in the agent's memory
+        across turns (Phase 7d).
+        """
+        if my_id is None:
+            my_id = world.my_id
+
+        empty = Bundle()
+        empty_score = self.evaluator.score(world, empty, my_id=my_id).total
+        best_bundle = empty
+        best_score = empty_score
+
+        # Beam frontier: list of (score, bundle). Start with just empty.
+        frontier: list[tuple[float, Bundle]] = [(empty_score, empty)]
+
+        for _ in range(self.max_depth):
+            extensions: list[tuple[float, Bundle]] = []
+            for _, bundle in frontier:
+                current = bundle.apply(world)
+                sun = SunFilter(current, safety_margin=self.sun_safety)
+                for spec in self._enumerate_candidates(current, my_id, sun):
+                    try:
+                        extended = Bundle(bundle.launches + (spec,))
+                        s = self.evaluator.score(world, extended,
+                                                   my_id=my_id).total
+                    except ValueError:
+                        continue
+                    extensions.append((s, extended))
+                    if s > best_score:
+                        best_score = s
+                        best_bundle = extended
+
+            if not extensions:
+                break
+            extensions.sort(key=lambda x: x[0], reverse=True)
+            frontier = extensions[:self.beam_width]
+
+        return best_bundle
+
+    def _enumerate_candidates(self, world: "World", my_id: int,
+                                sun: "SunFilter",
+                                ):
+        """Yield single-LaunchSpec candidates. Filtered by SunFilter."""
+        sources = [p for p in world.planets
+                   if p.owner == my_id
+                   and not p.is_comet
+                   and p.ships >= self.min_source_ships]
+        targets = [p for p in world.planets
+                   if p.owner != my_id and not p.is_comet]
+        if not sources or not targets:
+            return
+
+        for src in sources:
+            # Top-N closest targets — heuristic that the chooser
+            # cares most about reachable targets.
+            scored = sorted(
+                targets,
+                key=lambda t: math.hypot(
+                    src.current_x - t.current_x,
+                    src.current_y - t.current_y,
+                ),
+            )[:self.candidates_per_source]
+
+            for tgt in scored:
+                # Aim at target's current position. Good enough for
+                # short-range static targets; orbital lead-aim
+                # refinement comes later.
+                dx = tgt.current_x - src.current_x
+                dy = tgt.current_y - src.current_y
+                if dx == 0 and dy == 0:
+                    continue
+                angle = math.atan2(dy, dx)
+
+                # Calibrated ship count: "just enough" + multiplier.
+                # For neutral targets (no production), tgt.ships is
+                # the static defense. For enemy targets, tgt.ships
+                # grows with production over flight time — but we
+                # don't know flight time yet; use a constant buffer
+                # for now (Phase 7d will refine).
+                required = max(1, int(tgt.ships) + 1)
+                commit = int(required * self.ship_count_multiplier)
+                commit = min(commit, int(src.ships) - 1)  # keep 1 for self
+                if commit < 1:
+                    continue
+
+                spec = LaunchSpec(
+                    src_id=src.id, aim_angle=angle,
+                    ships=commit, owner=my_id, launch_turn=0,
+                )
+                if not sun.is_safe(spec):
+                    continue
+                yield spec
