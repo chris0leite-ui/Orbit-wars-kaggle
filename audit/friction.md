@@ -401,6 +401,26 @@ relevant skill file or source code, not back into friction.md.
   `favor`). Flag filed at `knowledge-base/flags/
   2026-05-17-composite-value-head-2p-only.md`. Do NOT
   submit composite-default agent without 4P-aware variant.
+- `tag: bundler-modular-agent-namespace-access-breaks-bundle` —
+  submission 52744234 ERRORED in Kaggle validation with
+  ImportError: 'attempted relative import with no known parent
+  package'. Root cause: `agents/baseline/main.py` used
+  `from agents.baseline import chooser, proposer` (modular pattern,
+  new this session). The bundler's `_INTRA_IMPORT_RE` only stripped
+  `from lib.X` and `from .X` lines — left the absolute
+  `from agents.baseline.X` line in the bundle. Locally `agents/`
+  was importable from cwd, so parity gate passed; Kaggle's flat
+  filesystem has no `agents/` package and import resolution
+  trampled through `kaggle_environments/.../lux_ai_s3/agents.py`,
+  surfacing the misleading "relative import" error. **Fix:** extend
+  bundler regex to match `from agents.<name>.X import …`, and add
+  `_topo_sort_agent_submodules` to inline sibling .py files (value,
+  proposer, chooser) before main.py. Switch main.py to single-line
+  explicit-name imports (`from X.chooser import build_idle_baseline,
+  …`) — multi-line parenthesised imports leak continuation lines
+  past the per-line strip regex. Verified: parity 712 turns + cold-
+  load test (repo dir stripped from sys.path) on the re-bundle.
+  Re-submit 52744856.
 - `tag: composite-head-wallclock-over-1000ms-on-heavy-turns`
   — composite A/B vs panel/peaks hit max turn-ms 1183/1292
   (env budget 1000ms). Root cause:
