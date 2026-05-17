@@ -6,31 +6,31 @@ PI buckets: `win`=captured, `defense`=reinforced own, `waste_attack`=bounced, `w
 
 | sub_id | ep | fleets | win% | def% | waste_atk% | waste_comet% | waste_traj% | inflight% | unknown% |
 |---|---|---|---|---|---|---|---|---|---|
-| 52710995 | 92 | 9507 | 47.4 | 35.2 | 15.7 | 0.1 | 0.9 | 0.7 | 0.0 |
+| 52744856 | 13 | 1823 | 47.7 | 40.2 | 10.8 | 0.2 | 0.8 | 0.3 | 0.1 |
 
 ## cross-submission totals
 
-- fleets launched: 9507 across 92 episodes in 1 submissions
-- ships launched: 454392
+- fleets launched: 1823 across 13 episodes in 1 submissions
+- ships launched: 162109
 
 By bucket (count and percentage):
-- `win              `  4511 fleets (47.4%) — 247677 ships (54.5%)
-- `defense          `  3346 fleets (35.2%) — 134572 ships (29.6%)
-- `waste_attack     `  1489 fleets (15.7%) —  58225 ships (12.8%)
-- `waste_comet      `     5 fleets ( 0.1%) —   1738 ships ( 0.4%)
-- `waste_trajectory `    89 fleets ( 0.9%) —   2247 ships ( 0.5%)
-- `inflight         `    65 fleets ( 0.7%) —   9881 ships ( 2.2%)
-- `unknown          `     2 fleets ( 0.0%) —     52 ships ( 0.0%)
+- `win              `   870 fleets (47.7%) — 102151 ships (63.0%)
+- `defense          `   732 fleets (40.2%) —  47752 ships (29.5%)
+- `waste_attack     `   197 fleets (10.8%) —   8890 ships ( 5.5%)
+- `waste_comet      `     3 fleets ( 0.2%) —   2864 ships ( 1.8%)
+- `waste_trajectory `    15 fleets ( 0.8%) —    185 ships ( 0.1%)
+- `inflight         `     5 fleets ( 0.3%) —    184 ships ( 0.1%)
+- `unknown          `     1 fleets ( 0.1%) —     83 ships ( 0.1%)
 
 Raw outcomes (debug):
-- `captured` 4511
-- `reinforced_self` 3346
-- `bounced_enemy` 1357
-- `arrived_but_lost` 87
-- `alive_at_end` 65
-- `oob` 64
-- `bounced_neutral` 45
-- `sun` 13
-- `vanished_in_space` 12
-- `comet_collision` 5
-- `hit_planet_unknown_flip` 2
+- `captured` 870
+- `reinforced_self` 732
+- `bounced_enemy` 166
+- `arrived_but_lost` 20
+- `bounced_neutral` 11
+- `oob` 6
+- `vanished_in_space` 5
+- `alive_at_end` 5
+- `sun` 4
+- `comet_collision` 3
+- `hit_planet_unknown_flip` 1
