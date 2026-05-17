@@ -64,33 +64,84 @@ Local validation (run again at session start to refresh):
 
 **Not submitted.** Submission is single-shot per Rule 1 and needs PI approval.
 
+## What just landed (2026-05-17, A2 follow-up)
+
+After PR #27 merged, public-notebook research (Rule 22 plateau scan)
+reordered priorities. Key findings:
+
+- `romantamrazov/orbit-star-wars-lb-max-1224` (peak μ=1224, +109 above
+  our ceiling) — pure heuristic mission portfolio, ZERO ML. Decomposes
+  into 6+ named missions + 4P weakness exploitation + inter-enemy
+  dynamics + indirect wealth map + adaptive modes.
+- `konbu17/orbit-wars-rule-base-ml-shot-validator-hybrid` — 24→64→32→1
+  MLP, BCE loss, base64 NPZ embed. +19 pp local lift on 8.8k examples;
+  we have 37k examples (but `labels.parquet` is gitignored — need to
+  regenerate from a replay corpus that's also absent).
+- `aidensong123/lb-highest-1000-search-learned-value-function` — GBC
+  value head, caps at LB 1000+ (*lower* than us → PARKED).
+
+**A2 (4P weakness exploitation) landed in `agents/baseline/value.py`:**
+
+  ELIMINATION_BONUS=55, WEAK_ENEMY_THRESHOLD=110
+  WEAKEST_ENEMY_MULT_4P=1.5, ELIMINATION_GATE_RATIO=0.9
+
+4P only. In 4P, opps aggregate by WEIGHTED-sum (weakest 1.5x). Elim
+bonus +55 when weakest_strength ≤ 110 AND my_strength ≥ 0.9× theirs.
+2P path is UNCHANGED from the original baseline (after the 2P uniform
+bias attempt was rolled back).
+
+**Failed attempt: 2P uniform 1.25x bias.** Tested as part of A2; h2h
+vs v15 (n=64) showed 25 wins (39.1%, Wlo=0.281, Whi=0.513, INCONCLUSIVE
+verdict per the plan's Wlo>0.50 hard gate). The bias made the chooser
+over-aggressive against v15's well-tuned strategy. Rolled back.
+
+**Process change:** CLAUDE.md Rule 27a codifies h2h-vs-rolling-champion
+as the FIRST submission gate (n≥64, Wlo>0.50). Closes the
+panel-misleads-h2h friction (4 prior recurrences).
+
+**Validation:**
+- unit tests (28 cases): green
+- bench (3 games / 505 turns): p50=91 p95=261 max=347ms (in envelope)
+- smoke vs random both seats + vs nearest: PASS
+- h2h vs v7_0_drop_one (baseline gate): not re-run (A2 4P-only, no
+  expected change in 2P)
+- h2h vs v15 (n=64): INCONCLUSIVE (39.1%) — but expected since A2 is
+  now 4P-only and fast.py harness is 2P-only
+
+**Not submitted.** A2's 4P lift cannot be validated via fast.py's 2P
+harness. Need 4P FFA panel or self-play 4P games to gate it.
+
 ## Next-session first-action (ranked by EV / cost)
 
-1. **Architectural pivot on top of baseline** (~1 day). The v9–v15
-   chooser axis is structurally saturated (Rule 37 cap hit at v16–v20).
-   The clean modular split lets you swap ONE of value / proposer /
-   chooser / opp_model independently. Highest-EV candidates:
-   - **Learned value head** replacing `agents/baseline/value.favor`:
-     `lib/value_heads.composite_capture_value` already exists; train
-     a small head on replay corpus or use the existing logistic
-     regression weights (Mine 2 hit 0.77 AUC).
-   - **Portfolio search** in `chooser.py`: enumerate 3-5 named
-     portfolios (incumbent / conservative / aggressive / no-op /
-     drop-weakest) and score each — different action-space topology
-     from drop-one.
-   - **IL warm-start** from top-10 replays — `data/shot_validator/`
-     already has 37k labeled examples (24-dim); the MLP head is
-     deferred but the pipeline is ready.
-   Pre-flight: Rule 16 6-question check; Rule 19 issue-tree claim.
-2. **Map-type-conditional opening book** (H40, ~4 h). 4 board
-   archetypes identified earlier; tier-1 experiment = override
-   proposer's first 30 turns with a cluster-specific template. Gate:
-   ≥55% Wilson on 3-agent panel + h2h vs v15 baseline.
-3. **Submit the clean baseline as a calibration probe** (~20 min) —
-   PI-approved single-shot. Expected outcome: functional parity with
-   v15, but a clean live data point against the live-drift WARNING.
-   Costs: evicts v20 from rolling-last-2 (v15 stays — it's the
-   second-most-recent of `[baseline, v15]`).
+1. **Validate A2 in 4P FFA panel** (~1 h). `scripts/ffa_panel.py`
+   --focals baseline,v15_bundle --background v7_0,v4_planner,v3.5.1
+   --seeds 32. If A2 has clear higher first-place rate than v15, A2's
+   4P weakness mult is the lift it was designed to be. If FFA is also
+   parity/regression, A2 doesn't lift on its own and the strategy is
+   structurally bound up in romantamrazov's larger mission portfolio.
+
+2. **Stage 4 — mission portfolio subset port** (~2-4 days). Port
+   romantamrazov's `build_elimination_missions` + `build_gang_up_missions`
+   onto baseline's chooser. ~800-1000 LOC. Higher cost than initial
+   400 LOC estimate but ceiling is the public-notebook +109 μ pattern.
+   Gate: h2h vs v15 n=64 Wlo>0.50 (2P) + 4P FFA panel.
+
+3. **B3 — train MLP shot validator** (~6-12 h end-to-end, blocked on
+   data gen). Need to either pull top-LB replays via Kaggle replay API
+   (per-episode rate-limited) or generate via self-play with
+   `scripts/generate_selfplay_replays.py` (self-mimicking labels —
+   weaker signal than konbu17's gold labels). Then train the
+   24→64→32→1 MLP, integrate as `agents/baseline/validator.py`
+   post-filter at threshold 0.4.
+
+4. **Resurrect v9_scavenge as h2h gate baseline.** μ=1119.9 (>v15's
+   1112.8) but evicted from rolling-last-2. Bundle from git history
+   and use as additional h2h gate — our actual team peak.
+
+5. **B2 (PARKED) — opp_traj + CRN principled refactor.** Still good
+   engineering; the cross-game audit (84% v8 losses = mid_economy)
+   argues for it. But public-notebook evidence says action-space
+   architecture is the dominant gap; B2 is downstream of that.
 
 ## Pointers
 
@@ -107,7 +158,9 @@ Local validation (run again at session start to refresh):
 - `audit/2026-05-16-v16-v20-asymmetric-compounding-postmortem.md` —
   the v15→v20 chooser saturation iteration; Rule 37 application.
 - `knowledge-base/thoughts/2026-05-17-baseline-functional-parity-with-v15.md` —
-  this session's wrap-up.
+  earlier session wrap-up (baseline parity).
+- `knowledge-base/thoughts/2026-05-17-public-notebook-research-and-A2.md` —
+  public-notebook research findings + A2 implementation + 2P-bias rollback.
 - `fast.py` — single-file iteration entry: smoke / bench / eval / play.
 - `scripts/bundle_agent.py` — bundler for submissions.
 

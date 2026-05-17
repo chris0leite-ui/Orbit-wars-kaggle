@@ -166,3 +166,76 @@ change).
   ceiling) vs subset port (eliminate+gang-up only, ~800 LOC, lower
   ceiling) vs A2-only + repeated calibration (lowest cost, lowest
   ceiling)?
+
+## Update 2026-05-17 — h2h verdict + 2P-bias rollback
+
+H2H A2 (4P weakness + 2P uniform 1.25x bias) vs v15 (n=64) shipped:
+
+```
+n= 32  wins= 13/32  ( 40.6%)  Wlo=0.255  Whi=0.577   CONTINUE
+n= 64  wins= 25/64  ( 39.1%)  Wlo=0.281  Whi=0.513   INCONCLUSIVE
+turn-ms p50=280  p95=693  max=1340  total elapsed 1468.4s
+```
+
+Verdict: INCONCLUSIVE per the plan's hard gate (Wlo > 0.50 required).
+Point estimate 39.1% is below the 50% parity line — the 2P uniform
+1.25x bias REGRESSES vs v15 in 2P games, even if not statistically
+significantly so.
+
+**Diagnosis of why 2P bias regresses:**
+
+The 1.25x multiplier on opp_ships + opp_prod makes the chooser
+perceive opp's contribution as 25% MORE significant. For a capture
+trade where I lose X ships and opp loses X ships:
+
+- Without bias: delta_F1 = -X - (-X) = 0   (zero-EV trade)
+- With 1.25x:   delta_F1 = -X - (-1.25X) = 0.25X   (positive-EV trade)
+
+Effectively the bias makes the chooser more aggressive. v15 is
+well-calibrated for the current chooser; over-aggression trades
+ships needed later for opp-ships now. The "weakness exploitation"
+thesis from romantamrazov is structurally per-WEAKEST (1.5x on
+the single weakest opp out of 3), not uniform. Conflating "uniform
+2P aggression" with "4P weakness targeting" was the design error.
+
+**Action taken:**
+
+Rolled back the 2P bias path. value.py is now:
+
+  - 2P: UNCHANGED from baseline (max-of-opps, no bias, no bonus).
+  - 4P: 1.5x mult on weakest opp + elim bonus (gated).
+
+This means A2 has ZERO effect in 2P games (fast.py default), so we
+can't validate via fast.py's 2P harness. Three follow-up options:
+
+1. **Validate via 4P FFA panel** (`scripts/ffa_panel.py`). Compare
+   focal=baseline-A2 vs focal=v15 on the same 3-opp background. If
+   A2 gives higher first-place rate in 4P, that's evidence. ~30-60
+   min wallclock for n=32 seeds.
+
+2. **Submit A2 as a calibration probe.** 4P-only changes don't risk
+   2P regression; downside is bounded. But Rule 1 needs PI approval
+   and Rule 12 says rolling-last-2 is risk-bearing.
+
+3. **Skip A2 entirely**, go to Stage 4 (mission portfolio subset).
+   This is the +109 μ path the plan endorses; A2 was its smallest
+   fragment.
+
+Most defensible move: option 1 first (4P FFA validation), then
+based on result, option 2 (submit) or option 3 (Stage 4 build).
+
+**Rule reminders surfaced:**
+
+- Rule 37 (3-variant axis cap): the 2P bias rollback is NOT iteration
+  on the same axis — it's removing a hypothesis that failed evidence.
+  Different from "tune 1.25 → 1.10 → 1.05" which WOULD violate Rule 37.
+
+- Rule 38 (fix-verification reproduces failure): the 2P bias failure
+  was caught BY the h2h gate (Rule 27a we just codified). The gate
+  worked. The diagnosis WHY would need a replay-level analysis of
+  losses (deferred).
+
+- Rule 40 (modeling-correctness over restriction-tuning): the bias
+  was an inelegant uniform multiplier; the 4P weakness logic is
+  semantically grounded (target the weakest player, the LB-MAX pattern).
+  Keeping the modeling-correct piece, dropping the band-aid.

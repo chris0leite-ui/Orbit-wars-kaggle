@@ -76,7 +76,35 @@ saturation_count: 0
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
-  - 2026-05-17 — kaggle-baseline-strategy-lO4mm.
+  - 2026-05-17 [PM] — kaggle-baseline-strategy-lO4mm (A2 follow-up).
+    Public-notebook research (Rule 22 plateau scan) surfaced 3 informative
+    notebooks: romantamrazov/orbit-star-wars-lb-max-1224 (peak μ=1224,
+    +109 above us; pure heuristic mission portfolio, ZERO ML),
+    konbu17/...-shot-validator-hybrid (24→64→32→1 MLP, +19pp local),
+    aidensong123/...-search-learned-value-function (GBC LB caps at 1000+,
+    parked). Reordered priorities: action-space architecture > state-fn
+    correctness.
+    Implemented A2 (4P weakness exploitation) in agents/baseline/value.py:
+    ELIMINATION_BONUS=55, WEAK_ENEMY_THRESHOLD=110, WEAKEST_ENEMY_MULT_4P=1.5,
+    ELIMINATION_GATE_RATIO=0.9. 4P-only (2P unchanged after roll-back).
+    Initial attempt included WEAKEST_ENEMY_MULT_2P=1.25 uniform bias on
+    the single opp; h2h vs v15 (n=64) showed 25 wins (39.1%, Wlo=0.281,
+    Whi=0.513) INCONCLUSIVE — the bias makes chooser over-aggressive vs
+    v15. Rolled back 2P bias; kept 4P weakness multiplier.
+    Codified CLAUDE.md Rule 27a: h2h-vs-rolling-champion is the FIRST
+    submission gate (n≥64, Wlo>0.50). Closes panel-misleads-h2h friction
+    (4 prior recurrences).
+    Local validation:
+      - unit (28 cases): green in ~3 s
+      - bench (3 games / 505 turns): p50=91 p95=261 max=347ms
+      - smoke vs random + vs nearest: PASS (32/32 nearest Wlo=0.89)
+      - h2h vs v15 (n=64) with 2P bias: INCONCLUSIVE (rolled back)
+      - h2h vs v15 (n=64) 4P-only: not run (4P-only = no 2P change)
+    Not submitted — A2's lift can't be validated via fast.py 2P harness.
+    Next-session: 4P FFA panel validation (scripts/ffa_panel.py) or
+    Stage 4 mission portfolio subset port (~800 LOC, evidence-backed +109μ
+    ceiling per romantamrazov).
+  - 2026-05-17 [AM] — kaggle-baseline-strategy-lO4mm (baseline rebaseline).
     Shipped agents/baseline/{main,proposer,chooser,value}.py — clean
     modular re-implementation of v15 (live champion, 5/16 push), 577 LOC
     across 4 files of ≤262 LOC each. Uses lib/fast_sim.py + lib/opp_model.py
@@ -146,6 +174,9 @@ mechanism_families_explored:
   - v15-multi-wait-grid-banded-dedup         # extra_surplus (0,5,12) + wait_band {0,1-7,>=8}
   - v16-v20-chooser-saturation-iteration     # F4 vulnerability / dogpile / reactive-step-0 — all HOLD per Rule 37
   - baseline-clean-modular-reimpl-v15        # agents/baseline/ (this branch)
+  - public-notebook-research-22                 # 3 informative notebooks pulled; LB-MAX-1224 is +109μ above us
+  - a2-4p-weakness-exploitation                 # romantamrazov-derived; 4P-only after 2P bias rolled back
+  - a2-2p-uniform-bias-rolled-back              # 1.25× uniform 2P bias FAILED h2h vs v15 (25/64=39.1% INCONCLUSIVE)
 
 gate_status: cleared                          # full pytest + new baseline tests pass
 ```
