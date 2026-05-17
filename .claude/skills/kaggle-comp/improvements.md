@@ -91,6 +91,51 @@ discipline) requiring a `--vs-panel` PASS verdict in the pre-submit
 decision record. Belongs in CLAUDE.md, not in a hook, because the
 PI is in the loop on every submit anyway.
 
+### [ ] [CODE-COMP-DISCOVERED] fast.py `--require-h2h` skip-by-name misses env-var dispatch
+
+`tag: require-h2h-skip-by-name-misses-env-var-dispatch`. Origin:
+Orbit Wars 2026-05-17 PM (claude/audit-workflow-performance-btjeK).
+The gate that REFUSES `fast.py eval --vs-panel` without
+`--require-h2h <champion>` correctly forces an in-family h2h
+declaration — but the panel-loop's "same-agent skip" at
+`fast.py:_eval_vs_one` compares opponent NAME to focal NAME and
+silently skips when they match. Modular agents with env-var
+dispatch (e.g. `agents/baseline` with `BASELINE_VALUE_HEAD=composite`
+vs unset) share a path and name; the gate skips the h2h that
+matters most. Caught only because PI asked for a cross-branch
+survey; otherwise we'd have submitted without validating
+composite-vs-favor.
+
+**Fix:** either (a) include the env-var snapshot in the focal-vs-
+opponent identity check, or (b) accept a `--force-h2h` flag that
+overrides the same-agent skip. Recurrence risk applies to every
+future modular-agent + env-var-dispatch combination — the new
+production default is exactly this pattern.
+
+Cost evidence: 1 session of incomplete in-family h2h validation
+on a candidate submission.
+
+### [ ] [CODE-COMP-DISCOVERED] Bundler should inject submission env manifest
+
+`tag: bundler-ships-with-wrong-default-env-var`. Origin: Orbit
+Wars 2026-05-17 PM (claude/audit-workflow-performance-btjeK).
+`scripts/bundle_agent.py` concatenates lib/ + agent files into a
+single submission .py but knows nothing about runtime env-var
+requirements. The first bundle of `agents/baseline` after the A2
+merge shipped with `BASELINE_VALUE_HEAD` unset → default `favor`
+→ MISSED the composite-in-2P lift the A/B validated. Worked around
+by adding `os.environ.setdefault("BASELINE_VALUE_HEAD", "hybrid")`
+manually at the top of `agents/baseline/main.py`. Fragile.
+
+**Fix:** extend `scripts/bundle_agent.py` to read a per-agent file
+`agents/<name>/SUBMISSION_ENV` (simple KEY=value lines), and emit
+matching `os.environ.setdefault(KEY, value)` lines at the top of
+the bundle. Eliminates the per-agent "did you remember setdefault?"
+gotcha. Manifest absent → bundle behaves as today.
+
+Cost evidence: 1 extra bundle cycle this session (~5 min) +
+hidden-regression risk if not caught at re-test.
+
 ### [ ] [CROSS-CUTTING] do-and-dont.md — ISO date convention; never invent Day-N
 
 `tag: day-counter-drift`. Origin: s6e5 2026-05-08 PM. Prose uses ISO
