@@ -20,6 +20,12 @@ from __future__ import annotations
 
 import os
 
+# Production default: hybrid value head (composite in 2P, A2-favor in 4P).
+# `setdefault` lets local A/B drivers (fast.py) override via env var without
+# patching source, while submission-bundle / Kaggle-runner sees hybrid out
+# of the box. See agents/baseline/value.select_favor_fn for the dispatch.
+os.environ.setdefault("BASELINE_VALUE_HEAD", "hybrid")
+
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from lib.fast_sim import from_obs as fs_from_obs
