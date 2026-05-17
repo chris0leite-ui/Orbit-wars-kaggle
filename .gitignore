@@ -18,9 +18,13 @@ submissions/*
 external/kernels/*/
 !external/kernels/.gitkeep
 
-# Replays from local simulator runs
-replays/
-audit/replays/
+# Replays from local simulator runs (top-level only — anchored leading
+# slash so this does NOT also shadow the rule below for audit/replays/).
+/replays/
+audit/replays/*
+# Keep replay-mine summaries (small, PI-readable; scripts/replay_mine.py).
+!audit/replays/replay-mine-*.json
+!audit/replays/replay-mine-*.md
 audit/manifold/
 
 # In-progress local panel logs (final summaries are committed separately)

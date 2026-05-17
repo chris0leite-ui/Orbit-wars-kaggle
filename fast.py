@@ -481,9 +481,29 @@ def cmd_eval(args: argparse.Namespace) -> int:
 
     panel: list[str]
     if args.vs_panel is not None:
+        # Hard gate: panel mode requires --require-h2h <champion>. Closes the
+        # panel-passes-h2h-vs-current-fails friction (4 recurrences: v13/v14/
+        # v17/v18). Panel measures opponents one-at-a-time; the ladder is a
+        # mixture + same-family agents play differently. Champion h2h is the
+        # only signal that catches non-transitive A>B>C>A regressions.
+        if args.require_h2h is None:
+            print("REFUSE: --vs-panel requires --require-h2h <current-champion>.")
+            print("        Reason: panel pass without h2h-vs-champion has been")
+            print("        a false-positive in 4 of the last 8 submissions.")
+            print("        Pass the current rolling champion's source path, e.g.:")
+            print("          --require-h2h agents/baseline")
+            print("        To bypass (not recommended), set FAST_PY_SKIP_H2H_GATE=1.")
+            import os as _os
+            if _os.environ.get("FAST_PY_SKIP_H2H_GATE") != "1":
+                return 2
+            print("WARNING: FAST_PY_SKIP_H2H_GATE=1 — gate bypassed.")
         panel = _parse_panel_arg(args.vs_panel)
         if args.vs != DEFAULT_BASELINE:
             print(f"WARNING: --vs {args.vs!r} ignored when --vs-panel is set")
+        # Prepend the required h2h so the champion is always opponent #1
+        # and a champion-only failure short-circuits the rest of the panel.
+        if args.require_h2h is not None and args.require_h2h not in panel:
+            panel = [args.require_h2h] + panel
     else:
         panel = [args.vs]
 
@@ -656,6 +676,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help=f"multi-opponent calibration panel — required before any "
                          f"submission. 'default' = {','.join(DEFAULT_PANEL)}, "
                          f"or pass a comma-separated list of agent names")
+    sp.add_argument("--require-h2h", default=None,
+                    help="MANDATORY when --vs-panel is set: source path or "
+                         "registry name of the current rolling champion. Champion "
+                         "h2h is prepended to the panel; PASS requires ALL panel "
+                         "opponents (including champion) to clear Wlo>=gate. "
+                         "Closes panel-passes-h2h-vs-current-fails (4 recurrences).")
     sp.add_argument("--max-seeds", type=int, default=64)
     sp.add_argument("--gate", type=float, default=0.55,
                     help="Wilson 95%% lower-bound gate (default: 0.55)")
