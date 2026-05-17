@@ -262,6 +262,9 @@ class World:
     _timeline_cache: dict[tuple[int, int], dict] = field(
         default_factory=dict, compare=False, repr=False,
     )
+    _combat_log_cache: dict[tuple[int, int], dict] = field(
+        default_factory=dict, compare=False, repr=False,
+    )
 
     # ---------------------------------------------------------------
     # Construction
@@ -391,6 +394,7 @@ class World:
             _comet_by_planet_id=comet_by_pid,
             _ledger_cache={},
             _timeline_cache={},
+            _combat_log_cache={},
         )
 
     # ---------------------------------------------------------------
@@ -567,6 +571,61 @@ class World:
         return min(enemy_etas)
 
     # ---------------------------------------------------------------
+    # Phase 5 — Per-planet combat outcomes (lazy)
+    # ---------------------------------------------------------------
+
+    def _combat_log_for(self, planet_id: int, horizon: int,
+                        ) -> dict[int, "CombatOutcome"]:
+        """Internal: lazy per-(planet, horizon) combat log build.
+
+        Reuses the same arrival list as the timeline path; the combat
+        log is a side-channel emitted by
+        `_simulate_timeline_with_combat_log`. The plain
+        `_timeline_cache` and the verbose `_combat_log_cache` are
+        populated together on first call.
+        """
+        key = (planet_id, horizon)
+        cached = self._combat_log_cache.get(key)
+        if cached is not None:
+            return cached
+        planet = self._planet_by_id.get(planet_id)
+        if planet is None:
+            # Comet fallthrough (mirrors _timeline_for).
+            comet = self._comet_by_planet_id.get(planet_id)
+            if comet is None:
+                return {}
+            for p in self.planets:
+                if p.id == planet_id:
+                    planet = p
+                    break
+            if planet is None:
+                return {}
+        arrivals = self.ledger_for(planet_id, horizon)
+        timeline, log = _simulate_timeline_with_combat_log(
+            planet, arrivals, horizon,
+        )
+        # Also pre-populate the plain timeline cache so a subsequent
+        # `ownership_at` call doesn't redo the work.
+        self._timeline_cache[key] = timeline
+        self._combat_log_cache[key] = log
+        return log
+
+    def combat_at(self, planet_id: int, t: int,
+                  horizon: int = DEFAULT_LEDGER_HORIZON,
+                  ) -> Optional["CombatOutcome"]:
+        """`CombatOutcome` at relative turn `t` on `planet_id`, or
+        `None` if no arrivals at that turn (no combat). Bit-exact with
+        `lib.combat.resolve_arrivals` on the same arrival group.
+
+        Clamps `t` to `[1, horizon]`. `t <= 0` returns None (combat
+        events are indexed from t=1 onward — t=0 is the snapshot).
+        """
+        if t <= 0:
+            return None
+        log = self._combat_log_for(planet_id, horizon)
+        return log.get(int(t))
+
+    # ---------------------------------------------------------------
     # Phase 3 — Hypothetical launch overlay
     # ---------------------------------------------------------------
 
@@ -673,6 +732,7 @@ class World:
             _comet_by_planet_id=dict(self._comet_by_planet_id),
             _ledger_cache={},
             _timeline_cache={},
+            _combat_log_cache={},
         )
 
     def with_candidates(self, specs: Iterable["LaunchSpec"]) -> "World":
@@ -838,6 +898,7 @@ __all__ = [
     "GameConfig",
     "PlanetView", "FleetView", "CometPathView", "Arrival", "LaunchSpec",
     "SunVerdict", "SunFilter",
+    "CombatOutcome",
     "World",
 ]
 
@@ -1055,3 +1116,115 @@ def _simulate_planet_timeline(
         ships_at[t] = max(0.0, garrison)
 
     return {"owner_at": owner_at, "ships_at": ships_at, "horizon": h}
+
+
+# ---------------------------------------------------------------------------
+# PHASE 5 — Per-planet combat outcomes (lazy)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CombatOutcome:
+    """Detailed record of a single per-planet combat event.
+
+    Returned by `World.combat_at(pid, t)` when there is at least one
+    arrival at turn `t`. Reports both the resolution (`winner_owner`,
+    `surviving_ships`) and the participants (the runner-up attacker
+    and the full attacker list) so the shot validator (Step 2) and
+    the value head (Step 3) can label their data.
+
+    Definitions:
+    - `turn` — the relative turn the combat occurred at (matches the
+      `t` passed to `combat_at`).
+    - `pre_garrison_owner` / `pre_garrison_ships` — state BEFORE the
+      arrival group resolves (after production accrual for that turn).
+    - `winner_owner` / `surviving_ships` — state AFTER combat.
+    - `attackers` — `(owner, ships)` per attacking owner-group, sorted
+      descending by ship count. `lib.combat.resolve_arrivals` groups
+      same-owner arrivals into one entry per owner.
+    - `runner_up_owner` / `runner_up_ships` — the second-largest
+      attacker. `-1 / 0` if there's only one attacker.
+    - `is_tie` — True iff top_ships == second_ships, in which case all
+      attackers are destroyed (rule 4 in `lib/combat.py`).
+    """
+    turn: int
+    pre_garrison_owner: int
+    pre_garrison_ships: float
+    winner_owner: int
+    surviving_ships: float
+    attackers: tuple[tuple[int, int], ...]
+    runner_up_owner: int
+    runner_up_ships: int
+    is_tie: bool
+
+
+def _simulate_timeline_with_combat_log(
+    planet: "PlanetView",
+    arrivals: Iterable[Arrival],
+    horizon: int,
+) -> tuple[dict, dict[int, CombatOutcome]]:
+    """Variant of `_simulate_planet_timeline` that ALSO emits a
+    per-turn combat log. Used by `World.combat_at`.
+
+    Identical state-evolution semantics to `_simulate_planet_timeline`
+    — the combat log is a side-channel. Asserted equivalent in
+    `tests/test_trajectory_layer_combat.py`.
+    """
+    h = max(0, int(math.ceil(horizon)))
+    by_turn: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    for arr in arrivals:
+        if arr.ships <= 0:
+            continue
+        bucket = max(1, int(math.ceil(arr.eta)))
+        if bucket > h:
+            continue
+        by_turn[bucket].append((arr.owner, int(arr.ships)))
+
+    owner = planet.owner
+    garrison = float(planet.ships)
+    owner_at = {0: owner}
+    ships_at = {0: max(0.0, garrison)}
+    combat_log: dict[int, CombatOutcome] = {}
+
+    for t in range(1, h + 1):
+        if owner != -1:
+            garrison += planet.production
+        group = by_turn.get(t, [])
+        if group:
+            # Aggregate same-owner arrivals to mirror resolve_arrivals'
+            # internal grouping, so the `attackers` tuple matches the
+            # combat-detail.
+            by_attacker: dict[int, int] = {}
+            for arr_owner, ships in group:
+                if ships <= 0:
+                    continue
+                by_attacker[arr_owner] = (by_attacker.get(arr_owner, 0)
+                                            + int(ships))
+            ranked = sorted(by_attacker.items(),
+                             key=lambda kv: kv[1], reverse=True)
+            attackers_tuple = tuple(ranked)
+            runner_owner = ranked[1][0] if len(ranked) > 1 else -1
+            runner_ships = ranked[1][1] if len(ranked) > 1 else 0
+            is_tie = (len(ranked) > 1
+                      and ranked[0][1] == ranked[1][1])
+
+            pre_owner = owner
+            pre_ships = garrison
+            owner, garrison = resolve_arrivals(owner, garrison, group)
+
+            combat_log[t] = CombatOutcome(
+                turn=t,
+                pre_garrison_owner=pre_owner,
+                pre_garrison_ships=max(0.0, pre_ships),
+                winner_owner=owner,
+                surviving_ships=max(0.0, garrison),
+                attackers=attackers_tuple,
+                runner_up_owner=runner_owner,
+                runner_up_ships=int(runner_ships),
+                is_tie=is_tie,
+            )
+        owner_at[t] = owner
+        ships_at[t] = max(0.0, garrison)
+
+    timeline = {"owner_at": owner_at, "ships_at": ships_at, "horizon": h}
+    return timeline, combat_log
