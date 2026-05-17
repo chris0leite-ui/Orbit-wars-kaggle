@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, Optional
 
 from lib.aim import swept_pair_hit
@@ -565,12 +565,154 @@ class World:
             return None
         return min(enemy_etas)
 
+    # ---------------------------------------------------------------
+    # Phase 3 — Hypothetical launch overlay
+    # ---------------------------------------------------------------
+
+    def with_candidate(self, spec: "LaunchSpec") -> "World":
+        """Return a NEW World that includes a hypothetical launch.
+
+        The receiver is unchanged. The new World has:
+        - The source planet's ships decremented by `spec.ships`.
+        - A synthetic FleetView added at the env-faithful spawn
+          position (`source.center + (radius + 0.1) * direction`).
+        - Fresh caches — the fleet set has changed, so the ledger
+          and timelines must be recomputed on first query.
+
+        Semantics: the overlay represents the state immediately
+        AFTER the env's launch phase (`process_moves`) but BEFORE
+        production / movement / rotation / combat. Querying
+        `overlay.ledger_for(pid)` predicts where the synthetic
+        fleet will arrive, with eta=1 corresponding to the fleet
+        having traversed `speed` units from spawn.
+
+        Compared with COMMITTING the launch (running fs_step with
+        the action), the overlay is at step S; the committed state
+        is at step S+1. For every arrival, `overlay.eta` ==
+        `committed.eta + 1`.
+
+        Phase 3 supports `launch_turn == 0` only. Future-turn
+        launches are deferred.
+
+        Raises:
+        - `ValueError` if `spec.src_id` isn't an owned planet
+        - `ValueError` if `spec.ships > source.ships` (cannot launch
+          more than the source's garrison)
+        - `ValueError` if `spec.ships <= 0`
+        - `NotImplementedError` if `spec.launch_turn != 0`
+        """
+        if spec.launch_turn != 0:
+            raise NotImplementedError(
+                f"launch_turn > 0 not yet supported (got {spec.launch_turn})"
+            )
+        if spec.ships <= 0:
+            raise ValueError(f"spec.ships must be > 0 (got {spec.ships})")
+        src = self._planet_by_id.get(spec.src_id)
+        if src is None:
+            raise ValueError(f"unknown src_id: {spec.src_id}")
+        if spec.ships > src.ships:
+            raise ValueError(
+                f"source {spec.src_id} has only {src.ships} ships, "
+                f"cannot launch {spec.ships}"
+            )
+
+        # Pick a unique synthetic fleet id (negative, never collides
+        # with real fleet ids which are non-negative).
+        min_existing = min((f.id for f in self.fleets), default=0)
+        virtual_id = min(min_existing, 0) - 1
+
+        # Spawn position: src.center + (radius + 0.1) * direction.
+        # Mirrors the env's process_moves spawn offset (orbit_wars.py
+        # process_moves) so the synthetic fleet starts where a real
+        # one would.
+        cos_a = math.cos(spec.aim_angle)
+        sin_a = math.sin(spec.aim_angle)
+        spawn_x = src.current_x + cos_a * (src.radius + 0.1)
+        spawn_y = src.current_y + sin_a * (src.radius + 0.1)
+
+        new_fleet = FleetView(
+            id=virtual_id,
+            owner=spec.owner,
+            current_x=spawn_x,
+            current_y=spawn_y,
+            angle=spec.aim_angle,
+            ships=int(spec.ships),
+            from_planet_id=spec.src_id,
+            speed=_fleet_speed(spec.ships, self.cfg.ship_speed),
+        )
+
+        # Decrement the source planet's garrison (env: ships are
+        # deducted at launch, BEFORE production).
+        new_src = replace(src, ships=src.ships - spec.ships)
+        new_planets = tuple(
+            new_src if p.id == spec.src_id else p
+            for p in self.planets
+        )
+        new_planet_by_id = dict(self._planet_by_id)
+        new_planet_by_id[spec.src_id] = new_src
+
+        # Append synthetic fleet. Build fresh indices (no cache
+        # leakage — the parent's _ledger_cache / _timeline_cache
+        # assume a different fleet set).
+        new_fleets = self.fleets + (new_fleet,)
+        new_fleet_by_id = dict(self._fleet_by_id)
+        new_fleet_by_id[virtual_id] = new_fleet
+
+        return World(
+            step=self.step,
+            my_id=self.my_id,
+            omega=self.omega,
+            episode_seed=self.episode_seed,
+            cfg=self.cfg,
+            planets=new_planets,
+            fleets=new_fleets,
+            comet_paths=self.comet_paths,
+            _planet_by_id=new_planet_by_id,
+            _fleet_by_id=new_fleet_by_id,
+            _comet_by_planet_id=dict(self._comet_by_planet_id),
+            _ledger_cache={},
+            _timeline_cache={},
+        )
+
+    def with_candidates(self, specs: Iterable["LaunchSpec"]) -> "World":
+        """Apply multiple candidate launches in sequence. Each
+        successive `with_candidate` re-uses the previous overlay's
+        state (so the per-source ship deductions accumulate)."""
+        w = self
+        for s in specs:
+            w = w.with_candidate(s)
+        return w
+
+
+# ---------------------------------------------------------------------------
+# LaunchSpec — Phase 3 input type for `World.with_candidate`
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LaunchSpec:
+    """One hypothetical fleet launch.
+
+    `launch_turn` is the relative turn at which the launch happens
+    (0 = this turn). Phase 3 supports 0 only; positive values raise
+    NotImplementedError in `World.with_candidate`.
+
+    `owner` is who is launching — usually `world.my_id` for our own
+    candidates; can be set to an opponent's id when overlaying their
+    hypothetical action under a learned opp model (Phase 7).
+    """
+    src_id: int
+    aim_angle: float
+    ships: int
+    owner: int
+    launch_turn: int = 0
+
 
 __all__ = [
     "BOARD_SIZE", "CENTER", "SUN_RADIUS", "ROTATION_RADIUS_LIMIT",
     "SUN_SAFETY", "DEFAULT_LEDGER_HORIZON", "DEFAULT_RAYCAST_STEPS",
     "GameConfig",
-    "PlanetView", "FleetView", "CometPathView", "Arrival",
+    "PlanetView", "FleetView", "CometPathView", "Arrival", "LaunchSpec",
     "World",
 ]
 
@@ -654,6 +796,16 @@ def _fleet_target_planet(
 
         # Planet collision.
         for pid in planet_ids:
+            # Source-planet skip on the first step: mirrors the env's
+            # explicit `if pid == src_id and step == 0: continue`
+            # (lib/trajectory.py:133-135). For fresh launches (Phase 3
+            # synthetic fleets), the fleet starts just outside its
+            # source — without this skip the swept-pair check would
+            # spuriously hit the source itself. For already-in-flight
+            # fleets the check is a no-op (the fleet has moved away
+            # from `from_planet_id`).
+            if pid == fleet.from_planet_id and t == 1:
+                continue
             p_old = world.planet_position(pid, t - 1)
             p_new = world.planet_position(pid, t)
             if p_old is None or p_new is None:
