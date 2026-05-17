@@ -87,6 +87,79 @@ discounting scoring/proposer signals the rollout already evaluates
 Plumbing: 3-anchor Wilson gate, PV_GAMMA in JAX, HAV helpers,
 Renaissance flags (default-off), snipe tier emission framework.
 
+## Day-N PM space-fleet-physics-engine-lrLE6 (this branch — fast_sim value-head pivot, KEEP verdict)
+
+v8_analytic was at 50% vs nearest / 25% vs v7_0 after 5 sessions of
+tuning (cap=64/128, single-wave mirror, multi-wave mirror, width=3/4,
+defensive window, fragility-aware cheap-rank). PI: "we know enough.
+what is the root cause of the quality issue?"
+
+**Root cause diagnosed** via `/tmp/micro_trace.py` on seed 1 turn 80:
+40 candidate atoms, **0 score better than no-op**, **38 of 40 score
+EXACTLY equal to no-op (delta = 0.0000)**. JAX K=8 leaf evaluator
+treats in-flight fleets as `my_ships`, so any launch with ETA > K is
+bit-identical to no-op in the leaf. Median launch ETA = 10-30 turns;
+K=8 catches almost nothing. Every prior tuning operated on the pool
+BEFORE or on opp sim INSIDE the leaf — never on the leaf
+representation. Documented in `audit/2026-05-17-v8_analytic-fastsim-
+pivot.md`.
+
+**Pivot:** new module `lib/foundation/strategies/analytic_fastsim.py`
+(`abcb77b`, refined at `7e511a0`). Replaces JAX vmap value head with
+v8_scavenge-shape: `fast_sim` K-step rollout, reactive `lite_greedy`
+opp at each step, `_favor` (F1 + F2 PV-discount) leaf, greedy non-
+dogpile merge. K=15 N=25 (chosen via K-sweep on the diagnosed
+state — K=8 → 1 positive atom, K=15 → 5, K=25 → 8, K=40 → 9).
+Drops beam_search; the file stays on disk but no longer imported.
+
+**Probe 1 (n=8 side-balanced):**
+
+| Variant | vs nearest | vs v7_0 |
+|---|---:|---:|
+| JAX baseline (`c89eb71`) | 4/8 (50 %) | 2/8 (25 %) |
+| fast_sim K=8 (intermediate) | 2/8 (25 %) | 0/8 (0 %) |
+| **fast_sim K=15 N=25** (`7e511a0`) | **4/8 (50 %)** | in-progress |
+
+Same aggregate as JAX, but the WIN PATTERN shifted: seed 1 went
+0/2 → 2/2 (genuine progress — predicted exactly from K-sweep
+showing 5 positive atoms vs JAX's 0). Seed 0 regressed 2/2 → 0/2,
+but losses are now 461-485 turn full games (slowly outproduced)
+not 109-499 split (was eliminated). Different failure character.
+
+**Verdict — KEEP, per PI reframe:** "we do not need to win, we
+just need to know if we can use the architecture as a strong
+baseline to leverage our ambitious ideas." Three substrate-
+viability checks PASS:
+
+1. **K-sweep monotone.** 1 → 5 → 8 → 9 positive atoms as K rises.
+   The new value head has a tunable knob with predictable gradient.
+   Contrast: JAX path had 0-positive-atoms at every tuning.
+2. **K=8 → K=15 change moved real outcomes** on the predicted
+   seeds (1 won as the K-sweep predicted).
+3. **Timing headroom.** p50 22-294 ms warm, p95 154-705 ms (max
+   1031 outlier of 4,500+ turns). ~3× cheaper than JAX path.
+   ~300 ms headroom available for layering ambitious work.
+
+**Substrate ready for ambitious extensions** (ordered by EV/hour):
+
+1. Wallclock-guarded K extension (target K=25-40 light-state,
+   K=15-20 mid-game). ~30 LOC.
+2. Beam-over-fastsim (depth=2 width=3 affordable now).
+3. Wait-then-fire candidates (port v8_scavenge `_wait_then_fire_
+   candidate`). ~80 LOC.
+4. Stronger opp model (`top_tier_mirror_policy` exists in
+   `lib/opp_model.py`).
+5. Learned value head trained on fast_sim rollouts.
+
+Open friction (postmortem promotion candidates pending PI ratify):
+
+- `K-shorter-than-launch-eta-makes-value-head-blind` — root cause.
+- `copy-K-from-jax-budget-to-fastsim` — cost-regime port mistake.
+- `rule-37-strict-kill-vs-pi-override` — Wilson LB threshold too
+  conservative at n=8; substrate-viability check should accompany.
+
+Postmortem: `audit/2026-05-17-postmortem-fastsim-pivot.md`.
+
 ## Falsified or dead (across all three branches today)
 
 - All 7 v7_X chooser-axis variants (chooser-axis exhausted)
@@ -126,6 +199,10 @@ Renaissance flags (default-off), snipe tier emission framework.
 
 ## Pointers (this session)
 
+- `audit/2026-05-17-v8_analytic-fastsim-pivot.md` — value-head root-
+  cause diagnosis + fast_sim pivot session record (this branch).
+- `audit/2026-05-17-postmortem-fastsim-pivot.md` — postmortem
+  including promotion candidates.
 - `audit/2026-05-14-postmortem-geo-session.md` — geo iteration
   postmortem (this branch).
 - `audit/2026-05-14-postmortem-read-handover-iLWTq.md` — chooser-axis

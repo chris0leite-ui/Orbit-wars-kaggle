@@ -177,6 +177,53 @@ fix forward AND add a test.
   and commit from there. **Fix forward:** investigate signer's
   source-discovery; configure it to accept worktrees.
 
+## 2026-05-17 (claude/space-fleet-physics-engine-lrLE6 — v8_analytic value-head pivot to fast_sim)
+
+- `tag: K-shorter-than-launch-eta-makes-value-head-blind` — JAX K=8
+  rollout couldn't distinguish 38 of 40 candidate atoms from no-op
+  (delta = 0.0000 exactly) at seed 1 turn 80. Root cause: in-flight
+  fleets count as `my_ships` in the leaf, so any launch with ETA > K
+  produces a bit-identical leaf state. Median launch ETA = 10-30
+  turns; K=8 catches almost nothing. All prior tuning operated on the
+  candidate pool BEFORE the leaf or on opp simulation INSIDE the K
+  window — never touched leaf representation. **Fix:** new value
+  head must either (a) extend K past the median launch ETA, or (b)
+  credit in-flight aimed fleets with their expected production gain
+  (cheap-rank's pv_horizon). Diagnosed via /tmp/micro_trace.py;
+  fixed via fast_sim+lite_greedy pivot at `7e511a0` (K=15).
+- `tag: copy-K-from-jax-budget-to-fastsim` — initial fast_sim port
+  inherited K=8 from the JAX-budget-constrained config. Predictable
+  consequence: same horizon-too-short failure mode as JAX, manifested
+  as 2/8 vs nearest (REGRESSED from JAX baseline 4/8). Per-step cost
+  on fast_sim is ~10-30× cheaper than JAX, so K=15-25 is actually
+  affordable. **Fix:** when porting between different cost regimes,
+  re-derive horizon-vs-budget rather than copying the prior value.
+- `tag: rule-37-strict-kill-vs-pi-override` — plan-mode WRAPUP gate
+  was "Wilson 95% LB < 40% vs nearest → kill". 4/8 wins gives LB=21.5%
+  which triggers kill, but n=8 is too small for the LB to clear 40%
+  unless ≥7/8 wins. PI overrode the strict-read gate with "we don't
+  need to win, we need to know if architecture is buildable-on" —
+  reframed verdict from outcome-based to substrate-viability-based.
+  **Lesson:** Wilson-LB thresholds at n=8 are very conservative;
+  use them as one signal, not the sole verdict. Promotion candidate:
+  encode "use Wilson LB AND a substrate-viability check (knob
+  responsiveness, timing headroom) for kill-or-keep decisions."
+- `tag: parallel-bench-cpu-contention` — earlier same-day parallel
+  bench (nearest + v7_0 simultaneously) inflated per-turn timing
+  30% via CPU contention and produced unreliable max-turn-ms
+  numbers (some seeds at 1100ms). Sequential bench reproduced
+  timing of 200-700 ms p95. **Fix:** never run two
+  v8_analytic-as-focal benches in parallel; sequence them. Already
+  fixed in `/tmp/probe1_bench.py` invocation pattern this session.
+- `tag: bench-light-on-seeds-needs-n-balance` — n=8 side-balanced
+  (4 seeds × 2 side assignments) gave honest signal where n=4
+  was variance-noisy, but Wilson LB still uninformative at this
+  scale. Per-seed pattern more informative than aggregate at n=8:
+  K-sweep predicted seed 1 win flip from 0/2 → 2/2, and bench
+  confirmed it. **Promotion candidate (low priority):** track
+  per-seed outcome timeline in `state/calibration-ladder.md` so
+  prior-bench seed effects are visible at decision time.
+
 ## 2026-05-16 (claude/space-fleet-physics-engine-lrLE6 — v8_analytic structural recovery)
 
 - `tag: focal-agent-never-smoke-tested-against-floor` — opened the
