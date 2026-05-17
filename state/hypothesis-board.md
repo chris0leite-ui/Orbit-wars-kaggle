@@ -38,39 +38,36 @@ saturation (v7_1..v7_7), value-function asymmetric-compounding
 (v17/v18/v19), and chooser banded multi-wait (v14/v15) all live in a
 different axis class.
 
-#### 2026-05-17 UPDATE — proposer-bonus axis CLOSED (Rule 37)
+#### 2026-05-17 UPDATE — proposer-bonus axis: magnitude matters
 
 After v15 live-settled at 1114.9 (vs v20's 1094.2), strategy pivoted
-to building on the v15 base. Six successive variants on the proposer-
-bonus axis have now regressed vs v15:
+to building on the v15 base. Three single-knob proposer-bonus variants
+A/B tested vs v15 at n=32:
 
-| Variant | Knob | Weight | h2h vs v15 (n=32) |
-| --- | --- | --- | --- |
-| H17 DANGER3 (5/13) | pre-rank danger reweight | — | regressed |
-| H19 FLEET_OVERCOMMIT (5/13) | overcommit reweight | — | regressed |
-| H21 PRE_REINFORCE (5/13) | reinforce reweight | — | regressed |
-| v22_sun_on_v15 (5/17) | sun-safe pre-strip | binary | 43.8% |
-| v24_rotation_on_v23 | rotation_alignment bonus | 0.02×prod | 40.6% |
-| v25_chain_on_v23 | chain_bonus | 0.30×ECV | 43.8% |
-| v26_chainlite_on_v23 | chain_bonus | 0.10×ECV | pending |
+| Variant | Knob | Weight | h2h vs v15 (n=32) | Wlo |
+| --- | --- | --- | --- | --- |
+| v22_sun_on_v15 (5/17) | sun-safe pre-strip | binary | 43.8% | 0.282 |
+| v24_rotation_on_v23 | rotation_alignment bonus | 0.02×prod | 40.6% | 0.255 |
+| v25_chain_on_v23 | chain_bonus | 0.30×ECV | 43.8% | 0.282 |
+| **v26_chainlite_on_v23** | **chain_bonus** | **0.10×ECV** | **65.6%** | **0.483** |
 
-That is FAR past Rule 37's N=3 cap on consecutive falsifications in
-the same axis. The chooser pipeline (cheap_marginal_value → prerank
-→ adaptive validate cap → K-rollout) is a tight local optimum;
-ANY upstream score perturbation regresses because the validate budget
-gets a worse candidate set after prerank shuffles. The ONLY winning
-addition shape so far is POST-rollout model-correctness fixes
-(v23's predict_fleet_fate check after Δ > 0 gate; 50.0% h2h vs v15
-+ verified bug fix).
+v26 OVERTURNS the earlier-this-session "axis closed" conclusion. Same
+mechanism as v25 (chain_bonus on cheap_marginal_value), 1/3 weight.
+v25 regresses 6pp; v26 wins 16pp over the v23 base.
 
-**Axis closed. Future work pivots to:**
-- Value-function axis (better leaf scorer for the K-rollout)
-- Rollout-depth axis (deeper K, JAX/numba acceleration)
-- Imitation-learning axis (warm-start from top-10 replays)
-- 4P-archetype axis (separate chooser branches per opp count / map class)
-- Post-rollout fixes only on v15/v23 chooser shape (v23-style)
+**Interpretation:** the regression IS magnitude-driven, not mechanism-
+driven. v15's prerank → validate-budget pipeline is sensitive to
+score shifts — small chain bonuses tilt ordering in a productive way
+(promoting capture-and-follow-on candidates), but large chain
+bonuses dominate cheap_marginal_value enough to crowd out competing
+candidates with better total Δ.
 
-These are different axes; clean Rule 37 reset.
+**Earlier 5/13 falsifications (H17/H19/H21) were ALL at full bonus
+weight on v7_0** — they don't speak against the small-weight regime.
+Re-opens the axis for small-weight tuning.
+
+v26 outcome histogram pending (Rule 38 inheritance check). v26 vs v15
+n=64 expansion running to tighten Wlo above (or below) the 0.55 gate.
 
 ## Open — Geometry-conditional EDA (2026-05-14)
 

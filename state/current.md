@@ -27,10 +27,25 @@ last_submission_file: submissions/v20.py  # 317 KB bundle; parity OK 858 turns
 # Rule 38: v23 sends 0 fleets to sun/oob in 1263 launches; v15 sends
 # 7 in 1269 (0.55% rate, 3 of 5 seeds).
 #
-# v24_rotation_on_v23 built: v23 + rotation_alignment bonus only
-# (use_rotation=True flag in lib.compound.compound_bonus). Bundle:
-# submissions/v24_rotation_on_v23.py (335 KB, sha256:af9e3c748dcf268d).
-# A/B vs v15 running.
+# v24_rotation_on_v23 built: v23 + rotation_alignment bonus only.
+# A/B vs v15 n=32: 40.6% (Wlo=0.255) INCONCLUSIVE — regressed 10pp vs
+# v23's 50.0%. Rule 38: 0 sun/oob in 990 launches (inherits v23 fix).
+#
+# v25_chain_on_v23: v23 + chain_bonus only (0.30 weight). A/B vs v15
+# n=32: 43.8% (Wlo=0.282) INCONCLUSIVE — regressed 6pp vs v23. Rule 38:
+# 0 sun/oob in 1186 launches.
+#
+# v26_chainlite_on_v23: v23 + chain_bonus @ 0.10 weight (1/3 of v25).
+# A/B vs v15 n=32: 21/32 = 65.6% (Wlo=0.483, Whi=0.796) — DIRECTIONAL
+# +16pp over v23 base. Re-opens proposer-bonus axis (magnitude-driven,
+# not mechanism-driven). Bundle: submissions/v26_chainlite_on_v23.py
+# (335 KB, sha256:1abf16db65040117). n=64 confirm run pending; outcome
+# histogram pending.
+#
+# RANKED submission candidates (5/17 17:00):
+# 1. v26_chainlite (pending Wlo>0.55 at n=64) — highest EV if signal real
+# 2. v23_sun_fate — 50.0% h2h + bug fix verified — clean defensive sub
+# 3. v24/v25 — regress, do not submit
 last_submission_message: |
   v20: chooser dogpile (remove per-target dedup). v15 emit-cap
   bottleneck diagnosed: chooser found 6-16 positive-Δ candidates per
