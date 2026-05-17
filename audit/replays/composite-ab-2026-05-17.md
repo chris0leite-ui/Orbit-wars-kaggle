@@ -65,6 +65,30 @@ will exceed Kaggle's 1000ms actTimeout. Submission could still work
 those turns play idle. Risk: a high-impact turn timing out = lost
 game. Worth a final tighten before live ladder.
 
+## A/B retest #2 (post #1+#2 timing fixes, pre-A2-merge)
+
+After commit `239fdc5` (pre-bail headroom + adaptive WorldModel
+horizon), re-ran composite vs v15. Adaptive-tier eval doubled to
+n=64 (CI bracketed at n=32):
+
+| n | wins | rate | Wlo | Whi | verdict |
+|---|---:|---:|---:|---:|---|
+| 32 | 23 | 71.9% | 0.546 | 0.844 | CONTINUE |
+| 64 | 40 | **62.5%** | 0.503 | 0.733 | **INCONCLUSIVE** |
+
+- max turn-ms 1580 (vs 1196 last retest) — but this run shared CPU
+  with the FFA panel; not apples-to-apples.
+- p95 turn-ms 646 (down from 721; the timing fixes ARE working at
+  the 95th percentile).
+- Total elapsed 1583s (longer due to CPU contention).
+
+**Reading the variance:** point estimate moved 75% → 62.5% across
+the two retests. The first was n=32 (noisy); the second is n=64
+(more reliable). 62.5% is closer to the original n=64 figure of
+67.2%. Best estimate of the true composite-vs-v15 winrate: ~63-67%,
+Wlo at the 0.55 gate. Composite is winning in 2P but not
+deterministically PASS-able at n=64.
+
 ## Post-merge — A2 4P from `claude/kaggle-baseline-strategy-lO4mm`
 
 Pulled in `agents/baseline/value.py` + `tests/test_baseline_value.py`
