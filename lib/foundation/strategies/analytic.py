@@ -87,12 +87,12 @@ class AnalyticStrategy:
         *,
         width: int = 3,
         depth: int = 2,
-        K: int = 8,
+        K: int = 15,
         budget_ms: float = 800.0,
         opp_aggressive: bool = True,
         enable_chainer: bool = True,
         atom_cap: int = DEFAULT_ATOM_CAP,
-        fastsim_top_n: int = 40,
+        fastsim_top_n: int = 25,
     ) -> None:
         # width/depth/budget_ms/opp_aggressive are now legacy beam knobs
         # kept for API compatibility; the fast_sim scorer in
@@ -104,10 +104,14 @@ class AnalyticStrategy:
         self._opp_aggressive = opp_aggressive
         self._enable_chainer = enable_chainer
         self._atom_cap = atom_cap
-        # Top-N cut applied AFTER cheap-rank, BEFORE fast_sim. v8_scavenge
-        # uses 60; we start at 40 to leave budget headroom (fast_sim
-        # per-candidate cost is ~K*2 ms = ~16 ms at K=8, so N=40 ⇒
-        # ~640 ms + ~5 ms snap build + greedy merge ≈ 660 ms warm).
+        # Top-N cut applied AFTER cheap-rank, BEFORE fast_sim. K=15
+        # chosen so the rollout covers most launch ETAs (median 10-30);
+        # at K=8 only the closest captures landed, leaving 39/40 atoms
+        # bit-equal to no-op. Mid-game per-candidate cost scales as
+        # K × in-flight-fleet count: seed-3 p95 measured 643 ms at
+        # K=8 N=40 → 760 ms at K=15 N=25 (well in budget). N=25
+        # matches v8_scavenge's N_VALIDATE band; see
+        # /tmp/v8_scavenge.py:76 for the rationale.
         self._fastsim_top_n = fastsim_top_n
 
     def emit(
