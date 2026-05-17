@@ -19,19 +19,23 @@ days_to_deadline: 37
 # Most-recent submission (composite + A2 hybrid; pre-submit hypotheses
 # registered at audit/2026-05-17-pre-submit-hypotheses-composite-a2-hybrid.md).
 # Status is the only stable bit — query Kaggle for μ.
-last_submission_id: 52744234
+last_submission_id: 52744856
 last_submission_status: PENDING
 last_submission_file: submissions/baseline.py
-last_submission_agent: composite_a2_hybrid_baseline
-last_kernel_push: 2026-05-17 13:57:01 UTC
+last_submission_agent: composite_a2_hybrid_baseline (rebundle)
+last_kernel_push: 2026-05-17 14:17:28 UTC
+prior_error_submission_id: 52744234  # ERROR — `from agents.baseline import` not inlined; bundler fix in commit 4094aa1
 current_submitted_agent: composite_a2_hybrid_baseline (5/17 PM; composite head 2P + A2-favor 4P, dispatched via favor_hybrid)
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation; the
 # third push auto-evicts the previous oldest). Status is the only stable
 # bit — μ values drift, query Kaggle for them.
-# This push (52744234) evicts v20 (was μ=1087.4 at submit-time).
+# Re-bundle push (52744856) after prior 52744234 errored. Rolling impact
+# depends on whether Kaggle counts ERROR-status subs for the rolling pair —
+# best estimate: only COMPLETE submissions count, so rolling-last-2 effective
+# pair is composite_a2_hybrid (52744856 once COMPLETE) + v15.
 rolling_last_2:
-  - {agent: composite_a2_hybrid_baseline, sub_id: 52744234, submitted: 2026-05-17T13:57Z, status: PENDING}
+  - {agent: composite_a2_hybrid_baseline_rebundle, sub_id: 52744856, submitted: 2026-05-17T14:17Z, status: PENDING}
   - {agent: v15_banded, sub_id: 52710995, submitted: 2026-05-16T13:43Z, status: COMPLETE, role: current_champion}
 
 # Team peak as of 2026-05-17: v15_banded (the multi-wait-grid + banded
@@ -47,15 +51,16 @@ team_peak_agent: v15_banded
 # 3-opponent panel (`fast.py eval --vs-panel`) + h2h vs the current
 # rolling agent (not just a fixed baseline) before any new push.
 
-submissions_used_today: 1     # 5/17 — composite+A2 hybrid (52744234)
-submissions_used_total: 30    # see ladder list below; refresh via Kaggle CLI
+submissions_used_today: 2     # 5/17 — composite+A2 hybrid (52744234 ERROR, 52744856 PENDING re-bundle)
+submissions_used_total: 31    # see ladder list below; refresh via Kaggle CLI
 plateau_days: 0
 saturation_count: 0
 
 # Live ladder — read from `kaggle competitions submissions orbit-wars`,
 # NOT from this file. Submission IDs are stable; scores are not.
 # Most recent ladder entries by submission id:
-#   52744234  baseline.py (composite+A2 hybrid) 2026-05-17 13:57 PENDING ← NEW
+#   52744856  baseline.py (composite+A2 hybrid, re-bundle) 2026-05-17 14:17 PENDING ← NEW
+#   52744234  baseline.py (composite+A2 hybrid, ERROR) 2026-05-17 13:57 ← failed: `from agents.baseline import` not inlined
 #   52721807  v20.py            2026-05-16 21:57  COMPLETE
 #   52710995  v15.py            2026-05-16 13:43  COMPLETE  ← team peak
 #   52704189  v8_scavenge (v13) 2026-05-16 09:07  COMPLETE
