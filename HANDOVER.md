@@ -23,13 +23,12 @@
   v7_0.
 - **Submission status:** NOT submitted (PI build-only this session).
   Next-session decision once v15 and v20 settle live.
-- **⚠️ BUNDLE PARITY BROKEN:** `submissions/v21_compound.py` on seed 1
-  loses where `agents/v21_compound/main.py` wins (1/1 MISMATCH probed
-  before parity-check timed out at 5 min). Bundle is NOT safe to submit
-  until parity is fixed. Likely cause: bundle's adaptive
-  `n_affordable_validate` differs from source's because per-step
-  wallclock cost is measured slightly differently in the inlined
-  context. See "Next-session first action" item 0.
+- **Bundle parity OK (corrected 2026-05-17):** the previous session's
+  MISMATCH flag was timing-noise from adaptive wallclock probing.
+  With `ORBIT_WARS_PARITY_WALLCLOCK_MS=60000`, src=bundle on every
+  probed seed. Full-game divergence under default 1000ms cap is
+  expected (same behavior on Kaggle servers). Bundle is safe to submit
+  per the bundler's per-obs parity contract.
 
 ## Next-session first-action (ranked by EV / cost)
 

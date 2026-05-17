@@ -147,8 +147,11 @@ def _candidate_post_capture(tgt, world, me, capture_step):
 
 
 def compound_bonus(src, tgt, ships, eta, world, model, me,
-                   anchor_xy, mission_book,
-                   wait_N: int = 0) -> float:
+                   anchor_xy=None, mission_book=None,
+                   wait_N: int = 0,
+                   use_rotation: bool = True,
+                   use_chain: bool = True,
+                   use_carry: bool = True) -> float:
     """Sum of (rotation + chain + carryforward) bonuses for one candidate.
 
     Each component is bounded; the total is intended to add ≤ ~50% of
@@ -158,11 +161,15 @@ def compound_bonus(src, tgt, ships, eta, world, model, me,
 
     Returns 0.0 for the BOUNCE branch (ships ≤ predicted defenders) so
     we never reward a doomed capture for being "in the right place."
+
+    `use_*` flags enable per-axis ablation. The v21a/b/c/d single-axis
+    agents pass exactly one True flag.
     """
     # Skip bonus computation for reinforce candidates — the carryforward
     # bonus still applies but rotation/chain don't (we already own it).
     if int(tgt.owner) == me:
-        return mission_book.carryforward_bonus(int(src.id), int(tgt.id))
+        return (mission_book.carryforward_bonus(int(src.id), int(tgt.id))
+                if use_carry else 0.0)
 
     arrival_step = wait_N + eta
     pred_owner = model.owner_at(int(tgt.id), arrival_step)
@@ -171,28 +178,24 @@ def compound_bonus(src, tgt, ships, eta, world, model, me,
     if pred_owner == me or ships <= pred_ships:
         return 0.0
 
-    omega = float(world.omega)
+    rotation_bonus = 0.0
+    if use_rotation:
+        omega = float(world.omega)
+        align = rotation_alignment(
+            [tgt.id, tgt.owner, tgt.x, tgt.y, tgt.radius, tgt.ships, tgt.production],
+            omega, anchor_xy, horizon=ROTATION_HORIZON,
+        )
+        rotation_bonus = ROTATION_BONUS_WEIGHT * float(tgt.production) * float(align)
 
-    # Rotation alignment: planets drifting toward our cluster centroid
-    # are easier to defend → bonus. Scaled by production.
-    align = rotation_alignment(
-        [tgt.id, tgt.owner, tgt.x, tgt.y, tgt.radius, tgt.ships, tgt.production],
-        omega, anchor_xy, horizon=ROTATION_HORIZON,
-    )
-    rotation_bonus = ROTATION_BONUS_WEIGHT * float(tgt.production) * float(align)
-
-    # Chain bonus: if this capture unlocks a follow-on capture inside
-    # CHAIN_LOOKAHEAD_TURNS, credit a fraction of the chain target's
-    # ECV. Encourages picking captures whose POSITION matters, not
-    # just whose intrinsic production matters.
-    chain = _candidate_post_capture(tgt, world, me, capture_step=arrival_step)
     chain_bonus = 0.0
-    if chain is not None:
-        chain_ecv, _chain_target, _chain_eta = chain
-        chain_bonus = CHAIN_BONUS_WEIGHT * chain_ecv
+    if use_chain:
+        chain = _candidate_post_capture(tgt, world, me, capture_step=arrival_step)
+        if chain is not None:
+            chain_ecv, _chain_target, _chain_eta = chain
+            chain_bonus = CHAIN_BONUS_WEIGHT * chain_ecv
 
-    # Carryforward bonus: if we already committed to this (src, tgt)
-    # last turn, small stability nudge to prefer continuing the plan.
-    carry_bonus = mission_book.carryforward_bonus(int(src.id), int(tgt.id))
+    carry_bonus = 0.0
+    if use_carry:
+        carry_bonus = mission_book.carryforward_bonus(int(src.id), int(tgt.id))
 
     return rotation_bonus + chain_bonus + carry_bonus
