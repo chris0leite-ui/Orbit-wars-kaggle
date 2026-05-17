@@ -255,6 +255,20 @@ fix forward AND add a test.
 - `tag: trueskill-noise-vs-signal` — TrueSkill σ is large for the
   first ~24 h after submit (initial σ≈300, shrinks ∝ 1/√N). Wait
   ≥24 h before reading rank delta into strategy decisions.
+- `tag: state-files-claim-current-champion-with-stale-mu` — 2026-05-17
+  baseline session: `state/current.md` claimed v7_pv (μ=1064.4) was
+  team peak while live Kaggle had v15 (μ=1115.5) as the rolling champion.
+  Two days of intervening sessions (v8_scavenge → v9 → v12 → v13 → v15
+  → v20) shipped without state/current.md being refreshed. **Root
+  cause:** state files recorded μ values which drift, and the
+  refresh-state-files step was skipped by the wrap-up of the
+  intervening sessions. **Fix landed this session:** state/current.md
+  no longer records μ values at all (top-of-file note plus
+  rolling-last-2 entries hold only submission IDs + dates + statuses).
+  Rule 32 already mandates session-start `kaggle competitions
+  submissions orbit-wars`; with no μ in the file, there's nothing to
+  go stale. Same convention applied to HANDOVER.md and
+  state/mechanism-ledger.md.
 
 ## How to add an entry
 
