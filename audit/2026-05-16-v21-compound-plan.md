@@ -216,3 +216,37 @@ v22 is the recommended submission candidate.
 Also built v21a/v21b/v21c/v21d ablations isolating each compound
 component on v20 base. If any single axis shows ≥55% Wlo vs v20, that
 axis is a candidate to apply to v15 base as a v22-variant (v22b, etc.).
+
+### v22 vs v15 A/B result: 43.8% INCONCLUSIVE — do NOT submit
+
+n=32: **14/32 wins (43.8%), Wlo=0.282, Whi=0.607**. Wilson CI brackets
+50% widely; not a statistically significant regression, but the point
+estimate is below parity. Combined with the local-overpredict-2x
+calibration shift, live μ(v22) is more likely below v15's 1115.5 than
+above.
+
+**Architectural finding:** the sun-safe pre-filter is NOT a free
+defensive win. The K-rollout already correctly prices sun-bound
+candidates — when the rollout scores a sun-bound candidate as
+positive Δ, the value isn't "reach the target" but "remove ships
+from this source before opp captures it" (sacrifice fleet). v22's
+pre-filter strips these candidates from the validate stage; the
+chooser then picks objectively-worse alternatives that the rollout
+would have ranked lower. Net effect: slightly under parity.
+
+This is the THIRD time this session class of "additions in front of
+the K-rollout regress because the rollout already implicitly handles
+the concern":
+1. Leaf-asymmetric-compounding (v17/v18/v19, 2026-05-16): rollout's
+   reactive opp already encodes asymmetry
+2. Pre-rank reweight on top of v7 (H17/H19/H21, 2026-05-13): rollout
+   already evaluates contested territory
+3. Sun-safe pre-filter (v22, 2026-05-17): rollout already prices
+   sun-bound candidates correctly per their non-target value
+
+**Submission recommendation:** do NOT submit v22. The 43.8% point
+estimate + local-overpredict-2x suggests live μ(v22) ≈ 1090-1100,
+below v15's 1115.5. Pushing v22 evicts v15 (older in rolling-last-2),
+dropping floor from 1115.5 to max(v22_live, v20_live=1095.5).
+
+Wait for v15 to drift / hold the floor for further iteration.

@@ -30,9 +30,41 @@
   expected (same behavior on Kaggle servers). Bundle is safe to submit
   per the bundler's per-obs parity contract.
 
+## 2026-05-17 session update — v22 NOT a submission candidate
+
+Live μ pulled:
+- v15 (52710995) SETTLED at **1115.5 ← TEAM FLOOR**
+- v20 (52721807) SETTLED at 1095.5
+- v20 lost 20μ vs v15 live despite local 65.6% — local-overpredict pattern
+
+Built v22 = v15 + lib.compound.fleet_path_safe (sun pre-filter only).
+**A/B v22 vs v15 n=32 = 43.8% (Wlo=0.282) INCONCLUSIVE.** Slight
+regression in point estimate. Architectural finding: K-rollout
+correctly prices sun-bound candidates as positive-Δ-for-other-reasons
+(sacrifice fleets that remove ships from a source before opp capture);
+v22 strips these candidates, slight regression follows.
+
+Same pattern as v17/v18/v19 (leaf asymmetry) and H17/H19/H21 (pre-rank
+reweight): **the K-rollout already implicitly handles concerns that
+proposer-time additions try to explicitly enforce.**
+
+**Submission recommendation: HOLD v22.** Pushing evicts v15 (older in
+rolling-last-2), dropping floor from 1115.5 to max(v22_live ≈ 1095,
+v20_live=1095.5).
+
+Bundle parity (corrected): the previous session's MISMATCH flag was
+timing-noise. Per-obs parity contract IS satisfied under
+ORBIT_WARS_PARITY_WALLCLOCK_MS=60000 (0/3 mismatches across seeds
+1, 7, 42). Bundles are safe to submit when ready.
+
 ## Next-session first-action (ranked by EV / cost)
 
-0. **Fix bundle-source parity for v21_compound** (~1 hr). Probe: run
+0. (RESOLVED 2026-05-17) Bundle parity flagged false-positive last
+   session — actually timing-noise. v22, v21_compound, v21a/b/c/d
+   bundles all parity-OK. **Skip this item.**
+
+   Original Priority 0 retained for reference:
+   "Fix bundle-source parity for v21_compound" (~1 hr). Probe: run
    `python -c "from kaggle_environments import make; e=make('orbit_wars',
    configuration={'seed':1}); e.run(['agents/v21_compound/main.py',
    'agents/v20/main.py']); print(e.steps[-1][0].reward)"` and the bundle
