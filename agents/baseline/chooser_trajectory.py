@@ -36,8 +36,9 @@ from __future__ import annotations
 
 import math
 import os
+import time
 
-from agents.baseline.chooser import opp_actions_for_snap
+from agents.baseline.chooser import affordable_validate_cap, opp_actions_for_snap
 from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
@@ -78,6 +79,20 @@ MIN_SOURCE_RESERVE: int = 0
 OPP_NEAREST_K: int = 4
 OPP_SHIP_FRACTION: float = 0.8
 OPP_MIN_SHIPS: int = 4
+
+# Wallclock budgeting (2026-05-17 wait_N session): mirror composite
+# chooser. v4 with wait_N>0 routinely blew the 1000ms env cap on heavy
+# turns (max=2416ms in n=64 A/B vs v15). Composite stays within cap via
+# affordable_validate_cap + safe_deadline pre-bail.
+#
+# N_VALIDATE=200 (vs composite's 60): trajectory v4's per-candidate
+# cost is shorter on average (prop_horizon clamps to MIN_HORIZON=25 for
+# most candidates; composite's avg horizon is closer to 32). The pre-
+# wallclock-fix A/B (no cap) hit 65.6%; the N_VALIDATE=60 cap dropped
+# it to 57.8% — confirming candidate breadth matters. Let safe_deadline
+# bind the actual budget; N_VALIDATE is just a generous upper bound.
+N_VALIDATE: int = 200
+RESERVED_OVERHEAD_MS: float = 50.0
 
 
 def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
@@ -451,6 +466,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     if not prerank:
         return []
 
+    deadline = time.perf_counter() + wallclock_ms / 1000.0
+
     # v4 (default, 2026-05-17 PM): Δ-from-idle-baseline scoring with
     # favor leaf. Replaces v3's binary owner-check leaf — see concept
     # at knowledge-base/concepts/probability-of-winning-framework.md.
@@ -481,8 +498,31 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             snap_base, me, num_seats, max_horizon_seen, favor_fn, gamma,
         )
 
+    # Wallclock budgeting (mirror composite chooser pattern). Probe per-
+    # step + per-leaf cost to size the safe_deadline pre-bail. The hard
+    # cap stays at N_VALIDATE (generous); safe_deadline is the real
+    # binder so score_candidate_v4's uninterruptible rollout never
+    # starts past the cliff. Closes the n=64 A/B max=2416ms overrun
+    # (1000ms env cap) without the N_VALIDATE=60 candidate-breadth
+    # regression (57.8% vs pre-fix 65.6% in the post-N=60 A/B).
+    cap = N_VALIDATE
+    per_cand_ms = 0.0
+    if not use_v3:
+        remaining_ms = max(50.0, (deadline - time.perf_counter()) * 1000.0)
+        _, per_cand_ms = affordable_validate_cap(
+            snap_base, me, num_seats, max_horizon, remaining_ms,
+            min_horizon, gamma,
+        )
+    safe_deadline = deadline - (per_cand_ms / 1000.0)
+
     scored: list[tuple] = []
+    cand_count = 0
     for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
+        if cand_count >= cap:
+            break
+        if not use_v3 and time.perf_counter() > safe_deadline:
+            break
+        cand_count += 1
         if use_v3:
             # v3 path: fire-now-only (binary leaf doesn't generalise to
             # wait_N>0 trivially). Skip wait_N>0 in the v3 path.
