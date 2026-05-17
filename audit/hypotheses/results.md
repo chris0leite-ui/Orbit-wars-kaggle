@@ -33,7 +33,7 @@ Each row records:
 
 | sub_id | date | agent | parent_step | pre_register_doc | local_predicted_μ | actual_settled_μ | μ_delta | H_results | mechanism_metric_Δ | verdict | postmortem |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 52744856 | 2026-05-17 | baseline (composite + A2 hybrid, re-bundle) | (pre-plan: composite+A2 pivot) | audit/2026-05-17-pre-submit-hypotheses-composite-a2-hybrid.md | ≥1108 (H2) | TBD | TBD | TBD | TBD | TBD | TBD |
+| 52744856 | 2026-05-17 | baseline (composite + A2 hybrid, re-bundle) | (pre-plan: composite+A2 pivot) | audit/2026-05-17-pre-submit-hypotheses-composite-a2-hybrid.md | ≥1108 (H2) | TBD (45 ep so far) | TBD | partial | win=0.456 (+3pp vs v15 0.428); sun_clip=0.002 (30x BELOW top10 0.062); active_turn_fraction=0.344 (14pp BELOW top10 0.48); multi_launch_turn_rate=0.289 (19pp BELOW top10 0.48); first_launch_step=4.87 (0.8 step slow vs top10 4.10) | partial — H1/H2 floors look met from n=45 winrate, aggression metrics SURPRISE-LOW vs top-10 | strategic finding (not friction) — see audit/2026-05-17-step1.5-verification-D-finding.md |
 | 52744234 | 2026-05-17 | baseline (composite + A2 hybrid, first bundle) | (pre-plan) | audit/2026-05-17-pre-submit-hypotheses-composite-a2-hybrid.md | ≥1108 (H2) | ERROR (validation failed) | n/a | n/a | n/a | bundle_failure | bundler-modular-agent-namespace-access-breaks-bundle (closed) |
 
 ## Notes
