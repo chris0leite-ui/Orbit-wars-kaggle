@@ -35,8 +35,10 @@ PI critique 2026-05-17: "we should be thinking in fleet trajectories";
 from __future__ import annotations
 
 import math
+import os
 
 from agents.baseline.chooser import opp_actions_for_snap
+from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
 from lib.trajectory import predict_fleet_fate
@@ -252,6 +254,100 @@ def score_candidate_dyn(snap_base, src, tgt, ships: int, angle: float,
     return (-WASTE_WEIGHT * ships, "bounced", eta)
 
 
+# ---------------------------------------------------------------------------
+# v4 (Direction A, 2026-05-17 PM): favor leaf + idle-baseline Δ-scoring.
+# ---------------------------------------------------------------------------
+#
+# v3 lost 0/32 vs v15 with a BINARY leaf (target.owner == me at leaf?).
+# Hypothesis: binary scoring collapses ~bits of strategic info that the
+# v15-style continuous `favor` leaf preserves (ship balance + production
+# balance × pv_horizon). v4 replaces v3's binary check with v15's
+# Δ-from-idle-baseline-favor scoring, keeping v3's eta-bounded
+# trajectory rollout (cheaper than v15's fixed K=40).
+#
+# If v4 reaches v15 parity: information-collapse hypothesis confirmed;
+# trajectory chooser was architecturally fine, leaf was the bug.
+# If v4 still loses: scoring isn't the binding constraint; pivot to
+# joint-action or sequential planning (Directions B/C in concept doc).
+
+
+def build_trajectory_baseline(snap_base, me: int, num_seats: int,
+                              horizon: int, favor_fn, gamma: float,
+                              ) -> list[float]:
+    """Idle-baseline favor at each tick in [0, horizon]. Used by v4 to
+    subtract the do-nothing alternative from each candidate's leaf
+    favor (mirrors `chooser.build_idle_baseline`).
+
+    Returns a list of length `horizon + 1`. Cost: `horizon` calls to
+    `fs_step` + `(horizon + 1)` calls to `favor_fn`. Runs ONCE per
+    chooser invocation, not per candidate.
+    """
+    snap = fs_clone(snap_base)
+    out: list[float] = [
+        favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma),
+    ]
+    for _ in range(horizon):
+        if snap.fake_env.done:
+            out.append(out[-1])
+            continue
+        actions = opp_actions_for_snap(snap, me, num_seats)
+        snap = fs_step(snap, actions, in_place=True)
+        out.append(
+            favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma),
+        )
+    return out
+
+
+def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
+                       me: int, num_seats: int, world,
+                       baseline_favors: list[float],
+                       favor_fn, gamma: float,
+                       horizon: int,
+                       ) -> tuple[float, str, int | None]:
+    """v4 scoring: same admissibility filter + fast_sim rollout as v3,
+    but the leaf is `favor_fn` instead of a binary owner-check, and the
+    score is `Δ = leaf_with_action − baseline_favors[horizon]`.
+
+    Returns `(delta, status, eta)`. Statuses match v3 plus "scored"
+    (the success case for v4, since "captured/reinforced/bounced" are
+    no longer first-class outcomes — favor implicitly encodes them).
+    """
+    fate = predict_fleet_fate(src, tgt, angle, ships, world)
+    if fate.outcome == "sun":
+        return (float("-inf"), "sun", fate.step)
+    if fate.outcome == "oob":
+        return (float("-inf"), "oob", fate.step)
+    if fate.outcome == "timeout":
+        return (float("-inf"), "timeout", fate.step)
+    if fate.outcome == "planet":
+        if fate.hit_planet_id in world.comet_ids:
+            return (float("-inf"), "comet_collision", fate.step)
+        return (float("-inf"), "path_blocked", fate.step)
+
+    eta = int(fate.step)
+    if int(tgt.id) in world.comet_ids:
+        life = comet_remaining_lifetime(int(tgt.id), world)
+        if life is None or life <= eta:
+            return (float("-inf"), "comet_expired", eta)
+
+    # Clamp horizon to baseline length (caller pre-sized).
+    if horizon >= len(baseline_favors):
+        horizon = len(baseline_favors) - 1
+
+    snap = fs_clone(snap_base)
+    for t in range(horizon):
+        if snap.fake_env.done:
+            break
+        actions = opp_actions_for_snap(snap, me, num_seats)
+        if t == 0:
+            actions[me] = [[int(src.id), float(angle), int(ships)]]
+        snap = fs_step(snap, actions, in_place=True)
+
+    leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
+    delta = leaf - baseline_favors[horizon]
+    return (delta, "scored", eta)
+
+
 def predict_opp_responses(world, me: int, num_seats: int,
                           ) -> list[tuple[int, int, int, int]]:
     """1-turn opp lookahead: project each enemy source's likely best
@@ -338,24 +434,57 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     if not prerank:
         return []
 
-    # v3: score each candidate by running fast_sim eta + SETTLE_TURNS
-    # ticks with our action injected at tick 0 and lite_greedy_policy
-    # driving every opp seat. The leaf reflects actual opp reactions
-    # (the gap v1/v2 had). predict_opp_responses + merge_ledgers v2
-    # path is no longer needed — fast_sim simulates opp moves natively.
+    # v4 (default, 2026-05-17 PM): Δ-from-idle-baseline scoring with
+    # favor leaf. Replaces v3's binary owner-check leaf — see concept
+    # at knowledge-base/concepts/probability-of-winning-framework.md.
+    # Use BASELINE_CHOOSER=trajectory_v3 to force the v3 (binary leaf)
+    # path for A/B comparison.
+    use_v3 = (
+        os.environ.get("BASELINE_CHOOSER", "").strip().lower()
+        == "trajectory_v3"
+    )
+    favor_fn = select_favor_fn()  # honours BASELINE_VALUE_HEAD env var
+
+    # Pre-pass: find the largest horizon we'll need so the baseline runs
+    # deep enough for every fire-now candidate. Use proposer's horizon
+    # field (= max(eta+2, MIN_HORIZON=25)) — same depth v15 uses, lets
+    # captured-planet production accumulate enough to register positively.
+    max_horizon_seen = 0
+    for cheap_delta, src, tgt, ships, angle, eta_hint, h, wait_N in prerank:
+        if int(wait_N) != 0:
+            continue
+        if int(h) > max_horizon_seen:
+            max_horizon_seen = int(h)
+
+    baseline_favors: list[float] = []
+    if not use_v3 and max_horizon_seen > 0:
+        baseline_favors = build_trajectory_baseline(
+            snap_base, me, num_seats, max_horizon_seen, favor_fn, gamma,
+        )
+
     scored: list[tuple] = []
-    for cheap_delta, src, tgt, ships, angle, eta_hint, _, wait_N in prerank:
+    for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
         # wait_N>0: fast_sim'ing across a wait doesn't trivially
         # generalise (the wait builds ships at src while opp acts).
         # Deferred; first cut is fire-now-only.
         if int(wait_N) != 0:
             continue
-        score, status, _ = score_candidate_dyn(
-            snap_base, src, tgt, int(ships), float(angle),
-            me, num_seats, world,
-        )
-        if status in ("captured",) and score > 0.0:
-            scored.append((score, src, tgt, ships, angle, wait_N))
+        if use_v3:
+            score, status, _ = score_candidate_dyn(
+                snap_base, src, tgt, int(ships), float(angle),
+                me, num_seats, world,
+            )
+            if status in ("captured",) and score > 0.0:
+                scored.append((score, src, tgt, ships, angle, wait_N))
+        else:
+            score, status, _ = score_candidate_v4(
+                snap_base, src, tgt, int(ships), float(angle),
+                me, num_seats, world,
+                baseline_favors, favor_fn, gamma,
+                horizon=int(prop_horizon),
+            )
+            if status == "scored" and score > 0.0:
+                scored.append((score, src, tgt, ships, angle, wait_N))
 
     if not scored:
         return []
