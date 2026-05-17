@@ -12,17 +12,25 @@ last_kernel_push: 2026-05-16 21:57:08 UTC
 last_submission_id: 52721807
 last_submission_status: COMPLETE
 last_submission_file: submissions/v20.py  # 317 KB bundle; parity OK 858 turns
-# UPDATE 2026-05-17 resume: live ladder data pulled.
-# - v15 (52710995) SETTLED at 1115.5 ← TEAM FLOOR
-# - v20 (52721807) SETTLED at 1095.5 ← evicts v13
-# v20 LOST 20μ vs v15 live despite local 65.6% h2h vs v15 — clear
-# local-overpredict pattern. Strategy: build on v15 base (live winner),
-# not v20 base. v21_compound and v21a/b/c/d (all v20-base) deferred.
+# UPDATE 2026-05-17 resume: live ladder pulled.
+# - v15 (52710995) settled at 1114.9 (was 1115.5; -0.6 drift) ← TEAM FLOOR
+# - v20 (52721807) settled at 1094.2 (was 1095.5; -1.3 drift)
+# - v13 (52704189) at 1085.7 unchanged (evicted)
+# v20 LOST ~21μ vs v15 live despite local 65.6% h2h — local-overpredict pattern.
+# Strategy: build on v15 base. v22, v21_compound, v21a/b/c/d (all v20-base) deferred.
 #
-# v22_sun_on_v15 built this session: v15 + lib.compound.fleet_path_safe
-# proposer-time pre-filter. By construction either ≡v15 or marginally
-# better (never worse). Bundle: submissions/v22_sun_on_v15.py (332 KB,
-# sha256:51605b7fba01eabf). A/B v22 vs v15 running.
+# v23_sun_fate built: v15 chooser + post-rollout predict_fleet_fate check
+# (rejects candidates where the rollout's K=40 horizon missed a sun/oob
+# collision visible in the 200-step ray-cast). Bundle:
+# submissions/v23_sun_fate.py (332 KB, sha256:ba1e3242024a154d).
+# A/B vs v15 n=32 = 16/32 = 50.0% Wlo=0.336 (parity within noise).
+# Rule 38: v23 sends 0 fleets to sun/oob in 1263 launches; v15 sends
+# 7 in 1269 (0.55% rate, 3 of 5 seeds).
+#
+# v24_rotation_on_v23 built: v23 + rotation_alignment bonus only
+# (use_rotation=True flag in lib.compound.compound_bonus). Bundle:
+# submissions/v24_rotation_on_v23.py (335 KB, sha256:af9e3c748dcf268d).
+# A/B vs v15 running.
 last_submission_message: |
   v20: chooser dogpile (remove per-target dedup). v15 emit-cap
   bottleneck diagnosed: chooser found 6-16 positive-Δ candidates per
