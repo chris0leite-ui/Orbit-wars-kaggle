@@ -36,6 +36,9 @@ from __future__ import annotations
 
 import math
 
+from agents.baseline.chooser import opp_actions_for_snap
+from lib.fast_sim import clone as fs_clone
+from lib.fast_sim import step as fs_step
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import comet_remaining_lifetime, predict_garrison_at
 
@@ -43,6 +46,15 @@ from lib.world_model import comet_remaining_lifetime, predict_garrison_at
 EPISODE_STEPS_TOTAL: int = 500
 WASTE_WEIGHT: float = 0.5
 CAPTURE_REWARD_WEIGHT: float = 0.05
+
+# How many ticks AFTER fleet arrival to keep simulating before reading
+# the leaf. Long enough to see immediate combat aftermath (production
+# tick, opp counter-arrivals already in flight); short enough that we
+# don't run a full v15-style 40-step rollout. v3 trade-off vs v2:
+# v2 used predict_garrison_at (single-tick static math); v3 uses
+# fast_sim along the actual trajectory so the leaf reflects opp's
+# reactive launches (via lite_greedy_policy each tick).
+SETTLE_TURNS: int = 3
 
 # Multi-launch budget (Step A, 2026-05-17 v2): the v1 chooser hard-
 # capped at 1 launch per source per turn. v15 routinely emits
@@ -149,6 +161,97 @@ def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
             "captured", eta)
 
 
+def score_candidate_dyn(snap_base, src, tgt, ships: int, angle: float,
+                        me: int, num_seats: int, world,
+                        settle_turns: int = SETTLE_TURNS,
+                        ) -> tuple[float, str, int | None]:
+    """v3 dynamic scoring: fast_sim along the trajectory.
+
+    Same admissibility gate as v2 (sun / oob / comet-collision /
+    comet-expired-by-arrival are rejected deterministically by
+    `predict_fleet_fate`). For surviving candidates, runs `fs_step`
+    for `eta + settle_turns` ticks with our action injected at tick 0
+    and `lite_greedy_policy` driving every opp seat reactively. Reads
+    the target planet's ACTUAL owner from the simulated leaf —
+    capturing whatever happens during flight (opp counter-launches,
+    other fleets arriving, production accumulation, multi-fleet
+    combat resolution).
+
+    This is the convergence of trajectory thinking (deterministic
+    admissibility filter, no expensive leaf value function) with
+    the K-step rollout's strategic depth (reactive opp via fast_sim
+    + lite_greedy). Cost per candidate ≈ (eta + settle) × per-step
+    fast_sim cost (~0.5 ms). For eta=10, that's ~6.5 ms — vs v15's
+    composite chooser ~20 ms (40-step rollout + 2-5 ms composite leaf).
+
+    Returns `(score, status, eta)`. Statuses: same vocabulary as v2.
+    """
+    fate = predict_fleet_fate(src, tgt, angle, ships, world)
+    if fate.outcome == "sun":
+        return (float("-inf"), "sun", fate.step)
+    if fate.outcome == "oob":
+        return (float("-inf"), "oob", fate.step)
+    if fate.outcome == "timeout":
+        return (float("-inf"), "timeout", fate.step)
+    if fate.outcome == "planet":
+        if fate.hit_planet_id in world.comet_ids:
+            return (float("-inf"), "comet_collision", fate.step)
+        return (float("-inf"), "path_blocked", fate.step)
+
+    eta = int(fate.step)
+    if int(tgt.id) in world.comet_ids:
+        life = comet_remaining_lifetime(int(tgt.id), world)
+        if life is None or life <= eta:
+            return (float("-inf"), "comet_expired", eta)
+
+    # Run fast_sim eta + settle ticks; inject our action at tick 0.
+    snap = fs_clone(snap_base)
+    horizon = eta + settle_turns
+    for t in range(horizon):
+        if snap.fake_env.done:
+            break
+        actions = opp_actions_for_snap(snap, me, num_seats)
+        if t == 0:
+            actions[me] = [[int(src.id), float(angle), int(ships)]]
+        snap = fs_step(snap, actions, in_place=True)
+
+    # Read target's leaf state from the simulated obs.
+    leaf_obs = snap.state[me].observation
+    leaf_planets = (
+        leaf_obs.get("planets", []) if isinstance(leaf_obs, dict)
+        else getattr(leaf_obs, "planets", [])
+    )
+    target_pid = int(tgt.id)
+    leaf_owner: int = -2  # sentinel: target not found (e.g. expired comet)
+    for p in leaf_planets:
+        if int(p[0]) == target_pid:
+            leaf_owner = int(p[1])
+            break
+
+    # Score from leaf outcome. The fast_sim leaf reflects opp's
+    # reactive launches and production over `eta + settle` ticks, so
+    # "owner == me at leaf" is a much stronger signal than the static
+    # predict_garrison_at v2 used.
+    if leaf_owner == me:
+        # Was it ours BEFORE the launch?
+        if int(tgt.owner) == me:
+            # Already ours, still ours — pure reinforcement (no extra credit).
+            return (0.0, "reinforced", eta)
+        # Captured (or recaptured a planet that would have fallen).
+        time_remaining = max(0, EPISODE_STEPS_TOTAL - int(world.step) - eta)
+        held = time_remaining
+        if target_pid in world.comet_ids:
+            life = comet_remaining_lifetime(target_pid, world)
+            if life is not None:
+                held = min(held, max(0, life - eta))
+        return (CAPTURE_REWARD_WEIGHT * float(tgt.production) * float(held),
+                "captured", eta)
+
+    # Leaf shows target NOT ours: either bounce (still enemy/neutral)
+    # or the planet vanished (comet expired). Both → waste.
+    return (-WASTE_WEIGHT * ships, "bounced", eta)
+
+
 def predict_opp_responses(world, me: int, num_seats: int,
                           ) -> list[tuple[int, int, int, int]]:
     """1-turn opp lookahead: project each enemy source's likely best
@@ -235,27 +338,22 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     if not prerank:
         return []
 
-    # Step C — pessimistic ledger including opp counter-launches.
-    opp_projected = predict_opp_responses(world, me, num_seats)
-    ledger = merge_ledgers(model.ledger, opp_projected)
-
+    # v3: score each candidate by running fast_sim eta + SETTLE_TURNS
+    # ticks with our action injected at tick 0 and lite_greedy_policy
+    # driving every opp seat. The leaf reflects actual opp reactions
+    # (the gap v1/v2 had). predict_opp_responses + merge_ledgers v2
+    # path is no longer needed — fast_sim simulates opp moves natively.
     scored: list[tuple] = []
     for cheap_delta, src, tgt, ships, angle, eta_hint, _, wait_N in prerank:
-        # First-cut: only fire-now candidates. wait_N>0 candidates
-        # reserve src+tgt without emitting; since we typically have
-        # 1-3 source planets, a single wait_N>0 reservation blocks
-        # every other launch from that source. Defer wait-then-fire
-        # to a follow-up (it needs time-discounted scoring to
-        # compete with fire-now properly).
+        # wait_N>0: fast_sim'ing across a wait doesn't trivially
+        # generalise (the wait builds ships at src while opp acts).
+        # Deferred; first cut is fire-now-only.
         if int(wait_N) != 0:
             continue
-        score, status, _ = score_candidate(
-            src, tgt, int(ships), float(angle), int(eta_hint),
-            me, world, ledger,
+        score, status, _ = score_candidate_dyn(
+            snap_base, src, tgt, int(ships), float(angle),
+            me, num_seats, world,
         )
-        # 'captured' covers both fresh captures AND defense-counterfactual
-        # recaptures (score_candidate scores them identically via the
-        # tgt.owner==me + pred_owner_without_us!=me branch).
         if status in ("captured",) and score > 0.0:
             scored.append((score, src, tgt, ships, angle, wait_N))
 
