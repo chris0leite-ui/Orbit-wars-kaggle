@@ -255,6 +255,17 @@ fix forward AND add a test.
 - `tag: trueskill-noise-vs-signal` — TrueSkill σ is large for the
   first ~24 h after submit (initial σ≈300, shrinks ∝ 1/√N). Wait
   ≥24 h before reading rank delta into strategy decisions.
+- `tag: wallclock-budget-A/B-noise` — time-budgeted agents (v15/v20/
+  v23+ chooser families) introduce wallclock-derived non-determinism
+  that dominates n=32 A/B variance. v26 vs v15 on same seeds 0..15
+  swung 65.6% → 43.8% across two runs (22pp). Same seed 0 ran 281
+  steps then 262 steps. `per_step_ms` probe via `time.perf_counter()`
+  varies with CPU contention → adaptive validate cap varies →
+  chooser sees different candidate sets → trajectories diverge.
+  **Mitigations:** (a) n=64+ for decision-grade A/B; (b) pool re-runs
+  across same-seed re-evaluations; (c) consider `time.process_time()`
+  instead of `perf_counter()` for the probe — CPU-load independent.
+  Concept doc: `knowledge-base/concepts/wallclock-budget-noise-floor.md`.
 
 ## How to add an entry
 
