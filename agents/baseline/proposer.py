@@ -278,7 +278,13 @@ def propose(my_planets, target_pool, world, model, me: int,
     # in-chooser variant (chooser_trajectory.py) lost A/B vs v15
     # because it discarded strategic depth; this proposer-side filter
     # keeps the K-step rollout and only PRUNES doomed candidates.
-    if os.environ.get("PROPOSER_TRAJECTORY_FILTER", "").strip().lower() == "on":
+    # Default-on as of 2026-05-17 after the SUN_SAFETY=0 fix in
+    # lib.trajectory closed the false-reject leak: Option 1 prefilter
+    # A/B vs v15 went from 36/64 (56.2pct) pre-fix to 42/64 (65.6pct)
+    # post-fix — at parity-or-better with composite_a2 alone, plus
+    # deterministic 0pct sun/oob/comet failures. Set
+    # PROPOSER_TRAJECTORY_FILTER=off to bypass.
+    if os.environ.get("PROPOSER_TRAJECTORY_FILTER", "").strip().lower() != "off":
         filtered: list = []
         for entry in deduped:
             _cheap, src, tgt, ships, angle, eta, _horizon, w = entry

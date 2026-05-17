@@ -434,6 +434,27 @@ relevant skill file or source code, not back into friction.md.
   `per_step_ms × avg_K + per_leaf_ms`. Caller signature
   picks up `me` and `gamma` (both already in scope at
   `chooser.choose:100`). Verified by re-running A/B after.
+- `tag: predict-fleet-fate-sun-safety-cushion-false-rejects` —
+  `lib/trajectory.predict_fleet_fate` checked
+  `sun_d < SUN_RADIUS + 0.5` (the engine uses bare
+  `sun_d < SUN_RADIUS`). The 0.5 cushion was filed
+  2026-05-11 as "float drift" insurance but caused
+  systematic false rejections in production code:
+  `lib.mechanism.sun_avoid` dropped legal snipe/reinforce
+  intents in `v3_snipe`; `agents/baseline/proposer.
+  PROPOSER_TRAJECTORY_FILTER` A/B vs v15 stuck at 56.2pct
+  (n=64). **Fix:** `SUN_SAFETY = 0` in `lib/trajectory.py`.
+  Same A/B post-fix: 65.6pct (n=64), +9.4pp. Trajectory
+  chooser v4 also showed the same pattern (filter ON
+  vs OFF). Same friction class as `helper-reimplemented-
+  inline-silently-wrong` (2026-05-14) — a near-correct
+  re-implementation of an engine primitive diverges
+  silently. **Promotion candidate (3rd recurrence of
+  the helper-divergence pattern this comp):** when
+  inlining or wrapping an engine primitive, MUST
+  reproduce the engine's exact predicate, including
+  any inequality direction or strict/non-strict bound,
+  and add a parity test that exercises the boundary.
 
 ## 2026-05-17 (claude/improve-fleet-efficiency-cQXg4 — 7 variants falsified)
 
