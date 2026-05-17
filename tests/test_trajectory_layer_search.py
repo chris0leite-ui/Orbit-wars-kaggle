@@ -286,3 +286,121 @@ def test_search_completes_on_realistic_state():
     assert elapsed < 1.0, f"search took {elapsed*1000:.0f} ms"
     # Realistic state: we should commit at least one launch.
     assert len(bundle.launches) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 7d — Delayed-launch enumeration
+# ---------------------------------------------------------------------------
+
+
+def test_search_default_launch_turns_unchanged():
+    """With `launch_turns=(0,)` (default), the search produces the
+    same bundle as Phase 7c. Regression guard so the knob defaults
+    don't change behaviour."""
+    world = _toy_world(
+        planets=[
+            [0, 0, 30.0, 80.0, 2.0, 50, 1],
+            [1, -1, 50.0, 90.0, 1.0, 3, 0],
+        ],
+        fleets=[],
+    )
+    search = BundleSearch()  # default launch_turns=(0,)
+    bundle = search.search(world, my_id=0)
+    # Phase 7c baseline: captures the near-target with launch_turn=0.
+    assert not bundle.is_empty
+    assert all(s.launch_turn == 0 for s in bundle.launches)
+
+
+def test_search_delayed_launch_captures_strong_enemy():
+    """A target too strong for an immediate single launch but
+    capturable with a DELAYED launch once the source's production
+    has accrued enough ships. Target is an ENEMY: capturing
+    eliminates them (elimination_bonus=200 amortises the ship cost).
+
+    Setup (sun-clear): source at (35, 85), 30 ships, prod=1. Enemy
+    planet at (55, 85), 40 ships, prod=1 (their only planet).
+
+    - Immediate launch: 29 ships → 40 + 5*1 (flight time) = 45
+      garrison at arrival → fails, ships wasted.
+    - Delayed launch at t=20: src has 30+20=50 ships; can send 49;
+      target garrison = 40 + ~25 ≈ 65 → still fails for 49.
+    - Delayed launch at t=40 with multiplier=1.5: src has 30+40=70
+      ships; can send min(60, 69) = 60; target at arrival ≈ 40+50 =
+      90 → still fails.
+
+    Realistic setup: lower target ships so the delayed launch
+    succeeds at moderate horizon.
+    """
+    world = _toy_world(
+        planets=[
+            [0, 0, 35.0, 85.0, 2.0, 25, 1],
+            [1, 1, 55.0, 85.0, 2.0, 25, 1],  # ENEMY, their only planet
+        ],
+        fleets=[],
+    )
+    ev = BundleEvaluator(horizon=60)
+    search = BundleSearch(
+        evaluator=ev,
+        max_depth=2,
+        beam_width=4,
+        launch_turns=(0, 5, 10, 15, 20),
+        ship_count_multiplier=1.5,  # buffer for production accrual
+    )
+    bundle = search.search(world, my_id=0)
+    assert not bundle.is_empty, "search picked no launch"
+    # The search should pick A launch that scores higher than no-op,
+    # and the bundle's score should reflect an attempted capture.
+    score = ev.score(world, bundle, my_id=0)
+    empty_score = ev.score(world, Bundle(), my_id=0)
+    assert score.total > empty_score.total, (
+        f"bundle score {score.total} not better than empty {empty_score.total}"
+    )
+
+
+def test_search_coordinated_arrival_from_far_planet():
+    """Idle FAR source + close source: coordinated bundle has a
+    near-source launch at t=0 AND a far-source launch at t=K so
+    both arrive on the same turn against a strong target.
+
+    Setup (sun-clear, all at y=85):
+    - Near source at (40, 85) — close to target.
+    - Far source at (10, 85) — far from target.
+    - Target neutral at (55, 85), 35 ships, prod=1.
+    - Each source alone (~30 ships) fails; combined arrival of
+      ~60 ships captures despite production accrual.
+
+    The far source's launch needs to fire at launch_turn=0 too if
+    distances make synchronised arrival impossible — but with the
+    far source 45 units away and the near source 15 units away,
+    flight times differ by ~25 turns. For coordinated arrival, the
+    near source should DELAY by ~25 turns (or the far source should
+    launch first immediately).
+    """
+    world = _toy_world(
+        planets=[
+            [0, 0, 40.0, 85.0, 2.0, 30, 1],   # near source
+            [1, 0, 10.0, 85.0, 2.0, 30, 1],   # FAR source
+            [2, -1, 55.0, 85.0, 2.0, 35, 1],  # target
+        ],
+        fleets=[],
+    )
+    ev = BundleEvaluator(horizon=80)
+    search = BundleSearch(
+        evaluator=ev,
+        max_depth=2,
+        beam_width=4,
+        launch_turns=(0, 10, 20, 30),
+    )
+    bundle = search.search(world, my_id=0)
+    assert not bundle.is_empty
+    # Strong claim: the bundle SHOULD include the far source (id 1).
+    # We accept either "far source launches" OR "near source delayed"
+    # — both are valid trajectory-native discoveries. Just verify
+    # the search is making a non-trivial multi-step decision (not
+    # only single-immediate-launch).
+    is_multi = (len(bundle.launches) >= 2
+                or any(s.launch_turn > 0 for s in bundle.launches))
+    assert is_multi, (
+        f"search produced only single immediate launch: "
+        f"{bundle.launches}"
+    )

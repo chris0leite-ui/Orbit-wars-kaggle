@@ -1528,9 +1528,14 @@ class BundleSearch:
     lets the search keep the (otherwise pruned) first launch alive
     long enough to discover the gang-up.
 
-    Phase 7c v1 supports `launch_turn=0` candidates only. Phase 7d
-    adds delayed-launch (long-range coordinated arrival) enumeration
-    and incremental scoring for performance.
+    Phase 7c shipped `launch_turn=0` only. Phase 7d adds the
+    `launch_turns` knob — the search now considers DELAYED launches
+    timed to arrive coordinated with other ships. This is the
+    "idle far planets activate" pattern: a 60-ship planet 40 steps
+    from any target has no good single-turn action, but with
+    `launch_turns=(0, 5, 10)` the search can find a `launch_turn=10`
+    spec that arrives coordinated with a closer source's
+    `launch_turn=0` arrival.
 
     Knobs:
     - `max_depth`: max bundle size. Each iteration extends the beam,
@@ -1539,6 +1544,10 @@ class BundleSearch:
     - `beam_width`: how many partial-bundles to keep between
       iterations. Must be >= 2 to discover gang-ups.
     - `candidates_per_source`: top-N closest targets per source.
+    - `launch_turns`: delayed-launch enumeration. Each candidate
+      (source, target) pair generates one LaunchSpec per launch_turn
+      in this tuple. Default `(0,)` preserves Phase 7c behaviour;
+      `(0, 5, 10, 15)` enables coordinated-arrival planning.
     - `min_source_ships`: skip sources too weak to launch from.
     - `ship_count_multiplier`: ships to commit per launch as a
       multiple of (target.ships + 1). 1.0 = "just enough"; >1 = "buffer."
@@ -1547,6 +1556,7 @@ class BundleSearch:
     max_depth: int = 3
     beam_width: int = 4
     candidates_per_source: int = 3
+    launch_turns: tuple[int, ...] = (0,)
     min_source_ships: int = 2
     ship_count_multiplier: float = 1.0
     sun_safety: float = SUN_SAFETY
@@ -1599,7 +1609,16 @@ class BundleSearch:
     def _enumerate_candidates(self, world: "World", my_id: int,
                                 sun: "SunFilter",
                                 ):
-        """Yield single-LaunchSpec candidates. Filtered by SunFilter."""
+        """Yield single-LaunchSpec candidates across the
+        (source × top-N target × launch_turn) cross-product. Filtered
+        by per-launch-turn source availability + SunFilter.
+
+        For `launch_turn > 0`, ship availability is queried via
+        `world.ownership_at(src.id, launch_turn)` so production
+        accrual + prior bundle commitments are correctly accounted
+        for. For sources currently owned by us (the only ones we
+        enumerate), `ownership_at` returns the future ship count.
+        """
         sources = [p for p in world.planets
                    if p.owner == my_id
                    and not p.is_comet
@@ -1623,29 +1642,47 @@ class BundleSearch:
             for tgt in scored:
                 # Aim at target's current position. Good enough for
                 # short-range static targets; orbital lead-aim
-                # refinement comes later.
+                # refinement comes later. For a future-launch
+                # candidate, ideally we'd aim at target's predicted
+                # position at (launch_turn + eta); for static targets
+                # that's the same as current position.
                 dx = tgt.current_x - src.current_x
                 dy = tgt.current_y - src.current_y
                 if dx == 0 and dy == 0:
                     continue
                 angle = math.atan2(dy, dx)
 
-                # Calibrated ship count: "just enough" + multiplier.
-                # For neutral targets (no production), tgt.ships is
-                # the static defense. For enemy targets, tgt.ships
-                # grows with production over flight time — but we
-                # don't know flight time yet; use a constant buffer
-                # for now (Phase 7d will refine).
+                # Per-target required ship count (constant across
+                # launch_turns — for enemy targets, production over a
+                # longer flight makes this an underestimate; the
+                # multiplier knob compensates).
                 required = max(1, int(tgt.ships) + 1)
-                commit = int(required * self.ship_count_multiplier)
-                commit = min(commit, int(src.ships) - 1)  # keep 1 for self
-                if commit < 1:
+                base_commit = int(required * self.ship_count_multiplier)
+                if base_commit < 1:
                     continue
 
-                spec = LaunchSpec(
-                    src_id=src.id, aim_angle=angle,
-                    ships=commit, owner=my_id, launch_turn=0,
-                )
-                if not sun.is_safe(spec):
-                    continue
-                yield spec
+                for launch_turn in self.launch_turns:
+                    if launch_turn < 0:
+                        continue
+                    # Source availability at launch_turn.
+                    if launch_turn == 0:
+                        avail = int(src.ships)
+                    else:
+                        owner_at, ships_at = world.ownership_at(
+                            src.id, launch_turn,
+                        )
+                        if owner_at != my_id:
+                            # Source captured before launch_turn.
+                            continue
+                        avail = int(ships_at)
+                    commit = min(base_commit, avail - 1)  # keep 1
+                    if commit < 1:
+                        continue
+                    spec = LaunchSpec(
+                        src_id=src.id, aim_angle=angle,
+                        ships=commit, owner=my_id,
+                        launch_turn=int(launch_turn),
+                    )
+                    if not sun.is_safe(spec):
+                        continue
+                    yield spec
