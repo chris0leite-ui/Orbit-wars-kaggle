@@ -111,6 +111,36 @@ panel-misleads-h2h friction (4 prior recurrences).
 **Not submitted.** A2's 4P lift cannot be validated via fast.py's 2P
 harness. Need 4P FFA panel or self-play 4P games to gate it.
 
+## What just landed (2026-05-17, hybrid head)
+
+Wired `favor_hybrid` in `agents/baseline/value.py` (commit `a97806a`):
+
+  - 2P (`num_seats <= 2`) → `favor_composite` (waste-aware,
+    validated by other branch's A/B: **93.8 % vs v9_scavenge** team
+    peak μ=1119.9 and **67.2 % vs v15** rolling champion).
+  - 4P (`num_seats > 2`) → `favor` (with A2 weakness multiplier).
+  - Toggle: `BASELINE_VALUE_HEAD=hybrid`.
+
+Domains are disjoint — composite has no 4P opp aggregation
+(`composite-value-head-2p-only.md` flag); A2's per-WEAKEST mult only
+fires when `num_seats > 2`. Three dispatch tests added; 17 total
+baseline-value tests green.
+
+**Local validation (recorded for cross-branch comparison at
+`audit/2026-05-17-hybrid-head-local-results.md`):**
+
+- Bench (3 games, 717 turns): p50=213 p95=550 max=662ms, zero >1000ms.
+  PASS. ~80 % slower than A2-only at p95 (composite is heavier).
+- Smoke vs random (32 games): 32/32 (100 %, Wlo=0.89). PASS.
+- Smoke vs nearest (32 games): 32/32 (100 %, Wlo=0.89). PASS.
+  Per-turn p95 866-897ms under 8-worker CPU contention; on Kaggle's
+  evaluator (solo agent) real-world p95 should track bench (~550ms).
+- **Not yet run:** h2h vs v15 n=64 (recommended gate before bundle);
+  4P FFA panel with hybrid active.
+
+**Not submitted.** Awaiting PI gate-choice (recommended: h2h vs v15
+n=64 to verify the other branch's 67.2 % reproduces).
+
 ## Next-session first-action (ranked by EV / cost)
 
 1. **Validate A2 in 4P FFA panel** (~1 h). `scripts/ffa_panel.py`
