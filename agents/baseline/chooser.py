@@ -77,9 +77,14 @@ def score_action(snap_base, me: int, num_seats: int,
 
 def affordable_validate_cap(snap_base, me: int, num_seats: int,
                             max_horizon: int, wallclock_ms: float,
-                            min_horizon: int, gamma: float) -> int:
+                            min_horizon: int, gamma: float,
+                            ) -> tuple[int, float]:
     """Probe per-step + per-leaf cost on the current board, derive a
-    safe candidate cap that fits inside the wallclock budget. Min cap = 8.
+    safe candidate cap and the per-candidate cost estimate.
+
+    Returns `(cap, per_cand_ms)`. `cap` is bounded below by 8. The
+    `per_cand_ms` value is used by `choose()` to pre-bail before
+    entering a candidate that would push past the deadline.
 
     Probing per-leaf cost matters because the leaf eval cost varies
     by ~50x between value heads (favor ~100µs vs composite_capture_value
@@ -101,7 +106,8 @@ def affordable_validate_cap(snap_base, me: int, num_seats: int,
     avg_K = (min_horizon + max_horizon) / 2.0
     per_cand_ms = (per_step_ms * avg_K + per_leaf_ms) * PER_CANDIDATE_SAFETY
     budget = wallclock_ms - RESERVED_OVERHEAD_MS
-    return max(8, int(budget / per_cand_ms))
+    cap = max(8, int(budget / per_cand_ms))
+    return cap, per_cand_ms
 
 
 def choose(snap_base, prerank, baseline_favors: list[float],
@@ -111,16 +117,21 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     if not prerank:
         return []
 
-    n_aff = affordable_validate_cap(
+    n_aff, per_cand_ms = affordable_validate_cap(
         snap_base, me, num_seats, max_horizon, wallclock_ms,
         min_horizon, gamma,
     )
     top = prerank[: min(N_VALIDATE, n_aff)]
 
     deadline = time.perf_counter() + wallclock_ms / 1000.0
+    # Pre-bail headroom: don't ENTER a candidate that would push us past
+    # the deadline. score_action is uninterruptible (runs the full K-step
+    # rollout once entered), so checking AT the deadline is too late.
+    # Closes the long-tail max-turn-ms overrun seen in the 2026-05-17 A/B.
+    safe_deadline = deadline - (per_cand_ms / 1000.0)
     validated: list[tuple] = []
     for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
-        if time.perf_counter() > deadline:
+        if time.perf_counter() > safe_deadline:
             break
         delta = score_action(
             snap_base, me, num_seats,

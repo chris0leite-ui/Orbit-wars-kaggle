@@ -192,15 +192,34 @@ def composite_capture_value(
     from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet  # noqa: E402
     fleets = [Fleet(*f) for f in fleets_raw]
     planets_list = list(world.planets_by_id.values())
-    model = WorldModel.from_world(world, horizon=horizon)
     step_now = int(world.step)
 
-    delta = 0.0
+    # Pre-pass: compute each of OUR fleets' target/eta so we can scope
+    # the WorldModel build to the actual look-ahead needed. The full
+    # DEFAULT_HORIZON (=30) is overkill when our longest fleet eta is
+    # 10 — WorldModel.from_world is O(horizon × planets), so scaling
+    # horizon to max_eta cuts the dominant cost roughly in half on
+    # short-range turns. 2026-05-17 timing-fix item #2.
+    fleet_targets: list[tuple[Fleet, float, object | None, int]] = []
+    max_eta = 0
     for f in fleets:
         if int(f.owner) != my_id:
             continue
         ships = float(f.ships)
         target, eta = fleet_target_planet(f, planets_list)
+        eta_int = int(eta) if eta is not None else 0
+        fleet_targets.append((f, ships, target, eta_int))
+        if target is not None and eta_int > max_eta:
+            max_eta = eta_int
+
+    if not fleet_targets:
+        return base
+
+    effective_horizon = max(1, min(horizon, max_eta + 1))
+    model = WorldModel.from_world(world, horizon=effective_horizon)
+
+    delta = 0.0
+    for f, ships, target, eta in fleet_targets:
         if target is None:
             # No planet on our trajectory — destined for OOB or sun.
             delta -= waste_weight * ships
