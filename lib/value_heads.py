@@ -43,7 +43,12 @@ from typing import Any
 
 from lib.fast_sim import ship_totals
 from lib.intent import World
-from lib.world_model import DEFAULT_HORIZON, WorldModel, fleet_target_planet
+from lib.world_model import (
+    DEFAULT_HORIZON,
+    WorldModel,
+    comet_remaining_lifetime,
+    fleet_target_planet,
+)
 
 
 # Phase 2 audit established AUC ≈ oracle at K=50. K=10 + 30 extra of
@@ -224,6 +229,22 @@ def composite_capture_value(
             # No planet on our trajectory — destined for OOB or sun.
             delta -= waste_weight * ships
             continue
+        # Comet-lifetime gate: WorldModel's simulate_planet_timeline
+        # assumes planets persist for the full horizon and is unaware
+        # that comets exit the board after `path_index` reaches the
+        # end of the path (engine: orbit_wars.py:528-561). A fleet
+        # aimed at a comet that expires before arrival hits empty space
+        # — it never enters combat, never captures, never bounces. The
+        # pred_owner check below would say "we'll own it at eta" for a
+        # comet that's actually GONE by then. Pre-check matches the
+        # engine's truth. Mirrors lib/missions/snipe.py:404-420 (H15)
+        # and PI direction 2026-05-17: "use comets only if really
+        # worth the risk and short lifetime".
+        if int(target.id) in world.comet_ids:
+            comet_life = comet_remaining_lifetime(int(target.id), world)
+            if comet_life is None or comet_life <= eta:
+                delta -= waste_weight * ships
+                continue
         # Predict ownership and garrison at ETA.
         pred_owner = model.owner_at(target.id, eta)
         pred_ships = model.ships_at(target.id, eta) or 0.0
@@ -231,8 +252,27 @@ def composite_capture_value(
             # Already ours — reinforcement; no extra credit (already in base).
             continue
         if ships > pred_ships:
-            # Will capture. Credit by production × remaining game time.
+            # Will capture. Credit by production × remaining hold time.
+            # For comets, "hold time" is capped by the comet's remaining
+            # lifetime (it ceases to exist when the path ends). Without
+            # this cap a 5-step-lifetime comet at turn 200 over-credits by
+            # ~60× (using EPISODE_STEPS_TOTAL=500 - 200 = 300 vs the real
+            # 5). Pattern mirrors lib/missions/snipe.py:404-420 (H15)
+            # and PI direction 2026-05-17: "comets only if really worth
+            # the risk and short lifetime".
             time_remaining = max(0, EPISODE_STEPS_TOTAL - step_now - eta)
+            comet_life = comet_remaining_lifetime(int(target.id), world)
+            if comet_life is not None:
+                # `comet_life` is steps until the comet exits the board at
+                # the CURRENT world step. After `eta` steps in flight the
+                # remaining lifetime is `comet_life - eta`; non-positive
+                # means the comet expires at or before our fleet arrives.
+                held = min(time_remaining, max(0, comet_life - eta))
+                if held <= 0:
+                    # Comet gone by arrival — treat the launch as waste.
+                    delta -= waste_weight * ships
+                    continue
+                time_remaining = held
             delta += capture_weight * float(target.production) * float(time_remaining)
         else:
             # Will bounce — wasted attack.

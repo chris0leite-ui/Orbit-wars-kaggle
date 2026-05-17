@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 
 import pytest
@@ -10,8 +11,10 @@ from kaggle_environments import make
 
 from lib import fast_sim
 from lib.value_heads import (
+    CAPTURE_REWARD_WEIGHT,
     INFLIGHT_EXTRA_HORIZON,
     INFLIGHT_WEIGHT,
+    composite_capture_value,
     delta_us_minus_them_obs,
     inflight_value,
 )
@@ -113,3 +116,93 @@ def test_inflight_value_works_as_value_fn_in_score_candidate():
     score = score_candidate(snap, [], my_id=0, K=5, opp_tier=1,
                              value_fn=inflight_value)
     assert isinstance(score, float)
+
+
+# ---------------------------------------------------------------------------
+# composite_capture_value — comet lifetime cap (2026-05-17)
+# ---------------------------------------------------------------------------
+
+
+def _obs_with_comet_target(path_len: int, path_index: int = 0):
+    """Synthetic obs where our fleet is one tick from hitting a comet
+    of known remaining-lifetime = path_len - path_index.
+
+    The comet sits at (50, 50). Our fleet is at (48, 50) moving +x at
+    angle 0. Our home planet at (10, 50) (so the fleet originated from
+    it). One enemy planet at (90, 50) so the world isn't trivially
+    empty. Fleet ships = 10 (low speed); comet has 0 garrison so we'll
+    "capture" on arrival.
+
+    `path_len` = total comet path length; `path_index` = where it is
+    now. `comet_remaining_lifetime` returns `path_len - path_index`.
+    """
+    comet_id = 99
+    return {
+        "player": 0,
+        "step": 100,
+        "angular_velocity": 0.0,
+        "next_fleet_id": 1,
+        "initial_planets": [],
+        # Planet tuple: (id, owner, x, y, radius, ships, production)
+        "planets": [
+            (0, 0, 10.0, 50.0, 2.0, 50, 1),    # our home
+            (comet_id, -1, 50.0, 50.0, 1.0, 0, 2),  # comet target
+            (1, 1, 90.0, 50.0, 2.0, 50, 1),    # enemy
+        ],
+        # Fleet tuple: (id, owner, x, y, angle, from_planet_id, ships)
+        "fleets": [(0, 0, 48.0, 50.0, 0.0, 0, 10)],
+        "comet_planet_ids": [comet_id],
+        "comets": [{
+            "planet_ids": [comet_id],
+            # Path stays put around (50, 50) — the test cares about
+            # lifetime, not the comet's motion.
+            "paths": [[[50.0, 50.0]] * path_len],
+            "path_index": path_index,
+        }],
+    }
+
+
+def test_composite_penalises_doomed_comet_target():
+    """A fleet aimed at a comet that will expire BEFORE arrival hits
+    empty space — composite must waste-penalise the launch. The
+    WorldModel's per-planet timeline doesn't model comet expiry, so
+    without the comet-lifetime gate the launch would slip through.
+    Direct test of the 2026-05-17 PI direction: 'use comets only if
+    really worth the risk and short lifetime'."""
+    # Fleet at (48, 50) heading toward comet at (50, 50). Distance ~2,
+    # speed for 10 ships ~1.96 → eta ≈ 1 tick.
+    # path_len=1, path_index=0 → remaining lifetime = 1 tick at start.
+    # comet_remaining_lifetime returns 1, eta=1, gate fires
+    # (lifetime <= eta).
+    doomed = _obs_with_comet_target(path_len=1, path_index=0)
+    v_doomed = composite_capture_value(doomed, my_id=0)
+    # Base (ship-delta): us=50+10=60, them=50 → 10. Waste penalty:
+    # waste_weight (=0.5) * 10 ships = -5. Net: 10 - 5 = 5.
+    # Without the gate composite would return ≥10 (no penalty).
+    assert v_doomed < 10.0, (
+        f"comet-lifetime-gate did not fire: v_doomed={v_doomed}, "
+        f"expected < base ship-delta (10) due to waste penalty"
+    )
+
+
+def test_composite_allows_long_lived_comet_target():
+    """A comet with plenty of life left is a legitimate target — the
+    gate must NOT fire. composite returns base ship-delta (no penalty)
+    since the pred_owner==me skip prevents capture credit anyway in
+    this single-fleet scenario."""
+    alive = _obs_with_comet_target(path_len=200, path_index=0)
+    v_alive = composite_capture_value(alive, my_id=0)
+    assert math.isclose(v_alive, 10.0, abs_tol=1e-6), (
+        f"long-lived comet target should pass gate cleanly; got {v_alive}"
+    )
+
+
+def test_composite_gate_distinguishes_short_vs_long_comet():
+    """Direct A/B: same fleet, same target, only the comet's remaining
+    lifetime differs. Short-life is penalised; long-life is not."""
+    short = composite_capture_value(_obs_with_comet_target(path_len=1, path_index=0), my_id=0)
+    long_ = composite_capture_value(_obs_with_comet_target(path_len=200, path_index=0), my_id=0)
+    assert short < long_, (
+        f"short-life comet value ({short}) should be < long-life "
+        f"({long_}) — gate must penalise the doomed launch"
+    )
