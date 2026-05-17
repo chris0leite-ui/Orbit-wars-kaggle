@@ -147,6 +147,50 @@ def state_at_timeline(timeline, arrival_turn):
     return timeline["owner_at"][t], timeline["ships_at"][t]
 
 
+def predict_garrison_at(planet, eta: int,
+                        arrivals: list[tuple[int, int, int]],
+                        ) -> tuple[int, float]:
+    """Single-tick combat prediction: `(owner, garrison)` at exactly `eta`
+    ticks from now. O(eta) walk, O(arrivals) total work.
+
+    Cheaper alternative to `simulate_planet_timeline` when callers only
+    need state at one specific tick (e.g. a candidate's arrival). Same
+    combat rules (production tick → resolve_arrivals per step), just
+    doesn't build the full dict timeline.
+
+    `arrivals` matches the per-planet entry in `build_arrival_ledger`:
+    list of `(eta_arrival, owner, ships)`.
+
+    Origin: trajectory-first chooser (2026-05-17). The chooser scores
+    each candidate by predicting the arrival outcome at exactly the
+    candidate's eta; building a 40-step timeline per planet per call
+    was the dominant cost of the K-step rollout we're replacing.
+    """
+    eta = max(0, int(math.ceil(eta)))
+    if eta == 0:
+        return planet.owner, max(0.0, float(planet.ships))
+
+    # Bucket arrivals by tick.
+    by_turn: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    for arrival_eta, arrival_owner, arrival_ships in arrivals:
+        if arrival_ships <= 0:
+            continue
+        bucket = max(1, int(math.ceil(arrival_eta)))
+        if bucket > eta:
+            continue
+        by_turn[bucket].append((arrival_owner, int(arrival_ships)))
+
+    owner = planet.owner
+    garrison = float(planet.ships)
+    for t in range(1, eta + 1):
+        if owner != -1:
+            garrison += planet.production
+        group = by_turn.get(t, [])
+        if group:
+            owner, garrison = resolve_arrivals(owner, garrison, group)
+    return owner, max(0.0, garrison)
+
+
 @dataclass
 class WorldModel:
     """Per-turn arrival-ledger snapshot. Built once at the top of an

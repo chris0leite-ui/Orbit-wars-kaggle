@@ -119,6 +119,27 @@ def agent(obs, configuration=None):
 
     snap_base = fs_from_obs(obs, num_seats=num_seats)
 
+    # Trajectory-first chooser opt-in (2026-05-17). Deterministic
+    # admissibility + single-tick combat prediction; no K-step rollout,
+    # no leaf-value approximation. See knowledge-base/concepts/
+    # trajectory-first-architecture.md. Default chooser remains the
+    # K-step rollout for backward compat with the v15-line A/B baseline.
+    if os.environ.get("BASELINE_CHOOSER", "").strip().lower() == "trajectory":
+        # Trajectory chooser doesn't need baseline_favors (no idle baseline);
+        # propose still wants a baseline_len for shape but value doesn't
+        # affect the trajectory chooser's scoring.
+        prerank = propose(
+            my_planets, target_pool, world, model, me, omega,
+            baseline_len=MAX_HORIZON + 1,
+        )
+        from agents.baseline.chooser_trajectory import choose_trajectory
+        return choose_trajectory(
+            snap_base, prerank, None,
+            me, num_seats, wallclock_ms,
+            MIN_HORIZON, MAX_HORIZON, gamma,
+            world, model,
+        )
+
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
     )
