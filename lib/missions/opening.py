@@ -50,13 +50,22 @@ FRONT_LOAD_EXPONENT = 1.5     # H7 from main's hypothesis board
 USE_OPENING_MISSION = 1
 
 
-def propose_opening_missions(world: World, model: WorldModel) -> list[Mission]:
+def propose_opening_missions(world: World, model: WorldModel,
+                             window: int = OPENING_WINDOW) -> list[Mission]:
     """One Mission per (our source with ships>8, neutral target) pair,
     fired only during the opening window. Score = production ×
-    (remaining_steps)^1.5 / (distance + 1)."""
+    (remaining_steps)^1.5 / (distance + 1).
+
+    `window` (default = `OPENING_WINDOW` = 5) lets callers extend the
+    opening-fire window without monkey-patching the module constant.
+    v23 uses window=15 to cover the empirical opening gap (v15's first
+    15 turns under-launch by ~72% vs top-10; audit/2026-05-14-opening-
+    atlas.json). Default unchanged so v7_1/geo/geo_recap callers see
+    identical behaviour.
+    """
     if not USE_OPENING_MISSION:
         return []
-    if int(world.step) > OPENING_WINDOW:
+    if int(world.step) > window:
         return []
     my_planets = [
         p for p in world.planets_by_id.values()
