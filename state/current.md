@@ -14,6 +14,7 @@
 ```yaml
 date: 2026-05-17
 deadline: 2026-06-23 23:59 UTC
+days_to_deadline: 37
 
 # Submitted agents — what they are and when they shipped.
 # For current μ, run `kaggle competitions submissions orbit-wars`.
@@ -76,6 +77,33 @@ saturation_count: 0
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
+  - 2026-05-17 PM — audit-workflow-performance-btjeK.
+    Diagnostic + observe-loop foundations + composite head wired + A2 merged
+    + submission bundled. Workflow fixes: kaggle-CLI shim (`~/.local/bin/kaggle`
+    installed by session-start hook to persist KAGGLE_API_TOKEN across Bash
+    calls); `fast.py eval --vs-panel` REFUSES (exit 2) unless `--require-h2h
+    <champion>` is set; WRAPUP step 4c enforces Rule-36 flags/questions filing
+    check. Pivot #1 (replay-mine): `scripts/replay_mine.py` walks live-episode
+    replays and classifies fleets into PI-facing buckets. Surprise finding:
+    PI's "vanished_in_space = comets" hypothesis was falsified (0.1% / 12 of
+    9507 fleets); the 838 vanishes were misclassified planet hits because
+    `attribute_fleets:290` used static distance from fleet-old to planet-NEW.
+    Fix: swept-pair against every planet via `lib.game.interpreter.swept_pair_hit`
+    — v15's real waste is ~17%, not 24%. Pivot #2 (composite head): wired
+    `composite_capture_value` opt-in via `BASELINE_VALUE_HEAD=composite`, then
+    panel A/B at n=32 cleared every opponent including the team peak
+    (v9_scavenge 30/32 = 93.8% Wlo=0.799, v15 24/32 = 75% Wlo=0.579 PASS;
+    n=64 retest 40/64 = 62.5% Wlo=0.503 INCONCLUSIVE — best estimate of true
+    2P winrate ~63-67%, Wlo right at the 0.55 gate). Followups: pre-bail
+    headroom + adaptive WorldModel horizon (`#1+#2 timing fixes`). Merged A2
+    from claude/kaggle-baseline-strategy-lO4mm (`favor_hybrid` dispatcher:
+    composite-in-2P + A2-favor-in-4P; A2 = 1.5× weakest-opp bias + +55
+    elimination bonus, sourced from public notebook romantamrazov LB μ=1224).
+    Submission bundled at `submissions/baseline.py` (286 KB, parity OK over
+    712 turns; uses hybrid by default via `os.environ.setdefault`). Tests:
+    53+ green across baseline value/chooser/proposer + new postmortem-comet
+    + dispatcher + wallclock variants (favor + hybrid). 4P FFA panel running
+    at session-end. NOT SUBMITTED — Rule 1, PI sign-off required.
   - 2026-05-17 — kaggle-baseline-strategy-lO4mm.
     Shipped agents/baseline/{main,proposer,chooser,value}.py — clean
     modular re-implementation of v15 (live champion, 5/16 push), 577 LOC
@@ -146,6 +174,11 @@ mechanism_families_explored:
   - v15-multi-wait-grid-banded-dedup         # extra_surplus (0,5,12) + wait_band {0,1-7,>=8}
   - v16-v20-chooser-saturation-iteration     # F4 vulnerability / dogpile / reactive-step-0 — all HOLD per Rule 37
   - baseline-clean-modular-reimpl-v15        # agents/baseline/ (this branch)
+  - composite-head-on-baseline-chooser       # 5/17 PM — first lift past v9_scavenge ceiling
+  - timing-aware-validate-cap                # 5/17 PM — leaf-eval cost in chooser budget
+  - swept-pair-vanish-classifier             # 5/17 PM — measurement-honesty for replay-mine
+  - A2-4P-weakness-exploitation              # 5/17 PM — merged from kaggle-baseline-strategy
+  - favor_hybrid-2P-composite-4P-A2          # 5/17 PM — production dispatcher
 
-gate_status: cleared                          # full pytest + new baseline tests pass
+gate_status: cleared                          # 53+ tests + bundle parity 712 turns
 ```
