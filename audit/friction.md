@@ -361,6 +361,70 @@ relevant skill file or source code, not back into friction.md.
   be off by ±80μ. Document in WRAPUP that the team-floor
   calculation uses SETTLED μ, not first-read μ.
 
+## 2026-05-17 (claude/audit-workflow-performance-btjeK)
+
+- `tag: kaggle-cli-401-in-followup-shells` — diagnostic
+  session: bootstrap.sh exports `KAGGLE_API_TOKEN` inside
+  its own shell only; every subsequent Bash tool call comes
+  up with no token and the real CLI 401s. KGAT_-prefix
+  tokens cannot live in `~/.kaggle/kaggle.json` (legacy
+  32-hex auth path returns 401 — verified empirically this
+  session). Bootstrap's "skip kaggle.json for KGAT_" branch
+  is correct but leaves no env-persistence path. **Fix:**
+  SessionStart hook installs `$HOME/.local/bin/kaggle` shim
+  that re-derives `KAGGLE_API_TOKEN` from harness var
+  `$KaggleAPIToke` on every invocation. Verified in fresh
+  shell; survives across Bash tool calls.
+- `tag: vanished-in-space-dominates-trajectory-waste` —
+  replay-mine of v15's 92 live games shows `vanished_in_space`
+  at 838 fleets (8.8%, 18% ships-weighted) vs sun-death at
+  13 (0.14%). Sun was the salient PI hypothesis; the real
+  ship-leak is whatever causes mid-flight vanish (comet
+  collision suspected). **Fix:** before sun-fix (pivot #5)
+  is worthwhile, identify the vanish mechanism — it's the
+  dominant ship-waste category by ~6x.
+- `tag: composite-head-2p-only-no-4p-opp-aggregation` —
+  wiring `lib.value_heads.composite_capture_value` into
+  `agents/baseline/value.favor_composite`: composite
+  collapses all non-me planets into one "enemy" bucket.
+  In 4P this loses the `favor()` sum-of-opps signal that
+  "capturing a weak opp is full credit." **Fix:** opt-in
+  via `BASELINE_VALUE_HEAD=composite` env var (default =
+  `favor`). Flag filed at `knowledge-base/flags/
+  2026-05-17-composite-value-head-2p-only.md`. Do NOT
+  submit composite-default agent without 4P-aware variant.
+
+## 2026-05-17 (claude/improve-fleet-efficiency-cQXg4 — 7 variants falsified)
+
+- `tag: pattern-overlay-on-tuned-baseline-doesnt-lift` (3rd recurrence)
+  — built 7 variants across 2 axes (chooser filters v21/v21_a/v21_ae/
+  v21_solo, rollout opp v22, opening overlay v23 at two windows). All
+  fail at n=32 vs v15 (range 15.6 % – 31.2 %). v15's chooser, leaf,
+  opp model, and emit dedup are co-tuned end-to-end; any single-component
+  modification breaks calibration in some other dimension. **Fix:**
+  promote to kaggle-comp/improvements.md — refuse to plan single-
+  component modifications on v15. Either wholesale chooser-family
+  replacement (different value head AND different proposer AND different
+  chooser) or no change. Full archaeology on the branch plus
+  `audit/2026-05-17-fleet-efficiency-negative-result.md`.
+- `tag: launch-rate-is-symptom-not-cause` — replay analysis showed v15
+  launches 2 fleets in turns 0-15 vs top-10's 7-10. v23 tried to close
+  the gap with `propose_opening_missions` short-circuit. Live: 15.6 %
+  vs v15 — worse. Transplanting a behavioural pattern from top-10 replays
+  without their surrounding stack regresses 25-35 pp. **Fix:** before
+  injecting a behavioural pattern from replays, construct a controlled
+  test (would v15 with that pattern alone lift?); if you can't, the
+  pattern can't be transplanted.
+- `tag: n16-falsely-shows-parity` (recurrence of `small-n-ab-noise-
+  misled-panel` from 2026-05-15). v21 at n=16 = 8/16 = 50.0 % (Wlo=0.28)
+  read as parity; same agent at n=32 = 10/32 = 31.2 % Wlo=0.18 = clear
+  FAIL. Wilson CI width at n=16 is ≈ 0.45 — cannot distinguish parity
+  from a 20 pp regression. Burned 4 single-axis ablations at n=16
+  before the n=32 reveal. **Fix:** for any submission-gating decision,
+  n=32 minimum. n=16 is for smoke only ("agent doesn't crash"), not
+  for verdicts. Promotion candidate: bump `fast.py eval` default
+  `--max-seeds` from 8 (= n=16 with 2-seat balance) to 16 (= n=32).
+
 
 ```
 - `tag: <kebab-slug>` — <session context>: <what happened>.

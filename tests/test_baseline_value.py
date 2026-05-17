@@ -168,3 +168,42 @@ def test_a2_constants_match_lb_max_calibration():
     assert WEAKEST_ENEMY_MULT_4P == 1.5
     assert WEAK_ENEMY_THRESHOLD == 110.0
     assert ELIMINATION_BONUS == 55.0
+
+
+# ---------------------------------------------------------------------------
+# select_favor_fn dispatcher (PR #29 — BASELINE_VALUE_HEAD opt-in toggle)
+# ---------------------------------------------------------------------------
+
+
+def test_select_favor_fn_default_returns_favor():
+    """Without BASELINE_VALUE_HEAD env, dispatcher returns the canonical favor."""
+    import os
+    from agents.baseline.value import select_favor_fn, favor as canonical
+    old = os.environ.pop("BASELINE_VALUE_HEAD", None)
+    try:
+        assert select_favor_fn() is canonical
+    finally:
+        if old is not None:
+            os.environ["BASELINE_VALUE_HEAD"] = old
+
+
+def test_select_favor_fn_composite_path():
+    """BASELINE_VALUE_HEAD=composite swaps to favor_composite."""
+    import os
+    from agents.baseline.value import select_favor_fn, favor_composite
+    os.environ["BASELINE_VALUE_HEAD"] = "composite"
+    try:
+        assert select_favor_fn() is favor_composite
+    finally:
+        os.environ.pop("BASELINE_VALUE_HEAD", None)
+
+
+def test_favor_composite_returns_float_on_simple_board():
+    """favor_composite must accept the (obs, me, num_seats, gamma) chooser
+    signature and return a finite float, even when there are no fleets."""
+    from agents.baseline.value import favor_composite
+    obs = _obs([(0, 0, 10, 50, 1.0, 30, 1), (1, 1, 90, 50, 1.0, 10, 1)])
+    v = favor_composite(obs, me=0, num_seats=2, gamma=0.99)
+    assert isinstance(v, float)
+    # No fleets => composite collapses to the ship-delta term: 30 - 10 = 20.
+    assert v == 20.0

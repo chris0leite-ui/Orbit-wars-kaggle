@@ -46,6 +46,26 @@ else
 fi
 echo
 
+# --- Step 1b: kaggle CLI wrapper (auth persists in every Bash shell) ----
+# Friction: 2026-05-17 — bootstrap.sh exports KAGGLE_API_TOKEN in its own
+# shell only; subsequent Bash tool calls come up with no token and the
+# real CLI 401s. KGAT_-prefix tokens can't live in ~/.kaggle/kaggle.json
+# (legacy 32-hex auth path returns 401). Install a thin shim on PATH that
+# derives KAGGLE_API_TOKEN from the harness env vars on every invocation.
+_KAGGLE_SHIM="$HOME/.local/bin/kaggle"
+if [[ -n "${KaggleAPIToke:-}" && ! -x "$_KAGGLE_SHIM" ]]; then
+    echo "--- kaggle CLI shim: installing $_KAGGLE_SHIM ---"
+    mkdir -p "$(dirname "$_KAGGLE_SHIM")"
+    cat > "$_KAGGLE_SHIM" <<'SHIM'
+#!/bin/bash
+# Auto-installed by .claude/hooks/session-start.sh — see hook for context.
+export KAGGLE_API_TOKEN="${KAGGLE_API_TOKEN:-${KaggleAPIToke:-}}"
+export KAGGLE_USERNAME="${KAGGLE_USERNAME:-${KaggleUserName:-}}"
+exec /usr/local/bin/kaggle "$@"
+SHIM
+    chmod +x "$_KAGGLE_SHIM"
+fi
+
 # --- Step 2: bootstrap (data + creds + deps) ----------------------------
 echo "--- bootstrap.sh ---"
 if [[ -x bootstrap.sh ]]; then

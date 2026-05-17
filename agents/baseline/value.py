@@ -26,9 +26,16 @@ multiplier on the single opp regressed h2h vs v15 in 2P (25/64,
 and biasing the chooser toward attacks degrades its calibration.
 The "weakness exploitation" thesis is 4P-specific (per-weakest, not
 uniform); the 2P path is unchanged from the original baseline.
+
+Opt-in alternative head: `BASELINE_VALUE_HEAD=composite` switches the
+chooser to `lib.value_heads.composite_capture_value` (waste +
+capture-aware per-fleet credit). 2P-only — composite does not
+distinguish opp identity in 4P. Default remains `favor` with A2.
 """
 
 from __future__ import annotations
+
+import os
 
 from lib.scoring import pv_horizon
 
@@ -108,3 +115,34 @@ def favor(obs, me: int, num_seats: int = 2, gamma: float = DEFAULT_GAMMA) -> flo
 
     pv = pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS)
     return (my_ships - opp_ships) + (my_prod - opp_prod) * pv + elim_bonus
+
+
+def favor_composite(obs, me: int, num_seats: int = 2,
+                    gamma: float = DEFAULT_GAMMA) -> float:
+    """`composite_capture_value` adapted to the (obs, me, num_seats, gamma)
+    signature `chooser` expects. `gamma` is intentionally ignored —
+    composite uses linear time-remaining weighting instead of γ-discount.
+    `num_seats` is ignored — composite doesn't differentiate opps.
+
+    Prior live evidence (iter_v1 sub 52661990, 2026-05-14):
+    composite head on the v7_0 chooser → ladder μ 1034.7 (vs v15 1108.4).
+    Wire only as an opt-in A/B; do NOT default this on. The clean
+    baseline value is `favor` (with A2 4P-weakness exploitation).
+    """
+    from lib.value_heads import composite_capture_value
+    return composite_capture_value(obs, me)
+
+
+def select_favor_fn():
+    """Pick the leaf value function. Default = `favor` (the v15 baseline
+    + A2 4P-weakness exploitation).
+
+    Switch via env var `BASELINE_VALUE_HEAD=composite`. Anything else
+    falls through to the default. The chooser uses the SAME function for
+    both `build_idle_baseline` and `score_action` so the Δ stays well-
+    defined.
+    """
+    choice = os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower()
+    if choice == "composite":
+        return favor_composite
+    return favor
