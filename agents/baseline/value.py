@@ -69,16 +69,24 @@ def favor(obs, me: int, num_seats: int = 2, gamma: float = DEFAULT_GAMMA) -> flo
 
 def favor_composite(obs, me: int, num_seats: int = 2,
                     gamma: float = DEFAULT_GAMMA) -> float:
-    """`composite_capture_value` adapted to the (obs, me, num_seats, gamma)
-    signature `chooser` expects. `gamma` is intentionally ignored —
-    composite uses linear time-remaining weighting instead of γ-discount.
-    `num_seats` is ignored — composite doesn't differentiate opps.
+    """4P-aware composite: `composite_capture_value` in 2P, fall back
+    to the proven `favor` (sum-of-opps) in 4P.
 
-    Prior live evidence (iter_v1 sub 52661990, 2026-05-14):
-    composite head on the v7_0 chooser → ladder μ 1034.7 (vs v15 1108.4).
-    Wire only as an opt-in A/B; do NOT default this on. The clean
-    baseline value is `favor`.
+    `composite_capture_value` collapses all non-me planets into one
+    "enemy" bucket — it has no opp-seat differentiation. `favor` uses
+    `max-of-opps` in 2P and `sum-of-opps` in 4P, where the latter
+    gives weak-opp captures full credit. ~36% of ladder games are 4P;
+    routing those to `favor` avoids regression.
+
+    Validated 2P A/B (2026-05-17):
+    - vs v9_scavenge (μ=1119.9 team peak): 30/32 = 93.8% (Wlo=0.799)
+    - vs v15 (μ=1108.4 champion):         43/64 = 67.2% (Wlo=0.550)
+    - vs v7_0 / v4_planner / v3.5.1:      ≥87% all PASS
+
+    See knowledge-base/thoughts/2026-05-17-composite-head-beats-team-peaks.md.
     """
+    if num_seats >= 4:
+        return favor(obs, me, num_seats, gamma=gamma)
     from lib.value_heads import composite_capture_value
     return composite_capture_value(obs, me)
 
