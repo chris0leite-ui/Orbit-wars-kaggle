@@ -207,3 +207,39 @@ def test_favor_composite_returns_float_on_simple_board():
     assert isinstance(v, float)
     # No fleets => composite collapses to the ship-delta term: 30 - 10 = 20.
     assert v == 20.0
+
+
+def test_select_favor_fn_hybrid_path():
+    """BASELINE_VALUE_HEAD=hybrid swaps to favor_hybrid."""
+    import os
+    from agents.baseline.value import select_favor_fn, favor_hybrid
+    os.environ["BASELINE_VALUE_HEAD"] = "hybrid"
+    try:
+        assert select_favor_fn() is favor_hybrid
+    finally:
+        os.environ.pop("BASELINE_VALUE_HEAD", None)
+
+
+def test_favor_hybrid_dispatches_2p_to_composite():
+    """Hybrid in 2P must match favor_composite output (no A2 effect)."""
+    from agents.baseline.value import favor_hybrid, favor_composite
+    obs = _obs([(0, 0, 10, 50, 1.0, 30, 1), (1, 1, 90, 50, 1.0, 10, 1)])
+    h = favor_hybrid(obs, me=0, num_seats=2, gamma=0.99)
+    c = favor_composite(obs, me=0, num_seats=2, gamma=0.99)
+    assert h == c, f"2P hybrid should match composite; got h={h} c={c}"
+
+
+def test_favor_hybrid_dispatches_4p_to_favor():
+    """Hybrid in 4P must match `favor` output (A2 4P-weakness multiplier
+    fires; composite would be incorrect here per the 2P-only flag).
+    """
+    from agents.baseline.value import favor_hybrid, favor as canonical
+    obs_4p = _obs([
+        (0, 0, 10, 10, 1.0, 50, 1),
+        (1, 1, 90, 10, 1.0, 50, 1),
+        (2, 2, 10, 90, 1.0, 50, 1),
+        (3, 3, 90, 90, 1.0, 50, 1),
+    ])
+    h = favor_hybrid(obs_4p, me=0, num_seats=4, gamma=0.99)
+    f = canonical(obs_4p, me=0, num_seats=4, gamma=0.99)
+    assert h == f, f"4P hybrid should match canonical favor; got h={h} f={f}"

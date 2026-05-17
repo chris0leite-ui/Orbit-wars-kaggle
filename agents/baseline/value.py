@@ -133,16 +133,36 @@ def favor_composite(obs, me: int, num_seats: int = 2,
     return composite_capture_value(obs, me)
 
 
-def select_favor_fn():
-    """Pick the leaf value function. Default = `favor` (the v15 baseline
-    + A2 4P-weakness exploitation).
+def favor_hybrid(obs, me: int, num_seats: int = 2,
+                 gamma: float = DEFAULT_GAMMA) -> float:
+    """2P uses composite (waste-aware, validated by audit-workflow A/B:
+    93.8% vs v9_scavenge, 67.2% vs v15). 4P uses `favor` with A2
+    4P-weakness exploitation. Domains are disjoint by construction —
+    composite has no 4P opp aggregation (`composite-value-head-2p-only.md`
+    flag), and A2's per-weakest multiplier + elim bonus only fire when
+    num_seats > 2.
+    """
+    if num_seats <= 2:
+        return favor_composite(obs, me, num_seats, gamma)
+    return favor(obs, me, num_seats, gamma)
 
-    Switch via env var `BASELINE_VALUE_HEAD=composite`. Anything else
-    falls through to the default. The chooser uses the SAME function for
-    both `build_idle_baseline` and `score_action` so the Δ stays well-
-    defined.
+
+def select_favor_fn():
+    """Pick the leaf value function.
+
+    Env var `BASELINE_VALUE_HEAD`:
+      - unset / anything else -> `favor` (default, v15 baseline + A2 4P).
+      - "composite"           -> `favor_composite` (2P waste-aware,
+                                  composite_capture_value head).
+      - "hybrid"              -> `favor_hybrid` (composite in 2P,
+                                  A2-favor in 4P).
+
+    The chooser uses the same function for both `build_idle_baseline` and
+    `score_action` so the Δ stays well-defined.
     """
     choice = os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower()
     if choice == "composite":
         return favor_composite
+    if choice == "hybrid":
+        return favor_hybrid
     return favor
