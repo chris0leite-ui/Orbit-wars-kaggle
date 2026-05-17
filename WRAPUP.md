@@ -66,6 +66,26 @@ Cap ≤150 lines. This is a checklist agents follow verbatim.
     write `audit/YYYY-MM-DD-postmortem*.md`, stage outputs.
     Blocks on PI replies; do not bypass.
 
+4c. **Flags + questions filing check (Rule 36 enforcement).**
+    Before staging the commit, verify today's second-brain entries
+    exist. From repo root:
+
+    ```bash
+    DATE=$(date -u +%Y-%m-%d)
+    [ -n "$(ls knowledge-base/flags/${DATE}-*.md 2>/dev/null)" ] \
+      || echo "WARN: no knowledge-base/flags/${DATE}-*.md — write a one-liner or pass --skip-flags-check"
+    [ -n "$(ls knowledge-base/questions/${DATE}-*.md 2>/dev/null)" ] \
+      || echo "WARN: no knowledge-base/questions/${DATE}-*.md — write a one-liner or pass --skip-questions-check"
+    [ -n "$(ls knowledge-base/thoughts/${DATE}-*.md 2>/dev/null)" ] \
+      || echo "WARN: no knowledge-base/thoughts/${DATE}-*.md — required by Rule 36"
+    ```
+
+    Both folders sit empty as of 2026-05-17 despite Rule 36; this
+    step makes the silence audible. The check is WARN-only (does not
+    block commit) so a deliberate empty session can still wrap. If
+    PI confirms "no flags / no questions today," still commit the
+    thoughts entry per Rule 36.
+
 5. **File-size guard.** If `CLAUDE.md` > 50k tokens or `HANDOVER.md`
    > 150 lines, archive the oldest sections to
    `audit/archive-YYYY-MM-DD-<topic>.md` BEFORE step 6 and update

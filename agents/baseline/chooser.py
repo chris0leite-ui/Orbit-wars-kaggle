@@ -20,7 +20,7 @@ from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
 from lib.opp_model import lite_greedy_policy as opp_policy
 
-from agents.baseline.value import favor
+from agents.baseline.value import select_favor_fn
 
 WALLCLOCK_BUDGET_MS = 600.0
 N_VALIDATE = 60
@@ -44,15 +44,16 @@ def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
 def build_idle_baseline(snap_base, me: int, num_seats: int,
                         max_horizon: int, gamma: float) -> list[float]:
     """favor at every horizon 0..max_horizon under (me-idle, opp-reactive)."""
+    favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
-    out = [favor(snap.state[me].observation, me, num_seats, gamma=gamma)]
+    out = [favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)]
     for _ in range(max_horizon):
         if snap.fake_env.done:
             out.append(out[-1])
             continue
         actions = opp_actions_for_snap(snap, me, num_seats)
         snap = fs_step(snap, actions, in_place=True)
-        out.append(favor(snap.state[me].observation, me, num_seats, gamma=gamma))
+        out.append(favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma))
     return out
 
 
@@ -61,6 +62,7 @@ def score_action(snap_base, me: int, num_seats: int,
                  horizon: int, baseline_favors: list[float],
                  wait_N: int, gamma: float) -> float:
     """Δ favor at horizon = leaf(my_action@wait_N) − baseline."""
+    favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
     for step_i in range(horizon):
         if snap.fake_env.done:
@@ -69,7 +71,7 @@ def score_action(snap_base, me: int, num_seats: int,
         if step_i == int(wait_N):
             actions[me] = [[int(src_id), float(angle), int(ships)]]
         snap = fs_step(snap, actions, in_place=True)
-    leaf = favor(snap.state[me].observation, me, num_seats, gamma=gamma)
+    leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
     return leaf - baseline_favors[horizon]
 
 

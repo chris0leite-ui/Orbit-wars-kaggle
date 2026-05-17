@@ -361,6 +361,39 @@ relevant skill file or source code, not back into friction.md.
   be off by ±80μ. Document in WRAPUP that the team-floor
   calculation uses SETTLED μ, not first-read μ.
 
+## 2026-05-17 (claude/audit-workflow-performance-btjeK)
+
+- `tag: kaggle-cli-401-in-followup-shells` — diagnostic
+  session: bootstrap.sh exports `KAGGLE_API_TOKEN` inside
+  its own shell only; every subsequent Bash tool call comes
+  up with no token and the real CLI 401s. KGAT_-prefix
+  tokens cannot live in `~/.kaggle/kaggle.json` (legacy
+  32-hex auth path returns 401 — verified empirically this
+  session). Bootstrap's "skip kaggle.json for KGAT_" branch
+  is correct but leaves no env-persistence path. **Fix:**
+  SessionStart hook installs `$HOME/.local/bin/kaggle` shim
+  that re-derives `KAGGLE_API_TOKEN` from harness var
+  `$KaggleAPIToke` on every invocation. Verified in fresh
+  shell; survives across Bash tool calls.
+- `tag: vanished-in-space-dominates-trajectory-waste` —
+  replay-mine of v15's 92 live games shows `vanished_in_space`
+  at 838 fleets (8.8%, 18% ships-weighted) vs sun-death at
+  13 (0.14%). Sun was the salient PI hypothesis; the real
+  ship-leak is whatever causes mid-flight vanish (comet
+  collision suspected). **Fix:** before sun-fix (pivot #5)
+  is worthwhile, identify the vanish mechanism — it's the
+  dominant ship-waste category by ~6x.
+- `tag: composite-head-2p-only-no-4p-opp-aggregation` —
+  wiring `lib.value_heads.composite_capture_value` into
+  `agents/baseline/value.favor_composite`: composite
+  collapses all non-me planets into one "enemy" bucket.
+  In 4P this loses the `favor()` sum-of-opps signal that
+  "capturing a weak opp is full credit." **Fix:** opt-in
+  via `BASELINE_VALUE_HEAD=composite` env var (default =
+  `favor`). Flag filed at `knowledge-base/flags/
+  2026-05-17-composite-value-head-2p-only.md`. Do NOT
+  submit composite-default agent without 4P-aware variant.
+
 ## 2026-05-17 (claude/improve-fleet-efficiency-cQXg4 — 7 variants falsified)
 
 - `tag: pattern-overlay-on-tuned-baseline-doesnt-lift` (3rd recurrence)

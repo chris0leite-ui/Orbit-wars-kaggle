@@ -7,9 +7,16 @@ PV-discount keeps F2 on a comparable scale to F1; without it the future-
 production term over-weights captures by ~100x in late game and the
 chooser stops valuing ship preservation. opp aggregation is max-of-opps
 in 2P and sum-of-opps in 4P (weak-opp captures get full credit).
+
+Opt-in alternative: `BASELINE_VALUE_HEAD=composite` switches the chooser to
+`lib.value_heads.composite_capture_value` (waste + capture-aware per-fleet
+credit). 2P-only — composite does not distinguish opp identity in 4P.
+Default remains `favor` (proven on v15 line at live μ~1108).
 """
 
 from __future__ import annotations
+
+import os
 
 from lib.scoring import pv_horizon
 
@@ -58,3 +65,33 @@ def favor(obs, me: int, num_seats: int = 2, gamma: float = DEFAULT_GAMMA) -> flo
 
     pv = pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS)
     return (my_ships - opp_ships) + (my_prod - opp_prod) * pv
+
+
+def favor_composite(obs, me: int, num_seats: int = 2,
+                    gamma: float = DEFAULT_GAMMA) -> float:
+    """`composite_capture_value` adapted to the (obs, me, num_seats, gamma)
+    signature `chooser` expects. `gamma` is intentionally ignored —
+    composite uses linear time-remaining weighting instead of γ-discount.
+    `num_seats` is ignored — composite doesn't differentiate opps.
+
+    Prior live evidence (iter_v1 sub 52661990, 2026-05-14):
+    composite head on the v7_0 chooser → ladder μ 1034.7 (vs v15 1108.4).
+    Wire only as an opt-in A/B; do NOT default this on. The clean
+    baseline value is `favor`.
+    """
+    from lib.value_heads import composite_capture_value
+    return composite_capture_value(obs, me)
+
+
+def select_favor_fn():
+    """Pick the leaf value function. Default = `favor` (the v15 baseline).
+
+    Switch via env var `BASELINE_VALUE_HEAD=composite`. Anything else
+    falls through to the default. The chooser uses the SAME function for
+    both `build_idle_baseline` and `score_action` so the Δ stays well-
+    defined.
+    """
+    choice = os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower()
+    if choice == "composite":
+        return favor_composite
+    return favor
