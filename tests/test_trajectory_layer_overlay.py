@@ -165,14 +165,16 @@ def test_overlay_raises_on_zero_or_negative_ships():
         ))
 
 
-def test_overlay_raises_on_future_launch_turn():
+def test_overlay_rejects_negative_launch_turn():
+    """`launch_turn > 0` is supported (Phase 7 trajectory-native);
+    negative launch_turn is invalid input."""
     obs, ep_seed = _step_env_to_obs(seed=42, warmup=10, num_seats=2)
     world = World.from_obs(obs, episode_seed=ep_seed)
     src = _our_planets_with_ships(world, my_id=0)[0]
-    with pytest.raises(NotImplementedError, match="launch_turn"):
+    with pytest.raises(ValueError, match="launch_turn"):
         world.with_candidate(LaunchSpec(
             src_id=src.id, aim_angle=0.0, ships=1, owner=0,
-            launch_turn=3,
+            launch_turn=-1,
         ))
 
 

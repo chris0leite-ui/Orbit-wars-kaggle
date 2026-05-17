@@ -177,6 +177,16 @@ class FleetView:
     """Per-fleet projection-ready view. Straight-line motion at
     `speed(ships)`. Collisions are NOT modelled at this phase — Phase 2
     adds the arrival ledger; Phase 4 adds the SunFilter.
+
+    `spawn_turn` is the relative turn (from snapshot's obs.step) at which
+    the fleet exists. For in-flight fleets in the obs, `spawn_turn=0`
+    (they exist now). For future-launch overlays (Phase 7), `spawn_turn`
+    is the bundle's `launch_turn` — the fleet doesn't exist before that
+    turn (`position_at(t<spawn_turn)` returns None).
+
+    `current_x`/`current_y` is the position at `spawn_turn` — i.e. the
+    spawn position for future launches, or the live position for
+    in-flight fleets at `spawn_turn=0`.
     """
     id: int
     owner: int
@@ -186,10 +196,14 @@ class FleetView:
     ships: int
     from_planet_id: int
     speed: float
+    spawn_turn: int = 0
 
-    def position_at(self, t: int) -> tuple[float, float]:
-        return (self.current_x + math.cos(self.angle) * self.speed * t,
-                self.current_y + math.sin(self.angle) * self.speed * t)
+    def position_at(self, t: int) -> Optional[tuple[float, float]]:
+        if t < self.spawn_turn:
+            return None
+        dt = t - self.spawn_turn
+        return (self.current_x + math.cos(self.angle) * self.speed * dt,
+                self.current_y + math.sin(self.angle) * self.speed * dt)
 
 
 def _fleet_speed(ships: int, ship_speed: float = 6.0) -> float:
@@ -247,6 +261,14 @@ class World:
     planets: tuple[PlanetView, ...]
     fleets: tuple[FleetView, ...]
     comet_paths: tuple[CometPathView, ...]
+    # Outgoing future launches scheduled via `with_candidate(launch_turn>0)`.
+    # Each entry is `(src_id, launch_turn, ships)`. Phase 7 bundles cause
+    # these to accumulate across multiple `with_candidate` calls. At
+    # timeline-simulation time, each entry deducts `ships` from the source
+    # planet's garrison at `launch_turn` BEFORE production accrues — same
+    # ordering as `lib/game/interpreter.py`'s `process_moves` → production
+    # phase sequence.
+    _outgoing_launches: tuple[tuple[int, int, int], ...] = ()
     # Indices (built in `from_obs`). Plain dicts; the immutability
     # invariant is that we never mutate them after construction.
     _planet_by_id: dict[int, PlanetView] = field(default_factory=dict, compare=False, repr=False)
@@ -528,9 +550,19 @@ class World:
             if planet is None:
                 return None
         arrivals = self.ledger_for(planet_id, horizon)
-        timeline = _simulate_planet_timeline(planet, arrivals, horizon)
+        outgoing = self._outgoing_for(planet_id)
+        timeline = _simulate_planet_timeline(planet, arrivals, horizon,
+                                              outgoing=outgoing)
         self._timeline_cache[key] = timeline
         return timeline
+
+    def _outgoing_for(self, planet_id: int,
+                      ) -> tuple[tuple[int, int], ...]:
+        """All outgoing future launches scheduled from `planet_id`.
+        Returns `((turn, ships), ...)`. Empty if no future launches.
+        Phase 1-6 worlds (no overlays / launch_turn=0 only) return ()."""
+        return tuple((t, s) for src, t, s in self._outgoing_launches
+                     if src == planet_id)
 
     def ownership_at(self, planet_id: int, t: int,
                      horizon: int = DEFAULT_LEDGER_HORIZON,
@@ -601,8 +633,9 @@ class World:
             if planet is None:
                 return {}
         arrivals = self.ledger_for(planet_id, horizon)
+        outgoing = self._outgoing_for(planet_id)
         timeline, log = _simulate_timeline_with_combat_log(
-            planet, arrivals, horizon,
+            planet, arrivals, horizon, outgoing=outgoing,
         )
         # Also pre-populate the plain timeline cache so a subsequent
         # `ownership_at` call doesn't redo the work.
@@ -651,28 +684,54 @@ class World:
         is at step S+1. For every arrival, `overlay.eta` ==
         `committed.eta + 1`.
 
-        Phase 3 supports `launch_turn == 0` only. Future-turn
-        launches are deferred.
+        `spec.launch_turn > 0` represents a FUTURE-TURN commitment:
+        the source's owner/ships are validated against the parent
+        World's timeline at `launch_turn` (so chained overlays
+        correctly account for prior launches in the same bundle), the
+        spawn position is `planet_position(src, launch_turn) +
+        (radius + 0.1) * direction`, and the synthetic FleetView
+        carries `spawn_turn = launch_turn` so its ray-cast starts at
+        the right time. The source planet's t=0 state is unchanged;
+        the ship deduction is applied IN THE TIMELINE at the launch
+        turn (via `_outgoing_launches`).
 
         Raises:
-        - `ValueError` if `spec.src_id` isn't an owned planet
-        - `ValueError` if `spec.ships > source.ships` (cannot launch
-          more than the source's garrison)
-        - `ValueError` if `spec.ships <= 0`
-        - `NotImplementedError` if `spec.launch_turn != 0`
+        - `ValueError` if `spec.src_id` isn't a known planet
+        - `ValueError` if at `launch_turn` the source isn't owned by
+          `spec.owner` or doesn't have enough ships
+        - `ValueError` if `spec.ships <= 0` or `spec.launch_turn < 0`
         """
-        if spec.launch_turn != 0:
-            raise NotImplementedError(
-                f"launch_turn > 0 not yet supported (got {spec.launch_turn})"
-            )
         if spec.ships <= 0:
             raise ValueError(f"spec.ships must be > 0 (got {spec.ships})")
+        if spec.launch_turn < 0:
+            raise ValueError(
+                f"spec.launch_turn must be >= 0 (got {spec.launch_turn})"
+            )
         src = self._planet_by_id.get(spec.src_id)
         if src is None:
             raise ValueError(f"unknown src_id: {spec.src_id}")
-        if spec.ships > src.ships:
+
+        # Validate ownership + ships AT launch_turn against the
+        # current World's timeline. For launch_turn=0 this is the
+        # current src state (owner / ships fields directly). For
+        # future launches, query `ownership_at` so chained overlays
+        # account for prior commitments.
+        if spec.launch_turn == 0:
+            src_owner_at_launch = src.owner
+            src_ships_at_launch = float(src.ships)
+        else:
+            src_owner_at_launch, src_ships_at_launch = self.ownership_at(
+                spec.src_id, spec.launch_turn,
+            )
+        if src_owner_at_launch != spec.owner:
             raise ValueError(
-                f"source {spec.src_id} has only {src.ships} ships, "
+                f"source {spec.src_id} owned by {src_owner_at_launch} at "
+                f"launch_turn={spec.launch_turn}, not {spec.owner}"
+            )
+        if spec.ships > src_ships_at_launch:
+            raise ValueError(
+                f"source {spec.src_id} has only {src_ships_at_launch} ships "
+                f"at launch_turn={spec.launch_turn}, "
                 f"cannot launch {spec.ships}"
             )
 
@@ -681,14 +740,21 @@ class World:
         min_existing = min((f.id for f in self.fleets), default=0)
         virtual_id = min(min_existing, 0) - 1
 
-        # Spawn position: src.center + (radius + 0.1) * direction.
-        # Mirrors the env's process_moves spawn offset (orbit_wars.py
-        # process_moves) so the synthetic fleet starts where a real
-        # one would.
+        # Spawn position at launch_turn: planet_position(src, launch_turn)
+        # + (radius + 0.1) * direction. For launch_turn=0 this is just
+        # the src's current position (Phase 1's planet_position).
         cos_a = math.cos(spec.aim_angle)
         sin_a = math.sin(spec.aim_angle)
-        spawn_x = src.current_x + cos_a * (src.radius + 0.1)
-        spawn_y = src.current_y + sin_a * (src.radius + 0.1)
+        src_pos = self.planet_position(spec.src_id, spec.launch_turn)
+        if src_pos is None:
+            # Source despawned (comet); shouldn't happen because the
+            # ownership check above would have failed. Defensive only.
+            raise ValueError(
+                f"source {spec.src_id} has no position at "
+                f"launch_turn={spec.launch_turn}"
+            )
+        spawn_x = src_pos[0] + cos_a * (src.radius + 0.1)
+        spawn_y = src_pos[1] + sin_a * (src.radius + 0.1)
 
         new_fleet = FleetView(
             id=virtual_id,
@@ -699,17 +765,32 @@ class World:
             ships=int(spec.ships),
             from_planet_id=spec.src_id,
             speed=_fleet_speed(spec.ships, self.cfg.ship_speed),
+            spawn_turn=int(spec.launch_turn),
         )
 
-        # Decrement the source planet's garrison (env: ships are
-        # deducted at launch, BEFORE production).
-        new_src = replace(src, ships=src.ships - spec.ships)
-        new_planets = tuple(
-            new_src if p.id == spec.src_id else p
-            for p in self.planets
-        )
-        new_planet_by_id = dict(self._planet_by_id)
-        new_planet_by_id[spec.src_id] = new_src
+        # Two cases for ship accounting:
+        # - launch_turn == 0: deduct ships from src's PlanetView NOW
+        #   (the post-process_moves snapshot semantics). DO NOT add
+        #   to _outgoing_launches — the deduction is already baked
+        #   into the t=0 PlanetView.
+        # - launch_turn > 0: leave src.ships unchanged; record in
+        #   _outgoing_launches so the timeline deducts at launch_turn
+        #   before production.
+        new_planets = self.planets
+        new_planet_by_id = self._planet_by_id
+        new_outgoing = self._outgoing_launches
+        if spec.launch_turn == 0:
+            new_src = replace(src, ships=src.ships - spec.ships)
+            new_planets = tuple(
+                new_src if p.id == spec.src_id else p
+                for p in self.planets
+            )
+            new_planet_by_id = dict(self._planet_by_id)
+            new_planet_by_id[spec.src_id] = new_src
+        else:
+            new_outgoing = self._outgoing_launches + (
+                (int(spec.src_id), int(spec.launch_turn), int(spec.ships)),
+            )
 
         # Append synthetic fleet. Build fresh indices (no cache
         # leakage — the parent's _ledger_cache / _timeline_cache
@@ -727,6 +808,7 @@ class World:
             planets=new_planets,
             fleets=new_fleets,
             comet_paths=self.comet_paths,
+            _outgoing_launches=new_outgoing,
             _planet_by_id=new_planet_by_id,
             _fleet_by_id=new_fleet_by_id,
             _comet_by_planet_id=dict(self._comet_by_planet_id),
@@ -752,15 +834,18 @@ class World:
 
 @dataclass(frozen=True)
 class LaunchSpec:
-    """One hypothetical fleet launch.
+    """One hypothetical fleet launch — primitive of a Bundle.
 
-    `launch_turn` is the relative turn at which the launch happens
-    (0 = this turn). Phase 3 supports 0 only; positive values raise
-    NotImplementedError in `World.with_candidate`.
+    `launch_turn` is the relative turn (from snapshot's obs.step) at
+    which the launch happens. `0` = this turn (immediate); positive
+    values represent FUTURE-TURN commitments — the planner's "save
+    up production then strike" pattern. The trajectory-native chooser
+    composes Bundles (sequences of LaunchSpecs at varying launch_turns)
+    and scores the resulting trajectory.
 
     `owner` is who is launching — usually `world.my_id` for our own
     candidates; can be set to an opponent's id when overlaying their
-    hypothetical action under a learned opp model (Phase 7).
+    hypothetical action under a learned opp model.
     """
     src_id: int
     aim_angle: float
@@ -969,6 +1054,11 @@ def _fleet_target_planet(
     for t in range(1, max_steps + 1):
         f_old = fleet.position_at(t - 1)
         f_new = fleet.position_at(t)
+        # Future-launch fleets (spawn_turn > 0) don't exist until then.
+        # Phase 1 in-flight fleets have spawn_turn=0 so this is a no-op
+        # for the legacy path.
+        if f_old is None or f_new is None:
+            continue
 
         # Sun check (matches lib/trajectory.predict_fleet_fate).
         if _segment_to_point_distance(f_old, f_new, (CENTER, CENTER)) \
@@ -982,7 +1072,7 @@ def _fleet_target_planet(
 
         # Planet collision.
         for pid in planet_ids:
-            # Source-planet skip on the first step: mirrors the env's
+            # Source-planet skip on the spawn step: mirrors the env's
             # explicit `if pid == src_id and step == 0: continue`
             # (lib/trajectory.py:133-135). For fresh launches (Phase 3
             # synthetic fleets), the fleet starts just outside its
@@ -990,7 +1080,7 @@ def _fleet_target_planet(
             # spuriously hit the source itself. For already-in-flight
             # fleets the check is a no-op (the fleet has moved away
             # from `from_planet_id`).
-            if pid == fleet.from_planet_id and t == 1:
+            if pid == fleet.from_planet_id and t == fleet.spawn_turn + 1:
                 continue
             p_old = world.planet_position(pid, t - 1)
             p_new = world.planet_position(pid, t)
@@ -1078,15 +1168,25 @@ def _simulate_planet_timeline(
     planet: "PlanetView",
     arrivals: Iterable[Arrival],
     horizon: int,
+    outgoing: Iterable[tuple[int, int]] = (),
 ) -> dict:
     """Per-planet ownership/garrison timeline under integer-tick semantics.
 
-    Mirrors `lib/world_model.simulate_planet_timeline` exactly:
+    Mirrors `lib/world_model.simulate_planet_timeline` exactly, plus
+    Phase 7's outgoing-launch handling for future-turn launches:
       1. At t=0, record current (owner, ships).
       2. For t in [1, horizon]:
-         a. If currently owned (owner != -1), garrison += production.
-         b. Resolve same-step arrivals via `lib.combat.resolve_arrivals`.
-         c. Record (owner_at[t], ships_at[t]).
+         a. Process outgoing launches at turn t (env's `process_moves`):
+            if still owned by the launch owner with enough ships,
+            deduct. Otherwise the launch is silently dropped (invalid
+            commitment — bundle validator should have caught it).
+         b. If currently owned (owner != -1), garrison += production.
+         c. Resolve same-step arrivals via `lib.combat.resolve_arrivals`.
+         d. Record (owner_at[t], ships_at[t]).
+
+    `outgoing` is `[(turn, ships), ...]` of THIS planet's future
+    launches recorded in `World._outgoing_launches`. Phase 1-6 callers
+    pass `()` to preserve the no-outgoing-launch semantics.
 
     Returns `{owner_at: dict[int, int], ships_at: dict[int, float],
               horizon: int}`. The legacy format kept for parity.
@@ -1101,14 +1201,30 @@ def _simulate_planet_timeline(
             continue
         by_turn[bucket].append((arr.owner, int(arr.ships)))
 
+    outgoing_by_turn: dict[int, int] = defaultdict(int)
+    for out_turn, out_ships in outgoing:
+        if out_ships <= 0:
+            continue
+        ot = max(1, int(out_turn))
+        if ot > h:
+            continue
+        outgoing_by_turn[ot] += int(out_ships)
+
     owner = planet.owner
     garrison = float(planet.ships)
     owner_at = {0: owner}
     ships_at = {0: max(0.0, garrison)}
 
     for t in range(1, h + 1):
+        # 1. Process outgoing launches (process_moves): only if still
+        # owned (a launch from a captured planet is invalidated).
+        out_ships = outgoing_by_turn.get(t, 0)
+        if out_ships > 0 and owner != -1:
+            garrison = max(0.0, garrison - out_ships)
+        # 2. Production.
         if owner != -1:
             garrison += planet.production
+        # 3. Combat.
         group = by_turn.get(t, [])
         if group:
             owner, garrison = resolve_arrivals(owner, garrison, group)
@@ -1162,6 +1278,7 @@ def _simulate_timeline_with_combat_log(
     planet: "PlanetView",
     arrivals: Iterable[Arrival],
     horizon: int,
+    outgoing: Iterable[tuple[int, int]] = (),
 ) -> tuple[dict, dict[int, CombatOutcome]]:
     """Variant of `_simulate_planet_timeline` that ALSO emits a
     per-turn combat log. Used by `World.combat_at`.
@@ -1180,6 +1297,15 @@ def _simulate_timeline_with_combat_log(
             continue
         by_turn[bucket].append((arr.owner, int(arr.ships)))
 
+    outgoing_by_turn: dict[int, int] = defaultdict(int)
+    for out_turn, out_ships in outgoing:
+        if out_ships <= 0:
+            continue
+        ot = max(1, int(out_turn))
+        if ot > h:
+            continue
+        outgoing_by_turn[ot] += int(out_ships)
+
     owner = planet.owner
     garrison = float(planet.ships)
     owner_at = {0: owner}
@@ -1187,8 +1313,14 @@ def _simulate_timeline_with_combat_log(
     combat_log: dict[int, CombatOutcome] = {}
 
     for t in range(1, h + 1):
+        # 1. Outgoing launches (env's process_moves).
+        out_ships = outgoing_by_turn.get(t, 0)
+        if out_ships > 0 and owner != -1:
+            garrison = max(0.0, garrison - out_ships)
+        # 2. Production.
         if owner != -1:
             garrison += planet.production
+        # 3. Combat.
         group = by_turn.get(t, [])
         if group:
             # Aggregate same-owner arrivals to mirror resolve_arrivals'
