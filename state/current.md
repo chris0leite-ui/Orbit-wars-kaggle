@@ -5,20 +5,24 @@
 > All Score values pulled live from `kaggle competitions submissions orbit-wars`.
 
 ```yaml
-date: 2026-05-16
+date: 2026-05-17
 days_to_deadline: 37                     # 2026-06-23 23:59 UTC minus today
-current_submitted_agent: v20_dogpile     # PENDING; per-target dedup removed
+current_submitted_agent: v20_dogpile     # COMPLETE; per-target dedup removed
 last_kernel_push: 2026-05-16 21:57:08 UTC
 last_submission_id: 52721807
-last_submission_status: PENDING
+last_submission_status: COMPLETE
 last_submission_file: submissions/v20.py  # 317 KB bundle; parity OK 858 turns
-# v21_compound built this session (claude/fleet-strategy-optimization-fsu0t).
-# Bundle: submissions/v21_compound.py (333 KB). NOT submitted — PI directed
-# build-only this session; submission decision next session after v15/v20 settle.
-# Rule 38 verification: v20 sends 6 fleets/8 games to sun + 2 OOB; v21 sends 0/0.
-# v21 differs from v20 only at proposer stage: sun-safe pre-filter +
-# rotation_alignment bonus + chain_bonus + MissionBook TTL persistence.
-# Leaf scorer (_favor), K-rollout, dogpile emit — all unchanged.
+# UPDATE 2026-05-17 resume: live ladder data pulled.
+# - v15 (52710995) SETTLED at 1115.5 ← TEAM FLOOR
+# - v20 (52721807) SETTLED at 1095.5 ← evicts v13
+# v20 LOST 20μ vs v15 live despite local 65.6% h2h vs v15 — clear
+# local-overpredict pattern. Strategy: build on v15 base (live winner),
+# not v20 base. v21_compound and v21a/b/c/d (all v20-base) deferred.
+#
+# v22_sun_on_v15 built this session: v15 + lib.compound.fleet_path_safe
+# proposer-time pre-filter. By construction either ≡v15 or marginally
+# better (never worse). Bundle: submissions/v22_sun_on_v15.py (332 KB,
+# sha256:51605b7fba01eabf). A/B v22 vs v15 running.
 last_submission_message: |
   v20: chooser dogpile (remove per-target dedup). v15 emit-cap
   bottleneck diagnosed: chooser found 6-16 positive-Δ candidates per
