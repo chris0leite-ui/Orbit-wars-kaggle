@@ -57,26 +57,41 @@ def test_score_action_no_op_when_horizon_zero():
 def test_affordable_cap_has_floor_of_eight():
     """Even with an extreme budget the cap is bounded below by 8."""
     _obs, snap = _snapshot_from_seed(7)
-    cap = affordable_validate_cap(
+    cap, per_cand_ms = affordable_validate_cap(
         snap, me=0, num_seats=2, max_horizon=10, wallclock_ms=50.0,
         min_horizon=5, gamma=0.99,
     )
     assert cap >= 8
+    assert per_cand_ms > 0.0
 
 
 def test_affordable_cap_shrinks_under_composite_head():
     """The cap probe measures per-leaf cost — composite_capture_value is
-    heavier per call than favor (builds a World + ray-casts every fleet).
-    Under composite the cap should be smaller than under favor at the
+    heavier per call than favor when fleets are in flight (builds a
+    World + ray-casts every fleet). Under composite on a board WITH
+    in-flight fleets the cap should be smaller than under favor at the
     same wallclock budget. Documents the 2026-05-17 timing fix.
 
-    Each branch is measured 3x with a warmup; we take the MEDIAN cap.
-    Real usage warms favor_fn heavily via build_idle_baseline before
-    reaching the probe; cold-cache noise in a one-shot test misleads.
+    NB: on a board with NO in-flight fleets, composite short-circuits
+    and is essentially as cheap as favor. Test must construct fleets
+    to exercise the heavy path.
     """
     import os
     import statistics
-    _obs, snap = _snapshot_from_seed(7)
+    from lib.fast_sim import step as fs_step
+    obs, snap = _snapshot_from_seed(7)
+
+    # Launch a fleet so composite hits its World/WorldModel/ray-cast
+    # path. Action shape: [[me_actions], [opp_actions]]. Find first
+    # owned planet from obs, launch 30 ships at angle 0.
+    my_planets = [p for p in obs["planets"] if p[1] == 0]
+    assert my_planets, "test prereq: seed=7 P0 must own a planet at step 0"
+    src_id = int(my_planets[0][0])
+    snap = fs_step(snap, [[[src_id, 0.0, 30]], []], in_place=True)
+    # Step a few more times so the fleet is mid-flight (not just-launched).
+    for _ in range(5):
+        snap = fs_step(snap, [[], []], in_place=True)
+
     args = dict(me=0, num_seats=2, max_horizon=40, wallclock_ms=600.0,
                 min_horizon=25, gamma=0.99)
 
@@ -87,7 +102,7 @@ def test_affordable_cap_shrinks_under_composite_head():
             os.environ["BASELINE_VALUE_HEAD"] = env_value
         # Warmup so module-import + WorldModel-build aren't on the path.
         affordable_validate_cap(snap, **args)
-        samples = [affordable_validate_cap(snap, **args) for _ in range(3)]
+        samples = [affordable_validate_cap(snap, **args)[0] for _ in range(3)]
         return statistics.median(samples)
 
     try:
@@ -98,7 +113,8 @@ def test_affordable_cap_shrinks_under_composite_head():
 
     assert cap_composite <= cap_favor, (
         f"composite cap ({cap_composite}) should be <= favor cap "
-        f"({cap_favor}) because composite leaf is heavier"
+        f"({cap_favor}) on a board with in-flight fleets — composite "
+        f"leaf is heavier (builds World + ray-casts every fleet)"
     )
 
 
