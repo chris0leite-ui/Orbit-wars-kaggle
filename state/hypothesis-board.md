@@ -38,6 +38,40 @@ saturation (v7_1..v7_7), value-function asymmetric-compounding
 (v17/v18/v19), and chooser banded multi-wait (v14/v15) all live in a
 different axis class.
 
+#### 2026-05-17 UPDATE — proposer-bonus axis CLOSED (Rule 37)
+
+After v15 live-settled at 1114.9 (vs v20's 1094.2), strategy pivoted
+to building on the v15 base. Six successive variants on the proposer-
+bonus axis have now regressed vs v15:
+
+| Variant | Knob | Weight | h2h vs v15 (n=32) |
+| --- | --- | --- | --- |
+| H17 DANGER3 (5/13) | pre-rank danger reweight | — | regressed |
+| H19 FLEET_OVERCOMMIT (5/13) | overcommit reweight | — | regressed |
+| H21 PRE_REINFORCE (5/13) | reinforce reweight | — | regressed |
+| v22_sun_on_v15 (5/17) | sun-safe pre-strip | binary | 43.8% |
+| v24_rotation_on_v23 | rotation_alignment bonus | 0.02×prod | 40.6% |
+| v25_chain_on_v23 | chain_bonus | 0.30×ECV | 43.8% |
+| v26_chainlite_on_v23 | chain_bonus | 0.10×ECV | pending |
+
+That is FAR past Rule 37's N=3 cap on consecutive falsifications in
+the same axis. The chooser pipeline (cheap_marginal_value → prerank
+→ adaptive validate cap → K-rollout) is a tight local optimum;
+ANY upstream score perturbation regresses because the validate budget
+gets a worse candidate set after prerank shuffles. The ONLY winning
+addition shape so far is POST-rollout model-correctness fixes
+(v23's predict_fleet_fate check after Δ > 0 gate; 50.0% h2h vs v15
++ verified bug fix).
+
+**Axis closed. Future work pivots to:**
+- Value-function axis (better leaf scorer for the K-rollout)
+- Rollout-depth axis (deeper K, JAX/numba acceleration)
+- Imitation-learning axis (warm-start from top-10 replays)
+- 4P-archetype axis (separate chooser branches per opp count / map class)
+- Post-rollout fixes only on v15/v23 chooser shape (v23-style)
+
+These are different axes; clean Rule 37 reset.
+
 ## Open — Geometry-conditional EDA (2026-05-14)
 
 > Five-mine EDA on 60 top-10 replays + (in-progress) ~500 self-play games.
