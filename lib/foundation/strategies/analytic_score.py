@@ -316,7 +316,8 @@ def enumerate_capped(
     ship_fractions: tuple[float, ...] = (0.5, 1.0),
     max_eta: int = 80,
     nearest_k_per_source: int = 8,
-) -> list[ActionSpec]:
+    return_targets: bool = False,
+):
     """Enumerate offensive + defensive atoms with cheap pre-ranking,
     return top-`max_n` overall.
 
@@ -336,8 +337,8 @@ def enumerate_capped(
 
     `max_n=None` or `max_n<=0` disables the cap (returns all atoms).
     """
-    out: list[tuple[ActionSpec, float]] = []
-    offensive_by_pair: dict[tuple[int, int], tuple[ActionSpec, float]] = {}
+    out: list[tuple[ActionSpec, float, int]] = []
+    offensive_by_pair: dict[tuple[int, int], tuple[ActionSpec, float, int]] = {}
 
     alive = np.asarray(state.planets_alive)
     ids = np.asarray(state.planets_id)
@@ -451,7 +452,7 @@ def enumerate_capped(
                 key = (src_id, tgt_id)
                 prev = offensive_by_pair.get(key)
                 if prev is None or score > prev[1]:
-                    offensive_by_pair[key] = (atom, score)
+                    offensive_by_pair[key] = (atom, score, tgt_id)
 
     out.extend(offensive_by_pair.values())
 
@@ -538,13 +539,18 @@ def enumerate_capped(
                     world_model, world_obj, my_id, state_step,
                     tgt_id, tgt_prod_i, fleet_ships, int(eta),
                 )
-                out.append((atom, score))
+                out.append((atom, score, tgt_id))
 
     # Top-N by cheap score (no cap when max_n is None or <= 0).
     if max_n is None or max_n <= 0 or len(out) <= max_n:
-        return [a for a, _s in out]
-    out.sort(key=lambda pair: pair[1], reverse=True)
-    return [a for a, _s in out[:max_n]]
+        if return_targets:
+            return [(a, t) for a, _s, t in out]
+        return [a for a, _s, _t in out]
+    out.sort(key=lambda triple: triple[1], reverse=True)
+    cut = out[:max_n]
+    if return_targets:
+        return [(a, t) for a, _s, t in cut]
+    return [a for a, _s, _t in cut]
 
 
 # ---------------------------------------------------------------------------

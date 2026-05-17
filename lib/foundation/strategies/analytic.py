@@ -49,11 +49,13 @@ from lib.foundation.memory_impls import (
     CompositeMemory,
     MissionMemory,
 )
+from lib.foundation.strategies.analytic_fastsim import (
+    score_and_select_via_fastsim,
+)
 from lib.foundation.strategies.analytic_score import (
     DEFAULT_ATOM_CAP,
     enumerate_capped,
 )
-from lib.foundation.strategies.beam_search import beam_search
 from lib.foundation.strategy import StrategyCtx, register_strategy
 from lib.game.jax.jax_types import GameState
 
@@ -90,7 +92,11 @@ class AnalyticStrategy:
         opp_aggressive: bool = True,
         enable_chainer: bool = True,
         atom_cap: int = DEFAULT_ATOM_CAP,
+        fastsim_top_n: int = 40,
     ) -> None:
+        # width/depth/budget_ms/opp_aggressive are now legacy beam knobs
+        # kept for API compatibility; the fast_sim scorer in
+        # `analytic_fastsim.py` replaced beam_search at session 2026-05-17.
         self._width = width
         self._depth = depth
         self._K = K
@@ -98,6 +104,11 @@ class AnalyticStrategy:
         self._opp_aggressive = opp_aggressive
         self._enable_chainer = enable_chainer
         self._atom_cap = atom_cap
+        # Top-N cut applied AFTER cheap-rank, BEFORE fast_sim. v8_scavenge
+        # uses 60; we start at 40 to leave budget headroom (fast_sim
+        # per-candidate cost is ~K*2 ms = ~16 ms at K=8, so N=40 ⇒
+        # ~640 ms + ~5 ms snap build + greedy merge ≈ 660 ms warm).
+        self._fastsim_top_n = fastsim_top_n
 
     def emit(
         self,
@@ -119,13 +130,12 @@ class AnalyticStrategy:
                 state, my_id,
                 world_model=ctx.world_model, raw_obs=ctx.raw_obs,
                 max_n=self._atom_cap,
+                return_targets=True,
             )
-            winning_set = beam_search(
-                state, atomics, my_id,
-                width=self._width, depth=self._depth, K=self._K,
-                num_agents=num_agents,
-                opp_aggressive=self._opp_aggressive,
-                budget_ms=effective_budget,
+            winning_set = score_and_select_via_fastsim(
+                ctx.raw_obs, atomics, my_id,
+                pre_committed=[],
+                K=self._K, max_n=self._fastsim_top_n,
             )
             return specs_to_tensor([winning_set], horizon=1), memory
 
@@ -157,20 +167,19 @@ class AnalyticStrategy:
         if not owned_sources or used_sources >= owned_sources:
             winning_set = list(pre_committed)
         else:
-            # 4. Run beam SEEDED with pre-commits.
+            # 4. Score atoms via fast_sim, greedy-merge non-dogpile.
             atomics = enumerate_capped(
                 state, my_id,
                 world_model=ctx.world_model, raw_obs=ctx.raw_obs,
                 max_n=self._atom_cap,
+                return_targets=True,
             )
-            atomics = [a for a in atomics if a.from_planet_id not in used_sources]
-            winning_set = beam_search(
-                state, atomics, my_id,
-                width=self._width, depth=self._depth, K=self._K,
-                num_agents=num_agents,
-                opp_aggressive=self._opp_aggressive,
-                budget_ms=effective_budget,
+            atomics = [(a, t) for (a, t) in atomics
+                       if a.from_planet_id not in used_sources]
+            winning_set = score_and_select_via_fastsim(
+                ctx.raw_obs, atomics, my_id,
                 pre_committed=pre_committed,
+                K=self._K, max_n=self._fastsim_top_n,
             )
 
         # 5. Mark fired waves.
