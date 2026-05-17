@@ -42,6 +42,7 @@ import numpy as np
 from lib.foundation.actions import ActionSpec
 from lib.foundation.strategies.analytic_score import (
     action_specs_to_candidate_arrays,
+    compute_nearest_style_opp_action,
     score_candidates_vmap_value_prod_jit,
 )
 from lib.game.jax.jax_types import GameState
@@ -92,6 +93,20 @@ def beam_search(
 
     t_start = time.perf_counter()
 
+    # Tier-1 mirror: compute opp's predicted nearest-style turn-0
+    # action once, broadcast it into every score_padded call. The
+    # K-step rollout was strict-idle before; this lets the value head
+    # see opp's first counter-attack wave, fixing the
+    # "value-head-blind-to-opp" half of the short-loss elimination
+    # pattern. Cost: ~1 ms (small Python loop over opp planets).
+    opp_id = 1 - my_id
+    opp_pids_np, opp_angles_np, opp_ships_np = compute_nearest_style_opp_action(
+        state, opp_id,
+    )
+    opp_pids = jnp.asarray(opp_pids_np)
+    opp_angles = jnp.asarray(opp_angles_np)
+    opp_ships = jnp.asarray(opp_ships_np)
+
     def _score_padded(candidate_sets: list[list[ActionSpec]]) -> np.ndarray:
         """Score `len(candidate_sets)` action sets via the JIT'd
         vmap kernel at fixed batch size. Pads or chunks as needed."""
@@ -108,6 +123,7 @@ def beam_search(
                 jnp.asarray(pids),
                 jnp.asarray(angles),
                 jnp.asarray(ships),
+                opp_pids, opp_angles, opp_ships,
                 K=K, my_id=my_id, num_agents=num_agents,
                 opp_aggressive=opp_aggressive,
             )

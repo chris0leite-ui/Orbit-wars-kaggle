@@ -83,7 +83,7 @@ class AnalyticStrategy:
     def __init__(
         self,
         *,
-        width: int = 3,
+        width: int = 4,
         depth: int = 2,
         K: int = 8,
         budget_ms: float = 800.0,

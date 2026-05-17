@@ -464,15 +464,27 @@ def enumerate_capped(
             if enemy_eta is None or enemy_eta > _K_THREAT_HORIZON:
                 continue
 
+            # Sum enemy ships over a multi-wave window. The prior
+            # `a_eta <= enemy_eta + 1` form only counted the FIRST wave,
+            # which under-sized reinforces against spammy opponents
+            # (nearest/v7_0) that send a launch every turn. A reinforce
+            # sized to neutralize wave #1 leaves the planet undefended
+            # against wave #2 a few turns later — diagnosed as the
+            # short-loss elimination pattern (~150-turn games vs
+            # nearest, friction.md 2026-05-17). Wider window with
+            # matching garrison projection: enemy stream summed over
+            # `[now, enemy_eta + _DEFENSIVE_WAVE_WINDOW]`, my garrison
+            # projected to the same end-point (linear prod growth).
+            window_end = int(enemy_eta) + _DEFENSIVE_WAVE_WINDOW
             arrivals = world_model.ledger.get(tgt_id) or []
             enemy_ships = sum(
                 int(a_ships) for (a_eta, a_owner, a_ships) in arrivals
-                if a_owner != my_id and a_eta <= enemy_eta + 1 and a_ships > 0
+                if a_owner != my_id and a_eta <= window_end and a_ships > 0
             )
             if enemy_ships <= 0:
                 continue
 
-            my_garrison_at_eta = int(ships[tgt_i]) + int(prod[tgt_i]) * int(enemy_eta)
+            my_garrison_at_eta = int(ships[tgt_i]) + int(prod[tgt_i]) * window_end
             shortfall = enemy_ships - my_garrison_at_eta + 1
             if shortfall <= 0:
                 continue
@@ -547,6 +559,12 @@ _K_THREAT_HORIZON = 25
 
 # A 1-ship "reinforce" can't survive combat resolution; matches v8_scavenge.
 _MIN_REINFORCE_SHIPS = 2
+
+# Defensive shortfall is summed over [now, enemy_eta + _DEFENSIVE_WAVE_WINDOW]
+# to cover follow-up waves from spammy opponents (nearest/v7_0 launch every
+# turn). 10 turns ≈ 2-3 waves at typical fleet speeds; tuned vs nearest
+# 2026-05-17 (short-loss elimination pattern fix).
+_DEFENSIVE_WAVE_WINDOW = 10
 
 
 def enumerate_defensive_reinforce(
@@ -680,11 +698,100 @@ def enumerate_defensive_reinforce(
 # ---------------------------------------------------------------------------
 
 
+def compute_nearest_style_opp_action(
+    state: GameState, opp_id: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Predict opp's turn-0 action as a `nearest`-style greedy launch.
+
+    For each opp-owned alive planet with ships > 1, target its nearest
+    non-opp-owned alive planet; send `target.ships + 1` (capped at
+    `src.ships - 1`) via orbit-aware `aim_orbiting`. Mirrors
+    `agents/simple/nearest.py:propose_intents` but writes the result
+    into the (MAX_LAUNCH_PER_AGENT,) action arrays consumed by
+    `jax_step`'s opp row.
+
+    Used as a Tier-1 mirror inside the K-step value-head rollout: the
+    strict-idle K-scan was blind to opp's turn-0 counter-attack, so any
+    action that defended "just enough" against currently-visible
+    threats looked fine — until opp's next-turn wave landed within the
+    K=8 window. Modeling one wave of opp launches closes that gap;
+    follow-on waves at turn 1..K-1 are still strict-idle (full per-
+    turn opp simulation inside vmap is the Phase B work).
+
+    Returns padded `(pids, angles, ships)` arrays of shape
+    `(MAX_LAUNCH_PER_AGENT,)`. Unused slots: pid=-1, angle=0, ships=0.
+    """
+    pids = -np.ones(MAX_LAUNCH_PER_AGENT, dtype=np.int32)
+    angles = np.zeros(MAX_LAUNCH_PER_AGENT, dtype=np.float32)
+    ships_out = np.zeros(MAX_LAUNCH_PER_AGENT, dtype=np.int32)
+
+    alive = np.asarray(state.planets_alive)
+    ids = np.asarray(state.planets_id)
+    owner = np.asarray(state.planets_owner)
+    ships_arr = np.asarray(state.planets_ships)
+    x = np.asarray(state.planets_x)
+    y = np.asarray(state.planets_y)
+    radius = np.asarray(state.planets_radius)
+    prod = np.asarray(state.planets_prod)
+    omega = float(state.angular_velocity)
+
+    P = len(alive)
+    opp_planets = [
+        i for i in range(P)
+        if bool(alive[i]) and int(owner[i]) == opp_id and int(ships_arr[i]) > 1
+    ]
+    non_opp_targets = [
+        i for i in range(P)
+        if bool(alive[i]) and int(ids[i]) >= 0 and int(owner[i]) != opp_id
+    ]
+    if not opp_planets or not non_opp_targets:
+        return pids, angles, ships_out
+
+    slot = 0
+    for src_i in opp_planets:
+        if slot >= MAX_LAUNCH_PER_AGENT:
+            break
+        # Nearest non-opp planet by Euclidean distance.
+        tgt_i = min(
+            non_opp_targets,
+            key=lambda t: (x[t] - x[src_i]) ** 2 + (y[t] - y[src_i]) ** 2,
+        )
+        src_ships = int(ships_arr[src_i])
+        tgt_ships = int(ships_arr[tgt_i])
+        # `nearest.py` sends `target.ships + 1`; we cap at src-1 so the
+        # source isn't emptied (matches realize's safety floor).
+        fleet_ships = max(1, min(tgt_ships + 1, src_ships - 1))
+        if fleet_ships < 1:
+            continue
+        tgt_tuple = (
+            int(ids[tgt_i]), int(owner[tgt_i]),
+            float(x[tgt_i]), float(y[tgt_i]),
+            float(radius[tgt_i]), tgt_ships, int(prod[tgt_i]),
+        )
+        aim = aim_orbiting(
+            (float(x[src_i]), float(y[src_i])), float(radius[src_i]),
+            tgt_tuple, float(radius[tgt_i]),
+            fleet_ships, omega,
+        )
+        if aim is None:
+            continue
+        aim_angle, _arrival, _eta = aim
+        pids[slot] = int(ids[src_i])
+        angles[slot] = float(aim_angle)
+        ships_out[slot] = fleet_ships
+        slot += 1
+
+    return pids, angles, ships_out
+
+
 def score_candidates_vmap_value_prod(
     state: GameState,
     my_pids_c: jnp.ndarray,
     my_angles_c: jnp.ndarray,
     my_ships_c: jnp.ndarray,
+    opp_pids: jnp.ndarray,
+    opp_angles: jnp.ndarray,
+    opp_ships: jnp.ndarray,
     K: int,
     my_id: int,
     num_agents: int = 2,
@@ -697,16 +804,17 @@ def score_candidates_vmap_value_prod(
       `my_pids_c, my_angles_c, my_ships_c` — shape `(C, MAX_LAUNCH_
         PER_AGENT)`. Our action for each candidate; sentinel `-1`
         marks no-launch slots.
-      `K` — rollout horizon in turns. Turn 0 applies my candidate
-        action; turns 1..K-1 are strict-idle (both seats no-op). This
-        lets the value head observe enemy fleet arrivals at ETAs up
-        to K-1, which is required for defensive reinforce candidates
-        to win argmax over offensive captures (Piece B of the
-        v8_scavenge port).
+      `opp_pids, opp_angles, opp_ships` — shape `(MAX_LAUNCH_PER_AGENT,)`.
+        Opp's predicted turn-0 action (Tier-1 mirror). Same for every
+        candidate; broadcasts inside `score_one`. Pass zeros / -1s for
+        the strict-idle behaviour.
+      `K` — rollout horizon in turns. Turn 0 applies my candidate AND
+        opp's predicted action; turns 1..K-1 are strict-idle (both
+        seats no-op). Captures opp's first counter-attack wave so
+        "just enough" defenses don't fool the value head.
       `my_id` — our seat (0 or 1; 2P-only).
-      `opp_aggressive` — RESERVED. Strict-idle in the scan body; the
-        v8_scavenge wallclock budget tolerates this and a later
-        iteration can swap in a Tier-1 mirror policy.
+      `opp_aggressive` — RESERVED. The Tier-1 mirror now happens at
+        turn 0; turns 1..K-1 stay strict-idle.
 
     Returns shape `(C,)` float32 scores from
     `value_with_future_production` evaluated at the K-step leaf.
@@ -717,6 +825,7 @@ def score_candidates_vmap_value_prod(
             f"(got num_agents={num_agents}); 4P support follows the "
             f"Phase B opp-mirror generalisation."
         )
+    opp_id = 1 - my_id  # 2P-only
 
     def score_one(my_pids, my_angles, my_ships):
         pids_full = jnp.full(
@@ -731,8 +840,13 @@ def score_candidates_vmap_value_prod(
         pids_full = pids_full.at[my_id].set(my_pids)
         ang_full = ang_full.at[my_id].set(my_angles)
         sh_full = sh_full.at[my_id].set(my_ships)
+        # Tier-1 mirror: opp fires its predicted nearest-style action
+        # at turn 0 alongside ours. Strict-idle after.
+        pids_full = pids_full.at[opp_id].set(opp_pids)
+        ang_full = ang_full.at[opp_id].set(opp_angles)
+        sh_full = sh_full.at[opp_id].set(opp_ships)
 
-        # Turn 0: my candidate action via full jax_step.
+        # Turn 0: both seats' actions via full jax_step.
         s = jax_step(state, pids_full, ang_full, sh_full)
         # Turns 1..K-1: strict-idle, so threats inbound at ETA ≤ K-1
         # land and any planet flips become visible to the leaf head.
