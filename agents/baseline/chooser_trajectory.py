@@ -491,25 +491,21 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
 
     scored.sort(key=lambda c: -c[0])
 
-    # Step A — multi-launch ship-budget dedup. Drops the v1 "1 launch
-    # per source" rule; each source can emit multiple fleets until its
-    # ship budget falls below MIN_SOURCE_RESERVE. Tgt dedup stays
-    # (don't dogpile a single target).
-    src_budget: dict[int, int] = {}
-    for p in world.planets_by_id.values():
-        if int(p.owner) == me:
-            src_budget[int(p.id)] = max(0, int(p.ships) - MIN_SOURCE_RESERVE)
+    # Emit logic — match composite chooser (`agents/baseline/chooser.choose`)
+    # for parity. 1 launch per source per turn, 1 per target. v4 H/T
+    # showed multi-launch budget is NOT a free lift over composite_a2
+    # (~30pp gap remained even with composite leaf). Keeping the simpler
+    # match-the-baseline emit rule isolates the trajectory-side changes
+    # (admissibility filter, wait_N drop) from the emit-logic changes.
+    used_srcs: set[int] = set()
     used_tgts: set[int] = set()
     moves: list[list] = []
     for _score, src, tgt, ships, angle, wait_N in scored:
         sid, tid = int(src.id), int(tgt.id)
-        if src_budget.get(sid, 0) < int(ships):
-            continue  # source out of ships
-        if tid in used_tgts:
-            continue  # don't dogpile this target
-        src_budget[sid] -= int(ships)
+        if sid in used_srcs or tid in used_tgts:
+            continue
+        used_srcs.add(sid)
         used_tgts.add(tid)
         if int(wait_N) == 0:
             moves.append([sid, float(angle), int(ships)])
-        # wait_N > 0 already filtered above; this is a no-op safety.
     return moves
