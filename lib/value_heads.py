@@ -43,12 +43,7 @@ from typing import Any
 
 from lib.fast_sim import ship_totals
 from lib.intent import World
-from lib.world_model import (
-    DEFAULT_HORIZON,
-    WorldModel,
-    comet_remaining_lifetime,
-    fleet_target_planet,
-)
+from lib.world_model import DEFAULT_HORIZON, WorldModel, comet_remaining_lifetime, fleet_target_planet
 
 
 # Phase 2 audit established AUC ≈ oracle at K=50. K=10 + 30 extra of
