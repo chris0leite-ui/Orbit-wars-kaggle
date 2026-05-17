@@ -984,6 +984,7 @@ __all__ = [
     "PlanetView", "FleetView", "CometPathView", "Arrival", "LaunchSpec",
     "SunVerdict", "SunFilter",
     "CombatOutcome",
+    "Bundle", "BundleScore", "BundleEvaluator",
     "World",
 ]
 
@@ -1360,3 +1361,139 @@ def _simulate_timeline_with_combat_log(
 
     timeline = {"owner_at": owner_at, "ships_at": ships_at, "horizon": h}
     return timeline, combat_log
+
+
+# ---------------------------------------------------------------------------
+# PHASE 7b — Bundle + BundleEvaluator (trajectory-native value function)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Bundle:
+    """A planner's commitment: a sequence of launches across future
+    turns. The trajectory-native chooser composes Bundles and scores
+    the world trajectory each produces; the best-scoring bundle's
+    earliest launches get emitted as actions this turn.
+
+    Empty bundle == no-op (the agent does nothing this turn AND has
+    no future commitments). Apply via `Bundle.apply(world)` to get
+    the overlay World.
+    """
+    launches: tuple[LaunchSpec, ...] = ()
+
+    def apply(self, world: "World") -> "World":
+        """Return the World with all this bundle's launches overlaid."""
+        return world.with_candidates(self.launches)
+
+    @property
+    def is_empty(self) -> bool:
+        return len(self.launches) == 0
+
+    @property
+    def first_launch_turn(self) -> Optional[int]:
+        """Earliest launch_turn across the bundle's specs, or None if
+        the bundle is empty. Useful for "what action does this bundle
+        emit THIS turn?" — the launches at turn 0."""
+        if not self.launches:
+            return None
+        return min(s.launch_turn for s in self.launches)
+
+    def specs_at_turn(self, turn: int) -> tuple[LaunchSpec, ...]:
+        """All specs scheduled at the given launch_turn. The agent
+        loop calls `specs_at_turn(0)` each turn to get the actions to
+        emit; advances all other commitments forward by one turn."""
+        return tuple(s for s in self.launches if s.launch_turn == turn)
+
+
+@dataclass(frozen=True)
+class BundleScore:
+    """Decomposed bundle value, for diagnosis + tuning + ladder
+    calibration (each component is its own metric in the pre-
+    registration discipline).
+    """
+    # End-state deltas at horizon (us vs sum of others, alive planets only).
+    ship_delta: float
+    planet_delta: float
+    production_delta: float
+    # Number of opponents eliminated (started with planets, owns none at K).
+    eliminations: int
+    # Sum: the scalar the chooser optimises.
+    total: float
+
+
+@dataclass(frozen=True)
+class BundleEvaluator:
+    """Score a bundle by reading the trajectory layer's K-turn outcome.
+
+    The score is a weighted sum of (ship_delta, planet_delta,
+    production_delta, eliminations) at the horizon, measured AFTER
+    applying the bundle to the world. The default weights are hand-
+    tuned starting points; Step 3's learned value head replaces this
+    function with a trained network later.
+
+    `horizon` is the look-ahead in turns. Default 30 — long enough to
+    capture cross-board strikes (board-diagonal ETA at speed=1.66 is
+    ~85 steps, but most strategic launches are <30 turns), short
+    enough that opponent uncertainty doesn't dominate the score.
+    """
+    horizon: int = 30
+    planet_weight: float = 5.0
+    production_weight: float = 10.0
+    elimination_bonus: float = 200.0
+
+    def score(self, world: "World", bundle: Bundle,
+              *, my_id: Optional[int] = None,
+              ) -> BundleScore:
+        """Compute the bundle's value. `my_id` defaults to
+        `world.my_id` — pass an explicit value to score from a
+        different seat's perspective (e.g. an opponent-bundle search
+        used by the learned opp model)."""
+        if my_id is None:
+            my_id = world.my_id
+        overlay = bundle.apply(world)
+
+        ships_by_owner: dict[int, float] = defaultdict(float)
+        planets_by_owner: dict[int, int] = defaultdict(int)
+        prod_by_owner: dict[int, float] = defaultdict(float)
+        for p in overlay.planets:
+            if p.is_comet:
+                continue
+            owner, ships = overlay.ownership_at(p.id, self.horizon)
+            if owner != -1:
+                ships_by_owner[owner] += ships
+                planets_by_owner[owner] += 1
+                prod_by_owner[owner] += p.production
+
+        my_ships = ships_by_owner.get(my_id, 0.0)
+        my_planets = planets_by_owner.get(my_id, 0)
+        my_prod = prod_by_owner.get(my_id, 0.0)
+        other_ships = sum(v for k, v in ships_by_owner.items() if k != my_id)
+        other_planets = sum(v for k, v in planets_by_owner.items() if k != my_id)
+        other_prod = sum(v for k, v in prod_by_owner.items() if k != my_id)
+
+        ship_delta = my_ships - other_ships
+        planet_delta = float(my_planets - other_planets)
+        production_delta = my_prod - other_prod
+
+        # Count opponents who started with planets but have none at K.
+        initial_opp_owners: set[int] = set()
+        for p in world.planets:
+            if p.is_comet:
+                continue
+            if p.owner != -1 and p.owner != my_id:
+                initial_opp_owners.add(p.owner)
+        eliminations = sum(1 for o in initial_opp_owners
+                           if planets_by_owner.get(o, 0) == 0)
+
+        total = (ship_delta
+                 + self.planet_weight * planet_delta
+                 + self.production_weight * production_delta
+                 + self.elimination_bonus * eliminations)
+
+        return BundleScore(
+            ship_delta=ship_delta,
+            planet_delta=planet_delta,
+            production_delta=production_delta,
+            eliminations=eliminations,
+            total=total,
+        )
