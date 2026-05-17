@@ -52,6 +52,36 @@ proposer-time additions try to explicitly enforce.**
 rolling-last-2), dropping floor from 1115.5 to max(v22_live ≈ 1095,
 v20_live=1095.5).
 
+## 2026-05-17 continuation — v23 + v24/v25 ablations
+
+Built v23_sun_fate (v15 chooser + post-rollout predict_fleet_fate
+check). Rule 38 verified: v23 has 0 sun/oob across 1263 launches;
+v15 has 7 in 1269 (0.55% rate, 3 of 5 seeds). h2h n=32 = 50.0% INC.
+
+Built v24_rotation_on_v23 (v23 + rotation_alignment only). h2h vs v15
+n=32 = 40.6% — point estimate dropped 10pp from v23 base. Confirms
+the same pattern as v17/v18/v19/v22: ANY perturbation upstream of the
+K-rollout regresses, even tiny ones. The chooser pipeline is fragile
+to prerank ordering changes — they swap which candidates make the
+validate budget cap.
+
+Built v25_chain_on_v23 (v23 + chain_bonus only). Not A/B-tested
+(chain weight is 15× rotation; expected to regress more).
+
+**Live drift:** v15 = 1114.9 (was 1115.5), v20 = 1094.2 (was 1095.5).
+v15 still holds the floor.
+
+**Submission candidates ranked:**
+1. v23_sun_fate — 50.0% h2h vs v15 + Rule 38 bug fix. CLEANEST.
+2. v22_sun_on_v15 — 43.8% h2h vs v15. Strip-at-proposer approach
+   strips feints the rollout had priced. Worse than v23.
+3. v24 / v25 / v21 / v21a-d — all 40-46% h2h or untested. Skip.
+
+Architectural lesson (4th instance): the only winning addition shape
+is POST-rollout, model-correctness fixes that reject candidates the
+rollout itself can't see fail. Upstream score perturbations
+consistently regress the chooser's emit set.
+
 Bundle parity (corrected): the previous session's MISMATCH flag was
 timing-noise. Per-obs parity contract IS satisfied under
 ORBIT_WARS_PARITY_WALLCLOCK_MS=60000 (0/3 mismatches across seeds

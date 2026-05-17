@@ -319,3 +319,54 @@ Net assessment: low-risk, low-expected-gain (~1-3μ if Real, 0 if
 neutral). Worth submitting if PI wants to deploy the bug-fix during
 the comp. NOT worth submitting if optimizing for ladder rank in next
 24h.
+
+## v24/v25 — single-axis ablations ON TOP of v23
+
+PI directive: build one ablation on top of v23 to localise compound-
+component lift after sun-fix is in place. Built two siblings:
+- v24_rotation_on_v23: v23 + rotation_alignment bonus (0.02 × prod × align)
+- v25_chain_on_v23: v23 + chain_bonus (0.30 × follow-on ECV)
+
+### v24 result: rotation hurts
+
+**v24 vs v15 n=32 = 13/32 = 40.6% (Wlo=0.255, Whi=0.577) INCONCLUSIVE.**
+Point estimate dropped 10pp from v23's 50.0%. Within Wilson noise but
+clearly directional.
+
+Rule 38 still passes: v24 has 0 sun/oob in 990 launches; v15 has 6 in
+1047 (0.57% rate) on the same seeds. Bug-fix inheritance intact.
+
+The 10pp drop comes from rotation_alignment perturbing the prerank
+ordering. Even a tiny shift (max ~0.1 bonus on a prod-5 target with
+full alignment, vs typical cheap values of 0.05-2.0) is enough to
+swap which candidates make it past the adaptive validate cap, and
+the chooser ends up with a worse set.
+
+### v25 status: not run
+
+Chain bonus has 15× larger weight (0.30 vs 0.02). Given rotation's
+small perturbation already cost 10pp, chain almost certainly costs
+more. Skipping the A/B unless PI overrides.
+
+### Architectural conclusion (4th instance of this pattern)
+
+The chooser+rollout+leaf in v15/v20/v23 is a tight local optimum.
+Any score perturbation upstream of the rollout regresses:
+1. Leaf-asymmetric-compounding (v17/v18/v19, 5/16): explicit asymmetry
+   broke implicit calibration
+2. Pre-rank reweight on v7 (H17/H19/H21, 5/13): DANGER3 / FLEET_
+   OVERCOMMIT / PRE_REINFORCE all monotonically regressed
+3. Sun-safe pre-strip (v22, 5/17): stripped feints rollout had priced
+4. **Rotation bonus on v23 (v24, 5/17): ~10pp regression from tiny
+   prerank perturbation**
+
+The v23 architecture (post-rollout fate check, no upstream
+perturbation) is the only winning shape so far. It rejects only
+candidates the rollout AGREES look good (Δ > 0) but that the rollout's
+horizon couldn't see die in the sun. Pure model-correctness, zero
+prerank perturbation.
+
+### v23 stays as the cleanest submission candidate
+
+Bundle ready: submissions/v23_sun_fate.py (332 KB,
+sha256:ba1e3242024a154d). 50.0% h2h vs v15 + Rule 38 verified.
