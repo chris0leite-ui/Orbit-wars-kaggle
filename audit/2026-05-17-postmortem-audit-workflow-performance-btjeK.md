@@ -106,16 +106,29 @@ Both entries land in the same commit as this postmortem.
 Composite head + A2 is the wholesale architectural change the
 2026-05-17 fleet-efficiency negative-result session said was
 needed. First lift past the v9_scavenge ceiling (93.8% vs the
-team peak). Submission is BUNDLE-READY (286 KB, parity OK over
-712 turns, hybrid default baked in) but **NOT submitted** —
-Rule 1 holds; PI sign-off required.
+team peak). Submission **was pushed** late in the session:
 
-Outstanding before any live push:
-- Max turn-ms still 1196-1580 (over the 1000ms env cap on heavy
-  turns). Engine drops over-budget actions; doesn't kill agent.
-  Acceptable risk if PI signs off; or do the deeper WorldModel-
-  reuse refactor.
-- 4P FFA panel still running at session-end (started ~mid-session,
-  ~50% complete on focal=baseline-with-A2). Result will land in
+- Submission ID: **52744234** (`submissions/baseline.py`, 286 KB)
+- Submitted: 2026-05-17 13:57 UTC, status PENDING at session-end.
+- Rolling-last-2 now: composite_a2_hybrid (52744234) + v15 (52710995).
+  Push **evicted v20** (μ=1087.4 at submit-time).
+- Pre-submit hypotheses registered before the push at
+  `audit/2026-05-17-pre-submit-hypotheses-composite-a2-hybrid.md`
+  (6 hypotheses: H1 floor ≥1080, H2 match v15 ≥1108, H3 beat
+  v9_scavenge ≥1120, H4 2P-vs-v15 ≥0.50, H5 max-turn-ms-exceedance
+  <5%, H6 4P first-place ≥0.30).
+
+PI explicitly approved the submission (Rule 1). Single-shot push,
+no retries. Wait ≥ 6 h before reading μ (early-trueskill-mu-unreliable
+friction tag).
+
+Outstanding for the next session:
+- Max turn-ms 1196-1580 (over the 1000ms env cap on heavy turns).
+  Engine drops over-budget actions; doesn't kill agent. Pre-filed
+  improvement options at
+  `knowledge-base/concepts/worldmodel-reuse-options.md` (3 options,
+  Option D recommended at ~4-5 h).
+- 4P FFA panel was still running at session-end (focal=baseline
+  ~80% complete, focal=v15 not started). Result will land in
   `audit/tournaments/ffa-panel-<utc>.json` independent of this
-  session.
+  session. Cross-checks H6.

@@ -16,20 +16,23 @@ date: 2026-05-17
 deadline: 2026-06-23 23:59 UTC
 days_to_deadline: 37
 
-# Submitted agents — what they are and when they shipped.
-# For current μ, run `kaggle competitions submissions orbit-wars`.
-current_submitted_agent: v20_dogpile (5/16; chooser dogpile — per-target dedup removed on top of v15)
-last_kernel_push: 2026-05-16 21:57:08 UTC
-last_submission_id: 52721807
-last_submission_status: COMPLETE
-last_submission_file: submissions/v20.py
+# Most-recent submission (composite + A2 hybrid; pre-submit hypotheses
+# registered at audit/2026-05-17-pre-submit-hypotheses-composite-a2-hybrid.md).
+# Status is the only stable bit — query Kaggle for μ.
+last_submission_id: 52744234
+last_submission_status: PENDING
+last_submission_file: submissions/baseline.py
+last_submission_agent: composite_a2_hybrid_baseline
+last_kernel_push: 2026-05-17 13:57:01 UTC
+current_submitted_agent: composite_a2_hybrid_baseline (5/17 PM; composite head 2P + A2-favor 4P, dispatched via favor_hybrid)
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation; the
 # third push auto-evicts the previous oldest). Status is the only stable
 # bit — μ values drift, query Kaggle for them.
+# This push (52744234) evicts v20 (was μ=1087.4 at submit-time).
 rolling_last_2:
-  - {agent: v20_dogpile, sub_id: 52721807, submitted: 2026-05-16T21:57Z, status: COMPLETE}
-  - {agent: v15_banded,  sub_id: 52710995, submitted: 2026-05-16T13:43Z, status: COMPLETE, role: current_champion}
+  - {agent: composite_a2_hybrid_baseline, sub_id: 52744234, submitted: 2026-05-17T13:57Z, status: PENDING}
+  - {agent: v15_banded, sub_id: 52710995, submitted: 2026-05-16T13:43Z, status: COMPLETE, role: current_champion}
 
 # Team peak as of 2026-05-17: v15_banded (the multi-wait-grid + banded
 # (src, tgt, wait_band) dedup line). v15 source lives in git history at
@@ -44,13 +47,15 @@ team_peak_agent: v15_banded
 # 3-opponent panel (`fast.py eval --vs-panel`) + h2h vs the current
 # rolling agent (not just a fixed baseline) before any new push.
 
-submissions_used_today: 0     # 5/17 — refresh via Kaggle CLI
+submissions_used_today: 1     # 5/17 — composite+A2 hybrid (52744234)
+submissions_used_total: 30    # see ladder list below; refresh via Kaggle CLI
 plateau_days: 0
 saturation_count: 0
 
 # Live ladder — read from `kaggle competitions submissions orbit-wars`,
 # NOT from this file. Submission IDs are stable; scores are not.
 # Most recent ladder entries by submission id:
+#   52744234  baseline.py (composite+A2 hybrid) 2026-05-17 13:57 PENDING ← NEW
 #   52721807  v20.py            2026-05-16 21:57  COMPLETE
 #   52710995  v15.py            2026-05-16 13:43  COMPLETE  ← team peak
 #   52704189  v8_scavenge (v13) 2026-05-16 09:07  COMPLETE
