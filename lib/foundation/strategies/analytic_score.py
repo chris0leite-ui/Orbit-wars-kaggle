@@ -58,6 +58,7 @@ from lib.game.jax.jax_types import (
     MAX_LAUNCH_PER_AGENT,
 )
 from lib.intent import World
+from lib.scoring import pv_horizon
 from lib.world_model import WorldModel
 
 
@@ -241,20 +242,58 @@ def enumerate_atomic_launches(
     return out
 
 
-def _cheap_score_offensive(
-    prod_tgt: int, fleet_ships: int, tgt_ships: int, tgt_owner: int, my_id: int,
-) -> float:
-    """Cheap pre-rank score for an offensive atom. Used to top-N filter
-    before the JAX vmap'd value head burns time on every atom.
+_CAPTURE_WEIGHT = 0.05  # v8_scavenge `_cheap_marginal_value`
+_BOUNCE_WEIGHT = 0.5
+_CHEAP_GAMMA = 0.99
+_EPISODE_STEPS = 500
+_REINFORCE_THREAT_WINDOW = 30  # threat must land within (eta + 30) to matter
 
-    Capture value ≈ `prod[tgt]` (we gain this production) minus
-    `ship_cost` (we pay these ships) minus an `enemy_garrison` penalty
-    (combat eats our ships when the planet is hostile). Weights are
-    O(1) chosen so the top-64 cap matches v8_scavenge's N_VALIDATE=60
-    selection band — fine-tune via re-bench.
+
+def _cheap_score_atom(
+    world_model: WorldModel,
+    world: Optional[World],
+    my_id: int,
+    state_step: int,
+    tgt_id: int,
+    tgt_prod: int,
+    fleet_ships: int,
+    eta: int,
+) -> float:
+    """Ported from v8_scavenge `_cheap_marginal_value` (agents/v8_scavenge
+    /main.py:383 on branch claude/recover-main-foundations-MV0e2).
+
+    Predicts arrival-time state via `WorldModel.owner_at` / `ships_at`
+    (no-action baseline — does NOT apply this candidate's launch), then
+    splits into three cases. CAPTURE/REINFORCE credit production through
+    a γ=0.99 PV-discounted horizon so late-game atoms with little
+    remaining game time are correctly down-weighted. BOUNCE assigns a
+    waste penalty so high-prod-but-un-winnable targets don't crowd out
+    real captures in the top-N cut — the bug my prior naive formula had.
     """
-    enemy_garrison = float(tgt_ships) if (tgt_owner != -1 and tgt_owner != my_id) else 0.0
-    return float(prod_tgt) * 1.0 - 0.05 * float(fleet_ships) - 0.5 * enemy_garrison
+    pred_owner = world_model.owner_at(int(tgt_id), int(eta))
+    pred_ships_raw = world_model.ships_at(int(tgt_id), int(eta))
+    pred_ships = float(pred_ships_raw) if pred_ships_raw is not None else 0.0
+
+    if pred_owner == my_id:
+        # REINFORCE: credit prevention-of-loss only if a threat lands soon.
+        if world is None:
+            t_to_threat = world_model.incoming_enemy_eta(int(tgt_id), my_id)
+        else:
+            t_to_threat = world_model.time_to_enemy_threat(int(tgt_id), my_id, world)
+        if t_to_threat is None or t_to_threat > eta + _REINFORCE_THREAT_WINDOW:
+            return 0.0
+        pv = pv_horizon(int(state_step), int(t_to_threat),
+                        gamma=_CHEAP_GAMMA, t_total=_EPISODE_STEPS)
+        return _CAPTURE_WEIGHT * float(tgt_prod) * float(pv)
+
+    if float(fleet_ships) > pred_ships:
+        # CAPTURE: pv-discounted production stream from arrival to game end.
+        pv = pv_horizon(int(state_step), int(eta),
+                        gamma=_CHEAP_GAMMA, t_total=_EPISODE_STEPS)
+        return _CAPTURE_WEIGHT * float(tgt_prod) * float(pv)
+
+    # BOUNCE: waste penalty.
+    return -_BOUNCE_WEIGHT * float(fleet_ships)
 
 
 # Default top-N cap on the candidate pool flowing into the beam.
@@ -281,19 +320,24 @@ def enumerate_capped(
     """Enumerate offensive + defensive atoms with cheap pre-ranking,
     return top-`max_n` overall.
 
-    Single pass over (src, tgt) planet pairs — no second pass to
-    re-derive target info. Cheap score per atom:
-      - offensive: `_cheap_score_offensive(prod_tgt, fleet_ships, tgt_ships, tgt_owner, my_id)`
-      - defensive reinforce: `2.0 × prod_tgt + shortfall` (priority boost
-        so defensive atoms aren't crowded out by high-prod captures)
+    Cheap score per atom uses v8_scavenge's `_cheap_marginal_value`:
+      - CAPTURE: 0.05 × prod[tgt] × pv_horizon(now, eta, γ=0.99)
+      - BOUNCE:  −0.5 × fleet_ships
+      - REINFORCE (own + threatened): 0.05 × prod[tgt] × pv_horizon(now, threat_eta)
+      - REINFORCE (own + safe): 0
 
-    Wraps the legacy `enumerate_atomic_launches` + `enumerate_defensive_
-    reinforce` pair. The legacy functions are kept for test compatibility
-    but no longer called from the live strategy emit path.
+    Pipeline differences from v8_scavenge worth noting:
+      • Per-(src, tgt) dedup keeps only the best-scoring ship-fraction
+        per pair (offensive only — defensive sizes are mission-specific
+        so dedup is N/A).
+      • Own planets are EXCLUDED from offensive enumeration; reinforces
+        come exclusively from the defensive loop (which uses the
+        stricter `incoming_enemy_eta`). v8_scavenge does the same.
 
     `max_n=None` or `max_n<=0` disables the cap (returns all atoms).
     """
     out: list[tuple[ActionSpec, float]] = []
+    offensive_by_pair: dict[tuple[int, int], tuple[ActionSpec, float]] = {}
 
     alive = np.asarray(state.planets_alive)
     ids = np.asarray(state.planets_id)
@@ -310,9 +354,35 @@ def enumerate_capped(
         i for i in range(P)
         if bool(alive[i]) and int(owner[i]) == my_id and int(ships[i]) > 1
     ]
-    all_targets = [
-        i for i in range(P) if bool(alive[i]) and int(ids[i]) >= 0
+    # Offensive target pool: enemy + neutral planets only. v8_scavenge
+    # `agents/v8_scavenge/main.py:606-607` does the same — own planets
+    # are EXCLUDED from the offensive enumeration and only added back
+    # via the defensive enumerate path (which uses the stricter
+    # `incoming_enemy_eta`, i.e., in-flight fleets only). Including own
+    # planets here floods the cap with REINFORCE_threatened atoms
+    # because `time_to_enemy_threat` considers theoretical launches
+    # from any enemy garrison — virtually every own planet is
+    # "threatened" mid-game, so the cap fills with own-planet
+    # reinforces and crowds out real captures (diagnosed via
+    # /tmp/diagnose_cheap_rank.py 2026-05-17: 100 of 144 atoms at
+    # step=100 were REINFORCE_threatened, only 2 were captures).
+    offensive_targets = [
+        i for i in range(P)
+        if bool(alive[i]) and int(ids[i]) >= 0 and int(owner[i]) != my_id
     ]
+
+    # Build the WorldModel (predicts owner_at/ships_at at any ETA) and
+    # World (planet_by_id table for threat-from-launches) up front so
+    # the cheap-rank scorer can use them for every atom. v8_scavenge's
+    # `_cheap_marginal_value` (agents/v8_scavenge/main.py:383) does the
+    # same — predict the no-action baseline, then score the atom against
+    # it. Cost: ~0.1 ms per owner_at/ships_at call; ~5 ms world build.
+    world_obj: Optional[World] = None
+    if raw_obs is not None:
+        world_obj = World.from_obs(raw_obs)
+        if world_model is None:
+            world_model = WorldModel.from_world(world_obj)
+    state_step = int(state.step)
 
     # -- Offensive atoms (matches enumerate_atomic_launches semantics) --
     for src_i in my_planets:
@@ -321,7 +391,7 @@ def enumerate_capped(
         src_radius = float(radius[src_i])
         src_ships = int(ships[src_i])
 
-        candidates = [t for t in all_targets if t != src_i]
+        candidates = [t for t in offensive_targets if t != src_i]
         candidates.sort(
             key=lambda t: (x[t] - x[src_i]) ** 2 + (y[t] - y[src_i]) ** 2
         )
@@ -361,15 +431,31 @@ def enumerate_capped(
                     launch_turn=0,
                     agent_id=my_id,
                 )
-                score = _cheap_score_offensive(
-                    tgt_prod_i, fleet_ships, tgt_ships_i, tgt_owner_i, my_id,
-                )
-                out.append((atom, score))
+                if world_model is not None:
+                    score = _cheap_score_atom(
+                        world_model, world_obj, my_id, state_step,
+                        tgt_id, tgt_prod_i, fleet_ships, int(eta),
+                    )
+                else:
+                    # No world_model available (test path with neither
+                    # raw_obs nor world_model). Fall back to a flat
+                    # `prod - tiny_ship_cost` rank so the cap still
+                    # produces a deterministic order; live emit path
+                    # always has world_model.
+                    score = float(tgt_prod_i) - 0.05 * float(fleet_ships)
+                # Per-(src, tgt) dedup: keep only the best-scoring fraction.
+                # v8_scavenge `agents/v8_scavenge/main.py:692-704` does the
+                # same — both fractions compete, only the winner survives
+                # to the cap. Avoids 0.5/1.0 atoms with similar scores
+                # eating two slots in the top-N for the same pair.
+                key = (src_id, tgt_id)
+                prev = offensive_by_pair.get(key)
+                if prev is None or score > prev[1]:
+                    offensive_by_pair[key] = (atom, score)
+
+    out.extend(offensive_by_pair.values())
 
     # -- Defensive atoms (matches enumerate_defensive_reinforce semantics) --
-    if world_model is None and raw_obs is not None:
-        world_model = WorldModel.from_world(World.from_obs(raw_obs))
-
     if world_model is not None and len(my_planets) >= 2:
         my_planet_set = my_planets  # alias for clarity
         for tgt_i in my_planet_set:
@@ -428,10 +514,18 @@ def enumerate_capped(
                     launch_turn=0,
                     agent_id=my_id,
                 )
-                # Defensive priority: 2× prod weight + raw shortfall.
-                # Keeps own-planet retention atoms competitive with
-                # high-prod captures in the top-N cut.
-                score = 2.0 * float(tgt_prod_i) + float(shortfall)
+                # Reinforce atoms route through the same scorer as
+                # offensive atoms — at our arrival ETA the planet is
+                # still ours (defensive eta is gated ≤ enemy_eta), so
+                # `_cheap_score_atom` hits the REINFORCE branch and
+                # credits prevention-of-loss via pv_horizon(threat_eta).
+                # This puts captures and reinforces on the SAME scale
+                # (both use 0.05 × prod × pv), avoiding the over-
+                # priority bug of the prior `2.0×prod + shortfall` form.
+                score = _cheap_score_atom(
+                    world_model, world_obj, my_id, state_step,
+                    tgt_id, tgt_prod_i, fleet_ships, int(eta),
+                )
                 out.append((atom, score))
 
     # Top-N by cheap score (no cap when max_n is None or <= 0).
