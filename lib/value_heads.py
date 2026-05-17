@@ -44,6 +44,7 @@ from typing import Any
 from lib.fast_sim import ship_totals
 from lib.intent import World
 from lib.world_model import DEFAULT_HORIZON, WorldModel, comet_remaining_lifetime, fleet_target_planet
+from lib.game.interpreter import CENTER, SUN_RADIUS, point_to_segment_distance
 
 
 # Phase 2 audit established AUC ≈ oracle at K=50. K=10 + 30 extra of
@@ -222,6 +223,21 @@ def composite_capture_value(
     for f, ships, target, eta in fleet_targets:
         if target is None:
             # No planet on our trajectory — destined for OOB or sun.
+            delta -= waste_weight * ships
+            continue
+        # Sun-crossing gate: `fleet_target_planet` ray-casts to the first
+        # planet on the angle, ignoring the sun. If the fleet's chord
+        # (current pos → target pos) passes within SUN_RADIUS of the
+        # sun, the engine kills the fleet at the crossing tick
+        # (orbit_wars.py:607: `point_to_segment_distance((CENTER, CENTER),
+        # old_pos, new_pos) < SUN_RADIUS`). Without this gate, composite
+        # silently credits captures the fleet never gets to make. Origin:
+        # PI live observation 2026-05-17 PM ("large fleet into the sun").
+        fleet_pos = (float(f.x), float(f.y))
+        target_pos = (float(target.x), float(target.y))
+        if point_to_segment_distance(
+            (CENTER, CENTER), fleet_pos, target_pos,
+        ) < SUN_RADIUS:
             delta -= waste_weight * ships
             continue
         # Comet-lifetime gate: WorldModel's simulate_planet_timeline

@@ -127,14 +127,10 @@ def _obs_with_comet_target(path_len: int, path_index: int = 0):
     """Synthetic obs where our fleet is one tick from hitting a comet
     of known remaining-lifetime = path_len - path_index.
 
-    The comet sits at (50, 50). Our fleet is at (48, 50) moving +x at
-    angle 0. Our home planet at (10, 50) (so the fleet originated from
-    it). One enemy planet at (90, 50) so the world isn't trivially
-    empty. Fleet ships = 10 (low speed); comet has 0 garrison so we'll
-    "capture" on arrival.
-
-    `path_len` = total comet path length; `path_index` = where it is
-    now. `comet_remaining_lifetime` returns `path_len - path_index`.
+    Geometry: sun is at (50, 50) radius 10. Place comet at (15, 50)
+    (35 units from sun-center — well outside SUN_RADIUS, so the sun
+    gate doesn't false-positive on this trajectory). Our fleet is at
+    (13, 50) moving +x. Our home at (5, 50). Enemy at (90, 50).
     """
     comet_id = 99
     return {
@@ -145,18 +141,19 @@ def _obs_with_comet_target(path_len: int, path_index: int = 0):
         "initial_planets": [],
         # Planet tuple: (id, owner, x, y, radius, ships, production)
         "planets": [
-            (0, 0, 10.0, 50.0, 2.0, 50, 1),    # our home
-            (comet_id, -1, 50.0, 50.0, 1.0, 0, 2),  # comet target
-            (1, 1, 90.0, 50.0, 2.0, 50, 1),    # enemy
+            (0, 0, 5.0, 50.0, 2.0, 50, 1),     # our home
+            (comet_id, -1, 15.0, 50.0, 1.0, 0, 2),  # comet target
+            (1, 1, 90.0, 50.0, 2.0, 50, 1),    # enemy (far away)
         ],
         # Fleet tuple: (id, owner, x, y, angle, from_planet_id, ships)
-        "fleets": [(0, 0, 48.0, 50.0, 0.0, 0, 10)],
+        "fleets": [(0, 0, 13.0, 50.0, 0.0, 0, 10)],
         "comet_planet_ids": [comet_id],
         "comets": [{
             "planet_ids": [comet_id],
-            # Path stays put around (50, 50) — the test cares about
-            # lifetime, not the comet's motion.
-            "paths": [[[50.0, 50.0]] * path_len],
+            # Path stays put around (15, 50) — the test cares about
+            # lifetime, not the comet's motion. Path coords irrelevant
+            # for comet_remaining_lifetime which only reads len + idx.
+            "paths": [[[15.0, 50.0]] * path_len],
             "path_index": path_index,
         }],
     }
@@ -205,4 +202,66 @@ def test_composite_gate_distinguishes_short_vs_long_comet():
     assert short < long_, (
         f"short-life comet value ({short}) should be < long-life "
         f"({long_}) — gate must penalise the doomed launch"
+    )
+
+
+def test_composite_penalises_sun_crossing_trajectory():
+    """A fleet aimed at a planet behind the sun (chord passes within
+    SUN_RADIUS of (CENTER, CENTER)) is killed by the engine at the
+    crossing tick. composite must waste-penalise the launch.
+
+    Live observation 2026-05-17 PM (PI): 'we shot a large fleet into
+    the sun'. Without the gate composite credits the capture (or
+    skips via pred_owner==me) and never penalises the lost ships.
+    """
+    # Our home at (20, 50), target at (80, 50), straight chord
+    # passes through (50, 50) — the sun center. Gate must fire.
+    obs = {
+        "player": 0,
+        "step": 100,
+        "angular_velocity": 0.0,
+        "next_fleet_id": 1,
+        "initial_planets": [],
+        "planets": [
+            (0, 0, 20.0, 50.0, 2.0, 50, 1),
+            (1, 1, 80.0, 50.0, 2.0, 10, 1),   # target behind the sun
+        ],
+        "fleets": [(0, 0, 22.0, 50.0, 0.0, 0, 100)],  # 100 ships, heading +x
+        "comet_planet_ids": [],
+        "comets": [],
+    }
+    v = composite_capture_value(obs, my_id=0)
+    # Base ship-delta: us=50+100=150, them=10 → 140. With sun gate:
+    # 140 - 0.5 * 100 = 90. Without gate: 140 (capture credit skipped
+    # by pred_owner==me, no penalty fires).
+    assert v < 140.0, (
+        f"sun-crossing gate did not fire: v={v}, expected < base "
+        f"ship-delta (140) due to waste penalty"
+    )
+
+
+def test_composite_does_not_penalise_non_sun_crossing():
+    """Fleet chord runs along y=20 (well below the sun at y=50);
+    perp distance to sun = 30 > SUN_RADIUS. Gate must NOT fire."""
+    obs = {
+        "player": 0,
+        "step": 100,
+        "angular_velocity": 0.0,
+        "next_fleet_id": 1,
+        "initial_planets": [],
+        "planets": [
+            (0, 0, 20.0, 20.0, 2.0, 50, 1),    # our home
+            (1, 1, 80.0, 20.0, 2.0, 10, 1),    # target on the +x ray
+        ],
+        # Fleet at (22, 20) heading +x along y=20 (below the sun).
+        "fleets": [(0, 0, 22.0, 20.0, 0.0, 0, 100)],
+        "comet_planet_ids": [],
+        "comets": [],
+    }
+    v = composite_capture_value(obs, my_id=0)
+    # Base ship-delta: us=50+100=150, them=10 → 140. No sun gate, no
+    # comet gate; pred_owner==me skip in capture branch → no credit.
+    # composite returns base 140.
+    assert math.isclose(v, 140.0, abs_tol=1e-6), (
+        f"non-sun-crossing trajectory false-positive: v={v}"
     )
