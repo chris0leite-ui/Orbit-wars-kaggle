@@ -97,7 +97,19 @@ DEFAULT_LIB_ORDER = [
 SUBMISSIONS = REPO / "submissions"
 
 
-_INTRA_IMPORT_RE = re.compile(r"^\s*from (lib|\.)[\w.]*\s+import\b.*$")
+# Strip these intra-package import patterns from the bundle (the referenced
+# symbols are inlined into the concatenated file, so the import lines would
+# fail at runtime in Kaggle's flat-filesystem sandbox):
+#   - `from lib.X import Y`         (lib modules, the long-established case)
+#   - `from .X import Y`            (relative imports within an agent package)
+#   - `from agents.<name>.X import` (modular agent pattern; the agents/baseline
+#     split + 2026-05-17 friction `bundler-ships-with-wrong-default-env-var`
+#     plus a sibling-class bug — bundle ran locally because agents.<name> was
+#     importable from cwd, then ERRORED on the Kaggle ladder because Kaggle's
+#     sandbox doesn't have the `agents` package on its filesystem).
+_INTRA_IMPORT_RE = re.compile(
+    r"^\s*from (lib|\.|agents\.[\w]+)[\w.]*\s+import\b.*$"
+)
 # Captures the lib-relative module path so we can verify it's in the bundle
 # order list. Friction: `bundler-missing-block-e-modules`,
 # `new-lib-module-silently-broken-bundle`, `bundle-default-lib-order-stale-...`
@@ -329,11 +341,62 @@ def bundle(
         parts.append(f"\n# === inlined: lib/{mod}.py ===\n")
         parts.append(_clean_lib_source(src))
 
+    # Inline agent submodules (e.g. agents/baseline/{value,proposer,chooser}.py)
+    # before main.py. Modular agent pattern (2026-05-17): main.py imports symbols
+    # from sibling files; without inlining the bundle would NameError after the
+    # intra-package import lines are stripped. Topological order by
+    # `from agents.<name>.X import` references.
+    if agent_dir.is_dir():
+        agent_submodules = _topo_sort_agent_submodules(agent_dir)
+        for sub_name, sub_src in agent_submodules:
+            parts.append(f"\n# === inlined: agents/{name}/{sub_name}.py ===\n")
+            parts.append(_clean_agent_source(sub_src))
+
     parts.append("\n# === agent ===\n")
     parts.append(_clean_agent_source(agent_src))
 
     out_path.write_text("".join(parts))
     return out_path
+
+
+def _topo_sort_agent_submodules(agent_dir: Path) -> list[tuple[str, str]]:
+    """Discover and topologically order the agent's sibling .py modules.
+
+    Returns `[(name, source), ...]` ordered so that any module X appears
+    before any module Y that does `from agents.<pkg>.X import ...`. Skips
+    `main.py` (caller emits it last) and `__init__.py` (irrelevant after
+    inlining). Cycles → ValueError; in practice they indicate a layering bug.
+    """
+    pkg = agent_dir.name
+    submodules: dict[str, str] = {}
+    deps: dict[str, set[str]] = {}
+    dep_re = re.compile(rf"^\s*from\s+agents\.{re.escape(pkg)}\.([\w]+)\s+import\b")
+
+    for path in sorted(agent_dir.glob("*.py")):
+        if path.name in ("main.py", "__init__.py"):
+            continue
+        mod_name = path.stem
+        src = path.read_text()
+        submodules[mod_name] = src
+        deps[mod_name] = set()
+        for line in src.splitlines():
+            m = dep_re.match(line)
+            if m and m.group(1) in submodules or (m and m.group(1) != mod_name):
+                deps[mod_name].add(m.group(1)) if m else None
+
+    # Kahn's algorithm.
+    ordered: list[tuple[str, str]] = []
+    pending = {k: set(v) for k, v in deps.items()}
+    while pending:
+        ready = sorted(n for n, ds in pending.items() if not (ds & set(pending)))
+        if not ready:
+            raise ValueError(
+                f"cycle in agent submodule deps: {pending}"
+            )
+        for n in ready:
+            ordered.append((n, submodules[n]))
+            del pending[n]
+    return ordered
 
 
 def _bundle_hash(path: Path) -> str:
