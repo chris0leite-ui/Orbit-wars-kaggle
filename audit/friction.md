@@ -363,6 +363,17 @@ relevant skill file or source code, not back into friction.md.
 
 ## 2026-05-17 (claude/audit-workflow-performance-btjeK)
 
+- `tag: validate-cap-too-tight-cost-winrate-not-just-wallclock` —
+  trajectory chooser wallclock fix session: mirrored composite's
+  `affordable_validate_cap` blindly (N_VALIDATE=60 + min-with-n_aff
+  cap). When per_cand_ms probed high, n_aff floored to 8 — chooser
+  scored only 8 of ~200 candidates on heavy turns. Winrate dropped
+  from 42/64 (65.6%) to 37/64 (57.8%). **Fix:** N_VALIDATE=200 +
+  rely on `safe_deadline` pre-bail (already in the loop) for the
+  real budget. Cap becomes a safety ceiling; deadline is the binder.
+  Rule 40 applies: restriction-tuning (cap-the-cap) was the wrong
+  lever; the modeling fix is "let the real budget bind, don't pre-
+  estimate it conservatively."
 - `tag: kaggle-cli-401-in-followup-shells` — diagnostic
   session: bootstrap.sh exports `KAGGLE_API_TOKEN` inside
   its own shell only; every subsequent Bash tool call comes
