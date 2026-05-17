@@ -357,6 +357,174 @@ def test_search_delayed_launch_captures_strong_enemy():
     )
 
 
+# ---------------------------------------------------------------------------
+# Phase 7e — seed-and-extend (carry last turn's plan into this turn)
+# ---------------------------------------------------------------------------
+
+
+def test_search_honors_seed_when_no_improvement():
+    """Seed is the best plan available; the search must not return
+    something that scores below the seed. Pinned: the search's empty-
+    bundle restart shouldn't accidentally win when seed is in fact the
+    correct plan."""
+    world = _toy_world(
+        planets=[
+            [0, 0, 30.0, 85.0, 2.0, 50, 1],
+            [1, -1, 50.0, 85.0, 1.0, 3, 0],
+        ],
+        fleets=[],
+    )
+    seed_spec = LaunchSpec(src_id=0, aim_angle=0.0, ships=4, owner=0)
+    seed = Bundle(launches=(seed_spec,))
+    ev = BundleEvaluator(horizon=30)
+    seed_score = ev.score(world, seed, my_id=0).total
+    search = BundleSearch(evaluator=ev, max_depth=2)
+    bundle = search.search(world, my_id=0, seed_bundle=seed)
+    final_score = ev.score(world, bundle, my_id=0).total
+    assert final_score >= seed_score, (
+        f"final score {final_score} regressed below seed {seed_score}"
+    )
+
+
+def test_search_rejects_harmful_seed():
+    """A seed that wastes ships (launches into empty space with no
+    capturable target) scores below empty. The search must fall back
+    to empty (or a plan that scores at least as well as empty), NOT
+    return the seed."""
+    world = _toy_world(
+        planets=[
+            [0, 0, 30.0, 80.0, 2.0, 50, 1],
+            # No targets — the wasteful launch has nothing to hit.
+        ],
+        fleets=[],
+    )
+    wasteful = LaunchSpec(src_id=0, aim_angle=0.0, ships=20, owner=0)
+    seed = Bundle(launches=(wasteful,))
+    ev = BundleEvaluator(horizon=30)
+    seed_score = ev.score(world, seed, my_id=0).total
+    empty_score = ev.score(world, Bundle(), my_id=0).total
+    # Test setup invariant: seed IS worse than empty.
+    assert seed_score < empty_score, (
+        f"test setup invalid: seed_score={seed_score} not less than "
+        f"empty_score={empty_score}"
+    )
+    search = BundleSearch(evaluator=ev, max_depth=2)
+    bundle = search.search(world, my_id=0, seed_bundle=seed)
+    final_score = ev.score(world, bundle, my_id=0).total
+    assert final_score >= empty_score
+    assert wasteful not in bundle.launches
+
+
+def test_search_extends_seed_with_new_launch():
+    """Seed = one good capture. World has a second capturable target
+    reachable only from a DIFFERENT source (avoids the
+    same-ray-same-spec collapse: when two targets sit on the same
+    angle from a source, the search's LaunchSpec for each is
+    identical and both fleets hit the closer one). Two sources +
+    two on-axis targets gives the search a genuine 2-launch optimum."""
+    world = _toy_world(
+        planets=[
+            [0, 0, 30.0, 85.0, 2.0, 50, 1],   # source A (prod=1)
+            [1, 0, 70.0, 85.0, 2.0, 50, 1],   # source B (prod=1)
+            [2, -1, 40.0, 85.0, 1.0, 3, 0],   # T1, closer to A
+            [3, -1, 60.0, 85.0, 1.0, 3, 0],   # T2, closer to B
+        ],
+        fleets=[],
+    )
+    # Seed: A → T1 (angle 0, eastward).
+    seed_spec = LaunchSpec(src_id=0, aim_angle=0.0, ships=4, owner=0)
+    seed = Bundle(launches=(seed_spec,))
+    search = BundleSearch(max_depth=3, beam_width=4,
+                           candidates_per_source=3)
+    bundle = search.search(world, my_id=0, seed_bundle=seed)
+    assert len(bundle.launches) >= 2, (
+        f"search failed to extend seed: {bundle.launches}"
+    )
+    # The seed itself should survive (the second capture didn't
+    # replace the first; the +1 planet from extending dominates the
+    # ship cost).
+    assert seed_spec in bundle.launches
+
+
+def test_search_drops_seed_launch_to_save_ships():
+    """Drop semantics: seed has a launch that hurts the score (fleet
+    flies into empty space, ships lost). The search must DROP it.
+    Setup uses launch_turns=(0,) and a single capturable target so
+    the only reachable improvements are (a) drop the wasted launch,
+    (b) add a capture from the same source. Both improvements
+    require the drop to free the source's ships."""
+    world = _toy_world(
+        planets=[
+            [0, 0, 30.0, 80.0, 2.0, 10, 1],   # source w/ exactly 10 ships
+            [1, -1, 30.0, 90.0, 1.0, 3, 0],   # capturable upward
+        ],
+        fleets=[],
+    )
+    # Wasteful eastbound launch from source 0 — no planet in that
+    # direction. Uses 9 ships (keeping 1, the minimum), so without
+    # dropping it, no other useful launch from source 0 is possible.
+    wasteful = LaunchSpec(src_id=0, aim_angle=0.0, ships=9, owner=0,
+                           launch_turn=0)
+    seed = Bundle(launches=(wasteful,))
+    ev = BundleEvaluator(horizon=30)
+    seed_score = ev.score(world, seed, my_id=0).total
+    empty_score = ev.score(world, Bundle(), my_id=0).total
+    # Test setup invariant: seed wastes ships (worse than empty).
+    assert seed_score < empty_score
+    search = BundleSearch(evaluator=ev, max_depth=2)
+    bundle = search.search(world, my_id=0, seed_bundle=seed)
+    # Drop required: wasteful launch must not be in the final bundle.
+    assert wasteful not in bundle.launches, (
+        f"search did not drop the wasteful seed launch: "
+        f"{bundle.launches}"
+    )
+    # Final must score at least as well as empty.
+    final_score = ev.score(world, bundle, my_id=0).total
+    assert final_score >= empty_score
+
+
+def test_search_swaps_seed_launch_via_drop_then_add():
+    """Multi-launch swap via drop+add: seed = (good_capture,
+    wasteful). The search should keep `good_capture` and replace
+    `wasteful` with a useful add — i.e. the final bundle contains
+    `good_capture` but NOT `wasteful`. This is the case that pure-
+    add search can't reach: `good_capture` would have to be re-
+    discovered as a singleton via the empty-restart path AND beat
+    out other partial extensions to survive beam pruning. The drop
+    path goes directly: seed → drop wasteful → (good_capture,) →
+    add new useful capture."""
+    world = _toy_world(
+        planets=[
+            [0, 0, 30.0, 80.0, 2.0, 50, 1],   # source A
+            [1, 0, 70.0, 80.0, 2.0, 50, 1],   # source B
+            [2, -1, 50.0, 80.0, 1.0, 3, 0],   # capturable centre target
+            [3, -1, 60.0, 90.0, 1.0, 3, 0],   # second capturable
+        ],
+        fleets=[],
+    )
+    # `good_capture`: source A captures planet 2.
+    good_capture = LaunchSpec(src_id=0, aim_angle=0.0, ships=4, owner=0)
+    # `wasteful`: source B fires east (away from all targets).
+    wasteful = LaunchSpec(src_id=1, aim_angle=0.0, ships=30, owner=0)
+    seed = Bundle(launches=(good_capture, wasteful))
+    search = BundleSearch(max_depth=3, beam_width=4,
+                           candidates_per_source=3)
+    bundle = search.search(world, my_id=0, seed_bundle=seed)
+    # Wasteful must be dropped.
+    assert wasteful not in bundle.launches, (
+        f"wasteful seed launch survived: {bundle.launches}"
+    )
+    # Some useful action must have been emitted from source 0 or 1.
+    assert len(bundle.launches) >= 1
+    ev = BundleEvaluator(horizon=30)
+    seed_score = ev.score(world, seed, my_id=0).total
+    final_score = ev.score(world, bundle, my_id=0).total
+    assert final_score > seed_score, (
+        f"final score {final_score} not strictly better than seed "
+        f"{seed_score}"
+    )
+
+
 def test_search_coordinated_arrival_from_far_planet():
     """Idle FAR source + close source: coordinated bundle has a
     near-source launch at t=0 AND a far-source launch at t=K so

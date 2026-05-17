@@ -1404,6 +1404,28 @@ class Bundle:
         emit; advances all other commitments forward by one turn."""
         return tuple(s for s in self.launches if s.launch_turn == turn)
 
+    def shift_forward(self, steps: int) -> "Bundle":
+        """Advance every launch's `launch_turn` by `-steps`. Specs
+        whose `launch_turn` would become negative are DROPPED (those
+        already fired in prior turns and persist in the env, not in
+        the bundle).
+
+        Per-turn agent loop usage: at the end of turn T, store the
+        chosen bundle; at the start of turn T+1, call
+        `stored.shift_forward(1)` to get the carry-over plan to pass
+        as `seed_bundle` to BundleSearch.
+        """
+        if steps < 0:
+            raise ValueError(f"steps must be >= 0 (got {steps})")
+        if steps == 0:
+            return self
+        kept = tuple(
+            replace(s, launch_turn=s.launch_turn - steps)
+            for s in self.launches
+            if s.launch_turn - steps >= 0
+        )
+        return Bundle(launches=kept)
+
 
 @dataclass(frozen=True)
 class BundleScore:
@@ -1537,6 +1559,20 @@ class BundleSearch:
     spec that arrives coordinated with a closer source's
     `launch_turn=0` arrival.
 
+    Phase 7e adds seed-and-extend semantics. `search(...,
+    seed_bundle=...)` lets the caller carry a previously-chosen
+    plan forward across turns: the agent loop stores last turn's
+    bundle, calls `.shift_forward(1)` to advance it by one game
+    step, and passes the result as `seed_bundle`. The search seeds
+    its frontier with BOTH the empty bundle AND the seed, then
+    explores TWO neighbor kinds per iteration:
+      - ADDS: bundle + new candidate spec (Phase 7c behaviour).
+      - DROPS: bundle - one existing launch (lets the search retract
+        a seed launch that no longer fits — e.g. its target was
+        captured by an ally, or the source got attacked).
+    Swap-a-seed-launch (replace target / ship count of one seed
+    launch) emerges as drop-then-add over two iterations.
+
     Knobs:
     - `max_depth`: max bundle size. Each iteration extends the beam,
       so search cost is O(max_depth · beam_width · candidates ·
@@ -1563,6 +1599,7 @@ class BundleSearch:
 
     def search(self, world: "World",
                *, my_id: Optional[int] = None,
+               seed_bundle: Optional[Bundle] = None,
                ) -> Bundle:
         """Return the highest-scoring Bundle for this turn.
 
@@ -1570,6 +1607,15 @@ class BundleSearch:
         on the result gives the launches to emit as this turn's
         action; future-turn specs persist in the agent's memory
         across turns (Phase 7d).
+
+        `seed_bundle` (Phase 7e): last turn's plan, typically passed
+        in already time-shifted via `Bundle.shift_forward(1)`. The
+        frontier is seeded with BOTH the empty bundle AND the seed,
+        then per-iteration neighbors include both adds AND drops.
+        Drops let the search retract a seed launch that no longer
+        fits; the empty-bundle floor guarantees the search never
+        returns something worse than no-op. `None` (default) restores
+        Phase 7c/d behaviour exactly.
         """
         if my_id is None:
             my_id = world.my_id
@@ -1581,15 +1627,43 @@ class BundleSearch:
 
         # Beam frontier: list of (score, bundle). Start with just empty.
         frontier: list[tuple[float, Bundle]] = [(empty_score, empty)]
+        # Dedup across iterations: each launches-tuple scored at most
+        # once. Bundles share equality via their frozen LaunchSpec
+        # tuple. Initialised with empty so drops-to-empty are skipped
+        # (re-scoring empty as an "extension" would burn a beam slot).
+        seen: set[tuple[LaunchSpec, ...]] = {empty.launches}
+
+        if seed_bundle is not None and not seed_bundle.is_empty:
+            try:
+                seed_score = self.evaluator.score(
+                    world, seed_bundle, my_id=my_id,
+                ).total
+            except ValueError:
+                # Seed is infeasible against current world (e.g. a
+                # source got captured between turns). Treat as if no
+                # seed was passed.
+                seed_score = None
+            if seed_score is not None:
+                frontier.append((seed_score, seed_bundle))
+                seen.add(seed_bundle.launches)
+                if seed_score > best_score:
+                    best_score = seed_score
+                    best_bundle = seed_bundle
 
         for _ in range(self.max_depth):
             extensions: list[tuple[float, Bundle]] = []
             for _, bundle in frontier:
                 current = bundle.apply(world)
                 sun = SunFilter(current, safety_margin=self.sun_safety)
+
+                # ADD neighbours: bundle + new candidate.
                 for spec in self._enumerate_candidates(current, my_id, sun):
+                    new_launches = bundle.launches + (spec,)
+                    if new_launches in seen:
+                        continue
+                    seen.add(new_launches)
                     try:
-                        extended = Bundle(bundle.launches + (spec,))
+                        extended = Bundle(new_launches)
                         s = self.evaluator.score(world, extended,
                                                    my_id=my_id).total
                     except ValueError:
@@ -1598,6 +1672,31 @@ class BundleSearch:
                     if s > best_score:
                         best_score = s
                         best_bundle = extended
+
+                # DROP neighbours: bundle - one existing launch.
+                # No-op when `bundle` is empty (range(0)). For
+                # singletons, the drop lands on empty which is in
+                # `seen` — skipped without scoring. For larger
+                # bundles the drop yields a genuinely new partial
+                # plan. Drops are how the search retracts a seed
+                # launch that no longer fits + how swap emerges
+                # (drop-then-add over two iterations).
+                for i in range(len(bundle.launches)):
+                    new_launches = (bundle.launches[:i]
+                                    + bundle.launches[i + 1:])
+                    if new_launches in seen:
+                        continue
+                    seen.add(new_launches)
+                    try:
+                        dropped = Bundle(new_launches)
+                        s = self.evaluator.score(world, dropped,
+                                                   my_id=my_id).total
+                    except ValueError:
+                        continue
+                    extensions.append((s, dropped))
+                    if s > best_score:
+                        best_score = s
+                        best_bundle = dropped
 
             if not extensions:
                 break

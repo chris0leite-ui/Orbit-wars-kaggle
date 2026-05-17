@@ -76,6 +76,57 @@ def test_bundle_specs_at_turn_partitions():
     assert b.specs_at_turn(3) == ()
 
 
+def test_bundle_shift_forward_advances_future_launches():
+    """`shift_forward(steps)` subtracts `steps` from every launch_turn.
+    Specs that remain at launch_turn >= 0 survive in the shifted
+    bundle; their other fields are unchanged."""
+    s0 = LaunchSpec(src_id=1, aim_angle=0.0, ships=5, owner=0,
+                     launch_turn=3)
+    s1 = LaunchSpec(src_id=2, aim_angle=1.0, ships=7, owner=0,
+                     launch_turn=10)
+    b = Bundle(launches=(s0, s1)).shift_forward(2)
+    assert len(b.launches) == 2
+    assert b.launches[0].launch_turn == 1
+    assert b.launches[1].launch_turn == 8
+    # Non-launch_turn fields preserved.
+    assert b.launches[0].src_id == 1 and b.launches[0].ships == 5
+    assert b.launches[1].src_id == 2 and b.launches[1].ships == 7
+
+
+def test_bundle_shift_forward_drops_past():
+    """Specs whose post-shift launch_turn is negative are DROPPED —
+    those launches already fired in prior turns."""
+    already_fired = LaunchSpec(src_id=1, aim_angle=0.0, ships=5, owner=0,
+                                launch_turn=0)
+    boundary = LaunchSpec(src_id=2, aim_angle=0.0, ships=5, owner=0,
+                           launch_turn=1)
+    future = LaunchSpec(src_id=3, aim_angle=0.0, ships=5, owner=0,
+                        launch_turn=5)
+    b = Bundle(launches=(already_fired, boundary, future)).shift_forward(1)
+    # already_fired (turn=0) → -1, dropped.
+    # boundary (turn=1) → 0, kept (fires this turn).
+    # future (turn=5) → 4, kept.
+    assert len(b.launches) == 2
+    assert b.launches[0].src_id == 2 and b.launches[0].launch_turn == 0
+    assert b.launches[1].src_id == 3 and b.launches[1].launch_turn == 4
+
+
+def test_bundle_shift_forward_zero_is_identity():
+    """`shift_forward(0)` returns an equivalent bundle."""
+    s = LaunchSpec(src_id=1, aim_angle=0.0, ships=5, owner=0,
+                    launch_turn=3)
+    b = Bundle(launches=(s,))
+    shifted = b.shift_forward(0)
+    assert shifted.launches == b.launches
+
+
+def test_bundle_shift_forward_negative_raises():
+    """Negative shifts are not a sensible game-loop operation."""
+    b = Bundle()
+    with pytest.raises(ValueError):
+        b.shift_forward(-1)
+
+
 def test_bundle_apply_returns_overlay():
     """`Bundle.apply(world)` is equivalent to
     `world.with_candidates(specs)`."""
