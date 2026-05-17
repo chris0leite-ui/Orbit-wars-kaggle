@@ -267,6 +267,51 @@ fix forward AND add a test.
   instead of `perf_counter()` for the probe — CPU-load independent.
   Concept doc: `knowledge-base/concepts/wallclock-budget-noise-floor.md`.
 
+## 2026-05-17 (claude/fleet-strategy-optimization-fsu0t — v23-v26 chooser line)
+
+- `tag: peer-branch-divergence-not-caught-at-session-start` — built
+  v23/v24/v25/v26 chooser-tuning line in parallel with
+  `claude/kaggle-baseline-strategy-lO4mm`'s clean modular re-baseline
+  + A2 2P-uniform-bias experiment. Discovered the parallel work only
+  at session end via PI prompt. Both branches independently converged
+  on "single-knob additions to v15 are noise-band-locked" (mine across
+  4 axes at n=32; theirs at n=64 on one axis with 39.1%). Cost: ~3-4 h
+  duplicate exploration. Root cause: Rule 32 session-start fetch only
+  pulls `origin/main`, not peer `claude/*` branches. **Fix:** extend
+  Rule 32 to `git fetch origin '+refs/heads/claude/*:refs/remotes/origin/claude/*'`
+  and grep peer branches' `HANDOVER.md` for active work before
+  launching new probes; surface conflicts to PI before compute.
+- `tag: rule-27a-not-pulled-from-peer-branch` — peer branch codified
+  Rule 27a (h2h-vs-rolling-champion at n=64 with Wilson-lower>0.50 as
+  FIRST submission gate) but my branch's CLAUDE.md never adopted it.
+  Was about to submit v23 on 50.0% n=32 h2h (Wlo=0.336, fails 27a)
+  before PI override. **Fix:** session-start rule-set diff —
+  `diff <(git show origin/claude/<peer>:CLAUDE.md) CLAUDE.md` for any
+  active peer branch; flag rule-count deltas to PI before first probe.
+- `tag: premature-axis-closure-on-n32-noise` — commit 2ffeb7d
+  declared "proposer-bonus axis CLOSED per Rule 37 (6 falsifications)"
+  then commit 14f03d0 (3 h later) reopened it after v26 produced
+  65.6% n=32 directional-positive. Both decisions were single-run
+  n=32 — the wallclock-noise concept doc later showed these have
+  ~22pp swing across runs on identical inputs. **Fix:** before
+  invoking Rule 37 axis-closure on time-budgeted agents, require
+  n=64+ on at least one falsification anchor, OR two independent
+  runs at n=32 with same direction.
+- `tag: v23-v26-no-audit-files-created` — 4 agent variants built,
+  A/B'd, bundled, and committed today with zero `audit/2026-05-17-<topic>.md`
+  files. Findings live only in commit messages + state/current.md
+  YAML comments. Future sessions will grep commits to reconstruct.
+  **Fix:** WRAPUP step 4 to enforce — any agent variant whose bundle
+  is shipped must have a same-session `audit/<date>-<variant>-results.md`
+  (even one-line PASS/INCONCLUSIVE/FAIL with the n + Wilson bracket).
+- `tag: rule-18-leaf-not-claimed-this-session` — ran 4 compute-heavy
+  A/B probes today (v23/v24/v25/v26, each ~15-30 min) without claiming
+  any ISSUES.md leaf per Rule 18. No leaf exists for "v15 chooser
+  single-knob ablation line" either. **Fix:** session-start checklist
+  item: claim or create an ISSUES.md leaf before first ≥10-min probe;
+  WRAPUP step 3b currently assumes leaves exist — should also flag
+  unclaimed compute.
+
 ## How to add an entry
 
 ```
