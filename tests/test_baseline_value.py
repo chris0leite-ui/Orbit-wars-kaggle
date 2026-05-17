@@ -317,3 +317,27 @@ def test_positional_ship_value_counts_in_flight_fleets():
     )
     v = _positional_ship_value(obs, me=0)
     assert v > 0.0
+
+
+def test_favor_hybrid_spatial_skips_spatial_in_4p():
+    """num_seats > 2 short-circuits spatial term → result == favor_hybrid.
+
+    Reason: bv33jlzwj 4P A/B showed spatial regresses 4P (3/32 first-place,
+    9.4%, max wallclock 1503ms). Restricting spatial to 2P preserves
+    the validated A2-favor-in-4P path.
+    """
+    import agents.baseline.value as bv
+    obs_4p = _obs([
+        (0, 0, 10, 10, 1.0, 50, 1),
+        (1, 1, 90, 10, 1.0, 50, 1),
+        (2, 2, 10, 90, 1.0, 50, 1),
+        (3, 3, 90, 90, 1.0, 50, 1),
+    ])
+    old_weight = bv.SPATIAL_WEIGHT
+    try:
+        bv.SPATIAL_WEIGHT = 5.0  # large weight - should still skip in 4P
+        s = bv.favor_hybrid_spatial(obs_4p, me=0, num_seats=4, gamma=0.99)
+        h = bv.favor_hybrid(obs_4p, me=0, num_seats=4, gamma=0.99)
+        assert s == h, f"4P spatial should equal hybrid; s={s} h={h}"
+    finally:
+        bv.SPATIAL_WEIGHT = old_weight

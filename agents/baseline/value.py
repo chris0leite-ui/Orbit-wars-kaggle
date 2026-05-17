@@ -176,14 +176,20 @@ def _positional_ship_value(obs, me: int) -> float:
 
 def favor_hybrid_spatial(obs, me: int, num_seats: int = 2,
                          gamma: float = DEFAULT_GAMMA) -> float:
-    """favor_hybrid + positional pull toward non-our planets.
+    """favor_hybrid + positional pull toward non-our planets (2P only).
 
     Layered on top of the validated hybrid head (composite in 2P,
-    A2-favor in 4P). The spatial term is purely additive — when
-    SPATIAL_WEIGHT=0 it equals favor_hybrid exactly.
+    A2-favor in 4P). The spatial term is applied ONLY in 2P games —
+    in 4P, the A2 weakness-exploitation already biases toward the
+    weakest opp's positions, and the bv33jlzwj A/B (3/32 first-place,
+    max=1503ms) showed spatial regresses 4P substantially. 2P-only
+    keeps the validated A2-4P path identical to favor_hybrid.
+
+    The spatial term is purely additive — when SPATIAL_WEIGHT=0 or
+    num_seats > 2 it equals favor_hybrid exactly.
     """
     base = favor_hybrid(obs, me, num_seats, gamma)
-    if SPATIAL_WEIGHT == 0.0:
+    if SPATIAL_WEIGHT == 0.0 or num_seats > 2:
         return base
     return base + SPATIAL_WEIGHT * _positional_ship_value(obs, me)
 
