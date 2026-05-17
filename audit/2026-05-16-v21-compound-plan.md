@@ -250,3 +250,72 @@ below v15's 1115.5. Pushing v22 evicts v15 (older in rolling-last-2),
 dropping floor from 1115.5 to max(v22_live, v20_live=1095.5).
 
 Wait for v15 to drift / hold the floor for further iteration.
+
+## 2026-05-17 follow-up — v23_sun_fate (post-rollout fate check)
+
+PI feedback on the v22 result: "that does not make sense" — challenged
+the "drained source = positive Δ" mechanism. Confirmed: that argument
+was wrong (combat math: launching ships before opp captures source
+makes things STRICTLY worse, opp ends up with more surplus). 14/32 is
+within Wilson noise of 50%, not statistically a regression.
+
+PI's real concern: the chooser IS emitting sun-bound fleets in actual
+play (~0.35% rate observed). That's a real bug regardless of whether
+the local A/B shows lift.
+
+Diagnosed mechanism: K-rollout horizon ≤ MAX_HORIZON=40. Slow fleets
+aimed across the board have eta to sun > 40. The rollout terminates
+BEFORE the fleet dies. At the leaf, the ships are still "alive" and
+count in `my_ships` → favor → Δ. Chooser emits. Live, the fleet dies
+a few turns later. The rollout is mis-pricing long-eta sun-bound
+candidates.
+
+Built v23_sun_fate (PI-recommended path: post-rollout fate check):
+v15 chooser, leaf scorer, dogpile emit — all unchanged. ONLY change:
+after `if delta > 0`, also call `lib.trajectory.predict_fleet_fate`.
+Reject if outcome ∈ {"sun", "oob"}. predict_fleet_fate uses 200-step
+ray-cast vs the rollout's ≤40, so it catches long-eta deaths the
+rollout couldn't see.
+
+This is more principled than v22 because:
+- v22 strips at proposer → removes candidates BEFORE rollout has
+  validated them. Redundant for short-eta sun (rollout catches it),
+  pollutes validate pool with weaker alternatives.
+- v23 rejects only AFTER the rollout agrees the candidate looks good
+  (Δ > 0). So we preserve all of v15's correct decisions, and only
+  reject the small set where the rollout's horizon was insufficient.
+
+### v23 results
+
+**Rule 38 verified (n=5 outcome histogram vs v15):**
+- v23: 1263 launches, 0 sun, 0 oob (0.00% wasted)
+- v15: 1269 launches, 5 sun + 2 oob (0.55% wasted)
+- 3 of 5 seeds had v15 emit sun-bound fleets. Bug is real and recurrent.
+
+**Local h2h: v23 vs v15 n=32 = 16/32 = 50.0%, Wlo=0.336, Whi=0.664
+INCONCLUSIVE.** Clean parity in point estimate (vs v22's 43.8%
+under-parity drift). Tier-2 (n=64) attempt was killed by 1500s
+wall-time cap during execution; n=32 result stands.
+
+Bench: v23 adds ~10-20ms per turn for the post-rollout
+predict_fleet_fate calls (run on top ~10 Δ-positive candidates).
+Well within wallclock budget.
+
+Bundle: submissions/v23_sun_fate.py (332 KB, sha256:ba1e3242024a154d).
+
+### Submission decision matrix
+
+|  | Probability | Live μ impact |
+|---|---|---|
+| v23 ≡ v15 (sun-fix never fires) | ~30% | floor = 1115.5 |
+| v23 marginally beats v15 (~+1-3pp) | ~40% | floor = 1115.5 to 1125 |
+| v23 within noise (±σ ≈ ±7) | ~25% | floor = 1108 to 1122 |
+| v23 worse (rollout was correct, our reject mis-fires) | ~5% | floor = 1100-1115 |
+
+Trades v15's settled σ-tight 1115.5 for v23's fresh σ~15 noise.
+Immediate Score (μ−κσ) drops ~50 points for 24h while σ settles.
+
+Net assessment: low-risk, low-expected-gain (~1-3μ if Real, 0 if
+neutral). Worth submitting if PI wants to deploy the bug-fix during
+the comp. NOT worth submitting if optimizing for ladder rank in next
+24h.
