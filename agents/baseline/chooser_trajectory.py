@@ -148,6 +148,16 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
 
     scored: list[tuple] = []
     for cheap_delta, src, tgt, ships, angle, eta_hint, _, wait_N in prerank:
+        # First-cut: only fire-now candidates. wait_N>0 candidates
+        # reserve src+tgt without emitting; since we typically have
+        # 1-3 source planets, a single wait_N>0 reservation blocks
+        # every other launch from that source. The K-step chooser
+        # could justify a wait via Δ-from-baseline; the trajectory
+        # chooser's static score doesn't have that signal. Defer
+        # wait-then-fire to a follow-up (it needs time-discounted
+        # scoring to compete with fire-now properly).
+        if int(wait_N) != 0:
+            continue
         score, status, _ = score_candidate(
             src, tgt, int(ships), float(angle), int(eta_hint),
             me, world, ledger,
