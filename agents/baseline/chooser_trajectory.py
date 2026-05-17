@@ -303,6 +303,7 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                        baseline_favors: list[float],
                        favor_fn, gamma: float,
                        horizon: int,
+                       skip_admissibility: bool = False,
                        ) -> tuple[float, str, int | None]:
     """v4 scoring: same admissibility filter + fast_sim rollout as v3,
     but the leaf is `favor_fn` instead of a binary owner-check, and the
@@ -311,24 +312,31 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     Returns `(delta, status, eta)`. Statuses match v3 plus "scored"
     (the success case for v4, since "captured/reinforced/bounced" are
     no longer first-class outcomes — favor implicitly encodes them).
-    """
-    fate = predict_fleet_fate(src, tgt, angle, ships, world)
-    if fate.outcome == "sun":
-        return (float("-inf"), "sun", fate.step)
-    if fate.outcome == "oob":
-        return (float("-inf"), "oob", fate.step)
-    if fate.outcome == "timeout":
-        return (float("-inf"), "timeout", fate.step)
-    if fate.outcome == "planet":
-        if fate.hit_planet_id in world.comet_ids:
-            return (float("-inf"), "comet_collision", fate.step)
-        return (float("-inf"), "path_blocked", fate.step)
 
-    eta = int(fate.step)
-    if int(tgt.id) in world.comet_ids:
-        life = comet_remaining_lifetime(int(tgt.id), world)
-        if life is None or life <= eta:
-            return (float("-inf"), "comet_expired", eta)
+    `skip_admissibility=True` bypasses the predict_fleet_fate filter
+    (env var TRAJECTORY_SKIP_ADMISSIBILITY=on) to isolate whether the
+    filter is false-rejecting valid candidates that composite_a2 lets
+    through.
+    """
+    eta = 0
+    if not skip_admissibility:
+        fate = predict_fleet_fate(src, tgt, angle, ships, world)
+        if fate.outcome == "sun":
+            return (float("-inf"), "sun", fate.step)
+        if fate.outcome == "oob":
+            return (float("-inf"), "oob", fate.step)
+        if fate.outcome == "timeout":
+            return (float("-inf"), "timeout", fate.step)
+        if fate.outcome == "planet":
+            if fate.hit_planet_id in world.comet_ids:
+                return (float("-inf"), "comet_collision", fate.step)
+            return (float("-inf"), "path_blocked", fate.step)
+
+        eta = int(fate.step)
+        if int(tgt.id) in world.comet_ids:
+            life = comet_remaining_lifetime(int(tgt.id), world)
+            if life is None or life <= eta:
+                return (float("-inf"), "comet_expired", eta)
 
     # Clamp horizon to baseline length (caller pre-sized).
     if horizon >= len(baseline_favors):
@@ -443,6 +451,10 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         os.environ.get("BASELINE_CHOOSER", "").strip().lower()
         == "trajectory_v3"
     )
+    skip_filter = (
+        os.environ.get("TRAJECTORY_SKIP_ADMISSIBILITY", "").strip().lower()
+        == "on"
+    )
     favor_fn = select_favor_fn()  # honours BASELINE_VALUE_HEAD env var
 
     # Pre-pass: find the largest horizon we'll need so the baseline runs
@@ -482,6 +494,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 me, num_seats, world,
                 baseline_favors, favor_fn, gamma,
                 horizon=int(prop_horizon),
+                skip_admissibility=skip_filter,
             )
             if status == "scored" and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))
