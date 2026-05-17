@@ -347,6 +347,52 @@ relevant skill file or source code, not back into friction.md.
   be off by ±80μ. Document in WRAPUP that the team-floor
   calculation uses SETTLED μ, not first-read μ.
 
+## 2026-05-17 (claude/improve-fleet-efficiency-cQXg4 — v21 patches falsified)
+
+- `tag: explicit-rewrite-of-implicit-behavior` (2nd recurrence) — built
+  v21 = v20 + cheap target-quality prefilter (E1) + joint-commitment
+  emit (A) + rollout-based capture-and-hold filter (E2). All three
+  patches address the empirical lost-back failure mode (60-70% of
+  captures lost back within 50 turns per replay analysis). All three
+  layer FILTERS on top of v15's chooser pipeline. h2h vs v15 at n=32:
+  10/32 = 31.2% Wlo=0.180 Whi=0.486 — clean regression. **Root cause:**
+  v15's reactive-opp rollout already encodes the lost-back signal —
+  opp counter-recaptures inside the rollout → my F2 leaf-favor drops →
+  candidate Δ collapses. Adding explicit filters double-counts that
+  signal and trims productive aggression along with the waste. **Fix:**
+  add the signal *inside* the rollout (stronger opp policy), not on
+  top of it. New plan at `audit/2026-05-17-v21-pivot-plan.md`. 2nd
+  recurrence → promotion candidate for kaggle-comp improvements.md:
+  pre-flight check before any explicit filter on the chooser output is
+  "does the rollout's reactive opp already catch this? if yes, do not
+  add the filter — modify the opp instead."
+- `tag: n16-falsely-shows-parity` — v21 h2h vs v15 at n=16 returned
+  8/16 = 50.0% (Wlo=0.28, Whi=0.72), read as "INCONCLUSIVE parity";
+  the SAME variant at n=32 returned 10/32 = 31.2% (Wlo=0.18,
+  Whi=0.486) — a clean FAIL. Wilson CI width at n=16 is ~0.45,
+  literally cannot distinguish parity from a 20pp regression. Burned
+  4 variants × ~7 min each (28 min compute) on the n=16 panel before
+  the n=32 reveal. **Fix:** when stake is a submission decision, n=16
+  is for SMOKE only ("agent doesn't crash"). Gating decisions require
+  n=32 minimum (Wilson width ~0.25). Already related to
+  `small-n-ab-noise-misled-panel` (2026-05-15) — that one was 5/8;
+  this one is 8/16; the lesson is the same. Promotion candidate:
+  refuse to call a 50%-at-n=16 result "parity"; either bump n or
+  declare "untested." Specifically promote to fast.py eval default:
+  `--max-seeds 16` (= n=32 with 2-seat balance) should be the default,
+  not n=8 (= n=16). Two-line code change.
+- `tag: diagnostic-sample-size-overfit` — wrote `scripts/diag_v21_vs_v15.py`
+  on 4 seeds (1000-1003) to find the cause of v21's n=16 parity result.
+  Roll-up showed "Δemits=-23.2, Δcaps=-5.8, Δlost_back=+1.2" — concluded
+  "Patch A over-commits." Built v21_solo (MAX_COMMIT_ROUNDS=0) to test;
+  result = same 43.8% as A-only and A+E1. Diagnostic was over-fit to
+  seed 1002 (the only divergent seed in the 4; +62 lost_back single-
+  handedly drove the +1.2 mean). **Root cause:** 4-seed diagnostics
+  cannot identify a dominant failure mode; one bad seed dominates the
+  mean. **Fix:** per-game diagnostics need n ≥ 16 on the SAME seed set
+  as the h2h panel — otherwise the diagnostic's mean is a tail, not the
+  bulk. Or use median + IQR instead of mean.
+
 
 ```
 - `tag: <kebab-slug>` — <session context>: <what happened>.
