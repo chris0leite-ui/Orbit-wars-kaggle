@@ -703,85 +703,182 @@ def compute_nearest_style_opp_action(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Predict opp's turn-0 action as a `nearest`-style greedy launch.
 
-    For each opp-owned alive planet with ships > 1, target its nearest
-    non-opp-owned alive planet; send `target.ships + 1` (capped at
-    `src.ships - 1`) via orbit-aware `aim_orbiting`. Mirrors
-    `agents/simple/nearest.py:propose_intents` but writes the result
-    into the (MAX_LAUNCH_PER_AGENT,) action arrays consumed by
-    `jax_step`'s opp row.
-
-    Used as a Tier-1 mirror inside the K-step value-head rollout: the
-    strict-idle K-scan was blind to opp's turn-0 counter-attack, so any
-    action that defended "just enough" against currently-visible
-    threats looked fine — until opp's next-turn wave landed within the
-    K=8 window. Modeling one wave of opp launches closes that gap;
-    follow-on waves at turn 1..K-1 are still strict-idle (full per-
-    turn opp simulation inside vmap is the Phase B work).
-
-    Returns padded `(pids, angles, ships)` arrays of shape
-    `(MAX_LAUNCH_PER_AGENT,)`. Unused slots: pid=-1, angle=0, ships=0.
+    Single-step version: computes opp's action assuming TURN 0 only.
+    For multi-step rollouts use `compute_opp_actions_per_step` which
+    fires opp at every step 0..K-1.
     """
-    pids = -np.ones(MAX_LAUNCH_PER_AGENT, dtype=np.int32)
-    angles = np.zeros(MAX_LAUNCH_PER_AGENT, dtype=np.float32)
-    ships_out = np.zeros(MAX_LAUNCH_PER_AGENT, dtype=np.int32)
+    pids_per_step, angles_per_step, ships_per_step = (
+        compute_opp_actions_per_step(state, opp_id, world_model=None, K=1)
+    )
+    return pids_per_step[0], angles_per_step[0], ships_per_step[0]
+
+
+# Center of board, matches lib/game/interpreter.py CENTER + ROTATION_RADIUS_LIMIT.
+# Re-derived rather than imported to avoid bouncing through the scalar
+# interpreter module (keeps this file's import graph small).
+_BOARD_CENTER = 23.0
+_ROTATION_RADIUS_LIMIT = 23.0
+
+
+def _propagate_planet_positions(
+    initial_x: np.ndarray, initial_y: np.ndarray, radius: np.ndarray,
+    omega: float, step: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Predict planet (x, y) at `step`. Mirror of jax_interpreter
+    `planet_path_compute` (jax_interpreter.py:54-104). Non-rotating
+    planets (r + radius >= ROTATION_RADIUS_LIMIT) stay at initial pos.
+    """
+    dx = initial_x - _BOARD_CENTER
+    dy = initial_y - _BOARD_CENTER
+    r = np.sqrt(dx * dx + dy * dy)
+    initial_angle = np.arctan2(dy, dx)
+    new_angle = initial_angle + omega * float(step)
+    new_x = np.where(
+        r + radius < _ROTATION_RADIUS_LIMIT,
+        _BOARD_CENTER + r * np.cos(new_angle),
+        initial_x,
+    )
+    new_y = np.where(
+        r + radius < _ROTATION_RADIUS_LIMIT,
+        _BOARD_CENTER + r * np.sin(new_angle),
+        initial_y,
+    )
+    return new_x.astype(np.float32), new_y.astype(np.float32)
+
+
+def compute_opp_actions_per_step(
+    state: GameState, opp_id: int,
+    world_model: Optional[WorldModel] = None,
+    *,
+    K: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Predict opp's per-step launch action for each of the K rollout
+    steps. Multi-wave Tier-1 mirror — extension of the single-step
+    `compute_nearest_style_opp_action`.
+
+    At each step t in 0..K-1, predict opp's `nearest`-style action
+    against the rollout's predicted state at that step:
+      - Predicted ownership via `world_model.owner_at(pid, t)`.
+        Falls back to current `state.planets_owner` if world_model is
+        None (single-step path).
+      - Predicted garrison via `world_model.ships_at(pid, t)` minus
+        cumulative launches we've already modeled from this planet at
+        prior steps (world_model doesn't simulate hypothetical opp
+        launches, so we subtract our own modeled drain).
+      - Planet positions via orbital propagation (initial_xy + omega *
+        absolute_step). Allows aim at the planet's CURRENT-step
+        location, not its t=0 location.
+      - Direct atan2 aim (NOT orbital intercept) — we skip
+        `aim_orbiting` for cost reasons; fleets are slightly off-
+        target but the value head primarily uses them as "opp ships
+        in flight" signal. Per-step compute drops from ~5 ms
+        (aim_orbiting × K × n_opp_planets) to ~0.5 ms.
+
+    Returns three `(K, MAX_LAUNCH_PER_AGENT)` arrays (pids, angles,
+    ships). Unused slots padded with sentinel: pid=-1, ships=0.
+    """
+    pids_per_step = -np.ones((K, MAX_LAUNCH_PER_AGENT), dtype=np.int32)
+    angles_per_step = np.zeros((K, MAX_LAUNCH_PER_AGENT), dtype=np.float32)
+    ships_per_step = np.zeros((K, MAX_LAUNCH_PER_AGENT), dtype=np.int32)
 
     alive = np.asarray(state.planets_alive)
     ids = np.asarray(state.planets_id)
     owner = np.asarray(state.planets_owner)
     ships_arr = np.asarray(state.planets_ships)
-    x = np.asarray(state.planets_x)
-    y = np.asarray(state.planets_y)
+    initial_x = np.asarray(state.initial_x)
+    initial_y = np.asarray(state.initial_y)
     radius = np.asarray(state.planets_radius)
-    prod = np.asarray(state.planets_prod)
+    prod_arr = np.asarray(state.planets_prod)
     omega = float(state.angular_velocity)
+    state_step = int(state.step)
 
     P = len(alive)
-    opp_planets = [
-        i for i in range(P)
-        if bool(alive[i]) and int(owner[i]) == opp_id and int(ships_arr[i]) > 1
-    ]
-    non_opp_targets = [
-        i for i in range(P)
-        if bool(alive[i]) and int(ids[i]) >= 0 and int(owner[i]) != opp_id
-    ]
-    if not opp_planets or not non_opp_targets:
-        return pids, angles, ships_out
+    # Per-planet cumulative drain from the modeled opp launches across
+    # the K steps. world_model.ships_at(pid, t) doesn't know about
+    # these hypothetical launches, so we maintain the bookkeeping.
+    drain = np.zeros(P, dtype=np.int32)
+    # Pre-resolve planet_id -> index for world_model lookups
+    pid_to_idx = {int(ids[i]): i for i in range(P) if bool(alive[i])}
 
-    slot = 0
-    for src_i in opp_planets:
-        if slot >= MAX_LAUNCH_PER_AGENT:
-            break
-        # Nearest non-opp planet by Euclidean distance.
-        tgt_i = min(
-            non_opp_targets,
-            key=lambda t: (x[t] - x[src_i]) ** 2 + (y[t] - y[src_i]) ** 2,
+    for t in range(K):
+        # Positions at absolute step = state_step + t.
+        pos_x, pos_y = _propagate_planet_positions(
+            initial_x, initial_y, radius, omega, state_step + t,
         )
-        src_ships = int(ships_arr[src_i])
-        tgt_ships = int(ships_arr[tgt_i])
-        # `nearest.py` sends `target.ships + 1`; we cap at src-1 so the
-        # source isn't emptied (matches realize's safety floor).
-        fleet_ships = max(1, min(tgt_ships + 1, src_ships - 1))
-        if fleet_ships < 1:
-            continue
-        tgt_tuple = (
-            int(ids[tgt_i]), int(owner[tgt_i]),
-            float(x[tgt_i]), float(y[tgt_i]),
-            float(radius[tgt_i]), tgt_ships, int(prod[tgt_i]),
-        )
-        aim = aim_orbiting(
-            (float(x[src_i]), float(y[src_i])), float(radius[src_i]),
-            tgt_tuple, float(radius[tgt_i]),
-            fleet_ships, omega,
-        )
-        if aim is None:
-            continue
-        aim_angle, _arrival, _eta = aim
-        pids[slot] = int(ids[src_i])
-        angles[slot] = float(aim_angle)
-        ships_out[slot] = fleet_ships
-        slot += 1
 
-    return pids, angles, ships_out
+        # Predicted ownership + garrisons at step offset t.
+        opp_idxs: list[int] = []
+        non_opp_idxs: list[int] = []
+        opp_garrison: dict[int, int] = {}
+        for i in range(P):
+            if not bool(alive[i]) or int(ids[i]) < 0:
+                continue
+            pid = int(ids[i])
+            if world_model is not None:
+                pred_owner = world_model.owner_at(pid, t)
+                if pred_owner is None:
+                    pred_owner = int(owner[i])  # fallback
+                raw_ships = world_model.ships_at(pid, t)
+                pred_ships = (
+                    int(raw_ships) if raw_ships is not None else int(ships_arr[i])
+                )
+            else:
+                pred_owner = int(owner[i])
+                # No world_model: linear production growth only (t=0 path).
+                pred_ships = int(ships_arr[i])
+            # Subtract our modeled drain from prior steps.
+            pred_ships = max(0, pred_ships - int(drain[i]))
+            if pred_owner == opp_id:
+                if pred_ships > 1:
+                    opp_idxs.append(i)
+                    opp_garrison[i] = pred_ships
+            else:
+                non_opp_idxs.append(i)
+
+        if not opp_idxs or not non_opp_idxs:
+            continue
+
+        slot = 0
+        for src_i in opp_idxs:
+            if slot >= MAX_LAUNCH_PER_AGENT:
+                break
+            src_x, src_y = float(pos_x[src_i]), float(pos_y[src_i])
+            # Nearest non-opp planet by predicted-step position.
+            best_d = float("inf")
+            best_tgt = -1
+            for tgt_i in non_opp_idxs:
+                dx = float(pos_x[tgt_i]) - src_x
+                dy = float(pos_y[tgt_i]) - src_y
+                d = dx * dx + dy * dy
+                if d < best_d:
+                    best_d = d
+                    best_tgt = tgt_i
+            if best_tgt < 0:
+                continue
+            tgt_pid = int(ids[best_tgt])
+            # Target ship count for `target.ships + 1` sizing.
+            if world_model is not None:
+                tgt_ships_raw = world_model.ships_at(tgt_pid, t)
+                tgt_ships = int(tgt_ships_raw) if tgt_ships_raw is not None else int(ships_arr[best_tgt])
+            else:
+                tgt_ships = int(ships_arr[best_tgt])
+
+            src_garrison = int(opp_garrison[src_i])
+            fleet_ships = max(1, min(tgt_ships + 1, src_garrison - 1))
+            if fleet_ships < 1:
+                continue
+
+            dx = float(pos_x[best_tgt]) - src_x
+            dy = float(pos_y[best_tgt]) - src_y
+            angle = float(math.atan2(dy, dx))
+
+            pids_per_step[t, slot] = int(ids[src_i])
+            angles_per_step[t, slot] = angle
+            ships_per_step[t, slot] = fleet_ships
+            slot += 1
+            drain[src_i] += fleet_ships
+
+    return pids_per_step, angles_per_step, ships_per_step
 
 
 def score_candidates_vmap_value_prod(
@@ -789,9 +886,9 @@ def score_candidates_vmap_value_prod(
     my_pids_c: jnp.ndarray,
     my_angles_c: jnp.ndarray,
     my_ships_c: jnp.ndarray,
-    opp_pids: jnp.ndarray,
-    opp_angles: jnp.ndarray,
-    opp_ships: jnp.ndarray,
+    opp_pids_per_step: jnp.ndarray,
+    opp_angles_per_step: jnp.ndarray,
+    opp_ships_per_step: jnp.ndarray,
     K: int,
     my_id: int,
     num_agents: int = 2,
@@ -802,19 +899,26 @@ def score_candidates_vmap_value_prod(
     Inputs:
       `state` — current `GameState`.
       `my_pids_c, my_angles_c, my_ships_c` — shape `(C, MAX_LAUNCH_
-        PER_AGENT)`. Our action for each candidate; sentinel `-1`
-        marks no-launch slots.
-      `opp_pids, opp_angles, opp_ships` — shape `(MAX_LAUNCH_PER_AGENT,)`.
-        Opp's predicted turn-0 action (Tier-1 mirror). Same for every
-        candidate; broadcasts inside `score_one`. Pass zeros / -1s for
-        the strict-idle behaviour.
-      `K` — rollout horizon in turns. Turn 0 applies my candidate AND
-        opp's predicted action; turns 1..K-1 are strict-idle (both
-        seats no-op). Captures opp's first counter-attack wave so
-        "just enough" defenses don't fool the value head.
+        PER_AGENT)`. Our action for each candidate (applied at step 0);
+        sentinel `-1` marks no-launch slots.
+      `opp_pids_per_step, opp_angles_per_step, opp_ships_per_step` —
+        shape `(K, MAX_LAUNCH_PER_AGENT)`. Opp's predicted action at
+        EACH rollout step 0..K-1 (multi-wave Tier-1 mirror). Same
+        across candidates; broadcasts inside `score_one`. Pass
+        all-sentinel for strict-idle.
+      `K` — rollout horizon in turns. Single scan body over all K
+        steps applies my action (only at step 0) and opp's per-step
+        action via `jax_step`. The prior strict-idle K-1 scan used
+        `jax_step_no_launch` to skip fleet_launch on idle steps; with
+        opp launching on every step that optimisation no longer
+        applies, so per-step cost rises ~28% (measured 88 → 113 ms
+        per chunk at K=8 vmap C=128 on CPU). Trade-off accepted to
+        give the value head visibility into opp's cumulative
+        aggression — without per-step opp, the head was blind to
+        waves landing at eta > 1, leading to short-loss elimination.
       `my_id` — our seat (0 or 1; 2P-only).
-      `opp_aggressive` — RESERVED. The Tier-1 mirror now happens at
-        turn 0; turns 1..K-1 stay strict-idle.
+      `opp_aggressive` — RESERVED. Multi-wave per-step opp is now
+        baked in; the flag is kept for API compatibility.
 
     Returns shape `(C,)` float32 scores from
     `value_with_future_production` evaluated at the K-step leaf.
@@ -828,34 +932,46 @@ def score_candidates_vmap_value_prod(
     opp_id = 1 - my_id  # 2P-only
 
     def score_one(my_pids, my_angles, my_ships):
-        pids_full = jnp.full(
-            (MAX_AGENTS, MAX_LAUNCH_PER_AGENT), -1, dtype=jnp.int32,
+        # Pack my action into a (K, MAX_LAUNCH) tensor — only step 0
+        # has my launch; remaining steps are sentinel (no-op for my
+        # seat). The opp side is already (K, MAX_LAUNCH) shaped.
+        my_pids_per_step = jnp.full(
+            (K, MAX_LAUNCH_PER_AGENT), -1, dtype=jnp.int32,
         )
-        ang_full = jnp.zeros(
-            (MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.float32,
+        my_angles_per_step = jnp.zeros(
+            (K, MAX_LAUNCH_PER_AGENT), dtype=jnp.float32,
         )
-        sh_full = jnp.zeros(
-            (MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.int32,
+        my_ships_per_step = jnp.zeros(
+            (K, MAX_LAUNCH_PER_AGENT), dtype=jnp.int32,
         )
-        pids_full = pids_full.at[my_id].set(my_pids)
-        ang_full = ang_full.at[my_id].set(my_angles)
-        sh_full = sh_full.at[my_id].set(my_ships)
-        # Tier-1 mirror: opp fires its predicted nearest-style action
-        # at turn 0 alongside ours. Strict-idle after.
-        pids_full = pids_full.at[opp_id].set(opp_pids)
-        ang_full = ang_full.at[opp_id].set(opp_angles)
-        sh_full = sh_full.at[opp_id].set(opp_ships)
+        my_pids_per_step = my_pids_per_step.at[0].set(my_pids)
+        my_angles_per_step = my_angles_per_step.at[0].set(my_angles)
+        my_ships_per_step = my_ships_per_step.at[0].set(my_ships)
 
-        # Turn 0: both seats' actions via full jax_step.
-        s = jax_step(state, pids_full, ang_full, sh_full)
-        # Turns 1..K-1: strict-idle, so threats inbound at ETA ≤ K-1
-        # land and any planet flips become visible to the leaf head.
-        # `jax_step_no_launch` omits `fleet_launch` — the dominant
-        # phase (55% of per-step cost) — since no seat launches on
-        # idle steps. Cuts the K-scan body roughly in half.
-        def idle_body(s_in, _):
-            return jax_step_no_launch(s_in), None
-        s, _ = jax.lax.scan(idle_body, s, None, length=K - 1)
+        def step_body(s_in, xs):
+            opp_p, opp_a, opp_s, my_p, my_a, my_s = xs
+            pids_full = jnp.full(
+                (MAX_AGENTS, MAX_LAUNCH_PER_AGENT), -1, dtype=jnp.int32,
+            )
+            ang_full = jnp.zeros(
+                (MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.float32,
+            )
+            sh_full = jnp.zeros(
+                (MAX_AGENTS, MAX_LAUNCH_PER_AGENT), dtype=jnp.int32,
+            )
+            pids_full = pids_full.at[my_id].set(my_p)
+            pids_full = pids_full.at[opp_id].set(opp_p)
+            ang_full = ang_full.at[my_id].set(my_a)
+            ang_full = ang_full.at[opp_id].set(opp_a)
+            sh_full = sh_full.at[my_id].set(my_s)
+            sh_full = sh_full.at[opp_id].set(opp_s)
+            return jax_step(s_in, pids_full, ang_full, sh_full), None
+
+        xs = (
+            opp_pids_per_step, opp_angles_per_step, opp_ships_per_step,
+            my_pids_per_step, my_angles_per_step, my_ships_per_step,
+        )
+        s, _ = jax.lax.scan(step_body, state, xs, length=K)
         return value_with_future_production(s, my_id=my_id)
 
     return jax.vmap(score_one, in_axes=(0, 0, 0))(

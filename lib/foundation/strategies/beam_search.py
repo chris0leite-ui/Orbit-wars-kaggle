@@ -42,10 +42,12 @@ import numpy as np
 from lib.foundation.actions import ActionSpec
 from lib.foundation.strategies.analytic_score import (
     action_specs_to_candidate_arrays,
-    compute_nearest_style_opp_action,
+    compute_opp_actions_per_step,
     score_candidates_vmap_value_prod_jit,
 )
 from lib.game.jax.jax_types import GameState
+from lib.intent import World
+from lib.world_model import WorldModel
 
 
 # Fixed batch dimension for all vmap'd scoring calls. Larger = fewer
@@ -67,6 +69,8 @@ def beam_search(
     opp_aggressive: bool = True,
     budget_ms: float = 800.0,
     pre_committed: Sequence[ActionSpec] = (),
+    world_model: Optional["WorldModel"] = None,
+    raw_obs: Optional[object] = None,
 ) -> list[ActionSpec]:
     """Beam search for the best action set; returns the winning set.
 
@@ -93,15 +97,24 @@ def beam_search(
 
     t_start = time.perf_counter()
 
-    # Tier-1 mirror: compute opp's predicted nearest-style turn-0
-    # action once, broadcast it into every score_padded call. The
-    # K-step rollout was strict-idle before; this lets the value head
-    # see opp's first counter-attack wave, fixing the
-    # "value-head-blind-to-opp" half of the short-loss elimination
-    # pattern. Cost: ~1 ms (small Python loop over opp planets).
+    # Multi-wave Tier-1 mirror: compute opp's predicted nearest-style
+    # launch at EACH rollout step 0..K-1, broadcast into every
+    # score_padded call. Lets the value head see opp's cumulative
+    # aggression — opp doesn't just attack on turn 0, it spams every
+    # turn (nearest, v7_0). Without per-step opp, the head was blind
+    # to waves landing at eta > 1, fooling it into accepting "just
+    # enough" defenses.
+    #
+    # Per-step prediction uses world_model.owner_at / ships_at to
+    # track planet ownership across the rollout (e.g., opp captures
+    # a planet at step 3 → that planet starts firing for opp at
+    # step 4). Cost: ~K * n_opp_planets * n_neutrals work in Python.
+    # Measured ~5-15 ms for K=8 on mid-game states.
     opp_id = 1 - my_id
-    opp_pids_np, opp_angles_np, opp_ships_np = compute_nearest_style_opp_action(
-        state, opp_id,
+    if world_model is None and raw_obs is not None:
+        world_model = WorldModel.from_world(World.from_obs(raw_obs))
+    opp_pids_np, opp_angles_np, opp_ships_np = compute_opp_actions_per_step(
+        state, opp_id, world_model=world_model, K=K,
     )
     opp_pids = jnp.asarray(opp_pids_np)
     opp_angles = jnp.asarray(opp_angles_np)
@@ -123,7 +136,7 @@ def beam_search(
                 jnp.asarray(pids),
                 jnp.asarray(angles),
                 jnp.asarray(ships),
-                opp_pids, opp_angles, opp_ships,
+                opp_pids, opp_angles, opp_ships,  # (K, MAX_LAUNCH) each
                 K=K, my_id=my_id, num_agents=num_agents,
                 opp_aggressive=opp_aggressive,
             )

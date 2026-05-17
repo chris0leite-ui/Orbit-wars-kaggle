@@ -126,6 +126,7 @@ class AnalyticStrategy:
                 num_agents=num_agents,
                 opp_aggressive=self._opp_aggressive,
                 budget_ms=effective_budget,
+                world_model=ctx.world_model, raw_obs=ctx.raw_obs,
             )
             return specs_to_tensor([winning_set], horizon=1), memory
 
@@ -171,6 +172,7 @@ class AnalyticStrategy:
                 opp_aggressive=self._opp_aggressive,
                 budget_ms=effective_budget,
                 pre_committed=pre_committed,
+                world_model=ctx.world_model, raw_obs=ctx.raw_obs,
             )
 
         # 5. Mark fired waves.
