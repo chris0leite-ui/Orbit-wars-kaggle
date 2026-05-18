@@ -339,12 +339,16 @@ def test_search_delayed_launch_captures_strong_enemy():
         fleets=[],
     )
     ev = BundleEvaluator(horizon=60)
+    # ship_ratios=(0.5, 1.0) emits half-commit + full-commit per
+    # (src, tgt, launch_turn); at delayed launch_turns the full-commit
+    # ratio sends enough ships once production has accrued. Replaces
+    # the now-removed `ship_count_multiplier` knob.
     search = BundleSearch(
         evaluator=ev,
         max_depth=2,
         beam_width=4,
         launch_turns=(0, 5, 10, 15, 20),
-        ship_count_multiplier=1.5,  # buffer for production accrual
+        ship_ratios=(0.5, 1.0),
     )
     bundle = search.search(world, my_id=0)
     assert not bundle.is_empty, "search picked no launch"
@@ -571,4 +575,175 @@ def test_search_coordinated_arrival_from_far_planet():
     assert is_multi, (
         f"search produced only single immediate launch: "
         f"{bundle.launches}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Piece 6 — uniform enumeration (target pool + ship-ratio grid)
+# ---------------------------------------------------------------------------
+
+
+def test_enumerate_emits_multi_ship_count_per_src_tgt():
+    """Directly inspect `_enumerate_candidates` for a single
+    (src, tgt) pair. With ship_ratios=(0.5, 1.0) the enumerator
+    must emit ≥2 LaunchSpecs differing only in ship count for the
+    same (src, tgt, launch_turn). This pins the principle: the
+    scorer picks the ship count, not the enumerator."""
+    from lib.trajectory_layer import SunFilter
+    world = _toy_world(
+        planets=[
+            [0, 0, 30.0, 85.0, 2.0, 50, 1],
+            [1, -1, 50.0, 85.0, 1.0, 3, 0],
+        ],
+        fleets=[],
+    )
+    search = BundleSearch(
+        max_depth=1,
+        beam_width=2,
+        candidates_per_source=2,
+        launch_turns=(0,),
+        ship_ratios=(0.5, 1.0),
+    )
+    sun = SunFilter(world)
+    specs = list(search._enumerate_candidates(world, my_id=0, sun=sun))
+    assert specs, "expected at least one candidate"
+    # Group by (src, tgt-by-angle, launch_turn) — different ship
+    # counts for the same src+launch_turn are sibling variants.
+    by_key: dict[tuple, set[int]] = {}
+    for s in specs:
+        key = (s.src_id, round(s.aim_angle, 4), s.launch_turn)
+        by_key.setdefault(key, set()).add(s.ships)
+    multi_count_keys = [k for k, v in by_key.items() if len(v) >= 2]
+    assert multi_count_keys, (
+        f"no (src, tgt, launch_turn) group emitted ≥2 ship counts: "
+        f"{by_key}"
+    )
+
+
+def test_enumerate_includes_own_planets_in_target_pool():
+    """Uniform enumeration: own planets are candidates, not just
+    enemy / neutral. Pins the revert of the defense-target
+    carving."""
+    from lib.trajectory_layer import SunFilter
+    world = _toy_world(
+        planets=[
+            [0, 0, 30.0, 85.0, 2.0, 50, 1],   # our source
+            [1, 0, 70.0, 85.0, 2.0, 10, 1],   # our other planet
+            [2, 1, 50.0, 15.0, 2.0, 30, 1],   # enemy (far)
+        ],
+        fleets=[],
+    )
+    search = BundleSearch(
+        max_depth=1,
+        beam_width=2,
+        candidates_per_source=5,
+        launch_turns=(0,),
+        ship_ratios=(1.0,),
+    )
+    sun = SunFilter(world)
+    specs = list(search._enumerate_candidates(world, my_id=0, sun=sun))
+    # Compute target planet for each spec via aim angle (degenerate
+    # but works for this layout: src 0 → tgt 1 angle is ~0; src 0 →
+    # tgt 2 is roughly downward).
+    saw_own_target = False
+    for s in specs:
+        if s.src_id != 0:
+            continue
+        # Angle toward planet 1 (right): atan2(0, 40) = 0
+        # Angle toward planet 2 (down-right): atan2(-70, 20) ≈ -1.29
+        if abs(s.aim_angle - 0.0) < 0.01:
+            saw_own_target = True
+            break
+    assert saw_own_target, (
+        f"enumeration did not include own-planet target: aim angles "
+        f"emitted from src 0 = "
+        f"{sorted({round(s.aim_angle, 3) for s in specs if s.src_id == 0})}"
+    )
+
+
+def test_search_reinforces_threatened_planet_naturally():
+    """End-to-end: with an own planet under imminent enemy threat,
+    the search SHOULD (via ΔP(win) ranking) produce a bundle that
+    includes a launch from our other planet toward the threatened
+    one. We never tell the enumerator "this is defense" — it falls
+    out of the uniform target pool + the scorer's planet_delta
+    reward for holding the planet.
+
+    Setup at y=80 (off the sun axis): our planet A at (30, 80) with
+    5 ships (weak garrison). Our reinforcer B at (32, 80) with 60
+    ships. Enemy planet C at (90, 80) with 80 ships, plus an
+    already-in-flight enemy fleet of 30 ships at (45, 80) heading
+    -x direction. Without reinforcement A falls; with reinforcement
+    A holds.
+    """
+    world = _toy_world(
+        planets=[
+            [0, 0, 30.0, 80.0, 2.0, 5, 1],   # our threatened planet A
+            [1, 0, 32.0, 80.0, 2.0, 60, 1],  # our reinforcer B
+            [2, 1, 90.0, 80.0, 2.0, 80, 1],  # enemy home
+        ],
+        # Enemy fleet already in flight toward A; Fleet schema is
+        # [id, owner, x, y, angle, from_planet_id, ships].
+        fleets=[
+            [10, 1, 45.0, 80.0, math.pi, 2, 30],
+        ],
+    )
+    ev = BundleEvaluator(horizon=20)
+    search = BundleSearch(
+        evaluator=ev,
+        max_depth=2,
+        beam_width=4,
+        candidates_per_source=5,
+        launch_turns=(0,),
+        ship_ratios=(0.5, 1.0),
+        min_source_ships=2,
+    )
+    bundle = search.search(world, my_id=0)
+    # The chosen bundle should include a launch FROM planet B (id 1)
+    # TO planet A (id 0). We can't query target directly (LaunchSpec
+    # encodes aim_angle, not tgt id), but the aim angle from (32, 50)
+    # toward (30, 50) is approximately π (left).
+    reinforces = [
+        s for s in bundle.launches
+        if s.src_id == 1 and abs(abs(s.aim_angle) - math.pi) < 0.1
+    ]
+    assert reinforces, (
+        f"search did not emit a reinforce launch from B→A; "
+        f"chose: {bundle.launches}"
+    )
+
+
+def test_search_picks_smaller_ship_count_when_capture_easy():
+    """Weak neutral target + strong source: the scorer should
+    prefer the half-commit (0.5 ratio) over the full-commit (1.0
+    ratio) because both capture, but the smaller commit preserves
+    more ship_delta. The chosen launch's ship count should be
+    strictly less than (src.ships - min_source_ships)."""
+    world = _toy_world(
+        planets=[
+            [0, 0, 30.0, 85.0, 2.0, 80, 1],   # strong source
+            [1, -1, 50.0, 85.0, 1.0, 3, 0],   # weak neutral, easy capture
+        ],
+        fleets=[],
+    )
+    ev = BundleEvaluator(horizon=40)
+    search = BundleSearch(
+        evaluator=ev,
+        max_depth=1,
+        beam_width=4,
+        candidates_per_source=2,
+        launch_turns=(0,),
+        ship_ratios=(0.5, 1.0),
+        min_source_ships=2,
+    )
+    bundle = search.search(world, my_id=0)
+    assert not bundle.is_empty
+    # min_source_ships=2 → usable = 80 - 2 = 78. Half = 39, full = 78.
+    # The capture only needs ~3+ETA*0 ≈ 4 ships, so half-commit
+    # (39) wins on ship_delta vs full-commit (78).
+    chosen_ships = bundle.launches[0].ships
+    full_commit_ships = 78
+    assert chosen_ships < full_commit_ships, (
+        f"chooser picked full commit {chosen_ships} when half-commit "
+        f"would capture the same target with less waste"
     )

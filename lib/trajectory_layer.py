@@ -1655,22 +1655,39 @@ class BundleSearch:
       score_time).
     - `beam_width`: how many partial-bundles to keep between
       iterations. Must be >= 2 to discover gang-ups.
-    - `candidates_per_source`: top-N closest targets per source.
+    - `candidates_per_source`: top-N closest targets per source. The
+      target pool is the UNIFORM set of all non-comet planets (own,
+      enemy, neutral); top-N is a pure budget throttle, not a
+      strategy filter. Defense / staging / attack all emerge from
+      the scorer's ΔP(win) ranking — never carve them at enumeration.
     - `launch_turns`: delayed-launch enumeration. Each candidate
       (source, target) pair generates one LaunchSpec per launch_turn
       in this tuple. Default `(0,)` preserves Phase 7c behaviour;
       `(0, 5, 10, 15)` enables coordinated-arrival planning.
-    - `min_source_ships`: skip sources too weak to launch from.
-    - `ship_count_multiplier`: ships to commit per launch as a
-      multiple of (target.ships + 1). 1.0 = "just enough"; >1 = "buffer."
+    - `min_source_ships`: skip sources too weak to launch from. Also
+      acts as the reserve kept at the source after any launch (the
+      ship_ratios apply to `avail - min_source_ships`, not raw avail).
+    - `ship_ratios`: fractional grid of ships to commit per launch,
+      applied to the source's usable budget `(avail -
+      min_source_ships)`. Default `(0.5, 1.0)` emits two siblings
+      per (src, tgt, launch_turn): half-commit / full-commit. The
+      scorer ranks across them via `ownership_at`-driven planet/ship
+      deltas — half-commit wins on cheap captures (fewer ships
+      wasted if it captures alone), full-commit wins on gang-ups +
+      defense reinforcement. A 3-ratio grid `(0.25, 0.5, 1.0)` was
+      tried first and dropped: greedy beam favours the smallest
+      ratio's better independent score and the full-commit variant
+      gets pruned before the next iteration can pair it into a
+      gang-up. Two ratios is the sweet spot that keeps the gang-up
+      variant in the frontier under beam_width=4.
     """
     evaluator: BundleEvaluator = field(default_factory=BundleEvaluator)
     max_depth: int = 3
     beam_width: int = 4
-    candidates_per_source: int = 3
+    candidates_per_source: int = 5
     launch_turns: tuple[int, ...] = (0,)
     min_source_ships: int = 2
-    ship_count_multiplier: float = 1.0
+    ship_ratios: tuple[float, ...] = (0.5, 1.0)
     sun_safety: float = SUN_SAFETY
 
     def search(self, world: "World",
@@ -1836,18 +1853,27 @@ class BundleSearch:
                                 sun: "SunFilter",
                                 ):
         """Yield single-LaunchSpec candidates across the
-        (source × top-N target × launch_turn) cross-product. Filtered
-        by per-launch-turn source availability + SunFilter.
+        (source × top-N target × launch_turn × ship_ratio)
+        cross-product. Filtered by per-launch-turn source availability
+        + SunFilter.
 
-        Targets include both ATTACK targets (enemy / neutral planets)
-        and DEFENSE targets (our own planets with an incoming enemy
-        arrival — reinforcement). Without defensive targets the
-        chooser can never enumerate "send ships home to hold the
-        line," so every captured planet falls back to the opp on
-        their next attack. Diagnosed 2026-05-18 vs v7_0 (0/32):
-        agent expanded 4p vs 2p at turn 20 then was wiped 0p vs 20p
-        by turn 165. The fix matches the incumbent baseline's
-        `target_pool = other_planets + threatened_mine` shape.
+        The target pool is UNIFORM — every non-comet planet (own,
+        enemy, neutral). Defense (own→own to hold a threatened
+        planet), staging (own→own to forward-position ships), attack
+        (own→enemy / own→neutral), and tempo (large gang-up bundles)
+        all emerge from the scorer's ΔP(win) ranking via
+        BundleEvaluator.score. Carving the target pool by
+        ownership / threat heuristics here biases the chooser away
+        from emergent strategy — that's the lesson from the 2026-05-18
+        defense-hotfix revert (the framework doc at
+        `knowledge-base/concepts/probability-of-winning-framework.md`
+        is the authoritative reference).
+
+        Per (src, tgt, launch_turn), the enumerator emits one
+        LaunchSpec per `ship_ratios` entry — small / medium / full
+        commit. The scorer reads `ownership_at(target, horizon)` for
+        each variant and naturally prefers the cheapest commit that
+        still captures (or holds, or stages successfully).
 
         For `launch_turn > 0`, ship availability is queried via
         `world.ownership_at(src.id, launch_turn)` so production
@@ -1859,20 +1885,14 @@ class BundleSearch:
                    if p.owner == my_id
                    and not p.is_comet
                    and p.ships >= self.min_source_ships]
-        attack_targets = [p for p in world.planets
-                          if p.owner != my_id and not p.is_comet]
-        defense_targets = [
-            p for p in world.planets
-            if p.owner == my_id and not p.is_comet
-            and world.incoming_enemy_eta(p.id, my_id) is not None
-        ]
-        targets = attack_targets + defense_targets
+        targets = [p for p in world.planets if not p.is_comet]
         if not sources or not targets:
             return
 
         for src in sources:
-            # Top-N closest targets — heuristic that the chooser
-            # cares most about reachable targets.
+            # Top-N closest targets — pure budget throttle across the
+            # uniform pool. The scorer decides which target deserves
+            # the commitment; we just gate enumeration on distance.
             scored = sorted(
                 targets,
                 key=lambda t: math.hypot(
@@ -1882,39 +1902,20 @@ class BundleSearch:
             )[:self.candidates_per_source]
 
             for tgt in scored:
+                if tgt.id == src.id:
+                    # Self-as-target: would launch into the source
+                    # planet at spawn (degenerate); skip.
+                    continue
                 # Aim at target's current position. Good enough for
                 # short-range static targets; orbital lead-aim
-                # refinement comes later. For a future-launch
-                # candidate, ideally we'd aim at target's predicted
-                # position at (launch_turn + eta); for static targets
-                # that's the same as current position.
+                # refinement (lib.aim.search_safe_intercept) is a
+                # follow-up — naive aim keeps moving parts minimal
+                # for the enumeration-shape A/B.
                 dx = tgt.current_x - src.current_x
                 dy = tgt.current_y - src.current_y
                 if dx == 0 and dy == 0:
                     continue
                 angle = math.atan2(dy, dx)
-
-                # Per-target required ship count. For ATTACK
-                # (enemy/neutral) targets: capture-cost = defender
-                # garrison + 1. For DEFENSE (our own threatened
-                # planet): cover-cost = sum of incoming enemy ships,
-                # minus what our existing garrison already absorbs.
-                # Sending more than required is wasteful (each extra
-                # ship is a strict -1 to ship_delta with no
-                # planet/prod benefit); the scorer will prefer the
-                # smaller commit if both pass the gate.
-                if tgt.owner == my_id:
-                    arrivals = world.ledger_for(tgt.id)
-                    enemy_ships = sum(
-                        a.ships for a in arrivals if a.owner != my_id
-                    )
-                    net_threat = enemy_ships - int(tgt.ships)
-                    required = max(1, net_threat)
-                else:
-                    required = max(1, int(tgt.ships) + 1)
-                base_commit = int(required * self.ship_count_multiplier)
-                if base_commit < 1:
-                    continue
 
                 for launch_turn in self.launch_turns:
                     if launch_turn < 0:
@@ -1930,17 +1931,33 @@ class BundleSearch:
                             # Source captured before launch_turn.
                             continue
                         avail = int(ships_at)
-                    commit = min(base_commit, avail - 1)  # keep 1
-                    if commit < 1:
+                    # Keep `min_source_ships` reserved at the source
+                    # after the launch — matches the source-survival
+                    # invariant the original capture math implicitly
+                    # enforced via `avail - 1`.
+                    usable = avail - self.min_source_ships
+                    if usable < 1:
                         continue
-                    spec = LaunchSpec(
-                        src_id=src.id, aim_angle=angle,
-                        ships=commit, owner=my_id,
-                        launch_turn=int(launch_turn),
-                    )
-                    if not sun.is_safe(spec):
-                        continue
-                    yield spec
+                    # Dedup ship counts within the per-(src,tgt,turn)
+                    # group (small `usable` values can collapse two
+                    # ratios to the same integer). The set keeps the
+                    # enumeration tidy and avoids re-scoring identical
+                    # specs downstream.
+                    emitted_counts: set[int] = set()
+                    for ratio in self.ship_ratios:
+                        ships = max(1, int(round(usable * ratio)))
+                        ships = min(ships, usable)
+                        if ships in emitted_counts:
+                            continue
+                        emitted_counts.add(ships)
+                        spec = LaunchSpec(
+                            src_id=src.id, aim_angle=angle,
+                            ships=ships, owner=my_id,
+                            launch_turn=int(launch_turn),
+                        )
+                        if not sun.is_safe(spec):
+                            continue
+                        yield spec
 
 
 # ---------------------------------------------------------------------------
