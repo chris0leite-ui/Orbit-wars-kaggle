@@ -42,6 +42,7 @@ from agents.baseline.chooser import affordable_validate_cap, opp_actions_for_sna
 from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
+from lib.opp_model import lite_greedy_policy as _me_policy
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import comet_remaining_lifetime, predict_garrison_at
 
@@ -49,6 +50,56 @@ from lib.world_model import comet_remaining_lifetime, predict_garrison_at
 EPISODE_STEPS_TOTAL: int = 500
 WASTE_WEIGHT: float = 0.5
 CAPTURE_REWARD_WEIGHT: float = 0.05
+
+# Bug #14 fix attempt — CHEAP MIRROR. NEGATIVE RESULT 2026-05-18 PM.
+#
+# Premise: at each tick of the leaf rollout, drive ME with
+# `lite_greedy_policy` (the same policy used for opp seats) instead
+# of standing still after the single injected launch. Pre-fix the
+# rollout was asymmetric: opp reacted each tick but WE didn't, so
+# every candidate was scored against a worst-case "I make this move
+# and then sit on my hands for 25 ticks while opp keeps playing"
+# baseline. The asymmetry is documented in the bug catalog at
+# `audit/2026-05-18-bug-catalog.md#14`.
+#
+# Empirical result with `BASELINE_ME_REACTS=1`:
+# - The 3 xfail oracles (cleanup / coordinated / solo) did NOT flip
+#   to pass — the mirror didn't unlock the expected coordination.
+# - The 2 working defense oracles (defense_against_incoming_multi_fleet,
+#   defense_wide_gap_multi_wave) REGRESSED to FAIL. The likely cause:
+#   `lite_greedy_policy` is too greedy/attack-biased — in the baseline
+#   it emits attack launches from the would-be reinforcer planet
+#   (e.g. P1 with 200 ships → launches at opp), so the baseline lets
+#   the threatened planet fall too. The candidate's reinforce can't
+#   look more attractive than a baseline that's already failing in
+#   the same way.
+#
+# PI's caveat was exactly this: "our chooser is meant to be SMARTER
+# than lite_greedy. Using lite_greedy as our rollout policy
+# UNDER-rates our skill." Under-rates badly enough to break working
+# tests. The fix isn't viable as written.
+#
+# Next steps (deferred): try the "future-capture credit at the leaf"
+# alternative (catalog option #3) — don't simulate us in the rollout
+# at all; instead at the leaf add bonus credit for OUR in-flight
+# captures past the leaf horizon. Captures the "we'll defend"
+# intuition via accounting, not simulation, and doesn't depend on
+# lite_greedy's tactical quality.
+#
+# The toggle and `_me_reactive_action` helper are kept so the
+# experiment is reproducible. Default OFF — env var
+# `BASELINE_ME_REACTS=1` to re-enable.
+_ME_REACTS_ENABLED = os.environ.get("BASELINE_ME_REACTS", "0") != "0"
+
+
+def _me_reactive_action(snap, me: int) -> list:
+    """`lite_greedy_policy` driven from ME's observation. Same call
+    shape as `opp_actions_for_snap` for non-me seats; isolated here so
+    rollout sites stay readable."""
+    try:
+        return _me_policy(snap.state[me].observation) or []
+    except Exception:
+        return []
 
 # How many ticks AFTER fleet arrival to keep simulating before reading
 # the leaf. Long enough to see immediate combat aftermath (production
@@ -305,6 +356,14 @@ def build_trajectory_baseline(snap_base, me: int, num_seats: int,
     Returns a list of length `horizon + 1`. Cost: `horizon` calls to
     `fs_step` + `(horizon + 1)` calls to `favor_fn`. Runs ONCE per
     chooser invocation, not per candidate.
+
+    Bug #14 fix (2026-05-18): when `BASELINE_ME_REACTS=1`, the
+    baseline ALSO has ME play `lite_greedy_policy` reactively each
+    tick — same policy used for opp seats. Reason: if only the
+    candidate path has ME reactive but the baseline doesn't, the Δ
+    captures "value of ME playing at all" rather than "value of THIS
+    candidate's specific move." Symmetric framing isolates the
+    candidate's marginal contribution.
     """
     snap = fs_clone(snap_base)
     out: list[float] = [
@@ -315,6 +374,8 @@ def build_trajectory_baseline(snap_base, me: int, num_seats: int,
             out.append(out[-1])
             continue
         actions = opp_actions_for_snap(snap, me, num_seats)
+        if _ME_REACTS_ENABLED:
+            actions[me] = _me_reactive_action(snap, me)
         snap = fs_step(snap, actions, in_place=True)
         out.append(
             favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma),
@@ -382,6 +443,8 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
         actions = opp_actions_for_snap(snap, me, num_seats)
         if t == int(wait_N):
             actions[me] = [[int(src.id), float(angle), int(ships)]]
+        elif _ME_REACTS_ENABLED:
+            actions[me] = _me_reactive_action(snap, me)
         snap = fs_step(snap, actions, in_place=True)
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
@@ -447,6 +510,8 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         actions = opp_actions_for_snap(snap, me, num_seats)
         if t in inject_at:
             actions[me] = inject_at[t]
+        elif _ME_REACTS_ENABLED:
+            actions[me] = _me_reactive_action(snap, me)
         snap = fs_step(snap, actions, in_place=True)
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
