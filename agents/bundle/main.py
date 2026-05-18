@@ -91,19 +91,19 @@ def _build_searches() -> tuple[BundleSearch, BundleSearch, int]:
         production_weight=_env_float("BUNDLE_PRODUCTION_WEIGHT", 10.0),
         elimination_bonus=_env_float("BUNDLE_ELIMINATION_BONUS", 200.0),
     )
-    # Tuned 2026-05-18 vs sloppy random (full 499-turn game):
-    # p50=332ms p95=484ms max=558ms, 0/499 over 1000ms cap. The
-    # BundleEvaluator timeline build dominates score cost
-    # (O(N_planets × horizon)), so multi-launch depth is the most
-    # expensive knob. Defaults keep us under the live-env actTimeout
-    # while preserving the mirror-search opp model. Bump
-    # BUNDLE_OWN_MAX_DEPTH=2 + BUNDLE_OWN_BEAM_WIDTH=3 to enable
-    # gang-ups — passes the 1000ms cap on most mid-game turns but
-    # has tail risk; production needs evaluator perf work first.
+    # Tuned 2026-05-18 with with_candidate cache-inheritance perf
+    # fix in place. Full 363-turn game vs sloppy random at depth=2:
+    # p50=49ms p95=131ms max=160ms, 0/363 over 1000ms cap. Massive
+    # headroom vs the live-env actTimeout=1000ms. Depth=2 enables
+    # gang-up bundles (the structurally-invisible-to-greedy pattern
+    # BundleSearch was designed for). Bumping further
+    # (launch_turns=(0,5,10) + depth=3) is feasible but pushes
+    # per-turn cost up; tune per-A/B once the depth=2 ceiling is
+    # measured.
     own = BundleSearch(
         evaluator=ev,
-        max_depth=_env_int("BUNDLE_OWN_MAX_DEPTH", 1),
-        beam_width=_env_int("BUNDLE_OWN_BEAM_WIDTH", 2),
+        max_depth=_env_int("BUNDLE_OWN_MAX_DEPTH", 2),
+        beam_width=_env_int("BUNDLE_OWN_BEAM_WIDTH", 3),
         candidates_per_source=_env_int("BUNDLE_OWN_CANDS_PER_SOURCE", 2),
         launch_turns=_env_turns("BUNDLE_OWN_LAUNCH_TURNS", (0,)),
     )
