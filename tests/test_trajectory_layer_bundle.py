@@ -173,7 +173,14 @@ def test_empty_bundle_score_components():
     assert score.production_delta == 1.0
     # No opp owners → no eliminations possible.
     assert score.eliminations == 0
-    expected_total = 60.0 + 5.0 * 1.0 + 10.0 * 1.0 + 200.0 * 0
+    # Production_delta is multiplied by pv_horizon(step=0, eta=0)·
+    # production_weight. Default weight=1.0 + gamma=1.0 → 500-step.
+    from lib.scoring import pv_horizon as _pv
+    pv = _pv(0, 0, gamma=1.0)
+    expected_total = (60.0
+                      + 5.0 * 1.0
+                      + 1.0 * pv * 1.0
+                      + 200.0 * 0)
     assert math.isclose(score.total, expected_total, abs_tol=1e-9)
 
 

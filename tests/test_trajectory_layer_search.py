@@ -738,12 +738,125 @@ def test_search_picks_smaller_ship_count_when_capture_easy():
     )
     bundle = search.search(world, my_id=0)
     assert not bundle.is_empty
-    # min_source_ships=2 → usable = 80 - 2 = 78. Half = 39, full = 78.
-    # The capture only needs ~3+ETA*0 ≈ 4 ships, so half-commit
-    # (39) wins on ship_delta vs full-commit (78).
+    # reserve_ships_at_source=1 (default) → usable = 80 - 1 = 79.
+    # Ratios emit {40, 79}; capture_min variant emits 4 (tgt.ships+1).
+    # The 4-ship capture wins on ship_delta vs the 40 or 79 commits.
     chosen_ships = bundle.launches[0].ships
-    full_commit_ships = 78
+    full_commit_ships = 79
     assert chosen_ships < full_commit_ships, (
-        f"chooser picked full commit {chosen_ships} when half-commit "
+        f"chooser picked full commit {chosen_ships} when capture-min "
         f"would capture the same target with less waste"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Piece 7 — target-aware ship-count + reserve separation
+# ---------------------------------------------------------------------------
+
+
+def test_enumerate_emits_target_aware_ship_count():
+    """Per Piece 7 root-cause #2: per (src, tgt) the enumerator MUST
+    emit `target.ships + 1` as one of the ship-count variants when
+    the source has enough usable ships. This is the smallest count
+    that captures (or holds at symmetric size for own targets) — the
+    fractional ratios alone almost never hit it.
+    """
+    from lib.trajectory_layer import SunFilter
+    world = _toy_world(
+        planets=[
+            # Source has 50 ships; target has 8 → capture_min = 9.
+            [0, 0, 30.0, 85.0, 2.0, 50, 1],
+            [1, -1, 50.0, 85.0, 1.0, 8, 0],
+        ],
+        fleets=[],
+    )
+    search = BundleSearch(
+        max_depth=1,
+        beam_width=2,
+        candidates_per_source=2,
+        launch_turns=(0,),
+        ship_ratios=(0.5, 1.0),
+    )
+    sun = SunFilter(world)
+    specs = list(search._enumerate_candidates(world, my_id=0, sun=sun))
+    # Filter to launches roughly aimed at planet 1 (angle ~ 0).
+    aimed_at_pid1 = [s for s in specs
+                     if s.src_id == 0 and abs(s.aim_angle) < 0.01]
+    assert aimed_at_pid1, "no launches aimed at planet 1 emitted"
+    ship_counts = {s.ships for s in aimed_at_pid1}
+    assert 9 in ship_counts, (
+        f"target-aware capture_min variant (target.ships + 1 = 9) "
+        f"missing; emitted ship counts: {sorted(ship_counts)}"
+    )
+
+
+def test_enumerate_reserve_at_source_default_one():
+    """Per Piece 7 root-cause #1: a 10-ship source with
+    `reserve_ships_at_source=1` (default) and `min_source_ships=2`
+    can launch UP TO 9 ships — not just 8. Before the split, both
+    knobs were `min_source_ships`, capping usable at 8 and blocking
+    9-ship captures needed to flip nearby weak neutrals/enemies."""
+    from lib.trajectory_layer import SunFilter
+    world = _toy_world(
+        planets=[
+            [0, 0, 30.0, 85.0, 2.0, 10, 1],   # 10-ship source
+            [1, -1, 50.0, 85.0, 1.0, 5, 0],   # capture_min=6
+        ],
+        fleets=[],
+    )
+    search = BundleSearch(
+        max_depth=1, beam_width=2, candidates_per_source=2,
+        launch_turns=(0,), ship_ratios=(1.0,),
+        min_source_ships=2,
+        reserve_ships_at_source=1,
+    )
+    sun = SunFilter(world)
+    specs = list(search._enumerate_candidates(world, my_id=0, sun=sun))
+    counts_from_src0 = sorted(s.ships for s in specs if s.src_id == 0)
+    # ratio=1.0 emits usable=9; capture_min emits 6. So {6, 9}.
+    assert 9 in counts_from_src0, (
+        f"reserve=1 must allow 9-ship launch from 10-ship source; "
+        f"got {counts_from_src0}"
+    )
+
+
+def test_evaluator_pv_horizon_amplifies_production_at_low_step():
+    """Per Piece 7 root-cause #3: BundleEvaluator now multiplies
+    production_delta by `pv_horizon(step, 0, gamma)` rather than the
+    flat `production_weight=10`. At step ≈ 0 / gamma=1.0 the
+    multiplier is ~500 (the remaining-game horizon), matching
+    `agents/baseline/value.favor` semantics — production captured
+    early in the game is worth far more than production at horizon."""
+    from lib.scoring import pv_horizon as _pv
+    world = _toy_world(
+        planets=[
+            [0, 0, 20.0, 80.0, 2.0, 50, 1],
+            [1, 1, 80.0, 80.0, 2.0, 50, 1],
+        ],
+        fleets=[],
+    )
+    ev = BundleEvaluator(horizon=10,
+                         planet_weight=5.0,
+                         production_weight=1.0,
+                         pv_gamma=1.0)
+    score = ev.score(world, Bundle(), my_id=0)
+    # Symmetric world → delta == 0 for ships/planets/prod → total == 0.
+    assert score.total == 0.0
+    # Decompose with a non-trivial delta: capture the enemy planet.
+    capture = Bundle(launches=(
+        LaunchSpec(src_id=0, aim_angle=0.0, ships=10, owner=0),
+    ))
+    cap_score = ev.score(world, capture, my_id=0)
+    # production_delta * pv_horizon(0, 0, 1.0) contribution should be
+    # the dominant component (≈500 * 2 ≈ 1000 for a +2 prod swing).
+    pv = _pv(0, 0, gamma=1.0)
+    expected_prod_contrib = 1.0 * pv * cap_score.production_delta
+    # Reconstruct total from components.
+    reconstructed = (cap_score.ship_delta
+                     + 5.0 * cap_score.planet_delta
+                     + expected_prod_contrib
+                     + 200.0 * cap_score.eliminations)
+    assert math.isclose(cap_score.total, reconstructed, abs_tol=1e-6), (
+        f"score formula mismatch: total={cap_score.total} "
+        f"reconstructed={reconstructed}"
     )

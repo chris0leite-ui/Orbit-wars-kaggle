@@ -43,6 +43,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 from lib.aim import swept_pair_hit
 from lib.combat import resolve_arrivals
+from lib.scoring import pv_horizon
 
 # ---------------------------------------------------------------------------
 # Constants — must match `lib/game/interpreter.py` exactly
@@ -882,6 +883,143 @@ class World:
             w = w.with_candidate(s)
         return w
 
+    # ---------------------------------------------------------------
+    # Phase 8 — multi-turn lookahead primitive
+    # ---------------------------------------------------------------
+
+    def snapshot_at(self, t: int,
+                    *,
+                    horizon: int = DEFAULT_LEDGER_HORIZON,
+                    ) -> "World":
+        """Re-anchor: return a new World as if `t` turns have elapsed.
+
+        The trajectory layer already SCORES a bundle at a future
+        horizon (`BundleEvaluator`). `snapshot_at` is the complement —
+        produce a fresh World whose turn 0 is the parent's turn `t`,
+        so the caller can chain a new BundleSearch from that rolled-
+        forward state (multi-turn lookahead, idle-baseline differencing,
+        "replay from here" workflows).
+        Invariant pinned by tests:
+            `snapshot_at(t).ownership_at(p, 0) ==
+             self.ownership_at(p, t)` for every planet p (at the same
+            horizon).
+        Fleets that have already arrived by `t` are dropped (their
+        effect is baked into the new planet states). Fleets still in
+        flight at `t` are projected forward. Future-scheduled launches
+        (`_outgoing_launches`) and `spawn_turn > t` synthetic fleets
+        are carried over with their times shifted by `-t`. Comets
+        whose path has exhausted by `t` are dropped.
+        Caches are NOT inherited — the new World's timelines re-build
+        from the rolled-forward anchor.
+        """
+        if t == 0:
+            return self
+        if t < 0:
+            raise ValueError(f"snapshot_at requires t >= 0 (got {t})")
+
+        # 1. Rebuild planets at turn t using closed-form position +
+        # timeline-driven ownership/ships.
+        new_planets: list[PlanetView] = []
+        for p in self.planets:
+            owner_t, ships_t = self.ownership_at(p.id, t, horizon=horizon)
+            pos_t = self.planet_position(p.id, t)
+            if pos_t is None:
+                # Expired comet (path exhausted); drop the planet so
+                # the new World has no stale comet reference.
+                continue
+            new_planets.append(replace(
+                p,
+                owner=int(owner_t),
+                ships=float(ships_t),
+                current_x=float(pos_t[0]),
+                current_y=float(pos_t[1]),
+            ))
+
+        # 2. Rebuild fleets: drop those that arrived by t; project
+        # those still in flight; shift future-scheduled (spawn_turn>t)
+        # carriers forward by -t. Reuse the parent's ledger horizon
+        # for the per-fleet ray-cast — fleets that don't hit a planet
+        # within horizon turns from self.step are dropped (they were
+        # already dropped by the parent's ledger).
+        max_steps = min(int(horizon), DEFAULT_RAYCAST_STEPS)
+        new_fleets: list[FleetView] = []
+        for f in self.fleets:
+            if f.ships <= 0:
+                continue
+            if f.spawn_turn > t:
+                # Hasn't spawned yet at turn t; shift spawn_turn.
+                # current_x/y is the position at f.spawn_turn (the
+                # spawn position), so no position update needed.
+                new_fleets.append(replace(f,
+                                          spawn_turn=f.spawn_turn - t))
+                continue
+            # Already spawned at or before t. Check arrival.
+            target_id, arrival_turn = _fleet_target_planet(
+                self, f, max_steps=max_steps,
+            )
+            if arrival_turn is None:
+                # Sun-killed, OOB, or no-planet-hit-within-horizon —
+                # the fleet contributes nothing to any planet's
+                # timeline (see `_build_full_ledger`'s same drop).
+                # Conservative behaviour for snapshot_at: drop it.
+                # The fleet may technically still be alive at t for
+                # sub-horizon snapshots, but it's destined to die
+                # without changing ownership state, so omitting it
+                # from the new World preserves ownership invariants.
+                continue
+            if arrival_turn <= t:
+                # Arrived; effect is baked into ownership_at(target, t).
+                continue
+            # Still in flight. Project position to turn t and
+            # re-anchor spawn_turn to 0.
+            pos = f.position_at(t)
+            if pos is None:
+                continue
+            new_fleets.append(replace(f,
+                                      current_x=float(pos[0]),
+                                      current_y=float(pos[1]),
+                                      spawn_turn=0))
+
+        # 3. Future-scheduled launches: drop those whose launch_turn
+        # has already passed (their effect is in ownership_at(src, t));
+        # shift the rest.
+        new_outgoing = tuple(
+            (int(src), int(lt - t), int(ships))
+            for (src, lt, ships) in self._outgoing_launches
+            if lt > t
+        )
+
+        # 4. Comets: advance path_index; drop exhausted paths.
+        new_comet_paths: list[CometPathView] = []
+        for cp in self.comet_paths:
+            new_idx = cp.path_index + t
+            if new_idx < 0 or new_idx >= len(cp.path):
+                continue
+            new_comet_paths.append(replace(cp, path_index=new_idx))
+
+        # 5. Rebuild indices (fresh dicts — never mutate parent's).
+        planet_by_id = {p.id: p for p in new_planets}
+        fleet_by_id = {f.id: f for f in new_fleets}
+        comet_by_pid = {c.planet_id: c for c in new_comet_paths}
+
+        return World(
+            step=int(self.step + t),
+            my_id=self.my_id,
+            omega=self.omega,
+            episode_seed=self.episode_seed,
+            cfg=self.cfg,
+            planets=tuple(new_planets),
+            fleets=tuple(new_fleets),
+            comet_paths=tuple(new_comet_paths),
+            _outgoing_launches=new_outgoing,
+            _planet_by_id=planet_by_id,
+            _fleet_by_id=fleet_by_id,
+            _comet_by_planet_id=comet_by_pid,
+            _ledger_cache={},
+            _timeline_cache={},
+            _combat_log_cache={},
+        )
+
 
 # ---------------------------------------------------------------------------
 # LaunchSpec — Phase 3 input type for `World.with_candidate`
@@ -1516,8 +1654,21 @@ class BundleEvaluator:
     """
     horizon: int = 30
     planet_weight: float = 5.0
-    production_weight: float = 10.0
+    # production_weight is a coefficient on TOP of the pv_horizon
+    # multiplier (the present-value of one unit of production over the
+    # game's remaining horizon). Default 1.0 → production_delta is
+    # valued at ~`t_total - step` ship-equivalents at game start,
+    # matching `agents/baseline/value.favor` semantics. The old static
+    # weight=10 collapsed production to "10 ship-equivalents over the
+    # evaluator's K-turn horizon" — fine within the horizon, but blind
+    # to the compounding value past it (root-cause #3 in the Piece 7
+    # diagnostic).
+    production_weight: float = 1.0
     elimination_bonus: float = 200.0
+    # γ < 1 applies geometric discount to future production turns; γ=1
+    # is the linear horizon (every remaining game turn counted at unit
+    # value). Match `lib.scoring.PV_GAMMA` default (1.0); tune via A/B.
+    pv_gamma: float = 1.0
 
     def score(self, world: "World", bundle: Bundle,
               *, my_id: Optional[int] = None,
@@ -1583,9 +1734,16 @@ class BundleEvaluator:
         eliminations = sum(1 for o in initial_opp_owners
                            if planets_by_owner.get(o, 0) == 0)
 
+        # Production delta is multiplied by pv_horizon — the present
+        # value of one unit of production over the game's remaining
+        # turns. At step=0 / gamma=1 this is ~500 (t_total - step);
+        # late game it shrinks linearly. The chooser thus weighs an
+        # early-game capture (which yields 500+ turns of production)
+        # FAR more heavily than a late-game one, matching baseline.
+        pv = pv_horizon(int(world.step), 0, gamma=self.pv_gamma)
         total = (ship_delta
                  + self.planet_weight * planet_delta
-                 + self.production_weight * production_delta
+                 + self.production_weight * pv * production_delta
                  + self.elimination_bonus * eliminations)
 
         return BundleScore(
@@ -1687,6 +1845,13 @@ class BundleSearch:
     candidates_per_source: int = 5
     launch_turns: tuple[int, ...] = (0,)
     min_source_ships: int = 2
+    # Reserve N ships at the source AFTER any launch. The ship_ratios
+    # apply to `(avail - reserve_ships_at_source)`, not raw avail.
+    # Decoupled from `min_source_ships` (which filters sources too
+    # weak to launch at all) per Piece 7 root-cause #1: the conflated
+    # reserve=2 caused 10-ship sources to top out at 8-ship launches,
+    # missing the 9-ship captures the scorer would have rewarded.
+    reserve_ships_at_source: int = 1
     ship_ratios: tuple[float, ...] = (0.5, 1.0)
     sun_safety: float = SUN_SAFETY
 
@@ -1931,11 +2096,11 @@ class BundleSearch:
                             # Source captured before launch_turn.
                             continue
                         avail = int(ships_at)
-                    # Keep `min_source_ships` reserved at the source
-                    # after the launch — matches the source-survival
-                    # invariant the original capture math implicitly
-                    # enforced via `avail - 1`.
-                    usable = avail - self.min_source_ships
+                    # Reserve N ships at the source post-launch; the
+                    # rest is the launch budget. `reserve_ships_at_source`
+                    # is decoupled from `min_source_ships` (Piece 7
+                    # root-cause #1).
+                    usable = avail - self.reserve_ships_at_source
                     if usable < 1:
                         continue
                     # Dedup ship counts within the per-(src,tgt,turn)
@@ -1944,9 +2109,21 @@ class BundleSearch:
                     # enumeration tidy and avoids re-scoring identical
                     # specs downstream.
                     emitted_counts: set[int] = set()
-                    for ratio in self.ship_ratios:
-                        ships = max(1, int(round(usable * ratio)))
-                        ships = min(ships, usable)
+                    # Target-aware capture-min variant: `tgt.ships + 1`
+                    # is enough to (a) capture an enemy/neutral target
+                    # outright (combat: attackers > defenders → owner
+                    # flips), or (b) probe a reinforcement of our own
+                    # planet at the symmetric size. Uniform across
+                    # ownership types — the scorer picks via ΔP(win),
+                    # not the enumerator. Piece 7 root-cause #2.
+                    capture_min = int(tgt.ships) + 1
+                    candidate_counts = [
+                        max(1, min(usable, int(round(usable * ratio))))
+                        for ratio in self.ship_ratios
+                    ]
+                    if 1 <= capture_min <= usable:
+                        candidate_counts.append(capture_min)
+                    for ships in candidate_counts:
                         if ships in emitted_counts:
                             continue
                         emitted_counts.add(ships)

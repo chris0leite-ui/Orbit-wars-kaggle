@@ -33,7 +33,7 @@ Knobs (env var overrides, all optional):
   BUNDLE_TOTAL_MS              total per-turn budget (own_deadline). default 750
   BUNDLE_MIRROR_MS             mirror sub-budget within total.       default 250
   BUNDLE_PLANET_WEIGHT                                             default 5.0
-  BUNDLE_PRODUCTION_WEIGHT                                         default 10.0
+  BUNDLE_PRODUCTION_WEIGHT     multiplier on top of pv_horizon.    default 1.0
   BUNDLE_ELIMINATION_BONUS                                         default 200.0
 """
 
@@ -88,7 +88,7 @@ def _build_searches() -> tuple[BundleSearch, BundleSearch, int]:
     ev = BundleEvaluator(
         horizon=_env_int("BUNDLE_HORIZON", 15),
         planet_weight=_env_float("BUNDLE_PLANET_WEIGHT", 5.0),
-        production_weight=_env_float("BUNDLE_PRODUCTION_WEIGHT", 10.0),
+        production_weight=_env_float("BUNDLE_PRODUCTION_WEIGHT", 1.0),
         elimination_bonus=_env_float("BUNDLE_ELIMINATION_BONUS", 200.0),
     )
     # Tuned 2026-05-18 with with_candidate cache-inheritance perf
