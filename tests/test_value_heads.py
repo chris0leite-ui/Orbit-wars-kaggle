@@ -184,23 +184,25 @@ def test_composite_penalises_doomed_comet_target():
 
 def test_composite_allows_long_lived_comet_target():
     """A comet with plenty of life left is a legitimate target — the
-    comet-lifetime gate must NOT fire (no waste penalty). Post-2026-05-18
-    counterfactual fix (bug #15): the per-fleet capture-credit DOES fire
-    in this scenario — the comet is neutral at obs time, our 10-ship
-    fleet would capture, and `simulate_planet_timeline` without our
-    fleet shows the comet stays neutral, so we cause the capture and
-    earn `capture_weight × production × held = 0.05 × 2 × 198 = 19.8`.
-    Base ship-delta = 10; my_prod = opp_prod = 1 (neutral comet excluded)
-    so the production-PV term is 0. Result: 10 + 0 + 19.8 = 29.8.
+    comet-lifetime gate must NOT fire (no waste penalty).
+
+    Bug #15 fix v2 (2026-05-18 PM): the per-fleet capture-credit was
+    DROPPED after the ablation showed it double-credited captures
+    alongside the production-PV term and the chooser over-emitted.
+    The PV term in the base does the work: planet ownership at the
+    LEAF state credits the capture. Here the test is run on the
+    current obs (not a leaf), so the comet is still neutral and the
+    PV term contributes 0 (my_prod = opp_prod = 1 from the
+    non-neutral planets). The fleet hits a healthy comet so the
+    comet gate doesn't fire, and pred_owner == my_id at eta so no
+    waste penalty. Result: just the base ship-delta = 10.
     """
     alive = _obs_with_comet_target(path_len=200, path_index=0)
     v_alive = composite_capture_value(alive, my_id=0)
-    # 10 (base) + 0 (my_prod == opp_prod) + 19.8 (capture credit for
-    # the comet → time_remaining capped by comet life-eta = 198 ticks).
-    assert math.isclose(v_alive, 29.9, abs_tol=0.05), (
-        f"long-lived comet target should fire capture credit "
-        f"(counterfactual: comet stays neutral without us → we cause "
-        f"the capture); got {v_alive}, expected ~29.9"
+    assert math.isclose(v_alive, 10.0, abs_tol=1e-6), (
+        f"long-lived comet target should leave composite at base "
+        f"ship-delta (no waste penalty fires, no per-fleet capture "
+        f"credit in v2); got {v_alive}, expected 10.0"
     )
 
 
@@ -255,32 +257,50 @@ def test_composite_penalises_sun_crossing_trajectory():
 # ---------------------------------------------------------------------------
 
 
-def test_composite_credits_capture_we_cause():
-    """Per-fleet counterfactual fix (2026-05-18, bug #15). Our fleet is
-    in flight to an opp-owned planet; without our fleet the planet
-    stays opp. The fleet CAUSES the capture, so capture credit fires.
+def test_composite_credits_post_arrival_capture_via_pv():
+    """Bug #15 fix v2 (2026-05-18 PM). The per-fleet capture-credit
+    was dropped; PV-term-in-the-base is now the sole capture-crediting
+    mechanism. Verify it fires for a POST-ARRIVAL leaf state where the
+    captured planet now reads as ours.
+
+    The chooser calls composite on the rollout's LEAF observation. For
+    short-eta candidates the fleet has already arrived by the leaf
+    horizon, so we see the post-capture world: target owned by us, no
+    in-flight fleet to credit. The PV term picks up the ownership flip
+    via `(my_prod − opp_prod) × pv` — without it the leaf base equals
+    the idle baseline and Δ = 0 (this was the bug #15 sanity-oracle
+    failure mode).
     """
-    obs = {
+    # Post-arrival leaf: we own both planets, no fleets.
+    leaf = {
         "player": 0,
-        "step": 100,
+        "step": 11,
         "angular_velocity": 0.0,
-        "next_fleet_id": 1,
+        "next_fleet_id": 0,
         "initial_planets": [],
         "planets": [
-            (0, 0, 20.0, 20.0, 2.0, 0, 1),     # our home (just launched)
-            (1, 1, 80.0, 20.0, 2.0, 5, 1),     # opp planet (low garrison)
+            (0, 0, 30.0, 30.0, 2.0, 11, 1),   # our home (post-launch growth)
+            (1, 0, 70.0, 30.0, 2.0, 84, 1),   # just-captured opp planet
         ],
-        "fleets": [(0, 0, 22.0, 20.0, 0.0, 0, 100)],  # 100 ships our way
+        "fleets": [],
         "comet_planet_ids": [],
         "comets": [],
     }
-    v = composite_capture_value(obs, my_id=0)
-    base = delta_us_minus_them_obs(obs, my_id=0)
-    # Base = (0 + 100) - 5 = 95. PV term = 0 (1 - 1 == 0). Capture
-    # credit ≈ 0.05 × 1 × (500 - 100 - eta) ≈ 19.
-    assert v > base, (
-        f"capture credit must fire when we cause the capture; "
-        f"got v={v}, base={base}"
+    # Same step idle baseline: opp still owns P1.
+    idle = dict(leaf)
+    idle["planets"] = [
+        (0, 0, 30.0, 30.0, 2.0, 111, 1),
+        (1, 1, 70.0, 30.0, 2.0, 16, 1),
+    ]
+    v_leaf = composite_capture_value(leaf, my_id=0)
+    v_idle = composite_capture_value(idle, my_id=0)
+    # Base ship-delta is symmetric (both = 95 by construction). The Δ
+    # must come from the PV term: leaf has my_prod=2, opp_prod=0; idle
+    # has my_prod=opp_prod=1. PV at step 11 ≈ 99.
+    assert v_leaf > v_idle + 50.0, (
+        f"PV term must credit the ownership flip at the leaf; "
+        f"got v_leaf={v_leaf:.1f} vs v_idle={v_idle:.1f} "
+        f"(expected difference >~ 100 from production-PV)"
     )
 
 
@@ -360,12 +380,11 @@ def test_composite_does_not_penalise_non_sun_crossing():
     perp distance to sun = 30 > SUN_RADIUS. Sun gate must NOT fire
     (no waste penalty).
 
-    Post-2026-05-18 counterfactual fix (bug #15): the per-fleet
-    capture-credit fires — our 100-ship fleet captures the opp's
-    10-ship planet, and the counterfactual (without us) shows the
-    planet stays opp, so we get credit. Base = 140 (50+100 - 10),
-    PV term = 0 (my_prod == opp_prod == 1), capture credit
-    = 0.05 × 1 × (500-100-eta) ≈ 19.2. Total ≈ 159.
+    Bug #15 fix v2 (2026-05-18 PM): per-fleet capture credit was
+    dropped. In this single-fleet IN-FLIGHT scenario the target is
+    still opp at obs time so the PV term contributes 0 (my_prod ==
+    opp_prod == 1); pred_owner at eta is us (we'd capture) so no
+    waste penalty either. composite returns plain base ship-delta.
     """
     obs = {
         "player": 0,
@@ -383,14 +402,11 @@ def test_composite_does_not_penalise_non_sun_crossing():
         "comets": [],
     }
     v = composite_capture_value(obs, my_id=0)
-    # 140 (base) + 0 (PV) + ~19 (capture credit). Must NOT have a
-    # waste penalty (no sun crossing) — strict lower bound 140 catches
-    # any regression that re-introduces a false-positive penalty.
-    assert v > 140.0 - 1e-6, (
-        f"non-sun-crossing trajectory false-positive waste penalty: "
-        f"v={v} (should be ≥ base ship-delta 140)"
-    )
-    assert math.isclose(v, 159.2, abs_tol=0.5), (
-        f"capture credit should fire for capturing the opp planet; "
-        f"got {v}, expected ~159 (140 base + ~19 capture credit)"
+    # Base ship-delta: us=50+100=150, them=10 → 140. No sun gate, no
+    # comet gate, no waste penalty (pred_owner == me at eta), no
+    # per-fleet capture credit (removed in v2). composite returns base.
+    assert math.isclose(v, 140.0, abs_tol=1e-6), (
+        f"non-sun-crossing trajectory should return base ship-delta "
+        f"(no waste penalty, no per-fleet capture credit in v2); "
+        f"got {v}, expected 140.0"
     )

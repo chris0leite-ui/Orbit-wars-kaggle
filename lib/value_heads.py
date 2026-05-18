@@ -49,7 +49,7 @@ from lib.scoring import pv_horizon
 # multi-line import as indented orphans (IndentationError at runtime).
 # Friction tag: `bundler-modular-agent-namespace-access-breaks-bundle`
 # documented in agents/baseline/main.py.
-from lib.world_model import DEFAULT_HORIZON, WorldModel, comet_remaining_lifetime, fleet_target_planet, simulate_planet_timeline
+from lib.world_model import DEFAULT_HORIZON, WorldModel, comet_remaining_lifetime, fleet_target_planet
 from lib.game.interpreter import CENTER, SUN_RADIUS, point_to_segment_distance
 
 
@@ -160,21 +160,17 @@ EPISODE_STEPS_TOTAL: int = 500
 # composite / 4P A2-favor split in `favor_hybrid`.
 PRODUCTION_PV_GAMMA: float = 0.99
 
-# Diagnostic toggles for isolating the bug #15 fix (2026-05-18).
-# A/B vs the pre-fix bundle regressed at n=64 (40.6%, Wlo=0.295, max
-# wallclock 1666ms). To attribute the regression to each subsystem,
-# wire env-var kill-switches that revert each half of the fix
-# independently:
-#   - `COMPOSITE_PRODUCTION_PV=0` disables the per-planet PV term added
-#     to base (the symmetric-base-cancels-captures fix for the sanity
-#     oracle).
-#   - `COMPOSITE_COUNTERFACTUAL=0` disables the per-fleet counterfactual
-#     and reverts to the pre-fix `pred_owner == my_id → continue` path
-#     (the chicken-and-egg fix).
-# Defaults are ON so production code is unchanged.
+# Diagnostic toggle for the production-PV term in `composite_capture_value`.
+# Bug #15 fix v2 (2026-05-18 PM): the canonical fix is the PV term alone —
+# the per-fleet "counterfactual" capture credit was dropped after the A/B
+# ablation showed it DOUBLE-CREDITED captures alongside the PV term and
+# the chooser over-emitted as a result (n=64 winrates: both halves on
+# 40.6%, PV only 46.9%, vs pre-fix bundle 50% by definition). The
+# `COMPOSITE_PRODUCTION_PV` env var still flips PV off for diagnostic A/Bs
+# (sanity oracle fails when off, but pre-fix behaviour is otherwise
+# preserved). Default ON.
 import os as _os
 _COMPOSITE_PV_ENABLED = _os.environ.get("COMPOSITE_PRODUCTION_PV", "1") != "0"
-_COMPOSITE_CF_ENABLED = _os.environ.get("COMPOSITE_COUNTERFACTUAL", "1") != "0"
 
 
 def composite_capture_value(
@@ -184,34 +180,36 @@ def composite_capture_value(
     capture_weight: float = CAPTURE_REWARD_WEIGHT,
     waste_weight: float = WASTE_PENALTY_WEIGHT,
 ) -> float:
-    """Ship-delta + production-PV + per-fleet capture/waste credit.
+    """Ship-delta + production-PV + per-fleet waste penalty.
 
     Base = `(my_ships − opp_ships) + (my_prod − opp_prod) × pv`. The PV
     term values planet ownership beyond the leaf horizon so captures
     register at the leaf even after the capturing fleet has arrived
     (without it, ship counts net out symmetrically and equal-production
-    captures score Δ = 0 vs idle).
+    captures score Δ = 0 vs idle). This is bug #15's fix: a leaf state
+    where we just captured opp's last planet now scores higher than
+    the do-nothing baseline.
 
-    For each of OUR in-flight fleets:
-    - If no target on the trajectory → fleet escapes to OOB. Waste penalty.
-    - If trajectory crosses the sun (engine kills the fleet mid-flight)
-      → waste penalty.
-    - If target is a comet that will expire before arrival → waste penalty.
-    - Predict the target's owner at ETA via WorldModel.
-      - If `pred_owner != my_id`: combat at eta does NOT end with us
-        owning the target → waste penalty.
-      - If `pred_owner == my_id`: counterfactual check. Re-simulate the
-        target's timeline with this fleet's ledger entry removed; if it
-        is STILL ours at eta, the fleet over-reinforces (no credit);
-        otherwise this fleet causes the capture and we credit
-        `capture_weight × production × time_remaining`.
+    For each of OUR in-flight fleets, the per-fleet WASTE PENALTY fires
+    when the launch is structurally lost:
+    - no planet on the trajectory (OOB);
+    - trajectory crosses the sun (engine kills the fleet mid-flight);
+    - target is a comet that expires before arrival;
+    - predicted owner at ETA is NOT us (we bounce off a stronger
+      defender, or multi-arrival combat goes the other way).
 
-    The counterfactual check is the 2026-05-18 fix for bug #15: the
-    pre-fix code unconditionally skipped credit whenever
-    `pred_owner == my_id`, but the WorldModel SIMULATES with this fleet
-    included, so that branch fired on every capture we caused (zero
-    credit for every offensive launch). Discovered via synthetic oracle
-    `tests/test_planner_oracles.py::test_oracle_sanity_trivial_capture`.
+    There is NO per-fleet capture-credit term. The bug #15 fix v1
+    (2026-05-18 AM) added a counterfactual per-fleet capture credit
+    on top of the PV term, but the A/B ablation (n=64) showed the two
+    terms double-credit the same capture and the chooser systematically
+    over-emits (winrate 40.6% with both halves on, 46.9% with PV only,
+    vs 50% baseline). v2 (this version) keeps PV-only — the PV term
+    already credits the capture at the leaf via planet ownership.
+
+    Set `COMPOSITE_PRODUCTION_PV=0` to disable the PV term for a clean
+    A/B revert to pre-2026-05-18 behaviour (sanity oracle fails when
+    PV is off, but the chooser's calibration matches the pre-bug-#15
+    state used by submission `52754310`).
     """
     base = delta_us_minus_them_obs(obs, my_id)
     world = World.from_obs(obs)
@@ -333,97 +331,16 @@ def composite_capture_value(
                 continue
         # Predict ownership at ETA. WorldModel includes THIS fleet in
         # its ledger, so the prediction reflects "world if we let this
-        # fleet land."
+        # fleet land." If pred_owner is NOT us at eta, the launch is
+        # structurally lost (we bounce off a stronger defender, or
+        # multi-arrival combat goes the other way) — apply waste
+        # penalty. Otherwise the launch is constructive (causes the
+        # capture OR over-reinforces a planet we'd hold anyway); either
+        # way we do NOT add a per-fleet capture credit — the PV term in
+        # the base already values the resulting ownership at the leaf.
+        # See bug #15 fix v2 rationale in the docstring above.
         pred_owner = model.owner_at(target.id, eta)
-        pred_ships = model.ships_at(target.id, eta) or 0.0
-        if not _COMPOSITE_CF_ENABLED:
-            # Diagnostic kill-switch: revert to exact pre-2026-05-18
-            # behaviour (`pred_owner == my_id → skip`,
-            # `ships > pred_ships → credit`, else waste). Used for
-            # ablation A/Bs to isolate which half of the bug #15 fix is
-            # responsible for the n=64 regression observed 2026-05-18 PM.
-            if pred_owner == my_id:
-                continue
-            if ships > pred_ships:
-                time_remaining = max(0, EPISODE_STEPS_TOTAL - step_now - eta)
-                comet_life = comet_remaining_lifetime(int(target.id), world)
-                if comet_life is not None:
-                    held = min(time_remaining, max(0, comet_life - eta))
-                    if held <= 0:
-                        delta -= waste_weight * ships
-                        continue
-                    time_remaining = held
-                delta += capture_weight * float(target.production) * float(time_remaining)
-            else:
-                delta -= waste_weight * ships
-            continue
         if pred_owner != my_id:
-            # Combat at eta does not end with us owning the target —
-            # we'd bounce off a stronger defender (or multi-arrival
-            # combat goes the other way). Waste penalty. Note: this
-            # replaces the older `ships > pred_ships` check, which
-            # mis-classified "60 ships vs 70 defenders → pred_ships=10
-            # surviving → ships>pred_ships → credit" as a capture even
-            # though pred_owner stayed enemy. pred_owner is the
-            # authoritative combat outcome.
             delta -= waste_weight * ships
-            continue
-        # pred_owner == my_id at eta. The WorldModel's simulation
-        # INCLUDES this fleet, so the prediction could mean EITHER:
-        #   (a) we cause the capture (target was opp/neutral, this
-        #       fleet flips it), OR
-        #   (b) we over-reinforce a planet that would be ours anyway
-        #       (someone else captures, or it's already ours).
-        # The pre-2026-05-18 implementation `continue`d unconditionally
-        # — treating BOTH cases as (b). Bug #15: every capture this
-        # agent caused got zero credit at the leaf because the model's
-        # own fleet inclusion inverted the causal direction. Discovered
-        # via synthetic oracle test `test_oracle_sanity_trivial_capture`
-        # (100 ships vs 5 ships); the audit lives at
-        # audit/2026-05-18-bug-catalog.md#15.
-        #
-        # Fix: counterfactual check. Re-simulate the target's timeline
-        # with THIS fleet's ledger entry removed. If target still ends
-        # up ours at eta, it's case (b) — no credit. If not, it's case
-        # (a) — credit production × remaining hold time.
-        full_arrivals = model.ledger.get(int(target.id), [])
-        this_entry = (int(eta), int(my_id), int(ships))
-        counterfactual = list(full_arrivals)
-        try:
-            counterfactual.remove(this_entry)
-        except ValueError:
-            # Ledger entry not found (eta-rounding edge case in
-            # build_arrival_ledger). Conservative: treat as
-            # over-reinforcement (skip) rather than risk double-credit.
-            continue
-        cf_timeline = simulate_planet_timeline(
-            target, counterfactual, max(1, eta + 1),
-        )
-        cf_owner = cf_timeline["owner_at"].get(int(eta), int(target.owner))
-        if cf_owner == my_id:
-            # Without this fleet target is still ours → over-reinforce.
-            continue
-        # We cause the capture. Credit production × remaining hold time.
-        # For comets, "hold time" is capped by the comet's remaining
-        # lifetime (it ceases to exist when the path ends). Without
-        # this cap a 5-step-lifetime comet at turn 200 over-credits by
-        # ~60× (using EPISODE_STEPS_TOTAL=500 - 200 = 300 vs the real
-        # 5). Pattern mirrors lib/missions/snipe.py:404-420 (H15)
-        # and PI direction 2026-05-17: "comets only if really worth
-        # the risk and short lifetime".
-        time_remaining = max(0, EPISODE_STEPS_TOTAL - step_now - eta)
-        comet_life = comet_remaining_lifetime(int(target.id), world)
-        if comet_life is not None:
-            # `comet_life` is steps until the comet exits the board at
-            # the CURRENT world step. After `eta` steps in flight the
-            # remaining lifetime is `comet_life - eta`; non-positive
-            # means the comet expires at or before our fleet arrives.
-            held = min(time_remaining, max(0, comet_life - eta))
-            if held <= 0:
-                # Comet gone by arrival — treat the launch as waste.
-                delta -= waste_weight * ships
-                continue
-            time_remaining = held
-        delta += capture_weight * float(target.production) * float(time_remaining)
 
     return base + delta
