@@ -1,0 +1,51 @@
+
+loaded 100 replays from /home/user/Orbit-wars-kaggle/audit/replays/live/52710995
+
+=== 2-player games: n=55 ===
+  total_production: min=36.00 med=68.00 max=112.00
+  rotating_share: min=0.20 med=0.40 max=0.56
+  size_split: min=-1.24 med=-0.22 max=0.97
+  n_planets: min=20.00 med=28.00 max=40.00
+  archetypes present: 27/32
+  ARCHETYPES MISSING FROM THESE LIVE GAMES (panel over-covers):
+    high_prod__mixed_static__big_rotating
+    high_prod__mostly_rotating__big_rotating
+    high_prod__mostly_static__big_rotating
+    high_prod__mostly_static__big_static
+    low_prod__mixed_static__big_static
+  top 8 archetypes in live games:
+    med_high_prod__mixed_static__big_static                    5  9.1% (panel uniform 3.1%, ratio 2.9x) <-- under-covered
+    med_high_prod__mostly_rotating__big_static                 4  7.3% (panel uniform 3.1%, ratio 2.3x) <-- under-covered
+    low_prod__mostly_static__big_static                        4  7.3% (panel uniform 3.1%, ratio 2.3x) <-- under-covered
+    low_prod__mixed_static__big_rotating                       4  7.3% (panel uniform 3.1%, ratio 2.3x) <-- under-covered
+    med_low_prod__mostly_rotating__big_static                  3  5.5% (panel uniform 3.1%, ratio 1.7x)
+    med_low_prod__mostly_static__big_rotating                  3  5.5% (panel uniform 3.1%, ratio 1.7x)
+    low_prod__mixed_rotating__big_static                       3  5.5% (panel uniform 3.1%, ratio 1.7x)
+    med_high_prod__mixed_rotating__big_rotating                2  3.6% (panel uniform 3.1%, ratio 1.2x)
+
+=== 4-player games: n=45 ===
+  total_production: min=32.00 med=72.00 max=104.00
+  rotating_share: min=0.20 med=0.38 max=0.50
+  size_split: min=-0.87 med=-0.14 max=0.81
+  n_planets: min=20.00 med=28.00 max=36.00
+  archetypes present: 21/32
+  ARCHETYPES MISSING FROM THESE LIVE GAMES (panel over-covers):
+    high_prod__mixed_rotating__big_rotating
+    high_prod__mostly_rotating__big_rotating
+    high_prod__mostly_static__big_rotating
+    high_prod__mostly_static__big_static
+    low_prod__mostly_rotating__big_rotating
+    med_high_prod__mostly_rotating__big_rotating
+    med_high_prod__mostly_static__big_static
+    med_low_prod__mixed_rotating__big_rotating
+    ... +3 more
+  top 8 archetypes in live games:
+    med_high_prod__mixed_static__big_rotating                  4  8.9% (panel uniform 3.1%, ratio 2.8x) <-- under-covered
+    low_prod__mostly_static__big_rotating                      4  8.9% (panel uniform 3.1%, ratio 2.8x) <-- under-covered
+    low_prod__mixed_static__big_static                         4  8.9% (panel uniform 3.1%, ratio 2.8x) <-- under-covered
+    low_prod__mixed_rotating__big_static                       4  8.9% (panel uniform 3.1%, ratio 2.8x) <-- under-covered
+    med_low_prod__mixed_static__big_rotating                   3  6.7% (panel uniform 3.1%, ratio 2.1x) <-- under-covered
+    high_prod__mixed_static__big_rotating                      3  6.7% (panel uniform 3.1%, ratio 2.1x) <-- under-covered
+    med_high_prod__mixed_rotating__big_static                  3  6.7% (panel uniform 3.1%, ratio 2.1x) <-- under-covered
+    low_prod__mixed_rotating__big_rotating                     3  6.7% (panel uniform 3.1%, ratio 2.1x) <-- under-covered
+

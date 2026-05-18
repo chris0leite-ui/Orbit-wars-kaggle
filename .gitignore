@@ -9,6 +9,11 @@ data/*
 data/shot_validator/*
 !data/shot_validator/README.md
 !data/shot_validator/schema.json
+# Seed panel manifest — small, hand-built artifact consumed by lib/seed_panel.py.
+!data/seed_panel_128.json
+
+# Seed-panel build cache — regeneratable from scripts/build_seed_panel.py.
+audit/seed-panel/features.json
 
 # Submissions / kernel build artifacts
 submissions/*
