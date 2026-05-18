@@ -112,22 +112,36 @@ def test_overlay_adds_synthetic_fleet():
     assert new_fleet.id < 0
 
 
-def test_overlay_parent_caches_intact():
+def test_overlay_parent_caches_intact_and_overlay_inherits():
     """Materialising the parent's ledger BEFORE the overlay leaves
-    the parent's caches alive; the overlay has FRESH caches."""
+    the parent's caches alive; the overlay INHERITS the parent's
+    ledger cache (Phase 8 perf — avoids rebuilding the full ledger
+    per `with_candidate`), with only the affected planets' timelines
+    invalidated."""
     obs, ep_seed = _step_env_to_obs(seed=42, warmup=30, num_seats=2)
     world = World.from_obs(obs, episode_seed=ep_seed)
     _ = world.ledger_all(horizon=50)
+    _ = world.ownership_at(world.planets[0].id, 10, horizon=50)
     assert 50 in world._ledger_cache
+    parent_timeline_keys_before = set(world._timeline_cache.keys())
 
     src = _our_planets_with_ships(world, my_id=0)[0]
     spec = LaunchSpec(src_id=src.id, aim_angle=0.0, ships=2, owner=0)
     overlay = world.with_candidate(spec)
-    # Parent still cached.
+
+    # Parent still cached (untouched).
     assert 50 in world._ledger_cache
-    # Overlay has fresh, empty cache.
-    assert overlay._ledger_cache == {}
-    assert overlay._timeline_cache == {}
+    assert set(world._timeline_cache.keys()) == parent_timeline_keys_before
+
+    # Overlay inherited the per-horizon ledger structure.
+    assert 50 in overlay._ledger_cache
+    # Source planet's timeline must NOT be in overlay's cache
+    # (invalidated — ships count changed at t=0).
+    for k in overlay._timeline_cache.keys():
+        assert k[0] != src.id, (
+            f"source planet {src.id} timeline should be invalidated, "
+            f"found cached entry {k}"
+        )
 
 
 # ---------------------------------------------------------------------------

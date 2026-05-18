@@ -792,12 +792,68 @@ class World:
                 (int(spec.src_id), int(spec.launch_turn), int(spec.ships)),
             )
 
-        # Append synthetic fleet. Build fresh indices (no cache
-        # leakage — the parent's _ledger_cache / _timeline_cache
-        # assume a different fleet set).
+        # Append synthetic fleet.
         new_fleets = self.fleets + (new_fleet,)
         new_fleet_by_id = dict(self._fleet_by_id)
         new_fleet_by_id[virtual_id] = new_fleet
+
+        # PERF (Phase 8): inherit parent's caches + incrementally
+        # extend with the synthetic fleet's contribution. Without
+        # this, every `bundle.apply(world)` paid O(N_fleets ×
+        # N_planets × horizon) per child World — the dominant
+        # BundleEvaluator cost (44 in-flight fleets × 24 planets ×
+        # horizon turns = ~30 ms / score on mid-game states).
+        #
+        # The synthetic fleet is the ONLY fleet whose contribution
+        # to the ledger is new; existing fleets' arrivals are
+        # identical between parent and child because planet
+        # positions, fleet positions, and sun geometry are
+        # invariants of the (orbit_omega, step) snapshot. Affected
+        # timelines: the source planet (ships decremented at t=0
+        # for launch_turn=0, or via _outgoing_launches for
+        # launch_turn>0) and the synthetic fleet's target planet
+        # (new arrival). All other planet timelines are unchanged.
+        affected: set[int] = {int(spec.src_id)}
+        inherited_ledger: dict[int, dict[int, tuple[Arrival, ...]]] = {}
+        # Compute the synthetic fleet's target once at the max
+        # cached horizon, reuse across smaller horizons (target +
+        # eta are physics-deterministic; smaller horizons just
+        # drop arrivals whose eta is past the horizon).
+        synth_target_id: Optional[int] = None
+        synth_eta: Optional[int] = None
+        if self._ledger_cache:
+            max_h = max(self._ledger_cache.keys())
+            max_steps = min(int(max_h), DEFAULT_RAYCAST_STEPS)
+            synth_target_id, synth_eta = _fleet_target_planet(
+                self, new_fleet, max_steps=max_steps,
+            )
+            if synth_target_id is not None:
+                affected.add(int(synth_target_id))
+            for h, parent_ledger in self._ledger_cache.items():
+                new_ledger = dict(parent_ledger)
+                if (synth_target_id is not None
+                        and synth_eta is not None
+                        and synth_eta <= h):
+                    arrival = Arrival(
+                        eta=int(synth_eta),
+                        owner=int(new_fleet.owner),
+                        ships=int(new_fleet.ships),
+                        fleet_id=int(new_fleet.id),
+                    )
+                    existing = new_ledger.get(synth_target_id, ())
+                    new_ledger[synth_target_id] = tuple(sorted(
+                        existing + (arrival,),
+                        key=lambda a: (a.eta, a.fleet_id),
+                    ))
+                inherited_ledger[h] = new_ledger
+        inherited_timeline = {
+            k: v for k, v in self._timeline_cache.items()
+            if k[0] not in affected
+        }
+        inherited_combat = {
+            k: v for k, v in self._combat_log_cache.items()
+            if k[0] not in affected
+        }
 
         return World(
             step=self.step,
@@ -812,9 +868,9 @@ class World:
             _planet_by_id=new_planet_by_id,
             _fleet_by_id=new_fleet_by_id,
             _comet_by_planet_id=dict(self._comet_by_planet_id),
-            _ledger_cache={},
-            _timeline_cache={},
-            _combat_log_cache={},
+            _ledger_cache=inherited_ledger,
+            _timeline_cache=inherited_timeline,
+            _combat_log_cache=inherited_combat,
         )
 
     def with_candidates(self, specs: Iterable["LaunchSpec"]) -> "World":
