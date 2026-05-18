@@ -221,8 +221,16 @@ def main() -> int:
                     help="Iterate over every cell with non-zero top10 + ours "
                          "samples in audit/2026-05-18-team-archetype-gap.json "
                          "and produce a cross-cell summary.")
+    ap.add_argument("--gap-vs-even", action="store_true",
+                    help="Pool features across GAP cells (panel_gap >= 0.30) "
+                         "vs EVEN cells (|panel_gap| <= 0.20). Compares the "
+                         "ours-vs-top10 delta between the two pools to "
+                         "disambiguate universal-aggression-deficit vs "
+                         "archetype-conditional behavior.")
     args = ap.parse_args()
 
+    if args.gap_vs_even:
+        return _run_gap_vs_even(args.prefix_turns)
     if args.all_gap_cells:
         return _run_all_cells(args.prefix_turns)
 
@@ -424,6 +432,159 @@ def _run_all_cells(prefix_turns: int) -> int:
                       f"{fmt(r['delta_top10_minus_ours_all'])} | "
                       f"{fmt(r['effect_size_d'], 2)} |")
         md.append("")
+    out_md.write_text("\n".join(md) + "\n")
+    print(f"wrote {out_md}")
+    return 0
+
+
+def _run_gap_vs_even(prefix_turns: int) -> int:
+    """Pool features across GAP and EVEN cells; compare top10-vs-ours
+    deltas to decide whether the behavior is universal or conditional.
+
+    GAP cells: panel_gap >= +0.30 (baseline clearly losing).
+    EVEN cells: |panel_gap| <= 0.20 (baseline competitive).
+    """
+    gap_path = REPO / "audit" / "2026-05-18-team-archetype-gap.json"
+    gap_data = json.loads(gap_path.read_text())
+    rows = [r for r in gap_data["rows"]
+            if r["top10_n"] >= 1 and r["ours_n"] >= 1]
+
+    gap_cells = [r["archetype"] for r in rows if (r["gap"] or 0) >= 0.30]
+    even_cells = [r["archetype"] for r in rows if abs(r["gap"] or 0) <= 0.20]
+
+    print(f"GAP cells ({len(gap_cells)}):   {gap_cells}")
+    print(f"EVEN cells ({len(even_cells)}): {even_cells}\n")
+
+    cache = _preload_all(prefix_turns)
+
+    def _pool(cells: list[str]) -> dict:
+        top10: list[np.ndarray] = []
+        ours: list[np.ndarray] = []
+        ours_loss: list[np.ndarray] = []
+        for c in cells:
+            data = cache.get(c, {})
+            top10.extend(data.get("top10_win", []))
+            ours.extend(data.get("ours_win", []) + data.get("ours_loss", []))
+            ours_loss.extend(data.get("ours_loss", []))
+        return {
+            "top10": _summarise(top10),
+            "ours": _summarise(ours),
+            "ours_loss": _summarise(ours_loss),
+        }
+
+    gap_pool = _pool(gap_cells)
+    even_pool = _pool(even_cells)
+
+    print(f"GAP pool:   top10_n={gap_pool['top10']['n']}, ours_n={gap_pool['ours']['n']}")
+    print(f"EVEN pool:  top10_n={even_pool['top10']['n']}, ours_n={even_pool['ours']['n']}\n")
+
+    if gap_pool["top10"]["n"] == 0 or gap_pool["ours"]["n"] == 0 \
+            or even_pool["top10"]["n"] == 0 or even_pool["ours"]["n"] == 0:
+        print("ERROR: at least one pool is empty.")
+        return 2
+
+    print(f"{'feature':<28s}  {'gap-pool d':>11s}  {'even-pool d':>12s}  {'cross-d':>9s}  conditional?")
+    print("-" * 90)
+    rows_out = []
+    for i, name in enumerate(FEATURE_NAMES):
+        g_t = gap_pool["top10"]["mean"][i]
+        g_o = gap_pool["ours"]["mean"][i]
+        g_ts = gap_pool["top10"]["std"][i]
+        g_os = gap_pool["ours"]["std"][i]
+        e_t = even_pool["top10"]["mean"][i]
+        e_o = even_pool["ours"]["mean"][i]
+        e_ts = even_pool["top10"]["std"][i]
+        e_os = even_pool["ours"]["std"][i]
+        d_gap = _effect_size(
+            g_t, g_ts, g_o, g_os,
+            gap_pool["top10"]["n"], gap_pool["ours"]["n"],
+        )
+        d_even = _effect_size(
+            e_t, e_ts, e_o, e_os,
+            even_pool["top10"]["n"], even_pool["ours"]["n"],
+        )
+        cross = (d_gap - d_even) if (d_gap is not None and d_even is not None) else None
+        # If |d_even| < 0.3 and |d_gap| > 0.5, behavior is conditional
+        # (top-10 only diverges from us in the gap cells).
+        if d_gap is not None and d_even is not None:
+            if abs(d_even) < 0.3 and abs(d_gap) > 0.5:
+                kind = "CONDITIONAL"
+            elif abs(d_gap - d_even) < 0.3 and abs(d_gap) > 0.5:
+                kind = "UNIVERSAL"
+            else:
+                kind = "mixed"
+        else:
+            kind = "—"
+        rows_out.append({
+            "feature": name,
+            "gap_top10_mean": g_t, "gap_ours_mean": g_o,
+            "even_top10_mean": e_t, "even_ours_mean": e_o,
+            "d_gap": d_gap, "d_even": d_even,
+            "cross_d": cross, "kind": kind,
+        })
+
+        def _f(v, w=10, p=2):
+            return f"{v:>+{w}.{p}f}" if v is not None else f"{'-':>{w}s}"
+
+        print(f"{name:<28s}  {_f(d_gap,11,2)}  {_f(d_even,12,2)}  {_f(cross,9,2)}  {kind}")
+
+    # Tabulate kinds
+    from collections import Counter
+    kind_counts = Counter(r["kind"] for r in rows_out)
+    print(f"\nKind tally: {dict(kind_counts)}")
+    universal = [r["feature"] for r in rows_out if r["kind"] == "UNIVERSAL"]
+    conditional = [r["feature"] for r in rows_out if r["kind"] == "CONDITIONAL"]
+    print(f"\nUNIVERSAL features (top-10 diverges from us in BOTH pools): {universal}")
+    print(f"CONDITIONAL features (top-10 only diverges in GAP cells): {conditional}")
+
+    # Persist
+    out_json = REPO / "audit" / "2026-05-18-archetype-action-audit-gap-vs-even.json"
+    out_json.write_text(json.dumps({
+        "prefix_turns": prefix_turns,
+        "gap_cells": gap_cells,
+        "even_cells": even_cells,
+        "gap_pool_n": {"top10": gap_pool["top10"]["n"], "ours": gap_pool["ours"]["n"]},
+        "even_pool_n": {"top10": even_pool["top10"]["n"], "ours": even_pool["ours"]["n"]},
+        "rows": rows_out,
+    }, indent=2))
+    print(f"\nwrote {out_json}")
+
+    out_md = REPO / "audit" / "2026-05-18-archetype-action-audit-gap-vs-even.md"
+    md = ["# Gap-vs-even pool comparison",
+          "",
+          "Pools fingerprint samples across two groups of cells to decide ",
+          "whether top-10's edge is **universal** (top-10 diverges from us ",
+          "in EVERY cell, gap or not) or **conditional** (top-10 only ",
+          "diverges in the gap cells where we're losing).",
+          "",
+          f"- **GAP cells** (panel-gap >= +30%, baseline losing): {len(gap_cells)} cells; "
+          f"pooled top10_n={gap_pool['top10']['n']}, ours_n={gap_pool['ours']['n']}",
+          f"- **EVEN cells** (|gap| <= 20%, baseline competitive): {len(even_cells)} cells; "
+          f"pooled top10_n={even_pool['top10']['n']}, ours_n={even_pool['ours']['n']}",
+          "",
+          "Classification rule:",
+          "- **UNIVERSAL**: |d_gap| > 0.5 and |d_gap - d_even| < 0.3 (same direction, similar magnitude in both pools)",
+          "- **CONDITIONAL**: |d_gap| > 0.5 and |d_even| < 0.3 (top-10 only diverges in gap cells)",
+          "- **mixed**: everything else",
+          "",
+          "## Per-feature comparison",
+          "",
+          "| feature | top10/ours (GAP) | top10/ours (EVEN) | d_gap | d_even | cross-d | kind |",
+          "|---|---|---|---|---|---|---|"]
+    for r in rows_out:
+        def fmt(v, p=3):
+            return f"{v:.{p}f}" if v is not None else "—"
+        md.append(f"| `{r['feature']}` | "
+                  f"{fmt(r['gap_top10_mean'])} / {fmt(r['gap_ours_mean'])} | "
+                  f"{fmt(r['even_top10_mean'])} / {fmt(r['even_ours_mean'])} | "
+                  f"{fmt(r['d_gap'], 2)} | {fmt(r['d_even'], 2)} | "
+                  f"{fmt(r['cross_d'], 2)} | {r['kind']} |")
+    md += ["",
+           "## Summary",
+           "",
+           f"- **Universal features:** {len(universal)} — `{', '.join(universal) if universal else '(none)'}`",
+           f"- **Conditional features:** {len(conditional)} — `{', '.join(conditional) if conditional else '(none)'}`",
+           ""]
     out_md.write_text("\n".join(md) + "\n")
     print(f"wrote {out_md}")
     return 0
