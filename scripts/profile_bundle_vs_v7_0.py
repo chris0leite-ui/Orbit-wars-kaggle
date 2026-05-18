@@ -71,7 +71,6 @@ def main():
             dt = (time.perf_counter() - t0) * 1000.0
             sink.append(dt)
             return res
-        wrapped.__code__ = agent.__code__ if hasattr(agent, "__code__") else None
         return wrapped
 
     bundle_wrapped = wrap(bundle_agent, "bundle", bundle_ms_log)
