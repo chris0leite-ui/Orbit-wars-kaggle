@@ -276,6 +276,81 @@ def test_oracle_defense_against_incoming_multi_fleet():
 
 
 # ---------------------------------------------------------------------------
+# Oracle — Bug #4: drain-frontier source-defense pre-cut
+# ---------------------------------------------------------------------------
+
+
+def test_drain_frontier_filter_logic_drops_unsafe_launches():
+    """Bug #4 fix unit test. The proposer-side `_source_survives_launch`
+    pre-cut returns False for launches that would leave the source
+    unable to defend against the earliest known inbound threat.
+
+    Scenario: src has 25 ships at production=1; opp's 30-ship fleet
+    arrives in 12 ticks. Production accrual buys 12 ships, so the
+    source can spare at most `25 + 12 - (30 + 1) = 6` ships.
+
+    NB: an end-to-end `agent(obs)` test isn't sufficient here — the
+    proposer's banding dedup naturally picks the smallest ship-count
+    variant per (src, tgt, wait_band), so a draining variant rarely
+    survives banding even when the drain filter is off. The filter
+    is a defensive layer for edge cases (joint candidates, wait-then-
+    fire sizing) where banding picks a large variant. Unit-testing
+    the predicate makes the contract explicit.
+    """
+    from agents.baseline.proposer import _source_survives_launch
+    from lib.intent import World
+    from lib.world_model import WorldModel
+
+    src = _planet(0, 0, 20.0, 25.0, ships=25, production=1)
+    tgt = _planet(1, -1, 35.0, 5.0, ships=3, production=0)
+    f = [10, 1, 52.0, 25.0, math.atan2(0, -32), 2, 30]
+    obs = _obs([src, tgt], fleets=[f])
+    w = World.from_obs(obs)
+    m = WorldModel.from_world(w)
+    src_planet = w.planets_by_id[0]
+
+    # Safe sizes (residue + 12·prod >= 31): ships in [0, 6].
+    assert _source_survives_launch(src_planet, ships=2, wait_N=0,
+                                    world=w, model=m, me=0)
+    assert _source_survives_launch(src_planet, ships=6, wait_N=0,
+                                    world=w, model=m, me=0)
+    # Just-over the boundary → drop.
+    assert not _source_survives_launch(src_planet, ships=7, wait_N=0,
+                                        world=w, model=m, me=0)
+    # Full-drain launch → drop.
+    assert not _source_survives_launch(src_planet, ships=25, wait_N=0,
+                                        world=w, model=m, me=0)
+    # wait_N >= threat_eta means the launch fires after src has fallen.
+    assert not _source_survives_launch(src_planet, ships=1, wait_N=12,
+                                        world=w, model=m, me=0)
+    assert not _source_survives_launch(src_planet, ships=1, wait_N=20,
+                                        world=w, model=m, me=0)
+
+
+def test_drain_frontier_filter_passes_through_when_no_threat():
+    """Filter must be a no-op for sources with no inbound enemy threat
+    (`time_to_enemy_threat` returns None)."""
+    from agents.baseline.proposer import _source_survives_launch
+    from lib.intent import World
+    from lib.world_model import WorldModel
+
+    src = _planet(0, 0, 20.0, 25.0, ships=25, production=1)
+    tgt = _planet(1, -1, 35.0, 5.0, ships=3, production=0)
+    # No inbound fleet; no opp planet that could plausibly launch
+    # (the only opp would be tgt, which is neutral). `time_to_enemy
+    # _threat` must return None.
+    obs = _obs([src, tgt], fleets=[])
+    w = World.from_obs(obs)
+    m = WorldModel.from_world(w)
+    src_planet = w.planets_by_id[0]
+    # Every launch size should pass.
+    for ships in (1, 6, 12, 25):
+        assert _source_survives_launch(
+            src_planet, ships=ships, wait_N=0, world=w, model=m, me=0,
+        ), f"filter false-positively dropped a safe launch (ships={ships})"
+
+
+# ---------------------------------------------------------------------------
 # Oracle 5 — Bug #12 specific: WIDE-gap multi-wave attack
 # ---------------------------------------------------------------------------
 

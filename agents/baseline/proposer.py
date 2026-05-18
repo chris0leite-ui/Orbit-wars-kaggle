@@ -357,6 +357,58 @@ def wait_band(wait_N: int) -> int:
     return 1 if wait_N <= 7 else 2
 
 
+def _source_survives_launch(
+    src, ships: int, wait_N: int, world, model, me: int,
+) -> bool:
+    """Bug #4 fix (2026-05-18 PM): would `src` still defend itself
+    against the earliest known inbound threat after launching `ships`
+    at `wait_N`?
+
+    Returns True when:
+    - no enemy threat is inbound to `src` (`time_to_enemy_threat` is
+      None), OR
+    - the threat is "potential" only (no fleet in the ledger; opp
+      would need to launch + travel — the chooser's rollout can
+      score that case better), OR
+    - the launch lands strictly BEFORE the threat AND the residue
+      plus production accrual up to `threat_eta` covers the threat
+      force (with a +1 margin for combat resolution).
+
+    Returns False when the launch leaves `src` vulnerable: the
+    chooser's leaf rollout (horizon 25) doesn't see threats landing
+    30+ ticks later, so the chooser drains exposed sources. This
+    filter is a proposer-side pre-cut that doesn't depend on the
+    rollout horizon. Anchored on the asdf-game (76947663) P15 pattern
+    (25 ships → launched 18 → opp threat at ~10 ticks → P15 falls).
+    """
+    threat_eta = model.time_to_enemy_threat(int(src.id), me, world)
+    if threat_eta is None:
+        return True
+    threat_force = sum(
+        sh
+        for (eta_arr, owner, sh) in model.ledger.get(int(src.id), [])
+        if owner != me and eta_arr <= int(threat_eta) + WAVE_LOOKAHEAD
+    )
+    if threat_force <= 0:
+        # Potential-launch threats only; let the chooser's rollout
+        # handle the assessment. The pre-cut is for in-flight cases
+        # where the trajectory is already committed.
+        return True
+    if int(wait_N) >= int(threat_eta):
+        # Launch would happen AT or AFTER the threat lands — the
+        # source has already fallen by the time we'd fire. Drop.
+        return False
+    growth_during_wait = int(src.production) * int(wait_N)
+    residue_after_launch = int(src.ships) + growth_during_wait - int(ships)
+    if residue_after_launch < 0:
+        return False  # nonsensical sizing; guard
+    growth_after_launch_to_threat = (
+        int(src.production) * (int(threat_eta) - int(wait_N))
+    )
+    garrison_at_threat = residue_after_launch + growth_after_launch_to_threat
+    return garrison_at_threat >= int(threat_force) + 1
+
+
 def propose(my_planets, target_pool, world, model, me: int,
             omega: float, baseline_len: int):
     """Build the pre-rank list of candidates, then dedup by
@@ -456,6 +508,25 @@ def propose(my_planets, target_pool, world, model, me: int,
                     continue
             filtered.append(entry)
         deduped = filtered
+
+    # Bug #4 fix (2026-05-18 PM): drop candidates whose launch would
+    # leave the SOURCE vulnerable to a known inbound enemy threat
+    # before our garrison + production accrual can defend. The
+    # chooser's leaf rollout (horizon 25) doesn't see threats landing
+    # 30+ ticks later, so the chooser drains exposed sources. This
+    # pre-cut catches that class of decision before the chooser even
+    # scores the candidate. Opt out via PROPOSER_DRAIN_FILTER=off to
+    # A/B against the pre-fix breadth.
+    if os.environ.get("PROPOSER_DRAIN_FILTER", "").strip().lower() != "off":
+        deduped = [
+            entry for entry in deduped
+            if _source_survives_launch(
+                entry[1],  # src
+                int(entry[3]),  # ships
+                int(entry[7]),  # wait_N
+                world, model, me,
+            )
+        ]
 
     deduped.sort(key=lambda e: -e[0])
     return deduped
