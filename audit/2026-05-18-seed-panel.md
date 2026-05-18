@@ -133,6 +133,31 @@ Outputs:
 - `audit/tournaments/20260518T111505Z.json` — full tournament record
   (per-game seed, ship-delta, statuses).
 
+## A/B validation: baseline vs v7_0 (32 archetypes × 2 seats)
+
+`python fast.py eval baseline --vs v7_0 --geometry-panel --full-panel
+ --by-archetype --max-seeds 32 --workers 8` — 17 min, 64 games.
+
+- **Aggregate**: baseline 51/64 = 79.7 % wins, Wilson [0.68, 0.88].
+- **Coverage**: all 32 archetypes hit (2 games each, P0 + P1).
+- **Signal**: 29/32 archetypes are extreme (≥75 % or ≤25 %).
+
+**Five regression archetypes where v7_0 actually beats baseline:**
+- `low_prod__mixed_rotating__big_rotating` (0/2)
+- `med_high_prod__mostly_static__big_static` (0/2)
+- `med_low_prod__mixed_rotating__big_static` (0/2)
+- `med_low_prod__mixed_static__big_rotating` (0/2)
+- `med_low_prod__mixed_static__big_static` (0/2)
+
+**Pattern.** Three of five regressions cluster on `med_low_prod__mixed_*` —
+mid-low-production games with mixed rotation states. Without the panel,
+the aggregate 80 % winrate would hide this; the cluster is a concrete
+follow-up: either accept it as an acceptable trade (v7_0 was overfit to
+this slice) or root-cause why baseline's mission-portfolio underperforms
+when production is mid-low and rotation is mixed.
+
+Full readout: `audit/seed-panel/ab-baseline-vs-v7_0.txt`.
+
 ## Open follow-ups (out of scope here)
 
 - Synthetic / handcrafted geometries (PI flagged as later). Now that
