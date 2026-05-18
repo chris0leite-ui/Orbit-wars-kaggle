@@ -583,6 +583,54 @@ def test_search_coordinated_arrival_from_far_planet():
 # ---------------------------------------------------------------------------
 
 
+def test_enumerate_excludes_self_from_top_n():
+    """Regression for the self-eats-a-slot bug (fixed 2026-05-18).
+
+    Before the fix, `_enumerate_candidates` sorted ALL non-comet
+    planets by distance and took [:candidates_per_source]. The
+    source's own planet (distance 0) always landed at index 0; the
+    inner `if tgt.id == src.id: continue` then dropped it, so a
+    request for top-N actually emitted top-(N-1) actual targets.
+
+    With `candidates_per_source=2` in a 24-planet board this
+    collapsed to ONE target per source. In an own-cluster early-
+    game state, that one target was usually another OWN planet,
+    starving the chooser of enemy/neutral candidates.
+
+    Fix: filter self BEFORE the sort+slice, so top-N yields N
+    distinct non-self targets. This test pins that invariant.
+    """
+    from lib.trajectory_layer import SunFilter
+    # Source at (30, 85). Place 3 non-self targets at strictly
+    # different angles + distances so the top-2 closest yields two
+    # distinct angles. (Collinear targets would all produce angle=0
+    # and defeat the angle-as-target-id check.)
+    world = _toy_world(
+        planets=[
+            [0, 0, 30.0, 85.0, 2.0, 50, 1],   # source
+            [1, -1, 40.0, 85.0, 1.0, 5, 1],   # closest (right,  d=10)
+            [2, -1, 30.0, 65.0, 1.0, 5, 1],   # 2nd closest (down, d=20)
+            [3, -1, 70.0, 60.0, 1.0, 5, 1],   # farther (d≈47)
+        ],
+        fleets=[],
+    )
+    search = BundleSearch(
+        max_depth=1, beam_width=2,
+        candidates_per_source=2,   # exercise the bug-prone width
+        launch_turns=(0,),
+        ship_ratios=(1.0,),
+    )
+    sun = SunFilter(world)
+    specs = list(search._enumerate_candidates(world, my_id=0, sun=sun))
+    # Distinct angles ≈ distinct targets. Top-2 should give us
+    # launches toward TWO different non-self targets.
+    angles = {round(s.aim_angle, 3) for s in specs if s.src_id == 0}
+    assert len(angles) >= 2, (
+        f"top-2 closest emitted only {len(angles)} distinct target(s); "
+        f"self-eats-slot regression has returned: angles={angles}"
+    )
+
+
 def test_enumerate_emits_multi_ship_count_per_src_tgt():
     """Directly inspect `_enumerate_candidates` for a single
     (src, tgt) pair. With ship_ratios=(0.5, 1.0) the enumerator

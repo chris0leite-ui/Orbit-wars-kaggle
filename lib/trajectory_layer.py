@@ -43,7 +43,6 @@ from typing import Any, Iterable, Mapping, Optional
 
 from lib.aim import swept_pair_hit
 from lib.combat import resolve_arrivals
-from lib.scoring import pv_horizon
 
 # ---------------------------------------------------------------------------
 # Constants — must match `lib/game/interpreter.py` exactly
@@ -1626,49 +1625,71 @@ class BundleScore:
     """Decomposed bundle value, for diagnosis + tuning + ladder
     calibration (each component is its own metric in the pre-
     registration discipline).
+
+    Field semantics — terminal vs path-integrated:
+    - `ship_delta`: TERMINAL (us − sum of others) at turn K. Ships
+      are transit-state mid-rollout, so the path integral over ships
+      has no clean interpretation; we keep this terminal.
+    - `planet_delta`: PATH-INTEGRATED. Sum over t in [1..K] of
+      (my_planets_t − opp_planets_t). Units = planet-turns. A planet
+      we hold for all K turns contributes +K; a planet captured at
+      t=5 and held to K contributes (K-5); a planet captured then
+      recaptured contributes only the held window. Magnitude scales
+      with K — interpret accordingly, NOT as a planet count diff.
+    - `production_delta`: PATH-INTEGRATED. Same shape as
+      planet_delta but weighted by per-planet `production` rate.
+      Units = production-turns.
+    - `eliminations`: TERMINAL count of opponents who started with
+      planets and own none at turn K.
+    - `total`: weighted sum (`ship_delta + planet_weight ·
+      planet_delta + production_weight · production_delta +
+      elimination_bonus · eliminations`). This is the scalar the
+      chooser argmax's over.
     """
-    # End-state deltas at horizon (us vs sum of others, alive planets only).
     ship_delta: float
     planet_delta: float
     production_delta: float
-    # Number of opponents eliminated (started with planets, owns none at K).
     eliminations: int
-    # Sum: the scalar the chooser optimises.
     total: float
 
 
 @dataclass(frozen=True)
 class BundleEvaluator:
-    """Score a bundle by reading the trajectory layer's K-turn outcome.
+    """Score a bundle by reading the trajectory layer's K-turn rollout.
 
-    The score is a weighted sum of (ship_delta, planet_delta,
-    production_delta, eliminations) at the horizon, measured AFTER
-    applying the bundle to the world. The default weights are hand-
-    tuned starting points; Step 3's learned value head replaces this
-    function with a trained network later.
+    Hybrid terminal-vs-path-integrated leaf:
+    - `ship_delta` is the TERMINAL (turn K) ship-count diff.
+    - `planet_delta` and `production_delta` are PATH-INTEGRATED —
+      summed over t in [1..K] of the per-turn diff. Earlier captures
+      accumulate more credit (more held turns); recaptured planets
+      contribute only the held window. This is the H3 fix to the
+      pre-2026-05-18 terminal-only scoring, which was blind to mid-
+      rollout bleed and gave equal credit to captures-at-t=5 vs
+      captures-at-t=25.
+    - `eliminations` is a terminal count; the elimination_bonus
+      rewards a full opp seat wipe at K.
 
     `horizon` is the look-ahead in turns. Default 30 — long enough to
     capture cross-board strikes (board-diagonal ETA at speed=1.66 is
     ~85 steps, but most strategic launches are <30 turns), short
     enough that opponent uncertainty doesn't dominate the score.
+
+    Default weights are hand-tuned starting points; Step 3's learned
+    value head replaces this function with a trained network later.
     """
     horizon: int = 30
     planet_weight: float = 5.0
-    # production_weight is a coefficient on TOP of the pv_horizon
-    # multiplier (the present-value of one unit of production over the
-    # game's remaining horizon). Default 1.0 → production_delta is
-    # valued at ~`t_total - step` ship-equivalents at game start,
-    # matching `agents/baseline/value.favor` semantics. The old static
-    # weight=10 collapsed production to "10 ship-equivalents over the
-    # evaluator's K-turn horizon" — fine within the horizon, but blind
-    # to the compounding value past it (root-cause #3 in the Piece 7
-    # diagnostic).
+    # Coefficient on the path-integrated production_delta (the sum
+    # over t in [1..horizon] of `my_prod_t - opp_prod_t`). Default
+    # 1.0 → one ship-equivalent per held production-turn. Combined
+    # with planet_weight=5, a +2-prod planet captured at turn 5 and
+    # held through K=30 yields ~25 turns × (1·2 + 5·1) = 175
+    # ship-equivalents over the rollout window — comparable to the
+    # ~50-ship launch cost. Adjust per A/B; the magnitude is
+    # PROPORTIONAL to horizon, so a horizon change rebalances this
+    # weight against ship_delta (which stays terminal).
     production_weight: float = 1.0
     elimination_bonus: float = 200.0
-    # γ < 1 applies geometric discount to future production turns; γ=1
-    # is the linear horizon (every remaining game turn counted at unit
-    # value). Match `lib.scoring.PV_GAMMA` default (1.0); tune via A/B.
-    pv_gamma: float = 1.0
 
     def score(self, world: "World", bundle: Bundle,
               *, my_id: Optional[int] = None,
