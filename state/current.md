@@ -12,16 +12,17 @@
 > (clean modular re-baseline of v15).
 
 ```yaml
-date: 2026-05-17
+date: 2026-05-18
 deadline: 2026-06-23 23:59 UTC
-days_to_deadline: 37
+days_to_deadline: 36
 
 # Most-recent submission (trajectory chooser v4 + wait_N + wallclock budget).
 # Sets BASELINE_CHOOSER=trajectory + BASELINE_VALUE_HEAD=hybrid via setdefault
-# in agents/baseline/main.py. n=64 vs v15: 42/64 = 65.6pct Wlo=0.534 INCONCL
-# (+3pp point estimate over composite_a2 same A/B; max-turn-ms 1077 vs 1292).
+# in agents/baseline/main.py. SETTLED at mu=1271.8 (far above local A/B
+# prediction of ~1140-1180). Spatial-leaf A/B 2026-05-18 was net-negative
+# (2P 40.6%, 4P 9.4%, wallclock max 2541ms) — NO new submission.
 last_submission_id: 52754310
-last_submission_status: PENDING
+last_submission_status: COMPLETE
 last_submission_file: submissions/baseline.py
 last_submission_agent: trajectory_chooser_v4_waitN_baseline
 last_kernel_push: 2026-05-17 22:06:07 UTC

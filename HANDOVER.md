@@ -1,152 +1,154 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-17 evening by
-> `claude/audit-workflow-performance-btjeK`. Next session opens
-> with Direction B (joint candidate evaluation).
+> Last written: 2026-05-18 by
+> `claude/audit-workflow-performance-btjeK`. Spatial leaf
+> hypothesis falsified this session; Direction B remains next.
 
 ## Where we are
 
-- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC. ~37 days.
-- **Just submitted:** `52754310 baseline.py` PENDING — trajectory
-  chooser v4 + wait_N + wallclock budget. Sets BASELINE_CHOOSER=
-  trajectory and BASELINE_VALUE_HEAD=hybrid via setdefault in
-  `agents/baseline/main.py`. **Do NOT hardcode μ here.** Query
-  Kaggle at session start: `kaggle competitions submissions
-  orbit-wars`.
+- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC. ~36 days.
+- **Live production:** `52754310 baseline.py` — trajectory chooser
+  v4 + wait_N + wallclock budget + hybrid value head. Settled at
+  **μ=1271.8** (well above prior session's prediction of ~1158).
+  Sets `BASELINE_CHOOSER=trajectory` and `BASELINE_VALUE_HEAD=hybrid`
+  via setdefault in `agents/baseline/main.py`.
 - **Rolling-last-2** (auto-eval pair):
-  - `52754310` trajectory v4 + wait_N (5/17 22:06 UTC) — PENDING
+  - `52754310` trajectory v4 (5/17 22:06 UTC) — COMPLETE, μ=1271.8
   - `52744856` composite_a2_hybrid (5/17 14:17 UTC) — COMPLETE,
-    μ ≈ 1158.6 settling
-  - v20 (`52721807`, μ=1082.4) evicted by 52754310 push.
-- **Daily submission budget:** 5/day; 5/17 used 3 (`52744234`
-  ERROR, `52744856` OK, `52754310` PENDING).
-- **Calibration WARNING** (still active per prior sessions): local
-  Wilson lower bound consistently over-predicts live μ. Wait for
-  ~6h / 50 games per `early-trueskill-mu-unreliable` before
-  reading the new submission's settled μ.
+    μ=1152.7 (the floor)
+- **Daily submission budget:** 5/day; 5/17 used 3 (52744234 ERROR,
+  52744856 OK, 52754310 OK); 5/18 used 0.
+- **NO new submission this session.** Spatial leaf experiment was
+  net-negative (see audit/2026-05-18-spatial-leaf-negative-result.md).
+  Floor stays at 1152.7; champion at 1271.8.
+- **Calibration UPDATE**: the trajectory chooser's local A/B
+  predicted ~1140-1180 mu vs v15-as-reference; live μ landed at
+  1271.8 — **+90 above prediction**. Local A/B systematically
+  UNDERPREDICTS for the trajectory chooser architecture. Future
+  candidates that show clear local A/B lift may settle even higher.
+  Conversely, A/B losses (like spatial leaf this session) are real
+  and should be trusted.
 
-## What just landed (2026-05-17 evening)
-
-The trajectory-first reframe (4 iterations across this and the
-prior session) finished as a production swap. Live agent now uses
-the trajectory chooser with deterministic admissibility filter
-(predict_fleet_fate rejects sun/oob/expired-comet/comet-collision
-candidates before scoring).
+## What this session shipped (no submission)
 
 3 commits this session:
-- `da2473f` — wait_N>0 candidates threaded into v4 (was previously
-  filtered with `if int(wait_N) != 0: continue` at chooser entry).
-- `10c9601` — wallclock budgeting via `affordable_validate_cap` +
-  `safe_deadline` pre-bail. Mirrors composite chooser pattern.
-- `f192cf4` — `BASELINE_CHOOSER=trajectory` setdefault in main.py.
+- `b5f5296` — spatial leaf head (opt-in, env-gated) + idle-trajectory
+  audit infrastructure
+- `cc38e11` — summary.json for 52754310 live episodes
+- `558bd61` — spatial leaf 2P-only short-circuit (4P regression fix)
 
-### A/B receipts (n=64 vs v15, BASELINE_VALUE_HEAD=hybrid)
+### A/B receipts (clean bundle-based, NOT env-based)
 
-| variant | wins | rate | Wlo | max-ms |
-|---|---:|---:|---:|---:|
-| v4 fire-now only (no wait_N) | 31/64 | 48.4% | 0.36 | — |
-| **v4 + wait_N (shipped)** | **42/64** | **65.6%** | **0.534** | **1077** |
-| composite_a2 (ref / rolling partner) | 40/64 | 62.5% | 0.503 | 1292 |
+| variant | n | wins/rate | Wlo | max-ms | verdict |
+|---|---:|---:|---:|---:|---|
+| spatial+trajectory vs hybrid+trajectory (2P) | 64 | 26/40.6% | 0.295 | 2541 | **FAIL** |
+| spatial+trajectory in 4P vs 3x hybrid | 32 | 3 first-place/9.4% | 0.032 | 1503 | **FAIL** |
 
-+3pp point estimate over composite at better max-turn-ms. Both
-INCONCL — within statistical noise.
+Failure modes:
+1. 2P regression — spatial pull conflicts with composite's capture
+   EV (double-counting / wait-N timing breakage)
+2. 4P regression hard — spatial conflicts with A2 weakness-exploitation
+3. Wallclock blowout under CPU contention (max 2541ms vs 1000ms cap)
 
-### Bench post-wallclock-fix
+The 2P-only short-circuit (commit 558bd61) eliminates risk-2, but
+risk-1 remains in 2P.
 
-p50=138, p95=412, p99=566, max=623, over_1000ms=0. PASS.
+### What's reusable
+
+- `scripts/idle_trajectory_audit.py` — re-runnable measurement
+  (ship-turn density by distance bucket, launch ETA distribution,
+  staging-opportunity rate). See `audit/replays/idle-trajectory-
+  2026-05-17.md`.
+- `agents/baseline/value.favor_hybrid_spatial` — opt-in spatial
+  leaf via `BASELINE_VALUE_HEAD=hybrid_spatial`. Default OFF.
+- New env vars: `BASELINE_SPATIAL_WEIGHT` (default 0.5),
+  `BASELINE_SPATIAL_DECAY` (default 30).
+- Friction tag `env-var-shared-process-breaks-ab-isolation` —
+  documents the within-process A/B isolation issue. **Use hard-coded
+  bundle patches for clean A/B between configurations.**
+
+## Confirmed: idle-fleet leak IS real but spatial leaf does NOT fix it
+
+`scripts/idle_trajectory_audit.py` measured on submission 52754310:
+- **43.8% of ship-turns** are on planets >50 units from any
+  non-our planet ("isolated")
+- 22.6% mid, 10.7% rear, 22.9% frontier
+- Long launches (>20 ETA): 11.6% of all launches
+- Staging-opportunity rate: 46.2%
+
+The leak is real. The spatial leaf is just not the right fix.
 
 ## Next-session first-action (ranked by EV / cost)
 
-**1. Direction B — joint candidate evaluation (~1-2 weeks, +30-50μ
-expected if it works).** PI directive at session end. Concrete
-shape filed at `knowledge-base/thoughts/2026-05-17-direction-b-
-joint-action-scoping.md`. Summary:
-
-- Enumerator: top-K=5 independent candidates form seed pool. Joint
-  candidate set = K singles + C(K,2)=10 pairs = 15 candidates.
-- Scorer: fast_sim with ALL constituent launches injected at their
-  respective wait_N steps; favor-Δ vs idle baseline.
-- Emit: highest-Δ joint; emit fire-now constituents; reserve src/tgt
-  for wait>0 constituents.
-- Wallclock estimate: 15 × ~30ms = 450ms. Fits in 600ms budget.
-
-Open question (PI to weigh in pre-implementation): which baseline
-for joint candidates? Same idle baseline (singles vs joints
-non-comparable), best-single baseline (marginal lift), or sum-of-
-singles baseline (interaction term only). See
+**1. Direction B — joint candidate evaluation (PI directive from
+prior session).** Multi-step planning is more likely to drain
+isolated ship-turns than single-step leaf tweaks. The joint
+chooser scores "A→B stage then B→T capture" as a unit, so forward-
+deploy emerges naturally if the joint score is positive. Concrete
+plan: `knowledge-base/thoughts/2026-05-17-direction-b-joint-action-
+scoping.md`. Open question on joint baseline still pending PI:
 `knowledge-base/questions/2026-05-17-joint-scoring-baseline.md`.
 
-**2. Mine the leaderboard (~1-3 days, cheap).** Rule 22 fires at
-plateau. We haven't pulled top-5 public notebooks since the
-romantamrazov (LB μ=1224) reference. Rolling μ at ~1158 suggests
-we're in the 5-15% percentile band, not top-1%. Pull replays from
-top-LB submissions, run `attribute_fleets`, find the structural
-gap. Cheap; informs every later direction.
+**2. Mine top-5 public notebooks (Rule 22).** We're at μ=1271.8.
+Romantamrazov LB-MAX was 1224 (47 below). Top-of-LB might be
+1300+. Pull and compare structural choices. Cheap; informs every
+later direction.
 
-**3. Watch 52754310 settle (~6h / 50 games).** If μ lands ≥1158
-(matches/beats composite_a2), Direction B builds on a solid base.
-If μ tanks <1100, revert trajectory→composite via 3-line edit and
-re-submit composite_a2 as the rolling-pair floor. Rollback flag:
-`knowledge-base/flags/2026-05-17-trajectory-default-4p-untested.md`.
+**3. Alternative positional formulation.** Rule 37 budget: 2 more
+variants available on positional axis.
+  - Weight by production (target capture EV, not just distance).
+  - Restrict to "contested neutrals only" (exclude opp planets
+    that have full garrisons and aren't realistic captures).
+  - Different spatial signal: distance-to-opp-FLEETS-only (not
+    planets).
+  - Risk: still double-counting concern. Probably better to wait
+    for Direction B which uses different framing.
 
-## Falsified or dead this session
-
-- N_VALIDATE=60 cap as the wallclock fix: cost 8pp winrate (37/64
-  vs 42/64). Friction tag
-  `validate-cap-too-tight-cost-winrate-not-just-wallclock`. Rule 40
-  applies — restriction-tuning lost to letting safe_deadline bind.
-- Replacing composite entirely with trajectory chooser (v1/v2/v3
-  binary leaf): 0/32 × 3 = Rule 37 axis-saturation. Closed.
-
-## What this session deliberately did NOT do
-
-- **Did not implement Direction B or C.** Rule 37 already constrained
-  this session's diff. Direction B is next session's first task.
-- **Did not test trajectory chooser in 4P.** All A/B was 2P. Flag
-  filed at `knowledge-base/flags/2026-05-17-trajectory-default-4p-
-  untested.md`.
-- **Did not modify proposer, value head, or emit logic.** The
-  trajectory chooser slots in via two env-var setdefaults; the
-  upstream/downstream pipeline is untouched.
+**4. Staging proposer.** Per audit, only 12% of launches are long
+and 46% of those have staging options ≈ 5.5% of launches could
+benefit. Low leverage compared to other directions.
 
 ## Pointers
 
-- `agents/baseline/main.py` — entry, sets both env vars.
-- `agents/baseline/chooser_trajectory.py` — trajectory chooser
+- `agents/baseline/main.py` — entry, sets BASELINE_CHOOSER=trajectory
+  + BASELINE_VALUE_HEAD=hybrid via setdefault.
+- `agents/baseline/value.py` — favor_hybrid (validated production),
+  favor_hybrid_spatial (opt-in, 2P-only). New env vars
+  BASELINE_SPATIAL_WEIGHT, BASELINE_SPATIAL_DECAY.
+- `agents/baseline/chooser_trajectory.py` — trajectory chooser v4
   (extend here for Direction B).
-- `agents/baseline/chooser.py` — composite chooser (REFERENCE for
-  wait_N pattern at score_action:60-73 and validate budgeting at
-  affordable_validate_cap:78).
 - `agents/baseline/proposer.py` — multi-wait grid + banded dedup.
-- `agents/baseline/value.py` — favor_hybrid dispatcher.
-- `lib/trajectory.py` — predict_fleet_fate (SUN_SAFETY=0 post-fix).
-- `lib/fast_sim.py`, `lib/world_model.py` — primitives. Do NOT
-  rewrite.
-- `audit/2026-05-17-trajectory-chooser-shipped.md` — what shipped
-  this session (full receipt).
-- `audit/2026-05-17-sun-safety-cushion-fix.md` — earlier bug fix
-  for predict_fleet_fate's false-rejection cushion.
-- `knowledge-base/concepts/probability-of-winning-framework.md` —
-  Direction A/B/C framing.
-- `knowledge-base/concepts/trajectory-first-architecture.md` —
-  the architectural reframe doc.
+- `scripts/idle_trajectory_audit.py` — NEW; ship-turn density
+  measurement.
+- `audit/2026-05-18-spatial-leaf-negative-result.md` — NEW;
+  this session's negative-result postmortem (full A/B receipts +
+  failure-mode hypotheses).
+- `audit/replays/idle-trajectory-2026-05-17.md` — measurement
+  output for 52754310 / 52744856 / 52710995.
 - `knowledge-base/thoughts/2026-05-17-direction-b-joint-action-
-  scoping.md` — concrete plan for next session.
+  scoping.md` — Direction B plan.
+- `knowledge-base/questions/2026-05-17-joint-scoring-baseline.md` —
+  open question for PI.
 - `state/current.md` — submitted-agent state (no μ values).
 
 ## Rule reminders
 
 - Rule 1: submissions are single-shot, PI-approved. No retry loops.
-- Rule 12: rolling-last-2 — third push evicts oldest. v20 just
-  evicted; pair is now [composite_a2 52744856, trajectory 52754310].
-- Rule 22: at every plateau, mine top-5 public notebooks.
+- Rule 12: rolling-last-2 — third push evicts oldest. Current pair
+  is [52754310 (1271.8), 52744856 (1152.7)]. Push order matters.
+- Rule 22: at every plateau, mine top-5 public notebooks. **Fires
+  next session — current μ=1271.8 stable, exploration warranted.**
 - Rule 32: session-start `kaggle competitions submissions
   orbit-wars` is the source of truth for μ. State files do NOT
   record μ.
-- Rule 37: 3-variant axis cap. v1/v2/v3 trajectory-as-replacement
-  hit it; v4 succeeded by making trajectory chooser LOOK LIKE
-  composite + smarter filter. Direction B is a DIFFERENT axis
-  (joint vs single scoring).
+- Rule 37: 3-variant axis cap. Spatial-positional axis: 1/3 used
+  (this session's negative result). 2 more available.
+- Rule 38: fix-verification reproduces failure. The 2P-only
+  short-circuit was verified via test_favor_hybrid_spatial_skips_
+  spatial_in_4p with SPATIAL_WEIGHT=5.0 but not by re-running 4P
+  A/B with the new bundle. **Next session: re-bundle and verify
+  4P matches hybrid baseline before any spatial-leaf submission.**
 - Rule 40: prefer modeling-correctness over restriction-tuning.
-  Hit again this session — N_VALIDATE=60 cap was a band-aid; the
-  modeling fix was "let safe_deadline bind."
+  Applied this session (spatial leaf IS modeling). Rule 40 doesn't
+  guarantee the modeling fix is RIGHT — it guarantees you TRY
+  modeling. Spatial leaf was wrong direction.
