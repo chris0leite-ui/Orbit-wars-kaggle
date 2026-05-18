@@ -466,6 +466,45 @@ relevant skill file or source code, not back into friction.md.
   for verdicts. Promotion candidate: bump `fast.py eval` default
   `--max-seeds` from 8 (= n=16 with 2-seat balance) to 16 (= n=32).
 
+## 2026-05-18 (claude/ml-competition-strategy-PFhzM — Phase C wrap)
+
+- `tag: cands-per-source-2-saturates-search` — Phase C diagnostic at
+  turn 20 of bundle-vs-v7_0 found `BUNDLE_OWN_CANDS_PER_SOURCE=2`
+  caused the beam search to converge on empty bundle even when
+  productive attacks existed; bumping to 5 unlocked productive
+  search across all tested horizons. **Oracle suite masked this**
+  because oracle fixture sets cands=5 in monkeypatched env, but
+  production runs the agent's `_build_searches` default. Phase A
+  oracles tested the BETTER config; live agent ran the worse one.
+  **Fix:** default flipped to 5 (commit 9c77fa2). **Rule:** when
+  oracle fixture knobs diverge from production defaults, the oracle
+  results don't transfer to live play. Audit oracle fixture
+  diff'ed against `_build_searches` defaults next time.
+- `tag: oracle-passes-production-loses-pattern` — Meta-friction.
+  10/10 oracles green; 0/16 wins vs v7_0 pre-cands-fix. Oracle
+  suite is necessary but not sufficient for live performance. A
+  mechanism can pass its synthetic isolation test AND have negative
+  production cost-benefit (Phase B me-followup case). **Fix:**
+  always pair oracle work with at least one live-style game profile
+  before committing to a Phase C A/B.
+- `tag: bundler-multiline-import-orphan` —
+  `scripts/bundle_agent.py` strips only the `from X import (` line
+  of a multi-line import, leaving the subsequent identifier-per-
+  line block as syntactically invalid orphan continuation lines.
+  Caught by parity gate (IndentationError at the inlined location).
+  **Fix:** collapse bundle agent's multi-line `from
+  lib.trajectory_layer import ...` to a single line. **Rule:** keep
+  bundle-agent `lib` imports single-line until the bundler is
+  refactored to detect multi-line forms.
+- `tag: chooser-axis-exhaustion-pivot-trigger` — Per Rule 37: 5 of 7
+  variants on the chooser/scorer/opp-model axis nulled or regressed
+  this session. cands=5 was the one win; lead-aim (asymmetric +
+  symmetric) didn't transfer. PI ratified pivot away from this axis
+  toward objective-based search (mission framework). **Fix:** the
+  next session implements a mission-based proposer that feeds
+  bundle's trajectory-layer scorer (see
+  `knowledge-base/thoughts/2026-05-18-strategic-redirect-from-tactical-mechanics.md`).
+
 ## 2026-05-18 (claude/ml-competition-strategy-PFhzM — Phase A/B trajectory-native foundation)
 
 - `tag: pi-isolate-fix-verify` — PI ratified principle: when a problem
