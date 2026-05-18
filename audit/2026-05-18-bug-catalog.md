@@ -4,6 +4,12 @@ Catalog of bugs discovered while diagnosing the chooser's
 under-emission and 4P-regression patterns. Each bug includes:
 location, symptom, root cause, fix sketch, and current status.
 
+**IMPORTANT — bugs #4, #13, #14 share a single root architectural
+limitation** (single-step + me-static rollout). See concept doc
+`knowledge-base/concepts/coordination-oracle-testing.md` for the
+foundational framing: many bugs here are symptoms of ONE structural
+issue. Oracle-based test methodology proposed there.
+
 ---
 
 ## #1 — "feasible-now still gets wait-N=1" speculative variant
@@ -194,6 +200,73 @@ collapses these.
 
 **Status**: **NOT INVESTIGATED**. Theoretical risk; not observed in
 data yet.
+
+---
+
+## #14 — ⭐ ROOT — Asymmetric rollout: opp plays, we don't
+
+**Location**: `agents/baseline/chooser_trajectory.py:score_candidate_v4`
+rollout loop (line ~370-376):
+
+```python
+for t in range(horizon):
+    if snap.fake_env.done:
+        break
+    actions = opp_actions_for_snap(snap, me, num_seats)  # opp REACTS each step
+    if t == int(wait_N):
+        actions[me] = [[int(src.id), float(angle), int(ships)]]  # we move ONCE
+    snap = fs_step(snap, actions, in_place=True)
+```
+
+**Symptom**: in the leaf rollout, opp is simulated REACTIVELY (calls
+`lite_greedy_policy` every tick), but OUR agent stands still after
+our single launch. The chooser is essentially asking "if I make this
+ONE move AND THEN STAND STILL FOR 25 TICKS, what's the worst opp
+can do?"
+
+This produces a systematic worst-case bound. The chooser refuses
+any launch that opp could exploit, because in the rollout we agreed
+not to defend.
+
+**Evidence**:
+1. Dekaineko step 150: launching P0→P8 exposes P0 to opp counter.
+   Real game we'd reinforce P0 from one of 22 other planets. Rollout
+   shows us doing nothing → P0 falls → chooser scores Δ ≤ 0.
+2. Asdf game pattern: chooser drains planet P15 because rollout
+   doesn't show us defending P15 later either.
+3. Joint v3 4P regression: joint commits 2 sources; rollout shows
+   3 opps exploiting both while we do nothing.
+
+**Root cause**: classic asymmetric self-play simulation. The
+opponent's reactive policy is implemented; ours is not.
+
+**Fix sketches**:
+
+1. **Mirror lite_greedy for me in the rollout**: at each tick,
+   also call `lite_greedy_policy(snap.state[me].observation)` and
+   inject the result. We become reactive too. Honest game-theoretic
+   simulation.
+   - Concern: our chooser is meant to be SMARTER than lite_greedy.
+     Using lite_greedy as our rollout policy under-rates our skill.
+     But: it's still better than "we do nothing."
+
+2. **Mirror the proposer+chooser stack for me** (heavier): in the
+   rollout, run a cheap version of our own decision pipeline at each
+   tick. Very expensive — each leaf eval becomes recursive.
+
+3. **Predict our future captures via composite_capture_value**: at
+   the leaf, INCLUDE the value of OUR in-flight fleets' captures
+   beyond what's already credited. Captures the "we'll defend"
+   intuition without simulating it.
+
+4. **Heuristic overrides for clear oracle scenarios** (bug-class
+   patches): see `coordination-oracle-testing.md`.
+
+**Status**: **NOT YET FIXED**. THE structural fix. Implementing #1
+or #2 above would dissolve bugs #4 and #13 simultaneously.
+
+**Severity**: critical. Likely the single biggest architectural
+improvement available. Roman/dekaineko/asdf losses all trace here.
 
 ---
 
