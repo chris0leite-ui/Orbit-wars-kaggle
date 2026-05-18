@@ -44,13 +44,12 @@ from typing import Any
 from lib.fast_sim import ship_totals
 from lib.intent import World
 from lib.scoring import pv_horizon
-from lib.world_model import (
-    DEFAULT_HORIZON,
-    WorldModel,
-    comet_remaining_lifetime,
-    fleet_target_planet,
-    simulate_planet_timeline,
-)
+# Single-line imports below: the submission bundler's per-line
+# import-stripping regex would leak continuation lines from a parenthesised
+# multi-line import as indented orphans (IndentationError at runtime).
+# Friction tag: `bundler-modular-agent-namespace-access-breaks-bundle`
+# documented in agents/baseline/main.py.
+from lib.world_model import DEFAULT_HORIZON, WorldModel, comet_remaining_lifetime, fleet_target_planet, simulate_planet_timeline
 from lib.game.interpreter import CENTER, SUN_RADIUS, point_to_segment_distance
 
 

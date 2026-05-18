@@ -33,11 +33,11 @@ def _enable_drain_mission():
         _drain_mod.USE_DRAIN_MISSION = saved
 
 
-def _world(planets, *, my_id=0, step=20, fleets=()):
+def _world(planets, *, my_id=0, step=20, fleets=(), angular_velocity=0.05):
     obs = {
         "player": my_id,
         "planets": planets,
-        "angular_velocity": 0.05,
+        "angular_velocity": angular_velocity,
         "comet_planet_ids": [],
         "step": step,
         "comets": [],
@@ -137,14 +137,22 @@ def test_score_uses_drain_bonus_and_rebalanced_denominator():
 
 
 def test_skips_target_already_predicted_ours():
-    """If our existing in-flight fleets will own the target, drain skips."""
+    """If our existing in-flight fleets will own the target, drain skips.
+
+    angular_velocity=0 pins both planets static so the friendly fleet's
+    straight-line ray-cast (`fleet_target_planet`) deterministically hits
+    P1. The default omega=0.05 makes P1 orbital; post-bug-#11 the orbital
+    ray-cast correctly notices a non-leading aim misses an orbiting
+    target, which would make this test about lead-aim rather than drain's
+    skip-already-captured logic.
+    """
     planets = [
         _planet(0, owner=0, ships=50, x=10.0, y=10.0),
         _planet(1, owner=1, ships=5, prod=1, x=70.0, y=10.0),
     ]
     # Friendly fleet 100 ships nearly at target → flips to ours within eta
     fleets = [_fleet(0, owner=0, x=65.0, y=10.0, angle=0.0, from_pid=2, ships=100)]
-    w = _world(planets, fleets=fleets)
+    w = _world(planets, fleets=fleets, angular_velocity=0.0)
     out = propose_drain_missions(w, _model(w))
     # Drain may still propose against other (no other targets here) — empty.
     assert out == []
