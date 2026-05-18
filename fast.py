@@ -409,15 +409,22 @@ def _eval_vs_one(focal_path: str, focal_name: str,
 
     Returns: (verdict, wlo, whi, wins, n, focal_turn_ms, total_elapsed_s).
     """
+    # Linear tier ladder (PI direction 2026-05-18): grow cumulative n by
+    # +16 each tier rather than doubling. Both schemes POOL — each tier
+    # adds new seeds and recomputes Wilson CI on the cumulative count.
+    # Linear gives more early-stop opportunities (we can call PASS/FAIL
+    # at 32 or 48 instead of committing the full 32-game jump from 32→64),
+    # so the average games-to-verdict is lower when the true winrate is
+    # clearly above or below the gate. Cost: more "looks" at the data —
+    # a mild multiple-testing concern for formal hypothesis testing, but
+    # acceptable for sanity-A/B confidence intervals.
+    TIER_STEP = 16
     tiers: list[int] = []
-    n = 16
-    while n <= max_seeds:
+    n = TIER_STEP
+    while n < max_seeds:
         tiers.append(n)
-        if n >= max_seeds:
-            break
-        n = min(max_seeds, n * 2)
-    if tiers and tiers[-1] < max_seeds:
-        tiers.append(max_seeds)
+        n += TIER_STEP
+    tiers.append(max_seeds)  # final tier always lands at max_seeds
     if not tiers:
         tiers = [max_seeds]
 
