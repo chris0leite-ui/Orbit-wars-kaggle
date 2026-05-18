@@ -37,21 +37,22 @@ os.environ.setdefault("BASELINE_VALUE_HEAD", "hybrid")
 # any value other than "trajectory" (e.g. "composite").
 os.environ.setdefault("BASELINE_CHOOSER", "trajectory")
 
-# H1 — post-chooser idle drain (2026-05-18).
-# Audit `audit/replays/idle-trajectory-2026-05-17.md` measured 43.8pct of
-# our ship-turns sit on planets > 50 units from any non-our planet ("isolated"
-# in the audit terminology). Spatial leaf head (favor_hybrid_spatial) tried
-# to fix this in the chooser's Δ scoring but failed A/B (40.6pct 2P,
-# 9.4pct 4P first-place — see audit/2026-05-18-spatial-leaf-negative-
-# result.md). H1 is a strictly POST-CHOOSER heuristic: for OUR planets the
-# chooser chose not to use, with idle surplus, no incoming threat, and
-# "rear" position, emit one extra reinforce launch toward our closest
-# non-rear own planet. This does NOT perturb chooser Δ — only drains idle
-# garrisons when the chooser would have done nothing for that source.
+# H1 — post-chooser idle drain (2026-05-18) — DISABLED BY DEFAULT.
+# Audit `audit/replays/idle-trajectory-2026-05-17.md` measured 43.8pct
+# isolated ship-turns in trajectory champion (mu=1271.8). H1 attempted
+# to drain rear sources via post-chooser reinforce launches. A/B vs
+# hybrid reference at n=32: **11/32 = 34.4pct, Wlo=0.204, max-ms=1528
+# — FAIL**. The chooser's decision to leave rear planets idle is
+# CORRECTLY calibrated reserve-holding; H1's forced emissions weaken
+# defense without compensating capture-EV. Spatial-leaf head (commit
+# b5f5296) failed for the same root cause. The 43.8 pct isolated is
+# not a leak — it's correctly-held reserve. See audit/2026-05-18-
+# spatial-leaf-negative-result.md and audit/2026-05-18-h1-idle-drain-
+# negative-result.md. Default OFF; opt-in via BASELINE_IDLE_DRAIN=1.
 IDLE_DRAIN_THRESHOLD = int(os.environ.get("BASELINE_IDLE_DRAIN_THRESHOLD", "30"))
 IDLE_REAR_THRESHOLD = float(os.environ.get("BASELINE_IDLE_REAR_THRESHOLD", "35.0"))
 IDLE_DRAIN_RESERVE = int(os.environ.get("BASELINE_IDLE_DRAIN_RESERVE", "5"))
-IDLE_DRAIN_ENABLED = os.environ.get("BASELINE_IDLE_DRAIN", "1") != "0"
+IDLE_DRAIN_ENABLED = os.environ.get("BASELINE_IDLE_DRAIN", "0") == "1"
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 

@@ -3,12 +3,32 @@
 Audit `audit/replays/idle-trajectory-2026-05-17.md` measured 43.8pct
 isolated ship-turns in trajectory champion. H1 drains rear-source
 surplus only when chooser left them idle.
+
+H1 is DISABLED by default (BASELINE_IDLE_DRAIN unset → off) after the
+2026-05-18 A/B (11/32 = 34.4pct vs hybrid). The flag-OFF mode is tested
+in `test_drain_disabled_when_env_off`. All other tests force-enable H1
+via monkey-patch of `agents.baseline.main.IDLE_DRAIN_ENABLED` so they
+exercise the drain logic directly.
 """
 
 from __future__ import annotations
 
+import pytest
+
+import agents.baseline.main as bm
 from agents.baseline.main import drain_idle_rear
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
+
+
+@pytest.fixture(autouse=True)
+def _enable_idle_drain():
+    """Force-enable H1 for unit-test scope; restore on teardown."""
+    old = bm.IDLE_DRAIN_ENABLED
+    bm.IDLE_DRAIN_ENABLED = True
+    try:
+        yield
+    finally:
+        bm.IDLE_DRAIN_ENABLED = old
 
 
 class _FakeModel:
@@ -110,7 +130,7 @@ def test_drain_skips_when_no_closer_own_target():
 
 def test_drain_disabled_when_env_off():
     import os
-    os.environ["BASELINE_IDLE_DRAIN"] = "0"
+    os.environ["BASELINE_IDLE_DRAIN"] = "1"  # explicit-enable for default-off test
     # Force module-level constant re-read by reimporting? The module reads
     # IDLE_DRAIN_ENABLED at import time, so we monkey-patch.
     import agents.baseline.main as bm
