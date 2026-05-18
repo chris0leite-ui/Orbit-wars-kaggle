@@ -22,8 +22,16 @@ days_to_deadline: 36
 # prediction of ~1140-1180). Spatial-leaf A/B 2026-05-18 was net-negative
 # (2P 40.6%, 4P 9.4%, wallclock max 2541ms) — NO new submission.
 last_submission_id: 52766596
-last_submission_status: PENDING
+last_submission_status: COMPLETE
+last_submission_mu: 1094.1
 last_submission_message: "Direction B v3 joint candidate evaluation, 2P-only gated"
+# Rolling pair settled state:
+#   52754310 (trajectory champion): mu=1141.0
+#   52766596 (joint v3, just submitted): mu=1094.1 — UNDERPERFORMED
+#   52744856 (evicted, prior floor): mu=1149.2
+# Joint v3 net cost: -54 mu vs the floor it replaced. Bug #15 (composite
+# capture-credit) explains why: captures don't register positive Δ.
+# Fix #15 next session = highest priority.
 last_submission_file: submissions/baseline.py
 last_submission_agent: trajectory_chooser_v4_waitN_baseline
 last_kernel_push: 2026-05-17 22:06:07 UTC
