@@ -33,7 +33,8 @@ Knobs (env var overrides, all optional):
   BUNDLE_TOTAL_MS              total per-turn budget (own_deadline). default 750
   BUNDLE_MIRROR_MS             mirror sub-budget within total.       default 250
   BUNDLE_PLANET_WEIGHT                                             default 5.0
-  BUNDLE_PRODUCTION_WEIGHT     multiplier on top of pv_horizon.    default 1.0
+  BUNDLE_PRODUCTION_WEIGHT     coefficient on path-integrated      default 1.0
+                               production_delta (turns of ownership).
   BUNDLE_ELIMINATION_BONUS                                         default 200.0
 """
 

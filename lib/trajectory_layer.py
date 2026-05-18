@@ -2080,14 +2080,22 @@ class BundleSearch:
                    if p.owner == my_id
                    and not p.is_comet
                    and p.ships >= self.min_source_ships]
-        targets = [p for p in world.planets if not p.is_comet]
-        if not sources or not targets:
+        all_targets = [p for p in world.planets if not p.is_comet]
+        if not sources or not all_targets:
             return
 
         for src in sources:
             # Top-N closest targets — pure budget throttle across the
             # uniform pool. The scorer decides which target deserves
             # the commitment; we just gate enumeration on distance.
+            # FILTER SELF BEFORE the top-N slice — otherwise the
+            # source's own entry (distance 0) eats one of the N slots
+            # and we enumerate N-1 actual targets. In early game with
+            # candidates_per_source=2, that meant 1 target per source
+            # and bundle effectively idled.
+            targets = [t for t in all_targets if t.id != src.id]
+            if not targets:
+                continue
             scored = sorted(
                 targets,
                 key=lambda t: math.hypot(
@@ -2097,10 +2105,6 @@ class BundleSearch:
             )[:self.candidates_per_source]
 
             for tgt in scored:
-                if tgt.id == src.id:
-                    # Self-as-target: would launch into the source
-                    # planet at spawn (degenerate); skip.
-                    continue
                 # Aim at target's current position. Good enough for
                 # short-range static targets; orbital lead-aim
                 # refinement (lib.aim.search_safe_intercept) is a
