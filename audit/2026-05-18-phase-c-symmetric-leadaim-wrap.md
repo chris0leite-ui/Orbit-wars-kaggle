@@ -16,16 +16,42 @@ lead-aim), plus diagnostic/audit/test commits in between.
 | C-aim (asymmetric) | `aim_orbiting` in bundle enumeration only | **Regression**: vs v7_0 6/16 (Wlo 0.19); vs baseline 2/16 (unchanged) |
 | C+ (symmetric) | `lite_greedy_policy(omega=...)` + thread through opp prediction + me-followup | In flight at session-end; first 16 games look similar to asymmetric (suggests this fix isn't load-bearing for the v7_0 regression) |
 
-## The Phase C+ measurement (partial)
+## The Phase C+ measurement (final)
 
-n=16 P0-side games of the Phase C+ A/B were observed before wrap-up.
-The first half of bundle-vs-v7_0 stayed at 3/8 (matching asymmetric).
-Bundle-vs-baseline stayed at 1/8 (also matching asymmetric within
-seed-noise). **Symmetric lead-aim did not visibly recover v7_0 vs
-the asymmetric run.**
+The full n=48 tournament completed:
 
-The full 48-game tournament is running in background at session-end;
-final numbers will land in `audit/tournaments/<utc>.json`.
+| Matchup | W/N | Winrate | Wlo (95%) | Whi |
+|---|---|---|---|---|
+| bundle vs v7_0 | 6/16 | 0.375 | 0.185 | 0.614 |
+| bundle vs baseline | 2/16 | 0.125 | 0.035 | 0.360 |
+
+**These numbers are bit-identical to the asymmetric lead-aim run.**
+Two distinct mechanisms (asymmetric: bundle uses lead-aim, opp
+prediction static; symmetric: both use lead-aim) produced the same
+aggregate winrates against both opponents.
+
+This DECISIVELY confirms the chooser-axis-exhaustion finding. The
+asymmetric-model hypothesis I proposed mid-session was wrong — even
+when corrected, game outcomes are unchanged. The factor that's
+keeping bundle at ~37% vs v7_0 (vs cands=5-only's 81%) is not the
+opp-prediction asymmetry. It's something else about lead-aim's
+interaction with the search topology that I didn't diagnose.
+
+Possible alternative root causes (none verified, deferred to next
+session if relevant):
+- Lead-aim's `aim_orbiting` returns longer ETAs than naive atan2 for
+  some launches → bundle's affordability gate rejects some launches
+  that cands=5-only would have accepted → fewer captures
+- Lead-aim's angle differs by enough on some launches that they hit
+  a different (worse) target than cands=5-only would have
+- The 5-iter fixed-point in aim_orbiting falls back to
+  search_safe_intercept which scans 60 turns → marginally more cost,
+  one or two fewer search iterations under deadline-bailout
+
+The Phase C+ symmetric-lead-aim experiment is therefore NULL on its
+primary hypothesis. cands=5-only (commit 9c77fa2) remains the best
+known bundle configuration vs v7_0. **Reverting lead-aim is a viable
+fallback if a strategic-axis pivot stalls.**
 
 ## Why the symmetric fix didn't pay off — hypotheses
 
