@@ -94,6 +94,15 @@ OPP_MIN_SHIPS: int = 4
 N_VALIDATE: int = 200
 RESERVED_OVERHEAD_MS: float = 50.0
 
+# Direction B — joint candidate evaluation (2026-05-18).
+# Verified (C)+(E) via scripts/verify_solo_vs_joint.py on live episodes
+# of 52754310 (mu=1271.8): solo launches from idle planets capture only
+# 21pct of nearest targets (production growth out-paces accumulation);
+# joint launches with a neighbor capture 89pct (+68pp lift).
+# Opt-in via BASELINE_JOINT=1. Production stays on solo-only path.
+JOINT_TOP_K_PER_TARGET: int = 3   # consider top-K solo candidates per target
+JOINT_MAX_PAIRS: int = 20         # global cap to bound wallclock
+
 
 def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
                     me: int, world, ledger: dict,
@@ -380,6 +389,70 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     return (delta, "scored", eta)
 
 
+def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
+                              world,
+                              baseline_favors: list[float],
+                              favor_fn, gamma: float,
+                              horizon: int,
+                              skip_admissibility: bool = False,
+                              ) -> tuple[float, str]:
+    """Direction B: score a JOINT candidate of multiple launches in one
+    fast_sim rollout. `launches` is a list of
+    `(src, tgt, ships, angle, wait_N)` tuples — all injected at their
+    respective wait_N steps in the SAME rollout. Leaf scoring identical
+    to v4 solo: Δ = leaf − baseline_favors[horizon].
+
+    Returns `(delta, status)` where status is:
+      - 'admissibility_fail' if any wait_N==0 leg fails predict_fleet_fate
+      - 'comet_expired' if any leg targets a comet that expires before eta
+      - 'scored' otherwise
+
+    For v1 simplicity, all legs typically have wait_N==0 (fire-now joint).
+    Multi-wait joints are valid by construction but not enumerated yet
+    (see proposer path in `choose_trajectory`).
+    """
+    # Per-leg admissibility filter (only meaningful for wait_N==0 legs).
+    for src, tgt, ships, angle, wait_N in launches:
+        if skip_admissibility or int(wait_N) != 0:
+            continue
+        fate = predict_fleet_fate(src, tgt, angle, ships, world)
+        if fate.outcome == "sun":
+            return (float("-inf"), "admissibility_fail")
+        if fate.outcome == "oob":
+            return (float("-inf"), "admissibility_fail")
+        if fate.outcome == "timeout":
+            return (float("-inf"), "admissibility_fail")
+        if fate.outcome == "planet":
+            return (float("-inf"), "admissibility_fail")
+        if int(tgt.id) in world.comet_ids:
+            life = comet_remaining_lifetime(int(tgt.id), world)
+            if life is None or life <= int(fate.step):
+                return (float("-inf"), "comet_expired")
+
+    # Clamp horizon to baseline length.
+    if horizon >= len(baseline_favors):
+        horizon = len(baseline_favors) - 1
+
+    # Build the inject schedule keyed by wait_N step.
+    inject_at: dict[int, list] = {}
+    for src, tgt, ships, angle, wait_N in launches:
+        inject_at.setdefault(int(wait_N), []).append(
+            [int(src.id), float(angle), int(ships)],
+        )
+
+    snap = fs_clone(snap_base)
+    for t in range(horizon):
+        if snap.fake_env.done:
+            break
+        actions = opp_actions_for_snap(snap, me, num_seats)
+        if t in inject_at:
+            actions[me] = inject_at[t]
+        snap = fs_step(snap, actions, in_place=True)
+
+    leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
+    return (leaf - baseline_favors[horizon], "scored")
+
+
 def predict_opp_responses(world, me: int, num_seats: int,
                           ) -> list[tuple[int, int, int, int]]:
     """1-turn opp lookahead: project each enemy source's likely best
@@ -546,21 +619,83 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             if status == "scored" and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))
 
+    # Direction B (2026-05-18): joint candidate enumeration. Gated by
+    # BASELINE_JOINT=1 (default unset → off). Validated by (C)+(E)
+    # verification (scripts/verify_solo_vs_joint.py): on idle planets,
+    # solo captures 21pct of targets vs joint 89pct.
+    joint_enabled = os.environ.get("BASELINE_JOINT", "0").strip() == "1"
+    if (joint_enabled and not use_v3
+            and time.perf_counter() <= safe_deadline):
+        # Group prerank by target_id. Take top-K solo candidates per
+        # target by cheap_delta; pair-enumerate.
+        by_tgt: dict[int, list] = {}
+        for cd, src, tgt, ships, angle, eta_hint, ph, wn in prerank:
+            if int(wn) != 0:
+                continue  # v1: fire-now joints only
+            by_tgt.setdefault(int(tgt.id), []).append(
+                (float(cd), src, tgt, int(ships), float(angle), int(ph)),
+            )
+        joint_count = 0
+        for tgt_id, cands in by_tgt.items():
+            if len(cands) < 2:
+                continue
+            cands.sort(key=lambda c: -c[0])
+            top = cands[:JOINT_TOP_K_PER_TARGET]
+            for i in range(len(top)):
+                if joint_count >= JOINT_MAX_PAIRS:
+                    break
+                if time.perf_counter() > safe_deadline:
+                    break
+                for j in range(i + 1, len(top)):
+                    if joint_count >= JOINT_MAX_PAIRS:
+                        break
+                    if time.perf_counter() > safe_deadline:
+                        break
+                    ca, cb = top[i], top[j]
+                    if int(ca[1].id) == int(cb[1].id):
+                        continue  # same source → not a joint
+                    launches = [
+                        (ca[1], ca[2], ca[3], ca[4], 0),
+                        (cb[1], cb[2], cb[3], cb[4], 0),
+                    ]
+                    jh = max(int(ca[5]), int(cb[5]))
+                    j_score, j_status = score_candidate_v4_joint(
+                        snap_base, launches, me, num_seats, world,
+                        baseline_favors, favor_fn, gamma,
+                        horizon=jh, skip_admissibility=skip_filter,
+                    )
+                    joint_count += 1
+                    if j_status == "scored" and j_score > 0.0:
+                        scored.append((j_score, "joint", launches))
+
     if not scored:
         return []
 
     scored.sort(key=lambda c: -c[0])
 
     # Emit logic — match composite chooser (`agents/baseline/chooser.choose`)
-    # for parity. 1 launch per source per turn, 1 per target. v4 H/T
-    # showed multi-launch budget is NOT a free lift over composite_a2
-    # (~30pp gap remained even with composite leaf). Keeping the simpler
-    # match-the-baseline emit rule isolates the trajectory-side changes
-    # (admissibility filter, wait_N drop) from the emit-logic changes.
+    # for parity. 1 launch per source per turn, 1 per target. For joints
+    # (tagged 'joint' tuples), require ALL of its sources and targets to
+    # be free; commit all legs together.
     used_srcs: set[int] = set()
     used_tgts: set[int] = set()
     moves: list[list] = []
-    for _score, src, tgt, ships, angle, wait_N in scored:
+    for entry in scored:
+        # Joint candidates are 3-tuples: (score, 'joint', launches).
+        if len(entry) == 3 and entry[1] == "joint":
+            _score, _tag, launches = entry
+            if any(int(L[0].id) in used_srcs for L in launches):
+                continue
+            if any(int(L[1].id) in used_tgts for L in launches):
+                continue
+            for src, tgt, ships, angle, wait_N in launches:
+                used_srcs.add(int(src.id))
+                used_tgts.add(int(tgt.id))
+                if int(wait_N) == 0:
+                    moves.append([int(src.id), float(angle), int(ships)])
+            continue
+        # Solo: legacy 6-tuple (score, src, tgt, ships, angle, wait_N).
+        _score, src, tgt, ships, angle, wait_N = entry
         sid, tid = int(src.id), int(tgt.id)
         if sid in used_srcs or tid in used_tgts:
             continue

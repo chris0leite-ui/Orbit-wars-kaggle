@@ -332,3 +332,145 @@ def test_choose_trajectory_v2_emits_multiple_per_source():
         from collections import Counter
         src_counts = Counter(m[0] for m in moves)
         assert max(src_counts.values()) >= 1  # at least 1 per source (sanity)
+
+
+# ---------------------------------------------------------------------------
+# Direction B — joint candidate evaluation (2026-05-18)
+# ---------------------------------------------------------------------------
+
+
+def _two_srcs(world, me: int = 0):
+    """Return two distinct planets to use as joint sources. Prefers
+    two own planets; falls back to (my home, any neutral) since
+    score_candidate_v4_joint only injects launch actions (ownership
+    is validated by fast_sim engine but the joint scoring API doesn't
+    require it for testability)."""
+    mine = [p for p in world.planets_by_id.values() if int(p.owner) == me]
+    if len(mine) >= 2:
+        return mine[0], mine[1]
+    # Use home + the nearest non-own planet as a second "source".
+    home = mine[0]
+    others = [p for p in world.planets_by_id.values()
+              if int(p.id) != int(home.id)]
+    others.sort(key=lambda q: math.hypot(q.x - home.x, q.y - home.y))
+    return home, others[0]
+
+
+def test_score_candidate_v4_joint_admissibility_fail():
+    """A joint with one sun-crossing leg returns 'admissibility_fail'."""
+    from agents.baseline.chooser_trajectory import (
+        score_candidate_v4_joint, build_trajectory_baseline,
+    )
+    from agents.baseline.value import select_favor_fn, DEFAULT_GAMMA
+    obs, snap, world, model = _snap_and_world(seed=7)
+    me = 0
+    src_a, src_b = _two_srcs(world, me)
+    tgt = _enemy_tgt(world, me)
+    safe_angle_a = math.atan2(tgt.y - src_a.y, tgt.x - src_a.x)
+    sun_angle_b = math.atan2(50.0 - src_b.y, 50.0 - src_b.x)
+    favor_fn = select_favor_fn()
+    baseline = build_trajectory_baseline(
+        snap, me, num_seats=2, horizon=15,
+        favor_fn=favor_fn, gamma=DEFAULT_GAMMA,
+    )
+    launches = [
+        (src_a, tgt, 20, safe_angle_a, 0),
+        (src_b, tgt, 20, sun_angle_b, 0),  # sun-crossing → reject
+    ]
+    score, status = score_candidate_v4_joint(
+        snap, launches, me, num_seats=2, world=world,
+        baseline_favors=baseline, favor_fn=favor_fn, gamma=DEFAULT_GAMMA,
+        horizon=15,
+    )
+    assert status == "admissibility_fail"
+    assert score == float("-inf")
+
+
+def test_score_candidate_v4_joint_returns_scored_for_admissible_pair():
+    """Two admissible legs to the same target return ('scored', float)."""
+    from agents.baseline.chooser_trajectory import (
+        score_candidate_v4_joint, build_trajectory_baseline,
+    )
+    from agents.baseline.value import select_favor_fn, DEFAULT_GAMMA
+    obs, snap, world, model = _snap_and_world(seed=7)
+    me = 0
+    src_a, src_b = _two_srcs(world, me)
+    tgt = _enemy_tgt(world, me)
+    angle_a = math.atan2(tgt.y - src_a.y, tgt.x - src_a.x)
+    angle_b = math.atan2(tgt.y - src_b.y, tgt.x - src_b.x)
+    favor_fn = select_favor_fn()
+    baseline = build_trajectory_baseline(
+        snap, me, num_seats=2, horizon=15,
+        favor_fn=favor_fn, gamma=DEFAULT_GAMMA,
+    )
+    launches = [
+        (src_a, tgt, 5, angle_a, 0),
+        (src_b, tgt, 5, angle_b, 0),
+    ]
+    score, status = score_candidate_v4_joint(
+        snap, launches, me, num_seats=2, world=world,
+        baseline_favors=baseline, favor_fn=favor_fn, gamma=DEFAULT_GAMMA,
+        horizon=15, skip_admissibility=True,  # bypass for test simplicity
+    )
+    assert status == "scored"
+    assert isinstance(score, float)
+
+
+def test_choose_trajectory_joint_disabled_by_default():
+    """Without BASELINE_JOINT, choose_trajectory behaves identically to
+    the solo-only path. We assert the function returns a list (smoke)
+    AND doesn't crash with default env."""
+    import os
+    obs, snap, world, model = _snap_and_world(seed=7)
+    me = 0
+    src_a, src_b = _two_srcs(world, me)
+    tgt = _enemy_tgt(world, me)
+    angle_a = math.atan2(tgt.y - src_a.y, tgt.x - src_a.x)
+    angle_b = math.atan2(tgt.y - src_b.y, tgt.x - src_b.x)
+    prerank = [
+        _make_candidate(src_a, tgt, ships=10, angle=angle_a, eta=10, wait_N=0),
+        _make_candidate(src_b, tgt, ships=10, angle=angle_b, eta=10, wait_N=0),
+    ]
+    os.environ.pop("BASELINE_JOINT", None)
+    os.environ["BASELINE_CHOOSER"] = "trajectory"
+    try:
+        moves = choose_trajectory(
+            snap, prerank=prerank, baseline_favors=None,
+            me=me, num_seats=2, wallclock_ms=600.0,
+            min_horizon=25, max_horizon=40, gamma=0.99,
+            world=world, model=model,
+        )
+    finally:
+        os.environ.pop("BASELINE_CHOOSER", None)
+    assert isinstance(moves, list)
+
+
+def test_choose_trajectory_joint_enabled_runs_end_to_end():
+    """With BASELINE_JOINT=1, choose_trajectory exercises the joint
+    scoring path. Prerank has two same-target candidates from
+    different sources. The function should not crash and should
+    return a list (joints may or may not emit depending on Δ)."""
+    import os
+    obs, snap, world, model = _snap_and_world(seed=7)
+    me = 0
+    src_a, src_b = _two_srcs(world, me)
+    tgt = _enemy_tgt(world, me)
+    angle_a = math.atan2(tgt.y - src_a.y, tgt.x - src_a.x)
+    angle_b = math.atan2(tgt.y - src_b.y, tgt.x - src_b.x)
+    prerank = [
+        _make_candidate(src_a, tgt, ships=10, angle=angle_a, eta=10, wait_N=0),
+        _make_candidate(src_b, tgt, ships=10, angle=angle_b, eta=10, wait_N=0),
+    ]
+    os.environ["BASELINE_JOINT"] = "1"
+    os.environ["BASELINE_CHOOSER"] = "trajectory"
+    try:
+        moves = choose_trajectory(
+            snap, prerank=prerank, baseline_favors=None,
+            me=me, num_seats=2, wallclock_ms=600.0,
+            min_horizon=25, max_horizon=40, gamma=0.99,
+            world=world, model=model,
+        )
+    finally:
+        os.environ.pop("BASELINE_JOINT", None)
+        os.environ.pop("BASELINE_CHOOSER", None)
+    assert isinstance(moves, list)
