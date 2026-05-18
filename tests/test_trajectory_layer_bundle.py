@@ -167,19 +167,18 @@ def test_empty_bundle_score_components():
     ev = BundleEvaluator(horizon=10)
     score = ev.score(world, Bundle(), my_id=0)
     # No opponent → other_ships = other_planets = other_prod = 0.
-    # At horizon=10: my_ships = 50 + 10*1 = 60. my_planets = 1. my_prod = 1.
+    # At horizon=10: my_ships = 50 + 10*1 = 60 (terminal).
+    # Path-integrated planet_delta = sum over t in [1..10] of
+    # (my_planets - other_planets) = 10 turns * 1 planet = 10.
+    # Path-integrated production_delta = 10 turns * 1 prod = 10.
     assert score.ship_delta == 60.0
-    assert score.planet_delta == 1.0
-    assert score.production_delta == 1.0
+    assert score.planet_delta == 10.0
+    assert score.production_delta == 10.0
     # No opp owners → no eliminations possible.
     assert score.eliminations == 0
-    # Production_delta is multiplied by pv_horizon(step=0, eta=0)·
-    # production_weight. Default weight=1.0 + gamma=1.0 → 500-step.
-    from lib.scoring import pv_horizon as _pv
-    pv = _pv(0, 0, gamma=1.0)
     expected_total = (60.0
-                      + 5.0 * 1.0
-                      + 1.0 * pv * 1.0
+                      + 5.0 * 10.0
+                      + 1.0 * 10.0
                       + 200.0 * 0)
     assert math.isclose(score.total, expected_total, abs_tol=1e-9)
 

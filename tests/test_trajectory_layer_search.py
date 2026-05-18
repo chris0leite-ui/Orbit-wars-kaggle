@@ -713,12 +713,13 @@ def test_search_reinforces_threatened_planet_naturally():
     )
 
 
-def test_search_picks_smaller_ship_count_when_capture_easy():
-    """Weak neutral target + strong source: the scorer should
-    prefer the half-commit (0.5 ratio) over the full-commit (1.0
-    ratio) because both capture, but the smaller commit preserves
-    more ship_delta. The chosen launch's ship count should be
-    strictly less than (src.ships - min_source_ships)."""
+def test_search_picks_some_capture_variant_for_easy_target():
+    """Weak neutral target + strong source: the chooser picks SOME
+    capture-sized launch (not empty). With path-integrated scoring
+    the chooser prefers FASTER captures (more turns of credit) so
+    full-commit can win over half-commit; the specific count is the
+    scorer's call. Sanity-checks that enumeration emits SOMETHING
+    capture-shaped from this source."""
     world = _toy_world(
         planets=[
             [0, 0, 30.0, 85.0, 2.0, 80, 1],   # strong source
@@ -738,15 +739,10 @@ def test_search_picks_smaller_ship_count_when_capture_easy():
     )
     bundle = search.search(world, my_id=0)
     assert not bundle.is_empty
-    # reserve_ships_at_source=1 (default) → usable = 80 - 1 = 79.
-    # Ratios emit {40, 79}; capture_min variant emits 4 (tgt.ships+1).
-    # The 4-ship capture wins on ship_delta vs the 40 or 79 commits.
-    chosen_ships = bundle.launches[0].ships
-    full_commit_ships = 79
-    assert chosen_ships < full_commit_ships, (
-        f"chooser picked full commit {chosen_ships} when capture-min "
-        f"would capture the same target with less waste"
-    )
+    chosen = bundle.launches[0]
+    assert chosen.src_id == 0
+    # Source has 80 ships; reserve=1 → usable=79 → variants ⊂ {4, 40, 79}.
+    assert 1 <= chosen.ships <= 79
 
 
 # ---------------------------------------------------------------------------
@@ -820,43 +816,40 @@ def test_enumerate_reserve_at_source_default_one():
     )
 
 
-def test_evaluator_pv_horizon_amplifies_production_at_low_step():
-    """Per Piece 7 root-cause #3: BundleEvaluator now multiplies
-    production_delta by `pv_horizon(step, 0, gamma)` rather than the
-    flat `production_weight=10`. At step ≈ 0 / gamma=1.0 the
-    multiplier is ~500 (the remaining-game horizon), matching
-    `agents/baseline/value.favor` semantics — production captured
-    early in the game is worth far more than production at horizon."""
-    from lib.scoring import pv_horizon as _pv
+def test_evaluator_path_integral_rewards_earlier_capture():
+    """Path-integrated scoring: an earlier capture accumulates more
+    turns of ownership credit than the same capture later. Compares
+    a turn=0 launch (captures earlier) vs a launch_turn=5 launch
+    (captures the same target ~5 turns later) — the earlier launch
+    should score strictly higher because it owns the planet for
+    more of the [1..K] window.
+    """
     world = _toy_world(
         planets=[
-            [0, 0, 20.0, 80.0, 2.0, 50, 1],
-            [1, 1, 80.0, 80.0, 2.0, 50, 1],
+            [0, 0, 30.0, 85.0, 2.0, 80, 1],
+            # Target with NON-ZERO production so the path integral
+            # over its ownership has measurable effect.
+            [1, -1, 50.0, 85.0, 1.0, 3, 1],
         ],
         fleets=[],
     )
-    ev = BundleEvaluator(horizon=10,
-                         planet_weight=5.0,
-                         production_weight=1.0,
-                         pv_gamma=1.0)
-    score = ev.score(world, Bundle(), my_id=0)
-    # Symmetric world → delta == 0 for ships/planets/prod → total == 0.
-    assert score.total == 0.0
-    # Decompose with a non-trivial delta: capture the enemy planet.
-    capture = Bundle(launches=(
-        LaunchSpec(src_id=0, aim_angle=0.0, ships=10, owner=0),
+    ev = BundleEvaluator(horizon=30, planet_weight=5.0,
+                         production_weight=1.0)
+    early = Bundle(launches=(
+        LaunchSpec(src_id=0, aim_angle=0.0, ships=10, owner=0,
+                   launch_turn=0),
     ))
-    cap_score = ev.score(world, capture, my_id=0)
-    # production_delta * pv_horizon(0, 0, 1.0) contribution should be
-    # the dominant component (≈500 * 2 ≈ 1000 for a +2 prod swing).
-    pv = _pv(0, 0, gamma=1.0)
-    expected_prod_contrib = 1.0 * pv * cap_score.production_delta
-    # Reconstruct total from components.
-    reconstructed = (cap_score.ship_delta
-                     + 5.0 * cap_score.planet_delta
-                     + expected_prod_contrib
-                     + 200.0 * cap_score.eliminations)
-    assert math.isclose(cap_score.total, reconstructed, abs_tol=1e-6), (
-        f"score formula mismatch: total={cap_score.total} "
-        f"reconstructed={reconstructed}"
+    late = Bundle(launches=(
+        LaunchSpec(src_id=0, aim_angle=0.0, ships=10, owner=0,
+                   launch_turn=5),
+    ))
+    early_score = ev.score(world, early, my_id=0)
+    late_score = ev.score(world, late, my_id=0)
+    # Both capture the same target with the same ship count; only
+    # the timing differs. Path integral favors the earlier capture.
+    assert early_score.production_delta > late_score.production_delta, (
+        f"path integral did not reward earlier capture: "
+        f"early={early_score.production_delta} "
+        f"late={late_score.production_delta}"
     )
+    assert early_score.total > late_score.total

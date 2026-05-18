@@ -1701,28 +1701,62 @@ class BundleEvaluator:
                 except ValueError:
                     continue
 
-        ships_by_owner: dict[int, float] = defaultdict(float)
-        planets_by_owner: dict[int, int] = defaultdict(int)
-        prod_by_owner: dict[int, float] = defaultdict(float)
+        # Path-integrated production: for each non-comet planet, sum
+        # `+production` per turn it's ours and `-production/num_opps`
+        # per turn it's owned by an opp, across [1..horizon]. The
+        # integral naturally rewards EARLY captures (more turns of
+        # accumulated credit) and PENALISES bleed (a planet held
+        # turns 5-20 then lost contributes only 16 turns of credit,
+        # not the full horizon). Terminal-only scoring is blind to
+        # both effects; that blindness was the H3 root cause behind
+        # bundle 0/32 vs v7_0.
+        # Cost: per planet, the timeline is already built+cached on
+        # first `ownership_at` call; the per-turn dict reads are
+        # O(1). For 24 planets × 30 horizon = 720 dict reads per
+        # score, ~50 us.
+        my_planets_path = 0.0
+        opp_planets_path = 0.0
+        my_prod_path = 0.0
+        opp_prod_path = 0.0
+        for p in overlay.planets:
+            if p.is_comet:
+                continue
+            timeline = overlay._timeline_for(p.id, self.horizon)
+            if timeline is None:
+                continue
+            owner_at = timeline["owner_at"]
+            h = timeline["horizon"]
+            for t in range(1, h + 1):
+                owner_t = owner_at[t]
+                if owner_t == my_id:
+                    my_planets_path += 1
+                    my_prod_path += p.production
+                elif owner_t != -1:
+                    opp_planets_path += 1
+                    opp_prod_path += p.production
+
+        # Terminal-state ship counts (ships are transit-state mid-
+        # rollout; the path integral over ships doesn't have a clean
+        # interpretation, so we keep ship_delta as terminal).
+        ships_by_owner_K: dict[int, float] = defaultdict(float)
+        planets_by_owner_K: dict[int, int] = defaultdict(int)
         for p in overlay.planets:
             if p.is_comet:
                 continue
             owner, ships = overlay.ownership_at(p.id, self.horizon)
             if owner != -1:
-                ships_by_owner[owner] += ships
-                planets_by_owner[owner] += 1
-                prod_by_owner[owner] += p.production
+                ships_by_owner_K[owner] += ships
+                planets_by_owner_K[owner] += 1
 
-        my_ships = ships_by_owner.get(my_id, 0.0)
-        my_planets = planets_by_owner.get(my_id, 0)
-        my_prod = prod_by_owner.get(my_id, 0.0)
-        other_ships = sum(v for k, v in ships_by_owner.items() if k != my_id)
-        other_planets = sum(v for k, v in planets_by_owner.items() if k != my_id)
-        other_prod = sum(v for k, v in prod_by_owner.items() if k != my_id)
-
+        my_ships = ships_by_owner_K.get(my_id, 0.0)
+        other_ships = sum(v for k, v in ships_by_owner_K.items() if k != my_id)
         ship_delta = my_ships - other_ships
-        planet_delta = float(my_planets - other_planets)
-        production_delta = my_prod - other_prod
+
+        # Path-integrated planet & production deltas — these are the
+        # values the total uses (and the values the chooser ranks
+        # against). Surfaced via BundleScore for diagnostic stability.
+        planet_delta_path = my_planets_path - opp_planets_path
+        production_delta_path = my_prod_path - opp_prod_path
 
         # Count opponents who started with planets but have none at K.
         initial_opp_owners: set[int] = set()
@@ -1732,24 +1766,20 @@ class BundleEvaluator:
             if p.owner != -1 and p.owner != my_id:
                 initial_opp_owners.add(p.owner)
         eliminations = sum(1 for o in initial_opp_owners
-                           if planets_by_owner.get(o, 0) == 0)
+                           if planets_by_owner_K.get(o, 0) == 0)
 
-        # Production delta is multiplied by pv_horizon — the present
-        # value of one unit of production over the game's remaining
-        # turns. At step=0 / gamma=1 this is ~500 (t_total - step);
-        # late game it shrinks linearly. The chooser thus weighs an
-        # early-game capture (which yields 500+ turns of production)
-        # FAR more heavily than a late-game one, matching baseline.
-        pv = pv_horizon(int(world.step), 0, gamma=self.pv_gamma)
+        # All deltas summed over [1..K] (path integral) except
+        # ship_delta (terminal — see comment above) and eliminations
+        # (terminal — opp is eliminated or not).
         total = (ship_delta
-                 + self.planet_weight * planet_delta
-                 + self.production_weight * pv * production_delta
+                 + self.planet_weight * planet_delta_path
+                 + self.production_weight * production_delta_path
                  + self.elimination_bonus * eliminations)
 
         return BundleScore(
             ship_delta=ship_delta,
-            planet_delta=planet_delta,
-            production_delta=production_delta,
+            planet_delta=planet_delta_path,
+            production_delta=production_delta_path,
             eliminations=eliminations,
             total=total,
         )
