@@ -1621,6 +1621,7 @@ class BundleSearch:
                *, my_id: Optional[int] = None,
                seed_bundle: Optional[Bundle] = None,
                opp_overlays: Optional[Mapping[int, Bundle]] = None,
+               deadline: Optional[float] = None,
                ) -> Bundle:
         """Return the highest-scoring Bundle for this turn.
 
@@ -1645,9 +1646,23 @@ class BundleSearch:
         counterplay instead of a passive world. `None` (default)
         scores against the passive world (Phase 7c-7e behaviour).
         Build the dict with `predict_opp_bundles_via_mirror_search`.
+
+        `deadline` (Phase 8): absolute `time.perf_counter()` wallclock
+        bound. If set, the search bails out the moment elapsed time
+        crosses it and returns the best bundle seen so far. The
+        empty-bundle floor is always preserved (scored before any
+        bailable work). `None` (default) runs to depth completion.
+        Required for live-env compliance with the 1000ms actTimeout.
         """
         if my_id is None:
             my_id = world.my_id
+
+        # `time.perf_counter` is module-imported below; do this here
+        # so the deadline check is a fast attribute lookup.
+        if deadline is not None:
+            from time import perf_counter as _now
+        else:
+            _now = None  # type: ignore[assignment]
 
         empty = Bundle()
         empty_score = self.evaluator.score(
@@ -1682,14 +1697,25 @@ class BundleSearch:
                     best_score = seed_score
                     best_bundle = seed_bundle
 
+        # Outer label so deadline-driven `break`s exit the depth loop.
+        timed_out = False
         for _ in range(self.max_depth):
+            if _now is not None and _now() >= deadline:
+                timed_out = True
+                break
             extensions: list[tuple[float, Bundle]] = []
             for _, bundle in frontier:
+                if _now is not None and _now() >= deadline:
+                    timed_out = True
+                    break
                 current = bundle.apply(world)
                 sun = SunFilter(current, safety_margin=self.sun_safety)
 
                 # ADD neighbours: bundle + new candidate.
                 for spec in self._enumerate_candidates(current, my_id, sun):
+                    if _now is not None and _now() >= deadline:
+                        timed_out = True
+                        break
                     new_launches = bundle.launches + (spec,)
                     if new_launches in seen:
                         continue
@@ -1707,6 +1733,9 @@ class BundleSearch:
                         best_score = s
                         best_bundle = extended
 
+                if timed_out:
+                    break
+
                 # DROP neighbours: bundle - one existing launch.
                 # No-op when `bundle` is empty (range(0)). For
                 # singletons, the drop lands on empty which is in
@@ -1716,6 +1745,9 @@ class BundleSearch:
                 # launch that no longer fits + how swap emerges
                 # (drop-then-add over two iterations).
                 for i in range(len(bundle.launches)):
+                    if _now is not None and _now() >= deadline:
+                        timed_out = True
+                        break
                     new_launches = (bundle.launches[:i]
                                     + bundle.launches[i + 1:])
                     if new_launches in seen:
@@ -1734,7 +1766,10 @@ class BundleSearch:
                         best_score = s
                         best_bundle = dropped
 
-            if not extensions:
+                if timed_out:
+                    break
+
+            if timed_out or not extensions:
                 break
             extensions.sort(key=lambda x: x[0], reverse=True)
             frontier = extensions[:self.beam_width]
