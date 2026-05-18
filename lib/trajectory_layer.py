@@ -1465,14 +1465,34 @@ class BundleEvaluator:
 
     def score(self, world: "World", bundle: Bundle,
               *, my_id: Optional[int] = None,
+              opp_overlays: Optional[Mapping[int, Bundle]] = None,
               ) -> BundleScore:
         """Compute the bundle's value. `my_id` defaults to
         `world.my_id` — pass an explicit value to score from a
         different seat's perspective (e.g. an opponent-bundle search
-        used by the learned opp model)."""
+        used by the learned opp model).
+
+        `opp_overlays` (Phase 8): per-opponent predicted bundles to
+        apply ON TOP of `bundle` before reading ownership at horizon.
+        Maps opp_id → Bundle. Each opp bundle's launches carry
+        `owner=opp_id`, so World.with_candidate's ownership check
+        gates them correctly. An opp bundle that becomes infeasible
+        against the composed overlay (e.g. its source got captured
+        by `bundle` before the opp's launch_turn) is dropped silently
+        — the score then reflects a partial-counterplay world, which
+        is the worst case for that opp.
+        """
         if my_id is None:
             my_id = world.my_id
         overlay = bundle.apply(world)
+        if opp_overlays:
+            for opp_id, opp_bundle in opp_overlays.items():
+                if opp_bundle.is_empty:
+                    continue
+                try:
+                    overlay = opp_bundle.apply(overlay)
+                except ValueError:
+                    continue
 
         ships_by_owner: dict[int, float] = defaultdict(float)
         planets_by_owner: dict[int, int] = defaultdict(int)
@@ -1600,6 +1620,7 @@ class BundleSearch:
     def search(self, world: "World",
                *, my_id: Optional[int] = None,
                seed_bundle: Optional[Bundle] = None,
+               opp_overlays: Optional[Mapping[int, Bundle]] = None,
                ) -> Bundle:
         """Return the highest-scoring Bundle for this turn.
 
@@ -1616,12 +1637,22 @@ class BundleSearch:
         fits; the empty-bundle floor guarantees the search never
         returns something worse than no-op. `None` (default) restores
         Phase 7c/d behaviour exactly.
+
+        `opp_overlays` (Phase 8): per-opponent predicted bundles
+        passed straight through to BundleEvaluator. Every score this
+        search computes applies these overlays after our candidate
+        bundle, so the chooser ranks our bundles against realistic
+        counterplay instead of a passive world. `None` (default)
+        scores against the passive world (Phase 7c-7e behaviour).
+        Build the dict with `predict_opp_bundles_via_mirror_search`.
         """
         if my_id is None:
             my_id = world.my_id
 
         empty = Bundle()
-        empty_score = self.evaluator.score(world, empty, my_id=my_id).total
+        empty_score = self.evaluator.score(
+            world, empty, my_id=my_id, opp_overlays=opp_overlays,
+        ).total
         best_bundle = empty
         best_score = empty_score
 
@@ -1637,6 +1668,7 @@ class BundleSearch:
             try:
                 seed_score = self.evaluator.score(
                     world, seed_bundle, my_id=my_id,
+                    opp_overlays=opp_overlays,
                 ).total
             except ValueError:
                 # Seed is infeasible against current world (e.g. a
@@ -1664,8 +1696,10 @@ class BundleSearch:
                     seen.add(new_launches)
                     try:
                         extended = Bundle(new_launches)
-                        s = self.evaluator.score(world, extended,
-                                                   my_id=my_id).total
+                        s = self.evaluator.score(
+                            world, extended, my_id=my_id,
+                            opp_overlays=opp_overlays,
+                        ).total
                     except ValueError:
                         continue
                     extensions.append((s, extended))
@@ -1689,8 +1723,10 @@ class BundleSearch:
                     seen.add(new_launches)
                     try:
                         dropped = Bundle(new_launches)
-                        s = self.evaluator.score(world, dropped,
-                                                   my_id=my_id).total
+                        s = self.evaluator.score(
+                            world, dropped, my_id=my_id,
+                            opp_overlays=opp_overlays,
+                        ).total
                     except ValueError:
                         continue
                     extensions.append((s, dropped))
@@ -1785,3 +1821,78 @@ class BundleSearch:
                     if not sun.is_safe(spec):
                         continue
                     yield spec
+
+
+# ---------------------------------------------------------------------------
+# PHASE 8 — Mirror-search opp model
+# ---------------------------------------------------------------------------
+
+
+def predict_opp_bundles_via_mirror_search(
+    world: "World",
+    *,
+    my_id: Optional[int] = None,
+    search: Optional[BundleSearch] = None,
+    depth: int = 1,
+) -> dict[int, Bundle]:
+    """For each opponent present in `world`, run BundleSearch from
+    their seat and return their predicted best bundle.
+
+    Plugged into a BundleSearch call as `opp_overlays=...` so the
+    chooser scores our candidate bundles against realistic
+    counterplay instead of a passive world.
+
+    `depth` controls how deep the mirror recursion goes:
+      - 0  → returns {} (opponents stay passive).
+      - 1  → each opp runs BundleSearch with opp_overlays={} (no inner
+             mirror). Default. Adds first-order counterplay; cost is
+             ~N_opps extra BundleSearch calls per turn.
+      - >1 → each opp's inner search recurses with depth-1. Cost
+             scales exponentially in depth; budget carefully.
+
+    Opp ids come from `world.planets`: any non-comet planet with
+    owner != my_id and owner != -1. Opps with no surviving sources
+    yield an empty bundle (BundleEvaluator skips empties at apply
+    time, so they cost nothing downstream).
+
+    `search` defaults to a vanilla BundleSearch(); pass a cheaper one
+    (smaller max_depth / beam_width) to bound mirror-search cost
+    relative to our own chooser pass.
+    """
+    if my_id is None:
+        my_id = world.my_id
+    if depth <= 0:
+        return {}
+    if search is None:
+        search = BundleSearch()
+
+    opp_ids: set[int] = set()
+    for p in world.planets:
+        if p.is_comet:
+            continue
+        if p.owner == -1 or p.owner == my_id:
+            continue
+        opp_ids.add(p.owner)
+    if not opp_ids:
+        return {}
+
+    out: dict[int, Bundle] = {}
+    for opp_id in sorted(opp_ids):
+        if depth == 1:
+            inner_overlays: dict[int, Bundle] = {}
+        else:
+            inner_overlays = predict_opp_bundles_via_mirror_search(
+                world,
+                my_id=opp_id,
+                search=search,
+                depth=depth - 1,
+            )
+        bundle = search.search(
+            world,
+            my_id=opp_id,
+            opp_overlays=inner_overlays,
+        )
+        if not bundle.is_empty:
+            out[opp_id] = bundle
+    return out
+
