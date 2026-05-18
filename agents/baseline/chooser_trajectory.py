@@ -478,20 +478,33 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
         horizon = len(baseline_favors) - 1
 
     snap = fs_clone(snap_base)
+    # Bug #14 option 5: precompute defensive reinforces ONCE from the
+    # candidate's tick-0 observation. In real game the chooser emits
+    # ALL of this turn's moves (candidate + any reactive defense)
+    # simultaneously — we model that by merging them at `wait_N` and
+    # NOT re-evaluating defense on every rollout tick. Per-call cost
+    # drops from `horizon × per-candidate` to `1 × per-candidate`,
+    # which is the difference between bench-WATCH (10 outliers >1s
+    # at horizon=25 with the per-tick variant) and bench-PASS.
+    me_defense_emits: list = []
+    if _ME_DEFENDS_ENABLED:
+        me_defense_emits = _me_defensive_action(snap, me)
+
     for t in range(horizon):
         if snap.fake_env.done:
             break
         actions = opp_actions_for_snap(snap, me, num_seats)
-        # ME policy: defensive (option 5, bug #14) by default; the
-        # reactive cheap-mirror (option 1) is the deprecated fallback.
-        # The candidate injection at `t == wait_N` OVERRIDES whichever
-        # ME policy is active.
-        if _ME_DEFENDS_ENABLED:
-            actions[me] = _me_defensive_action(snap, me)
+        if t == int(wait_N):
+            # Candidate first (the chooser's primary decision), then
+            # defensive emits. If the candidate drains the planet
+            # defense wanted as reinforcer, fs_step will cap the
+            # defensive launch at remaining ships.
+            actions[me] = (
+                [[int(src.id), float(angle), int(ships)]]
+                + list(me_defense_emits)
+            )
         elif _ME_REACTS_ENABLED:
             actions[me] = _me_reactive_action(snap, me)
-        if t == int(wait_N):
-            actions[me] = [[int(src.id), float(angle), int(ships)]]
         snap = fs_step(snap, actions, in_place=True)
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
@@ -551,18 +564,25 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         )
 
     snap = fs_clone(snap_base)
+    # Defensive emits computed once from tick-0 obs, attached to the
+    # earliest inject step (typically wait_N=0). Matches the
+    # score_candidate_v4 wiring — see comment there.
+    me_defense_emits: list = []
+    if _ME_DEFENDS_ENABLED:
+        me_defense_emits = _me_defensive_action(snap, me)
+    earliest_inject_t = min(inject_at.keys()) if inject_at else -1
+
     for t in range(horizon):
         if snap.fake_env.done:
             break
         actions = opp_actions_for_snap(snap, me, num_seats)
-        # Joint variant: defensive option 5 first, then candidate
-        # injections at their respective wait_N steps OVERRIDE.
-        if _ME_DEFENDS_ENABLED:
-            actions[me] = _me_defensive_action(snap, me)
+        if t in inject_at:
+            base_actions = list(inject_at[t])
+            if t == earliest_inject_t and me_defense_emits:
+                base_actions = base_actions + list(me_defense_emits)
+            actions[me] = base_actions
         elif _ME_REACTS_ENABLED:
             actions[me] = _me_reactive_action(snap, me)
-        if t in inject_at:
-            actions[me] = inject_at[t]
         snap = fs_step(snap, actions, in_place=True)
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)

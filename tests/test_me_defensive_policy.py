@@ -146,6 +146,53 @@ def test_self_sufficient_skips_emit():
     assert me_defensive_action(_obs(p, fleets=[f]), me=0) == []
 
 
+def test_idempotency_inbound_friendly_counts_toward_garrison():
+    """CRITICAL idempotency contract for the in-rollout use case:
+    once the policy has emitted a reinforce, the SAME threat against
+    the SAME planet must NOT trigger another emit on subsequent
+    rollout ticks. Modeled by replaying the scenario with the
+    previously-launched reinforce already in flight.
+
+    Origin: 2026-05-18 PM. The first A/B of option 5 collapsed at
+    15.6% (vs bundle's 50%) with max wallclock 8252ms. Diagnosis:
+    the stateless policy re-emitted a redundant reinforce every
+    rollout tick because `garrison_at_eta` didn't count
+    already-in-flight friendly reinforces. By rollout tick 5 we had
+    stacked 5 redundant reinforces, draining the sister and
+    bloating the fleet count — `fs_step` slows under high fleet
+    count and the chooser's leaf valuation goes haywire (it sees
+    "I sent 300 ships, of course it held" → over-emits aggressive
+    captures in real play).
+
+    Fix: include friendly inbound ships in the garrison math. This
+    test pins the contract.
+    """
+    p = [
+        _planet(0, 0, 20.0, 20.0, ships=5, production=1),     # thin
+        _planet(1, 0, 25.0, 35.0, ships=200, production=2),   # sister
+        _planet(2, 1, 80.0, 80.0, ships=10, production=1),
+    ]
+    # Same enemy fleet as test_single_threat: 80 ships, eta≈17 → P0.
+    f_enemy = [10, 1, 80.0, 20.0, math.pi, 2, 80]
+    # A previously-launched friendly reinforce, 70 ships heading at
+    # P0. Placed at (22, 25) — clearly EN ROUTE between P1 and P0
+    # (not at P1's coords, otherwise the ray-cast self-attributes to
+    # P1 and the friendly never reaches the policy's inbound map).
+    angle_to_p0 = math.atan2(20.0 - 25.0, 20.0 - 22.0)
+    f_friendly = [11, 0, 22.0, 25.0, angle_to_p0, 1, 70]
+    obs = _obs(p, fleets=[f_enemy, f_friendly])
+    moves = me_defensive_action(obs, me=0)
+    assert moves == [], (
+        f"idempotency contract VIOLATED: policy emitted {moves} "
+        f"despite a 70-ship friendly reinforce already in flight to "
+        f"the threatened planet. Without this contract the policy "
+        f"stacks redundant reinforces every rollout tick — "
+        f"catastrophic wallclock + behavioural blowup observed in "
+        f"the 2026-05-18 A/B (15.6pct vs 50pct baseline, max "
+        f"wallclock 8252ms)."
+    )
+
+
 def test_source_reservation_one_launch_per_source():
     """Two threatened MY planets that share the same nearest sister.
     The policy must NOT double-commit the sister; only one launch

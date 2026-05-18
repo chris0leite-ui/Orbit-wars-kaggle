@@ -318,18 +318,32 @@ def me_defensive_action(obs: Any, me: int) -> list:
     if not my_planets_by_id:
         return []
 
-    # 1. Attribute inbound enemy fleets to MY planets.
-    inbound: dict[int, list[tuple[int, int]]] = {}
+    # 1. Attribute fleets to MY planets. Enemy fleets become threats;
+    # friendly fleets become inbound reinforcements that count toward
+    # `garrison_at_eta`. The friendly-counting is the critical
+    # idempotency property: without it the stateless policy emits a
+    # NEW reinforce every rollout tick because each tick re-evaluates
+    # the SAME threat against the SAME garrison without crediting the
+    # already-launched reinforce. By tick N we've stacked N redundant
+    # reinforces, draining the sister and bloating the fleet count
+    # (which slows fs_step). Counting friendlies makes the policy
+    # converge after one emit per real threat.
+    inbound_enemy: dict[int, list[tuple[int, int]]] = {}
+    inbound_friendly_ships: dict[int, int] = {}
     for f in fleets:
-        if int(f.owner) == me:
-            continue
         target, eta = fleet_target_planet(f, planets, omega)
         if target is None or int(target.owner) != me:
             continue
-        inbound.setdefault(int(target.id), []).append(
-            (int(eta), int(f.ships))
-        )
-    if not inbound:
+        if int(f.owner) == me:
+            inbound_friendly_ships[int(target.id)] = (
+                inbound_friendly_ships.get(int(target.id), 0)
+                + int(f.ships)
+            )
+        else:
+            inbound_enemy.setdefault(int(target.id), []).append(
+                (int(eta), int(f.ships))
+            )
+    if not inbound_enemy:
         return []
 
     moves: list = []
@@ -338,7 +352,7 @@ def me_defensive_action(obs: Any, me: int) -> list:
     # Process threats in eta-order so the most-urgent gets dibs on the
     # nearest reinforcer.
     threat_list = sorted(
-        inbound.items(),
+        inbound_enemy.items(),
         key=lambda kv: min(e for (e, _s) in kv[1]),
     )
     for pid, waves in threat_list:
@@ -352,9 +366,10 @@ def me_defensive_action(obs: Any, me: int) -> list:
         garrison_at_eta = (
             float(p_target.ships)
             + float(p_target.production) * float(earliest_eta)
+            + float(inbound_friendly_ships.get(pid, 0))
         )
         if garrison_at_eta >= float(threat_force) + 1.0:
-            continue  # natural production covers it
+            continue  # natural production + in-flight reinforces cover it
 
         shortfall = float(threat_force) + 1.0 - garrison_at_eta
         # Find nearest viable reinforcer.
