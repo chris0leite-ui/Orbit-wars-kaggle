@@ -93,6 +93,10 @@ def _build_searches() -> tuple[BundleSearch, BundleSearch, int]:
         # Default 0.0 preserves prior behavior; set BUNDLE_JOINT_BONUS=0.5
         # to enable + BUNDLE_JOINT_SEEDS=10 for the search-side counterpart.
         joint_bonus=_env_float("BUNDLE_JOINT_BONUS", 0.0),
+        # Phase E Phase 2 (2026-05-18): bounce penalty for failed captures.
+        # Default 0.0 preserves prior behavior; live config: 0.5 (matches
+        # composite_capture_value's WASTE_PENALTY_WEIGHT).
+        bounce_weight=_env_float("BUNDLE_BOUNCE_WEIGHT", 0.0),
     )
     # Tuned 2026-05-18 with with_candidate cache-inheritance perf
     # fix in place. Full 363-turn game vs sloppy random at depth=2:

@@ -347,6 +347,72 @@ def test_J1_joint_preferred_over_far_solo(joint_bonus_on):
     assert 2 in tgt_ids, f"joint must aim at P2; emitted {moves} → {tgt_ids}"
 
 
+# ---- Phase E Phase 2 — bounce-penalty oracles ----------------------------
+
+@pytest.fixture
+def bounce_penalty_on(monkeypatch, bundle_knobs):
+    """Enable bounce penalty. Inherits the Phase A defaults from
+    `bundle_knobs`; only flips the bounce weight knob."""
+    monkeypatch.setenv("BUNDLE_BOUNCE_WEIGHT", "0.5")
+
+
+def test_B1_solo_bounce_not_emitted(bounce_penalty_on):
+    """Single-source bounce-only state: our P0 (20 ships) is the ONLY
+    launch source; enemy P1 has 50 defenders. The only target P0 can
+    productively reach is P1, but 20 <= 50 means the launch bounces.
+
+    With bounce_weight=0.5, the chooser must NOT emit the bouncing
+    launch — empty bundle must win.
+
+    Layout: P0 our 20-ship source at (30, 25); P1 enemy 50-defender
+    target at (50, 35). No buffer / second source / neutral.
+    Avoids any 'sacrifice ships to deny opp' incentive — opp's only
+    planet is P1, not adjacent to anything of ours.
+    """
+    obs = _obs([
+        _planet(0, 0, 30, 25, ships=20, production=1),    # our source
+        _planet(1, 1, 50, 35, ships=50, production=1),    # over-defended enemy
+    ])
+    moves = _emit(obs)
+    # Bounce penalty must reject the 20-ship launch at P1.
+    # Empty bundle is acceptable; any other safe target is acceptable
+    # too (there are none in this layout, so empty is the only option).
+    hits = set(_targets_of_emits(obs, moves))
+    assert 1 not in hits, (
+        f"bounce penalty must reject solo 20sh launch at 50-defender P1; "
+        f"emitted {moves} → hits {hits}"
+    )
+
+
+def test_B2_joint_not_penalized(bounce_penalty_on, monkeypatch):
+    """With bounce penalty AND joint bonus both on: two 30-ship sources
+    at a 50-defender target form a successful joint (30+30 > 50). Each
+    leg ALONE bounces (30 <= 50), so naive per-launch bounce penalty
+    would penalize the joint to oblivion. The joint-aware exemption
+    must prevent that — bundle must still emit the joint.
+
+    This tests the Phase 2 ↔ Phase 1 interaction (B2 from the plan)."""
+    monkeypatch.setenv("BUNDLE_JOINT_BONUS", "0.5")
+    monkeypatch.setenv("BUNDLE_JOINT_SEEDS", "10")
+    obs = _obs([
+        _planet(0, 0, 30, 25, ships=30, production=1),    # source A
+        _planet(1, 0, 70, 25, ships=30, production=1),    # source B
+        _planet(2, 1, 50, 35, ships=50, production=2),    # joint target
+    ])
+    moves = _emit(obs)
+    src_ids = {int(m[0]) for m in moves}
+    tgt_ids = set(_targets_of_emits(obs, moves))
+    # Both P0 and P1 must fire at P2 (the joint property).
+    # With joint exemption working, bounce penalty doesn't kill it.
+    assert 0 in src_ids and 1 in src_ids, (
+        f"joint must survive bounce penalty when joint_bonus on; "
+        f"emitted {moves} from sources {src_ids}"
+    )
+    assert 2 in tgt_ids, (
+        f"joint must aim at P2; emitted {moves} → {tgt_ids}"
+    )
+
+
 def test_J2_no_joint_when_pair_insufficient(joint_bonus_on):
     """Two sources P0 (20 ships) + P1 (30 ships) face a 60-defender target P2.
     Joint sum = 50 < 60 → CANNOT capture even together.

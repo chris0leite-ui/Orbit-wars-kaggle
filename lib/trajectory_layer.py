@@ -1764,6 +1764,19 @@ class BundleEvaluator:
     # seeding lets the search find pair-cooperative captures the
     # current beam misses.
     joint_bonus: float = 0.0
+    # Phase E Phase 2 (2026-05-18): bounce-penalty for failed captures.
+    # When `bounce_weight > 0`, score() subtracts `bounce_weight * ships`
+    # from total for each launch where (delivered_ships <= defenders at
+    # arrival). Ported from `lib/value_heads.composite_capture_value`
+    # (the live champion's waste penalty) with the same default 0.5.
+    # Phase 0 diagnostic + Phase 1 pick-rate post-mortem showed bundle
+    # launches 368 fleets across 16 games at over-defended enemy
+    # planets that all bounce; current scorer treats these as silent
+    # zero (planet stays opp-owned, no penalty). The penalty pushes the
+    # chooser away from these bounces toward either empty bundle or
+    # correctly-sized solos elsewhere. Default 0.0 preserves prior
+    # behavior.
+    bounce_weight: float = 0.0
 
     def score(self, world: "World", bundle: Bundle,
               *, my_id: Optional[int] = None,
@@ -1895,6 +1908,20 @@ class BundleEvaluator:
                 joint_value = tgt.production * remaining + self.planet_weight
                 joint_bonus_total += self.joint_bonus * joint_value
 
+        # Phase E Phase 2 (2026-05-18): bounce penalty for solo launches
+        # that would fail to capture. Mirrors composite_capture_value's
+        # `0.5 × ships` waste penalty (the live champion's existing
+        # mechanism). SUBTRACTIVE from total — pushes the chooser away
+        # from launches whose ship count is insufficient to overcome
+        # the predicted defenders at arrival. Joint-aware: launches
+        # that contribute to a detected joint capture are exempted
+        # (the joint succeeds, so individual under-cap is not a bounce).
+        bounce_penalty_total = 0.0
+        if self.bounce_weight > 0.0 and bundle.launches:
+            bounce_penalty_total = self._compute_bounce_penalty(
+                world, bundle, my_id,
+            )
+
         # All deltas summed over [1..K] (path integral) except
         # ship_delta (terminal — see comment above) and eliminations
         # (terminal — opp is eliminated or not).
@@ -1902,7 +1929,8 @@ class BundleEvaluator:
                  + self.planet_weight * planet_delta_path
                  + self.production_weight * production_delta_path
                  + self.elimination_bonus * eliminations
-                 + joint_bonus_total)
+                 + joint_bonus_total
+                 - bounce_penalty_total)
 
         return BundleScore(
             ship_delta=ship_delta,
@@ -2003,6 +2031,99 @@ class BundleEvaluator:
                     (tgt_id, min_arrival, sum_ships, max_ships, tgt)
                 )
         return joints
+
+    def _compute_bounce_penalty(
+        self, world: "World", bundle: Bundle, my_id: int,
+    ) -> float:
+        """Sum `bounce_weight * ships` over launches that fail to capture
+        their target (delivered ships <= predicted defenders at arrival).
+
+        Joint-aware: launches contributing to a detected distinct-source
+        joint capture are exempted (the joint succeeds, so individual
+        under-cap is not a true bounce). When `joint_bonus == 0` this
+        exemption check still runs but joints rarely emerge from regular
+        search; the cost is one extra `_detect_joint_captures` call
+        (~1-2ms) per scored bundle when bounce_weight > 0.
+
+        Defender count at arrival: read from `world.ownership_at(target,
+        arrival_turn)`. This counts the pre-bundle defender state
+        (background production + any opp in-flight fleets) but NOT
+        our other bundle launches — so each leg is checked
+        independently against its own arrival's opp resistance.
+        """
+        if not bundle.launches:
+            return 0.0
+        omega = float(getattr(world, "omega", 0.0) or 0.0)
+        current_step = int(getattr(world, "step", 0) or 0)
+        rot_offset = 1 if current_step == 0 else 0
+        planets = [p for p in world.planets if not p.is_comet]
+        planet_by_id_local = {p.id: p for p in planets}
+
+        # Identify launches that are part of a successful joint —
+        # exempt them from the bounce penalty.
+        joint_launch_ids: set[int] = set()
+        if len(bundle.launches) >= 2:
+            joints = self._detect_joint_captures(world, bundle, my_id)
+            for tgt_id, _arr, _sum, _max, _tgt in joints:
+                # Re-raycast each launch to find which ones hit this
+                # target — those are the joint partners.
+                for i, launch in enumerate(bundle.launches):
+                    if launch.owner != my_id:
+                        continue
+                    if int(launch.launch_turn) != 0:
+                        continue
+                    src = planet_by_id_local.get(int(launch.src_id))
+                    if src is None:
+                        continue
+                    hit_pid, _step = _raycast_first_planet_hit(
+                        src, float(launch.aim_angle), int(launch.ships),
+                        planets, omega, rot_offset,
+                    )
+                    if hit_pid is not None and int(hit_pid) == tgt_id:
+                        joint_launch_ids.add(i)
+
+        total_penalty = 0.0
+        for i, launch in enumerate(bundle.launches):
+            if launch.owner != my_id:
+                continue
+            if int(launch.launch_turn) != 0:
+                continue
+            if i in joint_launch_ids:
+                continue  # part of a successful joint
+            src = planet_by_id_local.get(int(launch.src_id))
+            if src is None:
+                continue
+            hit_pid, arrival_step = _raycast_first_planet_hit(
+                src, float(launch.aim_angle), int(launch.ships),
+                planets, omega, rot_offset,
+            )
+            if hit_pid is None or arrival_step is None:
+                continue
+            if int(hit_pid) == int(launch.src_id):
+                continue
+            tgt = planet_by_id_local.get(int(hit_pid))
+            if tgt is None:
+                continue
+            if tgt.owner == my_id:
+                continue  # reinforcing own planet — not a bounce
+            # Predicted defenders at arrival via trajectory_layer's
+            # native arrival prediction (accounts for opp production
+            # + any opp in-flight fleets already in obs).
+            try:
+                owner_at_arrival, defenders_at_arrival = world.ownership_at(
+                    int(hit_pid), int(arrival_step),
+                )
+            except Exception:
+                continue
+            # If our other prior launches already captured it,
+            # owner_at_arrival could be my_id — but we're reading
+            # PRE-bundle world, so this only fires if obs.fleets had
+            # an in-flight friendly launch from before.
+            if owner_at_arrival == my_id:
+                continue
+            if int(launch.ships) <= int(defenders_at_arrival):
+                total_penalty += self.bounce_weight * int(launch.ships)
+        return total_penalty
 
 
 # ---------------------------------------------------------------------------
