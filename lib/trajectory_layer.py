@@ -1777,6 +1777,21 @@ class BundleEvaluator:
     # correctly-sized solos elsewhere. Default 0.0 preserves prior
     # behavior.
     bounce_weight: float = 0.0
+    # Phase E Phase 3 (2026-05-18): compound-ROI weighting on the
+    # production path-integral. Default linear path-integral already
+    # rewards early captures (capture at turn a contributes prod × (K-a)
+    # to the sum). Compound term ADDS prod × (K-t) per turn t of
+    # ownership, making the total quadratic in (K-a). Models the
+    # compounding effect: early-captured production turns into ships
+    # that enable LATER captures, recursively. Default 0.0 preserves
+    # current behavior; quadratic term scales as (K-a)² so the
+    # weight need not be large to materially shift target preferences
+    # toward fast-arrival captures. Phase 1+2 NULL post-mortem
+    # (audit/2026-05-18-phase-e-phase2-failures.json): bundle
+    # captures more efficiently than baseline AFTER Phase 2 but loses
+    # the same — target-selection (which planet to capture) is the
+    # gap; compound-ROI is one lever for shifting it.
+    compound_weight: float = 0.0
 
     def score(self, world: "World", bundle: Bundle,
               *, my_id: Optional[int] = None,
@@ -1840,6 +1855,12 @@ class BundleEvaluator:
         opp_planets_path = 0.0
         my_prod_path = 0.0
         opp_prod_path = 0.0
+        # Phase E Phase 3 compound path: same loop, weights each
+        # owned-turn by (h - t) — extra reward for owning early in
+        # the horizon. Only accumulated when compound_weight > 0 (the
+        # multiply happens unconditionally; gated at final total).
+        my_compound_path = 0.0
+        opp_compound_path = 0.0
         for p in overlay.planets:
             if p.is_comet:
                 continue
@@ -1853,9 +1874,11 @@ class BundleEvaluator:
                 if owner_t == my_id:
                     my_planets_path += 1
                     my_prod_path += p.production
+                    my_compound_path += p.production * (h - t)
                 elif owner_t != -1:
                     opp_planets_path += 1
                     opp_prod_path += p.production
+                    opp_compound_path += p.production * (h - t)
 
         # Terminal-state ship counts (ships are transit-state mid-
         # rollout; the path integral over ships doesn't have a clean
@@ -1879,6 +1902,7 @@ class BundleEvaluator:
         # against). Surfaced via BundleScore for diagnostic stability.
         planet_delta_path = my_planets_path - opp_planets_path
         production_delta_path = my_prod_path - opp_prod_path
+        compound_delta_path = my_compound_path - opp_compound_path
 
         # Count opponents who started with planets but have none at K.
         initial_opp_owners: set[int] = set()
@@ -1928,6 +1952,7 @@ class BundleEvaluator:
         total = (ship_delta
                  + self.planet_weight * planet_delta_path
                  + self.production_weight * production_delta_path
+                 + self.compound_weight * compound_delta_path
                  + self.elimination_bonus * eliminations
                  + joint_bonus_total
                  - bounce_penalty_total)

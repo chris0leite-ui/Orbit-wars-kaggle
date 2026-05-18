@@ -413,6 +413,44 @@ def test_B2_joint_not_penalized(bounce_penalty_on, monkeypatch):
     )
 
 
+# ---- Phase E Phase 3 — compound-ROI oracle ------------------------------
+
+@pytest.fixture
+def compound_on(monkeypatch, bundle_knobs):
+    monkeypatch.setenv("BUNDLE_COMPOUND_WEIGHT", "1.0")
+
+
+def test_C1_compound_score_strictly_increases_with_capture(compound_on):
+    """Direct unit check: same bundle, same world — with
+    compound_weight > 0, the score for a bundle that captures a neutral
+    planet must be STRICTLY greater than without compound (because
+    capture adds positive compound_path credit). Confirms the new
+    term is wired into total."""
+    from lib.trajectory_layer import (
+        BundleEvaluator, Bundle, LaunchSpec, World,
+    )
+    obs = _obs([
+        _planet(0, 0, 30, 25, ships=30, production=1),
+        _planet(1, -1, 40, 25, ships=5, production=2),    # close neutral
+    ])
+    world = World.from_obs(obs)
+    # Aim P0→P1 with full ships.
+    import math
+    angle = math.atan2(0, 10)  # (40,25) - (30,25) = (10, 0)
+    bundle = Bundle(launches=(LaunchSpec(
+        src_id=0, owner=0, aim_angle=angle,
+        ships=30, launch_turn=0,
+    ),))
+    ev_off = BundleEvaluator(compound_weight=0.0)
+    ev_on = BundleEvaluator(compound_weight=1.0)
+    score_off = ev_off.score(world, bundle, my_id=0).total
+    score_on = ev_on.score(world, bundle, my_id=0).total
+    assert score_on > score_off, (
+        f"compound_weight=1 must strictly raise score for a "
+        f"capturing bundle; off={score_off:.2f} on={score_on:.2f}"
+    )
+
+
 def test_J2_no_joint_when_pair_insufficient(joint_bonus_on):
     """Two sources P0 (20 ships) + P1 (30 ships) face a 60-defender target P2.
     Joint sum = 50 < 60 → CANNOT capture even together.

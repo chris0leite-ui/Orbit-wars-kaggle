@@ -97,6 +97,12 @@ def _build_searches() -> tuple[BundleSearch, BundleSearch, int]:
         # Default 0.0 preserves prior behavior; live config: 0.5 (matches
         # composite_capture_value's WASTE_PENALTY_WEIGHT).
         bounce_weight=_env_float("BUNDLE_BOUNCE_WEIGHT", 0.0),
+        # Phase E Phase 3 (2026-05-18): compound-ROI weighting. Adds a
+        # (h-t)-weighted path-integral term — quadratic-in-remaining-
+        # horizon credit for early captures. Default 0.0 preserves
+        # current behavior; suggested starting point 0.1 (the term is
+        # quadratic in K-arrival so small coefficients are material).
+        compound_weight=_env_float("BUNDLE_COMPOUND_WEIGHT", 0.0),
     )
     # Tuned 2026-05-18 with with_candidate cache-inheritance perf
     # fix in place. Full 363-turn game vs sloppy random at depth=2:
