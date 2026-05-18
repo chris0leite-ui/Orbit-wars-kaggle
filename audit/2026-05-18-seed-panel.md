@@ -74,6 +74,44 @@ for game in result.matrix["my_agent"]["baseline"].games:
     # bucket / aggregate as needed
 ```
 
+## Real-replay coverage check (submission 52710995, 100 games)
+
+`scripts/validate_panel_vs_replays.py` extracts the same geometry
+features from 100 real Kaggle-ladder games (55 × 2-player, 45 × 4-player)
+and bins them into the 32 archetypes.
+
+**Headline:** every real game falls inside a panel bin (no out-of-range
+features), so the panel is structurally valid as a coverage set. The
+panel uses **uniform 4 seeds per cell**, but live-play frequency is
+not uniform:
+
+- **Over-covered (good for tail-regression detection):**
+  - 2P: 5 archetypes never appear in 55 live games (mostly
+    `high_prod__*__big_rotating`). Panel still keeps 4 seeds each
+    so we'd catch a regression there before it landed on the ladder.
+  - 4P: 11 archetypes missing from 45 live games.
+- **Under-covered (slots we should consider doubling):**
+  - 2P top live cells run 2-3× the panel's uniform 3.1% allocation.
+  - `med_high_prod__mixed_static__big_static`: 9.1% live vs 3.1% panel.
+  - `med_high_prod__mostly_rotating__big_static`: 7.3% live.
+  - `low_prod__mostly_static__big_static`: 7.3% live.
+  - `low_prod__mixed_static__big_rotating`: 7.3% live.
+
+Full output: `audit/seed-panel/replay-coverage-52710995.txt`.
+
+**Interpretation.** Uniform stratification trades sample-efficiency
+for tail-regression detection. Since the goal of this panel is "catch
+geometry-conditional failures BEFORE they hit the ladder," uniform is
+the right choice — a frequency-matched panel would have ≤1 seed per
+rare archetype and miss those regressions. A future
+`SEEDS_DISTRIBUTION_MATCHED_64` panel mirroring live frequency would
+complement, not replace, the uniform `SEEDS_128`.
+
+**4P caveat.** The panel is 2P-only (seat-0 vs seat-1 home assignment).
+4P games sample the same initial-planet RNG path, so the geometry
+features are comparable, but 4P-specific regressions need their own
+panel.
+
 ## Open follow-ups (out of scope here)
 
 - Synthetic / handcrafted geometries (PI flagged as later). Now that
