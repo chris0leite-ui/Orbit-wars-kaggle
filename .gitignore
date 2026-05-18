@@ -15,6 +15,11 @@ data/shot_validator/*
 # Seed-panel build cache — regeneratable from scripts/build_seed_panel.py.
 audit/seed-panel/features.json
 
+# Bundle parity cache — keyed by full sha256 of the bundled file. Machine-
+# local artifact written by scripts/bundle_agent.py to skip the ~9 min
+# self-play parity gate on warm rebuilds of an unchanged bundle.
+audit/bundle-parity-cache.json
+
 # Submissions / kernel build artifacts
 submissions/*
 !submissions/.gitkeep

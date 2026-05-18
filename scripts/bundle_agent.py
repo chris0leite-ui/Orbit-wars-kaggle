@@ -11,6 +11,13 @@ CLI:
         e.g. python scripts/bundle_agent.py agents/v1_orbitfix --lib geometry fleet orbit
 
 Output: submissions/<basename(agent_dir)>.py
+
+Parity gate: post-bundle self-play comparison between the source agent
+and the bundled file across seeds=(0,). Results are cached by full
+sha256 in ``audit/bundle-parity-cache.json``; a cache hit skips the
+~30-60s gate on repeat builds of an unchanged bundle. Use
+``--ignore-parity-cache`` to force re-verification, or
+``--skip-parity-gate`` to bypass both gate and cache (not recommended).
 """
 
 from __future__ import annotations
@@ -404,7 +411,45 @@ def _bundle_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
 
 
-def _parity_gate(bundle_path: Path, agent_dir: Path, seeds=(0,)) -> bool:
+def _bundle_full_hash(path: Path) -> str:
+    """Full sha256 used as the parity-cache key (not truncated)."""
+    import hashlib
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+_PARITY_CACHE_PATH = REPO / "audit" / "bundle-parity-cache.json"
+
+
+def _parity_cache_load() -> dict:
+    import json
+    if not _PARITY_CACHE_PATH.exists():
+        return {}
+    try:
+        return json.loads(_PARITY_CACHE_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _parity_cache_hit(full_sha: str) -> bool:
+    entry = _parity_cache_load().get(full_sha)
+    return bool(entry and entry.get("passed"))
+
+
+def _parity_cache_record(full_sha: str, turns: int, seeds: tuple[int, ...]) -> None:
+    import json
+    import time
+    cache = _parity_cache_load()
+    cache[full_sha] = {
+        "passed": True,
+        "turns": int(turns),
+        "seeds": list(seeds),
+        "recorded_at": time.time(),
+    }
+    _PARITY_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _PARITY_CACHE_PATH.write_text(json.dumps(cache, indent=2, sort_keys=True) + "\n")
+
+
+def _parity_gate(bundle_path: Path, agent_dir: Path, seeds=(0,)) -> tuple[bool, int]:
     """Compare source-agent vs bundle-agent on self-play obs streams.
 
     For each seed, generate a self-play game using the SOURCE agent, then
@@ -474,9 +519,9 @@ def _parity_gate(bundle_path: Path, agent_dir: Path, seeds=(0,)) -> bool:
 
     if mismatches:
         print(f"  PARITY FAIL: {mismatches}/{compared} mismatched turns", file=sys.stderr)
-        return False
+        return False, compared
     print(f"  parity OK: {compared} turns matched across {len(seeds)} self-play seed(s)")
-    return True
+    return True, compared
 
 
 def _load_module_from_file(path: Path, name: str):
@@ -501,7 +546,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-dir", type=Path, default=SUBMISSIONS)
     parser.add_argument(
         "--skip-parity-gate", action="store_true",
-        help="skip the post-bundle self-play parity check (NOT recommended)",
+        help="skip the post-bundle self-play parity check (NOT recommended; "
+             "prefer relying on the sha256 parity cache at "
+             "audit/bundle-parity-cache.json — a cache hit auto-skips)",
+    )
+    parser.add_argument(
+        "--ignore-parity-cache", action="store_true",
+        help="run the parity gate even if this bundle's sha256 is in "
+             "audit/bundle-parity-cache.json (use to force re-verification)",
     )
     parser.add_argument(
         "--force", action="store_true",
@@ -515,13 +567,19 @@ def main(argv: list[str] | None = None) -> int:
         force=args.force,
     )
     h = _bundle_hash(out)
+    full_sha = _bundle_full_hash(out)
     print(f"wrote {out} ({out.stat().st_size} bytes) sha256:{h}")
-    if not args.skip_parity_gate:
-        ok = _parity_gate(out, args.agent_dir.resolve())
-        if not ok:
-            print(f"REFUSING TO LEAVE BUNDLE: removing {out}", file=sys.stderr)
-            out.unlink()
-            return 1
+    if args.skip_parity_gate:
+        return 0
+    if not args.ignore_parity_cache and _parity_cache_hit(full_sha):
+        print(f"  parity cache HIT for sha256:{h} — skipping self-play gate")
+        return 0
+    ok, turns = _parity_gate(out, args.agent_dir.resolve())
+    if not ok:
+        print(f"REFUSING TO LEAVE BUNDLE: removing {out}", file=sys.stderr)
+        out.unlink()
+        return 1
+    _parity_cache_record(full_sha, turns, (0,))
     return 0
 
 
