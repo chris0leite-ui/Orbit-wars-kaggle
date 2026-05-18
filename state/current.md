@@ -1,7 +1,8 @@
 # state/current.md — current submitted agent + tournament rank
 
 > **Score values are intentionally NOT recorded here.** They drift as the
-> rolling μ settles and as the leaderboard moves. ALWAYS query Kaggle
+> rolling μ DRIFTS as the leaderboard moves (it does NOT settle to a
+> final value — TrueSkill keeps updating). ALWAYS query Kaggle
 > directly at session start (Rule 32):
 >
 >     export KAGGLE_USERNAME="$KaggleUserName" KAGGLE_KEY="$KaggleAPIToke" \
@@ -27,8 +28,8 @@ days_to_deadline: 36
 # Local A/B vs prior bundle: 26/32 = 81.2% Wlo=0.647 Whi=0.911 PASS.
 # Bench: max=705ms p95=504ms over_1000ms=0 PASS.
 last_submission_id: 52784853
-last_submission_status: PENDING
-last_submission_mu: null  # will settle over time; query Kaggle CLI
+last_submission_status: COMPLETE
+last_submission_mu: 1083.1  # snapshot at 2026-05-18 PM — UNDER-performing. NOTE: Kaggle μ DRIFTS continuously and does NOT settle; this is a today snapshot, not a final value. Local A/B 81.2% vs prior bundle did NOT translate to ladder. Calibration miss of ~30 mu vs prediction (1130-1160).
 last_submission_message: "PV off + bug #3/#4/#12 fixes"
 last_submission_file: submissions/baseline.py
 last_submission_agent: baseline_PV_off_with_clean_math_fixes
@@ -39,10 +40,10 @@ current_submitted_agent: baseline_PV_off_with_clean_math_fixes (5/18 PM)
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation; the
 # third push auto-evicts the previous oldest). 52784853 push evicts the
 # older of the prior pair (52766596 at 1094.1). New pair becomes
-# [52754310 (trajectory champion, 1141.0 settled), 52784853 (NEW)].
+# [52754310 (trajectory champion, μ snapshot 1143.7), 52784853 (NEW)].
 rolling_last_2:
-  - {agent: baseline_PV_off_with_clean_math_fixes, sub_id: 52784853, submitted: 2026-05-18T17:42Z, status: PENDING}
-  - {agent: trajectory_chooser_v4_waitN_baseline, sub_id: 52754310, submitted: 2026-05-17T22:06Z, status: COMPLETE, mu_at_submit_time: 1143.7, mu_settled: 1141.0}
+  - {agent: baseline_PV_off_with_clean_math_fixes, sub_id: 52784853, submitted: 2026-05-18T17:42Z, status: COMPLETE, mu_snapshot: 1083.1}  # NEW FLOOR — net cost ~30 mu vs the 1113.4 floor it replaced
+  - {agent: trajectory_chooser_v4_waitN_baseline, sub_id: 52754310, submitted: 2026-05-17T22:06Z, status: COMPLETE, mu_at_submit_time: 1143.7, mu_snapshot: 1143.7}
 
 # Team peak as of 2026-05-17: v15_banded (the multi-wait-grid + banded
 # (src, tgt, wait_band) dedup line). v15 source lives in git history at

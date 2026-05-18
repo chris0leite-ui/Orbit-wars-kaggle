@@ -8,7 +8,7 @@ Commit `b285882` (Bug #15 v2: PV-term-only) landed with the
 production-PV term enabled by default in
 `lib/value_heads.py:composite_capture_value`. The kill-switch
 `_COMPOSITE_PV_ENABLED` is wired (env var `COMPOSITE_PRODUCTION_PV=0`)
-but the default is `1`. A/B at n=96 vs the pre-fix bundle settled at
+but the default is `1`. A/B at n=96 vs the pre-fix bundle landed at
 **39.6% winrate** (Wlo=0.304, Whi=0.496, verdict FAIL).
 
 This means production code (`agents/baseline/main.py` via

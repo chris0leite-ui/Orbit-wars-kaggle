@@ -361,6 +361,39 @@ relevant skill file or source code, not back into friction.md.
   be off by ±80μ. Document in WRAPUP that the team-floor
   calculation uses SETTLED μ, not first-read μ.
 
+## 2026-05-18 (claude/audit-workflow-performance-btjeK — submission 52784853 ladder regression)
+
+- `tag: kaggle-mu-does-not-settle-stop-saying-it-does` — repeated
+  PI correction across multiple sessions: Kaggle TrueSkill μ
+  DRIFTS continuously as ladder games are played. I keep writing
+  "settled μ=X" in wrap-up docs (HANDOVER.md, state/current.md,
+  audit notes, even chat responses). Every μ value reported is a
+  SNAPSHOT at the moment of `kaggle competitions submissions
+  orbit-wars` query, not a final value. PI has corrected this in
+  prior sessions; the pattern recurred this session in 6+ places.
+  **Fix:** scrub "settled" / "settle" wording from all Orbit Wars
+  artifacts. Use "snapshot" or "current" with explicit timestamp.
+  Promotion candidate if it fires again: add a session-start hook
+  warning, OR a pre-commit hook that rejects "settled" near a
+  μ value in Orbit Wars files.
+
+
+
+- `tag: local-ab-vs-ladder-calibration-miss-30mu` — submission
+  `52784853` (PV off + bug #3/#4/#12) local A/B vs prior bundle was
+  26/32 = 81.2% (Wlo=0.647) PASS — predicted settled μ 1130-1160.
+  **Actual settled: 1083.1**, ≈30μ BELOW prediction and ≈30μ below
+  the 1113.4 it replaced. Repeats the recurring local-vs-live
+  calibration miss documented in `state/current.md::Calibration
+  WARNING` (multiple -20 to -30pp gaps on recent submissions). The
+  bundle-as-baseline doesn't represent the LB opponent distribution
+  the new submission actually fights. **Fix:** before any future
+  submission push, run a 3-opponent panel (`fast.py eval --vs-panel
+  --require-h2h <current-floor>`) AND a 4P sub-panel; only push if
+  ALL FOUR gates clear (oracles + bench + h2h + 4P). The
+  bundle-only A/B is sufficient for "did we structurally regress"
+  but NOT for "will this lift the ladder."
+
 ## 2026-05-18 (claude/audit-workflow-performance-btjeK — bug #15 v1/v2 + #14 option 5)
 
 - `tag: wrong-root-cause-from-symptom-similarity` — bug #15 v1 (commit
