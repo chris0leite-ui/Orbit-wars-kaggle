@@ -19,6 +19,37 @@
 
 ## Pending — promotion needed
 
+### [ ] [CROSS-CUTTING] Read state docs + recent audits before proposing subsystem edits
+
+`tag: wrong-file-recon-skipped-state-md` +
+`tag: crn-symmetry-broken-without-reading-prior-audits`
+(both 2026-05-18, claude/reverse-engineer-seat-geometry-BPJKs).
+
+Same-session double recurrence: proposed edits to "our agent" twice
+in one session without first reading the state docs that index the
+agent (`state/current.md`) or the audit notes that document the
+subsystem's design history (`audit/2026-05-17-state-function-
+principled-fix-results.md`). First recurrence caught by PI:
+"is that really our submission? check again." Second cost ~30 min
+compute + one full panel slot: asymmetric Tier-1 chooser change
+violated the CRN symmetry the v11→v12→v13 line had specifically
+fixed; panel returned 0/32, reverted.
+
+Both frictions have the same shape as `agent-introspection-skipped-
+bootstrap` (2026-05-13) and `fix-not-validated-against-real-failing-
+state` (2026-05-14) — the bootstrap-side equivalents already landed
+as Rule 38 + SessionStart hook (above). The **recon-side** equivalent
+has not been codified.
+
+**Fix:** add CLAUDE.md Rule 41 — "Before proposing edits to a
+subsystem in tree, (a) `cat state/current.md` to confirm which file
+implements it, and (b) `grep -l "<subsystem-name>" audit/2026-05-*.md`
+to check recent design audits. Mandatory if the edit modifies the
+agent's behaviour at submission time."
+
+Cost evidence: 2x recurrence within one session; ~30 min eval burned
+on a CRN-broken change; one panel slot consumed by a 0/32 result.
+
 ### [ ] [CROSS-CUTTING] Stop-hook should not force commit-before-verify
 
 `tag: stop-hook-pressure-commits-speculative-WIP` (2026-05-16,
