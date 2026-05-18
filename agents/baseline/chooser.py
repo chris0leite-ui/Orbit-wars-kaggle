@@ -18,7 +18,7 @@ import time
 
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
-from lib.opp_model import lite_greedy_policy as opp_policy
+from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy
 
 from agents.baseline.value import select_favor_fn
 
@@ -28,8 +28,15 @@ PER_CANDIDATE_SAFETY = 1.5
 RESERVED_OVERHEAD_MS = 50.0
 
 
-def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
-    """One reactive lite_greedy action set per non-me seat."""
+def opp_actions_for_snap(snap, me: int, num_seats: int,
+                         opp_policy=lite_greedy_policy) -> list[list]:
+    """One reactive opp action set per non-me seat.
+
+    `opp_policy` defaults to `lite_greedy_policy` (~1-2 ms/call, the
+    legacy chooser policy). Pass `top_tier_mirror_policy` when modelling
+    a μ≥1100-ladder opponent (~10 ms/call; affordable only inside
+    `build_idle_baseline` which runs once per turn, not per candidate).
+    """
     actions: list[list] = [[] for _ in range(num_seats)]
     for opp_id in range(num_seats):
         if opp_id == me:
@@ -43,7 +50,23 @@ def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
 
 def build_idle_baseline(snap_base, me: int, num_seats: int,
                         max_horizon: int, gamma: float) -> list[float]:
-    """favor at every horizon 0..max_horizon under (me-idle, opp-reactive)."""
+    """favor at every horizon 0..max_horizon under (me-idle, opp = Tier-1).
+
+    Uses `top_tier_mirror_policy` as the opp model here (not the cheap
+    `lite_greedy_policy` used inside `score_action`). Rationale: the
+    chooser was modelling its opponent as a too-passive lite_greedy in
+    BOTH baseline and per-candidate rollouts, so (me-idle) looked
+    artificially safe and Δ-against-baseline stayed near zero — the
+    chooser refused to launch. Swapping the baseline-only opp to Tier 1
+    (the aggressive top-tier mirror) drops the idle-baseline favor (opp
+    grabs planets when I idle), so more action-Δs go positive and the
+    chooser launches more often. Per-candidate scoring stays on lite to
+    fit the wallclock budget.
+
+    Cost: ~10 ms/call × max_horizon=40 ≈ 400 ms baseline build, vs
+    ~60 ms previously. Combined with proposer + choose still inside the
+    1000 ms env timeout in practice.
+    """
     favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
     out = [favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)]
@@ -51,7 +74,9 @@ def build_idle_baseline(snap_base, me: int, num_seats: int,
         if snap.fake_env.done:
             out.append(out[-1])
             continue
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        actions = opp_actions_for_snap(
+            snap, me, num_seats, opp_policy=top_tier_mirror_policy,
+        )
         snap = fs_step(snap, actions, in_place=True)
         out.append(favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma))
     return out

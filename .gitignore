@@ -50,6 +50,10 @@ audit/live-episodes/*/postmortem/postmortem-*.json
 # A/B comparisons (see audit/2026-05-11-v3-snipe-critical-review.md §6.5).
 # Source of truth lives on its own branch; we don't track a copy here.
 agents/precision/
+# Frozen pre-change copy of agents/baseline/ used as the A/B reference
+# while validating an in-flight chooser change. Source of truth is the
+# previous commit on this branch.
+agents/baseline_pre/
 
 # Common data formats
 *.csv
