@@ -238,13 +238,18 @@ def test_oracle_solo_capture_but_loses_source():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="Bug #11 fix may help; bug #12 likely still active")
 def test_oracle_defense_against_incoming_multi_fleet():
     """Our planet P is under attack from TWO opp in-flight fleets.
     Combined enemy strength exceeds our garrison + production accrual.
     A reinforcement launch from a neighbor MUST be emitted.
 
-    This is the asdf-game step 37 pattern abstracted.
+    This is the asdf-game step 37 pattern abstracted. Used to be
+    xfail (bugs #11 + #12 expected to suppress it). Bug #11 (orbital
+    ray-cast) was fixed earlier and flipped this to xpass; the bug
+    #12 fix (WAVE_LOOKAHEAD widening the inflight summation window)
+    is the principled reason this should pass — both waves enter the
+    enemy_inflight sum, shortfall is positive, reinforce candidate
+    emitted. Unmarked 2026-05-18 PM after bug #12 fix.
     """
     # Place off y=50 axis to avoid sun. Our planet under threat:
     p_under = _planet(0, 0, 30.0, 25.0, ships=30, production=2)
@@ -267,6 +272,48 @@ def test_oracle_defense_against_incoming_multi_fleet():
         f"combined (40 at eta=5 + 60 at eta=10). P0 has 30 ships + "
         f"2*10=20 production = 50, vs 100. Needs reinforcement from "
         f"P1 (200 ships). Planner emitted {moves} → targets {targets}."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Oracle 5 — Bug #12 specific: WIDE-gap multi-wave attack
+# ---------------------------------------------------------------------------
+
+
+def test_oracle_defense_wide_gap_multi_wave():
+    """Bug #12 verification: TWO opp fleets with a large eta gap (≥ 5
+    ticks). Pre-fix the `enemy_eta + 1` window summed only the earliest
+    wave; the later wave was silently excluded, shortfall went negative,
+    no reinforce candidate emitted. Post-fix (`WAVE_LOOKAHEAD = 12`),
+    both waves enter the sum, the shortfall is positive, and the
+    proposer emits a reinforce candidate.
+
+    Sized so the earliest wave ALONE cannot dominate our garrison
+    (so the pre-fix code's shortfall is small/negative) but the
+    combined wave clearly does. The reinforce neighbor has plenty of
+    ships and is close enough to defend.
+    """
+    # Our planet under threat — 30 ships + 2/turn production
+    p_under = _planet(0, 0, 30.0, 25.0, ships=30, production=2)
+    # Reinforce neighbor — close, lots of ships
+    p_help = _planet(1, 0, 25.0, 25.0, ships=200, production=2)
+    # Opp planet (source) — sized so it can't single-launch
+    opp = _planet(2, 1, 75.0, 25.0, ships=10, production=1)
+    # First wave: 35 ships at eta ≈ 2 (close, would lose 1-vs-1 against
+    # 30 + 2*2 = 34 garrison). Pre-fix shortfall ≈ 35 - 34 + 1 = 2 —
+    # tiny, barely emits.
+    f1 = [10, 1, 35.0, 25.0, math.atan2(0, -5), 2, 35]
+    # Second wave: 50 ships at eta ≈ 8 (≥ 5 ticks later — outside the
+    # pre-fix `enemy_eta + 1 = 3` window).
+    f2 = [11, 1, 50.0, 25.0, math.atan2(0, -20), 2, 50]
+    obs = _obs([p_under, p_help, opp], fleets=[f1, f2])
+    moves = _emit(obs)
+    targets = _targets_of_emits(obs, moves)
+    assert 0 in targets, (
+        f"Wide-gap multi-wave defense FAIL: combined opp force ≈ 85 vs "
+        f"P0's 30 + accrual. Pre-fix the eta=8 wave was excluded from "
+        f"the enemy_inflight sum (window was enemy_eta + 1 = 3). "
+        f"Planner emitted {moves} → targets {targets}."
     )
 
 

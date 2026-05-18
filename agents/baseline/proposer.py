@@ -44,6 +44,16 @@ GAMMA = 0.99
 WAIT_GRID_MODE = os.environ.get("BASELINE_WAIT_GRID", "backward").strip().lower()
 WAIT_BUFFER_OFFSET = 3   # backward grid emits {min_w, min_w + 3}
 
+# Bug #12 fix (2026-05-18): widen the in-flight-enemy summation window
+# so a staggered multi-wave attack (e.g. f1 at eta=2 + f2 at eta=4) is
+# accounted for as a single coordinated threat. Pre-fix the window was
+# `enemy_eta + 1` of the EARLIEST inbound, which silently excluded
+# later waves and zeroed the shortfall. Anchored on the asdf-game
+# (76947663) step 37 trace. The principled v2 of this fix is a full
+# timeline simulation to find the max shortfall over time; this
+# constant is the cheap version.
+WAVE_LOOKAHEAD = 12
+
 
 def aim_and_eta(src, tgt, ships: int, omega: float, wait_N: int = 0):
     """Return (aim_angle_radians, ceil_eta_turns) for one (src, tgt, ships).
@@ -91,20 +101,38 @@ def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
         enemy_eta = model.time_to_enemy_threat(int(tgt.id), me, world)
         if enemy_eta is None:
             return 0
+        # Bug #12 fix (2026-05-18): widen the inflight window from
+        # `enemy_eta + 1` to `enemy_eta + WAVE_LOOKAHEAD` so a staggered
+        # multi-wave attack (eta=2 + eta=4) counts together. Pre-fix,
+        # asdf-game (76947663) step 37 had two opp fleets inbound to
+        # P15 (40 ships at eta=2, 65 ships at eta=4); only the 40-ship
+        # earliest wave entered the sum, shortfall was negative, no
+        # reinforce candidate emitted, P15 fell.
         enemy_inflight = sum(
             ships
             for (eta_arr, owner, ships) in model.ledger.get(int(tgt.id), [])
-            if owner != me and eta_arr <= enemy_eta + 1
+            if owner != me and eta_arr <= enemy_eta + WAVE_LOOKAHEAD
         )
         enemy_potential = 0.0
         if enemy_inflight <= 0:
+            # Bug #3 fix (2026-05-18): the speculative-launch potential
+            # accrues opp production over `enemy_eta` ticks, matching the
+            # accrual already applied to our garrison below. Pre-fix
+            # enemy_potential was the OPP planet's current ship count
+            # (static) while my_garrison accrued — asymmetric prediction
+            # made shortfall almost always negative, so no preemptive
+            # reinforce candidates were emitted.
             best_enemy_ships = 0.0
+            best_enemy_prod = 0.0
             for p in world.planets_by_id.values():
                 if int(p.owner) < 0 or int(p.owner) == me:
                     continue
                 if int(p.ships) > best_enemy_ships:
                     best_enemy_ships = float(p.ships)
-            enemy_potential = best_enemy_ships
+                    best_enemy_prod = float(p.production)
+            enemy_potential = (
+                best_enemy_ships + best_enemy_prod * float(enemy_eta)
+            )
         enemy_strength = max(enemy_inflight, enemy_potential)
         my_garrison = float(tgt.ships) + float(tgt.production) * enemy_eta
         shortfall = enemy_strength - my_garrison + 1
