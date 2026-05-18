@@ -184,13 +184,23 @@ def test_composite_penalises_doomed_comet_target():
 
 def test_composite_allows_long_lived_comet_target():
     """A comet with plenty of life left is a legitimate target — the
-    gate must NOT fire. composite returns base ship-delta (no penalty)
-    since the pred_owner==me skip prevents capture credit anyway in
-    this single-fleet scenario."""
+    comet-lifetime gate must NOT fire (no waste penalty). Post-2026-05-18
+    counterfactual fix (bug #15): the per-fleet capture-credit DOES fire
+    in this scenario — the comet is neutral at obs time, our 10-ship
+    fleet would capture, and `simulate_planet_timeline` without our
+    fleet shows the comet stays neutral, so we cause the capture and
+    earn `capture_weight × production × held = 0.05 × 2 × 198 = 19.8`.
+    Base ship-delta = 10; my_prod = opp_prod = 1 (neutral comet excluded)
+    so the production-PV term is 0. Result: 10 + 0 + 19.8 = 29.8.
+    """
     alive = _obs_with_comet_target(path_len=200, path_index=0)
     v_alive = composite_capture_value(alive, my_id=0)
-    assert math.isclose(v_alive, 10.0, abs_tol=1e-6), (
-        f"long-lived comet target should pass gate cleanly; got {v_alive}"
+    # 10 (base) + 0 (my_prod == opp_prod) + 19.8 (capture credit for
+    # the comet → time_remaining capped by comet life-eta = 198 ticks).
+    assert math.isclose(v_alive, 29.9, abs_tol=0.05), (
+        f"long-lived comet target should fire capture credit "
+        f"(counterfactual: comet stays neutral without us → we cause "
+        f"the capture); got {v_alive}, expected ~29.9"
     )
 
 
@@ -240,9 +250,123 @@ def test_composite_penalises_sun_crossing_trajectory():
     )
 
 
+# ---------------------------------------------------------------------------
+# composite_capture_value — counterfactual capture credit (bug #15 fix)
+# ---------------------------------------------------------------------------
+
+
+def test_composite_credits_capture_we_cause():
+    """Per-fleet counterfactual fix (2026-05-18, bug #15). Our fleet is
+    in flight to an opp-owned planet; without our fleet the planet
+    stays opp. The fleet CAUSES the capture, so capture credit fires.
+    """
+    obs = {
+        "player": 0,
+        "step": 100,
+        "angular_velocity": 0.0,
+        "next_fleet_id": 1,
+        "initial_planets": [],
+        "planets": [
+            (0, 0, 20.0, 20.0, 2.0, 0, 1),     # our home (just launched)
+            (1, 1, 80.0, 20.0, 2.0, 5, 1),     # opp planet (low garrison)
+        ],
+        "fleets": [(0, 0, 22.0, 20.0, 0.0, 0, 100)],  # 100 ships our way
+        "comet_planet_ids": [],
+        "comets": [],
+    }
+    v = composite_capture_value(obs, my_id=0)
+    base = delta_us_minus_them_obs(obs, my_id=0)
+    # Base = (0 + 100) - 5 = 95. PV term = 0 (1 - 1 == 0). Capture
+    # credit ≈ 0.05 × 1 × (500 - 100 - eta) ≈ 19.
+    assert v > base, (
+        f"capture credit must fire when we cause the capture; "
+        f"got v={v}, base={base}"
+    )
+
+
+def test_composite_no_credit_for_over_reinforcement():
+    """Per-fleet counterfactual fix (2026-05-18, bug #15). TWO of our
+    identical fleets arrive at the SAME tick on the same opp target,
+    either alone captures. For each fleet, the counterfactual (remove
+    this fleet) leaves the other fleet still capturing → cf_owner ==
+    my_id → no credit. Total per-fleet credit must be 0 (the PV term
+    is the only signal). Guards against the regression where the fix
+    over-credits redundant fleets.
+    """
+    obs = {
+        "player": 0,
+        "step": 100,
+        "angular_velocity": 0.0,
+        "next_fleet_id": 2,
+        "initial_planets": [],
+        "planets": [
+            (0, 0, 15.0, 20.0, 2.0, 0, 1),     # our home A
+            (1, 0, 15.0, 25.0, 2.0, 0, 1),     # our home B (off-axis)
+            (2, 1, 80.0, 20.0, 2.0, 5, 1),     # opp planet
+        ],
+        # Two fleets at IDENTICAL position so they ray-cast to the
+        # same eta on the same target → same ledger entry → both
+        # over-reinforce under the counterfactual remove-one check.
+        "fleets": [
+            (0, 0, 22.0, 20.0, 0.0, 0, 100),
+            (1, 0, 22.0, 20.0, 0.0, 1, 100),
+        ],
+        "comet_planet_ids": [],
+        "comets": [],
+    }
+    from lib.scoring import pv_horizon as _pv
+    v = composite_capture_value(obs, my_id=0)
+    base = delta_us_minus_them_obs(obs, my_id=0)
+    # Base = (0 + 0 + 100 + 100) - 5 = 195. PV = (2 - 1) × pv@step100.
+    # Both fleets: cf timeline (without this fleet) still shows the
+    # OTHER fleet captures → cf_owner = me → no credit each.
+    pv = _pv(100, 0, gamma=0.99, t_total=500)
+    expected = base + pv
+    assert abs(v - expected) < 0.5, (
+        f"redundant fleets should NOT each get capture credit; "
+        f"got v={v}, expected ~{expected} (no per-fleet credit, only PV term). "
+        f"If much higher (≈19 more), counterfactual is mis-attributing credit."
+    )
+
+
+def test_composite_penalises_bouncing_fleet():
+    """Per-fleet logic: if our fleet has too few ships to capture
+    (pred_owner stays opp at eta), waste penalty fires."""
+    obs = {
+        "player": 0,
+        "step": 100,
+        "angular_velocity": 0.0,
+        "next_fleet_id": 1,
+        "initial_planets": [],
+        "planets": [
+            (0, 0, 20.0, 20.0, 2.0, 50, 1),    # our home
+            (1, 1, 80.0, 20.0, 2.0, 100, 1),   # well-defended opp
+        ],
+        "fleets": [(0, 0, 22.0, 20.0, 0.0, 0, 20)],  # 20 ships vs 100+
+        "comet_planet_ids": [],
+        "comets": [],
+    }
+    v = composite_capture_value(obs, my_id=0)
+    base = delta_us_minus_them_obs(obs, my_id=0)
+    # Bouncing fleet: -0.5 × 20 = -10. PV = 0 (1 - 1 = 0).
+    assert v < base, (
+        f"bounce penalty must fire on insufficient-ships launch; "
+        f"got v={v}, base={base}"
+    )
+
+
 def test_composite_does_not_penalise_non_sun_crossing():
     """Fleet chord runs along y=20 (well below the sun at y=50);
-    perp distance to sun = 30 > SUN_RADIUS. Gate must NOT fire."""
+    perp distance to sun = 30 > SUN_RADIUS. Sun gate must NOT fire
+    (no waste penalty).
+
+    Post-2026-05-18 counterfactual fix (bug #15): the per-fleet
+    capture-credit fires — our 100-ship fleet captures the opp's
+    10-ship planet, and the counterfactual (without us) shows the
+    planet stays opp, so we get credit. Base = 140 (50+100 - 10),
+    PV term = 0 (my_prod == opp_prod == 1), capture credit
+    = 0.05 × 1 × (500-100-eta) ≈ 19.2. Total ≈ 159.
+    """
     obs = {
         "player": 0,
         "step": 100,
@@ -259,9 +383,14 @@ def test_composite_does_not_penalise_non_sun_crossing():
         "comets": [],
     }
     v = composite_capture_value(obs, my_id=0)
-    # Base ship-delta: us=50+100=150, them=10 → 140. No sun gate, no
-    # comet gate; pred_owner==me skip in capture branch → no credit.
-    # composite returns base 140.
-    assert math.isclose(v, 140.0, abs_tol=1e-6), (
-        f"non-sun-crossing trajectory false-positive: v={v}"
+    # 140 (base) + 0 (PV) + ~19 (capture credit). Must NOT have a
+    # waste penalty (no sun crossing) — strict lower bound 140 catches
+    # any regression that re-introduces a false-positive penalty.
+    assert v > 140.0 - 1e-6, (
+        f"non-sun-crossing trajectory false-positive waste penalty: "
+        f"v={v} (should be ≥ base ship-delta 140)"
+    )
+    assert math.isclose(v, 159.2, abs_tol=0.5), (
+        f"capture credit should fire for capturing the opp planet; "
+        f"got {v}, expected ~159 (140 base + ~19 capture credit)"
     )
