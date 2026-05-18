@@ -153,7 +153,7 @@ _TIER_REGISTRY: dict[int, Policy] = {
 
 
 def lite_greedy_policy(obs: Any) -> list:
-    """Cheap opp policy: vulnerability-aware ROI launch picker.
+    """Cheap opp policy: ROI-greedy launch picker, no WorldModel.
 
     Per-call cost is ~1-2 ms (raw obs only; no World object,
     no WorldModel.from_world, no mission framework, no mechanism stack).
@@ -162,29 +162,12 @@ def lite_greedy_policy(obs: Any) -> list:
     matters more than bit-identical top-tier behaviour (e.g. as the
     per-step opp policy in lookahead rollouts).
 
-    Behaviour: for each owned planet with ships >= 10, score every
-    enemy/neutral target by:
-        score = production / (distance+1) / max(1, defenders_at_eta - 2)
-    Then launch enough to win the capture, sized by max(aggressive=0.7×src,
+    Behaviour: for each owned planet with ships >= 5, find the
+    enemy/neutral target with the best production/distance ratio and
+    launch enough to win the capture, sized by max(aggressive=0.7×src,
     capture_size). Skips if the source can't afford the capture
-    (defenders+production_during_flight+1 > src.ships).
-
-    2026-05-18 update — vulnerability term: the divisor
-    `max(1, defenders_at_eta - 2)` makes drained planets (low garrison,
-    even at same base production) attractive targets. Closes the 4P
-    opp-prediction gap that made joint candidate enumeration regress
-    4P at 12.5pct first-place. The 4P failure mode was: my joint
-    drains 2 srcs to capture target T. Post-capture, T (low garrison)
-    + A, B (low garrison) are all vulnerable. The pre-fix lite_greedy
-    scored by production/distance only, so opps didn't preferentially
-    exploit MY weakened planets. Leaf saw "joint = good capture"
-    even though live game punished it with 3 simultaneous opp
-    exploitations. With vulnerability term, opps prefer weakened
-    targets in the rollout, and the leaf correctly punishes
-    over-extension. See audit/2026-05-18-joint-candidates-submitted.md
-    section "The 4P opp model gap." SAFETY=2 avoids divide-by-zero;
-    the existing affordability check (`needed = defenders + 1`)
-    already requires winning capture so anything below 2 is "free".
+    (defenders+production_during_flight+1 > src.ships), avoiding the
+    bouncing-fleet failure mode where 0.7×src.ships < defenders.
     """
     player = obs.get("player", 0) if isinstance(obs, dict) else getattr(obs, "player", 0)
     planets = obs.get("planets") if isinstance(obs, dict) else getattr(obs, "planets", None)
@@ -195,21 +178,9 @@ def lite_greedy_policy(obs: Any) -> list:
     for src in planets:
         if src[1] != player or src[5] < 10:
             continue
-        sx = src[2]; sy = src[3]
-        budget = int(src[5])
-        # Hoist agg_ships + agg_spd outside the per-target loop — they
-        # depend only on src. Mirrors the original code's behaviour.
-        agg_ships = max(5, int(budget * 0.7))
-        if agg_ships > budget:
-            agg_ships = budget
-        agg_spd = _fleet_speed(agg_ships)
-        if agg_spd <= 0:
-            continue
-        # Score all targets by vulnerability-weighted ROI; cache the
-        # winner's eta + defenders for the affordability check.
         best = None
         best_score = -1.0
-        best_defenders = 0.0
+        sx = src[2]; sy = src[3]
         for t in targets:
             if t[0] == src[0]:
                 continue
@@ -217,29 +188,39 @@ def lite_greedy_policy(obs: Any) -> list:
             d = math.sqrt(dx * dx + dy * dy)
             if d < 1e-6:
                 continue
-            flight = max(0.0, d - float(src[4]) - float(t[4]) - 0.1)
-            eta = max(1, int(math.ceil(flight / agg_spd)))
-            # Production accrues only for OWNED planets (env rule:
-            # orbit_wars.py:511-514 — neutrals stay at their current
-            # count). Treating neutrals as accreting was the bug that
-            # made lite_greedy skip capturable openings (e.g.
-            # 13-defender prod=1 neutral at d=12 looked like 19
-            # defenders at eta=6, so the policy idled in opp_traj
-            # rollouts). Real opps grab near targets at step 4 and
-            # snowball.
-            if int(t[1]) == -1:
-                defenders_at_eta = float(t[5])
-            else:
-                defenders_at_eta = float(t[5]) + float(t[6]) * eta
-            score = (float(t[6]) / (d + 1.0)
-                     / max(1.0, defenders_at_eta - 2.0))
+            score = float(t[6]) / (d + 1.0)
             if score > best_score:
                 best_score = score
                 best = t
-                best_defenders = defenders_at_eta
         if best is None:
             continue
-        needed = int(math.ceil(best_defenders)) + 1
+        # Capture-size estimate: predict defenders at straight-line ETA
+        # for an aggressive-sized fleet, only launch if affordable.
+        # Straight-line aim/eta — adequate for static targets; orbital
+        # targets misaim but the rollout simulator catches the miss.
+        budget = int(src[5])
+        agg_ships = max(5, int(budget * 0.7))
+        if agg_ships > budget:
+            agg_ships = budget
+        spd = _fleet_speed(agg_ships)
+        if spd <= 0:
+            continue
+        dx = best[2] - sx; dy = best[3] - sy
+        d = math.sqrt(dx * dx + dy * dy)
+        flight = max(0.0, d - float(src[4]) - float(best[4]) - 0.1)
+        eta = max(1, int(math.ceil(flight / spd)))
+        # Production accrues only for OWNED planets (env rule:
+        # orbit_wars.py:511-514 — neutrals stay at their current count).
+        # Treating neutrals as accreting was the bug that made lite_greedy
+        # skip capturable openings (e.g. 13-defender prod=1 neutral at
+        # d=12 looked like 19 defenders at eta=6, so the policy idled
+        # in opp_traj rollouts). Real opps grab near targets at step 4
+        # and snowball.
+        if int(best[1]) == -1:
+            defenders_at_eta = float(best[5])
+        else:
+            defenders_at_eta = float(best[5]) + float(best[6]) * eta
+        needed = int(math.ceil(defenders_at_eta)) + 1
         if needed > budget:
             continue  # can't afford the capture — skip, don't bounce
         ships = max(agg_ships, needed)
