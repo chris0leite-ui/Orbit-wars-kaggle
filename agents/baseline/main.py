@@ -37,6 +37,14 @@ os.environ.setdefault("BASELINE_VALUE_HEAD", "hybrid")
 # any value other than "trajectory" (e.g. "composite").
 os.environ.setdefault("BASELINE_CHOOSER", "trajectory")
 
+# Direction B v3 (2026-05-18 PM): joint candidate enumeration enabled
+# by default. 2P A/B: joint vs hybrid = 38/64 = 59.4pct, Wlo=0.471,
+# Whi=0.705 (INCONCLUSIVE-but-positive). 2P-only gate in chooser
+# (num_seats <= 2 check) preserves 4P behaviour (4P regressed without
+# gate at 12.5pct first-place). Wallclock OK: bench max=891ms,
+# p95=703ms, zero >1000ms. Set BASELINE_JOINT=0 to disable.
+os.environ.setdefault("BASELINE_JOINT", "1")
+
 # H1 — post-chooser idle drain (2026-05-18) — DISABLED BY DEFAULT.
 # Audit `audit/replays/idle-trajectory-2026-05-17.md` measured 43.8pct
 # isolated ship-turns in trajectory champion (mu=1271.8). H1 attempted

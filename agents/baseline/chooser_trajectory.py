@@ -622,14 +622,17 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 # Track sources with viable solo (for joint gating).
                 solo_winners.add(int(src.id))
 
-    # Direction B v2 (2026-05-18 PM): joint candidate enumeration gated
-    # to ONLY fire when at least one constituent solo did NOT pass.
-    # v1 emit-greedy on raw score lost 2P A/B 12/32 = 37.5pct — joint
-    # commits both srcs even when each solo would have been positive
-    # independently. Gating to "one of the legs is a failing solo"
-    # preserves the (C)+(E) lift case (single source bounces, joint
-    # captures) without over-bundling working solos.
-    joint_enabled = os.environ.get("BASELINE_JOINT", "0").strip() == "1"
+    # Direction B v3 (2026-05-18 PM): 2P-only gate added after v2's
+    # 4P regression (4/32 first-place = 12.5pct in 8-seed × 4-seat
+    # rotation vs 3x hybrid). 4P joint commits 2 srcs against one of
+    # 3 opponents, leaving the other 2 opps free to attack our weakened
+    # planets. 2P-only is the same defensive shape as favor_hybrid_spatial
+    # in commit 558bd61. 2P joint v2 A/B 38/64 = 59.4pct (Wlo=0.471,
+    # INCONCL-but-positive vs hybrid).
+    joint_enabled = (
+        os.environ.get("BASELINE_JOINT", "0").strip() == "1"
+        and int(num_seats) <= 2
+    )
     if (joint_enabled and not use_v3
             and time.perf_counter() <= safe_deadline):
         # Group prerank by target_id. Take top-K solo candidates per
