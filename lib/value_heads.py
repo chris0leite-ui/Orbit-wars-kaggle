@@ -194,6 +194,12 @@ def composite_capture_value(
     fleets = [Fleet(*f) for f in fleets_raw]
     planets_list = list(world.planets_by_id.values())
     step_now = int(world.step)
+    # Thread omega through to fleet_target_planet so orbiting-target
+    # attribution works (bug #11 fix, 2026-05-18).
+    omega = float(
+        raw.get("angular_velocity", 0.0) if isinstance(raw, dict)
+        else getattr(raw, "angular_velocity", 0.0) or 0.0
+    )
 
     # Pre-pass: compute each of OUR fleets' target/eta so we can scope
     # the WorldModel build to the actual look-ahead needed. The full
@@ -207,7 +213,7 @@ def composite_capture_value(
         if int(f.owner) != my_id:
             continue
         ships = float(f.ships)
-        target, eta = fleet_target_planet(f, planets_list)
+        target, eta = fleet_target_planet(f, planets_list, omega)
         eta_int = int(eta) if eta is not None else 0
         fleet_targets.append((f, ships, target, eta_int))
         if target is not None and eta_int > max_eta:
