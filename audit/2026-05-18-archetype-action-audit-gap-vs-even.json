@@ -1,0 +1,197 @@
+{
+  "prefix_turns": 100,
+  "gap_cells": [
+    "low_prod__mostly_static__big_rotating",
+    "low_prod__mixed_rotating__big_rotating",
+    "low_prod__mostly_rotating__big_static",
+    "med_low_prod__mixed_static__big_rotating",
+    "med_high_prod__mostly_rotating__big_rotating",
+    "high_prod__mixed_static__big_static",
+    "high_prod__mostly_rotating__big_static",
+    "med_high_prod__mixed_static__big_static",
+    "med_low_prod__mixed_rotating__big_static",
+    "high_prod__mixed_rotating__big_rotating",
+    "low_prod__mixed_rotating__big_static"
+  ],
+  "even_cells": [
+    "low_prod__mostly_static__big_static",
+    "low_prod__mixed_static__big_rotating",
+    "med_low_prod__mostly_static__big_rotating",
+    "med_low_prod__mostly_rotating__big_static"
+  ],
+  "gap_pool_n": {
+    "top10": 19,
+    "ours": 23
+  },
+  "even_pool_n": {
+    "top10": 4,
+    "ours": 14
+  },
+  "rows": [
+    {
+      "feature": "launches_per_turn",
+      "gap_top10_mean": 0.9952948636651872,
+      "gap_ours_mean": 0.5710715854194114,
+      "even_top10_mean": 0.6725000000000001,
+      "even_ours_mean": 0.45499999999999996,
+      "d_gap": 1.2571110799823373,
+      "d_even": 1.2538130459895698,
+      "cross_d": 0.003298033992767513,
+      "kind": "UNIVERSAL"
+    },
+    {
+      "feature": "mean_fleet_size",
+      "gap_top10_mean": 36.56807579034363,
+      "gap_ours_mean": 34.67435165833183,
+      "even_top10_mean": 38.63019468921171,
+      "even_ours_mean": 36.27125755594038,
+      "d_gap": 0.22064862889944004,
+      "d_even": 0.3076257431683304,
+      "cross_d": -0.08697711426889038,
+      "kind": "mixed"
+    },
+    {
+      "feature": "p95_fleet_size",
+      "gap_top10_mean": 95.61315789473682,
+      "gap_ours_mean": 82.01086956521738,
+      "even_top10_mean": 98.42499999999995,
+      "even_ours_mean": 88.3142857142857,
+      "d_gap": 0.48204876530513885,
+      "d_even": 0.4197229501180507,
+      "cross_d": 0.06232581518708813,
+      "kind": "mixed"
+    },
+    {
+      "feature": "mean_target_distance",
+      "gap_top10_mean": 36.32748005217644,
+      "gap_ours_mean": 33.93247519441739,
+      "even_top10_mean": 30.260541440565305,
+      "even_ours_mean": 34.32331760469099,
+      "d_gap": 0.5197343139867476,
+      "d_even": -0.7111407740230508,
+      "cross_d": 1.2308750880097983,
+      "kind": "mixed"
+    },
+    {
+      "feature": "mean_target_production",
+      "gap_top10_mean": 2.8261885498811794,
+      "gap_ours_mean": 2.5476233518073754,
+      "even_top10_mean": 2.7938813618203926,
+      "even_ours_mean": 2.344168474260544,
+      "d_gap": 0.4358149793763287,
+      "d_even": 0.8502142409700701,
+      "cross_d": -0.41439926159374146,
+      "kind": "mixed"
+    },
+    {
+      "feature": "mean_target_garrison",
+      "gap_top10_mean": 29.039193325998703,
+      "gap_ours_mean": 26.87178540728021,
+      "even_top10_mean": 32.81444662684892,
+      "even_ours_mean": 27.815144519388646,
+      "d_gap": 0.35827822337998827,
+      "d_even": 0.6753122388780325,
+      "cross_d": -0.3170340154980442,
+      "kind": "mixed"
+    },
+    {
+      "feature": "mean_garrison_at_launch",
+      "gap_top10_mean": 11.281140222056655,
+      "gap_ours_mean": 13.780601855270813,
+      "even_top10_mean": 7.649658108523404,
+      "even_ours_mean": 11.236952164664428,
+      "d_gap": -0.5550547815600213,
+      "d_even": -0.8188624097543101,
+      "cross_d": 0.2638076281942888,
+      "kind": "UNIVERSAL"
+    },
+    {
+      "feature": "targets_neutral_fraction",
+      "gap_top10_mean": 0.2936548517988625,
+      "gap_ours_mean": 0.36552923913929786,
+      "even_top10_mean": 0.293776138747478,
+      "even_ours_mean": 0.4417541771232851,
+      "d_gap": -0.5661006256587741,
+      "d_even": -1.0372273186269374,
+      "cross_d": 0.47112669296816334,
+      "kind": "mixed"
+    },
+    {
+      "feature": "targets_enemy_fraction",
+      "gap_top10_mean": 0.35241298983708025,
+      "gap_ours_mean": 0.31655216692703264,
+      "even_top10_mean": 0.2704199569754546,
+      "even_ours_mean": 0.3052100869468845,
+      "d_gap": 0.35170573895832263,
+      "d_even": -0.2506969257770346,
+      "cross_d": 0.6024026647353573,
+      "kind": "mixed"
+    },
+    {
+      "feature": "launch_angle_var",
+      "gap_top10_mean": 2.2950460267984822,
+      "gap_ours_mean": 2.469441376965691,
+      "even_top10_mean": 2.0951430570266103,
+      "even_ours_mean": 2.9835320569295303,
+      "d_gap": -0.19398800137077765,
+      "d_even": -0.6545713244422806,
+      "cross_d": 0.46058332307150296,
+      "kind": "mixed"
+    },
+    {
+      "feature": "sun_clip_launch_rate",
+      "gap_top10_mean": 0.061267376727653595,
+      "gap_ours_mean": 0.04968158952648753,
+      "even_top10_mean": 0.030928902606859876,
+      "even_ours_mean": 0.04358597144235369,
+      "d_gap": 0.18979954395855164,
+      "d_even": -0.3251030712472393,
+      "cross_d": 0.514902615205791,
+      "kind": "mixed"
+    },
+    {
+      "feature": "mean_planets_owned",
+      "gap_top10_mean": 7.205231452124287,
+      "gap_ours_mean": 8.18792270531401,
+      "even_top10_mean": 6.23,
+      "even_ours_mean": 6.8042857142857125,
+      "d_gap": -0.4721917543953325,
+      "d_even": -0.18414370964280785,
+      "cross_d": -0.28804804475252466,
+      "kind": "mixed"
+    },
+    {
+      "feature": "mean_total_ships",
+      "gap_top10_mean": 338.47249207355736,
+      "gap_ours_mean": 424.83690821256033,
+      "even_top10_mean": 293.4,
+      "even_ours_mean": 337.70285714285717,
+      "d_gap": -0.6045068119670978,
+      "d_even": -0.261331134614219,
+      "cross_d": -0.3431756773528788,
+      "kind": "CONDITIONAL"
+    },
+    {
+      "feature": "ships_growth_per_turn",
+      "gap_top10_mean": 7.213310004099556,
+      "gap_ours_mean": 10.496901656447811,
+      "even_top10_mean": 7.537329732973297,
+      "even_ours_mean": 8.527973940251167,
+      "d_gap": -0.834476305409524,
+      "d_even": -0.18922739218332513,
+      "cross_d": -0.6452489132261989,
+      "kind": "CONDITIONAL"
+    },
+    {
+      "feature": "multi_launch_turn_rate",
+      "gap_top10_mean": 0.4504057878505365,
+      "gap_ours_mean": 0.2794587481599609,
+      "even_top10_mean": 0.334952356536043,
+      "even_ours_mean": 0.2526049960055014,
+      "d_gap": 1.483009274219369,
+      "d_even": 0.9562413134465266,
+      "cross_d": 0.5267679607728424,
+      "kind": "mixed"
+    }
+  ]
+}

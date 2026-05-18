@@ -118,7 +118,45 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
-## 2026-05-16 (claude/recover-main-foundations-MV0e2 — v13 session)
+## 2026-05-18 (claude/reverse-engineer-seat-geometry-BPJKs)
+
+- `tag: wrong-file-recon-skipped-state-md` — recon for an audit-driven
+  chooser change started at `data/main.py` (60-line Kaggle starter
+  example, unchanged since 2026-05-01 kickoff) instead of `agents/
+  baseline/` (the modular v15 re-baseline `state/current.md` names as
+  our submission). Spent two rounds analysing the wrong agent and
+  proposing constant-bump fixes that didn't map to anything we ship.
+  PI caught: "is that really our submission? check again." **Root
+  cause:** didn't read `state/current.md` before forming a code-change
+  recommendation about modifying "our agent." Same shape as
+  `agent-introspection-skipped-bootstrap` (2026-05-13) and
+  `fix-not-validated-against-real-failing-state` (2026-05-14): jumped
+  to a code mental-model without reading the state docs that index
+  what's actually in tree. **Fix:** before proposing edits to "our
+  agent," `cat state/current.md` and confirm the file path. Promotion
+  candidate (sees 3+ recurrences).
+
+- `tag: crn-symmetry-broken-without-reading-prior-audits` — designed
+  asymmetric chooser change: `top_tier_mirror_policy` (aggressive
+  Tier-1) in `build_idle_baseline`, kept `lite_greedy_policy` (passive)
+  in `score_action`. Panel result: 0 wins / 32 games, Wilson 0.00-0.11,
+  decisive FAIL. Burned ~30 min of compute + one full panel slot.
+  Reverted (commit `f28c9fc`). **Root cause:** the chooser's Δ requires
+  common-random-numbers symmetry — both legs of `leaf(action) -
+  baseline` must use the SAME opp trajectory. The audit trail at
+  `audit/2026-05-17-state-function-principled-fix-results.md` documents
+  the v11 → v12 → v13 progression that fixed exactly this asymmetric-Δ
+  failure mode. I diagnosed the audit signal correctly (lite_greedy
+  too passive vs real top-10) but chose a remedy that reintroduced the
+  v11 bug the team had paid to fix. **Fix:** before proposing chooser-
+  internal edits, grep `audit/` for the last 30 days of chooser /
+  opp_model / baseline notes (`grep -l "chooser\|opp_model\|baseline"
+  audit/2026-05-*.md`). Methodologically correct fix here is symmetric
+  stronger opp (vectorise `top_tier_mirror_policy` or train Tier-2
+  logreg) — pending. Same shape as `wrong-file-recon-skipped-state-md`
+  above: code-change before reading state. Promotion candidate.
+
+
 
 - `tag: restriction-tuning-before-modeling-fix` — when a failure
   mode admits both a constant bump (MAX_*/MIN_*/threshold) and a

@@ -1,0 +1,3004 @@
+{
+  "prefix_turns": 100,
+  "n_cells": 16,
+  "per_cell": [
+    {
+      "archetype": "low_prod__mostly_static__big_rotating",
+      "n": {
+        "top10_win": 1,
+        "ours_win": 0,
+        "ours_loss": 2
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 0.73,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.43999999999999995,
+          "ours_all_std": 0.24999999999999997,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.43999999999999995,
+          "delta_top10_minus_ours_all": 0.29000000000000004,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 31.78082191780822,
+          "top10_std": 0.0,
+          "ours_all_mean": 30.058352402745996,
+          "ours_all_std": 3.362700228832951,
+          "ours_win_mean": null,
+          "ours_loss_mean": 30.058352402745996,
+          "delta_top10_minus_ours_all": 1.7224695150622225,
+          "effect_size_d": null
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 104.39999999999999,
+          "top10_std": 0.0,
+          "ours_all_mean": 55.599999999999994,
+          "ours_all_std": 2.4000000000000057,
+          "ours_win_mean": null,
+          "ours_loss_mean": 55.599999999999994,
+          "delta_top10_minus_ours_all": 48.8,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 36.357740345042565,
+          "top10_std": 0.0,
+          "ours_all_mean": 36.59969067497964,
+          "ours_all_std": 5.903430767034532,
+          "ours_win_mean": null,
+          "ours_loss_mean": 36.59969067497964,
+          "delta_top10_minus_ours_all": -0.241950329937076,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 2.971830985915493,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.3176964149504196,
+          "ours_all_std": 0.4191456903127384,
+          "ours_win_mean": null,
+          "ours_loss_mean": 2.3176964149504196,
+          "delta_top10_minus_ours_all": 0.6541345709650734,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 38.84507042253521,
+          "top10_std": 0.0,
+          "ours_all_mean": 25.278794813119756,
+          "ours_all_std": 4.5106788710907715,
+          "ours_win_mean": null,
+          "ours_loss_mean": 25.278794813119756,
+          "delta_top10_minus_ours_all": 13.566275609415452,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 23.91549295774648,
+          "top10_std": 0.0,
+          "ours_all_mean": 10.074370709382151,
+          "ours_all_std": 3.9691075514874137,
+          "ours_win_mean": null,
+          "ours_loss_mean": 10.074370709382151,
+          "delta_top10_minus_ours_all": 13.841122248364329,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.38028169014084506,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.45080091533180777,
+          "ours_all_std": 0.2334096109839817,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.45080091533180777,
+          "delta_top10_minus_ours_all": -0.07051922519096271,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.43661971830985913,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.20938215102974828,
+          "ours_all_std": 0.05148741418764302,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.20938215102974828,
+          "delta_top10_minus_ours_all": 0.22723756728011085,
+          "effect_size_d": null
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 2.409697677957224,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.706873616056042,
+          "ours_all_std": 0.12013625594764532,
+          "ours_win_mean": null,
+          "ours_loss_mean": 2.706873616056042,
+          "delta_top10_minus_ours_all": -0.2971759380988179,
+          "effect_size_d": null
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.1267605633802817,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.02631578947368421,
+          "ours_all_std": 0.02631578947368421,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.02631578947368421,
+          "delta_top10_minus_ours_all": 0.10044477390659748,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 3.48,
+          "top10_std": 0.0,
+          "ours_all_mean": 6.915000000000001,
+          "ours_all_std": 2.225,
+          "ours_win_mean": null,
+          "ours_loss_mean": 6.915000000000001,
+          "delta_top10_minus_ours_all": -3.435000000000001,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 155.53,
+          "top10_std": 0.0,
+          "ours_all_mean": 289.695,
+          "ours_all_std": 58.21500000000002,
+          "ours_win_mean": null,
+          "ours_loss_mean": 289.695,
+          "delta_top10_minus_ours_all": -134.165,
+          "effect_size_d": null
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 4.226768676867685,
+          "top10_std": 0.0,
+          "ours_all_mean": 7.77925892589259,
+          "ours_all_std": 0.020165016501649813,
+          "ours_win_mean": null,
+          "ours_loss_mean": 7.77925892589259,
+          "delta_top10_minus_ours_all": -3.5524902490249044,
+          "effect_size_d": null
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.475,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.13725490196078433,
+          "ours_all_std": 0.13725490196078433,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.13725490196078433,
+          "delta_top10_minus_ours_all": 0.33774509803921565,
+          "effect_size_d": null
+        }
+      ],
+      "panel_gap": 1.0
+    },
+    {
+      "archetype": "low_prod__mixed_rotating__big_rotating",
+      "n": {
+        "top10_win": 1,
+        "ours_win": 0,
+        "ours_loss": 1
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 0.6506024096385542,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.38,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.38,
+          "delta_top10_minus_ours_all": 0.2706024096385542,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 33.351851851851855,
+          "top10_std": 0.0,
+          "ours_all_mean": 32.05263157894737,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 32.05263157894737,
+          "delta_top10_minus_ours_all": 1.2992202729044848,
+          "effect_size_d": null
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 101.14999999999995,
+          "top10_std": 0.0,
+          "ours_all_mean": 70.15,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 70.15,
+          "delta_top10_minus_ours_all": 30.999999999999943,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 39.74564799668613,
+          "top10_std": 0.0,
+          "ours_all_mean": 39.04256103437151,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 39.04256103437151,
+          "delta_top10_minus_ours_all": 0.7030869623146216,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 1.9074074074074074,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.0,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 2.0,
+          "delta_top10_minus_ours_all": -0.09259259259259256,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 29.314814814814813,
+          "top10_std": 0.0,
+          "ours_all_mean": 29.68421052631579,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 29.68421052631579,
+          "delta_top10_minus_ours_all": -0.36939571150097805,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 5.666666666666667,
+          "top10_std": 0.0,
+          "ours_all_mean": 7.7631578947368425,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 7.7631578947368425,
+          "delta_top10_minus_ours_all": -2.0964912280701755,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.4444444444444444,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.3684210526315789,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.3684210526315789,
+          "delta_top10_minus_ours_all": 0.07602339181286549,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.3148148148148148,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.3157894736842105,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.3157894736842105,
+          "delta_top10_minus_ours_all": -0.0009746588693956837,
+          "effect_size_d": null
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 2.7957323847388063,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.1943584965335163,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 2.1943584965335163,
+          "delta_top10_minus_ours_all": 0.6013738882052899,
+          "effect_size_d": null
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.25925925925925924,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.0,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.0,
+          "delta_top10_minus_ours_all": 0.25925925925925924,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 5.349397590361446,
+          "top10_std": 0.0,
+          "ours_all_mean": 5.87,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 5.87,
+          "delta_top10_minus_ours_all": -0.5206024096385544,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 182.33734939759037,
+          "top10_std": 0.0,
+          "ours_all_mean": 230.92,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 230.92,
+          "delta_top10_minus_ours_all": -48.582650602409615,
+          "effect_size_d": null
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 6.503799168800638,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.707986798679868,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 2.707986798679868,
+          "delta_top10_minus_ours_all": 3.79581237012077,
+          "effect_size_d": null
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.19444444444444445,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.15151515151515152,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.15151515151515152,
+          "delta_top10_minus_ours_all": 0.04292929292929293,
+          "effect_size_d": null
+        }
+      ],
+      "panel_gap": 1.0
+    },
+    {
+      "archetype": "low_prod__mostly_rotating__big_static",
+      "n": {
+        "top10_win": 2,
+        "ours_win": 0,
+        "ours_loss": 1
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 0.575,
+          "top10_std": 0.28500000000000003,
+          "ours_all_mean": 0.32,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.32,
+          "delta_top10_minus_ours_all": 0.25499999999999995,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 27.6214915797915,
+          "top10_std": 3.4819566960705686,
+          "ours_all_mean": 29.84375,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 29.84375,
+          "delta_top10_minus_ours_all": -2.222258420208501,
+          "effect_size_d": null
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 57.074999999999996,
+          "top10_std": 7.324999999999996,
+          "ours_all_mean": 59.8,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 59.8,
+          "delta_top10_minus_ours_all": -2.7250000000000014,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 36.48746561083616,
+          "top10_std": 1.487712425936735,
+          "ours_all_mean": 37.166324212344364,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 37.166324212344364,
+          "delta_top10_minus_ours_all": -0.6788586015082032,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 1.8492381716118684,
+          "top10_std": 0.08179631114675223,
+          "ours_all_mean": 1.59375,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 1.59375,
+          "delta_top10_minus_ours_all": 0.25548817161186843,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 25.85505212510024,
+          "top10_std": 4.075982357658379,
+          "ours_all_mean": 22.09375,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 22.09375,
+          "delta_top10_minus_ours_all": 3.76130212510024,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 10.666198877305533,
+          "top10_std": 0.7475942261427422,
+          "ours_all_mean": 6.5625,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 6.5625,
+          "delta_top10_minus_ours_all": 4.103698877305533,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.5302726543704892,
+          "top10_std": 0.26283079390537295,
+          "ours_all_mean": 0.46875,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.46875,
+          "delta_top10_minus_ours_all": 0.061522654370489205,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.25521251002405776,
+          "top10_std": 0.15176423416198878,
+          "ours_all_mean": 0.25,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.25,
+          "delta_top10_minus_ours_all": 0.005212510024057759,
+          "effect_size_d": null
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 2.474597689138304,
+          "top10_std": 0.2973312071667029,
+          "ours_all_mean": 1.9801874954066039,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 1.9801874954066039,
+          "delta_top10_minus_ours_all": 0.49441019373170003,
+          "effect_size_d": null
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.01744186046511628,
+          "top10_std": 0.01744186046511628,
+          "ours_all_mean": 0.03125,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.03125,
+          "delta_top10_minus_ours_all": -0.013808139534883721,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 6.4350000000000005,
+          "top10_std": 2.7750000000000004,
+          "ours_all_mean": 8.06,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 8.06,
+          "delta_top10_minus_ours_all": -1.625,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 184.23000000000002,
+          "top10_std": 37.33,
+          "ours_all_mean": 274.33,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 274.33,
+          "delta_top10_minus_ours_all": -90.09999999999997,
+          "effect_size_d": null
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 4.7462946294629464,
+          "top10_std": 1.5549594959495947,
+          "ours_all_mean": 8.503252325232523,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 8.503252325232523,
+          "delta_top10_minus_ours_all": -3.756957695769577,
+          "effect_size_d": null
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.36367924528301887,
+          "top10_std": 0.013679245283018893,
+          "ours_all_mean": 0.25,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.25,
+          "delta_top10_minus_ours_all": 0.11367924528301887,
+          "effect_size_d": null
+        }
+      ],
+      "panel_gap": 1.0
+    },
+    {
+      "archetype": "med_low_prod__mixed_static__big_rotating",
+      "n": {
+        "top10_win": 1,
+        "ours_win": 0,
+        "ours_loss": 2
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 1.47,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.7,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.7,
+          "delta_top10_minus_ours_all": 0.77,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 38.925170068027214,
+          "top10_std": 0.0,
+          "ours_all_mean": 35.35,
+          "ours_all_std": 0.30714285714285694,
+          "ours_win_mean": null,
+          "ours_loss_mean": 35.35,
+          "delta_top10_minus_ours_all": 3.5751700680272123,
+          "effect_size_d": null
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 111.39999999999998,
+          "top10_std": 0.0,
+          "ours_all_mean": 89.475,
+          "ours_all_std": 13.824999999999996,
+          "ours_win_mean": null,
+          "ours_loss_mean": 89.475,
+          "delta_top10_minus_ours_all": 21.924999999999983,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 36.22571794504365,
+          "top10_std": 0.0,
+          "ours_all_mean": 36.380625751661256,
+          "ours_all_std": 0.014449739250292026,
+          "ours_win_mean": null,
+          "ours_loss_mean": 36.380625751661256,
+          "delta_top10_minus_ours_all": -0.15490780661760795,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 2.4657534246575343,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.442857142857143,
+          "ours_all_std": 0.12857142857142856,
+          "ours_win_mean": null,
+          "ours_loss_mean": 2.442857142857143,
+          "delta_top10_minus_ours_all": 0.02289628180039127,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 29.684931506849313,
+          "top10_std": 0.0,
+          "ours_all_mean": 27.50714285714286,
+          "ours_all_std": 4.807142857142859,
+          "ours_win_mean": null,
+          "ours_loss_mean": 27.50714285714286,
+          "delta_top10_minus_ours_all": 2.1777886497064536,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 19.986301369863014,
+          "top10_std": 0.0,
+          "ours_all_mean": 15.971428571428572,
+          "ours_all_std": 1.557142857142857,
+          "ours_win_mean": null,
+          "ours_loss_mean": 15.971428571428572,
+          "delta_top10_minus_ours_all": 4.014872798434443,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.2671232876712329,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.22142857142857142,
+          "ours_all_std": 0.021428571428571422,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.22142857142857142,
+          "delta_top10_minus_ours_all": 0.04569471624266147,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.2876712328767123,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.47857142857142854,
+          "ours_all_std": 0.09285714285714283,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.47857142857142854,
+          "delta_top10_minus_ours_all": -0.19090019569471622,
+          "effect_size_d": null
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 4.086043474555996,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.5158360283134007,
+          "ours_all_std": 0.6161238077444854,
+          "ours_win_mean": null,
+          "ours_loss_mean": 2.5158360283134007,
+          "delta_top10_minus_ours_all": 1.5702074462425957,
+          "effect_size_d": null
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.0273972602739726,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.04285714285714286,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.04285714285714286,
+          "delta_top10_minus_ours_all": -0.015459882583170256,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 7.97,
+          "top10_std": 0.0,
+          "ours_all_mean": 10.165,
+          "ours_all_std": 1.2950000000000008,
+          "ours_win_mean": null,
+          "ours_loss_mean": 10.165,
+          "delta_top10_minus_ours_all": -2.1949999999999994,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 501.55,
+          "top10_std": 0.0,
+          "ours_all_mean": 495.945,
+          "ours_all_std": 20.204999999999984,
+          "ours_win_mean": null,
+          "ours_loss_mean": 495.945,
+          "delta_top10_minus_ours_all": 5.605000000000018,
+          "effect_size_d": null
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 12.465664566456645,
+          "top10_std": 0.0,
+          "ours_all_mean": 13.14968196819682,
+          "ours_all_std": 0.5350405040504054,
+          "ours_win_mean": null,
+          "ours_loss_mean": 13.14968196819682,
+          "delta_top10_minus_ours_all": -0.6840174017401743,
+          "effect_size_d": null
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.6197183098591549,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.40930232558139534,
+          "ours_all_std": 0.009302325581395349,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.40930232558139534,
+          "delta_top10_minus_ours_all": 0.21041598427775954,
+          "effect_size_d": null
+        }
+      ],
+      "panel_gap": 1.0
+    },
+    {
+      "archetype": "med_high_prod__mostly_rotating__big_rotating",
+      "n": {
+        "top10_win": 1,
+        "ours_win": 0,
+        "ours_loss": 1
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 0.82,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.46464646464646464,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.46464646464646464,
+          "delta_top10_minus_ours_all": 0.3553535353535353,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 40.13414634146341,
+          "top10_std": 0.0,
+          "ours_all_mean": 35.15217391304348,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 35.15217391304348,
+          "delta_top10_minus_ours_all": 4.981972428419937,
+          "effect_size_d": null
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 96.85000000000001,
+          "top10_std": 0.0,
+          "ours_all_mean": 70.25,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 70.25,
+          "delta_top10_minus_ours_all": 26.60000000000001,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 45.24659974382324,
+          "top10_std": 0.0,
+          "ours_all_mean": 35.46319454428392,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 35.46319454428392,
+          "delta_top10_minus_ours_all": 9.783405199539317,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 2.8536585365853657,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.8043478260869565,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 2.8043478260869565,
+          "delta_top10_minus_ours_all": 0.04931071049840918,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 32.646341463414636,
+          "top10_std": 0.0,
+          "ours_all_mean": 29.369565217391305,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 29.369565217391305,
+          "delta_top10_minus_ours_all": 3.2767762460233314,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 9.341463414634147,
+          "top10_std": 0.0,
+          "ours_all_mean": 16.847826086956523,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 16.847826086956523,
+          "delta_top10_minus_ours_all": -7.506362672322377,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.2804878048780488,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.34782608695652173,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.34782608695652173,
+          "delta_top10_minus_ours_all": -0.06733828207847292,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.2682926829268293,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.30434782608695654,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.30434782608695654,
+          "delta_top10_minus_ours_all": -0.036055143160127257,
+          "effect_size_d": null
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 1.508799324097175,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.2217037994672206,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 2.2217037994672206,
+          "delta_top10_minus_ours_all": -0.7129044753700455,
+          "effect_size_d": null
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.3048780487804878,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.0,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.0,
+          "delta_top10_minus_ours_all": 0.3048780487804878,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 7.66,
+          "top10_std": 0.0,
+          "ours_all_mean": 5.222222222222222,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 5.222222222222222,
+          "delta_top10_minus_ours_all": 2.437777777777778,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 374.81,
+          "top10_std": 0.0,
+          "ours_all_mean": 292.8888888888889,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 292.8888888888889,
+          "delta_top10_minus_ours_all": 81.92111111111109,
+          "effect_size_d": null
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 8.914605460546055,
+          "top10_std": 0.0,
+          "ours_all_mean": 1.9113543599257885,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 1.9113543599257885,
+          "delta_top10_minus_ours_all": 7.0032511006202665,
+          "effect_size_d": null
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.4423076923076923,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.2571428571428571,
+          "ours_all_std": 0.0,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.2571428571428571,
+          "delta_top10_minus_ours_all": 0.18516483516483517,
+          "effect_size_d": null
+        }
+      ],
+      "panel_gap": 1.0
+    },
+    {
+      "archetype": "high_prod__mixed_static__big_static",
+      "n": {
+        "top10_win": 2,
+        "ours_win": 0,
+        "ours_loss": 2
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 1.495,
+          "top10_std": 0.665,
+          "ours_all_mean": 0.54,
+          "ours_all_std": 0.06,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.54,
+          "delta_top10_minus_ours_all": 0.9550000000000001,
+          "effect_size_d": 2.0227218240867835
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 31.41069834895136,
+          "top10_std": 2.3022646140116017,
+          "ours_all_mean": 33.68125,
+          "ours_all_std": 0.13125000000000142,
+          "ours_win_mean": null,
+          "ours_loss_mean": 33.68125,
+          "delta_top10_minus_ours_all": -2.2705516510486383,
+          "effect_size_d": -1.3924722634471467
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 72.19999999999997,
+          "top10_std": 9.800000000000026,
+          "ours_all_mean": 87.77499999999999,
+          "ours_all_std": 3.4750000000000085,
+          "ours_win_mean": null,
+          "ours_loss_mean": 87.77499999999999,
+          "delta_top10_minus_ours_all": -15.575000000000017,
+          "effect_size_d": -2.118355387066668
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 31.879125213916335,
+          "top10_std": 6.717869050679386,
+          "ours_all_mean": 28.41007238505481,
+          "ours_all_std": 0.10043365393543802,
+          "ours_win_mean": null,
+          "ours_loss_mean": 28.41007238505481,
+          "delta_top10_minus_ours_all": 3.4690528288615248,
+          "effect_size_d": 0.730206758716576
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 3.4462172505151605,
+          "top10_std": 0.16773623785693248,
+          "ours_all_mean": 3.0770833333333334,
+          "ours_all_std": 0.027083333333333348,
+          "ours_win_mean": null,
+          "ours_loss_mean": 3.0770833333333334,
+          "delta_top10_minus_ours_all": 0.3691339171818271,
+          "effect_size_d": 3.072440185194811
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 28.331998822490434,
+          "top10_std": 0.0028848984397988886,
+          "ours_all_mean": 25.325000000000003,
+          "ours_all_std": 3.841666666666667,
+          "ours_win_mean": null,
+          "ours_loss_mean": 25.325000000000003,
+          "delta_top10_minus_ours_all": 3.0069988224904307,
+          "effect_size_d": 1.1069511456179717
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 11.20214895496026,
+          "top10_std": 1.1649396526346774,
+          "ours_all_mean": 16.391666666666666,
+          "ours_all_std": 0.6416666666666675,
+          "ours_win_mean": null,
+          "ours_loss_mean": 16.391666666666666,
+          "delta_top10_minus_ours_all": -5.189517711706406,
+          "effect_size_d": -5.51823401909891
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.20797762731822197,
+          "top10_std": 0.04518692964380336,
+          "ours_all_mean": 0.3416666666666667,
+          "ours_all_std": 0.008333333333333331,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.3416666666666667,
+          "delta_top10_minus_ours_all": -0.1336890393484447,
+          "effect_size_d": -4.114674757913351
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.5574330291433618,
+          "top10_std": 0.08907859876361493,
+          "ours_all_mean": 0.3104166666666667,
+          "ours_all_std": 0.03958333333333333,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.3104166666666667,
+          "delta_top10_minus_ours_all": 0.24701636247669512,
+          "effect_size_d": 3.583743605946352
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 1.345242026334395,
+          "top10_std": 0.5993118608076361,
+          "ours_all_mean": 2.721757572676095,
+          "ours_all_std": 0.1099708612445347,
+          "ours_win_mean": null,
+          "ours_loss_mean": 2.721757572676095,
+          "delta_top10_minus_ours_all": -1.3765155463417003,
+          "effect_size_d": -3.194862601802146
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.0375919929349426,
+          "top10_std": 0.0003826906093612019,
+          "ours_all_mean": 0.04583333333333334,
+          "ours_all_std": 0.004166666666666669,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.04583333333333334,
+          "delta_top10_minus_ours_all": -0.008241340398390737,
+          "effect_size_d": -2.78547970659549
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 7.855,
+          "top10_std": 0.11499999999999977,
+          "ours_all_mean": 8.905000000000001,
+          "ours_all_std": 0.4249999999999998,
+          "ours_win_mean": null,
+          "ours_loss_mean": 8.905000000000001,
+          "delta_top10_minus_ours_all": -1.0500000000000007,
+          "effect_size_d": -3.3726509321353664
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 403.19500000000005,
+          "top10_std": 45.785,
+          "ours_all_mean": 484.66999999999996,
+          "ours_all_std": 22.97999999999999,
+          "ours_win_mean": null,
+          "ours_loss_mean": 484.66999999999996,
+          "delta_top10_minus_ours_all": -81.47499999999991,
+          "effect_size_d": -2.2492035940597024
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 7.82045904590459,
+          "top10_std": 0.6553105310531051,
+          "ours_all_mean": 12.826120612061205,
+          "ours_all_std": 3.128136813681369,
+          "ours_win_mean": null,
+          "ours_loss_mean": 12.826120612061205,
+          "delta_top10_minus_ours_all": -5.005661566156615,
+          "effect_size_d": -2.2149517617160144
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.5635483108906213,
+          "top10_std": 0.1713914481455233,
+          "ours_all_mean": 0.22513513513513514,
+          "ours_all_std": 0.045135135135135146,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.22513513513513514,
+          "delta_top10_minus_ours_all": 0.33841317575548613,
+          "effect_size_d": 2.7003062566520115
+        }
+      ],
+      "panel_gap": 1.0
+    },
+    {
+      "archetype": "high_prod__mostly_rotating__big_static",
+      "n": {
+        "top10_win": 1,
+        "ours_win": 0,
+        "ours_loss": 2
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 1.08,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.755,
+          "ours_all_std": 0.03500000000000003,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.755,
+          "delta_top10_minus_ours_all": 0.32500000000000007,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 47.083333333333336,
+          "top10_std": 0.0,
+          "ours_all_mean": 45.028129395218,
+          "ours_all_std": 2.7496483825597764,
+          "ours_win_mean": null,
+          "ours_loss_mean": 45.028129395218,
+          "delta_top10_minus_ours_all": 2.0552039381153335,
+          "effect_size_d": null
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 117.0,
+          "top10_std": 0.0,
+          "ours_all_mean": 124.04999999999997,
+          "ours_all_std": 2.4500000000000597,
+          "ours_win_mean": null,
+          "ours_loss_mean": 124.04999999999997,
+          "delta_top10_minus_ours_all": -7.049999999999969,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 31.446050602771084,
+          "top10_std": 0.0,
+          "ours_all_mean": 31.11095073954375,
+          "ours_all_std": 1.5641154709378178,
+          "ours_win_mean": null,
+          "ours_loss_mean": 31.11095073954375,
+          "delta_top10_minus_ours_all": 0.33509986322733454,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 2.638888888888889,
+          "top10_std": 0.0,
+          "ours_all_mean": 3.054588607594937,
+          "ours_all_std": 0.32041139240506333,
+          "ours_win_mean": null,
+          "ours_loss_mean": 3.054588607594937,
+          "delta_top10_minus_ours_all": -0.41569971870604805,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 24.73148148148148,
+          "top10_std": 0.0,
+          "ours_all_mean": 31.199103375527425,
+          "ours_all_std": 0.009229957805906963,
+          "ours_win_mean": null,
+          "ours_loss_mean": 31.199103375527425,
+          "delta_top10_minus_ours_all": -6.467621894045944,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 8.046296296296296,
+          "top10_std": 0.0,
+          "ours_all_mean": 15.88132911392405,
+          "ours_all_std": 1.1313291139240498,
+          "ours_win_mean": null,
+          "ours_loss_mean": 15.88132911392405,
+          "delta_top10_minus_ours_all": -7.835032817627754,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.32407407407407407,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.29834739803094235,
+          "ours_all_std": 0.0072081575246132346,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.29834739803094235,
+          "delta_top10_minus_ours_all": 0.025726676043131724,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.3148148148148148,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.31162095639943743,
+          "ours_all_std": 0.007823488045007015,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.31162095639943743,
+          "delta_top10_minus_ours_all": 0.003193858415377393,
+          "effect_size_d": null
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 1.8238349752306398,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.915152019363141,
+          "ours_all_std": 1.1725970332858027,
+          "ours_win_mean": null,
+          "ours_loss_mean": 2.915152019363141,
+          "delta_top10_minus_ours_all": -1.091317044132501,
+          "effect_size_d": null
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.018518518518518517,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.053094233473980304,
+          "ours_all_std": 0.002461322081575245,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.053094233473980304,
+          "delta_top10_minus_ours_all": -0.034575714955461787,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 11.04,
+          "top10_std": 0.0,
+          "ours_all_mean": 12.765,
+          "ours_all_std": 0.125,
+          "ours_win_mean": null,
+          "ours_loss_mean": 12.765,
+          "delta_top10_minus_ours_all": -1.7250000000000014,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 545.2,
+          "top10_std": 0.0,
+          "ours_all_mean": 777.165,
+          "ours_all_std": 25.08499999999998,
+          "ours_win_mean": null,
+          "ours_loss_mean": 777.165,
+          "delta_top10_minus_ours_all": -231.96499999999992,
+          "effect_size_d": null
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 12.597851785178518,
+          "top10_std": 0.0,
+          "ours_all_mean": 18.252508250825084,
+          "ours_all_std": 1.4941644164416417,
+          "ours_win_mean": null,
+          "ours_loss_mean": 18.252508250825084,
+          "delta_top10_minus_ours_all": -5.654656465646566,
+          "effect_size_d": null
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.3880597014925373,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.3322440087145969,
+          "ours_all_std": 0.038126361655773405,
+          "ours_win_mean": null,
+          "ours_loss_mean": 0.3322440087145969,
+          "delta_top10_minus_ours_all": 0.05581569277794041,
+          "effect_size_d": null
+        }
+      ],
+      "panel_gap": 1.0
+    },
+    {
+      "archetype": "med_high_prod__mixed_static__big_static",
+      "n": {
+        "top10_win": 6,
+        "ours_win": 1,
+        "ours_loss": 4
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 1.1133333333333333,
+          "top10_std": 0.49127950858503705,
+          "ours_all_mean": 0.534,
+          "ours_all_std": 0.11637869220780926,
+          "ours_win_mean": 0.67,
+          "ours_loss_mean": 0.5,
+          "delta_top10_minus_ours_all": 0.5793333333333333,
+          "effect_size_d": 1.5477477756936555
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 31.99010377709138,
+          "top10_std": 3.8477014181272318,
+          "ours_all_mean": 35.03807664837295,
+          "ours_all_std": 6.640728552269694,
+          "ours_win_mean": 44.791044776119406,
+          "ours_loss_mean": 32.59983461643634,
+          "delta_top10_minus_ours_all": -3.0479728712815692,
+          "effect_size_d": -0.5778257120496265
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 89.38333333333331,
+          "top10_std": 17.462165450545356,
+          "ours_all_mean": 79.16,
+          "ours_all_std": 23.529203131427973,
+          "ours_win_mean": 115.39999999999999,
+          "ours_loss_mean": 70.1,
+          "delta_top10_minus_ours_all": 10.223333333333315,
+          "effect_size_d": 0.5015664866686477
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 37.326437067108536,
+          "top10_std": 5.251179763333284,
+          "ours_all_mean": 31.72854448666386,
+          "ours_all_std": 5.07012006704515,
+          "ours_win_mean": 37.6780580974863,
+          "ours_loss_mean": 30.241166083958255,
+          "delta_top10_minus_ours_all": 5.597892580444675,
+          "effect_size_d": 1.082452254397346
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 2.9799277731154414,
+          "top10_std": 0.31255129205555543,
+          "ours_all_mean": 2.7292825496212174,
+          "ours_all_std": 0.5355689013439945,
+          "ours_win_mean": 3.253731343283582,
+          "ours_loss_mean": 2.598170351205626,
+          "delta_top10_minus_ours_all": 0.250645223494224,
+          "effect_size_d": 0.5879204138522027
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 27.552601029296113,
+          "top10_std": 6.9479628434851675,
+          "ours_all_mean": 28.461863586507842,
+          "ours_all_std": 5.996586854827581,
+          "ours_win_mean": 27.01492537313433,
+          "ours_loss_mean": 28.823598139851217,
+          "delta_top10_minus_ours_all": -0.9092625572117292,
+          "effect_size_d": -0.13898354669059784
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 10.314601620153908,
+          "top10_std": 3.134581360042969,
+          "ours_all_mean": 15.081810741835719,
+          "ours_all_std": 4.164203032960832,
+          "ours_win_mean": 20.671641791044777,
+          "ours_loss_mean": 13.684352979533456,
+          "delta_top10_minus_ours_all": -4.767209121681811,
+          "effect_size_d": -1.313844503733116
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.2682832555507986,
+          "top10_std": 0.06540666309329042,
+          "ours_all_mean": 0.40449061773440703,
+          "ours_all_std": 0.07086786913140712,
+          "ours_win_mean": 0.26865671641791045,
+          "ours_loss_mean": 0.4384490930635311,
+          "delta_top10_minus_ours_all": -0.1362073621836084,
+          "effect_size_d": -2.006350338996783
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.33795805835321735,
+          "top10_std": 0.054767792041709326,
+          "ours_all_mean": 0.2968296022255103,
+          "ours_all_std": 0.10182097792439003,
+          "ours_win_mean": 0.417910447761194,
+          "ours_loss_mean": 0.26655939084158936,
+          "delta_top10_minus_ours_all": 0.04112845612770705,
+          "effect_size_d": 0.5192350390155522
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 1.890173223039515,
+          "top10_std": 0.7929309318642705,
+          "ours_all_mean": 2.2710297025768993,
+          "ours_all_std": 0.644867803476584,
+          "ours_win_mean": 1.4533685648846129,
+          "ours_loss_mean": 2.475444986999971,
+          "delta_top10_minus_ours_all": -0.38085647953738433,
+          "effect_size_d": -0.5211231138047077
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.026365431605442784,
+          "top10_std": 0.012179768482046403,
+          "ours_all_mean": 0.05759456958910879,
+          "ours_all_std": 0.026370970208477076,
+          "ours_win_mean": 0.014925373134328358,
+          "ours_loss_mean": 0.06826186870280389,
+          "delta_top10_minus_ours_all": -0.031229137983666003,
+          "effect_size_d": -1.578328637065774
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 7.278333333333332,
+          "top10_std": 0.7550367908622438,
+          "ours_all_mean": 7.764,
+          "ours_all_std": 1.7778931351462044,
+          "ours_win_mean": 7.4,
+          "ours_loss_mean": 7.855,
+          "delta_top10_minus_ours_all": -0.4856666666666678,
+          "effect_size_d": -0.37014979465278386
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 339.47499999999997,
+          "top10_std": 44.9905192790659,
+          "ours_all_mean": 380.83000000000004,
+          "ours_all_std": 104.58629317458383,
+          "ours_win_mean": 503.23,
+          "ours_loss_mean": 350.23,
+          "delta_top10_minus_ours_all": -41.355000000000075,
+          "effect_size_d": -0.5345151902225814
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 6.38968796879688,
+          "top10_std": 3.037123816301025,
+          "ours_all_mean": 9.687408340834084,
+          "ours_all_std": 2.3126121213994577,
+          "ours_win_mean": 9.848646864686469,
+          "ours_loss_mean": 9.647098709870988,
+          "delta_top10_minus_ours_all": -3.2977203720372037,
+          "effect_size_d": -1.2040385681379306
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.4703643745284369,
+          "top10_std": 0.13963611227277453,
+          "ours_all_mean": 0.2938455172497726,
+          "ours_all_std": 0.0582445534769098,
+          "ours_win_mean": 0.3191489361702128,
+          "ours_loss_mean": 0.2875196625196625,
+          "delta_top10_minus_ours_all": 0.1765188572786643,
+          "effect_size_d": 1.5890285732766705
+        }
+      ],
+      "panel_gap": 0.8
+    },
+    {
+      "archetype": "med_low_prod__mixed_rotating__big_static",
+      "n": {
+        "top10_win": 2,
+        "ours_win": 1,
+        "ours_loss": 1
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 0.7,
+          "top10_std": 0.010000000000000009,
+          "ours_all_mean": 0.56,
+          "ours_all_std": 0.12000000000000002,
+          "ours_win_mean": 0.68,
+          "ours_loss_mean": 0.44,
+          "delta_top10_minus_ours_all": 0.1399999999999999,
+          "effect_size_d": 1.6442166146411683
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 48.710042865891,
+          "top10_std": 7.20300061236987,
+          "ours_all_mean": 29.849598930481285,
+          "ours_all_std": 8.326871657754012,
+          "ours_win_mean": 38.1764705882353,
+          "ours_loss_mean": 21.522727272727273,
+          "delta_top10_minus_ours_all": 18.860443935409712,
+          "effect_size_d": 2.422589061809275
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 109.94999999999996,
+          "top10_std": 8.44999999999996,
+          "ours_all_mean": 67.125,
+          "ours_all_std": 27.125,
+          "ours_win_mean": 94.25,
+          "ours_loss_mean": 40.0,
+          "delta_top10_minus_ours_all": 42.82499999999996,
+          "effect_size_d": 2.1317210209693527
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 35.580243915256496,
+          "top10_std": 1.5645123483985657,
+          "ours_all_mean": 35.5307511958262,
+          "ours_all_std": 4.785847206985428,
+          "ours_win_mean": 40.31659840281163,
+          "ours_loss_mean": 30.744903988840772,
+          "delta_top10_minus_ours_all": 0.04949271943029743,
+          "effect_size_d": 0.013901124234968252
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 3.0387894288150044,
+          "top10_std": 0.31415174765558396,
+          "ours_all_mean": 2.085561497326203,
+          "ours_all_std": 0.2673796791443851,
+          "ours_win_mean": 2.3529411764705883,
+          "ours_loss_mean": 1.8181818181818181,
+          "delta_top10_minus_ours_all": 0.9532279314888013,
+          "effect_size_d": 3.2677844178793802
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 26.569693094629155,
+          "top10_std": 5.047953964194374,
+          "ours_all_mean": 25.56885026737968,
+          "ours_all_std": 1.887032085561497,
+          "ours_win_mean": 27.455882352941178,
+          "ours_loss_mean": 23.681818181818183,
+          "delta_top10_minus_ours_all": 1.0008428272494747,
+          "effect_size_d": 0.2626407835097526
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 10.654624893435635,
+          "top10_std": 4.683610400682012,
+          "ours_all_mean": 11.175802139037433,
+          "ours_all_std": 0.4712566844919781,
+          "ours_win_mean": 11.647058823529411,
+          "ours_loss_mean": 10.704545454545455,
+          "delta_top10_minus_ours_all": -0.5211772456017982,
+          "effect_size_d": -0.1565785729266128
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.21877664109121908,
+          "top10_std": 0.027600170502983815,
+          "ours_all_mean": 0.4378342245989305,
+          "ours_all_std": 0.08489304812834222,
+          "ours_win_mean": 0.35294117647058826,
+          "ours_loss_mean": 0.5227272727272727,
+          "delta_top10_minus_ours_all": -0.21905758350771143,
+          "effect_size_d": -3.470422122956603
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.3792625745950554,
+          "top10_std": 0.041027280477408334,
+          "ours_all_mean": 0.3094919786096257,
+          "ours_all_std": 0.014037433155080214,
+          "ours_win_mean": 0.3235294117647059,
+          "ours_loss_mean": 0.29545454545454547,
+          "delta_top10_minus_ours_all": 0.06977059598542973,
+          "effect_size_d": 2.275492075375016
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 2.6584291038746395,
+          "top10_std": 1.238434642490186,
+          "ours_all_mean": 2.273832735988167,
+          "ours_all_std": 0.8964172435586188,
+          "ours_win_mean": 1.3774154924295483,
+          "ours_loss_mean": 3.170249979546786,
+          "delta_top10_minus_ours_all": 0.38459636788647256,
+          "effect_size_d": 0.35576597560732665
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.06521739130434782,
+          "top10_std": 0.06521739130434782,
+          "ours_all_mean": 0.11965240641711229,
+          "ours_all_std": 0.01671122994652406,
+          "ours_win_mean": 0.10294117647058823,
+          "ours_loss_mean": 0.13636363636363635,
+          "delta_top10_minus_ours_all": -0.05443501511276447,
+          "effect_size_d": -1.1434598657079134
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 6.65,
+          "top10_std": 1.0500000000000003,
+          "ours_all_mean": 7.665,
+          "ours_all_std": 2.335,
+          "ours_win_mean": 10.0,
+          "ours_loss_mean": 5.33,
+          "delta_top10_minus_ours_all": -1.0149999999999997,
+          "effect_size_d": -0.5606654601565776
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 328.995,
+          "top10_std": 11.125,
+          "ours_all_mean": 375.92,
+          "ours_all_std": 97.74000000000001,
+          "ours_win_mean": 473.66,
+          "ours_loss_mean": 278.18,
+          "delta_top10_minus_ours_all": -46.92500000000001,
+          "effect_size_d": -0.6746084136873345
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 7.022481248124814,
+          "top10_std": 1.0732403240324047,
+          "ours_all_mean": 10.093927392739275,
+          "ours_all_std": 0.9035043504350435,
+          "ours_win_mean": 10.997431743174317,
+          "ours_loss_mean": 9.19042304230423,
+          "delta_top10_minus_ours_all": -3.0714461446144607,
+          "effect_size_d": -3.0961868434108175
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.44326923076923075,
+          "top10_std": 0.018269230769230788,
+          "ours_all_mean": 0.30663329161451813,
+          "ours_all_std": 0.012515644555694622,
+          "ours_win_mean": 0.3191489361702128,
+          "ours_loss_mean": 0.29411764705882354,
+          "delta_top10_minus_ours_all": 0.13663593915471262,
+          "effect_size_d": 8.725734398903253
+        }
+      ],
+      "panel_gap": 0.5
+    },
+    {
+      "archetype": "high_prod__mixed_rotating__big_rotating",
+      "n": {
+        "top10_win": 1,
+        "ours_win": 1,
+        "ours_loss": 1
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 1.07,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.85,
+          "ours_all_std": 0.09999999999999998,
+          "ours_win_mean": 0.95,
+          "ours_loss_mean": 0.75,
+          "delta_top10_minus_ours_all": 0.22000000000000008,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 65.49532710280374,
+          "top10_std": 0.0,
+          "ours_all_mean": 47.11298245614035,
+          "ours_all_std": 2.4603508771929796,
+          "ours_win_mean": 44.65263157894737,
+          "ours_loss_mean": 49.57333333333333,
+          "delta_top10_minus_ours_all": 18.38234464666339,
+          "effect_size_d": null
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 196.39999999999986,
+          "top10_std": 0.0,
+          "ours_all_mean": 121.44999999999993,
+          "ours_all_std": 3.749999999999993,
+          "ours_win_mean": 117.69999999999995,
+          "ours_loss_mean": 125.19999999999993,
+          "delta_top10_minus_ours_all": 74.94999999999993,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 30.807698832842547,
+          "top10_std": 0.0,
+          "ours_all_mean": 35.60980003857191,
+          "ours_all_std": 0.6709634731788299,
+          "ours_win_mean": 34.93883656539308,
+          "ours_loss_mean": 36.28076351175074,
+          "delta_top10_minus_ours_all": -4.802101205729365,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 4.380952380952381,
+          "top10_std": 0.0,
+          "ours_all_mean": 3.493333333333333,
+          "ours_all_std": 0.30666666666666664,
+          "ours_win_mean": 3.8,
+          "ours_loss_mean": 3.1866666666666665,
+          "delta_top10_minus_ours_all": 0.8876190476190482,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 46.76190476190476,
+          "top10_std": 0.0,
+          "ours_all_mean": 30.18842105263158,
+          "ours_all_std": 6.4515789473684215,
+          "ours_win_mean": 23.736842105263158,
+          "ours_loss_mean": 36.64,
+          "delta_top10_minus_ours_all": 16.57348370927318,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 10.038095238095238,
+          "top10_std": 0.0,
+          "ours_all_mean": 17.780701754385966,
+          "ours_all_std": 0.314035087719299,
+          "ours_win_mean": 18.094736842105263,
+          "ours_loss_mean": 17.466666666666665,
+          "delta_top10_minus_ours_all": -7.742606516290728,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.1523809523809524,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.2519298245614035,
+          "ours_all_std": 0.04140350877192983,
+          "ours_win_mean": 0.21052631578947367,
+          "ours_loss_mean": 0.29333333333333333,
+          "delta_top10_minus_ours_all": -0.09954887218045111,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.4666666666666667,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.3550877192982456,
+          "ours_all_std": 0.01824561403508773,
+          "ours_win_mean": 0.3368421052631579,
+          "ours_loss_mean": 0.37333333333333335,
+          "delta_top10_minus_ours_all": 0.11157894736842106,
+          "effect_size_d": null
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 4.854750554486978,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.9482811599507075,
+          "ours_all_std": 1.0818761846921134,
+          "ours_win_mean": 4.030157344642821,
+          "ours_loss_mean": 1.866404975258594,
+          "delta_top10_minus_ours_all": 1.9064693945362707,
+          "effect_size_d": null
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.02857142857142857,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.06210526315789473,
+          "ours_all_std": 0.022105263157894735,
+          "ours_win_mean": 0.08421052631578947,
+          "ours_loss_mean": 0.04,
+          "delta_top10_minus_ours_all": -0.033533834586466166,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 6.26,
+          "top10_std": 0.0,
+          "ours_all_mean": 8.69,
+          "ours_all_std": 0.0,
+          "ours_win_mean": 8.69,
+          "ours_loss_mean": 8.69,
+          "delta_top10_minus_ours_all": -2.4299999999999997,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 409.82,
+          "top10_std": 0.0,
+          "ours_all_mean": 642.905,
+          "ours_all_std": 100.745,
+          "ours_win_mean": 542.16,
+          "ours_loss_mean": 743.65,
+          "delta_top10_minus_ours_all": -233.08499999999998,
+          "effect_size_d": null
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 6.225790579057906,
+          "top10_std": 0.0,
+          "ours_all_mean": 16.44980198019802,
+          "ours_all_std": 4.512124212421242,
+          "ours_win_mean": 11.937677767776778,
+          "ours_loss_mean": 20.961926192619263,
+          "delta_top10_minus_ours_all": -10.224011401140116,
+          "effect_size_d": null
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.5,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.38535714285714284,
+          "ours_all_std": 0.025357142857142856,
+          "ours_win_mean": 0.4107142857142857,
+          "ours_loss_mean": 0.36,
+          "delta_top10_minus_ours_all": 0.11464285714285716,
+          "effect_size_d": null
+        }
+      ],
+      "panel_gap": 0.5
+    },
+    {
+      "archetype": "low_prod__mixed_rotating__big_static",
+      "n": {
+        "top10_win": 1,
+        "ours_win": 2,
+        "ours_loss": 1
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 0.87,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.5366666666666666,
+          "ours_all_std": 0.13670731102939918,
+          "ours_win_mean": 0.585,
+          "ours_loss_mean": 0.44,
+          "delta_top10_minus_ours_all": 0.33333333333333337,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 30.597701149425287,
+          "top10_std": 0.0,
+          "ours_all_mean": 27.70350767953508,
+          "ours_all_std": 0.44431968338321387,
+          "ours_win_mean": 27.91889788293898,
+          "ours_loss_mean": 27.272727272727273,
+          "delta_top10_minus_ours_all": 2.894193469890208,
+          "effect_size_d": null
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 74.7,
+          "top10_std": 0.0,
+          "ours_all_mean": 66.43333333333334,
+          "ours_all_std": 7.727152702573509,
+          "ours_win_mean": 61.0,
+          "ours_loss_mean": 77.30000000000003,
+          "delta_top10_minus_ours_all": 8.266666666666666,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 38.540373642474066,
+          "top10_std": 0.0,
+          "ours_all_mean": 34.28278189200194,
+          "ours_all_std": 0.9894617558267488,
+          "ours_win_mean": 33.586624171718356,
+          "ours_loss_mean": 35.67509733256912,
+          "delta_top10_minus_ours_all": 4.257591750472123,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 1.9310344827586208,
+          "top10_std": 0.0,
+          "ours_all_mean": 1.8695286195286196,
+          "ours_all_std": 0.4297894402118509,
+          "ours_win_mean": 1.9861111111111112,
+          "ours_loss_mean": 1.6363636363636365,
+          "delta_top10_minus_ours_all": 0.06150586323000118,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 22.93103448275862,
+          "top10_std": 0.0,
+          "ours_all_mean": 21.486531986531986,
+          "ours_all_std": 3.7460747821414544,
+          "ours_win_mean": 22.695707070707073,
+          "ours_loss_mean": 19.068181818181817,
+          "delta_top10_minus_ours_all": 1.444502496226633,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 10.413793103448276,
+          "top10_std": 0.0,
+          "ours_all_mean": 11.94023569023569,
+          "ours_all_std": 5.943588447837769,
+          "ours_win_mean": 8.717171717171718,
+          "ours_loss_mean": 18.386363636363637,
+          "delta_top10_minus_ours_all": -1.5264425867874145,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.20689655172413793,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.3985690235690236,
+          "ours_all_std": 0.09921775409249778,
+          "ours_win_mean": 0.3819444444444444,
+          "ours_loss_mean": 0.4318181818181818,
+          "delta_top10_minus_ours_all": -0.19167247184488564,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.19540229885057472,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.32575757575757575,
+          "ours_all_std": 0.09153822707268615,
+          "ours_win_mean": 0.26136363636363635,
+          "ours_loss_mean": 0.45454545454545453,
+          "delta_top10_minus_ours_all": -0.13035527690700102,
+          "effect_size_d": null
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 1.829439141172585,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.2940957004079796,
+          "ours_all_std": 0.46317325098231654,
+          "ours_win_mean": 2.26087028524553,
+          "ours_loss_mean": 2.3605465307328783,
+          "delta_top10_minus_ours_all": -0.4646565592353946,
+          "effect_size_d": null
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.0,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.041245791245791245,
+          "ours_all_std": 0.013728540766245868,
+          "ours_win_mean": 0.050505050505050504,
+          "ours_loss_mean": 0.022727272727272728,
+          "delta_top10_minus_ours_all": -0.041245791245791245,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 9.59,
+          "top10_std": 0.0,
+          "ours_all_mean": 6.713333333333334,
+          "ours_all_std": 0.7281178170842653,
+          "ours_win_mean": 6.63,
+          "ours_loss_mean": 6.88,
+          "delta_top10_minus_ours_all": 2.876666666666666,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 392.04,
+          "top10_std": 0.0,
+          "ours_all_mean": 312.12,
+          "ours_all_std": 63.71223482712459,
+          "ours_win_mean": 318.06,
+          "ours_loss_mean": 300.24,
+          "delta_top10_minus_ours_all": 79.92000000000002,
+          "effect_size_d": null
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 8.601812181218124,
+          "top10_std": 0.0,
+          "ours_all_mean": 7.588834883488349,
+          "ours_all_std": 1.2725586970059213,
+          "ours_win_mean": 7.672457245724573,
+          "ours_loss_mean": 7.4215901590159,
+          "delta_top10_minus_ours_all": 1.0129772977297753,
+          "effect_size_d": null
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.375,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.23593733368169456,
+          "ours_all_std": 0.10736550911682803,
+          "ours_win_mean": 0.27495863210148924,
+          "ours_loss_mean": 0.15789473684210525,
+          "delta_top10_minus_ours_all": 0.13906266631830544,
+          "effect_size_d": null
+        }
+      ],
+      "panel_gap": 0.33333333333333337
+    },
+    {
+      "archetype": "med_high_prod__mostly_rotating__big_static",
+      "n": {
+        "top10_win": 1,
+        "ours_win": 3,
+        "ours_loss": 1
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 1.31,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.5599999999999999,
+          "ours_all_std": 0.0966953980290686,
+          "ours_win_mean": 0.5566666666666666,
+          "ours_loss_mean": 0.57,
+          "delta_top10_minus_ours_all": 0.7500000000000001,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 38.01526717557252,
+          "top10_std": 0.0,
+          "ours_all_mean": 36.80920580684135,
+          "ours_all_std": 5.821935157184461,
+          "ours_win_mean": 38.096484935437594,
+          "ours_loss_mean": 32.94736842105263,
+          "delta_top10_minus_ours_all": 1.20606136873117,
+          "effect_size_d": null
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 101.0,
+          "top10_std": 0.0,
+          "ours_all_mean": 89.2625,
+          "ours_all_std": 10.037764629139305,
+          "ours_win_mean": 88.28333333333335,
+          "ours_loss_mean": 92.19999999999999,
+          "delta_top10_minus_ours_all": 11.737499999999997,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 34.80924029736447,
+          "top10_std": 0.0,
+          "ours_all_mean": 36.191731569199725,
+          "ours_all_std": 5.259767519723127,
+          "ours_win_mean": 38.12654575231205,
+          "ours_loss_mean": 30.387289019862767,
+          "delta_top10_minus_ours_all": -1.3824912718352564,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 3.213740458015267,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.4941378160311976,
+          "ours_all_std": 0.15375757867026887,
+          "ours_win_mean": 2.541891357047445,
+          "ours_loss_mean": 2.3508771929824563,
+          "delta_top10_minus_ours_all": 0.7196026419840695,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 26.916030534351144,
+          "top10_std": 0.0,
+          "ours_all_mean": 24.21434827638284,
+          "ours_all_std": 1.4040730700774815,
+          "ours_win_mean": 23.812113491317472,
+          "ours_loss_mean": 25.42105263157895,
+          "delta_top10_minus_ours_all": 2.7016822579683044,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 9.091603053435115,
+          "top10_std": 0.0,
+          "ours_all_mean": 10.948894167467351,
+          "ours_all_std": 2.3234207877256376,
+          "ours_win_mean": 10.393847194050034,
+          "ours_loss_mean": 12.614035087719298,
+          "delta_top10_minus_ours_all": -1.8572911140322361,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.32061068702290074,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.4514675287139335,
+          "ours_all_std": 0.14695023659941642,
+          "ours_win_mean": 0.49669354705717444,
+          "ours_loss_mean": 0.3157894736842105,
+          "delta_top10_minus_ours_all": -0.13085684169103273,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.22900763358778625,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.30412141395888176,
+          "ours_all_std": 0.045450099687896484,
+          "ours_win_mean": 0.31192796714985405,
+          "ours_loss_mean": 0.2807017543859649,
+          "delta_top10_minus_ours_all": -0.0751137803710955,
+          "effect_size_d": null
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 3.4017239252643594,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.93398663635721,
+          "ours_all_std": 1.597859626261153,
+          "ours_win_mean": 3.026590443833772,
+          "ours_loss_mean": 2.6561752139275243,
+          "delta_top10_minus_ours_all": 0.4677372889071494,
+          "effect_size_d": null
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.015267175572519083,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.10694318230147178,
+          "ours_all_std": 0.060832260989976156,
+          "ours_win_mean": 0.11335114365342436,
+          "ours_loss_mean": 0.08771929824561403,
+          "delta_top10_minus_ours_all": -0.0916760067289527,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 7.45,
+          "top10_std": 0.0,
+          "ours_all_mean": 9.379999999999999,
+          "ours_all_std": 2.8318103750074797,
+          "ours_win_mean": 8.293333333333333,
+          "ours_loss_mean": 12.64,
+          "delta_top10_minus_ours_all": -1.9299999999999988,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 344.5,
+          "top10_std": 0.0,
+          "ours_all_mean": 456.995,
+          "ours_all_std": 103.67021281448204,
+          "ours_win_mean": 430.02,
+          "ours_loss_mean": 537.92,
+          "delta_top10_minus_ours_all": -112.495,
+          "effect_size_d": null
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 8.704674467446745,
+          "top10_std": 0.0,
+          "ours_all_mean": 11.821800180018002,
+          "ours_all_std": 2.582265047601482,
+          "ours_win_mean": 11.098189818981899,
+          "ours_loss_mean": 13.992631263126313,
+          "delta_top10_minus_ours_all": -3.117125712571257,
+          "effect_size_d": null
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.5571428571428572,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.3121926759834368,
+          "ours_all_std": 0.07821133756808511,
+          "ours_win_mean": 0.32101880607315386,
+          "ours_loss_mean": 0.2857142857142857,
+          "delta_top10_minus_ours_all": 0.24495018115942035,
+          "effect_size_d": null
+        }
+      ],
+      "panel_gap": 0.25
+    },
+    {
+      "archetype": "low_prod__mostly_static__big_static",
+      "n": {
+        "top10_win": 1,
+        "ours_win": 4,
+        "ours_loss": 0
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 1.02,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.39249999999999996,
+          "ours_all_std": 0.16663958113245483,
+          "ours_win_mean": 0.39249999999999996,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 0.6275000000000001,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 29.098039215686274,
+          "top10_std": 0.0,
+          "ours_all_mean": 37.85369098297214,
+          "ours_all_std": 7.001743389894963,
+          "ours_win_mean": 37.85369098297214,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -8.755651767285865,
+          "effect_size_d": null
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 91.89999999999998,
+          "top10_std": 0.0,
+          "ours_all_mean": 79.08749999999999,
+          "ours_all_std": 7.16130007400891,
+          "ours_win_mean": 79.08749999999999,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 12.812499999999986,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 27.965285042512956,
+          "top10_std": 0.0,
+          "ours_all_mean": 37.81329971279587,
+          "ours_all_std": 3.346160896884854,
+          "ours_win_mean": 37.81329971279587,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -9.848014670282911,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 2.6930693069306932,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.437017789571969,
+          "ours_all_std": 0.6807849257117208,
+          "ours_win_mean": 2.437017789571969,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 0.2560515173587241,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 25.059405940594058,
+          "top10_std": 0.0,
+          "ours_all_mean": 26.569278588628436,
+          "ours_all_std": 4.8589893957848,
+          "ours_win_mean": 26.569278588628436,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -1.5098726480343778,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 4.00990099009901,
+          "top10_std": 0.0,
+          "ours_all_mean": 12.390344734384982,
+          "ours_all_std": 3.727254726071414,
+          "ours_win_mean": 12.390344734384982,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -8.380443744285973,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.25742574257425743,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.4452675807164972,
+          "ours_all_std": 0.15691082223430125,
+          "ours_win_mean": 0.4452675807164972,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -0.18784183814223976,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.5742574257425742,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.27868077055383556,
+          "ours_all_std": 0.12457643021621433,
+          "ours_win_mean": 0.27868077055383556,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 0.29557665518873866,
+          "effect_size_d": null
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 1.645059715618287,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.857466977604343,
+          "ours_all_std": 1.8068278145624008,
+          "ours_win_mean": 2.857466977604343,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -1.212407261986056,
+          "effect_size_d": null
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.019801980198019802,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.043736792962799156,
+          "ours_all_std": 0.025543612737566182,
+          "ours_win_mean": 0.043736792962799156,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -0.023934812764779354,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 3.89,
+          "top10_std": 0.0,
+          "ours_all_mean": 5.26,
+          "ours_all_std": 0.9044058823338116,
+          "ours_win_mean": 5.26,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -1.3699999999999997,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 177.62,
+          "top10_std": 0.0,
+          "ours_all_mean": 280.86249999999995,
+          "ours_all_std": 97.3171103596382,
+          "ours_win_mean": 280.86249999999995,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -103.24249999999995,
+          "effect_size_d": null
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 2.77029702970297,
+          "top10_std": 0.0,
+          "ours_all_mean": 6.694045904590459,
+          "ours_all_std": 2.2875599413598997,
+          "ours_win_mean": 6.694045904590459,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -3.9237488748874885,
+          "effect_size_d": null
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.288135593220339,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.21735999799639352,
+          "ours_all_std": 0.0635964725138839,
+          "ours_win_mean": 0.21735999799639352,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 0.07077559522394547,
+          "effect_size_d": null
+        }
+      ],
+      "panel_gap": 0.0
+    },
+    {
+      "archetype": "low_prod__mixed_static__big_rotating",
+      "n": {
+        "top10_win": 1,
+        "ours_win": 4,
+        "ours_loss": 0
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 0.52,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.4175,
+          "ours_all_std": 0.1121104366238933,
+          "ours_win_mean": 0.4175,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 0.10250000000000004,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 34.5,
+          "top10_std": 0.0,
+          "ours_all_mean": 29.150513777562956,
+          "ours_all_std": 6.027514935605238,
+          "ours_win_mean": 29.150513777562956,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 5.349486222437044,
+          "effect_size_d": null
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 100.29999999999986,
+          "top10_std": 0.0,
+          "ours_all_mean": 68.44999999999999,
+          "ours_all_std": 17.48163321889577,
+          "ours_win_mean": 68.44999999999999,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 31.849999999999866,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 29.718709159748506,
+          "top10_std": 0.0,
+          "ours_all_mean": 28.20700902912241,
+          "ours_all_std": 3.8021222000878847,
+          "ours_win_mean": 28.20700902912241,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 1.511700130626096,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 2.519230769230769,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.045607548681319,
+          "ours_all_std": 0.557017306226946,
+          "ours_win_mean": 2.045607548681319,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 0.47362322054945016,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 29.76923076923077,
+          "top10_std": 0.0,
+          "ours_all_mean": 27.579300145898507,
+          "ours_all_std": 9.845493086440506,
+          "ours_win_mean": 27.579300145898507,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 2.1899306233322626,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 8.884615384615385,
+          "top10_std": 0.0,
+          "ours_all_mean": 7.544452891788959,
+          "ours_all_std": 2.2758795397184284,
+          "ours_win_mean": 7.544452891788959,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 1.3401624928264262,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.34615384615384615,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.42316301025317415,
+          "ours_all_std": 0.07998409474170172,
+          "ours_win_mean": 0.42316301025317415,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -0.07700916409932801,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.11538461538461539,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.4114267956481071,
+          "ours_all_std": 0.06595030853888481,
+          "ours_win_mean": 0.4114267956481071,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -0.2960421802634917,
+          "effect_size_d": null
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 3.349409372222402,
+          "top10_std": 0.0,
+          "ours_all_mean": 3.4231611482587327,
+          "ours_all_std": 0.5818929032979514,
+          "ours_win_mean": 3.4231611482587327,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -0.07375177603633087,
+          "effect_size_d": null
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.0,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.025375319432696483,
+          "ours_all_std": 0.005325795469318949,
+          "ours_win_mean": 0.025375319432696483,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -0.025375319432696483,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 6.43,
+          "top10_std": 0.0,
+          "ours_all_mean": 5.397500000000001,
+          "ours_all_std": 2.3965848096823117,
+          "ours_win_mean": 5.397500000000001,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 1.0324999999999989,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 272.26,
+          "top10_std": 0.0,
+          "ours_all_mean": 209.4275,
+          "ours_all_std": 35.95276510576063,
+          "ours_win_mean": 209.4275,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 62.83249999999998,
+          "effect_size_d": null
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 7.155835583558357,
+          "top10_std": 0.0,
+          "ours_all_mean": 5.1414626462646265,
+          "ours_all_std": 1.803459024826722,
+          "ours_win_mean": 5.1414626462646265,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 2.0143729372937305,
+          "effect_size_d": null
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.3783783783783784,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.2732359514687101,
+          "ours_all_std": 0.09057449287342895,
+          "ours_win_mean": 0.2732359514687101,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 0.1051424269096683,
+          "effect_size_d": null
+        }
+      ],
+      "panel_gap": 0.0
+    },
+    {
+      "archetype": "med_low_prod__mostly_static__big_rotating",
+      "n": {
+        "top10_win": 1,
+        "ours_win": 3,
+        "ours_loss": 0
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 0.39,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.4633333333333334,
+          "ours_all_std": 0.1665999866613307,
+          "ours_win_mean": 0.4633333333333334,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -0.07333333333333336,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 52.43589743589744,
+          "top10_std": 0.0,
+          "ours_all_mean": 43.27767565359477,
+          "ours_all_std": 3.577914281965682,
+          "ours_win_mean": 43.27767565359477,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 9.158221782302668,
+          "effect_size_d": null
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 127.5,
+          "top10_std": 0.0,
+          "ours_all_mean": 111.5833333333333,
+          "ours_all_std": 28.955838021987105,
+          "ours_win_mean": 111.5833333333333,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 15.9166666666667,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 28.797127936071412,
+          "top10_std": 0.0,
+          "ours_all_mean": 34.27872271763988,
+          "ours_all_std": 6.0154998140135705,
+          "ours_win_mean": 34.27872271763988,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -5.481594781568468,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 2.8974358974358974,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.6447099673202614,
+          "ours_all_std": 0.5222146435367215,
+          "ours_win_mean": 2.6447099673202614,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 0.25272593011563593,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 47.69230769230769,
+          "top10_std": 0.0,
+          "ours_all_mean": 31.988255718954246,
+          "ours_all_std": 3.185290433887239,
+          "ours_win_mean": 31.988255718954246,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 15.704051973353447,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 6.743589743589744,
+          "top10_std": 0.0,
+          "ours_all_mean": 12.887765522875817,
+          "ours_all_std": 5.028589032456785,
+          "ours_win_mean": 12.887765522875817,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -6.144175779286074,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.28205128205128205,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.5421772875816994,
+          "ours_all_std": 0.2357214189919473,
+          "ours_win_mean": 0.5421772875816994,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -0.2601260055304173,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.10256410256410256,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.220077614379085,
+          "ours_all_std": 0.13109507584470434,
+          "ours_win_mean": 0.220077614379085,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -0.11751351181498243,
+          "effect_size_d": null
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 1.0199977113568093,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.856889287921079,
+          "ours_all_std": 0.8720471724401143,
+          "ours_win_mean": 2.856889287921079,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -1.83689157656427,
+          "effect_size_d": null
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.05128205128205128,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.005208333333333333,
+          "ours_all_std": 0.00736569563735987,
+          "ours_win_mean": 0.005208333333333333,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 0.046073717948717945,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 5.79,
+          "top10_std": 0.0,
+          "ours_all_mean": 7.57,
+          "ours_all_std": 4.731659328396329,
+          "ours_win_mean": 7.57,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -1.7800000000000002,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 340.28,
+          "top10_std": 0.0,
+          "ours_all_mean": 467.64000000000004,
+          "ours_all_std": 291.8190662037009,
+          "ours_win_mean": 467.64000000000004,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -127.36000000000007,
+          "effect_size_d": null
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 10.296633663366336,
+          "top10_std": 0.0,
+          "ours_all_mean": 12.61156515651565,
+          "ours_all_std": 9.116015949677001,
+          "ours_win_mean": 12.61156515651565,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -2.314931493149315,
+          "effect_size_d": null
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.21875,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.23438805346700084,
+          "ours_all_std": 0.06516796947380708,
+          "ours_win_mean": 0.23438805346700084,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -0.01563805346700084,
+          "effect_size_d": null
+        }
+      ],
+      "panel_gap": 0.0
+    },
+    {
+      "archetype": "med_low_prod__mostly_rotating__big_static",
+      "n": {
+        "top10_win": 1,
+        "ours_win": 3,
+        "ours_loss": 0
+      },
+      "rows": [
+        {
+          "feature": "launches_per_turn",
+          "top10_mean": 0.76,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.58,
+          "ours_all_std": 0.07874007874011807,
+          "ours_win_mean": 0.58,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 0.18000000000000005,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_fleet_size",
+          "top10_mean": 38.48684210526316,
+          "top10_std": 0.0,
+          "ours_all_mean": 36.6492532600802,
+          "ours_all_std": 3.2508966094204763,
+          "ours_win_mean": 36.6492532600802,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 1.8375888451829567,
+          "effect_size_d": null
+        },
+        {
+          "feature": "p95_fleet_size",
+          "top10_mean": 74.0,
+          "top10_std": 0.0,
+          "ours_all_mean": 103.83333333333333,
+          "ours_all_std": 14.001983986405483,
+          "ours_win_mean": 103.83333333333333,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -29.83333333333333,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_distance",
+          "top10_mean": 34.561043623928356,
+          "top10_std": 0.0,
+          "ours_all_mean": 37.869681115027056,
+          "ours_all_std": 5.596703066770739,
+          "ours_win_mean": 37.869681115027056,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -3.3086374910987004,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_production",
+          "top10_mean": 3.0657894736842106,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.3179091282245583,
+          "ours_all_std": 0.18808588333049547,
+          "ours_win_mean": 2.3179091282245583,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 0.7478803454596523,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_target_garrison",
+          "top10_mean": 28.736842105263158,
+          "top10_std": 0.0,
+          "ours_all_mean": 25.617647058823533,
+          "ours_all_std": 6.062349588431812,
+          "ours_win_mean": 25.617647058823533,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 3.119195046439625,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_garrison_at_launch",
+          "top10_mean": 10.960526315789474,
+          "top10_std": 0.0,
+          "ours_all_mean": 12.971614410659592,
+          "ours_all_std": 5.164859326391952,
+          "ours_win_mean": 12.971614410659592,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -2.011088094870118,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_neutral_fraction",
+          "top10_mean": 0.2894736842105263,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.361434751034069,
+          "ours_all_std": 0.04280159303837606,
+          "ours_win_mean": 0.361434751034069,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -0.0719610668235427,
+          "effect_size_d": null
+        },
+        {
+          "feature": "targets_enemy_fraction",
+          "top10_mean": 0.2894736842105263,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.2840927031037858,
+          "ours_all_std": 0.0651871262201004,
+          "ours_win_mean": 0.2840927031037858,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 0.005380981106740512,
+          "effect_size_d": null
+        },
+        {
+          "feature": "launch_angle_var",
+          "top10_mean": 2.3661054289089423,
+          "top10_std": 0.0,
+          "ours_all_mean": 2.6920894765992975,
+          "ours_all_std": 1.9560308362730887,
+          "ours_win_mean": 2.6920894765992975,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -0.32598404769035527,
+          "effect_size_d": null
+        },
+        {
+          "feature": "sun_clip_launch_rate",
+          "top10_mean": 0.05263157894736842,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.10604338353698968,
+          "ours_all_std": 0.03739716292821421,
+          "ours_win_mean": 0.10604338353698968,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -0.05341180458962126,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_planets_owned",
+          "top10_mean": 8.81,
+          "top10_std": 0.0,
+          "ours_all_mean": 9.973333333333334,
+          "ours_all_std": 2.2246248123123045,
+          "ours_win_mean": 9.973333333333334,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -1.163333333333334,
+          "effect_size_d": null
+        },
+        {
+          "feature": "mean_total_ships",
+          "top10_mean": 383.44,
+          "top10_std": 0.0,
+          "ours_all_mean": 454.58666666666664,
+          "ours_all_std": 47.56961378396459,
+          "ours_win_mean": 454.58666666666664,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -71.14666666666665,
+          "effect_size_d": null
+        },
+        {
+          "feature": "ships_growth_per_turn",
+          "top10_mean": 9.926552655265525,
+          "top10_std": 0.0,
+          "ours_all_mean": 11.404968496849685,
+          "ours_all_std": 2.920365955307864,
+          "ours_win_mean": 11.404968496849685,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": -1.4784158415841606,
+          "effect_size_d": null
+        },
+        {
+          "feature": "multi_launch_turn_rate",
+          "top10_mean": 0.45454545454545453,
+          "top10_std": 0.0,
+          "ours_all_mean": 0.2903073286052009,
+          "ours_all_std": 0.09723700549400187,
+          "ours_win_mean": 0.2903073286052009,
+          "ours_loss_mean": null,
+          "delta_top10_minus_ours_all": 0.1642381259402536,
+          "effect_size_d": null
+        }
+      ],
+      "panel_gap": 0.0
+    }
+  ],
+  "per_feature_summary": {
+    "launches_per_turn": {
+      "n_cells": 3,
+      "weighted_mean_d": 1.6747350839915756,
+      "mean_abs_d": 1.7382287381405357,
+      "n_positive": 3,
+      "n_negative": 0,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": 2.0227218240867835,
+        "med_high_prod__mixed_static__big_static": 1.5477477756936555,
+        "med_low_prod__mixed_rotating__big_static": 1.6442166146411683
+      }
+    },
+    "mean_fleet_size": {
+      "n_cells": 3,
+      "weighted_mean_d": -0.09209944039154186,
+      "mean_abs_d": 1.464295679102016,
+      "n_positive": 1,
+      "n_negative": 2,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": -1.3924722634471467,
+        "med_high_prod__mixed_static__big_static": -0.5778257120496265,
+        "med_low_prod__mixed_rotating__big_static": 2.422589061809275
+      }
+    },
+    "p95_fleet_size": {
+      "n_cells": 3,
+      "weighted_mean_d": 0.281618189016512,
+      "mean_abs_d": 1.583880964901556,
+      "n_positive": 2,
+      "n_negative": 1,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": -2.118355387066668,
+        "med_high_prod__mixed_static__big_static": 0.5015664866686477,
+        "med_low_prod__mixed_rotating__big_static": 2.1317210209693527
+      }
+    },
+    "mean_target_distance": {
+      "n_cells": 3,
+      "weighted_mean_d": 0.7667196708766465,
+      "mean_abs_d": 0.6088533791162968,
+      "n_positive": 3,
+      "n_negative": 0,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": 0.730206758716576,
+        "med_high_prod__mixed_static__big_static": 1.082452254397346,
+        "med_low_prod__mixed_rotating__big_static": 0.013901124234968252
+      }
+    },
+    "mean_target_production": {
+      "n_cells": 3,
+      "weighted_mean_d": 1.735561252823266,
+      "mean_abs_d": 2.3093816723087977,
+      "n_positive": 3,
+      "n_negative": 0,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": 3.072440185194811,
+        "med_high_prod__mixed_static__big_static": 0.5879204138522027,
+        "med_low_prod__mixed_rotating__big_static": 3.2677844178793802
+      }
+    },
+    "mean_target_garrison": {
+      "n_cells": 3,
+      "weighted_mean_d": 0.2271406805336066,
+      "mean_abs_d": 0.5028584919394407,
+      "n_positive": 2,
+      "n_negative": 1,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": 1.1069511456179717,
+        "med_high_prod__mixed_static__big_static": -0.13898354669059784,
+        "med_low_prod__mixed_rotating__big_static": 0.2626407835097526
+      }
+    },
+    "mean_garrison_at_launch": {
+      "n_cells": 3,
+      "weighted_mean_d": -1.9909830780796252,
+      "mean_abs_d": 2.3295523652528796,
+      "n_positive": 0,
+      "n_negative": 3,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": -5.51823401909891,
+        "med_high_prod__mixed_static__big_static": -1.313844503733116,
+        "med_low_prod__mixed_rotating__big_static": -0.1565785729266128
+      }
+    },
+    "targets_neutral_fraction": {
+      "n_cells": 3,
+      "weighted_mean_d": -2.800216161858202,
+      "mean_abs_d": 3.1971490732889123,
+      "n_positive": 0,
+      "n_negative": 3,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": -4.114674757913351,
+        "med_high_prod__mixed_static__big_static": -2.006350338996783,
+        "med_low_prod__mixed_rotating__big_static": -3.470422122956603
+      }
+    },
+    "targets_enemy_fraction": {
+      "n_cells": 3,
+      "weighted_mean_d": 1.5905162841911664,
+      "mean_abs_d": 2.126156906778973,
+      "n_positive": 3,
+      "n_negative": 0,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": 3.583743605946352,
+        "med_high_prod__mixed_static__big_static": 0.5192350390155522,
+        "med_low_prod__mixed_rotating__big_static": 2.275492075375016
+      }
+    },
+    "launch_angle_var": {
+      "n_cells": 3,
+      "weighted_mean_d": -0.920423202379242,
+      "mean_abs_d": 1.35725056373806,
+      "n_positive": 1,
+      "n_negative": 2,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": -3.194862601802146,
+        "med_high_prod__mixed_static__big_static": -0.5211231138047077,
+        "med_low_prod__mixed_rotating__big_static": 0.35576597560732665
+      }
+    },
+    "sun_clip_launch_rate": {
+      "n_cells": 3,
+      "weighted_mean_d": -1.7499469255484086,
+      "mean_abs_d": 1.835756069789726,
+      "n_positive": 0,
+      "n_negative": 3,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": -2.78547970659549,
+        "med_high_prod__mixed_static__big_static": -1.578328637065774,
+        "med_low_prod__mixed_rotating__big_static": -1.1434598657079134
+      }
+    },
+    "mean_planets_owned": {
+      "n_cells": 3,
+      "weighted_mean_d": -1.0797090842053119,
+      "mean_abs_d": 1.4344887289815758,
+      "n_positive": 0,
+      "n_negative": 3,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": -3.3726509321353664,
+        "med_high_prod__mixed_static__big_static": -0.37014979465278386,
+        "med_low_prod__mixed_rotating__big_static": -0.5606654601565776
+      }
+    },
+    "mean_total_ships": {
+      "n_cells": 3,
+      "weighted_mean_d": -0.9466888851785534,
+      "mean_abs_d": 1.1527757326565393,
+      "n_positive": 0,
+      "n_negative": 3,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": -2.2492035940597024,
+        "med_high_prod__mixed_static__big_static": -0.5345151902225814,
+        "med_low_prod__mixed_rotating__big_static": -0.6746084136873345
+      }
+    },
+    "ships_growth_per_turn": {
+      "n_cells": 3,
+      "weighted_mean_d": -1.8491633389937019,
+      "mean_abs_d": 2.1717257244215875,
+      "n_positive": 0,
+      "n_negative": 3,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": -2.2149517617160144,
+        "med_high_prod__mixed_static__big_static": -1.2040385681379306,
+        "med_low_prod__mixed_rotating__big_static": -3.0961868434108175
+      }
+    },
+    "multi_launch_turn_rate": {
+      "n_cells": 3,
+      "weighted_mean_d": 3.42191379749932,
+      "mean_abs_d": 4.338356409610645,
+      "n_positive": 3,
+      "n_negative": 0,
+      "per_cell_d": {
+        "high_prod__mixed_static__big_static": 2.7003062566520115,
+        "med_high_prod__mixed_static__big_static": 1.5890285732766705,
+        "med_low_prod__mixed_rotating__big_static": 8.725734398903253
+      }
+    }
+  }
+}
