@@ -28,10 +28,21 @@ MIN_FLEET_SIZE = 2
 SIM_SETTLE_TURNS = 2
 MIN_HORIZON = 25
 MAX_HORIZON = 40
-WAIT_EXTRA_SURPLUS = (0, 5, 12)
+WAIT_EXTRA_SURPLUS = (0, 5, 12)  # legacy forward grid (kept for rollback)
 CHEAP_REJECT_THRESHOLD = -10.0
 EPISODE_STEPS = 500
 GAMMA = 0.99
+
+# Backward wait grid (2026-05-18): anchored on min_wait_affordable.
+# Replaces forward WAIT_EXTRA_SURPLUS = (0, 5, 12) grid that caused
+# under-emission. Diagnosis: at Roman game (76941081) step 90 with 454
+# ships across 9 planets, proposer emitted 18 candidates, 15 of which
+# were wait_N > 0. Chooser picked top-Δ candidate (wait_N=17, fire-now-
+# capable src reserved), emitted 0 launches. Repeat every turn → 59pct
+# idle. With backward grid, already-affordable (src, tgt) pairs emit
+# NO wait variants; chooser only sees fire-now → emits.
+WAIT_GRID_MODE = os.environ.get("BASELINE_WAIT_GRID", "backward").strip().lower()
+WAIT_BUFFER_OFFSET = 3   # backward grid emits {min_w, min_w + 3}
 
 
 def aim_and_eta(src, tgt, ships: int, omega: float, wait_N: int = 0):
@@ -121,10 +132,13 @@ def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list
     return sorted(sizes)
 
 
-def wait_then_fire_variants(src, tgt, model, omega: float, me: int):
-    """Multi-wait-grid candidates for one (src, tgt). Returns list of
-    (ships, wait_N, angle, eta). Generates one variant per extra_surplus
-    in WAIT_EXTRA_SURPLUS, deduped by (wait_N, ships).
+def wait_then_fire_variants_forward(src, tgt, model, omega: float, me: int):
+    """Forward wait-grid (legacy): enumerate fixed WAIT_EXTRA_SURPLUS = (0, 5, 12).
+
+    Kept for rollback via BASELINE_WAIT_GRID=forward. Caused under-emission
+    when src is already armed (always emits wait_N=1 variant that
+    out-scores fire-now in chooser Δ; chooser picks the wait, reserves
+    src+tgt, emits nothing).
     """
     if int(tgt.owner) == me:
         return []
@@ -161,6 +175,101 @@ def wait_then_fire_variants(src, tgt, model, omega: float, me: int):
         if wait_N + eta + SIM_SETTLE_TURNS > MAX_HORIZON:
             continue
 
+        key = (wait_N, final_fleet)
+        if key in seen:
+            continue
+        seen.add(key)
+        variants.append((final_fleet, wait_N, angle, eta))
+    return variants
+
+
+def min_wait_affordable(src, tgt, model, omega: float, me: int) -> int | None:
+    """Smallest wait_N at which src can affordably capture tgt.
+
+    Returns:
+      0   — src can already fire-now (cap_now ≤ src.ships).
+      N>0 — src must accumulate N turns before firing.
+      None — hopeless within MAX_HORIZON (opp accumulates faster than
+             we can; pair never affordable).
+
+    Mirrors the affordability math in `wait_then_fire_variants_forward`
+    so callers get a consistent answer. Used to anchor the backward
+    wait-grid: when min_wait == 0, NO wait variants are emitted (the
+    fire-now path covers it; speculative waits like the old wait_N=1
+    block fire-now from being chosen).
+    """
+    if int(tgt.owner) == me:
+        return None  # reinforce path handled separately
+    if int(src.production) <= 0:
+        return None  # src can't accumulate; wait is pointless
+    prod = int(src.production)
+
+    # Fire-now feasibility check
+    initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
+    _a0, eta0 = aim_and_eta(src, tgt, initial, omega, wait_N=0)
+    pred_now = float(model.ships_at(int(tgt.id), eta0) or 0.0)
+    cap_now = max(MIN_FLEET_SIZE, int(math.ceil(pred_now)) + 1)
+    if cap_now <= int(src.ships):
+        return 0
+
+    # Iterate wait_N until affordable (no closed form due to
+    # fleet_speed(ships) nonlinearity)
+    for wait_N in range(1, MAX_HORIZON):
+        budget = int(src.ships) + prod * wait_N
+        # Cheap pre-check: even bare capture of current garrison exceeds budget
+        if max(MIN_FLEET_SIZE, int(tgt.ships) + 1) > budget:
+            continue
+        target_fleet = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
+        _angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N)
+        pred_at_arrival = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
+        cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arrival)) + 1)
+        if cap_final <= budget and wait_N + eta + SIM_SETTLE_TURNS <= MAX_HORIZON:
+            return wait_N
+    return None  # hopeless within MAX_HORIZON
+
+
+def wait_then_fire_variants(src, tgt, model, omega: float, me: int):
+    """Backward wait grid: anchor on min_wait_affordable.
+
+    Returns list of (ships, wait_N, angle, eta). Behaviour:
+    - Already-armed src (min_wait == 0) → return []. Fire-now path
+      handles this; we don't emit speculative waits that compete with
+      fire-now in chooser Δ ranking.
+    - Hopeless pair (min_wait is None) → return []. Saves chooser
+      cycles; this pair's launches will all bounce.
+    - Otherwise → emit {min_wait, min_wait + WAIT_BUFFER_OFFSET}
+      candidates. Primary captures as fast as feasible; +3 buffer
+      adds resilience-against-opp-counter.
+
+    Forward-mode rollback available via BASELINE_WAIT_GRID=forward.
+    """
+    if WAIT_GRID_MODE == "forward":
+        return wait_then_fire_variants_forward(src, tgt, model, omega, me)
+    if int(tgt.owner) == me:
+        return []
+    min_w = min_wait_affordable(src, tgt, model, omega, me)
+    if min_w is None or min_w == 0:
+        return []
+    prod = max(1, int(src.production))
+    variants = []
+    seen: set[tuple[int, int]] = set()
+    for wait_N in (min_w, min_w + WAIT_BUFFER_OFFSET):
+        if wait_N >= MAX_HORIZON:
+            break
+        budget = int(src.ships) + prod * wait_N
+        target_fleet = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
+        if target_fleet > budget:
+            continue
+        angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N)
+        pred_at_arrival = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
+        cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arrival)) + 1)
+        if cap_final > budget:
+            continue
+        final_fleet = max(cap_final, MIN_FLEET_SIZE)
+        if final_fleet > budget:
+            final_fleet = budget
+        if wait_N + eta + SIM_SETTLE_TURNS > MAX_HORIZON:
+            continue
         key = (wait_N, final_fleet)
         if key in seen:
             continue

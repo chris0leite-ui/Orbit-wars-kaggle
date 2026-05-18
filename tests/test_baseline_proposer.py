@@ -9,6 +9,7 @@ from agents.baseline.proposer import (
     WAIT_EXTRA_SURPLUS,
     capture_size,
     enumerate_ship_counts,
+    min_wait_affordable,
     nearest_k,
     propose,
     wait_band,
@@ -105,22 +106,38 @@ def test_wait_then_fire_variants_skips_zero_production():
     assert wait_then_fire_variants(src, tgt, model, omega=0.0, me=0) == []
 
 
-def test_wait_then_fire_variants_emits_multi_grid_with_dedup():
-    """A feasible-now pair still gets wait>=1 variants for surplus targets,
-    deduped by (wait_N, ships)."""
+def test_wait_then_fire_variants_emits_nothing_when_already_armed():
+    """Backward grid (2026-05-18): src that can fire NOW affordably
+    gets NO wait variants. The fire-now path handles affordable pairs;
+    emitting speculative waits would compete with fire-now in chooser
+    Δ ranking and cause under-emission (Roman game diagnosis).
+
+    Previous behaviour (forward grid): always emit wait_N=1 even when
+    feasible-now. That bug is now in wait_then_fire_variants_forward.
+    """
     src = _planet(0, 0, 10.0, 50.0, ships=50, production=2)
     tgt = _planet(1, -1, 12.0, 50.0, ships=3, production=1)
     world = _world(0, [src, tgt])
     model = WorldModel.from_world(world)
     variants = wait_then_fire_variants(src, tgt, model, omega=0.0, me=0)
-    assert variants, "expected at least one wait variant"
-    # wait_N>=1 for every variant
+    assert variants == [], (
+        f"backward grid should emit [] for already-armed src; got {variants}"
+    )
+
+
+def test_wait_then_fire_variants_forward_legacy():
+    """Legacy forward-grid path preserved via BASELINE_WAIT_GRID=forward."""
+    import os
+    from agents.baseline.proposer import wait_then_fire_variants_forward
+    src = _planet(0, 0, 10.0, 50.0, ships=50, production=2)
+    tgt = _planet(1, -1, 12.0, 50.0, ships=3, production=1)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    # Direct call to the forward variant (bypasses env-var dispatch)
+    variants = wait_then_fire_variants_forward(src, tgt, model, omega=0.0, me=0)
+    assert variants, "forward variant should emit wait_N=1 even when armed"
     assert all(w >= 1 for _ships, w, _angle, _eta in variants)
-    # Up to len(WAIT_EXTRA_SURPLUS) distinct (wait_N, ships) variants
     assert len(variants) <= len(WAIT_EXTRA_SURPLUS)
-    # All distinct (wait_N, ships) keys
-    keys = {(w, s) for s, w, _angle, _eta in variants}
-    assert len(keys) == len(variants)
 
 
 def test_propose_dedups_per_src_tgt_band():
@@ -164,3 +181,68 @@ def test_propose_returns_empty_when_no_targets():
         world=world, model=model, me=0, omega=0.0, baseline_len=50,
     )
     assert out == []
+
+
+# ---------------------------------------------------------------------------
+# min_wait_affordable + backward wait grid (2026-05-18 Tier 1.5)
+# ---------------------------------------------------------------------------
+
+
+def test_min_wait_affordable_returns_zero_when_src_already_armed():
+    """src has plenty of ships → fire-now affordable → return 0."""
+    src = _planet(0, 0, 10.0, 50.0, ships=100, production=1)
+    tgt = _planet(1, -1, 12.0, 50.0, ships=10)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    result = min_wait_affordable(src, tgt, model, omega=0.0, me=0)
+    assert result == 0, f"expected 0 (fire-now affordable); got {result}"
+
+
+def test_min_wait_affordable_returns_positive_for_accumulation():
+    """src has too few ships → must accumulate → return positive wait_N."""
+    src = _planet(0, 0, 10.0, 50.0, ships=5, production=1)
+    tgt = _planet(1, -1, 12.0, 50.0, ships=20)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    result = min_wait_affordable(src, tgt, model, omega=0.0, me=0)
+    assert result is not None and result > 0, (
+        f"expected positive wait (need to accumulate); got {result}"
+    )
+
+
+def test_min_wait_affordable_returns_none_for_zero_production():
+    """src can't produce → can't accumulate → return None."""
+    src = _planet(0, 0, 10.0, 50.0, ships=5, production=0)
+    tgt = _planet(1, -1, 12.0, 50.0, ships=20)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    result = min_wait_affordable(src, tgt, model, omega=0.0, me=0)
+    assert result is None, f"expected None (zero production); got {result}"
+
+
+def test_min_wait_affordable_returns_none_for_owned_target():
+    """tgt is mine → reinforce path handles it; return None."""
+    src = _planet(0, 0, 10.0, 50.0, ships=50, production=1)
+    own_tgt = _planet(1, 0, 12.0, 50.0, ships=5)  # me owns tgt
+    world = _world(0, [src, own_tgt])
+    model = WorldModel.from_world(world)
+    result = min_wait_affordable(src, own_tgt, model, omega=0.0, me=0)
+    assert result is None
+
+
+def test_wait_variants_anchored_at_min_wait():
+    """When src must accumulate, wait variants emit at {min_w, min_w+3}."""
+    src = _planet(0, 0, 10.0, 50.0, ships=5, production=1)
+    tgt = _planet(1, -1, 12.0, 50.0, ships=20)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    min_w = min_wait_affordable(src, tgt, model, omega=0.0, me=0)
+    assert min_w is not None and min_w > 0
+    variants = wait_then_fire_variants(src, tgt, model, omega=0.0, me=0)
+    assert variants, "expected at least one wait variant for accumulating src"
+    wait_Ns = {int(w) for _ships, w, _angle, _eta in variants}
+    expected_anchor = {min_w, min_w + 3}
+    assert wait_Ns.issubset(expected_anchor), (
+        f"variants should anchor at min_w({min_w}) and min_w+3({min_w + 3}); "
+        f"got wait_Ns={wait_Ns}"
+    )
