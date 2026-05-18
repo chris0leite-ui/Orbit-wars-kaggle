@@ -296,6 +296,9 @@ class PanelStat:
     focal_p1_wins: int = 0
     focal_turn_ms: list[float] = field(default_factory=list)
     elapsed_s: float = 0.0
+    # Per-game outcomes for the --by-archetype reporter. Each entry is
+    # (seed, focal_won). One seed appears twice (P0 + P1 sides).
+    per_game: list[tuple[int, bool]] = field(default_factory=list)
 
     @property
     def winrate(self) -> float:
@@ -327,6 +330,7 @@ def _absorb(stat: PanelStat, result: GameResult, focal_is_p0: bool) -> None:
         stat.draws += 1
     times = result.p0_turn_ms if focal_is_p0 else result.p1_turn_ms
     stat.focal_turn_ms.extend(times)
+    stat.per_game.append((result.seed, focal_won))
 
 
 def _balanced_pairs(seeds: Sequence[int], focal_path: str, opp_path: str
@@ -403,12 +407,25 @@ def cmd_smoke(args: argparse.Namespace) -> int:
 
 def _eval_vs_one(focal_path: str, focal_name: str,
                  opp_path: str, opp_name: str,
-                 max_seeds: int, gate: float, workers: int
-                 ) -> tuple[str, float, float, int, int, list[float], float]:
+                 max_seeds: int, gate: float, workers: int,
+                 seed_pool: Sequence[int] | None = None,
+                 ) -> tuple[str, float, float, int, int, list[float], float, list[tuple[int, bool]]]:
     """Run the adaptive Wilson-gated A/B vs a single opponent.
 
-    Returns: (verdict, wlo, whi, wins, n, focal_turn_ms, total_elapsed_s).
+    `seed_pool` overrides the default ``range(max_seeds)`` seed source —
+    used by ``--geometry-panel`` to draw from
+    ``lib.seed_panel.SEED_PANEL_128_INTERLEAVED`` instead. The pool is
+    sliced by tier index (not by value) so adaptive tiering still works.
+
+    Returns: (verdict, wlo, whi, wins, n, focal_turn_ms, total_elapsed_s,
+              per_game_outcomes).
     """
+    if seed_pool is None:
+        seed_pool = list(range(max_seeds))
+    else:
+        seed_pool = list(seed_pool[:max_seeds])
+    max_seeds = len(seed_pool)
+
     tiers: list[int] = []
     n = 16
     while n <= max_seeds:
@@ -427,13 +444,15 @@ def _eval_vs_one(focal_path: str, focal_name: str,
     total_elapsed = 0.0
     last_seed_idx = 0
     verdict = "FAIL"
+    per_game: list[tuple[int, bool]] = []
 
     for tier_n in tiers:
-        new_seeds = list(range(last_seed_idx, tier_n))
+        new_seeds = seed_pool[last_seed_idx:tier_n]
         if not new_seeds:
             continue
         stat = play_panel(focal_path, focal_name, opp_path, opp_name,
                           new_seeds, workers)
+        per_game.extend(stat.per_game)
         cumulative_wins += stat.focal_wins
         cumulative_n += stat.n
         cumulative_times.extend(stat.focal_turn_ms)
@@ -461,7 +480,7 @@ def _eval_vs_one(focal_path: str, focal_name: str,
 
     lo, hi = wilson_ci(cumulative_wins, cumulative_n)
     return (verdict, lo, hi, cumulative_wins, cumulative_n,
-            cumulative_times, total_elapsed)
+            cumulative_times, total_elapsed, per_game)
 
 
 def _parse_panel_arg(s: str | None) -> list[str]:
@@ -475,9 +494,64 @@ def _parse_panel_arg(s: str | None) -> list[str]:
     return [tok.strip() for tok in s.split(",") if tok.strip()]
 
 
+def _report_by_archetype(focal_name: str,
+                         per_opp_games: list[tuple[str, list[tuple[int, bool]]]]
+                         ) -> None:
+    """Print a per-archetype winrate breakdown for the focal agent.
+
+    Each opponent's per-game outcomes are grouped by archetype using
+    ``lib.seed_panel.ARCHETYPE_OF_SEED``. Seeds outside the panel are
+    bucketed as ``<not-in-panel>``. Each seed contributes 2 games
+    (P0 + P1 sides) because ``_balanced_pairs`` plays both seats.
+    """
+    try:
+        from lib.seed_panel import ARCHETYPE_OF_SEED
+    except Exception as e:
+        print(f"\n   [by-archetype skipped: {e}]")
+        return
+
+    print(f"\n   per-archetype winrate ({focal_name}):")
+    for opp_name, games in per_opp_games:
+        if not games:
+            continue
+        bucket: dict[str, list[int]] = {}
+        for seed, focal_won in games:
+            arch = ARCHETYPE_OF_SEED.get(seed, "<not-in-panel>")
+            bucket.setdefault(arch, []).append(1 if focal_won else 0)
+        rows = sorted(bucket.items())
+        if len(per_opp_games) > 1:
+            print(f"     vs {opp_name}:")
+        extremes = 0
+        for arch, wins in rows:
+            wr = sum(wins) / len(wins)
+            flag = ""
+            if wr <= 0.25:
+                flag = " <-- LOSING"
+                extremes += 1
+            elif wr >= 0.75:
+                flag = " <-- winning"
+                extremes += 1
+            print(f"       {arch:<55s}  {sum(wins):>2d}/{len(wins):<2d}  "
+                  f"{wr:>5.0%}{flag}")
+        n_archs = len(rows)
+        print(f"     [{n_archs} archetypes, {extremes} extreme "
+              f"(<=25% or >=75%)]")
+
+
 def cmd_eval(args: argparse.Namespace) -> int:
     focal_name, focal_path = resolve_agent_spec(args.agent)
     gate = float(args.gate)
+
+    seed_pool: Sequence[int] | None = None
+    if getattr(args, "geometry_panel", False):
+        # Interleaved order ensures the first N (for any N) covers
+        # archetypes round-robin instead of clustering by archetype.
+        from lib.seed_panel import SEED_PANEL_128_INTERLEAVED
+        seed_pool = SEED_PANEL_128_INTERLEAVED
+        if args.max_seeds == 64:  # argparse default — bump to full panel
+            args.max_seeds = 128
+        print(f"== using geometry panel: {len(seed_pool)} seeds, "
+              f"32 archetypes, interleaved ==")
 
     panel: list[str]
     if args.vs_panel is not None:
@@ -515,6 +589,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     per_opponent_results: list[tuple[str, str, float, float, int, int]] = []
     overall_times: list[float] = []
     overall_elapsed = 0.0
+    per_opp_games: list[tuple[str, list[tuple[int, bool]]]] = []
 
     for opp_spec in panel:
         opp_name, opp_path = resolve_agent_spec(opp_spec)
@@ -525,19 +600,23 @@ def cmd_eval(args: argparse.Namespace) -> int:
             print(f"\n-- vs {opp_name} --")
         else:
             print(f"== eval {focal_name} vs {opp_name}  gate Wlo≥{gate:.2f} ==")
-        verdict, lo, hi, wins, n, times, elapsed = _eval_vs_one(
+        verdict, lo, hi, wins, n, times, elapsed, per_game = _eval_vs_one(
             focal_path, focal_name, opp_path, opp_name,
-            args.max_seeds, gate, args.workers,
+            args.max_seeds, gate, args.workers, seed_pool=seed_pool,
         )
         per_opponent_results.append((opp_name, verdict, lo, hi, wins, n))
         overall_times.extend(times)
         overall_elapsed += elapsed
+        per_opp_games.append((opp_name, per_game))
 
     p50 = p_quantile(overall_times, 0.50)
     p95 = p_quantile(overall_times, 0.95)
     pmax = max(overall_times) if overall_times else 0.0
     print(f"\n   focal turn-ms  p50={p50:.0f}  p95={p95:.0f}  max={pmax:.0f}"
           f"   total elapsed {overall_elapsed:.1f}s")
+
+    if getattr(args, "by_archetype", False):
+        _report_by_archetype(focal_name, per_opp_games)
 
     if len(per_opponent_results) > 1:
         print("\n   per-opponent summary:")
@@ -686,6 +765,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--gate", type=float, default=0.55,
                     help="Wilson 95%% lower-bound gate (default: 0.55)")
     sp.add_argument("--workers", type=int, default=8)
+    sp.add_argument("--geometry-panel", action="store_true",
+                    help="Draw seeds from lib.seed_panel.SEED_PANEL_128_INTERLEAVED "
+                         "(32 archetypes round-robin) instead of range(0, max-seeds). "
+                         "Auto-bumps --max-seeds to 128 if it's still the default. "
+                         "Combine with --by-archetype for per-cell winrate breakdown. "
+                         "Built by scripts/build_seed_panel.py; see "
+                         "audit/2026-05-18-seed-panel.md.")
+    sp.add_argument("--by-archetype", action="store_true",
+                    help="After eval, print per-archetype focal winrate. Useful "
+                         "with --geometry-panel; also works with range() seeds "
+                         "(only intersecting seeds are reported).")
     sp.set_defaults(func=cmd_eval)
 
     sp = sub.add_parser("play", help="single game, verbose")

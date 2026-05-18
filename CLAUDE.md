@@ -217,6 +217,9 @@ Process docs (read once / on trigger):
 - `comp-context.md` — settled-once facts (kickoff, env spec, gate clearance).
 - `audit/INDEX.md` — map of audit/ subdirs.
 - `audit/friction.md` — current friction summary (concise).
+- `audit/2026-05-18-seed-panel.md` — 128-seed geometry-stratified
+  eval panel (32 archetypes × 4 seeds). Use it for A/B testing via
+  `python fast.py eval <agent> --vs <opp> --geometry-panel --by-archetype`.
 
 - `knowledge-base/` — PI second-brain (permanent; Rules 35-36).
   Subdirs: `thoughts/`, `concepts/`, `friction/`, `flags/`, `questions/`.
