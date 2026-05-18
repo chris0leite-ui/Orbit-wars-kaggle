@@ -1,0 +1,41 @@
+== using geometry panel: 128 seeds, 32 archetypes, interleaved ==
+== eval baseline vs v7_0  gate Wlo≥0.55 ==
+   n= 32  wins= 28/32  ( 87.5%)  Wlo=0.719  Whi=0.950  elapsed=508.2s  -> CONTINUE  (CI brackets gate)
+   n= 64  wins= 51/64  ( 79.7%)  Wlo=0.683  Whi=0.877  elapsed=517.1s  -> STOP  verdict=PASS  (max seeds reached)
+
+   focal turn-ms  p50=290  p95=664  max=1556   total elapsed 1025.3s
+
+   per-archetype winrate (baseline):
+       high_prod__mixed_rotating__big_rotating                   2/2    100% <-- winning
+       high_prod__mixed_rotating__big_static                     2/2    100% <-- winning
+       high_prod__mixed_static__big_rotating                     2/2    100% <-- winning
+       high_prod__mixed_static__big_static                       2/2    100% <-- winning
+       high_prod__mostly_rotating__big_rotating                  2/2    100% <-- winning
+       high_prod__mostly_rotating__big_static                    1/2     50%
+       high_prod__mostly_static__big_rotating                    2/2    100% <-- winning
+       high_prod__mostly_static__big_static                      2/2    100% <-- winning
+       low_prod__mixed_rotating__big_rotating                    0/2      0% <-- LOSING
+       low_prod__mixed_rotating__big_static                      2/2    100% <-- winning
+       low_prod__mixed_static__big_rotating                      2/2    100% <-- winning
+       low_prod__mixed_static__big_static                        1/2     50%
+       low_prod__mostly_rotating__big_rotating                   2/2    100% <-- winning
+       low_prod__mostly_rotating__big_static                     2/2    100% <-- winning
+       low_prod__mostly_static__big_rotating                     2/2    100% <-- winning
+       low_prod__mostly_static__big_static                       2/2    100% <-- winning
+       med_high_prod__mixed_rotating__big_rotating               2/2    100% <-- winning
+       med_high_prod__mixed_rotating__big_static                 1/2     50%
+       med_high_prod__mixed_static__big_rotating                 2/2    100% <-- winning
+       med_high_prod__mixed_static__big_static                   2/2    100% <-- winning
+       med_high_prod__mostly_rotating__big_rotating              2/2    100% <-- winning
+       med_high_prod__mostly_rotating__big_static                2/2    100% <-- winning
+       med_high_prod__mostly_static__big_rotating                2/2    100% <-- winning
+       med_high_prod__mostly_static__big_static                  0/2      0% <-- LOSING
+       med_low_prod__mixed_rotating__big_rotating                2/2    100% <-- winning
+       med_low_prod__mixed_rotating__big_static                  0/2      0% <-- LOSING
+       med_low_prod__mixed_static__big_rotating                  0/2      0% <-- LOSING
+       med_low_prod__mixed_static__big_static                    0/2      0% <-- LOSING
+       med_low_prod__mostly_rotating__big_rotating               2/2    100% <-- winning
+       med_low_prod__mostly_rotating__big_static                 2/2    100% <-- winning
+       med_low_prod__mostly_static__big_rotating                 2/2    100% <-- winning
+       med_low_prod__mostly_static__big_static                   2/2    100% <-- winning
+     [32 archetypes, 29 extreme (<=25% or >=75%)]

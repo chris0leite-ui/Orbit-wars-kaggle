@@ -1,0 +1,3750 @@
+{
+  "pool_size": 10000,
+  "bin_edges": {
+    "total_production": [
+      64,
+      76,
+      88
+    ],
+    "rotating_share": [
+      0.3333333333333333,
+      0.4,
+      0.4444444444444444
+    ],
+    "size_split": [
+      -0.07860851762192134
+    ]
+  },
+  "archetype_names": {
+    "total_production": [
+      "low_prod",
+      "med_low_prod",
+      "med_high_prod",
+      "high_prod"
+    ],
+    "rotating_share": [
+      "mostly_static",
+      "mixed_static",
+      "mixed_rotating",
+      "mostly_rotating"
+    ],
+    "size_split": [
+      "big_static",
+      "big_rotating"
+    ]
+  },
+  "panel": [
+    {
+      "seed": 2560,
+      "archetype": "low_prod__mostly_static__big_static",
+      "archetype_bins": [
+        0,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 2560,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 8,
+        "n_static": 20,
+        "rotating_share": 0.2857142857142857,
+        "total_production": 56,
+        "production_rotating_share": 0.21428571428571427,
+        "production_static_share": 0.7857142857142857,
+        "radius_mean": 1.5530287158439844,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.3465735902799727,
+        "radius_static_mean": 1.6356107660695893,
+        "size_split": -0.28903717578961663,
+        "angular_velocity": 0.04969783042480125,
+        "home_orbital_radius": 27.146738938815,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 11.896652998799592
+      }
+    },
+    {
+      "seed": 4676,
+      "archetype": "low_prod__mostly_static__big_static",
+      "archetype_bins": [
+        0,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 4676,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 4,
+        "n_static": 16,
+        "rotating_share": 0.2,
+        "total_production": 52,
+        "production_rotating_share": 0.15384615384615385,
+        "production_static_share": 0.8461538461538461,
+        "radius_mean": 1.8553332238032119,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.6931471805599454,
+        "radius_static_mean": 1.8958797346140281,
+        "size_split": -0.20273255405408275,
+        "angular_velocity": 0.04380696516486395,
+        "home_orbital_radius": 66.64659622330637,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 19.289716425789315
+      }
+    },
+    {
+      "seed": 6475,
+      "archetype": "low_prod__mostly_static__big_static",
+      "archetype_bins": [
+        0,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 6475,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 4,
+        "n_static": 16,
+        "rotating_share": 0.2,
+        "total_production": 24,
+        "production_rotating_share": 0.16666666666666666,
+        "production_static_share": 0.8333333333333334,
+        "radius_mean": 1.1386294361119895,
+        "radius_max": 1.6931471805599454,
+        "radius_rotating_mean": 1.0,
+        "radius_static_mean": 1.1732867951399863,
+        "size_split": -0.17328679513998635,
+        "angular_velocity": 0.03522298437656295,
+        "home_orbital_radius": 56.844434098337004,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.991047191549573
+      }
+    },
+    {
+      "seed": 8526,
+      "archetype": "low_prod__mostly_static__big_static",
+      "archetype_bins": [
+        0,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 8526,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 4,
+        "n_static": 16,
+        "rotating_share": 0.2,
+        "total_production": 40,
+        "production_rotating_share": 0.1,
+        "production_static_share": 0.9,
+        "radius_mean": 1.6356107660695898,
+        "radius_max": 2.09861228866811,
+        "radius_rotating_mean": 1.0,
+        "radius_static_mean": 1.7945134575869872,
+        "size_split": -0.7945134575869872,
+        "angular_velocity": 0.031129785203082135,
+        "home_orbital_radius": 26.234684055219933,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 20.054039104902387
+      }
+    },
+    {
+      "seed": 1,
+      "archetype": "low_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        0,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 1,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 4,
+        "n_static": 16,
+        "rotating_share": 0.2,
+        "total_production": 60,
+        "production_rotating_share": 0.2,
+        "production_static_share": 0.8,
+        "radius_mean": 1.9939626599152003,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 2.09861228866811,
+        "radius_static_mean": 1.967800252726973,
+        "size_split": 0.1308120359411371,
+        "angular_velocity": 0.028359106102810033,
+        "home_orbital_radius": 22.31897994741111,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 19.538684182281887
+      }
+    },
+    {
+      "seed": 1725,
+      "archetype": "low_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        0,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 1725,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 4,
+        "n_static": 16,
+        "rotating_share": 0.2,
+        "total_production": 56,
+        "production_rotating_share": 0.2857142857142857,
+        "production_static_share": 0.7142857142857143,
+        "radius_mean": 1.8317766166719345,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 2.386294361119891,
+        "radius_static_mean": 1.6931471805599454,
+        "size_split": 0.6931471805599454,
+        "angular_velocity": 0.03218851251476025,
+        "home_orbital_radius": 66.18611914532526,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 18.469267802998242
+      }
+    },
+    {
+      "seed": 1948,
+      "archetype": "low_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        0,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 1948,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 8,
+        "n_static": 20,
+        "rotating_share": 0.2857142857142857,
+        "total_production": 40,
+        "production_rotating_share": 0.4,
+        "production_static_share": 0.6,
+        "radius_mean": 1.255965638461151,
+        "radius_max": 2.09861228866811,
+        "radius_rotating_mean": 1.549306144334055,
+        "radius_static_mean": 1.1386294361119895,
+        "size_split": 0.4106767082220655,
+        "angular_velocity": 0.03541664894885845,
+        "home_orbital_radius": 64.58036800640753,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.233036652936018
+      }
+    },
+    {
+      "seed": 2419,
+      "archetype": "low_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        0,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 2419,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 4,
+        "n_static": 20,
+        "rotating_share": 0.16666666666666666,
+        "total_production": 60,
+        "production_rotating_share": 0.2,
+        "production_static_share": 0.8,
+        "radius_mean": 1.7499682783883779,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.09861228866811,
+        "radius_static_mean": 1.6802394763324315,
+        "size_split": 0.41837281233567847,
+        "angular_velocity": 0.04799801074793883,
+        "home_orbital_radius": 30.18633693234552,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 13.534151253813654
+      }
+    },
+    {
+      "seed": 1900,
+      "archetype": "low_prod__mixed_static__big_static",
+      "archetype_bins": [
+        0,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 1900,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 48,
+        "production_rotating_share": 0.25,
+        "production_static_share": 0.75,
+        "radius_mean": 1.6452001684846496,
+        "radius_max": 2.09861228866811,
+        "radius_rotating_mean": 1.3465735902799727,
+        "radius_static_mean": 1.7945134575869877,
+        "size_split": -0.44793986730701496,
+        "angular_velocity": 0.026105462083069457,
+        "home_orbital_radius": 62.76078023234778,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 13.618789100678022
+      }
+    },
+    {
+      "seed": 2957,
+      "archetype": "low_prod__mixed_static__big_static",
+      "archetype_bins": [
+        0,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 2957,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 56,
+        "production_rotating_share": 0.2857142857142857,
+        "production_static_share": 0.7142857142857143,
+        "radius_mean": 1.7127776865026763,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.549306144334055,
+        "radius_static_mean": 1.7945134575869868,
+        "size_split": -0.24520731325293177,
+        "angular_velocity": 0.02572076438826882,
+        "home_orbital_radius": 33.34298850949818,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 17.101367512720817
+      }
+    },
+    {
+      "seed": 4393,
+      "archetype": "low_prod__mixed_static__big_static",
+      "archetype_bins": [
+        0,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 4393,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 48,
+        "production_rotating_share": 0.25,
+        "production_static_share": 0.75,
+        "radius_mean": 1.5776226504666218,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.3465735902799727,
+        "radius_static_mean": 1.6931471805599458,
+        "size_split": -0.34657359027997314,
+        "angular_velocity": 0.043963296475781156,
+        "home_orbital_radius": 24.914386174032867,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 11.387748181433667
+      }
+    },
+    {
+      "seed": 9306,
+      "archetype": "low_prod__mixed_static__big_static",
+      "archetype_bins": [
+        0,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 9306,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 60,
+        "production_rotating_share": 0.3333333333333333,
+        "production_static_share": 0.6666666666666666,
+        "radius_mean": 1.8283022165960008,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.6931471805599454,
+        "radius_static_mean": 1.8958797346140286,
+        "size_split": -0.2027325540540832,
+        "angular_velocity": 0.046331139832110506,
+        "home_orbital_radius": 61.95418003401341,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.265371550082909
+      }
+    },
+    {
+      "seed": 32,
+      "archetype": "low_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        0,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 32,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 48,
+        "production_rotating_share": 0.5,
+        "production_static_share": 0.5,
+        "radius_mean": 1.5776226504666218,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 2.039720770839918,
+        "radius_static_mean": 1.3465735902799731,
+        "size_split": 0.693147180559945,
+        "angular_velocity": 0.026935544596332604,
+        "home_orbital_radius": 22.924662510062184,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 15.383240463923313
+      }
+    },
+    {
+      "seed": 2078,
+      "archetype": "low_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        0,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 2078,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 60,
+        "production_rotating_share": 0.4666666666666667,
+        "production_static_share": 0.5333333333333333,
+        "radius_mean": 1.7607246985779728,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 2.242453324894001,
+        "radius_static_mean": 1.5198603854199595,
+        "size_split": 0.7225929394740414,
+        "angular_velocity": 0.04923272394404879,
+        "home_orbital_radius": 61.09423329797256,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.003578717973364
+      }
+    },
+    {
+      "seed": 6858,
+      "archetype": "low_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        0,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 6858,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 40,
+        "production_rotating_share": 0.4,
+        "production_static_share": 0.6,
+        "radius_mean": 1.3662040962227036,
+        "radius_max": 2.09861228866811,
+        "radius_rotating_mean": 1.549306144334055,
+        "radius_static_mean": 1.2746530721670275,
+        "size_split": 0.2746530721670275,
+        "angular_velocity": 0.04909662843255225,
+        "home_orbital_radius": 25.90710570801484,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 11.040731410369817
+      }
+    },
+    {
+      "seed": 7079,
+      "archetype": "low_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        0,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 7079,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 44,
+        "production_rotating_share": 0.45454545454545453,
+        "production_static_share": 0.5454545454545454,
+        "radius_mean": 1.5296756383913248,
+        "radius_max": 2.09861228866811,
+        "radius_rotating_mean": 1.8958797346140277,
+        "radius_static_mean": 1.3465735902799727,
+        "size_split": 0.549306144334055,
+        "angular_velocity": 0.047291045565444986,
+        "home_orbital_radius": 48.97286463374593,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 17.438805136984232
+      }
+    },
+    {
+      "seed": 78,
+      "archetype": "low_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        0,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 78,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 8,
+        "n_static": 12,
+        "rotating_share": 0.4,
+        "total_production": 56,
+        "production_rotating_share": 0.35714285714285715,
+        "production_static_share": 0.6428571428571429,
+        "radius_mean": 1.8188689124444202,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.6931471805599454,
+        "radius_static_mean": 1.9026834003674031,
+        "size_split": -0.20953621980745774,
+        "angular_velocity": 0.04536195363619526,
+        "home_orbital_radius": 64.18757598205502,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 20.20577248041257
+      }
+    },
+    {
+      "seed": 1750,
+      "archetype": "low_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        0,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 1750,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 8,
+        "n_static": 12,
+        "rotating_share": 0.4,
+        "total_production": 60,
+        "production_rotating_share": 0.3333333333333333,
+        "production_static_share": 0.6666666666666666,
+        "radius_mean": 2.075055681536834,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.8958797346140277,
+        "radius_static_mean": 2.194506312818704,
+        "size_split": -0.2986265782046762,
+        "angular_velocity": 0.03423982081987803,
+        "home_orbital_radius": 22.3866339492955,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 19.177202862361668
+      }
+    },
+    {
+      "seed": 7166,
+      "archetype": "low_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        0,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 7166,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 60,
+        "production_rotating_share": 0.26666666666666666,
+        "production_static_share": 0.7333333333333333,
+        "radius_mean": 1.584906366031729,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.2310490601866484,
+        "radius_static_mean": 1.850299345415539,
+        "size_split": -0.6192502852288906,
+        "angular_velocity": 0.049282048149694904,
+        "home_orbital_radius": 62.88392751550383,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 12.827193770808664
+      }
+    },
+    {
+      "seed": 8866,
+      "archetype": "low_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        0,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 8866,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 52,
+        "production_rotating_share": 0.3076923076923077,
+        "production_static_share": 0.6923076923076923,
+        "radius_mean": 1.4951051289713901,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.2310490601866484,
+        "radius_static_mean": 1.6931471805599458,
+        "size_split": -0.46209812037329745,
+        "angular_velocity": 0.025841246225145345,
+        "home_orbital_radius": 30.27758664994125,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 11.479057267758344
+      }
+    },
+    {
+      "seed": 1467,
+      "archetype": "low_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        0,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 1467,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 32,
+        "production_rotating_share": 0.5,
+        "production_static_share": 0.5,
+        "radius_mean": 1.099021025794278,
+        "radius_max": 1.6931471805599454,
+        "radius_rotating_mean": 1.2310490601866484,
+        "radius_static_mean": 1.0,
+        "size_split": 0.2310490601866484,
+        "angular_velocity": 0.04337603008899717,
+        "home_orbital_radius": 23.238775889648828,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 12.8078227895611
+      }
+    },
+    {
+      "seed": 2412,
+      "archetype": "low_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        0,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 2412,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 8,
+        "n_static": 12,
+        "rotating_share": 0.4,
+        "total_production": 48,
+        "production_rotating_share": 0.4166666666666667,
+        "production_static_share": 0.5833333333333334,
+        "radius_mean": 1.7742402021815789,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.8958797346140277,
+        "radius_static_mean": 1.6931471805599454,
+        "size_split": 0.2027325540540823,
+        "angular_velocity": 0.03352517065993814,
+        "home_orbital_radius": 22.78567002060459,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 20.10779448167007
+      }
+    },
+    {
+      "seed": 3154,
+      "archetype": "low_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        0,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 3154,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 8,
+        "n_static": 12,
+        "rotating_share": 0.4,
+        "total_production": 56,
+        "production_rotating_share": 0.5,
+        "production_static_share": 0.5,
+        "radius_mean": 1.9574983485564101,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.1512925464970225,
+        "radius_static_mean": 1.8283022165960006,
+        "size_split": 0.32299032990102194,
+        "angular_velocity": 0.048307132202230416,
+        "home_orbital_radius": 58.79602989156113,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 16.210541866800234
+      }
+    },
+    {
+      "seed": 8717,
+      "archetype": "low_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        0,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 8717,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 56,
+        "production_rotating_share": 0.42857142857142855,
+        "production_static_share": 0.5714285714285714,
+        "radius_mean": 1.4951051289713895,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.462098120373297,
+        "radius_static_mean": 1.519860385419959,
+        "size_split": -0.05776226504666204,
+        "angular_velocity": 0.025911784616577244,
+        "home_orbital_radius": 55.91395595216657,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.603178358491899
+      }
+    },
+    {
+      "seed": 417,
+      "archetype": "low_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        0,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 417,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 16,
+        "n_static": 20,
+        "rotating_share": 0.4444444444444444,
+        "total_production": 60,
+        "production_rotating_share": 0.3333333333333333,
+        "production_static_share": 0.6666666666666666,
+        "radius_mean": 1.3328591415059994,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.1732867951399863,
+        "radius_static_mean": 1.4605170185988094,
+        "size_split": -0.2872302234588231,
+        "angular_velocity": 0.04827601529611335,
+        "home_orbital_radius": 28.318451373650586,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 10.325935408872493
+      }
+    },
+    {
+      "seed": 451,
+      "archetype": "low_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        0,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 451,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 12,
+        "n_static": 12,
+        "rotating_share": 0.5,
+        "total_production": 52,
+        "production_rotating_share": 0.3076923076923077,
+        "production_static_share": 0.6923076923076923,
+        "radius_mean": 1.6452001684846493,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.2310490601866484,
+        "radius_static_mean": 2.0593512767826496,
+        "size_split": -0.8283022165960012,
+        "angular_velocity": 0.026010112388560627,
+        "home_orbital_radius": 28.748961534211762,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 12.318201008607566
+      }
+    },
+    {
+      "seed": 2663,
+      "archetype": "low_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        0,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 2663,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 12,
+        "n_static": 12,
+        "rotating_share": 0.5,
+        "total_production": 56,
+        "production_rotating_share": 0.5,
+        "production_static_share": 0.5,
+        "radius_mean": 1.7607246985779732,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.6931471805599454,
+        "radius_static_mean": 1.8283022165960006,
+        "size_split": -0.13515503603605517,
+        "angular_velocity": 0.0398115948465741,
+        "home_orbital_radius": 32.196878531206686,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 16.98917147489757
+      }
+    },
+    {
+      "seed": 8782,
+      "archetype": "low_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        0,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 8782,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 16,
+        "n_static": 20,
+        "rotating_share": 0.4444444444444444,
+        "total_production": 60,
+        "production_rotating_share": 0.26666666666666666,
+        "production_static_share": 0.7333333333333333,
+        "radius_mean": 1.3008944667891345,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.0,
+        "radius_static_mean": 1.541610040220442,
+        "size_split": -0.541610040220442,
+        "angular_velocity": 0.028549744077569755,
+        "home_orbital_radius": 65.78960282023381,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.350773346719096
+      }
+    },
+    {
+      "seed": 647,
+      "archetype": "low_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        0,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 647,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 16,
+        "n_static": 16,
+        "rotating_share": 0.5,
+        "total_production": 60,
+        "production_rotating_share": 0.5333333333333333,
+        "production_static_share": 0.4666666666666667,
+        "radius_mean": 1.5345832648770072,
+        "radius_max": 2.09861228866811,
+        "radius_rotating_mean": 1.6212266624470004,
+        "radius_static_mean": 1.447939867307014,
+        "size_split": 0.17328679513998635,
+        "angular_velocity": 0.04762106754976916,
+        "home_orbital_radius": 58.103864572580996,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.934135140902406
+      }
+    },
+    {
+      "seed": 1843,
+      "archetype": "low_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        0,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 1843,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 12,
+        "n_static": 12,
+        "rotating_share": 0.5,
+        "total_production": 48,
+        "production_rotating_share": 0.5833333333333334,
+        "production_static_share": 0.4166666666666667,
+        "radius_mean": 1.4992887122589984,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.5364793041447002,
+        "radius_static_mean": 1.462098120373297,
+        "size_split": 0.07438118377140324,
+        "angular_velocity": 0.03488046804009133,
+        "home_orbital_radius": 57.573791328104456,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 16.738676483493496
+      }
+    },
+    {
+      "seed": 2177,
+      "archetype": "low_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        0,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 2177,
+        "n_planets": 40,
+        "n_groups": 10,
+        "n_rotating": 24,
+        "n_static": 16,
+        "rotating_share": 0.6,
+        "total_production": 56,
+        "production_rotating_share": 0.6428571428571429,
+        "production_static_share": 0.35714285714285715,
+        "radius_mean": 1.2484906649788003,
+        "radius_max": 2.09861228866811,
+        "radius_rotating_mean": 1.298626578204676,
+        "radius_static_mean": 1.1732867951399863,
+        "size_split": 0.12533978306468962,
+        "angular_velocity": 0.04317793882339738,
+        "home_orbital_radius": 22.623925741498258,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 10.052043739002224
+      }
+    },
+    {
+      "seed": 7314,
+      "archetype": "low_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        0,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 7314,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 12,
+        "n_static": 12,
+        "rotating_share": 0.5,
+        "total_production": 52,
+        "production_rotating_share": 0.6923076923076923,
+        "production_static_share": 0.3076923076923077,
+        "radius_mean": 1.6452001684846491,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 2.0593512767826496,
+        "radius_static_mean": 1.2310490601866484,
+        "size_split": 0.8283022165960012,
+        "angular_velocity": 0.025820458287083764,
+        "home_orbital_radius": 23.6477006297237,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 15.005733863295674
+      }
+    },
+    {
+      "seed": 1990,
+      "archetype": "med_low_prod__mostly_static__big_static",
+      "archetype_bins": [
+        1,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 1990,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 4,
+        "n_static": 16,
+        "rotating_share": 0.2,
+        "total_production": 64,
+        "production_rotating_share": 0.125,
+        "production_static_share": 0.875,
+        "radius_mean": 2.1196843917996757,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.6931471805599454,
+        "radius_static_mean": 2.226318694609608,
+        "size_split": -0.5331715140496627,
+        "angular_velocity": 0.025321003112931024,
+        "home_orbital_radius": 32.24726461160972,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 17.42993340609204
+      }
+    },
+    {
+      "seed": 2393,
+      "archetype": "med_low_prod__mostly_static__big_static",
+      "archetype_bins": [
+        1,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 2393,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 8,
+        "n_static": 20,
+        "rotating_share": 0.2857142857142857,
+        "total_production": 72,
+        "production_rotating_share": 0.2777777777777778,
+        "production_static_share": 0.7222222222222222,
+        "radius_mean": 1.8669179411777304,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.6931471805599454,
+        "radius_static_mean": 1.9364262454248444,
+        "size_split": -0.24327906486489903,
+        "angular_velocity": 0.025998717395400953,
+        "home_orbital_radius": 49.61285903119073,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.280973401701061
+      }
+    },
+    {
+      "seed": 6294,
+      "archetype": "med_low_prod__mostly_static__big_static",
+      "archetype_bins": [
+        1,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 6294,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 4,
+        "n_static": 16,
+        "rotating_share": 0.2,
+        "total_production": 64,
+        "production_rotating_share": 0.0625,
+        "production_static_share": 0.9375,
+        "radius_mean": 2.015034763046766,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.0,
+        "radius_static_mean": 2.268793453808457,
+        "size_split": -1.268793453808457,
+        "angular_velocity": 0.049301465583757524,
+        "home_orbital_radius": 48.218108184133705,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 19.652561673020735
+      }
+    },
+    {
+      "seed": 9427,
+      "archetype": "med_low_prod__mostly_static__big_static",
+      "archetype_bins": [
+        1,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 9427,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 8,
+        "n_static": 20,
+        "rotating_share": 0.2857142857142857,
+        "total_production": 72,
+        "production_rotating_share": 0.2222222222222222,
+        "production_static_share": 0.7777777777777778,
+        "radius_mean": 1.8408720044928801,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.549306144334055,
+        "radius_static_mean": 1.9574983485564101,
+        "size_split": -0.40819220422235514,
+        "angular_velocity": 0.04993741693036344,
+        "home_orbital_radius": 49.02465550122762,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 13.191790110774546
+      }
+    },
+    {
+      "seed": 1117,
+      "archetype": "med_low_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        1,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 1117,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 4,
+        "n_static": 16,
+        "rotating_share": 0.2,
+        "total_production": 68,
+        "production_rotating_share": 0.23529411764705882,
+        "production_static_share": 0.7647058823529411,
+        "radius_mean": 2.213685117648822,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 2.386294361119891,
+        "radius_static_mean": 2.1705328067810554,
+        "size_split": 0.21576155433883537,
+        "angular_velocity": 0.036476997758560406,
+        "home_orbital_radius": 25.204983656618293,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 20.6279363671204
+      }
+    },
+    {
+      "seed": 1282,
+      "archetype": "med_low_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        1,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 1282,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 4,
+        "n_static": 20,
+        "rotating_share": 0.16666666666666666,
+        "total_production": 68,
+        "production_rotating_share": 0.29411764705882354,
+        "production_static_share": 0.7058823529411765,
+        "radius_mean": 1.9810173385750263,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.6094379124341005,
+        "radius_static_mean": 1.8553332238032119,
+        "size_split": 0.7541046886308886,
+        "angular_velocity": 0.02635575591560661,
+        "home_orbital_radius": 59.922753649461534,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 16.691668297758124
+      }
+    },
+    {
+      "seed": 1571,
+      "archetype": "med_low_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        1,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 1571,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 4,
+        "n_static": 20,
+        "rotating_share": 0.16666666666666666,
+        "total_production": 68,
+        "production_rotating_share": 0.23529411764705882,
+        "production_static_share": 0.7647058823529411,
+        "radius_mean": 1.9241962407465945,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 2.386294361119891,
+        "radius_static_mean": 1.8317766166719351,
+        "size_split": 0.5545177444479557,
+        "angular_velocity": 0.029410417831408946,
+        "home_orbital_radius": 26.356563949780107,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 14.565339327162128
+      }
+    },
+    {
+      "seed": 3462,
+      "archetype": "med_low_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        1,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 3462,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 8,
+        "n_static": 24,
+        "rotating_share": 0.25,
+        "total_production": 68,
+        "production_rotating_share": 0.29411764705882354,
+        "production_static_share": 0.7058823529411765,
+        "radius_mean": 1.5117930702777627,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.6931471805599454,
+        "radius_static_mean": 1.4513417001837017,
+        "size_split": 0.24180548037624372,
+        "angular_velocity": 0.04322408814507962,
+        "home_orbital_radius": 49.29378867172012,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.416720396961
+      }
+    },
+    {
+      "seed": 828,
+      "archetype": "med_low_prod__mixed_static__big_static",
+      "archetype_bins": [
+        1,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 828,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 12,
+        "n_static": 20,
+        "rotating_share": 0.375,
+        "total_production": 72,
+        "production_rotating_share": 0.3333333333333333,
+        "production_static_share": 0.6666666666666666,
+        "radius_mean": 1.5477533293342356,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.462098120373297,
+        "radius_static_mean": 1.5991464547107983,
+        "size_split": -0.1370483343375013,
+        "angular_velocity": 0.029970713732031244,
+        "home_orbital_radius": 54.00336815256611,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.348384916797414
+      }
+    },
+    {
+      "seed": 2867,
+      "archetype": "med_low_prod__mixed_static__big_static",
+      "archetype_bins": [
+        1,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 2867,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 64,
+        "production_rotating_share": 0.25,
+        "production_static_share": 0.75,
+        "radius_mean": 1.7979152904636742,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.549306144334055,
+        "radius_static_mean": 1.922219863528484,
+        "size_split": -0.37291371919442895,
+        "angular_velocity": 0.025990605861750567,
+        "home_orbital_radius": 49.16580482540327,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 16.320238812018193
+      }
+    },
+    {
+      "seed": 9017,
+      "archetype": "med_low_prod__mixed_static__big_static",
+      "archetype_bins": [
+        1,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 9017,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 12,
+        "n_static": 20,
+        "rotating_share": 0.375,
+        "total_production": 72,
+        "production_rotating_share": 0.3333333333333333,
+        "production_static_share": 0.6666666666666666,
+        "radius_mean": 1.5477533293342352,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.462098120373297,
+        "radius_static_mean": 1.5991464547107983,
+        "size_split": -0.1370483343375013,
+        "angular_velocity": 0.04819832610275698,
+        "home_orbital_radius": 24.98824741394493,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 10.630524320402584
+      }
+    },
+    {
+      "seed": 9547,
+      "archetype": "med_low_prod__mixed_static__big_static",
+      "archetype_bins": [
+        1,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 9547,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 68,
+        "production_rotating_share": 0.11764705882352941,
+        "production_static_share": 0.8823529411764706,
+        "radius_mean": 1.7675283643313489,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.0,
+        "radius_static_mean": 2.1512925464970225,
+        "size_split": -1.1512925464970225,
+        "angular_velocity": 0.049534939207072096,
+        "home_orbital_radius": 30.2503833597498,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 16.95166807255737
+      }
+    },
+    {
+      "seed": 119,
+      "archetype": "med_low_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        1,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 119,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 72,
+        "production_rotating_share": 0.3333333333333333,
+        "production_static_share": 0.6666666666666666,
+        "radius_mean": 1.8047189562170505,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.8047189562170503,
+        "radius_static_mean": 1.80471895621705,
+        "size_split": 2.220446049250313e-16,
+        "angular_velocity": 0.04815782146267535,
+        "home_orbital_radius": 27.39285053027798,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 17.081132560114245
+      }
+    },
+    {
+      "seed": 3959,
+      "archetype": "med_low_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        1,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 3959,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 12,
+        "n_static": 24,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 72,
+        "production_rotating_share": 0.3888888888888889,
+        "production_static_share": 0.6111111111111112,
+        "radius_mean": 1.4999788522589186,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.5364793041447002,
+        "radius_static_mean": 1.4817286263160279,
+        "size_split": 0.05475067782867238,
+        "angular_velocity": 0.0435394252003848,
+        "home_orbital_radius": 28.010867638417487,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 10.65941820105822
+      }
+    },
+    {
+      "seed": 8763,
+      "archetype": "med_low_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        1,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 8763,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 12,
+        "n_static": 20,
+        "rotating_share": 0.375,
+        "total_production": 64,
+        "production_rotating_share": 0.375,
+        "production_static_share": 0.625,
+        "radius_mean": 1.511793070277763,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.5972531564093522,
+        "radius_static_mean": 1.4605170185988094,
+        "size_split": 0.13673613781054272,
+        "angular_velocity": 0.02523571311347594,
+        "home_orbital_radius": 59.47023922650579,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.28829632927862
+      }
+    },
+    {
+      "seed": 9102,
+      "archetype": "med_low_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        1,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 9102,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 72,
+        "production_rotating_share": 0.4444444444444444,
+        "production_static_share": 0.5555555555555556,
+        "radius_mean": 1.981017338575026,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.3540251005511057,
+        "radius_static_mean": 1.7945134575869868,
+        "size_split": 0.5595116429641189,
+        "angular_velocity": 0.04914337885698966,
+        "home_orbital_radius": 62.79838835220575,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 13.173306738517558
+      }
+    },
+    {
+      "seed": 324,
+      "archetype": "med_low_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        1,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 324,
+        "n_planets": 40,
+        "n_groups": 10,
+        "n_rotating": 16,
+        "n_static": 24,
+        "rotating_share": 0.4,
+        "total_production": 72,
+        "production_rotating_share": 0.3333333333333333,
+        "production_static_share": 0.6666666666666666,
+        "radius_mean": 1.4276666119016055,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.2746530721670275,
+        "radius_static_mean": 1.5296756383913246,
+        "size_split": -0.2550225662242971,
+        "angular_velocity": 0.039752259509321805,
+        "home_orbital_radius": 60.394906578711,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.566687584350806
+      }
+    },
+    {
+      "seed": 2509,
+      "archetype": "med_low_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        1,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 2509,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 8,
+        "n_static": 12,
+        "rotating_share": 0.4,
+        "total_production": 64,
+        "production_rotating_share": 0.25,
+        "production_static_share": 0.75,
+        "radius_mean": 2.038591370178042,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.549306144334055,
+        "radius_static_mean": 2.3647815207407,
+        "size_split": -0.8154753764066451,
+        "angular_velocity": 0.03734334688860385,
+        "home_orbital_radius": 22.786726591712398,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 19.004828790152448
+      }
+    },
+    {
+      "seed": 7337,
+      "archetype": "med_low_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        1,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 7337,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 64,
+        "production_rotating_share": 0.25,
+        "production_static_share": 0.75,
+        "radius_mean": 1.642829952904324,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.2310490601866484,
+        "radius_static_mean": 1.9516656224425801,
+        "size_split": -0.7206165622559317,
+        "angular_velocity": 0.04987015243118656,
+        "home_orbital_radius": 24.84663197120221,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 11.699400797685168
+      }
+    },
+    {
+      "seed": 8603,
+      "archetype": "med_low_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        1,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 8603,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 8,
+        "n_static": 12,
+        "rotating_share": 0.4,
+        "total_production": 72,
+        "production_rotating_share": 0.3888888888888889,
+        "production_static_share": 0.6111111111111112,
+        "radius_mean": 2.221849516552874,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.1512925464970225,
+        "radius_static_mean": 2.2688874965901067,
+        "size_split": -0.11759495009308418,
+        "angular_velocity": 0.028548144853618188,
+        "home_orbital_radius": 60.77943648177237,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 17.067359375225756
+      }
+    },
+    {
+      "seed": 455,
+      "archetype": "med_low_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        1,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 455,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 72,
+        "production_rotating_share": 0.6111111111111112,
+        "production_static_share": 0.3888888888888889,
+        "radius_mean": 1.8089943543051359,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 2.2904003369692973,
+        "radius_static_mean": 1.447939867307014,
+        "size_split": 0.8424604696622833,
+        "angular_velocity": 0.04765530859298425,
+        "home_orbital_radius": 62.97134770525159,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 12.304700665909579
+      }
+    },
+    {
+      "seed": 2996,
+      "archetype": "med_low_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        1,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 2996,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 8,
+        "n_static": 12,
+        "rotating_share": 0.4,
+        "total_production": 68,
+        "production_rotating_share": 0.47058823529411764,
+        "production_static_share": 0.5294117647058824,
+        "radius_mean": 2.0832200804408845,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.354025100551105,
+        "radius_static_mean": 1.9026834003674031,
+        "size_split": 0.4513417001837017,
+        "angular_velocity": 0.048684857822074525,
+        "home_orbital_radius": 49.207632909200996,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 18.270674689874987
+      }
+    },
+    {
+      "seed": 3520,
+      "archetype": "med_low_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        1,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 3520,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 72,
+        "production_rotating_share": 0.4444444444444444,
+        "production_static_share": 0.5555555555555556,
+        "radius_mean": 1.7418509786986012,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.8283022165960006,
+        "radius_static_mean": 1.6770125502755528,
+        "size_split": 0.1512896663204477,
+        "angular_velocity": 0.028718044733136494,
+        "home_orbital_radius": 31.66745837918611,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 11.49098404036958
+      }
+    },
+    {
+      "seed": 4633,
+      "archetype": "med_low_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        1,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 4633,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 8,
+        "n_static": 12,
+        "rotating_share": 0.4,
+        "total_production": 72,
+        "production_rotating_share": 0.4444444444444444,
+        "production_static_share": 0.5555555555555556,
+        "radius_mean": 2.140756494931241,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.354025100551105,
+        "radius_static_mean": 1.998577424517997,
+        "size_split": 0.3554476760331078,
+        "angular_velocity": 0.026635407428682853,
+        "home_orbital_radius": 24.60506755220928,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 18.59098251128208
+      }
+    },
+    {
+      "seed": 906,
+      "archetype": "med_low_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        1,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 906,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 20,
+        "n_static": 16,
+        "rotating_share": 0.5555555555555556,
+        "total_production": 68,
+        "production_rotating_share": 0.4117647058823529,
+        "production_static_share": 0.5882352941176471,
+        "radius_mean": 1.4751851243351175,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.219722457733622,
+        "radius_static_mean": 1.7945134575869868,
+        "size_split": -0.5747909998533647,
+        "angular_velocity": 0.02502964032231074,
+        "home_orbital_radius": 61.64273708394193,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.63552678791525
+      }
+    },
+    {
+      "seed": 2476,
+      "archetype": "med_low_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        1,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 2476,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 12,
+        "n_static": 12,
+        "rotating_share": 0.5,
+        "total_production": 64,
+        "production_rotating_share": 0.5,
+        "production_static_share": 0.5,
+        "radius_mean": 1.8458623025389713,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.7675283643313486,
+        "radius_static_mean": 1.9241962407465938,
+        "size_split": -0.15666787641524516,
+        "angular_velocity": 0.04470223914290664,
+        "home_orbital_radius": 22.41710754830909,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 16.37705804103486
+      }
+    },
+    {
+      "seed": 5047,
+      "archetype": "med_low_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        1,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 5047,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 16,
+        "n_static": 20,
+        "rotating_share": 0.4444444444444444,
+        "total_production": 72,
+        "production_rotating_share": 0.4444444444444444,
+        "production_static_share": 0.5555555555555556,
+        "radius_mean": 1.531943526975783,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.4023594781085251,
+        "radius_static_mean": 1.6356107660695898,
+        "size_split": -0.23325128796106465,
+        "angular_velocity": 0.04965682602691503,
+        "home_orbital_radius": 38.825926634188754,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 10.829229313373244
+      }
+    },
+    {
+      "seed": 7947,
+      "archetype": "med_low_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        1,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 7947,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 20,
+        "n_static": 12,
+        "rotating_share": 0.625,
+        "total_production": 68,
+        "production_rotating_share": 0.47058823529411764,
+        "production_static_share": 0.5294117647058824,
+        "radius_mean": 1.6359495419040482,
+        "radius_max": 2.09861228866811,
+        "radius_rotating_mean": 1.3583518938456112,
+        "radius_static_mean": 2.0986122886681104,
+        "size_split": -0.7402603948224993,
+        "angular_velocity": 0.026741898734485348,
+        "home_orbital_radius": 27.88813164314887,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 12.38514071461573
+      }
+    },
+    {
+      "seed": 1049,
+      "archetype": "med_low_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        1,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 1049,
+        "n_planets": 40,
+        "n_groups": 10,
+        "n_rotating": 20,
+        "n_static": 20,
+        "rotating_share": 0.5,
+        "total_production": 68,
+        "production_rotating_share": 0.47058823529411764,
+        "production_static_share": 0.5294117647058824,
+        "radius_mean": 1.3871201010907896,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.3583518938456112,
+        "radius_static_mean": 1.4158883083359677,
+        "size_split": -0.05753641449035651,
+        "angular_velocity": 0.04995936093475529,
+        "home_orbital_radius": 38.869395364241576,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 10.925886569454459
+      }
+    },
+    {
+      "seed": 2572,
+      "archetype": "med_low_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        1,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 2572,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 16,
+        "n_static": 20,
+        "rotating_share": 0.4444444444444444,
+        "total_production": 72,
+        "production_rotating_share": 0.5,
+        "production_static_share": 0.5,
+        "radius_mean": 1.5202368030138027,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.6212266624470002,
+        "radius_static_mean": 1.4394449154672442,
+        "size_split": 0.18178174697975602,
+        "angular_velocity": 0.02620049163854874,
+        "home_orbital_radius": 57.34401586311083,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.916969714706621
+      }
+    },
+    {
+      "seed": 6202,
+      "archetype": "med_low_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        1,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 6202,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 12,
+        "n_static": 12,
+        "rotating_share": 0.5,
+        "total_production": 72,
+        "production_rotating_share": 0.5,
+        "production_static_share": 0.5,
+        "radius_mean": 1.9985774245179977,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.9985774245179975,
+        "radius_static_mean": 1.9985774245179975,
+        "size_split": 0.0,
+        "angular_velocity": 0.04778398956634723,
+        "home_orbital_radius": 54.21767936470563,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 15.194026968076557
+      }
+    },
+    {
+      "seed": 9453,
+      "archetype": "med_low_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        1,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 9453,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 12,
+        "n_static": 12,
+        "rotating_share": 0.5,
+        "total_production": 64,
+        "production_rotating_share": 0.75,
+        "production_static_share": 0.25,
+        "radius_mean": 1.7675283643313489,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.3040076684760487,
+        "radius_static_mean": 1.2310490601866484,
+        "size_split": 1.0729586082894003,
+        "angular_velocity": 0.03816585809819804,
+        "home_orbital_radius": 23.862043919731203,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 15.677245882839502
+      }
+    },
+    {
+      "seed": 787,
+      "archetype": "med_high_prod__mostly_static__big_static",
+      "archetype_bins": [
+        2,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 787,
+        "n_planets": 40,
+        "n_groups": 10,
+        "n_rotating": 12,
+        "n_static": 28,
+        "rotating_share": 0.3,
+        "total_production": 84,
+        "production_rotating_share": 0.14285714285714285,
+        "production_static_share": 0.8571428571428571,
+        "radius_mean": 1.5257495372027787,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.0,
+        "radius_static_mean": 1.751070767432541,
+        "size_split": -0.751070767432541,
+        "angular_velocity": 0.03265917850222195,
+        "home_orbital_radius": 50.56226591699922,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.437236134582257
+      }
+    },
+    {
+      "seed": 1336,
+      "archetype": "med_high_prod__mostly_static__big_static",
+      "archetype_bins": [
+        2,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 1336,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 4,
+        "n_static": 16,
+        "rotating_share": 0.2,
+        "total_production": 76,
+        "production_rotating_share": 0.05263157894736842,
+        "production_static_share": 0.9473684210526315,
+        "radius_mean": 2.198292909421597,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.0,
+        "radius_static_mean": 2.497866136776996,
+        "size_split": -1.497866136776996,
+        "angular_velocity": 0.03774969816907736,
+        "home_orbital_radius": 57.33345072784015,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 19.800005229815977
+      }
+    },
+    {
+      "seed": 3473,
+      "archetype": "med_high_prod__mostly_static__big_static",
+      "archetype_bins": [
+        2,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 3473,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 8,
+        "n_static": 20,
+        "rotating_share": 0.2857142857142857,
+        "total_production": 84,
+        "production_rotating_share": 0.09523809523809523,
+        "production_static_share": 0.9047619047619048,
+        "radius_mean": 1.9138470936023064,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.0,
+        "radius_static_mean": 2.2793859310432287,
+        "size_split": -1.2793859310432287,
+        "angular_velocity": 0.04639120765336355,
+        "home_orbital_radius": 24.343448921758235,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 15.207864147370499
+      }
+    },
+    {
+      "seed": 9013,
+      "archetype": "med_high_prod__mostly_static__big_static",
+      "archetype_bins": [
+        2,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 9013,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 8,
+        "n_static": 20,
+        "rotating_share": 0.2857142857142857,
+        "total_production": 84,
+        "production_rotating_share": 0.14285714285714285,
+        "production_static_share": 0.8571428571428571,
+        "radius_mean": 1.9717706804749027,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.3465735902799727,
+        "radius_static_mean": 2.221849516552874,
+        "size_split": -0.8752759262729013,
+        "angular_velocity": 0.049172090149028645,
+        "home_orbital_radius": 61.812075346839016,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 13.668885202658712
+      }
+    },
+    {
+      "seed": 422,
+      "archetype": "med_high_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        2,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 422,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 4,
+        "n_static": 16,
+        "rotating_share": 0.2,
+        "total_production": 80,
+        "production_rotating_share": 0.2,
+        "production_static_share": 0.8,
+        "radius_mean": 2.242921619684439,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.386294361119891,
+        "radius_static_mean": 2.2070784343255747,
+        "size_split": 0.17921592679431608,
+        "angular_velocity": 0.03464888842630009,
+        "home_orbital_radius": 22.941014334076552,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 19.31967133876944
+      }
+    },
+    {
+      "seed": 4814,
+      "archetype": "med_high_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        2,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 4814,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 8,
+        "n_static": 24,
+        "rotating_share": 0.25,
+        "total_production": 76,
+        "production_rotating_share": 0.2631578947368421,
+        "production_static_share": 0.7368421052631579,
+        "radius_mean": 1.7438303190734663,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.6931471805599454,
+        "radius_static_mean": 1.760724698577973,
+        "size_split": -0.06757751801802758,
+        "angular_velocity": 0.049889884003051416,
+        "home_orbital_radius": 59.61506293291045,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.89415178095761
+      }
+    },
+    {
+      "seed": 4963,
+      "archetype": "med_high_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        2,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 4963,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 4,
+        "n_static": 16,
+        "rotating_share": 0.2,
+        "total_production": 80,
+        "production_rotating_share": 0.2,
+        "production_static_share": 0.8,
+        "radius_mean": 2.373386656892376,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.386294361119891,
+        "radius_static_mean": 2.3701597308354976,
+        "size_split": 0.016134630284393214,
+        "angular_velocity": 0.031202521962231253,
+        "home_orbital_radius": 64.23189105923502,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 17.92163817591104
+      }
+    },
+    {
+      "seed": 7186,
+      "archetype": "med_high_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        2,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 7186,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 8,
+        "n_static": 20,
+        "rotating_share": 0.2857142857142857,
+        "total_production": 80,
+        "production_rotating_share": 0.35,
+        "production_static_share": 0.65,
+        "radius_mean": 1.8559235067297126,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.1512925464970225,
+        "radius_static_mean": 1.7377758908227876,
+        "size_split": 0.4135166556742349,
+        "angular_velocity": 0.027295896330083072,
+        "home_orbital_radius": 29.340025218299434,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 12.235829829278916
+      }
+    },
+    {
+      "seed": 741,
+      "archetype": "med_high_prod__mixed_static__big_static",
+      "archetype_bins": [
+        2,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 741,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 12,
+        "n_static": 24,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 84,
+        "production_rotating_share": 0.23809523809523808,
+        "production_static_share": 0.7619047619047619,
+        "radius_mean": 1.6017889335782687,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.3662040962227033,
+        "radius_static_mean": 1.7195813522560515,
+        "size_split": -0.35337725603334813,
+        "angular_velocity": 0.03052099027337784,
+        "home_orbital_radius": 22.755027168498952,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 11.026461181252621
+      }
+    },
+    {
+      "seed": 4785,
+      "archetype": "med_high_prod__mixed_static__big_static",
+      "archetype_bins": [
+        2,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 4785,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 12,
+        "n_static": 20,
+        "rotating_share": 0.375,
+        "total_production": 80,
+        "production_rotating_share": 0.25,
+        "production_static_share": 0.75,
+        "radius_mean": 1.7717232629877424,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.3662040962227033,
+        "radius_static_mean": 2.015034763046766,
+        "size_split": -0.6488306668240629,
+        "angular_velocity": 0.04987090374951962,
+        "home_orbital_radius": 49.669524177050015,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.620835764803017
+      }
+    },
+    {
+      "seed": 8516,
+      "archetype": "med_high_prod__mixed_static__big_static",
+      "archetype_bins": [
+        2,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 8516,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 80,
+        "production_rotating_share": 0.2,
+        "production_static_share": 0.8,
+        "radius_mean": 1.9878210043284013,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.549306144334055,
+        "radius_static_mean": 2.207078434325575,
+        "size_split": -0.6577722899915202,
+        "angular_velocity": 0.02967627434925963,
+        "home_orbital_radius": 35.61417566342188,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 16.10669210378116
+      }
+    },
+    {
+      "seed": 9227,
+      "archetype": "med_high_prod__mixed_static__big_static",
+      "archetype_bins": [
+        2,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 9227,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 80,
+        "production_rotating_share": 0.25,
+        "production_static_share": 0.75,
+        "radius_mean": 2.066154942536025,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.8958797346140281,
+        "radius_static_mean": 2.1512925464970225,
+        "size_split": -0.25541281188299436,
+        "angular_velocity": 0.035667682469376384,
+        "home_orbital_radius": 68.60050600343952,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 16.29084359754145
+      }
+    },
+    {
+      "seed": 1265,
+      "archetype": "med_high_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        2,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 1265,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 12,
+        "n_static": 20,
+        "rotating_share": 0.375,
+        "total_production": 76,
+        "production_rotating_share": 0.42105263157894735,
+        "production_static_share": 0.5789473684210527,
+        "radius_mean": 1.7078700600169943,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.8283022165960003,
+        "radius_static_mean": 1.6356107660695893,
+        "size_split": 0.192691450526411,
+        "angular_velocity": 0.025152784979380217,
+        "home_orbital_radius": 23.877336801103514,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 11.177263923395804
+      }
+    },
+    {
+      "seed": 4461,
+      "archetype": "med_high_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        2,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 4461,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 76,
+        "production_rotating_share": 0.3157894736842105,
+        "production_static_share": 0.6842105263157895,
+        "radius_mean": 2.1161723746110814,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.0986122886681104,
+        "radius_static_mean": 2.1249524175825667,
+        "size_split": -0.02634012891445625,
+        "angular_velocity": 0.04705220201206646,
+        "home_orbital_radius": 48.891703824013646,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 17.024704205035473
+      }
+    },
+    {
+      "seed": 5981,
+      "archetype": "med_high_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        2,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 5981,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 12,
+        "n_static": 20,
+        "rotating_share": 0.375,
+        "total_production": 76,
+        "production_rotating_share": 0.3684210526315789,
+        "production_static_share": 0.631578947368421,
+        "radius_mean": 1.6850798654177495,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.6931471805599454,
+        "radius_static_mean": 1.680239476332431,
+        "size_split": 0.012907704227514305,
+        "angular_velocity": 0.049524247936267966,
+        "home_orbital_radius": 34.92697486259156,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 10.878065353511076
+      }
+    },
+    {
+      "seed": 8855,
+      "archetype": "med_high_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        2,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 8855,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 12,
+        "n_static": 20,
+        "rotating_share": 0.375,
+        "total_production": 80,
+        "production_rotating_share": 0.35,
+        "production_static_share": 0.65,
+        "radius_mean": 1.677012550275552,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.732408192445407,
+        "radius_static_mean": 1.6437751649736398,
+        "size_split": 0.08863302747176705,
+        "angular_velocity": 0.028543818071608024,
+        "home_orbital_radius": 66.49294207793736,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.65581994046492
+      }
+    },
+    {
+      "seed": 585,
+      "archetype": "med_high_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        2,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 585,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 80,
+        "production_rotating_share": 0.4,
+        "production_static_share": 0.6,
+        "radius_mean": 1.8819694434145622,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.8283022165960006,
+        "radius_static_mean": 1.922219863528484,
+        "size_split": -0.09391764693248339,
+        "angular_velocity": 0.026560565286518234,
+        "home_orbital_radius": 26.28988616377234,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 12.410154196519803
+      }
+    },
+    {
+      "seed": 1217,
+      "archetype": "med_high_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        2,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 1217,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 8,
+        "n_static": 12,
+        "rotating_share": 0.4,
+        "total_production": 80,
+        "production_rotating_share": 0.3,
+        "production_static_share": 0.7,
+        "radius_mean": 2.336922345533586,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.039720770839918,
+        "radius_static_mean": 2.535056728662697,
+        "size_split": -0.4953359578227787,
+        "angular_velocity": 0.04900305175831399,
+        "home_orbital_radius": 29.600752989983164,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 15.992446332583246
+      }
+    },
+    {
+      "seed": 6462,
+      "archetype": "med_high_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        2,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 6462,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 8,
+        "n_static": 12,
+        "rotating_share": 0.4,
+        "total_production": 84,
+        "production_rotating_share": 0.3333333333333333,
+        "production_static_share": 0.6666666666666666,
+        "radius_mean": 2.4180153671552183,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.2424533248940004,
+        "radius_static_mean": 2.535056728662697,
+        "size_split": -0.2926034037686964,
+        "angular_velocity": 0.025745872682338272,
+        "home_orbital_radius": 23.794635404331288,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 19.64631997172892
+      }
+    },
+    {
+      "seed": 9984,
+      "archetype": "med_high_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        2,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 9984,
+        "n_planets": 40,
+        "n_groups": 10,
+        "n_rotating": 16,
+        "n_static": 24,
+        "rotating_share": 0.4,
+        "total_production": 76,
+        "production_rotating_share": 0.3157894736842105,
+        "production_static_share": 0.6842105263157895,
+        "radius_mean": 1.4787491742782044,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.2746530721670275,
+        "radius_static_mean": 1.614813242352323,
+        "size_split": -0.34016017018529543,
+        "angular_velocity": 0.048017697370649114,
+        "home_orbital_radius": 56.790731846315886,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.47376438370324
+      }
+    },
+    {
+      "seed": 272,
+      "archetype": "med_high_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        2,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 272,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 80,
+        "production_rotating_share": 0.4,
+        "production_static_share": 0.6,
+        "radius_mean": 1.9230668823362467,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.9241962407465945,
+        "radius_static_mean": 1.9222198635284844,
+        "size_split": 0.001976377218110059,
+        "angular_velocity": 0.0494713422799195,
+        "home_orbital_radius": 59.32852679800222,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.86334533048738
+      }
+    },
+    {
+      "seed": 662,
+      "archetype": "med_high_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        2,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 662,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 8,
+        "n_static": 12,
+        "rotating_share": 0.4,
+        "total_production": 76,
+        "production_rotating_share": 0.3684210526315789,
+        "production_static_share": 0.631578947368421,
+        "radius_mean": 2.2793859310432287,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.242453324894001,
+        "radius_static_mean": 2.304007668476048,
+        "size_split": -0.061554343582047366,
+        "angular_velocity": 0.04086492510768713,
+        "home_orbital_radius": 23.034590216875124,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 17.665488556876916
+      }
+    },
+    {
+      "seed": 4353,
+      "archetype": "med_high_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        2,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 4353,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 76,
+        "production_rotating_share": 0.47368421052631576,
+        "production_static_share": 0.5263157894736842,
+        "radius_mean": 1.8500917932268186,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.9241962407465938,
+        "radius_static_mean": 1.7945134575869868,
+        "size_split": 0.12968278315960702,
+        "angular_velocity": 0.031043502545064786,
+        "home_orbital_radius": 22.14493091138577,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 11.61787766578873
+      }
+    },
+    {
+      "seed": 9118,
+      "archetype": "med_high_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        2,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 9118,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 8,
+        "n_static": 12,
+        "rotating_share": 0.4,
+        "total_production": 76,
+        "production_rotating_share": 0.42105263157894735,
+        "production_static_share": 0.5789473684210527,
+        "radius_mean": 2.302942538174506,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.3540251005511057,
+        "radius_static_mean": 2.2688874965901067,
+        "size_split": 0.08513760396099901,
+        "angular_velocity": 0.03712412690745534,
+        "home_orbital_radius": 60.35550910600069,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 19.32686640909749
+      }
+    },
+    {
+      "seed": 2537,
+      "archetype": "med_high_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        2,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 2537,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 12,
+        "n_static": 12,
+        "rotating_share": 0.5,
+        "total_production": 80,
+        "production_rotating_share": 0.45,
+        "production_static_share": 0.55,
+        "radius_mean": 1.987821004328402,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.9026834003674031,
+        "radius_static_mean": 2.0729586082894,
+        "size_split": -0.1702752079219969,
+        "angular_velocity": 0.026125298734936946,
+        "home_orbital_radius": 25.12179975932016,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 15.189219989637012
+      }
+    },
+    {
+      "seed": 3403,
+      "archetype": "med_high_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        2,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 3403,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 16,
+        "n_static": 16,
+        "rotating_share": 0.5,
+        "total_production": 84,
+        "production_rotating_share": 0.42857142857142855,
+        "production_static_share": 0.5714285714285714,
+        "radius_mean": 1.7129728093320256,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.6212266624470002,
+        "radius_static_mean": 1.80471895621705,
+        "size_split": -0.18349229377004983,
+        "angular_velocity": 0.025290215745124786,
+        "home_orbital_radius": 59.17181724620444,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.821155327554045
+      }
+    },
+    {
+      "seed": 6593,
+      "archetype": "med_high_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        2,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 6593,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 16,
+        "n_static": 20,
+        "rotating_share": 0.4444444444444444,
+        "total_production": 80,
+        "production_rotating_share": 0.35,
+        "production_static_share": 0.65,
+        "radius_mean": 1.6220468843331528,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.4479398673070139,
+        "radius_static_mean": 1.7613324979540643,
+        "size_split": -0.3133926306470505,
+        "angular_velocity": 0.04944081696523384,
+        "home_orbital_radius": 22.98894916491194,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 12.505278463244126
+      }
+    },
+    {
+      "seed": 8968,
+      "archetype": "med_high_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        2,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 8968,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 16,
+        "n_static": 20,
+        "rotating_share": 0.4444444444444444,
+        "total_production": 76,
+        "production_rotating_share": 0.42105263157894735,
+        "production_static_share": 0.5789473684210527,
+        "radius_mean": 1.5841661524475317,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.519860385419959,
+        "radius_static_mean": 1.6356107660695893,
+        "size_split": -0.11575038064963028,
+        "angular_velocity": 0.04693145758378299,
+        "home_orbital_radius": 54.25815642675628,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.237729860723201
+      }
+    },
+    {
+      "seed": 489,
+      "archetype": "med_high_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        2,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 489,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 12,
+        "n_static": 12,
+        "rotating_share": 0.5,
+        "total_production": 84,
+        "production_rotating_share": 0.5238095238095238,
+        "production_static_share": 0.47619047619047616,
+        "radius_mean": 2.2013099785720787,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.2688874965901076,
+        "radius_static_mean": 2.1337324605540524,
+        "size_split": 0.13515503603605517,
+        "angular_velocity": 0.04847279692509037,
+        "home_orbital_radius": 22.781388159182796,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 16.63148240102186
+      }
+    },
+    {
+      "seed": 5675,
+      "archetype": "med_high_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        2,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 5675,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 16,
+        "n_static": 20,
+        "rotating_share": 0.4444444444444444,
+        "total_production": 80,
+        "production_rotating_share": 0.45,
+        "production_static_share": 0.55,
+        "radius_mean": 1.6089598803713325,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.5756462732485113,
+        "radius_static_mean": 1.6356107660695893,
+        "size_split": -0.059964492821078075,
+        "angular_velocity": 0.028605167129224732,
+        "home_orbital_radius": 21.369031271275286,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 11.929067557366665
+      }
+    },
+    {
+      "seed": 7770,
+      "archetype": "med_high_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        2,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 7770,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 16,
+        "n_static": 16,
+        "rotating_share": 0.5,
+        "total_production": 80,
+        "production_rotating_share": 0.65,
+        "production_static_share": 0.35,
+        "radius_mean": 1.7717232629877422,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.0235861405555253,
+        "radius_static_mean": 1.519860385419959,
+        "size_split": 0.5037257551355663,
+        "angular_velocity": 0.04802117973934942,
+        "home_orbital_radius": 56.259321625848806,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 13.476003846593294
+      }
+    },
+    {
+      "seed": 8624,
+      "archetype": "med_high_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        2,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 8624,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 16,
+        "n_static": 20,
+        "rotating_share": 0.4444444444444444,
+        "total_production": 84,
+        "production_rotating_share": 0.5714285714285714,
+        "production_static_share": 0.42857142857142855,
+        "radius_mean": 1.5364793041447002,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.80471895621705,
+        "radius_static_mean": 1.3218875824868201,
+        "size_split": 0.4828313737302299,
+        "angular_velocity": 0.025578451165112606,
+        "home_orbital_radius": 55.22036363796332,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.018732461886394
+      }
+    },
+    {
+      "seed": 1030,
+      "archetype": "high_prod__mostly_static__big_static",
+      "archetype_bins": [
+        3,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 1030,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 8,
+        "n_static": 24,
+        "rotating_share": 0.25,
+        "total_production": 88,
+        "production_rotating_share": 0.18181818181818182,
+        "production_static_share": 0.8181818181818182,
+        "radius_mean": 1.799616206902019,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.549306144334055,
+        "radius_static_mean": 1.8830528944246734,
+        "size_split": -0.3337467500906184,
+        "angular_velocity": 0.04894715269197991,
+        "home_orbital_radius": 34.99986939950713,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 12.480314696348582
+      }
+    },
+    {
+      "seed": 1153,
+      "archetype": "high_prod__mostly_static__big_static",
+      "archetype_bins": [
+        3,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 1153,
+        "n_planets": 40,
+        "n_groups": 10,
+        "n_rotating": 12,
+        "n_static": 28,
+        "rotating_share": 0.3,
+        "total_production": 120,
+        "production_rotating_share": 0.23333333333333334,
+        "production_static_share": 0.7666666666666667,
+        "radius_mean": 1.916951837745594,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.6931471805599454,
+        "radius_static_mean": 2.0128681193965856,
+        "size_split": -0.3197209388366402,
+        "angular_velocity": 0.026598392318499007,
+        "home_orbital_radius": 53.23419294713439,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.101740035203527
+      }
+    },
+    {
+      "seed": 2726,
+      "archetype": "high_prod__mostly_static__big_static",
+      "archetype_bins": [
+        3,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 2726,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 8,
+        "n_static": 20,
+        "rotating_share": 0.2857142857142857,
+        "total_production": 88,
+        "production_rotating_share": 0.18181818181818182,
+        "production_static_share": 0.8181818181818182,
+        "radius_mean": 2.0389140560814356,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.549306144334055,
+        "radius_static_mean": 2.2347572207803883,
+        "size_split": -0.6854510764463333,
+        "angular_velocity": 0.029291598129461204,
+        "home_orbital_radius": 37.177559587971324,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 14.446075804265757
+      }
+    },
+    {
+      "seed": 8686,
+      "archetype": "high_prod__mostly_static__big_static",
+      "archetype_bins": [
+        3,
+        0,
+        0
+      ],
+      "features": {
+        "seed": 8686,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 4,
+        "n_static": 16,
+        "rotating_share": 0.2,
+        "total_production": 88,
+        "production_rotating_share": 0.13636363636363635,
+        "production_static_share": 0.8636363636363636,
+        "radius_mean": 2.46264407741806,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.09861228866811,
+        "radius_static_mean": 2.5536520246055483,
+        "size_split": -0.4550397359374383,
+        "angular_velocity": 0.04206321961815035,
+        "home_orbital_radius": 58.26258371986782,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 18.803172912834164
+      }
+    },
+    {
+      "seed": 3335,
+      "archetype": "high_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        3,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 3335,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 8,
+        "n_static": 24,
+        "rotating_share": 0.25,
+        "total_production": 100,
+        "production_rotating_share": 0.32,
+        "production_static_share": 0.68,
+        "radius_mean": 1.9648356868998094,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.354025100551105,
+        "radius_static_mean": 1.8351058823493769,
+        "size_split": 0.5189192182017279,
+        "angular_velocity": 0.04692851210950391,
+        "home_orbital_radius": 28.089567917282835,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 13.567689480383091
+      }
+    },
+    {
+      "seed": 4333,
+      "archetype": "high_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        3,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 4333,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 4,
+        "n_static": 16,
+        "rotating_share": 0.2,
+        "total_production": 88,
+        "production_rotating_share": 0.22727272727272727,
+        "production_static_share": 0.7727272727272727,
+        "radius_mean": 2.4755517816455757,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.6094379124341005,
+        "radius_static_mean": 2.442080248948443,
+        "size_split": 0.1673576634856575,
+        "angular_velocity": 0.04667314973713555,
+        "home_orbital_radius": 47.9135619706006,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 20.317376466050565
+      }
+    },
+    {
+      "seed": 4693,
+      "archetype": "high_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        3,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 4693,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 8,
+        "n_static": 20,
+        "rotating_share": 0.2857142857142857,
+        "total_production": 96,
+        "production_rotating_share": 0.375,
+        "production_static_share": 0.625,
+        "radius_mean": 2.128715293141775,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.497866136776995,
+        "radius_static_mean": 1.9810549556876857,
+        "size_split": 0.5168111810893095,
+        "angular_velocity": 0.048291046900843494,
+        "home_orbital_radius": 62.98916617500449,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 15.029543165305165
+      }
+    },
+    {
+      "seed": 9812,
+      "archetype": "high_prod__mostly_static__big_rotating",
+      "archetype_bins": [
+        3,
+        0,
+        1
+      ],
+      "features": {
+        "seed": 9812,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 8,
+        "n_static": 24,
+        "rotating_share": 0.25,
+        "total_production": 92,
+        "production_rotating_share": 0.30434782608695654,
+        "production_static_share": 0.6956521739130435,
+        "radius_mean": 1.850299345415538,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.242453324894001,
+        "radius_static_mean": 1.7195813522560517,
+        "size_split": 0.5228719726379492,
+        "angular_velocity": 0.028537870481826814,
+        "home_orbital_radius": 59.91986600532406,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.891706178716584
+      }
+    },
+    {
+      "seed": 1649,
+      "archetype": "high_prod__mixed_static__big_static",
+      "archetype_bins": [
+        3,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 1649,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 12,
+        "n_static": 20,
+        "rotating_share": 0.375,
+        "total_production": 88,
+        "production_rotating_share": 0.36363636363636365,
+        "production_static_share": 0.6363636363636364,
+        "radius_mean": 1.8502993454155392,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.7675283643313484,
+        "radius_static_mean": 1.8999619340660534,
+        "size_split": -0.132433569734705,
+        "angular_velocity": 0.04812049020428849,
+        "home_orbital_radius": 60.539236653749285,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.26237596430624
+      }
+    },
+    {
+      "seed": 2794,
+      "archetype": "high_prod__mixed_static__big_static",
+      "archetype_bins": [
+        3,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 2794,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 96,
+        "production_rotating_share": 0.2916666666666667,
+        "production_static_share": 0.7083333333333334,
+        "radius_mean": 2.334394594608376,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.1512925464970225,
+        "radius_static_mean": 2.4259456186640507,
+        "size_split": -0.27465307216702817,
+        "angular_velocity": 0.025982960235179715,
+        "home_orbital_radius": 60.89660998445982,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 15.892403898160088
+      }
+    },
+    {
+      "seed": 4252,
+      "archetype": "high_prod__mixed_static__big_static",
+      "archetype_bins": [
+        3,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 4252,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 88,
+        "production_rotating_share": 0.2727272727272727,
+        "production_static_share": 0.7272727272727273,
+        "radius_mean": 2.1709230524397536,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.8047189562170503,
+        "radius_static_mean": 2.354025100551105,
+        "size_split": -0.5493061443340546,
+        "angular_velocity": 0.048145181979050815,
+        "home_orbital_radius": 32.79496155328402,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 15.506077828939743
+      }
+    },
+    {
+      "seed": 9240,
+      "archetype": "high_prod__mixed_static__big_static",
+      "archetype_bins": [
+        3,
+        1,
+        0
+      ],
+      "features": {
+        "seed": 9240,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 12,
+        "n_static": 24,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 120,
+        "production_rotating_share": 0.26666666666666666,
+        "production_static_share": 0.7333333333333333,
+        "radius_mean": 2.0436291031966833,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.7675283643313489,
+        "radius_static_mean": 2.18167947262935,
+        "size_split": -0.41415110829800095,
+        "angular_velocity": 0.025842264520518583,
+        "home_orbital_radius": 22.298724406417126,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 12.132677442147083
+      }
+    },
+    {
+      "seed": 3493,
+      "archetype": "high_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        3,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 3493,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 12,
+        "n_static": 20,
+        "rotating_share": 0.375,
+        "total_production": 92,
+        "production_rotating_share": 0.391304347826087,
+        "production_static_share": 0.6086956521739131,
+        "radius_mean": 1.8943269196142092,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.9241962407465938,
+        "radius_static_mean": 1.876405326934777,
+        "size_split": 0.04779091381181688,
+        "angular_velocity": 0.025392115812454402,
+        "home_orbital_radius": 60.2404811299587,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.99979583200706
+      }
+    },
+    {
+      "seed": 3774,
+      "archetype": "high_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        3,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 3774,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 8,
+        "n_static": 16,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 92,
+        "production_rotating_share": 0.34782608695652173,
+        "production_static_share": 0.6521739130434783,
+        "radius_mean": 2.286447582533078,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.3540251005511057,
+        "radius_static_mean": 2.2526588235240643,
+        "size_split": 0.10136627702704137,
+        "angular_velocity": 0.034446937083280775,
+        "home_orbital_radius": 34.25248214271281,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 17.248106746762947
+      }
+    },
+    {
+      "seed": 5923,
+      "archetype": "high_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        3,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 5923,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 12,
+        "n_static": 24,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 88,
+        "production_rotating_share": 0.5,
+        "production_static_share": 0.5,
+        "radius_mean": 1.6337536082951338,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.0729586082894,
+        "radius_static_mean": 1.4141511082980003,
+        "size_split": 0.6588074999913998,
+        "angular_velocity": 0.0257357670530141,
+        "home_orbital_radius": 25.026172944346733,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 10.547395588890753
+      }
+    },
+    {
+      "seed": 8514,
+      "archetype": "high_prod__mixed_static__big_rotating",
+      "archetype_bins": [
+        3,
+        1,
+        1
+      ],
+      "features": {
+        "seed": 8514,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 12,
+        "n_static": 24,
+        "rotating_share": 0.3333333333333333,
+        "total_production": 124,
+        "production_rotating_share": 0.41935483870967744,
+        "production_static_share": 0.5806451612903226,
+        "radius_mean": 2.1134745097991683,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.439162704512104,
+        "radius_static_mean": 1.9506304124427007,
+        "size_split": 0.4885322920694031,
+        "angular_velocity": 0.04872888419771075,
+        "home_orbital_radius": 23.92865594754867,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 12.14001049072986
+      }
+    },
+    {
+      "seed": 2083,
+      "archetype": "high_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        3,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 2083,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 96,
+        "production_rotating_share": 0.25,
+        "production_static_share": 0.75,
+        "radius_mean": 2.0539655583182683,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.462098120373297,
+        "radius_static_mean": 2.497866136776996,
+        "size_split": -1.035768016403699,
+        "angular_velocity": 0.04981039464795478,
+        "home_orbital_radius": 25.460384256724616,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 12.605328359793573
+      }
+    },
+    {
+      "seed": 2661,
+      "archetype": "high_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        3,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 2661,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 96,
+        "production_rotating_share": 0.375,
+        "production_static_share": 0.625,
+        "radius_mean": 2.1529865841125466,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.9985774245179968,
+        "radius_static_mean": 2.268793453808457,
+        "size_split": -0.2702160292904603,
+        "angular_velocity": 0.04733337106225105,
+        "home_orbital_radius": 58.936604824582844,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 13.733426067158504
+      }
+    },
+    {
+      "seed": 6328,
+      "archetype": "high_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        3,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 6328,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 104,
+        "production_rotating_share": 0.38461538461538464,
+        "production_static_share": 0.6153846153846154,
+        "radius_mean": 2.252007609906825,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.155245300933242,
+        "radius_static_mean": 2.3245793416370093,
+        "size_split": -0.16933404070376712,
+        "angular_velocity": 0.03321655235857417,
+        "home_orbital_radius": 36.78703767243894,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 16.2864830385162
+      }
+    },
+    {
+      "seed": 9327,
+      "archetype": "high_prod__mixed_rotating__big_static",
+      "archetype_bins": [
+        3,
+        2,
+        0
+      ],
+      "features": {
+        "seed": 9327,
+        "n_planets": 40,
+        "n_groups": 10,
+        "n_rotating": 16,
+        "n_static": 24,
+        "rotating_share": 0.4,
+        "total_production": 92,
+        "production_rotating_share": 0.30434782608695654,
+        "production_static_share": 0.6956521739130435,
+        "radius_mean": 1.727239839257005,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.447939867307014,
+        "radius_static_mean": 1.9134398205569996,
+        "size_split": -0.4654999532499855,
+        "angular_velocity": 0.025500397560693402,
+        "home_orbital_radius": 62.19117151551395,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.483859119482782
+      }
+    },
+    {
+      "seed": 5199,
+      "archetype": "high_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        3,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 5199,
+        "n_planets": 28,
+        "n_groups": 7,
+        "n_rotating": 12,
+        "n_static": 16,
+        "rotating_share": 0.42857142857142855,
+        "total_production": 88,
+        "production_rotating_share": 0.45454545454545453,
+        "production_static_share": 0.5454545454545454,
+        "radius_mean": 2.038914056081435,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.194506312818704,
+        "radius_static_mean": 1.922219863528484,
+        "size_split": 0.27228644929021995,
+        "angular_velocity": 0.027177955683586934,
+        "home_orbital_radius": 22.74253111746238,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 12.636581211609325
+      }
+    },
+    {
+      "seed": 5274,
+      "archetype": "high_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        3,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 5274,
+        "n_planets": 40,
+        "n_groups": 10,
+        "n_rotating": 16,
+        "n_static": 24,
+        "rotating_share": 0.4,
+        "total_production": 88,
+        "production_rotating_share": 0.5909090909090909,
+        "production_static_share": 0.4090909090909091,
+        "radius_mean": 1.6356107660695898,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 2.141087047866959,
+        "radius_static_mean": 1.298626578204676,
+        "size_split": 0.842460469662283,
+        "angular_velocity": 0.02539389719171855,
+        "home_orbital_radius": 60.70649455646131,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.162663689032978
+      }
+    },
+    {
+      "seed": 7542,
+      "archetype": "high_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        3,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 7542,
+        "n_planets": 40,
+        "n_groups": 10,
+        "n_rotating": 16,
+        "n_static": 24,
+        "rotating_share": 0.4,
+        "total_production": 112,
+        "production_rotating_share": 0.42857142857142855,
+        "production_static_share": 0.5714285714285714,
+        "radius_mean": 1.8476371196895993,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.9222198635284844,
+        "radius_static_mean": 1.7979152904636748,
+        "size_split": 0.12430457306480958,
+        "angular_velocity": 0.04915779896321228,
+        "home_orbital_radius": 30.43918507129394,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 10.938831313507182
+      }
+    },
+    {
+      "seed": 8909,
+      "archetype": "high_prod__mixed_rotating__big_rotating",
+      "archetype_bins": [
+        3,
+        2,
+        1
+      ],
+      "features": {
+        "seed": 8909,
+        "n_planets": 20,
+        "n_groups": 5,
+        "n_rotating": 8,
+        "n_static": 12,
+        "rotating_share": 0.4,
+        "total_production": 92,
+        "production_rotating_share": 0.391304347826087,
+        "production_static_share": 0.6086956521739131,
+        "radius_mean": 2.5201804919084174,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.497866136776995,
+        "radius_static_mean": 2.535056728662697,
+        "size_split": -0.03719059188570162,
+        "angular_velocity": 0.032698796117630144,
+        "home_orbital_radius": 48.24018880483869,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 17.400198750682886
+      }
+    },
+    {
+      "seed": 405,
+      "archetype": "high_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        3,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 405,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 16,
+        "n_static": 20,
+        "rotating_share": 0.4444444444444444,
+        "total_production": 100,
+        "production_rotating_share": 0.24,
+        "production_static_share": 0.76,
+        "radius_mean": 1.8648026684817829,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.3465735902799727,
+        "radius_static_mean": 2.27938593104323,
+        "size_split": -0.9328123407632574,
+        "angular_velocity": 0.026088249345231056,
+        "home_orbital_radius": 60.87734011705077,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.549839700684343
+      }
+    },
+    {
+      "seed": 7045,
+      "archetype": "high_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        3,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 7045,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 16,
+        "n_static": 16,
+        "rotating_share": 0.5,
+        "total_production": 100,
+        "production_rotating_share": 0.28,
+        "production_static_share": 0.72,
+        "radius_mean": 1.9648356868998083,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.447939867307014,
+        "radius_static_mean": 2.481731506492603,
+        "size_split": -1.0337916391855888,
+        "angular_velocity": 0.026824142933546638,
+        "home_orbital_radius": 21.816163769475637,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 11.667997625533495
+      }
+    },
+    {
+      "seed": 9408,
+      "archetype": "high_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        3,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 9408,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 12,
+        "n_static": 12,
+        "rotating_share": 0.5,
+        "total_production": 108,
+        "production_rotating_share": 0.4444444444444444,
+        "production_static_share": 0.5555555555555556,
+        "radius_mean": 2.4871097165874008,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.3647815207407006,
+        "radius_static_mean": 2.6094379124341,
+        "size_split": -0.24465639169339948,
+        "angular_velocity": 0.049223646814560124,
+        "home_orbital_radius": 31.099792761623895,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 13.761958952740038
+      }
+    },
+    {
+      "seed": 9658,
+      "archetype": "high_prod__mostly_rotating__big_static",
+      "archetype_bins": [
+        3,
+        3,
+        0
+      ],
+      "features": {
+        "seed": 9658,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 12,
+        "n_static": 12,
+        "rotating_share": 0.5,
+        "total_production": 88,
+        "production_rotating_share": 0.45454545454545453,
+        "production_static_share": 0.5454545454545454,
+        "radius_mean": 2.260013410836972,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.133732460554052,
+        "radius_static_mean": 2.386294361119891,
+        "size_split": -0.2525619005658388,
+        "angular_velocity": 0.04379268693142768,
+        "home_orbital_radius": 58.85626537600322,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 16.364633664074933
+      }
+    },
+    {
+      "seed": 3233,
+      "archetype": "high_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        3,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 3233,
+        "n_planets": 24,
+        "n_groups": 6,
+        "n_rotating": 12,
+        "n_static": 12,
+        "rotating_share": 0.5,
+        "total_production": 96,
+        "production_rotating_share": 0.5416666666666666,
+        "production_static_share": 0.4583333333333333,
+        "radius_mean": 2.3647815207407006,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.439162704512104,
+        "radius_static_mean": 2.2904003369692973,
+        "size_split": 0.14876236754280647,
+        "angular_velocity": 0.04837441277782166,
+        "home_orbital_radius": 33.99891131446575,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 15.522084286259593
+      }
+    },
+    {
+      "seed": 3578,
+      "archetype": "high_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        3,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 3578,
+        "n_planets": 32,
+        "n_groups": 8,
+        "n_rotating": 16,
+        "n_static": 16,
+        "rotating_share": 0.5,
+        "total_production": 112,
+        "production_rotating_share": 0.5,
+        "production_static_share": 0.5,
+        "radius_mean": 2.0874393435262752,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 2.0955066586684703,
+        "radius_static_mean": 2.0793720283840775,
+        "size_split": 0.01613463028439277,
+        "angular_velocity": 0.02773131229714254,
+        "home_orbital_radius": 23.039373037928044,
+        "home_is_rotating": true,
+        "nearest_neighbor_mean": 13.468142522569039
+      }
+    },
+    {
+      "seed": 4027,
+      "archetype": "high_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        3,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 4027,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 16,
+        "n_static": 20,
+        "rotating_share": 0.4444444444444444,
+        "total_production": 88,
+        "production_rotating_share": 0.45454545454545453,
+        "production_static_share": 0.5454545454545454,
+        "radius_mean": 1.7832505379173165,
+        "radius_max": 2.386294361119891,
+        "radius_rotating_mean": 1.7945134575869868,
+        "radius_static_mean": 1.7742402021815784,
+        "size_split": 0.020273255405408364,
+        "angular_velocity": 0.02558272107193274,
+        "home_orbital_radius": 51.19266067128126,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 10.894489508757674
+      }
+    },
+    {
+      "seed": 6548,
+      "archetype": "high_prod__mostly_rotating__big_rotating",
+      "archetype_bins": [
+        3,
+        3,
+        1
+      ],
+      "features": {
+        "seed": 6548,
+        "n_planets": 36,
+        "n_groups": 9,
+        "n_rotating": 16,
+        "n_static": 20,
+        "rotating_share": 0.4444444444444444,
+        "total_production": 104,
+        "production_rotating_share": 0.46153846153846156,
+        "production_static_share": 0.5384615384615384,
+        "radius_mean": 1.909854347160468,
+        "radius_max": 2.6094379124341005,
+        "radius_rotating_mean": 1.922219863528484,
+        "radius_static_mean": 1.8999619340660536,
+        "size_split": 0.022257929462430326,
+        "angular_velocity": 0.04886118006314698,
+        "home_orbital_radius": 61.284368987723404,
+        "home_is_rotating": false,
+        "nearest_neighbor_mean": 11.245015087846404
+      }
+    }
+  ]
+}

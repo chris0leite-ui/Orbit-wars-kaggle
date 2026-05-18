@@ -27,6 +27,13 @@ spec.loader.exec_module(tournament)
 
 SEEDS_20 = [42, 1, 7, 13, 31, 100, 17, 23, 53, 71, 91, 113, 137, 149, 167, 181, 199, 211, 233, 257]
 
+# 128-seed geometry-stratified panel (built by scripts/build_seed_panel.py).
+# Lazy import so a missing data/seed_panel_128.json doesn't break SEEDS_20 callers.
+try:
+    from lib.seed_panel import SEED_PANEL_128 as SEEDS_128  # noqa: F401
+except Exception:  # pragma: no cover
+    SEEDS_128 = None
+
 
 def main() -> int:
     baseline = str(REPO / "data" / "main.py")

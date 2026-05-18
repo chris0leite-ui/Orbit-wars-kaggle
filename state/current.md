@@ -42,6 +42,13 @@ team_peak_agent: v15_banded
 # has been roughly -20 to -30 pp on every recent submission. Use a
 # 3-opponent panel (`fast.py eval --vs-panel`) + h2h vs the current
 # rolling agent (not just a fixed baseline) before any new push.
+#
+# Geometry-stratified eval panel (added 5/18 — claude/reverse-engineer-seat-geometry-BPJKs):
+# 128 seeds covering 32 archetypes (total_production × rotating_share ×
+# size_split). Surfaces flavour-dependent regressions before they hit live:
+#   python fast.py eval <agent> --vs <opp> --geometry-panel --by-archetype
+# Auto-bumps --max-seeds to 128; interleaved so adaptive tiers cover all
+# 32 archetypes from tier 1. See audit/2026-05-18-seed-panel.md.
 
 submissions_used_today: 0     # 5/17 — refresh via Kaggle CLI
 plateau_days: 0
