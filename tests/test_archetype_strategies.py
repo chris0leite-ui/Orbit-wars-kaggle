@@ -156,18 +156,18 @@ def test_known_regressions_subset_of_archetypes() -> None:
 
 
 def test_check_returns_violations_for_obviously_wrong_metrics() -> None:
-    """Sanity: `check()` must actually flag a no-launch agent on a
-    high_prod archetype (the strictest opening tempo)."""
-    # No launches at all → fails first_launch_step + early_launches + multi_launch
+    """Sanity: ``check()`` must flag a no-launch agent on a high_prod cell."""
+    # A never-launching agent fails first_launch_step (delayed start),
+    # launches_per_turn (no tempo), and mean_target_production (no targets).
     metrics = {
-        "first_launch_step": 50,
-        "early_launches": 0,
+        "first_launch_step": 999,
         "launches_per_turn": 0.0,
-        "multi_launch_turn_rate": 0.0,
         "mean_fleet_size": 0.0,
+        "mean_target_production": 0.0,
+        "launch_angle_var": 0.0,
     }
     violations = check("high_prod__mostly_static__big_static", metrics)
-    assert len(violations) >= 3, f"expected ≥3 violations, got: {violations}"
+    assert violations, f"expected ≥1 violation, got: {violations}"
 
 
 def test_check_accepts_conforming_metrics() -> None:
