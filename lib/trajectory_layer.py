@@ -1839,6 +1839,16 @@ class BundleSearch:
         (source × top-N target × launch_turn) cross-product. Filtered
         by per-launch-turn source availability + SunFilter.
 
+        Targets include both ATTACK targets (enemy / neutral planets)
+        and DEFENSE targets (our own planets with an incoming enemy
+        arrival — reinforcement). Without defensive targets the
+        chooser can never enumerate "send ships home to hold the
+        line," so every captured planet falls back to the opp on
+        their next attack. Diagnosed 2026-05-18 vs v7_0 (0/32):
+        agent expanded 4p vs 2p at turn 20 then was wiped 0p vs 20p
+        by turn 165. The fix matches the incumbent baseline's
+        `target_pool = other_planets + threatened_mine` shape.
+
         For `launch_turn > 0`, ship availability is queried via
         `world.ownership_at(src.id, launch_turn)` so production
         accrual + prior bundle commitments are correctly accounted
@@ -1849,8 +1859,14 @@ class BundleSearch:
                    if p.owner == my_id
                    and not p.is_comet
                    and p.ships >= self.min_source_ships]
-        targets = [p for p in world.planets
-                   if p.owner != my_id and not p.is_comet]
+        attack_targets = [p for p in world.planets
+                          if p.owner != my_id and not p.is_comet]
+        defense_targets = [
+            p for p in world.planets
+            if p.owner == my_id and not p.is_comet
+            and world.incoming_enemy_eta(p.id, my_id) is not None
+        ]
+        targets = attack_targets + defense_targets
         if not sources or not targets:
             return
 
@@ -1878,11 +1894,24 @@ class BundleSearch:
                     continue
                 angle = math.atan2(dy, dx)
 
-                # Per-target required ship count (constant across
-                # launch_turns — for enemy targets, production over a
-                # longer flight makes this an underestimate; the
-                # multiplier knob compensates).
-                required = max(1, int(tgt.ships) + 1)
+                # Per-target required ship count. For ATTACK
+                # (enemy/neutral) targets: capture-cost = defender
+                # garrison + 1. For DEFENSE (our own threatened
+                # planet): cover-cost = sum of incoming enemy ships,
+                # minus what our existing garrison already absorbs.
+                # Sending more than required is wasteful (each extra
+                # ship is a strict -1 to ship_delta with no
+                # planet/prod benefit); the scorer will prefer the
+                # smaller commit if both pass the gate.
+                if tgt.owner == my_id:
+                    arrivals = world.ledger_for(tgt.id)
+                    enemy_ships = sum(
+                        a.ships for a in arrivals if a.owner != my_id
+                    )
+                    net_threat = enemy_ships - int(tgt.ships)
+                    required = max(1, net_threat)
+                else:
+                    required = max(1, int(tgt.ships) + 1)
                 base_commit = int(required * self.ship_count_multiplier)
                 if base_commit < 1:
                     continue
