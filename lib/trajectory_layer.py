@@ -1941,7 +1941,16 @@ class BundleEvaluator:
         rot_offset = 1 if current_step == 0 else 0
         planets = [p for p in world.planets if not p.is_comet]
 
-        by_target: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        # by_target stores (arrival_turn, ships, src_id) per launch so we
+        # can require >=2 DISTINCT sources before tagging a joint. Same-
+        # source pseudo-joints (e.g. two 3-ship launches from src=0 at
+        # identical angles, emerging from the search's ADD iterations
+        # rather than from `_enumerate_joint_seeds`) are NOT real
+        # coordination — splitting one launch into two smaller ones
+        # provides no strategic benefit and is strictly worse on the
+        # fleet_speed curve. Origin: Phase E Phase 1 single-state diag,
+        # seed=42 turn=5 (audit/2026-05-18-phase-e-phase1-diag.md).
+        by_target: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
         for launch in bundle.launches:
             if launch.owner != my_id:
                 continue
@@ -1964,12 +1973,17 @@ class BundleEvaluator:
                 continue
             arrival_turn = int(launch.launch_turn) + int(arrival_step)
             by_target[int(hit_pid)].append(
-                (arrival_turn, int(launch.ships))
+                (arrival_turn, int(launch.ships), int(launch.src_id))
             )
 
         joints: list[tuple[int, int, int, int, Any]] = []
         for tgt_id, arrivals in by_target.items():
             if len(arrivals) < 2:
+                continue
+            # Require >=2 DISTINCT source planets — joint = multi-source
+            # coordination, not multi-fleet from one source.
+            distinct_sources = {src for _, _, src in arrivals}
+            if len(distinct_sources) < 2:
                 continue
             tgt = None
             for p in planets:
@@ -1981,10 +1995,10 @@ class BundleEvaluator:
             if tgt.owner == my_id:
                 continue  # don't bonus joint reinforcement of own planet
             defenders = int(tgt.ships)
-            sum_ships = sum(s for _, s in arrivals)
-            max_ships = max(s for _, s in arrivals)
+            sum_ships = sum(s for _, s, _src in arrivals)
+            max_ships = max(s for _, s, _src in arrivals)
             if sum_ships > defenders and max_ships <= defenders:
-                min_arrival = min(t for t, _ in arrivals)
+                min_arrival = min(t for t, _, _src in arrivals)
                 joints.append(
                     (tgt_id, min_arrival, sum_ships, max_ships, tgt)
                 )
