@@ -361,6 +361,59 @@ relevant skill file or source code, not back into friction.md.
   be off by ±80μ. Document in WRAPUP that the team-floor
   calculation uses SETTLED μ, not first-read μ.
 
+## 2026-05-18 (claude/audit-workflow-performance-btjeK — bug #15 v1/v2 + #14 option 5)
+
+- `tag: wrong-root-cause-from-symptom-similarity` — bug #15 v1 (commit
+  466fc98) added BOTH a production-PV term in composite's base AND a
+  per-fleet counterfactual capture credit. After the A/B regressed
+  (40.6% vs bundle 50%), I told PI the root cause was "double-counting
+  per capture." The "drop the per-fleet credit, keep PV" v2 (b285882)
+  was supposed to fix this — but A/B still failed at exactly the same
+  39.6%. Then bug #14 option 5 (smart reactive defense) was supposed
+  to cure the v2 regression — and also failed at 39.6%. The actual
+  root cause: the PV term ITSELF over-credits because the chooser
+  was calibrated WITHOUT it. Adding any positive capture signal of
+  that magnitude inflates all candidate scores → over-emission → drained
+  sources. **Fix:** before proposing a structural fix for a regression,
+  run the kill-switch FIRST — `COMPOSITE_PRODUCTION_PV=0` would have
+  isolated the PV term's contribution in one A/B, before the 3-cycle
+  v1→v2→v3 investigation.
+
+- `tag: stateless-policy-in-rollout-cannot-converge` — bug #14 option 5
+  v1 was stateless per rollout tick. It ignored already-in-flight
+  friendly reinforces when computing `garrison_at_eta`, so every tick
+  re-emitted a fresh reinforce against the same threat. By tick 5 we
+  had stacked 5 redundant reinforces, draining the sister and bloating
+  the fleet count. A/B: 15.6% (max wallclock 8252ms). **Fix:** include
+  in-flight friendly ships in the garrison math (idempotency contract);
+  test pinned at `test_idempotency_inbound_friendly_counts_toward_garrison`.
+
+- `tag: per-tick-rollout-policy-blows-wallclock` — even with the
+  idempotency bug fixed, calling the defensive policy per-candidate
+  per-rollout-tick (5000 calls/turn for N_VALIDATE=200, horizon=25)
+  added ~1.5s to median turn cost — bench max 1492ms with 10
+  >1000ms outliers. **Fix:** precompute the policy emits ONCE per
+  candidate (tick-0 obs) and merge with the candidate's launch at
+  `wait_N`. Models "all this turn's chooser moves emit together."
+  Bench dropped to 685ms max, zero outliers.
+
+- `tag: planet-collision-in-test-setup` — `test_oracle_cleanup_capture_last_opp_planet`
+  builds a circle of 23 OUR planets around the sun, then adds the
+  opp planet at angle 0 — coincidentally the SAME position as P0.
+  Ray-cast picks one or the other, proposer emits 0 candidates,
+  test fails. Discovered while tracing why option 5 didn't flip
+  the xfail. **Fix:** offset the opp planet by a few units (still
+  TODO — task parked for next session).
+
+- `tag: rollout-auto-defense-in-baseline-zeros-delta` — first cut of
+  option 5 applied auto-defense in BOTH baseline and candidate
+  rollouts. Baseline became too capable: it auto-defended threats,
+  so candidates that ALSO defended (real reinforce launches) added
+  no marginal value → Δ ≈ 0 → chooser refused to emit real defense.
+  Working defense oracles regressed to FAIL. **Fix:** asymmetric on
+  purpose — auto-defense in CANDIDATE rollouts only, baseline stays
+  idle. Restored working oracles to PASS.
+
 ## 2026-05-17 (claude/audit-workflow-performance-btjeK)
 
 - `tag: validate-cap-too-tight-cost-winrate-not-just-wallclock` —
