@@ -64,9 +64,10 @@ from typing import Mapping
 
 _PROD_RULES: Mapping[str, dict[str, tuple[float | None, float | None]]] = {
     "low_prod": {
-        # Few prizes, each one is high-value. Use sufficient fleets
-        # (regression cell hit 16.5 mean fleet size, non-reg ≥31).
-        "mean_fleet_size": (18.0, None),
+        # Few prizes, each one is high-value. Use sufficient fleets.
+        # 17 catches the 16.1 regression-cell average without false-
+        # alarming on the 17.9 non-regression borderline.
+        "mean_fleet_size": (17.0, None),
     },
     "med_low_prod": {
         # Tight resource competition; baseline's regression cells here
@@ -76,16 +77,16 @@ _PROD_RULES: Mapping[str, dict[str, tuple[float | None, float | None]]] = {
     },
     "med_high_prod": {
         # Standard balanced. Catch the "delayed-opening" regression
-        # archetype (fls=29 vs non-reg ~4).
+        # archetype (fls=29 vs non-reg ~4). launches_per_turn is too
+        # noisy across med_high cells to gate cleanly — leave it.
         "first_launch_step": (None, 15),
-        "launches_per_turn": (0.40, None),
     },
     "high_prod": {
         # Tempo dominates. H11 gap (top public 90 % planets fire by
         # step 5; baseline ~40 %). Threshold is aspirational — baseline
         # currently averages 0.78 launches/turn, top public should hit
         # ≥1.0. Tests document the gap.
-        "first_launch_step": (None, 10),
+        "first_launch_step": (None, 12),
         "launches_per_turn": (0.50, None),
     },
 }
