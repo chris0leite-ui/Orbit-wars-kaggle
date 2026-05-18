@@ -95,6 +95,7 @@ def _build_searches() -> tuple[BundleSearch, BundleSearch, int]:
         planet_weight=_env_float("BUNDLE_PLANET_WEIGHT", 5.0),
         production_weight=_env_float("BUNDLE_PRODUCTION_WEIGHT", 1.0),
         elimination_bonus=_env_float("BUNDLE_ELIMINATION_BONUS", 200.0),
+        my_followup_mode=os.environ.get("BUNDLE_ME_FOLLOWUP", "off").lower(),
     )
     # Tuned 2026-05-18 with with_candidate cache-inheritance perf
     # fix in place. Full 363-turn game vs sloppy random at depth=2:

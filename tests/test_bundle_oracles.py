@@ -185,13 +185,23 @@ def test_A4_drain_frontier_penalty(bundle_knobs):
                           "treats source as drained-forever and rejects "
                           "profitable launches. Phase B target.")
 def test_A5_reinforcement_aware_launch(bundle_knobs):
-    """P0 has prod=3 — production will refill what we launch. Agent should
-    commit to capturing neutral P2 once me-followup correctly models the
-    refill, instead of holding back because P0 'looks empty' after launch."""
+    """P0 has prod=4 — production will refill what we launch. Agent should
+    commit to a first-wave attack on P2 (which alone loses, 14 ships vs
+    15 neutral) because me-followup correctly models the second wave:
+    by the time the lost first wave reaches P2 at ~t=5, P0 has
+    refilled (1+5*4=21 ships) and lite_greedy at that event fires a
+    second wave that captures the weakened P2. Without me-followup
+    score is blind to the second wave, sees only the -14 ship loss, and
+    rationally picks empty (idle).
+
+    Layout tuned for the mechanic: P0 -> P2 distance 10 so both waves
+    arrive within horizon=15. Original A5 used distance ~42, which put
+    even the first wave's arrival outside horizon and made the
+    mechanic structurally invisible regardless of me-followup."""
     obs = _obs([
-        _planet(0, 0, 20, 50, ships=30, production=3),
-        _planet(1, 0, 80, 50, ships=10, production=1),
-        _planet(2, -1, 50, 80, ships=40, production=1),
+        _planet(0, 0, 20, 30, ships=15, production=4),
+        _planet(1, 0, 80, 30, ships=10, production=1),
+        _planet(2, -1, 30, 30, ships=15, production=1),
     ])
     assert 2 in _targets_of_emits(obs, _emit(obs))
 
@@ -204,8 +214,11 @@ def test_A6_gangup_emergence(bundle_knobs, monkeypatch):
 
     Sources placed close to target (P0/P1 at x=60, P2 at x=85) so
     fleet travel (~35 units at log-speed ~3.3) arrives within
-    horizon-15. Rays clear the sun by ~24 units."""
-    monkeypatch.setenv("BUNDLE_TOTAL_MS", "400")
+    horizon-15. Rays clear the sun by ~24 units.
+
+    Budget bumped to 800ms (preemptive for Phase B me-followup,
+    which adds ~3x per-score-call cost when BUNDLE_ME_FOLLOWUP=lite)."""
+    monkeypatch.setenv("BUNDLE_TOTAL_MS", "800")
     obs = _obs([
         _planet(0, 0, 60, 25, ships=60, production=1),
         _planet(1, 0, 60, 75, ships=60, production=1),

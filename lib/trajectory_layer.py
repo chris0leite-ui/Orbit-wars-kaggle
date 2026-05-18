@@ -1691,6 +1691,13 @@ class BundleEvaluator:
     # weight against ship_delta (which stays terminal).
     production_weight: float = 1.0
     elimination_bonus: float = 200.0
+    # Phase B me-followup mode. "off" (default) preserves Phase 7c-8b
+    # scoring exactly; "lite" applies a predicted ME reactive bundle
+    # (event-driven lite_greedy from my seat) on top of `bundle`
+    # before reading the path integral. Bug #14 me-half target: makes
+    # the rollout self-consistent on both seats so the score function
+    # stops treating my sources as drained-forever after each launch.
+    my_followup_mode: str = "off"
 
     def score(self, world: "World", bundle: Bundle,
               *, my_id: Optional[int] = None,
@@ -1714,6 +1721,20 @@ class BundleEvaluator:
         if my_id is None:
             my_id = world.my_id
         overlay = bundle.apply(world)
+        # Phase B me-followup: predict my reactive launches across the
+        # rollout and apply them BEFORE opp overlays. Guarded by
+        # `my_id == world.my_id` so the inner opp-search (mirror mode,
+        # which calls score with my_id=opp_id but unchanged world)
+        # does NOT recursively run me-followup from the opp's seat.
+        if self.my_followup_mode == "lite" and my_id == world.my_id:
+            followup = predict_my_followup_via_event_driven_lite_greedy(
+                overlay, my_id=my_id, horizon=self.horizon,
+            )
+            if not followup.is_empty:
+                try:
+                    overlay = followup.apply(overlay)
+                except ValueError:
+                    pass
         if opp_overlays:
             for opp_id, opp_bundle in opp_overlays.items():
                 if opp_bundle.is_empty:
@@ -2424,5 +2445,115 @@ def predict_opp_via_event_driven_lite_greedy(
         for oid, specs in opp_specs_acc.items()
         if specs
     }
+
+
+def predict_my_followup_via_event_driven_lite_greedy(
+    world: "World",
+    *,
+    my_id: Optional[int] = None,
+    horizon: int = DEFAULT_LEDGER_HORIZON,
+    max_events: int = 10,
+) -> Bundle:
+    """Me-side mirror of `predict_opp_via_event_driven_lite_greedy`.
+
+    Caller passes a `world` that already has my candidate bundle
+    applied (i.e. `overlay = my_bundle.apply(base_world)`). This
+    function predicts what lite_greedy from MY seat would launch at
+    each subsequent arrival event, accumulates those launches into a
+    single Bundle, and returns it. The caller composes:
+
+        followup = predict_my_followup_via_event_driven_lite_greedy(overlay)
+        overlay = followup.apply(overlay)
+
+    Differs from the opp version:
+    - Iterates only [my_id], not all opps. Returns one Bundle, not a
+      dict — there is only ever one "me" per call.
+    - `max_events=10` (vs opp's 30). Me-followup is invoked per-score-
+      call inside `BundleEvaluator.score` (~15-20× per turn at default
+      knobs), so its cost compounds where opp's runs once per turn.
+      Empirically 1-3 launches show up in a 30-turn rollout, so 10 is
+      generous.
+    - KEEPS t=0 in the event queue (matches opp). At t=0, the
+      overlay's snapshot already reflects my_bundle's ship deductions
+      for `launch_turn=0` launches; `lite_greedy_policy` naturally
+      filters drained sources via its `src[5] < 10` ship check. The
+      value-add at t=0 is launches from sources my_bundle didn't touch
+      — those are legitimate reactive launches and capturing them is
+      the whole point of making the rollout self-consistent.
+
+    Bug #14 (me-half) target: without this function, `BundleEvaluator.
+    score` treats sources as drained-forever after my_bundle's launch,
+    so it pessimistically rejects profitable launches even when
+    production would refill the source within horizon. With this
+    function applied to the overlay before scoring, the path-integrated
+    planet/production credit accurately reflects the source's
+    refill-and-relaunch trajectory.
+    """
+    if my_id is None:
+        my_id = world.my_id
+    h = max(0, int(horizon))
+    if h <= 0:
+        return Bundle()
+
+    # Need at least one owned planet to launch from; bail early
+    # otherwise (cheap path for the eliminated-me / no-my-planets case).
+    has_my_planet = any(
+        p.owner == my_id and not p.is_comet for p in world.planets
+    )
+    if not has_my_planet:
+        return Bundle()
+
+    initial_etas: set[int] = set()
+    for arrivals in world.ledger_all(h).values():
+        for a in arrivals:
+            if 0 < a.eta <= h:
+                initial_etas.add(int(a.eta))
+
+    event_queue: list[int] = sorted({0} | initial_etas)
+    processed: set[int] = set()
+
+    my_specs_acc: list[LaunchSpec] = []
+    overlay = world
+    iterations = 0
+
+    while event_queue and iterations < max_events:
+        t = event_queue.pop(0)
+        if t in processed or t > h:
+            continue
+        processed.add(t)
+        iterations += 1
+
+        snap = overlay.snapshot_at(t)
+
+        obs = world_to_obs(snap, my_id)
+        actions = lite_greedy_policy(obs)
+        any_new_launch = False
+        for action in actions:
+            src_id, angle, ships = action
+            spec = LaunchSpec(
+                src_id=int(src_id),
+                aim_angle=float(angle),
+                ships=int(ships),
+                owner=int(my_id),
+                launch_turn=int(t),
+            )
+            try:
+                overlay = overlay.with_candidate(spec)
+            except ValueError:
+                continue
+            my_specs_acc.append(spec)
+            any_new_launch = True
+
+        if any_new_launch:
+            new_ledger = overlay.ledger_all(h)
+            for arrivals in new_ledger.values():
+                for a in arrivals:
+                    if (a.eta > t and a.eta <= h
+                            and a.eta not in processed
+                            and a.eta not in event_queue):
+                        event_queue.append(int(a.eta))
+            event_queue.sort()
+
+    return Bundle(launches=tuple(my_specs_acc))
 
 
