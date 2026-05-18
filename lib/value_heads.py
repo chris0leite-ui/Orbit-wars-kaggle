@@ -160,6 +160,22 @@ EPISODE_STEPS_TOTAL: int = 500
 # composite / 4P A2-favor split in `favor_hybrid`.
 PRODUCTION_PV_GAMMA: float = 0.99
 
+# Diagnostic toggles for isolating the bug #15 fix (2026-05-18).
+# A/B vs the pre-fix bundle regressed at n=64 (40.6%, Wlo=0.295, max
+# wallclock 1666ms). To attribute the regression to each subsystem,
+# wire env-var kill-switches that revert each half of the fix
+# independently:
+#   - `COMPOSITE_PRODUCTION_PV=0` disables the per-planet PV term added
+#     to base (the symmetric-base-cancels-captures fix for the sanity
+#     oracle).
+#   - `COMPOSITE_COUNTERFACTUAL=0` disables the per-fleet counterfactual
+#     and reverts to the pre-fix `pred_owner == my_id → continue` path
+#     (the chicken-and-egg fix).
+# Defaults are ON so production code is unchanged.
+import os as _os
+_COMPOSITE_PV_ENABLED = _os.environ.get("COMPOSITE_PRODUCTION_PV", "1") != "0"
+_COMPOSITE_CF_ENABLED = _os.environ.get("COMPOSITE_COUNTERFACTUAL", "1") != "0"
+
 
 def composite_capture_value(
     obs: Any, my_id: int,
@@ -218,20 +234,21 @@ def composite_capture_value(
     # `tests/test_planner_oracles.py::test_oracle_sanity_trivial_capture`
     # surfaced (b); the bug catalog at audit/2026-05-18-bug-catalog.md
     # documents (a). 2026-05-18 fix.
-    pv = pv_horizon(
-        step_now, 0,
-        gamma=PRODUCTION_PV_GAMMA,
-        t_total=EPISODE_STEPS_TOTAL,
-    )
-    my_prod = 0.0
-    opp_prod = 0.0
-    for p in world.planets_by_id.values():
-        owner = int(p.owner)
-        if owner == my_id:
-            my_prod += float(p.production)
-        elif owner >= 0:
-            opp_prod += float(p.production)
-    base += (my_prod - opp_prod) * pv
+    if _COMPOSITE_PV_ENABLED:
+        pv = pv_horizon(
+            step_now, 0,
+            gamma=PRODUCTION_PV_GAMMA,
+            t_total=EPISODE_STEPS_TOTAL,
+        )
+        my_prod = 0.0
+        opp_prod = 0.0
+        for p in world.planets_by_id.values():
+            owner = int(p.owner)
+            if owner == my_id:
+                my_prod += float(p.production)
+            elif owner >= 0:
+                opp_prod += float(p.production)
+        base += (my_prod - opp_prod) * pv
 
     raw = world.obs_raw
     fleets_raw = (
@@ -318,6 +335,28 @@ def composite_capture_value(
         # its ledger, so the prediction reflects "world if we let this
         # fleet land."
         pred_owner = model.owner_at(target.id, eta)
+        pred_ships = model.ships_at(target.id, eta) or 0.0
+        if not _COMPOSITE_CF_ENABLED:
+            # Diagnostic kill-switch: revert to exact pre-2026-05-18
+            # behaviour (`pred_owner == my_id → skip`,
+            # `ships > pred_ships → credit`, else waste). Used for
+            # ablation A/Bs to isolate which half of the bug #15 fix is
+            # responsible for the n=64 regression observed 2026-05-18 PM.
+            if pred_owner == my_id:
+                continue
+            if ships > pred_ships:
+                time_remaining = max(0, EPISODE_STEPS_TOTAL - step_now - eta)
+                comet_life = comet_remaining_lifetime(int(target.id), world)
+                if comet_life is not None:
+                    held = min(time_remaining, max(0, comet_life - eta))
+                    if held <= 0:
+                        delta -= waste_weight * ships
+                        continue
+                    time_remaining = held
+                delta += capture_weight * float(target.production) * float(time_remaining)
+            else:
+                delta -= waste_weight * ships
+            continue
         if pred_owner != my_id:
             # Combat at eta does not end with us owning the target —
             # we'd bounce off a stronger defender (or multi-arrival
