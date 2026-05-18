@@ -1,61 +1,100 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-18 PM (late wrap) by
+> Last written: 2026-05-18 LATE-PM (Tier 1/2/3 implementation wrap) by
 > `claude/audit-workflow-performance-btjeK`.
-> **Submission 52784853 (PV off + bug #3/#4/#12) CURRENT μ=1083.1
-> as of today's snapshot — under-performing by ~30μ vs prior
-> floor. Note: Kaggle scores DRIFT continuously and DO NOT settle;
-> every μ below is a snapshot, not a final value. Local A/B (81.2%)
-> did NOT translate to ladder.** Next session: pivot to wasted-ships
-> hold-feasibility filter + asymmetric opp model + tighter
-> pre-submit gates.
+> **Submission 52784853 still on ladder; μ snapshot drifted UP from
+> 1083.1 (briefing) to 1122.1 (late-PM check) — drift confirms
+> `kaggle-mu-does-not-settle` friction.** This session implemented
+> Tier 1 (bundler sha256 parity cache; 6700× warm speedup), Tier 2
+> (hold-feasibility filter behind PROPOSER_HOLD_FEASIBILITY,
+> default on), Tier 3 (BASELINE_OPP_TIER dispatch, default off).
+> Three new oracles in test_planner_oracles.py pin Tier 2's contract.
+> No new submission pushed this session.
 
 ## Live state
 
 | Submission | μ (snapshot, drifts) | Status | Role |
 |---|---:|---|---|
-| **52784853** | **1083.1** | Active rolling pair | NEW FLOOR — PV off + clean math, under-performed |
-| 52754310 | 1143.7 | Active rolling pair | Trajectory champion (kept) |
-| 52766596 | 1113.4 | Evicted | Joint v3 (replaced by 52784853) |
-| 52744856 | 1149.2 | Older | Composite_a2 hybrid |
+| **52784853** | **1122.1** | Most-recent | PV off + clean math (drifted up from 1083.1 morning snapshot) |
+| 52766596 | 1109.8 | Possibly in rolling pair | Joint v3 |
+| 52754310 | 1143.7 | Possibly evicted (was champion) | Trajectory v4 |
+| 52744856 | 1149.2 | Older | Composite_a2 hybrid (highest snapshot) |
 
-Daily submission budget: 5/18 used **1** (52784853). 4 unused.
-Rolling pair: pushing the next submission evicts the OLDER of
-[52784853, 52754310] (= 52754310 — the 1143.7 champion). Be VERY
-careful pushing — losing the 1143.7 floor would be catastrophic.
+Daily submission budget: 5/18 used **1** (52784853). 4 unused (none
+used this late-PM Tier 1/2/3 session).
 
-## Headline finding (today's session)
+**Rolling-pair ambiguity (UNRESOLVED).** State/current.md says
+52766596 was evicted by 52784853 (pair = [52754310, 52784853]).
+The literal "rolling LAST 2 submissions" rule says 52754310 was
+evicted (pair = [52766596, 52784853]). These have opposite
+implications for the protected floor (1143.7 vs 1109.8). Verify
+EMPIRICALLY at next-session start by checking the Kaggle team page
+(CLI doesn't expose which 2 are evaluating). Conservative floor for
+push decisions: 1109.8 until confirmed.
 
-**Local A/B vs the prior bundle does NOT predict ladder μ for this
-agent family.** The 81.2% n=32 win-rate vs `/tmp/baseline_hybrid
-_bundle.py` translated to a 30μ LOSS on the ladder. The bundle is a
-single sparring partner; the ladder's opponent distribution is
-different. New friction tag
-`local-ab-vs-ladder-calibration-miss-30mu` documents this; the fix is
-to gate future submissions on a 3-opponent panel + 4P sub-panel,
-not just the bundle A/B.
+## Headline this session (late-PM Tier 1/2/3 implementation)
 
-## What this session shipped
+**Tier 1 — Bundler sha256 parity cache.** Cold parity gate measured
+8m42s. With cache, warm re-build hits 0.078s (6700× speedup). Cache
+file at `audit/bundle-parity-cache.json` (gitignored).
+`--ignore-parity-cache` forces re-verification.
 
-11 commits on `claude/audit-workflow-performance-btjeK`:
+**Tier 2 — Hold-feasibility filter (proposer.py).** Three iterations
+on the design:
+  - v1 (MIN_COUNTER=10, no src-distance check, 1.0× margin): too
+    aggressive — 88% zero-emit vs random.
+  - v2 (MIN_COUNTER=20, src-closer-than-opp check, 1.5× margin):
+    better but still cut some legit captures.
+  - v3 (ally-aware: filter only triggers if our NEAREST planet to
+    tgt is farther than opp's nearest): final design. Sanity vs
+    random matches production behavior (~75% zero-emit baseline).
+Three oracles in `tests/test_planner_oracles.py` pin the contract;
+oracle 1 (`neutral_near_strong_opp`) is the fix-verification anchor
+(failed pre-filter, passes post-filter). Filter on by default behind
+`PROPOSER_HOLD_FEASIBILITY=on/off`.
 
+**Tier 3 — Asymmetric opp model dispatch (chooser.py).** Added
+`_select_opp_policy()`: `BASELINE_OPP_TIER=1` switches rollout opp
+from lite_greedy_policy to top_tier_mirror_policy (v3.5.1 aggressive
+snipe). Defaults OFF — bench gate REQUIRED before enabling (the
+per-call cost is 5-10× lite_greedy). Bench WAS NOT run this session
+(the Tier-3-on bench got buffer-stalled and was killed; needs re-run
+next session).
+
+**Carry-over caveat — local A/B vs ladder calibration miss.**
+Previous submission's 81.2% n=32 local A/B → −30μ ladder loss.
+Friction `local-ab-vs-ladder-calibration-miss-30mu` is binding.
+This session's A/B was running at wrap-up time and HAD NOT
+completed — DO NOT push Tier 2-on bundle until the A/B verdict is
+known.
+
+## What this session shipped (late-PM, Tier 1/2/3)
+
+3 new commits on `claude/audit-workflow-performance-btjeK`:
+
+```
+a7f9383  proposer: hold-feasibility filter to drop unholdable captures
+ce14317  chooser: BASELINE_OPP_TIER dispatch for asymmetric opp model
+a273f09  bundler: sha256 parity-cache to skip warm-rebuild self-play gate
+```
+
+Default behavior:
+- `PROPOSER_HOLD_FEASIBILITY` on by default → Tier 2 active in any
+  bundle built post-commit.
+- `BASELINE_OPP_TIER` off by default → Tier 3 has no behavioral
+  effect unless explicitly enabled.
+- Bundler cache: no behavioral effect; dev-tooling only.
+
+This means a re-bundled `agents/baseline` is functionally
+different from 52784853's bundle (filter is active). DO NOT push
+without A/B verifying the filter doesn't regress ladder μ.
+
+Older commits this branch (prior session):
 ```
 be7a3b8  state/current.md: submission 52784853 (PV-off + clean math fixes)
 82df5b8  value_heads: disable PV term in production (n=96 A/B regressed 39.6%)
-884423d  Day-9 PM wrap: bug #15 v2 + bug #14 option 5 both A/B-failed at 39.6%
-8e60a6a  Bug #14 option 5 v2: idempotent policy + tick-0-only call
-e7f94cf  Bug #14 fix: option 5 — reactive defense in candidate rollouts
-384cd54  Bug #4 fix: proposer-side drain-frontier pre-cut
-b285882  Bug #15 fix v2: PV-term-only (drop double-counting counterfactual)
-5f22ea8  Bug #14 cheap-mirror attempt: NEGATIVE RESULT, toggle preserved off
-333b884  value_heads: env-var kill-switches for bug #15 fix halves (diagnostic)
-9eb882d  Bug #3 + #12 fix: symmetric reinforce sizing + widened multi-wave window
-466fc98  Bug #15 fix: counterfactual capture credit + production-PV term
+[... see git log for full history ...]
 ```
-
-Production effect: −30μ floor (1113.4 → 1083.1). Bug #3 / #4 / #12
-clean math fixes are unconditionally good; the regression came from
-the bundle A/B's inability to predict ladder shift.
 
 ## Falsified-or-dead
 
@@ -129,19 +168,32 @@ session.
 ## How to start next session
 
 1. **Read this file first.**
-2. **Check origin/main for updates** — PI has prepared seed-set
-   artifacts there for A/B testing across geometries. The seed
-   sets should be picked up before running any A/B.
-3. **Read** `audit/2026-05-18-next-session-plan-tiered.md` — the
-   full tier-by-tier plan with file paths and reusable utilities.
-4. **First action**: Tier 1 (bundling tax) is a quick win;
-   then pivot to Tier 2 (hold-feasibility filter) — write the
-   three synthetic oracles BEFORE the filter implementation.
-5. **Submission gate**: do NOT push a new submission until ALL FOUR
-   gates clear: oracles + bench + 3-opp panel + 4P sub-panel. The
-   bundle A/B alone is insufficient (this session's −30μ lesson).
-6. **Be careful with rolling-pair**: the older entry is 52754310
-   (1143.7 — the champion). Losing it would be catastrophic.
+2. **Empirically verify rolling-pair** by checking the Kaggle team
+   page (CLI doesn't expose which 2 are evaluating). state/current.md
+   and the rolling-LAST-2 rule disagree on whether 52754310 (1143.7)
+   or 52766596 (1109.8) is the preserved floor.
+3. **Re-run the A/B that didn't complete this session**:
+   ```
+   PROPOSER_HOLD_FEASIBILITY=1 python -u fast.py eval \
+     /tmp/baseline_tier2_v2.py --vs submissions/baseline.py \
+     --geometry-panel --by-archetype --max-seeds 32 --workers 6
+   ```
+   The focal bundle `/tmp/baseline_tier2_v2.py` was the ally-aware
+   filter snapshot at session-end (`sha256:50ec0b79...`). Re-bundle
+   from current source if `/tmp` was wiped:
+   `python scripts/bundle_agent.py agents/baseline --out-dir /tmp`
+   (warm cache hit if source unchanged).
+4. **Run the deferred Tier 3 bench**:
+   `PROPOSER_HOLD_FEASIBILITY=1 BASELINE_OPP_TIER=1 python -u fast.py
+   bench agents/baseline/main.py --vs v7_0 --games 2`. Verify max <
+   1000ms; if it blows budget, fall back to "top_tier only on top-N
+   candidates" per plan.
+5. **Run 4P sub-panel**: `python scripts/play4p.py --focal
+   /tmp/baseline_tier2_v2.py --bg v7_0,v7_0,v7_0 --rotate-seats
+   --workers 4 --seeds <16 random>`. First-place rate ≥ 25% gate.
+6. **Submission gate** (unchanged): do NOT push until ALL FOUR
+   gates clear (oracles ✓ done + bench + multi-opp panel + 4P
+   sub-panel). The bundle A/B alone is insufficient.
 
 ## Pointers (new this session)
 
@@ -172,16 +224,19 @@ session.
 
 - **Rule 1**: submissions are PI-approved, single-shot, no retry
   loops.
-- **Rule 12** (Orbit Wars caveat): rolling-last-2 = [52754310
-  (1143.7), 52784853 (1083.1)]. Pushing 1 evicts the older
-  (52754310 — the CHAMPION). Verify the new submission is ≥
-  the champion BEFORE pushing.
-- **Rule 32**: session-start git fetch — `git fetch origin && git
-  log HEAD..origin/main && git diff HEAD..origin/main` BEFORE any
-  new compute. PI has new seed-set artifacts on main.
-- **Rule 38**: fix-verification reproduces failure state. Use the
-  oracle suite as the regression harness.
+- **Rule 12** (Orbit Wars caveat): rolling-pair contents AMBIGUOUS
+  this session. Verify empirically before pushing. Conservative
+  floor (lower of the two recent μ): 1109.8.
+- **Rule 32**: session-start git fetch is REQUIRED. Origin/main has
+  diverged 21 commits since last sync — archetype-strategies +
+  simpler v15 baseline track. This branch deliberately stays on
+  the trajectory_chooser stack per PI directive.
+- **Rule 38**: fix-verification reproduces failure state. The new
+  hold-feasibility oracles in `tests/test_planner_oracles.py`
+  document the failed-pre-fix / passed-post-fix contract.
 - **Rule 40**: prefer modeling correctness over restriction tuning.
-  Tier 2 (hold-feasibility) is modeling correctness. Tier 4 (active
-  planets) is modeling correctness. Tier 5 (PV recalibration) is
-  modeling correctness paired with chooser-gate retuning.
+  Tier 2 IS a restriction (a candidate pre-cut) — it's the cheapest
+  approximation of the wasted-ships pattern. The principled-correct
+  fix is the rollout seeing opp counter (Tier 3 + longer horizon).
+  Watch for Tier 2 over-restriction in the A/B: if it cuts too many
+  legit captures, default it OFF and lean on Tier 3 instead.
