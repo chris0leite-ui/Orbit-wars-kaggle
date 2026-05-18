@@ -2425,7 +2425,13 @@ def predict_opp_via_event_driven_lite_greedy(
         any_new_launch = False
         for opp_id in opp_ids:
             obs = world_to_obs(snap, opp_id)
-            actions = lite_greedy_policy(obs)
+            # Phase C+: pass omega so lite_greedy uses lead-aim
+            # consistently with bundle's own enumeration. Symmetric
+            # world model — fixes the bias diagnosed at 2026-05-18
+            # turn-20 bundle-vs-baseline (bundle was over-optimistic
+            # about opp damage because opp prediction missed orbital
+            # targets).
+            actions = lite_greedy_policy(obs, omega=snap.omega)
             for action in actions:
                 src_id, angle, ships = action
                 spec = LaunchSpec(
@@ -2547,7 +2553,8 @@ def predict_my_followup_via_event_driven_lite_greedy(
         snap = overlay.snapshot_at(t)
 
         obs = world_to_obs(snap, my_id)
-        actions = lite_greedy_policy(obs)
+        # Phase C+: symmetric lead-aim via omega (matches opp path).
+        actions = lite_greedy_policy(obs, omega=snap.omega)
         any_new_launch = False
         for action in actions:
             src_id, angle, ships = action

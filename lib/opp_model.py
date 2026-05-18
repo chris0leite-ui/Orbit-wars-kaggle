@@ -43,6 +43,7 @@ from __future__ import annotations
 import math
 from typing import Any, Callable
 
+from lib.aim import aim_orbiting
 from lib.fleet import speed as _fleet_speed
 from lib.intent import World, realize
 from lib.mechanism import DEFAULT_MECHANISMS
@@ -152,7 +153,22 @@ _TIER_REGISTRY: dict[int, Policy] = {
 }
 
 
-def lite_greedy_policy(obs: Any) -> list:
+def _static_aim_eta(src_xy, src_radius, target, target_radius, spd):
+    """Straight-line aim + naive ETA (legacy lite_greedy behavior).
+    Returns (angle_radians, eta_int)."""
+    sx, sy = src_xy
+    dx = float(target[2]) - sx
+    dy = float(target[3]) - sy
+    angle = math.atan2(dy, dx)
+    d = math.sqrt(dx * dx + dy * dy)
+    flight = max(0.0, d - float(src_radius) - float(target_radius) - 0.1)
+    if spd <= 0:
+        return angle, 999
+    eta = max(1, int(math.ceil(flight / spd)))
+    return angle, eta
+
+
+def lite_greedy_policy(obs: Any, omega: float = 0.0) -> list:
     """Cheap opp policy: ROI-greedy launch picker, no WorldModel.
 
     Per-call cost is ~1-2 ms (raw obs only; no World object,
@@ -168,6 +184,15 @@ def lite_greedy_policy(obs: Any) -> list:
     capture_size). Skips if the source can't afford the capture
     (defenders+production_during_flight+1 > src.ships), avoiding the
     bouncing-fleet failure mode where 0.7×src.ships < defenders.
+
+    `omega` (Phase C+): when non-zero, use orbital lead-aim
+    (`aim_orbiting`) instead of static `atan2`, and use the resulting
+    self-consistent ETA in the affordability gate. Default 0.0
+    preserves bit-identical pre-Phase-C+ behavior for callers that
+    don't pass omega (v8_analytic, abl_lite, v7_wide_deep). Phase C+
+    diagnosed the asymmetric world model: bundle's enumeration used
+    lead-aim for our own launches but lite_greedy was static for opp
+    prediction, biasing the score to over-optimistic opp damage.
     """
     player = obs.get("player", 0) if isinstance(obs, dict) else getattr(obs, "player", 0)
     planets = obs.get("planets") if isinstance(obs, dict) else getattr(obs, "planets", None)
@@ -194,10 +219,15 @@ def lite_greedy_policy(obs: Any) -> list:
                 best = t
         if best is None:
             continue
-        # Capture-size estimate: predict defenders at straight-line ETA
-        # for an aggressive-sized fleet, only launch if affordable.
-        # Straight-line aim/eta — adequate for static targets; orbital
-        # targets misaim but the rollout simulator catches the miss.
+        # Capture-size estimate: predict defenders at ETA for an
+        # aggressive-sized fleet, only launch if affordable. ETA path
+        # depends on `omega`: static atan2 (omega=0) or orbital lead-
+        # aim (omega!=0). Production accrues only for OWNED planets
+        # (env rule: orbit_wars.py:511-514 — neutrals stay at their
+        # current count). Treating neutrals as accreting was the bug
+        # that made lite_greedy skip capturable openings (e.g. 13-
+        # defender prod=1 neutral at d=12 looked like 19 defenders
+        # at eta=6, so the policy idled in opp_traj rollouts).
         budget = int(src[5])
         agg_ships = max(5, int(budget * 0.7))
         if agg_ships > budget:
@@ -205,17 +235,22 @@ def lite_greedy_policy(obs: Any) -> list:
         spd = _fleet_speed(agg_ships)
         if spd <= 0:
             continue
-        dx = best[2] - sx; dy = best[3] - sy
-        d = math.sqrt(dx * dx + dy * dy)
-        flight = max(0.0, d - float(src[4]) - float(best[4]) - 0.1)
-        eta = max(1, int(math.ceil(flight / spd)))
-        # Production accrues only for OWNED planets (env rule:
-        # orbit_wars.py:511-514 — neutrals stay at their current count).
-        # Treating neutrals as accreting was the bug that made lite_greedy
-        # skip capturable openings (e.g. 13-defender prod=1 neutral at
-        # d=12 looked like 19 defenders at eta=6, so the policy idled
-        # in opp_traj rollouts). Real opps grab near targets at step 4
-        # and snowball.
+
+        src_xy = (sx, sy)
+        src_r = float(src[4]); tgt_r = float(best[4])
+        if omega != 0.0:
+            res = aim_orbiting(src_xy, src_r, list(best), tgt_r,
+                               agg_ships, omega)
+            if res is not None:
+                angle, _arrival, eta_float = res
+                angle = float(angle)
+                eta = max(1, int(math.ceil(float(eta_float))))
+            else:
+                # Degenerate orbital geometry → static fallback.
+                angle, eta = _static_aim_eta(src_xy, src_r, best, tgt_r, spd)
+        else:
+            angle, eta = _static_aim_eta(src_xy, src_r, best, tgt_r, spd)
+
         if int(best[1]) == -1:
             defenders_at_eta = float(best[5])
         else:
@@ -228,7 +263,6 @@ def lite_greedy_policy(obs: Any) -> list:
             ships = budget
         if ships < 5:
             continue
-        angle = math.atan2(best[3] - sy, best[2] - sx)
         moves.append([src[0], angle, ships])
     return moves
 
