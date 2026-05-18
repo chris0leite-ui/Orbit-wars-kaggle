@@ -197,6 +197,49 @@ data yet.
 
 ---
 
+## #12 — `capture_size.enemy_inflight` window too narrow for multi-wave attacks
+
+**Location**: `agents/baseline/proposer.py:capture_size` (reinforce
+branch, line ~83-87):
+
+```python
+enemy_inflight = sum(
+    ships
+    for (eta_arr, owner, ships) in model.ledger.get(int(tgt.id), [])
+    if owner != me and eta_arr <= enemy_eta + 1
+)
+```
+
+**Symptom**: When an opp launches MULTIPLE fleets at the same target
+(staggered wave attack), capture_size only counts those arriving
+within `enemy_eta + 1` of the EARLIEST. The post-fix ledger for the
+asdf game at step 37 correctly contains both `(eta=2, ships=42)`
+and `(eta=4, ships=65)`. enemy_eta = 2 (earliest). The window
+`enemy_eta + 1 = 3` excludes F23 at eta=4. shortfall computed only
+against the 42-ship fleet → returns 0 → no reinforce candidate.
+
+**Discovered**: AFTER fix #11 landed. The ledger improvement
+exposed this asymmetry that was previously masked.
+
+**Fix sketch**: widen the window to include staggered waves:
+
+```python
+# Sum all opp ships arriving in the next ~10-20 steps, not just
+# enemy_eta + 1. Or: sum ALL opp ships in ledger (let the chooser
+# decide whether the late ones are reachable).
+enemy_inflight = sum(
+    ships for (eta_arr, owner, ships) in model.ledger.get(int(tgt.id), [])
+    if owner != me and eta_arr <= enemy_eta + WAVE_LOOKAHEAD  # 10? 20?
+)
+```
+
+Or a more principled fix: simulate the timeline at the planet
+including ALL inbound fleets, find the MAX shortfall over time.
+
+**Status**: **NOT YET FIXED**. Critical follow-on to #11.
+
+---
+
 ## #11 — ⚠️ `fleet_target_planet` ray-cast misses ORBITING targets
 
 **Location**: `lib/world_model.py:fleet_target_planet` (ray-cast
