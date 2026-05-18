@@ -466,6 +466,32 @@ relevant skill file or source code, not back into friction.md.
   for verdicts. Promotion candidate: bump `fast.py eval` default
   `--max-seeds` from 8 (= n=16 with 2-seat balance) to 16 (= n=32).
 
+## 2026-05-18 (claude/ml-competition-strategy-PFhzM — Phase A/B trajectory-native foundation)
+
+- `tag: pi-isolate-fix-verify` — PI ratified principle: when a problem
+  surfaces, isolate it as a synthetic test case FIRST, fix in
+  isolation, THEN verify the fix applies to production. Exact
+  application: A5 oracle was the synthetic isolated case for me-followup;
+  fixed mechanism in `predict_my_followup_via_event_driven_lite_greedy`
+  + unit tests; verified A5 flips XFAIL→XPASS-strict under
+  `BUNDLE_ME_FOLLOWUP=lite`. Generalises to all future
+  diagnose-and-fix loops. **Fix:** logged here; promote to CLAUDE.md
+  rule if it survives a second session intact.
+- `tag: oracle-horizon-mismatch-hides-mechanic` — A5 oracle (Phase A)
+  was designed with P0→P2 distance ~42 units; the smallest fleet at
+  log-speed ~2.18 takes ~19 turns to arrive, outside default
+  `BUNDLE_HORIZON=15`. The mechanic it claimed to test
+  (reinforcement-aware launch via me-followup) was structurally
+  invisible because `initial_etas` filtered out the only arrival
+  event. Looked like a Phase B failure ("A5 didn't flip under
+  lite mode") when it was actually an oracle-calibration bug. Caught
+  by the score-delta diagnosis: lite and off produced bit-identical
+  scores. **Fix:** redesigned A5 with distance=10 so the two-wave
+  attack plays out within horizon=15; new layout makes me-followup
+  activation observable. Rule: **every oracle's "winning trajectory"
+  must complete inside the agent's default horizon, or the oracle is
+  testing the horizon, not the mechanic**.
+
 ## 2026-05-17 (claude/space-fleet-physics-engine-lrLE6 — v8_analytic value-head pivot to fast_sim)
 
 - `tag: K-shorter-than-launch-eta-makes-value-head-blind` — JAX K=8
