@@ -10,6 +10,7 @@ import pytest
 from kaggle_environments import make
 
 from lib import fast_sim
+from lib import value_heads as _value_heads
 from lib.value_heads import (
     CAPTURE_REWARD_WEIGHT,
     INFLIGHT_EXTRA_HORIZON,
@@ -257,6 +258,11 @@ def test_composite_penalises_sun_crossing_trajectory():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(
+    not _value_heads._COMPOSITE_PV_ENABLED,
+    reason="PV term disabled in production (2026-05-18 wrap)",
+    strict=False,
+)
 def test_composite_credits_post_arrival_capture_via_pv():
     """Bug #15 fix v2 (2026-05-18 PM). The per-fleet capture-credit
     was dropped; PV-term-in-the-base is now the sole capture-crediting
@@ -304,6 +310,11 @@ def test_composite_credits_post_arrival_capture_via_pv():
     )
 
 
+@pytest.mark.xfail(
+    not _value_heads._COMPOSITE_PV_ENABLED,
+    reason="PV term disabled in production (2026-05-18 wrap)",
+    strict=False,
+)
 def test_composite_no_credit_for_over_reinforcement():
     """Per-fleet counterfactual fix (2026-05-18, bug #15). TWO of our
     identical fleets arrive at the SAME tick on the same opp target,

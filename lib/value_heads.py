@@ -161,16 +161,24 @@ EPISODE_STEPS_TOTAL: int = 500
 PRODUCTION_PV_GAMMA: float = 0.99
 
 # Diagnostic toggle for the production-PV term in `composite_capture_value`.
-# Bug #15 fix v2 (2026-05-18 PM): the canonical fix is the PV term alone —
-# the per-fleet "counterfactual" capture credit was dropped after the A/B
-# ablation showed it DOUBLE-CREDITED captures alongside the PV term and
-# the chooser over-emitted as a result (n=64 winrates: both halves on
-# 40.6%, PV only 46.9%, vs pre-fix bundle 50% by definition). The
-# `COMPOSITE_PRODUCTION_PV` env var still flips PV off for diagnostic A/Bs
-# (sanity oracle fails when off, but pre-fix behaviour is otherwise
-# preserved). Default ON.
+# Bug #15 fix v2 (2026-05-18 PM) shipped this term default-ON; subsequent
+# A/B vs the pre-fix bundle settled at 39.6% (n=96, Wlo=0.304, FAIL).
+# Bug #14 option 5 (smart reactive defense in candidate rollouts) was the
+# hypothesised cure; it ALSO failed at 39.6% — the hypothesis is fully
+# falsified. The convergent failure means the PV term itself over-credits
+# captures: chooser was calibrated WITHOUT PV; adding ~100 units per
+# captured planet at leaf uniformly inflates candidate scores → over-
+# emission → drained sources → losses. Disabling PV restores the chooser's
+# pre-#15 calibration (~50% vs bundle). Cost: sanity oracle (`test_oracle
+# _sanity_trivial_capture`) reverts to xfail — that property is real but
+# the cost-benefit tilts to "disable and revisit with chooser-gate
+# recalibration in a future session". See
+# audit/2026-05-18-postmortem-bug-15-v2-and-bug-14-option-5.md and
+# knowledge-base/thoughts/2026-05-18-PV-term-recalibration-debt.md.
+# Default OFF as of 2026-05-18 PM session wrap. Set
+# `COMPOSITE_PRODUCTION_PV=1` to re-enable for A/Bs.
 import os as _os
-_COMPOSITE_PV_ENABLED = _os.environ.get("COMPOSITE_PRODUCTION_PV", "1") != "0"
+_COMPOSITE_PV_ENABLED = _os.environ.get("COMPOSITE_PRODUCTION_PV", "0") != "0"
 
 
 def composite_capture_value(
