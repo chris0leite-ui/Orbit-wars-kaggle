@@ -1,0 +1,196 @@
+{
+  "schema_version": 1,
+  "config": {
+    "bundle": "submissions/bundle.py",
+    "baseline": "submissions/baseline.py",
+    "seeds": [
+      42,
+      1,
+      7,
+      13,
+      31,
+      100,
+      17,
+      23
+    ],
+    "n_games": 16,
+    "workers": 4
+  },
+  "elapsed_s": 693.7,
+  "aggregate": {
+    "n_games": 16,
+    "bundle_wins": 2,
+    "total_fleets": 1627,
+    "total_ships_launched": 73763,
+    "bucket_ships": {
+      "captured": 38020,
+      "bounced_enemy": 13221,
+      "reinforced_self": 21180,
+      "comet_collision": 8,
+      "bounced_neutral": 588,
+      "arrived_but_lost": 746,
+      "sun": 0,
+      "vanished_in_space": 0,
+      "hit_planet_unknown_flip": 0,
+      "oob": 0,
+      "alive_at_end": 0
+    },
+    "bucket_count": {
+      "captured": 715,
+      "bounced_enemy": 341,
+      "reinforced_self": 516,
+      "comet_collision": 1,
+      "bounced_neutral": 23,
+      "arrived_but_lost": 31
+    },
+    "pct_ships_by_bucket": {
+      "captured": 51.543456746607376,
+      "bounced_enemy": 17.923620243211367,
+      "reinforced_self": 28.713582690508794,
+      "comet_collision": 0.010845545869880563,
+      "bounced_neutral": 0.7971476214362214,
+      "arrived_but_lost": 1.0113471523663624
+    },
+    "pct_count_by_bucket": {
+      "captured": 43.9459127228027,
+      "bounced_enemy": 20.95881991395206,
+      "reinforced_self": 31.71481253841426,
+      "comet_collision": 0.06146281499692685,
+      "bounced_neutral": 1.4136447449293177,
+      "arrived_but_lost": 1.9053472649047325
+    },
+    "pct_wasted_ships": 19.74296056288383,
+    "pct_productive_ships": 80.25703943711618,
+    "pct_inflight_ships": 0.0
+  },
+  "per_game": [
+    {
+      "seed": 1,
+      "bundle_seat": 0,
+      "reward_bundle": -1,
+      "n_steps": 155,
+      "elapsed_s": 58.2,
+      "n_fleets": 49
+    },
+    {
+      "seed": 7,
+      "bundle_seat": 0,
+      "reward_bundle": -1,
+      "n_steps": 134,
+      "elapsed_s": 81.7,
+      "n_fleets": 85
+    },
+    {
+      "seed": 42,
+      "bundle_seat": 0,
+      "reward_bundle": -1,
+      "n_steps": 282,
+      "elapsed_s": 93.6,
+      "n_fleets": 88
+    },
+    {
+      "seed": 31,
+      "bundle_seat": 0,
+      "reward_bundle": 1,
+      "n_steps": 283,
+      "elapsed_s": 211.0,
+      "n_fleets": 152
+    },
+    {
+      "seed": 100,
+      "bundle_seat": 0,
+      "reward_bundle": -1,
+      "n_steps": 242,
+      "elapsed_s": 188.1,
+      "n_fleets": 76
+    },
+    {
+      "seed": 13,
+      "bundle_seat": 0,
+      "reward_bundle": -1,
+      "n_steps": 500,
+      "elapsed_s": 328.9,
+      "n_fleets": 184
+    },
+    {
+      "seed": 42,
+      "bundle_seat": 1,
+      "reward_bundle": -1,
+      "n_steps": 271,
+      "elapsed_s": 98.5,
+      "n_fleets": 103
+    },
+    {
+      "seed": 17,
+      "bundle_seat": 0,
+      "reward_bundle": -1,
+      "n_steps": 500,
+      "elapsed_s": 289.3,
+      "n_fleets": 187
+    },
+    {
+      "seed": 23,
+      "bundle_seat": 0,
+      "reward_bundle": -1,
+      "n_steps": 316,
+      "elapsed_s": 115.4,
+      "n_fleets": 58
+    },
+    {
+      "seed": 1,
+      "bundle_seat": 1,
+      "reward_bundle": -1,
+      "n_steps": 257,
+      "elapsed_s": 84.6,
+      "n_fleets": 57
+    },
+    {
+      "seed": 7,
+      "bundle_seat": 1,
+      "reward_bundle": -1,
+      "n_steps": 145,
+      "elapsed_s": 87.9,
+      "n_fleets": 77
+    },
+    {
+      "seed": 31,
+      "bundle_seat": 1,
+      "reward_bundle": 1,
+      "n_steps": 207,
+      "elapsed_s": 150.1,
+      "n_fleets": 104
+    },
+    {
+      "seed": 17,
+      "bundle_seat": 1,
+      "reward_bundle": -1,
+      "n_steps": 166,
+      "elapsed_s": 101.0,
+      "n_fleets": 77
+    },
+    {
+      "seed": 100,
+      "bundle_seat": 1,
+      "reward_bundle": -1,
+      "n_steps": 241,
+      "elapsed_s": 193.6,
+      "n_fleets": 89
+    },
+    {
+      "seed": 23,
+      "bundle_seat": 1,
+      "reward_bundle": -1,
+      "n_steps": 273,
+      "elapsed_s": 103.8,
+      "n_fleets": 44
+    },
+    {
+      "seed": 13,
+      "bundle_seat": 1,
+      "reward_bundle": -1,
+      "n_steps": 354,
+      "elapsed_s": 309.1,
+      "n_fleets": 197
+    }
+  ]
+}
