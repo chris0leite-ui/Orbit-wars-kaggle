@@ -16,34 +16,33 @@ date: 2026-05-18
 deadline: 2026-06-23 23:59 UTC
 days_to_deadline: 36
 
-# Most-recent submission (trajectory chooser v4 + wait_N + wallclock budget).
-# Sets BASELINE_CHOOSER=trajectory + BASELINE_VALUE_HEAD=hybrid via setdefault
-# in agents/baseline/main.py. SETTLED at mu=1271.8 (far above local A/B
-# prediction of ~1140-1180). Spatial-leaf A/B 2026-05-18 was net-negative
-# (2P 40.6%, 4P 9.4%, wallclock max 2541ms) — NO new submission.
-last_submission_id: 52766596
-last_submission_status: COMPLETE
-last_submission_mu: 1094.1
-last_submission_message: "Direction B v3 joint candidate evaluation, 2P-only gated"
-# Rolling pair settled state:
-#   52754310 (trajectory champion): mu=1141.0
-#   52766596 (joint v3, just submitted): mu=1094.1 — UNDERPERFORMED
-#   52744856 (evicted, prior floor): mu=1149.2
-# Joint v3 net cost: -54 mu vs the floor it replaced. Bug #15 (composite
-# capture-credit) explains why: captures don't register positive Δ.
-# Fix #15 next session = highest priority.
+# Most-recent submission (PV-off + bug #3/#4/#12 fixes).
+# Built on `claude/audit-workflow-performance-btjeK` HEAD (commit 82df5b8).
+# `_COMPOSITE_PV_ENABLED` defaults to False — restores pre-#15 chooser
+# calibration. Bug #15 v2's PV term and bug #14 option 5 both A/B-failed
+# at 39.6% n=96 in this session (see audit/2026-05-18-postmortem-bug-15
+# -v2-and-bug-14-option-5.md). This submission preserves the clean math
+# fixes (drain-frontier pre-cut, symmetric reinforce sizing, multi-wave
+# threat window) without the regressing PV inflation.
+# Local A/B vs prior bundle: 26/32 = 81.2% Wlo=0.647 Whi=0.911 PASS.
+# Bench: max=705ms p95=504ms over_1000ms=0 PASS.
+last_submission_id: 52784853
+last_submission_status: PENDING
+last_submission_mu: null  # will settle over time; query Kaggle CLI
+last_submission_message: "PV off + bug #3/#4/#12 fixes"
 last_submission_file: submissions/baseline.py
-last_submission_agent: trajectory_chooser_v4_waitN_baseline
-last_kernel_push: 2026-05-17 22:06:07 UTC
+last_submission_agent: baseline_PV_off_with_clean_math_fixes
+last_kernel_push: 2026-05-18 17:42:16 UTC
 prior_error_submission_id: 52744234  # 5/17 earlier — bundler fix in commit 4094aa1
-current_submitted_agent: trajectory_chooser_v4_waitN_baseline (5/17 evening; trajectory chooser default-on)
+current_submitted_agent: baseline_PV_off_with_clean_math_fixes (5/18 PM)
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation; the
-# third push auto-evicts the previous oldest). v20 (1082.4) evicted by
-# the 52754310 push. Pair becomes [composite_a2 52744856, trajectory 52754310].
+# third push auto-evicts the previous oldest). 52784853 push evicts the
+# older of the prior pair (52766596 at 1094.1). New pair becomes
+# [52754310 (trajectory champion, 1141.0 settled), 52784853 (NEW)].
 rolling_last_2:
-  - {agent: trajectory_chooser_v4_waitN_baseline, sub_id: 52754310, submitted: 2026-05-17T22:06Z, status: PENDING}
-  - {agent: composite_a2_hybrid_baseline_rebundle, sub_id: 52744856, submitted: 2026-05-17T14:17Z, status: COMPLETE, mu_at_submit_time: 1158.6}
+  - {agent: baseline_PV_off_with_clean_math_fixes, sub_id: 52784853, submitted: 2026-05-18T17:42Z, status: PENDING}
+  - {agent: trajectory_chooser_v4_waitN_baseline, sub_id: 52754310, submitted: 2026-05-17T22:06Z, status: COMPLETE, mu_at_submit_time: 1143.7, mu_settled: 1141.0}
 
 # Team peak as of 2026-05-17: v15_banded (the multi-wait-grid + banded
 # (src, tgt, wait_band) dedup line). v15 source lives in git history at
@@ -58,15 +57,17 @@ team_peak_agent: v15_banded
 # 3-opponent panel (`fast.py eval --vs-panel`) + h2h vs the current
 # rolling agent (not just a fixed baseline) before any new push.
 
-submissions_used_today: 3     # 5/17 — composite+A2 hybrid x2 (52744234 ERROR, 52744856 OK), trajectory v4+waitN (52754310)
-submissions_used_total: 32    # see ladder list below; refresh via Kaggle CLI
+submissions_used_today: 1     # 5/18 — baseline_PV_off_with_clean_math_fixes (52784853)
+submissions_used_total: 33    # see ladder list below; refresh via Kaggle CLI
 plateau_days: 0
 saturation_count: 0
 
 # Live ladder — read from `kaggle competitions submissions orbit-wars`,
 # NOT from this file. Submission IDs are stable; scores are not.
 # Most recent ladder entries by submission id:
-#   52754310  baseline.py (trajectory v4 + wait_N + wallclock) 2026-05-17 22:06 PENDING ← NEW
+#   52784853  baseline.py (PV-off + bug #3/#4/#12 fixes) 2026-05-18 17:42 PENDING ← NEW
+#   52766596  baseline.py (joint v3 2P-only) 2026-05-18 07:12 COMPLETE μ=1094.1 EVICTED by 52784853
+#   52754310  baseline.py (trajectory v4 + wait_N + wallclock) 2026-05-17 22:06 COMPLETE μ=1141.0
 #   52744856  baseline.py (composite+A2 hybrid, re-bundle) 2026-05-17 14:17 COMPLETE μ≈1158 settling
 #   52744234  baseline.py (composite+A2 hybrid, ERROR) 2026-05-17 13:57 ← failed: `from agents.baseline import` not inlined
 #   52721807  v20.py            2026-05-16 21:57  COMPLETE
