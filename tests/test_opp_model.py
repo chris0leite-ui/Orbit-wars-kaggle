@@ -145,3 +145,58 @@ def test_predict_opponent_action_default_tier_is_1():
     default = opp_model.predict_opponent_action(obs)
     explicit = opp_model.predict_opponent_action(obs, tier=1)
     assert _normalize_action(default) == _normalize_action(explicit)
+
+
+# ---------------------------------------------------------------------------
+# lite_greedy vulnerability-term tests (2026-05-18 Tier 1)
+# ---------------------------------------------------------------------------
+
+
+def _planet(pid: int, owner: int, x: float, y: float,
+            ships: int = 10, production: int = 1, radius: float = 1.0):
+    """Planet tuple in obs format: (id, owner, x, y, radius, ships, production)."""
+    return [pid, owner, float(x), float(y), float(radius),
+            int(ships), int(production)]
+
+
+def test_lite_greedy_prefers_vulnerable_target():
+    """Two opp targets at same distance + same production, but one has
+    5 garrison and the other has 50. Vulnerability term should make
+    the lite_greedy opp prefer the weaker one."""
+    import math as _m
+    src = _planet(0, 0, 50.0, 50.0, ships=100, production=1)
+    weak = _planet(1, 1, 20.0, 50.0, ships=5, production=1)
+    strong = _planet(2, 1, 80.0, 50.0, ships=50, production=1)
+    obs = {"player": 0, "planets": [src, weak, strong], "fleets": []}
+    moves = opp_model.lite_greedy_policy(obs)
+    assert len(moves) == 1, f"expected 1 launch, got {moves}"
+    _src_id, angle, _ships = moves[0]
+    # Weak is at x=20 < src.x=50 → cos(angle) < 0.
+    # Strong is at x=80 > src.x=50 → cos(angle) > 0.
+    assert _m.cos(angle) < 0, (
+        f"expected launch toward weak (x=20 < src.x=50); "
+        f"got angle={angle}, cos={_m.cos(angle)}"
+    )
+
+
+def test_lite_greedy_still_skips_unaffordable():
+    """Existing affordability check preserved: source can't afford
+    capture → no launch emitted."""
+    src = _planet(0, 0, 50.0, 50.0, ships=10, production=1)
+    too_hard = _planet(1, 1, 55.0, 50.0, ships=30, production=1)
+    obs = {"player": 0, "planets": [src, too_hard], "fleets": []}
+    moves = opp_model.lite_greedy_policy(obs)
+    assert moves == []
+
+
+def test_lite_greedy_neutral_no_production_accrual():
+    """Neutral target's predicted defenders == current garrison.
+    Regression test for env rule preserved through the rewrite."""
+    src = _planet(0, 0, 50.0, 50.0, ships=15, production=1)
+    neutral = _planet(1, -1, 80.0, 50.0, ships=9, production=1)
+    obs = {"player": 0, "planets": [src, neutral], "fleets": []}
+    moves = opp_model.lite_greedy_policy(obs)
+    assert len(moves) == 1, (
+        f"expected 1 launch (neutral is affordable: needs 10 ≤ 15 budget); "
+        f"got {moves}. If empty, neutral was treated as accreting (bug)."
+    )
