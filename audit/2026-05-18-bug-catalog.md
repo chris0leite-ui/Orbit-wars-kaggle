@@ -203,6 +203,94 @@ data yet.
 
 ---
 
+## #15 — 🚨 CRITICAL — composite_capture_value doesn't credit captures it CAUSES
+
+**Location**: `lib/value_heads.py:composite_capture_value` line 266-270:
+
+```python
+pred_owner = model.owner_at(target.id, eta)
+pred_ships = model.ships_at(target.id, eta) or 0.0
+if pred_owner == my_id:
+    # "Already ours — reinforcement; no extra credit (already in base)."
+    continue
+```
+
+**Symptom**: when our fleet IS in flight to a target it will capture,
+`model.owner_at(target.id, eta)` returns `my_id` because the model's
+simulation includes our fleet's arrival. The composite then treats
+this as "over-reinforcement" (target already ours) and skips the
+capture-bonus credit. Result: composite returns ONLY the base
+ship-delta term; captures the agent makes get ZERO credit at the
+leaf.
+
+**Discovered**: 2026-05-18 while debugging the trivial 100-vs-5
+sanity oracle. Even with 100 ships vs 5 opp ships in a clean
+synthetic setup, agent emits nothing. Trace:
+```
+step 0: my=1pl, opp=1pl, my_sh=100, opp_sh=5, favor=95.0
+step 1: my=1pl, opp=1pl, my_sh=1 (post-launch), in_flight=100, favor=95.0
+step 11: my=2pl, opp=0pl (captured), my_sh=95, opp_sh=0, favor=95.0, done
+```
+
+Favor is 95.0 at ALL steps including post-capture. The capture
+delivers 1 production gain over 489 remaining steps (~24 expected
+bonus at capture_weight=0.05) but composite credits ZERO.
+
+**Root cause**: chicken-and-egg with predictive simulation. The
+model SIMULATES with the fleet included; the composite then asks
+"will the target already be ours at arrival?" — yes, BECAUSE OF
+THIS FLEET. The check inverts the causal direction.
+
+**Why this devastates the chooser**:
+- baseline (idle, no launch): favor = N
+- candidate (launch + capture): favor = N (capture not credited)
+- Δ = 0 → emit gate (`> 0`) rejects ALL captures
+
+The chooser only emits when Δ > 0, but captures give Δ = 0 from
+composite, so the ONLY positive Δ moves are pure ship-balance
+plays (reinforce-against-threat — when our planet would otherwise
+fall WITHOUT our action). Anything offensive scores 0.
+
+This is THE root cause of bug #13 (can't finish), and a major
+contributor to bugs #4 (drain-frontier), #7 (joint 4P fail), and
+#14 (asymmetric rollout). Many "we don't emit launches that
+should obviously emit" symptoms trace here.
+
+**Fix sketch**: check the COUNTERFACTUAL — what would happen if
+THIS fleet weren't in flight?
+
+```python
+# Build a ledger WITHOUT this specific fleet
+counterfactual_arrivals = [a for a in model.ledger.get(target.id, [])
+                           if a != (eta, int(f.owner), int(f.ships))]
+# Predict ownership without us
+counterfactual_owner = simulate_planet_timeline(
+    target, counterfactual_arrivals, eta + 1
+)["owner_at"][eta]
+if counterfactual_owner != my_id:
+    # Without this fleet, target wouldn't be ours → this fleet
+    # CAUSES the capture → bonus
+    delta += capture_weight * production * time_remaining
+else:
+    # Even without this fleet, target ends up ours (someone else
+    # already in flight or production-capture) → no bonus
+    continue
+```
+
+Or simpler heuristic: if target.owner != my_id at observation time
+AND our fleet's ships > raw `target.ships + production * eta`
+(non-modeled prediction), credit the bonus.
+
+**Status**: **NOT YET FIXED**. Discovered late in 2026-05-18
+session via synthetic oracle testing (the methodology PI proposed
+worked — the trivial sanity test surfaced this immediately).
+
+**Severity**: 🚨 CRITICAL. Likely THE single biggest fixable
+issue. Estimated impact: could enable proper capture-driven Δ
+across all coordination scenarios. Higher priority than #14.
+
+---
+
 ## #14 — ⭐ ROOT — Asymmetric rollout: opp plays, we don't
 
 **Location**: `agents/baseline/chooser_trajectory.py:score_candidate_v4`
