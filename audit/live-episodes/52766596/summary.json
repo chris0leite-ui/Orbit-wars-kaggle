@@ -1,38 +1,38 @@
 {
   "submission_id": "52766596",
-  "generated_utc": "2026-05-18T09:11:54Z",
+  "generated_utc": "2026-05-18T09:50:26Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 29,
-  "n_played": 29,
-  "wins_total": 16,
-  "winrate_total": 0.5517241379310345,
+  "n_episodes": 41,
+  "n_played": 41,
+  "wins_total": 24,
+  "winrate_total": 0.5853658536585366,
   "by_size": {
     "2": {
-      "n": 14,
-      "wins": 10,
-      "winrate": 0.7142857142857143
+      "n": 23,
+      "wins": 16,
+      "winrate": 0.6956521739130435
     },
     "4": {
-      "n": 15,
-      "wins": 6,
-      "winrate": 0.4
+      "n": 18,
+      "wins": 8,
+      "winrate": 0.4444444444444444
     }
   },
   "self_match_episodes": 1,
   "seat_distribution": {
-    "0": 10,
-    "1": 15,
-    "2": 2,
+    "0": 15,
+    "1": 20,
+    "2": 4,
     "3": 3
   },
   "episode_length_steps": {
-    "n": 29,
+    "n": 41,
     "min": 104,
-    "q1": 180,
+    "q1": 176,
     "median": 200,
-    "q3": 263,
+    "q3": 271,
     "max": 500,
-    "mean": 228.3793103448276
+    "mean": 230.70731707317074
   },
   "opponents": [
     {
@@ -41,9 +41,19 @@
       "beat_us": 2
     },
     {
+      "name": "TensorFlower",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
       "name": "Lidor Foguel",
       "seen": 2,
       "beat_us": 1
+    },
+    {
+      "name": "KoshinM",
+      "seen": 2,
+      "beat_us": 0
     },
     {
       "name": "Dhruv Bansal",
@@ -216,11 +226,6 @@
       "beat_us": 0
     },
     {
-      "name": "TensorFlower",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "Bora Erk\u0131l\u0131\u00e7",
       "seen": 1,
       "beat_us": 0
@@ -244,11 +249,6 @@
       "name": "siman",
       "seen": 1,
       "beat_us": 1
-    },
-    {
-      "name": "KoshinM",
-      "seen": 1,
-      "beat_us": 0
     },
     {
       "name": "Adam Vajda",
@@ -314,6 +314,86 @@
       "name": "burgundy",
       "seen": 1,
       "beat_us": 1
+    },
+    {
+      "name": "Marco DG",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "simmons1025",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kevin L.",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Bangrocket",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Froglet Fleet",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Vedant Agrawal",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "kaggle-in-sleep",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "senkin13",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Komil Parmar",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "claudex",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Robert Cheah",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "LHYSKX",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mengfei Li",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Karan Singh Bisht",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "dekaineko",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\u6ca1\u843d\u8005",
+      "seen": 1,
+      "beat_us": 0
     }
   ],
   "losses": [
@@ -451,6 +531,44 @@
       ],
       "winner": "burgundy",
       "steps": 197
+    },
+    {
+      "episode": "episode-76949284",
+      "size": 2,
+      "opponents": [
+        "Froglet Fleet"
+      ],
+      "winner": "Froglet Fleet",
+      "steps": 154
+    },
+    {
+      "episode": "episode-76950357",
+      "size": 2,
+      "opponents": [
+        "TensorFlower"
+      ],
+      "winner": "TensorFlower",
+      "steps": 222
+    },
+    {
+      "episode": "episode-76950382",
+      "size": 2,
+      "opponents": [
+        "senkin13"
+      ],
+      "winner": "senkin13",
+      "steps": 127
+    },
+    {
+      "episode": "episode-76951062",
+      "size": 4,
+      "opponents": [
+        "claudex",
+        "Robert Cheah",
+        "LHYSKX"
+      ],
+      "winner": "Robert Cheah",
+      "steps": 125
     }
   ]
 }

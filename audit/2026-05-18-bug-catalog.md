@@ -197,6 +197,65 @@ data yet.
 
 ---
 
+## #13 — Chooser stalls in dominant positions ("can't finish the game")
+
+**Location**: `agents/baseline/chooser_trajectory.py:score_candidate_v4`
+emit gate (`score > 0.0` strictly) interacting with leaf scoring in
+overwhelming-advantage states.
+
+**Symptom**: When we're winning by a large margin (we hold 23 of 24
+planets, 3000+ ships; opp holds 1 planet, ~100 ships), the chooser
+emits NOTHING for many turns. Opp's last planet accumulates ships
+unmolested until eventually we DO emit (often after opp has
+accumulated 100+ ships).
+
+**Evidence**: dekaineko game (episode 76951352) steps 130-160:
+- We have 23 planets, ~3000-4000 ships
+- Opp has 1 planet (P8) with 52→112 ships
+- 4 candidates aimed at P8 each turn with positive cheap_delta
+- Chooser scores in v4: P0→P8 Δ=-32, P16→P8 Δ=0, P4→P8 Δ=-1200
+- All ≤ 0 → emit gate rejects → EMIT NOTHING
+- 30 turns of idle while opp accumulates
+- Finally emit at step 161 (we still win, but unnecessary delay)
+
+**Root cause**: leaf favor at horizon=25 dominated by base ship
+balance (3274 my - 92 opp). Any launch costs ships from my source
+(temporarily reduces my_ships count via ship-loss-to-bounce-or-
+combat). Capture bonus (`0.05 × prod × time_remaining ≈ 35`) is
+small relative to baseline magnitude. Net Δ ≤ 0 because:
+- ship-balance loss from launch (combat) > capture bonus
+- OR fast_sim's `done` flag fires early when we capture and game
+  appears "decided" — terminal leaf has no marginal benefit
+
+**Fix sketch** (multiple angles):
+
+1. **Emit ANY positive-prod capture in dominant positions**: gate
+   could be "Δ > 0 OR (we win and capture has any prod)". Cap at
+   1-2 per turn to avoid runaway.
+
+2. **Re-weight capture bonus when we dominate**: scale capture_bonus
+   by `(opp_planet_count == 1) * eliminate_bonus`. Captures that
+   would ELIMINATE opp are worth far more than incremental.
+
+3. **Tempo-pressure term in favor**: explicit "time to game end"
+   reward — game ending sooner is better when we're winning, so
+   capturing the last opp planet quickly is positive even if leaf
+   ship-balance is unchanged.
+
+4. **Force-emit cleanup**: when opp has only 1 planet AND we have
+   overwhelming force, emit one launch per turn from the closest
+   sufficient src.
+
+**Status**: **NOT YET FIXED**. Cosmetically we still win this game,
+but the stall is exploitable: a smarter opp could counter-launch
+during our hesitation and recapture lost ground.
+
+**Severity**: medium. Doesn't lose easy games but wastes 20-30 turns
+on close-to-finished games. Could lose IF opp counters effectively
+during the stall.
+
+---
+
 ## #12 — `capture_size.enemy_inflight` window too narrow for multi-wave attacks
 
 **Location**: `agents/baseline/proposer.py:capture_size` (reinforce
