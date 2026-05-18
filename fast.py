@@ -409,6 +409,7 @@ def _eval_vs_one(focal_path: str, focal_name: str,
                  opp_path: str, opp_name: str,
                  max_seeds: int, gate: float, workers: int,
                  seed_pool: Sequence[int] | None = None,
+                 full_panel: bool = False,
                  ) -> tuple[str, float, float, int, int, list[float], float, list[tuple[int, bool]]]:
     """Run the adaptive Wilson-gated A/B vs a single opponent.
 
@@ -416,6 +417,9 @@ def _eval_vs_one(focal_path: str, focal_name: str,
     used by ``--geometry-panel`` to draw from
     ``lib.seed_panel.SEED_PANEL_128_INTERLEAVED`` instead. The pool is
     sliced by tier index (not by value) so adaptive tiering still works.
+
+    `full_panel=True` disables adaptive early-stop entirely; every seed
+    in ``seed_pool`` (or ``range(max_seeds)``) is played.
 
     Returns: (verdict, wlo, whi, wins, n, focal_turn_ms, total_elapsed_s,
               per_game_outcomes).
@@ -464,16 +468,16 @@ def _eval_vs_one(focal_path: str, focal_name: str,
               f"wins={cumulative_wins:>3d}/{cumulative_n:<3d} "
               f"({100*wr:>5.1f}%)  Wlo={lo:.3f}  Whi={hi:.3f}  "
               f"elapsed={stat.elapsed_s:.1f}s", end="  ")
-        if lo >= gate:
+        if not full_panel and lo >= gate:
             verdict = "PASS"
             print(f"-> STOP  verdict=PASS  (Wlo≥{gate})")
             break
-        if hi < gate:
+        if not full_panel and hi < gate:
             verdict = "FAIL"
             print(f"-> STOP  verdict=FAIL  (Whi<{gate})")
             break
         if tier_n >= max_seeds:
-            verdict = "INCONCLUSIVE" if hi >= gate else "FAIL"
+            verdict = "PASS" if lo >= gate else ("FAIL" if hi < gate else "INCONCLUSIVE")
             print(f"-> STOP  verdict={verdict}  (max seeds reached)")
             break
         print("-> CONTINUE  (CI brackets gate)")
@@ -602,7 +606,9 @@ def cmd_eval(args: argparse.Namespace) -> int:
             print(f"== eval {focal_name} vs {opp_name}  gate Wlo≥{gate:.2f} ==")
         verdict, lo, hi, wins, n, times, elapsed, per_game = _eval_vs_one(
             focal_path, focal_name, opp_path, opp_name,
-            args.max_seeds, gate, args.workers, seed_pool=seed_pool,
+            args.max_seeds, gate, args.workers,
+            seed_pool=seed_pool,
+            full_panel=getattr(args, "full_panel", False),
         )
         per_opponent_results.append((opp_name, verdict, lo, hi, wins, n))
         overall_times.extend(times)
@@ -776,6 +782,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="After eval, print per-archetype focal winrate. Useful "
                          "with --geometry-panel; also works with range() seeds "
                          "(only intersecting seeds are reported).")
+    sp.add_argument("--full-panel", action="store_true",
+                    help="Disable adaptive early-stop (both PASS-stop and "
+                         "FAIL-stop) and run every seed in --max-seeds / the "
+                         "geometry panel. Use when you care about full "
+                         "per-archetype coverage, not the gate verdict.")
     sp.set_defaults(func=cmd_eval)
 
     sp = sub.add_parser("play", help="single game, verbose")
