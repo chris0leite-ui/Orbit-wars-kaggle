@@ -41,7 +41,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, Optional
 
-from lib.aim import aim_orbiting, swept_pair_hit
+from lib.aim import swept_pair_hit
 from lib.combat import resolve_arrivals
 from lib.opp_model import lite_greedy_policy
 
@@ -2148,37 +2148,16 @@ class BundleSearch:
             )[:self.candidates_per_source]
 
             for tgt in scored:
-                # Lead-aim for orbiting targets: aim ahead of where
-                # the target will be at fleet arrival, not at its
-                # current position. Critical for cross-board strikes
-                # — at omega=0.04 and 8-15 turn ETA, a static aim
-                # misses orbiting targets by 30-90 degrees of arc.
-                # Phase C diagnostic (2026-05-18): at turn 20 of
-                # bundle-vs-baseline seed 42, static-aim P8->P14
-                # captures P14 with 1 ship (score delta -30); lead-
-                # aim captures with 35 ships (score delta +13).
-                # Falls back to static atan2 if no self-consistent
-                # intercept exists (degenerate orbital geometry).
+                # Aim at target's current position. Good enough for
+                # short-range static targets; orbital lead-aim
+                # refinement (lib.aim.search_safe_intercept) is a
+                # follow-up — naive aim keeps moving parts minimal
+                # for the enumeration-shape A/B.
                 dx = tgt.current_x - src.current_x
                 dy = tgt.current_y - src.current_y
                 if dx == 0 and dy == 0:
                     continue
-                # Use a representative ship count for ETA estimation;
-                # per-ratio variation barely affects fleet speed
-                # (log-scaled), and the search picks the best ratio.
-                ship_estimate = max(1, int(src.ships * 0.7))
-                tgt_tuple = (tgt.id, tgt.owner, tgt.current_x,
-                             tgt.current_y, tgt.radius, tgt.ships,
-                             tgt.production)
-                res = aim_orbiting(
-                    (src.current_x, src.current_y), src.radius,
-                    list(tgt_tuple), tgt.radius, ship_estimate,
-                    world.omega,
-                )
-                if res is not None:
-                    angle = float(res[0])
-                else:
-                    angle = math.atan2(dy, dx)
+                angle = math.atan2(dy, dx)
 
                 for launch_turn in self.launch_turns:
                     if launch_turn < 0:
@@ -2425,13 +2404,7 @@ def predict_opp_via_event_driven_lite_greedy(
         any_new_launch = False
         for opp_id in opp_ids:
             obs = world_to_obs(snap, opp_id)
-            # Phase C+: pass omega so lite_greedy uses lead-aim
-            # consistently with bundle's own enumeration. Symmetric
-            # world model — fixes the bias diagnosed at 2026-05-18
-            # turn-20 bundle-vs-baseline (bundle was over-optimistic
-            # about opp damage because opp prediction missed orbital
-            # targets).
-            actions = lite_greedy_policy(obs, omega=snap.omega)
+            actions = lite_greedy_policy(obs)
             for action in actions:
                 src_id, angle, ships = action
                 spec = LaunchSpec(
@@ -2553,8 +2526,7 @@ def predict_my_followup_via_event_driven_lite_greedy(
         snap = overlay.snapshot_at(t)
 
         obs = world_to_obs(snap, my_id)
-        # Phase C+: symmetric lead-aim via omega (matches opp path).
-        actions = lite_greedy_policy(obs, omega=snap.omega)
+        actions = lite_greedy_policy(obs)
         any_new_launch = False
         for action in actions:
             src_id, angle, ships = action
