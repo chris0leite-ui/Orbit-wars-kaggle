@@ -1,10 +1,10 @@
-"""Single-turn diagnostic: at a target turn in bundle (off) vs v7_0,
-dump bundle's full candidate scoring + score what v7_0 actually played
+"""Single-turn diagnostic: at a target turn in bundle (off) vs opp,
+dump bundle's full candidate scoring + score what opp actually played
 as a Bundle. Disambiguates the three root-cause hypotheses:
 
-  (a) Scoring weights wrong — bundle CONSIDERS v7_0's move but scores
+  (a) Scoring weights wrong — bundle CONSIDERS opp's move but scores
       it lower than the one it picked.
-  (b) Enumeration wrong — bundle NEVER considers v7_0's move.
+  (b) Enumeration wrong — bundle NEVER considers opp's move.
   (c) Search topology wrong — bundle scores it highest but beam prunes
       it.
 
@@ -34,17 +34,20 @@ from lib.trajectory_layer import (
     Bundle, BundleEvaluator, LaunchSpec, World,
 )
 
-OBS_CACHE = REPO / "audit" / "diag_turn20_obs.pkl"
+def obs_cache_path(opp_name: str, seed: int, turn: int) -> Path:
+    return REPO / "audit" / f"diag_obs_{opp_name}_seed{seed}_t{turn}.pkl"
 
 
-def load_v7_0():
-    spec = importlib.util.spec_from_file_location(
-        "v7_0_loaded", REPO / "submissions" / "v7_0_drop_one.py",
-    )
+def load_opponent(submission_path: Path):
+    """Load any submission file's `agent` callable."""
+    mod_name = f"_opp_{submission_path.stem}"
+    spec = importlib.util.spec_from_file_location(mod_name, submission_path)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["v7_0_loaded"] = mod
+    sys.modules[mod_name] = mod
     spec.loader.exec_module(mod)
     return mod.agent
+
+
 
 
 def main():
@@ -52,18 +55,25 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--turn", type=int, default=20)
     ap.add_argument("--mode", choices=["off", "lite"], default="off")
+    ap.add_argument("--opponent", type=str,
+                    default="submissions/v7_0_drop_one.py",
+                    help="Path to opponent submission file")
     ap.add_argument("--reuse-obs", action="store_true",
                     help="Skip replay, use pinned obs from previous run.")
     args = ap.parse_args()
 
-    v7_0_agent = load_v7_0()
+    opp_path = REPO / args.opponent if not Path(args.opponent).is_absolute() else Path(args.opponent)
+    opp_agent = load_opponent(opp_path)
+    opp_name = opp_path.stem
+    obs_cache = obs_cache_path(opp_name, args.seed, args.turn)
+    print(f"Opponent: {opp_name}  Obs cache: {obs_cache.name}")
 
-    if args.reuse_obs and OBS_CACHE.exists():
-        with open(OBS_CACHE, "rb") as f:
+    if args.reuse_obs and obs_cache.exists():
+        with open(obs_cache, "rb") as f:
             cached = pickle.load(f)
         obs_bundle = cached["obs"]
         configuration = cached["configuration"]
-        print(f"Reusing pinned obs from {OBS_CACHE}")
+        print(f"Reusing pinned obs from {obs_cache}")
 
         class _StubConfig:
             def __init__(self, d): self.__dict__.update(d)
@@ -93,7 +103,7 @@ def main():
             obs1 = env.state[1].observation
             cfg = env.configuration
             a_bundle = bundle_agent(obs0, cfg)
-            a_v7 = v7_0_agent(obs1, cfg)
+            a_v7 = opp_agent(obs1, cfg)
             env.step([a_bundle, a_v7])
 
         if env.done:
@@ -105,10 +115,10 @@ def main():
         cfg_save = (dict(env.configuration)
                     if hasattr(env.configuration, "keys")
                     else dict(env.configuration.__dict__))
-        with open(OBS_CACHE, "wb") as f:
+        with open(obs_cache, "wb") as f:
             pickle.dump({"obs": dict(obs_bundle) if isinstance(obs_bundle, dict)
                          else obs_bundle, "configuration": cfg_save}, f)
-        print(f"Pinned obs to {OBS_CACHE}")
+        print(f"Pinned obs to {obs_cache}")
 
     print(f"\n=== Turn {args.turn} state (bundle's seat) ===")
     planets = obs_bundle.get("planets", []) if isinstance(obs_bundle, dict) else obs_bundle.planets
@@ -172,19 +182,19 @@ def main():
     finally:
         BundleEvaluator.score = original_score
 
-    # Now: what would v7_0 have played from BUNDLE'S seat?
-    print(f"\n=== Running v7_0 from BUNDLE'S seat (same obs) ===")
-    # v7_0 expects obs where the planet ownership labels match player perspective.
+    # Now: what would opp have played from BUNDLE'S seat?
+    print(f"\n=== Running opp from BUNDLE'S seat (same obs) ===")
+    # opp expects obs where the planet ownership labels match player perspective.
     # We feed it bundle's obs directly so it gets the same state. But it needs
     # its "player" field correct — bundle's obs has player=0.
     obs_for_v7 = dict(obs_bundle) if isinstance(obs_bundle, dict) else obs_bundle
-    v7_actions = v7_0_agent(obs_for_v7, env.configuration)
-    print(f"  v7_0 would play {len(v7_actions)} actions:")
+    v7_actions = opp_agent(obs_for_v7, env.configuration)
+    print(f"  opp would play {len(v7_actions)} actions:")
     for a in v7_actions:
         src, angle, ships = a
         print(f"  src={src} angle={angle:.3f} ships={ships}")
 
-    # Convert v7_0's actions to a Bundle and score it under bundle's evaluator
+    # Convert opp's actions to a Bundle and score it under bundle's evaluator
     # WITH the same opp_overlays bundle used during its search — otherwise the
     # comparison is apples-to-oranges (empty-vs-opp-aware scores vary by ~40 pts).
     v7_bundle = Bundle(launches=tuple(
@@ -192,7 +202,7 @@ def main():
                    ships=int(a[2]), owner=0, launch_turn=0)
         for a in v7_actions
     ))
-    print(f"\n=== Scoring v7_0's move WITH opp overlays (apples-to-apples) ===")
+    print(f"\n=== Scoring opp's move WITH opp overlays (apples-to-apples) ===")
     world = World.from_obs(obs_bundle, configuration=env.configuration)
     from agents.bundle.main import _build_searches
     from lib.trajectory_layer import predict_opp_via_event_driven_lite_greedy
@@ -208,7 +218,7 @@ def main():
     empty_score = ev.score(world, Bundle(), my_id=0,
                            opp_overlays=opp_overlays).total
     print(f"  empty bundle (do nothing) score: {empty_score:.2f}")
-    print(f"  v7_0's bundle score:             {v7_score:.2f}")
+    print(f"  opp's bundle score:             {v7_score:.2f}")
 
     # Find where v7's bundle ranks among bundle's considered candidates.
     v7_key = v7_bundle.launches
@@ -220,8 +230,8 @@ def main():
                 v7_rank = rank
                 break
 
-    print(f"  v7_0's-bundle score (re-scored): {v7_score:.2f}")
-    print(f"  v7_0's move appears in bundle's considered set: {v7_in_considered}")
+    print(f"  opp's-bundle score (re-scored): {v7_score:.2f}")
+    print(f"  opp's move appears in bundle's considered set: {v7_in_considered}")
     if v7_in_considered:
         print(f"  rank in considered set: #{v7_rank}")
     else:
@@ -240,23 +250,23 @@ def main():
                             opp_overlays=opp_overlays).total
     print(f"\n=== Apples-to-apples (all with same opp_overlays) ===")
     print(f"  bundle's chosen score: {bundle_score:.2f}")
-    print(f"  v7_0's move score:     {v7_score:.2f}")
-    print(f"  delta (v7_0 - bundle): {v7_score - bundle_score:+.2f}")
+    print(f"  opp's move score:     {v7_score:.2f}")
+    print(f"  delta (opp - bundle): {v7_score - bundle_score:+.2f}")
     print(f"  score range across bundle's 72 candidates: "
           f"{min(s for _, s in unique.items()):.2f} to "
           f"{max(s for _, s in unique.items()):.2f}")
 
     if v7_score > bundle_score and not v7_in_considered:
-        print(f"\n  >>> ROOT: ENUMERATION (b) — v7_0's move would have scored "
+        print(f"\n  >>> ROOT: ENUMERATION (b) — opp's move would have scored "
               f"{v7_score - bundle_score:+.2f} better but bundle never enumerated it.")
     elif v7_score > bundle_score and v7_in_considered:
-        print(f"\n  >>> ROOT: SEARCH TOPOLOGY (c) — bundle saw v7_0's move "
+        print(f"\n  >>> ROOT: SEARCH TOPOLOGY (c) — bundle saw opp's move "
               f"(rank #{v7_rank}, score {v7_score:.2f}) but its search "
               f"converged on a worse one ({bundle_score:.2f}).")
     elif v7_score <= bundle_score:
         print(f"\n  >>> ROOT: SCORING (a) — bundle's scorer values its own pick "
-              f"HIGHER ({bundle_score:.2f}) than v7_0's ({v7_score:.2f}). "
-              f"v7_0 may be winning by something the scorer doesn't measure.")
+              f"HIGHER ({bundle_score:.2f}) than opp's ({v7_score:.2f}). "
+              f"opp may be winning by something the scorer doesn't measure.")
 
 
 if __name__ == "__main__":
