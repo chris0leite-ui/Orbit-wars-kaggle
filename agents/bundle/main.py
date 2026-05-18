@@ -47,14 +47,7 @@ import os
 import time
 from typing import Optional
 
-from lib.trajectory_layer import (
-    Bundle,
-    BundleEvaluator,
-    BundleSearch,
-    World,
-    predict_opp_bundles_via_mirror_search,
-    predict_opp_via_event_driven_lite_greedy,
-)
+from lib.trajectory_layer import Bundle, BundleEvaluator, BundleSearch, World, predict_opp_bundles_via_mirror_search, predict_opp_via_event_driven_lite_greedy
 
 
 def _env_int(name: str, default: int) -> int:
@@ -110,7 +103,13 @@ def _build_searches() -> tuple[BundleSearch, BundleSearch, int]:
         evaluator=ev,
         max_depth=_env_int("BUNDLE_OWN_MAX_DEPTH", 2),
         beam_width=_env_int("BUNDLE_OWN_BEAM_WIDTH", 3),
-        candidates_per_source=_env_int("BUNDLE_OWN_CANDS_PER_SOURCE", 2),
+        # Default bumped 2->5 (2026-05-18 Phase C): single-turn diagnostic
+        # at turn 20 of bundle-vs-v7_0 showed cands=2 caused beam search
+        # to converge on empty bundle even when productive attacks existed.
+        # cands=5 unlocks the search; bench shows bundle survives 60+
+        # more turns vs v7_0 (eliminated turn 178 vs 121 prior) and stays
+        # within timing budget (0/178 turns > 800ms, p95=756ms).
+        candidates_per_source=_env_int("BUNDLE_OWN_CANDS_PER_SOURCE", 5),
         launch_turns=_env_turns("BUNDLE_OWN_LAUNCH_TURNS", (0,)),
     )
     opp = BundleSearch(
