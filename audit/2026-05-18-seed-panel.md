@@ -112,6 +112,27 @@ complement, not replace, the uniform `SEEDS_128`.
 features are comparable, but 4P-specific regressions need their own
 panel.
 
+## Self-play validation (baseline vs baseline, 128 panel games)
+
+`python scripts/validate_seed_panel.py` ran the comp-shipped baseline
+against itself across all 128 panel seeds (~9 min CPU on this container).
+
+- 128/128 games completed cleanly.
+- Aggregate: 31 P0 wins / 29 P1 wins / 68 draws — P0/P1 split well
+  within the ±15 % gate from ISSUES.md::A.6.
+- **Geometry-conditional signal is strong**: 27/32 archetypes show
+  P0 winrate outside [0.40, 0.60]; stdev across archetypes = 0.22.
+- This confirms the panel actually exposes flavour-dependent
+  differences. The draw rate (53 %) is the well-known
+  baseline-self-play step-500 attrition pattern — irrelevant here
+  since we only need the panel to surface variance, not produce
+  decisive games.
+
+Outputs:
+- `audit/seed-panel/selfplay-validation.txt` — per-archetype readout.
+- `audit/tournaments/20260518T111505Z.json` — full tournament record
+  (per-game seed, ship-delta, statuses).
+
 ## Open follow-ups (out of scope here)
 
 - Synthetic / handcrafted geometries (PI flagged as later). Now that

@@ -1,0 +1,171 @@
+running baseline vs baseline on 128 seeds ...
+[1/128] baseline (P0) vs baseline (P1) seed=2560: draw steps=500 dShips=+0
+[2/128] baseline (P0) vs baseline (P1) seed=4676: p0_win steps=500 dShips=+143
+[3/128] baseline (P0) vs baseline (P1) seed=6475: draw steps=500 dShips=+0
+[4/128] baseline (P0) vs baseline (P1) seed=8526: draw steps=500 dShips=+0
+[5/128] baseline (P0) vs baseline (P1) seed=1: p0_win steps=269 dShips=+4420
+[6/128] baseline (P0) vs baseline (P1) seed=1725: p0_win steps=458 dShips=+3613
+[7/128] baseline (P0) vs baseline (P1) seed=1948: draw steps=500 dShips=+0
+[8/128] baseline (P0) vs baseline (P1) seed=2419: p1_win steps=435 dShips=-3801
+[9/128] baseline (P0) vs baseline (P1) seed=1900: draw steps=500 dShips=+0
+[10/128] baseline (P0) vs baseline (P1) seed=2957: p0_win steps=500 dShips=+35
+[11/128] baseline (P0) vs baseline (P1) seed=4393: p0_win steps=497 dShips=+3429
+[12/128] baseline (P0) vs baseline (P1) seed=9306: p0_win steps=420 dShips=+3127
+[13/128] baseline (P0) vs baseline (P1) seed=32: p1_win steps=500 dShips=-1484
+[14/128] baseline (P0) vs baseline (P1) seed=2078: draw steps=500 dShips=+0
+[15/128] baseline (P0) vs baseline (P1) seed=6858: draw steps=500 dShips=+0
+[16/128] baseline (P0) vs baseline (P1) seed=7079: draw steps=500 dShips=+0
+[17/128] baseline (P0) vs baseline (P1) seed=78: draw steps=500 dShips=+0
+[18/128] baseline (P0) vs baseline (P1) seed=1750: draw steps=500 dShips=+0
+[19/128] baseline (P0) vs baseline (P1) seed=7166: p1_win steps=500 dShips=-2811
+[20/128] baseline (P0) vs baseline (P1) seed=8866: p1_win steps=500 dShips=-474
+[21/128] baseline (P0) vs baseline (P1) seed=1467: draw steps=500 dShips=+0
+[22/128] baseline (P0) vs baseline (P1) seed=2412: p0_win steps=500 dShips=+1643
+[23/128] baseline (P0) vs baseline (P1) seed=3154: p0_win steps=359 dShips=+4126
+[24/128] baseline (P0) vs baseline (P1) seed=8717: draw steps=500 dShips=+0
+[25/128] baseline (P0) vs baseline (P1) seed=417: draw steps=500 dShips=+0
+[26/128] baseline (P0) vs baseline (P1) seed=451: draw steps=500 dShips=+0
+[27/128] baseline (P0) vs baseline (P1) seed=2663: draw steps=500 dShips=+0
+[28/128] baseline (P0) vs baseline (P1) seed=8782: p1_win steps=500 dShips=-1625
+[29/128] baseline (P0) vs baseline (P1) seed=647: p1_win steps=500 dShips=-945
+[30/128] baseline (P0) vs baseline (P1) seed=1843: draw steps=500 dShips=+0
+[31/128] baseline (P0) vs baseline (P1) seed=2177: p0_win steps=500 dShips=+346
+[32/128] baseline (P0) vs baseline (P1) seed=7314: draw steps=500 dShips=+0
+[33/128] baseline (P0) vs baseline (P1) seed=1990: p0_win steps=230 dShips=+4063
+[34/128] baseline (P0) vs baseline (P1) seed=2393: p1_win steps=488 dShips=-3102
+[35/128] baseline (P0) vs baseline (P1) seed=6294: draw steps=500 dShips=+0
+[36/128] baseline (P0) vs baseline (P1) seed=9427: p0_win steps=438 dShips=+4373
+[37/128] baseline (P0) vs baseline (P1) seed=1117: draw steps=500 dShips=+0
+[38/128] baseline (P0) vs baseline (P1) seed=1282: draw steps=500 dShips=+0
+[39/128] baseline (P0) vs baseline (P1) seed=1571: draw steps=500 dShips=+0
+[40/128] baseline (P0) vs baseline (P1) seed=3462: draw steps=500 dShips=+0
+[41/128] baseline (P0) vs baseline (P1) seed=828: p0_win steps=462 dShips=+4279
+[42/128] baseline (P0) vs baseline (P1) seed=2867: p1_win steps=339 dShips=-4649
+[43/128] baseline (P0) vs baseline (P1) seed=9017: draw steps=500 dShips=+0
+[44/128] baseline (P0) vs baseline (P1) seed=9547: draw steps=500 dShips=+0
+[45/128] baseline (P0) vs baseline (P1) seed=119: draw steps=500 dShips=+0
+[46/128] baseline (P0) vs baseline (P1) seed=3959: draw steps=500 dShips=+0
+[47/128] baseline (P0) vs baseline (P1) seed=8763: p0_win steps=500 dShips=+158
+[48/128] baseline (P0) vs baseline (P1) seed=9102: p0_win steps=328 dShips=+3434
+[49/128] baseline (P0) vs baseline (P1) seed=324: draw steps=500 dShips=+0
+[50/128] baseline (P0) vs baseline (P1) seed=2509: draw steps=500 dShips=+0
+[51/128] baseline (P0) vs baseline (P1) seed=7337: draw steps=500 dShips=+0
+[52/128] baseline (P0) vs baseline (P1) seed=8603: draw steps=500 dShips=+0
+[53/128] baseline (P0) vs baseline (P1) seed=455: p0_win steps=439 dShips=+5416
+[54/128] baseline (P0) vs baseline (P1) seed=2996: p1_win steps=500 dShips=-127
+[55/128] baseline (P0) vs baseline (P1) seed=3520: draw steps=500 dShips=+0
+[56/128] baseline (P0) vs baseline (P1) seed=4633: draw steps=500 dShips=+0
+[57/128] baseline (P0) vs baseline (P1) seed=906: p0_win steps=500 dShips=+250
+[58/128] baseline (P0) vs baseline (P1) seed=2476: draw steps=500 dShips=+0
+[59/128] baseline (P0) vs baseline (P1) seed=5047: draw steps=500 dShips=+0
+[60/128] baseline (P0) vs baseline (P1) seed=7947: p1_win steps=500 dShips=-84
+[61/128] baseline (P0) vs baseline (P1) seed=1049: draw steps=500 dShips=+0
+[62/128] baseline (P0) vs baseline (P1) seed=2572: draw steps=500 dShips=+0
+[63/128] baseline (P0) vs baseline (P1) seed=6202: draw steps=500 dShips=+0
+[64/128] baseline (P0) vs baseline (P1) seed=9453: p0_win steps=500 dShips=+1837
+[65/128] baseline (P0) vs baseline (P1) seed=787: draw steps=500 dShips=+0
+[66/128] baseline (P0) vs baseline (P1) seed=1336: p1_win steps=461 dShips=-5709
+[67/128] baseline (P0) vs baseline (P1) seed=3473: draw steps=500 dShips=+0
+[68/128] baseline (P0) vs baseline (P1) seed=9013: draw steps=500 dShips=+0
+[69/128] baseline (P0) vs baseline (P1) seed=422: p0_win steps=350 dShips=+5677
+[70/128] baseline (P0) vs baseline (P1) seed=4814: draw steps=500 dShips=+0
+[71/128] baseline (P0) vs baseline (P1) seed=4963: draw steps=500 dShips=+0
+[72/128] baseline (P0) vs baseline (P1) seed=7186: p0_win steps=453 dShips=+4040
+[73/128] baseline (P0) vs baseline (P1) seed=741: draw steps=500 dShips=+0
+[74/128] baseline (P0) vs baseline (P1) seed=4785: p0_win steps=476 dShips=+5577
+[75/128] baseline (P0) vs baseline (P1) seed=8516: draw steps=500 dShips=+0
+[76/128] baseline (P0) vs baseline (P1) seed=9227: p1_win steps=478 dShips=-3256
+[77/128] baseline (P0) vs baseline (P1) seed=1265: p1_win steps=500 dShips=-3736
+[78/128] baseline (P0) vs baseline (P1) seed=4461: p0_win steps=500 dShips=+428
+[79/128] baseline (P0) vs baseline (P1) seed=5981: p1_win steps=400 dShips=-4897
+[80/128] baseline (P0) vs baseline (P1) seed=8855: p1_win steps=489 dShips=-4930
+[81/128] baseline (P0) vs baseline (P1) seed=585: draw steps=500 dShips=+0
+[82/128] baseline (P0) vs baseline (P1) seed=1217: draw steps=500 dShips=+0
+[83/128] baseline (P0) vs baseline (P1) seed=6462: draw steps=500 dShips=+0
+[84/128] baseline (P0) vs baseline (P1) seed=9984: p0_win steps=500 dShips=+189
+[85/128] baseline (P0) vs baseline (P1) seed=272: draw steps=500 dShips=+0
+[86/128] baseline (P0) vs baseline (P1) seed=662: draw steps=500 dShips=+0
+[87/128] baseline (P0) vs baseline (P1) seed=4353: draw steps=500 dShips=+0
+[88/128] baseline (P0) vs baseline (P1) seed=9118: draw steps=500 dShips=+0
+[89/128] baseline (P0) vs baseline (P1) seed=2537: p1_win steps=500 dShips=-1230
+[90/128] baseline (P0) vs baseline (P1) seed=3403: p0_win steps=500 dShips=+1448
+[91/128] baseline (P0) vs baseline (P1) seed=6593: draw steps=500 dShips=+0
+[92/128] baseline (P0) vs baseline (P1) seed=8968: p1_win steps=500 dShips=-4822
+[93/128] baseline (P0) vs baseline (P1) seed=489: draw steps=500 dShips=+0
+[94/128] baseline (P0) vs baseline (P1) seed=5675: draw steps=500 dShips=+0
+[95/128] baseline (P0) vs baseline (P1) seed=7770: p1_win steps=500 dShips=-345
+[96/128] baseline (P0) vs baseline (P1) seed=8624: draw steps=500 dShips=+0
+[97/128] baseline (P0) vs baseline (P1) seed=1030: draw steps=500 dShips=+0
+[98/128] baseline (P0) vs baseline (P1) seed=1153: p1_win steps=500 dShips=-1752
+[99/128] baseline (P0) vs baseline (P1) seed=2726: draw steps=500 dShips=+0
+[100/128] baseline (P0) vs baseline (P1) seed=8686: p0_win steps=272 dShips=+6441
+[101/128] baseline (P0) vs baseline (P1) seed=3335: p1_win steps=500 dShips=-1658
+[102/128] baseline (P0) vs baseline (P1) seed=4333: p0_win steps=376 dShips=+5618
+[103/128] baseline (P0) vs baseline (P1) seed=4693: p0_win steps=362 dShips=+4124
+[104/128] baseline (P0) vs baseline (P1) seed=9812: p0_win steps=373 dShips=+7570
+[105/128] baseline (P0) vs baseline (P1) seed=1649: draw steps=500 dShips=+0
+[106/128] baseline (P0) vs baseline (P1) seed=2794: p1_win steps=342 dShips=-8128
+[107/128] baseline (P0) vs baseline (P1) seed=4252: p1_win steps=500 dShips=-2783
+[108/128] baseline (P0) vs baseline (P1) seed=9240: p1_win steps=500 dShips=-12
+[109/128] baseline (P0) vs baseline (P1) seed=3493: p1_win steps=500 dShips=-6501
+[110/128] baseline (P0) vs baseline (P1) seed=3774: p0_win steps=500 dShips=+3743
+[111/128] baseline (P0) vs baseline (P1) seed=5923: p1_win steps=500 dShips=-4
+[112/128] baseline (P0) vs baseline (P1) seed=8514: draw steps=500 dShips=+0
+[113/128] baseline (P0) vs baseline (P1) seed=2083: draw steps=500 dShips=+0
+[114/128] baseline (P0) vs baseline (P1) seed=2661: draw steps=500 dShips=+0
+[115/128] baseline (P0) vs baseline (P1) seed=6328: draw steps=500 dShips=+0
+[116/128] baseline (P0) vs baseline (P1) seed=9327: draw steps=500 dShips=+0
+[117/128] baseline (P0) vs baseline (P1) seed=5199: draw steps=500 dShips=+0
+[118/128] baseline (P0) vs baseline (P1) seed=5274: p0_win steps=480 dShips=+4202
+[119/128] baseline (P0) vs baseline (P1) seed=7542: draw steps=500 dShips=+0
+[120/128] baseline (P0) vs baseline (P1) seed=8909: p0_win steps=332 dShips=+7692
+[121/128] baseline (P0) vs baseline (P1) seed=405: p1_win steps=498 dShips=-6011
+[122/128] baseline (P0) vs baseline (P1) seed=7045: p1_win steps=500 dShips=-149
+[123/128] baseline (P0) vs baseline (P1) seed=9408: draw steps=500 dShips=+0
+[124/128] baseline (P0) vs baseline (P1) seed=9658: p0_win steps=350 dShips=+4804
+[125/128] baseline (P0) vs baseline (P1) seed=3233: draw steps=500 dShips=+0
+[126/128] baseline (P0) vs baseline (P1) seed=3578: p1_win steps=500 dShips=-4587
+[127/128] baseline (P0) vs baseline (P1) seed=4027: draw steps=500 dShips=+0
+[128/128] baseline (P0) vs baseline (P1) seed=6548: p1_win steps=386 dShips=-4738
+wrote /home/user/Orbit-wars-kaggle/audit/tournaments/20260518T111505Z.json
+
+total games: 128  p0 wins: 31  p1 wins: 29  draws: 68
+
+=== per-archetype P0 winrate (baseline self-play) ===
+  high_prod__mixed_rotating__big_rotating                  4/4  100% <-- extreme
+  high_prod__mixed_rotating__big_static                    4/4  100% <-- extreme
+  high_prod__mixed_static__big_rotating                    2/4  50%
+  high_prod__mixed_static__big_static                      1/4  25%
+  high_prod__mostly_rotating__big_rotating                 2/4  50%
+  high_prod__mostly_rotating__big_static                   2/4  50%
+  high_prod__mostly_static__big_rotating                   3/4  75%
+  high_prod__mostly_static__big_static                     3/4  75%
+  low_prod__mixed_rotating__big_rotating                   4/4  100% <-- extreme
+  low_prod__mixed_rotating__big_static                     2/4  50%
+  low_prod__mixed_static__big_rotating                     3/4  75%
+  low_prod__mixed_static__big_static                       4/4  100% <-- extreme
+  low_prod__mostly_rotating__big_rotating                  3/4  75%
+  low_prod__mostly_rotating__big_static                    3/4  75%
+  low_prod__mostly_static__big_rotating                    3/4  75%
+  low_prod__mostly_static__big_static                      4/4  100% <-- extreme
+  med_high_prod__mixed_rotating__big_rotating              4/4  100% <-- extreme
+  med_high_prod__mixed_rotating__big_static                4/4  100% <-- extreme
+  med_high_prod__mixed_static__big_rotating                1/4  25%
+  med_high_prod__mixed_static__big_static                  3/4  75%
+  med_high_prod__mostly_rotating__big_rotating             3/4  75%
+  med_high_prod__mostly_rotating__big_static               2/4  50%
+  med_high_prod__mostly_static__big_rotating               4/4  100% <-- extreme
+  med_high_prod__mostly_static__big_static                 3/4  75%
+  med_low_prod__mixed_rotating__big_rotating               3/4  75%
+  med_low_prod__mixed_rotating__big_static                 4/4  100% <-- extreme
+  med_low_prod__mixed_static__big_rotating                 4/4  100% <-- extreme
+  med_low_prod__mixed_static__big_static                   3/4  75%
+  med_low_prod__mostly_rotating__big_rotating              4/4  100% <-- extreme
+  med_low_prod__mostly_rotating__big_static                3/4  75%
+  med_low_prod__mostly_static__big_rotating                4/4  100% <-- extreme
+  med_low_prod__mostly_static__big_static                  3/4  75%
+
+archetypes with winrate outside [0.40, 0.60]: 27/32
+winrate stdev across archetypes: 0.220
+
+OK: panel exposes geometry-conditional differences.
