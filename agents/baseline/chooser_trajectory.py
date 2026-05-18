@@ -589,6 +589,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     safe_deadline = deadline - (per_cand_ms / 1000.0)
 
     scored: list[tuple] = []
+    solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0
     cand_count = 0
     for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
         if cand_count >= cap:
@@ -618,11 +619,16 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             )
             if status == "scored" and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))
+                # Track sources with viable solo (for joint gating).
+                solo_winners.add(int(src.id))
 
-    # Direction B (2026-05-18): joint candidate enumeration. Gated by
-    # BASELINE_JOINT=1 (default unset → off). Validated by (C)+(E)
-    # verification (scripts/verify_solo_vs_joint.py): on idle planets,
-    # solo captures 21pct of targets vs joint 89pct.
+    # Direction B v2 (2026-05-18 PM): joint candidate enumeration gated
+    # to ONLY fire when at least one constituent solo did NOT pass.
+    # v1 emit-greedy on raw score lost 2P A/B 12/32 = 37.5pct — joint
+    # commits both srcs even when each solo would have been positive
+    # independently. Gating to "one of the legs is a failing solo"
+    # preserves the (C)+(E) lift case (single source bounces, joint
+    # captures) without over-bundling working solos.
     joint_enabled = os.environ.get("BASELINE_JOINT", "0").strip() == "1"
     if (joint_enabled and not use_v3
             and time.perf_counter() <= safe_deadline):
@@ -654,6 +660,13 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                     ca, cb = top[i], top[j]
                     if int(ca[1].id) == int(cb[1].id):
                         continue  # same source → not a joint
+                    # Gate: at least one constituent must be a FAILING
+                    # solo. If both srcs already have viable solo
+                    # captures, joint over-bundles them and the emit
+                    # logic would lose the cheaper independent path.
+                    if (int(ca[1].id) in solo_winners
+                            and int(cb[1].id) in solo_winners):
+                        continue
                     launches = [
                         (ca[1], ca[2], ca[3], ca[4], 0),
                         (cb[1], cb[2], cb[3], cb[4], 0),
