@@ -44,15 +44,10 @@ GAMMA = 0.99
 WAIT_GRID_MODE = os.environ.get("BASELINE_WAIT_GRID", "backward").strip().lower()
 WAIT_BUFFER_OFFSET = 3   # backward grid emits {min_w, min_w + 3}
 
-# Bug #12 fix (2026-05-18): widen the in-flight-enemy summation window
-# so a staggered multi-wave attack (e.g. f1 at eta=2 + f2 at eta=4) is
-# accounted for as a single coordinated threat. Pre-fix the window was
-# `enemy_eta + 1` of the EARLIEST inbound, which silently excluded
-# later waves and zeroed the shortfall. Anchored on the asdf-game
-# (76947663) step 37 trace. The principled v2 of this fix is a full
-# timeline simulation to find the max shortfall over time; this
-# constant is the cheap version.
-WAVE_LOOKAHEAD = 12
+# Bug #12 window constant — promoted to `lib/world_model.py` so both
+# this proposer and the in-rollout defensive policy
+# (`lib/opp_model.me_defensive_action`) import it from one location.
+from lib.world_model import WAVE_LOOKAHEAD  # noqa: E402
 
 
 def aim_and_eta(src, tgt, ships: int, omega: float, wait_N: int = 0):

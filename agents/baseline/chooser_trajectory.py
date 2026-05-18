@@ -43,6 +43,7 @@ from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
 from lib.opp_model import lite_greedy_policy as _me_policy
+from lib.opp_model import me_defensive_action as _me_defends_policy
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import comet_remaining_lifetime, predict_garrison_at
 
@@ -98,6 +99,37 @@ def _me_reactive_action(snap, me: int) -> list:
     rollout sites stay readable."""
     try:
         return _me_policy(snap.state[me].observation) or []
+    except Exception:
+        return []
+
+
+# Bug #14 fix — OPTION 5: PURELY DEFENSIVE policy for ME in the rollout
+# (2026-05-18 PM). Supersedes the failed cheap-mirror (option 1 above).
+# At each rollout tick, ME runs `lib.opp_model.me_defensive_action`:
+# scan inbound enemy fleets, find under-defended owned planets, emit a
+# reinforce launch from the nearest viable sister planet. Never attacks.
+#
+# Rationale vs the cheap-mirror failure: lite_greedy is too attack-biased
+# — in the baseline path it emitted attack launches from the would-be
+# reinforcer, so the baseline let the threatened planet fall too. A
+# purely-defensive policy avoids that pathology because it never
+# misallocates the reinforcer's ships to offense. The chooser's own
+# attack moves are made on its real next turn; the rollout's job is to
+# model opp's reaction (which implies us defending), not us attacking
+# again.
+#
+# Default OFF (env var `BASELINE_ME_DEFENDS=1` to enable). When both
+# DEFENDS and REACTS are set, DEFENDS takes precedence (REACTS is the
+# deprecated cheap-mirror experiment kept only for reproducibility).
+_ME_DEFENDS_ENABLED = os.environ.get("BASELINE_ME_DEFENDS", "0") != "0"
+
+
+def _me_defensive_action(snap, me: int) -> list:
+    """Defensive policy on ME's observation. Same call shape as
+    `_me_reactive_action`; isolated here so the three rollout sites
+    stay readable."""
+    try:
+        return _me_defends_policy(snap.state[me].observation, me) or []
     except Exception:
         return []
 
@@ -374,6 +406,15 @@ def build_trajectory_baseline(snap_base, me: int, num_seats: int,
             out.append(out[-1])
             continue
         actions = opp_actions_for_snap(snap, me, num_seats)
+        # Baseline IS asymmetric on purpose (ME idle, opp reactive) —
+        # we measure the candidate's marginal value above the worst-
+        # case "I do nothing this turn AND on every future turn"
+        # outcome. Auto-defense applies in CANDIDATE rollouts only
+        # (sites B/C below), where it represents "future me reacting
+        # to opp's response to MY move." Adding auto-defense here
+        # makes the baseline too capable and zeros the candidate-Δ
+        # for defensive launches (auto-defense already handles them),
+        # so the chooser refuses to emit real defense.
         if _ME_REACTS_ENABLED:
             actions[me] = _me_reactive_action(snap, me)
         snap = fs_step(snap, actions, in_place=True)
@@ -441,10 +482,16 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
         if snap.fake_env.done:
             break
         actions = opp_actions_for_snap(snap, me, num_seats)
-        if t == int(wait_N):
-            actions[me] = [[int(src.id), float(angle), int(ships)]]
+        # ME policy: defensive (option 5, bug #14) by default; the
+        # reactive cheap-mirror (option 1) is the deprecated fallback.
+        # The candidate injection at `t == wait_N` OVERRIDES whichever
+        # ME policy is active.
+        if _ME_DEFENDS_ENABLED:
+            actions[me] = _me_defensive_action(snap, me)
         elif _ME_REACTS_ENABLED:
             actions[me] = _me_reactive_action(snap, me)
+        if t == int(wait_N):
+            actions[me] = [[int(src.id), float(angle), int(ships)]]
         snap = fs_step(snap, actions, in_place=True)
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
@@ -508,10 +555,14 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         if snap.fake_env.done:
             break
         actions = opp_actions_for_snap(snap, me, num_seats)
-        if t in inject_at:
-            actions[me] = inject_at[t]
+        # Joint variant: defensive option 5 first, then candidate
+        # injections at their respective wait_N steps OVERRIDE.
+        if _ME_DEFENDS_ENABLED:
+            actions[me] = _me_defensive_action(snap, me)
         elif _ME_REACTS_ENABLED:
             actions[me] = _me_reactive_action(snap, me)
+        if t in inject_at:
+            actions[me] = inject_at[t]
         snap = fs_step(snap, actions, in_place=True)
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)

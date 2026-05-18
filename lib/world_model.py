@@ -38,6 +38,20 @@ from lib.orbit import is_orbiting, predict_relative
 # actTimeout. See audit/2026-05-11-v3-snipe-critical-review.md §P2.
 DEFAULT_HORIZON = 250
 
+# Bug #12 fix (2026-05-18): width of the in-flight-enemy summation
+# window used when computing combined threat against a single planet.
+# A staggered multi-wave attack (e.g. f1 at eta=2 + f2 at eta=4)
+# should be accounted for as one coordinated threat; pre-fix the
+# window was `enemy_eta + 1` of the EARLIEST inbound, which silently
+# excluded later waves and zeroed the shortfall. Anchored on the
+# asdf-game (76947663) step 37 trace. Promoted to lib so both the
+# proposer (`agents/baseline/proposer.py`) and the in-rollout
+# defensive policy (`lib/opp_model.me_defensive_action`) import it
+# from one location. The principled v2 of this fix is a full
+# timeline simulation to find the max shortfall over time; this
+# constant is the cheap version.
+WAVE_LOOKAHEAD = 12
+
 
 def fleet_target_planet(fleet, planets, omega: float = 0.0,
                         max_horizon: int = DEFAULT_HORIZON):
