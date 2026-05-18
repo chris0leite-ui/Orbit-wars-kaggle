@@ -307,3 +307,73 @@ def test_A10_production_prioritized_expansion(bundle_knobs):
         _planet(2, -1, 70, 30, ships=8, production=1),
     ])
     assert 1 in _targets_of_emits(obs, _emit(obs))
+
+
+# ---- Phase E Phase 1 — joint coordination oracles ------------------------
+
+@pytest.fixture
+def joint_bonus_on(monkeypatch, bundle_knobs):
+    """Enable joint coordination bonus + frontier seeding. Inherits the
+    Phase A defaults from `bundle_knobs`; only flips the joint knobs."""
+    monkeypatch.setenv("BUNDLE_JOINT_BONUS", "0.5")
+    monkeypatch.setenv("BUNDLE_JOINT_SEEDS", "10")
+
+
+def test_J1_joint_preferred_over_far_solo(joint_bonus_on):
+    """Two close 30-ship sources P0 + P1 face a 50-defender enemy target P2.
+    Neither solo captures (30 < 50+1). Joint P0+P1=60 > 50 → captures.
+    A distant 60-ship source P3 (far enough to be lower-EV under horizon-15
+    path integral) would solo-capture but arrives too late.
+
+    With joint bonus on, the search must emit BOTH P0 and P1 launches
+    at P2, not the far solo from P3.
+
+    Layout: P0+P1 are at y=25 (lower-left/lower-right of target), target
+    P2 at y=35 ship-near to both; P3 far at y=75 above the sun."""
+    obs = _obs([
+        _planet(0, 0, 30, 25, ships=30, production=1),
+        _planet(1, 0, 70, 25, ships=30, production=1),
+        _planet(2, 1, 50, 35, ships=50, production=2),    # enemy target
+        _planet(3, 0, 50, 75, ships=60, production=1),    # far solo source
+    ])
+    moves = _emit(obs)
+    # Sources that launched (any angle):
+    src_ids = {int(m[0]) for m in moves}
+    # Targets actually hit by emitted moves:
+    tgt_ids = set(_targets_of_emits(obs, moves))
+    # JOINT property: both close sources fire at P2.
+    assert 0 in src_ids, f"P0 must launch as joint partner; emitted {moves}"
+    assert 1 in src_ids, f"P1 must launch as joint partner; emitted {moves}"
+    assert 2 in tgt_ids, f"joint must aim at P2; emitted {moves} → {tgt_ids}"
+
+
+def test_J2_no_joint_when_pair_insufficient(joint_bonus_on):
+    """Two sources P0 (20 ships) + P1 (30 ships) face a 60-defender target P2.
+    Joint sum = 50 < 60 → CANNOT capture even together.
+
+    Bundle must NOT emit the joint (it would just bounce both fleets).
+    Either fires solo at a different target (P3 = 5-ship neutral), or
+    holds. The KEY assertion: P2 is NOT both-hit by a P0+P1 joint.
+    """
+    obs = _obs([
+        _planet(0, 0, 30, 25, ships=20, production=1),
+        _planet(1, 0, 70, 25, ships=30, production=1),
+        _planet(2, 1, 50, 35, ships=60, production=2),   # enemy too strong
+        _planet(3, -1, 50, 18, ships=5, production=1),    # cheap neutral
+    ])
+    moves = _emit(obs)
+    # Which launches HIT P2?
+    p2_hitters = set()
+    pmap = {p[0]: p for p in obs["planets"]}
+    for m in moves:
+        src_id = int(m[0])
+        # Reuse the helper: returns first-hit planet for THIS move.
+        hits = _targets_of_emits(obs, [m])
+        if hits and hits[0] == 2:
+            p2_hitters.add(src_id)
+    # Forbid the joint at P2: at most ONE source allowed to fire at it
+    # (a solo bounce is bad but not the joint property we're testing).
+    assert len(p2_hitters) < 2, (
+        f"Joint at P2 must not emit when sum 20+30=50 < defenders 60; "
+        f"emitted {moves}; P2 hitters={p2_hitters}"
+    )

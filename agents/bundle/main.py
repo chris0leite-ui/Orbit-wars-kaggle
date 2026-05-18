@@ -89,6 +89,10 @@ def _build_searches() -> tuple[BundleSearch, BundleSearch, int]:
         production_weight=_env_float("BUNDLE_PRODUCTION_WEIGHT", 1.0),
         elimination_bonus=_env_float("BUNDLE_ELIMINATION_BONUS", 200.0),
         my_followup_mode=os.environ.get("BUNDLE_ME_FOLLOWUP", "off").lower(),
+        # Phase E Phase 1 (2026-05-18): coordinated joint-capture bonus.
+        # Default 0.0 preserves prior behavior; set BUNDLE_JOINT_BONUS=0.5
+        # to enable + BUNDLE_JOINT_SEEDS=10 for the search-side counterpart.
+        joint_bonus=_env_float("BUNDLE_JOINT_BONUS", 0.0),
     )
     # Tuned 2026-05-18 with with_candidate cache-inheritance perf
     # fix in place. Full 363-turn game vs sloppy random at depth=2:
@@ -111,6 +115,10 @@ def _build_searches() -> tuple[BundleSearch, BundleSearch, int]:
         # within timing budget (0/178 turns > 800ms, p95=756ms).
         candidates_per_source=_env_int("BUNDLE_OWN_CANDS_PER_SOURCE", 5),
         launch_turns=_env_turns("BUNDLE_OWN_LAUNCH_TURNS", (0,)),
+        # Phase E Phase 1a: explicit joint-pair frontier seeding.
+        # Couples with BUNDLE_JOINT_BONUS — without the bonus, seeded
+        # joints have no edge over empty/solo and get pruned.
+        joint_seeds=_env_int("BUNDLE_JOINT_SEEDS", 0),
     )
     opp = BundleSearch(
         evaluator=ev,

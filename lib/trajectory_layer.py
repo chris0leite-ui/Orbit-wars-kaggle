@@ -220,6 +220,59 @@ def _fleet_speed(ships: int, ship_speed: float = 6.0) -> float:
     return min(raw, ship_speed)
 
 
+def _raycast_first_planet_hit(
+    src: "PlanetView", aim_angle: float, ships: int,
+    planets: list, omega: float, rot_offset: int,
+    max_steps: int = 60,
+) -> tuple[Optional[int], Optional[int]]:
+    """Phase E Phase 1: lightweight raycast for joint-detection.
+
+    Walks the fleet forward from `src` along `aim_angle` and returns
+    `(hit_planet_id, arrival_step)` for the first planet whose circle
+    the fleet enters, or `(None, None)` if no hit within `max_steps`.
+
+    For non-rotating planets, uses `current_x/current_y` as the fixed
+    position. For rotating planets (omega > 0), advances each planet
+    via `_planet_position_orbital` per step. Mirrors predict_fleet_fate
+    geometry but on PlanetView (trajectory_layer's data shape), not on
+    world_model.PlanetState.
+
+    Skips the source planet itself. Does NOT check sun / OOB / comet —
+    callers do their own SunFilter check before emitting.
+
+    O(max_steps * planets) per call; ~1-2ms typical. Joint detection
+    in `BundleEvaluator.score` runs this once per launch in the bundle.
+    """
+    if not planets:
+        return None, None
+    cos_a = math.cos(aim_angle)
+    sin_a = math.sin(aim_angle)
+    spawn_x = src.current_x + cos_a * (src.radius + 0.1)
+    spawn_y = src.current_y + sin_a * (src.radius + 0.1)
+    speed = _fleet_speed(ships)
+    if speed <= 0:
+        return None, None
+    src_id = int(src.id)
+
+    fx, fy = spawn_x, spawn_y
+    for step in range(1, max_steps + 1):
+        fx += cos_a * speed
+        fy += sin_a * speed
+        for p in planets:
+            if int(p.id) == src_id:
+                continue
+            if p.is_rotating and omega != 0.0:
+                t_eff = _effective_t_for_orbital(rot_offset, step)
+                px, py = _planet_position_orbital(p, omega, rot_offset, t_eff)
+            else:
+                px, py = p.current_x, p.current_y
+            dx = px - fx
+            dy = py - fy
+            if dx * dx + dy * dy <= (p.radius + 0.5) * (p.radius + 0.5):
+                return int(p.id), step
+    return None, None
+
+
 @dataclass(frozen=True)
 class CometPathView:
     """Per-comet pre-computed XY path. `path[absolute_step]` is the
@@ -1698,6 +1751,19 @@ class BundleEvaluator:
     # the rollout self-consistent on both seats so the score function
     # stops treating my sources as drained-forever after each launch.
     my_followup_mode: str = "off"
+    # Phase E Phase 1 (2026-05-18): coordinated-joint-capture bonus.
+    # When `joint_bonus > 0`, score() detects bundles with 2+ launches
+    # hitting the same enemy/neutral target where (sum_delivered >
+    # defenders) AND (no single launch's ships > defenders). Such joints
+    # would NOT capture in solo enumeration; they require coordination.
+    # The bonus is `joint_bonus * (production * remaining_horizon +
+    # planet_weight)` per detected joint, ADDITIVE to the path-integral
+    # capture credit. Default 0.0 preserves prior behavior; live
+    # config: 0.5. Phase 0 diagnostic showed 21.3% of bundle's ships
+    # bounce off enemy planets — the joint bonus + Phase 1a frontier
+    # seeding lets the search find pair-cooperative captures the
+    # current beam misses.
+    joint_bonus: float = 0.0
 
     def score(self, world: "World", bundle: Bundle,
               *, my_id: Optional[int] = None,
@@ -1811,13 +1877,32 @@ class BundleEvaluator:
         eliminations = sum(1 for o in initial_opp_owners
                            if planets_by_owner_K.get(o, 0) == 0)
 
+        # Phase E Phase 1 (2026-05-18): joint coordination bonus. Detects
+        # bundles whose 2+ launches at the same enemy/neutral target
+        # collectively succeed where no single launch would. ADDITIVE
+        # to the path-integral credit — the existing planet_delta_path
+        # already credits the resulting capture; this bonus rewards the
+        # coordination act itself so the search prefers joints over
+        # equally-large solos at less defended (lower-strategic-value)
+        # targets. Cheap: O(launches) calls to predict_fleet_fate (~1-2ms
+        # at typical bundle size 2-4).
+        joint_bonus_total = 0.0
+        if self.joint_bonus > 0.0 and len(bundle.launches) >= 2:
+            for tgt_id, arr_turn, _sum_s, _max_s, tgt in (
+                self._detect_joint_captures(world, bundle, my_id)
+            ):
+                remaining = max(0, self.horizon - arr_turn)
+                joint_value = tgt.production * remaining + self.planet_weight
+                joint_bonus_total += self.joint_bonus * joint_value
+
         # All deltas summed over [1..K] (path integral) except
         # ship_delta (terminal — see comment above) and eliminations
         # (terminal — opp is eliminated or not).
         total = (ship_delta
                  + self.planet_weight * planet_delta_path
                  + self.production_weight * production_delta_path
-                 + self.elimination_bonus * eliminations)
+                 + self.elimination_bonus * eliminations
+                 + joint_bonus_total)
 
         return BundleScore(
             ship_delta=ship_delta,
@@ -1826,6 +1911,84 @@ class BundleEvaluator:
             eliminations=eliminations,
             total=total,
         )
+
+    def _detect_joint_captures(
+        self, world: "World", bundle: Bundle, my_id: int,
+    ) -> list[tuple[int, int, int, int, Any]]:
+        """Group bundle launches by predicted hit-planet. Yield detected
+        joint captures: tuples of (target_id, arrival_turn, sum_ships,
+        max_indiv_ships, target_planet). A "joint capture" is a target
+        where (sum_delivered > defenders) AND (no individual launch's
+        ships > defenders) — i.e. coordination is REQUIRED to capture.
+
+        Targets currently owned by `my_id` are excluded (joint
+        reinforcement is not the same coordination property and is
+        already path-integrated). Neutral and enemy targets both
+        qualify; the existing path-integral credits the capture once,
+        the joint bonus rewards the coordination on top.
+
+        Uses a per-step raycast (matches predict_fleet_fate's geometry
+        for static planets, approximates omega>0 by using planets'
+        `current_*` positions as static). For Phase 1 v1, omega>0
+        accuracy is best-effort — under-counting joints on orbital
+        targets is preferable to mis-detecting them. Scope-limited to
+        `launch_turn=0` launches.
+        """
+        if len(bundle.launches) < 2:
+            return []
+        omega = float(getattr(world, "omega", 0.0) or 0.0)
+        current_step = int(getattr(world, "step", 0) or 0)
+        rot_offset = 1 if current_step == 0 else 0
+        planets = [p for p in world.planets if not p.is_comet]
+
+        by_target: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        for launch in bundle.launches:
+            if launch.owner != my_id:
+                continue
+            if int(launch.launch_turn) != 0:
+                continue  # Phase 1: same-turn launches only
+            src = None
+            for p in planets:
+                if p.id == int(launch.src_id):
+                    src = p
+                    break
+            if src is None:
+                continue
+            hit_pid, arrival_step = _raycast_first_planet_hit(
+                src, float(launch.aim_angle), int(launch.ships),
+                planets, omega, rot_offset,
+            )
+            if hit_pid is None or arrival_step is None:
+                continue
+            if int(hit_pid) == int(launch.src_id):
+                continue
+            arrival_turn = int(launch.launch_turn) + int(arrival_step)
+            by_target[int(hit_pid)].append(
+                (arrival_turn, int(launch.ships))
+            )
+
+        joints: list[tuple[int, int, int, int, Any]] = []
+        for tgt_id, arrivals in by_target.items():
+            if len(arrivals) < 2:
+                continue
+            tgt = None
+            for p in planets:
+                if p.id == tgt_id:
+                    tgt = p
+                    break
+            if tgt is None:
+                continue
+            if tgt.owner == my_id:
+                continue  # don't bonus joint reinforcement of own planet
+            defenders = int(tgt.ships)
+            sum_ships = sum(s for _, s in arrivals)
+            max_ships = max(s for _, s in arrivals)
+            if sum_ships > defenders and max_ships <= defenders:
+                min_arrival = min(t for t, _ in arrivals)
+                joints.append(
+                    (tgt_id, min_arrival, sum_ships, max_ships, tgt)
+                )
+        return joints
 
 
 # ---------------------------------------------------------------------------
@@ -1927,6 +2090,16 @@ class BundleSearch:
     reserve_ships_at_source: int = 1
     ship_ratios: tuple[float, ...] = (0.5, 1.0)
     sun_safety: float = SUN_SAFETY
+    # Phase E Phase 1a (2026-05-18): how many explicit joint-pair
+    # candidates to pre-seed into the search frontier (in addition to
+    # empty + seed_bundle + the regular ADD/DROP iterations). Each
+    # joint-pair is a 2-launch Bundle where neither solo would capture
+    # the target but the sum does. Default 0 disables (preserves prior
+    # behavior). Live config: 10. Coupled with BundleEvaluator's
+    # `joint_bonus` — the seeded joints score above empty BECAUSE of
+    # the bonus, so they survive beam pruning and can be extended in
+    # later iterations.
+    joint_seeds: int = 0
 
     def search(self, world: "World",
                *, my_id: Optional[int] = None,
@@ -2007,6 +2180,41 @@ class BundleSearch:
                 if seed_score > best_score:
                     best_score = seed_score
                     best_bundle = seed_bundle
+
+        # Phase E Phase 1a (2026-05-18): seed the frontier with explicit
+        # joint-pair candidates. The chicken-and-egg problem with depth=2
+        # discovery is: at iteration 1, a single bouncing launch_a scores
+        # WORSE than empty (ship_delta -= committed ships, planet credit
+        # = 0); beam_width=3 prunes it before iteration 2 can extend it
+        # to launch_a + launch_b. Pre-seeding 2-launch joint candidates
+        # bypasses this — the joint already carries its bonus from
+        # BundleEvaluator's joint_bonus path, so it survives the beam
+        # pruning naturally. Default `joint_seeds=0` skips this work
+        # (preserves prior behavior when BUNDLE_JOINT_BONUS unset).
+        if self.joint_seeds > 0:
+            try:
+                joint_pairs = self._enumerate_joint_seeds(
+                    world, my_id, max_seeds=self.joint_seeds,
+                )
+            except Exception:
+                joint_pairs = []
+            for joint_bundle in joint_pairs:
+                if _now is not None and _now() >= deadline:
+                    break
+                if joint_bundle.launches in seen:
+                    continue
+                seen.add(joint_bundle.launches)
+                try:
+                    s = self.evaluator.score(
+                        world, joint_bundle, my_id=my_id,
+                        opp_overlays=opp_overlays,
+                    ).total
+                except ValueError:
+                    continue
+                frontier.append((s, joint_bundle))
+                if s > best_score:
+                    best_score = s
+                    best_bundle = joint_bundle
 
         # Outer label so deadline-driven `break`s exit the depth loop.
         timed_out = False
@@ -2212,6 +2420,109 @@ class BundleSearch:
                         if not sun.is_safe(spec):
                             continue
                         yield spec
+
+    def _enumerate_joint_seeds(
+        self, world: "World", my_id: int, *, max_seeds: int = 10,
+    ) -> list["Bundle"]:
+        """Generate up to `max_seeds` 2-launch Bundles for joint captures
+        that no single source could make alone. Phase E Phase 1a.
+
+        Selection: for each enemy/neutral target T, consider the closest
+        pair of our sources. Emit a 2-launch Bundle iff:
+          - neither solo would capture (each source's available ships
+            < defenders+1 at T)
+          - the pair WOULD capture (combined avail > defenders)
+        Bounded enumeration: top-5 targets sorted by defender count
+        (high-defender targets are the ones that need coordination);
+        per target, try the 3 closest source-pairs.
+
+        All launches use `launch_turn=0` (Phase 1 scope: same-turn
+        joints). Cross-turn coordination (launch_turn>0 paired with
+        launch_turn=0) is deferred — the regular ADD/DROP iterations
+        can still discover it from a same-turn-paired seed.
+        """
+        sources = [p for p in world.planets
+                   if p.owner == my_id and not p.is_comet
+                   and p.ships >= self.min_source_ships]
+        if len(sources) < 2:
+            return []
+        targets = [p for p in world.planets
+                   if not p.is_comet
+                   and p.owner != my_id
+                   and p.owner != -1]
+        if not targets:
+            # Fall back to neutral targets if no enemy planets exist
+            # (e.g. opening turn before any enemy expansion).
+            targets = [p for p in world.planets
+                       if not p.is_comet and p.owner == -1]
+        if not targets:
+            return []
+        # Highest-defender targets first — they're the ones that need
+        # coordination. Capped at top-5 to bound enumeration cost.
+        targets = sorted(targets, key=lambda t: -int(t.ships))[:5]
+
+        seeds: list[Bundle] = []
+        for tgt in targets:
+            if len(seeds) >= max_seeds:
+                break
+            defenders = int(tgt.ships)
+            if defenders < 1:
+                continue
+            srcs_by_dist = sorted(
+                sources,
+                key=lambda s: math.hypot(
+                    s.current_x - tgt.current_x,
+                    s.current_y - tgt.current_y,
+                ),
+            )
+            # Try the 3 closest sources × pair them with the next 2-3.
+            tried_pairs: set[tuple[int, int]] = set()
+            for i in range(min(3, len(srcs_by_dist))):
+                if len(seeds) >= max_seeds:
+                    break
+                for j in range(i + 1, min(i + 4, len(srcs_by_dist))):
+                    a, b = srcs_by_dist[i], srcs_by_dist[j]
+                    key = (min(a.id, b.id), max(a.id, b.id))
+                    if key in tried_pairs:
+                        continue
+                    tried_pairs.add(key)
+                    avail_a = int(a.ships) - self.reserve_ships_at_source
+                    avail_b = int(b.ships) - self.reserve_ships_at_source
+                    if avail_a < 1 or avail_b < 1:
+                        continue
+                    # Joint condition: neither solo captures, pair does.
+                    if avail_a > defenders or avail_b > defenders:
+                        continue  # solo can win — no joint needed
+                    if avail_a + avail_b <= defenders:
+                        continue  # even pair can't win — skip
+                    # Aim each source at the target. Atan2 is fine for
+                    # the seed (lead-aim refinement reverted in Phase E
+                    # Phase 0).
+                    angle_a = math.atan2(
+                        tgt.current_y - a.current_y,
+                        tgt.current_x - a.current_x,
+                    )
+                    angle_b = math.atan2(
+                        tgt.current_y - b.current_y,
+                        tgt.current_x - b.current_x,
+                    )
+                    spec_a = LaunchSpec(
+                        src_id=a.id, aim_angle=angle_a,
+                        ships=avail_a, owner=my_id, launch_turn=0,
+                    )
+                    spec_b = LaunchSpec(
+                        src_id=b.id, aim_angle=angle_b,
+                        ships=avail_b, owner=my_id, launch_turn=0,
+                    )
+                    # SunFilter check — skip joints whose either leg
+                    # would crash the sun.
+                    sun = SunFilter(world, safety_margin=self.sun_safety)
+                    if not sun.is_safe(spec_a) or not sun.is_safe(spec_b):
+                        continue
+                    seeds.append(Bundle(launches=(spec_a, spec_b)))
+                    if len(seeds) >= max_seeds:
+                        break
+        return seeds
 
 
 # ---------------------------------------------------------------------------
