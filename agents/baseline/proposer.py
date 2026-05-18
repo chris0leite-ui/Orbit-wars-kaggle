@@ -237,9 +237,14 @@ def wait_then_fire_variants(src, tgt, model, omega: float, me: int):
       fire-now in chooser Δ ranking.
     - Hopeless pair (min_wait is None) → return []. Saves chooser
       cycles; this pair's launches will all bounce.
-    - Otherwise → emit {min_wait, min_wait + WAIT_BUFFER_OFFSET}
-      candidates. Primary captures as fast as feasible; +3 buffer
-      adds resilience-against-opp-counter.
+    - Otherwise → emit candidates at {min_wait, min_wait + WAIT_BUFFER_OFFSET}
+      × {cap_final, 2×cap_final, budget}. The bare-capture variant gives
+      the chooser a lean option; the budget variant USES the accumulated
+      ships we waited for (instead of leaving them idle on the source —
+      a fix for the 2026-05-18 backward-grid bug where wait_N variants
+      emitted only bare-capture amounts, wasting the accumulation and
+      leaving 1-ship residue on captured planets vulnerable to opp
+      recapture in 4P).
 
     Forward-mode rollback available via BASELINE_WAIT_GRID=forward.
     """
@@ -265,10 +270,20 @@ def wait_then_fire_variants(src, tgt, model, omega: float, me: int):
         cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arrival)) + 1)
         if cap_final > budget:
             continue
-        final_fleet = max(cap_final, MIN_FLEET_SIZE)
-        if final_fleet > budget:
-            final_fleet = budget
         if wait_N + eta + SIM_SETTLE_TURNS > MAX_HORIZON:
+            continue
+        # We waited N turns to accumulate src.ships + prod*N total ships.
+        # USE the accumulation — emit full budget, not bare capture+1.
+        # Banding dedup ((src, tgt, wait_band) key) collapses multiple
+        # ship-counts at the same wait_N to one per band since cheap_delta
+        # is identical for capture-success. So we pick ONE — the budget
+        # variant. This:
+        #   1. Uses ships we waited for (otherwise the wait is wasted).
+        #   2. Leaves residue on the captured planet (budget - defenders),
+        #      defending against opp recapture in 4P (the bare-capture
+        #      variant left 1-ship residue → trivially recaptured).
+        final_fleet = budget
+        if final_fleet < MIN_FLEET_SIZE:
             continue
         key = (wait_N, final_fleet)
         if key in seen:
