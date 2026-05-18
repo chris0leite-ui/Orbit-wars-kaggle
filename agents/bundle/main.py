@@ -29,6 +29,9 @@ Knobs (env var overrides, all optional):
   BUNDLE_OPP_BEAM_WIDTH                                            default 2
   BUNDLE_OPP_CANDS_PER_SOURCE                                      default 2
   BUNDLE_MIRROR_DEPTH          recursion depth for the opp model.  default 1
+  BUNDLE_OPP_MODE              "mirror" (Phase 8a recursive bundle
+                               search) or "event_driven" (Phase 8b
+                               per-arrival lite_greedy snapshots).  default mirror
   BUNDLE_HORIZON               evaluator horizon (turns).          default 30
   BUNDLE_TOTAL_MS              total per-turn budget (own_deadline). default 750
   BUNDLE_MIRROR_MS             mirror sub-budget within total.       default 250
@@ -50,6 +53,7 @@ from lib.trajectory_layer import (
     BundleSearch,
     World,
     predict_opp_bundles_via_mirror_search,
+    predict_opp_via_event_driven_lite_greedy,
 )
 
 
@@ -186,9 +190,24 @@ def agent(obs, configuration=None):
     mirror_deadline = t_start + mirror_budget_ms / 1000.0
     own_deadline = t_start + total_budget_ms / 1000.0
 
-    mirror = _mirror_with_deadline(
-        world, me, opp_search, mirror_depth, mirror_deadline,
-    )
+    # Opp model: "mirror" (Phase 8a: BundleSearch recursion, the
+    # current default — assumes opp is bundle-search-like) or
+    # "event_driven" (Phase 8b: walks the trajectory layer's arrival
+    # event stream, calls lite_greedy_policy at each event,
+    # accumulates a per-opp reactive Bundle — analogous to
+    # agents/baseline's per-step opp model but built without
+    # stepping a simulator).
+    opp_mode = os.environ.get("BUNDLE_OPP_MODE", "mirror").lower()
+    if opp_mode == "event_driven":
+        mirror = predict_opp_via_event_driven_lite_greedy(
+            world,
+            my_id=me,
+            horizon=own_search.evaluator.horizon,
+        )
+    else:
+        mirror = _mirror_with_deadline(
+            world, me, opp_search, mirror_depth, mirror_deadline,
+        )
 
     chosen = own_search.search(
         world,

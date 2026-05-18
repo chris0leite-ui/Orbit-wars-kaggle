@@ -43,6 +43,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 from lib.aim import swept_pair_hit
 from lib.combat import resolve_arrivals
+from lib.opp_model import lite_greedy_policy
 
 # ---------------------------------------------------------------------------
 # Constants — must match `lib/game/interpreter.py` exactly
@@ -2264,4 +2265,164 @@ def predict_opp_bundles_via_mirror_search(
         if not bundle.is_empty:
             out[opp_id] = bundle
     return out
+
+
+# ---------------------------------------------------------------------------
+# PHASE 8b — Event-driven trajectory-native reactive opp model
+# ---------------------------------------------------------------------------
+
+
+def world_to_obs(world: "World", player_id: int) -> dict:
+    """Adapter: World → kaggle-style obs dict, from `player_id`'s seat.
+
+    `lite_greedy_policy` consumes a dict-or-namespace with `.player`
+    and `.planets` (the latter as `(id, owner, x, y, radius, ships,
+    production)` tuples). This adapter materialises that shape from
+    a `World` so the reactive opp loop can call lite_greedy on any
+    snapshot (turn-0 OR `snapshot_at(t)` output) without re-routing
+    through `World.from_obs`.
+
+    `fleets` is included for downstream compatibility but not used
+    by `lite_greedy_policy` (verified at `lib/opp_model.py:155-233`).
+    """
+    return {
+        "player": int(player_id),
+        "step": int(world.step),
+        "planets": [
+            (p.id, p.owner, float(p.current_x), float(p.current_y),
+             float(p.radius), float(p.ships), float(p.production))
+            for p in world.planets
+        ],
+        "fleets": [
+            (f.id, f.owner, float(f.current_x), float(f.current_y),
+             float(f.angle), f.from_planet_id, int(f.ships))
+            for f in world.fleets if f.spawn_turn == 0
+        ],
+    }
+
+
+def predict_opp_via_event_driven_lite_greedy(
+    world: "World",
+    *,
+    my_id: Optional[int] = None,
+    horizon: int = DEFAULT_LEDGER_HORIZON,
+    max_events: int = 30,
+) -> dict[int, Bundle]:
+    """Event-driven trajectory-native reactive opp model.
+
+    For each opponent, predict their full plan of launches across the
+    rollout horizon by walking the trajectory layer's natural event
+    stream — arrival ETAs from the ledger — and calling
+    `lite_greedy_policy` at each event timestamp. The result is
+    structurally equivalent to what `agents/baseline`'s `_build_opp_
+    trajectory` produces via per-step fast_sim, but built WITHOUT
+    stepping a simulator: each "step" is a closed-form
+    `snapshot_at(t)` reconstruction (~2 ms) followed by a stateless
+    lite_greedy call (~1 ms).
+
+    Why event-driven instead of fixed-stride:
+    - Fleet arrivals are the ONLY moments state transitions occur
+      (production accrual is continuous, fleet motion deterministic,
+      ownership only flips at arrivals).
+    - The trajectory layer pre-computes every arrival's ETA in the
+      ledger — i.e. the event set is FREE.
+    - Fixed-stride (e.g. every 5 turns) can miss a cluster of
+      transitions between snapshots; event-driven catches every one
+      at exactly the right moment.
+    - When opp launches at event t, their new fleet's arrival is a
+      new event we must process. The event queue grows dynamically.
+
+    Returns dict[opp_id, Bundle], structured for direct use as
+    `opp_overlays=...` in `BundleSearch.search` or
+    `BundleEvaluator.score`.
+
+    `max_events` caps total event-processing iterations to prevent
+    runaway in pathological cases (deep recursive launch chains).
+    Default 30 is generous for a 30-turn horizon — most rollouts
+    have <15 events.
+    """
+    if my_id is None:
+        my_id = world.my_id
+    h = max(0, int(horizon))
+    if h <= 0:
+        return {}
+
+    opp_ids: list[int] = sorted({
+        p.owner for p in world.planets
+        if p.owner != -1 and p.owner != my_id and not p.is_comet
+    })
+    if not opp_ids:
+        return {}
+
+    # Initial event set: every arrival ETA in the parent's ledger.
+    # The trajectory layer caches this on first query; subsequent
+    # calls are free.
+    initial_etas: set[int] = set()
+    for arrivals in world.ledger_all(h).values():
+        for a in arrivals:
+            if 0 < a.eta <= h:
+                initial_etas.add(int(a.eta))
+
+    event_queue: list[int] = sorted({0} | initial_etas)
+    processed: set[int] = set()
+
+    opp_specs_acc: dict[int, list[LaunchSpec]] = {oid: [] for oid in opp_ids}
+    overlay = world
+    iterations = 0
+
+    while event_queue and iterations < max_events:
+        t = event_queue.pop(0)
+        if t in processed or t > h:
+            continue
+        processed.add(t)
+        iterations += 1
+
+        # Snapshot to relative turn t. t=0 is a no-op (returns self).
+        snap = overlay.snapshot_at(t)
+
+        any_new_launch = False
+        for opp_id in opp_ids:
+            obs = world_to_obs(snap, opp_id)
+            actions = lite_greedy_policy(obs)
+            for action in actions:
+                src_id, angle, ships = action
+                spec = LaunchSpec(
+                    src_id=int(src_id),
+                    aim_angle=float(angle),
+                    ships=int(ships),
+                    owner=int(opp_id),
+                    launch_turn=int(t),
+                )
+                # Apply to overlay so future snapshots reflect this
+                # launch's source deduction + new fleet arrival. If
+                # the launch is infeasible vs the evolving overlay
+                # (rare: e.g. source captured by us before t), skip
+                # silently — matches BundleEvaluator's drop semantics.
+                try:
+                    overlay = overlay.with_candidate(spec)
+                except ValueError:
+                    continue
+                opp_specs_acc[opp_id].append(spec)
+                any_new_launch = True
+
+        # After applying this event's launches, the overlay's ledger
+        # has new arrivals. Add their ETAs as new events. The cache
+        # rebuild is O(N_new_fleets) thanks to with_candidate's
+        # inherited ledger (Phase 8 perf fix).
+        if any_new_launch:
+            new_ledger = overlay.ledger_all(h)
+            for arrivals in new_ledger.values():
+                for a in arrivals:
+                    if (a.eta > t and a.eta <= h
+                            and a.eta not in processed
+                            and a.eta not in event_queue):
+                        event_queue.append(int(a.eta))
+            event_queue.sort()
+
+    return {
+        oid: Bundle(launches=tuple(specs))
+        for oid, specs in opp_specs_acc.items()
+        if specs
+    }
+
 
