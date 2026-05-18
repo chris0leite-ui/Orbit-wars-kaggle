@@ -21,8 +21,9 @@ days_to_deadline: 36
 # in agents/baseline/main.py. SETTLED at mu=1271.8 (far above local A/B
 # prediction of ~1140-1180). Spatial-leaf A/B 2026-05-18 was net-negative
 # (2P 40.6%, 4P 9.4%, wallclock max 2541ms) — NO new submission.
-last_submission_id: 52754310
-last_submission_status: COMPLETE
+last_submission_id: 52766596
+last_submission_status: PENDING
+last_submission_message: "Direction B v3 joint candidate evaluation, 2P-only gated"
 last_submission_file: submissions/baseline.py
 last_submission_agent: trajectory_chooser_v4_waitN_baseline
 last_kernel_push: 2026-05-17 22:06:07 UTC
