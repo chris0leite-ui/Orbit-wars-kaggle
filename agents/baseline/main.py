@@ -18,6 +18,7 @@ Knobs (env var overrides, all optional):
 
 from __future__ import annotations
 
+import math
 import os
 
 # Production default: hybrid value head (composite in 2P, A2-favor in 4P).
@@ -35,6 +36,22 @@ os.environ.setdefault("BASELINE_VALUE_HEAD", "hybrid")
 # drivers can force the composite path by setting BASELINE_CHOOSER to
 # any value other than "trajectory" (e.g. "composite").
 os.environ.setdefault("BASELINE_CHOOSER", "trajectory")
+
+# H1 — post-chooser idle drain (2026-05-18).
+# Audit `audit/replays/idle-trajectory-2026-05-17.md` measured 43.8pct of
+# our ship-turns sit on planets > 50 units from any non-our planet ("isolated"
+# in the audit terminology). Spatial leaf head (favor_hybrid_spatial) tried
+# to fix this in the chooser's Δ scoring but failed A/B (40.6pct 2P,
+# 9.4pct 4P first-place — see audit/2026-05-18-spatial-leaf-negative-
+# result.md). H1 is a strictly POST-CHOOSER heuristic: for OUR planets the
+# chooser chose not to use, with idle surplus, no incoming threat, and
+# "rear" position, emit one extra reinforce launch toward our closest
+# non-rear own planet. This does NOT perturb chooser Δ — only drains idle
+# garrisons when the chooser would have done nothing for that source.
+IDLE_DRAIN_THRESHOLD = int(os.environ.get("BASELINE_IDLE_DRAIN_THRESHOLD", "30"))
+IDLE_REAR_THRESHOLD = float(os.environ.get("BASELINE_IDLE_REAR_THRESHOLD", "35.0"))
+IDLE_DRAIN_RESERVE = int(os.environ.get("BASELINE_IDLE_DRAIN_RESERVE", "5"))
+IDLE_DRAIN_ENABLED = os.environ.get("BASELINE_IDLE_DRAIN", "1") != "0"
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
@@ -99,6 +116,70 @@ def _gamma() -> float:
         return 0.99
 
 
+def drain_idle_rear(moves, planets, my_id: int, world, model) -> list:
+    """H1: append reinforce launches for rear sources the chooser didn't use.
+
+    Idempotent post-chooser pass. Fires only when ALL of:
+      - source is one of MY planets AND not in `moves`
+      - source.ships > IDLE_DRAIN_THRESHOLD
+      - source's min-distance to any non-our planet > IDLE_REAR_THRESHOLD
+      - source has no enemy threat (model.time_to_enemy_threat is None)
+      - there is an own planet strictly closer to the action than source
+    Emits one launch toward that closer own planet, ships = source.ships
+    minus IDLE_DRAIN_RESERVE. Each `move` is `[src_id, angle, ships]`.
+    """
+    if not IDLE_DRAIN_ENABLED:
+        return moves
+    used_srcs = set()
+    for m in moves:
+        try:
+            used_srcs.add(int(m[0]))
+        except (TypeError, IndexError):
+            pass
+    non_our_xy = [(float(p.x), float(p.y)) for p in planets
+                  if int(p.owner) != my_id]
+    if not non_our_xy:
+        return moves
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    if len(my_planets) < 2:
+        return moves  # no closer own target available
+
+    def d_action(p):
+        return min(math.hypot(float(p.x) - tx, float(p.y) - ty)
+                   for tx, ty in non_our_xy)
+
+    extras = []
+    for src in my_planets:
+        if int(src.id) in used_srcs:
+            continue
+        if int(src.ships) <= IDLE_DRAIN_THRESHOLD:
+            continue
+        src_d = d_action(src)
+        if src_d <= IDLE_REAR_THRESHOLD:
+            continue
+        if model.time_to_enemy_threat(int(src.id), my_id, world) is not None:
+            continue
+        best_target = None
+        best_d = src_d  # strict-less-than → require improvement
+        for q in my_planets:
+            if int(q.id) == int(src.id):
+                continue
+            qd = d_action(q)
+            if qd >= best_d:
+                continue
+            best_d = qd
+            best_target = q
+        if best_target is None:
+            continue
+        ships = int(src.ships) - IDLE_DRAIN_RESERVE
+        if ships < 1:
+            continue
+        angle = math.atan2(float(best_target.y) - float(src.y),
+                           float(best_target.x) - float(src.x))
+        extras.append([int(src.id), float(angle), int(ships)])
+    return list(moves) + extras
+
+
 def agent(obs, configuration=None):
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
@@ -143,12 +224,13 @@ def agent(obs, configuration=None):
             baseline_len=MAX_HORIZON + 1,
         )
         from agents.baseline.chooser_trajectory import choose_trajectory
-        return choose_trajectory(
+        moves = choose_trajectory(
             snap_base, prerank, None,
             me, num_seats, wallclock_ms,
             MIN_HORIZON, MAX_HORIZON, gamma,
             world, model,
         )
+        return drain_idle_rear(moves, planets, me, world, model)
 
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
@@ -159,8 +241,9 @@ def agent(obs, configuration=None):
         baseline_len=len(baseline_favors),
     )
 
-    return choose(
+    moves = choose(
         snap_base, prerank, baseline_favors,
         me, num_seats, wallclock_ms,
         MIN_HORIZON, MAX_HORIZON, gamma,
     )
+    return drain_idle_rear(moves, planets, me, world, model)
