@@ -404,6 +404,100 @@ def _source_survives_launch(
     return garrison_at_threat >= int(threat_force) + 1
 
 
+def _target_holdable_after_capture(
+    src, tgt, ships: int, wait_N: int, eta: int, world, model, me: int,
+) -> bool:
+    """Tier 2 hold-feasibility filter (PI direction 2026-05-18 PM).
+
+    Sibling to `_source_survives_launch`: that filter protects the
+    SOURCE from being drained against inbound threats; this one protects
+    the TARGET from being lost back to opp on counter-recapture.
+
+    Pattern: we launch `ships` from `src` to capture `tgt` at arrival
+    step `wait_N + eta`. Could the cheapest counter-launch from a
+    nearby strong opp planet recapture `tgt` before our garrison +
+    production can defend? If yes, the capture is unholdable — drop.
+
+    The chooser's rollout (horizon 25) often misses this case: long-
+    distance captures land near or past horizon, so the leaf state
+    never reflects the opp counter. `lite_greedy_policy` (the rollout
+    opp model) doesn't specifically counter our newly-captured
+    targets, so even within horizon the rollout under-credits opp
+    response.
+
+    Returns True (hold-feasible) for: reinforcing our own planets,
+    captures with no opp planet within plausible counter-range,
+    captures where our delivered force + production accrual beats
+    every opp's counter-force.
+    """
+    if int(tgt.owner) == me:
+        return True
+
+    arrival_step = int(wait_N) + int(eta)
+    if int(tgt.owner) == -1:
+        tgt_def_at_arrival = int(tgt.ships)
+    else:
+        tgt_def_at_arrival = int(tgt.ships) + int(tgt.production) * arrival_step
+
+    delivered = int(ships) - tgt_def_at_arrival
+    if delivered < 1:
+        return True
+
+    MIN_COUNTER_SHIPS = 20
+    SAFETY_MARGIN = 1.5
+
+    nearest_opp = None
+    nearest_opp_dist = float("inf")
+    for opp in world.planets_by_id.values():
+        if int(opp.owner) == me or int(opp.owner) == -1:
+            continue
+        if int(opp.id) == int(tgt.id):
+            continue
+        if int(opp.ships) < MIN_COUNTER_SHIPS:
+            continue
+        d = math.hypot(
+            float(opp.x) - float(tgt.x), float(opp.y) - float(tgt.y),
+        )
+        if d < nearest_opp_dist:
+            nearest_opp_dist = d
+            nearest_opp = opp
+    if nearest_opp is None:
+        return True
+
+    nearest_us_dist = float("inf")
+    for ally in world.planets_by_id.values():
+        if int(ally.owner) != me:
+            continue
+        if int(ally.id) == int(tgt.id):
+            continue
+        d = math.hypot(
+            float(ally.x) - float(tgt.x), float(ally.y) - float(tgt.y),
+        )
+        if d < nearest_us_dist:
+            nearest_us_dist = d
+    if nearest_us_dist <= nearest_opp_dist:
+        return True
+
+    flight = (
+        nearest_opp_dist - float(nearest_opp.radius)
+        - float(tgt.radius) - 0.1
+    )
+    if flight <= 0:
+        return True
+    opp_speed = fleet_speed(int(nearest_opp.ships))
+    if opp_speed <= 0:
+        return True
+    t_op = int(math.ceil(flight / opp_speed))
+    garrison_at_recapture = delivered + int(tgt.production) * t_op
+    counter_force = (
+        int(nearest_opp.ships)
+        + int(nearest_opp.production) * (arrival_step + t_op)
+    )
+    if counter_force >= SAFETY_MARGIN * garrison_at_recapture + 1:
+        return False
+    return True
+
+
 def propose(my_planets, target_pool, world, model, me: int,
             omega: float, baseline_len: int):
     """Build the pre-rank list of candidates, then dedup by
@@ -519,6 +613,26 @@ def propose(my_planets, target_pool, world, model, me: int,
                 entry[1],  # src
                 int(entry[3]),  # ships
                 int(entry[7]),  # wait_N
+                world, model, me,
+            )
+        ]
+
+    # Tier 2 hold-feasibility filter (2026-05-18 PM): drop candidates
+    # whose captured target would be recaptured by a nearby strong opp
+    # planet before our garrison + production accrual can defend. The
+    # chooser's rollout (horizon 25) misses long-distance captures whose
+    # arrival lands near/past horizon, so the leaf state under-credits
+    # opp counter. This pre-cut catches the wasted-ships pattern PI
+    # observed in live games. Opt out via PROPOSER_HOLD_FEASIBILITY=off.
+    if os.environ.get("PROPOSER_HOLD_FEASIBILITY", "").strip().lower() != "off":
+        deduped = [
+            entry for entry in deduped
+            if _target_holdable_after_capture(
+                entry[1],  # src
+                entry[2],  # tgt
+                int(entry[3]),  # ships
+                int(entry[7]),  # wait_N
+                int(entry[5]),  # eta
                 world, model, me,
             )
         ]

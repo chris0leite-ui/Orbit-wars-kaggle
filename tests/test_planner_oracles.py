@@ -423,3 +423,122 @@ def test_oracle_sanity_trivial_capture():
         f"Trivial-capture sanity FAIL: 100 ships vs 5 ships → "
         f"planner should emit. Got {moves} → targets {targets}."
     )
+
+
+# ---------------------------------------------------------------------------
+# Tier 2 — Hold-feasibility filter (the wasted-ships lever)
+# ---------------------------------------------------------------------------
+#
+# PI observation (2026-05-18): we capture neutral planets that are far
+# from our source but close to a strong opp planet. Opp counter-attacks
+# cheaply from short range and recaptures. We lose the ships AND the
+# planet. The chooser's rollout (horizon 25) doesn't see the opp counter
+# because either (a) our launch eta is near/past horizon so the leaf
+# state never reflects the capture, or (b) lite_greedy_policy doesn't
+# specifically counter our newly-captured targets.
+#
+# Encoded as a proposer-side pre-cut sibling to `_source_survives_launch`
+# (bug #4 drain-frontier). Plan: audit/2026-05-18-next-session-plan
+# -tiered.md::Tier 2.
+
+
+def test_oracle_hold_feasibility_neutral_near_strong_opp():
+    """M far from neutral P; strong opp O is short range from P.
+
+    Even though M has enough ships for the bare-capture sizing, the
+    capture is unholdable: O can counter-launch from short range and
+    recapture before our garrison + production can defend. The
+    proposer's hold-feasibility filter must drop this candidate.
+
+    Pre-filter: chooser emits M→P (cheap-rank likes the capture credit).
+    Post-filter: no emit from M toward P.
+    """
+    # Geometry: y=25 axis to stay clear of the sun at (50, 50).
+    # M  at (10, 25) — our planet, far from P, ample ships.
+    # P  at (40, 25) — neutral, low defense, capture-worthy on paper.
+    # O  at (55, 25) — opp, strong, short-range to P.
+    m = _planet(0, 0, 10.0, 25.0, ships=50, production=1)
+    p = _planet(1, -1, 40.0, 25.0, ships=5, production=1)
+    o = _planet(2, 1, 55.0, 25.0, ships=80, production=1)
+    obs = _obs([m, p, o])
+    moves = _emit(obs)
+    targets = _targets_of_emits(obs, moves)
+    assert 1 not in targets, (
+        f"Hold-feasibility FAIL: M(50 ships) → P(neutral, 5 def) is "
+        f"unholdable because O(80 ships, 15 away) can counter-recapture "
+        f"before our garrison can defend. Planner emitted "
+        f"{moves} → targets {targets}. Expected NO move toward pid=1."
+    )
+
+
+def test_oracle_hold_feasibility_size_threshold():
+    """Pin the filter cutoff: at what M-garrison size does the chooser
+    START emitting M→P with the same geometry?
+
+    The filter's contract is: when our delivered force (minus tgt
+    defense) plus production accrual over the opp counter-window beats
+    opp's counter-force, the launch is holdable and the filter
+    passes it through. Below that threshold, the candidate is dropped.
+
+    This test does NOT pin a specific threshold number — it pins the
+    PROPERTY: at M with 30 ships (clearly insufficient to hold), no
+    emit; at M with 500 ships (overwhelming), at least one emit toward
+    P. If the filter is over-aggressive (drops the 500-ship case), this
+    test fails — regression visible.
+    """
+    p = _planet(1, -1, 40.0, 25.0, ships=5, production=1)
+    o = _planet(2, 1, 55.0, 25.0, ships=80, production=1)
+
+    # Case A: M with 30 ships — borderline, unholdable. No emit.
+    m_low = _planet(0, 0, 10.0, 25.0, ships=30, production=1)
+    obs_low = _obs([m_low, p, o])
+    moves_low = _emit(obs_low)
+    targets_low = _targets_of_emits(obs_low, moves_low)
+    assert 1 not in targets_low, (
+        f"Hold-feasibility size-threshold FAIL (low side): "
+        f"M(30 ships) → P should be dropped (opp O 80 ships counter). "
+        f"Got moves {moves_low} → targets {targets_low}."
+    )
+
+    # Case B: M with 500 ships — overwhelming, holdable. Filter must
+    # pass it through. (Delivered force ≈ 495 after capture; counter
+    # ≈ 80 + some production — clearly holdable.)
+    m_high = _planet(0, 0, 10.0, 25.0, ships=500, production=1)
+    obs_high = _obs([m_high, p, o])
+    moves_high = _emit(obs_high)
+    targets_high = _targets_of_emits(obs_high, moves_high)
+    assert 1 in targets_high, (
+        f"Hold-feasibility size-threshold FAIL (high side): "
+        f"M(500 ships) → P should pass — overwhelming residue, holdable. "
+        f"Filter is over-aggressive. Got moves {moves_high} → "
+        f"targets {targets_high}."
+    )
+
+
+def test_oracle_hold_feasibility_with_nearby_ally():
+    """M far from P (as in oracle 1), PLUS an ally M' near P that can
+    contribute ships. The legitimate joint capture should pass the
+    filter: M' is close enough that the combined delivered force
+    (or M' alone as the breaker) plus production accrual covers O's
+    counter.
+
+    Verifies the filter does NOT kill coordinated/joint candidates
+    when the post-capture position IS holdable thanks to the nearby
+    ally. The chooser may emit either solo from M' (M' alone could
+    capture and hold) or a joint M+M' launch.
+    """
+    # Same M, P, O as oracle 1. Add M' close to P.
+    m = _planet(0, 0, 10.0, 25.0, ships=50, production=1)
+    p = _planet(1, -1, 40.0, 25.0, ships=5, production=1)
+    o = _planet(2, 1, 55.0, 25.0, ships=80, production=1)
+    # M' (ally near P, opposite side from O) with plenty of ships.
+    m_ally = _planet(3, 0, 30.0, 25.0, ships=100, production=1)
+    obs = _obs([m, p, o, m_ally])
+    moves = _emit(obs)
+    targets = _targets_of_emits(obs, moves)
+    assert 1 in targets, (
+        f"Hold-feasibility coordination FAIL: with ally M'(100 ships, "
+        f"10 away from P), the joint or M'-solo capture is holdable. "
+        f"Filter must not kill this case. Got moves {moves} → targets "
+        f"{targets}. Expected at least one move toward pid=1."
+    )
