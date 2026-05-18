@@ -1,8 +1,11 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-18 by
-> `claude/audit-workflow-performance-btjeK`. Spatial leaf
-> hypothesis falsified this session; Direction B remains next.
+> Last written: 2026-05-18 (late) by
+> `claude/audit-workflow-performance-btjeK`. Spatial leaf AND
+> post-chooser idle drain (H1) BOTH falsified this session. The
+> chooser's reserves are correctly calibrated; single-step
+> heuristics targeting "idle ships" all fail. Direction B (joint
+> candidates / multi-step) is the only known sound next direction.
 
 ## Where we are
 
@@ -31,11 +34,14 @@
 
 ## What this session shipped (no submission)
 
-3 commits this session:
+6 commits this session:
 - `b5f5296` — spatial leaf head (opt-in, env-gated) + idle-trajectory
   audit infrastructure
 - `cc38e11` — summary.json for 52754310 live episodes
 - `558bd61` — spatial leaf 2P-only short-circuit (4P regression fix)
+- `70fcc28` — spatial leaf experiment: negative result, no submission
+- `1b3f920` — H1 post-chooser idle drain implementation (initial)
+- `90c6adb` — H1 A/B FAIL: 11/32 vs hybrid, default flipped OFF
 
 ### A/B receipts (clean bundle-based, NOT env-based)
 
@@ -43,15 +49,17 @@
 |---|---:|---:|---:|---:|---|
 | spatial+trajectory vs hybrid+trajectory (2P) | 64 | 26/40.6% | 0.295 | 2541 | **FAIL** |
 | spatial+trajectory in 4P vs 3x hybrid | 32 | 3 first-place/9.4% | 0.032 | 1503 | **FAIL** |
+| H1-idle-drain+trajectory vs hybrid+trajectory (2P) | 32 | 11/34.4% | 0.204 | 1528 | **FAIL** |
 
-Failure modes:
-1. 2P regression — spatial pull conflicts with composite's capture
-   EV (double-counting / wait-N timing breakage)
-2. 4P regression hard — spatial conflicts with A2 weakness-exploitation
-3. Wallclock blowout under CPU contention (max 2541ms vs 1000ms cap)
+Both attempts to "drain idle rear ships" hurt winrate. Spatial perturbed
+chooser Δ globally. H1 force-emitted launches the chooser correctly
+rejected.
 
-The 2P-only short-circuit (commit 558bd61) eliminates risk-2, but
-risk-1 remains in 2P.
+**Generalizable conclusion**: the 43.8% isolated ship-turns measured
+on the trajectory champion is NOT a leak. It's the natural distribution
+of correctly-held defensive reserve. The chooser at μ=1271.8 already
+optimizes this. Any single-step heuristic that "drains" or "pulls
+forward" hurts.
 
 ### What's reusable
 
