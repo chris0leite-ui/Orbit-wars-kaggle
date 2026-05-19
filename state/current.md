@@ -13,40 +13,51 @@
 > (clean modular re-baseline of v15).
 
 ```yaml
-date: 2026-05-18
+date: 2026-05-19
 deadline: 2026-06-23 23:59 UTC
-days_to_deadline: 36
+days_to_deadline: 35
 
-# Most-recent submission (PV-off + bug #3/#4/#12 fixes).
-# Built on `claude/audit-workflow-performance-btjeK` HEAD (commit 82df5b8).
-# `_COMPOSITE_PV_ENABLED` defaults to False — restores pre-#15 chooser
-# calibration. Bug #15 v2's PV term and bug #14 option 5 both A/B-failed
-# at 39.6% n=96 in this session (see audit/2026-05-18-postmortem-bug-15
-# -v2-and-bug-14-option-5.md). This submission preserves the clean math
-# fixes (drain-frontier pre-cut, symmetric reinforce sizing, multi-wave
-# threat window) without the regressing PV inflation.
-# Local A/B vs prior bundle: 26/32 = 81.2% Wlo=0.647 Whi=0.911 PASS.
-# Bench: max=705ms p95=504ms over_1000ms=0 PASS.
-last_submission_id: 52784853
-last_submission_status: COMPLETE
-last_submission_mu: 1083.1  # snapshot at 2026-05-18 PM — UNDER-performing. NOTE: Kaggle μ DRIFTS continuously and does NOT settle; this is a today snapshot, not a final value. Local A/B 81.2% vs prior bundle did NOT translate to ladder. Calibration miss of ~30 mu vs prediction (1130-1160).
-last_submission_message: "PV off + bug #3/#4/#12 fixes"
+# Most-recent submission (hold-feasibility filter solo).
+# Built on `claude/audit-workflow-performance-btjeK` HEAD. Trajectory chooser
+# unchanged (BASELINE_CHOOSER=trajectory default at main.py:38). The filter
+# (`_target_holdable_after_capture` at proposer.py:407, gated at :627) was
+# default-on since 2026-05-18 PM but had never been the sole change in a
+# submission. This is the calibration probe.
+#
+# Local validation:
+#   B.3 h2h solo A/B (treatment vs control with filter disabled at line 627):
+#     25/32 = 78.1% Wlo=0.612 Whi=0.890 PASS (early-stop at n=32)
+#   B' panel A/B + champion h2h (all PASS at Wlo >= 0.55):
+#     vs champion 52784853:  24/32 = 75.0% Wlo=0.579 (closest to gate)
+#     vs v7_0:               30/32 = 93.8% Wlo=0.799
+#     vs v4_planner:         29/32 = 90.6% Wlo=0.758
+#     vs v3.5.1:             27/32 = 84.4% Wlo=0.682
+#   Bundle parity OK over 574 turns.
+#   Wallclock: focal p50=310ms p95=738ms max=1268ms (max > 1s soft cap,
+#   matches current source's profile; not a new risk).
+last_submission_id: 52811320
+last_submission_status: PENDING
+last_submission_mu: null  # no μ yet; refresh via kaggle CLI
+last_submission_message: "hold-feasibility filter solo: B.3 Wlo=0.612 n=32; panel champion Wlo=0.579, v7_0 Wlo=0.799, v4_planner Wlo=0.758, v3.5.1 Wlo=0.682"
 last_submission_file: submissions/baseline.py
-last_submission_agent: baseline_PV_off_with_clean_math_fixes
-last_kernel_push: 2026-05-18 17:42:16 UTC
-prior_error_submission_id: 52744234  # 5/17 earlier — bundler fix in commit 4094aa1
-current_submitted_agent: baseline_PV_off_with_clean_math_fixes (5/18 PM)
+last_submission_agent: baseline_hold_feasibility_solo
+last_submission_sha256: a1e4fa23ff77edb8e963961de13679e34d15ba39a73794ebeea0378c701f9387
+last_kernel_push: 2026-05-19 12:54:31 UTC
+prior_submission_id: 52784853
+current_submitted_agent: baseline_hold_feasibility_solo (5/19 PM)
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation; the
 # third push auto-evicts the previous oldest). Per the literal
-# "rolling LAST 2 submissions" rule, 52784853's push evicts 52754310
-# (the trajectory champion at 1143.7) — NOT 52766596 as a prior
-# revision claimed. Verified via `kaggle competitions submissions
-# orbit-wars` 2026-05-19 AM: μ snapshots 52784853=1121.2, 52766596=
-# 1118.8, 52754310=1143.7 (evicted). Conservative push-floor: 1118.8.
+# "rolling LAST 2 submissions" rule. Verified via `kaggle competitions
+# submissions orbit-wars` 2026-05-19 12:55:
+#   52784853 (May 18 17:42, μ=1139.0) — drifted up from 1121.2 → 1132.5
+#     → 1139.0 over 24h. CHAMPION reference at session start.
+#   52766596 (May 18 07:12, μ=1118.3) — EVICTED by 52811320 push.
+#   52811320 (May 19 12:54, μ=PENDING) — hold-feasibility filter solo.
+# Floor of the rolling pair: 1139.0 (52784853) until 52811320 settles.
 rolling_last_2:
-  - {agent: baseline_PV_off_with_clean_math_fixes, sub_id: 52784853, submitted: 2026-05-18T17:42Z, status: COMPLETE, mu_snapshot: 1121.2}
-  - {agent: joint_v3_2P_only, sub_id: 52766596, submitted: 2026-05-18T07:12Z, status: COMPLETE, mu_snapshot: 1118.8}
+  - {agent: baseline_hold_feasibility_solo, sub_id: 52811320, submitted: 2026-05-19T12:54Z, status: PENDING, mu_snapshot: null}
+  - {agent: baseline_PV_off_with_clean_math_fixes, sub_id: 52784853, submitted: 2026-05-18T17:42Z, status: COMPLETE, mu_snapshot: 1139.0}
 
 # Team peak as of 2026-05-17: v15_banded (the multi-wait-grid + banded
 # (src, tgt, wait_band) dedup line). v15 source lives in git history at
@@ -55,34 +66,36 @@ rolling_last_2:
 # A clean modular re-implementation lives at agents/baseline/.
 team_peak_agent: v15_banded
 
-# Calibration WARNING (still active 5/17 — applies to the next submission):
+# Calibration WARNING (still active 5/19 — applies to next submissions):
 # Multiple recent submissions over-predicted live. Local-vs-live mapping
 # has been roughly -20 to -30 pp on every recent submission. Use a
 # 3-opponent panel (`fast.py eval --vs-panel`) + h2h vs the current
-# rolling agent (not just a fixed baseline) before any new push.
+# rolling agent (not just a fixed baseline) before any new push. The
+# 52811320 push followed this protocol (panel + champion h2h all PASS).
 
-submissions_used_today: 1     # 5/18 — baseline_PV_off_with_clean_math_fixes (52784853)
-submissions_used_total: 33    # see ladder list below; refresh via Kaggle CLI
+submissions_used_today: 1     # 5/19 — baseline_hold_feasibility_solo (52811320)
+submissions_used_total: 34    # see ladder list below; refresh via Kaggle CLI
 plateau_days: 0
 saturation_count: 0
 
 # Live ladder — read from `kaggle competitions submissions orbit-wars`,
 # NOT from this file. Submission IDs are stable; scores are not.
 # Most recent ladder entries by submission id:
-#   52784853  baseline.py (PV-off + bug #3/#4/#12 fixes) 2026-05-18 17:42 PENDING ← NEW
-#   52766596  baseline.py (joint v3 2P-only) 2026-05-18 07:12 COMPLETE μ=1094.1 EVICTED by 52784853
-#   52754310  baseline.py (trajectory v4 + wait_N + wallclock) 2026-05-17 22:06 COMPLETE μ=1141.0
-#   52744856  baseline.py (composite+A2 hybrid, re-bundle) 2026-05-17 14:17 COMPLETE μ≈1158 settling
-#   52744234  baseline.py (composite+A2 hybrid, ERROR) 2026-05-17 13:57 ← failed: `from agents.baseline import` not inlined
-#   52721807  v20.py            2026-05-16 21:57  COMPLETE
-#   52710995  v15.py            2026-05-16 13:43  COMPLETE  ← team peak
-#   52704189  v8_scavenge (v13) 2026-05-16 09:07  COMPLETE
-#   52699232  v8_scavenge (v12) 2026-05-16 05:37  COMPLETE
-#   52687411  v8_scavenge (v9)  2026-05-15 17:41  COMPLETE  ← highest-ever score; evicted from rolling
-#   52684059  v8_scavenge (v8)  2026-05-15 15:05  COMPLETE
-#   52678866  iter.py  (iter_v2) 2026-05-15 11:34 COMPLETE
-#   52661990  iter.py  (iter_v1) 2026-05-14 21:48 COMPLETE
-#   52643676  geo.py             2026-05-14 09:10 COMPLETE
+#   52811320  baseline.py (hold-feasibility filter solo)   2026-05-19 12:54 PENDING ← NEW
+#   52784853  baseline.py (PV-off + bug #3/#4/#12 fixes)   2026-05-18 17:42 COMPLETE μ=1139.0 ← rolling pair
+#   52766596  baseline.py (joint v3 2P-only)               2026-05-18 07:12 COMPLETE μ=1118.3 EVICTED by 52811320
+#   52754310  baseline.py (trajectory v4 + wait_N)         2026-05-17 22:06 COMPLETE μ=1143.7
+#   52744856  baseline.py (composite+A2 hybrid)            2026-05-17 14:17 COMPLETE μ=1149.2
+#   52744234  baseline.py (composite+A2 hybrid, ERROR)     2026-05-17 13:57 ← failed: `from agents.baseline import` not inlined
+#   52721807  v20.py            2026-05-16 21:57  COMPLETE μ=1076.7
+#   52710995  v15.py            2026-05-16 13:43  COMPLETE μ=1115.0  ← team peak
+#   52704189  v8_scavenge (v13) 2026-05-16 09:07  COMPLETE μ=1085.7
+#   52699232  v8_scavenge (v12) 2026-05-16 05:37  COMPLETE μ=1095.4
+#   52687411  v8_scavenge (v9)  2026-05-15 17:41  COMPLETE μ=1119.9
+#   52684059  v8_scavenge (v8)  2026-05-15 15:05  COMPLETE μ=1065.8
+#   52678866  iter.py  (iter_v2) 2026-05-15 11:34 COMPLETE μ=1036.0
+#   52661990  iter.py  (iter_v1) 2026-05-14 21:48 COMPLETE μ=1034.7
+#   52643676  geo.py             2026-05-14 09:10 COMPLETE μ=1004.9
 #   52630118  v7_pv.py           2026-05-13 23:31 COMPLETE
 #   52607699  v7_0_drop_one      2026-05-13 08:33 COMPLETE
 #   52588156  v7_0_drop_one      2026-05-12 17:36 COMPLETE
