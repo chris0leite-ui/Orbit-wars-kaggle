@@ -89,13 +89,13 @@ def trace_turn(obs, configuration, turn_idx):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--vs", type=str,
+                    default="/home/user/Orbit-wars-kaggle/agents/trajectory_roi/main.py",
+                    help="path to opponent agent .py")
     args = ap.parse_args()
 
     env = make("orbit_wars", configuration={"seed": args.seed})
-
-    # We need the obs both sides see, so we step manually.
-    # Use roi as P1 (vanilla); we manually wrap the trace on P0's turns.
-    trainer = env.train([None, "/home/user/Orbit-wars-kaggle/agents/trajectory_roi/main.py"])
+    trainer = env.train([None, args.vs])
     obs = trainer.reset()
 
     config = env.configuration
