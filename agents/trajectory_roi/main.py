@@ -37,15 +37,19 @@ from lib.opp_model import lite_greedy_policy
 from lib.trajectory_layer import World
 
 
-# ---- tuneables ------------------------------------------------------------
+# ---- tuneables (v3.1) ---------------------------------------------------
 
-K_HORIZON = 50                    # forward-projection depth
-TOP_TARGETS_PER_SOURCE = 5        # Layer-1 prune cap
-MAX_CANDIDATES_TOTAL = 30         # final candidate cap
-MAX_ITERATIONS = 2                # incremental joint solve iterations
+K_HORIZON = 30                    # forward-projection depth (was 50 — too slow)
+TOP_TARGETS_PER_SOURCE = 6        # Layer-1 prune cap per source
+MAX_CANDIDATES_TOTAL = 40         # final candidate cap (was 30)
+MAX_ITERATIONS = 5                # incremental joint solve iterations (was 2)
 MIN_LAUNCH_SHIPS = 5              # env minimum
 SAFETY_MARGIN = 1                 # ships above net defenders
-MAX_ETA = 50                      # don't consider launches that take > MAX_ETA turns
+MAX_ETA = 40                      # don't consider launches that take > MAX_ETA turns
+
+# v3.1 latency budget: hard cutoff so we never exceed env's 1000ms cap
+# and lose actions to env drops. Generously below the cap.
+JOINT_SOLVE_BUDGET_MS = 700
 
 # Layer-2 centrality thresholds
 CENTER_X = 50.0
@@ -345,19 +349,29 @@ def _threatened_planets(world: World, my_id: int):
 
 
 def enumerate_candidates(world: World, my_id: int,
-                         centrality_cache: dict[int, float]) -> list[Candidate]:
-    """Layer 1: build all candidates within blast radius, top-N per source."""
+                         centrality_cache: dict[int, float],
+                         ) -> tuple[list[Candidate], list[Candidate]]:
+    """Layer 1: build candidates within blast radius.
+
+    Returns (primary, mandatory):
+      - primary: capture candidates ranked by closed-form ROI, capped
+        at MAX_CANDIDATES_TOTAL.
+      - mandatory: defense candidates that ALWAYS pass to the joint
+        solve (no top-N screening) — PI's natural-compounding
+        principle: closed-form value undersells defense; the projection
+        will reveal real value via the cascade.
+    """
     per_target_top: dict[int, list[Candidate]] = {}
     my_planets = [p for p in world.planets if p.owner == my_id]
     targets_capture = [p for p in world.planets if p.owner != my_id]
 
-    def _add(c: Candidate):
+    def _add_capture(c: Candidate):
         bucket = per_target_top.setdefault(c.target_id, [])
         bucket.append(c)
         bucket.sort(key=lambda x: -x.roi)
-        del bucket[3:]  # keep top 3 per target (different sources / single vs multi)
+        del bucket[3:]  # keep top 3 per target
 
-    # Per-source: rank reachable targets by closed-form ROI, take top-N.
+    # Per-source: top-N reachable targets by closed-form ROI.
     for src in my_planets:
         if src.ships < MIN_LAUNCH_SHIPS:
             continue
@@ -369,18 +383,25 @@ def enumerate_candidates(world: World, my_id: int,
                 scored.append(c)
         scored.sort(key=lambda x: -x.roi)
         for c in scored[:TOP_TARGETS_PER_SOURCE]:
-            _add(c)
+            _add_capture(c)
 
-    # Multi-source bundles for central targets (centrality > 0).
+    # v3.1: multi-source bundles for ALL targets (dropped centrality gate).
     for tgt in targets_capture:
-        if centrality_cache.get(tgt.id, 0.0) <= 0.0:
-            continue
         mc = _solve_multi_source(tgt, world, my_id, centrality_cache,
                                  target_is_ours=False)
         if mc is not None:
-            _add(mc)
+            _add_capture(mc)
 
-    # Defense candidates.
+    primary: list[Candidate] = []
+    for bucket in per_target_top.values():
+        primary.extend(bucket)
+    primary.sort(key=lambda c: -c.roi)
+    primary = primary[:MAX_CANDIDATES_TOTAL]
+
+    # Mandatory: defense candidates always pass. Closed-form value
+    # under-represents defense compounding; we let the projection
+    # reveal real value during the joint solve.
+    mandatory: list[Candidate] = []
     threatened = _threatened_planets(world, my_id)
     for tgt in threatened:
         for src in my_planets:
@@ -389,17 +410,23 @@ def enumerate_candidates(world: World, my_id: int,
             c = _solve_single_source(src, tgt, world, my_id,
                                      centrality_cache, target_is_ours=True)
             if c is not None:
-                _add(c)
+                mandatory.append(c)
         mc = _solve_multi_source(tgt, world, my_id, centrality_cache,
                                  target_is_ours=True)
         if mc is not None:
-            _add(mc)
-
-    flat: list[Candidate] = []
-    for bucket in per_target_top.values():
-        flat.extend(bucket)
-    flat.sort(key=lambda c: -c.roi)
-    return flat[:MAX_CANDIDATES_TOTAL]
+            mandatory.append(mc)
+    # Per-target dedup on mandatory: keep highest-ROI per (target, allocations
+    # signature) to avoid redundant projection work.
+    seen: set[tuple] = set()
+    deduped: list[Candidate] = []
+    mandatory.sort(key=lambda c: -c.roi)
+    for c in mandatory:
+        sig = (c.target_id, tuple((a.src_id, a.ships) for a in c.allocations))
+        if sig in seen:
+            continue
+        seen.add(sig)
+        deduped.append(c)
+    return primary, deduped
 
 
 # ---- Layer 3: forward projection ----------------------------------------
@@ -464,10 +491,21 @@ def _fits(c: Candidate, remaining: dict[int, int]) -> bool:
     return True
 
 
-def joint_solve_forward(candidates: list[Candidate], initial_obs: dict,
-                        my_id: int, opp_id: int, my_planets) -> list[list]:
-    """Incremental joint via K-turn forward projection. Returns the
-    list of turn-0 emit actions to execute."""
+def joint_solve_forward(primary: list[Candidate], mandatory: list[Candidate],
+                        initial_obs: dict, my_id: int, opp_id: int,
+                        my_planets) -> list[list]:
+    """Incremental joint via K-turn forward projection.
+
+    v3.1 changes:
+      - Iterate over `primary + mandatory` (defense always considered).
+      - Accept `marginal >= 0` (was strict `> 0`); per-iteration tie-break
+        by ROI descending.
+      - Hard time-budget cutoff at JOINT_SOLVE_BUDGET_MS.
+    """
+    import time
+    t0 = time.perf_counter()
+
+    candidates = list(primary) + list(mandatory)
     remaining_budget = {p.id: int(p.ships) for p in my_planets}
     plan_emits: list[list] = []
     chosen: list[Candidate] = []
@@ -476,22 +514,35 @@ def joint_solve_forward(candidates: list[Candidate], initial_obs: dict,
     current_value = project(initial_obs, my_id, opp_id, plan_emits)
 
     for _ in range(MAX_ITERATIONS):
-        best_marginal = 0.0
+        if (time.perf_counter() - t0) * 1000.0 > JOINT_SOLVE_BUDGET_MS:
+            break
+        best_marginal = -1e9  # accept >= 0 explicitly via check below
         best_candidate: Candidate | None = None
         best_with_value: float | None = None
+        best_roi = -1e9
         for c in candidates:
             if c.target_id in used_targets:
                 continue
             if not _fits(c, remaining_budget):
                 continue
+            if (time.perf_counter() - t0) * 1000.0 > JOINT_SOLVE_BUDGET_MS:
+                break
             test_emits = plan_emits + _emit_for_candidate(c)
             with_value = project(initial_obs, my_id, opp_id, test_emits)
             marginal = with_value - current_value
-            if marginal > best_marginal:
+            # Strict improvement OR tied-but-higher-ROI candidate (helps
+            # when the projection is noisy / quantised).
+            if marginal > best_marginal or (
+                marginal == best_marginal and c.roi > best_roi
+            ):
                 best_marginal = marginal
                 best_candidate = c
                 best_with_value = with_value
-        if best_candidate is None or best_with_value is None:
+                best_roi = c.roi
+        # v3.1: accept marginal >= 0 (not strict > 0). A zero-marginal
+        # capture is harmless to add and may free up source ships from
+        # being held against opp threats they don't materialise.
+        if best_candidate is None or best_with_value is None or best_marginal < 0:
             break
         chosen.append(best_candidate)
         used_targets.add(best_candidate.target_id)
@@ -540,9 +591,10 @@ def agent(obs, configuration=None):
         return []
 
     centrality_cache = _build_centrality_cache(world)
-    candidates = enumerate_candidates(world, my_id, centrality_cache)
-    if not candidates:
+    primary, mandatory = enumerate_candidates(world, my_id, centrality_cache)
+    if not primary and not mandatory:
         return []
 
     initial_obs = obs if isinstance(obs, dict) else _obs_from_snap_like(obs)
-    return joint_solve_forward(candidates, initial_obs, my_id, opp_id, my_planets)
+    return joint_solve_forward(primary, mandatory, initial_obs,
+                               my_id, opp_id, my_planets)
