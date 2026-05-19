@@ -241,6 +241,25 @@ def agent(obs, configuration=None):
         )
         return drain_idle_rear(moves, planets, me, world, model)
 
+    # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
+    # coalition + opp-modifier posterior; no fast_sim rollout. See
+    # agents/baseline/chooser_roi.py and the plan at
+    # /root/.claude/plans/okay-we-can-do-elegant-lampson.md.
+    if os.environ.get("BASELINE_CHOOSER", "").strip().lower() == "roi":
+        prerank = propose(
+            my_planets, target_pool, world, model, me, omega,
+            baseline_len=MAX_HORIZON + 1,
+        )
+        from agents.baseline.chooser_roi import choose_roi
+        step = int(obs_d.get("step", 0))
+        moves = choose_roi(
+            snap_base, prerank,
+            me, num_seats, wallclock_ms,
+            MIN_HORIZON, MAX_HORIZON, gamma,
+            world, model, step,
+        )
+        return drain_idle_rear(moves, planets, me, world, model)
+
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
     )
