@@ -39,7 +39,7 @@ Cross-links to `audit/friction.md::2026-05-19`:
   per variant when `--max-seeds 16` was passed; ~24 min extra
   compute. Documentation gap, not a blocker.
 
-## Promotion candidates (PI ratified: pending)
+## Promotion candidates (PI ratified: YES — all 4 promoted 2026-05-19)
 
 ### [ ] [CROSS-CUTTING] Session-start `kaggle competitions submissions` reconciliation when HANDOVER claims a champion
 
@@ -127,7 +127,9 @@ budget-misaligned.
 
 ## PI additions (from step 4)
 
-Pending. PI may add inline or in next session.
+- "promote as suggested" — PI ratified all 4 promotion candidates
+  for inclusion in `.claude/skills/kaggle-comp/improvements.md`.
+  Done in same commit.
 
 ## Framework version at session-end
 

@@ -174,6 +174,104 @@ public-notebook scan). Agent picks one and ignores the others.
 that sequences all three. Reference from a single new rule that
 supersedes 7/14/22.
 
+### [ ] [CROSS-CUTTING] Session-start Kaggle-submissions reconciliation when HANDOVER claims a champion
+
+`tag: handover-staleness-vs-kaggle-state` (2026-05-19,
+claude/reverse-engineer-seat-geometry-BPJKs).
+
+Third recurrence of the "framework didn't catch that the baseline
+truth wasn't being verified" pattern, alongside
+`wrong-file-recon-skipped-state-md` (5/18) and
+`agent-introspection-skipped-bootstrap` (5/13). HANDOVER.md framed
+v15_banded as the current champion; Kaggle showed submission
+52784853 (commit `82df5b8`, μ=1121.2) from ~20 commits of
+architectural progress on origin/main. The bootstrap "ahead 2 /
+behind 1" output understated the divergence — the "+1" was a merge
+commit pulling in the entire trajectory-chooser lineage.
+
+**Where to insert:** bootstrap.sh / SessionStart hook output; also
+reference in CLAUDE.md Rule 32.
+
+**What to add:** when HANDOVER.md is >24h old OR the branch is
+"behind N" origin/main with N≥3, run
+`kaggle competitions submissions <comp> | head -10`
+and require the agent to reconcile the most recent submission's
+description against HANDOVER's "current champion" framing BEFORE
+forming any h2h plan. Display the most recent 2-3 submissions in
+the bootstrap summary so the gap is impossible to miss.
+
+**Why:** Rule 32 catches code-tree freshness; this catches
+narrative-freshness against the comp's ground truth. HANDOVER is
+load-bearing; if it's wrong about the champion, every downstream
+plan is wrong. Cost this session: ~30 min planning vs the wrong
+opponent before PI override.
+
+### [ ] [CODE-COMP-DISCOVERED] Bundle-vs-focal name collision in `fast.py eval --vs <path>`
+
+`tag: bundle-filename-collides-with-focal-name` (2026-05-19).
+
+`scripts/bundle_agent.py` defaults to `submissions/<agent_dir>.py`.
+`fast.py:152::resolve_agent_spec` returns `Path.stem` for arbitrary
+file paths. When the focal agent is `baseline` and we A/B against
+a bundle of `agents/baseline/` at a different commit, `fast.py`
+silently skips all games via the `same agent as focal`
+short-circuit. ~9 min wasted this session.
+
+**Where to insert:** `fast.py:152` `resolve_agent_spec`.
+
+**What to add:** when the resolved opponent stem equals the focal
+name AND the path resolves outside the repo, suffix the stem with
+a short hash of the path (`<stem>@<sha8>`). Or extend
+`scripts/bundle_agent.py` with a `--name` override and document
+the A/B convention to always pass it.
+
+**Why:** Silent failure (0 games + one-line SKIP, no error). The
+A/B-vs-bundle workflow is the standard Rule 27 gate; anyone
+repeating it will hit this.
+
+### [ ] [CODE-COMP-DISCOVERED] A=A control variance characterisation in `fast.py eval`
+
+`tag: same-config-runs-diverge-9pp` (2026-05-19).
+
+Same config at `BASELINE_ROI_DENOM_FLOOR=1.0` produced 15.6% (5/32)
+in one A/B run and 6.2% (2/32) in a back-to-back run vs the same
+opponent on the same geometry panel. 9-point swing on identical
+setup — Wilson intervals don't model this noise.
+
+**Where to insert:** new `fast.py eval --self-control` flag, or a
+test in `tests/test_fast_eval_determinism.py` that runs a known
+A=A pair twice and reports the empirical variance band.
+
+**What to add:** characterise the noise floor empirically so we
+don't over-interpret borderline gates (Wlo near 0.55). Document
+the source (likely kaggle_environments random tie-breaks; verify
+via fixed-seed control).
+
+**Why:** Single occurrence didn't block, but the implication is
+that any 32-seed A/B has ~±5pp implicit noise above what Wilson
+reports. Decisions near the gate threshold should use ≥64 seeds
+or two independent 32-seed runs.
+
+### [ ] [DOCS] Clarify `--max-seeds` vs `--geometry-panel` interaction in `fast.py eval --help`
+
+`tag: max-seeds-overridden-by-geometry-panel` (2026-05-19).
+
+`fast.py eval --geometry-panel --max-seeds 16` ran 32 seeds per
+variant, not 16. Help text mentions auto-bump to 128 when
+`--max-seeds` is "still the default" but is silent on the floor
+when a smaller value is explicit.
+
+**Where to insert:** `fast.py` argparse help text for `--max-seeds`
+and `--geometry-panel`.
+
+**What to add:** clarify the interaction. If geometry-panel
+enforces a minimum cell-coverage seed count, say so. If
+`--max-seeds N` is honoured strictly, document that. Match the
+actual behaviour.
+
+**Why:** Documentation gap; single occurrence; cost was ~24 min
+extra compute (the wider scan was harmless, just budget-mismatched).
+
 ## Applied in 2026-05-14 audit pass
 
 Moved out of this file to keep it lean. Full details in the
