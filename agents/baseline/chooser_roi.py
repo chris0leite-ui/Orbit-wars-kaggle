@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from itertools import combinations
 
 from lib.fleet import speed as fleet_speed
@@ -541,6 +542,14 @@ def choose_roi(
     this phase (mixed wait coalition geometry isn't validated by
     predict_fleet_fate).
     """
+    # Wallclock budget — insurance against dense-board coalition
+    # enumeration. Bench at G2 showed max=687ms on 2P self-play, well
+    # under the 1000ms cap, so this is structurally cheap. Solo scoring
+    # and the defensive post-pass are O(prerank × opps) and bounded;
+    # the deadline check sits at the head of coalition enumeration
+    # where the cost lives.
+    deadline = time.perf_counter() + max(50.0, float(wallclock_ms)) / 1000.0
+
     # --- Pass 1: solo scoring with ship-count variants ---
     # For each prerank entry, enumerate candidate ship counts:
     #   (a) original (proposer's pick — usually full budget).
@@ -586,6 +595,8 @@ def choose_roi(
 
     coalitions: list = []  # (score, target, legs)
     for target in opp_targets:
+        if time.perf_counter() > deadline:
+            break  # wallclock budget exhausted; emit what we have
         c_roi, c_legs = _best_coalition_for_target(
             target, my_planets, world, model, me, step, max_horizon, gamma,
         )
