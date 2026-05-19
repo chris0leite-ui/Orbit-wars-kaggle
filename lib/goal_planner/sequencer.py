@@ -25,7 +25,7 @@ from lib.trajectory_layer import World
 
 
 MAX_WAIT_TURNS = 30
-MIN_LAUNCH_SHIPS = 3
+MIN_LAUNCH_SHIPS = 5  # env minimum; matches trajectory_roi's constant
 
 
 @dataclass(frozen=True)
