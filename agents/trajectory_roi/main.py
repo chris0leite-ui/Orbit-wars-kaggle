@@ -80,6 +80,59 @@ def project_opp_grow_only(world: World, planet, turns_ahead: int) -> float:
     return float(planet.ships) + float(planet.production) * float(turns_ahead)
 
 
+def _fleet_arrival_eta(fleet, target_planet) -> int | None:
+    """Closed-form: integer eta at which `fleet` reaches `target_planet`,
+    or None if the fleet's trajectory doesn't intersect the target.
+
+    Static raycast (treats target at its current position — exact for
+    non-orbiting; an approximation for orbiting targets). Same shape as
+    `lib.world_model._static_first_hit` but tighter (one fleet, one
+    target).
+    """
+    fx, fy = fleet.current_x, fleet.current_y
+    spd = fleet.speed
+    if spd <= 0:
+        return None
+    tx, ty, tr = target_planet.current_x, target_planet.current_y, target_planet.radius
+    dx, dy = tx - fx, ty - fy
+    dir_x, dir_y = math.cos(fleet.angle), math.sin(fleet.angle)
+    proj = dx * dir_x + dy * dir_y
+    if proj < 0:
+        return None
+    perp_sq = dx * dx + dy * dy - proj * proj
+    r_sq = tr * tr
+    if perp_sq >= r_sq:
+        return None
+    hit_d = max(0.0, proj - math.sqrt(max(0.0, r_sq - perp_sq)))
+    return int(math.ceil(hit_d / spd))
+
+
+def project_in_flight(world: World, target_planet, by_eta: int,
+                      my_id: int) -> tuple[float, float]:
+    """Sum in-flight fleet arrivals at `target_planet` by `by_eta`.
+
+    Returns (our_ships_arriving, opp_ships_arriving). Used to correct
+    `defenders_at_eta` for fleets ALREADY in flight in the obs:
+    - Our fleets arriving REDUCE the defender count we need to beat
+      (they fight defenders for us before our new launch arrives).
+    - Opp fleets arriving INCREASE it (reinforcing the target).
+
+    Closed-form static raycast per fleet. Cheap (~planets fleets per
+    call, each O(1)).
+    """
+    ours = 0.0
+    theirs = 0.0
+    for fleet in world.fleets:
+        eta = _fleet_arrival_eta(fleet, target_planet)
+        if eta is None or eta > by_eta:
+            continue
+        if fleet.owner == my_id:
+            ours += float(fleet.ships)
+        else:
+            theirs += float(fleet.ships)
+    return ours, theirs
+
+
 # ---- ETA / aim helpers ----------------------------------------------------
 
 
@@ -140,16 +193,35 @@ def solve_capture(src, target, world: World) -> Candidate | None:
     initial_K = max(MIN_LAUNCH_SHIPS, int(target.ships) + SAFETY_SHIP_MARGIN)
     K = initial_K
 
+    my_id = world.my_id
+
     for _ in range(4):
         ae = _aim_and_eta(src, target, K, world.omega)
         if ae is None:
             return None
         angle, eta = ae
 
-        defenders = project_opp_grow_only(world, target, eta)
-        K_needed = max(MIN_LAUNCH_SHIPS, int(math.ceil(defenders)) + SAFETY_SHIP_MARGIN)
+        # Analytical defenders at arrival under v1 opp + in-flight fleets.
+        base_defenders = project_opp_grow_only(world, target, eta)
+        ours_in_flight, theirs_in_flight = project_in_flight(
+            world, target, eta, my_id,
+        )
+        # If we already have a friendly fleet en route to a target we
+        # don't own, we don't need to bring as much firepower. If opp has
+        # a fleet en route to a target they don't own (or back to one
+        # they do), we need more.
+        net_defenders = base_defenders + theirs_in_flight - ours_in_flight
+        if target.owner == my_id:
+            # Reinforcing one of our own planets — not in scope for this
+            # candidate type (we'd compute "defense ROI" differently).
+            return None
+        K_needed = max(MIN_LAUNCH_SHIPS,
+                       int(math.ceil(net_defenders)) + SAFETY_SHIP_MARGIN)
+        if K_needed <= MIN_LAUNCH_SHIPS and net_defenders < 0:
+            # Already over-captured by our existing in-flight fleets —
+            # skip; no new launch needed.
+            return None
         if K_needed <= K:
-            # Converged or K is already over-margin → use K_needed (tighter).
             K = K_needed
             break
         K = K_needed
@@ -165,9 +237,11 @@ def solve_capture(src, target, world: World) -> Candidate | None:
         return None
     angle, eta = ae
 
-    # Verify the budget actually captures (under our v1 opp model).
-    defenders_final = project_opp_grow_only(world, target, eta)
-    if K < defenders_final + SAFETY_SHIP_MARGIN:
+    # Re-check the budget actually captures under the full model.
+    base_defenders_final = project_opp_grow_only(world, target, eta)
+    ours_final, theirs_final = project_in_flight(world, target, eta, my_id)
+    net_defenders_final = base_defenders_final + theirs_final - ours_final
+    if K < max(MIN_LAUNCH_SHIPS, net_defenders_final + SAFETY_SHIP_MARGIN):
         return None
 
     # Value & ROI.

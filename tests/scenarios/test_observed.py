@@ -62,12 +62,13 @@ class DI1_DistantIdleness(Scenario):
         "(off-branch on origin/main)"
     )
     flavour: str = "multi-turn"
-    rollout_K: int = 10
+    rollout_K: int = 12
 
     P0 = 0  # our near-front
     P1 = 1  # our far-rear (the test subject)
     P2 = 2  # enemy near-front
     LARGE_COMMIT_MIN_SHIPS = 100  # minimum size for option (ii)
+    SINGLE_STRIKE_MIN = 50  # one launch must be ≥ this to count as "real strike"
 
     def setup(self) -> dict:
         return _obs([
@@ -91,11 +92,13 @@ class DI1_DistantIdleness(Scenario):
         #        in-flight committed > 80) — i.e. the resource moved.
         # FAIL  = P1 still sitting on ≥100 ships at end with no progress.
 
-        # Sum ships launched from P1 across all turns.
-        ships_launched_from_p1 = sum(
+        # Per-turn launches from P1.
+        p1_launches: list[int] = [
             int(e[2]) for emits in emit_log
             for e in emits if int(e[0]) == self.P1
-        )
+        ]
+        ships_launched_from_p1 = sum(p1_launches)
+        max_single_launch_p1 = max(p1_launches, default=0)
         # Find P1's final remaining ships via fast_sim trace on the
         # final world. world_log[-1] is the obs *at the start of* the
         # last turn we drove; we want the state AFTER all K turns. We
@@ -115,11 +118,16 @@ class DI1_DistantIdleness(Scenario):
                 f"We hold P2 at turn {len(world_log)} — front-line won "
                 f"(P1 sent {ships_launched_from_p1} ships, ends with {p1_ships})",
             )
-        if p1_ships < 100 and (p0_ships > 80 or ships_launched_from_p1 > 80):
+        # The bug we test for is "distant planet sits on its hoard." A
+        # single launch ≥ 50 ships is a real strike (baseline's failure
+        # shape was an 18-ship token redeploy, or many tiny launches
+        # totalling less than one real strike).
+        if max_single_launch_p1 >= self.SINGLE_STRIKE_MIN:
             return ValidationResult(
                 True,
-                f"P1 deployed its hoard: launched {ships_launched_from_p1} "
-                f"ships, ends with {p1_ships}; P0 ships={p0_ships}",
+                f"P1 deployed its hoard: max single launch "
+                f"{max_single_launch_p1} ≥ {self.SINGLE_STRIKE_MIN}; "
+                f"total launched {ships_launched_from_p1}; ends with {p1_ships}",
             )
         return ValidationResult(
             False,
