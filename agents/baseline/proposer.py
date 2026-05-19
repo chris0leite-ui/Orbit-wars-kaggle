@@ -167,13 +167,20 @@ def wait_then_fire_variants(src, tgt, model, omega: float, me: int):
 
 
 def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
-                         me: int, wait_N: int = 0) -> float:
+                         me: int, wait_N: int = 0,
+                         priority_by_planet: dict[int, float] | None = None) -> float:
     """Analytic Δ for Stage-1 ranking. Replaced by fast_sim in Stage-2.
 
     Capture: +0.05 * tgt.prod * pv_horizon(step, arrival, gamma=0.99)
     Bounce:  -0.5 * ships
     Reinforce (mine): pv-weighted loss-prevention credit if threatened
                       within eta+30, else 0.
+
+    If `priority_by_planet` is provided, the returned value is multiplied
+    by `priority_by_planet.get(int(tgt.id), 1.0)` — a per-target multiplier
+    that encodes the per-geometry-class priority prior (see
+    lib/priority_prior.py). lambda_alpha = lambda_gap = 0 makes the
+    multiplier 1.0 everywhere (ablation invariant).
     """
     arrival_step = wait_N + eta
     pred_owner = model.owner_at(int(tgt.id), arrival_step)
@@ -182,17 +189,21 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
     if pred_owner == me:
         t_to_threat = model.time_to_enemy_threat(int(tgt.id), me, world)
         if t_to_threat is None or t_to_threat > eta + 30:
-            return 0.0
-        pv = pv_horizon(int(world.step), int(t_to_threat),
-                        gamma=GAMMA, t_total=EPISODE_STEPS)
-        return 0.05 * float(tgt.production) * float(pv)
-
-    if ships > pred_ships:
+            base = 0.0
+        else:
+            pv = pv_horizon(int(world.step), int(t_to_threat),
+                            gamma=GAMMA, t_total=EPISODE_STEPS)
+            base = 0.05 * float(tgt.production) * float(pv)
+    elif ships > pred_ships:
         pv = pv_horizon(int(world.step), int(arrival_step),
                         gamma=GAMMA, t_total=EPISODE_STEPS)
-        return 0.05 * float(tgt.production) * float(pv)
+        base = 0.05 * float(tgt.production) * float(pv)
+    else:
+        base = -0.5 * float(ships)
 
-    return -0.5 * float(ships)
+    if priority_by_planet is None:
+        return base
+    return base * float(priority_by_planet.get(int(tgt.id), 1.0))
 
 
 def wait_band(wait_N: int) -> int:
@@ -203,13 +214,18 @@ def wait_band(wait_N: int) -> int:
 
 
 def propose(my_planets, target_pool, world, model, me: int,
-            omega: float, baseline_len: int):
+            omega: float, baseline_len: int,
+            priority_by_planet: dict[int, float] | None = None):
     """Build the pre-rank list of candidates, then dedup by
     (src_id, tgt_id, wait_band) keeping the top cheap-Δ per bucket.
 
     Returns: list of tuples
         (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N)
     sorted by cheap_delta descending.
+
+    `priority_by_planet`, when provided, is threaded into
+    `cheap_marginal_value` to apply the per-geometry-class prior
+    multiplier on every candidate's analytic Δ.
     """
     prerank = []
     for src in my_planets:
@@ -228,6 +244,7 @@ def propose(my_planets, target_pool, world, model, me: int,
                     horizon = baseline_len - 1
                 cheap = cheap_marginal_value(
                     src, tgt, ships, eta, world, model, me, wait_N=0,
+                    priority_by_planet=priority_by_planet,
                 )
                 if cheap > CHEAP_REJECT_THRESHOLD:
                     prerank.append(
@@ -242,6 +259,7 @@ def propose(my_planets, target_pool, world, model, me: int,
                     continue
                 w_cheap = cheap_marginal_value(
                     src, tgt, w_ships, w_eta, world, model, me, wait_N=w_wait,
+                    priority_by_planet=priority_by_planet,
                 )
                 if w_cheap > CHEAP_REJECT_THRESHOLD:
                     prerank.append(

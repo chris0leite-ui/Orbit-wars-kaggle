@@ -11,6 +11,10 @@ Knobs (env var overrides, all optional):
   BASELINE_GAMMA              PV-discount γ for favor() and cheap-rank.   default 0.99
   BASELINE_WALLCLOCK_MS       per-turn validate budget (env actTimeout=1000).
                                                                           default 600
+  BASELINE_LAMBDA_ALPHA       weight on the static per-class priority prior.
+                              0 disables; design default 3.0.             default 3.0
+  BASELINE_LAMBDA_GAP         weight on the opponent in-flight posterior gap.
+                              0 disables; design default 2.0.             default 2.0
   ORBIT_WARS_PARITY_WALLCLOCK_MS    bundle-parity override (very large
                                     value disables mid-loop deadline bail
                                     so the agent is a pure function of obs).
@@ -25,6 +29,7 @@ from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 from lib.fast_sim import from_obs as fs_from_obs
 from lib.intent import World
 from lib.world_model import WorldModel
+from lib import priority_prior
 
 from agents.baseline import chooser, proposer
 
@@ -77,6 +82,20 @@ def _gamma() -> float:
         return 0.99
 
 
+def _lambda_alpha() -> float:
+    try:
+        return float(os.environ.get("BASELINE_LAMBDA_ALPHA", 3.0))
+    except ValueError:
+        return 3.0
+
+
+def _lambda_gap() -> float:
+    try:
+        return float(os.environ.get("BASELINE_LAMBDA_GAP", 2.0))
+    except ValueError:
+        return 2.0
+
+
 def agent(obs, configuration=None):
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
@@ -99,6 +118,14 @@ def agent(obs, configuration=None):
     gamma = _gamma()
     wallclock_ms = _wallclock_ms()
 
+    lam_a = _lambda_alpha()
+    lam_g = _lambda_gap()
+    class_of = priority_prior.compute_class_of(raw_planets)
+    opp_share = priority_prior.compute_opp_share_in_flight(model, me, class_of)
+    priority_dict = priority_prior.priority_by_planet(
+        class_of, opp_share, lam_a, lam_g,
+    )
+
     threatened_mine = [
         p for p in my_planets
         if model.time_to_enemy_threat(int(p.id), me, world) is not None
@@ -114,6 +141,7 @@ def agent(obs, configuration=None):
     prerank = proposer.propose(
         my_planets, target_pool, world, model, me, omega,
         baseline_len=len(baseline_favors),
+        priority_by_planet=priority_dict,
     )
 
     return chooser.choose(
