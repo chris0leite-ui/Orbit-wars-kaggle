@@ -1,47 +1,59 @@
-"""trajectory_roi v2 — holistic analytical solver.
+"""trajectory_roi v3 — blast-radius-anchored joint forward projector.
 
-Five steps per turn, all closed-form, no rollouts:
+Three layers per turn, all closed-form / analytical:
 
-  1. Project opp's launches via the SAME solver run from their seat
-     (single-level, no nesting). Their projected launches become
-     phantom fleets in our defender / threat ledger.
-  2. Enumerate candidates over (target, launch_turn, allocation):
-     - CAPTURE candidates for non-our planets — single-source with
-       a wait-grid {0,1,2,5,10} plus a multi-source bundle at
-       launch_turn=0.
-     - DEFENSE candidates for our planets under threat — same shape
-       but the "defenders to beat" includes opp's incoming attack.
-  3. Score each candidate analytically: value = production held
-     over (horizon - arrival).
-  4. Joint-solve via 2-opt local search on a greedy seed.
-  5. Emit launch_turn=0 actions only; re-plan next turn.
+  Layer 1 — Blast-radius enumeration: only consider targets reachable
+    within K_HORIZON turns from each of our planets. Per source, keep
+    the top TOP_TARGETS_PER_SOURCE by production / (reach + 1).
 
-Compute envelope: ~50 ms / turn (vs 1000 ms env cap).
+  Layer 2 — Central-control value: each captured planet's value
+    includes a centrality bonus (inner rotating planets are worth
+    extra production-equivalent per turn beyond their raw production).
+    Encodes the strategic objective "maximize blast radius."
+
+  Layer 3 — Forward-projection joint solve: replace v2's 2-opt with
+    incremental joint optimization. For each candidate, project the
+    K=50-turn outcome with `lite_greedy_policy` for BOTH sides after
+    turn 0 — that captures opp's reactive counter-launches naturally.
+    Each candidate is scored by its MARGINAL contribution to the
+    projected outcome of the current plan, not by standalone ROI.
+
+Compute budget per turn (mid-game): ~600ms target. K=50 projection
+under lite_greedy is ~12 ms/plan per the benchmark.
+
+v2 stays at commit e006b91 as the depth-2 reference.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
-from typing import Iterable, Literal
+from dataclasses import dataclass
+from typing import Literal
 
 from lib.aim import aim_orbiting, flight_distance
 from lib.fleet import speed as fleet_speed
+from lib import fast_sim
+from lib.opp_model import lite_greedy_policy
 from lib.trajectory_layer import World
 
 
 # ---- tuneables ------------------------------------------------------------
 
-HORIZON = 30
-WAIT_GRID = (0, 1, 2, 5, 10)
-TOP_CANDIDATES_PER_TARGET = 3
-MIN_LAUNCH_SHIPS = 5
-SAFETY_MARGIN = 1
-MAX_ETA = 60
-TWO_OPT_PASSES = 4  # bound the 2-opt loop
+K_HORIZON = 50                    # forward-projection depth
+TOP_TARGETS_PER_SOURCE = 5        # Layer-1 prune cap
+MAX_CANDIDATES_TOTAL = 30         # final candidate cap
+MAX_ITERATIONS = 2                # incremental joint solve iterations
+MIN_LAUNCH_SHIPS = 5              # env minimum
+SAFETY_MARGIN = 1                 # ships above net defenders
+MAX_ETA = 50                      # don't consider launches that take > MAX_ETA turns
 
-# Per-source minimum garrison reserved (anti-drain). Tuned empirically.
-SOURCE_RESERVE = 0
+# Layer-2 centrality thresholds
+CENTER_X = 50.0
+CENTER_Y = 50.0
+INNER_RADIUS = 25.0               # inner zone (high blast-radius value)
+MID_RADIUS = 35.0                 # mid zone
+CENTRAL_STATIC_DIST = 25.0        # static planet centrality cutoff
+CENTRALITY_BONUS_TURNS = 30       # future turns of credit for centrality
 
 
 # ---- core types -----------------------------------------------------------
@@ -51,43 +63,61 @@ SOURCE_RESERVE = 0
 class Allocation:
     src_id: int
     ships: int
+    aim_angle: float
 
 
 @dataclass(frozen=True)
 class Candidate:
     flavor: Literal["capture", "defense"]
     target_id: int
-    launch_turn: int
     arrival_turn: int
     allocations: tuple[Allocation, ...]
-    aim_angles: tuple[float, ...]   # one per allocation
-    value: float
+    raw_value: float
     total_ships: int
 
     @property
     def roi(self) -> float:
-        return self.value / (self.total_ships + 1.0)
+        return self.raw_value / (self.total_ships + 1.0)
 
 
-@dataclass(frozen=True)
-class PhantomFleet:
-    """Projected opp launch from the mirror-opp pass."""
-    owner: int        # opp_id
-    src_id: int
-    target_id: int
-    arrival_turn: int  # turns from now
-    ships: int
+# ---- centrality (Layer 2) -------------------------------------------------
 
 
-# ---- geometry / ETA primitives -------------------------------------------
+def _build_centrality_cache(world: World) -> dict[int, float]:
+    """Per-planet centrality score for blast-radius weighting."""
+    cache: dict[int, float] = {}
+    for p in world.planets:
+        if getattr(p, "is_rotating", False):
+            if p.orbital_radius < INNER_RADIUS:
+                cache[p.id] = 1.0
+            elif p.orbital_radius < MID_RADIUS:
+                cache[p.id] = 0.5
+            else:
+                cache[p.id] = 0.0
+        else:
+            d = math.hypot(p.current_x - CENTER_X, p.current_y - CENTER_Y)
+            if d < CENTRAL_STATIC_DIST:
+                cache[p.id] = 0.5
+            else:
+                cache[p.id] = 0.0
+    return cache
+
+
+def _centrality_from_raw_planet(raw_p) -> float:
+    """Used by terminal-value scoring inside projection (raw obs tuple)."""
+    x, y = raw_p[2], raw_p[3]
+    d = math.hypot(x - CENTER_X, y - CENTER_Y)
+    if d < INNER_RADIUS:
+        return 1.0
+    if d < MID_RADIUS:
+        return 0.5
+    return 0.0
+
+
+# ---- aim / ETA primitives -------------------------------------------------
 
 
 def _aim_and_eta(src, target, ships: int, omega: float):
-    """Compute (aim_angle, integer_eta) for `ships` from `src` to
-    `target`. Returns None for invalid intercepts. Uses current
-    positions (launch_turn=0 implicit); for launch_turn>0 we accept
-    the approximation that geometry hasn't drifted meaningfully.
-    """
     if ships < MIN_LAUNCH_SHIPS:
         return None
     v = fleet_speed(ships)
@@ -105,7 +135,6 @@ def _aim_and_eta(src, target, ships: int, omega: float):
         ang = math.atan2(target.current_y - src.current_y,
                          target.current_x - src.current_x)
         return (ang, eta)
-    # Orbital — fixed-point.
     target_tuple = (
         target.id, target.owner,
         target.current_x, target.current_y,
@@ -122,8 +151,10 @@ def _aim_and_eta(src, target, ships: int, omega: float):
     return (angle, eta)
 
 
-def _fleet_eta(fleet, target_planet) -> int | None:
-    """Static raycast eta for an in-flight fleet hitting a target."""
+# ---- defender math (Layer 1 building block) ------------------------------
+
+
+def _fleet_eta_to_planet(fleet, target_planet) -> int | None:
     fx, fy = fleet.current_x, fleet.current_y
     spd = fleet.speed
     if spd <= 0:
@@ -142,240 +173,144 @@ def _fleet_eta(fleet, target_planet) -> int | None:
     return int(math.ceil(hit_d / spd))
 
 
-# ---- defender / arrival ledger --------------------------------------------
-
-
-def _base_defenders(target, at_turn: int) -> float:
-    """Closed-form: target's defenders at `at_turn` under grow-only rule.
-    Neutrals don't accrete (env rule); owned planets grow by production.
-    """
-    if target.owner == -1:
-        return float(target.ships)
-    return float(target.ships) + float(target.production) * float(at_turn)
-
-
-def _arrivals_at(world: World, target, by_turn: int, my_id: int,
-                 phantoms: Iterable[PhantomFleet]):
-    """Sum ships arriving at `target` by `by_turn`. Returns
-    (our_ships, opp_ships) — real + phantom combined.
-    """
-    ours = 0.0
-    theirs = 0.0
+def _net_defenders(world: World, target, arrival_turn: int, my_id: int,
+                   target_is_ours: bool) -> float:
+    """Closed-form defenders at arrival, accounting for in-flight fleets."""
+    base = (float(target.ships) if target.owner == -1
+            else float(target.ships) + float(target.production) * float(arrival_turn))
+    ours_in = 0.0
+    theirs_in = 0.0
     for fleet in world.fleets:
-        eta = _fleet_eta(fleet, target)
-        if eta is None or eta > by_turn:
+        eta = _fleet_eta_to_planet(fleet, target)
+        if eta is None or eta > arrival_turn:
             continue
         if fleet.owner == my_id:
-            ours += float(fleet.ships)
+            ours_in += float(fleet.ships)
         else:
-            theirs += float(fleet.ships)
-    for p in phantoms:
-        if p.target_id != target.id:
-            continue
-        if p.arrival_turn > by_turn:
-            continue
-        if p.owner == my_id:
-            ours += float(p.ships)
-        else:
-            theirs += float(p.ships)
-    return ours, theirs
-
-
-def _net_defenders(world, target, arrival_turn: int, my_id: int,
-                   phantoms: Iterable[PhantomFleet], target_is_ours: bool):
-    """Net defenders that an attacker (us, by default) needs to beat
-    to FLIP the target at `arrival_turn`. For our own target (defense
-    flavour), `defenders` = opp incoming - our base.
-    """
-    base = _base_defenders(target, arrival_turn)
-    ours, theirs = _arrivals_at(world, target, arrival_turn, my_id, phantoms)
+            theirs_in += float(fleet.ships)
     if target_is_ours:
-        # opp's attack force must exceed our base + reinforcements
-        # at the target. We want enough reinforcement so:
-        # (our_base + our_reinforcement) > opp_attack
-        return float(theirs) - (base + float(ours))
-    # capture: attacker (us) must exceed defenders + opp reinforcement,
-    # minus our prior in-flight credits.
-    return base + float(theirs) - float(ours)
+        return float(theirs_in) - (base + float(ours_in))
+    return base + float(theirs_in) - float(ours_in)
 
 
-# ---- single-source capture / defense solver ------------------------------
+# ---- Layer 1: single-source capture solver -------------------------------
 
 
-def _solve_single_source(src, target, launch_turn: int, world: World,
-                         my_id: int, phantoms: list[PhantomFleet],
+def _solve_single_source(src, target, world: World, my_id: int,
+                         centrality_cache: dict[int, float],
                          target_is_ours: bool) -> Candidate | None:
-    """Find the minimum-ship launch from src that wins the encounter
-    at target, launched at launch_turn. Returns a Candidate or None.
-    """
     omega = world.omega
-    # Ship budget at launch_turn = current + production accrual.
-    if src.owner != my_id:
-        return None
-    base_budget = int(src.ships) + int(src.production) * launch_turn
-    base_budget = max(0, base_budget - SOURCE_RESERVE)
-    if base_budget < MIN_LAUNCH_SHIPS:
+    src_budget = int(src.ships)
+    if src_budget < MIN_LAUNCH_SHIPS:
         return None
 
-    # Initial K guess by base defender count.
     K = max(MIN_LAUNCH_SHIPS, int(target.ships) + SAFETY_MARGIN)
-    if target_is_ours:
-        # Defense: estimate K as opp_incoming.
-        ours, theirs = _arrivals_at(world, target, MAX_ETA, my_id, phantoms)
-        K = max(MIN_LAUNCH_SHIPS, int(math.ceil(theirs)) + SAFETY_MARGIN)
-
     for _ in range(4):
         ae = _aim_and_eta(src, target, K, omega)
         if ae is None:
             return None
         angle, eta = ae
-        arrival_turn = launch_turn + eta
-        if arrival_turn > HORIZON:
+        net = _net_defenders(world, target, eta, my_id, target_is_ours)
+        if not target_is_ours and net < 0:
             return None
-        net_def = _net_defenders(
-            world, target, arrival_turn, my_id, phantoms, target_is_ours,
-        )
-        if net_def < 0 and not target_is_ours:
-            # Already over-captured by prior in-flight credits — no
-            # new launch needed.
+        if target_is_ours and net <= 0:
             return None
-        if target_is_ours and net_def <= 0:
-            # Defense not actually needed under current projection.
-            return None
-        K_needed = max(MIN_LAUNCH_SHIPS,
-                       int(math.ceil(net_def)) + SAFETY_MARGIN)
+        K_needed = max(MIN_LAUNCH_SHIPS, int(math.ceil(net)) + SAFETY_MARGIN)
         if K_needed <= K:
             K = K_needed
             break
         K = K_needed
 
-    if K > base_budget:
+    if K > src_budget:
         return None
-
     ae = _aim_and_eta(src, target, K, omega)
     if ae is None:
         return None
     angle, eta = ae
-    arrival_turn = launch_turn + eta
-    if arrival_turn > HORIZON:
+    net_final = _net_defenders(world, target, eta, my_id, target_is_ours)
+    if K < max(MIN_LAUNCH_SHIPS, net_final + SAFETY_MARGIN):
         return None
 
-    net_def_final = _net_defenders(
-        world, target, arrival_turn, my_id, phantoms, target_is_ours,
-    )
-    if K < max(MIN_LAUNCH_SHIPS, net_def_final + SAFETY_MARGIN):
-        return None
-
-    # Value: production held over remaining horizon.
-    held = max(0, HORIZON - arrival_turn)
+    held = max(0, K_HORIZON - eta)
+    centrality_v = centrality_cache.get(target.id, 0.0)
+    base_value = float(target.production) * float(held)
+    central_value = centrality_v * float(target.production) * CENTRALITY_BONUS_TURNS
+    raw_value = base_value + central_value
     if target_is_ours:
-        # Defense: we keep our planet AND avoid the ship loss.
-        value = float(target.production) * float(held) + float(target.ships)
-    else:
-        value = float(target.production) * float(held)
-    if value <= 0:
+        raw_value += float(target.ships)  # avoided ship loss
+    if raw_value <= 0:
         return None
 
-    flavor = "defense" if target_is_ours else "capture"
     return Candidate(
-        flavor=flavor,
+        flavor=("defense" if target_is_ours else "capture"),
         target_id=target.id,
-        launch_turn=launch_turn,
-        arrival_turn=arrival_turn,
-        allocations=(Allocation(src.id, K),),
-        aim_angles=(angle,),
-        value=value,
+        arrival_turn=eta,
+        allocations=(Allocation(src.id, K, angle),),
+        raw_value=raw_value,
         total_ships=K,
     )
 
 
-# ---- multi-source bundle (launch_turn=0 only) ----------------------------
-
-
 def _solve_multi_source(target, world: World, my_id: int,
-                        phantoms: list[PhantomFleet],
+                        centrality_cache: dict[int, float],
                         target_is_ours: bool) -> Candidate | None:
-    """Build a multi-source bundle that captures (or defends) target
-    at launch_turn=0. Pick sources greedily by ETA (closest first);
-    they're fungible at arrival. Returns None if even the joint
-    bundle can't fund the encounter.
-    """
-    my_planets = [p for p in world.planets if p.owner == my_id]
-    if not my_planets:
+    """Multi-source bundle for high-priority targets (centrality > 0)."""
+    my_planets = [p for p in world.planets if p.owner == my_id and p.id != target.id]
+    if len(my_planets) < 2:
         return None
-
     omega = world.omega
-
-    # Per-source ETA at a midweight ship count (~50). We refine
-    # per-source ship count after the bundle decision.
-    feasible: list[tuple[int, int, float, int]] = []  # (eta, budget, angle, src_id)
+    feasible: list[tuple[int, int, float, int]] = []
     for src in my_planets:
-        if src.id == target.id:
-            continue
         if src.ships < MIN_LAUNCH_SHIPS:
             continue
         ae = _aim_and_eta(src, target, max(MIN_LAUNCH_SHIPS, int(src.ships)), omega)
         if ae is None:
             continue
         angle, eta = ae
-        if eta > HORIZON:
+        if eta > MAX_ETA:
             continue
-        feasible.append((eta, int(src.ships - SOURCE_RESERVE), angle, src.id))
-
+        feasible.append((eta, int(src.ships), angle, src.id))
     if len(feasible) < 2:
-        return None  # need at least 2 to be a "bundle"
-    feasible.sort()  # by eta ascending
+        return None
+    feasible.sort()  # by eta
 
-    # Sync all sources to the LATEST eta in the bundle so they all
-    # arrive together (conservative — bigger ships fly faster, so the
-    # constraint is the slowest source).
     best: Candidate | None = None
     for k_sources in range(2, min(len(feasible), 4) + 1):
         chosen = feasible[:k_sources]
         arrival_turn = chosen[-1][0]
-        net_def = _net_defenders(
-            world, target, arrival_turn, my_id, phantoms, target_is_ours,
-        )
-        need = max(MIN_LAUNCH_SHIPS, int(math.ceil(net_def)) + SAFETY_MARGIN)
-        if target_is_ours and net_def <= 0:
+        net = _net_defenders(world, target, arrival_turn, my_id, target_is_ours)
+        if not target_is_ours and net < 0:
             return None
-        if net_def < 0 and not target_is_ours:
+        if target_is_ours and net <= 0:
             return None
-
-        # Allocate ships across sources closest-first up to budget.
+        need = max(MIN_LAUNCH_SHIPS, int(math.ceil(net)) + SAFETY_MARGIN)
         remaining = need
         allocations: list[Allocation] = []
-        angles: list[float] = []
         for (eta, budget, ang, src_id) in chosen:
             if remaining <= 0:
                 break
             take = min(remaining, budget)
             if take < MIN_LAUNCH_SHIPS:
                 continue
-            allocations.append(Allocation(src_id, take))
-            angles.append(ang)
+            allocations.append(Allocation(src_id, take, ang))
             remaining -= take
-        if remaining > 0:
-            continue  # bundle insufficient
-        if len(allocations) < 2:
-            continue  # collapsed to single-source
-
+        if remaining > 0 or len(allocations) < 2:
+            continue
         total = sum(a.ships for a in allocations)
-        held = max(0, HORIZON - arrival_turn)
+        held = max(0, K_HORIZON - arrival_turn)
+        centrality_v = centrality_cache.get(target.id, 0.0)
+        raw_value = (float(target.production) * float(held)
+                     + centrality_v * float(target.production) * CENTRALITY_BONUS_TURNS)
         if target_is_ours:
-            value = float(target.production) * float(held) + float(target.ships)
-        else:
-            value = float(target.production) * float(held)
-        if value <= 0:
+            raw_value += float(target.ships)
+        if raw_value <= 0:
             continue
         c = Candidate(
             flavor="defense" if target_is_ours else "capture",
             target_id=target.id,
-            launch_turn=0,
             arrival_turn=arrival_turn,
             allocations=tuple(allocations),
-            aim_angles=tuple(angles),
-            value=value,
+            raw_value=raw_value,
             total_ships=total,
         )
         if best is None or c.roi > best.roi:
@@ -383,261 +318,231 @@ def _solve_multi_source(target, world: World, my_id: int,
     return best
 
 
-# ---- candidate enumeration ------------------------------------------------
+# ---- Layer 1: enumeration ------------------------------------------------
+
+
+def _threatened_planets(world: World, my_id: int):
+    """Our planets with projected opp arrivals exceeding garrison + ours-in."""
+    out = []
+    for p in world.planets:
+        if p.owner != my_id:
+            continue
+        ours_in = 0.0
+        theirs_in = 0.0
+        for fleet in world.fleets:
+            eta = _fleet_eta_to_planet(fleet, p)
+            if eta is None or eta > MAX_ETA:
+                continue
+            if fleet.owner == my_id:
+                ours_in += float(fleet.ships)
+            else:
+                theirs_in += float(fleet.ships)
+        if theirs_in <= 0:
+            continue
+        if theirs_in > float(p.ships) + float(ours_in):
+            out.append(p)
+    return out
 
 
 def enumerate_candidates(world: World, my_id: int,
-                         phantoms: list[PhantomFleet]) -> list[Candidate]:
-    """Step 2: produce all candidates (capture + defense, single +
-    multi-source, over the wait-grid). Prune top-K per target by ROI."""
-    candidates: dict[int, list[Candidate]] = {}  # target_id → top-K
-
+                         centrality_cache: dict[int, float]) -> list[Candidate]:
+    """Layer 1: build all candidates within blast radius, top-N per source."""
+    per_target_top: dict[int, list[Candidate]] = {}
     my_planets = [p for p in world.planets if p.owner == my_id]
-    non_my = [p for p in world.planets if p.owner != my_id]
-    threatened = _threatened_planets(world, my_id, phantoms, my_planets)
-
-    targets_capture = non_my
-    targets_defense = threatened
+    targets_capture = [p for p in world.planets if p.owner != my_id]
 
     def _add(c: Candidate):
-        bucket = candidates.setdefault(c.target_id, [])
+        bucket = per_target_top.setdefault(c.target_id, [])
         bucket.append(c)
         bucket.sort(key=lambda x: -x.roi)
-        del bucket[TOP_CANDIDATES_PER_TARGET:]
+        del bucket[3:]  # keep top 3 per target (different sources / single vs multi)
 
-    # Capture candidates: single-source over wait-grid.
+    # Per-source: rank reachable targets by closed-form ROI, take top-N.
+    for src in my_planets:
+        if src.ships < MIN_LAUNCH_SHIPS:
+            continue
+        scored: list[Candidate] = []
+        for tgt in targets_capture:
+            c = _solve_single_source(src, tgt, world, my_id,
+                                     centrality_cache, target_is_ours=False)
+            if c is not None:
+                scored.append(c)
+        scored.sort(key=lambda x: -x.roi)
+        for c in scored[:TOP_TARGETS_PER_SOURCE]:
+            _add(c)
+
+    # Multi-source bundles for central targets (centrality > 0).
     for tgt in targets_capture:
-        for src in my_planets:
-            if src.id == tgt.id:
-                continue
-            for lt in WAIT_GRID:
-                c = _solve_single_source(src, tgt, lt, world, my_id,
-                                         phantoms, target_is_ours=False)
-                if c is not None:
-                    _add(c)
-        # Multi-source bundle at launch_turn=0.
-        mc = _solve_multi_source(tgt, world, my_id, phantoms,
+        if centrality_cache.get(tgt.id, 0.0) <= 0.0:
+            continue
+        mc = _solve_multi_source(tgt, world, my_id, centrality_cache,
                                  target_is_ours=False)
         if mc is not None:
             _add(mc)
 
-    # Defense candidates: single-source for each threatened planet,
-    # launch_turn=0 only.
-    for tgt in targets_defense:
+    # Defense candidates.
+    threatened = _threatened_planets(world, my_id)
+    for tgt in threatened:
         for src in my_planets:
             if src.id == tgt.id:
                 continue
-            c = _solve_single_source(src, tgt, 0, world, my_id,
-                                     phantoms, target_is_ours=True)
+            c = _solve_single_source(src, tgt, world, my_id,
+                                     centrality_cache, target_is_ours=True)
             if c is not None:
                 _add(c)
-        mc = _solve_multi_source(tgt, world, my_id, phantoms,
+        mc = _solve_multi_source(tgt, world, my_id, centrality_cache,
                                  target_is_ours=True)
         if mc is not None:
             _add(mc)
 
     flat: list[Candidate] = []
-    for bucket in candidates.values():
+    for bucket in per_target_top.values():
         flat.extend(bucket)
-    return flat
+    flat.sort(key=lambda c: -c.roi)
+    return flat[:MAX_CANDIDATES_TOTAL]
 
 
-def _threatened_planets(world: World, my_id: int,
-                        phantoms: list[PhantomFleet],
-                        my_planets: list) -> list:
-    """Our planets where projected opp arrivals exceed defenders."""
-    out = []
-    for p in my_planets:
-        ours, theirs = _arrivals_at(world, p, MAX_ETA, my_id, phantoms)
-        # If opp has more ships in flight to p than p will have at
-        # the latest arrival turn, p is at risk.
-        # Conservative: just check if ANY opp arrival exists with
-        # ships > current garrison.
-        if theirs <= 0:
+# ---- Layer 3: forward projection ----------------------------------------
+
+
+def _obs_from_snap(snap, seat: int) -> dict:
+    s_obs = snap.state[seat].observation
+    return {
+        "player": seat,
+        "step": int(getattr(s_obs, "step", 0)),
+        "planets": [list(p) for p in s_obs.planets],
+        "fleets": [list(f) for f in (s_obs.fleets or [])],
+        "comets": list(getattr(s_obs, "comets", [])),
+        "comet_planet_ids": list(getattr(s_obs, "comet_planet_ids", [])),
+        "angular_velocity": float(getattr(s_obs, "angular_velocity", 0.0)),
+        "initial_planets": [list(p) for p in getattr(s_obs, "initial_planets", s_obs.planets)],
+    }
+
+
+def _terminal_value(snap, my_id: int) -> float:
+    """Augmented terminal score: ship diff + centrality bonus."""
+    base = fast_sim.delta_us_minus_them(snap, my_id)
+    obs0 = snap.state[0].observation
+    central_bonus = 0.0
+    for p in obs0.planets:
+        if int(p[1]) != my_id:
             continue
-        if theirs >= float(p.ships) - float(ours):
-            out.append(p)
-    return out
-
-
-# ---- Step 1: mirror-opp ---------------------------------------------------
-
-
-def project_opp_launches(world: World, opp_id: int) -> list[PhantomFleet]:
-    """Run a trimmed solver from opp's seat to project their launches.
-    No nested mirror (treat their opponent = grow-only-us). Returns
-    phantom fleets representing opp's planned launches.
-
-    Only single-source capture candidates with launch_turn ∈ {0, 1, 2}
-    are enumerated for the opp — enough to see their immediate
-    threats without doubling our compute.
-    """
-    opp_planets = [p for p in world.planets if p.owner == opp_id]
-    if not opp_planets:
-        return []
-
-    targets = [p for p in world.planets if p.owner != opp_id]
-    # No phantoms when projecting opp (avoids infinite regress).
-    no_phantoms: list[PhantomFleet] = []
-
-    raw: list[Candidate] = []
-    for src in opp_planets:
-        if src.ships < MIN_LAUNCH_SHIPS:
+        c = _centrality_from_raw_planet(p)
+        if c <= 0:
             continue
-        for tgt in targets:
-            for lt in (0, 1, 2):
-                c = _solve_single_source(
-                    src, tgt, lt, world, opp_id, no_phantoms,
-                    target_is_ours=False,
-                )
-                if c is not None:
-                    raw.append(c)
-
-    # Greedy joint-pack from opp's POV.
-    raw.sort(key=lambda c: -c.roi)
-    budgets = {p.id: int(p.ships) for p in opp_planets}
-    picked: list[Candidate] = []
-    used_targets: set[int] = set()
-    for c in raw:
-        if c.target_id in used_targets:
-            continue
-        alloc = c.allocations[0]
-        if budgets.get(alloc.src_id, 0) < alloc.ships:
-            continue
-        picked.append(c)
-        budgets[alloc.src_id] -= alloc.ships
-        used_targets.add(c.target_id)
-
-    phantoms: list[PhantomFleet] = []
-    for c in picked:
-        for a in c.allocations:
-            phantoms.append(PhantomFleet(
-                owner=opp_id,
-                src_id=a.src_id,
-                target_id=c.target_id,
-                arrival_turn=c.arrival_turn,
-                ships=a.ships,
-            ))
-    return phantoms
+        central_bonus += c * float(p[6]) * CENTRALITY_BONUS_TURNS
+    return base + central_bonus
 
 
-# ---- Step 4: joint solve (greedy seed + 2-opt) ---------------------------
+def project(initial_obs: dict, my_id: int, opp_id: int,
+            my_turn0_emits: list, K: int = K_HORIZON) -> float:
+    """Forward-project K turns. Turn 0: our planned emits + opp's
+    `lite_greedy`. Turns 1..K-1: both sides run `lite_greedy`.
+    Returns augmented terminal value."""
+    snap = fast_sim.from_obs(initial_obs, configuration=None)
+    actions = [None, None]
+    actions[my_id] = my_turn0_emits
+    actions[opp_id] = lite_greedy_policy(_obs_from_snap(snap, opp_id))
+    snap = fast_sim.step(snap, actions)
+    for _ in range(K - 1):
+        if snap.fake_env.done:
+            break
+        actions[my_id] = lite_greedy_policy(_obs_from_snap(snap, my_id))
+        actions[opp_id] = lite_greedy_policy(_obs_from_snap(snap, opp_id))
+        snap = fast_sim.step(snap, actions)
+    return _terminal_value(snap, my_id)
 
 
-def _ships_drawn_from(c: Candidate, src_id: int) -> int:
-    return sum(a.ships for a in c.allocations if a.src_id == src_id)
+def _emit_for_candidate(c: Candidate) -> list[list]:
+    return [[a.src_id, a.aim_angle, a.ships] for a in c.allocations]
 
 
-def _candidate_fits(c: Candidate, remaining: dict[int, int]) -> bool:
+def _fits(c: Candidate, remaining: dict[int, int]) -> bool:
     for a in c.allocations:
         if remaining.get(a.src_id, 0) < a.ships:
             return False
     return True
 
 
-def _apply(c: Candidate, remaining: dict[int, int], sign: int):
-    """sign=+1 returns ships; sign=-1 spends them."""
-    for a in c.allocations:
-        remaining[a.src_id] = remaining.get(a.src_id, 0) + sign * a.ships
-
-
-def joint_solve_2opt(candidates: list[Candidate],
-                     my_planets: list) -> list[Candidate]:
-    """Greedy seed + 2-opt local improvement under per-source budgets
-    and one-launch-per-target dedup."""
-    budgets = {p.id: int(p.ships - SOURCE_RESERVE) for p in my_planets}
-    cands = sorted(candidates, key=lambda c: -c.roi)
-
+def joint_solve_forward(candidates: list[Candidate], initial_obs: dict,
+                        my_id: int, opp_id: int, my_planets) -> list[list]:
+    """Incremental joint via K-turn forward projection. Returns the
+    list of turn-0 emit actions to execute."""
+    remaining_budget = {p.id: int(p.ships) for p in my_planets}
+    plan_emits: list[list] = []
     chosen: list[Candidate] = []
-    used_target: set[int] = set()
-    remaining = dict(budgets)
-    for c in cands:
-        if c.target_id in used_target:
-            continue
-        if not _candidate_fits(c, remaining):
-            continue
-        chosen.append(c)
-        used_target.add(c.target_id)
-        _apply(c, remaining, -1)
+    used_targets: set[int] = set()
 
-    # 2-opt: for each not-picked candidate, try swapping in by
-    # removing 0, 1, or 2 lower-value chosen candidates.
-    for _ in range(TWO_OPT_PASSES):
-        improved = False
-        for c in cands:
-            if c in chosen:
+    current_value = project(initial_obs, my_id, opp_id, plan_emits)
+
+    for _ in range(MAX_ITERATIONS):
+        best_marginal = 0.0
+        best_candidate: Candidate | None = None
+        best_with_value: float | None = None
+        for c in candidates:
+            if c.target_id in used_targets:
                 continue
-            # Try drop 0: directly add.
-            if c.target_id not in used_target and _candidate_fits(c, remaining):
-                chosen.append(c)
-                used_target.add(c.target_id)
-                _apply(c, remaining, -1)
-                improved = True
+            if not _fits(c, remaining_budget):
                 continue
-            # Try drop 1 + add c.
-            best_swap = None
-            for victim in chosen:
-                if victim.target_id == c.target_id:
-                    # Same target swap is allowed if c has higher value.
-                    if c.value <= victim.value:
-                        continue
-                else:
-                    if victim.value >= c.value:
-                        continue
-                temp = dict(remaining)
-                _apply(victim, temp, +1)
-                if _candidate_fits(c, temp):
-                    delta = c.value - victim.value
-                    if best_swap is None or delta > best_swap[0]:
-                        best_swap = (delta, victim)
-            if best_swap is not None:
-                _, victim = best_swap
-                chosen.remove(victim)
-                used_target.discard(victim.target_id)
-                _apply(victim, remaining, +1)
-                if c.target_id not in used_target and _candidate_fits(c, remaining):
-                    chosen.append(c)
-                    used_target.add(c.target_id)
-                    _apply(c, remaining, -1)
-                    improved = True
-        if not improved:
+            test_emits = plan_emits + _emit_for_candidate(c)
+            with_value = project(initial_obs, my_id, opp_id, test_emits)
+            marginal = with_value - current_value
+            if marginal > best_marginal:
+                best_marginal = marginal
+                best_candidate = c
+                best_with_value = with_value
+        if best_candidate is None or best_with_value is None:
             break
-    return chosen
+        chosen.append(best_candidate)
+        used_targets.add(best_candidate.target_id)
+        for a in best_candidate.allocations:
+            remaining_budget[a.src_id] -= a.ships
+            plan_emits.append([a.src_id, a.aim_angle, a.ships])
+        current_value = best_with_value
+    return plan_emits
 
 
-# ---- Step 5: emit turn-0 actions -----------------------------------------
+# ---- helpers (must be defined BEFORE `agent` so that
+#       kaggle_environments.agent.get_last_callable picks `agent`
+#       as the entry point, not a helper) -------------------------------
 
 
-def emit_turn_0(plan: list[Candidate]) -> list[list]:
-    """Emit env actions for plan items scheduled to launch this turn."""
-    actions: list[list] = []
-    for c in plan:
-        if c.launch_turn != 0:
-            continue
-        for a, ang in zip(c.allocations, c.aim_angles):
-            actions.append([a.src_id, ang, a.ships])
-    return actions
+def _obs_from_snap_like(obs) -> dict:
+    """Best-effort dict obs from struct-form obs."""
+    return {
+        "player": int(getattr(obs, "player", 0)),
+        "step": int(getattr(obs, "step", 0)),
+        "planets": [list(p) for p in obs.planets],
+        "fleets": [list(f) for f in (obs.fleets or [])],
+        "comets": list(getattr(obs, "comets", [])),
+        "comet_planet_ids": list(getattr(obs, "comet_planet_ids", [])),
+        "angular_velocity": float(getattr(obs, "angular_velocity", 0.0)),
+        "initial_planets": [list(p) for p in getattr(obs, "initial_planets", obs.planets)],
+    }
 
 
-# ---- main entry -----------------------------------------------------------
+# ---- main entry — MUST BE LAST callable in this module ------------------
 
 
 def agent(obs, configuration=None):
     world = World.from_obs(obs, configuration)
     my_id = world.my_id
-    # 2P; for 4P this picks one opp deterministically. v3 generalises.
-    other_owners = [p.owner for p in world.planets if p.owner not in (-1, my_id)]
+    other_owners = [p.owner for p in world.planets
+                    if p.owner not in (-1, my_id)]
     if not other_owners:
         return []
     opp_id = max(set(other_owners), key=other_owners.count)
+    if my_id == opp_id:
+        return []
 
     my_planets = [p for p in world.planets if p.owner == my_id]
     if not my_planets:
         return []
 
-    phantoms = project_opp_launches(world, opp_id)
-    candidates = enumerate_candidates(world, my_id, phantoms)
+    centrality_cache = _build_centrality_cache(world)
+    candidates = enumerate_candidates(world, my_id, centrality_cache)
     if not candidates:
         return []
-    plan = joint_solve_2opt(candidates, my_planets)
-    return emit_turn_0(plan)
+
+    initial_obs = obs if isinstance(obs, dict) else _obs_from_snap_like(obs)
+    return joint_solve_forward(candidates, initial_obs, my_id, opp_id, my_planets)
