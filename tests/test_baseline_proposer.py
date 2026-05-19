@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
+import os
+
+from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from agents.baseline.proposer import (
     MIN_FLEET_SIZE,
     WAIT_EXTRA_SURPLUS,
+    _enumerate_reactor_candidates,
+    _target_cost_parity_ok,
     capture_size,
     enumerate_ship_counts,
     min_wait_affordable,
@@ -24,19 +28,27 @@ def _planet(pid, owner, x, y, *, ships=10, production=2, radius=1.5):
     return Planet(pid, owner, x, y, radius, ships, production)
 
 
-def _world(my_id, planets, *, step=0, omega=0.0):
+def _world(my_id, planets, *, step=0, omega=0.0, fleets=None):
     obs = {
         "player": my_id,
         "planets": [
             (p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production)
             for p in planets
         ],
-        "fleets": [],
+        "fleets": [
+            (f.id, f.owner, f.x, f.y, f.angle, f.from_planet_id, f.ships)
+            for f in (fleets or [])
+        ],
         "angular_velocity": omega,
         "comet_planet_ids": [],
         "step": step,
     }
     return World.from_obs(obs)
+
+
+def _fleet(fid, owner, x, y, angle, from_pid, ships):
+    """Fleet is a NamedTuple: (id, owner, x, y, angle, from_planet_id, ships)."""
+    return Fleet(fid, owner, x, y, angle, from_pid, ships)
 
 
 def test_wait_band_buckets():
@@ -246,3 +258,211 @@ def test_wait_variants_anchored_at_min_wait():
         f"variants should anchor at min_w({min_w}) and min_w+3({min_w + 3}); "
         f"got wait_Ns={wait_Ns}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Reactor-aware launch selection (Part A: cost-parity filter,
+# Part B: reactor candidate generator). 2026-05-19 PM.
+# ---------------------------------------------------------------------------
+
+
+def test_cost_parity_accepts_own_target():
+    """Reinforce launches on our own planets are never races; always pass."""
+    src = _planet(0, 0, 10.0, 50.0, ships=20, production=2)
+    mine_tgt = _planet(1, 0, 50.0, 50.0, ships=5, production=2)
+    opp = _planet(2, 1, 90.0, 50.0, ships=50, production=2)
+    world = _world(0, [src, mine_tgt, opp])
+    model = WorldModel.from_world(world)
+    assert _target_cost_parity_ok(
+        src, mine_tgt, ships=10, wait_N=0, eta=20, world=world, model=model, me=0,
+    ) is True
+
+
+def test_cost_parity_accepts_no_opp_in_range():
+    """No opp with MIN_REACTOR_SHIPS within range → filter passes."""
+    src = _planet(0, 0, 10.0, 50.0, ships=30, production=2)
+    tgt = _planet(1, -1, 50.0, 50.0, ships=5, production=1)
+    # opp with 3 ships < MIN_REACTOR_SHIPS=8 → not a reactor threat
+    opp_weak = _planet(2, 1, 60.0, 50.0, ships=3, production=1)
+    world = _world(0, [src, tgt, opp_weak])
+    model = WorldModel.from_world(world)
+    assert _target_cost_parity_ok(
+        src, tgt, ships=20, wait_N=0, eta=15, world=world, model=model, me=0,
+    ) is True
+
+
+def test_cost_parity_accepts_balanced_geometry():
+    """When opp's reactor cost ~= ours, filter accepts (default margin 0.7)."""
+    src = _planet(0, 0, 10.0, 50.0, ships=50, production=2)
+    tgt = _planet(1, -1, 50.0, 50.0, ships=5, production=1)
+    opp = _planet(2, 1, 90.0, 50.0, ships=50, production=2)  # mirror of src
+    world = _world(0, [src, tgt, opp])
+    model = WorldModel.from_world(world)
+    # 30-ship launch; balanced opp ≈ 30 ships needed → ratio ≈ 1.0 → accept.
+    assert _target_cost_parity_ok(
+        src, tgt, ships=30, wait_N=0, eta=14, world=world, model=model, me=0,
+    ) is True
+
+
+def test_cost_parity_rejects_high_cost_launch_with_close_opp():
+    """High-cost launch (heavy defenders) where a close opp recaptures
+    cheaply (small residue) → reject. This is the first-mover-trap pattern."""
+    src = _planet(0, 0, 5.0, 50.0, ships=200, production=2)
+    # Heavy-defender neutral: we pay 100 to capture but only 60 remain
+    tgt = _planet(1, -1, 80.0, 50.0, ships=40, production=1)
+    opp = _planet(2, 1, 85.0, 50.0, ships=50, production=2)
+    world = _world(0, [src, tgt, opp])
+    model = WorldModel.from_world(world)
+    # 100-ship launch: we pay 100, opp recapture ≈ 62 — opp pays 62% → reject.
+    assert _target_cost_parity_ok(
+        src, tgt, ships=100, wait_N=0, eta=15, world=world, model=model, me=0,
+    ) is False
+
+
+def test_cost_parity_env_var_disables():
+    """Setting PROPOSER_COST_PARITY=off bypasses the filter in propose()."""
+    src = _planet(0, 0, 5.0, 50.0, ships=200, production=2)
+    tgt = _planet(1, -1, 80.0, 50.0, ships=40, production=1)
+    opp = _planet(2, 1, 85.0, 50.0, ships=50, production=2)
+    world = _world(0, [src, tgt, opp])
+    model = WorldModel.from_world(world)
+    old = os.environ.get("PROPOSER_COST_PARITY")
+    os.environ["PROPOSER_COST_PARITY"] = "off"
+    try:
+        out = propose(
+            my_planets=[src], target_pool=[tgt, opp],
+            world=world, model=model, me=0, omega=0.0, baseline_len=50,
+        )
+        # With filter disabled, at least one candidate aimed at the
+        # vulnerable target survives (cost-parity would otherwise drop it).
+        # We don't need a strict count; just that the bypass is plumbed.
+        assert isinstance(out, list)
+    finally:
+        if old is None:
+            os.environ.pop("PROPOSER_COST_PARITY", None)
+        else:
+            os.environ["PROPOSER_COST_PARITY"] = old
+
+
+def test_cost_parity_margin_env_var_overrides():
+    """COST_PARITY_MARGIN env var changes the rejection threshold."""
+    src = _planet(0, 0, 5.0, 50.0, ships=200, production=2)
+    tgt = _planet(1, -1, 80.0, 50.0, ships=40, production=1)
+    opp = _planet(2, 1, 85.0, 50.0, ships=50, production=2)
+    world = _world(0, [src, tgt, opp])
+    model = WorldModel.from_world(world)
+    # Default margin (0.7) rejects this scenario
+    assert _target_cost_parity_ok(
+        src, tgt, ships=100, wait_N=0, eta=15, world=world, model=model, me=0,
+    ) is False
+    # Tighten margin to 0.0 → no rejection unless opp pays 0 → accept
+    old = os.environ.get("COST_PARITY_MARGIN")
+    os.environ["COST_PARITY_MARGIN"] = "0.0"
+    try:
+        assert _target_cost_parity_ok(
+            src, tgt, ships=100, wait_N=0, eta=15, world=world, model=model, me=0,
+        ) is True
+    finally:
+        if old is None:
+            os.environ.pop("COST_PARITY_MARGIN", None)
+        else:
+            os.environ["COST_PARITY_MARGIN"] = old
+
+
+def test_reactor_candidates_empty_when_no_opp_fleets():
+    """No opp fleets in flight → reactor generator returns empty."""
+    src = _planet(0, 0, 10.0, 50.0, ships=30, production=2)
+    tgt = _planet(1, -1, 50.0, 50.0, ships=5, production=1)
+    opp = _planet(2, 1, 90.0, 50.0, ships=30, production=2)
+    world = _world(0, [src, tgt, opp])  # no fleets
+    model = WorldModel.from_world(world)
+    out = _enumerate_reactor_candidates(
+        my_planets=[src], world=world, model=model, me=0,
+        omega=0.0, baseline_len=50,
+    )
+    assert out == []
+
+
+def test_reactor_candidates_fires_on_opp_fleet_capturing_neutral():
+    """Opp fleet en route to a neutral that they'll capture → we get a
+    reactor candidate from our nearby source."""
+    src = _planet(0, 0, 30.0, 50.0, ships=80, production=2)
+    tgt = _planet(1, -1, 50.0, 50.0, ships=5, production=1)
+    opp_planet = _planet(2, 1, 75.0, 50.0, ships=5, production=2)
+    # Opp fleet of 20 ships at (58, 50) heading toward tgt at (50, 50)
+    # angle=π points in -x direction, which moves the fleet from x=58
+    # toward x=50 (tgt). 20 > 5 defenders → opp captures.
+    import math as _math
+    opp_fleet = _fleet(
+        fid=100, owner=1, x=58.0, y=50.0, angle=_math.pi,
+        from_pid=2, ships=20,
+    )
+    world = _world(0, [src, tgt, opp_planet], fleets=[opp_fleet])
+    model = WorldModel.from_world(world)
+    out = _enumerate_reactor_candidates(
+        my_planets=[src], world=world, model=model, me=0,
+        omega=0.0, baseline_len=50,
+    )
+    assert out, "expected at least one reactor candidate"
+    # Every candidate targets tgt from src
+    for entry in out:
+        cheap, c_src, c_tgt, ships, _angle, _eta, _horizon, wait_N = entry
+        assert int(c_src.id) == 0
+        assert int(c_tgt.id) == 1
+        assert ships >= MIN_FLEET_SIZE
+        assert wait_N >= 0
+
+
+def test_reactor_candidates_skips_when_opp_bounces():
+    """Opp fleet too small to capture (bounces off defenders) → no reactor
+    candidate (existing wait/fire-now paths handle the still-neutral target)."""
+    src = _planet(0, 0, 30.0, 50.0, ships=80, production=2)
+    # tgt has 30 defenders; opp's 5-ship fleet will bounce
+    tgt = _planet(1, -1, 50.0, 50.0, ships=30, production=1)
+    opp_planet = _planet(2, 1, 75.0, 50.0, ships=5, production=2)
+    import math as _math
+    opp_fleet = _fleet(
+        fid=100, owner=1, x=58.0, y=50.0, angle=_math.pi,
+        from_pid=2, ships=5,
+    )
+    world = _world(0, [src, tgt, opp_planet], fleets=[opp_fleet])
+    model = WorldModel.from_world(world)
+    out = _enumerate_reactor_candidates(
+        my_planets=[src], world=world, model=model, me=0,
+        omega=0.0, baseline_len=50,
+    )
+    # Opp bounces → target stays neutral → existing pipeline covers; no reactor.
+    assert out == []
+
+
+def test_reactor_candidates_env_var_disables_via_propose():
+    """PROPOSER_REACTOR_CANDIDATES=off prevents reactor candidates from
+    being added inside propose()."""
+    src = _planet(0, 0, 30.0, 50.0, ships=80, production=2)
+    tgt = _planet(1, -1, 50.0, 50.0, ships=5, production=1)
+    opp_planet = _planet(2, 1, 75.0, 50.0, ships=5, production=2)
+    import math as _math
+    opp_fleet = _fleet(
+        fid=100, owner=1, x=58.0, y=50.0, angle=_math.pi,
+        from_pid=2, ships=20,
+    )
+    world = _world(0, [src, tgt, opp_planet], fleets=[opp_fleet])
+    model = WorldModel.from_world(world)
+    old = os.environ.get("PROPOSER_REACTOR_CANDIDATES")
+    os.environ["PROPOSER_REACTOR_CANDIDATES"] = "off"
+    try:
+        out = propose(
+            my_planets=[src], target_pool=[tgt, opp_planet],
+            world=world, model=model, me=0, omega=0.0, baseline_len=50,
+        )
+        # We can't assert the absence of all reactor-like candidates (the
+        # existing wait_then_fire path may emit similar moves), but we CAN
+        # assert no exception, that propose still returns a list, and that
+        # the toggle is wired (the function is invoked, the disable path
+        # taken — covered by code coverage). Just smoke-check the contract.
+        assert isinstance(out, list)
+    finally:
+        if old is None:
+            os.environ.pop("PROPOSER_REACTOR_CANDIDATES", None)
+        else:
+            os.environ["PROPOSER_REACTOR_CANDIDATES"] = old

@@ -49,6 +49,28 @@ WAIT_BUFFER_OFFSET = 3   # backward grid emits {min_w, min_w + 3}
 # (`lib/opp_model.me_defensive_action`) import it from one location.
 from lib.world_model import WAVE_LOOKAHEAD  # noqa: E402
 
+# Reactor-aware launch selection (2026-05-19 PM).
+#
+# Two-part fix for the "predictable first-mover" trap PI surfaced from
+# live-replay observation: we launch a fleet across the map, opp sees
+# it in flight and either reinforces the target so we bounce OR lets
+# us land and recaptures cheaply. Holdability check (existing) catches
+# "we'll keep the planet"; this catches "did we pay more than opp would
+# have paid to take it?"
+#
+# Part A — cost-parity filter (`_target_cost_parity_ok`): drops
+# candidate launches where the cheapest opp reactor pays materially
+# less ships than our capture cost. A launch can be holdable AND
+# wasteful (we keep it but paid more than necessary).
+# Part B — reactor candidate generator (`_enumerate_reactor_candidates`):
+# for each opp fleet in flight to a non-our target, propose our own
+# launch from a nearby source sized to recapture the target after opp
+# lands. We become the cheap second-mover.
+COST_PARITY_MARGIN_DEFAULT = 0.7        # reject if opp pays < 70 % of our cost
+MIN_REACTOR_SHIPS = 8                    # below this an opp planet can't realistically reactor
+MAX_REACTOR_CANDIDATES_PER_TURN = 12     # global cap on Part B output
+REACTOR_TOP_K_SOURCES_PER_TARGET = 3     # per-target source enumeration cap
+
 
 def aim_and_eta(src, tgt, ships: int, omega: float, wait_N: int = 0):
     """Return (aim_angle_radians, ceil_eta_turns) for one (src, tgt, ships).
@@ -498,6 +520,259 @@ def _target_holdable_after_capture(
     return True
 
 
+def _cost_parity_margin() -> float:
+    """Read COST_PARITY_MARGIN from env, falling back to the default constant."""
+    raw = os.environ.get("COST_PARITY_MARGIN", "")
+    if not raw:
+        return COST_PARITY_MARGIN_DEFAULT
+    try:
+        return float(raw)
+    except ValueError:
+        return COST_PARITY_MARGIN_DEFAULT
+
+
+def _target_cost_parity_ok(
+    src, tgt, ships: int, wait_N: int, eta: int, world, model, me: int,
+) -> bool:
+    """Reactor-cost parity filter — Part A of reactor-aware launch selection.
+
+    Sibling to `_target_holdable_after_capture`. Where that filter asks
+    "will we still own the target after opp's counter-launch?", this asks
+    the strategic-cost question: "is the cheapest opp reactor cost
+    materially LESS than our launch cost?" If yes the candidate is the
+    first-mover trap — we pay more than opp does to take this same
+    planet, even if we hold it afterward.
+
+    Returns True (acceptable) when:
+      - tgt is our own planet (reinforce, not a race),
+      - the capture itself fails (delivered < 1; other filters drop),
+      - no opp planet within plausible reactor range,
+      - some ally is closer to tgt than every threatening opp (we'd be
+        the cheap reactor; accept the launch),
+      - the cheapest opp reactor still pays ≥ ships * COST_PARITY_MARGIN.
+
+    Margin is read per-call from env (`COST_PARITY_MARGIN`) so A/B grid
+    sweeps can override without rebuilding the bundle.
+    """
+    if int(tgt.owner) == me:
+        return True
+
+    arrival_step = int(wait_N) + int(eta)
+    if int(tgt.owner) == -1:
+        tgt_def_at_arrival = int(tgt.ships)
+    else:
+        tgt_def_at_arrival = int(tgt.ships) + int(tgt.production) * arrival_step
+    delivered = int(ships) - tgt_def_at_arrival
+    if delivered < 1:
+        return True  # capture fails; not our concern here
+
+    # "Are WE closer to tgt than every threatening opp?" — analogue of
+    # the hold-feasibility ally-closer safety valve. If yes, we'd be
+    # the cheap second-mover and the launch is positionally fine.
+    nearest_us_dist = float("inf")
+    for ally in world.planets_by_id.values():
+        if int(ally.owner) != me:
+            continue
+        if int(ally.id) == int(tgt.id):
+            continue
+        if int(ally.id) == int(src.id):
+            continue  # already committed; can't double-count
+        d = math.hypot(
+            float(ally.x) - float(tgt.x), float(ally.y) - float(tgt.y),
+        )
+        if d < nearest_us_dist:
+            nearest_us_dist = d
+
+    min_opp_reactor_cost: int | None = None
+    for opp in world.planets_by_id.values():
+        if int(opp.owner) == me or int(opp.owner) == -1:
+            continue
+        if int(opp.id) == int(tgt.id):
+            continue
+        if int(opp.ships) < MIN_REACTOR_SHIPS:
+            continue
+        d = math.hypot(
+            float(opp.x) - float(tgt.x), float(opp.y) - float(tgt.y),
+        )
+        # Ally-closer safety valve: if some ally is strictly closer than
+        # this opp, treat the launch as positionally fine (we can reach
+        # tgt to defend faster than opp can reach it to recapture).
+        if nearest_us_dist < d:
+            return True
+        flight = d - float(opp.radius) - float(tgt.radius) - 0.1
+        if flight <= 0:
+            continue
+        opp_speed = fleet_speed(int(opp.ships))
+        if opp_speed <= 0:
+            continue
+        opp_eta_after_landing = int(math.ceil(flight / opp_speed))
+        # Garrison opp must overcome = our delivered residue plus our
+        # production accruing on tgt during opp's transit.
+        garrison_at_recapture = (
+            delivered + int(tgt.production) * opp_eta_after_landing
+        )
+        # Opp's budget at their chosen launch moment (just after our
+        # landing). Production accrues from now until then.
+        opp_launch_budget = (
+            int(opp.ships) + int(opp.production) * arrival_step
+        )
+        opp_needed = int(math.ceil(garrison_at_recapture)) + 1
+        if opp_needed > opp_launch_budget:
+            continue  # opp can't afford the reactor; skip them
+        opp_needed = max(MIN_FLEET_SIZE, opp_needed)
+        if min_opp_reactor_cost is None or opp_needed < min_opp_reactor_cost:
+            min_opp_reactor_cost = opp_needed
+
+    if min_opp_reactor_cost is None:
+        return True  # no affordable opp reactor; safe to launch
+
+    margin = _cost_parity_margin()
+    if float(min_opp_reactor_cost) < float(ships) * margin:
+        return False  # opp pays materially less than us — wasteful first-mover
+    return True
+
+
+def _enumerate_reactor_candidates(
+    my_planets, world, model, me: int, omega: float, baseline_len: int,
+):
+    """Reactor candidate generator — Part B of reactor-aware launch selection.
+
+    For each target T not owned by us that has at least one opp fleet
+    in flight, propose our own launches from a nearby source sized to
+    recapture T after opp lands. The chooser then ranks these alongside
+    the standard fire-now / wait_then_fire candidates.
+
+    Output shape matches `propose()`'s prerank tuples:
+        (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N).
+    Capped globally at MAX_REACTOR_CANDIDATES_PER_TURN, top-K by
+    cheap_delta. Per-target source enumeration is capped at
+    REACTOR_TOP_K_SOURCES_PER_TARGET closest.
+
+    Skips:
+      - targets with no opp in-flight fleets,
+      - targets that opp's fleet does NOT actually capture (post-landing
+        owner stays neutral or stays ours — the existing pipeline already
+        handles those cases via fire-now / wait_then_fire),
+      - sources that can't afford the post-landing recapture even with
+        wait accumulation.
+    """
+    if not my_planets:
+        return []
+
+    # Identify targets with opp in-flight fleets via the ledger. Keys
+    # are planet ids; values are lists of (eta, owner, ships).
+    target_ids_with_opp: list[int] = []
+    for tgt_id, entries in model.ledger.items():
+        for (eta_arr, owner, ships_arr) in entries:
+            if owner == me or owner == -1:
+                continue
+            if ships_arr <= 0:
+                continue
+            target_ids_with_opp.append(int(tgt_id))
+            break
+
+    if not target_ids_with_opp:
+        return []
+
+    candidates: list = []
+    for tgt_id in target_ids_with_opp:
+        tgt = world.planets_by_id.get(tgt_id)
+        if tgt is None:
+            continue
+        if int(tgt.owner) == me:
+            continue  # defensive reinforce handled elsewhere
+
+        # Latest opp arrival to this target. Use the post-landing owner
+        # to decide if a reactor is needed.
+        opp_etas = [
+            int(eta_arr)
+            for (eta_arr, owner, ships_arr) in model.ledger.get(tgt_id, [])
+            if owner != me and owner != -1 and ships_arr > 0
+        ]
+        if not opp_etas:
+            continue
+        max_opp_eta = max(opp_etas)
+
+        post_owner = model.owner_at(int(tgt_id), max_opp_eta + 1)
+        if post_owner is None:
+            continue  # beyond timeline horizon
+        if post_owner == me:
+            continue  # we end up holding; no reactor needed
+        if int(post_owner) == -1:
+            # Opp's fleet bounces. Existing wait_then_fire / fire-now
+            # variants handle the neutral capture; skip to avoid
+            # producing duplicate candidates.
+            continue
+
+        # Top-K closest sources by straight-line distance.
+        src_with_dist: list = []
+        for src in my_planets:
+            if int(src.ships) < MIN_FLEET_SIZE:
+                continue
+            if int(src.id) == int(tgt_id):
+                continue
+            d = math.hypot(
+                float(src.x) - float(tgt.x),
+                float(src.y) - float(tgt.y),
+            )
+            src_with_dist.append((d, src))
+        if not src_with_dist:
+            continue
+        src_with_dist.sort(key=lambda x: x[0])
+        src_with_dist = src_with_dist[:REACTOR_TOP_K_SOURCES_PER_TARGET]
+
+        for _d, src in src_with_dist:
+            # Conservative natural-eta probe at MIN_FLEET_SIZE (slowest);
+            # actual launch will be larger / faster, narrowing the gap.
+            _angle_probe, eta_probe = aim_and_eta(
+                src, tgt, MIN_FLEET_SIZE, omega, wait_N=0,
+            )
+            desired_arrival = max_opp_eta + 1
+            wait_N = max(0, desired_arrival - int(eta_probe))
+            if wait_N + int(eta_probe) + SIM_SETTLE_TURNS > MAX_HORIZON:
+                continue
+            arrival_step = wait_N + int(eta_probe)
+            arrival_owner = model.owner_at(int(tgt_id), arrival_step)
+            if arrival_owner == me:
+                continue
+            arrival_ships = float(
+                model.ships_at(int(tgt_id), arrival_step) or 0.0
+            )
+            needed = max(MIN_FLEET_SIZE, int(math.ceil(arrival_ships)) + 1)
+            budget = int(src.ships) + int(src.production) * wait_N
+            if needed > budget:
+                continue
+            # Recompute aim / eta at the actual ship count
+            angle, eta = aim_and_eta(src, tgt, needed, omega, wait_N=wait_N)
+            if wait_N + int(eta) + SIM_SETTLE_TURNS > MAX_HORIZON:
+                continue
+            # Re-sample timeline at the refined arrival step
+            refined_arrival = wait_N + int(eta)
+            refined_owner = model.owner_at(int(tgt_id), refined_arrival)
+            if refined_owner == me:
+                continue
+            refined_ships = float(
+                model.ships_at(int(tgt_id), refined_arrival) or 0.0
+            )
+            needed = max(MIN_FLEET_SIZE, int(math.ceil(refined_ships)) + 1)
+            if needed > budget:
+                continue
+            horizon = max(int(eta) + SIM_SETTLE_TURNS, MIN_HORIZON)
+            if horizon >= baseline_len:
+                continue
+            cheap = cheap_marginal_value(
+                src, tgt, needed, int(eta), world, model, me, wait_N=wait_N,
+            )
+            if cheap <= CHEAP_REJECT_THRESHOLD:
+                continue
+            candidates.append(
+                (cheap, src, tgt, needed, float(angle), int(eta), horizon, wait_N)
+            )
+
+    candidates.sort(key=lambda c: -c[0])
+    return candidates[:MAX_REACTOR_CANDIDATES_PER_TURN]
+
+
 def propose(my_planets, target_pool, world, model, me: int,
             omega: float, baseline_len: int):
     """Build the pre-rank list of candidates, then dedup by
@@ -544,6 +819,18 @@ def propose(my_planets, target_pool, world, model, me: int,
                         (w_cheap, src, tgt, w_ships, w_angle, w_eta,
                          w_horizon, w_wait)
                     )
+
+    # Reactor candidate generator (Part B of reactor-aware launch selection,
+    # 2026-05-19 PM). For each opp fleet in flight to a non-our target,
+    # propose our own launches sized to recapture after opp lands. These
+    # extend the standard prerank list and participate in the existing
+    # (src, tgt, wait_band) dedup. The chooser then scores them alongside
+    # fire-now / wait_then_fire candidates. Opt out via
+    # PROPOSER_REACTOR_CANDIDATES=off for ablation A/B.
+    if os.environ.get("PROPOSER_REACTOR_CANDIDATES", "").strip().lower() != "off":
+        prerank.extend(_enumerate_reactor_candidates(
+            my_planets, world, model, me, omega, baseline_len,
+        ))
 
     best_per_band: dict[tuple[int, int, int], tuple] = {}
     for entry in prerank:
@@ -628,6 +915,25 @@ def propose(my_planets, target_pool, world, model, me: int,
         deduped = [
             entry for entry in deduped
             if _target_holdable_after_capture(
+                entry[1],  # src
+                entry[2],  # tgt
+                int(entry[3]),  # ships
+                int(entry[7]),  # wait_N
+                int(entry[5]),  # eta
+                world, model, me,
+            )
+        ]
+
+    # Cost-parity filter (Part A of reactor-aware launch selection,
+    # 2026-05-19 PM). Drops candidate launches where the cheapest opp
+    # reactor pays materially fewer ships than we do. Holdability
+    # (above) and cost-parity ask different questions; both can drop
+    # the same candidate or one can drop what the other accepts. Opt
+    # out via PROPOSER_COST_PARITY=off for ablation A/B.
+    if os.environ.get("PROPOSER_COST_PARITY", "").strip().lower() != "off":
+        deduped = [
+            entry for entry in deduped
+            if _target_cost_parity_ok(
                 entry[1],  # src
                 entry[2],  # tgt
                 int(entry[3]),  # ships
