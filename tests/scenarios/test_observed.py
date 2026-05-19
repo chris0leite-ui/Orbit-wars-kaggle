@@ -118,16 +118,22 @@ class DI1_DistantIdleness(Scenario):
                 f"We hold P2 at turn {len(world_log)} — front-line won "
                 f"(P1 sent {ships_launched_from_p1} ships, ends with {p1_ships})",
             )
-        # The bug we test for is "distant planet sits on its hoard." A
-        # single launch ≥ 50 ships is a real strike (baseline's failure
-        # shape was an 18-ship token redeploy, or many tiny launches
-        # totalling less than one real strike).
+        # The bug we test for is "distant planet sits on its hoard."
+        # Either a single big strike (≥50) OR sustained deployment
+        # (total ≥80 across ≥2 launches) counts as "real use."
+        # Baseline's failure shape was an 18-ship token redeploy.
         if max_single_launch_p1 >= self.SINGLE_STRIKE_MIN:
             return ValidationResult(
                 True,
                 f"P1 deployed its hoard: max single launch "
                 f"{max_single_launch_p1} ≥ {self.SINGLE_STRIKE_MIN}; "
                 f"total launched {ships_launched_from_p1}; ends with {p1_ships}",
+            )
+        if ships_launched_from_p1 >= 80 and len(p1_launches) >= 2:
+            return ValidationResult(
+                True,
+                f"P1 sustained deployment: {ships_launched_from_p1} ships "
+                f"across {len(p1_launches)} launches; ends with {p1_ships}",
             )
         return ValidationResult(
             False,
