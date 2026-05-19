@@ -227,6 +227,22 @@ def favor_projected(obs, me: int, num_seats: int = 2,
     return projected_rank_diff(obs, me, num_seats)
 
 
+def favor_projected_sum(obs, me: int, num_seats: int = 2,
+                        gamma: float = DEFAULT_GAMMA) -> float:
+    """Per-seat ProjectedTotal with favor-compatible aggregation.
+
+    Same per-seat ProjectedTotal as `favor_projected`, but aggregates
+    opponents the way `favor` does in 4P (sum over opps). 2P collapses
+    to identical behaviour as `favor_projected` (single opp). Variant 2
+    of the production-compounding reframing — isolates the aggregator
+    choice from the per-seat-projection signal value.
+
+    `gamma` is intentionally ignored — projection uses linear horizon.
+    """
+    from lib.value_heads import projected_rank_diff_sum
+    return projected_rank_diff_sum(obs, me, num_seats)
+
+
 def select_favor_fn():
     """Pick the leaf value function.
 
@@ -234,11 +250,13 @@ def select_favor_fn():
       1. `lib.value_heads.VALUE_HEAD_CHOICE` numeric constant — patchable
          by `scripts/ab_variants.py` for clean A/B bundles. Values:
          0 = favor (v15 baseline + A2 4P), 1 = composite,
-         2 = projected. Anything else falls through to env-var path.
+         2 = projected (max-agg), 3 = projected_sum (sum-agg in 4P).
+         Anything else falls through to env-var path.
       2. `BASELINE_VALUE_HEAD` env var (legacy operator workflow):
          "composite" → favor_composite, "hybrid" → favor_hybrid,
          "hybrid_spatial" → favor_hybrid_spatial,
-         "projected" → favor_projected, else → favor.
+         "projected" → favor_projected,
+         "projected_sum" → favor_projected_sum, else → favor.
 
     The chooser uses the SAME function for both `build_idle_baseline`
     and `score_action` so the Δ stays well-defined (CRN symmetry).
@@ -248,6 +266,8 @@ def select_favor_fn():
         return favor_composite
     if VALUE_HEAD_CHOICE == 2:
         return favor_projected
+    if VALUE_HEAD_CHOICE == 3:
+        return favor_projected_sum
     choice = os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower()
     if choice == "composite":
         return favor_composite
@@ -257,4 +277,6 @@ def select_favor_fn():
         return favor_hybrid_spatial
     if choice == "projected":
         return favor_projected
+    if choice == "projected_sum":
+        return favor_projected_sum
     return favor
