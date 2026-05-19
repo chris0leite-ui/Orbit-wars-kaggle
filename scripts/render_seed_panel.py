@@ -2,8 +2,7 @@
 
 For each of the 32 archetype cells, picks ONE representative seed and draws
 its initial planet layout in a mini-plot. Static planets in dark grey,
-rotating in blue. Home planets (P0/P1) marked with quadrant colours.
-Sun at the centre, ROTATION_RADIUS_LIMIT circle dashed.
+rotating in blue. Sun at the centre, ROTATION_RADIUS_LIMIT circle dashed.
 
 Output: audit/seed-panel/preview.png
 """
@@ -41,19 +40,13 @@ def render_one(ax, seed: int, title: str) -> None:
         fill=False, linestyle="--", linewidth=0.4, edgecolor="grey", zorder=1,
     ))
 
-    home_colors = {0: "tab:blue", 1: "tab:red"}
     for p in planets:
         pid, owner, x, y, r, ships, prod = p
-        if owner in home_colors:
-            color = home_colors[owner]
-            edge = "black"
-        elif is_orbiting(p):
+        if is_orbiting(p):
             color = "#5b9bd5"
-            edge = "none"
         else:
             color = "#444"
-            edge = "none"
-        ax.add_patch(Circle((x, y), r, color=color, ec=edge, lw=0.4, zorder=3))
+        ax.add_patch(Circle((x, y), r, color=color, ec="none", lw=0.4, zorder=3))
 
     ax.set_xlim(0, BOARD_SIZE)
     ax.set_ylim(0, BOARD_SIZE)

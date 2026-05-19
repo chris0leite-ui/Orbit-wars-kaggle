@@ -44,8 +44,8 @@ columns walk rotation × size-split):
 
 ![Seed panel preview — 32 archetypes](PASTE_KAGGLE_UPLOAD_URL_HERE)
 
-(Sun is gold; static planets grey; rotating planets blue; player
-homes blue/red. Dashed circle = max rotating radius.)
+(Sun is gold; static planets grey; rotating planets blue. Dashed
+circle = max rotating radius.)
 
 ### The seeds
 
