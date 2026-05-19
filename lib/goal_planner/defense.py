@@ -34,6 +34,7 @@ from lib.goal_planner.predicate import remaining_turns
 from lib.goal_planner.sequencer import (
     MIN_LAUNCH_SHIPS, ScheduledLaunch, _available_ships_at, _src_with_ships,
 )
+from lib.goal_planner.validate import launch_reaches_target
 from lib.trajectory_layer import World
 
 
@@ -121,7 +122,10 @@ def defense_actions(world: World, my_id: int, opp_id: int,
     scheduled: list[ScheduledLaunch] = []
     for _priority, tgt_id in threatened:
         target = my_planets[tgt_id]
-        best: tuple[int, Candidate] | None = None
+        # Collect all feasible reinforcers (sorted cheapest first), then
+        # pick the cheapest that passes physics validation. Same late-
+        # with-fallback pattern as the sequencer (P3).
+        options: list[tuple[int, Candidate]] = []
         for src_id, src in my_planets.items():
             if src_id == tgt_id:
                 continue
@@ -131,11 +135,23 @@ def defense_actions(world: World, my_id: int, opp_id: int,
             cand = _solve_defense(src, target, world, my_id, src_ships=avail)
             if cand is None:
                 continue
-            if best is None or cand.total_ships < best[1].total_ships:
-                best = (src_id, cand)
-        if best is None:
+            options.append((src_id, cand))
+        options.sort(key=lambda sc: sc[1].total_ships)
+
+        chosen: Candidate | None = None
+        for _src_id, cand in options:
+            ok = True
+            for a in cand.allocations:
+                src_p = my_planets.get(a.src_id)
+                if src_p is None or not launch_reaches_target(
+                        src_p, target, a.aim_angle, a.ships, world):
+                    ok = False
+                    break
+            if ok:
+                chosen = cand
+                break
+        if chosen is None:
             continue
-        _, chosen = best
         for a in chosen.allocations:
             reservations.setdefault(a.src_id, []).append((0, a.ships))
             scheduled.append(ScheduledLaunch(

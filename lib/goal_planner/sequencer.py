@@ -21,11 +21,13 @@ from dataclasses import dataclass
 from agents.trajectory_roi.main import (
     Candidate, _build_centrality_cache, _solve_multi_source, _solve_single_source,
 )
+from lib.goal_planner.validate import launch_reaches_target
 from lib.trajectory_layer import World
 
 
 MAX_WAIT_TURNS = 30
 MIN_LAUNCH_SHIPS = 5  # env minimum; matches trajectory_roi's constant
+MAX_VALIDATE_PER_TARGET = 12  # cap fallback iterations to keep p95 bounded
 
 
 @dataclass(frozen=True)
@@ -53,23 +55,24 @@ def _available_ships_at(src, src_id, wait: int,
     return base - consumed
 
 
-def _try_single_source_with_wait(src, target, world: World, my_id: int,
-                                    centrality_cache, target_is_ours: bool,
-                                    reservations: dict[int, list[tuple[int, int]]]
-                                    ) -> tuple[int, Candidate] | None:
-    """Search wait_offset in [0, MAX_WAIT_TURNS] for the cheapest launch
-    from `src` to `target`, respecting prior reservations on `src`.
+def _collect_single_source_options(src, target, world: World, my_id: int,
+                                      centrality_cache, target_is_ours: bool,
+                                      reservations: dict[int, list[tuple[int, int]]]
+                                      ) -> list[tuple[int, Candidate]]:
+    """Return ALL feasible (wait_offset, Candidate) pairs for src→target,
+    sorted cheapest-first. Used by `backwards_acquisition_plan` to fall
+    through to alternates when the cheapest fails physics validation
+    (e.g. trajectory crosses the sun).
 
     Per-turn budget model: at wait W, source has
     `current_ships + W*production - sum(reservations at wait <= W)` ships
-    available. Target defenders accrue at `tgt.ships + W*tgt.production`.
-
-    Returns (wait_offset, Candidate) or None if no feasible W exists.
-    ETA computed from current positions (orbital drift over W approximated
-    as zero — matches trajectory_roi's primitive)."""
+    available. Target defenders accrue at `tgt.ships + W*tgt.production`
+    (for neutrals, env rules say neutrals don't actually accrue — but
+    `_solve_single_source`'s `_net_defenders` already handles that
+    distinction)."""
     src_id = src.id
     tgt_prod = int(target.production)
-    best: tuple[int, Candidate] | None = None
+    options: list[tuple[int, Candidate]] = []
     for wait in range(0, MAX_WAIT_TURNS + 1):
         avail = _available_ships_at(src, src_id, wait, reservations)
         if avail < MIN_LAUNCH_SHIPS:
@@ -81,11 +84,10 @@ def _try_single_source_with_wait(src, target, world: World, my_id: int,
                                      centrality_cache, target_is_ours)
         if cand is None:
             continue
-        # Lowest total_ships (= cheapest acquisition) wins; tie-break on
-        # earlier wait so we don't delay unnecessarily.
-        if best is None or (cand.total_ships, wait) < (best[1].total_ships, best[0]):
-            best = (wait, cand)
-    return best
+        options.append((wait, cand))
+    # Lowest total_ships first; tie-break on earlier wait.
+    options.sort(key=lambda wc: (wc[1].total_ships, wc[0]))
+    return options
 
 
 def backwards_acquisition_plan(world: World, my_id: int,
@@ -114,24 +116,21 @@ def backwards_acquisition_plan(world: World, my_id: int,
             continue
         target_is_ours = False  # portfolio entries are always not-mine
 
-        # Try every source; pick the cheapest (lowest total_ships) feasible
-        # (src, wait) pair respecting prior reservations.
-        best_single: tuple[int, int, Candidate] | None = None
+        # Collect ALL feasible options (single-source per src + multi-source),
+        # then iterate in cheapest-first order and accept the first that
+        # passes the physics gate (`launch_reaches_target`). This is the
+        # late-with-fallback pattern — primitives like _aim_and_eta don't
+        # check sun safety, so we drop trajectory-invalid options here.
+        options: list[tuple[int, Candidate]] = []
         for src_id, src in my_planets.items():
             if _available_ships_at(src, src_id, 0, reservations) < 0:
-                continue  # already over-allocated for turn 0 — shouldn't happen
-            found = _try_single_source_with_wait(
+                continue
+            options.extend(_collect_single_source_options(
                 src, target, world, my_id,
                 centrality_cache, target_is_ours, reservations,
-            )
-            if found is None:
-                continue
-            wait, cand = found
-            if best_single is None or (cand.total_ships, wait) < (best_single[2].total_ships, best_single[0]):
-                best_single = (wait, src_id, cand)
+            ))
 
-        # Multi-source: clamp each src's ships to its turn-0 availability
-        # (multi-source is wait_offset=0 by construction).
+        # Multi-source: clamp each src's ships to its turn-0 availability.
         budgeted_planets = tuple(
             _src_with_ships(p,
                             _available_ships_at(p, p.id, 0, reservations))
@@ -142,18 +141,38 @@ def backwards_acquisition_plan(world: World, my_id: int,
                                               _planet_by_id={p.id: p for p in budgeted_planets})
         multi = _solve_multi_source(target, budgeted_world, my_id,
                                      centrality_cache, target_is_ours)
-
-        # Pick the cheaper of single (best wait) vs multi (turn 0).
-        if best_single is None and multi is None:
+        if multi is not None:
+            options.append((0, multi))
+        if not options:
             continue
-        if best_single is None:
-            chosen_wait, chosen_cand = 0, multi
-        elif multi is None:
-            chosen_wait, _, chosen_cand = best_single
-        elif multi.total_ships < best_single[2].total_ships:
-            chosen_wait, chosen_cand = 0, multi
-        else:
-            chosen_wait, _, chosen_cand = best_single
+        options.sort(key=lambda wc: (wc[1].total_ships, wc[0]))
+        # Cap validation to keep p95 bounded. predict_fleet_fate is
+        # ~1-2ms per call; without the cap, a sun-blocked source can
+        # blow through the entire wait sweep (30 options × 5 sources =
+        # 150 calls per target). Top-12 cheapest is enough fallback to
+        # find a valid alternative if one exists.
+        options = options[:MAX_VALIDATE_PER_TARGET]
+
+        chosen: tuple[int, Candidate] | None = None
+        for wait, cand in options:
+            # Validate every allocation's trajectory. Multi-source
+            # bundles can have one bad leg; we require ALL legs valid.
+            ok = True
+            for a in cand.allocations:
+                src_p = my_planets.get(a.src_id)
+                if src_p is None:
+                    ok = False
+                    break
+                if not launch_reaches_target(src_p, target, a.aim_angle,
+                                              a.ships, world):
+                    ok = False
+                    break
+            if ok:
+                chosen = (wait, cand)
+                break
+        if chosen is None:
+            continue
+        chosen_wait, chosen_cand = chosen
 
         # Reserve and record.
         for a in chosen_cand.allocations:

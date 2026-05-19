@@ -59,12 +59,13 @@ def test_defense_priority_order_by_production():
     # Two mine planets close to a central reinforcer; both under threat
     # from FAR-AWAY opp fleets (long ETA → reinforcer can reach either).
     # p0 (prod=3) should be prioritized over p1 (prod=1).
-    # Geometry: p0=(30,30), p1=(35,30) — adjacent. p2=(32,30) reinforcer.
-    # Opp fleets coming from y=80 and y=-20 — vertical, far away.
+    # Geometry: p0=(20,30), p1=(40,30), p2=(30,40) — reinforcer offset
+    # in Y so flight distance is positive (planets aren't overlapping).
+    # Opp fleets coming from y=90 — vertical, far away.
     planets = [
-        _planet(0, owner=0, x=30.0, y=30.0, ships=5, production=3),
-        _planet(1, owner=0, x=35.0, y=30.0, ships=5, production=1),
-        _planet(2, owner=0, x=32.0, y=30.0, ships=100, production=1),
+        _planet(0, owner=0, x=20.0, y=30.0, ships=5, production=3),
+        _planet(1, owner=0, x=40.0, y=30.0, ships=5, production=1),
+        _planet(2, owner=0, x=30.0, y=40.0, ships=100, production=1),
         _planet(3, owner=1, x=95.0, y=5.0, ships=10, production=1),
     ]
     # Fleet (20 ships, speed ~3.35) at (30, 90) heading south (-pi/2)
@@ -74,8 +75,8 @@ def test_defense_priority_order_by_production():
     # (p0 starts at 5, gains 3*18=54 → 59 by arrival; p1 starts at 5,
     # gains 18 → 23 by arrival). Both need reinforcement.
     fleets = [
-        [101, 1, 30.0, 90.0, -1.5708, 3, 60],
-        [102, 1, 35.0, 90.0, -1.5708, 3, 60],
+        [101, 1, 20.0, 90.0, -1.5708, 3, 60],
+        [102, 1, 40.0, 90.0, -1.5708, 3, 60],
     ]
     world = _world(planets, fleets=fleets, step=10)
 

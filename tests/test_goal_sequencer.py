@@ -84,12 +84,13 @@ def test_sequencer_multi_source_bundle():
 
 def test_sequencer_shared_source_budget_respected():
     # Source p0 has 50 ships. Two cheap neutral targets each cost ~20.
-    # Sequencer must allocate p0's ships across both without exceeding budget.
+    # Geometry: targets on different bearings from p0 so the launches
+    # don't shadow each other through intervening planets.
     planets = [
-        _planet(0, owner=0, x=10.0, y=50.0, ships=50, production=1),
-        _planet(1, owner=-1, x=20.0, y=50.0, ships=15, production=1),
-        _planet(2, owner=-1, x=30.0, y=50.0, ships=15, production=1),
-        _planet(3, owner=1, x=90.0, y=10.0, ships=5, production=1),
+        _planet(0, owner=0, x=10.0, y=10.0, ships=50, production=1),
+        _planet(1, owner=-1, x=25.0, y=10.0, ships=15, production=1),
+        _planet(2, owner=-1, x=10.0, y=25.0, ships=15, production=1),
+        _planet(3, owner=1, x=90.0, y=90.0, ships=5, production=1),
     ]
     world = _world(planets, step=10)
     plan = backwards_acquisition_plan(world, my_id=0, portfolio=[1, 2])
@@ -98,9 +99,7 @@ def test_sequencer_shared_source_budget_respected():
     assert p0_total <= 50, (
         f"p0 over-allocated: budget=50, used={p0_total}; plan={plan}"
     )
-    # Both targets should be reachable from p0 with 15-defender each
-    # (~20 ships needed), and source budget 50 > 40 → plan should
-    # include launches at both targets if both are reachable.
+    # Both targets should be reachable from p0 (east and north).
     targets_hit = {L.target_id for L in plan}
     assert 1 in targets_hit, f"target 1 not in plan: {plan}"
     assert 2 in targets_hit, f"target 2 not in plan: {plan}"
