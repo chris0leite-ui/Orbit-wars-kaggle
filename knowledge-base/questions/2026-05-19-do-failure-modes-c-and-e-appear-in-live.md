@@ -5,6 +5,10 @@
 **Resolves by**: Phase 1a of the approved next-session plan
 (replay-mining)
 
+**STATUS: CLOSED 2026-05-19 AM** by replay-mine across 5 most recent
+COMPLETE submissions (56,842 fleets, 501 episodes). Full audit at
+`audit/2026-05-19-replay-mine-pre-roi.md`. Summary below.
+
 ## The question
 
 PI's five named failure modes are:
@@ -47,3 +51,34 @@ or % of total fleets).
 Question closes when the audit doc explicitly states for each of (a-e):
 "observed in live composite+A2 replays: YES / NO / N/A (no replays
 available)" with a count or % per case.
+
+## Resolution (5/19 AM)
+
+Replay-mine ran across 5 most recent COMPLETE subs including
+composite+A2 hybrid (sub 52744856, live peak μ≈1149.2). Per-failure
+findings:
+
+- **(a) recapture-loss**: YES, 0.97% prevalence (`arrived_but_lost`
+  = 554 / 56,842 fleets across 5 subs).
+- **(b) drift / sun-clip**: YES, 1.1% prevalence (`waste_trajectory`
+  bucket: 599 fleets; comprises 453 oob + 94 vanished + 52 sun).
+- **(c) garrison-counter**: YES, **13.9% prevalence** — biggest
+  detectable failure mode (`bounced_enemy` 7913 fleets across 5
+  subs; per-sub variance 13.7-17.6%). Bucket conflates true (c)
+  with simple garrison-undershoot; both belong in G1 scenario.
+- **(d) split-majority**: N/A from buckets (negative-space pattern;
+  needs behavioural detector). INDIRECTLY corroborated by BPJKs'
+  off-branch finding that we leave bigger garrisons at source
+  universally (d=+0.82σ vs top-10).
+- **(e) distant-planet idleness**: YES, **corroborated by BPJKs
+  off-branch behavioural data** —
+  `launches_per_turn` d=+1.26σ (we launch ~half as often as top-10)
+  and `mean_garrison_at_launch` d=-0.82σ (we send a smaller
+  fraction when we do) are universal deltas across archetypes.
+  Quantified evidence of (e) at the team level. Priority-1 in V0
+  scenario suite.
+
+Priority-revised scenario order (deviates from plan's equal
+priority): DI1 (e) > G1 (c) > SM1 (d) > R1 (a) > D1 (b) > sanity
+S1-S3. Justified in
+`audit/2026-05-19-replay-mine-pre-roi.md::Scenario priority ranking`.
