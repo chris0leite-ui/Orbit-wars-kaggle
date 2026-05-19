@@ -542,3 +542,65 @@ def test_oracle_hold_feasibility_with_nearby_ally():
         f"Filter must not kill this case. Got moves {moves} → targets "
         f"{targets}. Expected at least one move toward pid=1."
     )
+
+
+# ---------------------------------------------------------------------------
+# ROI-prior chooser oracles (BASELINE_CHOOSER=roi)
+#
+# These exercise the closed-form ROI chooser dispatched at
+# agents/baseline/main.py via BASELINE_CHOOSER=roi. The trajectory and
+# composite choosers are not required to satisfy these.
+# ---------------------------------------------------------------------------
+
+
+def test_oracle_no_launch_past_horizon(monkeypatch):
+    """ROI chooser must refuse launches whose arrival exceeds MAX_HORIZON.
+
+    M at (5, 5) with 200 ships; sole opp target P at (95, 95).
+    Straight-line distance ~127, fleet speed for small ships ~1/turn → eta
+    well beyond MAX_HORIZON=40. ROI must return -inf; no move emitted.
+    """
+    monkeypatch.setenv("BASELINE_CHOOSER", "roi")
+    planets = [
+        _planet(0, 0, 5.0, 5.0, ships=200, production=2),
+        _planet(1, 1, 95.0, 95.0, ships=10, production=1),
+    ]
+    obs = _obs(planets)
+    moves = _emit(obs)
+
+    targets = _targets_of_emits(obs, moves)
+    assert 1 not in targets, (
+        f"Out-of-horizon launch FAIL: M→P at distance ~127 cannot land "
+        f"within MAX_HORIZON=40, ROI must drop it. Got moves {moves} → "
+        f"targets {targets}."
+    )
+
+
+def test_oracle_roi_picks_higher_production(monkeypatch):
+    """ROI chooser prefers higher-production target when defense is equal.
+
+    M at (10, 10) with 100 ships. Two opp targets equidistant (50 from
+    M) and well clear of the sun: P1 north (10, 60) prod=1; P2 east
+    (60, 10) prod=3. ROI ∝ production × pv_horizon × margin_mult; the
+    prod=3 target wins by a 3× factor. Both opp planets have 10 ships,
+    below MIN_COUNTER_SHIPS=20, so hold-feasibility passes everything.
+    """
+    monkeypatch.setenv("BASELINE_CHOOSER", "roi")
+    planets = [
+        _planet(0, 0, 10.0, 10.0, ships=100, production=2),
+        _planet(1, 1, 10.0, 60.0, ships=10, production=1),  # north, prod=1
+        _planet(2, 1, 60.0, 10.0, ships=10, production=3),  # east,  prod=3
+    ]
+    obs = _obs(planets)
+    moves = _emit(obs)
+
+    targets = _targets_of_emits(obs, moves)
+    assert 2 in targets, (
+        f"ROI target selection FAIL: prod=3 target (pid=2) should beat "
+        f"prod=1 target (pid=1) at equal defense + distance. Got moves "
+        f"{moves} → targets {targets}."
+    )
+    assert 1 not in targets, (
+        f"ROI also fired at lower-production target — should commit ships "
+        f"to the prod=3 winner only. Got targets {targets}."
+    )
