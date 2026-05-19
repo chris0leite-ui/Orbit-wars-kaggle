@@ -651,6 +651,60 @@ relevant skill file or source code, not back into friction.md.
   scenario-suite-before-A/B as a default for any new agent
   architecture, not just this one.
 
+## 2026-05-19 PM2 (claude/ml-competition-strategy-PFhzM — Phase B + goal_planner + physics-gate + greedy_expand MVP)
+
+- `tag: physics-primitives-not-used-by-our-line` — our entire
+  experimental agent line (`trajectory_roi`, `cluster_solver`, all
+  Phase B variants, `goal_planner` v1) computes launches via
+  `_aim_and_eta` — a geometric aim helper that doesn't validate
+  sun-safety, OOB, or intervening-planet collisions. `predict_fleet_fate`
+  exists in `lib/trajectory.py` and is used by baseline.py via
+  `lib/mechanism.py:593,686,775`. Zero agents in our line import it.
+  Replay-probe quantified the cost: ~6.8% of trajectory_roi emits are
+  physically wasted (1.0% sun, 5.8% OOB). Discovered only when PI
+  asked "what about our whole physics and trajectory modeling — do
+  we use it?" after 4 A/Bs had already been burned on broken-physics
+  agents. **Fix:** added `lib/goal_planner/validate.py` and wired
+  into goal_planner sequencer/defense (late-with-fallback pattern).
+  Promotion candidate (RATIFIED): physics-validation gate is mandatory
+  for every experimental agent — see improvements.md.
+- `tag: synthetic-scenarios-miss-constructor-blind-spots` — all 17
+  goal_planner unit tests passed; agent shipped physically broken
+  (launches through the sun). The constructor (me) chose tight-east
+  geometries where the bug couldn't manifest. Same pattern in
+  `tests/test_cluster_solver.py:35-77` — clear-line geometry. **Fix:**
+  amend "scenarios are the gate" principle: synthetic + replay-position
+  oracle (run primitive on N real replay positions and validate
+  outputs against `predict_fleet_fate` or env). Promotion candidate
+  (RATIFIED) — see improvements.md.
+- `tag: detector-overlapping-clusters-overcommit` — at one observed
+  seed-0 turn 5, `find_solvable_clusters` returned 19 overlapping
+  clusters all containing planet 12 (hub-positioned near 6 neighbors,
+  C(6,1)+C(6,2) combinations). Hybrid agent (Phase B v2) concatenated
+  each cluster's solver action → 5× duplicate 15-ship launch from a
+  15-ship planet. Tests didn't cover hub geometry. Caught only via
+  single-game inspection script. **Fix:** changed hybrid to per-source
+  resolution (best cluster per MY source by solver value). Add hub-
+  position scenario to cluster-solver tests next time.
+- `tag: chooser-architecture-strategically-neutral` — built
+  `agents/goal_planner/` (~500 LOC across predicate/portfolio/sequencer
+  /defense) and `agents/greedy_expand/` (60 LOC, ROI-greedy). A/B
+  goal_planner vs greedy_expand: 14/32 (43.8%, Wilson [0.282, 0.607])
+  — statistical tie. The entire chooser stack added no measurable
+  value at the primitive layer we're operating. **Fix:** stop iterating
+  chooser layers on unverified primitives. Same lesson as the prior
+  session's `5-version-iteration-without-verification`; promoting
+  Rule 41 candidate (RATIFIED).
+- `tag: building-from-scratch-dominates-0-of-32` — five distinct
+  architectures this session, all 0/32 vs Kaggle baseline (veto-on-
+  trajectory_roi, hybrid, goal_planner no-validation, goal_planner
+  with-validation, greedy_expand MVP). Only signal across 8+ A/Bs
+  was `baseline_veto` (12/32 = 37.5%, wrapping the live submission).
+  Pattern strongly suggests wrap-vs-replace asymmetry. **Fix:**
+  observation logged; not promoted this session (PI did not ratify);
+  re-evaluate next session if recurs.
+
+
 
 ```
 - `tag: <kebab-slug>` — <session context>: <what happened>.

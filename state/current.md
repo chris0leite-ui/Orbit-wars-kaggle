@@ -58,8 +58,8 @@ team_peak_agent: v15_banded
 
 submissions_used_today: 0     # 5/19 — local A/B sweep only; no Kaggle pushes
 submissions_used_total: 34    # 31 + 3 missed (52754310, 52766596, 52784853); refresh via Kaggle CLI
-plateau_days: 2               # 5/18+5/19 spent on bundle scorer-axis Phase E + trajectory_roi v1-v3.1
-saturation_count: 2           # 5/19 AM: chooser/scorer axis saturated. 5/19 PM: trajectory_roi value-max axis saturated at 5 variants — Rule 37 fired again
+plateau_days: 2               # 5/18+5/19 spent on bundle scorer-axis Phase E + trajectory_roi v1-v3.1 + Phase B + goal_planner
+saturation_count: 3           # 5/19 AM: chooser/scorer axis. 5/19 PM: trajectory_roi value-max axis (5 variants). 5/19 PM2: building-from-our-primitives axis confirmed (5 more architectures all 0-1/32 vs Kaggle baseline; MVP greedy_expand tied goal_planner 14/32 — chooser layer strategically neutral)
 
 # Live ladder — read from `kaggle competitions submissions orbit-wars`,
 # NOT from this file. Submission IDs are stable; scores are not.
@@ -95,6 +95,20 @@ saturation_count: 2           # 5/19 AM: chooser/scorer axis saturated. 5/19 PM:
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
+  - 2026-05-19 PM2 — ml-competition-strategy-PFhzM (Phase B + goal_planner + physics-gate + greedy_expand MVP).
+    Continued from 5/19 PM v4 pivot. Built (a) Phase B cluster-veto/hybrid/baseline_veto;
+    (b) goal_planner Phase 1-4 (predicate + portfolio + sequencer + defense + agent,
+    17/17 unit tests); (c) physics-validation gate (lib.goal_planner.validate +
+    late-with-fallback wire-up to sequencer/defense) after discovering our experimental
+    line never imported lib.trajectory.predict_fleet_fate (~6.8% sun/OOB waste per
+    replay-probe). (d) greedy_expand MVP (60 LOC, no chooser layer) at PI's direction.
+    Eight A/Bs: six 0/32 vs Kaggle baseline (Phase B veto, hybrid, goal_planner ±validate,
+    greedy_expand, …); baseline_veto 12/32 = 37.5% (only signal, wraps live submission);
+    greedy_expand vs goal_planner 14/32 — chooser stack strategically neutral. PI
+    ratified promotion of Rule 41 (verify primitives before chooser), Rule 42 (physics-
+    validation gate is mandatory), and an amendment to Rule 19 (scenarios + replay-
+    oracle). NO Kaggle submission. See audit/2026-05-19-postmortem-PFhzM-physics-gate-
+    and-mvp.md.
   - 2026-05-19 PM — ml-competition-strategy-PFhzM (trajectory_roi saturation + v4 pivot).
     Shipped 5 trajectory_roi iterations (v1 → v1.1 → v2 → v3 → v3.1):
     all 0-1/32 A/B vs baseline. v1 + v1.1 missed opp counters. v2

@@ -19,6 +19,116 @@
 
 ## Pending — promotion needed
 
+### [ ] [CODE-COMP-DISCOVERED] Rule 41 — verify primitives before iterating chooser
+
+`tag: 5-version-iteration-without-verification` (2026-05-19 PM),
+`tag: chooser-architecture-strategically-neutral` (2026-05-19 PM2),
+`tag: building-from-scratch-dominates-0-of-32` (2026-05-19 PM2).
+Three same-class incidents in two consecutive sessions on the same
+branch. Prior session shipped 5 trajectory_roi iterations (v1→v3.1)
+on physically-broken primitives — all 0-1/32 vs baseline. Current
+session shipped 5 MORE architectures (Phase B veto/hybrid/baseline_veto,
+goal_planner with/without validation, greedy_expand MVP) — same
+outcome. MVP test confirmed: 60 LOC greedy ≈ 500 LOC architected
+planner (14/32, Wilson [0.28, 0.61]). The chooser layer doesn't
+matter when the primitives haven't been validated against the live
+env behaviour.
+
+**Where to insert:** `CLAUDE.md` ## Operating rules — concise — add
+Rule 41 after Rule 40, with a `[CODE-COMP-DISCOVERED]` lineage note.
+
+**What to add:**
+```
+41. **Verify primitives before iterating choosers.** Before shipping
+    v_(n+1) on top of primitives p_1..p_k, prove EACH p_i is correct
+    against env behaviour (not just self-consistent on constructed
+    scenarios). For code-comps: every closed-form output that becomes
+    a launch must round-trip through the env's ground-truth physics
+    (e.g. `lib.trajectory.predict_fleet_fate`) before being depended
+    on by a higher layer. If primitive verification fails, fix the
+    primitive — do not patch the chooser around the gap. Origin: 5/19
+    PM + PM2 sessions on `claude/ml-competition-strategy-PFhzM`,
+    10 total iterations across 2 sessions, all 0-1/32 vs baseline
+    because primitives were geometrically blind to sun / OOB / planet-
+    blocking. Builds on Rule 40 (modeling-correctness over
+    restriction-tuning) by adding a precondition: WHEN modeling-
+    correctness is in question, verify the primitive first.
+```
+
+**Why:** Two sessions of 5-iteration sprees, 0-1/32 outcomes, $100s of
+agent-time wasted on chooser polish that couldn't compensate for
+broken physics. Same pattern is structurally likely on any future
+code-comp where the env has physics constraints (collisions,
+boundaries, conservation laws).
+
+### [ ] [CODE-COMP-DISCOVERED] Physics-validation gate is mandatory
+
+`tag: physics-primitives-not-used-by-our-line` (2026-05-19 PM2).
+Our entire experimental agent line ignored `lib.trajectory.predict_fleet_fate`
+for the whole session despite baseline.py using it as a drop-filter
+in `lib/mechanism.py:593` (`sun_avoid`), `:686`
+(`path_clears_other_planets`), `:775` (`oob_guard`). Cost: 4 A/Bs
+burned on agents with ~6.8% physics-wasted launches (1.0% sun, 5.8%
+OOB per replay-probe across 2 episodes). Discovered only via PI's
+"do we use it?" question.
+
+**Where to insert:** `CLAUDE.md` ## Operating rules — concise — add
+Rule 42 (or fold into Rule 41 if compactness preferred).
+
+**What to add:**
+```
+42. **Physics-validation gate.** Every emit produced by an
+    experimental agent must round-trip through the env's ground-
+    truth physics primitive (`lib.trajectory.predict_fleet_fate` for
+    Orbit Wars) before reaching the env. Pattern: late-with-fallback
+    (collect ranked candidates, validate cheapest-first, accept first
+    that passes; cap fallback iterations). Mirrors
+    `lib/mechanism.py:593,686,775`. Skip the gate → you'll ship sun-
+    dying launches in real games while your unit tests stay green.
+    Origin: 2026-05-19 PM2 audit (`audit/2026-05-19-postmortem-
+    PFhzM-physics-gate-and-mvp.md`).
+```
+
+**Why:** Cost evidence is direct (4 A/Bs × ~10 min = ~40 min of
+compute) plus undetectable strategic distortion (we A/B'd choosers
+against an opponent that was making physically valid moves while we
+weren't). Generalises: any code-comp with environmental physics
+needs the equivalent.
+
+### [ ] [CODE-COMP-DISCOVERED] Scenarios + replay-position oracle
+
+`tag: synthetic-scenarios-miss-constructor-blind-spots` (2026-05-19 PM2).
+All 17 goal_planner unit tests passed on constructed geometries;
+agent shipped physically broken (launches through the sun). The
+prior session's pivot already declared "scenarios are the gate"
+(`knowledge-base/thoughts/2026-05-19-roi-pivot-scenario-gated-clean-
+architecture.md`), but constructed scenarios only catch bugs the
+constructor anticipated. Same blindness pattern in
+`tests/test_cluster_solver.py:35-77` — all clear-line geometry, no
+sun-blocked cases.
+
+**Where to insert:** Amend the principle in
+`knowledge-base/thoughts/2026-05-19-roi-pivot-scenario-gated-clean-
+architecture.md` AND add to `CLAUDE.md` Rule 19 (experimentation
+harness).
+
+**What to add (CLAUDE.md Rule 19 addendum):**
+```
+   **Scenario gate must be paired with a replay-position oracle.**
+   Synthetic scenarios alone catch only the bugs the constructor
+   anticipated. For every new primitive, also run on N >= 10 real
+   replay positions (`audit/live-episodes/*.json`) and validate the
+   output against the env's ground-truth behaviour (e.g.
+   `predict_fleet_fate` for launches). Bugs that only manifest in
+   real-board geometry slip past synthetic gates routinely.
+   See `scripts/probe_emits_via_fate.py` for the diagnostic pattern.
+```
+
+**Why:** Cost evidence — 17/17 tests green while agent was completely
+broken vs Kaggle baseline (0/32). The principle "scenarios are the
+gate" was already promoted last session; the amendment specifies the
+NECESSARY companion check.
+
 ### [ ] [CROSS-CUTTING] Stop-hook should not force commit-before-verify
 
 `tag: stop-hook-pressure-commits-speculative-WIP` (2026-05-16,
