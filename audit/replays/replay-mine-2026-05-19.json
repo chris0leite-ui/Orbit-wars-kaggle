@@ -1,0 +1,521 @@
+{
+  "date": "2026-05-19",
+  "submission_ids": [
+    "52766596"
+  ],
+  "submissions": [
+    {
+      "submission_id": "52766596",
+      "team_name": "ChrisLeiteScha",
+      "n_episodes": 41,
+      "n_fleets": 4755,
+      "n_ships_launched": 241160,
+      "raw_outcomes": {
+        "captured": 2010,
+        "bounced_enemy": 666,
+        "bounced_neutral": 37,
+        "reinforced_self": 1907,
+        "arrived_but_lost": 47,
+        "alive_at_end": 41,
+        "vanished_in_space": 9,
+        "oob": 26,
+        "comet_collision": 8,
+        "sun": 4
+      },
+      "by_bucket": {
+        "win": 2010,
+        "waste_attack": 750,
+        "defense": 1907,
+        "inflight": 41,
+        "waste_trajectory": 39,
+        "waste_comet": 8
+      },
+      "ships_by_bucket": {
+        "win": 123017,
+        "waste_attack": 29090,
+        "defense": 80093,
+        "inflight": 2527,
+        "waste_trajectory": 1549,
+        "waste_comet": 4884
+      },
+      "pct_by_bucket": {
+        "win": 42.3,
+        "defense": 40.1,
+        "waste_attack": 15.8,
+        "waste_comet": 0.2,
+        "waste_trajectory": 0.8,
+        "inflight": 0.9,
+        "unknown": 0.0
+      },
+      "pct_ships_by_bucket": {
+        "win": 51.0,
+        "defense": 33.2,
+        "waste_attack": 12.1,
+        "waste_comet": 2.0,
+        "waste_trajectory": 0.6,
+        "inflight": 1.0,
+        "unknown": 0.0
+      },
+      "per_episode": [
+        {
+          "eid": "episode-76940015",
+          "n_fleets": 322,
+          "by_bucket": {
+            "win": 160,
+            "waste_attack": 48,
+            "defense": 113,
+            "inflight": 1
+          }
+        },
+        {
+          "eid": "episode-76940407",
+          "n_fleets": 111,
+          "by_bucket": {
+            "win": 49,
+            "defense": 47,
+            "waste_attack": 14,
+            "waste_trajectory": 1
+          }
+        },
+        {
+          "eid": "episode-76940666",
+          "n_fleets": 125,
+          "by_bucket": {
+            "win": 60,
+            "defense": 60,
+            "waste_trajectory": 1,
+            "waste_attack": 4
+          }
+        },
+        {
+          "eid": "episode-76940919",
+          "n_fleets": 65,
+          "by_bucket": {
+            "win": 30,
+            "waste_attack": 5,
+            "defense": 29,
+            "waste_trajectory": 1
+          }
+        },
+        {
+          "eid": "episode-76941081",
+          "n_fleets": 128,
+          "by_bucket": {
+            "win": 32,
+            "defense": 45,
+            "waste_attack": 49,
+            "waste_trajectory": 2
+          }
+        },
+        {
+          "eid": "episode-76941276",
+          "n_fleets": 28,
+          "by_bucket": {
+            "win": 11,
+            "waste_attack": 14,
+            "defense": 2,
+            "waste_trajectory": 1
+          }
+        },
+        {
+          "eid": "episode-76941524",
+          "n_fleets": 44,
+          "by_bucket": {
+            "win": 37,
+            "defense": 7
+          }
+        },
+        {
+          "eid": "episode-76941892",
+          "n_fleets": 100,
+          "by_bucket": {
+            "win": 37,
+            "waste_attack": 15,
+            "defense": 44,
+            "waste_trajectory": 3,
+            "waste_comet": 1
+          }
+        },
+        {
+          "eid": "episode-76942253",
+          "n_fleets": 94,
+          "by_bucket": {
+            "win": 32,
+            "defense": 42,
+            "waste_attack": 19,
+            "inflight": 1
+          }
+        },
+        {
+          "eid": "episode-76942618",
+          "n_fleets": 86,
+          "by_bucket": {
+            "win": 41,
+            "defense": 37,
+            "waste_attack": 6,
+            "waste_trajectory": 2
+          }
+        },
+        {
+          "eid": "episode-76942984",
+          "n_fleets": 128,
+          "by_bucket": {
+            "win": 36,
+            "defense": 70,
+            "waste_attack": 17,
+            "waste_comet": 3,
+            "inflight": 2
+          }
+        },
+        {
+          "eid": "episode-76943340",
+          "n_fleets": 32,
+          "by_bucket": {
+            "win": 16,
+            "waste_attack": 10,
+            "defense": 5,
+            "waste_trajectory": 1
+          }
+        },
+        {
+          "eid": "episode-76943599",
+          "n_fleets": 124,
+          "by_bucket": {
+            "win": 57,
+            "waste_attack": 7,
+            "defense": 60
+          }
+        },
+        {
+          "eid": "episode-76943855",
+          "n_fleets": 147,
+          "by_bucket": {
+            "win": 54,
+            "defense": 76,
+            "waste_attack": 16,
+            "inflight": 1
+          }
+        },
+        {
+          "eid": "episode-76944218",
+          "n_fleets": 207,
+          "by_bucket": {
+            "win": 91,
+            "waste_attack": 21,
+            "defense": 92,
+            "waste_trajectory": 1,
+            "waste_comet": 2
+          }
+        },
+        {
+          "eid": "episode-76944520",
+          "n_fleets": 139,
+          "by_bucket": {
+            "win": 71,
+            "waste_attack": 23,
+            "defense": 44,
+            "waste_trajectory": 1
+          }
+        },
+        {
+          "eid": "episode-76944780",
+          "n_fleets": 362,
+          "by_bucket": {
+            "win": 144,
+            "waste_attack": 53,
+            "defense": 158,
+            "waste_trajectory": 7
+          }
+        },
+        {
+          "eid": "episode-76945037",
+          "n_fleets": 101,
+          "by_bucket": {
+            "win": 52,
+            "defense": 33,
+            "waste_attack": 8,
+            "inflight": 8
+          }
+        },
+        {
+          "eid": "episode-76945291",
+          "n_fleets": 22,
+          "by_bucket": {
+            "win": 9,
+            "waste_attack": 7,
+            "defense": 5,
+            "waste_trajectory": 1
+          }
+        },
+        {
+          "eid": "episode-76945551",
+          "n_fleets": 149,
+          "by_bucket": {
+            "win": 44,
+            "waste_attack": 40,
+            "defense": 63,
+            "waste_trajectory": 2
+          }
+        },
+        {
+          "eid": "episode-76945912",
+          "n_fleets": 41,
+          "by_bucket": {
+            "win": 23,
+            "waste_attack": 9,
+            "defense": 8,
+            "waste_trajectory": 1
+          }
+        },
+        {
+          "eid": "episode-76946170",
+          "n_fleets": 36,
+          "by_bucket": {
+            "win": 20,
+            "waste_attack": 11,
+            "defense": 5
+          }
+        },
+        {
+          "eid": "episode-76946422",
+          "n_fleets": 49,
+          "by_bucket": {
+            "waste_attack": 13,
+            "win": 22,
+            "defense": 12,
+            "waste_trajectory": 2
+          }
+        },
+        {
+          "eid": "episode-76946680",
+          "n_fleets": 52,
+          "by_bucket": {
+            "win": 30,
+            "defense": 20,
+            "waste_attack": 1,
+            "inflight": 1
+          }
+        },
+        {
+          "eid": "episode-76947043",
+          "n_fleets": 74,
+          "by_bucket": {
+            "win": 36,
+            "defense": 19,
+            "waste_attack": 17,
+            "waste_trajectory": 2
+          }
+        },
+        {
+          "eid": "episode-76947304",
+          "n_fleets": 87,
+          "by_bucket": {
+            "win": 44,
+            "defense": 29,
+            "waste_attack": 9,
+            "waste_trajectory": 3,
+            "inflight": 2
+          }
+        },
+        {
+          "eid": "episode-76947663",
+          "n_fleets": 79,
+          "by_bucket": {
+            "win": 29,
+            "waste_attack": 18,
+            "defense": 31,
+            "waste_trajectory": 1
+          }
+        },
+        {
+          "eid": "episode-76948036",
+          "n_fleets": 13,
+          "by_bucket": {
+            "waste_attack": 5,
+            "win": 6,
+            "defense": 1,
+            "waste_trajectory": 1
+          }
+        },
+        {
+          "eid": "episode-76948304",
+          "n_fleets": 127,
+          "by_bucket": {
+            "win": 41,
+            "defense": 51,
+            "waste_attack": 34,
+            "waste_trajectory": 1
+          }
+        },
+        {
+          "eid": "episode-76948662",
+          "n_fleets": 107,
+          "by_bucket": {
+            "win": 56,
+            "defense": 39,
+            "waste_attack": 3,
+            "inflight": 9
+          }
+        },
+        {
+          "eid": "episode-76949025",
+          "n_fleets": 174,
+          "by_bucket": {
+            "win": 93,
+            "defense": 63,
+            "waste_attack": 18
+          }
+        },
+        {
+          "eid": "episode-76949284",
+          "n_fleets": 90,
+          "by_bucket": {
+            "win": 28,
+            "waste_attack": 28,
+            "defense": 34
+          }
+        },
+        {
+          "eid": "episode-76949644",
+          "n_fleets": 115,
+          "by_bucket": {
+            "win": 63,
+            "defense": 44,
+            "waste_attack": 6,
+            "waste_comet": 2
+          }
+        },
+        {
+          "eid": "episode-76950001",
+          "n_fleets": 137,
+          "by_bucket": {
+            "win": 46,
+            "waste_attack": 19,
+            "defense": 69,
+            "waste_trajectory": 1,
+            "inflight": 2
+          }
+        },
+        {
+          "eid": "episode-76950357",
+          "n_fleets": 143,
+          "by_bucket": {
+            "win": 41,
+            "defense": 68,
+            "waste_attack": 34
+          }
+        },
+        {
+          "eid": "episode-76950382",
+          "n_fleets": 73,
+          "by_bucket": {
+            "win": 26,
+            "waste_attack": 21,
+            "defense": 26
+          }
+        },
+        {
+          "eid": "episode-76950731",
+          "n_fleets": 294,
+          "by_bucket": {
+            "win": 106,
+            "defense": 132,
+            "waste_attack": 49,
+            "waste_trajectory": 1,
+            "inflight": 6
+          }
+        },
+        {
+          "eid": "episode-76951062",
+          "n_fleets": 31,
+          "by_bucket": {
+            "win": 15,
+            "waste_attack": 10,
+            "defense": 6
+          }
+        },
+        {
+          "eid": "episode-76951084",
+          "n_fleets": 261,
+          "by_bucket": {
+            "win": 95,
+            "defense": 116,
+            "waste_attack": 41,
+            "waste_trajectory": 1,
+            "inflight": 8
+          }
+        },
+        {
+          "eid": "episode-76951352",
+          "n_fleets": 85,
+          "by_bucket": {
+            "win": 49,
+            "waste_attack": 8,
+            "defense": 28
+          }
+        },
+        {
+          "eid": "episode-76951704",
+          "n_fleets": 173,
+          "by_bucket": {
+            "win": 78,
+            "defense": 74,
+            "waste_attack": 20,
+            "waste_trajectory": 1
+          }
+        }
+      ]
+    }
+  ],
+  "aggregate": {
+    "n_episodes": 41,
+    "n_fleets": 4755,
+    "n_ships_launched": 241160,
+    "raw_outcomes": {
+      "captured": 2010,
+      "bounced_enemy": 666,
+      "bounced_neutral": 37,
+      "reinforced_self": 1907,
+      "arrived_but_lost": 47,
+      "alive_at_end": 41,
+      "vanished_in_space": 9,
+      "oob": 26,
+      "comet_collision": 8,
+      "sun": 4
+    },
+    "by_bucket": {
+      "win": 2010,
+      "waste_attack": 750,
+      "defense": 1907,
+      "inflight": 41,
+      "waste_trajectory": 39,
+      "waste_comet": 8
+    },
+    "ships_by_bucket": {
+      "win": 123017,
+      "waste_attack": 29090,
+      "defense": 80093,
+      "inflight": 2527,
+      "waste_trajectory": 1549,
+      "waste_comet": 4884
+    },
+    "pct_by_bucket": {
+      "win": 42.3,
+      "defense": 40.1,
+      "waste_attack": 15.8,
+      "waste_comet": 0.2,
+      "waste_trajectory": 0.8,
+      "inflight": 0.9,
+      "unknown": 0.0
+    },
+    "pct_ships_by_bucket": {
+      "win": 51.0,
+      "defense": 33.2,
+      "waste_attack": 12.1,
+      "waste_comet": 2.0,
+      "waste_trajectory": 0.6,
+      "inflight": 1.0,
+      "unknown": 0.0
+    }
+  }
+}
