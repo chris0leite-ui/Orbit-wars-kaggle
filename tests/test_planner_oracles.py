@@ -194,32 +194,34 @@ def test_oracle_coordinated_capture_two_sources(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="Multi-step planning required: chooser must emit B→A reinforce "
-    "in anticipation of opp's counter to A's attack. Closed-form ROI "
-    "doesn't model the conditional. Deferred to a multi-step or joint-"
-    "planning phase."
-)
 def test_oracle_solo_capture_but_loses_source(monkeypatch):
     """Single A → opp launch can win combat at opp (we have more
-    ships) BUT leaves A with 0 → opp's launch from opp planet
-    captures A before reinforcement.
+    ships) BUT leaves A with low residue → opp's launch from opp
+    planet captures A before reinforcement.
 
     With ONE neighbor B that can reinforce A within the
-    opp-counter-attack window, the coordinated plan wins.
+    opp-counter-attack window, the coordinated plan wins: A captures,
+    B's reinforce arrives before opp's counter, A holds. Opp may pivot
+    and recapture B instead — but A is more valuable (prod=2 vs B's
+    prod=1), so trading B for A + opp is a net positive.
 
     The planner should:
-      (a) NOT do the bare solo from A (it loses), AND
-      (b) emit a plan that captures opp without losing A
+      (a) emit a launch toward opp, AND
+      (b) emit a reinforcement leg from B to A (defensive coalition).
     """
     # Place off the y=50 axis to avoid sun-line. B is offset from
     # the A→opp axis so A's straight-line trajectory to opp doesn't
     # collide with B (the trajectory filter would otherwise reject
     # every solo from A; the test's intent — B nearby for reinforce
     # — is preserved by the small y offset).
+    #
+    # Asymmetric productions (A=2, B=1, opp=1): saving A is worth
+    # losing B in margin terms. Without the asymmetry, opp can pivot
+    # to B post-reinforcement and the net loss equals not reinforcing
+    # at all — the closed-form ROI correctly says "don't bother."
     monkeypatch.setenv("BASELINE_CHOOSER", "roi")
-    a = _planet(0, 0, 30.0, 25.0, ships=110, production=1)
-    b = _planet(1, 0, 33.0, 22.0, ships=80, production=1)
+    a = _planet(0, 0, 30.0, 25.0, ships=110, production=2)
+    b = _planet(1, 0, 33.0, 22.0, ships=100, production=1)
     opp = _planet(2, 1, 70.0, 25.0, ships=90, production=1)
     obs = _obs([a, b, opp])
     moves = _emit(obs)

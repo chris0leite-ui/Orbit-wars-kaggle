@@ -77,6 +77,16 @@ ENDGAME_BONUS_ENABLED: bool = (
     os.environ.get("ROI_ENDGAME_BONUS", "on").strip().lower() != "off"
 )
 
+# Defensive-coalition post-pass: after solos and attack-coalitions
+# emit, for each exposed source (vuln_loss > 0) try adding an ally
+# reinforce leg. If the reinforcement neutralises opp's counter AND
+# the joint ROI (attack + reinforce) beats the bare attack, emit the
+# reinforce as an additional move. Disable with
+# ROI_DEFENSIVE_COALITION=off.
+DEFENSIVE_COALITION_ENABLED: bool = (
+    os.environ.get("ROI_DEFENSIVE_COALITION", "on").strip().lower() != "off"
+)
+
 
 def _endgame_finish_bonus(
     target,
@@ -116,41 +126,31 @@ def _endgame_finish_bonus(
     return our_total_prod * pv_full
 
 
-def _source_vulnerability_loss(
+def _cheapest_opp_counter(
     src,
     residue: int,
     world,
-    model,
     me: int,
-    step: int,
     max_horizon: int,
-    gamma: float = 0.99,
-) -> float:
-    """Expected production loss if the cheapest opp planet recaptures
-    `src` after it's left with `residue` ships.
+    extra_defense_ships: int = 0,
+    extra_defense_eta: int | None = None,
+):
+    """Find the worst-case opp counter-attack against `src` left with
+    `residue` ships. Returns `(opp, opp_eta, opp_force, our_defense)`
+    for the opp planet whose recapture would cost us the most, or
+    `None` if no opp can profitably counter.
 
-    Symmetric to _target_holdable_after_capture (proposer.py:407) but
-    applied to the SOURCE: after our launch drains src, can any nearby
-    opp planet profitably counter-attack? If yes, this returns the
-    PV-discounted production stream src would have produced for us over
-    the remaining game. Returns 0 if the source is safe (residue
-    ≥ safe_garrison or no plausible opp threat).
-
-    No fast_sim. Considers each opp planet's straight-line counter:
-    opp arrives with opp.ships + opp.production · opp_eta; we defend
-    with residue + src.production · opp_eta. If opp_force > defense + 1
-    AND opp_eta ≤ max_horizon, the recapture is feasible.
+    `extra_defense_ships` + `extra_defense_eta` model a hypothetical
+    reinforcement leg arriving at `src` at tick `extra_defense_eta`.
+    If opp's counter ETA is later than the reinforcement, those ships
+    add to `src`'s defense at counter-arrival time. Used by the
+    defensive-coalition pass to test "does B's reinforcement save A?"
     """
-    if not OPP_MODIFIER_ENABLED:
-        return 0.0
     if int(src.production) <= 0:
-        return 0.0
-    # No early "residue ≥ safe_garrison" out — that threshold ignores
-    # the magnitude of nearby opp threats. The per-opp scan below
-    # computes opp_force vs our_defense exactly, so it's both correct
-    # and cheap (O(opps)).
+        return None
 
-    worst = 0.0
+    worst = None
+    worst_loss_proxy = -1  # use opp_force-our_defense gap as the tiebreaker
     for opp in world.planets_by_id.values():
         if int(opp.owner) == me or int(opp.owner) == -1:
             continue
@@ -169,18 +169,65 @@ def _source_vulnerability_loss(
             continue
         opp_force = int(opp.ships) + int(opp.production) * opp_eta
         our_defense = max(0, int(residue)) + int(src.production) * opp_eta
+        if (extra_defense_ships > 0
+                and extra_defense_eta is not None
+                and int(extra_defense_eta) <= opp_eta):
+            our_defense += int(extra_defense_ships)
         if opp_force <= our_defense + 1:
             continue  # we hold
-        # Recapture is feasible. Cost to us = margin loss when src
-        # flips from ours to opp's: -1 (we lose its prod) + -1 (opp
-        # gains its prod) → mult=2 against margin. PV-discount the
-        # production stream from opp_eta to game-end.
-        loss_pv = pv_horizon(int(step), opp_eta, gamma=gamma,
-                             t_total=T_TOTAL_DEFAULT)
-        loss = 2.0 * float(src.production) * loss_pv
-        if loss > worst:
-            worst = loss
+        gap = opp_force - our_defense
+        if gap > worst_loss_proxy:
+            worst_loss_proxy = gap
+            worst = (opp, opp_eta, opp_force, our_defense)
     return worst
+
+
+def _source_vulnerability_loss(
+    src,
+    residue: int,
+    world,
+    model,
+    me: int,
+    step: int,
+    max_horizon: int,
+    gamma: float = 0.99,
+    extra_defense_ships: int = 0,
+    extra_defense_eta: int | None = None,
+) -> float:
+    """Expected production loss if the cheapest opp planet recaptures
+    `src` after it's left with `residue` ships.
+
+    Symmetric to _target_holdable_after_capture (proposer.py:407) but
+    applied to the SOURCE: after our launch drains src, can any nearby
+    opp planet profitably counter-attack? If yes, this returns the
+    PV-discounted production stream src would have produced for us over
+    the remaining game. Returns 0 if the source is safe (residue
+    ≥ safe_garrison or no plausible opp threat).
+
+    No fast_sim. Considers each opp planet's straight-line counter:
+    opp arrives with opp.ships + opp.production · opp_eta; we defend
+    with residue + src.production · opp_eta. If opp_force > defense + 1
+    AND opp_eta ≤ max_horizon, the recapture is feasible.
+
+    `extra_defense_ships` + `extra_defense_eta` simulate a planned ally
+    reinforcement of `src`: if the reinforcement arrives ≤ opp's
+    counter ETA, those ships add to defense. Used by the defensive-
+    coalition pass to test whether a reinforcement neutralises the
+    vulnerability.
+    """
+    if not OPP_MODIFIER_ENABLED:
+        return 0.0
+    threat = _cheapest_opp_counter(
+        src, int(residue), world, me, int(max_horizon),
+        extra_defense_ships=int(extra_defense_ships),
+        extra_defense_eta=extra_defense_eta,
+    )
+    if threat is None:
+        return 0.0
+    _opp, opp_eta, _opp_force, _our_defense = threat
+    loss_pv = pv_horizon(int(step), int(opp_eta), gamma=gamma,
+                         t_total=T_TOTAL_DEFAULT)
+    return 2.0 * float(src.production) * loss_pv
 
 
 def solo_roi(
@@ -347,6 +394,95 @@ def coalition_roi(target, legs, world, model, me: int, step: int,
     return gross + endgame_bonus - ship_cost - vuln_loss, capture_step
 
 
+def _best_reinforcement_for(
+    src,
+    ships_emitted: int,
+    world,
+    model,
+    me: int,
+    step: int,
+    max_horizon: int,
+    gamma: float,
+    used_allies: set,
+):
+    """Find the best ally that, by reinforcing `src` post-launch, neutralises
+    opp's counter-attack profitably.
+
+    Returns `(ally, ally_ships, eta_ally, angle_ally, joint_delta)` for the
+    winning reinforcement, or `None` if no ally helps.
+
+    `joint_delta` is the ROI improvement vs. emitting just the attack leg:
+    `joint_delta = base_vuln_loss − ally_ship_cost − ally_vuln_loss`. Caller
+    accepts when `joint_delta > 0`.
+    """
+    from agents.baseline.proposer import aim_and_eta, _source_survives_launch
+    from lib.trajectory import predict_fleet_fate
+
+    residue = int(src.ships) - int(ships_emitted)
+    base_vuln = _source_vulnerability_loss(
+        src, residue, world, model, me, step, int(max_horizon), gamma=gamma,
+    )
+    if base_vuln <= 0.0:
+        return None  # source already safe
+
+    # Find the threatening opp counter so we can gate reinforce ETA.
+    threat = _cheapest_opp_counter(
+        src, residue, world, me, int(max_horizon),
+    )
+    if threat is None:
+        return None
+    _opp, opp_eta, _opp_force, _our_defense = threat
+
+    best = None
+    best_joint_delta = 0.0
+    for ally in world.planets_by_id.values():
+        if int(ally.owner) != me:
+            continue
+        if int(ally.id) == int(src.id):
+            continue
+        if int(ally.id) in used_allies:
+            continue
+        if int(ally.ships) < MIN_LEG_SHIPS + MIN_COALITION_RESIDUE:
+            continue
+        ally_ships = int(ally.ships) - MIN_COALITION_RESIDUE
+        if ally_ships < MIN_LEG_SHIPS:
+            continue
+        angle_ally, eta_ally = aim_and_eta(
+            ally, src, ally_ships, world.omega, wait_N=0,
+        )
+        if int(eta_ally) > int(opp_eta):
+            continue  # reinforcement arrives too late
+        if not _source_survives_launch(ally, ally_ships, 0, world, model, me):
+            continue
+        fate = predict_fleet_fate(
+            ally, src, float(angle_ally), int(ally_ships), world,
+        )
+        if fate.outcome != "target":
+            continue
+
+        # Recompute vuln with the reinforcement folded in. If it
+        # neutralises the threat, new_vuln drops to 0; if it merely
+        # reduces (e.g. another opp planet still threatens), new_vuln
+        # is the residual.
+        new_vuln = _source_vulnerability_loss(
+            src, residue, world, model, me, step, int(max_horizon),
+            gamma=gamma,
+            extra_defense_ships=ally_ships,
+            extra_defense_eta=int(eta_ally),
+        )
+        ally_residue = int(ally.ships) - ally_ships
+        ally_vuln = _source_vulnerability_loss(
+            ally, ally_residue, world, model, me, step, int(max_horizon),
+            gamma=gamma,
+        )
+        joint_delta = base_vuln - new_vuln - SHIP_COST_COEF * ally_ships - ally_vuln
+        if joint_delta > best_joint_delta:
+            best_joint_delta = joint_delta
+            best = (ally, int(ally_ships), int(eta_ally),
+                    float(angle_ally), float(joint_delta))
+    return best
+
+
 def _best_coalition_for_target(target, my_planets, world, model, me: int,
                                step: int, max_horizon: int, gamma: float):
     """Enumerate 2..COALITION_MAX_SOURCES leg subsets; return the
@@ -502,4 +638,26 @@ def choose_roi(
         used_tgts.add(tid)
         if wait_N == 0:
             moves.append([sid, float(angle), int(ships)])
+
+    # --- Pass 4: defensive-coalition post-pass ---
+    # For each emitted move whose source ends up vulnerable, see if an
+    # idle ally can reinforce before opp's counter arrives. The reinforce
+    # is emitted as an additional move.
+    if DEFENSIVE_COALITION_ENABLED and moves:
+        used_allies: set[int] = set(used_srcs)  # already-emitting srcs can't reinforce
+        # Iterate a snapshot so we don't reinforce-reinforce.
+        for src_id, _angle, ships in [tuple(m) for m in moves]:
+            src = world.planets_by_id.get(int(src_id))
+            if src is None:
+                continue
+            reinforce = _best_reinforcement_for(
+                src, int(ships), world, model, me, step,
+                int(max_horizon), gamma, used_allies,
+            )
+            if reinforce is None:
+                continue
+            ally, ally_ships, _eta_ally, angle_ally, _delta = reinforce
+            used_allies.add(int(ally.id))
+            moves.append([int(ally.id), float(angle_ally), int(ally_ships)])
+
     return moves
