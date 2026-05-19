@@ -1,0 +1,57 @@
+{
+  "utc": "20260519T095101Z",
+  "variants": {
+    "favor": {
+      "VALUE_HEAD_CHOICE": 0.0
+    },
+    "projected_sum": {
+      "VALUE_HEAD_CHOICE": 3.0
+    }
+  },
+  "seeds": [
+    42
+  ],
+  "include_self_play": false,
+  "summary": {
+    "favor": {
+      "wins": 1,
+      "losses": 1,
+      "draws": 0,
+      "n": 2,
+      "winrate": 0.5,
+      "wilson_lo": 0.09452865480086614,
+      "wilson_hi": 0.9054713451991339
+    },
+    "projected_sum": {
+      "wins": 1,
+      "losses": 1,
+      "draws": 0,
+      "n": 2,
+      "winrate": 0.5,
+      "wilson_lo": 0.09452865480086614,
+      "wilson_hi": 0.9054713451991339
+    }
+  },
+  "tournament_json": "/home/user/Orbit-wars-kaggle/audit/tournaments/2026-05-19T09:51:01Z.json",
+  "elapsed_s": 107.3,
+  "candidate": "projected_sum",
+  "per_anchor": {
+    "favor": {
+      "wins": 1,
+      "losses": 1,
+      "draws": 0,
+      "n": 2,
+      "winrate": 0.5,
+      "wilson_lo": 0.09452865480086614,
+      "wilson_hi": 0.9054713451991339
+    }
+  },
+  "gate": {
+    "threshold": 0.55,
+    "pass": false,
+    "passing_anchors": [],
+    "failing_anchors": [
+      "favor"
+    ]
+  }
+}

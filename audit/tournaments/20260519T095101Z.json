@@ -1,0 +1,73 @@
+{
+  "timestamp_utc": "2026-05-19T09:51:01Z",
+  "agents": {
+    "favor": "/home/user/Orbit-wars-kaggle/submissions/_ab/favor.py",
+    "projected_sum": "/home/user/Orbit-wars-kaggle/submissions/_ab/projected_sum.py"
+  },
+  "seeds": [
+    42
+  ],
+  "include_self_play": false,
+  "matrix": {
+    "favor": {
+      "projected_sum": {
+        "p0_name": "favor",
+        "p1_name": "projected_sum",
+        "n": 1,
+        "p0_wins": 0,
+        "p1_wins": 1,
+        "draws": 0,
+        "mean_ship_delta_p0_minus_p1": -2320.0,
+        "p0_p95_turn_ms": 200.04107350041522,
+        "p1_p95_turn_ms": 192.24105649982448,
+        "wilson_lo": 0.0,
+        "wilson_hi": 0.7934567085261071,
+        "games": [
+          {
+            "seed": 42,
+            "rewards": [
+              -1,
+              1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 250,
+            "final_ship_delta_p0_minus_p1": -2320.0
+          }
+        ]
+      }
+    },
+    "projected_sum": {
+      "favor": {
+        "p0_name": "projected_sum",
+        "p1_name": "favor",
+        "n": 1,
+        "p0_wins": 0,
+        "p1_wins": 1,
+        "draws": 0,
+        "mean_ship_delta_p0_minus_p1": -2660.0,
+        "p0_p95_turn_ms": 204.0633310002704,
+        "p1_p95_turn_ms": 189.72735950001152,
+        "wilson_lo": 0.0,
+        "wilson_hi": 0.7934567085261071,
+        "games": [
+          {
+            "seed": 42,
+            "rewards": [
+              -1,
+              1
+            ],
+            "statuses": [
+              "DONE",
+              "DONE"
+            ],
+            "n_steps": 270,
+            "final_ship_delta_p0_minus_p1": -2660.0
+          }
+        ]
+      }
+    }
+  }
+}
