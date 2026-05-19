@@ -1,0 +1,80 @@
+{
+  "generated_utc": "20260519T194954Z",
+  "focals": [
+    "/tmp/baseline_comet_only.py",
+    "/tmp/baseline_no_reactor.py"
+  ],
+  "background": [
+    "v7_0_drop_one",
+    "v3.5.1",
+    "roi"
+  ],
+  "players": 4,
+  "seeds": [
+    42,
+    1,
+    7,
+    13,
+    31,
+    100,
+    17,
+    23,
+    53,
+    71,
+    91,
+    113,
+    137,
+    149,
+    167,
+    181,
+    199,
+    211,
+    233,
+    257,
+    269,
+    281,
+    293,
+    307,
+    311,
+    313,
+    317,
+    331,
+    337,
+    347,
+    349,
+    353
+  ],
+  "rotate_seats": true,
+  "results": [
+    {
+      "focal": "/tmp/baseline_comet_only.py",
+      "focal_spec": "/tmp/baseline_comet_only.py",
+      "background": [
+        "v7_0_drop_one",
+        "v3.5.1",
+        "roi"
+      ],
+      "n_games": 128,
+      "first_place_count": 89,
+      "first_place_rate": 0.6953125,
+      "wilson_lo_95": 0.6108473759049617,
+      "wilson_hi_95": 0.7683955944473397,
+      "p95_focal_turn_ms": 342.33773900004394
+    },
+    {
+      "focal": "/tmp/baseline_no_reactor.py",
+      "focal_spec": "/tmp/baseline_no_reactor.py",
+      "background": [
+        "v7_0_drop_one",
+        "v3.5.1",
+        "roi"
+      ],
+      "n_games": 128,
+      "first_place_count": 80,
+      "first_place_rate": 0.625,
+      "wilson_lo_95": 0.5386384433955553,
+      "wilson_hi_95": 0.7040770576299176,
+      "p95_focal_turn_ms": 367.95543814994295
+    }
+  ]
+}
