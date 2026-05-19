@@ -313,36 +313,20 @@ def _per_seat_in_flight_credit(
     return credits
 
 
-def projected_rank_diff(
+def _projected_totals(
     obs: Any,
-    my_id: int,
-    num_seats: int = 2,
+    num_seats: int,
     *,
     capture_weight: float = CAPTURE_REWARD_WEIGHT,
     waste_weight: float = WASTE_PENALTY_WEIGHT,
     projection_lambda: float = PROJECTION_LAMBDA,
     horizon: int = DEFAULT_HORIZON,
-) -> float:
-    """Production-compounding unified value head.
+) -> dict:
+    """Per-seat ProjectedTotal_i = ships_i(now) + in_flight_credit_i
+    + λ · Σ_p P_p · (T − step) for planets owned by seat i at the leaf.
 
-    V(s) = ProjectedTotal_us − max_{j != us} ProjectedTotal_j
-    where ProjectedTotal_i  = ships_i(now)
-                            + in_flight_credit_i
-                            + λ · Σ_p P_p · (T − step) for p owned by i at leaf.
-
-    `max` matches TrueSkill ordinal ranking — the next opponent above us
-    is what we're racing. In 4P, opponents fighting each other shrinks
-    `max` for free (high-risk shots that move us past the leader pay off
-    even when the bottom opp does well in absolute terms).
-
-    Linear time-remaining (no γ-discount) per the PV-off finding
-    (live A/B 81.2% on submission 52784853). T=500 is a hard horizon;
-    exponential decay double-counts.
-
-    Compounding emerges from `P_p × (T − step)`: a P=3 capture at step 100
-    is worth ≈ 60 ship-units (0.05 × 3 × 400); at step 400, ≈ 15. Early
-    captures are super-linear in elapsed-game-time; the chooser will
-    prefer launching to hoarding without a passivity penalty.
+    Shared between the `max` and `sum` aggregator value heads — only the
+    final aggregation differs. Returns `{seat: float}`.
     """
     if isinstance(obs, dict):
         planets = obs.get("planets", []) or []
@@ -374,12 +358,81 @@ def projected_rank_diff(
         horizon=horizon,
     )
 
-    totals = {
+    return {
         i: ships_per[i] + credits[i] + projection_lambda * proj_per[i]
         for i in range(num_seats)
     }
+
+
+def projected_rank_diff(
+    obs: Any,
+    my_id: int,
+    num_seats: int = 2,
+    *,
+    capture_weight: float = CAPTURE_REWARD_WEIGHT,
+    waste_weight: float = WASTE_PENALTY_WEIGHT,
+    projection_lambda: float = PROJECTION_LAMBDA,
+    horizon: int = DEFAULT_HORIZON,
+) -> float:
+    """Production-compounding unified value head with `max` aggregation.
+
+    V(s) = ProjectedTotal_us − max_{j != us} ProjectedTotal_j.
+
+    NOTE (2026-05-19): the `max` aggregator was falsified on a 4P FFA
+    panel — projected lost 8.6 pp to favor (64.1% vs 72.7%). The realised
+    4P game treats every opponent as a threat at every step;
+    only-the-leader-matters under-defends against opps 2 and 3. See
+    `audit/2026-05-19-projected-value-head-4p-ab.md`. The sum-aggregator
+    sibling `projected_rank_diff_sum` keeps the per-seat scalar and
+    matches favor's 4P aggregation.
+
+    Linear time-remaining (no γ-discount) per the PV-off finding
+    (live A/B 81.2% on submission 52784853). T=500 is a hard horizon;
+    exponential decay double-counts.
+    """
+    totals = _projected_totals(
+        obs, num_seats,
+        capture_weight=capture_weight, waste_weight=waste_weight,
+        projection_lambda=projection_lambda, horizon=horizon,
+    )
     my_total = totals[my_id]
     if num_seats <= 1:
         return my_total
     opp_total = max(v for k, v in totals.items() if k != my_id)
+    return my_total - opp_total
+
+
+def projected_rank_diff_sum(
+    obs: Any,
+    my_id: int,
+    num_seats: int = 2,
+    *,
+    capture_weight: float = CAPTURE_REWARD_WEIGHT,
+    waste_weight: float = WASTE_PENALTY_WEIGHT,
+    projection_lambda: float = PROJECTION_LAMBDA,
+    horizon: int = DEFAULT_HORIZON,
+) -> float:
+    """Per-seat ProjectedTotal with favor-compatible aggregation.
+
+    V(s) = ProjectedTotal_us − Agg_{j != us} ProjectedTotal_j
+    where Agg = max in 2P (single opp, identical to `projected_rank_diff`)
+    and Agg = sum in 4P (matches favor's pessimistic baseline).
+
+    Variant 2 of the production-compounding reframing — isolates "the
+    aggregator was wrong" (4P A/B 2026-05-19) from "the per-seat scalar
+    adds no value over favor." If this also ties favor in 4P, the
+    leaf-side axis is exhausted; pivot to chooser-side change.
+    """
+    totals = _projected_totals(
+        obs, num_seats,
+        capture_weight=capture_weight, waste_weight=waste_weight,
+        projection_lambda=projection_lambda, horizon=horizon,
+    )
+    my_total = totals[my_id]
+    if num_seats <= 1:
+        return my_total
+    if num_seats <= 2:
+        opp_total = max(v for k, v in totals.items() if k != my_id)
+    else:
+        opp_total = sum(v for k, v in totals.items() if k != my_id)
     return my_total - opp_total

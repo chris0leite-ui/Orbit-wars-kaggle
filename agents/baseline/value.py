@@ -102,17 +102,34 @@ def favor_projected(obs, me: int, num_seats: int = 2,
     return projected_rank_diff(obs, me, num_seats)
 
 
+def favor_projected_sum(obs, me: int, num_seats: int = 2,
+                        gamma: float = DEFAULT_GAMMA) -> float:
+    """Per-seat ProjectedTotal with favor-compatible aggregation.
+
+    Same per-seat ProjectedTotal as `favor_projected`, but aggregates
+    opponents the way `favor` does in 4P (sum over opps). 2P collapses
+    to identical behaviour as `favor_projected` (single opp). Variant 2
+    of the production-compounding reframing — isolates the aggregator
+    choice from the per-seat-projection signal value.
+
+    `gamma` is intentionally ignored — projection uses linear horizon.
+    """
+    from lib.value_heads import projected_rank_diff_sum
+    return projected_rank_diff_sum(obs, me, num_seats)
+
+
 def select_favor_fn():
     """Pick the leaf value function. Default = `favor` (the v15 baseline).
 
     Two dispatch paths in priority order:
       1. `lib.value_heads.VALUE_HEAD_CHOICE` numeric constant — patchable
          by `scripts/ab_variants.py` for clean A/B bundles. Values:
-         0 = favor, 1 = composite, 2 = projected. Anything else falls
-         through to the env-var path.
+         0 = favor, 1 = composite, 2 = projected (max-agg),
+         3 = projected_sum (sum-agg in 4P). Anything else falls through
+         to the env-var path.
       2. `BASELINE_VALUE_HEAD` env var (legacy operator workflow):
          `composite` → favor_composite, `projected` → favor_projected,
-         anything else → favor.
+         `projected_sum` → favor_projected_sum, else → favor.
 
     The chooser uses the SAME function for both `build_idle_baseline`
     and `score_action` so the Δ stays well-defined (CRN symmetry).
@@ -122,9 +139,13 @@ def select_favor_fn():
         return favor_composite
     if VALUE_HEAD_CHOICE == 2:
         return favor_projected
+    if VALUE_HEAD_CHOICE == 3:
+        return favor_projected_sum
     choice = os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower()
     if choice == "composite":
         return favor_composite
     if choice == "projected":
         return favor_projected
+    if choice == "projected_sum":
+        return favor_projected_sum
     return favor

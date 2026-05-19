@@ -317,3 +317,52 @@ def test_value_head_choice_constant_one_picks_composite():
         assert select_favor_fn() is favor_composite
     finally:
         vh.VALUE_HEAD_CHOICE = prev_choice
+
+
+# ---------------------------------------------------------------------------
+# projected_rank_diff_sum — Variant 2 sum-aggregator
+# ---------------------------------------------------------------------------
+
+
+def test_projected_sum_2p_matches_max_aggregator():
+    """In 2P, sum-over-single-opp == max-over-single-opp. The two
+    projected variants must produce identical values at every 2P state."""
+    from lib.value_heads import projected_rank_diff, projected_rank_diff_sum
+    obs = _obs(
+        [(0, 0, 10, 50, 1.0, 30, 2), (1, 1, 90, 50, 1.0, 10, 1)],
+        step=50,
+    )
+    v_max = projected_rank_diff(obs, my_id=0, num_seats=2)
+    v_sum = projected_rank_diff_sum(obs, my_id=0, num_seats=2)
+    assert abs(v_max - v_sum) < 1e-9
+
+
+def test_projected_sum_4p_more_pessimistic_than_max():
+    """In 4P with three non-trivial opps, sum-aggregation gives a
+    smaller (more negative) V than max-aggregation, because sum
+    penalises every opp's production whereas max only penalises the
+    leader. Sanity-check that the aggregators differ in 4P."""
+    from lib.value_heads import projected_rank_diff, projected_rank_diff_sum
+    obs = _obs([
+        (0, 0, 10, 10, 1.0, 50, 2),
+        (1, 1, 90, 10, 1.0, 60, 2),    # leader
+        (2, 2, 10, 90, 1.0, 30, 2),    # middle
+        (3, 3, 90, 90, 1.0, 30, 2),    # middle
+    ], step=0)
+    v_max = projected_rank_diff(obs, my_id=0, num_seats=4)
+    v_sum = projected_rank_diff_sum(obs, my_id=0, num_seats=4)
+    # max penalises only opp1 (the leader). sum penalises all three.
+    # So sum must be more-negative (smaller).
+    assert v_sum < v_max
+
+
+def test_value_head_choice_constant_three_picks_projected_sum():
+    """VALUE_HEAD_CHOICE=3 → favor_projected_sum (the sum-aggregator)."""
+    import lib.value_heads as vh
+    from agents.baseline.value import select_favor_fn, favor_projected_sum
+    prev_choice = vh.VALUE_HEAD_CHOICE
+    try:
+        vh.VALUE_HEAD_CHOICE = 3
+        assert select_favor_fn() is favor_projected_sum
+    finally:
+        vh.VALUE_HEAD_CHOICE = prev_choice
