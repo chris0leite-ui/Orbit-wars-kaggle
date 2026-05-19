@@ -38,12 +38,15 @@ prior_error_submission_id: 52744234  # 5/17 earlier — bundler fix in commit 40
 current_submitted_agent: baseline_PV_off_with_clean_math_fixes (5/18 PM)
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation; the
-# third push auto-evicts the previous oldest). 52784853 push evicts the
-# older of the prior pair (52766596 at 1094.1). New pair becomes
-# [52754310 (trajectory champion, μ snapshot 1143.7), 52784853 (NEW)].
+# third push auto-evicts the previous oldest). Per the literal
+# "rolling LAST 2 submissions" rule, 52784853's push evicts 52754310
+# (the trajectory champion at 1143.7) — NOT 52766596 as a prior
+# revision claimed. Verified via `kaggle competitions submissions
+# orbit-wars` 2026-05-19 AM: μ snapshots 52784853=1121.2, 52766596=
+# 1118.8, 52754310=1143.7 (evicted). Conservative push-floor: 1118.8.
 rolling_last_2:
-  - {agent: baseline_PV_off_with_clean_math_fixes, sub_id: 52784853, submitted: 2026-05-18T17:42Z, status: COMPLETE, mu_snapshot: 1083.1}  # NEW FLOOR — net cost ~30 mu vs the 1113.4 floor it replaced
-  - {agent: trajectory_chooser_v4_waitN_baseline, sub_id: 52754310, submitted: 2026-05-17T22:06Z, status: COMPLETE, mu_at_submit_time: 1143.7, mu_snapshot: 1143.7}
+  - {agent: baseline_PV_off_with_clean_math_fixes, sub_id: 52784853, submitted: 2026-05-18T17:42Z, status: COMPLETE, mu_snapshot: 1121.2}
+  - {agent: joint_v3_2P_only, sub_id: 52766596, submitted: 2026-05-18T07:12Z, status: COMPLETE, mu_snapshot: 1118.8}
 
 # Team peak as of 2026-05-17: v15_banded (the multi-wait-grid + banded
 # (src, tgt, wait_band) dedup line). v15 source lives in git history at

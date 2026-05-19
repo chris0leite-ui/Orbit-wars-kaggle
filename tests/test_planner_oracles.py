@@ -22,8 +22,6 @@ from typing import Iterable
 
 import pytest
 
-from lib import value_heads as _value_heads
-
 
 # ---------------------------------------------------------------------------
 # Synthetic obs builders
