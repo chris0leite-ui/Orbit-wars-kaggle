@@ -161,21 +161,29 @@ def test_layer0_applies_l2_dominance_to_residual():
 def _setup_clean_capture_scenario():
     """Scenario producing one W1 commit and one uncertain residual candidate.
 
+    Sized for the Slice-3 multi-opp Wald bound: src1 must deliver enough
+    force that the coordinated sum of ALL reachable opps still falls
+    below SAFETY × garrison. Under variant 1 (single-nearest) a smaller
+    source sufficed, but variant 2's Wald sum is tighter.
+
     Returns (obs, world, model, snap_base, prerank).
     """
-    src1 = _planet(0, 0, 10.0, 50.0, ships=120, production=3)
+    # src1 is overpowered for tgt1 — sends 280 ships into a 10-ship neutral.
+    src1 = _planet(0, 0, 10.0, 50.0, ships=300, production=3)
     src2 = _planet(1, 0, 60.0, 10.0, ships=80, production=2)
-    # tgt1: clean capture (W1 commit) — far from any strong opp.
+    # tgt1: clean capture (W1 commit) — uncontested under multi-opp Wald.
     tgt1 = _planet(2, -1, 30.0, 50.0, ships=10, production=2)
     # tgt2: contested (uncertain) — strong opp nearby.
     tgt2 = _planet(3, -1, 50.0, 30.0, ships=10, production=1)
+    # The strong opp sits closer to tgt2 than tgt1 to keep tgt2 contested
+    # without dominating tgt1's Wald sum.
     opp_close = _planet(4, 1, 55.0, 30.0, ships=200, production=4)
     obs, world = _build_world(0, [src1, src2, tgt1, tgt2, opp_close])
     model = WorldModel.from_world(world)
     snap_base = fs_from_obs(obs, num_seats=2)
     prerank = [
-        _candidate(src1, tgt1, cheap_delta=5.0, ships=80, eta=4),  # W1
-        _candidate(src2, tgt2, cheap_delta=1.0, ships=40, eta=8),  # uncertain
+        _candidate(src1, tgt1, cheap_delta=5.0, ships=280, eta=4),  # W1
+        _candidate(src2, tgt2, cheap_delta=1.0, ships=40, eta=8),   # uncertain
     ]
     return obs, world, model, snap_base, prerank
 
@@ -271,6 +279,44 @@ def test_choose_layered_swap_stability_l0_commits_invariant(monkeypatch):
         assert any(int(m[0]) == 0 for m in moves), (
             f"W1 src=0 missing under inner={tag}: {moves}"
         )
+
+
+def test_choose_layered_subtracts_l0_elapsed_from_inner_wallclock(monkeypatch):
+    """Slice 3 — inner chooser receives wallclock_ms - L0 elapsed.
+
+    Verifies the wallclock-hygiene fix: when L0 runs (even briefly),
+    the inner chooser's `wallclock_ms` kwarg is the input budget minus
+    L0's elapsed time. Floor: `INNER_WALLCLOCK_FLOOR_MS`.
+    """
+    monkeypatch.setenv("BASELINE_INNER_CHOOSER", "trajectory")
+    obs, world, model, snap_base, prerank = _setup_clean_capture_scenario()
+
+    captured: dict = {}
+
+    def _spy_inner(k):
+        # Capture the wallclock_ms the inner saw and return no moves.
+        captured["wallclock_ms"] = k.get("wallclock_ms")
+        return []
+
+    monkeypatch.setitem(_INNER_DISPATCH, "trajectory", _spy_inner)
+    input_wallclock = 600.0
+    choose_layered(
+        snap_base, prerank, None, 0, 2, input_wallclock, 25, 40, 0.99,
+        world, model, 0,
+    )
+
+    seen = captured.get("wallclock_ms")
+    assert seen is not None, "inner chooser was not called"
+    # Inner must see a budget < input (some L0 elapsed > 0) and
+    # > the floor (Layer 0 on a 2-candidate prerank takes microseconds).
+    assert seen <= input_wallclock, (
+        f"inner wallclock {seen} should be ≤ input {input_wallclock}"
+    )
+    # Lower bound: the floor. In practice L0 cost is tiny so seen
+    # should be very close to input_wallclock, but the floor guards
+    # the pathological overrun case.
+    from agents.baseline.chooser_layered import INNER_WALLCLOCK_FLOOR_MS
+    assert seen >= INNER_WALLCLOCK_FLOOR_MS
 
 
 def test_choose_layered_passthrough_when_no_predicate_fires(monkeypatch):

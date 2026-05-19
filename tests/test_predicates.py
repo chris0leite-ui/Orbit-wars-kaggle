@@ -219,6 +219,83 @@ def test_w1_uncertain_when_counter_recapture_feasible():
     assert v.kind == "uncertain"
 
 
+def test_w1_uncertain_under_two_opp_gangup():
+    """Slice 3 — Wald bound: two strong opps that EACH alone wouldn't
+    overwhelm us still abstain because the SUM exceeds safety × garrison.
+
+    Setup: our capture delivers a modest garrison; two opps at moderate
+    range each have 80 ships (below the SAFETY × delivered threshold
+    individually) but their coordinated total exceeds it.
+    """
+    src = _planet(0, 0, 10.0, 50.0, ships=120, production=2)
+    tgt = _planet(1, -1, 50.0, 50.0, ships=10, production=1)
+    # Two opps within counter-reach, each 80 ships.
+    opp_a = _planet(2, 1, 60.0, 45.0, ships=80, production=2)
+    opp_b = _planet(3, 1, 60.0, 55.0, ships=80, production=2)
+    world = _world(0, [src, tgt, opp_a, opp_b])
+    model = WorldModel.from_world(world)
+    v = w1_provably_winning_capture(
+        src, tgt, ships=40, wait_N=0, eta=7, world=world, model=model, me=0,
+    )
+    # Delivered ≈ 40 - 10 = 30; each opp contributes ~80+ ships within
+    # window → coord_counter > SAFETY × garrison → abstain.
+    assert v.kind == "uncertain", f"gang-up should abstain; got {v}"
+
+
+def test_w1_uncertain_under_three_opp_gangup():
+    """Three modest opps; sum dominates even though no single one does."""
+    src = _planet(0, 0, 10.0, 50.0, ships=200, production=3)
+    tgt = _planet(1, -1, 50.0, 50.0, ships=10, production=2)
+    opp_a = _planet(2, 1, 60.0, 40.0, ships=40, production=1)
+    opp_b = _planet(3, 1, 60.0, 50.0, ships=40, production=1)
+    opp_c = _planet(4, 1, 60.0, 60.0, ships=40, production=1)
+    world = _world(0, [src, tgt, opp_a, opp_b, opp_c])
+    model = WorldModel.from_world(world)
+    v = w1_provably_winning_capture(
+        src, tgt, ships=50, wait_N=0, eta=7, world=world, model=model, me=0,
+    )
+    # Three opps × 40+ ships in reach should sum to exceed safety × ~40.
+    assert v.kind == "uncertain", f"3-opp gang-up should abstain; got {v}"
+
+
+def test_w1_commits_when_only_one_opp_in_reach():
+    """Single-opp scenario the variant-1 check would have allowed must
+    STILL commit under variant 2 — no regression on the clean case.
+    """
+    src = _planet(0, 0, 10.0, 50.0, ships=120, production=3)
+    tgt = _planet(1, -1, 30.0, 50.0, ships=10, production=2)
+    # One distant weak opp — below MIN_COUNTER_SHIPS or out of window.
+    opp_far = _planet(2, 1, 95.0, 95.0, ships=10, production=1)
+    world = _world(0, [src, tgt, opp_far])
+    model = WorldModel.from_world(world)
+    v = w1_provably_winning_capture(
+        src, tgt, ships=80, wait_N=0, eta=4, world=world, model=model, me=0,
+    )
+    assert v.kind == "commit"
+
+
+def test_w1_multi_opp_helper_returns_true_when_no_opps():
+    """No opps in reach → trivially holds."""
+    from agents.baseline.predicates import _w1_multi_opp_holds
+    src = _planet(0, 0, 10.0, 50.0, ships=80)
+    tgt = _planet(1, -1, 30.0, 50.0, ships=5, production=1)
+    world = _world(0, [src, tgt])
+    assert _w1_multi_opp_holds(
+        src, tgt, ships=50, wait_N=0, eta=4, world=world, me=0,
+    ) is True
+
+
+def test_w1_multi_opp_helper_rejects_bounce():
+    """Delivered < 1 (under-sized capture) → never holds."""
+    from agents.baseline.predicates import _w1_multi_opp_holds
+    src = _planet(0, 0, 10.0, 50.0, ships=80)
+    tgt = _planet(1, -1, 30.0, 50.0, ships=100, production=1)
+    world = _world(0, [src, tgt])
+    assert _w1_multi_opp_holds(
+        src, tgt, ships=5, wait_N=0, eta=4, world=world, me=0,
+    ) is False
+
+
 def test_w1_uncertain_when_source_exposed():
     """Source has its own inbound threat and post-launch can't defend."""
     src = _planet(0, 0, 10.0, 50.0, ships=20, production=1)

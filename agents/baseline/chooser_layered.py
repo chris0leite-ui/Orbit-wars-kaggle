@@ -22,6 +22,13 @@ else in this module nor in `predicates.py` needs to change.
 from __future__ import annotations
 
 import os
+import time
+
+# Slice 3 (2026-05-19): minimum wallclock the inner chooser must
+# receive even if L0 overran. Prevents zero-budget pathologies; the
+# trajectory chooser's own pre-bail logic respects whatever budget
+# it's given (down to ~50 ms).
+INNER_WALLCLOCK_FLOOR_MS: float = 50.0
 
 # Single-line imports below: the submission bundler's per-line
 # import-stripping regex leaks continuation lines from a parenthesised
@@ -172,6 +179,12 @@ def choose_layered(snap_base, prerank, baseline_favors,
     if not prerank:
         return []
 
+    # Slice 3: track L0 elapsed time so the inner chooser's wallclock
+    # budget is correctly debited. Pre-Slice-3 the inner got the full
+    # `wallclock_ms` and cumulative overrun (L0 + inner) pushed total
+    # turn time over the env's 1000ms actTimeout on hard turns.
+    t_l0_start = time.perf_counter()
+
     commits, residual = layer0_classify(
         prerank, world, model, int(me), int(step), float(gamma),
     )
@@ -187,6 +200,15 @@ def choose_layered(snap_base, prerank, baseline_favors,
         if int(c[1].id) not in used_srcs and int(c[2].id) not in used_tgts
     ]
 
+    # Compute remaining wallclock for the inner chooser. Floor at
+    # `INNER_WALLCLOCK_FLOOR_MS` so the inner never gets a zero/negative
+    # budget if L0 overran. Trajectory chooser's affordable_validate_cap
+    # + safe_deadline pre-bail respect whatever budget they're given.
+    l0_elapsed_ms = (time.perf_counter() - t_l0_start) * 1000.0
+    inner_wallclock_ms = max(
+        INNER_WALLCLOCK_FLOOR_MS, float(wallclock_ms) - l0_elapsed_ms,
+    )
+
     inner_name = inner_chooser_name or _resolve_inner_chooser_name()
     inner_kwargs = {
         "snap_base": snap_base,
@@ -194,7 +216,7 @@ def choose_layered(snap_base, prerank, baseline_favors,
         "baseline_favors": baseline_favors,
         "me": int(me),
         "num_seats": int(num_seats),
-        "wallclock_ms": float(wallclock_ms),
+        "wallclock_ms": inner_wallclock_ms,
         "min_horizon": int(min_horizon),
         "max_horizon": int(max_horizon),
         "gamma": float(gamma),

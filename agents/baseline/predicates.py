@@ -41,6 +41,16 @@ from agents.baseline.proposer import _source_survives_launch
 from agents.baseline.proposer import _target_holdable_after_capture
 
 
+# W1 Wald-bound constants (Slice 3 — variant 2 on the W1-bound axis).
+# `W1_HOLD_WINDOW` ties the hold-guarantee to the trajectory chooser's
+# default MAX_HORIZON so W1's commit semantics ("holds for `window`
+# ticks after arrival") match what the inner chooser would have
+# checked. Changing this constant is a deliberate bound-axis variant.
+W1_HOLD_WINDOW: int = 30
+W1_MIN_COUNTER_SHIPS: int = 20  # mirror proposer's MIN_COUNTER_SHIPS
+W1_SAFETY_MARGIN: float = 1.5   # mirror proposer's SAFETY_MARGIN
+
+
 # Default lookahead window beyond the latest known threat ETA. Mirrors
 # the proposer's `WAVE_LOOKAHEAD` so W2's holding-window check spans
 # the same staggered multi-wave window the proposer's reinforce
@@ -207,6 +217,109 @@ def w2_provably_held_reinforce(
 # ---------------------------------------------------------------------------
 
 
+def _w1_multi_opp_holds(
+    src, tgt, ships: int, wait_N: int, eta: int,
+    world, me: int,
+    *,
+    window: int = W1_HOLD_WINDOW,
+    min_counter_ships: int = W1_MIN_COUNTER_SHIPS,
+    safety_margin: float = W1_SAFETY_MARGIN,
+) -> bool:
+    """Slice-3 Wald bound: does our captured `tgt` hold against the
+    worst-case COORDINATED counter-launch from all opp planets in reach
+    within `window` ticks of arrival?
+
+    Replaces the single-nearest-opp check (`proposer.
+    _target_holdable_after_capture`) used in W1 v1. Sums potential
+    counter force across every opp planet whose ETA to `tgt` is ≤
+    `window`. The Wald sum is a strict upper bound on actual opp
+    coordination — every commit it allows is sound under any opp
+    policy.
+
+    Looseness (over-pessimism): the bound treats opp ships as if they
+    could be fully redirected to `tgt` regardless of their actual
+    strategic placement. Opp coalitions that strong typically have
+    better uses for those ships; the bound assumes the worst.
+
+    Returns True iff `coord_counter(t) < safety_margin * our_garrison(t) + 1`
+    for both t = arrival and t = arrival + window. Geometrically the
+    bound is tightest at one of those two endpoints since both forces
+    grow linearly in t (different slopes) — if it holds at both ends,
+    it holds throughout.
+
+    Soundness caveat on eta:
+      We use `fleet_speed(o.ships)` for opp ETA — mirrors the existing
+      proposer filter convention. Larger opp fleets travel slightly
+      faster (per `lib.fleet.speed`'s log curve), so if opp accumulates
+      before launching, ETA shrinks slightly. The bound is therefore a
+      shade unconservative on the eta axis but conservative on the
+      force axis (we assume opp commits ALL accumulated ships). Net
+      effect is dominated by the force axis.
+    """
+    if int(tgt.owner) == int(me):
+        return True  # reinforce — not W1's territory
+
+    arrival = int(wait_N) + int(eta)
+    # Our delivered force at arrival (mirrors _target_holdable_after_capture).
+    if int(tgt.owner) == -1:
+        tgt_def_at_arrival = int(tgt.ships)
+    else:
+        tgt_def_at_arrival = int(tgt.ships) + int(tgt.production) * arrival
+    delivered = int(ships) - tgt_def_at_arrival
+    if delivered < 1:
+        return False  # bounce — capture itself fails
+
+    reachable: list = []
+    for o in world.planets_by_id.values():
+        if int(o.owner) == int(me) or int(o.owner) == -1:
+            continue
+        if int(o.id) == int(tgt.id):
+            continue
+        if int(o.ships) < int(min_counter_ships):
+            continue
+        dist = math.hypot(float(o.x) - float(tgt.x),
+                          float(o.y) - float(tgt.y))
+        flight = max(0.0, dist - float(o.radius) - float(tgt.radius) - 0.1)
+        spd = fleet_speed(int(o.ships))
+        if spd <= 0:
+            continue
+        o_eta = int(math.ceil(flight / spd))
+        if o_eta > int(window):
+            continue
+        reachable.append((o, o_eta))
+
+    if not reachable:
+        return True
+
+    # Check at t = arrival + window (end of guarantee horizon).
+    t_end = arrival + int(window)
+    our_garrison_end = float(delivered) + float(int(tgt.production)) * float(window)
+    coord_counter_end = 0.0
+    for o, o_eta in reachable:
+        ticks_for_growth = max(0, t_end - int(o_eta))
+        coord_counter_end += (
+            float(int(o.ships))
+            + float(int(o.production)) * float(ticks_for_growth)
+        )
+    if coord_counter_end >= safety_margin * our_garrison_end + 1.0:
+        return False
+
+    # Check at t = arrival (worst case for immediate flip).
+    t_arr = arrival
+    our_garrison_arr = float(delivered)
+    coord_counter_arr = 0.0
+    for o, o_eta in reachable:
+        ticks_for_growth = max(0, t_arr - int(o_eta))
+        coord_counter_arr += (
+            float(int(o.ships))
+            + float(int(o.production)) * float(ticks_for_growth)
+        )
+    if coord_counter_arr >= safety_margin * our_garrison_arr + 1.0:
+        return False
+
+    return True
+
+
 def w1_provably_winning_capture(
     src, tgt, ships: int, wait_N: int, eta: int,
     world, model, me: int,
@@ -219,8 +332,8 @@ def w1_provably_winning_capture(
     Fires `commit` when ALL of:
       1. capture succeeds at arrival
          (`predict_garrison_at(ledger + our_arrival).owner == me`),
-      2. target is holdable post-capture against the nearest strong opp
-         counter (`proposer._target_holdable_after_capture` returns True),
+      2. target holds under the WORST-CASE coordinated multi-opp
+         counter over `W1_HOLD_WINDOW` ticks (`_w1_multi_opp_holds`),
       3. source defends itself against its own inbound threats
          (`proposer._source_survives_launch` returns True),
       4. closed-form value lower bound exceeds `value_epsilon`:
@@ -228,15 +341,12 @@ def w1_provably_winning_capture(
 
     Otherwise returns UNCERTAIN — the rollout will score it.
 
-    Soundness scope (v1):
-      - The hold check uses the nearest-strong-opp counter with
-        `SAFETY_MARGIN=1.5` margin (the existing proposer math). Sound
-        for single-counter scenarios. Multi-opp coordinated counters
-        are NOT modelled; gang-up captures can slip through and lose
-        on real ladder play. The v2 refinement is the Wald-style
-        sum-of-all-opp-ships-in-reach bound.
+    Soundness scope (slice 3 / variant 2 on the bound axis):
+      - The hold check is now multi-opp Wald (sum of all reachable
+        opp planets' worst-case counter force). Sound under any opp
+        policy; v1's single-nearest-opp check was empirically too
+        loose (Wlo=0.396 at n=64, audit 2026-05-19).
       - Reinforces (`tgt.owner == me`) defer to W2 — UNCERTAIN here.
-      - `step` is read from `world.step`.
     """
     # Inapplicable: reinforce — W2's territory.
     if int(tgt.owner) == int(me):
@@ -253,12 +363,13 @@ def w1_provably_winning_capture(
     if int(owner_at_arrival) != int(me):
         return UNCERTAIN  # bounce — L1's territory if no hold window exists.
 
-    # 2-3. Hold + source-survives — reuse existing proposer filters
-    # (imported at module level for bundler-safety).
-    if not _target_holdable_after_capture(
-        src, tgt, int(ships), int(wait_N), int(eta), world, model, int(me),
+    # 2. Multi-opp Wald hold check (slice 3).
+    if not _w1_multi_opp_holds(
+        src, tgt, int(ships), int(wait_N), int(eta), world, int(me),
     ):
         return UNCERTAIN
+
+    # 3. Source must survive its own inbound threats.
     if not _source_survives_launch(
         src, int(ships), int(wait_N), world, model, int(me),
     ):
