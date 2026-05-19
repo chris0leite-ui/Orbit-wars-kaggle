@@ -565,6 +565,56 @@ relevant skill file or source code, not back into friction.md.
   with both Wilson LB and substrate-viability checks (knob
   responsiveness, predicted-outcome-matched, timing headroom).
 
+## 2026-05-19 PM (claude/ml-competition-strategy-PFhzM — trajectory_roi v1-v3.1 saturation)
+
+- `tag: kaggle-loader-picks-last-callable` — kaggle_environments
+  `get_last_callable` returns `[v for v in env.values() if
+  callable(v)][-1]` — the LAST callable in the module. v3 had
+  `_obs_from_snap_like` defined AFTER `agent`, so kaggle invoked
+  the helper as the agent. Agent silently returned `[]` for every
+  turn of every game in env.run for v3 ↔ env.run debug log showed
+  P0 duration `1e-05` (10μs) per turn. **Fix:** ensure `agent`
+  is the LAST callable in the module. Added comment block to
+  v3.1 main.py. Promotion candidate: lint rule (`grep` for "def
+  agent" in agent files, confirm it's the LAST `^def ` in the
+  file). Found via env.run debug logs; took 4 inspection cycles
+  to localise.
+- `tag: predicate-too-strict-vs-real-behaviour` — DI1 predicate
+  required `max_single_launch_p1 >= 50`. v2 fired ONE 72-ship
+  strike → PASS. v3 fired multiple smaller strikes totalling 110
+  ships → max_single=44 → FAIL by predicate. But 110 ships across
+  5 launches IS the desired behaviour. **Fix:** added OR clause —
+  `max_single ≥ 50 OR (total ≥ 80 AND launches ≥ 2)`. Lesson:
+  scenario predicates should test what the agent IS, not what one
+  specific shape of solution looks like.
+- `tag: env-cap-vs-budget-confusion` — v3 set
+  `JOINT_SOLVE_BUDGET_MS=700` thinking it was the per-turn budget.
+  Actual per-turn cost is enumeration + Layer-2 + Layer-3 +
+  overhead. v3.1 still hit max=1119ms (over env's 1000ms cap)
+  despite the cutoff. **Fix:** make the cutoff agent-WIDE, not
+  joint-solve-specific. Compute budget should be set ≤500ms to
+  leave margin for enumeration + serialization overhead.
+- `tag: 5-version-iteration-without-verification` — Shipped v1
+  → v1.1 → v2 → v3 → v3.1 (5 versions) all 0-1/32 A/B vs baseline.
+  Every iteration added architecture (mirror, multi-source, defense,
+  forward-projection, joint optimization) on top of analytical
+  primitives we had NEVER independently verified. PI: "How can we
+  know we're doing everything right analytically?" — load-bearing
+  question. **Fix:** v4 starts with analytics verification suite
+  (5 closed-form checks) before any new architecture. Rule
+  candidate: Rule 41 "verify before stack — no v_(n+1) on a
+  v_(n) that didn't beat random+10%."
+- `tag: lite_greedy-projection-underestimates-real-opp` —
+  trajectory_roi's `project()` uses lite_greedy as opp model in
+  the K-turn forward simulation. lite_greedy is much weaker than
+  baseline. We sized captures for that weaker opp → captures
+  routinely bounce against real baseline. Mirror-v2-as-opp is
+  infeasible per benchmark (130-216s/turn). **Fix:** abandon
+  value-maximization via forward projection. Pivot to
+  goal-directed planner (winning-state predicate + backwards from
+  goal). Architecture limitation, not parameter; no fix at v3.x
+  level.
+
 ## 2026-05-19 (claude/ml-competition-strategy-PFhzM — Phase 3 sweep + ROI pivot)
 
 - `tag: plan-doc-survives-strategic-redirect` — PI's strategic

@@ -1,10 +1,13 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-19 by `claude/ml-competition-strategy-PFhzM`
-> (Phase 3 compound-weight sweep finalised + PI strategic pivot to
-> clean ROI agent on kept architecture + observation-grounded
-> scenario gate). See `## Day-19 PM ml-competition-strategy-PFhzM`
-> below for the load-bearing section for next-session execution.
+> Last written: 2026-05-19 PM by `claude/ml-competition-strategy-PFhzM`
+> after 5 trajectory_roi iterations all failing 0-1/32 vs baseline.
+> **Next session: analytics verification suite FIRST, then v4
+> goal-directed portfolio planner.** Copy-pasteable session prompt
+> lives at the bottom of
+> `/root/.claude/plans/read-the-handover-do-abundant-quokka.md`.
+> See `## Day-19 PM ml-competition-strategy-PFhzM` below for the
+> load-bearing section.
 >
 > Prior writer: 2026-05-17 by `claude/kaggle-baseline-strategy-lO4mm`
 > (clean modular re-baseline of v15).
@@ -77,87 +80,92 @@
 
 ## Day-19 PM ml-competition-strategy-PFhzM
 
-**Strategic state.** Bundle's chooser/scorer axis is fully
-characterised and exhausted. Phase 3 compound-weight sweep
-({0.05, 0.1, 0.2, 0.3, 0.5}) lifts bundle-vs-baseline from Wlo 0.035
-to 0.142, saturating at 0.3. Lever real but well below the 0.55
-gate. Bundle is structurally v7_0-class and cannot reach the live
-champion via more scorer coefficients. PI ratified the architectural
-pivot.
+**Strategic state.** Five trajectory_roi iterations shipped and
+all losing to baseline 0-1/32 A/B. Architecture has hit a
+ceiling. PI ratified pivot to: (A) build an analytics
+verification suite FIRST; (B) replace value-maximization with a
+goal-directed portfolio planner (winning-state predicate +
+backwards capture sequence). No more iteration on trajectory_roi.
 
-**Pivot in one sentence.** Drop bundle's decision stack entirely;
-keep the `lib/*` primitives; rebuild a clean ROI agent at
-`agents/trajectory_roi/` with 6 first-class primitives, and gate it
-on observation-grounded synthetic scenarios that ROI must pass 100%
-before any tournament A/B.
+**Pivot in one sentence.** Verify the analytics, then build a
+goal-directed planner that picks the smallest set of planets we
+need to own to GUARANTEE victory (closed-form: prod-advantage ×
+remaining-turns > opp recovery pool) and plans backwards to
+acquire them.
+
+**Iteration ladder this session (all A/B at n=32, vs baseline):**
+
+| commit | version | wins | bench p95 | reason for failure |
+|---|---|---|---|---|
+| `d8db862` | v1 | 0/32 | 10ms | no in-flight awareness |
+| `6707a90` | v1.1 | 0/32 | 22ms | turn-0 mirror blind to future counters |
+| `e006b91` | v2 | 1/32 | 265ms | joint 2-opt, multi-source, defense — but single-snapshot mirror still misses reactive counters |
+| `5bf2c23` | v3 | 0/32 | 1131ms | K=50 forward-projection blew env's 1000ms cap; actions dropped in late game. **Found and fixed `get_last_callable` loader bug — v3 silently emitted [] for entire games before this** |
+| `5d88f4b` | v3.1 | 0/32 | 357ms | latency fixed, headroom used, but captures still under-margined; lite_greedy projection underestimates real opp |
+
+Plus Phase 1a (replay-mine, `2498516`) and the analytical-depth
+benchmark (`f2ed987`) that demonstrated mirror-v2-as-opp in
+projection is computationally infeasible (1300-2200 ms/plan vs
+12 ms/plan with lite_greedy).
 
 **Next-session entry point (in order):**
 
-1. **Query live μ for sub 52744856.** Was PENDING at last session;
-   determines whether the live champion (composite+A2 hybrid) moved
-   off v15. Use the session-start hook's `kaggle competitions
-   submissions orbit-wars`.
-2. **Phase 1a — replay-mine recent live games.** `python
-   scripts/replay_mine.py --recent 5` against the latest COMPLETE
-   submission(s). Goal: confirm/refute PI's five named failure modes
-   (a recapture, b drift, c garrison-counter, d split-majority,
-   e distant-idleness) in actual live data. Document in
-   `audit/2026-05-19-replay-mine-pre-roi.md`. Open question filed
-   at `knowledge-base/questions/2026-05-19-do-failure-modes-c-and-e-
-   appear-in-live.md` — close this with explicit observed-or-not
-   per failure mode.
-3. **Phase 1b — scenario substrate.** `tests/scenarios/base.py`
-   with `Scenario` ABC (single-turn + multi-turn flavours), clean-
-   state helpers (round-trip, ray-cast reachability). Reuse
-   `tests/test_bundle_oracles.py` helpers (`_planet`, `_obs`, `_emit`).
-4. **Phase 1c — author V0 scenarios** (8 total): S1-S3 (sanity), R1
-   (a), D1 (b), G1 (c), SM1 (d — PI's canonical 100+100 vs 50),
-   DI1 (e). Source-tagged to the replay finding from step 2.
-5. **Phase 1d — clean-validate** each scenario (no sun-in-the-way,
-   physically reachable, manual eyeball). Phase 1 commit gate:
-   ≥6/8 fail against `baseline` (confirms suite encodes real gaps).
-6. **Phase 2 — `agents/trajectory_roi/main.py`** with the 6-primitive
-   architecture. Path-integration shape from `BundleEvaluator.score`
-   reused (the one bundle insight worth carrying forward — see
-   `knowledge-base/flags/2026-05-19-bundle-decision-stack-shelved-
-   not-deleted.md`).
-7. **Phase 3 — validate ROI 100%** against the scenario suite. Each
-   FAILURE → extend a primitive (never a hotfix `if` patch). Iterate.
-8. **Phase 4 — A/B vs current live champion** at n=8, expand on signal.
-9. **No Kaggle push** unless predicted μ > live champion (Rule 12).
-
-**Full plan**: `/root/.claude/plans/no-go-forward-test-fluttering-token.md`
-(approved this session).
-
-**What changed in `state/current.md`:** date 5/17→5/19, days_to_deadline
-37→35, submissions_used_today 2→0, plateau_days 0→2,
-saturation_count 0→1, session_log prepended with today's entry.
-
-**Discipline anchors live this session:**
-- Rule 37: axis exhaustion. We exited the chooser axis (overdue by 3
-  variants — friction logged at
-  `audit/friction.md::plan-doc-survives-strategic-redirect`).
-- Rule 40: PI's "no hotfixes" is Rule 40 applied to the new ROI
-  architecture. Every scenario fix extends one of 6 primitives.
-- Rule 38: every scenario IS a fix-verification rig for its named
-  failure mode.
+1. Read `/root/.claude/plans/read-the-handover-do-abundant-quokka.md`
+   — the v4 plan with full detail and a copy-pasteable session prompt.
+2. **Phase A — Analytics verification suite (~150 LOC, do FIRST):**
+   - Build `scripts/verify_analytics.py` + `tests/test_analytics.py`.
+   - Five tests: projection-vs-reality (the killer), determinism,
+     self-play balance, vs-random, capture-math unit tests.
+   - Output `audit/2026-05-20-analytics-verification.md` with PASS/FAIL
+     per check. **Block v4 build until all pass or known-bug
+     annotated.**
+3. **Phase B — `agents/trajectory_portfolio/main.py` (~250 LOC):**
+   - `identify_winning_state(world)` — closed-form predicate.
+   - `identify_target_portfolio(world)` — smallest planet set sufficient.
+   - `portfolio_acquisition_plan(world, portfolio)` — backwards-from-goal
+     capture sequencing.
+   - `defense_actions(world, portfolio)` — preserve portfolio members.
+   - NO `fast_sim.step` calls in agent. All decisions from closed-form.
+4. Gates before A/B: analytics tests pass + DI1+G1 pass + bench
+   p95 < 200 ms + zero turns > 1000 ms + self-play balanced.
+5. A/B vs baseline at n=16. Gate: positive win rate (> v3.1's 0/32).
+6. NO Kaggle submission without explicit PI sign-off.
 
 **Falsified-or-dead this session:**
-- Compound-weight as a competitive lever (vs baseline). Real but
-  saturates at Wlo 0.142.
-- Bundle as a submission candidate (it's v7_0-class, can't evict
-  live champion without losing ladder spot).
-- Speculative scenario authoring — PI rejected. Scenarios must be
-  observation-grounded.
+- Forward-projection joint-optimization with lite_greedy opp as a
+  WINNING architecture: structurally limited because lite_greedy
+  underestimates real-opp threat → our captures under-margin →
+  bounce in real games.
+- Mirror-v2-as-opp inside projection: benchmark says 130-216 seconds
+  per turn — infeasible.
+- Value-maximization without state-verification: 5 iterations of
+  parameter tuning on top of unverified analytical primitives,
+  zero wins. Verify first.
 
 **Pointers added this session:**
-- `audit/2026-05-19-phase-3-sweep-and-roi-pivot.md` — sweep results
-  + pivot verdict + plan reference.
-- `knowledge-base/thoughts/2026-05-19-roi-pivot-scenario-gated-
-  clean-architecture.md` — the pivot in PI's words + the
-  architectural reasoning + the anti-pattern I logged about myself.
-- `knowledge-base/flags/2026-05-19-bundle-decision-stack-shelved-
-  not-deleted.md` — what "drop bundle" means in working-tree terms.
-- `knowledge-base/questions/2026-05-19-do-failure-modes-c-and-e-
-  appear-in-live.md` — open question Phase 1a answers.
+- `audit/2026-05-19-replay-mine-pre-roi.md` — Phase 1a (a-e failure
+  modes observed in live submissions).
+- `audit/2026-05-19-analytical-depth-benchmark.md` — K=50 +
+  lite_greedy is viable at ~60-80 plans/sec; mirror-v2 infeasible.
+- `audit/replays/replay-mine-2026-05-19.{json,md}` — 56,842
+  fleet bucket roll-up across 5 most-recent submissions.
+- `scripts/benchmark_analytical_depth.py` — benchmark harness.
+- `scripts/run_scenarios.py` — Phase 1b standalone scenario runner.
+- `tests/scenarios/base.py` + `tests/scenarios/test_observed.py` —
+  DI1 + G1 scenarios + Scenario ABC.
+- `agents/trajectory_roi/main.py` — v3.1 reference (do NOT iterate
+  on this in next session).
+- `/root/.claude/plans/read-the-handover-do-abundant-quokka.md` —
+  v4 plan + next-session copy-paste prompt.
+
+**Discipline anchors live this session:**
+- Rule 37: axis exhaustion. Trajectory_roi value-maximization axis
+  saturated at 5 variants. Pivot to goal-directed planner.
+- Rule 6: closed-form heuristics before heavy compute. v4 has NO
+  rollouts in the agent decision path.
+- Rule 19: this session documented the nulls (5 failed versions)
+  rather than hiding them.
+- Rule 38: DI1 + G1 remain the fix-verification rigs for v4.
+- Rule 40: no hardcoded defense × 2 multiplier. The architecture
+  itself (portfolio preservation as goal) makes defense natural.
 - `audit/tournaments/202605190*.json` — 5 sweep run JSONs.

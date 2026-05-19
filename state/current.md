@@ -8,9 +8,12 @@
 >            KAGGLE_API_TOKEN="$KaggleAPIToke"
 >     kaggle competitions submissions orbit-wars
 >
-> Updated 2026-05-19 by `claude/ml-competition-strategy-PFhzM`
-> (Phase 3 sweep + ROI/scenario-gate pivot; AM re-sync after kaggle
-> CLI surfaced 3 missed 5/17-5/18 submissions).
+> Updated 2026-05-19 PM by `claude/ml-competition-strategy-PFhzM`
+> (5 trajectory_roi iterations all 0-1/32 vs baseline; PI pivot
+> to analytics-verification-first + goal-directed portfolio planner).
+> Earlier this session: AM re-sync after kaggle CLI surfaced 3
+> missed 5/17-5/18 submissions; Phase 1a replay-mine; Phase 1b
+> scenario substrate.
 
 ```yaml
 date: 2026-05-19
@@ -55,8 +58,8 @@ team_peak_agent: v15_banded
 
 submissions_used_today: 0     # 5/19 — local A/B sweep only; no Kaggle pushes
 submissions_used_total: 34    # 31 + 3 missed (52754310, 52766596, 52784853); refresh via Kaggle CLI
-plateau_days: 2               # 5/18+5/19 spent on bundle scorer-axis Phase E with no submitted improvement
-saturation_count: 1           # +1 this session: chooser/scorer axis fully characterised, pivoted off
+plateau_days: 2               # 5/18+5/19 spent on bundle scorer-axis Phase E + trajectory_roi v1-v3.1
+saturation_count: 2           # 5/19 AM: chooser/scorer axis saturated. 5/19 PM: trajectory_roi value-max axis saturated at 5 variants — Rule 37 fired again
 
 # Live ladder — read from `kaggle competitions submissions orbit-wars`,
 # NOT from this file. Submission IDs are stable; scores are not.
@@ -92,6 +95,35 @@ saturation_count: 1           # +1 this session: chooser/scorer axis fully chara
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
+  - 2026-05-19 PM — ml-competition-strategy-PFhzM (trajectory_roi saturation + v4 pivot).
+    Shipped 5 trajectory_roi iterations (v1 → v1.1 → v2 → v3 → v3.1):
+    all 0-1/32 A/B vs baseline. v1 + v1.1 missed opp counters. v2
+    added joint 2-opt + multi-source + mirror-opp@t=0, won 1/32 but
+    single-snapshot mirror still blind to reactive counters. v3
+    introduced K=50 forward-projection with lite_greedy as opp at each
+    step (per benchmark-driven design from f2ed987); found and FIXED a
+    critical kaggle_environments.get_last_callable loader bug
+    (helper `_obs_from_snap_like` was placed AFTER `agent` so kaggle
+    picked the helper as entry; agent silently emitted [] every turn
+    for whole games). v3.1 added 5 iterations + relaxed marginal +
+    multi-source-for-all + mandatory-defense screening + 700ms latency
+    cutoff; bench p95=357ms (was 1131ms) but still 0/32 — captures
+    are too small (SAFETY_MARGIN=1) and bounce, projection's
+    lite_greedy underestimates baseline's actual aggression.
+    Benchmark (f2ed987) proved K=50+lite_greedy is viable at ~80
+    plans/sec; mirror-v2-as-opp infeasible at 130-216s/turn.
+    PI ratified pivot to v4: (a) build analytics verification suite
+    FIRST (5 closed-form checks: projection-vs-reality, determinism,
+    self-play balance, vs-random, capture-math units); (b) replace
+    value-maximization with goal-directed portfolio planner —
+    winning-state predicate (prod_advantage × remaining > opp_pool),
+    smallest-sufficient-portfolio identifier, backwards-from-goal
+    capture sequencing, portfolio-preservation defense. NO
+    forward-projection in agent decision path. Full plan +
+    next-session prompt at
+    `/root/.claude/plans/read-the-handover-do-abundant-quokka.md`.
+    NO Kaggle submission. Next session: Phase A verification first,
+    then v4 build only after analytics validated.
   - 2026-05-19 AM — ml-competition-strategy-PFhzM (session resume + state sync).
     Kaggle CLI surfaced 3 submissions not reflected in HANDOVER: 52754310
     (trajectory v4, 5/17 PM, μ≈1143.7), 52766596 (joint candidate Direction
@@ -229,6 +261,10 @@ mechanism_families_explored:
   - swept-pair-vanish-classifier             # 5/17 PM — measurement-honesty for replay-mine
   - A2-4P-weakness-exploitation              # 5/17 PM — merged from kaggle-baseline-strategy
   - favor_hybrid-2P-composite-4P-A2          # 5/17 PM — production dispatcher
+  - trajectory_roi-outcome-first-single-source  # 5/19 PM v1: 0/32 — no in-flight awareness
+  - trajectory_roi-in-flight-aware           # 5/19 PM v1.1: 0/32 — still blind to future counters
+  - trajectory_roi-joint-2opt-mirror-opp-snapshot  # 5/19 PM v2: 1/32 — single-snapshot mirror
+  - trajectory_roi-forward-projection-lite_greedy  # 5/19 PM v3+v3.1: 0/32 — projection underestimates real opp; value-max axis saturated
 
 gate_status: cleared                          # 53+ tests + bundle parity 712 turns
 ```
