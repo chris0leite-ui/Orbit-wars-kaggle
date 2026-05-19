@@ -26,12 +26,14 @@ import time
 from itertools import combinations
 
 from lib.fleet import speed as fleet_speed
-from lib.scoring import (
-    T_TOTAL_DEFAULT,
-    expected_hold,
-    margin_multiplier,
-    pv_horizon,
-)
+# Single-line imports — the bundler's line-by-line regex chokes on
+# multi-line parenthesised imports (friction
+# `bundler-modular-agent-namespace-access-breaks-bundle`, see
+# agents/baseline/main.py:71-76).
+from lib.scoring import T_TOTAL_DEFAULT
+from lib.scoring import expected_hold
+from lib.scoring import margin_multiplier
+from lib.scoring import pv_horizon
 
 
 # Cost coefficients — to be calibrated via bench in Phase 6. Initial
