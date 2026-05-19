@@ -173,6 +173,50 @@ fix forward AND add a test.
   --help` output or stop-early at the requested seed count even
   when `--geometry-panel` is set. Low-priority — the extra seeds
   improved Wilson tightness, just at higher cost than planned.
+- `tag: public-artifact-internal-framing-leaks-through` —
+  community-engagement session (Kaggle discussion + dataset): two
+  drafts of public artifacts inherited internal framing/findings
+  from source material. Post: "Aggregate per archetype" tip used
+  `med_low_prod__mixed_*` + "80%" verbatim from `audit/2026-05-18-
+  seed-panel.md` v7_0 A/B (commit `7c40e68` abstracted it). Dataset
+  description: included "Hosted here … without exposing a private
+  GitHub" rationale (PI rewrote to a standalone artifact
+  description). Both caught only when PI prompted a leak-pass.
+  **Root cause:** my first-draft pipeline copy-pastes phrasing
+  from internal sources without a leak-pass step; PI's review
+  became the leak-discovery pass instead of a confirmation pass.
+  **Fix:** before handing any public-facing draft to PI, grep
+  against internal-vocab list (`v[0-9]+_*`, strategy terms,
+  internal paths, audit-hot-list archetype names) and abstract
+  hits. Promotion candidate (presented; PI declined to promote
+  this session).
+- `tag: kaggle-cli-discussions-read-only` — verified empirically:
+  `kaggle competitions topics` has only `show`; Python API exposes
+  `competition_list_topics`, `competition_list_topic_messages`,
+  `forums_topic_show` — no `create_topic` / `post_topic`.
+  Discussion posting is web-UI-only. **Fix:** settled-once fact;
+  belongs in `comp-context.md`. Promotion candidate (presented;
+  PI declined to promote this session).
+- `tag: pre-draft-duplicate-check-missed` — went straight to
+  drafting a Kaggle discussion post without first scanning the
+  forum for thematic duplicates; PI prompted the check ("check
+  if there has been a similar discussion item before"). Check
+  then ran cleanly across all 158 orbit-wars topics, no
+  duplicates found. **Root cause:** drafting started before the
+  "have others done this?" step. **Fix:** for any community-
+  engagement artifact, run
+  `api.competition_list_topics('<comp>', sort_by='new', page=N)`
+  across all pages and scan titles BEFORE forming a draft.
+  Promotion candidate (presented; PI declined to promote this
+  session).
+- `tag: senduserfile-account-session-invalid-error` — `SendUserFile`
+  delivery failed twice on PI's side with `account_session_invalid`
+  (claude.ai session-auth issue, not the harness). I re-tried
+  `SendUserFile` instead of immediately offering the GitHub-raw-URL
+  fallback. **Fix:** when the first `SendUserFile` fails with an
+  auth-class error, switch to GitHub-raw-URL (for committed files)
+  or inline-paste (for text); do not retry the same delivery
+  channel.
 
 
 

@@ -146,3 +146,115 @@ budget-misaligned.
   CPU total.
 - Submissions used this session: 0 (Rule 1 PI sign-off required;
   not pursued — A/B failed the gate).
+
+---
+
+# Session B — community-engagement (Kaggle discussion + dataset)
+
+## What went wrong
+
+**No bad decisions given priors at decision-time.** The Kaggle post
++ dataset shipped clean. Self-audits in response to PI prompts
+caught two leaks before publication.
+
+**Two process-level near-misses — same pattern:**
+
+1. **Draft of the post embedded the v7_0 internal regression cluster
+   as an "example."** The "Aggregate per archetype" tip read
+   *"a new version that wins 80% in aggregate can still lose every
+   game on, say, `med_low_prod__mixed_*` boards."* Both the 80% and
+   the cell name were pulled verbatim from `audit/2026-05-18-seed-
+   panel.md` lines 141 / 152. Caught + abstracted in commit `7c40e68`
+   after PI asked "does anything leak from our strategy?"
+
+2. **Initial Kaggle Dataset description included our internal hosting
+   motivation.** First draft: *"Hosted here so it can be embedded in
+   a Kaggle discussion post without exposing a private GitHub."* PI
+   caught: "describe what it is, not what it means for us." Rewrote
+   as a standalone artifact description.
+
+Same shape both times: **public-facing draft inherited internal
+framing/findings from source material; only caught when PI prompted
+a leak-pass.** PI shouldn't be the leak-discovery pass.
+
+## Frictions logged this session
+
+Cross-links to `audit/friction.md::2026-05-19`:
+
+- `public-artifact-internal-framing-leaks-through` — initial Kaggle
+  post + dataset description both contained internal-source framing;
+  PI prompted the leak-pass instead of finding a pre-vetted draft.
+- `kaggle-cli-discussions-read-only` — verified empirically: no
+  `create_topic` / `post_topic` in CLI or Python API. Posting is
+  web-UI-only. Settled-once fact.
+- `pre-draft-duplicate-check-missed` — went straight to drafting
+  the post without first scanning existing forum topics; PI
+  prompted the check, which then ran cleanly (no duplicates found
+  across all 158 topics).
+- `senduserfile-account-session-invalid-error` — `SendUserFile`
+  delivery failed on PI's side with `account_session_invalid`
+  twice. Env-side auth issue (claude.ai session, not the harness),
+  but I should have proactively offered the GitHub-URL fallback
+  the first time it failed rather than re-trying SendUserFile.
+
+## Promotion candidates (PI ratified: NO — recorded only)
+
+Presented 4 candidates; PI replied "no" to "anything to add /
+promote." Candidates stay here as data points; not pushed to
+`improvements.md`.
+
+1. **[WORKFLOW] Public-artifact leak-pass before handing to PI.**
+   Tag: `public-artifact-internal-framing-leaks-through`. 2× this
+   session; pattern is "draft inherits internal framing from
+   source material." Concrete check: grep draft against
+   `v[0-9]+_*`, strategy terms (`snipe|ROI|priority.prior|
+   marginal`), internal paths (`lib/|scripts/|fast\.py`),
+   audit-hot-list archetype names — abstract or remove any hit.
+   Cost-evidence: 3-turn back-and-forth × 2 artifacts; would have
+   been a real leak if PI hadn't been on the wheel.
+
+2. **[SETTLED-FACT] Kaggle CLI has no discussion-create endpoint.**
+   Tag: `kaggle-cli-discussions-read-only`. Would belong in
+   `comp-context.md` per Rule 8. Saves future agents from
+   re-investigating the same dead end.
+
+3. **[WORKFLOW] Kaggle Dataset is the canonical no-leak host for
+   forum images.** Tag: `forum-image-via-kaggle-dataset`. Recipe:
+   stage image + `dataset-metadata.json` (CC0 license, factual
+   description with no internal framing) in a temp folder; `kaggle
+   datasets create --public`; wait for processing (`kaggle datasets
+   status`); open in browser; right-click image → Copy image
+   address → paste into `![](url)` in forum editor.
+
+4. **[WORKFLOW] Pre-draft scan for prior community posts.** Tag:
+   `pre-draft-duplicate-check-missed`. Use
+   `api.competition_list_topics('<comp>', sort_by='new', page=N)`
+   across all pages; scan titles for thematic duplicates before
+   committing to a draft. Cheap (~30 s) prerequisite.
+
+## PI additions (from step 4)
+
+- "no" — PI declined to add frictions, promote candidates, or
+  ratify further actions.
+
+## Framework version at session-end (Session B)
+
+- Commit SHA at session-B start: `d763aa5` (postmortem promotion
+  commit from Session A).
+- Commit SHA at session-B end (pre-wrap-commit): `fe269cd`
+  (preview re-render dropping P0/P1 home colors).
+- Branch: `claude/reverse-engineer-seat-geometry-BPJKs`.
+- Active CLAUDE.md rules: 1..40 (unchanged from Session A).
+- Loaded skills this session: `postmortem`.
+- Compute spent this session: negligible (drafting + Matplotlib
+  render + Kaggle Dataset upload). No agent eval / no panel.
+- Submissions used this session: 0 to the competition. 1 public
+  Kaggle artifact published (discussion post + dataset).
+
+## Outputs published to Kaggle (Session B)
+
+- Discussion post: drafted in
+  `audit/2026-05-19-discussion-draft-seed-panel.md`, posted
+  manually by PI via web UI (URL not captured in this transcript).
+- Dataset: `chrisleitescha/orbit-wars-seed-panel-preview` (CC0,
+  released to host the preview image for the post). 460 KB PNG.
