@@ -118,7 +118,63 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
-## 2026-05-18 (claude/reverse-engineer-seat-geometry-BPJKs)
+## 2026-05-19 (claude/reverse-engineer-seat-geometry-BPJKs)
+
+- `tag: handover-staleness-vs-kaggle-state` — bootstrap reported
+  branch "ahead 2 / behind 1 origin/main" and HANDOVER.md framed
+  v15_banded as the current champion. Reality: `kaggle competitions
+  submissions orbit-wars` showed submission 52784853 (μ=1121.2,
+  2026-05-18 17:42) as the latest from commit `82df5b8` on
+  `origin/main`, with ~20 commits of architectural progress
+  (trajectory chooser, value-head selection, composite_capture_value,
+  bug fixes #3/#4/#12/#14) since the HANDOVER was written. The "+1"
+  commit ahead of merge-base was a merge commit pulling in all of
+  that. Spent ~30 min planning h2h vs the wrong opponent (v15)
+  before PI intervened: "the issue with the other submission is
+  that we are sort of stuck there." **Root cause:** Rule 32 git
+  fetch checks commit-count divergence but doesn't reconcile
+  HANDOVER's narrative claims against Kaggle's actual submissions
+  list. **Fix:** session-start must include `kaggle competitions
+  submissions <comp>` and a HANDOVER-vs-Kaggle reconciliation when
+  HANDOVER is >24h old or the branch is ahead/behind origin/main
+  by any non-trivial amount.
+- `tag: bundle-filename-collides-with-focal-name` — A/B opponent
+  bundle was written to `submissions/baseline.py`. `fast.py eval
+  --vs <path>` resolves opponent name from `Path.stem` ("baseline"),
+  which matched the focal agent's name from the registry, triggering
+  "skipping baseline: same agent as focal" and running 0 games.
+  Wasted ~3 min of compute setup + ~6 min of confused triage.
+  **Root cause:** `resolve_agent_spec` in `fast.py:152` returns
+  `p.stem` for arbitrary file paths with no de-collision check
+  against the focal name; bundler defaults to `<agent_dir>.py`
+  filename. **Fix:** copy bundle to a non-colliding name
+  (`sub_latest.py`) per-A/B, or patch `resolve_agent_spec` to
+  add a suffix when collision is detected. Done by manual `cp` this
+  session; should be wired into the A/B convention.
+- `tag: same-config-runs-diverge-9pp` — at default `BASELINE_ROI_
+  DENOM_FLOOR=1.0`, the original A/B got 15.6% (5/32) and the sweep
+  re-run at the same setting got 6.2% (2/32). 9-point swing on
+  identical config, geometry panel, same opponent. **Root cause:**
+  unclear — kaggle_environments may be non-deterministic via random
+  tie-breaks, or `fast.py`'s seed-iteration order under early-stop
+  differs between standalone and looped invocations. Did not
+  block progress (both runs FAIL the gate by wide margin) but
+  caps confidence in single 32-seed reads. **Fix:** when a 32-seed
+  result is being used as a gate, re-run once with a different
+  shuffle seed and report the spread; document the non-determinism
+  source in `comp-context.md` or rule out via a no-knob A=A control.
+- `tag: max-seeds-overridden-by-geometry-panel` — sweep was kicked
+  off with `--max-seeds 16` but each variant ran 32 seeds (~12 min
+  each instead of planned ~6). Total sweep took ~48 min not ~24.
+  **Root cause:** `--geometry-panel` flag interacts with
+  `--max-seeds` in a non-obvious way (auto-bump from default of 8?
+  or panel-cell-count override?). Not documented in `fast.py eval
+  --help` clearly. **Fix:** clarify the interaction in `fast.py
+  --help` output or stop-early at the requested seed count even
+  when `--geometry-panel` is set. Low-priority — the extra seeds
+  improved Wilson tightness, just at higher cost than planned.
+
+
 
 - `tag: wrong-file-recon-skipped-state-md` — recon for an audit-driven
   chooser change started at `data/main.py` (60-line Kaggle starter
