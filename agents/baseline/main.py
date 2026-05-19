@@ -15,6 +15,10 @@ Knobs (env var overrides, all optional):
                               0 disables; design default 3.0.             default 3.0
   BASELINE_LAMBDA_GAP         weight on the opponent in-flight posterior gap.
                               0 disables; design default 2.0.             default 2.0
+  BASELINE_ROI_ENABLED        when 1/true, divide positive cheap_marginal_value
+                              by (ships + eta + roi_denom_floor) -- v3_snipe
+                              additive cost denominator.                  default 1
+  BASELINE_ROI_DENOM_FLOOR    additive floor on the ROI cost denominator. default 1.0
   ORBIT_WARS_PARITY_WALLCLOCK_MS    bundle-parity override (very large
                                     value disables mid-loop deadline bail
                                     so the agent is a pure function of obs).
@@ -96,6 +100,20 @@ def _lambda_gap() -> float:
         return 2.0
 
 
+def _roi_enabled() -> bool:
+    val = os.environ.get("BASELINE_ROI_ENABLED")
+    if val is None:
+        return True
+    return val.strip().lower() not in ("0", "false", "no", "off", "")
+
+
+def _roi_denom_floor() -> float:
+    try:
+        return float(os.environ.get("BASELINE_ROI_DENOM_FLOOR", 1.0))
+    except ValueError:
+        return 1.0
+
+
 def agent(obs, configuration=None):
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
@@ -125,6 +143,8 @@ def agent(obs, configuration=None):
     priority_dict = priority_prior.priority_by_planet(
         class_of, opp_share, lam_a, lam_g,
     )
+    roi_on = _roi_enabled()
+    roi_floor = _roi_denom_floor()
 
     threatened_mine = [
         p for p in my_planets
@@ -142,6 +162,8 @@ def agent(obs, configuration=None):
         my_planets, target_pool, world, model, me, omega,
         baseline_len=len(baseline_favors),
         priority_by_planet=priority_dict,
+        roi_enabled=roi_on,
+        roi_denom_floor=roi_floor,
     )
 
     return chooser.choose(

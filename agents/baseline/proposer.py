@@ -168,7 +168,9 @@ def wait_then_fire_variants(src, tgt, model, omega: float, me: int):
 
 def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
                          me: int, wait_N: int = 0,
-                         priority_by_planet: dict[int, float] | None = None) -> float:
+                         priority_by_planet: dict[int, float] | None = None,
+                         roi_enabled: bool = False,
+                         roi_denom_floor: float = 1.0) -> float:
     """Analytic Δ for Stage-1 ranking. Replaced by fast_sim in Stage-2.
 
     Capture: +0.05 * tgt.prod * pv_horizon(step, arrival, gamma=0.99)
@@ -179,8 +181,15 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
     If `priority_by_planet` is provided, the returned value is multiplied
     by `priority_by_planet.get(int(tgt.id), 1.0)` — a per-target multiplier
     that encodes the per-geometry-class priority prior (see
-    lib/priority_prior.py). lambda_alpha = lambda_gap = 0 makes the
-    multiplier 1.0 everywhere (ablation invariant).
+    lib/priority_prior.py).
+
+    If `roi_enabled` is True, the POSITIVE-`base` branches (capture and
+    reinforce) are additionally divided by `(ships + arrival_step +
+    roi_denom_floor)` — v3_snipe's additive cost denominator. Bounces
+    (`base < 0`) are left untouched: they already carry a ship-cost
+    penalty and dividing them would weaken the rejection signal.
+    roi_enabled = False (and lambda_alpha = lambda_gap = 0) reduces this
+    function to the pre-pivot baseline byte-identically.
     """
     arrival_step = wait_N + eta
     pred_owner = model.owner_at(int(tgt.id), arrival_step)
@@ -201,6 +210,11 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
     else:
         base = -0.5 * float(ships)
 
+    if roi_enabled and base > 0.0:
+        denom = float(ships) + float(arrival_step) + float(roi_denom_floor)
+        if denom > 0.0:
+            base = base / denom
+
     if priority_by_planet is None:
         return base
     return base * float(priority_by_planet.get(int(tgt.id), 1.0))
@@ -215,7 +229,9 @@ def wait_band(wait_N: int) -> int:
 
 def propose(my_planets, target_pool, world, model, me: int,
             omega: float, baseline_len: int,
-            priority_by_planet: dict[int, float] | None = None):
+            priority_by_planet: dict[int, float] | None = None,
+            roi_enabled: bool = False,
+            roi_denom_floor: float = 1.0):
     """Build the pre-rank list of candidates, then dedup by
     (src_id, tgt_id, wait_band) keeping the top cheap-Δ per bucket.
 
@@ -226,6 +242,10 @@ def propose(my_planets, target_pool, world, model, me: int,
     `priority_by_planet`, when provided, is threaded into
     `cheap_marginal_value` to apply the per-geometry-class prior
     multiplier on every candidate's analytic Δ.
+
+    `roi_enabled` / `roi_denom_floor` toggle and parametrise the
+    v3_snipe-style additive cost denominator. See
+    `cheap_marginal_value` for the math.
     """
     prerank = []
     for src in my_planets:
@@ -245,6 +265,8 @@ def propose(my_planets, target_pool, world, model, me: int,
                 cheap = cheap_marginal_value(
                     src, tgt, ships, eta, world, model, me, wait_N=0,
                     priority_by_planet=priority_by_planet,
+                    roi_enabled=roi_enabled,
+                    roi_denom_floor=roi_denom_floor,
                 )
                 if cheap > CHEAP_REJECT_THRESHOLD:
                     prerank.append(
@@ -260,6 +282,8 @@ def propose(my_planets, target_pool, world, model, me: int,
                 w_cheap = cheap_marginal_value(
                     src, tgt, w_ships, w_eta, world, model, me, wait_N=w_wait,
                     priority_by_planet=priority_by_planet,
+                    roi_enabled=roi_enabled,
+                    roi_denom_floor=roi_denom_floor,
                 )
                 if w_cheap > CHEAP_REJECT_THRESHOLD:
                     prerank.append(
