@@ -47,7 +47,11 @@ from lib.trajectory_layer import World
 
 DEFAULT_MAX_DEPTH = 6
 DEFAULT_BUDGET_MS = 2000.0
-TOP_K_CANDIDATES = 4    # per ply for our side (plus IDLE)
+TOP_K_CANDIDATES = 4         # per ply for our side (plus IDLE)
+SHAPED_HORIZON = 30          # target horizon for the shaped leaf value
+                              # (matches trajectory_roi's K_HORIZON so the
+                              # audit is apples-to-apples with the
+                              # heuristic's value function)
 
 
 # ---- types --------------------------------------------------------------
@@ -115,16 +119,51 @@ def _generate_my_candidates(world: World, my_id: int,
     return uniq
 
 
+def _shaped_terminal_value(snap: fast_sim.Snapshot, my_id: int,
+                            remaining_horizon: int) -> float:
+    """Trajectory_roi's `_terminal_value` plus a closed-form approximation
+    of the FUTURE production payoff if we held this configuration for
+    `remaining_horizon` more turns.
+
+    Without shaping, the solver at depth N can't see the production
+    payoff that materialises at depths > N (e.g. a captured prod-1
+    planet pays back 23 ships between depth 8 and the heuristic's
+    K_HORIZON=30). Heuristic's `raw_value` IS this shape (it credits
+    captures by production × held_turns); the audit needs the solver
+    to credit it too to compare apples-to-apples.
+
+    `remaining_horizon` should be `SHAPED_HORIZON - turns_searched`.
+    """
+    base = _terminal_value(snap, my_id)
+    if remaining_horizon <= 0:
+        return base
+    obs0 = snap.state[0].observation
+    prod_diff = 0.0
+    for p in obs0.planets:
+        owner = int(p[1])
+        prod = float(p[6])
+        if owner == my_id:
+            prod_diff += prod
+        elif owner >= 0:
+            prod_diff -= prod
+    return base + prod_diff * float(remaining_horizon)
+
+
 def _max_search(snap: fast_sim.Snapshot, my_id: int, opp_id: int,
                  depth: int, deadline: float,
-                 stats: dict[str, int]) -> tuple[list, float]:
+                 stats: dict[str, int],
+                 turns_searched: int = 0) -> tuple[list, float]:
     """Return (best_action, value) for the current snap.
 
     `best_action` is the emit list for our seat at this ply; subsequent
-    plies aren't returned (we only need the immediate move at the root)."""
+    plies aren't returned (we only need the immediate move at the root).
+    `turns_searched` is the number of env-steps applied since the root —
+    used to compute `remaining_horizon` for the shaped leaf reward.
+    """
     stats["nodes"] += 1
     if depth <= 0 or snap.fake_env.done or time.perf_counter() >= deadline:
-        return [], _terminal_value(snap, my_id)
+        remaining = max(0, SHAPED_HORIZON - turns_searched)
+        return [], _shaped_terminal_value(snap, my_id, remaining)
 
     # Rebuild a World view on the current snap so candidate-generation
     # primitives have what they expect.
@@ -150,7 +189,8 @@ def _max_search(snap: fast_sim.Snapshot, my_id: int, opp_id: int,
         actions[opp_id] = opp_emit
         child_snap = fast_sim.step(snap, actions)
         _, child_value = _max_search(child_snap, my_id, opp_id,
-                                      depth - 1, deadline, stats)
+                                      depth - 1, deadline, stats,
+                                      turns_searched + 1)
         if child_value > best_value:
             best_value = child_value
             best_action = my_emit
@@ -191,9 +231,13 @@ def solve(isolated_obs: dict, my_id: int, opp_id: int,
         depth_reached = d
 
     elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+    if depth_reached == 0:
+        # No iteration completed; fall back to the shaped value of the
+        # root state itself.
+        best_value = _shaped_terminal_value(snap, my_id, SHAPED_HORIZON)
     return SolveResult(
         best_action=best_action,
-        value=best_value if depth_reached > 0 else _terminal_value(snap, my_id),
+        value=best_value,
         depth_reached=depth_reached,
         nodes_searched=stats["nodes"],
         elapsed_ms=elapsed_ms,
