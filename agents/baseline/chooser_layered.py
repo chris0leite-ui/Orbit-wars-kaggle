@@ -114,20 +114,18 @@ def layer0_classify(prerank, world, model, me, step, gamma):
         prerank, world, model, int(me), gamma=float(gamma),
     )
 
-    # Slice 6: long-horizon LP assignment as a strategic anchor.
-    # `lp_assignment: dict[src_id, tgt_id]` of the assignment that
-    # maximizes Σ production × (EPISODE_END - capture_time). Candidates
-    # matching this assignment get an "LP" commit verdict that
-    # backstops alongside W1/W2 if the inner doesn't pick them.
-    # Independent commit reason: W1 = "provable hold against worst-
-    # case counter"; LP = "globally optimal one-source-one-target
-    # assignment for the current state." Either justifies a backstop.
-    lp_assignment = compute_lp_assignment(world, model, int(me))
-    # Track sources we've already LP-committed: the LP gives exactly one
-    # (src → tgt) assignment per source, but the prerank may contain
-    # multiple candidates matching that (src, tgt) pair (different
-    # ship counts, wait_Ns). Only commit ONE per source — pick the
-    # first matching candidate; others stay uncertain.
+    # Slice 6: LP assignment available behind env var. Default OFF
+    # because n=16 A/B regressed (8/16 wins vs Slice 5's 9/16, Wlo
+    # 0.280 vs 0.332) AND wallclock max blew up (1832ms vs 861ms).
+    # The LP picks a static (src → tgt) per source but doesn't see
+    # the inner chooser's strategic reasoning about source use; the
+    # extra LP commits behave as noise. Module kept for future
+    # research (audit-replay analysis, training-data labelling);
+    # opt-in via `BASELINE_LP_COMMIT=1` for further experiments.
+    if os.environ.get("BASELINE_LP_COMMIT", "0").strip() == "1":
+        lp_assignment = compute_lp_assignment(world, model, int(me))
+    else:
+        lp_assignment = {}
     lp_committed_srcs: set = set()
 
     verdicts: list = []
