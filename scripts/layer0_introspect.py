@@ -43,14 +43,17 @@ TURNS: list[dict] = []  # list of per-turn dicts
 
 
 def _wrap_layer0_classify():
-    """Replace `cl.layer0_classify` with a version that records counts."""
+    """Replace `cl.layer0_classify` with a version that records counts.
+
+    Slice 4 update: layer0_classify now returns (verdicts, filtered)
+    instead of (commits, residual). Verdicts cover every input
+    candidate; commits = verdicts with kind=='commit'.
+    """
     original = cl.layer0_classify
+    original_backstop = cl._backstop_emit
 
     def wrapped(prerank, world, model, me, step, gamma):
         n_in = len(prerank)
-        # Re-classify to count outcomes (cheap: predicates are O(planets×horizon)).
-        # We CALL the real function so behaviour is unchanged; the recount is
-        # for stats only.
         verdicts: dict[str, int] = Counter()
         per_cand: list[tuple] = []
         for c in prerank:
@@ -79,7 +82,7 @@ def _wrap_layer0_classify():
                 continue
             verdicts["uncertain"] += 1
 
-        # L2 prune impact on the (uncertain) residual.
+        # L2 prune impact recount (using same logic as production):
         uncertain_residual = [
             c for c in prerank
             if (l1_provably_wasted_launch(c[1], c[2], int(c[3]), int(c[7]), int(c[5]),
@@ -92,8 +95,8 @@ def _wrap_layer0_classify():
         n_after_l2 = len(l2_dominance_prune(uncertain_residual))
         n_l2_pruned = len(uncertain_residual) - n_after_l2
 
-        # Now call the REAL function (unmodified state path).
-        commits, residual = original(prerank, world, model, me, step, gamma)
+        # Call the REAL function (new Slice 4 return shape).
+        verdicts_out, filtered = original(prerank, world, model, me, step, gamma)
 
         TURNS.append({
             "step": int(getattr(world, "step", 0) or 0),
@@ -103,13 +106,22 @@ def _wrap_layer0_classify():
             "n_L1": verdicts["L1"],
             "n_L2_pruned": n_l2_pruned,
             "n_uncertain": verdicts["uncertain"],
-            "n_commits_emitted": len(commits),
-            "n_residual_to_inner": len(residual),
+            "n_filtered_to_inner": len(filtered),
             "per_cand": per_cand,
+            "_verdicts_out": verdicts_out,  # captured for backstop wrapper
         })
-        return commits, residual
+        return verdicts_out, filtered
+
+    def wrapped_backstop(verdicts, emit_inner):
+        appended = original_backstop(verdicts, emit_inner)
+        # Attribute the backstop count to the most recent turn record.
+        if TURNS:
+            TURNS[-1]["n_backstop_appended"] = len(appended)
+            TURNS[-1]["n_inner_emitted"] = len(emit_inner)
+        return appended
 
     cl.layer0_classify = wrapped
+    cl._backstop_emit = wrapped_backstop
 
 
 def main() -> int:
@@ -135,15 +147,17 @@ def main() -> int:
     # Per-turn summary header.
     print(
         f"{'step':>4}  {'cands':>5}  {'W1':>3}  {'W2':>3}  {'L1':>3}  "
-        f"{'L2p':>3}  {'unc':>4}  {'emit_L0':>7}  {'->inner':>7}"
+        f"{'L2p':>3}  {'unc':>4}  {'->inner':>7}  {'inner':>5}  {'bkstp':>5}"
     )
-    print("-" * 60)
+    print("-" * 75)
     for t in TURNS:
         print(
             f"{t['step']:>4}  {t['n_candidates']:>5}  "
             f"{t['n_W1']:>3}  {t['n_W2']:>3}  {t['n_L1']:>3}  "
             f"{t['n_L2_pruned']:>3}  {t['n_uncertain']:>4}  "
-            f"{t['n_commits_emitted']:>7}  {t['n_residual_to_inner']:>7}"
+            f"{t['n_filtered_to_inner']:>7}  "
+            f"{t.get('n_inner_emitted', 0):>5}  "
+            f"{t.get('n_backstop_appended', 0):>5}"
         )
 
     # Aggregates.
@@ -153,16 +167,25 @@ def main() -> int:
     total_l1 = sum(t["n_L1"] for t in TURNS)
     total_l2 = sum(t["n_L2_pruned"] for t in TURNS)
     total_unc = sum(t["n_uncertain"] for t in TURNS)
-    total_emit_l0 = sum(t["n_commits_emitted"] for t in TURNS)
+    total_inner_emit = sum(t.get("n_inner_emitted", 0) for t in TURNS)
+    total_backstop = sum(t.get("n_backstop_appended", 0) for t in TURNS)
     n_turns = max(1, len(TURNS))
-    print("-" * 60)
+    print("-" * 75)
     print(f"totals: cands={total_cands} W1={total_w1} W2={total_w2} "
-          f"L1={total_l1} L2p={total_l2} uncertain={total_unc} "
-          f"emitted_L0={total_emit_l0}")
+          f"L1={total_l1} L2p={total_l2} uncertain={total_unc}")
+    print(f"        inner_emit={total_inner_emit} backstop_appended={total_backstop}")
     print(f"per-turn avg: cands={total_cands/n_turns:.1f} "
           f"W1={total_w1/n_turns:.2f} W2={total_w2/n_turns:.2f} "
-          f"L1={total_l1/n_turns:.2f} L2p={total_l2/n_turns:.2f} "
-          f"emit_L0={total_emit_l0/n_turns:.2f}")
+          f"L1={total_l1/n_turns:.2f} L2p={total_l2/n_turns:.2f}")
+    print(f"              inner_emit/turn={total_inner_emit/n_turns:.2f} "
+          f"backstop/turn={total_backstop/n_turns:.2f}")
+    # Backstop hit-rate: of W1+W2 commits, how many actually fired via backstop?
+    total_commits_avail = total_w1 + total_w2
+    if total_commits_avail > 0:
+        print(f"backstop rate: {total_backstop}/{total_commits_avail} = "
+              f"{100*total_backstop/total_commits_avail:.1f}% of commits "
+              f"actually appended (rest were either covered by inner or "
+              f"blocked by source conflict)")
 
     # Sample a few turns where W1/W2 fired, for narrative detail.
     interesting = [t for t in TURNS if t["n_W1"] > 0 or t["n_W2"] > 0]
