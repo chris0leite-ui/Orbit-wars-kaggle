@@ -228,15 +228,18 @@ def _source_vulnerability_loss(
     if threat is None:
         return 0.0
     _opp, opp_eta, _opp_force, _our_defense = threat
+    # Vulnerability is a TRANSIENT cost. Opp holds src for roughly
+    # `opp_eta` ticks before we counter-counter-attack (symmetric
+    # round-trip). Use a finite loss window, NOT the full remaining
+    # game, otherwise the closed-form math says every drained capture
+    # is a permanent loss and the chooser refuses to emit.
+    # Default loss window = opp_eta (one round-trip). 2× margin
+    # because src flipping from ours → opp's shifts margin by 2×
+    # tgt.production during the loss window.
+    loss_end = int(step) + 2 * int(opp_eta)
     loss_pv = pv_horizon(int(step), int(opp_eta), gamma=gamma,
-                         t_total=T_TOTAL_DEFAULT)
-    # Vulnerability is the EXPECTED loss, not the worst-case loss. The
-    # 2× margin multiplier (we lose, opp gains) applies only if the
-    # loss is permanent; in reality we'll re-capture or contest. Use
-    # 1× as a tunable midpoint between "ignore opp counter" (0×) and
-    # "assume forever" (2×). G3 vs v7_0 baseline emit-rate jumped from
-    # 1.4% → meaningful when this multiplier was reduced from 2 → 1.
-    return float(src.production) * loss_pv
+                         t_total=loss_end)
+    return 2.0 * float(src.production) * loss_pv
 
 
 def solo_roi(
@@ -273,7 +276,52 @@ def solo_roi(
         return -SHIP_COST_COEF * int(ships)
 
     if int(tgt.owner) == me:
-        return 0.0  # reinforce — proposer-side threat reinforce handles defense
+        # Reinforce. The proposer emits these only when tgt is
+        # threatened (`time_to_enemy_threat` + positive shortfall via
+        # `capture_size`). Compute the value of HOLDING the planet:
+        # if we reinforce, we keep tgt's production for the rest of
+        # the game AND deny opp the gain (2× margin).
+        #
+        # Sanity check: does the reinforcement actually defend? The
+        # proposer's capture_size sized this candidate to cover the
+        # shortfall, but rare edge cases (cap > budget, ship truncation)
+        # can leave a candidate that arrives but doesn't hold. We use
+        # `_cheapest_opp_counter` with the reinforcement folded in via
+        # `extra_defense_*` to confirm. If still threatened post-
+        # reinforcement, this is a band-aid that won't actually save
+        # the planet — score it as wasted ships.
+        post_residue = int(tgt.ships)  # tgt's current ships pre-arrival
+        threat_post = _cheapest_opp_counter(
+            tgt, post_residue, world, int(me), int(max_horizon),
+            extra_defense_ships=int(ships),
+            extra_defense_eta=int(arrival),
+        )
+        if threat_post is not None:
+            # Reinforcement insufficient — tgt still falls. Wasted.
+            return -SHIP_COST_COEF * int(ships)
+        # Confirm tgt WAS threatened before reinforcement; otherwise
+        # we're wasting ships on a safe planet.
+        threat_pre = _cheapest_opp_counter(
+            tgt, post_residue, world, int(me), int(max_horizon),
+        )
+        if threat_pre is None:
+            return -SHIP_COST_COEF * int(ships)
+        # We save the planet. Value = production stream we preserve.
+        # 2× margin (we keep + opp denied) over the rest of the game,
+        # discounted from now (we incur ship cost now, save the
+        # margin stream from the threat ETA onward).
+        _opp_pre, opp_eta_pre, _opp_force, _defense = threat_pre
+        save_pv = pv_horizon(int(step), int(opp_eta_pre), gamma=gamma,
+                             t_total=T_TOTAL_DEFAULT)
+        gross_reinforce = 2.0 * float(tgt.production) * save_pv
+        ship_cost = SHIP_COST_COEF * int(ships)
+        wait_cost = WAIT_COST_COEF * int(wait_N) * float(src.production)
+        residue_src = int(src.ships) - int(ships)
+        vuln_loss = _source_vulnerability_loss(
+            src, residue_src, world, model, me, step, int(max_horizon),
+            gamma=gamma,
+        )
+        return gross_reinforce - ship_cost - wait_cost - vuln_loss
 
     hold = expected_hold(int(tgt.id), arrival, world, model, t_total=T_TOTAL_DEFAULT)
     if hold <= 0:
@@ -281,7 +329,16 @@ def solo_roi(
 
     pv_held = pv_horizon(int(step), arrival, gamma=gamma,
                          t_total=int(step) + arrival + hold)
+    # 2P-contested-neutral assumption: in an adversarial 2P game,
+    # neutrals are competed for. If we don't capture, opp likely will.
+    # Treat neutrals the same as enemy planets for margin purposes
+    # (gain + deny opp's potential gain). This symmetrises gross vs
+    # the 1× vuln-loss multiplier so the chooser actually emits
+    # against contested boards. margin_multiplier(tgt, me) returns
+    # 1 for neutrals; we promote to 2 here.
     mult = margin_multiplier(tgt, me)
+    if mult == 1 and int(tgt.owner) == -1:
+        mult = 2
 
     gross = mult * float(tgt.production) * pv_held
     endgame_bonus = _endgame_finish_bonus(
