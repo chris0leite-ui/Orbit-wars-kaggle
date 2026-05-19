@@ -230,7 +230,13 @@ def _source_vulnerability_loss(
     _opp, opp_eta, _opp_force, _our_defense = threat
     loss_pv = pv_horizon(int(step), int(opp_eta), gamma=gamma,
                          t_total=T_TOTAL_DEFAULT)
-    return 2.0 * float(src.production) * loss_pv
+    # Vulnerability is the EXPECTED loss, not the worst-case loss. The
+    # 2× margin multiplier (we lose, opp gains) applies only if the
+    # loss is permanent; in reality we'll re-capture or contest. Use
+    # 1× as a tunable midpoint between "ignore opp counter" (0×) and
+    # "assume forever" (2×). G3 vs v7_0 baseline emit-rate jumped from
+    # 1.4% → meaningful when this multiplier was reduced from 2 → 1.
+    return float(src.production) * loss_pv
 
 
 def solo_roi(
@@ -553,25 +559,35 @@ def choose_roi(
     deadline = time.perf_counter() + max(50.0, float(wallclock_ms)) / 1000.0
 
     # --- Pass 1: solo scoring with ship-count variants ---
-    # For each prerank entry, enumerate candidate ship counts:
-    #   (a) original (proposer's pick — usually full budget).
-    #   (b) src.ships - MIN_SOLO_RESIDUE (largest emit that keeps the
-    #       residue floor — relevant only if the original drains below
-    #       the floor).
-    # Each variant gets a solo_roi score; we keep the best per (src, tgt).
+    # For each prerank entry, enumerate candidate ship counts and let
+    # solo_roi pick the best. Variants:
+    #   (a) original (proposer's pick — usually cap or full budget).
+    #   (b) at-fire-time max_safe (src.ships + wait_N × src.production
+    #       − MIN_SOLO_RESIDUE) when it differs from (a) and still
+    #       captures (≥ MIN_LEG_SHIPS).
+    # CRITICAL: max_safe must use AT-FIRE-TIME ships for wait_N>0
+    # candidates. With wait_N=11 and src.ships=10, effective fire-time
+    # ships = 21; max_safe = 16. Computing max_safe off the current
+    # src.ships alone clamps the launch to 5 ships, which always
+    # bounces against the wait_N=11 cap. That bug made ROI emit nothing
+    # for half a game (G3 vs v7_0 lost 0/32).
+    # No hard rejection on (a) — vuln_loss is the principled cost
+    # of draining the source, and is enforced inside solo_roi.
     solo_scored: list = []  # (score, src, tgt, ships, angle, wait_N)
     solo_by_target: dict[int, list] = {}
     for entry in prerank:
         _cheap, src, tgt, ships_orig, angle, eta, _horizon, wait_N = entry
-        max_residue_safe_ships = max(0, int(src.ships) - MIN_SOLO_RESIDUE)
+        src_ships_at_fire = int(src.ships) + int(wait_N) * int(src.production)
+        max_safe_at_fire = max(0, src_ships_at_fire - MIN_SOLO_RESIDUE)
 
         ship_variants: list[int] = []
-        if int(ships_orig) <= max_residue_safe_ships:
+        if int(ships_orig) >= MIN_LEG_SHIPS:
             ship_variants.append(int(ships_orig))
-        elif max_residue_safe_ships >= MIN_LEG_SHIPS:
-            ship_variants.append(max_residue_safe_ships)
-        else:
-            continue  # source too small to honor the floor at all
+        if (max_safe_at_fire >= MIN_LEG_SHIPS
+                and max_safe_at_fire != int(ships_orig)):
+            ship_variants.append(max_safe_at_fire)
+        if not ship_variants:
+            continue
 
         best_score = float("-inf")
         best_ships = ship_variants[0]
