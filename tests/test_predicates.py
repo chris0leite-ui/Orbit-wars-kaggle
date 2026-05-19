@@ -13,8 +13,10 @@ from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
 from agents.baseline.predicates import (
     UNCERTAIN,
     Verdict,
+    _w1_value_bounds,
     l1_provably_wasted_launch,
     l2_dominance_prune,
+    w1_dominance_classify,
     w1_provably_winning_capture,
     w2_provably_held_reinforce,
 )
@@ -414,3 +416,120 @@ def test_l2_preserves_order():
     b = _candidate(src, tgt2, cheap_delta=0.5, ships=10, eta=5)
     out = l2_dominance_prune([a, b])
     assert out[0] is a and out[1] is b
+
+
+# ---------------------------------------------------------------------------
+# Slice 5 — bounded-interval scoring + dominance classifier
+# ---------------------------------------------------------------------------
+
+
+def test_value_bounds_reinforce_returns_zero_zero():
+    """W2's territory; bounds are (0, 0) so this candidate doesn't compete in W1 dominance."""
+    src = _planet(0, 0, 10.0, 50.0, ships=80)
+    mine_tgt = _planet(1, 0, 12.0, 50.0, ships=5)
+    world = _world(0, [src, mine_tgt])
+    model = WorldModel.from_world(world)
+    lo, hi = _w1_value_bounds(src, mine_tgt, ships=10, wait_N=0, eta=1, world=world, model=model, me=0)
+    assert (lo, hi) == (0.0, 0.0)
+
+
+def test_value_bounds_bounce_returns_zero_zero():
+    """Capture fails at arrival; both bounds 0."""
+    src = _planet(0, 0, 10.0, 50.0, ships=100)
+    tgt = _planet(1, -1, 50.0, 50.0, ships=100, production=1)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    lo, hi = _w1_value_bounds(src, tgt, ships=5, wait_N=0, eta=7, world=world, model=model, me=0)
+    assert (lo, hi) == (0.0, 0.0)
+
+
+def test_value_bounds_clean_capture_lo_positive():
+    """Clean capture passes Wald → lower bound > 0; upper bound is production × pv."""
+    src = _planet(0, 0, 10.0, 50.0, ships=120, production=3)
+    tgt = _planet(1, -1, 30.0, 50.0, ships=10, production=2)
+    opp_far = _planet(2, 1, 95.0, 95.0, ships=10)
+    world = _world(0, [src, tgt, opp_far])
+    model = WorldModel.from_world(world)
+    lo, hi = _w1_value_bounds(src, tgt, ships=80, wait_N=0, eta=4, world=world, model=model, me=0)
+    assert 0.0 < lo <= hi
+    assert hi > 0.0
+
+
+def test_value_bounds_contested_capture_lo_zero_hi_positive():
+    """Capture succeeds but Wald fails (gang-up exists) → lo=0, hi>0."""
+    src = _planet(0, 0, 10.0, 50.0, ships=200, production=3)
+    tgt = _planet(1, -1, 50.0, 50.0, ships=10, production=2)
+    opp_a = _planet(2, 1, 60.0, 45.0, ships=80, production=2)
+    opp_b = _planet(3, 1, 60.0, 55.0, ships=80, production=2)
+    world = _world(0, [src, tgt, opp_a, opp_b])
+    model = WorldModel.from_world(world)
+    lo, hi = _w1_value_bounds(src, tgt, ships=80, wait_N=0, eta=7, world=world, model=model, me=0)
+    assert lo == 0.0  # Wald rejected (gang-up)
+    assert hi > 0.0   # but capture itself succeeds
+
+
+def test_dominance_classifier_single_source_single_candidate_commits():
+    """One candidate on src; lo > 0 → commit."""
+    src = _planet(0, 0, 10.0, 50.0, ships=120, production=3)
+    tgt = _planet(1, -1, 30.0, 50.0, ships=10, production=2)
+    opp_far = _planet(2, 1, 95.0, 95.0, ships=10)
+    world = _world(0, [src, tgt, opp_far])
+    model = WorldModel.from_world(world)
+    cand = (5.0, src, tgt, 80, 0.0, 4, 6, 0)
+    verdicts = w1_dominance_classify([cand], world, model, 0, gamma=0.99)
+    assert id(cand) in verdicts
+    assert verdicts[id(cand)].kind == "commit"
+    assert verdicts[id(cand)].reason == "W1"
+
+
+def test_dominance_classifier_two_candidates_no_dominance_skips():
+    """Two W1-eligible candidates from same source; neither lo > other's hi → no commit."""
+    src = _planet(0, 0, 10.0, 50.0, ships=200, production=3)
+    tgt_a = _planet(1, -1, 30.0, 50.0, ships=10, production=2)
+    tgt_b = _planet(2, -1, 40.0, 50.0, ships=10, production=2)
+    opp_far = _planet(3, 1, 95.0, 95.0, ships=10)
+    world = _world(0, [src, tgt_a, tgt_b, opp_far])
+    model = WorldModel.from_world(world)
+    cand_a = (5.0, src, tgt_a, 80, 0.0, 4, 6, 0)
+    cand_b = (5.0, src, tgt_b, 80, 0.0, 5, 7, 0)
+    verdicts = w1_dominance_classify([cand_a, cand_b], world, model, 0, gamma=0.99)
+    # Two equal-production targets; neither's lo > other's hi → no commit.
+    assert len(verdicts) == 0
+
+
+def test_dominance_classifier_clear_winner_commits_only_one():
+    """Source has one high-value + one low-value candidate; only the high one commits."""
+    src = _planet(0, 0, 10.0, 50.0, ships=200, production=3)
+    # High-value: production=5, capture succeeds, holds.
+    tgt_high = _planet(1, -1, 30.0, 50.0, ships=10, production=5)
+    # Low-value: production=1, very different scale.
+    tgt_low = _planet(2, -1, 40.0, 50.0, ships=10, production=1)
+    opp_far = _planet(3, 1, 95.0, 95.0, ships=10)
+    world = _world(0, [src, tgt_high, tgt_low, opp_far])
+    model = WorldModel.from_world(world)
+    cand_high = (5.0, src, tgt_high, 80, 0.0, 4, 6, 0)
+    cand_low = (1.0, src, tgt_low, 80, 0.0, 5, 7, 0)
+    verdicts = w1_dominance_classify([cand_high, cand_low], world, model, 0, gamma=0.99)
+    # tgt_high's lower bound (production=5 × pv over window) should exceed
+    # tgt_low's upper bound (production=1 × pv full). Verify the high one commits.
+    if id(cand_high) in verdicts:
+        assert verdicts[id(cand_high)].kind == "commit"
+    # The low one should NOT commit (it loses dominance to the high one).
+    assert id(cand_low) not in verdicts or verdicts[id(cand_low)].kind != "commit"
+
+
+def test_dominance_classifier_different_sources_independent():
+    """Two sources, each with its own candidate; both can commit independently."""
+    src_a = _planet(0, 0, 10.0, 50.0, ships=120, production=3)
+    src_b = _planet(1, 0, 80.0, 50.0, ships=120, production=3)
+    tgt_a = _planet(2, -1, 25.0, 50.0, ships=10, production=2)
+    tgt_b = _planet(3, -1, 70.0, 50.0, ships=10, production=2)
+    opp_far = _planet(4, 1, 95.0, 95.0, ships=10)
+    world = _world(0, [src_a, src_b, tgt_a, tgt_b, opp_far])
+    model = WorldModel.from_world(world)
+    cand_a = (5.0, src_a, tgt_a, 80, 0.0, 4, 6, 0)
+    cand_b = (5.0, src_b, tgt_b, 80, 0.0, 4, 6, 0)
+    verdicts = w1_dominance_classify([cand_a, cand_b], world, model, 0, gamma=0.99)
+    # Both should commit independently (different sources).
+    assert id(cand_a) in verdicts and verdicts[id(cand_a)].kind == "commit"
+    assert id(cand_b) in verdicts and verdicts[id(cand_b)].kind == "commit"

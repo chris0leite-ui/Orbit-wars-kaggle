@@ -385,6 +385,142 @@ def w1_provably_winning_capture(
     return Verdict(kind="commit", lower_bound=value, reason="W1")
 
 
+# ---------------------------------------------------------------------------
+# Slice 5 — bounded-interval scoring + per-source dominance commit
+# ---------------------------------------------------------------------------
+
+
+def _w1_value_bounds(
+    src, tgt, ships: int, wait_N: int, eta: int,
+    world, model, me: int,
+    *,
+    gamma: float = 0.99,
+) -> tuple[float, float]:
+    """Closed-form `(lower_bound, upper_bound)` on Δ-favor from this
+    capture.
+
+    `upper_bound` = `production × pv_horizon`, the best-case value
+    assuming opp doesn't counter at all (no production cost to us in
+    that scenario, and tgt's production accrues fully to our side
+    for the remaining episode).
+
+    `lower_bound` = `upper_bound` × `W1_HOLD_WINDOW` / remaining-game
+    fraction, but only if the multi-opp Wald hold check passes; else
+    `0.0`. The intuition: if Wald says "we hold for at least window
+    ticks against the worst-case coordinated counter," then the
+    minimum value is the production accrued over that window.
+    Otherwise (no hold guarantee), the lower bound is 0 — we cannot
+    rule out losing tgt immediately.
+
+    Returns `(0.0, 0.0)` for:
+      - reinforces (`tgt.owner == me`): not W1's territory.
+      - bounces (delivered force < tgt garrison at arrival).
+      - source-vulnerable launches (`_source_survives_launch` fails).
+
+    Used by `w1_dominance_classify` to compute per-source dominance.
+    """
+    if int(tgt.owner) == int(me):
+        return (0.0, 0.0)
+
+    arrival = int(wait_N) + int(eta)
+    base_arrivals = list(model.ledger.get(int(tgt.id), []))
+    our_arrival = (arrival, int(me), int(ships))
+
+    owner_at_arrival, _ = predict_garrison_at(
+        tgt, arrival, base_arrivals + [our_arrival],
+    )
+    if int(owner_at_arrival) != int(me):
+        return (0.0, 0.0)  # bounce
+
+    if not _source_survives_launch(
+        src, int(ships), int(wait_N), world, model, int(me),
+    ):
+        return (0.0, 0.0)  # source drained
+
+    step = int(getattr(world, "step", 0) or 0)
+    pv_full = pv_horizon(step, arrival, gamma=gamma, t_total=T_TOTAL_DEFAULT)
+    upper_bound = float(int(tgt.production)) * float(pv_full)
+
+    if not _w1_multi_opp_holds(
+        src, tgt, int(ships), int(wait_N), int(eta), world, int(me),
+    ):
+        return (0.0, upper_bound)
+
+    # Wald passes: lower bound is the production over the proven
+    # hold window. Cap by upper_bound for safety.
+    pv_window = pv_horizon(
+        step, arrival, gamma=gamma,
+        t_total=step + arrival + W1_HOLD_WINDOW,
+    )
+    lower_bound = min(upper_bound, float(int(tgt.production)) * float(pv_window))
+    return (lower_bound, upper_bound)
+
+
+def w1_dominance_classify(prerank, world, model, me: int, *, gamma: float = 0.99) -> dict:
+    """Per-source W1 dominance: commit a candidate iff its closed-form
+    lower bound exceeds every alternative candidate's upper bound on
+    the same source.
+
+    Returns `{id(candidate): Verdict}` for capture candidates only.
+    Reinforces and non-capture candidates are absent from the dict;
+    callers fall through to W2 / uncertain.
+
+    A source with a single W1-eligible capture commits if its lower
+    bound is positive (no alternative to compete with). A source with
+    multiple candidates commits only the dominant one — the one whose
+    worst-case value beats every other candidate's best-case value.
+    This is strictly tighter than Slice 4's "per-candidate W1 commit
+    when Wald passes" — it eliminates the case where two W1-eligible
+    captures from the same source compete, and L0 backstop appends
+    whichever ranks first by lower_bound alone.
+
+    Soundness: if `lo[i] > hi[j]` for all j ≠ i on source s, then
+    even in the most optimistic alternative scenario, candidate i has
+    higher value. The closed-form proof is local to one source's
+    available actions.
+    """
+    by_src: dict = {}
+    bounds_by_id: dict = {}
+    for c in prerank:
+        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N = c
+        if int(tgt.owner) == int(me):
+            continue  # W2's territory
+        lo, hi = _w1_value_bounds(
+            src, tgt, int(ships), int(wait_N), int(eta),
+            world, model, int(me), gamma=gamma,
+        )
+        bounds_by_id[id(c)] = (lo, hi)
+        by_src.setdefault(int(src.id), []).append(c)
+
+    verdicts: dict = {}
+    for sid, src_cands in by_src.items():
+        # Sort by lower_bound descending.
+        ranked = sorted(
+            src_cands, key=lambda c: -bounds_by_id[id(c)][0],
+        )
+        best = ranked[0]
+        best_lo, best_hi = bounds_by_id[id(best)]
+        if best_lo <= 0.0:
+            continue  # no committable candidate on this source
+
+        if len(ranked) == 1:
+            # Only candidate on this source; commit if lo > 0.
+            verdicts[id(best)] = Verdict(
+                kind="commit", lower_bound=best_lo, reason="W1",
+            )
+            continue
+
+        # Multi-candidate: best lo must exceed all OTHER candidates' hi.
+        max_other_hi = max(bounds_by_id[id(c)][1] for c in ranked[1:])
+        if best_lo > max_other_hi:
+            verdicts[id(best)] = Verdict(
+                kind="commit", lower_bound=best_lo, reason="W1",
+            )
+        # Else: no dominance → no W1 commit on this source.
+
+    return verdicts
+
+
 def l1_provably_wasted_launch(
     src, tgt, ships: int, wait_N: int, eta: int,
     world, model, me: int,

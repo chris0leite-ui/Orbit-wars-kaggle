@@ -41,6 +41,7 @@ from agents.baseline.chooser_trajectory import choose_trajectory
 from agents.baseline.predicates import UNCERTAIN
 from agents.baseline.predicates import l1_provably_wasted_launch
 from agents.baseline.predicates import l2_dominance_prune
+from agents.baseline.predicates import w1_dominance_classify
 from agents.baseline.predicates import w1_provably_winning_capture
 from agents.baseline.predicates import w2_provably_held_reinforce
 
@@ -106,13 +107,20 @@ def layer0_classify(prerank, world, model, me, step, gamma):
     commits were mathematically sound, they preempted source
     allocations the inner would have used more effectively.
     """
+    # Slice 5: W1 commits are decided by per-source dominance over
+    # bounded intervals. Computed once for all W1-eligible candidates.
+    # Slice 4's per-candidate Wald commit is REPLACED by this stricter
+    # gate — fewer commits, higher confidence.
+    w1_verdict_by_id = w1_dominance_classify(
+        prerank, world, model, int(me), gamma=float(gamma),
+    )
+
     verdicts: list = []
     surviving: list = []
     for c in prerank:
         cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N = c
 
-        # L1 first — drop provably wasted from `filtered` (inner doesn't
-        # see them) but still record the verdict for the audit log.
+        # L1 first — drop provably wasted from `filtered`.
         v_l1 = l1_provably_wasted_launch(
             src, tgt, int(ships), int(wait_N), int(eta), world, model, int(me),
         )
@@ -120,17 +128,14 @@ def layer0_classify(prerank, world, model, me, step, gamma):
             verdicts.append((c, v_l1))
             continue
 
-        # W1 commit attempt — record but keep in filtered.
-        v_w1 = w1_provably_winning_capture(
-            src, tgt, int(ships), int(wait_N), int(eta), world, model, int(me),
-            gamma=gamma,
-        )
-        if v_w1.kind == "commit":
-            verdicts.append((c, v_w1))
+        # W1 dominance verdict (computed above).
+        w1_v = w1_verdict_by_id.get(id(c))
+        if w1_v is not None and w1_v.kind == "commit":
+            verdicts.append((c, w1_v))
             surviving.append(c)
             continue
 
-        # W2 commit attempt — record but keep in filtered.
+        # W2 commit attempt — per-candidate check.
         v_w2 = w2_provably_held_reinforce(
             src, tgt, int(ships), int(wait_N), int(eta), world, model, int(me),
         )
