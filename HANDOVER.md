@@ -1,96 +1,42 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-17 by `claude/kaggle-baseline-strategy-lO4mm`
+> Last written: 2026-05-19 by `claude/ml-competition-strategy-PFhzM`
+> (Phase 3 compound-weight sweep finalised + PI strategic pivot to
+> clean ROI agent on kept architecture + observation-grounded
+> scenario gate). See `## Day-19 PM ml-competition-strategy-PFhzM`
+> below for the load-bearing section for next-session execution.
+>
+> Prior writer: 2026-05-17 by `claude/kaggle-baseline-strategy-lO4mm`
 > (clean modular re-baseline of v15).
-> Prior session: `claude/recover-main-foundations-MV0e2` and
+> Earlier sessions: `claude/recover-main-foundations-MV0e2` and
 > `claude/merge-2026-05-16-knowledge` (the v9 → v15 → v20 chooser line).
 
 ## Where we are
 
-- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC.
-- **Team peak agent:** v15_banded (multi-wait-grid + banded
-  (src, tgt, wait_band) dedup), shipped 5/16 as submission #52710995.
-  **Do NOT hardcode the live μ here** — it drifts as the rolling
-  rating settles. Query Kaggle at session start:
+- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC (35 days).
+- **Last submission:** composite+A2 hybrid (sub #52744856, pushed
+  2026-05-17 PM). Was PENDING at last session log; **live μ unknown
+  as of 5/19**. Query at session start:
   `kaggle competitions submissions orbit-wars`.
-- **Rolling-last-2** (Kaggle auto-keeps these two for final eval; the
+- **Team peak agent (until live μ confirms otherwise):** v15_banded
+  (sub #52710995, 5/16). The composite+A2 hybrid sub is the rolling
+  candidate to replace it; verify on session start.
+- **Rolling-last-2** (Kaggle auto-keeps these two for final eval;
   third push auto-evicts):
-  - v20_dogpile (5/16 22:00 UTC, sub #52721807) — most recent
-  - v15_banded  (5/16 14:00 UTC, sub #52710995) — current champion
-- **Daily submission budget:** 5/day; 5/17 starts at 0/5 used.
-- **Calibration WARNING** (still active): multiple recent submissions
-  over-predicted live by 20–30 pp. Every new push needs a 3-opponent
-  local panel (`fast.py eval --vs-panel`) PLUS h2h vs the current
-  rolling champion (not just a fixed baseline) — closes the
-  `panel-pass-without-h2h-vs-current` and `local-overpredict-2x`
-  frictions.
-- **v15 source** is NOT in the working tree — the "Bootstrap: nuke
-  historical strategy code" reset wiped it. It lives at
-  `f315dc7:agents/v15/main.py` (787 LOC) in git history. The clean
-  modular re-implementation at `agents/baseline/` is the working
-  foundation for everything going forward.
-
-## What just landed (2026-05-17, this branch)
-
-`agents/baseline/` — clean modular re-baseline of v15 in 577 LOC.
-
-```
-agents/baseline/
-├── value.py    (60 LOC)   F1 + F2 favor leaf with pv_horizon discount
-├── proposer.py (262 LOC)  multi-wait extra_surplus grid + banded dedup
-├── chooser.py  (132 LOC)  reactive-opp idle baseline + per-cand Δ + emit
-└── main.py     (123 LOC)  entry + env-var knobs + pipeline glue
-```
-
-Backed by the same proven primitives v15 used: `lib/fast_sim.py`
-(0.12 ms/step), `lib/opp_model.lite_greedy_policy` (reactive),
-`lib/scoring.pv_horizon`, `lib/world_model.WorldModel`. None of `lib/`
-was modified. Env-var knobs: `BASELINE_GAMMA` (default 0.99),
-`BASELINE_WALLCLOCK_MS` (default 600), `ORBIT_WARS_PARITY_WALLCLOCK_MS`
-(bundle-parity override).
-
-`tests/test_baseline_*.py` — 5 files, 26 test cases:
-- `test_baseline_value.py` — F1+F2 monotonicity + PV-discount + 4P sum-of-opps
-- `test_baseline_proposer.py` — wait-grid + banded dedup + capture_size + sizing
-- `test_baseline_chooser.py` — reactive baseline length + score_action + emit shape
-- `test_baseline_smoke.py` — vs random both seats + per-turn budget (skip if no env)
-- `test_baseline_h2h.py` — gated on `BASELINE_RUN_H2H=1` (n=16 vs v7_0_drop_one)
-
-Local validation (run again at session start to refresh):
-- unit tests (23 cases): green in ~3 s
-- `fast.py bench baseline` (3 games / 557 turns): p50/p95/max within v15's published envelope
-- `fast.py eval baseline` (n=64 vs v7_0_drop_one): PASS (Wilson lo > 0.55)
-- `fast.py eval baseline --vs /tmp/v15_resurrect/main.py` (n=64): INCONCLUSIVE — CI brackets 0.50 = **functional parity with v15**
-
-**Not submitted.** Submission is single-shot per Rule 1 and needs PI approval.
-
-## Next-session first-action (ranked by EV / cost)
-
-1. **Architectural pivot on top of baseline** (~1 day). The v9–v15
-   chooser axis is structurally saturated (Rule 37 cap hit at v16–v20).
-   The clean modular split lets you swap ONE of value / proposer /
-   chooser / opp_model independently. Highest-EV candidates:
-   - **Learned value head** replacing `agents/baseline/value.favor`:
-     `lib/value_heads.composite_capture_value` already exists; train
-     a small head on replay corpus or use the existing logistic
-     regression weights (Mine 2 hit 0.77 AUC).
-   - **Portfolio search** in `chooser.py`: enumerate 3-5 named
-     portfolios (incumbent / conservative / aggressive / no-op /
-     drop-weakest) and score each — different action-space topology
-     from drop-one.
-   - **IL warm-start** from top-10 replays — `data/shot_validator/`
-     already has 37k labeled examples (24-dim); the MLP head is
-     deferred but the pipeline is ready.
-   Pre-flight: Rule 16 6-question check; Rule 19 issue-tree claim.
-2. **Map-type-conditional opening book** (H40, ~4 h). 4 board
-   archetypes identified earlier; tier-1 experiment = override
-   proposer's first 30 turns with a cluster-specific template. Gate:
-   ≥55% Wilson on 3-agent panel + h2h vs v15 baseline.
-3. **Submit the clean baseline as a calibration probe** (~20 min) —
-   PI-approved single-shot. Expected outcome: functional parity with
-   v15, but a clean live data point against the live-drift WARNING.
-   Costs: evicts v20 from rolling-last-2 (v15 stays — it's the
-   second-most-recent of `[baseline, v15]`).
+  - composite+A2 hybrid (5/17, sub #52744856) — PENDING last check
+  - v15_banded (5/16, sub #52710995) — current champion (until
+    composite+A2 clears)
+- **Daily submission budget:** 5/day; 5/19 0/5 used (local A/B only).
+- **Calibration WARNING** (active): -20 to -30 pp local-vs-live on
+  the last three submissions. The new ROI agent uses
+  **observation-grounded synthetic scenarios** as its primary gate
+  (not tournament winrate) precisely because of this gap — see
+  Day-19 PM section below.
+- **Working foundation:** `agents/baseline/` (clean modular v15
+  re-impl, current live-champion source). `agents/bundle/` is
+  SHELVED — not iterated (see `knowledge-base/flags/2026-05-19-
+  bundle-decision-stack-shelved-not-deleted.md`). `agents/trajectory_roi/`
+  is the new build target for the next session.
 
 ## Pointers
 
@@ -126,3 +72,92 @@ Local validation (run again at session start to refresh):
   work must pivot to a different axis.
 - Rule 40: prefer modeling-correctness over restriction-tuning
   (no MAX_WAIT / MAX_HORIZON / MIN_FLEET_SIZE bumps to fix symptoms).
+
+---
+
+## Day-19 PM ml-competition-strategy-PFhzM
+
+**Strategic state.** Bundle's chooser/scorer axis is fully
+characterised and exhausted. Phase 3 compound-weight sweep
+({0.05, 0.1, 0.2, 0.3, 0.5}) lifts bundle-vs-baseline from Wlo 0.035
+to 0.142, saturating at 0.3. Lever real but well below the 0.55
+gate. Bundle is structurally v7_0-class and cannot reach the live
+champion via more scorer coefficients. PI ratified the architectural
+pivot.
+
+**Pivot in one sentence.** Drop bundle's decision stack entirely;
+keep the `lib/*` primitives; rebuild a clean ROI agent at
+`agents/trajectory_roi/` with 6 first-class primitives, and gate it
+on observation-grounded synthetic scenarios that ROI must pass 100%
+before any tournament A/B.
+
+**Next-session entry point (in order):**
+
+1. **Query live μ for sub 52744856.** Was PENDING at last session;
+   determines whether the live champion (composite+A2 hybrid) moved
+   off v15. Use the session-start hook's `kaggle competitions
+   submissions orbit-wars`.
+2. **Phase 1a — replay-mine recent live games.** `python
+   scripts/replay_mine.py --recent 5` against the latest COMPLETE
+   submission(s). Goal: confirm/refute PI's five named failure modes
+   (a recapture, b drift, c garrison-counter, d split-majority,
+   e distant-idleness) in actual live data. Document in
+   `audit/2026-05-19-replay-mine-pre-roi.md`. Open question filed
+   at `knowledge-base/questions/2026-05-19-do-failure-modes-c-and-e-
+   appear-in-live.md` — close this with explicit observed-or-not
+   per failure mode.
+3. **Phase 1b — scenario substrate.** `tests/scenarios/base.py`
+   with `Scenario` ABC (single-turn + multi-turn flavours), clean-
+   state helpers (round-trip, ray-cast reachability). Reuse
+   `tests/test_bundle_oracles.py` helpers (`_planet`, `_obs`, `_emit`).
+4. **Phase 1c — author V0 scenarios** (8 total): S1-S3 (sanity), R1
+   (a), D1 (b), G1 (c), SM1 (d — PI's canonical 100+100 vs 50),
+   DI1 (e). Source-tagged to the replay finding from step 2.
+5. **Phase 1d — clean-validate** each scenario (no sun-in-the-way,
+   physically reachable, manual eyeball). Phase 1 commit gate:
+   ≥6/8 fail against `baseline` (confirms suite encodes real gaps).
+6. **Phase 2 — `agents/trajectory_roi/main.py`** with the 6-primitive
+   architecture. Path-integration shape from `BundleEvaluator.score`
+   reused (the one bundle insight worth carrying forward — see
+   `knowledge-base/flags/2026-05-19-bundle-decision-stack-shelved-
+   not-deleted.md`).
+7. **Phase 3 — validate ROI 100%** against the scenario suite. Each
+   FAILURE → extend a primitive (never a hotfix `if` patch). Iterate.
+8. **Phase 4 — A/B vs current live champion** at n=8, expand on signal.
+9. **No Kaggle push** unless predicted μ > live champion (Rule 12).
+
+**Full plan**: `/root/.claude/plans/no-go-forward-test-fluttering-token.md`
+(approved this session).
+
+**What changed in `state/current.md`:** date 5/17→5/19, days_to_deadline
+37→35, submissions_used_today 2→0, plateau_days 0→2,
+saturation_count 0→1, session_log prepended with today's entry.
+
+**Discipline anchors live this session:**
+- Rule 37: axis exhaustion. We exited the chooser axis (overdue by 3
+  variants — friction logged at
+  `audit/friction.md::plan-doc-survives-strategic-redirect`).
+- Rule 40: PI's "no hotfixes" is Rule 40 applied to the new ROI
+  architecture. Every scenario fix extends one of 6 primitives.
+- Rule 38: every scenario IS a fix-verification rig for its named
+  failure mode.
+
+**Falsified-or-dead this session:**
+- Compound-weight as a competitive lever (vs baseline). Real but
+  saturates at Wlo 0.142.
+- Bundle as a submission candidate (it's v7_0-class, can't evict
+  live champion without losing ladder spot).
+- Speculative scenario authoring — PI rejected. Scenarios must be
+  observation-grounded.
+
+**Pointers added this session:**
+- `audit/2026-05-19-phase-3-sweep-and-roi-pivot.md` — sweep results
+  + pivot verdict + plan reference.
+- `knowledge-base/thoughts/2026-05-19-roi-pivot-scenario-gated-
+  clean-architecture.md` — the pivot in PI's words + the
+  architectural reasoning + the anti-pattern I logged about myself.
+- `knowledge-base/flags/2026-05-19-bundle-decision-stack-shelved-
+  not-deleted.md` — what "drop bundle" means in working-tree terms.
+- `knowledge-base/questions/2026-05-19-do-failure-modes-c-and-e-
+  appear-in-live.md` — open question Phase 1a answers.
+- `audit/tournaments/202605190*.json` — 5 sweep run JSONs.

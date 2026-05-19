@@ -8,13 +8,13 @@
 >            KAGGLE_API_TOKEN="$KaggleAPIToke"
 >     kaggle competitions submissions orbit-wars
 >
-> Updated 2026-05-17 by `claude/kaggle-baseline-strategy-lO4mm`
-> (clean modular re-baseline of v15).
+> Updated 2026-05-19 by `claude/ml-competition-strategy-PFhzM`
+> (Phase 3 sweep + ROI/scenario-gate pivot).
 
 ```yaml
-date: 2026-05-17
+date: 2026-05-19
 deadline: 2026-06-23 23:59 UTC
-days_to_deadline: 37
+days_to_deadline: 35
 
 # Most-recent submission (composite + A2 hybrid; pre-submit hypotheses
 # registered at audit/2026-05-17-pre-submit-hypotheses-composite-a2-hybrid.md).
@@ -51,10 +51,10 @@ team_peak_agent: v15_banded
 # 3-opponent panel (`fast.py eval --vs-panel`) + h2h vs the current
 # rolling agent (not just a fixed baseline) before any new push.
 
-submissions_used_today: 2     # 5/17 — composite+A2 hybrid (52744234 ERROR, 52744856 PENDING re-bundle)
+submissions_used_today: 0     # 5/19 — local A/B sweep only; no Kaggle pushes
 submissions_used_total: 31    # see ladder list below; refresh via Kaggle CLI
-plateau_days: 0
-saturation_count: 0
+plateau_days: 2               # 5/18+5/19 spent on bundle scorer-axis Phase E with no submitted improvement
+saturation_count: 1           # +1 this session: chooser/scorer axis fully characterised, pivoted off
 
 # Live ladder — read from `kaggle competitions submissions orbit-wars`,
 # NOT from this file. Submission IDs are stable; scores are not.
@@ -87,6 +87,24 @@ saturation_count: 0
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
+  - 2026-05-19 — ml-competition-strategy-PFhzM (Phase 3 sweep + ROI pivot).
+    Phase 3 compound-weight sweep finalised across {0.05, 0.1, 0.2, 0.3, 0.5}:
+    lever lifts bundle-vs-baseline from Wlo 0.035 to 0.142, then saturates
+    at 0.3 (identical at 0.5). 0.1 is the free Pareto point (no v7_0 cost,
+    +1 vs baseline); 0.3 is the peak (+3 vs baseline, -2 vs v7_0). Bundle is
+    v7_0-class and structurally below the live champion; lever exhausted.
+    PI ratified the strategic pivot: drop bundle's entire decision stack
+    (chooser, scorer coefficients, BUNDLE_* env vars), KEEP the architecture
+    (lib/{fast_sim, trajectory_layer, world_model, trajectory, opp_model}.py),
+    REBUILD a clean ROI agent at `agents/trajectory_roi/` with 6 first-class
+    primitives (enumerate / predict_arrival / reachable / score /
+    refine_via_rollout / select). Scenario-suite-FIRST methodology:
+    observation-grounded synthetic scenarios encoding 5 named failure modes
+    (recapture-loss, drift-loss, garrison-counter, split-majority,
+    distant-idleness); ROI must pass 100% before ANY tournament A/B. Plan
+    approved at `/root/.claude/plans/no-go-forward-test-fluttering-token.md`.
+    Next-session entry-point: Phase 1a replay-mining to ground scenario
+    authoring in real live failures. NO submission this session.
   - 2026-05-17 PM — audit-workflow-performance-btjeK.
     Diagnostic + observe-loop foundations + composite head wired + A2 merged
     + submission bundled. Workflow fixes: kaggle-CLI shim (`~/.local/bin/kaggle`

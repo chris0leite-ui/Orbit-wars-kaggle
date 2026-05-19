@@ -565,6 +565,42 @@ relevant skill file or source code, not back into friction.md.
   with both Wilson LB and substrate-viability checks (knob
   responsiveness, predicted-outcome-matched, timing headroom).
 
+## 2026-05-19 (claude/ml-competition-strategy-PFhzM — Phase 3 sweep + ROI pivot)
+
+- `tag: plan-doc-survives-strategic-redirect` — PI's strategic
+  redirect was written 2026-05-18 (`knowledge-base/thoughts/2026-05-18-
+  strategic-redirect-from-tactical-mechanics.md`): drop chooser-axis
+  iteration, go objective-first. This session ran THREE more
+  chooser-axis variants (Phase 1 joint, Phase 2 bounce, Phase 3
+  compound) before pivoting. Root cause: the older Phase E plan doc
+  was not rewritten when the redirect landed; agents executing the
+  plan inherit the old framing without checking for newer redirects.
+  **Fix:** before any phase start, check
+  `knowledge-base/thoughts/` for strategic-redirect entries newer
+  than the plan doc. Promotion candidate: rule in WRAPUP / handover
+  flow that flags "plan doc older than thoughts/strategic-redirect-*"
+  to next session.
+- `tag: compound-weight-saturation-bracketed` — Phase 3 sweep at
+  weights {0.05, 0.1, 0.2, 0.3, 0.5} cleanly bracketed the lever's
+  effective range: 0.05 = no effect, 0.1 = free Pareto (no v7_0
+  cost), 0.3 = peak vs baseline, 0.5 = identical to 0.3 (saturated).
+  Wlo 0.035 → 0.142. Lever real but well below the 0.55 gate.
+  **Fix:** none needed — discipline win. Bracketing a coefficient
+  with 5 points across 1.5 orders of magnitude is the right
+  characterisation for any new scorer knob; promote as a default
+  sweep protocol.
+- `tag: scenario-suite-precedes-agent-implementation` — PI's
+  next-session plan inverts the usual order: build the synthetic
+  scenario suite FIRST, then the agent that must pass them. Reason:
+  the calibration gap (-20 to -30 pp local-vs-live over three
+  recent submissions) means tournament A/Bs are noisy + biased; a
+  deterministic scenario suite gives unbiased modeling-correctness
+  signals. **Fix:** captured in the approved next-session plan
+  (`/root/.claude/plans/no-go-forward-test-fluttering-token.md`);
+  promotion candidate if it survives the next session intact —
+  scenario-suite-before-A/B as a default for any new agent
+  architecture, not just this one.
+
 
 ```
 - `tag: <kebab-slug>` — <session context>: <what happened>.
