@@ -177,6 +177,22 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
     the v10-v13 iteration line (MAX_WAIT, MAX_HORIZON, MIN_FLEET_SIZE
     were all candidate bumps PI rejected in favour of modeling fixes
     that made the symptom emerge naturally).
+41. **Inspect first, small A/B second, big A/B last.** Before any
+    multi-minute A/B run, run a single-game introspection (or
+    targeted oracle scenario) to verify the change does what you
+    think it does. Then run a SMALL A/B (n=4 or n=8 seeds, ~5-10
+    min) to get a directional signal. Only escalate to n=32+ once
+    the small A/B is positive AND the introspection confirms the
+    mechanism. Big A/Bs are SLOW and OPAQUE — by the time results
+    arrive you've forgotten the hypothesis, burned a CPU hour, and
+    can't easily intervene. Worse, big A/Bs block parallel work
+    via CPU contention (4-worker eval at 99% CPU starves single-
+    game introspection scripts). Origin: 2026-05-19 PI directive
+    after a 45-min layered-chooser A/B was started before a
+    single-game inspection; layered_w1w2l1l2 vs trajectory n=32
+    was Slice 3's run, ran 45 min, returned Wlo=0.366 INCONCLUSIVE.
+    The single-game introspect (5 min) would have shown the same
+    architectural failure mode much faster.
 
 ## Defaults from prior-comp postmortem
 
