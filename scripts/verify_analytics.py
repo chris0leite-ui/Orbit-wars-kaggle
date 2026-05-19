@@ -263,19 +263,26 @@ def test_3_self_play_balance(n: int) -> TestResult:
     troi = trajectory_roi_main.agent
     seat0_wins, seat1_wins, draws, elapsed, games = _evaluate_2p(
         troi, troi, n)
+    rate = seat0_wins / n if n else 0.0
+    # Spec gate: 0.4 ≤ rate ≤ 0.6 → PASS (balanced).
+    # WARN zone: 0.2 ≤ rate < 0.4 or 0.6 < rate ≤ 0.8 → small-n noise OR
+    #   mild asymmetry; needs n≥16 to disambiguate.
+    # FAIL: rate < 0.2 or rate > 0.8.
+    if 0.4 <= rate <= 0.6:
+        gate = "PASS"
+    elif 0.2 <= rate <= 0.8:
+        gate = "WARN"
+    else:
+        gate = "FAIL"
     res.summary = (
         f"seat0_wins={seat0_wins} seat1_wins={seat1_wins} draws={draws} "
-        f"elapsed={elapsed:.1f}s")
-    # PASS gate: |seat0_wins/n - 0.5| <= 2/n  (i.e. within ±2 wins of even)
-    ok = abs(seat0_wins - n / 2) <= 2
-    res.passed = ok
+        f"rate={rate:.0%} elapsed={elapsed:.1f}s gate={gate}")
+    res.passed = (gate == "PASS")
     for g in games:
         res.cases.append(CaseResult(
             name=f"seed={g['seed']} turns={g['turns']} outcome={g['outcome']}",
             passed=True,
         ))
-    if not ok:
-        res.summary += "  (FAIL: outside ±2 win band)"
     return res
 
 
@@ -384,22 +391,34 @@ def main() -> int:
                         help="Skip the self-play balance check.")
     parser.add_argument("--skip-4", action="store_true",
                         help="Skip the vs-random check.")
+    parser.add_argument("--skip-1", action="store_true",
+                        help="Skip projection-vs-reality check.")
+    parser.add_argument("--skip-2", action="store_true",
+                        help="Skip projection-determinism check.")
     parser.add_argument("--ab-n", type=int, default=N_AB_GAMES,
                         help="Episode count per side for Tests 3, 4.")
+    parser.add_argument("--no-write", action="store_true",
+                        help="Run tests but don't overwrite the audit doc.")
     args = parser.parse_args()
 
     results: list[TestResult] = []
     t_start = time.perf_counter()
 
-    print("[1/4] Projection vs reality ...", flush=True)
-    r1 = test_1_projection_vs_reality()
-    print(f"      {r1.summary}", flush=True)
-    results.append(r1)
+    if args.skip_1:
+        print("[1/4] Projection vs reality — SKIPPED", flush=True)
+    else:
+        print("[1/4] Projection vs reality ...", flush=True)
+        r1 = test_1_projection_vs_reality()
+        print(f"      {r1.summary}", flush=True)
+        results.append(r1)
 
-    print("[2/4] Projection determinism ...", flush=True)
-    r2 = test_2_projection_determinism()
-    print(f"      {r2.summary}", flush=True)
-    results.append(r2)
+    if args.skip_2:
+        print("[2/4] Projection determinism — SKIPPED", flush=True)
+    else:
+        print("[2/4] Projection determinism ...", flush=True)
+        r2 = test_2_projection_determinism()
+        print(f"      {r2.summary}", flush=True)
+        results.append(r2)
 
     if args.skip_3:
         print("[3/4] Self-play balance — SKIPPED", flush=True)
@@ -420,12 +439,15 @@ def main() -> int:
     # Probe whether Test 5 passes (pytest invocation done separately).
     test5_summary = "see pytest output"
 
-    doc = _render_audit(results, test5_summary)
-    AUDIT_DOC.parent.mkdir(parents=True, exist_ok=True)
-    AUDIT_DOC.write_text(doc)
-
-    elapsed = time.perf_counter() - t_start
-    print(f"\nWrote {AUDIT_DOC}  ({elapsed:.1f}s total)")
+    if args.no_write:
+        elapsed = time.perf_counter() - t_start
+        print(f"\nSkipping audit-doc write (--no-write)  ({elapsed:.1f}s total)")
+    else:
+        doc = _render_audit(results, test5_summary)
+        AUDIT_DOC.parent.mkdir(parents=True, exist_ok=True)
+        AUDIT_DOC.write_text(doc)
+        elapsed = time.perf_counter() - t_start
+        print(f"\nWrote {AUDIT_DOC}  ({elapsed:.1f}s total)")
     n_pass = sum(r.passed for r in results)
     print(f"PASS: {n_pass}/{len(results)} tests")
     return 0
