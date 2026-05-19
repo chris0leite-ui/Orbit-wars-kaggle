@@ -66,6 +66,22 @@ Local validation (run again at session start to refresh):
 
 ## Next-session first-action (ranked by EV / cost)
 
+0. **PI-designated next-session task: per-geometry-class priority prior.**
+   Read `knowledge-base/concepts/per-class-priority-prior.md` end to
+   end before anything else. The 2026-05-19 audit
+   (`audit/2026-05-19-archetype-per-planet-class.md`) showed top-10
+   over-allocates +10 pp of fleet share to `low_prod_rotating_inner`
+   and we over-allocate to `high_prod_static_*`. The design doc
+   contains the alpha table, opponent-posterior calculation,
+   combining formula, injection point (`proposer.py::cheap_marginal_value`),
+   default coefficients (`lambda_alpha=3`, `lambda_gap=2`), a six-question
+   preflight, a validation plan, and a next-session checklist. The
+   PI's framing: this is **prior weights that get updated by what
+   the opponent is doing**, giving the agent orientation on which
+   planets matter most. v1 ships from the closed-form prior — no IL,
+   no training compute. Tasks 1–3 below are the previous handover's
+   leftover candidates, lower priority than task 0.
+
 1. **Architectural pivot on top of baseline** (~1 day). The v9–v15
    chooser axis is structurally saturated (Rule 37 cap hit at v16–v20).
    The clean modular split lets you swap ONE of value / proposer /
@@ -108,6 +124,12 @@ Local validation (run again at session start to refresh):
   the v15→v20 chooser saturation iteration; Rule 37 application.
 - `knowledge-base/thoughts/2026-05-17-baseline-functional-parity-with-v15.md` —
   this session's wrap-up.
+- `knowledge-base/concepts/per-class-priority-prior.md` — next-session
+  design doc (PI-designated task 0).
+- `audit/2026-05-19-archetype-per-planet-class.md` — per-archetype ×
+  per-class rollup that drives the alpha table in the design doc.
+- `lib/per_planet_class.py` — 8-class binning helpers
+  (`classify_planet`, `compute_board_medians`, `ALL_CLASS_LABELS`).
 - `fast.py` — single-file iteration entry: smoke / bench / eval / play.
 - `scripts/bundle_agent.py` — bundler for submissions.
 
