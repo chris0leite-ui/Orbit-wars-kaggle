@@ -217,6 +217,32 @@ fix forward AND add a test.
   auth-class error, switch to GitHub-raw-URL (for committed files)
   or inline-paste (for text); do not retry the same delivery
   channel.
+- `tag: scaling-claim-asserted-without-measuring-the-scaling` —
+  Session C reply draft asserted that the simulator's orbital math
+  drops "~1 ULP per tick" and "accumulates" over 47 turns. Numerical
+  subagent measured directly: the gap appears at tick 1 and stays
+  bounded in {0, 1, 2, 3} ULPs through turn 50. NOT accumulating;
+  capped by round-off ceiling. **Root cause:** I inferred a scaling
+  law ("1 per tick → accumulates → surfaces by turn 47") from a
+  single-endpoint observation (turn-2 break + turn-47 surface),
+  without sampling intermediate turns. Same paraphrase-the-mechanism
+  pattern as `helper-reimplemented-inline-silently-wrong` (2026-05-14).
+  **Fix:** any quantitative scaling claim ("X per tick", "accumulates
+  exponentially", "doubles every N steps") needs a direct measurement
+  of the scaling, not a 2-point endpoint inference. 3 subagent
+  critiques caught this before posting.
+- `tag: public-artifact-internal-framing-leaks-through` (3rd
+  recurrence today) — Session C reply draft used "strict `<`" twice
+  to name the baseline's tie-break mechanism. Forum-post-risk
+  subagent flagged it as a free competitive hint to readers
+  ("tie-break in the baseline matters"). Rewrote to neutral
+  "resolve the near-tie identically on both seats." **Root cause:**
+  same as morning and dataset-description occurrences — public draft
+  copy-pastes mechanism details from internal analysis. **Fix:** the
+  pre-draft internal-vocab grep needs to include code-mechanism
+  names (operators, function calls) the comp public would not have
+  named themselves. 3rd recurrence in one day; promotion case
+  stronger than this morning's.
 
 
 

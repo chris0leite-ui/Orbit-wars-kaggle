@@ -258,3 +258,133 @@ promote." Candidates stay here as data points; not pushed to
   manually by PI via web UI (URL not captured in this transcript).
 - Dataset: `chrisleitescha/orbit-wars-seed-panel-preview` (CC0,
   released to host the preview image for the post). 460 KB PNG.
+
+---
+
+# Session C — community-engagement deep dive (Kaggle thread reply)
+
+## What went wrong
+
+**No bad decisions given priors at decision-time.** The thread debate
+was substantive and well-handled; the empirical work converged on a
+correct verdict (simulator's orbital math is not bit-exact mirror in
+float64; baseline's tie-break amplifies the 1-ULP gap).
+
+**Two process-level near-misses, both caught by subagent critique
+before the reply went out:**
+
+1. **Quantitative-scaling-claim overclaim.** Initial reply draft said
+   the simulator drops "~1 ULP per tick" and "accumulates" over 47
+   turns. Numerical critic measured directly and found the gap is
+   *bounded* in {0, 1, 2, 3} ULPs, NOT accumulating. The "per tick /
+   accumulates" framing was a 2-point inference (turn-2 break +
+   turn-47 surface) wrongly extrapolated as a scaling law. Rewrote to
+   "1-3 ULP error from the first orbital tick onward, capped at the
+   round-off ceiling."
+
+2. **Public-artifact-leak-pass discipline failed again.** Reply draft
+   named "strict `<`" twice as the baseline's tie-break mechanism.
+   Forum-post-risk critic flagged it as a free competitive hint —
+   "tie-break in the baseline matters" is exactly the kind of
+   primitive a Kaggle reader could weaponise. Replaced with neutral
+   "resolve the near-tie identically on both seats." **Third
+   recurrence of `public-artifact-internal-framing-leaks-through`
+   today** (post draft, dataset description, this reply).
+
+**PI overrides this session** (all small, recoverable):
+- "go through the games step by step" — moved me from theoretical
+  hand-waving ("most likely action processing order") to empirical
+  turn-by-turn investigation that found the actual mechanism.
+- "make sure it does not result from any code from our side" —
+  prompted the self-containment check for the public probe.
+- "how sure are you about your claim? can you replicate it?" —
+  prompted the no-op isolation test that pinned the simulator-side
+  cause.
+- "critique again, make sure it is not false, use 3 subagents" —
+  caught the scaling-claim overclaim and the strict-`<` leak.
+
+## Frictions logged this session
+
+Cross-links to `audit/friction.md::2026-05-19`:
+
+- `scaling-claim-asserted-without-measuring-the-scaling` — inferred
+  a scaling law from a 2-point endpoint observation instead of
+  measuring intermediate turns.
+- `public-artifact-internal-framing-leaks-through` (3rd recurrence
+  today) — strict-`<` mechanism name leaked into reply draft; same
+  pattern as Session B's "med_low_prod__mixed_*" and "Hosted to
+  avoid GitHub exposure."
+
+## Promotion candidates (PI ratified: pending)
+
+### [ ] [WORKFLOW] Public-artifact leak-pass before handing to PI (3rd recurrence today)
+
+Same candidate as Session B. Re-presented this session because:
+- Recurrence count today: **3** (post body, dataset description,
+  reply draft).
+- Cost: 3 turns of subagent + back-and-forth on the reply alone,
+  ~15 min net. Compounding.
+- Each recurrence has caught a different mechanism kind (panel name,
+  internal motivation, code primitive). The vocab list to grep
+  against is non-trivial.
+
+**Concrete check to install:** before sending any externally-visible
+text to PI, grep against an internal-vocab regex (`v[0-9]+_*` agent
+versions, strategy terms `snipe|ROI|priority.prior|marginal`,
+internal paths `lib/|scripts/|fast\.py`, mechanism primitives any
+careful reader would not have named themselves like `strict <`,
+specific archetype slice names from audit hot lists). Abstract or
+remove every hit before handoff.
+
+### [ ] [WORKFLOW] Measure quantitative scalings before asserting them
+
+`tag: scaling-claim-asserted-without-measuring-the-scaling`.
+
+When claiming "X per tick", "accumulates exponentially", "doubles
+every N steps", "drift grows linearly", run the actual sampling at
+intermediate points before publishing. A 2-point endpoint
+observation does not establish a scaling law.
+
+Same instinct as `helper-reimplemented-inline-silently-wrong`
+(paraphrase the mechanism rather than measure it).
+
+**Where to insert:** `.claude/skills/kaggle-comp/improvements.md`.
+
+## PI additions (from step 4)
+
+- (pending PI input — Session C postmortem ratification)
+
+## Framework version at session-end (Session C)
+
+- Commit SHA at session-C start: `c534e14`.
+- Commit SHA at session-C end (pre-wrap-commit): same `c534e14`
+  (all Session C work in /tmp/ + subagent transcripts + Kaggle thread
+  reply; this wrap-commit will be the first Session C artifact in
+  the repo).
+- Branch: `claude/reverse-engineer-seat-geometry-BPJKs`.
+- Active CLAUDE.md rules: 1..40 (unchanged from Session A/B).
+- Loaded skills this session: `postmortem`.
+- Subagents dispatched this session: 4 total
+  (1 critique on reply draft + 3 parallel critique-of-the-critique:
+  numerical, methodology, forum-post-risk). All caught real issues.
+- Compute spent this session: negligible (probe scripts ran in
+  <2 min each).
+
+## Outputs produced (Session C)
+
+Code (newly tracked):
+- `scripts/probe_seat_mirror_break.py` — finds first action-mirror
+  break in baseline-vs-baseline, dumps full-precision distances.
+- `scripts/probe_simulator_isolation.py` — no-op self-play test,
+  finds first bit-exact-mirror break with no agent actions.
+
+Documentation (newly tracked):
+- `knowledge-base/concepts/simulator-orbital-math-mirror-precision.md`
+  — full empirical mechanism + receipt that 1-ULP drift is bounded
+  (not accumulating). Cites the four probes used.
+
+External:
+- Kaggle thread reply posted by PI, summarising the finding in
+  layperson terms. Thread is now in steady state (commenter conceded
+  technical point + raised a defensible separate strategic preference
+  about more-seeds-vs-both-seats; closed cleanly).
