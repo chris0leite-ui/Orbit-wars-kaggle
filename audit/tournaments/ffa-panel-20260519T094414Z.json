@@ -1,0 +1,80 @@
+{
+  "generated_utc": "20260519T094414Z",
+  "focals": [
+    "submissions/_ab/favor.py",
+    "submissions/_ab/projected.py"
+  ],
+  "background": [
+    "submissions/v7_0_drop_one.py",
+    "submissions/v4_planner.py",
+    "submissions/v3.5.1.py"
+  ],
+  "players": 4,
+  "seeds": [
+    42,
+    1,
+    7,
+    13,
+    31,
+    100,
+    17,
+    23,
+    53,
+    71,
+    91,
+    113,
+    137,
+    149,
+    167,
+    181,
+    199,
+    211,
+    233,
+    257,
+    269,
+    281,
+    293,
+    307,
+    311,
+    313,
+    317,
+    331,
+    337,
+    347,
+    349,
+    353
+  ],
+  "rotate_seats": true,
+  "results": [
+    {
+      "focal": "submissions/_ab/favor.py",
+      "focal_spec": "submissions/_ab/favor.py",
+      "background": [
+        "submissions/v7_0_drop_one.py",
+        "submissions/v4_planner.py",
+        "submissions/v3.5.1.py"
+      ],
+      "n_games": 128,
+      "first_place_count": 93,
+      "first_place_rate": 0.7265625,
+      "wilson_lo_95": 0.6435907063413415,
+      "wilson_hi_95": 0.7963311392673282,
+      "p95_focal_turn_ms": 641.6549545001544
+    },
+    {
+      "focal": "submissions/_ab/projected.py",
+      "focal_spec": "submissions/_ab/projected.py",
+      "background": [
+        "submissions/v7_0_drop_one.py",
+        "submissions/v4_planner.py",
+        "submissions/v3.5.1.py"
+      ],
+      "n_games": 128,
+      "first_place_count": 82,
+      "first_place_rate": 0.640625,
+      "wilson_lo_95": 0.5545209239708031,
+      "wilson_hi_95": 0.718534014682854,
+      "p95_focal_turn_ms": 670.9481651002534
+    }
+  ]
+}
