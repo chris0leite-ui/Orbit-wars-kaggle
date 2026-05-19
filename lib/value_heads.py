@@ -220,3 +220,157 @@ def composite_capture_value(
             delta -= waste_weight * ships
 
     return base + delta
+
+
+# ---------------------------------------------------------------------------
+# projected_rank_diff — production-compounding unified value head
+# ---------------------------------------------------------------------------
+#
+# Working backward from Kaggle's evaluation (TrueSkill on ordinal rank by
+# total ships at T=500), the cheap sufficient statistic for a seat's
+# final score is:
+#
+#     ProjectedTotal_i = ships_now_i
+#                      + in_flight_capture/waste_credit_i
+#                      + PROJECTION_LAMBDA × Σ_p (P_p × turns_remaining)
+#                        for planets p owned by seat i at the leaf state
+#
+# V(s) = ProjectedTotal_us − max_{j != us} ProjectedTotal_j.
+#
+# Generalises composite_capture_value's "P × turns_remaining" credit from
+# in-flight fleets only to ALL planets at the leaf, and replaces the 2P
+# `delta_us_minus_them` aggregation with `max` over opponents — which is
+# what TrueSkill ordinal ranking measures against.
+#
+# Compounding pressure: a P=5 planet owned at step 100 contributes
+# 0.05 × 5 × 400 = 100 to your projection — orders of magnitude bigger
+# than ship-balance differentials. Pressure to launch (rather than hoard)
+# is built into the math, not a tuned passivity-penalty term.
+
+
+PROJECTION_LAMBDA: float = 0.05  # same scale as CAPTURE_REWARD_WEIGHT
+
+
+def _per_seat_in_flight_credit(
+    obs: Any,
+    num_seats: int,
+    *,
+    capture_weight: float = CAPTURE_REWARD_WEIGHT,
+    waste_weight: float = WASTE_PENALTY_WEIGHT,
+    horizon: int = DEFAULT_HORIZON,
+) -> dict:
+    """Per-seat in-flight capture / waste credit.
+
+    Generalises composite_capture_value's per-fleet logic: instead of
+    attributing the credit to one seat (`my_id`), attributes each fleet's
+    predicted fate to its OWN seat's bucket. WorldModel built once.
+    """
+    credits = {i: 0.0 for i in range(num_seats)}
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return credits
+    raw = world.obs_raw
+    fleets_raw = (
+        raw.get("fleets", []) if isinstance(raw, dict)
+        else getattr(raw, "fleets", [])
+    )
+    if not fleets_raw:
+        return credits
+
+    from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet  # noqa: E402
+    fleets = [Fleet(*f) for f in fleets_raw]
+    planets_list = list(world.planets_by_id.values())
+    model = WorldModel.from_world(world, horizon=horizon)
+    step_now = int(world.step)
+
+    for f in fleets:
+        owner = int(f.owner)
+        if owner < 0 or owner >= num_seats:
+            continue
+        ships = float(f.ships)
+        target, eta = fleet_target_planet(f, planets_list)
+        if target is None:
+            credits[owner] -= waste_weight * ships
+            continue
+        pred_owner = model.owner_at(target.id, eta)
+        pred_ships = model.ships_at(target.id, eta) or 0.0
+        if pred_owner == owner:
+            continue  # over-reinforcement — neutral
+        if ships > pred_ships:
+            time_remaining = max(0, EPISODE_STEPS_TOTAL - step_now - eta)
+            credits[owner] += capture_weight * float(target.production) * float(time_remaining)
+        else:
+            credits[owner] -= waste_weight * ships
+    return credits
+
+
+def projected_rank_diff(
+    obs: Any,
+    my_id: int,
+    num_seats: int = 2,
+    *,
+    capture_weight: float = CAPTURE_REWARD_WEIGHT,
+    waste_weight: float = WASTE_PENALTY_WEIGHT,
+    projection_lambda: float = PROJECTION_LAMBDA,
+    horizon: int = DEFAULT_HORIZON,
+) -> float:
+    """Production-compounding unified value head.
+
+    V(s) = ProjectedTotal_us − max_{j != us} ProjectedTotal_j
+    where ProjectedTotal_i  = ships_i(now)
+                            + in_flight_credit_i
+                            + λ · Σ_p P_p · (T − step) for p owned by i at leaf.
+
+    `max` matches TrueSkill ordinal ranking — the next opponent above us
+    is what we're racing. In 4P, opponents fighting each other shrinks
+    `max` for free (high-risk shots that move us past the leader pay off
+    even when the bottom opp does well in absolute terms).
+
+    Linear time-remaining (no γ-discount) per the PV-off finding
+    (live A/B 81.2% on submission 52784853). T=500 is a hard horizon;
+    exponential decay double-counts.
+
+    Compounding emerges from `P_p × (T − step)`: a P=3 capture at step 100
+    is worth ≈ 60 ship-units (0.05 × 3 × 400); at step 400, ≈ 15. Early
+    captures are super-linear in elapsed-game-time; the chooser will
+    prefer launching to hoarding without a passivity penalty.
+    """
+    if isinstance(obs, dict):
+        planets = obs.get("planets", []) or []
+        fleets = obs.get("fleets", []) or []
+        step = int(obs.get("step", 0))
+    else:
+        planets = getattr(obs, "planets", []) or []
+        fleets = getattr(obs, "fleets", []) or []
+        step = int(getattr(obs, "step", 0))
+    rem = max(0, EPISODE_STEPS_TOTAL - step)
+
+    ships_per = {i: 0.0 for i in range(num_seats)}
+    proj_per = {i: 0.0 for i in range(num_seats)}
+    for p in planets:
+        owner = int(p[1])
+        if owner < 0 or owner >= num_seats:
+            continue
+        ships_per[owner] += float(p[5])
+        proj_per[owner] += float(p[6]) * rem
+    for f in fleets:
+        owner = int(f[1])
+        if owner < 0 or owner >= num_seats:
+            continue
+        ships_per[owner] += float(f[6])
+
+    credits = _per_seat_in_flight_credit(
+        obs, num_seats,
+        capture_weight=capture_weight, waste_weight=waste_weight,
+        horizon=horizon,
+    )
+
+    totals = {
+        i: ships_per[i] + credits[i] + projection_lambda * proj_per[i]
+        for i in range(num_seats)
+    }
+    my_total = totals[my_id]
+    if num_seats <= 1:
+        return my_total
+    opp_total = max(v for k, v in totals.items() if k != my_id)
+    return my_total - opp_total

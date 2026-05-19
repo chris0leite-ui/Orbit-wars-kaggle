@@ -83,15 +83,38 @@ def favor_composite(obs, me: int, num_seats: int = 2,
     return composite_capture_value(obs, me)
 
 
+def favor_projected(obs, me: int, num_seats: int = 2,
+                    gamma: float = DEFAULT_GAMMA) -> float:
+    """Production-compounding unified value head (`projected_rank_diff`).
+
+    V(s) = ProjectedTotal_me − max_{j != me} ProjectedTotal_j
+    where ProjectedTotal_i = ships_i(now) + in_flight_credit_i
+                           + λ × Σ_p (P_p × turns_remaining) for p owned by i.
+
+    Generalises composite_capture_value's "P × turns_remaining" credit
+    from in-flight fleets only to ALL planets at the leaf, with a `max`
+    aggregation that handles 2P and 4P uniformly (no A2 hybrid graft).
+
+    `gamma` is intentionally ignored — projection uses linear horizon
+    (PV-off finding from 52784853 live A/B 81.2% vs the prior bundle).
+    """
+    from lib.value_heads import projected_rank_diff
+    return projected_rank_diff(obs, me, num_seats)
+
+
 def select_favor_fn():
     """Pick the leaf value function. Default = `favor` (the v15 baseline).
 
-    Switch via env var `BASELINE_VALUE_HEAD=composite`. Anything else
-    falls through to the default. The chooser uses the SAME function for
-    both `build_idle_baseline` and `score_action` so the Δ stays well-
-    defined.
+    Switch via env var `BASELINE_VALUE_HEAD`:
+      - `composite` → `favor_composite` (in-flight capture/waste, 2P-only).
+      - `projected` → `favor_projected` (production-compounding, 2P+4P unified).
+      - anything else → `favor` (default).
+    The chooser uses the SAME function for both `build_idle_baseline`
+    and `score_action` so the Δ stays well-defined (CRN symmetry).
     """
     choice = os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower()
     if choice == "composite":
         return favor_composite
+    if choice == "projected":
+        return favor_projected
     return favor
