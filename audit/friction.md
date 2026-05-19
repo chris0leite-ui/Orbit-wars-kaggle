@@ -498,6 +498,31 @@ relevant skill file or source code, not back into friction.md.
   responsiveness, predicted-outcome-matched, timing headroom).
 
 
+## 2026-05-19 (claude/strategy-framework-design-OyoYR — projected_rank_diff axis)
+
+- `tag: full-panel-AB-before-single-game-evidence` — ran two 256-game
+  4P FFA panels (favor vs projected, then favor vs projected_sum) at
+  ~20 min each before checking whether the new value head changed the
+  agent's behaviour on a single game. Single-game inspection
+  afterwards showed favor and projected_sum produced **bit-identical
+  trajectories** on the seeds I checked (seed 42 seat 0): same launch
+  counts, same eliminations, same v7_0 win. The two heads disagree on
+  ~10% of frame valuations in 2P (per
+  `/tmp/compare_value_heads.py`), but in 4P with mixed opponents most
+  decisions land the same way because the chooser argmax is robust to
+  small leaf-value-direction differences. **Root cause:** treating
+  the panel as the first validation step instead of as a confirmatory
+  one. Cheap diagnostic (`python /tmp/inspect_one_4p.py --seed S
+  --seat I --focal <bundle>` for 2-4 different seeds, diff the
+  per-turn action streams) is ~3 min and reveals zero-behaviour-change
+  cases before burning 40 min of panel compute. **Fix:** before any
+  256-game A/B, inspect 2-4 single games with `inspect_one_*.py` and
+  confirm the two bundles produce different action streams. If
+  trajectories are bit-identical on the sample, abort the panel —
+  the change isn't expressive in this architecture and the panel is
+  noise. PI-ratified 2026-05-19 mid-session.
+
+
 ```
 - `tag: <kebab-slug>` — <session context>: <what happened>.
   <Root cause>. **Fix:** <concrete action>.
