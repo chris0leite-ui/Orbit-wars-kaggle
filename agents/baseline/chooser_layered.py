@@ -39,11 +39,13 @@ from agents.baseline.chooser import choose
 from agents.baseline.chooser_roi import choose_roi
 from agents.baseline.chooser_trajectory import choose_trajectory
 from agents.baseline.predicates import UNCERTAIN
+from agents.baseline.predicates import Verdict
 from agents.baseline.predicates import l1_provably_wasted_launch
 from agents.baseline.predicates import l2_dominance_prune
 from agents.baseline.predicates import w1_dominance_classify
 from agents.baseline.predicates import w1_provably_winning_capture
 from agents.baseline.predicates import w2_provably_held_reinforce
+from agents.baseline.strategic_lp import compute_lp_assignment
 
 
 # Inner-chooser dispatch table. Each entry adapts the kwargs to the
@@ -107,13 +109,26 @@ def layer0_classify(prerank, world, model, me, step, gamma):
     commits were mathematically sound, they preempted source
     allocations the inner would have used more effectively.
     """
-    # Slice 5: W1 commits are decided by per-source dominance over
-    # bounded intervals. Computed once for all W1-eligible candidates.
-    # Slice 4's per-candidate Wald commit is REPLACED by this stricter
-    # gate — fewer commits, higher confidence.
+    # Slice 5: W1 commits decided by per-source dominance over bounded intervals.
     w1_verdict_by_id = w1_dominance_classify(
         prerank, world, model, int(me), gamma=float(gamma),
     )
+
+    # Slice 6: long-horizon LP assignment as a strategic anchor.
+    # `lp_assignment: dict[src_id, tgt_id]` of the assignment that
+    # maximizes Σ production × (EPISODE_END - capture_time). Candidates
+    # matching this assignment get an "LP" commit verdict that
+    # backstops alongside W1/W2 if the inner doesn't pick them.
+    # Independent commit reason: W1 = "provable hold against worst-
+    # case counter"; LP = "globally optimal one-source-one-target
+    # assignment for the current state." Either justifies a backstop.
+    lp_assignment = compute_lp_assignment(world, model, int(me))
+    # Track sources we've already LP-committed: the LP gives exactly one
+    # (src → tgt) assignment per source, but the prerank may contain
+    # multiple candidates matching that (src, tgt) pair (different
+    # ship counts, wait_Ns). Only commit ONE per source — pick the
+    # first matching candidate; others stay uncertain.
+    lp_committed_srcs: set = set()
 
     verdicts: list = []
     surviving: list = []
@@ -128,14 +143,14 @@ def layer0_classify(prerank, world, model, me, step, gamma):
             verdicts.append((c, v_l1))
             continue
 
-        # W1 dominance verdict (computed above).
+        # W1 dominance verdict (Slice 5).
         w1_v = w1_verdict_by_id.get(id(c))
         if w1_v is not None and w1_v.kind == "commit":
             verdicts.append((c, w1_v))
             surviving.append(c)
             continue
 
-        # W2 commit attempt — per-candidate check.
+        # W2 reinforce commit (Slice 1).
         v_w2 = w2_provably_held_reinforce(
             src, tgt, int(ships), int(wait_N), int(eta), world, model, int(me),
         )
@@ -143,6 +158,26 @@ def layer0_classify(prerank, world, model, me, step, gamma):
             verdicts.append((c, v_w2))
             surviving.append(c)
             continue
+
+        # Slice 6: LP-alignment commit. Only one LP commit per source,
+        # for fire-now candidates matching (src.id, tgt.id) of the LP's
+        # recommended assignment. Lower_bound = LP value (production ×
+        # time_remaining); used by the backstop sort to prioritize
+        # among multiple LP commits.
+        if (int(wait_N) == 0
+                and int(src.id) not in lp_committed_srcs
+                and lp_assignment.get(int(src.id)) == int(tgt.id)
+                and int(tgt.owner) != int(me)):
+            lp_value = float(int(tgt.production)) * float(
+                max(0, 500 - int(getattr(world, "step", 0) or 0) - int(eta))
+            )
+            if lp_value > 0:
+                verdicts.append(
+                    (c, Verdict(kind="commit", lower_bound=lp_value, reason="LP")),
+                )
+                surviving.append(c)
+                lp_committed_srcs.add(int(src.id))
+                continue
 
         verdicts.append((c, UNCERTAIN))
         surviving.append(c)

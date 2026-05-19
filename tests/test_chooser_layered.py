@@ -134,13 +134,19 @@ def test_layer0_classifies_bounce_as_l1_discard():
 
 
 def test_layer0_passes_uncertain_to_filtered():
-    """Candidate that no predicate commits → uncertain verdict, stays in filtered."""
-    src = _planet(0, 0, 10.0, 50.0, ships=100, production=3)
-    tgt = _planet(1, -1, 30.0, 50.0, ships=10, production=2)
-    opp_close = _planet(2, 1, 35.0, 50.0, ships=200, production=4)
-    obs, world = _build_world(0, [src, tgt, opp_close])
+    """Candidate that no W1/W2/L1/LP commits → uncertain. Constructed
+    with 2 targets where LP picks the OTHER one, leaving the
+    candidate's (src, tgt) pair unassigned by LP. Gang-up nearby
+    blocks W1 dominance.
+    """
+    src = _planet(0, 0, 10.0, 50.0, ships=80, production=2)
+    tgt_lowval = _planet(1, -1, 30.0, 50.0, ships=5, production=1)
+    tgt_highval = _planet(2, -1, 35.0, 50.0, ships=5, production=10)
+    opp_close = _planet(3, 1, 40.0, 50.0, ships=200, production=4)
+    obs, world = _build_world(0, [src, tgt_lowval, tgt_highval, opp_close])
     model = WorldModel.from_world(world)
-    cand = _candidate(src, tgt, cheap_delta=2.0, ships=40, eta=8)
+    # Candidate targets the LOW-value planet; LP will pick high.
+    cand = _candidate(src, tgt_lowval, cheap_delta=2.0, ships=40, eta=4)
     verdicts, filtered = layer0_classify([cand], world, model, 0, 0, 0.99)
     assert _commits_from(verdicts) == []
     assert verdicts[0][1].kind == "uncertain"
@@ -148,19 +154,23 @@ def test_layer0_passes_uncertain_to_filtered():
 
 
 def test_layer0_applies_l2_dominance_to_filtered():
-    """L2 dominance applies to the filtered set (after L1 discards removed)."""
-    src = _planet(0, 0, 10.0, 50.0, ships=100, production=3)
-    tgt = _planet(1, -1, 30.0, 50.0, ships=10, production=2)
-    opp_close = _planet(2, 1, 35.0, 50.0, ships=200)
-    obs, world = _build_world(0, [src, tgt, opp_close])
+    """L2 dominance acts on the all-uncertain residual.
+    Same 2-target scenario as the passthrough test: LP picks the
+    high-value target; both same-(src, low-tgt) candidates stay
+    uncertain; L2 drops the dominated one.
+    """
+    src = _planet(0, 0, 10.0, 50.0, ships=80, production=2)
+    tgt_lowval = _planet(1, -1, 30.0, 50.0, ships=5, production=1)
+    tgt_highval = _planet(2, -1, 35.0, 50.0, ships=5, production=10)
+    opp_close = _planet(3, 1, 40.0, 50.0, ships=200)
+    obs, world = _build_world(0, [src, tgt_lowval, tgt_highval, opp_close])
     model = WorldModel.from_world(world)
-    dominator = _candidate(src, tgt, cheap_delta=3.0, ships=40, eta=5)
-    dominated = _candidate(src, tgt, cheap_delta=1.0, ships=60, eta=10)
+    dominator = _candidate(src, tgt_lowval, cheap_delta=3.0, ships=40, eta=5)
+    dominated = _candidate(src, tgt_lowval, cheap_delta=1.0, ships=60, eta=10)
     verdicts, filtered = layer0_classify(
         [dominator, dominated], world, model, 0, 0, 0.99,
     )
     assert _commits_from(verdicts) == []
-    # Dominated candidate dropped from filtered by L2; both still have verdicts.
     assert filtered == [dominator]
     assert len(verdicts) == 2
 
@@ -374,17 +384,53 @@ def test_choose_layered_subtracts_l0_elapsed_from_inner_wallclock(monkeypatch):
     assert seen >= INNER_WALLCLOCK_FLOOR_MS
 
 
-def test_choose_layered_passthrough_when_no_predicate_fires(monkeypatch):
-    """When no candidate is committable or discardable, the verdict list
-    has all 'uncertain' entries and the filtered set equals the L2-pruned
-    prerank."""
-    monkeypatch.setenv("BASELINE_INNER_CHOOSER", "trajectory")
-    src = _planet(0, 0, 10.0, 50.0, ships=100, production=3)
-    tgt = _planet(1, -1, 30.0, 50.0, ships=10, production=2)
-    opp_close = _planet(2, 1, 35.0, 50.0, ships=200, production=4)
-    obs, world = _build_world(0, [src, tgt, opp_close])
+def test_layer0_lp_commit_fires_when_assignment_matches(monkeypatch):
+    """Slice 6: LP picks a (src, tgt) pair; matching candidate gets LP commit."""
+    src = _planet(0, 0, 10.0, 50.0, ships=80, production=2)
+    # Only one capturable target → LP must pick this src→tgt.
+    tgt = _planet(1, -1, 30.0, 50.0, ships=5, production=3)
+    obs, world = _build_world(0, [src, tgt])
     model = WorldModel.from_world(world)
-    cand = _candidate(src, tgt, cheap_delta=2.0, ships=40, eta=8)
+    cand = _candidate(src, tgt, cheap_delta=2.0, ships=40, eta=4)
+    verdicts, filtered = layer0_classify([cand], world, model, 0, 0, 0.99)
+    commits = _commits_from(verdicts)
+    assert len(commits) == 1
+    # Either W1 (clean capture) or LP — both are valid commits here.
+    assert commits[0][1].reason in ("W1", "LP")
+
+
+def test_layer0_lp_only_one_commit_per_source(monkeypatch):
+    """Slice 6: even if multiple candidates match the LP's (src, tgt),
+    only ONE LP commit fires per source."""
+    src = _planet(0, 0, 10.0, 50.0, ships=5, production=1)  # LP-feasible but W1-infeasible
+    tgt = _planet(1, -1, 30.0, 50.0, ships=2, production=3)
+    obs, world = _build_world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    # Three candidates for the SAME (src, tgt) pair with different ships/eta.
+    cand_a = _candidate(src, tgt, cheap_delta=1.0, ships=3, eta=4)
+    cand_b = _candidate(src, tgt, cheap_delta=2.0, ships=4, eta=5)
+    cand_c = _candidate(src, tgt, cheap_delta=0.5, ships=5, eta=6)
+    verdicts, filtered = layer0_classify(
+        [cand_a, cand_b, cand_c], world, model, 0, 0, 0.99,
+    )
+    commits = _commits_from(verdicts)
+    lp_commits = [v for c, v in commits if v.reason == "LP"]
+    assert len(lp_commits) <= 1, (
+        f"expected at most 1 LP commit per source; got {len(lp_commits)}"
+    )
+
+
+def test_choose_layered_passthrough_when_no_predicate_fires(monkeypatch):
+    """Same 2-target uncertain scenario: candidate stays uncertain when
+    LP picks the other target and W1 is blocked by gang-up."""
+    monkeypatch.setenv("BASELINE_INNER_CHOOSER", "trajectory")
+    src = _planet(0, 0, 10.0, 50.0, ships=80, production=2)
+    tgt_lowval = _planet(1, -1, 30.0, 50.0, ships=5, production=1)
+    tgt_highval = _planet(2, -1, 35.0, 50.0, ships=5, production=10)
+    opp_close = _planet(3, 1, 40.0, 50.0, ships=200, production=4)
+    obs, world = _build_world(0, [src, tgt_lowval, tgt_highval, opp_close])
+    model = WorldModel.from_world(world)
+    cand = _candidate(src, tgt_lowval, cheap_delta=2.0, ships=40, eta=4)
     verdicts, filtered = layer0_classify([cand], world, model, 0, 0, 0.99)
     assert _commits_from(verdicts) == []
     assert verdicts[0][1].kind == "uncertain"
