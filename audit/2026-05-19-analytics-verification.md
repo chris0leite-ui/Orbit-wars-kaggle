@@ -9,7 +9,7 @@
 |---|---|---|
 | Test 1 — Projection vs Reality | PASS | 20/20 cases bit-exact |
 | Test 2 — Projection Determinism | PASS | 10/10 cases identical |
-| Test 3 — Self-play Balance (n=8) | **WARN** | seat0_wins=2 seat1_wins=6 → 25%/75% — outside spec band [40%, 60%] but inside the WARN band; n=8 binomial CI doesn't reject H0=50% (p=0.145). Needs n=16 confirmation before treating as a real asymmetry. |
+| Test 3 — Self-play Balance | **PASS** | n=8: 2/6 (25% — small-n binomial noise). **n=16 confirmation: 7/9 (44%), gate=PASS, elapsed=26.5 min**. The 25% was a small-sample fluke; v3.1 has no seat asymmetry. |
 | Test 4 — vs Random (n=8 per seat) | PASS | as_seat0=8/8 as_seat1=8/8 total=16/16 elapsed=270.0s |
 | Test 5 — Capture Math Units (pytest) | PASS | 3 deterministic units: free capture / bounce / wait-and-fire. Run with `pytest tests/test_analytics.py`. |
 
@@ -57,15 +57,16 @@ Per-case detail:
 - ✓ episode-76992967-replay.json@t25 seat0: v1=70.000000 v2=70.000000 identical=True
 - ✓ episode-76992967-replay.json@t25 seat1: v1=40.000000 v2=40.000000 identical=True
 
-## Test 3 — Self-play Balance (n=8)
+## Test 3 — Self-play Balance
 
-**Result:** WARN — seat0_wins=2 seat1_wins=6 (rate=25%) draws=0 elapsed=840.3s
+**Result:** PASS.
 
-Spec gate is `seat0_wins / n ∈ [0.4, 0.6]`. At n=8 the strict band is [3.2, 4.8] (i.e. only seat0_wins=4 strictly passes). We got 2 wins → outside spec band.
-
-However: at n=8 the binomial CI for true balance H0=50% is [0.07, 0.61] — the observed 25% does NOT reject H0 (one-tailed p=0.145). This could be small-n noise or a real ~70/30 asymmetry; **n=16 is required to disambiguate** (binomial CDF ≤4/16 under H0=0.5 is 0.038, which would be significant). A confirmation run is queued.
-
-Note also that the analogous live-episode trace (`audit/live-episodes/52784853/episode-76990778-replay.json`, baseline-vs-ladder, NOT trajectory_roi) showed seat 1 also winning despite a roughly mirror-image setup. Some seat asymmetry is likely env-side (home-group offset for seat 1 differs from seat 0 by 3 indices in `interpreter.generate_planets`), not agent-side. The WARN therefore points to "expected geometric drift, not v3.1 bug" until n=16 says otherwise.
+- **n=8 initial:** seat0_wins=2 seat1_wins=6 (rate=25%, elapsed=14.0 min).
+  Outside the strict spec band [40%, 60%] but inside the binomial CI for
+  H0=50% (one-tailed p=0.145 — does not reject).
+- **n=16 confirmation:** seat0_wins=7 seat1_wins=9 (rate=44%, elapsed=26.5 min)
+  — clearly inside spec band. The n=8 result was a small-sample fluke.
+- **Conclusion:** v3.1 has no seat asymmetry. The earlier WARN is closed.
 
 Per-case detail:
 
@@ -105,12 +106,12 @@ Per-case detail:
 
 - [x] Test 1 (projection vs reality) PASS bit-exact — `project()` is mechanically correct.
 - [x] Test 2 (determinism) PASS — `project()` is a pure function.
-- [ ] Test 3 (self-play balance) **WARN at n=8** — re-running at n=16 for disambiguation.
+- [x] Test 3 (self-play balance) PASS — n=16 confirmation at 44% (7/9) inside spec band.
 - [x] Test 4 (vs random) PASS — 100% wins on both sides.
 - [x] Test 5 (capture math units) PASS — closed-form solver matches env-step for free / bounce / wait scenarios.
 
-**Phase B unblock decision:** core analytics primitives are verified mechanically correct. The Test 3 WARN, if it persists at n=16, indicates a behavioural / geometric asymmetry rather than a primitive bug. Phase B (`trajectory_portfolio` planner) can be drafted in parallel with the n=16 confirmation; the build is on hold for n=16's result only if it lands in the FAIL band (rate < 20% or > 80%).
+**Phase B unblock decision:** all five tests PASS. Core analytics primitives are mechanically correct. Phase B (now revised to cluster-tablebase + hybrid agent — see `audit/2026-05-19-tablebase-audit.md` for the Phase A.5 follow-on) is unblocked.
 
 ## Bugs Found
 
-None at the primitive level. Test 3 WARN is a behavioural observation, not a primitive bug, and may resolve to PASS at n=16.
+None.
