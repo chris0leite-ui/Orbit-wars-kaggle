@@ -636,6 +636,62 @@ relevant skill file or source code, not back into friction.md.
   with both Wilson LB and substrate-viability checks (knob
   responsiveness, predicted-outcome-matched, timing headroom).
 
+## 2026-05-19 (claude/strategy-framework-design-OyoYR-rebased — value-head axis falsified)
+
+- `tag: full-panel-AB-before-single-game-evidence` — ran two 256-game
+  4P FFA panels (favor vs projected, then favor vs projected_sum) at
+  ~20 min each before checking whether the new value head changed the
+  agent's behaviour on a single game. Single-game inspection
+  afterwards showed favor and projected_sum produced **bit-identical
+  trajectories** on the seeds I checked (seed 42 seat 0) for the
+  stale baseline. **Root cause:** treating the panel as the first
+  validation step instead of a confirmatory one. Cheap diagnostic
+  (`python /tmp/inspect_one_4p.py --seed S --seat I --focal <bundle>`
+  for 2-4 different seeds, diff the per-turn action streams) is ~3 min
+  and reveals zero-behaviour-change cases before burning 40 min of
+  panel compute. **Fix:** before any 256-game A/B, inspect 2-4 single
+  games with `inspect_one_*.py` and confirm the two bundles produce
+  different action streams. If trajectories are bit-identical on the
+  sample, abort the panel — the change isn't expressive in this
+  architecture and the panel is noise. PI-ratified 2026-05-19
+  mid-session.
+
+- `tag: value-head-permissiveness-greenlights-bad-proposer-candidates` —
+  2026-05-19 (rebased): projected_rank_diff_sum on btjeK lost 22.6 pp
+  to favor in 4P (42.2% vs 64.8%, no CI overlap). Deep-dive on
+  seed=7 seat=1: projected_sum launched 2.3x more than favor (93 vs
+  41) but only +3 captures; the extra 52 launches were 26 reinforces,
+  18 OOB/sun, 4 bounces. **Root cause:** NEW failure mode (NOT CRN
+  symmetry — that's the F4 / dogpile family). The per-seat
+  `P_p × (T-step)` projection inflated the value of marginal
+  candidate actions enough to clear the chooser's Δ-threshold; the
+  proposer's bad candidates (fleets to OOB / fleets to our own planet)
+  were no longer filtered by the value head. Favor's tighter
+  F1+F2+A2 hybrid was doing real work rejecting them. Bonus:
+  p95=1534 ms over the 1000 ms budget. **Fix:** stop iterating on
+  leaf-side value heads under this proposer; investigate proposer-
+  side candidate filtering (a7f9383 hold-feasibility filter is the
+  reference direction). Documented in
+  `audit/2026-05-19-value-head-axis-exhausted.md`.
+
+- `tag: stale-branch-base-invalidates-local-AB` — 2026-05-19: ran 2P
+  and 4P A/B tests of projected_rank_diff_sum vs `favor` on a branch
+  `claude/strategy-framework-design-OyoYR` based on `origin/main
+  d25e9d3` — but the LIVE submission is on `claude/audit-workflow-
+  performance-btjeK`, which is ~80 commits ahead with bug fixes
+  #3/#4/#11/#12, PV-off, A2-4P hybrid in `favor`, and the
+  hold-feasibility filter. Local A/B was projected_sum_stale vs
+  favor_stale and showed TIE (68% vs 66%). On the rebased branch
+  (btjeK base + my variant), the same variant lost 22.6 pp.
+  **Root cause:** no session-start check that the branch is current
+  with where the live submission actually came from — Rule 32
+  fetches origin/main but the relevant branch is the live-submission
+  branch, not main. **Fix:** at session start when intending to
+  improve a live submission, check `state/current.md` for the source
+  branch of the live bundle and rebase / branch from THAT, not from
+  origin/main. The branch-tip might be origin/main, but the live
+  submission's parent is often a feature branch.
+
 
 ```
 - `tag: <kebab-slug>` — <session context>: <what happened>.
