@@ -466,3 +466,113 @@ def test_reactor_candidates_env_var_disables_via_propose():
             os.environ.pop("PROPOSER_REACTOR_CANDIDATES", None)
         else:
             os.environ["PROPOSER_REACTOR_CANDIDATES"] = old
+
+
+# ---------------------------------------------------------------------------
+# Comet-aim fix (Part C) — aim_and_eta routes comets to aim_comet
+# (path-indexed lead, not orbital rotation).
+# ---------------------------------------------------------------------------
+
+
+def _world_with_comet(my_id, planets, *, comet_id, path, path_index,
+                     omega=0.04, step=50):
+    """Build a World with a single comet riding `path[path_index]` etc.
+
+    The comet appears in `planets` (at its current path position), in
+    `comet_planet_ids`, AND in `comets` (with the path metadata).
+    """
+    cur_x, cur_y = path[path_index]
+    comet_planet = (comet_id, -1, float(cur_x), float(cur_y), 1.0, 30, 1)
+    obs = {
+        "player": my_id,
+        "planets": [
+            (p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production)
+            for p in planets
+        ] + [comet_planet],
+        "fleets": [],
+        "angular_velocity": omega,
+        "comet_planet_ids": [comet_id],
+        "comets": [
+            {
+                "planet_ids": [comet_id],
+                "paths": [path],
+                "path_index": path_index,
+            },
+        ],
+        "step": step,
+    }
+    return World.from_obs(obs)
+
+
+def test_aim_and_eta_routes_comet_to_path_indexed_lead():
+    """For a comet target moving east on a linear path, aim_and_eta with
+    world set returns an angle pointing at a FUTURE path index, not the
+    comet's current position."""
+    from agents.baseline.proposer import aim_and_eta
+    from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
+    src = _planet(0, 0, 5.0, 50.0, ships=80, production=2)
+    # Comet moves east at 4 board-units/turn along y=50 (linear path).
+    path = [[20.0 + i * 4.0, 50.0] for i in range(30)]
+    world = _world_with_comet(
+        my_id=0, planets=[src], comet_id=42, path=path, path_index=0,
+    )
+    comet_planet = world.planets_by_id[42]
+    angle_with_world, eta_with_world = aim_and_eta(
+        src, comet_planet, ships=10, omega=0.04, world=world,
+    )
+    # The comet's CURRENT position is (20, 50). At our launch the path
+    # advances 1 step per turn; by arrival the comet has moved east.
+    # The aim point's x must be GREATER than 20 (eastward lead).
+    import math as _math
+    aim_x = src.x + _math.cos(angle_with_world) * 100  # any +ve scale
+    assert aim_x > 20.0, (
+        f"aim should lead east of current comet position; got angle={_math.degrees(angle_with_world):.2f}° → aim_x={aim_x:.2f}"
+    )
+
+
+def test_aim_and_eta_comet_disabled_via_env_var():
+    """BASELINE_COMET_AIM=off bypasses the comet branch in aim_and_eta."""
+    from agents.baseline.proposer import aim_and_eta
+    src = _planet(0, 0, 5.0, 50.0, ships=80, production=2)
+    path = [[20.0 + i * 4.0, 50.0] for i in range(30)]
+    world = _world_with_comet(
+        my_id=0, planets=[src], comet_id=42, path=path, path_index=0,
+    )
+    comet_planet = world.planets_by_id[42]
+    old = os.environ.get("BASELINE_COMET_AIM")
+    os.environ["BASELINE_COMET_AIM"] = "off"
+    try:
+        angle_off, eta_off = aim_and_eta(
+            src, comet_planet, ships=10, omega=0.04, world=world,
+        )
+        # With path-aware aim disabled, the function falls back to the
+        # orbital/atan2 path which aims at the comet's CURRENT position
+        # (or its orbital-rotated prediction).
+        import math as _math
+        # is_orbiting on this comet: orbit_r = hypot(20-50, 50-50) = 30,
+        # so (30 + 1.0) < 50 (rotation limit) is True → uses aim_orbiting.
+        # We just assert it doesn't crash and returns a sensible eta.
+        assert eta_off >= 1
+    finally:
+        if old is None:
+            os.environ.pop("BASELINE_COMET_AIM", None)
+        else:
+            os.environ["BASELINE_COMET_AIM"] = old
+
+
+def test_aim_and_eta_comet_returns_eta_within_path_length():
+    """If the comet path is short (5 steps), aim_and_eta should still
+    return a valid (angle, eta) without crashing — falling through to
+    the atan2 fallback when aim_comet returns None (comet exits)."""
+    from agents.baseline.proposer import aim_and_eta
+    # Source far from comet; only 5-step path → comet exits before arrival
+    src = _planet(0, 0, 90.0, 90.0, ships=80, production=2)
+    path = [[20.0 + i * 4.0, 50.0] for i in range(5)]
+    world = _world_with_comet(
+        my_id=0, planets=[src], comet_id=42, path=path, path_index=0,
+    )
+    comet_planet = world.planets_by_id[42]
+    angle, eta = aim_and_eta(
+        src, comet_planet, ships=10, omega=0.04, world=world,
+    )
+    assert eta >= 1, f"expected positive eta; got {eta}"

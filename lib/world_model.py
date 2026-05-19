@@ -433,3 +433,28 @@ def comet_remaining_lifetime(planet_id: int, world) -> int | None:
         return None
     path, path_index = entry
     return max(0, len(path) - path_index)
+
+
+def comet_position_at(planet_id: int, world, lead_turns: int) -> tuple[float, float] | None:
+    """Position of comet `planet_id` at `lead_turns` from now.
+
+    Returns `(x, y)` from the comet's pre-computed path at index
+    `path_index + lead_turns`, or `None` if the comet has exited the
+    board by then (index past the end of the path) or if `planet_id`
+    isn't a comet.
+
+    Comets travel along polynomial paths at `cometSpeed=4` board
+    units/turn (env: `orbit_wars.py::generate_comet_paths`), NOT around
+    the central sun like orbital planets. So `lib.orbit.predict_relative`
+    is wrong for comets — use this instead.
+    """
+    paths_by_id = _comet_paths_by_id(world)
+    entry = paths_by_id.get(int(planet_id))
+    if entry is None:
+        return None
+    path, path_index = entry
+    idx = int(path_index) + int(lead_turns)
+    if idx < 0 or idx >= len(path):
+        return None
+    point = path[idx]
+    return float(point[0]), float(point[1])

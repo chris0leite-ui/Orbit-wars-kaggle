@@ -16,12 +16,12 @@ from __future__ import annotations
 import math
 import os
 
-from lib.aim import aim_orbiting
+from lib.aim import aim_comet, aim_orbiting
 from lib.fleet import speed as fleet_speed
 from lib.orbit import is_orbiting, predict_relative
 from lib.scoring import pv_horizon
 from lib.trajectory import predict_fleet_fate
-from lib.world_model import comet_remaining_lifetime
+from lib.world_model import _comet_paths_by_id, comet_remaining_lifetime
 
 NUM_TARGETS_PER_SOURCE = 8
 MIN_FLEET_SIZE = 2
@@ -72,14 +72,69 @@ MAX_REACTOR_CANDIDATES_PER_TURN = 12     # global cap on Part B output
 REACTOR_TOP_K_SOURCES_PER_TARGET = 3     # per-target source enumeration cap
 
 
-def aim_and_eta(src, tgt, ships: int, omega: float, wait_N: int = 0):
+def _comet_path_entry(world, tgt_id):
+    """Look up (path, path_index) for a comet target, or None if not a comet.
+
+    Honoured by `aim_and_eta` only when `BASELINE_COMET_AIM` is enabled.
+    Wrapper around `lib.world_model._comet_paths_by_id` that's local to
+    the proposer so test fixtures can monkey-patch it independently if
+    needed.
+    """
+    if world is None:
+        return None
+    if int(tgt_id) not in getattr(world, "comet_ids", set()):
+        return None
+    paths = _comet_paths_by_id(world)
+    return paths.get(int(tgt_id))
+
+
+def aim_and_eta(src, tgt, ships: int, omega: float, wait_N: int = 0, world=None):
     """Return (aim_angle_radians, ceil_eta_turns) for one (src, tgt, ships).
 
-    For orbiting targets, jointly solves aim + eta via lib.aim.aim_orbiting.
-    For wait_N>0 candidates, pre-rotates BOTH src and tgt by omega*wait_N
-    so aim is computed at the geometry that will hold at fire time (co-
-    rotating planets preserve relative geometry).
+    For COMET targets (target_id in world.comet_ids) AND when `world` is
+    provided AND env-var `BASELINE_COMET_AIM != "off"`, uses path-indexed
+    lead via `lib.aim.aim_comet`. Comets travel polynomial paths at
+    cometSpeed=4 board-units/turn, NOT orbital rotation; using the
+    orbital lead causes 20-40-board-unit misses (ep 77087563 / sub
+    52811320, fleet 32 OOB).
+
+    For orbiting non-comet targets, jointly solves aim + eta via
+    lib.aim.aim_orbiting. For wait_N>0 candidates, pre-rotates BOTH src
+    and tgt by omega*wait_N so aim is computed at the geometry that
+    will hold at fire time (co-rotating planets preserve relative
+    geometry).
+
+    The `world` argument is optional (default None) so existing callers
+    that don't pass it keep the pre-fix orbital behaviour. The proposer
+    `propose()` entry threads `world` through here.
     """
+    # Path-indexed lead for comet targets (Part C, 2026-05-19 PM).
+    if (
+        world is not None
+        and os.environ.get("BASELINE_COMET_AIM", "").strip().lower() != "off"
+    ):
+        comet_entry = _comet_path_entry(world, int(tgt.id))
+        if comet_entry is not None:
+            path, path_index = comet_entry
+            # For wait_N>0, advance the effective path_index by wait_N
+            # (the comet will have moved that many positions by the time
+            # we launch). The source planet is treated as having waited
+            # in place; if src is itself orbiting we pre-rotate it too.
+            effective_index = int(path_index) + int(wait_N)
+            src_x, src_y = float(src.x), float(src.y)
+            if wait_N > 0 and is_orbiting(list(src)):
+                src_x, src_y = predict_relative(list(src), omega, wait_N)
+            res = aim_comet(
+                (src_x, src_y), src.radius, list(tgt), tgt.radius, ships,
+                path, effective_index,
+            )
+            if res is not None:
+                return float(res[0]), max(1, int(math.ceil(float(res[2]))))
+            # Comet exits before arrival: fall through to the simple
+            # atan2-at-current-position path below. The trajectory
+            # filter or comet-lifetime gate will catch the resulting
+            # candidate as a non-target outcome.
+
     if is_orbiting(list(tgt)):
         tgt_list = list(tgt)
         src_x, src_y = float(src.x), float(src.y)
@@ -156,7 +211,7 @@ def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
         return max(0, int(math.ceil(shortfall)))
 
     initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
-    _angle, eta = aim_and_eta(src, tgt, initial, omega)
+    _angle, eta = aim_and_eta(src, tgt, initial, omega, world=world)
     pred = float(model.ships_at(int(tgt.id), eta) or 0.0)
     return max(MIN_FLEET_SIZE, int(math.ceil(pred)) + 1)
 
@@ -177,7 +232,7 @@ def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list
     return sorted(sizes)
 
 
-def wait_then_fire_variants_forward(src, tgt, model, omega: float, me: int):
+def wait_then_fire_variants_forward(src, tgt, model, omega: float, me: int, world=None):
     """Forward wait-grid (legacy): enumerate fixed WAIT_EXTRA_SURPLUS = (0, 5, 12).
 
     Kept for rollback via BASELINE_WAIT_GRID=forward. Caused under-emission
@@ -192,7 +247,7 @@ def wait_then_fire_variants_forward(src, tgt, model, omega: float, me: int):
         return []
 
     initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
-    _a0, eta0 = aim_and_eta(src, tgt, initial, omega)
+    _a0, eta0 = aim_and_eta(src, tgt, initial, omega, world=world)
     pred_now = float(model.ships_at(int(tgt.id), eta0) or 0.0)
     cap_now = max(MIN_FLEET_SIZE, int(math.ceil(pred_now)) + 1)
 
@@ -208,7 +263,7 @@ def wait_then_fire_variants_forward(src, tgt, model, omega: float, me: int):
         if wait_N < 1:
             continue
 
-        angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N)
+        angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N, world=world)
         pred_at_arr = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
         cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arr)) + 1)
         final_fleet = cap_final + extra_surplus
@@ -228,7 +283,7 @@ def wait_then_fire_variants_forward(src, tgt, model, omega: float, me: int):
     return variants
 
 
-def min_wait_affordable(src, tgt, model, omega: float, me: int) -> int | None:
+def min_wait_affordable(src, tgt, model, omega: float, me: int, world=None) -> int | None:
     """Smallest wait_N at which src can affordably capture tgt.
 
     Returns:
@@ -251,7 +306,7 @@ def min_wait_affordable(src, tgt, model, omega: float, me: int) -> int | None:
 
     # Fire-now feasibility check
     initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
-    _a0, eta0 = aim_and_eta(src, tgt, initial, omega, wait_N=0)
+    _a0, eta0 = aim_and_eta(src, tgt, initial, omega, wait_N=0, world=world)
     pred_now = float(model.ships_at(int(tgt.id), eta0) or 0.0)
     cap_now = max(MIN_FLEET_SIZE, int(math.ceil(pred_now)) + 1)
     if cap_now <= int(src.ships):
@@ -265,7 +320,7 @@ def min_wait_affordable(src, tgt, model, omega: float, me: int) -> int | None:
         if max(MIN_FLEET_SIZE, int(tgt.ships) + 1) > budget:
             continue
         target_fleet = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
-        _angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N)
+        _angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N, world=world)
         pred_at_arrival = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
         cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arrival)) + 1)
         if cap_final <= budget and wait_N + eta + SIM_SETTLE_TURNS <= MAX_HORIZON:
@@ -273,7 +328,7 @@ def min_wait_affordable(src, tgt, model, omega: float, me: int) -> int | None:
     return None  # hopeless within MAX_HORIZON
 
 
-def wait_then_fire_variants(src, tgt, model, omega: float, me: int):
+def wait_then_fire_variants(src, tgt, model, omega: float, me: int, world=None):
     """Backward wait grid: anchor on min_wait_affordable.
 
     Returns list of (ships, wait_N, angle, eta). Behaviour:
@@ -294,10 +349,10 @@ def wait_then_fire_variants(src, tgt, model, omega: float, me: int):
     Forward-mode rollback available via BASELINE_WAIT_GRID=forward.
     """
     if WAIT_GRID_MODE == "forward":
-        return wait_then_fire_variants_forward(src, tgt, model, omega, me)
+        return wait_then_fire_variants_forward(src, tgt, model, omega, me, world=world)
     if int(tgt.owner) == me:
         return []
-    min_w = min_wait_affordable(src, tgt, model, omega, me)
+    min_w = min_wait_affordable(src, tgt, model, omega, me, world=world)
     if min_w is None or min_w == 0:
         return []
     prod = max(1, int(src.production))
@@ -310,7 +365,7 @@ def wait_then_fire_variants(src, tgt, model, omega: float, me: int):
         target_fleet = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
         if target_fleet > budget:
             continue
-        angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N)
+        angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N, world=world)
         pred_at_arrival = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
         cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arrival)) + 1)
         if cap_final > budget:
@@ -725,7 +780,7 @@ def _enumerate_reactor_candidates(
             # Conservative natural-eta probe at MIN_FLEET_SIZE (slowest);
             # actual launch will be larger / faster, narrowing the gap.
             _angle_probe, eta_probe = aim_and_eta(
-                src, tgt, MIN_FLEET_SIZE, omega, wait_N=0,
+                src, tgt, MIN_FLEET_SIZE, omega, wait_N=0, world=world,
             )
             desired_arrival = max_opp_eta + 1
             wait_N = max(0, desired_arrival - int(eta_probe))
@@ -743,7 +798,7 @@ def _enumerate_reactor_candidates(
             if needed > budget:
                 continue
             # Recompute aim / eta at the actual ship count
-            angle, eta = aim_and_eta(src, tgt, needed, omega, wait_N=wait_N)
+            angle, eta = aim_and_eta(src, tgt, needed, omega, wait_N=wait_N, world=world)
             if wait_N + int(eta) + SIM_SETTLE_TURNS > MAX_HORIZON:
                 continue
             # Re-sample timeline at the refined arrival step
@@ -793,7 +848,7 @@ def propose(my_planets, target_pool, world, model, me: int,
             for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
-                angle, eta = aim_and_eta(src, tgt, ships, omega)
+                angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
                 horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if horizon >= baseline_len:
                     horizon = baseline_len - 1
@@ -806,7 +861,7 @@ def propose(my_planets, target_pool, world, model, me: int,
                     )
 
             for w_ships, w_wait, w_angle, w_eta in wait_then_fire_variants(
-                src, tgt, model, omega, me,
+                src, tgt, model, omega, me, world=world,
             ):
                 w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if w_horizon >= baseline_len:

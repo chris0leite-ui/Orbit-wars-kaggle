@@ -148,6 +148,71 @@ def aim_orbiting(src_xy, src_radius, target_tuple, target_radius, ships, omega):
     return angle, (tx, ty), last_eta or 0.0
 
 
+def aim_comet(src_xy, src_radius, target_tuple, target_radius, ships,
+              comet_path, comet_path_index):
+    """5-iter fixed-point lead for COMET targets — path-indexed, NOT orbital.
+
+    Sibling to `aim_orbiting`. Comets follow pre-computed polynomial paths
+    at `cometSpeed=4` board-units/turn, not orbital rotation around the
+    sun. Using `predict_relative` for comets mis-aims by 20-40 board
+    units within ~7 turns (ep 77087563 / sub 52811320: 40 ships from
+    planet 12 → comet 31, fleet OOB).
+
+    Algorithm (mirrors `aim_orbiting`):
+    1. Start with target's CURRENT position (path[index]).
+    2. Estimate ETA to current target position.
+    3. Predict target position at that ETA via path[index + ceil(eta)].
+       Returns None if the comet exits the path before arrival.
+    4. Re-estimate ETA to the predicted position.
+    5. Repeat up to MAX_ITERATIONS. Convergence = |dx|, |dy| < TOL.
+    6. If converged, return; else fall back to last-iteration guess.
+
+    Returns (aim_angle, arrival_xy, eta) or None if the comet exits
+    before any reachable intercept.
+
+    `comet_path` is a list of `[x, y]` pairs; `comet_path_index` is the
+    current path position (advances by 1 per turn in the env, see
+    `orbit_wars.py:550`). Caller is responsible for fetching these via
+    `lib.world_model.comet_position_at` or `_comet_paths_by_id`.
+    """
+    path_len = len(comet_path)
+    base_idx = int(comet_path_index)
+    if base_idx < 0 or base_idx >= path_len:
+        return None
+
+    # Start at the comet's current position (path[base_idx]).
+    cur_pt = comet_path[base_idx]
+    tx, ty = float(cur_pt[0]), float(cur_pt[1])
+    last_eta: float | None = None
+
+    for _ in range(MAX_ITERATIONS):
+        eta = estimate_eta(src_xy, src_radius, (tx, ty), target_radius, ships)
+        if eta is None:
+            return None
+        # Path-indexed position lookup at the predicted arrival step.
+        lead = int(math.ceil(eta))
+        future_idx = base_idx + lead
+        if future_idx < 0 or future_idx >= path_len:
+            # Comet has exited the board before we'd arrive — abort.
+            return None
+        future_pt = comet_path[future_idx]
+        ntx, nty = float(future_pt[0]), float(future_pt[1])
+        if (
+            last_eta is not None
+            and abs(ntx - tx) < CONVERGENCE_XY_TOL
+            and abs(nty - ty) < CONVERGENCE_XY_TOL
+        ):
+            angle = math.atan2(nty - src_xy[1], ntx - src_xy[0])
+            return angle, (ntx, nty), eta
+        tx, ty = ntx, nty
+        last_eta = eta
+
+    # Non-convergence: return the last iteration's guess. The trajectory
+    # filter / cost-parity filter will catch downstream misfires.
+    angle = math.atan2(ty - src_xy[1], tx - src_xy[0])
+    return angle, (tx, ty), last_eta or 0.0
+
+
 def swept_pair_hit(A, B, P0, P1, r):
     """Mirror of the env's swept-pair collision check (orbit_wars.py:46-67).
 

@@ -325,3 +325,68 @@ def test_predict_garrison_at_eta_zero_returns_current_state():
     p = _planet(0, 0, 50.0, 50.0, ships=15, production=5)
     owner, ships = predict_garrison_at(p, 0, [(1, 1, 100)])
     assert owner == 0 and ships == 15.0
+
+
+# ---------------------------------------------------------------------------
+# comet_position_at — path-indexed lookup (Part C, 2026-05-19 PM)
+# ---------------------------------------------------------------------------
+
+
+def _world_with_comet(comet_id, path, path_index):
+    """Minimal obs that includes a comet at path[path_index]."""
+    cur_x, cur_y = path[path_index]
+    obs = {
+        "player": 0,
+        "planets": [
+            (0, 0, 5.0, 5.0, 1.0, 100, 1),
+            (comet_id, -1, float(cur_x), float(cur_y), 1.0, 30, 1),
+        ],
+        "fleets": [],
+        "angular_velocity": 0.04,
+        "comet_planet_ids": [comet_id],
+        "comets": [
+            {
+                "planet_ids": [comet_id],
+                "paths": [path],
+                "path_index": path_index,
+            },
+        ],
+        "step": 50,
+    }
+    return World.from_obs(obs)
+
+
+def test_comet_position_at_returns_path_indexed_point():
+    """comet_position_at(comet, world, lead) returns path[path_index+lead]."""
+    from lib.world_model import comet_position_at
+    # Linear path moving east at 4 units/step.
+    path = [[20.0 + i * 4.0, 50.0] for i in range(10)]
+    world = _world_with_comet(comet_id=42, path=path, path_index=2)
+    # lead=0 → current position = path[2] = (28.0, 50.0)
+    pos0 = comet_position_at(42, world, 0)
+    assert pos0 == (28.0, 50.0), f"lead=0: got {pos0}"
+    # lead=3 → path[5] = (40.0, 50.0)
+    pos3 = comet_position_at(42, world, 3)
+    assert pos3 == (40.0, 50.0), f"lead=3: got {pos3}"
+
+
+def test_comet_position_at_returns_none_past_path_end():
+    """When path_index + lead >= len(path), comet has exited → None."""
+    from lib.world_model import comet_position_at
+    path = [[20.0 + i * 4.0, 50.0] for i in range(5)]
+    world = _world_with_comet(comet_id=42, path=path, path_index=2)
+    # path_index=2 + lead=3 = 5 == len(path) → exited
+    assert comet_position_at(42, world, 3) is None
+    # path_index=2 + lead=10 → way past
+    assert comet_position_at(42, world, 10) is None
+
+
+def test_comet_position_at_returns_none_for_non_comet():
+    """Non-comet planet_id returns None (no path data)."""
+    from lib.world_model import comet_position_at
+    path = [[20.0 + i * 4.0, 50.0] for i in range(5)]
+    world = _world_with_comet(comet_id=42, path=path, path_index=0)
+    # Planet 0 (the source) is not a comet.
+    assert comet_position_at(0, world, 1) is None
+    # Some random id not in the obs.
+    assert comet_position_at(999, world, 0) is None

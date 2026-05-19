@@ -37,6 +37,7 @@ from lib.aim import swept_pair_hit
 from lib.fleet import speed as fleet_speed
 from lib.geometry import BOARD_SIZE, CENTER, SUN_RADIUS
 from lib.orbit import is_orbiting, predict_relative
+from lib.world_model import _comet_paths_by_id
 
 # Max steps we simulate before giving up. A 1-ship fleet at speed 1.0
 # can cross the 141.4-unit board diagonal in 142 steps; 200 covers
@@ -98,9 +99,32 @@ def predict_fleet_fate(
         # Shouldn't happen (fleet_speed is monotonically >= 1.0 for ships >= 1).
         return FleetFate("oob", None, 0)
 
-    # Pre-compute per-planet positions at every step (orbital chord).
-    planet_positions: dict[int, list[tuple[float, float]]] = {}
+    # Pre-compute per-planet positions at every step. Three motion models:
+    # - Comets (in world.comet_ids): pre-computed polynomial paths,
+    #   `path[path_index + t]` per step. Path can exhaust mid-flight →
+    #   position becomes None (collision skipped at that step).
+    # - Orbiting planets: rotate around the sun via predict_relative.
+    # - Static planets: fixed at current (x, y).
+    comet_ids = getattr(world, "comet_ids", set()) or set()
+    comet_paths = _comet_paths_by_id(world) if comet_ids else {}
+    planet_positions: dict[int, list[tuple[float, float] | None]] = {}
     for pid, p in world.planets_by_id.items():
+        if pid in comet_ids:
+            path_info = comet_paths.get(pid)
+            if path_info is None:
+                planet_positions[pid] = [(p.x, p.y)] * (max_steps + 1)
+            else:
+                path, idx = path_info
+                row: list[tuple[float, float] | None] = []
+                for t in range(max_steps + 1):
+                    fi = idx + t
+                    if 0 <= fi < len(path):
+                        pt = path[fi]
+                        row.append((float(pt[0]), float(pt[1])))
+                    else:
+                        row.append(None)
+                planet_positions[pid] = row
+            continue
         p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
         if is_orbiting(p_tuple) and omega != 0.0:
             planet_positions[pid] = [
@@ -142,6 +166,9 @@ def predict_fleet_fate(
                 continue
             p_old = positions[step]
             p_new = positions[step + 1]
+            # Comet has exited the board by this step — no collision possible.
+            if p_old is None or p_new is None:
+                continue
             prad = world.planets_by_id[pid].radius
             if swept_pair_hit(fleet_old, fleet_new, p_old, p_new, prad):
                 outcome = "target" if pid == target_id else "planet"
