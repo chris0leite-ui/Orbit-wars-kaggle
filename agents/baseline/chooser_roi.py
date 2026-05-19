@@ -34,6 +34,11 @@ from lib.scoring import T_TOTAL_DEFAULT
 from lib.scoring import expected_hold
 from lib.scoring import margin_multiplier
 from lib.scoring import pv_horizon
+# Tier 2 imports: fast_sim rollout posterior for top-K candidates.
+from lib.fast_sim import clone as fs_clone
+from lib.fast_sim import step as fs_step
+from lib.fast_sim import delta_us_minus_them as fs_delta
+from lib.opp_model import lite_greedy_policy
 
 
 # Cost coefficients — to be calibrated via bench in Phase 6. Initial
@@ -89,6 +94,84 @@ ENDGAME_BONUS_ENABLED: bool = (
 DEFENSIVE_COALITION_ENABLED: bool = (
     os.environ.get("ROI_DEFENSIVE_COALITION", "on").strip().lower() != "off"
 )
+
+# Tier 2 — forward-sim posterior. After ROI ranks candidates, the
+# top-K solos get re-scored via a K-tick fast_sim rollout: our launch
+# now, opp acts via lite_greedy_policy, then both seats idle. Compare
+# the rollout's terminal `us_minus_them` to a baseline rollout where
+# we did nothing. Replaces the closed-form score with measured
+# margin delta — closes the "closed-form vuln is over-pessimistic
+# OR too aggressive" gap that G3 exposed. Disable with
+# ROI_TIER2_ROLLOUT=off; tune K via ROI_ROLLOUT_K (default 8).
+TIER2_ROLLOUT_ENABLED: bool = (
+    os.environ.get("ROI_TIER2_ROLLOUT", "on").strip().lower() != "off"
+)
+TIER2_ROLLOUT_K: int = int(os.environ.get("ROI_ROLLOUT_K", "8"))
+TIER2_TOP_K_SOLOS: int = int(os.environ.get("ROI_TIER2_TOP_K", "6"))
+
+
+def _terminal_value(snap, me: int) -> float:
+    """Terminal scoring head for the Tier 2 rollout. Returns ship-delta
+    in normal play; returns a decisive +/-1e6 bonus when the game ends
+    (opp eliminated or we got eliminated) so capture-eliminations
+    don't tie a "no-op + ship growth" baseline.
+    """
+    from lib.fast_sim import ship_totals
+    totals = ship_totals(snap)
+    us = totals.get(int(me), 0.0)
+    them = sum(v for k, v in totals.items() if int(k) != int(me))
+    if getattr(snap, "fake_env", None) is not None and snap.fake_env.done:
+        if us > them + 1e-6:
+            return 1e6 + (us - them)
+        if them > us + 1e-6:
+            return -1e6 - (them - us)
+        return 0.0
+    return us - them
+
+
+def _rollout_baseline(snap_base, me: int, num_seats: int, K: int) -> float:
+    """Roll K ticks from `snap_base` with us idle and opp(s) playing
+    lite_greedy_policy. Return `_terminal_value`. The reference
+    against which candidate rollouts are compared.
+    """
+    snap = fs_clone(snap_base)
+    for _ in range(int(K)):
+        if snap.fake_env.done:
+            break
+        actions: list = [[] for _ in range(num_seats)]
+        for seat in range(num_seats):
+            if seat == me:
+                continue
+            try:
+                actions[seat] = lite_greedy_policy(snap.state[seat].observation)
+            except Exception:
+                actions[seat] = []
+        snap = fs_step(snap, actions, in_place=True)
+    return _terminal_value(snap, int(me))
+
+
+def _rollout_with_action(snap_base, our_action: list, me: int,
+                          num_seats: int, K: int) -> float:
+    """Roll K ticks with our `our_action` on tick 0 (idle afterwards)
+    and opp(s) playing lite_greedy_policy throughout. Return
+    `_terminal_value`. Compared against `_rollout_baseline` to get the
+    measured margin delta of taking `our_action`.
+    """
+    snap = fs_clone(snap_base)
+    for tick in range(int(K)):
+        if snap.fake_env.done:
+            break
+        actions: list = [[] for _ in range(num_seats)]
+        actions[me] = our_action if tick == 0 else []
+        for seat in range(num_seats):
+            if seat == me:
+                continue
+            try:
+                actions[seat] = lite_greedy_policy(snap.state[seat].observation)
+            except Exception:
+                actions[seat] = []
+        snap = fs_step(snap, actions, in_place=True)
+    return _terminal_value(snap, int(me))
 
 
 def _endgame_finish_bonus(
@@ -687,6 +770,76 @@ def choose_roi(
         if c_roi <= best_solo_on_tgt + COALITION_SLACK:
             continue
         coalitions.append((c_roi, target, c_legs))
+
+    # --- Pass 2.5: Tier 2 rollout posterior on top-K solos ---
+    # ROI's closed-form scoring is the prior; for the top-K solos
+    # we replace the score with a measured fast_sim rollout delta
+    # vs an idle-us baseline. Coalitions and wait_N>0 solos stay on
+    # closed-form (rollout integration for those is more complex).
+    # The rollout sees opp's actual lite_greedy reaction within K
+    # ticks — closes the closed-form vuln calibration gap.
+    if TIER2_ROLLOUT_ENABLED and solo_scored and time.perf_counter() <= deadline:
+        # Sort solos by closed-form score (descending). Validate top-K.
+        solo_scored.sort(key=lambda r: -r[0])
+        # Determine rollout horizon — must be long enough for the
+        # furthest top-K candidate to ARRIVE and resolve. fast_sim's
+        # `ship_totals` counts in-flight fleets in their owner's total,
+        # so if we terminate the rollout before the fleet lands, the
+        # candidate is scored as a no-op vs idle baseline.
+        max_eta_top_k = 0
+        for i in range(min(TIER2_TOP_K_SOLOS, len(solo_scored))):
+            _score, src, tgt, ships, angle, wait_N = solo_scored[i]
+            # eta isn't stored in the rec; recover via fleet_speed and
+            # straight-line distance (approximation; ignores wait_N
+            # candidates which are skipped below).
+            d = math.hypot(float(tgt.x) - float(src.x),
+                           float(tgt.y) - float(src.y))
+            spd = fleet_speed(int(ships))
+            if spd > 0:
+                max_eta_top_k = max(max_eta_top_k, int(math.ceil(d / spd)))
+        K_rollout = max(int(TIER2_ROLLOUT_K), max_eta_top_k + 5)
+
+        try:
+            baseline_delta = _rollout_baseline(
+                snap_base, int(me), int(num_seats), K_rollout,
+            )
+        except Exception:
+            baseline_delta = None
+        if baseline_delta is not None:
+            top_k = min(TIER2_TOP_K_SOLOS, len(solo_scored))
+            rescored: list = []
+            for i in range(top_k):
+                if time.perf_counter() > deadline:
+                    break
+                _score, src, tgt, ships, angle, wait_N = solo_scored[i]
+                if int(wait_N) != 0:
+                    # Wait-N solo: leave on closed-form score.
+                    rescored.append(solo_scored[i])
+                    continue
+                action = [[int(src.id), float(angle), int(ships)]]
+                try:
+                    cand_delta = _rollout_with_action(
+                        snap_base, action, int(me), int(num_seats),
+                        K_rollout,
+                    )
+                except Exception:
+                    rescored.append(solo_scored[i])
+                    continue
+                roll_score = float(cand_delta) - float(baseline_delta)
+                # Drop candidates the rollout says are worse than idle.
+                # ROI's prior was over-optimistic on these (e.g.,
+                # didn't see opp's actual counter-attack landing).
+                if roll_score <= 0.0:
+                    continue
+                rescored.append((roll_score, src, tgt, int(ships),
+                                  float(angle), int(wait_N)))
+            # Keep the rescored top-K (replaces their original
+            # closed-form scores); the un-validated tail stays as-is.
+            solo_scored = rescored + solo_scored[top_k:]
+            # Rebuild solo_by_target with new scores.
+            solo_by_target = {}
+            for rec in solo_scored:
+                solo_by_target.setdefault(int(rec[2].id), []).append(rec)
 
     # --- Pass 3: greedy emit ---
     # Sort all candidates (solo + coalition) by score desc.
