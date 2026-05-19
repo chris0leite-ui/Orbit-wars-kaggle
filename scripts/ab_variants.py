@@ -70,6 +70,7 @@ PATCHABLE_PATHS = [
     REPO / "lib" / "mechanism.py",
     REPO / "lib" / "planner.py",
     REPO / "lib" / "scoring.py",
+    REPO / "lib" / "value_heads.py",
 ]
 BUNDLE_OUT = REPO / "submissions" / "_ab"
 

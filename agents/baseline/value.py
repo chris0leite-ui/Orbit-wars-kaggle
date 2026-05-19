@@ -230,22 +230,24 @@ def favor_projected(obs, me: int, num_seats: int = 2,
 def select_favor_fn():
     """Pick the leaf value function.
 
-    Env var `BASELINE_VALUE_HEAD`:
-      - unset / anything else -> `favor` (default, v15 baseline + A2 4P).
-      - "composite"           -> `favor_composite` (2P waste-aware,
-                                  composite_capture_value head).
-      - "hybrid"              -> `favor_hybrid` (composite in 2P,
-                                  A2-favor in 4P).
-      - "hybrid_spatial"      -> `favor_hybrid_spatial`.
-      - "projected"           -> `favor_projected` (per-seat ProjectedTotal,
-                                  max aggregator — Variant 1 of the
-                                  production-compounding reframing; 4P
-                                  regression vs A2-favor, see audit
-                                  2026-05-19-projected-value-head-4p-ab.md).
+    Two dispatch paths in priority order:
+      1. `lib.value_heads.VALUE_HEAD_CHOICE` numeric constant — patchable
+         by `scripts/ab_variants.py` for clean A/B bundles. Values:
+         0 = favor (v15 baseline + A2 4P), 1 = composite,
+         2 = projected. Anything else falls through to env-var path.
+      2. `BASELINE_VALUE_HEAD` env var (legacy operator workflow):
+         "composite" → favor_composite, "hybrid" → favor_hybrid,
+         "hybrid_spatial" → favor_hybrid_spatial,
+         "projected" → favor_projected, else → favor.
 
-    The chooser uses the same function for both `build_idle_baseline` and
-    `score_action` so the Δ stays well-defined.
+    The chooser uses the SAME function for both `build_idle_baseline`
+    and `score_action` so the Δ stays well-defined (CRN symmetry).
     """
+    from lib.value_heads import VALUE_HEAD_CHOICE
+    if VALUE_HEAD_CHOICE == 1:
+        return favor_composite
+    if VALUE_HEAD_CHOICE == 2:
+        return favor_projected
     choice = os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower()
     if choice == "composite":
         return favor_composite
