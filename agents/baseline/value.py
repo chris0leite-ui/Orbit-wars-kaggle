@@ -208,6 +208,25 @@ def favor_hybrid(obs, me: int, num_seats: int = 2,
     return favor(obs, me, num_seats, gamma)
 
 
+def favor_projected(obs, me: int, num_seats: int = 2,
+                    gamma: float = DEFAULT_GAMMA) -> float:
+    """Production-compounding unified value head (`projected_rank_diff`).
+
+    V(s) = ProjectedTotal_me − max_{j != me} ProjectedTotal_j
+    where ProjectedTotal_i = ships_i(now) + in_flight_credit_i
+                           + λ × Σ_p (P_p × turns_remaining) for p owned by i.
+
+    Generalises composite_capture_value's "P × turns_remaining" credit
+    from in-flight fleets only to ALL planets at the leaf, with a `max`
+    aggregation that handles 2P and 4P uniformly (no A2 hybrid graft).
+
+    `gamma` is intentionally ignored — projection uses linear horizon
+    (PV-off finding from 52784853 live A/B 81.2% vs the prior bundle).
+    """
+    from lib.value_heads import projected_rank_diff
+    return projected_rank_diff(obs, me, num_seats)
+
+
 def select_favor_fn():
     """Pick the leaf value function.
 
@@ -217,6 +236,12 @@ def select_favor_fn():
                                   composite_capture_value head).
       - "hybrid"              -> `favor_hybrid` (composite in 2P,
                                   A2-favor in 4P).
+      - "hybrid_spatial"      -> `favor_hybrid_spatial`.
+      - "projected"           -> `favor_projected` (per-seat ProjectedTotal,
+                                  max aggregator — Variant 1 of the
+                                  production-compounding reframing; 4P
+                                  regression vs A2-favor, see audit
+                                  2026-05-19-projected-value-head-4p-ab.md).
 
     The chooser uses the same function for both `build_idle_baseline` and
     `score_action` so the Δ stays well-defined.
@@ -228,4 +253,6 @@ def select_favor_fn():
         return favor_hybrid
     if choice == "hybrid_spatial":
         return favor_hybrid_spatial
+    if choice == "projected":
+        return favor_projected
     return favor
