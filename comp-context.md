@@ -139,6 +139,24 @@ boardSize: 100.0
 cometSpeed: 4.0
 ```
 
+## Execution environment (organizer-confirmed, discussion 700191, 2026-05-19)
+
+```yaml
+cpu_per_submission: 1.6                   # "1 and 3/5 of a CPU" per submission process
+memory_per_submission: ~8 GB
+timeout_semantics: wall-clock             # actTimeout (1 s) is wall time, NOT CPU time
+overage_budget: 60 s                      # total per game; once exhausted → forfeit
+process_lifetime: per-episode_fresh       # each episode starts a new process
+module_caches: persist_within_episode     # state survives across turns of one game; cleared between games
+hardware_uniformity: same_for_all_games   # public LB and final/private eval use the same hardware
+arch_python_image: kaggle_environments_docker  # https://github.com/Kaggle/kaggle-environments/tree/master/docker — Q1 (CPU arch) + Q6 (Python ver.) deferred to this image
+```
+
+Implication for our budget: a single-threaded agent is bounded by 1.0 CPU
+(can't exceed one core), so the practical eval CPU share ≈ unconstrained
+local. Day-1 cost probe extrapolated assuming 0.6 CPU — that was
+~2.6× too pessimistic. See footnote in `audit/2026-05-13-day-1-audits.md`.
+
 ## Evaluation (from `kaggle competitions pages orbit-wars --content --page-name evaluation`)
 
 ```yaml

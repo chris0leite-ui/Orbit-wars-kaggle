@@ -422,6 +422,10 @@ I-M = data-driven; K = realism check already cleared.
   Result: v7_0_drop_one single-threaded, scales linearly with CPU
   share. Extrapolated to eval's 0.6 CPU: p99 ≈ 444 ms, max ≈ 676 ms.
   Zero overage. See `audit/2026-05-13-day-1-audits.md`.
+  **Correction (2026-05-19, discussion 700191):** organizer confirmed
+  **1.6 CPU per submission** (not 0.6); single-threaded agent is bounded
+  by 1.0 CPU, so practical p99 ≈ unconstrained-local 216 ms. Verdict
+  still PASS, with more headroom than originally projected.
 - **H27 [L] (~1 day):** **Arrival-window candidate enumerator.**
   Add `_enumerate_arrival_windows` mode to `lib/v7_search.py` —
   sweep ship-counts s.t. arrival ∈ [enemy_eta − 2, enemy_eta + 2];
