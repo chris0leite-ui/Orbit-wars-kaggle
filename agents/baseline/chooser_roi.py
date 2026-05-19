@@ -51,6 +51,11 @@ COALITION_SLACK: float = float(os.environ.get("ROI_COALITION_SLACK", "1.0"))
 # caught by _source_survives_launch downstream.
 MIN_COALITION_RESIDUE: int = int(os.environ.get("ROI_MIN_RESIDUE", "5"))
 MIN_LEG_SHIPS: int = 2
+# Minimum residue on solo emits — prevents draining a source to zero.
+# Mirror of MIN_COALITION_RESIDUE for the solo path. Proposer dedup
+# typically picks the budget-sized variant, which would drain the
+# source; choose_roi downsizes to honor this floor.
+MIN_SOLO_RESIDUE: int = int(os.environ.get("ROI_MIN_SOLO_RESIDUE", "5"))
 
 # Source-vulnerability knobs (Phase 4). Folded into solo/coalition
 # ROI so the comparison sees the true cost of exposing a source.
@@ -400,19 +405,41 @@ def choose_roi(
     this phase (mixed wait coalition geometry isn't validated by
     predict_fleet_fate).
     """
-    # --- Pass 1: solo scoring ---
+    # --- Pass 1: solo scoring with ship-count variants ---
+    # For each prerank entry, enumerate candidate ship counts:
+    #   (a) original (proposer's pick — usually full budget).
+    #   (b) src.ships - MIN_SOLO_RESIDUE (largest emit that keeps the
+    #       residue floor — relevant only if the original drains below
+    #       the floor).
+    # Each variant gets a solo_roi score; we keep the best per (src, tgt).
     solo_scored: list = []  # (score, src, tgt, ships, angle, wait_N)
     solo_by_target: dict[int, list] = {}
     for entry in prerank:
-        _cheap, src, tgt, ships, angle, eta, _horizon, wait_N = entry
-        score = solo_roi(
-            src, tgt, int(ships), int(eta), int(wait_N),
-            world, model, int(me), int(step), int(max_horizon),
-            gamma=gamma,
-        )
-        if score == float("-inf") or score <= 0.0:
+        _cheap, src, tgt, ships_orig, angle, eta, _horizon, wait_N = entry
+        max_residue_safe_ships = max(0, int(src.ships) - MIN_SOLO_RESIDUE)
+
+        ship_variants: list[int] = []
+        if int(ships_orig) <= max_residue_safe_ships:
+            ship_variants.append(int(ships_orig))
+        elif max_residue_safe_ships >= MIN_LEG_SHIPS:
+            ship_variants.append(max_residue_safe_ships)
+        else:
+            continue  # source too small to honor the floor at all
+
+        best_score = float("-inf")
+        best_ships = ship_variants[0]
+        for s in ship_variants:
+            score = solo_roi(
+                src, tgt, s, int(eta), int(wait_N),
+                world, model, int(me), int(step), int(max_horizon),
+                gamma=gamma,
+            )
+            if score > best_score:
+                best_score = score
+                best_ships = s
+        if best_score == float("-inf") or best_score <= 0.0:
             continue
-        rec = (score, src, tgt, int(ships), float(angle), int(wait_N))
+        rec = (best_score, src, tgt, int(best_ships), float(angle), int(wait_N))
         solo_scored.append(rec)
         solo_by_target.setdefault(int(tgt.id), []).append(rec)
 
