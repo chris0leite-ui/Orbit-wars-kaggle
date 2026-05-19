@@ -35,29 +35,31 @@ days_to_deadline: 35
 #   Bundle parity OK over 574 turns.
 #   Wallclock: focal p50=310ms p95=738ms max=1268ms (max > 1s soft cap,
 #   matches current source's profile; not a new risk).
-last_submission_id: 52811320
+last_submission_id: 52827111
 last_submission_status: PENDING
 last_submission_mu: null  # no μ yet; refresh via kaggle CLI
-last_submission_message: "hold-feasibility filter solo: B.3 Wlo=0.612 n=32; panel champion Wlo=0.579, v7_0 Wlo=0.799, v4_planner Wlo=0.758, v3.5.1 Wlo=0.682"
+last_submission_message: "comet-aim + reactor-aware: 2P A/B comet-only 64/96=66.7pct Wlo=0.568 PASS; 4P FFA combined 89/127=70.1pct, comet-only 89/128=69.5pct CI[61.1,76.8], no-reactor 80/128=62.5pct CI[53.9,70.4]; comet-aim alone is +7pp, reactor-aware adds +0.6pp on top (within noise); Rule-38 trace ep 77087563 vs Felix Truong confirms 40-ship OOB fixed"
 last_submission_file: submissions/baseline.py
-last_submission_agent: baseline_hold_feasibility_solo
-last_submission_sha256: a1e4fa23ff77edb8e963961de13679e34d15ba39a73794ebeea0378c701f9387
-last_kernel_push: 2026-05-19 12:54:31 UTC
-prior_submission_id: 52784853
-current_submitted_agent: baseline_hold_feasibility_solo (5/19 PM)
+last_submission_agent: baseline_comet_aim_plus_reactor
+last_submission_sha256: 90d2034141054d2022e968c081e3b466d1608347d63b1d56657b34bc4b0370ef
+last_kernel_push: 2026-05-19 19:52:53 UTC
+prior_submission_id: 52811320
+current_submitted_agent: baseline_comet_aim_plus_reactor (5/19 evening)
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation; the
 # third push auto-evicts the previous oldest). Per the literal
 # "rolling LAST 2 submissions" rule. Verified via `kaggle competitions
-# submissions orbit-wars` 2026-05-19 12:55:
-#   52784853 (May 18 17:42, μ=1139.0) — drifted up from 1121.2 → 1132.5
-#     → 1139.0 over 24h. CHAMPION reference at session start.
-#   52766596 (May 18 07:12, μ=1118.3) — EVICTED by 52811320 push.
-#   52811320 (May 19 12:54, μ=PENDING) — hold-feasibility filter solo.
-# Floor of the rolling pair: 1139.0 (52784853) until 52811320 settles.
+# submissions orbit-wars` 2026-05-19 19:52:
+#   52811320 (May 19 12:54, μ=1137.5) — hold-feasibility filter solo,
+#     SETTLED at 1137.5 (was drifting around 1067 yesterday). Kept.
+#   52784853 (May 18 17:42, μ=1130.4) — EVICTED by 52827111 push.
+#   52827111 (May 19 19:52, μ=PENDING) — comet-aim + reactor-aware.
+# Floor of the rolling pair after push: 1137.5 (52811320) until 52827111 settles.
+# Calibration note: 52811320 climbed dramatically from drift-low ~1067
+# to settled 1137.5 — TrueSkill needs 24h+ to settle reliably.
 rolling_last_2:
-  - {agent: baseline_hold_feasibility_solo, sub_id: 52811320, submitted: 2026-05-19T12:54Z, status: PENDING, mu_snapshot: null}
-  - {agent: baseline_PV_off_with_clean_math_fixes, sub_id: 52784853, submitted: 2026-05-18T17:42Z, status: COMPLETE, mu_snapshot: 1139.0}
+  - {agent: baseline_comet_aim_plus_reactor, sub_id: 52827111, submitted: 2026-05-19T19:52Z, status: PENDING, mu_snapshot: null}
+  - {agent: baseline_hold_feasibility_solo, sub_id: 52811320, submitted: 2026-05-19T12:54Z, status: COMPLETE, mu_snapshot: 1137.5}
 
 # Team peak as of 2026-05-17: v15_banded (the multi-wait-grid + banded
 # (src, tgt, wait_band) dedup line). v15 source lives in git history at
@@ -73,16 +75,17 @@ team_peak_agent: v15_banded
 # rolling agent (not just a fixed baseline) before any new push. The
 # 52811320 push followed this protocol (panel + champion h2h all PASS).
 
-submissions_used_today: 1     # 5/19 — baseline_hold_feasibility_solo (52811320)
-submissions_used_total: 34    # see ladder list below; refresh via Kaggle CLI
+submissions_used_today: 2     # 5/19 — 52811320 (hold-feasibility solo) + 52827111 (comet-aim + reactor-aware)
+submissions_used_total: 35    # see ladder list below; refresh via Kaggle CLI
 plateau_days: 0
 saturation_count: 0
 
 # Live ladder — read from `kaggle competitions submissions orbit-wars`,
 # NOT from this file. Submission IDs are stable; scores are not.
 # Most recent ladder entries by submission id:
-#   52811320  baseline.py (hold-feasibility filter solo)   2026-05-19 12:54 PENDING ← NEW
-#   52784853  baseline.py (PV-off + bug #3/#4/#12 fixes)   2026-05-18 17:42 COMPLETE μ=1139.0 ← rolling pair
+#   52827111  baseline.py (comet-aim + reactor-aware)      2026-05-19 19:52 PENDING ← NEW
+#   52811320  baseline.py (hold-feasibility filter solo)   2026-05-19 12:54 COMPLETE μ=1137.5 ← rolling pair
+#   52784853  baseline.py (PV-off + bug #3/#4/#12 fixes)   2026-05-18 17:42 COMPLETE μ=1130.4 EVICTED by 52827111
 #   52766596  baseline.py (joint v3 2P-only)               2026-05-18 07:12 COMPLETE μ=1118.3 EVICTED by 52811320
 #   52754310  baseline.py (trajectory v4 + wait_N)         2026-05-17 22:06 COMPLETE μ=1143.7
 #   52744856  baseline.py (composite+A2 hybrid)            2026-05-17 14:17 COMPLETE μ=1149.2
@@ -113,6 +116,34 @@ saturation_count: 0
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
+  - 2026-05-19 evening — audit-workflow-performance-btjeK.
+    Three commits + one push. (a) `037009b`: reactor-aware launch
+    selection — cost-parity filter (reject candidates where the cheapest
+    opp reactor pays < 70 pct of our cost) + reactor-candidate generator
+    (propose our own race-to-recapture for opp fleets in flight). 2P A/B
+    INCONCLUSIVE (61/128 = 47.7 pct Wlo=0.392 Whi=0.563), drilldown
+    showed local "regression" was wallclock artifact under 6-worker
+    contention on 4 CPUs — agent decisions identical when given enough
+    wallclock; max=1332ms in contended A/B vs 442ms in serial bench.
+    (b) `dbbc535`: comet-aim path-indexed lead — new aim_comet 5-iter
+    fixed-point sibling of aim_orbiting that reads obs.comets[g].paths
+    instead of predict_relative orbital rotation; predict_fleet_fate
+    also updated to use the path. Env-var BASELINE_COMET_AIM=on default.
+    Rule-38 trace on ep 77087563 (sub 52811320 vs Felix Truong): pre-fix
+    angle 160.01° at step 51 → step-8 OOB at (-2.19, 80.49); post-fix
+    angle 121.25° → trajectory filter correctly drops the candidate as
+    wrong-planet. (c) `cb8b5aa`: 4P FFA panel JSON committed.
+    Verifications: comet-only 2P A/B 64/96=66.7 pct Wlo=0.568 PASS;
+    4P FFA panel vs {v7_0_drop_one, v3.5.1, roi}:
+      combined (reactor+comet): 89/127 = 70.1 pct (partial; container
+                                cycled at game 127)
+      comet-only:               89/128 = 69.5 pct CI [61.1, 76.8]
+      no-reactor (52811320):    80/128 = 62.5 pct CI [53.9, 70.4]
+    Comet-aim is +7pp solo; reactor-aware adds +0.6pp (within noise).
+    Pushed combined bundle 52827111 at PI direction ("submit with
+    reactor — I want to see how it behaves"). 52811320 settled at
+    μ=1137.5 (was drifting around 1067 yesterday — TrueSkill needs
+    24h+ to settle).
   - 2026-05-17 PM — audit-workflow-performance-btjeK.
     Diagnostic + observe-loop foundations + composite head wired + A2 merged
     + submission bundled. Workflow fixes: kaggle-CLI shim (`~/.local/bin/kaggle`
@@ -215,6 +246,8 @@ mechanism_families_explored:
   - swept-pair-vanish-classifier             # 5/17 PM — measurement-honesty for replay-mine
   - A2-4P-weakness-exploitation              # 5/17 PM — merged from kaggle-baseline-strategy
   - favor_hybrid-2P-composite-4P-A2          # 5/17 PM — production dispatcher
+  - reactor-aware-launch-selection           # 5/19 PM — cost-parity filter + reactor candidates (037009b)
+  - comet-aim-path-indexed-lead              # 5/19 PM — fix comet motion model (dbbc535)
 
-gate_status: cleared                          # 53+ tests + bundle parity 712 turns
+gate_status: cleared                          # 60+ proposer/aim/trajectory tests + bundle parity
 ```
