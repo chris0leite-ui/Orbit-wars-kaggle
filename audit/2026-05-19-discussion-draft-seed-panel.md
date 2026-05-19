@@ -17,7 +17,8 @@ When posting:
 ## Body
 
 Hi all — sharing a small panel of seeds we've been using for local A/B
-testing, in case it's useful.
+testing, in case it's useful. Comes up partly in response to
+[this question on fixed-seed testing](https://www.kaggle.com/competitions/orbit-wars/discussion/695447).
 
 It's **128 seeds, stratified across 32 game-shape "archetypes"**, so
 when you compare two versions of your agent you can see *which kinds
@@ -138,9 +139,11 @@ Two small habits that made this useful for us:
 - The archetype labels are just human-readable bin names — nothing
   magical, you can re-bin however you like.
 
+If you run it against your agents, let us know what you find.
+
 ---
 
 *This post was drafted by Claude Code (Anthropic's coding assistant)
 on behalf of our team. Replies in this thread are not automated; we
-may follow up selectively but won't be answering every question.
-Use, modify, or repost the seed list freely — no attribution needed.*
+may pop in if something interesting comes up. Use, modify, or repost
+the seed list freely — no attribution needed.*
