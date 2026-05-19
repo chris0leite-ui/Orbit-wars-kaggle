@@ -15,9 +15,30 @@ chooser's wiring stays stable; their bodies land in subsequent slices.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
-from lib.world_model import WAVE_LOOKAHEAD, simulate_planet_timeline
+# Single-line imports below: the submission bundler's per-line
+# import-stripping regex leaks continuation lines from a parenthesised
+# multi-line import as indented orphans (IndentationError at runtime).
+# Friction tag `bundler-modular-agent-namespace-access-breaks-bundle`
+# documented in agents/baseline/main.py and proposer.py.
+#
+# All lib/agent imports MUST be at module level — the bundler's
+# alias-rewrite for stripped imports happens at column 0 and breaks
+# any in-function `from lib.X import ...` line (the alias becomes an
+# unindented statement mid-function body → IndentationError).
+from lib.fleet import speed as fleet_speed
+from lib.scoring import T_TOTAL_DEFAULT, pv_horizon
+from lib.world_model import WAVE_LOOKAHEAD
+from lib.world_model import predict_garrison_at
+from lib.world_model import simulate_planet_timeline
+
+# Proposer filters reused by W1. No circular-import risk: proposer
+# doesn't import predicates. Module-level so the bundler doesn't
+# rewrite an in-function import alias mid-body (IndentationError).
+from agents.baseline.proposer import _source_survives_launch
+from agents.baseline.proposer import _target_holdable_after_capture
 
 
 # Default lookahead window beyond the latest known threat ETA. Mirrors
@@ -134,9 +155,8 @@ def w2_provably_held_reinforce(
         # Closed-form reach: opp could launch and arrive at tgt by
         # tick = ceil(dist / fleet_speed(opp.ships)). If this is within
         # the window AND not already represented by an in-flight fleet
-        # from that opp at tgt, W2 abstains.
-        from lib.fleet import speed as fleet_speed
-        import math
+        # from that opp at tgt, W2 abstains. (`math` and `fleet_speed`
+        # imported at module level — bundler-safe).
         dx = float(opp.x) - float(tgt.x)
         dy = float(opp.y) - float(tgt.y)
         dist = math.hypot(dx, dy)
@@ -190,18 +210,68 @@ def w2_provably_held_reinforce(
 def w1_provably_winning_capture(
     src, tgt, ships: int, wait_N: int, eta: int,
     world, model, me: int,
+    *,
+    gamma: float = 0.99,
+    value_epsilon: float = 0.01,
 ) -> Verdict:
     """W1 — is this capture candidate provably winning?
 
-    NOT YET IMPLEMENTED. Returns UNCERTAIN unconditionally.
+    Fires `commit` when ALL of:
+      1. capture succeeds at arrival
+         (`predict_garrison_at(ledger + our_arrival).owner == me`),
+      2. target is holdable post-capture against the nearest strong opp
+         counter (`proposer._target_holdable_after_capture` returns True),
+      3. source defends itself against its own inbound threats
+         (`proposer._source_survives_launch` returns True),
+      4. closed-form value lower bound exceeds `value_epsilon`:
+         `tgt.production * pv_horizon(step, arrival, gamma) > eps`.
 
-    Planned behaviour: closed-form proof that ownership of `tgt` holds
-    through `[arrival, episode_end]` against the WORST-CASE coordinated
-    opp counter-launch over all opp planets in reach. Promotes the
-    existing `proposer._target_holdable_after_capture` from binary
-    discard filter to emit shortcut.
+    Otherwise returns UNCERTAIN — the rollout will score it.
+
+    Soundness scope (v1):
+      - The hold check uses the nearest-strong-opp counter with
+        `SAFETY_MARGIN=1.5` margin (the existing proposer math). Sound
+        for single-counter scenarios. Multi-opp coordinated counters
+        are NOT modelled; gang-up captures can slip through and lose
+        on real ladder play. The v2 refinement is the Wald-style
+        sum-of-all-opp-ships-in-reach bound.
+      - Reinforces (`tgt.owner == me`) defer to W2 — UNCERTAIN here.
+      - `step` is read from `world.step`.
     """
-    return UNCERTAIN
+    # Inapplicable: reinforce — W2's territory.
+    if int(tgt.owner) == int(me):
+        return UNCERTAIN
+
+    arrival = int(wait_N) + int(eta)
+    base_arrivals = list(model.ledger.get(int(tgt.id), []))
+    our_arrival = (arrival, int(me), int(ships))
+
+    # 1. Capture succeeds at arrival.
+    owner_at_arrival, _garrison = predict_garrison_at(
+        tgt, arrival, base_arrivals + [our_arrival],
+    )
+    if int(owner_at_arrival) != int(me):
+        return UNCERTAIN  # bounce — L1's territory if no hold window exists.
+
+    # 2-3. Hold + source-survives — reuse existing proposer filters
+    # (imported at module level for bundler-safety).
+    if not _target_holdable_after_capture(
+        src, tgt, int(ships), int(wait_N), int(eta), world, model, int(me),
+    ):
+        return UNCERTAIN
+    if not _source_survives_launch(
+        src, int(ships), int(wait_N), world, model, int(me),
+    ):
+        return UNCERTAIN
+
+    # 4. Value lower bound: production × pv_horizon.
+    step = int(getattr(world, "step", 0) or 0)
+    pv = pv_horizon(step, arrival, gamma=gamma, t_total=T_TOTAL_DEFAULT)
+    value = float(int(tgt.production)) * float(pv)
+    if value <= value_epsilon:
+        return UNCERTAIN
+
+    return Verdict(kind="commit", lower_bound=value, reason="W1")
 
 
 def l1_provably_wasted_launch(
@@ -210,22 +280,99 @@ def l1_provably_wasted_launch(
 ) -> Verdict:
     """L1 — is this launch provably wasted?
 
-    NOT YET IMPLEMENTED. Returns UNCERTAIN unconditionally.
+    Symmetric inverse of W1. Fires `discard` when the candidate has
+    NO tick in `[arrival, arrival + WAVE_LOOKAHEAD]` at which we own
+    `tgt` under the augmented ledger.
 
-    Planned behaviour: symmetric inverse of W1. Drop candidates with no
-    value-positive holding window. Generalises the existing
-    admissibility filter (`predict_fleet_fate` non-target outcomes).
+    Strictly tighter than `predict_fleet_fate` admissibility:
+    fate-predictor catches sun/oob/path-blocked; L1 also catches
+    "delivered force loses combat at arrival" (bounce) and "we capture
+    but get recaptured within window."
+
+    Soundness: future opp launches can only make `tgt` MORE hostile,
+    never less. The in-flight-ledger-only check is therefore an upper
+    bound on our ownership over the window — never owning under that
+    upper bound is a sound proof of waste. No conservative-abstain
+    guard needed.
+
+    Reinforces (`tgt.owner == me`) defer to W2 — UNCERTAIN here.
     """
-    return UNCERTAIN
+    # Inapplicable: reinforce — W2's territory.
+    if int(tgt.owner) == int(me):
+        return UNCERTAIN
+
+    arrival = int(wait_N) + int(eta)
+    base_arrivals = list(model.ledger.get(int(tgt.id), []))
+    our_arrival = (arrival, int(me), int(ships))
+    augmented = base_arrivals + [our_arrival]
+
+    window_end = arrival + WAVE_LOOKAHEAD
+    timeline = simulate_planet_timeline(tgt, augmented, horizon=window_end)
+    owner_at = timeline["owner_at"]
+
+    # Did we ever own it within [arrival, window_end]?
+    for t in range(arrival, window_end + 1):
+        if int(owner_at.get(t, -1)) == int(me):
+            return UNCERTAIN  # we hold at some tick; defer to rollout
+
+    # Never owned within window → provably wasted.
+    return Verdict(kind="discard", reason="L1")
 
 
 def l2_dominance_prune(candidates):
-    """L2 — drop candidates dominated by another same-source candidate.
+    """L2 — drop same-(src, tgt) candidates dominated on (cheap_delta, ships, eta).
 
-    NOT YET IMPLEMENTED. Returns `candidates` unchanged.
+    Each input element is the proposer prerank tuple:
+      `(cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N)`.
 
-    Planned behaviour: closed-form scan. A is dominated by B iff same
-    source, weakly higher cheap-Δ lower bound, weakly lower ships,
-    weakly earlier arrival.
+    Candidate A is dominated by B (same (src.id, tgt.id)) iff B has
+    weakly higher `cheap_delta`, weakly lower `ships`, weakly earlier
+    `eta`, AND is strictly better in at least one dimension. Dominated
+    candidates are dropped.
+
+    v1 scope: same-source-AND-same-target only. Cross-target dominance
+    would require value lower bounds we don't yet compute closed-form
+    (different targets have different latent values); held back as a
+    v2 refinement gated on audit-replay evidence.
+
+    Order-preserving: surviving candidates appear in the same order
+    they had in the input (sort stability matters for the chooser's
+    cheap-Δ-desc downstream ordering).
+
+    Cost: O(N²) per group in the worst case; groups are typically ≤3
+    after the proposer's `(src, tgt, wait_band)` dedup, so the constant
+    factor is negligible.
     """
-    return list(candidates)
+    if not candidates:
+        return []
+
+    # Group by (src.id, tgt.id) — preserving first-seen index for ordering.
+    groups: dict = {}
+    order: list = []
+    for idx, c in enumerate(candidates):
+        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N = c
+        key = (int(src.id), int(tgt.id))
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append((idx, c))
+
+    keep_indices: set = set()
+    for key in order:
+        group = groups[key]
+        # For each member, check if dominated by any other member.
+        for i, (idx_i, c_i) in enumerate(group):
+            cd_i, _, _, sh_i, _, et_i, _, _ = c_i
+            dominated = False
+            for j, (idx_j, c_j) in enumerate(group):
+                if i == j:
+                    continue
+                cd_j, _, _, sh_j, _, et_j, _, _ = c_j
+                if (cd_j >= cd_i and sh_j <= sh_i and et_j <= et_i and
+                        (cd_j > cd_i or sh_j < sh_i or et_j < et_i)):
+                    dominated = True
+                    break
+            if not dominated:
+                keep_indices.add(idx_i)
+
+    return [c for idx, c in enumerate(candidates) if idx in keep_indices]

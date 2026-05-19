@@ -260,6 +260,37 @@ def agent(obs, configuration=None):
         )
         return drain_idle_rear(moves, planets, me, world, model)
 
+    # Layered chooser opt-in (2026-05-19 slice 2). Layer-0 closed-form
+    # predicates (W1/W2 commit, L1/L2 discard) over a pluggable inner
+    # chooser selected via BASELINE_INNER_CHOOSER (default "trajectory").
+    # See /root/.claude/plans/take-the-lens-of-magical-shore.md §9.
+    if os.environ.get("BASELINE_CHOOSER", "").strip().lower() == "layered":
+        inner_name = os.environ.get(
+            "BASELINE_INNER_CHOOSER", "trajectory",
+        ).strip().lower()
+        prerank = propose(
+            my_planets, target_pool, world, model, me, omega,
+            baseline_len=MAX_HORIZON + 1,
+        )
+        # Inner chooser's appetite for baseline_favors differs: ROI
+        # ignores it; trajectory accepts None; composite needs it.
+        if inner_name == "composite":
+            baseline_favors = build_idle_baseline(
+                snap_base, me, num_seats, MAX_HORIZON, gamma,
+            )
+        else:
+            baseline_favors = None
+        from agents.baseline.chooser_layered import choose_layered
+        step = int(obs_d.get("step", 0))
+        moves = choose_layered(
+            snap_base, prerank, baseline_favors,
+            me, num_seats, wallclock_ms,
+            MIN_HORIZON, MAX_HORIZON, gamma,
+            world, model, step,
+            inner_chooser_name=inner_name,
+        )
+        return drain_idle_rear(moves, planets, me, world, model)
+
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
     )
