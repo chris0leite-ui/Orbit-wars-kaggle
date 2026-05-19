@@ -20,6 +20,9 @@ from lib.goal_planner.predicate import (
 from lib.trajectory_layer import World
 
 
+CAPTURE_SAFETY_MARGIN = 2
+
+
 def _ships_to_capture(planet, my_id: int) -> int:
     """Closed-form lower bound on ships needed to capture this planet
     from anywhere (ignoring ETA and defender production).
@@ -52,6 +55,33 @@ def _candidate_score(planet, my_id: int) -> tuple[float, int]:
     return (-ratio, cost)
 
 
+def _is_feasibly_capturable(target, mine_planets: list) -> bool:
+    """Closed-form check: can ANY mine source eventually capture this
+    target?
+
+    Two ways to capture:
+      a) NOW: some source already has > target.ships + safety
+      b) WAIT: some source's prod >= target.prod (so we accumulate
+         faster than the defender — we'll eventually overcome). Edge:
+         if target prod is 0, any positive src prod works.
+
+    If neither holds across all sources, we can NEVER acquire this
+    target — exclude from the portfolio. Targets with no source within
+    MAX_ETA range are also infeasible but we don't check geometry here
+    (the sequencer (P3) will reject those; portfolio's job is the
+    ship-pool / prod-rate gate)."""
+    t_ships = int(target.ships)
+    t_prod = int(target.production)
+    for src in mine_planets:
+        s_ships = int(src.ships)
+        s_prod = int(src.production)
+        if s_ships > t_ships + CAPTURE_SAFETY_MARGIN:
+            return True
+        if s_prod >= t_prod and s_prod > 0:
+            return True
+    return False
+
+
 def smallest_winning_portfolio(world: World, my_id: int,
                                  opp_id: int) -> list[int]:
     """Greedy build of the smallest portfolio that flips `is_winning_state`.
@@ -60,6 +90,11 @@ def smallest_winning_portfolio(world: World, my_id: int,
     list if no subset of available not-mine planets can flip the
     predicate.
 
+    Filtering: candidates we can never catch up to (target prod outruns
+    ALL mine sources' prod AND no source can capture now) are excluded.
+    Greedy ratio sort would otherwise prefer high-prod-high-cost targets
+    that bait us into unwinnable wait-then-fire chases.
+
     Special case: if `is_winning_state(world, my_id, opp_id)` is already
     True, returns `[]` (no acquisition needed — caller can route to
     defense-only).
@@ -67,7 +102,9 @@ def smallest_winning_portfolio(world: World, my_id: int,
     if is_winning_state(world, my_id, opp_id):
         return []
 
-    candidates = [p for p in world.planets if p.owner != my_id]
+    mine_planets = [p for p in world.planets if p.owner == my_id]
+    candidates = [p for p in world.planets
+                  if p.owner != my_id and _is_feasibly_capturable(p, mine_planets)]
     candidates.sort(key=lambda p: _candidate_score(p, my_id))
 
     portfolio: list[int] = []
