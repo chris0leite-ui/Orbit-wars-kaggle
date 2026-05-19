@@ -315,7 +315,7 @@ Cross-links to `audit/friction.md::2026-05-19`:
   pattern as Session B's "med_low_prod__mixed_*" and "Hosted to
   avoid GitHub exposure."
 
-## Promotion candidates (PI ratified: pending)
+## Promotion candidates (PI ratified: NO — recorded only)
 
 ### [ ] [WORKFLOW] Public-artifact leak-pass before handing to PI (3rd recurrence today)
 
@@ -352,7 +352,8 @@ Same instinct as `helper-reimplemented-inline-silently-wrong`
 
 ## PI additions (from step 4)
 
-- (pending PI input — Session C postmortem ratification)
+- "do not promote" — PI declined to promote either candidate to
+  `improvements.md`. Recorded here as data only.
 
 ## Framework version at session-end (Session C)
 
