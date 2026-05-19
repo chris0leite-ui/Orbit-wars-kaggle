@@ -55,22 +55,38 @@ python fast.py eval submissions/_ab/layered_w1w2l1l2.py \
     --vs submissions/baseline.py --max-seeds 32 --workers 4
 ```
 
-**Output**: (in progress — pending)
+**Output** (2026-05-19, ~45 min wallclock):
 
-**Verdict**: TBD
+```
+n=64  wins=33/64  (51.6%)  Wlo=0.396  Whi=0.634  elapsed=1404.6s
+verdict=INCONCLUSIVE  (max seeds reached)
+
+focal turn-ms  p50=187  p95=622  max=1286   total elapsed 2713.7s
+```
+
+**Verdict**: **STOP**.
+
+Two reasons (either alone is sufficient):
+
+1. **Wlo=0.396 is below the 0.45 floor**. Per plan §10 decision
+   matrix: "Wlo < 0.45 means Layer 0 is actively regressing — stop
+   and diagnose." The point estimate (51.6%) is statistically
+   indistinguishable from break-even, but the lower CI bound permits
+   a real regression. The single-game loss in Step 4 was NOT
+   anomalous.
+
+2. **Wallclock regression**: max=1286ms exceeds the 1000ms env
+   actTimeout. Step 1 bench vs random was clean, but contested mid/
+   late-game turns push past the cap. The layered chooser's per-turn
+   overhead = Layer 0 classification + inner-chooser rollout on the
+   residual; on hard turns both costs stack. The chooser-trajectory
+   safe_deadline pre-bail probably saves us inside the rollout but
+   the outer L0 pre-pass is uninterruptible.
 
 ## Step 3 — Panel calibration + h2h, n=32
 
-**Command:**
-```bash
-python fast.py eval submissions/_ab/layered_w1w2l1l2.py \
-    --vs-panel default --require-h2h submissions/baseline.py \
-    --max-seeds 32 --workers 4
-```
-
-**Output**: (pending Step 2 verdict)
-
-**Verdict**: TBD
+**SKIPPED** per Step 2 STOP verdict. Per plan §10, Step 3 runs only
+after Step 2 clears Wlo ≥ 0.45.
 
 ## Step 4 — Predicate-fire diagnostic
 
@@ -140,12 +156,50 @@ the best one for emit; the rest reserve src+tgt for future turns.
 
 ## Decision
 
-Pending Steps 2 + 3. The introspection confirms Layer 0 is
-functional, not dead weight. The remaining question is whether
-"provably winning" by the single-nearest-opp counter bound is
-actually winning against ladder-realistic strategies, or whether
-the v1 W1 commit bound is too loose (gang-up coordination scenarios
-that single-opp doesn't model).
+**STOP.** Do not submit the layered chooser to the ladder. Do not
+flip the default `BASELINE_CHOOSER`. Keep `chooser_layered.py` as
+opt-in research code on the dev branch.
+
+### Diagnosis
+
+The math is sound (every predicate has a passing unit test). What
+fails empirically is the **emit-time decision quality** in two ways:
+
+1. **W1's single-nearest-opp bound is too loose under coordinated
+   counter-attack.** The bound assumes only the nearest strong opp
+   would counter; v15 / trajectory baseline routinely launches from
+   2-3 sources concurrently. A capture that the bound certifies as
+   provably-held can still flip under gang-up.
+
+2. **Layer 0 preempts the inner chooser's source allocation.** When
+   W1 commits src=A → tgt=T, the trajectory chooser's rollout never
+   considers src=A's other options. If trajectory would have used A
+   for a higher-value (residual-scored) launch, that win is lost.
+   Predicate v1 commits naively; bipartite matching across (W1
+   commits ∪ residual) would fix this in part.
+
+3. **Wallclock regression** (max=1286ms). Layer 0's pre-pass is
+   uninterruptible and stacks on top of the inner rollout. The
+   wallclock cap was clean against random but breaks on contested
+   high-candidate-count turns.
+
+### Recommended next slice (do NOT execute without PI sign-off)
+
+1. **Strengthen W1's bound to multi-opp coordinated counter**:
+   sum-of-all-opp-ships-in-reach instead of nearest-only. Re-run
+   Step 2; expect lower W1 firing rate but higher per-commit
+   precision.
+2. **Wallclock budget**: cap Layer 0's pre-pass at 50 ms; if it
+   runs over, fall through to the inner chooser unconditionally.
+3. **Optional**: bipartite matching at emit time across (commits ∪
+   inner moves) instead of greedy.
+4. **Re-validate at n=32** vs trajectory baseline. Need Wlo > 0.45
+   to continue.
+
+If after one round of refinement the bound + budget fix STILL
+shows Wlo < 0.45, the Layer-0 architecture is the wrong fit for
+this game. Rule 37 (3-variant cap per axis) caps refinement at 3
+attempts on the W1-bound axis.
 
 ## Notes
 
