@@ -38,6 +38,7 @@ INNER_WALLCLOCK_FLOOR_MS: float = 50.0
 from agents.baseline.chooser import choose
 from agents.baseline.chooser_roi import choose_roi
 from agents.baseline.chooser_trajectory import choose_trajectory
+from agents.baseline.predicates import UNCERTAIN
 from agents.baseline.predicates import l1_provably_wasted_launch
 from agents.baseline.predicates import l2_dominance_prune
 from agents.baseline.predicates import w1_provably_winning_capture
@@ -81,77 +82,111 @@ _INNER_DISPATCH = {
 
 
 def layer0_classify(prerank, world, model, me, step, gamma):
-    """Pure closed-form classification: prerank → (commits, residual).
+    """Pure closed-form classification (Slice 4 — predicates as priors).
 
     Returns:
-        commits: list of (candidate_tuple, Verdict) for W1/W2 commits.
-        residual: list of candidate tuples for the inner chooser.
+        verdicts: list of (candidate_tuple, Verdict) in input order.
+                  Every input candidate gets a verdict (commit, discard,
+                  or uncertain). The chooser uses `kind == "commit"`
+                  entries as a BACKSTOP after the inner chooser runs.
+        filtered: list of candidate tuples to send to the inner chooser
+                  (input minus L1 discards, with L2 dominance prune
+                  applied). W1/W2 commit candidates STAY in `filtered`
+                  so the inner chooser sees them and can score them
+                  alongside everything else.
 
-    L1 fires first so provably-wasted candidates never reach W1/W2.
-    Among the surviving candidates, W1 (capture) and W2 (reinforce)
-    are mutually exclusive by their `tgt.owner == me` gating.
-    L2 prunes the residual (same-source-same-target dominance).
+    Architectural pivot from Slice 2/3: we no longer preempt the inner
+    chooser. Layer 0's commits become a backstop — if the inner chose
+    a move that conflicts with a provable commit, the inner's choice
+    wins (it had strategic context the closed-form bound lacks). The
+    commit is only emitted if the inner left its source unused.
+
+    Reason: Slice 3's audit-replay diagnosis (commit `dcf71e2`) showed
+    that L0 preemption was the load-bearing failure mode — even when
+    commits were mathematically sound, they preempted source
+    allocations the inner would have used more effectively.
     """
-    commits: list = []
-    residual: list = []
+    verdicts: list = []
+    surviving: list = []
     for c in prerank:
         cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N = c
 
-        # L1 first — drop provably wasted.
-        v = l1_provably_wasted_launch(
+        # L1 first — drop provably wasted from `filtered` (inner doesn't
+        # see them) but still record the verdict for the audit log.
+        v_l1 = l1_provably_wasted_launch(
             src, tgt, int(ships), int(wait_N), int(eta), world, model, int(me),
         )
-        if v.kind == "discard":
+        if v_l1.kind == "discard":
+            verdicts.append((c, v_l1))
             continue
 
-        # W1 commit?
-        v = w1_provably_winning_capture(
+        # W1 commit attempt — record but keep in filtered.
+        v_w1 = w1_provably_winning_capture(
             src, tgt, int(ships), int(wait_N), int(eta), world, model, int(me),
             gamma=gamma,
         )
-        if v.kind == "commit":
-            commits.append((c, v))
+        if v_w1.kind == "commit":
+            verdicts.append((c, v_w1))
+            surviving.append(c)
             continue
 
-        # W2 commit?
-        v = w2_provably_held_reinforce(
+        # W2 commit attempt — record but keep in filtered.
+        v_w2 = w2_provably_held_reinforce(
             src, tgt, int(ships), int(wait_N), int(eta), world, model, int(me),
         )
-        if v.kind == "commit":
-            commits.append((c, v))
+        if v_w2.kind == "commit":
+            verdicts.append((c, v_w2))
+            surviving.append(c)
             continue
 
-        residual.append(c)
+        verdicts.append((c, UNCERTAIN))
+        surviving.append(c)
 
-    residual = l2_dominance_prune(residual)
-    return commits, residual
+    filtered = l2_dominance_prune(surviving)
+    return verdicts, filtered
 
 
-def _emit_l0(commits):
-    """Greedy emit of Layer-0 commits: highest lower_bound first,
-    1 launch per source, 1 per target.
+def _backstop_emit(verdicts, emit_inner):
+    """Slice 4 backstop: append W1/W2 commits the inner chooser didn't
+    cover.
 
-    Returns (moves, used_srcs, used_tgts). `wait_N>0` commits reserve
-    src+tgt but don't emit a launch (matches the existing chooser pattern
-    — wait-then-fire candidates fire on a later turn).
+    A commit `(src, tgt, ...)` is considered "covered" if the inner
+    emitted any move from the same source. We approximate target-side
+    coverage as "trust the inner's own 1-launch-per-target dedup"
+    because emit moves carry only `[src_id, angle, ships]` (no
+    target id), so an exact target-uniqueness check post-emit is
+    not free. Source-side dedup is sufficient to prevent
+    double-launching from the same planet.
+
+    Returns the appended moves (NOT the full final emit). Caller
+    concatenates.
     """
-    commits_sorted = sorted(
-        commits, key=lambda cv: -float(cv[1].lower_bound),
-    )
     used_srcs: set = set()
-    used_tgts: set = set()
-    moves: list = []
-    for c, v in commits_sorted:
+    for move in emit_inner:
+        try:
+            used_srcs.add(int(move[0]))
+        except (TypeError, IndexError, ValueError):
+            pass
+
+    # Sort commits by lower_bound desc so the highest-value backstop
+    # wins when multiple commits share a free source slot.
+    commits = [(c, v) for c, v in verdicts if v.kind == "commit"]
+    commits.sort(key=lambda cv: -float(cv[1].lower_bound))
+
+    appended: list = []
+    for c, v in commits:
         cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N = c
-        sid, tid = int(src.id), int(tgt.id)
-        if sid in used_srcs or tid in used_tgts:
+        sid = int(src.id)
+        if sid in used_srcs:
+            continue  # inner used this source for something else
+        if int(wait_N) != 0:
+            # wait_N>0 commits emit nothing this turn (existing chooser
+            # convention); reserving src is moot since inner already
+            # chose for this source.
             continue
         used_srcs.add(sid)
-        used_tgts.add(tid)
-        if int(wait_N) == 0:
-            moves.append([sid, float(angle), int(ships)])
-        # wait_N>0: reserve, emit nothing this turn
-    return moves, used_srcs, used_tgts
+        appended.append([sid, float(angle), int(ships)])
+    return appended
 
 
 def _resolve_inner_chooser_name() -> str:
@@ -179,31 +214,16 @@ def choose_layered(snap_base, prerank, baseline_favors,
     if not prerank:
         return []
 
-    # Slice 3: track L0 elapsed time so the inner chooser's wallclock
-    # budget is correctly debited. Pre-Slice-3 the inner got the full
-    # `wallclock_ms` and cumulative overrun (L0 + inner) pushed total
-    # turn time over the env's 1000ms actTimeout on hard turns.
+    # Slice 4 architecture: classify, then send full filtered prerank
+    # to the inner. Commits become a backstop (after inner) rather
+    # than a preempt (before inner). Layer 0's role is to inform the
+    # final emit set without overriding the inner's source allocation.
     t_l0_start = time.perf_counter()
 
-    commits, residual = layer0_classify(
+    verdicts, filtered_prerank = layer0_classify(
         prerank, world, model, int(me), int(step), float(gamma),
     )
 
-    emit_l0, used_srcs, used_tgts = _emit_l0(commits)
-
-    # Filter residual: drop candidates whose src or tgt is already taken
-    # by an L0 commit. The inner chooser's own 1-per-src / 1-per-tgt
-    # dedup handles intra-residual conflicts; we just need to keep L0
-    # commits sovereign.
-    residual_filtered = [
-        c for c in residual
-        if int(c[1].id) not in used_srcs and int(c[2].id) not in used_tgts
-    ]
-
-    # Compute remaining wallclock for the inner chooser. Floor at
-    # `INNER_WALLCLOCK_FLOOR_MS` so the inner never gets a zero/negative
-    # budget if L0 overran. Trajectory chooser's affordable_validate_cap
-    # + safe_deadline pre-bail respect whatever budget they're given.
     l0_elapsed_ms = (time.perf_counter() - t_l0_start) * 1000.0
     inner_wallclock_ms = max(
         INNER_WALLCLOCK_FLOOR_MS, float(wallclock_ms) - l0_elapsed_ms,
@@ -212,7 +232,7 @@ def choose_layered(snap_base, prerank, baseline_favors,
     inner_name = inner_chooser_name or _resolve_inner_chooser_name()
     inner_kwargs = {
         "snap_base": snap_base,
-        "prerank": residual_filtered,
+        "prerank": filtered_prerank,
         "baseline_favors": baseline_favors,
         "me": int(me),
         "num_seats": int(num_seats),
@@ -225,20 +245,8 @@ def choose_layered(snap_base, prerank, baseline_favors,
         "step": int(step),
     }
     inner_fn = _INNER_DISPATCH[inner_name]
-    emit_inner = inner_fn(inner_kwargs) or []
+    emit_inner = list(inner_fn(inner_kwargs) or [])
 
-    # Merge with belt-and-suspenders src-uniqueness: in the unlikely
-    # event the inner chooser returns a move on a source already used
-    # by an L0 commit (shouldn't happen given the pre-filter), drop it.
-    final_emit = list(emit_l0)
-    for move in emit_inner:
-        try:
-            sid = int(move[0])
-        except (TypeError, IndexError, ValueError):
-            continue
-        if sid in used_srcs:
-            continue
-        final_emit.append(move)
-        used_srcs.add(sid)
-
-    return final_emit
+    # Backstop: append W1/W2 commits the inner didn't already cover.
+    backstop = _backstop_emit(verdicts, emit_inner)
+    return emit_inner + backstop

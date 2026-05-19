@@ -89,56 +89,66 @@ def test_dispatch_table_keys_are_stable():
 # ---------------------------------------------------------------------------
 
 
+def _commits_from(verdicts):
+    """Slice 4 helper: extract commit (candidate, verdict) pairs."""
+    return [(c, v) for c, v in verdicts if v.kind == "commit"]
+
+
 def test_layer0_empty_prerank():
     obs, world = _build_world(0, [_planet(0, 0, 10.0, 50.0)])
     model = WorldModel.from_world(world)
-    commits, residual = layer0_classify([], world, model, 0, 0, 0.99)
-    assert commits == []
-    assert residual == []
+    verdicts, filtered = layer0_classify([], world, model, 0, 0, 0.99)
+    assert verdicts == []
+    assert filtered == []
 
 
 def test_layer0_classifies_clean_capture_as_w1():
-    """A clean capture (strong delivered, no opp counter) → W1 commit."""
+    """A clean capture (strong delivered, no opp counter) → W1 commit
+    verdict AND candidate stays in filtered (so inner can see it)."""
     src = _planet(0, 0, 10.0, 50.0, ships=120, production=3)
     tgt = _planet(1, -1, 30.0, 50.0, ships=10, production=2)
     opp_far = _planet(2, 1, 95.0, 95.0, ships=10)
     obs, world = _build_world(0, [src, tgt, opp_far])
     model = WorldModel.from_world(world)
     cand = _candidate(src, tgt, cheap_delta=5.0, ships=80, eta=4)
-    commits, residual = layer0_classify([cand], world, model, 0, 0, 0.99)
+    verdicts, filtered = layer0_classify([cand], world, model, 0, 0, 0.99)
+    commits = _commits_from(verdicts)
     assert len(commits) == 1
     assert commits[0][1].reason == "W1"
-    assert residual == []
+    # Slice 4: commit candidates STAY in filtered so the inner can score them.
+    assert filtered == [cand]
 
 
 def test_layer0_classifies_bounce_as_l1_discard():
-    """Under-sized launch → L1 discard, never reaches W1/W2."""
+    """Under-sized launch → L1 verdict AND dropped from filtered."""
     src = _planet(0, 0, 10.0, 50.0, ships=100)
     tgt = _planet(1, -1, 50.0, 50.0, ships=100, production=1)
     obs, world = _build_world(0, [src, tgt])
     model = WorldModel.from_world(world)
     cand = _candidate(src, tgt, cheap_delta=0.5, ships=5, eta=7)
-    commits, residual = layer0_classify([cand], world, model, 0, 0, 0.99)
-    assert commits == []
-    assert residual == []  # L1-discarded
+    verdicts, filtered = layer0_classify([cand], world, model, 0, 0, 0.99)
+    # Discard verdict recorded but candidate not in filtered.
+    assert len(verdicts) == 1
+    assert verdicts[0][1].kind == "discard"
+    assert filtered == []
 
 
-def test_layer0_passes_uncertain_to_residual():
-    """Candidate that no predicate commits → residual."""
+def test_layer0_passes_uncertain_to_filtered():
+    """Candidate that no predicate commits → uncertain verdict, stays in filtered."""
     src = _planet(0, 0, 10.0, 50.0, ships=100, production=3)
     tgt = _planet(1, -1, 30.0, 50.0, ships=10, production=2)
-    # Nearby strong opp can recapture → W1 abstains.
     opp_close = _planet(2, 1, 35.0, 50.0, ships=200, production=4)
     obs, world = _build_world(0, [src, tgt, opp_close])
     model = WorldModel.from_world(world)
     cand = _candidate(src, tgt, cheap_delta=2.0, ships=40, eta=8)
-    commits, residual = layer0_classify([cand], world, model, 0, 0, 0.99)
-    assert commits == []
-    assert residual == [cand]
+    verdicts, filtered = layer0_classify([cand], world, model, 0, 0, 0.99)
+    assert _commits_from(verdicts) == []
+    assert verdicts[0][1].kind == "uncertain"
+    assert filtered == [cand]
 
 
-def test_layer0_applies_l2_dominance_to_residual():
-    """Two uncertain candidates same (src, tgt); strictly dominated dropped."""
+def test_layer0_applies_l2_dominance_to_filtered():
+    """L2 dominance applies to the filtered set (after L1 discards removed)."""
     src = _planet(0, 0, 10.0, 50.0, ships=100, production=3)
     tgt = _planet(1, -1, 30.0, 50.0, ships=10, production=2)
     opp_close = _planet(2, 1, 35.0, 50.0, ships=200)
@@ -146,11 +156,13 @@ def test_layer0_applies_l2_dominance_to_residual():
     model = WorldModel.from_world(world)
     dominator = _candidate(src, tgt, cheap_delta=3.0, ships=40, eta=5)
     dominated = _candidate(src, tgt, cheap_delta=1.0, ships=60, eta=10)
-    commits, residual = layer0_classify(
+    verdicts, filtered = layer0_classify(
         [dominator, dominated], world, model, 0, 0, 0.99,
     )
-    assert commits == []
-    assert residual == [dominator]
+    assert _commits_from(verdicts) == []
+    # Dominated candidate dropped from filtered by L2; both still have verdicts.
+    assert filtered == [dominator]
+    assert len(verdicts) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -199,64 +211,66 @@ def test_choose_layered_empty_prerank_returns_no_moves(monkeypatch):
     assert moves == []
 
 
-def test_choose_layered_emits_w1_commit(monkeypatch):
-    """W1 commit reaches the final moves list, src/tgt locked."""
+def test_choose_layered_emits_from_w1_source(monkeypatch):
+    """Slice 4: a W1-classified candidate's source ends up in the emit
+    list — either because the inner chose it OR because the backstop
+    appended it. The specific path doesn't matter; coverage does.
+    """
     monkeypatch.setenv("BASELINE_INNER_CHOOSER", "trajectory")
     obs, world, model, snap_base, prerank = _setup_clean_capture_scenario()
     moves = choose_layered(
         snap_base, prerank, None, 0, 2, 600.0, 25, 40, 0.99,
         world, model, 0,
     )
-    # At minimum, the W1 commit (src1=0 → tgt1=2) is emitted.
-    assert any(int(m[0]) == 0 for m in moves), f"W1 src missing in {moves}"
+    # src1=0 has a W1 commit candidate. Under Slice 4 the inner sees it
+    # and either picks it or picks something else from src=0; either way
+    # the source should be represented in the emit.
+    assert any(int(m[0]) == 0 for m in moves), f"src=0 missing in {moves}"
 
 
 def test_choose_layered_inner_chooser_override(monkeypatch):
     """The `inner_chooser_name` kwarg overrides the env var."""
     monkeypatch.setenv("BASELINE_INNER_CHOOSER", "roi")
     obs, world, model, snap_base, prerank = _setup_clean_capture_scenario()
-    # Force trajectory via kwarg; env var asks for roi.
     moves = choose_layered(
         snap_base, prerank, None, 0, 2, 600.0, 25, 40, 0.99,
         world, model, 0,
         inner_chooser_name="trajectory",
     )
-    # W1 commit still emits regardless of inner chooser.
     assert any(int(m[0]) == 0 for m in moves)
 
 
-def test_choose_layered_swap_stability_l0_commits_invariant(monkeypatch):
-    """LOAD-BEARING: Layer-0 commit set is identical across inner-chooser
-    selection. Only residual emits may vary.
+def test_choose_layered_swap_stability_l0_verdicts_invariant(monkeypatch):
+    """LOAD-BEARING: Layer-0 verdict set is identical across inner-chooser
+    selection.
 
-    This is the core decoupling claim. Layer 0 must not depend on the
-    inner chooser — same world, same prerank, same `step`/`gamma` →
-    same `(commits, residual)` from `layer0_classify` regardless of
-    which downstream chooser will eventually run on the residual.
+    Decoupling claim: `layer0_classify` is a pure function of (prerank,
+    world, model, me, step, gamma). It must not depend on which inner
+    chooser will run next. Same inputs → same verdict list + same
+    filtered list.
     """
     obs, world, model, _snap_base, prerank = _setup_clean_capture_scenario()
 
-    # Layer 0 classify is itself agnostic — call it directly and assert.
-    commits_a, residual_a = layer0_classify(prerank, world, model, 0, 0, 0.99)
-    commits_b, residual_b = layer0_classify(prerank, world, model, 0, 0, 0.99)
-    commits_c, residual_c = layer0_classify(prerank, world, model, 0, 0, 0.99)
+    verdicts_a, filtered_a = layer0_classify(prerank, world, model, 0, 0, 0.99)
+    verdicts_b, filtered_b = layer0_classify(prerank, world, model, 0, 0, 0.99)
+    verdicts_c, filtered_c = layer0_classify(prerank, world, model, 0, 0, 0.99)
 
-    # Stronger property: the commit tags and lower_bounds match exactly.
-    def _commit_signatures(commits):
+    def _verdict_signatures(verdicts):
         return [
-            (int(c[1].id), int(c[2].id), v.reason, round(v.lower_bound, 6))
-            for c, v in commits
+            (int(c[1].id), int(c[2].id), v.kind, v.reason,
+             round(float(v.lower_bound), 6))
+            for c, v in verdicts
         ]
 
-    assert (_commit_signatures(commits_a)
-            == _commit_signatures(commits_b)
-            == _commit_signatures(commits_c))
-    assert residual_a == residual_b == residual_c
+    assert (_verdict_signatures(verdicts_a)
+            == _verdict_signatures(verdicts_b)
+            == _verdict_signatures(verdicts_c))
+    assert filtered_a == filtered_b == filtered_c
 
-    # And: invoking `choose_layered` with three different inner-chooser
-    # selections produces emit sets that AGREE on the L0 commits. The
-    # residual may differ across choosers (that's allowed — each has
-    # its own scoring), so we only assert agreement on the W1 src.
+    # End-to-end: regardless of inner chooser selection, src=0 (which has
+    # a W1 commit verdict) should be represented in the emit. The exact
+    # move may differ (each inner has its own scoring) but src coverage
+    # is the load-bearing decoupling claim.
     moves_traj = choose_layered(
         _snap_base, prerank, None, 0, 2, 600.0, 25, 40, 0.99,
         world, model, 0, inner_chooser_name="trajectory",
@@ -265,20 +279,61 @@ def test_choose_layered_swap_stability_l0_commits_invariant(monkeypatch):
         _snap_base, prerank, None, 0, 2, 600.0, 25, 40, 0.99,
         world, model, 0, inner_chooser_name="roi",
     )
-    # Build composite baseline_favors — composite signature requires it.
     from agents.baseline.chooser import build_idle_baseline
     baseline_favors = build_idle_baseline(_snap_base, 0, 2, 40, 0.99)
     moves_comp = choose_layered(
         _snap_base, prerank, baseline_favors, 0, 2, 600.0, 25, 40, 0.99,
         world, model, 0, inner_chooser_name="composite",
     )
-    # All three include the W1 commit on src=0.
     for tag, moves in [("traj", moves_traj),
                         ("roi", moves_roi),
                         ("composite", moves_comp)]:
         assert any(int(m[0]) == 0 for m in moves), (
-            f"W1 src=0 missing under inner={tag}: {moves}"
+            f"src=0 missing under inner={tag}: {moves}"
         )
+
+
+def test_backstop_fires_when_inner_returns_nothing(monkeypatch):
+    """Slice 4: if the inner returns no moves (e.g., it bailed on
+    wallclock), W1/W2 commits MUST appear in the final emit as the
+    backstop's whole point."""
+    monkeypatch.setenv("BASELINE_INNER_CHOOSER", "trajectory")
+    obs, world, model, snap_base, prerank = _setup_clean_capture_scenario()
+
+    def _stub_inner(_k):
+        return []  # inner picks nothing
+
+    monkeypatch.setitem(_INNER_DISPATCH, "trajectory", _stub_inner)
+    moves = choose_layered(
+        snap_base, prerank, None, 0, 2, 600.0, 25, 40, 0.99,
+        world, model, 0,
+    )
+    # Backstop must have appended the W1 commit from src=0.
+    assert any(int(m[0]) == 0 for m in moves), (
+        f"backstop did not fire when inner emitted nothing: {moves}"
+    )
+
+
+def test_backstop_skipped_when_inner_used_source(monkeypatch):
+    """Slice 4: if the inner already emits from src=0, the backstop
+    must NOT also emit from src=0 (no double-launching)."""
+    monkeypatch.setenv("BASELINE_INNER_CHOOSER", "trajectory")
+    obs, world, model, snap_base, prerank = _setup_clean_capture_scenario()
+
+    def _stub_inner(_k):
+        # Inner emits a move from src=0 with some other angle/ships.
+        return [[0, 1.234, 50]]
+
+    monkeypatch.setitem(_INNER_DISPATCH, "trajectory", _stub_inner)
+    moves = choose_layered(
+        snap_base, prerank, None, 0, 2, 600.0, 25, 40, 0.99,
+        world, model, 0,
+    )
+    # Exactly one emit from src=0 (the inner's), not also the backstop.
+    src_0_emits = [m for m in moves if int(m[0]) == 0]
+    assert len(src_0_emits) == 1, (
+        f"expected exactly 1 emit from src=0; got {src_0_emits}"
+    )
 
 
 def test_choose_layered_subtracts_l0_elapsed_from_inner_wallclock(monkeypatch):
@@ -320,18 +375,17 @@ def test_choose_layered_subtracts_l0_elapsed_from_inner_wallclock(monkeypatch):
 
 
 def test_choose_layered_passthrough_when_no_predicate_fires(monkeypatch):
-    """When all candidates are uncertain (no commits, no discards), the
-    layered chooser delegates entirely to the inner chooser."""
+    """When no candidate is committable or discardable, the verdict list
+    has all 'uncertain' entries and the filtered set equals the L2-pruned
+    prerank."""
     monkeypatch.setenv("BASELINE_INNER_CHOOSER", "trajectory")
-    # Build a scenario where no W1/W2/L1 fires: contested capture.
     src = _planet(0, 0, 10.0, 50.0, ships=100, production=3)
     tgt = _planet(1, -1, 30.0, 50.0, ships=10, production=2)
     opp_close = _planet(2, 1, 35.0, 50.0, ships=200, production=4)
     obs, world = _build_world(0, [src, tgt, opp_close])
     model = WorldModel.from_world(world)
-    snap_base = fs_from_obs(obs, num_seats=2)
     cand = _candidate(src, tgt, cheap_delta=2.0, ships=40, eta=8)
-    # commits empty, residual non-empty → inner chooser handles it.
-    commits, residual = layer0_classify([cand], world, model, 0, 0, 0.99)
-    assert commits == []
-    assert len(residual) == 1
+    verdicts, filtered = layer0_classify([cand], world, model, 0, 0, 0.99)
+    assert _commits_from(verdicts) == []
+    assert verdicts[0][1].kind == "uncertain"
+    assert filtered == [cand]
