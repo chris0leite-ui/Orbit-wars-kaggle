@@ -9,34 +9,36 @@
 >     kaggle competitions submissions orbit-wars
 >
 > Updated 2026-05-19 by `claude/ml-competition-strategy-PFhzM`
-> (Phase 3 sweep + ROI/scenario-gate pivot).
+> (Phase 3 sweep + ROI/scenario-gate pivot; AM re-sync after kaggle
+> CLI surfaced 3 missed 5/17-5/18 submissions).
 
 ```yaml
 date: 2026-05-19
 deadline: 2026-06-23 23:59 UTC
 days_to_deadline: 35
 
-# Most-recent submission (composite + A2 hybrid; pre-submit hypotheses
-# registered at audit/2026-05-17-pre-submit-hypotheses-composite-a2-hybrid.md).
-# Status is the only stable bit — query Kaggle for μ.
-last_submission_id: 52744856
-last_submission_status: PENDING
+# Most-recent submission. 5/17 PM had ONE submit (52744856) the HANDOVER
+# logged. THREE more landed 5/17-5/18 from other branches/sessions whose
+# work hasn't merged into this branch yet. Last is 52784853 (5/18 PM
+# PV-off + bug-fix bundle).
+last_submission_id: 52784853
+last_submission_status: COMPLETE
 last_submission_file: submissions/baseline.py
-last_submission_agent: composite_a2_hybrid_baseline (rebundle)
-last_kernel_push: 2026-05-17 14:17:28 UTC
+last_submission_agent: baseline_pv_off_bugfix_3_4_12 (drain-frontier + symmetric reinforce + multi-wave window; A/B 81.2% n=32 vs prior bundle)
+last_kernel_push: 2026-05-18 17:42:16 UTC
 prior_error_submission_id: 52744234  # ERROR — `from agents.baseline import` not inlined; bundler fix in commit 4094aa1
-current_submitted_agent: composite_a2_hybrid_baseline (5/17 PM; composite head 2P + A2-favor 4P, dispatched via favor_hybrid)
+current_submitted_agent: baseline_pv_off_bugfix_3_4_12 (5/18 PM; rolling-last-2 is THIS + prior 52766596)
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation; the
-# third push auto-evicts the previous oldest). Status is the only stable
-# bit — μ values drift, query Kaggle for them.
-# Re-bundle push (52744856) after prior 52744234 errored. Rolling impact
-# depends on whether Kaggle counts ERROR-status subs for the rolling pair —
-# best estimate: only COMPLETE submissions count, so rolling-last-2 effective
-# pair is composite_a2_hybrid (52744856 once COMPLETE) + v15.
+# third push auto-evicts the previous oldest).
+# CRITICAL: the live peak (52744856 composite+A2 hybrid, μ≈1149.2) has
+# been EVICTED from rolling-last-2 by the two 5/18 subs (μ≈1124.1, 1119.0).
+# Both kept submissions underperform the peak — that ladder spot is
+# unrecoverable without a new push that re-establishes 1149+ class.
 rolling_last_2:
-  - {agent: composite_a2_hybrid_baseline_rebundle, sub_id: 52744856, submitted: 2026-05-17T14:17Z, status: PENDING}
-  - {agent: v15_banded, sub_id: 52710995, submitted: 2026-05-16T13:43Z, status: COMPLETE, role: current_champion}
+  - {agent: baseline_pv_off_bugfix_3_4_12,           sub_id: 52784853, submitted: 2026-05-18T17:42Z, status: COMPLETE, role: most_recent_kept}
+  - {agent: baseline_joint_candidate_v3_direction_B, sub_id: 52766596, submitted: 2026-05-18T07:12Z, status: COMPLETE, role: oldest_kept}
+evicted_peak: {agent: composite_a2_hybrid_baseline_rebundle, sub_id: 52744856, submitted: 2026-05-17T14:17Z, status: COMPLETE, note: live-peak μ≈1149.2 evicted by 5/18 subs}
 
 # Team peak as of 2026-05-17: v15_banded (the multi-wait-grid + banded
 # (src, tgt, wait_band) dedup line). v15 source lives in git history at
@@ -52,15 +54,18 @@ team_peak_agent: v15_banded
 # rolling agent (not just a fixed baseline) before any new push.
 
 submissions_used_today: 0     # 5/19 — local A/B sweep only; no Kaggle pushes
-submissions_used_total: 31    # see ladder list below; refresh via Kaggle CLI
+submissions_used_total: 34    # 31 + 3 missed (52754310, 52766596, 52784853); refresh via Kaggle CLI
 plateau_days: 2               # 5/18+5/19 spent on bundle scorer-axis Phase E with no submitted improvement
 saturation_count: 1           # +1 this session: chooser/scorer axis fully characterised, pivoted off
 
 # Live ladder — read from `kaggle competitions submissions orbit-wars`,
 # NOT from this file. Submission IDs are stable; scores are not.
-# Most recent ladder entries by submission id:
-#   52744856  baseline.py (composite+A2 hybrid, re-bundle) 2026-05-17 14:17 PENDING ← NEW
-#   52744234  baseline.py (composite+A2 hybrid, ERROR) 2026-05-17 13:57 ← failed: `from agents.baseline import` not inlined
+# Most recent ladder entries by submission id (μ values 5/19 AM snapshot only):
+#   52784853  baseline.py (PV off + bug #3/#4/#12 fixes)    2026-05-18 17:42 COMPLETE  μ≈1124.1 ← last push, rolling-last-2
+#   52766596  baseline.py (Direction B joint candidate v3)  2026-05-18 07:12 COMPLETE  μ≈1119.0 ← rolling-last-2
+#   52754310  baseline.py (trajectory chooser v4 + wait_N)  2026-05-17 22:06 COMPLETE  μ≈1143.7 ← evicted
+#   52744856  baseline.py (composite+A2 hybrid, re-bundle)  2026-05-17 14:17 COMPLETE  μ≈1149.2 ← LIVE PEAK, evicted from rolling-last-2
+#   52744234  baseline.py (composite+A2 hybrid, ERROR)      2026-05-17 13:57 ERROR     ← `from agents.baseline import` not inlined
 #   52721807  v20.py            2026-05-16 21:57  COMPLETE
 #   52710995  v15.py            2026-05-16 13:43  COMPLETE  ← team peak
 #   52704189  v8_scavenge (v13) 2026-05-16 09:07  COMPLETE
@@ -87,6 +92,23 @@ saturation_count: 1           # +1 this session: chooser/scorer axis fully chara
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
+  - 2026-05-19 AM — ml-competition-strategy-PFhzM (session resume + state sync).
+    Kaggle CLI surfaced 3 submissions not reflected in HANDOVER: 52754310
+    (trajectory v4, 5/17 PM, μ≈1143.7), 52766596 (joint candidate Direction
+    B, 5/18 AM, μ≈1119.0), 52784853 (PV-off + bug #3/#4/#12 fixes, 5/18 PM,
+    μ≈1124.1, A/B 81.2% n=32 vs prior bundle locally). LIVE PEAK is sub
+    52744856 composite+A2 hybrid at μ≈1149.2, but it has been EVICTED from
+    rolling-last-2 by the two 5/18 subs — that ladder spot is lost until
+    we push 1149+ class again. State synced: rolling_last_2,
+    last_submission_*, submissions_used_total 31→34, evicted_peak field
+    added. The 3 missed subs were authored on other branches (`audit-
+    workflow-performance-btjeK` follow-on for trajectory v4 + joint
+    candidate + PV-off bug-fix line) and have not yet been merged into
+    this branch. Origin/main is also 21 commits ahead from the
+    `claude/reverse-engineer-seat-geometry-BPJKs` branch (5/18 seed-panel
+    + archetype-gap diagnostic infrastructure). PI directed: deferred
+    rebase, state sync committed as a clean fast-forward. Next: Phase 1a
+    replay-mine sub 52784853 (newest COMPLETE).
   - 2026-05-19 — ml-competition-strategy-PFhzM (Phase 3 sweep + ROI pivot).
     Phase 3 compound-weight sweep finalised across {0.05, 0.1, 0.2, 0.3, 0.5}:
     lever lifts bundle-vs-baseline from Wlo 0.035 to 0.142, then saturates
