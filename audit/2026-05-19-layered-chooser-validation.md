@@ -74,16 +74,78 @@ python fast.py eval submissions/_ab/layered_w1w2l1l2.py \
 
 ## Step 4 — Predicate-fire diagnostic
 
-(pending Step 2/3 verdicts)
+Single-game introspection via `scripts/layer0_introspect.py` (wraps
+`layer0_classify` to log per-turn verdicts).
 
-**W1 fires/turn**: TBD
-**W2 fires/turn**: TBD
-**L1 discards/turn**: TBD
-**L2 prunes/turn**: TBD
+### Game A: layered (P0) vs random (P1), seed 42, 113 turns
+
+- Outcome: layered WIN (1/-1)
+- Totals: cands=3057  **W1=1301**  W2=0  L1=0  L2p=0  uncertain=1756
+- Per turn: cands=27.1  **W1=11.5**  W2=0.00  L1=0.00  emit_L0=11.5
+- Interpretation: against a non-counter-attacking opp, ~42% of all
+  candidate launches are provably winning captures. Layer 0
+  short-circuits 11.5 rollouts per turn — significant CPU saving and
+  zero noise from `lite_greedy_policy` mis-rating.
+- W2 / L1 silent: no inbound enemy threats (random doesn't reinforce
+  or counter), and no provably-wasted launches.
+
+### Game B: layered (P0) vs trajectory baseline (P1), seed 42, 312 turns
+
+- Outcome: layered **LOSS** (-1/+1)
+- Totals: cands=4794  **W1=1741**  W2=84  **L1=3**  L2p=0  uncertain=2966
+- Per turn: cands=15.4  **W1=5.58**  **W2=0.27**  L1=0.01  emit_L0=5.85
+- Interpretation:
+  - W1 still fires ~5.6/turn even against a strong counter-attacking
+    opp. Layer 0 IS doing real work, not dead weight.
+  - W2 fires 84 times — defensive reinforces that the baseline's
+    attacks make actionable. Important for defense.
+  - L1 fires only 3 times in 312 turns — proposer's existing
+    admissibility filters catch most wastes upstream. L1 is essentially
+    redundant in this game.
+  - L2 fires zero times — proposer's `(src, tgt, wait_band)` dedup
+    already catches everything.
+- Single-seed loss does NOT prove Layer 0 regresses; Step 2's n=32
+  Wilson CI is the authority.
+
+### Concrete trace (Game B, opening 3 turns)
+
+```
+step 0: cands=8 W1=8 W2=0 L1=0
+   W1: src=16 -> tgt=0  ships=34 wait_N=6  lower_bound=435.48
+   W1: src=16 -> tgt=0  ships=46 wait_N=9  lower_bound=422.44
+   W1: src=16 -> tgt=14 ships=10 wait_N=0  lower_bound=362.78
+   W1: src=16 -> tgt=4  ships=14 wait_N=1  lower_bound=359.12
+   W1: src=16 -> tgt=12 ships=10 wait_N=0  lower_bound=331.18
+   W1: src=16 -> tgt=8  ships=62 wait_N=13 lower_bound=331.18
+   W1: src=16 -> tgt=24 ships=14 wait_N=1  lower_bound=185.10
+   W1: src=16 -> tgt=20 ships=10 wait_N=0  lower_bound=183.23
+```
+
+Every opening-turn candidate from our home (P16) is a W1 commit.
+Lower bounds are `tgt.production × pv_horizon`: high-value targets
+(P0, P14) get ~$400; mid-value (P4, P12, P8) get ~$330; far/low-prod
+targets (P24, P20) get ~$185. Bipartite matching (greedy v1) picks
+the best one for emit; the rest reserve src+tgt for future turns.
+
+### Findings summary
+
+- **W1 is load-bearing**: 5-12 commits per turn depending on opp
+  strength. Doing the work the plan promised.
+- **W2 is useful but rare**: fires only when there's an in-flight
+  enemy threat AND no at-rest opp in counter-reach.
+- **L1 is nearly redundant**: proposer's filters catch most wastes
+  upstream. Keep but don't optimise.
+- **L2 is dead code**: existing dedup is sufficient. Don't extend
+  to cross-target until evidence shows it's missing wins.
 
 ## Decision
 
-(pending all step verdicts)
+Pending Steps 2 + 3. The introspection confirms Layer 0 is
+functional, not dead weight. The remaining question is whether
+"provably winning" by the single-nearest-opp counter bound is
+actually winning against ladder-realistic strategies, or whether
+the v1 W1 commit bound is too loose (gang-up coordination scenarios
+that single-opp doesn't model).
 
 ## Notes
 
