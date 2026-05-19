@@ -24,6 +24,7 @@ import math
 import os
 from itertools import combinations
 
+from lib.fleet import speed as fleet_speed
 from lib.scoring import (
     T_TOTAL_DEFAULT,
     expected_hold,
@@ -50,6 +51,131 @@ COALITION_SLACK: float = float(os.environ.get("ROI_COALITION_SLACK", "1.0"))
 # caught by _source_survives_launch downstream.
 MIN_COALITION_RESIDUE: int = int(os.environ.get("ROI_MIN_RESIDUE", "5"))
 MIN_LEG_SHIPS: int = 2
+
+# Source-vulnerability knobs (Phase 4). Folded into solo/coalition
+# ROI so the comparison sees the true cost of exposing a source.
+# Disable with ROI_OPP_MODIFIER=off to fall back to Phase 3 behaviour.
+OPP_MODIFIER_ENABLED: bool = (
+    os.environ.get("ROI_OPP_MODIFIER", "on").strip().lower() != "off"
+)
+# Don't consider opp planets with fewer than this many ships as a
+# counter-attack threat. Matches the proposer's hold-feasibility
+# MIN_COUNTER_SHIPS (proposer.py:446) for symmetry.
+VULN_MIN_OPP_SHIPS: int = 20
+
+# Endgame elimination bonus: when capturing this target removes the
+# LAST planet owned by a non-me, non-neutral player, the strategic
+# value is "uncontested production for the rest of the game" — far
+# beyond the per-tick PV math. Bonus = our_total_prod × pv_full,
+# representing the unopposed advantage we get after elimination.
+ENDGAME_BONUS_ENABLED: bool = (
+    os.environ.get("ROI_ENDGAME_BONUS", "on").strip().lower() != "off"
+)
+
+
+def _endgame_finish_bonus(
+    target,
+    capture_step: int,
+    world,
+    me: int,
+    step: int,
+    gamma: float,
+) -> float:
+    """Bonus PV when `target` is the last planet owned by some opp
+    player. After capture, that player is eliminated and we play
+    uncontested for the rest of the game.
+
+    Bonus = sum(my_planets.production) × pv_horizon(step, capture_step).
+    For two-opp scenarios this only fires if BOTH conditions hold:
+    target.owner has no other planets. The bonus reflects the
+    margin lead we'd accrue once that player is gone.
+    """
+    if not ENDGAME_BONUS_ENABLED:
+        return 0.0
+    if int(target.owner) == me or int(target.owner) == -1:
+        return 0.0
+    target_owner = int(target.owner)
+    for p in world.planets_by_id.values():
+        if int(p.id) == int(target.id):
+            continue
+        if int(p.owner) == target_owner:
+            return 0.0  # target_owner has another planet → not last
+    our_total_prod = sum(
+        float(p.production) for p in world.planets_by_id.values()
+        if int(p.owner) == me
+    )
+    if our_total_prod <= 0:
+        return 0.0
+    pv_full = pv_horizon(int(step), int(capture_step), gamma=gamma,
+                         t_total=T_TOTAL_DEFAULT)
+    return our_total_prod * pv_full
+
+
+def _source_vulnerability_loss(
+    src,
+    residue: int,
+    world,
+    model,
+    me: int,
+    step: int,
+    max_horizon: int,
+    gamma: float = 0.99,
+) -> float:
+    """Expected production loss if the cheapest opp planet recaptures
+    `src` after it's left with `residue` ships.
+
+    Symmetric to _target_holdable_after_capture (proposer.py:407) but
+    applied to the SOURCE: after our launch drains src, can any nearby
+    opp planet profitably counter-attack? If yes, this returns the
+    PV-discounted production stream src would have produced for us over
+    the remaining game. Returns 0 if the source is safe (residue
+    ≥ safe_garrison or no plausible opp threat).
+
+    No fast_sim. Considers each opp planet's straight-line counter:
+    opp arrives with opp.ships + opp.production · opp_eta; we defend
+    with residue + src.production · opp_eta. If opp_force > defense + 1
+    AND opp_eta ≤ max_horizon, the recapture is feasible.
+    """
+    if not OPP_MODIFIER_ENABLED:
+        return 0.0
+    if int(src.production) <= 0:
+        return 0.0
+    # No early "residue ≥ safe_garrison" out — that threshold ignores
+    # the magnitude of nearby opp threats. The per-opp scan below
+    # computes opp_force vs our_defense exactly, so it's both correct
+    # and cheap (O(opps)).
+
+    worst = 0.0
+    for opp in world.planets_by_id.values():
+        if int(opp.owner) == me or int(opp.owner) == -1:
+            continue
+        if int(opp.ships) < VULN_MIN_OPP_SHIPS:
+            continue
+        d = math.hypot(float(opp.x) - float(src.x),
+                       float(opp.y) - float(src.y))
+        flight = d - float(opp.radius) - float(src.radius) - 0.1
+        if flight <= 0:
+            continue
+        spd = fleet_speed(int(opp.ships))
+        if spd <= 0:
+            continue
+        opp_eta = int(math.ceil(flight / spd))
+        if opp_eta > int(max_horizon):
+            continue
+        opp_force = int(opp.ships) + int(opp.production) * opp_eta
+        our_defense = max(0, int(residue)) + int(src.production) * opp_eta
+        if opp_force <= our_defense + 1:
+            continue  # we hold
+        # Recapture is feasible. Cost to us = margin loss when src
+        # flips from ours to opp's: -1 (we lose its prod) + -1 (opp
+        # gains its prod) → mult=2 against margin. PV-discount the
+        # production stream from opp_eta to game-end.
+        loss_pv = pv_horizon(int(step), opp_eta, gamma=gamma,
+                             t_total=T_TOTAL_DEFAULT)
+        loss = 2.0 * float(src.production) * loss_pv
+        if loss > worst:
+            worst = loss
+    return worst
 
 
 def solo_roi(
@@ -97,10 +223,18 @@ def solo_roi(
     mult = margin_multiplier(tgt, me)
 
     gross = mult * float(tgt.production) * pv_held
+    endgame_bonus = _endgame_finish_bonus(
+        tgt, arrival, world, me, step, gamma,
+    )
     ship_cost = SHIP_COST_COEF * int(ships)
     wait_cost = WAIT_COST_COEF * int(wait_N) * float(src.production)
 
-    return gross - ship_cost - wait_cost
+    residue = int(src.ships) - int(ships)
+    vuln_loss = _source_vulnerability_loss(
+        src, residue, world, model, me, step, int(max_horizon), gamma=gamma,
+    )
+
+    return gross + endgame_bonus - ship_cost - wait_cost - vuln_loss
 
 
 def _coalition_legs_for_target(target, my_planets, world, model, me: int,
@@ -179,8 +313,33 @@ def coalition_roi(target, legs, world, model, me: int, step: int,
                          t_total=int(step) + capture_step + hold)
     mult = margin_multiplier(target, me)
     total_ships = sum(int(ships) for (_src, ships, _eta, _angle) in legs)
-    roi = mult * float(target.production) * pv_held - SHIP_COST_COEF * total_ships
-    return roi, capture_step
+    gross = mult * float(target.production) * pv_held
+    endgame_bonus = _endgame_finish_bonus(
+        target, capture_step, world, me, step, gamma,
+    )
+    ship_cost = SHIP_COST_COEF * total_ships
+
+    # Coalition vulnerability is capped by opp's counter-capacity.
+    # Each opp planet can launch at most one counter-attack per turn.
+    # Count plausible opp counter-sources; cap loss at top-K per-leg
+    # vulnerabilities, K = num_opp_planets_above_threshold. With one
+    # opp planet (the common 2P case), opp can only recapture ONE of
+    # our drained sources — taking MAX, not SUM.
+    per_leg_vuln: list[float] = []
+    for src, ships, _eta, _angle in legs:
+        residue = int(src.ships) - int(ships)
+        per_leg_vuln.append(_source_vulnerability_loss(
+            src, residue, world, model, me, step, int(max_horizon), gamma=gamma,
+        ))
+    opp_counter_capacity = sum(
+        1 for p in world.planets_by_id.values()
+        if int(p.owner) != me and int(p.owner) != -1
+        and int(p.ships) >= VULN_MIN_OPP_SHIPS
+    )
+    per_leg_vuln.sort(reverse=True)
+    vuln_loss = sum(per_leg_vuln[:max(1, opp_counter_capacity)])
+
+    return gross + endgame_bonus - ship_cost - vuln_loss, capture_step
 
 
 def _best_coalition_for_target(target, my_planets, world, model, me: int,
