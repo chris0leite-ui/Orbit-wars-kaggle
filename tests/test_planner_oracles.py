@@ -604,3 +604,47 @@ def test_oracle_roi_picks_higher_production(monkeypatch):
         f"ROI also fired at lower-production target — should commit ships "
         f"to the prod=3 winner only. Got targets {targets}."
     )
+
+
+def test_oracle_n_way_coalition_three_sources(monkeypatch):
+    """ROI chooser must coordinate N-way coalition when no solo captures.
+
+    Opp has 200 ships and prod=1 at (45, 85). Three of our planets
+    each have 200 ships: A(10,10), B(90,10), C(15,30). Solo
+    capture_size ≈ 200 + eta + 1 > 200 budget → solo infeasible. A
+    coalition of 2 (sum 390 ships, each contributing 195 with
+    residue=5) overwhelms the defense.
+
+    Properties checked:
+      (a) ≥ 2 emits target the opp planet (coalition).
+      (b) Every source's post-launch residue is ≥ 5 (drain-frontier
+          honored by MIN_COALITION_RESIDUE).
+    """
+    monkeypatch.setenv("BASELINE_CHOOSER", "roi")
+    a = _planet(0, 0, 10.0, 10.0, ships=200, production=1)
+    b = _planet(1, 0, 90.0, 10.0, ships=200, production=1)
+    c = _planet(2, 0, 15.0, 30.0, ships=200, production=1)
+    opp = _planet(3, 1, 45.0, 85.0, ships=200, production=1)
+    obs = _obs([a, b, c, opp])
+    moves = _emit(obs)
+
+    targets = _targets_of_emits(obs, moves)
+    opp_emit_count = targets.count(3)
+    assert opp_emit_count >= 2, (
+        f"N-way coalition FAIL: solo is infeasible (cap > budget) but "
+        f"coalition of 2 sources sums to ~390 ships vs ~220 defense. "
+        f"Expected ≥ 2 emits at pid=3; got moves {moves} → targets "
+        f"{targets}."
+    )
+    by_id = {p[0]: p for p in obs["planets"]}
+    for m in moves:
+        sid, _, ships = int(m[0]), float(m[1]), int(m[2])
+        src = by_id.get(sid)
+        if src is None:
+            continue
+        residue = src[5] - ships
+        assert residue >= 5, (
+            f"Coalition leg from pid={sid} sent {ships} ships, leaving "
+            f"residue {residue} < 5 (MIN_COALITION_RESIDUE). Source is "
+            f"vulnerable to counter."
+        )
