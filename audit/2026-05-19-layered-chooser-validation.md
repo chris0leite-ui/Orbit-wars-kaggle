@@ -201,6 +201,107 @@ shows Wlo < 0.45, the Layer-0 architecture is the wrong fit for
 this game. Rule 37 (3-variant cap per axis) caps refinement at 3
 attempts on the W1-bound axis.
 
+## Slice 3 — Variant 2 (multi-opp Wald): FAILED
+
+Commit `c9e4191`. W1's hold-check replaced single-nearest-opp with a
+Wald sum over all opp planets in counter-reach (window=30,
+SAFETY=1.5). `chooser_layered.py` now passes
+`max(50, wallclock_ms - L0_elapsed)` to the inner chooser.
+
+### Step 1 — Bench parity (variant 2)
+- Control (trajectory): n=585, p95=665, max=853, over_1000ms=0. PASS.
+- Treatment (layered v2): n=490, p95=517, max=660, over_1000ms=0. PASS.
+- Treatment is faster than control. Wallclock fix working.
+
+### Step 4 — Single-game introspection (seed 42, vs trajectory)
+- Outcome: WIN (+1/-1) — was LOSS under variant 1.
+- W1/turn: 0.97 (5.7× less than variant 1's 5.58)
+- W2/turn: 0.79 (3× more than variant 1's 0.27)
+- L2 prunes/turn: 0.80 (was 0)
+- L0 emit/turn: 1.77 (was 5.85)
+- Encouraging single-seed but not statistically meaningful.
+
+### Step 2 — n=64 head-to-head vs trajectory baseline
+```
+n=64  wins=31/64  (48.4%)  Wlo=0.366  Whi=0.604  INCONCLUSIVE
+focal turn-ms  p50=254  p95=682  max=1064
+```
+
+**Verdict**: **VARIANT 2 FAILED**. Wlo=0.366 < 0.45 gate.
+
+### Comparison vs Variant 1
+
+| | V1 single-nearest | V2 multi-opp Wald |
+|---|---|---|
+| Wins | 33/64 (51.6%) | 31/64 (48.4%) |
+| Wlo | 0.396 | **0.366** |
+| max-turn-ms | 1286 | 1064 |
+
+Tighter math, marginally worse outcome. The bound-axis hypothesis
+(loose single-opp counter → false-positive commits → lost games)
+is **falsified**. The actual failure mode is structural, not
+mathematical: even with sound commits, the layered architecture
+under-performs the pure trajectory rollout.
+
+### Diagnosis (refined)
+
+The single-game introspect revealed a side effect of tighter W1:
+**W2 fires 3× more often**. Why? Because tighter W1 leaves more
+candidates in the uncertain residual; the inner chooser uses those
+sources, but the resulting game state generates more defensive
+opportunities for W2 on subsequent turns.
+
+This suggests the load-bearing problem is NOT "W1 commits are wrong"
+but "Layer 0 commits are mechanically different from inner chooser's
+optimal choice — even when the L0 commit is sound, the inner chooser
+would have made a strategically better launch from the same source."
+
+In other words: **soundness doesn't equal value**. The trajectory
+chooser's noisy lite_greedy rollout still finds higher-value launches
+than the closed-form W1 commit — the rollout sees second-order
+effects (opp policy choice over K ticks) that the closed-form bound
+explicitly assumes worst-case for.
+
+### Rule 37 status after Slice 3
+
+W1-bound axis:
+1. ✅ Variant 1 (single-nearest, `671edb1`): Wlo=0.396 — FAILED
+2. ✅ Variant 2 (multi-opp Wald, `c9e4191`): Wlo=0.366 — FAILED
+3. ⏳ Variant 3 (reserved): one slot left before mandatory axis
+   pivot per Rule 37.
+
+### Recommendations
+
+**Do not** spend the Variant 3 slot on another bound refinement —
+the bound axis is empirically falsified. The architecture itself is
+the limiting factor.
+
+**Axis pivot candidates (PI to choose):**
+
+1. **Composition axis**: stop committing W1/W2 unconditionally;
+   instead INFORM the inner chooser by injecting closed-form Δ-favor
+   as a `cheap_delta` boost on those candidates. Layer 0 becomes a
+   prior, not a gate. The inner trajectory rollout still ranks all
+   candidates by its leaf score — but W1/W2 candidates start with
+   higher priority. Preserves Layer 0's "decidability" insight
+   without preempting the rollout.
+2. **Wallclock-cache axis**: implement Plan §3 Option E — cache the
+   WorldModel built at tick 0, apply ledger delta updates per
+   candidate, evaluate `composite_capture_value` analytically instead
+   of rebuilding World+Model from leaf obs. Reduces leaf eval cost
+   50-90%, freeing rollout budget. No predicate logic.
+3. **Drop the layered chooser entirely.** Park `chooser_layered.py`
+   as research code; the W1/W2 closed-form proofs are useful for
+   future use cases (audit-replay validation, automated game
+   analysis) but not for ladder play.
+
+### Action this session
+
+- Do NOT submit. Production stays on `BASELINE_CHOOSER=trajectory`.
+- Do NOT flip default. Slice 3 commit `c9e4191` keeps layered as
+  opt-in research code on the dev branch.
+- Document the Rule 37 status; next session decides axis pivot.
+
 ## Notes
 
 - The current rolling-pair floor is μ=1118.8 (HANDOVER 2026-05-19;
