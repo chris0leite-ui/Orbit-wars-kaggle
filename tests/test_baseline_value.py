@@ -260,3 +260,60 @@ def test_favor_projected_crn_state_function():
     v1 = favor_projected(obs, me=0, num_seats=2, gamma=0.99)
     v2 = favor_projected(obs, me=0, num_seats=2, gamma=0.99)
     assert v1 == v2
+
+
+# ---------------------------------------------------------------------------
+# Numeric VALUE_HEAD_CHOICE dispatch (patchable by scripts/ab_variants.py)
+# ---------------------------------------------------------------------------
+
+
+def test_value_head_choice_constant_takes_priority_over_env_var():
+    """VALUE_HEAD_CHOICE=2 forces favor_projected even if env var picks
+    composite. Validates that ab_variants-patched bundles win over any
+    operator env var leftover in the runtime."""
+    import os
+    import lib.value_heads as vh
+    from agents.baseline.value import select_favor_fn, favor_projected
+    prev_env = os.environ.pop("BASELINE_VALUE_HEAD", None)
+    prev_choice = vh.VALUE_HEAD_CHOICE
+    try:
+        os.environ["BASELINE_VALUE_HEAD"] = "composite"
+        vh.VALUE_HEAD_CHOICE = 2
+        assert select_favor_fn() is favor_projected
+    finally:
+        vh.VALUE_HEAD_CHOICE = prev_choice
+        if prev_env is None:
+            os.environ.pop("BASELINE_VALUE_HEAD", None)
+        else:
+            os.environ["BASELINE_VALUE_HEAD"] = prev_env
+
+
+def test_value_head_choice_constant_zero_falls_through_to_env_var():
+    """VALUE_HEAD_CHOICE=0 (default) keeps the env-var path live for
+    back-compat with existing operator workflows."""
+    import os
+    import lib.value_heads as vh
+    from agents.baseline.value import select_favor_fn, favor_composite
+    prev_env = os.environ.pop("BASELINE_VALUE_HEAD", None)
+    prev_choice = vh.VALUE_HEAD_CHOICE
+    try:
+        vh.VALUE_HEAD_CHOICE = 0
+        os.environ["BASELINE_VALUE_HEAD"] = "composite"
+        assert select_favor_fn() is favor_composite
+    finally:
+        vh.VALUE_HEAD_CHOICE = prev_choice
+        if prev_env is None:
+            os.environ.pop("BASELINE_VALUE_HEAD", None)
+        else:
+            os.environ["BASELINE_VALUE_HEAD"] = prev_env
+
+
+def test_value_head_choice_constant_one_picks_composite():
+    import lib.value_heads as vh
+    from agents.baseline.value import select_favor_fn, favor_composite
+    prev_choice = vh.VALUE_HEAD_CHOICE
+    try:
+        vh.VALUE_HEAD_CHOICE = 1
+        assert select_favor_fn() is favor_composite
+    finally:
+        vh.VALUE_HEAD_CHOICE = prev_choice

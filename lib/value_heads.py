@@ -50,6 +50,15 @@ from lib.world_model import DEFAULT_HORIZON, WorldModel, fleet_target_planet
 # static substrate ≈ K=40 effective; close enough.
 INFLIGHT_EXTRA_HORIZON: int = 30
 
+# Patchable value-head selector used by agents/baseline/value.select_favor_fn.
+# 0 = favor (default v15 baseline)
+# 1 = composite_capture_value
+# 2 = projected_rank_diff (production-compounding unified head)
+# No type annotation — scripts/ab_variants.py regex-patches `NAME = number`
+# lines and does not match annotated assignments. Falls back to env var
+# BASELINE_VALUE_HEAD when VALUE_HEAD_CHOICE == 0.
+VALUE_HEAD_CHOICE = 0
+
 # How much weight to give the in-flight production credit relative to
 # ship-delta. 0.5 chosen so a captured 3-production planet (worth
 # ~3*30=90 production-points) approximately balances 90 ships of

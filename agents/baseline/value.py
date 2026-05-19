@@ -105,13 +105,23 @@ def favor_projected(obs, me: int, num_seats: int = 2,
 def select_favor_fn():
     """Pick the leaf value function. Default = `favor` (the v15 baseline).
 
-    Switch via env var `BASELINE_VALUE_HEAD`:
-      - `composite` → `favor_composite` (in-flight capture/waste, 2P-only).
-      - `projected` → `favor_projected` (production-compounding, 2P+4P unified).
-      - anything else → `favor` (default).
+    Two dispatch paths in priority order:
+      1. `lib.value_heads.VALUE_HEAD_CHOICE` numeric constant — patchable
+         by `scripts/ab_variants.py` for clean A/B bundles. Values:
+         0 = favor, 1 = composite, 2 = projected. Anything else falls
+         through to the env-var path.
+      2. `BASELINE_VALUE_HEAD` env var (legacy operator workflow):
+         `composite` → favor_composite, `projected` → favor_projected,
+         anything else → favor.
+
     The chooser uses the SAME function for both `build_idle_baseline`
     and `score_action` so the Δ stays well-defined (CRN symmetry).
     """
+    from lib.value_heads import VALUE_HEAD_CHOICE
+    if VALUE_HEAD_CHOICE == 1:
+        return favor_composite
+    if VALUE_HEAD_CHOICE == 2:
+        return favor_projected
     choice = os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower()
     if choice == "composite":
         return favor_composite
