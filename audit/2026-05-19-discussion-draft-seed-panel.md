@@ -124,9 +124,9 @@ Two small habits that made this useful for us:
 - **Play both seats** for every seed. Otherwise a change that helps
   on one home-planet can look like it helps overall.
 - **Aggregate per archetype**, not just overall. A new version that
-  wins 80% in aggregate can still lose every game on, say,
-  `med_low_prod__mixed_*` boards — that's exactly the kind of
-  regression a stratified panel catches.
+  wins well in aggregate can still lose every game on a specific
+  archetype slice — that's exactly the kind of regression a
+  stratified panel catches.
 
 ### Notes
 
