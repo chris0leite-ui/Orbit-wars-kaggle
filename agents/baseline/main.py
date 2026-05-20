@@ -14,6 +14,13 @@ Knobs (env var overrides, all optional):
   ORBIT_WARS_PARITY_WALLCLOCK_MS    bundle-parity override (very large
                                     value disables mid-loop deadline bail
                                     so the agent is a pure function of obs).
+  BASELINE_CHAIN_BONUS        when "1", fire-now capture candidates get a
+                              cheap_delta bump proportional to the best
+                              downstream relay-capture the surviving stack
+                              can reach (Claws ladder pattern, ep
+                              77164175 step 223). Pre-filter signal only —
+                              chooser_trajectory's leaf score is unchanged.
+                              default off; opt-in for A/B.
 """
 
 from __future__ import annotations
@@ -94,6 +101,7 @@ from lib.world_model import WorldModel
 # `bundler-modular-agent-namespace-access-breaks-bundle` (2026-05-17).
 from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS
 from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON
+from agents.baseline.proposer import aim_and_eta as _aim_and_eta
 
 
 _PARITY_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
@@ -175,8 +183,6 @@ def _tick_ledger(me: int, world, model, omega: float) -> tuple[list[list], list[
     pending = _PENDING_LAUNCHES.get(int(me), [])
     if not pending:
         return [], []
-
-    from agents.baseline.proposer import aim_and_eta as _aim_and_eta
 
     due_moves: list[list] = []
     survivors: list[dict] = []
