@@ -407,11 +407,12 @@ def test_reactor_candidates_fires_on_opp_fleet_capturing_neutral():
     assert out, "expected at least one reactor candidate"
     # Every candidate targets tgt from src
     for entry in out:
-        cheap, c_src, c_tgt, ships, _angle, _eta, _horizon, wait_N = entry
+        cheap, c_src, c_tgt, ships, _angle, _eta, _horizon, wait_N, is_chain = entry
         assert int(c_src.id) == 0
         assert int(c_tgt.id) == 1
         assert ships >= MIN_FLEET_SIZE
         assert wait_N >= 0
+        assert is_chain is False, "reactor candidates never carry chain bonus"
 
 
 def test_reactor_candidates_skips_when_opp_bounces():
@@ -586,7 +587,8 @@ def test_aim_and_eta_comet_returns_eta_within_path_length():
 
 def test_chain_bonus_disabled_by_default(monkeypatch):
     """When BASELINE_CHAIN_BONUS is unset, propose() emits the bare
-    cheap_marginal_value for captures. Tuple shape is the legacy 8-tuple.
+    cheap_marginal_value for captures and tags is_chain=False on every
+    9-tuple entry.
     """
     monkeypatch.delenv("BASELINE_CHAIN_BONUS", raising=False)
     src = _planet(0, 0, 5.0, 50.0, ships=300, production=4)
@@ -600,15 +602,16 @@ def test_chain_bonus_disabled_by_default(monkeypatch):
     )
     assert out, "default-off should still emit normal capture candidates"
     for entry in out:
-        assert len(entry) == 8, (
-            f"bonus-only port must NOT change tuple shape; got {len(entry)}"
+        assert len(entry) == 9, f"Phase 8 tuple shape is 9; got {len(entry)}"
+        assert entry[8] is False, (
+            f"is_chain must be False with env off; got {entry}"
         )
 
 
 def test_chain_bonus_promotes_relay(monkeypatch):
     """With BASELINE_CHAIN_BONUS=1, capture of a relay-staging planet
     that unlocks a downstream high-prod target gets a positive bonus
-    folded into cheap_delta. cheap strictly raises vs default-off.
+    folded into cheap_delta AND is tagged is_chain=True.
     """
     src = _planet(0, 0, 5.0, 50.0, ships=300, production=4)
     relay = _planet(1, -1, 25.0, 50.0, ships=5, production=1)
@@ -630,8 +633,11 @@ def test_chain_bonus_promotes_relay(monkeypatch):
         my_planets=[src], target_pool=[relay, enemy_big],
         world=world, model=model, me=0, omega=0.0, baseline_len=50,
     )
-    chain_relay = [c for c in boosted if int(c[2].id) == 1]
-    assert chain_relay, "expected a relay-capture candidate with bonus on"
+    chain_relay = [c for c in boosted if int(c[2].id) == 1 and c[8]]
+    assert chain_relay, (
+        f"expected at least one is_chain=True relay candidate; "
+        f"got {[(int(c[2].id), c[8]) for c in boosted]}"
+    )
     chain_cheap = max(c[0] for c in chain_relay)
     assert chain_cheap > base_cheap, (
         f"chain bonus must strictly raise cheap_delta; base={base_cheap:.2f} "

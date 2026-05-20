@@ -45,8 +45,9 @@ def _enemy_tgt(world, me: int = 0):
     raise RuntimeError("no enemy target")
 
 
-def _make_candidate(src, tgt, ships, angle, eta=5, wait_N=0):
-    return (0.0, src, tgt, int(ships), float(angle), int(eta), 10, int(wait_N))
+def _make_candidate(src, tgt, ships, angle, eta=5, wait_N=0, is_chain=False):
+    return (0.0, src, tgt, int(ships), float(angle), int(eta), 10,
+            int(wait_N), bool(is_chain))
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +168,34 @@ def test_choose_trajectory_drops_doomed_candidates():
         world=world, model=model,
     )
     assert moves == []
+
+
+def test_choose_trajectory_is_chain_bypasses_rollout():
+    """Phase 8 chain bypass: an is_chain=True candidate with positive
+    cheap_delta emits without invoking score_candidate_v4. The rollout
+    would assume idle-me and miss the leg-2 relay; the bypass uses
+    cheap_delta (chain-bonus inclusive) as Δ directly.
+
+    Verifies by passing a chain-tagged candidate that points the launch
+    along a known-feasible angle; the chooser should emit it even when
+    baseline_favors is empty (the rollout path needs baseline_favors,
+    the bypass does not).
+    """
+    obs, snap, world, model = _snap_and_world(seed=7)
+    me = 0
+    src = _my_src(world, me)
+    tgt = _enemy_tgt(world, me)
+    angle = math.atan2(tgt.y - src.y, tgt.x - src.x)
+    # Cheap_delta > 0 + is_chain=True ⇒ bypass emits without rollout.
+    cand = (5.0, src, tgt, 20, angle, 5, 10, 0, True)
+    moves, _commits = choose_trajectory(
+        snap, prerank=[cand], baseline_favors=None,
+        me=me, num_seats=2, wallclock_ms=600.0,
+        min_horizon=25, max_horizon=40, gamma=0.99,
+        world=world, model=model,
+    )
+    assert moves, "is_chain candidate with cheap_delta>0 must emit"
+    assert int(moves[0][0]) == int(src.id)
 
 
 def test_choose_trajectory_emit_format_is_env_action_shape():

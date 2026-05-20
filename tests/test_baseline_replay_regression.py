@@ -80,19 +80,24 @@ def test_claws_step223_chain_bonus_promotes_p3_p31(claws_step223, monkeypatch):
     )
     base_cheap = max(c[0] for c in base_p3_p31)
     for c in base:
-        assert len(c) == 8, "default-off must keep legacy 8-tuple shape"
+        assert len(c) == 9, "Phase 8 tuple shape is 9"
+        assert c[8] is False, "chain bonus off should never set is_chain=True"
 
     monkeypatch.setenv("BASELINE_CHAIN_BONUS", "1")
     boosted = proposer.propose(
         my_planets, target_pool, world, model, me, omega,
         baseline_len=proposer.MAX_HORIZON + 1,
     )
-    boosted_p3_p31 = [c for c in boosted if int(c[1].id) == 3 and int(c[2].id) == 31]
-    assert boosted_p3_p31, (
-        f"expected a p3→p31 candidate with chain bonus on; "
-        f"got {len(boosted)} candidates total"
+    chain_p3_p31 = [
+        c for c in boosted
+        if int(c[1].id) == 3 and int(c[2].id) == 31 and c[8]
+    ]
+    assert chain_p3_p31, (
+        f"expected at least one is_chain=True p3→p31 candidate with bonus on; "
+        f"got {len(boosted)} candidates total, "
+        f"{sum(1 for c in boosted if c[8])} chain-tagged"
     )
-    chain_cheap = max(c[0] for c in boosted_p3_p31)
+    chain_cheap = max(c[0] for c in chain_p3_p31)
     assert chain_cheap > base_cheap, (
         f"chain bonus must strictly raise p3→p31 cheap_delta; "
         f"base={base_cheap:.2f} chain={chain_cheap:.2f}"

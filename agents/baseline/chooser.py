@@ -165,7 +165,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     # Closes the long-tail max-turn-ms overrun seen in the 2026-05-17 A/B.
     safe_deadline = deadline - (per_cand_ms / 1000.0)
     validated: list[tuple] = []
-    for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
+    for cheap, src, tgt, ships, angle, _eta, horizon, wait_N, is_chain in top:
         if time.perf_counter() > safe_deadline:
             break
         sid_ = int(src.id)
@@ -175,6 +175,12 @@ def choose(snap_base, prerank, baseline_favors: list[float],
         else:
             if sid_ in reserved_srcs:
                 continue
+        # Phase 8 chain bypass: leaf rollout's idle-me assumption misses
+        # the relay (leg-2 capture of the followup). Use cheap (which
+        # already includes the chain bonus) as Δ directly.
+        if is_chain and cheap > 0.0:
+            validated.append((float(cheap), src, tgt, ships, angle, wait_N))
+            continue
         delta = score_action(
             snap_base, me, num_seats,
             int(src.id), float(angle), int(ships),

@@ -18,8 +18,12 @@ Knobs (env var overrides, all optional):
                               cheap_delta bump proportional to the best
                               downstream relay-capture the surviving stack
                               can reach (Claws ladder pattern, ep
-                              77164175 step 223). Pre-filter signal only —
-                              chooser_trajectory's leaf score is unchanged.
+                              77164175 step 223) AND are tagged with a
+                              9th is_chain bit. The default chooser
+                              (trajectory) bypasses the leaf rollout for
+                              is_chain candidates and uses cheap_delta
+                              as Δ directly — the rollout's idle-me
+                              assumption would miss the relay otherwise.
                               default off; opt-in for A/B.
 """
 

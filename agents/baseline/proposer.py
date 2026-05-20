@@ -892,7 +892,8 @@ def _enumerate_reactor_candidates(
             if cheap <= CHEAP_REJECT_THRESHOLD:
                 continue
             candidates.append(
-                (cheap, src, tgt, needed, float(angle), int(eta), horizon, wait_N)
+                (cheap, src, tgt, needed, float(angle), int(eta), horizon,
+                 wait_N, False)
             )
 
     candidates.sort(key=lambda c: -c[0])
@@ -909,14 +910,15 @@ def propose(my_planets, target_pool, world, model, me: int,
     sorted by cheap_delta descending.
     """
     prerank = []
-    # Phase 7 chain-bonus: read once per turn, not per (src,tgt,ships). When
-    # on, fire-now capture candidates get their cheap_delta bumped by the
+    # Phase 8 chain-bonus (full port): read once per turn, not per (src,tgt,ships).
+    # When on, fire-now capture candidates get their cheap_delta bumped by the
     # PV-weighted value of the best downstream capture the surviving stack
-    # can reach. Pre-filter signal only — leaf score in chooser_trajectory
-    # is unchanged. Wait variants do NOT get the bonus (the relay only
-    # makes sense for fire-now; the followup already conditions on a
-    # wait_N=0 launch from tgt). Reactor candidates also skip the bonus
-    # for Phase 7 minimality.
+    # can reach AND are tagged with a 9th `is_chain` bit. The chooser
+    # bypasses leaf-rollout scoring for is_chain candidates and uses
+    # cheap_delta as Δ directly (the rollout assumes idle-me and would
+    # miss the relay). Wait variants and reactor candidates do NOT get
+    # the bonus or the is_chain tag — the followup conditions on a
+    # wait_N=0 launch from tgt.
     chain_on = os.environ.get(
         "BASELINE_CHAIN_BONUS", "0",
     ).strip() == "1"
@@ -937,15 +939,18 @@ def propose(my_planets, target_pool, world, model, me: int,
                 cheap = cheap_marginal_value(
                     src, tgt, ships, eta, world, model, me, wait_N=0,
                 )
+                is_chain = False
                 if chain_on and int(tgt.owner) != me:
                     bonus, _t2 = _chain_followup_bonus(
                         tgt, ships, eta, world, model, me, omega,
                     )
                     if bonus > 0.0:
                         cheap += bonus
+                        is_chain = True
                 if cheap > CHEAP_REJECT_THRESHOLD:
                     prerank.append(
-                        (cheap, src, tgt, ships, angle, eta, horizon, 0)
+                        (cheap, src, tgt, ships, angle, eta, horizon, 0,
+                         is_chain)
                     )
 
             for w_ships, w_wait, w_angle, w_eta in wait_then_fire_variants(
@@ -960,7 +965,7 @@ def propose(my_planets, target_pool, world, model, me: int,
                 if w_cheap > CHEAP_REJECT_THRESHOLD:
                     prerank.append(
                         (w_cheap, src, tgt, w_ships, w_angle, w_eta,
-                         w_horizon, w_wait)
+                         w_horizon, w_wait, False)
                     )
 
     # Reactor candidate generator (Part B of reactor-aware launch selection,
@@ -977,7 +982,7 @@ def propose(my_planets, target_pool, world, model, me: int,
 
     best_per_band: dict[tuple[int, int, int], tuple] = {}
     for entry in prerank:
-        cheap, src, tgt, _ships, _angle, _eta, _horizon, w = entry
+        cheap, src, tgt, _ships, _angle, _eta, _horizon, w, _is_chain = entry
         key = (int(src.id), int(tgt.id), wait_band(int(w)))
         prev = best_per_band.get(key)
         if prev is None or cheap > prev[0]:
@@ -1010,7 +1015,7 @@ def propose(my_planets, target_pool, world, model, me: int,
     if os.environ.get("PROPOSER_TRAJECTORY_FILTER", "").strip().lower() != "off":
         filtered: list = []
         for entry in deduped:
-            _cheap, src, tgt, ships, angle, eta, _horizon, w = entry
+            _cheap, src, tgt, ships, angle, eta, _horizon, w, _is_chain = entry
             if int(w) != 0:
                 # Wait-then-fire: trajectory geometry depends on the
                 # launch-time orbital state; the static fate-predictor

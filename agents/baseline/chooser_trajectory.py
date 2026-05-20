@@ -725,7 +725,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     # horizon already accounts for the wait via
     # `w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)`).
     max_horizon_seen = 0
-    for cheap_delta, src, tgt, ships, angle, eta_hint, h, wait_N in prerank:
+    for cheap_delta, src, tgt, ships, angle, eta_hint, h, wait_N, _is_chain in prerank:
         if int(h) > max_horizon_seen:
             max_horizon_seen = int(h)
 
@@ -755,7 +755,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     scored: list[tuple] = []
     solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0
     cand_count = 0
-    for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
+    for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N, is_chain in prerank:
         if cand_count >= cap:
             break
         if not use_v3 and time.perf_counter() > safe_deadline:
@@ -787,6 +787,15 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             if status in ("captured",) and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))
         else:
+            # Phase 8 chain bypass: for is_chain candidates, the leaf
+            # rollout's idle-me assumption misses the relay (leg-2
+            # capture of the followup target). Skip the rollout and
+            # use cheap_delta (which already includes the chain bonus)
+            # as Δ directly. Mirrors the EpMVP Phase 6 mechanism.
+            if is_chain and cheap_delta > 0.0:
+                scored.append((float(cheap_delta), src, tgt, ships, angle, wait_N))
+                solo_winners.add(int(src.id))
+                continue
             score, status, _ = score_candidate_v4(
                 snap_base, src, tgt, int(ships), float(angle),
                 me, num_seats, world,
@@ -816,7 +825,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         # Group prerank by target_id. Take top-K solo candidates per
         # target by cheap_delta; pair-enumerate.
         by_tgt: dict[int, list] = {}
-        for cd, src, tgt, ships, angle, eta_hint, ph, wn in prerank:
+        for cd, src, tgt, ships, angle, eta_hint, ph, wn, _ic in prerank:
             if int(wn) != 0:
                 continue  # v1: fire-now joints only
             if int(src.id) in reserved_srcs:
