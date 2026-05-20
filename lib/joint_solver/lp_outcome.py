@@ -54,7 +54,17 @@ from lib.joint_solver.outcome_table import (
 # ---------------------------------------------------------------------------
 
 T_END = 200                       # value horizon for production stream
-ALPHA_OPP_PENALTY = 1.0           # weight on opp production in objective
+# Weight on opp production in the objective.
+#
+# Phase 5E (2026-05-20): set to 0.0. With accurate opp projection (Phase
+# 5D) and α=1.0, the LP correctly identifies contested captures as
+# net-zero EV ("opp recaptures, value≈0") → idles 75% of mid-game turns
+# (Phase 5D seed-42 deep dive). Baseline's "spray small captures
+# everywhere" strategy wins on aggregate even with sub-optimal per-launch
+# ROI because each brief ownership yields production. Setting α=0
+# valued my-production-only (ignore opp-side production), restoring
+# capture-greedy behavior.
+ALPHA_OPP_PENALTY = 0.0
 SHIP_COST = 0.01                  # tiny tie-breaker on ship spend
 MAX_CONTESTERS_PER_PLANET = MAX_ENUMERATION_BITS  # 2^6 = 64 subsets per planet
 TIME_LIMIT_SECONDS = 0.3          # MILP wallclock cap
