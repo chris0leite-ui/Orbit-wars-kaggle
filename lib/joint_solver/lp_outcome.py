@@ -41,12 +41,7 @@ except ImportError:
     Bounds = None  # type: ignore[assignment]
 
 from lib.joint_solver.columns import Column
-from lib.joint_solver.outcome_table import (
-    MAX_ENUMERATION_BITS,
-    Arrival,
-    OutcomeRow,
-    enumerate_outcomes,
-)
+from lib.joint_solver.outcome_table import MAX_ENUMERATION_BITS, Arrival, OutcomeRow, enumerate_outcomes
 
 
 # ---------------------------------------------------------------------------

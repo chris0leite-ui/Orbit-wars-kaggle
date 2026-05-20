@@ -34,7 +34,8 @@ except ImportError:
     LinearConstraint = None  # type: ignore[assignment]
     Bounds = None  # type: ignore[assignment]
 
-from agents.baseline.strategic_lp import _greedy_assignment as _greedy_assign
+from agents.baseline.strategic_lp import _greedy_assignment
+_greedy_assign = _greedy_assignment
 from lib.joint_solver.columns import Column
 
 

@@ -28,25 +28,15 @@ from dataclasses import dataclass, field
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
 
-from agents.baseline.chooser_trajectory import (
-    merge_ledgers,
-)
+from agents.baseline.chooser_trajectory import merge_ledgers
 from agents.baseline.migration_solver import propose_migrations
 from agents.baseline.proposer import MAX_HORIZON, propose
 from lib.intent import World
 from lib.joint_solver.columns import column_from_candidate
-from lib.joint_solver.lp import (
-    DEFAULT_MAX_CONTESTERS_PER_TARGET,
-    DEFAULT_MAX_WAIT_N,
-    MultiTurnResult,
-    solve_multi_turn,
-)
-from lib.joint_solver.lp_outcome import (
-    OutcomeAwareResult,
-    solve_outcome_aware,
-)
+from lib.joint_solver.lp import DEFAULT_MAX_CONTESTERS_PER_TARGET, DEFAULT_MAX_WAIT_N, MultiTurnResult, solve_multi_turn
+from lib.joint_solver.lp_outcome import OutcomeAwareResult, solve_outcome_aware
 from lib.joint_solver.opp_projection import predict_opp_multi_launch
-from lib.joint_solver.opening_planner import OPENING_HORIZON, plan as opening_plan
+from lib.joint_solver.opening_planner import OPENING_HORIZON, opening_plan
 from lib.joint_solver.predicate import is_winning_state
 from lib.joint_solver.portfolio import smallest_winning_portfolio
 from lib.joint_solver.value import DEFAULT_GAMMA, value_for_candidate

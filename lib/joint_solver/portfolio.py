@@ -11,11 +11,7 @@ predicate to True. Greedy by production-per-ship-cost.
 from __future__ import annotations
 
 from lib.intent import World
-from lib.joint_solver.predicate import (
-    EPISODE_STEPS,
-    is_winning_state,
-    is_winning_state_if_owned,
-)
+from lib.joint_solver.predicate import EPISODE_STEPS, is_winning_state, is_winning_state_if_owned
 
 
 CAPTURE_SAFETY_MARGIN = 2

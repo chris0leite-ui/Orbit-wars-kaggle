@@ -29,7 +29,8 @@ from __future__ import annotations
 
 import math
 
-from lib.fleet import speed as fleet_speed
+from lib.fleet import speed
+fleet_speed = speed
 from lib.trajectory import predict_fleet_fate
 
 

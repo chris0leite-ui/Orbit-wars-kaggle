@@ -530,7 +530,7 @@ def _solve_milp(candidates: list[_Candidate], world, my_id: int,
 # ---------------------------------------------------------------------------
 
 
-def plan(world, model, my_id: int, num_seats: int,
+def opening_plan(world, model, my_id: int, num_seats: int,
          *, time_limit_seconds: float = 0.15) -> OpeningPlan:
     """Build the opening schedule for the current world."""
     candidates, waterfall = _build_candidates(world, model, my_id, num_seats)
