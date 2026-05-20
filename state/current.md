@@ -116,6 +116,27 @@ saturation_count: 0
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
+  - 2026-05-19 PM (research) — audit-workflow-performance-btjeK.
+    Research-only session — no code changes, no submissions. Followed
+    up on PI's "mobilize parked ships" framing with three parallel
+    Explore agents: (a) replay-mine for current parked-ship rate;
+    (b) joint-candidate scope + 4P-gap analysis; (c) Rule-22 top-5
+    public-notebook scan. The replay-mine returned a 27.9 pp win-vs-loss
+    gap in parked-fraction across 89 episodes and I almost shipped a
+    "parking is not a leak" audit doc — but PI caught the confound:
+    the rear definition (min_dist_to_nonour ≥ 35) grows automatically
+    with territory share, so winning → ships-look-parked is tautological.
+    Audit doc + analysis script deleted, nothing committed to the
+    agent. Findings that DO stand: (i) joint candidates in 4P are
+    gated by a known opp-model bug in `lib.opp_model.lite_greedy_policy`
+    — it doesn't model coordinated multi-opp attacks on drained sources;
+    the fix is documented in audit/2026-05-18-joint-candidates-submitted.md
+    lines 110-127; (ii) Rule-22 scan: Rahul's MCTS (10-turn rollouts)
+    is the strongest public notebook and confirms multi-step planning
+    is the load-bearing idea; no top notebook uses post-hoc idle-drain
+    heuristics. Postmortem at audit/2026-05-19-postmortem-parked-ship-confound.md
+    drafts a candidate Rule 41 (confound-sweep before correlational
+    conclusion). PI ratification pending.
   - 2026-05-19 evening — audit-workflow-performance-btjeK.
     Three commits + one push. (a) `037009b`: reactor-aware launch
     selection — cost-parity filter (reject candidates where the cheapest

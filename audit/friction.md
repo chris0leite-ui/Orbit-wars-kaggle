@@ -647,6 +647,26 @@ tag fires 3+ times, it goes to
 `.claude/skills/kaggle-comp/improvements.md` and then into the
 relevant skill file or source code, not back into friction.md.
 
+## 2026-05-19 (claude/audit-workflow-performance-btjeK — parked-ship analysis confound)
+
+- `tag: territory-share-confound-on-distance-metric` — built a parked-ship
+  win/loss analysis using `min_dist_to_nonour ≥ 35` as the "rear"
+  threshold (matching `audit/replays/idle-trajectory-2026-05-17.md` and
+  H1's `IDLE_REAR_THRESHOLD`) and reported a 27.9 pp win-vs-loss gap as
+  evidence "parking is not a leak." PI caught the obvious confound: the
+  rear definition is RELATIVE to non-our planets, so as we win,
+  enemy/neutral planets become rare and far → every ship looks "rear"
+  by construction. The win/loss correlation was tautological with
+  territory share, not chooser behavior. The same alarm should have
+  fired on the original 43.8 % number — it came from a pool with
+  87.5 % winrate. **Fix:** before drawing causal conclusions from a
+  correlation, enumerate ≥2 mechanical confounds the metric is
+  sensitive to and either control for them (restrict to contested
+  midgames; e.g. neither side > 55 % planet share) OR switch to a
+  target-availability-aware metric (launch-rate-per-surplus-ship,
+  per-ship-time-to-engagement, etc.). Promotion candidate — see
+  postmortem.
+
 ## Anti-spam — what does NOT belong here
 
 - Successful experiments → `audit/YYYY-MM-DD-*.md`.

@@ -19,6 +19,38 @@
 
 ## Pending — promotion needed
 
+### [ ] [CROSS-CUTTING] CLAUDE.md Rule 41 — confound-sweep before correlational conclusion
+
+`tag: territory-share-confound-on-distance-metric` (2026-05-19,
+parked-ship-research session, PI override).
+
+**Where to insert:** `## Operating rules — concise` in CLAUDE.md,
+after Rule 40. Rule 41.
+
+**What to add:**
+
+```
+41. **Confound-sweep before correlational conclusion.** Before
+    reporting a correlation between a metric and an outcome (win/loss,
+    high-LB/low-LB, treatment/control) as evidence FOR or AGAINST a
+    hypothesis, enumerate ≥2 mechanical confounds the metric is
+    sensitive to. If any confound is plausible AND not controlled for,
+    label the result "correlational, not causal" and propose either
+    a controlled subset (e.g. restrict the window) or a different
+    metric. Distance-to-class-X, ratio-of-Y, and time-to-event metrics
+    are the highest-risk family — they shift with the very quantity
+    you're testing against. Origin: 2026-05-19 parked-ship analysis;
+    rear = `min_dist_to_nonour ≥ 35` grows automatically with
+    territory share, so the win/loss split was tautological with
+    "we are winning," not informative about chooser behavior.
+```
+
+**Why:** PI override 2026-05-19; same root cause was visible in the
+2026-05-17 `audit/replays/idle-trajectory-2026-05-17.md` framing
+(43.8 % rear-ship rate reported from a pool with 87.5 % winrate) and
+ran for ~36 h before challenge. Two recurrences on the same axis
+within 48 h. Full postmortem: `audit/2026-05-19-postmortem-parked-ship-confound.md`.
+
 ### [ ] [CROSS-CUTTING] Stop-hook should not force commit-before-verify
 
 `tag: stop-hook-pressure-commits-speculative-WIP` (2026-05-16,
