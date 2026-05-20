@@ -42,6 +42,7 @@ from lib.joint_solver.lp import (
     MultiTurnResult,
     solve_multi_turn,
 )
+from lib.joint_solver.opening_planner import OPENING_HORIZON, plan as opening_plan
 from lib.joint_solver.predicate import is_winning_state
 from lib.joint_solver.portfolio import smallest_winning_portfolio
 from lib.joint_solver.value import DEFAULT_GAMMA, value_for_candidate
@@ -173,6 +174,77 @@ def solve_turn(obs, configuration=None, *,
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
     num_seats = _num_seats(planets, fleets)
+    step_now = int(obs_d.get("step", 0) or 0)
+
+    # Phase 4 endgame predicate gate — applies BEFORE both the opening
+    # planner (Phase 5A) and the LP (Phase 4). If we're already winning by
+    # closed-form math, idle — no need to risk ships, whether in opening
+    # or post-opening. 2P only; 4P bypasses.
+    if num_seats == 2:
+        opp_id_pre = 1 - me
+        try:
+            if is_winning_state(world, me, opp_id_pre):
+                if not return_diagnostics:
+                    return []
+                return [], MpcDiagnostics(
+                    step=step_now, n_prerank=0, n_columns=0,
+                    n_positive_columns=0, n_fired_columns=0,
+                    n_emitted_moves=0, objective=0.0,
+                    solver_status="endgame_winning_idle",
+                    n_vars=0, n_constraints=0,
+                    n_opp_projections=0, is_winning_state=True,
+                    portfolio_size=0, portfolio_filtered=False,
+                    n_columns_before_filter=0,
+                )
+        except Exception:
+            pass  # if predicate evaluation fails, fall through
+
+    # Phase 5A: opening planner dispatch.
+    # For step < OPENING_HORIZON, solve the opening as a one-shot multi-turn
+    # MILP and commit to its schedule. We emit only entries with
+    # fire_step == step_now (the rest of the schedule is planning intent the
+    # next re-derivation will refresh). Critically, we do NOT fall through
+    # to Phase 4 LP just because the schedule has no fire_step==step_now
+    # entry — the planner's INTENT is to wait this tick and fire on a
+    # scheduled later tick; falling through would override that with
+    # arbitrary Phase 4 emissions and break the commit-and-execute contract.
+    #
+    # Only true fallback: planner returned no candidates at all (e.g.,
+    # source pool empty because every my-planet has < MIN_SOURCE_SHIPS).
+    # In that case, let the existing Phase 4 LP handle the turn.
+    if step_now < OPENING_HORIZON:
+        op = opening_plan(world, model, me, num_seats)
+        if op.n_vars > 0 or op.schedule:
+            opening_moves = [
+                [int(e.src_id), float(e.angle), int(e.ships)]
+                for e in op.schedule if int(e.fire_step) == step_now
+            ]
+            if not return_diagnostics:
+                return opening_moves
+            wait_dist: dict[int, int] = {}
+            for e in op.schedule:
+                offset = int(e.fire_step) - step_now
+                wait_dist[offset] = wait_dist.get(offset, 0) + 1
+            diag = MpcDiagnostics(
+                step=step_now,
+                n_prerank=0,
+                n_columns=op.n_vars,
+                n_positive_columns=op.n_vars,
+                n_fired_columns=len(op.schedule),
+                n_emitted_moves=len(opening_moves),
+                objective=float(op.objective),
+                solver_status=f"opening:{op.status}",
+                n_vars=int(op.n_vars),
+                n_constraints=int(op.n_constraints),
+                n_opp_projections=0,
+                is_winning_state=False,
+                portfolio_size=0,
+                portfolio_filtered=False,
+                n_columns_before_filter=op.n_vars,
+                fired_wait_distribution=wait_dist,
+            )
+            return opening_moves, diag
+        # else: no candidates at all — fall through to Phase 4 LP.
 
     threatened_mine = [
         p for p in my_planets
