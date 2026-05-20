@@ -14,6 +14,7 @@ Pipeline per turn:
 from __future__ import annotations
 
 import math
+import os
 
 from lib.aim import aim_orbiting
 from lib.fleet import speed as fleet_speed
@@ -116,6 +117,15 @@ def max_safe_launch_now(src, world, model, me: int, *,
     Returns max(0, min(src.ships, min over eta_e)) — i.e. the tightest
     floor across all incoming waves. If no enemy is inbound within
     `horizon`, the full garrison is launchable.
+
+    NOTE on calibration (2026-05-20 Phase 2 A/B): in 2P self-play vs the
+    pre-Phase-1 baseline, applying this floor cumulatively (with Phase 1
+    on) hit 3/8 wins. Symmetric matchups penalise the more defensive
+    side — both bleed similarly without this floor, but with it the
+    floored side captures less ground while still losing to the opp
+    attack that arrives anyway. Live calibration via the ladder is the
+    truer test (asymmetric opponents); see BASELINE_GARRISON_FLOOR env
+    var gating in enumerate_ship_counts.
     """
     pid = int(src.id)
     arrivals = model.ledger.get(pid, [])
@@ -152,11 +162,17 @@ def max_safe_launch_now(src, world, model, me: int, *,
 def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list[int]:
     """Fire-now ship-count set: capture-size, 2x capture-size, full budget.
 
-    Each candidate size is clamped by `max_safe_launch_now(src)` so a
-    src under imminent threat cannot bleed below its garrison floor.
+    Gated by BASELINE_GARRISON_FLOOR=1: when set, each candidate size is
+    clamped by `max_safe_launch_now(src)` so a src under imminent threat
+    cannot bleed below its garrison floor. Off by default after a 2P
+    self-play A/B (n=8) showed Phase-1+floor cumulative at 3/8 wins
+    against the pre-Phase-1 baseline — the floor is too conservative in
+    symmetric play. Kept for live-ladder A/B as a separate knob.
     """
     cap = capture_size(src, tgt, model, omega, me, world)
-    budget = min(int(src.ships), max_safe_launch_now(src, world, model, me))
+    budget = int(src.ships)
+    if os.environ.get("BASELINE_GARRISON_FLOOR", "0").strip() == "1":
+        budget = min(budget, max_safe_launch_now(src, world, model, me))
     if cap == 0:
         return []  # reinforce-targets with no threat
     sizes = set()

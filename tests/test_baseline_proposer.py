@@ -119,21 +119,21 @@ def test_max_safe_launch_severe_threat_returns_zero():
     assert floor == 0, f"expected 0 under 80-ship threat; got {floor}"
 
 
-def test_max_safe_launch_floor_caps_enumerated_sizes():
-    """When src is under threat, enumerate_ship_counts respects the floor.
+def test_max_safe_launch_floor_caps_enumerated_sizes(monkeypatch):
+    """When src is under threat AND BASELINE_GARRISON_FLOOR=1 is set,
+    enumerate_ship_counts respects the floor.
 
-    src 30 ships, prod=1, enemy 50 incoming from open trajectory.
-    Target tgt is *behind* src so the enemy fleet hits src first, not tgt.
+    The floor is env-var-gated (default off) because cumulative
+    Phase-1+floor lost 3/8 in 2P self-play A/B against the pre-Phase-1
+    baseline. The function itself is still callable and correct; the
+    integration into enumerate_ship_counts is what's gated.
     """
-    # src at center; tgt at NW (target for our own launch) far enough that
-    # enemy fleet (from east, heading west) hits src first.
     src = _planet(0, 0, 50.0, 50.0, ships=30, production=1)
     tgt = _planet(2, -1, 10.0, 10.0, ships=3, production=1)
     enemy_home = _planet(1, 1, 95.0, 50.0, ships=5)
     enemy_fleet = Fleet(0, 1, 65.0, 50.0, 3.141592653589793, 1, 50)
     world = _world(0, [src, tgt, enemy_home], fleets=[enemy_fleet])
     model = WorldModel.from_world(world)
-    # Verify ledger placed the enemy fleet at src.
     assert any(owner == 1 for (_eta, owner, _ships)
                in model.ledger.get(0, [])), (
         f"test setup broken — enemy fleet not predicted at src; "
@@ -143,9 +143,20 @@ def test_max_safe_launch_floor_caps_enumerated_sizes():
     floor = max_safe_launch_now(src, world, model, me=0)
     assert floor == 0, f"expected floor=0 under threat; got {floor}"
 
-    sizes = enumerate_ship_counts(src, tgt, model, omega=0.0, me=0, world=world)
-    assert sizes == [] or all(s <= floor for s in sizes), (
-        f"enumerate must respect garrison floor {floor}; saw {sizes}"
+    # Floor off (default) — enumerate still emits full budget.
+    monkeypatch.delenv("BASELINE_GARRISON_FLOOR", raising=False)
+    sizes_off = enumerate_ship_counts(src, tgt, model, omega=0.0, me=0, world=world)
+    assert sizes_off, (
+        "with floor disabled, enumerate should still emit candidates "
+        "from src's full budget"
+    )
+
+    # Floor on — enumerate respects the 0-cap.
+    monkeypatch.setenv("BASELINE_GARRISON_FLOOR", "1")
+    sizes_on = enumerate_ship_counts(src, tgt, model, omega=0.0, me=0, world=world)
+    assert sizes_on == [] or all(s <= floor for s in sizes_on), (
+        f"with floor enabled, enumerate must respect floor {floor}; "
+        f"saw {sizes_on}"
     )
 
 
