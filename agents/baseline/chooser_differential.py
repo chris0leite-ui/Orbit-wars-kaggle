@@ -246,6 +246,22 @@ def choose_differential(snap_base, prerank, baseline_favors,
     if not prerank:
         return []
 
+    # Slice 8c: filter wait_N > 0 before scoring. The differential's
+    # closed-form Δ-favor rewards longer wait plans (more production
+    # accrues at the leaf) but the chooser's emit logic only fires
+    # wait_N == 0. Without this filter, high-Δ wait plans dominate
+    # the per-source ranking, lock the source, emit nothing — and
+    # the source idles forever. Treating differential as fire-now
+    # only: wait plans are handled implicitly by the proposer
+    # re-emitting fire-now candidates once the source accumulates
+    # enough ships naturally.
+    # See audit/2026-05-20-slice8-differential-validation.md for the
+    # diagnosis (single-game introspect showed avg 0.75 emits/turn
+    # under wait-N pollution; trajectory baseline at ~1.5/turn).
+    prerank = [c for c in prerank if int(c[7]) == 0]
+    if not prerank:
+        return []
+
     scored: list = []
     for c in prerank:
         cheap_delta, src, tgt, ships, angle, eta, horizon_hint, wait_N = c

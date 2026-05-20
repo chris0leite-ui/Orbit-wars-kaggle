@@ -204,3 +204,40 @@ def test_choose_differential_one_per_target():
         None, [cand_a, cand_b], None, 0, 2, 600.0, 25, 40, 0.99, world, model,
     )
     assert len(moves) == 1
+
+
+# ---------------------------------------------------------------------------
+# Slice 8c — wait_N filter
+# ---------------------------------------------------------------------------
+
+
+def test_choose_differential_filters_wait_N_candidates():
+    """Slice 8c: wait_N > 0 candidates are dropped before scoring.
+    A fire-now candidate from the same source emits; the wait variant
+    contributes nothing to the emit set.
+    """
+    src = _planet(0, 0, 10.0, 50.0, ships=120, production=2)
+    tgt = _planet(1, -1, 30.0, 50.0, ships=5, production=3)
+    obs, world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    cand_fire = _candidate(src, tgt, cheap_delta=1.0, ships=50, eta=4, wait_N=0)
+    cand_wait = _candidate(src, tgt, cheap_delta=2.0, ships=80, eta=4, wait_N=5)
+    moves = choose_differential(
+        None, [cand_fire, cand_wait], None, 0, 2, 600.0, 25, 40, 0.99, world, model,
+    )
+    # Fire-now wins because wait variant is filtered out.
+    assert len(moves) == 1
+    assert int(moves[0][2]) == 50  # ships count of cand_fire, not cand_wait
+
+
+def test_choose_differential_returns_empty_when_only_wait_candidates():
+    """All-wait prerank → empty emit (filter drops everything)."""
+    src = _planet(0, 0, 10.0, 50.0, ships=120, production=2)
+    tgt = _planet(1, -1, 30.0, 50.0, ships=5, production=3)
+    obs, world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    cand_wait = _candidate(src, tgt, ships=80, eta=4, wait_N=5)
+    moves = choose_differential(
+        None, [cand_wait], None, 0, 2, 600.0, 25, 40, 0.99, world, model,
+    )
+    assert moves == []
