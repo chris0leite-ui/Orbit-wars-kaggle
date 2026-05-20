@@ -53,22 +53,36 @@ from lib.joint_solver.outcome_table import (
 # Constants (initial values; tunable via introspect)
 # ---------------------------------------------------------------------------
 
-T_END = 200                       # value horizon for production stream
+# Game horizon. PRINCIPLED VALUE: 500. The Orbit Wars episode ends at step 500
+# (per the env: `lib/fast_sim.DEFAULT_CONFIG['episodeSteps']`); production
+# accrued through that tick is real game-end ship count. Earlier values
+# (T_END=200) were arbitrary clipping to keep "forecasts speculative" —
+# the right answer is to model the actual game.
+T_END = 500
 # Weight on opp production in the objective.
-#
-# Phase 5E (2026-05-20): set to 0.0. With accurate opp projection (Phase
-# 5D) and α=1.0, the LP correctly identifies contested captures as
-# net-zero EV ("opp recaptures, value≈0") → idles 75% of mid-game turns
-# (Phase 5D seed-42 deep dive). Baseline's "spray small captures
-# everywhere" strategy wins on aggregate even with sub-optimal per-launch
-# ROI because each brief ownership yields production. Setting α=0
-# valued my-production-only (ignore opp-side production), restoring
-# capture-greedy behavior.
-ALPHA_OPP_PENALTY = 0.0
-SHIP_COST = 0.01                  # tiny tie-breaker on ship spend
+# PRINCIPLED VALUE: 1.0. The game's win condition is `my_ships - opp_ships`
+# at T_END. Opp's accumulated production directly subtracts from our margin.
+# Anything less than 1.0 is arbitrary.
+ALPHA_OPP_PENALTY = 1.0
+# Ship cost coefficient in the objective. Phase 5G (2026-05-20): bumped
+# from 0.01 to 1.0 after the critique diagnosis: enumerate_ship_counts
+# in agents/baseline/proposer.py emits 3 ship-count variants per (src,
+# tgt) — [capture_size, 2×capture_size, full_budget] — all with
+# IDENTICAL cheap_delta (per-candidate value doesn't depend on ship
+# count for a successful capture) AND identical outcome_table value
+# (same prod_stream regardless of ships). At SHIP_COST=0.01, the
+# penalty (42 ships × 0.01 = 0.42) is dwarfed by value (~180), and
+# the LP picks the LARGEST variant by tie-break. Result: each source
+# drains in ONE fire then is idle for many turns. SHIP_COST=1.0
+# makes the per-ship penalty meaningful: 42-ship variant costs 42 vs
+# 9-ship variant costs 9, breaking the tie toward efficient launches.
+SHIP_COST = 1.0
 MAX_CONTESTERS_PER_PLANET = MAX_ENUMERATION_BITS  # 2^6 = 64 subsets per planet
 TIME_LIMIT_SECONDS = 0.3          # MILP wallclock cap
-DEFENDER_GUARD = 5                # reserve ships per source (subtracted ONCE from budget)
+# PRINCIPLED VALUE: 0. The LP's objective already penalizes losing a planet
+# (opp's prod_stream gets credit when ownership flips); over-draining a
+# source is naturally bad math, no need for an arbitrary reservation.
+DEFENDER_GUARD = 0
 
 
 # ---------------------------------------------------------------------------
