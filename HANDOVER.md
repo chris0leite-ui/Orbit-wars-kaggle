@@ -1,178 +1,255 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-19 (end-of-session ROI-pivot wrap) by
-> `claude/audit-workflow-performance-btjeK`.
-> **Production agent unchanged on the ladder.** Default chooser
-> remains `"trajectory"` (`agents/baseline/main.py:38`); the ROI
-> pivot is on the dev branch only.
+> Last written: 2026-05-20 PM by `claude/strategy-framework-design-OyoYR-rebased`.
+> **Production agent unchanged on the Kaggle ladder.** Default chooser
+> remains `"trajectory"` (`agents/baseline/main.py:38`); the analytical
+> work lives on this branch only.
 >
-> This session attempted to invert the architecture — closed-form
-> ROI prior + thin opp-modifier posterior, replacing the trajectory
-> rollout. Phases 1-5, Tier 1, Tier 2 all landed; the chooser passes
-> 13/14 synthetic oracles. **G3 panel A/B failed catastrophically
-> (0/32 vs v7_0, v4_planner, v3.5.1; 8/32 vs the trajectory bundle).**
-> Three iteration rounds confirmed closed-form ROI has a structural
-> ceiling: closed-form vuln/gross math can't track 2P planet-control
-> dynamics, and Tier 2's surrogate opp (`lite_greedy_policy`)
-> doesn't match real ladder opponents.
+> This session executed the plan at
+> `/root/.claude/plans/do-the-fixes-with-tingly-finch.md` — three
+> correctness fixes (F1+F2+F5) + 15 permanent tests + an exact emit-
+> outcome diagnostic. All bugs closed. **Strategic loss vs trajectory
+> baseline persists (0/4 n=4 A/B)** — the architectural MPC-drift bind
+> documented in Phase 5B remains the open axis.
 
-## Live state (snapshot 2026-05-19 AM; drifts)
+## TL;DR
 
-| Submission | μ | Role |
+- Trajectory plumbing: **100% target landing, 0 sun, 0 OOB** across 4
+  seeds × full games (324 emissions total).
+- The PI claim "ships do not hit targets" is **closed**.
+- The PI claim "modeling is bad" is **half-closed**: per-emission
+  modeling is correct; the per-turn LP's strategic modeling (wait_N
+  treadmill, MPC drift) is the remaining failure mode.
+- Analytical **beats ROI cleanly** (seed 42: win, 295 steps, 37%
+  emit rate). It loses to trajectory baseline (seed 42: loss, 141
+  steps, 26% emit rate).
+- Rule 37 axis-cap honoured: no further analytical-substrate
+  iteration this session.
+
+## Live ladder state (snapshot 2026-05-20 PM; refresh via Kaggle CLI)
+
+| Submission | μ snapshot | Role |
 |---|---:|---|
-| **52784853** | **1121.2** | Rolling pair (most recent) — PV off + clean math fixes |
-| **52766596** | **1118.8** | Rolling pair (older) — joint v3 |
-| 52754310 | 1143.7 | **EVICTED** (trajectory champion) |
-| 52744856 | 1149.2 | Evicted (older) |
+| **52857903** | PENDING | Rolling pair (newest) — analytical + wait-N traj fix + endgame-idle removal |
+| **52854094** | 806.4 | Rolling pair (older) — analytical Phase 5 initial |
+| 52845073 | 1051.3 | Evicted (baseline Phase 1) |
+| 52827111 | 1122.0 | Evicted (baseline comet-aim + reactor) |
+| 52811320 | 1135.1 | Evicted (baseline hold-feasibility solo) |
+| 52784853 | 1130.4 | Evicted (baseline PV-off + math fixes) |
+| 52754310 | 1143.7 | Evicted (trajectory champion, long ago) |
 
-Floor for push decisions: **1118.8**. `state/current.md` was corrected
-this session — earlier sessions had claimed the trajectory champion was
-still in the pair; it isn't.
+**Floor for push decisions: 806.4** — the rolling pair holds no
+trajectory floor. Daily submissions 2026-05-20: 3 used, 2 remaining.
 
-Daily submission budget: 5/19 used **0**. 5 unused.
+## This session's commits
 
-## Where to start
+```
+fbc62fe analytical: trajectory-validate migrations + opp-projection wait_N + mpc silent-idle close
+```
 
-**Read `audit/2026-05-19-next-session-plan.md` first** — the structured
-plan for picking up cleanly. Summary:
+1 commit, on `claude/strategy-framework-design-OyoYR-rebased`. Pushed.
+Branch is ahead 156 / behind 21 of origin/main.
 
-- **Phase A (5 min)**: verify default chooser is still trajectory,
-  refresh ladder snapshot.
-- **Phase B (60-90 min, PRIMARY work)**: validate the hold-feasibility
-  filter as a solo lift. It's been default-on since 2026-05-18 PM but
-  never the sole change in a submission. A/B `with_holdfeas` vs
-  `without_holdfeas` at n=64. If it lifts, push.
-- **Phase C (stretch, 30-60 min)**: run the 14 oracle suite under
-  trajectory chooser; map which fail and which patterns to backport.
-- **Phase D (defer)**: decide ROI's fate (recommend: park as opt-in).
+## What landed (F1+F2+F5)
 
-## What's preserved on the dev branch
+### F1 — `lib/joint_solver/opp_projection.py`
+At `tick_offset > 0`, source/target positions are advanced via
+`predict_relative` before dx/dy/angle computation, and `wait_N=
+tick_offset` is passed to `predict_fleet_fate`. Same wait_N pattern
+`aac3c1e` introduced for our launches; previously the opp threat
+ledger was modelled with stale (step_now) geometry.
 
-Branch `claude/audit-workflow-performance-btjeK`, ahead 100+ commits:
+### F2 — `lib/joint_solver/mpc.py:189-221`
+Opening dispatch refactored to three cases:
+1. Schedule has fire_step==step_now entries → emit those.
+2. Schedule non-empty but no fire-now entry → planner's intentional
+   wait, return [].
+3. Schedule empty → fall through to Phase-4 LP.
 
-- **`agents/baseline/chooser_roi.py`** (~750 LOC) — closed-form ROI
-  chooser, opt-in via `BASELINE_CHOOSER=roi`. Includes:
-  - Solo ROI with margin × production × PV-held + endgame bonus
-  - N-way coalition enumeration (`_best_coalition_for_target`)
-  - Source-vulnerability loss (closed-form opp counter model)
-  - Defensive coalition post-pass (B reinforces exposed A)
-  - Tier 2 forward-sim posterior (rollout top-K via fast_sim)
-- **`tests/test_planner_oracles.py`** — 14 oracle scenarios; 13 pass
-  under ROI. Tier 2's rollout broke `solo_capture_but_loses_source`
-  (joint-rollout support is a bigger refactor).
-- **Phase 1-5 + Tier 1 + Tier 2 commits** (`1967743` is the tip).
-  All implementation is honest and principled in isolation — the
-  failure mode is architectural, not bug-driven.
+Closes the silent-idle bug where `n_vars > 0 or schedule` kept us
+in opening mode emitting nothing when MILP rejected all candidates.
+
+### F5 — `agents/baseline/migration_solver.py`
+`propose_migrations` now validates trajectory via `predict_fleet_fate`.
+Migrations were concatenated AFTER the proposer's trajectory filter
+in `mpc.py` / `main.py`, slipping past it. The trajectory baseline's
+rollout incidentally penalised sun-bound migrations via low leaf
+value; the analytical LP doesn't roll out, so the bug surfaced as
+the seed=42 fid=65 sun loss.
+
+### Observability — `MpcDiagnostics.emitted_targets`
+Per emitted move: `{src_id, tgt_id, ships, angle, wait_N}`. Used by
+`tests/test_emit_accuracy.py` to verify every emission lands on its
+intended target via `predict_fleet_fate`.
+
+## Validation infrastructure (permanent, reusable)
+
+| File | Purpose | Tests |
+|---|---|---:|
+| `tests/test_trajectory_wait_N.py` | wait_N propagation regression guard | 4 |
+| `tests/test_opp_projection_wait_N.py` | opp projection wait_N pin (monkeypatch) | 3 |
+| `tests/test_mpc_silent_idle.py` | mpc opening dispatch 3-case pin | 3 |
+| `tests/test_emit_accuracy.py` | drives real kaggle game, asserts every emit lands | 5 |
+| `scripts/check_fleet_outcomes.py` | EXACT emit-outcome diagnostic via predict_fleet_fate | n/a |
+
+**Use the diagnostic before any A/B**:
+```
+python -m scripts.check_fleet_outcomes --seed <S>
+```
+Or with ROI as opp:
+```
+BASELINE_CHOOSER=roi python -m scripts.check_fleet_outcomes --seed <S>
+```
 
 ## Verified findings (will hold next session)
 
-1. **`fast.py bench` "PASS" is wallclock only, not focal-win.** Use
-   `fast.py eval` for actual A/B.
-2. **Bundler can't handle multi-line `from lib.X import (...)`.**
-   Single-line imports mandatory; documented at `main.py:71-76`.
-3. **`lib/fast_sim.py::delta_us_minus_them` misses eliminations.**
-   At game-end, ship_totals is `{me: N}` and reads as just N — same
-   as idle-but-growing baseline. Tier 2 needed `_terminal_value` that
-   returns ±1e6 on `snap.fake_env.done`. Pattern is in
-   `chooser_roi.py::_terminal_value` for future reuse.
-4. **`lite_greedy_policy` as surrogate opp doesn't generalise.**
-   v7_0, v4_planner, v3.5.1 each play differently. Any rollout-based
-   opp model needs the actual opponent's policy class, not a generic
-   greedy.
-5. **Rolling pair is rolling LAST 2** (literal). Don't trust state
-   files claiming otherwise. Verify via `kaggle competitions
-   submissions orbit-wars` every session start.
+1. **Closed-form primitives are bit-exact.** `predict_fleet_fate`,
+   `swept_pair_hit`, `predict_garrison_at`, `aim_orbiting`,
+   `combat.resolve_arrivals`, `outcome_table.enumerate_outcomes` —
+   all enforced by parity tests with zero tolerance. Trust them;
+   **do not write heuristics where these primitives apply** (PI
+   directive 2026-05-20 PM).
+
+2. **The "ships don't hit targets" symptom is closed.** Post-fix:
+   324 emissions across 4 seeds, 100% target, 0 sun, 0 OOB. The
+   acceptance bar is **zero** sun/OOB losses, not "low".
+
+3. **Analytical beats ROI, loses to trajectory.** vs ROI on seed
+   42: win, 137 emissions, 295 game-length, 37% emit rate. vs
+   trajectory: loss, 43 emissions, 141 game-length, 26% emit rate.
+   The remaining gap is specifically against rollout-based
+   opponents.
+
+4. **Architectural failure mode**: per-turn LP re-derivation makes
+   wait_N>0 plans evaporate. 58% of firing turns vs trajectory had
+   wait_N>0 columns that never emit; agent idles ~74% of turns
+   mid-game. Late-game (steps 100+): sources depleted, no positive
+   columns, agent eliminated.
 
 ## What NOT to do next session
 
-- **Don't push the ROI bundle to the ladder.** It loses 0/N vs v7_0.
-- **Don't flip the chooser default to `"roi"`.** Production stability.
-- **Don't delete `chooser_roi.py` or the new oracle additions.** The
-  defensive-coalition / coalition-ROI / oracle-scenario work is useful
-  research output worth keeping for now.
-- **Don't backport ROI's defensive coalition to trajectory** without
-  a session-budget decision — it touches the joint mechanism and is a
-  bigger change than a "small safe ship."
+- Don't keep iterating on the analytical-substrate axis with
+  per-knob value tweaks. Rule 37 binds; the prior postmortem
+  (`knowledge-base/thoughts/2026-05-20-analytical-vs-rollout-architectural-bind.md`)
+  named this pattern explicitly.
+- Don't write position-match heuristics for fleet-outcome
+  classification. Use `predict_fleet_fate` (PI directive).
+- Don't run A/B before single-game introspect (Rule 41).
+- Don't run A/B without first running
+  `scripts/check_fleet_outcomes.py` to confirm zero sun/OOB
+  emissions (PI directive 2026-05-20 PM).
+- Don't push to the ladder without PI sign-off (Rule 1).
+- Don't flip `BASELINE_CHOOSER` default at `agents/baseline/main.py:38`.
 
-## This session's commits (`8cbc9d1` → `1967743`)
+## Open axes (PI to choose direction)
 
-```
-1967743 chooser_roi: Tier 2 rollout posterior — implemented but doesn't fix G3
-dc6a264 chooser_roi: reinforce scoring + contested neutrals + transient vuln
-f355143 chooser_roi: partial fixes from G3 diagnosis (not yet competitive)
-5594371 chooser_roi: split multi-line lib.scoring import (bundler-safe)
-9589954 chooser_roi: Tier 1B — wallclock budget on coalition enumeration
-20ca470 chooser_roi: Tier 1A — defensive coalition (B reinforces exposed A)
-2187fb2 housekeeping: correct rolling-pair + drop dead import
-a926e7c chooser_roi: Phase 5 — ship-count enumeration + xfail conversions
-5cdb08d chooser_roi: Phase 4 — source vulnerability + endgame bonus
-19e97a6 chooser_roi: Phase 3 — N-way coalition (no rollout)
-a8c40f1 chooser_roi: Phase 2 — solo_roi + greedy emit
-7ce6de7 chooser_roi: Phase 1 — env-var dispatch + stub
-```
+### Option B — Refactor substrate (3-5 sessions)
+Keep closed-form primitives. Replace the per-turn LP-as-substrate
+with a deeper game-theoretic solver:
+- depth-2 minimax over MILP children, OR
+- saddle-point Stackelberg-k (converges fast for finite zero-sum).
+- Stronger opp model (mirror-trajectory, or learned best-response).
 
-11 commits, all on `claude/audit-workflow-performance-btjeK`. Pushed.
+Pros: keeps the analytical architecture; mathematically principled.
+Cons: longest path; opp-model gap is real (lite_greedy ≠ ladder
+opps).
 
-## Rule reminders
+### Option C — Rebuild on trajectory (1-2 sessions)
+Use analytical primitives as INPUT signals into the trajectory
+chooser, not as substrate:
+- Inject `is_winning_state` + `smallest_winning_portfolio` as
+  leaf-eval bonuses.
+- Inject `outcome_table` joint-subset values as score adjustments.
+- Keep trajectory's rollout as the decision substrate (~μ=1140
+  proven).
 
-- **Rule 1**: submissions PI-approved, single-shot, no retry loops.
-- **Rule 12**: rolling pair is literal-last-2; verify via kaggle CLI.
-- **Rule 32**: session-start git fetch is REQUIRED. Origin/main has
-  diverged further (archetype-strategies line); this branch stays
-  on the trajectory + ROI track per PI directive.
-- **Rule 36**: session-end second-brain update + postmortem. Plan file
-  + this HANDOVER cover the doc side; a postmortem note at
-  `audit/2026-05-19-postmortem-roi-pivot-failure.md` covers the
-  retrospective side.
-- **Rule 40**: prefer modeling-correctness over restriction-tuning.
-  The hold-feasibility filter (Phase B's primary target) IS a
-  restriction. The session's confirmation is that ladder validation is
-  the only real test of whether a closed-form restriction generalises.
+Pros: bounded by trajectory's known μ (1140), fastest path to
+ladder lift. Cons: caps strategic upside at trajectory's ceiling.
 
-## Primitives for closed-form calculations vs exact simulation
+### Option D — Hybrid (option B opening + option C mid-game)
+The opening MILP works (Phase 5A audit: 4 captures / 0 losses on
+seed 42 in steps 0-30). Keep it. Replace post-opening LP with the
+trajectory chooser. Bounded compromise.
 
-Pointers only — two distinct tiers, surface on sibling branches:
+## Rule reminders + new directives
 
-**For closed-form calculations (no simulation):**
+- **Rule 1**: submissions are single-shot, PI-approved.
+- **Rule 12** (Orbit Wars caveat): rolling pair is LAST 2; verify
+  via `kaggle competitions submissions orbit-wars`.
+- **Rule 32**: session-start git fetch is required.
+- **Rule 37**: 3-consecutive-axis-failure cap binds; this session
+  honoured it by stopping analytical-substrate work after A/B.
+- **Rule 38**: fix-verification reproduces failure state — L1
+  tests pin each bug's failure state before fix.
+- **Rule 39**: no Claude session URLs in commits / PR bodies.
+- **Rule 40**: prefer modeling-correctness over restriction-
+  tuning.
+- **Rule 41**: inspect first, small A/B second, big A/B last.
+  **This session inverted ordering once** — A/B before
+  introspect; corrected mid-session. Next session: introspect
+  always before A/B.
 
-- `origin/claude/ml-competition-strategy-PFhzM` — `lib/trajectory_layer.py`
-  is a sparse closed-form O(1) "where is every entity at relative turn t"
-  oracle. Parity-pinned to `lib/game/interpreter.py` (test
-  `tests/test_trajectory_layer_positions.py`). Encodes the env's
-  rotate-before-step off-by-one once, in one place. Use this for any
-  positional / arrival-time / per-tick geometry query that must be
-  analytical.
+**New PI directives (2026-05-20 PM)** — promote candidates:
 
-- `origin/claude/precision-physics-engine-ymJkA` — `agents/precision/sim.py`
-  has the closed-form physics primitives (`segment_oob`,
-  `segment_crosses_sun`, `swept_pair_hit`, `predict_planet_pos`,
-  `planet_sweep_segment`, `combat_resolve`, `ships_for_speed`);
-  `agents/precision/intercept.py` has
-  `find_shot(src, tgt, ship_count, world) -> Shot | None`, a
-  guaranteed-landing inverse-intercept solver. End-to-end parity test at
-  `agents/precision/tests/test_intercept_landing.py` — every emitted
-  Shot lands in the kaggle env across many seeds and (src, tgt) pairs.
+- **Candidate Rule 44**: "Zero is the bar for OOB and sun losses."
+  Even one sun/OOB-bound emission is a bug. Add
+  `scripts/check_fleet_outcomes.py` to the pre-A/B checklist.
+- **Candidate Rule 45**: "No heuristics where exact primitives
+  exist." `predict_fleet_fate`, `swept_pair_hit`,
+  `predict_garrison_at` etc. are bit-exact; reuse them. Don't
+  write position-match approximators or tolerance fudges.
 
-**For exact simulation (when a query truly needs a forward step):**
+Both pending; add to `.claude/skills/kaggle-comp/improvements.md`
+in a future wrap-up session.
 
-- `lib/fast_sim.py` — already on this branch. Thin wrapper over
-  `lib/game/interpreter.py` (byte-exact pure-Python port of the kaggle
-  engine; parity enforced by `tests/test_game_parity.py` with zero
-  tolerance). Entry points: `step(snap, actions, in_place=False)` for
-  one atomic tick, `rollout(snap, K, policies, in_place=False)` for
-  multi-tick lookahead, `from_obs(obs, configuration, episode_seed)` to
-  construct the Snapshot, `clone(snap)` to branch the search tree.
+## Critical files (reference)
 
-## Pointers (new this session)
+### Modified this session
+- `lib/joint_solver/opp_projection.py` — F1 (~25 LOC).
+- `lib/joint_solver/mpc.py` — F2 (~15 LOC) + emitted_targets field.
+- `agents/baseline/migration_solver.py` — F5 (~15 LOC + import).
 
-- `audit/2026-05-19-next-session-plan.md` — **THE plan to read first.**
-- `audit/2026-05-19-postmortem-roi-pivot-failure.md` — postmortem.
-- `agents/baseline/chooser_roi.py` — research code, opt-in via env var.
-- `tests/test_planner_oracles.py` — 4 new oracles (no_launch_past_horizon,
-  roi_picks_higher_production, n_way_coalition_three_sources,
-  hold_feasibility variants).
-- `state/current.md` — rolling-pair record corrected; μ snapshots
-  refreshed.
-- `/root/.claude/plans/okay-we-can-do-elegant-lampson.md` — the original
-  ROI pivot plan from this session's planning phase. Useful context for
-  any future revival of the ROI direction.
+### Read-only verification
+- `lib/trajectory.py:66` — `predict_fleet_fate(... wait_N=0)`.
+- `agents/baseline/proposer.py:53-82` — `aim_and_eta` (already
+  wait_N-correct).
+- `lib/joint_solver/opening_planner.py:303-306` — already wait_N-
+  correct.
+
+### Where the analytical architecture lives
+- `agents/analytical/main.py` — entry point.
+- `lib/joint_solver/mpc.py` — orchestration.
+- `lib/joint_solver/opening_planner.py` — opening MILP.
+- `lib/joint_solver/lp_outcome.py` — post-opening outcome-aware LP.
+- `lib/joint_solver/opp_projection.py` — opp threat projection.
+- `lib/joint_solver/value.py` — closed-form value function.
+- `lib/joint_solver/outcome_table.py` — 2^k subset enumerator.
+- `lib/joint_solver/predicate.py` + `portfolio.py` — endgame
+  win-set logic.
+
+## How to start next session
+
+1. **Read this file first.** Then `state/current.md`.
+2. Session-start hook auto-fetches `origin/main` and reports diff.
+3. Refresh ladder snapshot:
+   `kaggle competitions submissions orbit-wars`. Note the live μ
+   for 52857903 (PENDING) and 52854094 (806.4).
+4. Branch off `claude/strategy-framework-design-OyoYR-rebased` at
+   `fbc62fe` onto a new branch (the auto-spawned `claude/<slug>-XXXXX`).
+5. Confirm option (B / C / D) with PI before deep work.
+6. Single-game introspect BEFORE any A/B. Use
+   `scripts/check_fleet_outcomes.py` to verify zero sun/OOB.
+7. PI approval required before any submission.
+
+## Submission strategy (open PI decision)
+
+Two paths for the next submission:
+- **Restore floor**: bundle + push trajectory baseline. Evicts
+  52854094 (μ=806). Rolling pair becomes `{trajectory ~μ1120,
+  52857903 PENDING}`. Cost: 1 of 2 remaining slots today (if
+  done now) or fresh budget tomorrow.
+- **Single push** of the next-session candidate after Option
+  B/C/D delivers. Bypasses the floor restoration.
+
+Recommend restoring floor before any speculative push, but defer
+the call to PI in the fresh session.
