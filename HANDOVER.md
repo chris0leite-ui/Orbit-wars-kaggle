@@ -1,7 +1,10 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-20 by `claude/review-skills-improvements-moKOR`
-> (cross-branch consolidation pass).
+> Last written: 2026-05-20 PM by `claude/review-skills-improvements-moKOR`
+> (n=8 iteration loop attempt; no candidate found, structural-change
+> pivot queued).
+> Prior PM session on this branch (cross-branch consolidation pass)
+> notes preserved under "What just landed (2026-05-20, this session)".
 > Prior writers (per-branch, now superseded): `kaggle-baseline-strategy-lO4mm`,
 > `audit-workflow-performance-btjeK`, `strategy-framework-design-OyoYR-rebased`,
 > `ml-competition-strategy-PFhzM`, `analyze-game-strategy-EpMVP`.
@@ -29,6 +32,136 @@
   origin of new Rule 42 (pre-submit cross-branch coordination gate).
 - **Daily submission budget:** 5/day. 5/20 used: 2. 3 slots remain.
 - **Floor-at-risk flag:** **TRUE** — rolling pair is 320 μ below team peak.
+
+## Day-N PM review-skills-improvements-moKOR (2026-05-20 evening)
+
+**Session shape:** n=8-capped A/B iteration loop attempting to beat sub
+52827111 ("comet-aim + reactor-aware", μ=1122). PI directive: no
+submission until a candidate shows significant lift at n=8 (gate
+≥14/16 = Wilson-lo 0.524). Result: no candidate found. Pivot
+direction surfaced at end of session.
+
+### What landed (code + docs)
+
+- **Setup (3 commits + bundler fix):** targeted `git checkout` of sub
+  52827111's mechanism source from `claude/audit-workflow-performance-btjeK`
+  onto this branch (`d642593`). Imported files:
+  `agents/baseline/{proposer,chooser,value,main,chooser_trajectory,chooser_roi}.py`,
+  `lib/{world_model,trajectory,aim,opp_model,value_heads}.py`,
+  matching tests, and `scripts/bundle_agent.py` (btjeK upgrade with
+  parity-gate cache).
+  - Bundler indent-preservation fix (`9a45fea`): bundler was breaking
+    function-local intra-package imports by hoisting alias rebinds to
+    column 0 inside function bodies → IndentationError. Fixed at
+    `scripts/bundle_agent.py:268-275`.
+  - `.gitignore` for `audit/bundle-parity-cache.json` (`3f123c3`).
+- **Pinned baseline:** `submissions/iter_baseline.py` = clean re-build
+  of the deployed sub-52827111 bundle (parity-gate green).
+- **Iter 1 audit:** `audit/2026-05-21-n8-iter1-reactor-ablation.md`
+  (filename off by one day vs UTC; content correct). Documents the
+  parallel-vs-serial discrepancy that invalidated the original Iter 1
+  diagnostic.
+
+### Load-bearing findings
+
+1. **CPU-contention contaminates n=8 A/Bs.** Three parallel `fast.py
+   eval` instances (24 worker processes) produced focal p95=1248ms (over
+   the 1000ms env actTimeout). Variant 1b reported 12/16 (75%) under
+   contention; same bundle re-tested serially gave **6/16 (37.5%)**.
+   Variant 1a similarly fell from 11/16 to 7/16 serial. **Mandatory
+   convention going forward: all n=8 A/Bs run serially, no parallel
+   fast.py invocations.**
+
+2. **No env-var ablation produces ≥14/16 lift over the deployed
+   baseline.** Four serial n=8 runs (all clean wallclock):
+
+   | Variant | Δ vs deployed | Wins | Wlo |
+   |---|---|---:|---:|
+   | A1 — comet-aim solo (reactor-aware OFF) | 7/16 (43.8%) | 0.231 |
+   | A2 — Part B (reactor candidates) OFF | 7/16 (43.8%) | 0.231 |
+   | A3 — BASELINE_COMET_AIM=off | 9/16 (56.2%) | 0.332 |
+   | A4 | killed before completion (PI directive — see #3) |
+
+   Three runs all landed at 7/16, A3 at 9/16. All INCONCLUSIVE; no
+   candidate cleared the gate.
+
+3. **PI verdict mid-loop ("your tests are meaningless, we need a big
+   lift"):** env-var ablations tap out at ±5pp which is invisible at
+   n=8 (Wilson CI ~±20pp). To produce a ≥14/16 lift over a near-optimal
+   bundle requires a STRUCTURAL change, not a knob flip. Loop halted
+   at A3 result.
+
+4. **Structural-change candidates that are NOT yet new code on this
+   branch:**
+   - **`used_tgts` lock removal in `chooser_trajectory.py:898`.**
+     Currently blocks multi-source-same-target SOLO emits even when
+     JOINT is on; JOINT only fires for pre-paired candidates (capped
+     JOINT_TOP_K_PER_TARGET=3, JOINT_MAX_PAIRS=20).
+   - **JOINT expansion** — raise the per-target / global pair caps by
+     5-10×; remove the lock-checks at `chooser_trajectory.py:885-888`.
+   - **Composite value head + A2 restoration** (the μ=1149 team-peak
+     architecture). `value.py` has `BASELINE_VALUE_HEAD=composite` opt-in;
+     A2 4P-weakness logic also imported.
+   - **New chooser** (MCTS / beam search over candidate set) — 1+
+     day build.
+   - **Increase N_VALIDATE / WALLCLOCK budget** — squeezes the existing
+     chooser only marginally; unlikely to be a "big lift."
+
+5. **Confirmed already-implemented (not new work):** `BASELINE_LEDGER=on`
+   (wait-N inter-turn commitment memory, the original Iter 4 idea —
+   already in chooser_trajectory.py lines 904-915, gated by env var
+   defaulting to "off"). `BASELINE_JOINT=1` multi-source coalitions
+   (already ON by default, just capped low).
+
+### Verified gaps in the current chooser
+
+- **`agents/baseline/proposer.py:926-928`**: wait_N>0 candidates bypass
+  the trajectory filter (`predict_fleet_fate` returns wrong results
+  because it doesn't pre-rotate src/tgt to launch time). This is real
+  H44 surface: filter has zero coverage for the multi-wait grid.
+  Iter 3 (planned, not yet implemented) would extend
+  `predict_fleet_fate` with a `launch_step` arg.
+- **`predict_fleet_fate` does NOT check enemy-fleet intercepts.** This
+  is correct behavior — game rules confirm fleet-vs-fleet collision
+  doesn't exist. Original Iter 3 framing ("add enemy fleet ray-cast")
+  was based on a misread of the game spec.
+
+### Falsified or weakened this session
+
+- **"Part A (cost-parity filter) is the regressor."** Iter 1's
+  parallel-run 12/16 was CPU-contention noise; clean serial gives
+  parity-or-loss (6/16). Cannot blame Part A based on this data.
+- **"Comet-aim is the key lift in sub 52827111."** A3 turned comet-aim
+  OFF and got 9/16 (better than 7/16 from other ablations).
+  Directional signal that comet-aim itself may be neutral-or-mildly-
+  harmful, not the value-add of the push.
+- **Floor-recovery via rebundle of `iter_baseline.py` (== sub 52827111).**
+  PI rejected: "we can learn nothing from that." Path is OFF.
+
+## Next-session first action (this session's pivot)
+
+**Priority 1 — Pick one structural change from the list above and ship
+it (~few hundred LOC, single axis).** Recommend `used_tgts` lock
+removal + JOINT cap expansion in `chooser_trajectory.py` as the
+cheapest structural-shape change: combat rule 1 (same-owner same-step
+arrivals stack) is well-understood; the existing lock literally
+forbids the most powerful combat pattern. Risk: Plan agent flagged
+this as needing n=32 minimum (prior asymmetric chooser attempts
+0/32). Run n=8 serial first; if directional, escalate to n=32.
+
+**Priority 2 — if Priority 1 doesn't clear:** Composite value head +
+A2 restoration (μ=1149 architecture). Code already imported; needs
+the right env-var combo + bundle bake. Significant ladder evidence
+(sub 52744856 live μ=1149).
+
+**Priority 3 — out-of-session-scope:** Konbu17 shot-validator MLP
+(~1 week build, but the only ML attack with empirical precedent
++19pp panel lift).
+
+**Reading order for the next agent:** this section first, then
+`audit/2026-05-21-n8-iter1-reactor-ablation.md`, then
+`/root/.claude/plans/go-effervescent-mochi.md` for the full
+iteration ladder context.
 
 ## What just landed (2026-05-20, this session)
 
@@ -118,6 +251,8 @@ the underlying physics.
 - `audit/2026-05-21-h44-phase1-CORRECTED.md` (btjeK) — physics-failure analysis.
 - `audit/2026-05-20-postmortem-strategy-framework-design-OyoYR-rebased.md` — analytical axis closure.
 - `audit/2026-05-19-postmortem-PFhzM-physics-gate-and-mvp-confirmation.md` — Track-C verdict.
+- `audit/2026-05-21-n8-iter1-reactor-ablation.md` (this branch, filename off by one UTC day) — Iter 1 ablation results + the parallel/serial contention finding.
+- `/root/.claude/plans/go-effervescent-mochi.md` — full iteration-loop plan including the structural-change pivot list.
 
 ## Rule reminders (most relevant this session)
 
