@@ -29,6 +29,7 @@ from lib.pipeline.pending_schedule import (
     prune_stale,
 )
 from lib.pipeline.types import CommittedMoves, DecisionResult, TurnContext
+from lib.trajectory import predict_fleet_fate
 
 
 def _game_id(ctx: TurnContext) -> int:
@@ -55,9 +56,45 @@ def commit_persistent(decision: DecisionResult, ctx: TurnContext) -> CommittedMo
 
     # 2. Decant pending fires due this turn.
     decanted = decant_due(my_id, game_id, step_now)
-    decanted_moves = [
-        [int(f.src_id), float(f.angle), int(f.ships)] for f in decanted
-    ]
+    # 2a. Revalidate each decanted fire against the CURRENT world. The
+    # angle/ships were committed at fire_step − wait_N with the world's
+    # then-state; by now planets have orbited and other fleets/comets
+    # may have moved. predict_fleet_fate(... wait_N=0) tells us whether
+    # the stored angle still lands on the intended target. If not, drop
+    # the fire — closes the seed-1 "no_target_resolved" regression
+    # observed in Phase C validation (5 of 67 emissions misfired).
+    decanted_moves: list = []
+    n_decant_revalidate_dropped = 0
+    for f in decanted:
+        src = ctx.world.planets_by_id.get(int(f.src_id))
+        tgt = ctx.world.planets_by_id.get(int(f.tgt_id))
+        if src is None or tgt is None:
+            n_decant_revalidate_dropped += 1
+            continue
+        # Source ownership: may have flipped since commit; prune_stale
+        # already handled this, but double-check here for safety.
+        if int(src.owner) != my_id:
+            n_decant_revalidate_dropped += 1
+            continue
+        # Source ship-feasibility against the LIVE garrison.
+        if int(src.ships) < int(f.ships):
+            n_decant_revalidate_dropped += 1
+            continue
+        try:
+            fate = predict_fleet_fate(
+                src, tgt, float(f.angle), int(f.ships), ctx.world, wait_N=0,
+            )
+        except Exception:
+            n_decant_revalidate_dropped += 1
+            continue
+        if fate is None or fate.outcome != "target":
+            n_decant_revalidate_dropped += 1
+            continue
+        if int(fate.hit_planet_id) != int(f.tgt_id):
+            # The trajectory hits some other planet now; not our intent.
+            n_decant_revalidate_dropped += 1
+            continue
+        decanted_moves.append([int(f.src_id), float(f.angle), int(f.ships)])
 
     # 3. LP's own wait_N=0 emissions this turn.
     lp_moves = list(decision.moves or [])
@@ -86,7 +123,9 @@ def commit_persistent(decision: DecisionResult, ctx: TurnContext) -> CommittedMo
     return CommittedMoves(
         moves=all_moves,
         persisted_state={
-            "n_decanted": len(decanted),
+            "n_decanted_due": len(decanted),
+            "n_decanted_emitted": len(decanted_moves),
+            "n_decant_revalidate_dropped": n_decant_revalidate_dropped,
             "n_new_pending": len(new_pending),
             "game_id": game_id,
         },

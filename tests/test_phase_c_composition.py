@@ -92,12 +92,20 @@ def _run_game_with_phase_c(seed: int, opp_path: str) -> tuple[list[dict], list[l
                         sum(1 for c in decision.fired_columns if int(c.wait_N) > 0)
                         if decision else 0
                     ),
-                    "n_decanted": (
-                        committed.persisted_state["n_decanted"]
+                    "n_decanted_due": (
+                        committed.persisted_state.get("n_decanted_due", 0)
+                        if committed and committed.persisted_state else 0
+                    ),
+                    "n_decanted_emitted": (
+                        committed.persisted_state.get("n_decanted_emitted", 0)
+                        if committed and committed.persisted_state else 0
+                    ),
+                    "n_decant_revalidate_dropped": (
+                        committed.persisted_state.get("n_decant_revalidate_dropped", 0)
                         if committed and committed.persisted_state else 0
                     ),
                     "n_new_pending": (
-                        committed.persisted_state["n_new_pending"]
+                        committed.persisted_state.get("n_new_pending", 0)
                         if committed and committed.persisted_state else 0
                     ),
                     "n_emitted_total": len(moves),
@@ -135,13 +143,17 @@ def test_phase_c_composition_runs_and_decants(seed: int):
     )
 
     # Invariant 2: persistence kicks in at least once.
-    total_decants = sum(r["n_decanted"] for r in active)
+    total_decants_due = sum(r["n_decanted_due"] for r in active)
+    total_decants_emitted = sum(r["n_decanted_emitted"] for r in active)
+    total_decants_dropped = sum(r["n_decant_revalidate_dropped"] for r in active)
     total_new_pending = sum(r["n_new_pending"] for r in active)
     print(f"\nseed {seed}: {len(active)} active turns, "
           f"{total_new_pending} wait_N>0 commitments, "
-          f"{total_decants} decants")
+          f"{total_decants_due} decants due "
+          f"({total_decants_emitted} emitted, "
+          f"{total_decants_dropped} dropped by revalidation)")
     # commitments and decants together prove the cycle works.
-    assert total_new_pending > 0 or total_decants > 0, (
+    assert total_new_pending > 0 or total_decants_due > 0, (
         "neither wait_N>0 commitments nor decants happened in game — "
         "the persistent-schedule path was never exercised. Check that "
         "the LP is finding wait_N>0 fires in this game; if not, use a "
