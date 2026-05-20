@@ -33,9 +33,18 @@ from lib.fleet import speed as fleet_speed
 from lib.trajectory import predict_fleet_fate
 
 
-# Horizon for the multi-launch projection. Matches the per-turn outcome
-# table horizon window roughly; longer projections are speculative.
-HORIZON = 15
+# Horizon for the multi-launch projection. Empirical seed-42 trace
+# (step 50): HORIZON=15 over-projected opp ships by 67% (360sh vs
+# 216sh actual in-flight); the LP saw opp as 2× threatening and
+# under-fired (28 launches vs baseline's 63). HORIZON=8 dials back
+# to match observed opp activity more closely.
+HORIZON = 8
+
+# Per-source cap on projected launches. Even within HORIZON, real opps
+# don't fire every single tick — they sometimes hold, defend, or wait
+# for production. Cap at 3 prevents runaway projection from any one
+# source.
+MAX_LAUNCHES_PER_SOURCE = 3
 
 # Per-launch minimums (mirror lite_greedy_policy:179 / opp_model.py:200-204).
 OPP_MIN_SHIPS = 5          # don't project launches below this size
@@ -84,8 +93,11 @@ def _project_source(src, opp_id: int, all_planets: list, world,
     # Avoid spamming the same target across multiple ticks: once we project
     # a launch to a target, don't re-target it in the same projection.
     already_targeted: set[int] = set()
+    launches_made = 0
 
     for tick_offset in range(horizon):
+        if launches_made >= MAX_LAUNCHES_PER_SOURCE:
+            break
         # Accrue production at the START of each tick except the very first.
         if tick_offset > 0:
             current_ships += prod
@@ -159,6 +171,7 @@ def _project_source(src, opp_id: int, all_planets: list, world,
         ))
         current_ships -= float(ships_launch)
         already_targeted.add(int(best.id))
+        launches_made += 1
 
 
 def _pick_target(src, opp_id: int, all_planets: list,
