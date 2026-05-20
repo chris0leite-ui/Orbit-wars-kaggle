@@ -241,6 +241,23 @@ def agent(obs, configuration=None):
         )
         return drain_idle_rear(moves, planets, me, world, model)
 
+    # Differential chooser opt-in (2026-05-19 slice 8). Closed-form
+    # WorldModel-projection leaf eval; no fast_sim rollout. See
+    # /root/.claude/plans/take-the-lens-of-magical-shore.md §13.
+    if os.environ.get("BASELINE_CHOOSER", "").strip().lower() == "differential":
+        prerank = propose(
+            my_planets, target_pool, world, model, me, omega,
+            baseline_len=MAX_HORIZON + 1,
+        )
+        from agents.baseline.chooser_differential import choose_differential
+        moves = choose_differential(
+            snap_base, prerank, None,
+            me, num_seats, wallclock_ms,
+            MIN_HORIZON, MAX_HORIZON, gamma,
+            world, model,
+        )
+        return drain_idle_rear(moves, planets, me, world, model)
+
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
     # coalition + opp-modifier posterior; no fast_sim rollout. See
     # agents/baseline/chooser_roi.py and the plan at
