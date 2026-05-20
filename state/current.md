@@ -111,6 +111,28 @@ saturation_count: 1           # A.8 leak hypothesis null (5/21 v2 audit)
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
+  - 2026-05-21 PM (extended) — audit-workflow-performance-btjeK.
+    H44 Phase 1 landing-capture diagnostic
+    (`scripts/h44_landing_capture_diagnostic.py`) ran on submissions
+    52827111 + 52845073 (47 freshly-pulled 4P replays). First verdict
+    claimed F (fleet-destroyed-in-flight) = 65% of failures and
+    indicted predict_fleet_fate / lead_aim — PI rejected with a
+    hand-trace challenge. Spot-check of 5 F-flagged launches showed
+    all fleets arriving within target radius (no OOB, no aim error).
+    Root cause of F-overcounting: fleets vanish from fleets-list at
+    combat resolution regardless of outcome; "fleet missing"
+    correctly detects combat, not destruction. Diagnostic corrected
+    (commit 9994b62): F removed, G near-tie-combat added. Real
+    breakdown for 52827111: D (under-delivered) 23.5% / C (race) 21.6%
+    / A (over-drained source) 16.1% / other 30.2%. In lost episodes,
+    A + D = 46% — the real signal is chooser ship-sizing, not aim.
+    H45 (Rule-22 notebook scan) ran in parallel as background Explore
+    agent; no new top-5 since 5/14, two cheap candidates (sigmaborov
+    comet-profit gate, rahul neutral-denial term). H46 (4P weakest-
+    opp targeting) held. Three friction entries logged + 3 promotion
+    candidates drafted; PI declined promotion this session.
+    Postmortem: `audit/2026-05-20-postmortem-audit-workflow-performance-btjeK.md`
+    (appended).
   - 2026-05-21 PM — audit-workflow-performance-btjeK.
     PI flagged a confound in the 5/21 AM large→small leak audit
     (`scripts/large_to_small_audit.py`, commit 2c24d5e): high-prod

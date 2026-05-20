@@ -165,3 +165,111 @@ Stop-hook closed the loop before PI replied with additions. Three
 candidates above are drafted but **NOT promoted** to
 `.claude/skills/kaggle-comp/improvements.md` — next session can
 review + ratify. The friction entries themselves are committed.
+
+---
+
+# Postmortem (second session, same date 2026-05-20 UTC)
+
+(System date is 2026-05-20; in-session audit files use 2026-05-21
+suffix — recurring `audit-date-must-track-system-currentdate` tag,
+not renamed per prior PI guidance.)
+
+## What went wrong
+
+- **F-flag false positive in H44 Phase 1.** Added a fleet-destroyed-
+  in-flight diagnostic based on "fleet not in fleets list at
+  landing−1 OR landing." Didn't account for the env behavior that
+  fleets vanish from the list at combat resolution regardless of
+  outcome. Published commit `106afbe` claiming 65% F-dominance and an
+  aim/`predict_fleet_fate` infrastructure bug. PI reversed it in one
+  challenge ("I have not seen fleets getting out of bounds — give me
+  an example") by demanding a hand-trace. Spot-check of 5 F-flagged
+  launches showed all arrived within target radius. Diagnostic rewritten
+  (removed F; added G near-tie-combat); corrected verdict shows A+D
+  (chooser sizing) = 46% of failures in lost episodes.
+- **PI override**: the one challenge above. Calibration data-point —
+  when an audit verdict implies "the agent has a systemic
+  infrastructure bug" with no prior evidence, PI's prior weights
+  against it correctly; agent should too.
+- **Rule-bypass**: `test-existing-tools-first` (5/21 ledger session)
+  and `whatif-static-opp-false-positive` both already say
+  "validate diagnostic mechanism before drawing conclusions." Both
+  were applicable; neither was applied. The friction file already had
+  the warning; not consulted before designing the new diagnostic.
+- **Rule-gap**: no standing "must hand-trace 3 examples before
+  publishing a dominant-mode claim" rule. Candidate promotion drafted
+  in friction.md::`fleet-absence-mistaken-for-destruction`; PI declined
+  promotion this session.
+
+## What went right
+
+- v2 audit (`scripts/large_to_small_audit_v2.py`) strict-gate held:
+  LEAK REJECTED verdict produced before any Phase B fix work.
+- Rule 22 public-notebook scan (H45) launched as a background Explore
+  agent in parallel with H44, returning cheap candidates (sigmaborov's
+  comet-profit gate; rahul's neutral-denial term) without blocking
+  main-thread work.
+- H44 Phase 1 correction landed in-session, not deferred. Bad verdict
+  is now annotated in the audit doc itself.
+- Cross-agent push-coordination friction was logged immediately when
+  it surfaced (`cross-agent-push-coordination-gap`).
+
+## Frictions logged this session
+
+Three new entries in `audit/friction.md` under the
+`## 2026-05-21 (claude/audit-workflow-performance-btjeK — v2 audit +
+cross-agent push-coordination friction)` and (later in same file)
+`fleet-absence-mistaken-for-destruction`:
+
+- `per-launch-denominator-leaks-frequency-as-quality` — v1 audit's
+  per-launch denominator inflated launch-frequency into a phantom
+  leak; v2 per-ship normalisation rejected the leak.
+- `cross-agent-push-coordination-gap` — submission 52845073 pushed by
+  an unrelated agent unaware of the rolling-pair state; evicted the
+  1135.1 floor for a probe that settled at 1066.7.
+- `fleet-absence-mistaken-for-destruction` — fleet-list disappearance
+  taken as evidence of mid-flight destruction; actually it's combat
+  resolution. F-flag false positive reversed by PI in one example.
+
+## Promotion candidates (PI ratified: no)
+
+Three candidates drafted and presented to PI in step 4:
+
+1. Rule 41 — per-decision denominators leak frequency-as-quality.
+2. Push-authorisation must read `rolling_last_2`.
+3. 3-hand-trace gate before publishing a dominant-mode claim.
+
+PI declined ratification this session ("no"). Candidates remain in
+`audit/friction.md` for future-session reconsideration.
+
+## PI additions (from step 4)
+
+None ("no" to additions; "no" to promotion).
+
+## Substantive results this session
+
+- A.8 leaf → null. v1 large→small leak was selection-bias + end-state
+  bias artefact. Confound-controlled v2 audit confirms.
+- H44 Phase 1: corrected verdict says chooser ship-sizing (A + D) is
+  46% of failed-landing causes in lost episodes. C (race-condition)
+  is 17% in both won and lost. Combat math + other instrumentation
+  gaps account for ~30% residual.
+- H45: no new top-5 public notebooks since 5/14 scan. Two cheap
+  candidates surfaced for future probes (sigmaborov comet-profit gate;
+  rahul neutral-denial term).
+- H46 (4P weakest-opp targeting) held until next session.
+- Rolling pair as of session-end: 52845073 (μ=1066.7, accidental
+  old-line probe) + 52827111 (μ=1136.6, current line). Floor 1066.7.
+
+## Framework version at session-end
+
+- Branch: `claude/audit-workflow-performance-btjeK` (ahead 115 of main
+  pre-this-commit; will be ahead 116 after wrap-up commit).
+- Commit SHA pre-wrap-up: `9994b62`.
+- Active rules: CLAUDE.md Rules 1–40. Rule 40 (modeling-correctness
+  over restriction-tuning) was applied correctly in the Phase B design
+  that ultimately never executed. Rule 38 (fix-verification reproduces
+  failure state) was the basis for the PI's hand-trace challenge.
+- Loaded skills this session: postmortem (now), kaggle-comp.
+- Plans referenced:
+  `/root/.claude/plans/let-s-figure-out-how-purrfect-mist.md`.
