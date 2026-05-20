@@ -266,10 +266,11 @@ def _clean_agent_source(src: str) -> str:
         if _FUTURE_IMPORT_RE.match(line):
             continue
         if _INTRA_IMPORT_RE.match(line):
-            stripped = line.rstrip("\n")
-            out.append(f"# {stripped}  # inlined by bundle_agent.py\n")
+            indent = line[: len(line) - len(line.lstrip())]
+            stripped = line.strip()
+            out.append(f"{indent}# {stripped}  # inlined by bundle_agent.py\n")
             for asname, original in _extract_aliases(line):
-                out.append(f"{asname} = {original}\n")
+                out.append(f"{indent}{asname} = {original}\n")
         else:
             out.append(line)
     return "".join(out)
