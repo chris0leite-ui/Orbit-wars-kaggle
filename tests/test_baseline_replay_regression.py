@@ -12,13 +12,21 @@ sliced from large live-episode replays via `scripts/extract_replay_snapshot.py`
 (replay JSONs themselves are gitignored — too big).
 
 Scenarios on disk:
+  - linrock_77150441_step12.json
+      4P seat 3, step 12 of 169. Mid-opening; the top-scoring positive-Δ
+      candidate is `wait_N=10` (deferred capture), and the chooser used
+      to silently emit nothing because it reserved src+tgt without
+      firing. Several positive-Δ wait_N=0 alternates from the same
+      source were available the whole time. Phase 1 (wait_N>0 emit fix)
+      flips this from `[]` to a real launch.
   - linrock_77150441_step44.json
-      4P seat 3, step 44 of 169. Live opponent `linrock` has a 78-ship
-      fleet 11.2 units from our home p11 (garrison ~24 ships). The live
-      agent (sub 52827111) emits 45 ships outward from p13 instead of
-      defending. Our current modular baseline emits nothing (wait_N>0
-      reserve-without-emit bug at chooser.py:131-134). Either way home
-      falls 3 turns later. Phase 1 + Phase 2 should change this.
+      4P seat 3, step 44 of 169. Late kill-chain — a 78-ship enemy
+      fleet is 11.2 units from our home p11 with the garrison too low
+      to hold. The proposer produces NO positive-Δ candidates on the
+      modular baseline (every offensive move makes the F1 ship-balance
+      worse than idling). The agent correctly does nothing here; Phase
+      2 (garrison floor) and Phase 4 (neighbour reinforce) are the
+      structural fixes that prevent the state from reaching this point.
   - claws_77164175_step226.json
       4P seat 3 (Claws perspective), step 226 of 500. Claws has just
       captured p31 (prod=1) with 506 ships landed; next live action is a
@@ -59,6 +67,11 @@ def _bound_wallclock(monkeypatch):
 
 
 @pytest.fixture
+def linrock_step12() -> dict:
+    return _load("linrock_77150441_step12.json")
+
+
+@pytest.fixture
 def linrock_step44() -> dict:
     return _load("linrock_77150441_step44.json")
 
@@ -73,27 +86,62 @@ def claws_step226() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_linrock_step44_reproduces_under_emission(linrock_step44):
-    """NEGATIVE BASELINE — pinning the current bug.
+def test_linrock_step12_phase1_emits_wait0_alternate(linrock_step12):
+    """POSITIVE REGRESSION — locks the Phase 1 fix.
 
-    On step 44 of the linrock loss, a 78-ship enemy fleet is 11.2 units from
-    our home p11 (garrison ~24 ships, fleet ETA ≈ 2 turns). Our current
-    chooser silently emits NOTHING this turn because the top-scoring
-    candidate has `wait_N > 0` and reserves both src and tgt without
-    actually launching (agents/baseline/chooser.py:131-134).
+    At step 12 of the linrock loss, the top-scoring positive-Δ candidate
+    is `wait_N = 10` (src=11, tgt=3). The pre-Phase-1 chooser reserved
+    the src+tgt slot and emitted nothing this turn (the documented bug at
+    chooser.py:131-134). Post-fix, the chooser skips the wait_N>0
+    candidate without claiming the slot, and a positive-Δ wait_N=0
+    alternate from the same source fires instead.
 
-    After Phase 1 (wait_N>0 emit fix) this test MUST be updated — the
-    chooser should emit a wait_N=0 alternate (anything that isn't the
-    empty list is progress). Phase 2's garrison floor should additionally
-    block outward bleeds from p11 itself.
+    Audit on the first 80 turns of this episode found 35 such turns
+    where the bug bit (top scorer wait_N>0 with at least one positive-Δ
+    wait_N=0 alternate available). This assertion guards against
+    regression to the old reserve-without-emit logic.
+    """
+    obs = linrock_step12["obs"]
+    cfg = linrock_step12["configuration"]
+    action = baseline_main.agent(obs, cfg)
+    assert action, (
+        "Phase 1 fix requires the chooser to emit a wait_N=0 alternate "
+        "rather than silently reserving and skipping. Got `[]` — has the "
+        "reserve-without-emit logic been re-introduced at chooser.py?"
+    )
+    # Sanity: the emitted launch must be a valid (src, angle, ships)
+    # triple referencing a planet we own.
+    my_seat = linrock_step12["my_seat"]
+    my_ids = {int(p[0]) for p in obs["planets"] if int(p[1]) == my_seat}
+    for launch in action:
+        assert int(launch[0]) in my_ids, (
+            f"chooser emitted launch from non-owned planet: {launch}"
+        )
+
+
+def test_linrock_step44_no_positive_delta_so_correctly_idle(linrock_step44):
+    """Pin a different failure mode — Phase 2/4 territory.
+
+    By step 44 the kill chain is already in motion. Our proposer
+    produces no positive-Δ candidates: every offensive launch worsens
+    the F1 ship-balance (home is about to fall regardless), and the
+    proposer enumerates no defensive/reinforcement candidates. So the
+    chooser correctly does nothing here.
+
+    This test pins the CURRENT outcome (empty action) and documents that
+    Phase 1 does NOT affect this step. Phase 2 (garrison floor) and
+    Phase 4 (neighbour reinforce) are the structural fixes that prevent
+    the state from reaching this point — once they land we expect this
+    test to remain `assert action == []` (the rescue has already
+    happened earlier) OR to be replaced with an earlier-step counterpart.
     """
     obs = linrock_step44["obs"]
     cfg = linrock_step44["configuration"]
     action = baseline_main.agent(obs, cfg)
     assert action == [], (
-        "Expected current chooser to silently under-emit (wait_N>0 reserve "
-        "bug). Got a non-empty action — the bug may already be fixed; "
-        "update this assertion to encode the post-fix expectation."
+        "Expected `[]` at step 44 because no candidate has positive Δ — "
+        "if a launch is emitted here, the proposer's candidate pool has "
+        "changed (Phase 2/3/4 work). Update or replace this assertion."
     )
 
 
