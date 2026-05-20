@@ -142,7 +142,7 @@ def test_score_candidate_bounce_gives_negative_score():
 
 def test_choose_trajectory_empty_prerank_returns_empty():
     obs, snap, world, model = _snap_and_world(seed=7)
-    moves = choose_trajectory(
+    moves, _commits = choose_trajectory(
         snap, prerank=[], baseline_favors=None,
         me=0, num_seats=2, wallclock_ms=600.0,
         min_horizon=25, max_horizon=40, gamma=0.99,
@@ -160,7 +160,7 @@ def test_choose_trajectory_drops_doomed_candidates():
     tgt = _enemy_tgt(world, me)
     sun_angle = math.atan2(50.0 - src.y, 50.0 - src.x)
     prerank = [_make_candidate(src, tgt, ships=20, angle=sun_angle)]
-    moves = choose_trajectory(
+    moves, _commits = choose_trajectory(
         snap, prerank=prerank, baseline_favors=None,
         me=me, num_seats=2, wallclock_ms=600.0,
         min_horizon=25, max_horizon=40, gamma=0.99,
@@ -297,7 +297,7 @@ def test_choose_trajectory_does_not_silently_drop_wait_n_candidates():
     import os
     os.environ["BASELINE_CHOOSER"] = "trajectory"
     try:
-        moves = choose_trajectory(
+        moves, _commits = choose_trajectory(
             snap, prerank=prerank, baseline_favors=None,
             me=me, num_seats=2, wallclock_ms=600.0,
             min_horizon=25, max_horizon=40, gamma=0.99,
@@ -434,7 +434,7 @@ def test_choose_trajectory_joint_disabled_by_default():
     os.environ.pop("BASELINE_JOINT", None)
     os.environ["BASELINE_CHOOSER"] = "trajectory"
     try:
-        moves = choose_trajectory(
+        moves, _commits = choose_trajectory(
             snap, prerank=prerank, baseline_favors=None,
             me=me, num_seats=2, wallclock_ms=600.0,
             min_horizon=25, max_horizon=40, gamma=0.99,
@@ -464,7 +464,7 @@ def test_choose_trajectory_joint_enabled_runs_end_to_end():
     os.environ["BASELINE_JOINT"] = "1"
     os.environ["BASELINE_CHOOSER"] = "trajectory"
     try:
-        moves = choose_trajectory(
+        moves, _commits = choose_trajectory(
             snap, prerank=prerank, baseline_favors=None,
             me=me, num_seats=2, wallclock_ms=600.0,
             min_horizon=25, max_horizon=40, gamma=0.99,

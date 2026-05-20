@@ -2,31 +2,26 @@
 
 ## Open — Chooser-emit under-emission (2026-05-20, post sary loss)
 
-### H43 — Trajectory chooser's "wait_N>0 reserve-without-emit" rule causes 49% idle turns
+### H43 — Trajectory chooser's "wait_N>0 reserve-without-emit" rule causes 49% idle turns — CONFIRMED + FIX IMPLEMENTED
 
 > Confirmed via replay-driven postmortem (`scripts/baseline_postmortem.py`,
-> `audit/2026-05-20-filter-rejection-trace.md`). Single-episode signal on
-> ep 77140674 (sary 2P loss): 30 of 59 idle turns had ≥1 candidate scoring
-> Δ > 0; all 30 had `wait_N > 0` as their top-scoring candidate. The
-> chooser at `chooser_trajectory.py:856` consumes src+tgt slots for those
-> wait winners, then drops them on the floor. Same rule sits in
-> `chooser.py:179-181` with an explicit `"wait_N>0: reserve src/tgt, emit
-> nothing this turn"` comment.
-
-Three candidate fixes (ordered by risk):
-
-1. Don't reserve slots when `wait_N > 0` (move the `used_srcs.add` /
-   `used_tgts.add` calls inside the `if wait_N == 0:` branch). Cheapest
-   modeling fix.
-2. Drop `wait_N > 0` entries from `scored` entirely (`if wait_N != 0:
-   continue` at the chooser accept gate). Need to verify joint-candidate
-   enumeration (line 806-808 reads `solo_winners`) doesn't regress.
-3. Penalise wait-N's leaf-favor inflation — the rollout treats opp's
-   reactive policy identically across the wait window, ignoring that opp
-   uses those turns for expansion. Deeper modeling change.
-
-Falsifying gate: ≥55% Wilson on n=64 vs champion 52827111 + no panel
-target regresses > 5pp.
+> `audit/2026-05-20-filter-rejection-trace.md`). Fix implemented as a
+> stateful commit ledger (`audit/2026-05-20-ledger-design.md`); the
+> chooser now returns `(moves, commits)` and the agent maintains a
+> per-seat `_PENDING_LAUNCHES` dict that ticks wait commits down and
+> emits them on schedule (with re-aim).
+>
+> Two ledger modes:
+> - **soft** (default for the validated policy): src is NOT reserved
+>   during the wait — chooser can fire-now opportunistically; commit
+>   drops at emit time if not enough ships remain.
+> - hard: src reserved for the full wait window.
+>
+> Soft beats hard empirically. Cross-game validation on 6 recent
+> episodes: ledger_soft wins final-planet count 6/6 (aggregate 15 → 118),
+> drops idle rate ≥ 5pp in 4/6, raises launch volume +28%. Wallclock p95
+> DOWN slightly (367ms → 327ms). Default `BASELINE_LEDGER=off` for
+> production — next-session A/B flips to `on,soft`.
 
 ### H43-falsified: `_target_holdable_after_capture` filter is over-suppressing
 

@@ -133,11 +133,16 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   (`chooser_trajectory.py:856`; same pattern in `chooser.py:179-181`).
   30/30 idle turns with a positive-Δ candidate had wait_N>0 as the top
   pick — the chooser reserves src+tgt and emits nothing, blocking
-  fire-now alternatives from the same src. Three candidate fixes
-  documented in `audit/2026-05-20-filter-rejection-trace.md`; cheapest
-  is moving the `used_srcs/used_tgts` reservation inside the
-  `if wait_N == 0:` branch. Falsification gate: ≥55% Wilson on n=64 vs
-  champion 52827111, no panel target regresses >5pp. `[owner: audit-workflow-performance-btjeK | status: open]`
+  fire-now alternatives from the same src. **Fix implemented as a
+  stateful commit ledger** (`audit/2026-05-20-ledger-design.md`): chooser
+  returns `(moves, commits)`; agent maintains per-seat
+  `_PENDING_LAUNCHES` dict that ticks wait commits down and emits with
+  re-aim. Mode `soft` lets src fire-now during wait; commit drops at
+  emit time if not enough ships. Cross-game validation on 6 episodes:
+  ledger_soft wins final-planet count 6/6, drops idle ≥5pp in 4/6,
+  +28% launch volume. Falsification gate (next session): ≥55% Wilson on
+  n=64 vs champion 52827111, no panel target regresses >5pp.
+  `[owner: audit-workflow-performance-btjeK | status: wip — local-validated, A/B next session]`
 
 ### C. Reward / value signal — Q6 metric alignment (Rule 16)
 

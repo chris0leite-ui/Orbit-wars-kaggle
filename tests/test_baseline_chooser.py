@@ -130,7 +130,7 @@ def test_choose_empty_prerank_returns_empty():
         snap, prerank=[], baseline_favors=favs,
         me=0, num_seats=2, wallclock_ms=600.0,
         min_horizon=5, max_horizon=10, gamma=0.99,
-    ) == []
+    ) == ([], [])
 
 
 def test_choose_emit_format_is_env_action_shape():

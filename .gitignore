@@ -53,6 +53,15 @@ audit/live-episodes/*/episode-*.json
 audit/live-episodes/*/postmortem/postmortem-*.json
 !audit/live-episodes/*/postmortem/roll-up.json
 
+# Per-episode what-if rollouts from scripts/whatif_postmortem.py — per-
+# turn detail is large; only the small summary.json (multi-policy
+# comparison) is kept in git.
+audit/whatif/*/*/baseline.json
+audit/whatif/*/*/mpc.json
+audit/whatif/*/*/ledger.json
+audit/whatif/*/*/ledger_soft.json
+!audit/whatif/*/*/summary.json
+
 # Parallel-branch agents extracted via `git show` for cross-architecture
 # A/B comparisons (see audit/2026-05-11-v3-snipe-critical-review.md §6.5).
 # Source of truth lives on its own branch; we don't track a copy here.

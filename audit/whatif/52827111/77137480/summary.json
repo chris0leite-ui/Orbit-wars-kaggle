@@ -1,0 +1,29 @@
+{
+  "submission_id": "52827111",
+  "episode_id": "77137480",
+  "team_name": "ChrisLeiteScha",
+  "policies": {
+    "baseline": {
+      "n_idle_predicted": 93,
+      "n_steps_simulated": 158,
+      "diverged_at_turn": 101,
+      "action_match_rate": 0.7974683544303798,
+      "rewards": [
+        0,
+        0
+      ],
+      "final_planet_count_us": 6
+    },
+    "ledger_soft": {
+      "n_idle_predicted": 98,
+      "n_steps_simulated": 158,
+      "diverged_at_turn": 5,
+      "action_match_rate": 0.41139240506329117,
+      "rewards": [
+        0,
+        0
+      ],
+      "final_planet_count_us": 12
+    }
+  }
+}
