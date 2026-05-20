@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from lib.pipeline.pending_schedule import (
     ScheduledFire,
-    commit as ps_commit,
+    commit,
     decant_due,
     prune_past,
     prune_stale,
@@ -115,7 +115,7 @@ def commit_persistent(decision: DecisionResult, ctx: TurnContext) -> CommittedMo
             wait_N_original=w,
         ))
     if new_pending:
-        ps_commit(my_id, game_id, new_pending)
+        commit(my_id, game_id, new_pending)
 
     # 5. Concatenate decant + LP. No de-dup; env will validate.
     all_moves = decanted_moves + lp_moves

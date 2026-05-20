@@ -74,6 +74,16 @@ _INTRA_IMPORT_OPEN_RE = re.compile(
     r"^\s*from (lib|\.|agents\.[\w]+)[\w.]*\s+import\s*\(\s*$"
 )
 _FUTURE_IMPORT_RE = re.compile(r"^\s*from __future__\s+import\b.*$")
+# Alias inside a stripped intra-package block: re-emit `Z = Y` so the
+# bundled namespace still resolves Z. Without this, `from X import Y as Z`
+# silently drops Z and the first call site NameErrors at runtime
+# (root cause of 52863735 failure: `ps_commit` undefined).
+_ALIAS_RE = re.compile(r"\b([A-Za-z_]\w*)\s+as\s+([A-Za-z_]\w*)\b")
+
+
+def _emit_aliases(block_text: str) -> list[str]:
+    """Return `Z = Y` lines for every `Y as Z` alias in a stripped block."""
+    return [f"{alias} = {orig}" for orig, alias in _ALIAS_RE.findall(block_text)]
 
 
 def _strip_imports(src: str) -> str:
@@ -81,8 +91,9 @@ def _strip_imports(src: str) -> str:
 
     Handles both single-line `from lib.X import a, b` and multi-line
     `from lib.X import (\n  a,\n  b,\n)` (closing paren on its own line
-    or with content). When a multi-line open is seen, skip until the
-    closing paren line is consumed too.
+    or with content). When a multi-line open is seen, accumulate the
+    full block so any `Y as Z` aliases can be re-emitted as `Z = Y`
+    assignments.
 
     NOTE: `from __future__ import annotations` is KEPT. Without it,
     pipeline dataclasses (e.g. TurnContext with `world: World` /
@@ -94,17 +105,19 @@ def _strip_imports(src: str) -> str:
     De-duped at the top of the bundle by `_dedupe_future_imports`.
     """
     out_lines: list[str] = []
-    skip_until_close_paren = False
+    block_buf: list[str] | None = None  # None = not in multi-line block
     for line in src.splitlines():
-        if skip_until_close_paren:
-            stripped = line.strip()
-            if stripped.endswith(")"):
-                skip_until_close_paren = False
+        if block_buf is not None:
+            block_buf.append(line)
+            if line.strip().endswith(")"):
+                out_lines.extend(_emit_aliases("\n".join(block_buf)))
+                block_buf = None
             continue
         if _INTRA_IMPORT_OPEN_RE.match(line):
-            skip_until_close_paren = True
+            block_buf = [line]
             continue
         if _INTRA_IMPORT_RE.match(line):
+            out_lines.extend(_emit_aliases(line))
             continue
         # Drop __future__ imports from the BODY (they get hoisted to a
         # single canonical line at the top of the bundle).
