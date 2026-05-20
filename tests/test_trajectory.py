@@ -16,7 +16,7 @@ from lib.intent import World
 from lib.trajectory import predict_fleet_fate
 
 
-def _world(my_id, planets, omega=0.0):
+def _world(my_id, planets, omega=0.0, *, comet_ids=None, comets=None):
     obs = {
         "player": my_id,
         "planets": [
@@ -25,9 +25,11 @@ def _world(my_id, planets, omega=0.0):
         ],
         "fleets": [],
         "angular_velocity": omega,
-        "comet_planet_ids": [],
+        "comet_planet_ids": comet_ids or [],
         "step": 0,
     }
+    if comets is not None:
+        obs["comets"] = comets
     return World.from_obs(obs)
 
 
@@ -105,3 +107,78 @@ def test_overshoot_past_target_then_oob():
     assert fate.outcome != "target"
     if fate.outcome == "planet":
         assert fate.hit_planet_id != target.id
+
+
+# ---------------------------------------------------------------------------
+# Comet-aim fix (Part C, 2026-05-19 PM): comets are NOT orbital — their
+# positions in predict_fleet_fate must come from obs.comets[group].paths,
+# not from predict_relative.
+# ---------------------------------------------------------------------------
+
+
+def test_comet_position_lookup_uses_path_not_orbital():
+    """Fleet aimed at a comet's FUTURE path position should hit the comet
+    even though the orbital prediction would place it elsewhere.
+
+    Setup: comet on a slow linear path moving east, off the y=50 sun line.
+    Fleet speed at the chosen ship count is calibrated to converge with
+    the comet's path before max_steps. predict_fleet_fate must walk the
+    path, not rotate the comet around the sun.
+    """
+    src = _planet(0, 0, 5.0, 20.0, radius=1.5)
+    # Comet at (30, 20) moving east at 1 unit/turn (slow path so a
+    # 10-ship fleet ~1.96 units/turn catches up around step 24).
+    path = [[30.0 + i * 1.0, 20.0] for i in range(60)]
+    comet_planet = _planet(42, -1, path[0][0], path[0][1], radius=1.0)
+    world = _world(
+        my_id=0, planets=[src, comet_planet], omega=0.0,
+        comet_ids=[42],
+        comets=[{"planet_ids": [42], "paths": [path], "path_index": 0}],
+    )
+    # Aim straight east at the comet's eventual encounter position.
+    import math as _math
+    angle = 0.0  # pure +x; both fleet and comet at y=20, off the sun
+    fate = predict_fleet_fate(src, comet_planet, angle, ships=10, world=world)
+    # With path-aware fix: fleet catches the slow-moving comet at some
+    # step in [1, max_steps] → outcome="target", hit_planet_id=42.
+    # Without the fix (orbital), the comet would be predicted near its
+    # original position (omega=0 → stays at (30, 20)); the fleet would
+    # also hit it but the test wouldn't verify path-awareness. So set
+    # omega to a small non-zero value with path_index=0 and verify the
+    # outcome is target — meaning the per-step position came from the
+    # path, not from `predict_relative` (which would rotate it differently).
+    assert fate.outcome == "target", (
+        f"expected target (path-aware); got outcome={fate.outcome} hit_id={fate.hit_planet_id}"
+    )
+    assert fate.hit_planet_id == 42
+
+
+def test_comet_at_path_end_marked_as_exited():
+    """When the comet's path runs out mid-flight, predict_fleet_fate
+    skips collision against it (position becomes None). The fleet should
+    NOT collide with the comet's last-known position phantom-frozen."""
+    src = _planet(0, 0, 5.0, 20.0, radius=1.5)
+    # Very short path of only 3 steps; comet exits before fleet arrives.
+    path = [[30.0, 20.0], [34.0, 20.0], [38.0, 20.0]]
+    comet_planet = _planet(42, -1, path[0][0], path[0][1], radius=1.0)
+    # Add a static planet way past the comet's exit position so we have
+    # something concrete to predict.
+    target = _planet(99, 1, 90.0, 20.0, radius=1.5)
+    world = _world(
+        my_id=0, planets=[src, comet_planet, target], omega=0.0,
+        comet_ids=[42],
+        comets=[{"planet_ids": [42], "paths": [path], "path_index": 0}],
+    )
+    # Aim at the static target (planet 99) straight east at y=20 (off
+    # the sun). The pre-fix bug would park the comet at (30, 20) forever
+    # and the fleet would hit the frozen comet; the fix marks it exited
+    # and skips the collision so the fleet continues to planet 99.
+    import math as _math
+    angle = _math.atan2(target.y - src.y, target.x - src.x)
+    fate = predict_fleet_fate(src, target, angle, ships=10, world=world)
+    # The fleet should pass through the exited-comet region and reach
+    # the static target.
+    assert fate.outcome == "target", (
+        f"expected target (planet 99) after comet exits; got {fate.outcome} hit_id={fate.hit_planet_id}"
+    )
+    assert fate.hit_planet_id == 99

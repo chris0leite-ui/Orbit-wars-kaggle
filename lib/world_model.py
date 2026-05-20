@@ -28,7 +28,7 @@ from dataclasses import dataclass
 
 from lib.combat import resolve_arrivals
 from lib.fleet import speed as fleet_speed
-from lib.fleet import speed as fleet_speed
+from lib.orbit import is_orbiting, predict_relative
 
 # Raised 110 → 250 (2026-05-11): reinforce class was firing 0.2
 # candidates/turn because long-runway threats were invisible past
@@ -38,21 +38,45 @@ from lib.fleet import speed as fleet_speed
 # actTimeout. See audit/2026-05-11-v3-snipe-critical-review.md §P2.
 DEFAULT_HORIZON = 250
 
+# Bug #12 fix (2026-05-18): width of the in-flight-enemy summation
+# window used when computing combined threat against a single planet.
+# A staggered multi-wave attack (e.g. f1 at eta=2 + f2 at eta=4)
+# should be accounted for as one coordinated threat; pre-fix the
+# window was `enemy_eta + 1` of the EARLIEST inbound, which silently
+# excluded later waves and zeroed the shortfall. Anchored on the
+# asdf-game (76947663) step 37 trace. Promoted to lib so both the
+# proposer (`agents/baseline/proposer.py`) and the in-rollout
+# defensive policy (`lib/opp_model.me_defensive_action`) import it
+# from one location. The principled v2 of this fix is a full
+# timeline simulation to find the max shortfall over time; this
+# constant is the cheap version.
+WAVE_LOOKAHEAD = 12
 
-def fleet_target_planet(fleet, planets, max_horizon: int = DEFAULT_HORIZON):
+
+def fleet_target_planet(fleet, planets, omega: float = 0.0,
+                        max_horizon: int = DEFAULT_HORIZON):
     """Trace `fleet` along its angle, find first planet it'd hit.
 
     Returns `(target_planet, eta_turns)` or `(None, None)` if no planet
     intersects the fleet's trajectory within `max_horizon` steps.
 
+    For STATIC (non-orbiting) planets: straight-line ray-cast (cheap;
+    closed-form). For ORBITING planets: per-tick collision check using
+    `lib.orbit.predict_relative` to predict the planet's position at
+    each tick, then test fleet-vs-planet point-in-circle.
+
+    The `omega` argument is the environment's angular velocity from the
+    obs. When `omega == 0.0`, behaviour matches the previous static-only
+    ray-cast (orbiting check is short-circuited since rotation is zero).
+
     Used to build the arrival ledger from in-flight fleets — the env
     doesn't expose a fleet's intended target, only its angle.
 
-    Note: this is a *non-orbiting* ray-cast — it doesn't account for
-    target planets moving while the fleet is in flight. For inner
-    orbiting planets the attribution can be off by a step or two. The
-    arrival ledger uses these eta estimates to *roughly* predict
-    ownership; sub-step precision matters less than not double-committing.
+    Bug fix 2026-05-18 (#11): pre-fix the static ray-cast missed
+    orbiting targets that rotate INTO the fleet's path mid-flight.
+    Asdf game (76947663) step 37: 65-ship fleet aimed at orbiting P15
+    returned target=None until P15 had rotated into the straight line
+    at step 40 — by then too late to defend.
     """
     dir_x = math.cos(fleet.angle)
     dir_y = math.sin(fleet.angle)
@@ -60,9 +84,26 @@ def fleet_target_planet(fleet, planets, max_horizon: int = DEFAULT_HORIZON):
     if spd <= 0:
         return None, None
 
+    # Partition planets: static (closed-form fast path) vs orbiting
+    # (per-tick scan). The partition is cheap; typical boards have
+    # ~12-20 planets total with 5-8 orbiting.
+    static_planets = []
+    orbiting_planets = []
+    for p in planets:
+        # Build minimal tuple for is_orbiting (only x, y, radius used)
+        p_tuple = (int(p.id), int(p.owner), float(p.x), float(p.y),
+                   float(p.radius), 0, 0)
+        if omega != 0.0 and is_orbiting(p_tuple):
+            orbiting_planets.append((p, p_tuple))
+        else:
+            static_planets.append(p)
+
     best_planet = None
     best_turns = None
-    for p in planets:
+
+    # Fast path: static planets — straight-line ray-cast (unchanged
+    # math from pre-fix behaviour).
+    for p in static_planets:
         dx = p.x - fleet.x
         dy = p.y - fleet.y
         proj = dx * dir_x + dy * dir_y
@@ -77,21 +118,50 @@ def fleet_target_planet(fleet, planets, max_horizon: int = DEFAULT_HORIZON):
         if turns <= max_horizon and (best_turns is None or turns < best_turns):
             best_turns = turns
             best_planet = p
+
+    # Orbital path: per-tick collision scan.
+    if orbiting_planets:
+        # Discretize: check at integer ticks up to max_horizon. We use
+        # the int-ceil semantics that the ledger eventually buckets to,
+        # so checking at integer ticks is sufficient precision.
+        for t in range(1, int(max_horizon) + 1):
+            # Pruning: if we already have a static hit at eta T, no
+            # orbital hit beyond T can win.
+            if best_turns is not None and t > best_turns:
+                break
+            fx = fleet.x + dir_x * spd * t
+            fy = fleet.y + dir_y * spd * t
+            for p, p_tuple in orbiting_planets:
+                px, py = predict_relative(p_tuple, omega, t)
+                # Point-in-circle: fleet position within planet radius
+                # at tick t. Matches the ledger's step-bucket precision.
+                if math.hypot(fx - px, fy - py) <= float(p.radius):
+                    if best_turns is None or t < best_turns:
+                        best_turns = t
+                        best_planet = p
+                    break  # found a hit at this tick; advance to next tick
+
     if best_planet is None:
         return None, None
     return best_planet, int(math.ceil(best_turns))
 
 
-def build_arrival_ledger(fleets, planets, horizon: int = DEFAULT_HORIZON):
+def build_arrival_ledger(fleets, planets, omega: float = 0.0,
+                         horizon: int = DEFAULT_HORIZON):
     """{planet_id: [(eta, owner, ships), ...]} for in-flight fleets.
 
     Fleets that won't hit any planet within `horizon` are dropped (they
     will exit the board or die in sun/non-target collision — out of
     scope for the timeline).
+
+    `omega` is the env's angular velocity; passed through to
+    `fleet_target_planet` for correct orbiting-target attribution.
+    Defaults to 0 for backward compatibility (callers that don't pass
+    it get the previous static-only behaviour).
     """
     ledger: dict[int, list[tuple[int, int, int]]] = {p.id: [] for p in planets}
     for fleet in fleets:
-        target, eta = fleet_target_planet(fleet, planets, horizon)
+        target, eta = fleet_target_planet(fleet, planets, omega, horizon)
         if target is None:
             continue
         ledger[target.id].append((eta, int(fleet.owner), int(fleet.ships)))
@@ -147,6 +217,50 @@ def state_at_timeline(timeline, arrival_turn):
     return timeline["owner_at"][t], timeline["ships_at"][t]
 
 
+def predict_garrison_at(planet, eta: int,
+                        arrivals: list[tuple[int, int, int]],
+                        ) -> tuple[int, float]:
+    """Single-tick combat prediction: `(owner, garrison)` at exactly `eta`
+    ticks from now. O(eta) walk, O(arrivals) total work.
+
+    Cheaper alternative to `simulate_planet_timeline` when callers only
+    need state at one specific tick (e.g. a candidate's arrival). Same
+    combat rules (production tick → resolve_arrivals per step), just
+    doesn't build the full dict timeline.
+
+    `arrivals` matches the per-planet entry in `build_arrival_ledger`:
+    list of `(eta_arrival, owner, ships)`.
+
+    Origin: trajectory-first chooser (2026-05-17). The chooser scores
+    each candidate by predicting the arrival outcome at exactly the
+    candidate's eta; building a 40-step timeline per planet per call
+    was the dominant cost of the K-step rollout we're replacing.
+    """
+    eta = max(0, int(math.ceil(eta)))
+    if eta == 0:
+        return planet.owner, max(0.0, float(planet.ships))
+
+    # Bucket arrivals by tick.
+    by_turn: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    for arrival_eta, arrival_owner, arrival_ships in arrivals:
+        if arrival_ships <= 0:
+            continue
+        bucket = max(1, int(math.ceil(arrival_eta)))
+        if bucket > eta:
+            continue
+        by_turn[bucket].append((arrival_owner, int(arrival_ships)))
+
+    owner = planet.owner
+    garrison = float(planet.ships)
+    for t in range(1, eta + 1):
+        if owner != -1:
+            garrison += planet.production
+        group = by_turn.get(t, [])
+        if group:
+            owner, garrison = resolve_arrivals(owner, garrison, group)
+    return owner, max(0.0, garrison)
+
+
 @dataclass
 class WorldModel:
     """Per-turn arrival-ledger snapshot. Built once at the top of an
@@ -160,17 +274,24 @@ class WorldModel:
     @classmethod
     def from_world(cls, world, horizon: int = DEFAULT_HORIZON):
         """Build from `lib.intent.World`'s obs_raw. Reads in-flight fleets
-        directly from the raw obs because `World` doesn't materialise them."""
+        directly from the raw obs because `World` doesn't materialise them.
+
+        Threads the env's `angular_velocity` through to the ledger build
+        so inbound fleets aimed at orbiting planets are correctly
+        attributed (bug #11 fix, 2026-05-18).
+        """
         raw = world.obs_raw
         if isinstance(raw, dict):
             fleets_raw = raw.get("fleets", [])
+            omega = float(raw.get("angular_velocity", 0.0) or 0.0)
         else:
             fleets_raw = getattr(raw, "fleets", [])
+            omega = float(getattr(raw, "angular_velocity", 0.0) or 0.0)
 
         from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet  # local import — keeps lib/ env-free
         fleets = [Fleet(*f) for f in fleets_raw]
         planets = list(world.planets_by_id.values())
-        ledger = build_arrival_ledger(fleets, planets, horizon)
+        ledger = build_arrival_ledger(fleets, planets, omega, horizon)
         timelines = {
             p.id: simulate_planet_timeline(p, ledger[p.id], horizon) for p in planets
         }
@@ -312,3 +433,28 @@ def comet_remaining_lifetime(planet_id: int, world) -> int | None:
         return None
     path, path_index = entry
     return max(0, len(path) - path_index)
+
+
+def comet_position_at(planet_id: int, world, lead_turns: int) -> tuple[float, float] | None:
+    """Position of comet `planet_id` at `lead_turns` from now.
+
+    Returns `(x, y)` from the comet's pre-computed path at index
+    `path_index + lead_turns`, or `None` if the comet has exited the
+    board by then (index past the end of the path) or if `planet_id`
+    isn't a comet.
+
+    Comets travel along polynomial paths at `cometSpeed=4` board
+    units/turn (env: `orbit_wars.py::generate_comet_paths`), NOT around
+    the central sun like orbital planets. So `lib.orbit.predict_relative`
+    is wrong for comets — use this instead.
+    """
+    paths_by_id = _comet_paths_by_id(world)
+    entry = paths_by_id.get(int(planet_id))
+    if entry is None:
+        return None
+    path, path_index = entry
+    idx = int(path_index) + int(lead_turns)
+    if idx < 0 or idx >= len(path):
+        return None
+    point = path[idx]
+    return float(point[0]), float(point[1])

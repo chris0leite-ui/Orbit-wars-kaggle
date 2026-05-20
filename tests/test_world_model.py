@@ -261,3 +261,132 @@ def test_time_to_enemy_threat_skips_neutral_and_self_planets():
     world = _world_for_threat([mine1, mine2, target, neutral2])
     wm = WorldModel.from_world(world)
     assert wm.time_to_enemy_threat(target.id, my_id=0, world=world) is None
+
+
+# ---------------------------------------------------------------------------
+# predict_garrison_at — parity with simulate_planet_timeline at one tick
+# ---------------------------------------------------------------------------
+
+
+def test_predict_garrison_at_parity_with_timeline_neutral_no_arrivals():
+    """Neutral planet, no arrivals — predict_garrison_at must match
+    simulate_planet_timeline at every eta."""
+    from lib.world_model import predict_garrison_at
+    p = _planet(0, -1, 50.0, 50.0, ships=10, production=2)
+    tl = simulate_planet_timeline(p, [], horizon=15)
+    for eta in [0, 1, 5, 10, 15]:
+        owner_tl, ships_tl = state_at_timeline(tl, eta)
+        owner_p, ships_p = predict_garrison_at(p, eta, [])
+        assert owner_p == owner_tl, f"eta={eta}: owner {owner_p} vs {owner_tl}"
+        assert abs(ships_p - ships_tl) < 1e-9, (
+            f"eta={eta}: ships {ships_p} vs {ships_tl}"
+        )
+
+
+def test_predict_garrison_at_parity_owned_with_production():
+    """Owned planet accrues production each tick — must match timeline."""
+    from lib.world_model import predict_garrison_at
+    p = _planet(0, 0, 50.0, 50.0, ships=5, production=3)
+    tl = simulate_planet_timeline(p, [], horizon=10)
+    for eta in [0, 1, 3, 10]:
+        owner_tl, ships_tl = state_at_timeline(tl, eta)
+        owner_p, ships_p = predict_garrison_at(p, eta, [])
+        assert (owner_p, ships_p) == (owner_tl, ships_tl), (
+            f"eta={eta}: ({owner_p},{ships_p}) vs ({owner_tl},{ships_tl})"
+        )
+
+
+def test_predict_garrison_at_parity_with_combat():
+    """Enemy arrival flips ownership — predict + timeline must agree."""
+    from lib.world_model import predict_garrison_at
+    p = _planet(0, 0, 50.0, 50.0, ships=10, production=1)
+    arrivals = [(3, 1, 20)]  # enemy arrives at t=3 with 20 ships
+    tl = simulate_planet_timeline(p, arrivals, horizon=10)
+    for eta in [0, 1, 2, 3, 4, 5, 10]:
+        owner_tl, ships_tl = state_at_timeline(tl, eta)
+        owner_p, ships_p = predict_garrison_at(p, eta, arrivals)
+        assert (owner_p, ships_p) == (owner_tl, ships_tl), (
+            f"eta={eta}: ({owner_p},{ships_p}) vs ({owner_tl},{ships_tl})"
+        )
+
+
+def test_predict_garrison_at_skips_arrivals_past_eta():
+    """An arrival scheduled AFTER eta must not influence the prediction."""
+    from lib.world_model import predict_garrison_at
+    p = _planet(0, -1, 50.0, 50.0, ships=10)
+    # Enemy arrival at t=20; we predict at eta=5 — should be neutral+10.
+    owner, ships = predict_garrison_at(p, 5, [(20, 1, 100)])
+    assert owner == -1 and ships == 10.0
+
+
+def test_predict_garrison_at_eta_zero_returns_current_state():
+    """eta=0 → exactly current owner + garrison, regardless of arrivals."""
+    from lib.world_model import predict_garrison_at
+    p = _planet(0, 0, 50.0, 50.0, ships=15, production=5)
+    owner, ships = predict_garrison_at(p, 0, [(1, 1, 100)])
+    assert owner == 0 and ships == 15.0
+
+
+# ---------------------------------------------------------------------------
+# comet_position_at — path-indexed lookup (Part C, 2026-05-19 PM)
+# ---------------------------------------------------------------------------
+
+
+def _world_with_comet(comet_id, path, path_index):
+    """Minimal obs that includes a comet at path[path_index]."""
+    cur_x, cur_y = path[path_index]
+    obs = {
+        "player": 0,
+        "planets": [
+            (0, 0, 5.0, 5.0, 1.0, 100, 1),
+            (comet_id, -1, float(cur_x), float(cur_y), 1.0, 30, 1),
+        ],
+        "fleets": [],
+        "angular_velocity": 0.04,
+        "comet_planet_ids": [comet_id],
+        "comets": [
+            {
+                "planet_ids": [comet_id],
+                "paths": [path],
+                "path_index": path_index,
+            },
+        ],
+        "step": 50,
+    }
+    return World.from_obs(obs)
+
+
+def test_comet_position_at_returns_path_indexed_point():
+    """comet_position_at(comet, world, lead) returns path[path_index+lead]."""
+    from lib.world_model import comet_position_at
+    # Linear path moving east at 4 units/step.
+    path = [[20.0 + i * 4.0, 50.0] for i in range(10)]
+    world = _world_with_comet(comet_id=42, path=path, path_index=2)
+    # lead=0 → current position = path[2] = (28.0, 50.0)
+    pos0 = comet_position_at(42, world, 0)
+    assert pos0 == (28.0, 50.0), f"lead=0: got {pos0}"
+    # lead=3 → path[5] = (40.0, 50.0)
+    pos3 = comet_position_at(42, world, 3)
+    assert pos3 == (40.0, 50.0), f"lead=3: got {pos3}"
+
+
+def test_comet_position_at_returns_none_past_path_end():
+    """When path_index + lead >= len(path), comet has exited → None."""
+    from lib.world_model import comet_position_at
+    path = [[20.0 + i * 4.0, 50.0] for i in range(5)]
+    world = _world_with_comet(comet_id=42, path=path, path_index=2)
+    # path_index=2 + lead=3 = 5 == len(path) → exited
+    assert comet_position_at(42, world, 3) is None
+    # path_index=2 + lead=10 → way past
+    assert comet_position_at(42, world, 10) is None
+
+
+def test_comet_position_at_returns_none_for_non_comet():
+    """Non-comet planet_id returns None (no path data)."""
+    from lib.world_model import comet_position_at
+    path = [[20.0 + i * 4.0, 50.0] for i in range(5)]
+    world = _world_with_comet(comet_id=42, path=path, path_index=0)
+    # Planet 0 (the source) is not a comet.
+    assert comet_position_at(0, world, 1) is None
+    # Some random id not in the obs.
+    assert comet_position_at(999, world, 0) is None

@@ -233,6 +233,217 @@ def lite_greedy_policy(obs: Any) -> list:
     return moves
 
 
+# ---------------------------------------------------------------------------
+# ME-side defensive policy for the chooser's rollout (bug #14 fix, 2026-05-18)
+# ---------------------------------------------------------------------------
+#
+# The chooser's rollout in agents/baseline/chooser_trajectory.py drives
+# opp seats with `lite_greedy_policy` every tick but leaves ME idle
+# (except for the candidate injection at `wait_N`). This asymmetry
+# under-rates candidates that look attractive but expose our sources to
+# counter-attack (rollout shows opp exploiting, we don't defend) and
+# over-rates captures whose leaf-state ownership wouldn't survive opp's
+# counter past the rollout horizon. Catalog: audit/2026-05-18-bug-
+# catalog.md#14.
+#
+# Option 1 — cheap mirror with `lite_greedy_policy` for ME — failed
+# (commit 5f22ea8): lite_greedy is too attack-biased, so the rollout's
+# defense-baseline path emitted ATTACK launches from the would-be
+# reinforcer planet and the threatened planet fell anyway.
+#
+# Option 5 (this function): PURELY DEFENSIVE policy for ME. Scan
+# inbound enemy fleets, find under-defended owned planets, emit a
+# reinforce launch from the nearest viable sister planet. Never emit
+# attacks. The chooser's actual attack moves are made on its own turn;
+# the rollout's job is to model opp's reaction to OUR move, which
+# implies us defending what opp threatens — not us attacking again.
+def me_defensive_action(obs: Any, me: int) -> list:
+    """Purely-defensive obs-only policy for ME in the rollout.
+
+    Returns env-format launches [[src_id, angle, ships], ...]. Same
+    call shape as `lite_greedy_policy`. Stateless. No `WorldModel`
+    build (would add 3-5 ms per tick × per candidate × baseline and
+    blow the wallclock budget); uses only `fleet_target_planet` +
+    arithmetic.
+
+    Algorithm:
+    1. Walk obs.fleets; attribute each enemy fleet to a MY planet via
+       `lib.world_model.fleet_target_planet` (bug-#11-aware ray-cast).
+       Bucket into `{my_pid: [(eta, ships), ...]}`.
+    2. For each threatened MY planet P, sum threat force inside the
+       bug-#12 window: `threat_force = sum(s for (e, s) in inbound[P]
+       if e <= earliest_eta + WAVE_LOOKAHEAD)`. Skip if natural
+       production covers it (`P.ships + P.prod × earliest_eta >=
+       threat_force + 1`).
+    3. Find nearest viable reinforcer Q: own, not P, not in
+       `used_srcs`, reinforce-eta < earliest_eta with the sized fleet.
+    4. Size: `ships = max(MIN_FLEET_SIZE, ceil(shortfall) +
+       SAFETY_MARGIN)`, clamped at `Q.ships`.
+    5. Aim: `lib.aim.aim_orbiting` for orbiting P, else `atan2`.
+    6. Emit `[int(Q.id), float(angle), int(ships)]`; mark Q used.
+    """
+    # Local imports to keep the module's top-level fast (this function
+    # is on the rollout hot path and must not pay an import cost on
+    # first call inside the rollout).
+    from lib.aim import aim_orbiting
+    from lib.orbit import is_orbiting
+    from lib.world_model import WAVE_LOOKAHEAD, fleet_target_planet
+    from kaggle_environments.envs.orbit_wars.orbit_wars import (
+        Fleet, Planet,
+    )
+
+    MIN_FLEET_SIZE = 2
+    SAFETY_MARGIN = 1
+
+    planets_raw = (
+        obs.get("planets") if isinstance(obs, dict)
+        else getattr(obs, "planets", None)
+    )
+    if not planets_raw:
+        return []
+    fleets_raw = (
+        obs.get("fleets", []) if isinstance(obs, dict)
+        else getattr(obs, "fleets", [])
+    )
+    if not fleets_raw:
+        return []
+    omega = float(
+        obs.get("angular_velocity", 0.0) if isinstance(obs, dict)
+        else getattr(obs, "angular_velocity", 0.0) or 0.0
+    )
+
+    planets = [Planet(*p) for p in planets_raw]
+    fleets = [Fleet(*f) for f in fleets_raw]
+    my_planets_by_id = {int(p.id): p for p in planets if int(p.owner) == me}
+    if not my_planets_by_id:
+        return []
+
+    # 1. Attribute fleets to MY planets. Enemy fleets become threats;
+    # friendly fleets become inbound reinforcements that count toward
+    # `garrison_at_eta`. The friendly-counting is the critical
+    # idempotency property: without it the stateless policy emits a
+    # NEW reinforce every rollout tick because each tick re-evaluates
+    # the SAME threat against the SAME garrison without crediting the
+    # already-launched reinforce. By tick N we've stacked N redundant
+    # reinforces, draining the sister and bloating the fleet count
+    # (which slows fs_step). Counting friendlies makes the policy
+    # converge after one emit per real threat.
+    inbound_enemy: dict[int, list[tuple[int, int]]] = {}
+    inbound_friendly_ships: dict[int, int] = {}
+    for f in fleets:
+        target, eta = fleet_target_planet(f, planets, omega)
+        if target is None or int(target.owner) != me:
+            continue
+        if int(f.owner) == me:
+            inbound_friendly_ships[int(target.id)] = (
+                inbound_friendly_ships.get(int(target.id), 0)
+                + int(f.ships)
+            )
+        else:
+            inbound_enemy.setdefault(int(target.id), []).append(
+                (int(eta), int(f.ships))
+            )
+    if not inbound_enemy:
+        return []
+
+    moves: list = []
+    used_srcs: set[int] = set()
+
+    # Process threats in eta-order so the most-urgent gets dibs on the
+    # nearest reinforcer.
+    threat_list = sorted(
+        inbound_enemy.items(),
+        key=lambda kv: min(e for (e, _s) in kv[1]),
+    )
+    for pid, waves in threat_list:
+        p_target = my_planets_by_id[pid]
+        earliest_eta = min(e for (e, _s) in waves)
+        threat_force = sum(
+            s for (e, s) in waves if e <= earliest_eta + WAVE_LOOKAHEAD
+        )
+        if threat_force <= 0:
+            continue
+        garrison_at_eta = (
+            float(p_target.ships)
+            + float(p_target.production) * float(earliest_eta)
+            + float(inbound_friendly_ships.get(pid, 0))
+        )
+        if garrison_at_eta >= float(threat_force) + 1.0:
+            continue  # natural production + in-flight reinforces cover it
+
+        shortfall = float(threat_force) + 1.0 - garrison_at_eta
+        # Find nearest viable reinforcer.
+        best: tuple | None = None
+        best_dist_sq = float("inf")
+        for q in planets:
+            if int(q.owner) != me or int(q.id) == pid:
+                continue
+            if int(q.id) in used_srcs:
+                continue
+            dx = float(p_target.x) - float(q.x)
+            dy = float(p_target.y) - float(q.y)
+            dist_sq = dx * dx + dy * dy
+            if dist_sq >= best_dist_sq:
+                continue
+            # Single-iteration chicken-and-egg fix: assume worst-case
+            # reinforce-eta = earliest_eta - 1, compute ships, verify
+            # the resulting eta is still < earliest_eta.
+            worst_eta = max(1, int(earliest_eta) - 1)
+            ships_guess = max(
+                MIN_FLEET_SIZE,
+                int(math.ceil(shortfall)) + SAFETY_MARGIN,
+            )
+            if ships_guess > int(q.ships):
+                ships_guess = int(q.ships)
+            if ships_guess < MIN_FLEET_SIZE:
+                continue
+            spd = _fleet_speed(ships_guess)
+            if spd <= 0:
+                continue
+            d = math.sqrt(dist_sq)
+            flight = max(
+                0.0, d - float(q.radius) - float(p_target.radius) - 0.1
+            )
+            eta_q = max(1, int(math.ceil(flight / spd)))
+            if eta_q >= int(earliest_eta):
+                continue  # too slow
+            best = (q, ships_guess, eta_q)
+            best_dist_sq = dist_sq
+        if best is None:
+            continue
+
+        q, ships, eta_q = best
+        # Aim: orbital lead for orbiting targets, static atan2 otherwise.
+        if is_orbiting(p_target):
+            target_tuple = (
+                int(p_target.id), int(p_target.owner),
+                float(p_target.x), float(p_target.y),
+                float(p_target.radius),
+                int(p_target.ships), int(p_target.production),
+            )
+            aim_res = aim_orbiting(
+                (float(q.x), float(q.y)),
+                float(q.radius),
+                target_tuple,
+                float(p_target.radius),
+                int(ships),
+                float(omega),
+            )
+            if aim_res is None:
+                continue
+            angle = float(aim_res[0])
+        else:
+            angle = math.atan2(
+                float(p_target.y) - float(q.y),
+                float(p_target.x) - float(q.x),
+            )
+
+        moves.append([int(q.id), float(angle), int(ships)])
+        used_srcs.add(int(q.id))
+
+    return moves
+
+
 def make_opp_policy(tier: int = 1) -> Policy:
     """Return a `Callable(obs) -> action` for the given tier.
 
