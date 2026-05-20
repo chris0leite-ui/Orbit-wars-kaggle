@@ -1,5 +1,94 @@
 # state/hypothesis-board.md — open agent-design hypotheses
 
+## Open — Post-null brainstorm (2026-05-21 PM, plateau-day 7)
+
+Triggered by Rule 4 (after every null brainstorm 3 untried mechanisms)
+and Rule 14 (strategy-critic-loop after a null) and Rule 22 (overdue
+since 5/14 plateau-scan). The null was the v2 large→small audit
+(LEAK REJECTED). Plateau: 1130-1150 μ band since 5/13 (#52630118).
+
+Three candidate axes ranked by expected lift-per-effort. Each has a
+diagnostic-first phase to falsify before committing chooser changes
+(per recent ledger-axis lesson — what-if cannot replace true h2h).
+
+### H44 — Landing-capture rate is a hidden hemorrhage (DIAGNOSTIC FIRST)
+
+v2 audit measured `tgt_owned_at_landing` at 33-46% across ALL
+(src_tier, tgt_tier) buckets. Roughly HALF our launches don't even
+take the planet at landing time, before any strategic recapture
+consideration. The launches that miss are not measured separately
+from the launches that hit but get recaptured; both are conflated
+in v1 / end-of-game accounting. Two competing diagnoses:
+- **Over-bid + drained-source-loss**: chooser sizes ships big to
+  guarantee capture, but the drain leaves src vulnerable and opp
+  takes src before our fleet lands. Landing planet sees a flipped
+  src, opp now defends harder. (Mechanism-level fix: dynamic ship
+  sizing per source-defense margin.)
+- **Under-bid + production-accrual**: chooser sizes ships at
+  capture_size, target production accrues during flight, by landing
+  the defender count > our delivered. (Mechanism-level fix: arrival-
+  size mechanism is supposed to already handle this — verify it does.)
+- **Race condition**: our fleet and an opp fleet are both in flight
+  to the same tgt; the opp lands first because they launched first
+  or have shorter flight. (Mechanism-level fix: in-flight ledger
+  already tracks opp fleets; check if chooser uses it correctly.)
+
+Phase 1 (cheap, ~1 hr): extend v2 JSONL to record `expected_delivered`
+(ships - tgt_def_at_arrival), `actual_delivered`, `pre_landing_owner_flip`
+flags. Pivot by bucket to identify which failure mode dominates.
+
+Phase 2 (gated on Phase 1 diagnosis): targeted fix in proposer or
+chooser. Expected lift if landing-capture goes 40% → 60% on the failing
+half: rough +20pp local win-rate / +25-40 live μ.
+
+### H45 — Rule-22 top-5 public-notebook scan (OVERDUE)
+
+Last scan: 2026-05-14 (`audit/2026-05-14-public-notebook-scan.md`).
+Rule 22 mandate fires "at every plateau"; we've been at the 1130-1150
+plateau for 7 days. Pull top 5 Kaggle notebooks (≥10 votes); list
+approach + result + agent class; build the gap. Cheap (~2 hr with 3
+parallel Explore agents), high information value, regulatory.
+
+Specific candidate questions for the scan:
+- Has any top-notebook published an MCTS variant that beats Rahul's
+  10-turn rollout (the strongest known public)?
+- Is anyone using a learned value head or IL warm-start in public?
+- 4P-specific strategies in public — pile-on heuristics, leader
+  avoidance, weakest-opp targeting?
+
+Expected lift: ~20% probability of a genuinely new axis surfacing;
+mandatory regardless of outcome.
+
+### H46 — 4P-specific weakest-opp targeting (NEW STRUCTURAL)
+
+Current opp model (`lib/opp_model.py:lite_greedy_policy`) treats all
+3 opps as identical; the chooser's leaf score (`favor`) aggregates
+my_prod - opp_prod with no per-seat decomposition. In 4P FFA, the
+seat asymmetry is decisive: piling onto the WEAKEST opp eliminates
+them fastest and shrinks the field (4P → 3P → 2P transitions are μ
+inflection points).
+
+Diagnostic: from the 42 4P live replays, measure per-turn (a) which
+opp we targeted, (b) which opp was weakest by production/ships, (c)
+correlation between weakest-targeting and our win rate. If we ALREADY
+target the weakest opp ≥60% of the time, this axis is null.
+
+Fix sketch (gated on diagnostic showing < 60% weakest-targeting):
+multiplicative bonus in `chooser_trajectory.py::score_candidate_v4`
+when `tgt.owner == argmin_opp(prod[opp])`. Env-gated A/B.
+
+Expected lift if it lifts 4P win rate from current ~69% to 74%:
+rough +10-15 live μ (4P weighted ~half our games on the ladder).
+
+### Recommendation
+
+**Run H44 Phase 1 first** (~1 hr, no agent change). The landing-capture
+diagnostic gives concrete failure-mode attribution, which determines
+whether the fix is in proposer / chooser / arrival-size. **Run H45 in
+parallel** (3 Explore agents, cheap). Hold H46 until H44 / H45 verdicts
+are in — if H44 surfaces a clear fix or H45 finds a top-notebook idea
+better than the H46 sketch, deprioritize H46.
+
 ## Process change — under-emission gate (2026-05-21)
 
 Validated negative: simple/older panel anchors (roi, v7_0_drop_one,

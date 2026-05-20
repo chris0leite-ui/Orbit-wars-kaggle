@@ -722,6 +722,32 @@ relevant skill file or source code, not back into friction.md.
   files have wrong dates. Not renamed in this WRAPUP to avoid mass
   reference churn but noted for next session.
 
+## 2026-05-21 (claude/audit-workflow-performance-btjeK — v2 audit + cross-agent push-coordination friction)
+
+- `tag: per-launch-denominator-leaks-frequency-as-quality` — v1
+  large→small audit (`scripts/large_to_small_audit.py`) reported
+  per-launch NET production as the headline, signal collapsed under
+  per-ship normalisation in v2. Root cause: when comparing
+  decision-classes whose actors differ in launch frequency intrinsic
+  to the trait being studied (large planets produce more → launch
+  more), per-decision denominators encode frequency as quality.
+  **Fix:** primary metric must normalise by underlying resource
+  (ships, time, ops budget); per-decision is legacy comparable only.
+  Candidate Rule 41 in
+  `knowledge-base/thoughts/2026-05-21-per-launch-denominators-are-unsafe.md`.
+
+- `tag: cross-agent-push-coordination-gap` — submission 52845073
+  (Phase-1 chooser emit fix, old-lineage probe) was pushed by a
+  separate agent that wasn't informed the current line's rolling
+  pair was tight. Evicted the 52811320 floor (μ=1135.1), settled at
+  μ=1066.7. Not a regression — the probe was always going to settle
+  low — but the push timing was suboptimal because the other agent
+  didn't know the rolling-pair state. Root cause: state/current.md is
+  the rolling-pair source of truth but isn't read by every push-
+  authorising path. **Fix:** any agent authorising a push must read
+  state/current.md::rolling_last_2 first. Surface in
+  `improvements.md` for promotion; add to handover protocol.
+
 ## Anti-spam — what does NOT belong here
 
 - Successful experiments → `audit/YYYY-MM-DD-*.md`.

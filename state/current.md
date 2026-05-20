@@ -17,49 +17,43 @@ date: 2026-05-21
 deadline: 2026-06-23 23:59 UTC
 days_to_deadline: 33
 
-# Most-recent submission (hold-feasibility filter solo).
-# Built on `claude/audit-workflow-performance-btjeK` HEAD. Trajectory chooser
-# unchanged (BASELINE_CHOOSER=trajectory default at main.py:38). The filter
-# (`_target_holdable_after_capture` at proposer.py:407, gated at :627) was
-# default-on since 2026-05-18 PM but had never been the sole change in a
-# submission. This is the calibration probe.
+# Most-recent submission (Phase-1 chooser emit fix — OLD-LINEAGE PROBE,
+# pushed accidentally by an unrelated agent that wasn't informed the
+# rolling pair was tight). See friction.md
+# `cross-agent-push-coordination-gap` (2026-05-21). Built off an older
+# pre-Phase-1 baseline modular line. Settled at μ=1066.7 (-70 vs the
+# prior rolling-pair floor of 1135.1); this was expected for an old-line
+# probe and is NOT a regression of the current line.
 #
-# Local validation:
-#   B.3 h2h solo A/B (treatment vs control with filter disabled at line 627):
-#     25/32 = 78.1% Wlo=0.612 Whi=0.890 PASS (early-stop at n=32)
-#   B' panel A/B + champion h2h (all PASS at Wlo >= 0.55):
-#     vs champion 52784853:  24/32 = 75.0% Wlo=0.579 (closest to gate)
-#     vs v7_0:               30/32 = 93.8% Wlo=0.799
-#     vs v4_planner:         29/32 = 90.6% Wlo=0.758
-#     vs v3.5.1:             27/32 = 84.4% Wlo=0.682
-#   Bundle parity OK over 574 turns.
-#   Wallclock: focal p50=310ms p95=738ms max=1268ms (max > 1s soft cap,
-#   matches current source's profile; not a new risk).
-last_submission_id: 52827111
-last_submission_status: PENDING
-last_submission_mu: null  # no μ yet; refresh via kaggle CLI
-last_submission_message: "comet-aim + reactor-aware: 2P A/B comet-only 64/96=66.7pct Wlo=0.568 PASS; 4P FFA combined 89/127=70.1pct, comet-only 89/128=69.5pct CI[61.1,76.8], no-reactor 80/128=62.5pct CI[53.9,70.4]; comet-aim alone is +7pp, reactor-aware adds +0.6pp on top (within noise); Rule-38 trace ep 77087563 vs Felix Truong confirms 40-ship OOB fixed"
+# The strong agents 52827111 (comet-aim + reactor-aware, μ=1136.6) and
+# 52811320 (hold-feasibility solo, μ=1135.1) BOTH SETTLED in the
+# 1135-1137 band. 52811320 was auto-evicted by 52845073's push.
+last_submission_id: 52845073
+last_submission_status: COMPLETE
+last_submission_mu: 1066.7
+last_submission_message: "Phase 1 chooser emit fix (wait_N>0 no longer reserves src/tgt; modular baseline). Local 2P self-play A/B n=16 vs pre-Phase-1: 56% (Wlo 0.33, inconclusive). Phases 2/3/4/6 gated off behind env vars. Calibration probe to measure the chooser-emit-fix axis vs v15 baseline (live 1115.0). Bench p50=88 p95=200 max=339 ms (0 over 1000ms)."
 last_submission_file: submissions/baseline.py
-last_submission_agent: baseline_comet_aim_plus_reactor
-last_submission_sha256: 90d2034141054d2022e968c081e3b466d1608347d63b1d56657b34bc4b0370ef
-last_kernel_push: 2026-05-19 19:52:53 UTC
-prior_submission_id: 52811320
-current_submitted_agent: baseline_comet_aim_plus_reactor (5/19 evening)
+last_submission_agent: phase1_chooser_emit_fix_old_lineage
+last_submission_sha256: unknown  # pushed by other agent
+last_kernel_push: 2026-05-20 09:01:14 UTC
+prior_submission_id: 52827111
+current_submitted_agent: phase1_chooser_emit_fix_old_lineage (5/20 morning, accidental)
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation; the
-# third push auto-evicts the previous oldest). Per the literal
-# "rolling LAST 2 submissions" rule. Verified via `kaggle competitions
-# submissions orbit-wars` 2026-05-19 19:52:
-#   52811320 (May 19 12:54, μ=1137.5) — hold-feasibility filter solo,
-#     SETTLED at 1137.5 (was drifting around 1067 yesterday). Kept.
-#   52784853 (May 18 17:42, μ=1130.4) — EVICTED by 52827111 push.
-#   52827111 (May 19 19:52, μ=PENDING) — comet-aim + reactor-aware.
-# Floor of the rolling pair after push: 1137.5 (52811320) until 52827111 settles.
-# Calibration note: 52811320 climbed dramatically from drift-low ~1067
-# to settled 1137.5 — TrueSkill needs 24h+ to settle reliably.
+# third push auto-evicts the previous oldest). Verified via `kaggle
+# competitions submissions orbit-wars` 2026-05-21:
+#   52845073 (May 20 09:01, μ=1066.7) — Phase-1 emit fix, OLD-LINEAGE.
+#     Settled low as expected for an older modular line. Newest in pair.
+#   52827111 (May 19 19:52, μ=1136.6) — comet-aim + reactor-aware.
+#     Strong current-line agent. 2nd-newest in pair.
+#   52811320 (May 19 12:54, μ=1135.1) — hold-feasibility solo. EVICTED.
+# Pair floor: 1066.7 (52845073). Pair pivot: 1101.65.
+# To FLUSH 52845073 needs 2 sequential pushes (1st evicts 52827111;
+# 2nd evicts 52845073). With 5/day budget this is feasible inside one
+# session if PI greenlights two strong candidates.
 rolling_last_2:
-  - {agent: baseline_comet_aim_plus_reactor, sub_id: 52827111, submitted: 2026-05-19T19:52Z, status: PENDING, mu_snapshot: null}
-  - {agent: baseline_hold_feasibility_solo, sub_id: 52811320, submitted: 2026-05-19T12:54Z, status: COMPLETE, mu_snapshot: 1137.5}
+  - {agent: phase1_chooser_emit_fix_old_lineage, sub_id: 52845073, submitted: 2026-05-20T09:01Z, status: COMPLETE, mu_snapshot: 1066.7}
+  - {agent: baseline_comet_aim_plus_reactor, sub_id: 52827111, submitted: 2026-05-19T19:52Z, status: COMPLETE, mu_snapshot: 1136.6}
 
 # Team peak as of 2026-05-17: v15_banded (the multi-wait-grid + banded
 # (src, tgt, wait_band) dedup line). v15 source lives in git history at
@@ -75,16 +69,17 @@ team_peak_agent: v15_banded
 # rolling agent (not just a fixed baseline) before any new push. The
 # 52811320 push followed this protocol (panel + champion h2h all PASS).
 
-submissions_used_today: 0     # 5/21 diagnose+validate cycle, no submissions
-submissions_used_total: 35    # see ladder list below; refresh via Kaggle CLI
-plateau_days: 0
-saturation_count: 0
+submissions_used_today: 0     # 5/21 diagnose+brainstorm cycle, no current-line submissions
+submissions_used_total: 36    # +1 from 52845073 (accidental old-lineage push 5/20)
+plateau_days: 7               # 1130-1145 band since 5/13 v7_pv (#52630118)
+saturation_count: 1           # A.8 leak hypothesis null (5/21 v2 audit)
 
 # Live ladder — read from `kaggle competitions submissions orbit-wars`,
 # NOT from this file. Submission IDs are stable; scores are not.
 # Most recent ladder entries by submission id:
-#   52827111  baseline.py (comet-aim + reactor-aware)      2026-05-19 19:52 PENDING ← NEW
-#   52811320  baseline.py (hold-feasibility filter solo)   2026-05-19 12:54 COMPLETE μ=1137.5 ← rolling pair
+#   52845073  baseline.py (Phase-1 emit fix, OLD-LINEAGE ACCIDENT)  2026-05-20 09:01 COMPLETE μ=1066.7 ← NEWEST in rolling pair
+#   52827111  baseline.py (comet-aim + reactor-aware)      2026-05-19 19:52 COMPLETE μ=1136.6 ← 2nd in rolling pair
+#   52811320  baseline.py (hold-feasibility filter solo)   2026-05-19 12:54 COMPLETE μ=1135.1 ← EVICTED by 52845073
 #   52784853  baseline.py (PV-off + bug #3/#4/#12 fixes)   2026-05-18 17:42 COMPLETE μ=1130.4 EVICTED by 52827111
 #   52766596  baseline.py (joint v3 2P-only)               2026-05-18 07:12 COMPLETE μ=1118.3 EVICTED by 52811320
 #   52754310  baseline.py (trajectory v4 + wait_N)         2026-05-17 22:06 COMPLETE μ=1143.7
@@ -116,6 +111,25 @@ saturation_count: 0
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
+  - 2026-05-21 PM — audit-workflow-performance-btjeK.
+    PI flagged a confound in the 5/21 AM large→small leak audit
+    (`scripts/large_to_small_audit.py`, commit 2c24d5e): high-prod
+    planets launch more BECAUSE they produce more, so per-launch NET
+    encodes frequency as quality. End-of-game src-loss attribution
+    is also tautological in lost episodes (everything flips). Built
+    v2 audit (`scripts/large_to_small_audit_v2.py`, commit 0b83734)
+    with per-ship NET as primary, short-window (20-turn pre-relaunch)
+    src-loss attribution, landing-time tgt outcome, and early/mid/late
+    episode-window slicing. **Verdict: LEAK REJECTED.** Per-ship NET
+    for large→small is +0.008 (early), +0.003 (mid); large sources
+    have the LOWEST short-window loss rate (8-11%) of any tier. Phase
+    B (opp model cheap-capture bonus) NOT implemented per strict gate
+    in the approved plan. A.8 leaf → null. Candidate Rule 41
+    (per-decision denominators leak frequency-as-quality) drafted in
+    `knowledge-base/thoughts/2026-05-21-per-launch-denominators-are-unsafe.md`.
+    Also: discovered submission 52845073 was accidentally pushed
+    5/20 09:01 by another agent that wasn't informed; logged
+    `cross-agent-push-coordination-gap` friction.
   - 2026-05-20/21 — audit-workflow-performance-btjeK.
     Diagnose → fix → validate → reject cycle on the chooser's
     wait_N>0 under-emission. **No submissions** (PI direction:
