@@ -167,28 +167,11 @@ def solve_turn(obs, configuration=None, *,
     num_seats = _num_seats(planets, fleets)
     step_now = int(obs_d.get("step", 0) or 0)
 
-    # Phase 4 endgame predicate gate — applies BEFORE both the opening
-    # planner (Phase 5A) and the LP (Phase 4). If we're already winning by
-    # closed-form math, idle — no need to risk ships, whether in opening
-    # or post-opening. 2P only; 4P bypasses.
-    if num_seats == 2:
-        opp_id_pre = 1 - me
-        try:
-            if is_winning_state(world, me, opp_id_pre):
-                if not return_diagnostics:
-                    return []
-                return [], MpcDiagnostics(
-                    step=step_now, n_prerank=0, n_columns=0,
-                    n_positive_columns=0, n_fired_columns=0,
-                    n_emitted_moves=0, objective=0.0,
-                    solver_status="endgame_winning_idle",
-                    n_vars=0, n_constraints=0,
-                    n_opp_projections=0, is_winning_state=True,
-                    portfolio_size=0, portfolio_filtered=False,
-                    n_columns_before_filter=0,
-                )
-        except Exception:
-            pass  # if predicate evaluation fails, fall through
+    # The closed-form winning-state predicate is evaluated below as a SIGNAL
+    # to the LP (via portfolio filtering), not as a kill-switch. Idling on
+    # math-winning positions locks in a thin lead; capturing further opp
+    # planets compounds the win at the same level of acceptable risk the LP
+    # is already calibrated for.
 
     # Phase 5A: opening planner dispatch.
     # For step < OPENING_HORIZON, solve the opening as a one-shot multi-turn
@@ -263,21 +246,15 @@ def solve_turn(obs, configuration=None, *,
     columns = _build_columns(prerank, world, model_with_opp, my_id=me, gamma=gamma)
     n_columns_before_filter = len(columns)
 
-    # Endgame predicate gate (2P only — 4P bypasses).
+    # Endgame portfolio focus (2P only — 4P bypasses).
     #
-    # If the closed-form winning-state predicate already holds for me,
-    # ANY launch is a risk: I gain nothing from capturing more (production
-    # margin × turns_left already > opp's recovery capacity), but every
-    # ship I send is one less defender if opp coordinates a surprise.
-    # → return [] (preserve ownership).
-    #
-    # If the predicate is False but a smallest_winning_portfolio exists,
-    # restrict the LP to columns targeting those planets (plus own-planet
-    # reinforces / migrations). Focuses ship spend on targets that
-    # actually flip the predicate to True.
-    #
-    # If neither (4P, or 2P with no winnable portfolio), fall through to
-    # the LP unfiltered.
+    # If a smallest_winning_portfolio exists, restrict the LP to columns
+    # targeting those planets (plus own-planet reinforces / migrations).
+    # Focuses ship spend on targets that actually flip the predicate to
+    # True. When the predicate is already True, the portfolio is empty
+    # (no more captures needed to mathematically secure the win) and the
+    # LP runs unfiltered — capturing further opp planets compounds the
+    # lead at the LP's calibrated risk level.
     winning_now = False
     portfolio_filtered = False
     portfolio: list[int] = []
@@ -287,27 +264,6 @@ def solve_turn(obs, configuration=None, *,
             winning_now = bool(is_winning_state(world, me, opp_id))
         except Exception:
             winning_now = False
-        if winning_now:
-            if not return_diagnostics:
-                return []
-            diag = MpcDiagnostics(
-                step=int(obs_d.get("step", 0) or 0),
-                n_prerank=len(prerank),
-                n_columns=len(columns),
-                n_positive_columns=sum(1 for c in columns if c.value > 0.0),
-                n_fired_columns=0,
-                n_emitted_moves=0,
-                objective=0.0,
-                solver_status="endgame_winning_idle",
-                n_vars=0,
-                n_constraints=0,
-                n_opp_projections=len(opp_arrivals),
-                is_winning_state=True,
-                portfolio_size=0,
-                portfolio_filtered=False,
-                n_columns_before_filter=n_columns_before_filter,
-            )
-            return [], diag
         try:
             portfolio = smallest_winning_portfolio(world, me, opp_id)
         except Exception:

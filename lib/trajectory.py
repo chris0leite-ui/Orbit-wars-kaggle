@@ -66,6 +66,7 @@ class FleetFate:
 def predict_fleet_fate(
     src, target, aim_angle: float, ships: int,
     world, max_steps: int = DEFAULT_MAX_STEPS,
+    wait_N: int = 0,
 ) -> FleetFate:
     """Ray-cast a fleet's full trajectory until the first collision.
 
@@ -83,28 +84,42 @@ def predict_fleet_fate(
     Returns the FIRST hit. If we reach `max_steps` without collision the
     fate is `"timeout"` — should be rare on a 100x100 board.
 
+    `wait_N>0`: the fleet is scheduled to launch wait_N ticks from now.
+    Source position, planet positions, and the spawn point are all
+    advanced by wait_N orbital ticks before the ray-cast begins. Use this
+    when validating wait-then-fire candidates whose fire-time geometry
+    differs from the current world snapshot.
+
     O(max_steps * planets) per call. On a 24-planet mid-game board with
     max_steps=200 that's ~4800 swept_pair_hit calls = ~1-2 ms.
     """
     omega = world.omega
 
+    # Source position at fire time (t + wait_N).
+    src_tuple = [src.id, src.owner, src.x, src.y, src.radius,
+                 src.ships, src.production]
+    if wait_N > 0 and is_orbiting(src_tuple) and omega != 0.0:
+        src_x_fire, src_y_fire = predict_relative(src_tuple, omega, wait_N)
+    else:
+        src_x_fire, src_y_fire = src.x, src.y
+
     # Spawn position (env: src.center + (radius + 0.1) * direction).
     cos_a = math.cos(aim_angle)
     sin_a = math.sin(aim_angle)
-    spawn_x = src.x + cos_a * (src.radius + 0.1)
-    spawn_y = src.y + sin_a * (src.radius + 0.1)
+    spawn_x = src_x_fire + cos_a * (src.radius + 0.1)
+    spawn_y = src_y_fire + sin_a * (src.radius + 0.1)
     speed_val = fleet_speed(ships)
     if speed_val <= 0:
         # Shouldn't happen (fleet_speed is monotonically >= 1.0 for ships >= 1).
         return FleetFate("oob", None, 0)
 
-    # Pre-compute per-planet positions at every step (orbital chord).
+    # Pre-compute per-planet positions at every step from t+wait_N onward.
     planet_positions: dict[int, list[tuple[float, float]]] = {}
     for pid, p in world.planets_by_id.items():
         p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
         if is_orbiting(p_tuple) and omega != 0.0:
             planet_positions[pid] = [
-                predict_relative(p_tuple, omega, t)
+                predict_relative(p_tuple, omega, wait_N + t)
                 for t in range(max_steps + 1)
             ]
         else:

@@ -581,13 +581,11 @@ def propose(my_planets, target_pool, world, model, me: int,
         filtered: list = []
         for entry in deduped:
             _cheap, src, tgt, ships, angle, eta, _horizon, w = entry
-            if int(w) != 0:
-                # Wait-then-fire: trajectory geometry depends on the
-                # launch-time orbital state; the static fate-predictor
-                # would mis-classify. Pass through unfiltered.
-                filtered.append(entry)
-                continue
-            fate = predict_fleet_fate(src, tgt, float(angle), int(ships), world)
+            # Wait-then-fire: predict fate against fire-time geometry
+            # (planet positions advanced by wait_N orbital ticks).
+            fate = predict_fleet_fate(
+                src, tgt, float(angle), int(ships), world, wait_N=int(w),
+            )
             if fate.outcome != "target":
                 continue  # sun / oob / hits wrong planet / timeout — drop
             # Target reached. If it's a comet, also gate on lifetime.

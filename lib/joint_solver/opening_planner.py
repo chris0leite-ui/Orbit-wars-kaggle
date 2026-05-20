@@ -296,18 +296,20 @@ def _build_candidates(world, model, my_id: int, num_seats: int,
                 if needed + DEFENDER_GUARD > src_ships_at_fire:
                     continue  # can't afford while keeping defender
 
-                # 4. Trajectory feasibility (only meaningful at offset=0 since
-                # predict_fleet_fate uses current positions; conservative for
-                # offset>0 — we accept the approximation in the opening window).
-                if offset == 0:
-                    try:
-                        fate = predict_fleet_fate(src, tgt, angle, needed, world)
-                    except Exception:
-                        fate = None
-                    if fate is not None and getattr(fate, "outcome", "") != "target":
-                        waterfall.setdefault("dropped_trajectory", 0)
-                        waterfall["dropped_trajectory"] += 1
-                        continue
+                # 4. Trajectory feasibility against fire-time geometry.
+                # predict_fleet_fate advances planet positions by wait_N=offset
+                # orbital ticks so wait-then-fire candidates are checked against
+                # their actual fire-time geometry, not the turn-now snapshot.
+                try:
+                    fate = predict_fleet_fate(
+                        src, tgt, angle, needed, world, wait_N=int(offset),
+                    )
+                except Exception:
+                    fate = None
+                if fate is not None and getattr(fate, "outcome", "") != "target":
+                    waterfall.setdefault("dropped_trajectory", 0)
+                    waterfall["dropped_trajectory"] += 1
+                    continue
 
                 capture_residual = needed - int(math.ceil(gar_at_arr))
                 if capture_residual < 1:
