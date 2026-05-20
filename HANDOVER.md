@@ -1,18 +1,51 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-20 evening by `claude/strategy-axis-decision-3437`.
-> **Production agent unchanged on the Kaggle ladder.** Default chooser
-> remains `"trajectory"` (`agents/baseline/main.py:38`); the analytical
-> work lives on this branch only.
+> Last written: 2026-05-21 by `claude/strategy-axis-decision-3437`.
+> Plan executed: `/root/.claude/plans/be-a-mathematician-and-elegant-tide.md`
+> (foundation-solidification pass).
 >
-> This session executed the plan at
-> `/root/.claude/plans/spicy-marinating-token.md` — built the analytical-
-> native modular pipeline (`lib/pipeline/`), ran five substrate variants
-> (Phase C / D v2 / D v3 / F1 / F2a). **All five returned 1/4 vs
-> trajectory on identical seeds.** Then PI flagged a sloppiness; three
-> critical code-review subagents surfaced multiple correctness bugs that
-> contaminate the trust in those results. **No fixes landed; this
-> session ends in audit-and-document mode.**
+> **9 of the 10 audit-bugs fixed and pushed**; Bug #9 was confirmed
+> already-correct so it gets a regression-protection test next session
+> instead of a fix. A **bigger root cause** (bundler constant-collision
+> for `T_END`/`HOLD_WINDOW`/`DEFENDER_GUARD`) was found and fixed first
+> — that's the most plausible cause of the live "ships missing targets"
+> behaviour PI flagged at start of session.
+>
+> **Open follow-ups for next session** below — especially the new OOB-
+> on-comet-entry symptom PI flagged near the end and the residual
+> bundle-vs-source parity divergence that doesn't affect Rule-44 but
+> does indicate the bundle's LP makes slightly different choices than
+> source's.
+
+## TL;DR — this session
+
+- **Submitted twice**. 52864817 ERRORed (built before pulling the
+  ps_commit fix). 52865089 COMPLETE μ=807.7 (rising) with the
+  constant-collision fix; the previous "buggy" Phase C bundle 52864048
+  is at μ=789.0 and falling — the fix is empirically better.
+- **8 bug fixes shipped** (Bugs #1, #2, #3, #4, #6, #7, #8, #10).
+  Plus a critical bundler constant-collision fix found via the new
+  bundle-vs-source parity test (Bug #5 infrastructure).
+- **Bundler constant collision** was THE root cause of the live
+  miss-target behaviour. `opening_planner.py` defined `T_END=200`,
+  `HOLD_WINDOW=12`, `DEFENDER_GUARD=2` as file-local; `lp_outcome.py`
+  defined them as 500/—/0. In the bundle's flattened namespace the
+  later assignments silently overwrote the earlier ones, so the
+  opening MILP ran with 2.5× inflated values + zero source-budget
+  reserve, picked a different schedule, and fired one tick earlier
+  than the angle was computed for. Renamed the opening_planner
+  constants to `OPENING_T_END` / `OPENING_HOLD_WINDOW` /
+  `OPENING_DEFENDER_GUARD` (file-local, no external imports). Pin
+  test: `tests/test_bundle_analytical_phase_c_parity.py`.
+- **New OOB-on-comet-entry symptom** PI flagged after the second
+  submission's first self-play games settled. Most likely cause:
+  `lib/trajectory.py:118-126` treats every planet in
+  `world.planets_by_id` as orbiting (calls `predict_relative`), but
+  comets follow discrete paths from `world.obs["comets"]`. Comet
+  position predictions are therefore wrong, and a trajectory that
+  predict_fleet_fate says "hits target" can in reality miss
+  (comet redirects / target was elsewhere) and fly OOB. This is a
+  PRE-EXISTING bug not in the original 10; needs its own fix.
 
 ## TL;DR
 
