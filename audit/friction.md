@@ -118,6 +118,44 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-20 (claude/review-skills-improvements-moKOR — cross-branch consolidation)
+
+- `tag: inventory-as-categorical-summary-not-itemized` — first draft
+  of the cross-branch tools registry (`state/TOOLS.md`) was
+  category-grouped prose ("we have A/B harnesses", "we have
+  diagnostics"). Required THREE PI nudges to surface the actual
+  items: "have you mentioned ML competition branch?", "have you
+  listed the A B testing tools and the single game diagnose tools?",
+  "have you listed the validation and testing tools?". Each fix grew
+  the doc by ~50 lines; net output is ~3× the first draft. **Root
+  cause:** I summarize when PI wants enumeration. Categories aren't
+  searchable; itemized tables are. **Fix (drafted, NOT promoted per
+  PI):** when PI asks for an inventory / registry / catalog / tools
+  list, default to itemized enumeration (one row per item, scannable
+  table). Recorded in postmortem; not added to improvements.md.
+- `tag: substrate-asset-discovery-filtered-to-recent-only` —
+  initial 7-branch survey filtered to "recent" branches (commits in
+  last ~5 days), excluded `claude/precision-physics-engine-ymJkA`
+  (9 days old, holds the only guaranteed-landing inverse-intercept
+  solver in the repo + live-published submission #52552139). Surfaced
+  only when OyoYR-rebased's HANDOVER tier-split commit (84 min ago)
+  cited it. **Root cause:** "recent" filter is appropriate for ACTIVE
+  work, not for substrate-asset discovery. **Fix (drafted, NOT
+  promoted per PI):** query all `claude/*` branches when discovering
+  reusable substrate; do not filter by recency.
+- `tag: rule-number-collision-without-cross-branch-grep` — authored
+  Rule 41 ("pre-submit cross-branch coordination gate") without
+  first running `git grep "Rule 4[1-9]"` across sibling branches.
+  `claude/audit-workflow-performance-btjeK`'s knowledge-base already
+  had a Rule 41 candidate ("confound-sweep before correlational
+  conclusion"). Caught only when PI asked for latest updates on
+  other branches; renumbered to 42-47 and adopted btjeK's as Rule 41.
+  **Root cause:** authored new rule numbers without reading sibling
+  branches' KB. The new Rule 44 (this session) would have caught
+  this. **Fix (drafted, NOT promoted per PI):** grep all dev branches'
+  KB + improvements.md for pre-existing proposals before authoring a
+  new CLAUDE.md rule number.
+
 ## 2026-05-18 (claude/reverse-engineer-seat-geometry-BPJKs)
 
 - `tag: wrong-file-recon-skipped-state-md` — recon for an audit-driven
