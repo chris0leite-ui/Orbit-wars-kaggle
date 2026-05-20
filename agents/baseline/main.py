@@ -249,6 +249,18 @@ def agent(obs, configuration=None):
             my_planets, target_pool, world, model, me, omega,
             baseline_len=MAX_HORIZON + 1,
         )
+        # Slice 9: append closed-form ship-migration candidates to
+        # the prerank. Fills the missing "reposition ships toward
+        # action" candidate class that the proposer doesn't emit.
+        # The differential chooser detects migration tuples (tgt.owner
+        # == me, no inbound threat) and uses their cheap_delta as the
+        # score directly (Δ-favor projection would be 0 for own→own).
+        # Default-on under BASELINE_CHOOSER=differential; opt-out via
+        # BASELINE_MIGRATION=0 for ablation.
+        if os.environ.get("BASELINE_MIGRATION", "1").strip() != "0":
+            from agents.baseline.migration_solver import propose_migrations
+            migrations = propose_migrations(world, model, me)
+            prerank = list(prerank) + list(migrations)
         from agents.baseline.chooser_differential import choose_differential
         moves = choose_differential(
             snap_base, prerank, None,

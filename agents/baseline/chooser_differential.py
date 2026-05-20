@@ -265,14 +265,38 @@ def choose_differential(snap_base, prerank, baseline_favors,
     scored: list = []
     for c in prerank:
         cheap_delta, src, tgt, ships, angle, eta, horizon_hint, wait_N = c
-        try:
-            delta = score_candidate_differential(
-                c, world, model, int(me), int(num_seats), float(gamma),
-            )
-        except Exception:
-            # Defensive: a single bad candidate shouldn't crash the
-            # whole turn. The chooser falls back to skipping it.
-            continue
+
+        # Slice 9: migration candidate detection. Migration moves are
+        # own→own (`tgt.owner == me`) AND don't fire under enemy
+        # threat at the target (defensive reinforces have inbound
+        # threat — those would be W2's territory). The differential's
+        # Δ-favor projection would correctly return 0 for own→own
+        # moves (no ownership / production change at the leaf). Instead,
+        # use `cheap_delta` (which carries the migration solver's
+        # closed-form ΔCapture-EV value) directly as the score.
+        is_migration = False
+        if int(tgt.owner) == int(me):
+            threat_eta = None
+            try:
+                threat_eta = model.time_to_enemy_threat(
+                    int(tgt.id), int(me), world,
+                )
+            except Exception:
+                threat_eta = None
+            if threat_eta is None:
+                is_migration = True
+
+        if is_migration:
+            # The solver pre-computed value lives in cheap_delta.
+            # Skip Δ-favor projection (which would be 0 anyway).
+            delta = float(cheap_delta)
+        else:
+            try:
+                delta = score_candidate_differential(
+                    c, world, model, int(me), int(num_seats), float(gamma),
+                )
+            except Exception:
+                continue
         if delta > 0.0:
             scored.append((delta, src, tgt, ships, angle, wait_N))
 
