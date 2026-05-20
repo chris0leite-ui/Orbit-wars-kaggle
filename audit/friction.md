@@ -667,6 +667,61 @@ relevant skill file or source code, not back into friction.md.
   per-ship-time-to-engagement, etc.). Promotion candidate — see
   postmortem.
 
+## 2026-05-20 (claude/audit-workflow-performance-btjeK — ledger build → fail → axis-exhausted)
+
+- `tag: whatif-static-opp-false-positive` — what-if rollout validated
+  the stateful commit ledger as `+118 final planets vs +15 baseline`
+  across 6 episodes, then real h2h showed the same ledger LOSES to
+  current production 2/16 (12.5%, Wlo=0.035). Root cause: what-if
+  feeds the opp's RECORDED actions verbatim after divergence; opp
+  becomes effectively passive once state diverges from the recording.
+  Reactive opponent in real play punishes the over-emission. **Fix:**
+  the what-if harness is a useful chooser-behavior debugger but NOT a
+  μ-lift predictor. Treat any what-if positive as needing a small-n
+  h2h vs current production BEFORE drawing conclusions about
+  shippability. Promotion candidate — see postmortem.
+
+- `tag: launch-rate-is-symptom-not-cause` (3rd recurrence — promotion
+  already in improvements.md but I missed reading it) — the
+  49pct-idle observation in the sary loss was real but the cure
+  (build a ledger that fires more) regressed. Same friction was
+  promoted after 2026-05-17 fleet-efficiency session. Continuing to
+  fire on the symptom-fix pattern. **Fix:** the rule already exists;
+  the failure was not consulting `.claude/skills/kaggle-comp/improvements.md`
+  before opening a new fix-axis. Add a session-start checklist item
+  to grep improvements.md for the friction tag of the diagnosis
+  before designing the fix.
+
+- `tag: panel-anchor-strength-floor` — built `agents/sary_class/` to
+  catch under-emission regressions locally; then tested existing
+  anchors and found ALL simple ones (roi 1/8, sary_class 0/8,
+  v7_0_drop_one 0/8) LOSE to the failed ledger we're trying to
+  catch. Only current production catches it. Root cause: the failure
+  manifests only against opponents that share the production-class
+  defensive infrastructure (lite_greedy + reactive defense + value
+  head). Simple agents get crushed by an "almost-prod-with-a-bug"
+  regardless of the bug. **Fix:** for sophisticated-regression
+  classes, the only valid local detector is the current production
+  itself. Workflow change recorded in state/hypothesis-board.md:
+  candidate vs current production at n=8 is the FIRST gate. Don't
+  invest in synthetic anchors until current production becomes too
+  slow to be the gate.
+
+- `tag: test-existing-tools-first` — started building sary_class
+  before testing whether existing panel anchors (roi at 97% panel
+  WR) would already catch the regression. They wouldn't (see above),
+  but I should have tested 10 min FIRST before spending an hour on
+  sary_class. **Fix:** "before building a new diagnostic agent or
+  harness, test whether the existing infrastructure already exposes
+  the failure" — add as a Phase 0 step to any future panel-anchor
+  plan.
+
+- `tag: audit-date-must-track-system-currentdate` (recurrence —
+  promotion was Day-1, but recurred this cycle) — wrote
+  `audit/2026-05-21-*.md` files on 2026-05-20 (system date). 3 audit
+  files have wrong dates. Not renamed in this WRAPUP to avoid mass
+  reference churn but noted for next session.
+
 ## Anti-spam — what does NOT belong here
 
 - Successful experiments → `audit/YYYY-MM-DD-*.md`.

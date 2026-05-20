@@ -13,9 +13,9 @@
 > (clean modular re-baseline of v15).
 
 ```yaml
-date: 2026-05-19
+date: 2026-05-21
 deadline: 2026-06-23 23:59 UTC
-days_to_deadline: 35
+days_to_deadline: 33
 
 # Most-recent submission (hold-feasibility filter solo).
 # Built on `claude/audit-workflow-performance-btjeK` HEAD. Trajectory chooser
@@ -75,7 +75,7 @@ team_peak_agent: v15_banded
 # rolling agent (not just a fixed baseline) before any new push. The
 # 52811320 push followed this protocol (panel + champion h2h all PASS).
 
-submissions_used_today: 2     # 5/19 — 52811320 (hold-feasibility solo) + 52827111 (comet-aim + reactor-aware)
+submissions_used_today: 0     # 5/21 diagnose+validate cycle, no submissions
 submissions_used_total: 35    # see ladder list below; refresh via Kaggle CLI
 plateau_days: 0
 saturation_count: 0
@@ -116,6 +116,42 @@ saturation_count: 0
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
+  - 2026-05-20/21 — audit-workflow-performance-btjeK.
+    Diagnose → fix → validate → reject cycle on the chooser's
+    wait_N>0 under-emission. **No submissions** (PI direction:
+    diagnostic-only, then local-only validation).
+    (a) Replay-driven postmortem (`scripts/baseline_postmortem.py`,
+    new) on submission 52827111 over 8 recent live episodes:
+    confirmed 49% idle on sary loss, falsified the entering
+    hypothesis (filters innocent — 0% of drops by cost-parity, 4% by
+    hold-feasibility), localised the failure to the trajectory
+    chooser's "wait_N>0 reserve src+tgt, emit nothing" rule
+    (`chooser_trajectory.py:856`). 248/248 idle turns with positive-Δ
+    candidate had wait_N>0 as top. See
+    `audit/2026-05-20-filter-rejection-trace.md`.
+    (b) Built stateful commit ledger (`agents/baseline/main.py`
+    `_PENDING_LAUNCHES`, `_tick_ledger`; `(moves, commits)` return
+    from both chooser variants; `BASELINE_LEDGER=off` default).
+    What-if rollout harness (`scripts/whatif_postmortem.py`, new)
+    showed 6/6 final-planet wins +28% launch volume on 6 episodes.
+    See `audit/2026-05-20-ledger-design.md`.
+    (c) **VALIDATION FAILED in true h2h.** ledger_soft 2/16 (12.5%
+    Wlo=0.035); ledger_hard 0/16. Across 4 captured replays led_off
+    won all (88 final planets) while led_on was eliminated 0/4. Root
+    cause: the wait_N>0 reservation has defensive value (co-located
+    ship reserve for reactive defence) that the ledger destroys.
+    What-if used stale opp actions → false positive. See
+    `audit/2026-05-21-ledger-validation.md`. Ledger axis exhausted
+    per Rule 37 (2 same-axis variants failed).
+    (d) Attempted to build a sary-class panel anchor
+    (`agents/sary_class/main.py`) to catch this regression class
+    locally next time. Both variants (selective + nuke) lose 0/8
+    vs current production. Worse, ALL existing simple anchors
+    (roi 1/8, sary_class 0/8, v7_0_drop_one 0/8) lose to the failed
+    `led_on` — only current production catches the regression.
+    Workflow change: candidate vs current production at n≥8 is now
+    the FIRST under-emission gate. See
+    `audit/2026-05-21-sary-class-failure.md`.
   - 2026-05-19 PM (research) — audit-workflow-performance-btjeK.
     Research-only session — no code changes, no submissions. Followed
     up on PI's "mobilize parked ships" framing with three parallel
@@ -137,61 +173,6 @@ session_log:
     heuristics. Postmortem at audit/2026-05-19-postmortem-parked-ship-confound.md
     drafts a candidate Rule 41 (confound-sweep before correlational
     conclusion). PI ratification pending.
-  - 2026-05-19 evening — audit-workflow-performance-btjeK.
-    Three commits + one push. (a) `037009b`: reactor-aware launch
-    selection — cost-parity filter (reject candidates where the cheapest
-    opp reactor pays < 70 pct of our cost) + reactor-candidate generator
-    (propose our own race-to-recapture for opp fleets in flight). 2P A/B
-    INCONCLUSIVE (61/128 = 47.7 pct Wlo=0.392 Whi=0.563), drilldown
-    showed local "regression" was wallclock artifact under 6-worker
-    contention on 4 CPUs — agent decisions identical when given enough
-    wallclock; max=1332ms in contended A/B vs 442ms in serial bench.
-    (b) `dbbc535`: comet-aim path-indexed lead — new aim_comet 5-iter
-    fixed-point sibling of aim_orbiting that reads obs.comets[g].paths
-    instead of predict_relative orbital rotation; predict_fleet_fate
-    also updated to use the path. Env-var BASELINE_COMET_AIM=on default.
-    Rule-38 trace on ep 77087563 (sub 52811320 vs Felix Truong): pre-fix
-    angle 160.01° at step 51 → step-8 OOB at (-2.19, 80.49); post-fix
-    angle 121.25° → trajectory filter correctly drops the candidate as
-    wrong-planet. (c) `cb8b5aa`: 4P FFA panel JSON committed.
-    Verifications: comet-only 2P A/B 64/96=66.7 pct Wlo=0.568 PASS;
-    4P FFA panel vs {v7_0_drop_one, v3.5.1, roi}:
-      combined (reactor+comet): 89/127 = 70.1 pct (partial; container
-                                cycled at game 127)
-      comet-only:               89/128 = 69.5 pct CI [61.1, 76.8]
-      no-reactor (52811320):    80/128 = 62.5 pct CI [53.9, 70.4]
-    Comet-aim is +7pp solo; reactor-aware adds +0.6pp (within noise).
-    Pushed combined bundle 52827111 at PI direction ("submit with
-    reactor — I want to see how it behaves"). 52811320 settled at
-    μ=1137.5 (was drifting around 1067 yesterday — TrueSkill needs
-    24h+ to settle).
-  - 2026-05-17 PM — audit-workflow-performance-btjeK.
-    Diagnostic + observe-loop foundations + composite head wired + A2 merged
-    + submission bundled. Workflow fixes: kaggle-CLI shim (`~/.local/bin/kaggle`
-    installed by session-start hook to persist KAGGLE_API_TOKEN across Bash
-    calls); `fast.py eval --vs-panel` REFUSES (exit 2) unless `--require-h2h
-    <champion>` is set; WRAPUP step 4c enforces Rule-36 flags/questions filing
-    check. Pivot #1 (replay-mine): `scripts/replay_mine.py` walks live-episode
-    replays and classifies fleets into PI-facing buckets. Surprise finding:
-    PI's "vanished_in_space = comets" hypothesis was falsified (0.1% / 12 of
-    9507 fleets); the 838 vanishes were misclassified planet hits because
-    `attribute_fleets:290` used static distance from fleet-old to planet-NEW.
-    Fix: swept-pair against every planet via `lib.game.interpreter.swept_pair_hit`
-    — v15's real waste is ~17%, not 24%. Pivot #2 (composite head): wired
-    `composite_capture_value` opt-in via `BASELINE_VALUE_HEAD=composite`, then
-    panel A/B at n=32 cleared every opponent including the team peak
-    (v9_scavenge 30/32 = 93.8% Wlo=0.799, v15 24/32 = 75% Wlo=0.579 PASS;
-    n=64 retest 40/64 = 62.5% Wlo=0.503 INCONCLUSIVE — best estimate of true
-    2P winrate ~63-67%, Wlo right at the 0.55 gate). Followups: pre-bail
-    headroom + adaptive WorldModel horizon (`#1+#2 timing fixes`). Merged A2
-    from claude/kaggle-baseline-strategy-lO4mm (`favor_hybrid` dispatcher:
-    composite-in-2P + A2-favor-in-4P; A2 = 1.5× weakest-opp bias + +55
-    elimination bonus, sourced from public notebook romantamrazov LB μ=1224).
-    Submission bundled at `submissions/baseline.py` (286 KB, parity OK over
-    712 turns; uses hybrid by default via `os.environ.setdefault`). Tests:
-    53+ green across baseline value/chooser/proposer + new postmortem-comet
-    + dispatcher + wallclock variants (favor + hybrid). 4P FFA panel running
-    at session-end. NOT SUBMITTED — Rule 1, PI sign-off required.
   - 2026-05-17 — kaggle-baseline-strategy-lO4mm.
     Shipped agents/baseline/{main,proposer,chooser,value}.py — clean
     modular re-implementation of v15 (live champion, 5/16 push), 577 LOC
