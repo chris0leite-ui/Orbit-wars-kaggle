@@ -94,15 +94,22 @@ def affordable_validate_cap(snap_base, num_seats: int, max_horizon: int,
 
 def choose(snap_base, prerank, baseline_favors: list[float],
            me: int, num_seats: int, wallclock_ms: float,
-           min_horizon: int, max_horizon: int, gamma: float) -> list[list]:
-    """Validate top candidates with fast_sim, emit greedy non-dogpile moves."""
-    if not prerank:
+           min_horizon: int, max_horizon: int, gamma: float,
+           migrations=None) -> list[list]:
+    """Validate top candidates with fast_sim, emit greedy non-dogpile moves.
+
+    `migrations` (optional) is a list of own→own repositioning candidates
+    from `migration_solver.propose_migrations`. They use the solver's
+    closed-form value as Δ directly (no fast_sim rollout, since favor
+    delta on own→own is zero by construction).
+    """
+    if not prerank and not migrations:
         return []
 
     n_aff = affordable_validate_cap(
         snap_base, num_seats, max_horizon, wallclock_ms, min_horizon,
     )
-    top = prerank[: min(N_VALIDATE, n_aff)]
+    top = prerank[: min(N_VALIDATE, n_aff)] if prerank else []
 
     deadline = time.perf_counter() + wallclock_ms / 1000.0
     validated: list[tuple] = []
@@ -116,6 +123,15 @@ def choose(snap_base, prerank, baseline_favors: list[float],
         )
         if delta > 0:
             validated.append((delta, src, tgt, ships, angle, wait_N))
+
+    # Migration candidates: closed-form value IS Δ, fire-now (wait_N=0).
+    # No fast_sim rollout since own→own moves are favor-neutral.
+    for c in (migrations or []):
+        cheap, src, tgt, ships, angle, _eta, _horizon, _wait = c
+        if float(cheap) > 0:
+            validated.append(
+                (float(cheap), src, tgt, int(ships), float(angle), 0)
+            )
 
     if not validated:
         return []

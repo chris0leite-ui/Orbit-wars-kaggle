@@ -14,6 +14,10 @@ Knobs (env var overrides, all optional):
   ORBIT_WARS_PARITY_WALLCLOCK_MS    bundle-parity override (very large
                                     value disables mid-loop deadline bail
                                     so the agent is a pure function of obs).
+  BASELINE_MIGRATION          set to "1" to inject closed-form own→own
+                                    ship-repositioning candidates from
+                                    migration_solver. Default off; A/B
+                                    via BASELINE_MIGRATION=1.
 """
 
 from __future__ import annotations
@@ -116,8 +120,14 @@ def agent(obs, configuration=None):
         baseline_len=len(baseline_favors),
     )
 
+    migrations = []
+    if os.environ.get("BASELINE_MIGRATION", "0").strip() == "1":
+        from agents.baseline.migration_solver import propose_migrations
+        migrations = propose_migrations(world, model, me, gamma=gamma)
+
     return chooser.choose(
         snap_base, prerank, baseline_favors,
         me, num_seats, wallclock_ms,
         proposer.MIN_HORIZON, proposer.MAX_HORIZON, gamma,
+        migrations=migrations,
     )
