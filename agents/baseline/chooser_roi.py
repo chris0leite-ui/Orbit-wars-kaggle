@@ -716,11 +716,12 @@ def choose_roi(
     solo_scored: list = []  # (score, src, tgt, ships, angle, wait_N)
     solo_by_target: dict[int, list] = {}
     for entry in prerank:
-        # Phase 8: prerank is now a 9-tuple (is_chain bit appended). ROI
-        # computes its own score via solo_roi and so doesn't benefit from
-        # the chain bonus — the bypass lives in the trajectory chooser
-        # (the default). Future work could bypass solo_roi for is_chain.
-        _cheap, src, tgt, ships_orig, angle, eta, _horizon, wait_N, _is_chain = entry
+        # Phase 9: prerank is a 9-tuple (chain_info dict or None at elem[8]).
+        # ROI computes its own score via solo_roi and so doesn't benefit from
+        # the chain bonus — the bypass + relay-commit machinery lives in the
+        # trajectory chooser (the default). Future work could bypass solo_roi
+        # for chain candidates too.
+        _cheap, src, tgt, ships_orig, angle, eta, _horizon, wait_N, _chain_info = entry
         src_ships_at_fire = int(src.ships) + int(wait_N) * int(src.production)
         max_safe_at_fire = max(0, src_ships_at_fire - MIN_SOLO_RESIDUE)
 

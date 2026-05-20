@@ -309,9 +309,17 @@ def agent(obs, configuration=None):
     # Both `LEDGER_ENABLED` and `BASELINE_LEDGER=on` are checked at call
     # time so harnesses can flip the env var mid-process without
     # restarting the agent module.
+    #
+    # Phase 9: also auto-engage the ledger path when BASELINE_CHAIN_BONUS=1
+    # so chain-relay commits (emitted by the chooser bypass) get ticked
+    # and fired regardless of the LEDGER env var.
+    chain_bonus_on = os.environ.get(
+        "BASELINE_CHAIN_BONUS", "0",
+    ).strip() == "1"
     ledger_on = (
         LEDGER_ENABLED
         or os.environ.get("BASELINE_LEDGER", "off").strip().lower() == "on"
+        or chain_bonus_on
     )
     if ledger_on and step == 0:
         _PENDING_LAUNCHES.pop(me, None)

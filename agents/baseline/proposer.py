@@ -394,8 +394,9 @@ def wait_then_fire_variants(src, tgt, model, omega: float, me: int, world=None):
 
 
 def _chain_followup_bonus(tgt, ships: int, arrival_step: int, world, model,
-                          me: int, omega: float) -> tuple[float, int | None]:
-    """Phase 7 chain-bonus: anticipate a relay-launch from `tgt` after capture.
+                          me: int, omega: float,
+                          ) -> tuple[float, int | None, int]:
+    """Phase 9 chain-bonus: anticipate a relay-launch from `tgt` after capture.
 
     When we capture `tgt` with `ships` arriving at `arrival_step` turns,
     the surviving stack (`ships - tgt.predicted_garrison - 1`) is a
@@ -408,23 +409,23 @@ def _chain_followup_bonus(tgt, ships: int, arrival_step: int, world, model,
     p23/p17/p7. The proposer's cheap_marginal_value scores only the
     first leg.
 
-    Returns `(bonus, followup_tgt_id)`. Bonus is 0.0 and id is None
-    when no feasible followup exists. Caller (propose) gates on
-    BASELINE_CHAIN_BONUS=1.
+    Returns `(bonus, followup_tgt_id, survivors)`. Bonus is 0.0, id is
+    None, and survivors is 0 when no feasible followup exists. Caller
+    (propose) gates on BASELINE_CHAIN_BONUS=1.
 
-    Phase 7 (btjeK port): bonus-only — folded into cheap_delta as a
-    pre-filter prioritisation hint. The trajectory chooser's leaf score
-    (`score_candidate_v4`) is unaffected; chain candidates float up
-    the cap-truncated scoring loop sooner under wallclock pressure.
-    A future full-port (chooser bypass) would credit the relay in the
-    final Δ; this minimal port tests the SIGNAL value.
+    Phase 9 (full-port + relay commitment): the chooser bypass uses
+    cheap_delta as Δ directly, AND emits a leg-2 commit so the captured
+    planet actually fires toward the predicted T2 on the followup turn.
+    Without the commit, the bonus credits leg-1 with leg-2 value that
+    never materialises (see scripts/inspect_chain_game.py seed 0:
+    31 chain launches fired, 0 relay completions).
     """
     pred_tgt_garrison = float(
         model.ships_at(int(tgt.id), int(arrival_step)) or float(tgt.ships)
     )
     survivors = int(ships) - int(math.ceil(pred_tgt_garrison)) - 1
     if survivors < MIN_FLEET_SIZE + 1:
-        return 0.0, None
+        return 0.0, None, 0
 
     relay_start = int(arrival_step) + 1  # +1 turn to launch from tgt
 
@@ -437,7 +438,7 @@ def _chain_followup_bonus(tgt, ships: int, arrival_step: int, world, model,
         and (model.owner_at(int(p.id), relay_start) or int(p.owner)) != me
     ]
     if not candidate_t2:
-        return 0.0, None
+        return 0.0, None, 0
 
     best_bonus = 0.0
     best_t2_id: int | None = None
@@ -461,7 +462,7 @@ def _chain_followup_bonus(tgt, ships: int, arrival_step: int, world, model,
         if bonus > best_bonus:
             best_bonus = bonus
             best_t2_id = int(t2.id)
-    return best_bonus, best_t2_id
+    return best_bonus, best_t2_id, survivors
 
 
 def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
@@ -893,7 +894,7 @@ def _enumerate_reactor_candidates(
                 continue
             candidates.append(
                 (cheap, src, tgt, needed, float(angle), int(eta), horizon,
-                 wait_N, False)
+                 wait_N, None)
             )
 
     candidates.sort(key=lambda c: -c[0])
@@ -910,14 +911,15 @@ def propose(my_planets, target_pool, world, model, me: int,
     sorted by cheap_delta descending.
     """
     prerank = []
-    # Phase 8 chain-bonus (full port): read once per turn, not per (src,tgt,ships).
-    # When on, fire-now capture candidates get their cheap_delta bumped by the
-    # PV-weighted value of the best downstream capture the surviving stack
-    # can reach AND are tagged with a 9th `is_chain` bit. The chooser
-    # bypasses leaf-rollout scoring for is_chain candidates and uses
-    # cheap_delta as Δ directly (the rollout assumes idle-me and would
-    # miss the relay). Wait variants and reactor candidates do NOT get
-    # the bonus or the is_chain tag — the followup conditions on a
+    # Phase 9 chain-bonus (full port + relay commit): when on, fire-now
+    # capture candidates get their cheap_delta bumped by the PV-weighted
+    # value of the best downstream capture, AND carry a `chain_info`
+    # payload with the predicted T2 id + surviving ship count. The
+    # chooser bypasses leaf-rollout scoring for chain candidates
+    # (the rollout assumes idle-me and would miss the relay) AND emits
+    # a leg-2 ledger commit so the captured planet actually fires
+    # toward T2 on the followup turn. Wait variants and reactor
+    # candidates carry chain_info=None — the followup conditions on a
     # wait_N=0 launch from tgt.
     chain_on = os.environ.get(
         "BASELINE_CHAIN_BONUS", "0",
@@ -939,18 +941,22 @@ def propose(my_planets, target_pool, world, model, me: int,
                 cheap = cheap_marginal_value(
                     src, tgt, ships, eta, world, model, me, wait_N=0,
                 )
-                is_chain = False
+                chain_info: dict | None = None
                 if chain_on and int(tgt.owner) != me:
-                    bonus, _t2 = _chain_followup_bonus(
+                    bonus, t2_id, survivors = _chain_followup_bonus(
                         tgt, ships, eta, world, model, me, omega,
                     )
-                    if bonus > 0.0:
+                    if bonus > 0.0 and t2_id is not None:
                         cheap += bonus
-                        is_chain = True
+                        chain_info = {
+                            "t2_id": int(t2_id),
+                            "survivors": int(survivors),
+                            "e1": int(eta),
+                        }
                 if cheap > CHEAP_REJECT_THRESHOLD:
                     prerank.append(
                         (cheap, src, tgt, ships, angle, eta, horizon, 0,
-                         is_chain)
+                         chain_info)
                     )
 
             for w_ships, w_wait, w_angle, w_eta in wait_then_fire_variants(
@@ -965,7 +971,7 @@ def propose(my_planets, target_pool, world, model, me: int,
                 if w_cheap > CHEAP_REJECT_THRESHOLD:
                     prerank.append(
                         (w_cheap, src, tgt, w_ships, w_angle, w_eta,
-                         w_horizon, w_wait, False)
+                         w_horizon, w_wait, None)
                     )
 
     # Reactor candidate generator (Part B of reactor-aware launch selection,
@@ -982,7 +988,7 @@ def propose(my_planets, target_pool, world, model, me: int,
 
     best_per_band: dict[tuple[int, int, int], tuple] = {}
     for entry in prerank:
-        cheap, src, tgt, _ships, _angle, _eta, _horizon, w, _is_chain = entry
+        cheap, src, tgt, _ships, _angle, _eta, _horizon, w, _chain_info = entry
         key = (int(src.id), int(tgt.id), wait_band(int(w)))
         prev = best_per_band.get(key)
         if prev is None or cheap > prev[0]:
@@ -1015,7 +1021,7 @@ def propose(my_planets, target_pool, world, model, me: int,
     if os.environ.get("PROPOSER_TRAJECTORY_FILTER", "").strip().lower() != "off":
         filtered: list = []
         for entry in deduped:
-            _cheap, src, tgt, ships, angle, eta, _horizon, w, _is_chain = entry
+            _cheap, src, tgt, ships, angle, eta, _horizon, w, _chain_info = entry
             if int(w) != 0:
                 # Wait-then-fire: trajectory geometry depends on the
                 # launch-time orbital state; the static fate-predictor

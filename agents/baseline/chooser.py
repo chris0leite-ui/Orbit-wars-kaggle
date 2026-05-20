@@ -165,7 +165,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     # Closes the long-tail max-turn-ms overrun seen in the 2026-05-17 A/B.
     safe_deadline = deadline - (per_cand_ms / 1000.0)
     validated: list[tuple] = []
-    for cheap, src, tgt, ships, angle, _eta, horizon, wait_N, is_chain in top:
+    for cheap, src, tgt, ships, angle, _eta, horizon, wait_N, chain_info in top:
         if time.perf_counter() > safe_deadline:
             break
         sid_ = int(src.id)
@@ -175,11 +175,14 @@ def choose(snap_base, prerank, baseline_favors: list[float],
         else:
             if sid_ in reserved_srcs:
                 continue
-        # Phase 8 chain bypass: leaf rollout's idle-me assumption misses
+        # Phase 9 chain bypass: leaf rollout's idle-me assumption misses
         # the relay (leg-2 capture of the followup). Use cheap (which
-        # already includes the chain bonus) as Δ directly.
-        if is_chain and cheap > 0.0:
-            validated.append((float(cheap), src, tgt, ships, angle, wait_N))
+        # already includes the chain bonus) as Δ directly, and carry
+        # chain_info forward so the emit path can enqueue the leg-2
+        # relay commit.
+        if chain_info is not None and cheap > 0.0:
+            validated.append((float(cheap), src, tgt, ships, angle, wait_N,
+                              chain_info))
             continue
         delta = score_action(
             snap_base, me, num_seats,
@@ -187,7 +190,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
             int(horizon), baseline_favors, int(wait_N), gamma,
         )
         if delta > 0:
-            validated.append((delta, src, tgt, ships, angle, wait_N))
+            validated.append((delta, src, tgt, ships, angle, wait_N, None))
 
     if not validated:
         return [], []
@@ -198,7 +201,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     moves: list[list] = []
     commits: list[dict] = []
     commit_step = int(world.step) if world is not None else 0
-    for _delta, src, tgt, ships, angle, wait_N in validated:
+    for _delta, src, tgt, ships, angle, wait_N, chain_info in validated:
         sid, tid = int(src.id), int(tgt.id)
         if sid in used_srcs or tid in used_tgts:
             continue
@@ -206,6 +209,19 @@ def choose(snap_base, prerank, baseline_favors: list[float],
         used_tgts.add(tid)
         if int(wait_N) == 0:
             moves.append([sid, float(angle), int(ships)])
+            # Phase 9: chain candidate fired ⇒ schedule the leg-2 relay
+            # commit so the captured planet actually fires toward T2 on
+            # the followup turn.
+            if chain_info is not None:
+                commits.append({
+                    "src_id": tid,
+                    "tgt_id": int(chain_info["t2_id"]),
+                    "ships_planned": int(chain_info["survivors"]),
+                    "angle_original": 0.0,
+                    "wait_remaining": int(chain_info["e1"]) + 1,
+                    "commit_step": commit_step,
+                    "is_chain_relay": True,
+                })
         else:
             commits.append({
                 "src_id": sid,

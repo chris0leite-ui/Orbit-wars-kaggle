@@ -45,9 +45,9 @@ def _enemy_tgt(world, me: int = 0):
     raise RuntimeError("no enemy target")
 
 
-def _make_candidate(src, tgt, ships, angle, eta=5, wait_N=0, is_chain=False):
+def _make_candidate(src, tgt, ships, angle, eta=5, wait_N=0, chain_info=None):
     return (0.0, src, tgt, int(ships), float(angle), int(eta), 10,
-            int(wait_N), bool(is_chain))
+            int(wait_N), chain_info)
 
 
 # ---------------------------------------------------------------------------
@@ -170,32 +170,45 @@ def test_choose_trajectory_drops_doomed_candidates():
     assert moves == []
 
 
-def test_choose_trajectory_is_chain_bypasses_rollout():
-    """Phase 8 chain bypass: an is_chain=True candidate with positive
-    cheap_delta emits without invoking score_candidate_v4. The rollout
-    would assume idle-me and miss the leg-2 relay; the bypass uses
-    cheap_delta (chain-bonus inclusive) as Δ directly.
+def test_choose_trajectory_chain_bypass_emits_and_commits_relay():
+    """Phase 9 chain bypass + relay commit: a chain candidate emits
+    leg-1 immediately (in `moves`) AND a leg-2 relay commit (in
+    `commits`) with src=leg-1-tgt, ships=survivors, wait_remaining=e1+1.
 
-    Verifies by passing a chain-tagged candidate that points the launch
-    along a known-feasible angle; the chooser should emit it even when
-    baseline_favors is empty (the rollout path needs baseline_favors,
-    the bypass does not).
+    Without the commit, the bonus credits leg-1 with leg-2 value that
+    never materialises (inspect_chain_game seed 0: 31 fires, 0 relays).
     """
     obs, snap, world, model = _snap_and_world(seed=7)
     me = 0
     src = _my_src(world, me)
     tgt = _enemy_tgt(world, me)
+    # Pick any other non-mine planet as the predicted T2.
+    others = [p for p in world.planets_by_id.values()
+              if int(p.id) != int(tgt.id) and int(p.id) != int(src.id)
+              and int(p.owner) != me]
+    assert others, "fixture must have at least 3 non-mine planets"
+    t2 = others[0]
     angle = math.atan2(tgt.y - src.y, tgt.x - src.x)
-    # Cheap_delta > 0 + is_chain=True ⇒ bypass emits without rollout.
-    cand = (5.0, src, tgt, 20, angle, 5, 10, 0, True)
-    moves, _commits = choose_trajectory(
+    chain_info = {"t2_id": int(t2.id), "survivors": 8, "e1": 5}
+    cand = (5.0, src, tgt, 20, angle, 5, 10, 0, chain_info)
+    moves, commits = choose_trajectory(
         snap, prerank=[cand], baseline_favors=None,
         me=me, num_seats=2, wallclock_ms=600.0,
         min_horizon=25, max_horizon=40, gamma=0.99,
         world=world, model=model,
     )
-    assert moves, "is_chain candidate with cheap_delta>0 must emit"
+    assert moves, "chain candidate with cheap_delta>0 must emit leg-1"
     assert int(moves[0][0]) == int(src.id)
+    # Relay commit was enqueued
+    relays = [c for c in commits if c.get("is_chain_relay")]
+    assert len(relays) == 1, f"expected 1 relay commit; got {commits}"
+    rel = relays[0]
+    assert int(rel["src_id"]) == int(tgt.id), (
+        "leg-2 src must be the leg-1 tgt (the just-captured planet)"
+    )
+    assert int(rel["tgt_id"]) == int(t2.id)
+    assert int(rel["ships_planned"]) == 8
+    assert int(rel["wait_remaining"]) == 6  # e1=5 + 1
 
 
 def test_choose_trajectory_emit_format_is_env_action_shape():

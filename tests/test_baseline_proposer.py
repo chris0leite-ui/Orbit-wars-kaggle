@@ -407,12 +407,12 @@ def test_reactor_candidates_fires_on_opp_fleet_capturing_neutral():
     assert out, "expected at least one reactor candidate"
     # Every candidate targets tgt from src
     for entry in out:
-        cheap, c_src, c_tgt, ships, _angle, _eta, _horizon, wait_N, is_chain = entry
+        cheap, c_src, c_tgt, ships, _angle, _eta, _horizon, wait_N, chain_info = entry
         assert int(c_src.id) == 0
         assert int(c_tgt.id) == 1
         assert ships >= MIN_FLEET_SIZE
         assert wait_N >= 0
-        assert is_chain is False, "reactor candidates never carry chain bonus"
+        assert chain_info is None, "reactor candidates never carry chain_info"
 
 
 def test_reactor_candidates_skips_when_opp_bounces():
@@ -587,7 +587,7 @@ def test_aim_and_eta_comet_returns_eta_within_path_length():
 
 def test_chain_bonus_disabled_by_default(monkeypatch):
     """When BASELINE_CHAIN_BONUS is unset, propose() emits the bare
-    cheap_marginal_value for captures and tags is_chain=False on every
+    cheap_marginal_value for captures and sets chain_info=None on every
     9-tuple entry.
     """
     monkeypatch.delenv("BASELINE_CHAIN_BONUS", raising=False)
@@ -602,16 +602,17 @@ def test_chain_bonus_disabled_by_default(monkeypatch):
     )
     assert out, "default-off should still emit normal capture candidates"
     for entry in out:
-        assert len(entry) == 9, f"Phase 8 tuple shape is 9; got {len(entry)}"
-        assert entry[8] is False, (
-            f"is_chain must be False with env off; got {entry}"
+        assert len(entry) == 9, f"Phase 9 tuple shape is 9; got {len(entry)}"
+        assert entry[8] is None, (
+            f"chain_info must be None with env off; got {entry}"
         )
 
 
 def test_chain_bonus_promotes_relay(monkeypatch):
     """With BASELINE_CHAIN_BONUS=1, capture of a relay-staging planet
     that unlocks a downstream high-prod target gets a positive bonus
-    folded into cheap_delta AND is tagged is_chain=True.
+    folded into cheap_delta AND a chain_info payload with t2_id +
+    survivors + e1 for the chooser to enqueue the leg-2 relay.
     """
     src = _planet(0, 0, 5.0, 50.0, ships=300, production=4)
     relay = _planet(1, -1, 25.0, 50.0, ships=5, production=1)
@@ -633,9 +634,9 @@ def test_chain_bonus_promotes_relay(monkeypatch):
         my_planets=[src], target_pool=[relay, enemy_big],
         world=world, model=model, me=0, omega=0.0, baseline_len=50,
     )
-    chain_relay = [c for c in boosted if int(c[2].id) == 1 and c[8]]
+    chain_relay = [c for c in boosted if int(c[2].id) == 1 and c[8] is not None]
     assert chain_relay, (
-        f"expected at least one is_chain=True relay candidate; "
+        f"expected at least one chain-tagged relay candidate; "
         f"got {[(int(c[2].id), c[8]) for c in boosted]}"
     )
     chain_cheap = max(c[0] for c in chain_relay)
@@ -643,6 +644,13 @@ def test_chain_bonus_promotes_relay(monkeypatch):
         f"chain bonus must strictly raise cheap_delta; base={base_cheap:.2f} "
         f"chain={chain_cheap:.2f}"
     )
+    # chain_info schema check
+    for c in chain_relay:
+        info = c[8]
+        assert isinstance(info, dict)
+        assert {"t2_id", "survivors", "e1"} <= set(info.keys())
+        assert info["survivors"] >= MIN_FLEET_SIZE + 1
+        assert info["e1"] >= 1
 
 
 def test_chain_bonus_skipped_when_no_survivors(monkeypatch):
@@ -655,12 +663,12 @@ def test_chain_bonus_skipped_when_no_survivors(monkeypatch):
     enemy_big = _planet(2, -1, 30.0, 50.0, ships=5, production=4)
     world = _world(0, [src, relay, enemy_big])
     model = WorldModel.from_world(world)
-    bonus, t2 = _chain_followup_bonus(
+    bonus, t2, survivors = _chain_followup_bonus(
         relay, ships=6, arrival_step=1, world=world, model=model,
         me=0, omega=0.0,
     )
-    assert bonus == 0.0 and t2 is None, (
-        f"expected zero bonus when survivors below threshold; got {bonus}, {t2}"
+    assert bonus == 0.0 and t2 is None and survivors == 0, (
+        f"expected zero bonus when survivors below threshold; got {bonus}, {t2}, {survivors}"
     )
 
 
@@ -674,7 +682,7 @@ def test_chain_bonus_skipped_when_no_feasible_t2(monkeypatch):
     far_strong = _planet(2, -1, 95.0, 50.0, ships=10000, production=1)
     world = _world(0, [src, relay, far_strong])
     model = WorldModel.from_world(world)
-    bonus, t2 = _chain_followup_bonus(
+    bonus, t2, _surv = _chain_followup_bonus(
         relay, ships=200, arrival_step=4, world=world, model=model,
         me=0, omega=0.0,
     )
