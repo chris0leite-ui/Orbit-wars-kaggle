@@ -92,6 +92,21 @@ def affordable_validate_cap(snap_base, num_seats: int, max_horizon: int,
     return max(8, int(budget / per_cand_ms))
 
 
+def _unpack_candidate(entry):
+    """Accept both 8-tuple (legacy, no is_chain) and 9-tuple shapes.
+
+    Proposer-emitted candidates carry an `is_chain` bit at index 8 when
+    Phase 6's BASELINE_CHAIN_BONUS=1 (default False otherwise). Migration
+    solver tuples remain 8-element; we treat their is_chain as False.
+    """
+    if len(entry) == 9:
+        cheap, src, tgt, ships, angle, eta, horizon, wait_N, is_chain = entry
+    else:
+        cheap, src, tgt, ships, angle, eta, horizon, wait_N = entry
+        is_chain = False
+    return cheap, src, tgt, ships, angle, eta, horizon, wait_N, bool(is_chain)
+
+
 def choose(snap_base, prerank, baseline_favors: list[float],
            me: int, num_seats: int, wallclock_ms: float,
            min_horizon: int, max_horizon: int, gamma: float,
@@ -102,6 +117,12 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     from `migration_solver.propose_migrations`. They use the solver's
     closed-form value as Δ directly (no fast_sim rollout, since favor
     delta on own→own is zero by construction).
+
+    Chain-capture candidates (proposer-emitted with is_chain=True, Phase 6)
+    take the same closed-form-Δ branch as migrations: their cheap_delta
+    already includes the followup-bonus and is used as Δ directly. The
+    rollout doesn't simulate our future relaunch, so the analytic value
+    is the right signal.
     """
     if not prerank and not migrations:
         return []
@@ -113,7 +134,16 @@ def choose(snap_base, prerank, baseline_favors: list[float],
 
     deadline = time.perf_counter() + wallclock_ms / 1000.0
     validated: list[tuple] = []
-    for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
+    for entry in top:
+        cheap, src, tgt, ships, angle, _eta, horizon, wait_N, is_chain = (
+            _unpack_candidate(entry)
+        )
+        if is_chain:
+            # Closed-form Δ — skip rollout (idle-me rollout misses the
+            # downstream relay capture).
+            if float(cheap) > 0:
+                validated.append((float(cheap), src, tgt, ships, angle, wait_N))
+            continue
         if time.perf_counter() > deadline:
             break
         delta = score_action(
@@ -127,7 +157,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     # Migration candidates: closed-form value IS Δ, fire-now (wait_N=0).
     # No fast_sim rollout since own→own moves are favor-neutral.
     for c in (migrations or []):
-        cheap, src, tgt, ships, angle, _eta, _horizon, _wait = c
+        cheap, src, tgt, ships, angle, _eta, _horizon, _wait = c[:8]
         if float(cheap) > 0:
             validated.append(
                 (float(cheap), src, tgt, int(ships), float(angle), 0)

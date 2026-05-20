@@ -7,6 +7,7 @@ from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 from agents.baseline.proposer import (
     MIN_FLEET_SIZE,
     WAIT_EXTRA_SURPLUS,
+    _chain_followup_bonus,
     capture_size,
     enumerate_ship_counts,
     max_safe_launch_now,
@@ -254,3 +255,111 @@ def test_propose_returns_empty_when_no_targets():
         world=world, model=model, me=0, omega=0.0, baseline_len=50,
     )
     assert out == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: chain-capture bonus (Claws relay pattern)
+# ---------------------------------------------------------------------------
+
+
+def test_chain_bonus_disabled_by_default(monkeypatch):
+    """When BASELINE_CHAIN_BONUS is unset, propose() emits the bare
+    cheap_marginal_value for captures and tags is_chain=False.
+    """
+    monkeypatch.delenv("BASELINE_CHAIN_BONUS", raising=False)
+    src = _planet(0, 0, 5.0, 50.0, ships=300, production=4)
+    relay = _planet(1, -1, 25.0, 50.0, ships=5, production=1)
+    enemy_big = _planet(2, -1, 45.0, 50.0, ships=8, production=4)
+    world = _world(0, [src, relay, enemy_big])
+    model = WorldModel.from_world(world)
+    out = propose(
+        my_planets=[src], target_pool=[relay, enemy_big],
+        world=world, model=model, me=0, omega=0.0, baseline_len=50,
+    )
+    assert out, "default-off should still emit normal capture candidates"
+    for entry in out:
+        assert len(entry) == 9
+        assert entry[8] is False, (
+            f"is_chain must be False with env off; got {entry}"
+        )
+
+
+def test_chain_bonus_promotes_relay(monkeypatch):
+    """With BASELINE_CHAIN_BONUS=1, capture of a relay-staging planet
+    that unlocks a downstream high-prod target gets a positive bonus and
+    is tagged is_chain=True. Bonus strictly raises cheap_delta vs off.
+    """
+    # Geometry: src far west, relay in the middle (weak garrison, low prod),
+    # enemy_big east of relay (richer prod, reachable from relay).
+    src = _planet(0, 0, 5.0, 50.0, ships=300, production=4)
+    relay = _planet(1, -1, 25.0, 50.0, ships=5, production=1)
+    enemy_big = _planet(2, -1, 45.0, 50.0, ships=8, production=4)
+    world = _world(0, [src, relay, enemy_big])
+    model = WorldModel.from_world(world)
+
+    monkeypatch.delenv("BASELINE_CHAIN_BONUS", raising=False)
+    base = propose(
+        my_planets=[src], target_pool=[relay, enemy_big],
+        world=world, model=model, me=0, omega=0.0, baseline_len=50,
+    )
+    base_relay = [c for c in base if int(c[2].id) == 1]
+    assert base_relay, "expected at least one capture candidate for relay"
+    base_cheap = max(c[0] for c in base_relay)
+
+    monkeypatch.setenv("BASELINE_CHAIN_BONUS", "1")
+    boosted = propose(
+        my_planets=[src], target_pool=[relay, enemy_big],
+        world=world, model=model, me=0, omega=0.0, baseline_len=50,
+    )
+    chain_relay = [c for c in boosted if int(c[2].id) == 1 and c[8]]
+    assert chain_relay, (
+        f"expected at least one is_chain=True candidate for relay capture; "
+        f"got {[(int(c[2].id), c[8]) for c in boosted]}"
+    )
+    chain_cheap = max(c[0] for c in chain_relay)
+    assert chain_cheap > base_cheap, (
+        f"chain bonus must strictly raise cheap_delta; base={base_cheap:.2f} "
+        f"chain={chain_cheap:.2f}"
+    )
+
+
+def test_chain_bonus_skipped_when_no_survivors(monkeypatch):
+    """When ships barely cover the target garrison, survivors are below
+    MIN_FLEET_SIZE+1 → no chain bonus regardless of env var.
+    """
+    monkeypatch.setenv("BASELINE_CHAIN_BONUS", "1")
+    src = _planet(0, 0, 10.0, 50.0, ships=10, production=2)
+    relay = _planet(1, -1, 12.0, 50.0, ships=5, production=1)
+    enemy_big = _planet(2, -1, 30.0, 50.0, ships=5, production=4)
+    world = _world(0, [src, relay, enemy_big])
+    model = WorldModel.from_world(world)
+    # Only ~10 ships available; predicted garrison ~5 → survivors ~4 (< MIN+1=3 actually).
+    # Set the bar tighter: smaller src so survivors < MIN_FLEET_SIZE+1.
+    bonus, t2 = _chain_followup_bonus(
+        relay, ships=6, arrival_step=1, world=world, model=model,
+        me=0, omega=0.0,
+    )
+    assert bonus == 0.0 and t2 is None, (
+        f"expected zero bonus when survivors below threshold; got {bonus}, {t2}"
+    )
+
+
+def test_chain_bonus_skipped_when_no_feasible_t2(monkeypatch):
+    """When the only non-mine target is unreachable (too far or too
+    well-defended for survivors), the bonus is zero.
+    """
+    monkeypatch.setenv("BASELINE_CHAIN_BONUS", "1")
+    # relay sits in mid-board with NO other non-mine planet nearby; the
+    # only neutral is far across the map AND heavily defended.
+    src = _planet(0, 0, 5.0, 50.0, ships=200, production=4)
+    relay = _planet(1, -1, 25.0, 50.0, ships=5, production=1)
+    far_strong = _planet(2, -1, 95.0, 50.0, ships=10000, production=1)
+    world = _world(0, [src, relay, far_strong])
+    model = WorldModel.from_world(world)
+    bonus, t2 = _chain_followup_bonus(
+        relay, ships=200, arrival_step=4, world=world, model=model,
+        me=0, omega=0.0,
+    )
+    assert bonus == 0.0 and t2 is None, (
+        f"expected zero bonus when no feasible followup; got {bonus}, {t2}"
+    )

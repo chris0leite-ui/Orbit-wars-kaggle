@@ -271,6 +271,69 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
     return -0.5 * float(ships)
 
 
+def _chain_followup_bonus(tgt, ships: int, arrival_step: int, world, model,
+                          me: int, omega: float) -> tuple[float, int | None]:
+    """Phase 6 chain-bonus: anticipate a relay-launch from `tgt` after capture.
+
+    When we capture `tgt` with `ships` arriving at `arrival_step` turns,
+    the surviving stack (`ships - tgt.predicted_garrison`) is a launchable
+    resource. If that stack can reach a nearby non-mine planet T2 and
+    capture it, the value of THIS launch should reflect the downstream
+    capture too — not just `tgt`'s own production-PV.
+
+    Mirrors the Claws ladder pattern (ep 77164175 step 223→227): launch
+    588 from p3 to p31 (low-prod staging) → 506 survivors → relaunch
+    to p23. The proposer's cheap_marginal_value scores only the first
+    leg. This helper returns the bonus for the best feasible second leg.
+
+    Returns `(bonus, followup_tgt_id)`. Bonus is 0.0 and id is None when
+    no feasible followup exists. Caller gates via BASELINE_CHAIN_BONUS=1.
+    """
+    pred_tgt_garrison = float(
+        model.ships_at(int(tgt.id), int(arrival_step)) or float(tgt.ships)
+    )
+    survivors = int(ships) - int(math.ceil(pred_tgt_garrison)) - 1
+    if survivors < MIN_FLEET_SIZE + 1:
+        return 0.0, None
+
+    relay_start = int(arrival_step) + 1  # +1 turn to launch from tgt
+
+    # Build the followup target pool: non-mine planets predicted to be
+    # non-mine at the followup arrival window. Reuse nearest_k around
+    # the staging planet for an O(planets) scan.
+    candidate_t2 = [
+        p for p in world.planets_by_id.values()
+        if int(p.id) != int(tgt.id)
+        and (model.owner_at(int(p.id), relay_start) or int(p.owner)) != me
+    ]
+    if not candidate_t2:
+        return 0.0, None
+
+    best_bonus = 0.0
+    best_t2_id: int | None = None
+    for t2 in nearest_k(candidate_t2, tgt, NUM_TARGETS_PER_SOURCE):
+        _angle2, eta2 = aim_and_eta(tgt, t2, int(survivors), omega)
+        if eta2 <= 0 or eta2 > MAX_HORIZON:
+            continue
+        followup_arrival = relay_start + int(eta2)
+        pred_t2_garrison = float(
+            model.ships_at(int(t2.id), followup_arrival) or float(t2.ships)
+        )
+        required = int(math.ceil(pred_t2_garrison)) + 1
+        if survivors < required:
+            continue  # followup capture infeasible
+        pv = pv_horizon(
+            int(world.step), int(followup_arrival),
+            gamma=GAMMA, t_total=EPISODE_STEPS,
+        )
+        # 0.04 vs base 0.05 — one opp-reaction turn discount.
+        bonus = 0.04 * float(t2.production) * float(pv)
+        if bonus > best_bonus:
+            best_bonus = bonus
+            best_t2_id = int(t2.id)
+    return best_bonus, best_t2_id
+
+
 def wait_band(wait_N: int) -> int:
     """Three buckets: fire-now (0), short-wait (1..7), long-wait (>=8)."""
     if wait_N == 0:
@@ -295,6 +358,10 @@ def propose(my_planets, target_pool, world, model, me: int,
             if int(tgt.id) == int(src.id):
                 continue
 
+            chain_on = os.environ.get(
+                "BASELINE_CHAIN_BONUS", "0",
+            ).strip() == "1"
+
             for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
@@ -305,9 +372,17 @@ def propose(my_planets, target_pool, world, model, me: int,
                 cheap = cheap_marginal_value(
                     src, tgt, ships, eta, world, model, me, wait_N=0,
                 )
+                is_chain = False
+                if chain_on and int(tgt.owner) != me:
+                    bonus, _t2 = _chain_followup_bonus(
+                        tgt, ships, eta, world, model, me, omega,
+                    )
+                    if bonus > 0.0:
+                        cheap += bonus
+                        is_chain = True
                 if cheap > CHEAP_REJECT_THRESHOLD:
                     prerank.append(
-                        (cheap, src, tgt, ships, angle, eta, horizon, 0)
+                        (cheap, src, tgt, ships, angle, eta, horizon, 0, is_chain)
                     )
 
             for w_ships, w_wait, w_angle, w_eta in wait_then_fire_variants(
@@ -319,15 +394,18 @@ def propose(my_planets, target_pool, world, model, me: int,
                 w_cheap = cheap_marginal_value(
                     src, tgt, w_ships, w_eta, world, model, me, wait_N=w_wait,
                 )
+                # Wait variants do not get the chain bonus — the relay
+                # only makes sense for fire-now captures (the followup
+                # already conditions on a wait_N=0 launch from tgt).
                 if w_cheap > CHEAP_REJECT_THRESHOLD:
                     prerank.append(
                         (w_cheap, src, tgt, w_ships, w_angle, w_eta,
-                         w_horizon, w_wait)
+                         w_horizon, w_wait, False)
                     )
 
     best_per_band: dict[tuple[int, int, int], tuple] = {}
     for entry in prerank:
-        cheap, src, tgt, _ships, _angle, _eta, _horizon, w = entry
+        cheap, src, tgt, _ships, _angle, _eta, _horizon, w, _is_chain = entry
         key = (int(src.id), int(tgt.id), wait_band(int(w)))
         prev = best_per_band.get(key)
         if prev is None or cheap > prev[0]:

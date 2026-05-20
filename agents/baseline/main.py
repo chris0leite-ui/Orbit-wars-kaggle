@@ -23,6 +23,16 @@ Knobs (env var overrides, all optional):
                                     own planets (Phase 4). Combines with
                                     BASELINE_MIGRATION orthogonally.
                                     Default off.
+  BASELINE_CHAIN_BONUS         set to "1" to enable Phase 6 chain-capture
+                                    bonus on capture candidates (Claws
+                                    relay pattern: own→enemy then newly-
+                                    own→enemy). When set, the proposer
+                                    folds the followup capture's PV-
+                                    weighted value into cheap_delta and
+                                    tags the candidate is_chain=True; the
+                                    chooser routes those through the
+                                    closed-form-Δ branch (no rollout).
+                                    Default off.
 """
 
 from __future__ import annotations
