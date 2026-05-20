@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
+from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from agents.baseline.proposer import (
     MIN_FLEET_SIZE,
     WAIT_EXTRA_SURPLUS,
     capture_size,
     enumerate_ship_counts,
+    max_safe_launch_now,
     nearest_k,
     propose,
     wait_band,
@@ -23,14 +24,17 @@ def _planet(pid, owner, x, y, *, ships=10, production=2, radius=1.5):
     return Planet(pid, owner, x, y, radius, ships, production)
 
 
-def _world(my_id, planets, *, step=0, omega=0.0):
+def _world(my_id, planets, *, fleets=None, step=0, omega=0.0):
     obs = {
         "player": my_id,
         "planets": [
             (p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production)
             for p in planets
         ],
-        "fleets": [],
+        "fleets": [
+            (f.id, f.owner, f.x, f.y, f.angle, f.from_planet_id, f.ships)
+            for f in (fleets or [])
+        ],
         "angular_velocity": omega,
         "comet_planet_ids": [],
         "step": step,
@@ -86,6 +90,81 @@ def test_enumerate_ship_counts_returns_sizes_at_or_under_budget():
     assert sizes  # non-empty
     assert all(MIN_FLEET_SIZE <= s <= 50 for s in sizes)
     assert sizes == sorted(sizes)  # sorted ascending
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: max_safe_launch_now — garrison floor under threat
+# ---------------------------------------------------------------------------
+
+
+def test_max_safe_launch_no_threat_returns_full_garrison():
+    """No inbound enemy fleets → no floor, full garrison is launchable."""
+    src = _planet(0, 0, 50.0, 50.0, ships=50, production=2)
+    tgt = _planet(1, 1, 90.0, 50.0, ships=10, production=2)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    assert max_safe_launch_now(src, world, model, me=0) == 50
+
+
+def test_max_safe_launch_severe_threat_returns_zero():
+    """Enemy fleet about to hit src with no defence → cannot launch."""
+    # src at (50, 50); enemy fleet inbound from (70, 50) heading west (π).
+    # No other planets to absorb the fleet en route, so it WILL hit src.
+    src = _planet(0, 0, 50.0, 50.0, ships=20, production=2)
+    enemy_home = _planet(1, 1, 95.0, 50.0, ships=5)
+    enemy_fleet = Fleet(0, 1, 70.0, 50.0, 3.141592653589793, 1, 80)
+    world = _world(0, [src, enemy_home], fleets=[enemy_fleet])
+    model = WorldModel.from_world(world)
+    floor = max_safe_launch_now(src, world, model, me=0)
+    assert floor == 0, f"expected 0 under 80-ship threat; got {floor}"
+
+
+def test_max_safe_launch_floor_caps_enumerated_sizes():
+    """When src is under threat, enumerate_ship_counts respects the floor.
+
+    src 30 ships, prod=1, enemy 50 incoming from open trajectory.
+    Target tgt is *behind* src so the enemy fleet hits src first, not tgt.
+    """
+    # src at center; tgt at NW (target for our own launch) far enough that
+    # enemy fleet (from east, heading west) hits src first.
+    src = _planet(0, 0, 50.0, 50.0, ships=30, production=1)
+    tgt = _planet(2, -1, 10.0, 10.0, ships=3, production=1)
+    enemy_home = _planet(1, 1, 95.0, 50.0, ships=5)
+    enemy_fleet = Fleet(0, 1, 65.0, 50.0, 3.141592653589793, 1, 50)
+    world = _world(0, [src, tgt, enemy_home], fleets=[enemy_fleet])
+    model = WorldModel.from_world(world)
+    # Verify ledger placed the enemy fleet at src.
+    assert any(owner == 1 for (_eta, owner, _ships)
+               in model.ledger.get(0, [])), (
+        f"test setup broken — enemy fleet not predicted at src; "
+        f"ledger[0]={model.ledger.get(0)}"
+    )
+
+    floor = max_safe_launch_now(src, world, model, me=0)
+    assert floor == 0, f"expected floor=0 under threat; got {floor}"
+
+    sizes = enumerate_ship_counts(src, tgt, model, omega=0.0, me=0, world=world)
+    assert sizes == [] or all(s <= floor for s in sizes), (
+        f"enumerate must respect garrison floor {floor}; saw {sizes}"
+    )
+
+
+def test_max_safe_launch_partial_threat_returns_intermediate():
+    """Threat present but not overwhelming → some ships launchable."""
+    src = _planet(0, 0, 50.0, 50.0, ships=100, production=2)
+    enemy_home = _planet(1, 1, 95.0, 50.0, ships=5)
+    enemy_fleet = Fleet(0, 1, 70.0, 50.0, 3.141592653589793, 1, 30)
+    world = _world(0, [src, enemy_home], fleets=[enemy_fleet])
+    model = WorldModel.from_world(world)
+    floor = max_safe_launch_now(src, world, model, me=0)
+    # Verify ledger; otherwise the test is meaningless.
+    assert model.ledger.get(0) and any(owner == 1
+        for (_e, owner, _s) in model.ledger[0]), (
+        f"test setup broken; ledger[0]={model.ledger.get(0)}"
+    )
+    assert 0 < floor < 100, (
+        f"expected partial floor between 0 and 100; got {floor}"
+    )
 
 
 def test_wait_then_fire_variants_skips_mine_targets():

@@ -119,6 +119,38 @@ def test_linrock_step12_phase1_emits_wait0_alternate(linrock_step12):
         )
 
 
+def test_linrock_step44_garrison_floor_blocks_home_bleed(linrock_step44):
+    """POSITIVE REGRESSION — locks the Phase 2 fix.
+
+    At step 44, an enemy 78-ship fleet is 11.2 units from our home p11.
+    The model.ledger places that fleet at p11 with eta ~3. The garrison
+    floor `max_safe_launch_now(p11, ...)` must return 0 because:
+        my garrison @ eta3 = 24 + 5*3 = 39
+        enemy arrived @ eta3 = 78
+        deficit = 78 + safety(2) − 39 = 41 → negative budget → clamped 0
+
+    Pre-Phase-2 the proposer would let `enumerate_ship_counts` enumerate
+    up to `src.ships=24` for p11. Post-Phase-2 the floor caps the budget
+    at 0 so no fire-now candidate from p11 survives — preventing the
+    home-bleed pattern.
+    """
+    from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
+    from lib.intent import World
+    from lib.world_model import WorldModel
+    from agents.baseline.proposer import max_safe_launch_now
+
+    obs = linrock_step44["obs"]
+    me = linrock_step44["my_seat"]
+    world = World.from_obs(obs)
+    model = WorldModel.from_world(world)
+    p11 = next(Planet(*p) for p in obs["planets"] if int(p[0]) == 11)
+    assert int(p11.owner) == me, "fixture should still own p11"
+    floor = max_safe_launch_now(p11, world, model, me)
+    assert floor == 0, (
+        f"expected garrison floor 0 at p11 under 78-ship threat; got {floor}"
+    )
+
+
 def test_linrock_step44_no_positive_delta_so_correctly_idle(linrock_step44):
     """Pin a different failure mode — Phase 2/4 territory.
 

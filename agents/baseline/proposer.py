@@ -102,10 +102,61 @@ def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
     return max(MIN_FLEET_SIZE, int(math.ceil(pred)) + 1)
 
 
+def max_safe_launch_now(src, world, model, me: int, *,
+                        horizon: int = 20, safety: int = 2) -> int:
+    """Max ships we can launch from `src` this turn without `src` falling
+    within `horizon` turns.
+
+    Walks every enemy arrival at `src` with eta <= horizon. For each eta_e,
+    the binding constraint is
+
+        L <= src.ships + prod*eta_e + my_reinforce_by(eta_e)
+                 - enemy_arrived_by(eta_e) - safety.
+
+    Returns max(0, min(src.ships, min over eta_e)) — i.e. the tightest
+    floor across all incoming waves. If no enemy is inbound within
+    `horizon`, the full garrison is launchable.
+    """
+    pid = int(src.id)
+    arrivals = model.ledger.get(pid, [])
+    if not arrivals:
+        return int(src.ships)
+
+    enemy = sorted(
+        ((eta, ships) for (eta, owner, ships) in arrivals
+         if owner != me and ships > 0 and eta <= horizon),
+        key=lambda x: x[0],
+    )
+    if not enemy:
+        return int(src.ships)
+
+    mine = sorted(
+        ((eta, ships) for (eta, owner, ships) in arrivals
+         if owner == me and eta <= horizon),
+        key=lambda x: x[0],
+    )
+
+    prod = int(src.production)
+    src_ships = int(src.ships)
+    enemy_cum = 0
+    binding = src_ships  # start permissive
+    for eta_e, ships_e in enemy:
+        enemy_cum += int(ships_e)
+        my_reinforce = sum(int(s) for (e, s) in mine if e <= eta_e)
+        avail = src_ships + prod * int(eta_e) + my_reinforce - enemy_cum - safety
+        if avail < binding:
+            binding = avail
+    return max(0, min(src_ships, binding))
+
+
 def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list[int]:
-    """Fire-now ship-count set: capture-size, 2x capture-size, full budget."""
+    """Fire-now ship-count set: capture-size, 2x capture-size, full budget.
+
+    Each candidate size is clamped by `max_safe_launch_now(src)` so a
+    src under imminent threat cannot bleed below its garrison floor.
+    """
     cap = capture_size(src, tgt, model, omega, me, world)
-    budget = int(src.ships)
+    budget = min(int(src.ships), max_safe_launch_now(src, world, model, me))
     if cap == 0:
         return []  # reinforce-targets with no threat
     sizes = set()
@@ -118,10 +169,14 @@ def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list
     return sorted(sizes)
 
 
-def wait_then_fire_variants(src, tgt, model, omega: float, me: int):
+def wait_then_fire_variants(src, tgt, model, omega: float, me: int, world=None):
     """Multi-wait-grid candidates for one (src, tgt). Returns list of
     (ships, wait_N, angle, eta). Generates one variant per extra_surplus
     in WAIT_EXTRA_SURPLUS, deduped by (wait_N, ships).
+
+    Wait variants are dropped when `model.owner_at(src.id, wait_N)` is no
+    longer me — src is predicted to fall before the launch time, so the
+    plan is infeasible. (R40: model-correctness, not a brittle cap.)
     """
     if int(tgt.owner) == me:
         return []
@@ -144,6 +199,11 @@ def wait_then_fire_variants(src, tgt, model, omega: float, me: int):
         else:
             wait_N = (shortfall + prod - 1) // prod  # ceil
         if wait_N < 1:
+            continue
+
+        # Drop wait variants whose src is predicted to fall before fire time.
+        pred_owner = model.owner_at(int(src.id), wait_N)
+        if pred_owner is not None and pred_owner != me:
             continue
 
         angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N)
