@@ -40,17 +40,22 @@ from lib.world_model import WorldModel, simulate_planet_timeline
 def _columns_to_arrivals(
     my_portfolio: list, step_now: int, my_id: int,
 ) -> list[tuple[int, int, int, int]]:
-    """Convert my portfolio's Columns into (pid, eta_abs, owner, ships).
+    """Convert my portfolio's Columns into (pid, eta_rel, owner, ships).
 
-    eta_abs = step_now + wait_N + eta (matches lp_outcome.py:173 +
-    leaf_outcome_table.column_to_arrival).
+    `eta_rel = wait_N + eta` — **relative to step_now**, matching the
+    contract of `build_arrival_ledger` and `simulate_planet_timeline`
+    (lib/world_model.py:171-188 buckets `eta` as `max(1, ceil(eta))`
+    starting at step 1 of the horizon). `step_now` is intentionally
+    unused; it's kept in the signature so callers don't have to thread
+    a context change if absolute etas become useful later.
     """
+    del step_now  # not used; kept in signature for stability.
     arrivals = []
     for col in my_portfolio:
         if int(col.ships) <= 0:
             continue
-        eta_abs = int(step_now) + int(col.wait_N) + int(col.eta)
-        arrivals.append((int(col.tgt_id), eta_abs, int(my_id), int(col.ships)))
+        eta_rel = int(col.wait_N) + int(col.eta)
+        arrivals.append((int(col.tgt_id), eta_rel, int(my_id), int(col.ships)))
     return arrivals
 
 
