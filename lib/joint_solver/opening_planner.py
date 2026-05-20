@@ -10,7 +10,7 @@ Architecture (substrate replacement for steps 0 .. OPENING_HORIZON):
 - For each (source, launch_tick, target) triple, pre-compute trajectory
   feasibility, capture-size at arrival, defensive feasibility.
 - Binary MILP: x_{s,t,p} ∈ {0,1} per surviving triple. Objective rewards
-  early capture of high-prod targets (`prod_p · (T_END − arrival_tick)`).
+  early capture of high-prod targets (`prod_p · (OPENING_T_END − arrival_tick)`).
 - Constraints: per-source ship budget over time; per-target gang-up cap.
 - Solve via scipy.optimize.milp (HiGHS); pure-Python greedy fallback.
 
@@ -47,10 +47,16 @@ from lib.world_model import predict_garrison_at
 # ---------------------------------------------------------------------------
 
 OPENING_HORIZON = 30        # planner active for steps 0..(OPENING_HORIZON-1)
-T_END = 200                 # value horizon: prod·(T_END - arrival)
+# NOTE on renames vs the analogous constants in lp_outcome.py:
+# the bundler flattens all inlined modules into one namespace, so
+# `T_END`, `HOLD_WINDOW`, `DEFENDER_GUARD` would collide with lp_outcome's
+# values (500/—/0) and silently overwrite the opening planner's intent.
+# These three constants are file-local — no caller imports them — so
+# we rename here to be collision-safe.
+OPENING_T_END = 200         # value horizon: prod·(OPENING_T_END - arrival)
 OPP_BONUS = 1.10            # multiplier for capturing opp planets (strips their prod)
-HOLD_WINDOW = 12            # ticks of post-capture defense we require feasibility for
-DEFENDER_GUARD = 2          # reserve at least this many ships on each source (subtracted ONCE from budget)
+OPENING_HOLD_WINDOW = 12    # ticks of post-capture defense we require feasibility for
+OPENING_DEFENDER_GUARD = 2  # reserve at least this many ships on each source (subtracted ONCE from budget)
 MIN_SOURCE_SHIPS = 3        # skip sources with fewer ships (newly captured planets fire sooner)
 MAX_CONTESTERS_PER_TARGET = 1  # opening: each target captured at most once (avoid wasteful gang-ups)
 TOP_PAIRS_PER_SOURCE = 12
@@ -153,8 +159,8 @@ def _expected_hold_duration(tgt, arrival: int, capture_residual: int,
     Decision logic, empirically tuned:
       - If opp arrives BEFORE us (opp_threat_eta < arrival): hold = 0
         (we won't take this planet at all; opp gets there first).
-      - If opp's earliest arrival ≥ arrival + HOLD_WINDOW: we got there
-        with margin; assume opp focuses elsewhere → hold = T_END - arrival
+      - If opp's earliest arrival ≥ arrival + OPENING_HOLD_WINDOW: we got there
+        with margin; assume opp focuses elsewhere → hold = OPENING_T_END - arrival
         (full game-end credit). This is the typical opening case for
         targets closer to us than to opp.
       - Else (tight race, opp could arrive soon): scale the hold by 3×
@@ -170,13 +176,13 @@ def _expected_hold_duration(tgt, arrival: int, capture_residual: int,
     except Exception:
         opp_threat_eta = None
     if opp_threat_eta is None:
-        return max(0, T_END - arrival)
+        return max(0, OPENING_T_END - arrival)
     delta = int(opp_threat_eta) - arrival
     if delta <= 0:
         return 0
-    if delta >= HOLD_WINDOW:
-        return max(0, T_END - arrival)
-    return min(max(0, T_END - arrival), 3 * delta)
+    if delta >= OPENING_HOLD_WINDOW:
+        return max(0, OPENING_T_END - arrival)
+    return min(max(0, OPENING_T_END - arrival), 3 * delta)
 
 
 def _is_minimally_holdable(tgt, arrival: int, capture_residual: int,
@@ -251,7 +257,7 @@ def _build_candidates(world, model, my_id: int, num_seats: int,
             for offset in fire_offsets:
                 fire_step = step_now + offset
                 # Initial ship estimate for aim_and_eta — refine via fixed point.
-                ships_est = max(DEFENDER_GUARD, int(tgt.ships) + 1)
+                ships_est = max(OPENING_DEFENDER_GUARD, int(tgt.ships) + 1)
                 # Two-step refinement is enough (eta converges fast).
                 for _ in range(2):
                     res = aim_and_eta(src, tgt, ships_est, omega, wait_N=offset)
@@ -293,7 +299,7 @@ def _build_candidates(world, model, my_id: int, num_seats: int,
                     continue
                 # Source budget at fire tick (post-production, pre-launch).
                 src_ships_at_fire = int(src.ships) + int(src.production) * offset
-                if needed + DEFENDER_GUARD > src_ships_at_fire:
+                if needed + OPENING_DEFENDER_GUARD > src_ships_at_fire:
                     continue  # can't afford while keeping defender
 
                 # 4. Trajectory feasibility against fire-time geometry.
@@ -415,7 +421,7 @@ def _greedy_fallback(candidates: list[_Candidate], world, my_id: int,
         offset = c.fire_step - step_now
         used = sum(v for (s, fs), v in emitted_by_src_fire.items()
                    if s == c.src_id and fs <= c.fire_step)
-        if used + c.ships > initial + prod * max(0, offset) - DEFENDER_GUARD:
+        if used + c.ships > initial + prod * max(0, offset) - OPENING_DEFENDER_GUARD:
             continue
         chosen.append(c)
         emitted_by_src_fire[(c.src_id, c.fire_step)] = (
@@ -465,12 +471,12 @@ def _solve_milp(candidates: list[_Candidate], world, my_id: int,
     A_rows: list[list[float]] = []
     b_ub: list[float] = []
 
-    # (C1) Per-source budget over time. DEFENDER_GUARD is subtracted ONCE
-    # from the right-hand side per (src, u) row — not per launch — so a
+    # (C1) Per-source budget over time. OPENING_DEFENDER_GUARD is subtracted
+    # ONCE from the right-hand side per (src, u) row — not per launch — so a
     # source can do many launches as long as its CUMULATIVE outflow leaves
-    # DEFENDER_GUARD ships at the home.
+    # OPENING_DEFENDER_GUARD ships at the home.
     #   Σ_{c: src(c)=src, c.fire_step ≤ u} ships(c) · x_c
-    #     ≤ initial(src) + prod(src) · (u - step_now) - DEFENDER_GUARD
+    #     ≤ initial(src) + prod(src) · (u - step_now) - OPENING_DEFENDER_GUARD
     fire_ticks_for_budget = sorted({c.fire_step for c in candidates})
     for sid in src_ids:
         initial, prod = src_inv[sid]
@@ -484,7 +490,7 @@ def _solve_milp(candidates: list[_Candidate], world, my_id: int,
             if not any_in_row:
                 continue
             A_rows.append(row)
-            b_ub.append(float(initial + prod * max(0, u - step_now) - DEFENDER_GUARD))
+            b_ub.append(float(initial + prod * max(0, u - step_now) - OPENING_DEFENDER_GUARD))
 
     # (C2) Per-target gang-up cap.
     for tid in tgt_ids:
