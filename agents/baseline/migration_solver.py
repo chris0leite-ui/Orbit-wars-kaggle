@@ -35,6 +35,7 @@ import math
 # Single-line imports below — bundler constraint (see proposer.py:71-76).
 from lib.fleet import speed as fleet_speed
 from lib.scoring import pv_horizon
+from lib.trajectory import predict_fleet_fate
 from lib.world_model import WAVE_LOOKAHEAD
 
 
@@ -226,6 +227,22 @@ def propose_migrations(world, model, me: int,
                 float(P_dst.y) - float(P_src.y),
                 float(P_dst.x) - float(P_src.x),
             )
+            # Trajectory feasibility — drop migrations whose straight-line
+            # path hits the sun, OOB, or a non-target planet. The proposer
+            # filters its own output the same way (proposer.py:580-596),
+            # but migrations bypass that filter (concatenated AFTER in
+            # mpc.py / main.py). Without this filter, sun-bound migrations
+            # leak through to the analytical LP (which has no rollout to
+            # incidentally penalise them) and the env kills the fleet
+            # silently — root cause of seed=42 fid=65 sun loss (2026-05-20).
+            # `predict_fleet_fate` is bit-exact parity with the kaggle env
+            # per tests/test_intercept_landing.py.
+            fate = predict_fleet_fate(
+                P_src, P_dst, float(angle), int(available), world, wait_N=0,
+            )
+            if fate.outcome != "target":
+                continue
+
             # Tuple format mirrors `proposer.propose()` output:
             # (value, src, tgt, ships, angle, eta, horizon, wait_N)
             candidates.append((

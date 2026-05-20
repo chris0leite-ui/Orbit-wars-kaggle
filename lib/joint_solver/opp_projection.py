@@ -31,6 +31,7 @@ import math
 
 from lib.fleet import speed
 fleet_speed = speed
+from lib.orbit import is_orbiting, predict_relative
 from lib.trajectory import predict_fleet_fate
 
 
@@ -124,11 +125,30 @@ def _project_source(src, opp_id: int, all_planets: list, world,
         # Compute flight ETA via straight-line + fleet speed (mirror
         # lite_greedy_policy:205-211; no aim_orbiting precision — that's
         # fine for a projection).
+        #
+        # At tick_offset > 0 the source and target have orbited. We
+        # compute dx/dy/distance/eta/angle at FIRE-TIME geometry so the
+        # projection reflects what opp would actually launch at that
+        # tick — same wait_N propagation pattern as aac3c1e introduced
+        # for OUR launches in `opening_planner` and `predict_fleet_fate`.
         spd = fleet_speed(agg_ships)
         if spd <= 0:
             continue
-        dx = float(best.x) - float(src.x)
-        dy = float(best.y) - float(src.y)
+        omega = float(getattr(world, "omega", 0.0))
+        src_tuple = [int(src.id), int(src.owner), float(src.x), float(src.y),
+                     float(src.radius), int(src.ships), int(src.production)]
+        best_tuple = [int(best.id), int(best.owner), float(best.x), float(best.y),
+                      float(best.radius), int(best.ships), int(best.production)]
+        if tick_offset > 0 and omega != 0.0 and is_orbiting(src_tuple):
+            src_x_fire, src_y_fire = predict_relative(src_tuple, omega, tick_offset)
+        else:
+            src_x_fire, src_y_fire = float(src.x), float(src.y)
+        if tick_offset > 0 and omega != 0.0 and is_orbiting(best_tuple):
+            tgt_x_fire, tgt_y_fire = predict_relative(best_tuple, omega, tick_offset)
+        else:
+            tgt_x_fire, tgt_y_fire = float(best.x), float(best.y)
+        dx = tgt_x_fire - src_x_fire
+        dy = tgt_y_fire - src_y_fire
         d = math.sqrt(dx * dx + dy * dy)
         flight = max(0.0, d - float(src.radius) - float(best.radius) - 0.1)
         eta = max(1, int(math.ceil(flight / spd)))
@@ -152,10 +172,11 @@ def _project_source(src, opp_id: int, all_planets: list, world,
         if ships_launch > budget:
             ships_launch = budget
 
-        # Trajectory feasibility (sun/oob/wrong-planet).
+        # Trajectory feasibility (sun/oob/wrong-planet) at FIRE-TIME geometry.
         angle = math.atan2(dy, dx)
         try:
-            fate = predict_fleet_fate(src, best, angle, ships_launch, world)
+            fate = predict_fleet_fate(src, best, angle, ships_launch, world,
+                                      wait_N=int(tick_offset))
         except Exception:
             fate = None
         if fate is not None and getattr(fate, "outcome", "") != "target":

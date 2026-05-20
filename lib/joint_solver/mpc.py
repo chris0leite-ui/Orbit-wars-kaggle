@@ -62,6 +62,11 @@ class MpcDiagnostics:
     portfolio_filtered: bool = False
     n_columns_before_filter: int = 0
     fired_wait_distribution: dict[int, int] = field(default_factory=dict)
+    # For each emitted move, the intended target (src_id, tgt_id, ships,
+    # angle, wait_N). Populated by both the opening dispatch and the
+    # post-opening LP. Used by tests/test_emit_accuracy.py to verify
+    # `predict_fleet_fate(...) == "target"` for every emitted launch.
+    emitted_targets: list[dict] = field(default_factory=list)
 
 
 def _model_with_opp_projection(world, model, *, my_id: int, num_seats: int):
@@ -175,20 +180,25 @@ def solve_turn(obs, configuration=None, *,
 
     # Phase 5A: opening planner dispatch.
     # For step < OPENING_HORIZON, solve the opening as a one-shot multi-turn
-    # MILP and commit to its schedule. We emit only entries with
-    # fire_step == step_now (the rest of the schedule is planning intent the
-    # next re-derivation will refresh). Critically, we do NOT fall through
-    # to Phase 4 LP just because the schedule has no fire_step==step_now
-    # entry — the planner's INTENT is to wait this tick and fire on a
-    # scheduled later tick; falling through would override that with
-    # arbitrary Phase 4 emissions and break the commit-and-execute contract.
+    # MILP and commit to its schedule. Three cases (Phase 5F refactor):
     #
-    # Only true fallback: planner returned no candidates at all (e.g.,
-    # source pool empty because every my-planet has < MIN_SOURCE_SHIPS).
-    # In that case, let the existing Phase 4 LP handle the turn.
+    #   (a) schedule non-empty AND has fire_step == step_now entries:
+    #       Emit those. The rest of the schedule is planning intent; the
+    #       next re-derivation will refresh.
+    #
+    #   (b) schedule non-empty but NO fire_step == step_now entry:
+    #       Planner's intentional wait. Honor it (return []); falling
+    #       through would override the planner's commit-and-execute
+    #       contract with arbitrary Phase 4 emissions.
+    #
+    #   (c) schedule empty (MILP infeasible OR no candidates):
+    #       Fall through to Phase 4 LP. This closes the pre-fix silent-
+    #       idle bug where `op.n_vars > 0 or op.schedule` caused us to
+    #       stay in opening mode and emit nothing.
     if step_now < OPENING_HORIZON:
         op = opening_plan(world, model, me, num_seats)
-        if op.n_vars > 0 or op.schedule:
+        if op.schedule:
+            # Cases (a) and (b): planner produced a schedule, honor it.
             opening_moves = [
                 [int(e.src_id), float(e.angle), int(e.ships)]
                 for e in op.schedule if int(e.fire_step) == step_now
@@ -199,6 +209,12 @@ def solve_turn(obs, configuration=None, *,
             for e in op.schedule:
                 offset = int(e.fire_step) - step_now
                 wait_dist[offset] = wait_dist.get(offset, 0) + 1
+            emitted_targets = [
+                {"src_id": int(e.src_id), "tgt_id": int(e.tgt_id),
+                 "ships": int(e.ships), "angle": float(e.angle),
+                 "wait_N": 0}
+                for e in op.schedule if int(e.fire_step) == step_now
+            ]
             diag = MpcDiagnostics(
                 step=step_now,
                 n_prerank=0,
@@ -216,9 +232,10 @@ def solve_turn(obs, configuration=None, *,
                 portfolio_filtered=False,
                 n_columns_before_filter=op.n_vars,
                 fired_wait_distribution=wait_dist,
+                emitted_targets=emitted_targets,
             )
             return opening_moves, diag
-        # else: no candidates at all — fall through to Phase 4 LP.
+        # Case (c): empty schedule — fall through to Phase 4 LP.
 
     threatened_mine = [
         p for p in my_planets
@@ -305,6 +322,15 @@ def solve_turn(obs, configuration=None, *,
         w = int(col.wait_N)
         wait_dist[w] = wait_dist.get(w, 0) + 1
 
+    # Build emitted_targets list: only columns with wait_N==0 actually
+    # produce a move this turn (lp_outcome filters in `moves` builder).
+    emitted_targets = [
+        {"src_id": int(col.src_id), "tgt_id": int(col.tgt_id),
+         "ships": int(col.ships), "angle": float(col.angle),
+         "wait_N": int(col.wait_N)}
+        for col in res_oc.fired_columns if int(col.wait_N) == 0
+    ]
+
     diag = MpcDiagnostics(
         step=int(obs_d.get("step", 0) or 0),
         n_prerank=len(prerank),
@@ -322,5 +348,6 @@ def solve_turn(obs, configuration=None, *,
         portfolio_filtered=portfolio_filtered,
         n_columns_before_filter=n_columns_before_filter,
         fired_wait_distribution=wait_dist,
+        emitted_targets=emitted_targets,
     )
     return res_oc.moves, diag

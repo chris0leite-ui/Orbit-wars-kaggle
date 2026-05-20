@@ -1,0 +1,41 @@
+{
+  "summary": {
+    "wins": 0,
+    "losses": 4,
+    "draws": 0,
+    "n": 4,
+    "winrate": 0.0,
+    "wilson_lo": 0.0,
+    "wilson_hi": 0.48990002040399916,
+    "verdict": "FAIL",
+    "elapsed_seconds": 115.0,
+    "seeds_played": [
+      42,
+      7,
+      1,
+      13
+    ]
+  },
+  "per_game": [
+    {
+      "seed": 42,
+      "outcome": "p1_win",
+      "focal_won": false
+    },
+    {
+      "seed": 7,
+      "outcome": "p1_win",
+      "focal_won": false
+    },
+    {
+      "seed": 1,
+      "outcome": "p1_win",
+      "focal_won": false
+    },
+    {
+      "seed": 13,
+      "outcome": "p1_win",
+      "focal_won": false
+    }
+  ]
+}
