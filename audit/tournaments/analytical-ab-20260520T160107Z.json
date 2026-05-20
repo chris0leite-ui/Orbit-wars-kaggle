@@ -1,0 +1,32 @@
+{
+  "summary": {
+    "wins": 0,
+    "losses": 2,
+    "draws": 0,
+    "n": 2,
+    "winrate": 0.0,
+    "wilson_lo": 0.0,
+    "wilson_hi": 0.6576280471103807,
+    "verdict": "INCONCLUSIVE",
+    "tiers_used": [
+      2
+    ],
+    "elapsed_seconds": 37.9,
+    "seeds_played": [
+      42,
+      1
+    ]
+  },
+  "per_game": [
+    {
+      "seed": 42,
+      "outcome": "p1_win",
+      "focal_won": false
+    },
+    {
+      "seed": 1,
+      "outcome": "p1_win",
+      "focal_won": false
+    }
+  ]
+}
