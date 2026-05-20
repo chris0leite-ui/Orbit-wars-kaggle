@@ -149,12 +149,28 @@ def _build_per_planet_arrivals(
     for col in active_columns:
         by_tgt.setdefault(int(col.tgt_id), []).append(col)
 
+    # Bug #6: build the keep-set of column ids referenced as parents
+    # by ANY column. The per-planet pre-filter would otherwise drop a
+    # low-value parent and the linkage constraint at L495-518 would
+    # force-zero every compound that pointed at it — silent action-space
+    # shrinkage. Compute across all active columns (parents may live in
+    # a different by_tgt group than their compounds).
+    parent_keepset: set[int] = {
+        int(getattr(c, "parent_column_id"))
+        for c in active_columns
+        if getattr(c, "parent_column_id", None) is not None
+    }
+
     out: dict[int, tuple[list[Arrival], list[Arrival]]] = {}
     for tgt_pid, cols in by_tgt.items():
-        # Cap at MAX_CONTESTERS_PER_PLANET via per-candidate value.
+        # Cap at MAX_CONTESTERS_PER_PLANET via per-candidate value. The
+        # keep-set is force-kept regardless of value rank.
         if len(cols) > MAX_CONTESTERS_PER_PLANET:
-            cols = sorted(cols, key=lambda c: float(c.value), reverse=True)
-            cols = cols[:MAX_CONTESTERS_PER_PLANET]
+            forced = [c for c in cols if int(c.column_id) in parent_keepset]
+            optional = [c for c in cols if int(c.column_id) not in parent_keepset]
+            optional.sort(key=lambda c: float(c.value), reverse=True)
+            budget = max(0, MAX_CONTESTERS_PER_PLANET - len(forced))
+            cols = forced + optional[:budget]
 
         # Fixed arrivals — ONLY from model.ledger (opp projections live there).
         fixed: list[Arrival] = []
