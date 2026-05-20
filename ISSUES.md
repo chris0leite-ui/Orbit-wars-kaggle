@@ -126,23 +126,23 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   Heavy compute; defer until heuristic plateau. `[owner: unclaimed | status: open]`
 - **B.5 Hybrid**: heuristic policy with learned value head, OR IL
   warm-start on top-LB replays then RL fine-tune. `[owner: unclaimed | status: open]`
-- **B.6 Chooser-emit under-emission fix (post-sary diagnosis)**:
+- **B.6 Chooser-emit under-emission fix (post-sary diagnosis) — NULL**:
   Replay-driven postmortem on submission 52827111 ep 77140674 (sary 2P
   loss, 49% idle turns) localised the under-emission to the trajectory
   chooser's "wait_N>0 reserve-without-emit" rule
   (`chooser_trajectory.py:856`; same pattern in `chooser.py:179-181`).
-  30/30 idle turns with a positive-Δ candidate had wait_N>0 as the top
-  pick — the chooser reserves src+tgt and emits nothing, blocking
-  fire-now alternatives from the same src. **Fix implemented as a
-  stateful commit ledger** (`audit/2026-05-20-ledger-design.md`): chooser
-  returns `(moves, commits)`; agent maintains per-seat
-  `_PENDING_LAUNCHES` dict that ticks wait commits down and emits with
-  re-aim. Mode `soft` lets src fire-now during wait; commit drops at
-  emit time if not enough ships. Cross-game validation on 6 episodes:
-  ledger_soft wins final-planet count 6/6, drops idle ≥5pp in 4/6,
-  +28% launch volume. Falsification gate (next session): ≥55% Wilson on
-  n=64 vs champion 52827111, no panel target regresses >5pp.
-  `[owner: audit-workflow-performance-btjeK | status: wip — local-validated, A/B next session]`
+  Fix attempted as a stateful commit ledger
+  (`audit/2026-05-20-ledger-design.md`). Local what-if rollout showed
+  +28% launch volume and 6/6 final-planet wins. **However, head-to-head
+  play falsified the fix** (`audit/2026-05-21-ledger-validation.md`):
+  ledger_soft 2/16 (12.5%, Wlo=0.035) at n=8; ledger_hard 0/16 (0%).
+  Replay diagnosis shows ledger drains source reserves; opponent
+  exploits with bigger counter-launches; ledger eliminated 4/4. The
+  wait_N>0 reservation has DEFENSIVE VALUE (ships co-located for
+  reactive defense + larger counter-attacks) that the ledger destroys.
+  Codebase change kept env-gated OFF; no submission. Confirms prior
+  friction "launch-rate-is-symptom-not-cause".
+  `[owner: audit-workflow-performance-btjeK | status: null — ledger axis exhausted (2 variants), per Rule 37 do not re-attempt on this axis without new data]`
 
 ### C. Reward / value signal — Q6 metric alignment (Rule 16)
 

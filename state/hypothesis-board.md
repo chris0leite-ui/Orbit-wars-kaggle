@@ -2,26 +2,37 @@
 
 ## Open — Chooser-emit under-emission (2026-05-20, post sary loss)
 
-### H43 — Trajectory chooser's "wait_N>0 reserve-without-emit" rule causes 49% idle turns — CONFIRMED + FIX IMPLEMENTED
+### H43 — Trajectory chooser's "wait_N>0 reserve-without-emit" rule causes 49% idle turns — CONFIRMED, but FIX FAILED in h2h (KILLED 2026-05-21)
 
-> Confirmed via replay-driven postmortem (`scripts/baseline_postmortem.py`,
-> `audit/2026-05-20-filter-rejection-trace.md`). Fix implemented as a
-> stateful commit ledger (`audit/2026-05-20-ledger-design.md`); the
-> chooser now returns `(moves, commits)` and the agent maintains a
-> per-seat `_PENDING_LAUNCHES` dict that ticks wait commits down and
-> emits them on schedule (with re-aim).
+> Diagnosis confirmed via `audit/2026-05-20-filter-rejection-trace.md`
+> (49% idle, 248/248 idle-turns-with-Δ>0 had wait_N>0 as top). Fix
+> implemented as a stateful commit ledger
+> (`audit/2026-05-20-ledger-design.md`).
 >
-> Two ledger modes:
-> - **soft** (default for the validated policy): src is NOT reserved
->   during the wait — chooser can fire-now opportunistically; commit
->   drops at emit time if not enough ships remain.
-> - hard: src reserved for the full wait window.
+> What-if rollout suggested the ledger improved final-planet count
+> 6/6 on a 6-episode corpus. **But h2h play falsified this**
+> (`audit/2026-05-21-ledger-validation.md`):
+> - ledger_soft vs current: 2/16 (12.5%) Wilson-LB=0.035 (n=8 gate FAIL).
+> - ledger_hard vs current: 0/16 (0%) Wilson-LB=0.000.
+> - Across 4 captured h2h replays: led_on emits 321 launches / 14578
+>   ships in 4 games; led_off emits 416 / 23041. led_off wins all 4
+>   games (24/0/24/24 final planets vs 0/0/0/0 for led_on).
 >
-> Soft beats hard empirically. Cross-game validation on 6 recent
-> episodes: ledger_soft wins final-planet count 6/6 (aggregate 15 → 118),
-> drops idle rate ≥ 5pp in 4/6, raises launch volume +28%. Wallclock p95
-> DOWN slightly (367ms → 327ms). Default `BASELINE_LEDGER=off` for
-> production — next-session A/B flips to `on,soft`.
+> Root cause: the wait_N>0 reservation has DEFENSIVE VALUE we missed.
+> Reserved ships stay co-located on the planet, available for the
+> defensive reactive policy when opp threatens, and accumulate for
+> larger counter-attack launches. The ledger drains those reserves
+> (soft mode) or doesn't surface alternative emits (hard mode). Net
+> regression in adversarial play. What-if's static opp gave a false
+> positive because opp's recorded actions stopped working against our
+> diverged state.
+>
+> Codebase: ledger code stays gated on `BASELINE_LEDGER=off` (default).
+> Production behaviour unchanged. No submission planned.
+>
+> Lesson confirms the prior friction tag
+> "launch-rate-is-symptom-not-cause" (audit/2026-05-17-fleet-
+> efficiency-negative-result.md).
 
 ### H43-falsified: `_target_holdable_after_capture` filter is over-suppressing
 
