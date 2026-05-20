@@ -38,7 +38,12 @@ committed" notice and stop. Don't sit on artifacts. Don't ask
 ## Steps
 
 ```
-1. Load state (Haiku): comp-context.md, last 3 audit/, lb_status.py.
+1. Load state (Haiku): state/MULTI_BRANCH.md + state/TOOLS.md FIRST
+   (if present — Orbit Wars and successor code-comps; Rule 44),
+   then comp-context.md, last 3 audit/, lb_status.py. For
+   code-comps with parallel feature branches, also run
+   `kaggle competitions submissions <comp> | head -5` to verify the
+   rolling-last-2 state matches the MULTI_BRANCH live-Kaggle table.
 
 2. Pick experiment (Sonnet): from queue or new hypothesis.
    *RE-RANK THE QUEUE BY EXPECTED LEARNING-PER-SLOT* at every replan,

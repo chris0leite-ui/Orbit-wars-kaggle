@@ -7,68 +7,18 @@
 > rotate per self-improvement.md: archive applied/superseded items to
 > `improvements-archive-YYYY-MM-DD.md`.
 >
-> Last rotation: 2026-05-14 (claude/audit-workflow-friction-XD56a).
-> Full prior history at `improvements-archive-2026-05-14.md`.
+> Last rotation: 2026-05-20 (claude/review-skills-improvements-moKOR).
+> Full prior history at `improvements-archive-2026-05-20.md`
+> (which itself supersedes `improvements-archive-2026-05-14.md`).
 
 ## Tags
 
 - `[CROSS-CUTTING]` — applies to any Kaggle comp (tabular or code/agent).
 - `[TABULAR-ONLY]` — applies only to tabular comps; ignore on Orbit Wars.
-- `[ADAPT-FOR-CODE-COMP]` — concept transfers but the implementation differs in code/agent comps; adaptation note inline.
+- `[ADAPT-FOR-CODE-COMP]` — concept transfers but implementation differs in code/agent comps.
 - `[CODE-COMP-DISCOVERED]` — new lessons that originate from a code/agent comp.
 
 ## Pending — promotion needed
-
-### [ ] [CROSS-CUTTING] Read state docs + recent audits before proposing subsystem edits
-
-`tag: wrong-file-recon-skipped-state-md` +
-`tag: crn-symmetry-broken-without-reading-prior-audits`
-(both 2026-05-18, claude/reverse-engineer-seat-geometry-BPJKs).
-
-Same-session double recurrence: proposed edits to "our agent" twice
-in one session without first reading the state docs that index the
-agent (`state/current.md`) or the audit notes that document the
-subsystem's design history (`audit/2026-05-17-state-function-
-principled-fix-results.md`). First recurrence caught by PI:
-"is that really our submission? check again." Second cost ~30 min
-compute + one full panel slot: asymmetric Tier-1 chooser change
-violated the CRN symmetry the v11→v12→v13 line had specifically
-fixed; panel returned 0/32, reverted.
-
-Both frictions have the same shape as `agent-introspection-skipped-
-bootstrap` (2026-05-13) and `fix-not-validated-against-real-failing-
-state` (2026-05-14) — the bootstrap-side equivalents already landed
-as Rule 38 + SessionStart hook (above). The **recon-side** equivalent
-has not been codified.
-
-**Fix:** add CLAUDE.md Rule 41 — "Before proposing edits to a
-subsystem in tree, (a) `cat state/current.md` to confirm which file
-implements it, and (b) `grep -l "<subsystem-name>" audit/2026-05-*.md`
-to check recent design audits. Mandatory if the edit modifies the
-agent's behaviour at submission time."
-
-Cost evidence: 2x recurrence within one session; ~30 min eval burned
-on a CRN-broken change; one panel slot consumed by a 0/32 result.
-
-### [ ] [CROSS-CUTTING] Stop-hook should not force commit-before-verify
-
-`tag: stop-hook-pressure-commits-speculative-WIP` (2026-05-16,
-v13 session).
-
-Stop-hook `~/.claude/stop-hook-git-check.sh` warns on every turn
-with uncommitted changes. Pattern: agent commits speculative work
-to silence the hook, then has to revert when verification reveals
-regression. Cost: 1 wasted commit/revert pair in the v13 session
-(lite_greedy-neutral-fix committed before panel ran; panel showed
-Wlo 0.700 → 0.483; reverted).
-
-**Fix:** when a change is being VERIFIED (panel running, tests
-running), use `git stash` to silence the stop-hook without
-committing speculative work. Stash, run verification, pop+commit
-only on PASS. Document this in CLAUDE.md or kaggle-comp skill so
-the pattern doesn't recur. Alternative: extend stop-hook to skip
-warning when a background verification job is in flight (less
-robust; relies on detecting in-flight jobs).
 
 ### [ ] [CROSS-CUTTING] **TOP PRIORITY** SessionStart hook: bootstrap + git fetch
 
@@ -85,82 +35,52 @@ fix is a SessionStart hook.
 1. `git fetch origin && git log -5 --oneline HEAD`
 2. `bash bootstrap.sh` (idempotent — guards skip if already present)
 3. `python -m pytest tests/ -q --no-header -x --tb=line 2>&1 | tail -5`
-
-Each step's output posted before the first agent response. Stops:
-- Handover-staleness (git step)
-- Bootstrap-skipped (bootstrap step; runs unconditionally because
-  the patched bootstrap.sh internally checks for `data/main.py`)
-- Test-baseline-unknown (pytest step; gives the agent a fresh
-  "16 fail" or "0 fail" reading)
+4. **NEW (2026-05-20):** `kaggle competitions submissions orbit-wars | head -5`
+   surfaced inline (drives the MULTI_BRANCH live-Kaggle table that
+   Rule 42 now references).
 
 Cost evidence (3 incidents): ~30 min designing duplicated work + 16
 spurious pytest failures the agent labelled "pre-existing" + 10 min
 manual recovery on day-1 audit branch.
 
+### [ ] [CROSS-CUTTING] Stop-hook should not force commit-before-verify
+
+`tag: stop-hook-pressure-commits-speculative-WIP` (2026-05-16,
+v13 session).
+
+Stop-hook `~/.claude/stop-hook-git-check.sh` warns on every turn
+with uncommitted changes. Pattern: agent commits speculative work
+to silence the hook, then has to revert when verification reveals
+regression. Cost: 1 wasted commit/revert pair in the v13 session.
+
+**Fix:** when a change is being VERIFIED (panel running, tests
+running), use `git stash` to silence the stop-hook without
+committing speculative work. Stash, run verification, pop+commit
+only on PASS.
+
 ### [ ] [CODE-COMP-DISCOVERED] AST-walk import discovery in bundle_agent.py
 
 `tag: bundler-missing-block-e-modules` and 5 related. Origin: Orbit
 Wars 2026-05-11 through 2026-05-14. **Partially mitigated** by the
-loud-error guard added 2026-05-14 (`_assert_lib_imports_resolved`).
-That stops the silent-NameError failure but still requires manual
-maintenance of `DEFAULT_LIB_ORDER`.
+loud-error guard (`_assert_lib_imports_resolved`) and the EpMVP
+2026-05-20 "inline agent submodules + explicit-name imports"
+upgrade (addresses 3 of 5 silent-fail modes).
 
-**Fix:** replace the hand-maintained `DEFAULT_LIB_ORDER` with AST
-discovery. Parse the agent's `main.py`, traverse `from lib... import`
-statements transitively, build a topologically-sorted module list.
-Eliminates the manual maintenance burden. Defer until the next time
-a new `lib/*.py` is added.
-
-### [ ] [CODE-COMP-DISCOVERED] Make `--vs-panel` mandatory before submission
-
-`tag: local-vs-v7_0-only-misses-ladder-distribution`. Origin: Orbit
-Wars 2026-05-12 (v3.5.1 -150μ) and 2026-05-14 (geo v3.1 -80μ). The
-flag landed in source 2026-05-14; the workflow rule has not.
-
-**Fix:** add a CLAUDE.md sub-clause to Rule 12 (submission
-discipline) requiring a `--vs-panel` PASS verdict in the pre-submit
-decision record. Belongs in CLAUDE.md, not in a hook, because the
-PI is in the loop on every submit anyway.
-
-### [ ] [CROSS-CUTTING] do-and-dont.md — ISO date convention; never invent Day-N
-
-`tag: day-counter-drift`. Origin: s6e5 2026-05-08 PM. Prose uses ISO
-dates (`2026-05-14`) or comp-day-N anchored to comp start. **Never
-invent a "Day N" counter that is not calendar-anchored.** The `dN`
-short-codes in script names are FROZEN sequencing identifiers and
-MUST NOT be reused as date references.
-
-**Fix:** session-start sanity check: grep `state/*.md HANDOVER.md`
-for `Day N` patterns where N > days-since-comp-start, surface as
-friction. Add to `do-and-dont.md` once.
-
-### [ ] [CROSS-CUTTING] CLAUDE.md / Rule 12 addendum: pre-submit eviction record
-
-`tag: rolling-last-2-tradeoff-needs-explicit-decision-record`.
-Origin: Orbit Wars 2026-05-11. Rolling-last-2 makes every submission
-an explicit trade between known and unknown; without
-pre-registration the agent defaults to "ship the new thing" without
-sizing the eviction cost.
-
-**Fix:** Rule 12 sub-clause — before every Orbit Wars submission,
-write a one-line decision record citing (i) the submission_id and
-μ being evicted, (ii) the expected Δμ over the surviving slot,
-(iii) the rationale if the evicted submission has higher μ than
-what stays. Append to `state/current.md::last_submission_message`
-before the submit call.
+**Fix:** (i) merge up the EpMVP bundler upgrade as part of the
+code-consolidation pass; (ii) replace hand-maintained
+`DEFAULT_LIB_ORDER` with AST discovery. Parse the agent's `main.py`,
+traverse `from lib... import` statements transitively, build a
+topologically-sorted module list. Eliminates manual maintenance.
 
 ### [ ] [CROSS-CUTTING] PI-protocol — no-unexplained-abbreviations rule
 
 `tag: pi-comm-no-unexplained-abbreviations`. PI verbatim 2026-05-07:
 "I often struggle to understand what we are doing with so many
 abbreviations and specific methods and slang." Promoted to Rule 0
-of Orbit Wars's CLAUDE.md but state-doc compliance is poor —
-`state/current.md`, `hypothesis-board.md`, `mechanism-ledger.md`
-remain heavy on coded references (v7_X, K=10, μ, σ, drop-one,
-σ-equiv, Wilson lo).
+of Orbit Wars's CLAUDE.md but state-doc compliance is mixed.
 
 **Fix:** Rule 0 already exists. The remaining work is enforcement
-in HANDOVER.md prose specifically (the doc the PI actually reads
+in `HANDOVER.md` prose specifically (the doc the PI actually reads
 between sessions). State files MAY stay coded for agent-to-agent
 reference.
 
@@ -174,10 +94,57 @@ public-notebook scan). Agent picks one and ignores the others.
 that sequences all three. Reference from a single new rule that
 supersedes 7/14/22.
 
+### [ ] [CODE-COMP-DISCOVERED] **NEW** Code-consolidation merge gate (6-step) into pre-submit runbook
+
+`tag: cross-branch-code-divergence` (2026-05-20).
+
+Eight active branches building parallel agents with overlapping but
+not-merged code: `lib/trajectory_layer.py` (PFhzM), `agents/precision/`
+(precision branch), `chooser_roi.py` (btjeK), EpMVP bundler upgrade,
+EpMVP oracle tests. The 6-step consolidation gate now lives in
+`state/TOOLS.md`. Needs promotion into the kaggle-comp skill's
+day-loop / experiment-loop so that branch-only artifacts get a
+formal merge-up review rather than dying with the branch.
+
+**Fix:** add `consolidation-runbook.md` to the skill (separate from
+plateau-runbook); reference it from day-loop step 1 alongside
+`state/MULTI_BRANCH.md`. Defer the file write until next session;
+the state docs already encode the gate, so this is the discoverability
+layer.
+
+### [ ] [CODE-COMP-DISCOVERED] **NEW** Three-track parallel work as canonical pattern for code-comps
+
+`tag: parallel-track-fragmentation` (2026-05-20 cross-branch survey).
+
+Eight active branches collapsed into THREE methodological tracks
+(Analytical / Hybrid-Sim / Verify-first) plus shared substrate
+(Tier-1 closed-form vs Tier-2 simulation). This split should be
+the default mental model for any Simulation-class Kaggle comp —
+not invented per-comp.
+
+**Fix:** add "Track registry" section to kickoff-runbook so new
+code-comps start with the three-track placeholder filled. Defer
+until next code-comp kickoff (no urgency for Orbit Wars).
+
+## Applied in 2026-05-20 audit pass
+
+Moved out of this file to keep it lean. Full details in
+`improvements-archive-2026-05-20.md`.
+
+- `[APPLIED]` Rule 41 — confound-sweep before correlational conclusion → CLAUDE.md
+- `[APPLIED]` Rule 42 — pre-submit cross-branch coordination gate → CLAUDE.md + `state/MULTI_BRANCH.md`
+- `[APPLIED]` Rule 43 — multi-opponent panel mandatory pre-submit → CLAUDE.md (supersedes "--vs-panel mandatory" pending)
+- `[APPLIED]` Rule 44 — state-of-truth read before subsystem edits → CLAUDE.md (supersedes "read state docs" pending)
+- `[APPLIED]` Rule 45 — n ≥ 32 minimum for A/B lift claims → CLAUDE.md
+- `[APPLIED]` Rule 46 — bundle + parity smoke before submission → CLAUDE.md
+- `[APPLIED]` Rule 47 — physics-primitive verification before agent design → CLAUDE.md
+- `[APPLIED]` `state/MULTI_BRANCH.md` + `state/TOOLS.md` as single source of truth
+- `[APPLIED]` SKILL.md step 0 "load MULTI_BRANCH + TOOLS first"
+- `[APPLIED]` day-loop.md step 1 amendment for code-comp branch coordination
+
 ## Applied in 2026-05-14 audit pass
 
-Moved out of this file to keep it lean. Full details in the
-`improvements-archive-2026-05-14.md`.
+Full details in `improvements-archive-2026-05-14.md`.
 
 - `[APPLIED]` Rule 37 — consecutive-falsification cap → CLAUDE.md
 - `[APPLIED]` Rule 2 extension — two-tier kernel smoke → CLAUDE.md

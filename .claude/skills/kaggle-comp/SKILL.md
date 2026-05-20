@@ -58,6 +58,12 @@ day-loop in [loops.md](loops.md).
 
 ## What to load (in order)
 
+0. **Multi-branch state-of-truth** (Orbit Wars and any successor
+   code-comp with parallel feature branches): `state/MULTI_BRANCH.md`
+   (live Kaggle, track registry, closed tracks, push claim board)
+   AND `state/TOOLS.md` (tools registry). Read BEFORE any subsystem
+   edits or A/B planning (Rule 44). If those files don't exist on
+   this comp, fall through to step 1.
 1. **`comp-context.md`** at the comp repo root. Settled-once facts.
    If it doesn't exist, the comp is at Day 1 — go to [kickoff.md](kickoff.md).
 2. **Latest `audit/YYYY-MM-DD-*.md`** entries (last 3).
