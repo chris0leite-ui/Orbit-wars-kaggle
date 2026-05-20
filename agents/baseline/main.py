@@ -45,7 +45,13 @@ from lib.fast_sim import from_obs as fs_from_obs
 from lib.intent import World
 from lib.world_model import WorldModel
 
-from agents.baseline import chooser, proposer
+# Import by explicit names so the bundler's per-line import-stripping regex
+# strips these cleanly and the inlined symbols resolve at top-level. Single-
+# line form is mandatory — multi-line parenthesised imports would leak
+# continuation lines as indented orphans in the bundle. Ported from btjeK
+# commit 4094aa1 (friction `bundler-modular-agent-namespace-access-breaks-bundle`).
+from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS
+from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON
 
 
 _PARITY_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
@@ -84,9 +90,9 @@ def _wallclock_ms() -> float:
         except ValueError:
             pass
     try:
-        return float(os.environ.get("BASELINE_WALLCLOCK_MS", chooser.WALLCLOCK_BUDGET_MS))
+        return float(os.environ.get("BASELINE_WALLCLOCK_MS", WALLCLOCK_BUDGET_MS))
     except ValueError:
-        return chooser.WALLCLOCK_BUDGET_MS
+        return WALLCLOCK_BUDGET_MS
 
 
 def _gamma() -> float:
@@ -126,11 +132,11 @@ def agent(obs, configuration=None):
 
     snap_base = fs_from_obs(obs, num_seats=num_seats)
 
-    baseline_favors = chooser.build_idle_baseline(
-        snap_base, me, num_seats, proposer.MAX_HORIZON, gamma,
+    baseline_favors = build_idle_baseline(
+        snap_base, me, num_seats, MAX_HORIZON, gamma,
     )
 
-    prerank = proposer.propose(
+    prerank = propose(
         my_planets, target_pool, world, model, me, omega,
         baseline_len=len(baseline_favors),
     )
@@ -145,9 +151,9 @@ def agent(obs, configuration=None):
             propose_defensive_migrations(world, model, me, gamma=gamma)
         )
 
-    return chooser.choose(
+    return choose(
         snap_base, prerank, baseline_favors,
         me, num_seats, wallclock_ms,
-        proposer.MIN_HORIZON, proposer.MAX_HORIZON, gamma,
+        MIN_HORIZON, MAX_HORIZON, gamma,
         migrations=migrations,
     )
