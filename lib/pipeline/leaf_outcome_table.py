@@ -161,10 +161,18 @@ def _discounted_prod_stream(timeline: dict, planet_production: int,
 
 def column_to_arrival(col, step_now: int) -> tuple[int, int, int, int]:
     """Convert a Column into the `(pid, eta_rel, owner, ships)` shape this
-    module consumes. Returns eta_rel measured from step_now."""
+    module consumes. Returns eta_rel measured from step_now.
+
+    Important: column.eta is flight time from LAUNCH (proposer convention,
+    `aim_and_eta` at agents/baseline/proposer.py:73). For wait_N > 0
+    columns, launch is at step_now + wait_N and arrival is at
+    step_now + wait_N + eta. So arrival eta-from-step_now is the SUM,
+    not just `col.eta`. lp_outcome.py:173 does the same: `total_eta
+    = col.wait_N + col.eta`.
+    """
     return (
         int(col.tgt_id),
-        int(col.eta),   # column.eta is already from step_now (proposer convention)
+        int(col.wait_N) + int(col.eta),
         int(col.owner),
         int(col.ships),
     )
