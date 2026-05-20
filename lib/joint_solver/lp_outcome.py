@@ -168,7 +168,19 @@ def _build_per_planet_arrivals(
         if len(cols) > MAX_CONTESTERS_PER_PLANET:
             forced = [c for c in cols if int(c.column_id) in parent_keepset]
             optional = [c for c in cols if int(c.column_id) not in parent_keepset]
-            optional.sort(key=lambda c: float(c.value), reverse=True)
+            # Bug #7: secondary sort keys so prerank_passthrough's
+            # uniform value=1.0 doesn't yield non-deterministic survivors.
+            # Prefer higher ships, earlier launches (smaller wait_N),
+            # smaller column_id (id-ascending for stable identity tie-break).
+            optional.sort(
+                key=lambda c: (
+                    float(c.value),
+                    int(c.ships),
+                    -int(c.wait_N),
+                    -int(c.column_id),
+                ),
+                reverse=True,
+            )
             budget = max(0, MAX_CONTESTERS_PER_PLANET - len(forced))
             cols = forced + optional[:budget]
 
