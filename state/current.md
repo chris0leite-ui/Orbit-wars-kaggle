@@ -13,9 +13,9 @@
 > after submitting the fixed analytical (52857903).
 
 ```yaml
-date: 2026-05-20
+date: 2026-05-21
 deadline: 2026-06-23 23:59 UTC
-days_to_deadline: 34
+days_to_deadline: 33
 
 # Most-recent submission: analytical with wait-N trajectory validation +
 # endgame-idle short-circuit removal. Built on the joint_solver Phase 5
@@ -110,6 +110,65 @@ saturation_count: 0
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
+  - 2026-05-21 — strategy-axis-decision-3437 (this session).
+    Pivot from "Option B substrate refactor" to a modular analytical-
+    native pipeline framework, per PI redirect: "analytics native, do
+    right what 52857903 was not able to achieve." Built a seven-stage
+    pipeline (perception / candidates / prerank / opp_model / decision /
+    leaf / commit) with one file per stage, swappable from a registry;
+    current analytical agent (52857903) is one specific composition.
+
+    Phase A — pipeline scaffold + reference instantiation. Built
+    lib/pipeline/* (8 files, ~600 LOC). agents/analytical/main.py
+    rewired to compose default_composition(). Bit-parity test
+    (tests/test_pipeline_parity.py) — composed pipeline emits
+    identical moves to legacy mpc.solve_turn over 3 games (2×50-turn
+    + 1 full game seed 42) = ~700 turns of zero-tolerance verification.
+    All 15 inherited correctness tests still pass.
+
+    Phase B — foundation diagnostics + Rule-38 pin tests. Three new
+    tests (outcome-table-fast_sim parity + wait_N evaporation pin +
+    pre-filter amputation pin), two new diagnostic scripts (pipeline
+    funnel + opp-predict accuracy). Seed-42 numbers from the funnel:
+      - 94 active turns, 42 firing, 40% of firing turns have wait_N>0
+        columns the LP selected (HANDOVER's 58% claim confirmed in
+        direction); 65% of those evaporate (failure pinned).
+      - MILP itself is fast: ms_decision p90=13.1, max=14.4.
+        ms_total p90=222, max=346 — plenty of headroom for Phase D
+        K_MY × K_OPP outcome-table leaves.
+      - Pre-filter amputation rate non-trivial (failure pinned).
+    Opp-predict diagnostic has a known bug (actual-extraction calls
+    predict_fleet_fate with target=None — fix in Phase D when designing
+    the action-reactive opp model).
+
+    Phase C — two stage swaps that close the documented failure modes:
+      - Stage 7 commit_persistent: pending-schedule decant for wait_N>0
+        commitments. Closes evaporation.
+      - Stage 3 prerank_passthrough: rewrites column values to 1.0 to
+        neutralize lp_outcome.py:331's drop. Closes amputation.
+    New agent agents/analytical_phase_c/main.py composes the swap.
+    Rule-44 verification (check_fleet_outcomes per seed):
+      - seed 42: 0 sun, 0 OOB, 100% target (57 emissions)
+      - seed 1:  0 sun, 0 OOB, 92.54% target ← regression (~7.5%
+        misses; likely decant misfires; needs Phase C debug)
+      - seed 7:  0 sun, 0 OOB, 100% target
+      - seed 13: pending
+    Small A/B (n=4) vs trajectory baseline: 1/4 wins (focal flipped
+    seed 13 W; lost 42/1/7). Wilson [0.046, 0.699] INCONCLUSIVE,
+    but +1 win over the 0/4 reference. Verdict: directional positive
+    but with a real regression to investigate before Phase D.
+
+    Phase D (pending): action-reactive opp model + game-theoretic
+    decision rule (depth-2 maximin / saddle-point LP / IBR /
+    Stackelberg-k). Estimated 6-8 h work.
+
+    Branch: claude/strategy-axis-decision-3437 (off 5087948).
+    Commits: pipeline scaffold + parity (1), Phase B diagnostics (1),
+    Phase C stage swaps (1). All pushed.
+
+    No Kaggle submission this session (Rule 1; PI deferred floor
+    restore; rolling pair unchanged).
+
   - 2026-05-17 PM — audit-workflow-performance-btjeK.
     Diagnostic + observe-loop foundations + composite head wired + A2 merged
     + submission bundled. Workflow fixes: kaggle-CLI shim (`~/.local/bin/kaggle`
