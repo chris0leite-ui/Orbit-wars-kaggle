@@ -9,44 +9,49 @@
 >            KAGGLE_API_TOKEN="$KaggleAPIToke"
 >     kaggle competitions submissions orbit-wars
 >
-> Updated 2026-05-17 by `claude/kaggle-baseline-strategy-lO4mm`
-> (clean modular re-baseline of v15).
+> Updated 2026-05-20 PM by `claude/strategy-framework-design-OyoYR-rebased`
+> after submitting the fixed analytical (52857903).
 
 ```yaml
-date: 2026-05-18
+date: 2026-05-20
 deadline: 2026-06-23 23:59 UTC
-days_to_deadline: 36
+days_to_deadline: 34
 
-# Most-recent submission (PV-off + bug #3/#4/#12 fixes).
-# Built on `claude/audit-workflow-performance-btjeK` HEAD (commit 82df5b8).
-# `_COMPOSITE_PV_ENABLED` defaults to False — restores pre-#15 chooser
-# calibration. Bug #15 v2's PV term and bug #14 option 5 both A/B-failed
-# at 39.6% n=96 in this session (see audit/2026-05-18-postmortem-bug-15
-# -v2-and-bug-14-option-5.md). This submission preserves the clean math
-# fixes (drain-frontier pre-cut, symmetric reinforce sizing, multi-wave
-# threat window) without the regressing PV inflation.
-# Local A/B vs prior bundle: 26/32 = 81.2% Wlo=0.647 Whi=0.911 PASS.
-# Bench: max=705ms p95=504ms over_1000ms=0 PASS.
-last_submission_id: 52784853
-last_submission_status: COMPLETE
-last_submission_mu: 1083.1  # snapshot at 2026-05-18 PM — UNDER-performing. NOTE: Kaggle μ DRIFTS continuously and does NOT settle; this is a today snapshot, not a final value. Local A/B 81.2% vs prior bundle did NOT translate to ladder. Calibration miss of ~30 mu vs prediction (1130-1160).
-last_submission_message: "PV off + bug #3/#4/#12 fixes"
-last_submission_file: submissions/baseline.py
-last_submission_agent: baseline_PV_off_with_clean_math_fixes
-last_kernel_push: 2026-05-18 17:42:16 UTC
-prior_error_submission_id: 52744234  # 5/17 earlier — bundler fix in commit 4094aa1
-current_submitted_agent: baseline_PV_off_with_clean_math_fixes (5/18 PM)
+# Most-recent submission: analytical with wait-N trajectory validation +
+# endgame-idle short-circuit removal. Built on the joint_solver Phase 5
+# substrate; appends fixes commit aac3c1e on
+# claude/strategy-framework-design-OyoYR-rebased.
+# - predict_fleet_fate now accepts wait_N (advances orbits before
+#   ray-casting); proposer's wait-N bypass dropped; opening_planner
+#   validates trajectory at every fire offset.
+# - is_winning_state early-returns in mpc.py removed; LP runs in
+#   winning states (capturing further opp planets compounds the lead).
+# Local: 0/2 vs trajectory baseline INCONCLUSIVE (n=2 too small);
+# 0/2 vs v7_0 INCONCLUSIVE. Bug-fix push per PI request to see live
+# ladder behaviour — the prior analytical (52854094) closed at μ=806.4.
+last_submission_id: 52857903
+last_submission_status: PENDING
+last_submission_mu: null  # pending; previous analytical pair member 52854094 settled at 806.4
+last_submission_message: "Analytical + wait-N trajectory validation + endgame-idle removal"
+last_submission_file: submissions/analytical.py
+last_submission_agent: analytical_wait_N_traj_plus_endgame_play
+last_kernel_push: 2026-05-20 16:12:11 UTC
+current_submitted_agent: analytical_wait_N_traj_plus_endgame_play (5/20 PM)
+
+# Trajectory champion (historical): 52754310 baseline.py (trajectory v4 +
+# wait_N + wallclock budget), μ=1143.7. NOT v7_0 — v7_0 is the older
+# bundled anchor used in fast.py's --vs default, never a live champion.
+# 52754310 was evicted from rolling-last-2 by the 5/18 baseline push and
+# is no longer in the rolling pair.
 
 # Rolling-last-2 (Kaggle auto-keeps these two for final evaluation; the
-# third push auto-evicts the previous oldest). Per the literal
-# "rolling LAST 2 submissions" rule, 52784853's push evicts 52754310
-# (the trajectory champion at 1143.7) — NOT 52766596 as a prior
-# revision claimed. Verified via `kaggle competitions submissions
-# orbit-wars` 2026-05-19 AM: μ snapshots 52784853=1121.2, 52766596=
-# 1118.8, 52754310=1143.7 (evicted). Conservative push-floor: 1118.8.
+# third push auto-evicts the previous oldest). 52857903 evicts 52845073
+# (baseline 1051.3, pushed 5/20 09:01). Both rolling members are now
+# analytical-family submissions; we no longer hold a baseline floor.
+# Conservative push-floor: 806.4 (previous analytical 52854094).
 rolling_last_2:
-  - {agent: baseline_PV_off_with_clean_math_fixes, sub_id: 52784853, submitted: 2026-05-18T17:42Z, status: COMPLETE, mu_snapshot: 1121.2}
-  - {agent: joint_v3_2P_only, sub_id: 52766596, submitted: 2026-05-18T07:12Z, status: COMPLETE, mu_snapshot: 1118.8}
+  - {agent: analytical_wait_N_traj_plus_endgame_play, sub_id: 52857903, submitted: 2026-05-20T16:12Z, status: PENDING, mu_snapshot: null}
+  - {agent: analytical_phase5_initial,                sub_id: 52854094, submitted: 2026-05-20T13:59Z, status: COMPLETE, mu_snapshot: 806.4}
 
 # Team peak as of 2026-05-17: v15_banded (the multi-wait-grid + banded
 # (src, tgt, wait_band) dedup line). v15 source lives in git history at
@@ -61,18 +66,23 @@ team_peak_agent: v15_banded
 # 3-opponent panel (`fast.py eval --vs-panel`) + h2h vs the current
 # rolling agent (not just a fixed baseline) before any new push.
 
-submissions_used_today: 1     # 5/18 — baseline_PV_off_with_clean_math_fixes (52784853)
-submissions_used_total: 33    # see ladder list below; refresh via Kaggle CLI
+submissions_used_today: 3     # 5/20 — 52845073 (baseline), 52854094 (analytical initial), 52857903 (analytical fixed)
+submissions_used_total: 38    # ladder list below; refresh via Kaggle CLI (Rule 32)
 plateau_days: 0
 saturation_count: 0
 
 # Live ladder — read from `kaggle competitions submissions orbit-wars`,
 # NOT from this file. Submission IDs are stable; scores are not.
-# Most recent ladder entries by submission id:
-#   52784853  baseline.py (PV-off + bug #3/#4/#12 fixes) 2026-05-18 17:42 PENDING ← NEW
-#   52766596  baseline.py (joint v3 2P-only) 2026-05-18 07:12 COMPLETE μ=1094.1 EVICTED by 52784853
-#   52754310  baseline.py (trajectory v4 + wait_N + wallclock) 2026-05-17 22:06 COMPLETE μ=1141.0
-#   52744856  baseline.py (composite+A2 hybrid, re-bundle) 2026-05-17 14:17 COMPLETE μ≈1158 settling
+# Most recent ladder entries by submission id (newest first):
+#   52857903  analytical.py (wait-N traj + endgame fix) 2026-05-20 16:12 PENDING ← NEW
+#   52854094  analytical.py (Phase 5 analytical initial) 2026-05-20 13:59 COMPLETE μ=806.4
+#   52845073  baseline.py (Phase 1 chooser emit fix) 2026-05-20 09:01 COMPLETE μ=1051.3 ← EVICTED by 52857903
+#   52827111  baseline.py (comet-aim + reactor-aware) 2026-05-19 19:52 COMPLETE μ=1122.0
+#   52811320  baseline.py (hold-feasibility filter solo) 2026-05-19 12:54 COMPLETE μ=1135.1
+#   52784853  baseline.py (PV-off + bug #3/#4/#12 fixes) 2026-05-18 17:42 COMPLETE μ=1130.4
+#   52766596  baseline.py (joint v3 2P-only) 2026-05-18 07:12 COMPLETE μ=1118.3
+#   52754310  baseline.py (trajectory v4 + wait_N + wallclock) 2026-05-17 22:06 COMPLETE μ=1143.7 ← prior "trajectory champion"; evicted long ago
+#   52744856  baseline.py (composite+A2 hybrid, re-bundle) 2026-05-17 14:17 COMPLETE μ=1149.2
 #   52744234  baseline.py (composite+A2 hybrid, ERROR) 2026-05-17 13:57 ← failed: `from agents.baseline import` not inlined
 #   52721807  v20.py            2026-05-16 21:57  COMPLETE
 #   52710995  v15.py            2026-05-16 13:43  COMPLETE  ← team peak
