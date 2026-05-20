@@ -58,8 +58,15 @@ def decision_maximin(
     horizon_truncate: int | None = None,
     discount_gamma: float | None = None,
     opp_portfolios_fn=opp_portfolios_perturbations,
+    my_portfolios_fn=None,
 ) -> DecisionResult:
-    """Depth-2 maximin: argmax_my min_opp leaf(my, opp)."""
+    """Depth-2 maximin: argmax_my min_opp leaf(my, opp).
+
+    `my_portfolios_fn` (optional): callable returning a list of my
+    candidate portfolios. Signature `fn(cols, ctx, opp, *, k,
+    max_portfolio_size) -> list[list[Column]]`. If None, defaults to
+    the greedy-beam `enumerate_top_k_portfolios` (cheap_delta-ranked).
+    """
     t_start = time.perf_counter()
     deadline_s = float(time_limit_seconds) - (DEFAULT_BUDGET_RESERVE_MS / 1000.0)
 
@@ -70,11 +77,18 @@ def decision_maximin(
         )
 
     # 1. My portfolios (always includes empty as the idle baseline).
-    my_portfolios = enumerate_top_k_portfolios(
-        cols.columns, ctx,
-        k=int(k_my),
-        max_portfolio_size=int(max_portfolio_size),
-    )
+    if my_portfolios_fn is None:
+        my_portfolios = enumerate_top_k_portfolios(
+            cols.columns, ctx,
+            k=int(k_my),
+            max_portfolio_size=int(max_portfolio_size),
+        )
+    else:
+        my_portfolios = my_portfolios_fn(
+            cols, ctx, opp,
+            k=int(k_my),
+            max_portfolio_size=int(max_portfolio_size),
+        )
     if not my_portfolios:
         return DecisionResult(
             moves=[], fired_columns=[], objective=0.0,
