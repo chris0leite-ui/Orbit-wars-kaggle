@@ -2,6 +2,9 @@
 
 Alternative to `commit_stateless`. At each turn:
 
+  0. (Bug #1) Tell the pending-schedule container what game we're in;
+     it resets state if the fingerprint changes (new game in the same
+     Python process — the tournament-harness scenario).
   1. Prune stale pending fires (source lost / not owned).
   2. Decant pending fires whose `fire_step == step_now` — these become
      wait_N=0 emissions this turn.
@@ -13,10 +16,6 @@ Alternative to `commit_stateless`. At each turn:
      current ship count and computed feasibility; the decant uses the
      fixed ship count committed earlier — over-spend risk is on the
      env, which will validate at action-application time).
-
-Game ID is taken from `ctx.obs_d['episode_seed']` if present, else
-falls back to a deterministic hash of the initial planet config so
-parallel test games don't collide.
 """
 
 from __future__ import annotations
@@ -27,35 +26,48 @@ from lib.pipeline.pending_schedule import (
     decant_due,
     prune_past,
     prune_stale,
+    get_default_pending,
 )
 from lib.pipeline.types import CommittedMoves, DecisionResult, TurnContext
 from lib.trajectory import predict_fleet_fate
 
 
-def _game_id(ctx: TurnContext) -> int:
-    """Derive a stable game identifier from the observation."""
+def _game_fingerprint(ctx: TurnContext):
+    """Derive a stable per-game fingerprint from the observation.
+
+    Used by `PendingSchedule.begin_turn` to detect new games and reset
+    state. `episode_seed` is the strongest signal; the initial planet
+    layout is a stable fallback (it is identical across all turns of a
+    game and differs between games with different seeds).
+    """
     obs_d = ctx.obs_d
-    # Prefer explicit episode_seed if the env exposes it.
     eid = obs_d.get("episode_seed")
     if eid is not None:
-        return int(eid)
-    # Fallback: hash of the initial planet config (stable across turns).
+        return ("eid", int(eid))
     init = obs_d.get("initial_planets") or []
-    return abs(hash(tuple(tuple(p) for p in init))) % (2 ** 31)
+    return ("init", tuple(tuple(p) for p in init))
 
 
 def commit_persistent(decision: DecisionResult, ctx: TurnContext) -> CommittedMoves:
     """Persistent-schedule Stage-7 implementation."""
     my_id = int(ctx.me)
-    game_id = _game_id(ctx)
     step_now = int(ctx.step_now)
 
+    # 0. Game-boundary detection (Bug #1): the default pending-schedule
+    # singleton is shared across all games in this Python process. If
+    # this turn belongs to a new game (fingerprint changed), wipe.
+    pending = get_default_pending()
+    pending.begin_turn(_game_fingerprint(ctx))
+
+    # game_id retained for telemetry only (NOT used for state keying).
+    game_id_for_telemetry = abs(hash(_game_fingerprint(ctx))) % (2 ** 31)
+
     # 1. Prune stale.
-    prune_stale(my_id, game_id, ctx.world)
-    prune_past(my_id, game_id, step_now)
+    prune_stale(my_id, game_id_for_telemetry, ctx.world)
+    prune_past(my_id, game_id_for_telemetry, step_now)
 
     # 2. Decant pending fires due this turn.
-    decanted = decant_due(my_id, game_id, step_now)
+    decanted = decant_due(my_id, game_id_for_telemetry, step_now)
     # 2a. Revalidate each decanted fire against the CURRENT world. The
     # angle/ships were committed at fire_step − wait_N with the world's
     # then-state; by now planets have orbited and other fleets/comets
@@ -115,7 +127,7 @@ def commit_persistent(decision: DecisionResult, ctx: TurnContext) -> CommittedMo
             wait_N_original=w,
         ))
     if new_pending:
-        commit(my_id, game_id, new_pending)
+        commit(my_id, game_id_for_telemetry, new_pending)
 
     # 5. Concatenate decant + LP. No de-dup; env will validate.
     all_moves = decanted_moves + lp_moves
@@ -127,6 +139,6 @@ def commit_persistent(decision: DecisionResult, ctx: TurnContext) -> CommittedMo
             "n_decanted_emitted": len(decanted_moves),
             "n_decant_revalidate_dropped": n_decant_revalidate_dropped,
             "n_new_pending": len(new_pending),
-            "game_id": game_id,
+            "game_id": game_id_for_telemetry,
         },
     )
