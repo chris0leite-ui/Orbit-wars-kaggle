@@ -1,5 +1,17 @@
 # state/hypothesis-board.md — open agent-design hypotheses
 
+## Process change — under-emission gate (2026-05-21)
+
+Validated negative: simple/older panel anchors (roi, v7_0_drop_one,
+hand-coded sary_class) ALL lose to the failed ledger variant `led_on`
+that we proved loses to current production at 12.5%. ONLY current
+production itself catches the under-emission regression.
+
+**New gate for all candidates**: candidate vs `submissions/baseline.py`
+at n=8 must clear Wilson-LB ≥ 0.40 BEFORE any other panel work. Slow
+(~80s/game) but is the only valid detector. See
+`audit/2026-05-21-sary-class-failure.md`.
+
 ## Open — Chooser-emit under-emission (2026-05-20, post sary loss)
 
 ### H43 — Trajectory chooser's "wait_N>0 reserve-without-emit" rule causes 49% idle turns — CONFIRMED, but FIX FAILED in h2h (KILLED 2026-05-21)
