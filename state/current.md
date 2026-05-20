@@ -13,9 +13,9 @@
 > (clean modular re-baseline of v15).
 
 ```yaml
-date: 2026-05-21
+date: 2026-05-20
 deadline: 2026-06-23 23:59 UTC
-days_to_deadline: 33
+days_to_deadline: 34
 
 # Most-recent submission (hold-feasibility filter solo).
 # Built on `claude/audit-workflow-performance-btjeK` HEAD. Trajectory chooser
@@ -75,7 +75,7 @@ team_peak_agent: v15_banded
 # rolling agent (not just a fixed baseline) before any new push. The
 # 52811320 push followed this protocol (panel + champion h2h all PASS).
 
-submissions_used_today: 0     # 5/21 diagnose+validate cycle, no submissions
+submissions_used_today: 0     # 5/20 chain-bonus axis A/B-and-reject cycle, no submissions
 submissions_used_total: 35    # see ladder list below; refresh via Kaggle CLI
 plateau_days: 0
 saturation_count: 0
@@ -116,6 +116,33 @@ saturation_count: 0
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
+  - 2026-05-20 — phase7-btjek-chain-bonus.
+    Chain-bonus axis fully exhausted via 3 consecutive failed
+    variants on btjeK base. **No submissions.** Took the EpMVP
+    Phase 6 "chain-capture bonus" idea (Claws relay pattern, ep
+    77164175 step 223) and ported it onto btjeK in three depths:
+    (a) Phase 7 (bonus-only, commit 51b9400) — fold chain bonus
+    into cheap_delta as pre-filter signal. A/B n=16 vs chain-off
+    on geometry-panel: 7/16=43.8% Wlo=0.231 INCONCL-negative.
+    (b) Phase 8 (full port + chooser bypass, commit af0f9b7) —
+    9-tuple + is_chain bit + trajectory chooser skips
+    score_candidate_v4 for chain candidates. Close-read via new
+    `scripts/inspect_chain_game.py` (commit 7c4ba1d) revealed
+    31 chain launches fired but **0 relay completions** — the
+    bonus credits leg-1 with leg-2 value the agent never delivers.
+    (c) Phase 9 (force the relay via leg-2 ledger commit, commit
+    4f6cd5a) — captured planet enqueues a follow-up launch toward
+    predicted T2. A/B n=16: 1/16=6.2% Wlo=0.011 decisive FAIL,
+    max-ms=1233 (over 1000ms cap). Forcing relay was worse than
+    not forcing it: hard-mode src reservation locks ships against
+    defense, predicted T2 goes stale by leg-2 fire time, inflated
+    cheap_delta drives bad leg-1 picks. Per Rule 37 the axis is
+    closed (3 same-axis variants failed). See
+    `audit/2026-05-20-postmortem-phase7-btjek-chain-bonus.md`.
+    btjeK chain-off (commit 0b83734) remains the strict-best
+    candidate from this branch. **Recommendation:** do NOT ship
+    anything from `claude/phase7-btjek-chain-bonus`; pivot to a
+    different mechanism family next session.
   - 2026-05-20/21 — audit-workflow-performance-btjeK.
     Diagnose → fix → validate → reject cycle on the chooser's
     wait_N>0 under-emission. **No submissions** (PI direction:

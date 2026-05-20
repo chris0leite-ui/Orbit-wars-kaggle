@@ -722,6 +722,56 @@ relevant skill file or source code, not back into friction.md.
   files have wrong dates. Not renamed in this WRAPUP to avoid mass
   reference churn but noted for next session.
 
+## 2026-05-20 (claude/phase7-btjek-chain-bonus — chain-bonus axis exhausted, Rule 37)
+
+- `tag: aggregate-without-close-read` — drove Phase 7 (n=16 INCONCL-
+  negative, 7/16) → Phase 8 (full port) → Phase 9 (bypass + relay
+  commit, n=16 FAIL 1/16, Wlo=0.011) on aggregate winrate alone.
+  Only after PI prompted "Have you also looked at one game closely?"
+  did I run `scripts/inspect_chain_game.py` and immediately discover
+  the load-bearing finding: 31 chain launches fired, **0 relay
+  completions** — the bonus credits leg-1 with leg-2 value that
+  never materialises. That single close-read would have killed
+  Phases 8 + 9 before either was coded. Root cause: default
+  workflow was "test mechanism via A/B" without "watch a game."
+  **Fix:** before scaling any new mechanism A/B beyond n=16, run a
+  single-game close-read (1 game, focal vs control on geometry-panel
+  seed, dump per-turn mechanism-firing counts + outcome). Promotion
+  candidate — see postmortem.
+
+- `tag: rule37-axis-exhaustion-chain-bonus` — three consecutive
+  variants on the chain-bonus axis failed:
+  Phase 7 (bonus only) 7/16 INCONCL-negative, Phase 8 (full
+  port + bypass) inspect=0-relays, Phase 9 (bypass + relay commit)
+  1/16 decisive FAIL. Per Rule 37 the axis is exhausted; further
+  iteration on the chain-bonus mechanism is forbidden until a
+  different model-correctness fix changes the substrate (Rule 40).
+  **Fix:** the rule already exists and fired correctly this time
+  (stopped after Phase 9). No new fix; record the calibration.
+
+- `tag: bundler-alias-rebind-drops-indent` (pre-existing on btjeK
+  base) — `scripts/bundle_agent.py` strips intra-package imports
+  and emits alias rebindings (e.g. `_aim_and_eta = aim_and_eta`)
+  but inserts them at column 0 regardless of the original
+  `from X import Y as Z` line's indent. When that import lives
+  inside a function body (`main.py:_tick_ledger` had `from
+  agents.baseline.proposer import aim_and_eta as _aim_and_eta`
+  at indent 4), the rebind lands at indent 0 → IndentationError
+  on bundle import. Workaround taken: hoist the import to module
+  level. **Fix:** real fix is in `scripts/bundle_agent.py`'s
+  `_strip_intra_package_imports` — preserve the original line's
+  leading whitespace on the rebind line. Out of scope for this
+  branch.
+
+- `tag: pre-existing-wallclock-test-fails-on-btjeK` (recurrence —
+  observed earlier on btjeK base) —
+  `tests/test_baseline_smoke.py::test_baseline_wallclock_under_budget_favor`
+  fails on a clean checkout of `origin/claude/audit-workflow-performance-btjeK`
+  with `p95=539ms (target < 300)`. Not a Phase-7-9 regression
+  (reproduced under `git stash`). Test budget needs updating to
+  match the current production cost or the timer config; out of
+  scope for this branch.
+
 ## Anti-spam — what does NOT belong here
 
 - Successful experiments → `audit/YYYY-MM-DD-*.md`.
