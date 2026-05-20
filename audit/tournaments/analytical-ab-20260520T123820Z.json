@@ -1,0 +1,48 @@
+{
+  "summary": {
+    "wins": 0,
+    "losses": 16,
+    "draws": 0,
+    "n": 16,
+    "winrate": 0.0,
+    "wilson_lo": 0.0,
+    "wilson_hi": 0.19361341827271994,
+    "as_p0_n": 8,
+    "as_p0_winrate": 0.0,
+    "as_p1_n": 8,
+    "as_p1_winrate": 0.0,
+    "seeds": [
+      42,
+      1,
+      7,
+      13,
+      31,
+      100,
+      17,
+      23
+    ],
+    "elapsed_seconds": 257.5,
+    "n_seats_per_seed": 2,
+    "games_per_seed": 2
+  },
+  "matrix": {
+    "analytical": {
+      "trajectory": {
+        "p0_wins": 0,
+        "p1_wins": 8,
+        "draws": 0,
+        "n": 8,
+        "p0_winrate": 0.0
+      }
+    },
+    "trajectory": {
+      "analytical": {
+        "p0_wins": 8,
+        "p1_wins": 0,
+        "draws": 0,
+        "n": 8,
+        "p0_winrate": 1.0
+      }
+    }
+  }
+}
