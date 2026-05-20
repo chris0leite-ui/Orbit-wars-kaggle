@@ -50,12 +50,13 @@ OPENING_HORIZON = 30        # planner active for steps 0..(OPENING_HORIZON-1)
 T_END = 200                 # value horizon: prod·(T_END - arrival)
 OPP_BONUS = 1.10            # multiplier for capturing opp planets (strips their prod)
 HOLD_WINDOW = 12            # ticks of post-capture defense we require feasibility for
-DEFENDER_GUARD = 5          # reserve at least this many ships on each source (subtracted ONCE from budget)
-MIN_SOURCE_SHIPS = 5        # skip sources with fewer ships (can't usefully launch)
+DEFENDER_GUARD = 2          # reserve at least this many ships on each source (subtracted ONCE from budget)
+MIN_SOURCE_SHIPS = 3        # skip sources with fewer ships (newly captured planets fire sooner)
 MAX_CONTESTERS_PER_TARGET = 1  # opening: each target captured at most once (avoid wasteful gang-ups)
 TOP_PAIRS_PER_SOURCE = 12
 TOP_TARGETS_PER_SOURCE = 8  # K in "top-K targets by prod/(dist+1)"
 STRIDE = 1                  # launch-tick stride (must-include t=step_now)
+ROI_THRESHOLD = 0.5         # accept launches with value ≥ ROI_THRESHOLD × ships invested
 
 
 # ---------------------------------------------------------------------------
@@ -327,8 +328,10 @@ def _build_candidates(world, model, my_id: int, num_seats: int,
                     continue
                 opp_bonus = OPP_BONUS if int(tgt.owner) != -1 else 1.0
                 value = float(int(tgt.production)) * float(hold_dur) * float(opp_bonus)
-                # Per-launch ROI filter: must produce more than the ships invested.
-                if value <= float(needed):
+                # Per-launch ROI filter — gentler than 1:1 to match the
+                # baseline's aggressive opening throughput. Even half-ROI
+                # captures contribute to the production base once held.
+                if value < ROI_THRESHOLD * float(needed):
                     waterfall.setdefault("dropped_low_roi", 0)
                     waterfall["dropped_low_roi"] += 1
                     continue
