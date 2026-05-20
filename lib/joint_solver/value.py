@@ -56,6 +56,18 @@ def value_for_candidate(c, world, model, *, my_id: int,
             return value if value > 0.0 else 0.0
 
         # Defensive reinforce — W2 verdict.
+        #
+        # Phase 5B investigation (2026-05-20): tried positive fallback when
+        # Wald failed (0.5×, then 0.1× of W2 base value). Both made A/B
+        # worse, not better — game length 181 → 127 at 0.5×, 181 → 160 at
+        # 0.1×, with launch count exploding to 105 vs baseline's 55 (each
+        # threatened planet gets multiple per-wait_N defensive candidates;
+        # LP picks them all even if individually small).
+        #
+        # The deeper issue is structural: small reinforces don't actually
+        # save planets under heavy attack, AND the LP can't enforce "one
+        # defense per target" once values are positive. Keep W2's skip
+        # behavior — defensive value is 0 unless Wald proves hold.
         try:
             verdict = w2_provably_held_reinforce(
                 src, tgt, int(ships), int(wait_N), int(eta),
