@@ -258,3 +258,146 @@ def propose_migrations(world, model, me: int,
         if len(out) >= int(k_max):
             break
     return out
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: defensive migration toward threatened own planets.
+# ---------------------------------------------------------------------------
+
+
+def _defensive_deficit(P_dst, world, model, me: int) -> tuple[int, int, int]:
+    """Return (threat_eta, total_enemy_force, my_garrison_at_eta) for P_dst.
+
+    `threat_eta` is None if P_dst is not under threat.
+    `total_enemy_force` sums every in-flight enemy fleet arriving within
+    `threat_eta + WAVE_LOOKAHEAD` turns.
+    `my_garrison_at_eta` is the predicted garrison at threat_eta from
+    production and any in-flight friendly fleets already inbound.
+    """
+    threat_eta = model.time_to_enemy_threat(int(P_dst.id), int(me), world)
+    if threat_eta is None:
+        return (None, 0, int(P_dst.ships))
+
+    window = int(threat_eta) + WAVE_LOOKAHEAD
+    enemy_force = 0
+    my_inbound = 0
+    for (eta_arr, owner, sh) in model.ledger.get(int(P_dst.id), []):
+        if int(owner) == int(me) and int(eta_arr) <= int(threat_eta):
+            my_inbound += int(sh)
+        elif int(owner) != int(me) and int(eta_arr) <= window:
+            enemy_force += int(sh)
+    my_garrison = int(P_dst.ships) + int(P_dst.production) * int(threat_eta) + my_inbound
+    return (int(threat_eta), int(enemy_force), int(my_garrison))
+
+
+def propose_defensive_migrations(world, model, me: int,
+                                 *,
+                                 gamma: float = DEFAULT_GAMMA,
+                                 k_max: int = DEFAULT_K_MAX_MIGRATIONS,
+                                 epsilon: float = MIGRATION_VALUE_EPSILON,
+                                 safety: int = 2,
+                                 ) -> list:
+    """Emit closed-form defensive migrations TOWARD threatened own planets.
+
+    Mirrors `propose_migrations` but inverted: each candidate is a
+    rescue mission from a safe source to a threatened destination. The
+    value is the present-value of the destination's remaining production
+    if it survives (otherwise it would fall and that PV is lost).
+
+    Constraints:
+      - Destination must be under enemy threat AND have a non-trivial
+        deficit (enemy force > current garrison + safety).
+      - Source must have spare ships above its own threat reserve.
+      - Reinforce must ARRIVE in time: mig_eta <= threat_eta.
+      - Reinforce amount must close the deficit (else partial rescues
+        bleed ships and still lose the planet).
+      - One migration per source per turn (greedy dedup).
+      - Cap at `k_max` candidates per turn.
+
+    Returns the same 8-tuple shape as `propose_migrations` so the
+    chooser can treat both code paths uniformly.
+    """
+    step = int(getattr(world, "step", 0) or 0)
+    my_planets = [p for p in world.planets_by_id.values()
+                  if int(p.owner) == int(me)]
+    if len(my_planets) < 2:
+        return []
+
+    candidates: list = []
+    for P_dst in my_planets:
+        threat_eta, enemy_force, my_garrison = _defensive_deficit(
+            P_dst, world, model, int(me),
+        )
+        if threat_eta is None or enemy_force <= 0:
+            continue
+        deficit = enemy_force + int(safety) - my_garrison
+        if deficit <= 0:
+            continue  # destination holds without help
+
+        # PV of saving this planet — its production over remaining turns.
+        time_remaining = EPISODE_END - step - int(threat_eta)
+        if time_remaining <= 0:
+            continue
+        pv_save = pv_horizon(step, int(threat_eta), gamma=float(gamma),
+                             t_total=EPISODE_END)
+        save_value = float(int(P_dst.production)) * float(pv_save)
+        if save_value <= 0:
+            continue
+
+        for P_src in my_planets:
+            if int(P_src.id) == int(P_dst.id):
+                continue
+            reserve = _threat_reserve(P_src, world, model, int(me))
+            available = int(P_src.ships) - int(reserve)
+            # Need to cover the deficit; partial reinforces don't help
+            # (the planet still falls and the ships are wasted).
+            if available < deficit:
+                continue
+
+            dist = math.hypot(
+                float(P_src.x) - float(P_dst.x),
+                float(P_src.y) - float(P_dst.y),
+            )
+            flight = max(0.0, dist - float(P_src.radius)
+                                 - float(P_dst.radius) - 0.1)
+            ships_send = max(MIN_MIGRATION_SHIPS, int(deficit))
+            spd = fleet_speed(int(ships_send))
+            if spd <= 0:
+                continue
+            mig_eta = int(math.ceil(flight / spd))
+            if mig_eta <= 0 or mig_eta > int(threat_eta):
+                continue  # too slow to arrive in time
+
+            angle = math.atan2(
+                float(P_dst.y) - float(P_src.y),
+                float(P_dst.x) - float(P_src.x),
+            )
+            value = save_value  # PV-discount already baked into save_value
+            if value <= epsilon:
+                continue
+            candidates.append((
+                float(value),
+                P_src,
+                P_dst,
+                int(ships_send),
+                float(angle),
+                int(mig_eta),
+                int(mig_eta + 2),
+                0,  # wait_N — fire-now rescue
+            ))
+
+    candidates.sort(key=lambda c: -float(c[0]))
+    used_srcs: set = set()
+    used_dsts: set = set()
+    out: list = []
+    for c in candidates:
+        sid = int(c[1].id)
+        tid = int(c[2].id)
+        if sid in used_srcs or tid in used_dsts:
+            continue
+        used_srcs.add(sid)
+        used_dsts.add(tid)
+        out.append(c)
+        if len(out) >= int(k_max):
+            break
+    return out

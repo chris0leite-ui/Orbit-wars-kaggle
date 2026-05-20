@@ -13,8 +13,10 @@ from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
 from agents.baseline.migration_solver import (
     MIN_MIGRATION_SHIPS,
     _best_capture_ev_for_planet,
+    _defensive_deficit,
     _threat_reserve,
     compute_capture_ev_per_planet,
+    propose_defensive_migrations,
     propose_migrations,
 )
 from lib.intent import World
@@ -242,3 +244,93 @@ def test_propose_migrations_empty_when_no_value_unlock():
     model = WorldModel.from_world(world)
     migrations = propose_migrations(world, model, me=0)
     assert migrations == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: propose_defensive_migrations (rescue toward threatened own planets)
+# ---------------------------------------------------------------------------
+
+
+def test_defensive_deficit_returns_none_when_no_threat():
+    """No inbound enemy fleets → no threat → tuple with None threat_eta."""
+    p = _planet(0, 0, 50.0, 50.0, ships=10, production=2)
+    other = _planet(1, 0, 60.0, 50.0, ships=10, production=2)
+    obs, world = _world(0, [p, other])
+    model = WorldModel.from_world(world)
+    t_eta, ef, garr = _defensive_deficit(p, world, model, me=0)
+    assert t_eta is None
+    assert ef == 0
+    assert garr == 10
+
+
+def test_defensive_migration_fires_when_rescue_feasible():
+    """Big nearby off-axis source can rescue a threatened planet.
+
+    Geometry: enemy fleet inbound to threatened p0 along the +x axis;
+    rescuer p1 is just NW (off-axis) so the fleet's trajectory hits p0
+    first, not p1. Rescuer has 800 ships (large fleet → high speed) so
+    the rescue arrives well before the threat eta.
+    """
+    threatened = _planet(0, 0, 50.0, 50.0, ships=5, production=2)
+    rescuer = _planet(1, 0, 47.0, 56.0, ships=800, production=2)  # off-axis
+    enemy_home = _planet(2, 1, 95.0, 50.0, ships=5)
+    # Fleet at (62, 50) heading west toward p0 along the x-axis.
+    enemy_fleet = _fleet(0, 1, 62.0, 50.0, 3.141592653589793, ships=60)
+    obs, world = _world(0, [threatened, rescuer, enemy_home], fleets=[enemy_fleet])
+    model = WorldModel.from_world(world)
+    # Verify fleet is predicted to hit p0 (not p1) before testing rescue.
+    assert any(owner == 1 for (_e, owner, _s) in model.ledger.get(0, [])), (
+        f"test setup: enemy fleet must be projected to hit p0; "
+        f"ledger[0]={model.ledger.get(0)}"
+    )
+
+    cands = propose_defensive_migrations(world, model, me=0)
+    rescues_p0 = [c for c in cands if int(c[2].id) == 0]
+    assert rescues_p0, (
+        f"expected a rescue toward p0 from a heavy nearby source; "
+        f"got {len(cands)} candidates total"
+    )
+    cand = rescues_p0[0]
+    _value, src, dst, ships, _angle, mig_eta, _h, wait = cand
+    assert int(src.id) == 1
+    assert int(dst.id) == 0
+    assert wait == 0
+
+
+def test_defensive_migration_skips_when_rescue_too_slow():
+    """When rescue ETA exceeds threat ETA, no candidate is emitted."""
+    threatened = _planet(0, 0, 50.0, 50.0, ships=5, production=1)
+    # rescuer is far away with few ships — fleet speed is slow
+    far_rescuer = _planet(1, 0, 5.0, 5.0, ships=20, production=1)
+    enemy_home = _planet(2, 1, 95.0, 50.0, ships=5)
+    enemy_fleet = _fleet(0, 1, 58.0, 50.0, 3.141592653589793, ships=40)
+    obs, world = _world(0, [threatened, far_rescuer, enemy_home], fleets=[enemy_fleet])
+    model = WorldModel.from_world(world)
+    cands = propose_defensive_migrations(world, model, me=0)
+    rescues_p0 = [c for c in cands if int(c[2].id) == 0]
+    assert rescues_p0 == [], (
+        f"expected no rescue (rescuer too far/slow); got {rescues_p0}"
+    )
+
+
+def test_defensive_migration_skips_when_partial_rescue():
+    """A rescuer with fewer ships than the deficit shouldn't fire — a
+    partial rescue still loses the planet and wastes the ships sent."""
+    threatened = _planet(0, 0, 50.0, 50.0, ships=5, production=1)
+    too_small = _planet(1, 0, 53.0, 50.0, ships=10, production=1)  # only 10 ships
+    enemy_home = _planet(2, 1, 95.0, 50.0, ships=5)
+    enemy_fleet = _fleet(0, 1, 60.0, 50.0, 3.141592653589793, ships=60)
+    obs, world = _world(0, [threatened, too_small, enemy_home], fleets=[enemy_fleet])
+    model = WorldModel.from_world(world)
+    cands = propose_defensive_migrations(world, model, me=0)
+    rescues_p0 = [c for c in cands if int(c[2].id) == 0]
+    assert rescues_p0 == [], "partial rescue should not fire (still loses planet)"
+
+
+def test_defensive_migration_empty_when_no_threat():
+    """No threats → no defensive candidates."""
+    a = _planet(0, 0, 40.0, 50.0, ships=100, production=2)
+    b = _planet(1, 0, 60.0, 50.0, ships=100, production=2)
+    obs, world = _world(0, [a, b])
+    model = WorldModel.from_world(world)
+    assert propose_defensive_migrations(world, model, me=0) == []

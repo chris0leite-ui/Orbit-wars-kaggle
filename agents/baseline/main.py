@@ -18,6 +18,11 @@ Knobs (env var overrides, all optional):
                                     ship-repositioning candidates from
                                     migration_solver. Default off; A/B
                                     via BASELINE_MIGRATION=1.
+  BASELINE_DEFENSIVE_MIGRATION set to "1" to inject defensive own→own
+                                    rescue candidates toward threatened
+                                    own planets (Phase 4). Combines with
+                                    BASELINE_MIGRATION orthogonally.
+                                    Default off.
 """
 
 from __future__ import annotations
@@ -124,6 +129,11 @@ def agent(obs, configuration=None):
     if os.environ.get("BASELINE_MIGRATION", "0").strip() == "1":
         from agents.baseline.migration_solver import propose_migrations
         migrations = propose_migrations(world, model, me, gamma=gamma)
+    if os.environ.get("BASELINE_DEFENSIVE_MIGRATION", "0").strip() == "1":
+        from agents.baseline.migration_solver import propose_defensive_migrations
+        migrations = list(migrations) + list(
+            propose_defensive_migrations(world, model, me, gamma=gamma)
+        )
 
     return chooser.choose(
         snap_base, prerank, baseline_favors,
