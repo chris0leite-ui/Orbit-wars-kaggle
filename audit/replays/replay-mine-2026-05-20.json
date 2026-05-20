@@ -1,0 +1,106 @@
+{
+  "date": "2026-05-20",
+  "submission_ids": [
+    "52766596"
+  ],
+  "submissions": [
+    {
+      "submission_id": "52766596",
+      "team_name": "\u8036\u270c",
+      "n_episodes": 1,
+      "n_fleets": 215,
+      "n_ships_launched": 7728,
+      "raw_outcomes": {
+        "captured": 40,
+        "reinforced_self": 115,
+        "bounced_enemy": 17,
+        "arrived_but_lost": 1,
+        "alive_at_end": 42
+      },
+      "by_bucket": {
+        "win": 40,
+        "defense": 115,
+        "waste_attack": 18,
+        "inflight": 42
+      },
+      "ships_by_bucket": {
+        "win": 2275,
+        "defense": 3764,
+        "waste_attack": 478,
+        "inflight": 1211
+      },
+      "pct_by_bucket": {
+        "win": 18.6,
+        "defense": 53.5,
+        "waste_attack": 8.4,
+        "waste_comet": 0.0,
+        "waste_trajectory": 0.0,
+        "inflight": 19.5,
+        "unknown": 0.0
+      },
+      "pct_ships_by_bucket": {
+        "win": 29.4,
+        "defense": 48.7,
+        "waste_attack": 6.2,
+        "waste_comet": 0.0,
+        "waste_trajectory": 0.0,
+        "inflight": 15.7,
+        "unknown": 0.0
+      },
+      "per_episode": [
+        {
+          "eid": "episode-77042048",
+          "n_fleets": 215,
+          "by_bucket": {
+            "win": 40,
+            "defense": 115,
+            "waste_attack": 18,
+            "inflight": 42
+          }
+        }
+      ]
+    }
+  ],
+  "aggregate": {
+    "n_episodes": 1,
+    "n_fleets": 215,
+    "n_ships_launched": 7728,
+    "raw_outcomes": {
+      "captured": 40,
+      "reinforced_self": 115,
+      "bounced_enemy": 17,
+      "arrived_but_lost": 1,
+      "alive_at_end": 42
+    },
+    "by_bucket": {
+      "win": 40,
+      "defense": 115,
+      "waste_attack": 18,
+      "inflight": 42
+    },
+    "ships_by_bucket": {
+      "win": 2275,
+      "defense": 3764,
+      "waste_attack": 478,
+      "inflight": 1211
+    },
+    "pct_by_bucket": {
+      "win": 18.6,
+      "defense": 53.5,
+      "waste_attack": 8.4,
+      "waste_comet": 0.0,
+      "waste_trajectory": 0.0,
+      "inflight": 19.5,
+      "unknown": 0.0
+    },
+    "pct_ships_by_bucket": {
+      "win": 29.4,
+      "defense": 48.7,
+      "waste_attack": 6.2,
+      "waste_comet": 0.0,
+      "waste_trajectory": 0.0,
+      "inflight": 15.7,
+      "unknown": 0.0
+    }
+  }
+}

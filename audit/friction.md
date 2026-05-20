@@ -692,7 +692,114 @@ relevant skill file or source code, not back into friction.md.
   origin/main. The branch-tip might be origin/main, but the live
   submission's parent is often a feature branch.
 
-## 2026-05-20 (claude/strategy-framework-design-OyoYR-rebased — analytical-chooser axis exhausted)
+## 2026-05-20 PM (claude/strategy-framework-design-OyoYR-rebased — joint_solver Phases 1→5E shipped; 0/16 locally; μ=711.5 live)
+
+- `tag: bundle-multi-line-imports-broken` — phase-5 submission prep:
+  scripts/bundle_agent.py's regex import-stripper operates per-line;
+  multi-line `from X import (a, b, c)` left orphan continuation
+  lines, producing `SyntaxError: unmatched ')'` in the bundle. Found
+  by smoke-testing the bundle. Root cause: per-line regex can't see
+  multi-line parenthesised imports. **Fix:** all
+  bundle-deployable lib/agents modules must use single-line imports
+  (`from X import a, b, c`). Did the rewrite for lib/joint_solver/
+  this session. Promotion candidate.
+- `tag: bundle-aliased-imports-broken` — phase-5 submission prep:
+  `from X import Y as Z` stripped by bundler leaves `Z` undefined
+  at bundle runtime. Hit "name 'opening_plan' is not defined" and
+  "name '_greedy_assign' is not defined" and "name 'fleet_speed'
+  is not defined." Root cause: bundler strips the import line
+  entirely; the alias rename is lost. **Fix:** avoid `as` aliases
+  in bundle-path code; if needed, do `Z = Y` after the import.
+  Promotion candidate.
+- `tag: cross-agent-imports-not-bundled` — phase-5 submission:
+  lib/joint_solver/* imports `from agents.baseline.*` (proposer,
+  predicates, strategic_lp, migration_solver, chooser_trajectory).
+  The bundler inlines THIS agent's siblings (`agents/<this>/*.py`)
+  but not OTHER agents' files. Bundle had stripped imports
+  without inlining helpers → "name '_greedy_assignment' is not
+  defined". Workaround: based the analytical bundle on
+  `submissions/baseline.py` (helpers already inlined) and
+  appended joint_solver content. Root cause: bundler design only
+  considers within-agent deps. **Fix:** move shared helpers to
+  `lib/` OR extend bundler to inline cross-agent deps explicitly.
+  Promotion candidate.
+- `tag: tests-pass-bundle-broken` — phase-5 submission: 50/50
+  unit tests pass; bundle had multiple silent failures (above
+  three tags). Tests use full PYTHONPATH; bundle uses flat exec
+  — they don't exercise the deployment path. Root cause: no CI
+  step exercises the bundle. **Fix:** every PR that changes
+  bundle-path code must run a bundle-loads-and-emits smoke.
+- `tag: source-bundle-behavior-diverges` — phase-5 submission:
+  same agent, same seed, source vs bundle launch counts differ by
+  ±20 across 5 seeds (avg src=64, bundle=76 vs trajectory
+  baseline). Both still lose 0-5, but the agents are
+  demonstrably different. Likely cause: LP tie-breaking through
+  different float paths when classes are inlined into one
+  namespace vs imported from modules. **Fix:** add a
+  bundle-parity check (fixed seed N-turn action equality) BEFORE
+  any submission; bail if any divergence. Promotion candidate.
+- `tag: local-AB-not-calibrated-to-live-ladder` — phase-4
+  through 5E: 6 consecutive 0/16 n=8 A/Bs vs ONE opponent
+  (trajectory baseline). Submitted at session end → live
+  μ=711.5 (baseline was 1122). Local A/B told us the BINARY
+  outcome (lose) but not the SEVERITY — we expected μ ≈ 800-1000;
+  reality was near-random. Root cause: single-opponent local panel
+  is not representative of live ladder distribution. **Fix:**
+  every A/B harness must test vs ≥3 distinct opponent classes
+  (random + lite_greedy + a strong baseline at minimum).
+  Promotion candidate.
+- `tag: env-var-pollution-across-mp-workers` — phase-5E session:
+  `agents/analytical/main.py` had module-level
+  `os.environ.setdefault("PROPOSER_DRAIN_FILTER", "off")`. The
+  tournament harness uses `multiprocessing.Pool` workers that
+  import BOTH agents → setdefault leaks → baseline runs in same
+  worker reads the polluted env. Discovered by code-review agent
+  + AB symmetry inspection. Fixing the pollution (per-call
+  save/restore in agent()) made baseline stronger; single-game
+  game length 160 → 114, exposing that earlier 0/16 A/Bs were
+  measuring an artificially-weakened baseline. **Fix:** never
+  modify os.environ at module load in agent or lib modules;
+  scope all overrides per agent() call with try/finally restore.
+  Promotion candidate.
+- `tag: arbitrary-parameter-tuning-vs-principled-values` —
+  phases 4 through 5E: 5 phases spent tuning parameters
+  (ALPHA_OPP_PENALTY, SHIP_COST, T_END, DEFENDER_GUARD,
+  HORIZON, MAX_CONTESTERS_PER_PLANET, OPP_BONUS, ROI_THRESHOLD,
+  HOLD_WINDOW, etc.) without changing the binary A/B outcome.
+  PI question "why do we even have arbitrary parameter choices?"
+  reframed: the game's win condition defines them (T_END=500,
+  α=1.0, SC=1.0, GUARD=0). Cleanup didn't change the result
+  (0/16) but exposed the architectural bind clearly. **Fix:**
+  when tuning ≥3 knobs in succession yields no win-rate change,
+  audit whether the OBJECTIVE itself encodes arbitrary choices.
+  Promotion candidate.
+- `tag: oversized-ship-counts-via-dedup-tiebreak` — phase-5G
+  diagnosis: agents/baseline/proposer.py:enumerate_ship_counts
+  emits 3 ship-count variants per (src, tgt) — [capture_size,
+  2×capture_size, full_budget]. All variants have identical
+  cheap_marginal_value for captures (formula doesn't depend on
+  ship count once `ships > pred_ships`). The proposer's
+  wait_band dedup is order-sensitive and tied → arbitrary winner
+  (often the largest). With low SHIP_COST in the LP, larger
+  variants weren't penalised. Result: source drains in ONE
+  oversized fire then idles for many turns. Discovered via
+  direct LP introspection of step 50 seed 42. **Fix:** raise
+  SHIP_COST (now 1.0) OR fix the proposer's dedup to prefer
+  smaller ship counts when cheap_delta ties.
+- `tag: rule-37-axis-cap-vs-deeper-diagnosis` — phase-5C/5D/5E
+  cross-cycle: agent proposed STOP at Rule 37 (3 consecutive
+  axis falsifications) after Phase 4-5A losses. PI overrode:
+  "don't stop on this axis; find root causes." The deeper
+  diagnosis yielded real bugs (env-var pollution, oversized
+  ship counts, double-counted opp arrivals) that the
+  "give-up-cleanly" path would have missed. Root cause: Rule
+  37 reads as a hard stop, but the PI's heuristic allows
+  reframing-within-axis when concrete bugs surface. **Fix:**
+  refine Rule 37 to: "STOP iterating on the same KNOB after N
+  falsifications, BUT continue if root-cause diagnosis surfaces
+  a NEW bug class (not just a new tuning value)."
+
+
 
 - `tag: analytical-zero-not-bug` — Slice 8c session: agent
   proposed "relax the Δ > 0 emit gate" when differential chooser
