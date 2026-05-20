@@ -129,26 +129,39 @@ a8c40f1 chooser_roi: Phase 2 — solo_roi + greedy emit
   restriction. The session's confirmation is that ladder validation is
   the only real test of whether a closed-form restriction generalises.
 
-## Branches with high-precision / closed-form trajectory primitives
+## Primitives for closed-form calculations vs exact simulation
 
-Pointers only — to surface what's available on sibling branches:
+Pointers only — two distinct tiers, surface on sibling branches:
 
-- `origin/claude/precision-physics-engine-ymJkA` — `agents/precision/sim.py`
-  has the closed-form physics primitives (`segment_oob`, `segment_crosses_sun`,
-  `swept_pair_hit`, `predict_planet_pos`, `planet_sweep_segment`,
-  `combat_resolve`, `ships_for_speed`); `agents/precision/intercept.py`
-  has `find_shot(src, tgt, ship_count, world) -> Shot | None`, a
-  guaranteed-landing inverse-intercept solver (closed-form fixed-point on
-  theta + spawn + eta; every flight tick verified clear of sun / OOB /
-  wrong-planet). End-to-end parity test at
-  `agents/precision/tests/test_intercept_landing.py` — every emitted
-  Shot lands in the kaggle env across many seeds and (src, tgt) pairs.
+**For closed-form calculations (no simulation):**
 
 - `origin/claude/ml-competition-strategy-PFhzM` — `lib/trajectory_layer.py`
   is a sparse closed-form O(1) "where is every entity at relative turn t"
   oracle. Parity-pinned to `lib/game/interpreter.py` (test
   `tests/test_trajectory_layer_positions.py`). Encodes the env's
-  rotate-before-step off-by-one once, in one place.
+  rotate-before-step off-by-one once, in one place. Use this for any
+  positional / arrival-time / per-tick geometry query that must be
+  analytical.
+
+- `origin/claude/precision-physics-engine-ymJkA` — `agents/precision/sim.py`
+  has the closed-form physics primitives (`segment_oob`,
+  `segment_crosses_sun`, `swept_pair_hit`, `predict_planet_pos`,
+  `planet_sweep_segment`, `combat_resolve`, `ships_for_speed`);
+  `agents/precision/intercept.py` has
+  `find_shot(src, tgt, ship_count, world) -> Shot | None`, a
+  guaranteed-landing inverse-intercept solver. End-to-end parity test at
+  `agents/precision/tests/test_intercept_landing.py` — every emitted
+  Shot lands in the kaggle env across many seeds and (src, tgt) pairs.
+
+**For exact simulation (when a query truly needs a forward step):**
+
+- `lib/fast_sim.py` — already on this branch. Thin wrapper over
+  `lib/game/interpreter.py` (byte-exact pure-Python port of the kaggle
+  engine; parity enforced by `tests/test_game_parity.py` with zero
+  tolerance). Entry points: `step(snap, actions, in_place=False)` for
+  one atomic tick, `rollout(snap, K, policies, in_place=False)` for
+  multi-tick lookahead, `from_obs(obs, configuration, episode_seed)` to
+  construct the Snapshot, `clone(snap)` to branch the search tree.
 
 ## Pointers (new this session)
 
