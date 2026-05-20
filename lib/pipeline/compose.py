@@ -3,14 +3,16 @@
 Wires stage implementations into a callable agent that matches the
 standard kaggle signature `agent(obs, configuration) -> moves`.
 
-Execution order:
-  1. perception(obs, configuration)  → ctx
-  2. opening_override(ctx)            → opening; if committed, return its moves
-  3. candidates(ctx)                  → cset
-  4. opp_model(ctx)                   → opp
+Execution order (actual; differs from the conceptual stage numbering
+because Stage 3's prerank uses Stage 4's opp-augmented model — see
+the comment at the prerank call site):
+  1. perception(obs, configuration)              → ctx
+  2. opening_override(ctx)                       → opening; if committed, return
+  3. candidates(ctx)                             → cset
+  4. opp_model(ctx)                              → opp        [runs BEFORE prerank]
   5. prerank(cset, ctx, augmented_model=opp.augmented_model) → cols
-  6. decision(cols, opp, ctx)         → decision
-  7. commit(decision, ctx)            → committed
+  6. decision(cols, opp, ctx)                    → decision
+  7. commit(decision, ctx)                       → committed
   return committed.moves
 
 The default composition mirrors submission 52857903 bit-exact:
