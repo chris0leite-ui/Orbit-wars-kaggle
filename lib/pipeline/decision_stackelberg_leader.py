@@ -108,7 +108,11 @@ def decision_stackelberg_leader(
     # mirror-analytical, then leaf value.
     n_my = len(my_portfolios)
     n_opp_mirror_succeeded = 0
-    n_opp_fallback = 0
+    # Bug #8: distinguish "opp legitimately has nothing to do" from
+    # "the inner mirror LP failed". Both used to be merged into a single
+    # n_opp_fallback counter.
+    n_opp_mirror_empty = 0
+    n_opp_mirror_failed = 0
     payoffs: list[float] = []
     opp_responses: list[list] = []
 
@@ -126,17 +130,22 @@ def decision_stackelberg_leader(
 
         # Opp's best response to this my portfolio.
         try:
-            opp_arrivals = predict_opp_response_to_my_portfolio(
-                ctx, my_p, time_limit_seconds=float(opp_time_limit_seconds),
+            opp_arrivals, opp_status = predict_opp_response_to_my_portfolio(
+                ctx, my_p,
+                time_limit_seconds=float(opp_time_limit_seconds),
+                return_status=True,
             )
-            if opp_arrivals:
-                n_opp_mirror_succeeded += 1
-            else:
-                opp_arrivals = fallback_opp
-                n_opp_fallback += 1
         except Exception:
+            opp_arrivals, opp_status = [], "failed"
+        if opp_status == "ok":
+            n_opp_mirror_succeeded += 1
+        elif opp_status == "empty":
+            n_opp_mirror_empty += 1
+            # Empty is a legitimate "opp does nothing" — don't apply
+            # fallback; use the empty list as the actual response.
+        else:  # "failed"
+            n_opp_mirror_failed += 1
             opp_arrivals = fallback_opp
-            n_opp_fallback += 1
 
         # Leaf value: my portfolio vs opp's best response.
         leaf = leaf_value_for_portfolios(
@@ -168,7 +177,8 @@ def decision_stackelberg_leader(
     elapsed_ms = (time.perf_counter() - t_start) * 1000.0
     status = (
         f"stackelberg:n_my={n_my},best_i={best_i},"
-        f"opp_mirror={n_opp_mirror_succeeded},opp_fallback={n_opp_fallback},"
+        f"opp_mirror={n_opp_mirror_succeeded},"
+        f"opp_empty={n_opp_mirror_empty},opp_failed={n_opp_mirror_failed},"
         f"elapsed_ms={elapsed_ms:.1f}"
     )
 

@@ -92,16 +92,25 @@ def predict_opp_response_to_my_portfolio(
     opp_id: int | None = None,
     time_limit_seconds: float = 0.04,
     gamma: float = DEFAULT_GAMMA,
-) -> list[tuple[int, int, int, int]]:
+    return_status: bool = False,
+):
     """Mirror-analytical opp response to my candidate portfolio.
 
     Returns a list of `(target_pid, eta_relative_from_step_now,
     opp_owner, ships)` — same shape as `predict_opp_multi_launch` /
     `leaf_outcome_table` consumers.
 
-    Empty list on any failure (defensive — falls back to "opp does
-    nothing" in the caller).
+    When `return_status=True`, returns `(arrivals, status)` where
+    status ∈ {"ok", "empty", "failed"} so callers can distinguish
+    "opp legitimately has nothing to do" from a real failure (e.g. the
+    inner LP raised). Default `return_status=False` keeps the legacy
+    list-only return for backward compat.
     """
+    def _result(arrivals, status):
+        if return_status:
+            return (arrivals, status)
+        return arrivals
+
     # Determine opp id. 2P only for now (4P uses single strongest opp;
     # gate elsewhere).
     if opp_id is None:
@@ -117,7 +126,7 @@ def predict_opp_response_to_my_portfolio(
                     ship_totals.get(int(p.owner), 0) + int(p.ships)
                 )
             if not ship_totals:
-                return []
+                return _result([], "empty")
             opp_id = max(ship_totals.items(), key=lambda kv: kv[1])[0]
 
     opp_id = int(opp_id)
@@ -126,7 +135,7 @@ def predict_opp_response_to_my_portfolio(
     opp_planets = [p for p in ctx.planets if int(p.owner) == opp_id]
     other_from_opp_view = [p for p in ctx.planets if int(p.owner) != opp_id]
     if not opp_planets or not other_from_opp_view:
-        return []
+        return _result([], "empty")
 
     # Augment the model with my candidate arrivals (opp's POV: my future
     # fleets are committed).
@@ -154,7 +163,7 @@ def predict_opp_response_to_my_portfolio(
             baseline_len=MAX_HORIZON + 1,
         )
     except Exception:
-        return []
+        return _result([], "failed")
     try:
         opp_migrations = propose_migrations(ctx.world, augmented_model, opp_id)
     except Exception:
@@ -162,7 +171,7 @@ def predict_opp_response_to_my_portfolio(
     opp_prerank = list(opp_prerank) + list(opp_migrations)
 
     if not opp_prerank:
-        return []
+        return _result([], "empty")
 
     # Build opp's columns with value_for_candidate from opp's POV.
     opp_columns = []
@@ -179,7 +188,7 @@ def predict_opp_response_to_my_portfolio(
         ))
 
     if not opp_columns:
-        return []
+        return _result([], "empty")
 
     # Run the inner LP from opp's POV.
     try:
@@ -189,7 +198,7 @@ def predict_opp_response_to_my_portfolio(
             time_limit_seconds=float(time_limit_seconds),
         )
     except Exception:
-        return []
+        return _result([], "failed")
 
     # Translate fired_columns to (pid, eta_rel_from_step_now, owner, ships).
     opp_arrivals: list[tuple[int, int, int, int]] = []
@@ -200,4 +209,7 @@ def predict_opp_response_to_my_portfolio(
         opp_arrivals.append((
             int(col.tgt_id), int(eta_rel), int(opp_id), int(col.ships),
         ))
-    return opp_arrivals
+    # Empty fired_columns is a legitimate "opp has nothing useful to do"
+    # — distinguish from "ok with arrivals" so Stackelberg can log it.
+    final_status = "ok" if opp_arrivals else "empty"
+    return _result(opp_arrivals, final_status)
