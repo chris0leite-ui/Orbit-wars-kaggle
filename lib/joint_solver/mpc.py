@@ -30,7 +30,6 @@ from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
 
 from agents.baseline.chooser_trajectory import (
     merge_ledgers,
-    predict_opp_responses,
 )
 from agents.baseline.migration_solver import propose_migrations
 from agents.baseline.proposer import MAX_HORIZON, propose
@@ -46,6 +45,7 @@ from lib.joint_solver.lp_outcome import (
     OutcomeAwareResult,
     solve_outcome_aware,
 )
+from lib.joint_solver.opp_projection import predict_opp_multi_launch
 from lib.joint_solver.opening_planner import OPENING_HORIZON, plan as opening_plan
 from lib.joint_solver.predicate import is_winning_state
 from lib.joint_solver.portfolio import smallest_winning_portfolio
@@ -75,21 +75,18 @@ class MpcDiagnostics:
 
 
 def _model_with_opp_projection(world, model, *, my_id: int, num_seats: int):
-    """Return a (possibly-augmented) WorldModel that incorporates the
-    1-turn opp lookahead from predict_opp_responses. This is the
-    "single-shot Stackelberg" opp model: assume each enemy source fires
-    its nearest-best target now; merge those projected arrivals into the
-    ledger so our value function sees a pessimistic garrison evolution.
-
-    The PI's directive emphasised joint modeling — this is the minimal
-    opp-projection step. Phase 4 may extend to a 2-iter Stackelberg
-    (re-project opp given our LP solution).
+    """Return a (possibly-augmented) WorldModel that incorporates a
+    multi-launch opp projection (Phase 5D). Each opp source projects up
+    to HORIZON ticks of future launches via lite-greedy-style ROI logic
+    (see lib/joint_solver/opp_projection.py), giving the value function
+    a realistic threat exposure (5-10× more arrivals than the 1-shot
+    `predict_opp_responses` it replaced in Phase 5C).
 
     Returns `(model_with_opp, opp_arrivals)`. If projection fails or
     produces no arrivals, returns `(model, [])`.
     """
     try:
-        opp_arrivals = predict_opp_responses(world, int(my_id), int(num_seats))
+        opp_arrivals = predict_opp_multi_launch(world, int(my_id), int(num_seats))
     except Exception:
         return model, []
     if not opp_arrivals:
@@ -345,8 +342,11 @@ def solve_turn(obs, configuration=None, *,
     # The new objective uses production-stream-per-owner from outcome_table
     # subsets so defense and offense are valued on the same scale and the
     # LP makes a GLOBAL offense-vs-defense tradeoff (not per-candidate).
+    # Phase 5D: drop `opp_arrivals` parameter to fix the Phase 5C
+    # double-count bug — opp projections are already in
+    # `model_with_opp.ledger` via _model_with_opp_projection.
     res_oc: OutcomeAwareResult = solve_outcome_aware(
-        columns, world, model_with_opp, opp_arrivals,
+        columns, world, model_with_opp,
         my_id=me,
         time_limit_seconds=float(time_limit_seconds),
     )

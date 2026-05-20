@@ -106,7 +106,6 @@ def _build_per_planet_arrivals(
     active_columns: list[Column],
     world,
     model,
-    opp_arrivals: list,
     *,
     my_id: int,
     step_now: int,
@@ -114,8 +113,12 @@ def _build_per_planet_arrivals(
     """For each planet that has ≥1 candidate column targeting it, build the
     (fixed_arrivals, candidate_arrivals) pair for outcome_table.
 
-    Fixed arrivals = in-flight fleets from `model.ledger[p.id]` plus opp's
-    projected counter-launches from `predict_opp_responses` filtered to `p`.
+    Phase 5D: fixed arrivals come ONLY from `model.ledger[p.id]`. The
+    upstream `_model_with_opp_projection` already merges opp's projected
+    counter-launches into the ledger; reading them a second time from a
+    separate `opp_arrivals` parameter (as Phase 5C did) double-counted
+    every opp arrival.
+
     Candidate arrivals = active columns with tgt_id == p.id.
 
     If a planet has more than MAX_CONTESTERS_PER_PLANET candidates, keep
@@ -127,15 +130,6 @@ def _build_per_planet_arrivals(
     for col in active_columns:
         by_tgt.setdefault(int(col.tgt_id), []).append(col)
 
-    # Pre-build opp projection lookup by target.
-    opp_by_tgt: dict[int, list[tuple[int, int, int]]] = {}
-    for tup in opp_arrivals or []:
-        # (target_pid, eta, opp_owner, ships)
-        tgt_pid, eta, owner, ships = tup
-        opp_by_tgt.setdefault(int(tgt_pid), []).append(
-            (int(eta), int(owner), int(ships))
-        )
-
     out: dict[int, tuple[list[Arrival], list[Arrival]]] = {}
     for tgt_pid, cols in by_tgt.items():
         # Cap at MAX_CONTESTERS_PER_PLANET via per-candidate value.
@@ -143,17 +137,9 @@ def _build_per_planet_arrivals(
             cols = sorted(cols, key=lambda c: float(c.value), reverse=True)
             cols = cols[:MAX_CONTESTERS_PER_PLANET]
 
-        # Fixed arrivals from in-flight ledger.
+        # Fixed arrivals — ONLY from model.ledger (opp projections live there).
         fixed: list[Arrival] = []
         for eta_arr, owner, ships in model.ledger.get(int(tgt_pid), []):
-            if int(ships) <= 0:
-                continue
-            fixed.append(Arrival(
-                eta=int(eta_arr), owner=int(owner), ships=int(ships),
-                column_id=None,
-            ))
-        # Fixed arrivals from opp projection.
-        for eta_arr, owner, ships in opp_by_tgt.get(int(tgt_pid), []):
             if int(ships) <= 0:
                 continue
             fixed.append(Arrival(
@@ -283,7 +269,6 @@ def solve_outcome_aware(
     columns: list[Column],
     world,
     model,
-    opp_arrivals: list,
     *,
     my_id: int,
     t_end: int = T_END,
@@ -297,10 +282,11 @@ def solve_outcome_aware(
       columns: list of Column with pre-computed per-candidate value (used
         only as a pre-filter when a planet has > MAX_CONTESTERS_PER_PLANET
         candidates).
-      world, model: World and WorldModel snapshots (already opp-projected
-        by upstream `_model_with_opp_projection`).
-      opp_arrivals: list[(tgt_pid, eta, owner, ships)] from
-        predict_opp_responses (treated as fixed arrivals).
+      world, model: World and WorldModel snapshots. `model.ledger` is
+        EXPECTED to already include opp projections (the upstream
+        `_model_with_opp_projection` merges them in); the Phase 5C
+        separate `opp_arrivals` parameter was removed in Phase 5D after
+        the double-count audit.
       my_id: our seat.
 
     Returns OutcomeAwareResult with the chosen moves (wait_N==0 fires)
@@ -335,7 +321,7 @@ def solve_outcome_aware(
 
     # Build per-planet arrival sets and outcome tables.
     per_planet_arrivals = _build_per_planet_arrivals(
-        active, world, model, opp_arrivals,
+        active, world, model,
         my_id=int(my_id), step_now=step_now,
     )
     per_planet_tables: dict[int, dict[tuple[int, ...], OutcomeRow]] = {}

@@ -86,7 +86,7 @@ def test_forced_gang_up_two_sources_one_target():
         _column(column_id=0, src_id=0, tgt_id=10, ships=15, value=10.0, eta=3),
         _column(column_id=1, src_id=1, tgt_id=10, ships=15, value=10.0, eta=3),
     ]
-    res = solve_outcome_aware(cols, world, model, opp_arrivals=[], my_id=0)
+    res = solve_outcome_aware(cols, world, model, my_id=0)
     fired = {c.column_id for c in res.fired_columns}
     # Solo captures fail (15 < 20 garrison + opp production); gang-up
     # (30 ships arriving same tick) succeeds.
@@ -129,7 +129,7 @@ def test_defense_vs_offense_balance():
         # Offensive capture: src=0 → tgt=10 (15 ships > 3 + 4*0 = 3 garrison)
         _column(column_id=1, src_id=0, tgt_id=10, ships=15, value=80.0, eta=4),
     ]
-    res = solve_outcome_aware(cols, world, model, opp_arrivals=[], my_id=0)
+    res = solve_outcome_aware(cols, world, model, my_id=0)
     # Either can be picked, but the test verifies the LP MAKES A CHOICE
     # (not idle, not both — budget only allows one).
     assert len(res.fired_columns) >= 1, \
@@ -156,7 +156,7 @@ def test_idle_when_no_positive_value():
         _column(column_id=0, src_id=0, tgt_id=10, ships=5, value=0.0),
         _column(column_id=1, src_id=0, tgt_id=10, ships=5, value=-1.0),
     ]
-    res = solve_outcome_aware(cols, world, model, opp_arrivals=[], my_id=0)
+    res = solve_outcome_aware(cols, world, model, my_id=0)
     assert res.moves == []
     assert res.status == "no_positive_columns"
 
@@ -178,7 +178,7 @@ def test_subset_uniqueness_per_planet():
         _column(column_id=0, src_id=0, tgt_id=10, ships=8, value=20.0, eta=3),
         _column(column_id=1, src_id=0, tgt_id=11, ships=8, value=15.0, eta=4),
     ]
-    res = solve_outcome_aware(cols, world, model, opp_arrivals=[], my_id=0)
+    res = solve_outcome_aware(cols, world, model, my_id=0)
     # Subset uniqueness: each contested planet has exactly one chosen subset.
     assert set(res.per_planet_chosen.keys()) <= {10, 11}
     for pid, subset in res.per_planet_chosen.items():
@@ -212,7 +212,7 @@ def test_max_contesters_per_planet_cap():
             value=100.0 - k,  # decreasing value so the LOW-id ones survive the cap
             eta=3, wait_N=k,
         ))
-    res = solve_outcome_aware(cols, world, model, opp_arrivals=[], my_id=0)
+    res = solve_outcome_aware(cols, world, model, my_id=0)
     # The cap drops the n_extra LOWEST-value candidates from the planet's
     # enumeration. The LP only sees MAX_CONTESTERS_PER_PLANET candidates.
     assert res.n_x_vars <= MAX_CONTESTERS_PER_PLANET, \
@@ -238,7 +238,7 @@ def test_greedy_fallback_when_milp_raises():
     ]
     with patch("lib.joint_solver.lp_outcome.milp",
                side_effect=RuntimeError("forced failure")):
-        res = solve_outcome_aware(cols, world, model, opp_arrivals=[], my_id=0)
+        res = solve_outcome_aware(cols, world, model, my_id=0)
     assert res.status == "greedy_fallback"
     # Greedy should still pick the positive-value capture.
     assert len(res.fired_columns) == 1
@@ -249,27 +249,29 @@ def test_greedy_fallback_when_milp_raises():
 # ---------------------------------------------------------------------------
 
 
-def test_build_per_planet_arrivals_includes_ledger_and_opp_proj():
-    """Confirm that fixed arrivals include both the model.ledger entries
-    and the opp_arrivals projections."""
+def test_build_per_planet_arrivals_reads_only_ledger():
+    """Phase 5D: fixed arrivals come ONLY from model.ledger (opp projections
+    are pre-merged there by _model_with_opp_projection). The separate
+    `opp_arrivals` parameter was removed to fix the Phase 5C double-count."""
     me = [_planet(0, 0, ships=20, production=1)]
     opp = [_planet(10, 1, ships=5, production=1, x=30.0, y=30.0)]
     world, model = _world_and_model(my_id=0, planets=me + opp)
 
-    # Inject an in-flight enemy fleet to planet 10 in the ledger.
+    # Inject TWO arrivals into the ledger (mimics what
+    # _model_with_opp_projection does: real in-flight + projected opp).
     model.ledger.setdefault(10, []).append((4, 1, 7))
-    # Opp projection targeting planet 10.
-    opp_arrivals = [(10, 5, 1, 12)]
+    model.ledger[10].append((5, 1, 12))
 
     col = _column(column_id=0, src_id=0, tgt_id=10, ships=8, value=20.0, eta=3)
     arrivals_by_planet = _build_per_planet_arrivals(
-        [col], world, model, opp_arrivals, my_id=0, step_now=0,
+        [col], world, model, my_id=0, step_now=0,
     )
     fixed, cands = arrivals_by_planet[10]
-    # Ledger arrival (4, 1, 7) and opp projection (5, 1, 12) both present.
     fixed_keys = sorted((a.eta, a.owner, a.ships) for a in fixed)
     assert (4, 1, 7) in fixed_keys
     assert (5, 1, 12) in fixed_keys
+    # Crucially, the ledger entries each appear EXACTLY ONCE (no double-count).
+    assert len(fixed) == 2
     # Candidate has total eta = wait_N + eta = 0 + 3 = 3.
     assert len(cands) == 1
     assert cands[0].eta == 3
