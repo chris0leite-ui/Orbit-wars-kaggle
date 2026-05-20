@@ -71,12 +71,28 @@ def value_for_candidate(c, world, model, *, my_id: int,
                         t_total=EPISODE_END)
         return W2_VALUE_MULTIPLIER * float(int(tgt.production)) * float(pv)
 
-    # Capture — bounded interval lower bound.
+    # Capture — bounded interval (lo, hi).
+    #
+    # Phase 4 (2026-05-20): mid-bound fallback when Wald multi-opp hold
+    # check fails. _w1_value_bounds returns (0, hi) in that case, where
+    # `hi = production × pv_full` is the "no opp counter" ceiling.
+    #
+    # Phase 3 used `lo` directly → 60-90% of turns had `no_positive_columns`
+    # because Wald fails often. With Stackelberg projection ALREADY baking
+    # opp's projected counter-launches into the model (see mpc._model_with_opp_projection),
+    # the Wald check is double-counting opp pessimism. The mid-bound `hi/2`
+    # is a defensible expected-value proxy: not as conservative as `lo` (which
+    # assumes worst-case Wald-coordinated opp counter on top of Stackelberg),
+    # not as optimistic as `hi` (which assumes no opp counter at all).
     try:
-        lo, _hi = _w1_value_bounds(
+        lo, hi = _w1_value_bounds(
             src, tgt, int(ships), int(wait_N), int(eta),
             world, model, int(my_id), gamma=float(gamma),
         )
     except Exception:
         return 0.0
-    return float(lo) if lo > 0.0 else 0.0
+    if lo > 0.0:
+        return float(lo)
+    if hi > 0.0:
+        return 0.5 * float(hi)
+    return 0.0

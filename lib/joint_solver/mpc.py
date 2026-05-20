@@ -42,6 +42,8 @@ from lib.joint_solver.lp import (
     MultiTurnResult,
     solve_multi_turn,
 )
+from lib.joint_solver.predicate import is_winning_state
+from lib.joint_solver.portfolio import smallest_winning_portfolio
 from lib.joint_solver.value import DEFAULT_GAMMA, value_for_candidate
 from lib.world_model import WorldModel, simulate_planet_timeline
 
@@ -60,6 +62,10 @@ class MpcDiagnostics:
     n_vars: int
     n_constraints: int
     n_opp_projections: int = 0
+    is_winning_state: bool = False
+    portfolio_size: int = 0
+    portfolio_filtered: bool = False
+    n_columns_before_filter: int = 0
     fired_wait_distribution: dict[int, int] = field(default_factory=dict)
 
 
@@ -192,6 +198,72 @@ def solve_turn(obs, configuration=None, *,
     )
 
     columns = _build_columns(prerank, world, model_with_opp, my_id=me, gamma=gamma)
+    n_columns_before_filter = len(columns)
+
+    # Endgame predicate gate (2P only — 4P bypasses).
+    #
+    # If the closed-form winning-state predicate already holds for me,
+    # ANY launch is a risk: I gain nothing from capturing more (production
+    # margin × turns_left already > opp's recovery capacity), but every
+    # ship I send is one less defender if opp coordinates a surprise.
+    # → return [] (preserve ownership).
+    #
+    # If the predicate is False but a smallest_winning_portfolio exists,
+    # restrict the LP to columns targeting those planets (plus own-planet
+    # reinforces / migrations). Focuses ship spend on targets that
+    # actually flip the predicate to True.
+    #
+    # If neither (4P, or 2P with no winnable portfolio), fall through to
+    # the LP unfiltered.
+    winning_now = False
+    portfolio_filtered = False
+    portfolio: list[int] = []
+    if num_seats == 2:
+        opp_id = 1 - me  # 2P: the unique non-me seat.
+        try:
+            winning_now = bool(is_winning_state(world, me, opp_id))
+        except Exception:
+            winning_now = False
+        if winning_now:
+            if not return_diagnostics:
+                return []
+            diag = MpcDiagnostics(
+                step=int(obs_d.get("step", 0) or 0),
+                n_prerank=len(prerank),
+                n_columns=len(columns),
+                n_positive_columns=sum(1 for c in columns if c.value > 0.0),
+                n_fired_columns=0,
+                n_emitted_moves=0,
+                objective=0.0,
+                solver_status="endgame_winning_idle",
+                n_vars=0,
+                n_constraints=0,
+                n_opp_projections=len(opp_arrivals),
+                is_winning_state=True,
+                portfolio_size=0,
+                portfolio_filtered=False,
+                n_columns_before_filter=n_columns_before_filter,
+            )
+            return [], diag
+        try:
+            portfolio = smallest_winning_portfolio(world, me, opp_id)
+        except Exception:
+            portfolio = []
+        if portfolio:
+            portfolio_set = set(int(pid) for pid in portfolio)
+            # Keep columns targeting portfolio planets OR own-planet
+            # reinforces / migrations (target.owner == me). Own-planet
+            # filter is by tgt_id ∈ {ids of my planets}.
+            my_planet_ids = {int(p.id) for p in my_planets}
+            filtered = [
+                c for c in columns
+                if int(c.tgt_id) in portfolio_set or int(c.tgt_id) in my_planet_ids
+            ]
+            # Only apply the filter if it leaves a positive-value column;
+            # otherwise the filter would zero out the LP. Defensive.
+            if any(c.value > 0.0 for c in filtered):
+                columns = filtered
+                portfolio_filtered = True
 
     res: MultiTurnResult = solve_multi_turn(
         columns, world,
@@ -221,6 +293,10 @@ def solve_turn(obs, configuration=None, *,
         n_vars=int(res.n_vars),
         n_constraints=int(res.n_constraints),
         n_opp_projections=len(opp_arrivals),
+        is_winning_state=winning_now,
+        portfolio_size=len(portfolio),
+        portfolio_filtered=portfolio_filtered,
+        n_columns_before_filter=n_columns_before_filter,
         fired_wait_distribution=wait_dist,
     )
     return res.moves, diag
