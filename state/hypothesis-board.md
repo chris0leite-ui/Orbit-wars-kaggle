@@ -1,5 +1,39 @@
 # state/hypothesis-board.md — open agent-design hypotheses
 
+## Open — Chooser-emit under-emission (2026-05-20, post sary loss)
+
+### H43 — Trajectory chooser's "wait_N>0 reserve-without-emit" rule causes 49% idle turns
+
+> Confirmed via replay-driven postmortem (`scripts/baseline_postmortem.py`,
+> `audit/2026-05-20-filter-rejection-trace.md`). Single-episode signal on
+> ep 77140674 (sary 2P loss): 30 of 59 idle turns had ≥1 candidate scoring
+> Δ > 0; all 30 had `wait_N > 0` as their top-scoring candidate. The
+> chooser at `chooser_trajectory.py:856` consumes src+tgt slots for those
+> wait winners, then drops them on the floor. Same rule sits in
+> `chooser.py:179-181` with an explicit `"wait_N>0: reserve src/tgt, emit
+> nothing this turn"` comment.
+
+Three candidate fixes (ordered by risk):
+
+1. Don't reserve slots when `wait_N > 0` (move the `used_srcs.add` /
+   `used_tgts.add` calls inside the `if wait_N == 0:` branch). Cheapest
+   modeling fix.
+2. Drop `wait_N > 0` entries from `scored` entirely (`if wait_N != 0:
+   continue` at the chooser accept gate). Need to verify joint-candidate
+   enumeration (line 806-808 reads `solo_winners`) doesn't regress.
+3. Penalise wait-N's leaf-favor inflation — the rollout treats opp's
+   reactive policy identically across the wait window, ignoring that opp
+   uses those turns for expansion. Deeper modeling change.
+
+Falsifying gate: ≥55% Wilson on n=64 vs champion 52827111 + no panel
+target regresses > 5pp.
+
+### H43-falsified: `_target_holdable_after_capture` filter is over-suppressing
+
+Original entering-session hypothesis. Falsified by the same trace:
+filter drops only 4% of post-drain candidates; idle turns have *lower*
+drop-rate than non-idle (3.8% vs 4.2%). The filter is innocent.
+
 ## Open — Geometry-conditional EDA (2026-05-14)
 
 > Five-mine EDA on 60 top-10 replays + (in-progress) ~500 self-play games.

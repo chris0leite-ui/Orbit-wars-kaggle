@@ -126,6 +126,18 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   Heavy compute; defer until heuristic plateau. `[owner: unclaimed | status: open]`
 - **B.5 Hybrid**: heuristic policy with learned value head, OR IL
   warm-start on top-LB replays then RL fine-tune. `[owner: unclaimed | status: open]`
+- **B.6 Chooser-emit under-emission fix (post-sary diagnosis)**:
+  Replay-driven postmortem on submission 52827111 ep 77140674 (sary 2P
+  loss, 49% idle turns) localised the under-emission to the trajectory
+  chooser's "wait_N>0 reserve-without-emit" rule
+  (`chooser_trajectory.py:856`; same pattern in `chooser.py:179-181`).
+  30/30 idle turns with a positive-Δ candidate had wait_N>0 as the top
+  pick — the chooser reserves src+tgt and emits nothing, blocking
+  fire-now alternatives from the same src. Three candidate fixes
+  documented in `audit/2026-05-20-filter-rejection-trace.md`; cheapest
+  is moving the `used_srcs/used_tgts` reservation inside the
+  `if wait_N == 0:` branch. Falsification gate: ≥55% Wilson on n=64 vs
+  champion 52827111, no panel target regresses >5pp. `[owner: audit-workflow-performance-btjeK | status: open]`
 
 ### C. Reward / value signal — Q6 metric alignment (Rule 16)
 

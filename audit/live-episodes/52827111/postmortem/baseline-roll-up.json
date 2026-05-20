@@ -1,0 +1,36 @@
+{
+  "n_episodes": 1,
+  "by_result": {
+    "loss": 1
+  },
+  "n_turns": 168,
+  "n_predicted_idle": 85,
+  "n_recorded_idle": 135,
+  "n_both_idle": 80,
+  "by_filter_kept": {
+    "drain": 1037,
+    "hold": 874,
+    "cost": 872
+  },
+  "by_filter_dropped": {
+    "drain": 391,
+    "hold": 163,
+    "cost": 2
+  },
+  "by_filter_drop_rate": {
+    "cost": 0.0023,
+    "hold": 0.1572,
+    "drain": 0.2738
+  },
+  "idle_turns_with_candidates": 38,
+  "idle_turns_with_positive_delta": 23,
+  "idle_scored_total": 152,
+  "idle_positive_delta_total": 75,
+  "nonidle_scored_total": 720,
+  "nonidle_positive_delta_total": 339,
+  "dt_ms_p95": 128.22,
+  "submission_id": "52827111",
+  "team_name": "Son Pham",
+  "elapsed_s": 9.5,
+  "skipped_wrong_result": 0
+}
