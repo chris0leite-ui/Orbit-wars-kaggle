@@ -68,6 +68,22 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   least one experimental option from a list of five (see plan file
   `you-are-a-senior-woolly-nest.md` in claude plans dir).
   `[owner: game-strategy-eda-roatN | status: wip]`
+- **A.8 Large→small drain leak — confound-controlled re-audit.**
+  v1 audit (`scripts/large_to_small_audit.py`) reported large→small NET
+  −0.139/launch vs +0.191 small→large, suggesting we expose high-prod
+  planets to capture low-value targets. PI flagged the selection-bias
+  and end-state-attribution confounds. v2 re-audit
+  (`scripts/large_to_small_audit_v2.py`) used per-ship NET, short-window
+  (20-turn pre-relaunch) src-loss attribution, landing-time vs
+  end-of-game outcome, and early/mid/late episode-window slicing.
+  **Verdict: LEAK REJECTED.** Per-ship NET_short is positive in both
+  early (+0.008) and mid (+0.003) windows for large→small; v1 signal
+  was selection bias + end-state attribution tautology. Large sources
+  have the LOWEST short-window loss rate (8–11%) of any tier. Residual
+  small→large > large→small asymmetry is plausible geometry-driven, not
+  a chooser bug. Phase B (opp model cheap-capture bonus) NOT implemented.
+  See `audit/2026-05-21-large-to-small-confound-controlled.md`.
+  `[owner: audit-workflow-performance-btjeK | status: null]`
 
 ### B. Agent class — pick the simplest class that beats baselines
 
