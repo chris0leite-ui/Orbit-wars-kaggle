@@ -51,11 +51,15 @@ def planet_row(planets_list, pid):
 
 
 def classify(row: dict) -> str:
-    """Precedence: E (off-by-one) -> F (destroyed) -> A -> C -> B -> D -> other."""
+    """Precedence: E (off-by-one) -> A -> C -> B -> D -> other.
+
+    NOTE: We do NOT use fleet-list disappearance as a "destroyed" signal —
+    fleets disappear from the list when combat resolves at the target,
+    which happens at the landing step regardless of outcome. The earlier
+    F flag over-counted because of this; removed.
+    """
     if row["E_landed_within_5_after"]:
         return "E_prediction_off_by_one"
-    if row["F_fleet_destroyed_in_flight"]:
-        return "F_fleet_destroyed"
     if row["src_lost_pre_landing"]:
         return "A_src_lost_pre_landing"
     if row["third_party_flip"]:
@@ -64,6 +68,8 @@ def classify(row: dict) -> str:
         return "B_tgt_production_accrual"
     if row["under_delivered_cleanly"]:
         return "D_under_delivered"
+    if row["near_tie_combat"]:
+        return "G_near_tie_combat"
     return "other"
 
 
@@ -193,6 +199,14 @@ def analyze_episode(replay_path: Path, failure_rows: list[dict]) -> list[dict]:
         if tgt_owner_landing == -1 and tgt_owner_launch != -1:
             third_party_flip = True
 
+        # G — near-tie combat: ships barely exceed (or barely match) the
+        # predicted defender. Env's tie rule may keep planet with original
+        # owner when attacker_ships ≈ defender_ships.
+        near_tie_combat = (
+            tgt_owner_landing == tgt_owner_launch
+            and abs(ships - predicted_defender) <= 2
+        )
+
         diag = {
             **r,
             "arrival_step": arrival,
@@ -208,8 +222,9 @@ def analyze_episode(replay_path: Path, failure_rows: list[dict]) -> list[dict]:
             "third_party_flip": third_party_flip,
             "tgt_grew_more_than_predicted": tgt_grew_more_than_predicted,
             "under_delivered_cleanly": under_delivered_cleanly,
+            "near_tie_combat": near_tie_combat,
             "E_landed_within_5_after": E_landed_within_5_after,
-            "F_fleet_destroyed_in_flight": F_fleet_destroyed_in_flight,
+            "F_fleet_destroyed_in_flight": F_fleet_destroyed_in_flight,  # legacy, NOT used in classify()
         }
         diag["primary_diagnosis"] = classify(diag)
         out.append(diag)
@@ -226,10 +241,10 @@ def print_pivot(rows: list[dict], label: str, key_fn) -> None:
         by_bucket[k][r["primary_diagnosis"]] += 1
         totals[k] += 1
 
-    diags = ["E_prediction_off_by_one", "F_fleet_destroyed",
-             "A_src_lost_pre_landing", "C_third_party_flip",
-             "B_tgt_production_accrual", "D_under_delivered", "other"]
-    short = ["E_late", "F_dead", "A_src", "C_race", "B_tgt", "D_under", "other"]
+    diags = ["E_prediction_off_by_one", "A_src_lost_pre_landing",
+             "C_third_party_flip", "B_tgt_production_accrual",
+             "D_under_delivered", "G_near_tie_combat", "other"]
+    short = ["E_late", "A_src", "C_race", "B_tgt", "D_under", "G_tie", "other"]
     print(f"\n== {label} ==")
     keys = sorted(by_bucket.keys(), key=lambda k: -totals[k])
     print(f"  {'bucket':<24} {'n':>5}  " + "  ".join(f"{s:>8}" for s in short))
@@ -304,9 +319,9 @@ def main(argv=None):
     overall = collections.Counter(r["primary_diagnosis"] for r in diagnosed)
     n = len(diagnosed) or 1
     print(f"\n========== OVERALL failure-mode breakdown (n={n}) ==========")
-    for diag in ["E_prediction_off_by_one", "F_fleet_destroyed",
-                 "A_src_lost_pre_landing", "C_third_party_flip",
-                 "B_tgt_production_accrual", "D_under_delivered", "other"]:
+    for diag in ["E_prediction_off_by_one", "A_src_lost_pre_landing",
+                 "C_third_party_flip", "B_tgt_production_accrual",
+                 "D_under_delivered", "G_near_tie_combat", "other"]:
         v = overall[diag]
         print(f"  {diag:<32} {v:>5}  ({100*v/n:>5.1f}%)")
 

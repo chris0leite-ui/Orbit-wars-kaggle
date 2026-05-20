@@ -748,6 +748,23 @@ relevant skill file or source code, not back into friction.md.
   state/current.md::rolling_last_2 first. Surface in
   `improvements.md` for promotion; add to handover protocol.
 
+- `tag: fleet-absence-mistaken-for-destruction` — H44 Phase 1
+  diagnostic flagged 65% of failed landings as "fleet destroyed in
+  flight" based on "fleet not visible in fleets list at landing-1 OR
+  landing." But fleets vanish from the list whenever combat resolves
+  at the target — this is the EXPECTED behavior for any arriving
+  fleet. F over-fired on launches that arrived correctly but lost
+  combat. PI caught it: "I have not seen fleets getting out of bounds
+  or missing targets." Spot-check of 5 F-flagged launches showed all
+  had miss distance < target radius (i.e. arrived correctly). **Fix:**
+  any "fleet destroyed" detection must compare last-seen position to
+  target position at that step; if fleet is far from any planet AND
+  missing next step, that's a true mid-flight death.
+  CORRECTION audit doc:
+  `audit/2026-05-21-h44-phase1-CORRECTION.md`. **Process learning:**
+  any diagnostic claiming a dominant failure mode must include 3
+  hand-traced examples that match the diagnosis. Promotion candidate.
+
 ## Anti-spam — what does NOT belong here
 
 - Successful experiments → `audit/YYYY-MM-DD-*.md`.
