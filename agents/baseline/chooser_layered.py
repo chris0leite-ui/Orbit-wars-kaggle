@@ -37,6 +37,7 @@ INNER_WALLCLOCK_FLOOR_MS: float = 50.0
 # documented in agents/baseline/main.py and proposer.py.
 from agents.baseline.chooser import choose
 from agents.baseline.chooser_differential import choose_differential
+from agents.baseline.chooser_lp import choose_lp
 from agents.baseline.chooser_roi import choose_roi
 from agents.baseline.chooser_trajectory import choose_trajectory
 from agents.baseline.predicates import UNCERTAIN
@@ -87,11 +88,21 @@ def _dispatch_differential(k):
     )
 
 
+def _dispatch_lp(k):
+    return choose_lp(
+        k["snap_base"], k["prerank"], k["baseline_favors"],
+        k["me"], k["num_seats"], k["wallclock_ms"],
+        k["min_horizon"], k["max_horizon"], k["gamma"],
+        k["world"], k["model"],
+    )
+
+
 _INNER_DISPATCH = {
     "trajectory": _dispatch_trajectory,
     "composite": _dispatch_composite,
     "roi": _dispatch_roi,
     "differential": _dispatch_differential,
+    "lp": _dispatch_lp,
 }
 
 

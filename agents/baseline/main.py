@@ -241,6 +241,30 @@ def agent(obs, configuration=None):
         )
         return drain_idle_rear(moves, planets, me, world, model)
 
+    # LP chooser opt-in (2026-05-20 slice 10). Joint bipartite-
+    # assignment over the whole turn's move-set. The LP replaces the
+    # per-candidate greedy emit with a Hungarian/scipy solver. See
+    # /root/.claude/plans/take-the-lens-of-magical-shore.md §16.
+    if os.environ.get("BASELINE_CHOOSER", "").strip().lower() == "lp":
+        prerank = propose(
+            my_planets, target_pool, world, model, me, omega,
+            baseline_len=MAX_HORIZON + 1,
+        )
+        # Same migration injection as the differential branch — the
+        # LP needs the same candidate space to pick from.
+        if os.environ.get("BASELINE_MIGRATION", "1").strip() != "0":
+            from agents.baseline.migration_solver import propose_migrations
+            migrations = propose_migrations(world, model, me)
+            prerank = list(prerank) + list(migrations)
+        from agents.baseline.chooser_lp import choose_lp
+        moves = choose_lp(
+            snap_base, prerank, None,
+            me, num_seats, wallclock_ms,
+            MIN_HORIZON, MAX_HORIZON, gamma,
+            world, model,
+        )
+        return drain_idle_rear(moves, planets, me, world, model)
+
     # Differential chooser opt-in (2026-05-19 slice 8). Closed-form
     # WorldModel-projection leaf eval; no fast_sim rollout. See
     # /root/.claude/plans/take-the-lens-of-magical-shore.md §13.
