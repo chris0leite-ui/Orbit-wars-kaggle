@@ -29,6 +29,11 @@ class Column:
     Fields mirror the prerank tuple convention `(cheap_delta, src, tgt,
     ships, angle, eta, horizon_hint, wait_N)` but with explicit names and
     a `value` slot for the LP cost coefficient (filled by value computation).
+
+    `parent_column_id`: when not None, this column is a Phase-F2
+    production-feedback compound candidate. It can only fire if the
+    parent (a capture-of-src) column fires. The LP enforces this via a
+    linkage constraint `x_this ≤ x_parent`.
     """
     column_id: int          # unique LP index
     src_id: int
@@ -42,6 +47,7 @@ class Column:
     horizon_hint: int = 0   # passed through for downstream consumers
     cheap_delta: float = 0.0  # passed through (proposer's cheap-ranked Δ)
     is_opp: bool = False    # True for opp-projected columns (Phase 3+)
+    parent_column_id: Optional[int] = None  # Phase F2: compound-fire linkage
 
 
 def column_from_candidate(c, *, column_id: int, owner: int, value: float = 0.0,

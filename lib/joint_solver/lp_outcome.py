@@ -338,12 +338,18 @@ def solve_outcome_aware(
     step_now = int(getattr(world, "step", 0) or 0)
 
     # Filter to our positive-value columns with a valid source.
+    # EXCEPTION: compound columns (parent_column_id != None) are
+    # Phase F2a production-feedback fires from planets we'd capture
+    # mid-horizon. Their src isn't yet in inv (it's opp-owned now).
+    # They're feasible only if their parent capture fires; that's
+    # enforced via a linkage constraint added below, not by inv.
     inv = _source_inventory(columns, world, my_id=int(my_id))
     active: list[Column] = []
     for col in columns:
         if int(col.owner) != int(my_id):
             continue
-        if int(col.src_id) not in inv:
+        is_compound = getattr(col, "parent_column_id", None) is not None
+        if not is_compound and int(col.src_id) not in inv:
             continue
         if float(col.value) <= 0.0:
             continue
@@ -460,15 +466,24 @@ def solve_outcome_aware(
         A_eq_rows.append(row)
         b_eq.append(0.0)
 
-    # (3) Source budget over time (existing Phase 4 logic, on x only).
-    src_ids = sorted({int(c.src_id) for c in active})
+    # (3) Source budget over time. Phase F2a: skip compound columns —
+    # their ships come from a planet we'd capture mid-horizon, not from
+    # any source in `inv`. Compound columns are gated via the linkage
+    # constraint (4) below; the captured planet's post-capture
+    # production is implicit in the column's ship-count construction.
+    src_ids = sorted({int(c.src_id) for c in active
+                      if getattr(c, "parent_column_id", None) is None})
     fire_times = sorted({int(c.wait_N) for c in active})
     for sid in src_ids:
+        if sid not in inv:
+            continue
         initial, prod = inv[sid]
         for u in fire_times:
             row = [0.0] * n_total
             any_in_row = False
             for j, col in enumerate(active):
+                if getattr(col, "parent_column_id", None) is not None:
+                    continue  # compound col not in src-budget
                 if int(col.src_id) == sid and int(col.wait_N) <= u:
                     row[j] = float(col.ships)
                     any_in_row = True
@@ -476,6 +491,31 @@ def solve_outcome_aware(
                 continue
             A_ub_rows.append(row)
             b_ub.append(float(initial + prod * max(0, u) - DEFENDER_GUARD))
+
+    # (4) Phase F2a linkage: x_compound <= x_parent_capture.
+    # Encoded as A_ub row `+1 * x_compound − 1 * x_parent <= 0`.
+    # parent_column_id may reference a column that got dropped at the
+    # per-planet-MILP-prefilter step (lp_outcome.py:381). In that case
+    # we instead pin x_compound = 0 (force the row to b_ub=0 with only
+    # the +1 term — equivalent to x_compound <= 0).
+    col_id_to_idx: dict[int, int] = {
+        int(col.column_id): j for j, col in enumerate(active)
+    }
+    for j, col in enumerate(active):
+        pid_parent = getattr(col, "parent_column_id", None)
+        if pid_parent is None:
+            continue
+        row = [0.0] * n_total
+        row[j] = 1.0
+        parent_idx = col_id_to_idx.get(int(pid_parent))
+        if parent_idx is None:
+            # Parent dropped; force this compound col to 0.
+            A_ub_rows.append(row)
+            b_ub.append(0.0)
+        else:
+            row[parent_idx] = -1.0
+            A_ub_rows.append(row)
+            b_ub.append(0.0)
 
     # Compose constraints.
     constraints_list = []
