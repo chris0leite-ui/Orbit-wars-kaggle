@@ -188,6 +188,67 @@ public-notebook scan). Agent picks one and ignores the others.
 that sequences all three. Reference from a single new rule that
 supersedes 7/14/22.
 
+### [ ] [CROSS-CUTTING] Closed-form "no action" is not a bug — investigate the candidate space
+
+`tag: analytical-zero-not-bug` (2026-05-20, slice 8c session). PI
+override mid-session: agent proposed "relax the Δ > 0 emit gate"
+when differential chooser produced long idle stretches. PI
+corrected: "the fix is certainly not to relax the delta — Δ=+0.0
+is a feature, not a bug. The candidate space is incomplete."
+
+Generalises Rule 40 (modeling-correctness > restriction-tuning)
+to the CHOOSER OUTPUT axis. When closed-form math returns "no
+action," the analytical correctness is reporting honestly.
+"Loosen the bound" is an anti-pattern — it injects noise back
+into a clean substrate. The right response is to investigate
+the candidate space:
+
+- Are there move classes the proposer doesn't emit (migration,
+  multi-source coalitions, time-shifted joints, etc.)?
+- Is the analytical primitive missing scenarios (defensive
+  reinforce without inbound threat, speculative pre-positioning)?
+- Is the value formula missing terms (positional value,
+  denied-production value)?
+
+**Fix:** new CLAUDE.md rule:
+
+> Rule 42 (proposed). **"Closed-form zero" is honest, not broken.**
+> When an analytical chooser returns no action / Δ=0 / empty emit,
+> do NOT relax the gate. The math is reporting correctly; the
+> failure is in the input space. Investigate candidate generators
+> and missing primitives instead. Origin: 2026-05-20 differential-
+> chooser Slice 8c session; PI corrected mid-iteration.
+
+### [ ] [CODE-COMP-DISCOVERED] Stacking analytical commits on top of a rollout chooser is noise
+
+`tag: stack-not-replace-analytical-on-rollout` (2026-05-19 to
+2026-05-20, slices 4-10 session). Pattern observed across 7
+slices: every time we added closed-form commits (W1/W2/L1/L2 in
+Slices 4-5, LP in Slice 6, migration in Slice 9) ON TOP OF an
+existing rollout chooser, they produced noise — same or worse
+win rate vs trajectory baseline. Replacing the substrate
+(differential in Slice 8, joint LP in Slice 10) directionally
+right but value-calibration / candidate-space gaps still bit.
+
+Architectural lesson:
+
+- The rollout chooser was doing implicit PLANNING via its leaf
+  state (favor encoded whole-turn move-set consequences).
+- Analytical commits added on top override the rollout's
+  per-source allocation, not augment it.
+- "Two decision-makers" architecture → conflicts → noise.
+
+**Fix:** new CLAUDE.md rule:
+
+> Rule 43 (proposed). **Analytical work either REPLACES the
+> chooser substrate or stays in the heuristic input layer
+> (cheap_delta, prerank ordering). Don't stack it on top of an
+> existing chooser's decisions.** If you want to use closed-form
+> commits, they must be the ONLY decision-maker, not a parallel
+> commit pass over a rollout. Origin: 7 negative-result slices
+> over 2 sessions; documented across audit/2026-05-19-slice*.md
+> and audit/2026-05-20-slice*.md.
+
 ## Applied in 2026-05-14 audit pass
 
 Moved out of this file to keep it lean. Full details in the

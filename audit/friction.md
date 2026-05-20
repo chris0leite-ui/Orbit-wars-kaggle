@@ -692,6 +692,56 @@ relevant skill file or source code, not back into friction.md.
   origin/main. The branch-tip might be origin/main, but the live
   submission's parent is often a feature branch.
 
+## 2026-05-20 (claude/strategy-framework-design-OyoYR-rebased — analytical-chooser axis exhausted)
+
+- `tag: analytical-zero-not-bug` — Slice 8c session: agent
+  proposed "relax the Δ > 0 emit gate" when differential chooser
+  produced long late-game idle stretches in the introspect. PI
+  override mid-session: "Δ=+0.0 is a feature, not a bug. The
+  candidate space is incomplete." Root cause: agent conflated
+  "no positive-Δ candidate this turn" (correct math) with
+  "broken chooser." **Fix:** promoted to improvements.md as
+  Rule 42 candidate ("closed-form zero is honest, not broken;
+  investigate the candidate space, not the gate").
+- `tag: stack-not-replace-analytical-on-rollout` — slices 4-10
+  (cross-session pattern). Across 7 architectural attempts
+  (predicates-as-priors backstop, bounded-interval dominance,
+  LP commit-as-hint, differential leaf eval, wait_N filter,
+  migration solver, joint LP chooser), every "add analytical
+  layer on top of existing rollout chooser" produced same-
+  or-worse win rate vs trajectory. Replacing the substrate
+  was directionally right but value-calibration / candidate-
+  space gaps still bit. Root cause: rollout was doing implicit
+  planning via leaf-favor encoding whole-turn consequences;
+  analytical commits added on top override decisions instead
+  of augmenting. **Fix:** promoted to improvements.md as
+  Rule 43 candidate ("analytical work replaces substrate or
+  stays in input layer — never stacks on top").
+- `tag: per-source-distribution-vs-class-filter-misread` —
+  Slice 8c session: agent rushed wait_N>0 filter as the
+  "under-emit fix" based on top-3 candidate listings showing
+  wait_N>0 dominance. Introspect had already shown all 7
+  positive candidates from src=8 — that's a per-source-
+  allocation observation, not a wait_N one. The filter
+  changed nothing meaningful (emit rate 0.75 → 0.72) and
+  made outcome worse (37.5% → 18.8%). Root cause: jumping
+  to one-line fix on a partial reading of the trace. **Fix:**
+  before any candidate-class filter, check per-source
+  positive-Δ distribution in introspect; per-source dedup
+  caps emits regardless of which class dominates.
+- `tag: introspect-script-stale-after-architecture-change` —
+  scripts/differential_introspect.py wrapped
+  `score_candidate_differential` which returns 0 for own→own
+  candidates. After Slice 9 added migration candidates with
+  the special-case scoring path, the introspect's "positive-
+  Δ count" undercounted migration emits. Misleading trace
+  output suggested migrations weren't firing when they were.
+  Root cause: introspect wrappers tightly coupled to the
+  exact scoring function rather than the actual choose_*
+  output. **Fix:** update introspect to also wrap the final
+  choose_* call and count its outputs, not just its
+  internal scoring helpers. (Not done this session; logged
+  for next.)
 
 ```
 - `tag: <kebab-slug>` — <session context>: <what happened>.
