@@ -77,18 +77,26 @@ _FUTURE_IMPORT_RE = re.compile(r"^\s*from __future__\s+import\b.*$")
 
 
 def _strip_imports(src: str) -> str:
-    """Strip intra-package and __future__ imports.
+    """Strip intra-package imports.
 
     Handles both single-line `from lib.X import a, b` and multi-line
     `from lib.X import (\n  a,\n  b,\n)` (closing paren on its own line
     or with content). When a multi-line open is seen, skip until the
     closing paren line is consumed too.
+
+    NOTE: `from __future__ import annotations` is KEPT. Without it,
+    pipeline dataclasses (e.g. TurnContext with `world: World` /
+    `list[Column]` type hints) trigger
+    `dataclasses._is_type` → `sys.modules.get(cls.__module__).__dict__`
+    which fails when the bundled module isn't registered in
+    sys.modules (Kaggle's loader path). Keeping future-annotations
+    defers all type-hint evaluation to strings, avoiding the lookup.
+    De-duped at the top of the bundle by `_dedupe_future_imports`.
     """
     out_lines: list[str] = []
     skip_until_close_paren = False
     for line in src.splitlines():
         if skip_until_close_paren:
-            # Skip until we find a line whose stripped form ends with ')'.
             stripped = line.strip()
             if stripped.endswith(")"):
                 skip_until_close_paren = False
@@ -98,6 +106,8 @@ def _strip_imports(src: str) -> str:
             continue
         if _INTRA_IMPORT_RE.match(line):
             continue
+        # Drop __future__ imports from the BODY (they get hoisted to a
+        # single canonical line at the top of the bundle).
         if _FUTURE_IMPORT_RE.match(line):
             continue
         out_lines.append(line)
@@ -112,6 +122,18 @@ def _inline_block(rel_path: str, sub_marker: bool = True) -> str:
     return f"\n\n{header}\n\n{stripped}\n"
 
 
+_SYSMOD_SHIM = """
+# Bundle-self-registration shim. Required because Kaggle's loader calls
+# importlib.util.exec_module without first registering the module in
+# sys.modules; the dataclasses module then crashes when it does
+# sys.modules.get(cls.__module__).__dict__ during KW_ONLY detection
+# (Python 3.11 dataclasses.py:712). Registering ourselves as a stub
+# pointing at __main__ short-circuits the lookup harmlessly.
+import sys as _bundle_sys
+_bundle_sys.modules.setdefault(__name__, _bundle_sys.modules.get("__main__"))
+"""
+
+
 def main() -> int:
     print("== rebuilding submissions/baseline.py via bundle_agent.py ==")
     subprocess.check_call([
@@ -123,6 +145,17 @@ def main() -> int:
 
     baseline_bundle = (REPO / "submissions" / "baseline.py").read_text(
         encoding="utf-8",
+    )
+
+    # Inject sys.modules self-registration shim immediately after the
+    # `from __future__ import annotations` line at the top of the
+    # baseline bundle. Pipeline dataclasses defined later in the bundle
+    # need this to load on Kaggle.
+    import re as _re
+    baseline_bundle = _re.sub(
+        r"(from __future__ import annotations\n)",
+        r"\1" + _SYSMOD_SHIM,
+        baseline_bundle, count=1,
     )
 
     parts: list[str] = [baseline_bundle.rstrip()]
