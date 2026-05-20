@@ -32,6 +32,7 @@ import math
 from lib.aim import aim_orbiting
 from lib.orbit import is_orbiting, predict_relative
 from lib.trajectory import predict_fleet_fate
+from lib.world_model import simulate_planet_timeline
 from lib.joint_solver.columns import Column
 from lib.pipeline.types import CandidateSet, TurnContext
 
@@ -90,10 +91,40 @@ def generate_compound_candidates(
         )
         tgt_is_orbiting = is_orbiting(list(tgt_tuple_now))
 
+        # Bugs #3/#4 fix: simulate planet tgt's timeline given (existing
+        # ledger + base capture arrival). owner_at and ships_at give the
+        # exact post-capture state, so we don't have to approximate with
+        # `production * delay` and we can reject compounds when opp has
+        # already re-captured before compound_fire_rel.
+        existing_arrivals = list(ctx.model.ledger.get(int(tgt.id), []))
+        augmented_arrivals = existing_arrivals + [
+            (int(arrival_rel), int(me), int(base.ships)),
+        ]
+        try:
+            tgt_timeline = simulate_planet_timeline(
+                tgt, augmented_arrivals, ctx.model.horizon,
+            )
+        except Exception:
+            continue
+        owner_at = tgt_timeline.get("owner_at", {})
+        ships_at = tgt_timeline.get("ships_at", {})
+
         # Enumerate compound fires at compound_fire_step = arrival + delay.
         for delay in range(1, int(max_compound_delay) + 1):
             compound_fire_rel = arrival_rel + delay  # relative to step_now
-            ships_avail = int(tgt.production) * int(delay)
+            # Bug #4: must still own the planet at compound_fire_rel.
+            owner_at_fire = owner_at.get(int(compound_fire_rel))
+            if owner_at_fire is None or int(owner_at_fire) != int(me):
+                continue
+            # Bug #3: use exact garrison from the simulated timeline
+            # instead of `production * delay`. Reserve 1 ship as a
+            # post-fire stub so the planet isn't left at zero garrison
+            # (matches DEFENDER_GUARD's intent in opening_planner without
+            # importing it cross-module).
+            ships_at_fire = ships_at.get(int(compound_fire_rel))
+            if ships_at_fire is None:
+                continue
+            ships_avail = max(0, int(float(ships_at_fire)) - 1)
             if ships_avail < int(min_compound_ships):
                 continue
 
