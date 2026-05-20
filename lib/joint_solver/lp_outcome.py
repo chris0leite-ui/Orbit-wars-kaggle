@@ -180,11 +180,25 @@ def _build_per_planet_arrivals(
 
 
 def _value_for_outcome(row: OutcomeRow, my_id: int,
-                       alpha_opp_penalty: float) -> float:
+                       alpha_opp_penalty: float,
+                       discounted: bool = False) -> float:
     """Subset value: prod_stream_me − α · prod_stream_opp.
 
     Sums opp production across ALL non-me, non-neutral owners (4P-aware).
+
+    `discounted`: when True, reads `row.prod_stream_discounted` (the
+    γ-weighted per-tick production accrual) instead of the integer
+    `prod_stream`. Caller must have constructed the row via
+    `enumerate_outcomes(..., discount_gamma=γ)` so the discounted dict
+    is populated.
     """
+    if discounted:
+        me_prod = float(row.prod_stream_discounted.get(int(my_id), 0.0))
+        opp_prod = float(sum(
+            v for owner, v in row.prod_stream_discounted.items()
+            if int(owner) >= 0 and int(owner) != int(my_id)
+        ))
+        return me_prod - float(alpha_opp_penalty) * opp_prod
     me_prod = float(row.prod_stream.get(int(my_id), 0))
     opp_prod = float(sum(
         v for owner, v in row.prod_stream.items()
@@ -205,6 +219,7 @@ def _greedy_fallback(
     *,
     my_id: int,
     alpha_opp_penalty: float,
+    discounted: bool = False,
 ) -> OutcomeAwareResult:
     """Pure-Python greedy fallback when MILP is unavailable / infeasible.
 
@@ -221,9 +236,9 @@ def _greedy_fallback(
     per_planet_value: dict[int, float] = {}
     for pid, table in per_planet_tables.items():
         best_subset = ()
-        best_value = _value_for_outcome(table[()], my_id, alpha_opp_penalty)
+        best_value = _value_for_outcome(table[()], my_id, alpha_opp_penalty, discounted)
         for subset, row in table.items():
-            v = _value_for_outcome(row, my_id, alpha_opp_penalty)
+            v = _value_for_outcome(row, my_id, alpha_opp_penalty, discounted)
             if v > best_value:
                 best_value = v
                 best_subset = subset
@@ -260,7 +275,8 @@ def _greedy_fallback(
 
     # Compute final objective.
     obj = sum(
-        _value_for_outcome(per_planet_tables[pid][s], my_id, alpha_opp_penalty)
+        _value_for_outcome(per_planet_tables[pid][s], my_id, alpha_opp_penalty,
+                           discounted)
         for pid, s in chosen.items()
     )
 
@@ -294,6 +310,7 @@ def solve_outcome_aware(
     alpha_opp_penalty: float = ALPHA_OPP_PENALTY,
     ship_cost: float = SHIP_COST,
     time_limit_seconds: float = TIME_LIMIT_SECONDS,
+    discount_gamma: float | None = None,
 ) -> OutcomeAwareResult:
     """Solve the outcome-aware LP for post-opening turns.
 
@@ -356,6 +373,7 @@ def solve_outcome_aware(
                 horizon=int(t_end),
                 fixed_arrivals=fixed,
                 candidate_arrivals=cands,
+                discount_gamma=discount_gamma,
             )
         except ValueError:
             continue  # too many candidates after pre-filter; shouldn't happen
@@ -384,6 +402,8 @@ def solve_outcome_aware(
         return _greedy_fallback(
             active, per_planet_tables, world,
             my_id=int(my_id), alpha_opp_penalty=float(alpha_opp_penalty),
+            discounted=(discount_gamma is not None
+                        and 0.0 < float(discount_gamma) < 1.0),
         )
 
     import numpy as np
@@ -407,9 +427,13 @@ def solve_outcome_aware(
     c_vec = np.zeros(n_total, dtype=float)
     for j, col in enumerate(active):
         c_vec[j] = float(ship_cost) * float(col.ships)  # ship-cost penalty
+    use_discounted_value = (
+        discount_gamma is not None and 0.0 < float(discount_gamma) < 1.0
+    )
     for (pid, s), y_idx in y_index.items():
         row = per_planet_tables[pid][s]
-        value = _value_for_outcome(row, my_id, alpha_opp_penalty)
+        value = _value_for_outcome(row, my_id, alpha_opp_penalty,
+                                   use_discounted_value)
         c_vec[y_idx] = -float(value)  # negate so milp picks high-value subsets
 
     A_eq_rows: list[list[float]] = []
@@ -467,6 +491,8 @@ def solve_outcome_aware(
         return _greedy_fallback(
             active, per_planet_tables, world,
             my_id=int(my_id), alpha_opp_penalty=float(alpha_opp_penalty),
+            discounted=(discount_gamma is not None
+                        and 0.0 < float(discount_gamma) < 1.0),
         )
 
     bounds = Bounds(lb=np.zeros(n_total), ub=np.ones(n_total))
@@ -481,12 +507,16 @@ def solve_outcome_aware(
         return _greedy_fallback(
             active, per_planet_tables, world,
             my_id=int(my_id), alpha_opp_penalty=float(alpha_opp_penalty),
+            discounted=(discount_gamma is not None
+                        and 0.0 < float(discount_gamma) < 1.0),
         )
 
     if res.x is None:
         return _greedy_fallback(
             active, per_planet_tables, world,
             my_id=int(my_id), alpha_opp_penalty=float(alpha_opp_penalty),
+            discounted=(discount_gamma is not None
+                        and 0.0 < float(discount_gamma) < 1.0),
         )
 
     # Extract.
@@ -504,7 +534,7 @@ def solve_outcome_aware(
             per_planet_chosen[pid] = s
             row = per_planet_tables[pid][s]
             per_planet_value[pid] = _value_for_outcome(
-                row, my_id, alpha_opp_penalty,
+                row, my_id, alpha_opp_penalty, use_discounted_value,
             )
 
     return OutcomeAwareResult(

@@ -53,11 +53,21 @@ class Arrival:
 
 @dataclass(frozen=True)
 class OutcomeRow:
-    """Outcome of simulating one specific arrival set to the horizon."""
+    """Outcome of simulating one specific arrival set to the horizon.
+
+    `prod_stream` is the integer-summed per-owner production accrued over
+    [1, horizon] (the reference Phase 5 LP objective uses this).
+
+    `prod_stream_discounted` is the same stream weighted by γ^t per tick
+    (closes the "undiscounted T=500" leaf-evaluator hypothesis). Computed
+    only when `enumerate_outcomes(..., discount_gamma=γ)` is called with
+    γ ∈ (0, 1); empty dict otherwise. Phase F1 leaf variant reads this.
+    """
     subset: tuple[int, ...]
     owner_T: int
     ships_T: float
     prod_stream: dict[int, int] = field(hash=False)
+    prod_stream_discounted: dict[int, float] = field(default_factory=dict, hash=False)
 
 
 def _simulate_one(
@@ -67,8 +77,16 @@ def _simulate_one(
     horizon: int,
     arrivals: list[Arrival],
     subset_key: tuple[int, ...],
+    *,
+    discount_gamma: float | None = None,
 ) -> OutcomeRow:
-    """Walk the timeline for ONE specific arrival set. O(horizon)."""
+    """Walk the timeline for ONE specific arrival set. O(horizon).
+
+    `discount_gamma`: if set to γ ∈ (0, 1), also accumulate the per-tick
+    γ^t-weighted production into `prod_stream_discounted`. Default None
+    leaves the discounted dict empty (preserves bit-parity with the
+    pre-Phase-F1 LP).
+    """
     by_turn: dict[int, list[tuple[int, int]]] = {}
     for a in arrivals:
         if a.ships <= 0:
@@ -81,11 +99,24 @@ def _simulate_one(
     owner = int(initial_owner)
     garrison = float(initial_ships)
     prod_stream: dict[int, int] = {}
+    prod_stream_discounted: dict[int, float] = {}
+    use_discount = (
+        discount_gamma is not None
+        and 0.0 < float(discount_gamma) < 1.0
+    )
+    discount_t = 1.0  # γ^0 = 1; multiplied by γ at the start of each tick
 
     for t in range(1, horizon + 1):
+        if use_discount:
+            discount_t *= float(discount_gamma)
         if owner != -1:
             garrison += production
             prod_stream[owner] = prod_stream.get(owner, 0) + int(production)
+            if use_discount:
+                prod_stream_discounted[owner] = (
+                    prod_stream_discounted.get(owner, 0.0)
+                    + discount_t * float(production)
+                )
         group = by_turn.get(t)
         if group:
             owner, garrison = resolve_arrivals(owner, garrison, group)
@@ -95,6 +126,7 @@ def _simulate_one(
         owner_T=owner,
         ships_T=max(0.0, garrison),
         prod_stream=prod_stream,
+        prod_stream_discounted=prod_stream_discounted,
     )
 
 
@@ -106,6 +138,7 @@ def enumerate_outcomes(
     horizon: int,
     fixed_arrivals: list[Arrival],
     candidate_arrivals: list[Arrival],
+    discount_gamma: float | None = None,
 ) -> dict[tuple[int, ...], OutcomeRow]:
     """For each subset S ⊆ candidate_arrivals, simulate (fixed ∪ S) and
     return OutcomeRow keyed by sorted-tuple of S's column_ids.
@@ -145,6 +178,7 @@ def enumerate_outcomes(
             rows[key] = _simulate_one(
                 initial_owner, initial_ships, production, horizon,
                 fixed_arrivals + chosen, key,
+                discount_gamma=discount_gamma,
             )
     return rows
 
