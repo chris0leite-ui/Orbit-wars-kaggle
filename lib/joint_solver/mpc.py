@@ -42,6 +42,10 @@ from lib.joint_solver.lp import (
     MultiTurnResult,
     solve_multi_turn,
 )
+from lib.joint_solver.lp_outcome import (
+    OutcomeAwareResult,
+    solve_outcome_aware,
+)
 from lib.joint_solver.opening_planner import OPENING_HORIZON, plan as opening_plan
 from lib.joint_solver.predicate import is_winning_state
 from lib.joint_solver.portfolio import smallest_winning_portfolio
@@ -337,19 +341,21 @@ def solve_turn(obs, configuration=None, *,
                 columns = filtered
                 portfolio_filtered = True
 
-    res: MultiTurnResult = solve_multi_turn(
-        columns, world,
+    # Phase 5C: outcome-table-aware LP replaces the per-candidate Phase 4 LP.
+    # The new objective uses production-stream-per-owner from outcome_table
+    # subsets so defense and offense are valued on the same scale and the
+    # LP makes a GLOBAL offense-vs-defense tradeoff (not per-candidate).
+    res_oc: OutcomeAwareResult = solve_outcome_aware(
+        columns, world, model_with_opp, opp_arrivals,
         my_id=me,
-        max_contesters_per_target=int(max_contesters_per_target),
-        max_wait_N=int(max_wait_N),
         time_limit_seconds=float(time_limit_seconds),
     )
 
     if not return_diagnostics:
-        return res.moves
+        return res_oc.moves
 
     wait_dist: dict[int, int] = {}
-    for col in res.fired_columns:
+    for col in res_oc.fired_columns:
         w = int(col.wait_N)
         wait_dist[w] = wait_dist.get(w, 0) + 1
 
@@ -358,12 +364,12 @@ def solve_turn(obs, configuration=None, *,
         n_prerank=len(prerank),
         n_columns=len(columns),
         n_positive_columns=sum(1 for c in columns if c.value > 0.0),
-        n_fired_columns=len(res.fired_columns),
-        n_emitted_moves=len(res.moves),
-        objective=float(res.objective) if res.objective == res.objective else 0.0,
-        solver_status=str(res.status),
-        n_vars=int(res.n_vars),
-        n_constraints=int(res.n_constraints),
+        n_fired_columns=len(res_oc.fired_columns),
+        n_emitted_moves=len(res_oc.moves),
+        objective=float(res_oc.objective) if res_oc.objective == res_oc.objective else 0.0,
+        solver_status=str(res_oc.status),
+        n_vars=int(res_oc.n_x_vars + res_oc.n_y_vars),
+        n_constraints=int(res_oc.n_constraints),
         n_opp_projections=len(opp_arrivals),
         is_winning_state=winning_now,
         portfolio_size=len(portfolio),
@@ -371,4 +377,4 @@ def solve_turn(obs, configuration=None, *,
         n_columns_before_filter=n_columns_before_filter,
         fired_wait_distribution=wait_dist,
     )
-    return res.moves, diag
+    return res_oc.moves, diag
