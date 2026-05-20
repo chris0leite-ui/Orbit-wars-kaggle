@@ -1,52 +1,57 @@
 {
   "submission_id": "52643676",
-  "generated_utc": "2026-05-14T17:37:03Z",
+  "generated_utc": "2026-05-20T06:18:02Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 52,
-  "n_played": 52,
-  "wins_total": 28,
-  "winrate_total": 0.5384615384615384,
+  "n_episodes": 75,
+  "n_played": 75,
+  "wins_total": 39,
+  "winrate_total": 0.52,
   "by_size": {
     "2": {
+      "n": 43,
+      "wins": 23,
+      "winrate": 0.5348837209302325
+    },
+    "4": {
       "n": 32,
       "wins": 16,
       "winrate": 0.5
-    },
-    "4": {
-      "n": 20,
-      "wins": 12,
-      "winrate": 0.6
     }
   },
   "self_match_episodes": 1,
   "seat_distribution": {
-    "0": 24,
-    "1": 19,
-    "2": 7,
-    "3": 5
+    "0": 30,
+    "1": 28,
+    "2": 10,
+    "3": 10
   },
   "episode_length_steps": {
-    "n": 52,
+    "n": 75,
     "min": 80,
-    "q1": 152,
-    "median": 191,
+    "q1": 157,
+    "median": 185,
     "q3": 239,
     "max": 500,
-    "mean": 218.6153846153846
+    "mean": 212.57333333333332
   },
   "opponents": [
+    {
+      "name": "Anirudh K",
+      "seen": 3,
+      "beat_us": 2
+    },
     {
       "name": "Jun Peng #2",
       "seen": 3,
       "beat_us": 1
     },
     {
-      "name": "Anirudh K",
+      "name": "Longkun Shi (Candyman)",
       "seen": 2,
-      "beat_us": 2
+      "beat_us": 0
     },
     {
-      "name": "Longkun Shi (Candyman)",
+      "name": "zakopuro",
       "seen": 2,
       "beat_us": 0
     },
@@ -56,9 +61,19 @@
       "beat_us": 1
     },
     {
+      "name": "Rapha\u00ebl Caloz",
+      "seen": 2,
+      "beat_us": 2
+    },
+    {
       "name": "suki5050",
       "seen": 2,
       "beat_us": 2
+    },
+    {
+      "name": "KTakashina",
+      "seen": 2,
+      "beat_us": 0
     },
     {
       "name": "Saicharan Ramineni",
@@ -67,6 +82,11 @@
     },
     {
       "name": "datnt114",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "Stefan Berger",
       "seen": 2,
       "beat_us": 0
     },
@@ -171,11 +191,6 @@
       "beat_us": 0
     },
     {
-      "name": "zakopuro",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "saihyou",
       "seen": 1,
       "beat_us": 0
@@ -187,11 +202,6 @@
     },
     {
       "name": "Hayato Matsuzawa",
-      "seen": 1,
-      "beat_us": 1
-    },
-    {
-      "name": "Rapha\u00ebl Caloz",
       "seen": 1,
       "beat_us": 1
     },
@@ -257,11 +267,6 @@
     },
     {
       "name": "\u041c\u0430\u043a\u0441\u0438\u043c \u041e\u043f\u0456\u043b\u0430\u0442",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
-      "name": "KTakashina",
       "seen": 1,
       "beat_us": 0
     },
@@ -431,12 +436,217 @@
       "beat_us": 0
     },
     {
-      "name": "Stefan Berger",
+      "name": "Subash Kandel10",
       "seen": 1,
       "beat_us": 0
     },
     {
-      "name": "Subash Kandel10",
+      "name": "frizzerdk",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Shamil Yagiyayev",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Yuta Tomimasu",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Blu3s",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Sammymatik",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "A. R. SEKKAT",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Gypaets",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Andrij",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Shuntaro Tanaka",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "yukichi0403",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Prit_44421",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Octavi Grau",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Veniamin Nelin",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "montplusa",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "apat1n",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "kgrou0",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Md Boktiar Mahbub Murad",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Artur Misiurev2",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "frank S",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Olivier",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mengfei Li",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Sam Harrington",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "dia",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Andrey Yunoshev",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ming Fong",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Rasmus Larsen",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Felipe Ferreira",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "vkhydras",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Oskar Seweryn",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kronki",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Alexandru Cirjan",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ameer_LC",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "nejineji",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ReLU",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Froglet Fleet",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Hit Imai",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "TensorFlower",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "vova sivanev",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Arshad Shemil k",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kha Vo",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Qixiu",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Hailstorm",
       "seen": 1,
       "beat_us": 0
     }
@@ -673,6 +883,130 @@
       ],
       "winner": "Chalyx",
       "steps": 170
+    },
+    {
+      "episode": "episode-76557196",
+      "size": 4,
+      "opponents": [
+        "Yuta Tomimasu",
+        "Rapha\u00ebl Caloz",
+        "Blu3s"
+      ],
+      "winner": "Rapha\u00ebl Caloz",
+      "steps": 170
+    },
+    {
+      "episode": "episode-76557197",
+      "size": 4,
+      "opponents": [
+        "Sammymatik",
+        "A. R. SEKKAT",
+        "Gypaets"
+      ],
+      "winner": "Sammymatik",
+      "steps": 142
+    },
+    {
+      "episode": "episode-76566452",
+      "size": 4,
+      "opponents": [
+        "Shuntaro Tanaka",
+        "yukichi0403",
+        "Prit_44421"
+      ],
+      "winner": "Shuntaro Tanaka",
+      "steps": 380
+    },
+    {
+      "episode": "episode-76574015",
+      "size": 2,
+      "opponents": [
+        "Octavi Grau"
+      ],
+      "winner": "Octavi Grau",
+      "steps": 167
+    },
+    {
+      "episode": "episode-76575949",
+      "size": 4,
+      "opponents": [
+        "Veniamin Nelin",
+        "montplusa",
+        "apat1n"
+      ],
+      "winner": "Veniamin Nelin",
+      "steps": 173
+    },
+    {
+      "episode": "episode-76576836",
+      "size": 2,
+      "opponents": [
+        "kgrou0"
+      ],
+      "winner": "kgrou0",
+      "steps": 127
+    },
+    {
+      "episode": "episode-76602937",
+      "size": 2,
+      "opponents": [
+        "Rasmus Larsen"
+      ],
+      "winner": "Rasmus Larsen",
+      "steps": 137
+    },
+    {
+      "episode": "episode-76603182",
+      "size": 2,
+      "opponents": [
+        "Felipe Ferreira"
+      ],
+      "winner": "Felipe Ferreira",
+      "steps": 156
+    },
+    {
+      "episode": "episode-76611726",
+      "size": 4,
+      "opponents": [
+        "vkhydras",
+        "Oskar Seweryn",
+        "Kronki"
+      ],
+      "winner": "vkhydras",
+      "steps": 206
+    },
+    {
+      "episode": "episode-76613019",
+      "size": 4,
+      "opponents": [
+        "Alexandru Cirjan",
+        "Ameer_LC",
+        "nejineji"
+      ],
+      "winner": "Ameer_LC",
+      "steps": 218
+    },
+    {
+      "episode": "episode-76628346",
+      "size": 4,
+      "opponents": [
+        "Froglet Fleet",
+        "Hit Imai",
+        "TensorFlower"
+      ],
+      "winner": "TensorFlower",
+      "steps": 307
+    },
+    {
+      "episode": "episode-76630063",
+      "size": 4,
+      "opponents": [
+        "zakopuro",
+        "vova sivanev",
+        "Arshad Shemil k"
+      ],
+      "winner": "vova sivanev",
+      "steps": 232
     }
   ]
 }
