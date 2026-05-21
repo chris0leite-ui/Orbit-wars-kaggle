@@ -178,13 +178,27 @@ N_VALIDATE: int = 200
 RESERVED_OVERHEAD_MS: float = 50.0
 
 # Direction B — joint candidate evaluation (2026-05-18).
+# Caps env-var configurable so a variant can be A/B'd without rebuilding
+# the bundle. Default values match the original 2026-05-18 v3 production
+# constants. `BASELINE_JOINT_AGGR=1` ALSO lifts the `used_tgts` lock on
+# both solo and joint emits (multi-source-same-target stacking — combat
+# rule 1 exploit). Origin: 2026-05-20 PI directive to find a STRUCTURAL
+# lift over the n=8 ablation plateau. Risk: ship-waste from over-emit to
+# same target; controlled by leaving `used_srcs` lock in place.
 # Verified (C)+(E) via scripts/verify_solo_vs_joint.py on live episodes
 # of 52754310 (mu=1271.8): solo launches from idle planets capture only
 # 21pct of nearest targets (production growth out-paces accumulation);
 # joint launches with a neighbor capture 89pct (+68pp lift).
 # Opt-in via BASELINE_JOINT=1. Production stays on solo-only path.
-JOINT_TOP_K_PER_TARGET: int = 3   # consider top-K solo candidates per target
-JOINT_MAX_PAIRS: int = 20         # global cap to bound wallclock
+JOINT_TOP_K_PER_TARGET: int = int(
+    os.environ.get("BASELINE_JOINT_TOP_K", "3")
+)
+JOINT_MAX_PAIRS: int = int(
+    os.environ.get("BASELINE_JOINT_MAX_PAIRS", "20")
+)
+JOINT_LIFT_USED_TGTS: bool = (
+    os.environ.get("BASELINE_JOINT_AGGR", "0").strip() == "1"
+)
 
 
 def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
@@ -884,7 +898,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             _score, _tag, launches = entry
             if any(int(L[0].id) in used_srcs for L in launches):
                 continue
-            if any(int(L[1].id) in used_tgts for L in launches):
+            if (not JOINT_LIFT_USED_TGTS
+                    and any(int(L[1].id) in used_tgts for L in launches)):
                 continue
             for src, tgt, ships, angle, wait_N in launches:
                 used_srcs.add(int(src.id))
@@ -895,7 +910,9 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         # Solo: legacy 6-tuple (score, src, tgt, ships, angle, wait_N).
         _score, src, tgt, ships, angle, wait_N = entry
         sid, tid = int(src.id), int(tgt.id)
-        if sid in used_srcs or tid in used_tgts:
+        if sid in used_srcs:
+            continue
+        if not JOINT_LIFT_USED_TGTS and tid in used_tgts:
             continue
         used_srcs.add(sid)
         used_tgts.add(tid)
