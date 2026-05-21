@@ -14,11 +14,12 @@
 > | 1 | outcome_table + cherry-picked predicates | ✅ landed |
 > | 2 | column-gen + single-turn LP parity | ✅ landed |
 > | 3 | multi-turn horizon + Stackelberg + MPC | ✅ landed (Phase D v3) |
-> | **4** | **endgame predicate switch + n=8 A/B** | **❌ NEVER EXECUTED — next session** |
-> | 5 | n=32 → n=128 escalation, submit | partial (μ=1148.9 without Phase 4) |
+> | **4** | **endgame predicate switch + foundation hardening** | ✅ Step 1 + foundation landed; SUBMITTED → REGRESSED (see below) |
+> | 5 | n=32 → n=128 escalation, submit | partial; next-session task is **4P validation** |
 >
-> **The current focused plan to execute Phase 4** is at
-> **`/root/.claude/plans/be-a-mathematician-and-elegant-tide.md`**.
+> Refer also to:
+> - `/root/.claude/plans/be-a-mathematician-and-elegant-tide.md` — original Phase 4 focused plan.
+> - `/root/.claude/plans/do-not-submit-yet-radiant-koala.md` — this session's executed plan (Step 1 + foundation + Step 2 with sweep, A/B gates).
 >
 > The principle to internalize: **work on the LP's objective, not the
 > proposer's candidate set.** The proposer's job is to make sure good
@@ -28,12 +29,212 @@
 >
 > ---
 >
-> Last written: 2026-05-21 night by `claude/strategy-axis-decision-3437`.
-> Branch tip is the post-revert commit (see below); the FIX2 buffer +
-> FIX3 tier-aware-prefilter from earlier in this session were both
-> reverted because head-to-head A/B vs `09301b0` showed a regression.
+> Last written: 2026-05-21 PM by `claude/strategy-axis-decision-3437`.
+> Branch tip is `f2e643c` (post Step 2 + compound-bypass). The submitted
+> bundle was built one commit earlier at `8193371` (Step 1 + foundation
+> only). The Step 2 commits remain in tree but NOT in the submitted
+> bundle — deferred pending 4P validation.
 >
-> ## Latest session arc — AGGR critique → buffer attempt → REVERTED → Phase 4 next
+> ## Latest session arc — Phase 4 Step 1 + foundation SHIPPED → ladder REGRESSED μ=829.3
+>
+> **Outcome at session end**: submission `52894340` (`_phase4_step1_FND.py`,
+> built at commit `8193371`) settled at **μ=829.3**. Evicted the prior
+> ladder leader sub `52882014` (`baseline_joint_aggr_consolidated`, μ=1161.8).
+> **Net ladder loss ~330 μ.** Local n=8 vs LATEST said 8W/0L,
+> Wilson [0.66, 1.00] — but local was 2P-only; live ladder includes 4P.
+> Critical gap: **we shipped without a 4P validation gate.**
+>
+> Six rounds of work, in order:
+>
+> 1. **Phase 4 Step 1 — endgame predicate bonus** (commit `457e4e5`).
+>    Added `LAMBDA_ENDGAME=1000` + `_endgame_bonus` to
+>    `lib/joint_solver/lp_outcome.py`; wired into MILP cost vector
+>    + greedy fallback + result extraction (3 call sites). New helper
+>    `is_winning_state_if_lost` in `lib/joint_solver/predicate.py`.
+>    Per-(planet, subset) bonus that approximates the joint
+>    winning-state value monotonically (conservative; no false positives).
+>    Threading: derives `opp_id` via `lib.mirror.detect_num_players`
+>    inside `solve_outcome_aware` (2P only; 4P returns None → bonus = 0).
+>    Pin tests: 9 in `tests/test_lp_endgame_predicate.py` (5 helper-branch
+>    + 2 integration + 2 branch-coverage from code review). Rule 38 cycle
+>    verified by toggling `LAMBDA_ENDGAME=0` (pre-fix) — integration test
+>    fails (LP picks cheap-neutral over predicate-tipping opp capture).
+>
+> 2. **n=4 A/B vs Step-1-OLD + LADDER** via `env.run` with file paths
+>    (NOT `analytical_ab.py` — see lessons). Step 1 vs OLD (post-revert
+>    HEAD `583f5ee`): **3W/0L/1D**. Step 1 vs LADDER (sub 52872093 built
+>    at `1daec97`, currently μ=1049.4 on ladder): **3W/1L/0D**.
+>    Directional positive on both.
+>
+> 3. **Foundation hardening — orbital arrival safety + sibling sweep**
+>    (commit `8193371` + cherry-pick `4bccb82`). Cherry-picked `f1774a7`
+>    from sibling branch `claude/review-skills-improvements-moKOR`
+>    (`lib/world_model.py::time_to_enemy_threat` orbital-arrival fix:
+>    added `arrival_eta` param; predicts target + enemy positions via
+>    `predict_relative` when `omega != 0`). Sweep found a SIBLING bug
+>    in `lib/missions/snipe.py::_followon_hold_estimate` (same
+>    static-vs-orbiting pattern at the followon's capture tick `f_eta`).
+>    Applied the same `predict_relative` pattern. Both fixes gated
+>    behind `BASELINE_ORBITAL_SAFETY=1` env var (default OFF in source
+>    for backwards-compat); turned ON via
+>    `os.environ.setdefault` in `agents/analytical_phase_c/main.py`.
+>    Clarified `lib/scoring.py::eta_proxy` docstring (the suspicious-
+>    but-not-buggy case from the sweep). Pin tests: 6 across
+>    `tests/test_world_model_orbital_safety.py` (3) +
+>    `tests/test_snipe_orbital_safety.py` (3). **Rule 42 promoted** to
+>    `CLAUDE.md`: "Audit each library primitive against the entity
+>    types it may be invoked on."
+>
+> 4. **Phase 4 Step 2 — source-aware ship cost** (commits `16c9be7` +
+>    `f2e643c`). New constants `SHIP_COST_THREAT_MULT=2.0` and
+>    `SHIP_COST_THREAT_ETA_THRESHOLD=30`. New helper `_ship_cost(col,
+>    world, model, my_id)` wired into MILP cost vector (replaces
+>    uniform `ship_cost * col.ships`). Threatened sources (in-flight
+>    fleet OR close opp planet within threshold per PI directive
+>    "indirect fleet over close opponent planets") pay 2x. Compound
+>    columns (parent_column_id != None) bypass the multiplier —
+>    correctness fix from code review (their src is currently opp-owned
+>    and would spuriously fire the multiplier). Pin tests: 5 in
+>    `tests/test_lp_ship_cost_threat_aware.py`.
+>
+> 5. **Combined n=4 + n=8 A/B revealed Step 2 is NEUTRAL not net-positive**.
+>    Diagnostic split (FND = Step 1 + foundation, no Step 2):
+>    - FND vs Step 1 alone: **4W/0L** (foundation is a clear win).
+>    - FND vs LADDER: 3W/1L (matches Step 1 alone — foundation doesn't
+>      regress vs older bundle).
+>    - COMBINED (Step 1 + foundation + Step 2) vs Step 1 alone: 2W/2L (Step 2 doesn't help).
+>    - COMBINED vs LADDER: 2W/2L (dropped a win vs Step 1 alone).
+>
+>    Per PI insight ("strategies too similar to differentiate"),
+>    pivoted to external comparison vs the actual ladder leader
+>    sub 52882014 (`baseline_joint_aggr_consolidated`, μ=1161.8) built
+>    locally from commit `f4d5839` of the sibling branch. **n=8 vs
+>    LATEST on seeds [42, 1, 7, 13, 31, 100, 17, 23]**:
+>    - FND vs LATEST: **8W/0L/0D**, Wilson [0.658, 1.000].
+>    - COMBINED vs LATEST: **8W/0L/0D**, Wilson [0.658, 1.000].
+>    Both clear the gate.
+>
+> 6. **Submitted FND** as `52894340` (conservatively safer — fewer
+>    mechanisms, equally decisive). **Settled at μ=829.3.**
+>
+> **Root cause hypothesis**: every A/B was 2P. The endgame predicate
+> in `_endgame_bonus` returns 0 in 4P (the helper's first check is
+> `if opp_id is None: return 0.0`, and `_derive_opp_id_2p` returns
+> None when `detect_num_players != 2`). So Phase 4 Step 1 is INACTIVE
+> in 4P games. Foundation hardening (`BASELINE_ORBITAL_SAFETY=1`)
+> activates in 4P too; if it interacts badly with the AGGR-track 4P
+> logic (the consolidated agent's territory), the live ladder regression
+> would surface there. Need 4P A/B before next push.
+>
+> **Lessons for the playbook**:
+> - **2P-only A/B is INSUFFICIENT** as a ladder-push gate. The live
+>   ladder is mixed 2P/4P. Promote a 4P A/B requirement (candidate Rule
+>   43 — "Before any ladder push, run a 4P A/B with the active mechanism
+>   at the lowest tested seat count").
+> - **The `analytical_ab.py` harness has cross-process / cross-bundle
+>   contamination** when comparing two distinct bundles loaded in the
+>   same process via `play_one` (verified on seed 7 vs Step 1 NEW/OLD).
+>   Use `env.run([path_new, path_old])` with file paths in a fresh
+>   process for trustworthy A/B. Worth fixing the harness or marking
+>   it as 2P-baseline-only.
+> - **TrueSkill decays scores**: HANDOVER claimed sub 52872093 was at
+>   μ=1148.9 (peak band); live ladder showed μ=1049.4 by session end.
+>   Don't cache live μ in handover claims — re-check from kaggle CLI
+>   each session.
+>
+> ---
+>
+> ## Phase 4 deliverables landed this session
+>
+> Five commits on `claude/strategy-axis-decision-3437` (ahead 209 / behind 23 origin/main):
+>
+> | Commit  | Description |
+> |---|---|
+> | `457e4e5` | feat(phase4): Step 1 endgame predicate bonus in `_value_for_outcome` |
+> | `4bccb82` | cherry-pick `f1774a7`: orbital arrival safety in `time_to_enemy_threat` |
+> | `8193371` | feat(foundation): orbital safety sibling fix in `_followon_hold_estimate`; Rule 42 promoted |
+> | `16c9be7` | feat(phase4-step2): source-aware ship cost in LP objective |
+> | `f2e643c` | fix(phase4-step2): bypass source-aware multiplier for compound columns |
+>
+> Bundles produced (in `submissions/`, naming `_phase4_step1_*.py`):
+>
+> | Bundle | bytes | Contents |
+> |---|---|---|
+> | `_phase4_step1_OLD.py` | 715070 | Post-revert HEAD `583f5ee`, before Phase 4 |
+> | `_phase4_step1_NEW.py` | 720931 | Step 1 alone (commit `457e4e5`) |
+> | `_phase4_step1_LADDER.py` | 695723 | Sub 52872093 built at `1daec97` |
+> | `_phase4_step1_FND.py` | 728647 | Step 1 + foundation (commit `8193371`) — **SUBMITTED** |
+> | `_phase4_combined_NEW.py` | 732751 | Step 1 + foundation + Step 2 (commit `f2e643c`) |
+> | `_phase4_step1_LATEST.py` | 340245 | Sub 52882014 built at `f4d5839` (ladder leader baseline) |
+>
+> ## Live ladder state (snapshot 2026-05-21 PM, post submit)
+>
+> | Submission | μ | Role / fix |
+> |---|---:|---|
+> | **52894340** | **829.3** | **Our newest** — `_phase4_step1_FND.py` Step 1 + foundation. REGRESSED. |
+> | **52893236** | 1016.8 | `baseline_full.py` (sibling branch — consolidated + sniper + drain) |
+> | (evicted) 52882014 | 1161.8 | `baseline_joint_aggr_consolidated.py` — was ladder leader |
+> | (evicted) 52874528 | 1128.8 | baseline_joint_aggr |
+> | (evicted) 52872093 | 1049.4 | analytical_phase_c (Phase C + comet-path fix) |
+>
+> Floor for push decisions: **1016.8** (52893236, the older half of the
+> rolling pair). Replacing it costs ~190 μ if the new push is at 829.
+> Replacing it with something ≥1100 would recover the position.
+>
+> ## Open work (next session)
+>
+> ### 1. **HIGHEST PRIORITY** — root-cause the 4P regression
+>
+> Build a 4P A/B harness (env.run with 4 agent paths). Compare FND
+> (the submitted bundle) against three copies of `_phase4_step1_LATEST.py`
+> (sub 52882014, the consolidated leader) on seeds {0, 1, 2, 3, 4, 5, 6, 7}.
+> Same gate (≥ 50% expected per-seat Wilson lo). If FND loses 4P,
+> isolate by stashing BASELINE_ORBITAL_SAFETY (set env to 0) and re-run.
+> If still loses, isolate by stashing `_endgame_bonus` (set
+> LAMBDA_ENDGAME=0). Whichever flips fixes 4P is the culprit.
+>
+> ### 2. Recover ladder position
+>
+> Push something ≥μ=1016.8 to evict 52894340. Candidates:
+> - **Rebuild + submit `baseline_joint_aggr_consolidated.py`** from
+>   `f4d5839` source: known μ=1161.8 baseline; we have the bundle at
+>   `submissions/_phase4_step1_LATEST.py` (340245 bytes).
+> - **FND with BASELINE_ORBITAL_SAFETY=0**: tests if foundation
+>   hardening was the 4P regression vs the predicate term.
+> - **Step 1 alone** (no foundation): bundle at `submissions/_phase4_step1_NEW.py`.
+>   Tests if Step 1's 2P-only bonus accidentally hurts 4P.
+>
+> ### 3. Promote candidate Rule 43 to CLAUDE.md
+>
+> "Before any ladder push, run a 4P A/B (mixed seat count) with the
+> active mechanism. 2P-only A/B is insufficient when the live ladder
+> includes 4P games." Origin: 2026-05-21 PM Phase 4 ladder regression.
+>
+> ### 4. Step 2 (source-aware ship cost) decision
+>
+> Step 2 is committed at `16c9be7` + `f2e643c` but NOT in the
+> submitted bundle. Local 2P A/B was neutral vs Step 1 alone, decisive
+> vs LATEST. Carry forward if 4P A/B is positive; otherwise revert
+> or gate behind a different env var.
+>
+> ### 5. Bundle-vs-source residual parity (carried from prior session)
+>
+> `tests/test_bundle_analytical_phase_c_parity.py` still has the residual
+> divergence on seeds 7 + 42-full (HANDOVER prior). Pre-existing failure,
+> not introduced by Phase 4. Worth chasing once ladder is stable.
+>
+> ### 6. Fix `analytical_ab.py` harness reliability
+>
+> Verified `play_one` cross-process loading gives different outcomes
+> than direct `env.run([path, path])` for the same seed/bundles
+> (specifically seed 7 in Step 1 A/B). For trustworthy A/B against
+> two distinct bundles, use env.run with paths in a fresh process
+> until the harness is fixed. Doc this in the harness OR fix the
+> bundle isolation.
+>
+> ---
+>
+> ## Prior session — proposer overhaul (commit `adbfb5c`).
 >
 > Three rounds of work, in order:
 >
