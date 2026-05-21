@@ -107,6 +107,31 @@ modeling (Tier 2 placeholder is unimplemented).
 - `agents/baseline_joint_aggr_consolidated_topk8/main.py` — shim
   (supplanted by the locked bundle).
 
+## Finding 4 — MILP opening A/B PARITY (n=8 result)
+
+Completed `variant_milp_on` vs `variant_milp_off` clean A/B
+(hardcoded constants):
+
+| Metric | Value |
+|---|---|
+| Wins | 4/8 (50.0%) |
+| Wilson 95% | [0.215, 0.785] |
+| Verdict | INCONCLUSIVE (n=8 max-seeds reached) |
+| focal turn-ms | p50=624, p95=747, **max=1018** |
+| Total elapsed | 847.7 s (14 min wallclock) |
+
+The MILP opening planner produces **parity** at n=8 against the no-MILP
+baseline. Wilson width ±28pp at this n; would need n=32+ to claim
+lift or regression definitively, but the point-estimate is exactly
+50% — no directional signal worth escalating.
+
+**Concerning side note:** max focal turn-ms = 1018, right at Kaggle's
+1000ms actTimeout. MILP variant flirts with timeout. The sibling-
+branch `_phase4_step1_FND` push (analytical LP architecture) live μ
+crashed from claimed-local-8/0 to 940 — this timeout proximity may be
+one of the contributing factors (timeout-induced dropped actions →
+chooser fallback).
+
 ## What I'd do next session
 
 1. **Bundle parity verify.** Run the parity-gate on each
