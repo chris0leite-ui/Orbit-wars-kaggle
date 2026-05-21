@@ -882,9 +882,21 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     # planets. 2P-only is the same defensive shape as favor_hybrid_spatial
     # in commit 558bd61. 2P joint v2 A/B 38/64 = 59.4pct (Wlo=0.471,
     # INCONCL-but-positive vs hybrid).
+    # 2026-05-21: 4P gate lifted when BASELINE_JOINT_AGGR=1 OR when the
+    # explicit BASELINE_JOINT_4P=1 env var is set. Without this, AGGR's
+    # `used_tgts` lift creates a silent double-count in 4P: solo emits
+    # can stack on the same target but each is scored in an independent
+    # rollout that assumed it was alone. Lifting the gate runs the real
+    # joint scoring so combined-EV is computed once. Defensive fallout
+    # (the 2026-05-18 audit's concern) is now handled by the reinforce
+    # post-pass in `agents/baseline/main.emit_threat_reinforcements`.
+    joint_4p_allowed = (
+        JOINT_LIFT_USED_TGTS
+        or os.environ.get("BASELINE_JOINT_4P", "0").strip() == "1"
+    )
     joint_enabled = (
         os.environ.get("BASELINE_JOINT", "0").strip() == "1"
-        and int(num_seats) <= 2
+        and (int(num_seats) <= 2 or joint_4p_allowed)
     )
     if (joint_enabled and not use_v3
             and time.perf_counter() <= safe_deadline):
