@@ -45,6 +45,14 @@ os.environ.setdefault("BASELINE_CHOOSER", "trajectory")
 # p95=703ms, zero >1000ms. Set BASELINE_JOINT=0 to disable.
 os.environ.setdefault("BASELINE_JOINT", "1")
 
+# Kinematic precomputation table (Phase γ of
+# /root/.claude/plans/do-it-thoroughly-consider-tingly-fox.md). Replaces
+# the per-call position-rebuild inside predict_fleet_fate with a
+# per-turn-cached lookup. Bit-parity verified by 564 brute-force
+# (FleetFate-level) and 2 full-game byte-identical assertions
+# (seeds 42, 7); wall-clock saves 47-114 ms/step in measured runs.
+os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
+
 # H1 — post-chooser idle drain (2026-05-18) — DISABLED BY DEFAULT.
 # Audit `audit/replays/idle-trajectory-2026-05-17.md` measured 43.8pct
 # isolated ship-turns in trajectory champion (mu=1271.8). H1 attempted

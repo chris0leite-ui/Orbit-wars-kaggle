@@ -34,6 +34,11 @@ from __future__ import annotations
 
 import os
 
+# Kinematic precomputation table — see plan
+# /root/.claude/plans/do-it-thoroughly-consider-tingly-fox.md and
+# agents/analytical_phase_c/main.py. Bit-parity gated.
+os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
+
 from lib.pipeline import compose
 from lib.pipeline.candidates import candidates_default
 from lib.pipeline.commit_persistent import commit_persistent

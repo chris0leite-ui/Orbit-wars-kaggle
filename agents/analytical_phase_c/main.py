@@ -35,6 +35,16 @@ os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
 # only); per-feature toggles also available (LP_REACH_BONUS, etc.).
 os.environ.setdefault("LP_TOPOLOGY_FEATURES", "1")
 
+# Kinematic precomputation table (Phase γ of
+# /root/.claude/plans/do-it-thoroughly-consider-tingly-fox.md). Replaces
+# the per-call position-rebuild inside predict_fleet_fate with a
+# per-turn-cached lookup. Bit-parity verified by 564 brute-force
+# (FleetFate-level) and 2 full-game byte-identical assertions
+# (seeds 42, 7); wall-clock saves 47-114 ms/step in measured runs.
+# `setdefault` so external callers (tests, A/B harnesses) can still
+# override.
+os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
+
 from lib.pipeline import compose
 from lib.pipeline.candidates import candidates_default
 from lib.pipeline.commit_persistent import commit_persistent
