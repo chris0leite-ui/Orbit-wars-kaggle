@@ -126,6 +126,14 @@ def predict_fleet_fate(
     # positions far outside the board so swept_pair_hit can't match.
     OFF_BOARD = (-1e6, -1e6)  # sentinel for "comet has left the board"
     comet_paths = _comet_paths_by_id(world) if world.comet_ids else {}
+    # Env semantics (verified against
+    # kaggle_environments/envs/orbit_wars/orbit_wars.py lines 480-595):
+    # at env step T+1's fleet-movement check, the planet's old_pos is
+    # the position from obs T (planet[2], planet[3]) and new_pos is the
+    # advanced position. positions[0] is therefore the obs-T position
+    # (path[path_index] for comets; predict_relative(.., 0) for orbital);
+    # positions[1] is the obs-T+1 position. With wait_N>0 the fleet
+    # appears at env step T+1+wait_N and positions[0] = obs-T+wait_N.
     planet_positions: dict[int, list[tuple[float, float]]] = {}
     for pid, p in world.planets_by_id.items():
         if int(pid) in comet_paths:
@@ -182,6 +190,24 @@ def predict_fleet_fate(
                 continue
             p_old = positions[step]
             p_new = positions[step + 1]
+            # Comet expiry guard: if EITHER endpoint is the off-board
+            # sentinel, the comet has expired during this step — skip
+            # the collision check entirely. Without this guard,
+            # swept_pair_hit would treat the comet as moving along the
+            # huge sentinel-going segment, falsely matching any fleet
+            # trajectory (the env, however, removes expired comets from
+            # collision resolution — see orbit_wars.py L558-561). This
+            # was the cause of the residual seed-13 OOB: fleet aimed at
+            # "comet 38 at fleet_step 20" — but the comet's path ended
+            # at index 33 (path[14] + 20 == 34), so positions[20] is
+            # OFF_BOARD and the swept check produced a phantom hit;
+            # the env had no comet there, so the fleet sailed past and
+            # exited the board.
+            if (p_old[0] < 0 or p_old[0] > BOARD_SIZE
+                    or p_old[1] < 0 or p_old[1] > BOARD_SIZE
+                    or p_new[0] < 0 or p_new[0] > BOARD_SIZE
+                    or p_new[1] < 0 or p_new[1] > BOARD_SIZE):
+                continue
             prad = world.planets_by_id[pid].radius
             if swept_pair_hit(fleet_old, fleet_new, p_old, p_new, prad):
                 outcome = "target" if pid == target_id else "planet"

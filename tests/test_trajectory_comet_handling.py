@@ -160,6 +160,55 @@ def test_predict_fleet_fate_uses_path_not_stale_position():
     )
 
 
+def test_predict_fleet_fate_no_phantom_hit_on_expiring_comet():
+    """Live seed-13 OOB-reproducer: a comet's path ends mid-trajectory.
+    Pre-fix the off-board sentinel (-1e6, -1e6) used for "expired" path
+    positions caused swept_pair_hit to false-positive — the comet was
+    treated as sweeping along a huge segment toward off-board, which
+    crosses ANY fleet trajectory.
+
+    Effect on live: the fleet was aimed at the phantom "hit position",
+    sailed across the entire board, and exited OOB (seed 13 fid=53,
+    27-step flight ending at (98.83, 31.14)).
+
+    Setup: a comet at (50, 80) with a path that ENDS at index 1 (so the
+    very next index is OFF_BOARD). Fleet's straight-east trajectory at
+    y=10 would CROSS the comet's old-pos-to-sentinel segment if the
+    expiry guard is missing — falsely reporting target=comet. With the
+    fix the predictor must report 'target' (the real target planet) and
+    NOT a phantom comet hit.
+    """
+    # Comet at (50, 45) with path of length 1: positions[0]=path[0]=
+    # (50, 45), positions[1] would be path[1]=OFF_BOARD. The segment
+    # (50, 45) → (-1e6, -1e6) has slope ≈ 1 and the line y = x − 5
+    # crosses the fleet's straight-east path (y=10) at x=15, which is
+    # right at the fleet spawn (15.1, 10) — well within comet radius=2.
+    # Pre-fix predict_fleet_fate sees this as a "comet hit" at
+    # fleet_step 0 and reports outcome='planet' hit_planet_id=20.
+    comet_path = [
+        [50.0, 45.0],
+    ]
+    world, src, tgt, _comet = _build_comet_world(
+        comet_position_now=(50.0, 45.0),
+        comet_path=comet_path, path_index=0,
+    )
+    angle = 0.0  # straight east at y=10 from src(10,10)
+    fate = predict_fleet_fate(src, tgt, angle, ships=10, world=world,
+                              wait_N=0)
+    # Post-fix: comet's "next position" is OFF_BOARD → expiry guard
+    # skips the collision check for this comet entirely → fleet reaches
+    # the real target (planet 1).
+    assert fate.outcome == "target", (
+        f"expected 'target' (comet has expired, fleet should reach "
+        f"planet 1); got {fate.outcome} hit={fate.hit_planet_id} "
+        f"step={fate.step}. If 'planet' with hit_planet_id=20, the "
+        f"sentinel-segment is producing a phantom comet collision."
+    )
+    assert fate.hit_planet_id == 1, (
+        f"expected hit=1 (target planet), got {fate.hit_planet_id}"
+    )
+
+
 def test_predict_fleet_fate_comet_leaves_board():
     """When the path runs out (comet has left the board), the comet
     should not register collisions. Sentinel positions far off the
