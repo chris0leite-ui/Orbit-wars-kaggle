@@ -45,13 +45,17 @@ def _worker_play(args: tuple[int, str, str, bool]) -> dict:
         "r0 = final[0]['reward']; r1 = final[1]['reward'];"
         "print(json.dumps({'r0': r0, 'r1': r1, 'n_steps': len(env.steps), 'wall': wall}))"
     ) % (str(REPO), int(seed), str(p0_path), str(p1_path))
-    proc = subprocess.run(
-        [sys.executable, "-c", code],
-        env={**os.environ},  # clean shell env per game
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            env={**os.environ},  # clean shell env per game
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+    except subprocess.TimeoutExpired as e:
+        return {"seed": seed, "focal_is_p0": focal_is_p0, "outcome": "timeout",
+                "stderr": f"timed out after {e.timeout}s"}
     out = (proc.stdout or "").strip().splitlines()
     # The kaggle_environments registry prints chatter to stdout; the JSON is the LAST line.
     line = next((l for l in reversed(out) if l.startswith("{")), "")
@@ -90,6 +94,12 @@ def wilson_ci(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 def main() -> int:
+    # Line-buffer stdout so prints flush per-game even under shell redirect.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
     ap = argparse.ArgumentParser()
     ap.add_argument("focal")
     ap.add_argument("opp")
@@ -115,20 +125,24 @@ def main() -> int:
     with ProcessPoolExecutor(max_workers=args.workers) as ex:
         futs = [ex.submit(_worker_play, t) for t in tasks]
         for fut in as_completed(futs):
-            r = fut.result()
+            try:
+                r = fut.result()
+            except Exception as e:
+                # Don't let a single worker explosion kill the whole A/B.
+                r = {"outcome": "error", "stderr": f"worker raised: {type(e).__name__}: {e}"[:400]}
             results.append(r)
             tag = "WIN" if r.get("focal_won") else ("LOSS" if r.get("outcome") in ("p0_win","p1_win") else r.get("outcome","?"))
-            print(f"   seed={r.get('seed','?'):>4}  seat={'P0' if r.get('focal_is_p0') else 'P1'}  "
-                  f"{tag:>5}  steps={r.get('n_steps','-')}  wall={r.get('wall',0):.1f}s")
+            print(f"   seed={r.get('seed','?'):>4}  seat={'P0' if r.get('focal_is_p0') else 'P1' if r.get('focal_is_p0') is not None else '-'}  "
+                  f"{tag:>7}  steps={r.get('n_steps','-')}  wall={r.get('wall',0):.1f}s")
     wins = sum(1 for r in results if r.get("focal_won"))
-    errs = sum(1 for r in results if r.get("outcome") == "error")
+    errs = sum(1 for r in results if r.get("outcome") in ("error", "timeout"))
     n = len(results) - errs
     if n == 0:
         print("\n   ALL ERROR — no usable games")
         return 1
     lo, hi = wilson_ci(wins, n)
     elapsed = time.perf_counter() - t0
-    print(f"\n   focal_wins={wins}/{n} ({100*wins/n:.1f}%)  errs={errs}  "
+    print(f"\n   focal_wins={wins}/{n} ({100*wins/n:.1f}%)  errs/timeouts={errs}  "
           f"Wilson[{lo:.3f}, {hi:.3f}]  elapsed={elapsed:.0f}s")
     return 0
 
