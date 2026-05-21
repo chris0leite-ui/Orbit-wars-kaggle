@@ -193,6 +193,23 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
     was Slice 3's run, ran 45 min, returned Wlo=0.366 INCONCLUSIVE.
     The single-game introspect (5 min) would have shown the same
     architectural failure mode much faster.
+42. **Audit each library primitive against the entity types it may
+    be invoked on.** Three exemplars of the same bug class have now
+    landed in this comp: (a) `predict_fleet_fate` modeled every
+    planet as orbiting and broke on comets (commit `d9feee2`); (b)
+    the same primitive accepted an off-board sentinel for expired
+    comets and emitted phantom collisions (`1daec97`); (c)
+    `time_to_enemy_threat` modeled positions as static at our
+    arrival and silently mis-scored orbiting captures (`f1774a7`),
+    with sibling `_followon_hold_estimate` (this session). When
+    introducing or modifying a primitive that consumes Planet /
+    Fleet / Comet data, enumerate the entity types it might see
+    (orbiting / static / comet / expired-comet / empty) and write
+    a test for each. Sibling primitives that share the same input
+    type (`Planet`-position math callers) MUST be swept the same
+    cycle — a bug in one almost always has a sibling. Origin:
+    2026-05-21 foundation-hardening pass; PI-ratified after the
+    third instance.
 
 ## Defaults from prior-comp postmortem
 

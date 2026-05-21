@@ -37,6 +37,19 @@ def eta_proxy(mine: Planet, target: Planet) -> int:
     Uses `fleet_speed(target.ships + 1)` as the speed proxy — this is the
     speed of the minimum-cover fleet a strategy would send before
     `arrival_size` inflates it. Returns 0 for zero-distance pairs.
+
+    CAVEAT (PI 2026-05-21 sweep): returns CURRENT-position distance /
+    fleet_speed. NOT a future-arrival prediction. Callers wanting "ETA
+    if we launched now and the target rotated to its position at
+    arrival" must project the target via
+    `lib.orbit.predict_relative(target_tuple, omega, eta_proxy_result)`
+    and iterate to convergence (mirror `lib.aim.aim_orbiting`'s
+    fixed-point pattern). Misuse will silently mis-score orbiting-
+    target captures — same bug class as the
+    `WorldModel.time_to_enemy_threat` fix at commit `f1774a7`. Current
+    callers (snipe.py ROI denominator, mission distance heuristics)
+    use this as a snapshot cost proxy, not a future projection — so
+    SAFE today, but the assumption is fragile.
     """
     d = dist((mine.x, mine.y), (target.x, target.y))
     if d == 0.0:

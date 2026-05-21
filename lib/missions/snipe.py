@@ -33,11 +33,13 @@ be ours with surplus garrison at our fleet's arrival step.
 from __future__ import annotations
 
 import math
+import os
 
 from lib.fleet import speed as fleet_speed
 from lib.geometry import danger_3nn
 from lib.intent import World
 from lib.mission import Mission
+from lib.orbit import is_orbiting, predict_relative
 from lib.scoring import DANGER3_KAPPA, MIN_DANGER3_MULT, PV_GAMMA, expected_hold, pv_horizon
 from lib.world_model import WorldModel, comet_remaining_lifetime
 
@@ -207,14 +209,50 @@ def _followon_hold_estimate(
 
     Like `expected_hold` but explicitly EXCLUDES `target` from the
     enemy threat set, because we're about to flip target to our side.
+
+    PI 2026-05-21 fix (orbital arrival safety, sibling of
+    `WorldModel.time_to_enemy_threat`): when
+    `BASELINE_ORBITAL_SAFETY=1` and the board is rotating, predict
+    both `followon` and each enemy planet's position at our capture
+    tick `f_eta` before computing the distance. Previously used
+    CURRENT positions — silently wrong for orbiting followons that
+    rotate INTO enemy territory by `f_eta` ticks, returning a long
+    hold horizon for follow-on captures we'd immediately lose.
+    Inbound enemy fleets arriving before our capture are filtered
+    (combat resolution at our capture handles those). Gated for
+    backwards compat; default OFF preserves submitted-bundle parity.
     """
     step_now = int(world.step)
     remaining = max(0, EPISODE_STEPS - step_now - f_eta)
     if remaining == 0:
         return 0
 
-    # In-flight enemy fleets toward followon — keep as-is.
-    best: int | None = model.incoming_enemy_eta(followon.id, my_id)
+    omega = float(getattr(world, "omega", 0.0))
+    use_orbital_safety = (
+        os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1"
+        and omega != 0.0
+        and f_eta > 0
+    )
+
+    # In-flight enemy fleets toward followon — when orbital safety is
+    # ON, drop those arriving before our capture (combat resolution at
+    # our capture handles pre-arrival inbound fleets).
+    inbound = model.incoming_enemy_eta(followon.id, my_id)
+    if use_orbital_safety and inbound is not None and inbound < f_eta:
+        best: int | None = None
+    else:
+        best = inbound
+
+    # Followon position at our capture tick.
+    if use_orbital_safety:
+        followon_tuple = [followon.id, followon.owner, followon.x, followon.y,
+                          followon.radius, followon.ships, followon.production]
+        if is_orbiting(followon_tuple):
+            fx, fy = predict_relative(followon_tuple, omega, f_eta)
+        else:
+            fx, fy = float(followon.x), float(followon.y)
+    else:
+        fx, fy = float(followon.x), float(followon.y)
 
     # Potential launches from each enemy planet EXCEPT the target.
     for p in world.planets_by_id.values():
@@ -224,15 +262,38 @@ def _followon_hold_estimate(
             continue
         if p.ships <= 0:
             continue
-        dx = followon.x - p.x
-        dy = followon.y - p.y
+        if use_orbital_safety:
+            p_tuple = [p.id, p.owner, p.x, p.y,
+                       p.radius, p.ships, p.production]
+            if is_orbiting(p_tuple):
+                px, py = predict_relative(p_tuple, omega, f_eta)
+            else:
+                px, py = float(p.x), float(p.y)
+        else:
+            px, py = float(p.x), float(p.y)
+        dx = fx - px
+        dy = fy - py
         d = math.hypot(dx, dy)
         v = fleet_speed(int(p.ships))
         if v <= 0:
             continue
-        eta = int(math.ceil(d / v))
-        if best is None or eta < best:
-            best = eta
+        eta_travel = int(math.ceil(d / v))
+        # Threat ETA semantics: when orbital safety is OFF, this is
+        # "travel time from now" (legacy); when ON, this is "travel
+        # time from f_eta" — both sides of the subtraction below use
+        # the same baseline, so the `hold = best - f_eta` computation
+        # below preserves the original semantics for backwards compat
+        # AND adds f_eta to the threat under the new path. To keep the
+        # hold formula uniform, store `best` in pre-arrival-frame: in
+        # ON mode the threat arrives at `f_eta + eta_travel` ticks
+        # from now, so subtracting f_eta gives `eta_travel` directly.
+        if use_orbital_safety:
+            threat_total = f_eta + eta_travel
+            if best is None or threat_total < best:
+                best = threat_total
+        else:
+            if best is None or eta_travel < best:
+                best = eta_travel
 
     if best is None:
         return remaining

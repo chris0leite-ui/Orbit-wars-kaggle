@@ -18,6 +18,14 @@ from __future__ import annotations
 
 import os
 
+# Foundation hardening (PI 2026-05-21): enable orbital arrival safety
+# in `WorldModel.time_to_enemy_threat` and `snipe._followon_hold_estimate`.
+# The gate defaults OFF in the source for backwards compat with submitted
+# sub 52872093; the bundled analytical agent always wants it ON because
+# expected_hold and capture-EV scoring were silently mis-scoring orbiting
+# captures. `setdefault` so an external caller can still override.
+os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
+
 from lib.pipeline import compose
 from lib.pipeline.candidates import candidates_default
 from lib.pipeline.commit_persistent import commit_persistent
