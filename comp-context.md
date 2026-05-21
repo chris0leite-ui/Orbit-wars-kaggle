@@ -157,6 +157,24 @@ final_evaluation:
   visible_lb: best-scoring of your bots; track all via Submissions page
 ```
 
+## Execution environment (Kaggle eval, per discussion 700191)
+
+```yaml
+cpu:                1.6 cores per player (corrected; earlier audit cited 0.6 — see footnote in audit/2026-05-13-day-1-audits.md K-section)
+ram:                8 GB per player
+wallclock_per_turn: 1.0 s          # hard cap; exceeding consumes overage
+overage_budget:     60 s total per episode  # absorbed across the game, not per turn
+process_lifecycle:  fresh Python process per episode (state does NOT persist between games)
+module_caches:      OK within an episode  # imports, numba JIT, lru_cache all valid for the duration
+hardware:           uniform across players (no per-player perf variance)
+```
+
+Implications:
+- Per-turn budget of 1 s × 500 steps = 500 s baseline, + 60 s overage = 560 s total wall time per episode (one seat).
+- Slow turns (e.g. opening-MILP, joint enumeration) draw from the 60 s overage pool; bursty cost is fine, sustained cost is not.
+- `os.environ.setdefault(...)` at module top of bundle DOES take effect per episode (fresh process re-runs it).
+- The 0.6 CPU number used in 2026-05-13 K-audit was incorrect; with 1.6 CPU the headroom is ~2.7× what the audit measured. Verdict (PASS) stands with more headroom; agents up to ~600 ms p99 (vs the old 0.6-CPU extrapolation of 444 ms) fit comfortably.
+
 ## Strategic decisions (PI-answered, batched on Day 1)
 
 ```yaml
