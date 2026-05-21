@@ -1,38 +1,38 @@
 {
   "submission_id": "52710995",
-  "generated_utc": "2026-05-17T10:10:32Z",
+  "generated_utc": "2026-05-21T18:44:01Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 92,
-  "n_played": 92,
-  "wins_total": 41,
-  "winrate_total": 0.44565217391304346,
+  "n_episodes": 100,
+  "n_played": 100,
+  "wins_total": 45,
+  "winrate_total": 0.45,
   "by_size": {
     "2": {
-      "n": 52,
-      "wins": 27,
-      "winrate": 0.5192307692307693
+      "n": 55,
+      "wins": 28,
+      "winrate": 0.509090909090909
     },
     "4": {
-      "n": 40,
-      "wins": 14,
-      "winrate": 0.35
+      "n": 45,
+      "wins": 17,
+      "winrate": 0.37777777777777777
     }
   },
   "self_match_episodes": 1,
   "seat_distribution": {
-    "0": 33,
-    "1": 39,
-    "2": 10,
-    "3": 11
+    "0": 36,
+    "1": 41,
+    "2": 11,
+    "3": 13
   },
   "episode_length_steps": {
-    "n": 92,
+    "n": 100,
     "min": 99,
     "q1": 157,
     "median": 203,
     "q3": 272,
     "max": 500,
-    "mean": 227.02173913043478
+    "mean": 227.88
   },
   "opponents": [
     {
@@ -56,6 +56,11 @@
       "beat_us": 1
     },
     {
+      "name": "mtmr_s1",
+      "seen": 4,
+      "beat_us": 0
+    },
+    {
       "name": "ReLU",
       "seen": 3,
       "beat_us": 0
@@ -66,9 +71,24 @@
       "beat_us": 3
     },
     {
+      "name": "Himeno",
+      "seen": 3,
+      "beat_us": 0
+    },
+    {
+      "name": "breso",
+      "seen": 3,
+      "beat_us": 0
+    },
+    {
       "name": "Jake Will",
       "seen": 3,
       "beat_us": 0
+    },
+    {
+      "name": "mmath2",
+      "seen": 3,
+      "beat_us": 1
     },
     {
       "name": "vkhydras",
@@ -91,14 +111,14 @@
       "beat_us": 0
     },
     {
+      "name": "penguin46",
+      "seen": 3,
+      "beat_us": 2
+    },
+    {
       "name": "vova sivanev",
       "seen": 3,
       "beat_us": 1
-    },
-    {
-      "name": "mtmr_s1",
-      "seen": 3,
-      "beat_us": 0
     },
     {
       "name": "Takuya Inoue",
@@ -131,19 +151,14 @@
       "beat_us": 2
     },
     {
-      "name": "Himeno",
-      "seen": 2,
-      "beat_us": 0
-    },
-    {
       "name": "Forrest",
       "seen": 2,
       "beat_us": 1
     },
     {
-      "name": "breso",
+      "name": "Sukjae Cho",
       "seen": 2,
-      "beat_us": 0
+      "beat_us": 1
     },
     {
       "name": "gasin",
@@ -156,9 +171,9 @@
       "beat_us": 1
     },
     {
-      "name": "mmath2",
+      "name": "Naoism",
       "seen": 2,
-      "beat_us": 1
+      "beat_us": 0
     },
     {
       "name": "Boey",
@@ -172,11 +187,6 @@
     },
     {
       "name": "Komil Parmar",
-      "seen": 2,
-      "beat_us": 1
-    },
-    {
-      "name": "penguin46",
       "seen": 2,
       "beat_us": 1
     },
@@ -199,6 +209,26 @@
       "name": "Bora Erk\u0131l\u0131\u00e7",
       "seen": 2,
       "beat_us": 0
+    },
+    {
+      "name": "Claws",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "HY2017",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "senkin13",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "K_ChanHo",
+      "seen": 2,
+      "beat_us": 1
     },
     {
       "name": "Anti",
@@ -351,11 +381,6 @@
       "beat_us": 0
     },
     {
-      "name": "Sukjae Cho",
-      "seen": 1,
-      "beat_us": 1
-    },
-    {
       "name": "Slawek Biel",
       "seen": 1,
       "beat_us": 1
@@ -402,11 +427,6 @@
     },
     {
       "name": "A. R. SEKKAT",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
-      "name": "Naoism",
       "seen": 1,
       "beat_us": 0
     },
@@ -464,11 +484,6 @@
       "name": "you don't need RL",
       "seen": 1,
       "beat_us": 0
-    },
-    {
-      "name": "Claws",
-      "seen": 1,
-      "beat_us": 1
     },
     {
       "name": "keyrox",
@@ -581,16 +596,6 @@
       "beat_us": 0
     },
     {
-      "name": "HY2017",
-      "seen": 1,
-      "beat_us": 1
-    },
-    {
-      "name": "senkin13",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "typeIIIfairy",
       "seen": 1,
       "beat_us": 0
@@ -601,9 +606,39 @@
       "beat_us": 0
     },
     {
-      "name": "K_ChanHo",
+      "name": "Hem Viramgama",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "yuto083",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "currypurin",
       "seen": 1,
       "beat_us": 1
+    },
+    {
+      "name": "ush",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Roche Overflow",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Viltrum Empire",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Felipe Ferreira",
+      "seen": 1,
+      "beat_us": 0
     }
   ],
   "losses": [
@@ -1117,6 +1152,46 @@
       ],
       "winner": "K_ChanHo",
       "steps": 289
+    },
+    {
+      "episode": "episode-76853234",
+      "size": 2,
+      "opponents": [
+        "currypurin"
+      ],
+      "winner": "currypurin",
+      "steps": 124
+    },
+    {
+      "episode": "episode-76854506",
+      "size": 4,
+      "opponents": [
+        "Naoism",
+        "ush",
+        "mmath2"
+      ],
+      "winner": "ush",
+      "steps": 207
+    },
+    {
+      "episode": "episode-76856111",
+      "size": 2,
+      "opponents": [
+        "Viltrum Empire"
+      ],
+      "winner": "Viltrum Empire",
+      "steps": 140
+    },
+    {
+      "episode": "episode-76858264",
+      "size": 4,
+      "opponents": [
+        "Claws",
+        "penguin46",
+        "K_ChanHo"
+      ],
+      "winner": "penguin46",
+      "steps": 250
     }
   ]
 }

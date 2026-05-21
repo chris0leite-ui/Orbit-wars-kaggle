@@ -53,6 +53,11 @@ audit/live-episodes/*/episode-*.json
 audit/live-episodes/*/postmortem/postmortem-*.json
 !audit/live-episodes/*/postmortem/roll-up.json
 
+# Community-published daily episode dumps (kaggle/orbit-wars-episodes-*).
+# ~18 GB per day after filtering; regeneratable via
+# scripts/community_replay_filter.py + the Kaggle CLI.
+audit/community-replays/
+
 # Parallel-branch agents extracted via `git show` for cross-architecture
 # A/B comparisons (see audit/2026-05-11-v3-snipe-critical-review.md §6.5).
 # Source of truth lives on its own branch; we don't track a copy here.

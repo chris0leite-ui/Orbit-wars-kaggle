@@ -1,44 +1,54 @@
 {
   "submission_id": "52588156",
-  "generated_utc": "2026-05-13T17:31:34Z",
+  "generated_utc": "2026-05-21T18:46:31Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 96,
-  "n_played": 96,
-  "wins_total": 46,
-  "winrate_total": 0.4791666666666667,
+  "n_episodes": 118,
+  "n_played": 118,
+  "wins_total": 56,
+  "winrate_total": 0.4745762711864407,
   "by_size": {
     "2": {
-      "n": 46,
-      "wins": 25,
-      "winrate": 0.5434782608695652
+      "n": 54,
+      "wins": 29,
+      "winrate": 0.5370370370370371
     },
     "4": {
-      "n": 50,
-      "wins": 21,
-      "winrate": 0.42
+      "n": 64,
+      "wins": 27,
+      "winrate": 0.421875
     }
   },
   "self_match_episodes": 1,
   "seat_distribution": {
-    "0": 35,
-    "1": 34,
-    "2": 13,
-    "3": 15
+    "0": 41,
+    "1": 44,
+    "2": 14,
+    "3": 20
   },
   "episode_length_steps": {
-    "n": 96,
+    "n": 118,
     "min": 99,
-    "q1": 148,
-    "median": 188,
+    "q1": 147,
+    "median": 185,
     "q3": 230,
     "max": 500,
-    "mean": 206.03125
+    "mean": 203.9406779661017
   },
   "opponents": [
     {
       "name": "kei-sho",
-      "seen": 5,
+      "seen": 6,
       "beat_us": 3
+    },
+    {
+      "name": "Kha Vo",
+      "seen": 4,
+      "beat_us": 2
+    },
+    {
+      "name": "siman",
+      "seen": 4,
+      "beat_us": 0
     },
     {
       "name": "Qixiu",
@@ -51,9 +61,24 @@
       "beat_us": 0
     },
     {
+      "name": "\u8036\u270c",
+      "seen": 4,
+      "beat_us": 3
+    },
+    {
+      "name": "mason McClintic",
+      "seen": 4,
+      "beat_us": 2
+    },
+    {
       "name": "Hung Nguyen",
       "seen": 3,
       "beat_us": 1
+    },
+    {
+      "name": "OlivierS",
+      "seen": 3,
+      "beat_us": 0
     },
     {
       "name": "OrbitalDominator \ud83d\ude80",
@@ -61,12 +86,12 @@
       "beat_us": 2
     },
     {
-      "name": "Sliver Legion",
+      "name": "\ud83d\udef0\ufe0f Low-Orbit Losers",
       "seen": 3,
-      "beat_us": 2
+      "beat_us": 1
     },
     {
-      "name": "\u8036\u270c",
+      "name": "Sliver Legion",
       "seen": 3,
       "beat_us": 2
     },
@@ -79,6 +104,16 @@
       "name": "TensorFlower",
       "seen": 3,
       "beat_us": 2
+    },
+    {
+      "name": "Komil Parmar",
+      "seen": 3,
+      "beat_us": 1
+    },
+    {
+      "name": "lucasdeoferreira",
+      "seen": 3,
+      "beat_us": 0
     },
     {
       "name": "001",
@@ -116,11 +151,6 @@
       "beat_us": 0
     },
     {
-      "name": "Kha Vo",
-      "seen": 2,
-      "beat_us": 2
-    },
-    {
       "name": "vkhydras",
       "seen": 2,
       "beat_us": 1
@@ -146,12 +176,17 @@
       "beat_us": 1
     },
     {
+      "name": "Mathurin Ache",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
       "name": "Vojtech Franc",
       "seen": 2,
       "beat_us": 0
     },
     {
-      "name": "OlivierS",
+      "name": "Alexey Yurasov",
       "seen": 2,
       "beat_us": 0
     },
@@ -181,6 +216,11 @@
       "beat_us": 0
     },
     {
+      "name": "F\u00e9lix Truong",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
       "name": "Ted K",
       "seen": 2,
       "beat_us": 2
@@ -191,9 +231,9 @@
       "beat_us": 0
     },
     {
-      "name": "\ud83d\udef0\ufe0f Low-Orbit Losers",
+      "name": "corky",
       "seen": 2,
-      "beat_us": 1
+      "beat_us": 0
     },
     {
       "name": "LJL\u2665",
@@ -201,7 +241,47 @@
       "beat_us": 0
     },
     {
+      "name": "if_else_wins",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "RISHAV KUMAR",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "Longkun Shi (Candyman)",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "SonOfNike",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
       "name": "lolzPPO",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "monnu",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "Talim Aushakhman",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "Ethan Tang",
+      "seen": 2,
+      "beat_us": 2
+    },
+    {
+      "name": "Reinhard",
       "seen": 2,
       "beat_us": 1
     },
@@ -396,11 +476,6 @@
       "beat_us": 0
     },
     {
-      "name": "Mathurin Ache",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "Om Chimurkar",
       "seen": 1,
       "beat_us": 0
@@ -437,11 +512,6 @@
     },
     {
       "name": "MarkDjadchenko",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
-      "name": "Alexey Yurasov",
       "seen": 1,
       "beat_us": 0
     },
@@ -487,11 +557,6 @@
     },
     {
       "name": "aaa",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
-      "name": "F\u00e9lix Truong",
       "seen": 1,
       "beat_us": 0
     },
@@ -561,11 +626,6 @@
       "beat_us": 0
     },
     {
-      "name": "siman",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "B. Zhang",
       "seen": 1,
       "beat_us": 0
@@ -616,11 +676,6 @@
       "beat_us": 1
     },
     {
-      "name": "corky",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "Bora Erk\u0131l\u0131\u00e7",
       "seen": 1,
       "beat_us": 1
@@ -656,22 +711,7 @@
       "beat_us": 0
     },
     {
-      "name": "if_else_wins",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "winstonton",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
-      "name": "RISHAV KUMAR",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
-      "name": "Longkun Shi (Candyman)",
       "seen": 1,
       "beat_us": 0
     },
@@ -682,11 +722,6 @@
     },
     {
       "name": "Slawek Biel",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
-      "name": "SonOfNike",
       "seen": 1,
       "beat_us": 0
     },
@@ -721,11 +756,6 @@
       "beat_us": 0
     },
     {
-      "name": "monnu",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "soso",
       "seen": 1,
       "beat_us": 1
@@ -736,22 +766,7 @@
       "beat_us": 0
     },
     {
-      "name": "Talim Aushakhman",
-      "seen": 1,
-      "beat_us": 1
-    },
-    {
       "name": "kglctf",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
-      "name": "Komil Parmar",
-      "seen": 1,
-      "beat_us": 1
-    },
-    {
-      "name": "lucasdeoferreira",
       "seen": 1,
       "beat_us": 0
     },
@@ -774,6 +789,101 @@
       "name": "kgrou0",
       "seen": 1,
       "beat_us": 0
+    },
+    {
+      "name": "CRV5230",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "linrock",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "nesya",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Mille Initiate",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Forrest",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "saihyou",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "HassenHamdi Winning InchaAllah",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "dekaineko",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "TJ Carino",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Knight of Favonius",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "NANACHI",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Simon R\u00fcba",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Anh Ph\u00e1t T\u00f4",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Hailstorm",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Tim Krige",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Masashi Nishimoto",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Qiwei",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Stefan Berger",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Gypaets",
+      "seen": 1,
+      "beat_us": 1
     }
   ],
   "losses": [
@@ -1284,6 +1394,130 @@
       ],
       "winner": "Komil Parmar",
       "steps": 192
+    },
+    {
+      "episode": "episode-76476107",
+      "size": 4,
+      "opponents": [
+        "linrock",
+        "nesya",
+        "Mille Initiate"
+      ],
+      "winner": "nesya",
+      "steps": 416
+    },
+    {
+      "episode": "episode-76478260",
+      "size": 4,
+      "opponents": [
+        "siman",
+        "Ethan Tang",
+        "mason McClintic"
+      ],
+      "winner": "Ethan Tang",
+      "steps": 320
+    },
+    {
+      "episode": "episode-76478428",
+      "size": 2,
+      "opponents": [
+        "F\u00e9lix Truong"
+      ],
+      "winner": "F\u00e9lix Truong",
+      "steps": 117
+    },
+    {
+      "episode": "episode-76480581",
+      "size": 4,
+      "opponents": [
+        "mason McClintic",
+        "Komil Parmar",
+        "dekaineko"
+      ],
+      "winner": "mason McClintic",
+      "steps": 152
+    },
+    {
+      "episode": "episode-76480936",
+      "size": 4,
+      "opponents": [
+        "\ud83d\udef0\ufe0f Low-Orbit Losers",
+        "TJ Carino",
+        "Reinhard"
+      ],
+      "winner": "Reinhard",
+      "steps": 278
+    },
+    {
+      "episode": "episode-76481626",
+      "size": 4,
+      "opponents": [
+        "Reinhard",
+        "kei-sho",
+        "Knight of Favonius"
+      ],
+      "winner": "Knight of Favonius",
+      "steps": 203
+    },
+    {
+      "episode": "episode-76482072",
+      "size": 4,
+      "opponents": [
+        "mason McClintic",
+        "NANACHI",
+        "Simon R\u00fcba"
+      ],
+      "winner": "NANACHI",
+      "steps": 153
+    },
+    {
+      "episode": "episode-76484522",
+      "size": 2,
+      "opponents": [
+        "\u8036\u270c"
+      ],
+      "winner": "\u8036\u270c",
+      "steps": 104
+    },
+    {
+      "episode": "episode-76485100",
+      "size": 2,
+      "opponents": [
+        "mason McClintic"
+      ],
+      "winner": "mason McClintic",
+      "steps": 179
+    },
+    {
+      "episode": "episode-76486148",
+      "size": 2,
+      "opponents": [
+        "Longkun Shi (Candyman)"
+      ],
+      "winner": "Longkun Shi (Candyman)",
+      "steps": 221
+    },
+    {
+      "episode": "episode-76488422",
+      "size": 4,
+      "opponents": [
+        "Ethan Tang",
+        "Masashi Nishimoto",
+        "Qiwei"
+      ],
+      "winner": "Ethan Tang",
+      "steps": 198
+    },
+    {
+      "episode": "episode-76489488",
+      "size": 4,
+      "opponents": [
+        "Gypaets",
+        "siman",
+        "Mathurin Ache"
+      ],
+      "winner": "Gypaets",
+      "steps": 167
     }
   ]
 }
