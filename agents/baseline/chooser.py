@@ -152,7 +152,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     # Closes the long-tail max-turn-ms overrun seen in the 2026-05-17 A/B.
     safe_deadline = deadline - (per_cand_ms / 1000.0)
     validated: list[tuple] = []
-    for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
+    for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N, *_ in top:
         if time.perf_counter() > safe_deadline:
             break
         delta = score_action(

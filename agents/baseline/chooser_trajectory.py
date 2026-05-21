@@ -697,7 +697,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     # horizon already accounts for the wait via
     # `w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)`).
     max_horizon_seen = 0
-    for cheap_delta, src, tgt, ships, angle, eta_hint, h, wait_N in prerank:
+    for cheap_delta, src, tgt, ships, angle, eta_hint, h, wait_N, *_ in prerank:
         if int(h) > max_horizon_seen:
             max_horizon_seen = int(h)
 
@@ -727,7 +727,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     scored: list[tuple] = []
     solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0
     cand_count = 0
-    for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
+    for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N, *_ in prerank:
         if cand_count >= cap:
             break
         if not use_v3 and time.perf_counter() > safe_deadline:
@@ -774,7 +774,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         # Group prerank by target_id. Take top-K solo candidates per
         # target by cheap_delta; pair-enumerate.
         by_tgt: dict[int, list] = {}
-        for cd, src, tgt, ships, angle, eta_hint, ph, wn in prerank:
+        for cd, src, tgt, ships, angle, eta_hint, ph, wn, *_ in prerank:
             if int(wn) != 0:
                 continue  # v1: fire-now joints only
             by_tgt.setdefault(int(tgt.id), []).append(

@@ -76,7 +76,7 @@ def _compute_candidate_value(c, world, model, me: int,
     Zero values get mapped to the noop column at LP-build time; the
     LP never emits them.
     """
-    cheap_delta, src, tgt, ships, angle, eta, horizon_hint, wait_N = c
+    cheap_delta, src, tgt, ships, angle, eta, horizon_hint, wait_N, *_ = c
 
     # Wait-N>0 filter — same single-turn restriction as Slice 8c.
     if int(wait_N) != 0:
@@ -153,7 +153,7 @@ def _build_assignment_matrix(prerank, world, model, me: int,
     src_id_set: set = set()
     pair_to_best: dict = {}  # (src_id, tgt_id) → (best_value, candidate)
     for c in prerank:
-        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N = c
+        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N, *_ = c
         sid = int(src.id)
         src_id_set.add(sid)
         value = _compute_candidate_value(c, world, model, int(me), gamma)
@@ -230,7 +230,7 @@ def _solve_and_extract(cost_matrix, col_to_candidate) -> list:
         if int(j) not in col_to_candidate:
             continue  # noop column — source picked "don't launch"
         c = col_to_candidate[int(j)]
-        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N = c
+        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N, *_ = c
         if int(wait_N) != 0:
             continue  # belt-and-suspenders (value-compute already filters)
         sid = int(src.id)

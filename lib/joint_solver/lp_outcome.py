@@ -168,19 +168,41 @@ def _build_per_planet_arrivals(
         if len(cols) > MAX_CONTESTERS_PER_PLANET:
             forced = [c for c in cols if int(c.column_id) in parent_keepset]
             optional = [c for c in cols if int(c.column_id) not in parent_keepset]
-            # Bug #7: secondary sort keys so prerank_passthrough's
-            # uniform value=1.0 doesn't yield non-deterministic survivors.
-            # Prefer higher ships, earlier launches (smaller wait_N),
-            # smaller column_id (id-ascending for stable identity tie-break).
-            optional.sort(
-                key=lambda c: (
-                    float(c.value),
-                    int(c.ships),
-                    -int(c.wait_N),
-                    -int(c.column_id),
-                ),
-                reverse=True,
+            # Tier-aware sort (2026-05-21 night): make tier_class the
+            # PRIMARY sort key so spec-min columns sort first, buffered
+            # second, and other overkill last. Pre-fix tiebreak was
+            # (value, ships, -wait_N, -column_id) — for prerank_passthrough's
+            # uniform value=1.0 this collapsed to "highest ships wins",
+            # so when many sources competed for the per-target cap,
+            # spec-min / buffered (smaller ships) were always pruned in
+            # favor of full-budget columns. The proposer-level dedup
+            # (`tier_band` in proposer.py) already keeps spec-min /
+            # buffered / other-overkill in separate buckets per
+            # (src, tgt, wait_band); the prefilter just needs to spend
+            # the cap budget on diverse tiers, not redundant overkill
+            # from different sources. tier_class mirrors
+            # `agents.baseline.proposer.tier_band`: 0=spec_min, 1=buffered,
+            # 2=other-overkill (double / budget / wait / unknown).
+            def _tier_class(c) -> int:
+                tier = getattr(c, "tier", "unknown")
+                if tier == "spec_min":
+                    return 0
+                if tier == "buffered":
+                    return 1
+                return 2
+            # Sort key reversed (largest wins). For descending order,
+            # negate tier_class so spec_min (=0 → 0) > buffered (=1 → -1)
+            # > overkill (=2 → -2). Within a tier_class the existing
+            # value / ships / wait_N / column_id tiebreaks apply, so the
+            # Bug #7 determinism guarantee is preserved.
+            sort_key = lambda c: (
+                -_tier_class(c),
+                float(c.value),
+                int(c.ships),
+                -int(c.wait_N),
+                -int(c.column_id),
             )
+            optional.sort(key=sort_key, reverse=True)
             budget = max(0, MAX_CONTESTERS_PER_PLANET - len(forced))
             cols = forced + optional[:budget]
 

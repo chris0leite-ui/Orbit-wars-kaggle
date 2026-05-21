@@ -482,7 +482,7 @@ def w1_dominance_classify(prerank, world, model, me: int, *, gamma: float = 0.99
     by_src: dict = {}
     bounds_by_id: dict = {}
     for c in prerank:
-        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N = c
+        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N, *_ = c
         if int(tgt.owner) == int(me):
             continue  # W2's territory
         lo, hi = _w1_value_bounds(
@@ -597,7 +597,7 @@ def l2_dominance_prune(candidates):
     groups: dict = {}
     order: list = []
     for idx, c in enumerate(candidates):
-        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N = c
+        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N, *_ = c
         key = (int(src.id), int(tgt.id))
         if key not in groups:
             groups[key] = []

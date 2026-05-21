@@ -124,7 +124,7 @@ def test_partial_budget_candidates_enable_bundle():
                       baseline_len=50)
     by_src = {int(p.id): 0 for p in my_planets}
     for entry in prerank:
-        _cheap, src, tgt, _ships, _angle, _eta, _h, _w = entry
+        _cheap, src, tgt, _ships, _angle, _eta, _h, _w, *_ = entry
         if int(tgt.id) == 10:
             by_src[int(src.id)] = by_src.get(int(src.id), 0) + 1
     missing = [sid for sid, n in by_src.items() if n == 0]

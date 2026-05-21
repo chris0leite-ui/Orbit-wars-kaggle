@@ -716,7 +716,7 @@ def choose_roi(
     solo_scored: list = []  # (score, src, tgt, ships, angle, wait_N)
     solo_by_target: dict[int, list] = {}
     for entry in prerank:
-        _cheap, src, tgt, ships_orig, angle, eta, _horizon, wait_N = entry
+        _cheap, src, tgt, ships_orig, angle, eta, _horizon, wait_N, *_ = entry
         src_ships_at_fire = int(src.ships) + int(wait_N) * int(src.production)
         max_safe_at_fire = max(0, src_ships_at_fire - MIN_SOLO_RESIDUE)
 

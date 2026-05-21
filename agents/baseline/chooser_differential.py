@@ -205,7 +205,7 @@ def score_candidate_differential(c, world, model, me: int, num_seats: int,
     Returns `leaf_favor(with action) - leaf_favor(idle baseline)`.
     No fast_sim, no opp policy.
     """
-    cheap_delta, src, tgt, ships, angle, eta, horizon_hint, wait_N = c
+    cheap_delta, src, tgt, ships, angle, eta, horizon_hint, wait_N, *_ = c
     arrival = int(wait_N) + int(eta)
     H = arrival + int(settle)
 
@@ -264,7 +264,7 @@ def choose_differential(snap_base, prerank, baseline_favors,
 
     scored: list = []
     for c in prerank:
-        cheap_delta, src, tgt, ships, angle, eta, horizon_hint, wait_N = c
+        cheap_delta, src, tgt, ships, angle, eta, horizon_hint, wait_N, *_ = c
 
         # Slice 9: migration candidate detection. Migration moves are
         # own→own (`tgt.owner == me`) AND don't fire under enemy

@@ -153,7 +153,7 @@ def layer0_classify(prerank, world, model, me, step, gamma):
     verdicts: list = []
     surviving: list = []
     for c in prerank:
-        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N = c
+        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N, *_ = c
 
         # L1 first — drop provably wasted from `filtered`.
         v_l1 = l1_provably_wasted_launch(
@@ -235,7 +235,7 @@ def _backstop_emit(verdicts, emit_inner):
 
     appended: list = []
     for c, v in commits:
-        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N = c
+        cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N, *_ = c
         sid = int(src.id)
         if sid in used_srcs:
             continue  # inner used this source for something else
