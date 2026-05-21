@@ -85,7 +85,34 @@ TIME_LIMIT_SECONDS = 0.3          # MILP wallclock cap
 # source is naturally bad math, no need for an arbitrary reservation.
 DEFENDER_GUARD = 0
 
-# Phase 4 (lighthouse plan): endgame predicate term in the objective.
+# Phase 4 Step 2 (lighthouse plan): source-aware ship cost. A ship sent
+# from a planet under enemy threat carries DEFENSIVE VALUE at the source
+# — its removal costs more than 1 unit per ship. The LP previously
+# priced ships uniformly at `SHIP_COST * col.ships`, blind to the
+# defensive cost of stripping a threatened source. Threatened sources
+# now pay `SHIP_COST_THREAT_MULT * SHIP_COST * col.ships`. Per Rule 40,
+# this prices something the LP currently fails to see — not a cap or
+# threshold. Initial value 2.0 is conservative (lighthouse plan suggested
+# 3-5); calibrate via introspect. Setting to 1.0 reverts to uniform
+# pricing (no-op).
+#
+# "Threatened" includes BOTH (a) in-flight enemy fleets inbound to the
+# source AND (b) potential launches from close opp planets (PI directive
+# 2026-05-21: "indirect fleet over close opponent planets"). The latter
+# is the same metric `WorldModel.time_to_enemy_threat` computes; we
+# filter it by `SHIP_COST_THREAT_ETA_THRESHOLD` so a DISTANT potential
+# launch (e.g., opp planet across the board, eta=50) doesn't fire the
+# multiplier — the defensive value of source ships is sharply elevated
+# only when the threat is IMMINENT, not when it's purely geometric.
+SHIP_COST_THREAT_MULT = 2.0
+# Cutoff (turns) below which a `time_to_enemy_threat` reading counts as
+# "imminent." Empirically: cross-board flights at fleet_speed ~3 take
+# ~50 turns; half-board ~25; so 30 is a "close half of the map" cutoff.
+# Tune via introspect if the multiplier under-fires (raise) or
+# over-fires (lower).
+SHIP_COST_THREAT_ETA_THRESHOLD = 30
+
+# Phase 4 Step 1 (lighthouse plan): endgame predicate term in the objective.
 # When a subset captures a planet whose acquisition tips
 # `is_winning_state` from False→True, award +LAMBDA_ENDGAME. When a subset
 # loses an own planet whose loss flips us out of winning state, apply
@@ -241,6 +268,40 @@ def _derive_opp_id_2p(world, my_id: int) -> int | None:
     if num_players != 2:
         return None
     return 1 - int(my_id)
+
+
+def _ship_cost(col: Column, world, model, my_id: int) -> float:
+    """Source-aware per-column ship cost (Phase 4 Step 2).
+
+    Returns `SHIP_COST * col.ships` for a rear source (no enemy threat
+    within `SHIP_COST_THREAT_ETA_THRESHOLD` turns). Returns
+    `SHIP_COST_THREAT_MULT * SHIP_COST * col.ships` when an in-flight
+    enemy fleet OR a potential launch from a close opp planet would
+    reach the source within the threshold.
+
+    "Close" here means `time_to_enemy_threat <= SHIP_COST_THREAT_ETA_THRESHOLD`.
+    Per PI 2026-05-21: indirect fleets (potential launches from CLOSE
+    opp planets) count; distant opp planets do not. The threshold gives
+    the modeling-clean rear-vs-threatened distinction the LP needs.
+
+    `arrival_eta=0` on the threat call: we're asking "is THIS source
+    under threat right now" — not "post-arrival hold at a target." The
+    source IS at its current position; rotation prediction doesn't apply.
+
+    Returns base cost when `model` is None or the lookup fails.
+    """
+    base = float(SHIP_COST) * float(col.ships)
+    if model is None:
+        return base
+    try:
+        threat_eta = model.time_to_enemy_threat(
+            int(col.src_id), int(my_id), world,
+        )
+    except Exception:
+        return base
+    if threat_eta is None or int(threat_eta) > int(SHIP_COST_THREAT_ETA_THRESHOLD):
+        return base
+    return float(SHIP_COST_THREAT_MULT) * base
 
 
 def _endgame_bonus(planet_id: int, row: OutcomeRow, world,
@@ -579,9 +640,13 @@ def solve_outcome_aware(
     n_total = n_x + n_y
 
     # Cost vector. milp minimizes c^T·x, so negate values.
+    # Phase 4 Step 2: source-aware ship cost — threatened sources pay more.
+    # Honour the `ship_cost` kwarg (legacy uniform override) by scaling the
+    # base; the threat multiplier is independent.
     c_vec = np.zeros(n_total, dtype=float)
+    base_scale = float(ship_cost) / float(SHIP_COST) if SHIP_COST != 0 else 1.0
     for j, col in enumerate(active):
-        c_vec[j] = float(ship_cost) * float(col.ships)  # ship-cost penalty
+        c_vec[j] = _ship_cost(col, world, model, my_id) * base_scale
     use_discounted_value = (
         discount_gamma is not None and 0.0 < float(discount_gamma) < 1.0
     )
