@@ -126,6 +126,51 @@ SHIP_COST_THREAT_ETA_THRESHOLD = 30
 LAMBDA_ENDGAME = 1000.0
 
 
+# Level 1 — per-planet topology features (PI directive 2026-05-21: "we
+# need joint optimization that considers topology"). Three closed-form
+# per-planet bonuses added to the leaf value, awarded when row.owner_T
+# == my_id (so the LP only credits planets we'd own post-subset).
+# Computed ONCE per turn from `lib.geo.sense.sense_state(world, model)`;
+# cached per planet, looked up per (planet, subset).
+#
+# Each prefactor scaled so the topology contribution is a meaningful
+# fraction of `prod_stream_me` (typical magnitude ~200-800 per planet
+# at T_END=500) — not dominant. Calibration knobs: bump LAMBDA_REACH up
+# if introspect shows the LP still preferring isolated captures; bump
+# LAMBDA_FRONT up if it captures frontier planets it can't hold.
+#
+# Each feature is gated by an env var (default ON when the bundle sets
+# LP_TOPOLOGY_FEATURES=1; disabled cleanly by setting the corresponding
+# LP_*_BONUS=0). LP_TOPOLOGY_FEATURES=0 disables all three for clean
+# pre-fix / post-fix A/B comparison.
+import os as _os
+
+_TOPOLOGY_FEATURES_ENABLED = (
+    _os.environ.get("LP_TOPOLOGY_FEATURES", "0") == "1"
+)
+_REACH_BONUS_ENABLED = _TOPOLOGY_FEATURES_ENABLED and (
+    _os.environ.get("LP_REACH_BONUS", "1") == "1"
+)
+_DEFENSE_BONUS_ENABLED = _TOPOLOGY_FEATURES_ENABLED and (
+    _os.environ.get("LP_DEFENSE_BONUS", "1") == "1"
+)
+_FRONT_PENALTY_ENABLED = _TOPOLOGY_FEATURES_ENABLED and (
+    _os.environ.get("LP_FRONT_PENALTY", "1") == "1"
+)
+
+# Term 1: reachability_bonus(p) = Σ_{q ∈ neutrals reachable from p} prod(q)/(1+eta(p→q))
+LAMBDA_REACH = 50.0
+REACH_HORIZON = 30        # ticks; neutrals farther than this contribute 0
+
+# Term 2: mutual_defense_bonus(p) = count of my OTHER planets within DEFENSE_HORIZON
+LAMBDA_DEFENSE = 10.0
+DEFENSE_HORIZON = 12
+
+# Term 3: recapture_risk(p) = prod(p)/hold_time_after_capture when opp can counter
+LAMBDA_FRONT = 30.0
+RECAPTURE_HORIZON = 25    # ticks; threats farther than this contribute 0
+
+
 # ---------------------------------------------------------------------------
 # Public result dataclass
 # ---------------------------------------------------------------------------
@@ -379,6 +424,95 @@ def _endgame_bonus(planet_id: int, row: OutcomeRow, world,
         return 0.0
 
 
+def _per_planet_topology_score(planet_id: int, world, model, sense,
+                               my_id: int) -> float:
+    """Closed-form per-planet topology score (Level 1).
+
+    Sums three per-planet topology contributions; each can be
+    individually disabled via env var. Computed ONCE per planet per
+    turn from the pre-computed `sense_state` snapshot; subsets look up
+    the cached value via `_topology_bonus` and apply it conditionally
+    on `row.owner_T == my_id`.
+
+    Returns 0.0 if all three features disabled, if `sense` is None, or
+    if the planet is not in `world.planets_by_id`.
+
+    Exception safety: any failure in the underlying primitives falls
+    through to 0.0 — the LP cost-vector loop must never raise.
+    """
+    if sense is None:
+        return 0.0
+    p = world.planets_by_id.get(int(planet_id))
+    if p is None:
+        return 0.0
+
+    score = 0.0
+    try:
+        if _REACH_BONUS_ENABLED:
+            from lib.geo.sense import _planet_eta as _sense_eta
+            reach = 0.0
+            for n_pid, cluster_idx in sense.voronoi.items():
+                if cluster_idx < 0:  # CONTESTED neutral
+                    continue
+                n = world.planets_by_id.get(int(n_pid))
+                if n is None or n.id == int(planet_id):
+                    continue
+                eta = _sense_eta(p, n)
+                if eta > REACH_HORIZON:
+                    continue
+                score += LAMBDA_REACH * float(n.production) / (1.0 + float(eta))
+    except Exception:
+        pass
+
+    try:
+        if _DEFENSE_BONUS_ENABLED:
+            from lib.geo.sense import _planet_eta as _sense_eta
+            nearby = 0
+            for own_pid in sense.pid_to_cluster.keys():
+                if int(own_pid) == int(planet_id):
+                    continue
+                op = world.planets_by_id.get(int(own_pid))
+                if op is None:
+                    continue
+                eta = _sense_eta(p, op)
+                if eta <= DEFENSE_HORIZON:
+                    nearby += 1
+            score += LAMBDA_DEFENSE * float(nearby)
+    except Exception:
+        pass
+
+    try:
+        if _FRONT_PENALTY_ENABLED and model is not None:
+            threat = model.time_to_enemy_threat(int(planet_id), int(my_id), world)
+            if threat is not None and int(threat) <= RECAPTURE_HORIZON:
+                hold = max(1, int(threat))
+                score -= LAMBDA_FRONT * float(p.production) / float(hold)
+    except Exception:
+        pass
+
+    return float(score)
+
+
+def _topology_bonus(planet_id: int, row: OutcomeRow, my_id: int,
+                    topology_scores: dict[int, float] | None) -> float:
+    """Per-(planet, subset) topology bonus lookup.
+
+    Returns the pre-computed score for `planet_id` IFF this subset
+    predicts we'd own it post-capture (row.owner_T == my_id). Otherwise
+    0.0 — the LP doesn't credit topology of planets we don't end up
+    owning.
+
+    The bonus only fires when `topology_scores` was populated upstream
+    (LP_TOPOLOGY_FEATURES=1 and at least one LP_*_BONUS=1). Returns
+    0.0 otherwise — no behaviour change vs pre-Level-1.
+    """
+    if topology_scores is None:
+        return 0.0
+    if int(row.owner_T) != int(my_id):
+        return 0.0
+    return float(topology_scores.get(int(planet_id), 0.0))
+
+
 def _value_for_outcome(row: OutcomeRow, my_id: int,
                        alpha_opp_penalty: float,
                        discounted: bool = False) -> float:
@@ -422,6 +556,7 @@ def _greedy_fallback(
     discounted: bool = False,
     opp_id: int | None = None,
     currently_winning: bool = False,
+    topology_scores: dict[int, float] | None = None,
 ) -> OutcomeAwareResult:
     """Pure-Python greedy fallback when MILP is unavailable / infeasible.
 
@@ -442,11 +577,13 @@ def _greedy_fallback(
         best_value = (
             _value_for_outcome(empty_row, my_id, alpha_opp_penalty, discounted)
             + _endgame_bonus(pid, empty_row, world, my_id, opp_id, currently_winning)
+            + _topology_bonus(pid, empty_row, my_id, topology_scores)
         )
         for subset, row in table.items():
             v = (
                 _value_for_outcome(row, my_id, alpha_opp_penalty, discounted)
                 + _endgame_bonus(pid, row, world, my_id, opp_id, currently_winning)
+                + _topology_bonus(pid, row, my_id, topology_scores)
             )
             if v > best_value:
                 best_value = v
@@ -488,6 +625,7 @@ def _greedy_fallback(
                            discounted)
         + _endgame_bonus(pid, per_planet_tables[pid][s], world, my_id, opp_id,
                          currently_winning)
+        + _topology_bonus(pid, per_planet_tables[pid][s], my_id, topology_scores)
         for pid, s in chosen.items()
     )
 
@@ -559,6 +697,23 @@ def solve_outcome_aware(
             currently_winning = False
     else:
         currently_winning = False
+
+    # Level 1 topology features: compute per-planet topology scores
+    # ONCE per turn (Frank-Wolfe linearization — scored against current
+    # board, not post-LP state). Empty dict when LP_TOPOLOGY_FEATURES=0,
+    # which short-circuits the bonus to 0.0 in all 5 call sites.
+    topology_scores: dict[int, float] | None = None
+    if _TOPOLOGY_FEATURES_ENABLED:
+        try:
+            from lib.geo.sense import sense_state as _sense_state
+            sense = _sense_state(world, model)
+            topology_scores = {}
+            for pid in world.planets_by_id:
+                topology_scores[int(pid)] = _per_planet_topology_score(
+                    int(pid), world, model, sense, int(my_id),
+                )
+        except Exception:
+            topology_scores = None
 
     # Filter to our positive-value columns with a valid source.
     # EXCEPTION: compound columns (parent_column_id != None) are
@@ -634,6 +789,7 @@ def solve_outcome_aware(
             discounted=(discount_gamma is not None
                         and 0.0 < float(discount_gamma) < 1.0),
             opp_id=opp_id, currently_winning=currently_winning,
+            topology_scores=topology_scores,
         )
 
     import numpy as np
@@ -670,6 +826,7 @@ def solve_outcome_aware(
                                    use_discounted_value)
         value += _endgame_bonus(pid, row, world, my_id, opp_id,
                                 currently_winning)
+        value += _topology_bonus(pid, row, my_id, topology_scores)
         c_vec[y_idx] = -float(value)  # negate so milp picks high-value subsets
 
     A_eq_rows: list[list[float]] = []
@@ -764,6 +921,7 @@ def solve_outcome_aware(
             discounted=(discount_gamma is not None
                         and 0.0 < float(discount_gamma) < 1.0),
             opp_id=opp_id, currently_winning=currently_winning,
+            topology_scores=topology_scores,
         )
 
     bounds = Bounds(lb=np.zeros(n_total), ub=np.ones(n_total))
@@ -781,6 +939,7 @@ def solve_outcome_aware(
             discounted=(discount_gamma is not None
                         and 0.0 < float(discount_gamma) < 1.0),
             opp_id=opp_id, currently_winning=currently_winning,
+            topology_scores=topology_scores,
         )
 
     if res.x is None:
@@ -790,6 +949,7 @@ def solve_outcome_aware(
             discounted=(discount_gamma is not None
                         and 0.0 < float(discount_gamma) < 1.0),
             opp_id=opp_id, currently_winning=currently_winning,
+            topology_scores=topology_scores,
         )
 
     # Extract.
@@ -806,10 +966,14 @@ def solve_outcome_aware(
         if res.x[y_idx] > 0.5:
             per_planet_chosen[pid] = s
             row = per_planet_tables[pid][s]
-            per_planet_value[pid] = _value_for_outcome(
-                row, my_id, alpha_opp_penalty, use_discounted_value,
-            ) + _endgame_bonus(pid, row, world, my_id, opp_id,
-                               currently_winning)
+            per_planet_value[pid] = (
+                _value_for_outcome(
+                    row, my_id, alpha_opp_penalty, use_discounted_value,
+                )
+                + _endgame_bonus(pid, row, world, my_id, opp_id,
+                                 currently_winning)
+                + _topology_bonus(pid, row, my_id, topology_scores)
+            )
 
     return OutcomeAwareResult(
         moves=moves, fired_columns=fired, objective=float(-res.fun),

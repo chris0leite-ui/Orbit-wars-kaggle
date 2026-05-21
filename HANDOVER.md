@@ -1,5 +1,73 @@
 # HANDOVER.md — next-session brief
 
+> ## 2026-05-22 — Level 1 topology features in tree (NOT in submitted bundle)
+>
+> **What landed this session (this branch, not yet validated by A/B):**
+> Three closed-form per-planet topology bonuses in
+> `lib/joint_solver/lp_outcome.py::_value_for_outcome`, gated by
+> `LP_TOPOLOGY_FEATURES=1` (the agent sets this default in
+> `agents/analytical_phase_c/main.py`). Reuses
+> `lib.geo.sense.sense_state` (already-existing single-link clusters,
+> voronoi-by-ETA, threat-budget primitives) — no new graph
+> infrastructure needed.
+>
+> - `reachability_bonus(p)` — Σ over my-voronoi neutrals q of
+>   `prod(q) / (1+eta(p→q))` capped at REACH_HORIZON=30. Rewards
+>   captures that unlock more future neutrals.
+> - `mutual_defense_bonus(p)` — count of my OTHER owned planets within
+>   DEFENSE_HORIZON=12 ticks. Rewards clustered captures.
+> - `recapture_risk(p)` — penalty `prod(p) / hold_time` when opp can
+>   counter within RECAPTURE_HORIZON=25.
+>
+> All three credited per (planet, subset) ONLY when `row.owner_T ==
+> my_id` — the LP doesn't credit topology on planets opp ends up
+> owning. Each feature has its own env-var sub-toggle
+> (`LP_REACH_BONUS` / `LP_DEFENSE_BONUS` / `LP_FRONT_PENALTY`) for
+> per-feature differential A/B isolation.
+>
+> 6 pin tests in `tests/test_lp_topology_features.py` (Rule 38 cycle:
+> each feature OFF → no bonus; ON → directional bonus). Pre-existing
+> failure in `tests/test_endgame_gate.py::test_winning_state_returns_empty_moves`
+> is NOT caused by this change — it fails on HEAD before any topology
+> modification.
+>
+> Smoke test: agent runs seed=42 50 steps vs baseline → wins, ~440 ms
+> per-turn wallclock (vs ~50 ms baseline; sense_state is ~5-10 ms but
+> the LP now iterates more subset value-deltas).
+>
+> **NOT yet done (next session's task)**:
+> 1. Re-bundle FND with topology features ON →
+>    `submissions/_phase4_topology_NEW.py`
+> 2. Re-run screenshot calibration
+>    (`scripts/replay_compare_screenshots.py` +
+>    `scripts/replay_stats_screenshots.py`) on the new bundle vs the
+>    three flagged seeds. Success metrics in the plan file:
+>    - tempo% rises from 33-49% to ≥55% on at least 2/3 seeds
+>    - median delay-first-launch-from-new-pid drops from 9-10t to ≤7t
+> 3. n=4 then n=8 A/B vs the shipped FND (`_phase4_step1_FND.py`) on
+>    seeds [42, 1, 7, 13]
+> 4. If A/B clears, push to ladder (PI gate, Rule 1)
+> 5. If A/B null/negative, evaluate Level 2 (pairwise auxiliary z_pq;
+>    see plan)
+>
+> **Plan and rationale**:
+> `/root/.claude/plans/do-not-submit-yet-radiant-koala.md` (top of
+> file: "Level 1 — linear per-planet topology features"; lower section
+> "Level 2 — pairwise synergy" is documented but deferred until
+> Level 1 ships).
+>
+> Calibration data on disk:
+> - `audit/live-episodes/52894340/` — 60 FND ladder replays from sub
+>   52894340 (the three flagged screenshot seeds are episodes
+>   77321232, 77320686, 77323008).
+> - `audit/community-replays/2026-05-20/` — 4,159 top-player +100
+>   random sample replays from the 2026-05-20 daily dump (~18 GB on
+>   disk; pulled via `scripts/community_replay_filter.py`). Available
+>   for archetype-conditional calibration (plan steps D1-D7) after
+>   Level 1's A/B result.
+>
+> ---
+>
 > ## The big plan (READ FIRST)
 >
 > Every session's work fits somewhere in a **5-phase plan to build a
@@ -15,6 +83,7 @@
 > | 2 | column-gen + single-turn LP parity | ✅ landed |
 > | 3 | multi-turn horizon + Stackelberg + MPC | ✅ landed (Phase D v3) |
 > | **4** | **endgame predicate switch + foundation hardening** | ✅ Step 1 + foundation landed; SUBMITTED — live μ is drifting (snapshot only, see below) |
+> | 4+ | **Level 1 topology features** | ✅ in tree this session; NOT yet bundled or A/B'd |
 > | 5 | n=32 → n=128 escalation, submit | partial; next-session task is **4P validation** |
 >
 > Refer also to:

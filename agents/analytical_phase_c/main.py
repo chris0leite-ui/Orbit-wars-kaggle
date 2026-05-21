@@ -26,6 +26,15 @@ import os
 # captures. `setdefault` so an external caller can still override.
 os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
 
+# Level 1 topology features (PI 2026-05-21: "we need joint optimization
+# that considers topology"). Three closed-form per-planet bonuses added
+# to the LP's leaf value: reachability of nearby neutrals, mutual defense
+# from clustered own planets, recapture-risk penalty for frontier planets.
+# Computed once per turn from `lib.geo.sense.sense_state`. Set OFF to
+# fall back to the pre-Level-1 objective (Phase 4 Step 1 + foundation
+# only); per-feature toggles also available (LP_REACH_BONUS, etc.).
+os.environ.setdefault("LP_TOPOLOGY_FEATURES", "1")
+
 from lib.pipeline import compose
 from lib.pipeline.candidates import candidates_default
 from lib.pipeline.commit_persistent import commit_persistent
