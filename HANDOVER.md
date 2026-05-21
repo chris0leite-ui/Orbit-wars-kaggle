@@ -1,8 +1,80 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-21 late evening by `claude/strategy-axis-decision-3437`.
-> Branch is **197 ahead / 23 behind `origin/main`**; everything below
-> reflects the tip (`c03954d`).
+> Last written: 2026-05-21 night by `claude/strategy-axis-decision-3437`.
+> Branch is **201 ahead / 23 behind `origin/main`**; everything below
+> reflects the tip (`a8e0b80`).
+>
+> ## Latest session — AGGR critique → confidence buffer (commits `c1df712` + `a8e0b80`)
+>
+> PI shared an AGGR (aggressor-overkill) note from a sibling branch
+> arguing our spec-min capture sizing is fragile under opp-model error.
+> A per-launch introspect on three 2P seeds (`/tmp/launch_introspect.py`)
+> confirmed: median solo capture margin = +5 ships (spec-min), 33% of
+> solo attempts bounce, 43% of bounces involve opp under-prediction by
+> >2 ships (costing 45-135 ships per bounce in worst cases). Two fixes
+> in `agents/baseline/proposer.py` + one bundler fix:
+>
+> - **Fix 1 — partial-budget gate** (commit `c1df712`). The 2026-05-21 AM
+>   bundle-blind-spot fix made `enumerate_ship_counts` emit `budget` as
+>   a candidate even when `budget < cap`. Introspect found 6 confirmed
+>   "Type A" regressions where these sub-cap candidates fired solo and
+>   bounced (sent 6 vs predicted defender 19, etc.). The gate skips
+>   sub-cap candidates when no peer source is in reach. Own-target
+>   reinforces are exempt (ships add to garrison; partial defense >
+>   no defense).
+>
+> - **Fix 2 — confidence buffer** (commit `a8e0b80`).
+>   `confidence_buffered_size` returns `ceil(pred + ε) + 1` where
+>   `ε = base(1) + scale(0.5) × eta × (prod/3)`, capped at 12,
+>   discounted ×0.4 in 4P+. Emitted as an extra variant in
+>   `enumerate_ship_counts` alongside spec-min cap so the LP can choose
+>   between ship-efficient and robust per outcome value. Mathematical
+>   helper is correct (pin tests).
+>
+> - **Bundler fix — inline `lib/mirror`** (commit `a8e0b80`).
+>   THE actual root cause of two failed buffer-integration attempts
+>   in this session. `scripts/bundle_agent.py::DEFAULT_LIB_ORDER` did
+>   not include `mirror`, so the bundle stripped the `from lib.mirror
+>   import detect_num_players` line in proposer.py but never inlined
+>   the module. When the buffer code ran, the bundle raised
+>   `NameError: name 'detect_num_players' is not defined`.
+>   **kaggle_environments with `debug=False` silently catches agent
+>   exceptions and submits empty actions** — making the bug look like
+>   a strategic regression (focal acts 66 → 5, game stalls to step
+>   500, focal loses). The Plan agent's elaborate
+>   dedup/cheap-value/filter-interaction theory was a phantom: the
+>   diagnostic agent running with `debug=True` surfaced the NameError
+>   in seconds. Lesson: **reproduce regressions with `debug=True`
+>   FIRST** before redesigning logic that isn't broken.
+>
+> **Verified**: 5 new pin tests pass; 137 targeted tests pass; agent
+> smoke on seeds 42/7/384458460 plays normally (141/147/149 steps,
+> win/win/loss matching pre-fix outcome).
+>
+> **Introspect result post-fix vs pre-fix on 2P seeds 42/7/384458460**:
+>
+> | Metric | Pre-fix | Fix 1 only | Fix 1 + Fix 2 + bundler |
+> |---|---:|---:|---:|
+> | Solo attempts | 91 | 84 | 80 |
+> | Solo bounces | 30 (33%) | 29 (35%) | 29 (36%) |
+> | Median margin | +5 | +3 | +2 |
+> | Spec-min capture rate | 51% | 56% | 63% |
+> | Bundles captured | 7/7 | 5/6 | 6/6 |
+>
+> **The buffer is now visible to the LP but mostly ineffective in
+> practice.** `lib/joint_solver/lp_outcome.py:175-185` sorts ties by
+> `(value, ships, ...)` — among the buffered/double/budget tier the
+> LP prefilter prefers higher ship counts, so buffered (between cap
+> and budget) gets pruned in favor of full budget. Net solo-bounce
+> rate is statistically unchanged (29 vs 30). The infrastructure is
+> in place and the math helper is tested; **a tier-aware LP prefilter
+> is the next correctness step**.
+>
+> Bundle rebuilt locally; **not submitted (PI hold)**.
+>
+> ---
+>
+> ## Prior session — proposer overhaul (commit `adbfb5c`).
 >
 > **Proposer overhaul** landed (commit `adbfb5c`). PI shared a 4P FFA
 > loss (seed 2121761784): "we capture small planets and expose our
@@ -228,16 +300,70 @@ Agents that compose these:
 | —  | Bundler constant collision | **FIXED** (`fffdc8e`) — THE live root cause |
 | —  | predict_fleet_fate orbital-prediction for comets | **FIXED** (`d9feee2`) |
 | —  | predict_fleet_fate phantom-hit on expired-comet sentinel | **FIXED** (`1daec97`) |
+| —  | Partial-budget bundle blind-spot fix (2026-05-21 AM) | **FIXED** (`adbfb5c`) |
+| —  | Partial-budget candidates fire solo → bounces | **FIXED** (`c1df712`) — peer-gate |
+| —  | Bundler missing `lib/mirror` → `NameError` under buffer | **FIXED** (`a8e0b80`) |
+| —  | LP prefilter tier-blind → buffered variant pruned | **OPEN** (see Open work #2) |
 
 ## Open work (next session)
 
 ### 1. Submit the latest bundle (PI sign-off required)
 
-`submissions/analytical_phase_c.py` at commit `1daec97` has both
-comet-path AND expiry-guard fixes. Multi-seed self-play 0 OOB.
-Currently rolling pair is (52872093 μ=1148.9, 52865089 μ=805.9);
-this would evict 52865089 — safe trade. PI told me to hold on the
-last attempt; **start the session by asking whether to submit**.
+`submissions/analytical_phase_c.py` at commit `a8e0b80` has:
+- comet-path + expiry-guard fixes
+- proposer bundle/stockpile overhaul
+- opening-planner overhaul
+- partial-budget gate (this session)
+- confidence-buffer infrastructure (active but LP-pruned, see #2)
+- bundler `lib/mirror` inline fix
+
+Multi-seed self-play 0 OOB. Agent smoke green on seeds 42/7/384458460.
+Currently rolling pair is (52872093 μ=1148.9, 52865089 μ=805.9); this
+would evict 52865089 — safe trade. PI told me to hold on the last
+attempt; **start the session by asking whether to submit**.
+
+### 2. **NEW** — Tier-aware LP prefilter (unlocks the confidence buffer)
+
+The buffer's `confidence_buffered_size` is emitted alongside spec-min
+in `enumerate_ship_counts`, but `lib/joint_solver/lp_outcome.py:175-185`
+prefilter sorts ties as `(value, ships, -wait_N, -column_id)` descending
+— for the prerank_passthrough case (uniform value=1.0), higher ships
+wins ties. Among `{cap, buffered, double, budget}` from the same
+(src, tgt), the LP keeps `budget` and drops `buffered`. Net: buffer
+is technically active but the LP never uses it.
+
+**Fix direction**: make the prefilter tier-aware. Either:
+- (a) Keep ONE candidate per (src, tgt) tier-tag (spec_min, overkill).
+  Per-target cap stays at MAX_CONTESTERS_PER_PLANET=6, but the cap is
+  spent on tier-distinct candidates.
+- (b) Lower-ships-as-tie-break for the overkill tier, so buffered
+  (middle ships) wins over budget (max ships) when tied.
+- (c) Per-source quota: at most 2 columns per source per planet.
+
+Option (a) is the cleanest modeling fix. Estimate ~half a session.
+After this, re-run the 2P introspect — if buffered fires on the
+opp-under-prediction bounces (12 of 30 in the pre-fix data), we
+should see solo bounce rate drop from 33% toward ~20%.
+
+### 3. **NEW** — Audit the "silent kaggle_environments exception" trap
+
+This session burned ~3 hours chasing a phantom strategic regression
+that was actually a `NameError` in the bundle (`detect_num_players`
+not inlined). `kaggle_environments` with `debug=False` catches agent
+exceptions and submits empty actions, which makes any bundler-level
+import bug look like a strategic failure.
+
+**Actions**:
+- Add `debug=True` to the diagnostic harness in
+  `/tmp/launch_introspect.py` (or its successor in scripts/) so the
+  first cut of any regression diagnosis surfaces exceptions
+  immediately.
+- Extend `scripts/bundle_agent.py::_assert_lib_imports_resolved` to
+  recursively check agent submodules (not just `agent/main.py`).
+  Today it only checks main; submodules like proposer.py with
+  `from lib.X import …` slip through.
+- Friction-log entry: "silent-debug=False exception masquerades as
+  strategic regression." Promote to a Rule (candidate Rule 48).
 
 ### 2. Bundle-vs-source residual parity divergence
 
@@ -343,6 +469,12 @@ assume?" lens is worthwhile next session.
   permanent gate." Promoting to a real rule next session.
 - **Candidate Rule 47**: "audit each library primitive against the
   entity types it might be invoked on." Comet-handling bug class.
+- **Candidate Rule 48** (new this session): "reproduce regressions
+  with `debug=True` FIRST before redesigning code." Origin:
+  2026-05-21 night — burned 3 hours on phantom dedup/cheap-value
+  theories for the buffer regression; `debug=True` surfaced a
+  bundler-level `NameError` immediately. Silent agent exceptions
+  under `debug=False` masquerade as strategic regressions.
 
 ## Files modified this session
 
