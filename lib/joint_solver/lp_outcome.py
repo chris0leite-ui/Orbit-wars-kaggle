@@ -42,6 +42,12 @@ except ImportError:
 
 from lib.joint_solver.columns import Column
 from lib.joint_solver.outcome_table import MAX_ENUMERATION_BITS, Arrival, OutcomeRow, enumerate_outcomes
+from lib.joint_solver.predicate import (
+    is_winning_state,
+    is_winning_state_if_lost,
+    is_winning_state_if_owned,
+)
+from lib.mirror import detect_num_players
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +84,19 @@ TIME_LIMIT_SECONDS = 0.3          # MILP wallclock cap
 # (opp's prod_stream gets credit when ownership flips); over-draining a
 # source is naturally bad math, no need for an arbitrary reservation.
 DEFENDER_GUARD = 0
+
+# Phase 4 (lighthouse plan): endgame predicate term in the objective.
+# When a subset captures a planet whose acquisition tips
+# `is_winning_state` from False→True, award +LAMBDA_ENDGAME. When a subset
+# loses an own planet whose loss flips us out of winning state, apply
+# −LAMBDA_ENDGAME. Per-(planet, subset) bonus — the joint state is
+# approximated as the SUM of per-planet contributions; the predicate is
+# monotone in ownership, so this approximation is conservative (no false
+# positives by construction). Calibration knob: typical prod_stream
+# magnitudes are in the hundreds (prod=2 × horizon=200 ≈ 400); λ=1000
+# makes predicate flips dominate marginal production differences. Tune
+# down to 100 if introspect shows the bonus over-firing.
+LAMBDA_ENDGAME = 1000.0
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +226,84 @@ def _build_per_planet_arrivals(
     return out
 
 
+def _derive_opp_id_2p(world, my_id: int) -> int | None:
+    """For a 2P game, return the unique non-me seat. None for 4P (or if
+    seat count can't be inferred).
+
+    Phase 4 MVP: endgame predicate is 2P-only. 4P falls through to no
+    bonus — `is_winning_state` aggregates per-opp and the right
+    formulation across 3 opps is out of scope.
+    """
+    try:
+        num_players = int(detect_num_players(world.planets_by_id.values()))
+    except Exception:
+        return None
+    if num_players != 2:
+        return None
+    return 1 - int(my_id)
+
+
+def _endgame_bonus(planet_id: int, row: OutcomeRow, world,
+                   my_id: int, opp_id: int | None,
+                   currently_winning: bool) -> float:
+    """Per-(planet, subset) endgame predicate bonus / penalty.
+
+    `currently_winning` is `is_winning_state(world, my_id, opp_id)`
+    pre-computed once per LP solve (cheap; passed in to avoid O(planets)
+    recomputation per subset).
+
+    Cases:
+      + λ_endgame  if currently NOT mine, row.owner_T == me, AND owning
+                   this planet would satisfy is_winning_state_if_owned.
+                   Covers "tip from losing → winning" (primary intent)
+                   AND "already-winning + extra capture" (idempotent —
+                   same magnitude as retain bonus; MILP solution
+                   quality is unchanged).
+      + λ_endgame  if currently mine, row.owner_T == me, AND we are
+                   currently winning (defending in winning state).
+      − λ_endgame  if currently mine, row.owner_T != me, AND losing
+                   this planet would flip us out of winning state.
+      0            otherwise (no opp_id ⇒ 4P, predicate unavailable).
+
+    Exception safety: predicate calls are wrapped — any error from
+    `is_winning_state_if_owned` / `is_winning_state_if_lost` falls
+    through to 0. Matches the try/except guarding the upstream
+    `currently_winning` pre-computation; the MILP cost-vector loop
+    must never raise.
+    """
+    if opp_id is None:
+        return 0.0
+    current = world.planets_by_id.get(int(planet_id))
+    if current is None:
+        return 0.0
+    cur_owner = int(current.owner)
+    pred_owner = int(row.owner_T)
+    me = int(my_id)
+    opp = int(opp_id)
+
+    try:
+        if cur_owner != me:
+            # We don't currently own. Bonus on capture-puts-us-in-winning.
+            if pred_owner == me:
+                if is_winning_state_if_owned(world, me, opp, {int(planet_id)}):
+                    return LAMBDA_ENDGAME
+            return 0.0
+        # cur_owner == me. Bonus on retain-in-winning-state; penalty on
+        # loss-if-flipping.
+        if pred_owner == me:
+            return LAMBDA_ENDGAME if currently_winning else 0.0
+        # We lose this planet in this subset.
+        if is_winning_state_if_lost(world, me, opp, {int(planet_id)}):
+            # Still winning even if we lose this one — no penalty.
+            return 0.0
+        if currently_winning:
+            # Losing this planet flips us out of winning state.
+            return -LAMBDA_ENDGAME
+        return 0.0
+    except Exception:
+        return 0.0
+
+
 def _value_for_outcome(row: OutcomeRow, my_id: int,
                        alpha_opp_penalty: float,
                        discounted: bool = False) -> float:
@@ -248,13 +345,15 @@ def _greedy_fallback(
     my_id: int,
     alpha_opp_penalty: float,
     discounted: bool = False,
+    opp_id: int | None = None,
+    currently_winning: bool = False,
 ) -> OutcomeAwareResult:
     """Pure-Python greedy fallback when MILP is unavailable / infeasible.
 
     For each planet, pick the subset with the highest
-    (prod_stream_me − α · prod_stream_opp) value. Then check global
-    source budget feasibility; if a launch would over-spend, drop it
-    (greedy, lowest-value-marginal first).
+    (prod_stream_me − α · prod_stream_opp + endgame_bonus) value. Then
+    check global source budget feasibility; if a launch would over-spend,
+    drop it (greedy, lowest-value-marginal first).
     """
     step_now = int(getattr(world, "step", 0) or 0)
     inv = _source_inventory(active_columns, world, my_id=int(my_id))
@@ -263,10 +362,17 @@ def _greedy_fallback(
     chosen: dict[int, tuple[int, ...]] = {}
     per_planet_value: dict[int, float] = {}
     for pid, table in per_planet_tables.items():
+        empty_row = table[()]
         best_subset = ()
-        best_value = _value_for_outcome(table[()], my_id, alpha_opp_penalty, discounted)
+        best_value = (
+            _value_for_outcome(empty_row, my_id, alpha_opp_penalty, discounted)
+            + _endgame_bonus(pid, empty_row, world, my_id, opp_id, currently_winning)
+        )
         for subset, row in table.items():
-            v = _value_for_outcome(row, my_id, alpha_opp_penalty, discounted)
+            v = (
+                _value_for_outcome(row, my_id, alpha_opp_penalty, discounted)
+                + _endgame_bonus(pid, row, world, my_id, opp_id, currently_winning)
+            )
             if v > best_value:
                 best_value = v
                 best_subset = subset
@@ -305,6 +411,8 @@ def _greedy_fallback(
     obj = sum(
         _value_for_outcome(per_planet_tables[pid][s], my_id, alpha_opp_penalty,
                            discounted)
+        + _endgame_bonus(pid, per_planet_tables[pid][s], world, my_id, opp_id,
+                         currently_winning)
         for pid, s in chosen.items()
     )
 
@@ -364,6 +472,18 @@ def solve_outcome_aware(
         )
 
     step_now = int(getattr(world, "step", 0) or 0)
+
+    # Phase 4: derive opp_id for the endgame predicate term. 2P-only;
+    # 4P games get opp_id=None ⇒ no bonus (additive zero, no behaviour
+    # change vs pre-Phase-4).
+    opp_id = _derive_opp_id_2p(world, int(my_id))
+    if opp_id is not None:
+        try:
+            currently_winning = bool(is_winning_state(world, int(my_id), int(opp_id)))
+        except Exception:
+            currently_winning = False
+    else:
+        currently_winning = False
 
     # Filter to our positive-value columns with a valid source.
     # EXCEPTION: compound columns (parent_column_id != None) are
@@ -438,6 +558,7 @@ def solve_outcome_aware(
             my_id=int(my_id), alpha_opp_penalty=float(alpha_opp_penalty),
             discounted=(discount_gamma is not None
                         and 0.0 < float(discount_gamma) < 1.0),
+            opp_id=opp_id, currently_winning=currently_winning,
         )
 
     import numpy as np
@@ -468,6 +589,8 @@ def solve_outcome_aware(
         row = per_planet_tables[pid][s]
         value = _value_for_outcome(row, my_id, alpha_opp_penalty,
                                    use_discounted_value)
+        value += _endgame_bonus(pid, row, world, my_id, opp_id,
+                                currently_winning)
         c_vec[y_idx] = -float(value)  # negate so milp picks high-value subsets
 
     A_eq_rows: list[list[float]] = []
@@ -561,6 +684,7 @@ def solve_outcome_aware(
             my_id=int(my_id), alpha_opp_penalty=float(alpha_opp_penalty),
             discounted=(discount_gamma is not None
                         and 0.0 < float(discount_gamma) < 1.0),
+            opp_id=opp_id, currently_winning=currently_winning,
         )
 
     bounds = Bounds(lb=np.zeros(n_total), ub=np.ones(n_total))
@@ -577,6 +701,7 @@ def solve_outcome_aware(
             my_id=int(my_id), alpha_opp_penalty=float(alpha_opp_penalty),
             discounted=(discount_gamma is not None
                         and 0.0 < float(discount_gamma) < 1.0),
+            opp_id=opp_id, currently_winning=currently_winning,
         )
 
     if res.x is None:
@@ -585,6 +710,7 @@ def solve_outcome_aware(
             my_id=int(my_id), alpha_opp_penalty=float(alpha_opp_penalty),
             discounted=(discount_gamma is not None
                         and 0.0 < float(discount_gamma) < 1.0),
+            opp_id=opp_id, currently_winning=currently_winning,
         )
 
     # Extract.
@@ -603,7 +729,8 @@ def solve_outcome_aware(
             row = per_planet_tables[pid][s]
             per_planet_value[pid] = _value_for_outcome(
                 row, my_id, alpha_opp_penalty, use_discounted_value,
-            )
+            ) + _endgame_bonus(pid, row, world, my_id, opp_id,
+                               currently_winning)
 
     return OutcomeAwareResult(
         moves=moves, fired_columns=fired, objective=float(-res.fun),

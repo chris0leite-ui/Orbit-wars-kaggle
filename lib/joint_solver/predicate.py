@@ -127,3 +127,33 @@ def is_winning_state_if_owned(world: World, my_id: int, opp_id: int,
     if adv <= 0:
         return False
     return adv * rem > op
+
+
+def is_winning_state_if_lost(world: World, my_id: int, opp_id: int,
+                             lost_planet_ids: set[int],
+                             episode_steps: int = EPISODE_STEPS) -> bool:
+    """Hypothetical: would `is_winning_state` hold if I LOST
+    `lost_planet_ids` to opp?
+
+    Symmetric to is_winning_state_if_owned. Re-attributes each lost
+    planet's production from me to opp; adds opp's recovered production
+    over remaining turns to opp_pool. Models the production transfer
+    only (NOT the ship-transfer in combat) — combat losses reduce both
+    sides, so excluding ship transfer is conservative for a worst-case
+    "would losing this planet flip me out of winning state" check.
+
+    Caller is responsible for passing ids that ARE currently mine.
+    """
+    adv = prod_advantage(world, my_id, opp_id)
+    op = opp_pool(world, opp_id, episode_steps)
+    rem = remaining_turns(world, episode_steps)
+    for pid in lost_planet_ids:
+        p = world.planets_by_id.get(pid)
+        if p is None or p.owner != my_id:
+            continue
+        prod = int(p.production)
+        adv -= 2 * prod
+        op += prod * rem
+    if adv <= 0:
+        return False
+    return adv * rem > op

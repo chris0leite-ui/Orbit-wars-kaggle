@@ -17,6 +17,7 @@ from lib.intent import World
 from lib.joint_solver.predicate import (
     EPISODE_STEPS,
     is_winning_state,
+    is_winning_state_if_lost,
     is_winning_state_if_owned,
     opp_pool,
     prod_advantage,
@@ -127,3 +128,52 @@ def test_if_owned_re_attribution_neutral_vs_opp():
     # Acquiring just opp P2: adv = -1 + 6 = 5. opp_pool − (10 + 3*500) = 0.
     # 5 * 500 = 2500 > 0 → True.
     assert is_winning_state_if_owned(world, 0, 1, {2}) is True
+
+
+# ---------------------------------------------------------------------------
+# is_winning_state_if_lost: symmetric counterpart for defensive valuation.
+# ---------------------------------------------------------------------------
+
+def test_if_lost_flips_winning_to_losing():
+    """Symmetric to fixture 3: in winning state today; losing a key own
+    planet flips the predicate to False.
+
+    Setup: 3 mine prod=2; 1 opp prod=2.
+    prod_advantage = 6 − 2 = 4. Late step → small remaining.
+    """
+    me = [_planet(0, 0, production=2, ships=8),
+          _planet(1, 0, production=2, ships=8),
+          _planet(2, 0, production=2, ships=8)]
+    opp = [_planet(3, 1, production=2, ships=8, x=20.0)]
+    world = _world(my_id=0, planets=me + opp, step=400)
+
+    # remaining = 100. opp_pool = 8 + 2*100 = 208.
+    # adv*rem = 4*100 = 400 > 208 → True.
+    assert is_winning_state(world, 0, 1) is True
+
+    # Losing P0 (prod=2): adv -= 2*2 → adv = 4 − 4 = 0. adv ≤ 0 → False.
+    assert is_winning_state_if_lost(world, 0, 1, {0}) is False
+
+
+def test_if_lost_no_flip_when_lead_is_wide():
+    """Losing a planet in a comfortable lead doesn't flip the predicate."""
+    me = [_planet(i, 0, production=5, ships=20) for i in range(4)]
+    opp = [_planet(10, 1, production=1, ships=5)]
+    world = _world(my_id=0, planets=me + opp, step=10)
+
+    assert is_winning_state(world, 0, 1) is True
+    # Lose one own planet (prod=5). adv = 4*5 − 5 − 1 = 14 (still positive,
+    # and adv*rem dominates opp_pool). Predicate remains True.
+    assert is_winning_state_if_lost(world, 0, 1, {0}) is True
+
+
+def test_if_lost_already_not_mine_is_noop():
+    """Passing a planet id that isn't currently mine is a no-op."""
+    me = [_planet(0, 0, production=2, ships=8)]
+    opp = [_planet(1, 1, production=2, ships=8, x=10.0)]
+    world = _world(my_id=0, planets=me + opp, step=0)
+
+    base = is_winning_state(world, 0, 1)
+    # Lost id=1 (opp's) — caller contract is "ids currently mine"; helper
+    # silently skips the wrong ones.
+    assert is_winning_state_if_lost(world, 0, 1, {1}) is base
