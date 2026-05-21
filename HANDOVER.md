@@ -1,8 +1,39 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-21 evening by `claude/strategy-axis-decision-3437`.
-> Branch is **194 ahead / 23 behind `origin/main`**; everything below
-> reflects the tip (`d4ae531`).
+> Last written: 2026-05-21 late evening by `claude/strategy-axis-decision-3437`.
+> Branch is **197 ahead / 23 behind `origin/main`**; everything below
+> reflects the tip (`adbfb5c`).
+>
+> **Proposer overhaul** landed (commit `adbfb5c`). PI shared a 4P FFA
+> loss (seed 2121761784): "we capture small planets and expose our
+> big planets rather than bundling forces to protect ours and
+> capture the big ones." Two fixes in
+> `agents/baseline/proposer.py` close the diagnosis with Rule-38
+> pin tests in `tests/test_proposer_bundling.py`:
+>
+> - **Fix 1 (bundle blind spot)**: `enumerate_ship_counts` gated
+>   the third size by `budget > cap`, so sources that couldn't
+>   solo-capture emitted ZERO columns. Removed the gate — the LP's
+>   `outcome_table.enumerate_outcomes` already correctly scores
+>   joint multi-source captures via subset enumeration; the only
+>   blocker was candidate generation. Same change closes defensive
+>   bundling (multi-source reinforce).
+> - **Fix 2 (strategic stockpile)**: `capture_size` for own targets
+>   returned 0 when current garrison covered current threat,
+>   blinding the LP to strategic defense before opp builds up. New
+>   `STRATEGIC_DEFENSE_PROD=4` / `STRATEGIC_STOCKPILE_TICKS=5` floor
+>   the reinforce target to `5 × production` ships of preemptive
+>   buffer for high-prod own planets.
+>
+> Verified: 2 pin tests pass; 119 targeted regression tests pass;
+> `check_fleet_outcomes` on {2121761784, 384458460, 42, 7} all 100%
+> target / 0 sun / 0 OOB. Live candidate inspection at seed
+> 2121761784 step 30-50: bundle candidates (3+ sources targeting
+> the same big planet) appear; defense candidates for prod-5 own
+> planets emerge before active threat. Bundle rebuilt; not
+> submitted (PI hold).
+>
+> Earlier this session: **Opening-planner overhaul** (commit `d4ae531`).
 >
 > **Opening-planner overhaul** landed this evening (commit `d4ae531`).
 > PI shared a ladder loss (seed 384458460 vs vkhydras, −33 TrueSkill)
