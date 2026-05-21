@@ -288,9 +288,23 @@ def _ship_cost(col: Column, world, model, my_id: int) -> float:
     under threat right now" — not "post-arrival hold at a target." The
     source IS at its current position; rotation prediction doesn't apply.
 
+    **Compound-column special case** (review of commit 16c9be7): a
+    Phase-F2 compound column's `src_id` points to an opp-owned planet
+    that we hypothetically capture mid-horizon. The ship-cost concept
+    (defensive value of source ships) doesn't apply — those "source
+    ships" are FUTURE production after our capture, not ours-now. Also,
+    `time_to_enemy_threat` against an opp-owned src would find sibling
+    opp planets nearby and spuriously fire the multiplier, inflating
+    compound costs ~2x and starving the LP of useful action space.
+    Early-return base for compound columns.
+
     Returns base cost when `model` is None or the lookup fails.
     """
     base = float(SHIP_COST) * float(col.ships)
+    if getattr(col, "parent_column_id", None) is not None:
+        # Compound column — see docstring. Ship cost = base (no
+        # source-aware multiplier; the source ships don't exist yet).
+        return base
     if model is None:
         return base
     try:

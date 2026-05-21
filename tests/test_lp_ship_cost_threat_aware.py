@@ -170,6 +170,71 @@ def test_ship_cost_close_opp_planet_fires_multiplier():
 
 
 # ---------------------------------------------------------------------------
+# Test 1c — compound columns (Phase-F2 production-feedback) bypass the
+# source-aware multiplier.
+#
+# Compound columns have `parent_column_id != None` and their `src_id`
+# points at an OPP-owned planet that would be captured mid-horizon via
+# the parent column. The "source ships" don't exist yet (future
+# production after our capture); applying the source-aware multiplier
+# would spuriously inflate the compound's cost ~2x because
+# `time_to_enemy_threat` finds sibling opp planets nearby. Bug surfaced
+# in the n=4 A/B regression of commit 16c9be7 (review caught it before
+# escalation).
+# ---------------------------------------------------------------------------
+
+def test_ship_cost_compound_column_uses_base_cost():
+    """A compound column (parent_column_id != None) pays the base cost
+    regardless of whether `time_to_enemy_threat` against its (currently
+    opp-owned) src returns a threat. Locks the early-return.
+    """
+    # P0 mine at (0,50). P1 opp at (50,50) — will be captured via parent.
+    # P2 opp at (55,50) — sibling to P1, close. `time_to_enemy_threat(1)`
+    # would find P2 and report a short threat ETA → fire the multiplier
+    # if the compound branch weren't bypassed.
+    me = [_planet(0, 0, ships=100, x=0.0, y=50.0)]
+    opp = [_planet(1, 1, ships=20, production=2, x=50.0, y=50.0),
+           _planet(2, 1, ships=10, production=2, x=55.0, y=50.0)]
+    world = _world(my_id=0, planets=me + opp)
+    model = WorldModel(
+        ledger={0: [], 1: [], 2: []}, timelines={}, horizon=200,
+    )
+
+    # Sanity: time_to_enemy_threat(P1) finds P2 → short eta → would
+    # normally fire the multiplier. The compound bypass MUST override.
+    threat_p1 = model.time_to_enemy_threat(1, 0, world)
+    assert threat_p1 is not None and threat_p1 <= SHIP_COST_THREAT_ETA_THRESHOLD, (
+        f"fixture: time_to_enemy_threat(P1) should classify as close "
+        f"(eta <= {SHIP_COST_THREAT_ETA_THRESHOLD}); got {threat_p1}"
+    )
+
+    # Parent column: captures P1 from P0.
+    parent_col = Column(
+        column_id=120, src_id=0, tgt_id=1,
+        ships=30, wait_N=0, angle=0.0, eta=5,
+        owner=0, value=100.0, parent_column_id=None,
+    )
+    # Compound column: fires from P1 (mid-horizon-captured) to P2.
+    compound_col = Column(
+        column_id=121, src_id=1, tgt_id=2,
+        ships=15, wait_N=5, angle=0.0, eta=3,
+        owner=0, value=100.0, parent_column_id=120,
+    )
+
+    parent_cost = _ship_cost(parent_col, world, model, my_id=0)
+    compound_cost = _ship_cost(compound_col, world, model, my_id=0)
+
+    assert compound_cost == pytest.approx(SHIP_COST * 15), (
+        f"compound column should pay base cost (no source-aware "
+        f"multiplier); got {compound_cost}, expected {SHIP_COST * 15}"
+    )
+    # Sanity: parent column path is unaffected.
+    assert parent_cost > 0, (
+        f"parent column should still be priced normally; got {parent_cost}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Test 2 — no threat anywhere: rear pricing applies to every column.
 # ---------------------------------------------------------------------------
 
