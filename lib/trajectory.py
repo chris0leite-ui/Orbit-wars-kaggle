@@ -37,6 +37,7 @@ from lib.aim import swept_pair_hit
 from lib.fleet import speed as fleet_speed
 from lib.geometry import BOARD_SIZE, CENTER, SUN_RADIUS
 from lib.orbit import is_orbiting, predict_relative
+from lib.world_model import _comet_paths_by_id
 
 # Max steps we simulate before giving up. A 1-ship fleet at speed 1.0
 # can cross the 141.4-unit board diagonal in 142 steps; 200 covers
@@ -114,8 +115,32 @@ def predict_fleet_fate(
         return FleetFate("oob", None, 0)
 
     # Pre-compute per-planet positions at every step from t+wait_N onward.
+    #
+    # COMET HANDLING: comets follow discrete paths from `obs["comets"]`,
+    # NOT orbital paths. Predicting them with `predict_relative` is
+    # wrong — the prior bug produced 47 OOB events in seed 42 self-play
+    # (all post-step-50 when comets enter): fleets aimed at "comet at
+    # predicted orbital position" missed the real comet and flew off
+    # the board. Look up the comet's actual path and use it; for steps
+    # past the path's end, mark the comet as "gone" with sentinel
+    # positions far outside the board so swept_pair_hit can't match.
+    OFF_BOARD = (-1e6, -1e6)  # sentinel for "comet has left the board"
+    comet_paths = _comet_paths_by_id(world) if world.comet_ids else {}
     planet_positions: dict[int, list[tuple[float, float]]] = {}
     for pid, p in world.planets_by_id.items():
+        if int(pid) in comet_paths:
+            # Comet: use its discrete path.
+            path, path_index = comet_paths[int(pid)]
+            positions: list[tuple[float, float]] = []
+            for t in range(max_steps + 1):
+                path_t = int(path_index) + int(wait_N) + t
+                if 0 <= path_t < len(path):
+                    pt = path[path_t]
+                    positions.append((float(pt[0]), float(pt[1])))
+                else:
+                    positions.append(OFF_BOARD)
+            planet_positions[pid] = positions
+            continue
         p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
         if is_orbiting(p_tuple) and omega != 0.0:
             planet_positions[pid] = [
