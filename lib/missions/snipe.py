@@ -33,13 +33,14 @@ be ours with surplus garrison at our fleet's arrival step.
 from __future__ import annotations
 
 import math
+import os
 
 from lib.fleet import speed as fleet_speed
 from lib.geometry import danger_3nn
 from lib.intent import World
 from lib.mission import Mission
 from lib.scoring import DANGER3_KAPPA, MIN_DANGER3_MULT, PV_GAMMA, expected_hold, pv_horizon
-from lib.world_model import WorldModel, comet_remaining_lifetime
+from lib.world_model import WorldModel, _position_at, comet_remaining_lifetime
 
 # sym_hypot was imported here for the σ-equiv layer (cherry-picked
 # from origin/claude/game-theory-strategy-analysis-0oH4N). REVERTED for
@@ -201,20 +202,55 @@ def _max_enemy_arrival_within(
 
 def _followon_hold_estimate(
     followon, target, world: World, model: WorldModel, my_id: int, f_eta: int,
+    arrival_eta: int = 0,
 ) -> int:
     """Estimate how many turns we'd hold `followon` after capturing it
     from `target` (the about-to-be-captured forward base).
 
     Like `expected_hold` but explicitly EXCLUDES `target` from the
     enemy threat set, because we're about to flip target to our side.
+
+    `arrival_eta` (B3, 2026-05-22) — when > 0 AND
+    `BASELINE_ORBITAL_SAFETY=1`, predict `followon` and each enemy planet
+    position at our arrival to `followon` (in turns from now) via
+    `_position_at`. Returns `incoming_enemy_eta_after(arrival_eta - 1)`
+    so simultaneous-at-arrival fleets count as future threats (the
+    `expected_hold` site uses `incoming_enemy_eta_after(arrival_eta)`
+    instead — followon semantics differ because the followon ETA spans
+    *from now* through the target capture; we want any inbound that
+    survives arrival). Default 0 preserves prior behavior.
     """
     step_now = int(world.step)
     remaining = max(0, EPISODE_STEPS - step_now - f_eta)
     if remaining == 0:
         return 0
 
-    # In-flight enemy fleets toward followon — keep as-is.
-    best: int | None = model.incoming_enemy_eta(followon.id, my_id)
+    orbital_safety = os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1"
+    omega = float(getattr(world, "omega", 0.0))
+    use_predict = (
+        orbital_safety and omega != 0.0 and arrival_eta > 0
+    )
+
+    # Semantic anchor: legacy treats `f_eta` (target → followon travel)
+    # as "turns from now" (assumes we're at target now); the fixed path
+    # anchors at our TARGET ARRIVAL turn (arrival_eta from now), so
+    # `best` and `f_eta` are both relative to that anchor. We convert
+    # in-flight ETAs by subtracting `arrival_eta` so the final
+    # `best - f_eta` subtraction stays unit-consistent.
+    best: int | None
+    if use_predict:
+        inbound_abs = model.incoming_enemy_eta_after(
+            followon.id, my_id, arrival_eta - 1,
+        )
+        best = (inbound_abs - arrival_eta) if inbound_abs is not None else None
+    else:
+        best = model.incoming_enemy_eta(followon.id, my_id)
+
+    # Followon's position at our arrival.
+    if use_predict:
+        fx, fy = _position_at(followon, omega, arrival_eta)
+    else:
+        fx, fy = float(followon.x), float(followon.y)
 
     # Potential launches from each enemy planet EXCEPT the target.
     for p in world.planets_by_id.values():
@@ -224,15 +260,21 @@ def _followon_hold_estimate(
             continue
         if p.ships <= 0:
             continue
-        dx = followon.x - p.x
-        dy = followon.y - p.y
+        if use_predict:
+            px, py = _position_at(p, omega, arrival_eta)
+        else:
+            px, py = float(p.x), float(p.y)
+        dx = fx - px
+        dy = fy - py
         d = math.hypot(dx, dy)
         v = fleet_speed(int(p.ships))
         if v <= 0:
             continue
-        eta = int(math.ceil(d / v))
-        if best is None or eta < best:
-            best = eta
+        # Travel time from enemy planet (at anchor moment) to followon
+        # — same units (turns from anchor) in both modes.
+        eta_travel = int(math.ceil(d / v))
+        if best is None or eta_travel < best:
+            best = eta_travel
 
     if best is None:
         return remaining
@@ -241,7 +283,7 @@ def _followon_hold_estimate(
 
 
 def _best_followon(target, world: World, model: WorldModel, my_id: int,
-                   radius: float):
+                   radius: float, arrival_eta: int = 0):
     """Find the cheapest reachable nearby unowned planet from `target`,
     returning `(followon_planet, capture_cost, eta_from_target,
     expected_hold)` or `None` if no follow-on qualifies.
@@ -252,7 +294,25 @@ def _best_followon(target, world: World, model: WorldModel, my_id: int,
     units of `target`, and predicted to be holdable for at least
     `MIN_FOLLOWON_HOLD` turns after the follow-on arrives (computed
     AS IF target were already ours).
+
+    `arrival_eta` (B4, 2026-05-22) — when > 0 AND `BASELINE_ORBITAL_SAFETY=1`,
+    the target's position and each followon candidate's position rotate
+    by our arrival_eta; the launch-from-target distance, hence `f_eta`,
+    is computed from predicted positions at `arrival_eta`. The downstream
+    `_followon_hold_estimate` is then called with `arrival_eta=arrival_eta
+    + f_eta` (when WE arrive at the followon, from now). Default 0
+    preserves prior behavior.
     """
+    orbital_safety = os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1"
+    omega = float(getattr(world, "omega", 0.0))
+    use_predict = (
+        orbital_safety and omega != 0.0 and arrival_eta > 0
+    )
+    if use_predict:
+        tgt_x, tgt_y = _position_at(target, omega, arrival_eta)
+    else:
+        tgt_x, tgt_y = float(target.x), float(target.y)
+
     candidates = []
     for n in world.planets_by_id.values():
         if n.id == target.id:
@@ -261,8 +321,12 @@ def _best_followon(target, world: World, model: WorldModel, my_id: int,
             continue
         if n.id in world.comet_ids:
             continue
-        dx = n.x - target.x
-        dy = n.y - target.y
+        if use_predict:
+            nx, ny = _position_at(n, omega, arrival_eta)
+        else:
+            nx, ny = float(n.x), float(n.y)
+        dx = nx - tgt_x
+        dy = ny - tgt_y
         d = math.hypot(dx, dy)
         if d > radius:
             continue
@@ -271,7 +335,11 @@ def _best_followon(target, world: World, model: WorldModel, my_id: int,
         if v <= 0:
             continue
         f_eta = int(math.ceil(d / v))
-        eh = _followon_hold_estimate(n, target, world, model, my_id, f_eta)
+        followon_arrival_eta = (arrival_eta + f_eta) if use_predict else 0
+        eh = _followon_hold_estimate(
+            n, target, world, model, my_id, f_eta,
+            arrival_eta=followon_arrival_eta,
+        )
         if eh < MIN_FOLLOWON_HOLD:
             continue
         candidates.append((n, cost, f_eta, eh))
@@ -555,6 +623,7 @@ def propose_snipe_missions(
             if USE_OPERATIONAL_TIER and not is_comet:
                 foothold = _best_followon(
                     t, world, model, world.my_id, FOLLOWON_RADIUS,
+                    arrival_eta=int(eta),
                 )
                 if foothold is not None:
                     f_target, f_cost, f_eta_from_t, f_hold = foothold

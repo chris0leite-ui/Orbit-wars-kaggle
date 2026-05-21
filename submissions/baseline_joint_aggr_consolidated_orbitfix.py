@@ -3,6 +3,17 @@
 
 from __future__ import annotations
 
+import os as _orbitfix_os
+_orbitfix_os.environ.setdefault("BASELINE_JOINT_AGGR", "1")
+_orbitfix_os.environ.setdefault("BASELINE_JOINT_TOP_K", "5")
+_orbitfix_os.environ.setdefault("BASELINE_JOINT_MAX_PAIRS", "60")
+_orbitfix_os.environ.setdefault("BASELINE_REINFORCE_EMIT", "1")
+_orbitfix_os.environ.setdefault("BASELINE_REINFORCE_ANTICIPATE", "1")
+_orbitfix_os.environ.setdefault("BASELINE_NEUTRAL_BONUS", "2.0")
+_orbitfix_os.environ.setdefault("BASELINE_NEUTRAL_EARLY_EXTRA", "1.5")
+_orbitfix_os.environ.setdefault("BASELINE_NEUTRAL_EARLY_HORIZON", "50")
+_orbitfix_os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
+
 # === inlined: lib/geometry.py ===
 
 

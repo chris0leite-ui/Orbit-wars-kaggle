@@ -21,7 +21,7 @@ from lib.fleet import speed as fleet_speed
 from lib.orbit import is_orbiting, predict_relative
 from lib.scoring import pv_horizon
 from lib.trajectory import predict_fleet_fate
-from lib.world_model import _comet_paths_by_id, comet_remaining_lifetime
+from lib.world_model import _comet_paths_by_id, _position_at, comet_remaining_lifetime
 
 NUM_TARGETS_PER_SOURCE = 8
 MIN_FLEET_SIZE = 2
@@ -561,6 +561,19 @@ def _target_holdable_after_capture(
     MIN_COUNTER_SHIPS = 20
     SAFETY_MARGIN = 1.5
 
+    # B1 (PI 2026-05-21 / completed 2026-05-22) — when BASELINE_ORBITAL_SAFETY=1,
+    # the target and each opp/ally rotate to a different position by our
+    # arrival. Without this, an orbiting target far from opp NOW but close
+    # at arrival_step gets a falsely-HOLDABLE verdict and we capture into
+    # a recapture. Sibling fix to f1774a7 in `time_to_enemy_threat`.
+    orbital_safety = os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1"
+    omega = float(getattr(world, "omega", 0.0))
+    use_predict = orbital_safety and omega != 0.0 and arrival_step > 0
+    if use_predict:
+        tgt_x, tgt_y = _position_at(tgt, omega, arrival_step)
+    else:
+        tgt_x, tgt_y = float(tgt.x), float(tgt.y)
+
     nearest_opp = None
     nearest_opp_dist = float("inf")
     for opp in world.planets_by_id.values():
@@ -570,9 +583,11 @@ def _target_holdable_after_capture(
             continue
         if int(opp.ships) < MIN_COUNTER_SHIPS:
             continue
-        d = math.hypot(
-            float(opp.x) - float(tgt.x), float(opp.y) - float(tgt.y),
-        )
+        if use_predict:
+            ox, oy = _position_at(opp, omega, arrival_step)
+        else:
+            ox, oy = float(opp.x), float(opp.y)
+        d = math.hypot(ox - tgt_x, oy - tgt_y)
         if d < nearest_opp_dist:
             nearest_opp_dist = d
             nearest_opp = opp
@@ -585,9 +600,11 @@ def _target_holdable_after_capture(
             continue
         if int(ally.id) == int(tgt.id):
             continue
-        d = math.hypot(
-            float(ally.x) - float(tgt.x), float(ally.y) - float(tgt.y),
-        )
+        if use_predict:
+            ax, ay = _position_at(ally, omega, arrival_step)
+        else:
+            ax, ay = float(ally.x), float(ally.y)
+        d = math.hypot(ax - tgt_x, ay - tgt_y)
         if d < nearest_us_dist:
             nearest_us_dist = d
     if nearest_us_dist <= nearest_opp_dist:
@@ -659,6 +676,18 @@ def _target_cost_parity_ok(
     if delivered < 1:
         return True  # capture fails; not our concern here
 
+    # B2 (PI 2026-05-21 / completed 2026-05-22) — orbital safety: predict
+    # tgt/ally/opp positions at arrival_step when BASELINE_ORBITAL_SAFETY=1.
+    # Same modeling fix as B1 (`_target_holdable_after_capture`); the
+    # reactor-cost parity verdict depends on the same rotated geometry.
+    orbital_safety = os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1"
+    omega = float(getattr(world, "omega", 0.0))
+    use_predict = orbital_safety and omega != 0.0 and arrival_step > 0
+    if use_predict:
+        tgt_x, tgt_y = _position_at(tgt, omega, arrival_step)
+    else:
+        tgt_x, tgt_y = float(tgt.x), float(tgt.y)
+
     # "Are WE closer to tgt than every threatening opp?" — analogue of
     # the hold-feasibility ally-closer safety valve. If yes, we'd be
     # the cheap second-mover and the launch is positionally fine.
@@ -670,9 +699,11 @@ def _target_cost_parity_ok(
             continue
         if int(ally.id) == int(src.id):
             continue  # already committed; can't double-count
-        d = math.hypot(
-            float(ally.x) - float(tgt.x), float(ally.y) - float(tgt.y),
-        )
+        if use_predict:
+            ax, ay = _position_at(ally, omega, arrival_step)
+        else:
+            ax, ay = float(ally.x), float(ally.y)
+        d = math.hypot(ax - tgt_x, ay - tgt_y)
         if d < nearest_us_dist:
             nearest_us_dist = d
 
@@ -684,9 +715,11 @@ def _target_cost_parity_ok(
             continue
         if int(opp.ships) < MIN_REACTOR_SHIPS:
             continue
-        d = math.hypot(
-            float(opp.x) - float(tgt.x), float(opp.y) - float(tgt.y),
-        )
+        if use_predict:
+            ox, oy = _position_at(opp, omega, arrival_step)
+        else:
+            ox, oy = float(opp.x), float(opp.y)
+        d = math.hypot(ox - tgt_x, oy - tgt_y)
         # Ally-closer safety valve: if some ally is strictly closer than
         # this opp, treat the launch as positionally fine (we can reach
         # tgt to defend faster than opp can reach it to recapture).

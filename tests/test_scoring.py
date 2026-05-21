@@ -115,10 +115,14 @@ def test_pv_horizon_strictly_monotone_in_gamma_for_fixed_step_eta():
 
 class _FakeModel:
     """Minimal WorldModel stub: time_to_enemy_threat returns whatever
-    is preset; other methods unused by expected_hold."""
+    is preset; other methods unused by expected_hold. Records the
+    `arrival_eta` kwarg seen so tests can pin the orbital-safety
+    wiring (f1774a7 / 2026-05-22)."""
     def __init__(self, threat_eta=None):
         self._threat = threat_eta
-    def time_to_enemy_threat(self, planet_id, my_id, world):
+        self.last_arrival_eta = None
+    def time_to_enemy_threat(self, planet_id, my_id, world, arrival_eta=0):
+        self.last_arrival_eta = arrival_eta
         return self._threat
 
 
@@ -162,3 +166,41 @@ def test_expected_hold_respects_smaller_remaining_game():
     # remaining_game = 500 - 440 - 10 = 50; hold via threat = 200 - 10 = 190.
     # min(50, 190) = 50.
     assert scoring.expected_hold(target_id=7, eta=10, world=world, model=model) == 50
+
+
+# ---------------------------------------------------------------------------
+# Orbital-safety wiring pin (f1774a7 / 2026-05-22)
+# ---------------------------------------------------------------------------
+
+
+def test_expected_hold_passes_arrival_eta_when_env_set(monkeypatch):
+    """When BASELINE_ORBITAL_SAFETY=1, expected_hold must thread `eta`
+    into `time_to_enemy_threat` as `arrival_eta`. Pins the wiring
+    landed in f1774a7."""
+    world = _FakeWorld(step=100)
+    model = _FakeModel(threat_eta=30)
+    monkeypatch.setenv("BASELINE_ORBITAL_SAFETY", "1")
+    scoring.expected_hold(target_id=7, eta=20, world=world, model=model)
+    assert model.last_arrival_eta == 20, (
+        f"Expected arrival_eta=20, got {model.last_arrival_eta}"
+    )
+
+
+def test_expected_hold_does_not_pass_arrival_eta_when_env_unset(monkeypatch):
+    """When BASELINE_ORBITAL_SAFETY unset (default), `arrival_eta`
+    defaults to 0 in the stub — preserves backwards compat with sub
+    52882014."""
+    world = _FakeWorld(step=100)
+    model = _FakeModel(threat_eta=30)
+    monkeypatch.delenv("BASELINE_ORBITAL_SAFETY", raising=False)
+    scoring.expected_hold(target_id=7, eta=20, world=world, model=model)
+    assert model.last_arrival_eta == 0
+
+
+def test_expected_hold_does_not_pass_arrival_eta_when_env_zero(monkeypatch):
+    """`BASELINE_ORBITAL_SAFETY=0` (explicit) behaves identical to unset."""
+    world = _FakeWorld(step=100)
+    model = _FakeModel(threat_eta=30)
+    monkeypatch.setenv("BASELINE_ORBITAL_SAFETY", "0")
+    scoring.expected_hold(target_id=7, eta=20, world=world, model=model)
+    assert model.last_arrival_eta == 0

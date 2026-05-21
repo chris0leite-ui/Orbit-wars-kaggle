@@ -53,6 +53,25 @@ DEFAULT_HORIZON = 250
 WAVE_LOOKAHEAD = 12
 
 
+def _position_at(planet, omega: float, lead_turns: int) -> tuple[float, float]:
+    """Return predicted `(x, y)` of `planet` `lead_turns` from now.
+
+    Current position for static planets, when `omega == 0`, or when
+    `lead_turns <= 0`. Otherwise routes through
+    `lib.orbit.predict_relative` after the `is_orbiting` gate.
+
+    Used by `time_to_enemy_threat` and sibling orbital-safety call sites
+    to keep the predict-position-at-arrival pattern in one tested place.
+    """
+    if lead_turns <= 0 or omega == 0.0:
+        return float(planet.x), float(planet.y)
+    tup = [planet.id, planet.owner, planet.x, planet.y,
+           planet.radius, planet.ships, planet.production]
+    if not is_orbiting(tup):
+        return float(planet.x), float(planet.y)
+    return predict_relative(tup, omega, lead_turns)
+
+
 def fleet_target_planet(fleet, planets, omega: float = 0.0,
                         max_horizon: int = DEFAULT_HORIZON):
     """Trace `fleet` along its angle, find first planet it'd hit.
@@ -327,6 +346,31 @@ class WorldModel:
             return None
         return min(enemy_etas)
 
+    def incoming_enemy_eta_after(self, planet_id: int, my_id: int,
+                                  after: int) -> int | None:
+        """Min ETA among in-flight enemy fleets arriving STRICTLY AFTER
+        `after`. None if no qualifying fleet exists.
+
+        Used by `time_to_enemy_threat` with `arrival_eta > 0`: pre-arrival
+        and same-step inbound fleets are resolved by `owner_at` /
+        `ships_at` combat at our arrival, so they must NOT double-count
+        as future threats; AND, the earliest inbound fleet may itself be
+        pre-arrival while a LATER wave is a real threat — `incoming_enemy_eta`
+        would silently drop the later wave because it only returns the
+        minimum. This method surfaces the earliest post-`after` wave.
+        Origin: B6 fix (2026-05-22 audit of f1774a7 orbital-safety patch).
+        """
+        arrivals = self.ledger.get(planet_id)
+        if not arrivals:
+            return None
+        candidates = [
+            eta for (eta, owner, ships) in arrivals
+            if owner != my_id and ships > 0 and eta > after
+        ]
+        if not candidates:
+            return None
+        return min(candidates)
+
     def time_to_enemy_threat(self, planet_id: int, my_id: int, world,
                               arrival_eta: int = 0) -> int | None:
         """Earliest turn at which an enemy could have a fleet at
@@ -341,40 +385,53 @@ class WorldModel:
         H22 helper for Hold-Aware Value scoring. See plan file
         2026-05-14 HAV section.
 
-        `arrival_eta` (PI 2026-05-21 bug fix) — when > 0, the target
-        and enemy planet positions are predicted at that future turn
-        via `predict_relative`. This fixes a silent scoring bug where
-        an orbiting target that rotates INTO enemy territory by our
-        arrival was scored as safe (long expected_hold) because the
-        threat ETA was computed from the CURRENT target position.
-        Default 0 preserves the original "current position" semantics
-        for source-safety callers (drain checks etc).
+        `arrival_eta` (PI 2026-05-21 bug fix, completed 2026-05-22) —
+        when > 0, the target and enemy planet positions are predicted
+        at that future turn via `predict_relative`. This fixes a silent
+        scoring bug where an orbiting target that rotates INTO enemy
+        territory by our arrival was scored as safe (long expected_hold)
+        because the threat ETA was computed from the CURRENT target
+        position. Default 0 preserves the original "current position"
+        semantics for source-safety callers (drain checks etc).
+
+        Coverage notes (B5/B6/B7, completed in this audit pass):
+        - B5: in-flight fleets that arrive at-or-before our arrival are
+          resolved by combat at our arrival; only fleets arriving
+          STRICTLY AFTER `arrival_eta` count as future threats.
+        - B6: `incoming_enemy_eta` returns only the earliest inbound;
+          when that earliest is pre-arrival, a later wave can be the
+          real threat. Use `incoming_enemy_eta_after` to find it.
+        - B7: enemy fleet aims at target-at-our-arrival, but target
+          keeps rotating during enemy travel. Iterate a 5-step
+          fixed-point on `enemy_eta_travel` for orbiting targets;
+          fall through to the seed estimate on non-convergence.
         """
         target = world.planets_by_id.get(planet_id)
         if target is None:
             return None
 
         omega = float(getattr(world, "omega", 0.0))
+        target_is_orbital = (
+            arrival_eta > 0 and omega != 0.0
+            and is_orbiting([target.id, target.owner, target.x, target.y,
+                             target.radius, target.ships, target.production])
+        )
 
         # Target position at our arrival.
-        if arrival_eta > 0 and omega != 0.0:
-            target_tuple = [target.id, target.owner, target.x, target.y,
-                            target.radius, target.ships, target.production]
-            if is_orbiting(target_tuple):
-                tx, ty = predict_relative(target_tuple, omega, arrival_eta)
-            else:
-                tx, ty = float(target.x), float(target.y)
-        else:
-            tx, ty = float(target.x), float(target.y)
+        tx, ty = _position_at(target, omega, arrival_eta)
 
         best: int | None = None
 
-        # (a) in-flight enemy fleets — reuse existing helper. Their ETA
-        # is from now; ignore those that arrive BEFORE our arrival when
-        # we're scoring post-capture hold (we'll handle them via the
-        # standard combat resolution at our arrival).
-        inbound = self.incoming_enemy_eta(planet_id, my_id)
-        if inbound is not None and inbound >= arrival_eta:
+        # (a) in-flight enemy fleets — B5 + B6 fix. Filter strictly to
+        # fleets arriving AFTER our arrival; the earliest qualifying
+        # fleet (not just the earliest overall) becomes the in-flight
+        # threat ETA.
+        if arrival_eta > 0:
+            inbound = self.incoming_enemy_eta_after(planet_id, my_id,
+                                                     arrival_eta)
+        else:
+            inbound = self.incoming_enemy_eta(planet_id, my_id)
+        if inbound is not None:
             best = inbound
 
         # (b) potential launches from each enemy planet. When
@@ -387,15 +444,7 @@ class WorldModel:
                 continue
             if p.ships <= 0:
                 continue
-            if arrival_eta > 0 and omega != 0.0:
-                p_tuple = [p.id, p.owner, p.x, p.y,
-                           p.radius, p.ships, p.production]
-                if is_orbiting(p_tuple):
-                    px, py = predict_relative(p_tuple, omega, arrival_eta)
-                else:
-                    px, py = float(p.x), float(p.y)
-            else:
-                px, py = float(p.x), float(p.y)
+            px, py = _position_at(p, omega, arrival_eta)
             dx = tx - px
             dy = ty - py
             dist = (dx * dx + dy * dy) ** 0.5
@@ -403,6 +452,27 @@ class WorldModel:
             if v <= 0:
                 continue
             eta_travel = int(-(-dist // v))  # math.ceil without import
+
+            # B7 — 5-iteration fixed-point on `eta_travel` for orbiting
+            # targets. The enemy fleet aims at target-at-our-arrival, but
+            # during its travel the target keeps rotating; the actual
+            # rendezvous point shifts. Iterate target_pos_at(arrival +
+            # eta_travel) → recompute dist → recompute eta_travel until
+            # |Δ| ≤ 1 (mirror of lib/aim.py:aim_orbiting). The enemy
+            # planet's position at arrival_eta stays fixed (the assumed
+            # launch moment).
+            if target_is_orbital and eta_travel > 0:
+                for _ in range(5):
+                    tx_k, ty_k = _position_at(
+                        target, omega, arrival_eta + eta_travel,
+                    )
+                    dist_k = ((tx_k - px) ** 2 + (ty_k - py) ** 2) ** 0.5
+                    new_eta = int(-(-dist_k // v))
+                    if abs(new_eta - eta_travel) <= 1:
+                        eta_travel = new_eta
+                        break
+                    eta_travel = new_eta
+
             threat_arrival = arrival_eta + eta_travel
             if best is None or threat_arrival < best:
                 best = threat_arrival
