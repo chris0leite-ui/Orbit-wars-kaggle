@@ -83,6 +83,31 @@ ANTICIPATE_ENABLED = os.environ.get("BASELINE_REINFORCE_ANTICIPATE", "0") == "1"
 ANTICIPATE_MIN_PROD = int(os.environ.get("BASELINE_REINFORCE_ANTICIPATE_MIN_PROD", "3"))
 ANTICIPATE_MARGIN = float(os.environ.get("BASELINE_REINFORCE_ANTICIPATE_MARGIN", "1.3"))
 
+# Smart stagnant-rear drain (2026-05-21). Distinct from `drain_idle_rear`
+# (falsified 2026-05-18 at n=32, 11/32=34.4pct: fixed thresholds drained
+# correctly-held reserves). This version uses DYNAMIC expected_reserve
+# scaled by production, requires src.ships > 2x reserve (so only genuine
+# excess is drained), and hard-gates on "zero inbound enemy" (not the
+# looser time_to_enemy_threat heuristic). Origin: PI 2026-05-21 trace
+# of sub 52882014 showing 37/40 planets sat on 50+ idle ships for 20+
+# turns. Each drain launch is physics-filtered via predict_fleet_fate.
+# Default OFF; opt-in via BASELINE_STAGNANT_DRAIN=1.
+STAGNANT_DRAIN_ENABLED = os.environ.get("BASELINE_STAGNANT_DRAIN", "0") == "1"
+STAGNANT_RESERVE_MULT = int(os.environ.get("BASELINE_STAGNANT_RESERVE_MULT", "5"))
+STAGNANT_RESERVE_FLOOR = int(os.environ.get("BASELINE_STAGNANT_RESERVE_FLOOR", "10"))
+STAGNANT_THRESHOLD_MULT = float(os.environ.get("BASELINE_STAGNANT_THRESHOLD_MULT", "2.0"))
+STAGNANT_MIN_IMPROVEMENT = float(os.environ.get("BASELINE_STAGNANT_MIN_IMPROVEMENT", "8.0"))
+STAGNANT_MAX_LAUNCHES = int(os.environ.get("BASELINE_STAGNANT_MAX_LAUNCHES", "4"))
+
+# Combat-stack drain (2026-05-21). Different target choice from
+# drain_stagnant_rear: instead of "drain to a friendly closer to front,"
+# this stacks excess directly onto a NON-OUR planet we're currently
+# attacking (has friendly inbound in the ledger). Directly addresses
+# PI's image observation: "our large planet sits fleets away from
+# combat, we do not cluster at combat." Same dynamic-reserve guards.
+COMBAT_STACK_ENABLED = os.environ.get("BASELINE_COMBAT_STACK", "0") == "1"
+COMBAT_STACK_MAX_LAUNCHES = int(os.environ.get("BASELINE_COMBAT_STACK_MAX_LAUNCHES", "4"))
+
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
 # chooser's wait_N>0 winners are remembered across turns instead of
 # being silently dropped. Each entry ticks down each turn; when
@@ -520,6 +545,163 @@ def drain_idle_rear(moves, planets, my_id: int, world, model) -> list:
     return list(moves) + extras
 
 
+def drain_stagnant_rear(moves, planets, my_id: int, world, model) -> list:
+    """Drain genuinely-excess rear reserves toward closer-to-front friendlies.
+
+    PI 2026-05-21 spec — drains only when ALL of:
+      - source is one of MY planets AND not already in `moves`
+      - source has ZERO inbound enemy fleets (incoming_enemy_eta is None)
+      - source.ships > THRESHOLD_MULT * expected_reserve(src)
+      - a strictly-closer-to-front friendly exists (action distance
+        improvement >= STAGNANT_MIN_IMPROVEMENT board units)
+
+    expected_reserve(src) = max(production * RESERVE_MULT, RESERVE_FLOOR).
+    For prod=5 with defaults (5x, 10 floor): reserve=25, drain at >50.
+    For prod=2: reserve=10, drain at >20.
+
+    Each launch is filtered by predict_fleet_fate (Rule 47). At most
+    STAGNANT_MAX_LAUNCHES emissions per turn (wallclock guard).
+
+    Target choice: among friendlies that improve action-distance, pick
+    the one with the LOWEST ships (proxy for "needs reinforcement").
+    """
+    if not STAGNANT_DRAIN_ENABLED:
+        return moves
+    used_srcs = set()
+    for m in moves:
+        try:
+            used_srcs.add(int(m[0]))
+        except (TypeError, IndexError):
+            pass
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    other_planets = [p for p in planets if int(p.owner) != my_id]
+    if len(my_planets) < 2 or not other_planets:
+        return moves
+
+    def d_action(p):
+        return min(
+            math.hypot(float(p.x) - float(q.x), float(p.y) - float(q.y))
+            for q in other_planets
+        )
+
+    extras = []
+    fired = 0
+    for src in my_planets:
+        if fired >= STAGNANT_MAX_LAUNCHES:
+            break
+        if int(src.id) in used_srcs:
+            continue
+        # Hard gate: zero inbound enemy fleet ETAs.
+        if model.incoming_enemy_eta(int(src.id), my_id) is not None:
+            continue
+        prod = int(src.production)
+        expected_reserve = max(prod * STAGNANT_RESERVE_MULT,
+                               STAGNANT_RESERVE_FLOOR)
+        if int(src.ships) <= STAGNANT_THRESHOLD_MULT * expected_reserve:
+            continue
+        src_d = d_action(src)
+        # Closer-to-front friendly required; pick the lowest-ships one
+        # among candidates that meet the improvement floor.
+        candidates = []
+        for q in my_planets:
+            if int(q.id) == int(src.id):
+                continue
+            qd = d_action(q)
+            if src_d - qd < STAGNANT_MIN_IMPROVEMENT:
+                continue
+            candidates.append((int(q.ships), q))
+        if not candidates:
+            continue
+        candidates.sort(key=lambda x: x[0])
+        target = candidates[0][1]
+        ships_to_send = int(src.ships) - expected_reserve
+        if ships_to_send < 1:
+            continue
+        angle = math.atan2(float(target.y) - float(src.y),
+                           float(target.x) - float(src.x))
+        try:
+            fate = predict_fleet_fate(src, target, angle, ships_to_send, world)
+            if fate.outcome != "target":
+                continue
+        except Exception:
+            pass
+        extras.append([int(src.id), float(angle), int(ships_to_send)])
+        used_srcs.add(int(src.id))
+        fired += 1
+    return list(moves) + extras
+
+
+def drain_combat_stack(moves, planets, my_id: int, world, model) -> list:
+    """Stack idle excess directly onto attacks-in-progress.
+
+    Drain target = NON-OUR planet that already has friendly fleets
+    inbound (`model.ledger` entry with owner == my_id). Each excess
+    rear source fires an extra launch toward the contested target
+    closest to it, joining the existing wave.
+
+    Same reserve / threshold / inbound-enemy guards as
+    drain_stagnant_rear. Directly addresses PI 2026-05-21 image
+    observation: "our large planet sits fleets away from combat,
+    we do not cluster at combat."
+    """
+    if not COMBAT_STACK_ENABLED:
+        return moves
+    used_srcs = set()
+    for m in moves:
+        try:
+            used_srcs.add(int(m[0]))
+        except (TypeError, IndexError):
+            pass
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    if len(my_planets) < 2:
+        return moves
+
+    contested = []
+    for p in planets:
+        if int(p.owner) == my_id:
+            continue
+        arrivals = model.ledger.get(int(p.id), [])
+        friendly_in = sum(int(s) for (eta, o, s) in arrivals if o == my_id)
+        if friendly_in > 0:
+            contested.append(p)
+    if not contested:
+        return moves
+
+    extras = []
+    fired = 0
+    for src in my_planets:
+        if fired >= COMBAT_STACK_MAX_LAUNCHES:
+            break
+        if int(src.id) in used_srcs:
+            continue
+        if model.incoming_enemy_eta(int(src.id), my_id) is not None:
+            continue
+        prod = int(src.production)
+        reserve = max(prod * STAGNANT_RESERVE_MULT, STAGNANT_RESERVE_FLOOR)
+        if int(src.ships) <= STAGNANT_THRESHOLD_MULT * reserve:
+            continue
+        ships_to_send = int(src.ships) - reserve
+        if ships_to_send < 1:
+            continue
+        target = min(
+            contested,
+            key=lambda t: math.hypot(float(t.x) - float(src.x),
+                                     float(t.y) - float(src.y)),
+        )
+        angle = math.atan2(float(target.y) - float(src.y),
+                           float(target.x) - float(src.x))
+        try:
+            fate = predict_fleet_fate(src, target, angle, ships_to_send, world)
+            if fate.outcome != "target":
+                continue
+        except Exception:
+            pass
+        extras.append([int(src.id), float(angle), int(ships_to_send)])
+        used_srcs.add(int(src.id))
+        fired += 1
+    return list(moves) + extras
+
+
 def agent(obs, configuration=None):
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
@@ -653,7 +835,9 @@ def agent(obs, configuration=None):
 
         moves = due_moves + moves
         moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
-        return drain_idle_rear(moves, planets, me, world, model)
+        moves = drain_idle_rear(moves, planets, me, world, model)
+        moves = drain_stagnant_rear(moves, planets, me, world, model)
+        return drain_combat_stack(moves, planets, me, world, model)
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
     # coalition + opp-modifier posterior; no fast_sim rollout. See
@@ -673,7 +857,9 @@ def agent(obs, configuration=None):
             world, model, step,
         )
         moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
-        return drain_idle_rear(moves, planets, me, world, model)
+        moves = drain_idle_rear(moves, planets, me, world, model)
+        moves = drain_stagnant_rear(moves, planets, me, world, model)
+        return drain_combat_stack(moves, planets, me, world, model)
 
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
@@ -717,4 +903,6 @@ def agent(obs, configuration=None):
 
     moves = composite_due + moves
     moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
-    return drain_idle_rear(moves, planets, me, world, model)
+    moves = drain_idle_rear(moves, planets, me, world, model)
+    moves = drain_stagnant_rear(moves, planets, me, world, model)
+    return drain_combat_stack(moves, planets, me, world, model)
