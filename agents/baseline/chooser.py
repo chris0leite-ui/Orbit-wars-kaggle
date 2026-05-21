@@ -14,11 +14,12 @@ counter-launches and fragile leaves are correctly penalised.
 
 from __future__ import annotations
 
+import os
 import time
 
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
-from lib.opp_model import lite_greedy_policy as opp_policy
+from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy
 
 from agents.baseline.value import select_favor_fn
 
@@ -28,8 +29,29 @@ PER_CANDIDATE_SAFETY = 1.5
 RESERVED_OVERHEAD_MS = 50.0
 
 
+def _select_opp_policy():
+    """Tier 3 (2026-05-18 PM): asymmetric opp model selection.
+
+    BASELINE_OPP_TIER env var:
+      - "0" or unset → lite_greedy_policy (default, ~1-2ms/call).
+      - "1" → top_tier_mirror_policy (~5-10ms/call; ladder-realistic
+              opp using v3.5.1 aggressive snipe pipeline). Bench gate
+              FIRST before A/B — per-call cost is 5-10× lite_greedy.
+
+    Per-call selection (not cached at import time) so env-var overrides
+    inside test fixtures take effect without re-importing the module.
+    """
+    return (
+        top_tier_mirror_policy
+        if os.environ.get("BASELINE_OPP_TIER", "0").strip() == "1"
+        else lite_greedy_policy
+    )
+
+
 def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
-    """One reactive lite_greedy action set per non-me seat."""
+    """One reactive opp action set per non-me seat. Opp policy is
+    selected via BASELINE_OPP_TIER — see `_select_opp_policy`."""
+    opp_policy = _select_opp_policy()
     actions: list[list] = [[] for _ in range(num_seats)]
     for opp_id in range(num_seats):
         if opp_id == me:
@@ -75,19 +97,39 @@ def score_action(snap_base, me: int, num_seats: int,
     return leaf - baseline_favors[horizon]
 
 
-def affordable_validate_cap(snap_base, num_seats: int, max_horizon: int,
-                            wallclock_ms: float, min_horizon: int) -> int:
-    """Probe per-step cost on the current board, derive a safe candidate
-    cap that fits inside the wallclock budget. Min cap = 8.
+def affordable_validate_cap(snap_base, me: int, num_seats: int,
+                            max_horizon: int, wallclock_ms: float,
+                            min_horizon: int, gamma: float,
+                            ) -> tuple[int, float]:
+    """Probe per-step + per-leaf cost on the current board, derive a
+    safe candidate cap and the per-candidate cost estimate.
+
+    Returns `(cap, per_cand_ms)`. `cap` is bounded below by 8. The
+    `per_cand_ms` value is used by `choose()` to pre-bail before
+    entering a candidate that would push past the deadline.
+
+    Probing per-leaf cost matters because the leaf eval cost varies
+    by ~50x between value heads (favor ~100µs vs composite_capture_value
+    ~2-5ms — it builds a World + ray-casts every fleet). Without the
+    leaf probe the cap stayed sized for favor and composite blew the
+    1000ms env budget on heavy turns (max 1292ms vs v15 / v9_scavenge,
+    2026-05-17 A/B).
     """
+    favor_fn = select_favor_fn()
     t0 = time.perf_counter()
     probe = fs_clone(snap_base)
     probe = fs_step(probe, [[] for _ in range(num_seats)], in_place=True)
     per_step_ms = max(0.05, (time.perf_counter() - t0) * 1000.0)
+
+    t0 = time.perf_counter()
+    favor_fn(probe.state[me].observation, me, num_seats, gamma=gamma)
+    per_leaf_ms = max(0.05, (time.perf_counter() - t0) * 1000.0)
+
     avg_K = (min_horizon + max_horizon) / 2.0
-    per_cand_ms = per_step_ms * avg_K * PER_CANDIDATE_SAFETY
+    per_cand_ms = (per_step_ms * avg_K + per_leaf_ms) * PER_CANDIDATE_SAFETY
     budget = wallclock_ms - RESERVED_OVERHEAD_MS
-    return max(8, int(budget / per_cand_ms))
+    cap = max(8, int(budget / per_cand_ms))
+    return cap, per_cand_ms
 
 
 def choose(snap_base, prerank, baseline_favors: list[float],
@@ -97,15 +139,21 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     if not prerank:
         return []
 
-    n_aff = affordable_validate_cap(
-        snap_base, num_seats, max_horizon, wallclock_ms, min_horizon,
+    n_aff, per_cand_ms = affordable_validate_cap(
+        snap_base, me, num_seats, max_horizon, wallclock_ms,
+        min_horizon, gamma,
     )
     top = prerank[: min(N_VALIDATE, n_aff)]
 
     deadline = time.perf_counter() + wallclock_ms / 1000.0
+    # Pre-bail headroom: don't ENTER a candidate that would push us past
+    # the deadline. score_action is uninterruptible (runs the full K-step
+    # rollout once entered), so checking AT the deadline is too late.
+    # Closes the long-tail max-turn-ms overrun seen in the 2026-05-17 A/B.
+    safe_deadline = deadline - (per_cand_ms / 1000.0)
     validated: list[tuple] = []
-    for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
-        if time.perf_counter() > deadline:
+    for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N, *_ in top:
+        if time.perf_counter() > safe_deadline:
             break
         delta = score_action(
             snap_base, me, num_seats,

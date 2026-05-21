@@ -11,6 +11,13 @@ CLI:
         e.g. python scripts/bundle_agent.py agents/v1_orbitfix --lib geometry fleet orbit
 
 Output: submissions/<basename(agent_dir)>.py
+
+Parity gate: post-bundle self-play comparison between the source agent
+and the bundled file across seeds=(0,). Results are cached by full
+sha256 in ``audit/bundle-parity-cache.json``; a cache hit skips the
+~30-60s gate on repeat builds of an unchanged bundle. Use
+``--ignore-parity-cache`` to force re-verification, or
+``--skip-parity-gate`` to bypass both gate and cache (not recommended).
 """
 
 from __future__ import annotations
@@ -35,6 +42,14 @@ REPO = Path(__file__).resolve().parents[1]
 # via pathlib's `/` operator transparently.
 DEFAULT_LIB_ORDER = [
     "geometry",
+    # lib/mirror.py — player-count detection + symmetry helpers
+    # (2026-05-21). Depends only on geometry. Added because
+    # agents/baseline/proposer.py imports `detect_num_players` from
+    # here for the confidence-buffer's 4P discount path. Pre-2026-05-21
+    # bundles failed silently with NameError under debug=False when
+    # the buffer code ran — the silent-catch in kaggle_environments
+    # let the bug masquerade as a strategic regression.
+    "mirror",
     "fleet",
     "orbit",
     "aim",
@@ -97,7 +112,19 @@ DEFAULT_LIB_ORDER = [
 SUBMISSIONS = REPO / "submissions"
 
 
-_INTRA_IMPORT_RE = re.compile(r"^\s*from (lib|\.)[\w.]*\s+import\b.*$")
+# Strip these intra-package import patterns from the bundle (the referenced
+# symbols are inlined into the concatenated file, so the import lines would
+# fail at runtime in Kaggle's flat-filesystem sandbox):
+#   - `from lib.X import Y`         (lib modules, the long-established case)
+#   - `from .X import Y`            (relative imports within an agent package)
+#   - `from agents.<name>.X import` (modular agent pattern; the agents/baseline
+#     split + 2026-05-17 friction `bundler-ships-with-wrong-default-env-var`
+#     plus a sibling-class bug — bundle ran locally because agents.<name> was
+#     importable from cwd, then ERRORED on the Kaggle ladder because Kaggle's
+#     sandbox doesn't have the `agents` package on its filesystem).
+_INTRA_IMPORT_RE = re.compile(
+    r"^\s*from (lib|\.|agents\.[\w]+)[\w.]*\s+import\b.*$"
+)
 # Captures the lib-relative module path so we can verify it's in the bundle
 # order list. Friction: `bundler-missing-block-e-modules`,
 # `new-lib-module-silently-broken-bundle`, `bundle-default-lib-order-stale-...`
@@ -210,8 +237,9 @@ def _clean_lib_source(src: str) -> str:
         if _FUTURE_IMPORT_RE.match(line):
             continue
         if _INTRA_IMPORT_RE.match(line):
+            indent = line[: len(line) - len(line.lstrip(" \t"))]
             for asname, original in _extract_aliases(line):
-                out.append(f"{asname} = {original}\n")
+                out.append(f"{indent}{asname} = {original}\n")
             continue
         out.append(line)
     return _strip_module_docstring("".join(out))
@@ -247,10 +275,11 @@ def _clean_agent_source(src: str) -> str:
         if _FUTURE_IMPORT_RE.match(line):
             continue
         if _INTRA_IMPORT_RE.match(line):
+            indent = line[: len(line) - len(line.lstrip(" \t"))]
             stripped = line.rstrip("\n")
-            out.append(f"# {stripped}  # inlined by bundle_agent.py\n")
+            out.append(f"{indent}# {stripped.lstrip()}  # inlined by bundle_agent.py\n")
             for asname, original in _extract_aliases(line):
-                out.append(f"{asname} = {original}\n")
+                out.append(f"{indent}{asname} = {original}\n")
         else:
             out.append(line)
     return "".join(out)
@@ -329,6 +358,17 @@ def bundle(
         parts.append(f"\n# === inlined: lib/{mod}.py ===\n")
         parts.append(_clean_lib_source(src))
 
+    # Inline agent submodules (e.g. agents/baseline/{value,proposer,chooser}.py)
+    # before main.py. Modular agent pattern (2026-05-17): main.py imports symbols
+    # from sibling files; without inlining the bundle would NameError after the
+    # intra-package import lines are stripped. Topological order by
+    # `from agents.<name>.X import` references.
+    if agent_dir.is_dir():
+        agent_submodules = _topo_sort_agent_submodules(agent_dir)
+        for sub_name, sub_src in agent_submodules:
+            parts.append(f"\n# === inlined: agents/{name}/{sub_name}.py ===\n")
+            parts.append(_clean_agent_source(sub_src))
+
     parts.append("\n# === agent ===\n")
     parts.append(_clean_agent_source(agent_src))
 
@@ -336,12 +376,90 @@ def bundle(
     return out_path
 
 
+def _topo_sort_agent_submodules(agent_dir: Path) -> list[tuple[str, str]]:
+    """Discover and topologically order the agent's sibling .py modules.
+
+    Returns `[(name, source), ...]` ordered so that any module X appears
+    before any module Y that does `from agents.<pkg>.X import ...`. Skips
+    `main.py` (caller emits it last) and `__init__.py` (irrelevant after
+    inlining). Cycles → ValueError; in practice they indicate a layering bug.
+    """
+    pkg = agent_dir.name
+    submodules: dict[str, str] = {}
+    deps: dict[str, set[str]] = {}
+    dep_re = re.compile(rf"^\s*from\s+agents\.{re.escape(pkg)}\.([\w]+)\s+import\b")
+
+    for path in sorted(agent_dir.glob("*.py")):
+        if path.name in ("main.py", "__init__.py"):
+            continue
+        mod_name = path.stem
+        src = path.read_text()
+        submodules[mod_name] = src
+        deps[mod_name] = set()
+        for line in src.splitlines():
+            m = dep_re.match(line)
+            if m and m.group(1) in submodules or (m and m.group(1) != mod_name):
+                deps[mod_name].add(m.group(1)) if m else None
+
+    # Kahn's algorithm.
+    ordered: list[tuple[str, str]] = []
+    pending = {k: set(v) for k, v in deps.items()}
+    while pending:
+        ready = sorted(n for n, ds in pending.items() if not (ds & set(pending)))
+        if not ready:
+            raise ValueError(
+                f"cycle in agent submodule deps: {pending}"
+            )
+        for n in ready:
+            ordered.append((n, submodules[n]))
+            del pending[n]
+    return ordered
+
+
 def _bundle_hash(path: Path) -> str:
     import hashlib
     return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
 
 
-def _parity_gate(bundle_path: Path, agent_dir: Path, seeds=(0,)) -> bool:
+def _bundle_full_hash(path: Path) -> str:
+    """Full sha256 used as the parity-cache key (not truncated)."""
+    import hashlib
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+_PARITY_CACHE_PATH = REPO / "audit" / "bundle-parity-cache.json"
+
+
+def _parity_cache_load() -> dict:
+    import json
+    if not _PARITY_CACHE_PATH.exists():
+        return {}
+    try:
+        return json.loads(_PARITY_CACHE_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _parity_cache_hit(full_sha: str) -> bool:
+    entry = _parity_cache_load().get(full_sha)
+    return bool(entry and entry.get("passed"))
+
+
+def _parity_cache_record(full_sha: str, turns: int, seeds: tuple[int, ...]) -> None:
+    import json
+    import time
+    cache = _parity_cache_load()
+    cache[full_sha] = {
+        "passed": True,
+        "turns": int(turns),
+        "seeds": list(seeds),
+        "recorded_at": time.time(),
+    }
+    _PARITY_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _PARITY_CACHE_PATH.write_text(json.dumps(cache, indent=2, sort_keys=True) + "\n")
+
+
+def _parity_gate(bundle_path: Path, agent_dir: Path, seeds=(0,)) -> tuple[bool, int]:
     """Compare source-agent vs bundle-agent on self-play obs streams.
 
     For each seed, generate a self-play game using the SOURCE agent, then
@@ -411,9 +529,9 @@ def _parity_gate(bundle_path: Path, agent_dir: Path, seeds=(0,)) -> bool:
 
     if mismatches:
         print(f"  PARITY FAIL: {mismatches}/{compared} mismatched turns", file=sys.stderr)
-        return False
+        return False, compared
     print(f"  parity OK: {compared} turns matched across {len(seeds)} self-play seed(s)")
-    return True
+    return True, compared
 
 
 def _load_module_from_file(path: Path, name: str):
@@ -438,7 +556,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-dir", type=Path, default=SUBMISSIONS)
     parser.add_argument(
         "--skip-parity-gate", action="store_true",
-        help="skip the post-bundle self-play parity check (NOT recommended)",
+        help="skip the post-bundle self-play parity check (NOT recommended; "
+             "prefer relying on the sha256 parity cache at "
+             "audit/bundle-parity-cache.json — a cache hit auto-skips)",
+    )
+    parser.add_argument(
+        "--ignore-parity-cache", action="store_true",
+        help="run the parity gate even if this bundle's sha256 is in "
+             "audit/bundle-parity-cache.json (use to force re-verification)",
     )
     parser.add_argument(
         "--force", action="store_true",
@@ -452,13 +577,52 @@ def main(argv: list[str] | None = None) -> int:
         force=args.force,
     )
     h = _bundle_hash(out)
+    full_sha = _bundle_full_hash(out)
     print(f"wrote {out} ({out.stat().st_size} bytes) sha256:{h}")
-    if not args.skip_parity_gate:
-        ok = _parity_gate(out, args.agent_dir.resolve())
-        if not ok:
-            print(f"REFUSING TO LEAVE BUNDLE: removing {out}", file=sys.stderr)
-            out.unlink()
+
+    # Sanity check: the bundle must expose an `agent` callable at module
+    # top level. The bundler comments out `from agents.<name>.main import
+    # agent` for wrapper-style entries without inlining the body, leaving
+    # bundles with no `agent` symbol; kaggle_environments falls back to
+    # the last callable (wrong signature), every game ERRORs at step 0.
+    # Catch this here before the parity gate's AttributeError leaks out
+    # AND leaves the broken bundle in submissions/. See friction tag
+    # `bundle-agent-doesnt-inline-from-baseline-main` (2026-05-21 PM).
+    try:
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("_bundle_smoke_" + out.stem, out)
+        _mod = _ilu.module_from_spec(_spec)  # type: ignore[arg-type]
+        sys.modules[_spec.name] = _mod
+        _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+    except Exception as e:
+        print(f"REFUSING TO LEAVE BUNDLE: import failed — "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
+        if os.environ.get("BUNDLE_KEEP_BROKEN") == "1":
+            print(f"(BUNDLE_KEEP_BROKEN=1) leaving {out} on disk for inspection", file=sys.stderr)
             return 1
+        out.unlink()
+        return 1
+    if not callable(getattr(_mod, "agent", None)):
+        print(f"REFUSING TO LEAVE BUNDLE: bundle has no callable `agent` "
+              f"at module top level. The entry main.py likely uses "
+              f"`from agents.<x>.main import agent` and the bundler "
+              f"stripped the line without inlining the body. Either inline "
+              f"`agent` manually or have the entry main.py define `agent` "
+              f"directly. Removing {out}.", file=sys.stderr)
+        out.unlink()
+        return 1
+
+    if args.skip_parity_gate:
+        return 0
+    if not args.ignore_parity_cache and _parity_cache_hit(full_sha):
+        print(f"  parity cache HIT for sha256:{h} — skipping self-play gate")
+        return 0
+    ok, turns = _parity_gate(out, args.agent_dir.resolve())
+    if not ok:
+        print(f"REFUSING TO LEAVE BUNDLE: removing {out}", file=sys.stderr)
+        out.unlink()
+        return 1
+    _parity_cache_record(full_sha, turns, (0,))
     return 0
 
 

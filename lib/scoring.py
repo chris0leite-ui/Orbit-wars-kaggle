@@ -37,6 +37,19 @@ def eta_proxy(mine: Planet, target: Planet) -> int:
     Uses `fleet_speed(target.ships + 1)` as the speed proxy — this is the
     speed of the minimum-cover fleet a strategy would send before
     `arrival_size` inflates it. Returns 0 for zero-distance pairs.
+
+    CAVEAT (PI 2026-05-21 sweep): returns CURRENT-position distance /
+    fleet_speed. NOT a future-arrival prediction. Callers wanting "ETA
+    if we launched now and the target rotated to its position at
+    arrival" must project the target via
+    `lib.orbit.predict_relative(target_tuple, omega, eta_proxy_result)`
+    and iterate to convergence (mirror `lib.aim.aim_orbiting`'s
+    fixed-point pattern). Misuse will silently mis-score orbiting-
+    target captures — same bug class as the
+    `WorldModel.time_to_enemy_threat` fix at commit `f1774a7`. Current
+    callers (snipe.py ROI denominator, mission distance heuristics)
+    use this as a snapshot cost proxy, not a future projection — so
+    SAFE today, but the assumption is fragile.
     """
     d = dist((mine.x, mine.y), (target.x, target.y))
     if d == 0.0:
@@ -159,7 +172,19 @@ def expected_hold(
     remaining = max(0, t_total - step_now - eta)
     if remaining == 0:
         return 0
-    threat = model.time_to_enemy_threat(target_id, world.my_id, world)
+    # PI 2026-05-21 fix — when `BASELINE_ORBITAL_SAFETY=1`, pass
+    # `arrival_eta=eta` so enemy threat is computed from the target's
+    # predicted position at our arrival, not its current position.
+    # Without this, orbiting targets that rotate INTO enemy territory
+    # by our arrival are silently scored as safe (long hold), pushing
+    # us to capture planets we will immediately lose. Gated for A/B
+    # testing; default OFF preserves backwards compat with sub 52882014.
+    import os as _os
+    if _os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1":
+        threat = model.time_to_enemy_threat(target_id, world.my_id, world,
+                                             arrival_eta=int(eta))
+    else:
+        threat = model.time_to_enemy_threat(target_id, world.my_id, world)
     if threat is None:
         # No enemy can plausibly reach — saturate at remaining game.
         return remaining
