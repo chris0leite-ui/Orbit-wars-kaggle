@@ -2,7 +2,7 @@
 
 > Last written: 2026-05-21 late evening by `claude/strategy-axis-decision-3437`.
 > Branch is **197 ahead / 23 behind `origin/main`**; everything below
-> reflects the tip (`adbfb5c`).
+> reflects the tip (`c03954d`).
 >
 > **Proposer overhaul** landed (commit `adbfb5c`). PI shared a 4P FFA
 > loss (seed 2121761784): "we capture small planets and expose our
@@ -25,13 +25,37 @@
 >   the reinforce target to `5 × production` ships of preemptive
 >   buffer for high-prod own planets.
 >
+> **A/B verification (post-fix vs pre-fix, identical opponent panel,
+> seeds 0-3 swap-balanced n=8)**:
+>
+> | Metric | Result |
+> |---|---|
+> | Post-fix wins | **7 / 8 (87.5%)** |
+> | Wilson 95% CI | [0.529, 0.978] (just below 0.55 gate due to small n) |
+> | Verdict | Directional WIN; formally INCONCLUSIVE — needs n≈16 to clear gate |
+> | Turn-ms | p50=169, p95=404, max=655 (no perf regression) |
+>
+> **Close-up on seed 2121761784 vs v7_0_drop_one** (both win):
+>
+> | Metric | PRE-FIX | POST-FIX |
+> |---|---:|---:|
+> | Game length | 216 steps | **164 steps** (−52) |
+> | Mid-game emissions (60-100) | 47 | **74** (+57%) |
+> | Turns w/ ≥2 distinct sources | 25 | **46** (+84%) |
+> | Turns w/ ≥3 distinct sources | 9 | **21** (+133%) |
+>
+> Concrete examples in the trace: step 41 PRE silent, POST fires
+> from sources {32, 4, 24, 14}; step 56 PRE silent, POST fires
+> from {9, 12, 28}. Multi-source coordination is the direct effect
+> of the bundle fix; mid-game pressure (+57%) is the direct effect
+> of strategic stockpile + bundle candidates removing the "drained
+> source, idle planet" trap.
+>
 > Verified: 2 pin tests pass; 119 targeted regression tests pass;
 > `check_fleet_outcomes` on {2121761784, 384458460, 42, 7} all 100%
-> target / 0 sun / 0 OOB. Live candidate inspection at seed
-> 2121761784 step 30-50: bundle candidates (3+ sources targeting
-> the same big planet) appear; defense candidates for prod-5 own
-> planets emerge before active threat. Bundle rebuilt; not
-> submitted (PI hold).
+> target / 0 sun / 0 OOB. Bundle rebuilt; **not submitted (PI hold)**.
+>
+> ---
 >
 > Earlier this session: **Opening-planner overhaul** (commit `d4ae531`).
 >
