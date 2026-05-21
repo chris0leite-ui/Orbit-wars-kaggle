@@ -224,23 +224,17 @@ def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world,
     sizes = set()
     if MIN_FLEET_SIZE <= cap <= budget:
         sizes.add(cap)
-    # Confidence-buffered variant: SCAFFOLDED but NOT EMITTED.
-    # Rationale (2026-05-21): two attempts at landing a confidence
-    # buffer (cap-replacement, then extra-variant emission) both
-    # regressed the agent — broke offense in seed-42 smoke (focal acts
-    # dropped from 66 → 5 turns; game stalls to 500 steps; rewards flip
-    # from win to loss). Root cause: the buffered variant has a shorter
-    # eta (larger fleets are faster), which shifts the predicted owner
-    # at arrival in `cheap_marginal_value` — sometimes from "still opp"
-    # (positive capture value) into "already mine" (reinforce branch,
-    # 0 if threat is beyond eta+30). Dedup picks the wrong variant and
-    # the LP under-fires. The function + constants are kept as
-    # scaffolding for a future fix that addresses the dedup/cheap-value
-    # interaction. Per Rule 37, halt the buffer axis after 2 iterations.
-    # if False:
-    #     buffered = confidence_buffered_size(src, tgt, model, omega, me, world)
-    #     if MIN_FLEET_SIZE <= buffered <= budget and buffered != cap:
-    #         sizes.add(buffered)
+    # Confidence-buffered variant: insurance against opp reinforcement
+    # during flight. Emitted alongside spec-min so the LP can choose
+    # between ship-efficient (cap) and robust (cap + ε) sizing per
+    # outcome value. The bundler must inline `lib/mirror` for this to
+    # work — see scripts/bundle_agent.py:DEFAULT_LIB_ORDER (added 2026-
+    # 05-21 after a NameError-in-bundle bug silently swallowed by
+    # kaggle_environments debug=False made it look like a strategic
+    # regression).
+    buffered = confidence_buffered_size(src, tgt, model, omega, me, world)
+    if MIN_FLEET_SIZE <= buffered <= budget and buffered != cap:
+        sizes.add(buffered)
     if 2 * cap <= budget:
         sizes.add(2 * cap)
     if budget >= MIN_FLEET_SIZE:

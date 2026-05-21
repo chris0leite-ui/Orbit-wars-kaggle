@@ -42,6 +42,14 @@ REPO = Path(__file__).resolve().parents[1]
 # via pathlib's `/` operator transparently.
 DEFAULT_LIB_ORDER = [
     "geometry",
+    # lib/mirror.py — player-count detection + symmetry helpers
+    # (2026-05-21). Depends only on geometry. Added because
+    # agents/baseline/proposer.py imports `detect_num_players` from
+    # here for the confidence-buffer's 4P discount path. Pre-2026-05-21
+    # bundles failed silently with NameError under debug=False when
+    # the buffer code ran — the silent-catch in kaggle_environments
+    # let the bug masquerade as a strategic regression.
+    "mirror",
     "fleet",
     "orbit",
     "aim",
