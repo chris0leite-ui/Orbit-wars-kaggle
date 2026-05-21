@@ -769,8 +769,12 @@ def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
         if fired >= SNIPER_MAX_LAUNCHES:
             break
 
-        # Idle, threat-free sources sorted by ship count desc.
-        idle_sources = []
+        # Score every idle source by ACTUAL arrival ETA (PI 2026-05-21:
+        # "close + big = fast"). ETA = dist / fleet_speed(ships); bigger
+        # source = faster fleet, closer = shorter dist. Both effects baked
+        # into FleetFate.step. Physics-safety filter applied here, so the
+        # fastest viable arrival emerges naturally.
+        scored = []
         for src in my_planets:
             if int(src.id) in used_srcs:
                 continue
@@ -778,32 +782,31 @@ def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
                 continue
             if model.incoming_enemy_eta(int(src.id), my_id) is not None:
                 continue
-            idle_sources.append(src)
-        if not idle_sources:
+            src_reserve = max(int(src.production) * 5, 10)
+            available = int(src.ships) - src_reserve
+            if available < SNIPER_MIN_SOURCE_SHIPS:
+                continue
+            angle = math.atan2(float(tgt.y) - float(src.y),
+                               float(tgt.x) - float(src.x))
+            try:
+                fate = predict_fleet_fate(src, tgt, angle, available, world)
+            except Exception:
+                continue
+            if fate.outcome != "target":
+                continue
+            scored.append((int(fate.step), src, float(angle), int(available)))
+        if not scored:
             continue
-        idle_sources.sort(key=lambda s: -int(s.ships))
+        scored.sort(key=lambda s: s[0])
 
-        # Pick largest source as primary striker.
-        primary = idle_sources[0]
-        angle_p = math.atan2(float(tgt.y) - float(primary.y),
-                             float(tgt.x) - float(primary.x))
-        try:
-            fate_p = predict_fleet_fate(
-                primary, tgt, angle_p, int(primary.ships), world,
-            )
-        except Exception:
-            continue
-        if fate_p.outcome != "target":
-            continue
-        eta_p = int(fate_p.step)
-        # Predicted garrison at our arrival.
+        # Primary = fastest arrival. Required = predicted garrison at
+        # primary's arrival * margin.
+        eta_p, primary, angle_p, primary_avail = scored[0]
         predicted = model.ships_at(int(tgt.id), eta_p)
         if predicted is None:
             predicted = float(tgt.ships) + eta_p * int(tgt.production)
         required = int(math.ceil(float(predicted) * SNIPER_MARGIN)) + 1
-        reserve = max(int(primary.production) * 5, 10)
-        affordable = int(primary.ships) - reserve
-        if required > affordable:
+        if required > primary_avail:
             continue
         if sniper_ships_used + required > sniper_ship_budget:
             continue
@@ -813,27 +816,12 @@ def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
         sniper_ships_used += required
         fired += 1
 
-        # Follow-on reinforcements from other idle sources (arrive after
-        # primary, join our garrison post-capture). Cap by remaining
-        # SNIPER_MAX_LAUNCHES budget.
-        for src in idle_sources[1:]:
+        # Follow-on reinforcements from remaining sources in ETA order
+        # (fastest first → joins our garrison closest to capture moment).
+        for eta_f, src, angle_f, available in scored[1:]:
             if fired >= SNIPER_MAX_LAUNCHES:
                 break
-            src_reserve = max(int(src.production) * 5, 10)
-            available = int(src.ships) - src_reserve
-            if available < SNIPER_MIN_SOURCE_SHIPS:
-                continue
             if sniper_ships_used + available > sniper_ship_budget:
-                continue
-            angle_f = math.atan2(float(tgt.y) - float(src.y),
-                                 float(tgt.x) - float(src.x))
-            try:
-                fate_f = predict_fleet_fate(
-                    src, tgt, angle_f, available, world,
-                )
-            except Exception:
-                continue
-            if fate_f.outcome != "target":
                 continue
             extras.append([int(src.id), float(angle_f), int(available)])
             used_srcs.add(int(src.id))
