@@ -100,6 +100,12 @@ DEFAULT_LIB_ORDER = [
     # v9 super-version (2026-05-12 evening): composite value heads
     # for receding-horizon-pathology fix. Used by v9_inflight + v9_combined.
     "value_heads",
+    # 2026-05-21: opening planner cherry-picked from analytical track.
+    # Multi-turn MILP for steps 0..OPENING_HORIZON-1. Used by AGGR when
+    # BASELINE_OPENING_MILP=1. Imports from agents.baseline.proposer +
+    # lib.fleet/trajectory/world_model — all already in DEFAULT_LIB_ORDER
+    # above.
+    "joint_solver/opening_planner",
 ]
 SUBMISSIONS = REPO / "submissions"
 

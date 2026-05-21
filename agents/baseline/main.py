@@ -102,11 +102,21 @@ LEDGER_ENABLED = os.environ.get("BASELINE_LEDGER", "off").strip().lower() == "on
 LEDGER_MODE = os.environ.get("BASELINE_LEDGER_MODE", "hard").strip().lower()
 _PENDING_LAUNCHES: dict[int, list[dict]] = {}
 
+# Opening override (2026-05-21). Cherry-picked from analytical track
+# (origin/claude/strategy-axis-decision-3437). For step < OPENING_HORIZON
+# (=30), run the one-shot multi-turn MILP `opening_plan` and emit
+# fire_step==step_now entries from its schedule. Same three-case dispatch
+# as `lib/pipeline/opening.opening_default`: (a) emit schedule entries
+# fired now, (b) empty fire-now list, (c) empty schedule → fall through
+# to standard chooser. Default OFF; opt-in via BASELINE_OPENING_MILP=1.
+OPENING_MILP_ENABLED = os.environ.get("BASELINE_OPENING_MILP", "0") == "1"
+
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from lib.fast_sim import from_obs as fs_from_obs
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
+from lib.joint_solver.opening_planner import OPENING_HORIZON, opening_plan
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.orbit import predict_relative
 from lib.world_model import WorldModel
@@ -522,6 +532,23 @@ def agent(obs, configuration=None):
         if model.time_to_enemy_threat(int(p.id), me, world) is not None
     ]
     target_pool = other_planets + threatened_mine
+
+    # Opening override (2026-05-21). For step < OPENING_HORIZON, run the
+    # MILP opening_plan and emit fire_step==step_now entries. Falls
+    # through to the standard chooser when schedule is empty.
+    if OPENING_MILP_ENABLED and int(step) < OPENING_HORIZON:
+        try:
+            op = opening_plan(world, model, me, num_seats)
+        except Exception:
+            op = None
+        if op is not None and op.schedule:
+            opening_moves = [
+                [int(e.src_id), float(e.angle), int(e.ships)]
+                for e in op.schedule if int(e.fire_step) == int(step)
+            ]
+            # Cases (a) and (b) — schedule non-empty: defer to opening even
+            # if no fire_step==now entries (planner's intentional wait).
+            return opening_moves
 
     snap_base = fs_from_obs(obs, num_seats=num_seats)
 
