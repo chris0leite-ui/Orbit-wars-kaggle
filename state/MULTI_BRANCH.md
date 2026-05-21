@@ -13,28 +13,28 @@
 
 ---
 
-## Live Kaggle (snapshot 2026-05-20 17:00 UTC)
+## Live Kaggle (snapshot 2026-05-23 21:00 UTC)
 
 Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at session start.
 
 | Sub ID | Date (UTC) | Agent | μ | Role |
 |---|---|---|---:|---|
-| **52857903** | 2026-05-20 16:12 | analytical_wait_N_traj_plus_endgame_play | **806.5** | **Rolling pair (most recent)** |
-| **52854094** | 2026-05-20 13:59 | analytical (earlier) | **829.1** | **Rolling pair (older half)** |
-| 52845073 | 2026-05-20 09:01 | phase1_chooser_emit_fix_old_lineage | 1051.3 | EVICTED |
+| **52894340** | 2026-05-21 14:33 | _phase4_step1_FND (sibling, endgame predicate + f1774a7 orbital safety) | **1117.9** | **Rolling pair (most recent)** |
+| **52893236** | 2026-05-21 13:52 | baseline_full (this branch, kitchen-sink) | **1078.0** | **Rolling pair (older half)** |
+| 52882014 | 2026-05-21 10:26 | baseline_joint_aggr_consolidated | 1124 | EVICTED — best on this branch |
+| 52874528 | 2026-05-21 06:00 | baseline_joint_aggr | 1134.9 | EVICTED |
+| 52857903 | 2026-05-20 16:12 | analytical_wait_N_traj_plus_endgame_play | 806.5 | EVICTED |
+| 52854094 | 2026-05-20 13:59 | analytical (earlier) | 829.1 | EVICTED |
 | 52827111 | 2026-05-19 19:52 | comet-aim + reactor-aware | 1122.0 | EVICTED |
 | 52811320 | 2026-05-19 12:54 | hold-feasibility solo | 1135.1 | EVICTED |
-| 52784853 | 2026-05-18 17:42 | baseline_pv_off_bugfix | 1130.4 | EVICTED |
-| 52766596 | 2026-05-18 07:12 | joint_candidate_v3 | 1118.3 | EVICTED |
-| 52754310 | 2026-05-17 22:06 | trajectory v4 + wait_N + wallclock | 1143.7 | EVICTED |
 | **52744856** | 2026-05-17 14:17 | composite_a2_hybrid (composite head 2P + A2 4P) | **1149.2** | **TEAM PEAK** — EVICTED |
 
-- **Rolling pair floor:** μ = 829.1.
+- **Rolling pair floor:** μ = 1078.0 (baseline_full).
+- **Rolling pair ceiling:** μ = 1117.9 (_phase4_step1_FND).
 - **Team peak (evicted):** μ = 1149.2 (sub 52744856).
-- **Floor lost in last 24h:** ~320 μ. Five sequential pushes from `claude/strategy-framework-design-OyoYR-rebased` (analytical track) evicted strong agents from sibling branches without coordination. This is the friction `cross-agent-push-coordination-gap` (btjeK 2026-05-21) — addressed by Rule 42 below.
-- **FLOOR AT RISK FLAG: ✅ TRUE** — rolling pair is 320 μ below team peak.
-- **Daily submission budget:** 5/day. 5/20 used: 2 (52854094, 52857903). 3 remaining.
-- **Deadline:** 2026-06-23 23:59 UTC. **34 days remain.**
+- **Floor recovered from 5/20:** previous rolling pair was [829, 806]; current floor 1078 is +249 μ over that.
+- **Daily submission budget:** 5/day. Today (2026-05-23 UTC) used: 0. 5 remaining. Last submit was 5/21.
+- **Deadline:** 2026-06-23 23:59 UTC. **~31 days remain.**
 
 ---
 
@@ -118,12 +118,13 @@ Empty rows below mean no pending submission claim. Most recent claim at top.
 
 | Timestamp (UTC) | Branch | Agent | Predicted μ | Will evict (sub_id, μ) | PI signoff |
 |---|---|---|---:|---|---|
-| 2026-05-21 13:48 | review-skills-improvements-moKOR | baseline_full (PENDING SUBMIT) — consolidated + orbital safety + stagnant drain + combat stack + sniper | ~1100-1300 (n=4 = 2/4 vs consolidated AND vs v3.5.1; Wilson [0.150, 0.850] both, point estimate +25pp over symmetric 25% baseline) | 52874528 (μ=1134.9, baseline_joint_aggr) | ✅ PI explicit "submit baseline full now anyway" |
-| 2026-05-21 10:26 | review-skills-improvements-moKOR | baseline_joint_aggr_consolidated (sub **52882014**, PENDING) | ~1100-1250 (n=4 1/4 + seed=5 trace WIN 40 planets) | 52872093 (μ=1052.1, analytical_phase_c) | ✅ PI explicit "submit so I can observe" |
+| 2026-05-23 21:00 | review-skills-improvements-moKOR | baseline_joint_aggr_consolidated_orbitfix (PENDING SUBMIT) — consolidated + full B1-B7 orbital safety modeling fix | ~1110-1130 (4/4 vs baseline_full @ μ=1078, 2/4 parity vs consolidated @ μ=1124, 4/4 vs phase4_step1_FND @ μ=1118 — all clean_ab subprocess-isolated) | 52893236 (baseline_full, μ=1078) | ⏳ PENDING |
+| 2026-05-21 13:48 | review-skills-improvements-moKOR | baseline_full (sub **52893236**, settled μ=1078) — consolidated + orbital safety + stagnant drain + combat stack + sniper | ~1100-1300 (n=4 = 2/4 vs consolidated AND vs v3.5.1; Wilson [0.150, 0.850] both, point estimate +25pp over symmetric 25% baseline) | 52874528 (μ=1134.9, baseline_joint_aggr) | ✅ PI explicit "submit baseline full now anyway" |
+| 2026-05-21 10:26 | review-skills-improvements-moKOR | baseline_joint_aggr_consolidated (sub **52882014**, settled μ=1124, EVICTED) | ~1100-1250 (n=4 1/4 + seed=5 trace WIN 40 planets) | 52872093 (μ=1052.1, analytical_phase_c) | ✅ PI explicit "submit so I can observe" |
 | 2026-05-21 06:00 | review-skills-improvements-moKOR | baseline_joint_aggr (sub **52874528**, settled μ=1134.9) | ~1180 (n=16 vs phase_c 87.5%) | 52865089 (μ=805.9, evicted) | ✅ Rule 45 overridden |
 | 2026-05-20 17:00 | review-skills-improvements-moKOR | — | — | — | — *(no submission planned this session)* |
 
-**Required fields:** all 6 columns. The PI-signoff column is mandatory if the evicted-μ > predicted-μ (Rule 42).
+**Required fields:** all 6 columns. The PI-signoff column is mandatory if the evicted-μ > predicted-μ (Rule 42). For the 2026-05-23 row: evicted μ=1078 < predicted ≥1100 → Rule 42 GREEN (no PI signoff required by the gate, but Rule 1 still requires explicit "submit" confirmation).
 
 ---
 
