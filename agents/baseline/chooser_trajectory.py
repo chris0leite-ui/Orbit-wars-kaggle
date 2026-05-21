@@ -60,6 +60,18 @@ CAPTURE_REWARD_WEIGHT: float = 0.05
 # distinguish. Default 1.0 (no change); opt-in via env var.
 LEADER_FOCUS_WEIGHT: float = float(os.environ.get("BASELINE_LEADER_FOCUS", "1.0"))
 
+# Neutral-capture bonus (2026-05-21). In 4P trace of seed=5 (a loss),
+# focal made 73 captures-from-enemy but only 6 captures-from-neutral
+# while phase_c snowballed to 36 planets via aggressive neutral grab.
+# This bonus tilts the chooser toward neutral targets relative to
+# enemy targets — neutrals don't have a defender (cheaper) and grow
+# production without risk of attrition. Stronger in the opening phase
+# where territorial grab dominates outcomes. Default 1.0 (no change);
+# opt-in via env var BASELINE_NEUTRAL_BONUS.
+NEUTRAL_BONUS_WEIGHT: float = float(os.environ.get("BASELINE_NEUTRAL_BONUS", "1.0"))
+NEUTRAL_EARLY_HORIZON: int = int(os.environ.get("BASELINE_NEUTRAL_EARLY_HORIZON", "50"))
+NEUTRAL_EARLY_EXTRA: float = float(os.environ.get("BASELINE_NEUTRAL_EARLY_EXTRA", "1.0"))
+
 
 def _leader_owner_from_world(world, me: int) -> int | None:
     """Return the player id (other than `me`) with the highest total
@@ -290,6 +302,14 @@ def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
         leader = _leader_owner_from_world(world, me)
         if leader is not None and int(tgt.owner) == int(leader):
             bonus = LEADER_FOCUS_WEIGHT
+
+    # Neutral-capture bonus: applies when the target is currently neutral
+    # (tgt.owner == -1). Optional opening-phase extra multiplier for the
+    # first NEUTRAL_EARLY_HORIZON steps to accelerate territorial grab.
+    if NEUTRAL_BONUS_WEIGHT != 1.0 and int(tgt.owner) == -1:
+        bonus *= NEUTRAL_BONUS_WEIGHT
+        if int(world.step) < NEUTRAL_EARLY_HORIZON:
+            bonus *= NEUTRAL_EARLY_EXTRA
 
     # We hold the planet at eta. Was it ours before our arrival?
     # If the planet was already me (with no enemy interference), this
