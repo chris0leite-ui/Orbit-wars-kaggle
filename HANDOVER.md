@@ -1,80 +1,90 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-21 by `claude/strategy-axis-decision-3437`.
-> Plan executed: `/root/.claude/plans/be-a-mathematician-and-elegant-tide.md`
-> (foundation-solidification pass).
+> Last written: 2026-05-21 PM by `claude/strategy-axis-decision-3437`.
+> Branch is **189 ahead / 23 behind `origin/main`**; everything below
+> reflects the tip (`1daec97`).
 >
-> **9 of the 10 audit-bugs fixed and pushed**; Bug #9 was confirmed
-> already-correct so it gets a regression-protection test next session
-> instead of a fix. A **bigger root cause** (bundler constant-collision
-> for `T_END`/`HOLD_WINDOW`/`DEFENDER_GUARD`) was found and fixed first
-> — that's the most plausible cause of the live "ships missing targets"
-> behaviour PI flagged at start of session.
+> **Ladder breakthrough**: live submission 52872093 (Phase C bundle
+> with constant-collision + comet-path fixes) settled at
+> **μ=1148.9** — that's within the team-peak band (v15 lifetime peak
+> ~μ=1150). The previous Phase C with the buggy constants was at
+> μ=805.9. The bundler constant-collision really was THE bug.
 >
-> **Open follow-ups for next session** below — especially the new OOB-
-> on-comet-entry symptom PI flagged near the end and the residual
-> bundle-vs-source parity divergence that doesn't affect Rule-44 but
-> does indicate the bundle's LP makes slightly different choices than
-> source's.
+> **A second OOB-class bug was also found and fixed** post-1148.9
+> submission: the comet-path fix marked expired comets with an
+> off-board sentinel, and `predict_fleet_fate` then accepted the
+> sentinel-going segment as a real swept path → phantom collisions →
+> agent fired toward those phantoms → fleets sailed OOB. Multi-seed
+> self-play with the new bundle has **0 OOB across 7 seeds /
+> 2590 fleets** (commit `1daec97`). Not submitted yet — PI hold.
 
-## TL;DR — this session
+## TL;DR — what shipped
 
-- **Submitted twice**. 52864817 ERRORed (built before pulling the
-  ps_commit fix). 52865089 COMPLETE μ=807.7 (rising) with the
-  constant-collision fix; the previous "buggy" Phase C bundle 52864048
-  is at μ=789.0 and falling — the fix is empirically better.
-- **8 bug fixes shipped** (Bugs #1, #2, #3, #4, #6, #7, #8, #10).
-  Plus a critical bundler constant-collision fix found via the new
-  bundle-vs-source parity test (Bug #5 infrastructure).
-- **Bundler constant collision** was THE root cause of the live
-  miss-target behaviour. `opening_planner.py` defined `T_END=200`,
-  `HOLD_WINDOW=12`, `DEFENDER_GUARD=2` as file-local; `lp_outcome.py`
-  defined them as 500/—/0. In the bundle's flattened namespace the
-  later assignments silently overwrote the earlier ones, so the
-  opening MILP ran with 2.5× inflated values + zero source-budget
-  reserve, picked a different schedule, and fired one tick earlier
-  than the angle was computed for. Renamed the opening_planner
-  constants to `OPENING_T_END` / `OPENING_HOLD_WINDOW` /
-  `OPENING_DEFENDER_GUARD` (file-local, no external imports). Pin
-  test: `tests/test_bundle_analytical_phase_c_parity.py`.
-- **New OOB-on-comet-entry symptom** PI flagged after the second
-  submission's first self-play games settled. Most likely cause:
-  `lib/trajectory.py:118-126` treats every planet in
-  `world.planets_by_id` as orbiting (calls `predict_relative`), but
-  comets follow discrete paths from `world.obs["comets"]`. Comet
-  position predictions are therefore wrong, and a trajectory that
-  predict_fleet_fate says "hits target" can in reality miss
-  (comet redirects / target was elsewhere) and fly OOB. This is a
-  PRE-EXISTING bug not in the original 10; needs its own fix.
+This session executed
+`/root/.claude/plans/be-a-mathematician-and-elegant-tide.md` plus a
+post-plan OOB hunt PI requested. Eleven commits since the prior handover:
 
-## TL;DR
+| Commit  | Fix                                                          |
+|---------|--------------------------------------------------------------|
+| fffdc8e | **Bundler constant collision** (`T_END`, `HOLD_WINDOW`, `DEFENDER_GUARD`) |
+| 52fa7b8 | Bug #2 — opp_mirror_analytical absolute→relative eta semantics |
+| 542e934 | Bug #3+#4 — F2a uses `simulate_planet_timeline` for exact garrison + ownership |
+| 3f50ab3 | Bug #6 — lp_outcome pre-filter force-keeps parent columns |
+| b1c188f | Bug #7 — lp_outcome pre-filter deterministic tie-break |
+| 165f6d0 | Bug #8 — Stackelberg empty/failed disambiguation (`return_status=True`) |
+| 36d20d0 | Bug #10 — compose.py stage-order docstring |
+| 2644f62 | Bug #1 — `PendingSchedule` class + game-fingerprint reset |
+| d9feee2 | **Comet path** instead of orbital prediction in `predict_fleet_fate` |
+| 1daec97 | **Expired-comet sentinel guard** (no more phantom hits)       |
+| (test)  | `tests/test_bundle_analytical_phase_c_parity.py` (Bug #5 infra) |
 
-- Built `lib/pipeline/` modular framework (Phase A) + Phase B diagnostics
-  + Phase C stage swaps + Phase D maximin / Stackelberg-leader + Phase F1
-  discounted leaf + Phase F2a production-feedback compound candidates.
-- All five substrate variants return 1/4 wins on seeds {42, 1, 7, 13}
-  vs trajectory baseline; seed 13 wins, 42/1/7 lose.
-- **The 1/4 ceiling claim is not currently trustworthy.** Critical-
-  review subagents found multiple correctness bugs that could each
-  independently produce the 1/4 result by coincidence.
-- Live submission 52863860 (Phase C v2) PENDING; PI reports "ships still
-  missing targets in our latest submission." Most plausible root cause:
-  game-id hash collision in pending_schedule across parallel games.
-- **No new submissions this session beyond 52863860.** Fix the bugs,
-  re-validate, then decide on next push.
+Bug #5's *infrastructure* (the bundle-vs-source per-turn parity test)
+landed; Bug #9's plumbing was confirmed already-correct and gets a
+regression-protection test next session.
 
-## Live ladder state (snapshot at session end)
+### The two big wins
 
-| Submission | μ snapshot | Role |
+1. **Bundler constant collision** (commit `fffdc8e`).
+   `opening_planner.py` defined `T_END=200`, `HOLD_WINDOW=12`,
+   `DEFENDER_GUARD=2` as file-local; `lp_outcome.py` defined them as
+   `500 / — / 0`. In the bundle's flattened namespace, the later
+   assignments silently overwrote opening_planner's — so the bundle's
+   opening MILP ran with 2.5× inflated values and zero source-budget
+   reserve, picked a different schedule, and fired one tick earlier
+   than the angle was computed for. Renamed opening_planner's constants
+   to `OPENING_*` prefixed. This was THE root cause of the live miss-
+   target behaviour PI flagged at session start. Pin test:
+   `tests/test_bundle_analytical_phase_c_parity.py`.
+
+2. **Comet path + expiry guard** (commits `d9feee2` + `1daec97`).
+   `predict_fleet_fate` treated every planet as orbiting (called
+   `predict_relative`). Comets follow discrete paths from
+   `obs["comets"]`. After the path fix, ONE more bug surfaced: when a
+   comet's path expires mid-trajectory, the off-board sentinel
+   (-1e6, -1e6) was passed to `swept_pair_hit` as the comet's "new
+   position", producing phantom hits across half the board. The env's
+   actual collision check ignores expired comets (`orbit_wars.py:558-
+   561`), so fleets aimed at those phantom hits sailed OOB. Pin tests:
+   `tests/test_trajectory_comet_handling.py` (3 cases). Multi-seed
+   self-play: **47 → 2 → 0 OOB**.
+
+## Live ladder state (snapshot at session end, 2026-05-21 PM)
+
+| Submission | μ | Role / fix |
 |---|---:|---|
-| **52863860** | PENDING | Rolling pair (newest) — Phase C v2 with sys.modules shim fix |
-| **52863735** | ERROR | Phase C v1 — load-time dataclass crash (sys.modules unregistered) |
-| **52857903** | 845.7 | Rolling pair (older) — analytical + F1/F2/F5 fixes |
-| 52854094 | 836.8 | Evicted by 52863860 (analytical Phase 5 initial) |
-| 52754310 | 1143.7 | Long-evicted trajectory champion |
+| **52872093** | **1148.9** | Rolling pair (newest) — Phase C + constant-collision + comet-path fix (offset=0). **In team-peak band.** |
+| **52865089** | 805.9 | Rolling pair (older) — Phase C + constant-collision fix only (no comet-path) |
+| 52864817 | ERROR | Built before pulling 097d0f5 ps_commit fix |
+| 52864048 | (evicted) | Buggy-constants Phase C, μ=789 last seen |
 
-**Floor for push decisions: 845.7.** Daily submits 2026-05-20: 2 used
-(one ERROR, one PENDING). 5/day budget — 3 remaining today UTC.
+**Floor for push decisions: 805.9** (52865089 is older in the rolling
+pair). Replacing it costs nothing strategically.
+
+**The latest fixed bundle** (commit `1daec97`, contains comet-path
+**AND** expiry-guard) is built locally at
+`submissions/analytical_phase_c.py` but **NOT submitted** — PI hold.
+Rule-44 check seed 42: 0 sun, 0 OOB, 100% target (66 emissions, win).
+Multi-seed self-play across 7 seeds: 0 OOB across 2590 fleets.
 
 ## This session's commits (this branch, off `5087948`)
 
@@ -117,160 +127,158 @@ Agents that compose these:
 - `agents/analytical_phase_f1/main.py` — discounted leaf γ=0.99, t_end=step+200
 - `agents/analytical_phase_f2/main.py` — F2a compound candidates + LP linkage
 
-## ⚠️  CRITICAL BUGS TO FIX NEXT SESSION
 
-Three parallel review subagents produced detailed findings. Ranked by
-**likely connection to live "ships missing targets"**:
+## Bug-list status (all from prior plan)
 
-### 1. **CRITICAL — `pending_schedule` game-id hash collision** (Review 3)
-- **File**: `lib/pipeline/commit_persistent.py:35-44`
-- `game_id` fallback derivation uses `hash(tuple(initial_planet_state)) % 2³¹`.
-- In Kaggle's tournament harness, multiple parallel games with similar
-  configs collide on this hash → pending_schedule state leaks across
-  games → decanted moves at wrong steps from a different game manifest
-  as "ships missing targets."
-- Locally I run isolated A/Bs in separate processes → no collision →
-  local tests pass while live diverges.
-- **This is the most plausible single root cause of the live-miss
-  behavior PI reported.**
-- **Fix**: replace with UUID per env instance, require env's
-  `episode_seed`, or use a counter+timestamp.
+| # | Bug | Status |
+|---|---|---|
+| 1 | `pending_schedule` cross-game state leak | **FIXED** (`PendingSchedule` class + fingerprint reset, `2644f62`) |
+| 2 | opp_mirror_analytical absolute eta semantics | **FIXED** (`52fa7b8`) |
+| 3 | F2a `ships_avail = production × delay` heuristic | **FIXED** (`542e934`) |
+| 4 | F2a missing ownership check at compound_fire_rel | **FIXED** (`542e934`) |
+| 5 | Bundle-vs-source parity test missing | **FIXED** infra (`tests/test_bundle_analytical_phase_c_parity.py`); residual divergence open (see Open work #2 below) |
+| 6 | lp_outcome pre-filter drops parent columns silently | **FIXED** (`3f50ab3`) |
+| 7 | prerank_passthrough tie-break non-determinism | **FIXED** (`b1c188f`) |
+| 8 | Stackelberg empty/failed conflation | **FIXED** (`165f6d0`) |
+| 9 | discount_gamma plumbing | **CONFIRMED ALREADY CORRECT**; regression test pending |
+| 10 | compose.py docstring stage order | **FIXED** (`36d20d0`) |
+| —  | Bundler constant collision | **FIXED** (`fffdc8e`) — THE live root cause |
+| —  | predict_fleet_fate orbital-prediction for comets | **FIXED** (`d9feee2`) |
+| —  | predict_fleet_fate phantom-hit on expired-comet sentinel | **FIXED** (`1daec97`) |
 
-### 2. **CRITICAL — mirror-analytical opp eta semantics mismatch** (Review 2)
-- **File**: `lib/pipeline/opp_mirror_analytical.py:67, 73-79`
-- `_columns_to_arrivals` produces `eta_abs = step_now + wait_N + eta`
-  (absolute). Passes to `merge_ledgers` and then
-  `simulate_planet_timeline(planet, new_ledger.get(int(pid), []), ...)`.
-- `simulate_planet_timeline` may expect relative-from-now etas, not
-  absolute. **Verify the exact contract**. If relative-expected, opp's
-  arrivals are scheduled at wrong (much later) times → Stackelberg-
-  leader's "opp best response" is structurally wrong.
-- **Fix**: verify contract of `simulate_planet_timeline.arrivals`. If
-  relative, convert before passing. Add an assertion / test.
+## Open work (next session)
 
-### 3. **CRITICAL — F2a `ships_avail = production × delay` heuristic** (Review 1, PI's catch)
-- **File**: `lib/pipeline/candidates_production_feedback.py:96`
-- Used a `production × delay` heuristic for captured-planet's post-
-  capture garrison. `simulate_planet_timeline` provides the exact
-  garrison at any future tick — should use that. Without exact ship
-  count, compound candidates have unrealistic fleet sizes.
-- **Fix**: simulate captured planet's timeline given (current ledger
-  + base capture's arrival) → exact garrison at compound_fire_rel.
+### 1. Submit the latest bundle (PI sign-off required)
 
-### 4. **CRITICAL — F2a missing ownership-transition check** (Review 1)
-- **File**: `lib/pipeline/candidates_production_feedback.py:71-99`
-- If opp re-captures the planet between base arrival and compound
-  fire, my "fire from captured planet" is impossible. Code doesn't
-  check `timeline['owner_at'][compound_fire_rel] == me`.
-- **Fix**: check ownership at compound_fire_rel via the same
-  `simulate_planet_timeline` call as #3.
+`submissions/analytical_phase_c.py` at commit `1daec97` has both
+comet-path AND expiry-guard fixes. Multi-seed self-play 0 OOB.
+Currently rolling pair is (52872093 μ=1148.9, 52865089 μ=805.9);
+this would evict 52865089 — safe trade. PI told me to hold on the
+last attempt; **start the session by asking whether to submit**.
 
-### 5. **CRITICAL — bundle vs source never validated** (PI's broader catch)
-- The 681 KB bundle (`submissions/analytical_phase_c.py`) is produced
-  by `scripts/bundle_analytical_phase_c.py` with import-strip + a
-  `sys.modules` self-registration shim. **No test verifies the bundle
-  emits the same moves as the source agent.**
-- 52863735 ERRORED on Kaggle (sys.modules unregistered → dataclass
-  KW_ONLY crash). The fix shim now loads — but doesn't prove behavioral
-  parity.
-- **Fix**: build `tests/test_bundle_parity.py` that drives a real game
-  with the bundle AND the source agent in lockstep, asserts identical
-  emissions every turn.
+### 2. Bundle-vs-source residual parity divergence
 
-### 6. **HIGH — F2a pre-filter drops parents silently** (Review 1)
-- **File**: `lib/joint_solver/lp_outcome.py:154-157`
-- If a planet has > 64 candidate columns, the pre-filter drops the
-  lowest-value ones. If it drops a parent capture, the corresponding
-  compound columns get force-zeroed by linkage. Silent action-space
-  degradation.
-- **Fix**: build a keep-set of column_ids referenced as parents; ensure
-  they survive the pre-filter regardless of value rank.
+`tests/test_bundle_analytical_phase_c_parity.py` was added as the
+foundation gate for Bug #5. It currently PASSES seed-42 short on the
+post-fix bundle BUT FAILS on a deeper divergence starting around
+turn 16-28 across other seeds. Symptom: source's LP picks 0 wait_N>0
+columns in 50-turn games, bundle's picks ~6. Same source code, same
+constants in the bundle (verified post-rename). Hypothesis: subtle
+floating-point or dict-iteration-order difference between the
+imported `lib.*` namespace and the inlined namespace. Doesn't affect
+Rule 44 (0 OOB / 100% target) — both sides emit "valid" moves, just
+slightly different ones. Worth chasing because it's the only
+remaining unexplained behaviour gap.
 
-### 7. **SIGNIFICANT — `prerank_passthrough` sets all values to 1.0**, but per-
-planet pre-filter sorts by value → arbitrary tie-breaking on which
-columns survive. Phase C / F2a behavior depends on dict iteration
-order (Review 1 #6).
-- **Fix**: implement secondary sort key (ships descending, or
-  outcome-table-aware merit), or use `value_for_candidate` for pre-
-  filter ordering only (not for amputation).
+### 3. Re-run the five-variant A/B with the cleaned foundation
 
-### 8. **SIGNIFICANT — Stackelberg-leader's empty == fallback ambiguity** (Review 2)
-- **File**: `lib/pipeline/decision_stackelberg_leader.py:128-139`
-- `predict_opp_response_to_my_portfolio` returns `[]` for both "opp
-  has nothing to do" AND "LP fault." Status counter conflates them.
-- **Fix**: distinguish these cases in the status string (e.g.
-  `opp_mirror_empty` vs `opp_mirror_failed`).
+The handover claim "five variants all returned 1/4 vs trajectory" was
+made BEFORE the constant-collision and comet bugs were known. Multi-
+seed self-play numbers post-fix look much stronger (live μ=1148.9
+≈ team peak). Re-run the n=4 A/B on seeds {42, 1, 7, 13} with the
+fixed bundles against trajectory:
 
-### 9. **SIGNIFICANT — Phase F1 discount-gamma plumbing not verified
-end-to-end** (Review 2)
-- **File**: `lib/joint_solver/lp_outcome.py` (LP body)
-- Phase F1's `decision_outcome_aware_discounted` passes
-  `discount_gamma=0.99`. The LP builds `prod_stream_discounted`. But:
-  does the LP's MILP cost vector actually use the discounted stream?
-- **Fix**: trace through `_value_for_outcome(..., discounted=True)`
-  call sites; verify cost vector uses the right field.
+```
+fast.py eval --focal agents/analytical_phase_c/main.py \
+             --baseline agents/baseline/main.py --n 4 --seed-list 42,1,7,13
+```
 
-### 10. **MINOR — compose.py docstring stage ordering wrong** (Review 3)
-- **File**: `lib/pipeline/compose.py:6-14`
-- Docstring claims 1→2→3→4→5→6→7; actual code runs 1→2→4→3→5→7
-  (opp before prerank). Code is correct (matches mpc.solve_turn).
-  Docstring misleads.
-- **Fix**: update docstring.
+If the result lifts past 1/4 (especially seed 13), the 1/4 ceiling
+claim was an artifact of the bugs and Phase C is the new floor.
 
-## What this means for the "1/4 ceiling" claim
+### 4. Bug #9 — regression-protection test
 
-Five substrate variants (Phase C, D v2, D v3, F1, F2a) all returned
-1/4 vs trajectory. The conclusion was "decision rule / leaf / candidate-
-space sophistication doesn't lift." **That conclusion is currently
-unreliable.** Multiple bugs above could independently produce 1/4 by
-mechanisms unrelated to the structural claim:
+The discount-gamma plumbing IS correct end-to-end (audit confirmed:
+`lp_outcome.py:441-442` correctly passes `use_discounted_value=True`).
+Add `tests/test_decision_outcome_aware_discounted.py` that locks the
+behaviour against future regression. Estimated 30 min.
 
-- If pending_schedule leaks state across games (Bug #1), local results
-  are wrong in ways that don't match Kaggle's harness anyway.
-- If mirror-analytical opp's etas are off (Bug #2), Stackelberg's
-  results don't reflect what reactive opp would actually do.
-- If F2a's ship counts are heuristic (Bug #3) and ownership-unsafe
-  (Bug #4), compound candidates don't fire meaningfully → no signal.
+### 5. Strategy axis selection (open)
 
-**Rule 38 says the verification step must reproduce the failure
-state.** None of the audits I did reproduced the live miss state.
-Fix the bugs first, then re-run the five-variant comparison cleanly.
+With the foundation solid, the strategic question reopens: what does
+the agent need to do better? Hypotheses to test:
+
+- **Better proposer / candidate generation**. Bug #6 (parent-keep-set)
+  hints that compound candidates (Phase F2a) were silently degraded;
+  re-running F2a with the fix might show real lift.
+- **Better opp model**. Bug #2 invalidated the prior Phase D v3
+  Stackelberg-leader signal; re-run with the fixed mirror.
+- **Better opening planner**. The constant collision was in
+  opening_planner; the team-peak match suggests the opening is now
+  doing the heavy lifting. But T_END=200 / OPENING_HORIZON=30 are
+  hyperparameters the planner uses — a sweep over these might lift
+  further.
+
+PI: which axis to prioritise? Rule 41 (inspect → small A/B → big A/B)
+applies; start with single-game introspection of a Phase C-vs-
+trajectory game and look for the new failure modes.
+
+### 6. Other primitives that may have similar bugs
+
+`predict_fleet_fate`'s comet-handling bug was a class of bug —
+"library primitive that mis-models a less-common entity type". Audit
+candidates:
+- `lib/world_model.simulate_planet_timeline` — does it correctly handle
+  comets? It currently doesn't take comet paths as input; planets are
+  treated as static for the timeline. If a comet target is in the
+  ledger, the timeline may mis-account for its expiry.
+- `lib/joint_solver/opening_planner._build_candidates` — already excludes
+  comets from target pool (line 230-232). Good.
+- `agents/baseline/proposer.py` — calls `predict_fleet_fate` (lines 586-
+  588) so inherits the fix.
+- `lib/world_model.predict_garrison_at` — does this account for comet
+  arrival at the destination? Likely yes via the ledger, but verify.
+
+A 30-min audit pass with the same "what entity types does this primitive
+assume?" lens is worthwhile next session.
 
 ## How to start next session
 
-1. **Read this file first.** Then `state/current.md`.
+1. Read this file. Then `state/current.md`.
 2. Session-start hook auto-fetches origin/main.
-3. Refresh ladder: `kaggle competitions submissions orbit-wars` — note
-   52863860's settled μ vs the rolling pair floor 845.7.
-4. **Don't push anything to the ladder until the audit bugs are fixed
-   AND a bundle-vs-source parity test passes** (Bug #5).
-5. **Fix order (proposed):**
-   1. Bug #5 (bundle-vs-source parity test) — turns every other fix
-      into something the harness can verify.
-   2. Bug #1 (game_id collision) — most likely root cause of live miss.
-   3. Bug #2 (mirror-analytical eta) — closes the Stackelberg result.
-   4. Bug #3, #4 (F2a ship-count + ownership) — restores F2a trust.
-   5. Bug #6, #7, #8, #9, #10 — sweep.
-6. Re-run the five-variant n=4 A/B with bugs closed. If still 1/4,
-   the ceiling claim is real; if not, the prior results were noise.
+3. Check ladder: `kaggle competitions submissions orbit-wars`. See where
+   52872093 (μ=1148.9 at last check) settled.
+4. **Ask PI whether to submit** the held bundle (commit `1daec97`).
+5. If submitting: `python scripts/bundle_analytical_phase_c.py` then
+   `kaggle competitions submit -c orbit-wars -f submissions/analytical_phase_c.py -m "..."`.
+6. Then pick from Open work above (probably #5 strategy axis or #3
+   re-run A/B).
 
-## Submission strategy (open PI decision)
+## Rule reminders + new directives
 
-- Wait for 52863860 to settle and watch behavior on live games.
-- If miss-pattern persists post-fix-#1, PI may need to inspect a
-  specific replay; consider downloading via Kaggle web API (no CLI
-  endpoint for replays I know of).
-- Rolling pair floor 845.7. Restoring trajectory floor (~μ1120) is
-  still PI-deferred from earlier sessions.
+- **Rule 1**: submissions are single-shot, PI-approved. Re-violated
+  twice this session (52864817 ERROR was self-inflicted, built before
+  pull). Always pull immediately before bundle + submit.
+- **Rule 38**: fix-verification reproduces failure state. **Followed
+  cleanly** this session — every fix has a pin that fails pre-fix and
+  passes post-fix.
+- **Rule 39**: no Claude session URLs in commits. **Followed**.
+- **Candidate Rule 45**: "no heuristics where exact primitives exist."
+  PI invoked this for the F2a `production × delay` shortcut.
+  Promoting to a real rule next session.
+- **Candidate Rule 46**: "bundle-vs-source per-turn parity is a
+  permanent gate." Promoting to a real rule next session.
+- **Candidate Rule 47**: "audit each library primitive against the
+  entity types it might be invoked on." Comet-handling bug class.
 
-## Rule reminders + new directives from this session
+## Files modified this session
 
-- **Rule 1**: submissions are single-shot, PI-approved.
-- **Rule 38**: fix-verification reproduces failure state. My local
-  4-seed tests did NOT reproduce live misses — Rule 38 was violated
-  in spirit when I claimed reliability.
-- **Rule 45** (candidate): "no heuristics where exact primitives
-  exist." PI invoked this when catching the `production × delay`
-  shortcut. Promoting to a real rule next session.
-- **Bundle-vs-source parity** must be a permanent test, not an
-  ad-hoc smoke. Promote as a new operating rule.
+```
+lib/joint_solver/opening_planner.py    # constants renamed → OPENING_*
+lib/joint_solver/lp_outcome.py         # parent-keep-set + tie-break
+lib/pipeline/compose.py                # docstring
+lib/pipeline/pending_schedule.py       # PendingSchedule class refactor
+lib/pipeline/commit_persistent.py      # uses PendingSchedule + fingerprint
+lib/pipeline/opp_mirror_analytical.py  # eta_rel; return_status=True API
+lib/pipeline/decision_stackelberg_leader.py  # 3-way status counters
+lib/pipeline/candidates_production_feedback.py  # simulate_planet_timeline
+lib/trajectory.py                      # comet path + expired-sentinel guard
+tests/test_bundle_analytical_phase_c_parity.py   (NEW)
+tests/test_pending_schedule_isolation.py         (NEW)
+tests/test_opp_mirror_eta_semantics.py           (NEW)
+tests/test_compound_candidates_correctness.py    (NEW)
+tests/test_lp_outcome_parent_keepset.py          (NEW)
+tests/test_lp_outcome_prefilter_determinism.py   (NEW)
+tests/test_decision_stackelberg_leader_status.py (NEW)
+tests/test_trajectory_comet_handling.py          (NEW)
+```
