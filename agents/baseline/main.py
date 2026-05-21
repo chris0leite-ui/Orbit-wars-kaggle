@@ -533,9 +533,13 @@ def agent(obs, configuration=None):
     ]
     target_pool = other_planets + threatened_mine
 
-    # Opening override (2026-05-21). For step < OPENING_HORIZON, run the
-    # MILP opening_plan and emit fire_step==step_now entries. Falls
-    # through to the standard chooser when schedule is empty.
+    # Opening override (2026-05-21, hybrid). For step < OPENING_HORIZON
+    # AND when opening_plan produced fire_step==step_now entries, emit
+    # those. Cases (b) "MILP wants to wait" and (c) "empty schedule"
+    # both fall through to AGGR's standard chooser — AGGR's aggressive
+    # opening attacks outperform the MILP's "wait" recommendations in
+    # empirical 4P testing (variant_open n=16 5/16 vs pre-patch 6/16
+    # when intentional-waits were honoured).
     if OPENING_MILP_ENABLED and int(step) < OPENING_HORIZON:
         try:
             op = opening_plan(world, model, me, num_seats)
@@ -546,9 +550,10 @@ def agent(obs, configuration=None):
                 [int(e.src_id), float(e.angle), int(e.ships)]
                 for e in op.schedule if int(e.fire_step) == int(step)
             ]
-            # Cases (a) and (b) — schedule non-empty: defer to opening even
-            # if no fire_step==now entries (planner's intentional wait).
-            return opening_moves
+            if opening_moves:
+                # Case (a): MILP has fire-now entries — emit and return.
+                return opening_moves
+            # Cases (b) and (c) fall through.
 
     snap_base = fs_from_obs(obs, num_seats=num_seats)
 
