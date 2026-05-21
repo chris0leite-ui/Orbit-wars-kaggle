@@ -48,20 +48,26 @@ os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
 from lib.pipeline import compose
 from lib.pipeline.candidates import candidates_default
 from lib.pipeline.commit_persistent import commit_persistent
-from lib.pipeline.decision import decision_outcome_aware_milp
+from lib.pipeline.decision_depth2_search import decision_depth2_search
 from lib.pipeline.opening import opening_default
 from lib.pipeline.opp_model import opp_greedy_roi
 from lib.pipeline.perception import perception_default
 from lib.pipeline.prerank_passthrough import prerank_passthrough
 
 
+# Phase ε.2.a decision stage — wraps the plain LP with an opening-only
+# depth-2 search (top-K my portfolios × opp's mirror-analytical response
+# × LP-at-T+1 continuation). Falls through to the plain LP when
+# LP_DEPTH2_SEARCH is unset (default) OR when step_now >= opening
+# horizon, so the default behaviour matches `decision_outcome_aware_milp`
+# byte-for-byte. Opt in via `LP_DEPTH2_SEARCH=1`.
 _AGENT = compose(
     perception=perception_default,
     opening_override=opening_default,
     candidates=candidates_default,
     opp_model=opp_greedy_roi,
     prerank=prerank_passthrough,
-    decision=decision_outcome_aware_milp,
+    decision=decision_depth2_search,
     commit=commit_persistent,
 )
 
