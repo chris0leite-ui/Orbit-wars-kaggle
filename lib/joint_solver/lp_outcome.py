@@ -172,6 +172,32 @@ RECAPTURE_HORIZON = 25    # ticks; threats farther than this contribute 0
 
 
 # ---------------------------------------------------------------------------
+# Opening tempo bias — Phase ε option 3 of
+# /root/.claude/plans/do-it-thoroughly-consider-tingly-fox.md
+#
+# Mimics ladder-leader sub 52882014's heuristic (`BASELINE_NEUTRAL_BONUS=2.0`
+# × `EARLY_EXTRA=1.5 for step<50`) in the LP's vocabulary: at step <
+# OPENING_TEMPO_HORIZON, multiplicatively boost the my-prod contribution
+# from subsets that capture currently-neutral planets for us.
+#
+# Why this and not "scale all me_prod": (a) we want to bias TOWARD
+# action vs inaction (neutral captures are pure new value, vs already-
+# owned planets which we'd accrue regardless), (b) the leader's bonus
+# was specifically on the neutral target tier, not blanket scaling.
+#
+# Closed-form, no extra trajectory work. Gated OFF by default; opt in
+# via LP_OPENING_TEMPO=1 for the small A/B before flipping.
+OPENING_TEMPO_HORIZON = 50
+OPENING_TEMPO_FACTOR = 1.5
+
+
+def _opening_tempo_enabled() -> bool:
+    """Re-read env var on every call so test fixtures and runtime
+    monkeypatches take effect without an importlib.reload."""
+    return _os.environ.get("LP_OPENING_TEMPO", "0") == "1"
+
+
+# ---------------------------------------------------------------------------
 # Public result dataclass
 # ---------------------------------------------------------------------------
 
@@ -513,6 +539,38 @@ def _topology_bonus(planet_id: int, row: OutcomeRow, my_id: int,
     return float(topology_scores.get(int(planet_id), 0.0))
 
 
+def _opening_tempo_bonus(planet_id: int, row: OutcomeRow, world,
+                          my_id: int, step_now: int) -> float:
+    """Phase ε opening-tempo bias: extra credit for capturing a
+    currently-neutral planet during the opening.
+
+    Returns 0.0 when:
+    - The feature is disabled (LP_OPENING_TEMPO != "1") — every callsite
+      then gets pure no-op behaviour, no objective change.
+    - step_now >= OPENING_TEMPO_HORIZON — we're past the opening.
+    - The subset doesn't end with us owning the planet (owner_T != my_id).
+    - The planet's CURRENT owner isn't -1 (neutral) — we only boost
+      captures of neutrals, not contests over already-owned planets.
+
+    When active, returns `(OPENING_TEMPO_FACTOR - 1) × prod_stream_me_for_subset`.
+    Added on top of the existing `_value_for_outcome` prod-stream term,
+    this produces an effective multiplier of OPENING_TEMPO_FACTOR on
+    the my-prod component for the qualifying subset — exactly the
+    leader's `EARLY_EXTRA` scaling applied selectively to neutral captures.
+    """
+    if not _opening_tempo_enabled():
+        return 0.0
+    if int(step_now) >= OPENING_TEMPO_HORIZON:
+        return 0.0
+    if int(row.owner_T) != int(my_id):
+        return 0.0
+    p = world.planets_by_id.get(int(planet_id))
+    if p is None or int(p.owner) != -1:
+        return 0.0
+    my_prod = float(row.prod_stream.get(int(my_id), 0))
+    return (OPENING_TEMPO_FACTOR - 1.0) * my_prod
+
+
 def _value_for_outcome(row: OutcomeRow, my_id: int,
                        alpha_opp_penalty: float,
                        discounted: bool = False) -> float:
@@ -578,12 +636,14 @@ def _greedy_fallback(
             _value_for_outcome(empty_row, my_id, alpha_opp_penalty, discounted)
             + _endgame_bonus(pid, empty_row, world, my_id, opp_id, currently_winning)
             + _topology_bonus(pid, empty_row, my_id, topology_scores)
+            + _opening_tempo_bonus(pid, empty_row, world, my_id, step_now)
         )
         for subset, row in table.items():
             v = (
                 _value_for_outcome(row, my_id, alpha_opp_penalty, discounted)
                 + _endgame_bonus(pid, row, world, my_id, opp_id, currently_winning)
                 + _topology_bonus(pid, row, my_id, topology_scores)
+                + _opening_tempo_bonus(pid, row, world, my_id, step_now)
             )
             if v > best_value:
                 best_value = v
@@ -626,6 +686,8 @@ def _greedy_fallback(
         + _endgame_bonus(pid, per_planet_tables[pid][s], world, my_id, opp_id,
                          currently_winning)
         + _topology_bonus(pid, per_planet_tables[pid][s], my_id, topology_scores)
+        + _opening_tempo_bonus(pid, per_planet_tables[pid][s], world, my_id,
+                               step_now)
         for pid, s in chosen.items()
     )
 
@@ -827,6 +889,7 @@ def solve_outcome_aware(
         value += _endgame_bonus(pid, row, world, my_id, opp_id,
                                 currently_winning)
         value += _topology_bonus(pid, row, my_id, topology_scores)
+        value += _opening_tempo_bonus(pid, row, world, my_id, step_now)
         c_vec[y_idx] = -float(value)  # negate so milp picks high-value subsets
 
     A_eq_rows: list[list[float]] = []
@@ -973,6 +1036,7 @@ def solve_outcome_aware(
                 + _endgame_bonus(pid, row, world, my_id, opp_id,
                                  currently_winning)
                 + _topology_bonus(pid, row, my_id, topology_scores)
+                + _opening_tempo_bonus(pid, row, world, my_id, step_now)
             )
 
     return OutcomeAwareResult(
