@@ -38,8 +38,9 @@ except ImportError:
     Bounds = None  # type: ignore[assignment]
 
 from agents.baseline.proposer import aim_and_eta
+from lib.fleet import speed as fleet_speed
 from lib.trajectory import predict_fleet_fate
-from lib.world_model import predict_garrison_at
+from lib.world_model import predict_garrison_at, simulate_planet_timeline
 
 
 # ---------------------------------------------------------------------------
@@ -59,10 +60,25 @@ OPENING_HOLD_WINDOW = 12    # ticks of post-capture defense we require feasibili
 OPENING_DEFENDER_GUARD = 2  # reserve at least this many ships on each source (subtracted ONCE from budget)
 MIN_SOURCE_SHIPS = 3        # skip sources with fewer ships (newly captured planets fire sooner)
 MAX_CONTESTERS_PER_TARGET = 1  # opening: each target captured at most once (avoid wasteful gang-ups)
-TOP_PAIRS_PER_SOURCE = 12
+TOP_PAIRS_PER_SOURCE = 20   # max candidates per source after pruning
 TOP_TARGETS_PER_SOURCE = 8  # K in "top-K targets by prod/(dist+1)"
 STRIDE = 1                  # launch-tick stride (must-include t=step_now)
 ROI_THRESHOLD = 0.5         # accept launches with value ≥ ROI_THRESHOLD × ships invested
+SPREAD_GAP = 6              # min fire_step separation between kept candidates
+                            # of the same (src, tgt) pair — guarantees the
+                            # MILP sees a budget-feasible late fire, not
+                            # only the earliest 3 budget-conflicted ones.
+                            # Fix 2 (modeling gap C, seed 384458460).
+OPENING_VALUE_GAMMA = 0.95  # per-tick discount applied to candidate value
+                            # over (wait + flight) time. Mirrors
+                            # `prod_stream_discounted` in lp_outcome.py;
+                            # penalises cross-board long-flight captures
+                            # whose nominal value ignored the opportunity
+                            # cost of ship-tied-up-in-transit time.
+                            # Fix 3 (Bug B, seed 384458460).
+OPP_RESPONSE_LAG = 4        # ticks of slack added to opp's optimal eta
+                            # when checking whether opp can plausibly
+                            # contest our arrival. Fix 4 (Modeling gap D).
 
 
 # ---------------------------------------------------------------------------
@@ -152,25 +168,64 @@ def _ships_to_capture(tgt, owner_at_arrival: int, garrison_at_arrival: float,
     return max(1, int(math.ceil(garrison_at_arrival)) + 1)
 
 
+def _predict_opp_ships_at_target(tgt, arrival_step: int, world, my_id: int,
+                                 ) -> int:
+    """Maximum ships an opp could land at `tgt` within `arrival_step +
+    OPP_RESPONSE_LAG` ticks. Considers every enemy planet with
+    sufficient garrison; returns the strongest single source's
+    available force (opp can't fire from every planet at once during
+    the opening, so the strongest contestor is the worst case).
+
+    Returns 0 if no opp source can plausibly contest. Fix 4
+    (Modeling gap D, seed 384458460 p0→p2 misfire).
+    """
+    best = 0
+    for p in world.planets_by_id.values():
+        owner = int(p.owner)
+        if owner == int(my_id) or owner < 0:
+            continue
+        ships_avail = int(p.ships) - OPENING_DEFENDER_GUARD
+        if ships_avail < MIN_SOURCE_SHIPS:
+            continue
+        d = math.hypot(float(p.x) - float(tgt.x),
+                       float(p.y) - float(tgt.y))
+        v = fleet_speed(ships_avail)
+        if v <= 0:
+            continue
+        eta = int(math.ceil(d / v))
+        if eta <= arrival_step + OPP_RESPONSE_LAG:
+            if ships_avail > best:
+                best = ships_avail
+    return best
+
+
 def _expected_hold_duration(tgt, arrival: int, capture_residual: int,
                             world, model, my_id: int) -> int:
     """Closed-form expected hold duration in ticks AFTER capture.
 
-    Decision logic, empirically tuned:
-      - If opp arrives BEFORE us (opp_threat_eta < arrival): hold = 0
-        (we won't take this planet at all; opp gets there first).
-      - If opp's earliest arrival ≥ arrival + OPENING_HOLD_WINDOW: we got there
-        with margin; assume opp focuses elsewhere → hold = OPENING_T_END - arrival
-        (full game-end credit). This is the typical opening case for
-        targets closer to us than to opp.
-      - Else (tight race, opp could arrive soon): scale the hold by 3×
-        the minimum-arrival delta to reflect that opp won't typically
-        spend their first action attacking our outpost.
+    Two-stage check:
 
-    The 3× safety factor matches the production-vs-opp-source compare:
-    even if opp arrives at opp_threat, our garrison has had time to
-    grow, and our reinforcements have time to land.
+      Stage 1 (Fix 4 — ship-count opp race): if any opp source can
+      plausibly land more ships at `tgt` near our arrival than our
+      capture residual can hold, return 0. This is the "overwhelmed-
+      on-arrival" case the eta-only model used to miss (e.g.
+      seed-384458460 p0→p2 with opp's 60+ ship source in their
+      quadrant).
+
+      Stage 2 (legacy eta-delta): use `time_to_enemy_threat` for the
+      eta race:
+      - If opp arrives BEFORE us (delta ≤ 0): hold = 0.
+      - If opp's earliest arrival ≥ arrival + OPENING_HOLD_WINDOW: full
+        game-end credit (opp likely doesn't prioritise this outpost).
+      - Tight race: scale the hold by 3 × the delta to reflect that
+        opp won't typically spend their first action attacking us.
     """
+    # Stage 1: ship-count check.
+    opp_force = _predict_opp_ships_at_target(tgt, arrival, world, my_id)
+    if opp_force >= int(capture_residual) + 3:
+        return 0
+
+    # Stage 2: eta-delta check (legacy).
     try:
         opp_threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
     except Exception:
@@ -183,6 +238,32 @@ def _expected_hold_duration(tgt, arrival: int, capture_residual: int,
     if delta >= OPENING_HOLD_WINDOW:
         return max(0, OPENING_T_END - arrival)
     return min(max(0, OPENING_T_END - arrival), 3 * delta)
+
+
+def _target_already_claimed(tgt, base_arrivals, my_id: int,
+                            horizon: int = OPENING_HORIZON + 50) -> bool:
+    """True iff an existing in-flight FRIENDLY arrival will capture
+    `tgt` within `horizon` ticks. When True, adding a new launch at
+    `tgt` creates a redundant attack: either our new fleet arrives
+    AFTER the in-flight one (wasted reinforcement) or BEFORE it
+    (making the in-flight wasted). Cross-turn dedup — the per-solve
+    `MAX_CONTESTERS_PER_TARGET = 1` cap doesn't catch this because the
+    in-flight fleet is in `model.ledger`, not in this solve's
+    candidate set. Closes the seed-384458460 step-13 redundancy where
+    a p16→p8 launch was proposed while p0→p8 was already in flight.
+    """
+    if not base_arrivals:
+        return False
+    # Only friendly arrivals matter; opp arrivals can't claim FOR us.
+    friendly = [a for a in base_arrivals if int(a[1]) == int(my_id)]
+    if not friendly:
+        return False
+    timeline = simulate_planet_timeline(tgt, base_arrivals, horizon=horizon)
+    owner_at = timeline["owner_at"]
+    for t in range(1, horizon + 1):
+        if int(owner_at.get(t, -1)) == int(my_id):
+            return True
+    return False
 
 
 def _is_minimally_holdable(tgt, arrival: int, capture_residual: int,
@@ -254,6 +335,16 @@ def _build_candidates(world, model, my_id: int, num_seats: int,
         # 3+4+5: reachability × trajectory × stride-2 fire ticks.
         per_src_pruned: list[_Candidate] = []
         for tgt in top_targets:
+            # Fix 1 (Bug A): drop targets that an in-flight friendly
+            # arrival will capture. Cross-turn dedup — at turn T+1
+            # the previous turn's emission is in `model.ledger` and a
+            # second launch from any source would create a redundant
+            # attack.
+            tgt_base_arrivals = list(model.ledger.get(int(tgt.id), []))
+            if _target_already_claimed(tgt, tgt_base_arrivals, my_id):
+                waterfall.setdefault("dropped_already_claimed", 0)
+                waterfall["dropped_already_claimed"] += 1
+                continue
             for offset in fire_offsets:
                 fire_step = step_now + offset
                 # Initial ship estimate for aim_and_eta — refine via fixed point.
@@ -335,7 +426,14 @@ def _build_candidates(world, model, my_id: int, num_seats: int,
                     waterfall["dropped_defense"] += 1
                     continue
                 opp_bonus = OPP_BONUS if int(tgt.owner) != -1 else 1.0
-                value = float(int(tgt.production)) * float(hold_dur) * float(opp_bonus)
+                # Fix 3: discount value by time-to-capture so cross-
+                # board long-flight candidates lose their nominal
+                # advantage relative to close fast captures. Matches
+                # `prod_stream_discounted` semantics in lp_outcome.py.
+                time_to_capture = int(offset) + int(eta_flight)
+                discount = OPENING_VALUE_GAMMA ** float(time_to_capture)
+                value = (float(int(tgt.production)) * float(hold_dur)
+                         * float(opp_bonus) * float(discount))
                 # Per-launch ROI filter — gentler than 1:1 to match the
                 # baseline's aggressive opening throughput. Even half-ROI
                 # captures contribute to the production base once held.
@@ -354,17 +452,30 @@ def _build_candidates(world, model, my_id: int, num_seats: int,
                 ))
                 next_id += 1
 
-        # 6. Per-source cap: ensure target diversity FIRST, then trim.
-        # Group by (src, tgt); within each group keep the top 3 fire_steps
-        # by raw value. This prevents a single high-ROI tiny capture from
-        # crowding out larger valuable captures at other targets.
+        # 6. Per-(src, tgt) cap with budget-aware FIRE_STEP SPREAD.
+        # Group by (src, tgt); within each group keep up to 3
+        # candidates, picking by descending value but requiring each
+        # kept candidate's fire_step to be ≥ SPREAD_GAP away from
+        # already-kept fires in the same group. Without the spread,
+        # top-3-by-value always picks the earliest 3 fire_steps
+        # (value monotonically decreases with fire_step) — all of
+        # which share the source's cramped early ship budget. The
+        # spread guarantees the MILP sees at least one budget-
+        # feasible LATE fire per pair so a second wave from a
+        # regenerated source becomes pickable. Fix 2.
         by_tgt: dict[int, list[_Candidate]] = {}
         for c in per_src_pruned:
             by_tgt.setdefault(int(c.tgt_id), []).append(c)
         diverse: list[_Candidate] = []
         for tid, group in by_tgt.items():
-            group.sort(key=lambda c: c.value, reverse=True)
-            diverse.extend(group[:3])
+            kept_in_group: list[_Candidate] = []
+            for c in sorted(group, key=lambda c: c.value, reverse=True):
+                if len(kept_in_group) >= 3:
+                    break
+                if all(abs(int(c.fire_step) - int(k.fire_step)) >= SPREAD_GAP
+                       for k in kept_in_group):
+                    kept_in_group.append(c)
+            diverse.extend(kept_in_group)
         # Now take top TOP_PAIRS_PER_SOURCE by raw value across this source's
         # diverse candidates.
         diverse.sort(key=lambda c: c.value, reverse=True)
