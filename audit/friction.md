@@ -118,6 +118,41 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-21 (claude/review-skills-improvements-moKOR — drain/sniper iteration)
+
+- `tag: sniper-fleetfate-step-of-hit-attribute-bug` — first sniper
+  variant (`emit_sniper_strikes`) accessed `fate_p.step_of_hit` but
+  the FleetFate dataclass field is named `step`. The misleading
+  docstring at `lib/trajectory.py:25` advertised `step_of_hit` as the
+  return field name, so the bug was authored from the docstring not
+  the source. AttributeError raised on first sniper trigger and
+  cascaded ALL 4 agents to `status=ERROR` (kaggle_environments
+  interpreter wraps the entire turn in a try/except that re-raises,
+  collapsing all rewards to None). Lost ~25 min on a hung n=16 A/B
+  and one full debug cycle. **Fix:** use `fate_p.step` and align the
+  docstring (committed as 4f1fb2a). **Preventive:** when reading a
+  docstring for a field name, also peek at the dataclass definition
+  to confirm.
+
+- `tag: ab-baseline-misread-as-regression` — read 4/16 = 25% for the
+  orbital-fix variant as "regression" when in fact it's parity with
+  the 4P self-play symmetric baseline (4 identical agents → focal
+  wins exactly 25% by symmetry). Same misread for D1 drain at 6/16 =
+  37.5% (POSSIBLE LIFT). Cost: nearly dismissed two viable features
+  before noticing. **Fix:** for any 4P focal-vs-3xopp A/B, the
+  null-hypothesis bar is **25% wins** (1/N seats), not 50%; use
+  Wilson-lo vs 25% (not 50%) as the parity gate.
+
+- `tag: pre-submit-bundle-shim-recipe-undocumented` — variant agent
+  dirs (one-file shim with env-var `setdefault` + `from agents.baseline
+  .main import agent`) cannot be passed directly to `bundle_agent.py`
+  — the bundler only scans the agent dir and strips the import without
+  inlining `baseline/main.py`. Recipe: bundle `agents/baseline` first
+  to `submissions/baseline.py`, then awk-prepend the env-var
+  `setdefault` block. This was rediscovered today; the previous session
+  had also worked through it. **Fix:** document the recipe in
+  `state/TOOLS.md` so the next variant doesn't re-discover it.
+
 ## 2026-05-20 (claude/review-skills-improvements-moKOR — cross-branch consolidation)
 
 - `tag: inventory-as-categorical-summary-not-itemized` — first draft
