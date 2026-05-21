@@ -199,3 +199,168 @@ def test_strategic_stockpile_for_high_prod():
         f"Post-fix: at least the cap-sized candidate should be present. "
         f"Got: {sizes}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Fix 3 — partial-budget candidates gated when no bundle partner exists
+# ---------------------------------------------------------------------------
+
+
+def test_partial_budget_solo_filtered_when_alone():
+    """Pin: a single small source with no peers nearby should NOT emit a
+    sub-cap partial-budget candidate (it would fire solo and bounce).
+
+    Captures the 2026-05-21 introspect finding (seeds 384458460/42/7):
+    6 confirmed Type-A regressions from the prior partial-budget fix,
+    where 6-12 ship partial candidates fired solo when no peer
+    contributed. Post-fix: `peer_sources_in_reach == 0` gates the
+    sub-cap candidate; the bundle case is preserved when peers exist.
+    """
+    from agents.baseline.proposer import (
+        capture_size,
+        enumerate_ship_counts,
+        propose,
+    )
+
+    # Layout: ONE my source S (6 ships) at top-right corner, target T
+    # at (60, 60), distant opp for threat-eta plumbing. No peer
+    # sources exist within reach of T.
+    planets = [
+        [0, 0, 90.0, 90.0, 1.69, 6, 2],     # me: S (6 ships, alone)
+        [10, -1, 60.0, 60.0, 2.61, 16, 2],  # neutral big T (cap > 6)
+        [99, 1, 5.0, 5.0, 1.69, 10, 2],     # distant opp
+    ]
+    world, model = _build_world_and_model(planets, step=0)
+    me = 0
+    src = world.planets_by_id[0]
+    tgt = world.planets_by_id[10]
+    target_pool = [tgt]
+    my_planets = [p for p in world.planets_by_id.values() if int(p.owner) == me]
+
+    cap = capture_size(src, tgt, model, 0.0, me, world)
+    assert cap > int(src.ships), (
+        f"test prerequisite: src budget ({src.ships}) must be < cap ({cap})."
+    )
+
+    # Direct call with explicit peer_sources_in_reach=0: gate engages,
+    # partial-budget candidate (6 ships) is NOT emitted.
+    sizes = enumerate_ship_counts(
+        src, tgt, model, 0.0, me, world, peer_sources_in_reach=0
+    )
+    assert int(src.ships) not in sizes, (
+        f"Sub-cap partial-budget candidate ({src.ships} ships, cap={cap}) "
+        f"was emitted despite no peer in reach. Post-fix should gate this. "
+        f"Got: {sizes}"
+    )
+
+    # End-to-end via propose: no FIRE-NOW partial-budget candidate
+    # (ships == src.ships, wait_N == 0) should be emitted. Wait-grid
+    # candidates that accumulate ships before firing are unrelated to
+    # this gate and may still appear.
+    prerank = propose(my_planets, target_pool, world, model, me, 0.0,
+                      baseline_len=50)
+    fire_now_partials = [
+        c for c in prerank
+        if int(c[2].id) == int(tgt.id)
+        and int(c[3]) == int(src.ships)
+        and int(c[7]) == 0
+    ]
+    assert not fire_now_partials, (
+        f"propose() emitted fire-now partial-budget candidate(s) "
+        f"(ships={src.ships}, wait_N=0) targeting T from a lone source "
+        f"with no bundle partner: {[(int(c[1].id), int(c[3]), int(c[7])) for c in fire_now_partials]}"
+    )
+
+    # Companion: adding a peer source restores the partial-budget emission.
+    planets_with_peer = planets + [[1, 0, 87.0, 87.0, 1.69, 8, 2]]
+    world2, model2 = _build_world_and_model(planets_with_peer, step=0)
+    src2 = world2.planets_by_id[0]
+    tgt2 = world2.planets_by_id[10]
+    sizes_with_peer = enumerate_ship_counts(
+        src2, tgt2, model2, 0.0, me, world2, peer_sources_in_reach=1
+    )
+    assert int(src2.ships) in sizes_with_peer, (
+        f"Partial-budget candidate ({src2.ships} ships) should be "
+        f"emitted when a peer is in reach. Got: {sizes_with_peer}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix 4 — confidence-aware capture buffer
+# ---------------------------------------------------------------------------
+
+
+def test_confidence_buffer_size_function_correctness():
+    """Pin (SCAFFOLDING for future buffer activation):
+    `confidence_buffered_size` returns the expected ε-adjusted cap.
+
+    The emission path in `enumerate_ship_counts` is currently DISABLED
+    after two failed integration attempts (2026-05-21): the buffered
+    variant has a shorter eta than spec-min cap (larger fleets are
+    faster), which shifts `cheap_marginal_value`'s arrival prediction
+    and sometimes flips capture → reinforce-no-threat, breaking dedup
+    and stalling the LP. The math helper is kept and tested so the
+    next attempt can re-use it once the dedup/cheap interaction is
+    solved (likely needs distinguishable bands or a per-candidate
+    `cheap` that accounts for the cost differential).
+
+    For eta≈10, prod=3, 2P: expected ε ≈ 6; buffered ≈ 17.
+    """
+    from agents.baseline.proposer import (
+        capture_size,
+        confidence_buffered_size,
+    )
+
+    planets = [
+        [10, 0, 70.0, 80.0, 1.69, 50, 2],   # me: S
+        [11, -1, 70.0, 60.0, 2.61, 10, 3],  # neutral T (prod=3)
+        [99, 1, 5.0, 5.0, 1.69, 10, 2],     # opp (makes it 2P)
+    ]
+    world, model = _build_world_and_model(planets, step=0)
+    me = 0
+    src = world.planets_by_id[10]
+    tgt = world.planets_by_id[11]
+
+    cap = capture_size(src, tgt, model, 0.0, me, world)
+    buffered = confidence_buffered_size(src, tgt, model, 0.0, me, world)
+
+    assert cap == 11, (
+        f"capture_size should be spec-min (pred + 1 = 11). Got {cap}."
+    )
+    assert buffered >= 15, (
+        f"confidence_buffered_size expected ≥ 15 for prod=3, eta≈10, 2P. "
+        f"Got {buffered}. ε = base(1) + eta_scale(0.5) × eta × prod/3."
+    )
+
+
+def test_confidence_buffer_discounted_in_4p():
+    """Pin (scaffolding): 4P discount shrinks the buffered size.
+    Same scaffolding caveat as test_confidence_buffer_size_function_correctness.
+    """
+    from agents.baseline.proposer import (
+        capture_size,
+        confidence_buffered_size,
+    )
+
+    planets = [
+        [10, 0, 70.0, 80.0, 1.69, 50, 2],   # me: S
+        [11, -1, 70.0, 60.0, 2.61, 10, 3],  # neutral T (prod=3)
+        [99, 1, 5.0, 5.0, 1.69, 10, 2],     # opp 1
+        [98, 2, 5.0, 95.0, 1.69, 10, 2],    # opp 2
+        [97, 3, 95.0, 5.0, 1.69, 10, 2],    # opp 3 (makes it 4P)
+    ]
+    world, model = _build_world_and_model(planets, step=0)
+    me = 0
+    src = world.planets_by_id[10]
+    tgt = world.planets_by_id[11]
+
+    cap = capture_size(src, tgt, model, 0.0, me, world)
+    buffered_4p = confidence_buffered_size(src, tgt, model, 0.0, me, world)
+
+    assert cap == 11, f"Spec-min cap unchanged in 4P. Got {cap}."
+    # 4P: ε ≈ 6 × 0.4 = 2.4 → ceil(10 + 2.4) + 1 = 14.
+    assert 12 <= buffered_4p <= 15, (
+        f"4P confidence buffer expected to be discounted: 12 ≤ buffered ≤ 15. "
+        f"Got {buffered_4p}. The 4P discount (×0.4) shrinks ε from ~6 in 2P "
+        f"to ~2.4 in 4P; spec-min cap stays at 11."
+    )

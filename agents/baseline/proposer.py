@@ -18,6 +18,7 @@ import os
 
 from lib.aim import aim_orbiting
 from lib.fleet import speed as fleet_speed
+from lib.mirror import detect_num_players
 from lib.orbit import is_orbiting, predict_relative
 from lib.scoring import pv_horizon
 from lib.trajectory import predict_fleet_fate
@@ -41,6 +42,22 @@ GAMMA = 0.99
 # namespace collision (cf. OPENING_* rename, 2026-05-21 AM).
 STRATEGIC_DEFENSE_PROD = 4    # production threshold for "strategic"
 STRATEGIC_STOCKPILE_TICKS = 5 # buffer = N ticks × planet's production
+
+# Fix (confidence-aware capture buffer, 2026-05-21): the offensive
+# `capture_size` is spec-minimum — `ceil(predicted_defender)+1`. Median
+# solo capture margin in 2P is +5 ships (per launch_introspect); 14%
+# of solo attempts bounce because opp launched reinforcements during
+# our flight that the model couldn't see at depart time. Buffer ε
+# scales with flight time × target production (the two best proxies
+# for opp reinforcement rate over the flight window). Capped by
+# CONFIDENCE_BUFFER_MAX; discounted in multi-player formats where
+# over-commitment to a single capture drains defense against the
+# other opps (per AGGR sibling-branch 4P caveat).
+CONFIDENCE_BUFFER_BASE = 1
+CONFIDENCE_ETA_SCALE = 0.5
+CONFIDENCE_PROD_NORM = 3.0
+CONFIDENCE_BUFFER_MAX = 12
+CONFIDENCE_4P_DISCOUNT = 0.4
 
 # Backward wait grid (2026-05-18): anchored on min_wait_affordable.
 # Replaces forward WAIT_EXTRA_SURPLUS = (0, 5, 12) grid that caused
@@ -156,17 +173,49 @@ def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
     return max(MIN_FLEET_SIZE, int(math.ceil(pred)) + 1)
 
 
-def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list[int]:
+def confidence_buffered_size(src, tgt, model, omega: float, me: int, world) -> int:
+    """Offensive capture size with confidence buffer ε added.
+
+    The model predicts opp strength at arrival using current trajectory;
+    new opp launches during our flight are unmodeled. ε scales with
+    flight time × target production (the two best proxies for opp
+    reinforcement rate). Returns the buffered size, capped by
+    CONFIDENCE_BUFFER_MAX; discounted in 4P+ where over-commitment
+    drains defense.
+
+    Returns 0 for own targets (buffer is offense-only — own-target
+    reinforce is sized by capture_size's shortfall logic).
+    """
+    if int(tgt.owner) == me:
+        return 0
+    initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
+    _angle, eta = aim_and_eta(src, tgt, initial, omega)
+    pred = float(model.ships_at(int(tgt.id), eta) or 0.0)
+    prod_factor = float(tgt.production) / CONFIDENCE_PROD_NORM
+    epsilon = (
+        CONFIDENCE_BUFFER_BASE
+        + CONFIDENCE_ETA_SCALE * float(eta) * prod_factor
+    )
+    epsilon = min(epsilon, float(CONFIDENCE_BUFFER_MAX))
+    n_players = detect_num_players(list(world.planets_by_id.values()))
+    if n_players >= 3:
+        epsilon *= CONFIDENCE_4P_DISCOUNT
+    return max(MIN_FLEET_SIZE, int(math.ceil(pred + epsilon)) + 1)
+
+
+def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world,
+                          peer_sources_in_reach: int = 1) -> list[int]:
     """Fire-now ship-count set: capture-size, 2x capture-size, full budget.
 
-    Always emits `budget` as a candidate when `budget >= MIN_FLEET_SIZE`
-    (Fix — bundle blind spot, 2026-05-21). Pre-fix the third size was
-    gated by `budget > cap`, which dropped candidates from sources
-    that couldn't solo-capture — the LP literally never saw multi-
-    source bundle options. With the gate removed, every source within
-    range emits at least one column; the LP's outcome-table subset
-    enumeration (lib/joint_solver/outcome_table.py:73-130) correctly
-    scores the joint capture.
+    Emits `budget` as a candidate when `budget >= MIN_FLEET_SIZE`,
+    GATED on bundle feasibility when `budget < cap`: a partial-budget
+    candidate fires solo and bounces unless a peer source can also
+    contribute. Gate (2026-05-21) added after the 2026-05-21 bundle
+    fix surfaced 6-12 ship partials that fired solo (introspect on
+    2P seeds 384458460/42/7: 6 confirmed regressions, ~10 ships each).
+    `peer_sources_in_reach` defaults to 1 so direct callers (tests,
+    introspect tools) preserve the prior emit-always behavior; `propose`
+    computes the actual count and passes it through.
     """
     cap = capture_size(src, tgt, model, omega, me, world)
     budget = int(src.ships)
@@ -175,10 +224,34 @@ def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list
     sizes = set()
     if MIN_FLEET_SIZE <= cap <= budget:
         sizes.add(cap)
+    # Confidence-buffered variant: SCAFFOLDED but NOT EMITTED.
+    # Rationale (2026-05-21): two attempts at landing a confidence
+    # buffer (cap-replacement, then extra-variant emission) both
+    # regressed the agent — broke offense in seed-42 smoke (focal acts
+    # dropped from 66 → 5 turns; game stalls to 500 steps; rewards flip
+    # from win to loss). Root cause: the buffered variant has a shorter
+    # eta (larger fleets are faster), which shifts the predicted owner
+    # at arrival in `cheap_marginal_value` — sometimes from "still opp"
+    # (positive capture value) into "already mine" (reinforce branch,
+    # 0 if threat is beyond eta+30). Dedup picks the wrong variant and
+    # the LP under-fires. The function + constants are kept as
+    # scaffolding for a future fix that addresses the dedup/cheap-value
+    # interaction. Per Rule 37, halt the buffer axis after 2 iterations.
+    # if False:
+    #     buffered = confidence_buffered_size(src, tgt, model, omega, me, world)
+    #     if MIN_FLEET_SIZE <= buffered <= budget and buffered != cap:
+    #         sizes.add(buffered)
     if 2 * cap <= budget:
         sizes.add(2 * cap)
     if budget >= MIN_FLEET_SIZE:
-        sizes.add(budget)
+        # Gate (CAPTURE only): a sub-cap partial-budget candidate against
+        # an opp/neutral target fires solo and bounces unless a peer can
+        # also fire (bundle). Own-target reinforces are NOT gated — the
+        # ships arrive at our planet and add to garrison; partial defense
+        # is strictly better than no defense.
+        is_reinforce = int(tgt.owner) == me
+        if is_reinforce or budget >= cap or peer_sources_in_reach >= 1:
+            sizes.add(budget)
     return sorted(sizes)
 
 
@@ -534,6 +607,16 @@ def propose(my_planets, target_pool, world, model, me: int,
         (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N)
     sorted by cheap_delta descending.
     """
+    # Pre-compute per-peer reach sets: a peer's reach is its
+    # NUM_TARGETS_PER_SOURCE nearest targets. Used to gate sub-cap
+    # partial-budget candidates (Fix 1, 2026-05-21) — only emit when
+    # a bundle is physically possible.
+    peer_reach = {
+        int(p.id): {int(t.id) for t in nearest_k(target_pool, p, NUM_TARGETS_PER_SOURCE)}
+        for p in my_planets
+        if int(p.ships) >= MIN_FLEET_SIZE
+    }
+
     prerank = []
     for src in my_planets:
         if int(src.ships) < MIN_FLEET_SIZE:
@@ -542,7 +625,15 @@ def propose(my_planets, target_pool, world, model, me: int,
             if int(tgt.id) == int(src.id):
                 continue
 
-            for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
+            peer_count = sum(
+                1 for pid, reach_set in peer_reach.items()
+                if pid != int(src.id) and int(tgt.id) in reach_set
+            )
+
+            for ships in enumerate_ship_counts(
+                src, tgt, model, omega, me, world,
+                peer_sources_in_reach=peer_count,
+            ):
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
                 angle, eta = aim_and_eta(src, tgt, ships, omega)
