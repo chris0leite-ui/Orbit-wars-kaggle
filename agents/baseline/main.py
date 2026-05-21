@@ -108,6 +108,24 @@ STAGNANT_MAX_LAUNCHES = int(os.environ.get("BASELINE_STAGNANT_MAX_LAUNCHES", "4"
 COMBAT_STACK_ENABLED = os.environ.get("BASELINE_COMBAT_STACK", "0") == "1"
 COMBAT_STACK_MAX_LAUNCHES = int(os.environ.get("BASELINE_COMBAT_STACK_MAX_LAUNCHES", "4"))
 
+# Sniper bundle (2026-05-21). PI directive: "when we have idle planets
+# and when it's clear that they can bundle to really shoot even across
+# the whole map, fast to attack one of the biggest opponent planets,
+# then do it." Trigger: total reserve > SNIPER_TOTAL_RESERVE AND at least
+# one source has SNIPER_MIN_SOURCE_SHIPS idle AND a non-our planet with
+# production >= SNIPER_MIN_TGT_PROD is in range. Action: largest single
+# source fires the capture solo (sized to take predicted garrison +
+# safety margin); optional follow-on from other idle sources to bolster
+# post-capture garrison. Physics-filtered. Bounded by SNIPER_MAX_LAUNCHES.
+SNIPER_ENABLED = os.environ.get("BASELINE_SNIPER", "0") == "1"
+SNIPER_MIN_SOURCE_SHIPS = int(os.environ.get("BASELINE_SNIPER_MIN_SOURCE", "80"))
+SNIPER_TOTAL_RESERVE = int(os.environ.get("BASELINE_SNIPER_TOTAL_RESERVE", "300"))
+SNIPER_MIN_TGT_PROD = int(os.environ.get("BASELINE_SNIPER_MIN_TGT_PROD", "4"))
+SNIPER_MAX_TARGETS = int(os.environ.get("BASELINE_SNIPER_MAX_TARGETS", "3"))
+SNIPER_MARGIN = float(os.environ.get("BASELINE_SNIPER_MARGIN", "1.2"))
+SNIPER_MAX_LAUNCHES = int(os.environ.get("BASELINE_SNIPER_MAX_LAUNCHES", "4"))
+SNIPER_RESERVE_FRAC = float(os.environ.get("BASELINE_SNIPER_RESERVE_FRAC", "0.4"))
+
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
 # chooser's wait_N>0 winners are remembered across turns instead of
 # being silently dropped. Each entry ticks down each turn; when
@@ -702,6 +720,128 @@ def drain_combat_stack(moves, planets, my_id: int, world, model) -> list:
     return list(moves) + extras
 
 
+def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
+    """One-shot decisive strike at high-value enemy planets from idle reserves.
+
+    Trigger: total reserve > SNIPER_TOTAL_RESERVE AND at least one source
+    has SNIPER_MIN_SOURCE_SHIPS idle AND a non-our planet with production
+    >= SNIPER_MIN_TGT_PROD is reachable.
+
+    Action: largest single source fires the capture solo sized to take
+    `predicted_garrison_at_arrival * SNIPER_MARGIN`. Optional follow-on
+    launches from OTHER idle sources reinforce the capture (joining our
+    garrison post-flip). Each launch physics-filtered via predict_fleet_fate.
+
+    Affordability: total sniper ships <= SNIPER_RESERVE_FRAC * total reserve.
+    """
+    if not SNIPER_ENABLED:
+        return moves
+    used_srcs = set()
+    for m in moves:
+        try:
+            used_srcs.add(int(m[0]))
+        except (TypeError, IndexError):
+            pass
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    enemy_planets = [
+        p for p in planets
+        if int(p.owner) != my_id and int(p.owner) != -1
+    ]
+    if not my_planets or not enemy_planets:
+        return moves
+    total_my_ships = sum(int(p.ships) for p in my_planets)
+    if total_my_ships < SNIPER_TOTAL_RESERVE:
+        return moves
+
+    targets = sorted(
+        [p for p in enemy_planets if int(p.production) >= SNIPER_MIN_TGT_PROD],
+        key=lambda p: -int(p.production),
+    )[:SNIPER_MAX_TARGETS]
+    if not targets:
+        return moves
+
+    extras = []
+    fired = 0
+    sniper_ship_budget = int(total_my_ships * SNIPER_RESERVE_FRAC)
+    sniper_ships_used = 0
+
+    for tgt in targets:
+        if fired >= SNIPER_MAX_LAUNCHES:
+            break
+
+        # Idle, threat-free sources sorted by ship count desc.
+        idle_sources = []
+        for src in my_planets:
+            if int(src.id) in used_srcs:
+                continue
+            if int(src.ships) < SNIPER_MIN_SOURCE_SHIPS:
+                continue
+            if model.incoming_enemy_eta(int(src.id), my_id) is not None:
+                continue
+            idle_sources.append(src)
+        if not idle_sources:
+            continue
+        idle_sources.sort(key=lambda s: -int(s.ships))
+
+        # Pick largest source as primary striker.
+        primary = idle_sources[0]
+        angle_p = math.atan2(float(tgt.y) - float(primary.y),
+                             float(tgt.x) - float(primary.x))
+        try:
+            fate_p = predict_fleet_fate(
+                primary, tgt, angle_p, int(primary.ships), world,
+            )
+        except Exception:
+            continue
+        if fate_p.outcome != "target":
+            continue
+        eta_p = int(fate_p.step_of_hit)
+        # Predicted garrison at our arrival.
+        predicted = model.ships_at(int(tgt.id), eta_p)
+        if predicted is None:
+            predicted = float(tgt.ships) + eta_p * int(tgt.production)
+        required = int(math.ceil(float(predicted) * SNIPER_MARGIN)) + 1
+        reserve = max(int(primary.production) * 5, 10)
+        affordable = int(primary.ships) - reserve
+        if required > affordable:
+            continue
+        if sniper_ships_used + required > sniper_ship_budget:
+            continue
+
+        extras.append([int(primary.id), float(angle_p), int(required)])
+        used_srcs.add(int(primary.id))
+        sniper_ships_used += required
+        fired += 1
+
+        # Follow-on reinforcements from other idle sources (arrive after
+        # primary, join our garrison post-capture). Cap by remaining
+        # SNIPER_MAX_LAUNCHES budget.
+        for src in idle_sources[1:]:
+            if fired >= SNIPER_MAX_LAUNCHES:
+                break
+            src_reserve = max(int(src.production) * 5, 10)
+            available = int(src.ships) - src_reserve
+            if available < SNIPER_MIN_SOURCE_SHIPS:
+                continue
+            if sniper_ships_used + available > sniper_ship_budget:
+                continue
+            angle_f = math.atan2(float(tgt.y) - float(src.y),
+                                 float(tgt.x) - float(src.x))
+            try:
+                fate_f = predict_fleet_fate(
+                    src, tgt, angle_f, available, world,
+                )
+            except Exception:
+                continue
+            if fate_f.outcome != "target":
+                continue
+            extras.append([int(src.id), float(angle_f), int(available)])
+            used_srcs.add(int(src.id))
+            sniper_ships_used += available
+            fired += 1
+    return list(moves) + extras
+
+
 def agent(obs, configuration=None):
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
@@ -837,7 +977,8 @@ def agent(obs, configuration=None):
         moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
-        return drain_combat_stack(moves, planets, me, world, model)
+        moves = drain_combat_stack(moves, planets, me, world, model)
+        return emit_sniper_strikes(moves, planets, me, world, model)
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
     # coalition + opp-modifier posterior; no fast_sim rollout. See
@@ -859,7 +1000,8 @@ def agent(obs, configuration=None):
         moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
-        return drain_combat_stack(moves, planets, me, world, model)
+        moves = drain_combat_stack(moves, planets, me, world, model)
+        return emit_sniper_strikes(moves, planets, me, world, model)
 
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
@@ -905,4 +1047,5 @@ def agent(obs, configuration=None):
     moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
     moves = drain_idle_rear(moves, planets, me, world, model)
     moves = drain_stagnant_rear(moves, planets, me, world, model)
-    return drain_combat_stack(moves, planets, me, world, model)
+    moves = drain_combat_stack(moves, planets, me, world, model)
+    return emit_sniper_strikes(moves, planets, me, world, model)
