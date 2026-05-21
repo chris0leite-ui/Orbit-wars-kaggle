@@ -184,10 +184,18 @@ def predict_fleet_fate(
 
         # 3. Planet collision — swept_pair_hit against every planet.
         for pid, positions in planet_positions.items():
-            # Spawn-step skip: env explicitly does not collide a fresh
-            # fleet with its source planet on its first move.
-            if pid == src_id and step == 0:
-                continue
+            # NB: the env DOES check fleet-vs-source at step 0 (see
+            # orbit_wars.py L588-597 — no exclusion of from_id). For
+            # STATIC sources the geometry handles it: spawn is at
+            # `src.center + (radius + 0.1) * direction`, the fleet
+            # moves AWAY, swept_pair_hit never matches.
+            # For MOVING sources (comets, fast-orbiting planets), the
+            # source can catch the fleet within 1 step — that's a real
+            # collision the env applies. The earlier `if pid == src_id
+            # and step == 0: continue` skip falsely declared "target
+            # reached" for drain trajectories whose comet-source
+            # caught up and absorbed the fleet (root cause of stranded
+            # ships on captured comets).
             p_old = positions[step]
             p_new = positions[step + 1]
             # Comet expiry guard: if EITHER endpoint is the off-board
