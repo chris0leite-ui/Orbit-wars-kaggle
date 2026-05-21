@@ -1,8 +1,36 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-21 PM by `claude/strategy-axis-decision-3437`.
-> Branch is **189 ahead / 23 behind `origin/main`**; everything below
-> reflects the tip (`1daec97`).
+> Last written: 2026-05-21 evening by `claude/strategy-axis-decision-3437`.
+> Branch is **194 ahead / 23 behind `origin/main`**; everything below
+> reflects the tip (`d4ae531`).
+>
+> **Opening-planner overhaul** landed this evening (commit `d4ae531`).
+> PI shared a ladder loss (seed 384458460 vs vkhydras, −33 TrueSkill)
+> and pointed out the opening behaved structurally worse than the
+> opponent's. Replaying that seed locally surfaced four issues —
+> two correctness bugs plus two modeling gaps — all of which are
+> now closed with Rule-38 pin tests in `tests/test_opening_planner.py`:
+>
+> - **Bug A — cross-turn target dedup**: at turn T+1 the planner
+>   added a second launch at a target already being captured by an
+>   in-flight friendly. New `_target_already_claimed` helper drops
+>   the redundant candidate.
+> - **Bug B — time-discount value**: value model ignored eta, so
+>   cross-board long-flight candidates passed ROI. New
+>   `OPENING_VALUE_GAMMA = 0.95` discount over (wait+eta).
+> - **Modeling gap C — candidate spread**: top-3-by-value per
+>   (src, tgt) kept the earliest 3 fire_steps (all budget-conflicted).
+>   New `SPREAD_GAP = 6` guarantees the MILP sees a budget-feasible
+>   late fire per pair.
+> - **Modeling gap D — opp racing**: hold-duration only consulted
+>   eta-based opp threat. New `_predict_opp_ships_at_target` makes
+>   hold = 0 when opp force overwhelms our residual.
+>
+> Verified: 4 new pin tests pass; 139 / 140 pre-existing tests pass
+> (the one failure is a pre-existing aspirational oracle that was
+> already failing on HEAD); `check_fleet_outcomes` on seeds
+> {384458460, 42, 7, 1} all 100% target / 0 sun / 0 OOB. Bundle
+> rebuilds clean.
 >
 > **Ladder breakthrough**: live submission 52872093 (Phase C bundle
 > with constant-collision + comet-path fixes) settled at
