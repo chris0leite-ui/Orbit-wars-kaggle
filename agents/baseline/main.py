@@ -119,6 +119,7 @@ from lib.intent import World
 from lib.joint_solver.opening_planner import OPENING_HORIZON, opening_plan
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.orbit import predict_relative
+from lib.trajectory import predict_fleet_fate
 from lib.world_model import WorldModel
 
 # Import by explicit names so the bundler's per-line import-stripping regex
@@ -310,10 +311,18 @@ def emit_threat_reinforcements(
         if int(src.ships) < ships:
             continue
         try:
-            tx, ty = predict_relative(tgt, int(mission.eta), omega)
+            tx, ty = predict_relative(tgt, omega, int(mission.eta))
         except Exception:
             tx, ty = float(tgt.x), float(tgt.y)
         angle = math.atan2(float(ty) - float(src.y), float(tx) - float(src.x))
+        # Physics safety (Rule 47): drop reinforce launches that would
+        # hit the sun, go OOB, hit a non-target planet, or never arrive.
+        try:
+            fate = predict_fleet_fate(src, tgt, angle, ships, world)
+            if fate.outcome != "target":
+                continue
+        except Exception:
+            pass
         extras.append([sid, float(angle), int(ships)])
         used_srcs.add(sid)
         fired += 1
@@ -357,21 +366,32 @@ def _propose_anticipated_reinforces(
         arrivals = (model.ledger.get(int(d.id)) or []) if hasattr(model, "ledger") else []
         if not arrivals:
             continue
-        enemy_inbound = 0
-        friendly_inbound = 0
+        # Pass 1: find earliest enemy ETA (within horizon).
         earliest_enemy_eta: int | None = None
         for (eta_arr, owner_arr, ships_arr) in arrivals:
             if int(ships_arr) <= 0:
                 continue
             if int(eta_arr) > horizon:
                 continue
+            if int(owner_arr) != my_id:
+                if earliest_enemy_eta is None or int(eta_arr) < earliest_enemy_eta:
+                    earliest_enemy_eta = int(eta_arr)
+        if earliest_enemy_eta is None:
+            continue
+        # Pass 2: enemy + friendly inbound that lands at or before the
+        # first wave (later arrivals don't help defend this wave).
+        enemy_inbound = 0
+        friendly_inbound = 0
+        for (eta_arr, owner_arr, ships_arr) in arrivals:
+            if int(ships_arr) <= 0:
+                continue
+            if int(eta_arr) > earliest_enemy_eta:
+                continue
             if int(owner_arr) == my_id:
                 friendly_inbound += int(ships_arr)
             else:
                 enemy_inbound += int(ships_arr)
-                if earliest_enemy_eta is None or int(eta_arr) < earliest_enemy_eta:
-                    earliest_enemy_eta = int(eta_arr)
-        if enemy_inbound <= 0 or earliest_enemy_eta is None:
+        if enemy_inbound <= 0:
             continue
         # Projected defenders at earliest enemy arrival (ignoring
         # accruing production from the enemy's perspective; production
@@ -416,12 +436,20 @@ def _propose_anticipated_reinforces(
         if best_src is None:
             continue
         try:
-            tx, ty = predict_relative(d, int(best_eta), omega)
+            tx, ty = predict_relative(d, omega, int(best_eta))
         except Exception:
             tx, ty = float(d.x), float(d.y)
         angle = math.atan2(
             float(ty) - float(best_src.y), float(tx) - float(best_src.x),
         )
+        # Physics safety (Rule 47): drop reinforce launches that would
+        # hit the sun, go OOB, hit a non-target planet, or never arrive.
+        try:
+            fate = predict_fleet_fate(best_src, d, angle, deficit, world)
+            if fate.outcome != "target":
+                continue
+        except Exception:
+            pass
         out.append([int(best_src.id), float(angle), int(deficit)])
         used_srcs.add(int(best_src.id))
         fired += 1
