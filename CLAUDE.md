@@ -210,6 +210,21 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
     cycle — a bug in one almost always has a sibling. Origin:
     2026-05-21 foundation-hardening pass; PI-ratified after the
     third instance.
+43. **Kaggle μ is a moving TrueSkill snapshot, never "settled."** The
+    ladder runs continuous TrueSkill — a submission's μ keeps updating
+    as it plays more games against the population, indefinitely. There
+    is no final score. Vocabulary discipline: use **"snapshot at time
+    T"** or **"live estimate"**, never **"settled at"**, **"final μ"**,
+    **"regressed to"**, or **"stable at"**. Numeric μ values written
+    to docs / commits / PRs go stale within hours (52894340 drifted
+    829 → 1029 in 90 minutes this session; 52893236 drifted 975 → 1074
+    same window; 52872093 drifted 1148 → 1049 across one session).
+    Operational rule: **NEVER read μ from a doc — always re-pull from
+    `kaggle competitions submissions orbit-wars` at session start**,
+    and re-pull again before any push decision. Document μ only with
+    explicit "(snapshot YYYY-MM-DD HH:MM)" provenance, treat it as a
+    weak prior. Origin: 2026-05-21 PM; PI flagged me twice in one
+    session for treating μ as final, third strike triggered this rule.
 
 ## Defaults from prior-comp postmortem
 

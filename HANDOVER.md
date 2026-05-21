@@ -14,7 +14,7 @@
 > | 1 | outcome_table + cherry-picked predicates | ✅ landed |
 > | 2 | column-gen + single-turn LP parity | ✅ landed |
 > | 3 | multi-turn horizon + Stackelberg + MPC | ✅ landed (Phase D v3) |
-> | **4** | **endgame predicate switch + foundation hardening** | ✅ Step 1 + foundation landed; SUBMITTED → REGRESSED (see below) |
+> | **4** | **endgame predicate switch + foundation hardening** | ✅ Step 1 + foundation landed; SUBMITTED — live μ is drifting (snapshot only, see below) |
 > | 5 | n=32 → n=128 escalation, submit | partial; next-session task is **4P validation** |
 >
 > Refer also to:
@@ -35,14 +35,18 @@
 > only). The Step 2 commits remain in tree but NOT in the submitted
 > bundle — deferred pending 4P validation.
 >
-> ## Latest session arc — Phase 4 Step 1 + foundation SHIPPED → ladder REGRESSED μ=829.3
+> ## Latest session arc — Phase 4 Step 1 + foundation SHIPPED; live μ is a moving snapshot
 >
 > **Outcome at session end**: submission `52894340` (`_phase4_step1_FND.py`,
-> built at commit `8193371`) settled at **μ=829.3**. Evicted the prior
-> ladder leader sub `52882014` (`baseline_joint_aggr_consolidated`, μ=1161.8).
-> **Net ladder loss ~330 μ.** Local n=8 vs LATEST said 8W/0L,
-> Wilson [0.66, 1.00] — but local was 2P-only; live ladder includes 4P.
-> Critical gap: **we shipped without a 4P validation gate.**
+> built at commit `8193371`) live snapshot drifted **829.3 → 1029.7
+> within the session** as TrueSkill games kept playing. The submission
+> evicted the prior rolling-pair half sub `52882014` (snapshot ~1161.8
+> at submit time; that figure was ALSO a moving snapshot, not a final
+> rating). **The live μ is not "settled" — it's a continuous estimator,
+> always drifting. The right question next session is "what is μ NOW?"
+> not "what was μ when we last looked?"** Local n=8 vs LATEST was 8W/0L
+> Wilson [0.66, 1.00] but the local A/B was 2P-only; live ladder mixes
+> 2P + 4P. **Gap: no 4P validation gate before push.**
 >
 > Six rounds of work, in order:
 >
@@ -115,7 +119,10 @@
 >    Both clear the gate.
 >
 > 6. **Submitted FND** as `52894340` (conservatively safer — fewer
->    mechanisms, equally decisive). **Settled at μ=829.3.**
+>    mechanisms, equally decisive). Live snapshot drifted 829.3 → 1029.7
+>    within the session and continues updating. **Do NOT treat any μ
+>    in this HANDOVER as a final result; re-pull from `kaggle competitions
+>    submissions orbit-wars` at session start.**
 >
 > **Root cause hypothesis**: every A/B was 2P. The endgame predicate
 > in `_endgame_bonus` returns 0 in 4P (the helper's first check is
@@ -137,10 +144,16 @@
 >   Use `env.run([path_new, path_old])` with file paths in a fresh
 >   process for trustworthy A/B. Worth fixing the harness or marking
 >   it as 2P-baseline-only.
-> - **TrueSkill decays scores**: HANDOVER claimed sub 52872093 was at
->   μ=1148.9 (peak band); live ladder showed μ=1049.4 by session end.
->   Don't cache live μ in handover claims — re-check from kaggle CLI
->   each session.
+> - **Kaggle μ is a moving TrueSkill estimator — NEVER "settled"**.
+>   In a 90-minute window this session, 52894340 drifted 829.3 → 1029.7
+>   (+200 μ). Earlier in the session 52893236 drifted 975.8 → 1016.8 → 1074.3.
+>   HANDOVER claims like "sub X settled at μ=Y" are categorically wrong
+>   — they're snapshots that decay or rise as new games play out.
+>   **The only correct verb is "snapshot" or "live estimate"; the only
+>   correct way to read μ at session start is to re-pull from `kaggle
+>   competitions submissions orbit-wars`.** Promote to candidate Rule 44.
+>   Origin: 2026-05-21 PM, after PI flagged me TWICE in one session for
+>   treating μ as final.
 >
 > ---
 >
@@ -167,19 +180,24 @@
 > | `_phase4_combined_NEW.py` | 732751 | Step 1 + foundation + Step 2 (commit `f2e643c`) |
 > | `_phase4_step1_LATEST.py` | 340245 | Sub 52882014 built at `f4d5839` (ladder leader baseline) |
 >
-> ## Live ladder state (snapshot 2026-05-21 PM, post submit)
+> ## Live ladder state (MOVING SNAPSHOTS — re-pull at session start)
 >
-> | Submission | μ | Role / fix |
+> All μ below are TrueSkill snapshots that drift continuously as games
+> play out. **Do not treat them as final.** Pull current values via
+> `kaggle competitions submissions orbit-wars` before any decision.
+>
+> Session-end snapshot (2026-05-21 PM):
+>
+> | Submission | μ snapshot | Role / fix |
 > |---|---:|---|
-> | **52894340** | **829.3** | **Our newest** — `_phase4_step1_FND.py` Step 1 + foundation. REGRESSED. |
-> | **52893236** | 1016.8 | `baseline_full.py` (sibling branch — consolidated + sniper + drain) |
-> | (evicted) 52882014 | 1161.8 | `baseline_joint_aggr_consolidated.py` — was ladder leader |
-> | (evicted) 52874528 | 1128.8 | baseline_joint_aggr |
-> | (evicted) 52872093 | 1049.4 | analytical_phase_c (Phase C + comet-path fix) |
+> | **52894340** | 829.3 → 1029.7 (drifted +200 in one session) | **Our newest** — `_phase4_step1_FND.py` Step 1 + foundation |
+> | **52893236** | 975.8 → 1074.3 | `baseline_full.py` (sibling branch — consolidated + sniper + drain) |
+> | (evicted) 52882014 | 1161.8 at evict-time | `baseline_joint_aggr_consolidated.py` — was rolling-pair half |
+> | (evicted) 52874528 | 1128.8 at evict-time | baseline_joint_aggr |
+> | (evicted) 52872093 | 1049.4 at evict-time | analytical_phase_c (was 1148.9 in prior session) |
 >
-> Floor for push decisions: **1016.8** (52893236, the older half of the
-> rolling pair). Replacing it costs ~190 μ if the new push is at 829.
-> Replacing it with something ≥1100 would recover the position.
+> Decision floor next session: re-pull μ for the older half of the
+> rolling pair. Don't anchor on these numbers.
 >
 > ## Open work (next session)
 >
@@ -193,9 +211,12 @@
 > If still loses, isolate by stashing `_endgame_bonus` (set
 > LAMBDA_ENDGAME=0). Whichever flips fixes 4P is the culprit.
 >
-> ### 2. Recover ladder position
+> ### 2. Recover ladder position (if needed — re-pull μ first)
 >
-> Push something ≥μ=1016.8 to evict 52894340. Candidates:
+> 52894340 has been DRIFTING UP (829 → 1029 in one session). It may
+> recover further without any action. Re-pull μ at session start; if
+> 52894340 is still below 52893236's live value, consider one of these
+> candidate pushes:
 > - **Rebuild + submit `baseline_joint_aggr_consolidated.py`** from
 >   `f4d5839` source: known μ=1161.8 baseline; we have the bundle at
 >   `submissions/_phase4_step1_LATEST.py` (340245 bytes).
