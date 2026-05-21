@@ -67,6 +67,7 @@ class FleetFate:
 def predict_fleet_fate(
     src, target, aim_angle: float, ships: int,
     world, max_steps: int = DEFAULT_MAX_STEPS,
+    wait_N: int = 0,
 ) -> FleetFate:
     """Ray-cast a fleet's full trajectory until the first collision.
 
@@ -84,51 +85,74 @@ def predict_fleet_fate(
     Returns the FIRST hit. If we reach `max_steps` without collision the
     fate is `"timeout"` — should be rare on a 100x100 board.
 
+    `wait_N>0`: the fleet is scheduled to launch wait_N ticks from now.
+    Source position, planet positions, and the spawn point are all
+    advanced by wait_N orbital ticks before the ray-cast begins. Use this
+    when validating wait-then-fire candidates whose fire-time geometry
+    differs from the current world snapshot.
+
     O(max_steps * planets) per call. On a 24-planet mid-game board with
     max_steps=200 that's ~4800 swept_pair_hit calls = ~1-2 ms.
     """
     omega = world.omega
 
+    # Source position at fire time (t + wait_N).
+    src_tuple = [src.id, src.owner, src.x, src.y, src.radius,
+                 src.ships, src.production]
+    if wait_N > 0 and is_orbiting(src_tuple) and omega != 0.0:
+        src_x_fire, src_y_fire = predict_relative(src_tuple, omega, wait_N)
+    else:
+        src_x_fire, src_y_fire = src.x, src.y
+
     # Spawn position (env: src.center + (radius + 0.1) * direction).
     cos_a = math.cos(aim_angle)
     sin_a = math.sin(aim_angle)
-    spawn_x = src.x + cos_a * (src.radius + 0.1)
-    spawn_y = src.y + sin_a * (src.radius + 0.1)
+    spawn_x = src_x_fire + cos_a * (src.radius + 0.1)
+    spawn_y = src_y_fire + sin_a * (src.radius + 0.1)
     speed_val = fleet_speed(ships)
     if speed_val <= 0:
         # Shouldn't happen (fleet_speed is monotonically >= 1.0 for ships >= 1).
         return FleetFate("oob", None, 0)
 
-    # Pre-compute per-planet positions at every step. Three motion models:
-    # - Comets (in world.comet_ids): pre-computed polynomial paths,
-    #   `path[path_index + t]` per step. Path can exhaust mid-flight →
-    #   position becomes None (collision skipped at that step).
-    # - Orbiting planets: rotate around the sun via predict_relative.
-    # - Static planets: fixed at current (x, y).
-    comet_ids = getattr(world, "comet_ids", set()) or set()
-    comet_paths = _comet_paths_by_id(world) if comet_ids else {}
-    planet_positions: dict[int, list[tuple[float, float] | None]] = {}
+    # Pre-compute per-planet positions at every step from t+wait_N onward.
+    #
+    # COMET HANDLING: comets follow discrete paths from `obs["comets"]`,
+    # NOT orbital paths. Predicting them with `predict_relative` is
+    # wrong — the prior bug produced 47 OOB events in seed 42 self-play
+    # (all post-step-50 when comets enter): fleets aimed at "comet at
+    # predicted orbital position" missed the real comet and flew off
+    # the board. Look up the comet's actual path and use it; for steps
+    # past the path's end, mark the comet as "gone" with sentinel
+    # positions far outside the board so swept_pair_hit can't match.
+    OFF_BOARD = (-1e6, -1e6)  # sentinel for "comet has left the board"
+    comet_paths = _comet_paths_by_id(world) if world.comet_ids else {}
+    # Env semantics (verified against
+    # kaggle_environments/envs/orbit_wars/orbit_wars.py lines 480-595):
+    # at env step T+1's fleet-movement check, the planet's old_pos is
+    # the position from obs T (planet[2], planet[3]) and new_pos is the
+    # advanced position. positions[0] is therefore the obs-T position
+    # (path[path_index] for comets; predict_relative(.., 0) for orbital);
+    # positions[1] is the obs-T+1 position. With wait_N>0 the fleet
+    # appears at env step T+1+wait_N and positions[0] = obs-T+wait_N.
+    planet_positions: dict[int, list[tuple[float, float]]] = {}
     for pid, p in world.planets_by_id.items():
-        if pid in comet_ids:
-            path_info = comet_paths.get(pid)
-            if path_info is None:
-                planet_positions[pid] = [(p.x, p.y)] * (max_steps + 1)
-            else:
-                path, idx = path_info
-                row: list[tuple[float, float] | None] = []
-                for t in range(max_steps + 1):
-                    fi = idx + t
-                    if 0 <= fi < len(path):
-                        pt = path[fi]
-                        row.append((float(pt[0]), float(pt[1])))
-                    else:
-                        row.append(None)
-                planet_positions[pid] = row
+        if int(pid) in comet_paths:
+            # Comet: use its discrete path.
+            path, path_index = comet_paths[int(pid)]
+            positions: list[tuple[float, float]] = []
+            for t in range(max_steps + 1):
+                path_t = int(path_index) + int(wait_N) + t
+                if 0 <= path_t < len(path):
+                    pt = path[path_t]
+                    positions.append((float(pt[0]), float(pt[1])))
+                else:
+                    positions.append(OFF_BOARD)
+            planet_positions[pid] = positions
             continue
         p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
         if is_orbiting(p_tuple) and omega != 0.0:
             planet_positions[pid] = [
-                predict_relative(p_tuple, omega, t)
+                predict_relative(p_tuple, omega, wait_N + t)
                 for t in range(max_steps + 1)
             ]
         else:
@@ -160,14 +184,37 @@ def predict_fleet_fate(
 
         # 3. Planet collision — swept_pair_hit against every planet.
         for pid, positions in planet_positions.items():
-            # Spawn-step skip: env explicitly does not collide a fresh
-            # fleet with its source planet on its first move.
-            if pid == src_id and step == 0:
-                continue
+            # NB: the env DOES check fleet-vs-source at step 0 (see
+            # orbit_wars.py L588-597 — no exclusion of from_id). For
+            # STATIC sources the geometry handles it: spawn is at
+            # `src.center + (radius + 0.1) * direction`, the fleet
+            # moves AWAY, swept_pair_hit never matches.
+            # For MOVING sources (comets, fast-orbiting planets), the
+            # source can catch the fleet within 1 step — that's a real
+            # collision the env applies. The earlier `if pid == src_id
+            # and step == 0: continue` skip falsely declared "target
+            # reached" for drain trajectories whose comet-source
+            # caught up and absorbed the fleet (root cause of stranded
+            # ships on captured comets).
             p_old = positions[step]
             p_new = positions[step + 1]
-            # Comet has exited the board by this step — no collision possible.
-            if p_old is None or p_new is None:
+            # Comet expiry guard: if EITHER endpoint is the off-board
+            # sentinel, the comet has expired during this step — skip
+            # the collision check entirely. Without this guard,
+            # swept_pair_hit would treat the comet as moving along the
+            # huge sentinel-going segment, falsely matching any fleet
+            # trajectory (the env, however, removes expired comets from
+            # collision resolution — see orbit_wars.py L558-561). This
+            # was the cause of the residual seed-13 OOB: fleet aimed at
+            # "comet 38 at fleet_step 20" — but the comet's path ended
+            # at index 33 (path[14] + 20 == 34), so positions[20] is
+            # OFF_BOARD and the swept check produced a phantom hit;
+            # the env had no comet there, so the fleet sailed past and
+            # exited the board.
+            if (p_old[0] < 0 or p_old[0] > BOARD_SIZE
+                    or p_old[1] < 0 or p_old[1] > BOARD_SIZE
+                    or p_new[0] < 0 or p_new[0] > BOARD_SIZE
+                    or p_new[1] < 0 or p_new[1] > BOARD_SIZE):
                 continue
             prad = world.planets_by_id[pid].radius
             if swept_pair_hit(fleet_old, fleet_new, p_old, p_new, prad):
