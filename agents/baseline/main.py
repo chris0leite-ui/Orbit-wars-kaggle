@@ -62,6 +62,17 @@ IDLE_REAR_THRESHOLD = float(os.environ.get("BASELINE_IDLE_REAR_THRESHOLD", "35.0
 IDLE_DRAIN_RESERVE = int(os.environ.get("BASELINE_IDLE_DRAIN_RESERVE", "5"))
 IDLE_DRAIN_ENABLED = os.environ.get("BASELINE_IDLE_DRAIN", "0") == "1"
 
+# Reinforce-emit post-pass (2026-05-21). Wires `propose_reinforce_missions`
+# (lib/missions/reinforce.py) into the chooser's emit path. Distinct from
+# `drain_idle_rear` (which the 2026-05-18 audit falsified as weakening
+# defense): this only fires for OUR planets predicted to flip to enemy
+# within model.horizon. Triggered by PI live-game observation (4P seed
+# 914393430): a +5 prod planet fell while rear sources held reserves.
+# Default OFF; opt-in via BASELINE_REINFORCE_EMIT=1.
+REINFORCE_EMIT_ENABLED = os.environ.get("BASELINE_REINFORCE_EMIT", "0") == "1"
+REINFORCE_MIN_PROD = int(os.environ.get("BASELINE_REINFORCE_MIN_PROD", "2"))
+REINFORCE_MAX_LAUNCHES = int(os.environ.get("BASELINE_REINFORCE_MAX", "3"))
+
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
 # chooser's wait_N>0 winners are remembered across turns instead of
 # being silently dropped. Each entry ticks down each turn; when
@@ -85,6 +96,8 @@ from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from lib.fast_sim import from_obs as fs_from_obs
 from lib.intent import World
+from lib.missions.reinforce import propose_reinforce_missions
+from lib.orbit import predict_relative
 from lib.world_model import WorldModel
 
 # Import by explicit names so the bundler's per-line import-stripping regex
@@ -224,6 +237,66 @@ def _tick_ledger(me: int, world, model, omega: float) -> tuple[list[list], list[
         due_moves.append([sid, float(angle), int(ships)])
 
     return due_moves, survivors
+
+
+def emit_threat_reinforcements(
+    moves, planets, my_id: int, world, model, omega: float,
+) -> list:
+    """Append reinforce launches for OUR planets predicted to fall.
+
+    Defense-directed: uses `propose_reinforce_missions` which scans the
+    WorldModel timeline for the first `T_loss` per friendly planet, then
+    proposes (src, defended) candidates feasible to arrive before the
+    flip. Skips sources already in `moves` so the chooser's offensive
+    plan isn't disrupted. Caps total reinforce launches at
+    REINFORCE_MAX_LAUNCHES per turn.
+    """
+    if not REINFORCE_EMIT_ENABLED:
+        return moves
+    candidates = propose_reinforce_missions(world, model)
+    if not candidates:
+        return moves
+    used_srcs: set[int] = set()
+    for m in moves:
+        try:
+            used_srcs.add(int(m[0]))
+        except (TypeError, IndexError):
+            pass
+    planet_by_id = {int(p.id): p for p in planets}
+
+    def tgt_prod(M):
+        p = planet_by_id.get(int(M.target_id))
+        return float(p.production) if p is not None else 0.0
+
+    candidates.sort(key=lambda M: (-tgt_prod(M), -float(M.score)))
+    extras = []
+    fired = 0
+    for mission in candidates:
+        if fired >= REINFORCE_MAX_LAUNCHES:
+            break
+        if mission.mission_class != "reinforce":
+            continue
+        sid = int(mission.src_id)
+        if sid in used_srcs:
+            continue
+        src = planet_by_id.get(sid)
+        tgt = planet_by_id.get(int(mission.target_id))
+        if src is None or tgt is None:
+            continue
+        if int(tgt.production) < REINFORCE_MIN_PROD:
+            continue
+        ships = int(mission.ships)
+        if int(src.ships) < ships:
+            continue
+        try:
+            tx, ty = predict_relative(tgt, int(mission.eta), omega)
+        except Exception:
+            tx, ty = float(tgt.x), float(tgt.y)
+        angle = math.atan2(float(ty) - float(src.y), float(tx) - float(src.x))
+        extras.append([sid, float(angle), int(ships)])
+        used_srcs.add(sid)
+        fired += 1
+    return list(moves) + extras
 
 
 def drain_idle_rear(moves, planets, my_id: int, world, model) -> list:
@@ -400,6 +473,7 @@ def agent(obs, configuration=None):
             _PENDING_LAUNCHES[me] = surviving_pending + new_commits
 
         moves = due_moves + moves
+        moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
         return drain_idle_rear(moves, planets, me, world, model)
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
@@ -419,6 +493,7 @@ def agent(obs, configuration=None):
             MIN_HORIZON, MAX_HORIZON, gamma,
             world, model, step,
         )
+        moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
         return drain_idle_rear(moves, planets, me, world, model)
 
     baseline_favors = build_idle_baseline(
@@ -462,4 +537,5 @@ def agent(obs, configuration=None):
         _PENDING_LAUNCHES[me] = composite_surviving + new_commits
 
     moves = composite_due + moves
+    moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
     return drain_idle_rear(moves, planets, me, world, model)
