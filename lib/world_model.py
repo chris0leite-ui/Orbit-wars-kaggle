@@ -327,7 +327,8 @@ class WorldModel:
             return None
         return min(enemy_etas)
 
-    def time_to_enemy_threat(self, planet_id: int, my_id: int, world) -> int | None:
+    def time_to_enemy_threat(self, planet_id: int, my_id: int, world,
+                              arrival_eta: int = 0) -> int | None:
         """Earliest turn at which an enemy could have a fleet at
         `planet_id`. Considers BOTH (a) in-flight enemy fleets
         currently inbound, and (b) potential launches from every
@@ -338,26 +339,47 @@ class WorldModel:
         (caller should treat as "saturate at game horizon").
 
         H22 helper for Hold-Aware Value scoring. See plan file
-        2026-05-14 HAV section. The "potential launch" leg uses
-        `lib.scoring.eta_proxy(enemy_planet, target_planet)` — that
-        helper already estimates ETA from `ceil(dist / fleet_speed(
-        target.ships+1))`. We override its target argument so the
-        ship-count proxy is the LAUNCHING planet's garrison, not the
-        target's.
+        2026-05-14 HAV section.
+
+        `arrival_eta` (PI 2026-05-21 bug fix) — when > 0, the target
+        and enemy planet positions are predicted at that future turn
+        via `predict_relative`. This fixes a silent scoring bug where
+        an orbiting target that rotates INTO enemy territory by our
+        arrival was scored as safe (long expected_hold) because the
+        threat ETA was computed from the CURRENT target position.
+        Default 0 preserves the original "current position" semantics
+        for source-safety callers (drain checks etc).
         """
         target = world.planets_by_id.get(planet_id)
         if target is None:
             return None
 
+        omega = float(getattr(world, "omega", 0.0))
+
+        # Target position at our arrival.
+        if arrival_eta > 0 and omega != 0.0:
+            target_tuple = [target.id, target.owner, target.x, target.y,
+                            target.radius, target.ships, target.production]
+            if is_orbiting(target_tuple):
+                tx, ty = predict_relative(target_tuple, omega, arrival_eta)
+            else:
+                tx, ty = float(target.x), float(target.y)
+        else:
+            tx, ty = float(target.x), float(target.y)
+
         best: int | None = None
 
-        # (a) in-flight enemy fleets — reuse existing helper.
+        # (a) in-flight enemy fleets — reuse existing helper. Their ETA
+        # is from now; ignore those that arrive BEFORE our arrival when
+        # we're scoring post-capture hold (we'll handle them via the
+        # standard combat resolution at our arrival).
         inbound = self.incoming_enemy_eta(planet_id, my_id)
-        if inbound is not None:
+        if inbound is not None and inbound >= arrival_eta:
             best = inbound
 
-        # (b) potential launches from each enemy planet at its current
-        #     garrison.
+        # (b) potential launches from each enemy planet. When
+        # arrival_eta > 0, predict the enemy's position at our arrival
+        # too (assumes enemy launches immediately upon our capture).
         for p in world.planets_by_id.values():
             if p.id == planet_id:
                 continue
@@ -365,15 +387,25 @@ class WorldModel:
                 continue
             if p.ships <= 0:
                 continue
-            dx = target.x - p.x
-            dy = target.y - p.y
+            if arrival_eta > 0 and omega != 0.0:
+                p_tuple = [p.id, p.owner, p.x, p.y,
+                           p.radius, p.ships, p.production]
+                if is_orbiting(p_tuple):
+                    px, py = predict_relative(p_tuple, omega, arrival_eta)
+                else:
+                    px, py = float(p.x), float(p.y)
+            else:
+                px, py = float(p.x), float(p.y)
+            dx = tx - px
+            dy = ty - py
             dist = (dx * dx + dy * dy) ** 0.5
             v = fleet_speed(int(p.ships))
             if v <= 0:
                 continue
-            eta = int(-(-dist // v))  # math.ceil without import
-            if best is None or eta < best:
-                best = eta
+            eta_travel = int(-(-dist // v))  # math.ceil without import
+            threat_arrival = arrival_eta + eta_travel
+            if best is None or threat_arrival < best:
+                best = threat_arrival
 
         return best
 

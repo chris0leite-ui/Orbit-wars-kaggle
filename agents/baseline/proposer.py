@@ -430,7 +430,18 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
     pred_ships = float(model.ships_at(int(tgt.id), arrival_step) or 0.0)
 
     if pred_owner == me:
-        t_to_threat = model.time_to_enemy_threat(int(tgt.id), me, world)
+        # PI 2026-05-21 fix — gate on BASELINE_ORBITAL_SAFETY=1, pass
+        # arrival_eta so an orbiting target's position at our arrival
+        # is used for the threat-distance calc. Was silently scoring
+        # "rotates-into-enemy-zone" captures as safe (long horizon),
+        # driving fleets into easy recaptures. Default OFF preserves
+        # backwards compat with sub 52882014.
+        if os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1":
+            t_to_threat = model.time_to_enemy_threat(
+                int(tgt.id), me, world, arrival_eta=int(arrival_step),
+            )
+        else:
+            t_to_threat = model.time_to_enemy_threat(int(tgt.id), me, world)
         if t_to_threat is None or t_to_threat > eta + 30:
             return 0.0
         pv = pv_horizon(int(world.step), int(t_to_threat),

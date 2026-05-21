@@ -159,7 +159,19 @@ def expected_hold(
     remaining = max(0, t_total - step_now - eta)
     if remaining == 0:
         return 0
-    threat = model.time_to_enemy_threat(target_id, world.my_id, world)
+    # PI 2026-05-21 fix — when `BASELINE_ORBITAL_SAFETY=1`, pass
+    # `arrival_eta=eta` so enemy threat is computed from the target's
+    # predicted position at our arrival, not its current position.
+    # Without this, orbiting targets that rotate INTO enemy territory
+    # by our arrival are silently scored as safe (long hold), pushing
+    # us to capture planets we will immediately lose. Gated for A/B
+    # testing; default OFF preserves backwards compat with sub 52882014.
+    import os as _os
+    if _os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1":
+        threat = model.time_to_enemy_threat(target_id, world.my_id, world,
+                                             arrival_eta=int(eta))
+    else:
+        threat = model.time_to_enemy_threat(target_id, world.my_id, world)
     if threat is None:
         # No enemy can plausibly reach — saturate at remaining game.
         return remaining
