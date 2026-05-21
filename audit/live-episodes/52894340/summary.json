@@ -1,0 +1,816 @@
+{
+  "submission_id": "52894340",
+  "generated_utc": "2026-05-21T18:26:01Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 59,
+  "n_played": 59,
+  "wins_total": 31,
+  "winrate_total": 0.5254237288135594,
+  "by_size": {
+    "2": {
+      "n": 28,
+      "wins": 19,
+      "winrate": 0.6785714285714286
+    },
+    "4": {
+      "n": 31,
+      "wins": 12,
+      "winrate": 0.3870967741935484
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 20,
+    "1": 22,
+    "2": 8,
+    "3": 12
+  },
+  "episode_length_steps": {
+    "n": 59,
+    "min": 104,
+    "q1": 154,
+    "median": 174,
+    "q3": 226,
+    "max": 500,
+    "mean": 210.77966101694915
+  },
+  "opponents": [
+    {
+      "name": "Komil Parmar",
+      "seen": 4,
+      "beat_us": 2
+    },
+    {
+      "name": "Bora Erk\u0131l\u0131\u00e7",
+      "seen": 4,
+      "beat_us": 0
+    },
+    {
+      "name": "ma name",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "vkhydras",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "SKYisSKYisSKY",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "Roy Wei",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "arcobi",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "Nandodemo",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "Chase Bonfiglio",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "marsianenergy",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "JeremyH43",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "wala",
+      "seen": 2,
+      "beat_us": 2
+    },
+    {
+      "name": "simmons1025",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "Fishman97",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "keyrox",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "Itong",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "currypurin",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "marouane_chirane",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "toki-mashita",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Johnnzy1008",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "goose666",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Sanskar Sontakke",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Tejas",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Agustin Baena",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "duumvirato",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "John Briery",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "siman",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Troups",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Tr\u1ea7n T\u00f9ng D\u01b0\u01a1ng #2",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "test_orbit-wars",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "kei-sho",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mahdieh Rezaie",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Victor Merckle",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Gilwonka",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Akimichi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "claudex",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ONYX WARS",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "DONG RUNZE",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Olivier",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "XiaokangWang",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Arshad Shemil k",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "bndoss",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Naoism",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Petr Mikhailov",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Saidgani Dadajanov",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "corky",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "c0sm1c",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "nesya",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "MR.h",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "OrbitX",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "David Lizano",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Naveen Nimalan",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "AlphaOrbit [prize ineligible]",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "CurveCowboy",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Solo",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "hongan",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Quoc Tran Anh Le",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "StudyExchange",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "bengle",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Mykola Nelin",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Caiden Matthews",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "mrmvrey",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "No Overfitting",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "zorac",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Simon R\u00fcba",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Jeki Wan Taufik",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "asdf",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ktr",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\u674e\u6cbb\u78ca",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Stepwise",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Lucas Boesen",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "you don't need RL",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "OrbitalDominator \ud83d\ude80",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "skuro0315",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Jonathan Roy",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ha Quang Minh",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ichiro_9023",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "mmath2",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Chalyx",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\u8036\u270c",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "SonOfNike",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "aDg4b",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Artem",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "vova sivanev",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Qixiu",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "KoshinM",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "TensorFlower",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "c-number",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mille Initiate",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Emre",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ra5anchor",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "amoshyc",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Dietmar Hameister",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Takuya Inoue",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Aidan P5",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "morim",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Himeno",
+      "seen": 1,
+      "beat_us": 1
+    }
+  ],
+  "losses": [
+    {
+      "episode": "episode-77310247",
+      "size": 4,
+      "opponents": [
+        "John Briery",
+        "siman",
+        "Troups"
+      ],
+      "winner": "siman",
+      "steps": 173
+    },
+    {
+      "episode": "episode-77310753",
+      "size": 4,
+      "opponents": [
+        "test_orbit-wars",
+        "ma name",
+        "kei-sho"
+      ],
+      "winner": "ma name",
+      "steps": 206
+    },
+    {
+      "episode": "episode-77310810",
+      "size": 4,
+      "opponents": [
+        "Mahdieh Rezaie",
+        "Victor Merckle",
+        "Gilwonka"
+      ],
+      "winner": "Gilwonka",
+      "steps": 335
+    },
+    {
+      "episode": "episode-77311262",
+      "size": 4,
+      "opponents": [
+        "claudex",
+        "ONYX WARS",
+        "DONG RUNZE"
+      ],
+      "winner": "ONYX WARS",
+      "steps": 149
+    },
+    {
+      "episode": "episode-77311460",
+      "size": 4,
+      "opponents": [
+        "vkhydras",
+        "Olivier",
+        "XiaokangWang"
+      ],
+      "winner": "vkhydras",
+      "steps": 178
+    },
+    {
+      "episode": "episode-77312201",
+      "size": 4,
+      "opponents": [
+        "Roy Wei",
+        "arcobi",
+        "Petr Mikhailov"
+      ],
+      "winner": "arcobi",
+      "steps": 167
+    },
+    {
+      "episode": "episode-77312361",
+      "size": 4,
+      "opponents": [
+        "Nandodemo",
+        "Saidgani Dadajanov",
+        "corky"
+      ],
+      "winner": "corky",
+      "steps": 154
+    },
+    {
+      "episode": "episode-77312925",
+      "size": 4,
+      "opponents": [
+        "c0sm1c",
+        "marsianenergy",
+        "ma name"
+      ],
+      "winner": "marsianenergy",
+      "steps": 164
+    },
+    {
+      "episode": "episode-77313131",
+      "size": 4,
+      "opponents": [
+        "Komil Parmar",
+        "arcobi",
+        "nesya"
+      ],
+      "winner": "Komil Parmar",
+      "steps": 131
+    },
+    {
+      "episode": "episode-77313634",
+      "size": 4,
+      "opponents": [
+        "JeremyH43",
+        "wala",
+        "simmons1025"
+      ],
+      "winner": "wala",
+      "steps": 260
+    },
+    {
+      "episode": "episode-77313860",
+      "size": 4,
+      "opponents": [
+        "OrbitX",
+        "David Lizano",
+        "Naveen Nimalan"
+      ],
+      "winner": "Naveen Nimalan",
+      "steps": 233
+    },
+    {
+      "episode": "episode-77314101",
+      "size": 4,
+      "opponents": [
+        "Quoc Tran Anh Le",
+        "Chase Bonfiglio",
+        "keyrox"
+      ],
+      "winner": "Chase Bonfiglio",
+      "steps": 323
+    },
+    {
+      "episode": "episode-77315068",
+      "size": 4,
+      "opponents": [
+        "Nandodemo",
+        "marsianenergy",
+        "Bora Erk\u0131l\u0131\u00e7"
+      ],
+      "winner": "Nandodemo",
+      "steps": 186
+    },
+    {
+      "episode": "episode-77315383",
+      "size": 2,
+      "opponents": [
+        "bengle"
+      ],
+      "winner": "bengle",
+      "steps": 162
+    },
+    {
+      "episode": "episode-77315686",
+      "size": 4,
+      "opponents": [
+        "Bora Erk\u0131l\u0131\u00e7",
+        "Mykola Nelin",
+        "Caiden Matthews"
+      ],
+      "winner": "Caiden Matthews",
+      "steps": 174
+    },
+    {
+      "episode": "episode-77315902",
+      "size": 2,
+      "opponents": [
+        "Komil Parmar"
+      ],
+      "winner": "Komil Parmar",
+      "steps": 137
+    },
+    {
+      "episode": "episode-77316277",
+      "size": 4,
+      "opponents": [
+        "mrmvrey",
+        "No Overfitting",
+        "Itong"
+      ],
+      "winner": "No Overfitting",
+      "steps": 206
+    },
+    {
+      "episode": "episode-77316503",
+      "size": 2,
+      "opponents": [
+        "zorac"
+      ],
+      "winner": "zorac",
+      "steps": 147
+    },
+    {
+      "episode": "episode-77316849",
+      "size": 4,
+      "opponents": [
+        "Simon R\u00fcba",
+        "Itong",
+        "Jeki Wan Taufik"
+      ],
+      "winner": "Itong",
+      "steps": 124
+    },
+    {
+      "episode": "episode-77317955",
+      "size": 4,
+      "opponents": [
+        "Lucas Boesen",
+        "you don't need RL",
+        "OrbitalDominator \ud83d\ude80"
+      ],
+      "winner": "OrbitalDominator \ud83d\ude80",
+      "steps": 500
+    },
+    {
+      "episode": "episode-77318472",
+      "size": 4,
+      "opponents": [
+        "mmath2",
+        "Chalyx",
+        "wala"
+      ],
+      "winner": "wala",
+      "steps": 133
+    },
+    {
+      "episode": "episode-77320686",
+      "size": 2,
+      "opponents": [
+        "KoshinM"
+      ],
+      "winner": "KoshinM",
+      "steps": 121
+    },
+    {
+      "episode": "episode-77321232",
+      "size": 2,
+      "opponents": [
+        "Mille Initiate"
+      ],
+      "winner": "Mille Initiate",
+      "steps": 158
+    },
+    {
+      "episode": "episode-77321860",
+      "size": 4,
+      "opponents": [
+        "amoshyc",
+        "currypurin",
+        "Komil Parmar"
+      ],
+      "winner": "currypurin",
+      "steps": 140
+    },
+    {
+      "episode": "episode-77322994",
+      "size": 2,
+      "opponents": [
+        "Takuya Inoue"
+      ],
+      "winner": "Takuya Inoue",
+      "steps": 119
+    },
+    {
+      "episode": "episode-77323008",
+      "size": 2,
+      "opponents": [
+        "Aidan P5"
+      ],
+      "winner": "Aidan P5",
+      "steps": 108
+    },
+    {
+      "episode": "episode-77323358",
+      "size": 2,
+      "opponents": [
+        "morim"
+      ],
+      "winner": "morim",
+      "steps": 328
+    },
+    {
+      "episode": "episode-77324124",
+      "size": 2,
+      "opponents": [
+        "Himeno"
+      ],
+      "winner": "Himeno",
+      "steps": 197
+    }
+  ]
+}
