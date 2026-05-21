@@ -515,6 +515,88 @@ def test_comet_paths_view_matches_world_model_helper():
 # ---------------------------------------------------------------------------
 
 
+def test_predict_relative_cached_falls_through_without_table():
+    """`predict_relative_cached(planet, omega, lead, table=None)` must
+    be bit-identical to plain `predict_relative` — the fallback path."""
+    from lib.orbit import predict_relative_cached
+
+    p_tuple = [0, -1, 60.0, 50.0, 2.0, 0, 1]
+    omega = 0.05
+    for lead in (0, 1, 7, 23, 100):
+        cached = predict_relative_cached(p_tuple, omega, lead, table=None)
+        plain = predict_relative(p_tuple, omega, lead)
+        assert cached == plain
+
+
+def test_predict_relative_cached_uses_table_when_present():
+    """When `table` is supplied and the planet is in its snapshot,
+    `predict_relative_cached` returns the table lookup — bit-identical
+    to `predict_relative` because the table was built with the same
+    function and same planet tuple."""
+    from lib.orbit import predict_relative_cached
+
+    obs = _make_obs(
+        [_orbital_planet_row(0, 60.0, 50.0, radius=2.0)],
+        omega=0.05, step=0,
+    )
+    world = World.from_obs(obs)
+    table = KinematicTable()
+    table.begin_turn(world)
+    p = world.planets_by_id[0]
+    p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
+
+    for lead in (0, 1, 17, 100, DEFAULT_MAX_LEAD):
+        cached = predict_relative_cached(p_tuple, world.omega, lead, table=table)
+        plain = predict_relative(p_tuple, world.omega, lead)
+        assert cached == plain
+
+
+def test_predict_relative_cached_falls_through_on_miss():
+    """If pid is not in the table, fall through to predict_relative.
+    This protects callers that pass synthetic / predicted planets."""
+    from lib.orbit import predict_relative_cached
+
+    # Table built with planet 0 only.
+    obs = _make_obs(
+        [_orbital_planet_row(0, 60.0, 50.0, radius=2.0)],
+        omega=0.05, step=0,
+    )
+    world = World.from_obs(obs)
+    table = KinematicTable()
+    table.begin_turn(world)
+
+    # Now look up a DIFFERENT planet (pid=99 not in obs).
+    synthetic = [99, -1, 55.0, 50.0, 2.0, 0, 1]
+    cached = predict_relative_cached(synthetic, world.omega, 5, table=table)
+    plain = predict_relative(synthetic, world.omega, 5)
+    assert cached == plain
+
+
+def test_predict_relative_cached_falls_through_past_max_lead():
+    """Out-of-range orbital lookups raise from the table; the wrapper
+    must catch this and fall through, so callers don't crash."""
+    from lib.orbit import predict_relative_cached
+
+    obs = _make_obs(
+        [_orbital_planet_row(0, 60.0, 50.0, radius=2.0)],
+        omega=0.05, step=0,
+    )
+    world = World.from_obs(obs)
+    table = KinematicTable(max_lead=10)
+    table.begin_turn(world)
+    p_tuple = [0, -1, 60.0, 50.0, 2.0, 0, 1]
+
+    # Within range: matches.
+    a = predict_relative_cached(p_tuple, world.omega, 10, table=table)
+    b = predict_relative(p_tuple, world.omega, 10)
+    assert a == b
+
+    # Past range: fall through, still matches.
+    c = predict_relative_cached(p_tuple, world.omega, 50, table=table)
+    d = predict_relative(p_tuple, world.omega, 50)
+    assert c == d
+
+
 def test_module_singleton_wraps_class():
     """The module-level functions delegate to the singleton; reset()
     wipes it; begin_turn rebuilds."""

@@ -205,6 +205,16 @@ def agent(obs, configuration=None):
         return []
 
     world = World.from_obs(obs_d)
+    # Phase β opt-in: prime the kinematic precomputation singleton when
+    # KINEMATIC_TABLE_ENABLED is set. No caller consumes it yet (Phase γ
+    # wires predict_fleet_fate); this just confirms the per-turn build
+    # runs without behaviour change. Plan reference:
+    # /root/.claude/plans/do-it-thoroughly-consider-tingly-fox.md
+    if os.environ.get("KINEMATIC_TABLE_ENABLED", "").strip().lower() in (
+        "1", "true", "on", "yes",
+    ):
+        from lib.kinematic_table import begin_turn as _kt_begin_turn
+        _kt_begin_turn(world)
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
     num_seats = _num_seats(planets, fleets)

@@ -8,6 +8,7 @@ builds the World + WorldModel snapshots. Bit-exact: closed-form only.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Optional
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
@@ -15,6 +16,21 @@ from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
 from lib.intent import World
 from lib.pipeline.types import TurnContext
 from lib.world_model import WorldModel
+
+
+def _kinematic_table_enabled() -> bool:
+    """Phase β opt-in for the kinematic precomputation table.
+
+    Off by default. When `KINEMATIC_TABLE_ENABLED=1` (or true/on/yes),
+    the perception stage primes the module-level singleton at
+    `lib.kinematic_table._DEFAULT` with the current obs. No caller
+    consumes the table yet (Phase γ wires `predict_fleet_fate`); this
+    flag just confirms the per-turn build runs without behaviour
+    change at any default code path.
+    """
+    return os.environ.get("KINEMATIC_TABLE_ENABLED", "").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
 
 
 def _as_dict(obs):
@@ -77,6 +93,11 @@ def perception_default(obs, configuration: Optional[Any] = None) -> TurnContext:
         )
 
     world = World.from_obs(obs_d)
+    if _kinematic_table_enabled():
+        # Lazy import: only loaded when the env-var is set, keeps
+        # default-path import time unchanged.
+        from lib.kinematic_table import begin_turn as _kt_begin_turn
+        _kt_begin_turn(world)
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
 
