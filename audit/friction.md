@@ -63,6 +63,64 @@ fix forward AND add a test.
 
 ## Newly-fired patterns (this session)
 
+- `tag: bundle-agent-doesnt-inline-from-baseline-main` — 2026-05-21
+  PM (claude/strategy-axis-decision-3437): `scripts/bundle_agent.py`
+  comments out `from agents.baseline.main import agent` inside thin
+  wrapper `main.py` files but never inlines the target function body.
+  Result: bundles built from any `agents/<name>/main.py` whose only
+  effective code is env-var-set + `from agents.baseline.main import
+  agent` have NO `agent` symbol in the output. kaggle_environments'
+  loader (`agent.py:64`) falls back to "last callable in module
+  namespace" — for the consolidated bundle that's `opening_plan(world,
+  model, my_id, num_seats)`, signature mismatch, game ERRORs at step
+  0. Submitted file 52882014 worked on Kaggle (μ=1124) so an older
+  bundler version did inline it; the local re-bundle silently broke.
+  Cost evidence this cycle: last session's "n=8 vs LATEST: 8W/0L,
+  Wilson [0.658, 1.000]" was Phase 4 beating an ERROR-on-step-0
+  bundle, NOT vs ladder-leader-strength. Decision to submit FND was
+  taken on falsified evidence. **Detection runtime:** `python3 -c
+  "from kaggle_environments import make; env=make('orbit_wars',
+  debug=True); env.run(['submissions/X.py', lambda o,c=None: {'actions':[]}])"`
+  → `RAISED: opening_plan() missing 2 required positional arguments`.
+  **Fix immediate:** rebuilt `submissions/baseline_joint_aggr_consolidated_orbitfix.py`
+  by prepending env-var block to `submissions/baseline.py` (which has
+  the `agent` body inlined correctly). **Fix forward:** add a
+  post-bundle assertion `hasattr(module, 'agent')` to the parity gate
+  in `scripts/bundle_agent.py`; refuse to leave bundles without
+  `agent`. Companion improvement: when the entry main.py contains
+  `from agents.X.main import agent`, inline X's `agent` function body
+  rather than commenting the line out.
+
+- `tag: kaggle-mu-treated-as-final-not-snapshot` — 2026-05-21 (Rule
+  43 already codified end of last session; firing again early this
+  session). Said "two submissions at μ=1063.9 and μ=1059.0" without
+  re-pulling — values had drifted to 1058.2 and 1055.0 by the time I
+  needed them. Same pattern as the three drifts logged in Rule 43's
+  origin note. **Fix:** Rule 43 already enforces re-pull at session
+  start AND before any push decision; the gap is muscle-memory.
+  Promoted from candidate to enforced rule end of last session;
+  re-firing means the read-from-doc habit is sticky. Mitigation
+  this session: re-pulled live μ before drafting this entry.
+
+- `tag: header-comment-misled-static-analysis` — 2026-05-21 PM
+  (claude/strategy-axis-decision-3437): asserted "FND bundle's agent
+  is from agents/baseline, doesn't call Phase 4" based on the bundle's
+  HEADER line `# Bundled by scripts/bundle_agent.py from agents/baseline
+  + lib/...`. Header was a stale bundler artifact; the actual `agent()`
+  at line 18236 of the bundle is a post-bundle-appended analytical
+  pipeline (`_AGENT = compose(decision=decision_outcome_aware_milp,
+  ...)`) that DOES call `solve_outcome_aware` → `_endgame_bonus` every
+  turn. PI caught the wrong conclusion ("review carefully that it is
+  actually true what you say"); runtime trap (insert `raise
+  RuntimeError("PHASE4_*_CALLED")` at Phase 4 entry points and play
+  one game) proved Phase 4 IS live. **Root cause:** static reasoning
+  from header text instead of from the function body. **Fix:** when
+  claiming a code path is dead/live, the verification step is a
+  RUNTIME trap (raise on entry, run one game, observe), not a grep
+  for imports. Generalises Rule 38 (fix-verification reproduces
+  failure state) to code-path claims (dead-code claims reproduce
+  via runtime).
+
 - `tag: fix-not-validated-against-real-failing-state` — 2026-05-14
   audit-pass: I patched `bootstrap.sh` for `data-main-py-missing-on-
   fresh-clone`, ran the unit guards (syntax check, AST tests, --help

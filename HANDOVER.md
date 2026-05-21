@@ -35,6 +35,126 @@
 > only). The Step 2 commits remain in tree but NOT in the submitted
 > bundle — deferred pending 4P validation.
 >
+> ## 2026-05-21 EVENING CORRECTION — the n=8 vs LATEST A/B was vs a broken bundle
+>
+> The prior section claims "n=8 vs LATEST: 8W/0L/0D, Wilson [0.658,
+> 1.000]". **That A/B is invalid** and the submission decision was
+> taken on falsified evidence. Two facts established this session:
+>
+> 1. **The local consolidated bundle is broken as an agent file.**
+>    `submissions/baseline_joint_aggr_consolidated.py` (identical to
+>    `_phase4_step1_LATEST.py`, same sha) has NO `agent` symbol. The
+>    bundler `scripts/bundle_agent.py` commented out
+>    `from agents.baseline.main import agent` without inlining the
+>    function body. kaggle_environments falls back to the module's
+>    last callable — `opening_plan(world, model, my_id, num_seats)` —
+>    which has the wrong signature and ERRORs at step 0. Verified by
+>    `env.run(['submissions/baseline_joint_aggr_consolidated.py', noop])`
+>    → `RAISED: opening_plan() missing 2 required positional arguments`.
+>    So every game in the "n=8 vs LATEST" set was Phase 4 vs an agent
+>    that ERROR-forfeits on its first turn. 8W/0L is unsurprising and
+>    uninformative. **The Kaggle-submitted file 52882014 (μ≈1124) is
+>    a working version that exists only on Kaggle's servers** — an
+>    older bundler run did inline `agent` correctly; a more recent
+>    re-bundle silently broke the local copy.
+>
+> 2. **Phase 4 IS live in the FND bundle.** Earlier this session I
+>    initially mis-read the FND bundle header (`Bundled from
+>    agents/baseline`) as evidence Phase 4 was dead code in the
+>    submission. Wrong. Header is a stale bundler comment; the actual
+>    `agent()` defined at line 18236 of the bundle is a post-bundle-
+>    appended analytical pipeline (`_AGENT = compose(decision=
+>    decision_outcome_aware_milp, ...)`). Runtime trap test (insert
+>    `raise RuntimeError("PHASE4_*_CALLED")` inside `solve_outcome_aware`
+>    and `_endgame_bonus`, play one game vs noop) raised
+>    `PHASE4_SOLVE_OUTCOME_AWARE_CALLED` at step 1 and
+>    `PHASE4_ENDGAME_BONUS_CALLED` shortly after. **Phase 4 fires
+>    every turn in 52894340.**
+>
+> 3. **Live μ re-pulled 2026-05-21 17:00** (the only correct way to
+>    read μ per Rule 43):
+>
+>    | Submission | μ (snapshot 17:00) | File |
+>    |---|---:|---|
+>    | 52894340 | 1058.2 | `_phase4_step1_FND.py` (ours, Phase 4 + foundation) |
+>    | 52893236 | 1055.0 | `baseline_full.py` (sibling branch) |
+>    | 52882014 | 1124.0 | `baseline_joint_aggr_consolidated.py` (ladder leader of the rolling-pair generation) |
+>    | 52874528 | 1128.8 | baseline_joint_aggr |
+>    | 52872093 | 1049.4 | analytical_phase_c (older) |
+>
+>    Gap FND → consolidated: ~66 μ (snapshot only, drifts continuously).
+>
+> 4. **Rebuilt working consolidated bundle this session.**
+>    `submissions/baseline_joint_aggr_consolidated_orbitfix.py` was
+>    rebuilt by prepending the orbitfix env-var block to
+>    `submissions/baseline.py` (which DOES have `agent` inlined
+>    correctly). Verified: imports OK, agent symbol present, env vars
+>    take effect, plays full games. Use THIS file as the consolidated
+>    opponent for honest A/Bs.
+>
+> 5. **Honest A/B FND vs rebuilt orbitfix (n=8 seat-balanced, seeds
+>    [42, 1, 7, 13] × seat=0,1, episodeSteps=250, WALLCLOCK_BUDGET_MS=500)**:
+>    **FND W=3 L=5 D=0 / n=8. Wilson 95% CI on FND win rate [0.137,
+>    0.694] — wide; the gate (≥50% Wilson lower bound) is NOT cleared.**
+>    Per-seat: FND won 2/4 at seat 0, 1/4 at seat 1 (seat-1 disadvantage
+>    is consistent with the known seat asymmetry in 2P).
+>    Game-by-game:
+>
+>    | seed | FND seat | step | rewards | outcome | wall |
+>    |---:|:---:|---:|---|:---:|---:|
+>    | 42 | 0 | 226 | [1, -1] | W | 92s |
+>    | 42 | 1 | 249 | [1, -1] | L | 111s |
+>    | 1  | 0 | 244 | [1, -1] | W | 73s |
+>    | 1  | 1 | 249 | [-1, 1] | W | 86s |
+>    | 7  | 0 | 154 | [-1, 1] | L | 95s |
+>    | 7  | 1 | 150 | [1, -1] | L | 93s |
+>    | 13 | 0 | 249 | [-1, 1] | L | 258s (step-cap) |
+>    | 13 | 1 | 249 | [1, -1] | L | 256s (step-cap) |
+>
+>    Reproducer: `scripts/ab_fnd_vs_orbitfix.py`. Bundles:
+>    `submissions/_phase4_step1_FND.py` vs the rebuilt
+>    `submissions/baseline_joint_aggr_consolidated_orbitfix.py`
+>    (orbitfix + consolidated AGGR + NEUTRAL + REINFORCE env vars).
+>
+>    **Interpretation:** the rebuilt orbitfix is a STRONGER opponent
+>    than the live-ladder consolidated (52882014) because it adds the
+>    `BASELINE_ORBITAL_SAFETY=1` foundation fix that 52882014 lacks.
+>    So 3W/5L vs orbitfix is consistent with — though slightly worse
+>    than — the live snapshot gap (FND μ=1058.2 vs consolidated
+>    μ=1124.0, ~66 μ gap). The 2P A/B is directionally aligned with
+>    the live ladder for the first time this comp cycle.
+>
+>    **Caveats:**
+>    - n=8 Wilson is too wide to falsify Phase 4's value; it falsifies
+>      the previous-session "8W/0L" claim, nothing else.
+>    - 2P only; Kaggle ladder mixes 2P + 4P (4P A/B still pending).
+>    - Two seed=13 games hit episodeSteps=250 cap, which Kaggle's
+>      production cap of 500 wouldn't have. Outcomes there are
+>      determined by the truncated-game tiebreak, not endgame play.
+>
+> Frictions logged this session in `audit/friction.md`:
+> `bundle-agent-doesnt-inline-from-baseline-main`,
+> `header-comment-misled-static-analysis`,
+> `kaggle-mu-treated-as-final-not-snapshot` (re-fire of Rule 43).
+>
+> Tooling fixes this session (committed):
+> - `scripts/bundle_agent.py` now asserts the post-bundle module exposes
+>   a callable `agent` symbol; refuses to leave broken bundles in
+>   `submissions/`. Catches the consolidated-style bug going forward.
+> - `scripts/build_orbitfix_workaround.py` re-creates the working
+>   `submissions/baseline_joint_aggr_consolidated_orbitfix.py` from
+>   `submissions/baseline.py` + env-var prepend. Run this each fresh
+>   container if you need the consolidated_orbitfix opponent for A/B
+>   (the bundler still can't produce it from
+>   `agents/baseline_joint_aggr_consolidated_orbitfix/main.py` because
+>   that main.py is a wrapper — the proper fix is to rewrite the
+>   wrapper to define `agent` inline, deferred).
+> - `tests/test_submissions_loadable.py` parametrised regression test
+>   over `submissions/*.py`; asserts every bundle exposes `callable
+>   agent`. Skips files marked `BROKEN-AS-AGENT-FILE` in header (those
+>   markers are gitignored away each container reclaim, so the test
+>   effectively gates all `submissions/*.py` next session).
+>
 > ## Latest session arc — Phase 4 Step 1 + foundation SHIPPED; live μ is a moving snapshot
 >
 > **Outcome at session end**: submission `52894340` (`_phase4_step1_FND.py`,
