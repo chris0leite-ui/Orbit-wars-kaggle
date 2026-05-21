@@ -48,30 +48,16 @@ class Column:
     cheap_delta: float = 0.0  # passed through (proposer's cheap-ranked Δ)
     is_opp: bool = False    # True for opp-projected columns (Phase 3+)
     parent_column_id: Optional[int] = None  # Phase F2: compound-fire linkage
-    # Tier label from `agents.baseline.proposer.enumerate_ship_counts_with_tier`
-    # — used by the LP prefilter to keep spec-min, buffered, and other
-    # overkill columns separately within MAX_CONTESTERS_PER_PLANET. Default
-    # "unknown" preserves backward compat for synthetic test fixtures and
-    # any path that constructs Columns without going through prerank.
-    tier: str = "unknown"
 
 
 def column_from_candidate(c, *, column_id: int, owner: int, value: float = 0.0,
                           is_opp: bool = False) -> Column:
     """Convert a prerank tuple into a Column.
 
-    Prerank tuple shape:
-      (cheap_delta, src, tgt, ships, angle, eta, horizon_hint, wait_N, [tier])
-
-    The 9th `tier` element is optional for backward compat; defaults to
-    "unknown" if the producer didn't supply one. `agents/baseline/proposer.py`
-    appends tier as of 2026-05-21 night.
+    Prerank tuple shape (matches chooser_trajectory / chooser_lp):
+      (cheap_delta, src, tgt, ships, angle, eta, horizon_hint, wait_N)
     """
-    if len(c) >= 9:
-        cheap_delta, src, tgt, ships, angle, eta, horizon_hint, wait_N, tier = c[:9]
-    else:
-        cheap_delta, src, tgt, ships, angle, eta, horizon_hint, wait_N = c
-        tier = "unknown"
+    cheap_delta, src, tgt, ships, angle, eta, horizon_hint, wait_N = c
     return Column(
         column_id=int(column_id),
         src_id=int(src.id),
@@ -85,7 +71,6 @@ def column_from_candidate(c, *, column_id: int, owner: int, value: float = 0.0,
         horizon_hint=int(horizon_hint),
         cheap_delta=float(cheap_delta),
         is_opp=bool(is_opp),
-        tier=str(tier),
     )
 
 

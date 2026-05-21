@@ -203,55 +203,46 @@ def confidence_buffered_size(src, tgt, model, omega: float, me: int, world) -> i
     return max(MIN_FLEET_SIZE, int(math.ceil(pred + epsilon)) + 1)
 
 
-# Tier labels for fire-now ship-count variants. Threaded through the
-# prerank tuple → Column.tier → LP prefilter so the prefilter can keep
-# spec-min and overkill columns separately within the per-target cap
-# (lib/joint_solver/lp_outcome.py:_build_per_planet_arrivals). Without
-# this split, the buffered variant gets pruned in favor of higher-ship
-# variants and never reaches the LP.
-TIER_SPEC_MIN = "spec_min"  # cap = ceil(predicted_defender) + 1
-TIER_BUFFERED = "buffered"  # cap + ε (confidence buffer)
-TIER_DOUBLE = "double"      # 2 × cap (legacy overkill)
-TIER_BUDGET = "budget"      # full src.ships (partial or surplus)
-TIER_WAIT = "wait"          # any size from wait_then_fire_variants
+def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world,
+                          peer_sources_in_reach: int = 1) -> list[int]:
+    """Fire-now ship-count set: capture-size, 2x capture-size, full budget.
 
-
-def enumerate_ship_counts_with_tier(
-    src, tgt, model, omega: float, me: int, world,
-    peer_sources_in_reach: int = 1,
-) -> list[tuple[int, str]]:
-    """Fire-now ship-count set as `(ships, tier)` tuples.
-
-    Used by `propose` so the LP prefilter can preserve spec-min and
-    overkill columns separately. The plain `enumerate_ship_counts`
-    wraps this and returns just the sizes for backward compat with
-    tests and introspect tools.
+    Emits `budget` as a candidate when `budget >= MIN_FLEET_SIZE`,
+    GATED on bundle feasibility when `budget < cap`: a partial-budget
+    candidate fires solo and bounces unless a peer source can also
+    contribute. Gate (2026-05-21) added after the 2026-05-21 bundle
+    fix surfaced 6-12 ship partials that fired solo (introspect on
+    2P seeds 384458460/42/7: 6 confirmed regressions, ~10 ships each).
+    `peer_sources_in_reach` defaults to 1 so direct callers (tests,
+    introspect tools) preserve the prior emit-always behavior; `propose`
+    computes the actual count and passes it through.
     """
     cap = capture_size(src, tgt, model, omega, me, world)
     budget = int(src.ships)
     if cap == 0:
         return []  # reinforce-targets with no threat
-    sizes: dict[int, str] = {}  # ships → first-assigned tier wins ties
-
-    def add(ships: int, tier: str) -> None:
-        if ships not in sizes:
-            sizes[ships] = tier
-
+    sizes = set()
     if MIN_FLEET_SIZE <= cap <= budget:
-        add(cap, TIER_SPEC_MIN)
-    # Confidence-buffered variant: insurance against opp reinforcement
-    # during flight. Emitted alongside spec-min so the LP can choose
-    # between ship-efficient (cap) and robust (cap + ε) sizing per
-    # outcome value. The bundler must inline `lib/mirror` for this to
-    # work — see scripts/bundle_agent.py:DEFAULT_LIB_ORDER (added 2026-
-    # 05-21 after a NameError-in-bundle bug silently swallowed by
-    # kaggle_environments debug=False made it look like a strategic
-    # regression).
-    buffered = confidence_buffered_size(src, tgt, model, omega, me, world)
-    if MIN_FLEET_SIZE <= buffered <= budget and buffered != cap:
-        add(buffered, TIER_BUFFERED)
+        sizes.add(cap)
+    # Confidence-buffered variant: SCAFFOLDED but NOT EMITTED.
+    # Rationale (2026-05-21): two attempts at landing a confidence
+    # buffer (cap-replacement, then extra-variant emission) both
+    # regressed the agent — broke offense in seed-42 smoke (focal acts
+    # dropped from 66 → 5 turns; game stalls to 500 steps; rewards flip
+    # from win to loss). Root cause: the buffered variant has a shorter
+    # eta (larger fleets are faster), which shifts the predicted owner
+    # at arrival in `cheap_marginal_value` — sometimes from "still opp"
+    # (positive capture value) into "already mine" (reinforce branch,
+    # 0 if threat is beyond eta+30). Dedup picks the wrong variant and
+    # the LP under-fires. The function + constants are kept as
+    # scaffolding for a future fix that addresses the dedup/cheap-value
+    # interaction. Per Rule 37, halt the buffer axis after 2 iterations.
+    # if False:
+    #     buffered = confidence_buffered_size(src, tgt, model, omega, me, world)
+    #     if MIN_FLEET_SIZE <= buffered <= budget and buffered != cap:
+    #         sizes.add(buffered)
     if 2 * cap <= budget:
-        add(2 * cap, TIER_DOUBLE)
+        sizes.add(2 * cap)
     if budget >= MIN_FLEET_SIZE:
         # Gate (CAPTURE only): a sub-cap partial-budget candidate against
         # an opp/neutral target fires solo and bounces unless a peer can
@@ -260,21 +251,8 @@ def enumerate_ship_counts_with_tier(
         # is strictly better than no defense.
         is_reinforce = int(tgt.owner) == me
         if is_reinforce or budget >= cap or peer_sources_in_reach >= 1:
-            add(budget, TIER_BUDGET)
-    return [(s, sizes[s]) for s in sorted(sizes)]
-
-
-def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world,
-                          peer_sources_in_reach: int = 1) -> list[int]:
-    """Backward-compat wrapper: returns just ship counts (list[int]).
-
-    `propose` uses `enumerate_ship_counts_with_tier` to also get the
-    per-size tier label needed by the LP prefilter.
-    """
-    return [s for s, _ in enumerate_ship_counts_with_tier(
-        src, tgt, model, omega, me, world,
-        peer_sources_in_reach=peer_sources_in_reach,
-    )]
+            sizes.add(budget)
+    return sorted(sizes)
 
 
 def wait_then_fire_variants_forward(src, tgt, model, omega: float, me: int):
@@ -474,25 +452,6 @@ def wait_band(wait_N: int) -> int:
     return 1 if wait_N <= 7 else 2
 
 
-def tier_band(tier: str) -> int:
-    """Three buckets: spec_min (0), buffered (1), other overkill (2).
-
-    Used in `propose` dedup and the LP prefilter to keep all three
-    fire-now sizing options as separate candidates. Without the
-    split, buffered's strictly-higher cheap value (shorter eta →
-    less pv decay) silently displaces spec-min, AND within a single
-    overkill bucket budget's larger ships displaces buffered. The
-    3-band split preserves all three options for the LP to choose
-    via outcome scoring. Wait-grid candidates use TIER_WAIT which
-    maps to band 2.
-    """
-    if tier == TIER_SPEC_MIN:
-        return 0
-    if tier == TIER_BUFFERED:
-        return 1
-    return 2
-
-
 def _source_survives_launch(
     src, ships: int, wait_N: int, world, model, me: int,
 ) -> bool:
@@ -671,7 +630,7 @@ def propose(my_planets, target_pool, world, model, me: int,
                 if pid != int(src.id) and int(tgt.id) in reach_set
             )
 
-            for ships, tier in enumerate_ship_counts_with_tier(
+            for ships in enumerate_ship_counts(
                 src, tgt, model, omega, me, world,
                 peer_sources_in_reach=peer_count,
             ):
@@ -686,7 +645,7 @@ def propose(my_planets, target_pool, world, model, me: int,
                 )
                 if cheap > CHEAP_REJECT_THRESHOLD:
                     prerank.append(
-                        (cheap, src, tgt, ships, angle, eta, horizon, 0, tier)
+                        (cheap, src, tgt, ships, angle, eta, horizon, 0)
                     )
 
             for w_ships, w_wait, w_angle, w_eta in wait_then_fire_variants(
@@ -701,22 +660,13 @@ def propose(my_planets, target_pool, world, model, me: int,
                 if w_cheap > CHEAP_REJECT_THRESHOLD:
                     prerank.append(
                         (w_cheap, src, tgt, w_ships, w_angle, w_eta,
-                         w_horizon, w_wait, TIER_WAIT)
+                         w_horizon, w_wait)
                     )
 
-    # Dedup key includes tier_band so spec-min, buffered, and other
-    # overkill variants survive in separate buckets. Without this,
-    # the buffered variant has a strictly shorter eta than spec-min
-    # (larger fleets are faster) → strictly higher cheap value, so
-    # the 2-band dedup would silently drop spec-min. And within a
-    # single overkill bucket, budget (highest ships) would silently
-    # displace buffered. The 3-band split preserves all three options
-    # for the LP. Mirrored at lp_outcome.py:_build_per_planet_arrivals.
-    best_per_band: dict[tuple[int, int, int, int], tuple] = {}
+    best_per_band: dict[tuple[int, int, int], tuple] = {}
     for entry in prerank:
-        cheap, src, tgt, _ships, _angle, _eta, _horizon, w, *rest = entry
-        tier = rest[0] if rest else TIER_BUDGET
-        key = (int(src.id), int(tgt.id), wait_band(int(w)), tier_band(tier))
+        cheap, src, tgt, _ships, _angle, _eta, _horizon, w = entry
+        key = (int(src.id), int(tgt.id), wait_band(int(w)))
         prev = best_per_band.get(key)
         if prev is None or cheap > prev[0]:
             best_per_band[key] = entry
@@ -748,7 +698,7 @@ def propose(my_planets, target_pool, world, model, me: int,
     if os.environ.get("PROPOSER_TRAJECTORY_FILTER", "").strip().lower() != "off":
         filtered: list = []
         for entry in deduped:
-            _cheap, src, tgt, ships, angle, eta, _horizon, w, *_ = entry
+            _cheap, src, tgt, ships, angle, eta, _horizon, w = entry
             # Wait-then-fire: predict fate against fire-time geometry
             # (planet positions advanced by wait_N orbital ticks).
             fate = predict_fleet_fate(

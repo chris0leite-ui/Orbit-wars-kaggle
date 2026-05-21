@@ -124,7 +124,7 @@ def test_partial_budget_candidates_enable_bundle():
                       baseline_len=50)
     by_src = {int(p.id): 0 for p in my_planets}
     for entry in prerank:
-        _cheap, src, tgt, _ships, _angle, _eta, _h, _w, *_ = entry
+        _cheap, src, tgt, _ships, _angle, _eta, _h, _w = entry
         if int(tgt.id) == 10:
             by_src[int(src.id)] = by_src.get(int(src.id), 0) + 1
     missing = [sid for sid, n in by_src.items() if n == 0]
@@ -290,23 +290,30 @@ def test_partial_budget_solo_filtered_when_alone():
 # ---------------------------------------------------------------------------
 
 
-def test_confidence_buffer_emitted_as_extra_variant():
-    """Pin: `enumerate_ship_counts` emits the buffered variant alongside
-    spec-min cap so the LP can choose between ship-efficient (cap) and
-    robust (cap + ε) sizing per outcome value.
+def test_confidence_buffer_size_function_correctness():
+    """Pin (SCAFFOLDING for future buffer activation):
+    `confidence_buffered_size` returns the expected ε-adjusted cap.
 
-    For eta≈10, prod=3, 2P: expected ε ≈ 6; buffered ≈ 17. Spec-min
-    cap stays at 11. Both must appear in the emitted sizes list.
+    The emission path in `enumerate_ship_counts` is currently DISABLED
+    after two failed integration attempts (2026-05-21): the buffered
+    variant has a shorter eta than spec-min cap (larger fleets are
+    faster), which shifts `cheap_marginal_value`'s arrival prediction
+    and sometimes flips capture → reinforce-no-threat, breaking dedup
+    and stalling the LP. The math helper is kept and tested so the
+    next attempt can re-use it once the dedup/cheap interaction is
+    solved (likely needs distinguishable bands or a per-candidate
+    `cheap` that accounts for the cost differential).
+
+    For eta≈10, prod=3, 2P: expected ε ≈ 6; buffered ≈ 17.
     """
     from agents.baseline.proposer import (
         capture_size,
         confidence_buffered_size,
-        enumerate_ship_counts,
     )
 
     planets = [
-        [10, 0, 70.0, 80.0, 1.69, 50, 2],   # me: S (50 ships, plenty)
-        [11, -1, 70.0, 60.0, 2.61, 10, 3],  # neutral T (10 ships, prod=3)
+        [10, 0, 70.0, 80.0, 1.69, 50, 2],   # me: S
+        [11, -1, 70.0, 60.0, 2.61, 10, 3],  # neutral T (prod=3)
         [99, 1, 5.0, 5.0, 1.69, 10, 2],     # opp (makes it 2P)
     ]
     world, model = _build_world_and_model(planets, step=0)
@@ -316,7 +323,6 @@ def test_confidence_buffer_emitted_as_extra_variant():
 
     cap = capture_size(src, tgt, model, 0.0, me, world)
     buffered = confidence_buffered_size(src, tgt, model, 0.0, me, world)
-    sizes = enumerate_ship_counts(src, tgt, model, 0.0, me, world)
 
     assert cap == 11, (
         f"capture_size should be spec-min (pred + 1 = 11). Got {cap}."
@@ -325,24 +331,15 @@ def test_confidence_buffer_emitted_as_extra_variant():
         f"confidence_buffered_size expected ≥ 15 for prod=3, eta≈10, 2P. "
         f"Got {buffered}. ε = base(1) + eta_scale(0.5) × eta × prod/3."
     )
-    assert cap in sizes, (
-        f"enumerate_ship_counts must keep spec-min cap ({cap}). Got: {sizes}"
-    )
-    assert buffered in sizes, (
-        f"enumerate_ship_counts must emit the buffered variant ({buffered}). "
-        f"Got: {sizes}"
-    )
 
 
 def test_confidence_buffer_discounted_in_4p():
-    """Pin: 4P discount shrinks the buffered variant so it's smaller than
-    the 2P case but still above spec-min. Both spec-min and buffered are
-    emitted as candidates.
+    """Pin (scaffolding): 4P discount shrinks the buffered size.
+    Same scaffolding caveat as test_confidence_buffer_size_function_correctness.
     """
     from agents.baseline.proposer import (
         capture_size,
         confidence_buffered_size,
-        enumerate_ship_counts,
     )
 
     planets = [
@@ -359,7 +356,6 @@ def test_confidence_buffer_discounted_in_4p():
 
     cap = capture_size(src, tgt, model, 0.0, me, world)
     buffered_4p = confidence_buffered_size(src, tgt, model, 0.0, me, world)
-    sizes = enumerate_ship_counts(src, tgt, model, 0.0, me, world)
 
     assert cap == 11, f"Spec-min cap unchanged in 4P. Got {cap}."
     # 4P: ε ≈ 6 × 0.4 = 2.4 → ceil(10 + 2.4) + 1 = 14.
@@ -367,8 +363,4 @@ def test_confidence_buffer_discounted_in_4p():
         f"4P confidence buffer expected to be discounted: 12 ≤ buffered ≤ 15. "
         f"Got {buffered_4p}. The 4P discount (×0.4) shrinks ε from ~6 in 2P "
         f"to ~2.4 in 4P; spec-min cap stays at 11."
-    )
-    assert cap in sizes and buffered_4p in sizes, (
-        f"4P enumerate_ship_counts must emit both spec-min ({cap}) and "
-        f"buffered ({buffered_4p}). Got: {sizes}"
     )

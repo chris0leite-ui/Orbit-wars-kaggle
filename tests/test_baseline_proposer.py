@@ -141,15 +141,9 @@ def test_wait_then_fire_variants_forward_legacy():
 
 
 def test_propose_dedups_per_src_tgt_band():
-    """propose() dedups per (src, tgt, wait_band, tier_band).
-
-    Pre-2026-05-21: at most one entry per (src, tgt, wait_band).
-    Post-tier-aware: at most one per (src, tgt, wait_band, tier_band)
-    where tier_band ∈ {0: spec_min, 1: buffered, 2: other_overkill}.
-    Each wait_band can thus host up to 3 entries — one per tier_band.
-    The split is what lets the LP pick efficiency vs robustness.
+    """propose() returns at most one entry per (src, tgt, wait_band).
+    Bands are {0, 1..7, >=8}, so at most 3 entries per (src, tgt) pair.
     """
-    from collections import Counter
     src = _planet(0, 0, 10.0, 50.0, ships=80, production=3)
     tgt = _planet(1, -1, 12.0, 50.0, ships=5, production=2)
     world = _world(0, [src, tgt])
@@ -160,11 +154,9 @@ def test_propose_dedups_per_src_tgt_band():
     )
     # All entries are for (src, tgt)
     assert all(int(e[1].id) == 0 and int(e[2].id) == 1 for e in out)
-    # At most 3 entries per wait_band (one per tier_band).
-    bands = Counter(wait_band(int(e[7])) for e in out)
-    assert all(c <= 3 for c in bands.values()), (
-        f"wait_band counts exceed tier-band split limit (3): {bands}"
-    )
+    # Unique (band) per (src, tgt)
+    bands = [wait_band(int(e[7])) for e in out]
+    assert len(bands) == len(set(bands))
 
 
 def test_propose_sorts_descending_by_cheap_delta():

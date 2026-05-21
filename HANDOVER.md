@@ -1,10 +1,80 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-21 night by `claude/strategy-axis-decision-3437`.
-> Branch is **201 ahead / 23 behind `origin/main`**; everything below
-> reflects the tip (`a8e0b80`).
+> ## The big plan (READ FIRST)
 >
-> ## Latest session — AGGR critique → confidence buffer (commits `c1df712` + `a8e0b80`)
+> Every session's work fits somewhere in a **5-phase plan to build a
+> fully-analytical joint solver**:
+> **`/root/.claude/plans/you-are-a-mathematician-clever-lighthouse.md`**
+> ("Fully-Analytical Multi-Turn Joint Solver — Plan", 2026-05-19/20).
+>
+> Where the agent stands in that plan:
+>
+> | Phase | What it does | Status |
+> |---|---|---|
+> | 1 | outcome_table + cherry-picked predicates | ✅ landed |
+> | 2 | column-gen + single-turn LP parity | ✅ landed |
+> | 3 | multi-turn horizon + Stackelberg + MPC | ✅ landed (Phase D v3) |
+> | **4** | **endgame predicate switch + n=8 A/B** | **❌ NEVER EXECUTED — next session** |
+> | 5 | n=32 → n=128 escalation, submit | partial (μ=1148.9 without Phase 4) |
+>
+> **The current focused plan to execute Phase 4** is at
+> **`/root/.claude/plans/be-a-mathematician-and-elegant-tide.md`**.
+>
+> The principle to internalize: **work on the LP's objective, not the
+> proposer's candidate set.** The proposer's job is to make sure good
+> options reach the LP. The LP's job is to choose. If the agent makes
+> bad decisions, the question is "what does the LP objective fail to
+> price correctly?" — NOT "what extra candidate should we add?"
+>
+> ---
+>
+> Last written: 2026-05-21 night by `claude/strategy-axis-decision-3437`.
+> Branch tip is the post-revert commit (see below); the FIX2 buffer +
+> FIX3 tier-aware-prefilter from earlier in this session were both
+> reverted because head-to-head A/B vs `09301b0` showed a regression.
+>
+> ## Latest session arc — AGGR critique → buffer attempt → REVERTED → Phase 4 next
+>
+> Three rounds of work, in order:
+>
+> 1. **Diagnosed** the AGGR critique via per-launch introspect on three
+>    2P seeds. Found 33% solo bounce rate, 43% of bounces from opp-
+>    model under-prediction. Designed two fixes (partial-budget gate,
+>    confidence buffer). Activated both. Then discovered a bundler bug
+>    (`lib/mirror` not inlined → silent NameError under `debug=False`)
+>    that had masked the buffer's effect across two failed integration
+>    attempts. Built tier-aware LP prefilter on top to give the buffer
+>    a path to the LP.
+> 2. **Verified** via introspect: solo bounce rate dropped 33% → 19%;
+>    bundle engagements doubled (6 → 12); avg capture margin +30 ships.
+>    Looked like a clean win on the efficiency metric.
+> 3. **A/B-tested head-to-head** against the pre-session commit
+>    (`09301b0`). NEW lost 2 of 7 completed games. **Regression.**
+>    The buffer made NEW commit 37% more ships per opp-attack — robust
+>    against weak v7_0_drop_one, but against a same-strength opp the
+>    over-commit left home thin and OLD won the back-and-forth.
+>    Isolation A/B identified `FIX2` (the buffer activation, commit
+>    `a8e0b80`) as the regression source; `FIX1` (partial-budget gate)
+>    and `FIX3` (tier-aware prefilter) were A/B-neutral.
+>
+> **Reverted the buffer and tier-aware changes.** Kept FIX1 (partial-
+> budget gate, modeling-clean) and the bundler `lib/mirror` inline
+> fix (pure infrastructure, prevents the silent-NameError class
+> recurring). On-disk state matches commit `c1df712`-equivalent plus
+> the bundler patch. Agent smoke on seeds 42/7/384458460 plays normally
+> (142/155/149 steps, win/win/loss).
+>
+> **Root insight**: the introspect tool measures capture-attempt
+> bounce rate, not net planet/ship advantage at game end. We optimized
+> the wrong metric. The lighthouse plan called this out preemptively
+> ("defense emerges from math, no separate defensive-value hack") and
+> the right axis is the LP's OBJECTIVE — specifically Phase 4 of the
+> lighthouse plan, which was never executed. See the focused plan
+> linked above.
+>
+> ---
+>
+> ## Earlier this session — AGGR critique → confidence buffer (commits `c1df712` + `a8e0b80` + `3095024`, all REVERTED except the bundler+partial-budget-gate parts)
 >
 > PI shared an AGGR (aggressor-overkill) note from a sibling branch
 > arguing our spec-min capture sizing is fragile under opp-model error.
@@ -322,28 +392,28 @@ Currently rolling pair is (52872093 μ=1148.9, 52865089 μ=805.9); this
 would evict 52865089 — safe trade. PI told me to hold on the last
 attempt; **start the session by asking whether to submit**.
 
-### 2. **NEW** — Tier-aware LP prefilter (unlocks the confidence buffer)
+### 2. **HIGHEST PRIORITY** — Execute Phase 4 of the lighthouse plan
 
-The buffer's `confidence_buffered_size` is emitted alongside spec-min
-in `enumerate_ship_counts`, but `lib/joint_solver/lp_outcome.py:175-185`
-prefilter sorts ties as `(value, ships, -wait_N, -column_id)` descending
-— for the prerank_passthrough case (uniform value=1.0), higher ships
-wins ties. Among `{cap, buffered, double, budget}` from the same
-(src, tgt), the LP keeps `budget` and drops `buffered`. Net: buffer
-is technically active but the LP never uses it.
+**Plan**: `/root/.claude/plans/be-a-mathematician-and-elegant-tide.md`.
 
-**Fix direction**: make the prefilter tier-aware. Either:
-- (a) Keep ONE candidate per (src, tgt) tier-tag (spec_min, overkill).
-  Per-target cap stays at MAX_CONTESTERS_PER_PLANET=6, but the cap is
-  spent on tier-distinct candidates.
-- (b) Lower-ships-as-tie-break for the overkill tier, so buffered
-  (middle ships) wins over budget (max ships) when tied.
-- (c) Per-source quota: at most 2 columns per source per planet.
+The closed-form `is_winning_state` predicate exists in
+`lib/joint_solver/predicate.py` and is computed in `prerank_passthrough`
+and `prerank.py`, but the LP's `_value_for_outcome` at
+`lib/joint_solver/lp_outcome.py:232-257` **never reads it**. The
+endgame term `λ · I[winning_state]` from the lighthouse objective
+formulation is missing.
 
-Option (a) is the cleanest modeling fix. Estimate ~half a session.
-After this, re-run the 2P introspect — if buffered fires on the
-opp-under-prediction bounces (12 of 30 in the pre-fix data), we
-should see solo bounce rate drop from 33% toward ~20%.
+Two coupled changes:
+- Wire `is_winning_state_if_owned(world, my_id, opp_id, extra_owned)`
+  into `_value_for_outcome` so subsets that tip us into winning state
+  get a large bonus. This makes critical-planet defense emerge from
+  the math.
+- Recalibrate `SHIP_COST` so ships from threat-source planets cost
+  more than ships from rear sources. Today `SHIP_COST=1.0` uniformly
+  — the LP doesn't see the defensive cost of stripping a threatened
+  source.
+
+This is the fix the buffer was a (failed) heuristic substitute for.
 
 ### 3. **NEW** — Audit the "silent kaggle_environments exception" trap
 
