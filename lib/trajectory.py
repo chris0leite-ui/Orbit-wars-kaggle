@@ -22,7 +22,7 @@ and returns the FIRST hit.
 
 Public API:
     predict_fleet_fate(src, target, aim_angle, ships, world)
-        -> FleetFate(outcome, hit_planet_id, step_of_hit)
+        -> FleetFate(outcome, hit_planet_id, step)
 
 `outcome` is one of `"target"`, `"planet"`, `"sun"`, `"oob"`,
 `"timeout"`. The four downstream guards become trivial wrappers.

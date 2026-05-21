@@ -795,7 +795,7 @@ def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
             continue
         if fate_p.outcome != "target":
             continue
-        eta_p = int(fate_p.step_of_hit)
+        eta_p = int(fate_p.step)
         # Predicted garrison at our arrival.
         predicted = model.ships_at(int(tgt.id), eta_p)
         if predicted is None:
