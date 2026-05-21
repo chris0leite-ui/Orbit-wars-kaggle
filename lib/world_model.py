@@ -424,7 +424,36 @@ def _comet_paths_by_id(world) -> dict[int, tuple[list, int]]:
 
     Mirrors `lib/mechanism._comet_path_lookup` but promoted to a public
     helper because ROI scoring now needs it as well.
+
+    Phase γ — when `KINEMATIC_TABLE_ENABLED=1` and the kinematic table
+    has been primed for the current obs, returns its cached comet view
+    instead of re-parsing `obs["comets"]`. Pinned bit-identical to the
+    raw-parse fallback by `test_comet_paths_view_matches_world_model_helper`.
+    The table's view is a per-turn-cached dict; re-parsing on every
+    call from predict_fleet_fate (and its 60-100/turn callers) is the
+    redundant work this swap eliminates.
     """
+    # Opt-in fast path: read from the kinematic table when populated.
+    import os as _os
+    if _os.environ.get("KINEMATIC_TABLE_ENABLED", "").strip().lower() in (
+        "1", "true", "on", "yes",
+    ):
+        try:
+            from lib.kinematic_table import get_default as _kt_get_default
+            table = _kt_get_default()
+            # Only use the table if it was primed for this turn (has
+            # entries that match the current obs).
+            if table.n_planets > 0:
+                view = table.comet_paths_view()
+                # If the table snapshot disagrees with the world's
+                # comet_ids set (e.g. stale begin_turn), fall through.
+                want = {int(c) for c in (world.comet_ids or ())}
+                if set(view.keys()) == want:
+                    return view
+        except Exception:
+            # Defensive: never let a table issue break the fallback.
+            pass
+
     raw = world.obs_raw
     if raw is None:
         return {}

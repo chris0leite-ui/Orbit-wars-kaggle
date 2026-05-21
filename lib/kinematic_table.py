@@ -49,10 +49,13 @@ from lib.orbit import is_orbiting, predict_relative
 # a circular dependency with the call site we'll later modify.
 OFF_BOARD: tuple[float, float] = (-1e6, -1e6)
 
-# Default lookup window. `DEFAULT_MAX_STEPS=200` is the ray-cast horizon
-# in predict_fleet_fate; we add slack for wait_N offsets up to ~40 ticks
-# (the largest wait grid the proposer emits today is ~20-30).
-DEFAULT_MAX_LEAD: int = 250
+# Default lookup window. predict_fleet_fate uses `max_steps=200` as the
+# ray-cast horizon; callers may also pass wait_N (fire-offset) up to ~50.
+# 500 gives generous headroom (covers wait_N up to ~300 + max_steps=200)
+# at ~250 KB total memory cost — negligible. Phase γ relies on this
+# default being large enough that the table covers any predict_fleet_fate
+# call without falling through to the slow path.
+DEFAULT_MAX_LEAD: int = 500
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +203,34 @@ class KinematicTable:
 
     def has(self, pid: int) -> bool:
         return int(pid) in self._entries
+
+    @property
+    def max_lead(self) -> int:
+        """Maximum `lead` value the table can answer without falling
+        through. Use this to gate calls that need a large window."""
+        return self._max_lead
+
+    @property
+    def step(self) -> int:
+        """The absolute env step the table was last built for."""
+        return self._step
+
+    @property
+    def n_planets(self) -> int:
+        return len(self._entries)
+
+    def covers(self, pids, max_needed_lead: int) -> bool:
+        """Return True iff every pid is in the table AND the table's
+        max_lead is >= max_needed_lead. Cheap pre-flight for the Phase γ
+        predict_fleet_fate swap — on False, caller falls through to the
+        slow inline build."""
+        if max_needed_lead > self._max_lead:
+            return False
+        entries = self._entries
+        for pid in pids:
+            if int(pid) not in entries:
+                return False
+        return True
 
     def kind(self, pid: int) -> Optional[str]:
         entry = self._entries.get(int(pid))
