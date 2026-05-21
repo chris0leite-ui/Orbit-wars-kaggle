@@ -52,6 +52,40 @@ EPISODE_STEPS_TOTAL: int = 500
 WASTE_WEIGHT: float = 0.5
 CAPTURE_REWARD_WEIGHT: float = 0.05
 
+# Leader-focus bonus (2026-05-21). In 4P, multiply capture score by
+# LEADER_FOCUS_WEIGHT when the target's owner is the current leader
+# (player with highest planet-production-owned). Pushes focal to attack
+# the strongest opp rather than spreading attacks across all three.
+# Disabled (=1.0) in 2P automatically since there is no leader to
+# distinguish. Default 1.0 (no change); opt-in via env var.
+LEADER_FOCUS_WEIGHT: float = float(os.environ.get("BASELINE_LEADER_FOCUS", "1.0"))
+
+
+def _leader_owner_from_world(world, me: int) -> int | None:
+    """Return the player id (other than `me`) with the highest total
+    planet production owned. Returns None when leader is undefined
+    (no opps, single opp, or production tie).
+    """
+    if world is None:
+        return None
+    prod_by_owner: dict[int, int] = {}
+    try:
+        plist = list(world.planets_by_id.values())
+    except AttributeError:
+        return None
+    for p in plist:
+        o = int(getattr(p, "owner", -1))
+        if o < 0 or o == int(me):
+            continue
+        prod_by_owner[o] = prod_by_owner.get(o, 0) + int(getattr(p, "production", 0))
+    if len(prod_by_owner) < 2:
+        return None  # 2P or only one opp; no leader distinction
+    best = max(prod_by_owner.values())
+    leaders = [o for o, v in prod_by_owner.items() if v == best]
+    if len(leaders) > 1:
+        return None  # tie, no clear leader
+    return leaders[0]
+
 # Bug #14 fix attempt — CHEAP MIRROR. NEGATIVE RESULT 2026-05-18 PM.
 #
 # Premise: at each tick of the leaf rollout, drive ME with
@@ -250,6 +284,13 @@ def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
         # We didn't end up holding the planet — bounce / under-sized.
         return (-WASTE_WEIGHT * ships, "bounced", eta)
 
+    # Leader-focus bonus: 4P-only (in 2P _leader_owner_from_world returns None).
+    bonus = 1.0
+    if LEADER_FOCUS_WEIGHT != 1.0:
+        leader = _leader_owner_from_world(world, me)
+        if leader is not None and int(tgt.owner) == int(leader):
+            bonus = LEADER_FOCUS_WEIGHT
+
     # We hold the planet at eta. Was it ours before our arrival?
     # If the planet was already me (with no enemy interference), this
     # is reinforcement — no extra credit. Otherwise it's a capture.
@@ -270,7 +311,7 @@ def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
             life = comet_remaining_lifetime(int(tgt.id), world)
             if life is not None:
                 held = min(held, max(0, life - eta))
-        return (CAPTURE_REWARD_WEIGHT * float(tgt.production) * float(held),
+        return (CAPTURE_REWARD_WEIGHT * float(tgt.production) * float(held) * bonus,
                 "captured", eta)
 
     # Fresh capture (planet was not ours).
@@ -280,7 +321,7 @@ def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
         life = comet_remaining_lifetime(int(tgt.id), world)
         if life is not None:
             held = min(held, max(0, life - eta))
-    return (CAPTURE_REWARD_WEIGHT * float(tgt.production) * float(held),
+    return (CAPTURE_REWARD_WEIGHT * float(tgt.production) * float(held) * bonus,
             "captured", eta)
 
 
