@@ -73,6 +73,16 @@ REINFORCE_EMIT_ENABLED = os.environ.get("BASELINE_REINFORCE_EMIT", "0") == "1"
 REINFORCE_MIN_PROD = int(os.environ.get("BASELINE_REINFORCE_MIN_PROD", "2"))
 REINFORCE_MAX_LAUNCHES = int(os.environ.get("BASELINE_REINFORCE_MAX", "3"))
 
+# Anticipated-threat (preemptive) reinforce — direction (b) from
+# PI 2026-05-21 directive "mobilize idle planets toward planets that
+# need them." Fires for friendly destinations with inbound enemy fleets
+# that thin defenders below safety margin, even if T_loss isn't predicted
+# yet. Distinct from strict propose_reinforce_missions (T_loss < horizon
+# only) and from drain_idle_rear (blanket "rear -> closer friend").
+ANTICIPATE_ENABLED = os.environ.get("BASELINE_REINFORCE_ANTICIPATE", "0") == "1"
+ANTICIPATE_MIN_PROD = int(os.environ.get("BASELINE_REINFORCE_ANTICIPATE_MIN_PROD", "3"))
+ANTICIPATE_MARGIN = float(os.environ.get("BASELINE_REINFORCE_ANTICIPATE_MARGIN", "1.3"))
+
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
 # chooser's wait_N>0 winners are remembered across turns instead of
 # being silently dropped. Each entry ticks down each turn; when
@@ -95,6 +105,7 @@ _PENDING_LAUNCHES: dict[int, list[dict]] = {}
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from lib.fast_sim import from_obs as fs_from_obs
+from lib.fleet import speed as fleet_speed
 from lib.intent import World
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.orbit import predict_relative
@@ -296,7 +307,115 @@ def emit_threat_reinforcements(
         extras.append([sid, float(angle), int(ships)])
         used_srcs.add(sid)
         fired += 1
+
+    if ANTICIPATE_ENABLED and fired < REINFORCE_MAX_LAUNCHES:
+        extras2 = _propose_anticipated_reinforces(
+            planets, used_srcs, my_id, world, model, omega,
+            slots_left=REINFORCE_MAX_LAUNCHES - fired,
+        )
+        extras.extend(extras2)
     return list(moves) + extras
+
+
+def _propose_anticipated_reinforces(
+    planets, used_srcs: set[int], my_id: int, world, model, omega: float,
+    slots_left: int,
+) -> list:
+    """Preemptive reinforce: defenders thinned by inbound enemy fleets.
+
+    For each friendly D with prod >= ANTICIPATE_MIN_PROD and at least one
+    inbound enemy fleet within model.horizon, check whether projected
+    defenders cover the inbound threat by ANTICIPATE_MARGIN. If not,
+    propose a launch from the nearest viable friendly source whose
+    arrival ETA precedes the earliest enemy ETA.
+    """
+    if slots_left <= 0:
+        return []
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    if len(my_planets) < 2:
+        return []
+    horizon = int(getattr(model, "horizon", 40))
+    out = []
+    fired = 0
+    # Pre-compute friendly index for source iteration.
+    friendly_by_id = {int(p.id): p for p in my_planets}
+    # Score destinations by (production desc, thinness ratio asc — most-thin first).
+    destinations: list[tuple] = []
+    for d in my_planets:
+        if int(d.production) < ANTICIPATE_MIN_PROD:
+            continue
+        arrivals = (model.ledger.get(int(d.id)) or []) if hasattr(model, "ledger") else []
+        if not arrivals:
+            continue
+        enemy_inbound = 0
+        friendly_inbound = 0
+        earliest_enemy_eta: int | None = None
+        for (eta_arr, owner_arr, ships_arr) in arrivals:
+            if int(ships_arr) <= 0:
+                continue
+            if int(eta_arr) > horizon:
+                continue
+            if int(owner_arr) == my_id:
+                friendly_inbound += int(ships_arr)
+            else:
+                enemy_inbound += int(ships_arr)
+                if earliest_enemy_eta is None or int(eta_arr) < earliest_enemy_eta:
+                    earliest_enemy_eta = int(eta_arr)
+        if enemy_inbound <= 0 or earliest_enemy_eta is None:
+            continue
+        # Projected defenders at earliest enemy arrival (ignoring
+        # accruing production from the enemy's perspective; production
+        # accrues for us between now and arrival).
+        proj_defenders = (
+            int(d.ships) + int(d.production) * int(earliest_enemy_eta)
+            + friendly_inbound
+        )
+        # Already comfortable margin → skip.
+        if proj_defenders >= enemy_inbound * ANTICIPATE_MARGIN:
+            continue
+        deficit = int(enemy_inbound * ANTICIPATE_MARGIN) - proj_defenders + 1
+        if deficit <= 0:
+            continue
+        destinations.append((deficit, d, earliest_enemy_eta))
+    # Highest deficit first.
+    destinations.sort(key=lambda x: -x[0])
+    for deficit, d, earliest_enemy_eta in destinations:
+        if fired >= slots_left:
+            break
+        # Find nearest friendly source not already used, with enough
+        # ships AND able to arrive before earliest_enemy_eta.
+        best_src = None
+        best_eta = None
+        for s in my_planets:
+            if int(s.id) == int(d.id):
+                continue
+            if int(s.id) in used_srcs:
+                continue
+            if int(s.ships) < deficit:
+                continue
+            dist = math.hypot(float(d.x) - float(s.x), float(d.y) - float(s.y))
+            v = fleet_speed(deficit)
+            if v <= 0:
+                continue
+            eta = int(math.ceil(dist / v))
+            if eta >= int(earliest_enemy_eta):
+                continue
+            if best_src is None or eta < best_eta:
+                best_src = s
+                best_eta = eta
+        if best_src is None:
+            continue
+        try:
+            tx, ty = predict_relative(d, int(best_eta), omega)
+        except Exception:
+            tx, ty = float(d.x), float(d.y)
+        angle = math.atan2(
+            float(ty) - float(best_src.y), float(tx) - float(best_src.x),
+        )
+        out.append([int(best_src.id), float(angle), int(deficit)])
+        used_srcs.add(int(best_src.id))
+        fired += 1
+    return out
 
 
 def drain_idle_rear(moves, planets, my_id: int, world, model) -> list:
