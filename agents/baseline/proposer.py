@@ -32,6 +32,15 @@ WAIT_EXTRA_SURPLUS = (0, 5, 12)  # legacy forward grid (kept for rollback)
 CHEAP_REJECT_THRESHOLD = -10.0
 EPISODE_STEPS = 500
 GAMMA = 0.99
+# Fix (strategic defense, 2026-05-21): for high-prod own planets,
+# floor the reinforce target to a preemptive stockpile so the LP can
+# see strategic defense before shortfall materialises. Without this,
+# `capture_size` returns 0 whenever current garrison covers current
+# threat — blinding the LP to opp's build-up on a planet we won't
+# defend until it's too late. Prefixed STRATEGIC_* to avoid bundler
+# namespace collision (cf. OPENING_* rename, 2026-05-21 AM).
+STRATEGIC_DEFENSE_PROD = 4    # production threshold for "strategic"
+STRATEGIC_STOCKPILE_TICKS = 5 # buffer = N ticks × planet's production
 
 # Backward wait grid (2026-05-18): anchored on min_wait_affordable.
 # Replaces forward WAIT_EXTRA_SURPLUS = (0, 5, 12) grid that caused
@@ -131,7 +140,15 @@ def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
         enemy_strength = max(enemy_inflight, enemy_potential)
         my_garrison = float(tgt.ships) + float(tgt.production) * enemy_eta
         shortfall = enemy_strength - my_garrison + 1
-        return max(0, int(math.ceil(shortfall)))
+        base = max(0, int(math.ceil(shortfall)))
+        # Fix (strategic stockpile): high-prod own planets get a
+        # preemptive defensive buffer even when current shortfall ≤ 0.
+        # Pre-fix `base == 0` returned 0 → `enumerate_ship_counts`
+        # returned [] → no reinforce candidate → drained home stays
+        # undefended through mid-game build-up.
+        if int(tgt.production) >= STRATEGIC_DEFENSE_PROD:
+            base = max(base, STRATEGIC_STOCKPILE_TICKS * int(tgt.production))
+        return base
 
     initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
     _angle, eta = aim_and_eta(src, tgt, initial, omega)
@@ -140,7 +157,17 @@ def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
 
 
 def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list[int]:
-    """Fire-now ship-count set: capture-size, 2x capture-size, full budget."""
+    """Fire-now ship-count set: capture-size, 2x capture-size, full budget.
+
+    Always emits `budget` as a candidate when `budget >= MIN_FLEET_SIZE`
+    (Fix — bundle blind spot, 2026-05-21). Pre-fix the third size was
+    gated by `budget > cap`, which dropped candidates from sources
+    that couldn't solo-capture — the LP literally never saw multi-
+    source bundle options. With the gate removed, every source within
+    range emits at least one column; the LP's outcome-table subset
+    enumeration (lib/joint_solver/outcome_table.py:73-130) correctly
+    scores the joint capture.
+    """
     cap = capture_size(src, tgt, model, omega, me, world)
     budget = int(src.ships)
     if cap == 0:
@@ -150,7 +177,7 @@ def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list
         sizes.add(cap)
     if 2 * cap <= budget:
         sizes.add(2 * cap)
-    if budget >= MIN_FLEET_SIZE and budget > cap:
+    if budget >= MIN_FLEET_SIZE:
         sizes.add(budget)
     return sorted(sizes)
 
