@@ -33,7 +33,106 @@
 - **Daily submission budget:** 5/day. 5/20 used: 2. 3 slots remain.
 - **Floor-at-risk flag:** **TRUE** — rolling pair is 320 μ below team peak.
 
-## Day-N PM extract-physics-trajectory-Vjaz9 (2026-05-22)
+## Day-N PM extract-physics-trajectory-Vjaz9 (2026-05-22, full session)
+
+**Session shape:** physics substrate extraction → 3 conversion
+attempts to leaderboard lift → all parity vs ceiling at small n →
+submitting from sibling branch this cycle.
+
+**Phase 1 (substrate, commits 72fe45a + 4980813 + 923852e + 877764b):**
+extracted `lib/kinematic_table.py` (436 LOC + 621 LOC of parity
+tests) from `claude/strategy-axis-decision-3437`. Added env-gated
+priming in `agents/baseline/main.py:863-870`. Bench env-OFF→ON p95
+859→741 ms (−14%). A/B vs `baseline_full` at n=64: 31/64 = 48.4%,
+Wilson [0.366, 0.604]. Parity-with-floor.
+
+**Phase 2 (commits a3e21a4 + 5f8274a):** `predict_relative_smart`
+cached wrapper + 9 hot-path swaps. p50 263 ms (−60%). One swap
+reverted (`aim.py`) — proposer.py:151-155 mutates `tgt_list` before
+passing to `aim_orbiting`, so the cache key (pid) returns
+pre-mutation positions. Pin test added.
+
+**Phase 3a (commit c6a0c80) — the canonical H44 fix.** Removed the
+stale bypass at `agents/baseline/proposer.py:998-1002` that skipped
+`predict_fleet_fate` for every `wait_N > 0` candidate. Measured:
+**50% of wait_N candidates per game are geometrically doomed**
+(64% would have gone OOB live, 34% wrong-planet, 1% sun). Pre-fix
+they entered the prerank, got scored by the K=10 rollout (which
+couldn't see the death past its horizon), got picked, got launched
+LIVE. Post-fix they don't enter the prerank.
+
+**Phase 3b (Direction A, commit f70a333) — K-bump.**
+`BASELINE_MIN_HORIZON` / `BASELINE_MAX_HORIZON` env-overridable
+constants; `agents/orbitfix_kt_deep/` uses 40/60 (vs default 25/40).
+Bench p95 = 695 ms, max = 859 ms, well under the 1 s gate. 3/3 vs
+v7_0.
+
+**A/Bs vs the real ceiling (sub 52912707, μ=1175):**
+
+| Focal | Opp | n | Score | Wilson | Verdict |
+|---|---|---:|---|---|---|
+| baseline_kt | baseline_full | 74 | 18W/19L=48.6% | wide | parity vs floor |
+| orbitfix_kt | orbitfix | 4 | 2W/2L=50% | [0.15, 0.85] | parity vs ceiling |
+| orbitfix_kt_deep | orbitfix | 4 | 2W/2L=50% | [0.15, 0.85] | parity vs ceiling |
+
+Three independent slices, all parity. **The orbitfix brain is at a
+structural ceiling that physics-substrate + filter-correctness +
+K-bump don't shift.** Matches the prior 7 falsifications on
+mechanism-axis tweaks (H17, H19, H21, chain bonus, value
+aggregators, etc.).
+
+**Cross-branch alignment:** `claude/consolidate-codebase-refactor-dQAWA`
+hit the same wall independently — their Day 10 Gate 3 falsified
+3-source bundle coordination (only 1.8% of turns benefit; rolled
+back to MAX_BUNDLE_SIZE=2). Two independent attacks on the
+orbitfix ceiling both land at parity at small n.
+
+**Decision this cycle:** PI is submitting from
+`claude/consolidate-codebase-refactor-dQAWA` (their `agents/coord`
+or `agents/minimal`) instead of from this branch's work. Our work
+is infrastructure-ready, not submission-ready.
+
+### Next-session first action — make the best of this session's work
+
+The substrate landed; the conversions to lift didn't. Ranked by EV:
+
+1. **Cross-pollinate with the consolidate branch.** Their
+   `agents/coord/` (MAX_BUNDLE_SIZE=2) imports physics from
+   `agents/minimal/`, which still has the H44 wait_N filter
+   bypass at its line 793-795. Merging Phase 3a + kinematic
+   table priming into that path gives the coord agent both a
+   cleaner-code base AND the correctness fix — at low cost.
+   Their Gate 4 multi-opponent panel is the natural place to A/B
+   the joint variant. **This is the right move if their Gate 4
+   lifts coord into "ship" territory.**
+
+2. **Fix the wallclock-adaptive chooser's non-determinism.**
+   `agents/baseline/chooser.py:120-130` sizes `n_aff = int(budget
+   / per_cand_ms)` from a `time.perf_counter()` probe — per-run
+   timing noise → different cap → different chosen move. Same
+   seed, two runs, different outcome. (Documented in postmortem
+   §"What we learned" #2.) Replacing time-based budget with
+   count-based budget makes A/Bs reproducible AND might unlock
+   lift if signal was being masked by noise. Cost: medium.
+
+3. **Direction B / C from the prior plan.** Smarter opp model
+   inside the rollout (currently `lite_greedy_policy`), or
+   opening trajectory matrix port (Phase η.1 from sibling
+   branch). Only worth it if path 1+2 both wash.
+
+**Push-claim status:** none from this branch. PI submission this
+cycle goes through the consolidate branch per their push-claim
+discipline.
+
+**Read for next session:**
+- `audit/2026-05-22-postmortem-extract-physics-trajectory-Vjaz9.md`
+  — full postmortem with the 5 load-bearing lessons.
+- `audit/2026-05-22-baseline-kt-substrate-wireup.md` — Phase 1+2
+  pre-Phase-3a snapshot.
+
+---
+
+## Day-N PM extract-physics-trajectory-Vjaz9 (2026-05-22, initial substrate extraction)
 
 **Session shape:** surgical, additive extraction of physics substrate
 from the sibling Phase η branch (`claude/strategy-axis-decision-3437`).
@@ -289,7 +388,9 @@ the underlying physics.
 - `audit/2026-05-20-postmortem-strategy-framework-design-OyoYR-rebased.md` — analytical axis closure.
 - `audit/2026-05-19-postmortem-PFhzM-physics-gate-and-mvp-confirmation.md` — Track-C verdict.
 - `audit/2026-05-21-n8-iter1-reactor-ablation.md` (this branch, filename off by one UTC day) — Iter 1 ablation results + the parallel/serial contention finding.
-- `audit/2026-05-22-extract-physics-trajectory.md` (this session) — physics substrate extraction.
+- `audit/2026-05-22-extract-physics-trajectory.md` — initial physics substrate extraction.
+- `audit/2026-05-22-baseline-kt-substrate-wireup.md` — Phase 1 wire-up + Phase 1 A/B.
+- `audit/2026-05-22-postmortem-extract-physics-trajectory-Vjaz9.md` — full-session postmortem (Phase 1+2+3a+Direction A).
 - `/root/.claude/plans/go-effervescent-mochi.md` — full iteration-loop plan including the structural-change pivot list.
 
 ## Rule reminders (most relevant this session)

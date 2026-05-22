@@ -1,5 +1,43 @@
 # audit/friction.md — current friction summary
 
+## 2026-05-22 (claude/extract-physics-trajectory-Vjaz9)
+
+- `tag: stale-state-md` — Forked baseline against the wrong A/B
+  target: `state/MULTI_BRANCH.md` claimed ceiling μ=1117.9 but the
+  real Kaggle ceiling was sub 52912707 (μ=1175), submitted the
+  day before. Lost a session-worth of A/B runs against the floor
+  before noticing. Root cause: state file written 2026-05-21,
+  not refreshed after the 2026-05-22 04:56 UTC submission.
+  **Fix:** before any baseline fork, run `kaggle competitions
+  submissions <comp> | head -5` to verify the live rolling pair.
+  Codify as Rule 32b (extend Rule 32's session-start git fetch
+  to include a Kaggle-CLI submissions fetch).
+
+- `tag: wallclock-adaptive-chooser-nondeterminism` —
+  `agents/baseline/chooser.py:120-130` sizes `n_aff = int(budget /
+  per_cand_ms)` from a `time.perf_counter()` probe. Per-run timing
+  noise → different cap → different chosen move. Same seed, two
+  runs of the SAME code, different game outcomes. Observed in
+  bench (env-ON 0/3 wins) vs diff_v3 single-process (env-ON 1/1
+  win) on seed=0. Implication: any A/B at n<32 is below the
+  noise floor for this chooser. **Fix candidate:** replace the
+  time-based budget with a count-based budget; the kinematic
+  table makes per-candidate cost predictable enough. Logged for
+  next session.
+
+- `tag: bundler-refuses-cross-agent-wrapper` (re-confirmed) —
+  `scripts/bundle_agent.py` refuses `agents/baseline_kt/main.py`
+  with "no callable `agent`" because the bundler strips
+  `from agents.baseline.main import agent` without inlining the
+  body. Original friction tag the bundler safety check was
+  added for; still applies. **Mitigation:** wrapper agents are
+  local-eval only; submissions bundle from `agents/baseline/`
+  directly with env-var setdefaults post-injected (see
+  `submissions/baseline_full.py:6-19` for the pattern).
+  Documented in `agents/baseline_kt/main.py` module docstring.
+
+
+
 > One entry per distinct friction event. Format:
 >
 > ```
