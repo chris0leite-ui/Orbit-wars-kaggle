@@ -19,6 +19,7 @@ from agents.coord.main import (
     NEAREST_SOURCES_PER_TARGET,
     TIER2_BUDGET_MS,
     _bundle_cheap_delta,
+    _bundle_fire_now_viable,
     _bundle_to_launches,
     _cluster_arrival_windows,
     _emit_subsets,
@@ -27,7 +28,9 @@ from agents.coord.main import (
     _resolve_target_post_bundle,
     _synthesise_post_arrival_obs,
     _used_ships_per_source,
+    agent as coord_agent,
     cheap_filter_bundles,
+    emit_bundle_actions,
     enumerate_attack_bundles,
     enumerate_defend_bundles,
     enumerate_recapture_bundles,
@@ -976,3 +979,191 @@ def test_lagrangian_clear_shadow_price_resolves_source_conflict():
     assert competing_a in out
     assert competing_b not in out
     assert sum(b.tier2_score for b in out) == 50.0
+
+
+# ---------------------------------------------------------------------------
+# Day 7: emit_bundle_actions + agent() entry.
+# ---------------------------------------------------------------------------
+
+def _wait_bundle(target_id, src_id, ships, wait_N, eta=2, kind=BundleKind.ATTACK):
+    """A single-leg bundle with the given wait_N — for safeguard tests."""
+    return Bundle(
+        target_id=target_id,
+        arrival_step=wait_N + eta,
+        legs=(Leg(src_id=src_id, ships=ships, angle=0.0, wait_N=wait_N, eta=eta),),
+        kind=kind,
+        tier2_score=10.0,
+    )
+
+
+def _mixed_wait_bundle(target_id, fire_now_src, fire_now_ships,
+                       wait_src, wait_ships, wait_N=5,
+                       kind=BundleKind.ATTACK):
+    """A two-leg bundle: one fire-now, one delayed."""
+    return Bundle(
+        target_id=target_id,
+        arrival_step=wait_N + 2,
+        legs=(
+            Leg(src_id=fire_now_src, ships=fire_now_ships, angle=0.0,
+                wait_N=0, eta=2),
+            Leg(src_id=wait_src, ships=wait_ships, angle=0.1,
+                wait_N=wait_N, eta=2),
+        ),
+        kind=kind,
+        tier2_score=10.0,
+    )
+
+
+def test_emit_bundle_actions_empty_returns_empty():
+    src = _planet(0, 0, 10.0, 50.0, ships=20)
+    world = _world(0, [src])
+    model = WorldModel.from_world(world)
+    out = emit_bundle_actions([], world, model, me=0)
+    assert out == []
+
+
+def test_emit_bundle_actions_fire_now_only():
+    """All-wait_N=0 bundle: emits the leg as [src_id, angle, ships]."""
+    src = _planet(0, 0, 10.0, 50.0, ships=50)
+    tgt = _planet(1, 1, 14.0, 50.0, ships=5)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    b = _wait_bundle(target_id=1, src_id=0, ships=20, wait_N=0)
+    out = emit_bundle_actions([b], world, model, me=0)
+    assert out == [[0, 0.0, 20]]
+
+
+def test_emit_bundle_actions_all_delayed_emits_nothing():
+    """All-wait_N>0 bundle: reserved, no immediate move."""
+    src = _planet(0, 0, 10.0, 50.0, ships=50)
+    tgt = _planet(1, 1, 14.0, 50.0, ships=5)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    b = _wait_bundle(target_id=1, src_id=0, ships=20, wait_N=5)
+    out = emit_bundle_actions([b], world, model, me=0)
+    assert out == []
+
+
+def test_emit_bundle_actions_mixed_safe_emits_fire_now():
+    """Mixed-wait bundle where fire-now subset is viable standalone —
+    emits the fire-now leg only.
+    """
+    src_a = _planet(0, 0, 10.0, 50.0, ships=80)
+    src_b = _planet(1, 0, 10.0, 60.0, ships=80)
+    tgt = _planet(2, -1, 14.0, 55.0, ships=3)  # neutral, weak
+    world = _world(0, [src_a, src_b, tgt])
+    model = WorldModel.from_world(world)
+    # Fire-now leg with 50 ships easily captures 3-ship neutral.
+    b = _mixed_wait_bundle(
+        target_id=2, fire_now_src=0, fire_now_ships=50,
+        wait_src=1, wait_ships=30, wait_N=5,
+    )
+    out = emit_bundle_actions([b], world, model, me=0)
+    assert len(out) == 1
+    assert out[0][0] == 0  # fire-now source id
+    assert out[0][2] == 50  # fire-now ships
+
+
+def test_emit_bundle_actions_mixed_unsafe_drops_bundle():
+    """Mixed-wait bundle where fire-now subset can't hold — drops entirely.
+
+    Fire-now leg captures the target marginally, but a strong nearby opp
+    immediately recaptures: counter_force >> SAFETY_MARGIN * garrison.
+    """
+    src_a = _planet(0, 0, 10.0, 50.0, ships=80, production=2)
+    src_b = _planet(1, 0, 10.0, 60.0, ships=60, production=2)
+    tgt = _planet(2, 1, 45.0, 50.0, ships=3, production=1)  # far + weak
+    strong = _planet(3, 1, 60.0, 50.0, ships=300, production=5)  # close to tgt
+    world = _world(0, [src_a, src_b, tgt, strong])
+    model = WorldModel.from_world(world)
+    # Fire-now leg from src_a: ~50 ships, ~35-step flight. Marginally
+    # captures tgt (delivered ≈ 15), but `strong` enemy's recapture
+    # force vastly exceeds it.
+    b = _mixed_wait_bundle(
+        target_id=2, fire_now_src=0, fire_now_ships=50,
+        wait_src=1, wait_ships=40, wait_N=5,
+    )
+    out = emit_bundle_actions([b], world, model, me=0)
+    # Should drop because the fire-now leg alone can't hold against
+    # the strong recapture.
+    assert out == []
+
+
+def test_emit_bundle_actions_source_dedup_across_bundles():
+    """Two selected bundles sharing a source — only the first emits."""
+    src = _planet(0, 0, 10.0, 50.0, ships=80)
+    tgt_a = _planet(1, 1, 14.0, 50.0, ships=5)
+    tgt_b = _planet(2, 1, 14.0, 60.0, ships=5)
+    world = _world(0, [src, tgt_a, tgt_b])
+    model = WorldModel.from_world(world)
+    b1 = _wait_bundle(target_id=1, src_id=0, ships=20, wait_N=0)
+    b2 = _wait_bundle(target_id=2, src_id=0, ships=30, wait_N=0)
+    out = emit_bundle_actions([b1, b2], world, model, me=0)
+    # Only first bundle's leg emitted (second's source already used).
+    assert len(out) == 1
+    assert out[0][2] == 20  # the FIRST bundle's ship count
+
+
+def test_emit_defend_bundle_always_viable_safeguard():
+    """DEFEND bundles bypass the standalone-hold check (always viable)."""
+    own = _planet(0, 0, 10.0, 50.0, ships=5, production=2)
+    peer = _planet(1, 0, 11.0, 50.0, ships=80)
+    enemy = _planet(2, 1, 16.0, 50.0, ships=50)
+    world = _world(0, [own, peer, enemy])
+    model = WorldModel.from_world(world)
+    # Mixed-wait DEFEND bundle — fire-now subset wouldn't pass any
+    # standalone-attack check, but DEFEND always returns viable.
+    b = Bundle(
+        target_id=0, arrival_step=7,
+        legs=(
+            Leg(src_id=1, ships=3, angle=0.0, wait_N=0, eta=2),
+            Leg(src_id=1, ships=30, angle=0.1, wait_N=5, eta=2),
+        ),
+        kind=BundleKind.DEFEND,
+        tier2_score=5.0,
+    )
+    fire_now = [L for L in b.legs if L.wait_N == 0]
+    assert _bundle_fire_now_viable(b, fire_now, world, model, me=0) is True
+
+
+# ---------------------------------------------------------------------------
+# Day 7 agent() entry — smoke tests.
+# ---------------------------------------------------------------------------
+
+def test_agent_empty_obs_returns_empty():
+    """Agent with no planets returns []."""
+    obs = {"player": 0, "planets": [], "fleets": [],
+           "angular_velocity": 0.0, "comet_planet_ids": [], "step": 0}
+    assert coord_agent(obs) == []
+
+
+def test_agent_no_my_planets_returns_empty():
+    """Agent with only enemy planets returns []."""
+    e = _planet(0, 1, 50.0, 50.0, ships=5)
+    obs = {"player": 0, "planets": [(e.id, e.owner, e.x, e.y, e.radius, e.ships, e.production)],
+           "fleets": [], "angular_velocity": 0.0, "comet_planet_ids": [], "step": 0}
+    assert coord_agent(obs) == []
+
+
+def test_agent_returns_well_formed_moves():
+    """Agent on a real synthesised state returns [[int, float, int], ...]."""
+    src = _planet(0, 0, 10.0, 50.0, ships=80, production=2)
+    peer = _planet(1, 0, 10.0, 60.0, ships=60, production=2)
+    tgt = _planet(2, 1, 14.0, 55.0, ships=10, production=1)
+    obs = {
+        "player": 0,
+        "planets": [
+            (p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production)
+            for p in [src, peer, tgt]
+        ],
+        "fleets": [], "angular_velocity": 0.0,
+        "comet_planet_ids": [], "step": 0,
+    }
+    moves = coord_agent(obs)
+    assert isinstance(moves, list)
+    for m in moves:
+        assert len(m) == 3
+        assert isinstance(m[0], int)
+        assert isinstance(m[1], float)
+        assert isinstance(m[2], int)
+        assert m[2] >= 1  # positive ship count

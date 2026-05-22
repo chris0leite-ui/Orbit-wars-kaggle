@@ -15,6 +15,8 @@ from enum import Enum
 from itertools import combinations
 import time
 
+from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
+
 from agents.minimal.main import (
     EPISODE_STEPS,
     GAMMA,
@@ -24,6 +26,7 @@ from agents.minimal.main import (
     SIM_SETTLE_TURNS,
     CHEAP_REJECT_THRESHOLD,
     NUM_TARGETS_PER_SOURCE,
+    WALLCLOCK_BUDGET_MS,
     affordable_validate_cap,
     aim_and_eta,
     build_trajectory_baseline,
@@ -33,13 +36,17 @@ from agents.minimal.main import (
     nearest_k,
     score_candidate_v4_joint,
     wait_then_fire_variants,
+    _as_dict,
+    _num_seats,
     _source_survives_launch,
     _target_holdable_after_capture,
     _target_cost_parity_ok,
 )
+from lib.fast_sim import from_obs as fs_from_obs
+from lib.intent import World
 from lib.scoring import pv_horizon
 from lib.trajectory import predict_fleet_fate
-from lib.world_model import WAVE_LOOKAHEAD, comet_remaining_lifetime
+from lib.world_model import WAVE_LOOKAHEAD, WorldModel, comet_remaining_lifetime
 
 
 NEAREST_SOURCES_PER_TARGET = 5
@@ -918,8 +925,142 @@ def lagrangian_clear(scored: list["Bundle"], my_planets,
     return best_feasible
 
 
-def agent(obs, configuration=None):
-    """Placeholder — Day 7 wires the full bundle pipeline."""
-    raise NotImplementedError(
-        "agents.coord: bundle pipeline not yet wired; see plan day 7"
+# ---------------------------------------------------------------------------
+# Emission — bundles → env-format moves.
+# ---------------------------------------------------------------------------
+
+def _bundle_fire_now_viable(bundle: "Bundle", fire_now_legs: list["Leg"],
+                            world, model, me: int) -> bool:
+    """Stranded-singleton safeguard for mixed-wait bundles.
+
+    A bundle whose legs include BOTH wait_N==0 (fire-now) and wait_N>0
+    (reserved) emits only the fire-now subset this turn. If the bundle's
+    expected outcome depends on ALL legs arriving together, firing only
+    a strict subset wastes ships. This check verifies the fire-now
+    subset would have been viable as a stand-alone bundle.
+
+    DEFEND: always viable — extra ships on an own planet can't be a
+    net-negative even if they're insufficient to cover the threat.
+
+    ATTACK / RECAPTURE: combined fire-now ships must satisfy
+    `_target_holdable_after_capture` standalone.
+    """
+    if bundle.kind == BundleKind.DEFEND:
+        return True
+    tgt = world.planets_by_id.get(int(bundle.target_id))
+    if tgt is None:
+        return False
+    if not fire_now_legs:
+        return False
+    fire_now_ships = sum(int(L.ships) for L in fire_now_legs)
+    src_ref_id = min(int(L.src_id) for L in fire_now_legs)
+    src_ref = world.planets_by_id.get(src_ref_id)
+    if src_ref is None:
+        return False
+    eta = max(int(L.eta) for L in fire_now_legs)
+    return _target_holdable_after_capture(
+        src_ref, tgt, int(fire_now_ships), 0, int(eta), world, model, me,
     )
+
+
+def emit_bundle_actions(selected: list["Bundle"], world, model,
+                        me: int) -> list[list]:
+    """Convert Lagrangian-selected bundles to env-format moves.
+
+    Receding-horizon: only wait_N==0 legs emit this turn; wait_N>0 legs
+    are conceptually reserved but produce no immediate action (next turn
+    re-clears with fresh state).
+
+    Cross-bundle source-deduplication: one launch per source per turn
+    (matches minimal's emit convention).
+
+    Stranded-singleton safeguard: bundles with mixed wait_N legs only
+    emit their fire-now subset if it's viable standalone — see
+    `_bundle_fire_now_viable`.
+    """
+    moves: list[list] = []
+    used_srcs: set[int] = set()
+    for bundle in selected:
+        fire_now_legs = [L for L in bundle.legs if int(L.wait_N) == 0]
+        if not fire_now_legs:
+            continue
+        if len(fire_now_legs) < len(bundle.legs):
+            if not _bundle_fire_now_viable(
+                bundle, fire_now_legs, world, model, me,
+            ):
+                continue
+        for leg in fire_now_legs:
+            sid = int(leg.src_id)
+            if sid in used_srcs:
+                continue
+            used_srcs.add(sid)
+            moves.append([sid, float(leg.angle), int(leg.ships)])
+    return moves
+
+
+# ---------------------------------------------------------------------------
+# Agent entry — orchestrates the full pipeline.
+# ---------------------------------------------------------------------------
+
+def agent(obs, configuration=None) -> list[list]:
+    """Multi-source bundle coordinator. Pipeline per turn:
+
+      1. Parse obs → world, model, snap_base, target_pool.
+      2. Enumerate attack + defend bundles.
+      3. Cheap-filter to top-K by closed-form Δ-favor.
+      4. Tier-2 score via score_candidate_v4_joint (budget-aware).
+      5. Lagrangian clearing — pick bundles with shadow-priced selection.
+      6. Emit fire-now legs as env-format moves.
+
+    Returns [] if no own planets, no enemy/neutral planets, or no
+    positive-value bundles after Tier-2 scoring.
+    """
+    t_start = time.perf_counter()
+
+    obs_d = _as_dict(obs)
+    me = int(obs_d.get("player", 0))
+
+    raw_planets = obs_d.get("planets", []) or []
+    raw_fleets = obs_d.get("fleets", []) or []
+    if not raw_planets:
+        return []
+
+    planets = [Planet(*p) for p in raw_planets]
+    fleets = [Fleet(*f) for f in raw_fleets]
+    my_planets = [p for p in planets if int(p.owner) == me]
+    other_planets = [p for p in planets if int(p.owner) != me]
+    if not my_planets or not other_planets:
+        return []
+
+    world = World.from_obs(obs_d)
+    model = WorldModel.from_world(world)
+    omega = float(obs_d.get("angular_velocity", 0.0))
+    num_seats = _num_seats(planets, fleets)
+
+    snap_base = fs_from_obs(obs, num_seats=num_seats)
+
+    attacks = enumerate_attack_bundles(
+        my_planets, other_planets, world, model, me, omega,
+    )
+    defends = enumerate_defend_bundles(my_planets, world, model, me, omega)
+    all_bundles = attacks + defends
+    if not all_bundles:
+        return []
+
+    cheap = cheap_filter_bundles(
+        all_bundles, world, model, me, num_seats, K=CHEAP_FILTER_TOP_K,
+    )
+
+    # Budget-aware Tier-2: pass remaining wallclock, reserving ~60ms for
+    # Lagrangian + emit + outer-env overhead.
+    elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+    tier2_budget_ms = max(
+        50.0, float(WALLCLOCK_BUDGET_MS) - elapsed_ms - 60.0,
+    )
+    scored = tier2_score_bundles(
+        cheap, snap_base, me, num_seats, world,
+        wallclock_ms=tier2_budget_ms,
+    )
+
+    selected = lagrangian_clear(scored, my_planets=my_planets)
+    return emit_bundle_actions(selected, world, model, me)
