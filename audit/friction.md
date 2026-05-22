@@ -118,6 +118,44 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-22 (claude/consolidate-codebase-refactor-dQAWA — coord shipped + H44)
+
+- `tag: bundler-multiline-cross-agent-import-orphans` — bundling
+  `agents/coord/` failed with IndentationError at line 8836 because
+  the bundler's per-line regex strips the first line of `from
+  agents.minimal.main import (\n EPISODE_STEPS,\n ...\n)` but leaves
+  the continuation lines as orphan indented text. Friction `multi-
+  line-imports-leak-continuation-lines` was documented in commit
+  4094aa1 (2026-05-17). **Fix:** convert to single-line imports +
+  add `agents/coord/_minimal_inline.py` copy (the bundler natively
+  inlines same-directory submodules). Cost: ~1.5h to diagnose, copy
+  the helpers from minimal/main.py, and verify the bundle smokes.
+- `tag: bundler-doesnt-follow-cross-agent-main-imports` — even with
+  single-line imports, the bundler's `_topo_sort_agent_submodules`
+  only inlines files in the SAME `agent_dir`. Cross-agent imports
+  (`from agents.minimal.main import X`) still produce NameError at
+  runtime. **Fix:** for this session, copy minimal's helpers into
+  `agents/coord/_minimal_inline.py` (700 LOC duplication).
+  Longer-term: extend bundler to detect & inline cross-agent main
+  modules (~150 LOC bundler change, deferred).
+- `tag: bundler-parity-gate-syspath-collision` — bundler's parity
+  gate's source-agent loader fails with `attempted relative import
+  with no known parent package` from `kaggle_environments/envs/
+  lux_ai_s3/agents.py`. Some sys.path interaction puts the
+  kaggle_environments `agents.py` ahead of the repo's `agents/`.
+  **Fix:** ran bundle with `--skip-parity-gate` and verified
+  manually via fast.py-equivalent smoke (30-turn game vs minimal,
+  no crash). Pre-existing bundler bug, not coord-specific.
+- `tag: h44-wait-N-trajectory-bypass-inherited` — coord's
+  `_legs_for_pair` and `_minimal_inline::score_candidate_v4_joint`
+  inherited the wait_N>0 admissibility bypass from baseline/
+  minimal. H44 audit (btjeK 2026-05-20) measured ~65% of live
+  in-flight failures came from this bypass; sibling branch
+  `claude/extract-physics-trajectory-Vjaz9` (c6a0c80) fixed it
+  for baseline. **Fix:** Day 12 cherry-picked the same fix to
+  coord's two sites. Correctness only — source-branch verdict
+  said the fix doesn't break the chooser-axis ceiling.
+
 ## 2026-05-22 (claude/review-skills-improvements-moKOR — orbital safety completion + ship)
 
 - `tag: bundle-agent-doesnt-inline-from-baseline-main` — bundling
