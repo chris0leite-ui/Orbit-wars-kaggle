@@ -18,31 +18,34 @@ import time
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
-from agents.minimal.main import (
-    EPISODE_STEPS,
-    GAMMA,
-    MIN_FLEET_SIZE,
-    MIN_HORIZON,
-    MAX_HORIZON,
-    SIM_SETTLE_TURNS,
-    CHEAP_REJECT_THRESHOLD,
-    NUM_TARGETS_PER_SOURCE,
-    WALLCLOCK_BUDGET_MS,
-    affordable_validate_cap,
-    aim_and_eta,
-    build_trajectory_baseline,
-    cheap_marginal_value,
-    enumerate_ship_counts,
-    favor_hybrid,
-    nearest_k,
-    score_candidate_v4_joint,
-    wait_then_fire_variants,
-    _as_dict,
-    _num_seats,
-    _source_survives_launch,
-    _target_holdable_after_capture,
-    _target_cost_parity_ok,
-)
+# Single-line imports for bundle-safety. The bundler's regex strips line 1
+# of a multi-line `from X import (...)` but leaves the continuation lines
+# as orphan indented text → IndentationError. agents/coord/_minimal_inline
+# is a local copy of minimal's helpers so the bundler can inline it via
+# the standard intra-package submodule pattern.
+from agents.coord._minimal_inline import EPISODE_STEPS
+from agents.coord._minimal_inline import GAMMA
+from agents.coord._minimal_inline import MIN_FLEET_SIZE
+from agents.coord._minimal_inline import MIN_HORIZON
+from agents.coord._minimal_inline import MAX_HORIZON
+from agents.coord._minimal_inline import SIM_SETTLE_TURNS
+from agents.coord._minimal_inline import CHEAP_REJECT_THRESHOLD
+from agents.coord._minimal_inline import NUM_TARGETS_PER_SOURCE
+from agents.coord._minimal_inline import WALLCLOCK_BUDGET_MS
+from agents.coord._minimal_inline import affordable_validate_cap
+from agents.coord._minimal_inline import aim_and_eta
+from agents.coord._minimal_inline import build_trajectory_baseline
+from agents.coord._minimal_inline import cheap_marginal_value
+from agents.coord._minimal_inline import enumerate_ship_counts
+from agents.coord._minimal_inline import favor_hybrid
+from agents.coord._minimal_inline import nearest_k
+from agents.coord._minimal_inline import score_candidate_v4_joint
+from agents.coord._minimal_inline import wait_then_fire_variants
+from agents.coord._minimal_inline import _as_dict
+from agents.coord._minimal_inline import _num_seats
+from agents.coord._minimal_inline import _source_survives_launch
+from agents.coord._minimal_inline import _target_holdable_after_capture
+from agents.coord._minimal_inline import _target_cost_parity_ok
 from lib.fast_sim import from_obs as fs_from_obs
 from lib.intent import World
 from lib.scoring import pv_horizon
