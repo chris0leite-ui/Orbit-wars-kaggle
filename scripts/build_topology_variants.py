@@ -46,14 +46,31 @@ LAZY_BLOCK_RE = re.compile(
     re.MULTILINE,
 )
 
+# Phase α: same idea for the smooth-ΔW lazy gate.
+SMOOTH_DELTA_W_RE = re.compile(
+    r"(def _smooth_delta_w_enabled\(\) -> bool:\n)"
+    r"((?:    .*\n)+?)"
+    r"(\n)",
+    re.MULTILINE,
+)
 
-def _replace_with(src: str, retval: str) -> str:
-    """Replace each lazy `_*_enabled()` body with `return <retval>`."""
+
+def _replace_topology(src: str, retval: str) -> str:
+    """Replace each topology lazy `_*_enabled()` body with `return <retval>`."""
     def repl(m: re.Match) -> str:
         signature = m.group(1)
         trailing = m.group(3)
         return f"{signature}    return {retval}  # hardcoded by build_topology_variants.py\n{trailing}"
     return LAZY_BLOCK_RE.sub(repl, src)
+
+
+def _replace_smooth_delta_w(src: str, retval: str) -> str:
+    """Replace `_smooth_delta_w_enabled()` body."""
+    def repl(m: re.Match) -> str:
+        signature = m.group(1)
+        trailing = m.group(3)
+        return f"{signature}    return {retval}  # hardcoded by build_topology_variants.py\n{trailing}"
+    return SMOOTH_DELTA_W_RE.sub(repl, src)
 
 
 def main() -> int:
@@ -64,40 +81,64 @@ def main() -> int:
         return 1
 
     src = SRC.read_text()
-    # Sanity: confirm we see all 4 lazy functions.
-    matches = LAZY_BLOCK_RE.findall(src)
-    if len(matches) != 4:
-        print(f"ERROR: expected 4 lazy `_*_enabled()` blocks; found {len(matches)}.",
+    # Sanity: confirm we see all 4 topology lazy fns + 1 smooth-ΔW lazy fn.
+    topo_matches = LAZY_BLOCK_RE.findall(src)
+    if len(topo_matches) != 4:
+        print(f"ERROR: expected 4 lazy `_*_enabled()` topology blocks; "
+              f"found {len(topo_matches)}.", file=sys.stderr)
+        return 1
+    smooth_matches = SMOOTH_DELTA_W_RE.findall(src)
+    if len(smooth_matches) != 1:
+        print(f"ERROR: expected 1 `_smooth_delta_w_enabled()` block; "
+              f"found {len(smooth_matches)}. (Did Phase α land in tree?)",
               file=sys.stderr)
         return 1
 
-    on_src = _replace_with(src, "True")
-    off_src = _replace_with(src, "False")
+    # Two baseline variants (topology on/off, smooth-ΔW off — Phase β isolation):
+    on_src = _replace_smooth_delta_w(_replace_topology(src, "True"), "False")
+    off_src = _replace_smooth_delta_w(_replace_topology(src, "False"), "False")
 
     OUT_ON.write_text(on_src)
     OUT_OFF.write_text(off_src)
 
-    # Verify both load and report the right hardcoded value.
-    for path, expected in [(OUT_ON, True), (OUT_OFF, False)]:
+    # Phase α variants (smooth-ΔW on/off, topology off — Phase α isolation):
+    alpha_on = OUT_ON.parent / "smooth_dw_on.py"
+    alpha_off = OUT_ON.parent / "smooth_dw_off.py"
+    alpha_on.write_text(
+        _replace_smooth_delta_w(_replace_topology(src, "False"), "True")
+    )
+    alpha_off.write_text(
+        _replace_smooth_delta_w(_replace_topology(src, "False"), "False")
+    )
+
+    # Verify all four bundles load and report the right hardcoded value.
+    for path, topo, smooth in [
+        (OUT_ON, True, False),
+        (OUT_OFF, False, False),
+        (alpha_on, False, True),
+        (alpha_off, False, False),
+    ]:
         import importlib.util
-        spec = importlib.util.spec_from_file_location("m", str(path))
+        spec = importlib.util.spec_from_file_location(path.stem, str(path))
         m = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(m)
-        flag = m.__dict__.get("_topology_features_enabled")
-        if flag is None:
-            print(f"FAIL: {path.name} missing _topology_features_enabled",
-                  file=sys.stderr)
+        topo_fn = m.__dict__.get("_topology_features_enabled")
+        smooth_fn = m.__dict__.get("_smooth_delta_w_enabled")
+        if topo_fn is None or smooth_fn is None:
+            print(f"FAIL: {path.name} missing gate fn", file=sys.stderr)
             return 1
-        actual = flag()
-        if actual != expected:
-            print(f"FAIL: {path.name} _topology_features_enabled() = {actual}, expected {expected}",
-                  file=sys.stderr)
+        a_topo = topo_fn()
+        a_smooth = smooth_fn()
+        if a_topo != topo or a_smooth != smooth:
+            print(f"FAIL: {path.name} topo={a_topo}/{topo}, "
+                  f"smooth={a_smooth}/{smooth}", file=sys.stderr)
             return 1
         if not callable(getattr(m, "agent", None)):
-            print(f"FAIL: {path.name} no callable agent symbol", file=sys.stderr)
+            print(f"FAIL: {path.name} no callable agent symbol",
+                  file=sys.stderr)
             return 1
         print(f"OK: {path.name} loads, agent callable, "
-              f"_topology_features_enabled() = {actual} (expected {expected}), "
+              f"topology={a_topo}, smooth_ΔW={a_smooth}, "
               f"{path.stat().st_size} bytes")
 
     return 0

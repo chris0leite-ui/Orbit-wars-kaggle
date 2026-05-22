@@ -99,6 +99,24 @@ def is_winning_state(world: World, my_id: int, opp_id: int,
     )
 
 
+def winning_margin(world: World, my_id: int, opp_id: int,
+                   episode_steps: int = EPISODE_STEPS) -> int:
+    """Signed scalar form of `is_winning_state`.
+
+    Returns `prod_advantage × remaining_turns − opp_pool`. Positive ⇒
+    in winning state; magnitude ⇒ how much "ship-equivalent" margin.
+    Used by `lp_outcome._endgame_bonus` smooth-ΔW path (Phase α) to
+    grade captures by their predicate impact instead of binary tip.
+
+    Property: `is_winning_state(...) == (winning_margin(...) > 0)`.
+    """
+    return (
+        prod_advantage(world, my_id, opp_id)
+        * remaining_turns(world, episode_steps)
+        - opp_pool(world, opp_id, episode_steps)
+    )
+
+
 def is_winning_state_if_owned(world: World, my_id: int, opp_id: int,
                               extra_planet_ids: set[int],
                               episode_steps: int = EPISODE_STEPS) -> bool:

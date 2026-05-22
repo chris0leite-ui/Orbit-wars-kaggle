@@ -46,6 +46,7 @@ from lib.joint_solver.predicate import (
     is_winning_state,
     is_winning_state_if_lost,
     is_winning_state_if_owned,
+    remaining_turns,
 )
 from lib.mirror import detect_num_players
 
@@ -124,6 +125,42 @@ SHIP_COST_THREAT_ETA_THRESHOLD = 30
 # makes predicate flips dominate marginal production differences. Tune
 # down to 100 if introspect shows the bonus over-firing.
 LAMBDA_ENDGAME = 1000.0
+
+
+# Phase α (composed-noodling-riddle plan): smooth-ΔW endgame replacement.
+# The step `_endgame_bonus` returns ±LAMBDA_ENDGAME or 0, dominating the
+# objective and crowding out finer-grained value signals (topology
+# features fired but did not move LP argmax — see audit/2026-05-23/
+# phase-beta-result-and-next.md). Replacement: λ_W · ΔW(p, S), where
+# ΔW is the per-(planet, subset) contribution to
+# `winning_margin = prod_advantage × remaining_turns − opp_pool`.
+# Smooth across captures, signed (rewards both captures and prevented
+# losses), magnitude-proportional to planet importance.
+#
+# Calibration default (from audit/2026-05-23/calibrate_W_results.json,
+# r(W, focal_reward)=0.545 — marginal; the Plan agent's pressure-test
+# recommended starting conservative): LAMBDA_W = 0.3. Per-planet ΔW
+# magnitudes empirically run 600-5000 for a meaningful neutral/opp
+# capture, so λ_W=0.3 puts the smooth contribution at ~200-1500 per
+# planet — comparable to topology lambdas (50-300) and prod_stream
+# (200-800), so it influences argmax without dominating.
+LAMBDA_W_DEFAULT = 0.3
+
+
+def _smooth_delta_w_enabled() -> bool:
+    """Read env at call time (lazy) — Phase β taught us setdefault loses
+    races against the inlined bundle's module-init order."""
+    return _os.environ.get("LP_SMOOTH_DELTA_W", "0") == "1"
+
+
+def _lambda_w() -> float:
+    raw = _os.environ.get("LP_LAMBDA_W", "")
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return LAMBDA_W_DEFAULT
 
 
 # Level 1 — per-planet topology features (PI directive 2026-05-21: "we
@@ -456,10 +493,10 @@ def _ship_cost(col: Column, world, model, my_id: int) -> float:
     return float(SHIP_COST_THREAT_MULT) * base
 
 
-def _endgame_bonus(planet_id: int, row: OutcomeRow, world,
-                   my_id: int, opp_id: int | None,
-                   currently_winning: bool) -> float:
-    """Per-(planet, subset) endgame predicate bonus / penalty.
+def _endgame_bonus_step(planet_id: int, row: OutcomeRow, world,
+                        my_id: int, opp_id: int | None,
+                        currently_winning: bool) -> float:
+    """Per-(planet, subset) endgame predicate bonus / penalty — STEP form.
 
     `currently_winning` is `is_winning_state(world, my_id, opp_id)`
     pre-computed once per LP solve (cheap; passed in to avoid O(planets)
@@ -468,10 +505,6 @@ def _endgame_bonus(planet_id: int, row: OutcomeRow, world,
     Cases:
       + λ_endgame  if currently NOT mine, row.owner_T == me, AND owning
                    this planet would satisfy is_winning_state_if_owned.
-                   Covers "tip from losing → winning" (primary intent)
-                   AND "already-winning + extra capture" (idempotent —
-                   same magnitude as retain bonus; MILP solution
-                   quality is unchanged).
       + λ_endgame  if currently mine, row.owner_T == me, AND we are
                    currently winning (defending in winning state).
       − λ_endgame  if currently mine, row.owner_T != me, AND losing
@@ -480,9 +513,7 @@ def _endgame_bonus(planet_id: int, row: OutcomeRow, world,
 
     Exception safety: predicate calls are wrapped — any error from
     `is_winning_state_if_owned` / `is_winning_state_if_lost` falls
-    through to 0. Matches the try/except guarding the upstream
-    `currently_winning` pre-computation; the MILP cost-vector loop
-    must never raise.
+    through to 0.
     """
     if opp_id is None:
         return 0.0
@@ -496,25 +527,106 @@ def _endgame_bonus(planet_id: int, row: OutcomeRow, world,
 
     try:
         if cur_owner != me:
-            # We don't currently own. Bonus on capture-puts-us-in-winning.
             if pred_owner == me:
                 if is_winning_state_if_owned(world, me, opp, {int(planet_id)}):
                     return LAMBDA_ENDGAME
             return 0.0
-        # cur_owner == me. Bonus on retain-in-winning-state; penalty on
-        # loss-if-flipping.
         if pred_owner == me:
             return LAMBDA_ENDGAME if currently_winning else 0.0
-        # We lose this planet in this subset.
         if is_winning_state_if_lost(world, me, opp, {int(planet_id)}):
-            # Still winning even if we lose this one — no penalty.
             return 0.0
         if currently_winning:
-            # Losing this planet flips us out of winning state.
             return -LAMBDA_ENDGAME
         return 0.0
     except Exception:
         return 0.0
+
+
+def _endgame_bonus_smooth(planet_id: int, row: OutcomeRow, world,
+                          my_id: int, opp_id: int | None) -> float:
+    """Phase α — smooth-ΔW endgame bonus.
+
+    Returns `λ_W · ΔW(p, S)` where ΔW is the change in
+    `winning_margin = prod_advantage × remaining_turns − opp_pool`
+    attributable to this (planet, subset) ownership transition.
+
+    Closed-form: only the per-planet ownership change contributes;
+    other planets' terms cancel. The decomposition:
+
+      Δprod_advantage =
+         +prod   if (cur != me, pred == me)  [we capture, gain prod]
+         +prod   if (cur == opp, pred == me) [opp also loses prod]
+         −prod   if (cur == me,  pred != me) [we lose, lose prod]
+         −prod   if (cur == me,  pred == opp)[opp also gains prod]
+
+      Δopp_pool =
+         −(ships + prod·rem)  if (cur == opp, pred == me)
+                              [opp loses garrison + future prod stream]
+         +prod·rem            if (cur == me,  pred == opp)
+                              [opp gains future prod stream]
+         (we don't model the ship transfer in opp_pool on our loss —
+         matches `is_winning_state_if_lost`'s conservative approach.)
+
+      ΔW = Δprod_advantage × rem − Δopp_pool
+
+    Signed: positive = captures that strengthen winning margin; negative
+    = subsets that weaken it (e.g. we lose a planet to opp). The
+    objective rewards positive and penalizes negative — defense emerges
+    proportional to planet importance.
+    """
+    if opp_id is None:
+        return 0.0
+    current = world.planets_by_id.get(int(planet_id))
+    if current is None:
+        return 0.0
+    cur_owner = int(current.owner)
+    pred_owner = int(row.owner_T)
+    me = int(my_id)
+    opp = int(opp_id)
+
+    if cur_owner == me and pred_owner == me:
+        return 0.0  # no transition
+    if cur_owner != me and pred_owner != me:
+        return 0.0  # opp/neutral → opp/neutral; we don't care
+
+    prod = int(current.production)
+    ships = int(current.ships)
+    rem = int(remaining_turns(world))
+
+    d_adv = 0
+    d_op = 0
+
+    if cur_owner != me and pred_owner == me:
+        # We capture.
+        d_adv += prod
+        if cur_owner == opp:
+            d_adv += prod         # opp loses prod
+            d_op -= ships + prod * rem  # opp loses garrison + future prod
+    elif cur_owner == me and pred_owner != me:
+        # We lose.
+        d_adv -= prod
+        if pred_owner == opp:
+            d_adv -= prod
+            d_op += prod * rem    # opp gains future prod
+
+    delta_w = d_adv * rem - d_op
+    return _lambda_w() * float(delta_w)
+
+
+def _endgame_bonus(planet_id: int, row: OutcomeRow, world,
+                   my_id: int, opp_id: int | None,
+                   currently_winning: bool) -> float:
+    """Dispatch to step or smooth form based on `LP_SMOOTH_DELTA_W` env.
+
+    Step form (default): Phase 4 Step 1 ±LAMBDA_ENDGAME indicator.
+    Smooth form (opt-in): Phase α λ_W·ΔW signed, magnitude-proportional.
+    The two forms are independent code paths so the A/B isolates the
+    objective change cleanly.
+    """
+    if _smooth_delta_w_enabled():
+        return _endgame_bonus_smooth(planet_id, row, world, my_id, opp_id)
+    return _endgame_bonus_step(planet_id, row, world, my_id, opp_id,
+                               currently_winning)
 
 
 def _per_planet_topology_score(planet_id: int, world, model, sense,

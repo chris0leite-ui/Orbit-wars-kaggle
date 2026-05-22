@@ -359,3 +359,133 @@ def test_solve_outcome_aware_4p_no_behaviour_change():
             f"{res.objective} suggests a bonus magnitude ≥ "
             f"{LAMBDA_ENDGAME} leaked in"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase α — smooth-ΔW endgame replacement tests (Rule 38).
+# ---------------------------------------------------------------------------
+
+def test_smooth_endgame_neutral_capture_proportional_to_prod_and_remaining(
+    monkeypatch,
+):
+    """Smooth ΔW for capturing a neutral: ΔW = prod × remaining_turns.
+    Rule 38: a 3:1 production ratio between two candidate captures must
+    yield a 3:1 smooth-bonus ratio — the step form returns the SAME
+    magnitude (±LAMBDA_ENDGAME or 0) regardless of planet importance,
+    which is the failure mode Phase α addresses.
+    """
+    me = [_planet(0, 0, production=1, ships=10)]
+    neutral_big = [_planet(99, -1, production=3, ships=5, x=20.0)]
+    world_big = _world_from_planets(my_id=0, planets=me + neutral_big, step=100)
+    row_big = _row(subset=(500,), owner_T=0, me_prod=1200, opp_prod=0)
+
+    monkeypatch.setenv("LP_SMOOTH_DELTA_W", "1")
+    monkeypatch.setenv("LP_LAMBDA_W", "1.0")
+    big = _endgame_bonus(planet_id=99, row=row_big, world=world_big,
+                         my_id=0, opp_id=1, currently_winning=False)
+    # rem = 500-100 = 400, neutral capture: d_adv = +prod = +3, d_op = 0
+    # ΔW = 3 × 400 - 0 = 1200; λ_W = 1.0 ⇒ bonus = 1200
+    assert big == pytest.approx(1200.0), (
+        f"smooth ΔW for prod=3 neutral capture: expected 1×3×400=1200; got {big}"
+    )
+
+    neutral_small = [_planet(98, -1, production=1, ships=5, x=20.0)]
+    world_small = _world_from_planets(
+        my_id=0, planets=me + neutral_small, step=100)
+    row_small = _row(subset=(500,), owner_T=0, me_prod=400, opp_prod=0)
+    small = _endgame_bonus(planet_id=98, row=row_small, world=world_small,
+                           my_id=0, opp_id=1, currently_winning=False)
+    assert small == pytest.approx(400.0), (
+        f"smooth ΔW for prod=1 neutral capture: expected 1×1×400=400; got {small}"
+    )
+    assert big / small == pytest.approx(3.0), (
+        f"smooth bonus must scale with prod (3× vs 1×); ratio "
+        f"{big / small}"
+    )
+
+
+def test_smooth_endgame_opp_capture_includes_denial(monkeypatch):
+    """Capturing opp's planet: ΔW = 2×prod × rem + ships (we gain prod,
+    opp loses prod, opp loses garrison's future contribution).
+    """
+    me = [_planet(0, 0, production=1, ships=10)]
+    opp = [_planet(99, 1, production=4, ships=50, x=20.0)]
+    world = _world_from_planets(my_id=0, planets=me + opp, step=100)
+    row = _row(subset=(500,), owner_T=0, me_prod=1200, opp_prod=0)
+
+    monkeypatch.setenv("LP_SMOOTH_DELTA_W", "1")
+    monkeypatch.setenv("LP_LAMBDA_W", "1.0")
+    bonus = _endgame_bonus(planet_id=99, row=row, world=world,
+                           my_id=0, opp_id=1, currently_winning=False)
+    # rem = 400; d_adv = +4 (capture) +4 (opp loses) = +8
+    # d_op  = −(50 + 4×400) = −1650
+    # ΔW = 8 × 400 − (−1650) = 3200 + 1650 = 4850
+    assert bonus == pytest.approx(4850.0), (
+        f"opp capture: ΔW should be 8×400 + 1650 = 4850; got {bonus}"
+    )
+
+
+def test_smooth_endgame_own_loss_to_opp_is_negative(monkeypatch):
+    """Losing one of our planets to opp: ΔW < 0 (we lose prod, opp gains).
+    """
+    me = [_planet(99, 0, production=3, ships=5)]
+    opp = [_planet(1, 1, production=1, ships=10, x=20.0)]
+    world = _world_from_planets(my_id=0, planets=me + opp, step=100)
+    row = _row(subset=(500,), owner_T=1, me_prod=0, opp_prod=1200)
+
+    monkeypatch.setenv("LP_SMOOTH_DELTA_W", "1")
+    monkeypatch.setenv("LP_LAMBDA_W", "1.0")
+    bonus = _endgame_bonus(planet_id=99, row=row, world=world,
+                           my_id=0, opp_id=1, currently_winning=True)
+    # rem = 400; d_adv = -3 -3 = -6; d_op = +3×400 = +1200
+    # ΔW = -6×400 - 1200 = -2400 - 1200 = -3600
+    assert bonus == pytest.approx(-3600.0), (
+        f"own loss to opp: ΔW should be -6×400 - 1200 = -3600; got {bonus}"
+    )
+
+
+def test_smooth_endgame_lambda_scales_proportionally(monkeypatch):
+    """LP_LAMBDA_W=0.3 produces a bonus 30% of the LP_LAMBDA_W=1.0 value."""
+    me = [_planet(0, 0, production=1, ships=10)]
+    neutral = [_planet(99, -1, production=2, ships=5, x=20.0)]
+    world = _world_from_planets(my_id=0, planets=me + neutral, step=100)
+    row = _row(subset=(500,), owner_T=0, me_prod=800, opp_prod=0)
+
+    monkeypatch.setenv("LP_SMOOTH_DELTA_W", "1")
+    monkeypatch.setenv("LP_LAMBDA_W", "1.0")
+    full = _endgame_bonus(planet_id=99, row=row, world=world,
+                          my_id=0, opp_id=1, currently_winning=False)
+    monkeypatch.setenv("LP_LAMBDA_W", "0.3")
+    thirty = _endgame_bonus(planet_id=99, row=row, world=world,
+                            my_id=0, opp_id=1, currently_winning=False)
+    assert thirty == pytest.approx(0.3 * full), (
+        f"λ_W=0.3 should give 30% of λ_W=1.0; got {thirty}/{full}"
+    )
+
+
+def test_smooth_endgame_4p_returns_zero(monkeypatch):
+    """Smooth form, like step form, returns 0 in 4P (opp_id=None)."""
+    me = [_planet(0, 0, production=2, ships=10)]
+    neutral = [_planet(99, -1, production=3, ships=5, x=20.0)]
+    world = _world_from_planets(my_id=0, planets=me + neutral, step=100)
+    row = _row(subset=(500,), owner_T=0, me_prod=1200, opp_prod=0)
+
+    monkeypatch.setenv("LP_SMOOTH_DELTA_W", "1")
+    bonus = _endgame_bonus(planet_id=99, row=row, world=world,
+                           my_id=0, opp_id=None, currently_winning=False)
+    assert bonus == 0.0, f"4P (opp_id=None) should return 0; got {bonus}"
+
+
+def test_smooth_endgame_no_transition_returns_zero(monkeypatch):
+    """If owner doesn't change in the subset, ΔW = 0 — no transition,
+    no contribution."""
+    me = [_planet(99, 0, production=3, ships=10)]
+    world = _world_from_planets(my_id=0, planets=me, step=100)
+    row = _row(subset=(), owner_T=0, me_prod=1200, opp_prod=0)
+
+    monkeypatch.setenv("LP_SMOOTH_DELTA_W", "1")
+    bonus = _endgame_bonus(planet_id=99, row=row, world=world,
+                           my_id=0, opp_id=1, currently_winning=True)
+    assert bonus == 0.0, (
+        f"already-mine, still-mine = no transition = 0; got {bonus}"
+    )
