@@ -26,8 +26,11 @@ from lib.world_model import _comet_paths_by_id, _position_at, comet_remaining_li
 NUM_TARGETS_PER_SOURCE = 8
 MIN_FLEET_SIZE = 2
 SIM_SETTLE_TURNS = 2
-MIN_HORIZON = 25
-MAX_HORIZON = 40
+# Rollout horizon — env-var overridable so a deeper-horizon variant can
+# opt in without forcing it on every agent that imports baseline.proposer.
+# Defaults match the production ceiling (sub 52912707) settings.
+MIN_HORIZON = int(os.environ.get("BASELINE_MIN_HORIZON", "25"))
+MAX_HORIZON = int(os.environ.get("BASELINE_MAX_HORIZON", "40"))
 WAIT_EXTRA_SURPLUS = (0, 5, 12)  # legacy forward grid (kept for rollback)
 CHEAP_REJECT_THRESHOLD = -10.0
 EPISODE_STEPS = 500
