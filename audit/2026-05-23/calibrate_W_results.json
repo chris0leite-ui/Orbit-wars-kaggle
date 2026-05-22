@@ -1,0 +1,17 @@
+{
+  "n_episodes": 20,
+  "n_step_samples": 8310,
+  "n_emit_actions": 2370,
+  "b1_pearson_W_vs_reward": 0.5454354152447922,
+  "b1_threshold": 0.6,
+  "b1_pass": false,
+  "b2_mean_abs_dW": 1089.0434599156117,
+  "b2_variance_dW": 4377078.584879055,
+  "b2_stdev_dW": 2092.1468841548995,
+  "b2_stdev_threshold": 108.90434599156117,
+  "b2_pass_loose_variance_nonzero": true,
+  "b2_pass_strict_stdev_above_threshold": true,
+  "b3_pearson_dW_vs_shift": 0.04449215063781335,
+  "b3_threshold": 0.3,
+  "b3_pass": false
+}
