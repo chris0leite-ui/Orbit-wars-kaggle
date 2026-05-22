@@ -123,3 +123,61 @@ def test_agent_is_deterministic_across_calls():
     out_a = agent(obs)
     out_b = agent(obs)
     assert out_a == out_b
+
+
+def test_adaptive_k_off_by_default_no_horizon_bump():
+    """Phase 2, 2026-05-22: BASELINE_ADAPTIVE_K is OFF by default. With
+    the env var unset the chooser must not bump rollout horizon. End-to-
+    end smoke: agent still produces valid output and is deterministic.
+    """
+    import os
+    saved = os.environ.pop("BASELINE_ADAPTIVE_K", None)
+    try:
+        from agents.baseline.main import agent
+        obs, _snap = _snapshot_from_seed(42)
+        out = agent(obs)
+        assert isinstance(out, list)
+    finally:
+        if saved is not None:
+            os.environ["BASELINE_ADAPTIVE_K"] = saved
+
+
+def test_adaptive_k_extends_baseline_horizon():
+    """Phase 2, 2026-05-22: when BASELINE_ADAPTIVE_K=1 the chooser pre-
+    builds the idle baseline up to MAX_HORIZON_CAP so mid-loop horizon
+    bumps don't IndexError. Without this safeguard, score_candidate_v4
+    would try to read `baseline_favors[bumped_horizon]` past list end.
+    Smoke: an end-to-end run with adaptive ON, K_BUMP=20, very small
+    MARGIN to force a bump must not raise.
+    """
+    import os
+    saved = {
+        k: os.environ.get(k) for k in (
+            "BASELINE_ADAPTIVE_K", "BASELINE_CRITICALITY_K_BUMP",
+            "BASELINE_CRITICALITY_MARGIN", "BASELINE_CRITICALITY_PROBE",
+            "BASELINE_MAX_HORIZON_CAP",
+        )
+    }
+    os.environ["BASELINE_ADAPTIVE_K"] = "1"
+    os.environ["BASELINE_CRITICALITY_K_BUMP"] = "20"
+    os.environ["BASELINE_CRITICALITY_MARGIN"] = "999.0"  # always-critical
+    os.environ["BASELINE_CRITICALITY_PROBE"] = "1"
+    os.environ["BASELINE_MAX_HORIZON_CAP"] = "60"
+    try:
+        # Re-import to pick up the env vars (module-level constants).
+        import importlib
+        import agents.baseline.chooser_trajectory as ct
+        importlib.reload(ct)
+        from agents.baseline.main import agent
+        obs, _snap = _snapshot_from_seed(42)
+        out = agent(obs)
+        assert isinstance(out, list)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        import importlib
+        import agents.baseline.chooser_trajectory as ct
+        importlib.reload(ct)

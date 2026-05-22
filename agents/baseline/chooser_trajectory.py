@@ -245,6 +245,27 @@ JOINT_LIFT_USED_TGTS: bool = (
     os.environ.get("BASELINE_JOINT_AGGR", "0").strip() == "1"
 )
 
+# Phase 2 (2026-05-22): adaptive compute allocation. On critical turns
+# (small margin between top-scored candidates) the rollout horizon for
+# subsequent candidates gets a one-time bump, deepening evaluation where
+# the chooser is least confident. Reuses signals already computed in
+# `scored` — no new physics. Gated default OFF; orbitfix_kt is the
+# A/B target. MAX_HORIZON_CAP is the hard ceiling so total per-turn
+# budget never explodes.
+ADAPTIVE_K_ENABLED: bool = (
+    os.environ.get("BASELINE_ADAPTIVE_K", "0").strip() == "1"
+)
+ADAPTIVE_K_BUMP: int = int(os.environ.get("BASELINE_CRITICALITY_K_BUMP", "10"))
+ADAPTIVE_K_PROBE: int = int(
+    os.environ.get("BASELINE_CRITICALITY_PROBE", "3"),
+)
+ADAPTIVE_K_MARGIN: float = float(
+    os.environ.get("BASELINE_CRITICALITY_MARGIN", "0.05"),
+)
+ADAPTIVE_K_HORIZON_CAP: int = int(
+    os.environ.get("BASELINE_MAX_HORIZON_CAP", "60"),
+)
+
 
 def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
                     me: int, world, ledger: dict,
@@ -796,15 +817,23 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     # deep enough for every candidate (including wait_N>0, whose proposer
     # horizon already accounts for the wait via
     # `w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)`).
+    # Phase 2 (2026-05-22): when adaptive K is on, extend by ADAPTIVE_K_BUMP
+    # up to ADAPTIVE_K_HORIZON_CAP so subsequent in-loop horizon bumps
+    # don't index past `baseline_favors`.
     max_horizon_seen = 0
     for cheap_delta, src, tgt, ships, angle, eta_hint, h, wait_N in prerank:
         if int(h) > max_horizon_seen:
             max_horizon_seen = int(h)
+    baseline_horizon = max_horizon_seen
+    if ADAPTIVE_K_ENABLED and max_horizon_seen > 0:
+        baseline_horizon = min(
+            max_horizon_seen + ADAPTIVE_K_BUMP, ADAPTIVE_K_HORIZON_CAP,
+        )
 
     baseline_favors: list[float] = []
-    if not use_v3 and max_horizon_seen > 0:
+    if not use_v3 and baseline_horizon > 0:
         baseline_favors = build_trajectory_baseline(
-            snap_base, me, num_seats, max_horizon_seen, favor_fn, gamma,
+            snap_base, me, num_seats, baseline_horizon, favor_fn, gamma,
         )
 
     # Count-based budget (Phase 1, 2026-05-22). The prior wallclock
@@ -825,6 +854,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     scored: list[tuple] = []
     solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0
     cand_count = 0
+    critical_bump_active = False  # Phase 2 flag, set mid-loop
     for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
         if cand_count >= cap:
             break
@@ -843,6 +873,19 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             if sid_ in reserved_srcs:
                 continue
         cand_count += 1
+        # Phase 2 (2026-05-22): adaptive compute allocation. After
+        # ADAPTIVE_K_PROBE candidates scored, check the top-1 / top-2
+        # margin; if small (chooser is least confident on this turn),
+        # bump rollout horizon by ADAPTIVE_K_BUMP for subsequent
+        # candidates. Reuses signals already in `scored`; no new physics.
+        # baseline_favors was pre-sized to baseline_horizon so the bumped
+        # horizon is safe to index.
+        if (ADAPTIVE_K_ENABLED and not critical_bump_active
+                and not use_v3 and cand_count > ADAPTIVE_K_PROBE
+                and len(scored) >= 2):
+            top_two = sorted((s[0] for s in scored), reverse=True)[:2]
+            if (top_two[0] - top_two[1]) < ADAPTIVE_K_MARGIN:
+                critical_bump_active = True
         if use_v3:
             # v3 path: fire-now-only (binary leaf doesn't generalise to
             # wait_N>0 trivially). Skip wait_N>0 in the v3 path.
@@ -855,11 +898,16 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             if status in ("captured",) and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))
         else:
+            effective_horizon = int(prop_horizon)
+            if critical_bump_active:
+                effective_horizon = min(
+                    effective_horizon + ADAPTIVE_K_BUMP, baseline_horizon,
+                )
             score, status, _ = score_candidate_v4(
                 snap_base, src, tgt, int(ships), float(angle),
                 me, num_seats, world,
                 baseline_favors, favor_fn, gamma,
-                horizon=int(prop_horizon),
+                horizon=effective_horizon,
                 skip_admissibility=skip_filter,
                 wait_N=int(wait_N),
             )
