@@ -7,12 +7,18 @@ from agents.coord.main import (
     ARRIVAL_WINDOW_SLACK,
     Bundle,
     BundleKind,
+    CHEAP_FILTER_TOP_K,
+    CHEAP_OPPORTUNITY_COST,
     DEFEND_LOOKAHEAD,
     Leg,
     MAX_BUNDLE_SIZE,
     NEAREST_SOURCES_PER_TARGET,
+    _bundle_cheap_delta,
     _cluster_arrival_windows,
     _emit_subsets,
+    _resolve_target_post_bundle,
+    _synthesise_post_arrival_obs,
+    cheap_filter_bundles,
     enumerate_attack_bundles,
     enumerate_defend_bundles,
     enumerate_recapture_bundles,
@@ -436,3 +442,217 @@ def test_recapture_stub_returns_empty():
         [src], [tgt], world, model, me=0, omega=0.0,
     )
     assert bundles == []
+
+
+# ---------------------------------------------------------------------------
+# Cheap-filter — synthesised-obs combat resolution.
+# ---------------------------------------------------------------------------
+
+def _make_bundle(target_id, legs, kind=BundleKind.ATTACK, arrival_step=None):
+    """Build a Bundle for testing — arrival_step defaults to max leg ETA."""
+    if arrival_step is None:
+        arrival_step = max(L.arrival_step for L in legs)
+    return Bundle(
+        target_id=target_id,
+        arrival_step=arrival_step,
+        legs=tuple(legs),
+        kind=kind,
+    )
+
+
+def test_resolve_attack_capture_when_force_exceeds_defender():
+    """ATTACK with enough ships → captured; garrison = force − defender."""
+    tgt = _planet(1, 1, 14.0, 50.0, ships=10)
+    legs = [Leg(src_id=0, ships=30, angle=0.0, wait_N=0, eta=5)]
+    bundle = _make_bundle(target_id=1, legs=legs, kind=BundleKind.ATTACK)
+    owner, ships = _resolve_target_post_bundle(
+        bundle, tgt, pred_owner=1, pred_ships=10, me=0,
+    )
+    assert owner == 0  # me captured
+    assert ships == 20  # 30 - 10
+
+
+def test_resolve_attack_failed_when_force_below_defender():
+    """ATTACK with insufficient ships → not captured; defender retains."""
+    tgt = _planet(1, 1, 14.0, 50.0, ships=50)
+    legs = [Leg(src_id=0, ships=10, angle=0.0, wait_N=0, eta=5)]
+    bundle = _make_bundle(target_id=1, legs=legs, kind=BundleKind.ATTACK)
+    owner, ships = _resolve_target_post_bundle(
+        bundle, tgt, pred_owner=1, pred_ships=50, me=0,
+    )
+    assert owner == 1  # enemy retains
+    assert ships == 40  # 50 - 10
+
+
+def test_resolve_defend_reinforce_when_we_still_own():
+    """DEFEND with we-still-own-at-arrival → reinforcement ADDS to garrison."""
+    tgt = _planet(1, 0, 14.0, 50.0, ships=5)
+    legs = [Leg(src_id=2, ships=20, angle=0.0, wait_N=0, eta=3)]
+    bundle = _make_bundle(target_id=1, legs=legs, kind=BundleKind.DEFEND)
+    owner, ships = _resolve_target_post_bundle(
+        bundle, tgt, pred_owner=0, pred_ships=8, me=0,
+    )
+    assert owner == 0  # still ours
+    assert ships == 28  # 8 + 20
+
+
+def test_resolve_defend_handles_lost_by_arrival_as_recapture():
+    """DEFEND when already-lost-by-arrival → combat-rule-1 recapture."""
+    tgt = _planet(1, 0, 14.0, 50.0, ships=5)
+    legs = [Leg(src_id=2, ships=20, angle=0.0, wait_N=0, eta=3)]
+    bundle = _make_bundle(target_id=1, legs=legs, kind=BundleKind.DEFEND)
+    # pred_owner==1 means we lost it by arrival_step; recapture path.
+    owner, ships = _resolve_target_post_bundle(
+        bundle, tgt, pred_owner=1, pred_ships=5, me=0,
+    )
+    assert owner == 0  # we recaptured
+    assert ships == 15  # 20 - 5
+
+
+def test_synthesise_subtracts_committed_ships_from_sources():
+    """Source planets in synthesised obs lose the legs' ship count."""
+    src = _planet(0, 0, 10.0, 50.0, ships=50)
+    tgt = _planet(1, -1, 14.0, 50.0, ships=3)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    legs = [Leg(src_id=0, ships=20, angle=0.0, wait_N=0, eta=2)]
+    bundle = _make_bundle(target_id=1, legs=legs, kind=BundleKind.ATTACK)
+    synth = _synthesise_post_arrival_obs(bundle, world, model, me=0)
+    src_after = [p for p in synth["planets"] if p[0] == 0][0]
+    # Idle projection at step=2 = 50 + 2*production; minus 20 committed.
+    # Production=2 (default), so idle=50+4=54, then minus 20 = 34.
+    assert src_after[5] == 34, f"src ships expected 34, got {src_after[5]}"
+
+
+def test_synthesise_target_reflects_combat_resolution():
+    """Target's post-arrival state matches `_resolve_target_post_bundle`."""
+    src = _planet(0, 0, 10.0, 50.0, ships=50)
+    tgt = _planet(1, 1, 14.0, 50.0, ships=10, production=1)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    legs = [Leg(src_id=0, ships=30, angle=0.0, wait_N=0, eta=2)]
+    bundle = _make_bundle(target_id=1, legs=legs, kind=BundleKind.ATTACK)
+    synth = _synthesise_post_arrival_obs(bundle, world, model, me=0)
+    tgt_after = [p for p in synth["planets"] if p[0] == 1][0]
+    # Enemy at step=2 has 10 + 2*1 = 12 ships idle. 30 - 12 = 18, captured.
+    assert tgt_after[1] == 0  # owner = me
+    assert tgt_after[5] == 18
+
+
+def test_synthesise_step_advances():
+    """Synthesised obs step = current + arrival_step."""
+    src = _planet(0, 0, 10.0, 50.0, ships=20)
+    tgt = _planet(1, -1, 14.0, 50.0, ships=3)
+    world = _world(0, [src, tgt], step=37)
+    model = WorldModel.from_world(world)
+    legs = [Leg(src_id=0, ships=10, angle=0.0, wait_N=0, eta=5)]
+    bundle = _make_bundle(target_id=1, legs=legs, arrival_step=5)
+    synth = _synthesise_post_arrival_obs(bundle, world, model, me=0)
+    assert synth["step"] == 42  # 37 + 5
+    assert synth["player"] == 0
+
+
+def test_synthesise_clears_fleets():
+    """Synthesised obs has fleets=[] (cheap simplification)."""
+    src = _planet(0, 0, 10.0, 50.0, ships=20)
+    tgt = _planet(1, -1, 14.0, 50.0, ships=3)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    legs = [Leg(src_id=0, ships=10, angle=0.0, wait_N=0, eta=2)]
+    bundle = _make_bundle(target_id=1, legs=legs)
+    synth = _synthesise_post_arrival_obs(bundle, world, model, me=0)
+    assert synth["fleets"] == []
+
+
+def test_cheap_filter_empty_input_returns_empty():
+    src = _planet(0, 0, 10.0, 50.0, ships=20)
+    world = _world(0, [src])
+    model = WorldModel.from_world(world)
+    out = cheap_filter_bundles([], world, model, me=0, num_seats=2)
+    assert out == []
+
+
+def test_cheap_filter_populates_cheap_score():
+    """All returned bundles have cheap_score set (non-zero)."""
+    src = _planet(0, 0, 10.0, 50.0, ships=50)
+    tgt = _planet(1, -1, 14.0, 50.0, ships=3)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    bundles = enumerate_attack_bundles(
+        [src], [tgt], world, model, me=0, omega=0.0,
+    )
+    assert bundles  # precondition
+    out = cheap_filter_bundles(bundles, world, model, me=0, num_seats=2)
+    assert out
+    # cheap_score must be populated (not the default 0.0 if the bundle
+    # genuinely captures value — at minimum some bundle should score non-zero).
+    assert any(b.cheap_score != 0.0 for b in out)
+
+
+def test_cheap_filter_top_k_limits_returned_count():
+    """cheap_filter returns at most K bundles, sorted by cheap_score desc."""
+    src_a = _planet(0, 0, 10.0, 50.0, ships=30)
+    src_b = _planet(1, 0, 10.0, 60.0, ships=30)
+    tgt = _planet(2, -1, 14.0, 55.0, ships=3)
+    world = _world(0, [src_a, src_b, tgt])
+    model = WorldModel.from_world(world)
+    bundles = enumerate_attack_bundles(
+        [src_a, src_b], [tgt], world, model, me=0, omega=0.0,
+    )
+    out = cheap_filter_bundles(
+        bundles, world, model, me=0, num_seats=2, K=2,
+    )
+    assert len(out) <= 2
+    # Sorted descending.
+    scores = [b.cheap_score for b in out]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_cheap_filter_capture_scores_higher_than_failed_attack():
+    """An ATTACK that captures must score higher than one that doesn't."""
+    src = _planet(0, 0, 10.0, 50.0, ships=100)
+    tgt = _planet(1, 1, 14.0, 50.0, ships=10, production=1)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    capture_legs = [Leg(src_id=0, ships=40, angle=0.0, wait_N=0, eta=2)]
+    fail_legs = [Leg(src_id=0, ships=5, angle=0.0, wait_N=0, eta=2)]
+    capture_bundle = _make_bundle(target_id=1, legs=capture_legs)
+    fail_bundle = _make_bundle(target_id=1, legs=fail_legs)
+    base = favor_hybrid_via_world(world, me=0, num_seats=2)
+    cap_score = _bundle_cheap_delta(
+        capture_bundle, world, model, me=0, num_seats=2, current_favor=base,
+    )
+    fail_score = _bundle_cheap_delta(
+        fail_bundle, world, model, me=0, num_seats=2, current_favor=base,
+    )
+    assert cap_score > fail_score, (
+        f"capture cheap_score={cap_score} must exceed failed-attack {fail_score}"
+    )
+
+
+def test_cheap_filter_opportunity_cost_penalises_over_commitment():
+    """Two captures of the same target — smaller fleet wins on cheap_score
+    when both produce the same target outcome (tie-breaking via epsilon).
+    """
+    src = _planet(0, 0, 10.0, 50.0, ships=200)
+    tgt = _planet(1, 1, 14.0, 50.0, ships=5, production=1)
+    world = _world(0, [src, tgt])
+    model = WorldModel.from_world(world)
+    minimal_capture = [Leg(src_id=0, ships=10, angle=0.0, wait_N=0, eta=2)]
+    bloated_capture = [Leg(src_id=0, ships=150, angle=0.0, wait_N=0, eta=2)]
+    b_min = _make_bundle(target_id=1, legs=minimal_capture)
+    b_max = _make_bundle(target_id=1, legs=bloated_capture)
+    base = favor_hybrid_via_world(world, me=0, num_seats=2)
+    s_min = _bundle_cheap_delta(b_min, world, model, 0, 2, base)
+    s_max = _bundle_cheap_delta(b_max, world, model, 0, 2, base)
+    # Bloated commits 140 more ships for the same capture; the opportunity-
+    # cost term penalises it.
+    assert s_min > s_max, (
+        f"minimal-capture {s_min} should beat bloated {s_max} via epsilon"
+    )
+
+
+def favor_hybrid_via_world(world, me, num_seats):
+    """Tiny convenience for tests."""
+    from agents.minimal.main import favor_hybrid as _fh
+    return _fh(world.obs_raw, me, num_seats)
