@@ -52,6 +52,11 @@ DEFAULT_LIB_ORDER = [
     "mirror",
     "fleet",
     "orbit",
+    # lib/kinematic_table.py — per-turn position lookup table (2026-05-22,
+    # commit 4389615+). Depends on geometry + orbit; consumed by
+    # lib/trajectory.predict_fleet_fate's hot-path lookup
+    # (KINEMATIC_TABLE_ENABLED=1 default). Must precede `trajectory`.
+    "kinematic_table",
     "aim",
     "combat",
     "world_model",
@@ -223,6 +228,20 @@ def _strip_module_docstring(src: str) -> str:
     return "".join(lines[:i] + lines[j + 1 :])
 
 
+def _leading_ws(line: str) -> str:
+    """Return the leading whitespace of `line` (preserves tabs/spaces as-is).
+
+    Used to keep function-local intra-package imports (`try: from lib.X...`,
+    `if cond: from lib.X...`) properly indented after the import is stripped.
+    A column-0 alias rebind inside a `try` body would IndentationError; the
+    `9a45fea`-class fix preserves the original indent on the rebind too.
+    """
+    i = 0
+    while i < len(line) and line[i] in " \t":
+        i += 1
+    return line[:i]
+
+
 def _clean_lib_source(src: str) -> str:
     """Drop intra-package imports and `from __future__` lines from a lib module,
     but emit alias rebindings for any aliased intra-imports.
@@ -231,14 +250,26 @@ def _clean_lib_source(src: str) -> str:
     a lib file would silently leave `fleet_speed` undefined in the bundle —
     NameError at runtime, swallowed by kaggle_environments' try/except. The
     parity gate catches it but only on integration; cheaper to rebind here.
+
+    Function-local imports inside `try:` / `if:` / function-body blocks have
+    their rebind emitted at the original indent level so the enclosing block
+    remains syntactically valid.
     """
     out: list[str] = []
     for line in src.splitlines(keepends=True):
         if _FUTURE_IMPORT_RE.match(line):
             continue
         if _INTRA_IMPORT_RE.match(line):
-            for asname, original in _extract_aliases(line):
-                out.append(f"{asname} = {original}\n")
+            indent = _leading_ws(line)
+            aliases = _extract_aliases(line)
+            if aliases:
+                for asname, original in aliases:
+                    out.append(f"{indent}{asname} = {original}\n")
+            else:
+                # No aliases — emit a `pass` to keep the enclosing block
+                # non-empty (function-local `try: from lib.X import Y` with
+                # no `as` would otherwise leave the try body empty).
+                out.append(f"{indent}pass  # inlined import stripped\n")
             continue
         out.append(line)
     return _strip_module_docstring("".join(out))
@@ -268,16 +299,26 @@ def _clean_agent_source(src: str) -> str:
     """Strip `from __future__` (already emitted at the bundle top) and rewrite
     intra-lib imports — comment out the import and emit alias rebindings so
     `from lib.fleet import speed as fleet_speed` keeps working.
+
+    Function-local imports (inside `try:` / `if cond:` / function bodies)
+    keep their original indent on both the comment-out line and the alias
+    rebind, so the enclosing block remains syntactically valid.
     """
     out: list[str] = []
     for line in src.splitlines(keepends=True):
         if _FUTURE_IMPORT_RE.match(line):
             continue
         if _INTRA_IMPORT_RE.match(line):
-            stripped = line.rstrip("\n")
-            out.append(f"# {stripped}  # inlined by bundle_agent.py\n")
-            for asname, original in _extract_aliases(line):
-                out.append(f"{asname} = {original}\n")
+            indent = _leading_ws(line)
+            stripped = line.rstrip("\n").lstrip(" \t")
+            out.append(f"{indent}# {stripped}  # inlined by bundle_agent.py\n")
+            aliases = _extract_aliases(line)
+            if aliases:
+                for asname, original in aliases:
+                    out.append(f"{indent}{asname} = {original}\n")
+            # No aliases is fine for the agent path: the comment line is
+            # itself a syntactically valid statement, so the enclosing
+            # block already has a non-empty body.
         else:
             out.append(line)
     return "".join(out)

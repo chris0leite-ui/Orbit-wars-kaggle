@@ -145,18 +145,32 @@ LAMBDA_ENDGAME = 1000.0
 # pre-fix / post-fix A/B comparison.
 import os as _os
 
-_TOPOLOGY_FEATURES_ENABLED = (
-    _os.environ.get("LP_TOPOLOGY_FEATURES", "0") == "1"
-)
-_REACH_BONUS_ENABLED = _TOPOLOGY_FEATURES_ENABLED and (
-    _os.environ.get("LP_REACH_BONUS", "1") == "1"
-)
-_DEFENSE_BONUS_ENABLED = _TOPOLOGY_FEATURES_ENABLED and (
-    _os.environ.get("LP_DEFENSE_BONUS", "1") == "1"
-)
-_FRONT_PENALTY_ENABLED = _TOPOLOGY_FEATURES_ENABLED and (
-    _os.environ.get("LP_FRONT_PENALTY", "1") == "1"
-)
+
+# Lazy evaluation — read env on every call so bundled-agent setdefault
+# (which runs AFTER the lib code is inlined) takes effect. Module-level
+# cached form locked these to False in the bundle because the inlined
+# lp_outcome.py section evaluated them BEFORE the agent's
+# `os.environ.setdefault("LP_TOPOLOGY_FEATURES", "1")` ran.
+def _topology_features_enabled() -> bool:
+    return _os.environ.get("LP_TOPOLOGY_FEATURES", "0") == "1"
+
+
+def _reach_bonus_enabled() -> bool:
+    return _topology_features_enabled() and (
+        _os.environ.get("LP_REACH_BONUS", "1") == "1"
+    )
+
+
+def _defense_bonus_enabled() -> bool:
+    return _topology_features_enabled() and (
+        _os.environ.get("LP_DEFENSE_BONUS", "1") == "1"
+    )
+
+
+def _front_penalty_enabled() -> bool:
+    return _topology_features_enabled() and (
+        _os.environ.get("LP_FRONT_PENALTY", "1") == "1"
+    )
 
 # Term 1: reachability_bonus(p) = Σ_{q ∈ neutrals reachable from p} prod(q)/(1+eta(p→q))
 LAMBDA_REACH = 50.0
@@ -527,7 +541,7 @@ def _per_planet_topology_score(planet_id: int, world, model, sense,
 
     score = 0.0
     try:
-        if _REACH_BONUS_ENABLED:
+        if _reach_bonus_enabled():
             from lib.geo.sense import _planet_eta as _sense_eta
             reach = 0.0
             for n_pid, cluster_idx in sense.voronoi.items():
@@ -544,7 +558,7 @@ def _per_planet_topology_score(planet_id: int, world, model, sense,
         pass
 
     try:
-        if _DEFENSE_BONUS_ENABLED:
+        if _defense_bonus_enabled():
             from lib.geo.sense import _planet_eta as _sense_eta
             nearby = 0
             for own_pid in sense.pid_to_cluster.keys():
@@ -561,7 +575,7 @@ def _per_planet_topology_score(planet_id: int, world, model, sense,
         pass
 
     try:
-        if _FRONT_PENALTY_ENABLED and model is not None:
+        if _front_penalty_enabled() and model is not None:
             threat = model.time_to_enemy_threat(int(planet_id), int(my_id), world)
             if threat is not None and int(threat) <= RECAPTURE_HORIZON:
                 hold = max(1, int(threat))
@@ -829,7 +843,7 @@ def solve_outcome_aware(
     # board, not post-LP state). Empty dict when LP_TOPOLOGY_FEATURES=0,
     # which short-circuits the bonus to 0.0 in all 5 call sites.
     topology_scores: dict[int, float] | None = None
-    if _TOPOLOGY_FEATURES_ENABLED:
+    if _topology_features_enabled():
         try:
             from lib.geo.sense import sense_state as _sense_state
             sense = _sense_state(world, model)

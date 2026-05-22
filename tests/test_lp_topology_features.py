@@ -80,10 +80,10 @@ def _row(*, subset, owner_T, me_prod=0, opp_prod=0):
 @pytest.fixture
 def all_features_on(monkeypatch):
     """Enable all three topology features for the duration of the test."""
-    monkeypatch.setattr(lo, "_TOPOLOGY_FEATURES_ENABLED", True)
-    monkeypatch.setattr(lo, "_REACH_BONUS_ENABLED", True)
-    monkeypatch.setattr(lo, "_DEFENSE_BONUS_ENABLED", True)
-    monkeypatch.setattr(lo, "_FRONT_PENALTY_ENABLED", True)
+    monkeypatch.setenv("LP_TOPOLOGY_FEATURES", "1")
+    monkeypatch.setenv("LP_REACH_BONUS", "1")
+    monkeypatch.setenv("LP_DEFENSE_BONUS", "1")
+    monkeypatch.setenv("LP_FRONT_PENALTY", "1")
 
 
 # ---------------------------------------------------------------------------
@@ -115,17 +115,17 @@ def test_reachability_bonus_rewards_planets_near_neutrals(monkeypatch):
     sense = sense_state(world, model)
 
     # Pre-fix: feature disabled → both scores are 0.
-    monkeypatch.setattr(lo, "_TOPOLOGY_FEATURES_ENABLED", False)
-    monkeypatch.setattr(lo, "_REACH_BONUS_ENABLED", False)
+    monkeypatch.setenv("LP_TOPOLOGY_FEATURES", "0")
+    monkeypatch.setenv("LP_REACH_BONUS", "0")
     pre_p1 = lo._per_planet_topology_score(10, world, model, sense, my_id=0)
     pre_p2 = lo._per_planet_topology_score(30, world, model, sense, my_id=0)
     assert pre_p1 == 0.0 and pre_p2 == 0.0, "pre-fix: both must be 0"
 
     # Post-fix: reach bonus enabled.
-    monkeypatch.setattr(lo, "_TOPOLOGY_FEATURES_ENABLED", True)
-    monkeypatch.setattr(lo, "_REACH_BONUS_ENABLED", True)
-    monkeypatch.setattr(lo, "_DEFENSE_BONUS_ENABLED", False)
-    monkeypatch.setattr(lo, "_FRONT_PENALTY_ENABLED", False)
+    monkeypatch.setenv("LP_TOPOLOGY_FEATURES", "1")
+    monkeypatch.setenv("LP_REACH_BONUS", "1")
+    monkeypatch.setenv("LP_DEFENSE_BONUS", "0")
+    monkeypatch.setenv("LP_FRONT_PENALTY", "0")
     post_p1 = lo._per_planet_topology_score(10, world, model, sense, my_id=0)
     post_p2 = lo._per_planet_topology_score(30, world, model, sense, my_id=0)
     assert post_p1 > post_p2 + 1e-6, (
@@ -162,10 +162,10 @@ def test_mutual_defense_bonus_rewards_clustered_planets(monkeypatch):
     sense = sense_state(world, model)
 
     # Disable other features to isolate defense.
-    monkeypatch.setattr(lo, "_TOPOLOGY_FEATURES_ENABLED", True)
-    monkeypatch.setattr(lo, "_REACH_BONUS_ENABLED", False)
-    monkeypatch.setattr(lo, "_DEFENSE_BONUS_ENABLED", True)
-    monkeypatch.setattr(lo, "_FRONT_PENALTY_ENABLED", False)
+    monkeypatch.setenv("LP_TOPOLOGY_FEATURES", "1")
+    monkeypatch.setenv("LP_REACH_BONUS", "0")
+    monkeypatch.setenv("LP_DEFENSE_BONUS", "1")
+    monkeypatch.setenv("LP_FRONT_PENALTY", "0")
 
     score_near = lo._per_planet_topology_score(10, world, model, sense, my_id=0)
     score_far = lo._per_planet_topology_score(20, world, model, sense, my_id=0)
@@ -175,7 +175,7 @@ def test_mutual_defense_bonus_rewards_clustered_planets(monkeypatch):
     )
 
     # Pre-fix: defense disabled → near and far both 0.
-    monkeypatch.setattr(lo, "_DEFENSE_BONUS_ENABLED", False)
+    monkeypatch.setenv("LP_DEFENSE_BONUS", "0")
     pre_near = lo._per_planet_topology_score(10, world, model, sense, my_id=0)
     assert pre_near == 0.0, f"pre-fix: defense disabled → 0; got {pre_near}"
 
@@ -200,10 +200,10 @@ def test_recapture_risk_penalises_frontier_planets(monkeypatch):
     sense = sense_state(world, model)
 
     # Only front penalty on.
-    monkeypatch.setattr(lo, "_TOPOLOGY_FEATURES_ENABLED", True)
-    monkeypatch.setattr(lo, "_REACH_BONUS_ENABLED", False)
-    monkeypatch.setattr(lo, "_DEFENSE_BONUS_ENABLED", False)
-    monkeypatch.setattr(lo, "_FRONT_PENALTY_ENABLED", True)
+    monkeypatch.setenv("LP_TOPOLOGY_FEATURES", "1")
+    monkeypatch.setenv("LP_REACH_BONUS", "0")
+    monkeypatch.setenv("LP_DEFENSE_BONUS", "0")
+    monkeypatch.setenv("LP_FRONT_PENALTY", "1")
 
     score = lo._per_planet_topology_score(10, world, model, sense, my_id=0)
     assert score < 0.0, (
@@ -212,7 +212,7 @@ def test_recapture_risk_penalises_frontier_planets(monkeypatch):
     )
 
     # Pre-fix: feature disabled → score is 0.
-    monkeypatch.setattr(lo, "_FRONT_PENALTY_ENABLED", False)
+    monkeypatch.setenv("LP_FRONT_PENALTY", "0")
     pre = lo._per_planet_topology_score(10, world, model, sense, my_id=0)
     assert pre == 0.0, f"pre-fix: front penalty disabled → 0; got {pre}"
 
@@ -255,10 +255,10 @@ def test_topology_disabled_short_circuits_to_zero(monkeypatch):
     `_topology_bonus(scores=None)` returns 0.0. Locks the no-op contract
     that makes pre-Level-1 / post-Level-1 a clean A/B differential.
     """
-    monkeypatch.setattr(lo, "_TOPOLOGY_FEATURES_ENABLED", False)
-    monkeypatch.setattr(lo, "_REACH_BONUS_ENABLED", False)
-    monkeypatch.setattr(lo, "_DEFENSE_BONUS_ENABLED", False)
-    monkeypatch.setattr(lo, "_FRONT_PENALTY_ENABLED", False)
+    monkeypatch.setenv("LP_TOPOLOGY_FEATURES", "0")
+    monkeypatch.setenv("LP_REACH_BONUS", "0")
+    monkeypatch.setenv("LP_DEFENSE_BONUS", "0")
+    monkeypatch.setenv("LP_FRONT_PENALTY", "0")
 
     me = [_planet(0, 0, production=2, x=0.0, y=0.0)]
     neutrals = [_planet(i + 10, -1, production=2, x=5.0 * i, y=0.0)

@@ -55,9 +55,22 @@ PIPELINE_ORDER = [
     "lib/pipeline/prerank.py",
     "lib/pipeline/prerank_passthrough.py",
     "lib/pipeline/opp_model.py",
+    # opp_mirror_analytical depends only on joint_solver + pipeline/types.
+    # Must precede decision_depth2_search which references it.
+    "lib/pipeline/opp_mirror_analytical.py",
     "lib/pipeline/decision.py",
     "lib/pipeline/leaf_outcome_table.py",
     "lib/pipeline/pending_schedule.py",
+    # portfolio_enum + portfolio_enum_lp_seeded — wired transitively by
+    # decision_depth2_search via portfolio_enum_lp_seeded.enumerate_top_k_portfolios.
+    "lib/pipeline/portfolio_enum.py",
+    "lib/pipeline/portfolio_enum_lp_seeded.py",
+    # Decision variants. depth2_search is the production decision for
+    # analytical_phase_c (uses opening-only depth-2 search; falls through
+    # to plain LP otherwise). Must follow its deps (opp_mirror_analytical,
+    # leaf_outcome_table, portfolio_enum_lp_seeded, decision).
+    "lib/pipeline/decision_outcome_aware_discounted.py",
+    "lib/pipeline/decision_depth2_search.py",
     "lib/pipeline/commit.py",
     "lib/pipeline/commit_persistent.py",
     "lib/pipeline/opening.py",
@@ -81,9 +94,23 @@ _FUTURE_IMPORT_RE = re.compile(r"^\s*from __future__\s+import\b.*$")
 _ALIAS_RE = re.compile(r"\b([A-Za-z_]\w*)\s+as\s+([A-Za-z_]\w*)\b")
 
 
-def _emit_aliases(block_text: str) -> list[str]:
-    """Return `Z = Y` lines for every `Y as Z` alias in a stripped block."""
-    return [f"{alias} = {orig}" for orig, alias in _ALIAS_RE.findall(block_text)]
+def _emit_aliases(block_text: str, indent: str = "") -> list[str]:
+    """Return `Z = Y` lines for every `Y as Z` alias in a stripped block,
+    each prefixed with `indent` so the rebinding sits at the same column
+    as the original import. Without this, a function-local
+    `try: from lib.X import Y as Z` would leave the try body empty AND
+    rebind Z at column 0 — IndentationError on parse."""
+    return [
+        f"{indent}{alias} = {orig}"
+        for orig, alias in _ALIAS_RE.findall(block_text)
+    ]
+
+
+def _leading_ws(line: str) -> str:
+    i = 0
+    while i < len(line) and line[i] in " \t":
+        i += 1
+    return line[:i]
 
 
 def _strip_imports(src: str) -> str:
@@ -94,6 +121,11 @@ def _strip_imports(src: str) -> str:
     or with content). When a multi-line open is seen, accumulate the
     full block so any `Y as Z` aliases can be re-emitted as `Z = Y`
     assignments.
+
+    Function-local imports (inside `try:` / `if cond:` / function bodies)
+    keep their original indent on both alias rebinds and the `pass`
+    placeholder. Without this, `try: from lib.X import Y` leaves the
+    try body empty → IndentationError on parse.
 
     NOTE: `from __future__ import annotations` is KEPT. Without it,
     pipeline dataclasses (e.g. TurnContext with `world: World` /
@@ -106,18 +138,30 @@ def _strip_imports(src: str) -> str:
     """
     out_lines: list[str] = []
     block_buf: list[str] | None = None  # None = not in multi-line block
+    block_indent: str = ""
     for line in src.splitlines():
         if block_buf is not None:
             block_buf.append(line)
             if line.strip().endswith(")"):
-                out_lines.extend(_emit_aliases("\n".join(block_buf)))
+                aliases = _emit_aliases("\n".join(block_buf), indent=block_indent)
+                if aliases:
+                    out_lines.extend(aliases)
+                else:
+                    out_lines.append(f"{block_indent}pass  # inlined import stripped")
                 block_buf = None
+                block_indent = ""
             continue
         if _INTRA_IMPORT_OPEN_RE.match(line):
             block_buf = [line]
+            block_indent = _leading_ws(line)
             continue
         if _INTRA_IMPORT_RE.match(line):
-            out_lines.extend(_emit_aliases(line))
+            indent = _leading_ws(line)
+            aliases = _emit_aliases(line, indent=indent)
+            if aliases:
+                out_lines.extend(aliases)
+            else:
+                out_lines.append(f"{indent}pass  # inlined import stripped")
             continue
         # Drop __future__ imports from the BODY (they get hoisted to a
         # single canonical line at the top of the bundle).
