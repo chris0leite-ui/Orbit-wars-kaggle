@@ -187,10 +187,9 @@ def main() -> int:
               file=sys.stderr)
         return 1
     hold_aware_matches = HOLD_AWARE_RE.findall(src)
-    if len(hold_aware_matches) != 1:
-        print(f"ERROR: expected 1 `_hold_aware_enabled()` block; "
-              f"found {len(hold_aware_matches)}. (Did Phase ζ.v2 land?)",
-              file=sys.stderr)
+    if len(hold_aware_matches) != 2:
+        print(f"ERROR: expected 2 `_hold_aware_enabled()` blocks; "
+              f"found {len(hold_aware_matches)}.", file=sys.stderr)
         return 1
 
     # Phase β isolation: topology on/off, smooth-ΔW off, maximin off.

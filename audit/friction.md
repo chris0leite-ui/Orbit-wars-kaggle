@@ -978,4 +978,21 @@ postmortem.
   Phase 0 "topology-active assertion" caught this silently dead
   code (1156 calls to `_per_planet_topology_score` post-fix in an
   80-step game). **Fix:** `my_id=int(my_id)` keyword in call.
+- `tag: lp-pending-not-deducted-during-opening-fallthrough` — when
+  `opening_planner.opening_plan` returns committed=None during the
+  opening phase (step < 30), the LP runs as fallthrough. Bundle
+  defaults to `LP_PENDING_AWARE_BUDGET=0`, so the LP re-issues the
+  same wait_N>0 column each turn (src/tgt have ample apparent
+  ships). Across 11 turns, 11 duplicate ScheduledFires accumulated
+  into commit_persistent for fire_step=12; at step 12 they all
+  decanted into one action list (12 × (src=15, ships=21)). Env
+  rejected most but the bug surfaced as a flood-fire. Surfaced by
+  the Phase ζ.v2-opening hold-aware fix making opening_planner
+  reject more candidates → empty schedule → LP fallthrough → bug
+  triggered. Pre-existing latent issue masked by opening_planner
+  always emitting a non-empty schedule. **Fix:** scoped
+  `_predict_opp_counter` in opening_planner to OPP_RESPONSE_LAG=4
+  window (mirror legacy gate) so opening_planner doesn't over-reject;
+  longer-term, enable LP_PENDING_AWARE_BUDGET=1 or de-dup in
+  commit_persistent.
 
