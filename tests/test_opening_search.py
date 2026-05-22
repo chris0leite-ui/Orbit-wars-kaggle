@@ -39,11 +39,15 @@ from lib.world_model import WorldModel
 
 @pytest.fixture(autouse=True)
 def _isolate_matrix(monkeypatch):
-    """Reset the trajectory matrix singleton; clear LP_OPENING_SEARCH."""
+    """Reset the trajectory matrix + schedule cache singletons; clear
+    LP_OPENING_SEARCH."""
+    from lib.joint_solver.opening_search import clear_schedule_cache
     monkeypatch.delenv("LP_OPENING_SEARCH", raising=False)
     get_default_matrix().reset()
+    clear_schedule_cache()
     yield
     get_default_matrix().reset()
+    clear_schedule_cache()
 
 
 def _ctx_from_seed(seed: int):

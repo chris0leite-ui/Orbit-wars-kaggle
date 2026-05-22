@@ -46,6 +46,8 @@ except ImportError:
     LinearConstraint = None  # type: ignore[assignment]
     Bounds = None  # type: ignore[assignment]
 
+from typing import Any
+
 from lib.joint_solver.opening_planner import (
     OPENING_HORIZON,
     OPENING_DEFENDER_GUARD,
@@ -60,6 +62,86 @@ from lib.joint_solver.trajectory_matrix import (
     get_default as get_default_matrix,
 )
 from lib.world_model import simulate_planet_timeline
+
+
+# ---------------------------------------------------------------------------
+# Schedule cache — solve once per game, decant per turn
+# ---------------------------------------------------------------------------
+#
+# Bug seen on the n=8 A/B vs FND base (0W/8L): stateless re-derive each
+# turn picks "best fire at fire_step=step_now" — the matrix is anchored
+# on initial planets, so the SAME early fire keeps being optimal at
+# every turn. Net effect: we re-fire planet 0 → planet 8 every other
+# tick, draining home and never executing the wait_N>0 captures the
+# MILP nominally planned.
+#
+# Fix: solve the full schedule ONCE at first call within a game,
+# cache it, and emit only the fires with `fire_step == step_now` on
+# subsequent turns. Cache invalidates on game-fingerprint change
+# (matches trajectory_matrix's fingerprint via obs_d["initial_planets"]).
+
+
+class _ScheduleCache:
+    """Per-game schedule cache. Same singleton pattern as
+    trajectory_matrix / pending_schedule."""
+
+    def __init__(self) -> None:
+        self._fingerprint: Any = None
+        self._schedule: list[ScheduleEntry] = []
+        self._n_vars: int = 0
+        self._n_constraints: int = 0
+        self._status: str = ""
+        self._objective: float = 0.0
+        self._waterfall: dict = {}
+
+    def reset(self) -> None:
+        self._fingerprint = None
+        self._schedule = []
+        self._n_vars = 0
+        self._n_constraints = 0
+        self._status = ""
+        self._objective = 0.0
+        self._waterfall = {}
+
+    def get_or_solve(self, ctx, *, time_limit_seconds: float = 0.4
+                     ) -> OpeningPlan:
+        fp = self._fingerprint_from_ctx(ctx)
+        if fp != self._fingerprint:
+            op = _solve_full_schedule(ctx, time_limit_seconds=time_limit_seconds)
+            self._fingerprint = fp
+            self._schedule = list(op.schedule)
+            self._n_vars = int(op.n_vars)
+            self._n_constraints = int(op.n_constraints)
+            self._status = str(op.status)
+            self._objective = float(op.objective)
+            self._waterfall = dict(op.pruning_waterfall or {})
+        return OpeningPlan(
+            schedule=list(self._schedule),
+            objective=float(self._objective),
+            n_vars=int(self._n_vars),
+            n_constraints=int(self._n_constraints),
+            status=str(self._status),
+            pruning_waterfall=dict(self._waterfall),
+        )
+
+    @staticmethod
+    def _fingerprint_from_ctx(ctx) -> tuple:
+        """Same anchor as trajectory_matrix — initial planet state."""
+        obs_d = getattr(ctx, "obs_d", None) or {}
+        init = obs_d.get("initial_planets") or []
+        return ("opening_schedule", tuple(tuple(p) for p in init),
+                round(float(getattr(ctx, "omega", 0.0)), 6))
+
+
+_DEFAULT_CACHE = _ScheduleCache()
+
+
+def clear_schedule_cache() -> None:
+    _DEFAULT_CACHE.reset()
+
+
+def get_schedule_cache() -> _ScheduleCache:
+    return _DEFAULT_CACHE
 
 
 # ---------------------------------------------------------------------------
@@ -589,19 +671,10 @@ def _greedy_fallback(candidates: list[_SearchCandidate], world
 # ---------------------------------------------------------------------------
 
 
-def opening_plan_search(ctx, *, time_limit_seconds: float = 0.4
-                        ) -> OpeningPlan:
-    """Build the opening schedule using the trajectory-matrix-backed
-    widened search. Returns an `OpeningPlan` with the same shape as
-    `opening_planner.opening_plan`, so `lib/pipeline/opening.py` can
-    dispatch between the two via the env-var gate.
-
-    `time_limit_seconds` default 0.4s — bumped from opening_planner's
-    0.15s because the widened candidate set (~150-200 vars vs ~12) needs
-    more MILP solve time. On seed 42 the MILP converges at ~300ms wall;
-    0.4s gives headroom. Per-turn budget is 1.0s; this leaves ~600ms for
-    perception + candidates + commit.
-    """
+def _solve_full_schedule(ctx, *, time_limit_seconds: float = 0.4
+                         ) -> OpeningPlan:
+    """One-shot full-schedule solve. Internal — opening_plan_search wraps
+    this in the per-game cache so we don't re-derive every turn."""
     candidates = _build_candidates(ctx)
     if not candidates:
         return OpeningPlan(
@@ -636,3 +709,20 @@ def opening_plan_search(ctx, *, time_limit_seconds: float = 0.4
             "n_chosen": len(chosen),
         },
     )
+
+
+def opening_plan_search(ctx, *, time_limit_seconds: float = 0.4
+                        ) -> OpeningPlan:
+    """Build the opening schedule using the trajectory-matrix-backed
+    widened search. SOLVES ONCE PER GAME (cached by fingerprint),
+    decanting per turn — fixes the n=8 0W/8L regression where
+    stateless re-derive picked the same early fire at every turn.
+
+    Returns an `OpeningPlan` with the same shape as
+    `opening_planner.opening_plan`, so `lib/pipeline/opening.py` can
+    dispatch between the two via the env-var gate.
+
+    `time_limit_seconds` default 0.4s — only the first turn of each
+    game pays this cost; subsequent turns are O(1) cache lookup.
+    """
+    return _DEFAULT_CACHE.get_or_solve(ctx, time_limit_seconds=time_limit_seconds)
