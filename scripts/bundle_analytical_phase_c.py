@@ -82,6 +82,10 @@ PIPELINE_ORDER = [
     # leaf_outcome_table, portfolio_enum_lp_seeded, decision).
     "lib/pipeline/decision_outcome_aware_discounted.py",
     "lib/pipeline/decision_depth2_search.py",
+    # Phase ε.1 adversarial maximin search. Same deps as depth2 +
+    # the maximin selection rule. Wired via _decision_router in
+    # agents/analytical_phase_c/main.py, opt-in LP_MAXIMIN_SEARCH=1.
+    "lib/pipeline/decision_lagrangian_maximin.py",
     "lib/pipeline/commit.py",
     "lib/pipeline/commit_persistent.py",
     "lib/pipeline/opening.py",

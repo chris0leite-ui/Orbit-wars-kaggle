@@ -49,25 +49,37 @@ from lib.pipeline import compose
 from lib.pipeline.candidates import candidates_default
 from lib.pipeline.commit_persistent import commit_persistent
 from lib.pipeline.decision_depth2_search import decision_depth2_search
+from lib.pipeline.decision_lagrangian_maximin import decision_lagrangian_maximin
 from lib.pipeline.opening import opening_default
 from lib.pipeline.opp_model import opp_greedy_roi
 from lib.pipeline.perception import perception_default
 from lib.pipeline.prerank_passthrough import prerank_passthrough
 
 
-# Phase ε.2.a decision stage — wraps the plain LP with an opening-only
-# depth-2 search (top-K my portfolios × opp's mirror-analytical response
-# × LP-at-T+1 continuation). Falls through to the plain LP when
-# LP_DEPTH2_SEARCH is unset (default) OR when step_now >= opening
-# horizon, so the default behaviour matches `decision_outcome_aware_milp`
-# byte-for-byte. Opt in via `LP_DEPTH2_SEARCH=1`.
+# Decision-stage router (Phase ε.1):
+#   LP_MAXIMIN_SEARCH=1 → decision_lagrangian_maximin (adversarial maximin
+#                          over top-K us × top-K opp, closed-form leaf).
+#   LP_MAXIMIN_SEARCH=0/unset (default) → decision_depth2_search
+#                          (opening-only T+1 lookahead with argmax).
+# Each underlying module gates its own opt-in env var (LP_DEPTH2_SEARCH,
+# LP_MAXIMIN_SEARCH) and falls back to plain MILP when off, so default
+# behaviour with neither env var set matches `decision_outcome_aware_milp`
+# byte-for-byte.
+def _decision_router(cols, opp, ctx, **kw):
+    if os.environ.get("LP_MAXIMIN_SEARCH", "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    ):
+        return decision_lagrangian_maximin(cols, opp, ctx, **kw)
+    return decision_depth2_search(cols, opp, ctx, **kw)
+
+
 _AGENT = compose(
     perception=perception_default,
     opening_override=opening_default,
     candidates=candidates_default,
     opp_model=opp_greedy_roi,
     prerank=prerank_passthrough,
-    decision=decision_depth2_search,
+    decision=_decision_router,
     commit=commit_persistent,
 )
 

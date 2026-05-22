@@ -54,6 +54,14 @@ SMOOTH_DELTA_W_RE = re.compile(
     re.MULTILINE,
 )
 
+# Phase ε.1: maximin search gate.
+MAXIMIN_RE = re.compile(
+    r"(def _maximin_enabled\(\) -> bool:\n)"
+    r"((?:    .*\n)+?)"
+    r"(\n)",
+    re.MULTILINE,
+)
+
 
 def _replace_topology(src: str, retval: str) -> str:
     """Replace each topology lazy `_*_enabled()` body with `return <retval>`."""
@@ -73,6 +81,23 @@ def _replace_smooth_delta_w(src: str, retval: str) -> str:
     return SMOOTH_DELTA_W_RE.sub(repl, src)
 
 
+def _replace_maximin(src: str, retval: str) -> str:
+    """Replace `_maximin_enabled()` body."""
+    def repl(m: re.Match) -> str:
+        signature = m.group(1)
+        trailing = m.group(3)
+        return f"{signature}    return {retval}  # hardcoded by build_topology_variants.py\n{trailing}"
+    return MAXIMIN_RE.sub(repl, src)
+
+
+def _apply_all(src: str, *, topo: str, smooth: str, maximin: str) -> str:
+    """Compose all three rewrites — order independent."""
+    return _replace_maximin(
+        _replace_smooth_delta_w(_replace_topology(src, topo), smooth),
+        maximin,
+    )
+
+
 def main() -> int:
     if not SRC.exists():
         print(f"ERROR: {SRC.relative_to(REPO)} missing. "
@@ -81,7 +106,7 @@ def main() -> int:
         return 1
 
     src = SRC.read_text()
-    # Sanity: confirm we see all 4 topology lazy fns + 1 smooth-ΔW lazy fn.
+    # Sanity: confirm we see all 4 topology lazy fns + 1 smooth-ΔW + 1 maximin.
     topo_matches = LAZY_BLOCK_RE.findall(src)
     if len(topo_matches) != 4:
         print(f"ERROR: expected 4 lazy `_*_enabled()` topology blocks; "
@@ -93,43 +118,46 @@ def main() -> int:
               f"found {len(smooth_matches)}. (Did Phase α land in tree?)",
               file=sys.stderr)
         return 1
+    maximin_matches = MAXIMIN_RE.findall(src)
+    if len(maximin_matches) != 1:
+        print(f"ERROR: expected 1 `_maximin_enabled()` block; "
+              f"found {len(maximin_matches)}. (Did Phase ε.1 land?)",
+              file=sys.stderr)
+        return 1
 
-    # Two baseline variants (topology on/off, smooth-ΔW off — Phase β isolation):
-    on_src = _replace_smooth_delta_w(_replace_topology(src, "True"), "False")
-    off_src = _replace_smooth_delta_w(_replace_topology(src, "False"), "False")
+    # Phase β isolation: topology on/off, smooth-ΔW off, maximin off.
+    OUT_ON.write_text(_apply_all(src, topo="True",  smooth="False", maximin="False"))
+    OUT_OFF.write_text(_apply_all(src, topo="False", smooth="False", maximin="False"))
 
-    OUT_ON.write_text(on_src)
-    OUT_OFF.write_text(off_src)
-
-    # Phase α variants (smooth-ΔW on/off, topology off — Phase α isolation):
+    # Phase α isolation: smooth-ΔW on/off, topology off, maximin off.
     alpha_on = OUT_ON.parent / "smooth_dw_on.py"
     alpha_off = OUT_ON.parent / "smooth_dw_off.py"
-    alpha_on.write_text(
-        _replace_smooth_delta_w(_replace_topology(src, "False"), "True")
-    )
-    alpha_off.write_text(
-        _replace_smooth_delta_w(_replace_topology(src, "False"), "False")
-    )
+    alpha_on.write_text(_apply_all(src, topo="False", smooth="True",  maximin="False"))
+    alpha_off.write_text(_apply_all(src, topo="False", smooth="False", maximin="False"))
 
-    # Stacked variants (both α + β features ON or both OFF — for the
-    # combined-features A/B once α-alone and β-alone null):
+    # α+β stacked: both on/off, maximin off.
     stacked_on = OUT_ON.parent / "alpha_beta_on.py"
     stacked_off = OUT_ON.parent / "alpha_beta_off.py"
-    stacked_on.write_text(
-        _replace_smooth_delta_w(_replace_topology(src, "True"), "True")
-    )
-    stacked_off.write_text(
-        _replace_smooth_delta_w(_replace_topology(src, "False"), "False")
-    )
+    stacked_on.write_text(_apply_all(src, topo="True",  smooth="True",  maximin="False"))
+    stacked_off.write_text(_apply_all(src, topo="False", smooth="False", maximin="False"))
 
-    # Verify all six bundles load and report the right hardcoded value.
-    for path, topo, smooth in [
-        (OUT_ON, True, False),
-        (OUT_OFF, False, False),
-        (alpha_on, False, True),
-        (alpha_off, False, False),
-        (stacked_on, True, True),
-        (stacked_off, False, False),
+    # Phase ε.1 isolation: α+β baseline (both ON) + maximin on/off.
+    # focal = α+β+maximin ALL ON; opp = α+β ON, maximin OFF.
+    maximin_on = OUT_ON.parent / "maximin_on.py"
+    maximin_off = OUT_ON.parent / "maximin_off.py"
+    maximin_on.write_text(_apply_all(src, topo="True",  smooth="True",  maximin="True"))
+    maximin_off.write_text(_apply_all(src, topo="True",  smooth="True",  maximin="False"))
+
+    # Verify all eight bundles load and report the right hardcoded value.
+    for path, topo, smooth, maximin in [
+        (OUT_ON,      True,  False, False),
+        (OUT_OFF,     False, False, False),
+        (alpha_on,    False, True,  False),
+        (alpha_off,   False, False, False),
+        (stacked_on,  True,  True,  False),
+        (stacked_off, False, False, False),
+        (maximin_on,  True,  True,  True),
+        (maximin_off, True,  True,  False),
     ]:
         import importlib.util
         spec = importlib.util.spec_from_file_location(path.stem, str(path))
@@ -137,21 +165,22 @@ def main() -> int:
         spec.loader.exec_module(m)
         topo_fn = m.__dict__.get("_topology_features_enabled")
         smooth_fn = m.__dict__.get("_smooth_delta_w_enabled")
-        if topo_fn is None or smooth_fn is None:
+        maximin_fn = m.__dict__.get("_maximin_enabled")
+        if topo_fn is None or smooth_fn is None or maximin_fn is None:
             print(f"FAIL: {path.name} missing gate fn", file=sys.stderr)
             return 1
-        a_topo = topo_fn()
-        a_smooth = smooth_fn()
-        if a_topo != topo or a_smooth != smooth:
+        a_topo, a_smooth, a_maximin = topo_fn(), smooth_fn(), maximin_fn()
+        if a_topo != topo or a_smooth != smooth or a_maximin != maximin:
             print(f"FAIL: {path.name} topo={a_topo}/{topo}, "
-                  f"smooth={a_smooth}/{smooth}", file=sys.stderr)
+                  f"smooth={a_smooth}/{smooth}, maximin={a_maximin}/{maximin}",
+                  file=sys.stderr)
             return 1
         if not callable(getattr(m, "agent", None)):
             print(f"FAIL: {path.name} no callable agent symbol",
                   file=sys.stderr)
             return 1
         print(f"OK: {path.name} loads, agent callable, "
-              f"topology={a_topo}, smooth_ΔW={a_smooth}, "
+              f"topology={a_topo}, smooth_ΔW={a_smooth}, maximin={a_maximin}, "
               f"{path.stat().st_size} bytes")
 
     return 0
