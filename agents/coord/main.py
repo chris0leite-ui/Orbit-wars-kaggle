@@ -136,14 +136,14 @@ LAGRANGIAN_BUDGET_MS = 20.0
 #                         disable the floor and let the bonus rescue
 #                         tactically-losing bundles.
 LAMBDA_W_DEFAULT = 0.002
-LEAF_FLOOR_DEFAULT = 0.0
+LEAF_FLOOR_DEFAULT = 2.0
 # Lagrangian break threshold on reduced_score. The original loop breaks
 # when reduced_score <= 0 (only admit positive-net-value bundles). Setting
 # COORD_REDUCED_FLOOR=-1e9 admits any bundle (test the hypothesis that
 # per-bundle leaf-Δ is too pessimistic for ensemble emission — single
 # bundles look catastrophic when scored in isolation but many-bundle
 # sets can succeed via spread-the-defense).
-REDUCED_FLOOR_DEFAULT = 0.0
+REDUCED_FLOOR_DEFAULT = 2.0
 # Demand-spread mixing (Option 3 from 2026-05-22 design):
 # Per-opp defensive capacity × per-bundle attention demand → mixing_weight ∈
 # [0,1]. composite = w·tier2 + (1-w)·cheap_score + endgame. When our total
