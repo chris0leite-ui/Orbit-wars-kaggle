@@ -33,6 +33,67 @@
 - **Daily submission budget:** 5/day. 5/20 used: 2. 3 slots remain.
 - **Floor-at-risk flag:** **TRUE** — rolling pair is 320 μ below team peak.
 
+## Day-N PM extract-physics-trajectory-Vjaz9 (2026-05-22, late — Phases 1+2+3)
+
+**Session shape:** three simple chooser/value-head improvements, each
+independently committable. Built on the previous wrap (commit `9b91598`).
+
+**Phase 1 — deterministic chooser budget (commit `a50eb8e`):**
+Replaced `time.perf_counter()` probe in `agents/baseline/chooser.py`
++ `chooser_trajectory.py` with state-aware constants
+(`BASELINE_STEP_BASE_MS / STEP_PER_FLEET_MS / LEAF_BASE_MS /
+LEAF_PER_FLEET_MS`). Cap shrinks naturally as `n_fleets` grows,
+mirroring the probe's responsiveness without wallclock dependency.
+Joint-pair enumeration shares the deterministic budget via
+`joint_limit = cap * BASELINE_JOINT_BUDGET_FRAC` (default 0.5).
+Bench orbitfix_kt vs v7_0: p50=213, p95=583, max=969 ms, zero turns
+>=1000 ms. Determinism pins in `tests/test_baseline_chooser.py`:
+`test_affordable_cap_is_deterministic_across_calls` +
+`test_agent_is_deterministic_across_calls` (both fail on OLD probe
+code per Rule 38 reproduction).
+
+**Phase 2 — adaptive K compute allocation (commit `fcf1a73`):**
+After `BASELINE_CRITICALITY_PROBE` candidates scored (default 3),
+check top-1 vs top-2 margin in `scored`. If below
+`BASELINE_CRITICALITY_MARGIN` (default 0.05), bump rollout horizon
+by `BASELINE_CRITICALITY_K_BUMP` (default 10) for subsequent
+candidates, capped at `BASELINE_MAX_HORIZON_CAP` (default 60).
+Reuses signals already in the loop; no new physics. Env-gated
+`BASELINE_ADAPTIVE_K=1`, default OFF. `baseline_favors` pre-sized
+to the bumped ceiling so `score_candidate_v4` never IndexErrors.
+
+**Phase 3 — leaf in-flight fate check (commit `25589ad`):** In
+`lib/value_heads.py:composite_capture_value`, after `pred_owner ==
+my_id` passes, call `predict_fleet_fate(fleet_proxy, target,
+fleet.angle, ships, world)` to ray-cast the trajectory. If outcome
+!= "target", apply waste penalty. Catches intermediate-planet
+collisions (orbital drift into the fleet's straight-line path)
+that WorldModel doesn't simulate — the H44 audit finding (65% of
+in-flight deaths). Cost-controlled: only runs for fleets that
+would otherwise be FULLY credited. Env-gated
+`COMPOSITE_FLEET_SURVIVAL_CHECK=1`, default OFF. Bench with
+check ON: p95=646, max=1035, 3/711 turns >=1000 ms.
+
+**A/B variant `agents/orbitfix_kt_p23/main.py`** wires both Phase
+2 and Phase 3 ON for n=32 A/B vs `orbitfix_kt` (which has Phase 1
+baked in via shared chooser code). [A/B running at session end —
+see audit for final Wilson CI.]
+
+**Why this re-opens the structural-ceiling diagnosis:** if Phase 1
+alone shifts the A/B (Wilson-lo >= 0.55), then timing noise was
+masking signal across the whole branch. Historical mechanism-axis
+falsifications (H17/H19/H21, chain bonus, value aggregators,
+v9-v15 saturation) ran on the non-deterministic chooser and may
+have been false negatives. Re-survey closed tracks in that case.
+
+**Next-session first action:** (a) finalise the A/B verdict, (b) if
+Phase 2 or 3 lifts, tune their env vars (margin, K_BUMP, eta-gate
+threshold) for a follow-up bump; (c) if both wash, cross-pollinate
+Phase 3a + kinematic-table into the consolidate branch's
+`agents/coord` per the prior wrap section.
+
+---
+
 ## Day-N PM extract-physics-trajectory-Vjaz9 (2026-05-22, full session)
 
 **Session shape:** physics substrate extraction → 3 conversion
