@@ -198,6 +198,59 @@ def _opening_tempo_enabled() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Pending-aware source budget — Phase ζ.1 fix (do-it-thoroughly plan).
+#
+# Bug surfaced by the seed-42 step-1..7 LP introspect: the LP's
+# source-budget constraint reads `src.ships` directly from `world`, but
+# `commit_persistent` may have already committed wait_N>0 fires from
+# previous turns whose ships are reserved for an upcoming decant. When
+# the LP picks a new wait_N=0 fire from the same source on the SAME
+# turn a decant resolves, both fires command from the source, the env
+# caps total emission, and one fire dies silently.
+#
+# Fix: deduct pending-fire ships from each source-budget RHS at the
+# constraint level. For a pending fire with `fire_step == step_now + d`,
+# its ships are unavailable for any LP fire with wait_N >= d (the LP
+# fire would compete with the decanted fire at step step_now+d).
+#
+# Opt-in via LP_PENDING_AWARE_BUDGET=1 (default OFF for clean A/B).
+# Flip default to ON after A/B clears.
+def _pending_aware_budget_enabled() -> bool:
+    return _os.environ.get("LP_PENDING_AWARE_BUDGET", "0") == "1"
+
+
+def _fetch_pending_fires(my_id: int) -> list:
+    """Return the list of ScheduledFires from the pending-schedule
+    singleton for `my_id`. Lazy import to keep this module independent
+    of the pipeline layer in unit tests."""
+    try:
+        from lib.pipeline.pending_schedule import get_default_pending
+        return list(get_default_pending().get_pending(int(my_id)))
+    except Exception:
+        return []
+
+
+def _pending_ships_consumed_by(sid: int, step_now: int, u: int,
+                               pending_fires: list) -> int:
+    """Sum ships from pending fires from source `sid` whose decant time
+    (in ticks from now) is <= `u`. These fires reserve ships that the
+    LP cannot also emit at any wait_N <= u from the same source.
+
+    A fire with `fire_step == step_now + d` consumes ships at the d'th
+    tick from now. Past-due fires (d < 0; prune_past should have caught
+    them) are clamped to d=0 defensively.
+    """
+    total = 0
+    for f in pending_fires:
+        if int(getattr(f, "src_id", -1)) != int(sid):
+            continue
+        d = max(0, int(getattr(f, "fire_step", 0)) - int(step_now))
+        if d <= int(u):
+            total += int(getattr(f, "ships", 0))
+    return total
+
+
+# ---------------------------------------------------------------------------
 # Public result dataclass
 # ---------------------------------------------------------------------------
 
@@ -656,11 +709,17 @@ def _greedy_fallback(
     by_col_id = {int(c.column_id): c for c in active_columns}
 
     # Check source budget; greedy drop launches if over-spent.
+    # Pending-aware: when LP_PENDING_AWARE_BUDGET=1, subtract already-
+    # committed (wait_N>0 from prior turns) ships from the source budget.
     emitted_per_src_fire: dict[tuple[int, int], int] = {}
     fired: list[Column] = []
     drop_order = sorted(
         (by_col_id[cid] for cid in fired_ids),
         key=lambda c: float(c.value),
+    )
+    pending_fires_g = (
+        _fetch_pending_fires(int(my_id))
+        if _pending_aware_budget_enabled() else []
     )
     for col in drop_order:
         sid = int(col.src_id)
@@ -668,7 +727,12 @@ def _greedy_fallback(
         wait_N = int(col.wait_N)
         used = sum(v for (s, w), v in emitted_per_src_fire.items()
                    if s == sid and w <= wait_N)
-        if used + int(col.ships) > initial + prod * max(0, wait_N) - DEFENDER_GUARD:
+        pending_used = _pending_ships_consumed_by(
+            sid, step_now, wait_N, pending_fires_g,
+        )
+        if used + int(col.ships) > (
+            initial + prod * max(0, wait_N) - DEFENDER_GUARD - pending_used
+        ):
             # Drop this column from the chosen subset (replace with empty).
             for pid, s in chosen.items():
                 if int(col.column_id) in s:
@@ -924,6 +988,13 @@ def solve_outcome_aware(
     src_ids = sorted({int(c.src_id) for c in active
                       if getattr(c, "parent_column_id", None) is None})
     fire_times = sorted({int(c.wait_N) for c in active})
+    # Pending-aware budget (LP_PENDING_AWARE_BUDGET=1): pull pending fires
+    # ONCE so each (sid, u) constraint can deduct already-committed ships
+    # from the RHS.
+    pending_fires = (
+        _fetch_pending_fires(int(my_id))
+        if _pending_aware_budget_enabled() else []
+    )
     for sid in src_ids:
         if sid not in inv:
             continue
@@ -939,8 +1010,13 @@ def solve_outcome_aware(
                     any_in_row = True
             if not any_in_row:
                 continue
+            pending_used = _pending_ships_consumed_by(
+                sid, step_now, u, pending_fires,
+            )
             A_ub_rows.append(row)
-            b_ub.append(float(initial + prod * max(0, u) - DEFENDER_GUARD))
+            b_ub.append(float(
+                initial + prod * max(0, u) - DEFENDER_GUARD - pending_used
+            ))
 
     # (4) Phase F2a linkage: x_compound <= x_parent_capture.
     # Encoded as A_ub row `+1 * x_compound − 1 * x_parent <= 0`.
