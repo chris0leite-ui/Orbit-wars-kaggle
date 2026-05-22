@@ -61,14 +61,16 @@ from lib.pipeline.prerank_passthrough import prerank_passthrough
 #                          over top-K us × top-K opp, closed-form leaf).
 #   LP_MAXIMIN_SEARCH=0/unset (default) → decision_depth2_search
 #                          (opening-only T+1 lookahead with argmax).
-# Each underlying module gates its own opt-in env var (LP_DEPTH2_SEARCH,
-# LP_MAXIMIN_SEARCH) and falls back to plain MILP when off, so default
-# behaviour with neither env var set matches `decision_outcome_aware_milp`
-# byte-for-byte.
+# Routes via the LAZY `_maximin_enabled()` function from the maximin
+# module — NOT direct os.environ.get — so hardcoded-constant variant
+# bundles (scripts/build_topology_variants.py replaces the function
+# body with `return True`/`return False`) correctly route through the
+# router. Pre-fix the router read env-var directly, so hardcoded
+# variants had no effect → n=16 A/B was measuring LP-vs-LP, not
+# maximin (audit/2026-05-23/phase-epsilon-1-router-bug.md).
 def _decision_router(cols, opp, ctx, **kw):
-    if os.environ.get("LP_MAXIMIN_SEARCH", "0").strip().lower() in (
-        "1", "true", "on", "yes",
-    ):
+    from lib.pipeline.decision_lagrangian_maximin import _maximin_enabled
+    if _maximin_enabled():
         return decision_lagrangian_maximin(cols, opp, ctx, **kw)
     return decision_depth2_search(cols, opp, ctx, **kw)
 
