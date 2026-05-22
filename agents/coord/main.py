@@ -13,6 +13,7 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import combinations
+import os
 import time
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
@@ -248,7 +249,8 @@ def _emit_subsets(window: list[Leg], max_size: int) -> list[tuple[Leg, ...]]:
 
 def enumerate_attack_bundles(my_planets, target_pool, world, model,
                              me: int, omega: float,
-                             baseline_len: int = MAX_HORIZON + 1
+                             baseline_len: int = MAX_HORIZON + 1,
+                             max_bundle_size: int = MAX_BUNDLE_SIZE,
                              ) -> list[Bundle]:
     """Enumerate multi-source ATTACK bundles for each non-own target.
 
@@ -286,7 +288,7 @@ def enumerate_attack_bundles(my_planets, target_pool, world, model,
             continue
         windows = _cluster_arrival_windows(legs, slack=ARRIVAL_WINDOW_SLACK)
         for window in windows:
-            for subset in _emit_subsets(window, MAX_BUNDLE_SIZE):
+            for subset in _emit_subsets(window, max_bundle_size):
                 key_legs = frozenset(
                     (L.src_id, L.ships, L.wait_N, L.eta) for L in subset
                 )
@@ -305,7 +307,8 @@ def enumerate_attack_bundles(my_planets, target_pool, world, model,
 
 
 def enumerate_defend_bundles(my_planets, world, model, me: int, omega: float,
-                             baseline_len: int = MAX_HORIZON + 1
+                             baseline_len: int = MAX_HORIZON + 1,
+                             max_bundle_size: int = MAX_BUNDLE_SIZE,
                              ) -> list[Bundle]:
     """Enumerate multi-source DEFEND bundles for each own planet under threat.
 
@@ -350,7 +353,7 @@ def enumerate_defend_bundles(my_planets, world, model, me: int, omega: float,
                 all_legs.append(leg)
         if not all_legs:
             continue
-        for subset in _emit_subsets(all_legs, MAX_BUNDLE_SIZE):
+        for subset in _emit_subsets(all_legs, max_bundle_size):
             key_legs = frozenset(
                 (L.src_id, L.ships, L.wait_N, L.eta) for L in subset
             )
@@ -1039,10 +1042,28 @@ def agent(obs, configuration=None) -> list[list]:
 
     snap_base = fs_from_obs(obs, num_seats=num_seats)
 
+    # Env-var knobs for Gate 1 singleton-parity (Day 8) and ablations.
+    # COORD_MAX_BUNDLE_SIZE: int override of MAX_BUNDLE_SIZE (=3 default).
+    #   Set to 1 to force singleton-only — reduces coord to "minimal-shape"
+    #   for the structural-correctness gate.
+    # COORD_DISABLE_DEFEND: '1' to skip defense enumeration entirely.
+    #   Mirrors Day 8 / Gate 1 protocol (defense off → attack-only path).
+    max_bundle_size = int(os.environ.get(
+        "COORD_MAX_BUNDLE_SIZE", str(MAX_BUNDLE_SIZE),
+    ))
+    disable_defend = os.environ.get("COORD_DISABLE_DEFEND", "0") == "1"
+
     attacks = enumerate_attack_bundles(
         my_planets, other_planets, world, model, me, omega,
+        max_bundle_size=max_bundle_size,
     )
-    defends = enumerate_defend_bundles(my_planets, world, model, me, omega)
+    if disable_defend:
+        defends = []
+    else:
+        defends = enumerate_defend_bundles(
+            my_planets, world, model, me, omega,
+            max_bundle_size=max_bundle_size,
+        )
     all_bundles = attacks + defends
     if not all_bundles:
         return []

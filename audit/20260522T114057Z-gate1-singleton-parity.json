@@ -1,0 +1,375 @@
+{
+  "total_turns": 120,
+  "identical_turns": 63,
+  "source_subset_turns": 9,
+  "divergent_turns": 48,
+  "near_identical_pct": 60.0,
+  "acceptance_pct_threshold": 80.0,
+  "elapsed_seconds": 102.20514830299999,
+  "per_seed": [
+    {
+      "seed": 0,
+      "turns_evaluated": 60,
+      "identical_turns": 31,
+      "source_subset_turns": 4,
+      "divergent_turns": 25,
+      "diff_details": [
+        {
+          "seed": 0,
+          "turn": 16,
+          "coord_actions": [
+            [
+              20,
+              10
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            20
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 0,
+          "turn": 17,
+          "coord_actions": [
+            [
+              20,
+              13
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            20
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 0,
+          "turn": 20,
+          "coord_actions": [
+            [
+              12,
+              9
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            12
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 0,
+          "turn": 21,
+          "coord_actions": [
+            [
+              12,
+              10
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            12
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 0,
+          "turn": 22,
+          "coord_actions": [
+            [
+              12,
+              11
+            ]
+          ],
+          "minimal_actions": [
+            [
+              20,
+              13
+            ]
+          ],
+          "coord_sources": [
+            12
+          ],
+          "minimal_sources": [
+            20
+          ]
+        },
+        {
+          "seed": 0,
+          "turn": 24,
+          "coord_actions": [
+            [
+              12,
+              13
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            12
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 0,
+          "turn": 28,
+          "coord_actions": [
+            [
+              20,
+              9
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            20
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 0,
+          "turn": 29,
+          "coord_actions": [
+            [
+              20,
+              9
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            20
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 0,
+          "turn": 30,
+          "coord_actions": [
+            [
+              20,
+              15
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            20
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 0,
+          "turn": 32,
+          "coord_actions": [
+            [
+              20,
+              21
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            20
+          ],
+          "minimal_sources": []
+        }
+      ]
+    },
+    {
+      "seed": 1,
+      "turns_evaluated": 60,
+      "identical_turns": 32,
+      "source_subset_turns": 5,
+      "divergent_turns": 23,
+      "diff_details": [
+        {
+          "seed": 1,
+          "turn": 20,
+          "coord_actions": [
+            [
+              12,
+              10
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            12
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 1,
+          "turn": 21,
+          "coord_actions": [
+            [
+              12,
+              13
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            12
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 1,
+          "turn": 22,
+          "coord_actions": [
+            [
+              12,
+              16
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            12
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 1,
+          "turn": 23,
+          "coord_actions": [
+            [
+              14,
+              7
+            ],
+            [
+              12,
+              19
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            12,
+            14
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 1,
+          "turn": 24,
+          "coord_actions": [
+            [
+              14,
+              10
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            14
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 1,
+          "turn": 25,
+          "coord_actions": [
+            [
+              14,
+              13
+            ],
+            [
+              5,
+              9
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            5,
+            14
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 1,
+          "turn": 26,
+          "coord_actions": [
+            [
+              14,
+              16
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            14
+          ],
+          "minimal_sources": []
+        },
+        {
+          "seed": 1,
+          "turn": 27,
+          "coord_actions": [
+            [
+              12,
+              31
+            ]
+          ],
+          "minimal_actions": [
+            [
+              14,
+              19
+            ]
+          ],
+          "coord_sources": [
+            12
+          ],
+          "minimal_sources": [
+            14
+          ]
+        },
+        {
+          "seed": 1,
+          "turn": 33,
+          "coord_actions": [
+            [
+              4,
+              63
+            ],
+            [
+              14,
+              9
+            ]
+          ],
+          "minimal_actions": [
+            [
+              4,
+              63
+            ]
+          ],
+          "coord_sources": [
+            4,
+            14
+          ],
+          "minimal_sources": [
+            4
+          ]
+        },
+        {
+          "seed": 1,
+          "turn": 34,
+          "coord_actions": [
+            [
+              14,
+              12
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              12,
+              12
+            ]
+          ],
+          "minimal_actions": [],
+          "coord_sources": [
+            4,
+            12,
+            14
+          ],
+          "minimal_sources": []
+        }
+      ]
+    }
+  ]
+}
