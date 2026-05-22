@@ -114,6 +114,7 @@ LAGRANGIAN_BUDGET_MS = 20.0
 LAMBDA_W_DEFAULT = 0.002
 LAMBDA_W_ENV = "COORD_LAMBDA_W"
 DELTA_W_ENABLE_ENV = "COORD_DELTA_W"
+DEFEND_BONUS_ENV = "COORD_DEFEND_BONUS"
 
 
 def _lambda_w() -> float:
@@ -128,6 +129,14 @@ def _lambda_w() -> float:
 
 def _delta_w_enabled() -> bool:
     return os.environ.get(DELTA_W_ENABLE_ENV, "1") == "1"
+
+
+def _defend_bonus_enabled() -> bool:
+    """Gate for the DEFEND branch of the endgame bonus. Default on; set to
+    "0" to test ATTACK-only attribution (used to isolate whether DEFEND's
+    opp-independent magnitude is over-weighting defense).
+    """
+    return os.environ.get(DEFEND_BONUS_ENV, "1") == "1"
 
 
 class BundleKind(Enum):
@@ -883,6 +892,8 @@ def _bundle_endgame_bonus(bundle: Bundle, world, model, me: int,
         return _lambda_w() * float(dw)
 
     if bundle.kind == BundleKind.DEFEND:
+        if not _defend_bonus_enabled():
+            return 0.0
         opp_threat = _largest_threat_owner(bundle.target_id, model, me)
         if opp_threat is None:
             return 0.0

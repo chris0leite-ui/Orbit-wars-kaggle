@@ -70,8 +70,19 @@ def play_one(seed, coord_as_p0):
 
 
 def run_panel(seeds, lambda_w, mode):
-    """mode='on' → COORD_DELTA_W=1; mode='off' → COORD_DELTA_W=0."""
-    os.environ["COORD_DELTA_W"] = "1" if mode == "on" else "0"
+    """mode='on'        → COORD_DELTA_W=1, DEFEND_BONUS=1
+       mode='off'       → COORD_DELTA_W=0
+       mode='attackonly'→ COORD_DELTA_W=1, DEFEND_BONUS=0
+    """
+    if mode == "off":
+        os.environ["COORD_DELTA_W"] = "0"
+        os.environ["COORD_DEFEND_BONUS"] = "1"
+    elif mode == "attackonly":
+        os.environ["COORD_DELTA_W"] = "1"
+        os.environ["COORD_DEFEND_BONUS"] = "0"
+    else:  # "on"
+        os.environ["COORD_DELTA_W"] = "1"
+        os.environ["COORD_DEFEND_BONUS"] = "1"
     os.environ["COORD_LAMBDA_W"] = f"{lambda_w}"
     results = []
     print(f"\n=== mode {mode} (DELTA_W={'1' if mode == 'on' else '0'}, "
@@ -107,6 +118,8 @@ def main():
                         help="seed range (e.g. '0-7' or '0,1,2,3')")
     parser.add_argument("--lambda", dest="lambda_w", type=float, default=0.002)
     parser.add_argument("--out", type=str, default="audit/2026-05-22-coord-endgame-ab.json")
+    parser.add_argument("--modes", default="on,off",
+                        help="comma-separated subset of {on,off,attackonly}")
     args = parser.parse_args()
 
     if "-" in args.seeds:
@@ -117,12 +130,11 @@ def main():
 
     _prime_orbitfix_env()
 
+    modes = [m.strip() for m in args.modes.split(",") if m.strip()]
     all_results = []
-    # Run mode 'on' first, then 'off'.
-    for mode in ("on", "off"):
+    for mode in modes:
         all_results.extend(run_panel(seeds, args.lambda_w, mode))
 
-    # Aggregate
     def aggregate(rows):
         n = len(rows)
         w = sum(1 for r in rows if r["winner"] == "coord")
@@ -130,35 +142,33 @@ def main():
         t = sum(1 for r in rows if r["winner"] == "tie")
         return n, w, l, t
 
-    on_rows = [r for r in all_results if r["mode"] == "on"]
-    off_rows = [r for r in all_results if r["mode"] == "off"]
-    n_on, w_on, l_on, t_on = aggregate(on_rows)
-    n_off, w_off, l_off, t_off = aggregate(off_rows)
     print("\n========================================")
     print("SUMMARY")
     print("========================================")
-    print(f"mode ON  (DELTA_W=1, λ={args.lambda_w}): "
-          f"{w_on}W/{l_on}L/{t_on}T in n={n_on}, "
-          f"win-rate={w_on/n_on:.3f}, "
-          f"Wilson-lo={wilson_lower(w_on, n_on):.3f}")
-    print(f"mode OFF (DELTA_W=0):                     "
-          f"{w_off}W/{l_off}L/{t_off}T in n={n_off}, "
-          f"win-rate={w_off/n_off:.3f}, "
-          f"Wilson-lo={wilson_lower(w_off, n_off):.3f}")
-    print(f"  Δ win-rate (on − off): {(w_on/n_on) - (w_off/n_off):+.3f}")
+    summary = {}
+    for mode in modes:
+        rows = [r for r in all_results if r["mode"] == mode]
+        n, w, l, t = aggregate(rows)
+        wr = w / n if n else 0.0
+        wlo = wilson_lower(w, n)
+        print(f"mode {mode:>10s}: {w}W/{l}L/{t}T in n={n}, "
+              f"win-rate={wr:.3f}, Wilson-lo={wlo:.3f}")
+        summary[mode] = {
+            "n": n, "wins": w, "losses": l, "ties": t,
+            "win_rate": wr, "wilson_lo": wlo,
+        }
+    if "on" in summary and "off" in summary:
+        print(f"  Δ win-rate (on − off): "
+              f"{summary['on']['win_rate'] - summary['off']['win_rate']:+.3f}")
+    if "attackonly" in summary and "off" in summary:
+        print(f"  Δ win-rate (attackonly − off): "
+              f"{summary['attackonly']['win_rate'] - summary['off']['win_rate']:+.3f}")
 
     out = REPO / args.out
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({
-        "seeds": seeds, "lambda_w": args.lambda_w,
-        "summary": {
-            "on": {"n": n_on, "wins": w_on, "losses": l_on, "ties": t_on,
-                   "win_rate": w_on / n_on if n_on else 0.0,
-                   "wilson_lo": wilson_lower(w_on, n_on)},
-            "off": {"n": n_off, "wins": w_off, "losses": l_off, "ties": t_off,
-                    "win_rate": w_off / n_off if n_off else 0.0,
-                    "wilson_lo": wilson_lower(w_off, n_off)},
-        },
+        "seeds": seeds, "lambda_w": args.lambda_w, "modes": modes,
+        "summary": summary,
         "results": all_results,
     }, indent=2))
     print(f"\nResults: {out}")
