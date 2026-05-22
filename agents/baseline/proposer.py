@@ -18,7 +18,7 @@ import os
 
 from lib.aim import aim_comet, aim_orbiting
 from lib.fleet import speed as fleet_speed
-from lib.orbit import is_orbiting, predict_relative
+from lib.orbit import is_orbiting, predict_relative, predict_relative_smart
 from lib.scoring import pv_horizon
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import _comet_paths_by_id, _position_at, comet_remaining_lifetime
@@ -132,7 +132,7 @@ def aim_and_eta(src, tgt, ships: int, omega: float, wait_N: int = 0, world=None)
             effective_index = int(path_index) + int(wait_N)
             src_x, src_y = float(src.x), float(src.y)
             if wait_N > 0 and is_orbiting(list(src)):
-                src_x, src_y = predict_relative(list(src), omega, wait_N)
+                src_x, src_y = predict_relative_smart(list(src), omega, wait_N)
             res = aim_comet(
                 (src_x, src_y), src.radius, list(tgt), tgt.radius, ships,
                 path, effective_index,
@@ -148,10 +148,10 @@ def aim_and_eta(src, tgt, ships: int, omega: float, wait_N: int = 0, world=None)
         tgt_list = list(tgt)
         src_x, src_y = float(src.x), float(src.y)
         if wait_N > 0:
-            fx, fy = predict_relative(tgt_list, omega, wait_N)
+            fx, fy = predict_relative_smart(tgt_list, omega, wait_N)
             tgt_list[2] = fx
             tgt_list[3] = fy
-            src_x, src_y = predict_relative(list(src), omega, wait_N)
+            src_x, src_y = predict_relative_smart(list(src), omega, wait_N)
         res = aim_orbiting(
             (src_x, src_y), src.radius, tgt_list, tgt.radius, ships, omega,
         )

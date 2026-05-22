@@ -99,3 +99,33 @@ def predict_absolute(initial_planet, angular_velocity: float, env_step_n: int) -
         CENTER + orb_r * math.cos(cur_angle),
         CENTER + orb_r * math.sin(cur_angle),
     )
+
+
+def predict_relative_smart(current_planet, angular_velocity: float,
+                           lead_turns: float) -> Point:
+    """Env-gated cached wrapper around `predict_relative`.
+
+    When `KINEMATIC_TABLE_ENABLED=1`, routes through the singleton
+    kinematic_table via `predict_relative_cached` (which itself falls
+    through to `predict_relative` on miss — pid not primed, lead past
+    `max_lead`, etc.). Otherwise identical to `predict_relative`.
+
+    Bit-parity: when the table is primed via `begin_turn(world)` AND
+    `current_planet` is `world.planets_by_id[pid]` for some pid in the
+    table, the cached path is bit-identical to `predict_relative` for
+    any lead in `[0, table.max_lead]`. Synthetic / hypothetical planet
+    states (constructed mid-fixed-point loops) bypass the cache because
+    their pid is not in the table.
+
+    Mirrors the Phase γ gating pattern in `lib/trajectory.py` so the
+    whole kinematic-table feature has ONE global knob.
+    """
+    import os
+    if os.environ.get("KINEMATIC_TABLE_ENABLED", "").strip().lower() not in (
+        "1", "true", "on", "yes",
+    ):
+        return predict_relative(current_planet, angular_velocity, lead_turns)
+    from lib.kinematic_table import get_default
+    return predict_relative_cached(
+        current_planet, angular_velocity, lead_turns, table=get_default(),
+    )

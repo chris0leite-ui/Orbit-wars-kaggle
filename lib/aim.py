@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 
 from lib.fleet import speed as fleet_speed
-from lib.orbit import predict_relative
+from lib.orbit import predict_relative, predict_relative_smart
 
 # Tolerance bands tuned from public kernel patterns (Roman §K).
 INTERCEPT_TOLERANCE = 1        # +/- step delta between predicted and candidate
@@ -82,7 +82,7 @@ def search_safe_intercept(
     best = None
     best_score = None
     for cand_t in range(1, horizon + 1):
-        pred_xy = predict_relative(target_tuple, omega, cand_t)
+        pred_xy = predict_relative_smart(target_tuple, omega, cand_t)
         eta = estimate_eta(src_xy, src_radius, pred_xy, target_radius, ships)
         if eta is None:
             continue
@@ -124,7 +124,7 @@ def aim_orbiting(src_xy, src_radius, target_tuple, target_radius, ships, omega):
             return search_safe_intercept(
                 src_xy, src_radius, target_tuple, target_radius, ships, omega,
             )
-        ntx, nty = predict_relative(target_tuple, omega, eta)
+        ntx, nty = predict_relative_smart(target_tuple, omega, eta)
         if (
             last_eta is not None
             and abs(ntx - tx) < CONVERGENCE_XY_TOL

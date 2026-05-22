@@ -170,3 +170,63 @@ def test_static_planets_do_not_drift(env_seed_42):
     # Static planets should stay put unless captured/comet-merged; tolerate
     # tiny float noise but anything > 1e-6 means the env actually moved them.
     assert max_drift < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# predict_relative_smart — env-gated cached wrapper (Phase 2 substrate swap)
+# ---------------------------------------------------------------------------
+
+
+def test_predict_relative_smart_env_off_matches_predict_relative(monkeypatch):
+    """KINEMATIC_TABLE_ENABLED unset → identical to predict_relative."""
+    monkeypatch.delenv("KINEMATIC_TABLE_ENABLED", raising=False)
+    planet = _planet(1, 70.0, 50.0, radius=2.0)
+    omega = 0.05
+    for lead in (0, 1, 3.5, 10, 100):
+        got = orbit.predict_relative_smart(planet, omega, lead)
+        want = orbit.predict_relative(planet, omega, lead)
+        assert got == want, f"lead={lead}: got={got}, want={want}"
+
+
+def test_predict_relative_smart_env_on_unprimed_falls_through(monkeypatch):
+    """env=1 but table not primed → falls through to predict_relative."""
+    from lib import kinematic_table
+    monkeypatch.setenv("KINEMATIC_TABLE_ENABLED", "1")
+    kinematic_table.clear()
+    planet = _planet(1, 70.0, 50.0, radius=2.0)
+    omega = 0.05
+    for lead in (0, 1, 3.5, 10):
+        got = orbit.predict_relative_smart(planet, omega, lead)
+        want = orbit.predict_relative(planet, omega, lead)
+        assert got == want, f"lead={lead}: got={got}, want={want}"
+
+
+def test_predict_relative_smart_env_on_primed_matches_predict_relative(monkeypatch):
+    """env=1 + table primed for world W → bit-identical for planets in W."""
+    from lib import kinematic_table
+    from lib.intent import World
+    monkeypatch.setenv("KINEMATIC_TABLE_ENABLED", "1")
+    kinematic_table.clear()
+    obs = {
+        "player": 0,
+        "planets": [
+            [0, 0, 50.0 + 20.0, 50.0, 2.0, 10, 1],
+            [1, -1, 50.0 - 25.0, 50.0, 2.0, 5, 1],
+        ],
+        "fleets": [],
+        "angular_velocity": 0.04,
+        "initial_planets": [],
+        "comet_planet_ids": [],
+        "comets": [],
+        "step": 7,
+    }
+    world = World.from_obs(obs)
+    kinematic_table.begin_turn(world)
+    for pid, p in world.planets_by_id.items():
+        p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
+        for lead in (0, 1, 7, 50, 200):
+            got = orbit.predict_relative_smart(p_tuple, world.omega, lead)
+            want = orbit.predict_relative(p_tuple, world.omega, lead)
+            assert got == want, (
+                f"pid={pid} lead={lead}: cached={got}, slow={want}"
+            )

@@ -33,7 +33,7 @@ from lib.aim import aim_orbiting, swept_pair_hit
 from lib.fleet import speed as fleet_speed
 from lib.geometry import BOARD_SIZE, path_clears_sun
 from lib.intent import Intent, World
-from lib.orbit import is_orbiting, predict_relative
+from lib.orbit import is_orbiting, predict_relative, predict_relative_smart
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import WorldModel
 
@@ -542,7 +542,7 @@ def lead_aim(intents: list[Intent], world: World) -> list[Intent]:
                 d = math.hypot(tx - src.x, ty - src.y)
                 flight_d = max(0.0, d - r_offset)
                 t = flight_d / v
-                tx, ty = predict_relative(target_tuple, world.omega, t)
+                tx, ty = predict_relative_smart(target_tuple, world.omega, t)
             target_xy = (tx, ty)
         intent.aim_angle = math.atan2(target_xy[1] - src.y, target_xy[0] - src.x)
     return intents

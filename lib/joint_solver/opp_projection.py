@@ -31,7 +31,7 @@ import math
 
 from lib.fleet import speed
 fleet_speed = speed
-from lib.orbit import is_orbiting, predict_relative
+from lib.orbit import is_orbiting, predict_relative, predict_relative_smart
 from lib.trajectory import predict_fleet_fate
 
 
@@ -140,11 +140,11 @@ def _project_source(src, opp_id: int, all_planets: list, world,
         best_tuple = [int(best.id), int(best.owner), float(best.x), float(best.y),
                       float(best.radius), int(best.ships), int(best.production)]
         if tick_offset > 0 and omega != 0.0 and is_orbiting(src_tuple):
-            src_x_fire, src_y_fire = predict_relative(src_tuple, omega, tick_offset)
+            src_x_fire, src_y_fire = predict_relative_smart(src_tuple, omega, tick_offset)
         else:
             src_x_fire, src_y_fire = float(src.x), float(src.y)
         if tick_offset > 0 and omega != 0.0 and is_orbiting(best_tuple):
-            tgt_x_fire, tgt_y_fire = predict_relative(best_tuple, omega, tick_offset)
+            tgt_x_fire, tgt_y_fire = predict_relative_smart(best_tuple, omega, tick_offset)
         else:
             tgt_x_fire, tgt_y_fire = float(best.x), float(best.y)
         dx = tgt_x_fire - src_x_fire

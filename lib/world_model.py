@@ -28,7 +28,7 @@ from dataclasses import dataclass
 
 from lib.combat import resolve_arrivals
 from lib.fleet import speed as fleet_speed
-from lib.orbit import is_orbiting, predict_relative
+from lib.orbit import is_orbiting, predict_relative, predict_relative_smart
 
 # Raised 110 → 250 (2026-05-11): reinforce class was firing 0.2
 # candidates/turn because long-runway threats were invisible past
@@ -69,7 +69,7 @@ def _position_at(planet, omega: float, lead_turns: int) -> tuple[float, float]:
            planet.radius, planet.ships, planet.production]
     if not is_orbiting(tup):
         return float(planet.x), float(planet.y)
-    return predict_relative(tup, omega, lead_turns)
+    return predict_relative_smart(tup, omega, lead_turns)
 
 
 def fleet_target_planet(fleet, planets, omega: float = 0.0,
@@ -151,7 +151,7 @@ def fleet_target_planet(fleet, planets, omega: float = 0.0,
             fx = fleet.x + dir_x * spd * t
             fy = fleet.y + dir_y * spd * t
             for p, p_tuple in orbiting_planets:
-                px, py = predict_relative(p_tuple, omega, t)
+                px, py = predict_relative_smart(p_tuple, omega, t)
                 # Point-in-circle: fleet position within planet radius
                 # at tick t. Matches the ledger's step-bucket precision.
                 if math.hypot(fx - px, fy - py) <= float(p.radius):
