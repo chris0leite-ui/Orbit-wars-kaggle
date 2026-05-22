@@ -1,0 +1,173 @@
+{
+  "defend_boost": 1.0,
+  "samples": 416,
+  "minimal_def_total": 0,
+  "coord_def_total": 12,
+  "coord_atk_total": 559,
+  "ratio_coord_over_minimal": Infinity,
+  "turns_minimal_defended": 0,
+  "turns_coord_defended": 12,
+  "elapsed_seconds": 293.76649403700003,
+  "per_turn_sample": [
+    {
+      "seed": 0,
+      "turn": 0,
+      "player": 0,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 0,
+      "player": 1,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 1,
+      "player": 0,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 1,
+      "player": 1,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 2,
+      "player": 0,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 2,
+      "player": 1,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 3,
+      "player": 0,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 3,
+      "player": 1,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 4,
+      "player": 0,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 4,
+      "player": 1,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 5,
+      "player": 0,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 5,
+      "player": 1,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 6,
+      "player": 0,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 6,
+      "player": 1,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 7,
+      "player": 0,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 7,
+      "player": 1,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 8,
+      "player": 0,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 8,
+      "player": 1,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 9,
+      "player": 0,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 9,
+      "player": 1,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 0
+    }
+  ]
+}
