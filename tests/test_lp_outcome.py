@@ -28,7 +28,7 @@ from lib.joint_solver.columns import Column
 from lib.joint_solver.lp_outcome import (
     MAX_CONTESTERS_PER_PLANET,
     OutcomeAwareResult,
-    _greedy_fallback,
+    _lp_outcome_greedy_fallback as _greedy_fallback,
     _build_per_planet_arrivals,
     solve_outcome_aware,
 )
