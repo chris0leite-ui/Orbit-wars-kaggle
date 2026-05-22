@@ -267,3 +267,61 @@ def test_cost_parity_orbital_predicts_target_at_arrival(monkeypatch):
     )
     assert isinstance(off, bool)
     assert isinstance(on, bool)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 substrate-swap regression pin (2026-05-22 audit)
+#
+# aim_and_eta with wait_N>0 + orbiting target MUST produce identical
+# (angle, eta) regardless of KINEMATIC_TABLE_ENABLED. The failure mode
+# this guards against: proposer.py:151-154 mutates `tgt_list[2]`,
+# `tgt_list[3]` to a wait_N-shifted position, then calls aim_orbiting
+# with the mutated tuple. If aim.py's internal predict_relative calls
+# route through the kinematic table (keyed on pid), the cache returns
+# positions from the REAL obs frame, NOT the shifted frame — wrong
+# geometry, wrong aim, observed in bench as 2/3 → 0/3 wins.
+# ---------------------------------------------------------------------------
+
+
+def test_aim_and_eta_wait_N_parity_env_off_vs_on(monkeypatch):
+    from lib import kinematic_table
+    from agents.baseline.proposer import aim_and_eta
+
+    omega = 0.04
+    # Both planets orbiting, off the sun line.
+    src = _planet(0, 0, 65.0, 50.0, radius=1.5, ships=50)
+    tgt = _planet(1, -1, 35.0, 50.0, radius=1.5, ships=5)
+    world = _world([src, tgt], my_id=0, omega=omega)
+    src_planet = world.planets_by_id[0]
+    tgt_planet = world.planets_by_id[1]
+
+    results_off = []
+    results_on = []
+    for wait_N in (1, 3, 7, 15):
+        monkeypatch.delenv("KINEMATIC_TABLE_ENABLED", raising=False)
+        kinematic_table.clear()
+        results_off.append(
+            aim_and_eta(src_planet, tgt_planet, ships=30, omega=omega,
+                        wait_N=wait_N, world=world)
+        )
+
+        monkeypatch.setenv("KINEMATIC_TABLE_ENABLED", "1")
+        kinematic_table.clear()
+        kinematic_table.begin_turn(world)
+        results_on.append(
+            aim_and_eta(src_planet, tgt_planet, ships=30, omega=omega,
+                        wait_N=wait_N, world=world)
+        )
+
+    monkeypatch.delenv("KINEMATIC_TABLE_ENABLED", raising=False)
+    kinematic_table.clear()
+
+    for wait_N, off, on in zip((1, 3, 7, 15), results_off, results_on):
+        # Equality on the (angle, eta) tuple. Aim is computed via
+        # math.atan2 + a fixed-point loop that touches predict_relative
+        # repeatedly inside aim_orbiting; a single ULP drift cascades.
+        # We assert exact equality because the slow path is the
+        # canonical reference and the cached path must reproduce it.
+        assert off == on, (
+            f"wait_N={wait_N}: parity broken — off={off}, on={on}"
+        )

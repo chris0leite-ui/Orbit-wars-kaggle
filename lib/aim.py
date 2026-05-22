@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 
 from lib.fleet import speed as fleet_speed
-from lib.orbit import predict_relative, predict_relative_smart
+from lib.orbit import predict_relative
 
 # Tolerance bands tuned from public kernel patterns (Roman §K).
 INTERCEPT_TOLERANCE = 1        # +/- step delta between predicted and candidate
@@ -81,8 +81,13 @@ def search_safe_intercept(
     """
     best = None
     best_score = None
+    # NB: must use the slow predict_relative here — `target_tuple` may
+    # be a wait_N-shifted hypothetical state (proposer.py:151-155
+    # mutates tgt_list[2], tgt_list[3] before calling). The kinematic
+    # table keys on pid alone and would return positions from the real
+    # obs frame, not the shifted frame, breaking the intercept geometry.
     for cand_t in range(1, horizon + 1):
-        pred_xy = predict_relative_smart(target_tuple, omega, cand_t)
+        pred_xy = predict_relative(target_tuple, omega, cand_t)
         eta = estimate_eta(src_xy, src_radius, pred_xy, target_radius, ships)
         if eta is None:
             continue
@@ -124,7 +129,11 @@ def aim_orbiting(src_xy, src_radius, target_tuple, target_radius, ships, omega):
             return search_safe_intercept(
                 src_xy, src_radius, target_tuple, target_radius, ships, omega,
             )
-        ntx, nty = predict_relative_smart(target_tuple, omega, eta)
+        # NB: see search_safe_intercept — target_tuple may be a wait_N-
+        # shifted hypothetical state from proposer.py:151-155, so we
+        # MUST take the slow path here. The kinematic table would key
+        # the lookup on pid and return positions from the real obs frame.
+        ntx, nty = predict_relative(target_tuple, omega, eta)
         if (
             last_eta is not None
             and abs(ntx - tx) < CONVERGENCE_XY_TOL
