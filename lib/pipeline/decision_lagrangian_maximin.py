@@ -85,6 +85,21 @@ def _k_my() -> int:
     return DEFAULT_K_MY
 
 
+def _min_distinct_sources() -> int:
+    """ITEM 4a — diversity floor for top-K portfolio enum.
+
+    Default 2: ensure at least 2 of K candidates differ in primary
+    source. Override via `LP_MAXIMIN_MIN_DISTINCT_SOURCES=N`.
+    """
+    raw = os.environ.get("LP_MAXIMIN_MIN_DISTINCT_SOURCES", "")
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    return 2
+
+
 def decision_lagrangian_maximin(
     cols: PrerankedColumns,
     opp: OppModelResult,
@@ -124,10 +139,17 @@ def decision_lagrangian_maximin(
     )
 
     # 2. Top-K my portfolios (LP-seeded).
+    # ITEM 4a: enforce source diversity. If 2+ portfolios share the
+    # same primary source, maximin reduces to argmax (all candidates
+    # score similarly against the same K opp responses). We require
+    # at least 2 distinct primary sources among the top-K so the
+    # maximin sees genuinely different strategy options.
+    min_distinct = _min_distinct_sources()
     try:
         my_portfolios = enumerate_top_k_portfolios_lp_seeded(
             cols, ctx, opp, k=K,
             lp_time_limit_seconds=DEFAULT_INNER_LP_TIME_LIMIT_S,
+            min_distinct_primary_sources=min_distinct,
         )
     except Exception:
         my_portfolios = []

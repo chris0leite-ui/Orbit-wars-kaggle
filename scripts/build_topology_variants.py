@@ -62,6 +62,16 @@ MAXIMIN_RE = re.compile(
     re.MULTILINE,
 )
 
+# Phase 3 (λ_W sweep): the `LAMBDA_W_DEFAULT = X.Y` assignment in the
+# inlined `lp_outcome.py` section. Read at call time by `_lambda_w()`
+# (lazy) when `LP_LAMBDA_W` env var is unset — so rewriting this
+# constant in the bundle is the cleanest way to produce per-λ_W
+# variants without touching env-var pollution.
+LAMBDA_W_DEFAULT_RE = re.compile(
+    r"^LAMBDA_W_DEFAULT\s*=\s*[0-9.]+\s*$",
+    re.MULTILINE,
+)
+
 
 def _replace_topology(src: str, retval: str) -> str:
     """Replace each topology lazy `_*_enabled()` body with `return <retval>`."""
@@ -90,12 +100,24 @@ def _replace_maximin(src: str, retval: str) -> str:
     return MAXIMIN_RE.sub(repl, src)
 
 
-def _apply_all(src: str, *, topo: str, smooth: str, maximin: str) -> str:
-    """Compose all three rewrites — order independent."""
-    return _replace_maximin(
+def _replace_lambda_w(src: str, value: float) -> str:
+    """Replace `LAMBDA_W_DEFAULT = X.Y` with `LAMBDA_W_DEFAULT = <value>`."""
+    return LAMBDA_W_DEFAULT_RE.sub(
+        f"LAMBDA_W_DEFAULT = {value}  # hardcoded by build_topology_variants.py",
+        src,
+    )
+
+
+def _apply_all(src: str, *, topo: str, smooth: str, maximin: str,
+               lambda_w: float | None = None) -> str:
+    """Compose all rewrites — order independent."""
+    out = _replace_maximin(
         _replace_smooth_delta_w(_replace_topology(src, topo), smooth),
         maximin,
     )
+    if lambda_w is not None:
+        out = _replace_lambda_w(out, lambda_w)
+    return out
 
 
 def main() -> int:
@@ -148,17 +170,32 @@ def main() -> int:
     maximin_on.write_text(_apply_all(src, topo="True",  smooth="True",  maximin="True"))
     maximin_off.write_text(_apply_all(src, topo="True",  smooth="True",  maximin="False"))
 
-    # Verify all eight bundles load and report the right hardcoded value.
-    for path, topo, smooth, maximin in [
-        (OUT_ON,      True,  False, False),
-        (OUT_OFF,     False, False, False),
-        (alpha_on,    False, True,  False),
-        (alpha_off,   False, False, False),
-        (stacked_on,  True,  True,  False),
-        (stacked_off, False, False, False),
-        (maximin_on,  True,  True,  True),
-        (maximin_off, True,  True,  False),
-    ]:
+    # Phase 3 (λ_W sweep): α+β stacked variants at different λ_W
+    # default values. All share topo=True smooth=True maximin=False.
+    # File naming: alpha_beta_lambda_<int>_<frac>.py — e.g. _0_1, _1_0.
+    lambda_paths: list[tuple[Path, float]] = []
+    for lw in (0.1, 0.3, 1.0, 3.0):
+        # Normalize 0.1 → "0_1", 1.0 → "1_0", 3.0 → "3_0", 0.3 → "0_3"
+        i, frac = divmod(lw, 1)
+        name = f"alpha_beta_lambda_{int(i)}_{int(round(frac * 10))}.py"
+        p = OUT_ON.parent / name
+        p.write_text(_apply_all(src, topo="True", smooth="True",
+                                maximin="False", lambda_w=lw))
+        lambda_paths.append((p, lw))
+
+    # Verify all bundles load and report the right hardcoded value.
+    base_checks = [
+        (OUT_ON,      True,  False, False, None),
+        (OUT_OFF,     False, False, False, None),
+        (alpha_on,    False, True,  False, None),
+        (alpha_off,   False, False, False, None),
+        (stacked_on,  True,  True,  False, None),
+        (stacked_off, False, False, False, None),
+        (maximin_on,  True,  True,  True,  None),
+        (maximin_off, True,  True,  False, None),
+    ]
+    lambda_checks = [(p, True, True, False, lw) for p, lw in lambda_paths]
+    for path, topo, smooth, maximin, expected_lambda in base_checks + lambda_checks:
         import importlib.util
         spec = importlib.util.spec_from_file_location(path.stem, str(path))
         m = importlib.util.module_from_spec(spec)
@@ -179,9 +216,23 @@ def main() -> int:
             print(f"FAIL: {path.name} no callable agent symbol",
                   file=sys.stderr)
             return 1
+        # If a specific λ_W was baked in, verify _lambda_w() returns it
+        # (the lazy fn reads `LP_LAMBDA_W` env first, then falls back to
+        # LAMBDA_W_DEFAULT). With LP_LAMBDA_W unset, the bundle constant
+        # is the source of truth.
+        lambda_str = ""
+        if expected_lambda is not None:
+            lambda_fn = m.__dict__.get("_lambda_w")
+            assert lambda_fn is not None, "_lambda_w missing from bundle"
+            actual_lambda = float(lambda_fn())
+            if abs(actual_lambda - expected_lambda) > 1e-9:
+                print(f"FAIL: {path.name} _lambda_w()={actual_lambda} "
+                      f"≠ {expected_lambda}", file=sys.stderr)
+                return 1
+            lambda_str = f", λ_W={actual_lambda}"
         print(f"OK: {path.name} loads, agent callable, "
-              f"topology={a_topo}, smooth_ΔW={a_smooth}, maximin={a_maximin}, "
-              f"{path.stat().st_size} bytes")
+              f"topology={a_topo}, smooth_ΔW={a_smooth}, maximin={a_maximin}"
+              f"{lambda_str}, {path.stat().st_size} bytes")
 
     return 0
 
