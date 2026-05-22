@@ -576,6 +576,39 @@ def main(argv: list[str] | None = None) -> int:
     h = _bundle_hash(out)
     full_sha = _bundle_full_hash(out)
     print(f"wrote {out} ({out.stat().st_size} bytes) sha256:{h}")
+
+    # Sanity check: the bundle must expose an `agent` callable at module
+    # top level. The bundler comments out `from agents.<name>.main import
+    # agent` for wrapper-style entries without inlining the body, leaving
+    # bundles with no `agent` symbol; kaggle_environments falls back to
+    # the last callable (wrong signature), every game ERRORs at step 0.
+    # Catch this here before the parity gate's AttributeError leaks out
+    # AND leaves the broken bundle in submissions/. Cherry-picked from
+    # `claude/strategy-axis-decision-3437` c25a329 (2026-05-21 PM) which
+    # root-caused the friction tag `bundle-agent-doesnt-inline-from-
+    # baseline-main` — silent broken-bundle invalidated their n=8 A/B
+    # and falsified a submit decision.
+    try:
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("_bundle_smoke_" + out.stem, out)
+        _mod = _ilu.module_from_spec(_spec)  # type: ignore[arg-type]
+        sys.modules[_spec.name] = _mod
+        _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+    except Exception as e:
+        print(f"REFUSING TO LEAVE BUNDLE: import failed — "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
+        out.unlink()
+        return 1
+    if not callable(getattr(_mod, "agent", None)):
+        print(f"REFUSING TO LEAVE BUNDLE: bundle has no callable `agent` "
+              f"at module top level. The entry main.py likely uses "
+              f"`from agents.<x>.main import agent` and the bundler "
+              f"stripped the line without inlining the body. Either inline "
+              f"`agent` manually or have the entry main.py define `agent` "
+              f"directly. Removing {out}.", file=sys.stderr)
+        out.unlink()
+        return 1
+
     if args.skip_parity_gate:
         return 0
     if not args.ignore_parity_cache and _parity_cache_hit(full_sha):
