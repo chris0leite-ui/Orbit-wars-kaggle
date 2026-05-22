@@ -125,12 +125,21 @@ class Bundle:
     tier2_score: float = 0.0
 
 
-def _admissible_fire_now(src, tgt, angle: float, ships: int, world) -> bool:
-    """Fire-now physics admissibility — must hit target, comet not expired
-    before arrival. Mirrors the same filters minimal's propose() applies at
-    L797-L804.
+def _admissible_fire_now(src, tgt, angle: float, ships: int, world,
+                         wait_N: int = 0) -> bool:
+    """Trajectory admissibility — fleet must reach target (not sun/oob/
+    intercepted) and the target (if a comet) must still exist at arrival.
+
+    H44 fix (Day 12, 2026-05-22): wait_N>0 legs are checked via
+    predict_fleet_fate's wait_N parameter (lib/trajectory.py:81) which
+    pre-rotates source position and planet positions before ray-casting.
+    The previous bypass left ~65% of live in-flight deaths uncaught
+    (H44 audit, btjeK 2026-05-20; fix in
+    claude/extract-physics-trajectory-Vjaz9 commit c6a0c80).
     """
-    fate = predict_fleet_fate(src, tgt, float(angle), int(ships), world)
+    fate = predict_fleet_fate(
+        src, tgt, float(angle), int(ships), world, wait_N=int(wait_N),
+    )
     if fate.outcome != "target":
         return False
     if int(tgt.id) in world.comet_ids:
@@ -178,9 +187,11 @@ def _legs_for_pair(src, tgt, world, model, me: int, omega: float,
             angle=float(angle), wait_N=0, eta=int(eta),
         ))
 
-    # Wait-grid variants. Skip admissibility filter on wait_N>0 (geometry
-    # shifts at launch time; fast_sim's collision resolution catches it
-    # downstream — same convention as minimal's propose L794-L795).
+    # Wait-grid variants. H44 fix (Day 12, 2026-05-22): admissibility
+    # check now runs for wait_N>0 too via _admissible_fire_now's wait_N
+    # parameter. The earlier bypass left ~65% of live in-flight deaths
+    # uncaught (H44 audit + claude/extract-physics-trajectory-Vjaz9
+    # c6a0c80).
     for w_ships, w_wait, w_angle, w_eta in wait_then_fire_variants(
         src, tgt, model, omega, me, world=world,
     ):
@@ -191,6 +202,10 @@ def _legs_for_pair(src, tgt, world, model, me: int, omega: float,
             src, tgt, w_ships, w_eta, world, model, me, wait_N=w_wait,
         )
         if w_cheap <= CHEAP_REJECT_THRESHOLD:
+            continue
+        if not _admissible_fire_now(
+            src, tgt, w_angle, w_ships, world, wait_N=w_wait,
+        ):
             continue
         if not _source_survives_launch(
             src, int(w_ships), int(w_wait), world, model, me,

@@ -858,13 +858,18 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
     """Score a JOINT candidate (multiple launches in one rollout).
 
     `launches` = list of (src, tgt, ships, angle, wait_N). All injected
-    at their respective wait_N in the SAME rollout. Per-leg admissibility
-    only for wait_N==0 legs. Same Δ scoring as solo.
+    at their respective wait_N in the SAME rollout.
+
+    H44 fix (Day 12, 2026-05-22): per-leg admissibility now runs for
+    ALL legs including wait_N>0 via predict_fleet_fate's wait_N
+    parameter. The previous "wait_N!=0 → continue" bypass left ~65% of
+    live in-flight deaths uncaught (H44 audit, btjeK 2026-05-20; fix
+    in claude/extract-physics-trajectory-Vjaz9 commit c6a0c80).
     """
     for src, tgt, ships, angle, wait_N in launches:
-        if int(wait_N) != 0:
-            continue
-        fate = predict_fleet_fate(src, tgt, angle, ships, world)
+        fate = predict_fleet_fate(
+            src, tgt, angle, ships, world, wait_N=int(wait_N),
+        )
         if fate.outcome in ("sun", "oob", "timeout", "planet"):
             return (float("-inf"), "admissibility_fail")
         if int(tgt.id) in world.comet_ids:
