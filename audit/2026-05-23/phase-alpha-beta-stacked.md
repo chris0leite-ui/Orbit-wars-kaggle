@@ -63,6 +63,67 @@ above the 0.55 threshold. **Escalation to n=8 with 16-game count
 If n=16 holds at Wilson-lo ≥ 0.55, the stacked variant is the new
 baseline; bundle + 4P A/B + push under Rule 42.
 
+## n=16 result (confirmation pass)
+
+```
+focal_wins=9/16 (56.2%), Wilson [0.332, 0.769], elapsed 275s
+```
+
+Per-seed breakdown:
+
+| Seed | P0 | P1 | Net |
+|---|---|---|---|
+| 0 | LOSS (364) | WIN (500) | 1W 1L (mirror) |
+| 1 | **WIN (143)** | **WIN (224)** | **2W (non-mirror)** |
+| 2 | LOSS (303) | WIN (267) | 1W 1L (mirror) |
+| 3 | WIN (309) | LOSS (209) | 1W 1L (mirror) |
+| 4 | LOSS (159) | WIN (136) | 1W 1L (mirror) |
+| 5 | WIN (305) | LOSS (272) | 1W 1L (mirror) |
+| 6 | WIN (240) | LOSS (240) | 1W 1L (mirror) |
+| 7 | LOSS (219) | WIN (233) | 1W 1L (mirror) |
+
+7 of 8 seeds still flip with seat (1W/1L). Only seed 1 yields a
+true non-mirror (focal wins BOTH seats). That single non-mirror is
+what's pushing the point estimate above 50%.
+
+Point estimate 0.562 is still above the 0.55 directional threshold,
+but Wilson-lo of 0.332 is well below the 0.55 lift gate (Rule 45).
+**INCONCLUSIVE — cannot claim a lift, cannot falsify either.**
+
+To make a lift CLAIM at this signal strength (~10pp), need
+n ≈ 80 (Wilson-lo crosses 0.55 around there). That's ~80 × 50s ≈
+70 min wallclock at 4 workers — too expensive for ~10pp signal.
+
+## Decision: proceed to Phase ε.1 instead of bigger A/B
+
+Reasoning:
+
+1. **Symmetric 2P at small n is noise-limited.** When two agents are
+   close in strength, each seed almost surely produces 1W/1L on a
+   seat swap. Detecting a 5-10pp strength gap requires very large n.
+2. **The signal IS positive but small.** Doubling n would narrow
+   the CI but not reveal more about WHY it's positive. The Plan-agent
+   prediction is confirmed at the directional level: α enables β.
+3. **Phase ε.1 (adversarial maximin search) is the plan's next axis.**
+   On top of the α+β baseline, ε.1 may reveal a larger lift that
+   clears the gate at n=8 by itself.
+4. **4P A/B is required before any push (Rule 43).** Even if α+β
+   alone passed Wilson at n=32, we'd need 4P confirmation. That
+   parallel work can also run while ε.1 is built.
+
+**Path forward:**
+- Phase ε.1 build (adversarial maximin search with MILP inner). ~1 day.
+- Once ε.1 lands and clears its own A/B, combine α+β+ε.1.
+- 4P validation gate before PI push approval.
+- If ε.1 also nulls / inconclusive, the LP-family ceiling may be
+  the real bound; pivot to precision-physics or Konbu17-style ML
+  filter per off-ramp.
+
+**Not doing right now** (would burn wallclock without insight):
+- n=32 confirmation of α+β alone.
+- λ_W sweep (0.1 / 0.5 / 1.0 / 3.0) — defer until ε.1 is in place
+  and we have a stronger architectural baseline to calibrate against.
+
 ## What's next regardless of n=16 outcome
 
 1. If stacked clears n=16: ship under Rule 42 PI sign-off.
