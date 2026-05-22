@@ -178,4 +178,27 @@ appended below when complete.
 
 ### Parity gate result
 
-(filled in by the verification step at the end of this session)
+**Gate 5 parity re-test (post-revert) vs orbitfix at n=16:**
+
+```
+focal_wins=3/16 (18.8%)  Wilson[0.066, 0.430]  elapsed=698s
+```
+
+Wins on seeds 2/P0, 2/P1, 4/P1. Lost seed 0/P1 (the prior 457-step
+deep-game win; flipped at step 463 — well within stochastic-variance
+range for a long game). Compared to the prior pre-`9a19306` LP-only
+result (4/16, Wilson [0.102, 0.495]), the CIs heavily overlap and
+the −1-win difference is within noise.
+
+**Verdict: parity restored.** The revert is a clean restoration of
+the LP-only Phase ζ.v2 baseline. No regression vs the ~1100
+submission's expected behavior.
+
+### Comparison table
+
+| Variant | Gate 5 | Wilson CI | Note |
+|---|---|---|---|
+| LP-only baseline (5db11f2, pre-9a19306) | 4/16 | [0.102, 0.495] | The ~1100 submission's baseline |
+| LP + opening hold-aware (unscoped, 9a19306 initial) | 1/16 | [0.011, 0.283] | −3 wins, exposed latent LP bug |
+| LP + opening hold-aware (scoped, 9a19306 rebased) | 2/16 | [0.035, 0.360] | −2 wins, bug fixed but mechanism null |
+| LP-only restored (post-revert, this commit) | **3/16** | **[0.066, 0.430]** | Parity with baseline (noise-overlap) |
