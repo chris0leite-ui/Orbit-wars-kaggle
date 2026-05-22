@@ -222,9 +222,18 @@ def main() -> int:
 
     parts: list[str] = [baseline_bundle.rstrip()]
 
-    parts.append("\n\n# === joint_solver (Phase 5 analytical primitives) ===\n")
-    for rel in JOINT_SOLVER_ORDER:
-        parts.append(_inline_block(rel, sub_marker=True))
+    # NOTE: `bundle_agent.py::DEFAULT_LIB_ORDER` was extended on remote
+    # `62c6429` to include all of `joint_solver/*`; the baseline bundle
+    # therefore ALREADY contains predicate / columns / value / outcome_table
+    # / opp_projection / opening_planner / lp_outcome / lp / mpc /
+    # portfolio / trajectory_matrix / opening_search. Re-inlining them
+    # here produced 1MB+ bundles with duplicate function defs (and broke
+    # the topology-variant builder which expects 4 lazy-fn blocks, not 8).
+    # JOINT_SOLVER_ORDER is kept for documentation/back-compat but no
+    # longer inlined.
+    # parts.append("\n\n# === joint_solver (Phase 5 analytical primitives) ===\n")
+    # for rel in JOINT_SOLVER_ORDER:
+    #     parts.append(_inline_block(rel, sub_marker=True))
 
     parts.append("\n\n# === lib/pipeline (Phase A scaffold + Phase C swaps) ===\n")
     for rel in PIPELINE_ORDER:

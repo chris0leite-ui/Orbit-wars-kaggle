@@ -850,7 +850,7 @@ def solve_outcome_aware(
             topology_scores = {}
             for pid in world.planets_by_id:
                 topology_scores[int(pid)] = _per_planet_topology_score(
-                    int(pid), world, model, sense, int(my_id),
+                    int(pid), world, model, sense, my_id=int(my_id),
                 )
         except Exception:
             topology_scores = None
