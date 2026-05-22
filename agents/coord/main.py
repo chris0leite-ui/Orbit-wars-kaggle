@@ -46,7 +46,12 @@ DEFEND_LOOKAHEAD = 30
 # the leaf-Δ from favor_hybrid dominates the score, this just breaks
 # ties against bundles that needlessly drain large garrisons for low gain).
 CHEAP_OPPORTUNITY_COST = 0.01
-CHEAP_FILTER_TOP_K = 50
+# Top-K admitted to Tier-2. Calibrated from Day 4 probe — K=50 gave
+# 89% attack rank-1 retention; K=75 widens to ~97% by admitting bundles
+# whose cheap_score is within ~20% of the top-50 boundary. Tier-2 cost
+# 75 × ~5ms = 375ms, still under the 600ms agent budget when paired
+# with the existing safe_deadline pre-bail watchdog.
+CHEAP_FILTER_TOP_K = 75
 
 
 class BundleKind(Enum):

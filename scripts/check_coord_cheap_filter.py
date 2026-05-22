@@ -37,6 +37,7 @@ from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet  # noqa
 
 from agents.coord.main import (  # noqa: E402
     Bundle,
+    CHEAP_FILTER_TOP_K,
     cheap_filter_bundles,
     enumerate_attack_bundles,
     enumerate_defend_bundles,
@@ -55,8 +56,8 @@ from lib.intent import World  # noqa: E402
 from lib.world_model import WorldModel  # noqa: E402
 
 
-CHEAP_TOP_K_TARGET = 50
-WIDE_SAMPLE_K = 100
+CHEAP_TOP_K_TARGET = CHEAP_FILTER_TOP_K  # production K (currently 75)
+WIDE_SAMPLE_K = 150  # wider envelope for ground truth
 RANK1_RETENTION_THRESHOLD = 0.97
 ATTACK_RETENTION_THRESHOLD = 0.97
 DEFEND_RETENTION_THRESHOLD = 0.95
