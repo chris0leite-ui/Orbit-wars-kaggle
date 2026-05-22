@@ -46,6 +46,10 @@ from agents.coord._minimal_inline import _num_seats
 from agents.coord._minimal_inline import _source_survives_launch
 from agents.coord._minimal_inline import _target_holdable_after_capture
 from agents.coord._minimal_inline import _target_cost_parity_ok
+from agents.coord._endgame import bundle_delta_w_attack
+from agents.coord._endgame import bundle_delta_w_defend
+from agents.coord._endgame import opp_pool as endgame_opp_pool
+from agents.coord._endgame import remaining_turns as endgame_remaining_turns
 from lib.fast_sim import from_obs as fs_from_obs
 from lib.intent import World
 from lib.scoring import pv_horizon
@@ -94,6 +98,36 @@ LAGRANGIAN_MAX_ITERS = 12
 LAGRANGIAN_ALPHA0 = 0.01
 LAGRANGIAN_TARGET_UTIL = 0.8
 LAGRANGIAN_BUDGET_MS = 20.0
+
+# Smooth-ΔW endgame bonus — closed-form `winning_margin` contribution added
+# to each bundle's tier2_score before Lagrangian clearing. Per-bundle
+# opponent-of-record: target's owner for ATTACK; largest-inbound-threat
+# owner for DEFEND. 2P degenerates to source-branch formula; 4P uses (c1)
+# per-bundle attribution (see plan §4P attribution). Disable via env var
+# `COORD_DELTA_W=0`. Calibrate λ_W via `COORD_LAMBDA_W=<float>`.
+#
+# LAMBDA_W_DEFAULT = 0.002 chosen from
+# `scripts/check_coord_endgame_calibration.py` over seeds {0,1} × 30
+# early-mid-game turns: median |tier2_score| = 11.0, median |ΔW| = 1413.
+# Anchor that puts median bonus at 30% of median |tier2| is λ_W ≈ 0.0023;
+# rounded to 0.002 for cleaner runtime arithmetic.
+LAMBDA_W_DEFAULT = 0.002
+LAMBDA_W_ENV = "COORD_LAMBDA_W"
+DELTA_W_ENABLE_ENV = "COORD_DELTA_W"
+
+
+def _lambda_w() -> float:
+    raw = os.environ.get(LAMBDA_W_ENV, "")
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return LAMBDA_W_DEFAULT
+
+
+def _delta_w_enabled() -> bool:
+    return os.environ.get(DELTA_W_ENABLE_ENV, "1") == "1"
 
 
 class BundleKind(Enum):
@@ -783,8 +817,85 @@ def _bundle_to_launches(bundle: "Bundle", planets_by_id: dict
     return launches
 
 
+def _strongest_opp(world, me: int, num_seats: int) -> int | None:
+    """Opp with highest `opp_pool`. Used for neutral-target attribution
+    in 4P (where the bundle's target is neutral, so no natural
+    opponent-of-record — pick the strongest surviving opp)."""
+    candidates = [o for o in range(int(num_seats)) if o != int(me)]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda o: endgame_opp_pool(world, o))
+
+
+def _largest_threat_owner(target_id: int, model, me: int) -> int | None:
+    """Owner of the largest inbound enemy fleet at target_id.
+
+    `model.ledger[planet_id]` is a list of `(eta, owner, ships)` tuples
+    (see `lib/world_model.build_arrival_ledger`). Filter to non-me
+    non-neutral, pick the entry with max ships."""
+    ledger = getattr(model, "ledger", None)
+    if ledger is None:
+        return None
+    entries = ledger.get(int(target_id)) or []
+    threats = [
+        (int(owner), int(ships))
+        for (_eta, owner, ships) in entries
+        if int(owner) != int(me) and int(owner) >= 0
+    ]
+    if not threats:
+        return None
+    return max(threats, key=lambda t: t[1])[0]
+
+
+def _bundle_endgame_bonus(bundle: Bundle, world, model, me: int,
+                          num_seats: int) -> float:
+    """λ_W × ΔW(bundle). Closed-form winning-margin contribution.
+
+    Per-bundle opponent-of-record attribution:
+      - ATTACK: opp = current owner of target (or strongest opp for
+        neutral targets in 4P).
+      - DEFEND: opp = owner of largest inbound enemy fleet at target.
+      - 2P: opp degenerates to the unique non-me seat automatically.
+
+    `model=None` short-circuits to 0.0 — diagnostic probes / unit tests
+    that don't need the endgame term can skip building a WorldModel.
+    """
+    if model is None or not _delta_w_enabled():
+        return 0.0
+    rem = endgame_remaining_turns(world)
+    if rem <= 0:
+        return 0.0
+    target = world.planets_by_id.get(int(bundle.target_id))
+    if target is None:
+        return 0.0
+
+    if bundle.kind == BundleKind.ATTACK:
+        cur_owner = int(target.owner)
+        if cur_owner == int(me):
+            return 0.0
+        if cur_owner >= 0:
+            opp_id = cur_owner
+        else:
+            opp_id = _strongest_opp(world, me, num_seats)
+            if opp_id is None:
+                return 0.0
+        dw = bundle_delta_w_attack(target, int(me), int(opp_id), int(rem))
+        return _lambda_w() * float(dw)
+
+    if bundle.kind == BundleKind.DEFEND:
+        opp_threat = _largest_threat_owner(bundle.target_id, model, me)
+        if opp_threat is None:
+            return 0.0
+        dw = bundle_delta_w_defend(target, int(me), int(opp_threat), int(rem))
+        return _lambda_w() * float(dw)
+
+    # RECAPTURE stub remains stub-priced (current enumerate_recapture_bundles
+    # returns []).
+    return 0.0
+
+
 def tier2_score_bundles(bundles: list[Bundle], snap_base, me: int,
-                        num_seats: int, world,
+                        num_seats: int, world, model=None,
                         wallclock_ms: float = TIER2_BUDGET_MS
                         ) -> list[Bundle]:
     """Score each bundle via `score_candidate_v4_joint`, populate
@@ -840,7 +951,8 @@ def tier2_score_bundles(bundles: list[Bundle], snap_base, me: int,
             continue
         if t2_status != "scored":
             continue
-        scored.append(replace(b, tier2_score=float(t2_score)))
+        endgame = _bundle_endgame_bonus(b, world, model, me, num_seats)
+        scored.append(replace(b, tier2_score=float(t2_score) + endgame))
 
     scored.sort(key=lambda b: -b.tier2_score)
     return scored
@@ -1103,7 +1215,7 @@ def agent(obs, configuration=None) -> list[list]:
         50.0, float(WALLCLOCK_BUDGET_MS) - elapsed_ms - 60.0,
     )
     scored = tier2_score_bundles(
-        cheap, snap_base, me, num_seats, world,
+        cheap, snap_base, me, num_seats, world, model,
         wallclock_ms=tier2_budget_ms,
     )
 
