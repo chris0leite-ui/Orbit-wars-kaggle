@@ -403,20 +403,20 @@ def _extract_comet_paths(world) -> dict[int, tuple[list, int]]:
 # Module-level singleton + thin function wrappers.
 # ---------------------------------------------------------------------------
 
-_DEFAULT = KinematicTable()
+_KT_TABLE = KinematicTable()
 
 
 def clear_table() -> None:
     """Reset the module-level singleton (tests + the legacy entry point)."""
-    _DEFAULT.reset()
+    _KT_TABLE.reset()
 
 
 def begin_turn(world, *, max_lead: Optional[int] = None) -> bool:
-    return _DEFAULT.begin_turn(world, max_lead=max_lead)
+    return _KT_TABLE.begin_turn(world, max_lead=max_lead)
 
 
 def lookup_relative(pid: int, lead: int) -> tuple[float, float]:
-    return _DEFAULT.lookup_relative(pid, lead)
+    return _KT_TABLE.lookup_relative(pid, lead)
 
 
 def window(
@@ -424,13 +424,13 @@ def window(
     start_offset: int,
     length: int,
 ) -> dict[int, list[tuple[float, float]]]:
-    return _DEFAULT.window(pids, start_offset, length)
+    return _KT_TABLE.window(pids, start_offset, length)
 
 
 def comet_paths_view() -> dict[int, tuple[list, int]]:
-    return _DEFAULT.comet_paths_view()
+    return _KT_TABLE.comet_paths_view()
 
 
 def get_default_table() -> KinematicTable:
     """Accessor for the module-level singleton."""
-    return _DEFAULT
+    return _KT_TABLE

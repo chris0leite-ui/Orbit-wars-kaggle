@@ -113,12 +113,9 @@ DEFAULT_LIB_ORDER = [
     # v9 super-version (2026-05-12 evening): composite value heads
     # for receding-horizon-pathology fix. Used by v9_inflight + v9_combined.
     "value_heads",
-    # lib/kinematic_table.py (Phase γ, 2026-05-21): per-game position
-    # precompute lifted out of predict_fleet_fate's inner loop.
-    # agents/baseline/main.py imports begin_turn from here. Bundles
-    # without this fail with NameError on agent load when
-    # KINEMATIC_TABLE_ENABLED=1 (default-on since c48e143).
-    "kinematic_table",
+    # (kinematic_table already listed earlier in DEFAULT_LIB_ORDER,
+    # before `trajectory`. Listing again here would double-inline →
+    # two separate KinematicTable singletons → state divergence.)
     # lib/joint_solver/* — Phase 4 joint LP solver. Order matters:
     #   predicate (W math) → columns → value (DEFAULT_GAMMA used as
     #   function-arg default in mpc + prerank + opp_mirror_analytical) →

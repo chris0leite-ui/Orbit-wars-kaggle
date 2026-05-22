@@ -65,7 +65,13 @@ PIPELINE_ORDER = [
     "lib/pipeline/opp_mirror_analytical.py",
     "lib/pipeline/decision.py",
     "lib/pipeline/leaf_outcome_table.py",
-    "lib/pipeline/pending_schedule.py",
+    # pipeline/pending_schedule is inlined by DEFAULT_LIB_ORDER (the baseline
+    # bundle's pass) because lp_outcome.py lazy-imports it when
+    # LP_PENDING_AWARE_BUDGET=1. Listing it here too would double-inline
+    # the module → two separate PendingSchedule() singletons → state
+    # divergence (the second overwrites _DEFAULT but the first's bound
+    # references stay alive in closures created during the first inline).
+    # → bundle-vs-source parity fails at the first wait_N>0 commit.
     # portfolio_enum + portfolio_enum_lp_seeded — wired transitively by
     # decision_depth2_search via portfolio_enum_lp_seeded.enumerate_top_k_portfolios.
     "lib/pipeline/portfolio_enum.py",

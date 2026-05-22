@@ -436,5 +436,8 @@ def iter_viable(*, src_id: Optional[int] = None,
 
 def get_default_matrix() -> TrajectoryMatrix:
     """Accessor for the module-level singleton — for callers that want
-    to drive `begin_game(...)` from a stage."""
+    to drive `begin_game(...)` from a stage. Renamed from `get_default`
+    to avoid bundler symbol collision with `lib.kinematic_table.get_default`
+    (both modules define a get_default singleton accessor; in the flat
+    bundle namespace the later-inlined one shadows the first)."""
     return _TM_DEFAULT
