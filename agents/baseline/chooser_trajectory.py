@@ -37,7 +37,12 @@ from __future__ import annotations
 import math
 import os
 
-from agents.baseline.chooser import affordable_validate_cap, opp_actions_for_snap
+from agents.baseline.chooser import (
+    BASELINE_OPP_SMART_LEAF_WINDOW,
+    affordable_validate_cap,
+    opp_actions_for_snap,
+    opp_actions_for_step,
+)
 from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
@@ -496,11 +501,20 @@ def build_trajectory_baseline(snap_base, me: int, num_seats: int,
     out: list[float] = [
         favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma),
     ]
-    for _ in range(horizon):
+    leaf_window_start = max(0, horizon - BASELINE_OPP_SMART_LEAF_WINDOW)
+    for step_i in range(horizon):
         if snap.fake_env.done:
             out.append(out[-1])
             continue
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        # Phase 4 (2026-05-22): smart-opp leaf reaction. When the env
+        # var is on, the FINAL N baseline steps (window) use
+        # top_tier_mirror_policy so baseline[h] is calibrated against
+        # the same opp model the candidate rollout's leaf uses, AND so
+        # the smart-opp launches have time to propagate.
+        is_leaf_step = (step_i >= leaf_window_start)
+        actions = opp_actions_for_step(
+            snap, me, num_seats, smart_leaf=is_leaf_step,
+        )
         # Baseline IS asymmetric on purpose (ME idle, opp reactive) —
         # we measure the candidate's marginal value above the worst-
         # case "I do nothing this turn AND on every future turn"
@@ -585,10 +599,17 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     if _ME_DEFENDS_ENABLED:
         me_defense_emits = _me_defensive_action(snap, me)
 
+    leaf_window_start = max(0, horizon - BASELINE_OPP_SMART_LEAF_WINDOW)
     for t in range(horizon):
         if snap.fake_env.done:
             break
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        # Phase 4 (2026-05-22): smart-opp leaf reaction in the FINAL
+        # window of rollout steps. baseline_favors[horizon] was built
+        # with the same swap so the Δ subtraction stays calibrated.
+        is_leaf_step = (t >= leaf_window_start)
+        actions = opp_actions_for_step(
+            snap, me, num_seats, smart_leaf=is_leaf_step,
+        )
         if t == int(wait_N):
             # Candidate first (the chooser's primary decision), then
             # defensive emits. If the candidate drains the planet
@@ -667,10 +688,16 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         me_defense_emits = _me_defensive_action(snap, me)
     earliest_inject_t = min(inject_at.keys()) if inject_at else -1
 
+    leaf_window_start = max(0, horizon - BASELINE_OPP_SMART_LEAF_WINDOW)
     for t in range(horizon):
         if snap.fake_env.done:
             break
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        # Phase 4 (2026-05-22): smart-opp leaf reaction in the FINAL
+        # window of rollout steps — same swap as score_candidate_v4.
+        is_leaf_step = (t >= leaf_window_start)
+        actions = opp_actions_for_step(
+            snap, me, num_seats, smart_leaf=is_leaf_step,
+        )
         if t in inject_at:
             base_actions = list(inject_at[t])
             if t == earliest_inject_t and me_defense_emits:

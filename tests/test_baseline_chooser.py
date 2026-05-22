@@ -181,3 +181,67 @@ def test_adaptive_k_extends_baseline_horizon():
         import importlib
         import agents.baseline.chooser_trajectory as ct
         importlib.reload(ct)
+
+
+
+def test_opp_smart_leaf_off_is_bit_identical():
+    """Phase 4, 2026-05-22: with BASELINE_OPP_SMART_LEAF unset (default
+    OFF), the agent must produce byte-identical moves compared to the
+    explicit \"0\" setting. Guards against the helper introducing any
+    subtle change to the lite_greedy path."""
+    import os
+    saved = os.environ.get("BASELINE_OPP_SMART_LEAF")
+    try:
+        os.environ.pop("BASELINE_OPP_SMART_LEAF", None)
+        from agents.baseline.main import agent
+        obs, _snap = _snapshot_from_seed(42)
+        out_unset = agent(obs)
+
+        os.environ["BASELINE_OPP_SMART_LEAF"] = "0"
+        out_zero = agent(obs)
+        assert out_unset == out_zero
+    finally:
+        if saved is None:
+            os.environ.pop("BASELINE_OPP_SMART_LEAF", None)
+        else:
+            os.environ["BASELINE_OPP_SMART_LEAF"] = saved
+
+
+def test_opp_smart_leaf_on_runs_without_crash():
+    """Phase 4, 2026-05-22: with BASELINE_OPP_SMART_LEAF=1 the chooser
+    must run without raising on a warmed mid-game snapshot. This is a
+    smoke test only — the smart-leaf swap is in the rollout, where the
+    new opp launches MAY not propagate to flip the leaf favor enough
+    to change the prerank ordering (the prerank is dominated by
+    proposer cheap_delta; the leaf score nudges within). Validating
+    "smart-leaf actually changes a decision" is done at the A/B level,
+    not at the unit-test level.
+
+    Real safety net: `test_opp_smart_leaf_off_is_bit_identical` above.
+    """
+    import os
+    import random
+    saved = os.environ.get("BASELINE_OPP_SMART_LEAF")
+    try:
+        from agents.baseline.main import agent
+        env = make("orbit_wars", configuration={"seed": 7}, debug=False)
+        env.reset(2)
+        rng = random.Random(7)
+        for _ in range(30):
+            obs = env.state[0].observation
+            a = [[p[0], rng.uniform(0, 6.28), int(p[5] // 2)]
+                 for p in obs["planets"]
+                 if p[1] == 0 and p[5] > 5 and rng.random() < 0.3]
+            b = [[p[0], rng.uniform(0, 6.28), int(p[5] // 2)]
+                 for p in obs["planets"]
+                 if p[1] == 1 and p[5] > 5 and rng.random() < 0.3]
+            env.step([a, b])
+        obs = env.state[0].observation
+        os.environ["BASELINE_OPP_SMART_LEAF"] = "1"
+        out = agent(obs)
+        assert isinstance(out, list)
+    finally:
+        if saved is None:
+            os.environ.pop("BASELINE_OPP_SMART_LEAF", None)
+        else:
+            os.environ["BASELINE_OPP_SMART_LEAF"] = saved
