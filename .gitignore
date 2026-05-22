@@ -18,6 +18,9 @@ audit/seed-panel/features.json
 # Bundle parity-gate cache — keyed by bundle sha256, regenerable.
 audit/bundle-parity-cache.json
 
+# Cheap-filter probe checkpoint — overwritten per probe run, transient.
+audit/cheap-filter-completeness.checkpoint.json
+
 # Submissions / kernel build artifacts
 submissions/*
 !submissions/.gitkeep
