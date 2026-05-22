@@ -439,7 +439,7 @@ def _comet_paths_by_id(world) -> dict[int, tuple[list, int]]:
         "1", "true", "on", "yes",
     ):
         try:
-            from lib.kinematic_table import get_default as _kt_get_default
+            from lib.kinematic_table import get_default_table as _kt_get_default
             table = _kt_get_default()
             # Only use the table if it was primed for this turn (has
             # entries that match the current obs).

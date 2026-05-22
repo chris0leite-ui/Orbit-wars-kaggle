@@ -43,6 +43,11 @@ JOINT_SOLVER_ORDER = [
     "lib/joint_solver/value.py",
     "lib/joint_solver/opp_projection.py",
     "lib/joint_solver/opening_planner.py",
+    # trajectory_matrix + opening_search land in joint_solver per
+    # Phase η.1/η.2; opening_search depends on opening_planner +
+    # trajectory_matrix. Used by lib/pipeline/opening.py.
+    "lib/joint_solver/trajectory_matrix.py",
+    "lib/joint_solver/opening_search.py",
     "lib/joint_solver/lp_outcome.py",
     "lib/joint_solver/mpc.py",
 ]

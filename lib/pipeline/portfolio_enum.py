@@ -28,7 +28,7 @@ from lib.joint_solver.columns import Column
 from lib.pipeline.types import TurnContext
 
 
-def _source_inventory(columns: list[Column], ctx: TurnContext) -> dict[int, tuple[int, int]]:
+def _portfolio_enum_source_inventory(columns: list[Column], ctx: TurnContext) -> dict[int, tuple[int, int]]:
     """Return {src_id: (initial_ships, production_per_step)} for sources we use."""
     inv: dict[int, tuple[int, int]] = {}
     for col in columns:
@@ -94,7 +94,7 @@ def enumerate_top_k_portfolios(
 
     Returns the top `k` portfolios by aggregate cheap_delta.
     """
-    inv = _source_inventory(columns, ctx)
+    inv = _portfolio_enum_source_inventory(columns, ctx)
     # Filter to our positive-cheap_delta columns with a valid source.
     sorted_cols = sorted(
         [c for c in columns if int(c.src_id) in inv],

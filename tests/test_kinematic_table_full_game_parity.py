@@ -31,7 +31,7 @@ from kaggle_environments import make
 
 from agents.analytical_phase_c.main import agent as phase_c_agent
 from agents.baseline.main import agent as baseline_agent
-from lib.kinematic_table import clear as _kt_clear
+from lib.kinematic_table import clear_table as _kt_clear
 
 
 def _capture_moves(seed: int, kt_on: bool, episode_steps: int) -> list:

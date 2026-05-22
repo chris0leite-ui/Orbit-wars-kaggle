@@ -30,7 +30,7 @@ from lib.joint_solver.trajectory_matrix import (
     DEFAULT_MAX_LAUNCH_TICK,
     TrajectoryEntry,
     TrajectoryMatrix,
-    get_default,
+    get_default_matrix as get_default,
 )
 from lib.world_model import WorldModel, predict_garrison_at
 from agents.baseline.proposer import aim_and_eta

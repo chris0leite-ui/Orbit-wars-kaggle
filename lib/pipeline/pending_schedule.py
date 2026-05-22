@@ -152,54 +152,54 @@ class PendingSchedule:
 # preferred per-instance entry point for tests + future callers.
 # ---------------------------------------------------------------------------
 
-_DEFAULT = PendingSchedule()
+_PS_DEFAULT = PendingSchedule()
 
 
 def clear() -> None:
     """Reset the module-level singleton (tests + the legacy entry point)."""
-    _DEFAULT.reset()
+    _PS_DEFAULT.reset()
 
 
 def get_pending(my_id: int, game_id: int) -> list[ScheduledFire]:
     """Legacy two-arg API; game_id ignored (was the source of Bug #1)."""
     del game_id  # ignored — kept for signature parity with old callers
-    return _DEFAULT.get_pending(my_id)
+    return _PS_DEFAULT.get_pending(my_id)
 
 
 def set_pending(my_id: int, game_id: int, fires: list[ScheduledFire]) -> None:
     del game_id
-    _DEFAULT.set_pending(my_id, fires)
+    _PS_DEFAULT.set_pending(my_id, fires)
 
 
 def commit(my_id: int, game_id: int, new_fires: list[ScheduledFire]) -> None:
     del game_id
-    _DEFAULT.commit(my_id, new_fires)
+    _PS_DEFAULT.commit(my_id, new_fires)
 
 
 def decant_due(my_id: int, game_id: int, step_now: int) -> list[ScheduledFire]:
     del game_id
-    return _DEFAULT.decant_due(my_id, step_now)
+    return _PS_DEFAULT.decant_due(my_id, step_now)
 
 
 def prune_stale(my_id: int, game_id: int, world) -> int:
     del game_id
-    return _DEFAULT.prune_stale(my_id, world)
+    return _PS_DEFAULT.prune_stale(my_id, world)
 
 
 def prune_past(my_id: int, game_id: int, step_now: int) -> int:
     del game_id
-    return _DEFAULT.prune_past(my_id, step_now)
+    return _PS_DEFAULT.prune_past(my_id, step_now)
 
 
 def stats(my_id: int, game_id: int) -> dict:
     del game_id
-    return _DEFAULT.stats(my_id)
+    return _PS_DEFAULT.stats(my_id)
 
 
 def get_default_pending() -> PendingSchedule:
     """Accessor for the module-level singleton — for callers that want
     to drive `begin_turn(fingerprint)` from a stage."""
-    return _DEFAULT
+    return _PS_DEFAULT
 
 
 # Backward-compat: some callers / tests reference `_PENDING` directly.
@@ -207,7 +207,7 @@ def get_default_pending() -> PendingSchedule:
 # (Read-only via the property; mutations should go through the class API.)
 class _PendingViewDescriptor:
     def __get__(self, _obj, _objtype=None):
-        return _DEFAULT._pending
+        return _PS_DEFAULT._pending
 
 
-_PENDING = _DEFAULT._pending  # alias: same dict object the class mutates
+_PENDING = _PS_DEFAULT._pending  # alias: same dict object the class mutates

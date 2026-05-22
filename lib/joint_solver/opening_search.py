@@ -59,7 +59,7 @@ from lib.joint_solver.opening_planner import (
 )
 from lib.joint_solver.trajectory_matrix import (
     TrajectoryEntry,
-    get_default as get_default_matrix,
+    get_default_matrix,
 )
 from lib.world_model import simulate_planet_timeline
 
@@ -236,7 +236,7 @@ def _leaf_value_for_capture(entry: TrajectoryEntry, ships_fired: int,
 # ---------------------------------------------------------------------------
 
 
-def _build_candidates(ctx, *, alpha_opp_penalty: float = 1.0,
+def _opening_search_build_candidates(ctx, *, alpha_opp_penalty: float = 1.0,
                       ship_cost: float = 1.0,
                       max_chain_depth: int = 1) -> list[_SearchCandidate]:
     """Build the candidate list reading from the trajectory matrix.
@@ -420,17 +420,17 @@ def _build_candidates(ctx, *, alpha_opp_penalty: float = 1.0,
 
 
 # ---------------------------------------------------------------------------
-# MILP solver — mirrors opening_planner._solve_milp shape + chain linkage
+# MILP solver — mirrors opening_planner._opening_search_solve_milp shape + chain linkage
 # ---------------------------------------------------------------------------
 
 
-def _solve_milp(candidates: list[_SearchCandidate], world,
+def _opening_search_solve_milp(candidates: list[_SearchCandidate], world,
                 time_limit_seconds: float):
     """Run the MILP. Return (chosen, objective, status, n_constraints)."""
     if not candidates:
         return [], 0.0, "empty", 0
     if not _MILP_AVAILABLE:
-        chosen, obj = _greedy_fallback(candidates, world)
+        chosen, obj = _opening_search_greedy_fallback(candidates, world)
         return chosen, obj, "greedy_fallback", 0
 
     import numpy as np
@@ -584,11 +584,11 @@ def _solve_milp(candidates: list[_SearchCandidate], world,
         res = milp(c=c_vec, constraints=constraints, integrality=integrality,
                    bounds=bounds, options={"time_limit": time_limit_seconds})
     except Exception:
-        chosen, obj = _greedy_fallback(candidates, world)
+        chosen, obj = _opening_search_greedy_fallback(candidates, world)
         return chosen, obj, "milp_exception_greedy", len(A_rows)
 
     if res.x is None:
-        chosen, obj = _greedy_fallback(candidates, world)
+        chosen, obj = _opening_search_greedy_fallback(candidates, world)
         return chosen, obj, "milp_no_solution_greedy", len(A_rows)
 
     chosen = [c for j, c in enumerate(candidates) if res.x[j] > 0.5]
@@ -596,7 +596,7 @@ def _solve_milp(candidates: list[_SearchCandidate], world,
     return chosen, obj, "milp_ok", len(A_rows)
 
 
-def _greedy_fallback(candidates: list[_SearchCandidate], world
+def _opening_search_greedy_fallback(candidates: list[_SearchCandidate], world
                      ) -> tuple[list[_SearchCandidate], float]:
     """Pure-Python descending-value greedy with budget + gang-up + chain
     linkage tracking."""
@@ -675,7 +675,7 @@ def _solve_full_schedule(ctx, *, time_limit_seconds: float = 0.4
                          ) -> OpeningPlan:
     """One-shot full-schedule solve. Internal — opening_plan_search wraps
     this in the per-game cache so we don't re-derive every turn."""
-    candidates = _build_candidates(ctx)
+    candidates = _opening_search_build_candidates(ctx)
     if not candidates:
         return OpeningPlan(
             schedule=[], objective=0.0, n_vars=0, n_constraints=0,
@@ -683,7 +683,7 @@ def _solve_full_schedule(ctx, *, time_limit_seconds: float = 0.4
             pruning_waterfall={"n_candidates": 0},
         )
 
-    chosen, obj, status, n_constraints = _solve_milp(
+    chosen, obj, status, n_constraints = _opening_search_solve_milp(
         candidates, ctx.world, time_limit_seconds,
     )
 

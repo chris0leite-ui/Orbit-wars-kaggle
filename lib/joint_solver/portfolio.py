@@ -17,7 +17,7 @@ from lib.joint_solver.predicate import EPISODE_STEPS, is_winning_state, is_winni
 CAPTURE_SAFETY_MARGIN = 2
 
 
-def _ships_to_capture(planet, my_id: int) -> int:
+def _portfolio_ships_to_capture(planet, my_id: int) -> int:
     """Closed-form lower bound on ships needed to capture this planet."""
     if planet.owner == my_id:
         return 0
@@ -26,7 +26,7 @@ def _ships_to_capture(planet, my_id: int) -> int:
 
 def _candidate_score(planet, my_id: int) -> tuple[float, int]:
     """Greedy sort key: high production-per-ship-cost first, then cheap first."""
-    cost = _ships_to_capture(planet, my_id)
+    cost = _portfolio_ships_to_capture(planet, my_id)
     prod = int(planet.production)
     if cost == 0:
         return (-float("inf"), 0)

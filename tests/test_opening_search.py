@@ -25,13 +25,13 @@ from kaggle_environments import make
 from lib.intent import World
 from lib.joint_solver.opening_search import (
     _SearchCandidate,
-    _build_candidates,
+    _opening_search_build_candidates,
     opening_plan_search,
     opening_search_enabled,
 )
 from lib.joint_solver.trajectory_matrix import (
     TrajectoryMatrix,
-    get_default as get_default_matrix,
+    get_default_matrix,
 )
 from lib.pipeline.perception import perception_default
 from lib.world_model import WorldModel
@@ -116,7 +116,7 @@ def test_seed42_planet16_in_candidate_set():
     if ctx.is_empty_obs or ctx.is_no_targets:
         pytest.skip("seed 42 step 0 has no targets")
     _prime_matrix(ctx)
-    candidates = _build_candidates(ctx)
+    candidates = _opening_search_build_candidates(ctx)
     p16_candidates = [c for c in candidates if c.tgt_id == 16 and c.src_id == 0]
     assert p16_candidates, (
         f"expected ≥1 (0→16) candidate; got 0. "
@@ -158,7 +158,7 @@ def test_chain_candidates_emit_when_parent_enables_them():
     if ctx.is_empty_obs or ctx.is_no_targets:
         pytest.skip("seed 42 step 0 has no targets")
     _prime_matrix(ctx)
-    candidates = _build_candidates(ctx)
+    candidates = _opening_search_build_candidates(ctx)
     chains = [c for c in candidates if c.parent_column_id is not None]
     # If no chains emit, the chain code path is broken (or this seed
     # legitimately has no chain-enabling captures — but seed 42 has

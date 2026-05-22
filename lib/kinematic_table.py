@@ -406,7 +406,7 @@ def _extract_comet_paths(world) -> dict[int, tuple[list, int]]:
 _DEFAULT = KinematicTable()
 
 
-def clear() -> None:
+def clear_table() -> None:
     """Reset the module-level singleton (tests + the legacy entry point)."""
     _DEFAULT.reset()
 
@@ -431,6 +431,6 @@ def comet_paths_view() -> dict[int, tuple[list, int]]:
     return _DEFAULT.comet_paths_view()
 
 
-def get_default() -> KinematicTable:
+def get_default_table() -> KinematicTable:
     """Accessor for the module-level singleton."""
     return _DEFAULT

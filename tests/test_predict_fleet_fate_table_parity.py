@@ -21,7 +21,7 @@ import pytest
 
 from kaggle_environments import make
 from lib.intent import World
-from lib.kinematic_table import KinematicTable, get_default
+from lib.kinematic_table import KinematicTable, get_default_table as get_default
 from lib.trajectory import predict_fleet_fate
 
 
@@ -68,7 +68,7 @@ def _predict_with_table(world, src, target, angle, ships, wait_N):
     os.environ["KINEMATIC_TABLE_ENABLED"] = "1"
     try:
         # Prime the singleton.
-        from lib.kinematic_table import begin_turn as _kt_begin_turn, clear
+        from lib.kinematic_table import begin_turn as _kt_begin_turn, clear_table as clear
         clear()
         _kt_begin_turn(world)
         return predict_fleet_fate(src, target, angle, ships, world, wait_N=wait_N)
@@ -80,7 +80,7 @@ def _predict_without_table(world, src, target, angle, ships, wait_N):
     """Run predict_fleet_fate with KT off → inline build path."""
     os.environ.pop("KINEMATIC_TABLE_ENABLED", None)
     # Reset the table to ensure no leakage.
-    from lib.kinematic_table import clear
+    from lib.kinematic_table import clear_table as clear
     clear()
     return predict_fleet_fate(src, target, angle, ships, world, wait_N=wait_N)
 

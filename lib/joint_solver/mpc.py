@@ -101,13 +101,13 @@ def _model_with_opp_projection(world, model, *, my_id: int, num_seats: int):
     return augmented, opp_arrivals
 
 
-def _as_dict(obs):
+def _mpc_as_dict(obs):
     if isinstance(obs, dict):
         return obs
     return {k: getattr(obs, k) for k in dir(obs) if not k.startswith("_")}
 
 
-def _num_seats(planets, fleets) -> int:
+def _mpc_num_seats(planets, fleets) -> int:
     """Infer num_seats from owner ids present in obs."""
     owners = {int(p.owner) for p in planets if int(p.owner) >= 0}
     owners.update(int(f.owner) for f in fleets if int(f.owner) >= 0)
@@ -116,7 +116,7 @@ def _num_seats(planets, fleets) -> int:
     return max(2, max(owners) + 1)
 
 
-def _build_columns(prerank, world, model, *, my_id: int,
+def _mpc_build_columns(prerank, world, model, *, my_id: int,
                    gamma: float = DEFAULT_GAMMA):
     """Convert a prerank list to Columns with values via value_for_candidate."""
     columns = []
@@ -140,7 +140,7 @@ def solve_turn(obs, configuration=None, *,
     Returns either `moves` (default) or `(moves, MpcDiagnostics)` when
     `return_diagnostics=True`.
     """
-    obs_d = _as_dict(obs)
+    obs_d = _mpc_as_dict(obs)
     me = int(obs_d.get("player", 0))
     raw_planets = obs_d.get("planets", []) or []
     raw_fleets = obs_d.get("fleets", []) or []
@@ -169,7 +169,7 @@ def solve_turn(obs, configuration=None, *,
     world = World.from_obs(obs_d)
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
-    num_seats = _num_seats(planets, fleets)
+    num_seats = _mpc_num_seats(planets, fleets)
     step_now = int(obs_d.get("step", 0) or 0)
 
     # The closed-form winning-state predicate is evaluated below as a SIGNAL
@@ -260,7 +260,7 @@ def solve_turn(obs, configuration=None, *,
         world, model, my_id=me, num_seats=num_seats,
     )
 
-    columns = _build_columns(prerank, world, model_with_opp, my_id=me, gamma=gamma)
+    columns = _mpc_build_columns(prerank, world, model_with_opp, my_id=me, gamma=gamma)
     n_columns_before_filter = len(columns)
 
     # Endgame portfolio focus (2P only — 4P bypasses).

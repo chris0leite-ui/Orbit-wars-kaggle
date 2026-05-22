@@ -281,7 +281,7 @@ def _table_window_or_none(world, wait_N: int, length: int):
     if not _kinematic_table_enabled():
         return None
     # Lazy import keeps default-path module-load time unchanged.
-    from lib.kinematic_table import get_default
+    from lib.kinematic_table import get_default_table as get_default
     table = get_default()
     pids = list(world.planets_by_id.keys())
     if not pids:

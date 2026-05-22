@@ -288,7 +288,7 @@ class OutcomeAwareResult:
 # ---------------------------------------------------------------------------
 
 
-def _source_inventory(columns: list[Column], world, *, my_id: int
+def _lp_outcome_source_inventory(columns: list[Column], world, *, my_id: int
                       ) -> dict[int, tuple[int, int]]:
     """For each our-source-id present in columns, return (initial_ships, production)."""
     out: dict[int, tuple[int, int]] = {}
@@ -671,7 +671,7 @@ def _value_for_outcome(row: OutcomeRow, my_id: int,
 # ---------------------------------------------------------------------------
 
 
-def _greedy_fallback(
+def _lp_outcome_greedy_fallback(
     active_columns: list[Column],
     per_planet_tables: dict[int, dict[tuple[int, ...], OutcomeRow]],
     world,
@@ -691,7 +691,7 @@ def _greedy_fallback(
     drop it (greedy, lowest-value-marginal first).
     """
     step_now = int(getattr(world, "step", 0) or 0)
-    inv = _source_inventory(active_columns, world, my_id=int(my_id))
+    inv = _lp_outcome_source_inventory(active_columns, world, my_id=int(my_id))
 
     # Per planet: choose best subset.
     chosen: dict[int, tuple[int, ...]] = {}
@@ -861,7 +861,7 @@ def solve_outcome_aware(
     # mid-horizon. Their src isn't yet in inv (it's opp-owned now).
     # They're feasible only if their parent capture fires; that's
     # enforced via a linkage constraint added below, not by inv.
-    inv = _source_inventory(columns, world, my_id=int(my_id))
+    inv = _lp_outcome_source_inventory(columns, world, my_id=int(my_id))
     active: list[Column] = []
     for col in columns:
         if int(col.owner) != int(my_id):
@@ -923,7 +923,7 @@ def solve_outcome_aware(
         )
 
     if not _MILP_AVAILABLE:
-        return _greedy_fallback(
+        return _lp_outcome_greedy_fallback(
             active, per_planet_tables, world,
             my_id=int(my_id), alpha_opp_penalty=float(alpha_opp_penalty),
             discounted=(discount_gamma is not None
@@ -1068,7 +1068,7 @@ def solve_outcome_aware(
         b_ub_arr = np.array(b_ub, dtype=float)
         constraints_list.append(LinearConstraint(A_ub, ub=b_ub_arr))
     if not constraints_list:
-        return _greedy_fallback(
+        return _lp_outcome_greedy_fallback(
             active, per_planet_tables, world,
             my_id=int(my_id), alpha_opp_penalty=float(alpha_opp_penalty),
             discounted=(discount_gamma is not None
@@ -1086,7 +1086,7 @@ def solve_outcome_aware(
                    integrality=integrality, bounds=bounds,
                    options={"time_limit": float(time_limit_seconds)})
     except Exception:
-        return _greedy_fallback(
+        return _lp_outcome_greedy_fallback(
             active, per_planet_tables, world,
             my_id=int(my_id), alpha_opp_penalty=float(alpha_opp_penalty),
             discounted=(discount_gamma is not None
@@ -1096,7 +1096,7 @@ def solve_outcome_aware(
         )
 
     if res.x is None:
-        return _greedy_fallback(
+        return _lp_outcome_greedy_fallback(
             active, per_planet_tables, world,
             my_id=int(my_id), alpha_opp_penalty=float(alpha_opp_penalty),
             discounted=(discount_gamma is not None

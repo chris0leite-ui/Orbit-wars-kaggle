@@ -18,7 +18,7 @@ from lib.pipeline.types import TurnContext
 from lib.world_model import WorldModel
 
 
-def _kinematic_table_enabled() -> bool:
+def _perception_kinematic_table_enabled() -> bool:
     """Phase β opt-in for the kinematic precomputation table.
 
     Off by default. When `KINEMATIC_TABLE_ENABLED=1` (or true/on/yes),
@@ -93,7 +93,7 @@ def perception_default(obs, configuration: Optional[Any] = None) -> TurnContext:
         )
 
     world = World.from_obs(obs_d)
-    if _kinematic_table_enabled():
+    if _perception_kinematic_table_enabled():
         # Lazy import: only loaded when the env-var is set, keeps
         # default-path import time unchanged.
         from lib.kinematic_table import begin_turn as _kt_begin_turn

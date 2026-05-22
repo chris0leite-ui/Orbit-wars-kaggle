@@ -398,12 +398,12 @@ class TrajectoryMatrix:
 # ---------------------------------------------------------------------------
 
 
-_DEFAULT = TrajectoryMatrix()
+_TM_DEFAULT = TrajectoryMatrix()
 
 
-def clear() -> None:
+def clear_matrix() -> None:
     """Reset the module-level singleton (tests + legacy entry point)."""
-    _DEFAULT.reset()
+    _TM_DEFAULT.reset()
 
 
 def begin_game(world, model, omega: float, my_id: int,
@@ -412,7 +412,7 @@ def begin_game(world, model, omega: float, my_id: int,
                arrival_buffer: Optional[int] = None) -> bool:
     """Game-start precompute — call once per game, idempotent within
     a game (fingerprint detects new games)."""
-    return _DEFAULT.begin_game(
+    return _TM_DEFAULT.begin_game(
         world, model, omega, my_id, obs_d=obs_d,
         max_launch_tick=max_launch_tick, arrival_buffer=arrival_buffer,
     )
@@ -421,7 +421,7 @@ def begin_game(world, model, omega: float, my_id: int,
 def get(src_id: int, tgt_id: int, launch_tick: int
         ) -> Optional[TrajectoryEntry]:
     """O(1) lookup on the module-level singleton."""
-    return _DEFAULT.get(src_id, tgt_id, launch_tick)
+    return _TM_DEFAULT.get(src_id, tgt_id, launch_tick)
 
 
 def iter_viable(*, src_id: Optional[int] = None,
@@ -429,12 +429,12 @@ def iter_viable(*, src_id: Optional[int] = None,
                 launch_tick: Optional[int] = None
                 ) -> Iterator[TrajectoryEntry]:
     """Iterate over viable entries optionally filtered."""
-    return _DEFAULT.iter_viable(
+    return _TM_DEFAULT.iter_viable(
         src_id=src_id, tgt_id=tgt_id, launch_tick=launch_tick,
     )
 
 
-def get_default() -> TrajectoryMatrix:
+def get_default_matrix() -> TrajectoryMatrix:
     """Accessor for the module-level singleton — for callers that want
     to drive `begin_game(...)` from a stage."""
-    return _DEFAULT
+    return _TM_DEFAULT
