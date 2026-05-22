@@ -379,6 +379,7 @@ def enumerate_attack_bundles(my_planets, target_pool, world, model,
                              me: int, omega: float,
                              baseline_len: int = MAX_HORIZON + 1,
                              max_bundle_size: int = MAX_BUNDLE_SIZE,
+                             deadline: float | None = None,
                              ) -> list[Bundle]:
     """Enumerate multi-source ATTACK bundles for each non-own target.
 
@@ -392,15 +393,28 @@ def enumerate_attack_bundles(my_planets, target_pool, world, model,
     3. Per window, enumerate subsets where no source repeats.
     4. Emit one Bundle per unique subset (frozenset-of-legs dedup).
 
+    `deadline` is a `time.perf_counter()` value; when reached, the
+    per-(src, tgt) loop short-circuits and the rest of the function
+    runs with whatever legs were built. Returning fewer bundles is
+    strictly better than the agent emitting no moves at all
+    (timing probe 2026-05-22 showed 84% idle turns when this loop
+    was unbounded — total p50 wallclock 722ms vs 600ms budget).
+
     cheap_score and tier2_score are zeroed; populated by later passes.
     """
     legs_by_target: dict[int, list[Leg]] = defaultdict(list)
+    deadline_hit = False
     for tgt in target_pool:
+        if deadline_hit:
+            break
         if int(tgt.owner) == me:
             continue  # ATTACK targets non-own only
         # Limit to nearest-N reachable sources per target.
         sources = nearest_k(my_planets, tgt, NEAREST_SOURCES_PER_TARGET)
         for src in sources:
+            if deadline is not None and time.perf_counter() > deadline:
+                deadline_hit = True
+                break
             if int(src.ships) < MIN_FLEET_SIZE:
                 continue
             if int(src.id) == int(tgt.id):
@@ -437,6 +451,7 @@ def enumerate_attack_bundles(my_planets, target_pool, world, model,
 def enumerate_defend_bundles(my_planets, world, model, me: int, omega: float,
                              baseline_len: int = MAX_HORIZON + 1,
                              max_bundle_size: int = MAX_BUNDLE_SIZE,
+                             deadline: float | None = None,
                              ) -> list[Bundle]:
     """Enumerate multi-source DEFEND bundles for each own planet under threat.
 
@@ -462,13 +477,19 @@ def enumerate_defend_bundles(my_planets, world, model, me: int, omega: float,
     """
     bundles: list[Bundle] = []
     seen: set[tuple[int, frozenset]] = set()
+    deadline_hit = False
     for own in my_planets:
+        if deadline_hit:
+            break
         enemy_eta = model.time_to_enemy_threat(int(own.id), me, world)
         if enemy_eta is None or enemy_eta > DEFEND_LOOKAHEAD:
             continue
         peers = nearest_k(my_planets, own, NEAREST_SOURCES_PER_TARGET)
         all_legs: list[Leg] = []
         for peer in peers:
+            if deadline is not None and time.perf_counter() > deadline:
+                deadline_hit = True
+                break
             if int(peer.id) == int(own.id):
                 continue
             if int(peer.ships) < MIN_FLEET_SIZE:
@@ -1301,9 +1322,22 @@ def agent(obs, configuration=None) -> list[list]:
     ))
     disable_defend = os.environ.get("COORD_DISABLE_DEFEND", "0") == "1"
 
+    # Enumerate budget: leave at least 250ms for cheap_filter + Tier-2 +
+    # Lagrangian + emit + safety margin. Empirically (timing probe
+    # 2026-05-22) enumerate at p50=607ms ate the whole budget when
+    # unbounded, causing 84% idle turns. Deadline-bounded enumeration
+    # returns partial results — strictly better than emitting nothing.
+    enumerate_budget_ms = max(
+        100.0,
+        float(WALLCLOCK_BUDGET_MS) - 250.0
+        - (time.perf_counter() - t_start) * 1000.0,
+    )
+    enumerate_deadline = t_start + enumerate_budget_ms / 1000.0
+
     attacks = enumerate_attack_bundles(
         my_planets, other_planets, world, model, me, omega,
         max_bundle_size=max_bundle_size,
+        deadline=enumerate_deadline,
     )
     if disable_defend:
         defends = []
@@ -1311,6 +1345,7 @@ def agent(obs, configuration=None) -> list[list]:
         defends = enumerate_defend_bundles(
             my_planets, world, model, me, omega,
             max_bundle_size=max_bundle_size,
+            deadline=enumerate_deadline,
         )
     all_bundles = attacks + defends
     if not all_bundles:
