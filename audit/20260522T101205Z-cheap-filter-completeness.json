@@ -1,0 +1,113 @@
+{
+  "n_turns_sampled": 393,
+  "n_attack_rank1": 350,
+  "n_defend_rank1": 43,
+  "rank1_retention_rate": 0.910941475826972,
+  "attack_rank1_retention_rate": 0.9,
+  "defend_rank1_retention_rate": 1.0,
+  "mean_top5_retention": 0.9185750636132316,
+  "mean_spearman": -0.2583522601766457,
+  "miss_examples": [
+    {
+      "seed": 0,
+      "turn": 21,
+      "player": 0,
+      "rank1_kind": "attack",
+      "rank1_t2_score": 24.0,
+      "rank1_cheap_score": -20.2,
+      "n_attack": 85,
+      "n_defend": 0
+    },
+    {
+      "seed": 0,
+      "turn": 33,
+      "player": 0,
+      "rank1_kind": "attack",
+      "rank1_t2_score": 32.0,
+      "rank1_cheap_score": 30.74,
+      "n_attack": 223,
+      "n_defend": 11
+    },
+    {
+      "seed": 0,
+      "turn": 34,
+      "player": 0,
+      "rank1_kind": "attack",
+      "rank1_t2_score": 90.0,
+      "rank1_cheap_score": 25.85,
+      "n_attack": 217,
+      "n_defend": 0
+    },
+    {
+      "seed": 0,
+      "turn": 40,
+      "player": 0,
+      "rank1_kind": "attack",
+      "rank1_t2_score": 36.0,
+      "rank1_cheap_score": 31.91,
+      "n_attack": 264,
+      "n_defend": 0
+    },
+    {
+      "seed": 0,
+      "turn": 41,
+      "player": 0,
+      "rank1_kind": "attack",
+      "rank1_t2_score": 48.0,
+      "rank1_cheap_score": 11.68,
+      "n_attack": 245,
+      "n_defend": 0
+    },
+    {
+      "seed": 0,
+      "turn": 50,
+      "player": 0,
+      "rank1_kind": "attack",
+      "rank1_t2_score": 93.0,
+      "rank1_cheap_score": 25.85,
+      "n_attack": 208,
+      "n_defend": 10
+    },
+    {
+      "seed": 0,
+      "turn": 51,
+      "player": 0,
+      "rank1_kind": "attack",
+      "rank1_t2_score": 103.0,
+      "rank1_cheap_score": 25.85,
+      "n_attack": 204,
+      "n_defend": 18
+    },
+    {
+      "seed": 0,
+      "turn": 62,
+      "player": 0,
+      "rank1_kind": "attack",
+      "rank1_t2_score": 33.0,
+      "rank1_cheap_score": 14.74,
+      "n_attack": 251,
+      "n_defend": 3
+    },
+    {
+      "seed": 0,
+      "turn": 63,
+      "player": 0,
+      "rank1_kind": "attack",
+      "rank1_t2_score": 39.0,
+      "rank1_cheap_score": 14.74,
+      "n_attack": 221,
+      "n_defend": 1
+    },
+    {
+      "seed": 0,
+      "turn": 69,
+      "player": 0,
+      "rank1_kind": "attack",
+      "rank1_t2_score": 19.0,
+      "rank1_cheap_score": 21.81,
+      "n_attack": 213,
+      "n_defend": 0
+    }
+  ],
+  "elapsed_seconds": 251.713541772
+}
