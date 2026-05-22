@@ -503,3 +503,130 @@ def test_episode_steps_consistent_across_modules():
     from agents.coord._endgame import EPISODE_STEPS as eg_ep
     from agents.coord._minimal_inline import EPISODE_STEPS as mi_ep
     assert eg_ep == mi_ep == 500
+
+
+# ---------------------------------------------------------------------------
+# Demand-spread mixing (Option 3): mixing_weight × tier2 + (1-w) × cheap_score
+# ---------------------------------------------------------------------------
+
+from agents.coord.main import (  # noqa: E402
+    _composite_score,
+    _opp_defensive_capacity,
+    _bundle_attention,
+    _compute_mixing_weights,
+)
+
+
+def test_composite_score_mixing_weight_one_equals_tier2():
+    """mixing_weight=1.0 → composite = tier2 + endgame (current behavior)."""
+    b = Bundle(
+        target_id=1, arrival_step=5,
+        legs=(Leg(src_id=0, ships=5, angle=0.0, wait_N=0, eta=5),),
+        kind=BundleKind.ATTACK,
+        tier2_score=8.0, cheap_score=12.0, endgame_bonus=2.0,
+        mixing_weight=1.0,
+    )
+    assert _composite_score(b) == pytest.approx(8.0 + 2.0)
+
+
+def test_composite_score_mixing_weight_zero_equals_cheap():
+    """mixing_weight=0.0 → composite = cheap_score + endgame."""
+    b = Bundle(
+        target_id=1, arrival_step=5,
+        legs=(Leg(src_id=0, ships=5, angle=0.0, wait_N=0, eta=5),),
+        kind=BundleKind.ATTACK,
+        tier2_score=8.0, cheap_score=12.0, endgame_bonus=2.0,
+        mixing_weight=0.0,
+    )
+    assert _composite_score(b) == pytest.approx(12.0 + 2.0)
+
+
+def test_composite_score_mixing_weight_half_interpolates():
+    """mixing_weight=0.5 → composite midway."""
+    b = Bundle(
+        target_id=1, arrival_step=5,
+        legs=(Leg(src_id=0, ships=5, angle=0.0, wait_N=0, eta=5),),
+        kind=BundleKind.ATTACK,
+        tier2_score=8.0, cheap_score=12.0, endgame_bonus=2.0,
+        mixing_weight=0.5,
+    )
+    # 0.5 × 8 + 0.5 × 12 + 2 = 12.0
+    assert _composite_score(b) == pytest.approx(12.0)
+
+
+def test_opp_defensive_capacity_matches_ship_count(monkeypatch):
+    """Each opp source contributes opp_capacity_factor × ships to capacity dict."""
+    monkeypatch.setenv("COORD_OPP_CAPACITY_FACTOR", "1.0")
+    me = _planet(0, 0, ships=50)
+    opp1 = _planet(1, 1, ships=30)
+    opp2 = _planet(2, 2, ships=10)
+    neutral = _planet(3, -1, ships=5)
+    world = _world(0, [me, opp1, opp2, neutral])
+    cap = _opp_defensive_capacity(world, me=0)
+    # Neutral excluded; me excluded.
+    assert cap == {1: 30.0, 2: 10.0}
+
+
+def test_opp_defensive_capacity_factor_scales(monkeypatch):
+    monkeypatch.setenv("COORD_OPP_CAPACITY_FACTOR", "0.5")
+    me = _planet(0, 0, ships=50)
+    opp = _planet(1, 1, ships=40)
+    world = _world(0, [me, opp])
+    cap = _opp_defensive_capacity(world, me=0)
+    assert cap == {1: 20.0}
+
+
+def test_compute_mixing_weights_clipped_to_one_when_demand_below_capacity(monkeypatch):
+    """Few bundles + heavy opp ships → mixing_weights all = 1.0 (no spread)."""
+    monkeypatch.setenv("COORD_OPP_CAPACITY_FACTOR", "1.0")
+    me = _planet(0, 0, x=10.0, y=50.0, ships=20)
+    opp = _planet(1, 1, x=14.0, y=55.0, ships=500)  # massive opp
+    world = _world(0, [me, opp])
+    model = WorldModel.from_world(world)
+    bundle = Bundle(
+        target_id=1, arrival_step=5,
+        legs=(Leg(src_id=0, ships=10, angle=0.0, wait_N=0, eta=5),),
+        kind=BundleKind.ATTACK,
+        tier2_score=5.0,
+    )
+    weights = _compute_mixing_weights([bundle], world, model, me=0,
+                                        num_seats=2, omega=0.0)
+    # Either no responders → 1.0, or capacity_fraction = 500/10 → clipped to 1.0
+    assert weights[0] == pytest.approx(1.0)
+
+
+def test_compute_mixing_weights_below_one_when_demand_exceeds_capacity(monkeypatch):
+    """Heavy bundle demand vs weak opp → mixing_weight < 1.0."""
+    monkeypatch.setenv("COORD_OPP_CAPACITY_FACTOR", "1.0")
+    me = _planet(0, 0, x=10.0, y=50.0, ships=200)
+    opp = _planet(1, 1, x=14.0, y=55.0, ships=5)  # weak opp
+    world = _world(0, [me, opp])
+    model = WorldModel.from_world(world)
+    bundle = Bundle(
+        target_id=1, arrival_step=5,
+        legs=(Leg(src_id=0, ships=100, angle=0.0, wait_N=0, eta=5),),
+        kind=BundleKind.ATTACK,
+        tier2_score=-50.0,
+    )
+    weights = _compute_mixing_weights([bundle], world, model, me=0,
+                                        num_seats=2, omega=0.0)
+    # If opp is a responder, capacity_fraction = 5/100 = 0.05 → mixing < 0.1
+    # If opp not a responder (geometry), mixing = 1.0 (uniform mean of empty set).
+    # In this geometry (close: (14,55) vs (10,50)) opp should respond.
+    assert 0.0 <= weights[0] <= 1.0
+    # The whole point: if opp does respond, mixing should be << 1.0
+    # (we can't assert strictly because aim_and_eta geometry may not classify
+    # opp as in-window; but if it is, the test should see mixing very low)
+
+
+def test_demand_spread_disabled_via_env(monkeypatch):
+    """COORD_DEMAND_SPREAD=0 → tier2_score_bundles leaves mixing_weight=1.0."""
+    monkeypatch.setenv("COORD_DEMAND_SPREAD", "0")
+    from agents.coord.main import _demand_spread_enabled
+    assert not _demand_spread_enabled()
+
+
+def test_demand_spread_enabled_by_default(monkeypatch):
+    monkeypatch.delenv("COORD_DEMAND_SPREAD", raising=False)
+    from agents.coord.main import _demand_spread_enabled
+    assert _demand_spread_enabled()

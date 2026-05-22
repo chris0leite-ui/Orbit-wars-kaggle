@@ -144,6 +144,17 @@ LEAF_FLOOR_DEFAULT = 0.0
 # bundles look catastrophic when scored in isolation but many-bundle
 # sets can succeed via spread-the-defense).
 REDUCED_FLOOR_DEFAULT = 0.0
+# Demand-spread mixing (Option 3 from 2026-05-22 design):
+# Per-opp defensive capacity × per-bundle attention demand → mixing_weight ∈
+# [0,1]. composite = w·tier2 + (1-w)·cheap_score + endgame. When our total
+# demand exceeds opp's capacity, mixing_weight drops below 1, shifting
+# bundle scores toward the undefended cheap_score (less pessimistic) so
+# the Lagrangian's `reduced > 0` gate stops blocking the whole ensemble.
+DEMAND_SPREAD_ENABLE_ENV = "COORD_DEMAND_SPREAD"
+OPP_CAPACITY_FACTOR_DEFAULT = 1.0  # × opp.ships → defensive throughput estimate
+OPP_CAPACITY_FACTOR_ENV = "COORD_OPP_CAPACITY_FACTOR"
+DEMAND_REACH_WINDOW = 12  # turns; opp source counts as responder if it can
+                          # reach our target within this window (closed-form via aim_and_eta)
 LAMBDA_W_ENV = "COORD_LAMBDA_W"
 DELTA_W_ENABLE_ENV = "COORD_DELTA_W"
 ATTACK_BONUS_ENV = "COORD_ATTACK_BONUS"
@@ -208,6 +219,22 @@ def _defend_bonus_enabled() -> bool:
     return _env_truthy(DEFEND_BONUS_ENV)
 
 
+def _demand_spread_enabled() -> bool:
+    """Gate for demand-spread mixing. Default ON; set COORD_DEMAND_SPREAD=0
+    to revert to pure-tier2 scoring (mixing_weight stays at 1.0 always)."""
+    return _env_truthy(DEMAND_SPREAD_ENABLE_ENV)
+
+
+def _opp_capacity_factor() -> float:
+    raw = os.environ.get(OPP_CAPACITY_FACTOR_ENV, "")
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return OPP_CAPACITY_FACTOR_DEFAULT
+
+
 class BundleKind(Enum):
     ATTACK = "attack"
     DEFEND = "defend"
@@ -245,6 +272,13 @@ class Bundle:
     # Computed by `_bundle_endgame_bonus`; zero when env var
     # `COORD_DELTA_W=0` or when the bundle's kind has its own gate off.
     endgame_bonus: float = 0.0
+    # Demand-spread mixing weight ∈ [0, 1]:
+    #   1.0 = use full tier2_score (opp fully defends this bundle)
+    #   0.0 = use cheap_score (opp ignores; undefended Δ-favor)
+    # Populated by `_compute_mixing_weights` in `tier2_score_bundles`
+    # when `COORD_DEMAND_SPREAD=1` (default). Default 1.0 = backward-
+    # compat with code paths that construct Bundles without setting it.
+    mixing_weight: float = 1.0
 
 
 def _admissible_fire_now(src, tgt, angle: float, ships: int, world,
@@ -1016,7 +1050,8 @@ def _bundle_endgame_bonus(bundle: Bundle, world, model, me: int,
 
 def tier2_score_bundles(bundles: list[Bundle], snap_base, me: int,
                         num_seats: int, world, model=None,
-                        wallclock_ms: float = TIER2_BUDGET_MS
+                        wallclock_ms: float = TIER2_BUDGET_MS,
+                        omega: float = 0.0,
                         ) -> list[Bundle]:
     """Score each bundle via `score_candidate_v4_joint`, populate
     `tier2_score` (leaf-Δ only) and `endgame_bonus` (λ_W·ΔW), return
@@ -1082,15 +1117,148 @@ def tier2_score_bundles(bundles: list[Bundle], snap_base, me: int,
             endgame_bonus=float(endgame),
         ))
 
+    # Demand-spread mixing: when our total demand exceeds opp's defensive
+    # capacity, mixing_weight drops below 1.0 → composite shifts toward
+    # cheap_score (less pessimistic) → Lagrangian admits more bundles.
+    if _demand_spread_enabled() and scored:
+        weights = _compute_mixing_weights(
+            scored, world, model, me, num_seats, omega,
+        )
+        scored = [
+            replace(b, mixing_weight=weights.get(i, 1.0))
+            for i, b in enumerate(scored)
+        ]
+
     scored.sort(key=lambda b: -_composite_score(b))
     return scored
 
 
 def _composite_score(bundle: "Bundle") -> float:
-    """Leaf-Δ + strategic endgame bonus. Used wherever the agent needs the
-    full score (Lagrangian, emission tie-breaks); the raw `tier2_score`
-    field stays leaf-only so the Lagrangian's leaf-floor guard works."""
-    return float(bundle.tier2_score) + float(bundle.endgame_bonus)
+    """Demand-spread mixed leaf + strategic endgame bonus.
+
+    Effective leaf = mixing_weight × tier2_score + (1-mixing_weight) × cheap_score.
+    When mixing_weight=1.0 (default; current behavior when DEMAND_SPREAD off or
+    no responders) → composite = tier2 + endgame_bonus (same as pre-Option-3).
+    When mixing_weight<1.0 → composite shifts toward cheap_score, reflecting
+    that opp can't defend everywhere when our total demand exceeds capacity.
+
+    `tier2_score` stays leaf-only (the tactical signal); `_composite_score`
+    is the strategic + tactical full read used by the Lagrangian.
+    """
+    w = float(bundle.mixing_weight)
+    leaf = w * float(bundle.tier2_score) + (1.0 - w) * float(bundle.cheap_score)
+    return leaf + float(bundle.endgame_bonus)
+
+
+# ---------------------------------------------------------------------------
+# Demand-spread mixing — per-opp defensive capacity × per-bundle attention
+# demand → mixing_weight per bundle. Captures "opp can't defend everywhere"
+# so the Lagrangian sees less pessimistic scores when ensembles overwhelm
+# the defender. Option 3 from 2026-05-22 design.
+# ---------------------------------------------------------------------------
+
+def _opp_defensive_capacity(world, me: int) -> dict[int, float]:
+    """For each opp source planet, defensive throughput estimate.
+
+    Simplest model: capacity[s] = opp_capacity_factor × s.ships. The factor
+    (env `COORD_OPP_CAPACITY_FACTOR`, default 1.0) lets us tune empirically
+    if 1.0 over- or under-estimates opp's actual defense-vs-offense split.
+
+    Neutrals (owner == -1) excluded — they don't defend.
+    """
+    factor = _opp_capacity_factor()
+    cap: dict[int, float] = {}
+    for p in world.planets_by_id.values():
+        if int(p.owner) != int(me) and int(p.owner) >= 0:
+            cap[int(p.id)] = factor * float(p.ships)
+    return cap
+
+
+def _bundle_attention(bundle: "Bundle", world, model, me: int,
+                       opp_sources: list, omega: float) -> dict[int, float]:
+    """Per-opp-source attention demand for this bundle.
+
+    An opp source S counts as a "responder" if S can reach the bundle's
+    target T within DEMAND_REACH_WINDOW turns. Demand magnitude = total
+    ships in the bundle (the threat S must counter).
+
+    Closed-form via `aim_and_eta` — no rollout. Returns dict keyed by
+    opp source id, value = demand contribution.
+    """
+    tgt = world.planets_by_id.get(int(bundle.target_id))
+    if tgt is None or not opp_sources:
+        return {}
+    total_ships = sum(int(L.ships) for L in bundle.legs)
+    if total_ships <= 0:
+        return {}
+    arrival = int(bundle.arrival_step)
+    deadline = arrival + DEMAND_REACH_WINDOW
+    out: dict[int, float] = {}
+    for opp in opp_sources:
+        try:
+            _, eta = aim_and_eta(opp, tgt, total_ships, omega, world=world)
+        except Exception:
+            continue
+        if int(eta) <= deadline:
+            out[int(opp.id)] = float(total_ships)
+    return out
+
+
+def _compute_mixing_weights(
+    scored: list["Bundle"], world, model, me: int, num_seats: int,
+    omega: float,
+) -> dict[int, float]:
+    """Per-bundle mixing_weight ∈ [0, 1].
+
+    For each opp source S:
+      capacity_fraction[S] = min(1.0, capacity[S] / max(1.0, total_demand[S]))
+    For each bundle B:
+      mixing_weight[B] = mean of capacity_fraction[S] over S in
+                        responders(B), weighted uniformly. If B has no
+                        responders → mixing_weight = 1.0 (no spread; opp
+                        can't reach, so opp's defensive bandwidth doesn't
+                        constrain the leaf head's pessimism).
+
+    Returns dict keyed by bundle INDEX in `scored` (since Bundle is
+    frozen and not hashable to itself — index gives a stable handle).
+    """
+    if not scored:
+        return {}
+    # Opp source planets (excluding neutrals).
+    opp_sources = [
+        p for p in world.planets_by_id.values()
+        if int(p.owner) != int(me) and int(p.owner) >= 0
+    ]
+    if not opp_sources:
+        # No opps → no spread possible (defensive capacity is irrelevant).
+        return {i: 1.0 for i, _ in enumerate(scored)}
+
+    capacity = _opp_defensive_capacity(world, me)
+    # Per-bundle attention demand: list[dict[opp_id, demand]] indexed by bundle.
+    attentions: list[dict[int, float]] = []
+    for b in scored:
+        attentions.append(
+            _bundle_attention(b, world, model, me, opp_sources, omega)
+        )
+    # Total demand per opp source across all candidate bundles.
+    total_demand: dict[int, float] = defaultdict(float)
+    for att in attentions:
+        for opp_id, d in att.items():
+            total_demand[opp_id] += d
+    # Capacity fraction per opp source.
+    capacity_fraction: dict[int, float] = {}
+    for opp_id, cap in capacity.items():
+        demand = total_demand.get(opp_id, 0.0)
+        capacity_fraction[opp_id] = min(1.0, cap / max(1.0, demand))
+    # Per-bundle mixing weight: uniform mean over responders' capacity_fractions.
+    weights: dict[int, float] = {}
+    for i, att in enumerate(attentions):
+        if not att:
+            weights[i] = 1.0
+            continue
+        fractions = [capacity_fraction.get(opp_id, 1.0) for opp_id in att]
+        weights[i] = sum(fractions) / float(len(fractions))
+    return weights
 
 
 # ---------------------------------------------------------------------------
@@ -1386,6 +1554,7 @@ def agent(obs, configuration=None) -> list[list]:
     scored = tier2_score_bundles(
         cheap, snap_base, me, num_seats, world, model,
         wallclock_ms=tier2_budget_ms,
+        omega=omega,
     )
 
     selected = lagrangian_clear(scored, my_planets=my_planets)
