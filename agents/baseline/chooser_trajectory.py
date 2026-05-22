@@ -455,6 +455,7 @@ def score_candidate_dyn(snap_base, src, tgt, ships: int, angle: float,
 
 def build_trajectory_baseline(snap_base, me: int, num_seats: int,
                               horizon: int, favor_fn, gamma: float,
+                              opp_traj: list[list[list]] | None = None,
                               ) -> list[float]:
     """Idle-baseline favor at each tick in [0, horizon]. Used by v4 to
     subtract the do-nothing alternative from each candidate's leaf
@@ -476,11 +477,18 @@ def build_trajectory_baseline(snap_base, me: int, num_seats: int,
     out: list[float] = [
         favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma),
     ]
-    for _ in range(horizon):
+    for step_i in range(horizon):
         if snap.fake_env.done:
             out.append(out[-1])
             continue
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        if opp_traj is not None and step_i < len(opp_traj):
+            # CRN path: replay the precomputed opp sequence. Same opp
+            # behavior in baseline AND every candidate rollout means
+            # Δ-favor isolates the candidate's marginal contribution.
+            actions = [list(a) for a in opp_traj[step_i]]
+        else:
+            # Legacy path: opp policy fires reactively per tick.
+            actions = opp_actions_for_snap(snap, me, num_seats)
         # Baseline IS asymmetric on purpose (ME idle, opp reactive) —
         # we measure the candidate's marginal value above the worst-
         # case "I do nothing this turn AND on every future turn"
@@ -506,6 +514,7 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                        horizon: int,
                        skip_admissibility: bool = False,
                        wait_N: int = 0,
+                       opp_traj: list[list[list]] | None = None,
                        ) -> tuple[float, str, int | None]:
     """v4 scoring: same admissibility filter + fast_sim rollout as v3,
     but the leaf is `favor_fn` instead of a binary owner-check, and the
@@ -568,7 +577,10 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     for t in range(horizon):
         if snap.fake_env.done:
             break
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        if opp_traj is not None and t < len(opp_traj):
+            actions = [list(a) for a in opp_traj[t]]
+        else:
+            actions = opp_actions_for_snap(snap, me, num_seats)
         if t == int(wait_N):
             # Candidate first (the chooser's primary decision), then
             # defensive emits. If the candidate drains the planet
@@ -593,6 +605,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
                               favor_fn, gamma: float,
                               horizon: int,
                               skip_admissibility: bool = False,
+                              opp_traj: list[list[list]] | None = None,
                               ) -> tuple[float, str]:
     """Direction B: score a JOINT candidate of multiple launches in one
     fast_sim rollout. `launches` is a list of
@@ -650,7 +663,10 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
     for t in range(horizon):
         if snap.fake_env.done:
             break
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        if opp_traj is not None and t < len(opp_traj):
+            actions = [list(a) for a in opp_traj[t]]
+        else:
+            actions = opp_actions_for_snap(snap, me, num_seats)
         if t in inject_at:
             base_actions = list(inject_at[t])
             if t == earliest_inject_t and me_defense_emits:
@@ -734,6 +750,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                       world, model,
                       reserved_srcs: set[int] | None = None,
                       reserved_for_new_commits: set[int] | None = None,
+                      opp_traj: list[list[list]] | None = None,
                       ) -> tuple[list[list], list[dict]]:
     """Drop-in alternative to `chooser.choose`.
 
@@ -808,6 +825,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     if not use_v3 and max_horizon_seen > 0:
         baseline_favors = build_trajectory_baseline(
             snap_base, me, num_seats, max_horizon_seen, favor_fn, gamma,
+            opp_traj=opp_traj,
         )
 
     # Wallclock budgeting (mirror composite chooser pattern). Probe per-
@@ -869,6 +887,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 horizon=int(prop_horizon),
                 skip_admissibility=skip_filter,
                 wait_N=int(wait_N),
+                opp_traj=opp_traj,
             )
             if status == "scored" and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))
@@ -946,6 +965,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         snap_base, launches, me, num_seats, world,
                         baseline_favors, favor_fn, gamma,
                         horizon=jh, skip_admissibility=skip_filter,
+                        opp_traj=opp_traj,
                     )
                     joint_count += 1
                     if j_status == "scored" and j_score > 0.0:

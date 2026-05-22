@@ -64,16 +64,28 @@ def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
 
 
 def build_idle_baseline(snap_base, me: int, num_seats: int,
-                        max_horizon: int, gamma: float) -> list[float]:
-    """favor at every horizon 0..max_horizon under (me-idle, opp-reactive)."""
+                        max_horizon: int, gamma: float,
+                        opp_traj: list[list[list]] | None = None,
+                        ) -> list[float]:
+    """favor at every horizon 0..max_horizon under (me-idle, opp-reactive).
+
+    When `opp_traj` is provided, opp seats replay the precomputed action
+    sequence instead of being driven reactively by `opp_actions_for_snap`.
+    This is the CRN substrate — same opp sequence in baseline AND in every
+    candidate rollout cancels opp-variance from the Δ. Default (None)
+    preserves the existing reactive behavior for backward compat.
+    """
     favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
     out = [favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)]
-    for _ in range(max_horizon):
+    for step_i in range(max_horizon):
         if snap.fake_env.done:
             out.append(out[-1])
             continue
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        if opp_traj is not None and step_i < len(opp_traj):
+            actions = [list(a) for a in opp_traj[step_i]]
+        else:
+            actions = opp_actions_for_snap(snap, me, num_seats)
         snap = fs_step(snap, actions, in_place=True)
         out.append(favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma))
     return out
@@ -82,14 +94,25 @@ def build_idle_baseline(snap_base, me: int, num_seats: int,
 def score_action(snap_base, me: int, num_seats: int,
                  src_id: int, angle: float, ships: int,
                  horizon: int, baseline_favors: list[float],
-                 wait_N: int, gamma: float) -> float:
-    """Δ favor at horizon = leaf(my_action@wait_N) − baseline."""
+                 wait_N: int, gamma: float,
+                 opp_traj: list[list[list]] | None = None,
+                 ) -> float:
+    """Δ favor at horizon = leaf(my_action@wait_N) − baseline.
+
+    When `opp_traj` is provided, opp seats replay the precomputed action
+    sequence instead of being driven reactively per-tick. The Δ between
+    candidates then isolates the candidate's marginal contribution
+    (CRN). Default (None) preserves the existing reactive behavior.
+    """
     favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
     for step_i in range(horizon):
         if snap.fake_env.done:
             break
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        if opp_traj is not None and step_i < len(opp_traj):
+            actions = [list(a) for a in opp_traj[step_i]]
+        else:
+            actions = opp_actions_for_snap(snap, me, num_seats)
         if step_i == int(wait_N):
             actions[me] = [[int(src_id), float(angle), int(ships)]]
         snap = fs_step(snap, actions, in_place=True)
@@ -138,6 +161,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
            world=None,
            reserved_srcs: set[int] | None = None,
            reserved_for_new_commits: set[int] | None = None,
+           opp_traj: list[list[list]] | None = None,
            ) -> tuple[list[list], list[dict]]:
     """Validate top candidates with fast_sim, emit greedy non-dogpile moves.
 
@@ -179,6 +203,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
             snap_base, me, num_seats,
             int(src.id), float(angle), int(ships),
             int(horizon), baseline_favors, int(wait_N), gamma,
+            opp_traj=opp_traj,
         )
         if delta > 0:
             validated.append((delta, src, tgt, ships, angle, wait_N))

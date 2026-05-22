@@ -482,3 +482,94 @@ def opponent_action_distribution(
         raise ValueError("samples must be >= 1")
     base = predict_opponent_action(obs, tier=tier)
     return [base for _ in range(samples)]
+
+
+# ---------------------------------------------------------------------------
+# Precomputed opponent trajectory — CRN substrate for chooser rollouts
+# ---------------------------------------------------------------------------
+
+
+def compute_opp_trajectory(
+    snap_base,
+    me: int,
+    num_seats: int,
+    max_horizon: int,
+    tier: str = "lite",
+) -> list[list[list]]:
+    """Precompute one deterministic opp action sequence for the next
+    `max_horizon` ticks, starting from `snap_base`.
+
+    Why this exists: the chooser today drives opp seats reactively at
+    every tick inside every candidate's rollout. Two candidates of mine
+    see DIFFERENT opp action sequences because the opp's per-tick
+    response depends on the current candidate-mutated snap. The Δ-favor
+    between candidates is then part signal ("A is better than B") and
+    part noise ("A faced friendlier opp moves than B"). CRN
+    (common-random-numbers) fixes this: precompute ONE opp trajectory
+    here, replay it identically in baseline AND every candidate. Δ
+    isolates the candidate's marginal contribution.
+
+    Return shape: `traj[t]` is the action array at tick t — a list of
+    length `num_seats` where `traj[t][me] == []` (caller splices their
+    own action in) and `traj[t][opp_id]` is the opp's per-tick launch
+    list. Length is exactly `max_horizon` (one entry per forward step).
+
+    Tier selection — controls which opp policy fills the seats:
+      - "lite" (default): `lite_greedy_policy` for all ticks. ~1-2 ms
+        per call. Closest to today's reactive default (`BASELINE_OPP_TIER=0`).
+      - "topmix": `top_tier_mirror_policy` for the first 10 ticks,
+        `lite_greedy_policy` for ticks 10..max_horizon. Captures the
+        strategically critical opening with a ladder-realistic opp
+        while keeping the long tail cheap. AUTO-DOWNGRADES to "lite"
+        when num_seats > 2 (4P has 3 opp seats — topmix budget
+        would exceed the 600 ms chooser wallclock).
+      - "top": `top_tier_mirror_policy` every tick. ~5-10 ms per call.
+        Expensive — slot for ablation only.
+
+    Determinism: all three tiers are pure functions of obs (no random
+    state, no module memory). Same `snap_base + tier` → bit-identical
+    trajectory. This is what makes CRN work — the replay across
+    candidates is byte-equal opp behavior.
+
+    Cost (2P, max_horizon=40):
+      - "lite": ~60 ms one-time
+      - "topmix": ~160 ms one-time
+      - "top": ~400 ms one-time
+
+    Cost (4P, max_horizon=40): multiply by 3 (three opp seats). Topmix
+    auto-downgrades to lite at num_seats > 2 to stay under budget.
+    """
+    from lib.fast_sim import clone as fs_clone, step as fs_step
+
+    if num_seats > 2 and tier == "topmix":
+        tier = "lite"
+
+    def _policy_for_step(step_i: int) -> Policy:
+        if tier == "lite":
+            return lite_greedy_policy
+        if tier == "top":
+            return top_tier_mirror_policy
+        # topmix (2P only, after the auto-downgrade above)
+        return top_tier_mirror_policy if step_i < 10 else lite_greedy_policy
+
+    traj: list[list[list]] = []
+    snap = fs_clone(snap_base)
+    for step_i in range(max_horizon):
+        # If the rollout has terminated, pad with empty actions for the
+        # remaining ticks. fs_step is a no-op on done snaps but the
+        # caller's score-loop indexes traj[t] regardless of done state.
+        if snap.fake_env.done:
+            traj.append([[] for _ in range(num_seats)])
+            continue
+        policy = _policy_for_step(step_i)
+        actions: list[list] = [[] for _ in range(num_seats)]
+        for opp_id in range(num_seats):
+            if opp_id == me:
+                continue
+            try:
+                actions[opp_id] = policy(snap.state[opp_id].observation) or []
+            except Exception:
+                actions[opp_id] = []
+        traj.append(actions)
+        snap = fs_step(snap, actions, in_place=True)
+    return traj

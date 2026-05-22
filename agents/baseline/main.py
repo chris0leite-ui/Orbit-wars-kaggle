@@ -172,6 +172,7 @@ from lib.world_model import WorldModel
 # `bundler-modular-agent-namespace-access-breaks-bundle` (2026-05-17).
 from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS
 from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON
+from lib.opp_model import compute_opp_trajectory
 
 
 _PARITY_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
@@ -895,6 +896,21 @@ def agent(obs, configuration=None):
 
     snap_base = fs_from_obs(obs, num_seats=num_seats)
 
+    # CRN opp-trajectory precompute (B.3.1, 2026-05-23). When
+    # BASELINE_OPP_TRAJ_TIER is set, precompute one deterministic opp
+    # action sequence once per turn and reuse it across the baseline
+    # and every candidate rollout. Two gains: variance reduction (Δ
+    # between candidates is no longer corrupted by opp-reaction noise)
+    # and a realistic moving-opp baseline (the do-nothing branch is now
+    # correctly punished, fixing the 50% emission-rate gap from the
+    # 2026-05-18 audit). Default unset = legacy reactive opp per tick.
+    _opp_traj_tier = os.environ.get("BASELINE_OPP_TRAJ_TIER", "").strip().lower()
+    opp_traj_pre: list[list[list]] | None = None
+    if _opp_traj_tier in ("lite", "topmix", "top"):
+        opp_traj_pre = compute_opp_trajectory(
+            snap_base, me, num_seats, MAX_HORIZON, tier=_opp_traj_tier,
+        )
+
     # Trajectory-first chooser opt-in (2026-05-17). Deterministic
     # admissibility + single-tick combat prediction; no K-step rollout,
     # no leaf-value approximation. See knowledge-base/concepts/
@@ -955,6 +971,7 @@ def agent(obs, configuration=None):
             world, model,
             reserved_srcs=reserved_srcs,
             reserved_for_new_commits=reserved_for_new_commits,
+            opp_traj=opp_traj_pre,
         )
 
         # 2. Persist updated ledger (surviving + new commits) when on.
@@ -993,6 +1010,7 @@ def agent(obs, configuration=None):
 
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
+        opp_traj=opp_traj_pre,
     )
 
     prerank = propose(
@@ -1026,6 +1044,7 @@ def agent(obs, configuration=None):
         world=world,
         reserved_srcs=composite_reserved,
         reserved_for_new_commits=composite_reserved_new,
+        opp_traj=opp_traj_pre,
     )
 
     if ledger_on:
