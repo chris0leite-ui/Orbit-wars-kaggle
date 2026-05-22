@@ -122,6 +122,19 @@ TrueSkill ladder by 2026-06-23 23:59 UTC. Initial μ₀=600; target
   decide submission slot.** Status downgraded to `parked` pending
   next-session bisect resolution and/or different paradigm
   (depth-2 minimax, learned value head).
+- **B.3.1 CRN opp-trajectory chooser refactor.** Audit (2026-05-18)
+  found chooser baseline = "ME idle, OPP idle" → idleness under-punished
+  → 50% emission-rate gap vs strong opps. Compounded by per-candidate
+  reactive opp rollout (opp does different things across my candidates →
+  Δ-favor noise drowns marginal signal). Fix: precompute one opp
+  trajectory per turn (hybrid: top-tier-mirror first 10 ticks, lite-greedy
+  after) and replay it deterministically in baseline AND every candidate
+  rollout. Two gains: (a) CRN variance reduction makes Δ measurements
+  precise, (b) realistic moving-opp baseline correctly punishes idleness.
+  Env-var gated (`BASELINE_OPP_TRAJ_TIER`, default off during dev).
+  Gates: wallclock < 900ms, n=32 Wilson-lo ≥ 0.50 vs sub 52894340,
+  Rule 43 multi-opp panel, Rule 46 bundle smoke.
+  `[owner: review-skills-improvements-moKOR | status: wip]`
 - **B.4 RL**: PPO/IMPALA self-play with opponent-pool curriculum.
   Heavy compute; defer until heuristic plateau. `[owner: unclaimed | status: open]`
 - **B.5 Hybrid**: heuristic policy with learned value head, OR IL
