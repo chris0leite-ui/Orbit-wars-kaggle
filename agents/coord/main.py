@@ -13,20 +13,25 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import combinations
+import time
 
 from agents.minimal.main import (
     EPISODE_STEPS,
     GAMMA,
     MIN_FLEET_SIZE,
+    MIN_HORIZON,
     MAX_HORIZON,
     SIM_SETTLE_TURNS,
     CHEAP_REJECT_THRESHOLD,
     NUM_TARGETS_PER_SOURCE,
+    affordable_validate_cap,
     aim_and_eta,
+    build_trajectory_baseline,
     cheap_marginal_value,
     enumerate_ship_counts,
     favor_hybrid,
     nearest_k,
+    score_candidate_v4_joint,
     wait_then_fire_variants,
     _source_survives_launch,
     _target_holdable_after_capture,
@@ -52,6 +57,11 @@ CHEAP_OPPORTUNITY_COST = 0.01
 # 75 × ~5ms = 375ms, still under the 600ms agent budget when paired
 # with the existing safe_deadline pre-bail watchdog.
 CHEAP_FILTER_TOP_K = 75
+
+# Tier-2 wallclock budget (of the 600ms agent budget, reserve ~150ms for
+# enumeration + cheap-filter + Lagrangian + emit). The actual pre-bail
+# threshold is computed per-machine via `affordable_validate_cap`.
+TIER2_BUDGET_MS = 450.0
 
 
 class BundleKind(Enum):
@@ -695,6 +705,96 @@ def cheap_filter_bundles(bundles: list[Bundle], world, model, me: int,
         scored.append(replace(b, cheap_score=score))
     scored.sort(key=lambda b: -b.cheap_score)
     return scored[:K]
+
+
+# ---------------------------------------------------------------------------
+# Tier-2 scoring — bundle → leaf-Δ via score_candidate_v4_joint.
+# ---------------------------------------------------------------------------
+
+def _bundle_to_launches(bundle: "Bundle", planets_by_id: dict
+                       ) -> list[tuple] | None:
+    """Convert Bundle.legs to score_candidate_v4_joint's `launches` format:
+    [(src_planet, tgt_planet, ships, angle, wait_N), ...].
+
+    Returns None if any leg's source or the target isn't in
+    `planets_by_id` (defensive — shouldn't happen for bundles built from
+    current world state, but covers stale-bundle edge cases).
+    """
+    tgt = planets_by_id.get(int(bundle.target_id))
+    if tgt is None:
+        return None
+    launches: list[tuple] = []
+    for leg in bundle.legs:
+        src = planets_by_id.get(int(leg.src_id))
+        if src is None:
+            return None
+        launches.append(
+            (src, tgt, int(leg.ships), float(leg.angle), int(leg.wait_N)),
+        )
+    return launches
+
+
+def tier2_score_bundles(bundles: list[Bundle], snap_base, me: int,
+                        num_seats: int, world,
+                        wallclock_ms: float = TIER2_BUDGET_MS
+                        ) -> list[Bundle]:
+    """Score each bundle via `score_candidate_v4_joint`, populate
+    `tier2_score`, return bundles sorted descending by tier2_score.
+
+    Bundles that fail Tier-2 admissibility (sun/oob/comet_expired/
+    path_blocked) are dropped — no point passing them to the Lagrangian.
+
+    Budget enforcement mirrors minimal's `choose_trajectory` pattern:
+    probe per-rollout cost via `affordable_validate_cap`, compute
+    `safe_deadline = deadline − per_cand_ms`, pre-bail before starting
+    any bundle whose Tier-2 call would push past wallclock_ms. Bundles
+    past the cutoff are dropped (their cheap_score is not used here —
+    the Lagrangian only sees Tier-2-scored bundles).
+    """
+    if not bundles:
+        return []
+
+    t_start = time.perf_counter()
+    deadline = t_start + wallclock_ms / 1000.0
+
+    _, per_cand_ms = affordable_validate_cap(
+        snap_base, me, num_seats, MAX_HORIZON,
+        max(50.0, wallclock_ms),
+        MIN_HORIZON,
+    )
+    safe_deadline = deadline - (per_cand_ms / 1000.0)
+
+    baseline_horizon = MAX_HORIZON
+    baseline_favors = build_trajectory_baseline(
+        snap_base, me, num_seats, baseline_horizon,
+    )
+
+    planets_by_id = {p.id: p for p in world.planets_by_id.values()}
+
+    scored: list[Bundle] = []
+    for b in bundles:
+        if time.perf_counter() > safe_deadline:
+            break
+        launches = _bundle_to_launches(b, planets_by_id)
+        if launches is None:
+            continue
+        horizon = max(
+            MIN_HORIZON,
+            min(int(b.arrival_step) + SIM_SETTLE_TURNS, MAX_HORIZON - 1),
+        )
+        try:
+            t2_score, t2_status = score_candidate_v4_joint(
+                snap_base, launches, me, num_seats, world,
+                baseline_favors, horizon=horizon,
+            )
+        except Exception:
+            continue
+        if t2_status != "scored":
+            continue
+        scored.append(replace(b, tier2_score=float(t2_score)))
+
+    scored.sort(key=lambda b: -b.tier2_score)
+    return scored
 
 
 def agent(obs, configuration=None):

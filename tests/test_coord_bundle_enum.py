@@ -13,7 +13,9 @@ from agents.coord.main import (
     Leg,
     MAX_BUNDLE_SIZE,
     NEAREST_SOURCES_PER_TARGET,
+    TIER2_BUDGET_MS,
     _bundle_cheap_delta,
+    _bundle_to_launches,
     _cluster_arrival_windows,
     _emit_subsets,
     _resolve_target_post_bundle,
@@ -22,7 +24,9 @@ from agents.coord.main import (
     enumerate_attack_bundles,
     enumerate_defend_bundles,
     enumerate_recapture_bundles,
+    tier2_score_bundles,
 )
+from lib.fast_sim import from_obs as fs_from_obs
 from lib.intent import World
 from lib.world_model import WorldModel
 
@@ -656,3 +660,140 @@ def favor_hybrid_via_world(world, me, num_seats):
     """Tiny convenience for tests."""
     from agents.minimal.main import favor_hybrid as _fh
     return _fh(world.obs_raw, me, num_seats)
+
+
+# ---------------------------------------------------------------------------
+# Tier-2 scoring (Day 5) — score_candidate_v4_joint glue.
+# ---------------------------------------------------------------------------
+
+def _world_with_snap(my_id, planets, *, step=0, omega=0.0, num_seats=2):
+    """Build (world, snap_base) — needed for Tier-2 since it uses fast_sim."""
+    obs = {
+        "player": my_id,
+        "planets": [
+            (p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production)
+            for p in planets
+        ],
+        "fleets": [],
+        "angular_velocity": omega,
+        "comet_planet_ids": [],
+        "step": step,
+    }
+    world = World.from_obs(obs)
+    snap = fs_from_obs(obs, num_seats=num_seats)
+    return world, snap, obs
+
+
+def test_bundle_to_launches_basic():
+    src = _planet(0, 0, 10.0, 50.0, ships=50)
+    tgt = _planet(1, 1, 14.0, 50.0, ships=10)
+    planets_by_id = {0: src, 1: tgt}
+    bundle = Bundle(
+        target_id=1, arrival_step=2,
+        legs=(Leg(src_id=0, ships=20, angle=0.0, wait_N=0, eta=2),),
+        kind=BundleKind.ATTACK,
+    )
+    launches = _bundle_to_launches(bundle, planets_by_id)
+    assert launches is not None
+    assert len(launches) == 1
+    sp, tp, ships, angle, wait_N = launches[0]
+    assert sp is src
+    assert tp is tgt
+    assert ships == 20
+    assert wait_N == 0
+
+
+def test_bundle_to_launches_missing_source_returns_none():
+    """Defensive: if source planet not in current world (stale bundle)."""
+    tgt = _planet(1, 1, 14.0, 50.0, ships=10)
+    planets_by_id = {1: tgt}  # source id=0 NOT present
+    bundle = Bundle(
+        target_id=1, arrival_step=2,
+        legs=(Leg(src_id=0, ships=20, angle=0.0, wait_N=0, eta=2),),
+        kind=BundleKind.ATTACK,
+    )
+    assert _bundle_to_launches(bundle, planets_by_id) is None
+
+
+def test_bundle_to_launches_missing_target_returns_none():
+    src = _planet(0, 0, 10.0, 50.0, ships=50)
+    planets_by_id = {0: src}  # target id=99 NOT present
+    bundle = Bundle(
+        target_id=99, arrival_step=2,
+        legs=(Leg(src_id=0, ships=20, angle=0.0, wait_N=0, eta=2),),
+        kind=BundleKind.ATTACK,
+    )
+    assert _bundle_to_launches(bundle, planets_by_id) is None
+
+
+def test_tier2_score_bundles_empty_returns_empty():
+    src = _planet(0, 0, 10.0, 50.0, ships=20)
+    world, snap, _ = _world_with_snap(0, [src])
+    out = tier2_score_bundles([], snap, me=0, num_seats=2, world=world)
+    assert out == []
+
+
+def test_tier2_score_bundles_populates_score_and_sorts():
+    """End-to-end: enumerate + cheap-filter + Tier-2 yields sorted bundles."""
+    src = _planet(0, 0, 10.0, 50.0, ships=80, production=2)
+    peer = _planet(1, 0, 10.0, 60.0, ships=80, production=2)
+    tgt = _planet(2, 1, 14.0, 55.0, ships=10, production=1)
+    world, snap, _ = _world_with_snap(0, [src, peer, tgt])
+    model = WorldModel.from_world(world)
+    raw = enumerate_attack_bundles(
+        [src, peer], [tgt], world, model, me=0, omega=0.0,
+    )
+    assert raw, "precondition: enumeration produced bundles"
+    cheap = cheap_filter_bundles(raw, world, model, me=0, num_seats=2, K=10)
+    scored = tier2_score_bundles(cheap, snap, me=0, num_seats=2, world=world)
+    assert scored, "expected at least one Tier-2-scored bundle"
+    # tier2_score populated (not the default 0.0 across the board — at
+    # least one bundle should have a non-zero score in a real capture).
+    assert any(b.tier2_score != 0.0 for b in scored)
+    # Sorted descending by tier2_score.
+    scores = [b.tier2_score for b in scored]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_tier2_score_bundles_drops_admissibility_failures():
+    """A bundle whose fleet trajectory crosses the sun must be dropped."""
+    # Source FAR east, target FAR west — fleet aimed west crosses sun (50,50).
+    src = _planet(0, 0, 90.0, 50.0, ships=50, production=2)
+    tgt = _planet(1, 1, 10.0, 50.0, ships=10, production=1)
+    world, snap, _ = _world_with_snap(0, [src, tgt])
+    import math
+    bad_bundle = Bundle(
+        target_id=1, arrival_step=15,
+        # Aim due west — fleet path goes from (90, 50) through (50, 50)
+        # toward (10, 50), crossing the sun region en route.
+        legs=(Leg(src_id=0, ships=15, angle=math.pi, wait_N=0, eta=15),),
+        kind=BundleKind.ATTACK,
+    )
+    out = tier2_score_bundles(
+        [bad_bundle], snap, me=0, num_seats=2, world=world,
+    )
+    # score_candidate_v4_joint flags sun-crossing as "sun" status;
+    # tier2_score_bundles drops non-"scored" results.
+    assert out == []
+
+
+def test_tier2_score_bundles_budget_pre_bails():
+    """With a tiny wallclock budget, the function returns partial-or-empty
+    output without crashing (safe_deadline pre-bail).
+    """
+    src = _planet(0, 0, 10.0, 50.0, ships=80, production=2)
+    peer = _planet(1, 0, 10.0, 60.0, ships=80, production=2)
+    tgt = _planet(2, 1, 14.0, 55.0, ships=10, production=1)
+    world, snap, _ = _world_with_snap(0, [src, peer, tgt])
+    model = WorldModel.from_world(world)
+    raw = enumerate_attack_bundles(
+        [src, peer], [tgt], world, model, me=0, omega=0.0,
+    )
+    cheap = cheap_filter_bundles(raw, world, model, me=0, num_seats=2, K=20)
+    # 10ms budget — too small for the affordable_validate_cap probe to
+    # fit, so safe_deadline will be in the past and the loop short-circuits.
+    out = tier2_score_bundles(
+        cheap, snap, me=0, num_seats=2, world=world, wallclock_ms=10.0,
+    )
+    # No crash; output may be empty or small.
+    assert isinstance(out, list)
