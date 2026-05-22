@@ -137,11 +137,19 @@ LAGRANGIAN_BUDGET_MS = 20.0
 #                         tactically-losing bundles.
 LAMBDA_W_DEFAULT = 0.002
 LEAF_FLOOR_DEFAULT = 0.0
+# Lagrangian break threshold on reduced_score. The original loop breaks
+# when reduced_score <= 0 (only admit positive-net-value bundles). Setting
+# COORD_REDUCED_FLOOR=-1e9 admits any bundle (test the hypothesis that
+# per-bundle leaf-Δ is too pessimistic for ensemble emission — single
+# bundles look catastrophic when scored in isolation but many-bundle
+# sets can succeed via spread-the-defense).
+REDUCED_FLOOR_DEFAULT = 0.0
 LAMBDA_W_ENV = "COORD_LAMBDA_W"
 DELTA_W_ENABLE_ENV = "COORD_DELTA_W"
 ATTACK_BONUS_ENV = "COORD_ATTACK_BONUS"
 DEFEND_BONUS_ENV = "COORD_DEFEND_BONUS"
 LEAF_FLOOR_ENV = "COORD_LEAF_FLOOR"
+REDUCED_FLOOR_ENV = "COORD_REDUCED_FLOOR"
 
 _TRUTHY_ENV = {"1", "true", "yes", "on"}
 
@@ -170,6 +178,16 @@ def _leaf_floor() -> float:
         except ValueError:
             pass
     return LEAF_FLOOR_DEFAULT
+
+
+def _reduced_floor() -> float:
+    raw = os.environ.get(REDUCED_FLOOR_ENV, "")
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return REDUCED_FLOOR_DEFAULT
 
 
 def _delta_w_enabled() -> bool:
@@ -1104,12 +1122,15 @@ def _used_ships_per_source(chosen: list["Bundle"]) -> dict[int, int]:
 
 
 def _greedy_primal(scored: list["Bundle"], lam: dict[int, float],
-                   leaf_floor: float | None = None) -> list["Bundle"]:
+                   leaf_floor: float | None = None,
+                   reduced_floor: float | None = None) -> list["Bundle"]:
     """Greedy primal at the current shadow prices.
 
     Sort bundles by reduced_score descending (composite score − shadow
     cost), take in order subject to:
-    - reduced_score > 0 (positive-net-value bundles only)
+    - reduced_score > reduced_floor (default 0.0 = positive-net-value
+      only; set COORD_REDUCED_FLOOR=-1e9 to admit negative-composite
+      bundles for ensemble-style emission).
     - tier2_score >= leaf_floor (TACTICAL viability — prevents the
       strategic endgame_bonus from rescuing a bundle whose 25-turn
       rollout was net-negative). Default floor read from env via
@@ -1119,15 +1140,16 @@ def _greedy_primal(scored: list["Bundle"], lam: dict[int, float],
 
     Always feasible by construction.
     """
-    floor = _leaf_floor() if leaf_floor is None else float(leaf_floor)
+    lf = _leaf_floor() if leaf_floor is None else float(leaf_floor)
+    rf = _reduced_floor() if reduced_floor is None else float(reduced_floor)
     ordered = sorted(scored, key=lambda b: -_reduced_score(b, lam))
     chosen: list["Bundle"] = []
     used_src: set[int] = set()
     used_tgt: set[int] = set()
     for b in ordered:
-        if _reduced_score(b, lam) <= 0:
+        if _reduced_score(b, lam) <= rf:
             break
-        if float(b.tier2_score) < floor:
+        if float(b.tier2_score) < lf:
             continue  # tactically losing — bonus is not allowed to rescue
         if any(int(L.src_id) in used_src for L in b.legs):
             continue
