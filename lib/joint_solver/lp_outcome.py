@@ -698,6 +698,78 @@ def _per_planet_topology_score(planet_id: int, world, model, sense,
     return float(score)
 
 
+def _solve_via_dual_decomp(
+    active: list[Column],
+    per_planet_tables: dict[int, dict[tuple[int, ...], OutcomeRow]],
+    inv: dict[int, tuple[int, int]],
+    world,
+    model,
+    *,
+    my_id: int,
+    opp_id: int | None,
+    currently_winning: bool,
+    topology_scores: dict[int, float] | None,
+    alpha_opp_penalty: float,
+    ship_cost: float,
+    discount_gamma: float | None,
+    step_now: int,
+    time_limit_seconds: float,
+) -> "OutcomeAwareResult":
+    """ITEM 5 dispatcher → `lib.joint_solver.dual_decomp.solve_dual_decomp_inner`.
+
+    Builds the per-(planet, subset) base_value_fn closure that captures
+    V_p + endgame_bonus + topology_bonus + opening_tempo_bonus (same
+    objective the MILP path sums), then calls the dual-decomp inner
+    solver. Returns the same OutcomeAwareResult shape as MILP so
+    callers don't need to know which path ran.
+    """
+    from lib.joint_solver.dual_decomp import solve_dual_decomp_inner
+
+    use_discounted_value = (
+        discount_gamma is not None and 0.0 < float(discount_gamma) < 1.0
+    )
+
+    def base_value_fn(pid: int, row: OutcomeRow) -> float:
+        v = _value_for_outcome(row, my_id, alpha_opp_penalty,
+                               use_discounted_value)
+        v += _endgame_bonus(pid, row, world, my_id, opp_id,
+                            currently_winning)
+        v += _topology_bonus(pid, row, my_id, topology_scores)
+        v += _opening_tempo_bonus(pid, row, world, my_id, step_now)
+        return float(v)
+
+    chosen, per_planet_value, status = solve_dual_decomp_inner(
+        per_planet_tables, active, inv,
+        my_id=int(my_id),
+        base_value_fn=base_value_fn,
+        ship_cost=float(ship_cost),
+        time_limit_seconds=float(time_limit_seconds),
+    )
+
+    # Build OutcomeAwareResult.
+    fired_col_ids: set[int] = set()
+    for subset in chosen.values():
+        fired_col_ids.update(int(c) for c in subset)
+    col_by_id = {int(c.column_id): c for c in active}
+    fired = [col_by_id[cid] for cid in fired_col_ids if cid in col_by_id]
+    moves = [
+        [int(c.src_id), float(c.angle), int(c.ships)]
+        for c in fired if int(c.wait_N) == 0
+    ]
+    objective = float(sum(per_planet_value.values())) - float(ship_cost) * sum(
+        int(c.ships) for c in fired
+    )
+    return OutcomeAwareResult(
+        moves=moves, fired_columns=fired, objective=objective,
+        status=status,
+        n_x_vars=len(active),
+        n_y_vars=sum(len(t) for t in per_planet_tables.values()),
+        n_constraints=0,
+        per_planet_chosen=chosen,
+        per_planet_value=per_planet_value,
+    )
+
+
 def _topology_bonus(planet_id: int, row: OutcomeRow, my_id: int,
                     topology_scores: dict[int, float] | None) -> float:
     """Per-(planet, subset) topology bonus lookup.
@@ -1054,6 +1126,32 @@ def solve_outcome_aware(
             opp_id=opp_id, currently_winning=currently_winning,
             topology_scores=topology_scores,
         )
+
+    # ITEM 5 — Lagrangian dual decomposition route.
+    # LP_SOLVER=dual selects the closed-form per-source water-fill +
+    # per-target subset enum inner. Same per_planet_tables / active /
+    # inv / value-fn inputs as the MILP path; different solver.
+    # Falls back to MILP on any exception (safety).
+    if _os.environ.get("LP_SOLVER", "milp").strip().lower() == "dual":
+        try:
+            return _solve_via_dual_decomp(
+                active, per_planet_tables, inv, world, model,
+                my_id=int(my_id), opp_id=opp_id,
+                currently_winning=currently_winning,
+                topology_scores=topology_scores,
+                alpha_opp_penalty=float(alpha_opp_penalty),
+                ship_cost=float(ship_cost),
+                discount_gamma=discount_gamma,
+                step_now=int(step_now),
+                time_limit_seconds=float(time_limit_seconds),
+            )
+        except Exception as exc:
+            # On failure, fall through to MILP and tag the status.
+            import traceback
+            _dual_fallback_status = (
+                f"dual_decomp:fallback_to_milp:{type(exc).__name__}"
+            )
+            # Continue to MILP build below.
 
     import numpy as np
 
