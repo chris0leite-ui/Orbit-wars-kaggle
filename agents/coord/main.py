@@ -36,6 +36,7 @@ from lib.world_model import comet_remaining_lifetime
 NEAREST_SOURCES_PER_TARGET = 5
 MAX_BUNDLE_SIZE = 3
 ARRIVAL_WINDOW_SLACK = 2
+DEFEND_LOOKAHEAD = 30
 
 
 class BundleKind(Enum):
@@ -254,6 +255,94 @@ def enumerate_attack_bundles(my_planets, target_pool, world, model,
                     kind=BundleKind.ATTACK,
                 ))
     return bundles
+
+
+def enumerate_defend_bundles(my_planets, world, model, me: int, omega: float,
+                             baseline_len: int = MAX_HORIZON + 1
+                             ) -> list[Bundle]:
+    """Enumerate multi-source DEFEND bundles for each own planet under threat.
+
+    `time_to_enemy_threat` (not `incoming_enemy_eta`) captures BOTH in-flight
+    enemy fleets AND potential launches from nearby enemy planets — matches
+    the threat surface that minimal's `threatened_mine` filter uses
+    (agents/minimal/main.py L1353-1356). `incoming_enemy_eta` alone would
+    miss preemptive defense.
+
+    For each threatened own planet:
+    1. Find peer source planets via nearest-N.
+    2. Build candidate legs via Day-1 `_legs_for_pair` — reuses every
+       per-leg filter including `_source_survives_launch` (so we don't
+       drain a peer that's itself threatened).
+    3. Hard-filter legs whose arrival_step >= enemy_eta (too slow).
+    4. Enumerate subsets size 1..MAX_BUNDLE_SIZE with no source repeats.
+
+    NO arrival-window clustering — same-owner reinforcements arriving on
+    DIFFERENT turns add to garrison additively. The only constraint is
+    `arrival_step < enemy_eta`, enforced per-leg.
+
+    cheap_score and tier2_score are zeroed; populated by later passes.
+    """
+    bundles: list[Bundle] = []
+    seen: set[tuple[int, frozenset]] = set()
+    for own in my_planets:
+        enemy_eta = model.time_to_enemy_threat(int(own.id), me, world)
+        if enemy_eta is None or enemy_eta > DEFEND_LOOKAHEAD:
+            continue
+        peers = nearest_k(my_planets, own, NEAREST_SOURCES_PER_TARGET)
+        all_legs: list[Leg] = []
+        for peer in peers:
+            if int(peer.id) == int(own.id):
+                continue
+            if int(peer.ships) < MIN_FLEET_SIZE:
+                continue
+            pair_legs = _legs_for_pair(peer, own, world, model, me, omega,
+                                       baseline_len)
+            for leg in pair_legs:
+                if leg.arrival_step >= enemy_eta:
+                    continue
+                all_legs.append(leg)
+        if not all_legs:
+            continue
+        for subset in _emit_subsets(all_legs, MAX_BUNDLE_SIZE):
+            key_legs = frozenset(
+                (L.src_id, L.ships, L.wait_N, L.eta) for L in subset
+            )
+            key = (int(own.id), key_legs)
+            if key in seen:
+                continue
+            seen.add(key)
+            arrival_step = max(L.arrival_step for L in subset)
+            bundles.append(Bundle(
+                target_id=int(own.id),
+                arrival_step=arrival_step,
+                legs=tuple(subset),
+                kind=BundleKind.DEFEND,
+            ))
+    return bundles
+
+
+def enumerate_recapture_bundles(my_planets, target_pool, world, model,
+                                me: int, omega: float,
+                                baseline_len: int = MAX_HORIZON + 1
+                                ) -> list[Bundle]:
+    """v1 stub — recapture deferred to v2.
+
+    "Recently lost" detection requires inter-turn state (the previous-turn
+    owner of each planet), which the stateless agent doesn't track.
+    `WorldModel.owner_at` returns FUTURE predictions, not past history.
+
+    The high-value cheap targets that recapture would prioritise —
+    currently enemy/neutral planets with low garrison and high production
+    — are ALREADY enumerated by `enumerate_attack_bundles`. The
+    kind=RECAPTURE label would be metadata-only; bundle composition would
+    not change.
+
+    PI-approved deferral 2026-05-22. Revisit in v2 if recapture-priority
+    scoring turns out to add value, at which point a small module-level
+    dict cache keyed by planet_id storing previous-turn-owner can be
+    added with bounded blast radius.
+    """
+    return []
 
 
 def agent(obs, configuration=None):
