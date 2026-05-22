@@ -119,12 +119,16 @@ DEFAULT_LIB_ORDER = [
     # without this fail with NameError on agent load when
     # KINEMATIC_TABLE_ENABLED=1 (default-on since c48e143).
     "kinematic_table",
-    # lib/joint_solver/* — Phase 4 joint LP solver. Order: predicate
-    # (closed-form W math) → columns → outcome_table → opening_planner
-    # → lp_outcome. opp_projection + mpc + portfolio + lp + opening_search
-    # round out the package for agents using the analytical pipeline.
+    # lib/joint_solver/* — Phase 4 joint LP solver. Order matters:
+    #   predicate (W math) → columns → value (DEFAULT_GAMMA used as
+    #   function-arg default in mpc + prerank + opp_mirror_analytical) →
+    #   outcome_table → opp_projection → opening_planner → lp_outcome
+    #   → lp → mpc → portfolio → trajectory_matrix → opening_search.
+    # `value` must precede mpc / portfolio / lp because those modules
+    # use `DEFAULT_GAMMA` as a module-level function-default.
     "joint_solver/predicate",
     "joint_solver/columns",
+    "joint_solver/value",
     "joint_solver/outcome_table",
     "joint_solver/opp_projection",
     "joint_solver/opening_planner",
@@ -132,7 +136,6 @@ DEFAULT_LIB_ORDER = [
     "joint_solver/lp",
     "joint_solver/mpc",
     "joint_solver/portfolio",
-    "joint_solver/value",
     "joint_solver/trajectory_matrix",
     "joint_solver/opening_search",
     # lib/geo/* — sense_state + topology primitives used by the
