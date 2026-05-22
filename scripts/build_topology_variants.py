@@ -111,12 +111,25 @@ def main() -> int:
         _replace_smooth_delta_w(_replace_topology(src, "False"), "False")
     )
 
-    # Verify all four bundles load and report the right hardcoded value.
+    # Stacked variants (both α + β features ON or both OFF — for the
+    # combined-features A/B once α-alone and β-alone null):
+    stacked_on = OUT_ON.parent / "alpha_beta_on.py"
+    stacked_off = OUT_ON.parent / "alpha_beta_off.py"
+    stacked_on.write_text(
+        _replace_smooth_delta_w(_replace_topology(src, "True"), "True")
+    )
+    stacked_off.write_text(
+        _replace_smooth_delta_w(_replace_topology(src, "False"), "False")
+    )
+
+    # Verify all six bundles load and report the right hardcoded value.
     for path, topo, smooth in [
         (OUT_ON, True, False),
         (OUT_OFF, False, False),
         (alpha_on, False, True),
         (alpha_off, False, False),
+        (stacked_on, True, True),
+        (stacked_off, False, False),
     ]:
         import importlib.util
         spec = importlib.util.spec_from_file_location(path.stem, str(path))
