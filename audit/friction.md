@@ -928,3 +928,54 @@ relevant skill file or source code, not back into friction.md.
 
 If something is worth a paragraph, it's not friction. It's a real
 postmortem.
+
+## 2026-05-23 (claude/strategy-axis-decision-3437 — items 1+3+4+5 + live A/B reveal)
+
+- `tag: synthetic-baseline-doesnt-predict-live` — 7 A/Bs of α+β
+  stacked vs derived `*_off` bundles ranged 50-62.5% (looked
+  positive at 56-62% directional). Two A/Bs vs actual live submissions
+  (`_phase4_step1_FND` μ=1101, `orbitfix` μ=1165) BOTH gave 3/8 =
+  37.5%. Root cause: synthetic baselines isolate "code change effect"
+  not "vs deployed agent." **Fix:** filed as candidate Rule at
+  `knowledge-base/flags/2026-05-23-synthetic-baseline-misleading.md` —
+  any A/B intended to gate a submission must include the current live
+  rolling-pair leader as one opponent.
+- `tag: 4p-harness-self-play-artifact` — `scripts/ab_4p_focal.py`
+  gives focal 5/8 = 62.5% in self-play of identical files (vs
+  expected 25% baseline). Root cause: `kaggle_environments.env.run`
+  shares `sys.modules` across 4 in-process agents; when 3 of 4
+  share `bg_path`, they coordinate via shared singletons
+  (`_PS_DEFAULT`, `_TM_DEFAULT`, `_KT_TABLE`) while isolated focal
+  gets independent state. **Fix:** new `scripts/clean_ab_4p.py`
+  subprocess-per-game (mirror of `clean_ab.py` 2P). Self-play
+  parity Wilson CI now includes 0.25.
+- `tag: tie-handling-counts-ties-as-wins` — first version of
+  `clean_ab_4p.py` returned focal_won=True when focal's reward
+  equaled the max (including ties). 4 self-play games at step=500
+  cap all reported "WIN" instead of "TIE." Root cause: copied
+  `sorted_rs.index()` pattern from `ab_4p_focal.py:_focal_rank`
+  which has the same bug. **Fix:** count strict inequality;
+  `tied_at_top` recorded separately; focal_won requires UNIQUE
+  rank 1.
+- `tag: maximin-router-read-env-not-lazy-fn` — sister session fix
+  (commit `b436e05` not mine): `agents/analytical_phase_c/main.py`
+  `_decision_router` was reading `os.environ.get("LP_MAXIMIN_SEARCH")`
+  directly, bypassing the lazy `_maximin_enabled()` function used
+  by hardcoded variants. Result: maximin_on/maximin_off bundles
+  both routed to depth2_search regardless of gate. **Fix:** router
+  imports + calls `_maximin_enabled()`. This invalidated the prior
+  4W/4L maximin A/B result, which actually measured LP-vs-LP.
+- `tag: bundler-double-inline-joint-solver` — `bundle_analytical_phase_c.py`
+  re-inlined `joint_solver/*` after `bundle_agent.py` already
+  inlined them via the upgraded `DEFAULT_LIB_ORDER`. Bundle size
+  854KB → 1.06MB, dual `_topology_features_enabled` definitions,
+  variant builder's regex matched 8 blocks instead of 4. **Fix:**
+  comment out the redundant inline pass in `bundle_analytical_phase_c.py`.
+- `tag: per_planet_topology_score-kwarg-only-swallowed` — call
+  site at `lp_outcome.py:852` passed `my_id` positionally; signature
+  uses keyword-only (`*, my_id`); TypeError swallowed by surrounding
+  `try/except`; topology_scores stayed None for every turn. The
+  Phase 0 "topology-active assertion" caught this silently dead
+  code (1156 calls to `_per_planet_topology_score` post-fix in an
+  80-step game). **Fix:** `my_id=int(my_id)` keyword in call.
+
