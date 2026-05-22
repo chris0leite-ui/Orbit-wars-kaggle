@@ -62,6 +62,14 @@ MAXIMIN_RE = re.compile(
     re.MULTILINE,
 )
 
+# Phase ζ.v2: hold-aware prod_stream gate.
+HOLD_AWARE_RE = re.compile(
+    r"(def _hold_aware_enabled\(\) -> bool:\n)"
+    r"((?:    .*\n)+?)"
+    r"(\n)",
+    re.MULTILINE,
+)
+
 # Phase 3 (λ_W sweep): the `LAMBDA_W_DEFAULT = X.Y` assignment in the
 # inlined `lp_outcome.py` section. Read at call time by `_lambda_w()`
 # (lazy) when `LP_LAMBDA_W` env var is unset — so rewriting this
@@ -108,6 +116,15 @@ def _replace_maximin(src: str, retval: str) -> str:
     return MAXIMIN_RE.sub(repl, src)
 
 
+def _replace_hold_aware(src: str, retval: str) -> str:
+    """Replace `_hold_aware_enabled()` body."""
+    def repl(m: re.Match) -> str:
+        signature = m.group(1)
+        trailing = m.group(3)
+        return f"{signature}    return {retval}  # hardcoded by build_topology_variants.py\n{trailing}"
+    return HOLD_AWARE_RE.sub(repl, src)
+
+
 def _replace_lambda_w(src: str, value: float) -> str:
     """Replace `LAMBDA_W_DEFAULT = X.Y` with `LAMBDA_W_DEFAULT = <value>`."""
     return LAMBDA_W_DEFAULT_RE.sub(
@@ -128,11 +145,15 @@ def _replace_lp_solver(src: str, use_dual: bool) -> str:
 
 
 def _apply_all(src: str, *, topo: str, smooth: str, maximin: str,
+               hold_aware: str = "False",
                lambda_w: float | None = None) -> str:
     """Compose all rewrites — order independent."""
-    out = _replace_maximin(
-        _replace_smooth_delta_w(_replace_topology(src, topo), smooth),
-        maximin,
+    out = _replace_hold_aware(
+        _replace_maximin(
+            _replace_smooth_delta_w(_replace_topology(src, topo), smooth),
+            maximin,
+        ),
+        hold_aware,
     )
     if lambda_w is not None:
         out = _replace_lambda_w(out, lambda_w)
@@ -165,6 +186,12 @@ def main() -> int:
               f"found {len(maximin_matches)}. (Did Phase ε.1 land?)",
               file=sys.stderr)
         return 1
+    hold_aware_matches = HOLD_AWARE_RE.findall(src)
+    if len(hold_aware_matches) != 1:
+        print(f"ERROR: expected 1 `_hold_aware_enabled()` block; "
+              f"found {len(hold_aware_matches)}. (Did Phase ζ.v2 land?)",
+              file=sys.stderr)
+        return 1
 
     # Phase β isolation: topology on/off, smooth-ΔW off, maximin off.
     OUT_ON.write_text(_apply_all(src, topo="True",  smooth="False", maximin="False"))
@@ -188,6 +215,15 @@ def main() -> int:
     maximin_off = OUT_ON.parent / "maximin_off.py"
     maximin_on.write_text(_apply_all(src, topo="True",  smooth="True",  maximin="True"))
     maximin_off.write_text(_apply_all(src, topo="True",  smooth="True",  maximin="False"))
+
+    # Phase ζ.v2 isolation: α+β baseline + hold-aware on/off.
+    # focal = α+β+hold_aware ALL ON; opp = α+β ON, hold_aware OFF.
+    hold_aware_on = OUT_ON.parent / "hold_aware_on.py"
+    hold_aware_off = OUT_ON.parent / "hold_aware_off.py"
+    hold_aware_on.write_text(_apply_all(src, topo="True", smooth="True",
+                                        maximin="False", hold_aware="True"))
+    hold_aware_off.write_text(_apply_all(src, topo="True", smooth="True",
+                                         maximin="False", hold_aware="False"))
 
     # Phase 3 (λ_W sweep): α+β stacked variants at different λ_W
     # default values. All share topo=True smooth=True maximin=False.
@@ -216,20 +252,25 @@ def main() -> int:
         dual_paths.append((p, use_dual))
 
     # Verify all bundles load and report the right hardcoded value.
+    # Tuple: (path, topo, smooth, maximin, expected_lambda, hold_aware).
+    # hold_aware is False for all variants except the dedicated
+    # hold_aware_on/off pair below.
     base_checks = [
-        (OUT_ON,      True,  False, False, None),
-        (OUT_OFF,     False, False, False, None),
-        (alpha_on,    False, True,  False, None),
-        (alpha_off,   False, False, False, None),
-        (stacked_on,  True,  True,  False, None),
-        (stacked_off, False, False, False, None),
-        (maximin_on,  True,  True,  True,  None),
-        (maximin_off, True,  True,  False, None),
+        (OUT_ON,        True,  False, False, None,  False),
+        (OUT_OFF,       False, False, False, None,  False),
+        (alpha_on,      False, True,  False, None,  False),
+        (alpha_off,     False, False, False, None,  False),
+        (stacked_on,    True,  True,  False, None,  False),
+        (stacked_off,   False, False, False, None,  False),
+        (maximin_on,    True,  True,  True,  None,  False),
+        (maximin_off,   True,  True,  False, None,  False),
+        (hold_aware_on, True,  True,  False, None,  True),
+        (hold_aware_off,True,  True,  False, None,  False),
     ]
-    lambda_checks = [(p, True, True, False, lw) for p, lw in lambda_paths]
+    lambda_checks = [(p, True, True, False, lw, False) for p, lw in lambda_paths]
     # dual_paths share α+β=on, maximin=off; λ_W default (0.3).
-    dual_checks = [(p, True, True, False, None) for p, _ in dual_paths]
-    for path, topo, smooth, maximin, expected_lambda in (
+    dual_checks = [(p, True, True, False, None, False) for p, _ in dual_paths]
+    for path, topo, smooth, maximin, expected_lambda, hold_aware in (
         base_checks + lambda_checks + dual_checks
     ):
         import importlib.util
@@ -239,23 +280,26 @@ def main() -> int:
         topo_fn = m.__dict__.get("_topology_features_enabled")
         smooth_fn = m.__dict__.get("_smooth_delta_w_enabled")
         maximin_fn = m.__dict__.get("_maximin_enabled")
-        if topo_fn is None or smooth_fn is None or maximin_fn is None:
+        hold_aware_fn = m.__dict__.get("_hold_aware_enabled")
+        if (topo_fn is None or smooth_fn is None or maximin_fn is None
+                or hold_aware_fn is None):
             print(f"FAIL: {path.name} missing gate fn", file=sys.stderr)
             return 1
-        a_topo, a_smooth, a_maximin = topo_fn(), smooth_fn(), maximin_fn()
-        if a_topo != topo or a_smooth != smooth or a_maximin != maximin:
+        a_topo, a_smooth, a_maximin, a_hold = (
+            topo_fn(), smooth_fn(), maximin_fn(), hold_aware_fn(),
+        )
+        if (a_topo != topo or a_smooth != smooth
+                or a_maximin != maximin or a_hold != hold_aware):
             print(f"FAIL: {path.name} topo={a_topo}/{topo}, "
-                  f"smooth={a_smooth}/{smooth}, maximin={a_maximin}/{maximin}",
+                  f"smooth={a_smooth}/{smooth}, maximin={a_maximin}/{maximin}, "
+                  f"hold_aware={a_hold}/{hold_aware}",
                   file=sys.stderr)
             return 1
         if not callable(getattr(m, "agent", None)):
             print(f"FAIL: {path.name} no callable agent symbol",
                   file=sys.stderr)
             return 1
-        # If a specific λ_W was baked in, verify _lambda_w() returns it
-        # (the lazy fn reads `LP_LAMBDA_W` env first, then falls back to
-        # LAMBDA_W_DEFAULT). With LP_LAMBDA_W unset, the bundle constant
-        # is the source of truth.
+        # If a specific λ_W was baked in, verify _lambda_w() returns it.
         lambda_str = ""
         if expected_lambda is not None:
             lambda_fn = m.__dict__.get("_lambda_w")
@@ -267,8 +311,8 @@ def main() -> int:
                 return 1
             lambda_str = f", λ_W={actual_lambda}"
         print(f"OK: {path.name} loads, agent callable, "
-              f"topology={a_topo}, smooth_ΔW={a_smooth}, maximin={a_maximin}"
-              f"{lambda_str}, {path.stat().st_size} bytes")
+              f"topology={a_topo}, smooth_ΔW={a_smooth}, maximin={a_maximin}, "
+              f"hold_aware={a_hold}{lambda_str}, {path.stat().st_size} bytes")
 
     return 0
 

@@ -163,6 +163,78 @@ def _lambda_w() -> float:
     return LAMBDA_W_DEFAULT
 
 
+# ---------------------------------------------------------------------------
+# Phase ζ.v2 — Hold-aware prod_stream (root-cause fix for analytical's
+# scale-invariant leaf value).
+#
+# The LP's `prod_stream_me = production × (HORIZON − arrival)` is
+# scale-invariant in ship count for a successful capture, so under
+# SHIP_COST > 0 the LP picks the smallest viable variant — chronic
+# undercommitment in the opening (orbitfix fires 10, we fire 6).
+#
+# Fix: inject a SYNTHETIC opp-counter arrival into each per-planet
+# `fixed_arrivals` list. The existing `_simulate_one` per-tick
+# `resolve_arrivals` then naturally distinguishes subsets by their
+# residual garrison: bigger ships_fired → bigger residual → survives
+# opp counter → keeps accruing prod_stream. No coefficient hack;
+# the math becomes correct.
+#
+# Default OFF; opt-in via `LP_HOLD_AWARE=1`.
+def _hold_aware_enabled() -> bool:
+    """Read env at call time (lazy) — same pattern as smooth_delta_w
+    and topology features. Default OFF."""
+    return _os.environ.get("LP_HOLD_AWARE", "0") == "1"
+
+
+def _predict_opp_counter(planet_id: int, world, my_id: int
+                         ) -> tuple[int | None, int]:
+    """Predict the opp counter-fire to `planet_id` if we capture it.
+
+    Returns `(counter_eta, counter_ships)`:
+      - `counter_eta`: ticks-from-now until earliest opp arrival, or
+        `None` if no opp source can plausibly counter (no opps, all
+        out-of-range, etc.).
+      - `counter_ships`: ship count of the opp source that achieves
+        `counter_eta`. 0 when `counter_eta is None`.
+
+    Walks `world.planets_by_id` once. The closest opp source by
+    flight time (using `fleet_speed(opp.ships)`) is the assumed
+    counter; bigger opp garrisons fly faster, naturally weighting
+    toward the strongest threat.
+
+    Tie-break by ship count descending (pick the strongest source
+    among same-ETA sources — conservative worst-case for our hold).
+    """
+    target = world.planets_by_id.get(int(planet_id))
+    if target is None:
+        return None, 0
+    tx, ty = float(target.x), float(target.y)
+
+    best_eta: int | None = None
+    best_ships: int = 0
+    for p in world.planets_by_id.values():
+        if int(p.id) == int(planet_id):
+            continue
+        if int(p.owner) == int(my_id) or int(p.owner) == -1:
+            continue
+        if int(p.ships) <= 0:
+            continue
+        from lib.fleet import speed as _fleet_speed
+        dx = tx - float(p.x)
+        dy = ty - float(p.y)
+        dist = (dx * dx + dy * dy) ** 0.5
+        v = _fleet_speed(int(p.ships))
+        if v <= 0:
+            continue
+        eta = int(-(-dist // v))  # ceil(dist/v) without math import
+        if best_eta is None or eta < best_eta or (
+            eta == best_eta and int(p.ships) > best_ships
+        ):
+            best_eta = eta
+            best_ships = int(p.ships)
+    return best_eta, best_ships
+
+
 # Level 1 — per-planet topology features (PI directive 2026-05-21: "we
 # need joint optimization that considers topology"). Three closed-form
 # per-planet bonuses added to the leaf value, awarded when row.owner_T
@@ -349,6 +421,8 @@ def _build_per_planet_arrivals(
     *,
     my_id: int,
     step_now: int,
+    threat_cache: dict[int, tuple[int | None, int]] | None = None,
+    opp_id: int | None = None,
 ) -> dict[int, tuple[list[Arrival], list[Arrival]]]:
     """For each planet that has ≥1 candidate column targeting it, build the
     (fixed_arrivals, candidate_arrivals) pair for outcome_table.
@@ -414,6 +488,36 @@ def _build_per_planet_arrivals(
                 eta=int(eta_arr), owner=int(owner), ships=int(ships),
                 column_id=None,
             ))
+
+        # Phase ζ.v2 hold-aware injection: append a SYNTHETIC opp-counter
+        # arrival to fixed_arrivals so the per-tick `_simulate_one` +
+        # `resolve_arrivals` distinguishes subsets by post-capture
+        # residual garrison. Bigger ship_fired → bigger residual →
+        # survives opp counter → keeps accruing prod_stream → LP picks
+        # bigger fires naturally.
+        #
+        # Skip if (a) hold-aware off (threat_cache=None), (b) no opp_id
+        # (4P), (c) target is already mine (no capture, no counter),
+        # (d) no plausible opp threat, (e) model.ledger already has an
+        # opp arrival for this target (avoid double-count with
+        # opp_greedy_roi's projection).
+        if threat_cache is not None and opp_id is not None:
+            tgt_planet = world.planets_by_id.get(int(tgt_pid))
+            if (tgt_planet is not None
+                    and int(tgt_planet.owner) != int(my_id)):
+                ledger_has_opp = any(
+                    int(o) == int(opp_id) for (_e, o, _s)
+                    in model.ledger.get(int(tgt_pid), [])
+                )
+                if not ledger_has_opp:
+                    counter = threat_cache.get(int(tgt_pid))
+                    if counter is not None:
+                        c_eta, c_ships = counter
+                        if c_eta is not None and int(c_ships) > 0:
+                            fixed.append(Arrival(
+                                eta=int(c_eta), owner=int(opp_id),
+                                ships=int(c_ships), column_id=None,
+                            ))
 
         # Candidate arrivals from our columns. Total arrival tick from the
         # planner's NOW perspective = wait_N + eta (flight time).
@@ -1050,6 +1154,22 @@ def solve_outcome_aware(
             except Exception:
                 topology_scores = None
 
+    # Phase ζ.v2: hold-aware threat cache. Precompute per-planet
+    # `(counter_eta, counter_ships)` once per turn. Threaded into
+    # `_build_per_planet_arrivals` which appends a synthetic opp-counter
+    # arrival to each target's fixed_arrivals when the gate is on.
+    # 2P-only; 4P returns None (no synthetic injection).
+    threat_cache: dict[int, tuple[int | None, int]] | None = None
+    if _hold_aware_enabled() and opp_id is not None:
+        try:
+            threat_cache = {}
+            for pid in world.planets_by_id:
+                threat_cache[int(pid)] = _predict_opp_counter(
+                    int(pid), world, my_id=int(my_id),
+                )
+        except Exception:
+            threat_cache = None
+
     # Filter to our positive-value columns with a valid source.
     # EXCEPTION: compound columns (parent_column_id != None) are
     # Phase F2a production-feedback fires from planets we'd capture
@@ -1078,6 +1198,7 @@ def solve_outcome_aware(
     per_planet_arrivals = _build_per_planet_arrivals(
         active, world, model,
         my_id=int(my_id), step_now=step_now,
+        threat_cache=threat_cache, opp_id=opp_id,
     )
     per_planet_tables: dict[int, dict[tuple[int, ...], OutcomeRow]] = {}
     for tgt_pid, (fixed, cands) in per_planet_arrivals.items():
