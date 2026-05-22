@@ -113,6 +113,38 @@ DEFAULT_LIB_ORDER = [
     # v9 super-version (2026-05-12 evening): composite value heads
     # for receding-horizon-pathology fix. Used by v9_inflight + v9_combined.
     "value_heads",
+    # lib/kinematic_table.py (Phase γ, 2026-05-21): per-game position
+    # precompute lifted out of predict_fleet_fate's inner loop.
+    # agents/baseline/main.py imports begin_turn from here. Bundles
+    # without this fail with NameError on agent load when
+    # KINEMATIC_TABLE_ENABLED=1 (default-on since c48e143).
+    "kinematic_table",
+    # lib/joint_solver/* — Phase 4 joint LP solver. Order: predicate
+    # (closed-form W math) → columns → outcome_table → opening_planner
+    # → lp_outcome. opp_projection + mpc + portfolio + lp + opening_search
+    # round out the package for agents using the analytical pipeline.
+    "joint_solver/predicate",
+    "joint_solver/columns",
+    "joint_solver/outcome_table",
+    "joint_solver/opp_projection",
+    "joint_solver/opening_planner",
+    "joint_solver/lp_outcome",
+    "joint_solver/lp",
+    "joint_solver/mpc",
+    "joint_solver/portfolio",
+    "joint_solver/value",
+    "joint_solver/trajectory_matrix",
+    "joint_solver/opening_search",
+    # lib/geo/* — sense_state + topology primitives used by the
+    # LP_TOPOLOGY_FEATURES path. Required when agent sets
+    # LP_TOPOLOGY_FEATURES=1 at module load.
+    "geo/sense",
+    # lib/pipeline/pending_schedule.py — lazy-imported by
+    # lp_outcome.py::_fetch_pending_fires when LP_PENDING_AWARE_BUDGET=1.
+    # Listed here so the baseline bundle (which inlines lp_outcome.py)
+    # has the symbol available even when the analytical pipeline isn't
+    # bundled on top.
+    "pipeline/pending_schedule",
 ]
 SUBMISSIONS = REPO / "submissions"
 
@@ -256,12 +288,30 @@ def _clean_lib_source(src: str) -> str:
     remains syntactically valid.
     """
     out: list[str] = []
-    for line in src.splitlines(keepends=True):
+    lines = src.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         if _FUTURE_IMPORT_RE.match(line):
+            i += 1
             continue
         if _INTRA_IMPORT_RE.match(line):
             indent = _leading_ws(line)
-            aliases = _extract_aliases(line)
+            # Consume multi-line imports: when the matched line opens a
+            # parenthesised body, eat subsequent lines until matching `)`
+            # so the orphan body doesn't leak into the bundle.
+            full_stmt = line
+            if "(" in line and ")" not in line.split("#")[0]:
+                j = i + 1
+                while j < len(lines):
+                    full_stmt += lines[j]
+                    if ")" in lines[j].split("#")[0]:
+                        i = j
+                        break
+                    j += 1
+                else:
+                    i = j - 1
+            aliases = _extract_aliases(full_stmt)
             if aliases:
                 for asname, original in aliases:
                     out.append(f"{indent}{asname} = {original}\n")
@@ -270,8 +320,10 @@ def _clean_lib_source(src: str) -> str:
                 # non-empty (function-local `try: from lib.X import Y` with
                 # no `as` would otherwise leave the try body empty).
                 out.append(f"{indent}pass  # inlined import stripped\n")
+            i += 1
             continue
         out.append(line)
+        i += 1
     return _strip_module_docstring("".join(out))
 
 
@@ -303,24 +355,43 @@ def _clean_agent_source(src: str) -> str:
     Function-local imports (inside `try:` / `if cond:` / function bodies)
     keep their original indent on both the comment-out line and the alias
     rebind, so the enclosing block remains syntactically valid.
+
+    Also handles multi-line `from X import (a, b, c,)` by consuming
+    subsequent lines until the matching `)` — otherwise the body lines
+    orphan at module level after only the opening `(` line is stripped.
     """
     out: list[str] = []
-    for line in src.splitlines(keepends=True):
+    lines = src.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         if _FUTURE_IMPORT_RE.match(line):
+            i += 1
             continue
         if _INTRA_IMPORT_RE.match(line):
             indent = _leading_ws(line)
-            stripped = line.rstrip("\n").lstrip(" \t")
+            # Consume multi-line imports.
+            full_stmt = line
+            if "(" in line and ")" not in line.split("#")[0]:
+                j = i + 1
+                while j < len(lines):
+                    full_stmt += lines[j]
+                    if ")" in lines[j].split("#")[0]:
+                        i = j
+                        break
+                    j += 1
+                else:
+                    i = j - 1
+            stripped = full_stmt.rstrip("\n").replace("\n", " ").lstrip(" \t")
             out.append(f"{indent}# {stripped}  # inlined by bundle_agent.py\n")
-            aliases = _extract_aliases(line)
+            aliases = _extract_aliases(full_stmt)
             if aliases:
                 for asname, original in aliases:
                     out.append(f"{indent}{asname} = {original}\n")
-            # No aliases is fine for the agent path: the comment line is
-            # itself a syntactically valid statement, so the enclosing
-            # block already has a non-empty body.
-        else:
-            out.append(line)
+            i += 1
+            continue
+        out.append(line)
+        i += 1
     return "".join(out)
 
 

@@ -34,9 +34,20 @@ except ImportError:
     LinearConstraint = None  # type: ignore[assignment]
     Bounds = None  # type: ignore[assignment]
 
-from agents.baseline.strategic_lp import _greedy_assignment
-_greedy_assign = _greedy_assignment
 from lib.joint_solver.columns import Column
+
+
+def _greedy_assign(cost_matrix):
+    """Lazy proxy for agents.baseline.strategic_lp._greedy_assignment.
+
+    Lazy import avoids bundler module-ordering issues: the agent
+    subpackage gets inlined AFTER lib/, so a module-level import
+    here would fire before _greedy_assignment is defined in a
+    flat bundle. Function-scoped import resolves at call time when
+    everything is loaded.
+    """
+    from agents.baseline.strategic_lp import _greedy_assignment
+    return _greedy_assignment(cost_matrix)
 
 
 # Sentinel costs (mirror chooser_lp.py:50-54).
