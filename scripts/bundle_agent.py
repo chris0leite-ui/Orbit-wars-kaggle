@@ -129,6 +129,10 @@ DEFAULT_LIB_ORDER = [
     "joint_solver/outcome_table",
     "joint_solver/opp_projection",
     "joint_solver/opening_planner",
+    # joint_solver/dual_decomp — ITEM 5 Lagrangian inner. Imported
+    # function-locally by lp_outcome.py::_solve_via_dual_decomp when
+    # LP_SOLVER=dual. Depends only on columns + outcome_table.
+    "joint_solver/dual_decomp",
     "joint_solver/lp_outcome",
     "joint_solver/lp",
     "joint_solver/mpc",
