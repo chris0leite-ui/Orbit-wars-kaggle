@@ -93,7 +93,7 @@ def _probe_turn(obs, me: int) -> dict | None:
     cheap = cheap_filter_bundles(
         attacks, world, model, me, num_seats, K=CHEAP_FILTER_TOP_K,
     )
-    scored = tier2_score_bundles(cheap, snap_base, me, num_seats, world)
+    scored = tier2_score_bundles(cheap, snap_base, me, num_seats, world, model)
     if not scored:
         return None
 

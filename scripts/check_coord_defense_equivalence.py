@@ -141,7 +141,7 @@ def _coord_defense_count(obs, me: int, defend_boost: float) -> dict:
     cheap = cheap_filter_bundles(
         all_bundles, world, model, me, num_seats, K=CHEAP_FILTER_TOP_K,
     )
-    scored = tier2_score_bundles(cheap, snap_base, me, num_seats, world)
+    scored = tier2_score_bundles(cheap, snap_base, me, num_seats, world, model)
 
     # Apply DEFEND_PRIORITY_BOOST if requested.
     if defend_boost != 1.0:

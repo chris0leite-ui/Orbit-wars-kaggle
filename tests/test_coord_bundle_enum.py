@@ -738,10 +738,20 @@ def test_bundle_to_launches_missing_target_returns_none():
 
 
 def test_tier2_score_bundles_empty_returns_empty():
+    """Empty bundle list short-circuits before any scoring work."""
     src = _planet(0, 0, 10.0, 50.0, ships=20)
     world, snap, _ = _world_with_snap(0, [src])
-    out = tier2_score_bundles([], snap, me=0, num_seats=2, world=world)
-    assert out == []
+    # model explicitly None: short-circuit path.
+    out_no_model = tier2_score_bundles(
+        [], snap, me=0, num_seats=2, world=world, model=None,
+    )
+    assert out_no_model == []
+    # With a real model: also short-circuits (empty input).
+    model = WorldModel.from_world(world)
+    out_with_model = tier2_score_bundles(
+        [], snap, me=0, num_seats=2, world=world, model=model,
+    )
+    assert out_with_model == []
 
 
 def test_tier2_score_bundles_populates_score_and_sorts():
@@ -756,14 +766,16 @@ def test_tier2_score_bundles_populates_score_and_sorts():
     )
     assert raw, "precondition: enumeration produced bundles"
     cheap = cheap_filter_bundles(raw, world, model, me=0, num_seats=2, K=10)
-    scored = tier2_score_bundles(cheap, snap, me=0, num_seats=2, world=world)
+    scored = tier2_score_bundles(
+        cheap, snap, me=0, num_seats=2, world=world, model=model,
+    )
     assert scored, "expected at least one Tier-2-scored bundle"
     # tier2_score populated (not the default 0.0 across the board — at
     # least one bundle should have a non-zero score in a real capture).
     assert any(b.tier2_score != 0.0 for b in scored)
-    # Sorted descending by tier2_score.
-    scores = [b.tier2_score for b in scored]
-    assert scores == sorted(scores, reverse=True)
+    # Sorted descending by COMPOSITE (tier2_score + endgame_bonus).
+    composites = [b.tier2_score + b.endgame_bonus for b in scored]
+    assert composites == sorted(composites, reverse=True)
 
 
 def test_tier2_score_bundles_drops_admissibility_failures():
@@ -772,6 +784,7 @@ def test_tier2_score_bundles_drops_admissibility_failures():
     src = _planet(0, 0, 90.0, 50.0, ships=50, production=2)
     tgt = _planet(1, 1, 10.0, 50.0, ships=10, production=1)
     world, snap, _ = _world_with_snap(0, [src, tgt])
+    model = WorldModel.from_world(world)
     import math
     bad_bundle = Bundle(
         target_id=1, arrival_step=15,
@@ -781,7 +794,7 @@ def test_tier2_score_bundles_drops_admissibility_failures():
         kind=BundleKind.ATTACK,
     )
     out = tier2_score_bundles(
-        [bad_bundle], snap, me=0, num_seats=2, world=world,
+        [bad_bundle], snap, me=0, num_seats=2, world=world, model=model,
     )
     # score_candidate_v4_joint flags sun-crossing as "sun" status;
     # tier2_score_bundles drops non-"scored" results.
@@ -804,7 +817,8 @@ def test_tier2_score_bundles_budget_pre_bails():
     # 10ms budget — too small for the affordable_validate_cap probe to
     # fit, so safe_deadline will be in the past and the loop short-circuits.
     out = tier2_score_bundles(
-        cheap, snap, me=0, num_seats=2, world=world, wallclock_ms=10.0,
+        cheap, snap, me=0, num_seats=2, world=world, model=model,
+        wallclock_ms=10.0,
     )
     # No crash; output may be empty or small.
     assert isinstance(out, list)

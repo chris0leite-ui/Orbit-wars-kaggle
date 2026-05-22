@@ -343,3 +343,163 @@ def test_strongest_opp_in_4p_returns_max_pool_owner():
     mid_opp = _planet(3, 3, ships=10, production=5)
     world = _world(0, [me_planet, weak_opp, strong_opp, mid_opp])
     assert _strongest_opp(world, me=0, num_seats=4) == 2
+
+
+# ---------------------------------------------------------------------------
+# Code-review follow-ups: composite field, leaf-floor guard, env tolerance,
+# attack-disabled gate, defend own-target guard, EPISODE_STEPS consistency.
+# ---------------------------------------------------------------------------
+
+def test_bundle_dataclass_has_endgame_bonus_field():
+    """Pin the new field on the dataclass so a future refactor doesn't
+    silently drop it (the Lagrangian's leaf-floor guard depends on the
+    split between tier2_score and endgame_bonus)."""
+    b = Bundle(
+        target_id=1, arrival_step=5,
+        legs=(Leg(src_id=0, ships=5, angle=0.0, wait_N=0, eta=5),),
+        kind=BundleKind.ATTACK,
+    )
+    assert b.endgame_bonus == 0.0
+    assert b.tier2_score == 0.0
+
+
+def test_tier2_split_stores_leaf_and_bonus_separately(monkeypatch):
+    """After tier2_score_bundles, b.tier2_score is the leaf-Δ and
+    b.endgame_bonus is the bonus — they're additive but stored separately
+    so the Lagrangian can apply the leaf-floor guard."""
+    from agents.coord.main import (
+        cheap_filter_bundles,
+        enumerate_attack_bundles,
+        tier2_score_bundles,
+    )
+    from lib.fast_sim import from_obs as fs_from_obs
+    monkeypatch.setenv("COORD_DELTA_W", "1")
+    monkeypatch.setenv("COORD_LAMBDA_W", "1.0")  # amplify bonus visibility
+    src = _planet(0, 0, x=10.0, y=50.0, ships=80, production=2)
+    peer = _planet(1, 0, x=10.0, y=60.0, ships=80, production=2)
+    tgt = _planet(2, 1, x=14.0, y=55.0, ships=10, production=1)
+    world = _world(0, [src, peer, tgt])
+    model = WorldModel.from_world(world)
+    obs = {
+        "player": 0,
+        "planets": [(p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production)
+                    for p in [src, peer, tgt]],
+        "fleets": [], "angular_velocity": 0.0,
+        "comet_planet_ids": [], "step": 0,
+    }
+    snap = fs_from_obs(obs, num_seats=2)
+    raw = enumerate_attack_bundles(
+        [src, peer], [tgt], world, model, me=0, omega=0.0,
+    )
+    cheap = cheap_filter_bundles(raw, world, model, me=0, num_seats=2, K=10)
+    scored = tier2_score_bundles(
+        cheap, snap, me=0, num_seats=2, world=world, model=model,
+    )
+    assert scored
+    # At least one bundle has both a populated leaf AND a populated bonus
+    # (capture of opp planet gives bonus > 0 at λ=1.0).
+    assert any(b.endgame_bonus > 0 for b in scored)
+
+
+def test_leaf_floor_drops_tactically_negative_bundle(monkeypatch):
+    """A bundle with tier2_score < leaf_floor (default 0.0) must NOT be
+    chosen by the Lagrangian, even when the endgame_bonus would drag the
+    composite above zero."""
+    from agents.coord.main import _greedy_primal, lagrangian_clear
+    monkeypatch.delenv("COORD_LEAF_FLOOR", raising=False)
+    bad = Bundle(
+        target_id=1, arrival_step=5,
+        legs=(Leg(src_id=0, ships=5, angle=0.0, wait_N=0, eta=5),),
+        kind=BundleKind.ATTACK,
+        tier2_score=-1.0,    # tactical loss
+        endgame_bonus=5.0,   # strategic boost; composite=+4
+    )
+    # Default leaf_floor=0.0 — bad bundle dropped.
+    chosen = _greedy_primal([bad], lam={})
+    assert chosen == [], "bad bundle should be dropped by leaf-floor"
+
+    # Disable the floor explicitly via env var.
+    monkeypatch.setenv("COORD_LEAF_FLOOR", "-1000000")
+    chosen_no_floor = _greedy_primal([bad], lam={})
+    assert len(chosen_no_floor) == 1, (
+        "bad bundle should clear when leaf_floor is disabled"
+    )
+
+
+def test_leaf_floor_passes_positive_leaf_with_bonus(monkeypatch):
+    """A bundle with positive leaf AND positive bonus still clears the
+    floor (regression guard: leaf-floor must not reject tactically-fine
+    bundles)."""
+    from agents.coord.main import _greedy_primal
+    monkeypatch.delenv("COORD_LEAF_FLOOR", raising=False)
+    good = Bundle(
+        target_id=1, arrival_step=5,
+        legs=(Leg(src_id=0, ships=5, angle=0.0, wait_N=0, eta=5),),
+        kind=BundleKind.ATTACK,
+        tier2_score=2.0,    # tactically positive
+        endgame_bonus=3.0,
+    )
+    chosen = _greedy_primal([good], lam={})
+    assert chosen == [good]
+
+
+def test_attack_bonus_disabled_via_env(monkeypatch):
+    """COORD_ATTACK_BONUS=0 must zero the ATTACK branch but leave DEFEND
+    unaffected."""
+    monkeypatch.setenv("COORD_DELTA_W", "1")
+    monkeypatch.setenv("COORD_LAMBDA_W", "1.0")
+    monkeypatch.setenv("COORD_ATTACK_BONUS", "0")
+    src = _planet(0, 0, ships=50, production=2)
+    tgt = _planet(1, 1, ships=8, production=3)
+    world = _world(0, [src, tgt], step=0)
+    model = WorldModel.from_world(world)
+    bundle = _attack_bundle(target_id=1, src_id=0)
+    assert _bundle_endgame_bonus(
+        bundle, world, model, me=0, num_seats=2,
+    ) == 0.0
+
+
+def test_env_truthy_accepts_common_spellings(monkeypatch):
+    """COORD_DELTA_W=true / yes / on / 1 (any case) → enabled."""
+    from agents.coord.main import _delta_w_enabled
+    for value in ("1", "true", "TRUE", "True", "yes", "YES", "on", "On"):
+        monkeypatch.setenv("COORD_DELTA_W", value)
+        assert _delta_w_enabled(), f"value {value!r} should be truthy"
+
+
+def test_env_truthy_rejects_falsy(monkeypatch):
+    """COORD_DELTA_W=0 / false / off / no → disabled."""
+    from agents.coord.main import _delta_w_enabled
+    for value in ("0", "false", "FALSE", "off", "no", "", "anything-else"):
+        monkeypatch.setenv("COORD_DELTA_W", value)
+        assert not _delta_w_enabled(), f"value {value!r} should be falsy"
+
+
+def test_defend_own_target_guard(monkeypatch):
+    """DEFEND bundle on non-own target returns 0 — fail-fast guard
+    bypasses the ledger lookup even though bundle_delta_w_defend would
+    return 0 anyway."""
+    monkeypatch.setenv("COORD_DELTA_W", "1")
+    monkeypatch.setenv("COORD_LAMBDA_W", "1.0")
+    # Target owned by opp, mis-labeled as DEFEND (shouldn't happen in
+    # enumeration but we guard against future bugs).
+    src = _planet(0, 0)
+    bad_target = _planet(1, 1, ships=5, production=4)  # NOT mine
+    world = _world(0, [src, bad_target])
+    model = WorldModel.from_world(world)
+    bundle = Bundle(
+        target_id=1, arrival_step=3,
+        legs=(Leg(src_id=0, ships=10, angle=0.0, wait_N=0, eta=3),),
+        kind=BundleKind.DEFEND,
+    )
+    assert _bundle_endgame_bonus(
+        bundle, world, model, me=0, num_seats=2,
+    ) == 0.0
+
+
+def test_episode_steps_consistent_across_modules():
+    """Drift guard: _endgame.py and _minimal_inline.py must agree on
+    EPISODE_STEPS or pv_horizon vs remaining_turns will desynchronize."""
+    from agents.coord._endgame import EPISODE_STEPS as eg_ep
+    from agents.coord._minimal_inline import EPISODE_STEPS as mi_ep
+    assert eg_ep == mi_ep == 500

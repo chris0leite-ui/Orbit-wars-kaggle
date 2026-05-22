@@ -50,11 +50,22 @@ from agents.coord._endgame import bundle_delta_w_attack
 from agents.coord._endgame import bundle_delta_w_defend
 from agents.coord._endgame import opp_pool as endgame_opp_pool
 from agents.coord._endgame import remaining_turns as endgame_remaining_turns
+from agents.coord._endgame import EPISODE_STEPS as _ENDGAME_EPISODE_STEPS
 from lib.fast_sim import from_obs as fs_from_obs
 from lib.intent import World
 from lib.scoring import pv_horizon
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import WAVE_LOOKAHEAD, WorldModel, comet_remaining_lifetime
+
+
+# Drift guard: `_endgame.py` and `_minimal_inline.py` both define
+# EPISODE_STEPS. They must match — a divergence would make
+# endgame_remaining_turns() use a different horizon than the leaf head's
+# pv_horizon discounting, silently mis-scaling the bonus.
+assert _ENDGAME_EPISODE_STEPS == EPISODE_STEPS, (
+    f"EPISODE_STEPS drift: _endgame.py={_ENDGAME_EPISODE_STEPS} "
+    f"vs _minimal_inline.py={EPISODE_STEPS}"
+)
 
 
 NEAREST_SOURCES_PER_TARGET = 5
@@ -103,18 +114,42 @@ LAGRANGIAN_BUDGET_MS = 20.0
 # to each bundle's tier2_score before Lagrangian clearing. Per-bundle
 # opponent-of-record: target's owner for ATTACK; largest-inbound-threat
 # owner for DEFEND. 2P degenerates to source-branch formula; 4P uses (c1)
-# per-bundle attribution (see plan §4P attribution). Disable via env var
-# `COORD_DELTA_W=0`. Calibrate λ_W via `COORD_LAMBDA_W=<float>`.
+# per-bundle attribution (see plan §4P attribution).
 #
 # LAMBDA_W_DEFAULT = 0.002 chosen from
 # `scripts/check_coord_endgame_calibration.py` over seeds {0,1} × 30
 # early-mid-game turns: median |tier2_score| = 11.0, median |ΔW| = 1413.
 # Anchor that puts median bonus at 30% of median |tier2| is λ_W ≈ 0.0023;
 # rounded to 0.002 for cleaner runtime arithmetic.
+#
+# Env vars (truthy values: "1", "true", "yes", "on", case-insensitive):
+#   COORD_DELTA_W       — master gate (default ON). Off → no bonus at all.
+#   COORD_ATTACK_BONUS  — gate ATTACK branch only (default ON).
+#   COORD_DEFEND_BONUS  — gate DEFEND branch only (default ON).
+#   COORD_LAMBDA_W      — float override of LAMBDA_W_DEFAULT. Setting "0"
+#                         scales the bonus to 0 (equivalent to disabling).
+#   COORD_LEAF_FLOOR    — float; bundles with tier2_score < floor are
+#                         dropped during Lagrangian primal even if the
+#                         endgame bonus would push them above zero. Default
+#                         0.0 = "only admit tactically-non-negative
+#                         bundles". Set to a large negative (e.g. -1e9) to
+#                         disable the floor and let the bonus rescue
+#                         tactically-losing bundles.
 LAMBDA_W_DEFAULT = 0.002
+LEAF_FLOOR_DEFAULT = 0.0
 LAMBDA_W_ENV = "COORD_LAMBDA_W"
 DELTA_W_ENABLE_ENV = "COORD_DELTA_W"
+ATTACK_BONUS_ENV = "COORD_ATTACK_BONUS"
 DEFEND_BONUS_ENV = "COORD_DEFEND_BONUS"
+LEAF_FLOOR_ENV = "COORD_LEAF_FLOOR"
+
+_TRUTHY_ENV = {"1", "true", "yes", "on"}
+
+
+def _env_truthy(name: str, default: str = "1") -> bool:
+    """Tolerant env-var boolean: '1', 'true', 'yes', 'on' (case-insensitive)
+    count as true; anything else (including missing) uses `default`."""
+    return os.environ.get(name, default).strip().lower() in _TRUTHY_ENV
 
 
 def _lambda_w() -> float:
@@ -127,8 +162,24 @@ def _lambda_w() -> float:
     return LAMBDA_W_DEFAULT
 
 
+def _leaf_floor() -> float:
+    raw = os.environ.get(LEAF_FLOOR_ENV, "")
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return LEAF_FLOOR_DEFAULT
+
+
 def _delta_w_enabled() -> bool:
-    return os.environ.get(DELTA_W_ENABLE_ENV, "1") == "1"
+    return _env_truthy(DELTA_W_ENABLE_ENV)
+
+
+def _attack_bonus_enabled() -> bool:
+    """Gate for the ATTACK branch of the endgame bonus. Default ON; set to
+    "0" to test DEFEND-only attribution (mirrors COORD_DEFEND_BONUS)."""
+    return _env_truthy(ATTACK_BONUS_ENV)
 
 
 def _defend_bonus_enabled() -> bool:
@@ -136,7 +187,7 @@ def _defend_bonus_enabled() -> bool:
     "0" to test ATTACK-only attribution (used to isolate whether DEFEND's
     opp-independent magnitude is over-weighting defense).
     """
-    return os.environ.get(DEFEND_BONUS_ENV, "1") == "1"
+    return _env_truthy(DEFEND_BONUS_ENV)
 
 
 class BundleKind(Enum):
@@ -165,7 +216,17 @@ class Bundle:
     legs: tuple[Leg, ...]
     kind: BundleKind
     cheap_score: float = 0.0
+    # tier2_score is the leaf-Δ from `score_candidate_v4_joint` — the
+    # tactical signal (ships gained/lost over a ~25-turn rollout). It does
+    # NOT include the strategic endgame bonus; that lives in
+    # `endgame_bonus` so the Lagrangian can apply a leaf-floor guard
+    # against tactically-losing bundles that the bonus would otherwise
+    # rescue. The composite is read via `_composite_score(b)`.
     tier2_score: float = 0.0
+    # λ_W × ΔW (closed-form winning_margin contribution; see _endgame.py).
+    # Computed by `_bundle_endgame_bonus`; zero when env var
+    # `COORD_DELTA_W=0` or when the bundle's kind has its own gate off.
+    endgame_bonus: float = 0.0
 
 
 def _admissible_fire_now(src, tgt, angle: float, ships: int, world,
@@ -879,6 +940,8 @@ def _bundle_endgame_bonus(bundle: Bundle, world, model, me: int,
         return 0.0
 
     if bundle.kind == BundleKind.ATTACK:
+        if not _attack_bonus_enabled():
+            return 0.0
         cur_owner = int(target.owner)
         if cur_owner == int(me):
             return 0.0
@@ -893,6 +956,13 @@ def _bundle_endgame_bonus(bundle: Bundle, world, model, me: int,
 
     if bundle.kind == BundleKind.DEFEND:
         if not _defend_bonus_enabled():
+            return 0.0
+        # Fail-fast guard: DEFEND only makes sense for own targets. The
+        # formula in bundle_delta_w_defend also returns 0 if target.owner
+        # != me, but checking here saves a ledger lookup for the (currently
+        # impossible) case where an enumeration bug emits a DEFEND on a
+        # non-own target.
+        if int(target.owner) != int(me):
             return 0.0
         opp_threat = _largest_threat_owner(bundle.target_id, model, me)
         if opp_threat is None:
@@ -910,17 +980,21 @@ def tier2_score_bundles(bundles: list[Bundle], snap_base, me: int,
                         wallclock_ms: float = TIER2_BUDGET_MS
                         ) -> list[Bundle]:
     """Score each bundle via `score_candidate_v4_joint`, populate
-    `tier2_score`, return bundles sorted descending by tier2_score.
+    `tier2_score` (leaf-Δ only) and `endgame_bonus` (λ_W·ΔW), return
+    bundles sorted descending by composite (`tier2_score + endgame_bonus`).
 
     Bundles that fail Tier-2 admissibility (sun/oob/comet_expired/
     path_blocked) are dropped — no point passing them to the Lagrangian.
 
+    The leaf-Δ and the bonus are kept on separate fields so the Lagrangian
+    can apply a leaf-floor guard against bundles whose tactical verdict is
+    negative but whose strategic bonus drags them above zero. See plan
+    §"Fix 2 — Bound Lagrangian acceptance against the leaf-Δ floor".
+
     Budget enforcement mirrors minimal's `choose_trajectory` pattern:
     probe per-rollout cost via `affordable_validate_cap`, compute
     `safe_deadline = deadline − per_cand_ms`, pre-bail before starting
-    any bundle whose Tier-2 call would push past wallclock_ms. Bundles
-    past the cutoff are dropped (their cheap_score is not used here —
-    the Lagrangian only sees Tier-2-scored bundles).
+    any bundle whose Tier-2 call would push past wallclock_ms.
     """
     if not bundles:
         return []
@@ -963,20 +1037,40 @@ def tier2_score_bundles(bundles: list[Bundle], snap_base, me: int,
         if t2_status != "scored":
             continue
         endgame = _bundle_endgame_bonus(b, world, model, me, num_seats)
-        scored.append(replace(b, tier2_score=float(t2_score) + endgame))
+        scored.append(replace(
+            b,
+            tier2_score=float(t2_score),
+            endgame_bonus=float(endgame),
+        ))
 
-    scored.sort(key=lambda b: -b.tier2_score)
+    scored.sort(key=lambda b: -_composite_score(b))
     return scored
+
+
+def _composite_score(bundle: "Bundle") -> float:
+    """Leaf-Δ + strategic endgame bonus. Used wherever the agent needs the
+    full score (Lagrangian, emission tie-breaks); the raw `tier2_score`
+    field stays leaf-only so the Lagrangian's leaf-floor guard works."""
+    return float(bundle.tier2_score) + float(bundle.endgame_bonus)
 
 
 # ---------------------------------------------------------------------------
 # Lagrangian clearing — shadow-priced bundle selection.
 # ---------------------------------------------------------------------------
 
+_LAGRANGIAN_CYCLE_EPS = 1e-9
+
+
 def _reduced_score(bundle: "Bundle", lam: dict[int, float]) -> float:
-    """Bundle's tier2_score minus the shadow-price-weighted ship cost."""
+    """(tier2_score + endgame_bonus) − shadow-price-weighted ship cost.
+
+    Uses the COMPOSITE score (leaf-Δ + strategic bonus). The leaf-floor
+    guard against tactically-losing bundles is applied separately in
+    `_greedy_primal` — this function alone is not the right place
+    because the dual update reads reduced-score gradients.
+    """
     cost = sum(lam.get(int(L.src_id), 0.0) * float(L.ships) for L in bundle.legs)
-    return float(bundle.tier2_score) - cost
+    return _composite_score(bundle) - cost
 
 
 def _used_ships_per_source(chosen: list["Bundle"]) -> dict[int, int]:
@@ -988,19 +1082,23 @@ def _used_ships_per_source(chosen: list["Bundle"]) -> dict[int, int]:
     return used
 
 
-def _greedy_primal(scored: list["Bundle"], lam: dict[int, float]
-                   ) -> list["Bundle"]:
+def _greedy_primal(scored: list["Bundle"], lam: dict[int, float],
+                   leaf_floor: float | None = None) -> list["Bundle"]:
     """Greedy primal at the current shadow prices.
 
-    Sort bundles by reduced_score descending, take in order subject to:
+    Sort bundles by reduced_score descending (composite score − shadow
+    cost), take in order subject to:
     - reduced_score > 0 (positive-net-value bundles only)
+    - tier2_score >= leaf_floor (TACTICAL viability — prevents the
+      strategic endgame_bonus from rescuing a bundle whose 25-turn
+      rollout was net-negative). Default floor read from env via
+      `_leaf_floor()`.
     - no two bundles share a source (one launch per planet per turn)
-    - no two bundles share a target (one bundle per target — multi-source
-      is handled by the bundle itself, not by stacking singletons)
+    - no two bundles share a target (one bundle per target).
 
-    Always feasible by construction — no constraint can be violated since
-    we explicitly check before adding.
+    Always feasible by construction.
     """
+    floor = _leaf_floor() if leaf_floor is None else float(leaf_floor)
     ordered = sorted(scored, key=lambda b: -_reduced_score(b, lam))
     chosen: list["Bundle"] = []
     used_src: set[int] = set()
@@ -1008,6 +1106,8 @@ def _greedy_primal(scored: list["Bundle"], lam: dict[int, float]
     for b in ordered:
         if _reduced_score(b, lam) <= 0:
             break
+        if float(b.tier2_score) < floor:
+            continue  # tactically losing — bonus is not allowed to rescue
         if any(int(L.src_id) in used_src for L in b.legs):
             continue
         if int(b.target_id) in used_tgt:
@@ -1032,8 +1132,9 @@ def lagrangian_clear(scored: list["Bundle"], my_planets,
          that, not the final iteration's solution. This handles the
          integer-program duality gap and dual oscillation cleanly.
 
-    Termination: 2-cycle detection on primal_value (it == it-2) OR
-    LAGRANGIAN_MAX_ITERS OR wallclock deadline.
+    Termination: 2-cycle detection on primal_value (epsilon equality —
+    additive endgame bonus introduces FP noise that exact-`==` would
+    miss) OR LAGRANGIAN_MAX_ITERS OR wallclock deadline.
 
     Returns the best feasible bundle set found.
     """
@@ -1051,23 +1152,23 @@ def lagrangian_clear(scored: list["Bundle"], my_planets,
     for it in range(LAGRANGIAN_MAX_ITERS):
         chosen = _greedy_primal(scored, lam)
 
-        primal_value = sum(float(b.tier2_score) for b in chosen)
+        # Primal value uses the COMPOSITE score (the actual objective).
+        primal_value = sum(_composite_score(b) for b in chosen)
         if primal_value > best_value:
             best_value = primal_value
             best_feasible = chosen
 
         # Subgradient: g_s = used_s − target_util * budget_s.
-        # If g_s > 0 (over-utilised), raise λ_s to discourage use.
-        # If g_s < 0 (under-utilised), lower λ_s to encourage use.
         used = _used_ships_per_source(chosen)
         step = LAGRANGIAN_ALPHA0 / float(1 + it)
         for pid, budget in src_budget.items():
             g = float(used.get(pid, 0)) - LAGRANGIAN_TARGET_UTIL * float(budget)
             lam[pid] = max(0.0, lam[pid] + step * g)
 
-        # Termination: 2-cycle on primal value (it == it-2).
+        # Termination: 2-cycle on primal value (epsilon-tolerant).
         prev_values.append(primal_value)
-        if len(prev_values) >= 3 and prev_values[-1] == prev_values[-3]:
+        if (len(prev_values) >= 3
+                and abs(prev_values[-1] - prev_values[-3]) < _LAGRANGIAN_CYCLE_EPS):
             break
         if time.perf_counter() > deadline:
             break

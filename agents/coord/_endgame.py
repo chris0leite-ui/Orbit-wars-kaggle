@@ -148,6 +148,13 @@ def bundle_delta_w_defend(target_planet, my_id: int, opp_threat: int,
     Mirrors `is_winning_state_if_lost`'s conservative approach: NO ship
     transfer modeled (combat reduces both sides; excluding it is
     worst-case for "would the loss flip us out of winning state").
+
+    NOTE: `opp_threat` is currently UNUSED — the formula gives the same
+    bonus regardless of which opp threatens the planet. This is by design
+    in v1 (conservative; matches the source-branch predicate). The
+    parameter is kept as a forward-compat hook for v2 if we scale the
+    DEFEND bonus by the threat opp's `opp_pool` (so defending against
+    the leader is rewarded more than defending against a trailer).
     """
     cur_owner = int(target_planet.owner)
     if cur_owner != my_id:
