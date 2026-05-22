@@ -97,3 +97,9 @@ audit/external/
 # products land in audit/<date>-*.json which IS tracked.
 audit/eda-*/
 audit/2026-05-22/*.log
+
+# Transient copies of sibling-branch agents (e.g. claude/consolidate-codebase-refactor-dQAWA)
+# staged locally for cross-branch A/Bs. These should not be tracked on
+# this branch — they live in their own branches.
+agents/coord/
+agents/minimal/
