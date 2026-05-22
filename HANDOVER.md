@@ -33,6 +33,43 @@
 - **Daily submission budget:** 5/day. 5/20 used: 2. 3 slots remain.
 - **Floor-at-risk flag:** **TRUE** — rolling pair is 320 μ below team peak.
 
+## Day-N PM extract-physics-trajectory-Vjaz9 (2026-05-22)
+
+**Session shape:** surgical, additive extraction of physics substrate
+from the sibling Phase η branch (`claude/strategy-axis-decision-3437`).
+No strategy/agent code copied; no experiments; no submissions.
+
+**What landed (sole commit `72fe45a`):**
+
+- `lib/kinematic_table.py` (NEW, 436 lines) — per-turn precompute of
+  planet positions (static / orbital / comet). Bit-identical to
+  `predict_relative` by construction. Singleton + fingerprint rebuild.
+- `lib/orbit.py` (+37) — `predict_relative_cached(planet, ω, lead, *,
+  table=None)` lookup wrapper; falls through on any miss.
+- `lib/trajectory.py` (+47) — gated behind `KINEMATIC_TABLE_ENABLED=1`
+  env var. When primed AND the table covers the needed window, one
+  `table.window()` replaces the per-step inline build. Default OFF;
+  existing call sites unchanged.
+- `tests/test_kinematic_table_parity.py` (NEW, 621 lines) — `==`
+  parity pins (no tolerance) for every cache type.
+
+**Deliberately skipped:** `lib/joint_solver/trajectory_matrix.py`
+(Phase η.1 opening matrix — couples to `agents.baseline.proposer`,
+not pure physics) and the full-game parity test (imports specific
+agents). Strategy / chooser / pipeline / missions / value heads from
+the sibling branch all left where they are.
+
+**Verification:** 39/39 unit tests green; 80/80 in the wider
+geometry+orbital-safety+proposer+snipe sweep; end-to-end parity smoke
+on a 2-planet world identical cold vs primed.
+
+**Next-session first action:** build a fresh agent on top of this
+substrate. Opt-in protocol + usage example in
+`audit/2026-05-22-extract-physics-trajectory.md`. Default-OFF means
+no existing agent regressed by this commit.
+
+---
+
 ## Day-N PM review-skills-improvements-moKOR (2026-05-20 evening)
 
 **Session shape:** n=8-capped A/B iteration loop attempting to beat sub
@@ -252,6 +289,7 @@ the underlying physics.
 - `audit/2026-05-20-postmortem-strategy-framework-design-OyoYR-rebased.md` — analytical axis closure.
 - `audit/2026-05-19-postmortem-PFhzM-physics-gate-and-mvp-confirmation.md` — Track-C verdict.
 - `audit/2026-05-21-n8-iter1-reactor-ablation.md` (this branch, filename off by one UTC day) — Iter 1 ablation results + the parallel/serial contention finding.
+- `audit/2026-05-22-extract-physics-trajectory.md` (this session) — physics substrate extraction.
 - `/root/.claude/plans/go-effervescent-mochi.md` — full iteration-loop plan including the structural-change pivot list.
 
 ## Rule reminders (most relevant this session)
