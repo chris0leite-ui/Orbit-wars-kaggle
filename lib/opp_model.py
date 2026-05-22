@@ -233,6 +233,93 @@ def lite_greedy_policy(obs: Any) -> list:
     return moves
 
 
+def lite_greedy_opportunistic_policy(obs: Any) -> list:
+    """`lite_greedy_policy` + bias toward sniping under-defended enemy
+    planets.
+
+    Same per-source ROI structure as `lite_greedy_policy`, with one
+    modification: when a candidate target is an OWNED enemy planet with
+    ships <= `SNIPE_GARRISON_FLOOR`, multiply its ROI score by
+    `SNIPE_BONUS` so it dominates the per-source pick. This models
+    real top-tier opp behaviour where a planet that just got drained
+    (e.g. after our wait-bundle commit fires from it) gets sniped
+    opportunistically — production/distance ROI ignores that signal.
+
+    Used as the in-rollout opp model under `BASELINE_OPP_TIER=
+    opportunistic` to make the chooser correctly price the defensive
+    value of "ships at home". With the default lite policy, opp's
+    rollout actions don't punish defensive drains; with this policy,
+    the rollout's leaf reflects the post-snipe planet count, which
+    drops the favor delta on candidates that would expose home.
+
+    Determinism preserved (no random tie-break). Per-call cost equal
+    to `lite_greedy_policy` (one extra integer compare per target).
+    Neutrals are NOT given the snipe bonus — they're picked via the
+    standard ROI path (matches lite_greedy_policy's neutral handling).
+    """
+    SNIPE_GARRISON_FLOOR = 3
+    SNIPE_BONUS = 100.0
+
+    player = obs.get("player", 0) if isinstance(obs, dict) else getattr(obs, "player", 0)
+    planets = obs.get("planets") if isinstance(obs, dict) else getattr(obs, "planets", None)
+    if not planets:
+        return []
+    targets = [p for p in planets if p[1] != player]
+    moves: list = []
+    for src in planets:
+        if src[1] != player or src[5] < 10:
+            continue
+        best = None
+        best_score = -1.0
+        sx = src[2]; sy = src[3]
+        for t in targets:
+            if t[0] == src[0]:
+                continue
+            dx = t[2] - sx; dy = t[3] - sy
+            d = math.sqrt(dx * dx + dy * dy)
+            if d < 1e-6:
+                continue
+            base_score = float(t[6]) / (d + 1.0)
+            # Snipe bonus: owned enemy planet currently under-defended.
+            # Neutrals stay on the standard ROI path (capturing a neutral
+            # isn't "exploiting a defensive lapse" — it's expansion).
+            if int(t[5]) <= SNIPE_GARRISON_FLOOR and int(t[1]) != -1:
+                score = base_score * SNIPE_BONUS + 1.0
+            else:
+                score = base_score
+            if score > best_score:
+                best_score = score
+                best = t
+        if best is None:
+            continue
+        budget = int(src[5])
+        agg_ships = max(5, int(budget * 0.7))
+        if agg_ships > budget:
+            agg_ships = budget
+        spd = _fleet_speed(agg_ships)
+        if spd <= 0:
+            continue
+        dx = best[2] - sx; dy = best[3] - sy
+        d = math.sqrt(dx * dx + dy * dy)
+        flight = max(0.0, d - float(src[4]) - float(best[4]) - 0.1)
+        eta = max(1, int(math.ceil(flight / spd)))
+        if int(best[1]) == -1:
+            defenders_at_eta = float(best[5])
+        else:
+            defenders_at_eta = float(best[5]) + float(best[6]) * eta
+        needed = int(math.ceil(defenders_at_eta)) + 1
+        if needed > budget:
+            continue
+        ships = max(agg_ships, needed)
+        if ships > budget:
+            ships = budget
+        if ships < 5:
+            continue
+        angle = math.atan2(best[3] - sy, best[2] - sx)
+        moves.append([src[0], angle, ships])
+    return moves
+
+
 # ---------------------------------------------------------------------------
 # ME-side defensive policy for the chooser's rollout (bug #14 fix, 2026-05-18)
 # ---------------------------------------------------------------------------

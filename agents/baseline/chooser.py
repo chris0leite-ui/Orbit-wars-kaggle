@@ -19,7 +19,11 @@ import time
 
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
-from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy
+from lib.opp_model import (
+    lite_greedy_opportunistic_policy,
+    lite_greedy_policy,
+    top_tier_mirror_policy,
+)
 
 from agents.baseline.value import select_favor_fn
 
@@ -30,22 +34,31 @@ RESERVED_OVERHEAD_MS = 50.0
 
 
 def _select_opp_policy():
-    """Tier 3 (2026-05-18 PM): asymmetric opp model selection.
+    """Asymmetric opp model selection for the in-rollout opp.
 
     BASELINE_OPP_TIER env var:
-      - "0" or unset → lite_greedy_policy (default, ~1-2ms/call).
-      - "1" → top_tier_mirror_policy (~5-10ms/call; ladder-realistic
-              opp using v3.5.1 aggressive snipe pipeline). Bench gate
-              FIRST before A/B — per-call cost is 5-10× lite_greedy.
+      - "0" or unset    → lite_greedy_policy (default, ~1-2ms/call).
+      - "1"             → top_tier_mirror_policy (~5-10ms/call; ladder-
+                          realistic opp using v3.5.1 aggressive snipe
+                          pipeline). Bench gate FIRST before A/B — per-
+                          call cost is 5-10× lite_greedy.
+      - "opportunistic" → lite_greedy_opportunistic_policy (~1-2ms/
+                          call). Lite + snipe-bonus on under-defended
+                          owned-enemy planets. Used to model the
+                          defensive value of "ships at home" that
+                          plain lite under-prices, so the chooser
+                          correctly penalises candidates that drain
+                          a source the opp can punish post-launch.
 
     Per-call selection (not cached at import time) so env-var overrides
     inside test fixtures take effect without re-importing the module.
     """
-    return (
-        top_tier_mirror_policy
-        if os.environ.get("BASELINE_OPP_TIER", "0").strip() == "1"
-        else lite_greedy_policy
-    )
+    tier = os.environ.get("BASELINE_OPP_TIER", "0").strip()
+    if tier == "1":
+        return top_tier_mirror_policy
+    if tier == "opportunistic":
+        return lite_greedy_opportunistic_policy
+    return lite_greedy_policy
 
 
 def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
