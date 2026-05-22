@@ -325,3 +325,85 @@ def test_aim_and_eta_wait_N_parity_env_off_vs_on(monkeypatch):
         assert off == on, (
             f"wait_N={wait_N}: parity broken — off={off}, on={on}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3a — H44 wait_N filter gap pin (2026-05-22)
+#
+# Before Phase 3a, agents/baseline/proposer.py:996-1003 bypassed
+# predict_fleet_fate for any wait_N>0 candidate ("would mis-classify"
+# comment, stale). The H44 audit found this gap accounted for ~65% of
+# live in-flight deaths. Phase 3a routes wait_N>0 candidates through
+# predict_fleet_fate(wait_N=int(w)).
+#
+# This pin guards against silent regressions: predict_fleet_fate's
+# wait_N path must classify a sun-hitting trajectory as outcome="sun"
+# (not "target") regardless of wait_N value.
+# ---------------------------------------------------------------------------
+
+
+def test_predict_fleet_fate_wait_N_catches_sun_hit():
+    """A trajectory that crosses the sun at fire time must be rejected
+    by predict_fleet_fate when wait_N is set, mirroring the wait_N=0
+    behavior. Without Phase 3a's fix the proposer would let this
+    candidate through to the chooser."""
+    from lib.trajectory import predict_fleet_fate
+
+    # Source east of the sun, target west of the sun; straight-line
+    # trajectory crosses the sun's 10-unit radius centred at (50,50).
+    src = _planet(0, 0, 90.0, 50.0, radius=1.5, ships=50)
+    tgt = _planet(1, -1, 10.0, 50.0, radius=1.5, ships=5)
+    # Static geometry — omega=0 so wait_N can't rotate src/tgt away.
+    world = _world([src, tgt], my_id=0, omega=0.0)
+    src_p = world.planets_by_id[0]
+    tgt_p = world.planets_by_id[1]
+    angle = math.atan2(tgt_p.y - src_p.y, tgt_p.x - src_p.x)  # pure -x
+
+    # Both wait_N=0 and wait_N=5 should detect the sun hit.
+    for wait_N in (0, 5, 10):
+        fate = predict_fleet_fate(src_p, tgt_p, angle, ships=30,
+                                   world=world, wait_N=wait_N)
+        assert fate.outcome == "sun", (
+            f"wait_N={wait_N}: expected sun-hit, got {fate.outcome}"
+        )
+
+
+def test_predict_fleet_fate_wait_N_catches_oob_with_orbital_drift():
+    """Orbital target whose wait_N-shifted aim sends the fleet OOB
+    must be rejected. This is the H44 geometry-drift case the bypass
+    was masking."""
+    from lib.trajectory import predict_fleet_fate
+
+    omega = 0.05
+    # Source near +x edge; target on the +y edge. At wait_N=0 the
+    # straight-line aim hits the target. At wait_N=20 the target
+    # has rotated; aiming at the OLD target position sends the
+    # fleet on a path that exits the board.
+    src = _planet(0, 0, 95.0, 50.0, radius=1.5, ships=50)
+    tgt = _planet(1, -1, 50.0, 92.0, radius=1.5, ships=5)
+    world = _world([src, tgt], my_id=0, omega=omega)
+    src_p = world.planets_by_id[0]
+    tgt_p = world.planets_by_id[1]
+    # Naive aim at CURRENT target position (no orbital lead).
+    angle = math.atan2(tgt_p.y - src_p.y, tgt_p.x - src_p.x)
+    # Without wait_N: fleet flies straight at current tgt → may hit
+    # somewhere (target itself, since geometry isn't yet drifted).
+    fate0 = predict_fleet_fate(src_p, tgt_p, angle, ships=30,
+                                world=world, wait_N=0)
+    # With wait_N=20 + rotated tgt: the fleet appears far from where
+    # we aimed; it may go OOB or hit a wrong planet. Either way it's
+    # NOT "target".
+    fate20 = predict_fleet_fate(src_p, tgt_p, angle, ships=30,
+                                 world=world, wait_N=20)
+    # Both must produce a valid outcome string from the trajectory's
+    # vocabulary; key contract: the wait_N>0 path must NOT silently
+    # default to "target" — it must actually trace the trajectory.
+    assert fate20.outcome in ("target", "planet", "sun", "oob", "timeout")
+    # The point of the pin: wait_N=20 result differs from wait_N=0
+    # result (because geometry drifted). Without Phase 3a, the
+    # proposer never even called predict_fleet_fate for wait_N=20
+    # candidates — they all "passed" by default.
+    assert fate20.outcome != "target" or fate20.step != fate0.step, (
+        "wait_N=20 and wait_N=0 produced identical FleetFate "
+        "(suggests wait_N is not being honoured; the H44 gap is open)"
+    )

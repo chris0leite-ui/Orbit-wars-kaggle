@@ -994,13 +994,15 @@ def propose(my_planets, target_pool, world, model, me: int,
         filtered: list = []
         for entry in deduped:
             _cheap, src, tgt, ships, angle, eta, _horizon, w = entry
-            if int(w) != 0:
-                # Wait-then-fire: trajectory geometry depends on the
-                # launch-time orbital state; the static fate-predictor
-                # would mis-classify. Pass through unfiltered.
-                filtered.append(entry)
-                continue
-            fate = predict_fleet_fate(src, tgt, float(angle), int(ships), world)
+            # H44 close (2026-05-22): wait_N>0 candidates are pre-rotated
+            # to fire-time geometry by predict_fleet_fate itself (src
+            # position via predict_relative(src, omega, wait_N) and every
+            # planet's positions[t] indexed from t + wait_N). Mirrors the
+            # opp-side usage at lib/joint_solver/opp_projection.py:178.
+            # The earlier "pass through unfiltered" bypass left ~65% of
+            # live in-flight deaths uncaught (H44 finding, btjeK audit).
+            fate = predict_fleet_fate(src, tgt, float(angle), int(ships),
+                                       world, wait_N=int(w))
             if fate.outcome != "target":
                 continue  # sun / oob / hits wrong planet / timeout — drop
             # Target reached. If it's a comet, also gate on lifetime.
