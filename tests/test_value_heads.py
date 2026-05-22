@@ -113,3 +113,65 @@ def test_inflight_value_works_as_value_fn_in_score_candidate():
     score = score_candidate(snap, [], my_id=0, K=5, opp_tier=1,
                              value_fn=inflight_value)
     assert isinstance(score, float)
+
+
+# ---------------------------------------------------------------------------
+# composite_capture_value — Phase 3b in-flight fate check
+# ---------------------------------------------------------------------------
+
+
+def test_composite_fleet_survival_check_off_by_default():
+    """Phase 3b, 2026-05-22: COMPOSITE_FLEET_SURVIVAL_CHECK is OFF by
+    default. With the env var unset, composite_capture_value returns
+    the same value as the prior implementation. End-to-end smoke on
+    a warmed snapshot: head returns a float without raising.
+    """
+    import os
+    from lib.value_heads import composite_capture_value
+    saved = os.environ.pop("COMPOSITE_FLEET_SURVIVAL_CHECK", None)
+    try:
+        snap = _warmed_snap(seed=42, warmup=15)
+        obs = snap.state[0].observation
+        v = composite_capture_value(obs, my_id=0)
+        assert isinstance(v, float)
+    finally:
+        if saved is not None:
+            os.environ["COMPOSITE_FLEET_SURVIVAL_CHECK"] = saved
+
+
+def test_composite_fleet_survival_check_lowers_or_equal_to_baseline():
+    """Phase 3b, 2026-05-22: with the check ON, the value head can only
+    DECREASE (or stay equal to) the no-check baseline — it only adds
+    waste penalties for fleets that fail the trajectory ray-cast,
+    never adds positive credit. Run on a warmed mid-game snapshot
+    where some fleets are in flight.
+
+    Reload `value_heads` to pick up the env var (module-level constant).
+    """
+    import importlib
+    import os
+    saved = os.environ.get("COMPOSITE_FLEET_SURVIVAL_CHECK")
+    snap = _warmed_snap(seed=7, warmup=25)
+    obs = snap.state[0].observation
+    try:
+        # OFF baseline.
+        if saved is not None:
+            os.environ.pop("COMPOSITE_FLEET_SURVIVAL_CHECK")
+        import lib.value_heads as vh
+        importlib.reload(vh)
+        v_off = vh.composite_capture_value(obs, my_id=0)
+
+        # ON: same obs, check fires for any in-flight fleet that would
+        # have been credited.
+        os.environ["COMPOSITE_FLEET_SURVIVAL_CHECK"] = "1"
+        importlib.reload(vh)
+        v_on = vh.composite_capture_value(obs, my_id=0)
+        # Monotone: check never INCREASES value.
+        assert v_on <= v_off + 1e-9
+    finally:
+        if saved is None:
+            os.environ.pop("COMPOSITE_FLEET_SURVIVAL_CHECK", None)
+        else:
+            os.environ["COMPOSITE_FLEET_SURVIVAL_CHECK"] = saved
+        import lib.value_heads as vh
+        importlib.reload(vh)

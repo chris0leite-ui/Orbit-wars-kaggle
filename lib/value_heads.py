@@ -180,6 +180,20 @@ PRODUCTION_PV_GAMMA: float = 0.99
 import os as _os
 _COMPOSITE_PV_ENABLED = _os.environ.get("COMPOSITE_PRODUCTION_PV", "0") != "0"
 
+# Phase 3b (2026-05-22): per-leaf in-flight fate check. The WorldModel
+# `pred_owner` check below already handles "fleet arrives, we lose
+# combat at the target." It does NOT detect geometric in-flight deaths
+# (intermediate planet rotates into the fleet's path, sun-grazing past
+# the static chord check, etc.). For fleets that pass pred_owner ==
+# my_id (the ones we'd otherwise FULLY credit), call predict_fleet_fate
+# to ray-cast the trajectory; if it doesn't reach the target, apply
+# waste penalty. Cost-controlled by only running when the fleet would
+# otherwise be credited (skip the call when pred_owner already says
+# we lose). Env-gated; on-only for orbitfix_kt's submission stack.
+_COMPOSITE_FLEET_SURVIVAL_CHECK = (
+    _os.environ.get("COMPOSITE_FLEET_SURVIVAL_CHECK", "0") != "0"
+)
+
 
 def composite_capture_value(
     obs: Any, my_id: int,
@@ -350,5 +364,32 @@ def composite_capture_value(
         pred_owner = model.owner_at(target.id, eta)
         if pred_owner != my_id:
             delta -= waste_weight * ships
+            continue
+
+        # Phase 3b (2026-05-22): WorldModel.owner_at(target, eta) says
+        # we own at arrival, but WorldModel doesn't simulate the FLEET'S
+        # per-tick swept path — only the existing planets' orbital paths
+        # and the fleet's eta-at-target. A non-target planet rotating
+        # into the fleet's straight-line path between now and eta would
+        # destroy the fleet mid-flight (the H44 finding: 65% of in-
+        # flight deaths are intermediate-planet collisions, not target-
+        # capture failures). predict_fleet_fate ray-casts the actual
+        # trajectory; if outcome != "target" the fleet dies in flight.
+        # Gated; only runs for credited fleets — uncredited ones already
+        # took the waste penalty above. Per-leaf cost: ~0.5-1 ms × N_my_
+        # fleets_that_pass_pred_owner.
+        if _COMPOSITE_FLEET_SURVIVAL_CHECK:
+            from lib.trajectory import predict_fleet_fate
+            from types import SimpleNamespace
+            src_proxy = SimpleNamespace(
+                id=-1, owner=int(f.owner),
+                x=float(f.x), y=float(f.y),
+                radius=0.0, ships=int(ships), production=0,
+            )
+            fate = predict_fleet_fate(
+                src_proxy, target, float(f.angle), int(ships), world,
+            )
+            if fate.outcome != "target":
+                delta -= waste_weight * ships
 
     return base + delta
