@@ -63,6 +63,21 @@ CHEAP_FILTER_TOP_K = 75
 # threshold is computed per-machine via `affordable_validate_cap`.
 TIER2_BUDGET_MS = 450.0
 
+# Lagrangian iteration parameters (Day 6).
+# - LAGRANGIAN_MAX_ITERS: cap on subgradient iterations per turn.
+# - LAGRANGIAN_ALPHA0:    initial step size for the subgradient update,
+#                         decays as alpha0 / (1 + iter).
+# - LAGRANGIAN_TARGET_UTIL: soft pressure to use this fraction of each
+#                           source's ship budget. 0.8 = nudge toward
+#                           80% utilisation. Avoids both idle hoarding
+#                           and over-commitment to single bundles.
+# - LAGRANGIAN_BUDGET_MS: total wallclock budget for the dual loop;
+#                        well under 5ms in practice for K=75 bundles.
+LAGRANGIAN_MAX_ITERS = 12
+LAGRANGIAN_ALPHA0 = 0.01
+LAGRANGIAN_TARGET_UTIL = 0.8
+LAGRANGIAN_BUDGET_MS = 20.0
+
 
 class BundleKind(Enum):
     ATTACK = "attack"
@@ -795,6 +810,112 @@ def tier2_score_bundles(bundles: list[Bundle], snap_base, me: int,
 
     scored.sort(key=lambda b: -b.tier2_score)
     return scored
+
+
+# ---------------------------------------------------------------------------
+# Lagrangian clearing — shadow-priced bundle selection.
+# ---------------------------------------------------------------------------
+
+def _reduced_score(bundle: "Bundle", lam: dict[int, float]) -> float:
+    """Bundle's tier2_score minus the shadow-price-weighted ship cost."""
+    cost = sum(lam.get(int(L.src_id), 0.0) * float(L.ships) for L in bundle.legs)
+    return float(bundle.tier2_score) - cost
+
+
+def _used_ships_per_source(chosen: list["Bundle"]) -> dict[int, int]:
+    """Sum of leg.ships per source planet across the chosen bundle set."""
+    used: dict[int, int] = defaultdict(int)
+    for b in chosen:
+        for L in b.legs:
+            used[int(L.src_id)] += int(L.ships)
+    return used
+
+
+def _greedy_primal(scored: list["Bundle"], lam: dict[int, float]
+                   ) -> list["Bundle"]:
+    """Greedy primal at the current shadow prices.
+
+    Sort bundles by reduced_score descending, take in order subject to:
+    - reduced_score > 0 (positive-net-value bundles only)
+    - no two bundles share a source (one launch per planet per turn)
+    - no two bundles share a target (one bundle per target — multi-source
+      is handled by the bundle itself, not by stacking singletons)
+
+    Always feasible by construction — no constraint can be violated since
+    we explicitly check before adding.
+    """
+    ordered = sorted(scored, key=lambda b: -_reduced_score(b, lam))
+    chosen: list["Bundle"] = []
+    used_src: set[int] = set()
+    used_tgt: set[int] = set()
+    for b in ordered:
+        if _reduced_score(b, lam) <= 0:
+            break
+        if any(int(L.src_id) in used_src for L in b.legs):
+            continue
+        if int(b.target_id) in used_tgt:
+            continue
+        chosen.append(b)
+        for L in b.legs:
+            used_src.add(int(L.src_id))
+        used_tgt.add(int(b.target_id))
+    return chosen
+
+
+def lagrangian_clear(scored: list["Bundle"], my_planets,
+                     wallclock_ms: float = LAGRANGIAN_BUDGET_MS
+                     ) -> list["Bundle"]:
+    """Subgradient dual ascent on per-source ship-budget constraints.
+
+    At each iteration:
+      1. Greedy primal at the current λ (always feasible).
+      2. Update λ via subgradient: raise prices where sources are over-
+         utilised (> 80% of budget), lower otherwise. Floored at 0.
+      3. Track the BEST primal-value-ever across iterations — return
+         that, not the final iteration's solution. This handles the
+         integer-program duality gap and dual oscillation cleanly.
+
+    Termination: 2-cycle detection on primal_value (it == it-2) OR
+    LAGRANGIAN_MAX_ITERS OR wallclock deadline.
+
+    Returns the best feasible bundle set found.
+    """
+    if not scored:
+        return []
+
+    deadline = time.perf_counter() + wallclock_ms / 1000.0
+    src_budget = {int(p.id): max(1, int(p.ships)) for p in my_planets}
+    lam: dict[int, float] = {pid: 0.0 for pid in src_budget}
+
+    best_value = float("-inf")
+    best_feasible: list["Bundle"] = []
+    prev_values: list[float] = []
+
+    for it in range(LAGRANGIAN_MAX_ITERS):
+        chosen = _greedy_primal(scored, lam)
+
+        primal_value = sum(float(b.tier2_score) for b in chosen)
+        if primal_value > best_value:
+            best_value = primal_value
+            best_feasible = chosen
+
+        # Subgradient: g_s = used_s − target_util * budget_s.
+        # If g_s > 0 (over-utilised), raise λ_s to discourage use.
+        # If g_s < 0 (under-utilised), lower λ_s to encourage use.
+        used = _used_ships_per_source(chosen)
+        step = LAGRANGIAN_ALPHA0 / float(1 + it)
+        for pid, budget in src_budget.items():
+            g = float(used.get(pid, 0)) - LAGRANGIAN_TARGET_UTIL * float(budget)
+            lam[pid] = max(0.0, lam[pid] + step * g)
+
+        # Termination: 2-cycle on primal value (it == it-2).
+        prev_values.append(primal_value)
+        if len(prev_values) >= 3 and prev_values[-1] == prev_values[-3]:
+            break
+        if time.perf_counter() > deadline:
+            break
+
+    return best_feasible
 
 
 def agent(obs, configuration=None):

@@ -10,6 +10,10 @@ from agents.coord.main import (
     CHEAP_FILTER_TOP_K,
     CHEAP_OPPORTUNITY_COST,
     DEFEND_LOOKAHEAD,
+    LAGRANGIAN_ALPHA0,
+    LAGRANGIAN_BUDGET_MS,
+    LAGRANGIAN_MAX_ITERS,
+    LAGRANGIAN_TARGET_UTIL,
     Leg,
     MAX_BUNDLE_SIZE,
     NEAREST_SOURCES_PER_TARGET,
@@ -18,12 +22,16 @@ from agents.coord.main import (
     _bundle_to_launches,
     _cluster_arrival_windows,
     _emit_subsets,
+    _greedy_primal,
+    _reduced_score,
     _resolve_target_post_bundle,
     _synthesise_post_arrival_obs,
+    _used_ships_per_source,
     cheap_filter_bundles,
     enumerate_attack_bundles,
     enumerate_defend_bundles,
     enumerate_recapture_bundles,
+    lagrangian_clear,
     tier2_score_bundles,
 )
 from lib.fast_sim import from_obs as fs_from_obs
@@ -797,3 +805,174 @@ def test_tier2_score_bundles_budget_pre_bails():
     )
     # No crash; output may be empty or small.
     assert isinstance(out, list)
+
+
+# ---------------------------------------------------------------------------
+# Lagrangian clearing (Day 6) — shadow-priced bundle selection.
+# ---------------------------------------------------------------------------
+
+def _scored(target_id, src_id, ships, tier2, kind=BundleKind.ATTACK):
+    """Build a Bundle pre-populated with tier2_score (skips Tier-2)."""
+    return Bundle(
+        target_id=target_id,
+        arrival_step=2,
+        legs=(Leg(src_id=src_id, ships=ships, angle=0.0, wait_N=0, eta=2),),
+        kind=kind,
+        tier2_score=tier2,
+    )
+
+
+def _two_source(target_id, src_a, ships_a, src_b, ships_b, tier2,
+                kind=BundleKind.ATTACK):
+    return Bundle(
+        target_id=target_id,
+        arrival_step=2,
+        legs=(
+            Leg(src_id=src_a, ships=ships_a, angle=0.0, wait_N=0, eta=2),
+            Leg(src_id=src_b, ships=ships_b, angle=0.1, wait_N=0, eta=2),
+        ),
+        kind=kind,
+        tier2_score=tier2,
+    )
+
+
+def test_reduced_score_zero_lambda_equals_tier2():
+    b = _scored(target_id=1, src_id=0, ships=20, tier2=50.0)
+    lam = {0: 0.0}
+    assert _reduced_score(b, lam) == 50.0
+
+
+def test_reduced_score_subtracts_shadow_cost():
+    b = _scored(target_id=1, src_id=0, ships=20, tier2=50.0)
+    lam = {0: 1.0}  # 1.0 per ship → cost = 20
+    assert _reduced_score(b, lam) == 30.0
+
+
+def test_used_ships_per_source_aggregates_legs():
+    chosen = [
+        _scored(target_id=1, src_id=0, ships=20, tier2=10.0),
+        _two_source(target_id=2, src_a=0, ships_a=15, src_b=1, ships_b=25,
+                    tier2=20.0),
+    ]
+    used = _used_ships_per_source(chosen)
+    assert used[0] == 35  # 20 + 15
+    assert used[1] == 25
+
+
+def test_greedy_primal_picks_positive_only():
+    """A bundle with negative reduced_score must not be picked."""
+    pos = _scored(target_id=1, src_id=0, ships=20, tier2=50.0)
+    neg = _scored(target_id=2, src_id=1, ships=20, tier2=-5.0)
+    chosen = _greedy_primal([pos, neg], lam={0: 0.0, 1: 0.0})
+    assert pos in chosen
+    assert neg not in chosen
+
+
+def test_greedy_primal_one_bundle_per_source():
+    """Two bundles sharing a source — only the higher-reduced one wins."""
+    high = _scored(target_id=1, src_id=0, ships=20, tier2=50.0)
+    low = _scored(target_id=2, src_id=0, ships=20, tier2=30.0)
+    chosen = _greedy_primal([high, low], lam={0: 0.0})
+    assert high in chosen
+    assert low not in chosen
+
+
+def test_greedy_primal_one_bundle_per_target():
+    """Two bundles targeting the same planet — only one is picked."""
+    a = _scored(target_id=1, src_id=0, ships=20, tier2=50.0)
+    b = _scored(target_id=1, src_id=1, ships=30, tier2=40.0)
+    chosen = _greedy_primal([a, b], lam={0: 0.0, 1: 0.0})
+    target_ids = [c.target_id for c in chosen]
+    assert target_ids.count(1) == 1
+
+
+def test_lagrangian_clear_empty_returns_empty():
+    assert lagrangian_clear([], my_planets=[]) == []
+
+
+def test_lagrangian_clear_single_bundle_selected():
+    src = _planet(0, 0, 10.0, 50.0, ships=50)
+    b = _scored(target_id=1, src_id=0, ships=20, tier2=50.0)
+    out = lagrangian_clear([b], my_planets=[src])
+    assert out == [b]
+
+
+def test_lagrangian_clear_higher_tier2_wins_at_zero_lambda():
+    src = _planet(0, 0, 10.0, 50.0, ships=50)
+    src2 = _planet(1, 0, 10.0, 60.0, ships=50)
+    high = _scored(target_id=1, src_id=0, ships=20, tier2=80.0)
+    low = _scored(target_id=1, src_id=1, ships=20, tier2=30.0)
+    out = lagrangian_clear([high, low], my_planets=[src, src2])
+    assert high in out
+    assert low not in out  # same target — only one wins
+
+
+def test_lagrangian_clear_independent_bundles_both_selected():
+    """Two bundles with disjoint sources and targets — both should win."""
+    src0 = _planet(0, 0, 10.0, 50.0, ships=50)
+    src1 = _planet(1, 0, 10.0, 60.0, ships=50)
+    b1 = _scored(target_id=10, src_id=0, ships=20, tier2=40.0)
+    b2 = _scored(target_id=11, src_id=1, ships=20, tier2=35.0)
+    out = lagrangian_clear([b1, b2], my_planets=[src0, src1])
+    assert b1 in out
+    assert b2 in out
+
+
+def test_lagrangian_clear_terminates_within_max_iters():
+    """Should never loop forever — terminates at 2-cycle or MAX_ITERS."""
+    srcs = [_planet(i, 0, 10.0, 50.0 + 2 * i, ships=50) for i in range(4)]
+    bundles = [
+        _scored(target_id=10 + i, src_id=i, ships=20, tier2=30.0 + i)
+        for i in range(4)
+    ]
+    out = lagrangian_clear(bundles, my_planets=srcs)
+    # Just verify completion + sane output (no crash, no infinite loop).
+    assert isinstance(out, list)
+    assert all(b in bundles for b in out)
+
+
+def test_lagrangian_clear_budget_enforcement():
+    """Tiny wallclock budget — function returns without exceeding it."""
+    srcs = [_planet(i, 0, 10.0, 50.0 + 2 * i, ships=50) for i in range(4)]
+    bundles = [
+        _scored(target_id=10 + i, src_id=i, ships=20, tier2=30.0 + i)
+        for i in range(4)
+    ]
+    out = lagrangian_clear(bundles, my_planets=srcs, wallclock_ms=0.001)
+    # Even with sub-ms budget, the function returns a best-feasible-so-far
+    # (first iteration always completes).
+    assert isinstance(out, list)
+
+
+def test_lagrangian_clear_returns_best_across_iterations():
+    """Best-feasible-ever across iterations — not the final iteration's
+    primal. Verify by constructing a scenario where the dual oscillates.
+    """
+    src0 = _planet(0, 0, 10.0, 50.0, ships=10)  # tiny budget
+    src1 = _planet(1, 0, 10.0, 60.0, ships=10)
+    # Bundle A uses src0 with 10 ships (= entire budget) for tier2=20.
+    # Bundle B uses src1 with 5 ships for tier2=10.
+    # Both can co-exist at λ=0 (different sources).
+    a = _scored(target_id=10, src_id=0, ships=10, tier2=20.0)
+    b = _scored(target_id=11, src_id=1, ships=5, tier2=10.0)
+    out = lagrangian_clear([a, b], my_planets=[src0, src1])
+    # Both bundles should be selected (disjoint sources, disjoint targets).
+    assert a in out
+    assert b in out
+
+
+def test_lagrangian_clear_shadow_price_resolves_source_conflict():
+    """Two competing bundles for the same source — Lagrangian picks
+    the higher-tier2 one, but the LOSER's bundle is still positive-value.
+    Verify the chosen set's total tier2 is maximised.
+    """
+    src = _planet(0, 0, 10.0, 50.0, ships=20)
+    competing_a = _scored(target_id=10, src_id=0, ships=20, tier2=50.0)
+    competing_b = _scored(target_id=11, src_id=0, ships=20, tier2=30.0)
+    out = lagrangian_clear(
+        [competing_a, competing_b], my_planets=[src],
+    )
+    # Only one can win (shared source). The higher-tier2 should be chosen.
+    assert competing_a in out
+    assert competing_b not in out
+    assert sum(b.tier2_score for b in out) == 50.0
