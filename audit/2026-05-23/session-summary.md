@@ -152,7 +152,50 @@ form leaf uses the same math the LP optimizes against, so top-K
 portfolios all score similarly against the K opp responses; maximin
 degenerates to argmax.
 
-## 4P A/B — CRITICAL FINDING (Rule 43 gate)
+## 4P A/B v2 — 2P gate fixes the regression + unexpected lift
+
+After adding `LP_TOPOLOGY_4P` gate (default off):
+
+```
+focal: alpha_beta_on.py vs 3 × alpha_beta_off.py (post-2P-gate)
+4 seeds × 4 seats = 16 games
+Focal win rate: 13/16 = 81.2%  (random baseline 25.0%)
+Wilson 95% lower: 0.570  (gate ≥ 0.300 directional, ≥ 0.400 strong)
+Rank breakdown: rank1=13, rank2=3, rank3=0, rank4=0
+Per-seat wins: seat0=3/4, seat1=3/4, seat2=3/4, seat3=4/4
+```
+
+The 2P gate fixed the catastrophic 0/16. But the new result is
+**unexpectedly strong**: 13/16 = 81.2%, Wilson lower 0.570 — well
+above the "strong" gate.
+
+**Diagnosis pending.** The two bundles differ ONLY in 5 lazy-gate
+return values:
+- `_topology_features_enabled()`, `_reach_bonus_enabled()`,
+  `_defense_bonus_enabled()`, `_front_penalty_enabled()` (True vs False)
+- `_smooth_delta_w_enabled()` (True vs False)
+
+In 4P with the gate:
+- topology gate: skipped via `is_2p=False` short-circuit (both bundles).
+- smooth ΔW: dispatched but `opp_id is None` → returns 0 (both bundles).
+
+End-state should be ZERO behavioral difference. Yet focal wins 81.2%.
+
+Possibilities:
+1. The 2P gate code has an unintended effect I haven't traced.
+2. Sister-session commits between the two 4P runs introduced a
+   behavioral diff.
+3. Nondeterminism in MILP / game-engine via subtle FP differences.
+4. (Sanity check pending) The 4P harness has an artifact.
+
+Running a self-play sanity (alpha_beta_off vs alpha_beta_off, n=2)
+to baseline the harness. If self-play gives ~25%, the 81.2% is
+likely a real downstream effect of one of the diff-only lines.
+
+## 4P A/B — pre-2P-gate (REPLACED by v2 above)
+
+For reference: before the gate landed, the SAME A/B was 0/16
+(focal got rank2 in ALL 16 games):
 
 ```
 focal: alpha_beta_on.py vs 3 × alpha_beta_off.py
