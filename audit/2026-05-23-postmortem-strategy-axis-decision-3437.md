@@ -89,11 +89,14 @@ Cross-links to `audit/friction.md` block `## 2026-05-23
   TypeError on positional kwarg caught by try/except, topology
   silently dead for an unknown period.
 
-## Promotion candidates — PENDING PI REVIEW
+## Promotion candidates — PI RATIFIED (2026-05-23)
 
-Drafted as candidate rules. Not promoted to
-`.claude/skills/kaggle-comp/improvements.md` until PI explicitly
-ratifies. Recorded here as a record of the proposal.
+PI ratified candidates X1 and X2 in a follow-up turn after the
+initial wrap commit. **X3 (no try/except TypeError) NOT
+ratified** — remains drafted in this file only. X1 and X2
+appended to `.claude/skills/kaggle-comp/improvements.md` under
+the "Pending — promotion needed" section in commit immediately
+following this postmortem update.
 
 ### Candidate Rule X1 — Submission-gating A/Bs MUST include the live rolling-pair leader
 
@@ -182,11 +185,21 @@ Asked PI verbatim: "Anything you'd add to the postmortem?
 Frictions I missed, rules you want extracted, decisions worth
 flagging?" — and "Promote these candidates to improvements.md?"
 
-**PI did not reply in-band before wrap was committed** (stop hook
-pressure for clean commits trumped postmortem-skill's blocking
-clause). PI may add ratifications via a follow-up commit to
-`improvements.md`, or reject. Until then, candidates X1/X2/X3
-above remain DRAFTS in this file only.
+Stop-hook pressed for commit before PI replied; initial wrap
+committed with candidates marked PENDING. PI ratified in a
+follow-up turn:
+
+  "promote 1 and 2"
+
+→ X1 (submission-gating A/Bs must include live rolling-pair
+   leader): PROMOTED to improvements.md.
+→ X2 (hardcoded-variant dispatch must use lazy gate fn
+   consistently): PROMOTED to improvements.md.
+→ X3 (no `try/except TypeError`): NOT ratified. Stays drafted
+   here only; can be re-proposed in a future postmortem if the
+   pattern recurs.
+
+No PI additions beyond the ratification.
 
 ## Framework version at session-end
 

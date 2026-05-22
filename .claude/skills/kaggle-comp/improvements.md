@@ -249,6 +249,86 @@ Architectural lesson:
 > over 2 sessions; documented across audit/2026-05-19-slice*.md
 > and audit/2026-05-20-slice*.md.
 
+### [ ] [CODE-COMP-DISCOVERED] Submission-gating A/Bs MUST include the live rolling-pair leader
+
+`tag: synthetic-baseline-doesnt-predict-live` (2026-05-23,
+claude/strategy-axis-decision-3437 — items 1+3+4+5 session).
+
+7 A/Bs of `alpha_beta_on` vs derived `*_off` bundles ranged
+50.0–62.5% (looked like +12pp directional lift). Two A/Bs of
+the SAME bundle vs the actual live agents:
+  - vs `_phase4_step1_FND` (μ=1101): 3/8 = 37.5%
+  - vs LIVE `orbitfix` (μ=1165): 3/8 = 37.5%
+
+Cost: would have shipped α+β based on synthetic +12pp and
+evicted a μ=1165 rolling-pair half (Rule 12 — rolling-last-2
+eviction is unrecoverable for ~24h). Caught only when PI
+prompted "have you A/B tested against our latest submission?"
+
+Root cause: synthetic baselines (focal vs. a derived `*_off`
+variant of the same source) measure "did my code do anything,"
+not "does my code beat the deployed agent." They share 99%+ of
+their behaviour; only the gate functions differ. Live agents are
+different code lineages with different proposers, choosers, and
+env-var defaults.
+
+**Fix:** new CLAUDE.md rule (PI ratified 2026-05-23):
+
+> Rule 48 (proposed). **Submission-gating A/Bs MUST include the
+> current live rolling-pair leader as one opponent.** Synthetic-
+> baseline A/Bs (focal vs. a derived `*_off` variant of the same
+> source) are diagnostic, not gating. Any A/B intending to
+> justify a `kaggle competitions submit` MUST include the bundle
+> built from the live rolling-pair leader's commit as one
+> opponent, with Wilson-lo ≥ 0.50 required. The leader is
+> identified by re-pulling `kaggle competitions submissions
+> orbit-wars` at A/B-design time (Rule 43) and selecting the
+> highest-μ rolling-pair half. Synthetic A/Bs remain useful for
+> "is the feature firing" / isolation but cannot satisfy Rule
+> 12 / 43 alone. Origin: 2026-05-23
+> `synthetic-baseline-doesnt-predict-live`; full table in
+> `audit/2026-05-23-postmortem-strategy-axis-decision-3437.md`.
+
+### [ ] [CODE-COMP-DISCOVERED] Hardcoded-constant variants need lazy gate functions consistently used at every dispatch site
+
+`tag: maximin-router-read-env-not-lazy-fn` (2026-05-23,
+sister-session fix at commit b436e05).
+
+`scripts/build_topology_variants.py` produces variant bundles by
+regex-rewriting the BODY of lazy `_*_enabled()` functions to
+`return True` / `return False`. Variant bundles are immune to
+env-var pollution by construction. BUT: a dispatcher elsewhere
+in the code that reads `os.environ.get(...)` directly bypasses
+the lazy function and reads the (possibly contaminated) env-var.
+Result: hardcoded `True` and `False` variants both end up
+running the same branch.
+
+Concrete instance: `agents/analytical_phase_c/main.py:_decision_router`
+called `os.environ.get("LP_MAXIMIN_SEARCH")` directly. Variant
+`maximin_on` (with `_maximin_enabled()` hardcoded True) and
+`maximin_off` (hardcoded False) both routed to `depth2_search`
+because env-var was unset. Maximin's 4W/4L A/B result actually
+measured LP-vs-LP. Sister session caught at b436e05.
+
+Cost: ~3 min wallclock A/B invalidated; full Phase ε.1 isolation
+result lost confidence. Cheap to fix structurally.
+
+**Fix:** new CLAUDE.md rule (PI ratified 2026-05-23):
+
+> Rule 49 (proposed). **When a feature gate is hardcoded in a
+> variant bundle (e.g. via `build_topology_variants.py`-style
+> regex rewrite of a lazy `_*_enabled()` function body), EVERY
+> dispatch site for that feature MUST call the lazy gate
+> function — never `os.environ.get(...)` directly.** A
+> dispatcher reading env directly bypasses the hardcoded variant
+> and routes both bundles to the same branch. Pin tests must
+> assert the dispatch path was taken with each gate state, not
+> just that the gate function returns the expected value in
+> isolation. Origin: 2026-05-23
+> `maximin-router-read-env-not-lazy-fn`; sister-fixed at b436e05;
+> full incident in
+> `audit/2026-05-23-postmortem-strategy-axis-decision-3437.md`.
+
 ## Applied in 2026-05-14 audit pass
 
 Moved out of this file to keep it lean. Full details in the
