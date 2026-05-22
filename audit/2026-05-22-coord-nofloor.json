@@ -1,0 +1,95 @@
+{
+  "seeds": [
+    0,
+    1
+  ],
+  "lambda_w": 0.002,
+  "modes": [
+    "on",
+    "off"
+  ],
+  "summary": {
+    "on": {
+      "n": 4,
+      "wins": 1,
+      "losses": 3,
+      "ties": 0,
+      "win_rate": 0.25,
+      "wilson_lo": 0.045586062644636216
+    },
+    "off": {
+      "n": 4,
+      "wins": 1,
+      "losses": 3,
+      "ties": 0,
+      "win_rate": 0.25,
+      "wilson_lo": 0.045586062644636216
+    }
+  },
+  "results": [
+    {
+      "mode": "on",
+      "seed": 0,
+      "coord_as_p0": true,
+      "winner": "coord",
+      "turns": 182,
+      "elapsed_s": 109.141369682
+    },
+    {
+      "mode": "on",
+      "seed": 0,
+      "coord_as_p0": false,
+      "winner": "orbitfix",
+      "turns": 116,
+      "elapsed_s": 78.0334082559998
+    },
+    {
+      "mode": "on",
+      "seed": 1,
+      "coord_as_p0": true,
+      "winner": "orbitfix",
+      "turns": 197,
+      "elapsed_s": 148.93219018800028
+    },
+    {
+      "mode": "on",
+      "seed": 1,
+      "coord_as_p0": false,
+      "winner": "orbitfix",
+      "turns": 115,
+      "elapsed_s": 68.67161208700009
+    },
+    {
+      "mode": "off",
+      "seed": 0,
+      "coord_as_p0": true,
+      "winner": "coord",
+      "turns": 66,
+      "elapsed_s": 33.980253472000186
+    },
+    {
+      "mode": "off",
+      "seed": 0,
+      "coord_as_p0": false,
+      "winner": "orbitfix",
+      "turns": 97,
+      "elapsed_s": 62.40726003200007
+    },
+    {
+      "mode": "off",
+      "seed": 1,
+      "coord_as_p0": true,
+      "winner": "orbitfix",
+      "turns": 260,
+      "elapsed_s": 207.75998391099984
+    },
+    {
+      "mode": "off",
+      "seed": 1,
+      "coord_as_p0": false,
+      "winner": "orbitfix",
+      "turns": 133,
+      "elapsed_s": 76.94860768800027
+    }
+  ]
+}
