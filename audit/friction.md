@@ -118,6 +118,55 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-22 (claude/review-skills-improvements-moKOR — orbital safety completion + ship)
+
+- `tag: bundle-agent-doesnt-inline-from-baseline-main` — bundling
+  `agents/baseline_joint_aggr_consolidated_orbitfix/main.py` (a wrapper
+  whose body is `from agents.baseline.main import agent` + env-var
+  setdefault block) produced a 350 KB output with **0 `def agent`**.
+  The bundler stripped the import without inlining; kaggle_environments
+  would fall back to the last callable in the module (wrong signature
+  → game ERROR at step 0). Identical failure mode the sibling branch
+  `claude/strategy-axis-decision-3437` (c25a329) documented two days
+  ago — they noted their "n=8 vs LATEST 8W/0L" was Phase 4 beating an
+  ERROR-on-step-0 file. **Fix landed this session (cherry-pick
+  c25a329):** `scripts/bundle_agent.py` now exec-imports the bundle
+  post-write, refuses if `agent` symbol is not callable, unlinks the
+  output. Plus `tests/test_submissions_loadable.py` parametrised
+  regression test catches the bug class for any bundle in tree.
+
+- `tag: clean-ab-crashes-on-single-game-timeout` — `scripts/clean_ab.py`
+  used `subprocess.run(..., timeout=600)`; one pathological game on
+  seed 3 took >600s, raised `TimeoutExpired`, the `ProcessPoolExecutor`
+  bubbled it via `fut.result()` and killed the whole script. Lost all
+  in-flight results from sibling workers (seeds 5-15 were running,
+  block-buffered stdout meant nothing flushed before unwind). 32-game
+  A/B reduced to 8 visible results. **Fix landed (38372f4):** try/except
+  `TimeoutExpired` per-worker; bump 600 → 900s; line-buffer stdout
+  (`sys.stdout.reconfigure(line_buffering=True)`); wrap `fut.result()`
+  in try/except.
+
+- `tag: cpu-oversubscription-kills-ab-throughput` — ran two clean_ab
+  A/Bs in parallel at `--workers 4` each (8 worker processes on a 4-CPU
+  box). Load shot to 5–7×, individual games took 300–500s instead of
+  150–250s typical, the 600s timeout (later 900s) became hot.
+  Lesson: workers-per-AB × number-of-ABs ≤ nproc. **Fix forward:**
+  run A/Bs sequentially when more than one is needed, or scale workers
+  to `nproc / num_concurrent_abs`.
+
+- `tag: bundler-rebuild-requires-prepend-recipe` — variant agent dirs
+  (one-file shims via `setdefault` + `from agents.baseline.main import
+  agent`) cannot be bundled directly even after c25a329's loadable
+  guardrail — the guardrail now REFUSES the broken bundle but doesn't
+  produce a working one. The friction.md recipe (bundle
+  `agents/baseline`, then prepend env vars to `submissions/baseline.py`)
+  remains the workaround. **Promotion candidate:** make
+  `scripts/bundle_agent.py` recognise the wrapper pattern and either
+  inline `agent` automatically OR bundle the underlying agent and
+  apply the env-var prepend. Tracked in
+  `knowledge-base/questions/2026-05-22-what-orbital-safety-doesnt-yet-capture.md`
+  is the modelling follow-up; this bundler-UX work is separate.
+
 ## 2026-05-21 (claude/review-skills-improvements-moKOR — drain/sniper iteration)
 
 - `tag: sniper-fleetfate-step-of-hit-attribute-bug` — first sniper
