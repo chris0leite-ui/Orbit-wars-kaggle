@@ -1,0 +1,12 @@
+{
+  "samples": 786,
+  "turns_with_strict_3win": 14,
+  "frac_turns_3wins": 0.017811704834605598,
+  "n_positive_lifts": 15,
+  "mean_lift_when_winning": 9.466666666666667,
+  "max_lift_observed": 24.0,
+  "total_targets_3_only": 0,
+  "total_targets_3": 452,
+  "frac_targets_3_only": 0.0,
+  "elapsed_seconds": 591.9000273610001
+}

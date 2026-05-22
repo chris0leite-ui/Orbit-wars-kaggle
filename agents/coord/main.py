@@ -51,7 +51,13 @@ from lib.world_model import WAVE_LOOKAHEAD, WorldModel, comet_remaining_lifetime
 
 
 NEAREST_SOURCES_PER_TARGET = 5
-MAX_BUNDLE_SIZE = 3
+# Multi-source coordination cap. Gate 3 (Day 10) probe at MAX_BUNDLE_SIZE=3
+# showed 3-source bundles win on only 1.8% of turns (786 samples), and
+# never unlock targets that 2-source can't reach. Compute savings of
+# MAX_BUNDLE_SIZE=2 (smaller enumeration + tier-2 set) outweigh the
+# 1.8% × +9.47 mean-lift EV. Revisit in v2 if 3-source patterns emerge
+# more strongly against non-self opponents.
+MAX_BUNDLE_SIZE = 2
 ARRIVAL_WINDOW_SLACK = 2
 DEFEND_LOOKAHEAD = 30
 
