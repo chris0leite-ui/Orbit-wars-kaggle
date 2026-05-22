@@ -1,0 +1,23 @@
+{
+  "n_turns_sampled": 57,
+  "n_attack_rank1": 57,
+  "n_defend_rank1": 0,
+  "rank1_retention_rate": 0.9824561403508771,
+  "attack_rank1_retention_rate": 0.9824561403508771,
+  "defend_rank1_retention_rate": null,
+  "mean_top5_retention": 0.9824561403508772,
+  "mean_spearman": -0.11207001518024577,
+  "miss_examples": [
+    {
+      "seed": 0,
+      "turn": 21,
+      "player": 0,
+      "rank1_kind": "attack",
+      "rank1_t2_score": 24.0,
+      "rank1_cheap_score": -20.2,
+      "n_attack": 85,
+      "n_defend": 0
+    }
+  ],
+  "elapsed_seconds": 25.05190933499989
+}
