@@ -177,54 +177,87 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
     the v10-v13 iteration line (MAX_WAIT, MAX_HORIZON, MIN_FLEET_SIZE
     were all candidate bumps PI rejected in favour of modeling fixes
     that made the symptom emerge naturally).
-41. **Inspect first, small A/B second, big A/B last.** Before any
-    multi-minute A/B run, run a single-game introspection (or
-    targeted oracle scenario) to verify the change does what you
-    think it does. Then run a SMALL A/B (n=4 or n=8 seeds, ~5-10
-    min) to get a directional signal. Only escalate to n=32+ once
-    the small A/B is positive AND the introspection confirms the
-    mechanism. Big A/Bs are SLOW and OPAQUE — by the time results
-    arrive you've forgotten the hypothesis, burned a CPU hour, and
-    can't easily intervene. Worse, big A/Bs block parallel work
-    via CPU contention (4-worker eval at 99% CPU starves single-
-    game introspection scripts). Origin: 2026-05-19 PI directive
-    after a 45-min layered-chooser A/B was started before a
-    single-game inspection; layered_w1w2l1l2 vs trajectory n=32
-    was Slice 3's run, ran 45 min, returned Wlo=0.366 INCONCLUSIVE.
-    The single-game introspect (5 min) would have shown the same
-    architectural failure mode much faster.
-42. **Audit each library primitive against the entity types it may
-    be invoked on.** Three exemplars of the same bug class have now
-    landed in this comp: (a) `predict_fleet_fate` modeled every
-    planet as orbiting and broke on comets (commit `d9feee2`); (b)
-    the same primitive accepted an off-board sentinel for expired
-    comets and emitted phantom collisions (`1daec97`); (c)
-    `time_to_enemy_threat` modeled positions as static at our
-    arrival and silently mis-scored orbiting captures (`f1774a7`),
-    with sibling `_followon_hold_estimate` (this session). When
-    introducing or modifying a primitive that consumes Planet /
-    Fleet / Comet data, enumerate the entity types it might see
-    (orbiting / static / comet / expired-comet / empty) and write
-    a test for each. Sibling primitives that share the same input
-    type (`Planet`-position math callers) MUST be swept the same
-    cycle — a bug in one almost always has a sibling. Origin:
-    2026-05-21 foundation-hardening pass; PI-ratified after the
-    third instance.
-43. **Kaggle μ is a moving TrueSkill snapshot, never "settled."** The
-    ladder runs continuous TrueSkill — a submission's μ keeps updating
-    as it plays more games against the population, indefinitely. There
-    is no final score. Vocabulary discipline: use **"snapshot at time
-    T"** or **"live estimate"**, never **"settled at"**, **"final μ"**,
-    **"regressed to"**, or **"stable at"**. Numeric μ values written
-    to docs / commits / PRs go stale within hours (52894340 drifted
-    829 → 1029 in 90 minutes this session; 52893236 drifted 975 → 1074
-    same window; 52872093 drifted 1148 → 1049 across one session).
-    Operational rule: **NEVER read μ from a doc — always re-pull from
-    `kaggle competitions submissions orbit-wars` at session start**,
-    and re-pull again before any push decision. Document μ only with
-    explicit "(snapshot YYYY-MM-DD HH:MM)" provenance, treat it as a
-    weak prior. Origin: 2026-05-21 PM; PI flagged me twice in one
-    session for treating μ as final, third strike triggered this rule.
+41. **Confound-sweep before correlational conclusion.** When
+    comparing decision-classes that differ in cohort composition
+    (per-attempt vs per-resource; large-launch vs small-launch;
+    early-game vs late-game), an aggregate-rate gap is NOT a quality
+    signal until the confound is controlled. Mandatory before
+    accepting any such comparison: split by the confound, re-test
+    the gap within each cell. Origin: 2026-05-19/20
+    audit-workflow-performance-btjeK ledger A/B — `large-to-small`
+    leak was REJECTED after v2 confound-controlled re-audit; the
+    aggregate-rate gap turned out to be cohort composition, not
+    quality. Same pattern caused the sary_class panel anchor to
+    fail.
+42. **Pre-submit cross-branch coordination gate.** Before any
+    `kaggle competitions submit` (or `kaggle kernels push` that
+    triggers a submission): (a) run `kaggle competitions submissions
+    orbit-wars | head -5` to verify the current rolling-last-2
+    state; (b) append a claim row to `state/MULTI_BRANCH.md` push
+    claim board with branch / agent / predicted μ / which sub_id +
+    μ will be evicted; (c) if the evicted-μ EXCEEDS the predicted
+    candidate μ, the submit is BLOCKED until explicit PI sign-off.
+    Origin: 2026-05-20 `cross-agent-push-coordination-gap` —
+    five sequential pushes from one branch evicted strong agents
+    (μ ≈ 1149 → 1143 → 1135 → 1136 → 1122) from sibling branches
+    for two weak analytical pushes (μ 806 / 829); rolling-pair
+    floor lost ~320 μ in 24 h, unrecoverable for the rolling window.
+43. **Multi-opponent panel mandatory for pre-submit decision.**
+    Single-opponent local A/B is BANNED as sole evidence for a
+    submission decision. Minimum gate before submit:
+    (a) `fast.py eval <agent> --vs-panel` clears Wilson-lo ≥ 0.55
+    per opponent (not pooled — catches A>B>C>A loops),
+    AND (b) `fast.py eval <agent> --vs <current_rolling_champion>`
+    at n ≥ 32 with Wilson-lo ≥ 0.50. Origin:
+    `local-AB-not-calibrated-to-live-ladder` — 0/16 local A/B vs
+    one opponent submitted as plausible; live settled at μ=711.5
+    against a baseline of 1122. Sub-clause of Rule 12 (submission
+    discipline).
+44. **State-of-truth read before subsystem edits.** Before
+    proposing any change to a subsystem (chooser / proposer /
+    value head / opp model / bundler): (a) `cat state/MULTI_BRANCH.md`
+    to find the owning track and current state; (b) check the
+    "closed tracks" list — if your idea lives there, STOP;
+    (c) `git log --since=7.days -- audit/ knowledge-base/` for
+    recent design audits in the area. Skipping this produced the
+    geo-session ROI rebuild and the asymmetric Tier-1 chooser revert
+    (BPJKs PR #31, reverted same-session). Origin:
+    `wrong-file-recon-skipped-state-md` + `crn-symmetry-broken-
+    without-reading-prior-audits`. Supersedes the recon-side half
+    of the older Rule 38 (fix-verification) — Rule 38 covers the
+    "verify the patch" side; Rule 44 covers the "read before
+    editing" side.
+45. **n ≥ 32 minimum for any A/B lift claim.** n = 8 Wilson CI is
+    too wide to distinguish parity from a 20-pp regression; n = 16
+    is the minimum for a TRIAGE verdict only. Lift claims gated to
+    submission require n ≥ 32 with Wilson-lo ≥ 0.50. Exception:
+    a triage μ ≥ 0.75 at n = 16 with Wilson-lo ≥ 0.55 may proceed
+    to n = 32 confirmation before submit, but n = 16 alone is
+    NEVER a submit gate. Origin: `n16-falsely-shows-parity` +
+    `small-n-ab-noise-misled-panel` — two false-positive lifts
+    shipped on n = 8/16 evidence.
+46. **Bundle + parity smoke before any submission.** Every
+    submission MUST clear: (a) `python scripts/bundle_agent.py
+    <agent>` succeeds; (b) `pytest tests/test_bundle.py` GREEN;
+    (c) `python fast.py play <bundled_submission>` runs one full
+    game without crash. The bundler has 5 known silent-fail modes
+    (multi-line imports, aliased imports, cross-agent imports,
+    float tie-breaking divergence, missing-symbol). Origin:
+    `composite_a2_hybrid` (sub #52744234) ERROR'd on an absolute
+    import the local tests didn't catch; ~1 LB slot lost. Sub-
+    clause of Rule 12.
+47. **Physics-primitive verification before agent design.**
+    Before building a chooser or proposer that uses geometric
+    reasoning (target arrival, fleet path safety, sun avoidance,
+    capture timing), run a single-game trace through
+    `lib.trajectory.predict_fleet_fate` (or the closed-form
+    `lib/trajectory_layer.py` substrate on PFhzM) and confirm
+    sun / OOB / comet-expiry waste is < 2%. Skipping this is what
+    falsified the trajectory_roi line (PFhzM 5/19) for SUBSTRATE
+    reasons, not strategy — 4 A/Bs burned against agents with
+    6.8% physics waste before discovering `predict_fleet_fate`
+    was never imported. The failure mode is invisible until you
+    look at single-game trajectories.
 
 ## Defaults from prior-comp postmortem
 
@@ -252,7 +285,9 @@ WRAPUP step 4b → improvements.md.]
 ## Pointers
 
 State (mutable, refresh each session):
-- `state/current.md` — current submitted agent, tournament rank, submission count.
+- **`state/MULTI_BRANCH.md`** — **READ FIRST.** Cross-branch state-of-truth: live Kaggle rolling pair, three-track registry (Analytical / Hybrid-Sim / Verify-first), closed tracks (falsified knowledge), push claim board, per-branch sync table. Replaces the per-branch `state/current.md` divergence.
+- **`state/TOOLS.md`** — tools registry: A/B harnesses, single-game diagnostics, validation/test suite, consolidation-merge gate, `lib/` tier split. Read before reaching for any harness.
+- `state/current.md` — DEPRECATED; pointer to `MULTI_BRANCH.md`. Per-branch local snapshots only.
 - `state/calibration-ladder.md` — predicted-rank vs actual-rank table for new-candidate sizing.
 - `state/hypothesis-board.md` — open ideas, killed list, hedge ladder.
 - `state/mechanism-ledger.md` — every agent family tried (heuristic / search / IL / RL / hybrid), with results.
@@ -265,6 +300,9 @@ Process docs (read once / on trigger):
 - `comp-context.md` — settled-once facts (kickoff, env spec, gate clearance).
 - `audit/INDEX.md` — map of audit/ subdirs.
 - `audit/friction.md` — current friction summary (concise).
+- `audit/2026-05-18-seed-panel.md` — 128-seed geometry-stratified
+  eval panel (32 archetypes × 4 seeds). Use it for A/B testing via
+  `python fast.py eval <agent> --vs <opp> --geometry-panel --by-archetype`.
 
 - `knowledge-base/` — PI second-brain (permanent; Rules 35-36).
   Subdirs: `thoughts/`, `concepts/`, `friction/`, `flags/`, `questions/`.
