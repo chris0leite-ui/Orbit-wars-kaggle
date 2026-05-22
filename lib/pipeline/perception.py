@@ -101,6 +101,16 @@ def perception_default(obs, configuration: Optional[Any] = None) -> TurnContext:
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
 
+    # Phase η: trajectory matrix game-start precompute. Idempotent within
+    # a game (fingerprint anchors on obs_d["initial_planets"], stable
+    # across turns), so the per-turn cost after turn 0 is ~0. Opt-in via
+    # LP_OPENING_SEARCH=1 — keeps the default path unchanged for A/B.
+    if os.environ.get("LP_OPENING_SEARCH", "").strip().lower() in (
+        "1", "true", "on", "yes",
+    ):
+        from lib.joint_solver.trajectory_matrix import begin_game as _tm_begin_game
+        _tm_begin_game(world, model, omega, me, obs_d=obs_d)
+
     return TurnContext(
         obs_d=obs_d, configuration=configuration,
         me=me, num_seats=num_seats, step_now=step_now,

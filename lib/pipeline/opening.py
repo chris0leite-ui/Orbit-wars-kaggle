@@ -21,15 +21,28 @@ the pipeline short-circuits.
 from __future__ import annotations
 
 from lib.joint_solver.opening_planner import OPENING_HORIZON, opening_plan
+from lib.joint_solver.opening_search import (
+    opening_plan_search,
+    opening_search_enabled,
+)
 from lib.pipeline.types import CommittedMoves, OpeningResult, TurnContext
 
 
 def opening_default(ctx: TurnContext) -> OpeningResult:
-    """Reference opening override (parity with mpc.solve_turn:198-238)."""
+    """Reference opening override (parity with mpc.solve_turn:198-238).
+
+    When `LP_OPENING_SEARCH=1`, dispatches to the Phase η.2 widened
+    trajectory-matrix search instead. The search returns the same
+    `OpeningPlan` shape, so the rest of this function is identical
+    in either path.
+    """
     if ctx.step_now >= OPENING_HORIZON:
         return OpeningResult(committed=None)
 
-    op = opening_plan(ctx.world, ctx.model, ctx.me, ctx.num_seats)
+    if opening_search_enabled():
+        op = opening_plan_search(ctx)
+    else:
+        op = opening_plan(ctx.world, ctx.model, ctx.me, ctx.num_seats)
     if not op.schedule:
         # Case (c): empty schedule → fall through.
         return OpeningResult(

@@ -124,13 +124,20 @@ class TrajectoryMatrix:
         self._stats = {}
 
     def begin_game(self, world, model, omega: float, my_id: int,
-                   *, max_launch_tick: Optional[int] = None,
+                   *, obs_d: Optional[dict] = None,
+                   max_launch_tick: Optional[int] = None,
                    arrival_buffer: Optional[int] = None) -> bool:
         """Rebuild the matrix if the game fingerprint changed.
 
         Returns True iff a rebuild fired. The first call in a fresh
         game ALWAYS rebuilds; subsequent calls within the same game
         are no-ops (returns False).
+
+        Fingerprint anchors on `obs_d["initial_planets"]` when available
+        (stable across the entire game) — this is what makes the
+        per-game one-shot cost amortize across all turns. Falls back to
+        current planet positions if obs_d not provided (rebuild every
+        turn — useful only for tests).
 
         Per-game cost: one-shot, ~5-20 s depending on planet count and
         OPENING_HORIZON. Per-turn cost after build: 0 (only lookup).
@@ -142,7 +149,7 @@ class TrajectoryMatrix:
             self._arrival_buffer = int(arrival_buffer)
             self._fingerprint = None
 
-        new_fp = self._build_fingerprint(world, omega)
+        new_fp = self._build_fingerprint(world, omega, obs_d=obs_d)
         if self._fingerprint == new_fp:
             return False
         self._rebuild(world, model, omega, int(my_id))
@@ -150,19 +157,27 @@ class TrajectoryMatrix:
         return True
 
     @staticmethod
-    def _build_fingerprint(world, omega: float) -> tuple:
-        """Fingerprint anchors on initial planet positions + ownerships +
-        omega. Stable across turns of a game; differs between games.
+    def _build_fingerprint(world, omega: float, *,
+                            obs_d: Optional[dict] = None) -> tuple:
+        """Fingerprint anchors on `obs_d["initial_planets"]` (the env's
+        record of game-start state, stable across all turns) when
+        available. Falls back to current planet positions if not — but
+        that fallback REBUILDS EVERY TURN because orbital positions
+        change tick-by-tick. The caller should always provide obs_d
+        in production.
         """
+        if obs_d is not None and obs_d.get("initial_planets"):
+            init = obs_d.get("initial_planets") or []
+            init_t = tuple(tuple(p) for p in init)
+            return ("traj_matrix_init", init_t, round(float(omega), 6))
+        # Fallback: current positions (rebuild every turn).
         planets = world.planets_by_id
-        # Coarse-rounded positions so floating-point drift in obs doesn't
-        # spuriously change the fingerprint mid-game.
         positions = tuple(sorted(
             (int(pid), round(float(p.x), 3), round(float(p.y), 3),
              int(p.owner), int(p.production))
             for pid, p in planets.items()
         ))
-        return ("traj_matrix", positions, round(float(omega), 6))
+        return ("traj_matrix_current", positions, round(float(omega), 6))
 
     # ---- query ----
 
@@ -392,12 +407,13 @@ def clear() -> None:
 
 
 def begin_game(world, model, omega: float, my_id: int,
-               *, max_launch_tick: Optional[int] = None,
+               *, obs_d: Optional[dict] = None,
+               max_launch_tick: Optional[int] = None,
                arrival_buffer: Optional[int] = None) -> bool:
     """Game-start precompute — call once per game, idempotent within
     a game (fingerprint detects new games)."""
     return _DEFAULT.begin_game(
-        world, model, omega, my_id,
+        world, model, omega, my_id, obs_d=obs_d,
         max_launch_tick=max_launch_tick, arrival_buffer=arrival_buffer,
     )
 
