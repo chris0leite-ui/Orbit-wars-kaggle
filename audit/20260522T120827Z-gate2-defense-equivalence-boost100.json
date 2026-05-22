@@ -1,0 +1,153 @@
+{
+  "defend_boost": 1.0,
+  "samples": 120,
+  "minimal_def_total": 0,
+  "coord_def_total": 2,
+  "coord_atk_total": 247,
+  "ratio_coord_over_minimal": Infinity,
+  "turns_minimal_defended": 0,
+  "turns_coord_defended": 2,
+  "elapsed_seconds": 99.04864551399999,
+  "per_turn_sample": [
+    {
+      "seed": 0,
+      "turn": 0,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 1,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 2,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 3,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 4,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 5,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 6,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 7,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 8,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 9,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 10,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 11,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 12,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 0
+    },
+    {
+      "seed": 0,
+      "turn": 13,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 0
+    },
+    {
+      "seed": 0,
+      "turn": 14,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 15,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 16,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 17,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 18,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 1
+    },
+    {
+      "seed": 0,
+      "turn": 19,
+      "minimal_def": 0,
+      "coord_def": 0,
+      "coord_atk": 2
+    }
+  ]
+}
