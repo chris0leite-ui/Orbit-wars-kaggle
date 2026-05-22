@@ -47,6 +47,40 @@ def predict_relative(current_planet, angular_velocity: float, lead_turns: float)
     )
 
 
+def predict_relative_cached(current_planet, angular_velocity: float,
+                            lead_turns: float, *, table=None) -> Point:
+    """Lookup-aware wrapper around `predict_relative`.
+
+    When `table` is provided and the planet is in the table's current
+    obs snapshot, returns the cached lookup (O(1), no trig). On any
+    miss — `table is None`, planet pid not in table, lookup past
+    `max_lead` — falls through to the slow-path `predict_relative` call.
+
+    Bit-parity guarantee: the cached path is bit-identical to the
+    fallback IFF `planet` is the same instance from
+    `world.planets_by_id` that `table.begin_turn(world)` saw. Synthetic
+    or predicted planet states (e.g. inside an aim-orbiting fixed-point
+    loop where the "planet" position is a hypothetical future tick)
+    MUST pass `table=None` to force the slow path.
+    """
+    if table is None:
+        return predict_relative(current_planet, angular_velocity, lead_turns)
+    pid_obj = None
+    try:
+        pid_obj = getattr(current_planet, "id", None)
+        if pid_obj is None:
+            pid_obj = current_planet[0]
+        pid = int(pid_obj)
+    except (TypeError, IndexError, KeyError):
+        return predict_relative(current_planet, angular_velocity, lead_turns)
+    if not table.has(pid):
+        return predict_relative(current_planet, angular_velocity, lead_turns)
+    try:
+        return table.lookup_relative(pid, lead_turns)
+    except (IndexError, KeyError):
+        return predict_relative(current_planet, angular_velocity, lead_turns)
+
+
 def predict_absolute(initial_planet, angular_velocity: float, env_step_n: int) -> Point:
     """Predict (x, y) at `env.steps[env_step_n]` from `initial_planets`.
 
