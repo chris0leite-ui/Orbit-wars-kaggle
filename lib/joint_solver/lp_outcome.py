@@ -954,18 +954,29 @@ def solve_outcome_aware(
     # ONCE per turn (Frank-Wolfe linearization — scored against current
     # board, not post-LP state). Empty dict when LP_TOPOLOGY_FEATURES=0,
     # which short-circuits the bonus to 0.0 in all 5 call sites.
+    #
+    # 4P gate (PHASE β POST-MORTEM, 2026-05-22 4P A/B 0/16): topology
+    # features were tuned on 2P scenarios and the recapture_risk
+    # penalty + mutual_defense_bonus make the agent over-defensive in
+    # 4P (rank-2-always pattern). Smooth ΔW (Phase α) already gates
+    # itself to 2P via `_derive_opp_id_2p`; topology now does the same.
+    # `LP_TOPOLOGY_4P=1` re-enables for the 4P-recalibration session
+    # planned for next cycle.
     topology_scores: dict[int, float] | None = None
     if _topology_features_enabled():
-        try:
-            from lib.geo.sense import sense_state as _sense_state
-            sense = _sense_state(world, model)
-            topology_scores = {}
-            for pid in world.planets_by_id:
-                topology_scores[int(pid)] = _per_planet_topology_score(
-                    int(pid), world, model, sense, my_id=int(my_id),
-                )
-        except Exception:
-            topology_scores = None
+        is_2p = (opp_id is not None)
+        topology_4p_enabled = _os.environ.get("LP_TOPOLOGY_4P", "0") == "1"
+        if is_2p or topology_4p_enabled:
+            try:
+                from lib.geo.sense import sense_state as _sense_state
+                sense = _sense_state(world, model)
+                topology_scores = {}
+                for pid in world.planets_by_id:
+                    topology_scores[int(pid)] = _per_planet_topology_score(
+                        int(pid), world, model, sense, my_id=int(my_id),
+                    )
+            except Exception:
+                topology_scores = None
 
     # Filter to our positive-value columns with a valid source.
     # EXCEPTION: compound columns (parent_column_id != None) are

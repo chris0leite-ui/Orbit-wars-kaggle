@@ -152,33 +152,88 @@ form leaf uses the same math the LP optimizes against, so top-K
 portfolios all score similarly against the K opp responses; maximin
 degenerates to argmax.
 
+## 4P A/B — CRITICAL FINDING (Rule 43 gate)
+
+```
+focal: alpha_beta_on.py vs 3 × alpha_beta_off.py
+4 seeds × 4 seats = 16 games
+Focal win rate: 0/16 = 0.0%  (random baseline 25.0%)
+Wilson 95% lower: 0.000
+Rank breakdown: rank1=0, rank2=16, rank3=0, rank4=0
+```
+
+**Focal finished rank 2 in ALL 16 games.** Not random noise — a
+systematic placement pattern. The features make the agent survive
+to second place but never first.
+
+Mechanism diagnosis:
+
+1. **Smooth ΔW (Phase α) is 2P-only by design.** `_derive_opp_id_2p`
+   returns None when `num_seats != 2`; `_endgame_bonus_smooth` then
+   short-circuits to 0. So in 4P, α adds nothing.
+
+2. **Topology features (Phase β) fire in 4P** (no num_seats gate)
+   AND in this A/B they are the ONLY feature active for focal vs
+   background. The 0/16 win rate is therefore essentially a 4P
+   topology-vs-no-topology A/B, and topology LOSES catastrophically.
+
+3. The rank-2-always pattern suggests topology's recapture_risk
+   penalty + mutual_defense_bonus make the agent more defensive —
+   it survives longer than the weakest opponent but never aggresses
+   enough to take rank 1.
+
+**This is a Rule 47-class result**: features tuned on 2P scenarios
+(closed-form ROI in 2P, topology heuristics calibrated 2P-style)
+break in 4P FFA, where seat dynamics + 3-way denial trade-offs are
+qualitatively different.
+
+**DECISION (binding for any next submission)**: α+β stacked CANNOT
+ship until topology features either:
+  (a) Gate behind num_seats == 2 (becomes 2P-only like α already is).
+  (b) Get a 4P-specific re-tuning (likely different λ values, possibly
+      different formulas for `recapture_risk` and `mutual_defense_bonus`).
+
 ## Recommendation
 
-**Do not submit anything from this session without further n=32
-validation.** The α+β stacked variant has the best directional signal
-(point estimate 0.56-0.62) but is inconclusive at Wilson noise.
+**Do not submit anything from this session.** The α+β stacked variant
+has a 2P directional positive (0.56-0.62 point estimate) but a 4P
+catastrophic regression (0/16 wins). Net Kaggle ladder effect would
+almost certainly be a μ drop, since the live ladder mixes 2P + 4P.
 
-**Open paths to a real lift**:
+**Open paths forward — re-prioritized after the 4P finding**:
 
-1. **n=32-64 confirmation of α+β stacked** — directly measures the
-   true effect size. ~25-50 min wallclock at 4 workers. Could resolve
-   the question definitively.
-2. **λ_W sweep** at α+β config: try λ_W ∈ {0.1, 1.0, 3.0}. Finding a
-   sweet-spot calibration could push the lift above the noise.
-3. **Top-K diversity in maximin** (Plan-agent #3): enforce primary-
-   source diversity in top-K selection. Currently the LP-seeded
-   enumeration picks variants of the same idea.
-4. **fast_sim leaf evaluation in maximin** (Phase ε.2): closed-form
-   leaf uses the same math as the LP, so it provides no new signal
-   relative to argmax. fast_sim 15-tick rollouts with lite_greedy
-   on both sides would give a more independent estimate.
-5. **Phase γ (Lagrangian inner)**: planned but skipped this session.
-   Would speed up the LP from ~300ms to ~20ms, unblocking K=4-6
-   maximin and Stackelberg outer.
+PRIORITY 1 — fix the 4P regression before any other work:
 
-**Off-ramp (per plan)**: if all of the above null at n=32, pivot to
-precision-physics probe (`agents/precision/`) OR Konbu17-style ML
-shot validator (H14 in `state/hypothesis-board.md`).
+1a. **Gate topology features behind `num_seats == 2`** (1-hour fix).
+    Add a `_num_seats_2p()` helper, and have `_per_planet_topology_score`
+    short-circuit to 0 when not 2P. Re-A/B in 4P to confirm the
+    regression goes away. If 4P returns to ~25% baseline AND 2P
+    α+β stays at 0.56-0.62, the combined config is ladder-safe.
+
+1b. **Or re-tune topology λ values for 4P** — investigate WHY topology
+    causes rank-2-always-never-rank-1. Likely the recapture_risk
+    penalty is too aggressive; in 4P the "opp can counter within
+    25 ticks" predicate fires more often because more opponents
+    exist. Lower LAMBDA_FRONT (default 30) might help.
+
+PRIORITY 2 — after the 4P fix, broader confirmation:
+
+2. **n=32-64 confirmation of (α + 2P-gated β) stacked**. Both 2P and
+   4P A/Bs. Real effect size.
+3. **λ_W sweep** at α+β config: try λ_W ∈ {0.1, 1.0, 3.0}. Finding a
+   sweet-spot calibration could push the 2P lift above noise.
+
+PRIORITY 3 — search architecture improvements (Phase ε):
+
+4. **Top-K diversity in maximin** (Plan-agent #3): enforce primary-
+   source diversity in top-K selection.
+5. **fast_sim leaf evaluation in maximin** (Phase ε.2): closed-form
+   leaf is same math as LP; fast_sim K-tick rollouts are independent.
+6. **Phase γ (Lagrangian inner)**: speed up LP from ~300ms to ~20ms,
+   unblocking K=4-6 maximin / Stackelberg outer.
+
+**Off-ramp (still on the table)**: if all of the above null at n=32,
+pivot to precision-physics probe OR Konbu17 ML shot validator.
 
 ## Files created / modified this session
 
