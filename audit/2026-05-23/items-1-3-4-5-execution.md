@@ -77,15 +77,64 @@ Tests: 29/29 broad pin tests green
 - **n=32 of α+β stacked alone**: explicitly skipped by PI directive
   in the plan (item 2). Bad EV at the current signal strength.
 
+## Item 5 — dual vs MILP real-game A/B (POST-RUN)
+
+```
+focal: alpha_beta_solver_dual.py vs alpha_beta_solver_milp.py
+4 seeds × 2 seats = 8 games
+focal_wins=4/8 (50.0%), Wilson [0.215, 0.785]
+elapsed 153s (dual variant), 138-148s on seed=0 (longest)
+```
+
+Per-seat breakdown:
+
+| Seed | P0 | P1 |
+|---|---|---|
+| 0 | WIN  (461 steps) | LOSS (479 steps) |
+| 1 | WIN  (204 steps) | LOSS (204 steps) |
+| 2 | LOSS (155 steps) | WIN  (167 steps) |
+| 3 | WIN  (163 steps) | LOSS (243 steps) |
+
+Perfect per-seat mirror: each seed has one P0 winner and one P1 winner.
+
+**Diagnosis**:
+- Dual ≠ MILP behaviorally: step counts differ from the MILP-vs-MILP
+  baseline at every seed (e.g., seed=1 was 143 steps for alpha_beta_on
+  vs off; here both 204 — dual makes different decisions on both
+  sides).
+- Outcome-equivalent at n=8: neither solver is systematically better.
+  Compatible with "different tie-breaks at the LP-relaxation level
+  but equal-quality at the n we can afford."
+- **Wallclock**: dual seed=0 took 138/148s vs MILP's prior seed=0 at
+  100-160s in the alpha_beta A/B. **Within noise — NOT the 10×
+  speedup target.**
+
+Why no speedup observed:
+- Plan target was p95 ≤ 50 ms per turn (vs MILP's ~300 ms). We did
+  not measure per-turn timings; game-level wallclock includes long
+  games on dual (seed=0 went 461-479 steps vs 364 for MILP) so the
+  comparison is confounded.
+- The dual inner does 3 iterations × per-target argmax over 64
+  subsets × per-source rent computation. If subset enumeration is
+  the bottleneck (already O(2^k) regardless of solver), dual saves
+  only the MILP setup overhead.
+
+**Kill condition (per plan)**: "p95 wallclock > 100 ms → Lagrangian
+doesn't actually beat MILP for our problem sizes." Cannot evaluate
+without per-turn timing instrumentation. Status: **research path
+that ships pin-tested but with unknown speedup**. Production swap
+not justified at this measurement state.
+
 ## Items pending after this session
 
-- Item 5 real-game parity A/B (`alpha_beta_solver_dual` vs
-  `alpha_beta_solver_milp`) — RUNNING.
 - Item 4 maximin re-A/B (now with diversity + post-router-fix)
-  — queued after Item 5 finishes.
+  — RUNNING.
 - Item 4a diversity diagnostic (`measure_portfolio_diversity.py`)
   — never run; the diversity constraint defaults on without
-  empirical motivation. Would be informative but not blocking.
+  empirical motivation.
+- Per-turn wallclock comparison MILP vs dual on a panel — needed
+  to call the Item 5 production-swap decision per plan kill
+  condition.
 
 ## Plan-agent's open critiques (still relevant)
 
