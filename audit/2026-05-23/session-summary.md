@@ -188,9 +188,45 @@ Possibilities:
 3. Nondeterminism in MILP / game-engine via subtle FP differences.
 4. (Sanity check pending) The 4P harness has an artifact.
 
-Running a self-play sanity (alpha_beta_off vs alpha_beta_off, n=2)
-to baseline the harness. If self-play gives ~25%, the 81.2% is
-likely a real downstream effect of one of the diff-only lines.
+### Self-play sanity — HARNESS ARTIFACT CONFIRMED
+
+```
+focal: alpha_beta_off.py vs 3 × alpha_beta_off.py (same file)
+2 seeds × 4 seats = 8 games
+Focal win rate: 5/8 = 62.5%  (random baseline 25.0%)
+Wilson 95% lower: 0.306
+Rank: rank1=5, rank2=3, rank3=0, rank4=0
+Per-seat wins: 1/2, 1/2, 1/2, 2/2
+```
+
+**Self-play with IDENTICAL agent files gives focal 62.5% wins**.
+Not 25%. The harness has a focal-favoring artifact.
+
+Likely cause: `scripts/ab_4p_focal.py::_play_one` passes focal_path
+in one of 4 seats and bg_path in the other 3. When focal_path == bg_path,
+`kaggle_environments.env.run` may de-dup loaded modules and share
+state across the 3 bg slots — while focal is passed via a separate
+reference and gets isolated state. The 3 background agents may then
+share `pending_schedule` / `_KT_TABLE` / module-level state which
+either over-coordinates or causes stale-decant errors that
+benefit the isolated focal.
+
+**Consequence**: the 13/16 = 81.2% v2 result is NOT a clean lift
+claim. Some (unknown) fraction is the harness's focal-favoring
+artifact. The true lift of α+β-with-2P-gate over the no-features
+baseline in 4P is between -ε (no harm) and +unknown.
+
+What IS established:
+- 2P-gate definitively fixed the 0/16 catastrophic regression.
+- α+β with the gate is NOT 4P-harmful (focal wins ≥ self-play
+  baseline of 62.5% in the same harness).
+- The harness is unreliable for self-play or near-identical-agent
+  4P comparisons.
+
+To get clean 4P numbers, the harness needs fixing — for instance,
+copy the focal bundle to a distinct path per game so the 4 slots
+load 4 distinct module instances. Or use a subprocess-per-game
+pattern like clean_ab.py but for 4P.
 
 ## 4P A/B — pre-2P-gate (REPLACED by v2 above)
 
