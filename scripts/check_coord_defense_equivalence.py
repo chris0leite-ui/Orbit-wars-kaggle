@@ -169,15 +169,18 @@ def run_probe(seeds: int, turns: int, defend_boost: float) -> dict:
         env = make("orbit_wars", configuration={"seed": int(s)})
         env.reset(num_agents=2)
         for t in range(turns):
-            obs = env.state[0].observation
-            mc = _minimal_defense_count(obs, me=0)
-            cc = _coord_defense_count(obs, me=0, defend_boost=defend_boost)
-            per_turn.append({
-                "seed": s, "turn": t,
-                "minimal_def": mc,
-                "coord_def": cc["defense_count"],
-                "coord_atk": cc["attack_count"],
-            })
+            # Sample BOTH player perspectives — defense fires asymmetrically
+            # for whichever player is currently under threat.
+            for me in (0, 1):
+                obs = env.state[me].observation
+                mc = _minimal_defense_count(obs, me=me)
+                cc = _coord_defense_count(obs, me=me, defend_boost=defend_boost)
+                per_turn.append({
+                    "seed": s, "turn": t, "player": me,
+                    "minimal_def": mc,
+                    "coord_def": cc["defense_count"],
+                    "coord_atk": cc["attack_count"],
+                })
             a0 = minimal_agent(env.state[0].observation)
             a1 = minimal_agent(env.state[1].observation)
             env.step([a0, a1])
