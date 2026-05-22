@@ -32,8 +32,10 @@ FOCAL = REPO / "submissions" / "analytical_phase_c.py"
 BASELINE = REPO / "submissions" / "_phase4_step1_FND.py"
 
 
-# Parse "  outcome counts: {'target': 142, 'planet': 0, 'sun': 0, 'oob': 0, 'timeout': 0, 'no_target_resolved': 0}"
-COUNTS_RE = re.compile(r"counts:\s*(\{[^}]+\})")
+# Parse `check_fleet_outcomes` formatted output: lines like
+#   "                  target : 102  (100.0%)"
+# We capture each row's name + count.
+COUNT_ROW_RE = re.compile(r"^\s+(target|planet|sun|oob|timeout|no_target_resolved)\s*:\s*(\d+)")
 
 
 def _run_one(seed: int, timeout_s: int = 180) -> dict:
@@ -54,12 +56,13 @@ def _run_one(seed: int, timeout_s: int = 180) -> dict:
         return {"seed": seed, "error": "timeout", "wall_s": time.time() - t0}
 
     out = r.stdout + "\n" + r.stderr
-    counts = None
-    for m in COUNTS_RE.finditer(out):
-        try:
-            counts = eval(m.group(1), {"__builtins__": {}}, {})
-        except Exception:
-            pass
+    counts: dict | None = None
+    for line in out.splitlines():
+        m = COUNT_ROW_RE.match(line)
+        if m:
+            if counts is None:
+                counts = {}
+            counts[m.group(1)] = int(m.group(2))
     return {
         "seed": seed,
         "rc": r.returncode,
