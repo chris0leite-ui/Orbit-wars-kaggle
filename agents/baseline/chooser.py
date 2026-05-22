@@ -15,7 +15,6 @@ counter-launches and fragile leaves are correctly penalised.
 from __future__ import annotations
 
 import os
-import time
 
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
@@ -27,6 +26,40 @@ WALLCLOCK_BUDGET_MS = 600.0
 N_VALIDATE = 60
 PER_CANDIDATE_SAFETY = 1.5
 RESERVED_OVERHEAD_MS = 50.0
+
+# Deterministic per-candidate cost model (Phase 1, 2026-05-22).
+# Replaces the time.perf_counter()-based probe that made the chooser
+# non-deterministic across runs (128/210 turns diverged in diff_v3
+# trace despite identical physics). State-aware: per-step and per-leaf
+# costs scale linearly with n_fleets — the dominant variable for both
+# fs_step (orbit advance + collision resolution per fleet) and the
+# composite leaf (per-fleet trajectory checks). Constants calibrated
+# from orbitfix_kt bench at avg_K=32.5; env-override per agent if the
+# value head is materially heavier.
+BASELINE_STEP_BASE_MS = float(os.environ.get("BASELINE_STEP_BASE_MS", "0.20"))
+BASELINE_STEP_PER_FLEET_MS = float(
+    os.environ.get("BASELINE_STEP_PER_FLEET_MS", "0.06"),
+)
+BASELINE_LEAF_BASE_MS = float(os.environ.get("BASELINE_LEAF_BASE_MS", "0.80"))
+BASELINE_LEAF_PER_FLEET_MS = float(
+    os.environ.get("BASELINE_LEAF_PER_FLEET_MS", "0.25"),
+)
+
+
+def _state_n_fleets(snap_base) -> int:
+    """Total fleet count on the board at function entry, read from
+    snap.state[0].observation (fleets aren't seat-scoped). Deterministic
+    on identical snap input; sole state-derived input to per_cand_ms.
+    """
+    try:
+        obs0 = snap_base.state[0].observation
+        fleets = (
+            obs0.get("fleets", []) if hasattr(obs0, "get")
+            else getattr(obs0, "fleets", [])
+        )
+        return len(fleets) if fleets is not None else 0
+    except Exception:
+        return 0
 
 
 def _select_opp_policy():
@@ -101,30 +134,25 @@ def affordable_validate_cap(snap_base, me: int, num_seats: int,
                             max_horizon: int, wallclock_ms: float,
                             min_horizon: int, gamma: float,
                             ) -> tuple[int, float]:
-    """Probe per-step + per-leaf cost on the current board, derive a
-    safe candidate cap and the per-candidate cost estimate.
+    """Deterministic per-candidate cap. Returns `(cap, per_cand_ms)`.
 
-    Returns `(cap, per_cand_ms)`. `cap` is bounded below by 8. The
-    `per_cand_ms` value is used by `choose()` to pre-bail before
-    entering a candidate that would push past the deadline.
+    Replaced the wallclock probe (Phase 1, 2026-05-22): the probe used
+    `time.perf_counter()` to measure per-step and per-leaf cost on every
+    turn, but per-run timing jitter shifted the cap → different
+    candidate subset evaluated → different chosen action across runs of
+    the same seed. The state-aware model below scales linearly with
+    n_fleets (dominant cost driver for fs_step and composite leaf);
+    cap shrinks naturally as the board complexity grows, mirroring the
+    probe's responsiveness without the wallclock dependency.
 
-    Probing per-leaf cost matters because the leaf eval cost varies
-    by ~50x between value heads (favor ~100µs vs composite_capture_value
-    ~2-5ms — it builds a World + ray-casts every fleet). Without the
-    leaf probe the cap stayed sized for favor and composite blew the
-    1000ms env budget on heavy turns (max 1292ms vs v15 / v9_scavenge,
-    2026-05-17 A/B).
+    `me`, `gamma` retained for signature compatibility with prior
+    probe-based call sites (chooser_trajectory mirrors this same
+    function).
     """
-    favor_fn = select_favor_fn()
-    t0 = time.perf_counter()
-    probe = fs_clone(snap_base)
-    probe = fs_step(probe, [[] for _ in range(num_seats)], in_place=True)
-    per_step_ms = max(0.05, (time.perf_counter() - t0) * 1000.0)
-
-    t0 = time.perf_counter()
-    favor_fn(probe.state[me].observation, me, num_seats, gamma=gamma)
-    per_leaf_ms = max(0.05, (time.perf_counter() - t0) * 1000.0)
-
+    del me, gamma  # signature-compat; no longer probed
+    n_fleets = _state_n_fleets(snap_base)
+    per_step_ms = BASELINE_STEP_BASE_MS + BASELINE_STEP_PER_FLEET_MS * n_fleets
+    per_leaf_ms = BASELINE_LEAF_BASE_MS + BASELINE_LEAF_PER_FLEET_MS * n_fleets
     avg_K = (min_horizon + max_horizon) / 2.0
     per_cand_ms = (per_step_ms * avg_K + per_leaf_ms) * PER_CANDIDATE_SAFETY
     budget = wallclock_ms - RESERVED_OVERHEAD_MS
@@ -152,22 +180,19 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     if not prerank:
         return [], []
 
-    n_aff, per_cand_ms = affordable_validate_cap(
+    n_aff, _per_cand_ms = affordable_validate_cap(
         snap_base, me, num_seats, max_horizon, wallclock_ms,
         min_horizon, gamma,
     )
     top = prerank[: min(N_VALIDATE, n_aff)]
 
-    deadline = time.perf_counter() + wallclock_ms / 1000.0
-    # Pre-bail headroom: don't ENTER a candidate that would push us past
-    # the deadline. score_action is uninterruptible (runs the full K-step
-    # rollout once entered), so checking AT the deadline is too late.
-    # Closes the long-tail max-turn-ms overrun seen in the 2026-05-17 A/B.
-    safe_deadline = deadline - (per_cand_ms / 1000.0)
+    # Count-based budget only (Phase 1, 2026-05-22): n_aff IS the cap;
+    # the prior wallclock pre-bail at `safe_deadline` was a second
+    # non-determinism source (loop exited at varying indexes across
+    # runs depending on probe timing). With deterministic per_cand_ms
+    # and N_VALIDATE bound the budget math is enough.
     validated: list[tuple] = []
     for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
-        if time.perf_counter() > safe_deadline:
-            break
         sid_ = int(src.id)
         if int(wait_N) > 0:
             if sid_ in reserved_for_new_commits:

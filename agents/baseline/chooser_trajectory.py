@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import math
 import os
-import time
 
 from agents.baseline.chooser import affordable_validate_cap, opp_actions_for_snap
 from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn
@@ -778,8 +777,6 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     if not prerank:
         return [], []
 
-    deadline = time.perf_counter() + wallclock_ms / 1000.0
-
     # v4 (default, 2026-05-17 PM): Δ-from-idle-baseline scoring with
     # favor leaf. Replaces v3's binary owner-check leaf — see concept
     # at knowledge-base/concepts/probability-of-winning-framework.md.
@@ -810,30 +807,26 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             snap_base, me, num_seats, max_horizon_seen, favor_fn, gamma,
         )
 
-    # Wallclock budgeting (mirror composite chooser pattern). Probe per-
-    # step + per-leaf cost to size the safe_deadline pre-bail. The hard
-    # cap stays at N_VALIDATE (generous); safe_deadline is the real
-    # binder so score_candidate_v4's uninterruptible rollout never
-    # starts past the cliff. Closes the n=64 A/B max=2416ms overrun
-    # (1000ms env cap) without the N_VALIDATE=60 candidate-breadth
-    # regression (57.8% vs pre-fix 65.6% in the post-N=60 A/B).
+    # Count-based budget (Phase 1, 2026-05-22). The prior wallclock
+    # safe_deadline pre-bail was non-deterministic across runs: per-run
+    # timing jitter shifted per_cand_ms → safe_deadline moved → loop
+    # exited at varying cand_count → different chosen action for same
+    # seed. Now: deterministic per_cand_ms from constants → n_aff IS
+    # the budget, N_VALIDATE the generous upper bound. The kinematic
+    # table makes per-candidate cost predictable enough for this.
     cap = N_VALIDATE
-    per_cand_ms = 0.0
     if not use_v3:
-        remaining_ms = max(50.0, (deadline - time.perf_counter()) * 1000.0)
-        _, per_cand_ms = affordable_validate_cap(
-            snap_base, me, num_seats, max_horizon, remaining_ms,
+        n_aff, _per_cand_ms = affordable_validate_cap(
+            snap_base, me, num_seats, max_horizon, wallclock_ms,
             min_horizon, gamma,
         )
-    safe_deadline = deadline - (per_cand_ms / 1000.0)
+        cap = min(N_VALIDATE, n_aff)
 
     scored: list[tuple] = []
     solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0
     cand_count = 0
     for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
         if cand_count >= cap:
-            break
-        if not use_v3 and time.perf_counter() > safe_deadline:
             break
         # Skip candidates the ledger has already accounted for. A
         # wait_N>0 candidate from a src with a surviving commit would
@@ -898,10 +891,25 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         os.environ.get("BASELINE_JOINT", "0").strip() == "1"
         and (int(num_seats) <= 2 or joint_4p_allowed)
     )
-    if (joint_enabled and not use_v3
-            and time.perf_counter() <= safe_deadline):
+    if joint_enabled and not use_v3:
         # Group prerank by target_id. Take top-K solo candidates per
-        # target by cheap_delta; pair-enumerate.
+        # target by cheap_delta; pair-enumerate. Count-based budget
+        # (Phase 1, 2026-05-22): JOINT_MAX_PAIRS / JOINT_TOP_K_PER_TARGET
+        # are the deterministic bound; the prior wallclock safe_deadline
+        # gates were a non-determinism source (varying joint count
+        # across runs of the same seed). The effective limit also
+        # shares the per-turn cost budget with solo via `joint_limit`
+        # (each joint scoring is one K-step rollout, ~per_cand_ms cost):
+        # without sharing, JOINT_MAX_PAIRS=60 + solo n_aff=12 blew the
+        # 1000ms cap on the 2026-05-22 post-Phase-1 bench (orbitfix_kt
+        # seed-0 p95=4425ms). joint_limit halves the cap for joints by
+        # default — env-tunable via BASELINE_JOINT_BUDGET_FRAC.
+        joint_budget_frac = float(
+            os.environ.get("BASELINE_JOINT_BUDGET_FRAC", "0.5"),
+        )
+        joint_limit = max(
+            2, min(JOINT_MAX_PAIRS, int(cap * joint_budget_frac)),
+        )
         by_tgt: dict[int, list] = {}
         for cd, src, tgt, ships, angle, eta_hint, ph, wn in prerank:
             if int(wn) != 0:
@@ -918,14 +926,10 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             cands.sort(key=lambda c: -c[0])
             top = cands[:JOINT_TOP_K_PER_TARGET]
             for i in range(len(top)):
-                if joint_count >= JOINT_MAX_PAIRS:
-                    break
-                if time.perf_counter() > safe_deadline:
+                if joint_count >= joint_limit:
                     break
                 for j in range(i + 1, len(top)):
-                    if joint_count >= JOINT_MAX_PAIRS:
-                        break
-                    if time.perf_counter() > safe_deadline:
+                    if joint_count >= joint_limit:
                         break
                     ca, cb = top[i], top[j]
                     if int(ca[1].id) == int(cb[1].id):

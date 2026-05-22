@@ -88,3 +88,38 @@ def test_choose_emit_format_is_env_action_shape():
         assert isinstance(angle, float)
         assert isinstance(ships, int)
         assert ships >= 1
+
+
+def test_affordable_cap_is_deterministic_across_calls():
+    """Phase 1, 2026-05-22: affordable_validate_cap no longer probes
+    wallclock — two calls with identical args must return identical
+    (cap, per_cand_ms). Pre-Phase-1 this assertion fails when the
+    machine has any timing jitter at all (the probe path used
+    time.perf_counter() to measure per-step and per-leaf cost).
+    """
+    _obs, snap = _snapshot_from_seed(7)
+    out_a = affordable_validate_cap(
+        snap, me=0, num_seats=2,
+        max_horizon=40, wallclock_ms=600.0, min_horizon=25, gamma=0.99,
+    )
+    out_b = affordable_validate_cap(
+        snap, me=0, num_seats=2,
+        max_horizon=40, wallclock_ms=600.0, min_horizon=25, gamma=0.99,
+    )
+    assert out_a == out_b
+
+
+def test_agent_is_deterministic_across_calls():
+    """Phase 1, 2026-05-22: end-to-end determinism on a real obs. The
+    same observation passed twice must produce the same move list. Pre-
+    Phase-1, the wallclock-based candidate cap drifted across calls and
+    different candidates were evaluated → different chosen move. The
+    diff_v3 trace (2026-05-22) saw 128/210 turns diverge between
+    repeat runs of the same seed.
+    """
+    from agents.baseline.main import agent
+
+    obs, _snap = _snapshot_from_seed(42)
+    out_a = agent(obs)
+    out_b = agent(obs)
+    assert out_a == out_b
