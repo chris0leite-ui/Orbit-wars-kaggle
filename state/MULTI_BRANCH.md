@@ -109,6 +109,7 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
 | Closed-form ROI as full chooser replacement | `claude/audit-workflow-performance-btjeK` | 2026-05-19 | `chooser_roi.py` Tier 1+2: 0/32 vs v7_0 / v4_planner / v3.5.1 panel. Keep code as opt-in research (`BASELINE_CHOOSER=roi`); don't ship as default |
 | Asymmetric Tier-1 baseline chooser | `claude/reverse-engineer-seat-geometry-BPJKs` (PR #31, merged to main) | 2026-05-18 | CRN-violating, 0/32 panel, reverted in commit `f28c9fc` |
 | v9-v15 chooser saturation iteration | recover-main-foundations | 2026-05-16 | Rule 37 (3-variant cap) hit at v16-v20; chooser-axis structural ceiling ~μ=1120 |
+| Opening-side hold-aware (`opening_planner` continuous gate) | `claude/strategy-axis-decision-3437` (commit 9a19306, reverted) | 2026-05-24 | Gate 5 vs orbitfix: 1/16 (unscoped) → 2/16 (scoped) vs 4/16 LP-only baseline. Mechanism doesn't move MILP picks beneficially; closed-form value formula `production × hold_dur × γ^t` too coarse for ship-count discrimination. Investigation surfaced real latent bug (`lp-pending-not-deducted-during-opening-fallthrough` in friction.md) — separate axis, not yet fixed. Postmortem: `audit/2026-05-24-postmortem-hold-aware-opening-falsified.md`. |
 
 ---
 

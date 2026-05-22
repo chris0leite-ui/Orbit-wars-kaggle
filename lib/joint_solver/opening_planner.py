@@ -25,7 +25,6 @@ Once step >= OPENING_HORIZON, mpc.py falls through to the Phase 4 LP.
 from __future__ import annotations
 
 import math
-import os as _os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -200,54 +199,6 @@ def _predict_opp_ships_at_target(tgt, arrival_step: int, world, my_id: int,
     return best
 
 
-def _hold_aware_enabled() -> bool:
-    """Read env at call time (lazy) — mirror of lp_outcome's
-    `_hold_aware_enabled`. Unified gate: a single `LP_HOLD_AWARE=1`
-    controls hold-aware behaviour in both the opening_planner and the
-    post-step-30 LP. Default OFF.
-    """
-    return _os.environ.get("LP_HOLD_AWARE", "0") == "1"
-
-
-def _predict_opp_counter(planet_id: int, world, my_id: int
-                         ) -> tuple[int | None, int]:
-    """Predict the opp counter-fire to `planet_id` if we capture it.
-
-    Mirrors `lib.joint_solver.lp_outcome._predict_opp_counter` —
-    copied (not imported) to avoid an opening_planner ↔ lp_outcome
-    import cycle. Returns `(counter_eta, counter_ships)`: the closest
-    opp source by flight time using `fleet_speed(opp.ships)`. Tie-break
-    by ship count descending (conservative worst-case for our hold).
-    """
-    target = world.planets_by_id.get(int(planet_id))
-    if target is None:
-        return None, 0
-    tx, ty = float(target.x), float(target.y)
-
-    best_eta: int | None = None
-    best_ships: int = 0
-    for p in world.planets_by_id.values():
-        if int(p.id) == int(planet_id):
-            continue
-        if int(p.owner) == int(my_id) or int(p.owner) == -1:
-            continue
-        if int(p.ships) <= 0:
-            continue
-        dx = tx - float(p.x)
-        dy = ty - float(p.y)
-        dist = (dx * dx + dy * dy) ** 0.5
-        v = fleet_speed(int(p.ships))
-        if v <= 0:
-            continue
-        eta = int(math.ceil(dist / v))
-        if best_eta is None or eta < best_eta or (
-            eta == best_eta and int(p.ships) > best_ships
-        ):
-            best_eta = eta
-            best_ships = int(p.ships)
-    return best_eta, best_ships
-
-
 def _expected_hold_duration(tgt, arrival: int, capture_residual: int,
                             world, model, my_id: int) -> int:
     """Closed-form expected hold duration in ticks AFTER capture.
@@ -270,30 +221,9 @@ def _expected_hold_duration(tgt, arrival: int, capture_residual: int,
         opp won't typically spend their first action attacking us.
     """
     # Stage 1: ship-count check.
-    #
-    # Hold-aware ON: use the closest reachable opp source's ships
-    # as the gate threshold, BUT scoped to the same OPP_RESPONSE_LAG
-    # window the legacy gate uses (distant slow opp sources that
-    # arrive too late to contest our hold should not gate the capture).
-    # Without this scope, ON over-rejects vs OFF → opening_planner
-    # returns empty too often → falls through to LP without pending-
-    # aware budget → accumulates duplicate commits.
-    hold_from_counter: int | None = None
-    if _hold_aware_enabled():
-        counter_eta, counter_ships = _predict_opp_counter(
-            int(tgt.id), world, int(my_id),
-        )
-        # Scope to OPP_RESPONSE_LAG window (mirror legacy filter).
-        if counter_eta is not None and int(counter_eta) > int(arrival) + OPP_RESPONSE_LAG:
-            counter_eta, counter_ships = None, 0
-        if counter_eta is not None and int(counter_ships) >= int(capture_residual) + 3:
-            return 0
-        if counter_eta is not None:
-            hold_from_counter = max(0, int(counter_eta) - int(arrival))
-    else:
-        opp_force = _predict_opp_ships_at_target(tgt, arrival, world, my_id)
-        if opp_force >= int(capture_residual) + 3:
-            return 0
+    opp_force = _predict_opp_ships_at_target(tgt, arrival, world, my_id)
+    if opp_force >= int(capture_residual) + 3:
+        return 0
 
     # Stage 2: eta-delta check (legacy).
     try:
@@ -301,19 +231,13 @@ def _expected_hold_duration(tgt, arrival: int, capture_residual: int,
     except Exception:
         opp_threat_eta = None
     if opp_threat_eta is None:
-        stage2 = max(0, OPENING_T_END - arrival)
-    else:
-        delta = int(opp_threat_eta) - arrival
-        if delta <= 0:
-            return 0
-        if delta >= OPENING_HOLD_WINDOW:
-            stage2 = max(0, OPENING_T_END - arrival)
-        else:
-            stage2 = min(max(0, OPENING_T_END - arrival), 3 * delta)
-
-    if hold_from_counter is not None:
-        return min(stage2, hold_from_counter)
-    return stage2
+        return max(0, OPENING_T_END - arrival)
+    delta = int(opp_threat_eta) - arrival
+    if delta <= 0:
+        return 0
+    if delta >= OPENING_HOLD_WINDOW:
+        return max(0, OPENING_T_END - arrival)
+    return min(max(0, OPENING_T_END - arrival), 3 * delta)
 
 
 def _target_already_claimed(tgt, base_arrivals, my_id: int,

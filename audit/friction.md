@@ -994,5 +994,7 @@ postmortem.
   `_predict_opp_counter` in opening_planner to OPP_RESPONSE_LAG=4
   window (mirror legacy gate) so opening_planner doesn't over-reject;
   longer-term, enable LP_PENDING_AWARE_BUDGET=1 or de-dup in
-  commit_persistent.
+  commit_persistent. **Discovered during** the 9a19306-then-reverted
+  investigation (Phase ζ.v2-opening falsified at Gate 5 = 2/16);
+  the bug remains latent in tree, not yet fixed.
 
