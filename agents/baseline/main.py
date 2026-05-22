@@ -859,6 +859,16 @@ def agent(obs, configuration=None):
         return []
 
     world = World.from_obs(obs_d)
+
+    if os.environ.get("KINEMATIC_TABLE_ENABLED", "").strip().lower() in (
+        "1", "true", "on", "yes",
+    ):
+        try:
+            from lib import kinematic_table as _kt
+            _kt.begin_turn(world)
+        except Exception:
+            pass
+
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
     num_seats = _num_seats(planets, fleets)

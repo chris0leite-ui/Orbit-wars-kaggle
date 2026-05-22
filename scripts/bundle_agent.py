@@ -44,6 +44,7 @@ DEFAULT_LIB_ORDER = [
     "geometry",
     "fleet",
     "orbit",
+    "kinematic_table",
     "aim",
     "combat",
     "world_model",
