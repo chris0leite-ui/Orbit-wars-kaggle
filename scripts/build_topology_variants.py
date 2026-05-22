@@ -72,6 +72,14 @@ LAMBDA_W_DEFAULT_RE = re.compile(
     re.MULTILINE,
 )
 
+# ITEM 5: hardcode the LP_SOLVER gate in the dispatcher (lp_outcome.py
+# inside solve_outcome_aware). Original line:
+#     if _os.environ.get("LP_SOLVER", "milp").strip().lower() == "dual":
+# Replace with `if True:` (dual on) or `if False:` (milp on) per variant.
+LP_SOLVER_DISPATCH_RE = re.compile(
+    r'if _os\.environ\.get\("LP_SOLVER", "milp"\)\.strip\(\)\.lower\(\) == "dual":'
+)
+
 
 def _replace_topology(src: str, retval: str) -> str:
     """Replace each topology lazy `_*_enabled()` body with `return <retval>`."""
@@ -106,6 +114,17 @@ def _replace_lambda_w(src: str, value: float) -> str:
         f"LAMBDA_W_DEFAULT = {value}  # hardcoded by build_topology_variants.py",
         src,
     )
+
+
+def _replace_lp_solver(src: str, use_dual: bool) -> str:
+    """Replace the LP_SOLVER env-var check with a literal True/False.
+
+    Returns src unchanged if the dispatcher pattern isn't found (e.g.,
+    in older bundles that predate ITEM 5).
+    """
+    replacement = "if True:  # hardcoded LP_SOLVER=dual" if use_dual \
+                  else "if False:  # hardcoded LP_SOLVER=milp"
+    return LP_SOLVER_DISPATCH_RE.sub(replacement, src)
 
 
 def _apply_all(src: str, *, topo: str, smooth: str, maximin: str,
@@ -183,6 +202,19 @@ def main() -> int:
                                 maximin="False", lambda_w=lw))
         lambda_paths.append((p, lw))
 
+    # ITEM 5 (LP_SOLVER variants): identical to α+β stacked but with
+    # the LP_SOLVER=dual dispatcher hardcoded ON / OFF. Use these to
+    # A/B the dual decomposition inner vs MILP on real games.
+    dual_paths: list[tuple[Path, bool]] = []
+    for use_dual in (True, False):
+        suffix = "dual" if use_dual else "milp"
+        name = f"alpha_beta_solver_{suffix}.py"
+        p = OUT_ON.parent / name
+        body = _apply_all(src, topo="True", smooth="True", maximin="False")
+        body = _replace_lp_solver(body, use_dual=use_dual)
+        p.write_text(body)
+        dual_paths.append((p, use_dual))
+
     # Verify all bundles load and report the right hardcoded value.
     base_checks = [
         (OUT_ON,      True,  False, False, None),
@@ -195,7 +227,11 @@ def main() -> int:
         (maximin_off, True,  True,  False, None),
     ]
     lambda_checks = [(p, True, True, False, lw) for p, lw in lambda_paths]
-    for path, topo, smooth, maximin, expected_lambda in base_checks + lambda_checks:
+    # dual_paths share α+β=on, maximin=off; λ_W default (0.3).
+    dual_checks = [(p, True, True, False, None) for p, _ in dual_paths]
+    for path, topo, smooth, maximin, expected_lambda in (
+        base_checks + lambda_checks + dual_checks
+    ):
         import importlib.util
         spec = importlib.util.spec_from_file_location(path.stem, str(path))
         m = importlib.util.module_from_spec(spec)
