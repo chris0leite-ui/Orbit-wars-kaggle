@@ -47,7 +47,7 @@ print('outcome=', result.outcome, 'rewards=', result.rewards, flush=True)
         check=False,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        timeout=180,
+        timeout=600,
     )
 
 
