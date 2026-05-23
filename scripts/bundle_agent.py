@@ -111,6 +111,14 @@ DEFAULT_LIB_ORDER = [
     # lib.fleet/trajectory/world_model — all already in DEFAULT_LIB_ORDER
     # above.
     "joint_solver/opening_planner",
+    # 2026-05-23: predicate from analytical track. `is_winning_state_if_owned`
+    # is the closed-form 2P winning-state gate used by buildup_planner's
+    # STRIKE predicate, FINISHER, and DOGPILE. Pure closed-form — depends
+    # only on world + production accounting. Must be in the bundle so the
+    # `from lib.joint_solver.predicate import is_winning_state_if_owned`
+    # lines in agents/buildup_planner/{predicates,endgame}.py can be stripped
+    # and the symbol stays in scope.
+    "joint_solver/predicate",
 ]
 SUBMISSIONS = REPO / "submissions"
 

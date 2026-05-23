@@ -308,7 +308,7 @@ def _verify_intercept(
     tgt_sweep = cache.sweep(tgt, arr_j)
     if tgt_sweep is None:
         return None
-    if not sim.swept_pair_hit(A, B, tgt_sweep[0], tgt_sweep[1], tgt.radius):
+    if not sim.swept_pair_hit_sim(A, B, tgt_sweep[0], tgt_sweep[1], tgt.radius):
         return None
 
     # On every tick j = 0..k-1, verify safety:
@@ -348,7 +348,7 @@ def _verify_intercept(
                 continue
             if p.is_comet and sweep[0] == sweep[1] and sweep[0][0] < 0:
                 continue  # comet not yet placed
-            if sim.swept_pair_hit(A_j, B_j, sweep[0], sweep[1], p.radius):
+            if sim.swept_pair_hit_sim(A_j, B_j, sweep[0], sweep[1], p.radius):
                 return None
 
     return Shot(

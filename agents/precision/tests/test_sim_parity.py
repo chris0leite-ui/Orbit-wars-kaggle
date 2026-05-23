@@ -61,7 +61,7 @@ def test_planet_rotation_matches_engine():
             if p[0] not in init_by_id:
                 continue  # comet
             ip = init_by_id[p[0]]
-            if not sim.is_orbiting(ip[2], ip[3], ip[4]):
+            if not sim.is_orbiting_sim(ip[2], ip[3], ip[4]):
                 continue
             # Engine at end of step K applies rotation K times.
             # observation at step_idx shows the state AFTER step_idx-1's processing
@@ -94,7 +94,7 @@ def test_planet_rotation_relative_prediction():
             for p in obs_now:
                 if p[0] not in obs_future:
                     continue
-                if not sim.is_orbiting(p[2], p[3], p[4]):
+                if not sim.is_orbiting_sim(p[2], p[3], p[4]):
                     continue
                 pred_x, pred_y = sim.predict_planet_pos(p[2], p[3], p[4], omega, h, obs_step)
                 act = obs_future[p[0]]
@@ -115,7 +115,7 @@ def test_swept_pair_hit_matches_engine():
         P0 = (rng.uniform(0, 100), rng.uniform(0, 100))
         P1 = (P0[0] + rng.uniform(-3, 3), P0[1] + rng.uniform(-3, 3))
         r = rng.uniform(1.0, 4.0)
-        a = sim.swept_pair_hit(A, B, P0, P1, r)
+        a = sim.swept_pair_hit_sim(A, B, P0, P1, r)
         b = engine.swept_pair_hit(A, B, P0, P1, r)
         assert a == b, f"{A} {B} {P0} {P1} {r}: ours={a}, engine={b}"
 
@@ -157,7 +157,7 @@ def test_action_landed_static_target():
     other_planets = [p for p in obs0.planets if p[1] != 0]
     static_others = [
         p for p in other_planets
-        if not sim.is_orbiting(p[2], p[3], p[4])
+        if not sim.is_orbiting_sim(p[2], p[3], p[4])
     ]
     if not my_planets or not static_others:
         return  # skip if seed didn't yield this; try with another seed in real run

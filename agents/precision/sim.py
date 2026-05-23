@@ -51,7 +51,7 @@ def ships_for_speed(target_v: float, max_speed: float = MAX_SHIP_SPEED) -> int:
     return s_int
 
 
-def is_orbiting(planet_x: float, planet_y: float, planet_radius: float) -> bool:
+def is_orbiting_sim(planet_x: float, planet_y: float, planet_radius: float) -> bool:
     """Engine line 540: orbiting iff orbital_radius + planet_radius < 50."""
     orb_r = math.hypot(planet_x - CENTER, planet_y - CENTER)
     return orb_r + planet_radius < ROTATION_RADIUS_LIMIT
@@ -111,7 +111,7 @@ def predict_planet_pos(
     steps_ahead=0 returns observed position. `obs_step` is the current obs.step
     value; defaults to 1 (normal-play case where each tick rotates by +1).
     """
-    if not is_orbiting(observed_x, observed_y, planet_radius):
+    if not is_orbiting_sim(observed_x, observed_y, planet_radius):
         return (observed_x, observed_y)
     orb_r = math.hypot(observed_x - CENTER, observed_y - CENTER)
     cur_angle = math.atan2(observed_y - CENTER, observed_x - CENTER)
@@ -142,7 +142,7 @@ def planet_sweep_segment(
     return p_old, p_new
 
 
-def point_to_segment_distance(
+def point_to_segment_distance_sim(
     p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]
 ) -> float:
     """Engine line 34-43. Closest point on segment a->b to point p."""
@@ -155,7 +155,7 @@ def point_to_segment_distance(
     return math.hypot(p[0] - cx, p[1] - cy)
 
 
-def swept_pair_hit(
+def swept_pair_hit_sim(
     A: tuple[float, float],
     B: tuple[float, float],
     P0: tuple[float, float],
@@ -189,7 +189,7 @@ def segment_crosses_sun(
     for safety. Margin defaults to 0 (engine match); pass SUN_SAFETY_MARGIN
     for our launches to avoid round-off-destruction.
     """
-    return point_to_segment_distance((CENTER, CENTER), a, b) < SUN_RADIUS + margin
+    return point_to_segment_distance_sim((CENTER, CENTER), a, b) < SUN_RADIUS + margin
 
 
 def segment_oob(a: tuple[float, float], b: tuple[float, float]) -> bool:

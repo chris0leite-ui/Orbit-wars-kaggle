@@ -88,7 +88,7 @@ def test_landing_rate_static_targets():
         my_planets = [p for p in world["planets"] if p.owner == 0]
         static_targets = [
             p for p in world["planets"]
-            if not sim.is_orbiting(p.x, p.y, p.radius)
+            if not sim.is_orbiting_sim(p.x, p.y, p.radius)
             and p.owner != 0
         ]
         if not my_planets or not static_targets:
@@ -145,7 +145,7 @@ def test_landing_rate_orbiting_targets():
         my_planets = [p for p in world["planets"] if p.owner == 0]
         orbiting_targets = [
             p for p in world["planets"]
-            if sim.is_orbiting(p.x, p.y, p.radius)
+            if sim.is_orbiting_sim(p.x, p.y, p.radius)
             and p.owner != 0
         ]
         if not my_planets or not orbiting_targets:
