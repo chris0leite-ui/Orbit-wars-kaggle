@@ -18,6 +18,10 @@ audit/seed-panel/features.json
 # Bundle parity-gate cache — keyed by bundle sha256, regenerable.
 audit/bundle-parity-cache.json
 
+# Wave-probe diagnostic dumps — transient JSON from
+# scripts/_wave_instrument_probe.py, regenerable per run.
+audit/wave_probe/
+
 # Submissions / kernel build artifacts
 submissions/*
 !submissions/.gitkeep
