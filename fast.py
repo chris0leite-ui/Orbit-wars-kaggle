@@ -782,6 +782,31 @@ def cmd_elim_sweep(args: argparse.Namespace) -> int:
     one player alive (opp ended with zero planets AND zero in-flight fleets).
     Score-wins (focal led at turn cap with opp still alive) count as wins but
     NOT as elimination wins."""
+    # Set baseline's full-strength env at the PARENT process BEFORE forking
+    # workers. Reason: agents/baseline/chooser_trajectory.py caches env-var
+    # constants (JOINT_TOP_K, JOINT_MAX_PAIRS, JOINT_AGGR, etc.) at module
+    # import time. Whichever agent loads first in a worker freezes those
+    # values for the worker's lifetime. agents/buildup_planner/consolidation.py
+    # uses os.environ.setdefault, which is RACE-PRONE with load order: if
+    # baseline.main loads first (focal=p1 seat config), it sees defaults and
+    # caches WEAK values; subsequent setdefaults by consolidation.py can't
+    # update the cache. Setting the env in the parent before fork guarantees
+    # all worker processes inherit the full-strength values regardless of
+    # which agent loads first.
+    _baseline_env_defaults = {
+        "BASELINE_JOINT_AGGR":              "1",
+        "BASELINE_JOINT_TOP_K":             "5",
+        "BASELINE_JOINT_MAX_PAIRS":         "60",
+        "BASELINE_REINFORCE_EMIT":          "1",
+        "BASELINE_REINFORCE_ANTICIPATE":    "1",
+        "BASELINE_NEUTRAL_BONUS":           "2.0",
+        "BASELINE_NEUTRAL_EARLY_EXTRA":     "1.5",
+        "BASELINE_NEUTRAL_EARLY_HORIZON":   "50",
+        "BASELINE_ORBITAL_SAFETY":          "1",
+    }
+    for k, v in _baseline_env_defaults.items():
+        os.environ.setdefault(k, v)
+
     focal_name, focal_path = resolve_agent_spec(args.agent)
     opp_name,   opp_path   = resolve_agent_spec(args.vs)
     seeds = list(range(args.seeds))
