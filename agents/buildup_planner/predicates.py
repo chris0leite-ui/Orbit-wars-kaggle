@@ -88,37 +88,69 @@ def evaluate_inflection(world, model, me: int, opp_id: int, *,
     if not my_sources or not opp_targets:
         return None
 
-    # Enumerate subsets size 1 → max_size. We return the earliest-T plan
-    # across all subsets, so we have to look at every subset for every T
-    # before declaring "earliest." But we can prune by T-first: for each
-    # T, try every subset; first feasible candidate at that T wins (and
-    # earlier-T always beats later-T).
+    # Wallclock guard (cheap subset-level prune). Compute my total
+    # available ships ONCE: that's the upper bound on what I can throw
+    # at any subset in this turn (no production growth while we're
+    # mid-decision). For each subset S, if even the CURRENT opp garrison
+    # sum exceeds my_total / margin, the subset is infeasible at every
+    # future T too — model.ships_at(P, T) >= P.ships for opp-owned P
+    # when no friendly capture is en route. (The edge case where a
+    # friendly fleet is inbound to P is a strike candidate by other
+    # means; pruning it here just misses ONE subset, which is acceptable
+    # for Step-2 observation-only. Step 3 strike re-validation closes
+    # any remaining gap.)
+    my_total_ships = sum(int(s.ships) for s in my_sources)
+
     subsets: list[tuple] = []
     for size in range(1, max_size + 1):
         for S in combinations(opp_targets, size):
+            opp_total_now = sum(int(p.ships) for p in S)
+            if opp_total_now * float(margin) >= my_total_ships:
+                continue
             subsets.append(S)
+    if not subsets:
+        return None
+
+    # Memoize per-(target_id, arrival_step) shot computations: every
+    # subset containing target P recomputes the same shot table at the
+    # same T otherwise. With |S|=1 + |S|=2 enumeration, each (P, T)
+    # gets visited ~(1 + (n_opp - 1)) times; caching turns that into 1.
+    # Key = (tgt_id, T_abs); value = (sum_of_ship_counts, list_of_shots,
+    # opp_garrison_at_T_offset).
+    shot_cache: dict[tuple[int, int], tuple[int, list, float | None]] = {}
+
+    def _per_target(tgt_pv, T_abs: int, T_offset: int):
+        key = (int(tgt_pv.id), int(T_abs))
+        cached = shot_cache.get(key)
+        if cached is not None:
+            return cached
+        shots_here: list = []
+        total = 0
+        for src_pv in my_sources:
+            if src_pv.id == tgt_pv.id:
+                continue
+            shot = intercept.find_shot_for_arrival(
+                src_pv, tgt_pv, T_abs, world_d, cache=cache
+            )
+            if shot is None:
+                continue
+            shots_here.append(shot)
+            total += int(shot.ship_count)
+        garrison = model.ships_at(int(tgt_pv.id), T_offset)
+        result = (total, shots_here, garrison)
+        shot_cache[key] = result
+        return result
 
     cur_step = int(world.step)
     for T_offset in range(ETA_MIN, horizon + 1):
         T_abs = cur_step + T_offset
         for S in subsets:
-            # Per-target feasibility + accumulate shots.
             shots_for_S: list = []
             feasible = True
             for tgt_pv in S:
-                shots_for_P: list = []
-                total_ships = 0
-                for src_pv in my_sources:
-                    if src_pv.id == tgt_pv.id:
-                        continue
-                    shot = intercept.find_shot_for_arrival(
-                        src_pv, tgt_pv, T_abs, world_d, cache=cache
-                    )
-                    if shot is None:
-                        continue
-                    shots_for_P.append(shot)
-                    total_ships += int(shot.ship_count)
-                opp_garrison = model.ships_at(int(tgt_pv.id), T_offset)
+                total_ships, shots_for_P, opp_garrison = _per_target(
+                    tgt_pv, T_abs, T_offset
+                )
                 if opp_garrison is None:
                     feasible = False
                     break
