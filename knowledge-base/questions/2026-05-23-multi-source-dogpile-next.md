@@ -38,6 +38,27 @@ currently passes its stated gate; whether the next move is
 dogpile, port to live ladder, or a completely different track
 (physics modeling sweep / Konbu17 ML / etc.) needs PI direction.
 
+**PI direction (2026-05-23 session-end)**: climb rungs 2-3:
+
+1. **Rung 2** — run `scripts/random_elim_gate.py
+   agents/lagrange_simple/main.py` BUT with `starter` substituted for
+   `random` in `_play_one`. Expected: likely 16/16 already (starter
+   is only marginally stronger than random). If it fails, fix the
+   surfaced bug class FIRST before proceeding.
+2. **Rung 3** — add multi-source dogpile (~50 LOC in `dual.py`):
+   per `(target, arrival_step)` bucket, greedy-add candidates by
+   reduced cost per ship until cumulative ships > defense_at_arrival;
+   commit subset if subset reduced cost > 0. Then run the gate vs
+   `agents/baseline`. Target: 100% ELIM at n=16. Iterate until pass.
+
+Goal for the next session: pass rung 3 (100% ELIM vs baseline). Both
+rungs preserve the Lagrangian structure. The dogpile addition requires
+per-source PARTIAL candidates (ships < solo-min), which is the only
+non-trivial enumeration change.
+
+Rungs 4-5 (analytical_phase_c, composite_a2_hybrid) are explicitly
+NOT this session's targets; queued for the session after.
+
 **Related**:
 - `knowledge-base/thoughts/2026-05-23-simplest-lagrangian-shadow-
   prices.md` (the full design walkthrough)
