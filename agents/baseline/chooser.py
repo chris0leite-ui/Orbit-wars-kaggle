@@ -174,17 +174,29 @@ def build_idle_baseline(snap_base, me: int, num_seats: int,
 def score_action(snap_base, me: int, num_seats: int,
                  src_id: int, angle: float, ships: int,
                  horizon: int, baseline_favors: list[float],
-                 wait_N: int, gamma: float) -> float:
+                 wait_N: int, gamma: float,
+                 baseline_horizon: int | None = None) -> float:
     """Δ favor at horizon = leaf(my_action@wait_N) − baseline.
 
-    Phase 4 (2026-05-22): when `BASELINE_OPP_SMART_LEAF=1`, the final
-    rollout step uses `top_tier_mirror_policy` instead of lite_greedy
-    so the leaf reflects a smart-opp reactive defense. Mirrored in
-    `build_idle_baseline` so the Δ subtraction stays calibrated.
+    Phase 4 (2026-05-22, calibrated 2026-05-23): when
+    `BASELINE_OPP_SMART_LEAF=1`, the smart-opp swap fires at the
+    ABSOLUTE rollout step `baseline_horizon - WINDOW` onward. This is
+    the SAME absolute step the baseline build used, so candidates at
+    horizon < baseline_horizon - WINDOW never see smart-opp and their
+    Δ = leaf - baseline_favors[h] stays apples-to-apples
+    (both endpoints used lite_greedy throughout for steps < the absolute
+    window). The pre-2026-05-23 code anchored the window per-candidate
+    horizon, which biased every shorter-horizon candidate's Δ.
+
+    `baseline_horizon` defaults to `horizon` for callers that didn't
+    pass it (pre-Phase-4 callers); in that case the smart-opp swap fires
+    at the candidate's own tail, matching the older behaviour.
     """
+    if baseline_horizon is None:
+        baseline_horizon = horizon
     favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
-    leaf_window_start = max(0, horizon - BASELINE_OPP_SMART_LEAF_WINDOW)
+    leaf_window_start = max(0, baseline_horizon - BASELINE_OPP_SMART_LEAF_WINDOW)
     for step_i in range(horizon):
         if snap.fake_env.done:
             break
@@ -273,6 +285,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
             snap_base, me, num_seats,
             int(src.id), float(angle), int(ships),
             int(horizon), baseline_favors, int(wait_N), gamma,
+            baseline_horizon=int(max_horizon),
         )
         if delta > 0:
             validated.append((delta, src, tgt, ships, angle, wait_N))

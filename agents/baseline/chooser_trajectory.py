@@ -540,6 +540,7 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                        horizon: int,
                        skip_admissibility: bool = False,
                        wait_N: int = 0,
+                       baseline_horizon: int | None = None,
                        ) -> tuple[float, str, int | None]:
     """v4 scoring: same admissibility filter + fast_sim rollout as v3,
     but the leaf is `favor_fn` instead of a binary owner-check, and the
@@ -599,13 +600,18 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     if _ME_DEFENDS_ENABLED:
         me_defense_emits = _me_defensive_action(snap, me)
 
-    leaf_window_start = max(0, horizon - BASELINE_OPP_SMART_LEAF_WINDOW)
+    # Phase 4 (2026-05-23, calibrated): anchor the smart-opp window at
+    # the ABSOLUTE step `baseline_horizon - WINDOW`. baseline_favors[h]
+    # was built with the smart-opp swap firing at the same absolute
+    # step in build_trajectory_baseline. Candidates with horizon <
+    # baseline_horizon - WINDOW never enter the smart-opp window —
+    # their leaf is lite_greedy throughout, matching baseline_favors[h]
+    # which is also lite_greedy at that h. Δ stays apples-to-apples.
+    bh = horizon if baseline_horizon is None else int(baseline_horizon)
+    leaf_window_start = max(0, bh - BASELINE_OPP_SMART_LEAF_WINDOW)
     for t in range(horizon):
         if snap.fake_env.done:
             break
-        # Phase 4 (2026-05-22): smart-opp leaf reaction in the FINAL
-        # window of rollout steps. baseline_favors[horizon] was built
-        # with the same swap so the Δ subtraction stays calibrated.
         is_leaf_step = (t >= leaf_window_start)
         actions = opp_actions_for_step(
             snap, me, num_seats, smart_leaf=is_leaf_step,
@@ -634,6 +640,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
                               favor_fn, gamma: float,
                               horizon: int,
                               skip_admissibility: bool = False,
+                              baseline_horizon: int | None = None,
                               ) -> tuple[float, str]:
     """Direction B: score a JOINT candidate of multiple launches in one
     fast_sim rollout. `launches` is a list of
@@ -688,12 +695,13 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         me_defense_emits = _me_defensive_action(snap, me)
     earliest_inject_t = min(inject_at.keys()) if inject_at else -1
 
-    leaf_window_start = max(0, horizon - BASELINE_OPP_SMART_LEAF_WINDOW)
+    # Phase 4 (2026-05-23, calibrated): same absolute-step anchor as
+    # score_candidate_v4. See comment there.
+    bh = horizon if baseline_horizon is None else int(baseline_horizon)
+    leaf_window_start = max(0, bh - BASELINE_OPP_SMART_LEAF_WINDOW)
     for t in range(horizon):
         if snap.fake_env.done:
             break
-        # Phase 4 (2026-05-22): smart-opp leaf reaction in the FINAL
-        # window of rollout steps — same swap as score_candidate_v4.
         is_leaf_step = (t >= leaf_window_start)
         actions = opp_actions_for_step(
             snap, me, num_seats, smart_leaf=is_leaf_step,
@@ -937,6 +945,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 horizon=effective_horizon,
                 skip_admissibility=skip_filter,
                 wait_N=int(wait_N),
+                baseline_horizon=int(baseline_horizon),
             )
             if status == "scored" and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))
@@ -1025,6 +1034,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         snap_base, launches, me, num_seats, world,
                         baseline_favors, favor_fn, gamma,
                         horizon=jh, skip_admissibility=skip_filter,
+                        baseline_horizon=int(baseline_horizon),
                     )
                     joint_count += 1
                     if j_status == "scored" and j_score > 0.0:

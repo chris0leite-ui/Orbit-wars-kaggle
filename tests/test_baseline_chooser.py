@@ -245,3 +245,53 @@ def test_opp_smart_leaf_on_runs_without_crash():
             os.environ.pop("BASELINE_OPP_SMART_LEAF", None)
         else:
             os.environ["BASELINE_OPP_SMART_LEAF"] = saved
+
+
+def test_phase4_calibration_anchored_at_baseline_horizon():
+    """Phase 4 calibration fix (2026-05-23): the smart-opp leaf swap
+    must fire at the SAME absolute step (baseline_horizon - WINDOW) in
+    BOTH build_idle_baseline AND score_action, so Δ = leaf -
+    baseline_favors[h] stays apples-to-apples.
+
+    Test contract: score_action(horizon=H, baseline_horizon=BH) with
+    H < BH - WINDOW should be bit-identical between BASELINE_OPP_SMART_LEAF
+    ON and OFF (the candidate's rollout never enters the smart window).
+    Pre-fix, the candidate's rollout swapped at H - WINDOW (its own
+    tail) while the baseline swapped at BH - WINDOW, biasing Δ.
+    """
+    import os
+    from agents.baseline.chooser import (
+        build_idle_baseline, score_action, BASELINE_OPP_SMART_LEAF_WINDOW,
+    )
+    saved = os.environ.get("BASELINE_OPP_SMART_LEAF")
+    try:
+        _obs, snap = _snapshot_from_seed(7)
+        BH = 40
+        H = 10  # well below BH - WINDOW (= 35 with default WINDOW=5)
+        assert H < BH - BASELINE_OPP_SMART_LEAF_WINDOW, (
+            "test premise violated: H must be below the absolute smart-leaf window"
+        )
+        favs = build_idle_baseline(snap, me=0, num_seats=2, max_horizon=BH, gamma=0.99)
+
+        os.environ.pop("BASELINE_OPP_SMART_LEAF", None)
+        d_off = score_action(
+            snap, me=0, num_seats=2,
+            src_id=0, angle=0.0, ships=1,
+            horizon=H, baseline_favors=favs, wait_N=0, gamma=0.99,
+            baseline_horizon=BH,
+        )
+        os.environ["BASELINE_OPP_SMART_LEAF"] = "1"
+        d_on = score_action(
+            snap, me=0, num_seats=2,
+            src_id=0, angle=0.0, ships=1,
+            horizon=H, baseline_favors=favs, wait_N=0, gamma=0.99,
+            baseline_horizon=BH,
+        )
+        # H is far below the smart-leaf absolute window, so the candidate's
+        # rollout never enters the smart branch; Δ must match exactly.
+        assert d_off == d_on, f"calibration broken: off={d_off}, on={d_on}"
+    finally:
+        if saved is None:
+            os.environ.pop("BASELINE_OPP_SMART_LEAF", None)
+        else:
+            os.environ["BASELINE_OPP_SMART_LEAF"] = saved
