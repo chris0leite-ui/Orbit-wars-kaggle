@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 
 # Production default: hybrid value head (composite in 2P, A2-favor in 4P).
 # `setdefault` lets local A/B drivers (fast.py) override via env var without
@@ -152,6 +153,21 @@ WAVE_MIN_TOTAL_SHIPS = int(os.environ.get("BASELINE_WAVE_MIN_TOTAL", "60"))
 WAVE_RESERVE_FRAC = float(os.environ.get("BASELINE_WAVE_RESERVE_FRAC", "0.5"))
 WAVE_MARGIN = float(os.environ.get("BASELINE_WAVE_MARGIN", "1.05"))
 
+# Value-head leaf-Δ gate (V3, 2026-05-23). After the wave's mechanical
+# capture check accepts a candidate, optionally run a K-step rollout
+# WITH vs WITHOUT the wave's extras and only fire if Δfavor > epsilon.
+# Same anti-pattern as triples-extension and closed-form-ROI both
+# previously falsified — Rule 40 modeling-correctness fix routes the
+# joint action through the value head instead of tuning thresholds.
+# Telemetry is opt-in via BASELINE_WAVE_INSTRUMENT for the probe path.
+WAVE_LEAF_VALIDATE = os.environ.get("BASELINE_WAVE_LEAF_VALIDATE", "0") == "1"
+WAVE_LEAF_HORIZON = int(os.environ.get("BASELINE_WAVE_LEAF_HORIZON", "10"))
+WAVE_LEAF_EPS = float(os.environ.get("BASELINE_WAVE_LEAF_EPS", "0.0"))
+WAVE_LEAF_BUDGET_MS = float(os.environ.get("BASELINE_WAVE_LEAF_BUDGET_MS", "25"))
+WAVE_INSTRUMENT = os.environ.get("BASELINE_WAVE_INSTRUMENT", "0") == "1"
+_WAVE_TELEMETRY: list[dict] = []
+_OWNERSHIP_TRACE: list[tuple[int, dict[int, int]]] = []
+
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
 # chooser's wait_N>0 winners are remembered across turns instead of
 # being silently dropped. Each entry ticks down each turn; when
@@ -197,7 +213,11 @@ from lib.world_model import WorldModel
 # continuation lines as indented orphans. Friction tag
 # `bundler-modular-agent-namespace-access-breaks-bundle` (2026-05-17).
 from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS
+from agents.baseline.chooser import opp_actions_for_snap
 from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON
+from agents.baseline.value import favor as _favor_leaf
+from lib.fast_sim import clone as fs_clone
+from lib.fast_sim import step as fs_step
 from lib.opp_model import compute_opp_trajectory
 
 
@@ -963,18 +983,74 @@ def _resolve_move_target(move, src_planet, enemy_planets, world):
     return best, int(fate.step)
 
 
-def emit_convergence_wave(moves, planets, my_id: int, world, model) -> list:
+def _wave_leaf_delta(
+    snap_base, me: int, num_seats: int, gamma: float,
+    horizon: int, opp_traj,
+    moves_without: list, moves_with: list,
+) -> float:
+    """Δfavor over K turns, with vs without the wave's extras.
+
+    CRN substrate: the same opp action sequence is replayed in both
+    rollouts (either `opp_traj` precomputed, or `opp_actions_for_snap`
+    recomputed identically on each fresh clone). The wave's marginal
+    contribution is isolated; opp-reaction noise cancels.
+    """
+    def _roll(t0_action: list) -> float:
+        snap = fs_clone(snap_base)
+        for k in range(horizon):
+            if snap.fake_env.done:
+                break
+            if opp_traj is not None and k < len(opp_traj):
+                actions = [list(a) for a in opp_traj[k]]
+            else:
+                actions = opp_actions_for_snap(snap, me, num_seats)
+            actions[me] = t0_action if k == 0 else []
+            snap = fs_step(snap, actions, in_place=True)
+        return _favor_leaf(
+            snap.state[me].observation, me, num_seats, gamma=gamma,
+        )
+    return _roll(moves_with) - _roll(moves_without)
+
+
+def dump_wave_telemetry(path: str) -> int:
+    """Flush `_WAVE_TELEMETRY` to JSON. Returns record count."""
+    import json
+    with open(path, "w") as f:
+        json.dump(_WAVE_TELEMETRY, f)
+    return len(_WAVE_TELEMETRY)
+
+
+def dump_ownership_trace(path: str) -> int:
+    """Flush `_OWNERSHIP_TRACE` to JSON. Returns record count."""
+    import json
+    payload = [
+        {"step": step, "owners": owners}
+        for (step, owners) in _OWNERSHIP_TRACE
+    ]
+    with open(path, "w") as f:
+        json.dump(payload, f)
+    return len(_OWNERSHIP_TRACE)
+
+
+def emit_convergence_wave(
+    moves, planets, my_id: int, world, model,
+    *,
+    snap_base=None,
+    num_seats: int = 2,
+    opp_traj=None,
+    gamma: float = 0.99,
+    step: int = -1,
+) -> list:
     """Stack idle sources onto attacks the chooser already chose this turn.
 
-    Variant #2 of the convergence-wave axis (2026-05-23). The original
-    closed-form-target-selection variant bounced 15-25 of 25 launches
-    in n=2 close-look because the simulator couldn't predict the
-    opponent's reactive reinforcements. This variant uses the chooser
-    as the value-head gate: we only add launches at targets the
-    chooser ALREADY emitted a move against this turn (i.e., the
-    chooser's value-head + rollout said attacking that target is
-    positive-EV). Then we add additional idle sources to bolster the
-    attack with a staggered-arrival capture simulation.
+    Variant #3 of the convergence-wave axis (2026-05-23). Builds on V2
+    (chooser-as-gate restricts targets to those the chooser attacked)
+    by adding a post-acceptance value-head leaf-Δ gate when
+    `WAVE_LEAF_VALIDATE` is set. The leaf-Δ gate scores the joint
+    action (wave's extras as a block) via K-step rollout-and-favor;
+    fires only if Δfavor > epsilon. Addresses the V2 regression
+    (n=16 6/16 vs baseline_full) by routing the joint action through
+    the value head, the modeling-correctness fix per Rule 40.
 
     Distinct from drain_combat_stack: that mechanism stacks onto
     `model.ledger` attacks already in flight from prior turns; this
@@ -984,6 +1060,8 @@ def emit_convergence_wave(moves, planets, my_id: int, world, model) -> list:
     """
     if not CONVERGENCE_WAVE_ENABLED:
         return moves
+
+    _t_entry = time.perf_counter() if WAVE_INSTRUMENT else 0.0
 
     my_planets = [p for p in planets if int(p.owner) == my_id]
     enemy_planets = [
@@ -1013,13 +1091,33 @@ def emit_convergence_wave(moves, planets, my_id: int, world, model) -> list:
         chooser_attacks.setdefault(int(tgt.id), []).append(
             (int(eta), int(m[2])),
         )
+    _rec: dict | None = None
+    if WAVE_INSTRUMENT:
+        _rec = {
+            "step": int(step),
+            "me": int(my_id),
+            "n_candidate_targets": len(chooser_attacks),
+            "per_target": [],
+            "actual_fire": False,
+            "chosen_tgt_id": None,
+            "n_sources_in_prefix": 0,
+            "added_ships": 0,
+            "gate_delta": None,
+            "gate_ms": None,
+            "gate_rejected_reason": None,
+            "wall_ms": None,
+        }
+
     if not chooser_attacks:
+        if _rec is not None:
+            _rec["wall_ms"] = (time.perf_counter() - _t_entry) * 1000
+            _WAVE_TELEMETRY.append(_rec)
         return moves
 
     total_my_ships = sum(int(p.ships) for p in my_planets)
     wave_ship_budget = int(total_my_ships * WAVE_RESERVE_FRAC)
 
-    best = None  # (added_ships, tgt_id, prefix)
+    best = None  # (score, tgt_id, new_prefix, added_ships)
     for tgt_id, attacks in chooser_attacks.items():
         tgt = planets_by_id[tgt_id]
         # Idle sources eligible to bolster this attack.
@@ -1046,6 +1144,12 @@ def emit_convergence_wave(moves, planets, my_id: int, world, model) -> list:
                 continue
             scored.append((int(fate.step), src, float(angle), int(available)))
         if not scored:
+            if _rec is not None:
+                _rec["per_target"].append({
+                    "tgt_id": int(tgt_id),
+                    "n_qualifying_sources": 0,
+                    "captured": False,
+                })
             continue
         scored.sort(key=lambda s: s[0])
 
@@ -1059,6 +1163,25 @@ def emit_convergence_wave(moves, planets, my_id: int, world, model) -> list:
         prefix_idx, _total, captured = _simulate_staggered_capture(
             tgt, my_id, combined, model=model,
         )
+        if _rec is not None:
+            sub = {
+                "tgt_id": int(tgt_id),
+                "n_qualifying_sources": len(scored),
+                "captured": bool(captured),
+                "prefix_idx": int(prefix_idx),
+                "arrivals_total_ships": int(_total),
+            }
+            try:
+                eta_first = int(combined[0][0]) if combined else 0
+                garrison_first = int(model.ships_at(int(tgt_id), eta_first))
+                sub["garrison_at_first_eta"] = garrison_first
+                if garrison_first > 0:
+                    sub["achieved_margin"] = (
+                        float(_total) / float(garrison_first)
+                    )
+            except Exception:
+                pass
+            _rec["per_target"].append(sub)
         if not captured:
             continue
         # Count ONLY the new sources (skip the existing chooser arrivals).
@@ -1082,13 +1205,68 @@ def emit_convergence_wave(moves, planets, my_id: int, world, model) -> list:
             best = (score, tgt_id, new_prefix, added_ships)
 
     if best is None:
+        if _rec is not None:
+            _rec["wall_ms"] = (time.perf_counter() - _t_entry) * 1000
+            _WAVE_TELEMETRY.append(_rec)
         return moves
 
     _score, _tgt_id, prefix, _added = best
+
+    # Value-head leaf-Δ gate (V3). After the mechanical capture check
+    # accepts a candidate, run a K-step rollout with vs without the
+    # wave's extras and only fire if Δfavor > epsilon. CRN substrate
+    # (same opp script in both rollouts) isolates the wave's marginal
+    # effect. Pessimistic budget abort: if the gate takes too long,
+    # don't fire — preserves the 1000ms env hard cap.
+    if WAVE_LEAF_VALIDATE and snap_base is not None:
+        _t_gate = time.perf_counter()
+        extras_candidate = [
+            [int(src.id), float(angle), int(ships)]
+            for _eta, src, angle, ships in prefix
+        ]
+        moves_with = list(moves) + extras_candidate
+        try:
+            delta = _wave_leaf_delta(
+                snap_base, my_id, num_seats, gamma,
+                WAVE_LEAF_HORIZON, opp_traj,
+                moves_without=list(moves),
+                moves_with=moves_with,
+            )
+        except Exception:
+            delta = None
+        gate_ms = (time.perf_counter() - _t_gate) * 1000
+        if _rec is not None:
+            _rec["gate_delta"] = delta
+            _rec["gate_ms"] = gate_ms
+        if gate_ms > WAVE_LEAF_BUDGET_MS:
+            if _rec is not None:
+                _rec["gate_rejected_reason"] = "timeout"
+                _rec["wall_ms"] = (
+                    time.perf_counter() - _t_entry
+                ) * 1000
+                _WAVE_TELEMETRY.append(_rec)
+            return moves
+        if delta is None or delta <= WAVE_LEAF_EPS:
+            if _rec is not None:
+                _rec["gate_rejected_reason"] = "delta_nonpositive"
+                _rec["wall_ms"] = (
+                    time.perf_counter() - _t_entry
+                ) * 1000
+                _WAVE_TELEMETRY.append(_rec)
+            return moves
+
     extras = []
     for _eta, src, angle, ships in prefix:
         extras.append([int(src.id), float(angle), int(ships)])
         used_srcs.add(int(src.id))
+    if _rec is not None:
+        _rec["actual_fire"] = True
+        _rec["chosen_tgt_id"] = int(_tgt_id)
+        _rec["n_sources_in_prefix"] = len(prefix)
+        _rec["added_ships"] = int(_added)
+        _rec["prefix_src_ids"] = [int(src.id) for _eta, src, _a, _s in prefix]
+        _rec["wall_ms"] = (time.perf_counter() - _t_entry) * 1000
+        _WAVE_TELEMETRY.append(_rec)
     return list(moves) + extras
 
 
@@ -1108,6 +1286,15 @@ def agent(obs, configuration=None):
     if ledger_on and step == 0:
         _PENDING_LAUNCHES.pop(me, None)
 
+    # Wave instrumentation reset (opt-in via BASELINE_WAVE_INSTRUMENT).
+    # Episode boundary detection: same step==0 trigger. Per-step
+    # ownership snapshot used post-hoc to compute the "wave-source
+    # captured within +10 steps" cannibalization signal.
+    if WAVE_INSTRUMENT:
+        if step == 0:
+            _WAVE_TELEMETRY.clear()
+            _OWNERSHIP_TRACE.clear()
+
     raw_planets = obs_d.get("planets", []) or []
     raw_fleets = obs_d.get("fleets", []) or []
     if not raw_planets:
@@ -1115,6 +1302,13 @@ def agent(obs, configuration=None):
 
     planets = [Planet(*p) for p in raw_planets]
     fleets = [Fleet(*f) for f in raw_fleets]
+
+    if WAVE_INSTRUMENT:
+        _OWNERSHIP_TRACE.append((
+            int(step),
+            {int(p.id): int(p.owner) for p in planets},
+        ))
+
     my_planets = [p for p in planets if int(p.owner) == me]
     other_planets = [p for p in planets if int(p.owner) != me]
     if not my_planets or not other_planets:
@@ -1244,7 +1438,11 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
-        moves = emit_convergence_wave(moves, planets, me, world, model)
+        moves = emit_convergence_wave(
+            moves, planets, me, world, model,
+            snap_base=snap_base, num_seats=num_seats,
+            opp_traj=opp_traj_pre, gamma=gamma, step=step,
+        )
         return emit_sniper_strikes(moves, planets, me, world, model)
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
@@ -1268,7 +1466,11 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
-        moves = emit_convergence_wave(moves, planets, me, world, model)
+        moves = emit_convergence_wave(
+            moves, planets, me, world, model,
+            snap_base=snap_base, num_seats=num_seats,
+            opp_traj=opp_traj_pre, gamma=gamma, step=step,
+        )
         return emit_sniper_strikes(moves, planets, me, world, model)
 
     baseline_favors = build_idle_baseline(
@@ -1318,5 +1520,9 @@ def agent(obs, configuration=None):
     moves = drain_idle_rear(moves, planets, me, world, model)
     moves = drain_stagnant_rear(moves, planets, me, world, model)
     moves = drain_combat_stack(moves, planets, me, world, model)
-    moves = emit_convergence_wave(moves, planets, me, world, model)
+    moves = emit_convergence_wave(
+        moves, planets, me, world, model,
+        snap_base=snap_base, num_seats=num_seats,
+        opp_traj=opp_traj_pre, gamma=gamma, step=step,
+    )
     return emit_sniper_strikes(moves, planets, me, world, model)
