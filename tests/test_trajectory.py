@@ -182,3 +182,48 @@ def test_comet_at_path_end_marked_as_exited():
         f"expected target (planet 99) after comet exits; got {fate.outcome} hit_id={fate.hit_planet_id}"
     )
     assert fate.hit_planet_id == 99
+
+
+def test_predict_fleet_fate_skip_planet_id_excludes_source():
+    """Phase 3b correctness (2026-05-23): when skip_planet_id is passed,
+    that planet is excluded from the per-step collision scan.
+
+    Synthesise a fleet ~1 unit past planet A aimed at planet B. The
+    spawn-offset segment (f.x + 0.1*cos, f.y + 0.1*sin) may graze A's
+    swept chord at step 0 without the skip. With skip_planet_id=A.id
+    the scan ignores A and the ray-cast proceeds.
+    """
+    from types import SimpleNamespace
+    from lib.trajectory import predict_fleet_fate
+    from kaggle_environments import make
+    from lib.intent import World as IntentWorld
+    env = make("orbit_wars", configuration={"seed": 7}, debug=False)
+    env.reset(2)
+    obs = env.steps[0][0].observation
+    world = IntentWorld.from_obs(obs)
+    planets = list(world.planets_by_id.values())
+    src_p = planets[0]
+    tgt_p = planets[1]
+    import math
+    dx, dy = tgt_p.x - src_p.x, tgt_p.y - src_p.y
+    angle = math.atan2(dy, dx)
+    # Fleet just past src_p (offset by radius + 1.0 in flight direction).
+    f_x = src_p.x + math.cos(angle) * (src_p.radius + 1.0)
+    f_y = src_p.y + math.sin(angle) * (src_p.radius + 1.0)
+    proxy = SimpleNamespace(
+        id=-1, owner=0, x=f_x, y=f_y, radius=0.0, ships=10, production=0,
+    )
+
+    # Without skip: source planet COULD register a hit at step 0 (the
+    # synthetic spawn is still close to it). With skip: source planet
+    # is excluded from the scan.
+    fate_no_skip = predict_fleet_fate(proxy, tgt_p, angle, 10, world)
+    fate_skip = predict_fleet_fate(
+        proxy, tgt_p, angle, 10, world, skip_planet_id=int(src_p.id),
+    )
+    # Skip must NEVER report src_p as the hit planet.
+    assert fate_skip.hit_planet_id != int(src_p.id)
+    # The non-skip call may or may not have hit src_p depending on the
+    # geometry; if it did, the skip variant should disagree.
+    if fate_no_skip.outcome == "planet" and fate_no_skip.hit_planet_id == int(src_p.id):
+        assert fate_skip.outcome != "planet" or fate_skip.hit_planet_id != int(src_p.id)

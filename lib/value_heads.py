@@ -386,10 +386,24 @@ def composite_capture_value(
                 x=float(f.x), y=float(f.y),
                 radius=0.0, ships=int(ships), production=0,
             )
+            # Phase 3b correctness fix (2026-05-23): skip the fleet's
+            # original source planet from the collision scan. The
+            # synthetic spawn at (f.x + 0.1*cos, f.y + 0.1*sin) for a
+            # freshly-launched fleet can graze the source planet's
+            # swept chord and false-flag the fleet as in-flight-dead.
             fate = predict_fleet_fate(
                 src_proxy, target, float(f.angle), int(ships), world,
+                skip_planet_id=int(f.from_planet_id),
             )
             if fate.outcome != "target":
+                # NOTE: this delta -= waste_weight*ships extends a pre-
+                # existing accounting pattern (the OOB / sun / pred_owner
+                # branches above do the same), where the fleet's ships
+                # are already counted in `base` as ours. Net effect: the
+                # ships get counted twice (once positively in base, once
+                # as a waste penalty here). This is shared with the prior
+                # waste branches; fixing it is a value-head re-design
+                # tracked separately.
                 delta -= waste_weight * ships
 
     return base + delta

@@ -81,6 +81,7 @@ def predict_fleet_fate(
     src, target, aim_angle: float, ships: int,
     world, max_steps: int = DEFAULT_MAX_STEPS,
     wait_N: int = 0,
+    skip_planet_id: int | None = None,
 ) -> FleetFate:
     """Ray-cast a fleet's full trajectory until the first collision.
 
@@ -103,6 +104,15 @@ def predict_fleet_fate(
     advanced by wait_N orbital ticks before the ray-cast begins. Use this
     when validating wait-then-fire candidates whose fire-time geometry
     differs from the current world snapshot.
+
+    `skip_planet_id`: exclude this planet id from the per-step collision
+    scan. Used by Phase 3b's in-flight survival check (value_heads.py):
+    the synthetic src_proxy starts at the fleet's CURRENT position with
+    radius=0, so the original `from_planet_id` may still be inside the
+    spawn-offset segment at step 0; without exclusion the function
+    false-flags a healthy fleet as having hit its own source. Default
+    None preserves the env-matching behaviour (env does NOT exclude the
+    source planet; see source-collision comment in the loop).
 
     O(max_steps * planets) per call. On a 24-planet mid-game board with
     max_steps=200 that's ~4800 swept_pair_hit calls = ~1-2 ms.
@@ -205,6 +215,15 @@ def predict_fleet_fate(
 
         # 3. Planet collision — swept_pair_hit against every planet.
         for pid, positions in planet_positions.items():
+            # Optional source exclusion (caller-controlled): Phase 3b's
+            # in-flight survival check passes the fleet's
+            # from_planet_id here so the synthetic spawn at
+            # (f.x + 0.1*cos, f.y + 0.1*sin) doesn't falsely register a
+            # collision with the original source planet still ~radius+0.1
+            # behind a freshly-launched fleet. Default None preserves
+            # the env-matching behaviour (env does NOT exclude).
+            if skip_planet_id is not None and int(pid) == int(skip_planet_id):
+                continue
             # NB: the env DOES check fleet-vs-source at step 0 (see
             # orbit_wars.py L588-597 — no exclusion of from_id). For
             # STATIC sources the geometry handles it: spawn is at
