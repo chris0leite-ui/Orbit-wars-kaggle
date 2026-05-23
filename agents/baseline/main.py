@@ -164,6 +164,7 @@ from lib.missions.reinforce import propose_reinforce_missions
 from lib.orbit import predict_relative
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import WorldModel
+from lib.world_model import planet_position_at
 
 # Import by explicit names so the bundler's per-line import-stripping regex
 # can handle them. Single-line form is mandatory — the regex matches one
@@ -354,7 +355,7 @@ def emit_threat_reinforcements(
         if int(src.ships) < ships:
             continue
         try:
-            tx, ty = predict_relative(tgt, omega, int(mission.eta))
+            tx, ty = planet_position_at(tgt, world, int(mission.eta))
         except Exception:
             tx, ty = float(tgt.x), float(tgt.y)
         angle = math.atan2(float(ty) - float(src.y), float(tx) - float(src.x))
@@ -479,7 +480,7 @@ def _propose_anticipated_reinforces(
         if best_src is None:
             continue
         try:
-            tx, ty = predict_relative(d, omega, int(best_eta))
+            tx, ty = planet_position_at(d, world, int(best_eta))
         except Exception:
             tx, ty = float(d.x), float(d.y)
         angle = math.atan2(

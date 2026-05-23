@@ -560,3 +560,30 @@ def comet_position_at(planet_id: int, world, lead_turns: int) -> tuple[float, fl
         return None
     point = path[idx]
     return float(point[0]), float(point[1])
+
+
+def planet_position_at(planet, world, lead_turns: int) -> tuple[float, float]:
+    """Predict `(x, y)` of `planet` at `lead_turns` from now — comet-aware.
+
+    Dispatcher: comets route to `comet_position_at` (path lookup);
+    orbital / static planets route to `lib.orbit.predict_relative`
+    (which honors `is_orbiting`). Prefer this over raw `predict_relative`
+    at call sites that have a `world` handle — raw `predict_relative` is
+    physically wrong for comets (rotates them around the sun instead of
+    advancing their path).
+
+    `planet` may be a `Planet` namedtuple, a Plain Python list/tuple in
+    the `[id, owner, x, y, radius, ships, prod]` shape used throughout
+    `lib/`, or a `WorldModel.PlanetSnapshot`. Pid extraction is
+    duck-typed: `.id` attribute first, else index `[0]`.
+
+    Comets whose path has expired return the `(-1e6, -1e6)` OFF_BOARD
+    sentinel, matching `lib.kinematic_table.lookup_relative` semantics.
+    """
+    pid = int(getattr(planet, "id", None) if hasattr(planet, "id") else planet[0])
+    if pid in world.comet_ids:
+        pos = comet_position_at(pid, world, lead_turns)
+        if pos is not None:
+            return pos
+        return (-1e6, -1e6)
+    return predict_relative(planet, world.omega, lead_turns)

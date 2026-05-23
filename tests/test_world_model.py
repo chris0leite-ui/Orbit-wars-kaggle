@@ -390,3 +390,70 @@ def test_comet_position_at_returns_none_for_non_comet():
     assert comet_position_at(0, world, 1) is None
     # Some random id not in the obs.
     assert comet_position_at(999, world, 0) is None
+
+
+# ---------------------------------------------------------------------------
+# planet_position_at — comet-aware dispatcher (2026-05-23 KT-parity fix)
+# ---------------------------------------------------------------------------
+
+
+def test_planet_position_at_comet_uses_path_not_rotation():
+    """Comet target: planet_position_at routes through comet_position_at,
+    NOT through predict_relative's orbital rotation.
+
+    Regression pin for the KT bit-parity bug (40% turn divergence)
+    where reinforce paths called predict_relative(comet, omega, eta)
+    and got rotated orbital math instead of the comet's discrete path.
+    """
+    from lib.world_model import planet_position_at
+    from lib.orbit import predict_relative
+    path = [[20.0 + i * 4.0, 50.0] for i in range(10)]
+    world = _world_with_comet(comet_id=42, path=path, path_index=2)
+    # Tuple form (id, owner, x, y, radius, ships, prod).
+    comet_tup = (42, -1, 28.0, 50.0, 1.0, 30, 1)
+    # lead=3 → path[5] = (40.0, 50.0). NOT the rotated value.
+    pos = planet_position_at(comet_tup, world, 3)
+    assert pos == (40.0, 50.0), f"comet at lead=3: got {pos}"
+    # Confirm raw predict_relative would have rotated (the bug).
+    rotated = predict_relative(comet_tup, world.omega, 3)
+    assert rotated != (40.0, 50.0), (
+        "Test invalid: raw predict_relative happens to match path here; "
+        "pick a path point that differs from the rotated value."
+    )
+
+
+def test_planet_position_at_expired_comet_returns_off_board():
+    """Comet whose path has expired returns the OFF_BOARD sentinel,
+    matching lib.kinematic_table.lookup_relative semantics."""
+    from lib.world_model import planet_position_at
+    path = [[20.0 + i * 4.0, 50.0] for i in range(5)]
+    world = _world_with_comet(comet_id=42, path=path, path_index=2)
+    comet_tup = (42, -1, 28.0, 50.0, 1.0, 30, 1)
+    # path_index=2 + lead=10 → past end of path → expired.
+    pos = planet_position_at(comet_tup, world, 10)
+    assert pos == (-1e6, -1e6), f"expired comet: got {pos}"
+
+
+def test_planet_position_at_orbital_falls_through_to_predict_relative():
+    """Non-comet orbital planet: behavior matches predict_relative."""
+    from lib.world_model import planet_position_at
+    from lib.orbit import predict_relative
+    path = [[20.0 + i * 4.0, 50.0] for i in range(5)]
+    world = _world_with_comet(comet_id=42, path=path, path_index=0)
+    # Planet 0 is the (orbital) source at (5,5) — not a comet.
+    p0_tup = (0, 0, 5.0, 5.0, 1.0, 100, 1)
+    for lead in (0, 5, 50):
+        got = planet_position_at(p0_tup, world, lead)
+        exp = predict_relative(p0_tup, world.omega, lead)
+        assert got == exp, f"orbital lead={lead}: got {got} vs {exp}"
+
+
+def test_planet_position_at_accepts_planet_namedtuple():
+    """Accepts both tuple-shape and `.id`-attribute Planet objects."""
+    from lib.world_model import planet_position_at
+    from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
+    path = [[20.0 + i * 4.0, 50.0] for i in range(10)]
+    world = _world_with_comet(comet_id=42, path=path, path_index=2)
+    comet_planet = Planet(42, -1, 28.0, 50.0, 1.0, 30, 1)
+    pos = planet_position_at(comet_planet, world, 3)
+    assert pos == (40.0, 50.0), f"Planet form: got {pos}"
