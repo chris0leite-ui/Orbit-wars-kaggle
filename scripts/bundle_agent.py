@@ -41,6 +41,11 @@ REPO = Path(__file__).resolve().parents[1]
 # Subpackage paths like "missions/snipe" resolve to lib/missions/snipe.py
 # via pathlib's `/` operator transparently.
 DEFAULT_LIB_ORDER = [
+    # `config` exposes env_int/env_float/env_bool — per-call env helpers
+    # used by value_heads.py (Phase 3b gate) and by the chooser via
+    # functions hoisted out of agents/baseline/. Must precede every
+    # module that imports `from lib.config import ...`.
+    "config",
     "geometry",
     "fleet",
     "orbit",

@@ -37,13 +37,9 @@ from __future__ import annotations
 import math
 import os
 
-from agents.baseline.chooser import (
-    affordable_validate_cap,
-    opp_actions_for_snap,
-    opp_actions_for_step,
-    opp_smart_leaf_window,
-)
+from agents.baseline.chooser import affordable_validate_cap, opp_actions_for_snap, opp_actions_for_step, opp_smart_leaf_window
 from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn
+from lib.config import env_bool, env_float, env_int
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
 from lib.opp_model import lite_greedy_policy as _me_policy
@@ -268,27 +264,22 @@ _DEFAULT_ADAPTIVE_K_HORIZON_CAP = 60
 
 
 def _adaptive_k_enabled() -> bool:
-    from lib.config import env_bool
     return env_bool("BASELINE_ADAPTIVE_K", False)
 
 
 def _adaptive_k_bump() -> int:
-    from lib.config import env_int
     return env_int("BASELINE_CRITICALITY_K_BUMP", _DEFAULT_ADAPTIVE_K_BUMP)
 
 
 def _adaptive_k_probe() -> int:
-    from lib.config import env_int
     return env_int("BASELINE_CRITICALITY_PROBE", _DEFAULT_ADAPTIVE_K_PROBE)
 
 
 def _adaptive_k_margin() -> float:
-    from lib.config import env_float
     return env_float("BASELINE_CRITICALITY_MARGIN", _DEFAULT_ADAPTIVE_K_MARGIN)
 
 
 def _adaptive_k_horizon_cap() -> int:
-    from lib.config import env_int
     return env_int("BASELINE_MAX_HORIZON_CAP", _DEFAULT_ADAPTIVE_K_HORIZON_CAP)
 
 
@@ -1020,8 +1011,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         # to [0, 1] (2026-05-23) so a typo (frac=10.0) can't silently
         # saturate joint_limit at JOINT_MAX_PAIRS=60, defeating the
         # shared-budget intent and blowing the per-turn wallclock.
-        from lib.config import env_float as _env_float_local
-        joint_budget_frac = _env_float_local("BASELINE_JOINT_BUDGET_FRAC", 0.5)
+        joint_budget_frac = env_float("BASELINE_JOINT_BUDGET_FRAC", 0.5)
         joint_budget_frac = max(0.0, min(1.0, joint_budget_frac))
         joint_limit = max(
             2, min(JOINT_MAX_PAIRS, int(cap * joint_budget_frac)),
