@@ -1,12 +1,13 @@
 # orbitfix_kt_p23 — bundled from agents/baseline with env-var stack
 # (orbitfix substrate + kinematic table + Phase 2 adaptive K +
-#  Phase 3 leaf in-flight fate check).
-# Includes static-planet predict_relative fix (1ad6cfa, 2026-05-23)
-# and comet-aware reinforce dispatch (4c80932, 2026-05-23).
+#  Phase 3 leaf in-flight fate check + attack-pull positional term).
+# Includes static-planet predict_relative fix (1ad6cfa), comet-aware
+# reinforce dispatch (4c80932), comet-aware fleet_target_planet
+# (289d8ed), and attack-pull positional value head (this commit).
 # Rebundled from agents/baseline via scripts/bundle_agent.py +
 # manual env-stack prepend (the bundler can't inline agents/baseline
-# from a wrapper-style agent_dir; same approach as c8d9c47 used for
-# sub 52949672).
+# from a wrapper-style agent_dir; same approach as c8d9c47 / sub
+# 52949672 used).
 from __future__ import annotations
 
 import os as _kt_p23_os
@@ -22,6 +23,9 @@ _kt_p23_os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
 _kt_p23_os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
 _kt_p23_os.environ.setdefault("BASELINE_ADAPTIVE_K", "1")
 _kt_p23_os.environ.setdefault("COMPOSITE_FLEET_SURVIVAL_CHECK", "1")
+_kt_p23_os.environ.setdefault("BASELINE_VALUE_HEAD", "hybrid_attack_pull")
+_kt_p23_os.environ.setdefault("BASELINE_ATTACK_PULL_WEIGHT", "0.5")
+_kt_p23_os.environ.setdefault("BASELINE_ATTACK_PULL_DECAY", "30.0")
 
 
 
@@ -1083,7 +1087,8 @@ def _position_at(planet, omega: float, lead_turns: int) -> tuple[float, float]:
 
 
 def fleet_target_planet(fleet, planets, omega: float = 0.0,
-                        max_horizon: int = DEFAULT_HORIZON):
+                        max_horizon: int = DEFAULT_HORIZON,
+                        comet_paths: dict | None = None):
     """Trace `fleet` along its angle, find first planet it'd hit.
 
     Returns `(target_planet, eta_turns)` or `(None, None)` if no planet
@@ -1092,7 +1097,15 @@ def fleet_target_planet(fleet, planets, omega: float = 0.0,
     For STATIC (non-orbiting) planets: straight-line ray-cast (cheap;
     closed-form). For ORBITING planets: per-tick collision check using
     `lib.orbit.predict_relative` to predict the planet's position at
-    each tick, then test fleet-vs-planet point-in-circle.
+    each tick, then test fleet-vs-planet point-in-circle. For COMETS
+    (id in `comet_paths`): per-tick check using the comet's pre-
+    computed path (env semantics — comets do NOT rotate around the
+    sun, they follow polynomial paths).
+
+    `comet_paths` is `{pid: (path, path_index)}` — typically produced
+    by `_comet_paths_by_id(world)`. When None / empty, comets fall
+    through to the orbital ray-cast path with rotation math, which is
+    physically wrong but matches pre-2026-05-23 behaviour.
 
     The `omega` argument is the environment's angular velocity from the
     obs. When `omega == 0.0`, behaviour matches the previous static-only
@@ -1106,6 +1119,18 @@ def fleet_target_planet(fleet, planets, omega: float = 0.0,
     Asdf game (76947663) step 37: 65-ship fleet aimed at orbiting P15
     returned target=None until P15 had rotated into the straight line
     at step 40 — by then too late to defend.
+
+    Bug fix 2026-05-23: pre-fix, comets passed `is_orbiting` (they sit
+    inside ROTATION_RADIUS_LIMIT) and got rotated as if orbital, while
+    the env advances them along their path. KT-ON path used
+    `lookup_relative` (path-indexed, correct); KT-OFF path used
+    `predict_relative` (rotation, wrong). The two paths diverged by
+    several board units per comet per tick; cascaded into wrong fleet
+    attribution and divergent opponent-model decisions in
+    `me_defensive_action`. See /tmp/trace_turn_273_p1.py: planet 24 at
+    turn 273 returned (29.31, 65.20) on KT-OFF vs (29.63, 69.89) on
+    KT-ON. Fix: partition comets to a separate per-tick scan using
+    `path[idx + t]` directly.
     """
     dir_x = math.cos(fleet.angle)
     dir_y = math.sin(fleet.angle)
@@ -1113,14 +1138,22 @@ def fleet_target_planet(fleet, planets, omega: float = 0.0,
     if spd <= 0:
         return None, None
 
-    # Partition planets: static (closed-form fast path) vs orbiting
-    # (per-tick scan). The partition is cheap; typical boards have
-    # ~12-20 planets total with 5-8 orbiting.
+    # Partition planets: comets (path-indexed) → static (closed-form
+    # fast path) → orbiting (per-tick scan). Comets MUST be checked
+    # first because they sit inside ROTATION_RADIUS_LIMIT and would
+    # otherwise route to the orbital branch with rotation math.
     static_planets = []
     orbiting_planets = []
+    comet_planets = []  # list of (planet, path, path_index)
+    cps = comet_paths or {}
     for p in planets:
+        pid = int(p.id)
+        if pid in cps:
+            path, path_idx = cps[pid]
+            comet_planets.append((p, path, int(path_idx)))
+            continue
         # Build minimal tuple for is_orbiting (only x, y, radius used)
-        p_tuple = (int(p.id), int(p.owner), float(p.x), float(p.y),
+        p_tuple = (pid, int(p.owner), float(p.x), float(p.y),
                    float(p.radius), 0, 0)
         if omega != 0.0 and is_orbiting(p_tuple):
             orbiting_planets.append((p, p_tuple))
@@ -1148,27 +1181,30 @@ def fleet_target_planet(fleet, planets, omega: float = 0.0,
             best_turns = turns
             best_planet = p
 
-    # Orbital path: per-tick collision scan.
-    if orbiting_planets:
-        # Discretize: check at integer ticks up to max_horizon. We use
-        # the int-ceil semantics that the ledger eventually buckets to,
-        # so checking at integer ticks is sufficient precision.
+    # Orbital + comet path: per-tick collision scan.
+    if orbiting_planets or comet_planets:
         for t in range(1, int(max_horizon) + 1):
-            # Pruning: if we already have a static hit at eta T, no
-            # orbital hit beyond T can win.
             if best_turns is not None and t > best_turns:
                 break
             fx = fleet.x + dir_x * spd * t
             fy = fleet.y + dir_y * spd * t
             for p, p_tuple in orbiting_planets:
                 px, py = predict_relative_smart(p_tuple, omega, t)
-                # Point-in-circle: fleet position within planet radius
-                # at tick t. Matches the ledger's step-bucket precision.
                 if math.hypot(fx - px, fy - py) <= float(p.radius):
                     if best_turns is None or t < best_turns:
                         best_turns = t
                         best_planet = p
-                    break  # found a hit at this tick; advance to next tick
+                    break
+            for p, path, path_idx in comet_planets:
+                pt_idx = path_idx + t
+                if pt_idx >= len(path):
+                    continue  # comet exits before tick t
+                pt = path[pt_idx]
+                if math.hypot(fx - float(pt[0]), fy - float(pt[1])) <= float(p.radius):
+                    if best_turns is None or t < best_turns:
+                        best_turns = t
+                        best_planet = p
+                    break
 
     if best_planet is None:
         return None, None
@@ -1176,7 +1212,8 @@ def fleet_target_planet(fleet, planets, omega: float = 0.0,
 
 
 def build_arrival_ledger(fleets, planets, omega: float = 0.0,
-                         horizon: int = DEFAULT_HORIZON):
+                         horizon: int = DEFAULT_HORIZON,
+                         comet_paths: dict | None = None):
     """{planet_id: [(eta, owner, ships), ...]} for in-flight fleets.
 
     Fleets that won't hit any planet within `horizon` are dropped (they
@@ -1187,10 +1224,17 @@ def build_arrival_ledger(fleets, planets, omega: float = 0.0,
     `fleet_target_planet` for correct orbiting-target attribution.
     Defaults to 0 for backward compatibility (callers that don't pass
     it get the previous static-only behaviour).
+
+    `comet_paths` is `{pid: (path, path_index)}` from
+    `_comet_paths_by_id(world)`. When provided, comet targets are
+    attributed via path-indexed positions instead of rotated orbital
+    math. See `fleet_target_planet` docstring for the bug fix details.
     """
     ledger: dict[int, list[tuple[int, int, int]]] = {p.id: [] for p in planets}
     for fleet in fleets:
-        target, eta = fleet_target_planet(fleet, planets, omega, horizon)
+        target, eta = fleet_target_planet(
+            fleet, planets, omega, horizon, comet_paths=comet_paths,
+        )
         if target is None:
             continue
         ledger[target.id].append((eta, int(fleet.owner), int(fleet.ships)))
@@ -1320,7 +1364,10 @@ class WorldModel:
         from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet  # local import — keeps lib/ env-free
         fleets = [Fleet(*f) for f in fleets_raw]
         planets = list(world.planets_by_id.values())
-        ledger = build_arrival_ledger(fleets, planets, omega, horizon)
+        comet_paths = _comet_paths_by_id(world)
+        ledger = build_arrival_ledger(
+            fleets, planets, omega, horizon, comet_paths=comet_paths,
+        )
         timelines = {
             p.id: simulate_planet_timeline(p, ledger[p.id], horizon) for p in planets
         }
@@ -1427,8 +1474,10 @@ class WorldModel:
                              target.radius, target.ships, target.production])
         )
 
-        # Target position at our arrival.
-        tx, ty = _position_at(target, omega, arrival_eta)
+        # Target position at our arrival. Use comet-aware dispatcher
+        # so comet targets (which sit inside ROTATION_RADIUS_LIMIT and
+        # would otherwise be rotated) get their real path position.
+        tx, ty = planet_position_at(target, world, arrival_eta)
 
         best: int | None = None
 
@@ -1454,7 +1503,7 @@ class WorldModel:
                 continue
             if p.ships <= 0:
                 continue
-            px, py = _position_at(p, omega, arrival_eta)
+            px, py = planet_position_at(p, world, arrival_eta)
             dx = tx - px
             dy = ty - py
             dist = (dx * dx + dy * dy) ** 0.5
@@ -1473,8 +1522,8 @@ class WorldModel:
             # launch moment).
             if target_is_orbital and eta_travel > 0:
                 for _ in range(5):
-                    tx_k, ty_k = _position_at(
-                        target, omega, arrival_eta + eta_travel,
+                    tx_k, ty_k = planet_position_at(
+                        target, world, arrival_eta + eta_travel,
                     )
                     dist_k = ((tx_k - px) ** 2 + (ty_k - py) ** 2) ** 0.5
                     new_eta = int(-(-dist_k // v))
@@ -6365,6 +6414,30 @@ def me_defensive_action(obs: Any, me: int) -> list:
     if not my_planets_by_id:
         return []
 
+    # Build comet_paths {pid: (path, path_index)} from obs so
+    # fleet_target_planet attributes fleets to comets via their real
+    # path positions, not rotated orbital math (2026-05-23 fix).
+    # Schema mirrors lib.world_model._comet_paths_by_id; inlined here
+    # because me_defensive_action operates on raw obs (no World object
+    # — building one would pay the 3-5 ms WorldModel cost the function
+    # is specifically designed to avoid).
+    comets_raw = (
+        obs.get("comets", []) if isinstance(obs, dict)
+        else (getattr(obs, "comets", []) or [])
+    )
+    comet_paths: dict = {}
+    for group in comets_raw or []:
+        if hasattr(group, "keys"):
+            planet_ids = list(group["planet_ids"])
+            paths = list(group["paths"])
+            path_index = int(group["path_index"])
+        else:
+            planet_ids = list(group.planet_ids)
+            paths = list(group.paths)
+            path_index = int(group.path_index)
+        for idx, pid in enumerate(planet_ids):
+            comet_paths[int(pid)] = (paths[idx], path_index)
+
     # 1. Attribute fleets to MY planets. Enemy fleets become threats;
     # friendly fleets become inbound reinforcements that count toward
     # `garrison_at_eta`. The friendly-counting is the critical
@@ -6378,7 +6451,7 @@ def me_defensive_action(obs: Any, me: int) -> list:
     inbound_enemy: dict[int, list[tuple[int, int]]] = {}
     inbound_friendly_ships: dict[int, int] = {}
     for f in fleets:
-        target, eta = fleet_target_planet(f, planets, omega)
+        target, eta = fleet_target_planet(f, planets, omega, comet_paths=comet_paths)
         if target is None or int(target.owner) != me:
             continue
         if int(f.owner) == me:
@@ -8737,13 +8810,19 @@ def composite_capture_value(
     # 10 — WorldModel.from_world is O(horizon × planets), so scaling
     # horizon to max_eta cuts the dominant cost roughly in half on
     # short-range turns. 2026-05-17 timing-fix item #2.
+    # Build comet_paths once for both this pre-pass and the WorldModel
+    # build below — comet targets need path-indexed positions, not
+    # rotated orbital math (2026-05-23 KT-parity fix).
+    comet_paths = _comet_paths_by_id(world)
     fleet_targets: list[tuple[Fleet, float, object | None, int]] = []
     max_eta = 0
     for f in fleets:
         if int(f.owner) != my_id:
             continue
         ships = float(f.ships)
-        target, eta = fleet_target_planet(f, planets_list, omega)
+        target, eta = fleet_target_planet(
+            f, planets_list, omega, comet_paths=comet_paths,
+        )
         eta_int = int(eta) if eta is not None else 0
         fleet_targets.append((f, ships, target, eta_int))
         if target is not None and eta_int > max_eta:
@@ -10782,6 +10861,15 @@ STRENGTH_PROD_WEIGHT = 15.0
 SPATIAL_WEIGHT = float(os.environ.get("BASELINE_SPATIAL_WEIGHT", "0.5"))
 SPATIAL_DECAY = float(os.environ.get("BASELINE_SPATIAL_DECAY", "30.0"))
 
+# Attack-pull leaf params (favor_hybrid_attack_pull only).
+# Spatial sibling that pulls ships toward ENEMY planets specifically
+# (not neutral). Neutrals are diffuse early-game; using only enemy
+# positions gives the chooser a sharper "press forward" signal from
+# turn 1. The existing BASELINE_NEUTRAL_BONUS handles neutral
+# expansion separately, so no double-counting.
+ATTACK_PULL_WEIGHT = float(os.environ.get("BASELINE_ATTACK_PULL_WEIGHT", "0.5"))
+ATTACK_PULL_DECAY = float(os.environ.get("BASELINE_ATTACK_PULL_DECAY", "30.0"))
+
 
 def _read(obs, attr, default):
     if hasattr(obs, attr):
@@ -10918,6 +11006,73 @@ def favor_hybrid_spatial(obs, me: int, num_seats: int = 2,
     return base + SPATIAL_WEIGHT * _positional_ship_value(obs, me)
 
 
+def _attack_pull_ship_value(obs, me: int) -> float:
+    """Sum over my ships (on-planet + in-flight) of weight by closeness
+    to the nearest ENEMY (non-our, non-neutral) planet.
+
+    Weight per ship: 1.0 / (1.0 + d_enemy_min / ATTACK_PULL_DECAY).
+      d=0   → 1.0   (on an enemy planet — captured)
+      d=30  → 0.5   (forward-deployed; ATTACK_PULL_DECAY default)
+      d=80  → ~0.27 (mid-board)
+      d=120 → ~0.20 (rear)
+
+    Sibling to `_positional_ship_value` but enemy-only. The
+    non_our-based positional term gives weak signal early-game when
+    most planets are neutral; this term gives a clean "move toward
+    the opponent" signal active from turn 1. Sums on-planet ships
+    AND in-flight fleets so a fleet en route to enemy territory
+    accrues value as it approaches.
+
+    Returns 0.0 in degenerate end-state (no enemy planets left —
+    likely already winning).
+    """
+    planets = _read(obs, "planets", []) or []
+    fleets = _read(obs, "fleets", []) or []
+    enemy = [(float(p[2]), float(p[3])) for p in planets
+             if int(p[1]) >= 0 and int(p[1]) != me]
+    if not enemy:
+        return 0.0
+    total = 0.0
+    for p in planets:
+        if int(p[1]) != me:
+            continue
+        x, y = float(p[2]), float(p[3])
+        d_min = min(math.hypot(x - ex, y - ey) for ex, ey in enemy)
+        total += float(p[5]) * (1.0 / (1.0 + d_min / ATTACK_PULL_DECAY))
+    for f in fleets:
+        if int(f[1]) != me:
+            continue
+        x, y = float(f[2]), float(f[3])
+        d_min = min(math.hypot(x - ex, y - ey) for ex, ey in enemy)
+        total += float(f[6]) * (1.0 / (1.0 + d_min / ATTACK_PULL_DECAY))
+    return total
+
+
+def favor_hybrid_attack_pull(obs, me: int, num_seats: int = 2,
+                             gamma: float = DEFAULT_GAMMA) -> float:
+    """favor_hybrid + attack-pull term (2P only).
+
+    Sibling to favor_hybrid_spatial but the positional term pulls
+    toward ENEMY planets only, not all non-our planets. Designed to
+    address PI's "agent is too passive" diagnosis (2026-05-23): the
+    base hybrid head treats ships as positionless, so the chooser
+    cannot distinguish "well-positioned" from "well-stockpiled" and
+    the agent accumulates rear ships instead of pressing forward.
+
+    4P fallback: returns favor_hybrid unchanged (A2 already biases
+    toward weakest opp position; adding more positional bias on top
+    historically regresses 4P per the favor_hybrid_spatial audit).
+
+    Purely additive — when ATTACK_PULL_WEIGHT=0 or num_seats > 2 it
+    equals favor_hybrid exactly. Independent of favor_hybrid_spatial:
+    selecting one head excludes the other via `select_favor_fn`.
+    """
+    base = favor_hybrid(obs, me, num_seats, gamma)
+    if ATTACK_PULL_WEIGHT == 0.0 or num_seats > 2:
+        return base
+    return base + ATTACK_PULL_WEIGHT * _attack_pull_ship_value(obs, me)
+
+
 def favor_hybrid(obs, me: int, num_seats: int = 2,
                  gamma: float = DEFAULT_GAMMA) -> float:
     """2P uses composite (waste-aware, validated by audit-workflow A/B:
@@ -10952,6 +11107,8 @@ def select_favor_fn():
         return favor_hybrid
     if choice == "hybrid_spatial":
         return favor_hybrid_spatial
+    if choice == "hybrid_attack_pull":
+        return favor_hybrid_attack_pull
     return favor
 
 # === inlined: agents/baseline/chooser.py ===

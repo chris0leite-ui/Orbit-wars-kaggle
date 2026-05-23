@@ -23,5 +23,12 @@ os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
 os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
 os.environ.setdefault("BASELINE_ADAPTIVE_K", "1")
 os.environ.setdefault("COMPOSITE_FLEET_SURVIVAL_CHECK", "1")
+# Forward-deployment incentive (2026-05-23): pull ships toward enemy
+# planets to address the passivity diagnosis. Replaces the positionless
+# `favor` head with `favor_hybrid_attack_pull` which adds a per-ship
+# weight by closeness to the nearest enemy planet.
+os.environ.setdefault("BASELINE_VALUE_HEAD", "hybrid_attack_pull")
+os.environ.setdefault("BASELINE_ATTACK_PULL_WEIGHT", "0.5")
+os.environ.setdefault("BASELINE_ATTACK_PULL_DECAY", "30.0")
 
 from agents.baseline.main import agent  # noqa: E402

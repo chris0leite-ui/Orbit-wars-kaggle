@@ -109,3 +109,103 @@ def test_favor_composite_returns_float_on_simple_board():
     assert isinstance(v, float)
     # No fleets => composite collapses to the ship-delta term: 30 - 10 = 20.
     assert v == 20.0
+
+
+# ---------------------------------------------------------------------------
+# Attack-pull positional term (2026-05-23 passivity fix)
+# ---------------------------------------------------------------------------
+
+
+def test_attack_pull_returns_zero_with_no_enemy():
+    """No enemy planets → term is 0 (degenerate end-state)."""
+    from agents.baseline.value import _attack_pull_ship_value
+    obs = _obs([
+        (0, 0, 10, 50, 1.0, 100, 1),   # mine
+        (1, -1, 50, 50, 1.0, 30, 1),   # neutral
+    ])
+    assert _attack_pull_ship_value(obs, me=0) == 0.0
+
+
+def test_attack_pull_higher_when_ships_forward():
+    """100 ships at distance 20 from enemy > 100 ships at distance 80."""
+    from agents.baseline.value import _attack_pull_ship_value
+    # State A: my planet at (10, 50), enemy at (90, 50). dist=80.
+    state_back = _obs([
+        (0, 0, 10.0, 50.0, 1.0, 100, 1),
+        (1, 1, 90.0, 50.0, 1.0, 10, 1),
+    ])
+    # State B: my planet moved to (70, 50). dist=20.
+    state_forward = _obs([
+        (0, 0, 70.0, 50.0, 1.0, 100, 1),
+        (1, 1, 90.0, 50.0, 1.0, 10, 1),
+    ])
+    v_back = _attack_pull_ship_value(state_back, me=0)
+    v_forward = _attack_pull_ship_value(state_forward, me=0)
+    assert v_forward > v_back, (
+        f"forward={v_forward} should exceed back={v_back}; "
+        f"positional pull is broken"
+    )
+
+
+def test_attack_pull_credits_in_flight_fleets():
+    """A fleet in flight toward enemy contributes to the term — without
+    this the chooser can't credit "ships en route to attack" as positional
+    value, which is half the incentive correction.
+    """
+    from agents.baseline.value import _attack_pull_ship_value
+    # All ships at home (distance 80 from enemy).
+    home = _obs([
+        (0, 0, 10.0, 50.0, 1.0, 100, 1),
+        (1, 1, 90.0, 50.0, 1.0, 10, 1),
+    ])
+    # Same total ship count but 50 in-flight at (70, 50) toward enemy.
+    inflight = _obs(
+        [
+            (0, 0, 10.0, 50.0, 1.0, 50, 1),
+            (1, 1, 90.0, 50.0, 1.0, 10, 1),
+        ],
+        fleets=[(0, 0, 70.0, 50.0, 0.0, 0, 50)],
+    )
+    v_home = _attack_pull_ship_value(home, me=0)
+    v_inflight = _attack_pull_ship_value(inflight, me=0)
+    assert v_inflight > v_home, (
+        f"in-flight fleet at d=20 should score higher than all-home at d=80; "
+        f"home={v_home} inflight={v_inflight}"
+    )
+
+
+def test_attack_pull_ignores_neutral_planets():
+    """Distance to neutral planets does NOT factor in — only enemy counts.
+    Otherwise the term would give weak signal early-game when neutrals are
+    everywhere (the bug in the existing _positional_ship_value)."""
+    from agents.baseline.value import _attack_pull_ship_value
+    # My planet at (10, 50) with 100 ships.
+    # Two scenarios: nearby neutral vs nearby enemy. Score for the nearby
+    # enemy should be MUCH higher; nearby neutral should not pull at all.
+    near_neutral = _obs([
+        (0, 0, 10.0, 50.0, 1.0, 100, 1),
+        (1, -1, 30.0, 50.0, 1.0, 30, 1),   # neutral at d=20 from me
+        (2, 1, 90.0, 50.0, 1.0, 10, 1),    # enemy at d=80
+    ])
+    near_enemy = _obs([
+        (0, 0, 10.0, 50.0, 1.0, 100, 1),
+        (1, -1, 90.0, 50.0, 1.0, 30, 1),   # neutral at d=80
+        (2, 1, 30.0, 50.0, 1.0, 10, 1),    # enemy at d=20
+    ])
+    v_near_neutral = _attack_pull_ship_value(near_neutral, me=0)
+    v_near_enemy = _attack_pull_ship_value(near_enemy, me=0)
+    assert v_near_enemy > v_near_neutral, (
+        f"near-enemy={v_near_enemy} should exceed near-neutral={v_near_neutral}; "
+        f"the term must ignore neutrals (only enemy matters)"
+    )
+
+
+def test_select_favor_fn_attack_pull_path():
+    """BASELINE_VALUE_HEAD=hybrid_attack_pull swaps to the new head."""
+    import os
+    from agents.baseline.value import select_favor_fn, favor_hybrid_attack_pull
+    os.environ["BASELINE_VALUE_HEAD"] = "hybrid_attack_pull"
+    try:
+        assert select_favor_fn() is favor_hybrid_attack_pull
+    finally:
+        os.environ.pop("BASELINE_VALUE_HEAD", None)

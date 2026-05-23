@@ -58,6 +58,15 @@ STRENGTH_PROD_WEIGHT = 15.0
 SPATIAL_WEIGHT = float(os.environ.get("BASELINE_SPATIAL_WEIGHT", "0.5"))
 SPATIAL_DECAY = float(os.environ.get("BASELINE_SPATIAL_DECAY", "30.0"))
 
+# Attack-pull leaf params (favor_hybrid_attack_pull only).
+# Spatial sibling that pulls ships toward ENEMY planets specifically
+# (not neutral). Neutrals are diffuse early-game; using only enemy
+# positions gives the chooser a sharper "press forward" signal from
+# turn 1. The existing BASELINE_NEUTRAL_BONUS handles neutral
+# expansion separately, so no double-counting.
+ATTACK_PULL_WEIGHT = float(os.environ.get("BASELINE_ATTACK_PULL_WEIGHT", "0.5"))
+ATTACK_PULL_DECAY = float(os.environ.get("BASELINE_ATTACK_PULL_DECAY", "30.0"))
+
 
 def _read(obs, attr, default):
     if hasattr(obs, attr):
@@ -194,6 +203,73 @@ def favor_hybrid_spatial(obs, me: int, num_seats: int = 2,
     return base + SPATIAL_WEIGHT * _positional_ship_value(obs, me)
 
 
+def _attack_pull_ship_value(obs, me: int) -> float:
+    """Sum over my ships (on-planet + in-flight) of weight by closeness
+    to the nearest ENEMY (non-our, non-neutral) planet.
+
+    Weight per ship: 1.0 / (1.0 + d_enemy_min / ATTACK_PULL_DECAY).
+      d=0   → 1.0   (on an enemy planet — captured)
+      d=30  → 0.5   (forward-deployed; ATTACK_PULL_DECAY default)
+      d=80  → ~0.27 (mid-board)
+      d=120 → ~0.20 (rear)
+
+    Sibling to `_positional_ship_value` but enemy-only. The
+    non_our-based positional term gives weak signal early-game when
+    most planets are neutral; this term gives a clean "move toward
+    the opponent" signal active from turn 1. Sums on-planet ships
+    AND in-flight fleets so a fleet en route to enemy territory
+    accrues value as it approaches.
+
+    Returns 0.0 in degenerate end-state (no enemy planets left —
+    likely already winning).
+    """
+    planets = _read(obs, "planets", []) or []
+    fleets = _read(obs, "fleets", []) or []
+    enemy = [(float(p[2]), float(p[3])) for p in planets
+             if int(p[1]) >= 0 and int(p[1]) != me]
+    if not enemy:
+        return 0.0
+    total = 0.0
+    for p in planets:
+        if int(p[1]) != me:
+            continue
+        x, y = float(p[2]), float(p[3])
+        d_min = min(math.hypot(x - ex, y - ey) for ex, ey in enemy)
+        total += float(p[5]) * (1.0 / (1.0 + d_min / ATTACK_PULL_DECAY))
+    for f in fleets:
+        if int(f[1]) != me:
+            continue
+        x, y = float(f[2]), float(f[3])
+        d_min = min(math.hypot(x - ex, y - ey) for ex, ey in enemy)
+        total += float(f[6]) * (1.0 / (1.0 + d_min / ATTACK_PULL_DECAY))
+    return total
+
+
+def favor_hybrid_attack_pull(obs, me: int, num_seats: int = 2,
+                             gamma: float = DEFAULT_GAMMA) -> float:
+    """favor_hybrid + attack-pull term (2P only).
+
+    Sibling to favor_hybrid_spatial but the positional term pulls
+    toward ENEMY planets only, not all non-our planets. Designed to
+    address PI's "agent is too passive" diagnosis (2026-05-23): the
+    base hybrid head treats ships as positionless, so the chooser
+    cannot distinguish "well-positioned" from "well-stockpiled" and
+    the agent accumulates rear ships instead of pressing forward.
+
+    4P fallback: returns favor_hybrid unchanged (A2 already biases
+    toward weakest opp position; adding more positional bias on top
+    historically regresses 4P per the favor_hybrid_spatial audit).
+
+    Purely additive — when ATTACK_PULL_WEIGHT=0 or num_seats > 2 it
+    equals favor_hybrid exactly. Independent of favor_hybrid_spatial:
+    selecting one head excludes the other via `select_favor_fn`.
+    """
+    base = favor_hybrid(obs, me, num_seats, gamma)
+    if ATTACK_PULL_WEIGHT == 0.0 or num_seats > 2:
+        return base
+    return base + ATTACK_PULL_WEIGHT * _attack_pull_ship_value(obs, me)
+
+
 def favor_hybrid(obs, me: int, num_seats: int = 2,
                  gamma: float = DEFAULT_GAMMA) -> float:
     """2P uses composite (waste-aware, validated by audit-workflow A/B:
@@ -228,4 +304,6 @@ def select_favor_fn():
         return favor_hybrid
     if choice == "hybrid_spatial":
         return favor_hybrid_spatial
+    if choice == "hybrid_attack_pull":
+        return favor_hybrid_attack_pull
     return favor
