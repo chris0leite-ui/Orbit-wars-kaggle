@@ -49,10 +49,6 @@ audit/live-episodes/*/episode-*.json
 audit/live-episodes/*/postmortem/postmortem-*.json
 !audit/live-episodes/*/postmortem/roll-up.json
 
-# Parallel-branch agents extracted via `git show` for cross-architecture
-# A/B comparisons (see audit/2026-05-11-v3-snipe-critical-review.md §6.5).
-# Source of truth lives on its own branch; we don't track a copy here.
-agents/precision/
 # Frozen pre-change copy of agents/baseline/ used as the A/B reference
 # while validating an in-flight chooser change. Source of truth is the
 # previous commit on this branch.

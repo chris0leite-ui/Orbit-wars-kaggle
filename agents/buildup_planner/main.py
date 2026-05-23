@@ -1,6 +1,6 @@
 """buildup_planner.main — phase-dispatch state machine.
 
-Step 1 wiring: BUILDUP → CONSOLIDATION (no STRIKE).
+Step 2 wiring: BUILDUP → CONSOLIDATION (predicate observed but not acted on).
 
 Per-seat phase state lives in module-level `_PHASE_STATE`. State resets
 on `obs.step == 0` (new game). The state machine is:
@@ -10,9 +10,13 @@ on `obs.step == 0` (new game). The state machine is:
                          emit and stay in BUILDUP for next turn.
                          If None, transition to CONSOLIDATION SAME TURN
                          and emit the CONSOLIDATION moves.
-    CONSOLIDATION      : evaluate_inflection (Step 1 stub → None);
-                         delegate to consolidation.step(obs, configuration).
-    STRIKE             : (Step 3) — never reached in Step 1.
+    CONSOLIDATION      : evaluate_inflection (real Step-2 search);
+                         log elect result to audit/…strike_elect.jsonl;
+                         transition to STRIKE only if
+                         BUILDUP_PLANNER_STRIKE_ENABLED=1 (default OFF).
+                         Otherwise delegate to consolidation.step(...).
+    STRIKE             : (Step 3) — never reached in Step 2 because the
+                         enable flag defaults OFF.
 
 NO modifications to obs / configuration before CONSOLIDATION delegates
 to the baseline pipeline — that pipeline handles its own parse, ledger,
@@ -20,7 +24,10 @@ and reset.
 """
 from __future__ import annotations
 
+import json
 import os
+import time
+from pathlib import Path
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
 
@@ -39,6 +46,39 @@ from agents.buildup_planner import buildup, consolidation, predicates
 PHASE_BUILDUP = "BUILDUP"
 PHASE_CONSOLIDATION = "CONSOLIDATION"
 PHASE_STRIKE = "STRIKE"  # reserved for Step 3
+
+
+# --- Observation-only logging (Step 2) ----------------------------------
+# Path is relative to repo root by default; an env override lets tests
+# point at /tmp or disable entirely (empty string = no logging).
+# Default ON: the whole point of Step 2 is to measure elect-rate.
+_ELECT_LOG_PATH_DEFAULT = "audit/buildup_planner_strike_elect.jsonl"
+
+
+def _elect_log_path() -> str | None:
+    """Resolve the audit log path; None = logging disabled."""
+    p = os.environ.get("BUILDUP_PLANNER_ELECT_LOG", _ELECT_LOG_PATH_DEFAULT)
+    return p if p else None
+
+
+def _log_elect(entry: dict) -> None:
+    """Append one JSON line to the elect-log; silent on any I/O error."""
+    path = _elect_log_path()
+    if not path:
+        return
+    try:
+        # Make parent dir best-effort; missing parent should not crash.
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+    except Exception:
+        # Observation log MUST NOT break the agent. Drop silently.
+        pass
+
+
+def _strike_enabled() -> bool:
+    """Step 3 wires STRIKE; Step 2 keeps it OFF by default."""
+    return os.environ.get("BUILDUP_PLANNER_STRIKE_ENABLED", "0") == "1"
 
 # Per-seat machine state. Keyed by `obs.player` (int).
 _PHASE_STATE: dict[int, dict] = {}
@@ -97,19 +137,40 @@ def agent(obs, configuration=None) -> list[list]:
 
     # --- CONSOLIDATION branch -------------------------------------------
     if state["phase"] == PHASE_CONSOLIDATION:
-        # Inflection predicate (Step 1 stub: always None → stay).
-        # World/model rebuilt here only when we need the predicate; once
-        # the predicate is wired we'll always evaluate it. Step 1 skips
-        # the rebuild as a small optimisation since the stub is no-op.
-        if predicates.evaluate_inflection is not None:
-            # Guard the stub call cheaply — short-circuit on `is None`.
+        # Step 2: run the real inflection predicate, log the result.
+        # Strike transition is GATED by BUILDUP_PLANNER_STRIKE_ENABLED
+        # (default OFF) — observation-only until Step 3 flips it ON.
+        world_pred = World.from_obs(obs_d)
+        opp_id = predicates.opp_id_2p(world_pred, me)
+        if opp_id < 0:
+            _log_elect({"step": step, "me": me, "opp_id": -1, "skipped": "4p"})
+        else:
+            t0 = time.perf_counter()
+            plan = None
             try:
-                # Rebuild world only when the predicate would actually fire.
-                # Step 1 stub returns None unconditionally, so we elide.
-                plan = None  # placeholder for Step 2: evaluate_inflection(...)
-            except Exception:
+                model = WorldModel.from_world(world_pred)
+                plan = predicates.evaluate_inflection(
+                    world_pred, model, me, opp_id
+                )
+            except Exception as exc:
+                # Predicate errors must NOT break consolidation. Log and stay.
+                _log_elect({
+                    "step": step, "me": me, "opp_id": opp_id,
+                    "error": repr(exc),
+                    "elapsed_ms": round((time.perf_counter() - t0) * 1000.0, 3),
+                })
                 plan = None
-            if plan is not None:
+            else:
+                _log_elect({
+                    "step": step, "me": me, "opp_id": opp_id,
+                    "plan_found": plan is not None,
+                    "arrival_step": (int(plan.arrival_step) if plan else None),
+                    "target_ids": (sorted(int(t) for t in plan.target_ids)
+                                   if plan else None),
+                    "num_shots": (len(plan.shots) if plan else 0),
+                    "elapsed_ms": round((time.perf_counter() - t0) * 1000.0, 3),
+                })
+            if plan is not None and _strike_enabled():
                 state["phase"] = PHASE_STRIKE
                 state["strike_plan"] = plan
                 # Fall through to STRIKE this turn.
