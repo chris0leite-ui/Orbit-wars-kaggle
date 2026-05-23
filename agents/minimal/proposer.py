@@ -43,7 +43,4 @@ def propose(my_planets, enemy_planets) -> list[tuple]:
             angle = math.atan2(float(tgt.y) - float(src.y),
                                float(tgt.x) - float(src.x))
             cands.append((src, tgt, capture, angle))
-            overcommit = min(avail, 2 * capture)
-            if overcommit > capture:
-                cands.append((src, tgt, overcommit, angle))
     return cands

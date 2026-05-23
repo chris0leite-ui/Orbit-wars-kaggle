@@ -1,11 +1,10 @@
-"""Idle baseline + per-candidate Δ rollout, greedy non-dogpile emit.
+"""Idle baseline + per-candidate Δ rollout, greedy emit.
 
 Pipeline:
   baseline[h] = favor over HORIZON steps with (me=idle, opp=reactive)
   for each candidate:
     Δ = favor(me-fires-at-step-0, opp=reactive, HORIZON steps) - baseline[H]
-  emit Δ>0 candidates sorted desc, dogpile-filtered:
-    1 launch per source AND 1 per target per turn.
+  emit Δ>0 candidates sorted desc, 1 launch per source per turn.
 
 The reactive opp model is lib.opp_model.lite_greedy_policy — a cheap
 production/distance ROI scorer that approximates what spam-launchers
