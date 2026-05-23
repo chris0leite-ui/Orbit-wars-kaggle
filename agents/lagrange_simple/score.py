@@ -84,11 +84,16 @@ def enumerate_candidates(world, model, my_id: int, omega: float,
     """Enumerate every viable (src, tgt, launch_tick) capture candidate.
 
     Filters applied (in order):
-      1. ships needed ≤ source's current garrison.
+      1. ships needed ≤ source's current garrison (time-indexed).
       2. predict_fleet_fate.outcome == "target" (not sun / OOB / wrong planet).
       3. delivered ships > predicted garrison at arrival (capture succeeds).
       4. target NOT already ours at arrival (skip pure reinforce in v1).
       5. _target_holdable_after_capture (B1 — opp can't recapture cheaply).
+         RELAXED in dominant-endgame: when we own ≥3× as many planets as
+         the opponent, the recapture-risk model over-rejects (opp's few
+         remaining planets WILL counter, but our wide base lets us
+         re-take cheaply). The PI elim-gate failure on seed 14514 was the
+         hold filter blocking every approach to a 3-planet opp pocket.
       6. value > 0 (skip end-of-game captures with zero remaining production).
     """
     comet_ids = comet_ids or set()
@@ -99,6 +104,12 @@ def enumerate_candidates(world, model, my_id: int, omega: float,
                and int(p.id) not in comet_ids]
     if not my_planets or not targets:
         return []
+
+    opp_planets = [p for p in world.planets_by_id.values()
+                   if int(p.owner) != int(my_id) and int(p.owner) >= 0]
+    dominant_endgame = (
+        len(opp_planets) > 0 and len(my_planets) >= 3 * len(opp_planets)
+    )
 
     candidates: list[Candidate] = []
     for src in my_planets:
@@ -138,7 +149,7 @@ def enumerate_candidates(world, model, my_id: int, omega: float,
                     continue  # already ours by arrival — reinforce, skip v1
                 if float(ships) <= float(gar_at_arr):
                     continue  # not enough to capture
-                if not _target_holdable_after_capture(
+                if not dominant_endgame and not _target_holdable_after_capture(
                     src, tgt, ships, launch_tick, eta, world, model, my_id,
                 ):
                     continue
