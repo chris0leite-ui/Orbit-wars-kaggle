@@ -240,6 +240,43 @@ def min_ships_for_eta(eta: int) -> int:
     return min_ships_for_distance(distance_proxy)
 
 
+def min_ships_for_source_fraction(src_ships: int) -> int:
+    """Fractional source-drain floor (Change B v2, 2026-05-23, refined
+    from PI strategic input).
+
+    Returns the minimum ships a candidate must launch given the source
+    planet's current garrison size. Strategic rationale: a 2-ship
+    launch from a 100-ship planet (2% drain) is strategically
+    irrelevant — the planet still has 98 ships, the fleet is too
+    small to capture anything defended, and we've spent a turn-slot
+    on a non-decision. Fractional sizing scales naturally with
+    planet size: small planets keep their cheap launches, big
+    planets must concentrate.
+
+    Formula (when BASELINE_SOURCE_DRAIN_FRAC > 0):
+        min_ships = ceil(src_ships × SOURCE_DRAIN_FRAC)
+
+    SOURCE_DRAIN_FRAC default 0.10 in agents/orbitfix_kt_p23_snowball:
+        source has 5 ships  → floor = 1 (no-op, MIN_FLEET_SIZE takes over)
+        source has 20 ships → floor = 2 (no-op, MIN_FLEET_SIZE takes over)
+        source has 50 ships → floor = 5
+        source has 100 ships → floor = 10 (prevents 2-ship micro-launches)
+        source has 200 ships → floor = 20
+
+    Default 0.0 (the env var is missing) returns 0 — bit-identical to
+    pre-Change-B-v2 behavior. The function is composed with
+    `min_ships_for_distance` and `MIN_FLEET_SIZE` via max() at the
+    candidate gate, so all three floors stack honestly.
+
+    Supersedes the older `BASELINE_MIN_SOURCE_SHIPS_TO_EMIT` source-level
+    skip (which was an absolute threshold; this is a fraction).
+    """
+    frac = env_float("BASELINE_SOURCE_DRAIN_FRAC", 0.0)
+    if frac <= 0.0:
+        return 0
+    return int(math.ceil(float(src_ships) * frac))
+
+
 def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
     """WorldModel-aware minimum size to take (or hold) tgt from src."""
     if int(tgt.owner) == me:
@@ -995,23 +1032,31 @@ def propose(my_planets, target_pool, world, model, me: int,
             if int(tgt.id) == int(src.id):
                 continue
 
-            # Change A v2 (2026-05-23): pre-compute the geometric chord
-            # length src→tgt once per target. Distance is invariant to
-            # ship count (unlike ETA), so it's the cleanest signal for
-            # the "small-fleet-far-away" anti-fragmentation gate. When
-            # BASELINE_MIN_FLEET_BY_DISTANCE is OFF (default),
-            # min_ships_for_distance returns MIN_FLEET_SIZE → no-op.
+            # Change A v2 + B v2 (2026-05-23): combine three honest floors
+            # at the candidate gate. Each one captures a distinct cause
+            # of fleet waste; they STACK via max() rather than competing.
+            #   - MIN_FLEET_SIZE = absolute floor below which combat is
+            #     degenerate (always 2)
+            #   - min_ships_for_distance = geometric anti-fragmentation
+            #     (2-ship fleets across 50 units are wasted)
+            #   - min_ships_for_source_fraction = source-relative anti-
+            #     fragmentation (2-ship launch from a 100-ship planet
+            #     is strategically irrelevant)
+            # All three default to MIN_FLEET_SIZE=2 when their gates are
+            # OFF, so the unified floor stays bit-identical to pre-2026-
+            # 05-23 behavior unless agents opt in.
             chord_distance = math.hypot(src.x - tgt.x, src.y - tgt.y)
-            floor_by_distance = min_ships_for_distance(chord_distance)
+            candidate_floor = max(
+                MIN_FLEET_SIZE,
+                min_ships_for_distance(chord_distance),
+                min_ships_for_source_fraction(int(src.ships)),
+            )
 
             if emit_fire_now:
                 for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
                     if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                         continue
-                    # Distance-proportional floor: drop fragmented launches
-                    # to distant targets. capture_size already enforces the
-                    # garrison-needed floor; this adds the geometric one.
-                    if ships < floor_by_distance:
+                    if ships < candidate_floor:
                         continue
                     angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
                     horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
@@ -1031,10 +1076,11 @@ def propose(my_planets, target_pool, world, model, me: int,
                 w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if w_horizon >= baseline_len:
                     continue
-                # Distance-based gate also applies to wait_N candidates —
-                # the chord length is the SAME regardless of fire time,
-                # so we use the pre-computed floor_by_distance directly.
-                if w_ships < floor_by_distance:
+                # Unified candidate floor applies to wait_N candidates
+                # too — the chord length is invariant to fire time, and
+                # source-fraction floor uses current src.ships (snapshot
+                # at proposal time).
+                if w_ships < candidate_floor:
                     continue
                 w_cheap = cheap_marginal_value(
                     src, tgt, w_ships, w_eta, world, model, me, wait_N=w_wait,

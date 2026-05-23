@@ -36,10 +36,15 @@ os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
 os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
 os.environ.setdefault("BASELINE_ADAPTIVE_K", "1")
 os.environ.setdefault("COMPOSITE_FLEET_SURVIVAL_CHECK", "1")
-# Snowball knobs (Change A/B/C, 2026-05-23):
+# Snowball knobs (Change A v2 + B v2 + C, 2026-05-23):
+# - A v2: distance-proportional min-fleet floor (continuous)
+# - B v2: source-drain-fraction floor (replaces absolute threshold).
+#         A 100-ship planet must launch >= 10 ships, but a 5-ship
+#         planet can still snipe close empty neutrals with 2 ships.
+# - C:   joint pair enumeration prioritised by fattest-opp-first
 os.environ.setdefault("BASELINE_MIN_FLEET_BY_DISTANCE", "1")
 os.environ.setdefault("BASELINE_MIN_FLEET_SLOPE_PER_UNIT", "0.15")
-os.environ.setdefault("BASELINE_MIN_SOURCE_SHIPS_TO_EMIT", "5")
+os.environ.setdefault("BASELINE_SOURCE_DRAIN_FRAC", "0.10")
 os.environ.setdefault("BASELINE_JOINT_TARGET_PRIORITY", "1")
 
 from agents.baseline.main import agent  # noqa: E402

@@ -495,3 +495,55 @@ def test_changes_ab_off_by_default_propose_bit_identical():
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+def test_min_ships_for_source_fraction_off_by_default_returns_zero():
+    """Change B v2 pin (2026-05-23): with BASELINE_SOURCE_DRAIN_FRAC
+    unset or 0, the fractional floor returns 0 so it never raises the
+    candidate floor above MIN_FLEET_SIZE. Bit-identical default.
+    """
+    import os
+    from agents.baseline.proposer import min_ships_for_source_fraction
+    saved = os.environ.pop("BASELINE_SOURCE_DRAIN_FRAC", None)
+    try:
+        for ships in (5, 20, 100, 500):
+            assert min_ships_for_source_fraction(ships) == 0
+    finally:
+        if saved is not None:
+            os.environ["BASELINE_SOURCE_DRAIN_FRAC"] = saved
+
+
+def test_min_ships_for_source_fraction_scales_with_source_size():
+    """Change B v2 pin (2026-05-23): with FRAC=0.10, floor scales
+    linearly with source garrison. Small sources keep tiny floors so
+    cheap close captures stay viable; fat sources require concentrated
+    launches.
+    """
+    import os
+    from agents.baseline.proposer import min_ships_for_source_fraction
+    saved = os.environ.get("BASELINE_SOURCE_DRAIN_FRAC")
+    try:
+        os.environ["BASELINE_SOURCE_DRAIN_FRAC"] = "0.10"
+        # Small sources: floor is 1 (no-op vs MIN_FLEET_SIZE=2 at the
+        # candidate gate).
+        assert min_ships_for_source_fraction(5) == 1
+        assert min_ships_for_source_fraction(10) == 1
+        # Mid-size sources: floor matches MIN_FLEET_SIZE.
+        assert min_ships_for_source_fraction(20) == 2
+        assert min_ships_for_source_fraction(30) == 3
+        # Fat sources: floor exceeds MIN_FLEET_SIZE — these are the
+        # planets that should NOT emit micro-launches.
+        assert min_ships_for_source_fraction(50) == 5
+        assert min_ships_for_source_fraction(100) == 10
+        assert min_ships_for_source_fraction(200) == 20
+        # Monotone: bigger source never produces smaller floor.
+        prev = 0
+        for s in range(0, 500, 10):
+            cur = min_ships_for_source_fraction(s)
+            assert cur >= prev
+            prev = cur
+    finally:
+        if saved is None:
+            os.environ.pop("BASELINE_SOURCE_DRAIN_FRAC", None)
+        else:
+            os.environ["BASELINE_SOURCE_DRAIN_FRAC"] = saved
