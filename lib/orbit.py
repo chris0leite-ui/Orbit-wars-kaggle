@@ -31,11 +31,21 @@ def predict_relative(current_planet, angular_velocity: float, lead_turns: float)
 
     Safe for an agent that doesn't track absolute step count: read polar
     angle of the current planet position and rotate forward by
-    `omega * lead_turns`. Returns the current (x, y) for static planets too,
-    since rotating a position outside the rotation limit is a noop physically
-    but the formula still works mathematically — caller should pre-filter
-    via `is_orbiting` if performance matters.
+    `omega * lead_turns`. STATIC planets (those failing `is_orbiting`)
+    return their raw position — the env does NOT rotate planets outside
+    ROTATION_RADIUS_LIMIT, and the pre-2026-05-23 always-rotate behavior
+    was a silent bug used by 4 non-pre-filtered call sites in
+    `lib/aim.py` and `agents/baseline/main.py`. The bug surfaced as 81%
+    turn divergence between KT-ON and KT-OFF (the kinematic table
+    correctly stores constant for static planets, while this function
+    used to rotate them); see /tmp/parity_kt.py.
+
+    Returns the current (x, y) when omega == 0 too — the math
+    `cur_angle + 0 * lead = cur_angle` round-trips through atan2/cos/sin
+    introducing ULP drift, so we short-circuit.
     """
+    if not is_orbiting(current_planet):
+        return (float(current_planet[2]), float(current_planet[3]))
     px, py = current_planet[2], current_planet[3]
     dx, dy = px - CENTER, py - CENTER
     orb_r = math.hypot(dx, dy)

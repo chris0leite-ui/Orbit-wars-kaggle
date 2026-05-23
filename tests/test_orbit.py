@@ -230,3 +230,23 @@ def test_predict_relative_smart_env_on_primed_matches_predict_relative(monkeypat
             assert got == want, (
                 f"pid={pid} lead={lead}: cached={got}, slow={want}"
             )
+
+
+def test_predict_relative_static_planet_returns_constant():
+    """Regression pin (2026-05-23): predict_relative must return the
+    raw (p.x, p.y) for STATIC planets (those failing is_orbiting). The
+    env does NOT rotate planets outside ROTATION_RADIUS_LIMIT, but
+    pre-2026-05-23 this function always rotated regardless — a silent
+    bug used by 4 non-pre-filtered call sites (lib/aim.py, baseline/main.py
+    reinforce paths). The bug surfaced as 81% turn divergence between
+    KT-ON and KT-OFF (the table correctly stored constant for static
+    planets, while predict_relative rotated them).
+    """
+    # orb_r at (10, 10) ≈ 56.57; +radius 5 = 61.57 > ROTATION_RADIUS_LIMIT=50.
+    static_tup = _planet(0, 10.0, 10.0, radius=5.0)
+    assert not orbit.is_orbiting(static_tup), "test premise: planet must be static"
+    omega = 0.05
+    for lead in (0, 1, 5, 17, 100, 1000):
+        x, y = orbit.predict_relative(static_tup, omega, lead)
+        assert x == 10.0, f"lead={lead}: x={x} but expected 10.0 (static)"
+        assert y == 10.0, f"lead={lead}: y={y} but expected 10.0 (static)"
