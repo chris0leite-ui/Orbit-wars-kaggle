@@ -457,6 +457,27 @@ def bundle(
     parts.append("\n# === agent ===\n")
     parts.append(_clean_agent_source(agent_src))
 
+    # === kaggle entrypoint trailer ===
+    # kaggle_environments/agent.py:get_last_callable picks the LAST
+    # callable in env.values() insertion order. When a cross-agent
+    # dependency (e.g. baseline/main.py) is inlined and defines its
+    # own `def agent`, the primary's later `def agent` overwrites the
+    # VALUE but Python's dict preserves the original insertion POSITION
+    # of the key. Any helper defined AFTER baseline's `agent` insert
+    # but BEFORE the primary's `agent` redef (e.g. buildup_planner's
+    # `_reset_if_new_game`) becomes the last fresh callable, and
+    # kaggle calls IT with (obs, configuration) — exploding on the
+    # first arg type-mismatch. Symptom on the LB: ERROR with traceback
+    # in some helper function that never expected to be the entry.
+    # Origin: 2026-05-23, sub 52968305 (buildup_planner) ERROR'd.
+    # The trailer below introduces a NEW symbol guaranteed to be last
+    # in env.values(), forwarding to the real `agent`.
+    parts.append(
+        "\n# === kaggle entrypoint trailer (bundle_agent.py) ===\n"
+        "def _kaggle_orbit_wars_entrypoint(observation, configuration=None):\n"
+        "    return agent(observation, configuration)\n"
+    )
+
     out_path.write_text("".join(parts))
     return out_path
 
