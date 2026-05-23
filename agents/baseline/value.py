@@ -67,6 +67,26 @@ SPATIAL_DECAY = float(os.environ.get("BASELINE_SPATIAL_DECAY", "30.0"))
 ATTACK_PULL_WEIGHT = float(os.environ.get("BASELINE_ATTACK_PULL_WEIGHT", "0.5"))
 ATTACK_PULL_DECAY = float(os.environ.get("BASELINE_ATTACK_PULL_DECAY", "30.0"))
 
+# Endgame escalation params (favor_attack_pull only, gated on ENDGAME_ELIM_WEIGHT).
+# Addresses the "wins on score but doesn't ELIM" pattern: rung 1 (vs random)
+# 6/16 ELIM, rung 2 (vs starter) 3/16 ELIM. When we're clearly dominant
+# (>=2x planet count), the leaf still treats "spend 60 ships to take their
+# last planet" as net-negative (capture gives ~+35 prod-stream, costs ~−60
+# ships). The leaf has no terminus for "won by elim" so it stockpiles.
+# This term adds a discontinuous bonus that grows as opp_count drops,
+# making finishing attacks net-positive in the leaf.
+#
+# Bonus curve (opp_count → bonus, with default ENDGAME_ELIM_WEIGHT=100):
+#   opp=0 → 2000  (game won by elim — leaf state we want most)
+#   opp=1 →  800
+#   opp=2 →  450
+#   opp=3 →  200
+#   opp=4 →   50
+#   opp>=5 → 0  (not endgame; suppress to avoid disrupting mid-game)
+# Gated by dominance: only fires when my_count >= 2 * opp_count, else 0.
+ENDGAME_ELIM_WEIGHT = float(os.environ.get("BASELINE_ENDGAME_ELIM_WEIGHT", "0"))
+ENDGAME_ELIM_THRESHOLD = int(os.environ.get("BASELINE_ENDGAME_ELIM_THRESHOLD", "5"))
+
 
 def _read(obs, attr, default):
     if hasattr(obs, attr):
@@ -245,9 +265,56 @@ def _attack_pull_ship_value(obs, me: int) -> float:
     return total
 
 
+def _endgame_elim_bonus(obs, me: int) -> float:
+    """Bonus for leaf states where we're close to (or have achieved)
+    elimination. Discontinuous reward: grows quadratically as opp_count
+    drops below ENDGAME_ELIM_THRESHOLD, peaking at full elim.
+
+    Gated by dominance (my_count >= 2 * opp_count) so the bonus only
+    fires when we're already winning by score — otherwise it could
+    encourage reckless attacks in close mid-game where the leaf
+    correctly avoids high-cost low-probability captures.
+
+    Returns 0.0 when ENDGAME_ELIM_WEIGHT == 0 (suppress for ablations).
+
+    Bonus curve (with default ENDGAME_ELIM_WEIGHT=100, THRESHOLD=5):
+      opp=0 → 20 × WEIGHT  (perfect: 2000)
+      opp=1 →  16 × WEIGHT  (1600)
+      opp=2 →   9 × WEIGHT  (900)
+      opp=3 →   4 × WEIGHT  (400)
+      opp=4 →   1 × WEIGHT  (100)
+      opp>=5 → 0  (mid-game; leaf's base scoring takes over)
+
+    Quadratic ramp (5 - opp_count)**2 × WEIGHT chosen so the marginal
+    value of taking one MORE planet GROWS as the game ends — matches
+    the TrueSkill scoring (elim > score-win > draw).
+    """
+    if ENDGAME_ELIM_WEIGHT == 0.0:
+        return 0.0
+    planets = _read(obs, "planets", []) or []
+    my_count = 0
+    opp_count = 0
+    for p in planets:
+        owner = int(p[1])
+        if owner == me:
+            my_count += 1
+        elif owner >= 0:
+            opp_count += 1
+    if opp_count >= ENDGAME_ELIM_THRESHOLD:
+        return 0.0
+    # Dominance gate — only fire when we're already ahead. Avoid the
+    # case where a desperate "we're down 2 vs 5" leaf still grabs the
+    # elim bonus and pushes us to attack a position we don't dominate.
+    if my_count < 2 * max(1, opp_count):
+        return 0.0
+    gap = ENDGAME_ELIM_THRESHOLD - opp_count
+    return float(gap * gap) * ENDGAME_ELIM_WEIGHT
+
+
 def favor_attack_pull(obs, me: int, num_seats: int = 2,
                       gamma: float = DEFAULT_GAMMA) -> float:
-    """favor (cheap positionless baseline) + attack-pull term (2P only).
+    """favor (cheap positionless baseline) + attack-pull term (2P only)
+    + endgame elim-state bonus (gated on ENDGAME_ELIM_WEIGHT>0).
 
     The cheap variant of the attack-pull design. Layers the positional
     pull onto the canonical `favor` head — does NOT go through the
@@ -255,18 +322,32 @@ def favor_attack_pull(obs, me: int, num_seats: int = 2,
     per fleet at every leaf call, adding ~600ms per turn when
     COMPOSITE_FLEET_SURVIVAL_CHECK=1).
 
+    Endgame elim bonus addresses the "wins on score but doesn't ELIM"
+    pattern observed in rungs 1 (vs random 6/16 ELIM) and 2 (vs starter
+    3/16 ELIM): the leaf's base scoring has no "won by elim" terminus,
+    so attacking the opp's last few defended planets looks net-negative
+    (cost ~60 ships, prod-stream gain ~35) and the chooser stockpiles
+    instead of finishing. _endgame_elim_bonus adds a quadratically
+    growing reward as opp_count drops, gated by dominance.
+
     Wallclock vs `favor`: ~10-30 ms per turn extra (single _attack_pull
-    loop per leaf call × ~60 leaf calls).
+    loop per leaf call × ~60 leaf calls). Elim bonus adds a single dict
+    pass over planets, negligible.
 
     4P fallback: returns favor unchanged. The A2 weakness-exploitation
     inside `favor` already biases toward weakest opp position in 4P;
     adding positional bias on top historically regresses 4P per the
-    favor_hybrid_spatial audit.
+    favor_hybrid_spatial audit. Elim bonus also disabled in 4P (the
+    "opp_count" concept doesn't generalise cleanly to 3 opponents).
     """
     base = favor(obs, me, num_seats, gamma)
-    if ATTACK_PULL_WEIGHT == 0.0 or num_seats > 2:
+    if num_seats > 2:
         return base
-    return base + ATTACK_PULL_WEIGHT * _attack_pull_ship_value(obs, me)
+    bonus = 0.0
+    if ATTACK_PULL_WEIGHT != 0.0:
+        bonus += ATTACK_PULL_WEIGHT * _attack_pull_ship_value(obs, me)
+    bonus += _endgame_elim_bonus(obs, me)
+    return base + bonus
 
 
 def favor_hybrid_attack_pull(obs, me: int, num_seats: int = 2,

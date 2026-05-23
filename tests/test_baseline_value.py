@@ -200,6 +200,102 @@ def test_attack_pull_ignores_neutral_planets():
     )
 
 
+# ---------------------------------------------------------------------------
+# Endgame elimination bonus (2026-05-24 — finishing-attack incentive)
+# ---------------------------------------------------------------------------
+
+
+def test_endgame_elim_returns_zero_when_weight_off():
+    """With ENDGAME_ELIM_WEIGHT=0, bonus is suppressed (default ablation)."""
+    import os
+    from agents.baseline.value import _endgame_elim_bonus
+    os.environ.pop("BASELINE_ENDGAME_ELIM_WEIGHT", None)
+    # Module-level constant was loaded at import; reload to honor env.
+    import importlib, agents.baseline.value as v
+    importlib.reload(v)
+    obs = _obs([(0, 0, 10, 10, 1.0, 100, 1)] * 10 + [(99, 1, 90, 90, 1.0, 5, 1)])
+    assert v._endgame_elim_bonus(obs, me=0) == 0.0
+
+
+def test_endgame_elim_returns_zero_above_threshold():
+    """When opp_count >= threshold (default 5), bonus is 0 — bonus only
+    fires in late endgame, not mid-game."""
+    import os
+    os.environ["BASELINE_ENDGAME_ELIM_WEIGHT"] = "100"
+    import importlib, agents.baseline.value as v
+    importlib.reload(v)
+    try:
+        # 20 mine vs 8 opp — dominant but opp_count > threshold (5)
+        obs_planets = []
+        for i in range(20):
+            obs_planets.append((i, 0, 10 + i, 10, 1.0, 100, 1))
+        for i in range(8):
+            obs_planets.append((100 + i, 1, 90 - i, 90, 1.0, 50, 1))
+        obs = _obs(obs_planets)
+        assert v._endgame_elim_bonus(obs, me=0) == 0.0
+    finally:
+        os.environ.pop("BASELINE_ENDGAME_ELIM_WEIGHT", None)
+
+
+def test_endgame_elim_dominance_gate():
+    """When my_count < 2 * opp_count, bonus is 0 even in late-game range.
+    Avoids reckless attacks when we're not actually dominant."""
+    import os
+    os.environ["BASELINE_ENDGAME_ELIM_WEIGHT"] = "100"
+    import importlib, agents.baseline.value as v
+    importlib.reload(v)
+    try:
+        # 5 mine vs 3 opp — opp below threshold but I'm not 2x dominant
+        obs = _obs([
+            (0, 0, 10, 10, 1.0, 100, 1), (1, 0, 11, 10, 1.0, 100, 1),
+            (2, 0, 12, 10, 1.0, 100, 1), (3, 0, 13, 10, 1.0, 100, 1),
+            (4, 0, 14, 10, 1.0, 100, 1),
+            (10, 1, 90, 90, 1.0, 50, 1), (11, 1, 91, 90, 1.0, 50, 1),
+            (12, 1, 92, 90, 1.0, 50, 1),
+        ])
+        # 5 mine vs 3 opp; 5 < 2*3=6 → gate blocks bonus
+        assert v._endgame_elim_bonus(obs, me=0) == 0.0
+    finally:
+        os.environ.pop("BASELINE_ENDGAME_ELIM_WEIGHT", None)
+
+
+def test_endgame_elim_grows_quadratically_as_opp_drops():
+    """Bonus grows as (threshold - opp_count)**2, gated by dominance.
+    Captures the design: marginal value of taking one more planet
+    GROWS as we approach elim."""
+    import os
+    os.environ["BASELINE_ENDGAME_ELIM_WEIGHT"] = "100"
+    import importlib, agents.baseline.value as v
+    importlib.reload(v)
+    try:
+        my_planets = [(i, 0, 10 + i, 10, 1.0, 100, 1) for i in range(20)]
+
+        # opp_count=4 (just below threshold=5; 20 vs 4 = dominant)
+        obs4 = _obs(my_planets + [
+            (100, 1, 90, 90, 1.0, 50, 1), (101, 1, 91, 90, 1.0, 50, 1),
+            (102, 1, 92, 90, 1.0, 50, 1), (103, 1, 93, 90, 1.0, 50, 1),
+        ])
+        # opp_count=2
+        obs2 = _obs(my_planets + [
+            (100, 1, 90, 90, 1.0, 50, 1), (101, 1, 91, 90, 1.0, 50, 1),
+        ])
+        # opp_count=0 (elim achieved)
+        obs0 = _obs(my_planets)
+
+        v4 = v._endgame_elim_bonus(obs4, me=0)
+        v2 = v._endgame_elim_bonus(obs2, me=0)
+        v0 = v._endgame_elim_bonus(obs0, me=0)
+
+        # gap = (threshold=5) - opp_count, bonus = gap² × WEIGHT(100)
+        assert v4 == 1 * 1 * 100.0, f"opp=4: got {v4}"
+        assert v2 == 3 * 3 * 100.0, f"opp=2: got {v2}"
+        assert v0 == 5 * 5 * 100.0, f"opp=0: got {v0}"
+        # Monotone: more elim → bigger bonus
+        assert v0 > v2 > v4 > 0
+    finally:
+        os.environ.pop("BASELINE_ENDGAME_ELIM_WEIGHT", None)
+
+
 def test_select_favor_fn_attack_pull_path():
     """BASELINE_VALUE_HEAD=attack_pull swaps to the cheap variant
     (favor + attack-pull, no composite). BASELINE_VALUE_HEAD=

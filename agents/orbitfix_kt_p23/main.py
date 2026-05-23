@@ -37,5 +37,12 @@ os.environ.setdefault("BASELINE_ATTACK_PULL_DECAY", "30.0")
 # Slope 0.15: d=30→5 ships, d=50→8 ships, d=70→11 ships.
 os.environ.setdefault("BASELINE_MIN_FLEET_BY_DISTANCE", "1")
 os.environ.setdefault("BASELINE_MIN_FLEET_SLOPE_PER_UNIT", "0.15")
+# Endgame elimination bonus (2026-05-24): addresses the "wins by score
+# but doesn't ELIM" pattern. With my>=2*opp and opp<5 planets, adds a
+# quadratically growing reward to leaf states with fewer opp planets,
+# making finishing attacks net-positive in the chooser's leaf score.
+# Rung-1 (vs random) ELIM 6/16, rung-2 (vs starter) ELIM 3/16 baseline.
+os.environ.setdefault("BASELINE_ENDGAME_ELIM_WEIGHT", "100")
+os.environ.setdefault("BASELINE_ENDGAME_ELIM_THRESHOLD", "5")
 
 from agents.baseline.main import agent  # noqa: E402
