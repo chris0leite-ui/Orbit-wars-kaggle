@@ -17,6 +17,7 @@ import math
 import os
 
 from lib.aim import aim_comet, aim_orbiting
+from lib.config import env_bool, env_int
 from lib.fleet import speed as fleet_speed
 from lib.orbit import is_orbiting, predict_relative, predict_relative_smart
 from lib.scoring import pv_horizon
@@ -29,10 +30,8 @@ SIM_SETTLE_TURNS = 2
 # Rollout horizon — env-var overridable so a deeper-horizon variant can
 # opt in without forcing it on every agent that imports baseline.proposer.
 # Defaults match the production ceiling (sub 52912707) settings.
-from lib.config import env_int as _env_int  # noqa: E402
-
-MIN_HORIZON = _env_int("BASELINE_MIN_HORIZON", 25)
-MAX_HORIZON = _env_int("BASELINE_MAX_HORIZON", 40)
+MIN_HORIZON = env_int("BASELINE_MIN_HORIZON", 25)
+MAX_HORIZON = env_int("BASELINE_MAX_HORIZON", 40)
 WAIT_EXTRA_SURPLUS = (0, 5, 12)  # legacy forward grid (kept for rollback)
 CHEAP_REJECT_THRESHOLD = -10.0
 EPISODE_STEPS = 500
@@ -178,6 +177,32 @@ def nearest_k(targets, src, k: int):
         targets,
         key=lambda t: math.hypot(src.x - t.x, src.y - t.y),
     )[:k]
+
+
+def min_ships_for_eta(eta: int) -> int:
+    """Snowball anti-fragmentation floor (Change A, 2026-05-23).
+
+    Returns the minimum ships a candidate must carry given its predicted
+    arrival ETA. Distance amplifies the opp's counter-launch window AND
+    in-flight attrition risk; a 2-ship fleet across 25 ticks is almost
+    always wasted (PI observation from live trace). The floor schedule
+    is env-tunable so the A/B can tighten/loosen without code edit.
+
+    Default schedule (when BASELINE_MIN_FLEET_BY_ETA=1):
+      eta <= 5  → 2 ships (no-op vs MIN_FLEET_SIZE — snipe stragglers OK)
+      eta <= 15 → 5 ships (medium-range fleet must survive attrition)
+      eta > 15  → 10 ships (long-range requires concentration)
+
+    When the env var is OFF (default), returns MIN_FLEET_SIZE so the
+    function is bit-identical to pre-Change-A behavior at every site.
+    """
+    if not env_bool("BASELINE_MIN_FLEET_BY_ETA", False):
+        return MIN_FLEET_SIZE
+    if eta <= env_int("BASELINE_MIN_FLEET_NEAR_ETA", 5):
+        return MIN_FLEET_SIZE
+    if eta <= env_int("BASELINE_MIN_FLEET_MID_ETA", 15):
+        return env_int("BASELINE_MIN_FLEET_MID_SHIPS", 5)
+    return env_int("BASELINE_MIN_FLEET_FAR_SHIPS", 10)
 
 
 def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
@@ -914,33 +939,59 @@ def propose(my_planets, target_pool, world, model, me: int,
     sorted by cheap_delta descending.
     """
     prerank = []
+    # Change B (2026-05-23): source-garrison floor. When
+    # BASELINE_MIN_SOURCE_SHIPS_TO_EMIT > MIN_FLEET_SIZE, sources below
+    # that threshold skip fire-now emit (they can still emit wait_N
+    # candidates that accumulate ships before firing). Forces small
+    # planets to snowball rather than fragment. Default 0 = use
+    # MIN_FLEET_SIZE (existing behavior bit-identically).
+    min_src_ships_to_emit = max(
+        MIN_FLEET_SIZE,
+        env_int("BASELINE_MIN_SOURCE_SHIPS_TO_EMIT", 0),
+    )
     for src in my_planets:
         if int(src.ships) < MIN_FLEET_SIZE:
             continue
+        # Fire-now suppression: source must have enough to be worth
+        # spending compute on. wait_N candidates are still emitted
+        # below so the source can plan a delayed launch as it grows.
+        emit_fire_now = int(src.ships) >= min_src_ships_to_emit
         for tgt in nearest_k(target_pool, src, NUM_TARGETS_PER_SOURCE):
             if int(tgt.id) == int(src.id):
                 continue
 
-            for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
-                if ships < MIN_FLEET_SIZE or ships > int(src.ships):
-                    continue
-                angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
-                horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
-                if horizon >= baseline_len:
-                    horizon = baseline_len - 1
-                cheap = cheap_marginal_value(
-                    src, tgt, ships, eta, world, model, me, wait_N=0,
-                )
-                if cheap > CHEAP_REJECT_THRESHOLD:
-                    prerank.append(
-                        (cheap, src, tgt, ships, angle, eta, horizon, 0)
+            if emit_fire_now:
+                for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
+                    if ships < MIN_FLEET_SIZE or ships > int(src.ships):
+                        continue
+                    angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
+                    # Change A (2026-05-23): per-ETA min-fleet floor.
+                    # min_ships_for_eta returns MIN_FLEET_SIZE when the
+                    # env gate is OFF, so this is a no-op by default.
+                    if ships < min_ships_for_eta(eta):
+                        continue
+                    horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
+                    if horizon >= baseline_len:
+                        horizon = baseline_len - 1
+                    cheap = cheap_marginal_value(
+                        src, tgt, ships, eta, world, model, me, wait_N=0,
                     )
+                    if cheap > CHEAP_REJECT_THRESHOLD:
+                        prerank.append(
+                            (cheap, src, tgt, ships, angle, eta, horizon, 0)
+                        )
 
             for w_ships, w_wait, w_angle, w_eta in wait_then_fire_variants(
                 src, tgt, model, omega, me, world=world,
             ):
                 w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if w_horizon >= baseline_len:
+                    continue
+                # Change A also gates wait_N candidates by per-ETA floor.
+                # eta here is FROM FIRE TIME (w_wait + w_eta total), so
+                # gate on the full arrival distance to match the spirit
+                # of "small fleet, long flight" prevention.
+                if w_ships < min_ships_for_eta(int(w_wait) + int(w_eta)):
                     continue
                 w_cheap = cheap_marginal_value(
                     src, tgt, w_ships, w_eta, world, model, me, wait_N=w_wait,

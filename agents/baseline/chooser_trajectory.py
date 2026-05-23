@@ -1025,8 +1025,34 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             by_tgt.setdefault(int(tgt.id), []).append(
                 (float(cd), src, tgt, int(ships), float(angle), int(ph)),
             )
+
+        # Change C (2026-05-23): target-priority ordering for joint pair
+        # enumeration. The pre-2026-05-23 code iterated by_tgt in dict-
+        # insertion order, so the first ~5 targets consumed the full
+        # JOINT_MAX_PAIRS budget — biased by proposer emission order
+        # (per-source K-NN sweep), NOT by target value. PI observation:
+        # "we should bundle to the highest-opp-ships OR highest-EV-shot
+        # target within K nearest neighbours". Sort prioritises enemy-
+        # owned-fat targets first (greatest production-flip when
+        # captured, greatest threat removed), then by aggregate cheap_delta
+        # within the target's top candidates (the "highest EV shot"
+        # criterion). Gated by BASELINE_JOINT_TARGET_PRIORITY=1 so the
+        # default behaviour is bit-identical.
+        if env_bool("BASELINE_JOINT_TARGET_PRIORITY", False):
+            def _priority(item):
+                tgt_id, cands = item
+                tgt_obj = cands[0][2]  # any cand of this target carries the planet object
+                is_owned_by_me = (int(tgt_obj.owner) == int(me))
+                opp_ships = -int(tgt_obj.ships) if not is_owned_by_me else 0
+                # Use top-3 cheap_delta sum to break ties (fewer cands → smaller sum).
+                top3_sum = -sum(float(c[0]) for c in sorted(cands, key=lambda c: -float(c[0]))[:3])
+                return (is_owned_by_me, opp_ships, top3_sum)
+            iter_items = sorted(by_tgt.items(), key=_priority)
+        else:
+            iter_items = list(by_tgt.items())
+
         joint_count = 0
-        for tgt_id, cands in by_tgt.items():
+        for tgt_id, cands in iter_items:
             if len(cands) < 2:
                 continue
             cands.sort(key=lambda c: -c[0])

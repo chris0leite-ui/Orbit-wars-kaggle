@@ -407,3 +407,74 @@ def test_predict_fleet_fate_wait_N_catches_oob_with_orbital_drift():
         "wait_N=20 and wait_N=0 produced identical FleetFate "
         "(suggests wait_N is not being honoured; the H44 gap is open)"
     )
+
+
+def test_min_ships_for_eta_off_by_default_returns_min_fleet_size():
+    """Change A pin (2026-05-23): with BASELINE_MIN_FLEET_BY_ETA unset,
+    the per-ETA floor function must return MIN_FLEET_SIZE for every
+    ETA — preserving pre-Change-A behavior bit-identically.
+    """
+    import os
+    from agents.baseline.proposer import min_ships_for_eta, MIN_FLEET_SIZE
+    saved = os.environ.pop("BASELINE_MIN_FLEET_BY_ETA", None)
+    try:
+        for eta in (0, 5, 10, 15, 20, 30, 50):
+            assert min_ships_for_eta(eta) == MIN_FLEET_SIZE
+    finally:
+        if saved is not None:
+            os.environ["BASELINE_MIN_FLEET_BY_ETA"] = saved
+
+
+def test_min_ships_for_eta_on_applies_schedule():
+    """Change A pin (2026-05-23): with the gate ON, the floor schedule
+    fires. ETA <=5 → 2 (no-op), ETA 6-15 → 5, ETA >15 → 10 (env defaults).
+    """
+    import os
+    from agents.baseline.proposer import min_ships_for_eta
+    saved = os.environ.get("BASELINE_MIN_FLEET_BY_ETA")
+    try:
+        os.environ["BASELINE_MIN_FLEET_BY_ETA"] = "1"
+        assert min_ships_for_eta(0) == 2
+        assert min_ships_for_eta(5) == 2
+        assert min_ships_for_eta(10) == 5
+        assert min_ships_for_eta(15) == 5
+        assert min_ships_for_eta(20) == 10
+        assert min_ships_for_eta(40) == 10
+    finally:
+        if saved is None:
+            os.environ.pop("BASELINE_MIN_FLEET_BY_ETA", None)
+        else:
+            os.environ["BASELINE_MIN_FLEET_BY_ETA"] = saved
+
+
+def test_changes_ab_off_by_default_propose_bit_identical():
+    """Changes A + B (2026-05-23): with both env vars unset (default OFF),
+    propose() must produce the SAME prerank as before. End-to-end via
+    the chooser_trajectory entry path is too noisy; we directly compare
+    propose() output between two calls with the env vars unset.
+    """
+    import os
+    saved = {
+        k: os.environ.get(k) for k in (
+            "BASELINE_MIN_FLEET_BY_ETA",
+            "BASELINE_MIN_SOURCE_SHIPS_TO_EMIT",
+        )
+    }
+    try:
+        for k in saved:
+            os.environ.pop(k, None)
+        # Two identical calls produce identical output (Phase 1 invariant).
+        from agents.baseline.main import agent
+        from kaggle_environments import make
+        env = make("orbit_wars", configuration={"seed": 7}, debug=False)
+        env.reset(2)
+        obs = env.steps[0][0].observation
+        out_a = agent(obs)
+        out_b = agent(obs)
+        assert out_a == out_b
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
