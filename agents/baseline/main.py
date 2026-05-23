@@ -858,7 +858,7 @@ def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
 
 
 def _simulate_staggered_capture(
-    tgt, my_id: int, sources_eta: list,
+    tgt, my_id: int, sources_eta: list, model=None,
 ):
     """Greedy staggered-attrition simulation.
 
@@ -870,65 +870,120 @@ def _simulate_staggered_capture(
     final arrival captures the target with `WAVE_MARGIN` safety, the
     cumulative total ships used, and a bool indicating capture.
 
-    Conservative defender model — uses `tgt.ships` + production growth;
-    ignores any other in-flight enemy/friendly fleets. The caller pre-
-    filters targets so no friendly fleet is inbound (combat_stack
-    handles those), keeping this simulation honest for the "fresh
-    attack" case.
+    Defender model (when `model` is provided): garrison at the FIRST
+    arrival's eta is `model.ships_at(tgt.id, eta_1)`, which folds in
+    enemy reinforcement fleets currently in flight (sniper at line 806
+    does the same). Subsequent arrivals add `production * delta_eta` to
+    the residual after the prior fight — that arm of the prediction is
+    purely production-driven, since once we capture (or drain heavily)
+    the model's ownership prediction breaks. When `model` is None or
+    `ships_at` returns None, falls back to the naive
+    `tgt.ships + production * eta` model.
+
+    Origin: 2026-05-23 close-look on seeds 42/7 showed 0/25 captures —
+    every wave fired into mid-air because the naive defender model
+    ignored enemy reinforcements (step 36 seed 7: target 4 ships +
+    prod 4 → 152 ships 15 steps later, ~148 ships of reinforcement
+    the prior model never saw).
     """
-    garrison = float(tgt.ships)
     production = float(tgt.production)
     owner = int(tgt.owner)
     last_eta = 0
+    last_predicted = None  # model.ships_at at the previous arrival
     total_ships = 0
+    garrison = float(tgt.ships)
     for idx, (eta, _src, _angle, ships) in enumerate(sources_eta):
-        # Defender regrows between arrivals (only while still defender-owned).
         if owner != my_id:
-            garrison += max(0, eta - last_eta) * production
+            # Between arrivals (or from now to the first arrival) the
+            # garrison gains BOTH production growth AND any predicted
+            # enemy reinforcements. model.ships_at folds both in; if it
+            # returns None, fall back to production-only growth.
+            if model is not None:
+                predicted = model.ships_at(int(tgt.id), int(eta))
+            else:
+                predicted = None
+            if predicted is not None:
+                if idx == 0:
+                    # First arrival: take the model's prediction directly.
+                    garrison = float(predicted)
+                else:
+                    # Subsequent arrival: add the model's increment
+                    # (production + reinforcements between eta_prev and
+                    # eta_now) to the residual from the prior fight.
+                    delta = float(predicted) - float(last_predicted or 0.0)
+                    garrison += max(0.0, delta)
+                last_predicted = float(predicted)
+            else:
+                garrison += max(0, eta - last_eta) * production
             if ships * WAVE_MARGIN >= garrison:
-                # Capture — owner flips; remaining sources reinforce.
                 total_ships += ships
                 return idx + 1, total_ships, True
             else:
                 garrison -= ships
                 total_ships += ships
         else:
-            # Already ours from a prior arrival — remaining ships just
-            # land as reinforcement; the prefix that captured was idx-1.
-            # We stop accumulating here.
             break
         last_eta = eta
     return len(sources_eta), total_ships, False
 
 
+def _resolve_move_target(move, src_planet, enemy_planets, world):
+    """Resolve which enemy planet a move [src_id, angle, ships] is aimed at.
+
+    Returns (target_planet, eta) or (None, None) if no enemy planet is
+    aligned with the move's angle (within best-cosine match) or if
+    physics doesn't actually land us at that target.
+    """
+    if not enemy_planets:
+        return None, None
+    angle = float(move[1])
+    ships = int(move[2])
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    best = None
+    best_cos = -2.0
+    for t in enemy_planets:
+        dx = float(t.x) - float(src_planet.x)
+        dy = float(t.y) - float(src_planet.y)
+        norm = math.hypot(dx, dy)
+        if norm < 1e-6:
+            continue
+        cos = (cos_a * dx + sin_a * dy) / norm
+        if cos > best_cos:
+            best_cos = cos
+            best = t
+    if best is None or best_cos < 0.95:
+        return None, None
+    try:
+        fate = predict_fleet_fate(src_planet, best, angle, ships, world)
+    except Exception:
+        return None, None
+    if fate.outcome != "target":
+        return None, None
+    return best, int(fate.step)
+
+
 def emit_convergence_wave(moves, planets, my_id: int, world, model) -> list:
-    """Multi-source staggered-attrition strike at a fresh enemy target.
+    """Stack idle sources onto attacks the chooser already chose this turn.
 
-    Fills the gap between drain_combat_stack (stacks onto already-inbound
-    attacks) and emit_sniper_strikes (bails when no single source can
-    crack a target). For each candidate enemy planet with no friendly
-    fleet inbound, sorts the available idle sources by their natural
-    arrival ETA and simulates staggered combat to find the smallest
-    bundle that captures. Picks the highest-ROI capture across targets
-    and emits all launches in the chosen bundle.
+    Variant #2 of the convergence-wave axis (2026-05-23). The original
+    closed-form-target-selection variant bounced 15-25 of 25 launches
+    in n=2 close-look because the simulator couldn't predict the
+    opponent's reactive reinforcements. This variant uses the chooser
+    as the value-head gate: we only add launches at targets the
+    chooser ALREADY emitted a move against this turn (i.e., the
+    chooser's value-head + rollout said attacking that target is
+    positive-EV). Then we add additional idle sources to bolster the
+    attack with a staggered-arrival capture simulation.
 
-    Closed-form ROI (production × remaining steps) bypasses the value
-    head — the earlier-session triples-extension axis falsified the
-    leaf-Δ joint scoring (washing out due to lost ships counted both
-    sides of the baseline). Same physics filter (predict_fleet_fate)
-    as sniper / combat-stack per Rule 47. Total ships emitted capped at
-    WAVE_RESERVE_FRAC of total reserve; per-launch min via
-    WAVE_MIN_PER_SOURCE_SHIPS; bundle min via WAVE_MIN_TOTAL_SHIPS.
+    Distinct from drain_combat_stack: that mechanism stacks onto
+    `model.ledger` attacks already in flight from prior turns; this
+    one stacks onto FRESH attacks emitted by the chooser THIS turn
+    (which aren't in the ledger yet). The chooser-as-gate replaces the
+    closed-form ROI selection that was failing against reactive opps.
     """
     if not CONVERGENCE_WAVE_ENABLED:
         return moves
-
-    used_srcs: set[int] = set()
-    for m in moves:
-        try:
-            used_srcs.add(int(m[0]))
-        except (TypeError, IndexError):
-            pass
 
     my_planets = [p for p in planets if int(p.owner) == my_id]
     enemy_planets = [
@@ -938,33 +993,36 @@ def emit_convergence_wave(moves, planets, my_id: int, world, model) -> list:
     if not my_planets or not enemy_planets:
         return moves
 
+    planets_by_id = {int(p.id): p for p in planets}
+    used_srcs: set[int] = set()
+    # Resolve each existing move into (src, target, ships, eta) — these
+    # are the chooser-validated attacks we want to extend.
+    chooser_attacks: dict[int, list[tuple]] = {}  # tgt_id -> list of (eta, ships)
+    for m in moves:
+        try:
+            sid = int(m[0])
+        except (TypeError, IndexError):
+            continue
+        used_srcs.add(sid)
+        src = planets_by_id.get(sid)
+        if src is None or int(src.owner) != my_id:
+            continue
+        tgt, eta = _resolve_move_target(m, src, enemy_planets, world)
+        if tgt is None:
+            continue
+        chooser_attacks.setdefault(int(tgt.id), []).append(
+            (int(eta), int(m[2])),
+        )
+    if not chooser_attacks:
+        return moves
+
     total_my_ships = sum(int(p.ships) for p in my_planets)
     wave_ship_budget = int(total_my_ships * WAVE_RESERVE_FRAC)
-    if wave_ship_budget < WAVE_MIN_TOTAL_SHIPS:
-        return moves
 
-    # Targets: enemy planets with no friendly fleet inbound (combat_stack
-    # owns those), high-enough production, top-K by production.
-    candidate_targets = []
-    for p in enemy_planets:
-        if int(p.production) < WAVE_MIN_TGT_PROD:
-            continue
-        arrivals = model.ledger.get(int(p.id), [])
-        friendly_in = sum(int(s) for (_eta, o, s) in arrivals if o == my_id)
-        if friendly_in > 0:
-            continue
-        candidate_targets.append(p)
-    candidate_targets.sort(key=lambda t: -int(t.production))
-    candidate_targets = candidate_targets[:WAVE_MAX_TARGETS]
-    if not candidate_targets:
-        return moves
-
-    remaining_steps = max(1, 500 - int(world.step))
-    best = None  # (roi, tgt, prefix_launches, total_ships)
-
-    for tgt in candidate_targets:
-        # Score every idle source's ACTUAL ETA at this target. Physics
-        # filter is the safety filter: drops sun/oob/comet-expiry paths.
+    best = None  # (added_ships, tgt_id, prefix)
+    for tgt_id, attacks in chooser_attacks.items():
+        tgt = planets_by_id[tgt_id]
+        # Idle sources eligible to bolster this attack.
         scored = []
         for src in my_planets:
             if int(src.id) in used_srcs:
@@ -991,26 +1049,42 @@ def emit_convergence_wave(moves, planets, my_id: int, world, model) -> list:
             continue
         scored.sort(key=lambda s: s[0])
 
-        prefix_idx, total_ships, captured = _simulate_staggered_capture(
-            tgt, my_id, scored,
+        # Build combined arrival list: chooser's existing attacks +
+        # our candidate extra sources. Existing attacks contribute as
+        # fixed arrivals (no src object — we use None as a sentinel).
+        existing = [(eta, None, 0.0, ships) for (eta, ships) in attacks]
+        combined = existing + scored
+        combined.sort(key=lambda s: s[0])
+
+        prefix_idx, _total, captured = _simulate_staggered_capture(
+            tgt, my_id, combined, model=model,
         )
         if not captured:
             continue
-        if total_ships < WAVE_MIN_TOTAL_SHIPS:
+        # Count ONLY the new sources (skip the existing chooser arrivals).
+        new_prefix = [s for s in combined[:prefix_idx] if s[1] is not None]
+        if not new_prefix:
+            # Capture is achieved by the chooser's launches alone — no
+            # need to add anything.
             continue
-        if total_ships > wave_ship_budget:
+        added_ships = sum(int(s[3]) for s in new_prefix)
+        if added_ships < WAVE_MIN_PER_SOURCE_SHIPS:
             continue
-        if prefix_idx > WAVE_MAX_LAUNCHES:
+        if added_ships > wave_ship_budget:
+            continue
+        if len(new_prefix) > WAVE_MAX_LAUNCHES:
             continue
 
-        roi = float(tgt.production) * float(remaining_steps)
-        if best is None or roi > best[0]:
-            best = (roi, tgt, scored[:prefix_idx], total_ships)
+        # Prefer targets that need the least extra spend (cheapest
+        # bolster = highest marginal value), tie-break on production.
+        score = (float(planets_by_id[tgt_id].production), -added_ships)
+        if best is None or score > best[0]:
+            best = (score, tgt_id, new_prefix, added_ships)
 
     if best is None:
         return moves
 
-    _roi, _tgt, prefix, _total = best
+    _score, _tgt_id, prefix, _added = best
     extras = []
     for _eta, src, angle, ships in prefix:
         extras.append([int(src.id), float(angle), int(ships)])

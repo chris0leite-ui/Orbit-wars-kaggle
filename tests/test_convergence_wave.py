@@ -130,9 +130,11 @@ def test_simulator_fails_when_garrison_too_big():
 # ---------------------------------------------------------------------------
 
 
-def test_fires_multi_source_at_high_value_target(monkeypatch):
-    """Three idle sources with enough excess each + a high-prod weak
-    enemy → wave emits 1-3 launches and captures."""
+def test_fires_multi_source_at_chooser_validated_target(monkeypatch):
+    """Variant #2 (2026-05-23): wave only fires at targets the chooser
+    already attacked. Pre-seed a chooser move (src 0 → tgt 3 with 20
+    ships, insufficient alone), then the wave should add launches from
+    other idle sources to make the capture work."""
     _enable_wave(monkeypatch)
     planets_raw = [
         _planet(0, owner=0, ships=120, prod=1, x=10.0, y=80.0),
@@ -144,16 +146,18 @@ def test_fires_multi_source_at_high_value_target(monkeypatch):
     m = _model(w)
     from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
     planets = [Planet(*p) for p in planets_raw]
-    out = emit_convergence_wave([], planets, my_id=0, world=w, model=m)
-    assert len(out) >= 1
-    # All launches must target the high-prod enemy planet via correct angle
-    # (we don't get target id back, but angle should point at (70,70) from
-    # the source). Just confirm the bundle's total ships ≥ WAVE_MIN_TOTAL.
-    total = sum(int(m[2]) for m in out)
-    assert total >= WAVE_MIN_TOTAL_SHIPS
-    # Each launch passes the per-source minimum.
-    for ent in out:
+    # Pre-seed a chooser move aimed at planet 3 from planet 0.
+    chooser_angle = math.atan2(80.0 - 80.0, 70.0 - 10.0)  # straight east
+    chooser_moves = [[0, float(chooser_angle), 20]]
+    out = emit_convergence_wave(chooser_moves, planets, my_id=0, world=w, model=m)
+    extras = out[len(chooser_moves):]
+    assert len(extras) >= 1, f"wave should stack on chooser's attack; got {out}"
+    # Each new launch passes the per-source minimum.
+    for ent in extras:
         assert int(ent[2]) >= WAVE_MIN_PER_SOURCE_SHIPS
+    # No new launch from source 0 (already used by chooser).
+    for ent in extras:
+        assert int(ent[0]) != 0
 
 
 def test_no_double_fire_on_used_sources(monkeypatch):
