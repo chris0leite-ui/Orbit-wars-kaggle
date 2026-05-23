@@ -44,6 +44,11 @@ DEFAULT_LIB_ORDER = [
     "geometry",
     "fleet",
     "orbit",
+    # kinematic_table imports geometry + orbit; trajectory imports
+    # kinematic_table (opt-in via KINEMATIC_TABLE_ENABLED). Must precede
+    # trajectory so the inlined module is in scope when trajectory's
+    # `from lib.kinematic_table import ...` line is stripped.
+    "kinematic_table",
     "aim",
     "combat",
     "world_model",
@@ -221,6 +226,31 @@ def _strip_module_docstring(src: str) -> str:
     return "".join(lines[:i] + lines[j + 1 :])
 
 
+def _consume_multiline_import(
+    lines: list[str], start_idx: int,
+) -> tuple[int, str]:
+    """If the import line at `start_idx` opens with `(`, consume continuation
+    lines until the matching `)`. Returns `(end_idx_exclusive, joined_block)`.
+
+    Single-line imports return `(start_idx + 1, lines[start_idx])`. Closes
+    the bundler's known multi-line-imports silent-fail mode (Rule 46):
+    `from X import (\n  a,\n  b,\n)` was previously stripping ONLY the
+    first line, leaving the continuation lines as bare-indented expressions
+    that IndentationError on bundle import.
+    """
+    first = lines[start_idx]
+    # No open paren → single-line, common case.
+    if "(" not in first:
+        return start_idx + 1, first
+    end = start_idx
+    while end < len(lines):
+        if ")" in lines[end]:
+            break
+        end += 1
+    joined = "".join(lines[start_idx:end + 1])
+    return end + 1, joined
+
+
 def _clean_lib_source(src: str) -> str:
     """Drop intra-package imports and `from __future__` lines from a lib module,
     but emit alias rebindings for any aliased intra-imports.
@@ -230,15 +260,22 @@ def _clean_lib_source(src: str) -> str:
     NameError at runtime, swallowed by kaggle_environments' try/except. The
     parity gate catches it but only on integration; cheaper to rebind here.
     """
+    lines = src.splitlines(keepends=True)
     out: list[str] = []
-    for line in src.splitlines(keepends=True):
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         if _FUTURE_IMPORT_RE.match(line):
+            i += 1
             continue
         if _INTRA_IMPORT_RE.match(line):
-            for asname, original in _extract_aliases(line):
+            next_i, block = _consume_multiline_import(lines, i)
+            for asname, original in _extract_aliases(block):
                 out.append(f"{asname} = {original}\n")
+            i = next_i
             continue
         out.append(line)
+        i += 1
     return _strip_module_docstring("".join(out))
 
 
@@ -265,20 +302,29 @@ def _extract_aliases(line: str) -> list[tuple[str, str]]:
 def _clean_agent_source(src: str) -> str:
     """Strip `from __future__` (already emitted at the bundle top) and rewrite
     intra-lib imports — comment out the import and emit alias rebindings so
-    `from lib.fleet import speed as fleet_speed` keeps working.
+    `from lib.fleet import speed as fleet_speed` keeps working. Handles
+    multi-line `from X import (a, b, c)` blocks via `_consume_multiline_import`.
     """
+    lines = src.splitlines(keepends=True)
     out: list[str] = []
-    for line in src.splitlines(keepends=True):
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         if _FUTURE_IMPORT_RE.match(line):
+            i += 1
             continue
         if _INTRA_IMPORT_RE.match(line):
+            next_i, block = _consume_multiline_import(lines, i)
             indent = line[: len(line) - len(line.lstrip())]
-            stripped = line.strip()
-            out.append(f"{indent}# {stripped}  # inlined by bundle_agent.py\n")
-            for asname, original in _extract_aliases(line):
+            # Comment-only the FIRST line (the import directive); drop
+            # the continuation lines entirely. Then emit alias rebinds.
+            out.append(f"{indent}# {line.strip()}  # inlined by bundle_agent.py\n")
+            for asname, original in _extract_aliases(block):
                 out.append(f"{indent}{asname} = {original}\n")
-        else:
-            out.append(line)
+            i = next_i
+            continue
+        out.append(line)
+        i += 1
     return "".join(out)
 
 
@@ -360,11 +406,45 @@ def bundle(
     # from sibling files; without inlining the bundle would NameError after the
     # intra-package import lines are stripped. Topological order by
     # `from agents.<name>.X import` references.
+    agent_submodules: list[tuple[str, str]] = []
     if agent_dir.is_dir():
         agent_submodules = _topo_sort_agent_submodules(agent_dir)
-        for sub_name, sub_src in agent_submodules:
-            parts.append(f"\n# === inlined: agents/{name}/{sub_name}.py ===\n")
+
+    # Inline cross-agent dependencies (e.g. buildup_planner pulls in
+    # agents/baseline/* and agents/precision/* via direct attribute
+    # imports). Must precede the primary agent's submodules so the
+    # primary's stripped `from agents.X.Y import Z` lines leave `Z` in
+    # scope. Discovery walks both main.py and every primary submodule.
+    cross_packages = _discover_cross_agent_packages(
+        agent_src, name, agent_submodules,
+    )
+    for dep_pkg in cross_packages:
+        dep_dir = REPO / "agents" / dep_pkg
+        dep_submodules = _topo_sort_agent_submodules(
+            dep_dir, include_main=True,
+        )
+        for sub_name, sub_src in dep_submodules:
+            parts.append(
+                f"\n# === inlined: agents/{dep_pkg}/{sub_name}.py ===\n"
+            )
             parts.append(_clean_agent_source(sub_src))
+            # Namespace alias: `from agents.<pkg> import <sub>` is a
+            # module-as-namespace import (callers use `<sub>.foo()`),
+            # but the bundler inlines `<sub>`'s symbols at top level.
+            # Emit a `<sub> = SimpleNamespace(foo=foo, …)` block so
+            # both `<sub>.foo` and bare `foo` resolve. Public names
+            # are top-level defs / classes / non-_underscore assigns.
+            parts.append(
+                _namespace_alias_block(dep_pkg, sub_name, sub_src)
+            )
+
+    for sub_name, sub_src in agent_submodules:
+        parts.append(f"\n# === inlined: agents/{name}/{sub_name}.py ===\n")
+        parts.append(_clean_agent_source(sub_src))
+        # Primary-agent submodules also need a namespace alias for
+        # callers that do `from agents.<name> import <sub>` (most modular
+        # main.py files do this and reference `<sub>.foo`).
+        parts.append(_namespace_alias_block(name, sub_name, sub_src))
 
     parts.append("\n# === agent ===\n")
     parts.append(_clean_agent_source(agent_src))
@@ -373,30 +453,58 @@ def bundle(
     return out_path
 
 
-def _topo_sort_agent_submodules(agent_dir: Path) -> list[tuple[str, str]]:
+def _topo_sort_agent_submodules(
+    agent_dir: Path, *, include_main: bool = False,
+) -> list[tuple[str, str]]:
     """Discover and topologically order the agent's sibling .py modules.
 
     Returns `[(name, source), ...]` ordered so that any module X appears
     before any module Y that does `from agents.<pkg>.X import ...`. Skips
-    `main.py` (caller emits it last) and `__init__.py` (irrelevant after
-    inlining). Cycles → ValueError; in practice they indicate a layering bug.
+    `__init__.py` (irrelevant after inlining). By default skips
+    `main.py` too (the primary-agent caller emits its main last); pass
+    `include_main=True` for cross-agent dependency packages where main.py
+    must be inlined alongside its siblings. Cycles → ValueError; in
+    practice they indicate a layering bug.
     """
     pkg = agent_dir.name
     submodules: dict[str, str] = {}
     deps: dict[str, set[str]] = {}
-    dep_re = re.compile(rf"^\s*from\s+agents\.{re.escape(pkg)}\.([\w]+)\s+import\b")
+    # Two patterns: `from agents.pkg.X import a` (attribute import) AND
+    # `from agents.pkg import X[, Y]` (module-as-namespace import). Both
+    # establish X as a dep that must be inlined first. Origin: cherry-
+    # picked `agents/precision/intercept.py` uses the namespace form
+    # `from agents.precision import sim` and `sim` was being placed
+    # AFTER `intercept` in the inlined bundle → NameError.
+    attr_re = re.compile(rf"^\s*from\s+agents\.{re.escape(pkg)}\.([\w]+)\s+import\b")
+    mod_re = re.compile(rf"^\s*from\s+agents\.{re.escape(pkg)}\s+import\s+(.+)$")
 
     for path in sorted(agent_dir.glob("*.py")):
-        if path.name in ("main.py", "__init__.py"):
+        if path.name == "__init__.py":
+            continue
+        if path.name == "main.py" and not include_main:
             continue
         mod_name = path.stem
         src = path.read_text()
         submodules[mod_name] = src
         deps[mod_name] = set()
         for line in src.splitlines():
-            m = dep_re.match(line)
-            if m and m.group(1) in submodules or (m and m.group(1) != mod_name):
-                deps[mod_name].add(m.group(1)) if m else None
+            m_attr = attr_re.match(line)
+            if m_attr and m_attr.group(1) != mod_name:
+                deps[mod_name].add(m_attr.group(1))
+                continue
+            m_mod = mod_re.match(line)
+            if m_mod:
+                # `from agents.pkg import a, b as c` — strip aliases and
+                # commas, drop the trailing comment if any.
+                rhs = m_mod.group(1).split("#")[0]
+                for token in rhs.replace("(", "").replace(")", "").split(","):
+                    token = token.strip()
+                    if not token:
+                        continue
+                    # Handle `X as Y` — the dep is X, not Y.
+                    name = token.split(" as ")[0].strip()
+                    if name and name != mod_name:
+                        deps[mod_name].add(name)
 
     # Kahn's algorithm.
     ordered: list[tuple[str, str]] = []
@@ -411,6 +519,110 @@ def _topo_sort_agent_submodules(agent_dir: Path) -> list[tuple[str, str]]:
             ordered.append((n, submodules[n]))
             del pending[n]
     return ordered
+
+
+# Pattern for any `from agents.<pkg>...` import line, capturing <pkg>.
+# Used to discover cross-agent dependencies (the bundler strips intra-
+# agent imports; without inlining, the stripped line leaves NameErrors).
+_CROSS_AGENT_RE = re.compile(r"^\s*from\s+agents\.(\w+)(?:\.\w+)*\s+import\b")
+
+
+def _public_top_level_names(src: str) -> list[str]:
+    """Return public top-level names defined by `src`.
+
+    Includes: function defs, class defs (incl. @dataclass), simple
+    assignments to UPPER_CASE or plain identifiers. Excludes names
+    starting with `_`. Used to build namespace-alias blocks for
+    `from agents.<pkg> import <sub>` callers that use `<sub>.foo()`.
+    """
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+    names: list[str] = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if not node.name.startswith("_"):
+                names.append(node.name)
+        elif isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name) and not tgt.id.startswith("_"):
+                    names.append(tgt.id)
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and not node.target.id.startswith("_"):
+                names.append(node.target.id)
+    # Preserve definition order; dedupe.
+    seen: set[str] = set()
+    return [n for n in names if not (n in seen or seen.add(n))]
+
+
+def _namespace_alias_block(pkg: str, sub: str, src: str) -> str:
+    """Emit a `<sub> = SimpleNamespace(name=name, …)` block for the
+    inlined module, so `<pkg>` package callers using `from agents.<pkg>
+    import <sub>` + `<sub>.foo()` still resolve after stripping.
+
+    Falls back to an empty block when the module exports nothing
+    public (e.g., constants-only header or empty file).
+    """
+    names = _public_top_level_names(src)
+    if not names:
+        return ""
+    pairs = ",\n    ".join(f"{n}={n}" for n in names)
+    return (
+        f"\n# Namespace alias so `from agents.{pkg} import {sub}` callers "
+        f"still see `{sub}.<name>`.\n"
+        f"from types import SimpleNamespace as _SimpleNamespace_{sub}\n"
+        f"{sub} = _SimpleNamespace_{sub}(\n    {pairs},\n)\n"
+    )
+
+
+def _discover_cross_agent_packages(
+    main_src: str, primary_pkg: str, primary_subs: list[tuple[str, str]],
+) -> list[str]:
+    """Return a list of agent package names referenced by `from agents.X.*`
+    imports, where X != primary_pkg. Recursively walks each discovered
+    package's own files so transitive deps surface too.
+
+    Order: discovery order (BFS). Callers should inline in order so that
+    each package's content is in scope when later content references it.
+    Cross-package dependency cycles are NOT supported (rare and indicate
+    a layering bug); they raise via the topological sort downstream.
+    """
+    discovered: list[str] = []
+    seen: set[str] = set()
+
+    def _scan(src: str) -> list[str]:
+        out = []
+        for line in src.splitlines():
+            m = _CROSS_AGENT_RE.match(line)
+            if m and m.group(1) != primary_pkg and m.group(1) not in seen:
+                out.append(m.group(1))
+        return out
+
+    worklist: list[str] = list(_scan(main_src))
+    for _, sub_src in primary_subs:
+        worklist.extend(_scan(sub_src))
+
+    while worklist:
+        pkg = worklist.pop(0)
+        if pkg in seen:
+            continue
+        seen.add(pkg)
+        pkg_dir = REPO / "agents" / pkg
+        if not pkg_dir.is_dir():
+            raise RuntimeError(
+                f"cross-agent dep `agents/{pkg}` referenced but missing on disk"
+            )
+        # Recurse: scan every .py file in this package for further deps.
+        for path in sorted(pkg_dir.rglob("*.py")):
+            if path.name == "__init__.py":
+                continue
+            for dep in _scan(path.read_text()):
+                if dep not in seen:
+                    worklist.append(dep)
+        discovered.append(pkg)
+
+    return discovered
 
 
 def _bundle_hash(path: Path) -> str:
