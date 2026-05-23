@@ -65,7 +65,6 @@ A/B answers "whether," single-game tracing answers "why." When an A/B disagrees 
 | `scripts/archetype_action_audit.py` (594 LOC) | Per-archetype turn-by-turn action mix (% snipe / defend / settle) | seeds |
 | `scripts/fingerprint_external.py` | Top-ladder submissions' move fingerprints | external replays |
 | `scripts/bench_fast_sim.py` | `fast_sim.step` vs `env.clone+step` speedup ratio | microbench |
-| `scripts/jax_path_search.py` (333 LOC, WIP) | Trajectory pathfinding diagnostic | seed |
 
 The btjeK H44 finding (65% fleet-destroyed-in-flight) came from exactly this loop — A/B suggested a chooser change should help, single-game tracing showed the failures were physics, not strategy.
 
@@ -79,9 +78,6 @@ Every code consolidation merge MUST clear the gates marked **CRITICAL** below.
 |---|---|---|---|
 | **Parity (substrate trust — CRITICAL)** | `tests/test_fast_sim_parity.py` | `fast_sim.step` ↔ `env.clone()+step()` byte-exact | gate |
 | | `tests/test_game_parity.py` | `lib/game/interpreter.py` ↔ kaggle env; zero tolerance | gate |
-| | `tests/test_jax_*_parity.py` (5 files) | Batch JAX interpreter ↔ scalar paths | gate |
-| | `tests/test_jax_world_model_parity.py` | Batch world-model parity | gate |
-| | `tests/test_jax_full_step_parity.py` | JAX full step ↔ scalar | gate |
 | | `tests/test_batch_interpreter_parity.py` | Batched interpreter ↔ sequential | gate |
 | | `tests/test_replay_parity.py` | Replay deserialization ↔ live games | gate |
 | | `tests/test_trajectory_layer_positions.py` *(branch: PFhzM)* | `lib/trajectory_layer.py` ↔ `lib/game/interpreter.py` | gate (branch-only — promote with primitive) |
@@ -99,9 +95,7 @@ Every code consolidation merge MUST clear the gates marked **CRITICAL** below.
 | | `tests/test_value_heads.py` | `composite_capture_value` + horizon signals | stable |
 | | `tests/test_world_model.py` | Opponent prediction + comet trajectory | stable |
 | | `tests/test_intent.py` | World snapshot accessors | stable |
-| **Search / chooser** | `tests/test_jax_brute_search.py` | JAX depth-2 brute search | stable |
-| | `tests/test_jax_depth2.py` | JAX depth-2 variants | stable |
-| | `tests/test_v7_search.py` | v7_search pipeline | stable |
+| **Search / chooser** | `tests/test_v7_search.py` | v7_search pipeline | stable |
 | | `tests/test_enumerator_*.py` (2 files) | Candidate enumeration (add-one, split-source) | stable |
 | **Oracles / scenarios (synthetic coordination — CRITICAL for consolidation)** | `tests/test_planner_oracles.py` (14 scenarios) | Chooser passes hand-crafted "should obviously do X" scenarios. 13/14 pass on ROI (Tier-2 broke `solo_capture_but_loses_source`) | **CRITICAL** |
 | | `tests/test_baseline_replay_regression.py` *(branch: EpMVP, 364 LOC)* | linrock + Claws fixtures don't regress | branch (merge-up) |
@@ -182,7 +176,7 @@ Any branch's code merges to main if and only if these 6 steps GREEN, in order:
 
 ### Subdirectories
 
-- `lib/game/` — JAX-accelerated batch interpreter (parity-tested vs `fast_sim`).
+- `lib/game/` — pure-Python rebuild of the kaggle env + batch interpreter (parity-tested vs `fast_sim`).
 - `lib/geo/` — closed-form geometry solvers.
 - `lib/missions/` — Mission framework (snipe, opening, reinforce, gang_up).
 
@@ -193,7 +187,7 @@ Any branch's code merges to main if and only if these 6 steps GREEN, in order:
 **Baseline + simple:** `agents/baseline/` (modular framework — STABLE), `agents/simple/` (nearest.py, roi.py).
 **Versioned production:** `agents/v7_0` → `agents/v7_7`, `agents/v3.5.1`, `agents/v3_snipe`, `agents/v3_lookahead`, `agents/v4_planner`, `agents/v1_orbitfix`, `agents/v2`.
 **Ablations:** `agents/abl_K15`, `agents/abl_lite`, `agents/abl_maximin`, `agents/abl_value`, `agents/abl_combined`, `agents/v7_ablations`, `agents/v7_wide_deep`, `agents/v7_1_open_drop_comets`.
-**Specialty (branch-specific):** `agents/geo/`, `agents/geo_recap/`, `agents/jax_v7_0/`, `agents/_ledger_on/`, `agents/_ledger_off/`, `agents/_ledger_hard/`, `agents/_mpc/`, `agents/sary_class/`, `agents/precision/` (branch only).
+**Specialty (branch-specific):** `agents/geo/`, `agents/geo_recap/`, `agents/_ledger_on/`, `agents/_ledger_off/`, `agents/_ledger_hard/`, `agents/_mpc/`, `agents/sary_class/`, `agents/precision/` (branch only).
 
 ---
 
@@ -233,7 +227,7 @@ python scripts/bundle_agent.py agents/v3_snipe --lib geometry fleet orbit aim tr
 ## Pipeline files
 
 - `Makefile` — not present.
-- `requirements.txt` — kaggle, kaggle-environments, numpy, pandas, ipykernel, pytest. JAX optional.
+- `requirements.txt` — kaggle, kaggle-environments, numpy, pandas, ipykernel, pytest.
 - `.claude/settings.json` — Claude Code harness config (permissions, hooks).
 - `bootstrap.sh` — session-start environment setup (data fetch, dependency install, smoke).
 
