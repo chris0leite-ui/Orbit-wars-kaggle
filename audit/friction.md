@@ -118,6 +118,52 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-23 (claude/consolidate-codebase-refactor-dQAWA — coord Day 13)
+
+- `tag: per-bundle-isolation-scoring-blocks-ensembles` — coord's leaf
+  head via `score_candidate_v4_joint` rolls out `lite_greedy_policy`
+  per bundle in isolation; opp concentrates all defense on the one
+  attack scored. With 19 own planets and 480 ships dominating, individual
+  ATTACK bundles got leaf=−485 to −679; coord emitted 1 move, minimal
+  emitted 8. **Fix:** demand-spread mixing (`COORD_DEMAND_SPREAD=1`,
+  default ON in sub v3) — composite = mixing_weight·tier2 +
+  (1-w)·cheap_score; w drops when total demand exceeds opp's defensive
+  capacity. Not yet validated on Kaggle.
+
+- `tag: enumerate-eats-wallclock-budget` — timing probe showed
+  enumerate p50=607ms with median 9 own planets × 5 nearest sources ×
+  ~10 leg variants × 5 admissibility ray-casts. Agent budget is 600ms;
+  enumerate alone consumed it, Tier-2 pre-bailed empty, Lagrangian had
+  nothing to pick, 84% of turns emitted 0 moves. **Fix:**
+  deadline-bounded enumerate (commit `7a97358`), passes a `time.perf_counter()`
+  deadline to `enumerate_attack_bundles` / `enumerate_defend_bundles`;
+  returns partial results past the deadline. Idle rate 84% → 77%, total
+  wallclock p50 720ms → 524ms under budget.
+
+- `tag: low-floor-emits-marginal-fleets` — PI observed in sub
+  52936894 (LEAF_FLOOR=0, REDUCED_FLOOR=0): "too many small fleets to
+  far targets, wastes ships." Endgame bonus boosted bundles with leaf=0
+  to composite ≈ 1, Lagrangian admitted them. **Fix:** raised both
+  LEAF_FLOOR_DEFAULT and REDUCED_FLOOR_DEFAULT to 2.0 in coord v3
+  (commit `b75215e`). Not yet validated on Kaggle.
+
+- `tag: rapid-feature-pile-up-makes-attribution-hard` — Day 12 + Day 13
+  added 5 env-var features (smooth-ΔW, per-kind gates, leaf-floor,
+  reduced-floor, demand-spread mixing) shipped together in coord v3.
+  If v3's μ moves significantly we won't be able to attribute the change
+  to a single feature. **Fix:** next session pruning protocol —
+  single-feature ablations vs v3 baseline; disable the knob in
+  production default if removing it doesn't degrade win rate.
+
+- `tag: dual-submission-eviction-self-conflict` — sub 52936894 (coord v2)
+  was submitted at 23:27 UTC with conservative floor=0 defaults; PI
+  observed wasted ships immediately and requested floor raise. Sub
+  coord v3 (floor=2.0 + demand-spread) was submitted ~10 min later,
+  evicting v2 before it accumulated any μ data. We now have no data
+  on the floor=0 + demand-spread-off baseline. **Fix:** when iterating
+  fast on consecutive submissions, prefer env-var ablations on a stable
+  Kaggle binary over multiple submits.
+
 ## 2026-05-22 (claude/consolidate-codebase-refactor-dQAWA — coord shipped + H44)
 
 - `tag: bundler-multiline-cross-agent-import-orphans` — bundling

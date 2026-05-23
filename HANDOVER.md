@@ -1,6 +1,9 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-20 PM by `claude/review-skills-improvements-moKOR`
+> Last written: 2026-05-23 by `claude/consolidate-codebase-refactor-dQAWA`
+> (coord Day-13 — five new features shipped in two back-to-back submissions;
+> PI flagged "we may need to prune what doesn't work" once v3's μ settles).
+> Prior: 2026-05-20 PM by `claude/review-skills-improvements-moKOR`
 > (n=8 iteration loop attempt; no candidate found, structural-change
 > pivot queued).
 > Prior PM session on this branch (cross-branch consolidation pass)
@@ -20,7 +23,42 @@
 4. **This file** — session-start prompt below.
 5. `audit/friction.md` if you're about to touch a fragile path.
 
-## Where we are (2026-05-20 17:00 UTC)
+## Where we are (2026-05-23 — coord branch wrap)
+
+**Live submission: sub coord v3** (just submitted; not yet matched).
+- 4P-aware bundle-market coord with smooth-ΔW endgame bonus + Option 3
+  LITE demand-spread mixing + raised barriers (LEAF_FLOOR=2.0,
+  REDUCED_FLOOR=2.0) + deadline-bounded enumerate.
+- Self-evicted sub 52936894 (coord v2, never settled — was up for ~10 min
+  before v3 replaced it).
+- Rolling pair will be: coord v3 (new, PENDING μ) + sub 52935965
+  (orbitfix_kt_p23, μ=1091.3).
+
+**Next-session first action:**
+1. `kaggle competitions submissions orbit-wars | head -5` to read v3's μ.
+2. **Decision tree based on v3 μ:**
+   - μ ≥ 1100: features collectively help. Tune
+     COORD_OPP_CAPACITY_FACTOR + DEMAND_REACH_WINDOW. Upgrade Option 3
+     LITE → canonical (per-opp shadow price).
+   - μ ∈ [900, 1100]: at-parity with old coord (μ=905). The five-knob
+     pile-up cancelled out. **PRUNE** in order: DEMAND_SPREAD off →
+     REDUCED_FLOOR=0 → LEAF_FLOOR=0 → DELTA_W=0. Stop at the knob whose
+     removal improves A/B vs orbitfix.
+   - μ < 900: features collectively HURT. Revert to pre-Day-13 coord;
+     keep ONLY the deadline fix and code-review correctness fixes.
+
+**The prune-needed concern (PI explicit 2026-05-23):** five env-var-gated
+features were added between Day 12 and Day 13. They're all default-ON in
+sub coord v3. If μ moves significantly in either direction without
+single-feature isolation, we won't know which feature is responsible.
+Pruning must happen before any new feature work.
+
+See `knowledge-base/flags/2026-05-23-coord-five-knobs-need-pruning.md`
+for the full knob list and pruning method; `knowledge-base/questions/
+2026-05-23-which-knobs-help.md` for per-knob predicted directional
+effects.
+
+## (Older context follows) Where we were (2026-05-20 17:00 UTC)
 
 - **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC. **34 days remain.**
 - **Rolling-last-2 (Kaggle auto-keeps these two):**
