@@ -141,3 +141,78 @@ def test_empty_planets_returns_empty():
     obs["planets"] = []
     out = bp_main.agent(obs)
     assert out == []
+
+
+def _obs_2p(step: int, player: int = 0):
+    """Obs with a real opponent (player 1) so `opp_id_2p` returns 1
+    instead of -1 (which would short-circuit before the predicate)."""
+    return {
+        "player": player,
+        "step": step,
+        "planets": [
+            (0, 0, 50.0, 30.0, 3.0, 10, 2),    # me
+            (1, 1, 50.0, 70.0, 3.0, 10, 2),    # opp
+        ],
+        "fleets": [],
+        "comets": [],
+        "comet_planet_ids": [],
+        "angular_velocity": 0.01,
+    }
+
+
+def test_strike_election_routes_to_strike_phase(monkeypatch):
+    """When predicate elects AND BUILDUP_PLANNER_STRIKE_ENABLED=1, the
+    dispatcher transitions BUILDUP/CONSOLIDATION → STRIKE same-turn,
+    calls strike.step, and resets to CONSOLIDATION for next turn.
+
+    Mocks the predicate to return a StrikePlan and strike.step to return
+    a sentinel move list. Asserts the dispatcher emits the strike moves
+    (NOT consolidation's) on the elect turn AND ends in CONSOLIDATION."""
+    from agents.buildup_planner import predicates, strike
+    _reset_state()
+    bp_main._PHASE_STATE[0] = {"phase": bp_main.PHASE_CONSOLIDATION,
+                               "strike_plan": None,
+                               "game_id": "test"}
+    fake_plan = predicates.StrikePlan(
+        target_ids=frozenset({1}), arrival_step=42, shots=(),
+    )
+    sentinel_moves = [[0, 1.23, 7]]
+    monkeypatch.setenv("BUILDUP_PLANNER_STRIKE_ENABLED", "1")
+    with patch.object(bp_main.predicates, "evaluate_inflection",
+                      return_value=fake_plan), \
+         patch.object(strike, "step", return_value=sentinel_moves) as m_strike, \
+         patch.object(bp_main.consolidation, "step",
+                      return_value=[[99, 0.0, 99]]) as m_cons:
+        out = bp_main.agent(_obs_2p(step=50))
+    # Strike-only emission: strike's moves, NOT consolidation's.
+    assert out == sentinel_moves
+    assert m_strike.called
+    assert not m_cons.called
+    # Phase resets to CONSOLIDATION so the NEXT turn routes normally.
+    assert bp_main._PHASE_STATE[0]["phase"] == bp_main.PHASE_CONSOLIDATION
+    assert bp_main._PHASE_STATE[0]["strike_plan"] is None
+
+
+def test_strike_disabled_keeps_consolidation_even_with_plan(monkeypatch):
+    """`BUILDUP_PLANNER_STRIKE_ENABLED=0` (default): predicate may return
+    a plan but the dispatcher MUST stay in CONSOLIDATION and not call
+    strike.step. Guards against accidental flag-flip regressions."""
+    from agents.buildup_planner import predicates, strike
+    _reset_state()
+    bp_main._PHASE_STATE[0] = {"phase": bp_main.PHASE_CONSOLIDATION,
+                               "strike_plan": None,
+                               "game_id": "test"}
+    fake_plan = predicates.StrikePlan(
+        target_ids=frozenset({1}), arrival_step=42, shots=(),
+    )
+    monkeypatch.setenv("BUILDUP_PLANNER_STRIKE_ENABLED", "0")
+    with patch.object(bp_main.predicates, "evaluate_inflection",
+                      return_value=fake_plan), \
+         patch.object(strike, "step", return_value=[[0, 0.0, 1]]) as m_strike, \
+         patch.object(bp_main.consolidation, "step",
+                      return_value=[[7, 0.7, 7]]) as m_cons:
+        out = bp_main.agent(_obs_2p(step=50))
+    assert out == [[7, 0.7, 7]]
+    assert not m_strike.called
+    assert m_cons.called
+    assert bp_main._PHASE_STATE[0]["phase"] == bp_main.PHASE_CONSOLIDATION
