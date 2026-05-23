@@ -1,14 +1,12 @@
 # orbitfix_kt_p23 — bundled from agents/baseline with env-var stack
 # (orbitfix substrate + kinematic table + Phase 2 adaptive K +
-#  Phase 3 leaf in-flight fate check + Phase 4 smart-opp leaf).
-# Includes code-review fixes (2026-05-23):
-#  - Phase 4 Δ-calibration anchored at baseline_horizon
-#  - Phase 3b skip_planet_id (no false-flag on source planet)
-#  - State-aware cost model (adaptive-K + Phase 3b cost terms)
-#  - Per-call env reads via lib.config (A/B reproducibility)
-#  - Defensive guards (ZeroDivisionError, joint_budget_frac clamp)
-#  - Cheap_delta criticality detector (fires on defensive turns)
-#  - Hot-loop imports hoisted to module scope
+#  Phase 3 leaf in-flight fate check).
+# Includes static-planet predict_relative fix (1ad6cfa, 2026-05-23)
+# and comet-aware reinforce dispatch (4c80932, 2026-05-23).
+# Rebundled from agents/baseline via scripts/bundle_agent.py +
+# manual env-stack prepend (the bundler can't inline agents/baseline
+# from a wrapper-style agent_dir; same approach as c8d9c47 used for
+# sub 52949672).
 from __future__ import annotations
 
 import os as _kt_p23_os
@@ -24,6 +22,7 @@ _kt_p23_os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
 _kt_p23_os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
 _kt_p23_os.environ.setdefault("BASELINE_ADAPTIVE_K", "1")
 _kt_p23_os.environ.setdefault("COMPOSITE_FLEET_SURVIVAL_CHECK", "1")
+
 
 
 # === inlined: lib/config.py ===
@@ -228,11 +227,21 @@ def predict_relative(current_planet, angular_velocity: float, lead_turns: float)
 
     Safe for an agent that doesn't track absolute step count: read polar
     angle of the current planet position and rotate forward by
-    `omega * lead_turns`. Returns the current (x, y) for static planets too,
-    since rotating a position outside the rotation limit is a noop physically
-    but the formula still works mathematically — caller should pre-filter
-    via `is_orbiting` if performance matters.
+    `omega * lead_turns`. STATIC planets (those failing `is_orbiting`)
+    return their raw position — the env does NOT rotate planets outside
+    ROTATION_RADIUS_LIMIT, and the pre-2026-05-23 always-rotate behavior
+    was a silent bug used by 4 non-pre-filtered call sites in
+    `lib/aim.py` and `agents/baseline/main.py`. The bug surfaced as 81%
+    turn divergence between KT-ON and KT-OFF (the kinematic table
+    correctly stores constant for static planets, while this function
+    used to rotate them); see /tmp/parity_kt.py.
+
+    Returns the current (x, y) when omega == 0 too — the math
+    `cur_angle + 0 * lead = cur_angle` round-trips through atan2/cos/sin
+    introducing ULP drift, so we short-circuit.
     """
+    if not is_orbiting(current_planet):
+        return (float(current_planet[2]), float(current_planet[3]))
     px, py = current_planet[2], current_planet[3]
     dx, dy = px - CENTER, py - CENTER
     orb_r = math.hypot(dx, dy)
@@ -1561,6 +1570,33 @@ def comet_position_at(planet_id: int, world, lead_turns: int) -> tuple[float, fl
         return None
     point = path[idx]
     return float(point[0]), float(point[1])
+
+
+def planet_position_at(planet, world, lead_turns: int) -> tuple[float, float]:
+    """Predict `(x, y)` of `planet` at `lead_turns` from now — comet-aware.
+
+    Dispatcher: comets route to `comet_position_at` (path lookup);
+    orbital / static planets route to `lib.orbit.predict_relative`
+    (which honors `is_orbiting`). Prefer this over raw `predict_relative`
+    at call sites that have a `world` handle — raw `predict_relative` is
+    physically wrong for comets (rotates them around the sun instead of
+    advancing their path).
+
+    `planet` may be a `Planet` namedtuple, a Plain Python list/tuple in
+    the `[id, owner, x, y, radius, ships, prod]` shape used throughout
+    `lib/`, or a `WorldModel.PlanetSnapshot`. Pid extraction is
+    duck-typed: `.id` attribute first, else index `[0]`.
+
+    Comets whose path has expired return the `(-1e6, -1e6)` OFF_BOARD
+    sentinel, matching `lib.kinematic_table.lookup_relative` semantics.
+    """
+    pid = int(getattr(planet, "id", None) if hasattr(planet, "id") else planet[0])
+    if pid in world.comet_ids:
+        pos = comet_position_at(pid, world, lead_turns)
+        if pos is not None:
+            return pos
+        return (-1e6, -1e6)
+    return predict_relative(planet, world.omega, lead_turns)
 
 # === inlined: lib/intent.py ===
 
@@ -9483,6 +9519,7 @@ import math
 import os
 
 # from lib.aim import aim_comet, aim_orbiting  # inlined by bundle_agent.py
+# from lib.config import env_bool, env_float, env_int  # inlined by bundle_agent.py
 # from lib.fleet import speed as fleet_speed  # inlined by bundle_agent.py
 fleet_speed = speed
 # from lib.orbit import is_orbiting, predict_relative, predict_relative_smart  # inlined by bundle_agent.py
@@ -9496,11 +9533,8 @@ SIM_SETTLE_TURNS = 2
 # Rollout horizon — env-var overridable so a deeper-horizon variant can
 # opt in without forcing it on every agent that imports baseline.proposer.
 # Defaults match the production ceiling (sub 52912707) settings.
-# from lib.config import env_int as _env_int  # noqa: E402  # inlined by bundle_agent.py
-_env_int = env_int
-
-MIN_HORIZON = _env_int("BASELINE_MIN_HORIZON", 25)
-MAX_HORIZON = _env_int("BASELINE_MAX_HORIZON", 40)
+MIN_HORIZON = env_int("BASELINE_MIN_HORIZON", 25)
+MAX_HORIZON = env_int("BASELINE_MAX_HORIZON", 40)
 WAIT_EXTRA_SURPLUS = (0, 5, 12)  # legacy forward grid (kept for rollback)
 CHEAP_REJECT_THRESHOLD = -10.0
 EPISODE_STEPS = 500
@@ -9646,6 +9680,104 @@ def nearest_k(targets, src, k: int):
         targets,
         key=lambda t: math.hypot(src.x - t.x, src.y - t.y),
     )[:k]
+
+
+def min_ships_for_distance(distance: float) -> int:
+    """Distance-proportional snowball anti-fragmentation floor
+    (Change A v2, 2026-05-23, refined from PI strategic input).
+
+    Returns the minimum ships a candidate must carry given its
+    geometric DISTANCE (chord length src→tgt). Strategic rationale:
+    - Distance is invariant to ship count (unlike ETA, since bigger
+      fleets are slower per `lib.fleet.speed`). Cleaner signal.
+    - Bigger distance = larger opp counter-launch window + larger
+      lead-prediction error window. Without sufficient fleet mass
+      the launch is wasted on a target that's either defended by
+      arrival or that the fleet can't even reach (path drift).
+    - capture_size() already returns max(MIN_FLEET_SIZE,
+      predicted_opp_garrison + 1) — the problem case is LOW-DEFENSE
+      neutral captures where capture_size collapses to MIN_FLEET_SIZE=2.
+      A 2-ship launch at a distant empty neutral IS the wasted-launch
+      pattern PI observed in live trace.
+
+    Formula (when BASELINE_MIN_FLEET_BY_DISTANCE=1):
+        min_ships = max(MIN_FLEET_SIZE, ceil(distance * SLOPE))
+
+    SLOPE default 0.15 (BASELINE_MIN_FLEET_SLOPE_PER_UNIT). Result curve:
+        distance 10 → 2 ships   (no-op, MIN_FLEET_SIZE floor)
+        distance 20 → 3 ships
+        distance 30 → 5 ships
+        distance 50 → 8 ships
+        distance 70 → 11 ships
+
+    When the env var is OFF (default), returns MIN_FLEET_SIZE so the
+    function is bit-identical to pre-Change-A behavior at every site.
+
+    The companion `min_ships_for_eta()` accepts ETA for back-compat with
+    the wait_N call site where only ETA is available.
+    """
+    if not env_bool("BASELINE_MIN_FLEET_BY_DISTANCE", False):
+        return MIN_FLEET_SIZE
+    slope = env_float("BASELINE_MIN_FLEET_SLOPE_PER_UNIT", 0.15)
+    return max(MIN_FLEET_SIZE, int(math.ceil(float(distance) * slope)))
+
+
+def min_ships_for_eta(eta: int) -> int:
+    """Back-compat shim. Returns MIN_FLEET_SIZE (no-op) by default.
+
+    Prefer `min_ships_for_distance` at call sites that have geometric
+    distance available. This function survives only because the wait_N
+    emit path passes `wait + eta` (a tick count, not a distance) and
+    we don't currently expose distance into that scope. For the
+    BY_DISTANCE gate to also apply to wait_N candidates, an eta-based
+    proxy is computed: distance ≈ eta × est_speed_for_5_ship_fleet ≈
+    eta × 5 (board-wide median speed).
+    """
+    if not env_bool("BASELINE_MIN_FLEET_BY_DISTANCE", False):
+        return MIN_FLEET_SIZE
+    # eta is in ticks; convert to a distance proxy. fleet_speed for a
+    # 5-ship fleet is ~4.5 units/tick (lib/fleet.py speed formula);
+    # use 5 as a reasonable median that doesn't over-penalise close
+    # waits (which would have small eta and small proxy distance).
+    distance_proxy = float(eta) * 5.0
+    return min_ships_for_distance(distance_proxy)
+
+
+def min_ships_for_source_fraction(src_ships: int) -> int:
+    """Fractional source-drain floor (Change B v2, 2026-05-23, refined
+    from PI strategic input).
+
+    Returns the minimum ships a candidate must launch given the source
+    planet's current garrison size. Strategic rationale: a 2-ship
+    launch from a 100-ship planet (2% drain) is strategically
+    irrelevant — the planet still has 98 ships, the fleet is too
+    small to capture anything defended, and we've spent a turn-slot
+    on a non-decision. Fractional sizing scales naturally with
+    planet size: small planets keep their cheap launches, big
+    planets must concentrate.
+
+    Formula (when BASELINE_SOURCE_DRAIN_FRAC > 0):
+        min_ships = ceil(src_ships × SOURCE_DRAIN_FRAC)
+
+    SOURCE_DRAIN_FRAC default 0.10 in agents/orbitfix_kt_p23_snowball:
+        source has 5 ships  → floor = 1 (no-op, MIN_FLEET_SIZE takes over)
+        source has 20 ships → floor = 2 (no-op, MIN_FLEET_SIZE takes over)
+        source has 50 ships → floor = 5
+        source has 100 ships → floor = 10 (prevents 2-ship micro-launches)
+        source has 200 ships → floor = 20
+
+    Default 0.0 (the env var is missing) returns 0 — bit-identical to
+    pre-Change-B-v2 behavior. The function is composed with
+    `min_ships_for_distance` and `MIN_FLEET_SIZE` via max() at the
+    candidate gate, so all three floors stack honestly.
+
+    Supersedes the older `BASELINE_MIN_SOURCE_SHIPS_TO_EMIT` source-level
+    skip (which was an absolute threshold; this is a fraction).
+    """
+    frac = env_float("BASELINE_SOURCE_DRAIN_FRAC", 0.0)
+    if frac <= 0.0:
+        return 0
+    return int(math.ceil(float(src_ships) * frac))
 
 
 def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
@@ -10382,33 +10514,76 @@ def propose(my_planets, target_pool, world, model, me: int,
     sorted by cheap_delta descending.
     """
     prerank = []
+    # Change B (2026-05-23): source-garrison floor. When
+    # BASELINE_MIN_SOURCE_SHIPS_TO_EMIT > MIN_FLEET_SIZE, sources below
+    # that threshold skip fire-now emit (they can still emit wait_N
+    # candidates that accumulate ships before firing). Forces small
+    # planets to snowball rather than fragment. Default 0 = use
+    # MIN_FLEET_SIZE (existing behavior bit-identically).
+    min_src_ships_to_emit = max(
+        MIN_FLEET_SIZE,
+        env_int("BASELINE_MIN_SOURCE_SHIPS_TO_EMIT", 0),
+    )
     for src in my_planets:
         if int(src.ships) < MIN_FLEET_SIZE:
             continue
+        # Fire-now suppression: source must have enough to be worth
+        # spending compute on. wait_N candidates are still emitted
+        # below so the source can plan a delayed launch as it grows.
+        emit_fire_now = int(src.ships) >= min_src_ships_to_emit
         for tgt in nearest_k(target_pool, src, NUM_TARGETS_PER_SOURCE):
             if int(tgt.id) == int(src.id):
                 continue
 
-            for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
-                if ships < MIN_FLEET_SIZE or ships > int(src.ships):
-                    continue
-                angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
-                horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
-                if horizon >= baseline_len:
-                    horizon = baseline_len - 1
-                cheap = cheap_marginal_value(
-                    src, tgt, ships, eta, world, model, me, wait_N=0,
-                )
-                if cheap > CHEAP_REJECT_THRESHOLD:
-                    prerank.append(
-                        (cheap, src, tgt, ships, angle, eta, horizon, 0)
+            # Change A v2 + B v2 (2026-05-23): combine three honest floors
+            # at the candidate gate. Each one captures a distinct cause
+            # of fleet waste; they STACK via max() rather than competing.
+            #   - MIN_FLEET_SIZE = absolute floor below which combat is
+            #     degenerate (always 2)
+            #   - min_ships_for_distance = geometric anti-fragmentation
+            #     (2-ship fleets across 50 units are wasted)
+            #   - min_ships_for_source_fraction = source-relative anti-
+            #     fragmentation (2-ship launch from a 100-ship planet
+            #     is strategically irrelevant)
+            # All three default to MIN_FLEET_SIZE=2 when their gates are
+            # OFF, so the unified floor stays bit-identical to pre-2026-
+            # 05-23 behavior unless agents opt in.
+            chord_distance = math.hypot(src.x - tgt.x, src.y - tgt.y)
+            candidate_floor = max(
+                MIN_FLEET_SIZE,
+                min_ships_for_distance(chord_distance),
+                min_ships_for_source_fraction(int(src.ships)),
+            )
+
+            if emit_fire_now:
+                for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
+                    if ships < MIN_FLEET_SIZE or ships > int(src.ships):
+                        continue
+                    if ships < candidate_floor:
+                        continue
+                    angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
+                    horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
+                    if horizon >= baseline_len:
+                        horizon = baseline_len - 1
+                    cheap = cheap_marginal_value(
+                        src, tgt, ships, eta, world, model, me, wait_N=0,
                     )
+                    if cheap > CHEAP_REJECT_THRESHOLD:
+                        prerank.append(
+                            (cheap, src, tgt, ships, angle, eta, horizon, 0)
+                        )
 
             for w_ships, w_wait, w_angle, w_eta in wait_then_fire_variants(
                 src, tgt, model, omega, me, world=world,
             ):
                 w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if w_horizon >= baseline_len:
+                    continue
+                # Unified candidate floor applies to wait_N candidates
+                # too — the chord length is invariant to fire time, and
+                # source-fraction floor uses current src.ships (snapshot
+                # at proposal time).
+                if w_ships < candidate_floor:
                     continue
                 w_cheap = cheap_marginal_value(
                     src, tgt, w_ships, w_eta, world, model, me, wait_N=w_wait,
@@ -13093,8 +13268,34 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             by_tgt.setdefault(int(tgt.id), []).append(
                 (float(cd), src, tgt, int(ships), float(angle), int(ph)),
             )
+
+        # Change C (2026-05-23): target-priority ordering for joint pair
+        # enumeration. The pre-2026-05-23 code iterated by_tgt in dict-
+        # insertion order, so the first ~5 targets consumed the full
+        # JOINT_MAX_PAIRS budget — biased by proposer emission order
+        # (per-source K-NN sweep), NOT by target value. PI observation:
+        # "we should bundle to the highest-opp-ships OR highest-EV-shot
+        # target within K nearest neighbours". Sort prioritises enemy-
+        # owned-fat targets first (greatest production-flip when
+        # captured, greatest threat removed), then by aggregate cheap_delta
+        # within the target's top candidates (the "highest EV shot"
+        # criterion). Gated by BASELINE_JOINT_TARGET_PRIORITY=1 so the
+        # default behaviour is bit-identical.
+        if env_bool("BASELINE_JOINT_TARGET_PRIORITY", False):
+            def _priority(item):
+                tgt_id, cands = item
+                tgt_obj = cands[0][2]  # any cand of this target carries the planet object
+                is_owned_by_me = (int(tgt_obj.owner) == int(me))
+                opp_ships = -int(tgt_obj.ships) if not is_owned_by_me else 0
+                # Use top-3 cheap_delta sum to break ties (fewer cands → smaller sum).
+                top3_sum = -sum(float(c[0]) for c in sorted(cands, key=lambda c: -float(c[0]))[:3])
+                return (is_owned_by_me, opp_ships, top3_sum)
+            iter_items = sorted(by_tgt.items(), key=_priority)
+        else:
+            iter_items = list(by_tgt.items())
+
         joint_count = 0
-        for tgt_id, cands in by_tgt.items():
+        for tgt_id, cands in iter_items:
             if len(cands) < 2:
                 continue
             cands.sort(key=lambda c: -c[0])
@@ -13352,6 +13553,7 @@ fleet_speed = speed
 # from lib.orbit import predict_relative  # inlined by bundle_agent.py
 # from lib.trajectory import predict_fleet_fate  # inlined by bundle_agent.py
 # from lib.world_model import WorldModel  # inlined by bundle_agent.py
+# from lib.world_model import planet_position_at  # inlined by bundle_agent.py
 
 # Import by explicit names so the bundler's per-line import-stripping regex
 # can handle them. Single-line form is mandatory — the regex matches one
@@ -13543,7 +13745,7 @@ def emit_threat_reinforcements(
         if int(src.ships) < ships:
             continue
         try:
-            tx, ty = predict_relative(tgt, omega, int(mission.eta))
+            tx, ty = planet_position_at(tgt, world, int(mission.eta))
         except Exception:
             tx, ty = float(tgt.x), float(tgt.y)
         angle = math.atan2(float(ty) - float(src.y), float(tx) - float(src.x))
@@ -13668,7 +13870,7 @@ def _propose_anticipated_reinforces(
         if best_src is None:
             continue
         try:
-            tx, ty = predict_relative(d, omega, int(best_eta))
+            tx, ty = planet_position_at(d, world, int(best_eta))
         except Exception:
             tx, ty = float(d.x), float(d.y)
         angle = math.atan2(
