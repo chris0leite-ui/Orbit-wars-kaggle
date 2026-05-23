@@ -126,6 +126,32 @@ SNIPER_MARGIN = float(os.environ.get("BASELINE_SNIPER_MARGIN", "1.2"))
 SNIPER_MAX_LAUNCHES = int(os.environ.get("BASELINE_SNIPER_MAX_LAUNCHES", "4"))
 SNIPER_RESERVE_FRAC = float(os.environ.get("BASELINE_SNIPER_RESERVE_FRAC", "0.4"))
 
+# Staggered-attrition convergence wave (2026-05-23). PI directive
+# "streamline ships to the opponent really aggressively … not launching
+# small fleets … snowball through the fastest path." Fills the missing
+# multi-source FRESH-attack capability: drain_stagnant_rear reinforces
+# friendlies, drain_combat_stack stacks onto already-inbound attacks,
+# and emit_sniper_strikes bails when no single source can crack a target
+# (line 810 `if required > primary_avail: continue`). The wave bundles
+# multiple idle sources into a staggered-arrival attack: first arrival
+# weakens the garrison, subsequent arrivals finish the kill. Physics-
+# filtered per Rule 47 (predict_fleet_fate). Bypasses the value head
+# (closed-form ROI) — the triples-extension axis was falsified earlier
+# this session due to value-head leaf-Δ washing out joint actions.
+# Same-step convergence is NOT implementable: fleet speed depends on
+# ship count (lib/fleet.speed ∝ log(ships)) and BASELINE_LEDGER (the
+# wait-N plumbing) is per Rule 37 falsified. Staggered-attrition is
+# the production-realizable form. Default OFF; opt-in via
+# BASELINE_CONVERGENCE_WAVE=1.
+CONVERGENCE_WAVE_ENABLED = os.environ.get("BASELINE_CONVERGENCE_WAVE", "0") == "1"
+WAVE_MAX_LAUNCHES = int(os.environ.get("BASELINE_WAVE_MAX_LAUNCHES", "6"))
+WAVE_MAX_TARGETS = int(os.environ.get("BASELINE_WAVE_MAX_TARGETS", "5"))
+WAVE_MIN_TGT_PROD = int(os.environ.get("BASELINE_WAVE_MIN_TGT_PROD", "2"))
+WAVE_MIN_PER_SOURCE_SHIPS = int(os.environ.get("BASELINE_WAVE_MIN_PER_SOURCE", "15"))
+WAVE_MIN_TOTAL_SHIPS = int(os.environ.get("BASELINE_WAVE_MIN_TOTAL", "60"))
+WAVE_RESERVE_FRAC = float(os.environ.get("BASELINE_WAVE_RESERVE_FRAC", "0.5"))
+WAVE_MARGIN = float(os.environ.get("BASELINE_WAVE_MARGIN", "1.05"))
+
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
 # chooser's wait_N>0 winners are remembered across turns instead of
 # being silently dropped. Each entry ticks down each turn; when
@@ -831,6 +857,167 @@ def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
     return list(moves) + extras
 
 
+def _simulate_staggered_capture(
+    tgt, my_id: int, sources_eta: list,
+):
+    """Greedy staggered-attrition simulation.
+
+    `sources_eta` is a list of `(eta, src, angle, ships)` sorted by ETA
+    ascending. Walks through arrivals one at a time; between arrivals
+    the defender's garrison grows by `production * delta_eta`; at each
+    arrival the smaller side dies and the larger side's surplus
+    survives. Returns the shortest prefix (`prefix_idx`) such that the
+    final arrival captures the target with `WAVE_MARGIN` safety, the
+    cumulative total ships used, and a bool indicating capture.
+
+    Conservative defender model — uses `tgt.ships` + production growth;
+    ignores any other in-flight enemy/friendly fleets. The caller pre-
+    filters targets so no friendly fleet is inbound (combat_stack
+    handles those), keeping this simulation honest for the "fresh
+    attack" case.
+    """
+    garrison = float(tgt.ships)
+    production = float(tgt.production)
+    owner = int(tgt.owner)
+    last_eta = 0
+    total_ships = 0
+    for idx, (eta, _src, _angle, ships) in enumerate(sources_eta):
+        # Defender regrows between arrivals (only while still defender-owned).
+        if owner != my_id:
+            garrison += max(0, eta - last_eta) * production
+            if ships * WAVE_MARGIN >= garrison:
+                # Capture — owner flips; remaining sources reinforce.
+                total_ships += ships
+                return idx + 1, total_ships, True
+            else:
+                garrison -= ships
+                total_ships += ships
+        else:
+            # Already ours from a prior arrival — remaining ships just
+            # land as reinforcement; the prefix that captured was idx-1.
+            # We stop accumulating here.
+            break
+        last_eta = eta
+    return len(sources_eta), total_ships, False
+
+
+def emit_convergence_wave(moves, planets, my_id: int, world, model) -> list:
+    """Multi-source staggered-attrition strike at a fresh enemy target.
+
+    Fills the gap between drain_combat_stack (stacks onto already-inbound
+    attacks) and emit_sniper_strikes (bails when no single source can
+    crack a target). For each candidate enemy planet with no friendly
+    fleet inbound, sorts the available idle sources by their natural
+    arrival ETA and simulates staggered combat to find the smallest
+    bundle that captures. Picks the highest-ROI capture across targets
+    and emits all launches in the chosen bundle.
+
+    Closed-form ROI (production × remaining steps) bypasses the value
+    head — the earlier-session triples-extension axis falsified the
+    leaf-Δ joint scoring (washing out due to lost ships counted both
+    sides of the baseline). Same physics filter (predict_fleet_fate)
+    as sniper / combat-stack per Rule 47. Total ships emitted capped at
+    WAVE_RESERVE_FRAC of total reserve; per-launch min via
+    WAVE_MIN_PER_SOURCE_SHIPS; bundle min via WAVE_MIN_TOTAL_SHIPS.
+    """
+    if not CONVERGENCE_WAVE_ENABLED:
+        return moves
+
+    used_srcs: set[int] = set()
+    for m in moves:
+        try:
+            used_srcs.add(int(m[0]))
+        except (TypeError, IndexError):
+            pass
+
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    enemy_planets = [
+        p for p in planets
+        if int(p.owner) != my_id and int(p.owner) != -1
+    ]
+    if not my_planets or not enemy_planets:
+        return moves
+
+    total_my_ships = sum(int(p.ships) for p in my_planets)
+    wave_ship_budget = int(total_my_ships * WAVE_RESERVE_FRAC)
+    if wave_ship_budget < WAVE_MIN_TOTAL_SHIPS:
+        return moves
+
+    # Targets: enemy planets with no friendly fleet inbound (combat_stack
+    # owns those), high-enough production, top-K by production.
+    candidate_targets = []
+    for p in enemy_planets:
+        if int(p.production) < WAVE_MIN_TGT_PROD:
+            continue
+        arrivals = model.ledger.get(int(p.id), [])
+        friendly_in = sum(int(s) for (_eta, o, s) in arrivals if o == my_id)
+        if friendly_in > 0:
+            continue
+        candidate_targets.append(p)
+    candidate_targets.sort(key=lambda t: -int(t.production))
+    candidate_targets = candidate_targets[:WAVE_MAX_TARGETS]
+    if not candidate_targets:
+        return moves
+
+    remaining_steps = max(1, 500 - int(world.step))
+    best = None  # (roi, tgt, prefix_launches, total_ships)
+
+    for tgt in candidate_targets:
+        # Score every idle source's ACTUAL ETA at this target. Physics
+        # filter is the safety filter: drops sun/oob/comet-expiry paths.
+        scored = []
+        for src in my_planets:
+            if int(src.id) in used_srcs:
+                continue
+            if model.incoming_enemy_eta(int(src.id), my_id) is not None:
+                continue
+            src_reserve = max(int(src.production) * STAGNANT_RESERVE_MULT,
+                              STAGNANT_RESERVE_FLOOR)
+            if int(src.ships) <= STAGNANT_THRESHOLD_MULT * src_reserve:
+                continue
+            available = int(src.ships) - src_reserve
+            if available < WAVE_MIN_PER_SOURCE_SHIPS:
+                continue
+            angle = math.atan2(float(tgt.y) - float(src.y),
+                               float(tgt.x) - float(src.x))
+            try:
+                fate = predict_fleet_fate(src, tgt, angle, available, world)
+            except Exception:
+                continue
+            if fate.outcome != "target":
+                continue
+            scored.append((int(fate.step), src, float(angle), int(available)))
+        if not scored:
+            continue
+        scored.sort(key=lambda s: s[0])
+
+        prefix_idx, total_ships, captured = _simulate_staggered_capture(
+            tgt, my_id, scored,
+        )
+        if not captured:
+            continue
+        if total_ships < WAVE_MIN_TOTAL_SHIPS:
+            continue
+        if total_ships > wave_ship_budget:
+            continue
+        if prefix_idx > WAVE_MAX_LAUNCHES:
+            continue
+
+        roi = float(tgt.production) * float(remaining_steps)
+        if best is None or roi > best[0]:
+            best = (roi, tgt, scored[:prefix_idx], total_ships)
+
+    if best is None:
+        return moves
+
+    _roi, _tgt, prefix, _total = best
+    extras = []
+    for _eta, src, angle, ships in prefix:
+        extras.append([int(src.id), float(angle), int(ships)])
+        used_srcs.add(int(src.id))
+    return list(moves) + extras
+
+
 def agent(obs, configuration=None):
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
@@ -983,6 +1170,7 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
+        moves = emit_convergence_wave(moves, planets, me, world, model)
         return emit_sniper_strikes(moves, planets, me, world, model)
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
@@ -1006,6 +1194,7 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
+        moves = emit_convergence_wave(moves, planets, me, world, model)
         return emit_sniper_strikes(moves, planets, me, world, model)
 
     baseline_favors = build_idle_baseline(
@@ -1055,4 +1244,5 @@ def agent(obs, configuration=None):
     moves = drain_idle_rear(moves, planets, me, world, model)
     moves = drain_stagnant_rear(moves, planets, me, world, model)
     moves = drain_combat_stack(moves, planets, me, world, model)
+    moves = emit_convergence_wave(moves, planets, me, world, model)
     return emit_sniper_strikes(moves, planets, me, world, model)
