@@ -50,7 +50,7 @@ from lib.world_model import WorldModel
 # would also break agents/baseline/main.py, which is parity-tested.
 from agents.baseline.main import _as_dict, _num_seats
 
-from agents.buildup_planner import buildup, consolidation, endgame, predicates
+from agents.buildup_planner import buildup, consolidation, dogpile, endgame, predicates
 from agents.buildup_planner import strike as _strike_mod
 
 
@@ -209,6 +209,36 @@ def agent(obs, configuration=None) -> list[list]:
                         type(exc).__name__, exc,
                     )
                     return []
+
+        # DOGPILE pre-check (cheap O(|planets|)). Fires mid-game on the
+        # top-K opp planets by production when |opp planets| > K_FINISH
+        # (NOT FINISHER's territory) and the post-capture production
+        # advantage clears the relaxed gate. The atomic-drop emission
+        # machinery is shared with FINISHER + STRIKE.
+        dp_trigger = dogpile.quick_trigger(raw_planets, me)
+        if dp_trigger is not None:
+            dp_opp_id, _ = dp_trigger
+            dp_world = World.from_obs(obs_d)
+            dp_model = WorldModel.from_world(dp_world)
+            dp_plan = dogpile.evaluate(
+                dp_world, dp_model, me, dp_opp_id,
+            )
+            if dp_plan is not None:
+                try:
+                    return _strike_mod.step(
+                        dp_world, dp_plan,
+                        game_id=state.get("game_id", "unknown"),
+                        step_now=step,
+                    )
+                except Exception as exc:
+                    import logging
+                    logging.getLogger("buildup_planner.dogpile").warning(
+                        "atomic-drop: dogpile strike.step raised %s: %s",
+                        type(exc).__name__, exc,
+                    )
+                    # Fall through to baseline consolidation rather than
+                    # emit []; if dogpile's emission fails, we still want
+                    # to play the turn normally.
 
         # Default fast path: STRIKE disabled → skip the predicate entirely
         # and delegate straight to consolidation. The Step-3b diagnostic
