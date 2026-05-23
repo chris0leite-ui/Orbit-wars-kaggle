@@ -55,22 +55,37 @@ def test_score_action_no_op_when_horizon_zero():
 
 
 def test_affordable_cap_has_floor_of_eight():
-    """Even with an extreme budget the cap is bounded below by 8."""
+    """Even with an extreme budget the cap is bounded below by 8.
+
+    Fixed 2026-05-23: signature now requires `me` + `gamma` (Phase 1
+    determinism work changed the signature), and the function returns
+    `(cap, per_cand_ms)` not a scalar. Pre-fix this test was failing on
+    a TypeError and a tuple-vs-int comparison.
+    """
     _obs, snap = _snapshot_from_seed(7)
-    cap = affordable_validate_cap(
-        snap, num_seats=2, max_horizon=10, wallclock_ms=50.0, min_horizon=5,
+    cap, _per_cand_ms = affordable_validate_cap(
+        snap, me=0, num_seats=2, max_horizon=10,
+        wallclock_ms=50.0, min_horizon=5, gamma=0.99,
     )
     assert cap >= 8
 
 
 def test_choose_empty_prerank_returns_empty():
+    """An empty prerank produces no moves and no commits.
+
+    Fixed 2026-05-23: choose() returns `(moves, commits)` (the ledger
+    refactor added commits as a second return value). Pre-fix this test
+    was comparing `(/[], [])` against `[]` and silently failing.
+    """
     _obs, snap = _snapshot_from_seed(7)
     favs = build_idle_baseline(snap, me=0, num_seats=2, max_horizon=10, gamma=0.99)
-    assert choose(
+    moves, commits = choose(
         snap, prerank=[], baseline_favors=favs,
         me=0, num_seats=2, wallclock_ms=600.0,
         min_horizon=5, max_horizon=10, gamma=0.99,
-    ) == []
+    )
+    assert moves == []
+    assert commits == []
 
 
 def test_choose_emit_format_is_env_action_shape():
