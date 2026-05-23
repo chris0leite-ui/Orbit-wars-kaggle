@@ -54,6 +54,11 @@ audit/live-episodes/*/postmortem/postmortem-*.json
 # previous commit on this branch.
 agents/baseline_pre/
 
+# buildup_planner Step 2/3 audit log — per-turn elect entries, large +
+# regenerable. Path is `audit/buildup_planner_strike_elect.jsonl` by
+# default (BUILDUP_PLANNER_ELECT_LOG env override).
+audit/buildup_planner_strike_elect.jsonl
+
 # Common data formats
 *.csv
 *.zip

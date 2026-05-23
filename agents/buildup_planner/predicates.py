@@ -27,7 +27,15 @@ from typing import Any, Optional
 
 from lib.joint_solver.predicate import is_winning_state_if_owned
 
-from agents.precision import intercept
+# Direct attribute imports rather than `from agents.precision import intercept`
+# — keeps the bundle straightforward (the bundler strips intra-package
+# imports and inlines the file's source; a namespace-style `intercept.foo`
+# call would NameError on `intercept`, so we import the symbols we use).
+from agents.precision.intercept import (
+    SweepCache,
+    find_shot_for_arrival,
+    parse_world,
+)
 
 
 # Smallest arrival ETA we'll even consider. k=1 = arrives next tick, which
@@ -76,11 +84,11 @@ def evaluate_inflection(world, model, me: int, opp_id: int, *,
     # the same obs dict / struct that the dispatcher received from
     # Kaggle, so this is the canonical input to parse_world.
     try:
-        world_d = intercept.parse_world(world.obs_raw)
+        world_d = parse_world(world.obs_raw)
     except Exception:
         return None
 
-    cache = intercept.SweepCache(world_d["omega"], world_d["step"])
+    cache = SweepCache(world_d["omega"], world_d["step"])
 
     my_sources = [pv for pv in world_d["planets"]
                   if pv.owner == me and pv.ships >= 1]
@@ -129,7 +137,7 @@ def evaluate_inflection(world, model, me: int, opp_id: int, *,
         for src_pv in my_sources:
             if src_pv.id == tgt_pv.id:
                 continue
-            shot = intercept.find_shot_for_arrival(
+            shot = find_shot_for_arrival(
                 src_pv, tgt_pv, T_abs, world_d, cache=cache
             )
             if shot is None:

@@ -1,7 +1,5 @@
 """buildup_planner.main — phase-dispatch state machine.
 
-Step 2 wiring: BUILDUP → CONSOLIDATION (predicate observed but not acted on).
-
 Per-seat phase state lives in module-level `_PHASE_STATE`. State resets
 on `obs.step == 0` (new game). The state machine is:
 
@@ -10,13 +8,15 @@ on `obs.step == 0` (new game). The state machine is:
                          emit and stay in BUILDUP for next turn.
                          If None, transition to CONSOLIDATION SAME TURN
                          and emit the CONSOLIDATION moves.
-    CONSOLIDATION      : evaluate_inflection (real Step-2 search);
-                         log elect result to audit/…strike_elect.jsonl;
-                         transition to STRIKE only if
-                         BUILDUP_PLANNER_STRIKE_ENABLED=1 (default OFF).
-                         Otherwise delegate to consolidation.step(...).
-    STRIKE             : (Step 3) — never reached in Step 2 because the
-                         enable flag defaults OFF.
+    CONSOLIDATION      : evaluate_inflection search; log elect result to
+                         audit/…strike_elect.jsonl; if a plan is found
+                         AND BUILDUP_PLANNER_STRIKE_ENABLED=1, transition
+                         to STRIKE same-turn and emit the wave. Otherwise
+                         delegate to consolidation.step(...).
+    STRIKE             : single-turn — atomic-drop validation via
+                         strike.step(world, plan); transition back to
+                         CONSOLIDATION at end of turn. Strike-only
+                         emission (no consolidation moves that turn).
 
 NO modifications to obs / configuration before CONSOLIDATION delegates
 to the baseline pipeline — that pipeline handles its own parse, ledger,
@@ -83,9 +83,22 @@ def _strike_enabled() -> bool:
 # Per-seat machine state. Keyed by `obs.player` (int).
 _PHASE_STATE: dict[int, dict] = {}
 
+# Monotonic per-process counter — included in elect-log entries so that
+# `--workers >1` runs (where N games interleave in one log file) can be
+# aggregated per-game by `(pid, game_idx)`. PID alone is insufficient
+# because one worker process plays several games sequentially.
+_GAME_COUNTER = 0
+
+
+def _next_game_id() -> str:
+    global _GAME_COUNTER
+    _GAME_COUNTER += 1
+    return f"{os.getpid()}_{_GAME_COUNTER}"
+
 
 def _initial_state() -> dict:
-    return {"phase": PHASE_BUILDUP, "strike_plan": None}
+    return {"phase": PHASE_BUILDUP, "strike_plan": None,
+            "game_id": _next_game_id()}
 
 
 def _reset_if_new_game(me: int, step: int) -> dict:
@@ -142,8 +155,12 @@ def agent(obs, configuration=None) -> list[list]:
         # (default OFF) — observation-only until Step 3 flips it ON.
         world_pred = World.from_obs(obs_d)
         opp_id = predicates.opp_id_2p(world_pred, me)
+        # `.get` keeps existing dispatch tests (which build state manually
+        # without game_id) green; live game state always has it set.
+        gid = state.get("game_id", "unknown")
         if opp_id < 0:
-            _log_elect({"step": step, "me": me, "opp_id": -1, "skipped": "4p"})
+            _log_elect({"game_id": gid, "step": step, "me": me,
+                        "opp_id": -1, "skipped": "4p"})
         else:
             t0 = time.perf_counter()
             plan = None
@@ -155,14 +172,14 @@ def agent(obs, configuration=None) -> list[list]:
             except Exception as exc:
                 # Predicate errors must NOT break consolidation. Log and stay.
                 _log_elect({
-                    "step": step, "me": me, "opp_id": opp_id,
+                    "game_id": gid, "step": step, "me": me, "opp_id": opp_id,
                     "error": repr(exc),
                     "elapsed_ms": round((time.perf_counter() - t0) * 1000.0, 3),
                 })
                 plan = None
             else:
                 _log_elect({
-                    "step": step, "me": me, "opp_id": opp_id,
+                    "game_id": gid, "step": step, "me": me, "opp_id": opp_id,
                     "plan_found": plan is not None,
                     "arrival_step": (int(plan.arrival_step) if plan else None),
                     "target_ids": (sorted(int(t) for t in plan.target_ids)
@@ -178,12 +195,24 @@ def agent(obs, configuration=None) -> list[list]:
         if state["phase"] == PHASE_CONSOLIDATION:
             return consolidation.step(obs, configuration)
 
-    # --- STRIKE branch (Step 3 — not wired in Step 1) -------------------
+    # --- STRIKE branch ---------------------------------------------------
+    # One-turn phase: all shots in `strike_plan.shots` fire same-turn (the
+    # predicate sized each shot's eta so the wave converges at one arrival
+    # step). Strike-only emission — defensive consolidation is skipped for
+    # this single turn; the closed-form `is_winning_state_if_owned` gate
+    # already certifies we win allowing for one turn of opp recovery.
     if state["phase"] == PHASE_STRIKE:
-        # Unreachable in Step 1; defensive fallback to CONSOLIDATION.
+        from agents.buildup_planner import strike
+        plan = state["strike_plan"]
+        # Always transition back to CONSOLIDATION next turn, whether the
+        # strike emits or atomic-drops. Clear the plan before emit so a
+        # downstream exception can't leave stale state.
         state["phase"] = PHASE_CONSOLIDATION
         state["strike_plan"] = None
-        return consolidation.step(obs, configuration)
+        # Build a fresh World here — don't rely on cross-block scope from
+        # the CONSOLIDATION branch (only safe today because fall-through
+        # is the only path that sets PHASE_STRIKE, but brittle).
+        return strike.step(World.from_obs(obs_d), plan)
 
     # Unknown phase — defensive fallback.
     state["phase"] = PHASE_CONSOLIDATION
