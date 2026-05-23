@@ -92,6 +92,14 @@ def _strike_enabled() -> bool:
     """Step 3 wires STRIKE; Step 2 keeps it OFF by default."""
     return os.environ.get("BUILDUP_PLANNER_STRIKE_ENABLED", "0") == "1"
 
+
+def _buildup_enabled() -> bool:
+    """Default ON. Env hook for ablation: when OFF, skip the BUILDUP MILP
+    entirely and drop into CONSOLIDATION from turn 0 (so the agent is
+    behaviorally identical to baseline + FINISHER). Used to test whether
+    the open-loop MILP opening helps or hurts vs reactive opponents."""
+    return os.environ.get("BUILDUP_PLANNER_OPENING_ENABLED", "1") == "1"
+
 # Per-seat machine state. Keyed by `obs.player` (int).
 _PHASE_STATE: dict[int, dict] = {}
 
@@ -135,10 +143,11 @@ def agent(obs, configuration=None) -> list[list]:
 
     # --- BUILDUP branch -------------------------------------------------
     if state["phase"] == PHASE_BUILDUP:
-        # Past the opening horizon, buildup.step short-circuits to None
-        # immediately. Skipping the World+Model build saves ~25ms per turn
-        # for the majority of game-steps (turns 30-498 in a 500-turn game).
-        if step >= OPENING_HORIZON:
+        # Past the opening horizon OR opening disabled by env: transition
+        # straight to CONSOLIDATION without paying the World+Model build.
+        # buildup.step short-circuits to None for step>=OPENING_HORIZON;
+        # the ~25ms/turn build was wasted for the bulk of a 500-turn game.
+        if step >= OPENING_HORIZON or not _buildup_enabled():
             state["phase"] = PHASE_CONSOLIDATION
         else:
             planets = [Planet(*p) for p in raw_planets]
