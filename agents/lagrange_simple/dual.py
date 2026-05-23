@@ -22,9 +22,26 @@ sources with slack stay at λ_s=0. Math is faithful to the principle:
 """
 from __future__ import annotations
 
+import os
 from collections import defaultdict
+from dataclasses import replace
 
 from agents.lagrange_simple.score import Candidate
+
+
+# Dogpile is OFF by default. Three variants tried 2026-05-23 (claude/session-EqJuT)
+# all regressed vs random elim-gate from 13/16 baseline to 6/16:
+#   (1) naive (per-bucket commit until summed ships > defense)
+#   (2) restricted to dominant_endgame (entry only when my ≥ 3·opp)
+#   (3) cap at ONE coalition per turn
+# Common failure mode: dogpile commits drain rear sources for eta turns;
+# opp counter-captures > what we gain. Per Rule 37 (3-variant axis cap),
+# axis is closed pending a deeper modeling fix (likely: opp-counter prediction
+# during coalition flight + per-source defensive reserve). Re-enable for
+# experiments via env var; production stays off.
+DOGPILE_ENABLED = os.environ.get(
+    "LAGRANGE_SIMPLE_DOGPILE", "0",
+).strip().lower() in ("1", "true", "on", "yes")
 
 
 DEFAULT_SWEEPS = 3
@@ -35,11 +52,14 @@ def _inner_solve(candidates: list[Candidate],
                  lam: dict[int, float]) -> list[Candidate]:
     """Per-target argmax under shadow-price-adjusted score.
 
-    Each target keeps the single candidate with the highest positive score;
-    "do nothing" (score 0) is always an option.
+    Each target keeps the single SOLO candidate with the highest positive
+    score; "do nothing" (score 0) is always an option. Partial candidates
+    are skipped here — they only contribute via `_dogpile_pass`.
     """
     by_target: dict[int, list[Candidate]] = defaultdict(list)
     for c in candidates:
+        if c.is_partial:
+            continue
         by_target[int(c.tgt_id)].append(c)
     picked: list[Candidate] = []
     for cands_t in by_target.values():
@@ -99,13 +119,115 @@ def _time_indexed_feasible(picks_for_src: list[Candidate],
     return True, -1
 
 
+def _dogpile_pass(all_cands: list[Candidate],
+                  picked: list[Candidate],
+                  lam: dict[int, float],
+                  source_budgets: dict[int, int]) -> list[Candidate]:
+    """Multi-source dogpile inner pass.
+
+    Group partial candidates by (tgt_id, arrival_step). For each bucket
+    NOT already captured by the solo picks, greedy-add candidates by
+    ascending λ_src (cheapest shadow-price first), one per source, until
+    cumulative ships > defense_at_arrival. If the committed subset's
+    reduced cost (capture_value − Σ λ_src · ships) is strictly positive,
+    emit those (right-sized) candidates into the pick list.
+
+    This closes the single-source-per-target ceiling: targets whose
+    defense exceeds any single source's budget get coalition coverage.
+    """
+    captured_targets = {int(c.tgt_id) for c in picked if not c.is_partial}
+    residual = {int(s): int(b) for s, b in source_budgets.items()}
+    for c in picked:
+        residual[int(c.src_id)] = residual.get(int(c.src_id), 0) - int(c.ships)
+
+    buckets: dict[tuple[int, int], list[Candidate]] = defaultdict(list)
+    for c in all_cands:
+        if c.is_partial and int(c.tgt_id) not in captured_targets:
+            buckets[(int(c.tgt_id), int(c.arrival_step))].append(c)
+
+    # Sort buckets by capture_value descending — commit the highest-value
+    # coalition first; cap at ONE coalition per turn to bound per-turn ship
+    # drain (the rear-defense problem: each commit empties source(s) for
+    # eta turns while opp can counter-attack).
+    sorted_buckets = sorted(
+        buckets.items(), key=lambda kv: -float(kv[1][0].value),
+    )
+
+    dogpile_picks: list[Candidate] = []
+    for (tgt_id, arrival_step), bucket in sorted_buckets:
+        bucket.sort(key=lambda c: lam.get(int(c.src_id), 0.0))
+        defense = int(bucket[0].defense_at_arrival)
+        capture_value = float(bucket[0].value)
+
+        subset: list[tuple[Candidate, int]] = []
+        subset_ships = 0
+        subset_cost = 0.0
+        seen_srcs: set[int] = set()
+        for c in bucket:
+            if int(c.src_id) in seen_srcs:
+                continue
+            avail = min(int(c.ships), residual.get(int(c.src_id), 0))
+            if avail < 1:
+                continue
+            need = max(1, defense + 1 - subset_ships)
+            take = min(avail, need)
+            subset.append((c, take))
+            subset_ships += take
+            subset_cost += lam.get(int(c.src_id), 0.0) * float(take)
+            seen_srcs.add(int(c.src_id))
+            if subset_ships > defense:
+                break
+
+        if subset_ships <= defense:
+            continue
+        if (capture_value - subset_cost) <= 0.0:
+            continue
+
+        for c, take in subset:
+            dogpile_picks.append(replace(c, ships=int(take)))
+            residual[int(c.src_id)] -= int(take)
+        break  # cap: at most ONE dogpile coalition per turn
+
+    return picked + dogpile_picks
+
+
+def _run_time_indexed_fixup(picked: list[Candidate],
+                            source_budgets: dict[int, int],
+                            source_prods: dict[int, int]) -> list[Candidate]:
+    """Drop the worst-(value/ships) entry from any source whose per-time
+    cumulative constraint is violated; iterate until all sources feasible."""
+    while True:
+        by_src: dict[int, list[Candidate]] = defaultdict(list)
+        for c in picked:
+            by_src[int(c.src_id)].append(c)
+        violated_src = None
+        worst_pos = -1
+        for s, cs in by_src.items():
+            R = int(source_budgets.get(s, 0))
+            P = int(source_prods.get(s, 0))
+            ok, worst_i = _time_indexed_feasible(cs, R, P)
+            if not ok:
+                violated_src = s
+                worst_pos = worst_i
+                break
+        if violated_src is None:
+            return picked
+        worst_cand = by_src[violated_src][worst_pos]
+        picked.remove(worst_cand)
+
+
 def solve(candidates: list[Candidate],
           source_budgets: dict[int, int],
           source_prods: dict[int, int] | None = None,
           *,
           sweeps: int = DEFAULT_SWEEPS,
           step: float = DEFAULT_STEP) -> list[Candidate]:
-    """Lagrangian dual + time-indexed feasibility fix-up. Returns picks."""
+    """Lagrangian dual + dogpile + time-indexed feasibility fix-up.
+
+    Returns the chosen pick list (a mix of solo captures and dogpile-
+    coalition fleets). Partials in the input candidate list are routed
+    only through `_dogpile_pass`; the per-target argmax skips them.
+    """
     if not candidates:
         return []
     source_prods = source_prods or {}
@@ -129,23 +251,14 @@ def solve(candidates: list[Candidate],
             over = used - eff_budget
             lam[s] = max(0.0, lam[s] + step * over / eff_budget)
 
-    while True:
-        by_src: dict[int, list[Candidate]] = defaultdict(list)
-        for c in picked:
-            by_src[int(c.src_id)].append(c)
-        violated_src = None
-        worst_pos = -1
-        for s, cs in by_src.items():
-            R = int(source_budgets.get(s, 0))
-            P = int(source_prods.get(s, 0))
-            ok, worst_i = _time_indexed_feasible(cs, R, P)
-            if not ok:
-                violated_src = s
-                worst_pos = worst_i
-                break
-        if violated_src is None:
-            break
-        worst_cand = by_src[violated_src][worst_pos]
-        picked.remove(worst_cand)
+    picked = _run_time_indexed_fixup(picked, source_budgets, source_prods)
+
+    if DOGPILE_ENABLED:
+        # Dogpile pass: cover targets the solo path couldn't.
+        picked = _dogpile_pass(candidates, picked, lam, source_budgets)
+        # Re-run fix-up: dogpile commits use residual, but per-time cumulative
+        # could still be violated when partials launch at the same tick as
+        # solo picks from the same source.
+        picked = _run_time_indexed_fixup(picked, source_budgets, source_prods)
 
     return picked

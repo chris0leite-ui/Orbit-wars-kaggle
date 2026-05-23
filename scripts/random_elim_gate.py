@@ -22,8 +22,8 @@ REPO = Path(__file__).resolve().parents[1]
 
 def _play_one(args):
     """Play ONE game (clean subprocess) and return result dict."""
-    seed, focal_path, focal_seat = args
-    p0_path, p1_path = (focal_path, "random") if focal_seat == 0 else ("random", focal_path)
+    seed, focal_path, focal_seat, opp = args
+    p0_path, p1_path = (focal_path, opp) if focal_seat == 0 else (opp, focal_path)
     code = (
         "import json, sys, time;"
         "sys.path.insert(0, %r);"
@@ -93,6 +93,8 @@ def main():
     ap.add_argument("--n", type=int, default=16, help="Number of games (default 16)")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--rng-seed", type=int, default=2026, help="Meta-seed for game seeds + seat assignment")
+    ap.add_argument("--opp", default="random",
+                    help="Opponent: 'random' (default), 'starter', or path to agent main.py")
     args = ap.parse_args()
 
     focal = Path(args.focal).resolve()
@@ -100,14 +102,24 @@ def main():
         print(f"focal not found: {focal}", file=sys.stderr)
         return 2
 
+    # Resolve opp: builtins stay as bare names; path strings resolved + validated.
+    if args.opp in ("random", "starter"):
+        opp = args.opp
+    else:
+        opp_path = Path(args.opp).resolve()
+        if not opp_path.exists():
+            print(f"opp not found: {opp_path}", file=sys.stderr)
+            return 2
+        opp = str(opp_path)
+
     rng = random.Random(args.rng_seed)
     tasks = []
     for _ in range(args.n):
         seed = rng.randint(0, 100000)
         focal_seat = rng.randint(0, 1)
-        tasks.append((seed, str(focal), focal_seat))
+        tasks.append((seed, str(focal), focal_seat, opp))
 
-    print(f"== random-elim-gate focal={focal.name}  n={args.n}  workers={args.workers} ==", flush=True)
+    print(f"== random-elim-gate focal={focal.name}  opp={opp}  n={args.n}  workers={args.workers} ==", flush=True)
     t0 = time.perf_counter()
     results = []
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
