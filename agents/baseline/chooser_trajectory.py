@@ -246,6 +246,22 @@ JOINT_LIFT_USED_TGTS: bool = (
     os.environ.get("BASELINE_JOINT_AGGR", "0").strip() == "1"
 )
 
+# Triples extension (2026-05-23): when the existing pair-enum can't crack
+# a target (no pair scores > 0), optionally enumerate 3-source bundles
+# from a wider candidate slice. Diagnostic probe vs v7_0 found median
+# uncrackable defender garrison = 80 ships — beyond any reasonable pair
+# but within reach of 3 sources × ~25 ships each. Off by default; opt-in
+# via BASELINE_JOINT_TRIPLES=1.
+JOINT_TRIPLES_ENABLED: bool = (
+    os.environ.get("BASELINE_JOINT_TRIPLES", "0").strip() == "1"
+)
+JOINT_TRIPLES_TOP_K: int = int(
+    os.environ.get("BASELINE_JOINT_TRIPLES_TOP_K", "4"),
+)
+JOINT_MAX_TRIPLES: int = int(
+    os.environ.get("BASELINE_JOINT_MAX_TRIPLES", "8"),
+)
+
 # JOINT_INSTRUMENT: diagnostic counters for "would 3+ source bundles help?"
 # probe. When BASELINE_JOINT_INSTRUMENT is set to a path, accumulate one
 # row per target-with-2+-candidates encountered and append as JSONL on
@@ -955,6 +971,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 (float(cd), src, tgt, int(ships), float(angle), int(ph)),
             )
         joint_count = 0
+        triple_count = 0
         # JOINT_INSTRUMENT: per-target counters built up across the
         # inner pair-loops; appended to _JOINT_INSTRUMENT_ROWS after.
         _instr_positive_solo_by_tgt: dict[int, bool] = {}
@@ -971,6 +988,9 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             _instr_solo_gated = 0
             _instr_scored_status = 0
             _instr_positive = 0
+            # Always tracked (not gated on _JOINT_INSTRUMENT_PATH) — the
+            # triples block below uses this as its trigger condition.
+            pair_positive_for_tgt = 0
             for i in range(len(top)):
                 if joint_count >= JOINT_MAX_PAIRS:
                     break
@@ -1013,6 +1033,85 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                                 _instr_positive += 1
                     if j_status == "scored" and j_score > 0.0:
                         scored.append((j_score, "joint", launches))
+                        pair_positive_for_tgt += 1
+
+            # Triples extension. Fire only when no pair scored > 0 for
+            # this target — pairs are cheaper and already-running. The
+            # diagnostic probe (vs v7_0) showed ~3 per-turn enemy/neutral
+            # targets with ≥3 sources available where no pair clears the
+            # defender; this loop tries 3-source bundles for that subset.
+            _instr_triples_attempted = 0
+            _instr_triples_solo_gated = 0
+            _instr_triples_positive = 0
+            if (JOINT_TRIPLES_ENABLED
+                    and pair_positive_for_tgt == 0
+                    and triple_count < JOINT_MAX_TRIPLES
+                    and time.perf_counter() <= safe_deadline):
+                top_ext = cands[:JOINT_TRIPLES_TOP_K]
+                if len(top_ext) >= 3:
+                    for ti in range(len(top_ext)):
+                        if triple_count >= JOINT_MAX_TRIPLES:
+                            break
+                        if time.perf_counter() > safe_deadline:
+                            break
+                        for tj in range(ti + 1, len(top_ext)):
+                            if triple_count >= JOINT_MAX_TRIPLES:
+                                break
+                            if time.perf_counter() > safe_deadline:
+                                break
+                            for tk in range(tj + 1, len(top_ext)):
+                                if triple_count >= JOINT_MAX_TRIPLES:
+                                    break
+                                if time.perf_counter() > safe_deadline:
+                                    break
+                                ca, cb, cc = (
+                                    top_ext[ti], top_ext[tj], top_ext[tk],
+                                )
+                                sids = {
+                                    int(ca[1].id),
+                                    int(cb[1].id),
+                                    int(cc[1].id),
+                                }
+                                if len(sids) < 3:
+                                    continue  # need 3 distinct sources
+                                # Mirror pair gate: skip if all 3 sources
+                                # have viable solos (joint-over-bundle).
+                                if (int(ca[1].id) in solo_winners
+                                        and int(cb[1].id) in solo_winners
+                                        and int(cc[1].id) in solo_winners):
+                                    if _JOINT_INSTRUMENT_PATH:
+                                        _instr_triples_solo_gated += 1
+                                    continue
+                                launches = [
+                                    (ca[1], ca[2], ca[3], ca[4], 0),
+                                    (cb[1], cb[2], cb[3], cb[4], 0),
+                                    (cc[1], cc[2], cc[3], cc[4], 0),
+                                ]
+                                jh = max(
+                                    int(ca[5]), int(cb[5]), int(cc[5]),
+                                )
+                                j_score, j_status = (
+                                    score_candidate_v4_joint(
+                                        snap_base, launches, me,
+                                        num_seats, world,
+                                        baseline_favors, favor_fn, gamma,
+                                        horizon=jh,
+                                        skip_admissibility=skip_filter,
+                                        opp_traj=opp_traj,
+                                    )
+                                )
+                                triple_count += 1
+                                if _JOINT_INSTRUMENT_PATH:
+                                    _instr_triples_attempted += 1
+                                    if (j_status == "scored"
+                                            and j_score > 0.0):
+                                        _instr_triples_positive += 1
+                                if (j_status == "scored"
+                                        and j_score > 0.0):
+                                    scored.append(
+                                        (j_score, "joint", launches),
+                                    )
+
             if _JOINT_INSTRUMENT_PATH:
                 tgt_obj = cands[0][2]
                 _JOINT_INSTRUMENT_ROWS.append({
@@ -1028,6 +1127,9 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                     "n_pairs_solo_gated": _instr_solo_gated,
                     "n_pairs_scored": _instr_scored_status,
                     "n_pairs_positive": _instr_positive,
+                    "n_triples_attempted": _instr_triples_attempted,
+                    "n_triples_solo_gated": _instr_triples_solo_gated,
+                    "n_triples_positive": _instr_triples_positive,
                     "any_solo_winner": bool(
                         _instr_positive_solo_by_tgt.get(int(tgt_id), False),
                     ),
