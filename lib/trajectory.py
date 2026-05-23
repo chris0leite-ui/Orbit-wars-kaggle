@@ -182,10 +182,25 @@ def predict_fleet_fate(
                 continue
             p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
             if is_orbiting(p_tuple) and omega != 0.0:
-                planet_positions[pid] = [
-                    predict_relative(p_tuple, omega, wait_N + t)
-                    for t in range(max_steps + 1)
-                ]
+                # Inline rotation math — avoids 200+ predict_relative calls
+                # per orbital planet (each call re-derives orb_r and cur_angle
+                # from the same p.x, p.y). On a 4P board with ~10 orbital
+                # planets and max_steps=200, this saved 53M predict_relative
+                # calls per game (~50% of wallclock) per the 2026-05-23 4P
+                # profile. Bit-parity: same formula as predict_relative for
+                # orbital planets — see lib/orbit.py:226.
+                dx = p.x - CENTER
+                dy = p.y - CENTER
+                orb_r = math.hypot(dx, dy)
+                cur_angle = math.atan2(dy, dx)
+                positions_o: list[tuple[float, float]] = []
+                for t in range(max_steps + 1):
+                    new_angle = cur_angle + omega * (wait_N + t)
+                    positions_o.append((
+                        CENTER + orb_r * math.cos(new_angle),
+                        CENTER + orb_r * math.sin(new_angle),
+                    ))
+                planet_positions[pid] = positions_o
             else:
                 planet_positions[pid] = [(p.x, p.y)] * (max_steps + 1)
 
