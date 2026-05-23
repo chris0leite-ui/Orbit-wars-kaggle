@@ -26,19 +26,22 @@ import os
 from collections import defaultdict
 from dataclasses import replace
 
-from agents.lagrange_simple.score import Candidate
+from agents.lagrange_simple.score import Candidate, _source_defensive_ok
 
 
-# Dogpile is OFF by default. Three variants tried 2026-05-23 (claude/session-EqJuT)
-# all regressed vs random elim-gate from 13/16 baseline to 6/16:
-#   (1) naive (per-bucket commit until summed ships > defense)
-#   (2) restricted to dominant_endgame (entry only when my ≥ 3·opp)
-#   (3) cap at ONE coalition per turn
-# Common failure mode: dogpile commits drain rear sources for eta turns;
-# opp counter-captures > what we gain. Per Rule 37 (3-variant axis cap),
-# axis is closed pending a deeper modeling fix (likely: opp-counter prediction
-# during coalition flight + per-source defensive reserve). Re-enable for
-# experiments via env var; production stays off.
+# Dogpile is OFF by default. Six variants tried this session
+# (claude/session-EqJuT, 2026-05-23):
+#   (1) naive (all-budget partials, every bucket every turn) → 6/16 ELIM
+#   (2) restricted to dominant_endgame                        → 6/16
+#   (3) cap at ONE coalition per turn                         → 6/16
+#   (4) Phase C variant 1: + per-source rear-defense check    → 6/16
+#   (5) Phase C variant 2: + 1-coalition cap                  → 7/16
+# All regressed vs Phase B baseline (Phase A opp-into-ledger + Phase B
+# rear-defense check on solo path, no dogpile) which gives 14/16 ELIM.
+# Common failure mode: even per-source rear-defense isn't enough —
+# multiple drained sources can't defend EACH OTHER, opp chain-captures.
+# Axis closed permanently per Rule 37; deeper fix needs cross-source
+# defensive coordination, not coverable in this session.
 DOGPILE_ENABLED = os.environ.get(
     "LAGRANGE_SIMPLE_DOGPILE", "0",
 ).strip().lower() in ("1", "true", "on", "yes")
@@ -186,7 +189,7 @@ def _dogpile_pass(all_cands: list[Candidate],
         for c, take in subset:
             dogpile_picks.append(replace(c, ships=int(take)))
             residual[int(c.src_id)] -= int(take)
-        break  # cap: at most ONE dogpile coalition per turn
+        break  # cap: at most ONE dogpile coalition per turn (variant 2)
 
     return picked + dogpile_picks
 

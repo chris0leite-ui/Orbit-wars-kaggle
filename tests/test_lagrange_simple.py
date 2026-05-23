@@ -24,6 +24,7 @@ from agents.lagrange_simple.score import (
     Candidate,
     EPISODE_STEPS,
     MAX_LAUNCH_TICK,
+    _source_defensive_ok,
     enumerate_candidates,
 )
 
@@ -252,6 +253,35 @@ def test_agent_returns_legal_moves_format():
 # every shot at planet id 0. This bug caused the seed-32966 random-elim
 # gate failure (game ran 500 steps with opp's planet 0 untouched).
 # ---------------------------------------------------------------------------
+
+
+def test_source_defensive_ok_rejects_when_opp_counter_captures():
+    """A src with 5 ships facing an incoming opp arrival of 10 ships at
+    eta=3 cannot survive a launch of all 5 ships at launch_tick=0:
+    after launch ships=0, by eta=3 production=0*3=0 (assume p.production=0)
+    or 6 (if production=2), but opp's 10 ships wipe a 0-6-ship garrison
+    and capture. Defensive check should return False."""
+    from types import SimpleNamespace
+    src = SimpleNamespace(id=7, owner=0, ships=5, production=0)
+    src_arrivals = [(3, 1, 10)]  # opp arrives in 3 ticks with 10 ships
+    assert _source_defensive_ok(src, 5, 0, src_arrivals, horizon=10) is False
+
+
+def test_source_defensive_ok_passes_when_we_can_hold():
+    """A src with 20 ships facing an opp arrival of 5 ships at eta=3
+    after launching 5 ships at tick=0: ships=15 at tick=0, +0 prod per
+    tick, then 5 opp ships hit; 15 - 5 = 10 ours stays positive."""
+    from types import SimpleNamespace
+    src = SimpleNamespace(id=7, owner=0, ships=20, production=0)
+    src_arrivals = [(3, 1, 5)]
+    assert _source_defensive_ok(src, 5, 0, src_arrivals, horizon=10) is True
+
+
+def test_source_defensive_ok_no_opp_arrivals_always_passes():
+    """Trivial: no incoming opp arrivals means launch can never cause a flip."""
+    from types import SimpleNamespace
+    src = SimpleNamespace(id=7, owner=0, ships=10, production=0)
+    assert _source_defensive_ok(src, 10, 0, [], horizon=10) is True
 
 
 def test_planet_id_zero_is_not_silently_dropped():

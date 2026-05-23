@@ -19,12 +19,18 @@ from __future__ import annotations
 
 import math
 import os
+from collections import defaultdict
 from dataclasses import dataclass
 
+from agents.baseline.chooser_trajectory import (
+    merge_ledgers,
+    predict_opp_responses,
+)
 from agents.baseline.proposer import (
     _target_holdable_after_capture,
     aim_and_eta,
 )
+from lib.combat import resolve_arrivals
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import predict_garrison_at
 
@@ -96,6 +102,60 @@ def _capture_value(tgt, arrival_step: int) -> float:
     return float(tgt.production) * float(remaining)
 
 
+DEFENSE_HORIZON = 16    # ticks to look ahead for opp counter-arrivals
+
+
+def _source_defensive_ok(src, launch_ships: int, launch_tick: int,
+                          src_arrivals: list, *,
+                          horizon: int = DEFENSE_HORIZON) -> bool:
+    """True iff `src` retains ownership at every step in
+    `[1, launch_tick + horizon]` AFTER subtracting `launch_ships` from
+    its garrison at `launch_tick`.
+
+    Walks tick-by-tick (same loop pattern as
+    `lib.world_model.predict_garrison_at`):
+      - each tick: add production (if owner != -1)
+      - at launch_tick: subtract launch_ships
+      - resolve any opp arrivals at this tick
+      - if owner flips away from src.owner at ANY checked tick → False
+    `src_arrivals` is the enriched-ledger entry for src.id: list of
+    `(eta, owner, ships)` — opp's projected counters are already merged.
+    """
+    src_owner = int(src.owner)
+    owner = src_owner
+    ships = float(src.ships)
+    prod = int(src.production)
+
+    if int(launch_tick) == 0:
+        ships -= float(launch_ships)
+        if ships < 0.0:
+            return False
+
+    max_t = int(launch_tick) + int(horizon)
+    by_turn: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    for arrival_eta, arrival_owner, arrival_ships in src_arrivals:
+        if int(arrival_ships) <= 0:
+            continue
+        eta = max(1, int(math.ceil(float(arrival_eta))))
+        if eta > max_t:
+            continue
+        by_turn[eta].append((int(arrival_owner), int(arrival_ships)))
+
+    for t in range(1, max_t + 1):
+        if owner != -1:
+            ships += float(prod)
+        if t == int(launch_tick):
+            ships -= float(launch_ships)
+            if ships < 0.0:
+                return False
+        group = by_turn.get(t, [])
+        if group:
+            owner, ships = resolve_arrivals(owner, ships, group)
+            if owner != src_owner:
+                return False
+    return True
+
+
 def enumerate_candidates(world, model, my_id: int, omega: float,
                          comet_ids: set | None = None) -> list[Candidate]:
     """Enumerate every viable (src, tgt, launch_tick) capture candidate.
@@ -128,6 +188,14 @@ def enumerate_candidates(world, model, my_id: int, omega: float,
         len(opp_planets) > 0 and len(my_planets) >= 3 * len(opp_planets)
     )
 
+    # Opp projection (Phase A): predict opp's 1-turn counter-launches and
+    # merge them into the per-planet ledger. After this, every
+    # predict_garrison_at call sees opp's expected reinforcements at
+    # targets AND opp's expected attacks on our sources — the latter is
+    # what Phase B's rear-defense check consumes.
+    projected_opp = predict_opp_responses(world, int(my_id), num_seats=2)
+    enriched_ledger = merge_ledgers(model.ledger, projected_opp)
+
     candidates: list[Candidate] = []
     for src in my_planets:
         ships_now = int(src.ships)
@@ -137,7 +205,7 @@ def enumerate_candidates(world, model, my_id: int, omega: float,
         for tgt in targets:
             if int(tgt.id) == int(src.id):
                 continue
-            base_arrivals = list(model.ledger.get(int(tgt.id), []))
+            base_arrivals = list(enriched_ledger.get(int(tgt.id), []))
             for launch_tick in range(MAX_LAUNCH_TICK + 1):
                 # Time-indexed budget: by tick `launch_tick`, src will have
                 # ships_now + prod*launch_tick (production accrues each turn).
@@ -168,7 +236,10 @@ def enumerate_candidates(world, model, my_id: int, omega: float,
                                     world, model, my_id,
                                 ):
                                     value = _capture_value(tgt, arrival_step)
-                                    if value > 0.0:
+                                    if value > 0.0 and _source_defensive_ok(
+                                        src, int(ships), int(launch_tick),
+                                        list(enriched_ledger.get(int(src.id), [])),
+                                    ):
                                         candidates.append(Candidate(
                                             src_id=int(src.id),
                                             tgt_id=int(tgt.id),
@@ -226,6 +297,11 @@ def enumerate_candidates(world, model, my_id: int, omega: float,
                             world, model, my_id,
                         ):
                             continue
+                        if not _source_defensive_ok(
+                            src, int(ships_p), int(launch_tick),
+                            list(enriched_ledger.get(int(src.id), [])),
+                        ):
+                            continue
                         candidates.append(Candidate(
                             src_id=int(src.id),
                             tgt_id=int(tgt.id),
@@ -244,6 +320,11 @@ def enumerate_candidates(world, model, my_id: int, omega: float,
                         # (tgt, arrival_step) bucket. Skip the per-source B1
                         # hold filter — hold-after-capture is a coalition
                         # property; dogpile gates on reduced cost > 0.
+                        if not _source_defensive_ok(
+                            src, int(ships_p), int(launch_tick),
+                            list(enriched_ledger.get(int(src.id), [])),
+                        ):
+                            continue
                         candidates.append(Candidate(
                             src_id=int(src.id),
                             tgt_id=int(tgt.id),
