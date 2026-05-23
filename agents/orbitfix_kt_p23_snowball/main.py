@@ -37,7 +37,8 @@ os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
 os.environ.setdefault("BASELINE_ADAPTIVE_K", "1")
 os.environ.setdefault("COMPOSITE_FLEET_SURVIVAL_CHECK", "1")
 # Snowball knobs (Change A/B/C, 2026-05-23):
-os.environ.setdefault("BASELINE_MIN_FLEET_BY_ETA", "1")
+os.environ.setdefault("BASELINE_MIN_FLEET_BY_DISTANCE", "1")
+os.environ.setdefault("BASELINE_MIN_FLEET_SLOPE_PER_UNIT", "0.15")
 os.environ.setdefault("BASELINE_MIN_SOURCE_SHIPS_TO_EMIT", "5")
 os.environ.setdefault("BASELINE_JOINT_TARGET_PRIORITY", "1")
 

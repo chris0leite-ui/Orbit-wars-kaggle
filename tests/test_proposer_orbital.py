@@ -409,42 +409,59 @@ def test_predict_fleet_fate_wait_N_catches_oob_with_orbital_drift():
     )
 
 
-def test_min_ships_for_eta_off_by_default_returns_min_fleet_size():
-    """Change A pin (2026-05-23): with BASELINE_MIN_FLEET_BY_ETA unset,
-    the per-ETA floor function must return MIN_FLEET_SIZE for every
-    ETA — preserving pre-Change-A behavior bit-identically.
+def test_min_ships_for_distance_off_by_default_returns_min_fleet_size():
+    """Change A v2 pin (2026-05-23): with BASELINE_MIN_FLEET_BY_DISTANCE
+    unset, the floor function returns MIN_FLEET_SIZE for every distance —
+    preserving pre-Change-A behavior bit-identically.
     """
     import os
-    from agents.baseline.proposer import min_ships_for_eta, MIN_FLEET_SIZE
-    saved = os.environ.pop("BASELINE_MIN_FLEET_BY_ETA", None)
+    from agents.baseline.proposer import min_ships_for_distance, MIN_FLEET_SIZE
+    saved = os.environ.pop("BASELINE_MIN_FLEET_BY_DISTANCE", None)
     try:
-        for eta in (0, 5, 10, 15, 20, 30, 50):
-            assert min_ships_for_eta(eta) == MIN_FLEET_SIZE
+        for distance in (5.0, 15.0, 30.0, 50.0, 80.0):
+            assert min_ships_for_distance(distance) == MIN_FLEET_SIZE
     finally:
         if saved is not None:
-            os.environ["BASELINE_MIN_FLEET_BY_ETA"] = saved
+            os.environ["BASELINE_MIN_FLEET_BY_DISTANCE"] = saved
 
 
-def test_min_ships_for_eta_on_applies_schedule():
-    """Change A pin (2026-05-23): with the gate ON, the floor schedule
-    fires. ETA <=5 → 2 (no-op), ETA 6-15 → 5, ETA >15 → 10 (env defaults).
+def test_min_ships_for_distance_on_is_proportional():
+    """Change A v2 pin (2026-05-23): with the gate ON, the floor scales
+    linearly with distance. Default slope 0.15 — 1 extra ship per ~7
+    distance units. Monotone non-decreasing in distance.
     """
     import os
-    from agents.baseline.proposer import min_ships_for_eta
-    saved = os.environ.get("BASELINE_MIN_FLEET_BY_ETA")
+    from agents.baseline.proposer import min_ships_for_distance
+    saved = os.environ.get("BASELINE_MIN_FLEET_BY_DISTANCE")
+    saved_slope = os.environ.get("BASELINE_MIN_FLEET_SLOPE_PER_UNIT")
     try:
-        os.environ["BASELINE_MIN_FLEET_BY_ETA"] = "1"
-        assert min_ships_for_eta(0) == 2
-        assert min_ships_for_eta(5) == 2
-        assert min_ships_for_eta(10) == 5
-        assert min_ships_for_eta(15) == 5
-        assert min_ships_for_eta(20) == 10
-        assert min_ships_for_eta(40) == 10
+        os.environ["BASELINE_MIN_FLEET_BY_DISTANCE"] = "1"
+        os.environ.pop("BASELINE_MIN_FLEET_SLOPE_PER_UNIT", None)
+        # Default slope = 0.15
+        assert min_ships_for_distance(5.0) == 2  # ceil(0.75)=1 → MIN_FLEET_SIZE
+        assert min_ships_for_distance(10.0) == 2  # ceil(1.5)=2
+        assert min_ships_for_distance(20.0) == 3  # ceil(3.0)=3
+        assert min_ships_for_distance(30.0) == 5  # ceil(4.5)=5
+        assert min_ships_for_distance(50.0) == 8  # ceil(7.5)=8
+        assert min_ships_for_distance(70.0) == 11  # ceil(10.5)=11
+        # Monotone: bigger distance never returns smaller floor.
+        prev = 0
+        for d in range(0, 100, 5):
+            cur = min_ships_for_distance(float(d))
+            assert cur >= prev
+            prev = cur
+        # Env slope override.
+        os.environ["BASELINE_MIN_FLEET_SLOPE_PER_UNIT"] = "0.2"
+        assert min_ships_for_distance(50.0) == 10  # ceil(10.0)=10
     finally:
         if saved is None:
-            os.environ.pop("BASELINE_MIN_FLEET_BY_ETA", None)
+            os.environ.pop("BASELINE_MIN_FLEET_BY_DISTANCE", None)
         else:
-            os.environ["BASELINE_MIN_FLEET_BY_ETA"] = saved
+            os.environ["BASELINE_MIN_FLEET_BY_DISTANCE"] = saved
+        if saved_slope is None:
+            os.environ.pop("BASELINE_MIN_FLEET_SLOPE_PER_UNIT", None)
+        else:
+            os.environ["BASELINE_MIN_FLEET_SLOPE_PER_UNIT"] = saved_slope
 
 
 def test_changes_ab_off_by_default_propose_bit_identical():
@@ -456,7 +473,7 @@ def test_changes_ab_off_by_default_propose_bit_identical():
     import os
     saved = {
         k: os.environ.get(k) for k in (
-            "BASELINE_MIN_FLEET_BY_ETA",
+            "BASELINE_MIN_FLEET_BY_DISTANCE",
             "BASELINE_MIN_SOURCE_SHIPS_TO_EMIT",
         )
     }

@@ -17,7 +17,7 @@ import math
 import os
 
 from lib.aim import aim_comet, aim_orbiting
-from lib.config import env_bool, env_int
+from lib.config import env_bool, env_float, env_int
 from lib.fleet import speed as fleet_speed
 from lib.orbit import is_orbiting, predict_relative, predict_relative_smart
 from lib.scoring import pv_horizon
@@ -179,30 +179,65 @@ def nearest_k(targets, src, k: int):
     )[:k]
 
 
-def min_ships_for_eta(eta: int) -> int:
-    """Snowball anti-fragmentation floor (Change A, 2026-05-23).
+def min_ships_for_distance(distance: float) -> int:
+    """Distance-proportional snowball anti-fragmentation floor
+    (Change A v2, 2026-05-23, refined from PI strategic input).
 
-    Returns the minimum ships a candidate must carry given its predicted
-    arrival ETA. Distance amplifies the opp's counter-launch window AND
-    in-flight attrition risk; a 2-ship fleet across 25 ticks is almost
-    always wasted (PI observation from live trace). The floor schedule
-    is env-tunable so the A/B can tighten/loosen without code edit.
+    Returns the minimum ships a candidate must carry given its
+    geometric DISTANCE (chord length src→tgt). Strategic rationale:
+    - Distance is invariant to ship count (unlike ETA, since bigger
+      fleets are slower per `lib.fleet.speed`). Cleaner signal.
+    - Bigger distance = larger opp counter-launch window + larger
+      lead-prediction error window. Without sufficient fleet mass
+      the launch is wasted on a target that's either defended by
+      arrival or that the fleet can't even reach (path drift).
+    - capture_size() already returns max(MIN_FLEET_SIZE,
+      predicted_opp_garrison + 1) — the problem case is LOW-DEFENSE
+      neutral captures where capture_size collapses to MIN_FLEET_SIZE=2.
+      A 2-ship launch at a distant empty neutral IS the wasted-launch
+      pattern PI observed in live trace.
 
-    Default schedule (when BASELINE_MIN_FLEET_BY_ETA=1):
-      eta <= 5  → 2 ships (no-op vs MIN_FLEET_SIZE — snipe stragglers OK)
-      eta <= 15 → 5 ships (medium-range fleet must survive attrition)
-      eta > 15  → 10 ships (long-range requires concentration)
+    Formula (when BASELINE_MIN_FLEET_BY_DISTANCE=1):
+        min_ships = max(MIN_FLEET_SIZE, ceil(distance * SLOPE))
+
+    SLOPE default 0.15 (BASELINE_MIN_FLEET_SLOPE_PER_UNIT). Result curve:
+        distance 10 → 2 ships   (no-op, MIN_FLEET_SIZE floor)
+        distance 20 → 3 ships
+        distance 30 → 5 ships
+        distance 50 → 8 ships
+        distance 70 → 11 ships
 
     When the env var is OFF (default), returns MIN_FLEET_SIZE so the
     function is bit-identical to pre-Change-A behavior at every site.
+
+    The companion `min_ships_for_eta()` accepts ETA for back-compat with
+    the wait_N call site where only ETA is available.
     """
-    if not env_bool("BASELINE_MIN_FLEET_BY_ETA", False):
+    if not env_bool("BASELINE_MIN_FLEET_BY_DISTANCE", False):
         return MIN_FLEET_SIZE
-    if eta <= env_int("BASELINE_MIN_FLEET_NEAR_ETA", 5):
+    slope = env_float("BASELINE_MIN_FLEET_SLOPE_PER_UNIT", 0.15)
+    return max(MIN_FLEET_SIZE, int(math.ceil(float(distance) * slope)))
+
+
+def min_ships_for_eta(eta: int) -> int:
+    """Back-compat shim. Returns MIN_FLEET_SIZE (no-op) by default.
+
+    Prefer `min_ships_for_distance` at call sites that have geometric
+    distance available. This function survives only because the wait_N
+    emit path passes `wait + eta` (a tick count, not a distance) and
+    we don't currently expose distance into that scope. For the
+    BY_DISTANCE gate to also apply to wait_N candidates, an eta-based
+    proxy is computed: distance ≈ eta × est_speed_for_5_ship_fleet ≈
+    eta × 5 (board-wide median speed).
+    """
+    if not env_bool("BASELINE_MIN_FLEET_BY_DISTANCE", False):
         return MIN_FLEET_SIZE
-    if eta <= env_int("BASELINE_MIN_FLEET_MID_ETA", 15):
-        return env_int("BASELINE_MIN_FLEET_MID_SHIPS", 5)
-    return env_int("BASELINE_MIN_FLEET_FAR_SHIPS", 10)
+    # eta is in ticks; convert to a distance proxy. fleet_speed for a
+    # 5-ship fleet is ~4.5 units/tick (lib/fleet.py speed formula);
+    # use 5 as a reasonable median that doesn't over-penalise close
+    # waits (which would have small eta and small proxy distance).
+    distance_proxy = float(eta) * 5.0
+    return min_ships_for_distance(distance_proxy)
 
 
 def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
@@ -960,16 +995,25 @@ def propose(my_planets, target_pool, world, model, me: int,
             if int(tgt.id) == int(src.id):
                 continue
 
+            # Change A v2 (2026-05-23): pre-compute the geometric chord
+            # length src→tgt once per target. Distance is invariant to
+            # ship count (unlike ETA), so it's the cleanest signal for
+            # the "small-fleet-far-away" anti-fragmentation gate. When
+            # BASELINE_MIN_FLEET_BY_DISTANCE is OFF (default),
+            # min_ships_for_distance returns MIN_FLEET_SIZE → no-op.
+            chord_distance = math.hypot(src.x - tgt.x, src.y - tgt.y)
+            floor_by_distance = min_ships_for_distance(chord_distance)
+
             if emit_fire_now:
                 for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
                     if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                         continue
-                    angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
-                    # Change A (2026-05-23): per-ETA min-fleet floor.
-                    # min_ships_for_eta returns MIN_FLEET_SIZE when the
-                    # env gate is OFF, so this is a no-op by default.
-                    if ships < min_ships_for_eta(eta):
+                    # Distance-proportional floor: drop fragmented launches
+                    # to distant targets. capture_size already enforces the
+                    # garrison-needed floor; this adds the geometric one.
+                    if ships < floor_by_distance:
                         continue
+                    angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
                     horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                     if horizon >= baseline_len:
                         horizon = baseline_len - 1
@@ -987,11 +1031,10 @@ def propose(my_planets, target_pool, world, model, me: int,
                 w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if w_horizon >= baseline_len:
                     continue
-                # Change A also gates wait_N candidates by per-ETA floor.
-                # eta here is FROM FIRE TIME (w_wait + w_eta total), so
-                # gate on the full arrival distance to match the spirit
-                # of "small fleet, long flight" prevention.
-                if w_ships < min_ships_for_eta(int(w_wait) + int(w_eta)):
+                # Distance-based gate also applies to wait_N candidates —
+                # the chord length is the SAME regardless of fire time,
+                # so we use the pre-computed floor_by_distance directly.
+                if w_ships < floor_by_distance:
                     continue
                 w_cheap = cheap_marginal_value(
                     src, tgt, w_ships, w_eta, world, model, me, wait_N=w_wait,
