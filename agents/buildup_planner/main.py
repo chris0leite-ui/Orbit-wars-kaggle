@@ -212,7 +212,10 @@ def agent(obs, configuration=None) -> list[list]:
         # Build a fresh World here — don't rely on cross-block scope from
         # the CONSOLIDATION branch (only safe today because fall-through
         # is the only path that sets PHASE_STRIKE, but brittle).
-        return strike.step(World.from_obs(obs_d), plan)
+        return strike.step(
+            World.from_obs(obs_d), plan,
+            game_id=state.get("game_id", "unknown"), step_now=step,
+        )
 
     # Unknown phase — defensive fallback.
     state["phase"] = PHASE_CONSOLIDATION

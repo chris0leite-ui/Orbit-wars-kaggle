@@ -183,3 +183,73 @@ def test_duplicated_src_accumulates_budget(caplog):
     # Must surface the duplicated-src case as budget_overflow on src 0.
     assert any("budget_overflow" in r.message and "src=0" in r.message
                for r in caplog.records)
+
+
+def test_strike_log_emits_jsonl_line_per_call(tmp_path, monkeypatch):
+    """Step 3b instrumentation: `BUILDUP_PLANNER_STRIKE_LOG=<path>` opt-in
+    writes one JSONL line per `strike.step` call, with `outcome` matching
+    the actual emit / atomic-drop reason. Unset env var = no log."""
+    import json as _json
+
+    log_path = tmp_path / "strike.jsonl"
+    monkeypatch.setenv("BUILDUP_PLANNER_STRIKE_LOG", str(log_path))
+
+    # (a) All-pass emit — should log outcome="emit".
+    planets = [
+        (0, 0,  15.0, 15.0, 3.0, 100, 1),
+        (1, 1,  15.0, 85.0, 3.0,  10, 1),
+    ]
+    w = _world(planets)
+    src, tgt = w.planets_by_id[0], w.planets_by_id[1]
+    plan = StrikePlan(
+        target_ids=frozenset({1}), arrival_step=10,
+        shots=(_shot(0, 1, _aim(src, tgt), 20),),
+    )
+    moves = strike.step(w, plan, game_id="g1", step_now=42)
+    assert len(moves) == 1
+
+    # (b) Budget overflow — should log outcome="budget_overflow".
+    plan_overflow = StrikePlan(
+        target_ids=frozenset({1}), arrival_step=10,
+        shots=(_shot(0, 1, _aim(src, tgt), 200),),  # 200 > 100 garrison
+    )
+    moves = strike.step(w, plan_overflow, game_id="g1", step_now=43)
+    assert moves == []
+
+    # (c) Empty plan — should log outcome="empty".
+    plan_empty = StrikePlan(
+        target_ids=frozenset(), arrival_step=10, shots=(),
+    )
+    moves = strike.step(w, plan_empty, game_id="g1", step_now=44)
+    assert moves == []
+
+    lines = log_path.read_text().splitlines()
+    assert len(lines) == 3
+    entries = [_json.loads(l) for l in lines]
+    assert entries[0]["outcome"] == "emit"
+    assert entries[0]["num_emitted"] == 1
+    assert entries[0]["step"] == 42
+    assert entries[0]["game_id"] == "g1"
+    assert entries[1]["outcome"] == "budget_overflow"
+    assert entries[1]["num_emitted"] == 0
+    assert entries[2]["outcome"] == "empty"
+
+
+def test_strike_log_disabled_when_env_unset(tmp_path, monkeypatch):
+    """Default state (env var unset) writes nothing. Production behaviour
+    must remain identical to pre-instrumentation."""
+    monkeypatch.delenv("BUILDUP_PLANNER_STRIKE_LOG", raising=False)
+    planets = [
+        (0, 0,  15.0, 15.0, 3.0, 100, 1),
+        (1, 1,  15.0, 85.0, 3.0,  10, 1),
+    ]
+    w = _world(planets)
+    src, tgt = w.planets_by_id[0], w.planets_by_id[1]
+    plan = StrikePlan(
+        target_ids=frozenset({1}), arrival_step=10,
+        shots=(_shot(0, 1, _aim(src, tgt), 20),),
+    )
+    moves = strike.step(w, plan)   # no extra args either — backward compat
+    assert len(moves) == 1
+    # No log file should have been created.
+    assert not (tmp_path / "strike.jsonl").exists()
