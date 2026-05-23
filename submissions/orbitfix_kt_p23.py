@@ -1,7 +1,14 @@
 # orbitfix_kt_p23 — bundled from agents/baseline with env-var stack
 # (orbitfix substrate + kinematic table + Phase 2 adaptive K +
-#  Phase 3 leaf in-flight fate check). Local-eval wrapper at
-# agents/orbitfix_kt_p23/main.py uses the same env vars.
+#  Phase 3 leaf in-flight fate check + Phase 4 smart-opp leaf).
+# Includes code-review fixes (2026-05-23):
+#  - Phase 4 Δ-calibration anchored at baseline_horizon
+#  - Phase 3b skip_planet_id (no false-flag on source planet)
+#  - State-aware cost model (adaptive-K + Phase 3b cost terms)
+#  - Per-call env reads via lib.config (A/B reproducibility)
+#  - Defensive guards (ZeroDivisionError, joint_budget_frac clamp)
+#  - Cheap_delta criticality detector (fires on defensive turns)
+#  - Hot-loop imports hoisted to module scope
 from __future__ import annotations
 
 import os as _kt_p23_os
@@ -18,6 +25,40 @@ _kt_p23_os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
 _kt_p23_os.environ.setdefault("BASELINE_ADAPTIVE_K", "1")
 _kt_p23_os.environ.setdefault("COMPOSITE_FLEET_SURVIVAL_CHECK", "1")
 
+
+# === inlined: lib/config.py ===
+
+import os
+
+
+def env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw.strip())
+    except (TypeError, ValueError):
+        return default
+
+
+_TRUTHY = frozenset(("1", "true", "on", "yes"))
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in _TRUTHY
 
 # === inlined: lib/geometry.py ===
 
@@ -1691,6 +1732,7 @@ def predict_fleet_fate(
     src, target, aim_angle: float, ships: int,
     world, max_steps: int = DEFAULT_MAX_STEPS,
     wait_N: int = 0,
+    skip_planet_id: int | None = None,
 ) -> FleetFate:
     """Ray-cast a fleet's full trajectory until the first collision.
 
@@ -1713,6 +1755,15 @@ def predict_fleet_fate(
     advanced by wait_N orbital ticks before the ray-cast begins. Use this
     when validating wait-then-fire candidates whose fire-time geometry
     differs from the current world snapshot.
+
+    `skip_planet_id`: exclude this planet id from the per-step collision
+    scan. Used by Phase 3b's in-flight survival check (value_heads.py):
+    the synthetic src_proxy starts at the fleet's CURRENT position with
+    radius=0, so the original `from_planet_id` may still be inside the
+    spawn-offset segment at step 0; without exclusion the function
+    false-flags a healthy fleet as having hit its own source. Default
+    None preserves the env-matching behaviour (env does NOT exclude the
+    source planet; see source-collision comment in the loop).
 
     O(max_steps * planets) per call. On a 24-planet mid-game board with
     max_steps=200 that's ~4800 swept_pair_hit calls = ~1-2 ms.
@@ -1815,6 +1866,15 @@ def predict_fleet_fate(
 
         # 3. Planet collision — swept_pair_hit against every planet.
         for pid, positions in planet_positions.items():
+            # Optional source exclusion (caller-controlled): Phase 3b's
+            # in-flight survival check passes the fleet's
+            # from_planet_id here so the synthetic spawn at
+            # (f.x + 0.1*cos, f.y + 0.1*sin) doesn't falsely register a
+            # collision with the original source planet still ~radius+0.1
+            # behind a freshly-launched fleet. Default None preserves
+            # the env-matching behaviour (env does NOT exclude).
+            if skip_planet_id is not None and int(pid) == int(skip_planet_id):
+                continue
             # NB: the env DOES check fleet-vs-source at step 0 (see
             # orbit_wars.py L588-597 — no exclusion of from_id). For
             # STATIC sources the geometry handles it: spawn is at
@@ -8392,6 +8452,11 @@ from typing import Any
 # multi-line import as indented orphans (IndentationError at runtime).
 # Friction tag: `bundler-modular-agent-namespace-access-breaks-bundle`
 # documented in agents/baseline/main.py.
+# Phase 3b imports hoisted from per-fleet hot loop (2026-05-23). Lazy
+# imports inside composite_capture_value's per-fleet loop added ~10-30 μs
+# per iteration. Module-scope import is a sys.modules cache hit on every
+# subsequent run.
+from types import SimpleNamespace
 
 
 # Phase 2 audit established AUC ≈ oracle at K=50. K=10 + 30 extra of
@@ -8518,22 +8583,21 @@ PRODUCTION_PV_GAMMA: float = 0.99
 # knowledge-base/thoughts/2026-05-18-PV-term-recalibration-debt.md.
 # Default OFF as of 2026-05-18 PM session wrap. Set
 # `COMPOSITE_PRODUCTION_PV=1` to re-enable for A/Bs.
-import os as _os
-_COMPOSITE_PV_ENABLED = _os.environ.get("COMPOSITE_PRODUCTION_PV", "0") != "0"
 
-# Phase 3b (2026-05-22): per-leaf in-flight fate check. The WorldModel
-# `pred_owner` check below already handles "fleet arrives, we lose
-# combat at the target." It does NOT detect geometric in-flight deaths
-# (intermediate planet rotates into the fleet's path, sun-grazing past
-# the static chord check, etc.). For fleets that pass pred_owner ==
-# my_id (the ones we'd otherwise FULLY credit), call predict_fleet_fate
-# to ray-cast the trajectory; if it doesn't reach the target, apply
-# waste penalty. Cost-controlled by only running when the fleet would
-# otherwise be credited (skip the call when pred_owner already says
-# we lose). Env-gated; on-only for orbitfix_kt's submission stack.
-_COMPOSITE_FLEET_SURVIVAL_CHECK = (
-    _os.environ.get("COMPOSITE_FLEET_SURVIVAL_CHECK", "0") != "0"
-)
+
+def _composite_pv_enabled() -> bool:
+    """Per-call read (2026-05-23): was a module-load constant, which
+    silently ignored env-var changes between fixtures in the same
+    process."""
+    return env_bool("COMPOSITE_PRODUCTION_PV", False)
+
+
+def _composite_fleet_survival_check_enabled() -> bool:
+    """Per-call read for the Phase 3b gate. The previous module-load
+    constant froze the flag at import time — tests in
+    test_value_heads.py that flipped the env var after import were
+    silently ineffective."""
+    return env_bool("COMPOSITE_FLEET_SURVIVAL_CHECK", False)
 
 
 def composite_capture_value(
@@ -8595,7 +8659,7 @@ def composite_capture_value(
     # `tests/test_planner_oracles.py::test_oracle_sanity_trivial_capture`
     # surfaced (b); the bug catalog at audit/2026-05-18-bug-catalog.md
     # documents (a). 2026-05-18 fix.
-    if _COMPOSITE_PV_ENABLED:
+    if _composite_pv_enabled():
         pv = pv_horizon(
             step_now, 0,
             gamma=PRODUCTION_PV_GAMMA,
@@ -8719,17 +8783,30 @@ def composite_capture_value(
         # Gated; only runs for credited fleets — uncredited ones already
         # took the waste penalty above. Per-leaf cost: ~0.5-1 ms × N_my_
         # fleets_that_pass_pred_owner.
-        if _COMPOSITE_FLEET_SURVIVAL_CHECK:
-            from types import SimpleNamespace
+        if _composite_fleet_survival_check_enabled():
             src_proxy = SimpleNamespace(
                 id=-1, owner=int(f.owner),
                 x=float(f.x), y=float(f.y),
                 radius=0.0, ships=int(ships), production=0,
             )
+            # Phase 3b correctness fix (2026-05-23): skip the fleet's
+            # original source planet from the collision scan. The
+            # synthetic spawn at (f.x + 0.1*cos, f.y + 0.1*sin) for a
+            # freshly-launched fleet can graze the source planet's
+            # swept chord and false-flag the fleet as in-flight-dead.
             fate = predict_fleet_fate(
                 src_proxy, target, float(f.angle), int(ships), world,
+                skip_planet_id=int(f.from_planet_id),
             )
             if fate.outcome != "target":
+                # NOTE: this delta -= waste_weight*ships extends a pre-
+                # existing accounting pattern (the OOB / sun / pred_owner
+                # branches above do the same), where the fleet's ships
+                # are already counted in `base` as ours. Net effect: the
+                # ships get counted twice (once positively in base, once
+                # as a waste penalty here). This is shared with the prior
+                # waste branches; fixing it is a value-head re-design
+                # tracked separately.
                 delta -= waste_weight * ships
 
     return base + delta
@@ -9419,8 +9496,11 @@ SIM_SETTLE_TURNS = 2
 # Rollout horizon — env-var overridable so a deeper-horizon variant can
 # opt in without forcing it on every agent that imports baseline.proposer.
 # Defaults match the production ceiling (sub 52912707) settings.
-MIN_HORIZON = int(os.environ.get("BASELINE_MIN_HORIZON", "25"))
-MAX_HORIZON = int(os.environ.get("BASELINE_MAX_HORIZON", "40"))
+# from lib.config import env_int as _env_int  # noqa: E402  # inlined by bundle_agent.py
+_env_int = env_int
+
+MIN_HORIZON = _env_int("BASELINE_MIN_HORIZON", 25)
+MAX_HORIZON = _env_int("BASELINE_MAX_HORIZON", 40)
 WAIT_EXTRA_SURPLUS = (0, 5, 12)  # legacy forward grid (kept for rollback)
 CHEAP_REJECT_THRESHOLD = -10.0
 EPISODE_STEPS = 500
@@ -10717,6 +10797,7 @@ counter-launches and fragile leaves are correctly penalised.
 
 import os
 
+# from lib.config import env_float, env_int  # inlined by bundle_agent.py
 # from lib.fast_sim import clone as fs_clone  # inlined by bundle_agent.py
 fs_clone = clone
 # from lib.fast_sim import step as fs_step  # inlined by bundle_agent.py
@@ -10730,29 +10811,27 @@ N_VALIDATE = 60
 PER_CANDIDATE_SAFETY = 1.5
 RESERVED_OVERHEAD_MS = 50.0
 
-# Deterministic per-candidate cost model (Phase 1, 2026-05-22).
-# Replaces the time.perf_counter()-based probe that made the chooser
-# non-deterministic across runs (128/210 turns diverged in diff_v3
-# trace despite identical physics). State-aware: per-step and per-leaf
-# costs scale linearly with n_fleets — the dominant variable for both
-# fs_step (orbit advance + collision resolution per fleet) and the
-# composite leaf (per-fleet trajectory checks). Constants calibrated
-# from orbitfix_kt bench at avg_K=32.5; env-override per agent if the
-# value head is materially heavier.
-BASELINE_STEP_BASE_MS = float(os.environ.get("BASELINE_STEP_BASE_MS", "0.20"))
-BASELINE_STEP_PER_FLEET_MS = float(
-    os.environ.get("BASELINE_STEP_PER_FLEET_MS", "0.06"),
-)
-BASELINE_LEAF_BASE_MS = float(os.environ.get("BASELINE_LEAF_BASE_MS", "0.80"))
-BASELINE_LEAF_PER_FLEET_MS = float(
-    os.environ.get("BASELINE_LEAF_PER_FLEET_MS", "0.25"),
-)
+# Cost-model defaults (Phase 1; per-call env reads via lib.config so
+# A/B harnesses that monkey-patch env vars between fixtures get the
+# new value).
+_DEFAULT_STEP_BASE_MS = 0.20
+_DEFAULT_STEP_PER_FLEET_MS = 0.06
+_DEFAULT_LEAF_BASE_MS = 0.80
+_DEFAULT_LEAF_PER_FLEET_MS = 0.25
+# Phase 3b extra leaf cost per credited my-fleet when
+# COMPOSITE_FLEET_SURVIVAL_CHECK is on. predict_fleet_fate is ~1 ms
+# per call on a 24-planet board (max_steps=200).
+_DEFAULT_LEAF_FATE_MS_PER_FLEET = 1.0
+# Smart-opp leaf window (Phase 4). Same per-call read pattern.
+_DEFAULT_OPP_SMART_LEAF_WINDOW = 5
 
 
 def _state_n_fleets(snap_base) -> int:
-    """Total fleet count on the board at function entry, read from
-    snap.state[0].observation (fleets aren't seat-scoped). Deterministic
-    on identical snap input; sole state-derived input to per_cand_ms.
+    """Total fleet count on the board. Read from snap.state[0].observation
+    (fleets aren't seat-scoped). Falls back to a PESSIMISTIC default
+    (20) on exception so the cost model errs on the side of a smaller
+    cap when obs shape is unexpected — preferring fewer candidates over
+    a budget blow-up.
     """
     try:
         obs0 = snap_base.state[0].observation
@@ -10760,9 +10839,28 @@ def _state_n_fleets(snap_base) -> int:
             obs0.get("fleets", []) if hasattr(obs0, "get")
             else getattr(obs0, "fleets", [])
         )
-        return len(fleets) if fleets is not None else 0
+        if fleets is not None:
+            return len(fleets)
     except Exception:
-        return 0
+        pass
+    return 20
+
+
+def _state_n_my_fleets(snap_base, me: int) -> int:
+    """Count of fleets owned by `me`. Used by the Phase 3b cost-model
+    term. Pessimistic-default same as _state_n_fleets."""
+    try:
+        obs0 = snap_base.state[0].observation
+        fleets = (
+            obs0.get("fleets", []) if hasattr(obs0, "get")
+            else getattr(obs0, "fleets", [])
+        )
+        if fleets is None:
+            return 5
+        # Fleet tuple layout: (id, owner, x, y, angle, from_planet_id, ships).
+        return sum(1 for f in fleets if int(f[1]) == int(me))
+    except Exception:
+        return 5
 
 
 def _select_opp_policy():
@@ -10799,17 +10897,80 @@ def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
     return actions
 
 
+def opp_actions_for_step(snap, me: int, num_seats: int,
+                         *, smart_leaf: bool = False) -> list[list]:
+    """Per-step opp action selector that optionally swaps in
+    `top_tier_mirror_policy` at the leaf window (Phase 4, 2026-05-22).
+
+    When `BASELINE_OPP_SMART_LEAF=1` AND `smart_leaf=True`, the policy
+    used for THIS step is `top_tier_mirror_policy` (full v3.5.1
+    snipe + reinforce pipeline, ~5-10 ms/call). Otherwise behaves
+    identically to `opp_actions_for_snap` — the existing selected
+    policy (lite_greedy unless `BASELINE_OPP_TIER=1`).
+
+    `smart_leaf=True` is passed by callers for the FINAL
+    `BASELINE_OPP_SMART_LEAF_WINDOW` steps of the rollout (default 5)
+    so smart-opp launches have time to propagate to their targets
+    before the leaf is evaluated — a single last-step smart launch
+    doesn't shift the leaf value because the new fleet hasn't yet
+    affected any planet's ownership / production.
+
+    Rationale: the leaf state's opp army composition determines its
+    value. Running the full pipeline at every step blows the per-turn
+    budget; running it ONLY at the leaf window adds N × 5-10 ms per
+    candidate. Default OFF preserves pre-Phase-4 behavior bit-identically.
+
+    Used by both `build_idle_baseline` / `score_action` (here) AND
+    `build_trajectory_baseline` / `score_candidate_v4` / `_joint`
+    (in chooser_trajectory.py via import).
+    """
+    if smart_leaf and os.environ.get(
+        "BASELINE_OPP_SMART_LEAF", "0",
+    ).strip() == "1":
+        policy = top_tier_mirror_policy
+    else:
+        policy = _select_opp_policy()
+    actions: list[list] = [[] for _ in range(num_seats)]
+    for opp_id in range(num_seats):
+        if opp_id == me:
+            continue
+        try:
+            actions[opp_id] = policy(snap.state[opp_id].observation) or []
+        except Exception:
+            actions[opp_id] = []
+    return actions
+
+
+def opp_smart_leaf_window() -> int:
+    """Per-call read of BASELINE_OPP_SMART_LEAF_WINDOW. The previous
+    module-level read froze the value at import time — tests/A-B
+    harnesses that monkey-patched the env var between fixtures got the
+    import-time default silently. Per-call read closes that footgun.
+    """
+    return env_int("BASELINE_OPP_SMART_LEAF_WINDOW", _DEFAULT_OPP_SMART_LEAF_WINDOW)
+
+
 def build_idle_baseline(snap_base, me: int, num_seats: int,
                         max_horizon: int, gamma: float) -> list[float]:
-    """favor at every horizon 0..max_horizon under (me-idle, opp-reactive)."""
+    """favor at every horizon 0..max_horizon under (me-idle, opp-reactive).
+
+    Phase 4 (2026-05-22): when `BASELINE_OPP_SMART_LEAF=1`, the final
+    step (the one that produces `out[max_horizon]`) uses the smart
+    opp model. This matches `score_action`'s leaf-step policy so
+    `Δ = leaf − baseline[horizon]` stays calibrated.
+    """
     favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
     out = [favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)]
-    for _ in range(max_horizon):
+    leaf_window_start = max(0, max_horizon - opp_smart_leaf_window())
+    for step_i in range(max_horizon):
         if snap.fake_env.done:
             out.append(out[-1])
             continue
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        is_leaf_step = (step_i >= leaf_window_start)
+        actions = opp_actions_for_step(
+            snap, me, num_seats, smart_leaf=is_leaf_step,
+        )
         snap = fs_step(snap, actions, in_place=True)
         out.append(favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma))
     return out
@@ -10818,14 +10979,36 @@ def build_idle_baseline(snap_base, me: int, num_seats: int,
 def score_action(snap_base, me: int, num_seats: int,
                  src_id: int, angle: float, ships: int,
                  horizon: int, baseline_favors: list[float],
-                 wait_N: int, gamma: float) -> float:
-    """Δ favor at horizon = leaf(my_action@wait_N) − baseline."""
+                 wait_N: int, gamma: float,
+                 baseline_horizon: int | None = None) -> float:
+    """Δ favor at horizon = leaf(my_action@wait_N) − baseline.
+
+    Phase 4 (2026-05-22, calibrated 2026-05-23): when
+    `BASELINE_OPP_SMART_LEAF=1`, the smart-opp swap fires at the
+    ABSOLUTE rollout step `baseline_horizon - WINDOW` onward. This is
+    the SAME absolute step the baseline build used, so candidates at
+    horizon < baseline_horizon - WINDOW never see smart-opp and their
+    Δ = leaf - baseline_favors[h] stays apples-to-apples
+    (both endpoints used lite_greedy throughout for steps < the absolute
+    window). The pre-2026-05-23 code anchored the window per-candidate
+    horizon, which biased every shorter-horizon candidate's Δ.
+
+    `baseline_horizon` defaults to `horizon` for callers that didn't
+    pass it (pre-Phase-4 callers); in that case the smart-opp swap fires
+    at the candidate's own tail, matching the older behaviour.
+    """
+    if baseline_horizon is None:
+        baseline_horizon = horizon
     favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
+    leaf_window_start = max(0, baseline_horizon - opp_smart_leaf_window())
     for step_i in range(horizon):
         if snap.fake_env.done:
             break
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        is_leaf_step = (step_i >= leaf_window_start)
+        actions = opp_actions_for_step(
+            snap, me, num_seats, smart_leaf=is_leaf_step,
+        )
         if step_i == int(wait_N):
             actions[me] = [[int(src_id), float(angle), int(ships)]]
         snap = fs_step(snap, actions, in_place=True)
@@ -10836,29 +11019,61 @@ def score_action(snap_base, me: int, num_seats: int,
 def affordable_validate_cap(snap_base, me: int, num_seats: int,
                             max_horizon: int, wallclock_ms: float,
                             min_horizon: int, gamma: float,
+                            adaptive_k_extension: int = 0,
                             ) -> tuple[int, float]:
     """Deterministic per-candidate cap. Returns `(cap, per_cand_ms)`.
 
-    Replaced the wallclock probe (Phase 1, 2026-05-22): the probe used
-    `time.perf_counter()` to measure per-step and per-leaf cost on every
-    turn, but per-run timing jitter shifted the cap → different
-    candidate subset evaluated → different chosen action across runs of
-    the same seed. The state-aware model below scales linearly with
-    n_fleets (dominant cost driver for fs_step and composite leaf);
-    cap shrinks naturally as the board complexity grows, mirroring the
-    probe's responsiveness without the wallclock dependency.
+    State-aware cost model (Phase 1, calibrated 2026-05-23):
+        per_step_ms = STEP_BASE + STEP_PER_FLEET * n_fleets
+        per_leaf_ms = LEAF_BASE + LEAF_PER_FLEET * n_fleets
+                      + LEAF_FATE_PER_FLEET * n_my_fleets   (if Phase 3b)
+        per_cand_ms = (per_step_ms * effective_avg_K + per_leaf_ms) * SAFETY
+        effective_avg_K = (min_horizon + max_horizon + adaptive_k_extension) / 2
 
-    `me`, `gamma` retained for signature compatibility with prior
-    probe-based call sites (chooser_trajectory mirrors this same
-    function).
+    `adaptive_k_extension`: pass ADAPTIVE_K_BUMP (e.g. 10) when Phase 2
+    is enabled, so the cost model sees the higher avg K that critical
+    candidates run at. Default 0 = un-bumped.
+
+    Phase 3b leaf cost: added automatically when COMPOSITE_FLEET_SURVIVAL_CHECK
+    is on (per-call env read). Each my-fleet incurs one extra
+    predict_fleet_fate call inside composite_capture_value.
+
+    Guards:
+    - per_cand_ms clamped to >= 0.001 to avoid ZeroDivisionError if a
+      diagnostic A/B zeroes all cost constants.
+    - `n_fleets` falls back to 20 on obs-shape exceptions (pessimistic).
+
+    `me`, `gamma` retained for signature-compat.
     """
-    del me, gamma  # signature-compat; no longer probed
     n_fleets = _state_n_fleets(snap_base)
-    per_step_ms = BASELINE_STEP_BASE_MS + BASELINE_STEP_PER_FLEET_MS * n_fleets
-    per_leaf_ms = BASELINE_LEAF_BASE_MS + BASELINE_LEAF_PER_FLEET_MS * n_fleets
-    avg_K = (min_horizon + max_horizon) / 2.0
+    n_my_fleets = _state_n_my_fleets(snap_base, me) if me is not None else 0
+    del gamma  # signature-compat
+
+    step_base = env_float("BASELINE_STEP_BASE_MS", _DEFAULT_STEP_BASE_MS)
+    step_pf = env_float("BASELINE_STEP_PER_FLEET_MS", _DEFAULT_STEP_PER_FLEET_MS)
+    leaf_base = env_float("BASELINE_LEAF_BASE_MS", _DEFAULT_LEAF_BASE_MS)
+    leaf_pf = env_float("BASELINE_LEAF_PER_FLEET_MS", _DEFAULT_LEAF_PER_FLEET_MS)
+    per_step_ms = step_base + step_pf * n_fleets
+    per_leaf_ms = leaf_base + leaf_pf * n_fleets
+    # Phase 3b: extra per-my-fleet leaf cost when survival check is on.
+    if os.environ.get("COMPOSITE_FLEET_SURVIVAL_CHECK", "0").strip() in ("1", "true", "on", "yes"):
+        fate_pf = env_float(
+            "BASELINE_LEAF_FATE_MS_PER_FLEET", _DEFAULT_LEAF_FATE_MS_PER_FLEET,
+        )
+        per_leaf_ms += fate_pf * n_my_fleets
+
+    avg_K = (min_horizon + max_horizon + int(adaptive_k_extension)) / 2.0
     per_cand_ms = (per_step_ms * avg_K + per_leaf_ms) * PER_CANDIDATE_SAFETY
+    # ZeroDivisionError guard: if a diagnostic sets all cost constants
+    # to 0, per_cand_ms is 0. Clamp to a tiny positive value so the cap
+    # comes out at N_VALIDATE bound (deterministic, doesn't crash).
+    if per_cand_ms < 0.001:
+        per_cand_ms = 0.001
     budget = wallclock_ms - RESERVED_OVERHEAD_MS
+    if budget <= 0:
+        # Caller passed an absurdly small wallclock_ms; floor cap at 8
+        # (the explicit minimum) so we don't degrade to 0 candidates.
+        return 8, per_cand_ms
     cap = max(8, int(budget / per_cand_ms))
     return cap, per_cand_ms
 
@@ -10907,6 +11122,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
             snap_base, me, num_seats,
             int(src.id), float(angle), int(ships),
             int(horizon), baseline_favors, int(wait_N), gamma,
+            baseline_horizon=int(max_horizon),
         )
         if delta > 0:
             validated.append((delta, src, tgt, ships, angle, wait_N))
@@ -11885,8 +12101,9 @@ PI critique 2026-05-17: "we should be thinking in fleet trajectories";
 import math
 import os
 
-# from agents.baseline.chooser import affordable_validate_cap, opp_actions_for_snap  # inlined by bundle_agent.py
+# from agents.baseline.chooser import affordable_validate_cap, opp_actions_for_snap, opp_actions_for_step, opp_smart_leaf_window  # inlined by bundle_agent.py
 # from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn  # inlined by bundle_agent.py
+# from lib.config import env_bool, env_float, env_int  # inlined by bundle_agent.py
 # from lib.fast_sim import clone as fs_clone  # inlined by bundle_agent.py
 fs_clone = clone
 # from lib.fast_sim import step as fs_step  # inlined by bundle_agent.py
@@ -12104,19 +12321,34 @@ JOINT_LIFT_USED_TGTS: bool = (
 # `scored` — no new physics. Gated default OFF; orbitfix_kt is the
 # A/B target. MAX_HORIZON_CAP is the hard ceiling so total per-turn
 # budget never explodes.
-ADAPTIVE_K_ENABLED: bool = (
-    os.environ.get("BASELINE_ADAPTIVE_K", "0").strip() == "1"
-)
-ADAPTIVE_K_BUMP: int = int(os.environ.get("BASELINE_CRITICALITY_K_BUMP", "10"))
-ADAPTIVE_K_PROBE: int = int(
-    os.environ.get("BASELINE_CRITICALITY_PROBE", "3"),
-)
-ADAPTIVE_K_MARGIN: float = float(
-    os.environ.get("BASELINE_CRITICALITY_MARGIN", "0.05"),
-)
-ADAPTIVE_K_HORIZON_CAP: int = int(
-    os.environ.get("BASELINE_MAX_HORIZON_CAP", "60"),
-)
+# Phase 2 (calibrated 2026-05-23): per-call env reads via lib.config so
+# A/B harnesses that monkey-patch env vars between fixtures see the new
+# values. The old module-level reads froze at import time.
+
+_DEFAULT_ADAPTIVE_K_BUMP = 10
+_DEFAULT_ADAPTIVE_K_PROBE = 3
+_DEFAULT_ADAPTIVE_K_MARGIN = 0.05
+_DEFAULT_ADAPTIVE_K_HORIZON_CAP = 60
+
+
+def _adaptive_k_enabled() -> bool:
+    return env_bool("BASELINE_ADAPTIVE_K", False)
+
+
+def _adaptive_k_bump() -> int:
+    return env_int("BASELINE_CRITICALITY_K_BUMP", _DEFAULT_ADAPTIVE_K_BUMP)
+
+
+def _adaptive_k_probe() -> int:
+    return env_int("BASELINE_CRITICALITY_PROBE", _DEFAULT_ADAPTIVE_K_PROBE)
+
+
+def _adaptive_k_margin() -> float:
+    return env_float("BASELINE_CRITICALITY_MARGIN", _DEFAULT_ADAPTIVE_K_MARGIN)
+
+
+def _adaptive_k_horizon_cap() -> int:
+    return env_int("BASELINE_MAX_HORIZON_CAP", _DEFAULT_ADAPTIVE_K_HORIZON_CAP)
 
 
 def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
@@ -12348,11 +12580,20 @@ def build_trajectory_baseline(snap_base, me: int, num_seats: int,
     out: list[float] = [
         favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma),
     ]
-    for _ in range(horizon):
+    leaf_window_start = max(0, horizon - opp_smart_leaf_window())
+    for step_i in range(horizon):
         if snap.fake_env.done:
             out.append(out[-1])
             continue
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        # Phase 4 (2026-05-22): smart-opp leaf reaction. When the env
+        # var is on, the FINAL N baseline steps (window) use
+        # top_tier_mirror_policy so baseline[h] is calibrated against
+        # the same opp model the candidate rollout's leaf uses, AND so
+        # the smart-opp launches have time to propagate.
+        is_leaf_step = (step_i >= leaf_window_start)
+        actions = opp_actions_for_step(
+            snap, me, num_seats, smart_leaf=is_leaf_step,
+        )
         # Baseline IS asymmetric on purpose (ME idle, opp reactive) —
         # we measure the candidate's marginal value above the worst-
         # case "I do nothing this turn AND on every future turn"
@@ -12378,6 +12619,7 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                        horizon: int,
                        skip_admissibility: bool = False,
                        wait_N: int = 0,
+                       baseline_horizon: int | None = None,
                        ) -> tuple[float, str, int | None]:
     """v4 scoring: same admissibility filter + fast_sim rollout as v3,
     but the leaf is `favor_fn` instead of a binary owner-check, and the
@@ -12437,10 +12679,22 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     if _ME_DEFENDS_ENABLED:
         me_defense_emits = _me_defensive_action(snap, me)
 
+    # Phase 4 (2026-05-23, calibrated): anchor the smart-opp window at
+    # the ABSOLUTE step `baseline_horizon - WINDOW`. baseline_favors[h]
+    # was built with the smart-opp swap firing at the same absolute
+    # step in build_trajectory_baseline. Candidates with horizon <
+    # baseline_horizon - WINDOW never enter the smart-opp window —
+    # their leaf is lite_greedy throughout, matching baseline_favors[h]
+    # which is also lite_greedy at that h. Δ stays apples-to-apples.
+    bh = horizon if baseline_horizon is None else int(baseline_horizon)
+    leaf_window_start = max(0, bh - opp_smart_leaf_window())
     for t in range(horizon):
         if snap.fake_env.done:
             break
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        is_leaf_step = (t >= leaf_window_start)
+        actions = opp_actions_for_step(
+            snap, me, num_seats, smart_leaf=is_leaf_step,
+        )
         if t == int(wait_N):
             # Candidate first (the chooser's primary decision), then
             # defensive emits. If the candidate drains the planet
@@ -12465,6 +12719,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
                               favor_fn, gamma: float,
                               horizon: int,
                               skip_admissibility: bool = False,
+                              baseline_horizon: int | None = None,
                               ) -> tuple[float, str]:
     """Direction B: score a JOINT candidate of multiple launches in one
     fast_sim rollout. `launches` is a list of
@@ -12519,10 +12774,17 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         me_defense_emits = _me_defensive_action(snap, me)
     earliest_inject_t = min(inject_at.keys()) if inject_at else -1
 
+    # Phase 4 (2026-05-23, calibrated): same absolute-step anchor as
+    # score_candidate_v4. See comment there.
+    bh = horizon if baseline_horizon is None else int(baseline_horizon)
+    leaf_window_start = max(0, bh - opp_smart_leaf_window())
     for t in range(horizon):
         if snap.fake_env.done:
             break
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        is_leaf_step = (t >= leaf_window_start)
+        actions = opp_actions_for_step(
+            snap, me, num_seats, smart_leaf=is_leaf_step,
+        )
         if t in inject_at:
             base_actions = list(inject_at[t])
             if t == earliest_inject_t and me_defense_emits:
@@ -12677,9 +12939,10 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         if int(h) > max_horizon_seen:
             max_horizon_seen = int(h)
     baseline_horizon = max_horizon_seen
-    if ADAPTIVE_K_ENABLED and max_horizon_seen > 0:
+    adaptive_on = _adaptive_k_enabled()
+    if adaptive_on and max_horizon_seen > 0:
         baseline_horizon = min(
-            max_horizon_seen + ADAPTIVE_K_BUMP, ADAPTIVE_K_HORIZON_CAP,
+            max_horizon_seen + _adaptive_k_bump(), _adaptive_k_horizon_cap(),
         )
 
     baseline_favors: list[float] = []
@@ -12697,9 +12960,13 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     # table makes per-candidate cost predictable enough for this.
     cap = N_VALIDATE
     if not use_v3:
+        # Pass adaptive-K extension to the cost model so n_aff reflects
+        # the higher avg-K bumped candidates run at (calibrated 2026-05-23).
+        adaptive_ext = _adaptive_k_bump() if adaptive_on else 0
         n_aff, _per_cand_ms = affordable_validate_cap(
             snap_base, me, num_seats, max_horizon, wallclock_ms,
             min_horizon, gamma,
+            adaptive_k_extension=adaptive_ext,
         )
         cap = min(N_VALIDATE, n_aff)
 
@@ -12725,18 +12992,22 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             if sid_ in reserved_srcs:
                 continue
         cand_count += 1
-        # Phase 2 (2026-05-22): adaptive compute allocation. After
-        # ADAPTIVE_K_PROBE candidates scored, check the top-1 / top-2
-        # margin; if small (chooser is least confident on this turn),
-        # bump rollout horizon by ADAPTIVE_K_BUMP for subsequent
-        # candidates. Reuses signals already in `scored`; no new physics.
-        # baseline_favors was pre-sized to baseline_horizon so the bumped
-        # horizon is safe to index.
-        if (ADAPTIVE_K_ENABLED and not critical_bump_active
-                and not use_v3 and cand_count > ADAPTIVE_K_PROBE
-                and len(scored) >= 2):
-            top_two = sorted((s[0] for s in scored), reverse=True)[:2]
-            if (top_two[0] - top_two[1]) < ADAPTIVE_K_MARGIN:
+        # Phase 2 (2026-05-22; calibrated 2026-05-23): adaptive compute
+        # allocation. Use cheap_delta from prerank (always available,
+        # no dependence on positive scored Δ) so defensive turns where
+        # no candidate scores positively STILL trigger the bump — the
+        # chooser is most confused exactly there. Pre-2026-05-23 the
+        # gate read top-2 from `scored` which excluded Δ≤0 candidates,
+        # inverting the intent on defensive turns. cheap_delta margin
+        # is a fast proxy for "top candidates are tight"; bump for the
+        # remaining (deeper-rollout) evaluations.
+        if (adaptive_on and not critical_bump_active
+                and not use_v3 and cand_count > _adaptive_k_probe()
+                and len(prerank) >= 2):
+            cheap_top_two = sorted(
+                (float(c[0]) for c in prerank), reverse=True,
+            )[:2]
+            if (cheap_top_two[0] - cheap_top_two[1]) < _adaptive_k_margin():
                 critical_bump_active = True
         if use_v3:
             # v3 path: fire-now-only (binary leaf doesn't generalise to
@@ -12753,7 +13024,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             effective_horizon = int(prop_horizon)
             if critical_bump_active:
                 effective_horizon = min(
-                    effective_horizon + ADAPTIVE_K_BUMP, baseline_horizon,
+                    effective_horizon + _adaptive_k_bump(), baseline_horizon,
                 )
             score, status, _ = score_candidate_v4(
                 snap_base, src, tgt, int(ships), float(angle),
@@ -12762,6 +13033,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 horizon=effective_horizon,
                 skip_admissibility=skip_filter,
                 wait_N=int(wait_N),
+                baseline_horizon=int(baseline_horizon),
             )
             if status == "scored" and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))
@@ -12803,10 +13075,12 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         # without sharing, JOINT_MAX_PAIRS=60 + solo n_aff=12 blew the
         # 1000ms cap on the 2026-05-22 post-Phase-1 bench (orbitfix_kt
         # seed-0 p95=4425ms). joint_limit halves the cap for joints by
-        # default — env-tunable via BASELINE_JOINT_BUDGET_FRAC.
-        joint_budget_frac = float(
-            os.environ.get("BASELINE_JOINT_BUDGET_FRAC", "0.5"),
-        )
+        # default — env-tunable via BASELINE_JOINT_BUDGET_FRAC. Clamped
+        # to [0, 1] (2026-05-23) so a typo (frac=10.0) can't silently
+        # saturate joint_limit at JOINT_MAX_PAIRS=60, defeating the
+        # shared-budget intent and blowing the per-turn wallclock.
+        joint_budget_frac = env_float("BASELINE_JOINT_BUDGET_FRAC", 0.5)
+        joint_budget_frac = max(0.0, min(1.0, joint_budget_frac))
         joint_limit = max(
             2, min(JOINT_MAX_PAIRS, int(cap * joint_budget_frac)),
         )
@@ -12850,6 +13124,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         snap_base, launches, me, num_seats, world,
                         baseline_favors, favor_fn, gamma,
                         horizon=jh, skip_admissibility=skip_filter,
+                        baseline_horizon=int(baseline_horizon),
                     )
                     joint_count += 1
                     if j_status == "scored" and j_score > 0.0:
