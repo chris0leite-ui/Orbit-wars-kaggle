@@ -302,13 +302,20 @@ def composite_capture_value(
     # 10 — WorldModel.from_world is O(horizon × planets), so scaling
     # horizon to max_eta cuts the dominant cost roughly in half on
     # short-range turns. 2026-05-17 timing-fix item #2.
+    # Build comet_paths once for both this pre-pass and the WorldModel
+    # build below — comet targets need path-indexed positions, not
+    # rotated orbital math (2026-05-23 KT-parity fix).
+    from lib.world_model import _comet_paths_by_id  # noqa: E402
+    comet_paths = _comet_paths_by_id(world)
     fleet_targets: list[tuple[Fleet, float, object | None, int]] = []
     max_eta = 0
     for f in fleets:
         if int(f.owner) != my_id:
             continue
         ships = float(f.ships)
-        target, eta = fleet_target_planet(f, planets_list, omega)
+        target, eta = fleet_target_planet(
+            f, planets_list, omega, comet_paths=comet_paths,
+        )
         eta_int = int(eta) if eta is not None else 0
         fleet_targets.append((f, ships, target, eta_int))
         if target is not None and eta_int > max_eta:

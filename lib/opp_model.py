@@ -318,6 +318,30 @@ def me_defensive_action(obs: Any, me: int) -> list:
     if not my_planets_by_id:
         return []
 
+    # Build comet_paths {pid: (path, path_index)} from obs so
+    # fleet_target_planet attributes fleets to comets via their real
+    # path positions, not rotated orbital math (2026-05-23 fix).
+    # Schema mirrors lib.world_model._comet_paths_by_id; inlined here
+    # because me_defensive_action operates on raw obs (no World object
+    # — building one would pay the 3-5 ms WorldModel cost the function
+    # is specifically designed to avoid).
+    comets_raw = (
+        obs.get("comets", []) if isinstance(obs, dict)
+        else (getattr(obs, "comets", []) or [])
+    )
+    comet_paths: dict = {}
+    for group in comets_raw or []:
+        if hasattr(group, "keys"):
+            planet_ids = list(group["planet_ids"])
+            paths = list(group["paths"])
+            path_index = int(group["path_index"])
+        else:
+            planet_ids = list(group.planet_ids)
+            paths = list(group.paths)
+            path_index = int(group.path_index)
+        for idx, pid in enumerate(planet_ids):
+            comet_paths[int(pid)] = (paths[idx], path_index)
+
     # 1. Attribute fleets to MY planets. Enemy fleets become threats;
     # friendly fleets become inbound reinforcements that count toward
     # `garrison_at_eta`. The friendly-counting is the critical
@@ -331,7 +355,7 @@ def me_defensive_action(obs: Any, me: int) -> list:
     inbound_enemy: dict[int, list[tuple[int, int]]] = {}
     inbound_friendly_ships: dict[int, int] = {}
     for f in fleets:
-        target, eta = fleet_target_planet(f, planets, omega)
+        target, eta = fleet_target_planet(f, planets, omega, comet_paths=comet_paths)
         if target is None or int(target.owner) != me:
             continue
         if int(f.owner) == me:

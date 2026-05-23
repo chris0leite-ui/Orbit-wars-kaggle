@@ -457,3 +457,77 @@ def test_planet_position_at_accepts_planet_namedtuple():
     comet_planet = Planet(42, -1, 28.0, 50.0, 1.0, 30, 1)
     pos = planet_position_at(comet_planet, world, 3)
     assert pos == (40.0, 50.0), f"Planet form: got {pos}"
+
+
+# ---------------------------------------------------------------------------
+# fleet_target_planet — comet target attribution (2026-05-23 KT-parity fix)
+# ---------------------------------------------------------------------------
+
+
+def test_fleet_target_planet_attributes_via_comet_path_not_rotation():
+    """A fleet aimed at a moving comet attributes correctly when
+    `comet_paths` is provided. The path is the source of truth; without
+    it, `fleet_target_planet` would route the comet through the orbital
+    branch (rotation math), misattributing or missing the hit.
+
+    Setup: comet path is stationary in this test (same point per tick)
+    so the geometry is unambiguous: comet at (60, 50), radius 2, fleet
+    at (10, 50) heading east. With comet_paths provided, the per-tick
+    scan finds the comet at its true position (60, 50) at each tick.
+    Without comet_paths, the comet would route to the orbital scan and
+    `predict_relative_smart` would rotate it by `omega * t` per tick,
+    moving it off the fleet's straight-line path.
+    """
+    from lib.world_model import fleet_target_planet
+    # Comet's CURRENT position is north of the sun at (50, 90). Its
+    # path drifts SOUTHWARD over time: path[t] = (50, 90 - 4t). The
+    # comet crosses the fleet's east-bound y=50 line around tick 10
+    # at position (50, 50). With path lookup the fleet finds it
+    # there; with rotation the comet stays near (50, 90) (rotated
+    # around CENTER), nowhere near the fleet's line.
+    path = [[50.0, 90.0 - 4.0 * i] for i in range(50)]
+    # path[0] = (50, 90), path[10] = (50, 50), path[15] = (50, 30), ...
+    comet = _planet(42, -1, 50.0, 90.0, radius=5.0)
+    # Slow fleet (ships=20 → speed ~3 board units/turn) reaches x=50
+    # around tick (50-10)/speed. Use ships large enough that the fleet
+    # arrives at x ~ 50 around the same time the comet reaches y=50.
+    fleet = _fleet(100, 0, 10.0, 50.0, angle=0.0, ships=200)
+    comet_paths = {42: (path, 0)}
+    omega = 0.04
+    # With comet_paths: should attribute to comet 42 when paths cross.
+    p, eta = fleet_target_planet(
+        fleet, [comet], omega, comet_paths=comet_paths,
+    )
+    assert p is comet, (
+        f"Expected fleet to attribute to comet 42 via path lookup; "
+        f"got {p.id if p is not None else None}, eta={eta}"
+    )
+    assert eta is not None and eta > 0
+
+    # Without comet_paths: the comet routes to orbital scan and gets
+    # rotated around CENTER (50, 50). At (50, 90) the rotation keeps
+    # it on a circle of radius 40 around the sun, NOT crossing the
+    # fleet's eastward y=50 line near x=50. Should miss entirely.
+    p_no_paths, eta_no_paths = fleet_target_planet(fleet, [comet], omega)
+    assert (p_no_paths is None) or (eta_no_paths != eta), (
+        f"Pre-fix (orbital-rotation) branch should differ from comet-path "
+        f"branch; got same result p={p_no_paths.id if p_no_paths else None}, "
+        f"eta={eta_no_paths}"
+    )
+
+
+def test_fleet_target_planet_skips_expired_comet():
+    """A comet whose path expires before the fleet would arrive
+    should NOT be a valid target — fleet_target_planet returns None
+    (or attributes to a non-comet target) instead of using a stale
+    final-frame position."""
+    from lib.world_model import fleet_target_planet
+    # Short path: comet exits at tick 3.
+    path = [[80.0, 50.0], [80.0, 50.0], [80.0, 50.0]]
+    short_comet = _planet(42, -1, 80.0, 50.0, radius=2.0)
+    fleet = _fleet(100, 0, 10.0, 50.0, angle=0.0, ships=4)  # slow → eta > 3
+    comet_paths = {42: (path, 0)}
+    p, _eta = fleet_target_planet(
+        fleet, [short_comet], 0.04, comet_paths=comet_paths,
+    )
+    assert p is None, f"Expected None for expired comet; got {p}"
