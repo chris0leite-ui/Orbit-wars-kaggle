@@ -1,8 +1,8 @@
 # orbitfix_kt_p23 — bundled from agents/baseline with env-var stack.
 # Stack: orbitfix substrate + KT + Phase 2 (adaptive K) + Phase 3
 # (leaf survival check) + attack-pull positional value head + inline
-# rotation math in predict_fleet_fate + per-fleet planet pre-filter
-# (skips orbital/static planets that can't intersect the fleet ray).
+# rotation math + per-fleet planet pre-filter + distance-aware min
+# fleet size filter (rejects tiny offensive launches at far targets).
 from __future__ import annotations
 
 import os as _kt_p23_os
@@ -21,6 +21,8 @@ _kt_p23_os.environ.setdefault("COMPOSITE_FLEET_SURVIVAL_CHECK", "1")
 _kt_p23_os.environ.setdefault("BASELINE_VALUE_HEAD", "attack_pull")
 _kt_p23_os.environ.setdefault("BASELINE_ATTACK_PULL_WEIGHT", "0.5")
 _kt_p23_os.environ.setdefault("BASELINE_ATTACK_PULL_DECAY", "30.0")
+_kt_p23_os.environ.setdefault("BASELINE_MIN_FLEET_BY_DISTANCE", "1")
+_kt_p23_os.environ.setdefault("BASELINE_MIN_FLEET_SLOPE_PER_UNIT", "0.15")
 
 
 

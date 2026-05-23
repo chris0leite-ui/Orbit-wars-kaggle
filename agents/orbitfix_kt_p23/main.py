@@ -30,5 +30,12 @@ os.environ.setdefault("COMPOSITE_FLEET_SURVIVAL_CHECK", "1")
 os.environ.setdefault("BASELINE_VALUE_HEAD", "attack_pull")
 os.environ.setdefault("BASELINE_ATTACK_PULL_WEIGHT", "0.5")
 os.environ.setdefault("BASELINE_ATTACK_PULL_DECAY", "30.0")
+# Distance-aware min fleet size filter (2026-05-23): rejects offensive
+# launches sized too small for the target distance. Addresses the "many
+# small fleets to far targets" pattern observed in the JM replay (sub
+# 52959167 vs JM: 5-10 ship launches at distance 46-53 all wasted).
+# Slope 0.15: d=30→5 ships, d=50→8 ships, d=70→11 ships.
+os.environ.setdefault("BASELINE_MIN_FLEET_BY_DISTANCE", "1")
+os.environ.setdefault("BASELINE_MIN_FLEET_SLOPE_PER_UNIT", "0.15")
 
 from agents.baseline.main import agent  # noqa: E402
