@@ -62,8 +62,12 @@ audit/buildup_planner_strike_elect.jsonl
 # Step 3b strike diagnostic — per-seed raw elect + strike logs are
 # bulky + regenerable from scripts/strike_diagnostic.py. Keep
 # summary.jsonl + the findings .md (small, PI-readable) in git.
+# Both pre-fix (seed{N}_*.jsonl) and post-fix (seed{N}_seat{S}_*.jsonl)
+# naming so older runs stay ignored after the script refactor.
 audit/2026-05-23-strike-loss-diagnostic/seed*_elect.jsonl
 audit/2026-05-23-strike-loss-diagnostic/seed*_strike.jsonl
+audit/2026-05-23-strike-loss-diagnostic/seed*_seat*_elect.jsonl
+audit/2026-05-23-strike-loss-diagnostic/seed*_seat*_strike.jsonl
 
 # Common data formats
 *.csv

@@ -212,10 +212,24 @@ def agent(obs, configuration=None) -> list[list]:
         # Build a fresh World here — don't rely on cross-block scope from
         # the CONSOLIDATION branch (only safe today because fall-through
         # is the only path that sets PHASE_STRIKE, but brittle).
-        return strike.step(
-            World.from_obs(obs_d), plan,
-            game_id=state.get("game_id", "unknown"), step_now=step,
-        )
+        # Wrap in try/except mirroring the CONSOLIDATION-branch guard on
+        # evaluate_inflection (lines 170-176): predict_fleet_fate on a
+        # degenerate Shot (ship_count=0 div-by-zero, stale src_id KeyError,
+        # NaN angle) would otherwise propagate up and Kaggle would mark
+        # the agent as ERROR for the game. Strike errors MUST NOT break
+        # the agent — return [] on any exception. Logged for diagnosis.
+        try:
+            return strike.step(
+                World.from_obs(obs_d), plan,
+                game_id=state.get("game_id", "unknown"), step_now=step,
+            )
+        except Exception as exc:
+            import logging
+            logging.getLogger("buildup_planner.strike").warning(
+                "atomic-drop: strike.step raised %s: %s",
+                type(exc).__name__, exc,
+            )
+            return []
 
     # Unknown phase — defensive fallback.
     state["phase"] = PHASE_CONSOLIDATION

@@ -124,25 +124,30 @@ def cmd_run(args: argparse.Namespace) -> int:
     t0_all = time.perf_counter()
 
     for seed in seeds:
-        elect_path = out_dir / f"seed{seed}_elect.jsonl"
-        strike_path = out_dir / f"seed{seed}_strike.jsonl"
-        # Clean per-seed logs so re-runs don't compound.
-        elect_path.unlink(missing_ok=True)
-        strike_path.unlink(missing_ok=True)
-
-        # Strike enabled + both logs point at this seed's files.
+        # Strike enabled for all seeds.
         os.environ["BUILDUP_PLANNER_STRIKE_ENABLED"] = "1"
-        os.environ["BUILDUP_PLANNER_ELECT_LOG"] = str(elect_path)
-        os.environ["BUILDUP_PLANNER_STRIKE_LOG"] = str(strike_path)
 
         t0 = time.perf_counter()
         # Run BOTH seat orderings to mirror the A/B's full-panel behaviour
         # (focal as p0 then as p1). Each side contributes one entry.
         for swap in (False, True):
+            # Per-(seed, seat) log files — the previous shape (shared
+            # per-seed file across the two swap iterations) caused the
+            # second iteration's _summarise_logs to double-count the
+            # first iteration's entries. Per-seat files make the demux
+            # implicit and the JSONL self-describing.
+            seat = 0 if not swap else 1
+            elect_path = out_dir / f"seed{seed}_seat{seat}_elect.jsonl"
+            strike_path = out_dir / f"seed{seed}_seat{seat}_strike.jsonl"
+            elect_path.unlink(missing_ok=True)
+            strike_path.unlink(missing_ok=True)
+            os.environ["BUILDUP_PLANNER_ELECT_LOG"] = str(elect_path)
+            os.environ["BUILDUP_PLANNER_STRIKE_LOG"] = str(strike_path)
+
             p0, p1 = (
                 (focal_path, opp_path) if not swap else (opp_path, focal_path)
             )
-            focal_seat = 0 if not swap else 1
+            focal_seat = seat
             res = play_one(seed, p0, p1)
             focal_rew = res.rewards[focal_seat]
             focal_won = (focal_rew is not None and focal_rew > 0)
