@@ -988,6 +988,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             _instr_solo_gated = 0
             _instr_scored_status = 0
             _instr_positive = 0
+            _instr_pair_scores: list[float] = []
+            _instr_pair_statuses: list[str] = []
             # Always tracked (not gated on _JOINT_INSTRUMENT_PATH) — the
             # triples block below uses this as its trigger condition.
             pair_positive_for_tgt = 0
@@ -1027,6 +1029,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                     joint_count += 1
                     if _JOINT_INSTRUMENT_PATH:
                         _instr_attempted += 1
+                        _instr_pair_scores.append(float(j_score))
+                        _instr_pair_statuses.append(str(j_status))
                         if j_status == "scored":
                             _instr_scored_status += 1
                             if j_score > 0.0:
@@ -1043,6 +1047,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             _instr_triples_attempted = 0
             _instr_triples_solo_gated = 0
             _instr_triples_positive = 0
+            _instr_triple_scores: list[float] = []
+            _instr_triple_statuses: list[str] = []
             if (JOINT_TRIPLES_ENABLED
                     and pair_positive_for_tgt == 0
                     and triple_count < JOINT_MAX_TRIPLES
@@ -1103,6 +1109,12 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                                 triple_count += 1
                                 if _JOINT_INSTRUMENT_PATH:
                                     _instr_triples_attempted += 1
+                                    _instr_triple_scores.append(
+                                        float(j_score),
+                                    )
+                                    _instr_triple_statuses.append(
+                                        str(j_status),
+                                    )
                                     if (j_status == "scored"
                                             and j_score > 0.0):
                                         _instr_triples_positive += 1
@@ -1130,6 +1142,10 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                     "n_triples_attempted": _instr_triples_attempted,
                     "n_triples_solo_gated": _instr_triples_solo_gated,
                     "n_triples_positive": _instr_triples_positive,
+                    "pair_scores": list(_instr_pair_scores),
+                    "pair_statuses": list(_instr_pair_statuses),
+                    "triple_scores": list(_instr_triple_scores),
+                    "triple_statuses": list(_instr_triple_statuses),
                     "any_solo_winner": bool(
                         _instr_positive_solo_by_tgt.get(int(tgt_id), False),
                     ),
