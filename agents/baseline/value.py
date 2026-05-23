@@ -8,9 +8,20 @@ production term over-weights captures by ~100x in late game and the
 chooser stops valuing ship preservation. opp aggregation is max-of-opps
 in 2P and sum-of-opps in 4P (weak-opp captures get full credit).
 
-Opt-in alternative: `BASELINE_VALUE_HEAD=composite` switches the chooser to
-`lib.value_heads.composite_capture_value` (waste + capture-aware per-fleet
-credit). 2P-only — composite does not distinguish opp identity in 4P.
+Opt-in alternatives (`select_favor_fn` dispatch):
+- `composite` → `lib.value_heads.composite_capture_value` (waste + capture-
+  aware per-fleet credit; 2P-only — composite does not distinguish opp
+  identity in 4P).
+- `projected` → `lib.value_heads.projected_rank_diff` (production-
+  compounding per-seat ProjectedTotal, max-of-opps aggregation).
+- `projected_sum` → `lib.value_heads.projected_rank_diff_sum` (same
+  per-seat scalar; sum-of-opps aggregation in 4P, matches favor).
+
+Switch via env var `BASELINE_VALUE_HEAD=<choice>` for operator workflows
+OR via the numeric `lib.value_heads.VALUE_HEAD_CHOICE` constant which is
+patchable by `scripts/ab_variants.py` for clean A/B bundles. The numeric
+constant takes priority over the env var.
+
 Default remains `favor` (proven on v15 line at live μ~1108).
 """
 

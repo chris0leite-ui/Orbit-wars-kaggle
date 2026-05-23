@@ -257,7 +257,10 @@ def composite_capture_value(
 # is built into the math, not a tuned passivity-penalty term.
 
 
-PROJECTION_LAMBDA: float = 0.05  # same scale as CAPTURE_REWARD_WEIGHT
+# No type annotation — scripts/ab_variants.py regex-patches `NAME = number`
+# lines and does not match annotated assignments. Same convention as
+# VALUE_HEAD_CHOICE above.
+PROJECTION_LAMBDA = 0.05  # same scale as CAPTURE_REWARD_WEIGHT
 
 
 def _per_seat_in_flight_credit(
@@ -266,25 +269,39 @@ def _per_seat_in_flight_credit(
     *,
     capture_weight: float = CAPTURE_REWARD_WEIGHT,
     waste_weight: float = WASTE_PENALTY_WEIGHT,
+    projection_lambda: float = PROJECTION_LAMBDA,
     horizon: int = DEFAULT_HORIZON,
-) -> dict:
-    """Per-seat in-flight capture / waste credit.
+) -> tuple[dict, dict]:
+    """Per-seat in-flight capture / waste credit + per-seat projection
+    adjustment for predicted post-capture ownership transfer.
 
     Generalises composite_capture_value's per-fleet logic: instead of
     attributing the credit to one seat (`my_id`), attributes each fleet's
     predicted fate to its OWN seat's bucket. WorldModel built once.
+
+    Returns `(credits, proj_adjustments)` where:
+    - `credits[seat]` is the in-flight capture/waste credit for that
+      seat (positive for predicted captures, negative for OOB/sun
+      waste and for bounced attacks).
+    - `proj_adjustments[seat]` debits the CURRENT owner of a planet
+      that's about to be captured for the period [arrival, T]. This is
+      the modeling-correct fix to the double-counting bug: without it,
+      a captured planet's `λ × P × (T-step)` stays with the current
+      owner in `proj_per` while the capturer gets capture credit on
+      top, sign-flipping the value of in-flight captures at the leaf.
     """
     credits = {i: 0.0 for i in range(num_seats)}
+    proj_adjustments = {i: 0.0 for i in range(num_seats)}
     world = World.from_obs(obs)
     if not world.planets_by_id:
-        return credits
+        return credits, proj_adjustments
     raw = world.obs_raw
     fleets_raw = (
         raw.get("fleets", []) if isinstance(raw, dict)
         else getattr(raw, "fleets", [])
     )
     if not fleets_raw:
-        return credits
+        return credits, proj_adjustments
 
     from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet  # noqa: E402
     fleets = [Fleet(*f) for f in fleets_raw]
@@ -301,16 +318,31 @@ def _per_seat_in_flight_credit(
         if target is None:
             credits[owner] -= waste_weight * ships
             continue
+        current_target_owner = int(target.owner)
+        if current_target_owner == owner:
+            # Genuine reinforcement — planet was already ours pre-arrival.
+            # Ships are already counted in ships_per; no extra credit.
+            continue
+        # WorldModel resolves combat at eta, so owner_at[eta] is post-combat.
+        # `pred_owner == owner` means our fleet captures (fresh transfer);
+        # anything else means we bounce or another fleet got there first.
         pred_owner = model.owner_at(target.id, eta)
-        pred_ships = model.ships_at(target.id, eta) or 0.0
-        if pred_owner == owner:
-            continue  # over-reinforcement — neutral
-        if ships > pred_ships:
-            time_remaining = max(0, EPISODE_STEPS_TOTAL - step_now - eta)
-            credits[owner] += capture_weight * float(target.production) * float(time_remaining)
-        else:
+        if pred_owner != owner:
             credits[owner] -= waste_weight * ships
-    return credits
+            continue
+        # Fresh capture: current owner != us, post-combat owner == us.
+        time_remaining = max(0, EPISODE_STEPS_TOTAL - step_now - eta)
+        credits[owner] += capture_weight * float(target.production) * float(time_remaining)
+        # Transfer projection: the current owner stops getting credit for
+        # the post-arrival [eta, T] window once we capture. Without this
+        # debit, the planet's full `λ × P × (T-step)` term in proj_per
+        # remains with the current owner AND the capturer gets credit on
+        # top, biasing V_diff low for the attacker by `λ × P × (T-step-eta)`.
+        if 0 <= current_target_owner < num_seats:
+            proj_adjustments[current_target_owner] -= (
+                projection_lambda * float(target.production) * float(time_remaining)
+            )
+    return credits, proj_adjustments
 
 
 def _projected_totals(
@@ -352,14 +384,18 @@ def _projected_totals(
             continue
         ships_per[owner] += float(f[6])
 
-    credits = _per_seat_in_flight_credit(
+    credits, proj_adjustments = _per_seat_in_flight_credit(
         obs, num_seats,
         capture_weight=capture_weight, waste_weight=waste_weight,
+        projection_lambda=projection_lambda,
         horizon=horizon,
     )
 
     return {
-        i: ships_per[i] + credits[i] + projection_lambda * proj_per[i]
+        i: ships_per[i]
+           + credits[i]
+           + projection_lambda * proj_per[i]
+           + proj_adjustments[i]
         for i in range(num_seats)
     }
 
@@ -386,6 +422,15 @@ def projected_rank_diff(
     sibling `projected_rank_diff_sum` keeps the per-seat scalar and
     matches favor's 4P aggregation.
 
+    NOTE (2026-05-23, modeling fix): predicted in-flight captures now
+    transfer projection from the current planet owner to the capturing
+    seat (see `_per_seat_in_flight_credit`). The pre-fix code had a
+    double-counting bug where the planet's `λ × P × (T-step)` stayed
+    with the current owner while the capturer also got a capture
+    credit, biasing V(s) low for inbound captures by `λ × P × (T-step-eta)`.
+    The 4P regression cited above may be partly attributable to this
+    bug; re-run is required to know.
+
     Linear time-remaining (no γ-discount) per the PV-off finding
     (live A/B 81.2% on submission 52784853). T=500 is a hard horizon;
     exponential decay double-counts.
@@ -395,10 +440,12 @@ def projected_rank_diff(
         capture_weight=capture_weight, waste_weight=waste_weight,
         projection_lambda=projection_lambda, horizon=horizon,
     )
-    my_total = totals[my_id]
+    my_total = totals.get(my_id, 0.0)
     if num_seats <= 1:
         return my_total
-    opp_total = max(v for k, v in totals.items() if k != my_id)
+    opp_total = max(
+        (v for k, v in totals.items() if k != my_id), default=0.0,
+    )
     return my_total - opp_total
 
 
@@ -428,11 +475,13 @@ def projected_rank_diff_sum(
         capture_weight=capture_weight, waste_weight=waste_weight,
         projection_lambda=projection_lambda, horizon=horizon,
     )
-    my_total = totals[my_id]
+    my_total = totals.get(my_id, 0.0)
     if num_seats <= 1:
         return my_total
     if num_seats <= 2:
-        opp_total = max(v for k, v in totals.items() if k != my_id)
+        opp_total = max(
+            (v for k, v in totals.items() if k != my_id), default=0.0,
+        )
     else:
         opp_total = sum(v for k, v in totals.items() if k != my_id)
     return my_total - opp_total

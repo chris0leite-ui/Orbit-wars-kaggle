@@ -199,6 +199,100 @@ def test_projected_rank_diff_ignores_neutrals():
     assert projected_rank_diff(obs, my_id=0, num_seats=2) == 0.0
 
 
+def test_projected_totals_debits_current_owner_on_predicted_capture():
+    """Regression test for the projection-vs-capture-credit double-
+    counting bug. When seat 0's fleet is predicted to capture seat 1's
+    planet at ETA t, two things must happen:
+
+      1. credits[0] += capture_weight × P × (T - step - eta)   (capturer)
+      2. proj_adjustments[1] -= λ × P × (T - step - eta)        (defender)
+
+    Pre-fix, the capture-credit branch never fired for real captures
+    (WorldModel resolves combat AT eta so `pred_owner == owner` for a
+    successful attacker → existing `continue` swallowed the capture as
+    "over-reinforcement"). Even if the credit fired, the planet's full
+    `λ × P × (T-step)` term stayed in proj_per[1]. Post-fix both fire:
+    classifier uses target.owner (pre-arrival ownership) and proj is
+    transferred to the capturer.
+
+    Setup: P1 (enemy, P=5, 0 garrison). Our 500-ship fleet from (50,50)
+    angle=0 reaches (90,50) in ETA≈8. Production-during-flight gives
+    P1 ~40 ships at arrival; 500 > 40 → fresh capture predicted.
+    Defender's total absent the transfer: `λ × P × (T-step)` =
+    0.05 × 5 × 400 = 100. With transfer: drops to ≲ 5 (only the
+    pre-arrival window remains).
+    """
+    from lib.value_heads import _projected_totals
+    obs = _obs(
+        [(0, 0, 10, 50, 1.0, 0, 2), (1, 1, 90, 50, 1.0, 0, 5)],
+        fleets=[(0, 0, 50, 50, 0.0, 0, 500)],
+        step=100,
+    )
+    totals = _projected_totals(obs, num_seats=2)
+    assert totals[1] < 25, (
+        f"Defender's total ({totals[1]:.2f}) retains nearly the full "
+        f"100-unit projection for a planet that's about to be captured "
+        f"— projection transfer not applied. Expected ≲ 5."
+    )
+
+
+def test_projected_rank_diff_inbound_capture_is_not_a_regression_for_attacker():
+    """A predicted in-flight capture must NOT make V_diff worse for the
+    attacker than holding the same ships in garrison.
+
+    State A: my fleet of 500 ships from (50,50) angle=0 already in
+    flight toward enemy planet at (90,50). Capture certain (ETA≈8,
+    defender ships at arrival ≈40, attacker ships 500).
+
+    State B: same total ships but all 500 garrisoned at my home planet,
+    no fleet inbound. Enemy planet stays enemy-owned.
+
+    Pre-fix, V_diff(A) − V_diff(B) was approximately
+    `−λ × P × (T − step − eta)` ≈ −98 — the in-flight capture
+    appeared as a value regression. Post-fix it must be ≥ 0.
+    """
+    from lib.value_heads import projected_rank_diff
+    no_fleet = _obs(
+        [(0, 0, 10, 50, 1.0, 500, 2), (1, 1, 90, 50, 1.0, 0, 5)],
+        step=100,
+    )
+    with_fleet = _obs(
+        [(0, 0, 10, 50, 1.0, 0, 2), (1, 1, 90, 50, 1.0, 0, 5)],
+        fleets=[(0, 0, 50, 50, 0.0, 0, 500)],
+        step=100,
+    )
+    v_no = projected_rank_diff(no_fleet, my_id=0, num_seats=2)
+    v_with = projected_rank_diff(with_fleet, my_id=0, num_seats=2)
+    # Pre-fix: capture was a no-op on V_diff (capture credit silently
+    # caught by `pred_owner == owner` as "reinforcement"). Post-fix:
+    # capture is properly credited + projection transferred from
+    # defender. Expected Δ ≈ 2 × λ × P × (T-step-eta) ≈ 196.
+    assert v_with - v_no > 100, (
+        f"Inbound capture barely registers: v_no_fleet={v_no:.3f} "
+        f"v_with_fleet={v_with:.3f}; Δ={v_with - v_no:.3f} "
+        f"(should be >>100 — capturing P=5 prod for ~390 turns "
+        f"should add ~λP(T-step-eta) on both attacker credit AND "
+        f"defender projection debit)"
+    )
+
+
+def test_projected_rank_diff_inbound_capture_symmetric_zero_sum():
+    """V(me=attacker) + V(me=defender) ≈ 0 in 2P max-agg. Sanity check
+    that the projection transfer doesn't break the antisymmetry."""
+    from lib.value_heads import projected_rank_diff
+    obs = _obs(
+        [(0, 0, 10, 50, 1.0, 0, 2), (1, 1, 90, 50, 1.0, 0, 5)],
+        fleets=[(0, 0, 50, 50, 0.0, 0, 500)],
+        step=100,
+    )
+    v_me = projected_rank_diff(obs, my_id=0, num_seats=2)
+    v_opp = projected_rank_diff(obs, my_id=1, num_seats=2)
+    assert abs(v_me + v_opp) < 1e-6, (
+        f"Asymmetric V_diff: v_me={v_me:.3f}, v_opp={v_opp:.3f}, "
+        f"sum={v_me + v_opp:.3f} (should be ~0 in 2P max-agg)"
+    )
+
+
 def test_projected_rank_diff_in_flight_fleets_count_as_owner_ships():
     """A ship in my fleet shows up in ships_per[me] same as a garrisoned ship."""
     from lib.value_heads import projected_rank_diff
