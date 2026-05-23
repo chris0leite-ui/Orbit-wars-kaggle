@@ -20,6 +20,47 @@
 
 ## Pending — promotion needed
 
+### [ ] [CODE-COMP-DISCOVERED] **TOP PRIORITY** Random-elim gate is a pre-submit hard requirement
+
+`tag: random-elim-gate-mandatory` (2026-05-23, claude/session-EqJuT).
+
+**Rule:** any agent being considered for a Kaggle submission must
+first pass `scripts/random_elim_gate.py <focal> --n 16` at **100%
+wins, ALL by elimination** (`opp_planets == 0` at the terminal
+observation), with random seat assignment. n=16 is the hard floor;
+n=32 is recommended for production candidates. Wins by score / by
+step-500 timeout do **NOT** count.
+
+**Where to insert:** new CLAUDE.md rule (next number after current
+Rule 47). Sub-clause of Rule 12 (submission discipline) and Rule 43
+(multi-opponent panel). Random is the weakest reference opponent on
+the panel; failing to crush it at 100% by elim guarantees latent
+bugs the ladder will surface.
+
+**Why:** `agents/lagrange_simple` v1 looked viable on the single-
+game smoke (1/1 win vs random in 120 steps), but the n=16 gate
+surfaced **two distinct latent failure modes** that would have
+shipped to live:
+
+1. `tag: python-truthiness-gotcha-planet-id-zero` — `int(x or -1)`
+   evaluated to -1 when `hit_planet_id == 0`, silently dropping
+   every shot at planet id 0. Caused gate failure at seed 32966
+   (game ran to step 500, opp owned planet 0 the whole game).
+2. `tag: midgame-filter-overrejects-in-dominant-endgame` — the
+   B1 hold filter (load-bearing for +63 μ orbitfix) blocked every
+   attack on opp's 3-planet pocket when we held 29 planets.
+   Caused gate failure at seed 14514 (game ran to step 500, opp
+   owned 3 planets).
+
+Both bugs were invisible to single-game smoke; both would have
+burned rolling-pair slots on Kaggle. The n=16 random-elim gate
+is the cheapest screen that catches this class of bug.
+
+**Cost evidence:** 2 latent failure modes caught in one gate run
+(~3 min wallclock). Without the gate, each would have produced a
+weak Kaggle submission that survives the rolling-last-2 floor only
+because random opponents on the ladder lose to almost anything.
+
 ### [ ] [CROSS-CUTTING] **TOP PRIORITY** SessionStart hook: bootstrap + git fetch
 
 `tag: fix-not-validated-against-real-failing-state` (2026-05-14),

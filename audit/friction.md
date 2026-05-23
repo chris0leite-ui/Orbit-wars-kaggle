@@ -13,6 +13,52 @@
 > `audit/friction-archive-YYYY-MM-DD.md` and reset.
 >
 > Last rotation: 2026-05-14 (claude/audit-workflow-friction-XD56a).
+
+## 2026-05-23 (claude/session-EqJuT — simplest Lagrangian agent)
+
+- `tag: python-truthiness-gotcha-planet-id-zero` — building
+  `agents/lagrange_simple/score.py`: the filter
+  `int(fate.hit_planet_id or -1) != int(tgt.id)` silently dropped
+  every shot at planet id 0 (since `0 or -1 == -1` in Python).
+  Caused random-elim gate failure at seed 32966 (game ran to step
+  500 with opp still owning planet 0 the whole time, scored 15/16
+  ELIM + 1 WIN-by-score). Root cause: idiomatic-falsiness trap
+  when integer ids can include 0. **Fix:** use `x is not None`
+  not `(x or default)` for nullable ints / ids; pin via regression
+  test `test_planet_id_zero_is_not_silently_dropped`. Promotion
+  candidate: code-review rule "no `or default` for ints / ids".
+- `tag: midgame-filter-overrejects-in-dominant-endgame` — same
+  session, same gate, different seed (14514): the B1
+  `_target_holdable_after_capture` filter (load-bearing for the
+  +63 μ orbitfix on the ladder) blocked EVERY approach to opp's
+  3-planet pocket when we owned 29 planets and 16k+ ships. Game
+  dragged to step 500 with opp still owning 3 planets. Root cause:
+  filter calibrated for midgame ladder play where recapture risk
+  is real; in dominant endgame, our wide base makes recapture
+  cheap so the rejection is structurally wrong. **Fix:** gate the
+  filter on `n_my >= 3 * n_opp` — skip it in dominant endgame.
+  Both previous failures (32966 + 14514) now ELIM cleanly after
+  fix. Promotion candidate: midgame filters need an explicit
+  dominant-endgame relaxation policy or game-phase gate.
+- `tag: started-on-wrong-branch` — harness designated
+  `claude/session-EqJuT`, but session resumed on
+  `claude/strategy-axis-decision-3437` from prior session. Built
+  lagrange_simple on the wrong branch; recovered via clean
+  cherry-pick of the 4 commits onto session-EqJuT. Root cause:
+  did not verify branch state against harness rule at
+  session-start (Rule 32 fetch was done, but the branch-name
+  cross-check against the harness directive was not). **Fix:**
+  one-time check; not promoting (harness rule is already in
+  system prompt).
+- `tag: tail-poll-instead-of-monitor` — burned ~30 `cat
+  /tmp/lagrange_*.out` tool calls polling A/B progress when a
+  single `Monitor` or `until-loop` Bash `run_in_background`
+  would have produced one notification on completion. Noisy
+  session log, no compute waste. **Fix:** when waiting for a
+  background job, use Monitor (per-event) or
+  `run_in_background: true` with `until <check>` (single
+  notification). Already documented in Bash/Monitor tool
+  descriptions; this is a calibration miss, not a rule gap.
 > Full prior history at `audit/friction-archive-2026-05-14.md`.
 
 ## Just-landed fixes (claude/audit-workflow-friction-XD56a — 2026-05-14)
