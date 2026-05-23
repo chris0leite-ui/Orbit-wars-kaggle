@@ -19,6 +19,52 @@
 
 ## Pending — promotion needed
 
+### [ ] [CROSS-CUTTING] Surface team-best submission separately from this-branch's last submit
+
+`tag: branch-lagging-sibling-by-46mu` (2026-05-23,
+claude/strategy-framework-design-OyoYR).
+
+State files (`state/current.md`) carry `current_submitted_agent` and
+`team_peak_agent` fields, but the team-peak field was set 2026-05-17
+to v15_banded and has not been refreshed since. Meanwhile a sibling
+branch (`claude/extract-physics-trajectory-Vjaz9`) shipped
+`baseline_joint_aggr_consolidated_orbitfix` at μ=1165.4 on 2026-05-22
+— **46 μ above** the recorded team peak. The 5/23 session on the
+strategy-framework branch ran an entire leaf-side rerun cycle on top
+of v15 (μ≈1119.6) without surfacing that the team's strongest agent
+was now on a sibling branch and 46 μ ahead. Session-start hook
+prints `git log HEAD..origin/main` which DOES contain the sibling's
+submit commits — the information was visible and not processed.
+
+**Fix:** two coordinated changes —
+
+1. Add a `team_best_submission` block to `state/current.md` schema,
+   distinct from `current_submitted_agent` and `team_peak_agent`.
+   Format:
+   ```yaml
+   team_best_submission:
+     sub_id: <int>
+     agent: <name>
+     branch: <claude/...-slug>
+     mu: <float>
+     refreshed_utc: <ISO>
+   ```
+   Updated by every WRAPUP that pushes a new submit, and by the
+   session-start hook if it can prove the previous value is stale.
+
+2. Extend the session-start hook (per comp's
+   `bootstrap.sh` / SessionStart hook) to: (a) run
+   `kaggle competitions submissions <comp> --csv | head -20`,
+   (b) parse out the top `publicScore` across all submissions in
+   the last 7 days, (c) report `TEAM BEST: <agent> @ μ=<x>` if it
+   differs from `state/current.md`'s `current_submitted_agent`.
+   Same gate as the existing `git fetch origin` step.
+
+**Cost evidence:** an entire session (5/23) optimised against a
+foundation 46 μ behind team-best. The leaf-side rerun itself was
++0 μ; the strategic miss was the cost. Promotion ratified by PI
+2026-05-23 in postmortem.
+
 ### [ ] [CROSS-CUTTING] Read state docs + recent audits before proposing subsystem edits
 
 `tag: wrong-file-recon-skipped-state-md` +

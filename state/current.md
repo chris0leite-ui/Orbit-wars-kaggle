@@ -12,7 +12,7 @@
 > (clean modular re-baseline of v15).
 
 ```yaml
-date: 2026-05-17
+date: 2026-05-23
 deadline: 2026-06-23 23:59 UTC
 
 # Submitted agents — what they are and when they shipped.
@@ -83,6 +83,24 @@ saturation_count: 0
 #   52497828  day1_baseline      2026-05-10 00:09 COMPLETE
 
 session_log:
+  - 2026-05-23 — strategy-framework-design-OyoYR (leaf-side rerun
+    with capture fix). Re-tested favor vs projected_rank_diff_sum at
+    n=8 after landing 28ce9f3 (capture-classifier + projection-transfer
+    fix in lib/value_heads.py). Result: both heads 5/8 = 62.5%,
+    identical winner pattern on all 8 seeds — TIE confirmed at this
+    sample size. Pre-panel spot-check showed the fix IS expressive
+    (2 winner flips on first 4 seeds, 80-120 turn divergences) but
+    chooser-level shift doesn't propagate to placements against
+    [v7_0_drop_one, v4_planner, v3.5.1]. 5/19 verdict holds:
+    leaf-side axis structurally exhausted under baseline chooser.
+    Capture-fix stays on branch as a permanent modeling improvement;
+    no submission. Audit: audit/2026-05-23-leaf-side-rerun-with-
+    capture-fix.md (commit 49c02dd). FLAGGED for next session:
+    this branch's foundation (v15 μ≈1119.6) is 46 μ below sibling
+    extract-physics-trajectory-Vjaz9's orbitfix submission (sub
+    52912707, μ=1165.4). knowledge-base/flags/2026-05-23-branch-
+    lagging-sibling-by-46mu.md + questions/2026-05-23-merge-vs-
+    pivot-on-sibling-orbitfix.md.
   - 2026-05-17 — kaggle-baseline-strategy-lO4mm.
     Shipped agents/baseline/{main,proposer,chooser,value}.py — clean
     modular re-implementation of v15 (live champion, 5/16 push), 577 LOC
@@ -153,6 +171,7 @@ mechanism_families_explored:
   - v15-multi-wait-grid-banded-dedup         # extra_surplus (0,5,12) + wait_band {0,1-7,>=8}
   - v16-v20-chooser-saturation-iteration     # F4 vulnerability / dogpile / reactive-step-0 — all HOLD per Rule 37
   - baseline-clean-modular-reimpl-v15        # agents/baseline/ (this branch)
+  - projected-rank-diff-value-head-leaf-side # 5/19 + 5/23 — TIE, axis closed at N=2 variants
 
 gate_status: cleared                          # full pytest + new baseline tests pass
 ```

@@ -498,6 +498,30 @@ relevant skill file or source code, not back into friction.md.
   responsiveness, predicted-outcome-matched, timing headroom).
 
 
+## 2026-05-23 (claude/strategy-framework-design-OyoYR — leaf-side rerun w/ capture fix)
+
+- `tag: axis-reopened-with-new-fix` — re-tested leaf-side
+  (favor vs projected_rank_diff_sum) at 8 games because the
+  28ce9f3 capture-classifier fix landed; expected the fix would unlock
+  the axis. Result: 5/8 = 5/8 (same TIE shape as 5/19's n=128 panel).
+  **Root cause:** treating a modeling fix as a fresh slot on an axis
+  the same branch declared exhausted 4 days ago (32cdd2c). Rule 37
+  cap was already binding; "fix-induced re-litigation" is a Rule 37
+  loophole. **Fix:** when a fix lands on an already-exhausted axis,
+  verify the fix via the cheapest possible test (regression unit-test
+  + spot-check argmax shifts on synthesised input) and only escalate
+  to a full panel if both (a) the spot-check shows ≥1 placement flip
+  AND (b) PI explicitly re-opens the axis with a fresh slot vote.
+- `tag: spot-check-too-thin-first-pass` — initial expressivity probe
+  was 1 seed × 1 seat (seed=42), reported "2 turn divergences" — a
+  near-null. Bumped to 4 seeds × 1 seat: 80-120 turn divergences and
+  2 winner flips. The 1-seed default was misleading because seed=42
+  happened to be a comfortable focal win (both bundles converge to
+  the same trajectory in dominant positions). **Root cause:** the
+  5/19 friction set the policy but not the sample size. **Fix:**
+  `/tmp/inspect_*.py` spot-checks default to ≥4 seeds × ≥1 seat, NOT
+  1×1. One seed is a sampling-distribution artifact, not a signal.
+
 ## 2026-05-19 (claude/strategy-framework-design-OyoYR — projected_rank_diff axis)
 
 - `tag: full-panel-AB-before-single-game-evidence` — ran two 256-game
