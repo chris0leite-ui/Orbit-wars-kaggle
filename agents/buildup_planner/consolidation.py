@@ -33,6 +33,27 @@ os.environ.setdefault("BASELINE_NEUTRAL_EARLY_EXTRA", "1.5")
 os.environ.setdefault("BASELINE_NEUTRAL_EARLY_HORIZON", "50")
 os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
 
+# Ablation knob (2026-05-23): switch CONSOLIDATION's chooser between
+# trajectory (default) and roi (closed-form ROI prior + sniper/drain post-
+# passes). Default trajectory matches the previously-shipped configuration;
+# set BUILDUP_PLANNER_CHOOSER=roi to test the ROI chooser as a different
+# equilibrium against full-strength baseline. The env var IS NOT read by
+# baseline.main directly — we set BASELINE_CHOOSER via setdefault below
+# so the actual switch happens in baseline.main's dispatcher. NOTE: this
+# DOES leak to baseline-as-opp via env var, so the matchup stays symmetric
+# in chooser choice. The hypothesis being tested is whether the ROI+sniper+
+# drain equilibrium gives more room for FINISHER's edge to dominate.
+_CHOOSER = os.environ.get("BUILDUP_PLANNER_CHOOSER", "trajectory").strip().lower()
+if _CHOOSER == "roi":
+    os.environ.setdefault("BASELINE_CHOOSER", "roi")
+    # ROI chooser path in baseline.main also applies the offensive post-
+    # passes: idle drain, stagnant drain, combat stack, sniper strikes.
+    # Default OFF in trajectory mode; ON in roi mode (no env flip needed
+    # — the post-passes are unconditionally called inside the roi branch
+    # at agents/baseline/main.py:988-992).
+else:
+    os.environ.setdefault("BASELINE_CHOOSER", "trajectory")
+
 from agents.baseline.main import agent as _baseline_agent  # noqa: E402
 
 
