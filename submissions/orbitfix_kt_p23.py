@@ -1,13 +1,10 @@
-# orbitfix_kt_p23 — bundled from agents/baseline with env-var stack
-# (orbitfix substrate + kinematic table + Phase 2 adaptive K +
-#  Phase 3 leaf in-flight fate check + attack-pull positional term).
-# Includes static-planet predict_relative fix (1ad6cfa), comet-aware
-# reinforce dispatch (4c80932), comet-aware fleet_target_planet
-# (289d8ed), and attack-pull positional value head (this commit).
-# Rebundled from agents/baseline via scripts/bundle_agent.py +
-# manual env-stack prepend (the bundler can't inline agents/baseline
-# from a wrapper-style agent_dir; same approach as c8d9c47 / sub
-# 52949672 used).
+# orbitfix_kt_p23 — bundled from agents/baseline with env-var stack.
+# Stack: orbitfix substrate + KT + Phase 2 (adaptive K) + Phase 3
+# (leaf survival check; INERT under attack_pull head — composite
+# never fires) + attack-pull positional value head (FORWARD
+# DEPLOYMENT INCENTIVE). Cheap head: `favor` + attack_pull, no
+# composite per-fleet predict_fleet_fate (which blew p95 → 1931ms
+# in the hybrid_attack_pull variant smoke 2026-05-23).
 from __future__ import annotations
 
 import os as _kt_p23_os
@@ -23,7 +20,7 @@ _kt_p23_os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
 _kt_p23_os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
 _kt_p23_os.environ.setdefault("BASELINE_ADAPTIVE_K", "1")
 _kt_p23_os.environ.setdefault("COMPOSITE_FLEET_SURVIVAL_CHECK", "1")
-_kt_p23_os.environ.setdefault("BASELINE_VALUE_HEAD", "hybrid_attack_pull")
+_kt_p23_os.environ.setdefault("BASELINE_VALUE_HEAD", "attack_pull")
 _kt_p23_os.environ.setdefault("BASELINE_ATTACK_PULL_WEIGHT", "0.5")
 _kt_p23_os.environ.setdefault("BASELINE_ATTACK_PULL_DECAY", "30.0")
 
@@ -11048,24 +11045,48 @@ def _attack_pull_ship_value(obs, me: int) -> float:
     return total
 
 
+def favor_attack_pull(obs, me: int, num_seats: int = 2,
+                      gamma: float = DEFAULT_GAMMA) -> float:
+    """favor (cheap positionless baseline) + attack-pull term (2P only).
+
+    The cheap variant of the attack-pull design. Layers the positional
+    pull onto the canonical `favor` head — does NOT go through the
+    expensive composite_capture_value path (which runs predict_fleet_fate
+    per fleet at every leaf call, adding ~600ms per turn when
+    COMPOSITE_FLEET_SURVIVAL_CHECK=1).
+
+    Wallclock vs `favor`: ~10-30 ms per turn extra (single _attack_pull
+    loop per leaf call × ~60 leaf calls).
+
+    4P fallback: returns favor unchanged. The A2 weakness-exploitation
+    inside `favor` already biases toward weakest opp position in 4P;
+    adding positional bias on top historically regresses 4P per the
+    favor_hybrid_spatial audit.
+    """
+    base = favor(obs, me, num_seats, gamma)
+    if ATTACK_PULL_WEIGHT == 0.0 or num_seats > 2:
+        return base
+    return base + ATTACK_PULL_WEIGHT * _attack_pull_ship_value(obs, me)
+
+
 def favor_hybrid_attack_pull(obs, me: int, num_seats: int = 2,
                              gamma: float = DEFAULT_GAMMA) -> float:
-    """favor_hybrid + attack-pull term (2P only).
+    """favor_hybrid + attack-pull term (2P only). Heavy variant.
 
-    Sibling to favor_hybrid_spatial but the positional term pulls
-    toward ENEMY planets only, not all non-our planets. Designed to
-    address PI's "agent is too passive" diagnosis (2026-05-23): the
-    base hybrid head treats ships as positionless, so the chooser
-    cannot distinguish "well-positioned" from "well-stockpiled" and
-    the agent accumulates rear ships instead of pressing forward.
+    Layers attack_pull on top of favor_hybrid (which calls
+    favor_composite in 2P — the expensive waste-aware leaf with
+    per-fleet predict_fleet_fate). Per-turn cost roughly 3-5x the
+    cheap `favor_attack_pull` variant; use only if the composite
+    head's per-fleet survival check is desired AND has been verified
+    to fit inside the wallclock budget at the agent's K/N settings.
 
-    4P fallback: returns favor_hybrid unchanged (A2 already biases
-    toward weakest opp position; adding more positional bias on top
-    historically regresses 4P per the favor_hybrid_spatial audit).
+    PI 2026-05-23 smoke: enabling this on orbitfix_kt_p23 (Phase 2
+    adaptive K + Phase 3 survival check) blew p95 from 790ms → 1931ms
+    and lost vs v7_0. Stay on `favor_attack_pull` unless explicitly
+    tuned.
 
     Purely additive — when ATTACK_PULL_WEIGHT=0 or num_seats > 2 it
-    equals favor_hybrid exactly. Independent of favor_hybrid_spatial:
-    selecting one head excludes the other via `select_favor_fn`.
+    equals favor_hybrid exactly.
     """
     base = favor_hybrid(obs, me, num_seats, gamma)
     if ATTACK_PULL_WEIGHT == 0.0 or num_seats > 2:
@@ -11109,6 +11130,8 @@ def select_favor_fn():
         return favor_hybrid_spatial
     if choice == "hybrid_attack_pull":
         return favor_hybrid_attack_pull
+    if choice == "attack_pull":
+        return favor_attack_pull
     return favor
 
 # === inlined: agents/baseline/chooser.py ===

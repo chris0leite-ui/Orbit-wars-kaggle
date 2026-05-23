@@ -27,7 +27,7 @@ os.environ.setdefault("COMPOSITE_FLEET_SURVIVAL_CHECK", "1")
 # planets to address the passivity diagnosis. Replaces the positionless
 # `favor` head with `favor_hybrid_attack_pull` which adds a per-ship
 # weight by closeness to the nearest enemy planet.
-os.environ.setdefault("BASELINE_VALUE_HEAD", "hybrid_attack_pull")
+os.environ.setdefault("BASELINE_VALUE_HEAD", "attack_pull")
 os.environ.setdefault("BASELINE_ATTACK_PULL_WEIGHT", "0.5")
 os.environ.setdefault("BASELINE_ATTACK_PULL_DECAY", "30.0")
 

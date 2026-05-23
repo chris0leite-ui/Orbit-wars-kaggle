@@ -201,9 +201,18 @@ def test_attack_pull_ignores_neutral_planets():
 
 
 def test_select_favor_fn_attack_pull_path():
-    """BASELINE_VALUE_HEAD=hybrid_attack_pull swaps to the new head."""
+    """BASELINE_VALUE_HEAD=attack_pull swaps to the cheap variant
+    (favor + attack-pull, no composite). BASELINE_VALUE_HEAD=
+    hybrid_attack_pull swaps to the heavy variant."""
     import os
-    from agents.baseline.value import select_favor_fn, favor_hybrid_attack_pull
+    from agents.baseline.value import (
+        select_favor_fn, favor_attack_pull, favor_hybrid_attack_pull,
+    )
+    os.environ["BASELINE_VALUE_HEAD"] = "attack_pull"
+    try:
+        assert select_favor_fn() is favor_attack_pull
+    finally:
+        os.environ.pop("BASELINE_VALUE_HEAD", None)
     os.environ["BASELINE_VALUE_HEAD"] = "hybrid_attack_pull"
     try:
         assert select_favor_fn() is favor_hybrid_attack_pull
