@@ -38,10 +38,10 @@ import math
 import os
 
 from agents.baseline.chooser import (
-    BASELINE_OPP_SMART_LEAF_WINDOW,
     affordable_validate_cap,
     opp_actions_for_snap,
     opp_actions_for_step,
+    opp_smart_leaf_window,
 )
 from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn
 from lib.fast_sim import clone as fs_clone
@@ -257,19 +257,39 @@ JOINT_LIFT_USED_TGTS: bool = (
 # `scored` — no new physics. Gated default OFF; orbitfix_kt is the
 # A/B target. MAX_HORIZON_CAP is the hard ceiling so total per-turn
 # budget never explodes.
-ADAPTIVE_K_ENABLED: bool = (
-    os.environ.get("BASELINE_ADAPTIVE_K", "0").strip() == "1"
-)
-ADAPTIVE_K_BUMP: int = int(os.environ.get("BASELINE_CRITICALITY_K_BUMP", "10"))
-ADAPTIVE_K_PROBE: int = int(
-    os.environ.get("BASELINE_CRITICALITY_PROBE", "3"),
-)
-ADAPTIVE_K_MARGIN: float = float(
-    os.environ.get("BASELINE_CRITICALITY_MARGIN", "0.05"),
-)
-ADAPTIVE_K_HORIZON_CAP: int = int(
-    os.environ.get("BASELINE_MAX_HORIZON_CAP", "60"),
-)
+# Phase 2 (calibrated 2026-05-23): per-call env reads via lib.config so
+# A/B harnesses that monkey-patch env vars between fixtures see the new
+# values. The old module-level reads froze at import time.
+
+_DEFAULT_ADAPTIVE_K_BUMP = 10
+_DEFAULT_ADAPTIVE_K_PROBE = 3
+_DEFAULT_ADAPTIVE_K_MARGIN = 0.05
+_DEFAULT_ADAPTIVE_K_HORIZON_CAP = 60
+
+
+def _adaptive_k_enabled() -> bool:
+    from lib.config import env_bool
+    return env_bool("BASELINE_ADAPTIVE_K", False)
+
+
+def _adaptive_k_bump() -> int:
+    from lib.config import env_int
+    return env_int("BASELINE_CRITICALITY_K_BUMP", _DEFAULT_ADAPTIVE_K_BUMP)
+
+
+def _adaptive_k_probe() -> int:
+    from lib.config import env_int
+    return env_int("BASELINE_CRITICALITY_PROBE", _DEFAULT_ADAPTIVE_K_PROBE)
+
+
+def _adaptive_k_margin() -> float:
+    from lib.config import env_float
+    return env_float("BASELINE_CRITICALITY_MARGIN", _DEFAULT_ADAPTIVE_K_MARGIN)
+
+
+def _adaptive_k_horizon_cap() -> int:
+    from lib.config import env_int
+    return env_int("BASELINE_MAX_HORIZON_CAP", _DEFAULT_ADAPTIVE_K_HORIZON_CAP)
 
 
 def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
@@ -501,7 +521,7 @@ def build_trajectory_baseline(snap_base, me: int, num_seats: int,
     out: list[float] = [
         favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma),
     ]
-    leaf_window_start = max(0, horizon - BASELINE_OPP_SMART_LEAF_WINDOW)
+    leaf_window_start = max(0, horizon - opp_smart_leaf_window())
     for step_i in range(horizon):
         if snap.fake_env.done:
             out.append(out[-1])
@@ -608,7 +628,7 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     # their leaf is lite_greedy throughout, matching baseline_favors[h]
     # which is also lite_greedy at that h. Δ stays apples-to-apples.
     bh = horizon if baseline_horizon is None else int(baseline_horizon)
-    leaf_window_start = max(0, bh - BASELINE_OPP_SMART_LEAF_WINDOW)
+    leaf_window_start = max(0, bh - opp_smart_leaf_window())
     for t in range(horizon):
         if snap.fake_env.done:
             break
@@ -698,7 +718,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
     # Phase 4 (2026-05-23, calibrated): same absolute-step anchor as
     # score_candidate_v4. See comment there.
     bh = horizon if baseline_horizon is None else int(baseline_horizon)
-    leaf_window_start = max(0, bh - BASELINE_OPP_SMART_LEAF_WINDOW)
+    leaf_window_start = max(0, bh - opp_smart_leaf_window())
     for t in range(horizon):
         if snap.fake_env.done:
             break
@@ -860,9 +880,10 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         if int(h) > max_horizon_seen:
             max_horizon_seen = int(h)
     baseline_horizon = max_horizon_seen
-    if ADAPTIVE_K_ENABLED and max_horizon_seen > 0:
+    adaptive_on = _adaptive_k_enabled()
+    if adaptive_on and max_horizon_seen > 0:
         baseline_horizon = min(
-            max_horizon_seen + ADAPTIVE_K_BUMP, ADAPTIVE_K_HORIZON_CAP,
+            max_horizon_seen + _adaptive_k_bump(), _adaptive_k_horizon_cap(),
         )
 
     baseline_favors: list[float] = []
@@ -880,9 +901,13 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     # table makes per-candidate cost predictable enough for this.
     cap = N_VALIDATE
     if not use_v3:
+        # Pass adaptive-K extension to the cost model so n_aff reflects
+        # the higher avg-K bumped candidates run at (calibrated 2026-05-23).
+        adaptive_ext = _adaptive_k_bump() if adaptive_on else 0
         n_aff, _per_cand_ms = affordable_validate_cap(
             snap_base, me, num_seats, max_horizon, wallclock_ms,
             min_horizon, gamma,
+            adaptive_k_extension=adaptive_ext,
         )
         cap = min(N_VALIDATE, n_aff)
 
@@ -908,18 +933,22 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             if sid_ in reserved_srcs:
                 continue
         cand_count += 1
-        # Phase 2 (2026-05-22): adaptive compute allocation. After
-        # ADAPTIVE_K_PROBE candidates scored, check the top-1 / top-2
-        # margin; if small (chooser is least confident on this turn),
-        # bump rollout horizon by ADAPTIVE_K_BUMP for subsequent
-        # candidates. Reuses signals already in `scored`; no new physics.
-        # baseline_favors was pre-sized to baseline_horizon so the bumped
-        # horizon is safe to index.
-        if (ADAPTIVE_K_ENABLED and not critical_bump_active
-                and not use_v3 and cand_count > ADAPTIVE_K_PROBE
-                and len(scored) >= 2):
-            top_two = sorted((s[0] for s in scored), reverse=True)[:2]
-            if (top_two[0] - top_two[1]) < ADAPTIVE_K_MARGIN:
+        # Phase 2 (2026-05-22; calibrated 2026-05-23): adaptive compute
+        # allocation. Use cheap_delta from prerank (always available,
+        # no dependence on positive scored Δ) so defensive turns where
+        # no candidate scores positively STILL trigger the bump — the
+        # chooser is most confused exactly there. Pre-2026-05-23 the
+        # gate read top-2 from `scored` which excluded Δ≤0 candidates,
+        # inverting the intent on defensive turns. cheap_delta margin
+        # is a fast proxy for "top candidates are tight"; bump for the
+        # remaining (deeper-rollout) evaluations.
+        if (adaptive_on and not critical_bump_active
+                and not use_v3 and cand_count > _adaptive_k_probe()
+                and len(prerank) >= 2):
+            cheap_top_two = sorted(
+                (float(c[0]) for c in prerank), reverse=True,
+            )[:2]
+            if (cheap_top_two[0] - cheap_top_two[1]) < _adaptive_k_margin():
                 critical_bump_active = True
         if use_v3:
             # v3 path: fire-now-only (binary leaf doesn't generalise to
@@ -936,7 +965,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             effective_horizon = int(prop_horizon)
             if critical_bump_active:
                 effective_horizon = min(
-                    effective_horizon + ADAPTIVE_K_BUMP, baseline_horizon,
+                    effective_horizon + _adaptive_k_bump(), baseline_horizon,
                 )
             score, status, _ = score_candidate_v4(
                 snap_base, src, tgt, int(ships), float(angle),
@@ -987,10 +1016,13 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         # without sharing, JOINT_MAX_PAIRS=60 + solo n_aff=12 blew the
         # 1000ms cap on the 2026-05-22 post-Phase-1 bench (orbitfix_kt
         # seed-0 p95=4425ms). joint_limit halves the cap for joints by
-        # default — env-tunable via BASELINE_JOINT_BUDGET_FRAC.
-        joint_budget_frac = float(
-            os.environ.get("BASELINE_JOINT_BUDGET_FRAC", "0.5"),
-        )
+        # default — env-tunable via BASELINE_JOINT_BUDGET_FRAC. Clamped
+        # to [0, 1] (2026-05-23) so a typo (frac=10.0) can't silently
+        # saturate joint_limit at JOINT_MAX_PAIRS=60, defeating the
+        # shared-budget intent and blowing the per-turn wallclock.
+        from lib.config import env_float as _env_float_local
+        joint_budget_frac = _env_float_local("BASELINE_JOINT_BUDGET_FRAC", 0.5)
+        joint_budget_frac = max(0.0, min(1.0, joint_budget_frac))
         joint_limit = max(
             2, min(JOINT_MAX_PAIRS, int(cap * joint_budget_frac)),
         )

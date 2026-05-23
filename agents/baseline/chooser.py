@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 
+from lib.config import env_float, env_int
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
 from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy
@@ -27,29 +28,27 @@ N_VALIDATE = 60
 PER_CANDIDATE_SAFETY = 1.5
 RESERVED_OVERHEAD_MS = 50.0
 
-# Deterministic per-candidate cost model (Phase 1, 2026-05-22).
-# Replaces the time.perf_counter()-based probe that made the chooser
-# non-deterministic across runs (128/210 turns diverged in diff_v3
-# trace despite identical physics). State-aware: per-step and per-leaf
-# costs scale linearly with n_fleets — the dominant variable for both
-# fs_step (orbit advance + collision resolution per fleet) and the
-# composite leaf (per-fleet trajectory checks). Constants calibrated
-# from orbitfix_kt bench at avg_K=32.5; env-override per agent if the
-# value head is materially heavier.
-BASELINE_STEP_BASE_MS = float(os.environ.get("BASELINE_STEP_BASE_MS", "0.20"))
-BASELINE_STEP_PER_FLEET_MS = float(
-    os.environ.get("BASELINE_STEP_PER_FLEET_MS", "0.06"),
-)
-BASELINE_LEAF_BASE_MS = float(os.environ.get("BASELINE_LEAF_BASE_MS", "0.80"))
-BASELINE_LEAF_PER_FLEET_MS = float(
-    os.environ.get("BASELINE_LEAF_PER_FLEET_MS", "0.25"),
-)
+# Cost-model defaults (Phase 1; per-call env reads via lib.config so
+# A/B harnesses that monkey-patch env vars between fixtures get the
+# new value).
+_DEFAULT_STEP_BASE_MS = 0.20
+_DEFAULT_STEP_PER_FLEET_MS = 0.06
+_DEFAULT_LEAF_BASE_MS = 0.80
+_DEFAULT_LEAF_PER_FLEET_MS = 0.25
+# Phase 3b extra leaf cost per credited my-fleet when
+# COMPOSITE_FLEET_SURVIVAL_CHECK is on. predict_fleet_fate is ~1 ms
+# per call on a 24-planet board (max_steps=200).
+_DEFAULT_LEAF_FATE_MS_PER_FLEET = 1.0
+# Smart-opp leaf window (Phase 4). Same per-call read pattern.
+_DEFAULT_OPP_SMART_LEAF_WINDOW = 5
 
 
 def _state_n_fleets(snap_base) -> int:
-    """Total fleet count on the board at function entry, read from
-    snap.state[0].observation (fleets aren't seat-scoped). Deterministic
-    on identical snap input; sole state-derived input to per_cand_ms.
+    """Total fleet count on the board. Read from snap.state[0].observation
+    (fleets aren't seat-scoped). Falls back to a PESSIMISTIC default
+    (20) on exception so the cost model errs on the side of a smaller
+    cap when obs shape is unexpected — preferring fewer candidates over
+    a budget blow-up.
     """
     try:
         obs0 = snap_base.state[0].observation
@@ -57,9 +56,28 @@ def _state_n_fleets(snap_base) -> int:
             obs0.get("fleets", []) if hasattr(obs0, "get")
             else getattr(obs0, "fleets", [])
         )
-        return len(fleets) if fleets is not None else 0
+        if fleets is not None:
+            return len(fleets)
     except Exception:
-        return 0
+        pass
+    return 20
+
+
+def _state_n_my_fleets(snap_base, me: int) -> int:
+    """Count of fleets owned by `me`. Used by the Phase 3b cost-model
+    term. Pessimistic-default same as _state_n_fleets."""
+    try:
+        obs0 = snap_base.state[0].observation
+        fleets = (
+            obs0.get("fleets", []) if hasattr(obs0, "get")
+            else getattr(obs0, "fleets", [])
+        )
+        if fleets is None:
+            return 5
+        # Fleet tuple layout: (id, owner, x, y, angle, from_planet_id, ships).
+        return sum(1 for f in fleets if int(f[1]) == int(me))
+    except Exception:
+        return 5
 
 
 def _select_opp_policy():
@@ -140,9 +158,13 @@ def opp_actions_for_step(snap, me: int, num_seats: int,
     return actions
 
 
-BASELINE_OPP_SMART_LEAF_WINDOW = int(
-    os.environ.get("BASELINE_OPP_SMART_LEAF_WINDOW", "5"),
-)
+def opp_smart_leaf_window() -> int:
+    """Per-call read of BASELINE_OPP_SMART_LEAF_WINDOW. The previous
+    module-level read froze the value at import time — tests/A-B
+    harnesses that monkey-patched the env var between fixtures got the
+    import-time default silently. Per-call read closes that footgun.
+    """
+    return env_int("BASELINE_OPP_SMART_LEAF_WINDOW", _DEFAULT_OPP_SMART_LEAF_WINDOW)
 
 
 def build_idle_baseline(snap_base, me: int, num_seats: int,
@@ -157,7 +179,7 @@ def build_idle_baseline(snap_base, me: int, num_seats: int,
     favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
     out = [favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)]
-    leaf_window_start = max(0, max_horizon - BASELINE_OPP_SMART_LEAF_WINDOW)
+    leaf_window_start = max(0, max_horizon - opp_smart_leaf_window())
     for step_i in range(max_horizon):
         if snap.fake_env.done:
             out.append(out[-1])
@@ -196,7 +218,7 @@ def score_action(snap_base, me: int, num_seats: int,
         baseline_horizon = horizon
     favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
-    leaf_window_start = max(0, baseline_horizon - BASELINE_OPP_SMART_LEAF_WINDOW)
+    leaf_window_start = max(0, baseline_horizon - opp_smart_leaf_window())
     for step_i in range(horizon):
         if snap.fake_env.done:
             break
@@ -214,29 +236,61 @@ def score_action(snap_base, me: int, num_seats: int,
 def affordable_validate_cap(snap_base, me: int, num_seats: int,
                             max_horizon: int, wallclock_ms: float,
                             min_horizon: int, gamma: float,
+                            adaptive_k_extension: int = 0,
                             ) -> tuple[int, float]:
     """Deterministic per-candidate cap. Returns `(cap, per_cand_ms)`.
 
-    Replaced the wallclock probe (Phase 1, 2026-05-22): the probe used
-    `time.perf_counter()` to measure per-step and per-leaf cost on every
-    turn, but per-run timing jitter shifted the cap → different
-    candidate subset evaluated → different chosen action across runs of
-    the same seed. The state-aware model below scales linearly with
-    n_fleets (dominant cost driver for fs_step and composite leaf);
-    cap shrinks naturally as the board complexity grows, mirroring the
-    probe's responsiveness without the wallclock dependency.
+    State-aware cost model (Phase 1, calibrated 2026-05-23):
+        per_step_ms = STEP_BASE + STEP_PER_FLEET * n_fleets
+        per_leaf_ms = LEAF_BASE + LEAF_PER_FLEET * n_fleets
+                      + LEAF_FATE_PER_FLEET * n_my_fleets   (if Phase 3b)
+        per_cand_ms = (per_step_ms * effective_avg_K + per_leaf_ms) * SAFETY
+        effective_avg_K = (min_horizon + max_horizon + adaptive_k_extension) / 2
 
-    `me`, `gamma` retained for signature compatibility with prior
-    probe-based call sites (chooser_trajectory mirrors this same
-    function).
+    `adaptive_k_extension`: pass ADAPTIVE_K_BUMP (e.g. 10) when Phase 2
+    is enabled, so the cost model sees the higher avg K that critical
+    candidates run at. Default 0 = un-bumped.
+
+    Phase 3b leaf cost: added automatically when COMPOSITE_FLEET_SURVIVAL_CHECK
+    is on (per-call env read). Each my-fleet incurs one extra
+    predict_fleet_fate call inside composite_capture_value.
+
+    Guards:
+    - per_cand_ms clamped to >= 0.001 to avoid ZeroDivisionError if a
+      diagnostic A/B zeroes all cost constants.
+    - `n_fleets` falls back to 20 on obs-shape exceptions (pessimistic).
+
+    `me`, `gamma` retained for signature-compat.
     """
-    del me, gamma  # signature-compat; no longer probed
     n_fleets = _state_n_fleets(snap_base)
-    per_step_ms = BASELINE_STEP_BASE_MS + BASELINE_STEP_PER_FLEET_MS * n_fleets
-    per_leaf_ms = BASELINE_LEAF_BASE_MS + BASELINE_LEAF_PER_FLEET_MS * n_fleets
-    avg_K = (min_horizon + max_horizon) / 2.0
+    n_my_fleets = _state_n_my_fleets(snap_base, me) if me is not None else 0
+    del gamma  # signature-compat
+
+    step_base = env_float("BASELINE_STEP_BASE_MS", _DEFAULT_STEP_BASE_MS)
+    step_pf = env_float("BASELINE_STEP_PER_FLEET_MS", _DEFAULT_STEP_PER_FLEET_MS)
+    leaf_base = env_float("BASELINE_LEAF_BASE_MS", _DEFAULT_LEAF_BASE_MS)
+    leaf_pf = env_float("BASELINE_LEAF_PER_FLEET_MS", _DEFAULT_LEAF_PER_FLEET_MS)
+    per_step_ms = step_base + step_pf * n_fleets
+    per_leaf_ms = leaf_base + leaf_pf * n_fleets
+    # Phase 3b: extra per-my-fleet leaf cost when survival check is on.
+    if os.environ.get("COMPOSITE_FLEET_SURVIVAL_CHECK", "0").strip() in ("1", "true", "on", "yes"):
+        fate_pf = env_float(
+            "BASELINE_LEAF_FATE_MS_PER_FLEET", _DEFAULT_LEAF_FATE_MS_PER_FLEET,
+        )
+        per_leaf_ms += fate_pf * n_my_fleets
+
+    avg_K = (min_horizon + max_horizon + int(adaptive_k_extension)) / 2.0
     per_cand_ms = (per_step_ms * avg_K + per_leaf_ms) * PER_CANDIDATE_SAFETY
+    # ZeroDivisionError guard: if a diagnostic sets all cost constants
+    # to 0, per_cand_ms is 0. Clamp to a tiny positive value so the cap
+    # comes out at N_VALIDATE bound (deterministic, doesn't crash).
+    if per_cand_ms < 0.001:
+        per_cand_ms = 0.001
     budget = wallclock_ms - RESERVED_OVERHEAD_MS
+    if budget <= 0:
+        # Caller passed an absurdly small wallclock_ms; floor cap at 8
+        # (the explicit minimum) so we don't degrade to 0 candidates.
+        return 8, per_cand_ms
     cap = max(8, int(budget / per_cand_ms))
     return cap, per_cand_ms
 

@@ -51,6 +51,12 @@ from lib.scoring import pv_horizon
 # documented in agents/baseline/main.py.
 from lib.world_model import DEFAULT_HORIZON, WorldModel, comet_remaining_lifetime, fleet_target_planet
 from lib.game.interpreter import CENTER, SUN_RADIUS, point_to_segment_distance
+# Phase 3b imports hoisted from per-fleet hot loop (2026-05-23). Lazy
+# imports inside composite_capture_value's per-fleet loop added ~10-30 μs
+# per iteration. Module-scope import is a sys.modules cache hit on every
+# subsequent run.
+from lib.trajectory import predict_fleet_fate
+from types import SimpleNamespace
 
 
 # Phase 2 audit established AUC ≈ oracle at K=50. K=10 + 30 extra of
@@ -177,22 +183,22 @@ PRODUCTION_PV_GAMMA: float = 0.99
 # knowledge-base/thoughts/2026-05-18-PV-term-recalibration-debt.md.
 # Default OFF as of 2026-05-18 PM session wrap. Set
 # `COMPOSITE_PRODUCTION_PV=1` to re-enable for A/Bs.
-import os as _os
-_COMPOSITE_PV_ENABLED = _os.environ.get("COMPOSITE_PRODUCTION_PV", "0") != "0"
+from lib.config import env_bool
 
-# Phase 3b (2026-05-22): per-leaf in-flight fate check. The WorldModel
-# `pred_owner` check below already handles "fleet arrives, we lose
-# combat at the target." It does NOT detect geometric in-flight deaths
-# (intermediate planet rotates into the fleet's path, sun-grazing past
-# the static chord check, etc.). For fleets that pass pred_owner ==
-# my_id (the ones we'd otherwise FULLY credit), call predict_fleet_fate
-# to ray-cast the trajectory; if it doesn't reach the target, apply
-# waste penalty. Cost-controlled by only running when the fleet would
-# otherwise be credited (skip the call when pred_owner already says
-# we lose). Env-gated; on-only for orbitfix_kt's submission stack.
-_COMPOSITE_FLEET_SURVIVAL_CHECK = (
-    _os.environ.get("COMPOSITE_FLEET_SURVIVAL_CHECK", "0") != "0"
-)
+
+def _composite_pv_enabled() -> bool:
+    """Per-call read (2026-05-23): was a module-load constant, which
+    silently ignored env-var changes between fixtures in the same
+    process."""
+    return env_bool("COMPOSITE_PRODUCTION_PV", False)
+
+
+def _composite_fleet_survival_check_enabled() -> bool:
+    """Per-call read for the Phase 3b gate. The previous module-load
+    constant froze the flag at import time — tests in
+    test_value_heads.py that flipped the env var after import were
+    silently ineffective."""
+    return env_bool("COMPOSITE_FLEET_SURVIVAL_CHECK", False)
 
 
 def composite_capture_value(
@@ -254,7 +260,7 @@ def composite_capture_value(
     # `tests/test_planner_oracles.py::test_oracle_sanity_trivial_capture`
     # surfaced (b); the bug catalog at audit/2026-05-18-bug-catalog.md
     # documents (a). 2026-05-18 fix.
-    if _COMPOSITE_PV_ENABLED:
+    if _composite_pv_enabled():
         pv = pv_horizon(
             step_now, 0,
             gamma=PRODUCTION_PV_GAMMA,
@@ -378,9 +384,7 @@ def composite_capture_value(
         # Gated; only runs for credited fleets — uncredited ones already
         # took the waste penalty above. Per-leaf cost: ~0.5-1 ms × N_my_
         # fleets_that_pass_pred_owner.
-        if _COMPOSITE_FLEET_SURVIVAL_CHECK:
-            from lib.trajectory import predict_fleet_fate
-            from types import SimpleNamespace
+        if _composite_fleet_survival_check_enabled():
             src_proxy = SimpleNamespace(
                 id=-1, owner=int(f.owner),
                 x=float(f.x), y=float(f.y),

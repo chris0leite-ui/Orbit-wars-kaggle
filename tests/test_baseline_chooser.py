@@ -261,14 +261,14 @@ def test_phase4_calibration_anchored_at_baseline_horizon():
     """
     import os
     from agents.baseline.chooser import (
-        build_idle_baseline, score_action, BASELINE_OPP_SMART_LEAF_WINDOW,
+        build_idle_baseline, score_action, opp_smart_leaf_window,
     )
     saved = os.environ.get("BASELINE_OPP_SMART_LEAF")
     try:
         _obs, snap = _snapshot_from_seed(7)
         BH = 40
         H = 10  # well below BH - WINDOW (= 35 with default WINDOW=5)
-        assert H < BH - BASELINE_OPP_SMART_LEAF_WINDOW, (
+        assert H < BH - opp_smart_leaf_window(), (
             "test premise violated: H must be below the absolute smart-leaf window"
         )
         favs = build_idle_baseline(snap, me=0, num_seats=2, max_horizon=BH, gamma=0.99)
@@ -295,3 +295,147 @@ def test_phase4_calibration_anchored_at_baseline_horizon():
             os.environ.pop("BASELINE_OPP_SMART_LEAF", None)
         else:
             os.environ["BASELINE_OPP_SMART_LEAF"] = saved
+
+
+def test_env_parse_handles_bad_input():
+    """Commit 3 (2026-05-23): env vars with bad content (empty string,
+    non-numeric, whitespace) must not crash the agent at import. The
+    new lib.config helpers wrap parsing in try/except and fall back to
+    defaults. Pre-fix, a wrapper exporting `BASELINE_MIN_HORIZON=''`
+    crashed `int('')` at module load, erroring the submission.
+    """
+    import os
+    saved = {
+        k: os.environ.get(k) for k in (
+            "BASELINE_MIN_HORIZON", "BASELINE_MAX_HORIZON",
+            "BASELINE_STEP_BASE_MS", "BASELINE_OPP_SMART_LEAF_WINDOW",
+        )
+    }
+    try:
+        os.environ["BASELINE_MIN_HORIZON"] = ""
+        os.environ["BASELINE_MAX_HORIZON"] = "abc"
+        os.environ["BASELINE_STEP_BASE_MS"] = " "
+        os.environ["BASELINE_OPP_SMART_LEAF_WINDOW"] = "junk"
+        from agents.baseline.chooser import (
+            affordable_validate_cap, opp_smart_leaf_window,
+        )
+        # Helpers must return their defaults, not raise.
+        assert isinstance(opp_smart_leaf_window(), int)
+        _obs, snap = _snapshot_from_seed(42)
+        cap, _ = affordable_validate_cap(
+            snap, me=0, num_seats=2, max_horizon=40, wallclock_ms=600.0,
+            min_horizon=25, gamma=0.99,
+        )
+        assert cap >= 8
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_cost_model_responds_to_runtime_env_change():
+    """Commit 3 (2026-05-23): cost-model constants are read per-call.
+    Setting BASELINE_STEP_PER_FLEET_MS to a much larger value mid-test
+    must shrink the cap.
+    """
+    import os
+    saved = os.environ.get("BASELINE_STEP_PER_FLEET_MS")
+    try:
+        from agents.baseline.chooser import affordable_validate_cap
+        _obs, snap = _snapshot_from_seed(7)
+        os.environ.pop("BASELINE_STEP_PER_FLEET_MS", None)
+        cap_default, _ = affordable_validate_cap(
+            snap, me=0, num_seats=2, max_horizon=40, wallclock_ms=600.0,
+            min_horizon=25, gamma=0.99,
+        )
+        os.environ["BASELINE_STEP_PER_FLEET_MS"] = "2.0"  # ~33x default
+        cap_heavy, _ = affordable_validate_cap(
+            snap, me=0, num_seats=2, max_horizon=40, wallclock_ms=600.0,
+            min_horizon=25, gamma=0.99,
+        )
+        # Heavier cost → smaller cap (or hit the floor of 8).
+        assert cap_heavy <= cap_default
+    finally:
+        if saved is None:
+            os.environ.pop("BASELINE_STEP_PER_FLEET_MS", None)
+        else:
+            os.environ["BASELINE_STEP_PER_FLEET_MS"] = saved
+
+
+def test_cost_model_accounts_for_adaptive_k_extension():
+    """Commit 4 (2026-05-23): when Phase 2 is on, the cost model
+    receives `adaptive_k_extension=ADAPTIVE_K_BUMP` so n_aff is sized
+    for the actual (bumped) avg-K rather than the unbumped MAX_HORIZON.
+    """
+    from agents.baseline.chooser import affordable_validate_cap
+    _obs, snap = _snapshot_from_seed(7)
+    cap_unbumped, _ = affordable_validate_cap(
+        snap, me=0, num_seats=2, max_horizon=40, wallclock_ms=600.0,
+        min_horizon=25, gamma=0.99, adaptive_k_extension=0,
+    )
+    cap_bumped, _ = affordable_validate_cap(
+        snap, me=0, num_seats=2, max_horizon=40, wallclock_ms=600.0,
+        min_horizon=25, gamma=0.99, adaptive_k_extension=10,
+    )
+    assert cap_bumped <= cap_unbumped
+
+
+def test_cost_model_accounts_for_phase3b_when_enabled():
+    """Commit 4 (2026-05-23): when COMPOSITE_FLEET_SURVIVAL_CHECK is on,
+    affordable_validate_cap adds per-my-fleet leaf cost so n_aff
+    reflects the real per-leaf time.
+    """
+    import os
+    from agents.baseline.chooser import affordable_validate_cap
+    saved = os.environ.get("COMPOSITE_FLEET_SURVIVAL_CHECK")
+    try:
+        _obs, snap = _snapshot_from_seed(42)
+        os.environ.pop("COMPOSITE_FLEET_SURVIVAL_CHECK", None)
+        cap_off, _ = affordable_validate_cap(
+            snap, me=0, num_seats=2, max_horizon=40, wallclock_ms=600.0,
+            min_horizon=25, gamma=0.99,
+        )
+        os.environ["COMPOSITE_FLEET_SURVIVAL_CHECK"] = "1"
+        cap_on, _ = affordable_validate_cap(
+            snap, me=0, num_seats=2, max_horizon=40, wallclock_ms=600.0,
+            min_horizon=25, gamma=0.99,
+        )
+        assert cap_on <= cap_off
+    finally:
+        if saved is None:
+            os.environ.pop("COMPOSITE_FLEET_SURVIVAL_CHECK", None)
+        else:
+            os.environ["COMPOSITE_FLEET_SURVIVAL_CHECK"] = saved
+
+
+def test_zero_cost_constants_dont_crash():
+    """Commit 5 (2026-05-23): zeroing all cost constants would have
+    produced per_cand_ms=0 and ZeroDivisionError. The guard clamps
+    per_cand_ms ≥ 0.001 so the chooser stays alive.
+    """
+    import os
+    from agents.baseline.chooser import affordable_validate_cap
+    saved = {
+        k: os.environ.get(k) for k in (
+            "BASELINE_STEP_BASE_MS", "BASELINE_STEP_PER_FLEET_MS",
+            "BASELINE_LEAF_BASE_MS", "BASELINE_LEAF_PER_FLEET_MS",
+        )
+    }
+    try:
+        for k in saved:
+            os.environ[k] = "0"
+        _obs, snap = _snapshot_from_seed(7)
+        cap, per_cand_ms = affordable_validate_cap(
+            snap, me=0, num_seats=2, max_horizon=40, wallclock_ms=600.0,
+            min_horizon=25, gamma=0.99,
+        )
+        assert cap >= 8
+        assert per_cand_ms > 0
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v

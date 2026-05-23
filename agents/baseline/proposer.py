@@ -29,8 +29,10 @@ SIM_SETTLE_TURNS = 2
 # Rollout horizon — env-var overridable so a deeper-horizon variant can
 # opt in without forcing it on every agent that imports baseline.proposer.
 # Defaults match the production ceiling (sub 52912707) settings.
-MIN_HORIZON = int(os.environ.get("BASELINE_MIN_HORIZON", "25"))
-MAX_HORIZON = int(os.environ.get("BASELINE_MAX_HORIZON", "40"))
+from lib.config import env_int as _env_int  # noqa: E402
+
+MIN_HORIZON = _env_int("BASELINE_MIN_HORIZON", 25)
+MAX_HORIZON = _env_int("BASELINE_MAX_HORIZON", 40)
 WAIT_EXTRA_SURPLUS = (0, 5, 12)  # legacy forward grid (kept for rollback)
 CHEAP_REJECT_THRESHOLD = -10.0
 EPISODE_STEPS = 500
