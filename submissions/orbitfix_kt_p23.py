@@ -1,8 +1,8 @@
 # orbitfix_kt_p23 — bundled from agents/baseline with env-var stack.
 # Stack: orbitfix substrate + KT + Phase 2 (adaptive K) + Phase 3
 # (leaf survival check) + attack-pull positional value head + inline
-# rotation math in predict_fleet_fate (eliminates 53M predict_relative
-# calls per 4P game; cuts wallclock 50% per the 2026-05-23 profile).
+# rotation math in predict_fleet_fate + per-fleet planet pre-filter
+# (skips orbital/static planets that can't intersect the fleet ray).
 from __future__ import annotations
 
 import os as _kt_p23_os
@@ -1896,6 +1896,36 @@ def predict_fleet_fate(
     planet_positions = _table_window_or_none(world, wait_N, max_steps + 1)
     if planet_positions is None:
         comet_paths = _comet_paths_by_id(world) if world.comet_ids else {}
+        # Per-fleet planet pre-filter: the fleet travels from spawn along
+        # a fixed ray for at most `max_steps * speed_val` units. Any
+        # planet whose orbital ring (orbital) or position (static) can't
+        # come within `planet.radius + FILTER_SAFETY` of this segment can
+        # never be hit. Skipping them drops both the position pre-compute
+        # AND the per-step swept_pair_hit work for filtered planets.
+        # Typical 4P board: ~30 planets total, ~5-8 reachable per fleet,
+        # so ~70-80% of per-step work eliminated.
+        #
+        # ALWAYS include target_id (we need to detect the target-hit
+        # step) and skip_planet_id (caller-controlled exclusion). All
+        # comets are kept (path is dynamic; conservative filter would
+        # require checking every path point, defeating the win).
+        FILTER_SAFETY = 1.0  # board units; ε for float drift + safety
+        ray_len = float(max_steps) * speed_val
+        endpoint_x = spawn_x + cos_a * ray_len
+        endpoint_y = spawn_y + sin_a * ray_len
+        spawn_xy = (spawn_x, spawn_y)
+        endpoint_xy = (endpoint_x, endpoint_y)
+        # Max endpoint distance from CENTER (segment's farthest point
+        # from sun — used to detect "ring is entirely inside our flight
+        # corridor" case for the orbital filter).
+        d_max_from_center = max(
+            math.hypot(spawn_x - CENTER, spawn_y - CENTER),
+            math.hypot(endpoint_x - CENTER, endpoint_y - CENTER),
+        )
+        # Segment's closest approach to the sun (CENTER, CENTER).
+        d_min_from_center = _segment_to_point_distance(
+            spawn_xy, endpoint_xy, (CENTER, CENTER),
+        )
         planet_positions = {}
         for pid, p in world.planets_by_id.items():
             if int(pid) in comet_paths:
@@ -1912,7 +1942,31 @@ def predict_fleet_fate(
                 planet_positions[pid] = positions
                 continue
             p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
+            # Reachability gate: always include target + skip_planet_id
+            # (caller-controlled exclusion still applies); pre-filter
+            # the rest.
+            is_target_or_skip = (
+                pid == target.id
+                or (skip_planet_id is not None and int(pid) == int(skip_planet_id))
+            )
             if is_orbiting(p_tuple) and omega != 0.0:
+                dx = p.x - CENTER
+                dy = p.y - CENTER
+                orb_r = math.hypot(dx, dy)
+                if not is_target_or_skip:
+                    # Filter: segment's distance to the orbital ring of
+                    # radius orb_r centered at CENTER must be > planet.radius
+                    # + safety to skip. The ring intersects the segment
+                    # corridor iff (d_min_from_center <= orb_r <= d_max_from_center).
+                    # If either bound is violated by more than (radius + safety),
+                    # the planet can never enter the fleet's swept band.
+                    closest_to_ring = max(
+                        0.0,
+                        d_min_from_center - orb_r,
+                        orb_r - d_max_from_center,
+                    )
+                    if closest_to_ring > float(p.radius) + FILTER_SAFETY:
+                        continue
                 # Inline rotation math — avoids 200+ predict_relative calls
                 # per orbital planet (each call re-derives orb_r and cur_angle
                 # from the same p.x, p.y). On a 4P board with ~10 orbital
@@ -1920,9 +1974,6 @@ def predict_fleet_fate(
                 # calls per game (~50% of wallclock) per the 2026-05-23 4P
                 # profile. Bit-parity: same formula as predict_relative for
                 # orbital planets — see lib/orbit.py:226.
-                dx = p.x - CENTER
-                dy = p.y - CENTER
-                orb_r = math.hypot(dx, dy)
                 cur_angle = math.atan2(dy, dx)
                 positions_o: list[tuple[float, float]] = []
                 for t in range(max_steps + 1):
@@ -1933,6 +1984,15 @@ def predict_fleet_fate(
                     ))
                 planet_positions[pid] = positions_o
             else:
+                if not is_target_or_skip:
+                    # Static filter: planet sits at (p.x, p.y); skip if
+                    # the fleet's segment doesn't come within
+                    # planet.radius + safety of that point.
+                    d_perp = _segment_to_point_distance(
+                        spawn_xy, endpoint_xy, (p.x, p.y),
+                    )
+                    if d_perp > float(p.radius) + FILTER_SAFETY:
+                        continue
                 planet_positions[pid] = [(p.x, p.y)] * (max_steps + 1)
 
     target_id = target.id
