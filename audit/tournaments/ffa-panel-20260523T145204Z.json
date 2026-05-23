@@ -1,0 +1,56 @@
+{
+  "generated_utc": "20260523T145204Z",
+  "focals": [
+    "submissions/_ab/favor_v2.py",
+    "submissions/_ab/projected_sum_v2.py"
+  ],
+  "background": [
+    "submissions/v7_0_drop_one.py",
+    "submissions/v4_planner.py",
+    "submissions/v3.5.1.py"
+  ],
+  "players": 4,
+  "seeds": [
+    42,
+    1,
+    7,
+    13,
+    31,
+    100,
+    17,
+    23
+  ],
+  "rotate_seats": false,
+  "results": [
+    {
+      "focal": "submissions/_ab/favor_v2.py",
+      "focal_spec": "submissions/_ab/favor_v2.py",
+      "background": [
+        "submissions/v7_0_drop_one.py",
+        "submissions/v4_planner.py",
+        "submissions/v3.5.1.py"
+      ],
+      "n_games": 8,
+      "first_place_count": 5,
+      "first_place_rate": 0.625,
+      "wilson_lo_95": 0.30573785458380187,
+      "wilson_hi_95": 0.863158240538479,
+      "p95_focal_turn_ms": 453.5983298000076
+    },
+    {
+      "focal": "submissions/_ab/projected_sum_v2.py",
+      "focal_spec": "submissions/_ab/projected_sum_v2.py",
+      "background": [
+        "submissions/v7_0_drop_one.py",
+        "submissions/v4_planner.py",
+        "submissions/v3.5.1.py"
+      ],
+      "n_games": 8,
+      "first_place_count": 5,
+      "first_place_rate": 0.625,
+      "wilson_lo_95": 0.30573785458380187,
+      "wilson_hi_95": 0.863158240538479,
+      "p95_focal_turn_ms": 336.75249379996325
+    }
+  ]
+}
