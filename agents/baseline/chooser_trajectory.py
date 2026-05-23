@@ -246,6 +246,30 @@ JOINT_LIFT_USED_TGTS: bool = (
     os.environ.get("BASELINE_JOINT_AGGR", "0").strip() == "1"
 )
 
+# JOINT_INSTRUMENT: diagnostic counters for "would 3+ source bundles help?"
+# probe. When BASELINE_JOINT_INSTRUMENT is set to a path, accumulate one
+# row per target-with-2+-candidates encountered and append as JSONL on
+# process exit. Zero impact when env-var is unset.
+_JOINT_INSTRUMENT_PATH: str = os.environ.get(
+    "BASELINE_JOINT_INSTRUMENT", "",
+).strip()
+_JOINT_INSTRUMENT_ROWS: list[dict] = []
+
+
+def _joint_instrument_dump() -> None:
+    if not _JOINT_INSTRUMENT_PATH or not _JOINT_INSTRUMENT_ROWS:
+        return
+    import json
+    with open(_JOINT_INSTRUMENT_PATH, "a") as f:
+        for row in _JOINT_INSTRUMENT_ROWS:
+            f.write(json.dumps(row) + "\n")
+    _JOINT_INSTRUMENT_ROWS.clear()
+
+
+if _JOINT_INSTRUMENT_PATH:
+    import atexit
+    atexit.register(_joint_instrument_dump)
+
 
 def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
                     me: int, world, ledger: dict,
@@ -931,11 +955,22 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 (float(cd), src, tgt, int(ships), float(angle), int(ph)),
             )
         joint_count = 0
+        # JOINT_INSTRUMENT: per-target counters built up across the
+        # inner pair-loops; appended to _JOINT_INSTRUMENT_ROWS after.
+        _instr_positive_solo_by_tgt: dict[int, bool] = {}
+        if _JOINT_INSTRUMENT_PATH:
+            for _e in scored:
+                if len(_e) == 6:
+                    _instr_positive_solo_by_tgt[int(_e[2].id)] = True
         for tgt_id, cands in by_tgt.items():
             if len(cands) < 2:
                 continue
             cands.sort(key=lambda c: -c[0])
             top = cands[:JOINT_TOP_K_PER_TARGET]
+            _instr_attempted = 0
+            _instr_solo_gated = 0
+            _instr_scored_status = 0
+            _instr_positive = 0
             for i in range(len(top)):
                 if joint_count >= JOINT_MAX_PAIRS:
                     break
@@ -955,6 +990,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                     # logic would lose the cheaper independent path.
                     if (int(ca[1].id) in solo_winners
                             and int(cb[1].id) in solo_winners):
+                        if _JOINT_INSTRUMENT_PATH:
+                            _instr_solo_gated += 1
                         continue
                     launches = [
                         (ca[1], ca[2], ca[3], ca[4], 0),
@@ -968,8 +1005,34 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         opp_traj=opp_traj,
                     )
                     joint_count += 1
+                    if _JOINT_INSTRUMENT_PATH:
+                        _instr_attempted += 1
+                        if j_status == "scored":
+                            _instr_scored_status += 1
+                            if j_score > 0.0:
+                                _instr_positive += 1
                     if j_status == "scored" and j_score > 0.0:
                         scored.append((j_score, "joint", launches))
+            if _JOINT_INSTRUMENT_PATH:
+                tgt_obj = cands[0][2]
+                _JOINT_INSTRUMENT_ROWS.append({
+                    "turn": int(world.step) if world is not None else 0,
+                    "tgt_id": int(tgt_id),
+                    "tgt_owner": int(getattr(tgt_obj, "owner", -1)),
+                    "tgt_ships": float(getattr(tgt_obj, "ships", 0.0)),
+                    "tgt_production": float(
+                        getattr(tgt_obj, "production", 0.0),
+                    ),
+                    "n_cands": len(cands),
+                    "n_pairs_attempted": _instr_attempted,
+                    "n_pairs_solo_gated": _instr_solo_gated,
+                    "n_pairs_scored": _instr_scored_status,
+                    "n_pairs_positive": _instr_positive,
+                    "any_solo_winner": bool(
+                        _instr_positive_solo_by_tgt.get(int(tgt_id), False),
+                    ),
+                    "num_seats": int(num_seats),
+                })
 
     if not scored:
         return [], []
