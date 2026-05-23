@@ -129,7 +129,7 @@ def enumerate_candidates(world, model, my_id: int, omega: float,
                 )
                 if fate.outcome != "target":
                     continue
-                if int(fate.hit_planet_id or -1) != int(tgt.id):
+                if fate.hit_planet_id is None or int(fate.hit_planet_id) != int(tgt.id):
                     continue
                 owner_at_arr, gar_at_arr = predict_garrison_at(
                     tgt, arrival_step, base_arrivals,

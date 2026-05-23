@@ -243,3 +243,69 @@ def test_agent_returns_legal_moves_format():
         assert isinstance(ships, int) and ships >= 1
         assert src_id in ships_by_id
         assert ships <= ships_by_id[src_id]
+
+
+# ---------------------------------------------------------------------------
+# Regression: planet id 0 must be a viable capture target (Python `0 or -1`
+# truthiness bug, 2026-05-23). When `fate.hit_planet_id == 0`, the old
+# `int(fate.hit_planet_id or -1)` evaluated to -1, so we silently dropped
+# every shot at planet id 0. This bug caused the seed-32966 random-elim
+# gate failure (game ran 500 steps with opp's planet 0 untouched).
+# ---------------------------------------------------------------------------
+
+
+def test_planet_id_zero_is_not_silently_dropped():
+    """A candidate that successfully hits planet id 0 must NOT be filtered
+    by the `hit_planet_id == 0` truthiness gotcha.
+
+    Construct: a state where the only opp is planet id 0 and at least one
+    of our planets has a clear shot (fate.outcome=='target', hit_id==0).
+    Verify enumerate_candidates returns ≥1 candidate with tgt_id==0.
+
+    Reproducible via the original failure: seed 32966 step 150 vs random.
+    """
+    import math
+    import random as pyrandom
+    rng = pyrandom.Random(42)
+
+    def random_p0(obs, config):
+        obs_d = obs if isinstance(obs, dict) else {
+            k: getattr(obs, k) for k in dir(obs) if not k.startswith("_")
+        }
+        me = obs_d.get("player", 0)
+        planets = obs_d.get("planets", [])
+        my_p = [p for p in planets if int(p[1]) == int(me)]
+        if not my_p:
+            return []
+        src = rng.choice(my_p)
+        return [[int(src[0]),
+                 float(rng.uniform(-math.pi, math.pi)),
+                 int(rng.randint(1, max(1, int(src[5]))))]]
+
+    env = make("orbit_wars", configuration={"seed": 32966}, debug=False)
+    env.reset()
+    # Step to where the original bug manifested.
+    for _ in range(150):
+        obs0 = env.steps[-1][0]["observation"]
+        obs1 = env.steps[-1][1]["observation"]
+        env.step([random_p0(obs0, env.configuration),
+                  agent(obs1, env.configuration)])
+    obs = env.steps[-1][1]["observation"]
+    obs_d = obs if isinstance(obs, dict) else {
+        k: getattr(obs, k) for k in dir(obs) if not k.startswith("_")
+    }
+    me = 1
+    planets = [Planet(*p) for p in obs_d["planets"]]
+    opp_planets = [p for p in planets if int(p.owner) != me and int(p.owner) >= 0]
+    if not opp_planets or not any(int(p.id) == 0 for p in opp_planets):
+        pytest.skip("seed 32966 step 150 doesn't have opp planet id 0 anymore")
+
+    world = World.from_obs(obs_d)
+    model = WorldModel.from_world(world)
+    omega = float(obs_d.get("angular_velocity", 0.0) or 0.0)
+    cands = enumerate_candidates(world, model, me, omega, set())
+    cands_to_0 = [c for c in cands if c.tgt_id == 0]
+    assert cands_to_0, (
+        "regression: zero candidates target opp planet id 0 — the "
+        "`fate.hit_planet_id or -1` Python-truthiness gotcha is back."
+    )
