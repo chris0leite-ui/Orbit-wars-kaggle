@@ -792,6 +792,7 @@ def cmd_elim_sweep(args: argparse.Namespace) -> int:
     wins = elim_wins = score_wins = errors = draws = 0
     n = 0
     rows: list[tuple] = []
+    all_focal_turn_ms: list[float] = []
     t0 = time.perf_counter()
 
     if args.workers <= 1:
@@ -807,10 +808,13 @@ def cmd_elim_sweep(args: argparse.Namespace) -> int:
 
     for (seed, _p0, _p1, focal_is_p0), r in results:
         n += 1
+        focal_ms = r.p0_turn_ms if focal_is_p0 else r.p1_turn_ms
+        p95 = p_quantile(focal_ms, 0.95) if focal_ms else 0.0
+        all_focal_turn_ms.extend(focal_ms)
         if r.outcome == "error":
             errors += 1
             rows.append((seed, focal_is_p0, "error", "—",
-                         r.final_planet_counts, r.final_fleet_counts))
+                         r.final_planet_counts, r.final_fleet_counts, p95))
             continue
         focal_won = (focal_is_p0 and r.outcome == "p0_win") or \
                     (not focal_is_p0 and r.outcome == "p1_win")
@@ -823,19 +827,24 @@ def cmd_elim_sweep(args: argparse.Namespace) -> int:
         elif r.outcome == "draw":
             draws += 1
         rows.append((seed, focal_is_p0, r.outcome, r.terminated_by,
-                     r.final_planet_counts, r.final_fleet_counts))
+                     r.final_planet_counts, r.final_fleet_counts, p95))
 
     elapsed = time.perf_counter() - t0
     win_lo, win_hi = wilson_ci(wins, n)
     elim_lo, elim_hi = wilson_ci(elim_wins, n)
+    pool_p50 = p_quantile(all_focal_turn_ms, 0.50) if all_focal_turn_ms else 0.0
+    pool_p95 = p_quantile(all_focal_turn_ms, 0.95) if all_focal_turn_ms else 0.0
+    pool_p99 = p_quantile(all_focal_turn_ms, 0.99) if all_focal_turn_ms else 0.0
+    pool_max = max(all_focal_turn_ms) if all_focal_turn_ms else 0.0
+    over_1000 = sum(1 for t in all_focal_turn_ms if t >= 1000.0)
 
     rows.sort(key=lambda r: (r[0], 0 if r[1] else 1))
     print(f"\n{'seed':>4} {'seat':>4} {'outcome':>8} {'end':>12} "
-          f"{'planets(p0,p1)':>16} {'fleets(p0,p1)':>16}")
-    for seed, focal_is_p0, outcome, end, planets, fleets in rows:
+          f"{'planets(p0,p1)':>16} {'fleets(p0,p1)':>16} {'p95ms':>7}")
+    for seed, focal_is_p0, outcome, end, planets, fleets, p95 in rows:
         seat = "p0" if focal_is_p0 else "p1"
         print(f"{seed:>4} {seat:>4} {outcome:>8} {end:>12} "
-              f"{str(planets):>16} {str(fleets):>16}")
+              f"{str(planets):>16} {str(fleets):>16} {p95:>7.0f}")
 
     print(f"\n   wins:        {wins}/{n}   winrate     "
           f"{wins/n:.1%}  Wilson [{win_lo:.3f}, {win_hi:.3f}]")
@@ -844,10 +853,15 @@ def cmd_elim_sweep(args: argparse.Namespace) -> int:
     print(f"   score-only:  {score_wins}/{n}   ({score_wins/n:.1%})  "
           f"(focal won but opp still alive at turn cap)")
     print(f"   draws:       {draws}/{n}   errors: {errors}")
-    print(f"   wallclock {elapsed:.1f}s")
-    verdict = "PASS" if elim_lo >= 0.86 else "FAIL"
-    print(f"   verdict: {verdict}  (gate: elimination Wilson-lo >= 0.86)")
-    return 0 if verdict == "PASS" else 1
+    print(f"   wallclock {elapsed:.1f}s  "
+          f"per-turn focal p50={pool_p50:.0f} p95={pool_p95:.0f} "
+          f"p99={pool_p99:.0f} max={pool_max:.0f}ms  over1000ms={over_1000}")
+    elim_pass = elim_lo >= 0.86
+    wallclock_pass = pool_p95 < 1000.0 and over_1000 == 0
+    print(f"   verdict: elim={'PASS' if elim_pass else 'FAIL'}  "
+          f"wallclock={'PASS' if wallclock_pass else 'FAIL'}  "
+          f"(gates: elim Wilson-lo >= 0.86; focal p95 < 1000ms AND no turn >=1000ms)")
+    return 0 if (elim_pass and wallclock_pass) else 1
 
 
 # ---------------------------------------------------------------------------
