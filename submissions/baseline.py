@@ -1186,6 +1186,53 @@ class FleetFate:
     step: int                  # 1-based step at which the event occurred
 
 
+def _build_planet_positions(
+    world, max_steps: int, wait_N: int, OFF_BOARD: tuple[float, float],
+) -> dict[int, list[tuple[float, float]]]:
+    """Precompute per-step positions for every planet.
+
+    Env semantics (verified against
+    kaggle_environments/envs/orbit_wars/orbit_wars.py lines 480-595):
+    at env step T+1's fleet-movement check, the planet's old_pos is the
+    position from obs T (planet[2], planet[3]) and new_pos is the
+    advanced position. positions[0] is therefore the obs-T position
+    (path[path_index] for comets; predict_relative(.., 0) for orbital);
+    positions[1] is the obs-T+1 position. With wait_N>0 the fleet
+    appears at env step T+1+wait_N and positions[0] = obs-T+wait_N.
+
+    Hot-path: when many candidates in one turn share the same world +
+    wait_N, this dict is identical across calls. Callers cache it on
+    `world._traj_planet_positions_cache` keyed by (wait_N, max_steps).
+    Profile (2026-05-24): cached path saves ~21% of total agent time
+    by skipping the per-call O(planets × max_steps) trig loop.
+    """
+    omega = world.omega
+    comet_paths = _comet_paths_by_id(world) if world.comet_ids else {}
+    planet_positions: dict[int, list[tuple[float, float]]] = {}
+    for pid, p in world.planets_by_id.items():
+        if int(pid) in comet_paths:
+            path, path_index = comet_paths[int(pid)]
+            positions: list[tuple[float, float]] = []
+            for t in range(max_steps + 1):
+                path_t = int(path_index) + int(wait_N) + t
+                if 0 <= path_t < len(path):
+                    pt = path[path_t]
+                    positions.append((float(pt[0]), float(pt[1])))
+                else:
+                    positions.append(OFF_BOARD)
+            planet_positions[pid] = positions
+            continue
+        p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
+        if is_orbiting(p_tuple) and omega != 0.0:
+            planet_positions[pid] = [
+                predict_relative(p_tuple, omega, wait_N + t)
+                for t in range(max_steps + 1)
+            ]
+        else:
+            planet_positions[pid] = [(p.x, p.y)] * (max_steps + 1)
+    return planet_positions
+
+
 def predict_fleet_fate(
     src, target, aim_angle: float, ships: int,
     world, max_steps: int = DEFAULT_MAX_STEPS,
@@ -1247,38 +1294,23 @@ def predict_fleet_fate(
     # past the path's end, mark the comet as "gone" with sentinel
     # positions far outside the board so swept_pair_hit can't match.
     OFF_BOARD = (-1e6, -1e6)  # sentinel for "comet has left the board"
-    comet_paths = _comet_paths_by_id(world) if world.comet_ids else {}
-    # Env semantics (verified against
-    # kaggle_environments/envs/orbit_wars/orbit_wars.py lines 480-595):
-    # at env step T+1's fleet-movement check, the planet's old_pos is
-    # the position from obs T (planet[2], planet[3]) and new_pos is the
-    # advanced position. positions[0] is therefore the obs-T position
-    # (path[path_index] for comets; predict_relative(.., 0) for orbital);
-    # positions[1] is the obs-T+1 position. With wait_N>0 the fleet
-    # appears at env step T+1+wait_N and positions[0] = obs-T+wait_N.
-    planet_positions: dict[int, list[tuple[float, float]]] = {}
-    for pid, p in world.planets_by_id.items():
-        if int(pid) in comet_paths:
-            # Comet: use its discrete path.
-            path, path_index = comet_paths[int(pid)]
-            positions: list[tuple[float, float]] = []
-            for t in range(max_steps + 1):
-                path_t = int(path_index) + int(wait_N) + t
-                if 0 <= path_t < len(path):
-                    pt = path[path_t]
-                    positions.append((float(pt[0]), float(pt[1])))
-                else:
-                    positions.append(OFF_BOARD)
-            planet_positions[pid] = positions
-            continue
-        p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
-        if is_orbiting(p_tuple) and omega != 0.0:
-            planet_positions[pid] = [
-                predict_relative(p_tuple, omega, wait_N + t)
-                for t in range(max_steps + 1)
-            ]
-        else:
-            planet_positions[pid] = [(p.x, p.y)] * (max_steps + 1)
+    cache = getattr(world, "_traj_planet_positions_cache", None)
+    cache_key = (int(wait_N), int(max_steps))
+    if cache is None:
+        cache = {}
+        try:
+            world._traj_planet_positions_cache = cache
+        except (AttributeError, TypeError):
+            cache = None  # frozen world (rare); fall through to no-cache
+    planet_positions: dict[int, list[tuple[float, float]]] | None = (
+        cache.get(cache_key) if cache is not None else None
+    )
+    if planet_positions is None:
+        planet_positions = _build_planet_positions(
+            world, max_steps, wait_N, OFF_BOARD,
+        )
+        if cache is not None:
+            cache[cache_key] = planet_positions
 
     target_id = target.id
     src_id = src.id
@@ -5468,6 +5500,8 @@ def rollout(
 import math
 from typing import Any, Callable
 
+fs_clone = clone
+fs_step = step
 _fleet_speed = speed
 
 
@@ -5642,6 +5676,93 @@ def lite_greedy_policy(obs: Any) -> list:
         needed = int(math.ceil(defenders_at_eta)) + 1
         if needed > budget:
             continue  # can't afford the capture — skip, don't bounce
+        ships = max(agg_ships, needed)
+        if ships > budget:
+            ships = budget
+        if ships < 5:
+            continue
+        angle = math.atan2(best[3] - sy, best[2] - sx)
+        moves.append([src[0], angle, ships])
+    return moves
+
+
+def lite_greedy_opportunistic_policy(obs: Any) -> list:
+    """`lite_greedy_policy` + bias toward sniping under-defended enemy
+    planets.
+
+    Same per-source ROI structure as `lite_greedy_policy`, with one
+    modification: when a candidate target is an OWNED enemy planet with
+    ships <= `SNIPE_GARRISON_FLOOR`, multiply its ROI score by
+    `SNIPE_BONUS` so it dominates the per-source pick. This models
+    real top-tier opp behaviour where a planet that just got drained
+    (e.g. after our wait-bundle commit fires from it) gets sniped
+    opportunistically — production/distance ROI ignores that signal.
+
+    Used as the in-rollout opp model under `BASELINE_OPP_TIER=
+    opportunistic` to make the chooser correctly price the defensive
+    value of "ships at home". With the default lite policy, opp's
+    rollout actions don't punish defensive drains; with this policy,
+    the rollout's leaf reflects the post-snipe planet count, which
+    drops the favor delta on candidates that would expose home.
+
+    Determinism preserved (no random tie-break). Per-call cost equal
+    to `lite_greedy_policy` (one extra integer compare per target).
+    Neutrals are NOT given the snipe bonus — they're picked via the
+    standard ROI path (matches lite_greedy_policy's neutral handling).
+    """
+    SNIPE_GARRISON_FLOOR = 3
+    SNIPE_BONUS = 100.0
+
+    player = obs.get("player", 0) if isinstance(obs, dict) else getattr(obs, "player", 0)
+    planets = obs.get("planets") if isinstance(obs, dict) else getattr(obs, "planets", None)
+    if not planets:
+        return []
+    targets = [p for p in planets if p[1] != player]
+    moves: list = []
+    for src in planets:
+        if src[1] != player or src[5] < 10:
+            continue
+        best = None
+        best_score = -1.0
+        sx = src[2]; sy = src[3]
+        for t in targets:
+            if t[0] == src[0]:
+                continue
+            dx = t[2] - sx; dy = t[3] - sy
+            d = math.sqrt(dx * dx + dy * dy)
+            if d < 1e-6:
+                continue
+            base_score = float(t[6]) / (d + 1.0)
+            # Snipe bonus: owned enemy planet currently under-defended.
+            # Neutrals stay on the standard ROI path (capturing a neutral
+            # isn't "exploiting a defensive lapse" — it's expansion).
+            if int(t[5]) <= SNIPE_GARRISON_FLOOR and int(t[1]) != -1:
+                score = base_score * SNIPE_BONUS + 1.0
+            else:
+                score = base_score
+            if score > best_score:
+                best_score = score
+                best = t
+        if best is None:
+            continue
+        budget = int(src[5])
+        agg_ships = max(5, int(budget * 0.7))
+        if agg_ships > budget:
+            agg_ships = budget
+        spd = _fleet_speed(agg_ships)
+        if spd <= 0:
+            continue
+        dx = best[2] - sx; dy = best[3] - sy
+        d = math.sqrt(dx * dx + dy * dy)
+        flight = max(0.0, d - float(src[4]) - float(best[4]) - 0.1)
+        eta = max(1, int(math.ceil(flight / spd)))
+        if int(best[1]) == -1:
+            defenders_at_eta = float(best[5])
+        else:
+            defenders_at_eta = float(best[5]) + float(best[6]) * eta
+        needed = int(math.ceil(defenders_at_eta)) + 1
+        if needed > budget:
+            continue
         ships = max(agg_ships, needed)
         if ships > budget:
             ships = budget
@@ -5898,6 +6019,96 @@ def opponent_action_distribution(
         raise ValueError("samples must be >= 1")
     base = predict_opponent_action(obs, tier=tier)
     return [base for _ in range(samples)]
+
+
+# ---------------------------------------------------------------------------
+# Precomputed opponent trajectory — CRN substrate for chooser rollouts
+# ---------------------------------------------------------------------------
+
+
+def compute_opp_trajectory(
+    snap_base,
+    me: int,
+    num_seats: int,
+    max_horizon: int,
+    tier: str = "lite",
+) -> list[list[list]]:
+    """Precompute one deterministic opp action sequence for the next
+    `max_horizon` ticks, starting from `snap_base`.
+
+    Why this exists: the chooser today drives opp seats reactively at
+    every tick inside every candidate's rollout. Two candidates of mine
+    see DIFFERENT opp action sequences because the opp's per-tick
+    response depends on the current candidate-mutated snap. The Δ-favor
+    between candidates is then part signal ("A is better than B") and
+    part noise ("A faced friendlier opp moves than B"). CRN
+    (common-random-numbers) fixes this: precompute ONE opp trajectory
+    here, replay it identically in baseline AND every candidate. Δ
+    isolates the candidate's marginal contribution.
+
+    Return shape: `traj[t]` is the action array at tick t — a list of
+    length `num_seats` where `traj[t][me] == []` (caller splices their
+    own action in) and `traj[t][opp_id]` is the opp's per-tick launch
+    list. Length is exactly `max_horizon` (one entry per forward step).
+
+    Tier selection — controls which opp policy fills the seats:
+      - "lite" (default): `lite_greedy_policy` for all ticks. ~1-2 ms
+        per call. Closest to today's reactive default (`BASELINE_OPP_TIER=0`).
+      - "topmix": `top_tier_mirror_policy` for the first 10 ticks,
+        `lite_greedy_policy` for ticks 10..max_horizon. Captures the
+        strategically critical opening with a ladder-realistic opp
+        while keeping the long tail cheap. AUTO-DOWNGRADES to "lite"
+        when num_seats > 2 (4P has 3 opp seats — topmix budget
+        would exceed the 600 ms chooser wallclock).
+      - "top": `top_tier_mirror_policy` every tick. ~5-10 ms per call.
+        Expensive — slot for ablation only.
+
+    Determinism: all three tiers are pure functions of obs (no random
+    state, no module memory). Same `snap_base + tier` → bit-identical
+    trajectory. This is what makes CRN work — the replay across
+    candidates is byte-equal opp behavior.
+
+    Cost (2P, max_horizon=40):
+      - "lite": ~60 ms one-time
+      - "topmix": ~160 ms one-time
+      - "top": ~400 ms one-time
+
+    Cost (4P, max_horizon=40): multiply by 3 (three opp seats). Topmix
+    auto-downgrades to lite at num_seats > 2 to stay under budget.
+    """
+
+    if num_seats > 2 and tier == "topmix":
+        tier = "lite"
+
+    def _policy_for_step(step_i: int) -> Policy:
+        if tier == "lite":
+            return lite_greedy_policy
+        if tier == "top":
+            return top_tier_mirror_policy
+        # topmix (2P only, after the auto-downgrade above)
+        return top_tier_mirror_policy if step_i < 10 else lite_greedy_policy
+
+    traj: list[list[list]] = []
+    snap = fs_clone(snap_base)
+    for step_i in range(max_horizon):
+        # If the rollout has terminated, pad with empty actions for the
+        # remaining ticks. fs_step is a no-op on done snaps but the
+        # caller's score-loop indexes traj[t] regardless of done state.
+        if snap.fake_env.done:
+            traj.append([[] for _ in range(num_seats)])
+            continue
+        policy = _policy_for_step(step_i)
+        actions: list[list] = [[] for _ in range(num_seats)]
+        for opp_id in range(num_seats):
+            if opp_id == me:
+                continue
+            try:
+                actions[opp_id] = policy(snap.state[opp_id].observation) or []
+            except Exception:
+                actions[opp_id] = []
+        traj.append(actions)
+        snap = fs_step(snap, actions, in_place=True)
+    return traj
 
 # === inlined: lib/v7_search.py ===
 
@@ -10142,7 +10353,9 @@ import time
 fs_clone = clone
 # from lib.fast_sim import step as fs_step  # inlined by bundle_agent.py
 fs_step = step
-# from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy  # inlined by bundle_agent.py
+# from lib.opp_model import lite_greedy_opportunistic_policy  # inlined by bundle_agent.py
+# from lib.opp_model import lite_greedy_policy  # inlined by bundle_agent.py
+# from lib.opp_model import top_tier_mirror_policy  # inlined by bundle_agent.py
 
 # from agents.baseline.value import select_favor_fn  # inlined by bundle_agent.py
 
@@ -10153,22 +10366,31 @@ RESERVED_OVERHEAD_MS = 50.0
 
 
 def _select_opp_policy():
-    """Tier 3 (2026-05-18 PM): asymmetric opp model selection.
+    """Asymmetric opp model selection for the in-rollout opp.
 
     BASELINE_OPP_TIER env var:
-      - "0" or unset → lite_greedy_policy (default, ~1-2ms/call).
-      - "1" → top_tier_mirror_policy (~5-10ms/call; ladder-realistic
-              opp using v3.5.1 aggressive snipe pipeline). Bench gate
-              FIRST before A/B — per-call cost is 5-10× lite_greedy.
+      - "0" or unset    → lite_greedy_policy (default, ~1-2ms/call).
+      - "1"             → top_tier_mirror_policy (~5-10ms/call; ladder-
+                          realistic opp using v3.5.1 aggressive snipe
+                          pipeline). Bench gate FIRST before A/B — per-
+                          call cost is 5-10× lite_greedy.
+      - "opportunistic" → lite_greedy_opportunistic_policy (~1-2ms/
+                          call). Lite + snipe-bonus on under-defended
+                          owned-enemy planets. Used to model the
+                          defensive value of "ships at home" that
+                          plain lite under-prices, so the chooser
+                          correctly penalises candidates that drain
+                          a source the opp can punish post-launch.
 
     Per-call selection (not cached at import time) so env-var overrides
     inside test fixtures take effect without re-importing the module.
     """
-    return (
-        top_tier_mirror_policy
-        if os.environ.get("BASELINE_OPP_TIER", "0").strip() == "1"
-        else lite_greedy_policy
-    )
+    tier = os.environ.get("BASELINE_OPP_TIER", "0").strip()
+    if tier == "1":
+        return top_tier_mirror_policy
+    if tier == "opportunistic":
+        return lite_greedy_opportunistic_policy
+    return lite_greedy_policy
 
 
 def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
@@ -10187,16 +10409,28 @@ def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
 
 
 def build_idle_baseline(snap_base, me: int, num_seats: int,
-                        max_horizon: int, gamma: float) -> list[float]:
-    """favor at every horizon 0..max_horizon under (me-idle, opp-reactive)."""
+                        max_horizon: int, gamma: float,
+                        opp_traj: list[list[list]] | None = None,
+                        ) -> list[float]:
+    """favor at every horizon 0..max_horizon under (me-idle, opp-reactive).
+
+    When `opp_traj` is provided, opp seats replay the precomputed action
+    sequence instead of being driven reactively by `opp_actions_for_snap`.
+    This is the CRN substrate — same opp sequence in baseline AND in every
+    candidate rollout cancels opp-variance from the Δ. Default (None)
+    preserves the existing reactive behavior for backward compat.
+    """
     favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
     out = [favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)]
-    for _ in range(max_horizon):
+    for step_i in range(max_horizon):
         if snap.fake_env.done:
             out.append(out[-1])
             continue
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        if opp_traj is not None and step_i < len(opp_traj):
+            actions = [list(a) for a in opp_traj[step_i]]
+        else:
+            actions = opp_actions_for_snap(snap, me, num_seats)
         snap = fs_step(snap, actions, in_place=True)
         out.append(favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma))
     return out
@@ -10205,14 +10439,25 @@ def build_idle_baseline(snap_base, me: int, num_seats: int,
 def score_action(snap_base, me: int, num_seats: int,
                  src_id: int, angle: float, ships: int,
                  horizon: int, baseline_favors: list[float],
-                 wait_N: int, gamma: float) -> float:
-    """Δ favor at horizon = leaf(my_action@wait_N) − baseline."""
+                 wait_N: int, gamma: float,
+                 opp_traj: list[list[list]] | None = None,
+                 ) -> float:
+    """Δ favor at horizon = leaf(my_action@wait_N) − baseline.
+
+    When `opp_traj` is provided, opp seats replay the precomputed action
+    sequence instead of being driven reactively per-tick. The Δ between
+    candidates then isolates the candidate's marginal contribution
+    (CRN). Default (None) preserves the existing reactive behavior.
+    """
     favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
     for step_i in range(horizon):
         if snap.fake_env.done:
             break
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        if opp_traj is not None and step_i < len(opp_traj):
+            actions = [list(a) for a in opp_traj[step_i]]
+        else:
+            actions = opp_actions_for_snap(snap, me, num_seats)
         if step_i == int(wait_N):
             actions[me] = [[int(src_id), float(angle), int(ships)]]
         snap = fs_step(snap, actions, in_place=True)
@@ -10261,6 +10506,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
            world=None,
            reserved_srcs: set[int] | None = None,
            reserved_for_new_commits: set[int] | None = None,
+           opp_traj: list[list[list]] | None = None,
            ) -> tuple[list[list], list[dict]]:
     """Validate top candidates with fast_sim, emit greedy non-dogpile moves.
 
@@ -10302,6 +10548,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
             snap_base, me, num_seats,
             int(src.id), float(angle), int(ships),
             int(horizon), baseline_favors, int(wait_N), gamma,
+            opp_traj=opp_traj,
         )
         if delta > 0:
             validated.append((delta, src, tgt, ships, angle, wait_N))
@@ -11493,6 +11740,46 @@ JOINT_LIFT_USED_TGTS: bool = (
     os.environ.get("BASELINE_JOINT_AGGR", "0").strip() == "1"
 )
 
+# Triples extension (2026-05-23): when the existing pair-enum can't crack
+# a target (no pair scores > 0), optionally enumerate 3-source bundles
+# from a wider candidate slice. Diagnostic probe vs v7_0 found median
+# uncrackable defender garrison = 80 ships — beyond any reasonable pair
+# but within reach of 3 sources × ~25 ships each. Off by default; opt-in
+# via BASELINE_JOINT_TRIPLES=1.
+JOINT_TRIPLES_ENABLED: bool = (
+    os.environ.get("BASELINE_JOINT_TRIPLES", "0").strip() == "1"
+)
+JOINT_TRIPLES_TOP_K: int = int(
+    os.environ.get("BASELINE_JOINT_TRIPLES_TOP_K", "4"),
+)
+JOINT_MAX_TRIPLES: int = int(
+    os.environ.get("BASELINE_JOINT_MAX_TRIPLES", "8"),
+)
+
+# JOINT_INSTRUMENT: diagnostic counters for "would 3+ source bundles help?"
+# probe. When BASELINE_JOINT_INSTRUMENT is set to a path, accumulate one
+# row per target-with-2+-candidates encountered and append as JSONL on
+# process exit. Zero impact when env-var is unset.
+_JOINT_INSTRUMENT_PATH: str = os.environ.get(
+    "BASELINE_JOINT_INSTRUMENT", "",
+).strip()
+_JOINT_INSTRUMENT_ROWS: list[dict] = []
+
+
+def _joint_instrument_dump() -> None:
+    if not _JOINT_INSTRUMENT_PATH or not _JOINT_INSTRUMENT_ROWS:
+        return
+    import json
+    with open(_JOINT_INSTRUMENT_PATH, "a") as f:
+        for row in _JOINT_INSTRUMENT_ROWS:
+            f.write(json.dumps(row) + "\n")
+    _JOINT_INSTRUMENT_ROWS.clear()
+
+
+if _JOINT_INSTRUMENT_PATH:
+    import atexit
+    atexit.register(_joint_instrument_dump)
+
 
 def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
                     me: int, world, ledger: dict,
@@ -11702,6 +11989,7 @@ def score_candidate_dyn(snap_base, src, tgt, ships: int, angle: float,
 
 def build_trajectory_baseline(snap_base, me: int, num_seats: int,
                               horizon: int, favor_fn, gamma: float,
+                              opp_traj: list[list[list]] | None = None,
                               ) -> list[float]:
     """Idle-baseline favor at each tick in [0, horizon]. Used by v4 to
     subtract the do-nothing alternative from each candidate's leaf
@@ -11723,11 +12011,18 @@ def build_trajectory_baseline(snap_base, me: int, num_seats: int,
     out: list[float] = [
         favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma),
     ]
-    for _ in range(horizon):
+    for step_i in range(horizon):
         if snap.fake_env.done:
             out.append(out[-1])
             continue
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        if opp_traj is not None and step_i < len(opp_traj):
+            # CRN path: replay the precomputed opp sequence. Same opp
+            # behavior in baseline AND every candidate rollout means
+            # Δ-favor isolates the candidate's marginal contribution.
+            actions = [list(a) for a in opp_traj[step_i]]
+        else:
+            # Legacy path: opp policy fires reactively per tick.
+            actions = opp_actions_for_snap(snap, me, num_seats)
         # Baseline IS asymmetric on purpose (ME idle, opp reactive) —
         # we measure the candidate's marginal value above the worst-
         # case "I do nothing this turn AND on every future turn"
@@ -11753,6 +12048,7 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                        horizon: int,
                        skip_admissibility: bool = False,
                        wait_N: int = 0,
+                       opp_traj: list[list[list]] | None = None,
                        ) -> tuple[float, str, int | None]:
     """v4 scoring: same admissibility filter + fast_sim rollout as v3,
     but the leaf is `favor_fn` instead of a binary owner-check, and the
@@ -11815,7 +12111,10 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     for t in range(horizon):
         if snap.fake_env.done:
             break
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        if opp_traj is not None and t < len(opp_traj):
+            actions = [list(a) for a in opp_traj[t]]
+        else:
+            actions = opp_actions_for_snap(snap, me, num_seats)
         if t == int(wait_N):
             # Candidate first (the chooser's primary decision), then
             # defensive emits. If the candidate drains the planet
@@ -11840,6 +12139,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
                               favor_fn, gamma: float,
                               horizon: int,
                               skip_admissibility: bool = False,
+                              opp_traj: list[list[list]] | None = None,
                               ) -> tuple[float, str]:
     """Direction B: score a JOINT candidate of multiple launches in one
     fast_sim rollout. `launches` is a list of
@@ -11897,7 +12197,10 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
     for t in range(horizon):
         if snap.fake_env.done:
             break
-        actions = opp_actions_for_snap(snap, me, num_seats)
+        if opp_traj is not None and t < len(opp_traj):
+            actions = [list(a) for a in opp_traj[t]]
+        else:
+            actions = opp_actions_for_snap(snap, me, num_seats)
         if t in inject_at:
             base_actions = list(inject_at[t])
             if t == earliest_inject_t and me_defense_emits:
@@ -11981,6 +12284,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                       world, model,
                       reserved_srcs: set[int] | None = None,
                       reserved_for_new_commits: set[int] | None = None,
+                      opp_traj: list[list[list]] | None = None,
                       ) -> tuple[list[list], list[dict]]:
     """Drop-in alternative to `chooser.choose`.
 
@@ -12055,6 +12359,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     if not use_v3 and max_horizon_seen > 0:
         baseline_favors = build_trajectory_baseline(
             snap_base, me, num_seats, max_horizon_seen, favor_fn, gamma,
+            opp_traj=opp_traj,
         )
 
     # Wallclock budgeting (mirror composite chooser pattern). Probe per-
@@ -12116,6 +12421,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 horizon=int(prop_horizon),
                 skip_admissibility=skip_filter,
                 wait_N=int(wait_N),
+                opp_traj=opp_traj,
             )
             if status == "scored" and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))
@@ -12159,11 +12465,28 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 (float(cd), src, tgt, int(ships), float(angle), int(ph)),
             )
         joint_count = 0
+        triple_count = 0
+        # JOINT_INSTRUMENT: per-target counters built up across the
+        # inner pair-loops; appended to _JOINT_INSTRUMENT_ROWS after.
+        _instr_positive_solo_by_tgt: dict[int, bool] = {}
+        if _JOINT_INSTRUMENT_PATH:
+            for _e in scored:
+                if len(_e) == 6:
+                    _instr_positive_solo_by_tgt[int(_e[2].id)] = True
         for tgt_id, cands in by_tgt.items():
             if len(cands) < 2:
                 continue
             cands.sort(key=lambda c: -c[0])
             top = cands[:JOINT_TOP_K_PER_TARGET]
+            _instr_attempted = 0
+            _instr_solo_gated = 0
+            _instr_scored_status = 0
+            _instr_positive = 0
+            _instr_pair_scores: list[float] = []
+            _instr_pair_statuses: list[str] = []
+            # Always tracked (not gated on _JOINT_INSTRUMENT_PATH) — the
+            # triples block below uses this as its trigger condition.
+            pair_positive_for_tgt = 0
             for i in range(len(top)):
                 if joint_count >= JOINT_MAX_PAIRS:
                     break
@@ -12183,6 +12506,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                     # logic would lose the cheaper independent path.
                     if (int(ca[1].id) in solo_winners
                             and int(cb[1].id) in solo_winners):
+                        if _JOINT_INSTRUMENT_PATH:
+                            _instr_solo_gated += 1
                         continue
                     launches = [
                         (ca[1], ca[2], ca[3], ca[4], 0),
@@ -12193,10 +12518,133 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         snap_base, launches, me, num_seats, world,
                         baseline_favors, favor_fn, gamma,
                         horizon=jh, skip_admissibility=skip_filter,
+                        opp_traj=opp_traj,
                     )
                     joint_count += 1
+                    if _JOINT_INSTRUMENT_PATH:
+                        _instr_attempted += 1
+                        _instr_pair_scores.append(float(j_score))
+                        _instr_pair_statuses.append(str(j_status))
+                        if j_status == "scored":
+                            _instr_scored_status += 1
+                            if j_score > 0.0:
+                                _instr_positive += 1
                     if j_status == "scored" and j_score > 0.0:
                         scored.append((j_score, "joint", launches))
+                        pair_positive_for_tgt += 1
+
+            # Triples extension. Fire only when no pair scored > 0 for
+            # this target — pairs are cheaper and already-running. The
+            # diagnostic probe (vs v7_0) showed ~3 per-turn enemy/neutral
+            # targets with ≥3 sources available where no pair clears the
+            # defender; this loop tries 3-source bundles for that subset.
+            _instr_triples_attempted = 0
+            _instr_triples_solo_gated = 0
+            _instr_triples_positive = 0
+            _instr_triple_scores: list[float] = []
+            _instr_triple_statuses: list[str] = []
+            if (JOINT_TRIPLES_ENABLED
+                    and pair_positive_for_tgt == 0
+                    and triple_count < JOINT_MAX_TRIPLES
+                    and time.perf_counter() <= safe_deadline):
+                top_ext = cands[:JOINT_TRIPLES_TOP_K]
+                if len(top_ext) >= 3:
+                    for ti in range(len(top_ext)):
+                        if triple_count >= JOINT_MAX_TRIPLES:
+                            break
+                        if time.perf_counter() > safe_deadline:
+                            break
+                        for tj in range(ti + 1, len(top_ext)):
+                            if triple_count >= JOINT_MAX_TRIPLES:
+                                break
+                            if time.perf_counter() > safe_deadline:
+                                break
+                            for tk in range(tj + 1, len(top_ext)):
+                                if triple_count >= JOINT_MAX_TRIPLES:
+                                    break
+                                if time.perf_counter() > safe_deadline:
+                                    break
+                                ca, cb, cc = (
+                                    top_ext[ti], top_ext[tj], top_ext[tk],
+                                )
+                                sids = {
+                                    int(ca[1].id),
+                                    int(cb[1].id),
+                                    int(cc[1].id),
+                                }
+                                if len(sids) < 3:
+                                    continue  # need 3 distinct sources
+                                # Mirror pair gate: skip if all 3 sources
+                                # have viable solos (joint-over-bundle).
+                                if (int(ca[1].id) in solo_winners
+                                        and int(cb[1].id) in solo_winners
+                                        and int(cc[1].id) in solo_winners):
+                                    if _JOINT_INSTRUMENT_PATH:
+                                        _instr_triples_solo_gated += 1
+                                    continue
+                                launches = [
+                                    (ca[1], ca[2], ca[3], ca[4], 0),
+                                    (cb[1], cb[2], cb[3], cb[4], 0),
+                                    (cc[1], cc[2], cc[3], cc[4], 0),
+                                ]
+                                jh = max(
+                                    int(ca[5]), int(cb[5]), int(cc[5]),
+                                )
+                                j_score, j_status = (
+                                    score_candidate_v4_joint(
+                                        snap_base, launches, me,
+                                        num_seats, world,
+                                        baseline_favors, favor_fn, gamma,
+                                        horizon=jh,
+                                        skip_admissibility=skip_filter,
+                                        opp_traj=opp_traj,
+                                    )
+                                )
+                                triple_count += 1
+                                if _JOINT_INSTRUMENT_PATH:
+                                    _instr_triples_attempted += 1
+                                    _instr_triple_scores.append(
+                                        float(j_score),
+                                    )
+                                    _instr_triple_statuses.append(
+                                        str(j_status),
+                                    )
+                                    if (j_status == "scored"
+                                            and j_score > 0.0):
+                                        _instr_triples_positive += 1
+                                if (j_status == "scored"
+                                        and j_score > 0.0):
+                                    scored.append(
+                                        (j_score, "joint", launches),
+                                    )
+
+            if _JOINT_INSTRUMENT_PATH:
+                tgt_obj = cands[0][2]
+                _JOINT_INSTRUMENT_ROWS.append({
+                    "turn": int(world.step) if world is not None else 0,
+                    "tgt_id": int(tgt_id),
+                    "tgt_owner": int(getattr(tgt_obj, "owner", -1)),
+                    "tgt_ships": float(getattr(tgt_obj, "ships", 0.0)),
+                    "tgt_production": float(
+                        getattr(tgt_obj, "production", 0.0),
+                    ),
+                    "n_cands": len(cands),
+                    "n_pairs_attempted": _instr_attempted,
+                    "n_pairs_solo_gated": _instr_solo_gated,
+                    "n_pairs_scored": _instr_scored_status,
+                    "n_pairs_positive": _instr_positive,
+                    "n_triples_attempted": _instr_triples_attempted,
+                    "n_triples_solo_gated": _instr_triples_solo_gated,
+                    "n_triples_positive": _instr_triples_positive,
+                    "pair_scores": list(_instr_pair_scores),
+                    "pair_statuses": list(_instr_pair_statuses),
+                    "triple_scores": list(_instr_triple_scores),
+                    "triple_statuses": list(_instr_triple_statuses),
+                    "any_solo_winner": bool(
+                        _instr_positive_solo_by_tgt.get(int(tgt_id), False),
+                    ),
+                    "num_seats": int(num_seats),
+                })
 
     if not scored:
         return [], []
@@ -12274,6 +12722,7 @@ Knobs (env var overrides, all optional):
 
 import math
 import os
+import time
 
 # Production default: hybrid value head (composite in 2P, A2-favor in 4P).
 # `setdefault` lets local A/B drivers (fast.py) override via env var without
@@ -12380,6 +12829,47 @@ SNIPER_MARGIN = float(os.environ.get("BASELINE_SNIPER_MARGIN", "1.2"))
 SNIPER_MAX_LAUNCHES = int(os.environ.get("BASELINE_SNIPER_MAX_LAUNCHES", "4"))
 SNIPER_RESERVE_FRAC = float(os.environ.get("BASELINE_SNIPER_RESERVE_FRAC", "0.4"))
 
+# Staggered-attrition convergence wave (2026-05-23). PI directive
+# "streamline ships to the opponent really aggressively … not launching
+# small fleets … snowball through the fastest path." Fills the missing
+# multi-source FRESH-attack capability: drain_stagnant_rear reinforces
+# friendlies, drain_combat_stack stacks onto already-inbound attacks,
+# and emit_sniper_strikes bails when no single source can crack a target
+# (line 810 `if required > primary_avail: continue`). The wave bundles
+# multiple idle sources into a staggered-arrival attack: first arrival
+# weakens the garrison, subsequent arrivals finish the kill. Physics-
+# filtered per Rule 47 (predict_fleet_fate). Bypasses the value head
+# (closed-form ROI) — the triples-extension axis was falsified earlier
+# this session due to value-head leaf-Δ washing out joint actions.
+# Same-step convergence is NOT implementable: fleet speed depends on
+# ship count (lib/fleet.speed ∝ log(ships)) and BASELINE_LEDGER (the
+# wait-N plumbing) is per Rule 37 falsified. Staggered-attrition is
+# the production-realizable form. Default OFF; opt-in via
+# BASELINE_CONVERGENCE_WAVE=1.
+CONVERGENCE_WAVE_ENABLED = os.environ.get("BASELINE_CONVERGENCE_WAVE", "0") == "1"
+WAVE_MAX_LAUNCHES = int(os.environ.get("BASELINE_WAVE_MAX_LAUNCHES", "6"))
+WAVE_MAX_TARGETS = int(os.environ.get("BASELINE_WAVE_MAX_TARGETS", "5"))
+WAVE_MIN_TGT_PROD = int(os.environ.get("BASELINE_WAVE_MIN_TGT_PROD", "2"))
+WAVE_MIN_PER_SOURCE_SHIPS = int(os.environ.get("BASELINE_WAVE_MIN_PER_SOURCE", "15"))
+WAVE_MIN_TOTAL_SHIPS = int(os.environ.get("BASELINE_WAVE_MIN_TOTAL", "60"))
+WAVE_RESERVE_FRAC = float(os.environ.get("BASELINE_WAVE_RESERVE_FRAC", "0.5"))
+WAVE_MARGIN = float(os.environ.get("BASELINE_WAVE_MARGIN", "1.05"))
+
+# Value-head leaf-Δ gate (V3, 2026-05-23). After the wave's mechanical
+# capture check accepts a candidate, optionally run a K-step rollout
+# WITH vs WITHOUT the wave's extras and only fire if Δfavor > epsilon.
+# Same anti-pattern as triples-extension and closed-form-ROI both
+# previously falsified — Rule 40 modeling-correctness fix routes the
+# joint action through the value head instead of tuning thresholds.
+# Telemetry is opt-in via BASELINE_WAVE_INSTRUMENT for the probe path.
+WAVE_LEAF_VALIDATE = os.environ.get("BASELINE_WAVE_LEAF_VALIDATE", "0") == "1"
+WAVE_LEAF_HORIZON = int(os.environ.get("BASELINE_WAVE_LEAF_HORIZON", "10"))
+WAVE_LEAF_EPS = float(os.environ.get("BASELINE_WAVE_LEAF_EPS", "0.0"))
+WAVE_LEAF_BUDGET_MS = float(os.environ.get("BASELINE_WAVE_LEAF_BUDGET_MS", "25"))
+WAVE_INSTRUMENT = os.environ.get("BASELINE_WAVE_INSTRUMENT", "0") == "1"
+_WAVE_TELEMETRY: list[dict] = []
+_OWNERSHIP_TRACE: list[tuple[int, dict[int, int]]] = []
+
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
 # chooser's wait_N>0 winners are remembered across turns instead of
 # being silently dropped. Each entry ticks down each turn; when
@@ -12427,7 +12917,15 @@ fleet_speed = speed
 # continuation lines as indented orphans. Friction tag
 # `bundler-modular-agent-namespace-access-breaks-bundle` (2026-05-17).
 # from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS  # inlined by bundle_agent.py
+# from agents.baseline.chooser import opp_actions_for_snap  # inlined by bundle_agent.py
 # from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON  # inlined by bundle_agent.py
+# from agents.baseline.value import favor as _favor_leaf  # inlined by bundle_agent.py
+_favor_leaf = favor
+# from lib.fast_sim import clone as fs_clone  # inlined by bundle_agent.py
+fs_clone = clone
+# from lib.fast_sim import step as fs_step  # inlined by bundle_agent.py
+fs_step = step
+# from lib.opp_model import compute_opp_trajectory  # inlined by bundle_agent.py
 
 
 _PARITY_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
@@ -13087,6 +13585,399 @@ def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
     return list(moves) + extras
 
 
+def _simulate_staggered_capture(
+    tgt, my_id: int, sources_eta: list, model=None,
+):
+    """Greedy staggered-attrition simulation.
+
+    `sources_eta` is a list of `(eta, src, angle, ships)` sorted by ETA
+    ascending. Walks through arrivals one at a time; between arrivals
+    the defender's garrison grows by `production * delta_eta`; at each
+    arrival the smaller side dies and the larger side's surplus
+    survives. Returns the shortest prefix (`prefix_idx`) such that the
+    final arrival captures the target with `WAVE_MARGIN` safety, the
+    cumulative total ships used, and a bool indicating capture.
+
+    Defender model (when `model` is provided): garrison at the FIRST
+    arrival's eta is `model.ships_at(tgt.id, eta_1)`, which folds in
+    enemy reinforcement fleets currently in flight (sniper at line 806
+    does the same). Subsequent arrivals add `production * delta_eta` to
+    the residual after the prior fight — that arm of the prediction is
+    purely production-driven, since once we capture (or drain heavily)
+    the model's ownership prediction breaks. When `model` is None or
+    `ships_at` returns None, falls back to the naive
+    `tgt.ships + production * eta` model.
+
+    Origin: 2026-05-23 close-look on seeds 42/7 showed 0/25 captures —
+    every wave fired into mid-air because the naive defender model
+    ignored enemy reinforcements (step 36 seed 7: target 4 ships +
+    prod 4 → 152 ships 15 steps later, ~148 ships of reinforcement
+    the prior model never saw).
+    """
+    production = float(tgt.production)
+    owner = int(tgt.owner)
+    last_eta = 0
+    last_predicted = None  # model.ships_at at the previous arrival
+    total_ships = 0
+    garrison = float(tgt.ships)
+    for idx, (eta, _src, _angle, ships) in enumerate(sources_eta):
+        if owner != my_id:
+            # Between arrivals (or from now to the first arrival) the
+            # garrison gains BOTH production growth AND any predicted
+            # enemy reinforcements. model.ships_at folds both in; if it
+            # returns None, fall back to production-only growth.
+            if model is not None:
+                predicted = model.ships_at(int(tgt.id), int(eta))
+            else:
+                predicted = None
+            if predicted is not None:
+                if idx == 0:
+                    # First arrival: take the model's prediction directly.
+                    garrison = float(predicted)
+                else:
+                    # Subsequent arrival: add the model's increment
+                    # (production + reinforcements between eta_prev and
+                    # eta_now) to the residual from the prior fight.
+                    delta = float(predicted) - float(last_predicted or 0.0)
+                    garrison += max(0.0, delta)
+                last_predicted = float(predicted)
+            else:
+                garrison += max(0, eta - last_eta) * production
+            if ships * WAVE_MARGIN >= garrison:
+                total_ships += ships
+                return idx + 1, total_ships, True
+            else:
+                garrison -= ships
+                total_ships += ships
+        else:
+            break
+        last_eta = eta
+    return len(sources_eta), total_ships, False
+
+
+def _resolve_move_target(move, src_planet, enemy_planets, world):
+    """Resolve which enemy planet a move [src_id, angle, ships] is aimed at.
+
+    Returns (target_planet, eta) or (None, None) if no enemy planet is
+    aligned with the move's angle (within best-cosine match) or if
+    physics doesn't actually land us at that target.
+    """
+    if not enemy_planets:
+        return None, None
+    angle = float(move[1])
+    ships = int(move[2])
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    best = None
+    best_cos = -2.0
+    for t in enemy_planets:
+        dx = float(t.x) - float(src_planet.x)
+        dy = float(t.y) - float(src_planet.y)
+        norm = math.hypot(dx, dy)
+        if norm < 1e-6:
+            continue
+        cos = (cos_a * dx + sin_a * dy) / norm
+        if cos > best_cos:
+            best_cos = cos
+            best = t
+    if best is None or best_cos < 0.95:
+        return None, None
+    try:
+        fate = predict_fleet_fate(src_planet, best, angle, ships, world)
+    except Exception:
+        return None, None
+    if fate.outcome != "target":
+        return None, None
+    return best, int(fate.step)
+
+
+def _wave_leaf_delta(
+    snap_base, me: int, num_seats: int, gamma: float,
+    horizon: int, opp_traj,
+    moves_without: list, moves_with: list,
+) -> float:
+    """Δfavor over K turns, with vs without the wave's extras.
+
+    CRN substrate: the same opp action sequence is replayed in both
+    rollouts (either `opp_traj` precomputed, or `opp_actions_for_snap`
+    recomputed identically on each fresh clone). The wave's marginal
+    contribution is isolated; opp-reaction noise cancels.
+    """
+    def _roll(t0_action: list) -> float:
+        snap = fs_clone(snap_base)
+        for k in range(horizon):
+            if snap.fake_env.done:
+                break
+            if opp_traj is not None and k < len(opp_traj):
+                actions = [list(a) for a in opp_traj[k]]
+            else:
+                actions = opp_actions_for_snap(snap, me, num_seats)
+            actions[me] = t0_action if k == 0 else []
+            snap = fs_step(snap, actions, in_place=True)
+        return _favor_leaf(
+            snap.state[me].observation, me, num_seats, gamma=gamma,
+        )
+    return _roll(moves_with) - _roll(moves_without)
+
+
+def dump_wave_telemetry(path: str) -> int:
+    """Flush `_WAVE_TELEMETRY` to JSON. Returns record count."""
+    import json
+    with open(path, "w") as f:
+        json.dump(_WAVE_TELEMETRY, f)
+    return len(_WAVE_TELEMETRY)
+
+
+def dump_ownership_trace(path: str) -> int:
+    """Flush `_OWNERSHIP_TRACE` to JSON. Returns record count."""
+    import json
+    payload = [
+        {"step": step, "owners": owners}
+        for (step, owners) in _OWNERSHIP_TRACE
+    ]
+    with open(path, "w") as f:
+        json.dump(payload, f)
+    return len(_OWNERSHIP_TRACE)
+
+
+def emit_convergence_wave(
+    moves, planets, my_id: int, world, model,
+    *,
+    snap_base=None,
+    num_seats: int = 2,
+    opp_traj=None,
+    gamma: float = 0.99,
+    step: int = -1,
+) -> list:
+    """Stack idle sources onto attacks the chooser already chose this turn.
+
+    Variant #3 of the convergence-wave axis (2026-05-23). Builds on V2
+    (chooser-as-gate restricts targets to those the chooser attacked)
+    by adding a post-acceptance value-head leaf-Δ gate when
+    `WAVE_LEAF_VALIDATE` is set. The leaf-Δ gate scores the joint
+    action (wave's extras as a block) via K-step rollout-and-favor;
+    fires only if Δfavor > epsilon. Addresses the V2 regression
+    (n=16 6/16 vs baseline_full) by routing the joint action through
+    the value head, the modeling-correctness fix per Rule 40.
+
+    Distinct from drain_combat_stack: that mechanism stacks onto
+    `model.ledger` attacks already in flight from prior turns; this
+    one stacks onto FRESH attacks emitted by the chooser THIS turn
+    (which aren't in the ledger yet). The chooser-as-gate replaces the
+    closed-form ROI selection that was failing against reactive opps.
+    """
+    if not CONVERGENCE_WAVE_ENABLED:
+        return moves
+
+    _t_entry = time.perf_counter() if WAVE_INSTRUMENT else 0.0
+
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    enemy_planets = [
+        p for p in planets
+        if int(p.owner) != my_id and int(p.owner) != -1
+    ]
+    if not my_planets or not enemy_planets:
+        return moves
+
+    planets_by_id = {int(p.id): p for p in planets}
+    used_srcs: set[int] = set()
+    # Resolve each existing move into (src, target, ships, eta) — these
+    # are the chooser-validated attacks we want to extend.
+    chooser_attacks: dict[int, list[tuple]] = {}  # tgt_id -> list of (eta, ships)
+    for m in moves:
+        try:
+            sid = int(m[0])
+        except (TypeError, IndexError):
+            continue
+        used_srcs.add(sid)
+        src = planets_by_id.get(sid)
+        if src is None or int(src.owner) != my_id:
+            continue
+        tgt, eta = _resolve_move_target(m, src, enemy_planets, world)
+        if tgt is None:
+            continue
+        chooser_attacks.setdefault(int(tgt.id), []).append(
+            (int(eta), int(m[2])),
+        )
+    _rec: dict | None = None
+    if WAVE_INSTRUMENT:
+        _rec = {
+            "step": int(step),
+            "me": int(my_id),
+            "n_candidate_targets": len(chooser_attacks),
+            "per_target": [],
+            "actual_fire": False,
+            "chosen_tgt_id": None,
+            "n_sources_in_prefix": 0,
+            "added_ships": 0,
+            "gate_delta": None,
+            "gate_ms": None,
+            "gate_rejected_reason": None,
+            "wall_ms": None,
+        }
+
+    if not chooser_attacks:
+        if _rec is not None:
+            _rec["wall_ms"] = (time.perf_counter() - _t_entry) * 1000
+            _WAVE_TELEMETRY.append(_rec)
+        return moves
+
+    total_my_ships = sum(int(p.ships) for p in my_planets)
+    wave_ship_budget = int(total_my_ships * WAVE_RESERVE_FRAC)
+
+    best = None  # (score, tgt_id, new_prefix, added_ships)
+    for tgt_id, attacks in chooser_attacks.items():
+        tgt = planets_by_id[tgt_id]
+        # Idle sources eligible to bolster this attack.
+        scored = []
+        for src in my_planets:
+            if int(src.id) in used_srcs:
+                continue
+            if model.incoming_enemy_eta(int(src.id), my_id) is not None:
+                continue
+            src_reserve = max(int(src.production) * STAGNANT_RESERVE_MULT,
+                              STAGNANT_RESERVE_FLOOR)
+            if int(src.ships) <= STAGNANT_THRESHOLD_MULT * src_reserve:
+                continue
+            available = int(src.ships) - src_reserve
+            if available < WAVE_MIN_PER_SOURCE_SHIPS:
+                continue
+            angle = math.atan2(float(tgt.y) - float(src.y),
+                               float(tgt.x) - float(src.x))
+            try:
+                fate = predict_fleet_fate(src, tgt, angle, available, world)
+            except Exception:
+                continue
+            if fate.outcome != "target":
+                continue
+            scored.append((int(fate.step), src, float(angle), int(available)))
+        if not scored:
+            if _rec is not None:
+                _rec["per_target"].append({
+                    "tgt_id": int(tgt_id),
+                    "n_qualifying_sources": 0,
+                    "captured": False,
+                })
+            continue
+        scored.sort(key=lambda s: s[0])
+
+        # Build combined arrival list: chooser's existing attacks +
+        # our candidate extra sources. Existing attacks contribute as
+        # fixed arrivals (no src object — we use None as a sentinel).
+        existing = [(eta, None, 0.0, ships) for (eta, ships) in attacks]
+        combined = existing + scored
+        combined.sort(key=lambda s: s[0])
+
+        prefix_idx, _total, captured = _simulate_staggered_capture(
+            tgt, my_id, combined, model=model,
+        )
+        if _rec is not None:
+            sub = {
+                "tgt_id": int(tgt_id),
+                "n_qualifying_sources": len(scored),
+                "captured": bool(captured),
+                "prefix_idx": int(prefix_idx),
+                "arrivals_total_ships": int(_total),
+            }
+            try:
+                eta_first = int(combined[0][0]) if combined else 0
+                garrison_first = int(model.ships_at(int(tgt_id), eta_first))
+                sub["garrison_at_first_eta"] = garrison_first
+                if garrison_first > 0:
+                    sub["achieved_margin"] = (
+                        float(_total) / float(garrison_first)
+                    )
+            except Exception:
+                pass
+            _rec["per_target"].append(sub)
+        if not captured:
+            continue
+        # Count ONLY the new sources (skip the existing chooser arrivals).
+        new_prefix = [s for s in combined[:prefix_idx] if s[1] is not None]
+        if not new_prefix:
+            # Capture is achieved by the chooser's launches alone — no
+            # need to add anything.
+            continue
+        added_ships = sum(int(s[3]) for s in new_prefix)
+        if added_ships < WAVE_MIN_PER_SOURCE_SHIPS:
+            continue
+        if added_ships > wave_ship_budget:
+            continue
+        if len(new_prefix) > WAVE_MAX_LAUNCHES:
+            continue
+
+        # Prefer targets that need the least extra spend (cheapest
+        # bolster = highest marginal value), tie-break on production.
+        score = (float(planets_by_id[tgt_id].production), -added_ships)
+        if best is None or score > best[0]:
+            best = (score, tgt_id, new_prefix, added_ships)
+
+    if best is None:
+        if _rec is not None:
+            _rec["wall_ms"] = (time.perf_counter() - _t_entry) * 1000
+            _WAVE_TELEMETRY.append(_rec)
+        return moves
+
+    _score, _tgt_id, prefix, _added = best
+
+    # Value-head leaf-Δ gate (V3). After the mechanical capture check
+    # accepts a candidate, run a K-step rollout with vs without the
+    # wave's extras and only fire if Δfavor > epsilon. CRN substrate
+    # (same opp script in both rollouts) isolates the wave's marginal
+    # effect. Pessimistic budget abort: if the gate takes too long,
+    # don't fire — preserves the 1000ms env hard cap.
+    if WAVE_LEAF_VALIDATE and snap_base is not None:
+        _t_gate = time.perf_counter()
+        extras_candidate = [
+            [int(src.id), float(angle), int(ships)]
+            for _eta, src, angle, ships in prefix
+        ]
+        moves_with = list(moves) + extras_candidate
+        try:
+            delta = _wave_leaf_delta(
+                snap_base, my_id, num_seats, gamma,
+                WAVE_LEAF_HORIZON, opp_traj,
+                moves_without=list(moves),
+                moves_with=moves_with,
+            )
+        except Exception:
+            delta = None
+        gate_ms = (time.perf_counter() - _t_gate) * 1000
+        if _rec is not None:
+            _rec["gate_delta"] = delta
+            _rec["gate_ms"] = gate_ms
+        if gate_ms > WAVE_LEAF_BUDGET_MS:
+            if _rec is not None:
+                _rec["gate_rejected_reason"] = "timeout"
+                _rec["wall_ms"] = (
+                    time.perf_counter() - _t_entry
+                ) * 1000
+                _WAVE_TELEMETRY.append(_rec)
+            return moves
+        if delta is None or delta <= WAVE_LEAF_EPS:
+            if _rec is not None:
+                _rec["gate_rejected_reason"] = "delta_nonpositive"
+                _rec["wall_ms"] = (
+                    time.perf_counter() - _t_entry
+                ) * 1000
+                _WAVE_TELEMETRY.append(_rec)
+            return moves
+
+    extras = []
+    for _eta, src, angle, ships in prefix:
+        extras.append([int(src.id), float(angle), int(ships)])
+        used_srcs.add(int(src.id))
+    if _rec is not None:
+        _rec["actual_fire"] = True
+        _rec["chosen_tgt_id"] = int(_tgt_id)
+        _rec["n_sources_in_prefix"] = len(prefix)
+        _rec["added_ships"] = int(_added)
+        _rec["prefix_src_ids"] = [int(src.id) for _eta, src, _a, _s in prefix]
+        _rec["wall_ms"] = (time.perf_counter() - _t_entry) * 1000
+        _WAVE_TELEMETRY.append(_rec)
+    return list(moves) + extras
+
+
 def agent(obs, configuration=None):
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
@@ -13103,6 +13994,15 @@ def agent(obs, configuration=None):
     if ledger_on and step == 0:
         _PENDING_LAUNCHES.pop(me, None)
 
+    # Wave instrumentation reset (opt-in via BASELINE_WAVE_INSTRUMENT).
+    # Episode boundary detection: same step==0 trigger. Per-step
+    # ownership snapshot used post-hoc to compute the "wave-source
+    # captured within +10 steps" cannibalization signal.
+    if WAVE_INSTRUMENT:
+        if step == 0:
+            _WAVE_TELEMETRY.clear()
+            _OWNERSHIP_TRACE.clear()
+
     raw_planets = obs_d.get("planets", []) or []
     raw_fleets = obs_d.get("fleets", []) or []
     if not raw_planets:
@@ -13110,6 +14010,13 @@ def agent(obs, configuration=None):
 
     planets = [Planet(*p) for p in raw_planets]
     fleets = [Fleet(*f) for f in raw_fleets]
+
+    if WAVE_INSTRUMENT:
+        _OWNERSHIP_TRACE.append((
+            int(step),
+            {int(p.id): int(p.owner) for p in planets},
+        ))
+
     my_planets = [p for p in planets if int(p.owner) == me]
     other_planets = [p for p in planets if int(p.owner) != me]
     if not my_planets or not other_planets:
@@ -13151,6 +14058,21 @@ def agent(obs, configuration=None):
             # Cases (b) and (c) fall through.
 
     snap_base = fs_from_obs(obs, num_seats=num_seats)
+
+    # CRN opp-trajectory precompute (B.3.1, 2026-05-23). When
+    # BASELINE_OPP_TRAJ_TIER is set, precompute one deterministic opp
+    # action sequence once per turn and reuse it across the baseline
+    # and every candidate rollout. Two gains: variance reduction (Δ
+    # between candidates is no longer corrupted by opp-reaction noise)
+    # and a realistic moving-opp baseline (the do-nothing branch is now
+    # correctly punished, fixing the 50% emission-rate gap from the
+    # 2026-05-18 audit). Default unset = legacy reactive opp per tick.
+    _opp_traj_tier = os.environ.get("BASELINE_OPP_TRAJ_TIER", "").strip().lower()
+    opp_traj_pre: list[list[list]] | None = None
+    if _opp_traj_tier in ("lite", "topmix", "top"):
+        opp_traj_pre = compute_opp_trajectory(
+            snap_base, me, num_seats, MAX_HORIZON, tier=_opp_traj_tier,
+        )
 
     # Trajectory-first chooser opt-in (2026-05-17). Deterministic
     # admissibility + single-tick combat prediction; no K-step rollout,
@@ -13212,6 +14134,7 @@ def agent(obs, configuration=None):
             world, model,
             reserved_srcs=reserved_srcs,
             reserved_for_new_commits=reserved_for_new_commits,
+            opp_traj=opp_traj_pre,
         )
 
         # 2. Persist updated ledger (surviving + new commits) when on.
@@ -13223,6 +14146,11 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
+        moves = emit_convergence_wave(
+            moves, planets, me, world, model,
+            snap_base=snap_base, num_seats=num_seats,
+            opp_traj=opp_traj_pre, gamma=gamma, step=step,
+        )
         return emit_sniper_strikes(moves, planets, me, world, model)
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
@@ -13246,10 +14174,16 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
+        moves = emit_convergence_wave(
+            moves, planets, me, world, model,
+            snap_base=snap_base, num_seats=num_seats,
+            opp_traj=opp_traj_pre, gamma=gamma, step=step,
+        )
         return emit_sniper_strikes(moves, planets, me, world, model)
 
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
+        opp_traj=opp_traj_pre,
     )
 
     prerank = propose(
@@ -13283,6 +14217,7 @@ def agent(obs, configuration=None):
         world=world,
         reserved_srcs=composite_reserved,
         reserved_for_new_commits=composite_reserved_new,
+        opp_traj=opp_traj_pre,
     )
 
     if ledger_on:
@@ -13293,4 +14228,9 @@ def agent(obs, configuration=None):
     moves = drain_idle_rear(moves, planets, me, world, model)
     moves = drain_stagnant_rear(moves, planets, me, world, model)
     moves = drain_combat_stack(moves, planets, me, world, model)
+    moves = emit_convergence_wave(
+        moves, planets, me, world, model,
+        snap_base=snap_base, num_seats=num_seats,
+        opp_traj=opp_traj_pre, gamma=gamma, step=step,
+    )
     return emit_sniper_strikes(moves, planets, me, world, model)

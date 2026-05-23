@@ -43,6 +43,8 @@ from __future__ import annotations
 import math
 from typing import Any, Callable
 
+from lib.fast_sim import clone as fs_clone
+from lib.fast_sim import step as fs_step
 from lib.fleet import speed as _fleet_speed
 from lib.intent import World, realize
 from lib.mechanism import DEFAULT_MECHANISMS
@@ -626,7 +628,6 @@ def compute_opp_trajectory(
     Cost (4P, max_horizon=40): multiply by 3 (three opp seats). Topmix
     auto-downgrades to lite at num_seats > 2 to stay under budget.
     """
-    from lib.fast_sim import clone as fs_clone, step as fs_step
 
     if num_seats > 2 and tier == "topmix":
         tier = "lite"

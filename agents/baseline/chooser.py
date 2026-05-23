@@ -19,11 +19,9 @@ import time
 
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
-from lib.opp_model import (
-    lite_greedy_opportunistic_policy,
-    lite_greedy_policy,
-    top_tier_mirror_policy,
-)
+from lib.opp_model import lite_greedy_opportunistic_policy
+from lib.opp_model import lite_greedy_policy
+from lib.opp_model import top_tier_mirror_policy
 
 from agents.baseline.value import select_favor_fn
 
