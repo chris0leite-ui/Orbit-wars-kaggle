@@ -4,15 +4,25 @@ Per-seat phase state lives in module-level `_PHASE_STATE`. State resets
 on `obs.step == 0` (new game). The state machine is:
 
     Initial            : phase = "BUILDUP"
-    BUILDUP            : try buildup.step(...); if it returns moves,
-                         emit and stay in BUILDUP for next turn.
-                         If None, transition to CONSOLIDATION SAME TURN
-                         and emit the CONSOLIDATION moves.
-    CONSOLIDATION      : evaluate_inflection search; log elect result to
-                         audit/…strike_elect.jsonl; if a plan is found
-                         AND BUILDUP_PLANNER_STRIKE_ENABLED=1, transition
-                         to STRIKE same-turn and emit the wave. Otherwise
-                         delegate to consolidation.step(...).
+    BUILDUP            : if step >= OPENING_HORIZON, transition straight
+                         to CONSOLIDATION (no World/Model build paid).
+                         Else try buildup.step(...); if it returns moves,
+                         emit and stay in BUILDUP for next turn. If None,
+                         transition to CONSOLIDATION SAME TURN and emit
+                         the CONSOLIDATION moves.
+    CONSOLIDATION      : FIRST run the FINISHER pre-check
+                         (`endgame.quick_trigger`); when opp owns
+                         <=K_FINISH planets, search for a single-arrival
+                         wave that captures EVERY opp planet and emit it
+                         this turn (drives strict elimination, not just
+                         score-leading). Otherwise, when STRIKE is enabled,
+                         run `evaluate_inflection` and route to STRIKE on a
+                         plan. Default fast path (STRIKE disabled, no
+                         FINISHER trigger) delegates straight to
+                         consolidation.step — the Step-3b observation-only
+                         predicate path was retired since it paid a
+                         ~600ms-per-turn wallclock tax vs strong opponents
+                         without behavioral lift.
     STRIKE             : single-turn — atomic-drop validation via
                          strike.step(world, plan); transition back to
                          CONSOLIDATION at end of turn. Strike-only
@@ -32,6 +42,7 @@ from pathlib import Path
 from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
 
 from lib.intent import World
+from lib.joint_solver.opening_planner import OPENING_HORIZON
 from lib.world_model import WorldModel
 
 # Re-use baseline's well-tested obs-dict + num_seats helpers rather than
@@ -39,7 +50,8 @@ from lib.world_model import WorldModel
 # would also break agents/baseline/main.py, which is parity-tested.
 from agents.baseline.main import _as_dict, _num_seats
 
-from agents.buildup_planner import buildup, consolidation, predicates
+from agents.buildup_planner import buildup, consolidation, endgame, predicates
+from agents.buildup_planner import strike as _strike_mod
 
 
 # Phase tags (strings keep tracebacks + logs readable).
@@ -123,36 +135,80 @@ def agent(obs, configuration=None) -> list[list]:
 
     # --- BUILDUP branch -------------------------------------------------
     if state["phase"] == PHASE_BUILDUP:
-        planets = [Planet(*p) for p in raw_planets]
-        fleets = [Fleet(*f) for f in raw_fleets]
-        my_planets = [p for p in planets if int(p.owner) == me]
-        other_planets = [p for p in planets if int(p.owner) != me]
-        if not my_planets or not other_planets:
-            # Degenerate state — let CONSOLIDATION handle it; it will
-            # also return [] but logs/tests treat it consistently.
+        # Past the opening horizon, buildup.step short-circuits to None
+        # immediately. Skipping the World+Model build saves ~25ms per turn
+        # for the majority of game-steps (turns 30-498 in a 500-turn game).
+        if step >= OPENING_HORIZON:
             state["phase"] = PHASE_CONSOLIDATION
-            return consolidation.step(obs, configuration)
+        else:
+            planets = [Planet(*p) for p in raw_planets]
+            fleets = [Fleet(*f) for f in raw_fleets]
+            my_planets = [p for p in planets if int(p.owner) == me]
+            other_planets = [p for p in planets if int(p.owner) != me]
+            if not my_planets or not other_planets:
+                # Degenerate state — let CONSOLIDATION handle it; it will
+                # also return [] but logs/tests treat it consistently.
+                state["phase"] = PHASE_CONSOLIDATION
+                return consolidation.step(obs, configuration)
 
-        world = World.from_obs(obs_d)
-        model = WorldModel.from_world(world)
-        num_seats = _num_seats(planets, fleets)
+            world = World.from_obs(obs_d)
+            model = WorldModel.from_world(world)
+            num_seats = _num_seats(planets, fleets)
 
-        moves = buildup.step(world, model, me, num_seats, step)
-        if moves is not None:
-            # Stay in BUILDUP — the schedule will time out on its own
-            # via the OPENING_HORIZON guard inside buildup.step.
-            return moves
+            moves = buildup.step(world, model, me, num_seats, step)
+            if moves is not None:
+                # Stay in BUILDUP — the schedule will time out on its own
+                # via the OPENING_HORIZON guard inside buildup.step.
+                return moves
 
-        # buildup returned None: opening exhausted or no fire-now entries.
-        # Transition to CONSOLIDATION this same turn.
-        state["phase"] = PHASE_CONSOLIDATION
-        # Fall through.
+            # buildup returned None: opening exhausted or no fire-now entries.
+            # Transition to CONSOLIDATION this same turn.
+            state["phase"] = PHASE_CONSOLIDATION
+            # Fall through.
 
     # --- CONSOLIDATION branch -------------------------------------------
     if state["phase"] == PHASE_CONSOLIDATION:
-        # Step 2: run the real inflection predicate, log the result.
-        # Strike transition is GATED by BUILDUP_PLANNER_STRIKE_ENABLED
-        # (default OFF) — observation-only until Step 3 flips it ON.
+        # FINISHER pre-check (cheap O(|planets|)). Drives elimination once
+        # opp is reduced to <= K_FINISH planets — the closed-form gate
+        # alone leaves opp with 1-2 planets at turn cap (score-win, not
+        # elimination), which terminates as a "win" in reward space but
+        # leaves opp alive. FINISHER closes that gap by planning a wave
+        # that captures EVERY opp planet at one arrival step, dropping
+        # opp to zero owned planets (combined with 0 in-flight ships
+        # this triggers the env's elimination termination).
+        eg_trigger = endgame.quick_trigger(raw_planets, me)
+        if eg_trigger is not None:
+            eg_opp_id, _ = eg_trigger
+            eg_world = World.from_obs(obs_d)
+            eg_model = WorldModel.from_world(eg_world)
+            fin_plan = endgame.evaluate(
+                eg_world, eg_model, me, eg_opp_id,
+            )
+            if fin_plan is not None:
+                # Re-use strike.step's atomic-drop emission machinery —
+                # both plan shapes share the same shot contract.
+                try:
+                    return _strike_mod.step(
+                        eg_world, fin_plan,
+                        game_id=state.get("game_id", "unknown"),
+                        step_now=step,
+                    )
+                except Exception as exc:
+                    import logging
+                    logging.getLogger("buildup_planner.endgame").warning(
+                        "atomic-drop: endgame strike.step raised %s: %s",
+                        type(exc).__name__, exc,
+                    )
+                    return []
+
+        # Default fast path: STRIKE disabled → skip the predicate entirely
+        # and delegate straight to consolidation. The Step-3b diagnostic
+        # confirmed the observation-only predicate pays ~600ms/turn vs
+        # strong opponents with no behavioral benefit when STRIKE is off.
+        if not _strike_enabled():
+            return consolidation.step(obs, configuration)
+
+        # STRIKE-enabled path: run evaluate_inflection, log result, route.
         world_pred = World.from_obs(obs_d)
         opp_id = predicates.opp_id_2p(world_pred, me)
         # `.get` keeps existing dispatch tests (which build state manually
@@ -187,7 +243,7 @@ def agent(obs, configuration=None) -> list[list]:
                     "num_shots": (len(plan.shots) if plan else 0),
                     "elapsed_ms": round((time.perf_counter() - t0) * 1000.0, 3),
                 })
-            if plan is not None and _strike_enabled():
+            if plan is not None:
                 state["phase"] = PHASE_STRIKE
                 state["strike_plan"] = plan
                 # Fall through to STRIKE this turn.

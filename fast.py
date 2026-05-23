@@ -221,6 +221,13 @@ class GameResult:
     n_steps: int
     p0_turn_ms: list[float]
     p1_turn_ms: list[float]
+    # Termination + final-state fields (Phase B — elimination instrumentation).
+    # "elimination" = at most 1 player still has planets or in-flight fleets;
+    # "turn_cap" = game hit episodeSteps-2 with both players still alive;
+    # "unknown" = could not inspect the final observation (error path).
+    terminated_by: str = "unknown"
+    final_planet_counts: tuple[int, int] = (0, 0)
+    final_fleet_counts: tuple[int, int] = (0, 0)
 
 
 def _classify(rewards: tuple) -> str:
@@ -231,6 +238,30 @@ def _classify(rewards: tuple) -> str:
     if r1 > r0:
         return "p1_win"
     return "draw"
+
+
+def _classify_termination(final_obs) -> tuple[str, tuple[int, int], tuple[int, int]]:
+    """Inspect the env's final observation. Returns:
+       (termination_kind, (p0_planets, p1_planets), (p0_fleets, p1_fleets))
+
+    Matches the interpreter's alive-player rule (lib/game/interpreter.py:856-864):
+    a player is alive iff they own >=1 planet OR have >=1 in-flight fleet.
+    Termination is "elimination" if the alive-set has <=1 player at the
+    final tick (the only other way to terminate is the turn cap)."""
+    planets = list(getattr(final_obs, "planets", []) or [])
+    fleets = list(getattr(final_obs, "fleets", []) or [])
+    p0_planets = sum(1 for p in planets if int(p[1]) == 0)
+    p1_planets = sum(1 for p in planets if int(p[1]) == 1)
+    p0_fleets = sum(1 for f in fleets if int(f[1]) == 0)
+    p1_fleets = sum(1 for f in fleets if int(f[1]) == 1)
+    alive = set()
+    for p in planets:
+        if int(p[1]) != -1:
+            alive.add(int(p[1]))
+    for f in fleets:
+        alive.add(int(f[1]))
+    kind = "elimination" if len(alive) <= 1 else "turn_cap"
+    return kind, (p0_planets, p1_planets), (p0_fleets, p1_fleets)
 
 
 def play_one(seed: int, p0_path: str, p1_path: str, *,
@@ -261,6 +292,9 @@ def play_one(seed: int, p0_path: str, p1_path: str, *,
         )
     final = env.steps[-1]
     rewards = (final[0].reward, final[1].reward)
+    term_kind, planet_counts, fleet_counts = _classify_termination(
+        final[0].observation
+    )
     return GameResult(
         seed=seed,
         outcome=_classify(rewards),
@@ -268,6 +302,9 @@ def play_one(seed: int, p0_path: str, p1_path: str, *,
         n_steps=len(env.steps),
         p0_turn_ms=p0_times,
         p1_turn_ms=p1_times,
+        terminated_by=term_kind,
+        final_planet_counts=planet_counts,
+        final_fleet_counts=fleet_counts,
     )
 
 
@@ -735,6 +772,85 @@ def cmd_baselines(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# elim-sweep — winrate + elimination-rate vs an opponent
+# ---------------------------------------------------------------------------
+
+
+def cmd_elim_sweep(args: argparse.Namespace) -> int:
+    """Run focal vs opp on N seeds × seat-swap, report winrate AND
+    elimination-rate. Elimination = focal won AND env terminated with at most
+    one player alive (opp ended with zero planets AND zero in-flight fleets).
+    Score-wins (focal led at turn cap with opp still alive) count as wins but
+    NOT as elimination wins."""
+    focal_name, focal_path = resolve_agent_spec(args.agent)
+    opp_name,   opp_path   = resolve_agent_spec(args.vs)
+    seeds = list(range(args.seeds))
+    pairs = _balanced_pairs(seeds, focal_path, opp_path)
+    print(f"== elim-sweep {focal_name} vs {opp_name}  "
+          f"seeds={args.seeds} (×2 seats) = {len(pairs)} trials ==")
+
+    wins = elim_wins = score_wins = errors = draws = 0
+    n = 0
+    rows: list[tuple] = []
+    t0 = time.perf_counter()
+
+    if args.workers <= 1:
+        results = ((p, _play_one_task((p[0], p[1], p[2]))) for p in pairs)
+    else:
+        with ProcessPoolExecutor(max_workers=args.workers) as ex:
+            futs = {
+                ex.submit(_play_one_task, (seed, p0, p1)):
+                    (seed, p0, p1, focal_is_p0)
+                for seed, p0, p1, focal_is_p0 in pairs
+            }
+            results = ((futs[fut], fut.result()) for fut in as_completed(futs))
+
+    for (seed, _p0, _p1, focal_is_p0), r in results:
+        n += 1
+        if r.outcome == "error":
+            errors += 1
+            rows.append((seed, focal_is_p0, "error", "—",
+                         r.final_planet_counts, r.final_fleet_counts))
+            continue
+        focal_won = (focal_is_p0 and r.outcome == "p0_win") or \
+                    (not focal_is_p0 and r.outcome == "p1_win")
+        if focal_won:
+            wins += 1
+            if r.terminated_by == "elimination":
+                elim_wins += 1
+            else:
+                score_wins += 1
+        elif r.outcome == "draw":
+            draws += 1
+        rows.append((seed, focal_is_p0, r.outcome, r.terminated_by,
+                     r.final_planet_counts, r.final_fleet_counts))
+
+    elapsed = time.perf_counter() - t0
+    win_lo, win_hi = wilson_ci(wins, n)
+    elim_lo, elim_hi = wilson_ci(elim_wins, n)
+
+    rows.sort(key=lambda r: (r[0], 0 if r[1] else 1))
+    print(f"\n{'seed':>4} {'seat':>4} {'outcome':>8} {'end':>12} "
+          f"{'planets(p0,p1)':>16} {'fleets(p0,p1)':>16}")
+    for seed, focal_is_p0, outcome, end, planets, fleets in rows:
+        seat = "p0" if focal_is_p0 else "p1"
+        print(f"{seed:>4} {seat:>4} {outcome:>8} {end:>12} "
+              f"{str(planets):>16} {str(fleets):>16}")
+
+    print(f"\n   wins:        {wins}/{n}   winrate     "
+          f"{wins/n:.1%}  Wilson [{win_lo:.3f}, {win_hi:.3f}]")
+    print(f"   elim wins:   {elim_wins}/{n}   elim-rate   "
+          f"{elim_wins/n:.1%}  Wilson [{elim_lo:.3f}, {elim_hi:.3f}]")
+    print(f"   score-only:  {score_wins}/{n}   ({score_wins/n:.1%})  "
+          f"(focal won but opp still alive at turn cap)")
+    print(f"   draws:       {draws}/{n}   errors: {errors}")
+    print(f"   wallclock {elapsed:.1f}s")
+    verdict = "PASS" if elim_lo >= 0.86 else "FAIL"
+    print(f"   verdict: {verdict}  (gate: elimination Wilson-lo >= 0.86)")
+    return 0 if verdict == "PASS" else 1
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -806,6 +922,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("baselines", help="list baseline registry")
     sp.set_defaults(func=cmd_baselines)
+
+    sp = sub.add_parser("elim-sweep",
+                        help="winrate + elimination-rate vs an opponent")
+    sp.add_argument("agent")
+    sp.add_argument("--vs", default="random",
+                    help="opponent (default: random)")
+    sp.add_argument("--seeds", type=int, default=16,
+                    help="number of seeds; each played twice (seat-swap)")
+    sp.add_argument("--workers", type=int, default=4)
+    sp.set_defaults(func=cmd_elim_sweep)
 
     return ap
 
