@@ -25,6 +25,7 @@ Once step >= OPENING_HORIZON, mpc.py falls through to the Phase 4 LP.
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -226,8 +227,17 @@ def _expected_hold_duration(tgt, arrival: int, capture_residual: int,
         return 0
 
     # Stage 2: eta-delta check (legacy).
+    # When BASELINE_ORBITAL_SAFETY=1, evaluate threat ETA from the
+    # rotated geometry at OUR arrival (target + enemy sources have
+    # rotated during fleet flight). Matches the gate at
+    # lib/scoring.py:170 + agents/baseline/proposer.py:443.
     try:
-        opp_threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
+        if os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1":
+            opp_threat_eta = model.time_to_enemy_threat(
+                int(tgt.id), int(my_id), world, arrival_eta=int(arrival),
+            )
+        else:
+            opp_threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
     except Exception:
         opp_threat_eta = None
     if opp_threat_eta is None:
@@ -275,7 +285,12 @@ def _is_minimally_holdable(tgt, arrival: int, capture_residual: int,
     `_expected_hold_duration`, so the MILP picks captures with the best
     production-over-hold-window."""
     try:
-        opp_threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
+        if os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1":
+            opp_threat_eta = model.time_to_enemy_threat(
+                int(tgt.id), int(my_id), world, arrival_eta=int(arrival),
+            )
+        else:
+            opp_threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
     except Exception:
         opp_threat_eta = None
     if opp_threat_eta is None:

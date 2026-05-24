@@ -39,6 +39,13 @@ import os
 import time
 from pathlib import Path
 
+# Default BASELINE_ORBITAL_SAFETY on for this agent. Activates the
+# rotation-aware opp-ETA path in lib/scoring.py, agents/baseline/proposer.py,
+# lib/joint_solver/opening_planner.py and lib/joint_solver/value.py — see
+# 2026-05-24 plan "rotation-aware opponent ETA in early-game planning".
+# Explicit `BASELINE_ORBITAL_SAFETY=0` still wins (setdefault, not set).
+os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
+
 from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
 
 from lib.intent import World
