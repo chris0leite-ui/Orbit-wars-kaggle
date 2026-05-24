@@ -25,7 +25,6 @@ Once step >= OPENING_HORIZON, mpc.py falls through to the Phase 4 LP.
 from __future__ import annotations
 
 import math
-import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -227,17 +226,21 @@ def _expected_hold_duration(tgt, arrival: int, capture_residual: int,
         return 0
 
     # Stage 2: eta-delta check (legacy).
-    # When BASELINE_ORBITAL_SAFETY=1, evaluate threat ETA from the
-    # rotated geometry at OUR arrival (target + enemy sources have
-    # rotated during fleet flight). Matches the gate at
-    # lib/scoring.py:170 + agents/baseline/proposer.py:443.
+    # NOTE: arrival_eta is INTENTIONALLY 0 here — this gate is the
+    # BEAT-OPP-TO-PLANET race, which needs opp's CURRENT-launch
+    # capability. The 2026-05-24 attempt to pass arrival_eta=arrival
+    # was reverted: time_to_enemy_threat(arrival_eta=T) returns
+    # T+eta_travel (post-arrival-launch semantic). For co-rotating
+    # geometry the rotation cancels and the function effectively just
+    # adds `arrival` to the result — making delta = eta_travel > 0
+    # always, so the "opp arrives before us" gate became a no-op,
+    # over-committing fleet to contested captures (elim-sweep n=16
+    # 6/16 wins). The proper rotation-aware fix needs a two-call
+    # split (current-launch race + post-capture recapture race);
+    # tracked as a follow-up audit (see plan
+    # /root/.claude/plans/go-also-checknfor-similar-purring-flute.md).
     try:
-        if os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1":
-            opp_threat_eta = model.time_to_enemy_threat(
-                int(tgt.id), int(my_id), world, arrival_eta=int(arrival),
-            )
-        else:
-            opp_threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
+        opp_threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
     except Exception:
         opp_threat_eta = None
     if opp_threat_eta is None:
@@ -283,14 +286,14 @@ def _is_minimally_holdable(tgt, arrival: int, capture_residual: int,
 
     Anything beyond this is handled by the value-weighting in
     `_expected_hold_duration`, so the MILP picks captures with the best
-    production-over-hold-window."""
+    production-over-hold-window.
+
+    arrival_eta=0 is INTENTIONAL — see the matching note on the eta-delta
+    gate in `_expected_hold_duration` above. The race-to-planet gate
+    needs opp's CURRENT-launch capability. Reverted from the 2026-05-24
+    arrival_eta=arrival attempt that turned this gate into a no-op."""
     try:
-        if os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1":
-            opp_threat_eta = model.time_to_enemy_threat(
-                int(tgt.id), int(my_id), world, arrival_eta=int(arrival),
-            )
-        else:
-            opp_threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
+        opp_threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
     except Exception:
         opp_threat_eta = None
     if opp_threat_eta is None:

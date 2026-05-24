@@ -19,8 +19,6 @@ the wait_N parameter and return correctly scaled values.
 
 from __future__ import annotations
 
-import os
-
 from agents.baseline.predicates import _w1_value_bounds
 from agents.baseline.predicates import w2_provably_held_reinforce
 from lib.scoring import pv_horizon
@@ -47,19 +45,19 @@ def value_for_candidate(c, world, model, *, my_id: int,
 
     if int(tgt.owner) == int(my_id):
         # Own→own classification: migration vs defensive reinforce.
-        # When BASELINE_ORBITAL_SAFETY=1, evaluate the threat ETA at OUR
-        # arrival (wait_N + eta) — for wait_N>0 candidates an own planet
-        # that is safe NOW may have rotated into enemy reach by the time
-        # the reinforce arrives. Matches the gate pattern in
-        # lib/scoring.py:170 and agents/baseline/proposer.py:443.
+        # arrival_eta=0 here is intentional — the classification is
+        # "is this own planet under threat AT ALL?" not "what's the
+        # recapture race?" The 2026-05-24 attempt to pass
+        # arrival_eta=wait_N+eta was reverted: it killed the migration
+        # value path because the post-our-arrival threat ETA is almost
+        # never None (any enemy planet that can post-launch counts),
+        # so every own-target candidate dropped into the W2-only
+        # defensive branch (W2 returns 0 unless explicitly proves hold).
+        # See plan
+        # /root/.claude/plans/go-also-checknfor-similar-purring-flute.md
+        # for the proper two-semantics follow-up.
         try:
-            if os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1":
-                threat_eta = model.time_to_enemy_threat(
-                    int(tgt.id), int(my_id), world,
-                    arrival_eta=int(wait_N) + int(eta),
-                )
-            else:
-                threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
+            threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
         except Exception:
             threat_eta = None
 
