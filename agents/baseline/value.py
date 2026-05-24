@@ -49,6 +49,21 @@ WEAKEST_ENEMY_MULT_4P = 1.5
 ELIMINATION_GATE_RATIO = 0.9
 STRENGTH_PROD_WEIGHT = 15.0
 
+# Phi-1 (holistic refactor, 2026-05-25): leaf value derived from the
+# discounted production-advantage integral, with the 2P elimination
+# bonus the current `favor` is missing. The 4P branch has
+# ELIMINATION_BONUS=55 (line 46); the 2P branch returns 0. Phi-1 closes
+# that gap. Defaults below; all overridable via env var.
+#
+# Why 250 horizon: matches PI's 2026-05-24 fast-elim target (eliminate
+# within 250 turns) and the truncated A/B protocol added the same day.
+# Why 300 elim bonus: full-game outcome scale; in 2P this is the entire
+# game's worth of production-advantage being awarded for crossing the
+# elimination threshold. Tune down to ~55 if too aggressive.
+PHI_HORIZON = int(os.environ.get("PHI_HORIZON", "250"))
+PHI_GAMMA = float(os.environ.get("PHI_GAMMA", "0.99"))
+PHI_ELIM_BONUS = float(os.environ.get("PHI_ELIM_BONUS", "300.0"))
+
 # Spatial leaf params (favor_hybrid_spatial only).
 # Idle-trajectory audit 2026-05-17 on submission 52754310 (mu=1271.8)
 # showed 43.8% of our ship-turns were on planets >50 units from any
@@ -124,6 +139,97 @@ def favor(obs, me: int, num_seats: int = 2, gamma: float = DEFAULT_GAMMA) -> flo
             elim_bonus = ELIMINATION_BONUS
 
     pv = pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS)
+    return (my_ships - opp_ships) + (my_prod - opp_prod) * pv + elim_bonus
+
+
+def favor_phi(obs, me: int, num_seats: int = 2,
+              gamma: float = DEFAULT_GAMMA) -> float:
+    """Phi-1 leaf value (2026-05-25). Same shape as `favor` but:
+
+      - PV horizon is PHI_HORIZON (default 250) instead of EPISODE_STEPS=500.
+        Aligns the leaf with PI's fast-elim target.
+      - 2P gets an elimination bonus on the same trigger as 4P
+        (opp_strength <= WEAK_ENEMY_THRESHOLD AND
+         my_strength >= ELIMINATION_GATE_RATIO * opp_strength). Current
+        `favor` has elim_bonus=0 in 2P — the team peak mu=1149 (sub
+        52744856, composite_a2_hybrid) had its own 2P-aware capture
+        mechanic in the composite head; favor_phi closes the same gap
+        in the standard favor head, without depending on composite's
+        fragility (the PV-augmentation in composite regressed and is
+        currently OFF via COMPOSITE_PRODUCTION_PV=0).
+      - 2P uses PHI_ELIM_BONUS (default 300) for the elim trigger;
+        4P uses the original ELIMINATION_BONUS=55. Different scales
+        because eliminating the LAST opp in 2P wins the game outright,
+        while eliminating ONE OF FOUR in 4P leaves three threats alive.
+
+    Default gamma argument honored if PHI_GAMMA env var unset; otherwise
+    PHI_GAMMA overrides (so opt-in via env var changes both horizon AND
+    discount rate atomically). Wire via BASELINE_VALUE_HEAD=phi.
+    """
+    planets = _read(obs, "planets", []) or []
+    fleets = _read(obs, "fleets", []) or []
+    step = int(_read(obs, "step", 0))
+
+    ships_by_owner: dict[int, float] = {}
+    prod_by_owner: dict[int, float] = {}
+    for p in planets:
+        owner = int(p[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(p[5])
+        prod_by_owner[owner] = prod_by_owner.get(owner, 0.0) + float(p[6])
+    for f in fleets:
+        owner = int(f[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(f[6])
+
+    my_ships = ships_by_owner.get(me, 0.0)
+    my_prod = prod_by_owner.get(me, 0.0)
+    my_strength = my_ships + my_prod * STRENGTH_PROD_WEIGHT
+
+    opps = sorted(
+        o for o in (set(ships_by_owner) | set(prod_by_owner))
+        if o != me and o >= 0
+    )
+
+    elim_bonus = 0.0
+    if num_seats <= 2 or len(opps) < 2:
+        # 2P: max-of-opps aggregation (same as favor) + NEW 2P elim bonus.
+        opp_ships = max((ships_by_owner.get(o, 0.0) for o in opps), default=0.0)
+        opp_prod = max((prod_by_owner.get(o, 0.0) for o in opps), default=0.0)
+        # 2P elim trigger: the only opp is weak AND we dominate.
+        opp_strength = opp_ships + opp_prod * STRENGTH_PROD_WEIGHT
+        if (opps
+                and opp_strength <= WEAK_ENEMY_THRESHOLD
+                and my_strength >= ELIMINATION_GATE_RATIO * opp_strength):
+            elim_bonus = PHI_ELIM_BONUS
+    else:
+        # 4P: identical to favor — weighted sum (weakest 1.5x) + ELIM_BONUS=55.
+        opp_strengths = {
+            o: ships_by_owner.get(o, 0.0)
+               + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT
+            for o in opps
+        }
+        weakest = min(opps, key=lambda o: opp_strengths[o])
+        weakest_str = opp_strengths[weakest]
+        opp_ships = sum(
+            ships_by_owner.get(o, 0.0)
+            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
+            for o in opps
+        )
+        opp_prod = sum(
+            prod_by_owner.get(o, 0.0)
+            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
+            for o in opps
+        )
+        if (weakest_str <= WEAK_ENEMY_THRESHOLD
+                and my_strength >= ELIMINATION_GATE_RATIO * weakest_str):
+            elim_bonus = ELIMINATION_BONUS
+
+    # Honor PHI_GAMMA env var if set; else use the caller's gamma arg.
+    g = PHI_GAMMA if os.environ.get("PHI_GAMMA") else gamma
+    pv = pv_horizon(step, 0, gamma=g, t_total=PHI_HORIZON)
     return (my_ships - opp_ships) + (my_prod - opp_prod) * pv + elim_bonus
 
 
@@ -228,4 +334,6 @@ def select_favor_fn():
         return favor_hybrid
     if choice == "hybrid_spatial":
         return favor_hybrid_spatial
+    if choice == "phi":
+        return favor_phi
     return favor
