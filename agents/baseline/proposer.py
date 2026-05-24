@@ -19,6 +19,7 @@ import os
 from lib.aim import aim_comet, aim_orbiting
 from lib.fleet import speed as fleet_speed
 from lib.orbit import is_orbiting, predict_relative
+from lib.reliability import RELIABILITY_PRICING_ENABLED, reliability
 from lib.scoring import pv_horizon
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import _comet_paths_by_id, _position_at, comet_remaining_lifetime
@@ -473,6 +474,14 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
     else:
         ship_factor = 1.0
 
+    # Layer R reliability multiplier — risk-adjust by epistemic-uncertainty
+    # factor in [0, 1]. Decays with eta + wait_N + opp counter-launch reach.
+    # Default OFF; opt-in via BASELINE_RELIABILITY_PRICING=1.
+    if RELIABILITY_PRICING_ENABLED:
+        rel = reliability(tgt, int(ships), int(eta), int(wait_N), world, int(me))
+    else:
+        rel = 1.0
+
     if pred_owner == me:
         # PI 2026-05-21 fix — gate on BASELINE_ORBITAL_SAFETY=1, pass
         # arrival_eta so an orbiting target's position at our arrival
@@ -491,7 +500,11 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
         pv = pv_horizon(int(world.step), int(t_to_threat),
                         gamma=GAMMA, t_total=EPISODE_STEPS)
         # Patch A+B: scale by ship_factor, subtract fixed launch cost.
-        return 0.05 * float(tgt.production) * float(pv) * ship_factor - LAUNCH_FIXED_COST
+        # Layer R: multiply by reliability.
+        return (
+            0.05 * float(tgt.production) * float(pv) * ship_factor * rel
+            - LAUNCH_FIXED_COST
+        )
 
     if ships > pred_ships:
         # Layer Z prune: reject if effective landing (ships - prod·eta)
@@ -506,7 +519,11 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
         pv = pv_horizon(int(world.step), int(arrival_step),
                         gamma=GAMMA, t_total=EPISODE_STEPS)
         # Patch A+B: scale by ship_factor, subtract fixed launch cost.
-        return 0.05 * float(tgt.production) * float(pv) * ship_factor - LAUNCH_FIXED_COST
+        # Layer R: multiply by reliability.
+        return (
+            0.05 * float(tgt.production) * float(pv) * ship_factor * rel
+            - LAUNCH_FIXED_COST
+        )
 
     return -0.5 * float(ships)
 

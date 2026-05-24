@@ -40,6 +40,7 @@ except ImportError:
 
 from agents.baseline.proposer import aim_and_eta
 from lib.fleet import speed as fleet_speed
+from lib.reliability import RELIABILITY_PRICING_ENABLED, reliability
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import predict_garrison_at, simulate_planet_timeline
 
@@ -512,6 +513,15 @@ def _build_candidates(world, model, my_id: int, num_seats: int,
                 discount = OPENING_VALUE_GAMMA ** float(time_to_capture)
                 value = (float(int(tgt.production)) * float(hold_dur)
                          * float(opp_bonus) * float(discount))
+                # Layer R reliability multiplier — risk-adjust by epistemic-
+                # uncertainty factor in [0, 1]. Default OFF; opt-in via
+                # BASELINE_RELIABILITY_PRICING=1. Same env vars as the
+                # proposer site so a single submission gates both layers.
+                if RELIABILITY_PRICING_ENABLED:
+                    value = value * reliability(
+                        tgt, int(needed), int(eta_flight), int(offset),
+                        world, int(my_id),
+                    )
                 # Patch A (concentration): super-linear in ship count.
                 # alpha=1.0 (default) -> multiplier identically 1.0.
                 if OPENING_SHIP_ALPHA != 1.0:

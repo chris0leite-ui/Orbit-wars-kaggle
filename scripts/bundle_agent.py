@@ -60,6 +60,10 @@ DEFAULT_LIB_ORDER = [
     # and missions/reinforce since H16 (2026-05-13). Must precede the
     # mission modules so the inlined symbols are visible at parse time.
     "scoring",
+    # Layer R reliability multiplier (2026-05-25). Imported by
+    # opening_planner + proposer; module-level constants read env vars
+    # at import time. Default OFF preserves behavior.
+    "reliability",
     "missions/snipe",
     "missions/reinforce",
     "missions/recapture",
