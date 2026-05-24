@@ -1,13 +1,145 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-20 PM by `claude/review-skills-improvements-moKOR`
-> (n=8 iteration loop attempt; no candidate found, structural-change
-> pivot queued).
-> Prior PM session on this branch (cross-branch consolidation pass)
-> notes preserved under "What just landed (2026-05-20, this session)".
-> Prior writers (per-branch, now superseded): `kaggle-baseline-strategy-lO4mm`,
+> Last written: 2026-05-24 PM by `claude/agent-design-exploration-Q0q9T`
+> (concentration A+B submit + holistic Φ refactor queued as next-session
+> Priority 1). Prior writers preserved below.
+> Prior writers (now superseded): `review-skills-improvements-moKOR`,
+> `extract-physics-trajectory-Vjaz9`, `kaggle-baseline-strategy-lO4mm`,
 > `audit-workflow-performance-btjeK`, `strategy-framework-design-OyoYR-rebased`,
 > `ml-competition-strategy-PFhzM`, `analyze-game-strategy-EpMVP`.
+
+## Day-N PM agent-design-exploration-Q0q9T (2026-05-24)
+
+**Session shape:** opened on the bundler ERROR diagnosis (sub 52968305);
+reverted a broken orbital-aware ETA semantic mix-up; landed the proper
+two-call fix; designed and shipped a tactical-mathematician concentration
+patch (Tier-1 A+B); submitted at parity-vs-current with cheap-probe
+expected-floor-lift logic; queued the holistic Φ refactor as next-session
+Priority 1.
+
+**Commits on this branch (chronological):**
+
+- `eb1653a` — bundler trailing-entrypoint wrapper (root cause of sub
+  52968305 ERROR; uniquely-named `_kaggle_orbit_wars_entrypoint`
+  appended at end so `get_last_callable` picks the right function).
+- `24111ac` — first attempt at rotation-aware opp-ETA in the opening
+  MILP + reinforce classifier (passed `arrival_eta=arrival` everywhere).
+  Wrong semantic for the beat-to-planet race; falsified at 6/16.
+- `f590c22` — revert of `24111ac`. Documented the semantic split
+  (race-to-planet wants `arrival_eta=0`; hold-horizon scaling wants
+  `arrival_eta=arrival`).
+- `564fbc9` — proper two-call fix in `_expected_hold_duration`:
+  Stage 2A race-to-planet uses `arrival_eta=0`; Stage 2B hold-horizon
+  scaling gated on `BASELINE_ORBITAL_SAFETY=1` uses `arrival_eta=arrival`.
+  Local n=16 vs the broken-fix bundle: 10/16 (62.5%), Wilson [0.386,
+  0.815]. Wallclock improved 776 → 313 turns >1s.
+- `2878bfd` — Tier-1 A+B concentration patches. Super-linear ship-value
+  (`ships^(α-1)` normalized to a REF) + per-launch fixed cost C. All
+  four env vars default no-op; opt-in per submission bundle via
+  `OPENING_SHIP_ALPHA`, `OPENING_LAUNCH_COST`, `BASELINE_LAUNCH_SHIP_ALPHA`,
+  `BASELINE_LAUNCH_FIXED_COST`. Plus `fast.py --episode-steps` plumbing
+  for truncated-A/B testing (Rule 45 update path).
+
+**What shipped to Kaggle:**
+
+- Sub **52993021** (2026-05-24 16:10 UTC) — `buildup_planner_concentration`
+  with α=1.5, C_open=1.0, C_prop=0.05. Predicted μ band 1100-1180.
+- A/B evidence: vs sub 52968889 (μ=1144.5) at 250-step cap, n=16:
+  **8/16 = 50%** Wilson [0.28, 0.72] — parity. Vs `v3.5.1` at 250-step
+  cap, n=16: **16/16 winrate**, **13/16 = 81% elim-rate**. Wallclock
+  recovered: p95=983ms, max=1333ms, 129 turns >1000ms (vs 313 prior).
+- Rule 42 GREEN: evicted sub 52966655 μ=1130.9 (older half); kept sub
+  52968889 μ=1144.5 (better half). **Floor +13.6 μ to 1144.5
+  regardless of where 52993021 lands.**
+- Wallclock flag: 250-step bench had 129 turns >1000ms on focal side.
+  Below the 1000ms hard limit at p95, but max=1333ms — minor risk of
+  actTimeout on Kaggle hardware. Submit accepts the risk; revert path
+  via next push is open.
+
+**Falsified / dead-ends this session:**
+
+- `24111ac` arrival_eta=arrival as the universal fix: silently
+  no-op'd the race-to-planet gate (delta = eta_travel > 0 always).
+  Now documented in commit `f590c22` body so next session won't repeat.
+- Direction lift via concentration alone: 8/16 vs the same-strength
+  baseline. The patch helps vs weaker opponents (100% vs v3.5.1) but
+  doesn't crack same-strength parity. The proper fix is the holistic
+  Φ refactor (next session).
+
+**Pointers for next session:**
+
+- The plan file `/root/.claude/plans/go-also-checknfor-similar-purring-flute.md`
+  has the full Φ-refactor specification. **Start from Part B (Stages 1-5).**
+- `state/MULTI_BRANCH.md` updated with the new rolling pair + push claim
+  row for sub 52993021.
+- New A+B env vars are in `lib/joint_solver/opening_planner.py` (module
+  constants near line 84) and `agents/baseline/proposer.py` (near
+  line 53). Defaults are no-op; will be retired when Φ Stage 2/3 ships.
+
+## Next-session first actions (ranked by EV / cost)
+
+### Priority 1 — Holistic Φ refactor, Stage 1 (leaf `favor` + 2P elim bonus)
+
+**Goal:** replace the patchwork of four disjoint approximations
+(`opening_planner` value formula, `cheap_marginal_value`,
+`favor`/`composite`, finisher special case) with one unified function
+`delta_phi(action)` derived from the discounted production-advantage
+integral
+
+  `Φ(s, t) = Σ_{τ≥t} γ^(τ-t)·(P_my − P_opp) + B·𝟙{opp eliminated}`.
+
+Stage 1 is the highest-leverage incremental step: add `favor_phi` to
+`agents/baseline/value.py` and wire via `BASELINE_VALUE_HEAD=phi`. The
+key insight is **`chooser_trajectory.score_candidate_v4` is already
+in Δ-form** (`favor(leaf) - favor(baseline)`), so swapping `favor`
+propagates ΔΦ through the entire rollout chooser automatically — no
+chooser-side edits needed.
+
+Specifically Stage 1 closes the missing 2P elimination bonus gap: the
+current `favor` at 2P returns zero elim bonus, while the 4P branch has
+`ELIMINATION_BONUS=55` (value.py:99). The team peak μ=1149 (sub 52744856)
+ran with the composite head's 2P-aware capture mechanic; the Φ elim
+indicator closes that gap without depending on the composite head's
+PV-augmentation (which regressed at `COMPOSITE_PRODUCTION_PV=1` on
+2026-05-18).
+
+**Files to touch (Stage 1 only):**
+- NEW: `lib/value_heads/phi.py` (~200 lines: `delta_phi` + helpers).
+- NEW: `tests/test_value_head_phi.py` (~120 lines: oracle cases).
+- EDIT: `agents/baseline/value.py` (+~40 lines: `favor_phi` +
+  `select_favor_fn` route via `BASELINE_VALUE_HEAD=phi`).
+
+**Env vars (all default no-op):**
+- `PHI_HORIZON` = 250 (matches PI's fast-elim metric)
+- `PHI_GAMMA` = 0.99 (matches `pv_horizon` default)
+- `PHI_ELIM_BONUS` = 300 (large enough to dominate near opp.planets=0)
+
+**Test surface:** five oracle cases per Stage 1 plan section. Submit
+A/B at n=16 vs sub 52993021 (whatever μ it settles at) using both
+truncated (250-step) and full (500-step) sweeps.
+
+**Risk:** the leaf is hit ~10⁵ times/game. Compute overhead matters.
+Benchmark Stage 1 on a single seed before n=16 A/B.
+
+### Priority 2 — Φ refactor Stages 2-5 (MILP / proposer / missions / retire constants)
+
+Once Stage 1 ships, follow the plan's Stages 2-5 sequentially. Each is
+behind its own env var (`OPENING_VALUE_PHI`, `BASELINE_VALUE_PHI`,
+mission-specific gates). Stages 2-3 retire the A+B env vars from commit
+`2878bfd` once equivalence is demonstrated.
+
+### Priority 3 — `used_tgts` lock removal + JOINT cap expansion in `chooser_trajectory.py`
+
+Inherited from the 2026-05-20 HANDOVER. Lower priority than the Φ
+refactor because Φ subsumes the multi-source coordination question
+(joint candidates get the same delta_phi treatment; gang-up bonus
+emerges from the elim_lift term, not from a hand-coded cap).
+
+### Priority 4 — Composite head + A2 restoration (μ=1149 team-peak)
+
+If Φ Stage 1 doesn't clear, fall back to re-bundling the μ=1149
+architecture (sub 52744856, `composite_a2_hybrid`). Codebase already
+has the imports.
 
 ## Read order (Rule 44 — mandatory)
 

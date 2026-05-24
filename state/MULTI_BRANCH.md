@@ -13,27 +13,36 @@
 
 ---
 
-## Live Kaggle (snapshot 2026-05-23 21:00 UTC)
+## Live Kaggle (snapshot 2026-05-24 16:10 UTC)
 
 Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at session start.
 
 | Sub ID | Date (UTC) | Agent | μ | Role |
 |---|---|---|---:|---|
-| **52894340** | 2026-05-21 14:33 | _phase4_step1_FND (sibling, endgame predicate + f1774a7 orbital safety) | **1117.9** | **Rolling pair (most recent)** |
-| **52893236** | 2026-05-21 13:52 | baseline_full (this branch, kitchen-sink) | **1078.0** | **Rolling pair (older half)** |
-| 52882014 | 2026-05-21 10:26 | baseline_joint_aggr_consolidated | 1124 | EVICTED — best on this branch |
+| **52993021** | 2026-05-24 16:10 | buildup_planner_concentration (A+B α=1.5, C_open=1.0, C_prop=0.05; this branch) | **PENDING** | **Rolling pair (most recent)** |
+| **52968889** | 2026-05-23 23:59 | buildup_planner (this branch, bundler-trailer fix) | **1144.5** | **Rolling pair (older half)** |
+| 52966655 | 2026-05-23 21:18 | baseline (wave V3, sibling moKOR) | 1130.9 | EVICTED 2026-05-24 by sub 52993021 |
+| 52968305 | 2026-05-23 23:17 | buildup_planner (bundler ERROR) | — | EVICTED — ERROR |
+| 52965748 | 2026-05-23 20:26 | orbitfix_kt_p23 v5 | 1002.7 | EVICTED |
+| 52963659 | 2026-05-23 18:41 | orbitfix_kt_p23 v4 (ERROR) | — | EVICTED |
+| 52959167 | 2026-05-23 15:28 | orbitfix_kt_p23 v3 | 973.0 | EVICTED |
+| 52894340 | 2026-05-21 14:33 | _phase4_step1_FND (sibling) | 1117.9 | EVICTED |
+| 52893236 | 2026-05-21 13:52 | baseline_full (this branch, kitchen-sink) | 1078.0 | EVICTED |
+| 52882014 | 2026-05-21 10:26 | baseline_joint_aggr_consolidated | 1124 | EVICTED |
 | 52874528 | 2026-05-21 06:00 | baseline_joint_aggr | 1134.9 | EVICTED |
-| 52857903 | 2026-05-20 16:12 | analytical_wait_N_traj_plus_endgame_play | 806.5 | EVICTED |
-| 52854094 | 2026-05-20 13:59 | analytical (earlier) | 829.1 | EVICTED |
-| 52827111 | 2026-05-19 19:52 | comet-aim + reactor-aware | 1122.0 | EVICTED |
-| 52811320 | 2026-05-19 12:54 | hold-feasibility solo | 1135.1 | EVICTED |
 | **52744856** | 2026-05-17 14:17 | composite_a2_hybrid (composite head 2P + A2 4P) | **1149.2** | **TEAM PEAK** — EVICTED |
 
-- **Rolling pair floor:** μ = 1078.0 (baseline_full).
-- **Rolling pair ceiling:** μ = 1117.9 (_phase4_step1_FND).
+- **Rolling pair floor:** μ = 1144.5 (sub 52968889, until sub 52993021 settles).
+- **Rolling pair ceiling:** PENDING (predicted ~1144 ± 30 for sub 52993021).
 - **Team peak (evicted):** μ = 1149.2 (sub 52744856).
-- **Floor recovered from 5/20:** previous rolling pair was [829, 806]; current floor 1078 is +249 μ over that.
-- **Daily submission budget:** 5/day. Today (2026-05-23 UTC) used: 0. 5 remaining. Last submit was 5/21.
+- **Floor improved by sub 52993021 submit:** +13.6 μ (1130.9 → 1144.5) immediately, regardless of where the new submit lands; concentration just had to clear parity vs sub 52968889 to keep the floor at the better half.
+- **Daily submission budget:** 5/day. Today (2026-05-24 UTC) used: 1. 4 remaining.
+
+## Push claim board (Rule 42)
+
+| Timestamp (UTC) | Branch | Agent | Predicted μ | Evicting (sub_id, μ) | Verdict |
+|---|---|---|---|---|---|
+| 2026-05-24 16:10 | claude/agent-design-exploration-Q0q9T | buildup_planner_concentration (commit 2878bfd) | 1100-1180 (parity-or-lift band) | sub 52966655 μ=1130.9 | GREEN (predicted band ≥ evicted μ; better-half μ=1144.5 stays in rolling pair) |
 - **Deadline:** 2026-06-23 23:59 UTC. **~31 days remain.**
 
 ---
