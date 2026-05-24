@@ -25,6 +25,7 @@ Once step >= OPENING_HORIZON, mpc.py falls through to the Phase 4 LP.
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -225,27 +226,40 @@ def _expected_hold_duration(tgt, arrival: int, capture_residual: int,
     if opp_force >= int(capture_residual) + 3:
         return 0
 
-    # Stage 2: eta-delta check (legacy).
-    # NOTE: arrival_eta is INTENTIONALLY 0 here — this gate is the
-    # BEAT-OPP-TO-PLANET race, which needs opp's CURRENT-launch
-    # capability. The 2026-05-24 attempt to pass arrival_eta=arrival
-    # was reverted: time_to_enemy_threat(arrival_eta=T) returns
-    # T+eta_travel (post-arrival-launch semantic). For co-rotating
-    # geometry the rotation cancels and the function effectively just
-    # adds `arrival` to the result — making delta = eta_travel > 0
-    # always, so the "opp arrives before us" gate became a no-op,
-    # over-committing fleet to contested captures (elim-sweep n=16
-    # 6/16 wins). The proper rotation-aware fix needs a two-call
-    # split (current-launch race + post-capture recapture race);
-    # tracked as a follow-up audit (see plan
-    # /root/.claude/plans/go-also-checknfor-similar-purring-flute.md).
+    # Stage 2A: race-to-planet gate (opp's CURRENT-launch capability).
+    # arrival_eta=0: returns opp's earliest arrival if they launch NOW
+    # from current positions. If that's at-or-before our arrival, the
+    # capture is contested — hold=0. This semantic is REQUIRED here;
+    # arrival_eta=arrival would make the gate a no-op (sub 52968305-
+    # era 2026-05-24 elim-sweep 6/16 regression, see commit f590c22).
     try:
-        opp_threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
+        threat_now = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
     except Exception:
-        opp_threat_eta = None
-    if opp_threat_eta is None:
+        threat_now = None
+    if threat_now is not None and int(threat_now) <= arrival:
+        return 0
+
+    # Stage 2B: hold-horizon scaling — post-capture recapture race.
+    # Under BASELINE_ORBITAL_SAFETY=1, use opp's post-our-arrival ETA
+    # (arrival_eta=arrival) so the scaling reflects opp's RECAPTURE
+    # capability from rotated geometry. Catches the "target rotates
+    # into opp's quadrant during our flight" case where threat_now
+    # was None or far away but the rotated geometry is hostile.
+    # Without the gate, use threat_now (legacy semantic).
+    threat_for_scaling: int | None
+    if os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1":
+        try:
+            threat_for_scaling = model.time_to_enemy_threat(
+                int(tgt.id), int(my_id), world, arrival_eta=int(arrival),
+            )
+        except Exception:
+            threat_for_scaling = threat_now
+    else:
+        threat_for_scaling = threat_now
+
+    if threat_for_scaling is None:
         return max(0, OPENING_T_END - arrival)
-    delta = int(opp_threat_eta) - arrival
+    delta = int(threat_for_scaling) - arrival
     if delta <= 0:
         return 0
     if delta >= OPENING_HOLD_WINDOW:
