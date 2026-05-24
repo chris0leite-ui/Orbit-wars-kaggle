@@ -221,14 +221,19 @@ def select_favor_fn():
     The chooser uses the same function for both `build_idle_baseline` and
     `score_action` so the Δ stays well-defined.
 
-    Wave-incentive layering (baseline_wave 2026-05-24):
-      - BASELINE_HHI_BONUS=1            adds δ·HHI·Σs over our inflight
-                                        fleets (concentration bonus).
+    Wave-incentive layering (baseline_wave v2 2026-05-24 PM):
       - BASELINE_STOCKPILE_PENALTY=1    subtracts ε·Σ excess² over our
-                                        planets (forces drainage of
-                                        large idle stockpiles).
-    Both layer on top of whichever head was selected above; both default
-    OFF so the orbitfix-peak path is byte-identical.
+                                        planets (gentle drainage floor).
+
+    v1 also wrapped `inflight_hhi_bonus` here; removed in v2 because the
+    inflight-at-leaf HHI doesn't measure combat-rule-1 stacking (the
+    fleet has usually arrived by leaf time). The replacement signal is
+    `_coord_bonus` in chooser_trajectory.py which counts arrival-cohort
+    concentration during the rollout — the right granularity for waves.
+    `inflight_hhi_bonus` stays in lib/value_heads.py as research code
+    + unit-test coverage; BASELINE_HHI_BONUS env var is no-op now.
+
+    Both layers default OFF so the orbitfix-peak path is byte-identical.
     """
     choice = os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower()
     if choice == "composite":
@@ -240,16 +245,14 @@ def select_favor_fn():
     else:
         base = favor
 
-    hhi_on = os.environ.get("BASELINE_HHI_BONUS", "0").strip() == "1"
     stk_on = os.environ.get("BASELINE_STOCKPILE_PENALTY", "0").strip() == "1"
-    if not (hhi_on or stk_on):
+    if not stk_on:
         return base
 
-    delta = float(os.environ.get("BASELINE_HHI_DELTA", "0.1"))
-    eps = float(os.environ.get("BASELINE_STOCKPILE_EPS", "0.005"))
+    eps = float(os.environ.get("BASELINE_STOCKPILE_EPS", "0.001"))
     target = float(os.environ.get("BASELINE_STOCKPILE_TARGET", "50"))
 
-    from lib.value_heads import inflight_hhi_bonus, stockpile_pressure_penalty
+    from lib.value_heads import stockpile_pressure_penalty
 
     # NOTE: parameter names must match `num_seats` / `gamma` because callers
     # in chooser.py and chooser_trajectory.py pass `gamma=` as a keyword.
@@ -259,10 +262,7 @@ def select_favor_fn():
     # δ=1e-6 still fully suppresses emissions.)
     def _wave_wrapped(obs, me, num_seats=2, gamma=DEFAULT_GAMMA):
         v = base(obs, me, num_seats, gamma)
-        if hhi_on:
-            v += inflight_hhi_bonus(obs, me, delta=delta)
-        if stk_on:
-            v -= stockpile_pressure_penalty(obs, me, eps=eps, target=target)
+        v -= stockpile_pressure_penalty(obs, me, eps=eps, target=target)
         return v
 
     return _wave_wrapped

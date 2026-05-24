@@ -587,28 +587,49 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     return (delta, "scored", eta)
 
 
-def _coord_penalty(arrival_steps: list[int]) -> float:
-    """Coordination-cost penalty for a joint coalition (baseline_wave 2026-05-24).
+def _coord_bonus(launches, arrival_steps) -> float:
+    """Coord BONUS on per-step arrival cohorts (baseline_wave v2 2026-05-24).
 
-    α · max(0, max(a_i) − min(a_i))²  over the per-leg arrival steps of
-    a joint coalition. Zero when all legs land on the same step (combat
-    rule 1 gives additive stack); rises quadratically with spread.
+    The v1 version subtracted α·spread² as a penalty on joints. That was
+    backwards: solos paid no spread cost, so the chooser was biased AWAY
+    from waves. Replace with a positive bonus on combat-rule-1 stacking:
 
-    Returns 0 when the env var is off, when fewer than 2 arrival steps
-    are provided, or when α ≤ 0. Always non-negative.
+        cohort[step] = Σ ships of legs landing at `step`
+        concentration = Σ cohort_size² / Σ cohort_size      (ship-units)
+        bonus = α · concentration       (ADDED to joint score)
+
+    Properties:
+    - 2× 30-ship legs same step  →  cohort=60, conc=60   →  bonus=α·60
+    - 2× 30-ship legs diff steps →  cohorts=30,30, conc=30 → bonus=α·30
+    - 3× 30-ship legs same step  →  cohort=90, conc=90   →  bonus=α·90
+    Pure same-step joints > staggered joints > solos at equal total ships.
+    All non-negative.
+
+    Applied to JOINTS ONLY in v2 first cut — creates a clean
+    joint-over-solo gradient that the chooser can act on, exploiting the
+    existing JOINT enumeration path (lines 900-960). Solo scoring stays
+    unchanged so the v2 calibration sits adjacent to orbitfix, not on
+    top of it.
     """
     import os as _os
-    if _os.environ.get("BASELINE_COORD_PENALTY", "0").strip() != "1":
+    if _os.environ.get("BASELINE_COORD_BONUS", "0").strip() != "1":
         return 0.0
-    if len(arrival_steps) < 2:
+    if len(launches) < 2 or len(arrival_steps) < 2:
         return 0.0
-    alpha = float(_os.environ.get("BASELINE_COORD_ALPHA", "0.2"))
+    alpha = float(_os.environ.get("BASELINE_COORD_ALPHA", "0.5"))
     if alpha <= 0.0:
         return 0.0
-    spread = max(arrival_steps) - min(arrival_steps)
-    if spread <= 0:
+    # Aggregate ships by arrival step. `launches` is the list of
+    # (src, tgt, ships, angle, wait_N) tuples; ships index = 2.
+    cohorts: dict[int, float] = {}
+    for L, step in zip(launches, arrival_steps):
+        cohorts[int(step)] = cohorts.get(int(step), 0.0) + float(L[2])
+    total = sum(cohorts.values())
+    if total <= 0.0:
         return 0.0
-    return alpha * float(spread) * float(spread)
+    sq_sum = sum(c * c for c in cohorts.values())
+    concentration = sq_sum / total
+    return alpha * concentration
 
 
 def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
@@ -633,9 +654,11 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
     Multi-wait joints are valid by construction but not enumerated yet
     (see proposer path in `choose_trajectory`).
 
-    Wave incentive (2026-05-24): when BASELINE_COORD_PENALTY=1, subtract
-    α · spread² from the returned Δ where spread is the per-leg arrival-
-    step spread (max − min). Encourages combat-rule-1 stacking.
+    Wave incentive v2 (2026-05-24 PM): when BASELINE_COORD_BONUS=1, ADD
+    α · concentration to the returned Δ where concentration is the
+    ship-weighted average cohort size over per-step arrival groups (a
+    Herfindahl on arrival cohorts). See `_coord_bonus` for the math.
+    Encourages combat-rule-1 stacking by rewarding tight joint waves.
     """
     # Per-leg admissibility filter + arrival-step collection. The admissibility
     # check itself is gated by skip_admissibility, but we still need
@@ -697,7 +720,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         snap = fs_step(snap, actions, in_place=True)
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
-    delta = leaf - baseline_favors[horizon] - _coord_penalty(arrival_steps)
+    delta = leaf - baseline_favors[horizon] + _coord_bonus(launches, arrival_steps)
     return (delta, "scored")
 
 

@@ -214,9 +214,11 @@ def test_stockpile_penalty_sums_across_planets():
     assert abs(got - expected) < 1e-9
 
 
-def test_select_favor_fn_layers_wave_terms():
-    """End-to-end: with HHI+stockpile env vars set, select_favor_fn returns
-    a wrapper that applies both on top of the base head."""
+def test_select_favor_fn_layers_stockpile_term():
+    """End-to-end: BASELINE_STOCKPILE_PENALTY=1 makes select_favor_fn
+    return a wrapper that subtracts the stockpile term from the base
+    head. v2 (2026-05-24 PM) dropped HHI from the wrapper — see
+    /root/.claude/plans/do-1-2-rosy-popcorn.md "Plan v2"."""
     from agents.baseline.value import select_favor_fn, favor
     obs = _obs_with(
         planets=[(0, 0, 0, 0, 1.0, 100, 2), (1, 1, 10, 0, 1.0, 10, 2)],
@@ -225,8 +227,7 @@ def test_select_favor_fn_layers_wave_terms():
     import os as _os
     saved = {k: _os.environ.get(k) for k in
              ("BASELINE_HHI_BONUS", "BASELINE_STOCKPILE_PENALTY",
-              "BASELINE_HHI_DELTA", "BASELINE_STOCKPILE_EPS",
-              "BASELINE_STOCKPILE_TARGET")}
+              "BASELINE_STOCKPILE_EPS", "BASELINE_STOCKPILE_TARGET")}
     try:
         # Clear → wrapper not installed.
         for k in saved:
@@ -235,18 +236,22 @@ def test_select_favor_fn_layers_wave_terms():
         base_v = bare(obs, 0, 2, 0.99)
         assert bare is favor  # unwrapped
 
+        # HHI flag is a no-op in v2; setting it alone does NOT install
+        # the wrapper. Stockpile flag is what triggers the wrap.
         _os.environ["BASELINE_HHI_BONUS"] = "1"
+        only_hhi = select_favor_fn()
+        assert only_hhi is favor  # still unwrapped
+
         _os.environ["BASELINE_STOCKPILE_PENALTY"] = "1"
-        _os.environ["BASELINE_HHI_DELTA"] = "0.1"
-        _os.environ["BASELINE_STOCKPILE_EPS"] = "0.005"
+        _os.environ["BASELINE_STOCKPILE_EPS"] = "0.001"
         _os.environ["BASELINE_STOCKPILE_TARGET"] = "50"
         wrapped = select_favor_fn()
         assert wrapped is not favor
         wrapped_v = wrapped(obs, 0, 2, 0.99)
 
-        expect_delta = (
-            inflight_hhi_bonus(obs, 0, delta=0.1)
-            - stockpile_pressure_penalty(obs, 0, eps=0.005, target=50.0)
+        # Wrapper subtracts the stockpile penalty only (HHI dropped).
+        expect_delta = -stockpile_pressure_penalty(
+            obs, 0, eps=0.001, target=50.0,
         )
         assert abs((wrapped_v - base_v) - expect_delta) < 1e-9
     finally:
