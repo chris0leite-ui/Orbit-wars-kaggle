@@ -32,6 +32,10 @@ os.environ.setdefault("BASELINE_NEUTRAL_BONUS", "2.0")
 os.environ.setdefault("BASELINE_NEUTRAL_EARLY_EXTRA", "1.5")
 os.environ.setdefault("BASELINE_NEUTRAL_EARLY_HORIZON", "50")
 os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
+# NOTE: BASELINE_VALUE_HEAD=phi setdefault lives in
+# agents/buildup_planner/main.py (which runs BEFORE the baseline import
+# in this module, so the bundle's earlier-running baseline setdefault to
+# "hybrid" loses).
 
 # Ablation knob (2026-05-23): switch CONSOLIDATION's chooser between
 # trajectory (default) and roi (closed-form ROI prior + sniper/drain post-

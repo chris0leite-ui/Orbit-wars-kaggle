@@ -13,14 +13,15 @@
 
 ---
 
-## Live Kaggle (snapshot 2026-05-24 16:10 UTC)
+## Live Kaggle (snapshot 2026-05-24 22:38 UTC)
 
 Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at session start.
 
 | Sub ID | Date (UTC) | Agent | μ | Role |
 |---|---|---|---:|---|
-| **52993021** | 2026-05-24 16:10 | buildup_planner_concentration (A+B α=1.5, C_open=1.0, C_prop=0.05; this branch) | **PENDING** | **Rolling pair (most recent)** |
-| **52968889** | 2026-05-23 23:59 | buildup_planner (this branch, bundler-trailer fix) | **1144.5** | **Rolling pair (older half)** |
+| **53000996** | 2026-05-24 22:38 | buildup_planner_phi1_only (Phi-1 leaf swap, this branch) | **PENDING** | **Rolling pair (most recent)** |
+| **52993021** | 2026-05-24 16:10 | buildup_planner_concentration (A+B α=1.5, C_open=1.0, C_prop=0.05; this branch) | **1116.2 (adapting)** | **Rolling pair (older half)** |
+| 52968889 | 2026-05-23 23:59 | buildup_planner (this branch, bundler-trailer fix) | 1144.5 | EVICTED 2026-05-24 by sub 53000996 |
 | 52966655 | 2026-05-23 21:18 | baseline (wave V3, sibling moKOR) | 1130.9 | EVICTED 2026-05-24 by sub 52993021 |
 | 52968305 | 2026-05-23 23:17 | buildup_planner (bundler ERROR) | — | EVICTED — ERROR |
 | 52965748 | 2026-05-23 20:26 | orbitfix_kt_p23 v5 | 1002.7 | EVICTED |
@@ -32,17 +33,17 @@ Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at sessio
 | 52874528 | 2026-05-21 06:00 | baseline_joint_aggr | 1134.9 | EVICTED |
 | **52744856** | 2026-05-17 14:17 | composite_a2_hybrid (composite head 2P + A2 4P) | **1149.2** | **TEAM PEAK** — EVICTED |
 
-- **Rolling pair floor:** μ = 1144.5 (sub 52968889, until sub 52993021 settles).
-- **Rolling pair ceiling:** PENDING (predicted ~1144 ± 30 for sub 52993021).
+- **Rolling pair floor:** TBD — both halves adapting (Rule 48). Sub 52993021 currently 1116.2; sub 53000996 starts at 600 and will adapt.
 - **Team peak (evicted):** μ = 1149.2 (sub 52744856).
-- **Floor improved by sub 52993021 submit:** +13.6 μ (1130.9 → 1144.5) immediately, regardless of where the new submit lands; concentration just had to clear parity vs sub 52968889 to keep the floor at the better half.
-- **Daily submission budget:** 5/day. Today (2026-05-24 UTC) used: 1. 4 remaining.
+- **Daily submission budget:** 5/day. Today (2026-05-24 UTC) used: 2. 3 remaining.
+- **Floor risk:** Sub 53000996 evicts the strong half (sub 52968889 μ=1144.5). If Phi-1 settles below 52993021's adapt-curve, floor drops. PI override accepted this risk in exchange for the chance to pick up the 2P-elim-bonus signal.
 
 ## Push claim board (Rule 42)
 
 | Timestamp (UTC) | Branch | Agent | Predicted μ | Evicting (sub_id, μ) | Verdict |
 |---|---|---|---|---|---|
 | 2026-05-24 16:10 | claude/agent-design-exploration-Q0q9T | buildup_planner_concentration (commit 2878bfd) | 1100-1180 (parity-or-lift band) | sub 52966655 μ=1130.9 | GREEN (predicted band ≥ evicted μ; better-half μ=1144.5 stays in rolling pair) |
+| 2026-05-24 22:38 | claude/agent-design-exploration-Q0q9T | buildup_planner_phi1_only (commit 1f020e1 + buildup_planner main hard-set) | 1050-1200 (n=8 parity 4/8, Wilson [0.22, 0.79]) | sub 52968889 μ=1144.5 | MARGINAL (PI explicit override; predicted band overlaps evicted but central tendency below). Sub 52993021 currently 1116.2 (still adapting) anchors the other half. |
 - **Deadline:** 2026-06-23 23:59 UTC. **~31 days remain.**
 
 ---

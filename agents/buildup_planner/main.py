@@ -46,6 +46,18 @@ from pathlib import Path
 # Explicit `BASELINE_ORBITAL_SAFETY=0` still wins (setdefault, not set).
 os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
 
+# Phi-1 leaf swap (2026-05-25): favor_phi adds the 2P elimination bonus
+# (missing in `favor`) and uses 250-tick pv_horizon to match PI's
+# fast-elim metric. HARD SET (not setdefault) because the bundler
+# inlines `agents/baseline/main.py` BEFORE `agents/buildup_planner/main.py`
+# (dependency order), and baseline's own setdefault to "hybrid" wins
+# any setdefault race in the bundle. Hard-setting at agent-load time
+# means BASELINE_VALUE_HEAD=composite passed in by an A/B harness will
+# still be overridden — pass it AFTER the agent loads if you need
+# a manual override. Local n=8 vs sub 52968889 lineage: 4/8 parity,
+# Wilson [0.22, 0.79]. Submitted under explicit PI override of Rule 45.
+os.environ["BASELINE_VALUE_HEAD"] = "phi"
+
 from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
 
 from lib.intent import World
