@@ -58,6 +58,20 @@ EXPAND_RESERVE_FLOOR = int(os.environ.get("MOMENTUM_EXPAND_RESERVE_FLOOR", "0"))
 # filtering capturable targets, we sort primarily by production desc;
 # CCW ordering only applies within the highest-production bucket.
 CCW_TIEBREAK_ON_TOP_PROD_ONLY = True
+# Post-capture garrison: ships over the minimum capture size.
+# V3 tried +5 (then +8): both 0/8 vs baseline. Diagnose showed baseline
+# emits ~2× more fleets (100 vs 51 in seed 0); the +5 over-commit eats
+# budget per capture, suppressing emission volume. Reverted to +1 —
+# the over-commit margin is NOT the dominant lever. The dominant lever
+# is emission volume. Next-knob axis: enemy_multiplier in scoring (see
+# below) to bias us toward attacking enemies, not over-arming captures.
+POST_CAPTURE_GARRISON = int(os.environ.get("MOMENTUM_POST_CAPTURE", "1"))
+# Enemy-target scoring multiplier when we're behind on planets. PI:
+# "be aggressive" + "build momentum, attack opponent when upper hand."
+# When `len(my) < len(enemy)`, we're losing ground — biasing toward
+# enemy targets (captures that BOTH gain us and deny them) accelerates
+# recovery vs pure-greedy production captures of neutrals.
+ENEMY_MULTIPLIER = float(os.environ.get("MOMENTUM_ENEMY_MULT", "2.0"))
 
 
 def _reserve(planet) -> int:
@@ -135,9 +149,13 @@ def propose_expand(my_planets, neutrals, enemies, world, model, my_id: int,
     """Production-first target selection per source; CCW tie-break.
 
     For each source (sorted by production desc, ships desc):
-      1. Build the capturable target set (target.ships+1 ≤ src.ships).
-      2. Sort capturable by (production desc, ccw asc, eta asc).
-      3. Emit Intent at the top target, ships = target.ships + 1.
+      1. Build the capturable target set (cost ≤ src.budget).
+      2. Sort capturable by (effective_production desc, ETA asc, CCW asc),
+         where effective_production = production × ENEMY_MULTIPLIER for
+         enemy targets when we are behind on planet count. This biases
+         toward enemy-denial when we need to catch up (matches PI
+         "be aggressive" + "attack opponent" directives).
+      3. Emit Intent at the top target, ships sized via POST_CAPTURE_GARRISON.
       4. Mark source used; one launch per source per turn.
 
     The mechanism pipeline (`realize`) handles aim, ship inflation for
@@ -147,6 +165,9 @@ def propose_expand(my_planets, neutrals, enemies, world, model, my_id: int,
     if not neutrals and not enemies:
         return []
     intents: list[Intent] = []
+    # Are we behind on planets? Then favor enemy-denial captures.
+    behind = enemies and len(my_planets) < len(enemies)
+    enemy_mult = ENEMY_MULTIPLIER if behind else 1.0
     sorted_srcs = sorted(
         my_planets,
         key=lambda p: (-int(p.production), -int(p.ships)),
@@ -164,9 +185,12 @@ def propose_expand(my_planets, neutrals, enemies, world, model, my_id: int,
         # matches `agents/simple/production`'s pattern (closer ties
         # beat far ones). CCW is the third tier so it still influences
         # truly-equivalent candidates.
-        # Neutrals: cap = target.ships + 1 (no production growth).
+        # Neutrals: capture-size + POST_CAPTURE_GARRISON (post-capture
+        # defender ≥ POST_CAPTURE_GARRISON so the planet can repel a
+        # small immediate counter-attack — see Rule 40 / H21 pre-
+        # reinforce-window pattern in lib/mechanism.py).
         for tgt in neutrals:
-            cost = int(tgt.ships) + 1
+            cost = int(tgt.ships) + POST_CAPTURE_GARRISON
             if cost > budget:
                 continue
             eta = _eta_simple(src, tgt, max(1, budget))
@@ -174,15 +198,18 @@ def propose_expand(my_planets, neutrals, enemies, world, model, my_id: int,
             candidates.append(
                 (-int(tgt.production), eta, ccw_delta(src_theta, tgt_theta), tgt, cost)
             )
-        # Weak enemies: cap = projected garrison + 1 at our ETA.
+        # Weak enemies: projected garrison + POST_CAPTURE_GARRISON at our ETA.
+        # Score uses enemy_mult so when we're behind, enemy targets sort
+        # ahead of equal-prod neutrals.
         for tgt in enemies:
             eta = _eta_simple(src, tgt, max(1, budget))
-            proj = int(tgt.ships) + int(tgt.production) * eta + 1
+            proj = int(tgt.ships) + int(tgt.production) * eta + POST_CAPTURE_GARRISON
             if proj > budget:
                 continue
             tgt_theta = polar_angle_about((tgt.x, tgt.y))
+            effective_prod = float(tgt.production) * enemy_mult
             candidates.append(
-                (-int(tgt.production), eta, ccw_delta(src_theta, tgt_theta), tgt, proj)
+                (-effective_prod, eta, ccw_delta(src_theta, tgt_theta), tgt, proj)
             )
         if not candidates:
             continue
