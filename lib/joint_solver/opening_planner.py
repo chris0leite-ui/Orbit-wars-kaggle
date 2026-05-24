@@ -81,6 +81,26 @@ OPP_RESPONSE_LAG = 4        # ticks of slack added to opp's optimal eta
                             # when checking whether opp can plausibly
                             # contest our arrival. Fix 4 (Modeling gap D).
 
+# Concentration knobs (Tier-1 A+B, 2026-05-24). All four default to no-op
+# so the gated rollout is opt-in via env var per submission bundle.
+#
+#   OPENING_SHIP_ALPHA — super-linear ship-value exponent. Multiplier is
+#       (needed / OPENING_SHIP_REF) ** (alpha - 1). At alpha=1.0 the
+#       multiplier is identically 1.0 (no-op). At alpha=1.5 with REF=10:
+#       a 5-ship capture gets 0.707x; a 20-ship capture gets 1.414x.
+#       Captures the convexity of net effective landing (n - prod·d/sqrt(n))
+#       and the sqrt(n) fleet-speed scaling.
+#   OPENING_LAUNCH_COST — per-launch fixed cost in value units (same
+#       scale as `value`, typically O(10-30)). Subtracted AFTER the ROI
+#       gate so it cannot silently nuke the gate's semantics; only enters
+#       the MILP objective.
+#   OPENING_SHIP_REF — reference ship count for the alpha normalization.
+#       Anchored on typical opening-source garrison (~10 ships at t=0..10)
+#       so default-alpha=1.0 keeps the value scale identical to today.
+OPENING_SHIP_ALPHA = float(os.environ.get("OPENING_SHIP_ALPHA", "1.0"))
+OPENING_LAUNCH_COST = float(os.environ.get("OPENING_LAUNCH_COST", "0.0"))
+OPENING_SHIP_REF = float(os.environ.get("OPENING_SHIP_REF", "10.0"))
+
 
 # ---------------------------------------------------------------------------
 # Public dataclasses
@@ -466,13 +486,25 @@ def _build_candidates(world, model, my_id: int, num_seats: int,
                 discount = OPENING_VALUE_GAMMA ** float(time_to_capture)
                 value = (float(int(tgt.production)) * float(hold_dur)
                          * float(opp_bonus) * float(discount))
+                # Patch A (concentration): super-linear in ship count.
+                # alpha=1.0 (default) -> multiplier identically 1.0.
+                if OPENING_SHIP_ALPHA != 1.0:
+                    ref = max(1.0, OPENING_SHIP_REF)
+                    value = value * (float(needed) / ref) ** (OPENING_SHIP_ALPHA - 1.0)
                 # Per-launch ROI filter — gentler than 1:1 to match the
                 # baseline's aggressive opening throughput. Even half-ROI
                 # captures contribute to the production base once held.
+                # Runs BEFORE Patch B so the gate's value-per-ship semantics
+                # are unchanged when OPENING_LAUNCH_COST=0.0.
                 if value < ROI_THRESHOLD * float(needed):
                     waterfall.setdefault("dropped_low_roi", 0)
                     waterfall["dropped_low_roi"] += 1
                     continue
+                # Patch B (concentration): per-launch fixed cost. Applied
+                # AFTER the ROI gate so a mis-tuned C cannot silently nuke
+                # the gate. Negative post-cost values are passed through;
+                # the MILP minimises -value so they will not be selected.
+                value = value - OPENING_LAUNCH_COST
 
                 src_ids_in_use.add(int(src.id))
                 tgt_ids_in_use.add(int(tgt.id))

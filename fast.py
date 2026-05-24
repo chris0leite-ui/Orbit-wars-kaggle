@@ -266,8 +266,13 @@ def _classify_termination(final_obs) -> tuple[str, tuple[int, int], tuple[int, i
 
 
 def play_one(seed: int, p0_path: str, p1_path: str, *,
-             record_timing: bool = True) -> GameResult:
-    """Play a single 2P game and return outcome + per-turn timing."""
+             record_timing: bool = True,
+             episode_steps: int | None = None) -> GameResult:
+    """Play a single 2P game and return outcome + per-turn timing.
+
+    `episode_steps` truncates the game (default 500 in env config). Use 250
+    when targeting fast-elimination metrics (Rule-section 'truncated A/B').
+    """
     # Late import: kaggle_environments is slow to import; defer to worker.
     from kaggle_environments import make
 
@@ -279,7 +284,10 @@ def play_one(seed: int, p0_path: str, p1_path: str, *,
         p0 = _timed(p0, p0_times)
     if record_timing and callable(p1):
         p1 = _timed(p1, p1_times)
-    env = make("orbit_wars", configuration={"seed": seed}, debug=False)
+    _cfg: dict = {"seed": seed}
+    if episode_steps is not None:
+        _cfg["episodeSteps"] = int(episode_steps)
+    env = make("orbit_wars", configuration=_cfg, debug=False)
     try:
         env.run([p0, p1])
     except Exception:
@@ -310,8 +318,11 @@ def play_one(seed: int, p0_path: str, p1_path: str, *,
 
 
 # Picklable worker for ProcessPoolExecutor. Tuple args (not kwargs) to keep
-# the multiprocessing call site simple.
-def _play_one_task(args: tuple[int, str, str]) -> GameResult:
+# the multiprocessing call site simple. 4th arg (optional) = episode_steps.
+def _play_one_task(args) -> GameResult:
+    if len(args) == 4:
+        seed, p0_path, p1_path, episode_steps = args
+        return play_one(seed, p0_path, p1_path, episode_steps=episode_steps)
     seed, p0_path, p1_path = args
     return play_one(seed, p0_path, p1_path)
 
@@ -821,12 +832,14 @@ def cmd_elim_sweep(args: argparse.Namespace) -> int:
     all_focal_turn_ms: list[float] = []
     t0 = time.perf_counter()
 
+    ep_steps = getattr(args, "episode_steps", None)
+    _task = lambda seed, p0, p1: (seed, p0, p1, ep_steps) if ep_steps else (seed, p0, p1)
     if args.workers <= 1:
-        results = ((p, _play_one_task((p[0], p[1], p[2]))) for p in pairs)
+        results = ((p, _play_one_task(_task(p[0], p[1], p[2]))) for p in pairs)
     else:
         with ProcessPoolExecutor(max_workers=args.workers) as ex:
             futs = {
-                ex.submit(_play_one_task, (seed, p0, p1)):
+                ex.submit(_play_one_task, _task(seed, p0, p1)):
                     (seed, p0, p1, focal_is_p0)
                 for seed, p0, p1, focal_is_p0 in pairs
             }
@@ -971,6 +984,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--seeds", type=int, default=16,
                     help="number of seeds; each played twice (seat-swap)")
     sp.add_argument("--workers", type=int, default=4)
+    sp.add_argument("--episode-steps", type=int, default=None,
+                    help="cap each game at this many env steps (default: 500)")
     sp.set_defaults(func=cmd_elim_sweep)
 
     return ap

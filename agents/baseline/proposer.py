@@ -53,6 +53,21 @@ STRATEGIC_STOCKPILE_TICKS = 5 # buffer = N ticks × planet's production
 WAIT_GRID_MODE = os.environ.get("BASELINE_WAIT_GRID", "backward").strip().lower()
 WAIT_BUFFER_OFFSET = 3   # backward grid emits {min_w, min_w + 3}
 
+# Concentration knobs (Tier-1 A+B, 2026-05-24). Apply to the CAPTURE and
+# REINFORCE-with-threat branches of cheap_marginal_value. All three default
+# to no-op; opt-in per submission via env var. See lib/joint_solver/
+# opening_planner.py for the matching opening-planner patch.
+#
+#   BASELINE_LAUNCH_SHIP_ALPHA — exponent on (ships / REF)^(alpha-1).
+#       alpha=1.0 (default) -> multiplier identically 1.0.
+#   BASELINE_LAUNCH_FIXED_COST — subtracted from the capture cheap-delta.
+#       Units: cheap-delta scale (typical capture ~0.14).
+#   BASELINE_LAUNCH_SHIP_REF — reference fleet size for the alpha
+#       normalization. Anchored on typical proposer capture size.
+LAUNCH_SHIP_ALPHA = float(os.environ.get("BASELINE_LAUNCH_SHIP_ALPHA", "1.0"))
+LAUNCH_FIXED_COST = float(os.environ.get("BASELINE_LAUNCH_FIXED_COST", "0.0"))
+LAUNCH_SHIP_REF = float(os.environ.get("BASELINE_LAUNCH_SHIP_REF", "10.0"))
+
 # Bug #12 window constant — promoted to `lib/world_model.py` so both
 # this proposer and the in-rollout defensive policy
 # (`lib/opp_model.me_defensive_action`) import it from one location.
@@ -433,6 +448,15 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
     pred_owner = model.owner_at(int(tgt.id), arrival_step)
     pred_ships = float(model.ships_at(int(tgt.id), arrival_step) or 0.0)
 
+    # Patch A multiplier (concentration): ships^alpha normalized to REF
+    # so alpha=1.0 collapses to 1.0 (no-op). Applied to both capture and
+    # threatened-reinforce branches below.
+    if LAUNCH_SHIP_ALPHA != 1.0:
+        ref = max(1.0, LAUNCH_SHIP_REF)
+        ship_factor = (float(ships) / ref) ** (LAUNCH_SHIP_ALPHA - 1.0)
+    else:
+        ship_factor = 1.0
+
     if pred_owner == me:
         # PI 2026-05-21 fix — gate on BASELINE_ORBITAL_SAFETY=1, pass
         # arrival_eta so an orbiting target's position at our arrival
@@ -450,12 +474,14 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
             return 0.0
         pv = pv_horizon(int(world.step), int(t_to_threat),
                         gamma=GAMMA, t_total=EPISODE_STEPS)
-        return 0.05 * float(tgt.production) * float(pv)
+        # Patch A+B: scale by ship_factor, subtract fixed launch cost.
+        return 0.05 * float(tgt.production) * float(pv) * ship_factor - LAUNCH_FIXED_COST
 
     if ships > pred_ships:
         pv = pv_horizon(int(world.step), int(arrival_step),
                         gamma=GAMMA, t_total=EPISODE_STEPS)
-        return 0.05 * float(tgt.production) * float(pv)
+        # Patch A+B: scale by ship_factor, subtract fixed launch cost.
+        return 0.05 * float(tgt.production) * float(pv) * ship_factor - LAUNCH_FIXED_COST
 
     return -0.5 * float(ships)
 
