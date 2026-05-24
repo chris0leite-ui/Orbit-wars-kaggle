@@ -258,6 +258,27 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
     6.8% physics waste before discovering `predict_fleet_fate`
     was never imported. The failure mode is invisible until you
     look at single-game trajectories.
+48. **Kaggle submission scores are NOT settled when first observed.**
+    Every Orbit Wars submission starts at `publicScore = 600.0` with
+    `SubmissionStatus.COMPLETE` immediately after upload, and then
+    adapts upward (or downward) over hours-to-days as the ladder
+    plays it against other submissions. **A `600.0` reading right
+    after submit is the INITIAL value, not a settled regression.**
+    Never interpret an early-poll μ as final. Specifically:
+    - Do NOT panic-write "floor emergency" or recovery plans based
+      on the first poll after submit.
+    - Do NOT push a follow-up recovery submit on the same day
+      driven by an early μ reading. Wait at least 6-12 hours
+      (often 24h) before re-polling and judging.
+    - When asked "did the submit settle yet?" the honest answer is
+      "the score is updating; check again in <hours>".
+    - Only treat μ as settled when it's been stable across at least
+      two polls separated by ≥4 hours, OR when it's a known
+      multi-day-old submission.
+    The 600.0-start pattern has tripped recovery-panic actions in
+    multiple sessions; PI codified this rule on 2026-05-24 after
+    the agent (this assistant) drafted a full recovery plan based
+    on a μ=600 poll taken ~15 min after submit.
 
 ## Defaults from prior-comp postmortem
 
