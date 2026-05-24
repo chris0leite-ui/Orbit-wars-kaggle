@@ -1,0 +1,215 @@
+{
+  "rows": [
+    {
+      "focal": "baseline",
+      "opp": "nearest",
+      "wins": 4,
+      "n": 4,
+      "rate": 1.0,
+      "wlo": 0.5100999795960008,
+      "whi": 1.0,
+      "errs": 4
+    },
+    {
+      "focal": "baseline",
+      "opp": "roi",
+      "wins": 4,
+      "n": 4,
+      "rate": 1.0,
+      "wlo": 0.5100999795960008,
+      "whi": 1.0,
+      "errs": 4
+    },
+    {
+      "focal": "baseline",
+      "opp": "weakest",
+      "wins": 4,
+      "n": 4,
+      "rate": 1.0,
+      "wlo": 0.5100999795960008,
+      "whi": 1.0,
+      "errs": 4
+    },
+    {
+      "focal": "baseline",
+      "opp": "v3.5.1",
+      "wins": 2,
+      "n": 2,
+      "rate": 1.0,
+      "wlo": 0.34237195288961925,
+      "whi": 1.0,
+      "errs": 6
+    },
+    {
+      "focal": "baseline",
+      "opp": "v4_planner",
+      "wins": 0,
+      "n": 0,
+      "rate": 0.0,
+      "wlo": 0.0,
+      "whi": 1.0,
+      "errs": 8
+    },
+    {
+      "focal": "baseline",
+      "opp": "random",
+      "wins": 6,
+      "n": 6,
+      "rate": 1.0,
+      "wlo": 0.6096569663469354,
+      "whi": 0.9999999999999999,
+      "errs": 2
+    },
+    {
+      "focal": "baseline",
+      "opp": "starter",
+      "wins": 6,
+      "n": 6,
+      "rate": 1.0,
+      "wlo": 0.6096569663469354,
+      "whi": 0.9999999999999999,
+      "errs": 2
+    },
+    {
+      "focal": "baseline_full",
+      "opp": "nearest",
+      "wins": 4,
+      "n": 4,
+      "rate": 1.0,
+      "wlo": 0.5100999795960008,
+      "whi": 1.0,
+      "errs": 4
+    },
+    {
+      "focal": "baseline_full",
+      "opp": "roi",
+      "wins": 2,
+      "n": 4,
+      "rate": 0.5,
+      "wlo": 0.15003570882017148,
+      "whi": 0.8499642911798285,
+      "errs": 4
+    },
+    {
+      "focal": "baseline_full",
+      "opp": "weakest",
+      "wins": 5,
+      "n": 5,
+      "rate": 1.0,
+      "wlo": 0.5655085052479191,
+      "whi": 1.0,
+      "errs": 3
+    },
+    {
+      "focal": "baseline_full",
+      "opp": "v3.5.1",
+      "wins": 1,
+      "n": 2,
+      "rate": 0.5,
+      "wlo": 0.09452865480086614,
+      "whi": 0.9054713451991339,
+      "errs": 6
+    },
+    {
+      "focal": "baseline_full",
+      "opp": "v4_planner",
+      "wins": 0,
+      "n": 0,
+      "rate": 0.0,
+      "wlo": 0.0,
+      "whi": 1.0,
+      "errs": 8
+    },
+    {
+      "focal": "baseline_full",
+      "opp": "random",
+      "wins": 6,
+      "n": 6,
+      "rate": 1.0,
+      "wlo": 0.6096569663469354,
+      "whi": 0.9999999999999999,
+      "errs": 2
+    },
+    {
+      "focal": "baseline_full",
+      "opp": "starter",
+      "wins": 6,
+      "n": 6,
+      "rate": 1.0,
+      "wlo": 0.6096569663469354,
+      "whi": 0.9999999999999999,
+      "errs": 2
+    },
+    {
+      "focal": "baseline_joint_aggr_consolidated_orbitfix",
+      "opp": "nearest",
+      "wins": 3,
+      "n": 3,
+      "rate": 1.0,
+      "wlo": 0.43849391955098227,
+      "whi": 1.0,
+      "errs": 5
+    },
+    {
+      "focal": "baseline_joint_aggr_consolidated_orbitfix",
+      "opp": "roi",
+      "wins": 3,
+      "n": 3,
+      "rate": 1.0,
+      "wlo": 0.43849391955098227,
+      "whi": 1.0,
+      "errs": 5
+    },
+    {
+      "focal": "baseline_joint_aggr_consolidated_orbitfix",
+      "opp": "weakest",
+      "wins": 5,
+      "n": 5,
+      "rate": 1.0,
+      "wlo": 0.5655085052479191,
+      "whi": 1.0,
+      "errs": 3
+    },
+    {
+      "focal": "baseline_joint_aggr_consolidated_orbitfix",
+      "opp": "v3.5.1",
+      "wins": 4,
+      "n": 4,
+      "rate": 1.0,
+      "wlo": 0.5100999795960008,
+      "whi": 1.0,
+      "errs": 4
+    },
+    {
+      "focal": "baseline_joint_aggr_consolidated_orbitfix",
+      "opp": "v4_planner",
+      "wins": 0,
+      "n": 0,
+      "rate": 0.0,
+      "wlo": 0.0,
+      "whi": 1.0,
+      "errs": 8
+    },
+    {
+      "focal": "baseline_joint_aggr_consolidated_orbitfix",
+      "opp": "random",
+      "wins": 6,
+      "n": 6,
+      "rate": 1.0,
+      "wlo": 0.6096569663469354,
+      "whi": 0.9999999999999999,
+      "errs": 2
+    },
+    {
+      "focal": "baseline_joint_aggr_consolidated_orbitfix",
+      "opp": "starter",
+      "wins": 4,
+      "n": 4,
+      "rate": 1.0,
+      "wlo": 0.5100999795960008,
+      "whi": 1.0,
+      "errs": 4
+    }
+  ],
+  "elapsed": 2075.8395079790002
+}
