@@ -97,3 +97,6 @@ audit/external/
 # products land in audit/<date>-*.json which IS tracked.
 audit/eda-*/
 audit/2026-05-22/*.log
+# Live progress logs from in-flight elim_matrix runs; the JSON output
+# (audit/elim-sweep-*/matrix.json) is the durable artifact.
+audit/elim-sweep-*/matrix.log
