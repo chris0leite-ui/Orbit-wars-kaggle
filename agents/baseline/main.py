@@ -908,6 +908,12 @@ def agent(obs, configuration=None):
             my_planets, target_pool, world, model, me, omega,
             baseline_len=MAX_HORIZON + 1,
         )
+        # Wave proposer (baseline_wave v3 2026-05-24). Returns [] when the
+        # env var is off — orbitfix-path byte-identical.
+        from agents.baseline.proposer import enumerate_wave_candidates
+        wave_candidates = enumerate_wave_candidates(
+            my_planets, target_pool, world, model, me, omega,
+        )
         from agents.baseline.chooser_trajectory import choose_trajectory
 
         # 1. Tick + emit the ledger's due commitments (if any). Build
@@ -955,6 +961,7 @@ def agent(obs, configuration=None):
             world, model,
             reserved_srcs=reserved_srcs,
             reserved_for_new_commits=reserved_for_new_commits,
+            wave_candidates=wave_candidates,
         )
 
         # 2. Persist updated ledger (surviving + new commits) when on.

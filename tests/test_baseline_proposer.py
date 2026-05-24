@@ -13,9 +13,11 @@ from agents.baseline.proposer import (
     _bleed_penalty,
     _enumerate_reactor_candidates,
     _target_cost_parity_ok,
+    aim_and_eta,
     capture_size,
     cheap_marginal_value,
     enumerate_ship_counts,
+    enumerate_wave_candidates,
     min_wait_affordable,
     nearest_k,
     propose,
@@ -679,3 +681,126 @@ def test_aim_and_eta_comet_returns_eta_within_path_length():
         src, comet_planet, ships=10, omega=0.04, world=world,
     )
     assert eta >= 1, f"expected positive eta; got {eta}"
+
+
+# ---------------------------------------------------------------------------
+# Wave proposer — pure-math tests (baseline_wave v3 2026-05-24)
+# ---------------------------------------------------------------------------
+
+
+def _wave_world(my_id=0, omega=0.0):
+    """3 my-planets + 1 enemy target where the target is too heavily
+    defended for any single source to capture alone — a wave is required.
+    omega=0 → no rotation, deterministic etas."""
+    # High-prod, well-garrisoned enemy target. Any single 60-ship strike
+    # bounces; combined 3-source wave (~180 ships) clears defense + margin.
+    tgt = _planet(0, 1, 60.0, 50.0, ships=120, production=2)
+    fast = _planet(1, my_id, 55.0, 50.0, ships=60, production=3)   # closest
+    mid = _planet(2, my_id, 35.0, 50.0, ships=60, production=3)   # mid
+    slow = _planet(3, my_id, 15.0, 50.0, ships=60, production=3)   # farthest
+    world = _world(my_id, [tgt, fast, mid, slow], step=0, omega=omega)
+    model = WorldModel.from_world(world, horizon=60)
+    return tgt, [fast, mid, slow], world, model
+
+
+def test_wave_proposer_off_returns_empty():
+    """Default OFF: BASELINE_WAVE_PROPOSER unset → []. Orbitfix-path parity."""
+    tgt, my_planets, world, model = _wave_world()
+    with _with_env(BASELINE_WAVE_PROPOSER=None):
+        out = enumerate_wave_candidates(
+            my_planets, [tgt], world, model, me=0, omega=0.0,
+        )
+    assert out == []
+
+
+def test_wave_proposer_emits_at_least_one_wave():
+    """3 own planets all in range of an enemy target → at least one wave
+    emitted with ≥2 legs."""
+    tgt, my_planets, world, model = _wave_world()
+    with _with_env(BASELINE_WAVE_PROPOSER="1"):
+        out = enumerate_wave_candidates(
+            my_planets, [tgt], world, model, me=0, omega=0.0,
+        )
+    assert len(out) >= 1, f"expected ≥1 wave, got {out}"
+    for wave_tgt, legs in out:
+        assert int(wave_tgt.id) == int(tgt.id)
+        assert len(legs) >= 2, f"every wave needs ≥2 legs, got {legs}"
+
+
+def test_wave_wait_N_consistent_with_arrival_step():
+    """For each emitted wave, all legs must land at the SAME arrival step:
+    arrival_step = wait_N_S + eta(S, T, ships_S, wait_N=wait_N_S).
+    Same-step arrivals are the whole point — combat rule 1."""
+    tgt, my_planets, world, model = _wave_world()
+    with _with_env(BASELINE_WAVE_PROPOSER="1"):
+        out = enumerate_wave_candidates(
+            my_planets, [tgt], world, model, me=0, omega=0.0,
+        )
+    assert out, "expected at least one wave"
+    for wave_tgt, legs in out:
+        arrivals = []
+        for src, ships, _angle, wait_N in legs:
+            _ang, eta = aim_and_eta(
+                src, wave_tgt, int(ships), omega=0.0,
+                wait_N=int(wait_N), world=world,
+            )
+            arrivals.append(int(wait_N) + int(eta))
+        assert min(arrivals) == max(arrivals), (
+            f"all legs must land same step; got arrivals={arrivals}"
+        )
+
+
+def test_wave_total_exceeds_projected_defense():
+    """Every emitted wave's total inbound ships exceeds the projected
+    target garrison at arrival_step (else the wave bounces — not a wave)."""
+    tgt, my_planets, world, model = _wave_world()
+    with _with_env(BASELINE_WAVE_PROPOSER="1", BASELINE_WAVE_MARGIN="2"):
+        out = enumerate_wave_candidates(
+            my_planets, [tgt], world, model, me=0, omega=0.0,
+        )
+    assert out, "expected at least one wave"
+    for wave_tgt, legs in out:
+        # Reconstruct arrival_step from leg[0] (all same per previous test).
+        src0, ships0, _ang0, wait_N0 = legs[0]
+        _ang, eta0 = aim_and_eta(
+            src0, wave_tgt, int(ships0), omega=0.0,
+            wait_N=int(wait_N0), world=world,
+        )
+        arrival_step = int(wait_N0) + int(eta0)
+        defense = float(model.ships_at(int(wave_tgt.id), arrival_step) or 0.0)
+        total = sum(int(L[1]) for L in legs)
+        assert total > defense + 2.0 - 1e-9, (
+            f"wave total {total} must exceed defense {defense} + margin 2"
+        )
+
+
+def test_wave_respects_per_turn_cap():
+    """Many target candidates → enumerator stops at BASELINE_WAVE_MAX_PER_TURN."""
+    # 4 targets at varying distances; all reachable by all my-planets.
+    my0 = _planet(10, 0, 50.0, 50.0, ships=80, production=3)
+    my1 = _planet(11, 0, 52.0, 50.0, ships=80, production=3)
+    targets = [
+        _planet(i, 1, 30.0 + i * 5.0, 60.0, ships=8, production=2)
+        for i in range(4)
+    ]
+    world = _world(0, [my0, my1] + targets, step=0, omega=0.0)
+    model = WorldModel.from_world(world, horizon=60)
+    with _with_env(BASELINE_WAVE_PROPOSER="1", BASELINE_WAVE_MAX_PER_TURN="2"):
+        out = enumerate_wave_candidates(
+            [my0, my1], targets, world, model, me=0, omega=0.0,
+        )
+    assert len(out) <= 2, f"cap=2 expected; got {len(out)} waves"
+
+
+def test_wave_rejects_when_only_one_source_in_range():
+    """With a single my-planet (< 2 sources), every wave must have ≥2 legs,
+    so the enumerator returns []."""
+    tgt = _planet(0, 1, 60.0, 50.0, ships=10, production=2)
+    lone = _planet(1, 0, 55.0, 50.0, ships=80, production=3)
+    world = _world(0, [tgt, lone], step=0, omega=0.0)
+    model = WorldModel.from_world(world, horizon=60)
+    with _with_env(BASELINE_WAVE_PROPOSER="1"):
+        out = enumerate_wave_candidates(
+            [lone], [tgt], world, model, me=0, omega=0.0,
+        )
+    assert out == [], f"single source should not emit waves; got {out}"

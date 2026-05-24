@@ -794,6 +794,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                       world, model,
                       reserved_srcs: set[int] | None = None,
                       reserved_for_new_commits: set[int] | None = None,
+                      wave_candidates: list = (),
                       ) -> tuple[list[list], list[dict]]:
     """Drop-in alternative to `chooser.choose`.
 
@@ -1010,6 +1011,41 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                     joint_count += 1
                     if j_status == "scored" and j_score > 0.0:
                         scored.append((j_score, "joint", launches))
+
+    # Wave-proposer pass (baseline_wave v3 2026-05-24). The proposer-level
+    # wave enumerator (`proposer.enumerate_wave_candidates`) produces
+    # coordinated multi-source candidates that the existing JOINT-from-
+    # prerank path cannot — wait-aware legs targeting the same arrival
+    # step. They ride into `scored` as `(score, "joint", launches)`
+    # 3-tuples so the existing emit/dedup logic picks them up unchanged.
+    # Empty `wave_candidates` (the default) makes this a no-op — orbitfix-
+    # path byte-identical.
+    if wave_candidates and not use_v3:
+        for wv in wave_candidates:
+            if time.perf_counter() > safe_deadline:
+                break
+            tgt, legs = wv
+            if not legs or len(legs) < 2:
+                continue
+            # Skip waves whose sources are all reserved by the ledger.
+            if reserved_srcs and all(int(L[0].id) in reserved_srcs for L in legs):
+                continue
+            launches = [(L[0], tgt, int(L[1]), float(L[2]), int(L[3]))
+                        for L in legs]
+            # Horizon: deep enough that the latest arrival lands in the
+            # rollout. max(wait_N) is the lower bound for arrival; pad with
+            # min_horizon so leaf evaluation sees post-arrival state.
+            max_wait = max(int(L[3]) for L in legs)
+            wh = min(max_horizon, max_wait + int(min_horizon))
+            if wh >= len(baseline_favors):
+                wh = len(baseline_favors) - 1
+            w_score, w_status = score_candidate_v4_joint(
+                snap_base, launches, me, num_seats, world,
+                baseline_favors, favor_fn, gamma,
+                horizon=wh, skip_admissibility=skip_filter,
+            )
+            if w_status == "scored" and w_score > 0.0:
+                scored.append((w_score, "joint", launches))
 
     if not scored:
         return [], []
