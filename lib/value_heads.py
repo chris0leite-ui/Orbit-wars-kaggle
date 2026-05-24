@@ -181,6 +181,68 @@ import os as _os
 _COMPOSITE_PV_ENABLED = _os.environ.get("COMPOSITE_PRODUCTION_PV", "0") != "0"
 
 
+# ---------------------------------------------------------------------------
+# Wave-incentive terms (baseline_wave 2026-05-24).
+#
+# Three orthogonal additions intended to make wave-attack emerge from the
+# value head instead of being hard-coded as a phase machine:
+#
+#   inflight_hhi_bonus     — δ · HHI · Σs  over our inflight fleet sizes;
+#                            rewards concentrated inflight force.
+#   stockpile_pressure_penalty
+#                          — ε · max(0, p.ships − target)²; forces drainage
+#                            of large idle stockpiles.
+#
+# Both are pure functions of `obs` so they layer cleanly on top of any
+# existing value head (favor, favor_composite, favor_hybrid). Tests in
+# tests/test_value_heads.py.
+# ---------------------------------------------------------------------------
+
+
+def inflight_hhi_bonus(obs, my_id: int, *, delta: float) -> float:
+    """δ · HHI · Σs  for our inflight fleets, 0 below the noise floor.
+
+    HHI = (Σ s_i²) / (Σ s_i)² ∈ [1/n, 1]. Multiplying by Σs returns the
+    bonus to ship-count units so the coefficient `delta` is dimensionally
+    sane next to the ship-delta base. Returns 0 when total inflight ≤
+    MIN_FLEET_SIZE so a single-1-ship probe doesn't inflate the score.
+    """
+    MIN_FLEET_SIZE = 2  # mirror agents/baseline/proposer.py MIN_FLEET_SIZE
+    if isinstance(obs, dict):
+        fleets_raw = obs.get("fleets", []) or []
+    else:
+        fleets_raw = getattr(obs, "fleets", None) or []
+    sizes = [float(f[6]) for f in fleets_raw if int(f[1]) == int(my_id)]
+    total = sum(sizes)
+    if total < MIN_FLEET_SIZE:
+        return 0.0
+    sq = sum(s * s for s in sizes)
+    hhi = sq / (total * total)
+    return float(delta) * hhi * total
+
+
+def stockpile_pressure_penalty(obs, my_id: int, *, eps: float,
+                               target: float) -> float:
+    """ε · Σ max(0, ships_p − target)² over our planets.
+
+    Quadratic so a 200-ship idle planet (excess 150) is strongly penalised
+    while a 60-ship planet (excess 10) barely shows. Subtracted by callers
+    from the value-head output (return value is the unsigned penalty).
+    """
+    if isinstance(obs, dict):
+        planets_raw = obs.get("planets", []) or []
+    else:
+        planets_raw = getattr(obs, "planets", None) or []
+    total = 0.0
+    for p in planets_raw:
+        if int(p[1]) != int(my_id):
+            continue
+        excess = float(p[5]) - float(target)
+        if excess > 0.0:
+            total += excess * excess
+    return float(eps) * total
+
+
 def composite_capture_value(
     obs: Any, my_id: int,
     *,

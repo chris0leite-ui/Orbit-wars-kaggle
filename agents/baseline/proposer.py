@@ -420,6 +420,34 @@ def wait_then_fire_variants(src, tgt, model, omega: float, me: int, world=None):
     return variants
 
 
+def _bleed_penalty(src, ships: int, t_transit: int) -> float:
+    """Production-bleed opportunity-cost penalty (baseline_wave 2026-05-24).
+
+    Subtracts β · min(excess, P_src · t_transit − s) · γ^t_transit from
+    candidate score. The min(excess, …) clamp answers the "starve
+    mid-sized emissions" risk: a 30-ship planet emitting 30 ships has
+    excess=0 → zero penalty (correct minimum-effective emission). A
+    200-ship planet emitting 30 ships pays the full bleed.
+
+    Returns 0 when the env var is off, when t_transit <= 0, or when
+    either factor is non-positive. Always non-negative.
+    """
+    if os.environ.get("BASELINE_BLEED_PENALTY", "0").strip() != "1":
+        return 0.0
+    if int(t_transit) <= 0:
+        return 0.0
+    beta = float(os.environ.get("BASELINE_BLEED_BETA", "0.05"))
+    if beta <= 0.0:
+        return 0.0
+    src_ships = float(src.ships)
+    excess = max(0.0, src_ships - float(ships) - float(MIN_FLEET_SIZE))
+    bleed_rate = max(0.0, float(src.production) * float(t_transit) - float(ships))
+    cost = min(excess, bleed_rate)
+    if cost <= 0.0:
+        return 0.0
+    return float(beta) * cost * (GAMMA ** int(t_transit))
+
+
 def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
                          me: int, wait_N: int = 0) -> float:
     """Analytic Δ for Stage-1 ranking. Replaced by fast_sim in Stage-2.
@@ -428,10 +456,17 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
     Bounce:  -0.5 * ships
     Reinforce (mine): pv-weighted loss-prevention credit if threatened
                       within eta+30, else 0.
+
+    Wave incentive (2026-05-24): when BASELINE_BLEED_PENALTY=1, subtract
+    a production-bleed opportunity cost from the returned Δ. See
+    `_bleed_penalty` for the math. The bleed applies to every emission
+    path uniformly (capture / reinforce / bounce) since the opportunity
+    cost is a property of the source-and-transit pair, not the outcome.
     """
     arrival_step = wait_N + eta
     pred_owner = model.owner_at(int(tgt.id), arrival_step)
     pred_ships = float(model.ships_at(int(tgt.id), arrival_step) or 0.0)
+    bleed = _bleed_penalty(src, ships, eta)
 
     if pred_owner == me:
         # PI 2026-05-21 fix — gate on BASELINE_ORBITAL_SAFETY=1, pass
@@ -447,17 +482,17 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
         else:
             t_to_threat = model.time_to_enemy_threat(int(tgt.id), me, world)
         if t_to_threat is None or t_to_threat > eta + 30:
-            return 0.0
+            return 0.0 - bleed
         pv = pv_horizon(int(world.step), int(t_to_threat),
                         gamma=GAMMA, t_total=EPISODE_STEPS)
-        return 0.05 * float(tgt.production) * float(pv)
+        return 0.05 * float(tgt.production) * float(pv) - bleed
 
     if ships > pred_ships:
         pv = pv_horizon(int(world.step), int(arrival_step),
                         gamma=GAMMA, t_total=EPISODE_STEPS)
-        return 0.05 * float(tgt.production) * float(pv)
+        return 0.05 * float(tgt.production) * float(pv) - bleed
 
-    return -0.5 * float(ships)
+    return -0.5 * float(ships) - bleed
 
 
 def wait_band(wait_N: int) -> int:

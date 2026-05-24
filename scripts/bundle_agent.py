@@ -48,6 +48,14 @@ DEFAULT_LIB_ORDER = [
     "combat",
     "world_model",
     "intent",
+    # `kinematic_table` is the per-turn position-precompute extracted
+    # from the strategy-axis branch (2026-05-22 commit 72fe45a). It's
+    # default-OFF; `lib/trajectory.py:278` lazy-imports it inside a
+    # `_kinematic_table_enabled()` guard. The bundler's static import
+    # scan still requires the module in --lib order so the stripped
+    # `from lib.kinematic_table import ...` line resolves to inlined
+    # source instead of NameError'ing at runtime.
+    "kinematic_table",
     "trajectory",
     "mechanism",
     "mission",

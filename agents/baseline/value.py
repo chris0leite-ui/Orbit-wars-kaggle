@@ -220,12 +220,43 @@ def select_favor_fn():
 
     The chooser uses the same function for both `build_idle_baseline` and
     `score_action` so the Δ stays well-defined.
+
+    Wave-incentive layering (baseline_wave 2026-05-24):
+      - BASELINE_HHI_BONUS=1            adds δ·HHI·Σs over our inflight
+                                        fleets (concentration bonus).
+      - BASELINE_STOCKPILE_PENALTY=1    subtracts ε·Σ excess² over our
+                                        planets (forces drainage of
+                                        large idle stockpiles).
+    Both layer on top of whichever head was selected above; both default
+    OFF so the orbitfix-peak path is byte-identical.
     """
     choice = os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower()
     if choice == "composite":
-        return favor_composite
-    if choice == "hybrid":
-        return favor_hybrid
-    if choice == "hybrid_spatial":
-        return favor_hybrid_spatial
-    return favor
+        base = favor_composite
+    elif choice == "hybrid":
+        base = favor_hybrid
+    elif choice == "hybrid_spatial":
+        base = favor_hybrid_spatial
+    else:
+        base = favor
+
+    hhi_on = os.environ.get("BASELINE_HHI_BONUS", "0").strip() == "1"
+    stk_on = os.environ.get("BASELINE_STOCKPILE_PENALTY", "0").strip() == "1"
+    if not (hhi_on or stk_on):
+        return base
+
+    delta = float(os.environ.get("BASELINE_HHI_DELTA", "0.1"))
+    eps = float(os.environ.get("BASELINE_STOCKPILE_EPS", "0.005"))
+    target = float(os.environ.get("BASELINE_STOCKPILE_TARGET", "50"))
+
+    from lib.value_heads import inflight_hhi_bonus, stockpile_pressure_penalty
+
+    def _wave_wrapped(obs, me_, num_seats_=2, gamma_=DEFAULT_GAMMA):
+        v = base(obs, me_, num_seats_, gamma_)
+        if hhi_on:
+            v += inflight_hhi_bonus(obs, me_, delta=delta)
+        if stk_on:
+            v -= stockpile_pressure_penalty(obs, me_, eps=eps, target=target)
+        return v
+
+    return _wave_wrapped

@@ -7,11 +7,14 @@ import os
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from agents.baseline.proposer import (
+    GAMMA,
     MIN_FLEET_SIZE,
     WAIT_EXTRA_SURPLUS,
+    _bleed_penalty,
     _enumerate_reactor_candidates,
     _target_cost_parity_ok,
     capture_size,
+    cheap_marginal_value,
     enumerate_ship_counts,
     min_wait_affordable,
     nearest_k,
@@ -558,6 +561,106 @@ def test_aim_and_eta_comet_disabled_via_env_var():
             os.environ.pop("BASELINE_COMET_AIM", None)
         else:
             os.environ["BASELINE_COMET_AIM"] = old
+
+
+# ---------------------------------------------------------------------------
+# Wave incentive — production-bleed penalty (baseline_wave 2026-05-24)
+# ---------------------------------------------------------------------------
+
+
+def _with_env(**kv):
+    """Context-managed env-var override for tests."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def _ctx():
+        old = {k: os.environ.get(k) for k in kv}
+        for k, v in kv.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        try:
+            yield
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+    return _ctx()
+
+
+def test_bleed_off_when_flag_off():
+    src = _planet(0, 0, 50.0, 50.0, ships=200, production=5)
+    with _with_env(BASELINE_BLEED_PENALTY=None):
+        assert _bleed_penalty(src, ships=30, t_transit=20) == 0.0
+
+
+def test_bleed_zero_when_no_excess():
+    """Emit==src.ships → excess=0 (clamped) → penalty 0 regardless of bleed_rate."""
+    src = _planet(0, 0, 50.0, 50.0, ships=30, production=5)
+    with _with_env(BASELINE_BLEED_PENALTY="1", BASELINE_BLEED_BETA="0.05"):
+        # Emit all but the MIN_FLEET_SIZE floor → excess = 0 by definition.
+        assert _bleed_penalty(src, ships=30 - MIN_FLEET_SIZE, t_transit=20) == 0.0
+
+
+def test_bleed_fires_on_stockpile():
+    """200-ship src, 30-ship emit, t=20, P=5.
+
+    bleed_rate = max(0, 5*20 − 30) = 70
+    excess     = max(0, 200 − 30 − MIN_FLEET_SIZE) = 168
+    cost       = min(168, 70) = 70 (bleed_rate is the binding constraint)
+    penalty    = 0.05 * 70 * 0.99^20
+    """
+    src = _planet(0, 0, 50.0, 50.0, ships=200, production=5)
+    with _with_env(BASELINE_BLEED_PENALTY="1", BASELINE_BLEED_BETA="0.05"):
+        got = _bleed_penalty(src, ships=30, t_transit=20)
+    expected = 0.05 * 70.0 * (GAMMA ** 20)
+    assert abs(got - expected) < 1e-9
+
+
+def test_bleed_clamped_by_excess_not_bleed_rate():
+    """Small-stockpile planet with long transit: excess is binding, not bleed_rate.
+
+    src.ships=40, emit=20, P=5, t=30 → bleed_rate=130, excess=18 → cost=18.
+    """
+    src = _planet(0, 0, 50.0, 50.0, ships=40, production=5)
+    with _with_env(BASELINE_BLEED_PENALTY="1", BASELINE_BLEED_BETA="0.05"):
+        got = _bleed_penalty(src, ships=20, t_transit=30)
+    expected = 0.05 * 18.0 * (GAMMA ** 30)
+    assert abs(got - expected) < 1e-9
+
+
+def test_bleed_zero_for_zero_transit():
+    """t=0 → instant arrival → no opportunity cost."""
+    src = _planet(0, 0, 50.0, 50.0, ships=200, production=5)
+    with _with_env(BASELINE_BLEED_PENALTY="1", BASELINE_BLEED_BETA="0.05"):
+        assert _bleed_penalty(src, ships=30, t_transit=0) == 0.0
+
+
+def test_cheap_marginal_value_bleed_threads_through_capture_path():
+    """Verifies cheap_marginal_value subtracts the bleed term in the
+    capture-success branch."""
+    src = _planet(0, 0, 50.0, 50.0, ships=200, production=5)
+    tgt = _planet(1, 1, 60.0, 50.0, ships=5, production=3)
+    world = _world(my_id=0, planets=[src, tgt], step=0)
+    model = WorldModel.from_world(world, horizon=30)
+
+    # With bleed OFF (default): captures pred_owner=enemy, ships>pred_ships
+    # → positive ROI; orbital-safety is OFF too so we hit the simple branch.
+    with _with_env(BASELINE_BLEED_PENALTY=None, BASELINE_ORBITAL_SAFETY=None):
+        base_v = cheap_marginal_value(
+            src, tgt, ships=30, eta=20, world=world, model=model, me=0,
+        )
+    with _with_env(BASELINE_BLEED_PENALTY="1", BASELINE_BLEED_BETA="0.05",
+                   BASELINE_ORBITAL_SAFETY=None):
+        bleed_v = cheap_marginal_value(
+            src, tgt, ships=30, eta=20, world=world, model=model, me=0,
+        )
+    # base_v - bleed_v should equal the bleed penalty.
+    expected_bleed = 0.05 * 70.0 * (GAMMA ** 20)
+    assert abs((base_v - bleed_v) - expected_bleed) < 1e-9
 
 
 def test_aim_and_eta_comet_returns_eta_within_path_length():

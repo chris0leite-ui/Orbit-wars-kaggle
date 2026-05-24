@@ -587,6 +587,30 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     return (delta, "scored", eta)
 
 
+def _coord_penalty(arrival_steps: list[int]) -> float:
+    """Coordination-cost penalty for a joint coalition (baseline_wave 2026-05-24).
+
+    α · max(0, max(a_i) − min(a_i))²  over the per-leg arrival steps of
+    a joint coalition. Zero when all legs land on the same step (combat
+    rule 1 gives additive stack); rises quadratically with spread.
+
+    Returns 0 when the env var is off, when fewer than 2 arrival steps
+    are provided, or when α ≤ 0. Always non-negative.
+    """
+    import os as _os
+    if _os.environ.get("BASELINE_COORD_PENALTY", "0").strip() != "1":
+        return 0.0
+    if len(arrival_steps) < 2:
+        return 0.0
+    alpha = float(_os.environ.get("BASELINE_COORD_ALPHA", "0.2"))
+    if alpha <= 0.0:
+        return 0.0
+    spread = max(arrival_steps) - min(arrival_steps)
+    if spread <= 0:
+        return 0.0
+    return alpha * float(spread) * float(spread)
+
+
 def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
                               world,
                               baseline_favors: list[float],
@@ -608,10 +632,21 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
     For v1 simplicity, all legs typically have wait_N==0 (fire-now joint).
     Multi-wait joints are valid by construction but not enumerated yet
     (see proposer path in `choose_trajectory`).
+
+    Wave incentive (2026-05-24): when BASELINE_COORD_PENALTY=1, subtract
+    α · spread² from the returned Δ where spread is the per-leg arrival-
+    step spread (max − min). Encourages combat-rule-1 stacking.
     """
-    # Per-leg admissibility filter (only meaningful for wait_N==0 legs).
+    # Per-leg admissibility filter + arrival-step collection. The admissibility
+    # check itself is gated by skip_admissibility, but we still need
+    # fate.step for the coordination penalty when the gate is open.
+    arrival_steps: list[int] = []
     for src, tgt, ships, angle, wait_N in launches:
         if skip_admissibility or int(wait_N) != 0:
+            # Skip-mode: trust caller-vetted candidates. Use wait_N as a
+            # cheap proxy for arrival ordering (joint v1 has wait_N==0
+            # for every leg so spread==0 here — penalty disabled).
+            arrival_steps.append(int(wait_N))
             continue
         fate = predict_fleet_fate(src, tgt, angle, ships, world)
         if fate.outcome == "sun":
@@ -626,6 +661,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
             life = comet_remaining_lifetime(int(tgt.id), world)
             if life is None or life <= int(fate.step):
                 return (float("-inf"), "comet_expired")
+        arrival_steps.append(int(wait_N) + int(fate.step))
 
     # Clamp horizon to baseline length.
     if horizon >= len(baseline_favors):
@@ -661,7 +697,8 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         snap = fs_step(snap, actions, in_place=True)
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
-    return (leaf - baseline_favors[horizon], "scored")
+    delta = leaf - baseline_favors[horizon] - _coord_penalty(arrival_steps)
+    return (delta, "scored")
 
 
 def predict_opp_responses(world, me: int, num_seats: int,
