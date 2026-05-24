@@ -68,6 +68,22 @@ LAUNCH_SHIP_ALPHA = float(os.environ.get("BASELINE_LAUNCH_SHIP_ALPHA", "1.0"))
 LAUNCH_FIXED_COST = float(os.environ.get("BASELINE_LAUNCH_FIXED_COST", "0.0"))
 LAUNCH_SHIP_REF = float(os.environ.get("BASELINE_LAUNCH_SHIP_REF", "10.0"))
 
+# Layer Z — hard physics prune (2026-05-25). A launch is useful iff
+# `ships - prod_target * eta >= SAFETY_MARGIN`. Captures the closed-form
+# waste pattern: tiny fleets traveling far take fleet_speed=max(2,√n)
+# turns to arrive, during which the target produces prod*eta extra ships.
+# Effective landing must clear a safety margin. Default OFF so the gate
+# can be A/B-tested per submission via env var.
+#
+#   BASELINE_EFFECTIVE_LANDING_PRUNE — "1" enables the filter.
+#   BASELINE_EFFECTIVE_LANDING_MARGIN — min ships after production-bleed.
+EFFECTIVE_LANDING_PRUNE_ENABLED = (
+    os.environ.get("BASELINE_EFFECTIVE_LANDING_PRUNE", "0") == "1"
+)
+EFFECTIVE_LANDING_MARGIN = float(
+    os.environ.get("BASELINE_EFFECTIVE_LANDING_MARGIN", "1.0")
+)
+
 # Bug #12 window constant — promoted to `lib/world_model.py` so both
 # this proposer and the in-rollout defensive policy
 # (`lib/opp_model.me_defensive_action`) import it from one location.
@@ -478,6 +494,15 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
         return 0.05 * float(tgt.production) * float(pv) * ship_factor - LAUNCH_FIXED_COST
 
     if ships > pred_ships:
+        # Layer Z prune: reject if effective landing (ships - prod·eta)
+        # falls below the safety margin. Catches small fleets that travel
+        # long distances and lose their landing margin to production-bleed.
+        # `eta` here is flight time (post-wait); production accrual during
+        # wait_N is already in `pred_ships` and is the opp's problem.
+        if EFFECTIVE_LANDING_PRUNE_ENABLED:
+            effective_landing = float(ships) - float(tgt.production) * float(eta)
+            if effective_landing < EFFECTIVE_LANDING_MARGIN:
+                return CHEAP_REJECT_THRESHOLD - 1.0  # below reject gate
         pv = pv_horizon(int(world.step), int(arrival_step),
                         gamma=GAMMA, t_total=EPISODE_STEPS)
         # Patch A+B: scale by ship_factor, subtract fixed launch cost.

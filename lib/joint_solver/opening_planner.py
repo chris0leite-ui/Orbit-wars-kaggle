@@ -101,6 +101,17 @@ OPENING_SHIP_ALPHA = float(os.environ.get("OPENING_SHIP_ALPHA", "1.0"))
 OPENING_LAUNCH_COST = float(os.environ.get("OPENING_LAUNCH_COST", "0.0"))
 OPENING_SHIP_REF = float(os.environ.get("OPENING_SHIP_REF", "10.0"))
 
+# Layer Z — hard physics prune (2026-05-25). See identical block in
+# agents/baseline/proposer.py for rationale. Default OFF so the gate is
+# opt-in per submission. SAFETY_MARGIN is in ship units (effective
+# landing after production-bleed during flight).
+OPENING_EFFECTIVE_LANDING_PRUNE_ENABLED = (
+    os.environ.get("BASELINE_EFFECTIVE_LANDING_PRUNE", "0") == "1"
+)
+OPENING_EFFECTIVE_LANDING_MARGIN = float(
+    os.environ.get("BASELINE_EFFECTIVE_LANDING_MARGIN", "1.0")
+)
+
 
 # ---------------------------------------------------------------------------
 # Public dataclasses
@@ -463,6 +474,21 @@ def _build_candidates(world, model, my_id: int, num_seats: int,
                 capture_residual = needed - int(math.ceil(gar_at_arr))
                 if capture_residual < 1:
                     continue
+
+                # Layer Z hard physics prune: drop launches whose effective
+                # landing (ships - prod·eta) falls below the safety margin.
+                # Catches small fleets on long-haul trips where production-
+                # bleed eats the entire margin. Runs before the expensive
+                # hold-duration computation. eta_flight is post-wait travel
+                # time; production accrual during wait is already in gar_at_arr.
+                if OPENING_EFFECTIVE_LANDING_PRUNE_ENABLED:
+                    effective_landing = (
+                        float(needed) - float(tgt.production) * float(eta_flight)
+                    )
+                    if effective_landing < OPENING_EFFECTIVE_LANDING_MARGIN:
+                        waterfall.setdefault("dropped_effective_landing", 0)
+                        waterfall["dropped_effective_landing"] += 1
+                        continue
 
                 # Value = production × hold_window × opp_bonus, where
                 # hold_window is the expected ticks we hold post-capture
