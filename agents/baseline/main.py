@@ -156,6 +156,7 @@ OPENING_MILP_ENABLED = os.environ.get("BASELINE_OPENING_MILP", "0") == "1"
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
+from lib.drop_one import DROP_ONE_ENABLED, drop_one_validate
 from lib.fast_sim import from_obs as fs_from_obs
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
@@ -962,6 +963,11 @@ def agent(obs, configuration=None):
             _PENDING_LAUNCHES[me] = surviving_pending + new_commits
 
         moves = due_moves + moves
+        # Layer D plan-level drop-one validator (default OFF). Runs BEFORE
+        # post-passes so it only prunes the chooser's own picks; post-pass
+        # launches (drains, sniper) are heavily gated already and exempt.
+        if DROP_ONE_ENABLED:
+            moves = drop_one_validate(moves, world, model, me)
         moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)

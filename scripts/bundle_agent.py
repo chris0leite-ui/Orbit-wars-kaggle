@@ -64,6 +64,10 @@ DEFAULT_LIB_ORDER = [
     # opening_planner + proposer; module-level constants read env vars
     # at import time. Default OFF preserves behavior.
     "reliability",
+    # Layer D plan-level drop-one validator (2026-05-25). Imported by
+    # agents/baseline/main.py at the post-chooser emit site. Closed-form
+    # plan_production_advantage uses predict_fleet_fate. Default OFF.
+    "drop_one",
     "missions/snipe",
     "missions/reinforce",
     "missions/recapture",
