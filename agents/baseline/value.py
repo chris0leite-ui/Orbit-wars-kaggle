@@ -251,12 +251,18 @@ def select_favor_fn():
 
     from lib.value_heads import inflight_hhi_bonus, stockpile_pressure_penalty
 
-    def _wave_wrapped(obs, me_, num_seats_=2, gamma_=DEFAULT_GAMMA):
-        v = base(obs, me_, num_seats_, gamma_)
+    # NOTE: parameter names must match `num_seats` / `gamma` because callers
+    # in chooser.py and chooser_trajectory.py pass `gamma=` as a keyword.
+    # Using `gamma_` here caused a silent TypeError on every leaf eval which
+    # the rollout swallowed, zeroing every candidate's Δ — agent emitted no
+    # fleets at all even with δ → 0. (Found 2026-05-24 by ablation showing
+    # δ=1e-6 still fully suppresses emissions.)
+    def _wave_wrapped(obs, me, num_seats=2, gamma=DEFAULT_GAMMA):
+        v = base(obs, me, num_seats, gamma)
         if hhi_on:
-            v += inflight_hhi_bonus(obs, me_, delta=delta)
+            v += inflight_hhi_bonus(obs, me, delta=delta)
         if stk_on:
-            v -= stockpile_pressure_penalty(obs, me_, eps=eps, target=target)
+            v -= stockpile_pressure_penalty(obs, me, eps=eps, target=target)
         return v
 
     return _wave_wrapped
