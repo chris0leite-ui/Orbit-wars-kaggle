@@ -52,14 +52,28 @@ echo
 # real CLI 401s. KGAT_-prefix tokens can't live in ~/.kaggle/kaggle.json
 # (legacy 32-hex auth path returns 401). Install a thin shim on PATH that
 # derives KAGGLE_API_TOKEN from the harness env vars on every invocation.
+#
+# 2026-05-24 update: the harness may surface the KGAT_ token under any of
+# {KAGGLE_API_TOKEN, KaggleAPIToke, KAGGLE_KEY}. Earlier guard only matched
+# KaggleAPIToke; sessions where the token came in via KAGGLE_KEY skipped
+# the install and 401'd. Treat any KGAT_-prefix sighting as a trigger,
+# and (re)write the shim each run so body fixes propagate to old containers.
 _KAGGLE_SHIM="$HOME/.local/bin/kaggle"
-if [[ -n "${KaggleAPIToke:-}" && ! -x "$_KAGGLE_SHIM" ]]; then
-    echo "--- kaggle CLI shim: installing $_KAGGLE_SHIM ---"
+_KAGGLE_TOKEN_RAW="${KAGGLE_API_TOKEN:-${KaggleAPIToke:-${KAGGLE_KEY:-}}}"
+if [[ "$_KAGGLE_TOKEN_RAW" == KGAT_* ]]; then
+    echo "--- kaggle CLI shim: writing $_KAGGLE_SHIM ---"
     mkdir -p "$(dirname "$_KAGGLE_SHIM")"
     cat > "$_KAGGLE_SHIM" <<'SHIM'
 #!/bin/bash
 # Auto-installed by .claude/hooks/session-start.sh — see hook for context.
-export KAGGLE_API_TOKEN="${KAGGLE_API_TOKEN:-${KaggleAPIToke:-}}"
+# KGAT_-prefix tokens must route through KAGGLE_API_TOKEN, not the legacy
+# KAGGLE_KEY env path; the CLI 401s otherwise. Derive the token from
+# whichever env var the harness populated this session.
+_t="${KAGGLE_API_TOKEN:-${KaggleAPIToke:-${KAGGLE_KEY:-}}}"
+if [[ "$_t" == KGAT_* ]]; then
+    export KAGGLE_API_TOKEN="$_t"
+    unset KAGGLE_KEY  # belt-and-braces: kill legacy-auth fallback path
+fi
 export KAGGLE_USERNAME="${KAGGLE_USERNAME:-${KaggleUserName:-}}"
 exec /usr/local/bin/kaggle "$@"
 SHIM
