@@ -48,8 +48,10 @@ DEFAULT_LIB_ORDER = [
     "combat",
     "world_model",
     "intent",
+    "kinematic_table",
     "trajectory",
     "mechanism",
+    "polar",
     "mission",
     # `scoring` exposes `pv_horizon` + `PV_GAMMA` used by missions/snipe
     # and missions/reinforce since H16 (2026-05-13). Must precede the
