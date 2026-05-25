@@ -57,6 +57,10 @@ DEFAULT_LIB_ORDER = [
     # and missions/reinforce since H16 (2026-05-13). Must precede the
     # mission modules so the inlined symbols are visible at parse time.
     "scoring",
+    # `salvo` imports `s_needed` from scoring → must come AFTER scoring
+    # in bundle order (otherwise the stripped import has no symbol in
+    # scope and the bundled file fails to parse / runtime-NameErrors).
+    "salvo",
     "missions/snipe",
     "missions/reinforce",
     "missions/recapture",

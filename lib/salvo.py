@@ -35,8 +35,18 @@ MAX_SALVO_SOURCES = 6
 
 @dataclass
 class SalvoPlan:
-    """Bundle of synchronized intents + the arrival tick they share."""
+    """Bundle of synchronized intents + the arrival tick they share.
+
+    `wait_Ns` is parallel to `intents`: index i holds the number of
+    turns source `intents[i].src_id` must hold fire before launching.
+    `wait_N == 0` means launch this turn; `wait_N > 0` means register
+    in the caller's cross-turn ledger and fire when the counter
+    decrements to 0. True synchronized arrival requires the fast
+    sources to actually defer their launches, which only works with
+    that ledger — without it the salvo collapses to same-turn dogpile.
+    """
     intents: list[Intent]
+    wait_Ns: list[int]
     t_arrival: int
     target_id: int
     total_ships: int
@@ -59,15 +69,20 @@ def _eta_simple(src, tgt, ships: int) -> int:
 
 
 def salvo_feasible(sources, target, world, model, my_id, *,
-                   min_fleet_size: int = 8, safety: float = 1.15) -> bool:
+                   min_fleet_size: int = 8, safety: float = 1.15,
+                   reserve_fn=None) -> bool:
     """Quick check: can these sources combine to saturate this target?
 
     Each viable source must have at least `min_fleet_size` ships above
-    its dynamic reserve, AND the combined contribution must clear
-    `s_needed(target, t_arrival) * safety`. If only 1 source qualifies,
-    a synchronized salvo isn't a salvo — caller should use per-source
-    greedy instead.
+    `reserve_fn(src)` (default `_reserve` — defensive), AND the combined
+    contribution must clear `s_needed(target, t_arrival) * safety`.
+
+    Pass a lighter `reserve_fn` (e.g. a constant 1-ship floor) for
+    aggressive salvo commitment from sources that would otherwise be
+    excluded by the defensive default.
     """
+    if reserve_fn is None:
+        reserve_fn = _reserve
     if len(sources) < 2:
         return False
     contributions: list[int] = []
@@ -75,7 +90,7 @@ def salvo_feasible(sources, target, world, model, my_id, *,
     for src in sources:
         if int(src.ships) < min_fleet_size:
             continue
-        ships = int(src.ships) - _reserve(src)
+        ships = int(src.ships) - reserve_fn(src)
         if ships < min_fleet_size:
             continue
         contributions.append(ships)
@@ -91,6 +106,7 @@ def plan_synchronized_salvo(
     sources, target, world, model, my_id, omega: float, *,
     min_fleet_size: int = 8, safety: float = 1.15,
     max_sources: int = MAX_SALVO_SOURCES,
+    reserve_fn=None,
 ) -> SalvoPlan | None:
     """Build a synchronized-arrival salvo against `target`.
 
@@ -113,13 +129,15 @@ def plan_synchronized_salvo(
     """
     if len(sources) < 2:
         return None
+    if reserve_fn is None:
+        reserve_fn = _reserve
 
     # Step 1: filter sources by reserve floor, compute raw contributions.
     raw: list[tuple] = []  # (ships, eta, src)
     for src in sources:
         if int(src.ships) < min_fleet_size:
             continue
-        ships = int(src.ships) - _reserve(src)
+        ships = int(src.ships) - reserve_fn(src)
         if ships < min_fleet_size:
             continue
         eta = _eta_simple(src, target, ships)
@@ -166,8 +184,9 @@ def plan_synchronized_salvo(
         )
         candidates.append((intent, wait_N))
 
-    # Step 3: fate-gate each candidate.
+    # Step 3: fate-gate each candidate. Keep wait_N parallel to intent.
     surviving: list[Intent] = []
+    surviving_waits: list[int] = []
     for intent, wait_N in candidates:
         src = world.planets_by_id.get(intent.src_id)
         if src is None:
@@ -185,6 +204,7 @@ def plan_synchronized_salvo(
         )
         if ok:
             surviving.append(intent)
+            surviving_waits.append(int(wait_N))
 
     if len(surviving) < 2:
         return None
@@ -197,6 +217,7 @@ def plan_synchronized_salvo(
 
     return SalvoPlan(
         intents=surviving,
+        wait_Ns=surviving_waits,
         t_arrival=int(t_arrival),
         target_id=int(target.id),
         total_ships=total,

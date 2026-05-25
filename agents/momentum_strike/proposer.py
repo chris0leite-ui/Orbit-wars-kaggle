@@ -29,6 +29,7 @@ import os
 from lib.fleet import speed as fleet_speed
 from lib.intent import Intent
 from lib.polar import polar_angle_about, ccw_delta
+from lib.salvo import plan_synchronized_salvo
 
 
 def _eta_simple(src, tgt, ships: int) -> int:
@@ -221,3 +222,91 @@ def propose_expand(my_planets, neutrals, enemies, world, model, my_id: int,
         ))
         used_srcs.add(int(src.id))
     return intents
+
+
+# V4 salvo knobs.
+# Defaults: min_fleet=4 (a salvo contributor only needs to send 4 ships
+# above reserve; combining 4-5 sources still gives a decisive wave),
+# salvo_reserve=2 (offensive commitment — leave 2 defenders, not the
+# defensive `max(prod*5,10)` default in lib/salvo._reserve which would
+# starve the salvo gate in early/mid game).
+SALVO_MIN_FLEET_SIZE = int(os.environ.get("MOMENTUM_SALVO_MIN_FLEET", "4"))
+SALVO_SAFETY = float(os.environ.get("MOMENTUM_SALVO_SAFETY", "1.15"))
+SALVO_RESERVE = int(os.environ.get("MOMENTUM_SALVO_RESERVE", "2"))
+# Cap on cross-turn wait. Long-wait commits lock sources for many turns,
+# starving expansion. Empirically a wait=24 commit was found (src=5 with
+# 98 ships) — that's 98 idle ships for ~10% of game. Cap so sources too
+# far from the slowest contributor get dropped from the salvo instead
+# of waiting forever.
+SALVO_MAX_WAIT = int(os.environ.get("MOMENTUM_SALVO_MAX_WAIT", "8"))
+
+
+def _salvo_reserve(planet) -> int:
+    """Light offensive reserve for salvo source pool. Holds back just
+    SALVO_RESERVE ships per source so we can actually fire a coordinated
+    wave from mid-game planets.
+    """
+    return SALVO_RESERVE
+
+
+def _pick_strike_target(my_planets, enemy_planets, my_id: int):
+    """Production-leader enemy planet; tie-break by lowest projected
+    garrison at min ETA (cheaper to take).
+
+    Matches PI directive "focus on large planets" + V1's tested target
+    selection logic. Returns None if no enemy planets.
+    """
+    if not enemy_planets or not my_planets:
+        return None
+    scored = []
+    for tgt in enemy_planets:
+        min_eta = min(_eta_simple(s, tgt, 50) for s in my_planets)
+        proj = int(tgt.ships) + int(tgt.production) * min_eta
+        scored.append((-int(tgt.production), proj, tgt))
+    scored.sort()
+    return scored[0][2]
+
+
+def propose_salvo(my_planets, enemy_planets, world, model, my_id: int,
+                  omega: float, used_srcs: set[int],
+                  pending_srcs: set[int]):
+    """STRIKE-mode synchronized-arrival salvo at the production leader.
+
+    Excludes sources already used by defense (`used_srcs`) and sources
+    holding pending wait commits (`pending_srcs`). Calls
+    `lib.salvo.plan_synchronized_salvo`. Returns parallel
+    `(intents, wait_Ns)` lists; caller decides which to emit now and
+    which to register in the cross-turn ledger.
+
+    Returns ([], []) when no eligible target / no salvo plan.
+    """
+    target = _pick_strike_target(my_planets, enemy_planets, my_id)
+    if target is None:
+        return [], []
+    pool = [
+        s for s in my_planets
+        if int(s.id) not in used_srcs
+        and int(s.id) not in pending_srcs
+    ]
+    if len(pool) < 2:
+        return [], []
+    plan = plan_synchronized_salvo(
+        pool, target, world, model, my_id, omega,
+        min_fleet_size=SALVO_MIN_FLEET_SIZE, safety=SALVO_SAFETY,
+        reserve_fn=_salvo_reserve,
+    )
+    if plan is None:
+        return [], []
+    # Cap wait_N — drop intents whose wait exceeds SALVO_MAX_WAIT.
+    intents_out: list = []
+    waits_out: list = []
+    for it, w in zip(plan.intents, plan.wait_Ns):
+        if int(w) > SALVO_MAX_WAIT:
+            continue
+        intents_out.append(it)
+        waits_out.append(int(w))
+    # If the surviving subset is < 2, the salvo no longer coordinates;
+    # bail and let expand handle the sources individually.
+    if len(intents_out) < 2:
+        return [], []
+    return intents_out, waits_out
