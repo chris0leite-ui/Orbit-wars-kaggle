@@ -1,6 +1,9 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-20 PM by `claude/review-skills-improvements-moKOR`
+> Last written: 2026-05-25 evening by `claude/competitive-programming-strategy-ESwSv`
+> (Phase D + E + F: favor_strategic enrichment + code-review fixes
+> + 4P regression diagnosis in progress; observations only, see new section below).
+> Earlier writer: 2026-05-20 PM by `claude/review-skills-improvements-moKOR`
 > (n=8 iteration loop attempt; no candidate found, structural-change
 > pivot queued).
 > Prior PM session on this branch (cross-branch consolidation pass)
@@ -19,6 +22,116 @@
 3. **`CLAUDE.md`** — rules 1-47 (rules 41-47 added 2026-05-20).
 4. **This file** — session-start prompt below.
 5. `audit/friction.md` if you're about to touch a fragile path.
+
+## Session 2026-05-25 evening — observations log (NOT conclusions)
+
+This session ran Phases D / E / F on the `competitive-programming-strategy-ESwSv`
+branch. Findings below are recorded WITHOUT interpretation; pick up
+from these for the next session.
+
+### What was added (commits in chronological order)
+
+| Commit | What |
+|---|---|
+| 0a8308f | `chooser_trajectory.py`: env-gated EV-per-ship sort key (probe) |
+| f27bdf2 | `agents/baseline_ev_per_ship/` shim + bundled submission |
+| c6269fe | `clean_ab.py`: `--ffa` 4P mode |
+| 58b6bb9 | `agents/baseline/value.py`: `favor_strategic` (Term A hold-discount + Term B forward-reach) + `tests/test_favor_strategic.py` |
+| a9a542d | `scripts/trace_seed_672458420.py`: single-game 2P trace |
+| 2597cdb | `value.py`: Term C finishing-pressure + 2 new tests |
+| 716b19e | `value.py` + harness: all 15 code-review findings (Phase F) |
+| ce0c32d | `value.py`: F7 bug-fix (filter opp planets by ship count); new `scripts/trace_4p_strategic.py` |
+
+### Configurations in use (env-var stack for `BASELINE_VALUE_HEAD=strategic`)
+
+```
+BASELINE_HOLD_HORIZON=20
+BASELINE_FORWARD_REACH_WEIGHT=0.5
+BASELINE_FORWARD_REACH_HORIZON=15
+BASELINE_FINISH_BONUS=50
+BASELINE_FINISH_THRESHOLD=200
+```
+
+### Live ladder observations
+
+| Sub | Agent | Live μ | Note |
+|---|---|---:|---|
+| 53024913 | baseline_ev_per_ship (EV-per-ship sort variant) | **1070.1** | settled below predicted band (1100-1180); rolling-pair floor |
+| 53018599 | K1+Z v2 (sibling Q0q9T) | 1116.9 | newer half of rolling pair |
+| 53013786 | orbitfix RESUBMIT (THIS branch, evicted) | 1144.6 | -20.8 from original 5/22 peak (1165.4) |
+| 53001857 | baseline_wave v3.1 (evicted) | 1130.6 | |
+| 53000996 | buildup_planner_phi1_only (sibling, evicted) | 1115.2 | |
+
+### Local A/B observations (PI standard procedure: 5 games × N opps, 250-step cap, no seat switch)
+
+**EV-per-ship variant (sub 53024913 lineage; pre-strategic):**
+
+| Mode | Opponent | wins | Pooled |
+|---|---|---:|---|
+| 2P | orbitfix / baseline_wave / v7_0 / v4_planner | 4 / 3 / 4 / 4 | 15/20 = 75% |
+| 4P FFA | same | 1 / 2 / 2 / 3 | 8/20 = 40% |
+
+**Strategic head Phase D (Term A + B only):**
+
+| Mode | Opponent | wins | Pooled |
+|---|---|---:|---|
+| 2P | orbitfix / baseline_wave / v7_0 / v4_planner | 3 / 3 / 4 / 4 | 14/20 = 70% |
+| 4P FFA | same | 3 / 2 / 2 / 4 | 11/20 = 55% |
+
+**Strategic head Phase E (Term A + B + C, with Phase E bugs present):**
+
+| Mode | Opponent | wins | Pooled |
+|---|---|---:|---|
+| 2P (weak opps: v7_0/v4_planner/v3.5.1/v7_minimax) | — | 3 / 5 / 4 / 5 | 17/20 = 85% |
+
+**Strategic head Phase F (all 15 code-review fixes applied, with the initial F7 rewrite):**
+
+| Mode | Opponent | wins | Pooled |
+|---|---|---:|---|
+| 2P | orbitfix / baseline_wave / v7_0 / v4_planner | 3 / 3 / 4 / 5 | 15/20 = 75% |
+| 4P FFA | same | 0 / 0 / 1 / 1 | **2/20 = 10%** |
+
+**Strategic head Phase F + post-F bug-fix (filter opp planets by `ships >= 2`; commit ce0c32d):**
+
+| Mode | Opponent | wins | Pooled |
+|---|---|---:|---|
+| 4P single-game trace (seed=2 vs 3× orbitfix) | — | LOSS at step ~210, focal eliminated | — |
+| 4P panel (started, killed mid-run; no result) | — | — | — |
+
+### Diagnostic deltas (`scripts/diag_planet_drop_stage.py`, BASELINE_VALUE_HEAD=strategic)
+
+**4P FFA (seed 1511945213):**
+
+| Metric | EV-per-ship (pre-strategic) | Strategic Phase E (with bugs) | Strategic Phase F (post-fixes) |
+|---|---:|---:|---:|
+| `dropped_by_budget` | 0% | **11.8%** | **0.1%** |
+| `% planets scored` | 74.9% | 62.7% | 79.5% |
+| `% planets positive` | 42.4% | 27.4% | 36.9% |
+| `% planets fired` | 21.8% | 18.5% | 34.1% |
+| `ranked_out %` | 28.4% | 11.3% | 7.9% |
+
+### Single-game trace observations
+
+- **Seed 672458420, 2P, strategic Phase E (with bugs):** P0_WIN at step 249; final = 15 my / 17 opp planets; big_prod_owned = 8/8.
+- **Seed 672458420, 2P, strategic Phase F (after fixes):** P0_WIN at step **178** (71 steps earlier); final = **36 my / 0 opp** planets (opp eliminated); big_prod_owned = 8/8.
+- **Seed 0, 4P, strategic Phase F + F7 bug-fix vs 3× orbitfix:** focal LOSS at step ~210; focal eliminated; one opp (o1) grew from 6 → 16 planets while two others stayed flat.
+
+### Other observations
+
+- `tests/test_favor_strategic.py`: **13/13 GREEN** after Phase F refactor (pytest monkeypatch-based; 7 new tests covering Term C edges + Term A fallback observability + 4P parity).
+- `tests/test_bundle.py`: **10/10 GREEN** throughout (no orbitfix-bundle regression from Phase F).
+- Per-turn launch sizes in the 4P-post-fix trace are predominantly small (3-5 ships from low-stock planets firing as ships regenerate); the trace does NOT show large stockpile-then-decisive-launch patterns.
+- The bug-fix to Term A (filter opp planets by `ships >= 2`) was made because the F7 perf rewrite was treating 0-ship opp planets as threats based on POSITION alone; in 4P with many opp planets this collapsed my_prod_discounted.
+- PI raised but did not yet act on: the bug-fix to Term A should consider expected opp ship count AT THE TIME OF LAUNCH (i.e. `current_ships + production × launch_eta >= MIN`), not current ship count. Closed-form: `threat_eta = distance/fleet_speed + max(0, (MIN - current_ships) / production)`. Plus the in-flight-fleet contribution that `WorldModel.time_to_enemy_threat` modeled but the F7 approximation does not.
+
+### Open items for next session
+
+- 4P panel for Phase F + F7-bug-fix never completed (killed mid-run on PI request).
+- Arrival-time-aware threat-ETA model (PI's suggestion above) not yet implemented.
+- In-flight enemy fleet contribution to threat_eta not yet considered.
+- No new Kaggle submission since 53024913 (5/25 15:35).
+
+---
 
 ## Where we are (2026-05-25 — refreshed from `kaggle competitions submissions orbit-wars`)
 
