@@ -56,6 +56,18 @@ def main():
         "submissions/baseline_joint_aggr_consolidated_orbitfix.py",
     )
 
+    # Phase F F13: detect agent arity ONCE via inspect.signature, not
+    # try/except-TypeError around each per-turn call (which swallows
+    # real TypeErrors raised inside the agent).
+    import inspect
+    def _wants_config(fn):
+        try:
+            return len(inspect.signature(fn).parameters) >= 2
+        except (TypeError, ValueError):
+            return True  # safest default: pass configuration
+    focal_wants_config = _wants_config(focal_agent)
+    opp_wants_config = _wants_config(opp)
+
     state = env.steps[0]
 
     # Turn-0 board snapshot for planet labelling.
@@ -67,7 +79,10 @@ def main():
     planet_owner0 = {int(p[0]): int(p[1]) for p in planets0}
     planet_ships0 = {int(p[0]): int(p[5]) for p in planets0}
 
-    big_prod_threshold = sorted(planet_prod.values(), reverse=True)[5]
+    # Phase F F12: guard against seeds with <=5 planets; pick the
+    # min(5, last) index instead of unconditionally [5].
+    _top_prods = sorted(planet_prod.values(), reverse=True)
+    big_prod_threshold = _top_prods[min(5, len(_top_prods) - 1)] if _top_prods else 0
     big_prod_ids = {pid for pid, p in planet_prod.items() if p >= big_prod_threshold}
 
     print(f"=== seed {SEED}  episodeSteps={EPISODE_STEPS}  2P focal=strategic vs opp=orbitfix ===")
@@ -87,14 +102,8 @@ def main():
         obs_me = state[0]["observation"] if isinstance(state[0], dict) else state[0].observation
         obs_op = state[1]["observation"] if isinstance(state[1], dict) else state[1].observation
 
-        try:
-            a_me = focal_agent(obs_me, env.configuration)
-        except TypeError:
-            a_me = focal_agent(obs_me)
-        try:
-            a_op = opp(obs_op, env.configuration)
-        except TypeError:
-            a_op = opp(obs_op)
+        a_me = focal_agent(obs_me, env.configuration) if focal_wants_config else focal_agent(obs_me)
+        a_op = opp(obs_op, env.configuration) if opp_wants_config else opp(obs_op)
 
         # Pre-step: capture board state for the focal.
         obs_me_d = obs_me if isinstance(obs_me, dict) else dict(obs_me)

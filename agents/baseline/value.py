@@ -70,6 +70,13 @@ FORWARD_REACH_HORIZON = float(os.environ.get("BASELINE_FORWARD_REACH_HORIZON", "
 FINISH_BONUS = float(os.environ.get("BASELINE_FINISH_BONUS", "50"))
 FINISH_THRESHOLD = float(os.environ.get("BASELINE_FINISH_THRESHOLD", "200"))
 
+# Phase F — F3 observability. favor_strategic's Term A may fall back to
+# undiscounted my_prod if the leaf-time threat-ETA approximation raises
+# (e.g. on a malformed mid-rollout obs). Public for inspection from
+# harness scripts / tests.
+_TERM_A_FALLBACK_COUNT = 0
+_TERM_A_WARNED = False
+
 
 def _read(obs, attr, default):
     if hasattr(obs, attr):
@@ -246,12 +253,26 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
         2P AND ramps earlier (before opp is at the eliminable threshold).
         Naturally rewards finishing weak opponents instead of nibbling.
 
-    Default knobs (HOLD_HORIZON=20, FORWARD_REACH_WEIGHT=0.5,
-    FORWARD_REACH_HORIZON=15, FINISH_BONUS=50, FINISH_THRESHOLD=200)
-    shape the curves; tune via env vars.
+    Default knobs are the calibrated configuration of the strategic
+    head. Dispatch is OFF by default (default head is `favor`). When
+    BASELINE_VALUE_HEAD=strategic, all three terms ARE ON by default
+    with these calibrated values:
+        HOLD_HORIZON=20, FORWARD_REACH_WEIGHT=0.5,
+        FORWARD_REACH_HORIZON=15, FINISH_BONUS=50, FINISH_THRESHOLD=200.
+    Tune via env vars; set BASELINE_HOLD_HORIZON=0 to disable Term A,
+    BASELINE_FORWARD_REACH_WEIGHT=0 to disable Term B,
+    BASELINE_FINISH_BONUS=0 to disable Term C (also restores the
+    discrete 4P ELIMINATION_BONUS).
+
+    Term C subsumes the discrete 4P ELIMINATION_BONUS: when Term C is
+    active (FINISH_BONUS>0), the +55 discrete bonus does NOT also fire
+    — Term C IS the continuous generalisation. When Term C is OFF
+    (FINISH_BONUS=0), the discrete +55 bonus fires as before for
+    back-compat parity.
 
     Parity: with HOLD_HORIZON=0 AND FORWARD_REACH_WEIGHT=0 AND
-    FINISH_BONUS=0, this reduces to `favor` exactly.
+    FINISH_BONUS=0, this reduces to `favor` exactly (in both 2P and
+    4P branches).
     """
     planets = _read(obs, "planets", []) or []
     fleets = _read(obs, "fleets", []) or []
@@ -304,38 +325,77 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
         )
         elim_eligible = True
 
-    # Term A — hold-discount on MY planets. Build WorldModel for threat ETA.
-    # HOLD_HORIZON=0 disables Term A (every planet gets hold_score=1.0 = no discount).
+    # Term A — hold-discount on MY planets. Uses a direct straight-line
+    # approximation of threat_eta from each my-planet to the nearest opp
+    # planet (Phase F F7 perf rewrite: was WorldModel.from_world per-leaf,
+    # which dropped 11.8% of candidates by budget in 4P diagnostic).
+    # The approximation loses in-flight-fleet contribution but that's
+    # acceptable at the leaf (most in-flight fleets have arrived by horizon).
+    # HOLD_HORIZON=0 disables Term A (every planet gets hold_score=1.0).
     if HOLD_HORIZON <= 0:
         my_prod_discounted = prod_by_owner.get(me, 0.0)
     else:
         my_prod_discounted = 0.0
         try:
-            from lib.intent import World
-            from lib.world_model import WorldModel
-            world = World.from_obs(obs)
-            wm = WorldModel.from_world(world)
+            from lib.fleet import speed as fleet_speed
+            opp_planets_list = [p for p in planets if int(p[1]) >= 0 and int(p[1]) != me]
+            # Approximate launch speed from the slowest realistic opp launch
+            # (small fleets fly fastest in this game; opp typically launches
+            # capture-size). Use MIN_FLEET_SIZE=2 as the floor.
+            v_opp = fleet_speed(2)
             for p in planets:
                 if int(p[1]) != me:
                     continue
-                pid = int(p[0])
-                threat_eta = wm.time_to_enemy_threat(pid, me, world, arrival_eta=0)
-                if threat_eta is None:
+                px, py = float(p[2]), float(p[3])
+                # threat_eta ≈ nearest opp planet's straight-line ETA at v_opp.
+                # No opp → no threat (hold_score = 1.0).
+                if not opp_planets_list or v_opp <= 0.0:
                     hold_score = 1.0
                 else:
-                    hold_score = min(1.0, float(threat_eta) / HOLD_HORIZON)
+                    min_eta = float("inf")
+                    for ep in opp_planets_list:
+                        ex, ey = float(ep[2]), float(ep[3])
+                        dist = math.hypot(ex - px, ey - py)
+                        eta = dist / v_opp
+                        if eta < min_eta:
+                            min_eta = eta
+                    if min_eta == float("inf"):
+                        hold_score = 1.0
+                    else:
+                        hold_score = min(1.0, min_eta / HOLD_HORIZON)
                 my_prod_discounted += float(p[6]) * hold_score
-        except Exception:
-            # If WorldModel construction fails (e.g. malformed mid-rollout obs),
-            # fall back to undiscounted my_prod so we never zero-out the leaf.
+        except (KeyError, IndexError, AttributeError, ValueError, TypeError, ZeroDivisionError):
+            # Narrow catch (Phase F F3): only the error classes a malformed
+            # mid-rollout obs could plausibly raise. Anything else (SystemExit,
+            # MemoryError, programmer bugs) propagates. Bumps a counter so
+            # silent disablement is observable from harness scripts.
+            global _TERM_A_FALLBACK_COUNT, _TERM_A_WARNED
+            _TERM_A_FALLBACK_COUNT += 1
+            if not _TERM_A_WARNED:
+                import warnings
+                warnings.warn(
+                    "favor_strategic Term A fell back to undiscounted my_prod "
+                    "(malformed mid-rollout obs?). Further fallbacks counted in "
+                    "value._TERM_A_FALLBACK_COUNT but not warned.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                _TERM_A_WARNED = True
             my_prod_discounted = prod_by_owner.get(me, 0.0)
 
     pv = pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS)
     score = (my_ships - opp_ships) + (my_prod_discounted - opp_prod) * pv
 
-    # Elimination bonus — uses discounted my_prod for the strength check.
-    if elim_eligible:
-        my_strength = my_ships + my_prod_discounted * STRENGTH_PROD_WEIGHT
+    # Elimination bonus — uses RAW my_prod for the strength check
+    # (Phase F F4: was incorrectly using my_prod_discounted, which made
+    # the gate harder to clear in exactly the threatened-defender scenarios
+    # where Term A's discount fires hardest — opposite of intent).
+    # ALSO Phase F F2: suppressed when Term C is active. Term C subsumes
+    # the discrete elim_bonus as the continuous generalisation; firing
+    # both stacks the finishing-pressure signal.
+    if elim_eligible and FINISH_BONUS <= 0:
+        my_prod_raw = prod_by_owner.get(me, 0.0)
+        my_strength = my_ships + my_prod_raw * STRENGTH_PROD_WEIGHT
         if (weakest_str <= WEAK_ENEMY_THRESHOLD
                 and my_strength >= ELIMINATION_GATE_RATIO * weakest_str):
             score += ELIMINATION_BONUS
@@ -371,17 +431,26 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
 
     # Term C — finishing pressure. Continuous bonus that grows as the
     # weakest opp's strength approaches 0. Applies in BOTH 2P and 4P
-    # (generalises the 4P-only discrete ELIMINATION_BONUS). Disabled when
-    # FINISH_BONUS=0 (preserves Phase-D-only parity).
-    if opps and FINISH_BONUS > 0:
-        opp_strengths_c = {
-            o: ships_by_owner.get(o, 0.0)
-               + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT
-            for o in opps
-        }
-        target_str = min(opp_strengths_c.values())
-        finishing_pressure = max(0.0, 1.0 - target_str / FINISH_THRESHOLD)
-        score += FINISH_BONUS * finishing_pressure
+    # (generalises the 4P-only discrete ELIMINATION_BONUS — see F2
+    # suppression above). Disabled when FINISH_BONUS=0 or
+    # FINISH_THRESHOLD<=0 (Phase F F1: avoids ZeroDivisionError /
+    # sign-flip if operator sets threshold non-positive).
+    if opps and FINISH_BONUS > 0 and FINISH_THRESHOLD > 0:
+        # Phase F F5: filter to opps with prod > 0 (i.e. still own at
+        # least one planet). An opp with only in-flight residual ships
+        # and no production can't be 'finished by a launch' — they die
+        # automatically next turn. Excluding them so finishing-pressure
+        # tracks a meaningful target.
+        finishable_opps = [o for o in opps if prod_by_owner.get(o, 0.0) > 0.0]
+        if finishable_opps:
+            opp_strengths_c = {
+                o: ships_by_owner.get(o, 0.0)
+                   + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT
+                for o in finishable_opps
+            }
+            target_str = min(opp_strengths_c.values())
+            finishing_pressure = max(0.0, 1.0 - target_str / FINISH_THRESHOLD)
+            score += FINISH_BONUS * finishing_pressure
 
     return score
 

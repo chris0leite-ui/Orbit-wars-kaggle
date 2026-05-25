@@ -98,12 +98,17 @@ def _worker_play(args: tuple[int, str, str, bool, int, bool]) -> dict:
     data = json.loads(line)
     if ffa:
         rs = data.get("rs") or []
-        if not rs or any(r is None for r in rs):
+        # Phase F F9: also guard len(rs) >= 2 — a truncated 1-element
+        # rewards list would fail `max(rs[1:])` with ValueError on max([]).
+        if not rs or len(rs) < 2 or any(r is None for r in rs):
             outcome = "error"
             focal_won = False
         else:
-            # Focal is P0 by construction in FFA mode; wins iff strictly highest reward.
-            focal_won = rs[0] > max(rs[1:])
+            # Focal is P0 by construction in FFA mode. Phase F F10:
+            # `rs[0] >= max(rs[1:])` counts ties at rank-1 as wins (vs
+            # strict `>`); better matches Kaggle TrueSkill's tie semantics
+            # (ties are partial wins on the live ladder, not full losses).
+            focal_won = rs[0] >= max(rs[1:])
             if focal_won:
                 outcome = "focal_win"
             else:
@@ -169,7 +174,10 @@ def _run_one_panel_entry(focal: str, opp: str, seeds: int, swap_seats: bool,
             except Exception as e:
                 r = {"outcome": "error", "stderr": f"worker raised: {type(e).__name__}: {e}"[:400]}
             results.append(r)
-            tag = "WIN" if r.get("focal_won") else ("LOSS" if r.get("outcome") in ("p0_win","p1_win") else r.get("outcome","?"))
+            # Phase F F11: extend LOSS-tag to include FFA outcomes so
+            # `grep '\bLOSS\b'` works across 2P + FFA mixed-mode logs.
+            _LOSS_OUTCOMES = ("p0_win", "p1_win", "focal_loss")
+            tag = "WIN" if r.get("focal_won") else ("LOSS" if r.get("outcome") in _LOSS_OUTCOMES else r.get("outcome","?"))
             print(f"   seed={r.get('seed','?'):>4}  seat={'P0' if r.get('focal_is_p0') else 'P1' if r.get('focal_is_p0') is not None else '-'}  "
                   f"{tag:>7}  steps={r.get('n_steps','-')}  wall={r.get('wall',0):.1f}s")
     wins = sum(1 for r in results if r.get("focal_won"))

@@ -1060,11 +1060,25 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         return [], []
 
     if SORT_BY_EV_PER_SHIP:
+        # Phase F F8: explicit string-marker dispatch. Solo tuples are
+        # (score, src, tgt, ships, angle, wait_N) — c[1] is a Planet
+        # namedtuple. Joint tuples are (score, "joint", launches) — c[1]
+        # is the string "joint". Any future string marker (e.g. "wave")
+        # would also be a 3-tuple; recognise it explicitly and raise on
+        # unknown markers rather than IndexError on c[3].
         def _ev_per_ship_key(c):
             score = c[0]
-            if len(c) == 3 and c[1] == "joint":
-                total_ships = sum(int(L[2]) for L in c[2])
+            marker = c[1] if len(c) >= 2 else None
+            if isinstance(marker, str):
+                if marker == "joint":
+                    total_ships = sum(int(L[2]) for L in c[2])
+                else:
+                    raise ValueError(
+                        f"_ev_per_ship_key: unknown scored-tuple marker "
+                        f"{marker!r} (extend dispatch in chooser_trajectory.py)"
+                    )
             else:
+                # Solo tuple: (score, src, tgt, ships, angle, wait_N)
                 total_ships = int(c[3])
             if total_ships <= 0:
                 return 0.0

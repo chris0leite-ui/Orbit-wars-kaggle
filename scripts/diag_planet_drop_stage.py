@@ -118,6 +118,15 @@ def play_and_trace(seed: int, num_seats: int, focal_idx: int, opp_path: str):
     opp = _load_callable(opp_path)
     agents_list = [opp] * num_seats
     agents_list[focal_idx] = orbitfix_agent
+    # Phase F F13: detect arity ONCE via inspect.signature, not
+    # try/except-TypeError around each per-turn call.
+    import inspect
+    def _wants_config(fn):
+        try:
+            return len(inspect.signature(fn).parameters) >= 2
+        except (TypeError, ValueError):
+            return True
+    wants_config = [_wants_config(a) for a in agents_list]
 
     state = env.steps[0]
     PER_TURN.clear()
@@ -138,10 +147,9 @@ def play_and_trace(seed: int, num_seats: int, focal_idx: int, opp_path: str):
         per_seat_actions = []
         for s_idx in range(num_seats):
             obs_s = state[s_idx]["observation"] if isinstance(state[s_idx], dict) else state[s_idx].observation
-            try:
-                a = agents_list[s_idx](obs_s, env.configuration)
-            except TypeError:
-                a = agents_list[s_idx](obs_s)
+            a = (agents_list[s_idx](obs_s, env.configuration)
+                 if wants_config[s_idx]
+                 else agents_list[s_idx](obs_s))
             per_seat_actions.append(a)
 
         # Snapshot.
