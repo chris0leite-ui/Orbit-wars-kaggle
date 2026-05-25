@@ -951,22 +951,28 @@ def enumerate_wave_candidates(my_planets, target_pool, world, model,
     Algorithm per target T:
       1. `nearest_k(my_planets, T, K=4)` as candidate sources.
       2. Probe each source's `eta_S` at its capture-size budget.
-      3. ANCHOR = source with the largest `eta_S` (slowest viable).
-      4. For each `arrival_step in {anchor, anchor+2, anchor+5}`:
-         - For each S: `wait_N_S = arrival_step - eta_S`; skip if < 0
-           or `eta_S > anchor + tempo_guard`.
-         - Compute `ships_S = min(budget_after_wait, capture_size)` and
-           recompute `angle_S` at the wait-N pre-rotated geometry.
-      5. Sort legs by `ships / (wait_N+1)` desc; accumulate until total
+      3. For each ANCHOR source A in top-`anchors_max` candidates by eta
+         (v5: was single fixed-slowest anchor; many geometries had every
+         non-anchor faster source rejected by the tempo guard):
+         For each `arrival_step in {anchor, anchor+2, anchor+5}`:
+           - For each S: `wait_N_S = arrival_step - eta_S`; skip if < 0
+             or `eta_S > anchor + tempo_guard`.
+           - Compute `ships_S = min(budget_after_wait, capture_size·overkill)`
+             and recompute `angle_S` at the wait-N pre-rotated geometry.
+      4. Sort legs by `ships / (wait_N+1)` desc; accumulate until total
          exceeds `model.ships_at(T, arrival_step) + MIN_MARGIN`.
-      6. Emit if 2+ legs survive and totals exceed defense.
+      5. Across all (anchor, arrival_step) candidates for T, keep the
+         wave with the most legs (tie-break by total ships) — emits at
+         most one wave per target.
 
     Env knobs:
       BASELINE_WAVE_PROPOSER         "1" to enable                (default 0)
       BASELINE_WAVE_MAX_PER_TURN     cap on waves enumerated      (default 8)
       BASELINE_WAVE_K                nearest-K sources per target (default 4)
       BASELINE_WAVE_MARGIN           defense margin (ship-units)  (default 2)
-      BASELINE_WAVE_TEMPO_GUARD      max eta gap to anchor        (default 8)
+      BASELINE_WAVE_TEMPO_GUARD      max eta gap to anchor        (default 15, v5)
+      BASELINE_WAVE_ANCHORS          anchors tried per target     (default 3, v5)
+      BASELINE_WAVE_OVERKILL         per-leg ship-budget mult     (default 1.5, v5)
     """
     if os.environ.get("BASELINE_WAVE_PROPOSER", "0").strip() != "1":
         return []
@@ -974,7 +980,9 @@ def enumerate_wave_candidates(my_planets, target_pool, world, model,
     max_waves = int(os.environ.get("BASELINE_WAVE_MAX_PER_TURN", "8"))
     K = int(os.environ.get("BASELINE_WAVE_K", "4"))
     margin = int(os.environ.get("BASELINE_WAVE_MARGIN", "2"))
-    tempo_guard = int(os.environ.get("BASELINE_WAVE_TEMPO_GUARD", "8"))
+    tempo_guard = int(os.environ.get("BASELINE_WAVE_TEMPO_GUARD", "15"))
+    anchors_max = int(os.environ.get("BASELINE_WAVE_ANCHORS", "3"))
+    overkill = float(os.environ.get("BASELINE_WAVE_OVERKILL", "1.5"))
     arrival_offsets = (0, 2, 5)
 
     waves: list = []
@@ -1003,73 +1011,82 @@ def enumerate_wave_candidates(my_planets, target_pool, world, model,
         if len(per_src) < 2:
             continue
 
-        anchor_eta = max(eta_s for (_S, eta_s, _ps) in per_src)
+        # v5: try each of the top-`anchors_max` candidates by eta (slowest
+        # first — preserves v3 semantics when anchors_max=1).
+        anchor_etas = sorted({eta_s for (_S, eta_s, _ps) in per_src},
+                             reverse=True)[:max(1, anchors_max)]
 
-        for offset in arrival_offsets:
-            if len(waves) >= max_waves:
-                break
-            arrival_step = anchor_eta + offset
+        # Per-target best wave across (anchor, arrival_step) combos. Tie-break
+        # on total ships keeps the choice deterministic and prefers heavier
+        # waves when leg-count matches.
+        best_for_tgt: tuple | None = None  # (n_legs, total_ships, kept)
 
-            legs: list[tuple] = []
-            for S, eta_s, probe_ships in per_src:
-                if eta_s > anchor_eta + tempo_guard:
+        for anchor_eta in anchor_etas:
+            for offset in arrival_offsets:
+                arrival_step = anchor_eta + offset
+
+                legs: list[tuple] = []
+                for S, eta_s, probe_ships in per_src:
+                    if eta_s > anchor_eta + tempo_guard:
+                        continue
+                    wait_N_s = int(arrival_step) - int(eta_s)
+                    if wait_N_s < 0:
+                        continue
+                    # Budget = current ships + production accrued during wait,
+                    # minus a floor so the source still defends itself.
+                    budget_after_wait = (
+                        int(S.ships) + int(S.production) * wait_N_s - MIN_FLEET_SIZE
+                    )
+                    if budget_after_wait < MIN_FLEET_SIZE:
+                        continue
+                    # v5: overkill multiplier on probe_ships — empirical
+                    # ratio from Aidan replay was ~2.4×; default 1.5× to
+                    # stay conservative while clearing single-leg-miss
+                    # rejections that killed v3.1 wave formation.
+                    ships_s = min(budget_after_wait, int(probe_ships * overkill))
+                    if ships_s < MIN_FLEET_SIZE:
+                        continue
+                    # Recompute angle at the wait-N pre-rotated geometry so the
+                    # fleet actually intercepts T at arrival_step.
+                    angle_s, _eta_check = aim_and_eta(
+                        S, tgt, ships_s, omega, wait_N=wait_N_s, world=world,
+                    )
+                    legs.append((S, int(ships_s), float(angle_s), int(wait_N_s)))
+
+                if len(legs) < 2:
                     continue
-                wait_N_s = int(arrival_step) - int(eta_s)
-                if wait_N_s < 0:
+
+                # Efficiency-greedy keep: prefer legs with low wait_N and high ships.
+                legs.sort(key=lambda L: -float(L[1]) / float(L[3] + 1))
+
+                defense = float(model.ships_at(int(tgt.id), arrival_step) or 0.0)
+                target_total = defense + float(margin)
+
+                kept: list[tuple] = []
+                running = 0.0
+                single_source_suffices = False
+                for L in legs:
+                    kept.append(L)
+                    running += float(L[1])
+                    if running > target_total and len(kept) >= 2:
+                        break
+                    if running > target_total and len(kept) == 1:
+                        single_source_suffices = True
+                        break
+
+                if single_source_suffices:
                     continue
-                # Budget = current ships + production accrued during wait,
-                # minus a floor so the source still defends itself.
-                budget_after_wait = (
-                    int(S.ships) + int(S.production) * wait_N_s - MIN_FLEET_SIZE
-                )
-                if budget_after_wait < MIN_FLEET_SIZE:
+                if running <= target_total:
                     continue
-                # Fair share + safety buffer: contribute capture-size budget
-                # (each source brings ~one full capture's worth so combat
-                # rule 1 stacks well above the per-source minimum).
-                ships_s = min(budget_after_wait, int(probe_ships))
-                if ships_s < MIN_FLEET_SIZE:
+                if len(kept) < 2:
                     continue
-                # Recompute angle at the wait-N pre-rotated geometry so the
-                # fleet actually intercepts T at arrival_step.
-                angle_s, _eta_check = aim_and_eta(
-                    S, tgt, ships_s, omega, wait_N=wait_N_s, world=world,
-                )
-                legs.append((S, int(ships_s), float(angle_s), int(wait_N_s)))
 
-            if len(legs) < 2:
-                continue
+                cand = (len(kept), int(running), kept)
+                if best_for_tgt is None or cand[:2] > best_for_tgt[:2]:
+                    best_for_tgt = cand
 
-            # Efficiency-greedy keep: prefer legs with low wait_N and high ships.
-            legs.sort(key=lambda L: -float(L[1]) / float(L[3] + 1))
-
-            defense = float(model.ships_at(int(tgt.id), arrival_step) or 0.0)
-            target_total = defense + float(margin)
-
-            kept: list[tuple] = []
-            running = 0.0
-            single_source_suffices = False
-            for L in legs:
-                kept.append(L)
-                running += float(L[1])
-                if running > target_total and len(kept) >= 2:
-                    break
-                if running > target_total and len(kept) == 1:
-                    # One source can solo-capture. Don't emit a wave; the
-                    # existing solo path handles this target. Skip this
-                    # arrival_step entirely so we don't over-bundle when
-                    # a cheaper solo is available.
-                    single_source_suffices = True
-                    break
-
-            if single_source_suffices:
-                continue
-            if running <= target_total:
-                continue  # insufficient firepower even with all legs
-            if len(kept) < 2:
-                continue  # safety — should be unreachable given above gates
-
-            waves.append((tgt, kept))
+        if best_for_tgt is not None:
+            waves.append((tgt, best_for_tgt[2]))
 
     return waves
 

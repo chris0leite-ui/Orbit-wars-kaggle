@@ -214,6 +214,78 @@ def test_stockpile_penalty_sums_across_planets():
     assert abs(got - expected) < 1e-9
 
 
+def test_stockpile_turn_gate_zero_before_gate():
+    """v5: with BASELINE_STOCKPILE_TURN_GATE=30 and obs.step=10, the
+    wrapper short-circuits the penalty so early-game expansion isn't
+    starved (the v3.1 bug). The wrapper returns the unwrapped base."""
+    from agents.baseline.value import select_favor_fn, favor
+    obs = {
+        "planets": [(0, 0, 0, 0, 1.0, 200, 2)],  # 150 ships of excess
+        "fleets": [],
+        "step": 10,
+    }
+    import os as _os
+    saved = {k: _os.environ.get(k) for k in
+             ("BASELINE_STOCKPILE_PENALTY", "BASELINE_STOCKPILE_EPS",
+              "BASELINE_STOCKPILE_TARGET", "BASELINE_STOCKPILE_TURN_GATE")}
+    try:
+        _os.environ["BASELINE_STOCKPILE_PENALTY"] = "1"
+        _os.environ["BASELINE_STOCKPILE_EPS"] = "0.001"
+        _os.environ["BASELINE_STOCKPILE_TARGET"] = "50"
+        _os.environ["BASELINE_STOCKPILE_TURN_GATE"] = "30"
+        wrapped = select_favor_fn()
+        # Pre-gate (step 10 < gate 30): wrapper output must equal base.
+        base_v = favor(obs, 0, 2, 0.99)
+        wrapped_v = wrapped(obs, 0, 2, 0.99)
+        assert abs(wrapped_v - base_v) < 1e-9, (
+            f"penalty must be silenced pre-gate; "
+            f"base={base_v}, wrapped={wrapped_v}"
+        )
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+
+
+def test_stockpile_turn_gate_active_post_gate():
+    """v5: with BASELINE_STOCKPILE_TURN_GATE=30 and obs.step=50, the
+    penalty IS applied — mid/late-game stockpile drainage gradient."""
+    from agents.baseline.value import select_favor_fn, favor
+    obs = {
+        "planets": [(0, 0, 0, 0, 1.0, 200, 2)],  # 150 ships of excess
+        "fleets": [],
+        "step": 50,
+    }
+    import os as _os
+    saved = {k: _os.environ.get(k) for k in
+             ("BASELINE_STOCKPILE_PENALTY", "BASELINE_STOCKPILE_EPS",
+              "BASELINE_STOCKPILE_TARGET", "BASELINE_STOCKPILE_TURN_GATE")}
+    try:
+        _os.environ["BASELINE_STOCKPILE_PENALTY"] = "1"
+        _os.environ["BASELINE_STOCKPILE_EPS"] = "0.001"
+        _os.environ["BASELINE_STOCKPILE_TARGET"] = "50"
+        _os.environ["BASELINE_STOCKPILE_TURN_GATE"] = "30"
+        wrapped = select_favor_fn()
+        base_v = favor(obs, 0, 2, 0.99)
+        wrapped_v = wrapped(obs, 0, 2, 0.99)
+        # Post-gate: wrapper subtracts the full penalty (matches v3.1).
+        expect_delta = -stockpile_pressure_penalty(
+            obs, 0, eps=0.001, target=50.0,
+        )
+        assert abs((wrapped_v - base_v) - expect_delta) < 1e-9, (
+            f"post-gate penalty must match unconditional formula; "
+            f"delta={(wrapped_v - base_v):.6f}, expect={expect_delta:.6f}"
+        )
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+
+
 def test_select_favor_fn_layers_stockpile_term():
     """End-to-end: BASELINE_STOCKPILE_PENALTY=1 makes select_favor_fn
     return a wrapper that subtracts the stockpile term from the base

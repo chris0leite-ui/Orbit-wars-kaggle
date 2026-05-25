@@ -1,0 +1,17 @@
+{
+  "rows": [
+    {
+      "focal": "baseline_wave",
+      "opp": "baseline_joint_aggr_consolidated_orbitfix",
+      "elim_wins": 0,
+      "focal_wins": 2,
+      "n": 16,
+      "rate": 0.0,
+      "wlo": 0.0,
+      "whi": 0.19361341827271994,
+      "avg_steps": 184.5,
+      "errs": 0
+    }
+  ],
+  "elapsed": 594.874029224
+}

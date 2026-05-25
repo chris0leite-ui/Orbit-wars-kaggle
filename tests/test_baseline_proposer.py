@@ -804,3 +804,102 @@ def test_wave_rejects_when_only_one_source_in_range():
             [lone], [tgt], world, model, me=0, omega=0.0,
         )
     assert out == [], f"single source should not emit waves; got {out}"
+
+
+# ---------------------------------------------------------------------------
+# Wave proposer v5 — multi-anchor / tempo-guard / overkill
+# ---------------------------------------------------------------------------
+
+
+def test_wave_overkill_inflates_ship_budget():
+    """overkill=1.5 produces leg ship-counts ~1.5× of overkill=1.0 for legs
+    whose budget_after_wait does NOT clamp probe_ships × overkill."""
+    tgt, my_planets, world, model = _wave_world()
+
+    with _with_env(BASELINE_WAVE_PROPOSER="1", BASELINE_WAVE_OVERKILL="1.0",
+                   BASELINE_WAVE_ANCHORS="1"):
+        baseline_out = enumerate_wave_candidates(
+            my_planets, [tgt], world, model, me=0, omega=0.0,
+        )
+    with _with_env(BASELINE_WAVE_PROPOSER="1", BASELINE_WAVE_OVERKILL="1.5",
+                   BASELINE_WAVE_ANCHORS="1"):
+        boosted_out = enumerate_wave_candidates(
+            my_planets, [tgt], world, model, me=0, omega=0.0,
+        )
+
+    assert baseline_out and boosted_out, "both configs should emit a wave"
+    baseline_total = sum(int(L[1]) for L in baseline_out[0][1])
+    boosted_total = sum(int(L[1]) for L in boosted_out[0][1])
+    # Boosted total should be strictly larger (each leg got more ships, or
+    # the same number of legs each contributed more).
+    assert boosted_total > baseline_total, (
+        f"overkill=1.5 should inflate ship budget; "
+        f"baseline={baseline_total}, boosted={boosted_total}"
+    )
+
+
+def test_wave_multi_anchor_can_find_different_wave_than_single_anchor():
+    """Pin BASELINE_WAVE_ANCHORS to 1 vs 3 on the same geometry; the
+    multi-anchor sweep can find a wave the slowest-only path misses
+    (different arrival_step, possibly more legs)."""
+    # Geometry: target defense climbs with arrival step (because target
+    # production = 4 means ships_at(t) grows). The slowest-anchor wave
+    # faces the heaviest defender; the fast-anchor wave faces a lighter one.
+    tgt = _planet(0, 1, 70.0, 50.0, ships=80, production=4)
+    fast = _planet(1, 0, 65.0, 50.0, ships=80, production=3)
+    mid = _planet(2, 0, 45.0, 50.0, ships=80, production=3)
+    slow = _planet(3, 0, 10.0, 50.0, ships=80, production=3)
+    world = _world(0, [tgt, fast, mid, slow], step=0, omega=0.0)
+    model = WorldModel.from_world(world, horizon=80)
+
+    with _with_env(BASELINE_WAVE_PROPOSER="1", BASELINE_WAVE_ANCHORS="1"):
+        out_a1 = enumerate_wave_candidates(
+            [fast, mid, slow], [tgt], world, model, me=0, omega=0.0,
+        )
+    with _with_env(BASELINE_WAVE_PROPOSER="1", BASELINE_WAVE_ANCHORS="3"):
+        out_a3 = enumerate_wave_candidates(
+            [fast, mid, slow], [tgt], world, model, me=0, omega=0.0,
+        )
+    # Multi-anchor must enumerate at least as many waves as single-anchor.
+    assert len(out_a3) >= len(out_a1), (
+        f"multi-anchor (a=3) should not produce fewer waves; "
+        f"a1={len(out_a1)} a3={len(out_a3)}"
+    )
+    # And when both produce a wave, the multi-anchor one is at least as
+    # good (≥ legs, or ≥ total ships when legs tie). Single-anchor is a
+    # strict subset of the multi-anchor search.
+    if out_a1 and out_a3:
+        legs_a1 = len(out_a1[0][1])
+        legs_a3 = len(out_a3[0][1])
+        total_a1 = sum(int(L[1]) for L in out_a1[0][1])
+        total_a3 = sum(int(L[1]) for L in out_a3[0][1])
+        assert (legs_a3, total_a3) >= (legs_a1, total_a1), (
+            f"multi-anchor result should dominate single-anchor on "
+            f"(legs, total); a1=({legs_a1},{total_a1}) "
+            f"a3=({legs_a3},{total_a3})"
+        )
+
+
+def test_wave_tempo_guard_admits_more_with_loose_setting():
+    """Multi-anchor search exposes the tempo_guard effect: a tight guard
+    (8) excludes slow legs when a faster source is chosen as anchor;
+    loose guard (15) admits them. On the same geometry, guard=15 should
+    yield waves with at least as many total legs across all targets."""
+    tgt, my_planets, world, model = _wave_world()
+
+    with _with_env(BASELINE_WAVE_PROPOSER="1", BASELINE_WAVE_TEMPO_GUARD="8",
+                   BASELINE_WAVE_ANCHORS="3"):
+        out_g8 = enumerate_wave_candidates(
+            my_planets, [tgt], world, model, me=0, omega=0.0,
+        )
+    with _with_env(BASELINE_WAVE_PROPOSER="1", BASELINE_WAVE_TEMPO_GUARD="15",
+                   BASELINE_WAVE_ANCHORS="3"):
+        out_g15 = enumerate_wave_candidates(
+            my_planets, [tgt], world, model, me=0, omega=0.0,
+        )
+    legs_g8 = sum(len(L) for _t, L in out_g8)
+    legs_g15 = sum(len(L) for _t, L in out_g15)
+    assert legs_g15 >= legs_g8, (
+        f"loose tempo guard should admit ≥ legs; "
+        f"g8={legs_g8}, g15={legs_g15}"
+    )

@@ -251,6 +251,11 @@ def select_favor_fn():
 
     eps = float(os.environ.get("BASELINE_STOCKPILE_EPS", "0.001"))
     target = float(os.environ.get("BASELINE_STOCKPILE_TARGET", "50"))
+    # v5: turn gate. Pre-gate (step < turn_gate), the penalty is silenced so
+    # early-game solo expansion isn't starved — that was the v3.1 bug.
+    # Post-gate, mid/late-game stockpiles face the drainage pressure that
+    # forces the chooser to fire its 100+ ship rear planets into waves.
+    turn_gate = int(os.environ.get("BASELINE_STOCKPILE_TURN_GATE", "0"))
 
     from lib.value_heads import stockpile_pressure_penalty
 
@@ -262,7 +267,8 @@ def select_favor_fn():
     # δ=1e-6 still fully suppresses emissions.)
     def _wave_wrapped(obs, me, num_seats=2, gamma=DEFAULT_GAMMA):
         v = base(obs, me, num_seats, gamma)
-        v -= stockpile_pressure_penalty(obs, me, eps=eps, target=target)
+        if int(obs.get("step", 0)) >= turn_gate:
+            v -= stockpile_pressure_penalty(obs, me, eps=eps, target=target)
         return v
 
     return _wave_wrapped

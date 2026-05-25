@@ -39,21 +39,24 @@ os.environ.setdefault("BASELINE_NEUTRAL_EARLY_EXTRA", "1.5")
 os.environ.setdefault("BASELINE_NEUTRAL_EARLY_HORIZON", "50")
 os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
 
-# Wave-proposer layer (v3.1).
+# Wave-proposer layer (v5 2026-05-25 — post-Aidan-replay structural fix).
 os.environ.setdefault("BASELINE_WAVE_PROPOSER", "1")
 os.environ.setdefault("BASELINE_WAVE_MAX_PER_TURN", "8")
 os.environ.setdefault("BASELINE_WAVE_K", "4")
 os.environ.setdefault("BASELINE_WAVE_MARGIN", "2")
-os.environ.setdefault("BASELINE_WAVE_TEMPO_GUARD", "8")
+# v5: tempo guard 8 → 15 (cross-map geometries had eta spread 12-18);
+# anchors 1 → 3 (every viable source tried as anchor, best wave kept);
+# overkill 1.0 → 1.5 (Aidan empirical ratio was 2.4× on the loss replay).
+os.environ.setdefault("BASELINE_WAVE_TEMPO_GUARD", "15")
+os.environ.setdefault("BASELINE_WAVE_ANCHORS", "3")
+os.environ.setdefault("BASELINE_WAVE_OVERKILL", "1.5")
 
-# v3.1 (2026-05-24 PM diagnosis): dropped BASELINE_BLEED_PENALTY and
-# BASELINE_STOCKPILE_PENALTY. Single-game trace (200-step vs orbitfix,
-# seed=0) revealed the bleed penalty was starving early-game solo
-# expansion, holding the agent at my_planets=1 for 13+ turns and
-# blocking the wave proposer (which needs >=2 sources). With these two
-# layers off and wave-proposer-only, the agent expands to 25 planets
-# and wins by score [1,-1] vs orbitfix at seed=0. Bleed and stockpile
-# stay in the code-base (env-var gated) for future A/B re-introduction.
+# v5.1 (2026-05-25 PM, post-A/B ablation): the stockpile re-enable HURT
+# A/B vs orbitfix (full v5 = 2/16 wins; stockpile-off = 4/16 wins).
+# Per the plan's "catastrophic" branch, ship v5.1 with stockpile dropped
+# again. Keep the turn-gate code in `value.py` for future re-introduction.
+# os.environ.setdefault("BASELINE_STOCKPILE_PENALTY", "1")
+
 os.environ.setdefault("BASELINE_COORD_BONUS", "0")  # subsumed by wave proposer
 
 from agents.baseline.main import agent  # noqa: E402
