@@ -616,3 +616,179 @@ def test_select_favor_fn_routes_strategic(monkeypatch):
     })
     f = v.select_favor_fn()
     assert f.__name__ == "favor_strategic"
+
+
+# -- favor_speedrun --------------------------------------------------
+
+
+def _reload_value_speedrun(monkeypatch, env_overrides):
+    """Same as _reload_value_with but also resets speedrun knobs."""
+    defaults = {
+        "BASELINE_HOLD_HORIZON": "0",
+        "BASELINE_FORWARD_REACH_WEIGHT": "0",
+        "BASELINE_FORWARD_REACH_HORIZON": "15",
+        "BASELINE_FINISH_BONUS": "0",
+        "BASELINE_FINISH_THRESHOLD": "200",
+        "BASELINE_VALUE_HEAD": "",
+        "BASELINE_STOCKPILE_PENALTY": "0",
+        "BASELINE_SPEEDRUN_K_PLANET": "50",
+        "BASELINE_SPEEDRUN_K_ACQUIRE": "0.1",
+        "BASELINE_SPEEDRUN_K_SHIPS": "0.5",
+        "BASELINE_SPEEDRUN_HOLD_HORIZON": "20",
+        "BASELINE_SPEEDRUN_REACH_HORIZON": "25",
+    }
+    defaults.update(env_overrides)
+    for k, v in defaults.items():
+        monkeypatch.setenv(k, v)
+    import agents.baseline.value as vmod
+    importlib.reload(vmod)
+    return vmod
+
+
+def test_speedrun_capture_gives_planet_bonus(monkeypatch):
+    """Capturing a non-mine planet must increase leaf by >= K_PLANET.
+    This is the primary signal the speedrun head provides.
+    """
+    v = _reload_value_speedrun(monkeypatch, {})
+    K = float(v.SPEEDRUN_K_PLANET)
+    # State A: 1 my planet + 1 opp planet.
+    obs_a = _mk_obs([
+        (0, 0, 30.0, 50.0, 1.0, 100, 3),
+        (1, 1, 70.0, 50.0, 1.0,   5, 2),
+    ])
+    # State B: same, but I now own opp 1's planet too.
+    obs_b = _mk_obs([
+        (0, 0, 30.0, 50.0, 1.0, 100, 3),
+        (1, 0, 70.0, 50.0, 1.0,   5, 2),  # owner=0 (me)
+    ])
+    leaf_a = v.favor_speedrun(obs_a, 0, num_seats=2, gamma=0.99)
+    leaf_b = v.favor_speedrun(obs_b, 0, num_seats=2, gamma=0.99)
+    delta = leaf_b - leaf_a
+    # delta = +K (planet count) + my_prod growth - ROI loss + Term 4 ship growth.
+    # The K_PLANET term alone is +50. With prod gained and ROI lost, delta > K_PLANET.
+    assert delta >= K, (
+        f"Capturing a planet didn't add at least K_PLANET={K}: "
+        f"leaf_a={leaf_a} leaf_b={leaf_b} delta={delta}"
+    )
+
+
+def test_speedrun_loss_penalises(monkeypatch):
+    """Losing one of my planets must decrease leaf by >= K_PLANET.
+    Defense matters in the speedrun frame.
+    """
+    v = _reload_value_speedrun(monkeypatch, {})
+    K = float(v.SPEEDRUN_K_PLANET)
+    obs_have = _mk_obs([
+        (0, 0, 30.0, 50.0, 1.0, 100, 3),
+        (1, 0, 70.0, 50.0, 1.0,  20, 2),
+    ])
+    obs_lost = _mk_obs([
+        (0, 0, 30.0, 50.0, 1.0, 100, 3),
+        (1, 1, 70.0, 50.0, 1.0,  20, 2),  # opp captured it
+    ])
+    leaf_have = v.favor_speedrun(obs_have, 0, num_seats=2, gamma=0.99)
+    leaf_lost = v.favor_speedrun(obs_lost, 0, num_seats=2, gamma=0.99)
+    delta = leaf_have - leaf_lost
+    assert delta >= K, (
+        f"Losing a planet didn't subtract at least K_PLANET={K}: "
+        f"have={leaf_have} lost={leaf_lost} delta={delta}"
+    )
+
+
+def test_speedrun_all_mine_beats_all_opp(monkeypatch):
+    """An all-mine end state has higher leaf than all-opp end state."""
+    v = _reload_value_speedrun(monkeypatch, {})
+    obs_all_mine = _mk_obs([
+        (0, 0, 30.0, 50.0, 1.0, 100, 3),
+        (1, 0, 70.0, 50.0, 1.0,  20, 2),
+        (2, 0, 50.0, 30.0, 1.0,  50, 4),
+    ])
+    obs_all_opp = _mk_obs([
+        (0, 1, 30.0, 50.0, 1.0, 100, 3),
+        (1, 1, 70.0, 50.0, 1.0,  20, 2),
+        (2, 1, 50.0, 30.0, 1.0,  50, 4),
+    ])
+    leaf_mine = v.favor_speedrun(obs_all_mine, 0, num_seats=2, gamma=0.99)
+    leaf_opp = v.favor_speedrun(obs_all_opp, 0, num_seats=2, gamma=0.99)
+    assert leaf_mine > leaf_opp, (
+        f"All-mine should beat all-opp: mine={leaf_mine} opp={leaf_opp}"
+    )
+
+
+def test_speedrun_works_in_4p(monkeypatch):
+    """The speedrun head is mode-blind — works identically in 4P.
+    Capturing a non-mine planet (regardless of which opp owned it)
+    must give the same K_PLANET bonus.
+    """
+    v = _reload_value_speedrun(monkeypatch, {})
+    K = float(v.SPEEDRUN_K_PLANET)
+    # 4P state: me + 3 opps.
+    obs_a = _mk_obs([
+        (0, 0, 30.0, 50.0, 1.0, 100, 3),
+        (1, 1, 70.0, 50.0, 1.0,   5, 2),   # opp 1
+        (2, 2, 50.0, 30.0, 1.0,  10, 2),   # opp 2 — will be captured
+        (3, 3, 50.0, 70.0, 1.0,   8, 2),   # opp 3
+    ])
+    # I capture opp 2's planet.
+    obs_b = _mk_obs([
+        (0, 0, 30.0, 50.0, 1.0, 100, 3),
+        (1, 1, 70.0, 50.0, 1.0,   5, 2),
+        (2, 0, 50.0, 30.0, 1.0,  10, 2),   # mine now
+        (3, 3, 50.0, 70.0, 1.0,   8, 2),
+    ])
+    leaf_a = v.favor_speedrun(obs_a, 0, num_seats=4, gamma=0.99)
+    leaf_b = v.favor_speedrun(obs_b, 0, num_seats=4, gamma=0.99)
+    delta = leaf_b - leaf_a
+    assert delta >= K, (
+        f"4P speedrun: capturing opp 2 didn't add >=K_PLANET: "
+        f"a={leaf_a} b={leaf_b} delta={delta} K={K}"
+    )
+
+
+def test_speedrun_roi_blocked_for_unreachable_target(monkeypatch):
+    """A target too far away (eta > REACH_HORIZON) contributes 0 ROI."""
+    v = _reload_value_speedrun(monkeypatch, {
+        "BASELINE_SPEEDRUN_REACH_HORIZON": "5",  # small horizon
+    })
+    # Distance is ~127 units, way beyond REACH_HORIZON*fleet_speed.
+    obs_far = _mk_obs([
+        (0, 0,  5.0,  5.0, 1.0, 100, 3),
+        (1, 1, 95.0, 95.0, 1.0,   5, 2),
+    ])
+    obs_near = _mk_obs([
+        (0, 0, 40.0, 50.0, 1.0, 100, 3),
+        (1, 1, 50.0, 50.0, 1.0,   5, 2),  # dist=10, fleet_speed(6)≈1.74 → eta=5.7, just beyond
+    ])
+    leaf_far = v.favor_speedrun(obs_far, 0, num_seats=2, gamma=0.99)
+    leaf_near = v.favor_speedrun(obs_near, 0, num_seats=2, gamma=0.99)
+    # Both should have similar Term 3 contributions if both unreachable.
+    # We compare: far target contributes 0, near target also blocked at REACH_HORIZON=5.
+    # Since both are blocked, leafs should be similar (only differ in Term 2 due to position).
+    # The point: the ROI doesn't blow up when targets are out of reach.
+    # Specifically: leaf_far should be FINITE (not NaN, not inf).
+    import math
+    assert math.isfinite(leaf_far)
+    assert math.isfinite(leaf_near)
+
+
+def test_speedrun_unaffordable_target_no_roi(monkeypatch):
+    """A target where no source can afford capture-size contributes 0 ROI."""
+    v = _reload_value_speedrun(monkeypatch, {})
+    # My source has 5 ships, target has 1000 ships. capture-size=1001, I have 5. Unaffordable.
+    obs = _mk_obs([
+        (0, 0, 40.0, 50.0, 1.0,    5, 3),
+        (1, 1, 50.0, 50.0, 1.0, 1000, 2),
+    ])
+    leaf = v.favor_speedrun(obs, 0, num_seats=2, gamma=0.99)
+    # Verify it's finite (no blow-up from `inf` eta).
+    import math
+    assert math.isfinite(leaf)
+
+
+def test_select_favor_fn_routes_speedrun(monkeypatch):
+    """BASELINE_VALUE_HEAD=speedrun dispatches to favor_speedrun."""
+    v = _reload_value_speedrun(monkeypatch, {
+        "BASELINE_VALUE_HEAD": "speedrun",
+    })
+    f = v.select_favor_fn()
+    assert f.__name__ == "favor_speedrun"

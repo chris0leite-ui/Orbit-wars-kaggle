@@ -70,6 +70,19 @@ FORWARD_REACH_HORIZON = float(os.environ.get("BASELINE_FORWARD_REACH_HORIZON", "
 FINISH_BONUS = float(os.environ.get("BASELINE_FINISH_BONUS", "50"))
 FINISH_THRESHOLD = float(os.environ.get("BASELINE_FINISH_THRESHOLD", "200"))
 
+# Speedrun head (PI 2026-05-26 PM). Planet-count-first value function.
+# Captures the FFA win condition directly: own all planets in minimum
+# turns. No opp identity matters — all non-mine planets are obstacles
+# with growing garrisons. See `favor_speedrun` docstring.
+SPEEDRUN_K_PLANET = float(os.environ.get("BASELINE_SPEEDRUN_K_PLANET", "50"))
+SPEEDRUN_K_ACQUIRE = float(os.environ.get("BASELINE_SPEEDRUN_K_ACQUIRE", "0.1"))
+SPEEDRUN_K_SHIPS = float(os.environ.get("BASELINE_SPEEDRUN_K_SHIPS", "0.5"))
+SPEEDRUN_HOLD_HORIZON = float(
+    os.environ.get("BASELINE_SPEEDRUN_HOLD_HORIZON",
+                   os.environ.get("BASELINE_HOLD_HORIZON", "20"))
+)
+SPEEDRUN_REACH_HORIZON = float(os.environ.get("BASELINE_SPEEDRUN_REACH_HORIZON", "25"))
+
 # Phase F — F3 observability. favor_strategic's Term A may fall back to
 # undiscounted my_prod if the leaf-time threat-ETA approximation raises
 # (e.g. on a malformed mid-rollout obs). Public for inspection from
@@ -533,6 +546,139 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
     return score
 
 
+def favor_speedrun(obs, me: int, num_seats: int = 2,
+                   gamma: float = DEFAULT_GAMMA) -> float:
+    """Planet-count-first value head (PI 2026-05-26 PM).
+
+    Models the game as a SOLO SPEEDRUN: capture all planets in the
+    minimum number of turns. All non-mine planets are obstacles with
+    growing garrisons. No opp identity, no opp aggregation, no max-of-
+    opps. The "opp" is just environmental disturbance.
+
+    Designed in response to the unified-favor 4P collapse (1/8 = 12.5%
+    pool) where the leaf went flat across actions (capture-feasibility
+    gate + asymmetric F2 in 4P + Term C dominating → no positive Δ
+    available → chooser idled → focal eliminated). The speedrun leaf
+    gives every capture a HARD positive Δ (+K_PLANET) regardless of
+    who owned the target — eliminating the flat-Δ failure mode.
+
+    leaf = K_PLANET * |my_planets|
+         + Σ_{p ∈ my_planets} prod(p) * hold_score(p) * pv
+         + Σ_{p ∈ non_mine}   K_ACQUIRE * roi(p)
+         + K_SHIPS * my_ships_total
+
+    Term 1 — planet count. Primary signal. Capturing ANY non-mine
+        planet (neutral OR opp-owned) adds +K_PLANET. Losing one
+        subtracts. This directly mirrors the FFA win condition.
+
+    Term 2 — my production, asymmetric hold-discounted. Reuses
+        `_hold_discounted_prod` with threats = all opp-owned planets
+        (neutrals don't attack). Phase F's defensive "fear" gradient.
+
+    Term 3 — per-target ROI. For each non-mine planet `p`:
+        capture_cost = max(MIN_FLEET_SIZE, p.ships + 1)
+        Find best my-source `s` such that s.ships ≥ capture_cost; let
+        best_eta = dist(s, p) / fleet_speed(capture_cost).
+        If best_eta < SPEEDRUN_REACH_HORIZON:
+            falloff = max(0, 1 - best_eta / SPEEDRUN_REACH_HORIZON)
+            roi = p.prod * pv * falloff - capture_cost
+            if roi > 0: contribute K_ACQUIRE * roi
+        Growing-garrison constraint is automatic: as p.ships grows
+        during rollout, capture_cost grows, roi drops — leaf says
+        "act now or get harder."
+
+    Term 4 — total ship balance (small weight). Tie-breaker for
+        states where Terms 1-3 are equal.
+
+    Knobs (env var defaults):
+        BASELINE_SPEEDRUN_K_PLANET    = 50.0
+        BASELINE_SPEEDRUN_K_ACQUIRE   = 0.1
+        BASELINE_SPEEDRUN_K_SHIPS     = 0.5
+        BASELINE_SPEEDRUN_HOLD_HORIZON = HOLD_HORIZON fallback (20)
+        BASELINE_SPEEDRUN_REACH_HORIZON = 25.0
+
+    Parity with `favor`: with K_PLANET=0, K_ACQUIRE=0, K_SHIPS=0, and
+    SPEEDRUN_HOLD_HORIZON=0, this reduces to `my_prod_raw * pv` plus
+    nothing else — NOT identical to `favor`, intentionally. Speedrun
+    is a different model.
+    """
+    planets = _read(obs, "planets", []) or []
+    fleets = _read(obs, "fleets", []) or []
+    step = int(_read(obs, "step", 0))
+
+    my_planets = [p for p in planets if int(p[1]) == me]
+    non_mine = [p for p in planets if int(p[1]) != me]
+
+    # Term 1 — planet count (primary).
+    score = SPEEDRUN_K_PLANET * float(len(my_planets))
+
+    # Term 2 — my production, asymmetric hold-discounted.
+    # Threats are opp-owned planets only (neutrals don't attack).
+    try:
+        opp_threats = [
+            (float(p[2]), float(p[3]), float(p[5]))
+            for p in planets
+            if int(p[1]) >= 0 and int(p[1]) != me
+        ]
+        my_prod_disc = _hold_discounted_prod(
+            planets, me, opp_threats, SPEEDRUN_HOLD_HORIZON,
+        )
+    except (KeyError, IndexError, AttributeError, ValueError, TypeError, ZeroDivisionError):
+        global _TERM_A_FALLBACK_COUNT, _TERM_A_WARNED
+        _TERM_A_FALLBACK_COUNT += 1
+        if not _TERM_A_WARNED:
+            import warnings
+            warnings.warn(
+                "favor_speedrun fell back to undiscounted my_prod "
+                "(malformed mid-rollout obs?). Further fallbacks counted in "
+                "value._TERM_A_FALLBACK_COUNT but not warned.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            _TERM_A_WARNED = True
+        my_prod_disc = sum(float(p[6]) for p in my_planets)
+
+    pv = pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS)
+    score += my_prod_disc * pv
+
+    # Term 3 — per-target ROI. Captures the "acquire all planets" objective.
+    if non_mine and my_planets and SPEEDRUN_K_ACQUIRE > 0.0 and SPEEDRUN_REACH_HORIZON > 0.0:
+        from lib.fleet import speed as fleet_speed
+        for tgt in non_mine:
+            t_x, t_y = float(tgt[2]), float(tgt[3])
+            t_ships = float(tgt[5])
+            t_prod = float(tgt[6])
+            if t_prod <= 0:
+                continue  # not worth acquiring
+            capture = max(MIN_FLEET_SIZE_LOCAL, int(t_ships) + 1)
+            v = fleet_speed(capture)
+            if v <= 0.0:
+                continue
+            best_eta = float("inf")
+            for src in my_planets:
+                if int(src[5]) < capture:
+                    continue
+                dist = math.hypot(t_x - float(src[2]), t_y - float(src[3]))
+                eta = dist / v
+                if eta < best_eta:
+                    best_eta = eta
+            if best_eta < SPEEDRUN_REACH_HORIZON:
+                falloff = max(0.0, 1.0 - best_eta / SPEEDRUN_REACH_HORIZON)
+                future_value = t_prod * pv * falloff
+                roi = future_value - float(capture)
+                if roi > 0:
+                    score += SPEEDRUN_K_ACQUIRE * roi
+
+    # Term 4 — ship balance (tie-breaker).
+    if SPEEDRUN_K_SHIPS > 0.0:
+        my_ships_total = sum(float(p[5]) for p in my_planets) + sum(
+            float(f[6]) for f in fleets if int(f[1]) == me
+        )
+        score += SPEEDRUN_K_SHIPS * my_ships_total
+
+    return score
+
+
 def select_favor_fn():
     """Pick the leaf value function.
 
@@ -569,6 +715,8 @@ def select_favor_fn():
         base = favor_hybrid_spatial
     elif choice == "strategic":
         base = favor_strategic
+    elif choice == "speedrun":
+        base = favor_speedrun
     else:
         base = favor
 
