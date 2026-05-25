@@ -338,7 +338,19 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
         my_prod_discounted = 0.0
         try:
             from lib.fleet import speed as fleet_speed
-            opp_planets_list = [p for p in planets if int(p[1]) >= 0 and int(p[1]) != me]
+            # Phase F bug-fix (post-4P-regression diagnosis): only opp planets
+            # with enough ships to launch a min-size attack count as threats.
+            # The previous approximation treated 0/1-ship opp planets as
+            # threats because of their POSITION, which in 4P (with ~10-15
+            # opp planets, many at low garrison) made every my-planet look
+            # threatened → my_prod_discounted collapsed → favor lost its
+            # production-economy signal. WorldModel.time_to_enemy_threat
+            # did this filter implicitly; the approximation must too.
+            _MIN_LAUNCH = 2  # mirrors lib's MIN_FLEET_SIZE
+            opp_planets_list = [
+                p for p in planets
+                if int(p[1]) >= 0 and int(p[1]) != me and int(p[5]) >= _MIN_LAUNCH
+            ]
             # Approximate launch speed from the slowest realistic opp launch
             # (small fleets fly fastest in this game; opp typically launches
             # capture-size). Use MIN_FLEET_SIZE=2 as the floor.
