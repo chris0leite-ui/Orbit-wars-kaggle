@@ -118,6 +118,86 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-25 (claude/strategy-battlefield-game-6v82d — momentum_strike V2/V3/V4 iteration)
+
+- `tag: mechanism-pipeline-bypassed-in-v1` — V1 momentum_strike built
+  hand-rolled aim + `predict_fleet_fate` gate instead of routing
+  intents through `lib.intent.realize(..., DEFAULT_MECHANISMS)`. Lost
+  7/8 vs `agents/simple/nearest` (1/8 wins). After diagnose, V2
+  switched to the realize-mechanism pipeline that `agents/simple/
+  production` and `nearest` already use; jumped to 7/8 vs nearest.
+  **Root cause:** chose "control" over reuse despite mechanism stack
+  being battle-tested in the simple agents. **Fix:** default to
+  realize+DEFAULT_MECHANISMS for any agent not adding novel safety
+  checks; reserve hand-rolled paths for genuinely novel mechanisms.
+
+- `tag: knob-tuned-without-dominant-mode-measured` — V3 picked
+  `POST_CAPTURE_GARRISON +1 → +5` after a single failure-mode signal
+  (`captures_lost_quickly = 10` in seed 0 vs baseline). A subsequent
+  emission-rate diagnostic showed baseline launches 100 fleets to our
+  51 — emission VOLUME was the dominant gap, not garrison thickness.
+  Knob iteration wasted (0/8 unchanged, marginal simple regress).
+  **Root cause:** stopped at first plausible failure mode; didn't
+  measure alternatives. **Fix:** before picking a knob, measure ≥2
+  candidate failure axes (capture-stickiness, emission-rate,
+  target-quality) and rank.
+
+- `tag: sequential-env-step-diverged-from-play-one` — manual
+  `env.step([a0, a1])` loops in diagnostic scripts produced different
+  game outcomes than `fast.play_one(seed, p0, p1)` (env.run) for the
+  same seed. Sequential trace had momentum_strike WIN seed 0 vs
+  baseline at t=95; the A/B harness same seed reported LOSS at t=186.
+  Wasted ~30 min × 2 chasing reproducibility. **Root cause:** the
+  two paths diverge somewhere in agent invocation / obs marshalling —
+  not investigated. **Fix:** any authoritative measurement must use
+  `play_one`/`env.run`; sequential `env.step` traces are advisory
+  only.
+
+- `tag: bundle-multi-line-import-broke-bundle` (recurrence of Rule 38
+  friction) — V2 main.py used `from agents.X import (a, b,)`
+  parenthesized form. Bundler's per-line strip regex left orphaned
+  indented continuation lines → `IndentationError` at parse time of
+  bundled file. Caught by bundler's exec-import gate (Rule 46), no
+  bad bundle shipped. **Fix:** ALL agent imports single-line; ratified
+  in CLAUDE.md Rule 38 already. Recurred because Claude wrote
+  multi-line form by reflex when import list exceeded one line.
+
+- `tag: bundle-default-lib-order-stale-kinematic-table` — bundler
+  `DEFAULT_LIB_ORDER` didn't list `lib/kinematic_table.py` (extracted
+  72fe45a, never registered). Blocked bundling of ANY agent that
+  transitively imports `lib.trajectory` (which imports kinematic_table),
+  i.e. every agent using DEFAULT_MECHANISMS. **Fix:** added
+  `kinematic_table` to `DEFAULT_LIB_ORDER` after `intent`, before
+  `trajectory`. Also added `polar` + `salvo` for momentum_strike
+  (salvo had to go AFTER `scoring` since it imports `s_needed`).
+
+- `tag: salvo-reserve-defensive-not-offensive` — V4 wired
+  `lib/salvo.plan_synchronized_salvo` but the salvo gate never fired
+  because `_reserve` was hardcoded `max(prod*5, 10)` (defensive
+  baseline default), so each source needed ~18 ships before
+  contributing — rare in mid-game. **Fix:** parametrized `reserve_fn`
+  on `plan_synchronized_salvo` and `salvo_feasible`; agent passes
+  `_salvo_reserve = 2-ship floor` for offensive commitment.
+
+- `tag: long-wait-salvo-starved-expansion` — uncapped V4 salvo
+  registered `wait=24` commits holding 98 ships idle for ~10% of game.
+  Simple-panel early-elim regressed 27/32 → 20/32. **Fix:**
+  `SALVO_MAX_WAIT=8` env cap in `propose_salvo`; intents with wait > 8
+  are dropped from the salvo. Restored simple-panel early-elim to
+  26/32 — still worse than V3's 27/32, salvo gated OFF by default
+  via `MOMENTUM_STRIKE_RATIO=999.0`.
+
+- `tag: structural-gap-not-knob-tunable` — three consecutive V2/V3/V4
+  knob iterations (POST_CAPTURE +5/+8, ENEMY_MULTIPLIER, synchronized
+  salvo + ledger) all 0/8 vs `agents/baseline`. **Root cause:** the
+  gap is K-step rollout vs greedy 1-step proposer — a complexity-class
+  gap, not constant-tunable. Spent ~3h iterating knobs that couldn't
+  close it. **Fix (promotion candidate):** when 2 consecutive knob
+  iterations fail to lift the dominant metric by ≥1/8, declare gap
+  structural and pivot to a different approach. Complements Rule 37
+  (axis-falsification cap) — Rule 37 is for variants within an axis;
+  this is for "the whole knob ladder is wrong axis."
+
 ## 2026-05-22 (claude/review-skills-improvements-moKOR — orbital safety completion + ship)
 
 - `tag: bundle-agent-doesnt-inline-from-baseline-main` — bundling
