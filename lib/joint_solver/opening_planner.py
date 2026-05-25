@@ -102,6 +102,51 @@ OPENING_SHIP_ALPHA = float(os.environ.get("OPENING_SHIP_ALPHA", "1.0"))
 OPENING_LAUNCH_COST = float(os.environ.get("OPENING_LAUNCH_COST", "0.0"))
 OPENING_SHIP_REF = float(os.environ.get("OPENING_SHIP_REF", "10.0"))
 
+# Layer V1 — value-per-ship MILP objective (2026-05-25). Default OFF.
+#
+# Default behaviour ranks candidates by absolute `value` (prod × hold ×
+# γ^t × bonus), which prefers expensive nearby captures to cheap distant
+# ones even when the latter have 3× the per-ship production ROI. Concrete
+# failure mode: seed 1622482326 schedules a 56-ship launch at a gar=55
+# prod=4 neutral while skipping reachable, uncontested gar=19 prod=5
+# captures (per-ship ROI 13 vs 43.5; scripts/probe_seed_1622482326.py).
+#
+# When OPENING_VALUE_PER_SHIP=1 the objective coefficient becomes
+# `-(value / ships)` instead of `-value`, which is the LP-relaxation
+# (fractional knapsack) ranking. The integer MILP closely tracks the LP
+# when the ship budget binds across heterogeneous ship costs.
+#
+# The greedy fallback uses the same sort key for consistency.
+OPENING_VALUE_PER_SHIP = (
+    os.environ.get("OPENING_VALUE_PER_SHIP", "0") == "1"
+)
+
+# Layer V3 — full-horizon hold for un-overwhelmed captures (2026-05-25).
+# Default OFF.
+#
+# Default `_expected_hold_duration` caps midline captures at `3 * delta`
+# ticks where `delta` is the post-arrival opp recapture-race margin.
+# For symmetric (equidistant) targets this collapses to 15-20 ticks even
+# when the capture is genuinely defensible. At seed 1622482326 the
+# uncontested gar=19 neutrals get hold_dur=18 (vs full-horizon ~171),
+# which makes their value 5*18=90 instead of 5*171=855 — losing the MILP
+# ranking to a 56-ship gar=55 capture (hold_dur=182) by a factor of 3.
+#
+# When OPENING_FULL_HORIZON_HOLD=1, Stage 2B's tight-race scaling is
+# bypassed: as long as Stage 1 (ship-count overwhelm) and Stage 2A
+# (opp current-launch race-to-planet) both pass, we credit the full
+# `OPENING_T_END - arrival` horizon. Trades defensive realism (opp can
+# recapture rotated targets in some games) for opening-aggression
+# realism (we won't refuse a cheap distant capture on a
+# 6-tick-delta-scared model when we can clearly hold it for 100+ ticks).
+#
+# Pairs with Layer V1: V1 needs ships ranked by per-ship ROI; V3 ensures
+# the value-per-ship for cheap-distant captures isn't artificially
+# collapsed before the per-ship division runs.
+OPENING_FULL_HORIZON_HOLD = (
+    os.environ.get("OPENING_FULL_HORIZON_HOLD", "0") == "1"
+)
+
 # Layer Z — hard physics prune (2026-05-25). See identical block in
 # agents/baseline/proposer.py for rationale. Default OFF so the gate is
 # opt-in per submission. SAFETY_MARGIN is in ship units (effective
@@ -270,6 +315,15 @@ def _expected_hold_duration(tgt, arrival: int, capture_residual: int,
         threat_now = None
     if threat_now is not None and int(threat_now) <= arrival:
         return 0
+
+    # Layer V3 — full-horizon hold for un-overwhelmed captures. After
+    # clearing Stage 1 (ship-count) and Stage 2A (race-to-planet), the
+    # capture is well-defined as "we get there first and aren't
+    # outnumbered." Under V3 we credit the full residual horizon
+    # without the rotated-geometry 3*delta penalty. See module-level
+    # docstring on OPENING_FULL_HORIZON_HOLD.
+    if OPENING_FULL_HORIZON_HOLD:
+        return max(0, OPENING_T_END - arrival)
 
     # Stage 2B: hold-horizon scaling — post-capture recapture race.
     # Under BASELINE_ORBITAL_SAFETY=1, use opp's post-our-arrival ETA
@@ -624,7 +678,12 @@ def _greedy_fallback(candidates: list[_Candidate], world, my_id: int,
     chosen: list[_Candidate] = []
     obj = 0.0
 
-    for c in sorted(candidates, key=lambda x: x.value, reverse=True):
+    def _greedy_key(x: _Candidate) -> float:
+        if OPENING_VALUE_PER_SHIP and x.ships > 0:
+            return x.value / x.ships
+        return x.value
+
+    for c in sorted(candidates, key=_greedy_key, reverse=True):
         if tgt_count.get(c.tgt_id, 0) >= MAX_CONTESTERS_PER_TARGET:
             continue
         # Source budget check: cumulative emissions up to c.fire_step ≤ available.
@@ -675,9 +734,19 @@ def _solve_milp(candidates: list[_Candidate], world, my_id: int,
     tgt_ids = sorted({c.tgt_id for c in candidates})
 
     # Objective: minimize -value (with lex tie-breaker for stability).
-    c_vec = np.array(
-        [-(c.value - 1e-6 * c.column_id) for c in candidates], dtype=float,
-    )
+    # Layer V1 (OPENING_VALUE_PER_SHIP=1): rank by value-per-ship rather
+    # than absolute value. LP-relaxation = fractional knapsack on
+    # value/ships. The integer MILP tracks this when the budget binds
+    # across heterogeneous ship costs. See module-level docstring.
+    if OPENING_VALUE_PER_SHIP:
+        c_vec = np.array(
+            [-(c.value / max(1, c.ships) - 1e-6 * c.column_id) for c in candidates],
+            dtype=float,
+        )
+    else:
+        c_vec = np.array(
+            [-(c.value - 1e-6 * c.column_id) for c in candidates], dtype=float,
+        )
 
     A_rows: list[list[float]] = []
     b_ub: list[float] = []

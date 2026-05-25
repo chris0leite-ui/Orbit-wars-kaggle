@@ -63,17 +63,44 @@ def test_buildup_emits_while_schedule_alive():
         assert bp_main._PHASE_STATE[0]["phase"] == bp_main.PHASE_BUILDUP
 
 
-def test_buildup_to_consolidation_transition_same_turn():
-    """First None return must transition AND emit consolidation's moves."""
+def test_buildup_wait_inside_horizon_stays_in_buildup():
+    """When BUILDUP returns None inside the opening horizon (MILP wants
+    wait_N>0 or has no viable captures yet), the agent STAYS in BUILDUP
+    and emits no moves this turn — it does NOT transition to
+    CONSOLIDATION until step >= OPENING_HORIZON. 2026-05-25 fix: pre-fix
+    behaviour permanently transitioned on the first None, which made
+    the BUILDUP MILP's wait-then-fire schedule unobservable in real
+    games (planned step-3 launches were abandoned at step 0)."""
     _reset_state()
     bp_main._PHASE_STATE[0] = {"phase": bp_main.PHASE_BUILDUP,
                                "strike_plan": None}
     with patch.object(bp_main.buildup, "step", return_value=None) as m_bu, \
          patch.object(bp_main.consolidation, "step",
                       return_value=[[0, 1.5, 7]]) as m_co:
-        # step != 0 so the new-game reset doesn't fire and overwrite us.
+        # step inside opening horizon (5 < 30).
         out = bp_main.agent(_obs(step=5))
     assert m_bu.called
+    assert not m_co.called  # do NOT fall through.
+    assert out == []
+    assert bp_main._PHASE_STATE[0]["phase"] == bp_main.PHASE_BUILDUP
+
+
+def test_buildup_horizon_exit_transitions_same_turn():
+    """When BUILDUP returns None at step >= OPENING_HORIZON, the agent
+    transitions to CONSOLIDATION and emits its moves this same turn."""
+    _reset_state()
+    bp_main._PHASE_STATE[0] = {"phase": bp_main.PHASE_BUILDUP,
+                               "strike_plan": None}
+    from lib.joint_solver.opening_planner import OPENING_HORIZON
+    with patch.object(bp_main.buildup, "step", return_value=None) as m_bu, \
+         patch.object(bp_main.consolidation, "step",
+                      return_value=[[0, 1.5, 7]]) as m_co:
+        # step at horizon boundary: BUILDUP has nothing left to give.
+        # Note: the dispatch in main.py also short-circuits BUILDUP when
+        # step >= OPENING_HORIZON before even calling buildup.step,
+        # so the path under test is the "already in BUILDUP, horizon
+        # boundary tripped" case.
+        out = bp_main.agent(_obs(step=OPENING_HORIZON + 1))
     assert m_co.called
     assert out == [[0, 1.5, 7]]
     assert bp_main._PHASE_STATE[0]["phase"] == bp_main.PHASE_CONSOLIDATION

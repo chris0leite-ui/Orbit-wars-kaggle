@@ -189,8 +189,21 @@ def agent(obs, configuration=None) -> list[list]:
                 # via the OPENING_HORIZON guard inside buildup.step.
                 return moves
 
-            # buildup returned None: opening exhausted or no fire-now entries.
-            # Transition to CONSOLIDATION this same turn.
+            # buildup returned None: either opening exhausted
+            # (step >= OPENING_HORIZON) OR this turn's schedule has no
+            # fire_step == step_now entries (the MILP wants to wait_N>0).
+            # The 2026-05-25 fix: while we're still inside the opening
+            # horizon, STAY in BUILDUP and emit no moves this turn so we
+            # re-derive next turn. Pre-fix bug: the agent permanently
+            # transitioned to CONSOLIDATION on the first turn the MILP
+            # scheduled fire_step > step_now (i.e. *any* wait-N opening),
+            # which made V3 and V1 unobservable in real games — the
+            # planned step-3 launch was abandoned before step-3 arrived.
+            if step < OPENING_HORIZON:
+                return []
+
+            # Opening genuinely exhausted: transition to CONSOLIDATION
+            # this same turn.
             state["phase"] = PHASE_CONSOLIDATION
             # Fall through.
 
