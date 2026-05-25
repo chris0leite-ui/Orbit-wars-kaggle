@@ -58,6 +58,13 @@ STRENGTH_PROD_WEIGHT = 15.0
 SPATIAL_WEIGHT = float(os.environ.get("BASELINE_SPATIAL_WEIGHT", "0.5"))
 SPATIAL_DECAY = float(os.environ.get("BASELINE_SPATIAL_DECAY", "30.0"))
 
+# Phase D — model enrichment (favor_strategic; PI 2026-05-25 evening).
+# Default OFF — only activated when BASELINE_VALUE_HEAD=strategic.
+# See plan /root/.claude/plans/go-1-compressed-hummingbird.md Phase D.
+HOLD_HORIZON = float(os.environ.get("BASELINE_HOLD_HORIZON", "20"))
+FORWARD_REACH_WEIGHT = float(os.environ.get("BASELINE_FORWARD_REACH_WEIGHT", "0.5"))
+FORWARD_REACH_HORIZON = float(os.environ.get("BASELINE_FORWARD_REACH_HORIZON", "15"))
+
 
 def _read(obs, attr, default):
     if hasattr(obs, attr):
@@ -208,6 +215,150 @@ def favor_hybrid(obs, me: int, num_seats: int = 2,
     return favor(obs, me, num_seats, gamma)
 
 
+def favor_strategic(obs, me: int, num_seats: int = 2,
+                    gamma: float = DEFAULT_GAMMA) -> float:
+    """Model enrichment (Phase D, PI 2026-05-25 evening, Rule 40).
+
+    On top of the F1+F2+elim base from `favor`, adds two terms that
+    encode information the static-snapshot leaf was missing:
+
+    Term A — Per-planet hold discount. For each of my owned planets P,
+        scale its contribution to F2 (production stream) by
+        `min(1, threat_eta / HOLD_HORIZON)`. Planets the enemy can reach
+        soon contribute less. Naturally penalises capture-then-lose
+        ("softening") because the captured planet's threat_eta is small.
+    Term B — Forward-reach. For each of my owned planets P, sum the
+        production of enemy planets reachable from P via straight-line
+        flight within `FORWARD_REACH_HORIZON` turns. Adds
+        `FORWARD_REACH_WEIGHT * sum_P reach(P)` to favor. Naturally
+        rewards frontier captures and penalises back-yard captures —
+        no "direction bonus" or "frontier bonus" needed.
+
+    Default knobs (HOLD_HORIZON=20, FORWARD_REACH_WEIGHT=0.5,
+    FORWARD_REACH_HORIZON=15) shape the curves; tune via env vars.
+
+    Parity: with HOLD_HORIZON=inf and FORWARD_REACH_WEIGHT=0 this
+    reduces to `favor` exactly.
+    """
+    planets = _read(obs, "planets", []) or []
+    fleets = _read(obs, "fleets", []) or []
+    step = int(_read(obs, "step", 0))
+
+    ships_by_owner: dict[int, float] = {}
+    prod_by_owner: dict[int, float] = {}
+    for p in planets:
+        owner = int(p[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(p[5])
+        prod_by_owner[owner] = prod_by_owner.get(owner, 0.0) + float(p[6])
+    for f in fleets:
+        owner = int(f[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(f[6])
+
+    my_ships = ships_by_owner.get(me, 0.0)
+
+    opps = sorted(
+        o for o in (set(ships_by_owner) | set(prod_by_owner))
+        if o != me and o >= 0
+    )
+
+    # Opp aggregation: same as `favor` (2P max, 4P weighted-sum-with-weakest-1.5x).
+    elim_eligible = False
+    weakest_str = 0.0
+    if num_seats <= 2 or len(opps) < 2:
+        opp_ships = max((ships_by_owner.get(o, 0.0) for o in opps), default=0.0)
+        opp_prod = max((prod_by_owner.get(o, 0.0) for o in opps), default=0.0)
+    else:
+        opp_strengths = {
+            o: ships_by_owner.get(o, 0.0)
+               + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT
+            for o in opps
+        }
+        weakest = min(opps, key=lambda o: opp_strengths[o])
+        weakest_str = opp_strengths[weakest]
+        opp_ships = sum(
+            ships_by_owner.get(o, 0.0)
+            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
+            for o in opps
+        )
+        opp_prod = sum(
+            prod_by_owner.get(o, 0.0)
+            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
+            for o in opps
+        )
+        elim_eligible = True
+
+    # Term A — hold-discount on MY planets. Build WorldModel for threat ETA.
+    # HOLD_HORIZON=0 disables Term A (every planet gets hold_score=1.0 = no discount).
+    if HOLD_HORIZON <= 0:
+        my_prod_discounted = prod_by_owner.get(me, 0.0)
+    else:
+        my_prod_discounted = 0.0
+        try:
+            from lib.intent import World
+            from lib.world_model import WorldModel
+            world = World.from_obs(obs)
+            wm = WorldModel.from_world(world)
+            for p in planets:
+                if int(p[1]) != me:
+                    continue
+                pid = int(p[0])
+                threat_eta = wm.time_to_enemy_threat(pid, me, world, arrival_eta=0)
+                if threat_eta is None:
+                    hold_score = 1.0
+                else:
+                    hold_score = min(1.0, float(threat_eta) / HOLD_HORIZON)
+                my_prod_discounted += float(p[6]) * hold_score
+        except Exception:
+            # If WorldModel construction fails (e.g. malformed mid-rollout obs),
+            # fall back to undiscounted my_prod so we never zero-out the leaf.
+            my_prod_discounted = prod_by_owner.get(me, 0.0)
+
+    pv = pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS)
+    score = (my_ships - opp_ships) + (my_prod_discounted - opp_prod) * pv
+
+    # Elimination bonus — uses discounted my_prod for the strength check.
+    if elim_eligible:
+        my_strength = my_ships + my_prod_discounted * STRENGTH_PROD_WEIGHT
+        if (weakest_str <= WEAK_ENEMY_THRESHOLD
+                and my_strength >= ELIMINATION_GATE_RATIO * weakest_str):
+            score += ELIMINATION_BONUS
+
+    # Term B — forward-reach bonus.
+    if FORWARD_REACH_WEIGHT > 0.0:
+        from lib.fleet import speed as fleet_speed
+        my_planets_list = [p for p in planets if int(p[1]) == me]
+        enemy_planets_list = [
+            p for p in planets
+            if int(p[1]) >= 0 and int(p[1]) != me
+        ]
+        if my_planets_list and enemy_planets_list:
+            # Approximate launch speed via mean garrison; the chooser's actual
+            # launches use the source's ship count, but this is a reach proxy
+            # not an admissibility test.
+            ships_proxy = max(
+                2.0,
+                sum(float(p[5]) for p in my_planets_list) / len(my_planets_list),
+            )
+            v = fleet_speed(int(ships_proxy))
+            if v > 0.0:
+                reach_sum = 0.0
+                for mp in my_planets_list:
+                    mx, my_p = float(mp[2]), float(mp[3])
+                    for ep in enemy_planets_list:
+                        ex, ey = float(ep[2]), float(ep[3])
+                        dist = math.hypot(ex - mx, ey - my_p)
+                        eta = dist / v
+                        if eta <= FORWARD_REACH_HORIZON:
+                            reach_sum += float(ep[6])
+                score += FORWARD_REACH_WEIGHT * reach_sum
+
+    return score
+
+
 def select_favor_fn():
     """Pick the leaf value function.
 
@@ -242,6 +393,8 @@ def select_favor_fn():
         base = favor_hybrid
     elif choice == "hybrid_spatial":
         base = favor_hybrid_spatial
+    elif choice == "strategic":
+        base = favor_strategic
     else:
         base = favor
 
