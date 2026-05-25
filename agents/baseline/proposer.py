@@ -637,7 +637,12 @@ def _target_holdable_after_capture(
     if delivered < 1:
         return True
 
-    MIN_COUNTER_SHIPS = 20
+    # 2026-05-25: floor lowered 20 → 5 to match lib.opp_model.lite_greedy_policy
+    # (the rollout opp model now launches at ≥5 ships). Pre-fix, a 5-15 ship opp
+    # planet within recapture range was INVISIBLE to this gate — we'd capture
+    # neutrals that opp's nearest small planet could grab back cheaply.
+    # See audit/2026-05-25-recapture-rootcause.md (seed 2020490432 case).
+    MIN_COUNTER_SHIPS = 5
     SAFETY_MARGIN = 1.5
 
     # B1 (PI 2026-05-21 / completed 2026-05-22) — when BASELINE_ORBITAL_SAFETY=1,
