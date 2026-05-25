@@ -176,7 +176,7 @@ def lite_greedy_policy(obs: Any) -> list:
     targets = [p for p in planets if p[1] != player]
     moves: list = []
     for src in planets:
-        if src[1] != player or src[5] < 5:
+        if src[1] != player or src[5] < 10:
             continue
         best = None
         best_score = -1.0
