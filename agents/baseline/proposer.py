@@ -507,13 +507,24 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
         )
 
     if ships > pred_ships:
-        # Layer Z prune: reject if effective landing (ships - prod·eta)
-        # falls below the safety margin. Catches small fleets that travel
-        # long distances and lose their landing margin to production-bleed.
-        # `eta` here is flight time (post-wait); production accrual during
-        # wait_N is already in `pred_ships` and is the opp's problem.
+        # Layer Z v2 — physics-correct effective-landing prune
+        # (2026-05-25). Reject the launch if our headroom above the
+        # predicted garrison can't absorb production-bleed during flight:
+        #
+        #     (ships − pred_ships) − prod·eta  <  MARGIN  →  REJECT
+        #
+        # v1 (commit 109c01a, 2026-05-24) used `ships − prod·eta`,
+        # omitting the pred_ships subtraction. That gave defended
+        # targets a hidden ship-count credit equal to their predicted
+        # garrison — too permissive on contested cohorts. `eta` is the
+        # post-wait flight time and already fleet-speed-aware via
+        # `aim_and_eta` → `fleet_speed(ships)`; `pred_ships` already
+        # encodes wait_N production accrual at the launch tick.
         if EFFECTIVE_LANDING_PRUNE_ENABLED:
-            effective_landing = float(ships) - float(tgt.production) * float(eta)
+            effective_landing = (
+                (float(ships) - float(pred_ships))
+                - float(tgt.production) * float(eta)
+            )
             if effective_landing < EFFECTIVE_LANDING_MARGIN:
                 return CHEAP_REJECT_THRESHOLD - 1.0  # below reject gate
         pv = pv_horizon(int(world.step), int(arrival_step),

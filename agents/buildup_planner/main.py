@@ -58,6 +58,15 @@ os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
 # wins (setdefault).
 os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
 
+# Default Layer Z v2 effective-landing prune on (2026-05-25). v2 fixes
+# the v1 formula by subtracting `pred_ships` so the gate measures real
+# headroom-over-defender, not total ship count. Applied in the proposer
+# only — the opening_planner site was redundant with `gar_at_arr` and
+# was dropped. See lib/joint_solver/opening_planner.py and
+# agents/baseline/proposer.py:516. Explicit `BASELINE_EFFECTIVE_LANDING_PRUNE=0`
+# still wins (setdefault, not set).
+os.environ.setdefault("BASELINE_EFFECTIVE_LANDING_PRUNE", "1")
+
 # Phi-1 leaf swap (2026-05-25): favor_phi adds the 2P elimination bonus
 # (missing in `favor`) and uses 250-tick pv_horizon to match PI's
 # fast-elim metric. HARD SET (not setdefault) because the bundler

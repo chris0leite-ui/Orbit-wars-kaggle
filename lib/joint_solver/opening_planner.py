@@ -530,20 +530,14 @@ def _build_candidates(world, model, my_id: int, num_seats: int,
                 if capture_residual < 1:
                     continue
 
-                # Layer Z hard physics prune: drop launches whose effective
-                # landing (ships - prod·eta) falls below the safety margin.
-                # Catches small fleets on long-haul trips where production-
-                # bleed eats the entire margin. Runs before the expensive
-                # hold-duration computation. eta_flight is post-wait travel
-                # time; production accrual during wait is already in gar_at_arr.
-                if OPENING_EFFECTIVE_LANDING_PRUNE_ENABLED:
-                    effective_landing = (
-                        float(needed) - float(tgt.production) * float(eta_flight)
-                    )
-                    if effective_landing < OPENING_EFFECTIVE_LANDING_MARGIN:
-                        waterfall.setdefault("dropped_effective_landing", 0)
-                        waterfall["dropped_effective_landing"] += 1
-                        continue
+                # Layer Z gate dropped here in v2 (2026-05-25). `needed`
+                # is already the ships-required-AT-ARRIVAL, computed from
+                # `gar_at_arr` which encodes regrowth during BOTH the wait
+                # and the flight. Running the prune on `needed - prod·eta`
+                # double-counts the flight-time regrowth. The proposer-side
+                # Layer Z v2 (`agents/baseline/proposer.py:516`) handles the
+                # equivalent CONSOLIDATION-phase prune correctly using
+                # `pred_ships`.
 
                 # Value = production × hold_window × opp_bonus, where
                 # hold_window is the expected ticks we hold post-capture
