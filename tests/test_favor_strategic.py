@@ -81,20 +81,42 @@ def test_parity_with_knobs_off_2p(monkeypatch):
     )
 
 
-def test_parity_with_knobs_off_4p(monkeypatch):
-    """Phase F F15: 4P parity branch — weighted-sum opp + elim_bonus path."""
+def test_4p_max_of_opps_at_knobs_off(monkeypatch):
+    """2026-05-26 Change 2: in 4P at knobs OFF, favor_strategic uses
+    max-of-opps aggregation (NOT the original `favor`'s weighted-sum
+    with 1.5x-weakest). They diverge intentionally. Verify the new
+    invariant: F1 = my_ships - max(opp_ships), F2 = (my_prod - max(opp_prod))*pv,
+    plus the discrete elim_bonus when FINISH_BONUS=0 and the elim gate
+    fires."""
     v = _reload_value_with(monkeypatch, {})
-    # 4P: me + 3 opps. Mix strengths so weakest is clearly identified.
     obs = _mk_obs([
         (0, 0, 30.0, 50.0, 1.0,  10, 3),
         (1, 1, 70.0, 50.0, 1.0,   8, 2),
-        (2, 2, 50.0, 30.0, 1.0,   4, 1),  # weakest opp
+        (2, 2, 50.0, 30.0, 1.0,   4, 1),  # weakest opp (strength = 4 + 15 = 19)
         (3, 3, 50.0, 70.0, 1.0,  10, 2),
     ])
-    base = v.favor(obs, 0, num_seats=4, gamma=0.99)
+    # By hand: my_ships=10, opp_ships per opp = 8, 4, 10. max = 10.
+    # my_prod=3, opp_prod per opp = 2, 1, 2. max = 2.
+    # pv at step=0, gamma=0.99, t_total=500 ≈ 99.3.
+    # F1 = 10 - 10 = 0. F2 = (3 - 2) * 99.3 ≈ 99.3.
+    # weakest_str = 4 + 1*15 = 19 (≤ 110), my_strength = 10 + 3*15 = 55.
+    # Elim gate: my_strength ≥ 0.9 * 19 = 17.1? 55 ≥ 17.1 → YES.
+    # FINISH_BONUS=0 default in this test → discrete elim_bonus = +55 fires.
+    # Expected strat = 0 + 99.3 + 55 ≈ 154.3.
     strat = v.favor_strategic(obs, 0, num_seats=4, gamma=0.99)
-    assert strat == pytest.approx(base, abs=1e-9), (
-        f"4P parity broken: base={base} strategic={strat}"
+    from lib.scoring import pv_horizon
+    pv = pv_horizon(0, 0, gamma=0.99, t_total=500)
+    expected = (10.0 - 10.0) + (3.0 - 2.0) * pv + 55.0
+    assert strat == pytest.approx(expected, abs=1e-6), (
+        f"4P max-of-opps at knobs-off broke: expected={expected} got={strat}"
+    )
+
+    # Sanity: confirm `favor` (the base) still uses weighted-sum (i.e. they DO
+    # differ — Change 2 is intentional, not accidental).
+    base = v.favor(obs, 0, num_seats=4, gamma=0.99)
+    assert base != pytest.approx(strat, abs=1e-3), (
+        f"`favor` and `favor_strategic` should differ in 4P (Change 2 makes "
+        f"strategic use max-of-opps, favor still weighted-sum): both={base}"
     )
 
 
@@ -158,15 +180,15 @@ def test_term_a_propagates_systemexit(monkeypatch):
     """
     v = _reload_value_with(monkeypatch, {"BASELINE_HOLD_HORIZON": "20"})
     # Monkey-patch math.hypot inside the value module to raise SystemExit.
-    import math as _math_mod
-
     def _raise_systemexit(*a, **kw):
         raise SystemExit("propagate me")
 
     monkeypatch.setattr(v.math, "hypot", _raise_systemexit)
+    # Make opp strong enough to credibly threaten me (capture-size = my+1 = 11,
+    # opp has 100 >= 11), so the threat-ETA helper reaches math.hypot.
     obs = _mk_obs([
-        (0, 0, 30.0, 50.0, 1.0, 10, 3),
-        (1, 1, 70.0, 50.0, 1.0,  8, 2),
+        (0, 0, 30.0, 50.0, 1.0,  10, 3),
+        (1, 1, 70.0, 50.0, 1.0, 100, 2),
     ])
     with pytest.raises(SystemExit):
         v.favor_strategic(obs, 0, num_seats=2, gamma=0.99)
@@ -293,30 +315,34 @@ def test_term_c_threshold_negative_does_not_crash_or_explode(monkeypatch):
 
 def test_term_c_subsumes_elim_bonus_in_4p(monkeypatch):
     """In 4P, Term C REPLACES the discrete ELIMINATION_BONUS (does not
-    stack with it). With the 2026-05-26 rewrite, Term C sums over the
-    expected opp seats — magnitude is the sum of per-opp pressures,
-    not a single weakest-pick.
+    stack with it). The Change 2 4P aggregation (max-of-opps) is held
+    fixed by comparing strategic-with-Term-C-ON to strategic-with-Term-C-OFF;
+    the F1/F2 difference vs `favor` (weighted-sum) is NOT in scope here.
     """
-    v = _reload_value_with(monkeypatch, {
-        "BASELINE_FINISH_BONUS": "50",
-        "BASELINE_FINISH_THRESHOLD": "200",
-    })
     obs = _mk_obs([
         (0, 0, 30.0, 50.0, 1.0, 200, 8),  # me — strong
         (1, 1, 70.0, 50.0, 1.0,  30, 2),  # opp 1, strength = 30 + 2*15 = 60
         (2, 2, 50.0, 30.0, 1.0,   5, 2),  # opp 2 weakest, strength = 5 + 2*15 = 35
         (3, 3, 50.0, 70.0, 1.0,  40, 3),  # opp 3, strength = 40 + 3*15 = 85
     ])
-    base = v.favor(obs, 0, num_seats=4, gamma=0.99)  # has discrete +55
-    strat = v.favor_strategic(obs, 0, num_seats=4, gamma=0.99)  # has Term C only
-    delta = strat - base
-    # Term C contribution (per-opp sum):
-    #   opp 1 (60): 50*(1 - 60/200) = 35.0
-    #   opp 2 (35): 50*(1 - 35/200) = 41.25
-    #   opp 3 (85): 50*(1 - 85/200) = 28.75
-    #   total ≈ 105.0
-    # `base` includes the discrete +55. `strat` SUPPRESSES the +55 and
-    # adds the per-opp Term C ≈ 105. delta = 105 - 55 = 50.
+    # Knobs OFF run: HOLD_HORIZON=0, FORWARD_REACH_WEIGHT=0, FINISH_BONUS=0.
+    # → discrete elim_bonus = +55 fires (weakest_str=35 ≤ 110, my clears gate).
+    v_off = _reload_value_with(monkeypatch, {})
+    strat_off = v_off.favor_strategic(obs, 0, num_seats=4, gamma=0.99)
+
+    # Knobs ON for Term C: FINISH_BONUS=50, THRESHOLD=200.
+    # → Term C fires (per-opp sum), discrete elim_bonus SUPPRESSED.
+    v_on = _reload_value_with(monkeypatch, {
+        "BASELINE_FINISH_BONUS": "50",
+        "BASELINE_FINISH_THRESHOLD": "200",
+    })
+    strat_on = v_on.favor_strategic(obs, 0, num_seats=4, gamma=0.99)
+
+    # F1/F2 identical between off/on (knobs only gate the elim/Term-C path).
+    # Δ = (Term C value) - (discrete elim_bonus = 55).
+    # Term C: opp 1 (60) → 35; opp 2 (35) → 41.25; opp 3 (85) → 28.75. Sum ≈ 105.
+    # Δ ≈ 105 - 55 = 50.
+    delta = strat_on - strat_off
     expected_term_c = sum(
         50.0 * max(0.0, 1.0 - s/200.0) for s in (60.0, 35.0, 85.0)
     )
@@ -328,36 +354,33 @@ def test_term_c_subsumes_elim_bonus_in_4p(monkeypatch):
 
 
 def test_term_c_credits_zero_strength_opp_fully(monkeypatch):
-    """2026-05-26 modeling-correctness rewrite: an opp at strength=0
-    (planet with no ships / no production, or in-obs with zero garrison)
-    is effectively finished. Term C now credits them with the FULL
-    FINISH_BONUS — same as if they were gone from the obs entirely.
-    This is the fix for the anti-elimination cliff that biased the
-    chooser against landing killing blows in 4P FFA.
+    """An opp at strength=0 is effectively finished. Term C now credits
+    them with the FULL FINISH_BONUS — same as if they were gone from the
+    obs entirely. This is the fix for the anti-elimination cliff.
+
+    Hold F1/F2 fixed across the comparison by comparing
+    favor_strategic-with-knobs-off vs favor_strategic-with-Term-C-on on
+    the SAME obs (both use the same Change 2 max-of-opps aggregation).
     """
-    v = _reload_value_with(monkeypatch, {
-        "BASELINE_FINISH_BONUS": "50",
-        "BASELINE_FINISH_THRESHOLD": "200",
-    })
-    # 4P with opp 2 at zero strength (no ships, no production), the
-    # other two opps at strength = 100 + 5*15 = 175.
     obs = _mk_obs([
         (0, 0, 30.0, 50.0, 1.0, 200, 8),
         (1, 1, 70.0, 50.0, 1.0, 100, 5),
         (2, 2, 50.0, 30.0, 1.0,   0, 0),  # opp 2 — effectively eliminated
         (3, 3, 50.0, 70.0, 1.0, 100, 5),
     ])
-    base = v.favor(obs, 0, num_seats=4, gamma=0.99)
-    strat = v.favor_strategic(obs, 0, num_seats=4, gamma=0.99)
-    # `base` includes ELIMINATION_BONUS = 55 (weakest_str = 0 ≤ 110, my
-    # strength clears the 0.9× gate trivially). `strat` suppresses the
-    # discrete elim_bonus and uses Term C. Term C contribution:
-    #   opp1 at 175: 50 * (1 - 175/200) = 6.25
-    #   opp2 at 0:   50 * (1 - 0/200)   = 50.0   <-- this is the FIX
-    #   opp3 at 175: 50 * (1 - 175/200) = 6.25
-    # Total = 62.5. So strat - base ≈ 62.5 - 55 = 7.5.
-    delta = strat - base
-    term_c_only = delta + 55.0  # add back the suppressed discrete elim_bonus
+    v_off = _reload_value_with(monkeypatch, {})
+    strat_off = v_off.favor_strategic(obs, 0, num_seats=4, gamma=0.99)
+    v_on = _reload_value_with(monkeypatch, {
+        "BASELINE_FINISH_BONUS": "50",
+        "BASELINE_FINISH_THRESHOLD": "200",
+    })
+    strat_on = v_on.favor_strategic(obs, 0, num_seats=4, gamma=0.99)
+    # Δ = Term C contribution − discrete elim_bonus (suppressed at on).
+    # Term C: opp1@175 → 6.25; opp2@0 → 50.0 (the fix); opp3@175 → 6.25. Sum=62.5.
+    # Discrete elim_bonus at off = +55 (weakest_str=0, gate trivially clears).
+    # Δ ≈ 62.5 - 55 = 7.5.
+    delta = strat_on - strat_off
+    term_c_only = delta + 55.0
     expected = 50.0 + 2 * 50.0 * (1.0 - 175.0/200.0)  # 62.5
     assert term_c_only == pytest.approx(expected, abs=1.0), (
         f"Term C did not credit zero-strength opp fully: "

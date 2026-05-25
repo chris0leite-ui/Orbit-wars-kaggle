@@ -299,14 +299,19 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
     On top of the F1+F2+elim base from `favor`, three terms encode
     information the static-snapshot leaf was missing:
 
-    Term A — SYMMETRIC hold discount. Each player's production stream
-        in F2 is scaled by a hold score `min(1, threat_eta / HOLD_HORIZON)`
-        per owned planet. Threat ETA is the realistic capture-size
-        launch ETA from the nearest non-owner planet. Symmetry matters:
-        the prior asymmetric version only discounted MY prod, leaving
-        opp_prod un-scaled — in 4P that tilted F2 strongly negative
-        regardless of action, and the chooser fired tiny waste fleets
-        to harvest rollout-noise positive Δs.
+    Term A — hold discount on production stream. Each of MY planets'
+        production contribution is scaled by a hold score
+        `min(1, threat_eta / HOLD_HORIZON)`, using realistic capture-size
+        launch ETA from the nearest non-owner planet that can afford it.
+        Opp prod is treated mode-dependently:
+        - 2P: opp_prod is RAW (un-discounted). The asymmetric "fear"
+          signal is load-bearing — when opp can capture me, F2 swings
+          strongly negative and the chooser drives defense. Calibrated
+          75% win rate in Phase F.
+        - 4P: opp_prod is SYMMETRICALLY discounted (per-opp via the same
+          physics, then max-aggregated — see Change 2 below). The
+          asymmetric form was overly pessimistic with three opps' raw
+          prod summed, causing trickle-launch noise-harvesting.
 
     Term B — Forward-reach. For each of my owned planets P, count the
         production of enemy planets reachable from P via a realistic
@@ -349,9 +354,18 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
     MIN_FLEET_SIZE threat-speed floor in Term A, the ships>=2 opp-planet
     filter (subsumed by the threat-eta helper).
 
+    F1/F2 aggregation: 2P uses max-of-opps (trivially the single opp).
+    4P also uses max-of-opps — Change 2 (2026-05-26): the leaf measures
+    the actual FFA win condition `my_strength − max(opp_strength)`. The
+    prior 4P weighted-sum-with-1.5x-weakest aggregation is dropped;
+    Term C's per-opp finishing pressure provides the orthogonal
+    "finish the weakest" gradient instead.
+
     Parity: with HOLD_HORIZON=0 AND FORWARD_REACH_WEIGHT=0 AND
-    FINISH_BONUS=0, this reduces to `favor` exactly (both 2P and 4P
-    branches).
+    FINISH_BONUS=0, in 2P this reduces to `favor` exactly. In 4P it
+    differs from `favor` by the F1/F2 aggregation rule (max-of-opps
+    vs weighted-sum). The discrete ELIMINATION_BONUS path still
+    fires identically when FINISH_BONUS=0.
     """
     planets = _read(obs, "planets", []) or []
     fleets = _read(obs, "fleets", []) or []
@@ -386,6 +400,15 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
     if num_seats <= 2 or len(opps) < 2:
         opp_ships = max((ships_by_owner.get(o, 0.0) for o in opps), default=0.0)
     else:
+        # 4P: 2026-05-26 modeling-correctness Change 2 — max-of-opps
+        # instead of sum-with-1.5x-weakest. The leaf now measures the
+        # actual win condition ("how do I compare to the single strongest
+        # opp"). The dropped A2-weakest 1.5x weighting is replaced by
+        # Term C's per-opp finishing pressure (which provides the
+        # orthogonal 'finish the weakest' gradient with continuous-
+        # through-elimination semantics). `weakest`/`weakest_str` are
+        # still computed for the discrete elim_bonus path (back-compat
+        # parity with `favor` when FINISH_BONUS <= 0).
         opp_strengths = {
             o: ships_by_owner.get(o, 0.0)
                + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT
@@ -393,11 +416,7 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
         }
         weakest = min(opps, key=lambda o: opp_strengths[o])
         weakest_str = opp_strengths[weakest]
-        opp_ships = sum(
-            ships_by_owner.get(o, 0.0)
-            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
-            for o in opps
-        )
+        opp_ships = max(ships_by_owner.get(o, 0.0) for o in opps)
         elim_eligible = True
 
     # --- Term A: symmetric hold-discount on prod (both my and opp).
@@ -420,23 +439,28 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
         my_prod_discounted = _hold_discounted_prod(
             planets, me, all_other_threats, HOLD_HORIZON,
         )
-        # Per-opp discounted prod, then aggregated by the same 2P-max /
-        # 4P-weighted-sum rule used for opp_ships above.
         if num_seats <= 2 or len(opps) < 2:
-            if not opps:
-                opp_prod_discounted = 0.0
-            else:
-                opp_prod_discounted = max(
-                    _hold_discounted_prod(planets, o, my_threats, HOLD_HORIZON)
-                    for o in opps
-                )
+            # 2P: Change 1 — restore Phase F's ASYMMETRIC opp_prod.
+            # Opp production is counted RAW (un-discounted). The MY-side
+            # discount above is the load-bearing defensive signal that
+            # gave Phase F 75% wins in 2P; making opp_prod symmetric
+            # neutralised the fear gradient and the chooser became
+            # passive (n=2 panel 2026-05-26 showed 2/8 = 25%). Keep
+            # this asymmetric in 2P until / unless the chooser is
+            # re-tuned for the symmetric leaf.
+            opp_prod_discounted = max(
+                (prod_by_owner.get(o, 0.0) for o in opps), default=0.0,
+            )
         else:
-            opp_prod_discounted = 0.0
-            for o in opps:
-                w = WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0
-                opp_prod_discounted += w * _hold_discounted_prod(
-                    planets, o, my_threats, HOLD_HORIZON,
-                )
+            # 4P: symmetric Term A discount on each opp's prod, then
+            # max-of-opps aggregation (Change 2). The discount fires
+            # when ANY of my planets can credibly threaten the opp
+            # planet — same physics as the my-side discount. Max-of-opps
+            # picks the strongest threat to me's win condition.
+            opp_prod_discounted = max(
+                _hold_discounted_prod(planets, o, my_threats, HOLD_HORIZON)
+                for o in opps
+            )
     except (KeyError, IndexError, AttributeError, ValueError, TypeError, ZeroDivisionError):
         # F3 observability — same narrow catch as the pre-rewrite version.
         # Fall back to un-discounted F2 so a malformed mid-rollout obs
@@ -454,15 +478,13 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
             )
             _TERM_A_WARNED = True
         my_prod_discounted = prod_by_owner.get(me, 0.0)
-        if num_seats <= 2 or len(opps) < 2:
-            opp_prod_discounted = max(
-                (prod_by_owner.get(o, 0.0) for o in opps), default=0.0,
-            )
+        # F3 fallback mirrors the live-branch aggregation rule.
+        # 2P: asymmetric (max of raw). 4P: max-of-opps (Change 2).
+        if not opps:
+            opp_prod_discounted = 0.0
         else:
-            opp_prod_discounted = sum(
-                prod_by_owner.get(o, 0.0)
-                * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
-                for o in opps
+            opp_prod_discounted = max(
+                prod_by_owner.get(o, 0.0) for o in opps
             )
 
     pv = pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS)
