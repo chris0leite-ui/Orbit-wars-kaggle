@@ -22,9 +22,30 @@ Agent resolution: baseline names (`v7_0`, `v4_planner`, `v3.5.1`), path to `.py`
 
 ## A/B testing tools (pick by question being asked)
 
+> **STANDARD PROCEDURE (2026-05-25, PI-ratified):** `clean_ab.py`
+> with **5 games per opponent**, **`--episode-steps 250`** truncation,
+> **no seat switch**, against a **panel of 3-4 diverse opponents**.
+> Seat asymmetry from FP rounding is small vs between-strategy gaps;
+> panel diversity is the real signal (Rule 43). Use this template for
+> every A/B unless deliberately measuring something else.
+>
+> Example:
+> ```bash
+> python scripts/clean_ab.py agents/baseline/main.py \
+>     submissions/baseline_joint_aggr_consolidated_orbitfix.py \
+>     submissions/baseline_wave.py \
+>     submissions/v7_0_drop_one.py \
+>     submissions/v4_planner.py
+> ```
+> Default flags hard-code the standard procedure; override only with
+> a clear reason (e.g. `--episode-steps 500` for finisher mechanisms
+> that need late-game; `--swap-seats` only when comparing near-twin
+> agents).
+
 | Tool | Question it answers | Sample mode | CRN | Use when |
 |---|---|---|---|---|
-| `fast.py eval <agent>` | Beats v7_0 baseline? | adaptive (Wilson-gated) | yes | First-pass triage |
+| **`scripts/clean_ab.py focal opp1 opp2 ...`** | **Beats a diverse panel?** | **5 games × N opps, P0-only, 250-step cap** | yes (subprocess-isolated) | **STANDARD A/B** |
+| `fast.py eval <agent>` | Beats v7_0 baseline? | adaptive (Wilson-gated) | yes | Quick triage, not env-var-safe |
 | `fast.py eval <agent> --vs <opp>` | Beats a SPECIFIC opp? | adaptive | yes | h2h vs current rolling champion (Rule 43) |
 | `fast.py eval <agent> --vs-panel` | Beats the 3-agent panel? | adaptive | yes | Pre-submit minimum (Rule 43) |
 | `fast.py eval <agent> --geometry-panel` | Consistent across 32 archetypes? | 128 seeds | yes | Catch flavor-dependent regressions |
