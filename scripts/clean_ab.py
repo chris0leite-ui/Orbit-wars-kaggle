@@ -44,22 +44,40 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 
-def _worker_play(args: tuple[int, str, str, bool, int]) -> dict:
+def _worker_play(args: tuple[int, str, str, bool, int, bool]) -> dict:
     """Spawn a fresh subprocess that plays ONE game, returns its JSON result."""
-    seed, focal_path, opp_path, focal_is_p0, episode_steps = args
-    p0_path, p1_path = (focal_path, opp_path) if focal_is_p0 else (opp_path, focal_path)
-    code = (
-        "import json, sys, time;"
-        "sys.path.insert(0, %r);"
-        "from kaggle_environments import make;"
-        "env = make('orbit_wars', configuration={'seed': %d, 'episodeSteps': %d}, debug=False);"
-        "t0 = time.perf_counter();"
-        "env.run([%r, %r]);"
-        "wall = time.perf_counter() - t0;"
-        "final = env.steps[-1];"
-        "r0 = final[0]['reward']; r1 = final[1]['reward'];"
-        "print(json.dumps({'r0': r0, 'r1': r1, 'n_steps': len(env.steps), 'wall': wall}))"
-    ) % (str(REPO), int(seed), int(episode_steps), str(p0_path), str(p1_path))
+    seed, focal_path, opp_path, focal_is_p0, episode_steps, ffa = args
+    if ffa:
+        # 4P FFA: focal as P0, three copies of opp at P1/P2/P3. focal_is_p0
+        # is ignored in FFA mode (focal always P0); swap-seats not meaningful
+        # in 4P at this scope.
+        code = (
+            "import json, sys, time;"
+            "sys.path.insert(0, %r);"
+            "from kaggle_environments import make;"
+            "env = make('orbit_wars', configuration={'seed': %d, 'episodeSteps': %d}, debug=False);"
+            "t0 = time.perf_counter();"
+            "env.run([%r, %r, %r, %r]);"
+            "wall = time.perf_counter() - t0;"
+            "final = env.steps[-1];"
+            "rs = [s['reward'] for s in final];"
+            "print(json.dumps({'rs': rs, 'n_steps': len(env.steps), 'wall': wall}))"
+        ) % (str(REPO), int(seed), int(episode_steps),
+             str(focal_path), str(opp_path), str(opp_path), str(opp_path))
+    else:
+        p0_path, p1_path = (focal_path, opp_path) if focal_is_p0 else (opp_path, focal_path)
+        code = (
+            "import json, sys, time;"
+            "sys.path.insert(0, %r);"
+            "from kaggle_environments import make;"
+            "env = make('orbit_wars', configuration={'seed': %d, 'episodeSteps': %d}, debug=False);"
+            "t0 = time.perf_counter();"
+            "env.run([%r, %r]);"
+            "wall = time.perf_counter() - t0;"
+            "final = env.steps[-1];"
+            "r0 = final[0]['reward']; r1 = final[1]['reward'];"
+            "print(json.dumps({'r0': r0, 'r1': r1, 'n_steps': len(env.steps), 'wall': wall}))"
+        ) % (str(REPO), int(seed), int(episode_steps), str(p0_path), str(p1_path))
     try:
         proc = subprocess.run(
             [sys.executable, "-c", code],
@@ -78,6 +96,27 @@ def _worker_play(args: tuple[int, str, str, bool, int]) -> dict:
         return {"seed": seed, "focal_is_p0": focal_is_p0, "outcome": "error",
                 "stderr": (proc.stderr or "")[:400]}
     data = json.loads(line)
+    if ffa:
+        rs = data.get("rs") or []
+        if not rs or any(r is None for r in rs):
+            outcome = "error"
+            focal_won = False
+        else:
+            # Focal is P0 by construction in FFA mode; wins iff strictly highest reward.
+            focal_won = rs[0] > max(rs[1:])
+            if focal_won:
+                outcome = "focal_win"
+            else:
+                outcome = "focal_loss"
+        return {
+            "seed": seed,
+            "focal_is_p0": True,
+            "outcome": outcome,
+            "focal_won": bool(focal_won),
+            "n_steps": data["n_steps"],
+            "wall": data["wall"],
+            "rs": rs,
+        }
     r0, r1 = data["r0"], data["r1"]
     if r0 is None or r1 is None:
         outcome = "error"
@@ -109,15 +148,17 @@ def wilson_ci(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 def _run_one_panel_entry(focal: str, opp: str, seeds: int, swap_seats: bool,
-                          episode_steps: int, workers: int) -> dict:
+                          episode_steps: int, workers: int, ffa: bool) -> dict:
     """Run focal vs one opp; return {wins, n, lo, hi, elapsed, per_game}."""
+    mode = "4P FFA (focal P0 vs 3× opp)" if ffa else "2P"
     print(f"== clean_ab focal={Path(focal).name}  opp={Path(opp).name}  "
-          f"seeds={seeds}  swap_seats={swap_seats}  episode_steps={episode_steps}  workers={workers} ==")
-    tasks: list[tuple[int, str, str, bool, int]] = []
+          f"mode={mode}  seeds={seeds}  swap_seats={swap_seats}  "
+          f"episode_steps={episode_steps}  workers={workers} ==")
+    tasks: list[tuple[int, str, str, bool, int, bool]] = []
     for s in range(seeds):
-        tasks.append((s, focal, opp, True, episode_steps))   # focal as P0
-        if swap_seats:
-            tasks.append((s, focal, opp, False, episode_steps))  # focal as P1
+        tasks.append((s, focal, opp, True, episode_steps, ffa))   # focal as P0
+        if swap_seats and not ffa:
+            tasks.append((s, focal, opp, False, episode_steps, ffa))  # focal as P1 (2P only)
     t0 = time.perf_counter()
     results: list[dict] = []
     with ProcessPoolExecutor(max_workers=workers) as ex:
@@ -160,7 +201,9 @@ def main() -> int:
     ap.add_argument("--episode-steps", type=int, default=250,
                     help="Episode truncation (default 250 per PI standard procedure 2026-05-25)")
     ap.add_argument("--swap-seats", action="store_true",
-                    help="Play each seed twice (both seats). Default OFF per PI standard procedure 2026-05-25.")
+                    help="Play each seed twice (both seats). Default OFF per PI standard procedure 2026-05-25. Ignored in --ffa mode.")
+    ap.add_argument("--ffa", action="store_true",
+                    help="4P FFA mode: focal as P0, three copies of each opp at P1/P2/P3. Focal wins iff strictly highest reward.")
     ap.add_argument("--workers", type=int, default=2)
     args = ap.parse_args()
 
@@ -175,7 +218,8 @@ def main() -> int:
             print(f"opp not found: {p}", file=sys.stderr); return 2
         opps.append(str(p))
 
-    print(f"=== PANEL A/B  focal={Path(focal).name}  n_opp={len(opps)}  "
+    mode = "4P FFA" if args.ffa else "2P"
+    print(f"=== PANEL A/B  mode={mode}  focal={Path(focal).name}  n_opp={len(opps)}  "
           f"seeds={args.seeds}  episode_steps={args.episode_steps}  "
           f"swap_seats={args.swap_seats}  ===")
     print()
@@ -185,6 +229,7 @@ def main() -> int:
     for opp in opps:
         entry = _run_one_panel_entry(
             focal, opp, args.seeds, args.swap_seats, args.episode_steps, args.workers,
+            args.ffa,
         )
         panel.append(entry)
 
