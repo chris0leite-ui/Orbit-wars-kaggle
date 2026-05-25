@@ -13,28 +13,34 @@
 
 ---
 
-## Live Kaggle (snapshot 2026-05-23 21:00 UTC)
+## Live Kaggle (snapshot 2026-05-25 — refreshed from `kaggle competitions submissions orbit-wars`)
 
 Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at session start.
 
 | Sub ID | Date (UTC) | Agent | μ | Role |
 |---|---|---|---:|---|
-| **52894340** | 2026-05-21 14:33 | _phase4_step1_FND (sibling, endgame predicate + f1774a7 orbital safety) | **1117.9** | **Rolling pair (most recent)** |
-| **52893236** | 2026-05-21 13:52 | baseline_full (this branch, kitchen-sink) | **1078.0** | **Rolling pair (older half)** |
-| 52882014 | 2026-05-21 10:26 | baseline_joint_aggr_consolidated | 1124 | EVICTED — best on this branch |
-| 52874528 | 2026-05-21 06:00 | baseline_joint_aggr | 1134.9 | EVICTED |
-| 52857903 | 2026-05-20 16:12 | analytical_wait_N_traj_plus_endgame_play | 806.5 | EVICTED |
-| 52854094 | 2026-05-20 13:59 | analytical (earlier) | 829.1 | EVICTED |
-| 52827111 | 2026-05-19 19:52 | comet-aim + reactor-aware | 1122.0 | EVICTED |
+| **53001857** | 2026-05-24 23:51 | baseline_wave v3.1 (THIS branch — orbitfix peak stack + multi-source wave proposer) | **1144.1** | **Rolling pair (most recent)** |
+| **53000996** | 2026-05-24 22:38 | buildup_planner_phi1_only (sibling Q0q9T — Phi-1 leaf swap only) | **1109.8** | **Rolling pair (older half)** |
+| 52993021 | 2026-05-24 16:10 | concentration A+B (alpha=1.5, two-call orbital) | 1117.9 | EVICTED |
+| 52968889 | 2026-05-23 23:59 | buildup_planner (BUILDUP MILP + CONSOLIDATION + FINISHER) | 1142.4 | EVICTED |
+| 52966655 | 2026-05-23 21:18 | wave V3 (leaf-Δ gate + planet_positions cache) | 1141.0 | EVICTED |
+| **52912707** | 2026-05-22 04:56 | **baseline_joint_aggr_consolidated_orbitfix** (B1-B7 orbital-safety modeling fix) | **1165.4** | **TEAM PEAK** — EVICTED |
+| 52744856 | 2026-05-17 14:17 | composite_a2_hybrid (composite head 2P + A2 4P) | 1149.2 | EVICTED |
+| 52754310 | 2026-05-17 22:06 | trajectory chooser v4 + wait_N + wallclock budget | 1143.7 | EVICTED |
+| 52784853 | 2026-05-18 17:42 | PV off + bug #3/#4/#12 fixes | 1130.4 | EVICTED |
+| 52874528 | 2026-05-21 06:00 | baseline_joint_aggr (JOINT structural lift) | 1128.8 | EVICTED |
 | 52811320 | 2026-05-19 12:54 | hold-feasibility solo | 1135.1 | EVICTED |
-| **52744856** | 2026-05-17 14:17 | composite_a2_hybrid (composite head 2P + A2 4P) | **1149.2** | **TEAM PEAK** — EVICTED |
+| 52882014 | 2026-05-21 10:26 | baseline_joint_aggr_consolidated | 1124.0 | EVICTED |
+| 52827111 | 2026-05-19 19:52 | comet-aim + reactor-aware | 1122.0 | EVICTED |
+| 52766596 | 2026-05-18 07:12 | Direction B v3 joint candidate evaluation | 1118.3 | EVICTED |
+| 52894340 | 2026-05-21 14:33 | _phase4_step1_FND (endgame predicate + orbital safety) | 1092.3 | EVICTED |
 
-- **Rolling pair floor:** μ = 1078.0 (baseline_full).
-- **Rolling pair ceiling:** μ = 1117.9 (_phase4_step1_FND).
-- **Team peak (evicted):** μ = 1149.2 (sub 52744856).
-- **Floor recovered from 5/20:** previous rolling pair was [829, 806]; current floor 1078 is +249 μ over that.
-- **Daily submission budget:** 5/day. Today (2026-05-23 UTC) used: 0. 5 remaining. Last submit was 5/21.
-- **Deadline:** 2026-06-23 23:59 UTC. **~31 days remain.**
+- **Rolling pair floor:** μ = 1109.8 (buildup_planner_phi1_only, sibling branch Q0q9T).
+- **Rolling pair ceiling:** μ = 1144.1 (baseline_wave v3.1, THIS branch).
+- **Team peak (evicted):** μ = **1165.4** (sub **52912707** baseline_joint_aggr_consolidated_orbitfix, 2026-05-22, branch `claude/review-skills-improvements-moKOR`). Beat prior peak (composite_a2_hybrid 1149.2) by **+16.2 μ** via B1-B7 orbital-safety modeling fix (Rule 40 — modeling fix, not restriction-tuning).
+- **baseline_wave v3.1 outcome (THIS branch):** settled at μ=**1144.1**, FAR above the predicted 1000-1100 band. The pre-submit hypothesis "regression vs orbitfix peak μ=1165.4; PI learning submit" was wrong by ~140 μ in our favour — the multi-source wave proposer is the real lift, not just a calibration probe. n=8 local A/B vs orbitfix (3/8 win-by-reward) under-predicted live result.
+- **Daily submission budget:** 5/day. Today (2026-05-25 UTC) used: 0. 5 remaining. Last submit was 2026-05-24 23:51 UTC.
+- **Deadline:** 2026-06-23 23:59 UTC. **~29 days remain.**
 
 ---
 
@@ -71,7 +77,7 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
   - `claude/audit-workflow-performance-btjeK` — production line + audit infra.
   - `claude/analyze-game-strategy-EpMVP` — modular phase ports (Phases 0-6 gated off).
 - **Sibling (closed):** `claude/phase7-btjek-chain-bonus` — chain-bonus axis exhausted (Rule 37) on 2026-05-20.
-- **Lineage:** v8_scavenge → v15_banded → trajectory v4 → composite head 2P + A2 4P → comet-aim+reactor → hold-feasibility solo. Peak μ=1149.2 (sub 52744856, EVICTED).
+- **Lineage:** v8_scavenge → v15_banded → trajectory v4 → composite head 2P + A2 4P → comet-aim+reactor → hold-feasibility solo → **baseline_joint_aggr_consolidated_orbitfix (μ=1165.4, TEAM PEAK)** → baseline_wave v3.1 (μ=1144.1, current rolling-pair ceiling). Lineage peak EVICTED.
 - **Status:** live champion lineage. v16-v20 chooser axis falsified (Rule 37). Chain-bonus axis exhausted (Rule 37). Current pivot to physics-driven mechanisms.
 - **Latest finding (btjeK, 2026-05-20 PM):** H44 corrected — landing-capture failures are **65% fleet-destroyed-in-flight** (`audit/2026-05-21-h44-phase1-CORRECTED.md`). Substantive new physics-driven mechanism candidate.
 - **EpMVP latest:** Phase 4 (defensive migrations, gated off) + Phase 6 (chain-capture bonus, Claws relay pattern) landed 2026-05-20. Phases 0-6 individually env-var gated. Bundler upgraded for inline agent submodules + explicit-name imports.

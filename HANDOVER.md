@@ -20,18 +20,17 @@
 4. **This file** — session-start prompt below.
 5. `audit/friction.md` if you're about to touch a fragile path.
 
-## Where we are (2026-05-20 17:00 UTC)
+## Where we are (2026-05-25 — refreshed from `kaggle competitions submissions orbit-wars`)
 
-- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC. **34 days remain.**
+- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC. **~29 days remain.**
 - **Rolling-last-2 (Kaggle auto-keeps these two):**
-  - 52857903 (μ 806.5) — analytical_wait_N_traj_plus_endgame_play (2026-05-20 16:12)
-  - 52854094 (μ 829.1) — analytical (2026-05-20 13:59)
-- **Team peak (EVICTED):** μ 1149.2 (sub 52744856, composite_a2_hybrid, 2026-05-17).
-- **Floor lost in 24 h:** ~320 μ. The five-step eviction chain that
-  caused this is documented in `state/MULTI_BRANCH.md` and is the
-  origin of new Rule 42 (pre-submit cross-branch coordination gate).
-- **Daily submission budget:** 5/day. 5/20 used: 2. 3 slots remain.
-- **Floor-at-risk flag:** **TRUE** — rolling pair is 320 μ below team peak.
+  - **53001857** (μ **1144.1**) — **baseline_wave v3.1** (THIS branch; 2026-05-24 23:51)
+  - **53000996** (μ **1109.8**) — buildup_planner_phi1_only (sibling Q0q9T; 2026-05-24 22:38)
+- **Team peak (EVICTED):** μ **1165.4** (sub **52912707** baseline_joint_aggr_consolidated_orbitfix, 2026-05-22, branch `claude/review-skills-improvements-moKOR`). Beat prior peak (composite_a2_hybrid 1149.2) by +16.2 μ via B1-B7 orbital-safety modeling fix.
+- **Other strong evicted subs:** composite_a2_hybrid 1149.2 (5/17), trajectory v4 1143.7 (5/17), buildup_planner 1142.4 (5/23), wave V3 1141.0 (5/23), hold-feasibility 1135.1 (5/19), PV-off 1130.4 (5/18), joint_aggr 1128.8 (5/21), consolidated 1124.0 (5/21).
+- **Floor recovered:** rolling-pair floor μ=1109.8 is **+303 μ** over the 5/20 trough [829, 806].
+- **Daily submission budget:** 5/day. 5/25 used: 0. 5 slots remain.
+- **Floor-at-risk flag:** **FALSE** — rolling pair is only 21 μ below team peak; healthy.
 
 ## Day-N PM extract-physics-trajectory-Vjaz9 (2026-05-22)
 
@@ -233,7 +232,7 @@ branches. No code changed. New / edited docs:
 | Track | Lead branch | Best result | Status | Next action |
 |---|---|---|---|---|
 | **A — Analytical chooser** | `strategy-framework-design-OyoYR-rebased` | μ 829.1 (sub 52854094) — both live pushes regressed | knowledge-base 5/20: "axis closed (10 slices, 0 lift)"; architectural bind: analytical needs multi-turn glue OR must replace rollout entirely | Decide: park, or pivot to analytical-leaf-inside-rollout |
-| **B — Hybrid-sim production** | `audit-workflow-performance-btjeK` (production) + `analyze-game-strategy-EpMVP` (phases) | μ 1149.2 (EVICTED) | Live champion lineage. H44 finding 5/20: 65% fleet-destroyed-in-flight — new physics-driven mechanism candidate | (i) hold-feasibility solo validation (btjeK Phase B); (ii) H44 defensive mechanism design; (iii) EpMVP Phase 4/6 commissioning |
+| **B — Hybrid-sim production** | `audit-workflow-performance-btjeK` (production) + `analyze-game-strategy-EpMVP` (phases) + `review-skills-improvements-moKOR` (orbital-safety peak) + THIS branch (baseline_wave) | **μ 1165.4 (EVICTED)** — sub 52912707 baseline_joint_aggr_consolidated_orbitfix; current rolling-pair ceiling μ 1144.1 (baseline_wave v3.1) | Live champion lineage. H44 finding 5/20: 65% fleet-destroyed-in-flight — physics-driven mechanism candidate. baseline_wave v3.1 multi-source wave proposer settled +44-144 μ over local prediction. | (i) hold-feasibility solo validation (btjeK Phase B); (ii) H44 defensive mechanism design; (iii) EpMVP Phase 4/6 commissioning; (iv) wave v5.1 multi-anchor + overkill (see commit 7fc52cf this branch) |
 | **C — Verify-first + Goal-directed** | `ml-competition-strategy-PFhzM` (+ `precision-physics-engine-ymJkA` substrate) | Phase A Test 3 PASS; wrap-baseline 12/32 = 37.5% (only positive signal vs production) | greedy_expand (60 LOC) tied goal_planner (500 LOC); chooser axis confirmed neutral | Decide: is wrap-baseline-as-veto a viable design? Or is Track-C work substrate-only? |
 
 ## Next-session first actions (ranked by EV / cost)
@@ -255,11 +254,18 @@ Following the 6-step consolidation-merge gate in `state/TOOLS.md`:
    - `tests/test_baseline_replay_regression.py` (EpMVP)
    - `tests/test_migration_solver.py` (EpMVP)
 
-### Priority 2 — recovery submission planning
+### Priority 2 — recovery submission planning (STALE — pair recovered)
 
-The rolling-last-2 is 320 μ below team peak. Three sub-IDs have evidence
-of being strong:
+**As of 2026-05-25, the floor-recovery context is no longer the priority.**
+Rolling pair is now [μ=1109.8, μ=1144.1] — only 21 μ below the all-time
+team peak (52912707 μ=1165.4). Recovery from the 5/20 ~320 μ trough is
+complete; next-action focus shifts to **lift over current pair** rather
+than floor protection.
 
+For historical reference, the strongest evicted submissions with
+known-good bundles still in submission history:
+
+- **52912707** (μ 1165.4, baseline_joint_aggr_consolidated_orbitfix — all-time peak)
 - **52744856** (μ 1149.2, composite_a2_hybrid 2P + A2 4P)
 - **52754310** (μ 1143.7, trajectory v4 + wait_N + wallclock)
 - **52811320** (μ 1135.1, hold-feasibility solo)
