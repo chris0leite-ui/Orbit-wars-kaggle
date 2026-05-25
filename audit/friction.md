@@ -118,7 +118,45 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
-## 2026-05-22 (claude/review-skills-improvements-moKOR — orbital safety completion + ship)
+## 2026-05-25 (claude/competitive-programming-strategy-ESwSv — baseline_wave v5/v5.1)
+
+- `tag: wave-mechanical-vs-quality-test-gap` — post-v5
+  implementation, monkey-patched wave-emission counter on seed
+  799069305 showed 89 turns of wave activity vs v3.1's 0. Took
+  that as validation and went straight to A/B; result was 2/16
+  wins (worse than v3.1's 3/16). The probe measured candidate
+  *generation* not candidate *quality* — orbitfix's
+  `BASELINE_REINFORCE_ANTICIPATE` defends waves intercept-
+  efficiently, so the agent's waves CONNECTED-zero of the time.
+  **Fix:** when validating a candidate-generator fix, the
+  positive evidence required is a per-leg outcome trace on a
+  game vs the GATE opponent (did waves connect? get reinforced
+  against? bounce off defense?), not an emission count. Emission
+  counts are a precondition, not a signal.
+
+- `tag: replay-as-strong-prior-trap` — n=1 Aidan replay
+  screenshot drove a 3-edit code patch (multi-anchor, overkill,
+  turn-gated stockpile) plus 5 new tests plus full bundle —
+  ~1.5h compute. The intermediate diagnostic I skipped:
+  single-game trace of OUR v3.1 agent on Aidan's seed to see
+  WHY waves didn't fire (vs the assumed reasons). Would have
+  taken ~5 min and might have rejected one or more of the three
+  proposed fixes before implementation. **Fix:** replay-driven
+  prior → ALWAYS sandwich with a cheap diagnostic on own agent
+  before writing the patch. Compute saved per skipped fix:
+  ~30 min including tests.
+
+- `tag: rule-37-iteration-counting-ambiguity` — Rule 37 says "3
+  consecutive falsifications on same axis → STOP." This
+  session, v3.1 (single-line drop of bleed/stockpile in the
+  shim) was treated as a "hotfix" not a separate iteration —
+  so v5 was implemented as the "3rd structural attempt" when
+  arguably it was the 4th. Plan explicitly noted "this is the
+  3rd structural iteration" anyway; verdict came post-A/B-fail
+  rather than pre-implementation. **Fix:** Rule 37 should
+  define an iteration as "any commit that produces a new bundle
+  + A/B result, regardless of LOC changed" — and the iteration-
+  count gate must trigger PRE-implementation, not post-result.
 
 - `tag: bundle-agent-doesnt-inline-from-baseline-main` — bundling
   `agents/baseline_joint_aggr_consolidated_orbitfix/main.py` (a wrapper
