@@ -495,50 +495,74 @@ def test_realistic_threat_eta_inf_when_attacker_too_weak(monkeypatch):
     )
 
 
-def test_term_b_per_source_speed_not_mean_garrison(monkeypatch):
-    """Term B's reach should depend on the actual source planet's ships,
-    not on a global mean. A 2-ship planet and a 100-ship planet attacking
-    the same target should produce DIFFERENT reach contributions because
-    fleet_speed differs.
+def test_term_b_per_source_capture_capability(monkeypatch):
+    """Term B's reach should depend on source's capture capability.
+    A small source can't take a defended target; a big source can.
+
+    With the 2026-05-26 v2 capture-feasibility gate, launch = min(source,
+    capture) must be ≥ capture for reach to credit. Setup: defended target
+    that requires a meaningful launch (50 ships) to capture. A 30-ship
+    source is blocked; a 100-ship source clears the gate.
     """
     v = _reload_value_with(monkeypatch, {
         "BASELINE_FORWARD_REACH_WEIGHT": "1.0",
         "BASELINE_FORWARD_REACH_HORIZON": "15",
     })
-    # Target at distance 30. fleet_speed(2) ≈ 1.16 → eta = 30/1.16 ≈ 26
-    # turns. fleet_speed(101) ≈ 3.45 → eta = 30/3.45 ≈ 8.7 turns.
-    # With HORIZON=15: only the 100-ship source reaches; the 2-ship one
-    # does NOT.
-    # Source 2-ship board: my-planet has 2 ships; target has 100 (so
-    # capture-size = 101 but launch = min(2, 101) = 2).
-    obs_2ship = _mk_obs([
-        (0, 0, 50.0, 50.0, 1.0,   2, 3),
-        (1, 1, 80.0, 50.0, 1.0, 100, 2),
+    # Target at distance 30, defended by 50 ships (capture-size=51).
+    # 30-ship source: launch=min(30,51)=30 < 51 → feasibility blocks → reach 0.
+    # 100-ship source: launch=min(100,51)=51, fleet_speed(51) ≈ 3.15.
+    #                  eta = 30/3.15 ≈ 9.5 < 15 → reach += target.prod=4.
+    obs_30ship = _mk_obs([
+        (0, 0, 50.0, 50.0, 1.0,  30, 3),
+        (1, 1, 80.0, 50.0, 1.0,  50, 4),
     ])
-    # Source 100-ship board: same target.
     obs_100ship = _mk_obs([
         (0, 0, 50.0, 50.0, 1.0, 100, 3),
-        (1, 1, 80.0, 50.0, 1.0, 100, 2),
+        (1, 1, 80.0, 50.0, 1.0,  50, 4),
     ])
-    base_2 = v.favor(obs_2ship, 0, num_seats=2, gamma=0.99)
+    base_30 = v.favor(obs_30ship, 0, num_seats=2, gamma=0.99)
     base_100 = v.favor(obs_100ship, 0, num_seats=2, gamma=0.99)
-    strat_2 = v.favor_strategic(obs_2ship, 0, num_seats=2, gamma=0.99)
+    strat_30 = v.favor_strategic(obs_30ship, 0, num_seats=2, gamma=0.99)
     strat_100 = v.favor_strategic(obs_100ship, 0, num_seats=2, gamma=0.99)
-    term_b_2 = strat_2 - base_2
+    term_b_30 = strat_30 - base_30
     term_b_100 = strat_100 - base_100
-    # The 100-ship source can reach (eta ≈ 8.7 < 15) → reach_sum += 2 (target prod).
-    # The 2-ship source can't (eta ≈ 26 > 15) → reach_sum stays 0.
-    assert term_b_100 > term_b_2, (
-        f"Term B did not scale with source ship count: "
-        f"term_b_2={term_b_2} term_b_100={term_b_100} "
-        f"(2-ship source should have ZERO reach; 100-ship source should have positive reach)"
+    assert term_b_100 > term_b_30, (
+        f"Term B did not differentiate by capture capability: "
+        f"term_b_30={term_b_30} term_b_100={term_b_100}"
     )
-    # Spot-check magnitudes
-    assert abs(term_b_2) < 1e-6, (
-        f"2-ship source reached target it shouldn't: term_b_2={term_b_2}"
+    assert abs(term_b_30) < 1e-6, (
+        f"30-ship source got credit it shouldn't (can't take 50-ship target): "
+        f"term_b_30={term_b_30}"
     )
-    assert term_b_100 > 1.5, (
+    assert term_b_100 > 3.5, (
         f"100-ship source reach too small: term_b_100={term_b_100}"
+    )
+
+
+def test_term_b_capture_feasibility_gate(monkeypatch):
+    """A my-planet with enough ships to REACH a target in time but NOT
+    enough to capture it (launch < capture) should add ZERO to Term B.
+    This is the 2026-05-26 v2 fix for the leaf-inflation against strong
+    stockpile defenders (orbitfix-style).
+    """
+    v = _reload_value_with(monkeypatch, {
+        "BASELINE_FORWARD_REACH_WEIGHT": "1.0",
+        "BASELINE_FORWARD_REACH_HORIZON": "30",  # large — time gate not binding
+    })
+    # Target defended by 100 ships (capture-size=101). My source has 50 ships.
+    # launch = min(50, 101) = 50 < 101 → feasibility gate blocks.
+    # Without the gate, fleet_speed(50) ≈ 2.5, eta = 20/2.5 = 8 < 30 → would
+    # have credited target.prod=4 to reach. With the gate: blocked → 0.
+    obs = _mk_obs([
+        (0, 0, 50.0, 50.0, 1.0,  50, 3),
+        (1, 1, 70.0, 50.0, 1.0, 100, 4),
+    ])
+    base = v.favor(obs, 0, num_seats=2, gamma=0.99)
+    strat = v.favor_strategic(obs, 0, num_seats=2, gamma=0.99)
+    term_b = strat - base
+    assert abs(term_b) < 1e-6, (
+        f"Term B credited reach without capture feasibility: term_b={term_b} "
+        f"(expected 0 — 50-ship source can't capture 100-ship target)"
     )
 
 
