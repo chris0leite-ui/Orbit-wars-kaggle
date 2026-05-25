@@ -227,52 +227,131 @@ def favor_hybrid(obs, me: int, num_seats: int = 2,
     return favor(obs, me, num_seats, gamma)
 
 
+MIN_FLEET_SIZE_LOCAL = 2  # mirrors agents/baseline/proposer.MIN_FLEET_SIZE
+
+
+def _realistic_threat_eta(d_ships: float, d_x: float, d_y: float,
+                          a_ships: float, a_x: float, a_y: float) -> float:
+    """Straight-line ETA for an attacker at (a_x, a_y) with `a_ships`
+    garrison to capture a defender at (d_x, d_y) with `d_ships`.
+
+    Models the realistic launch: the attacker sends a capture-size fleet
+    (`max(MIN_FLEET_SIZE, d_ships + 1)`). Speed is `fleet_speed(launch)`
+    at that size. Returns `inf` if the attacker cannot afford a capture-
+    size launch (no threat from that source).
+
+    The speed depends on the LAUNCH size, not on the attacker's total
+    garrison or on the defender's garrison directly. fleet_speed is
+    monotone increasing in ship count (lib/fleet.py:20-35) — so the
+    capture-size launch travels FASTER against a well-defended planet
+    than against a near-neutral one (you have to send more, you fly
+    quicker). This is the right physics for "how soon could opp reach
+    me realistically?", replacing the prior MIN_FLEET_SIZE-floor
+    approximation that under-estimated all threats.
+    """
+    from lib.fleet import speed as fleet_speed
+    capture = max(MIN_FLEET_SIZE_LOCAL, int(d_ships) + 1)
+    if int(a_ships) < capture:
+        return float("inf")  # attacker can't field a capture-size launch
+    v = fleet_speed(capture)
+    if v <= 0.0:
+        return float("inf")
+    return math.hypot(a_x - d_x, a_y - d_y) / v
+
+
+def _hold_discounted_prod(planets, self_owner: int, threats,
+                          horizon: float) -> float:
+    """Sum `prod * hold_score` over `self_owner`'s planets.
+
+    `threats` is a list of (x, y, ships) tuples describing the attacker
+    planets that could threaten `self_owner`'s holdings. The hold score
+    for each owned planet is `min(1, min_eta / horizon)`, where
+    `min_eta` is the smallest realistic threat ETA from any attacker.
+
+    Returns the raw (undiscounted) prod sum when `horizon <= 0` or when
+    there are no threats — i.e. degenerates to the un-discounted F2
+    contribution exactly, which is what we want for parity.
+    """
+    if horizon <= 0 or not threats:
+        return sum(float(p[6]) for p in planets if int(p[1]) == self_owner)
+    total = 0.0
+    for p in planets:
+        if int(p[1]) != self_owner:
+            continue
+        p_x, p_y, p_ships = float(p[2]), float(p[3]), float(p[5])
+        min_eta = float("inf")
+        for a_x, a_y, a_ships in threats:
+            eta = _realistic_threat_eta(p_ships, p_x, p_y, a_ships, a_x, a_y)
+            if eta < min_eta:
+                min_eta = eta
+        if min_eta == float("inf"):
+            hold_score = 1.0
+        else:
+            hold_score = min(1.0, min_eta / horizon)
+        total += float(p[6]) * hold_score
+    return total
+
+
 def favor_strategic(obs, me: int, num_seats: int = 2,
                     gamma: float = DEFAULT_GAMMA) -> float:
-    """Model enrichment (Phase D, PI 2026-05-25 evening, Rule 40).
+    """Model enrichment (Phase D + 2026-05-26 modeling-correctness rewrite).
 
-    On top of the F1+F2+elim base from `favor`, adds two terms that
-    encode information the static-snapshot leaf was missing:
+    On top of the F1+F2+elim base from `favor`, three terms encode
+    information the static-snapshot leaf was missing:
 
-    Term A — Per-planet hold discount. For each of my owned planets P,
-        scale its contribution to F2 (production stream) by
-        `min(1, threat_eta / HOLD_HORIZON)`. Planets the enemy can reach
-        soon contribute less. Naturally penalises capture-then-lose
-        ("softening") because the captured planet's threat_eta is small.
-    Term B — Forward-reach. For each of my owned planets P, sum the
-        production of enemy planets reachable from P via straight-line
-        flight within `FORWARD_REACH_HORIZON` turns. Adds
-        `FORWARD_REACH_WEIGHT * sum_P reach(P)` to favor. Naturally
-        rewards frontier captures and penalises back-yard captures —
-        no "direction bonus" or "frontier bonus" needed.
+    Term A — SYMMETRIC hold discount. Each player's production stream
+        in F2 is scaled by a hold score `min(1, threat_eta / HOLD_HORIZON)`
+        per owned planet. Threat ETA is the realistic capture-size
+        launch ETA from the nearest non-owner planet. Symmetry matters:
+        the prior asymmetric version only discounted MY prod, leaving
+        opp_prod un-scaled — in 4P that tilted F2 strongly negative
+        regardless of action, and the chooser fired tiny waste fleets
+        to harvest rollout-noise positive Δs.
 
-    Term C — Finishing pressure (Phase E, 2026-05-25). Continuous bonus
-        that grows as the weakest opp's strength approaches 0. Adds
-        `FINISH_BONUS * max(0, 1 - weakest_str / FINISH_THRESHOLD)` to
-        favor. Generalises the 4P-only discrete ELIMINATION_BONUS to
-        2P AND ramps earlier (before opp is at the eliminable threshold).
-        Naturally rewards finishing weak opponents instead of nibbling.
+    Term B — Forward-reach. For each of my owned planets P, count the
+        production of enemy planets reachable from P via a realistic
+        capture-size launch within `FORWARD_REACH_HORIZON` turns. The
+        launch speed depends on the (source, target) pair — not on a
+        global mean-garrison proxy (the prior version over-estimated
+        speed for tiny-fleet sources, making 2-ship trickle launches
+        score reach as if they flew at stockpile speed).
 
-    Default knobs are the calibrated configuration of the strategic
-    head. Dispatch is OFF by default (default head is `favor`). When
-    BASELINE_VALUE_HEAD=strategic, all three terms ARE ON by default
-    with these calibrated values:
+    Term C — Finishing pressure (continuous through elimination). For
+        each EXPECTED opp seat (`num_seats - 1` of them), credit
+        `FINISH_BONUS * max(0, 1 - opp_strength / FINISH_THRESHOLD)`.
+        Eliminated seats (gone from obs) contribute the full bonus —
+        no anti-elimination cliff at the moment we land the killing
+        blow. In 4P the total snowballs toward `(num_seats - 1) *
+        FINISH_BONUS` as opps die, giving a clean gradient toward
+        finishing the game.
+
+    Knobs (all env-var configurable, all default OFF when dispatch is
+    OFF; default ON with the calibrated values when
+    BASELINE_VALUE_HEAD=strategic):
         HOLD_HORIZON=20, FORWARD_REACH_WEIGHT=0.5,
         FORWARD_REACH_HORIZON=15, FINISH_BONUS=50, FINISH_THRESHOLD=200.
-    Tune via env vars; set BASELINE_HOLD_HORIZON=0 to disable Term A,
-    BASELINE_FORWARD_REACH_WEIGHT=0 to disable Term B,
-    BASELINE_FINISH_BONUS=0 to disable Term C (also restores the
-    discrete 4P ELIMINATION_BONUS).
 
-    Term C subsumes the discrete 4P ELIMINATION_BONUS: when Term C is
-    active (FINISH_BONUS>0), the +55 discrete bonus does NOT also fire
-    — Term C IS the continuous generalisation. When Term C is OFF
-    (FINISH_BONUS=0), the discrete +55 bonus fires as before for
-    back-compat parity.
+    BASELINE_HOLD_HORIZON=0 disables Term A (both sides) and degenerates
+    F2 to the un-discounted favor F2. BASELINE_FORWARD_REACH_WEIGHT=0
+    disables Term B. BASELINE_FINISH_BONUS=0 disables Term C AND
+    restores the discrete 4P ELIMINATION_BONUS (back-compat parity).
+
+    Approximations kept (with reasons):
+      - Static planet positions at the leaf. The leaf is computed AFTER
+        the rollout (positions already advanced K steps by fs_step),
+        but the further HOLD_HORIZON / FORWARD_REACH_HORIZON projection
+        from leaf time uses straight-line distance, ignoring orbital
+        motion. Exact for static planets; bounded error for orbiters.
+        Plumbing `lib/orbit.predict_relative_cached` here is a separate
+        experiment with its own perf budget.
+
+    Approximations removed: ships_proxy mean garrison in Term B, the
+    MIN_FLEET_SIZE threat-speed floor in Term A, the ships>=2 opp-planet
+    filter (subsumed by the threat-eta helper).
 
     Parity: with HOLD_HORIZON=0 AND FORWARD_REACH_WEIGHT=0 AND
-    FINISH_BONUS=0, this reduces to `favor` exactly (in both 2P and
-    4P branches).
+    FINISH_BONUS=0, this reduces to `favor` exactly (both 2P and 4P
+    branches).
     """
     planets = _read(obs, "planets", []) or []
     fleets = _read(obs, "fleets", []) or []
@@ -299,12 +378,13 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
         if o != me and o >= 0
     )
 
-    # Opp aggregation: same as `favor` (2P max, 4P weighted-sum-with-weakest-1.5x).
+    # --- F1 aggregation: 2P max-of-opps, 4P weighted-sum with weakest×1.5.
+    # F2 numerator + opp-prod-discounted are built below using the
+    # SAME aggregation rule so the discount is symmetric.
     elim_eligible = False
     weakest_str = 0.0
     if num_seats <= 2 or len(opps) < 2:
         opp_ships = max((ships_by_owner.get(o, 0.0) for o in opps), default=0.0)
-        opp_prod = max((prod_by_owner.get(o, 0.0) for o in opps), default=0.0)
     else:
         opp_strengths = {
             o: ships_by_owner.get(o, 0.0)
@@ -318,93 +398,81 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
             * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
             for o in opps
         )
-        opp_prod = sum(
-            prod_by_owner.get(o, 0.0)
-            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
-            for o in opps
-        )
         elim_eligible = True
 
-    # Term A — hold-discount on MY planets. Uses a direct straight-line
-    # approximation of threat_eta from each my-planet to the nearest opp
-    # planet (Phase F F7 perf rewrite: was WorldModel.from_world per-leaf,
-    # which dropped 11.8% of candidates by budget in 4P diagnostic).
-    # The approximation loses in-flight-fleet contribution but that's
-    # acceptable at the leaf (most in-flight fleets have arrived by horizon).
-    # HOLD_HORIZON=0 disables Term A (every planet gets hold_score=1.0).
-    if HOLD_HORIZON <= 0:
-        my_prod_discounted = prod_by_owner.get(me, 0.0)
-    else:
-        my_prod_discounted = 0.0
-        try:
-            from lib.fleet import speed as fleet_speed
-            # Phase F bug-fix (post-4P-regression diagnosis): only opp planets
-            # with enough ships to launch a min-size attack count as threats.
-            # The previous approximation treated 0/1-ship opp planets as
-            # threats because of their POSITION, which in 4P (with ~10-15
-            # opp planets, many at low garrison) made every my-planet look
-            # threatened → my_prod_discounted collapsed → favor lost its
-            # production-economy signal. WorldModel.time_to_enemy_threat
-            # did this filter implicitly; the approximation must too.
-            _MIN_LAUNCH = 2  # mirrors lib's MIN_FLEET_SIZE
-            opp_planets_list = [
-                p for p in planets
-                if int(p[1]) >= 0 and int(p[1]) != me and int(p[5]) >= _MIN_LAUNCH
-            ]
-            # Approximate launch speed from the slowest realistic opp launch
-            # (small fleets fly fastest in this game; opp typically launches
-            # capture-size). Use MIN_FLEET_SIZE=2 as the floor.
-            v_opp = fleet_speed(2)
-            for p in planets:
-                if int(p[1]) != me:
-                    continue
-                px, py = float(p[2]), float(p[3])
-                # threat_eta ≈ nearest opp planet's straight-line ETA at v_opp.
-                # No opp → no threat (hold_score = 1.0).
-                if not opp_planets_list or v_opp <= 0.0:
-                    hold_score = 1.0
-                else:
-                    min_eta = float("inf")
-                    for ep in opp_planets_list:
-                        ex, ey = float(ep[2]), float(ep[3])
-                        dist = math.hypot(ex - px, ey - py)
-                        eta = dist / v_opp
-                        if eta < min_eta:
-                            min_eta = eta
-                    if min_eta == float("inf"):
-                        hold_score = 1.0
-                    else:
-                        hold_score = min(1.0, min_eta / HOLD_HORIZON)
-                my_prod_discounted += float(p[6]) * hold_score
-        except (KeyError, IndexError, AttributeError, ValueError, TypeError, ZeroDivisionError):
-            # Narrow catch (Phase F F3): only the error classes a malformed
-            # mid-rollout obs could plausibly raise. Anything else (SystemExit,
-            # MemoryError, programmer bugs) propagates. Bumps a counter so
-            # silent disablement is observable from harness scripts.
-            global _TERM_A_FALLBACK_COUNT, _TERM_A_WARNED
-            _TERM_A_FALLBACK_COUNT += 1
-            if not _TERM_A_WARNED:
-                import warnings
-                warnings.warn(
-                    "favor_strategic Term A fell back to undiscounted my_prod "
-                    "(malformed mid-rollout obs?). Further fallbacks counted in "
-                    "value._TERM_A_FALLBACK_COUNT but not warned.",
-                    RuntimeWarning,
-                    stacklevel=2,
+    # --- Term A: symmetric hold-discount on prod (both my and opp).
+    # Threats to MY prod = all non-me, non-neutral planets.
+    # Threats to opp O's prod = MY planets (we are the only attacker we model
+    # in the discount; cross-opp combat exists but its in-leaf value is
+    # captured by the rollout dynamics, not the leaf). Both sides use the
+    # SAME _realistic_threat_eta physics so F2 is a like-for-like ratio.
+    try:
+        all_other_threats = [
+            (float(p[2]), float(p[3]), float(p[5]))
+            for p in planets
+            if int(p[1]) >= 0 and int(p[1]) != me
+        ]
+        my_threats = [
+            (float(p[2]), float(p[3]), float(p[5]))
+            for p in planets
+            if int(p[1]) == me
+        ]
+        my_prod_discounted = _hold_discounted_prod(
+            planets, me, all_other_threats, HOLD_HORIZON,
+        )
+        # Per-opp discounted prod, then aggregated by the same 2P-max /
+        # 4P-weighted-sum rule used for opp_ships above.
+        if num_seats <= 2 or len(opps) < 2:
+            if not opps:
+                opp_prod_discounted = 0.0
+            else:
+                opp_prod_discounted = max(
+                    _hold_discounted_prod(planets, o, my_threats, HOLD_HORIZON)
+                    for o in opps
                 )
-                _TERM_A_WARNED = True
-            my_prod_discounted = prod_by_owner.get(me, 0.0)
+        else:
+            opp_prod_discounted = 0.0
+            for o in opps:
+                w = WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0
+                opp_prod_discounted += w * _hold_discounted_prod(
+                    planets, o, my_threats, HOLD_HORIZON,
+                )
+    except (KeyError, IndexError, AttributeError, ValueError, TypeError, ZeroDivisionError):
+        # F3 observability — same narrow catch as the pre-rewrite version.
+        # Fall back to un-discounted F2 so a malformed mid-rollout obs
+        # degrades gracefully rather than zero-ing the leaf.
+        global _TERM_A_FALLBACK_COUNT, _TERM_A_WARNED
+        _TERM_A_FALLBACK_COUNT += 1
+        if not _TERM_A_WARNED:
+            import warnings
+            warnings.warn(
+                "favor_strategic Term A fell back to undiscounted my_prod "
+                "(malformed mid-rollout obs?). Further fallbacks counted in "
+                "value._TERM_A_FALLBACK_COUNT but not warned.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            _TERM_A_WARNED = True
+        my_prod_discounted = prod_by_owner.get(me, 0.0)
+        if num_seats <= 2 or len(opps) < 2:
+            opp_prod_discounted = max(
+                (prod_by_owner.get(o, 0.0) for o in opps), default=0.0,
+            )
+        else:
+            opp_prod_discounted = sum(
+                prod_by_owner.get(o, 0.0)
+                * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
+                for o in opps
+            )
 
     pv = pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS)
-    score = (my_ships - opp_ships) + (my_prod_discounted - opp_prod) * pv
+    score = (my_ships - opp_ships) + (my_prod_discounted - opp_prod_discounted) * pv
 
-    # Elimination bonus — uses RAW my_prod for the strength check
-    # (Phase F F4: was incorrectly using my_prod_discounted, which made
-    # the gate harder to clear in exactly the threatened-defender scenarios
-    # where Term A's discount fires hardest — opposite of intent).
-    # ALSO Phase F F2: suppressed when Term C is active. Term C subsumes
-    # the discrete elim_bonus as the continuous generalisation; firing
-    # both stacks the finishing-pressure signal.
+    # --- Discrete 4P ELIMINATION_BONUS (back-compat).
+    # Suppressed when Term C is active (FINISH_BONUS > 0) — Term C IS the
+    # continuous generalisation. Uses RAW my_prod for the strength gate
+    # (F4: discount in the gate makes the gate harder to clear in exactly
+    # the threatened-defender case the gate exists for).
     if elim_eligible and FINISH_BONUS <= 0:
         my_prod_raw = prod_by_owner.get(me, 0.0)
         my_strength = my_ships + my_prod_raw * STRENGTH_PROD_WEIGHT
@@ -412,7 +480,11 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
                 and my_strength >= ELIMINATION_GATE_RATIO * weakest_str):
             score += ELIMINATION_BONUS
 
-    # Term B — forward-reach bonus.
+    # --- Term B: per-(src, tgt) realistic-launch forward reach.
+    # Speed = fleet_speed(realistic capture-size launch from src to tgt),
+    # bounded by src's actual garrison. A 2-ship source plays at 2-ship
+    # speed; a 100-ship source attacking a strong defender plays at
+    # capture-size speed. No global mean-garrison fudge.
     if FORWARD_REACH_WEIGHT > 0.0:
         from lib.fleet import speed as fleet_speed
         my_planets_list = [p for p in planets if int(p[1]) == me]
@@ -421,48 +493,46 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
             if int(p[1]) >= 0 and int(p[1]) != me
         ]
         if my_planets_list and enemy_planets_list:
-            # Approximate launch speed via mean garrison; the chooser's actual
-            # launches use the source's ship count, but this is a reach proxy
-            # not an admissibility test.
-            ships_proxy = max(
-                2.0,
-                sum(float(p[5]) for p in my_planets_list) / len(my_planets_list),
-            )
-            v = fleet_speed(int(ships_proxy))
-            if v > 0.0:
-                reach_sum = 0.0
-                for mp in my_planets_list:
-                    mx, my_p = float(mp[2]), float(mp[3])
-                    for ep in enemy_planets_list:
-                        ex, ey = float(ep[2]), float(ep[3])
-                        dist = math.hypot(ex - mx, ey - my_p)
-                        eta = dist / v
-                        if eta <= FORWARD_REACH_HORIZON:
-                            reach_sum += float(ep[6])
-                score += FORWARD_REACH_WEIGHT * reach_sum
+            reach_sum = 0.0
+            for mp in my_planets_list:
+                mx, my_p = float(mp[2]), float(mp[3])
+                m_ships = float(mp[5])
+                if int(m_ships) < MIN_FLEET_SIZE_LOCAL:
+                    continue  # can't reach anywhere — no launchable garrison
+                for ep in enemy_planets_list:
+                    ex, ey = float(ep[2]), float(ep[3])
+                    e_ships = float(ep[5])
+                    capture = max(MIN_FLEET_SIZE_LOCAL, int(e_ships) + 1)
+                    launch = min(int(m_ships), capture)
+                    if launch < MIN_FLEET_SIZE_LOCAL:
+                        continue
+                    v = fleet_speed(launch)
+                    if v <= 0.0:
+                        continue
+                    dist = math.hypot(ex - mx, ey - my_p)
+                    if dist / v <= FORWARD_REACH_HORIZON:
+                        reach_sum += float(ep[6])
+            score += FORWARD_REACH_WEIGHT * reach_sum
 
-    # Term C — finishing pressure. Continuous bonus that grows as the
-    # weakest opp's strength approaches 0. Applies in BOTH 2P and 4P
-    # (generalises the 4P-only discrete ELIMINATION_BONUS — see F2
-    # suppression above). Disabled when FINISH_BONUS=0 or
-    # FINISH_THRESHOLD<=0 (Phase F F1: avoids ZeroDivisionError /
-    # sign-flip if operator sets threshold non-positive).
-    if opps and FINISH_BONUS > 0 and FINISH_THRESHOLD > 0:
-        # Phase F F5: filter to opps with prod > 0 (i.e. still own at
-        # least one planet). An opp with only in-flight residual ships
-        # and no production can't be 'finished by a launch' — they die
-        # automatically next turn. Excluding them so finishing-pressure
-        # tracks a meaningful target.
-        finishable_opps = [o for o in opps if prod_by_owner.get(o, 0.0) > 0.0]
-        if finishable_opps:
-            opp_strengths_c = {
-                o: ships_by_owner.get(o, 0.0)
-                   + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT
-                for o in finishable_opps
-            }
-            target_str = min(opp_strengths_c.values())
-            finishing_pressure = max(0.0, 1.0 - target_str / FINISH_THRESHOLD)
-            score += FINISH_BONUS * finishing_pressure
+    # --- Term C: finishing pressure, continuous through elimination.
+    # Sum FINISH_BONUS * (1 - strength/threshold) over EXPECTED opp seats
+    # (num_seats - 1). Opps present in obs scale by their current strength;
+    # opp seats missing from obs (eliminated — no planets, no in-flight
+    # ships) credit the full FINISH_BONUS. This removes the anti-cliff
+    # the prior min-over-finishable_opps produced when the weakest opp
+    # transitions from low-strength to gone.
+    if FINISH_BONUS > 0 and FINISH_THRESHOLD > 0 and num_seats >= 2:
+        expected_opps = max(0, int(num_seats) - 1)
+        finishing_score = 0.0
+        for o in opps:
+            str_o = (ships_by_owner.get(o, 0.0)
+                     + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT)
+            finishing_score += FINISH_BONUS * max(
+                0.0, 1.0 - str_o / FINISH_THRESHOLD,
+            )
+        dead_count = max(0, expected_opps - len(opps))
+        finishing_score += FINISH_BONUS * dead_count
+        score += finishing_score
 
     return score
 

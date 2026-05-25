@@ -102,15 +102,26 @@ def test_parity_with_knobs_off_4p(monkeypatch):
 
 
 def test_term_a_discounts_threatened_planet(monkeypatch):
-    """A planet with imminent threat scores lower than the same planet safe."""
+    """A planet with imminent threat scores lower than the same planet
+    safe — Term A discounts my prod when opp can credibly attack me.
+
+    2026-05-26 rewrite: set up so opp CAN credibly capture (opp has
+    enough ships for capture-size launch); the symmetric discount on
+    OPP's prod doesn't fire because I lack ships for a capture-size
+    counter-launch. This isolates the my-side discount.
+    """
     v = _reload_value_with(monkeypatch, {"BASELINE_HOLD_HORIZON": "20"})
+    # Asymmetric capability: me with 5 ships, opp with 100. Opp can
+    # capture me (capture-size = 6, opp has 100); I can't capture opp
+    # (capture-size = 101, I have 5). Only my side gets the Term A
+    # discount.
     obs_safe = _mk_obs([
-        (0, 0,  5.0,  5.0, 1.0, 10, 3),
-        (1, 1, 95.0, 95.0, 1.0,  8, 2),
+        (0, 0,  5.0,  5.0, 1.0,   5, 3),
+        (1, 1, 95.0, 95.0, 1.0, 100, 2),
     ])
     obs_close = _mk_obs([
-        (0, 0, 40.0, 50.0, 1.0, 10, 3),
-        (1, 1, 60.0, 50.0, 1.0,  8, 2),
+        (0, 0, 40.0, 50.0, 1.0,   5, 3),
+        (1, 1, 60.0, 50.0, 1.0, 100, 2),
     ])
     s_safe = v.favor_strategic(obs_safe, 0, num_seats=2, gamma=0.99)
     s_close = v.favor_strategic(obs_close, 0, num_seats=2, gamma=0.99)
@@ -281,84 +292,270 @@ def test_term_c_threshold_negative_does_not_crash_or_explode(monkeypatch):
 
 
 def test_term_c_subsumes_elim_bonus_in_4p(monkeypatch):
-    """Phase F F2: in 4P, Term C (continuous) REPLACES the discrete
-    ELIMINATION_BONUS=55 rather than stacking on top of it.
+    """In 4P, Term C REPLACES the discrete ELIMINATION_BONUS (does not
+    stack with it). With the 2026-05-26 rewrite, Term C sums over the
+    expected opp seats — magnitude is the sum of per-opp pressures,
+    not a single weakest-pick.
     """
     v = _reload_value_with(monkeypatch, {
         "BASELINE_FINISH_BONUS": "50",
         "BASELINE_FINISH_THRESHOLD": "200",
     })
-    # 4P where weakest opp is finishable (strength ≤ 110) AND my_strength
-    # clears the 0.9× gate.
     obs = _mk_obs([
         (0, 0, 30.0, 50.0, 1.0, 200, 8),  # me — strong
-        (1, 1, 70.0, 50.0, 1.0,  30, 2),  # opp 1
-        (2, 2, 50.0, 30.0, 1.0,   5, 2),  # opp 2 — weakest (strength = 5 + 30 = 35)
-        (3, 3, 50.0, 70.0, 1.0,  40, 3),  # opp 3
+        (1, 1, 70.0, 50.0, 1.0,  30, 2),  # opp 1, strength = 30 + 2*15 = 60
+        (2, 2, 50.0, 30.0, 1.0,   5, 2),  # opp 2 weakest, strength = 5 + 2*15 = 35
+        (3, 3, 50.0, 70.0, 1.0,  40, 3),  # opp 3, strength = 40 + 3*15 = 85
     ])
     base = v.favor(obs, 0, num_seats=4, gamma=0.99)  # has discrete +55
     strat = v.favor_strategic(obs, 0, num_seats=4, gamma=0.99)  # has Term C only
-
-    # `base` includes ELIMINATION_BONUS=55. `strat` has Term C only.
-    # Term C at target_str=35, FINISH_THRESHOLD=200 → 50 * (1 - 35/200) = 41.25.
-    # If Term C is stacked on top of the 55, strat - base ≈ 41.25.
-    # If Term C subsumes (correct), strat - base ≈ 41.25 - 55 = -13.75.
     delta = strat - base
-    assert delta < 0, (
-        f"Term C did not subsume ELIMINATION_BONUS in 4P: "
-        f"delta={delta} (expected negative ≈ -13.75 because Term C 41.25 "
-        f"replaces discrete 55)"
+    # Term C contribution (per-opp sum):
+    #   opp 1 (60): 50*(1 - 60/200) = 35.0
+    #   opp 2 (35): 50*(1 - 35/200) = 41.25
+    #   opp 3 (85): 50*(1 - 85/200) = 28.75
+    #   total ≈ 105.0
+    # `base` includes the discrete +55. `strat` SUPPRESSES the +55 and
+    # adds the per-opp Term C ≈ 105. delta = 105 - 55 = 50.
+    expected_term_c = sum(
+        50.0 * max(0.0, 1.0 - s/200.0) for s in (60.0, 35.0, 85.0)
+    )
+    expected_delta = expected_term_c - 55.0
+    assert delta == pytest.approx(expected_delta, abs=1.0), (
+        f"Term C sum/subsume wrong: delta={delta} expected≈{expected_delta} "
+        f"(Term C alone ≈{expected_term_c}, discrete elim_bonus suppressed)"
     )
 
 
-def test_term_c_excludes_zero_prod_opps(monkeypatch):
-    """Phase F F5: Term C's target_str must pick the weakest opp WITH
-    production (> 0), not a near-dead opp with zero planets / only
-    in-flight residual ships.
+def test_term_c_credits_zero_strength_opp_fully(monkeypatch):
+    """2026-05-26 modeling-correctness rewrite: an opp at strength=0
+    (planet with no ships / no production, or in-obs with zero garrison)
+    is effectively finished. Term C now credits them with the FULL
+    FINISH_BONUS — same as if they were gone from the obs entirely.
+    This is the fix for the anti-elimination cliff that biased the
+    chooser against landing killing blows in 4P FFA.
     """
     v = _reload_value_with(monkeypatch, {
         "BASELINE_FINISH_BONUS": "50",
         "BASELINE_FINISH_THRESHOLD": "200",
     })
-    # Both boards have:
-    # - me at (30, 50) with 200 ships, 8 prod
-    # - opp 1 at (70, 50) with 100 ships, 5 prod (strength 175)
-    # The "near-dead" board adds:
-    # - opp 2 with prod=0 but a tiny in-flight fleet (we simulate by
-    #   making the planet 0-ship 0-prod and adding a fleet via a
-    #   side construction below).
-    #
-    # Concretely: 4P obs where opp 2's planet has 0 ships AND 0 prod,
-    # representing a 'lost the planet' state. Term C should NOT use
-    # opp 2's strength (~0) as target_str; it should use opp 1's (175).
-    obs_dead = _mk_obs([
+    # 4P with opp 2 at zero strength (no ships, no production), the
+    # other two opps at strength = 100 + 5*15 = 175.
+    obs = _mk_obs([
         (0, 0, 30.0, 50.0, 1.0, 200, 8),
-        (1, 1, 70.0, 50.0, 1.0, 100, 5),  # opp 1 — only finishable opp
-        (2, 2, 50.0, 30.0, 1.0,   0, 0),  # opp 2 — defeated (no production)
+        (1, 1, 70.0, 50.0, 1.0, 100, 5),
+        (2, 2, 50.0, 30.0, 1.0,   0, 0),  # opp 2 — effectively eliminated
         (3, 3, 50.0, 70.0, 1.0, 100, 5),
     ])
-    # If F5 holds: target_str = min over opps with prod>0 = min(opp1, opp3)
-    # = min(100 + 75, 100 + 75) = 175.
-    # Without F5: target_str = min over all opps = opp2 = 0 + 0 = 0.
-    # Pressure(175) ≈ 0.125; bonus ≈ 6.25.
-    # Pressure(0) = 1.0; bonus = 50.
-    base = v.favor(obs_dead, 0, num_seats=4, gamma=0.99)
-    strat = v.favor_strategic(obs_dead, 0, num_seats=4, gamma=0.99)
+    base = v.favor(obs, 0, num_seats=4, gamma=0.99)
+    strat = v.favor_strategic(obs, 0, num_seats=4, gamma=0.99)
+    # `base` includes ELIMINATION_BONUS = 55 (weakest_str = 0 ≤ 110, my
+    # strength clears the 0.9× gate trivially). `strat` suppresses the
+    # discrete elim_bonus and uses Term C. Term C contribution:
+    #   opp1 at 175: 50 * (1 - 175/200) = 6.25
+    #   opp2 at 0:   50 * (1 - 0/200)   = 50.0   <-- this is the FIX
+    #   opp3 at 175: 50 * (1 - 175/200) = 6.25
+    # Total = 62.5. So strat - base ≈ 62.5 - 55 = 7.5.
     delta = strat - base
+    term_c_only = delta + 55.0  # add back the suppressed discrete elim_bonus
+    expected = 50.0 + 2 * 50.0 * (1.0 - 175.0/200.0)  # 62.5
+    assert term_c_only == pytest.approx(expected, abs=1.0), (
+        f"Term C did not credit zero-strength opp fully: "
+        f"term_c_only={term_c_only}, expected ~{expected}"
+    )
 
-    # opp 2 has prod=0 → not in favor's opps either (no F2 contribution).
-    # But favor STILL fires elim_bonus for the weakest (the 0-strength opp).
-    # When Term C is active, F2 SUPPRESSES elim_bonus. So `base` has +55,
-    # `strat` has Term C with strength=175 → bonus ≈ 6.25 (instead of 50).
-    # delta = strat - base = 6.25 - 55 ≈ -48.75. Mostly we care that
-    # Term C used a sensible target_str — verify the bonus magnitude is
-    # NOT close to 50 (the bonus if target_str=0).
-    # Term C contribution alone:
-    term_c_only = delta + 55.0  # add back the suppressed elim_bonus
-    assert 0 < term_c_only < 20, (
-        f"Term C target_str included 0-prod opp (bonus too large): "
-        f"term_c_only={term_c_only} (expected ~6.25 if opp 2 excluded; "
-        f"~50 if F5 not applied)"
+
+def test_term_c_no_cliff_at_elimination_boundary(monkeypatch):
+    """Continuity through elimination — when an opp transitions from
+    strength=0 (still in obs) to gone-from-obs (truly eliminated),
+    Term C must contribute the SAME amount in both cases. The prior
+    `min over finishable_opps` filter dropped Term C to 0 the moment
+    an opp left the finishable set; the new sum-over-expected-seats
+    accounting routes through the same FINISH_BONUS credit in both
+    boundary states.
+
+    NOTE: this test is in 2P so the 4P 1.5×-weakest opp-aggregation
+    (a pre-existing F1/F2 cliff in `favor`) does not confound the
+    Term C-only continuity claim being tested here.
+    """
+    v = _reload_value_with(monkeypatch, {
+        "BASELINE_FINISH_BONUS": "50",
+        "BASELINE_FINISH_THRESHOLD": "200",
+    })
+    obs_zero_strength = _mk_obs([
+        (0, 0, 30.0, 50.0, 1.0, 200, 8),
+        (1, 1, 70.0, 50.0, 1.0,   0, 0),  # opp in obs at exactly strength 0
+    ])
+    obs_gone = _mk_obs([
+        (0, 0, 30.0, 50.0, 1.0, 200, 8),
+        # opp eliminated — not in obs
+    ])
+    s_zero = v.favor_strategic(obs_zero_strength, 0, num_seats=2, gamma=0.99)
+    s_gone = v.favor_strategic(obs_gone, 0, num_seats=2, gamma=0.99)
+    # In `obs_zero_strength`: opps = [1] with strength 0 → Term C +=
+    #   50*(1 - 0/200) = 50. dead_count = 0.
+    # In `obs_gone`: opps = []. dead_count = 1. Term C += 50.
+    # Both states → Term C contribution = 50. Continuity.
+    # F1 and F2 are 0/200/200 and equivalent in both states (no opp
+    # ships, no opp prod). So the leaves match almost exactly.
+    assert abs(s_gone - s_zero) < 1.0, (
+        f"Term C cliff at zero-strength → gone boundary: "
+        f"s_zero={s_zero} s_gone={s_gone} diff={s_gone - s_zero}"
+    )
+
+
+# -- 2026-05-26 modeling-correctness rewrite invariants --------------
+
+
+def test_hold_discounted_prod_helper_is_symmetric(monkeypatch):
+    """Direct unit test of `_hold_discounted_prod`: the same physics
+    applies whether we discount my prod (using opp planets as threats)
+    or opp prod (using my planets as threats). This is the symmetry
+    that fixes Bug 1 — the prior version only discounted my side.
+    """
+    v = _reload_value_with(monkeypatch, {})  # knobs irrelevant; helper is direct
+    planets = [
+        (0, 0, 30.0, 50.0, 1.0,  50, 3),   # me — 50 ships, 3 prod
+        (1, 1, 60.0, 50.0, 1.0, 100, 2),   # opp — 100 ships, 2 prod
+    ]
+    # Discount me's prod, with opp's planet as the threat source.
+    threats_to_me = [(60.0, 50.0, 100.0)]   # opp planet attacking
+    my_disc = v._hold_discounted_prod(planets, 0, threats_to_me, 30)
+    # Discount opp's prod, with my planet as the threat source.
+    threats_to_opp = [(30.0, 50.0, 50.0)]   # my planet attacking
+    opp_disc = v._hold_discounted_prod(planets, 1, threats_to_opp, 30)
+
+    # Me defender (50 ships) → capture-size = 51. Opp has 100 ≥ 51.
+    # v=fleet_speed(51)≈3.15, dist=30, eta≈9.5, hold_score≈0.32 → my_disc≈0.95.
+    assert 0.5 < my_disc < 1.5, (
+        f"my_disc={my_disc} (expected ≈0.95 — opp can capture me)"
+    )
+    # Opp defender (100 ships) → capture-size = 101. Me has 50 < 101.
+    # Threat ETA = inf → hold_score = 1.0 → opp_disc = 2 (un-discounted).
+    assert opp_disc == pytest.approx(2.0, abs=1e-6), (
+        f"opp_disc={opp_disc} (expected 2.0 — me can't credibly capture opp)"
+    )
+
+
+def test_realistic_threat_eta_speed_increases_with_capture_size(monkeypatch):
+    """`_realistic_threat_eta` uses fleet_speed(capture_size), so a
+    defender with HIGHER garrison gets faster threats (attacker must
+    send more, larger fleets fly faster). Prior MIN_FLEET_SIZE-floor
+    treated all defenders identically.
+    """
+    v = _reload_value_with(monkeypatch, {})
+    # Same attacker (200 ships) and same distance (30 units). Vary
+    # defender ship count → vary capture-size → vary speed → vary ETA.
+    eta_weak = v._realistic_threat_eta(  # defender at 2 ships → capture-size 3
+        d_ships=2, d_x=0.0, d_y=0.0, a_ships=200, a_x=30.0, a_y=0.0,
+    )
+    eta_strong = v._realistic_threat_eta(  # defender at 100 ships → capture-size 101
+        d_ships=100, d_x=0.0, d_y=0.0, a_ships=200, a_x=30.0, a_y=0.0,
+    )
+    assert eta_strong < eta_weak, (
+        f"Threat-ETA didn't drop with capture-size: weak={eta_weak} "
+        f"strong={eta_strong} (large-defender attack flies faster — "
+        f"attacker must send capture-size 101 ships, faster than capture-size 3)"
+    )
+
+
+def test_realistic_threat_eta_inf_when_attacker_too_weak(monkeypatch):
+    """Attacker with fewer ships than capture-size returns inf (no
+    credible threat) — replaces the previous ships>=2 hard filter
+    with a physics-derived condition."""
+    v = _reload_value_with(monkeypatch, {})
+    eta = v._realistic_threat_eta(
+        d_ships=100, d_x=0.0, d_y=0.0, a_ships=5, a_x=30.0, a_y=0.0,
+    )
+    assert eta == float("inf"), (
+        f"Expected inf (attacker has 5 ships, needs 101 for capture) got {eta}"
+    )
+
+
+def test_term_b_per_source_speed_not_mean_garrison(monkeypatch):
+    """Term B's reach should depend on the actual source planet's ships,
+    not on a global mean. A 2-ship planet and a 100-ship planet attacking
+    the same target should produce DIFFERENT reach contributions because
+    fleet_speed differs.
+    """
+    v = _reload_value_with(monkeypatch, {
+        "BASELINE_FORWARD_REACH_WEIGHT": "1.0",
+        "BASELINE_FORWARD_REACH_HORIZON": "15",
+    })
+    # Target at distance 30. fleet_speed(2) ≈ 1.16 → eta = 30/1.16 ≈ 26
+    # turns. fleet_speed(101) ≈ 3.45 → eta = 30/3.45 ≈ 8.7 turns.
+    # With HORIZON=15: only the 100-ship source reaches; the 2-ship one
+    # does NOT.
+    # Source 2-ship board: my-planet has 2 ships; target has 100 (so
+    # capture-size = 101 but launch = min(2, 101) = 2).
+    obs_2ship = _mk_obs([
+        (0, 0, 50.0, 50.0, 1.0,   2, 3),
+        (1, 1, 80.0, 50.0, 1.0, 100, 2),
+    ])
+    # Source 100-ship board: same target.
+    obs_100ship = _mk_obs([
+        (0, 0, 50.0, 50.0, 1.0, 100, 3),
+        (1, 1, 80.0, 50.0, 1.0, 100, 2),
+    ])
+    base_2 = v.favor(obs_2ship, 0, num_seats=2, gamma=0.99)
+    base_100 = v.favor(obs_100ship, 0, num_seats=2, gamma=0.99)
+    strat_2 = v.favor_strategic(obs_2ship, 0, num_seats=2, gamma=0.99)
+    strat_100 = v.favor_strategic(obs_100ship, 0, num_seats=2, gamma=0.99)
+    term_b_2 = strat_2 - base_2
+    term_b_100 = strat_100 - base_100
+    # The 100-ship source can reach (eta ≈ 8.7 < 15) → reach_sum += 2 (target prod).
+    # The 2-ship source can't (eta ≈ 26 > 15) → reach_sum stays 0.
+    assert term_b_100 > term_b_2, (
+        f"Term B did not scale with source ship count: "
+        f"term_b_2={term_b_2} term_b_100={term_b_100} "
+        f"(2-ship source should have ZERO reach; 100-ship source should have positive reach)"
+    )
+    # Spot-check magnitudes
+    assert abs(term_b_2) < 1e-6, (
+        f"2-ship source reached target it shouldn't: term_b_2={term_b_2}"
+    )
+    assert term_b_100 > 1.5, (
+        f"100-ship source reach too small: term_b_100={term_b_100}"
+    )
+
+
+def test_term_a_threat_eta_uses_capture_size_speed(monkeypatch):
+    """Term A's threat-ETA should use the realistic capture-size launch
+    speed, not the MIN_FLEET_SIZE floor. A me-planet with HIGH garrison
+    is more threatened (faster opp capture-size launch) than a me-planet
+    with LOW garrison at the same distance — the prior version (v_opp =
+    fleet_speed(2)) treated both identically.
+    """
+    v = _reload_value_with(monkeypatch, {"BASELINE_HOLD_HORIZON": "30"})
+    # Both boards: opp planet at distance 30 with enough ships to launch
+    # a capture-size fleet. Vary MY garrison.
+    # Low-garrison me: capture-size = 3 → fleet_speed(3) ≈ 1.27
+    #                  eta = 30/1.27 ≈ 23.6 turns → hold_score ≈ 0.79.
+    # High-garrison me: capture-size = 101 → fleet_speed(101) ≈ 3.45
+    #                   eta = 30/3.45 ≈ 8.7 turns → hold_score ≈ 0.29.
+    # So the high-garrison planet's hold_score should be LOWER (more
+    # threatened) → my_prod_discounted lower → leaf lower for high-garrison.
+    obs_low = _mk_obs([
+        (0, 0, 50.0, 50.0, 1.0,   2, 3),
+        (1, 1, 80.0, 50.0, 1.0, 200, 2),
+    ])
+    obs_high = _mk_obs([
+        (0, 0, 50.0, 50.0, 1.0, 100, 3),
+        (1, 1, 80.0, 50.0, 1.0, 200, 2),
+    ])
+    # F1 differs (my_ships 2 vs 100) — strip it to isolate Term A.
+    s_low = v.favor_strategic(obs_low, 0, num_seats=2, gamma=0.99)
+    s_high = v.favor_strategic(obs_high, 0, num_seats=2, gamma=0.99)
+    # F1_low = 2 - 200 = -198. F1_high = 100 - 200 = -100.
+    # ΔF1 = -100 - (-198) = 98.
+    # Adjusted: (s_high - 98) compared to s_low → should be LOWER because
+    # high-garrison version has Term A discount its 3-prod down more.
+    s_high_minus_f1 = s_high - 98.0
+    assert s_high_minus_f1 < s_low, (
+        f"Term A did not fire stronger discount on high-garrison defender: "
+        f"s_low={s_low} (effective Term A: hold ≈ 0.79) "
+        f"s_high - ΔF1 = {s_high_minus_f1} (effective Term A: hold ≈ 0.29) — "
+        f"expected the high-garrison version to be more discounted"
     )
 
 
