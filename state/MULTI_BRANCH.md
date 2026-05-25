@@ -13,15 +13,18 @@
 
 ---
 
-## Live Kaggle (snapshot 2026-05-24 22:38 UTC)
+## Live Kaggle (snapshot 2026-05-25 11:55 UTC)
 
 Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at session start.
 
 | Sub ID | Date (UTC) | Agent | μ | Role |
 |---|---|---|---:|---|
-| **53000996** | 2026-05-24 22:38 | buildup_planner_phi1_only (Phi-1 leaf swap, this branch) | **PENDING** | **Rolling pair (most recent)** |
-| **52993021** | 2026-05-24 16:10 | buildup_planner_concentration (A+B α=1.5, C_open=1.0, C_prop=0.05; this branch) | **1116.2 (adapting)** | **Rolling pair (older half)** |
-| 52968889 | 2026-05-23 23:59 | buildup_planner (this branch, bundler-trailer fix) | 1144.5 | EVICTED 2026-05-24 by sub 53000996 |
+| **53018599** | 2026-05-25 11:54 | buildup_planner K1+Z v2 (commit 603f45f, this branch) | **PENDING** | **Rolling pair (most recent)** |
+| **53013786** | 2026-05-25 08:40 | baseline_joint_aggr_consolidated_orbitfix RESUBMIT (sibling ESwSv, commit 458f663) | **1120.1 (adapting)** | **Rolling pair (older half / strong half)** |
+| 53001857 | 2026-05-24 23:51 | baseline_wave v3.1 (sibling ESwSv) | 1126.8 | EVICTED 2026-05-25 by sub 53018599 |
+| 53000996 | 2026-05-24 22:38 | buildup_planner_phi1_only (Phi-1 leaf swap, this branch) | 1115.2 | EVICTED 2026-05-25 by sub 53013786 |
+| 52993021 | 2026-05-24 16:10 | buildup_planner_concentration (A+B α=1.5, this branch) | 1117.9 | EVICTED 2026-05-25 by sub 53001857 |
+| 52968889 | 2026-05-23 23:59 | buildup_planner (this branch, bundler-trailer fix) | 1142.4 | EVICTED 2026-05-24 by sub 53000996 |
 | 52966655 | 2026-05-23 21:18 | baseline (wave V3, sibling moKOR) | 1130.9 | EVICTED 2026-05-24 by sub 52993021 |
 | 52968305 | 2026-05-23 23:17 | buildup_planner (bundler ERROR) | — | EVICTED — ERROR |
 | 52965748 | 2026-05-23 20:26 | orbitfix_kt_p23 v5 | 1002.7 | EVICTED |
@@ -33,18 +36,19 @@ Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at sessio
 | 52874528 | 2026-05-21 06:00 | baseline_joint_aggr | 1134.9 | EVICTED |
 | **52744856** | 2026-05-17 14:17 | composite_a2_hybrid (composite head 2P + A2 4P) | **1149.2** | **TEAM PEAK** — EVICTED |
 
-- **Rolling pair floor:** TBD — both halves adapting (Rule 48). Sub 52993021 currently 1116.2; sub 53000996 starts at 600 and will adapt.
+- **Rolling pair floor:** 1120.1 (sub 53013786 strong half; adapting). Sub 53018599 starts at 600 and will adapt.
 - **Team peak (evicted):** μ = 1149.2 (sub 52744856).
-- **Daily submission budget:** 5/day. Today (2026-05-24 UTC) used: 2. 3 remaining.
-- **Floor risk:** Sub 53000996 evicts the strong half (sub 52968889 μ=1144.5). If Phi-1 settles below 52993021's adapt-curve, floor drops. PI override accepted this risk in exchange for the chance to pick up the 2P-elim-bonus signal.
+- **Daily submission budget:** 5/day. Today (2026-05-25 UTC) used: 1 (sub 53018599). 4 remaining; HOLD per Rule 48 until sub 53018599 settles.
+- **Floor risk:** Sub 53018599 evicts sub 53001857 (μ=1126.8). If K1+Z v2 settles below ~1120 the rolling-pair floor drops. K1 is bit-parity by construction; Z v2 is the only behavior change. n=64 local A/B vs phi1_only was +10.9pp parity-band; live signal pending.
 
 ## Push claim board (Rule 42)
 
 | Timestamp (UTC) | Branch | Agent | Predicted μ | Evicting (sub_id, μ) | Verdict |
 |---|---|---|---|---|---|
 | 2026-05-24 16:10 | claude/agent-design-exploration-Q0q9T | buildup_planner_concentration (commit 2878bfd) | 1100-1180 (parity-or-lift band) | sub 52966655 μ=1130.9 | GREEN (predicted band ≥ evicted μ; better-half μ=1144.5 stays in rolling pair) |
-| 2026-05-24 22:38 | claude/agent-design-exploration-Q0q9T | buildup_planner_phi1_only (commit 1f020e1 + buildup_planner main hard-set) | 1050-1200 (n=8 parity 4/8, Wilson [0.22, 0.79]) | sub 52968889 μ=1144.5 | MARGINAL (PI explicit override; predicted band overlaps evicted but central tendency below). Sub 52993021 currently 1116.2 (still adapting) anchors the other half. |
-- **Deadline:** 2026-06-23 23:59 UTC. **~31 days remain.**
+| 2026-05-24 22:38 | claude/agent-design-exploration-Q0q9T | buildup_planner_phi1_only (commit 1f020e1 + buildup_planner main hard-set) | 1050-1200 (n=8 parity 4/8, Wilson [0.22, 0.79]) | sub 52968889 μ=1144.5 | MARGINAL (PI explicit override; predicted band overlaps evicted but central tendency below). |
+| 2026-05-25 11:54 | claude/agent-design-exploration-Q0q9T | buildup_planner K1+Z v2 (commit 603f45f) | 1100-1180 (n=64 vs phi1_only 56.2% Wilson [0.441,0.677]; +10.9pp over K1-alone) | sub 53001857 μ=1126.8 | MARGINAL (PI explicit override on Rule 45 Wlo<0.50; K1 is bit-parity by construction, Z v2 is the behavior change). Sub 53013786 μ=1120.1 anchors strong half. |
+- **Deadline:** 2026-06-23 23:59 UTC. **~29 days remain.**
 
 ---
 
@@ -119,6 +123,7 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
 | Closed-form ROI as full chooser replacement | `claude/audit-workflow-performance-btjeK` | 2026-05-19 | `chooser_roi.py` Tier 1+2: 0/32 vs v7_0 / v4_planner / v3.5.1 panel. Keep code as opt-in research (`BASELINE_CHOOSER=roi`); don't ship as default |
 | Asymmetric Tier-1 baseline chooser | `claude/reverse-engineer-seat-geometry-BPJKs` (PR #31, merged to main) | 2026-05-18 | CRN-violating, 0/32 panel, reverted in commit `f28c9fc` |
 | v9-v15 chooser saturation iteration | recover-main-foundations | 2026-05-16 | Rule 37 (3-variant cap) hit at v16-v20; chooser-axis structural ceiling ~μ=1120 |
+| Proposer pre-filter tightening (Z v2 + opp-model floor + holdability floor) | `claude/agent-design-exploration-Q0q9T` | 2026-05-25 | Rule 37: three consecutive falsifications vs joint_aggr (Z v2 parity at n=64; Fix A+B 20% at n=5; Fix A alone 0% at n=5). Wins against quiet opp (phi1_only 80%) but over-restricts against aggressive opp. Reverted Fix A+B; Z v2 stays shipped (sub 53018599). Next axis = chooser-side opp model, not proposer-side thresholds. See audit/2026-05-25-consolidation-review.md + knowledge-base/thoughts/2026-05-25-k1-zv2-ship-and-axis-exhaust.md |
 
 ---
 

@@ -118,7 +118,51 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
-## 2026-05-22 (claude/review-skills-improvements-moKOR — orbital safety completion + ship)
+## 2026-05-25 (claude/agent-design-exploration-Q0q9T — K1+Z v2 ship + Fix A/B falsification)
+
+- `tag: handover-recipe-mismath-vs-env` — Layer Z v2 plan claimed
+  `eta = d/√n for n>4` but env `lib/fleet.py:speed` uses a
+  `(log n / log 1000)^1.5` curve, not √n. Existing `aim_and_eta`
+  already computes eta via `fleet_speed(ships)`, so the "make it
+  fleet-speed-aware" recipe is a no-op for the substitution as
+  written. Discovered after the Phase-1 Explore agent reported
+  the actual code path. **Fix:** when HANDOVER recipes prescribe
+  a formula, Phase-1 Explore must verify the formula against the
+  env's actual code before Phase-2 design treats it as ground
+  truth. Update HANDOVER P2 entry to reference the real bug
+  (`pred_ships` subtraction) not the spurious √n claim.
+- `tag: cache-attempt-falsified-by-rederive-feature` — Tried to
+  cache the BUILDUP opening_plan schedule once-per-game (commit
+  9870575). n=32 A/B regressed 34.4% → 9.4%. Re-deriving each turn
+  was a FEATURE, not the wallclock bug it looked like — the
+  MILP responds to mid-opening state change. Reverted (52e771c).
+  **Fix:** when caching an expensive recomputation, profile the
+  cost FIRST. opening_plan was ~5ms/call (cProfile, post-fix),
+  not the 1.7s I'd assumed from the per-opening-turn variance.
+  The variance came from `predict_relative` × candidates, not from
+  the MILP.
+- `tag: n5-too-noisy-for-falsification` — New 5×250×no-swap A/B
+  standard gave 0/5 vs joint_aggr after Fix A revert (vs 1/5 with
+  Fix A+B). Both Wilson CIs include 30-43%; the apparent 1-game
+  worsening is within sample noise. **Fix:** treat n=5 panel
+  results as triage signal (point estimate, direction) NOT
+  falsification. A column requires n≥16 for confident
+  "regression-against-this-opp" claims. Update the next iteration
+  to use n=8-16 vs the single critical opp once K1+Z v2 settles
+  live.
+- `tag: proposer-tightening-axis-exhausted-vs-joint-aggr` — Three
+  consecutive attempts to tighten the proposer's pre-filter
+  (Z v2 parity at n=64, Fix A+B 20% vs joint_aggr at n=5, Fix A
+  alone 0% vs joint_aggr at n=5) all failed against the strong
+  rolling-pair half. Rule 37 cap reached. **Fix:** next axis is
+  the chooser-side, not the proposer-side. Specifically: the
+  opp model inside the rollout (lite_greedy_policy) is too weak
+  AND too restrictive depending on the threshold — the real fix
+  is probably a structurally better opp model (priority predict
+  or behaviour-cloning from live ladder replays) not a
+  threshold tune.
+
+
 
 - `tag: bundle-agent-doesnt-inline-from-baseline-main` — bundling
   `agents/baseline_joint_aggr_consolidated_orbitfix/main.py` (a wrapper
