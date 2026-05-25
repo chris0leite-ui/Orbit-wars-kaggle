@@ -64,6 +64,11 @@ SPATIAL_DECAY = float(os.environ.get("BASELINE_SPATIAL_DECAY", "30.0"))
 HOLD_HORIZON = float(os.environ.get("BASELINE_HOLD_HORIZON", "20"))
 FORWARD_REACH_WEIGHT = float(os.environ.get("BASELINE_FORWARD_REACH_WEIGHT", "0.5"))
 FORWARD_REACH_HORIZON = float(os.environ.get("BASELINE_FORWARD_REACH_HORIZON", "15"))
+# Term C — finishing pressure (Phase E, PI 2026-05-25 evening).
+# Continuous bonus that grows as the weakest opp's strength approaches 0.
+# 0 disables Term C; default keeps parity with strategic-no-C.
+FINISH_BONUS = float(os.environ.get("BASELINE_FINISH_BONUS", "50"))
+FINISH_THRESHOLD = float(os.environ.get("BASELINE_FINISH_THRESHOLD", "200"))
 
 
 def _read(obs, attr, default):
@@ -234,11 +239,19 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
         rewards frontier captures and penalises back-yard captures —
         no "direction bonus" or "frontier bonus" needed.
 
-    Default knobs (HOLD_HORIZON=20, FORWARD_REACH_WEIGHT=0.5,
-    FORWARD_REACH_HORIZON=15) shape the curves; tune via env vars.
+    Term C — Finishing pressure (Phase E, 2026-05-25). Continuous bonus
+        that grows as the weakest opp's strength approaches 0. Adds
+        `FINISH_BONUS * max(0, 1 - weakest_str / FINISH_THRESHOLD)` to
+        favor. Generalises the 4P-only discrete ELIMINATION_BONUS to
+        2P AND ramps earlier (before opp is at the eliminable threshold).
+        Naturally rewards finishing weak opponents instead of nibbling.
 
-    Parity: with HOLD_HORIZON=inf and FORWARD_REACH_WEIGHT=0 this
-    reduces to `favor` exactly.
+    Default knobs (HOLD_HORIZON=20, FORWARD_REACH_WEIGHT=0.5,
+    FORWARD_REACH_HORIZON=15, FINISH_BONUS=50, FINISH_THRESHOLD=200)
+    shape the curves; tune via env vars.
+
+    Parity: with HOLD_HORIZON=0 AND FORWARD_REACH_WEIGHT=0 AND
+    FINISH_BONUS=0, this reduces to `favor` exactly.
     """
     planets = _read(obs, "planets", []) or []
     fleets = _read(obs, "fleets", []) or []
@@ -355,6 +368,20 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
                         if eta <= FORWARD_REACH_HORIZON:
                             reach_sum += float(ep[6])
                 score += FORWARD_REACH_WEIGHT * reach_sum
+
+    # Term C — finishing pressure. Continuous bonus that grows as the
+    # weakest opp's strength approaches 0. Applies in BOTH 2P and 4P
+    # (generalises the 4P-only discrete ELIMINATION_BONUS). Disabled when
+    # FINISH_BONUS=0 (preserves Phase-D-only parity).
+    if opps and FINISH_BONUS > 0:
+        opp_strengths_c = {
+            o: ships_by_owner.get(o, 0.0)
+               + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT
+            for o in opps
+        }
+        target_str = min(opp_strengths_c.values())
+        finishing_pressure = max(0.0, 1.0 - target_str / FINISH_THRESHOLD)
+        score += FINISH_BONUS * finishing_pressure
 
     return score
 
