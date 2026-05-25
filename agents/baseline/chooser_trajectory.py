@@ -246,6 +246,15 @@ JOINT_LIFT_USED_TGTS: bool = (
     os.environ.get("BASELINE_JOINT_AGGR", "0").strip() == "1"
 )
 
+# EV-per-ship sort-key probe (2026-05-25). When on, the final candidate
+# sort uses score/ships instead of score, so each source's most efficient
+# candidate wins the per-source dedup race rather than the highest total
+# score. Probe; default OFF preserves orbitfix's emit ordering byte-for-
+# byte. See plan /root/.claude/plans/go-1-compressed-hummingbird.md.
+SORT_BY_EV_PER_SHIP: bool = (
+    os.environ.get("BASELINE_SORT_BY_EV_PER_SHIP", "0").strip() == "1"
+)
+
 
 def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
                     me: int, world, ledger: dict,
@@ -954,7 +963,19 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     if not scored:
         return [], []
 
-    scored.sort(key=lambda c: -c[0])
+    if SORT_BY_EV_PER_SHIP:
+        def _ev_per_ship_key(c):
+            score = c[0]
+            if len(c) == 3 and c[1] == "joint":
+                total_ships = sum(int(L[2]) for L in c[2])
+            else:
+                total_ships = int(c[3])
+            if total_ships <= 0:
+                return 0.0
+            return -score / total_ships
+        scored.sort(key=_ev_per_ship_key)
+    else:
+        scored.sort(key=lambda c: -c[0])
 
     # Emit logic — match composite chooser (`agents/baseline/chooser.choose`)
     # for parity. 1 launch per source per turn, 1 per target. For joints
