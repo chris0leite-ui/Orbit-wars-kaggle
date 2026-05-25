@@ -137,14 +137,7 @@ def _next_game_id() -> str:
 
 def _initial_state() -> dict:
     return {"phase": PHASE_BUILDUP, "strike_plan": None,
-            "game_id": _next_game_id(),
-            # Commit-and-execute cache: opening_plan() runs ONCE at the
-            # first BUILDUP turn of a game and stores its schedule here.
-            # Subsequent turns iterate the cached list — see
-            # agents/buildup_planner/buildup.py and the plan doc
-            # /root/.claude/plans/find-a-better-solution-zany-toucan.md.
-            # None = not yet solved; [] = solved and returned no entries.
-            "opening_schedule": None}
+            "game_id": _next_game_id()}
 
 
 def _reset_if_new_game(me: int, step: int) -> dict:
@@ -190,7 +183,7 @@ def agent(obs, configuration=None) -> list[list]:
             model = WorldModel.from_world(world)
             num_seats = _num_seats(planets, fleets)
 
-            moves = buildup.step(world, model, me, num_seats, step, state)
+            moves = buildup.step(world, model, me, num_seats, step)
             if moves is not None:
                 # Stay in BUILDUP — the schedule will time out on its own
                 # via the OPENING_HORIZON guard inside buildup.step.
