@@ -46,6 +46,18 @@ from pathlib import Path
 # Explicit `BASELINE_ORBITAL_SAFETY=0` still wins (setdefault, not set).
 os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
 
+# Default KINEMATIC_TABLE_ENABLED on for this agent (2026-05-25). Wires
+# the per-turn position cache (lib/kinematic_table.py) into
+# predict_fleet_fate's inner loop via lib/trajectory._table_window_or_none.
+# Bit-parity-gated (21/21 parity tests GREEN; see commit c48e143's
+# 564 FleetFate assertions + 2 full-game parity result). Documented
+# wallclock saving: 47-114 ms/step. Targets the consolidation review
+# finding K1 (audit/2026-05-25-consolidation-review.md): predict_relative
+# consumed 84s / 219 turns of the focal CPU; the table removes its
+# per-(planet,step) rebuild. Explicit `KINEMATIC_TABLE_ENABLED=0` still
+# wins (setdefault).
+os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
+
 # Phi-1 leaf swap (2026-05-25): favor_phi adds the 2P elimination bonus
 # (missing in `favor`) and uses 250-tick pv_horizon to match PI's
 # fast-elim metric. HARD SET (not setdefault) because the bundler
@@ -180,6 +192,24 @@ def agent(obs, configuration=None) -> list[list]:
                 return consolidation.step(obs, configuration)
 
             world = World.from_obs(obs_d)
+
+            # Phase γ kinematic_table priming for BUILDUP turns. Mirrors
+            # the same block in agents/baseline/main.py — without this,
+            # the opening's `opening_plan() -> _build_candidates ->
+            # predict_fleet_fate` path runs on an unprimed cache and
+            # falls through to the inline build (the slow path the
+            # K1 wiring exists to avoid). Per the K1 cProfile re-run,
+            # opening turns (12-28) stayed at ~2s because BUILDUP never
+            # primed; CONSOLIDATION turns improved by ~200ms p50.
+            if os.environ.get("KINEMATIC_TABLE_ENABLED", "").strip().lower() in (
+                "1", "true", "on", "yes",
+            ):
+                try:
+                    from lib import kinematic_table as _kt
+                    _kt.begin_turn(world)
+                except Exception:
+                    pass
+
             model = WorldModel.from_world(world)
             num_seats = _num_seats(planets, fleets)
 

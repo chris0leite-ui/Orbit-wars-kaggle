@@ -860,6 +860,23 @@ def agent(obs, configuration=None):
         return []
 
     world = World.from_obs(obs_d)
+
+    # Phase γ kinematic_table priming (ported from sibling-branch commit
+    # 923852e on 2026-05-25). When KINEMATIC_TABLE_ENABLED=1, build the
+    # per-turn position cache that lib/trajectory._table_window_or_none
+    # consumes inside predict_fleet_fate's inner loop. Bit-parity by
+    # construction (564 byte-identical FleetFate assertions + 2 full-game
+    # parity gate, see c48e143). Documented saving: 47-114 ms/step.
+    # try/except: hot path must not crash if obs is malformed.
+    if os.environ.get("KINEMATIC_TABLE_ENABLED", "").strip().lower() in (
+        "1", "true", "on", "yes",
+    ):
+        try:
+            from lib import kinematic_table as _kt
+            _kt.begin_turn(world)
+        except Exception:
+            pass
+
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
     num_seats = _num_seats(planets, fleets)
