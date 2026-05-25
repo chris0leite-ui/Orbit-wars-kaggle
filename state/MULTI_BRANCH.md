@@ -19,8 +19,9 @@ Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at sessio
 
 | Sub ID | Date (UTC) | Agent | μ | Role |
 |---|---|---|---:|---|
-| **53001857** | 2026-05-24 23:51 | baseline_wave v3.1 (THIS branch — orbitfix peak stack + multi-source wave proposer) | **1144.1** | **Rolling pair (most recent)** |
-| **53000996** | 2026-05-24 22:38 | buildup_planner_phi1_only (sibling Q0q9T — Phi-1 leaf swap only) | **1109.8** | **Rolling pair (older half)** |
+| **53013786** | 2026-05-25 08:40 | **baseline_joint_aggr_consolidated_orbitfix RESUBMIT** (THIS branch, bundle SHA 9ec3af83 = original 5/22 peak) | **PENDING** (predicted 1140-1190 band) | **Rolling pair (most recent)** |
+| **53001857** | 2026-05-24 23:51 | baseline_wave v3.1 (THIS branch — orbitfix peak stack + multi-source wave proposer) | **1147.0** | **Rolling pair (older half)** |
+| 53000996 | 2026-05-24 22:38 | buildup_planner_phi1_only (sibling Q0q9T — Phi-1 leaf swap only) | 1109.8 | EVICTED (by 53013786) |
 | 52993021 | 2026-05-24 16:10 | concentration A+B (alpha=1.5, two-call orbital) | 1117.9 | EVICTED |
 | 52968889 | 2026-05-23 23:59 | buildup_planner (BUILDUP MILP + CONSOLIDATION + FINISHER) | 1142.4 | EVICTED |
 | 52966655 | 2026-05-23 21:18 | wave V3 (leaf-Δ gate + planet_positions cache) | 1141.0 | EVICTED |
@@ -35,11 +36,11 @@ Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at sessio
 | 52766596 | 2026-05-18 07:12 | Direction B v3 joint candidate evaluation | 1118.3 | EVICTED |
 | 52894340 | 2026-05-21 14:33 | _phase4_step1_FND (endgame predicate + orbital safety) | 1092.3 | EVICTED |
 
-- **Rolling pair floor:** μ = 1109.8 (buildup_planner_phi1_only, sibling branch Q0q9T).
-- **Rolling pair ceiling:** μ = 1144.1 (baseline_wave v3.1, THIS branch).
+- **Rolling pair floor:** μ = 1147.0 (baseline_wave v3.1, THIS branch — uptick from 1144.1).
+- **Rolling pair ceiling:** sub **53013786** PENDING (orbitfix RESUBMIT, predicted 1140-1190 band).
 - **Team peak (evicted):** μ = **1165.4** (sub **52912707** baseline_joint_aggr_consolidated_orbitfix, 2026-05-22, branch `claude/review-skills-improvements-moKOR`). Beat prior peak (composite_a2_hybrid 1149.2) by **+16.2 μ** via B1-B7 orbital-safety modeling fix (Rule 40 — modeling fix, not restriction-tuning).
 - **baseline_wave v3.1 outcome (THIS branch):** settled at μ=**1144.1**, FAR above the predicted 1000-1100 band. The pre-submit hypothesis "regression vs orbitfix peak μ=1165.4; PI learning submit" was wrong by ~140 μ in our favour — the multi-source wave proposer is the real lift, not just a calibration probe. n=8 local A/B vs orbitfix (3/8 win-by-reward) under-predicted live result.
-- **Daily submission budget:** 5/day. Today (2026-05-25 UTC) used: 0. 5 remaining. Last submit was 2026-05-24 23:51 UTC.
+- **Daily submission budget:** 5/day. Today (2026-05-25 UTC) used: **1** (sub 53013786 RESUBMIT). 4 remaining. Last submit was 2026-05-25 08:40 UTC.
 - **Deadline:** 2026-06-23 23:59 UTC. **~29 days remain.**
 
 ---
@@ -124,7 +125,8 @@ Empty rows below mean no pending submission claim. Most recent claim at top.
 
 | Timestamp (UTC) | Branch | Agent | Predicted μ | Will evict (sub_id, μ) | PI signoff |
 |---|---|---|---:|---|---|
-| 2026-05-24 23:51 | competitive-programming-strategy-ESwSv | **baseline_wave v3.1** (sub **53001857** PENDING) — orbitfix peak stack (JOINT_AGGR + ORBITAL_SAFETY + NEUTRAL_BONUS + REINFORCE) + new multi-source wave proposer (`enumerate_wave_candidates`); bleed/stockpile DROPPED after diagnosis showed they starved early-game expansion. Commit `ff08752`. | ~1000–1100 (n=8 vs orbitfix 3/8 win-by-reward, 0/8 elim, Wilson [0.137, 0.694]); learning submit — PI explicit observation. | **52993021** (concentration, μ=1117.9) — rolling pair had shifted; Q0q9T's sub 53000996 Phi-1 μ=1141.6 had already evicted 52968889 between my check and push | ✅ PI explicit "submit baseline wave so i can see it and learn what to improve" — Rule 42 acknowledged (evicted μ ≈ predicted μ band; max-of-pair stays 1141.6 if baseline_wave settles ≤ Phi-1, drops to baseline_wave μ if higher) |
+| 2026-05-25 08:40 | competitive-programming-strategy-ESwSv | **baseline_joint_aggr_consolidated_orbitfix RESUBMIT** (sub **53013786** PENDING; existing bundle SHA `9ec3af83`, originally sub 52912707 commit 458f663, settled μ=1165.4 on 2026-05-22). Rule 46: bundle 10/10 GREEN; single-game smoke vs v7_0 = WIN; 3-seed bench p50=427ms p95=814ms max=953ms `over_1000ms=0`. Post-5/22 modeling fixes (predict_relative static-planet 1ad6cfa, comet-aware 4c80932, 289d8ed) deliberately NOT bundled — every subsequent submission containing them regressed live μ (52968889 μ=1142.4, 52966655 μ=1141.0, 53000996 μ=1109.8, 53001857 μ=1144.1). Same lesson as wave V3.1: local A/B doesn't predict live μ. | ~1140-1190 (TrueSkill re-eval noise band around the 1165.4 peak settle) | **53000996** (Phi-1, μ=1109.8 — older half of rolling pair) | ✅ PI explicit "Yes, submit unchanged" — Rule 42 GREEN (predicted μ ≫ evicted μ; floor moves 1109.8 → 1144.1) |
+| 2026-05-24 23:51 | competitive-programming-strategy-ESwSv | **baseline_wave v3.1** (sub **53001857** settled μ=1144.1) — orbitfix peak stack (JOINT_AGGR + ORBITAL_SAFETY + NEUTRAL_BONUS + REINFORCE) + new multi-source wave proposer (`enumerate_wave_candidates`); bleed/stockpile DROPPED after diagnosis showed they starved early-game expansion. Commit `ff08752`. | ~1000–1100 (n=8 vs orbitfix 3/8 win-by-reward, 0/8 elim, Wilson [0.137, 0.694]); learning submit — PI explicit observation. | **52993021** (concentration, μ=1117.9) — rolling pair had shifted; Q0q9T's sub 53000996 Phi-1 μ=1141.6 had already evicted 52968889 between my check and push | ✅ PI explicit "submit baseline wave so i can see it and learn what to improve" — Rule 42 acknowledged (evicted μ ≈ predicted μ band; max-of-pair stays 1141.6 if baseline_wave settles ≤ Phi-1, drops to baseline_wave μ if higher) |
 | 2026-05-23 21:00 | review-skills-improvements-moKOR | baseline_joint_aggr_consolidated_orbitfix (PENDING SUBMIT) — consolidated + full B1-B7 orbital safety modeling fix | ~1110-1130 (4/4 vs baseline_full @ μ=1078, 2/4 parity vs consolidated @ μ=1124, 4/4 vs phase4_step1_FND @ μ=1118 — all clean_ab subprocess-isolated) | 52893236 (baseline_full, μ=1078) | ⏳ PENDING |
 | 2026-05-21 13:48 | review-skills-improvements-moKOR | baseline_full (sub **52893236**, settled μ=1078) — consolidated + orbital safety + stagnant drain + combat stack + sniper | ~1100-1300 (n=4 = 2/4 vs consolidated AND vs v3.5.1; Wilson [0.150, 0.850] both, point estimate +25pp over symmetric 25% baseline) | 52874528 (μ=1134.9, baseline_joint_aggr) | ✅ PI explicit "submit baseline full now anyway" |
 | 2026-05-21 10:26 | review-skills-improvements-moKOR | baseline_joint_aggr_consolidated (sub **52882014**, settled μ=1124, EVICTED) | ~1100-1250 (n=4 1/4 + seed=5 trace WIN 40 planets) | 52872093 (μ=1052.1, analytical_phase_c) | ✅ PI explicit "submit so I can observe" |
