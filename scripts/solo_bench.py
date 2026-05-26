@@ -94,9 +94,12 @@ def _resolve_agent_path(spec: str) -> tuple[str, str]:
     raise SystemExit(f"cannot resolve agent: {spec}")
 
 
-def _worker(args: tuple[str, str, int, str, int, dict]) -> dict:
-    """Run one (agent, seed) game in a subprocess; return terminal stats."""
-    label, agent_path, seed, archetype, episode_steps, extra_env = args
+def _worker(args: tuple) -> dict:
+    """Run one (agent, seed) game in a subprocess; return terminal stats.
+
+    args = (label, agent_path, seed, archetype, episode_steps, extra_env, opp_path)
+    """
+    label, agent_path, seed, archetype, episode_steps, extra_env, opp_path = args
     code = (
         "import json, sys, time;"
         "sys.path.insert(0, %r);"
@@ -123,7 +126,7 @@ def _worker(args: tuple[str, str, int, str, int, dict]) -> dict:
         "    'wall': wall,"
         "}))"
     ) % (str(REPO), int(seed), int(episode_steps),
-         str(agent_path), str(NOOP_PATH))
+         str(agent_path), str(opp_path))
     # SA_SEED + SA_EPISODE_STEPS are passed unconditionally so sa_replay (and
     # any other "solve at module load" agent) can self-configure. Agents that
     # don't read these env vars ignore them.
@@ -218,12 +221,24 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--integral-t-end", type=int, default=None,
                     help="Override INTEGRAL_T_END in worker env (default: leave unset)")
+    ap.add_argument("--opp", default=None,
+                    help="Opponent agent path (default: agents/simple/noop.py). "
+                         "Resolved through _resolve_agent_path so accepts dir / short / .py.")
     args = ap.parse_args()
 
     resolved = [_resolve_agent_path(s) for s in args.agents]
     extra_env: dict[str, str] = {}
     if args.integral_t_end is not None:
         extra_env["INTEGRAL_T_END"] = str(args.integral_t_end)
+
+    # Resolve opp: default to noop (backward compatible with the
+    # pre-flag bench behavior). When --opp is set we accept any agent
+    # spec the agent-resolver understands.
+    if args.opp is None:
+        opp_path = str(NOOP_PATH)
+        opp_label = "noop"
+    else:
+        opp_label, opp_path = _resolve_agent_path(args.opp)
 
     if args.archetype_panel:
         seed_arc_pairs = _load_archetype_seeds(
@@ -232,7 +247,7 @@ def main() -> int:
         seed_arc_pairs = [(seed, "") for seed in range(args.seeds)]
 
     tasks = [
-        (label, path, seed, arc, args.steps, extra_env)
+        (label, path, seed, arc, args.steps, extra_env, opp_path)
         for (label, path) in resolved
         for (seed, arc) in seed_arc_pairs
     ]
@@ -243,7 +258,8 @@ def main() -> int:
                   else f"seeds 0..{args.seeds - 1}")
     print(f"[solo_bench] {len(resolved)} agent(s) × {n_seeds_per_agent} "
           f"seed(s)  [{panel_desc}]  = {len(tasks)} games, "
-          f"{args.steps} steps, {args.workers} worker(s)", file=sys.stderr)
+          f"{args.steps} steps, {args.workers} worker(s), "
+          f"opp={opp_label}", file=sys.stderr)
     if extra_env:
         print(f"[solo_bench] worker env: {extra_env}", file=sys.stderr)
 
