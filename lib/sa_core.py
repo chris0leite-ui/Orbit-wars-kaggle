@@ -227,15 +227,22 @@ def _compute_capture_emission(src, tgt, turn: int,
 
     # Predicted garrison at arrival. Use the WorldModel's ledger for the
     # incumbent fleets; we don't include this candidate yet (it's what
-    # we're computing).
+    # we're computing). predict_garrison_at takes eta = turns from snap0
+    # (where the world_model was built). If `turn` > ctx.t_start (we are
+    # WAITING before firing), the arrival from snap0's perspective is
+    # `(turn - t_start) + eta_local` — which is the absolute number of
+    # ticks between snap0 and the fleet arriving.
     arrivals: list = []
     if ctx.world_model is not None:
         try:
             arrivals = list(ctx.world_model.ledger.get(int(tgt.id), []))
         except Exception:
             arrivals = []
+    turn_offset_from_snap0 = max(0, int(turn) - int(ctx.t_start))
+    arrival_eta_from_snap0 = turn_offset_from_snap0 + int(eta)
     try:
-        pred_owner, pred_garrison = predict_garrison_at(tgt, eta, arrivals)
+        pred_owner, pred_garrison = predict_garrison_at(
+            tgt, arrival_eta_from_snap0, arrivals)
     except Exception:
         pred_owner, pred_garrison = int(tgt.owner), float(tgt.ships)
     if int(pred_owner) == int(ctx.me):
@@ -457,47 +464,71 @@ def _op_remove(plan: list[Emission], rng: random.Random,
     return new_plan
 
 
+_FIRE_TURN_TRIES = 4   # how many random fire-turn draws each add_* operator attempts
+
+
+def _sample_fire_turn(rng: random.Random, ctx: PerturbContext) -> int:
+    """Sample a fire turn from [t_start, t_end). Including t_start lets the
+    operator emit NOW; later turns let SA explore wait-then-fire candidates
+    (a src that can't afford the capture today may have enough ships at
+    t_start + k after k turns of production)."""
+    hi = max(ctx.t_start + 1, ctx.t_end)
+    return rng.randrange(int(ctx.t_start), int(hi))
+
+
+def _try_add_for_target(plan, rng, ctx, tgt) -> Optional[list[Emission]]:
+    """Try multiple (fire_turn, src) draws to land one valid capture
+    emission for `tgt`. Each draw uses closed-form physics + waiting-aware
+    ship accounting via `_compute_capture_emission`. Returns the new plan
+    on first success, else None.
+
+    The K=4 draws cover the "wait until I can afford it" axis: if no src
+    has enough ships at t_start, a later turn may work because production
+    accumulates."""
+    for _ in range(_FIRE_TURN_TRIES):
+        fire_turn = _sample_fire_turn(rng, ctx)
+        owned = _owned_srcs_at_turn(ctx, fire_turn)
+        if not owned:
+            continue
+        rng.shuffle(owned)
+        for src_id in owned:
+            if int(src_id) == int(tgt.id):
+                continue
+            src = ctx.world.planets_by_id.get(int(src_id))
+            if src is None:
+                continue
+            emit = _compute_capture_emission(src, tgt, fire_turn, ctx)
+            if emit is not None:
+                new_plan = list(plan)
+                new_plan.append(emit)
+                return new_plan
+    return None
+
+
 def _op_add_contested(plan: list[Emission], rng: random.Random,
                        ctx: PerturbContext) -> Optional[list[Emission]]:
     """Add a physics-valid emission targeting a planet opp wants to capture.
 
-    Samples a target from `opp_intent_window`. Picks an owned src at turn
-    `t_start` (current snap time — race opp). Computes aim + exact ships
-    via closed-form physics. Returns `None` if no valid (src, tgt) pair.
+    Sample a target from `opp_intent_window`. Sample a fire turn from
+    `[t_start, t_end)` (including the wait dimension PI flagged 2026-05-27
+    as essential — sometimes we need a few turns of accumulation before
+    we can afford the capture). Compute aim + exact ships via closed-form
+    physics. Returns `None` if no valid (turn, src) combination.
     """
     if not ctx.opp_intent_window or ctx.world is None:
         return None
-    # Sample a contested target. We fire NOW (t_start) to race the opp.
     _opp_turn, tgt_id = rng.choice(ctx.opp_intent_window)
     tgt = ctx.world.planets_by_id.get(int(tgt_id))
     if tgt is None:
         return None
-    owned = _owned_srcs_at_turn(ctx, ctx.t_start)
-    if not owned:
-        return None
-    rng.shuffle(owned)
-    for src_id in owned:
-        if int(src_id) == int(tgt_id):
-            continue
-        src = ctx.world.planets_by_id.get(int(src_id))
-        if src is None:
-            continue
-        emit = _compute_capture_emission(src, tgt, ctx.t_start, ctx)
-        if emit is not None:
-            new_plan = list(plan)
-            new_plan.append(emit)
-            return new_plan
-    return None
+    return _try_add_for_target(plan, rng, ctx, tgt)
 
 
 def _op_add_uncontested(plan: list[Emission], rng: random.Random,
                          ctx: PerturbContext) -> Optional[list[Emission]]:
     """Add a physics-valid emission targeting a high-π planet OUTSIDE the
-    contested set. Safe production growth.
-
-    Score: π_tgt × max(0, horizon_remaining). Pick a planet with non-trivial
-    score, then pick an owned src.
-    """
+    contested set. Safe production growth. Same wait-aware turn sampling
+    as `_op_add_contested`."""
     if ctx.world is None:
         return None
     contested_ids = {int(tid) for _t, tid in ctx.opp_intent_window}
@@ -514,29 +545,13 @@ def _op_add_uncontested(plan: list[Emission], rng: random.Random,
         candidates.append((score, int(pid)))
     if not candidates:
         return None
-    # Weighted sample by score (top-k bias).
     candidates.sort(reverse=True)
     top = candidates[:max(1, min(8, len(candidates)))]
     _score, tgt_id = rng.choice(top)
     tgt = ctx.world.planets_by_id.get(int(tgt_id))
     if tgt is None:
         return None
-    owned = _owned_srcs_at_turn(ctx, ctx.t_start)
-    if not owned:
-        return None
-    rng.shuffle(owned)
-    for src_id in owned:
-        if int(src_id) == int(tgt_id):
-            continue
-        src = ctx.world.planets_by_id.get(int(src_id))
-        if src is None:
-            continue
-        emit = _compute_capture_emission(src, tgt, ctx.t_start, ctx)
-        if emit is not None:
-            new_plan = list(plan)
-            new_plan.append(emit)
-            return new_plan
-    return None
+    return _try_add_for_target(plan, rng, ctx, tgt)
 
 
 def _op_modify_target(plan: list[Emission], rng: random.Random,
@@ -569,6 +584,56 @@ def _op_modify_target(plan: list[Emission], rng: random.Random,
     return new_plan
 
 
+def _op_shift_turn(plan: list[Emission], rng: random.Random,
+                    ctx: PerturbContext) -> Optional[list[Emission]]:
+    """Move an existing emission to a different fire turn, recomputing
+    aim + ships from the new (turn, src, tgt) triple.
+
+    PI 2026-05-27: waiting is essential — many good plans require firing
+    LATER (accumulate ships, time orbital alignment, sequence captures).
+    This operator perturbs the wait axis explicitly. Target identity is
+    recovered from the current emission's angle+ships via predict_fleet
+    _fate; new turn is sampled near the current one.
+    """
+    if not plan or ctx.world is None:
+        return None
+    idx = rng.randrange(len(plan))
+    turn, action = plan[idx]
+    try:
+        src_id = int(action[0])
+        angle_existing = float(action[1])
+        ships_existing = max(1, int(action[2]))
+    except (TypeError, ValueError, IndexError):
+        return None
+    src = ctx.world.planets_by_id.get(src_id)
+    if src is None:
+        return None
+    # Recover target id from the existing emission's trajectory.
+    try:
+        fate_existing = predict_fleet_fate(src, src, angle_existing,
+                                            ships_existing, ctx.world)
+    except Exception:
+        return None
+    if fate_existing.hit_planet_id is None:
+        return None
+    tgt = ctx.world.planets_by_id.get(int(fate_existing.hit_planet_id))
+    if tgt is None:
+        return None
+    # Sample a nearby new turn. Bias toward small shifts but allow larger
+    # ones so SA can rearrange the plan's tempo.
+    delta = rng.choice([-8, -5, -3, -2, -1, 1, 2, 3, 5, 8])
+    new_turn = max(int(ctx.t_start),
+                    min(int(ctx.t_end) - 1, int(turn) + int(delta)))
+    if new_turn == int(turn):
+        return None
+    emit = _compute_capture_emission(src, tgt, new_turn, ctx)
+    if emit is None:
+        return None
+    new_plan = list(plan)
+    new_plan[idx] = emit
+    return new_plan
+
+
 # Operator dispatch table. Order is just the uniform-random pool; weighting
 # is uniform for v1. Adding a future `_op_add_wave_*` is one entry below
 # plus the new function — no infrastructure changes.
@@ -577,6 +642,7 @@ _PERTURB_OPS: tuple = (
     _op_add_contested,
     _op_add_uncontested,
     _op_modify_target,
+    _op_shift_turn,
 )
 
 

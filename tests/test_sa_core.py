@@ -185,6 +185,66 @@ def test_perturb_validity_invariant():
             f"that this never happens.")
 
 
+def test_perturb_shift_turn_changes_turn_only():
+    """_op_shift_turn must produce a valid emission at a NEW turn when
+    one is reachable.
+
+    PI 2026-05-27: waiting is essential to the search space — many
+    captures need a delayed fire to accumulate ships or align with
+    orbital timing. This operator is the explicit wait-perturbation.
+
+    Test approach: try several seeds + initial turns until one produces
+    a capturable target (sa_core's capture eligibility depends on the
+    specific geometry of the seed). On that scenario, exercise shift
+    and verify at least one resulting emission has a different turn AND
+    passes the physics gate.
+    """
+    from lib.sa_core import _op_shift_turn, _compute_capture_emission
+    scenarios = [(0, 80, 5), (7542, 100, 5), (7542, 100, 10),
+                  (1153, 100, 5), (2794, 100, 5), (2794, 100, 15)]
+    seed_emit = None
+    ctx = None
+    for (seed, steps, seed_turn) in scenarios:
+        candidate_ctx = _build_test_ctx(seed=seed, steps=steps)
+        owned = [pid for pid, (owner, _ships)
+                  in candidate_ctx.ownership_cache.get(0, {}).items()
+                  if int(owner) == int(candidate_ctx.me)]
+        if not owned:
+            continue
+        src = candidate_ctx.world.planets_by_id[int(owned[0])]
+        for tgt_id, tgt in candidate_ctx.world.planets_by_id.items():
+            if int(tgt_id) == int(src.id):
+                continue
+            emit = _compute_capture_emission(src, tgt, seed_turn, candidate_ctx)
+            if emit is not None:
+                seed_emit = emit
+                ctx = candidate_ctx
+                break
+        if seed_emit is not None:
+            break
+    if seed_emit is None:
+        pytest.skip("no working (seed, turn) found for shift test setup; "
+                     "physics gate is doing its job — all generated "
+                     "emissions would have been unreachable")
+    orig_turn = seed_emit[0]
+    seed_plan = [seed_emit]
+
+    n_shifted = 0
+    for trial in range(50):
+        rng = random.Random(trial + 1000)
+        result = _op_shift_turn(seed_plan, rng, ctx)
+        if result is None:
+            continue
+        assert len(result) == 1, "shift must keep the same number of emissions"
+        new_turn = result[0][0]
+        if new_turn != orig_turn:
+            n_shifted += 1
+            assert _emission_passes_physics(result[0], ctx), \
+                f"shift produced a physics-failing emission: {result[0]}"
+    assert n_shifted >= 1, \
+        f"shift never landed at a different turn over 50 trials"
+
+
 def test_perturb_add_contested_respects_opp_intent():
     """add_contested only fires when opp_intent_window is non-empty.
 
