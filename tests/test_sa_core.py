@@ -245,6 +245,49 @@ def test_perturb_shift_turn_changes_turn_only():
         f"shift never landed at a different turn over 50 trials"
 
 
+def test_admissible_set_only_physics_valid():
+    """PI 2026-05-27: every emission in `ctx.admissible` must be a
+    physics-valid capture by construction. If anything in the set
+    fails predict_fleet_fate.outcome == 'target' on its specific
+    target, the enumeration is broken.
+
+    Tests across multiple seeds to cover varied geometries (static,
+    rotating, contested vs uncontested layouts).
+    """
+    from lib.sa_core import _build_perturb_context
+    from lib.trajectory import predict_fleet_fate
+    seeds = [0, 7542, 1153, 2794]
+    n_admissible_total = 0
+    n_validated = 0
+    for seed in seeds:
+        ctx = _build_test_ctx(seed=seed, steps=80)
+        for emit, tgt_id in zip(ctx.admissible, ctx.admissible_targets):
+            n_admissible_total += 1
+            turn, action = emit
+            src_id = int(action[0])
+            angle = float(action[1])
+            ships = max(1, int(action[2]))
+            src = ctx.world.planets_by_id.get(src_id)
+            tgt = ctx.world.planets_by_id.get(int(tgt_id))
+            if src is None or tgt is None:
+                continue
+            fate = predict_fleet_fate(src, tgt, angle, ships, ctx.world)
+            # outcome must be "target" — the admissible set is pre-validated
+            # specifically against tgt.
+            assert fate.outcome == "target", (
+                f"admissible emission failed physics gate: seed={seed} "
+                f"emit={emit} tgt={tgt_id} fate={fate}")
+            n_validated += 1
+    # We don't require a minimum count (some seeds may have very few
+    # reachable targets) but at least ONE across all seeds.
+    assert n_admissible_total > 0, \
+        f"admissible set was empty across all {len(seeds)} seeds — " \
+        f"enumeration likely broken or all geometries are blocked"
+    assert n_validated == n_admissible_total, \
+        f"{n_admissible_total - n_validated} of {n_admissible_total} " \
+        f"admissible emissions failed the physics gate"
+
+
 def test_perturb_add_contested_respects_opp_intent():
     """add_contested only fires when opp_intent_window is non-empty.
 

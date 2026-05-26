@@ -161,6 +161,24 @@ class PerturbContext:
     t_start: int
     t_end: int
     me: int = 0                                      # which seat we are
+    # Admissibility set (PI 2026-05-27): pre-validated capture emissions
+    # built once per ctx-build. Operators sample uniformly from here
+    # instead of running rejection-sampling per iter. Every entry passes
+    # `_compute_capture_emission` by construction.
+    admissible: list = field(default_factory=list)
+    # Sidecar: emission's index in `admissible` -> target planet id, set
+    # during enumeration so operators can filter contested vs uncontested
+    # without re-running predict_fleet_fate.
+    admissible_targets: list = field(default_factory=list)
+
+
+# Enumeration knobs (module-level, tunable). Offsets cover NOW / short
+# wait / medium wait / long wait — needed because some targets grow at
+# a comparable rate to our home, so accumulating an advantage takes
+# many turns. _ADMISSIBLE_TOP_K_TARGETS caps the search per refine.
+_ADMISSIBLE_TOP_K_TARGETS = 25
+_ADMISSIBLE_TURN_OFFSETS = (0, 2, 5, 12)
+_ADMISSIBLE_MAX_WALL_S = 0.3   # cap enumeration cost regardless of owned/target counts
 
 
 def _target_tuple_from_planet(p) -> list:
@@ -379,7 +397,7 @@ def _build_perturb_context(snap0,
         except Exception:
             break
 
-    return PerturbContext(
+    ctx = PerturbContext(
         snap0=snap0,
         world=world,
         world_model=world_model,
@@ -391,6 +409,67 @@ def _build_perturb_context(snap0,
         t_end=int(t_end),
         me=int(me),
     )
+    # Pre-validate admissible captures so operators draw from a set of
+    # guaranteed-valid moves instead of rejecting random draws.
+    _populate_admissible_set(ctx)
+    return ctx
+
+
+def _populate_admissible_set(ctx: PerturbContext) -> None:
+    """Build `ctx.admissible` + `ctx.admissible_targets` in place.
+
+    For each owned src × top-K target × turn offsets in
+    `_ADMISSIBLE_TURN_OFFSETS`, call `_compute_capture_emission`.
+    Every emission that lands in `ctx.admissible` is a guaranteed
+    physics-valid capture (passes `predict_fleet_fate.outcome == 'target'`
+    and is affordable from the src at the chosen fire turn).
+
+    Sidecar `ctx.admissible_targets[i]` is the resolved target id for
+    `ctx.admissible[i]`, so operators can filter by contested/uncontested
+    without re-running `predict_fleet_fate`.
+    """
+    ctx.admissible = []
+    ctx.admissible_targets = []
+    if ctx.world is None:
+        return
+    cache_start = ctx.ownership_cache.get(int(ctx.t_start), {})
+    owned_ids = [pid for pid, (owner, _ships) in cache_start.items()
+                  if int(owner) == int(ctx.me)]
+    if not owned_ids:
+        return
+    # Rank targets: contested first (×1.0), then high-π non-contested (×0.5).
+    contested = {int(tid) for _t, tid in ctx.opp_intent_window}
+    horizon = max(1, int(ctx.t_end) - int(ctx.t_start))
+    scored: list[tuple[float, int]] = []
+    for pid, p in ctx.world.planets_by_id.items():
+        if int(p.owner) == int(ctx.me):
+            continue
+        weight = 1.0 if int(pid) in contested else 0.5
+        score = weight * float(p.production) * float(horizon)
+        scored.append((score, int(pid)))
+    scored.sort(reverse=True)
+    target_ids = [pid for _s, pid in scored[:_ADMISSIBLE_TOP_K_TARGETS]]
+    deadline = time.perf_counter() + _ADMISSIBLE_MAX_WALL_S
+    for src_id in owned_ids:
+        src = ctx.world.planets_by_id.get(int(src_id))
+        if src is None:
+            continue
+        for tgt_id in target_ids:
+            if int(tgt_id) == int(src_id):
+                continue
+            tgt = ctx.world.planets_by_id.get(int(tgt_id))
+            if tgt is None:
+                continue
+            for offset in _ADMISSIBLE_TURN_OFFSETS:
+                if time.perf_counter() >= deadline:
+                    return  # bail; admissible partial but bounded
+                turn = int(ctx.t_start) + int(offset)
+                if turn >= int(ctx.t_end):
+                    break
+                emit = _compute_capture_emission(src, tgt, turn, ctx)
+                if emit is not None:
+                    ctx.admissible.append(emit)
+                    ctx.admissible_targets.append(int(tgt_id))
 
 
 def score_plan_from_snap(emissions: list[Emission],
@@ -507,80 +586,57 @@ def _try_add_for_target(plan, rng, ctx, tgt) -> Optional[list[Emission]]:
 
 def _op_add_contested(plan: list[Emission], rng: random.Random,
                        ctx: PerturbContext) -> Optional[list[Emission]]:
-    """Add a physics-valid emission targeting a planet opp wants to capture.
+    """Sample uniformly from the pre-validated admissibility set, filtered
+    to emissions whose target is contested (opp_intent_window).
 
-    Sample a target from `opp_intent_window`. Sample a fire turn from
-    `[t_start, t_end)` (including the wait dimension PI flagged 2026-05-27
-    as essential — sometimes we need a few turns of accumulation before
-    we can afford the capture). Compute aim + exact ships via closed-form
-    physics. Returns `None` if no valid (turn, src) combination.
+    PI 2026-05-27: "why reject rather than draw from admissible?" — the
+    admissibility set is pre-validated by _populate_admissible_set, so
+    every entry is a guaranteed physics-valid capture. We just filter
+    by contested-ness and pick uniformly. No rejection loop.
     """
-    if not ctx.opp_intent_window or ctx.world is None:
+    if not ctx.admissible or not ctx.opp_intent_window:
         return None
-    _opp_turn, tgt_id = rng.choice(ctx.opp_intent_window)
-    tgt = ctx.world.planets_by_id.get(int(tgt_id))
-    if tgt is None:
+    contested_ids = {int(tid) for _t, tid in ctx.opp_intent_window}
+    indices = [i for i, t in enumerate(ctx.admissible_targets)
+               if int(t) in contested_ids]
+    if not indices:
         return None
-    return _try_add_for_target(plan, rng, ctx, tgt)
+    pick = ctx.admissible[rng.choice(indices)]
+    new_plan = list(plan)
+    new_plan.append(pick)
+    return new_plan
 
 
 def _op_add_uncontested(plan: list[Emission], rng: random.Random,
                          ctx: PerturbContext) -> Optional[list[Emission]]:
-    """Add a physics-valid emission targeting a high-π planet OUTSIDE the
-    contested set. Safe production growth. Same wait-aware turn sampling
-    as `_op_add_contested`."""
-    if ctx.world is None:
+    """Sample uniformly from admissibility set, filtered to non-contested
+    targets (safe production growth, not racing opp)."""
+    if not ctx.admissible:
         return None
     contested_ids = {int(tid) for _t, tid in ctx.opp_intent_window}
-    horizon_remaining = max(0, ctx.t_end - ctx.t_start)
-    candidates = []
-    for pid, p in ctx.world.planets_by_id.items():
-        if int(pid) in contested_ids:
-            continue
-        if int(p.owner) == int(ctx.me):
-            continue
-        score = float(p.production) * horizon_remaining
-        if score <= 0:
-            continue
-        candidates.append((score, int(pid)))
-    if not candidates:
+    indices = [i for i, t in enumerate(ctx.admissible_targets)
+               if int(t) not in contested_ids]
+    if not indices:
         return None
-    candidates.sort(reverse=True)
-    top = candidates[:max(1, min(8, len(candidates)))]
-    _score, tgt_id = rng.choice(top)
-    tgt = ctx.world.planets_by_id.get(int(tgt_id))
-    if tgt is None:
-        return None
-    return _try_add_for_target(plan, rng, ctx, tgt)
+    pick = ctx.admissible[rng.choice(indices)]
+    new_plan = list(plan)
+    new_plan.append(pick)
+    return new_plan
 
 
 def _op_modify_target(plan: list[Emission], rng: random.Random,
                        ctx: PerturbContext) -> Optional[list[Emission]]:
-    """Pick a random emission, swap its target to a contested one,
-    recompute aim + ships. Same src and turn; new target."""
-    if not plan or ctx.world is None or not ctx.opp_intent_window:
+    """Replace a random existing emission with one sampled uniformly from
+    the admissibility set (any admissible swap, not just contested).
+
+    Drawing from the pre-validated set means the replacement is always
+    physics-valid; no rejection."""
+    if not plan or not ctx.admissible:
         return None
     idx = rng.randrange(len(plan))
-    turn, action = plan[idx]
-    try:
-        src_id = int(action[0])
-    except (TypeError, ValueError, IndexError):
-        return None
-    src = ctx.world.planets_by_id.get(src_id)
-    if src is None:
-        return None
-    # New target from contested set.
-    _opp_turn, new_tgt_id = rng.choice(ctx.opp_intent_window)
-    if int(new_tgt_id) == int(src_id):
-        return None
-    new_tgt = ctx.world.planets_by_id.get(int(new_tgt_id))
-    if new_tgt is None:
-        return None
-    emit = _compute_capture_emission(src, new_tgt, int(turn), ctx)
-    if emit is None:
-        return None
+    pick = ctx.admissible[rng.randrange(len(ctx.admissible))]
     new_plan = list(plan)
-    new_plan[idx] = emit
+    new_plan[idx] = pick
     return new_plan
 
 
