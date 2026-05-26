@@ -58,10 +58,11 @@ import random
 # turns. Path-graph build is bucketed coarser (orbiting=8, comet=2) to halve
 # the one-time build cost.
 # ---------------------------------------------------------------------------
-os.environ.setdefault("SA_REFINE_OPP_POLICY", "agents/simple/nearest.py")
+os.environ.setdefault("SA_REFINE_OPP_POLICY", "noop")     # SA score evaluates plans without a pessimistic opp model — 2026-05-26 inspection: with `nearest` SA over-defended and removed 90% of warm-start emissions; noop lets the closed-form `_capture_value` ranking actually influence final plan.
 os.environ.setdefault("SA_BUDGET_STEP_S", "0.4")          # ~0.4s SA + ~0.1s ctx-build; with snap caching ~0.55s Kaggle
 os.environ.setdefault("SA_ITER_STEP", "20")
 os.environ.setdefault("SA_HORIZON", "25")
+os.environ.setdefault("SA_WARM_START_MAX", "16")          # warm-start emissions per refine; 8 was too few (~1 emit per 2.5 turns over the horizon)
 os.environ.setdefault("SA_COEVOLVE_CYCLES", "1")          # first-turn budget: 2 SAs * 15s = 30s, fits 60s overage
 os.environ.setdefault("SA_BUDGET_INIT_S", "15")
 os.environ.setdefault("SA_ITER_INIT", "200")
