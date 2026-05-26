@@ -442,11 +442,31 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
         my_prod_discounted = _hold_discounted_prod(
             planets, me, all_other_threats, HOLD_HORIZON,
         )
+        # 2026-05-26 root-cause part 2: restore fcaf414's 2P/4P branch.
+        # 2P keeps ASYMMETRIC (Phase F calibration). 4P uses SYMMETRIC:
+        # discount each opp's prod by MY threats, then max-of-opps. The
+        # unified asymmetric in 4P (introduced in 3a054c7) caused the
+        # 0/8 4P collapse — chooser saw flat Δ on captures of non-leader
+        # opps. Symmetric Term A in 4P (fcaf414's choice) makes captures
+        # of any opp move opp_prod_discounted via the max-aggregation
+        # over discounted per-opp values.
         if not opps:
             opp_prod_discounted = 0.0
-        else:
+        elif num_seats <= 2 or len(opps) < 2:
+            # 2P / degenerate: asymmetric — opp_prod is RAW max-of-opps.
             opp_prod_discounted = max(
                 prod_by_owner.get(o, 0.0) for o in opps
+            )
+        else:
+            # 4P+: SYMMETRIC — each opp's prod discounted by MY threats.
+            my_threats = [
+                (float(p[2]), float(p[3]), float(p[5]))
+                for p in planets
+                if int(p[1]) == me
+            ]
+            opp_prod_discounted = max(
+                _hold_discounted_prod(planets, o, my_threats, HOLD_HORIZON)
+                for o in opps
             )
     except (KeyError, IndexError, AttributeError, ValueError, TypeError, ZeroDivisionError):
         # F3 observability — narrow catch on malformed mid-rollout obs.
