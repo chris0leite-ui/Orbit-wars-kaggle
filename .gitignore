@@ -105,3 +105,6 @@ audit/elim-sweep-*/*.log
 # files are noise.
 audit/solo-bench-*.log
 audit/solo-bench-*.txt
+# SA panel transient outputs — same pattern.
+audit/sa-panel-*.log
+audit/sa-panel-*.txt
