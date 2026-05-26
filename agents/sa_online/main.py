@@ -52,6 +52,7 @@ import random
 from scripts.sa_solo_solver import (
     REPO,
     _build_solo_snap0,
+    _load_agent,
     record_initial_plan,
 )
 from lib.sa_core import (
@@ -181,6 +182,27 @@ def _co_evolve(seed: int, steps: int):
     return _plan_list_to_dict(our_plan), _plan_list_to_dict(opp_plan)
 
 
+_RUNTIME_OPP_AGENT_CACHE: dict[str, object] = {}
+
+
+def _resolve_runtime_opp_policy(path_spec: str):
+    """Load an agent function from `path_spec` and wrap it as a noop-safe
+    policy. Used when SA_REFINE_OPP_POLICY names an agent (e.g.
+    'agents/simple/nearest.py') instead of 'noop' or 'coevolve'.
+
+    Cached on first load so we don't re-import per turn.
+    """
+    cached = _RUNTIME_OPP_AGENT_CACHE.get(path_spec)
+    if cached is not None:
+        return cached
+    try:
+        agent_fn = _load_agent(REPO / path_spec)
+    except Exception:
+        agent_fn = lambda _obs: []  # fail-safe to noop
+    _RUNTIME_OPP_AGENT_CACHE[path_spec] = agent_fn
+    return agent_fn
+
+
 def _refine_step(obs, configuration, t: int):
     """Per-turn refine; two modes selected by SA_REFINE_OPP_POLICY env var.
 
@@ -229,7 +251,8 @@ def _refine_step(obs, configuration, t: int):
     iter_cap = int(os.environ.get("SA_ITER_STEP", "100"))
     t0_step = float(os.environ.get("SA_T0_STEP", "100"))
     cool = float(os.environ.get("SA_COOLING_STEP", "0.95"))
-    mode = os.environ.get("SA_REFINE_OPP_POLICY", "noop").strip().lower()
+    mode_raw = os.environ.get("SA_REFINE_OPP_POLICY", "noop").strip()
+    mode = mode_raw.lower()
 
     if mode == "coevolve":
         n_cycles = max(1, int(os.environ.get("SA_REFINE_CYCLES", "1")))
@@ -261,11 +284,19 @@ def _refine_step(obs, configuration, t: int):
                 me=1,
                 score_mode="diff",
             )
-    else:  # "noop" (default)
-        # opp_policy = noop. Full budget for OUR SA. opp_plan unchanged.
+    else:
+        # mode is either "noop" (default) or a live-agent path
+        # (e.g. "agents/simple/nearest.py"). Live-agent paths use the
+        # original (non-lowercased) string so case-sensitive paths work.
+        # Skip the opp-side SA in both cases — full per-turn budget for
+        # OUR SA. opp_plan stays unchanged.
+        if mode == "noop":
+            opp_policy = lambda _obs: []
+        else:
+            opp_policy = _resolve_runtime_opp_policy(mode_raw)
         remaining_our, _b, _h = simulated_anneal_online(
             remaining_our, snap_t, max_steps=horizon,
-            opp_policy=lambda _obs: [],
+            opp_policy=opp_policy,
             n_iter=iter_cap, t0=t0_step, cooling=cool,
             rng=random.Random(t),
             start_step=t,
