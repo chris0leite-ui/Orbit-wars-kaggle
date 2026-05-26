@@ -98,6 +98,69 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
 
 ---
 
+## 2026-05-23 cross-branch finding — orbitfix lineage fails Rule-48 candidate; kt_p23 lineage is structurally weaker
+
+Source: `claude/competitive-programming-ab-test-BZknl`, this session.
+Full evidence in `audit/random_elim_gate_results.md` on this branch.
+
+**Context.** session-EqJuT promoted "100% win-by-elim vs nearest at
+n=16" as candidate Rule 48 (pre-submit substrate-correctness gate).
+Three sibling branches are independently iterating on the same
+"agent wins on score but can't eliminate" failure class right now —
+session-EqJuT (lagrange_simple Phase A+B), Q0q9T (buildup_planner
+FINISHER phase), Vjaz9 (orbitfix_kt_p23 v8 endgame-elim bonus). I
+tested two existing bundles against the gate:
+
+**Result 1 — `submissions/baseline_joint_aggr_consolidated_orbitfix.py`** (the
+bundle behind sub 52912707, live μ=1165.4):
+
+| gate | wins | elim | by-score | losses | verdict |
+|---|---:|---:|---:|---:|---|
+| vs random (n=16) | 16 | **16** | 0 | 0 | ✅ PASS |
+| vs nearest (n=16) | 16 | **14** | 2 | 0 | ❌ FAIL |
+
+The two non-elim seeds (98438, 31448) hit step 500 with focal holding
+27/40 and 35/40 planets vs opp's defended single pocket. Matches the
+session-EqJuT friction tag `midgame-filter-overrejects-in-dominant-
+endgame` — the B1 hold filter on `agents/baseline/proposer.py:
+_target_holdable_after_capture` refuses to fire at opp's last planet
+because (own!) neighbours are flagged as potential counters. Fix
+commit `68c24be` was applied to `agents/lagrange_simple` only;
+`agents/baseline/proposer.py` still carries the bug. Cherry-pick →
+re-bundle → re-test nearest gate is the cleanest follow-up.
+
+**Result 2 — Vjaz9 `submissions/orbitfix_kt_p23.py` v8** (commit 02cbcb8,
+shipped 2026-05-23 22:57, claims to address rung-1 6/16 ELIM and
+rung-2 3/16 ELIM via a quadratic endgame-elim bonus in
+`favor_attack_pull`):
+
+| gate | wins | elim | by-score | losses | verdict |
+|---|---:|---:|---:|---:|---|
+| vs random (n=16) | 16 | **6** | 10 | 0 | ❌ FAIL |
+| vs nearest (n=16) | **11** | 2 | 9 | **5** | ❌ FAIL |
+
+**v8 was eliminated by nearest in 5/16 games** (seeds 65865, 15613,
+31448, 14514, 12851 — all with focal owning 0 planets at game end).
+The endgame-elim bonus did NOT improve over Vjaz9's claimed v7 random
+baseline (also 6/16 ELIM); the bonus is masking a more central
+regression. Recommend Vjaz9 isolate the v7→v8 vs v6 (or earlier
+non-attack_pull-head) delta before iterating further.
+
+**Cross-branch implications.**
+
+- The 4 live submissions today on the `kt_p23` lineage (52949672 μ=984.3,
+  52959167 μ=973.0, 52963659 ERROR, 52965748 μ=981.5) all settled
+  ~200μ below the orbitfix lineage's peak (52912707 μ=1165.4). The
+  random-elim gate now shows the lineage is also substrate-broken —
+  losing to `nearest` 5/16. Recommend pausing kt_p23 iteration and
+  either reverting to the orbitfix substrate or porting v8's bonus
+  onto orbitfix instead.
+- Rule 48 candidate should be promoted: nearest gate (not just random
+  gate) is what catches the orbitfix's filter bug. Random-only gating
+  would have green-lit the bundle.
+
+---
+
 ## Closed tracks — falsified knowledge, do NOT iterate
 
 | Axis | Branch | Verdict date | Evidence |
