@@ -59,9 +59,9 @@ import random
 # the one-time build cost.
 # ---------------------------------------------------------------------------
 os.environ.setdefault("SA_REFINE_OPP_POLICY", "agents/simple/nearest.py")
-os.environ.setdefault("SA_BUDGET_STEP_S", "0.12")         # local ~0.15s, Kaggle (~6-8x slower than dev) ~0.9s
-os.environ.setdefault("SA_ITER_STEP", "8")
-os.environ.setdefault("SA_HORIZON", "20")                 # Shorter receding-horizon — less forward-sim cost per ctx-build
+os.environ.setdefault("SA_BUDGET_STEP_S", "0.4")          # ~0.4s SA + ~0.1s ctx-build; with snap caching ~0.55s Kaggle
+os.environ.setdefault("SA_ITER_STEP", "20")
+os.environ.setdefault("SA_HORIZON", "25")
 os.environ.setdefault("SA_COEVOLVE_CYCLES", "1")          # first-turn budget: 2 SAs * 15s = 30s, fits 60s overage
 os.environ.setdefault("SA_BUDGET_INIT_S", "15")
 os.environ.setdefault("SA_ITER_INIT", "200")
@@ -110,6 +110,55 @@ _INITIAL_PLANETS: list = []
 _SETTINGS: dict = {}
 _INITIALIZED: bool = False  # set after first-call init regardless of co_evolve success
 _PATH_GRAPH = None  # lazy-built at first refine; reused across all turns
+_CACHED_SNAP = None  # lib.fast_sim.Snapshot, built once at turn 0 then refreshed in place
+
+
+def _read_obs_field_local(obs, key, default=None):
+    if isinstance(obs, dict):
+        return obs.get(key, default)
+    return getattr(obs, key, default)
+
+
+def _get_or_refresh_snap(obs, configuration, seed):
+    """Return a Snapshot for the current obs.
+
+    First call: builds the snap via fs_from_obs (populates planet_position_cache
+    by trig-ing through all 501 episode steps for every rotating planet — ~50ms
+    local, ~300ms Kaggle). All subsequent calls: mutate the cached snap's
+    obs0 fields in place, leaving the heavy caches (planet_position_cache,
+    comet_path_cache) intact across turns.
+
+    The position cache + comet cache + initial_planets + angular_velocity are
+    GAME-INVARIANT — they depend only on the episode seed and the initial
+    state, which never changes mid-game. Rebuilding them every turn was the
+    dominant per-turn cost driver that pushed Kaggle past the 1s actTimeout.
+    """
+    global _CACHED_SNAP
+    import copy as _copy
+    if _CACHED_SNAP is None:
+        _CACHED_SNAP = fs_from_obs(obs, configuration,
+                                    episode_seed=seed, num_seats=2)
+        return _CACHED_SNAP
+    # Refresh mutable fields. planets/fleets/comets need deep-copy because
+    # the interpreter mutates them in place during forward sim.
+    obs0 = _CACHED_SNAP.state[0].observation
+    for k in ("planets", "fleets", "comets"):
+        v = _read_obs_field_local(obs, k)
+        if v is not None:
+            setattr(obs0, k, _copy.deepcopy(v))
+    for k in ("step", "next_fleet_id"):
+        v = _read_obs_field_local(obs, k)
+        if v is not None:
+            setattr(obs0, k, v)
+    # Seat 1 obs was built from seat 0 at fs_from_obs time. Its planet/fleet
+    # references are STALE (point at the original lists). Re-alias so both
+    # seats see the same updated mutable state — matches the interpreter's
+    # post-step aliasing (orbit_wars.py:676-682).
+    if len(_CACHED_SNAP.state) > 1:
+        obs1 = _CACHED_SNAP.state[1].observation
+        for k in ("planets", "fleets", "comets", "step", "next_fleet_id"):
+            setattr(obs1, k, getattr(obs0, k))
+    return _CACHED_SNAP
 
 
 def _get_or_build_path_graph(obs, steps: int):
@@ -400,8 +449,7 @@ def _refine_step(obs, configuration, t: int):
 
     seed = _SETTINGS["seed"]
     steps = _SETTINGS["steps"]
-    snap_t = fs_from_obs(obs, configuration,
-                          episode_seed=seed, num_seats=2)
+    snap_t = _get_or_refresh_snap(obs, configuration, seed)
     remaining_our = [
         (tau, list(a))
         for tau, acts in _PLAN_BY_TURN.items()
