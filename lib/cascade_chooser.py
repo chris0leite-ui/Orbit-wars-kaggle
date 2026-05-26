@@ -25,6 +25,40 @@ from lib.trajectory import predict_fleet_fate
 from lib.world_model import predict_garrison_at
 
 
+def _value_with_horizon(emit, idx: int, ctx: PerturbContext,
+                         value_t_end: int) -> float:
+    """Like `lib.sa_core._capture_value` but with an explicit ROI horizon.
+
+    Rationale: cascade_greedy's admissibility enumeration uses a small
+    horizon (e.g. 25 turns) to bound search cost, while ROI scoring
+    should integrate production all the way to game-end. If we use the
+    enumeration horizon for ROI, marginal captures with late arrival
+    are massively underpriced — `production × 0 − ship_cost < 0` causes
+    the `val > 0` gate to skip them, leaving the agent passive. n=16
+    vs nearest = 2/16 with that bug (commit 57e7100); this restores
+    the proper closed-form `production × game_remaining − ship_cost`.
+    """
+    turn, payload = emit
+    if idx < 0 or idx >= len(ctx.admissible_targets):
+        return -math.inf
+    if ctx.world is None:
+        return -math.inf
+    tgt_id = ctx.admissible_targets[idx]
+    tgt = ctx.world.planets_by_id.get(int(tgt_id))
+    if tgt is None:
+        return -math.inf
+    eta = 1
+    if ctx.path_graph is not None:
+        edge = ctx.path_graph.lookup(int(payload[0]),
+                                      int(tgt_id), int(turn))
+        if edge is not None:
+            eta = int(edge.eta)
+    t_arr = int(turn) + int(eta)
+    remaining = max(0, int(value_t_end) - t_arr)
+    ship_cost = float(payload[2])
+    return float(tgt.production) * float(remaining) - ship_cost
+
+
 # ---- public tunables -------------------------------------------------------
 
 DEFAULT_MAX_REBUILDS = 3
@@ -60,6 +94,7 @@ def _enumerate_pair_joints(
     top_k_targets: int = DEFAULT_JOINT_TOP_K_TARGETS,
     top_k_per_target: int = DEFAULT_JOINT_TOP_K_PER_TARGET,
     max_wall_s: float = DEFAULT_JOINT_WALL_S,
+    value_t_end: Optional[int] = None,
 ) -> list[tuple]:
     """Enumerate (S1, S2) → T joint candidates that solo-capture cannot.
 
@@ -168,7 +203,10 @@ def _enumerate_pair_joints(
                         if (fate_a.outcome != "target"
                                 or fate_b.outcome != "target"):
                             continue
-                        remaining = max(0, int(ctx.t_end) - int(t_arr))
+                        roi_end = (int(value_t_end)
+                                    if value_t_end is not None
+                                    else int(ctx.t_end))
+                        remaining = max(0, roi_end - int(t_arr))
                         joint_val = (
                             float(tgt.production) * float(remaining)
                             - float(n_a + n_b)
@@ -195,6 +233,7 @@ def _greedy_pick_from_ctx(
     max_picks: int,
     spent_per_src: dict[int, float],
     claimed_targets: set[int],
+    value_t_end: Optional[int] = None,
 ) -> list:
     """Greedy non-conflicting selection over solo + joint candidates.
 
@@ -211,7 +250,10 @@ def _greedy_pick_from_ctx(
         tgt = int(ctx.admissible_targets[i])
         if tgt in claimed_targets:
             continue
-        val = _capture_value(ctx.admissible[i], i, ctx)
+        if value_t_end is not None:
+            val = _value_with_horizon(ctx.admissible[i], i, ctx, value_t_end)
+        else:
+            val = _capture_value(ctx.admissible[i], i, ctx)
         if val == -math.inf or val <= 0.0:
             continue
         candidates.append((val, "solo", (i, tgt)))
@@ -288,6 +330,7 @@ def cascade_greedy_select(
     max_picks_per_rebuild: int = DEFAULT_MAX_PICKS_PER_REBUILD,
     enable_joints: bool = True,
     total_wall_s: float = DEFAULT_TOTAL_WALL_S,
+    value_t_end: Optional[int] = None,
 ) -> list:
     """Iterative cascade-greedy plan selection.
 
@@ -305,6 +348,10 @@ def cascade_greedy_select(
     Returns the full plan `[(turn, [src, angle, ships]), ...]`. The
     caller filters by turn for the fire-now emit (no plan carryover
     across turns).
+
+    `value_t_end`: ROI horizon override for `_capture_value` scoring.
+    If None (default), uses ctx.t_end (= enum horizon). Pass the
+    full episode-end to avoid underpricing captures with late arrival.
 
     Does not mutate `snap0`. Stops early on wallclock deadline or
     when a rebuild adds no new picks.
@@ -324,7 +371,8 @@ def cascade_greedy_select(
             )
         except Exception:
             break
-        joints = (_enumerate_pair_joints(ctx) if enable_joints else [])
+        joints = (_enumerate_pair_joints(ctx, value_t_end=value_t_end)
+                   if enable_joints else [])
         if not ctx.admissible and not joints:
             break
         spent: dict[int, float] = {}
@@ -334,6 +382,7 @@ def cascade_greedy_select(
             max_picks=int(max_picks_per_rebuild),
             spent_per_src=spent,
             claimed_targets=claimed,
+            value_t_end=value_t_end,
         )
         if not new_picks:
             break

@@ -143,6 +143,9 @@ def agent(obs, configuration=None):
             t_start=t, t_end=t + horizon, me=me,
             opp_policy=None,
             path_graph=pg,
+            # Bound admissibility enumeration to `horizon` turns ahead
+            # (cost) but score ROI against the full episode end (value).
+            value_t_end=int(steps),
         )
     except Exception:
         # Per-turn refine failure: emit nothing rather than crash. The
