@@ -118,6 +118,66 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-26 (claude/competitive-programming-strategy-ESwSv — strategic-head rewrite cycle)
+
+- `tag: calibrated-heuristic-fixed-as-approximation` — strategic-head iteration:
+  changed `_realistic_threat_eta` from Phase F's `fleet_speed(MIN_FLEET_SIZE)` to
+  `fleet_speed(capture_size)` claiming "modeling correctness." The slow-fleet
+  floor was a CALIBRATED HEURISTIC the chooser was tuned to; "fixing" it spread
+  Term A discount across iterations and broke 2P. Reverting to slow-fleet (95e6d0d)
+  then broke 4P (0/8) because the symmetric Term A in 4P needed capture-size
+  speed to actually fire. **Root cause:** treated a tuned approximation as a
+  bug. **Fix:** before "fixing" any heuristic with a modeling-correctness
+  argument, run an A/B panel pinned at the heuristic and confirm the "fix"
+  doesn't regress. Promotion candidate.
+
+- `tag: unified-model-broke-both-modes` — commit 3a054c7 (unified favor):
+  collapsed the 2P/4P branch into one path (asymmetric Term A in both modes
+  + max-of-opps + capture-feasibility gate). Local n=2 panel: 50% 2P (was
+  62.5% at fcaf414), 12.5% 4P (was 35% at fcaf414). Submitted as sub 53032723
+  for "learning data" — settled at live μ=984.1 (rolling pair floor dropped
+  ~130 μ from 1113.2 to 984.1). **Root cause:** combined 3 axis changes in
+  one commit (asymmetric-in-4P + max-of-opps + cap-feasibility gate) without
+  isolating which axis was load-bearing. Compound interactions hid the
+  individual regressions. **Fix:** one-axis-at-a-time changes when iterating
+  on a calibrated leaf. Submission to learn cost real μ.
+
+- `tag: speedrun-overcorrection-after-unified` — commit 14e429f (favor_speedrun):
+  built a new head (planet-count-primary + per-target ROI) as response to
+  unified's flat-Δ collapse. Local n=2: 25% 2P, 12.5% 4P — REGRESSED 2P
+  worse than unified (50%) and didn't improve 4P. Chooser over-attacked,
+  fast-eliminated against weak opps. **Root cause:** continued forward when
+  the right move was hard-revert to last-known-good (fcaf414). Sunk-cost
+  pattern. **Fix:** Rule 37's N=3 consecutive-falsification cap should be a
+  HARD-STOP-AND-REVERT trigger, not "consider pivoting." Promotion candidate.
+
+- `tag: root-cause-confidently-wrong` — claimed "the threat-ETA helper is
+  THE root cause" with high confidence after code-review. Reverted it
+  (95e6d0d) → 4P went from 12.5% (unified) to 0% (95e6d0d) — WORSE. The
+  actual issue was a compound: threat-ETA + asymmetric-in-4P + cap-feas
+  gate. Single-axis attribution was wrong. **Root cause:** code-review
+  identified a real anomaly but conflated "different from Phase F" with
+  "the cause of the regression." **Fix:** when claiming a root cause,
+  the test is "applying ONLY this revert recovers the baseline." Verify
+  before committing the diagnostic narrative.
+
+- `tag: 4-iterations-to-restore-known-good` — fcaf414 was the last-known-good
+  (35% 4P / 62.5% 2P). Restoration required 4 successive commits (95e6d0d
+  → 0bbf009 → e1a26e1 → 4ad192f), each panel-tested (n=2). Net iteration
+  cost: ~2 hours wallclock, no actual forward progress. A single
+  `git reset --hard fcaf414` would have achieved the same end state in 1 minute.
+  **Root cause:** forward-only mindset; treated each revert as an experiment
+  to verify rather than as a baseline restoration. **Fix:** when 2+ axes
+  changed in the broken commit, default to git-revert-the-commit, not
+  axis-by-axis reverts. Promotion candidate.
+
+- `tag: postmortem-flags-not-filed-during-session` — Rule 36 mandates
+  `knowledge-base/flags/`, `questions/`, `thoughts/` updates. Today (the
+  longest session this comp), no entries written. Standing duty per
+  `knowledge-base/flags/2026-05-06.md` ignored. **Root cause:** in-the-loop
+  iteration crowded out reflection. **Fix:** make the flags-questions-thoughts
+  check a HARD blocker, not WARN.
+
 ## 2026-05-25 (claude/competitive-programming-strategy-ESwSv — baseline_wave v5/v5.1)
 
 - `tag: wave-mechanical-vs-quality-test-gap` — post-v5
