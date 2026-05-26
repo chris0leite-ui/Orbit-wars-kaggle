@@ -27,15 +27,41 @@ import argparse
 import json
 import math
 import os
+import random
 import statistics
 import subprocess
 import sys
 import time
+from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 NOOP_PATH = REPO / "agents" / "simple" / "noop.py"
+PANEL_PATH = REPO / "data" / "seed_panel_128.json"
+
+
+def _load_archetype_seeds(per_archetype: int, rng_seed: int
+                          ) -> list[tuple[int, str]]:
+    """Return `[(seed, archetype_name), ...]` — `per_archetype` random
+    picks per archetype, deterministic given `rng_seed`.
+
+    Each archetype in `data/seed_panel_128.json` has exactly 4 seeds;
+    we draw `per_archetype` of them without replacement (4 max).
+    """
+    with PANEL_PATH.open() as f:
+        panel = json.load(f)
+    by_arc: dict[str, list[int]] = defaultdict(list)
+    for entry in panel["panel"]:
+        by_arc[entry["archetype"]].append(int(entry["seed"]))
+    rng = random.Random(rng_seed)
+    out: list[tuple[int, str]] = []
+    for arc in sorted(by_arc.keys()):
+        pool = list(by_arc[arc])
+        rng.shuffle(pool)
+        for s in pool[:per_archetype]:
+            out.append((s, arc))
+    return out
 
 
 def _resolve_agent_path(spec: str) -> tuple[str, str]:
@@ -68,9 +94,9 @@ def _resolve_agent_path(spec: str) -> tuple[str, str]:
     raise SystemExit(f"cannot resolve agent: {spec}")
 
 
-def _worker(args: tuple[str, str, int, int, dict]) -> dict:
+def _worker(args: tuple[str, str, int, str, int, dict]) -> dict:
     """Run one (agent, seed) game in a subprocess; return terminal stats."""
-    label, agent_path, seed, episode_steps, extra_env = args
+    label, agent_path, seed, archetype, episode_steps, extra_env = args
     code = (
         "import json, sys, time;"
         "sys.path.insert(0, %r);"
@@ -109,19 +135,22 @@ def _worker(args: tuple[str, str, int, int, dict]) -> dict:
             timeout=900,
         )
     except subprocess.TimeoutExpired as e:
-        return {"label": label, "seed": seed, "outcome": "timeout",
+        return {"label": label, "seed": seed, "archetype": archetype,
+                "outcome": "timeout",
                 "wall_total": time.perf_counter() - t0,
                 "stderr": f"timed out after {e.timeout}s"}
     out_lines = (proc.stdout or "").strip().splitlines()
     json_line = next((l for l in reversed(out_lines) if l.startswith("{")), "")
     if not json_line:
-        return {"label": label, "seed": seed, "outcome": "error",
+        return {"label": label, "seed": seed, "archetype": archetype,
+                "outcome": "error",
                 "wall_total": time.perf_counter() - t0,
                 "stderr": (proc.stderr or "")[:600]}
     data = json.loads(json_line)
     return {
         "label": label,
         "seed": seed,
+        "archetype": archetype,
         "outcome": "ok",
         "ships": data["ships_planets"] + data["ships_fleets"],
         "ships_planets": data["ships_planets"],
@@ -163,7 +192,16 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--agents", nargs="+", required=True,
                     help="Agent specs (paths, short names, or dirs)")
-    ap.add_argument("--seeds", type=int, default=32)
+    ap.add_argument("--seeds", type=int, default=32,
+                    help="Seeds 0..N-1 (ignored if --archetype-panel set)")
+    ap.add_argument("--archetype-panel", action="store_true",
+                    help="Draw seeds from data/seed_panel_128.json — one (or "
+                         "--per-archetype) random seed per archetype.")
+    ap.add_argument("--per-archetype", type=int, default=1,
+                    help="Seeds per archetype when --archetype-panel set "
+                         "(max 4, the panel pool per bucket).")
+    ap.add_argument("--rng-seed", type=int, default=42,
+                    help="RNG seed for archetype seed-pick (reproducible).")
     ap.add_argument("--steps", type=int, default=250)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--integral-t-end", type=int, default=None,
@@ -175,15 +213,25 @@ def main() -> int:
     if args.integral_t_end is not None:
         extra_env["INTEGRAL_T_END"] = str(args.integral_t_end)
 
+    if args.archetype_panel:
+        seed_arc_pairs = _load_archetype_seeds(
+            per_archetype=args.per_archetype, rng_seed=args.rng_seed)
+    else:
+        seed_arc_pairs = [(seed, "") for seed in range(args.seeds)]
+
     tasks = [
-        (label, path, seed, args.steps, extra_env)
+        (label, path, seed, arc, args.steps, extra_env)
         for (label, path) in resolved
-        for seed in range(args.seeds)
+        for (seed, arc) in seed_arc_pairs
     ]
 
-    print(f"[solo_bench] {len(resolved)} agent(s) × {args.seeds} seed(s) "
-          f"= {len(tasks)} games, {args.steps} steps, {args.workers} worker(s)",
-          file=sys.stderr)
+    n_seeds_per_agent = len(seed_arc_pairs)
+    panel_desc = (f"archetype-panel (per_archetype={args.per_archetype}, "
+                  f"rng_seed={args.rng_seed})" if args.archetype_panel
+                  else f"seeds 0..{args.seeds - 1}")
+    print(f"[solo_bench] {len(resolved)} agent(s) × {n_seeds_per_agent} "
+          f"seed(s)  [{panel_desc}]  = {len(tasks)} games, "
+          f"{args.steps} steps, {args.workers} worker(s)", file=sys.stderr)
     if extra_env:
         print(f"[solo_bench] worker env: {extra_env}", file=sys.stderr)
 
@@ -230,6 +278,41 @@ def main() -> int:
               f"{s['std_ships']:>7.1f} {s['ci95_lo']:>9.1f} {s['ci95_hi']:>9.1f} "
               f"{s['mean_planets']:>8.2f} {s['wall_s']:>8.1f} "
               f"{s.get('errors', 0):>4d}")
+
+    if args.archetype_panel:
+        # Per-archetype breakdown: rows = archetypes (in panel order),
+        # columns = agents (in CLI order). Diff column shown if exactly
+        # two agents (the canonical A/B case).
+        arc_order: list[str] = []
+        seen: set[str] = set()
+        for (_, arc) in seed_arc_pairs:
+            if arc not in seen:
+                arc_order.append(arc); seen.add(arc)
+        cli_order = [label for label, _ in resolved]
+        print("\nper-archetype mean terminal ships "
+              f"(n={args.per_archetype} game(s) per cell):")
+        head_cols = "  ".join(f"{lab[:22]:>22s}" for lab in cli_order)
+        diff_col = f"  {'diff[1-2]':>10s}" if len(cli_order) == 2 else ""
+        print(f"{'archetype':<42s}  {head_cols}{diff_col}")
+        print("-" * (44 + len(head_cols) + len(diff_col)))
+        for arc in arc_order:
+            cells: list[str] = []
+            means: list[float] = []
+            for lab in cli_order:
+                vals = [r["ships"] for r in results_by_agent[lab]
+                        if r.get("archetype") == arc and r.get("outcome") == "ok"]
+                if vals:
+                    m = statistics.mean(vals)
+                    means.append(m)
+                    cells.append(f"{m:>22.1f}")
+                else:
+                    means.append(float("nan"))
+                    cells.append(f"{'-':>22s}")
+            row = "  ".join(cells)
+            if len(cli_order) == 2 and not any(math.isnan(m) for m in means):
+                diff = means[0] - means[1]
+                row += f"  {diff:>+10.1f}"
+            print(f"{arc:<42s}  {row}")
 
     # JSON dump for downstream analysis. To stderr to keep stdout = table.
     print("\n[solo_bench] raw JSON:", file=sys.stderr)
