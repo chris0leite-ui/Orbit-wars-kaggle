@@ -63,8 +63,9 @@ def _get_step(obs):
 def record_initial_plan(seed: int, steps: int, agent_path: Path):
     """Run focal-vs-noop via env.run, log every focal emission.
 
-    Returns (emissions_list, env_terminal_ships, n_steps).
+    Returns (emissions_list, env_terminal_ships, n_steps, initial_planets).
     emissions: list of (turn, [src, angle, ships]).
+    initial_planets: obs.planets at turn 0 (for the SA add-emission op).
     """
     agent_fn = _load_agent(agent_path)
     emissions: list[tuple[int, list]] = []
@@ -83,15 +84,20 @@ def record_initial_plan(seed: int, steps: int, agent_path: Path):
                configuration={"seed": seed, "episodeSteps": steps},
                debug=False)
     env.reset(num_agents=2)
+    # Capture initial planets BEFORE env.run so we have them for SA's
+    # add-emission perturbation (we need to know which planet IDs / positions exist).
+    obs0 = env.steps[0][0]["observation"] if isinstance(env.steps[0][0], dict) else env.steps[0][0].observation
+    od0 = obs0 if isinstance(obs0, dict) else dict(obs0)
+    initial_planets = [list(p) for p in (od0.get("planets") or [])]
     env.run([recorder, noop])
     final = env.steps[-1]
-    obs0 = final[0]["observation"] if isinstance(final[0], dict) else final[0].observation
-    od = obs0 if isinstance(obs0, dict) else dict(obs0)
-    planets = od.get("planets") or []
-    fleets = od.get("fleets") or []
+    obs_f = final[0]["observation"] if isinstance(final[0], dict) else final[0].observation
+    odf = obs_f if isinstance(obs_f, dict) else dict(obs_f)
+    planets = odf.get("planets") or []
+    fleets = odf.get("fleets") or []
     p0_ships = sum(float(p[5]) for p in planets if int(p[1]) == 0) + \
                sum(float(f[6]) for f in fleets if int(f[1]) == 0)
-    return emissions, p0_ships, len(env.steps)
+    return emissions, p0_ships, len(env.steps), initial_planets
 
 
 def score_plan(emissions, seed: int, steps: int) -> float:
@@ -119,12 +125,46 @@ def score_plan(emissions, seed: int, steps: int) -> float:
     return ship_totals(snap).get(0, 0.0)
 
 
-def perturb(plan: list[tuple[int, list]], rng: random.Random) -> list[tuple[int, list]]:
-    """One uniform random local edit."""
-    if not plan:
+def perturb(plan: list[tuple[int, list]], rng: random.Random,
+            initial_planets: list | None = None,
+            t_end: int = 200) -> list[tuple[int, list]]:
+    """One uniform random local edit.
+
+    Ops: remove / modify ships / shift turn / nudge angle / ADD new emission.
+    'add' samples src + tgt from `initial_planets` (the obs.planets at turn 0)
+    so we don't need to simulate to find owned planets — most adds will be
+    invalid (src not owned at T, ships not available, fleet flies into sun),
+    and SA rejects those silently. The valid ones close the gap on seeds
+    where ROI under-emits.
+    """
+    can_add = initial_planets is not None and len(initial_planets) >= 2
+    ops = ["remove", "ships", "shift", "angle"]
+    if can_add:
+        ops.append("add")
+    if not plan and not can_add:
         return list(plan)
-    op = rng.choice(["remove", "ships", "shift", "angle"])
+    op = rng.choice(ops)
     new_plan = list(plan)
+
+    if op == "add":
+        # Random (src, tgt, ships, turn). Angle = atan2 from src to tgt
+        # at the planets' INITIAL positions; most rotating-target adds
+        # will fail predict_fleet_fate's filter and SA discards them.
+        # Some hit, and those are the ones SA keeps.
+        src_p = rng.choice(initial_planets)
+        tgt_p = rng.choice(initial_planets)
+        while int(tgt_p[0]) == int(src_p[0]):
+            tgt_p = rng.choice(initial_planets)
+        sx, sy = float(src_p[2]), float(src_p[3])
+        tx, ty = float(tgt_p[2]), float(tgt_p[3])
+        angle = math.atan2(ty - sy, tx - sx)
+        ships = rng.choice([10, 20, 30, 50, 80, 120, 200])
+        turn = rng.randrange(0, max(1, t_end))
+        new_plan.append((turn, [int(src_p[0]), float(angle), int(ships)]))
+        return new_plan
+
+    if not new_plan:
+        return new_plan
     idx = rng.randrange(len(new_plan))
     if op == "remove":
         new_plan.pop(idx)
@@ -146,8 +186,12 @@ def perturb(plan: list[tuple[int, list]], rng: random.Random) -> list[tuple[int,
 
 
 def simulated_anneal(initial_plan, seed, steps, n_iterations,
-                     t0, cooling, rng):
-    """SA loop: returns (best_plan, best_score, history)."""
+                     t0, cooling, rng, initial_planets=None):
+    """SA loop: returns (best_plan, best_score, history).
+
+    `initial_planets`: list of planet rows from obs at turn 0; enables
+    the 'add new emission' perturbation. If None, only edit/remove ops.
+    """
     score = score_plan(initial_plan, seed, steps)
     best_plan, best_score = list(initial_plan), score
     current_plan, current_score = list(initial_plan), score
@@ -155,7 +199,8 @@ def simulated_anneal(initial_plan, seed, steps, n_iterations,
 
     temp = t0
     for i in range(n_iterations):
-        new_plan = perturb(current_plan, rng)
+        new_plan = perturb(current_plan, rng,
+                            initial_planets=initial_planets, t_end=steps)
         new_score = score_plan(new_plan, seed, steps)
         delta = new_score - current_score
         if delta > 0 or rng.random() < math.exp(delta / max(1e-9, temp)):
@@ -190,7 +235,7 @@ def main():
     log(f"=== seed={args.seed} steps={args.steps} iter={args.iterations} ===")
 
     t0 = time.perf_counter()
-    plan, env_score, env_n_steps = record_initial_plan(
+    plan, env_score, env_n_steps, initial_planets = record_initial_plan(
         args.seed, args.steps, REPO / args.agent)
     t_record = time.perf_counter() - t0
     log(f"recorded {len(plan)} emissions in {t_record:.1f}s "
@@ -210,7 +255,8 @@ def main():
     sa_t0 = time.perf_counter()
     best_plan, best_score, history = simulated_anneal(
         plan, args.seed, args.steps, args.iterations,
-        args.t0, args.cooling, rng)
+        args.t0, args.cooling, rng,
+        initial_planets=initial_planets)
     sa_elapsed = time.perf_counter() - sa_t0
 
     initial_score = fs_score

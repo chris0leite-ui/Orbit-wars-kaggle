@@ -69,6 +69,7 @@ _BASELINES: dict[str, str] = {
     "roi":        str(REPO / "agents" / "simple" / "roi.py"),
     "noop":       str(REPO / "agents" / "simple" / "noop.py"),
     "integral_minimal": str(REPO / "agents" / "integral_minimal" / "main.py"),
+    "sa_replay":        str(REPO / "agents" / "sa_replay" / "main.py"),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",

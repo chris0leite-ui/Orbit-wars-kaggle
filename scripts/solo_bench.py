@@ -124,7 +124,13 @@ def _worker(args: tuple[str, str, int, str, int, dict]) -> dict:
         "}))"
     ) % (str(REPO), int(seed), int(episode_steps),
          str(agent_path), str(NOOP_PATH))
-    env = {**os.environ, **{k: str(v) for k, v in extra_env.items()}}
+    # SA_SEED + SA_EPISODE_STEPS are passed unconditionally so sa_replay (and
+    # any other "solve at module load" agent) can self-configure. Agents that
+    # don't read these env vars ignore them.
+    env = {**os.environ,
+           **{k: str(v) for k, v in extra_env.items()},
+           "SA_SEED": str(seed),
+           "SA_EPISODE_STEPS": str(episode_steps)}
     t0 = time.perf_counter()
     try:
         proc = subprocess.run(
