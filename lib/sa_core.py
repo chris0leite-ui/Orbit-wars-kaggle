@@ -176,9 +176,9 @@ class PerturbContext:
 # wait / medium wait / long wait — needed because some targets grow at
 # a comparable rate to our home, so accumulating an advantage takes
 # many turns. _ADMISSIBLE_TOP_K_TARGETS caps the search per refine.
-_ADMISSIBLE_TOP_K_TARGETS = 25
-_ADMISSIBLE_TURN_OFFSETS = (0, 2, 5, 12)
-_ADMISSIBLE_MAX_WALL_S = 0.3   # cap enumeration cost regardless of owned/target counts
+_ADMISSIBLE_TOP_K_TARGETS = 40
+_ADMISSIBLE_TURN_OFFSETS = (0, 1, 2, 3, 5, 8, 16, 32)   # finer near 0 + long wait
+_ADMISSIBLE_MAX_WALL_S = 0.6   # cap enumeration cost regardless of owned/target counts
 
 
 def _target_tuple_from_planet(p) -> list:
