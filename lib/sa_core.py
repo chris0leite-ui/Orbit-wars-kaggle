@@ -895,6 +895,91 @@ def _capture_value(emit, idx: int, ctx: PerturbContext) -> float:
     return float(tgt.production) * float(remaining) - ship_cost
 
 
+def _warm_start_from_admissible(ctx: PerturbContext,
+                                  current_plan: list,
+                                  *,
+                                  max_emissions: int = 8) -> list:
+    """Greedy initial-plan fill: rank ctx.admissible by closed-form
+    `_capture_value`, greedy-assign respecting per-source ship budgets.
+
+    Why this exists: SA with a sparse initial plan and a tight per-turn
+    iteration budget (Kaggle: ~8-20 iters / 5000-edge candidate pool)
+    almost never stumbles onto a good capture sequence. The agent
+    converges on "do nothing" — observed live in sub 53062327 where
+    sa_online emitted 5 actions in 79 turns vs the peak baseline and
+    was eliminated at step 79. Seeding SA with "closest biggest
+    planets at ETA" lets it polish a sensible default instead of
+    searching from zero.
+
+    Pattern: closed-form value reuses `_capture_value` (the same
+    function ruin-recreate uses); source-budget tracking via a local
+    dict overlay mirrors `lib/planner.py:settle_plan` — no
+    `ownership_cache` rebuild.
+    """
+    if not ctx.admissible:
+        return current_plan
+
+    # Score every admissible emission by closed-form game-model value.
+    scored: list[tuple[int, tuple, float]] = []
+    for i in range(len(ctx.admissible)):
+        emit = ctx.admissible[i]
+        v = _capture_value(emit, i, ctx)
+        if v > 0.0:
+            scored.append((i, emit, v))
+    if not scored:
+        return current_plan
+    scored.sort(key=lambda s: -s[2])
+
+    # Cumulative ships spent per source across all warm-start picks. Each
+    # candidate in ctx.admissible is INDIVIDUALLY affordable at its own
+    # t_dep (the admissible-set enumeration already filtered by the
+    # source's ships at that future turn, accrued via forward-sim
+    # production from the current-plan baseline). When we pick multiple
+    # emissions from the same source, we subtract earlier picks from the
+    # ownership_cache[t_dep] available pool so we don't double-spend.
+    spent_per_src: dict[int, float] = {}
+
+    # Pre-subtract any emissions already in current_plan from the source
+    # spend — they live in the same plan space SA will evaluate, so
+    # warm-start picks must respect them.
+    for turn, payload in current_plan:
+        src_id = int(payload[0])
+        spent_per_src[src_id] = spent_per_src.get(src_id, 0.0) + float(payload[2])
+
+    seen_keys: set[tuple[int, int]] = set(
+        (int(t), int(p[0])) for t, p in current_plan
+    )
+    added = 0
+    augmented = list(current_plan)
+    for _idx, emit, _value in scored:
+        if added >= max_emissions:
+            break
+        turn, payload = emit
+        src_id = int(payload[0])
+        ships_needed = float(payload[2])
+        key = (int(turn), src_id)
+        if key in seen_keys:
+            continue
+        # Affordability at the emission's own t_dep, accounting for
+        # cumulative spend from prior warm-start picks on the same source.
+        cache_at_dep = ctx.ownership_cache.get(int(turn), {})
+        src_state = cache_at_dep.get(src_id)
+        if src_state is None:
+            continue
+        owner_at_dep, ships_at_dep = src_state
+        if int(owner_at_dep) != int(ctx.me):
+            continue
+        available = float(ships_at_dep) - spent_per_src.get(src_id, 0.0)
+        if available < ships_needed:
+            continue
+        spent_per_src[src_id] = spent_per_src.get(src_id, 0.0) + ships_needed
+        seen_keys.add(key)
+        augmented.append(emit)
+        added += 1
+
+    return augmented
+
+
 _RUIN_K_MIN = 3
 _RUIN_K_MAX = 5
 
@@ -1061,11 +1146,6 @@ def simulated_anneal_online(initial_plan: list[Emission],
     deadline = (time.perf_counter() + max_wall_s) if max_wall_s is not None else None
 
     current_plan = list(initial_plan)
-    current_score = score_plan_from_snap(
-        current_plan, snap0, opp_policy, max_steps,
-        me=me, score_mode=score_mode)
-    best_plan = list(current_plan)
-    best_score = current_score
     history: list[tuple[int, float, float]] = []
 
     # Build the perturbation context ONCE up front — ownership cache +
@@ -1089,6 +1169,26 @@ def simulated_anneal_online(initial_plan: list[Emission],
             t_start=int(start_step), t_end=int(t_end_perturb), me=int(me),
             path_graph=path_graph,
         )
+
+    # Warm-start: when SA is called with a sparse initial plan (e.g. the
+    # turn-1 empty case on Kaggle), greedy-fill from ctx.admissible using
+    # the same closed-form _capture_value the ruin-recreate operator
+    # uses. Without this, with SA_ITER_STEP=20 and a 5000-edge candidate
+    # pool, SA explores ~8 random plan variants per turn and almost
+    # never stumbles onto a good capture — the agent converges on "do
+    # nothing" and gets eliminated. See inspection trace 2026-05-26
+    # (sub 53062327: 5 emits over 79 turns vs peak baseline).
+    warm_threshold = int(os.environ.get("SA_WARM_START_THRESHOLD", "3"))
+    warm_max = int(os.environ.get("SA_WARM_START_MAX", "8"))
+    if len(current_plan) < warm_threshold:
+        current_plan = _warm_start_from_admissible(
+            ctx, current_plan, max_emissions=warm_max)
+
+    current_score = score_plan_from_snap(
+        current_plan, snap0, opp_policy, max_steps,
+        me=me, score_mode=score_mode)
+    best_plan = list(current_plan)
+    best_score = current_score
 
     last_rebuild_iter = 0
     n_rebuilds = 0

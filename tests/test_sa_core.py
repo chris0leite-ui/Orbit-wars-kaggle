@@ -16,9 +16,21 @@ REPO = Path(__file__).resolve().parents[1]
 from lib.sa_core import (  # noqa: E402
     _noop_policy,
     perturb,
+    reset_fate_cache,
     score_plan_from_snap,
     simulated_anneal_online,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_fate_cache_between_tests():
+    """Fate cache is module-level + per-process in production (Kaggle
+    starts a fresh process per episode). Tests share the process, so
+    reset between tests to prevent stale (src, tgt, t_dep) entries
+    from one seed leaking into another."""
+    reset_fate_cache()
+    yield
+    reset_fate_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -277,10 +289,17 @@ def test_admissible_set_only_physics_valid():
     """
     from lib.sa_core import _build_perturb_context
     from lib.trajectory import predict_fleet_fate
+    from lib.sa_core import reset_fate_cache
     seeds = [0, 7542, 1153, 2794]
     n_admissible_total = 0
     n_validated = 0
     for seed in seeds:
+        # Fate cache is intentionally per-process in production (each
+        # Kaggle episode = fresh process = fresh planet geometry). In
+        # multi-seed tests we must reset between iterations so cached
+        # entries from seed N don't poison seed N+1's identical
+        # (src, tgt, t_dep) keys with stale outcomes.
+        reset_fate_cache()
         ctx = _build_test_ctx(seed=seed, steps=80)
         for emit, tgt_id in zip(ctx.admissible, ctx.admissible_targets):
             n_admissible_total += 1
@@ -687,3 +706,147 @@ def test_sa_online_vs_solo_parity():
 
     assert best_online == best_solo, \
         f"SA parity break: online={best_online} solo={best_solo}"
+
+
+# ---------------------------------------------------------------------------
+# warm-start (closest biggest planets at ETA) — seeds SA on Kaggle turn 1
+# ---------------------------------------------------------------------------
+
+
+def test_warm_start_seeds_empty_plan():
+    """ctx with non-empty admissible, empty initial_plan -> warm-start
+    augments. This is the live failure mode that motivated the function
+    (sub 53062327: SA emitted 5 actions in 79 turns from empty start)."""
+    from lib.sa_core import _warm_start_from_admissible
+    ctx = _build_test_ctx(seed=0, steps=50, plan=[])
+    if not ctx.admissible:
+        pytest.skip("admissible set empty on seed 0 — env-specific; "
+                     "test is meaningful only when admissible is populated")
+    augmented = _warm_start_from_admissible(ctx, [], max_emissions=8)
+    assert len(augmented) > 0, "warm-start did nothing on an empty plan"
+    assert len(augmented) <= 8, "warm-start emitted more than max_emissions"
+
+
+def test_warm_start_respects_source_budget():
+    """No source's cumulative spend up to any t_dep exceeds its available
+    ships at that t_dep. Available = ownership_cache[t_dep][src].ships,
+    which already includes accrued production from forward-sim through
+    the current (empty) plan.
+
+    Iterate the warm-start output sorted by t_dep ascending: maintain
+    cumulative-spent per source, assert each new emission's cumulative
+    spend never exceeds that source's ships at its t_dep."""
+    from lib.sa_core import _warm_start_from_admissible
+    ctx = _build_test_ctx(seed=0, steps=50, plan=[])
+    if not ctx.admissible:
+        pytest.skip("admissible set empty")
+    augmented = _warm_start_from_admissible(ctx, [], max_emissions=20)
+
+    cumulative_spent: dict[int, float] = {}
+    sorted_emissions = sorted(augmented, key=lambda e: int(e[0]))
+    for turn, payload in sorted_emissions:
+        src_id = int(payload[0])
+        ships_needed = float(payload[2])
+        cache_at_dep = ctx.ownership_cache.get(int(turn), {})
+        state = cache_at_dep.get(src_id)
+        assert state is not None, \
+            f"warm-start emit at turn={turn} from src={src_id} not in ownership_cache"
+        owner, ships_at_dep = state
+        assert int(owner) == int(ctx.me), \
+            f"warm-start used non-me source {src_id} at t_dep={turn} (owner={owner})"
+        new_total = cumulative_spent.get(src_id, 0.0) + ships_needed
+        assert new_total <= float(ships_at_dep) + 1e-6, (
+            f"src {src_id} over-allocated at t_dep={turn}: "
+            f"cumulative {new_total} > available {ships_at_dep}"
+        )
+        cumulative_spent[src_id] = new_total
+
+
+def test_warm_start_skips_when_plan_is_full():
+    """If the caller already passes >= threshold emissions, warm-start
+    should NOT augment (called only when current_plan is sparse).
+
+    This test bypasses the call-site guard by invoking the function
+    directly with a max_emissions of 0 — which is the equivalent of the
+    sa_core call site short-circuiting. With max_emissions=0 the function
+    should never add anything."""
+    from lib.sa_core import _warm_start_from_admissible
+    ctx = _build_test_ctx(seed=0, steps=50, plan=[])
+    if not ctx.admissible:
+        pytest.skip("admissible set empty")
+    prior_plan = [(0, [0, 1.5, 5])]
+    augmented = _warm_start_from_admissible(ctx, prior_plan, max_emissions=0)
+    assert augmented == prior_plan, \
+        "warm-start added emissions despite max_emissions=0"
+
+
+def test_warm_start_pre_subtracts_existing_emissions():
+    """When current_plan already emits 90% of a source's ships at t_start,
+    warm-start should not stack additional emissions on that source at
+    early t_deps where the cumulative spend would exceed the source's
+    available ships (which grow with production over time).
+
+    Verify: the cumulative spend for that source AT EACH t_dep of the
+    new emissions never exceeds ownership_cache[t_dep][src].ships."""
+    from lib.sa_core import _warm_start_from_admissible
+    ctx = _build_test_ctx(seed=0, steps=50, plan=[])
+    if not ctx.admissible:
+        pytest.skip("admissible set empty")
+    cache_t0 = ctx.ownership_cache.get(int(ctx.t_start), {})
+    my_srcs = [(pid, state) for pid, state in cache_t0.items()
+                if int(state[0]) == int(ctx.me)]
+    if not my_srcs:
+        pytest.skip("no owned sources at t_start")
+    src_id, (_o, ships_t0) = my_srcs[0]
+    pre_charge = max(1, int(float(ships_t0) * 0.9))
+    seed_plan = [(int(ctx.t_start), [int(src_id), 0.0, pre_charge])]
+
+    augmented = _warm_start_from_admissible(ctx, seed_plan, max_emissions=20)
+
+    # Check cumulative-source-spend invariant on src_id across all emissions
+    # (seed + warm-start), sorted by t_dep ascending.
+    sorted_all = sorted(augmented, key=lambda e: int(e[0]))
+    cumulative = 0.0
+    for turn, payload in sorted_all:
+        if int(payload[0]) != int(src_id):
+            continue
+        cumulative += float(payload[2])
+        cache_at_dep = ctx.ownership_cache.get(int(turn), {})
+        state = cache_at_dep.get(src_id)
+        if state is None:
+            continue
+        _o, ships_at_dep = state
+        assert cumulative <= float(ships_at_dep) + 1e-6, (
+            f"pre-charge ignored: src {src_id} over-allocated at t_dep={turn}: "
+            f"cumulative {cumulative} > available {ships_at_dep}"
+        )
+
+
+def test_warm_start_dedup_same_turn_same_source():
+    """No two emissions in the warm-start output may share the same
+    (turn, src_id). The env's emission semantics make this redundant at
+    best and ambiguous at worst."""
+    from lib.sa_core import _warm_start_from_admissible
+    ctx = _build_test_ctx(seed=0, steps=50, plan=[])
+    if not ctx.admissible:
+        pytest.skip("admissible set empty")
+    augmented = _warm_start_from_admissible(ctx, [], max_emissions=20)
+    keys = [(int(t), int(p[0])) for t, p in augmented]
+    assert len(keys) == len(set(keys)), \
+        f"warm-start produced duplicate (turn,src) keys: {keys}"
+
+
+def test_warm_start_no_admissible_returns_input():
+    """Defensive: if ctx.admissible is empty (e.g. degraded ctx), warm-
+    start returns the input plan unchanged rather than crashing."""
+    from lib.sa_core import _warm_start_from_admissible, PerturbContext
+    # Hand-build a minimal ctx with empty admissible — simulates the
+    # degraded-ctx fallback path inside simulated_anneal_online.
+    ctx = PerturbContext(
+        snap0=None, world=None, world_model=None,
+        omega=0.0, comet_paths={},
+        ownership_cache={}, opp_intent_window=[],
+        t_start=0, t_end=50, me=0,
+    )
+    out = _warm_start_from_admissible(ctx, [], max_emissions=8)
+    assert out == []
