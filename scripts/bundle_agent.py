@@ -98,6 +98,10 @@ DEFAULT_LIB_ORDER = [
     # Inlining these is a no-op for non-v7 agents (their agent() never
     # imports from them) — they bloat the bundle by ~35 KB. Acceptable.
     "fast_sim",
+    # lib/path_graph.py (2026-05-28): static feasibility graph for SA
+    # admissibility. Imports from lib.aim/lib.orbit/lib.world_model;
+    # consumed by lib.sa_core, so must precede sa_core in the order.
+    "path_graph",
     # lib/sa_core.py (2026-05-26): SA primitives shared by sa_solo_solver
     # and sa_online. Imports from lib.fast_sim, so must come AFTER it.
     "sa_core",

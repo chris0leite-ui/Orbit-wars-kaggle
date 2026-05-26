@@ -83,6 +83,8 @@ from lib.sa_core import load_agent as _load_agent
 from lib.sa_core import record_initial_plan
 from lib.sa_core import simulated_anneal_online
 from lib.fast_sim import from_obs as fs_from_obs
+from lib.intent import World as _SAWorld
+from lib.path_graph import build_path_graph as _build_path_graph
 
 # Imports for the inlined `simple/nearest` opp surrogate (below).
 # Bundler strips these single-line lib imports and inlines the modules,
@@ -98,6 +100,28 @@ _OPP_PLAN_BY_TURN: dict[int, list[list]] = {}
 _INITIAL_PLANETS: list = []
 _SETTINGS: dict = {}
 _INITIALIZED: bool = False  # set after first-call init regardless of co_evolve success
+_PATH_GRAPH = None  # lazy-built at first refine; reused across all turns
+
+
+def _get_or_build_path_graph(obs, steps: int):
+    """Lazy-build the static feasibility graph from obs's world.
+
+    Deferred past turn 0 to avoid Kaggle's actTimeout=1s on the first
+    act() call (graph build can take ~500ms on a typical 18-planet world).
+    Cached at module level — every subsequent turn reuses it.
+    """
+    global _PATH_GRAPH
+    if _PATH_GRAPH is not None:
+        return _PATH_GRAPH
+    try:
+        obs_d = obs if isinstance(obs, dict) else dict(obs)
+        world = _SAWorld.from_obs(obs_d)
+        _PATH_GRAPH = _build_path_graph(
+            world, t_max=int(steps),
+            orbiting_bucket=4, comet_bucket=1)
+    except Exception:
+        _PATH_GRAPH = None  # SA falls back to legacy per-emission aim
+    return _PATH_GRAPH
 
 
 # ---------------------------------------------------------------------------
@@ -176,17 +200,23 @@ def _resolve_seed_and_steps_from_config(obs, configuration) -> tuple[int, int]:
     """Fallback when env vars aren't set (e.g. direct env.run with config)."""
     if configuration is None:
         return 0, 200
+    seed_v = None
     if hasattr(configuration, "seed"):
-        seed = int(configuration.seed)
+        seed_v = getattr(configuration, "seed")
     elif isinstance(configuration, dict):
-        seed = int(configuration.get("seed", 0))
-    else:
+        seed_v = configuration.get("seed")
+    try:
+        seed = int(seed_v) if seed_v is not None else 0
+    except (TypeError, ValueError):
         seed = 0
+    steps_v = None
     if hasattr(configuration, "episodeSteps"):
-        steps = int(configuration.episodeSteps)
+        steps_v = getattr(configuration, "episodeSteps")
     elif isinstance(configuration, dict):
-        steps = int(configuration.get("episodeSteps", 200))
-    else:
+        steps_v = configuration.get("episodeSteps")
+    try:
+        steps = int(steps_v) if steps_v is not None else 200
+    except (TypeError, ValueError):
         steps = 200
     return seed, steps
 
@@ -222,12 +252,14 @@ def _co_evolve(seed: int, steps: int):
     the MPC pessimism trap because opp is no longer a fixed counter —
     it's an evolving plan SA can find new attacks against.
     """
-    global _INITIAL_PLANETS
+    global _INITIAL_PLANETS, _PATH_GRAPH
     n_cycles = int(os.environ.get("SA_COEVOLVE_CYCLES", "3"))
     budget_s = float(os.environ.get("SA_BUDGET_INIT_S", "30"))
     iter_cap = int(os.environ.get("SA_ITER_INIT", "300"))
     t0 = float(os.environ.get("SA_T0", "500"))
     cooling = float(os.environ.get("SA_COOLING", "0.99"))
+    rebuild_iters = int(os.environ.get("SA_REBUILD_INTERVAL_ITERS", "100"))
+    max_rebuilds = int(os.environ.get("SA_MAX_REBUILDS", "3"))
     base_rng = int(os.environ.get("SA_RNG_SEED", "42"))
     bootstrap_agent = REPO / os.environ.get(
         "SA_BOOTSTRAP_AGENT", "agents/simple/roi.py")
@@ -242,6 +274,26 @@ def _co_evolve(seed: int, steps: int):
 
     snap0 = _build_solo_snap0(seed, steps)
 
+    # Build path_graph once from snap0's world (this runs at module load,
+    # outside Kaggle's per-turn actTimeout). Cached for the rest of the
+    # game.
+    if _PATH_GRAPH is None:
+        try:
+            obs0 = snap0.state[0].observation
+            od = {}
+            for k in ("player", "step", "planets", "fleets", "comets",
+                      "comet_planet_ids", "angular_velocity"):
+                v = getattr(obs0, k, None)
+                if v is not None:
+                    od[k] = list(v) if isinstance(v, list) else v
+            world = _SAWorld.from_obs(od)
+            _PATH_GRAPH = _build_path_graph(
+                world, t_max=int(steps),
+                orbiting_bucket=4, comet_bucket=1)
+        except Exception:
+            _PATH_GRAPH = None
+    pg = _PATH_GRAPH
+
     for cycle in range(n_cycles):
         # Our SA: maximise (our_ships - opp_ships) holding opp_plan fixed.
         opp_policy = _plan_replay_policy(opp_plan)
@@ -255,6 +307,9 @@ def _co_evolve(seed: int, steps: int):
             max_wall_s=budget_s,
             me=0,
             score_mode="diff",
+            path_graph=pg,
+            rebuild_interval_iters=rebuild_iters,
+            max_rebuilds=max_rebuilds,
         )
 
         # Opp SA: from opp's POV (me=1), maximise (their_ships - our_ships)
@@ -270,6 +325,9 @@ def _co_evolve(seed: int, steps: int):
             max_wall_s=budget_s,
             me=1,
             score_mode="diff",
+            path_graph=pg,
+            rebuild_interval_iters=rebuild_iters,
+            max_rebuilds=max_rebuilds,
         )
 
     return _plan_list_to_dict(our_plan), _plan_list_to_dict(opp_plan)
@@ -349,8 +407,11 @@ def _refine_step(obs, configuration, t: int):
     iter_cap = int(os.environ.get("SA_ITER_STEP", "100"))
     t0_step = float(os.environ.get("SA_T0_STEP", "100"))
     cool = float(os.environ.get("SA_COOLING_STEP", "0.95"))
+    rebuild_iters = int(os.environ.get("SA_REBUILD_INTERVAL_ITERS", "100"))
+    max_rebuilds = int(os.environ.get("SA_MAX_REBUILDS", "3"))
     mode_raw = os.environ.get("SA_REFINE_OPP_POLICY", "noop").strip()
     mode = mode_raw.lower()
+    pg = _get_or_build_path_graph(obs, steps)
 
     if mode == "coevolve":
         n_cycles = max(1, int(os.environ.get("SA_REFINE_CYCLES", "1")))
@@ -368,6 +429,9 @@ def _refine_step(obs, configuration, t: int):
                 max_wall_s=budget_per_side,
                 me=0,
                 score_mode="diff",
+                path_graph=pg,
+                rebuild_interval_iters=rebuild_iters,
+                max_rebuilds=max_rebuilds,
             )
             # OPP best response to our updated plan (search from opp's POV).
             our_policy = _plan_replay_policy(remaining_our)
@@ -381,6 +445,9 @@ def _refine_step(obs, configuration, t: int):
                 max_wall_s=budget_per_side,
                 me=1,
                 score_mode="diff",
+                path_graph=pg,
+                rebuild_interval_iters=rebuild_iters,
+                max_rebuilds=max_rebuilds,
             )
     else:
         # mode is either "noop" (default) or a live-agent path
@@ -402,6 +469,9 @@ def _refine_step(obs, configuration, t: int):
             max_wall_s=total_budget,
             me=0,
             score_mode="diff",
+            path_graph=pg,
+            rebuild_interval_iters=rebuild_iters,
+            max_rebuilds=max_rebuilds,
         )
 
     # Merge: past tau < t kept as-is; future replaced with refined.

@@ -44,6 +44,7 @@ from lib.fast_sim import ship_totals
 from lib.fast_sim import step as fs_step
 from lib.intent import World
 from lib.orbit import predict_relative
+from lib.path_graph import PathGraph, build_path_graph
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import WorldModel, _comet_paths_by_id, predict_garrison_at
 
@@ -170,6 +171,12 @@ class PerturbContext:
     # during enumeration so operators can filter contested vs uncontested
     # without re-running predict_fleet_fate.
     admissible_targets: list = field(default_factory=list)
+    # Static feasibility graph (PI 2026-05-28). When provided, the
+    # cascade-aware `_populate_admissible_set` iterates over (t_dep,
+    # owned-at-t_dep, tgt) using precomputed (angle, eta) lookups
+    # instead of redoing aim_orbiting per candidate. Lazy-built inside
+    # `_build_perturb_context` if not supplied.
+    path_graph: PathGraph | None = None
 
 
 # Enumeration knobs (module-level, tunable). Offsets cover NOW / short
@@ -177,8 +184,10 @@ class PerturbContext:
 # a comparable rate to our home, so accumulating an advantage takes
 # many turns. _ADMISSIBLE_TOP_K_TARGETS caps the search per refine.
 _ADMISSIBLE_TOP_K_TARGETS = 40
-_ADMISSIBLE_TURN_OFFSETS = (0, 1, 2, 3, 5, 8, 16, 32)   # finer near 0 + long wait
-_ADMISSIBLE_MAX_WALL_S = 0.6   # cap enumeration cost regardless of owned/target counts
+_ADMISSIBLE_TURN_OFFSETS = (0, 1, 2, 3, 5, 8, 16, 32)   # legacy, kept for fallback
+_ADMISSIBLE_MAX_WALL_S = 0.6        # cap enumeration cost regardless of size
+_ADMISSIBLE_INLOOP_WALL_S = 0.1     # tighter cap for in-SA-loop rebuilds
+_ADMISSIBLE_BUCKET_DEFAULT = 4      # t_dep stride for cascade enumeration
 
 
 def _target_tuple_from_planet(p) -> list:
@@ -284,8 +293,12 @@ def _compute_capture_emission(src, tgt, turn: int,
 
     # Final physics validation. Most failures already filtered above; this
     # catches sun / OOB / wrong-planet collisions the orbital lead missed.
+    # wait_N advances src + other planet positions to the fire turn so
+    # the trajectory check matches the actual fire-time geometry.
+    wait_N = max(0, int(turn) - int(ctx.t_start))
     try:
-        fate = predict_fleet_fate(src, tgt, angle, ships, ctx.world)
+        fate = predict_fleet_fate(src, tgt, angle, ships, ctx.world,
+                                   wait_N=wait_N)
     except Exception:
         return None
     if fate.outcome != "target":
@@ -300,7 +313,11 @@ def _build_perturb_context(snap0,
                             max_steps: int,
                             t_start: int,
                             t_end: int,
-                            me: int = 0) -> PerturbContext:
+                            me: int = 0,
+                            *,
+                            path_graph: PathGraph | None = None,
+                            admissible_wall_s: float = _ADMISSIBLE_MAX_WALL_S,
+                            ) -> PerturbContext:
     """One forward sim from snap0 records ownership-at-turn + opp's intended
     captures. Cost ~50 ms per refine; amortised across all SA iterations.
 
@@ -408,36 +425,108 @@ def _build_perturb_context(snap0,
         t_start=int(t_start),
         t_end=int(t_end),
         me=int(me),
+        path_graph=path_graph,
     )
     # Pre-validate admissible captures so operators draw from a set of
     # guaranteed-valid moves instead of rejecting random draws.
-    _populate_admissible_set(ctx)
+    _populate_admissible_set(ctx, max_wall_s=float(admissible_wall_s))
     return ctx
 
 
-def _populate_admissible_set(ctx: PerturbContext) -> None:
-    """Build `ctx.admissible` + `ctx.admissible_targets` in place.
+def _compute_capture_emission_from_edge(edge, src, tgt, t_dep: int,
+                                          ctx: PerturbContext) -> Optional[tuple]:
+    """Validate + finalize a capture emission from a precomputed `PathEdge`.
 
-    For each owned src × top-K target × turn offsets in
-    `_ADMISSIBLE_TURN_OFFSETS`, call `_compute_capture_emission`.
-    Every emission that lands in `ctx.admissible` is a guaranteed
-    physics-valid capture (passes `predict_fleet_fate.outcome == 'target'`
-    and is affordable from the src at the chosen fire turn).
+    Skips the aim recompute (uses `edge.angle` / `edge.eta` directly)
+    but still calls `predict_garrison_at` for the dynamic ship cost and
+    `predict_fleet_fate(..., wait_N=t_dep - t_start)` for trajectory-vs-
+    other-planets validation at the actual fire turn (not t=0).
 
-    Sidecar `ctx.admissible_targets[i]` is the resolved target id for
-    `ctx.admissible[i]`, so operators can filter by contested/uncontested
-    without re-running `predict_fleet_fate`.
+    The aim is geometry-only; the rest is the dynamic per-state cost
+    that varies with garrison + in-flight fleets. Returns `(t_dep,
+    [src.id, angle, ships])` on success, `None` if the candidate fails
+    affordability or trajectory checks.
+
+    `wait_N` advances both src.position and other planets' positions to
+    the fire turn for the trajectory check — cascade sources at t_dep > 0
+    would otherwise get false-negative collision rejections because the
+    world was snapshotted at t=0.
+    """
+    angle = float(edge.angle)
+    eta = int(edge.eta)
+
+    arrivals: list = []
+    if ctx.world_model is not None:
+        try:
+            arrivals = list(ctx.world_model.ledger.get(int(tgt.id), []))
+        except Exception:
+            arrivals = []
+    turn_offset_from_snap0 = max(0, int(t_dep) - int(ctx.t_start))
+    arrival_eta_from_snap0 = turn_offset_from_snap0 + eta
+    try:
+        pred_owner, pred_garrison = predict_garrison_at(
+            tgt, arrival_eta_from_snap0, arrivals)
+    except Exception:
+        pred_owner, pred_garrison = int(tgt.owner), float(tgt.ships)
+    if int(pred_owner) == int(ctx.me):
+        return None
+    ships = max(1, int(math.ceil(float(pred_garrison))) + 1)
+
+    cache_entry = ctx.ownership_cache.get(int(t_dep))
+    if cache_entry is not None:
+        src_state = cache_entry.get(int(src.id))
+        if src_state is None:
+            return None
+        cur_owner, cur_ships = src_state
+        if int(cur_owner) != int(ctx.me) or int(cur_ships) < ships:
+            return None
+    else:
+        if int(src.owner) != int(ctx.me) or int(src.ships) < ships:
+            return None
+
+    wait_N = max(0, int(t_dep) - int(ctx.t_start))
+    try:
+        fate = predict_fleet_fate(src, tgt, angle, ships, ctx.world,
+                                   wait_N=wait_N)
+    except Exception:
+        return None
+    if fate.outcome != "target":
+        return None
+
+    return (int(t_dep), [int(src.id), float(angle), int(ships)])
+
+
+def _populate_admissible_set(ctx: PerturbContext, *,
+                              max_wall_s: float = _ADMISSIBLE_MAX_WALL_S) -> None:
+    """Build `ctx.admissible` + `ctx.admissible_targets` via cascade-aware
+    enumeration.
+
+    Iterates `t_dep` over a bucketed grid `[t_start, t_end)` at
+    `path_graph.orbiting_bucket` cadence. For each `t_dep`, reads
+    `ctx.ownership_cache[t_dep]` for the set of planets we own at that
+    fire turn — so captures earlier in the (currently-evaluated) plan
+    open new sources for later captures (cascade).
+
+    PI 2026-05-28: the original enumeration read owned-at-t_start only;
+    the "capture A in 20 turns unlocks B-from-A at turn 30" cascade was
+    structurally invisible. This rewrite closes that fixed point at the
+    candidate-enumeration level.
     """
     ctx.admissible = []
     ctx.admissible_targets = []
     if ctx.world is None:
         return
-    cache_start = ctx.ownership_cache.get(int(ctx.t_start), {})
-    owned_ids = [pid for pid, (owner, _ships) in cache_start.items()
-                  if int(owner) == int(ctx.me)]
-    if not owned_ids:
-        return
-    # Rank targets: contested first (×1.0), then high-π non-contested (×0.5).
+    # Lazy-build path_graph if the caller didn't supply one (e.g. tests).
+    if ctx.path_graph is None:
+        try:
+            ctx.path_graph = build_path_graph(
+                ctx.world, t_max=int(ctx.t_end),
+                orbiting_bucket=_ADMISSIBLE_BUCKET_DEFAULT,
+                comet_bucket=1)
+        except Exception:
+            return
+    pg = ctx.path_graph
+
     contested = {int(tid) for _t, tid in ctx.opp_intent_window}
     horizon = max(1, int(ctx.t_end) - int(ctx.t_start))
     scored: list[tuple[float, int]] = []
@@ -449,24 +538,38 @@ def _populate_admissible_set(ctx: PerturbContext) -> None:
         scored.append((score, int(pid)))
     scored.sort(reverse=True)
     target_ids = [pid for _s, pid in scored[:_ADMISSIBLE_TOP_K_TARGETS]]
-    deadline = time.perf_counter() + _ADMISSIBLE_MAX_WALL_S
-    for src_id in owned_ids:
-        src = ctx.world.planets_by_id.get(int(src_id))
-        if src is None:
+    if not target_ids:
+        return
+
+    bucket = max(1, int(pg.orbiting_bucket))
+    deadline = time.perf_counter() + float(max_wall_s)
+    for t_dep in range(int(ctx.t_start), int(ctx.t_end), bucket):
+        if time.perf_counter() >= deadline:
+            return
+        owned_at = ctx.ownership_cache.get(int(t_dep))
+        if owned_at is None:
             continue
-        for tgt_id in target_ids:
-            if int(tgt_id) == int(src_id):
+        owned_ids = [pid for pid, (owner, _s) in owned_at.items()
+                     if int(owner) == int(ctx.me)]
+        if not owned_ids:
+            continue
+        for src_id in owned_ids:
+            src = ctx.world.planets_by_id.get(int(src_id))
+            if src is None:
                 continue
-            tgt = ctx.world.planets_by_id.get(int(tgt_id))
-            if tgt is None:
-                continue
-            for offset in _ADMISSIBLE_TURN_OFFSETS:
+            for tgt_id in target_ids:
+                if int(tgt_id) == int(src_id):
+                    continue
                 if time.perf_counter() >= deadline:
-                    return  # bail; admissible partial but bounded
-                turn = int(ctx.t_start) + int(offset)
-                if turn >= int(ctx.t_end):
-                    break
-                emit = _compute_capture_emission(src, tgt, turn, ctx)
+                    return
+                edge = pg.lookup(int(src_id), int(tgt_id), int(t_dep))
+                if edge is None:
+                    continue
+                tgt = ctx.world.planets_by_id.get(int(tgt_id))
+                if tgt is None:
+                    continue
+                emit = _compute_capture_emission_from_edge(
+                    edge, src, tgt, int(t_dep), ctx)
                 if emit is not None:
                     ctx.admissible.append(emit)
                     ctx.admissible_targets.append(int(tgt_id))
@@ -584,21 +687,34 @@ def _try_add_for_target(plan, rng, ctx, tgt) -> Optional[list[Emission]]:
     return None
 
 
+def _plan_target_ids(plan: list[Emission], ctx: PerturbContext) -> set[int]:
+    """Resolve target planet ids for every emission in `plan` via the
+    admissibility index (cheap) or predict_fleet_fate (fallback)."""
+    by_id = {id(e): ctx.admissible_targets[i]
+             for i, e in enumerate(ctx.admissible)}
+    targets: set[int] = set()
+    for e in plan:
+        tid = by_id.get(id(e))
+        if tid is None:
+            tid = _planet_id_of_emission(e, ctx)
+        if tid is not None:
+            targets.add(int(tid))
+    return targets
+
+
 def _op_add_contested(plan: list[Emission], rng: random.Random,
                        ctx: PerturbContext) -> Optional[list[Emission]]:
     """Sample uniformly from the pre-validated admissibility set, filtered
-    to emissions whose target is contested (opp_intent_window).
-
-    PI 2026-05-27: "why reject rather than draw from admissible?" — the
-    admissibility set is pre-validated by _populate_admissible_set, so
-    every entry is a guaranteed physics-valid capture. We just filter
-    by contested-ness and pick uniformly. No rejection loop.
+    to emissions whose target is contested (opp_intent_window) AND not
+    already covered by the plan (capturing the same planet twice is
+    wasted ships).
     """
     if not ctx.admissible or not ctx.opp_intent_window:
         return None
     contested_ids = {int(tid) for _t, tid in ctx.opp_intent_window}
+    existing = _plan_target_ids(plan, ctx)
     indices = [i for i, t in enumerate(ctx.admissible_targets)
-               if int(t) in contested_ids]
+               if int(t) in contested_ids and int(t) not in existing]
     if not indices:
         return None
     pick = ctx.admissible[rng.choice(indices)]
@@ -610,12 +726,13 @@ def _op_add_contested(plan: list[Emission], rng: random.Random,
 def _op_add_uncontested(plan: list[Emission], rng: random.Random,
                          ctx: PerturbContext) -> Optional[list[Emission]]:
     """Sample uniformly from admissibility set, filtered to non-contested
-    targets (safe production growth, not racing opp)."""
+    targets AND not already in the plan."""
     if not ctx.admissible:
         return None
     contested_ids = {int(tid) for _t, tid in ctx.opp_intent_window}
+    existing = _plan_target_ids(plan, ctx)
     indices = [i for i, t in enumerate(ctx.admissible_targets)
-               if int(t) not in contested_ids]
+               if int(t) not in contested_ids and int(t) not in existing]
     if not indices:
         return None
     pick = ctx.admissible[rng.choice(indices)]
@@ -626,15 +743,22 @@ def _op_add_uncontested(plan: list[Emission], rng: random.Random,
 
 def _op_modify_target(plan: list[Emission], rng: random.Random,
                        ctx: PerturbContext) -> Optional[list[Emission]]:
-    """Replace a random existing emission with one sampled uniformly from
-    the admissibility set (any admissible swap, not just contested).
+    """Replace a random existing emission with a different-target admissible.
 
-    Drawing from the pre-validated set means the replacement is always
-    physics-valid; no rejection."""
+    Excludes emissions targeting planets already covered by other entries
+    in the plan — that would create redundant captures."""
     if not plan or not ctx.admissible:
         return None
     idx = rng.randrange(len(plan))
-    pick = ctx.admissible[rng.randrange(len(ctx.admissible))]
+    # Targets already in the plan EXCEPT for the emission we're replacing
+    other_plan = list(plan)
+    other_plan.pop(idx)
+    existing = _plan_target_ids(other_plan, ctx)
+    indices = [i for i, t in enumerate(ctx.admissible_targets)
+               if int(t) not in existing]
+    if not indices:
+        return None
+    pick = ctx.admissible[rng.choice(indices)]
     new_plan = list(plan)
     new_plan[idx] = pick
     return new_plan
@@ -690,6 +814,128 @@ def _op_shift_turn(plan: list[Emission], rng: random.Random,
     return new_plan
 
 
+def _capture_value(emit, idx: int, ctx: PerturbContext) -> float:
+    """Precise marginal value of a capture under the no-recapture
+    assumption — production-integral from arrival to game end minus
+    ship cost.
+
+        V = ∫_{t_arr}^{t_end} production(tgt) dt - ships_at_departure
+          = production(tgt) × (t_end - t_arr) - ship_cost
+
+    This is the *closed-form game-model value* (not an ad-hoc score)
+    assuming opp doesn't re-capture. The greedy ruin-recreate operator
+    ranks admissible candidates by this; SA's score function still
+    arbitrates whether the captured planet survives.
+
+    PI 2026-05-28 mandate: prefer precise analytics to heuristics —
+    `_capture_value` is the precise game-model value with the assumption
+    explicit (no-recapture), not a heuristic weighting.
+    """
+    turn, payload = emit
+    if idx < 0 or idx >= len(ctx.admissible_targets):
+        return -math.inf
+    tgt_id = ctx.admissible_targets[idx]
+    if ctx.world is None:
+        return -math.inf
+    tgt = ctx.world.planets_by_id.get(int(tgt_id))
+    if tgt is None:
+        return -math.inf
+    eta = 1
+    if ctx.path_graph is not None:
+        edge = ctx.path_graph.lookup(int(payload[0]), int(tgt_id), int(turn))
+        if edge is not None:
+            eta = int(edge.eta)
+    t_arr = int(turn) + int(eta)
+    remaining = max(0, int(ctx.t_end) - t_arr)
+    ship_cost = float(payload[2])
+    return float(tgt.production) * float(remaining) - ship_cost
+
+
+_RUIN_K_MIN = 3
+_RUIN_K_MAX = 5
+
+
+def _planet_id_of_emission(emit, ctx: PerturbContext) -> Optional[int]:
+    """Recover the target planet id of an emission via predict_fleet_fate.
+    Returns None if the trajectory can't be resolved."""
+    if ctx.world is None:
+        return None
+    _turn, payload = emit
+    try:
+        src_id = int(payload[0])
+        angle = float(payload[1])
+        ships = max(1, int(payload[2]))
+    except (TypeError, ValueError, IndexError):
+        return None
+    src = ctx.world.planets_by_id.get(src_id)
+    if src is None:
+        return None
+    try:
+        fate = predict_fleet_fate(src, src, angle, ships, ctx.world)
+    except Exception:
+        return None
+    if fate.hit_planet_id is None:
+        return None
+    return int(fate.hit_planet_id)
+
+
+def _op_ruin_recreate(plan: list[Emission], rng: random.Random,
+                       ctx: PerturbContext) -> Optional[list[Emission]]:
+    """ALNS ruin-and-recreate: drop a contiguous window of k=3..5
+    emissions from `plan` and greedily refill with top-value admissible
+    candidates targeting planets NOT already captured in the retained
+    portion.
+
+    Candidates are deduplicated by target_id during refill — capturing
+    the same planet twice from the same source is wasted ships, and
+    cascade enumeration produces many same-target / different-t_dep
+    entries that would all rank near each other by `_capture_value`.
+
+    "Value" is `_capture_value` — the precise game-model marginal value
+    under the no-recapture assumption, not a heuristic weighting.
+    """
+    if len(plan) < 2 or not ctx.admissible:
+        return None
+    k = min(rng.randint(_RUIN_K_MIN, _RUIN_K_MAX), len(plan))
+    if k <= 0:
+        return None
+    start = rng.randrange(max(1, len(plan) - k + 1))
+    ruined = list(plan[:start]) + list(plan[start + k:])
+    # Targets already covered by the retained portion of the plan
+    retained_targets: set[int] = set()
+    for e in ruined:
+        tid = _planet_id_of_emission(e, ctx)
+        if tid is not None:
+            retained_targets.add(int(tid))
+    # Candidates: admissible emissions whose target isn't already covered
+    candidates: list[tuple[float, tuple, int]] = []
+    for i, emit in enumerate(ctx.admissible):
+        tgt_id = int(ctx.admissible_targets[i])
+        if tgt_id in retained_targets:
+            continue
+        val = _capture_value(emit, i, ctx)
+        if val == -math.inf:
+            continue
+        candidates.append((val, emit, tgt_id))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda kv: -kv[0])
+    # Greedy refill: pick top-value while skipping any target already
+    # added in this rebuild.
+    rebuilt = list(ruined)
+    added_targets: set[int] = set()
+    n_added = 0
+    for _val, emit, tgt_id in candidates:
+        if n_added >= k:
+            break
+        if tgt_id in added_targets:
+            continue
+        rebuilt.append(emit)
+        added_targets.add(tgt_id)
+        n_added += 1
+    return rebuilt
+
+
 # Operator dispatch table. Order is just the uniform-random pool; weighting
 # is uniform for v1. Adding a future `_op_add_wave_*` is one entry below
 # plus the new function — no infrastructure changes.
@@ -699,6 +945,7 @@ _PERTURB_OPS: tuple = (
     _op_add_uncontested,
     _op_modify_target,
     _op_shift_turn,
+    _op_ruin_recreate,
 )
 
 
@@ -744,6 +991,9 @@ def simulated_anneal_online(initial_plan: list[Emission],
                              max_wall_s: float | None = None,
                              me: int = 0,
                              score_mode: str = "absolute",
+                             path_graph: PathGraph | None = None,
+                             rebuild_interval_iters: int = 100,
+                             max_rebuilds: int = 3,
                              ) -> tuple[list[Emission], float, list]:
     """Metropolis SA from a given snapshot.
 
@@ -774,13 +1024,17 @@ def simulated_anneal_online(initial_plan: list[Emission],
     best_score = current_score
     history: list[tuple[int, float, float]] = []
 
-    # Build the perturbation context ONCE — ownership cache + opp-intent
-    # window are amortised across all SA iterations. Cost ~20-50 ms.
+    # Build the perturbation context ONCE up front — ownership cache +
+    # opp-intent window are amortised across all SA iterations.
+    # Inside the loop, ctx may be rebuilt every `rebuild_interval_iters`
+    # iterations against `current_plan` so the cascade-aware admissible
+    # set tracks the plan SA is currently exploring.
     try:
         ctx = _build_perturb_context(
             snap0, current_plan, opp_policy,
             max_steps=max_steps, t_start=start_step,
             t_end=t_end_perturb, me=me,
+            path_graph=path_graph,
         )
     except Exception:
         # Degraded ctx: no opp-aware operators, fallback to remove-only.
@@ -789,13 +1043,36 @@ def simulated_anneal_online(initial_plan: list[Emission],
             omega=0.0, comet_paths={},
             ownership_cache={}, opp_intent_window=[],
             t_start=int(start_step), t_end=int(t_end_perturb), me=int(me),
+            path_graph=path_graph,
         )
 
+    last_rebuild_iter = 0
+    n_rebuilds = 0
     temp = t0
     for i in range(n_iter):
         if deadline is not None and time.perf_counter() >= deadline:
             history.append((i, current_score, best_score))
             break
+        # Cascade refresh: rebuild ctx against current_plan periodically
+        # so admissibility reflects planets we've captured during SA.
+        if (n_rebuilds < int(max_rebuilds)
+                and rebuild_interval_iters > 0
+                and i > 0
+                and (i - last_rebuild_iter) >= int(rebuild_interval_iters)):
+            try:
+                ctx = _build_perturb_context(
+                    snap0, current_plan, opp_policy,
+                    max_steps=max_steps, t_start=start_step,
+                    t_end=t_end_perturb, me=me,
+                    path_graph=path_graph,
+                    admissible_wall_s=_ADMISSIBLE_INLOOP_WALL_S,
+                )
+                n_rebuilds += 1
+                last_rebuild_iter = i
+            except Exception:
+                # Keep prior ctx if rebuild fails; SA continues with stale
+                # but valid candidate set.
+                pass
         new_plan = perturb(current_plan, rng, ctx)
         new_score = score_plan_from_snap(
             new_plan, snap0, opp_policy, max_steps,
