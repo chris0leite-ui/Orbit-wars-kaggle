@@ -79,6 +79,14 @@ os.environ.setdefault("BASELINE_EFFECTIVE_LANDING_PRUNE", "1")
 # Wilson [0.22, 0.79]. Submitted under explicit PI override of Rule 45.
 os.environ["BASELINE_VALUE_HEAD"] = "phi"
 
+# Sibling ESwSv per-ship-sort flag (cherry-picked from commit 0a8308f).
+# Sub 53024913 settled at μ=1136.4 with this flag ON. The read is
+# call-time inside chooser_trajectory.choose_trajectory (the call-time
+# refactor closes the bundle-order timing gap that the module-level
+# cache had). setdefault is fine here — no competing setdefault exists
+# in the bundle for this key.
+os.environ.setdefault("BASELINE_SORT_BY_EV_PER_SHIP", "1")
+
 from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
 
 from lib.intent import World

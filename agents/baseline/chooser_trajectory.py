@@ -963,7 +963,13 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     if not scored:
         return [], []
 
-    if SORT_BY_EV_PER_SHIP:
+    # Call-time env read (was module-level cache). Required for the bundle
+    # to honor BASELINE_SORT_BY_EV_PER_SHIP=1 set in the primary agent's
+    # main.py — chooser_trajectory.py is inlined BEFORE the primary agent
+    # in cross-agent bundles, so the module-level read fired with default
+    # "0" and never noticed the primary agent's env override. Call-time
+    # read closes that timing gap.
+    if os.environ.get("BASELINE_SORT_BY_EV_PER_SHIP", "0").strip() == "1":
         def _ev_per_ship_key(c):
             score = c[0]
             if len(c) == 3 and c[1] == "joint":
