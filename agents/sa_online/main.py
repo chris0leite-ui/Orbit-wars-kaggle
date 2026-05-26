@@ -50,12 +50,18 @@ import random
 # Kaggle ladder defaults — set BEFORE any other env-var read in this file.
 # These are tuned for orbit_wars's actTimeout=1s + remainingOverageTime=60s.
 # Each can be overridden by setting the env var BEFORE importing this module.
-# PI 2026-05-26 PM observation submit: opp_policy = simple/nearest.
+#
+# 2026-05-26: episode 77803734 (sub 53059642) TIMEOUTed at step 122 — overage
+# pool depleted because per-turn durations were 1.3-1.7s vs 1.0s actTimeout.
+# Kaggle CPU is ~3-4x slower than dev; defaults below target ~0.7s per turn
+# on Kaggle (≈ 0.2s local), keeping cumulative overage usage < 60s over 200
+# turns. Path-graph build is bucketed coarser (orbiting=8, comet=2) to halve
+# the one-time build cost.
 # ---------------------------------------------------------------------------
 os.environ.setdefault("SA_REFINE_OPP_POLICY", "agents/simple/nearest.py")
-os.environ.setdefault("SA_BUDGET_STEP_S", "0.5")         # leaves 500ms slack vs actTimeout=1s
-os.environ.setdefault("SA_ITER_STEP", "30")
-os.environ.setdefault("SA_HORIZON", "30")
+os.environ.setdefault("SA_BUDGET_STEP_S", "0.12")         # local ~0.15s, Kaggle (~6-8x slower than dev) ~0.9s
+os.environ.setdefault("SA_ITER_STEP", "8")
+os.environ.setdefault("SA_HORIZON", "20")                 # Shorter receding-horizon — less forward-sim cost per ctx-build
 os.environ.setdefault("SA_COEVOLVE_CYCLES", "1")          # first-turn budget: 2 SAs * 15s = 30s, fits 60s overage
 os.environ.setdefault("SA_BUDGET_INIT_S", "15")
 os.environ.setdefault("SA_ITER_INIT", "200")
@@ -65,6 +71,9 @@ os.environ.setdefault("SA_COOLING", "0.99")
 os.environ.setdefault("SA_COOLING_STEP", "0.95")
 os.environ.setdefault("SA_RNG_SEED", "42")
 os.environ.setdefault("SA_BOOTSTRAP_AGENT", "agents/simple/roi.py")
+os.environ.setdefault("SA_PATH_GRAPH_ORBITING_BUCKET", "8")
+os.environ.setdefault("SA_PATH_GRAPH_COMET_BUCKET", "2")
+os.environ.setdefault("SA_MAX_REBUILDS", "0")             # disable in-loop ctx rebuild on Kaggle (each rebuild is ~100ms)
 
 # scripts.sa_solo_solver is reachable because the bench harness adds REPO
 # to sys.path before exec'ing this file. We pull REPO from there too so
@@ -116,9 +125,11 @@ def _get_or_build_path_graph(obs, steps: int):
     try:
         obs_d = obs if isinstance(obs, dict) else dict(obs)
         world = _SAWorld.from_obs(obs_d)
+        orb_bucket = int(os.environ.get("SA_PATH_GRAPH_ORBITING_BUCKET", "8"))
+        com_bucket = int(os.environ.get("SA_PATH_GRAPH_COMET_BUCKET", "2"))
         _PATH_GRAPH = _build_path_graph(
             world, t_max=int(steps),
-            orbiting_bucket=4, comet_bucket=1)
+            orbiting_bucket=orb_bucket, comet_bucket=com_bucket)
     except Exception:
         _PATH_GRAPH = None  # SA falls back to legacy per-emission aim
     return _PATH_GRAPH
@@ -287,9 +298,11 @@ def _co_evolve(seed: int, steps: int):
                 if v is not None:
                     od[k] = list(v) if isinstance(v, list) else v
             world = _SAWorld.from_obs(od)
+            orb_bucket = int(os.environ.get("SA_PATH_GRAPH_ORBITING_BUCKET", "8"))
+            com_bucket = int(os.environ.get("SA_PATH_GRAPH_COMET_BUCKET", "2"))
             _PATH_GRAPH = _build_path_graph(
                 world, t_max=int(steps),
-                orbiting_bucket=4, comet_bucket=1)
+                orbiting_bucket=orb_bucket, comet_bucket=com_bucket)
         except Exception:
             _PATH_GRAPH = None
     pg = _PATH_GRAPH
