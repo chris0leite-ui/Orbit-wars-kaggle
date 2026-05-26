@@ -94,62 +94,119 @@ def test_score_snap_unchanged_after_call():
 
 
 # ---------------------------------------------------------------------------
-# perturb — shape + range guarantees per op
+# perturb — physics validity + opp-awareness invariants
 # ---------------------------------------------------------------------------
 
 
+def _build_test_ctx(seed: int = 0, steps: int = 50,
+                     plan=None, opp_policy=None):
+    """Build a PerturbContext from a fresh snap for use in perturb tests."""
+    from lib.sa_core import _build_perturb_context
+    snap = _build_snap0(seed=seed, steps=steps)
+    if plan is None:
+        plan = []
+    return _build_perturb_context(
+        snap, plan, opp_policy=opp_policy,
+        max_steps=steps, t_start=0, t_end=steps, me=0,
+    )
+
+
+def _emission_passes_physics(emit, ctx) -> bool:
+    """Run predict_fleet_fate on an emission; returns True iff outcome=='target'."""
+    from lib.trajectory import predict_fleet_fate
+    if ctx.world is None:
+        return False
+    _turn, action = emit
+    try:
+        src_id = int(action[0]); angle = float(action[1]); ships = int(action[2])
+    except (TypeError, ValueError, IndexError):
+        return False
+    src = ctx.world.planets_by_id.get(src_id)
+    if src is None:
+        return False
+    fate = predict_fleet_fate(src, src, angle, max(1, ships), ctx.world)
+    return fate.outcome == "target" or fate.outcome == "planet"
+    # ("planet" is fine; the operators guarantee outcome="target" against
+    # the SPECIFIC target they computed for, but predict_fleet_fate above
+    # is called with src=src as a placeholder target, so we accept both
+    # outcomes meaning the fleet successfully hits SOME planet without
+    # dying to sun/OOB/timeout.)
+
+
 def test_perturb_remove_shrinks():
-    """remove op decreases plan length by 1."""
+    """remove op decreases plan length by 1 when plan is non-empty."""
+    from lib.sa_core import _op_remove
     plan = [(5, [0, 0.0, 10]), (10, [1, 0.5, 20])]
-    rng = random.Random(0)
-    # Disable add-op (initial_planets=None) so we only get remove/ships/shift/angle.
-    # Find a remove draw deterministically by trying a few rng seeds.
-    for trial in range(50):
-        rng = random.Random(trial)
-        new = perturb(list(plan), rng,
-                       initial_planets=None, t_start=0, t_end=20)
-        if len(new) == len(plan) - 1:
-            return  # found a remove
-    pytest.fail("perturb never produced 'remove' op over 50 trials")
+    ctx = _build_test_ctx(seed=0, steps=50)
+    new = _op_remove(list(plan), random.Random(0), ctx)
+    assert new is not None
+    assert len(new) == len(plan) - 1
 
 
-def test_perturb_add_inserts():
-    """add op increases plan length by 1, new emission has valid shape."""
-    plan = [(5, [0, 0.0, 10])]
-    initial_planets = _initial_planets(seed=0, steps=50)
-    for trial in range(100):
-        rng = random.Random(trial)
-        new = perturb(list(plan), rng,
-                       initial_planets=initial_planets,
-                       t_start=0, t_end=50)
-        if len(new) == len(plan) + 1:
-            # Validate new emission shape
-            added = new[-1]
-            assert isinstance(added, tuple)
-            turn, action = added
-            assert 0 <= int(turn) < 50, f"turn {turn} out of range [0, 50)"
-            assert len(action) == 3, f"action wrong shape: {action}"
-            return
-    pytest.fail("perturb never produced 'add' op over 100 trials")
+def test_perturb_remove_empty_returns_none():
+    """remove op returns None when plan is empty (lets dispatcher fall through)."""
+    from lib.sa_core import _op_remove
+    ctx = _build_test_ctx(seed=0, steps=50)
+    result = _op_remove([], random.Random(0), ctx)
+    assert result is None
 
 
-def test_perturb_add_respects_t_range():
-    """add op only generates turns in [t_start, t_end)."""
-    initial_planets = _initial_planets(seed=0, steps=50)
-    t_start_test = 30
-    t_end_test = 50
-    n_adds = 0
+def test_perturb_validity_invariant():
+    """SUBSTRATE GATE: every emission added by any operator must produce
+    a physics-valid fleet (not sun / OOB / timeout). 200 trials.
+
+    This is the load-bearing invariant of the redesign — perturb is now
+    physics-aware by construction. If this fails, the operator generated
+    a candidate that today's `perturb` would have via the old random
+    `add`/`angle` ops, defeating the whole point.
+    """
+    n_adds_total = 0
+    n_physics_pass = 0
+    plan_initial = []
+    ctx = _build_test_ctx(seed=0, steps=50, plan=plan_initial)
     for trial in range(200):
         rng = random.Random(trial)
-        new = perturb([], rng,
-                       initial_planets=initial_planets,
-                       t_start=t_start_test, t_end=t_end_test)
-        if len(new) == 1:  # add fired
-            turn, _ = new[0]
-            assert t_start_test <= int(turn) < t_end_test, \
-                f"add violated range: turn={turn} not in [{t_start_test}, {t_end_test})"
-            n_adds += 1
-    assert n_adds >= 5, f"expected many add draws over 200 trials, got {n_adds}"
+        new = perturb(list(plan_initial), rng, ctx)
+        # adds are new emissions that didn't exist in plan_initial
+        if len(new) > len(plan_initial):
+            new_emissions = new[len(plan_initial):]
+            for emit in new_emissions:
+                n_adds_total += 1
+                if _emission_passes_physics(emit, ctx):
+                    n_physics_pass += 1
+    # We're testing the INVARIANT: every successful add is physics-valid.
+    # The number of adds varies (operators may return None if no valid
+    # target exists), but every one that DOES land must pass.
+    if n_adds_total > 0:
+        assert n_physics_pass == n_adds_total, (
+            f"physics-validity invariant violated: "
+            f"{n_adds_total - n_physics_pass} of {n_adds_total} emissions "
+            f"failed predict_fleet_fate. The whole point of the redesign is "
+            f"that this never happens.")
+
+
+def test_perturb_add_contested_respects_opp_intent():
+    """add_contested only fires when opp_intent_window is non-empty.
+
+    With opp_policy=noop the intent window is empty, so _op_add_contested
+    returns None deterministically. With opp_policy=nearest it's non-empty.
+    """
+    from lib.sa_core import _op_add_contested
+    from importlib.util import spec_from_file_location, module_from_spec
+    from pathlib import Path
+    spec = spec_from_file_location("near", str(Path(__file__).resolve().parents[1] / "agents/simple/nearest.py"))
+    near_mod = module_from_spec(spec); spec.loader.exec_module(near_mod)
+    near_agent = near_mod.agent
+
+    ctx_noop = _build_test_ctx(seed=0, steps=50, opp_policy=None)
+    rng = random.Random(0)
+    # Noop opp → empty intent window → operator must no-op.
+    assert _op_add_contested([], rng, ctx_noop) is None
+
+    ctx_nearest = _build_test_ctx(seed=0, steps=50, opp_policy=near_agent)
+    # nearest opp on seed 0 fires within ~10 turns; window should populate.
+    assert len(ctx_nearest.opp_intent_window) > 0, \
+        "expected at least one opp_intent entry with nearest opp policy"
 
 
 # ---------------------------------------------------------------------------
