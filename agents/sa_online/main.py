@@ -89,6 +89,7 @@ _PLAN_BY_TURN: dict[int, list[list]] = {}
 _OPP_PLAN_BY_TURN: dict[int, list[list]] = {}
 _INITIAL_PLANETS: list = []
 _SETTINGS: dict = {}
+_INITIALIZED: bool = False  # set after first-call init regardless of co_evolve success
 
 
 def _resolve_seed_and_steps_from_env() -> tuple[int, int] | None:
@@ -360,23 +361,55 @@ def _maybe_solve_at_load():
     _PLAN_BY_TURN, _OPP_PLAN_BY_TURN = _co_evolve(seed, steps)
 
 
+def _safe_co_evolve(seed: int, steps: int):
+    """Try _co_evolve; on failure (e.g. Kaggle sandbox blocks recursive
+    make() or external agent files missing in the bundle), fall back to
+    empty plans so per-turn refine can build from scratch."""
+    try:
+        return _co_evolve(seed, steps)
+    except Exception:
+        return {}, {}
+
+
+def _capture_initial_planets_from_obs(obs):
+    global _INITIAL_PLANETS
+    if _INITIAL_PLANETS:
+        return
+    try:
+        obs_d = obs if isinstance(obs, dict) else dict(obs)
+        _INITIAL_PLANETS = [list(p) for p in (obs_d.get("planets") or [])]
+    except Exception:
+        _INITIAL_PLANETS = []
+
+
 def agent(obs, configuration=None):
-    global _PLAN_BY_TURN, _OPP_PLAN_BY_TURN, _SETTINGS
+    global _PLAN_BY_TURN, _OPP_PLAN_BY_TURN, _SETTINGS, _INITIALIZED
     t = _get_step(obs)
 
-    if not _PLAN_BY_TURN:
-        # Module-load path didn't fire (env vars unset). Fall back to
-        # solving on first call — will exceed actTimeout under env.run
-        # but works for direct-call testing.
+    if not _INITIALIZED:
         seed, steps = _resolve_seed_and_steps_from_config(obs, configuration)
         _SETTINGS["seed"] = seed
         _SETTINGS["steps"] = steps
-        _PLAN_BY_TURN, _OPP_PLAN_BY_TURN = _co_evolve(seed, steps)
+        _capture_initial_planets_from_obs(obs)
+        _PLAN_BY_TURN, _OPP_PLAN_BY_TURN = _safe_co_evolve(seed, steps)
+        _INITIALIZED = True
     elif t > 0:
-        _PLAN_BY_TURN = _refine_step(obs, configuration, t)
+        try:
+            _PLAN_BY_TURN = _refine_step(obs, configuration, t)
+        except Exception:
+            # Per-turn refine failed (unexpected); keep previous plan
+            # so the agent at least returns its last cached action.
+            pass
 
     return [list(a) for a in _PLAN_BY_TURN.get(int(t), [])]
 
 
 # Solve at module load if the bench harness supplied SA_SEED / SA_EPISODE_STEPS.
-_maybe_solve_at_load()
+# Wrap in try/except so the agent module always imports cleanly even when the
+# load-time co-evolve fails (Kaggle sandbox, missing external files, etc.).
+try:
+    _maybe_solve_at_load()
+    if _PLAN_BY_TURN:
+        _INITIALIZED = True
+except Exception:
+    pass
