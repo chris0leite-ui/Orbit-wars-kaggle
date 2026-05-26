@@ -121,7 +121,7 @@ def main():
     # ---- Tables ----
     results.sort(key=lambda r: r.get("archetype", ""))
     print(f"{'archetype':<42s} {'seed':>5s} {'ROI':>8s} {'SA':>8s} "
-          f"{'gap':>+8s} {'gap%':>7s} {'init→best emissions':>22s} {'wall_s':>8s}")
+          f"{'gap':>9s} {'gap%':>7s} {'emit (init→best)':>22s} {'wall_s':>8s}")
     print("-" * 110)
     for r in results:
         if r.get("outcome") != "ok":
