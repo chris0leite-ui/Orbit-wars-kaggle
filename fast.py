@@ -68,6 +68,7 @@ _BASELINES: dict[str, str] = {
     "nearest":    str(REPO / "agents" / "simple" / "nearest.py"),
     "roi":        str(REPO / "agents" / "simple" / "roi.py"),
     "noop":       str(REPO / "agents" / "simple" / "noop.py"),
+    "integral_minimal": str(REPO / "agents" / "integral_minimal" / "main.py"),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",
