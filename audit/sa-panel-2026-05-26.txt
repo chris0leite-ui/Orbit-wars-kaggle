@@ -1,0 +1,44 @@
+archetype                                   seed      ROI       SA       gap    gap%       emit (init→best)   wall_s
+--------------------------------------------------------------------------------------------------------------
+high_prod__mixed_rotating__big_rotating     7542     7895    15213    +7318  +92.7%        315→314            267.3
+high_prod__mixed_rotating__big_static       9327     3197     8909    +5712 +178.7%        194→192            254.5
+high_prod__mixed_static__big_rotating       3774     3703    12294    +8591 +232.0%        315→312            163.6
+high_prod__mixed_static__big_static         2794     4468    11553    +7085 +158.6%        126→125            120.7
+high_prod__mostly_rotating__big_rotating    3578     5090    15546   +10456 +205.4%        339→338            680.3
+high_prod__mostly_rotating__big_static      7045     3740    11454    +7714 +206.3%        280→279            278.7
+high_prod__mostly_static__big_rotating      4693     7906    12656    +4750  +60.1%        286→290            287.1
+high_prod__mostly_static__big_static        1153     4228    14807   +10579 +250.2%        292→293            238.4
+low_prod__mixed_rotating__big_rotating      1467     1624     2673    +1049  +64.6%        121→120            112.9
+low_prod__mixed_rotating__big_static        7166     3859     6246    +2387  +61.9%        154→153            143.3
+low_prod__mixed_static__big_rotating        6858     4298     4298       +0   +0.0%         62→62             108.8
+low_prod__mixed_static__big_static          9306     2128     6602    +4474 +210.2%        133→136            126.9
+low_prod__mostly_rotating__big_rotating     7314     6941     6941       +0   +0.0%        166→166            134.9
+low_prod__mostly_rotating__big_static       2663     2758     7036    +4278 +155.1%        206→204            143.3
+low_prod__mostly_static__big_rotating          1     3980     6894    +2914  +73.2%        152→153            150.0
+low_prod__mostly_static__big_static         8526     2113     3272    +1159  +54.9%        126→144            109.5
+med_high_prod__mixed_rotating__big_rotating   662     3685     9044    +5359 +145.4%        298→298            150.9
+med_high_prod__mixed_rotating__big_static   1217     3458     9011    +5553 +160.6%         67→66             131.4
+med_high_prod__mixed_static__big_rotating   8855     2373     6486    +4113 +173.3%        188→190            290.4
+med_high_prod__mixed_static__big_static      741     4101     4700     +599  +14.6%        192→198            175.8
+med_high_prod__mostly_rotating__big_rotating   489     4269    11070    +6801 +159.3%        165→168            158.3
+med_high_prod__mostly_rotating__big_static  2537    11147    11147       +0   +0.0%        178→178            154.8
+med_high_prod__mostly_static__big_rotating  4814     3563     7452    +3889 +109.1%        151→178            148.4
+med_high_prod__mostly_static__big_static    3473     4024     4539     +515  +12.8%        395→416            168.8
+med_low_prod__mixed_rotating__big_rotating  3520     4267     8248    +3981  +93.3%        415→423            231.1
+med_low_prod__mixed_rotating__big_static    2509     2473     8706    +6233 +252.0%        155→155             41.7
+med_low_prod__mixed_static__big_rotating    9102     7824     7824       +0   +0.0%        111→111             33.9
+med_low_prod__mixed_static__big_static      2867     8054     8054       +0   +0.0%        129→129             32.7
+med_low_prod__mostly_rotating__big_rotating  9453     3024     8395    +5371 +177.6%        190→189             44.1
+med_low_prod__mostly_rotating__big_static    906     7461     7461       +0   +0.0%        210→210             61.2
+med_low_prod__mostly_static__big_rotating   1571     8984     8984       +0   +0.0%        154→154             43.7
+med_low_prod__mostly_static__big_static     1990     3320     7355    +4035 +121.5%        180→187             43.1
+
+=== summary ===
+  n archetypes:        32/32
+  ROI mean ships:          4686
+  SA  mean ships:          8590
+  mean gap (%):         +107.0%
+  median gap (%):       +101.2%
+  archetypes w/ lift:  25/32
+  mean lift (% where lifted): +136.9%
+  max gap:              +252.0%
