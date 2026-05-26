@@ -182,24 +182,28 @@ def _co_evolve(seed: int, steps: int):
 
 
 def _refine_step(obs, configuration, t: int):
-    """Per-turn conditional co-evolve: snap from current obs, run N
-    cycles of alternating SA (our vs opp), update BOTH cached plans.
+    """Per-turn refine; two modes selected by SA_REFINE_OPP_POLICY env var.
 
-    This is the online iterated-best-response (PI 2026-05-26 PM): rather
-    than committing to a stale t=0 opp_plan, we re-evolve both plans
-    from the current state each turn. The conditioning is the snap —
-    captures + in-flight fleets are encoded there. Substrate gate:
-    test_inflight_opp_fleets_advance_under_noop confirms in-flight opp
-    fleets still fly under any opp_policy.
+    Modes (default "noop"):
 
-    Budget: SA_BUDGET_STEP_S (default 0.8s) split across both SAs and
-    across cycles. With cached plan replays as opp_policy each side's
-    score eval is ~50 ms; budget/2/cycles → ~4-8 iter per side per
-    cycle, enough for an incremental refinement off the hot-started
-    cached plan.
+      "noop"     — opp_policy = noop in OUR rollout. PI 2026-05-26 PM:
+                   observability replaces opp prediction. Snap encodes
+                   opp's past + currently-in-flight actions (substrate
+                   gate: test_inflight_opp_fleets_advance_under_noop).
+                   We don't *predict* opp's future emissions — we'll see
+                   them in next turn's obs and re-plan. Closed-loop MPC.
+                   Full per-turn budget for OUR SA. opp_plan unchanged.
 
-    Updates _OPP_PLAN_BY_TURN as a side effect; returns the new
-    _PLAN_BY_TURN dict (our plan).
+      "coevolve" — Conditional iterated best response: snap from current
+                   obs, N_REFINE_CYCLES of alternating SA (our vs opp),
+                   update BOTH cached plans. Heavier, more sophisticated;
+                   produces Nash-against-itself plans that may diverge
+                   from a heuristic opponent like simple/roi.
+
+    Both modes share: snap-from-current-obs, deadline, diff score,
+    hot-start from cached plans. Updates _OPP_PLAN_BY_TURN as a side
+    effect (only in coevolve mode); always returns the new
+    _PLAN_BY_TURN dict.
     """
     global _OPP_PLAN_BY_TURN
 
@@ -221,38 +225,53 @@ def _refine_step(obs, configuration, t: int):
     if horizon <= 0:
         return _PLAN_BY_TURN
 
-    n_cycles = max(1, int(os.environ.get("SA_REFINE_CYCLES", "1")))
     total_budget = float(os.environ.get("SA_BUDGET_STEP_S", "0.8"))
-    budget_per_side = total_budget / (2 * n_cycles)
     iter_cap = int(os.environ.get("SA_ITER_STEP", "100"))
     t0_step = float(os.environ.get("SA_T0_STEP", "100"))
     cool = float(os.environ.get("SA_COOLING_STEP", "0.95"))
+    mode = os.environ.get("SA_REFINE_OPP_POLICY", "noop").strip().lower()
 
-    for cycle in range(n_cycles):
-        # OUR best response to current opp_plan.
-        opp_policy = _plan_replay_policy(remaining_opp)
+    if mode == "coevolve":
+        n_cycles = max(1, int(os.environ.get("SA_REFINE_CYCLES", "1")))
+        budget_per_side = total_budget / (2 * n_cycles)
+        for cycle in range(n_cycles):
+            # OUR best response to current opp_plan.
+            opp_policy = _plan_replay_policy(remaining_opp)
+            remaining_our, _b, _h = simulated_anneal_online(
+                remaining_our, snap_t, max_steps=horizon,
+                opp_policy=opp_policy,
+                n_iter=iter_cap, t0=t0_step, cooling=cool,
+                rng=random.Random(t * 2 + cycle),
+                start_step=t,
+                initial_planets=_INITIAL_PLANETS,
+                max_wall_s=budget_per_side,
+                me=0,
+                score_mode="diff",
+            )
+            # OPP best response to our updated plan (search from opp's POV).
+            our_policy = _plan_replay_policy(remaining_our)
+            remaining_opp, _b, _h = simulated_anneal_online(
+                remaining_opp, snap_t, max_steps=horizon,
+                opp_policy=our_policy,
+                n_iter=iter_cap, t0=t0_step, cooling=cool,
+                rng=random.Random(t * 2 + cycle + 10_000),
+                start_step=t,
+                initial_planets=_INITIAL_PLANETS,
+                max_wall_s=budget_per_side,
+                me=1,
+                score_mode="diff",
+            )
+    else:  # "noop" (default)
+        # opp_policy = noop. Full budget for OUR SA. opp_plan unchanged.
         remaining_our, _b, _h = simulated_anneal_online(
             remaining_our, snap_t, max_steps=horizon,
-            opp_policy=opp_policy,
+            opp_policy=lambda _obs: [],
             n_iter=iter_cap, t0=t0_step, cooling=cool,
-            rng=random.Random(t * 2 + cycle),
+            rng=random.Random(t),
             start_step=t,
             initial_planets=_INITIAL_PLANETS,
-            max_wall_s=budget_per_side,
+            max_wall_s=total_budget,
             me=0,
-            score_mode="diff",
-        )
-        # OPP best response to our updated plan (search from opp's POV).
-        our_policy = _plan_replay_policy(remaining_our)
-        remaining_opp, _b, _h = simulated_anneal_online(
-            remaining_opp, snap_t, max_steps=horizon,
-            opp_policy=our_policy,
-            n_iter=iter_cap, t0=t0_step, cooling=cool,
-            rng=random.Random(t * 2 + cycle + 10_000),
-            start_step=t,
-            initial_planets=_INITIAL_PLANETS,
-            max_wall_s=budget_per_side,
-            me=1,
             score_mode="diff",
         )
 
@@ -264,14 +283,15 @@ def _refine_step(obs, configuration, t: int):
     for tau, action in remaining_our:
         new_our.setdefault(int(tau), []).append(list(action))
 
-    new_opp: dict[int, list[list]] = {
-        int(tau): acts
-        for tau, acts in _OPP_PLAN_BY_TURN.items() if tau < t
-    }
-    for tau, action in remaining_opp:
-        new_opp.setdefault(int(tau), []).append(list(action))
+    if mode == "coevolve":
+        new_opp: dict[int, list[list]] = {
+            int(tau): acts
+            for tau, acts in _OPP_PLAN_BY_TURN.items() if tau < t
+        }
+        for tau, action in remaining_opp:
+            new_opp.setdefault(int(tau), []).append(list(action))
+        _OPP_PLAN_BY_TURN = new_opp
 
-    _OPP_PLAN_BY_TURN = new_opp
     return new_our
 
 

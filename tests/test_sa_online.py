@@ -209,6 +209,7 @@ def test_refine_updates_both_plans():
                      SA_ITER_INIT="20", SA_BUDGET_STEP_S="0.5",
                      SA_ITER_STEP="50", SA_HORIZON="15",
                      SA_REFINE_CYCLES="1",
+                     SA_REFINE_OPP_POLICY="coevolve",   # explicit
                      SA_SEED="0", SA_EPISODE_STEPS="50")
     try:
         import importlib
@@ -230,12 +231,57 @@ def test_refine_updates_both_plans():
         opp_after_id = id(sa_mod._OPP_PLAN_BY_TURN)
 
         assert opp_after_id != opp_before_id, (
-            "_OPP_PLAN_BY_TURN was not reassigned after _refine_step — "
-            "the conditional co-evolve opp-side SA path didn't execute. "
+            "_OPP_PLAN_BY_TURN was not reassigned after _refine_step in "
+            "COEVOLVE mode — the opp-side SA path didn't execute. "
             "This would mean we regress to the stale-opp failing architecture.")
         assert isinstance(sa_mod._OPP_PLAN_BY_TURN, dict), (
             "_OPP_PLAN_BY_TURN type clobbered: "
             f"{type(sa_mod._OPP_PLAN_BY_TURN).__name__}")
+    finally:
+        _restore_env(snap)
+        os.environ.pop("SA_SEED", None)
+        os.environ.pop("SA_EPISODE_STEPS", None)
+
+
+def test_refine_noop_mode_does_not_run_opp_sa():
+    """In default (noop) mode, _refine_step must NOT run the opp-side SA.
+
+    Verification: _OPP_PLAN_BY_TURN's id is UNCHANGED after refine.
+    Confirms the architectural switch — noop mode is strictly cheaper
+    than coevolve, with all per-turn budget devoted to OUR SA.
+    """
+    snap = _set_env(SA_COEVOLVE_CYCLES="1", SA_BUDGET_INIT_S="3",
+                     SA_ITER_INIT="20", SA_BUDGET_STEP_S="0.5",
+                     SA_ITER_STEP="50", SA_HORIZON="15",
+                     SA_REFINE_OPP_POLICY="noop",
+                     SA_SEED="0", SA_EPISODE_STEPS="50")
+    try:
+        import importlib
+        import agents.sa_online.main as sa_mod
+        importlib.reload(sa_mod)
+        opp_before_id = id(sa_mod._OPP_PLAN_BY_TURN)
+        opp_before_len = sum(len(v) for v in sa_mod._OPP_PLAN_BY_TURN.values())
+
+        from kaggle_environments import make
+        env = make("orbit_wars",
+                   configuration={"seed": 0, "episodeSteps": 50},
+                   debug=False)
+        env.reset(num_agents=2)
+        for _ in range(5):
+            env.step([[], []])
+        state = env.steps[-1]
+        obs = state[0]["observation"] if isinstance(state[0], dict) else state[0].observation
+
+        sa_mod._refine_step(obs, env.configuration, t=5)
+        opp_after_id = id(sa_mod._OPP_PLAN_BY_TURN)
+        opp_after_len = sum(len(v) for v in sa_mod._OPP_PLAN_BY_TURN.values())
+
+        assert opp_after_id == opp_before_id, (
+            "noop mode unexpectedly reassigned _OPP_PLAN_BY_TURN; "
+            "opp-side SA must NOT run in noop mode.")
+        assert opp_after_len == opp_before_len, (
+            f"noop mode mutated opp_plan content: "
+            f"len {opp_before_len} → {opp_after_len}")
     finally:
         _restore_env(snap)
         os.environ.pop("SA_SEED", None)
