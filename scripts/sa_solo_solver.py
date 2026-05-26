@@ -43,8 +43,14 @@ sys.path.insert(0, str(REPO))
 from kaggle_environments import make  # noqa: E402
 
 from lib.fast_sim import from_obs as fs_from_obs  # noqa: E402
-from lib.fast_sim import rollout as fs_rollout
-from lib.fast_sim import ship_totals
+from lib.fast_sim import rollout as fs_rollout  # noqa: F401  (re-export)
+from lib.fast_sim import ship_totals  # noqa: F401  (re-export)
+from lib.sa_core import (  # noqa: E402
+    perturb,
+    score_plan_from_snap,
+    simulated_anneal_online as _sa_online,
+    _get_step as _sa_get_step,  # noqa: F401  (kept for callers that imported it)
+)
 
 
 def _load_agent(path):
@@ -60,14 +66,21 @@ def _get_step(obs):
     return int(getattr(obs, "step", 0))
 
 
-def record_initial_plan(seed: int, steps: int, agent_path: Path):
-    """Run focal-vs-noop via env.run, log every focal emission.
+def record_initial_plan(seed: int, steps: int, agent_path: Path,
+                        opp_path: Path | None = None):
+    """Run focal-vs-opp via env.run, log every focal emission.
+
+    `opp_path` defaults to agents/simple/noop.py (solo bench). For online
+    MPC we pass `agents/simple/roi.py` so the recorded plan is one that
+    arose against the actual opponent model we'll be optimising against.
+    Backward-compatible: existing callers leave opp_path=None.
 
     Returns (emissions_list, env_terminal_ships, n_steps, initial_planets).
-    emissions: list of (turn, [src, angle, ships]).
-    initial_planets: obs.planets at turn 0 (for the SA add-emission op).
     """
     agent_fn = _load_agent(agent_path)
+    if opp_path is None:
+        opp_path = REPO / "agents" / "simple" / "noop.py"
+    opp_fn = _load_agent(opp_path)
     emissions: list[tuple[int, list]] = []
 
     def recorder(obs):
@@ -76,9 +89,6 @@ def record_initial_plan(seed: int, steps: int, agent_path: Path):
         for a in acts:
             emissions.append((t, [int(a[0]), float(a[1]), int(a[2])]))
         return acts
-
-    def noop(obs):
-        return []
 
     env = make("orbit_wars",
                configuration={"seed": seed, "episodeSteps": steps},
@@ -89,7 +99,7 @@ def record_initial_plan(seed: int, steps: int, agent_path: Path):
     obs0 = env.steps[0][0]["observation"] if isinstance(env.steps[0][0], dict) else env.steps[0][0].observation
     od0 = obs0 if isinstance(obs0, dict) else dict(obs0)
     initial_planets = [list(p) for p in (od0.get("planets") or [])]
-    env.run([recorder, noop])
+    env.run([recorder, opp_fn])
     final = env.steps[-1]
     obs_f = final[0]["observation"] if isinstance(final[0], dict) else final[0].observation
     odf = obs_f if isinstance(obs_f, dict) else dict(obs_f)
@@ -100,119 +110,43 @@ def record_initial_plan(seed: int, steps: int, agent_path: Path):
     return emissions, p0_ships, len(env.steps), initial_planets
 
 
-def score_plan(emissions, seed: int, steps: int) -> float:
-    """Replay the plan via fast_sim, return P0 terminal ships."""
-    plan_by_turn: dict[int, list[list]] = {}
-    for t, action in emissions:
-        plan_by_turn.setdefault(int(t), []).append(list(action))
-
+def _build_solo_snap0(seed: int, steps: int):
+    """Build a turn-0 snapshot for the solo (vs noop) game on `seed`."""
     env = make("orbit_wars",
                configuration={"seed": seed, "episodeSteps": steps},
                debug=False)
     env.reset(num_agents=2)
     obs0 = env.steps[0][0]["observation"] if isinstance(env.steps[0][0], dict) else env.steps[0][0].observation
-    snap = fs_from_obs(obs0, env.configuration,
+    return fs_from_obs(obs0, env.configuration,
                        episode_seed=seed, num_seats=2)
 
-    def replay(obs):
-        t = _get_step(obs)
-        return [list(a) for a in plan_by_turn.get(t, [])]
 
-    def noop(obs):
-        return []
+def score_plan(emissions, seed: int, steps: int) -> float:
+    """Solo-mode score wrapper: build a turn-0 snap, delegate to sa_core.
 
-    snap = fs_rollout(snap, K=steps, policies=[replay, noop], in_place=False)
-    return ship_totals(snap).get(0, 0.0)
-
-
-def perturb(plan: list[tuple[int, list]], rng: random.Random,
-            initial_planets: list | None = None,
-            t_end: int = 200) -> list[tuple[int, list]]:
-    """One uniform random local edit.
-
-    Ops: remove / modify ships / shift turn / nudge angle / ADD new emission.
-    'add' samples src + tgt from `initial_planets` (the obs.planets at turn 0)
-    so we don't need to simulate to find owned planets — most adds will be
-    invalid (src not owned at T, ships not available, fleet flies into sun),
-    and SA rejects those silently. The valid ones close the gap on seeds
-    where ROI under-emits.
+    Backward-compatible signature. Used by callers that don't yet hold
+    a snap (e.g. the panel runner doing one-shot scoring per seed).
     """
-    can_add = initial_planets is not None and len(initial_planets) >= 2
-    ops = ["remove", "ships", "shift", "angle"]
-    if can_add:
-        ops.append("add")
-    if not plan and not can_add:
-        return list(plan)
-    op = rng.choice(ops)
-    new_plan = list(plan)
-
-    if op == "add":
-        # Random (src, tgt, ships, turn). Angle = atan2 from src to tgt
-        # at the planets' INITIAL positions; most rotating-target adds
-        # will fail predict_fleet_fate's filter and SA discards them.
-        # Some hit, and those are the ones SA keeps.
-        src_p = rng.choice(initial_planets)
-        tgt_p = rng.choice(initial_planets)
-        while int(tgt_p[0]) == int(src_p[0]):
-            tgt_p = rng.choice(initial_planets)
-        sx, sy = float(src_p[2]), float(src_p[3])
-        tx, ty = float(tgt_p[2]), float(tgt_p[3])
-        angle = math.atan2(ty - sy, tx - sx)
-        ships = rng.choice([10, 20, 30, 50, 80, 120, 200])
-        turn = rng.randrange(0, max(1, t_end))
-        new_plan.append((turn, [int(src_p[0]), float(angle), int(ships)]))
-        return new_plan
-
-    if not new_plan:
-        return new_plan
-    idx = rng.randrange(len(new_plan))
-    if op == "remove":
-        new_plan.pop(idx)
-    elif op == "ships":
-        t, action = new_plan[idx]
-        src, ang, ships = action
-        new_ships = max(1, int(ships * rng.uniform(0.7, 1.3)))
-        new_plan[idx] = (t, [src, ang, new_ships])
-    elif op == "shift":
-        t, action = new_plan[idx]
-        new_t = max(0, t + rng.choice([-2, -1, 1, 2]))
-        new_plan[idx] = (new_t, action)
-    elif op == "angle":
-        t, action = new_plan[idx]
-        src, ang, ships = action
-        new_ang = ang + rng.uniform(-0.2, 0.2)
-        new_plan[idx] = (t, [src, float(new_ang), ships])
-    return new_plan
+    snap = _build_solo_snap0(seed, steps)
+    return score_plan_from_snap(emissions, snap,
+                                 opp_policy=None, max_steps=steps)
 
 
 def simulated_anneal(initial_plan, seed, steps, n_iterations,
                      t0, cooling, rng, initial_planets=None):
-    """SA loop: returns (best_plan, best_score, history).
+    """Solo SA wrapper. Builds snap0 ONCE, delegates to sa_core.
 
-    `initial_planets`: list of planet rows from obs at turn 0; enables
-    the 'add new emission' perturbation. If None, only edit/remove ops.
+    The old implementation called `score_plan` (which built a new env +
+    snap each iteration). Switching to the snap-based path of sa_core
+    keeps the math identical (fs_rollout(in_place=False) clones, so each
+    iter starts from the same state) while removing the per-iter env
+    construction overhead.
     """
-    score = score_plan(initial_plan, seed, steps)
-    best_plan, best_score = list(initial_plan), score
-    current_plan, current_score = list(initial_plan), score
-    history: list[tuple[int, float, float]] = []  # (iter, current, best)
-
-    temp = t0
-    for i in range(n_iterations):
-        new_plan = perturb(current_plan, rng,
-                            initial_planets=initial_planets, t_end=steps)
-        new_score = score_plan(new_plan, seed, steps)
-        delta = new_score - current_score
-        if delta > 0 or rng.random() < math.exp(delta / max(1e-9, temp)):
-            current_plan = new_plan
-            current_score = new_score
-            if current_score > best_score:
-                best_score = current_score
-                best_plan = list(current_plan)
-        temp *= cooling
-        if i % 50 == 0 or i == n_iterations - 1:
-            history.append((i, current_score, best_score))
-    return best_plan, best_score, history
+    snap0 = _build_solo_snap0(seed, steps)
+    return _sa_online(initial_plan, snap0, max_steps=steps,
+                      opp_policy=None, n_iter=n_iterations,
+                      t0=t0, cooling=cooling, rng=rng,
+                      start_step=0, initial_planets=initial_planets)
 
 
 def main():
