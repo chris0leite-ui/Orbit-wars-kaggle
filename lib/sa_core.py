@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 from typing import Callable
 
 from lib.fast_sim import rollout as fs_rollout
@@ -59,8 +60,24 @@ def _emissions_to_plan_dict(emissions: list[Emission]) -> dict[int, list[list]]:
 def score_plan_from_snap(emissions: list[Emission],
                          snap,
                          opp_policy: Policy | None = None,
-                         max_steps: int = 200) -> float:
-    """Replay `emissions` over `snap` against `opp_policy`; return P0 ships.
+                         max_steps: int = 200,
+                         *,
+                         me: int = 0,
+                         score_mode: str = "absolute") -> float:
+    """Replay `emissions` over `snap` against `opp_policy`; return a score.
+
+    `me`: which seat owns `emissions` (the seat we score for).
+    `score_mode`:
+        "absolute" -> ships_me at terminal (default, backward compatible)
+        "diff"     -> ships_me - max_o(ships_o for o != me)
+
+    The "diff" mode makes denying-opp inherently positive marginal value,
+    fixing the MPC pessimism trap where every aggressive plan looked
+    equally bad against a strong fixed opp model.
+
+    `me` also controls which seat's policy plays `emissions`. If me==0
+    the policy ordering is [replay, opp_policy]; if me==1 it's
+    [opp_policy, replay]. This lets co-evolution search from opp's POV.
 
     fs_rollout(in_place=False) clones the snap internally so the caller's
     snap object is unchanged — safe to reuse across SA iterations.
@@ -73,9 +90,22 @@ def score_plan_from_snap(emissions: list[Emission],
         t = _get_step(obs)
         return [list(a) for a in plan_by_turn.get(t, [])]
 
+    if int(me) == 0:
+        policies = [replay, opp_policy]
+    else:
+        policies = [opp_policy, replay]
+
     snap = fs_rollout(snap, K=max_steps,
-                      policies=[replay, opp_policy], in_place=False)
-    return float(ship_totals(snap).get(0, 0.0))
+                      policies=policies, in_place=False)
+    totals = ship_totals(snap)
+    me_ships = float(totals.get(int(me), 0.0))
+    if score_mode == "diff":
+        opp_ships = max(
+            (float(v) for k, v in totals.items() if int(k) != int(me) and int(k) >= 0),
+            default=0.0,
+        )
+        return me_ships - opp_ships
+    return me_ships
 
 
 def perturb(plan: list[Emission], rng: random.Random,
@@ -142,6 +172,9 @@ def simulated_anneal_online(initial_plan: list[Emission],
                              *,
                              start_step: int = 0,
                              initial_planets: list | None = None,
+                             max_wall_s: float | None = None,
+                             me: int = 0,
+                             score_mode: str = "absolute",
                              ) -> tuple[list[Emission], float, list]:
     """Metropolis SA from a given snapshot.
 
@@ -151,21 +184,38 @@ def simulated_anneal_online(initial_plan: list[Emission],
     `start_step` constrains add-perturbations so they don't generate
     actions for turns in the past (which would be no-ops anyway, but
     waste SA iterations).
+
+    `max_wall_s`: optional soft wallclock deadline. The loop breaks
+    early once the deadline is exceeded. Set to keep per-turn refines
+    inside kaggle's actTimeout regardless of opp_policy cost.
+
+    `me` + `score_mode`: passed through to score_plan_from_snap. See
+    that function's docstring; "diff" mode (ships_me - max_o ships_o)
+    fixes the MPC pessimism trap.
     """
     t_end_perturb = max(start_step + 1, start_step + max_steps)
 
+    deadline = (time.perf_counter() + max_wall_s) if max_wall_s is not None else None
+
     current_plan = list(initial_plan)
-    current_score = score_plan_from_snap(current_plan, snap0, opp_policy, max_steps)
+    current_score = score_plan_from_snap(
+        current_plan, snap0, opp_policy, max_steps,
+        me=me, score_mode=score_mode)
     best_plan = list(current_plan)
     best_score = current_score
     history: list[tuple[int, float, float]] = []
 
     temp = t0
     for i in range(n_iter):
+        if deadline is not None and time.perf_counter() >= deadline:
+            history.append((i, current_score, best_score))
+            break
         new_plan = perturb(current_plan, rng,
                             initial_planets=initial_planets,
                             t_start=start_step, t_end=t_end_perturb)
-        new_score = score_plan_from_snap(new_plan, snap0, opp_policy, max_steps)
+        new_score = score_plan_from_snap(
+            new_plan, snap0, opp_policy, max_steps,
+            me=me, score_mode=score_mode)
         delta = new_score - current_score
         if delta > 0 or rng.random() < math.exp(delta / max(1e-9, temp)):
             current_plan = new_plan

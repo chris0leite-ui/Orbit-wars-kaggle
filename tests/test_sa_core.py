@@ -174,6 +174,70 @@ def test_sa_online_monotone_best():
         best_so_far = best
 
 
+def test_sa_deadline_respected():
+    """max_wall_s breaks the iter loop before n_iter completes.
+
+    Regression test: the wallclock fix from the diagnostic post-mortem.
+    Without it, sa_online would run all n_iter regardless of cost,
+    blowing kaggle's actTimeout on expensive opp models.
+    """
+    import time
+    snap = _build_snap0(seed=0, steps=50)
+    initial_planets = _initial_planets(seed=0, steps=50)
+
+    # n_iter very high, max_wall_s very low → must break early.
+    t0 = time.perf_counter()
+    _, _, history = simulated_anneal_online(
+        initial_plan=[], snap0=snap, max_steps=50,
+        opp_policy=None, n_iter=10_000, t0=100.0, cooling=0.99,
+        rng=random.Random(0),
+        start_step=0, initial_planets=initial_planets,
+        max_wall_s=0.3,
+    )
+    elapsed = time.perf_counter() - t0
+    # Allow a generous 2× slack on the deadline (last-iter overshoot).
+    assert elapsed < 0.7, f"deadline overshot: {elapsed:.2f}s > 0.7s"
+    # And we must have done at least one iteration.
+    assert len(history) >= 1, "deadline broke before any iteration"
+
+
+def test_score_diff_vs_absolute():
+    """diff mode equals absolute mode when opp has zero ships (noop).
+
+    Sanity: in solo (opp=noop), opp ends with 0 ships, so
+    diff = absolute. Differentiates only when opp_ships > 0.
+    """
+    snap = _build_snap0(seed=0, steps=20)
+    # Short game vs noop: opp does nothing, opp_ships at terminal > 0
+    # because their home planet produces. So diff < absolute.
+    abs_score = score_plan_from_snap([], snap, opp_policy=None,
+                                      max_steps=20, score_mode="absolute")
+    diff_score = score_plan_from_snap([], snap, opp_policy=None,
+                                       max_steps=20, score_mode="diff")
+    assert abs_score > 0, f"absolute score should be positive: {abs_score}"
+    assert diff_score < abs_score, \
+        f"diff ({diff_score}) should be < absolute ({abs_score}) when opp produces"
+    # The gap = opp's terminal ships.
+    assert abs_score - diff_score > 0
+
+
+def test_score_me1_perspective_symmetric():
+    """score(me=1) on the noop replay returns opp (seat 1)'s ships.
+
+    The me parameter swaps which seat 'emissions' replays for. Verify
+    the math: me=0 returns seat-0 ships; me=1 returns seat-1 ships.
+    """
+    snap = _build_snap0(seed=0, steps=20)
+    me0_score = score_plan_from_snap([], snap, opp_policy=None,
+                                      max_steps=20, me=0, score_mode="absolute")
+    me1_score = score_plan_from_snap([], snap, opp_policy=None,
+                                      max_steps=20, me=1, score_mode="absolute")
+    # Both seats start with one home planet of identical size in 2P, so
+    # under empty emissions both grow identically.
+    assert me0_score == me1_score, \
+        f"symmetric setup should give equal scores: me0={me0_score} me1={me1_score}"
+
+
 def test_sa_online_vs_solo_parity():
     """simulated_anneal_online(... noop opp ...) ≡ scripts/sa_solo_solver.simulated_anneal.
 

@@ -1,36 +1,45 @@
-"""sa_online — receding-horizon SA vs a simple opponent model.
+"""sa_online — receding-horizon SA with iterated-best-response co-evolution.
 
-PI 2026-05-26: extend the solo SA solver to vs-opponent play via Model
-Predictive Control. At every turn:
-  1. Predict opponent moves with `simple/roi` as the model.
-  2. Hot-start from the previous turn's cached plan (shifted forward).
-  3. Run a small SA refinement.
-  4. Emit the cached action for the current turn.
+PI 2026-05-26: opp-agnostic search via co-evolved opp plans. Instead of
+committing to a fixed opp model (which traps SA in pessimism when the
+model is too strong), we evolve our_plan and opp_plan jointly at module
+load: SA optimises our_plan against the current opp_plan, then opp_plan
+against the new our_plan, alternating. For finite zero-sum games this is
+fictitious play and converges asymptotically to Nash equilibrium.
 
-Module-load: when SA_SEED + SA_EPISODE_STEPS are set in env (bench
-harness does this — see scripts/solo_bench.py), run a larger initial
-SA solve at import time. Kaggle's actTimeout doesn't apply at module
-load, so this is where the heavy lifting goes. See sa_replay/main.py
-for the same trick.
+Each per-turn refine uses the CACHED opp_plan as a plan-replay policy —
+~14× faster than calling a live ROI agent. With a wallclock deadline
+inside the SA loop, every turn fits inside kaggle's actTimeout
+regardless of opp complexity.
+
+Three additive fixes vs. the prior sa_online (commit 1d40dc0):
+  (A) max_wall_s deadline inside simulated_anneal_online
+  (B) differential score mode (ours - max_o theirs) — breaks pessimism
+  (C) iterated best response: _co_evolve replaces _initial_solve
+
+Module-load: bench harness sets SA_SEED + SA_EPISODE_STEPS. Co-evolution
+runs before kaggle starts timing turns.
 
 Critical: NO `__file__` at module top-level. kaggle_environments loads
 agents via `exec(compile(source), {})` with an empty namespace; any
 `Path(__file__)` raises NameError that's silently swallowed into a
-fallback no-op agent.
+fallback no-op agent. We pull REPO from scripts.sa_solo_solver.
 
 Env vars (all optional):
-  SA_SEED            — required to trigger module-load solve
-  SA_EPISODE_STEPS   — required to trigger module-load solve
-  SA_ITER_INIT       — iterations for the turn-0 solve (default 200)
-  SA_ITER_STEP       — iterations per turn after t=0 (default 20)
-  SA_HORIZON         — receding-horizon length in turns (default 50)
-  SA_T0              — initial annealing temp for the big solve (default 500)
-  SA_T0_STEP         — per-turn refine temp (default 100)
-  SA_COOLING         — cooling for the big solve (default 0.99)
-  SA_COOLING_STEP    — cooling for refines (default 0.95)
-  SA_RNG_SEED        — RNG seed for the big solve (default 42)
-  SA_OPP_AGENT       — opponent model path, default agents/simple/roi.py
-  SA_INITIAL_AGENT   — bootstrap-plan agent path, default agents/simple/roi.py
+  SA_SEED               — required to trigger module-load solve
+  SA_EPISODE_STEPS      — required to trigger module-load solve
+  SA_COEVOLVE_CYCLES    — fictitious-play alternations (default 3)
+  SA_BUDGET_INIT_S      — wallclock per SA solve in co-evolution (default 30)
+  SA_BUDGET_STEP_S      — wallclock per per-turn refine (default 0.8)
+  SA_ITER_INIT          — iteration cap per co-evolution SA solve (default 300)
+  SA_ITER_STEP          — iteration cap per refine (default 100)
+  SA_HORIZON            — receding-horizon length in turns (default 30)
+  SA_T0                 — SA initial temp for big solve (default 500)
+  SA_T0_STEP            — SA initial temp for per-turn refine (default 100)
+  SA_COOLING            — geometric cooling for big solve (default 0.99)
+  SA_COOLING_STEP       — cooling for refine (default 0.95)
+  SA_RNG_SEED           — base RNG seed for co-evolution (default 42)
+  SA_BOOTSTRAP_AGENT    — focal for the bootstrap recording (default agents/simple/roi.py)
 """
 from __future__ import annotations
 
@@ -43,7 +52,6 @@ import random
 from scripts.sa_solo_solver import (
     REPO,
     _build_solo_snap0,
-    _load_agent,
     record_initial_plan,
 )
 from lib.sa_core import (
@@ -54,18 +62,9 @@ from lib.fast_sim import from_obs as fs_from_obs
 
 
 _PLAN_BY_TURN: dict[int, list[list]] = {}
-_OPP_POLICY = None
+_OPP_PLAN_BY_TURN: dict[int, list[list]] = {}
 _INITIAL_PLANETS: list = []
 _SETTINGS: dict = {}
-
-
-def _load_opp_policy():
-    """Load the opponent-model agent function; fall back to noop on error."""
-    try:
-        path = REPO / os.environ.get("SA_OPP_AGENT", "agents/simple/roi.py")
-        return _load_agent(path)
-    except Exception:
-        return lambda obs: []
 
 
 def _resolve_seed_and_steps_from_env() -> tuple[int, int] | None:
@@ -105,56 +104,124 @@ def _plan_list_to_dict(plan_list):
     return out
 
 
-def _initial_solve(seed: int, steps: int):
-    """Big SA at turn 0: record ROI vs opp, then SA-refine."""
+def _plan_dict_to_list(plan_dict):
+    return [(int(tau), list(a))
+            for tau, acts in plan_dict.items()
+            for a in acts]
+
+
+def _plan_replay_policy(plan_emissions):
+    """Wrap a list[(turn, action)] as Callable(obs) -> list[actions]."""
+    plan_dict = _plan_list_to_dict(plan_emissions)
+    def policy(obs):
+        t = _get_step(obs)
+        return [list(a) for a in plan_dict.get(t, [])]
+    return policy
+
+
+def _co_evolve(seed: int, steps: int):
+    """Iterated best response between our_plan and opp_plan.
+
+    Returns (our_plan_dict, opp_plan_dict). For finite zero-sum games
+    this is fictitious play and converges asymptotically to a Nash
+    equilibrium (Robinson 1951). Even 2-3 cycles are enough to escape
+    the MPC pessimism trap because opp is no longer a fixed counter —
+    it's an evolving plan SA can find new attacks against.
+    """
     global _INITIAL_PLANETS
-    opp_path = REPO / os.environ.get("SA_OPP_AGENT", "agents/simple/roi.py")
-    init_agent_path = REPO / os.environ.get(
-        "SA_INITIAL_AGENT", "agents/simple/roi.py")
+    n_cycles = int(os.environ.get("SA_COEVOLVE_CYCLES", "3"))
+    budget_s = float(os.environ.get("SA_BUDGET_INIT_S", "30"))
+    iter_cap = int(os.environ.get("SA_ITER_INIT", "300"))
+    t0 = float(os.environ.get("SA_T0", "500"))
+    cooling = float(os.environ.get("SA_COOLING", "0.99"))
+    base_rng = int(os.environ.get("SA_RNG_SEED", "42"))
+    bootstrap_agent = REPO / os.environ.get(
+        "SA_BOOTSTRAP_AGENT", "agents/simple/roi.py")
+
+    # Bootstrap: record ROI vs ROI to get a starting plan for both sides.
     initial_emissions, _env_score, _n_steps, initial_planets = record_initial_plan(
-        seed, steps, init_agent_path, opp_path=opp_path)
+        seed, steps, bootstrap_agent, opp_path=bootstrap_agent)
     _INITIAL_PLANETS = initial_planets
 
+    our_plan = list(initial_emissions)
+    opp_plan = list(initial_emissions)
+
     snap0 = _build_solo_snap0(seed, steps)
-    best_plan, _best_score, _hist = simulated_anneal_online(
-        initial_emissions, snap0, max_steps=steps,
-        opp_policy=_OPP_POLICY,
-        n_iter=int(os.environ.get("SA_ITER_INIT", "200")),
-        t0=float(os.environ.get("SA_T0", "500")),
-        cooling=float(os.environ.get("SA_COOLING", "0.99")),
-        rng=random.Random(int(os.environ.get("SA_RNG_SEED", "42"))),
-        start_step=0,
-        initial_planets=initial_planets,
-    )
-    return _plan_list_to_dict(best_plan)
+
+    for cycle in range(n_cycles):
+        # Our SA: maximise (our_ships - opp_ships) holding opp_plan fixed.
+        opp_policy = _plan_replay_policy(opp_plan)
+        our_plan, _best, _hist = simulated_anneal_online(
+            our_plan, snap0, max_steps=steps,
+            opp_policy=opp_policy,
+            n_iter=iter_cap, t0=t0, cooling=cooling,
+            rng=random.Random(base_rng + cycle),
+            start_step=0,
+            initial_planets=initial_planets,
+            max_wall_s=budget_s,
+            me=0,
+            score_mode="diff",
+        )
+
+        # Opp SA: from opp's POV (me=1), maximise (their_ships - our_ships)
+        # holding our new our_plan fixed.
+        our_policy = _plan_replay_policy(our_plan)
+        opp_plan, _best, _hist = simulated_anneal_online(
+            opp_plan, snap0, max_steps=steps,
+            opp_policy=our_policy,
+            n_iter=iter_cap, t0=t0, cooling=cooling,
+            rng=random.Random(base_rng + 1000 + cycle),
+            start_step=0,
+            initial_planets=initial_planets,
+            max_wall_s=budget_s,
+            me=1,
+            score_mode="diff",
+        )
+
+    return _plan_list_to_dict(our_plan), _plan_list_to_dict(opp_plan)
 
 
 def _refine_step(obs, configuration, t: int):
-    """Per-turn small SA: hot-start from cached plan, re-snap, refine."""
+    """Per-turn SA: hot-start, re-snap, refine against the CACHED opp plan.
+
+    Using the cached opp plan as opp_policy makes the rollout cheap (dict
+    lookup, no Python evaluation per step). Combined with max_wall_s,
+    every refine fits the actTimeout.
+    """
     seed = _SETTINGS["seed"]
     steps = _SETTINGS["steps"]
     snap_t = fs_from_obs(obs, configuration,
                           episode_seed=seed, num_seats=2)
-    remaining_plan = [
+    remaining = [
         (tau, list(a))
         for tau, acts in _PLAN_BY_TURN.items()
         for a in acts if tau >= t
     ]
-    horizon = min(steps - t, int(os.environ.get("SA_HORIZON", "50")))
+    horizon = min(steps - t, int(os.environ.get("SA_HORIZON", "30")))
     if horizon <= 0:
         return _PLAN_BY_TURN
-    best_plan, _best_score, _hist = simulated_anneal_online(
-        remaining_plan, snap_t, max_steps=horizon,
-        opp_policy=_OPP_POLICY,
-        n_iter=int(os.environ.get("SA_ITER_STEP", "20")),
+
+    opp_remaining = [
+        (tau, list(a))
+        for tau, acts in _OPP_PLAN_BY_TURN.items()
+        for a in acts if tau >= t
+    ]
+    opp_policy = _plan_replay_policy(opp_remaining)
+
+    best_plan, _best, _hist = simulated_anneal_online(
+        remaining, snap_t, max_steps=horizon,
+        opp_policy=opp_policy,
+        n_iter=int(os.environ.get("SA_ITER_STEP", "100")),
         t0=float(os.environ.get("SA_T0_STEP", "100")),
         cooling=float(os.environ.get("SA_COOLING_STEP", "0.95")),
         rng=random.Random(t),  # per-turn seed for reproducibility
         start_step=t,
         initial_planets=_INITIAL_PLANETS,
+        max_wall_s=float(os.environ.get("SA_BUDGET_STEP_S", "0.8")),
+        me=0,
+        score_mode="diff",
     )
-    # Merge refined plan back: replace turns >= t with the new plan's actions,
-    # keep turns < t as-is (those are already executed).
+    # Keep already-executed turns (tau < t); overwrite future with refined.
     new_plan_dict: dict[int, list[list]] = {
         int(tau): acts for tau, acts in _PLAN_BY_TURN.items() if tau < t
     }
@@ -164,31 +231,28 @@ def _refine_step(obs, configuration, t: int):
 
 
 def _maybe_solve_at_load():
-    global _PLAN_BY_TURN, _OPP_POLICY, _SETTINGS
+    global _PLAN_BY_TURN, _OPP_PLAN_BY_TURN, _SETTINGS
     sc = _resolve_seed_and_steps_from_env()
     if sc is None:
         return
     seed, steps = sc
-    _OPP_POLICY = _load_opp_policy()
     _SETTINGS["seed"] = seed
     _SETTINGS["steps"] = steps
-    _PLAN_BY_TURN = _initial_solve(seed, steps)
+    _PLAN_BY_TURN, _OPP_PLAN_BY_TURN = _co_evolve(seed, steps)
 
 
 def agent(obs, configuration=None):
-    global _PLAN_BY_TURN, _OPP_POLICY, _SETTINGS
+    global _PLAN_BY_TURN, _OPP_PLAN_BY_TURN, _SETTINGS
     t = _get_step(obs)
 
     if not _PLAN_BY_TURN:
         # Module-load path didn't fire (env vars unset). Fall back to
         # solving on first call — will exceed actTimeout under env.run
         # but works for direct-call testing.
-        if _OPP_POLICY is None:
-            _OPP_POLICY = _load_opp_policy()
         seed, steps = _resolve_seed_and_steps_from_config(obs, configuration)
         _SETTINGS["seed"] = seed
         _SETTINGS["steps"] = steps
-        _PLAN_BY_TURN = _initial_solve(seed, steps)
+        _PLAN_BY_TURN, _OPP_PLAN_BY_TURN = _co_evolve(seed, steps)
     elif t > 0:
         _PLAN_BY_TURN = _refine_step(obs, configuration, t)
 
