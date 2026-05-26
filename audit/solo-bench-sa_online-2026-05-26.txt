@@ -1,0 +1,76 @@
+agent                                      n  mean_ships ships/step     std   ci95_lo   ci95_hi  planets   wall_s  err
+----------------------------------------------------------------------------------------------------------------------
+sa_online                                 32      8245.3      41.90  3539.6    7018.9    9471.7    23.56   1597.1    0
+simple/roi                                32      4686.1      32.19  2319.1    3882.6    5489.6    27.06     87.0    0
+
+per-archetype mean terminal ships (n=1 game(s) per cell):
+archetype                                                sa_online              simple/roi   diff[1-2]
+------------------------------------------------------------------------------------------------------
+high_prod__mixed_rotating__big_rotating                    15264.0                  7895.0     +7369.0
+high_prod__mixed_rotating__big_static                       6410.0                  3197.0     +3213.0
+high_prod__mixed_static__big_rotating                      12274.0                  3703.0     +8571.0
+high_prod__mixed_static__big_static                        11354.0                  4468.0     +6886.0
+high_prod__mostly_rotating__big_rotating                   15596.0                  5090.0    +10506.0
+high_prod__mostly_rotating__big_static                     11604.0                  3740.0     +7864.0
+high_prod__mostly_static__big_rotating                     13216.0                  7906.0     +5310.0
+high_prod__mostly_static__big_static                       14431.0                  4228.0    +10203.0
+low_prod__mixed_rotating__big_rotating                      1899.0                  1624.0      +275.0
+low_prod__mixed_rotating__big_static                        5425.0                  3859.0     +1566.0
+low_prod__mixed_static__big_rotating                        3021.0                  4298.0     -1277.0
+low_prod__mixed_static__big_static                          6063.0                  2128.0     +3935.0
+low_prod__mostly_rotating__big_rotating                     6753.0                  6941.0      -188.0
+low_prod__mostly_rotating__big_static                       6402.0                  2758.0     +3644.0
+low_prod__mostly_static__big_rotating                       6192.0                  3980.0     +2212.0
+low_prod__mostly_static__big_static                         2922.0                  2113.0      +809.0
+med_high_prod__mixed_rotating__big_rotating                  9487.0                  3685.0     +5802.0
+med_high_prod__mixed_rotating__big_static                   8248.0                  3458.0     +4790.0
+med_high_prod__mixed_static__big_rotating                   4478.0                  2373.0     +2105.0
+med_high_prod__mixed_static__big_static                     5111.0                  4101.0     +1010.0
+med_high_prod__mostly_rotating__big_rotating                 10677.0                  4269.0     +6408.0
+med_high_prod__mostly_rotating__big_static                 11128.0                 11147.0       -19.0
+med_high_prod__mostly_static__big_rotating                  8138.0                  3563.0     +4575.0
+med_high_prod__mostly_static__big_static                    4241.0                  4024.0      +217.0
+med_low_prod__mixed_rotating__big_rotating                  9193.0                  4267.0     +4926.0
+med_low_prod__mixed_rotating__big_static                    8665.0                  2473.0     +6192.0
+med_low_prod__mixed_static__big_rotating                    6897.0                  7824.0      -927.0
+med_low_prod__mixed_static__big_static                      7166.0                  8054.0      -888.0
+med_low_prod__mostly_rotating__big_rotating                  8323.0                  3024.0     +5299.0
+med_low_prod__mostly_rotating__big_static                   6645.0                  7461.0      -816.0
+med_low_prod__mostly_static__big_rotating                   8889.0                  8984.0       -95.0
+med_low_prod__mostly_static__big_static                     7738.0                  3320.0     +4418.0
+
+per-archetype mean ships/step (n=1 game(s) per cell):
+archetype                                                sa_online              simple/roi   diff[1-2]
+------------------------------------------------------------------------------------------------------
+high_prod__mixed_rotating__big_rotating                      76.70                   58.05      +18.65
+high_prod__mixed_rotating__big_static                        32.21                   23.51       +8.70
+high_prod__mixed_static__big_rotating                        61.68                   35.27      +26.41
+high_prod__mixed_static__big_static                          57.06                   37.55      +19.51
+high_prod__mostly_rotating__big_rotating                     78.37                   48.02      +30.35
+high_prod__mostly_rotating__big_static                       58.31                   32.24      +26.07
+high_prod__mostly_static__big_rotating                       66.41                   54.15      +12.26
+high_prod__mostly_static__big_static                         72.52                   39.51      +33.00
+low_prod__mixed_rotating__big_rotating                        9.54                   10.02       -0.48
+low_prod__mixed_rotating__big_static                         27.26                   23.53       +3.73
+low_prod__mixed_static__big_rotating                         15.18                   21.60       -6.42
+low_prod__mixed_static__big_static                           30.47                   18.19      +12.28
+low_prod__mostly_rotating__big_rotating                      33.93                   34.88       -0.94
+low_prod__mostly_rotating__big_static                        32.17                   22.24       +9.93
+low_prod__mostly_static__big_rotating                        31.12                   27.64       +3.48
+low_prod__mostly_static__big_static                          14.68                   15.89       -1.20
+med_high_prod__mixed_rotating__big_rotating                   47.67                   29.96      +17.71
+med_high_prod__mixed_rotating__big_static                    41.45                   30.33      +11.11
+med_high_prod__mixed_static__big_rotating                    22.50                   16.25       +6.25
+med_high_prod__mixed_static__big_static                      25.68                   23.57       +2.11
+med_high_prod__mostly_rotating__big_rotating                   53.65                   36.80      +16.85
+med_high_prod__mostly_rotating__big_static                   55.92                   56.02       -0.10
+med_high_prod__mostly_static__big_rotating                   40.89                   28.06      +12.84
+med_high_prod__mostly_static__big_static                     36.25                   35.61       +0.64
+med_low_prod__mixed_rotating__big_rotating                   46.20                   32.33      +13.87
+med_low_prod__mixed_rotating__big_static                     43.54                   24.25      +19.30
+med_low_prod__mixed_static__big_rotating                     34.66                   39.32       -4.66
+med_low_prod__mixed_static__big_static                       36.01                   40.47       -4.46
+med_low_prod__mostly_rotating__big_rotating                   41.82                   27.00      +14.82
+med_low_prod__mostly_rotating__big_static                    33.39                   37.49       -4.10
+med_low_prod__mostly_static__big_rotating                    44.67                   45.15       -0.48
+med_low_prod__mostly_static__big_static                      38.88                   25.34      +13.54
