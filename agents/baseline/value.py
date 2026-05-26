@@ -703,6 +703,26 @@ def favor_speedrun(obs, me: int, num_seats: int = 2,
     return score
 
 
+# Per-turn cache of in-flight fleet outcomes (id -> FleetFate).
+# Populated by agents.baseline.main at turn entry via populate_fleet_fate_cache;
+# read by favor_integral_ships_v2 to discount fleets predicted to die
+# (sun/OOB/timeout) instead of crediting them at face value.
+# v1 leaf treats every in-flight ship at face value, which over-credits
+# misses on rotating geometries (bench 2026-05-26: −5k to −8k ships on
+# `*_rotating` archetypes). v2 uses this cache to apply the correct
+# closed-form physics.
+_FLEET_FATE_CACHE: dict[int, object] = {}
+
+
+def reset_fleet_fate_cache() -> None:
+    _FLEET_FATE_CACHE.clear()
+
+
+def populate_fleet_fate_cache(predictions: dict) -> None:
+    _FLEET_FATE_CACHE.clear()
+    _FLEET_FATE_CACHE.update(predictions)
+
+
 def favor_integral_ships(obs, me: int, num_seats: int = 2,
                          gamma: float = DEFAULT_GAMMA) -> float:
     """Terminal ship-count predictor at T_END (env INTEGRAL_T_END, default 500).
@@ -734,6 +754,70 @@ def favor_integral_ships(obs, me: int, num_seats: int = 2,
         if owner < 0:
             continue
         ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(f[6])
+
+    def total(o: int) -> float:
+        return ships_by_owner.get(o, 0.0) + prod_by_owner.get(o, 0.0) * remaining
+
+    opps = [o for o in set(ships_by_owner) | set(prod_by_owner)
+            if o != me and o >= 0]
+    return total(me) - max((total(o) for o in opps), default=0.0)
+
+
+def favor_integral_ships_v2(obs, me: int, num_seats: int = 2,
+                            gamma: float = DEFAULT_GAMMA) -> float:
+    """Physics-aware terminal ship-count predictor.
+
+    Same closed-form integral as `favor_integral_ships`, but in-flight
+    ships are conditionally credited per the per-turn `_FLEET_FATE_CACHE`
+    (populated at turn entry by agents.baseline.main from
+    lib.trajectory.walk_existing_fleet_fate):
+
+      - outcome ∈ {"planet", "target"} AND arrives ≤ remaining
+            -> credit ships to fleet owner (will land)
+      - outcome ∈ {"sun", "oob", "timeout"}
+            -> drop (fleet dies in transit)
+      - fleet not in cache (new emission during rollout)
+            -> credit at face value (matches v1 behaviour)
+
+    First iteration: simple owner-credit at landing, no combat
+    resolution at the destination planet. v3 will add combat via
+    `lib.combat.resolve_arrivals`.
+    """
+    planets = _read(obs, "planets", []) or []
+    fleets = _read(obs, "fleets", []) or []
+    step = int(_read(obs, "step", 0))
+    t_end = int(os.environ.get("INTEGRAL_T_END", str(EPISODE_STEPS)))
+    remaining = max(0, t_end - step)
+
+    ships_by_owner: dict[int, float] = {}
+    prod_by_owner: dict[int, float] = {}
+    for p in planets:
+        owner = int(p[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(p[5])
+        prod_by_owner[owner] = prod_by_owner.get(owner, 0.0) + float(p[6])
+
+    for f in fleets:
+        owner = int(f[1])
+        if owner < 0:
+            continue
+        fleet_ships = float(f[6])
+        fleet_id = int(f[0])
+        fate = _FLEET_FATE_CACHE.get(fleet_id)
+        if fate is None:
+            # New emission during the rollout: face-value credit (v1 parity).
+            ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + fleet_ships
+            continue
+        outcome = getattr(fate, "outcome", None)
+        if outcome in ("planet", "target"):
+            if int(getattr(fate, "step", 0)) <= remaining:
+                ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + fleet_ships
+            # else: too far in the future to arrive within the leaf horizon
+        elif outcome in ("sun", "oob", "timeout"):
+            pass  # fleet dies; no credit
+        else:
+            ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + fleet_ships
 
     def total(o: int) -> float:
         return ships_by_owner.get(o, 0.0) + prod_by_owner.get(o, 0.0) * remaining
@@ -783,6 +867,8 @@ def select_favor_fn():
         base = favor_speedrun
     elif choice == "integral_ships":
         base = favor_integral_ships
+    elif choice == "integral_v2":
+        base = favor_integral_ships_v2
     else:
         base = favor
 

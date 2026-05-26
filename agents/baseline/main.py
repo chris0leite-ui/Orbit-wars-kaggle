@@ -861,6 +861,20 @@ def agent(obs, configuration=None):
     world = World.from_obs(obs_d)
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
+
+    # Physics-aware leaf cache (favor_integral_ships_v2 only).
+    # Predicts each in-flight fleet's terminal outcome (planet hit / sun /
+    # OOB / timeout) closed-form via lib.trajectory.walk_existing_fleet_fate
+    # so the leaf can drop fleets predicted to die instead of crediting
+    # them at face value (Rule 47 — no approximation when closed-form is
+    # cheap; ~50 ms per turn for 20 in-flight fleets × 200 steps × 24
+    # planets). Gated on env var so other value heads don't pay the cost.
+    if os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower() == "integral_v2":
+        from lib.trajectory import walk_existing_fleet_fate
+        from agents.baseline.value import populate_fleet_fate_cache
+        fates = {int(f[0]): walk_existing_fleet_fate(f, world)
+                 for f in raw_fleets}
+        populate_fleet_fate_cache(fates)
     num_seats = _num_seats(planets, fleets)
     gamma = _gamma()
     wallclock_ms = _wallclock_ms()

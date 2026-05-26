@@ -172,6 +172,10 @@ def _summarize(rows: list[dict]) -> dict:
     ships = [r["ships"] for r in ok]
     planets = [r["n_planets"] for r in ok]
     walls = [r["wall"] for r in ok]
+    # ships/step normalises out early-elimination confound: when the focal
+    # agent eliminates noop fast, the game ends at step 60-95 instead of
+    # the configured episode_steps cap, so raw "terminal ships" under-counts.
+    rates = [r["ships"] / max(1, r["step"]) for r in ok]
     mean = statistics.mean(ships)
     std = statistics.stdev(ships) if n > 1 else 0.0
     se = std / math.sqrt(n) if n > 1 else 0.0
@@ -182,6 +186,8 @@ def _summarize(rows: list[dict]) -> dict:
         "std_ships": std,
         "ci95_lo": mean - half,
         "ci95_hi": mean + half,
+        "mean_ships_per_step": statistics.mean(rates),
+        "std_ships_per_step": statistics.stdev(rates) if n > 1 else 0.0,
         "mean_planets": statistics.mean(planets),
         "wall_s": sum(walls),
         "errors": len(rows) - n,
@@ -262,20 +268,21 @@ def main() -> int:
     )
 
     header = (
-        f"{'agent':<40s} {'n':>3s} {'mean_ships':>11s} {'std':>7s} "
-        f"{'ci95_lo':>9s} {'ci95_hi':>9s} {'planets':>8s} {'wall_s':>8s} "
-        f"{'err':>4s}"
+        f"{'agent':<40s} {'n':>3s} {'mean_ships':>11s} {'ships/step':>10s} "
+        f"{'std':>7s} {'ci95_lo':>9s} {'ci95_hi':>9s} {'planets':>8s} "
+        f"{'wall_s':>8s} {'err':>4s}"
     )
     print(header)
     print("-" * len(header))
     for label, s in summaries:
         if s["n"] == 0:
-            print(f"{label:<40s} {0:>3d} {'-':>11s} {'-':>7s} "
-                  f"{'-':>9s} {'-':>9s} {'-':>8s} {'-':>8s} "
-                  f"{s.get('errors', 0):>4d}")
+            print(f"{label:<40s} {0:>3d} {'-':>11s} {'-':>10s} "
+                  f"{'-':>7s} {'-':>9s} {'-':>9s} {'-':>8s} "
+                  f"{'-':>8s} {s.get('errors', 0):>4d}")
             continue
         print(f"{label:<40s} {s['n']:>3d} {s['mean_ships']:>11.1f} "
-              f"{s['std_ships']:>7.1f} {s['ci95_lo']:>9.1f} {s['ci95_hi']:>9.1f} "
+              f"{s['mean_ships_per_step']:>10.2f} {s['std_ships']:>7.1f} "
+              f"{s['ci95_lo']:>9.1f} {s['ci95_hi']:>9.1f} "
               f"{s['mean_planets']:>8.2f} {s['wall_s']:>8.1f} "
               f"{s.get('errors', 0):>4d}")
 
@@ -313,6 +320,33 @@ def main() -> int:
                 diff = means[0] - means[1]
                 row += f"  {diff:>+10.1f}"
             print(f"{arc:<42s}  {row}")
+
+        # Second breakdown: ships/step (normalises early-elim confound).
+        print("\nper-archetype mean ships/step "
+              f"(n={args.per_archetype} game(s) per cell):")
+        head_cols2 = "  ".join(f"{lab[:22]:>22s}" for lab in cli_order)
+        diff_col2 = f"  {'diff[1-2]':>10s}" if len(cli_order) == 2 else ""
+        print(f"{'archetype':<42s}  {head_cols2}{diff_col2}")
+        print("-" * (44 + len(head_cols2) + len(diff_col2)))
+        for arc in arc_order:
+            cells2: list[str] = []
+            means2: list[float] = []
+            for lab in cli_order:
+                vals = [r["ships"] / max(1, r["step"])
+                        for r in results_by_agent[lab]
+                        if r.get("archetype") == arc and r.get("outcome") == "ok"]
+                if vals:
+                    m = statistics.mean(vals)
+                    means2.append(m)
+                    cells2.append(f"{m:>22.2f}")
+                else:
+                    means2.append(float("nan"))
+                    cells2.append(f"{'-':>22s}")
+            row2 = "  ".join(cells2)
+            if len(cli_order) == 2 and not any(math.isnan(m) for m in means2):
+                diff2 = means2[0] - means2[1]
+                row2 += f"  {diff2:>+10.2f}"
+            print(f"{arc:<42s}  {row2}")
 
     # JSON dump for downstream analysis. To stderr to keep stdout = table.
     print("\n[solo_bench] raw JSON:", file=sys.stderr)

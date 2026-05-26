@@ -245,6 +245,90 @@ def predict_fleet_fate(
     return FleetFate("timeout", None, max_steps)
 
 
+def walk_existing_fleet_fate(fleet, world,
+                             max_steps: int = DEFAULT_MAX_STEPS) -> FleetFate:
+    """Predict the outcome of an in-flight fleet from its current state.
+
+    Mirrors `predict_fleet_fate`'s step-loop but starts from the fleet's
+    current (x, y, angle, ships) — the fleet was spawned in a previous
+    turn, so we skip the src + radius offset and just walk forward from
+    (fleet[2], fleet[3]).
+
+    `outcome` is `"planet"` (or `"sun"` / `"oob"` / `"timeout"`); an
+    in-flight fleet has no intended target, so we report whatever planet
+    it actually hits.
+
+    fleet tuple shape: [id, owner, x, y, _, angle, ships]
+    """
+    fx = float(fleet[2])
+    fy = float(fleet[3])
+    angle = float(fleet[5])
+    ships = int(fleet[6])
+
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    speed_val = fleet_speed(ships)
+    if speed_val <= 0:
+        return FleetFate("oob", None, 0)
+
+    omega = world.omega
+    OFF_BOARD = (-1e6, -1e6)
+
+    planet_positions = _table_window_or_none(world, 0, max_steps + 1)
+    if planet_positions is None:
+        comet_paths = _comet_paths_by_id(world) if world.comet_ids else {}
+        planet_positions = {}
+        for pid, p in world.planets_by_id.items():
+            if int(pid) in comet_paths:
+                path, path_index = comet_paths[int(pid)]
+                positions: list[tuple[float, float]] = []
+                for t in range(max_steps + 1):
+                    path_t = int(path_index) + t
+                    if 0 <= path_t < len(path):
+                        pt = path[path_t]
+                        positions.append((float(pt[0]), float(pt[1])))
+                    else:
+                        positions.append(OFF_BOARD)
+                planet_positions[pid] = positions
+                continue
+            p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
+            if is_orbiting(p_tuple) and omega != 0.0:
+                planet_positions[pid] = [
+                    predict_relative(p_tuple, omega, t)
+                    for t in range(max_steps + 1)
+                ]
+            else:
+                planet_positions[pid] = [(p.x, p.y)] * (max_steps + 1)
+
+    for step in range(max_steps):
+        fleet_old = (fx + cos_a * speed_val * step,
+                     fy + sin_a * speed_val * step)
+        fleet_new = (fx + cos_a * speed_val * (step + 1),
+                     fy + sin_a * speed_val * (step + 1))
+
+        sun_d = _segment_to_point_distance(fleet_old, fleet_new, (CENTER, CENTER))
+        if sun_d < SUN_RADIUS + SUN_SAFETY:
+            return FleetFate("sun", None, step + 1)
+
+        if (fleet_new[0] < 0.0 or fleet_new[0] > BOARD_SIZE
+                or fleet_new[1] < 0.0 or fleet_new[1] > BOARD_SIZE):
+            return FleetFate("oob", None, step + 1)
+
+        for pid, positions in planet_positions.items():
+            p_old = positions[step]
+            p_new = positions[step + 1]
+            if (p_old[0] < 0 or p_old[0] > BOARD_SIZE
+                    or p_old[1] < 0 or p_old[1] > BOARD_SIZE
+                    or p_new[0] < 0 or p_new[0] > BOARD_SIZE
+                    or p_new[1] < 0 or p_new[1] > BOARD_SIZE):
+                continue
+            prad = world.planets_by_id[pid].radius
+            if swept_pair_hit(fleet_old, fleet_new, p_old, p_new, prad):
+                return FleetFate("planet", pid, step + 1)
+
+    return FleetFate("timeout", None, max_steps)
+
+
 def _segment_to_point_distance(a, b, p) -> float:
     """Shortest distance from segment a->b to point p."""
     ax, ay = a

@@ -32,7 +32,10 @@ os.environ.setdefault("BASELINE_NEUTRAL_BONUS", "2.0")
 os.environ.setdefault("BASELINE_NEUTRAL_EARLY_EXTRA", "1.5")
 os.environ.setdefault("BASELINE_NEUTRAL_EARLY_HORIZON", "50")
 os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
-# Integral-ships leaf.
-os.environ.setdefault("BASELINE_VALUE_HEAD", "integral_ships")
+# Integral-ships leaf — v2 is physics-aware (uses
+# lib.trajectory.walk_existing_fleet_fate to discount in-flight fleets
+# predicted to die in transit). v1 fallback via BASELINE_VALUE_HEAD=
+# integral_ships still works.
+os.environ.setdefault("BASELINE_VALUE_HEAD", "integral_v2")
 os.environ.setdefault("INTEGRAL_T_END", "500")
 from agents.baseline.main import agent  # noqa: E402
