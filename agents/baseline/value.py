@@ -248,25 +248,26 @@ def _realistic_threat_eta(d_ships: float, d_x: float, d_y: float,
     """Straight-line ETA for an attacker at (a_x, a_y) with `a_ships`
     garrison to capture a defender at (d_x, d_y) with `d_ships`.
 
-    Models the realistic launch: the attacker sends a capture-size fleet
-    (`max(MIN_FLEET_SIZE, d_ships + 1)`). Speed is `fleet_speed(launch)`
-    at that size. Returns `inf` if the attacker cannot afford a capture-
-    size launch (no threat from that source).
+    Affordability check: returns `inf` if the attacker can't field a
+    capture-size fleet (`max(MIN_FLEET_SIZE, d_ships + 1)`) — they pose
+    no credible capture threat.
 
-    The speed depends on the LAUNCH size, not on the attacker's total
-    garrison or on the defender's garrison directly. fleet_speed is
-    monotone increasing in ship count (lib/fleet.py:20-35) — so the
-    capture-size launch travels FASTER against a well-defended planet
-    than against a near-neutral one (you have to send more, you fly
-    quicker). This is the right physics for "how soon could opp reach
-    me realistically?", replacing the prior MIN_FLEET_SIZE-floor
-    approximation that under-estimated all threats.
+    Speed: uses `fleet_speed(MIN_FLEET_SIZE_LOCAL)` — the slow-fleet
+    floor calibrated to Phase F. 2026-05-26 root-cause finding: the
+    earlier `fleet_speed(capture_size)` variant (commits 523a221 →
+    14e429f) sped up threats 3× against stockpiled defenders, over-
+    firing the Term A discount, collapsing F2, and breaking the
+    chooser's calibration (2P 75% → ≤50%, 4P 35% → 12.5% across all
+    iterations using the helper). Phase F's "slow-fleet floor" wasn't
+    an approximation — it was a CALIBRATED HEURISTIC the chooser
+    relied on. Reverting restores the calibration that gave 75% 2P
+    with the strategic head.
     """
     from lib.fleet import speed as fleet_speed
     capture = max(MIN_FLEET_SIZE_LOCAL, int(d_ships) + 1)
     if int(a_ships) < capture:
         return float("inf")  # attacker can't field a capture-size launch
-    v = fleet_speed(capture)
+    v = fleet_speed(MIN_FLEET_SIZE_LOCAL)
     if v <= 0.0:
         return float("inf")
     return math.hypot(a_x - d_x, a_y - d_y) / v

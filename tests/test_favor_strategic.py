@@ -433,8 +433,9 @@ def test_term_c_no_cliff_at_elimination_boundary(monkeypatch):
 def test_hold_discounted_prod_helper_is_symmetric(monkeypatch):
     """Direct unit test of `_hold_discounted_prod`: the same physics
     applies whether we discount my prod (using opp planets as threats)
-    or opp prod (using my planets as threats). This is the symmetry
-    that fixes Bug 1 — the prior version only discounted my side.
+    or opp prod (using my planets as threats). The symmetric API works
+    either direction; only the AFFORDABILITY of the capture-size launch
+    differs.
     """
     v = _reload_value_with(monkeypatch, {})  # knobs irrelevant; helper is direct
     planets = [
@@ -448,38 +449,47 @@ def test_hold_discounted_prod_helper_is_symmetric(monkeypatch):
     threats_to_opp = [(30.0, 50.0, 50.0)]   # my planet attacking
     opp_disc = v._hold_discounted_prod(planets, 1, threats_to_opp, 30)
 
-    # Me defender (50 ships) → capture-size = 51. Opp has 100 ≥ 51.
-    # v=fleet_speed(51)≈3.15, dist=30, eta≈9.5, hold_score≈0.32 → my_disc≈0.95.
-    assert 0.5 < my_disc < 1.5, (
-        f"my_disc={my_disc} (expected ≈0.95 — opp can capture me)"
+    # 2026-05-26 root-cause revert: threat speed is now `fleet_speed(MIN_FLEET_SIZE)`
+    # = Phase F's slow-fleet floor, not capture-size speed. For me (50 ships)
+    # being threatened by opp (100 ships, can afford capture-size 51):
+    #   v = fleet_speed(2) ≈ 1.16, dist=30, eta=30/1.16≈25.8, hold≈0.86 → my_disc≈2.58
+    assert 2.0 < my_disc < 3.0, (
+        f"my_disc={my_disc} (expected ≈2.58 with slow-fleet threat speed)"
     )
-    # Opp defender (100 ships) → capture-size = 101. Me has 50 < 101.
-    # Threat ETA = inf → hold_score = 1.0 → opp_disc = 2 (un-discounted).
+    # Opp defender (100 ships) → capture-size = 101. Me has 50 < 101 — UNaffordable.
+    # ETA=inf, hold=1.0, opp_disc=opp_prod_raw=2.0.
     assert opp_disc == pytest.approx(2.0, abs=1e-6), (
-        f"opp_disc={opp_disc} (expected 2.0 — me can't credibly capture opp)"
+        f"opp_disc={opp_disc} (expected 2.0 — me can't afford capture-size)"
     )
 
 
-def test_realistic_threat_eta_speed_increases_with_capture_size(monkeypatch):
-    """`_realistic_threat_eta` uses fleet_speed(capture_size), so a
-    defender with HIGHER garrison gets faster threats (attacker must
-    send more, larger fleets fly faster). Prior MIN_FLEET_SIZE-floor
-    treated all defenders identically.
+def test_realistic_threat_eta_uses_slow_fleet_speed(monkeypatch):
+    """2026-05-26 root-cause revert: `_realistic_threat_eta` uses
+    `fleet_speed(MIN_FLEET_SIZE)` — the slow-fleet floor calibrated to
+    Phase F. The earlier `fleet_speed(capture_size)` variant broke the
+    chooser's calibration on both 2P and 4P. Affordability check still
+    uses capture-size for the "can attacker even threaten?" test.
     """
     v = _reload_value_with(monkeypatch, {})
-    # Same attacker (200 ships) and same distance (30 units). Vary
-    # defender ship count → vary capture-size → vary speed → vary ETA.
-    eta_weak = v._realistic_threat_eta(  # defender at 2 ships → capture-size 3
+    # Same attacker (200 ships), same distance (30 units), vary defender.
+    # All affordable threats fly at the same slow speed (≈1.16).
+    eta_weak = v._realistic_threat_eta(
         d_ships=2, d_x=0.0, d_y=0.0, a_ships=200, a_x=30.0, a_y=0.0,
     )
-    eta_strong = v._realistic_threat_eta(  # defender at 100 ships → capture-size 101
+    eta_strong = v._realistic_threat_eta(
         d_ships=100, d_x=0.0, d_y=0.0, a_ships=200, a_x=30.0, a_y=0.0,
     )
-    assert eta_strong < eta_weak, (
-        f"Threat-ETA didn't drop with capture-size: weak={eta_weak} "
-        f"strong={eta_strong} (large-defender attack flies faster — "
-        f"attacker must send capture-size 101 ships, faster than capture-size 3)"
+    # Both at the same slow-fleet speed → same ETA at same distance.
+    assert eta_weak == pytest.approx(eta_strong, abs=1e-6), (
+        f"All affordable threats should fly at the same slow speed: "
+        f"weak={eta_weak} strong={eta_strong}"
     )
+    # Affordability gate: weak attacker (1 ship) can't field capture-size against
+    # 100-ship defender (needs 101) → inf.
+    eta_blocked = v._realistic_threat_eta(
+        d_ships=100, d_x=0.0, d_y=0.0, a_ships=1, a_x=30.0, a_y=0.0,
+    )
+    assert eta_blocked == float("inf")
 
 
 def test_realistic_threat_eta_inf_when_attacker_too_weak(monkeypatch):
@@ -566,22 +576,17 @@ def test_term_b_capture_feasibility_gate(monkeypatch):
     )
 
 
-def test_term_a_threat_eta_uses_capture_size_speed(monkeypatch):
-    """Term A's threat-ETA should use the realistic capture-size launch
-    speed, not the MIN_FLEET_SIZE floor. A me-planet with HIGH garrison
-    is more threatened (faster opp capture-size launch) than a me-planet
-    with LOW garrison at the same distance — the prior version (v_opp =
-    fleet_speed(2)) treated both identically.
+def test_term_a_threat_eta_garrison_independent(monkeypatch):
+    """2026-05-26 root-cause revert: threat-ETA uses slow-fleet speed
+    `fleet_speed(MIN_FLEET_SIZE)`, NOT capture-size speed. So Term A's
+    discount on MY planet is independent of MY garrison size (the
+    defender's ships affect AFFORDABILITY of the attack but not the
+    threat's flight speed). This is Phase F's calibrated behavior.
     """
     v = _reload_value_with(monkeypatch, {"BASELINE_HOLD_HORIZON": "30"})
-    # Both boards: opp planet at distance 30 with enough ships to launch
-    # a capture-size fleet. Vary MY garrison.
-    # Low-garrison me: capture-size = 3 → fleet_speed(3) ≈ 1.27
-    #                  eta = 30/1.27 ≈ 23.6 turns → hold_score ≈ 0.79.
-    # High-garrison me: capture-size = 101 → fleet_speed(101) ≈ 3.45
-    #                   eta = 30/3.45 ≈ 8.7 turns → hold_score ≈ 0.29.
-    # So the high-garrison planet's hold_score should be LOWER (more
-    # threatened) → my_prod_discounted lower → leaf lower for high-garrison.
+    # Both: opp at distance 30 with 200 ships (can afford any capture-size).
+    # MY garrison varies, but the opp's threat speed is fleet_speed(2) ≈ 1.16
+    # in both. ETA = 30/1.16 ≈ 25.8 → hold ≈ 0.86 for both.
     obs_low = _mk_obs([
         (0, 0, 50.0, 50.0, 1.0,   2, 3),
         (1, 1, 80.0, 50.0, 1.0, 200, 2),
@@ -590,19 +595,16 @@ def test_term_a_threat_eta_uses_capture_size_speed(monkeypatch):
         (0, 0, 50.0, 50.0, 1.0, 100, 3),
         (1, 1, 80.0, 50.0, 1.0, 200, 2),
     ])
-    # F1 differs (my_ships 2 vs 100) — strip it to isolate Term A.
     s_low = v.favor_strategic(obs_low, 0, num_seats=2, gamma=0.99)
     s_high = v.favor_strategic(obs_high, 0, num_seats=2, gamma=0.99)
-    # F1_low = 2 - 200 = -198. F1_high = 100 - 200 = -100.
-    # ΔF1 = -100 - (-198) = 98.
-    # Adjusted: (s_high - 98) compared to s_low → should be LOWER because
-    # high-garrison version has Term A discount its 3-prod down more.
-    s_high_minus_f1 = s_high - 98.0
-    assert s_high_minus_f1 < s_low, (
-        f"Term A did not fire stronger discount on high-garrison defender: "
-        f"s_low={s_low} (effective Term A: hold ≈ 0.79) "
-        f"s_high - ΔF1 = {s_high_minus_f1} (effective Term A: hold ≈ 0.29) — "
-        f"expected the high-garrison version to be more discounted"
+    # F1 differs by my_ships: 2 vs 100. F1_low - F1_high = 2 - 100 = -98.
+    # ΔF1 = +98 going from low to high.
+    # Term A on MY planet (prod=3 in both): same hold_score now → same
+    # contribution. So s_high - s_low ≈ ΔF1 = 98 ± noise.
+    assert abs((s_high - s_low) - 98.0) < 5.0, (
+        f"Term A discount appears to depend on my garrison (it shouldn't, "
+        f"under the slow-fleet speed model): s_high - s_low = {s_high - s_low} "
+        f"(expected ≈98 = pure F1 delta with Term A invariant)"
     )
 
 
