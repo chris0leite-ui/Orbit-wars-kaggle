@@ -105,6 +105,11 @@ DEFAULT_LIB_ORDER = [
     # lib/sa_core.py (2026-05-26): SA primitives shared by sa_solo_solver
     # and sa_online. Imports from lib.fast_sim, so must come AFTER it.
     "sa_core",
+    # lib/cascade_chooser.py (2026-05-26): deterministic plan selector
+    # over cascade-DAG; imports `_build_perturb_context`, `_capture_value`,
+    # `PerturbContext` from sa_core, so must come AFTER it. Used by
+    # `agents/cascade_greedy`.
+    "cascade_chooser",
     "opp_model",
     "v7_search",
     # v4_planner brain (2026-05-12 evening): candidate portfolios +

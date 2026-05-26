@@ -82,6 +82,30 @@ def bundled_v1(tmp_path_factory):
     return path, mod
 
 
+@pytest.fixture(scope="module")
+def bundled_cascade_greedy(tmp_path_factory):
+    """Build the cascade_greedy bundle. Same shape as bundled_v1 — guards
+    against bundler regressions specific to cascade_chooser inlining
+    (e.g. multi-line `from lib.sa_core import (...)` not stripped)."""
+    out_dir = tmp_path_factory.mktemp("submissions")
+    path = bundle_agent.bundle(
+        REPO / "agents" / "cascade_greedy",
+        lib_modules=bundle_agent.DEFAULT_LIB_ORDER,
+        out_dir=out_dir,
+    )
+    mod = _load_module("bundled_cascade_greedy_for_tests", path)
+    return path, mod
+
+
+def test_bundle_cascade_greedy_compiles_and_exposes_agent(bundled_cascade_greedy):
+    """cascade_greedy-specific bundle smoke: file parses, `agent` is callable.
+    Catches the multi-line-import bug class that initially broke this bundle."""
+    path, mod = bundled_cascade_greedy
+    src = path.read_text()
+    compile(src, str(path), "exec")
+    assert callable(getattr(mod, "agent", None))
+
+
 def test_bundle_file_compiles(bundled_v1):
     path, _ = bundled_v1
     src = path.read_text()
