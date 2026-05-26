@@ -249,25 +249,25 @@ def _realistic_threat_eta(d_ships: float, d_x: float, d_y: float,
     garrison to capture a defender at (d_x, d_y) with `d_ships`.
 
     Affordability check: returns `inf` if the attacker can't field a
-    capture-size fleet (`max(MIN_FLEET_SIZE, d_ships + 1)`) — they pose
-    no credible capture threat.
+    capture-size fleet (`max(MIN_FLEET_SIZE, d_ships + 1)`).
 
-    Speed: uses `fleet_speed(MIN_FLEET_SIZE_LOCAL)` — the slow-fleet
-    floor calibrated to Phase F. 2026-05-26 root-cause finding: the
-    earlier `fleet_speed(capture_size)` variant (commits 523a221 →
-    14e429f) sped up threats 3× against stockpiled defenders, over-
-    firing the Term A discount, collapsing F2, and breaking the
-    chooser's calibration (2P 75% → ≤50%, 4P 35% → 12.5% across all
-    iterations using the helper). Phase F's "slow-fleet floor" wasn't
-    an approximation — it was a CALIBRATED HEURISTIC the chooser
-    relied on. Reverting restores the calibration that gave 75% 2P
-    with the strategic head.
+    Speed: uses `fleet_speed(capture_size)`. The earlier slow-fleet
+    floor revert (95e6d0d, 2026-05-26) collapsed 4P (Term A barely
+    fired with slow-fleet → symmetric Term A in 4P became degenerate
+    → 0/8 panel). The capture-size threat-ETA is what fcaf414 used
+    to get 35% 4P; restored here.
+
+    The 2P 75 → ~62 regression (Phase F → fcaf414) is NOT from this
+    helper alone — fcaf414 with capture-size ETA gave 62-67% (solo
+    data). My slow-fleet revert didn't improve 2P meaningfully (50%
+    at 95e6d0d) but did break 4P. Empirically, capture-size is the
+    right choice in both modes.
     """
     from lib.fleet import speed as fleet_speed
     capture = max(MIN_FLEET_SIZE_LOCAL, int(d_ships) + 1)
     if int(a_ships) < capture:
         return float("inf")  # attacker can't field a capture-size launch
-    v = fleet_speed(MIN_FLEET_SIZE_LOCAL)
+    v = fleet_speed(capture)
     if v <= 0.0:
         return float("inf")
     return math.hypot(a_x - d_x, a_y - d_y) / v
