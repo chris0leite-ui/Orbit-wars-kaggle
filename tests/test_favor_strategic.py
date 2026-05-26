@@ -505,64 +505,21 @@ def test_realistic_threat_eta_inf_when_attacker_too_weak(monkeypatch):
     )
 
 
-def test_term_b_per_source_capture_capability(monkeypatch):
-    """Term B's reach should depend on source's capture capability.
-    A small source can't take a defended target; a big source can.
-
-    With the 2026-05-26 v2 capture-feasibility gate, launch = min(source,
-    capture) must be ≥ capture for reach to credit. Setup: defended target
-    that requires a meaningful launch (50 ships) to capture. A 30-ship
-    source is blocked; a 100-ship source clears the gate.
-    """
-    v = _reload_value_with(monkeypatch, {
-        "BASELINE_FORWARD_REACH_WEIGHT": "1.0",
-        "BASELINE_FORWARD_REACH_HORIZON": "15",
-    })
-    # Target at distance 30, defended by 50 ships (capture-size=51).
-    # 30-ship source: launch=min(30,51)=30 < 51 → feasibility blocks → reach 0.
-    # 100-ship source: launch=min(100,51)=51, fleet_speed(51) ≈ 3.15.
-    #                  eta = 30/3.15 ≈ 9.5 < 15 → reach += target.prod=4.
-    obs_30ship = _mk_obs([
-        (0, 0, 50.0, 50.0, 1.0,  30, 3),
-        (1, 1, 80.0, 50.0, 1.0,  50, 4),
-    ])
-    obs_100ship = _mk_obs([
-        (0, 0, 50.0, 50.0, 1.0, 100, 3),
-        (1, 1, 80.0, 50.0, 1.0,  50, 4),
-    ])
-    base_30 = v.favor(obs_30ship, 0, num_seats=2, gamma=0.99)
-    base_100 = v.favor(obs_100ship, 0, num_seats=2, gamma=0.99)
-    strat_30 = v.favor_strategic(obs_30ship, 0, num_seats=2, gamma=0.99)
-    strat_100 = v.favor_strategic(obs_100ship, 0, num_seats=2, gamma=0.99)
-    term_b_30 = strat_30 - base_30
-    term_b_100 = strat_100 - base_100
-    assert term_b_100 > term_b_30, (
-        f"Term B did not differentiate by capture capability: "
-        f"term_b_30={term_b_30} term_b_100={term_b_100}"
-    )
-    assert abs(term_b_30) < 1e-6, (
-        f"30-ship source got credit it shouldn't (can't take 50-ship target): "
-        f"term_b_30={term_b_30}"
-    )
-    assert term_b_100 > 3.5, (
-        f"100-ship source reach too small: term_b_100={term_b_100}"
-    )
-
-
-def test_term_b_capture_feasibility_gate(monkeypatch):
-    """A my-planet with enough ships to REACH a target in time but NOT
-    enough to capture it (launch < capture) should add ZERO to Term B.
-    This is the 2026-05-26 v2 fix for the leaf-inflation against strong
-    stockpile defenders (orbitfix-style).
+def test_term_b_credits_any_reachable_target(monkeypatch):
+    """2026-05-26 part 3: capture-feasibility gate REMOVED. Term B
+    credits ANY reachable target (within FORWARD_REACH_HORIZON), even
+    if our launch can't actually capture it. The gate (3a054c7) was
+    over-restrictive against strong-stockpile defenders and regressed
+    2P calibration; Phase F and fcaf414 credited any reachable target.
     """
     v = _reload_value_with(monkeypatch, {
         "BASELINE_FORWARD_REACH_WEIGHT": "1.0",
         "BASELINE_FORWARD_REACH_HORIZON": "30",  # large — time gate not binding
     })
     # Target defended by 100 ships (capture-size=101). My source has 50 ships.
-    # launch = min(50, 101) = 50 < 101 → feasibility gate blocks.
-    # Without the gate, fleet_speed(50) ≈ 2.5, eta = 20/2.5 = 8 < 30 → would
-    # have credited target.prod=4 to reach. With the gate: blocked → 0.
+    # launch = min(50, 101) = 50 < capture. With the gate REMOVED, reach
+    # is credited if the time gate passes: fleet_speed(50) ≈ 2.5,
+    # eta = 20/2.5 = 8 < 30 → reach += target.prod=4.
     obs = _mk_obs([
         (0, 0, 50.0, 50.0, 1.0,  50, 3),
         (1, 1, 70.0, 50.0, 1.0, 100, 4),
@@ -570,9 +527,10 @@ def test_term_b_capture_feasibility_gate(monkeypatch):
     base = v.favor(obs, 0, num_seats=2, gamma=0.99)
     strat = v.favor_strategic(obs, 0, num_seats=2, gamma=0.99)
     term_b = strat - base
-    assert abs(term_b) < 1e-6, (
-        f"Term B credited reach without capture feasibility: term_b={term_b} "
-        f"(expected 0 — 50-ship source can't capture 100-ship target)"
+    # Term B should credit reach (target.prod=4 weighted by FORWARD_REACH_WEIGHT=1.0).
+    assert term_b > 3.5, (
+        f"Term B should credit reachable target even when launch < capture: "
+        f"term_b={term_b} (expected >= 4.0 with the gate removed)"
     )
 
 

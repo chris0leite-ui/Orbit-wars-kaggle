@@ -529,12 +529,15 @@ def favor_strategic(obs, me: int, num_seats: int = 2,
                     e_ships = float(ep[5])
                     capture = max(MIN_FLEET_SIZE_LOCAL, int(e_ships) + 1)
                     launch = min(int(m_ships), capture)
-                    # Capture-feasibility gate: only credit reach when our
-                    # launch can actually take the planet (launch ≥ capture).
-                    # The prior version credited any reachable enemy planet
-                    # even when our launch was undersized, inflating the leaf
-                    # against strong-stockpile defenders (orbitfix-style).
-                    if launch < capture:
+                    # 2026-05-26 part 3: capture-feasibility gate REMOVED.
+                    # The gate (introduced in 3a054c7) credited reach
+                    # ONLY when launch >= capture. Against strong-stockpile
+                    # defenders (orbitfix, ev_per_ship), this zeroed Term B
+                    # contribution across most candidates and regressed 2P
+                    # from fcaf414's ~67% (solo data) to 50%. Phase F and
+                    # fcaf414 credited any reachable target — that's the
+                    # calibrated behavior the chooser was tuned to.
+                    if launch < MIN_FLEET_SIZE_LOCAL:
                         continue
                     v = fleet_speed(launch)
                     if v <= 0.0:
