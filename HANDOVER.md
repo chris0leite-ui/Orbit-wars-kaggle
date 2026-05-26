@@ -1,10 +1,11 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-25 12:00 UTC by `claude/agent-design-exploration-Q0q9T`.
-> K1 (kinematic_table) + Layer Z v2 shipped as sub 53018599 (PENDING).
-> Three proposer-tightening axis falsifications → Rule 37 cap reached;
-> next axis is chooser-side. Older sections archived to
-> `audit/archive-2026-05-24-handover.md`.
+> Last written: 2026-05-26 (live-state refresh) by `claude/agent-design-exploration-Q0q9T`.
+> K1+Z v2 (sub 53018599) settled at **μ=1118.6** — within predicted band 1100-1180,
+> on the low end. Evicted by sibling ESwSv's `BASELINE_SORT_BY_EV_PER_SHIP=1`
+> push (sub 53024913 μ=1136.4, now strong half of rolling pair). Sibling
+> adopted our 5×250×no-swap A/B standard. Our branch has 0 in rolling pair.
+> Older sections archived to `audit/archive-2026-05-24-handover.md`.
 
 ## Read order (Rule 44 — mandatory)
 
@@ -14,15 +15,16 @@
 4. **This file.**
 5. `audit/2026-05-25-postmortem-k1-zv2-axis-exhaustion.md` if you're about to touch the proposer pre-filter chain.
 
-## Where we are (2026-05-25 12:00 UTC)
+## Where we are (2026-05-26 — live refresh)
 
-- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC. **~29 days remain.**
+- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC. **~28 days remain.**
 - **Rolling pair (auto-kept by Kaggle):**
-  - **53018599** (K1+Z v2 bundle, commit 603f45f, 2026-05-25 11:54). PENDING; predicted μ-band 1100-1180. **Do NOT re-poll <4h after submit (Rule 48).**
-  - **53013786** (`baseline_joint_aggr_consolidated_orbitfix` RESUBMIT, sibling ESwSv, 2026-05-25 08:40) — μ=**1120.1** (adapting). Strong half.
-- **Just evicted by sub 53018599:** sub 53001857 (baseline_wave v3.1, μ=1126.8).
+  - **53032723** (`baseline_unified`, sibling ESwSv, learning submit) — μ=**1063.1** (weak half).
+  - **53024913** (`baseline_ev_per_ship`, sibling ESwSv, `BASELINE_SORT_BY_EV_PER_SHIP=1`) — μ=**1136.4** (strong half).
+- **Our K1+Z v2 sub 53018599 settled at μ=1118.6** — in HANDOVER's predicted "parity-band" (1080-1130). Evicted by sub 53024913. Per yesterday's P0 decision tree: this is the "un-stack Z v2 alone vs joint_aggr" case.
+- **Sibling's per-ship-sort lift:** sub 53024913 description shows 75% (15/20) panel A/B using our 5×250×no-swap standard (vs orbitfix/wave/v7_0_drop_one/v4_planner). One env flag in chooser, ~1.6× more launches/turn, sub_1000ms wallclock except 0.47% over-budget tail.
 - **Team peak ever:** μ=1149.2 (sub 52744856, `composite_a2_hybrid`). Treat as break-glass reserve.
-- **Daily submits today (2026-05-25 UTC):** 1/5 used. 4 remaining. **HOLD until 53018599 settles.**
+- **Daily submits today (2026-05-26 UTC):** 0/5 used.
 
 ## Today's progress (2026-05-25)
 
@@ -50,27 +52,32 @@
 
 ## Next-session first actions (ranked)
 
-### Priority 0 — Read sub 53018599's settled μ
+### Priority 0 (RESOLVED) — Sub 53018599 settled at μ=1118.6
 
-Wait ≥4h after 11:54 UTC submit. Then `kaggle competitions submissions orbit-wars`:
-- **μ ≥ 1130:** K1+Z v2 confirmed; pivot to P1.
-- **μ 1080-1130:** parity-band on the ladder; un-stack Z v2 and A/B in isolation at n=32 vs joint_aggr (NOT phi1_only — the n=64 vs phi1_only was a misleading panel).
-- **μ < 1080:** Z v2 was the regression source. Revert Z v2 too; re-submit K1-only bundle. K1 is bit-parity safe.
+In the predicted band (1100-1180) but on the low end. Per yesterday's
+decision tree, this falls in the "parity-band on the ladder" case —
+un-stack Z v2 in isolation A/B vs joint_aggr. **HOWEVER**, the more
+load-bearing event happened in parallel: sibling ESwSv shipped a
+chooser-side per-ship-sort flag (sub 53024913) and settled μ=1136.4.
+That overtook us before our settle reading was even available. The
+"un-stack Z v2" diagnostic is still valid for our branch's
+internal hygiene, but it's no longer the highest-leverage move.
 
-### Priority 1 — Replay-scout (deferred from HANDOVER 5/24 P0)
+### Priority 1 — Cherry-pick sibling's per-ship-sort onto our K1+Z v2 stack
 
-Pull 5-10 top-50 ladder replays. Catalog opening + midgame patterns. Specifically check the asymmetry the seed-2020490432 screenshot showed: how do top agents handle "opp closer to the midline neutral than we are"? Do they avoid the capture, contest at fewer-ships, or always counter-launch? Until this is answered, every chooser-side fix is a guess.
+Sub 53024913 (`baseline_ev_per_ship`, sibling ESwSv) shipped `BASELINE_SORT_BY_EV_PER_SHIP=1` and settled μ=1136.4. The patch is in `claude/competitive-programming-strategy-ESwSv` near commit `0a8308f`. Conceptually adjacent to our Layer V1 (per-ship value) but applied to the consolidation chooser, not BUILDUP. Plausibly composes with K1 (their max=1018 ms over-budget tail of 0.47% would be absorbed by K1's 200 ms headroom). Expected composite μ band 1140-1160. Risk: may interact with our Z v2 differently than with their baseline. **Validation gate: 5×250×no-swap panel via `scripts/ab_quick.py` plus n=8-16 vs joint_aggr.** Sibling already validated their patch alone at 75% pooled, Wilson [0.541, 0.886].
 
-### Priority 2 — Better rollout opp model (chooser-side, not proposer-side)
+### Priority 2 — Replay-scout (deferred from HANDOVER 5/24 P0, still pending)
 
-The cheap-recapture diagnosis was REAL (80% vs phi1_only confirms). But the proposer-pre-filter axis is closed. The right fix is structurally better opp model inside `score_candidate_v4`'s rollout. Today's evidence: `lib.opp_model.lite_greedy_policy` skips 5-9 ship launches (10-ship floor); lowering to 5 over-launches and regresses vs joint_aggr. The fix isn't a threshold — it's a different model. Candidates:
-- Priority-based projection (opp targets the highest-prod planet in their nearest-K, regardless of ship count).
-- Behavior-cloned policy from Priority 1's scouted replays.
-- Cap rollout opp launches per turn at K=2 (avoid the over-launch failure mode of Fix A).
+Pull 5-10 top-50 ladder replays. Catalog opening + midgame patterns. Especially: how do top agents handle "opp closer to the midline neutral than we are" (the seed-2020490432 pattern)? Sibling's sub 53024913 description claims their flag converts "wait-N commits into fire-now" — worth confirming whether top agents emit more fire-now or whether the wait-N → fire-now conversion is just a workaround for a missing committal mechanism.
 
-### Priority 3 — Z v2 isolation A/B vs joint_aggr (n=32)
+### Priority 3 — Z v2 isolation A/B vs joint_aggr (n=32) — INTERNAL HYGIENE
 
-Whether sub 53018599 settles strong or weak, the n=64 vs phi1_only result is suspect (Wilson CI [0.441, 0.677] includes parity widely). Run n=32 A/B with Z v2 ON vs OFF, both vs joint_aggr. If lift survives, Z v2 stays. If not, revert and only K1 ships in next iteration.
+The n=64 vs phi1_only result (Wilson [0.441, 0.677]) is suspect. Run n=32 A/B with Z v2 ON vs OFF, both vs joint_aggr. If lift survives, Z v2 stays. If not, future submits ship K1 alone. **NOT urgent** — only useful if P1 is delayed; can wait.
+
+### Priority 4 — Better rollout opp model (chooser-side, not proposer-side)
+
+The cheap-recapture diagnosis was real (80% vs phi1_only confirms). The proposer-pre-filter axis is closed (Rule 37). The right fix is structurally better opp model inside `score_candidate_v4`'s rollout. Candidates: priority-based projection (opp targets highest-prod in nearest-K, regardless of ship count); behavior-cloned policy from P2's scouted replays; cap rollout opp launches per turn at K=2. **Defer until P1 + P2 deliver.**
 
 ### Priority 4 — Φ refactor Stages 2-5
 

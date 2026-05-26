@@ -118,6 +118,20 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-26 (claude/agent-design-exploration-Q0q9T — sibling-overtake observation)
+
+- `tag: sibling-shipped-while-we-slept` — Submitted K1+Z v2 (sub 53018599)
+  2026-05-25 11:54. Sibling ESwSv shipped `BASELINE_SORT_BY_EV_PER_SHIP=1`
+  (sub 53024913) at 15:44 — same day, 4h later. Sibling's flag settled
+  μ=1136.4; ours settled μ=1118.6. We were evicted before our settle
+  reading was available. Net: our branch is now 0 in rolling pair while
+  sibling holds both halves. **Fix:** post-submit, set a sentinel to
+  re-poll at +6h and +12h (current pattern is "wait for next session"
+  which is too coarse when sibling branches push 1-3 submits/day).
+  Alternative fix: cross-branch coordination via state/MULTI_BRANCH.md
+  push claim board, but that requires the sibling to file claims too —
+  not enforceable from our side.
+
 ## 2026-05-25 (claude/agent-design-exploration-Q0q9T — K1+Z v2 ship + Fix A/B falsification)
 
 - `tag: handover-recipe-mismath-vs-env` — Layer Z v2 plan claimed

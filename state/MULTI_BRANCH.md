@@ -13,17 +13,19 @@
 
 ---
 
-## Live Kaggle (snapshot 2026-05-25 11:55 UTC)
+## Live Kaggle (snapshot 2026-05-26 — fresh poll)
 
 Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at session start.
 
 | Sub ID | Date (UTC) | Agent | μ | Role |
 |---|---|---|---:|---|
-| **53018599** | 2026-05-25 11:54 | buildup_planner K1+Z v2 (commit 603f45f, this branch) | **PENDING** | **Rolling pair (most recent)** |
-| **53013786** | 2026-05-25 08:40 | baseline_joint_aggr_consolidated_orbitfix RESUBMIT (sibling ESwSv, commit 458f663) | **1120.1 (adapting)** | **Rolling pair (older half / strong half)** |
-| 53001857 | 2026-05-24 23:51 | baseline_wave v3.1 (sibling ESwSv) | 1126.8 | EVICTED 2026-05-25 by sub 53018599 |
-| 53000996 | 2026-05-24 22:38 | buildup_planner_phi1_only (Phi-1 leaf swap, this branch) | 1115.2 | EVICTED 2026-05-25 by sub 53013786 |
-| 52993021 | 2026-05-24 16:10 | buildup_planner_concentration (A+B α=1.5, this branch) | 1117.9 | EVICTED 2026-05-25 by sub 53001857 |
+| **53032723** | 2026-05-25 23:02 | baseline_unified (sibling ESwSv, LEARNING submit) | **1063.1** | **Rolling pair (most recent / weak half)** |
+| **53024913** | 2026-05-25 15:44 | baseline_ev_per_ship (sibling ESwSv, `BASELINE_SORT_BY_EV_PER_SHIP=1`) | **1136.4** | **Rolling pair (strong half)** |
+| 53018599 | 2026-05-25 11:54 | buildup_planner K1+Z v2 (this branch, commit 603f45f) | **1118.6** | EVICTED 2026-05-25 by sub 53024913 — **SETTLED IN PREDICTED BAND (1100-1180)** |
+| 53013786 | 2026-05-25 08:40 | baseline_joint_aggr_consolidated_orbitfix RESUBMIT (sibling ESwSv) | 1144.6 | EVICTED 2026-05-25 by sub 53032723 |
+| 53001857 | 2026-05-24 23:51 | baseline_wave v3.1 (sibling ESwSv) | 1130.6 | EVICTED 2026-05-25 by sub 53018599 |
+| 53000996 | 2026-05-24 22:38 | buildup_planner_phi1_only (this branch) | 1115.2 | EVICTED 2026-05-25 by sub 53013786 |
+| 52993021 | 2026-05-24 16:10 | buildup_planner_concentration (this branch) | 1117.9 | EVICTED 2026-05-25 by sub 53001857 |
 | 52968889 | 2026-05-23 23:59 | buildup_planner (this branch, bundler-trailer fix) | 1142.4 | EVICTED 2026-05-24 by sub 53000996 |
 | 52966655 | 2026-05-23 21:18 | baseline (wave V3, sibling moKOR) | 1130.9 | EVICTED 2026-05-24 by sub 52993021 |
 | 52968305 | 2026-05-23 23:17 | buildup_planner (bundler ERROR) | — | EVICTED — ERROR |
@@ -36,10 +38,11 @@ Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at sessio
 | 52874528 | 2026-05-21 06:00 | baseline_joint_aggr | 1134.9 | EVICTED |
 | **52744856** | 2026-05-17 14:17 | composite_a2_hybrid (composite head 2P + A2 4P) | **1149.2** | **TEAM PEAK** — EVICTED |
 
-- **Rolling pair floor:** 1120.1 (sub 53013786 strong half; adapting). Sub 53018599 starts at 600 and will adapt.
+- **Rolling pair floor:** 1063.1 (sub 53032723, weak half — learning submit). Strong half sub 53024913 μ=1136.4.
 - **Team peak (evicted):** μ = 1149.2 (sub 52744856).
-- **Daily submission budget:** 5/day. Today (2026-05-25 UTC) used: 1 (sub 53018599). 4 remaining; HOLD per Rule 48 until sub 53018599 settles.
-- **Floor risk:** Sub 53018599 evicts sub 53001857 (μ=1126.8). If K1+Z v2 settles below ~1120 the rolling-pair floor drops. K1 is bit-parity by construction; Z v2 is the only behavior change. n=64 local A/B vs phi1_only was +10.9pp parity-band; live signal pending.
+- **Daily submission budget:** 5/day. Today (2026-05-26 UTC) used: 0.
+- **Floor risk:** Sub 53032723 (1063.1) is the weak half; any reasonable push displaces it. Sub 53024913's per-ship-sort flag (sibling) is the live ceiling at 1136.4.
+- **Our branch status:** 0 in rolling pair. Sub 53018599 (K1+Z v2) settled at μ=1118.6 — within predicted band but on the low end; evicted by sibling's per-ship-sort push. Next-action options in HANDOVER.md.
 
 ## Push claim board (Rule 42)
 
