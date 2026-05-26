@@ -189,20 +189,35 @@ _ADMISSIBLE_MAX_WALL_S = 0.6        # cap enumeration cost regardless of size
 _ADMISSIBLE_INLOOP_WALL_S = 0.1     # tighter cap for in-SA-loop rebuilds
 _ADMISSIBLE_BUCKET_DEFAULT = 4      # t_dep stride for cascade enumeration
 
-# Per-edge fate cache, keyed by (src_id, tgt_id, absolute_t_dep). Result is
-# the predict_fleet_fate outcome string ("target" / "sun" / "oob" / etc).
-# Geometry-only: depends solely on planet positions at absolute turns, which
-# are a deterministic function of the episode's initial state. So the same
-# (src, tgt, t_dep) yields the same trajectory verdict for the entire game.
+# Per-edge fate cache, keyed by (src_id, tgt_id, absolute_t_dep, ships_bucket).
+# Result is the predict_fleet_fate outcome string ("target" / "sun" / "oob" /
+# etc). Planet positions at absolute turns are a deterministic function of
+# the episode's initial state, so geometry is invariant — BUT fleet step
+# length comes from fleet_speed(ships) which depends on ship count, so two
+# fleets with very different ship counts on the same (src, tgt, t_dep) can
+# follow different swept-hit paths. We bucket ships at log2 so neighboring
+# ship counts collapse to a single cache entry: any miss falls through to
+# predict_fleet_fate and the bucket is filled on first touch.
 # Profile of sub 53061384 (turn ~100): predict_fleet_fate dominated 90% of
 # per-turn cost via 148k predict_relative calls in admissible-set rebuild;
 # memoizing collapses subsequent turns to dict lookups.
-_FATE_CACHE: dict[tuple[int, int, int], str] = {}
+_FATE_CACHE: dict[tuple[int, int, int, int], str] = {}
+
+
+def _ships_bucket(ships: int) -> int:
+    """log2-quantise ships count. Same bucket -> same fleet_speed within
+    ~50%, which keeps the swept-hit geometry close enough that the
+    trajectory verdict is unlikely to flip. Coarser buckets cache better
+    but risk false positives/negatives on swept_pair_hit; bucket=2x speed
+    is a tested compromise."""
+    n = max(1, int(ships))
+    return n.bit_length()
 
 
 def reset_fate_cache() -> None:
-    """Clear the (src, tgt, t_dep) -> fate.outcome memo. Call between games
-    or whenever the episode's initial planet state changes."""
+    """Clear the (src, tgt, t_dep, ships_bucket) -> fate.outcome memo.
+    Call between games or whenever the episode's initial planet state
+    changes."""
     _FATE_CACHE.clear()
 
 
@@ -501,10 +516,12 @@ def _compute_capture_emission_from_edge(edge, src, tgt, t_dep: int,
             return None
 
     wait_N = max(0, int(t_dep) - int(ctx.t_start))
-    # Absolute fire turn = t_dep (already absolute on the episode timeline).
-    # Trajectory geometry at fire turn is invariant across the game, so the
-    # outcome only depends on (src_id, tgt_id, t_dep).
-    cache_key = (int(src.id), int(tgt.id), int(t_dep))
+    # Cache key: (src_id, tgt_id, t_dep, ships_bucket). t_dep is absolute on
+    # the episode timeline; planet geometry at that turn is deterministic.
+    # ships_bucket quantises fleet_speed so neighboring ship counts hit the
+    # same cache entry.
+    cache_key = (int(src.id), int(tgt.id), int(t_dep),
+                 _ships_bucket(ships))
     cached_outcome = _FATE_CACHE.get(cache_key)
     if cached_outcome is not None:
         if cached_outcome != "target":
