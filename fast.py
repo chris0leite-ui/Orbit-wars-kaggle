@@ -67,6 +67,7 @@ _BASELINES: dict[str, str] = {
     # Cheap source-tree baselines for smoke triage.
     "nearest":    str(REPO / "agents" / "simple" / "nearest.py"),
     "roi":        str(REPO / "agents" / "simple" / "roi.py"),
+    "noop":       str(REPO / "agents" / "simple" / "noop.py"),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",

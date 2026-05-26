@@ -703,6 +703,46 @@ def favor_speedrun(obs, me: int, num_seats: int = 2,
     return score
 
 
+def favor_integral_ships(obs, me: int, num_seats: int = 2,
+                         gamma: float = DEFAULT_GAMMA) -> float:
+    """Terminal ship-count predictor at T_END (env INTEGRAL_T_END, default 500).
+
+    V = [my_ships + Σ_{p∈mine} π_p · (T_END - t)]
+        − max_o [ships_o + Σ_{p∈o} π_p · (T_END - t)]
+
+    Closed-form, single formula in 2P and 4P. No threat-ETA discount, no
+    capture-feasibility gate, no Term B/C — PI 2026-05-26: strategy must
+    emerge from the rollout, not be baked into the leaf (Rule 40).
+    `gamma` is unused (kept for compatibility with leaf-call signature).
+    """
+    planets = _read(obs, "planets", []) or []
+    fleets = _read(obs, "fleets", []) or []
+    step = int(_read(obs, "step", 0))
+    t_end = int(os.environ.get("INTEGRAL_T_END", str(EPISODE_STEPS)))
+    remaining = max(0, t_end - step)
+
+    ships_by_owner: dict[int, float] = {}
+    prod_by_owner: dict[int, float] = {}
+    for p in planets:
+        owner = int(p[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(p[5])
+        prod_by_owner[owner] = prod_by_owner.get(owner, 0.0) + float(p[6])
+    for f in fleets:
+        owner = int(f[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(f[6])
+
+    def total(o: int) -> float:
+        return ships_by_owner.get(o, 0.0) + prod_by_owner.get(o, 0.0) * remaining
+
+    opps = [o for o in set(ships_by_owner) | set(prod_by_owner)
+            if o != me and o >= 0]
+    return total(me) - max((total(o) for o in opps), default=0.0)
+
+
 def select_favor_fn():
     """Pick the leaf value function.
 
@@ -741,6 +781,8 @@ def select_favor_fn():
         base = favor_strategic
     elif choice == "speedrun":
         base = favor_speedrun
+    elif choice == "integral_ships":
+        base = favor_integral_ships
     else:
         base = favor
 
