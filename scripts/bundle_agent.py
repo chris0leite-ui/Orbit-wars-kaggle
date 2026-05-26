@@ -98,6 +98,9 @@ DEFAULT_LIB_ORDER = [
     # Inlining these is a no-op for non-v7 agents (their agent() never
     # imports from them) — they bloat the bundle by ~35 KB. Acceptable.
     "fast_sim",
+    # lib/sa_core.py (2026-05-26): SA primitives shared by sa_solo_solver
+    # and sa_online. Imports from lib.fast_sim, so must come AFTER it.
+    "sa_core",
     "opp_model",
     "v7_search",
     # v4_planner brain (2026-05-12 evening): candidate portfolios +
@@ -605,7 +608,11 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:
         print(f"REFUSING TO LEAVE BUNDLE: import failed — "
               f"{type(e).__name__}: {e}", file=sys.stderr)
-        out.unlink()
+        if os.environ.get("BUNDLE_KEEP_ON_FAIL", "0") != "1":
+            out.unlink()
+        else:
+            print(f"  BUNDLE_KEEP_ON_FAIL=1 → leaving {out} for inspection",
+                  file=sys.stderr)
         return 1
     if not callable(getattr(_mod, "agent", None)):
         print(f"REFUSING TO LEAVE BUNDLE: bundle has no callable `agent` "

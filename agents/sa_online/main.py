@@ -46,19 +46,42 @@ from __future__ import annotations
 import os
 import random
 
+# ---------------------------------------------------------------------------
+# Kaggle ladder defaults — set BEFORE any other env-var read in this file.
+# These are tuned for orbit_wars's actTimeout=1s + remainingOverageTime=60s.
+# Each can be overridden by setting the env var BEFORE importing this module.
+# PI 2026-05-26 PM observation submit: opp_policy = simple/nearest.
+# ---------------------------------------------------------------------------
+os.environ.setdefault("SA_REFINE_OPP_POLICY", "agents/simple/nearest.py")
+os.environ.setdefault("SA_BUDGET_STEP_S", "0.5")         # leaves 500ms slack vs actTimeout=1s
+os.environ.setdefault("SA_ITER_STEP", "30")
+os.environ.setdefault("SA_HORIZON", "30")
+os.environ.setdefault("SA_COEVOLVE_CYCLES", "1")          # first-turn budget: 2 SAs * 15s = 30s, fits 60s overage
+os.environ.setdefault("SA_BUDGET_INIT_S", "15")
+os.environ.setdefault("SA_ITER_INIT", "200")
+os.environ.setdefault("SA_T0", "500")
+os.environ.setdefault("SA_T0_STEP", "100")
+os.environ.setdefault("SA_COOLING", "0.99")
+os.environ.setdefault("SA_COOLING_STEP", "0.95")
+os.environ.setdefault("SA_RNG_SEED", "42")
+os.environ.setdefault("SA_BOOTSTRAP_AGENT", "agents/simple/roi.py")
+
 # scripts.sa_solo_solver is reachable because the bench harness adds REPO
 # to sys.path before exec'ing this file. We pull REPO from there too so
 # we don't have to recompute it via __file__.
-from scripts.sa_solo_solver import (
-    REPO,
-    _build_solo_snap0,
-    _load_agent,
-    record_initial_plan,
-)
-from lib.sa_core import (
-    _get_step,
-    simulated_anneal_online,
-)
+from pathlib import Path
+
+# REPO discovery — kaggle's exec() doesn't set __file__, so do NOT use it
+# at module top-level. Instead trust sys.path[0] which the bench harness
+# (and live Kaggle) populates with the working dir.
+import sys as _sys
+REPO = Path(_sys.path[0]) if _sys.path[0] else Path(".")
+
+from lib.sa_core import _get_step
+from lib.sa_core import build_solo_snap0 as _build_solo_snap0
+from lib.sa_core import load_agent as _load_agent
+from lib.sa_core import record_initial_plan
+from lib.sa_core import simulated_anneal_online
 from lib.fast_sim import from_obs as fs_from_obs
 
 

@@ -28,10 +28,14 @@ effects beyond what the rng draws.
 from __future__ import annotations
 
 import math
+import os
 import random
 import time
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 from typing import Callable
 
+from lib.fast_sim import from_obs as fs_from_obs
 from lib.fast_sim import rollout as fs_rollout
 from lib.fast_sim import ship_totals
 
@@ -42,6 +46,76 @@ Emission = tuple[int, list]
 
 def _noop_policy(_obs) -> list:
     return []
+
+
+# ---------------------------------------------------------------------------
+# Agent + env helpers (used by both scripts/sa_solo_solver.py and
+# agents/sa_online/main.py). Kept here so the bundler can pick them up via
+# --lib sa_core; the bundler doesn't know about scripts/.
+# ---------------------------------------------------------------------------
+
+def load_agent(path):
+    """Load a kaggle-style agent function from a .py file path."""
+    spec = spec_from_file_location("a", str(path))
+    mod = module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.agent
+
+
+def build_solo_snap0(seed: int, steps: int):
+    """Build a turn-0 snapshot for the solo (vs noop) game on `seed`."""
+    from kaggle_environments import make
+    env = make("orbit_wars",
+               configuration={"seed": seed, "episodeSteps": steps},
+               debug=False)
+    env.reset(num_agents=2)
+    obs0 = env.steps[0][0]["observation"] if isinstance(env.steps[0][0], dict) else env.steps[0][0].observation
+    return fs_from_obs(obs0, env.configuration,
+                       episode_seed=seed, num_seats=2)
+
+
+def record_initial_plan(seed: int, steps: int, agent_path,
+                        opp_path=None, noop_default_path=None):
+    """Run focal-vs-opp via env.run, log every focal emission.
+
+    `agent_path`: focal agent. `opp_path`: opponent agent (default noop).
+    `noop_default_path`: path to the noop agent (caller-provided to keep
+    this function decoupled from any REPO constant).
+
+    Returns (emissions_list, env_terminal_ships, n_steps, initial_planets).
+    """
+    from kaggle_environments import make
+    agent_fn = load_agent(agent_path)
+    if opp_path is None:
+        if noop_default_path is None:
+            raise ValueError("opp_path or noop_default_path must be provided")
+        opp_path = noop_default_path
+    opp_fn = load_agent(opp_path)
+    emissions: list[tuple[int, list]] = []
+
+    def recorder(obs):
+        t = _get_step(obs)
+        acts = agent_fn(obs)
+        for a in acts:
+            emissions.append((t, [int(a[0]), float(a[1]), int(a[2])]))
+        return acts
+
+    env = make("orbit_wars",
+               configuration={"seed": seed, "episodeSteps": steps},
+               debug=False)
+    env.reset(num_agents=2)
+    obs0 = env.steps[0][0]["observation"] if isinstance(env.steps[0][0], dict) else env.steps[0][0].observation
+    od0 = obs0 if isinstance(obs0, dict) else dict(obs0)
+    initial_planets = [list(p) for p in (od0.get("planets") or [])]
+    env.run([recorder, opp_fn])
+    final = env.steps[-1]
+    obs_f = final[0]["observation"] if isinstance(final[0], dict) else final[0].observation
+    odf = obs_f if isinstance(obs_f, dict) else dict(obs_f)
+    planets = odf.get("planets") or []
+    fleets = odf.get("fleets") or []
+    p0_ships = sum(float(p[5]) for p in planets if int(p[1]) == 0) + \
+               sum(float(f[6]) for f in fleets if int(f[1]) == 0)
+    return emissions, p0_ships, len(env.steps), initial_planets
 
 
 def _get_step(obs) -> int:

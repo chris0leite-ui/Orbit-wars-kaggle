@@ -46,18 +46,19 @@ from lib.fast_sim import from_obs as fs_from_obs  # noqa: E402
 from lib.fast_sim import rollout as fs_rollout  # noqa: F401  (re-export)
 from lib.fast_sim import ship_totals  # noqa: F401  (re-export)
 from lib.sa_core import (  # noqa: E402
+    build_solo_snap0 as _sa_build_solo_snap0,
+    load_agent as _sa_load_agent,
     perturb,
+    record_initial_plan as _sa_record_initial_plan,
     score_plan_from_snap,
     simulated_anneal_online as _sa_online,
     _get_step as _sa_get_step,  # noqa: F401  (kept for callers that imported it)
 )
 
 
-def _load_agent(path):
-    spec = spec_from_file_location("a", str(path))
-    mod = module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.agent
+# Backward-compatible aliases for callers that imported the underscore'd
+# names from this module. The actual implementations live in lib/sa_core.
+_load_agent = _sa_load_agent
 
 
 def _get_step(obs):
@@ -68,57 +69,21 @@ def _get_step(obs):
 
 def record_initial_plan(seed: int, steps: int, agent_path: Path,
                         opp_path: Path | None = None):
-    """Run focal-vs-opp via env.run, log every focal emission.
+    """Backward-compat wrapper around lib.sa_core.record_initial_plan.
 
-    `opp_path` defaults to agents/simple/noop.py (solo bench). For online
-    MPC we pass `agents/simple/roi.py` so the recorded plan is one that
-    arose against the actual opponent model we'll be optimising against.
-    Backward-compatible: existing callers leave opp_path=None.
-
-    Returns (emissions_list, env_terminal_ships, n_steps, initial_planets).
+    Defaults opp_path to agents/simple/noop.py for solo solver.
     """
-    agent_fn = _load_agent(agent_path)
     if opp_path is None:
         opp_path = REPO / "agents" / "simple" / "noop.py"
-    opp_fn = _load_agent(opp_path)
-    emissions: list[tuple[int, list]] = []
-
-    def recorder(obs):
-        t = _get_step(obs)
-        acts = agent_fn(obs)
-        for a in acts:
-            emissions.append((t, [int(a[0]), float(a[1]), int(a[2])]))
-        return acts
-
-    env = make("orbit_wars",
-               configuration={"seed": seed, "episodeSteps": steps},
-               debug=False)
-    env.reset(num_agents=2)
-    # Capture initial planets BEFORE env.run so we have them for SA's
-    # add-emission perturbation (we need to know which planet IDs / positions exist).
-    obs0 = env.steps[0][0]["observation"] if isinstance(env.steps[0][0], dict) else env.steps[0][0].observation
-    od0 = obs0 if isinstance(obs0, dict) else dict(obs0)
-    initial_planets = [list(p) for p in (od0.get("planets") or [])]
-    env.run([recorder, opp_fn])
-    final = env.steps[-1]
-    obs_f = final[0]["observation"] if isinstance(final[0], dict) else final[0].observation
-    odf = obs_f if isinstance(obs_f, dict) else dict(obs_f)
-    planets = odf.get("planets") or []
-    fleets = odf.get("fleets") or []
-    p0_ships = sum(float(p[5]) for p in planets if int(p[1]) == 0) + \
-               sum(float(f[6]) for f in fleets if int(f[1]) == 0)
-    return emissions, p0_ships, len(env.steps), initial_planets
+    return _sa_record_initial_plan(
+        seed, steps, agent_path,
+        opp_path=opp_path,
+        noop_default_path=REPO / "agents" / "simple" / "noop.py",
+    )
 
 
-def _build_solo_snap0(seed: int, steps: int):
-    """Build a turn-0 snapshot for the solo (vs noop) game on `seed`."""
-    env = make("orbit_wars",
-               configuration={"seed": seed, "episodeSteps": steps},
-               debug=False)
-    env.reset(num_agents=2)
-    obs0 = env.steps[0][0]["observation"] if isinstance(env.steps[0][0], dict) else env.steps[0][0].observation
-    return fs_from_obs(obs0, env.configuration,
-                       episode_seed=seed, num_seats=2)
+# Backward-compatible alias; implementation in lib.sa_core.build_solo_snap0
+_build_solo_snap0 = _sa_build_solo_snap0
 
 
 def score_plan(emissions, seed: int, steps: int) -> float:
