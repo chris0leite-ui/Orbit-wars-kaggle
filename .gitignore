@@ -100,3 +100,8 @@ audit/2026-05-22/*.log
 # Live progress logs from in-flight elim_matrix runs; the JSON output
 # (audit/elim-sweep-*/matrix.json) is the durable artifact.
 audit/elim-sweep-*/*.log
+# Solo-bench transient outputs — the final result .txt is committed by
+# hand (git add -f) once the bench completes; in-progress mid-write
+# files are noise.
+audit/solo-bench-*.log
+audit/solo-bench-*.txt
