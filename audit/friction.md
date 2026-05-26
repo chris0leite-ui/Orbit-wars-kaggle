@@ -178,6 +178,83 @@ fix forward AND add a test.
   iteration crowded out reflection. **Fix:** make the flags-questions-thoughts
   check a HARD blocker, not WARN.
 
+### 2026-05-26 PM (claude/competitive-programming-strategy-ESwSv — sa_online warm-start cycle)
+
+Separate session, same branch. Observations only:
+
+- `tag: architecture-verdict-before-profiling` — sub 53061384 TIMEOUTed
+  step 357/500. From the per-turn log I concluded the SA architecture
+  was "structurally too slow" and recommended pivoting to a different
+  agent. PI overrode: "There IS an option, run a code review agent."
+  A multi-angle code review then a single-turn `cProfile` showed
+  `_populate_admissible_set → predict_fleet_fate → 148k calls to
+  predict_relative per turn` re-validating cascade edges whose
+  trajectory verdict was invariant for the episode. The fix was
+  ~50 lines (module-level fate cache keyed by (src,tgt,t_dep,
+  ships_bucket)). Observed: I declared architecture-level conclusion
+  before running the lowest-effort diagnostic.
+
+- `tag: smoke-vs-random-false-positive` — declared sub 53062327 (v4)
+  fit-for-Kaggle after a 500-step self-play vs `random` opponent
+  showed 57s/60s overage in pocket. Live submission ERRORed. Local
+  inspection vs the peak baseline showed sa emitted 5 actions in 79
+  turns and was eliminated step 79. The vs-random "fit" came from
+  sa emitting nothing while random emitted nothing → game-state
+  complexity never ramped, per-turn cost never grew. Observed: the
+  opponent class chosen for a smoke test changes which failure modes
+  are visible.
+
+- `tag: cache-key-missed-episode-seed` — the (src,tgt,t_dep)
+  fate-cache I added passed all production code paths but broke
+  `test_admissible_set_only_physics_valid` which iterates 4 seeds in
+  a single test process. Cached outcomes from seed 0 returned
+  'target' for keys that, under seed 7542's planet geometry, actually
+  hit a different planet. Observed: the cache key matches Kaggle's
+  one-episode-per-process model exactly, but tests that share a
+  process need an explicit reset hook.
+
+- `tag: warm-start-source-budget-at-wrong-turn` — first version of
+  `_warm_start_from_admissible` checked source affordability against
+  `ownership_cache[t_start]`. ctx.admissible entries are individually
+  affordable at their own `t_dep` (which can be many turns later,
+  with accrued production), so the t_start check rejected almost
+  every candidate at turn 1 when home has only 10 ships. Observed:
+  the per-turn smoke result with this bug was numerically identical
+  to v4's broken behavior (5 emits vs 7 emits — within noise) so
+  the bug wasn't visible until I forced co_evolve off to isolate
+  warm-start.
+
+- `tag: co-evolve-masks-warm-start-locally` — `_co_evolve` runs at
+  module load locally (35s turn 0) and pre-fills `_PLAN_BY_TURN`.
+  On Kaggle it fails (recursive `make()` blocked) so warm-start
+  fires. I ran multiple local smokes seeing "warm-start did
+  nothing" without realising co_evolve had already filled
+  remaining_our above the warm-start threshold. Observed: local
+  test environment diverged from Kaggle on the exact code path I
+  was trying to test, and required an explicit
+  `SA_COEVOLVE_CYCLES=0` to repro the Kaggle path.
+
+- `tag: opp-policy-as-silent-veto` — with default
+  `SA_REFINE_OPP_POLICY=agents/simple/nearest.py`, SA's score
+  function evaluated warm-start emissions assuming opp plays
+  aggressively. score_mode=diff still preferred "do nothing"
+  because launching ships from home triggered (predicted) opp
+  counter-captures. The 16 warm-start emissions per turn collapsed
+  to 0-2 surviving in SA's output. Switching to `noop` raised the
+  emit-rate 12× on the same seed. Observed: changing the warm-
+  start function alone moved local emit-count 5→7; changing the
+  opp model alongside moved it to 62. The function works only in
+  combination with a non-pessimistic score.
+
+- `tag: 4-iteration-fix-cycle-on-perf-bug` — the timing problem
+  took 4 commits (`7d1ab2f` tighten budget → `4165227` snap+fate
+  cache → `6147dcb` ships in cache key → `c419045` warm-start +
+  `147d6aa` opp defaults) and 4 Kaggle submissions to converge.
+  Each commit was rebundled and submitted before the next was
+  diagnosed. Two of those submissions consumed rolling-pair slots
+  for ERROR results. Observed: the diagnostic loop ran fully
+  inside the live ladder rather than locally.
+
 ## 2026-05-25 (claude/competitive-programming-strategy-ESwSv — baseline_wave v5/v5.1)
 
 - `tag: wave-mechanical-vs-quality-test-gap` — post-v5
