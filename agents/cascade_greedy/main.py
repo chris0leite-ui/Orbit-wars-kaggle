@@ -29,10 +29,76 @@ from lib.intent import World as _SAWorld
 from lib.path_graph import build_path_graph as _build_path_graph
 from lib.sa_core import reset_fate_cache
 
+# Imports for the inlined `simple/nearest` opp surrogate (below).
+# Single-line `from lib.X import Y` imports so the bundler can strip
+# them and rely on the inlined lib modules instead.
+from lib.geometry import dist
+from lib.intent import Intent
+from lib.intent import realize
+from lib.mechanism import DEFAULT_MECHANISMS
+
 
 # Horizon in turns. Cascade DP gains from looking further out, but
 # admissibility enumeration cost grows linearly with the horizon.
 DEFAULT_HORIZON = 25
+
+
+# ---------------------------------------------------------------------------
+# Inlined `simple/nearest` agent — distance-greedy targeting + DEFAULT_MECHANISMS.
+# Lifted verbatim from agents/simple/nearest.py so the bundle doesn't depend
+# on loading it from disk on Kaggle (where adjacent files aren't shipped).
+# Used as the opp_policy inside cascade_greedy's forward sim so admissibility
+# plans against a plausibly-acting opponent rather than a frozen world.
+# ---------------------------------------------------------------------------
+import random as _nearest_random
+
+try:
+    from kaggle_environments.envs.orbit_wars.orbit_wars import Planet as _NearestPlanet
+except Exception:  # pragma: no cover — kaggle env always present at runtime
+    _NearestPlanet = None
+
+
+def _nearest_score(mine, target) -> tuple:
+    return (dist((mine.x, mine.y), (target.x, target.y)),)
+
+
+def _nearest_propose_intents(obs):
+    player = obs.get("player", 0) if isinstance(obs, dict) else obs.player
+    raw_planets = obs.get("planets", []) if isinstance(obs, dict) else obs.planets
+    step = (
+        int(obs.get("step", 0))
+        if isinstance(obs, dict)
+        else int(getattr(obs, "step", 0))
+    )
+    if _NearestPlanet is None:
+        return []
+    planets = [_NearestPlanet(*p) for p in raw_planets]
+    my_planets = [p for p in planets if p.owner == player]
+    targets = [p for p in planets if p.owner != player]
+    if not my_planets or not targets:
+        return []
+    rng = _nearest_random.Random(step ^ (player + 1) * 1009)
+    intents = []
+    for mine in my_planets:
+        scored = [(_nearest_score(mine, t), rng.random(), t) for t in targets]
+        scored.sort(key=lambda e: (e[0], e[1]))
+        target = scored[0][2]
+        intents.append(
+            Intent(src_id=mine.id, target_id=target.id, ships=target.ships + 1)
+        )
+    return intents
+
+
+def _nearest_opp_policy(obs):
+    """Opp surrogate for `_build_perturb_context`'s forward sim.
+
+    Returns the same actions shape as a real Kaggle agent: a list of
+    `[src_id, angle, ships]`. `realize(intents, obs, ...)` does the
+    physics + mechanism filter, so even if a predicted intent is
+    physics-invalid (e.g. trajectory aimed at a moved planet) it's
+    dropped before reaching our ownership_cache."""
+    return realize(_nearest_propose_intents(obs), obs,
+                   mechanisms=DEFAULT_MECHANISMS)
 
 
 def _read_obs_field(obs, key, default=None):
@@ -141,7 +207,14 @@ def agent(obs, configuration=None):
         plan = cascade_greedy_select(
             snap,
             t_start=t, t_end=t + horizon, me=me,
-            opp_policy=None,
+            # Predict opp's emissions with the simple/nearest heuristic so
+            # the forward sim populates ownership_cache + world_model.ledger
+            # against a plausibly-acting opponent rather than a frozen world.
+            # Three problems get partial fixes for free: "frozen world"
+            # source attrition, opp-defender underestimate at target
+            # arrival, and defensive urgency (contested planets get higher
+            # defender count which lowers their ROI naturally).
+            opp_policy=_nearest_opp_policy,
             path_graph=pg,
             # Bound admissibility enumeration to `horizon` turns ahead
             # (cost) but score ROI against the full episode end (value).
