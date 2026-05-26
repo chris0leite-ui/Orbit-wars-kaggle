@@ -16,7 +16,46 @@
 
 ## 2026-05-23 (claude/session-EqJuT — simplest Lagrangian agent)
 
-- `tag: python-truthiness-gotcha-planet-id-zero` — building
+### Verification follow-up (later same day, no source changes)
+
+- `tag: gate-score-claim-not-reproducible-from-head` — re-ran
+  `scripts/random_elim_gate.py agents/lagrange_simple/main.py
+  --n 16 --opp random --rng-seed 2026` against HEAD `ce70160`,
+  which claims "14/16 ELIM at default rng-seed". Actual: **9/16
+  ELIM** (16/16 wins, 7 by score). Either the commit's self-
+  reported score was wrong at write-time or something between
+  commit and verification (cache state, kinematic table) shifted
+  outcomes; no source change is in tree to explain a 14→9 drift.
+  **Fix:** require any commit claiming a gate score to reference
+  a saved `.out` artifact path (e.g. `audit/probe-results/
+  YYYY-MM-DD-<slug>.out`) so the claim is reproducible offline.
+  Sub-clause of Rule 38 (fix-verification reproduces failure
+  state). Promotion candidate.
+- `tag: pi-direction-note-overtaken-by-same-session-evidence`
+  — `01f7544` filed a PI direction note recommending "rung 3 =
+  ~50 LOC dogpile, iterate until pass". Later that same session,
+  6 dogpile variants regressed and the axis was closed under
+  Rule 37 (commit `ce70160` body). The direction note in
+  `knowledge-base/questions/2026-05-23-multi-source-dogpile-
+  next.md` was never amended, so it still recommends a
+  falsified-this-session mechanism. **Fix:** when wrap-up
+  closes an axis the same-day direction note recommended,
+  amend the note inline (don't just close the axis silently).
+- `tag: rung3-empirically-out-of-reach-for-lagrange-simple` —
+  ran the gate vs `agents/baseline` at n=16: **0/16 wins,
+  baseline ELIMs us in 15/16 games** (median time-to-extinction
+  ~170 turns). Rung 1 (random) and rung 2 (starter) also fail
+  the 100%-ELIM bar (both 9/16 ELIM). The agent doesn't survive
+  the opening against a competent opp; single-source-per-target
+  + rear-defense filter make us too passive. **Fix:** the
+  PI-direction-note path is closed; need a different agent
+  (cross-source defensive coordination + opening theory +
+  game-phase-aware filters), not an extension of
+  `lagrange_simple`. PI to direct next track.
+
+---
+
+
   `agents/lagrange_simple/score.py`: the filter
   `int(fate.hit_planet_id or -1) != int(tgt.id)` silently dropped
   every shot at planet id 0 (since `0 or -1 == -1` in Python).

@@ -1,0 +1,20 @@
+== random-elim-gate focal=main.py  opp=random  n=16  workers=4 ==
+   seed= 29266  seat=P1  ELIM        steps=97  my_planets=20  opp_planets=0  wall=51.8s
+   seed= 75047  seat=P1  ELIM        steps=88  my_planets=20  opp_planets=0  wall=66.4s
+   seed= 15613  seat=P1  WIN(score)  steps=500  my_planets=15  opp_planets=13  wall=105.1s
+   seed= 65865  seat=P0  WIN(score)  steps=500  my_planets=14  opp_planets=8  wall=108.2s
+   seed= 98438  seat=P1  WIN(score)  steps=500  my_planets=11  opp_planets=9  wall=114.9s
+   seed= 31448  seat=P0  WIN(score)  steps=500  my_planets=12  opp_planets=23  wall=105.8s
+   seed= 80504  seat=P0  WIN(score)  steps=500  my_planets=13  opp_planets=22  wall=92.7s
+   seed=  1505  seat=P1  ELIM        steps=125  my_planets=18  opp_planets=0  wall=43.1s
+   seed= 14514  seat=P1  ELIM        steps=122  my_planets=26  opp_planets=0  wall=119.7s
+   seed= 89048  seat=P1  ELIM        steps=86  my_planets=17  opp_planets=0  wall=68.2s
+   seed= 12851  seat=P1  WIN(score)  steps=500  my_planets=15  opp_planets=9  wall=112.1s
+   seed= 27554  seat=P1  ELIM        steps=94  my_planets=24  opp_planets=0  wall=85.2s
+   seed= 32966  seat=P1  ELIM        steps=102  my_planets=20  opp_planets=0  wall=87.2s
+   seed= 46745  seat=P1  WIN(score)  steps=500  my_planets=15  opp_planets=3  wall=108.6s
+   seed= 97775  seat=P0  ELIM        steps=96  my_planets=26  opp_planets=0  wall=112.5s
+   seed= 94779  seat=P1  ELIM        steps=113  my_planets=28  opp_planets=0  wall=123.8s
+
+   wins=16/16  (elim=9, by_score=7)  losses=0  draws=0  errs=0  elapsed=454s
+   ❌ GATE FAIL — 7 games not won by elimination

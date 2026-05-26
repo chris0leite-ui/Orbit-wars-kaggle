@@ -129,3 +129,81 @@ Promoted as above.
 - The new pending Rule-48 in `improvements.md` should be promoted to
   `CLAUDE.md` in the next audit pass, and applied retroactively to
   every existing submission candidate.
+
+---
+
+## Verification follow-up (later same day, no source change in tree)
+
+PI asked: "check if we beat the simple strategies by a hundred percent
+by elimination as outlined in the docs of this branch" — then "try
+rung 3 and explain why you think it is not possible".
+
+### What was re-run
+
+All three rungs from `knowledge-base/questions/2026-05-23-multi-
+source-dogpile-next.md` PI direction note (`01f7544`), against the
+EqJuT HEAD `ce70160`. Artifacts saved under `audit/probe-results/`.
+
+| Rung | Opp        | n  | Wins | ELIMs | Losses | Verdict |
+|------|------------|----|------|-------|--------|---------|
+| 1    | `random`   | 16 | 16   | 9     | 0      | FAIL    |
+| 2    | `starter`  | 16 | 15   | 9     | 1      | FAIL    |
+| 3    | `baseline` | 16 | 0    | 0     | 16 (15 by opp-ELIM) | FAR FAIL |
+
+### What went wrong (verification-side)
+
+- **Calibration miss in `ce70160` commit message.** Body claims "14/16
+  ELIM at default rng-seed = 2026". Re-run with the same default seed
+  produced 9/16. No source change between commit and verification.
+  Best read: the commit's self-reported gate score was either not
+  reproducible at write-time or relied on warmed kinematic-table
+  cache state not present in a cold run. The original session's
+  Rule-38 check (fix-verification reproduces failure) covered the
+  bug-side, not the gate-score-side.
+- **PI direction note overtaken by within-session evidence.** The
+  note in `multi-source-dogpile-next.md` recommends rung 3 = dogpile.
+  But 6 dogpile variants regressed in the same session, axis closed
+  under Rule 37. The note was never amended; it still recommends a
+  same-day-falsified mechanism.
+- **Rung 3 is structurally out of reach for this agent.** Detailed
+  reasoning in `knowledge-base/thoughts/2026-05-23-lagrange-simple-
+  rung-verification.md`. Summary: direction reversed (opp ELIMs us,
+  not vice-versa); single-source ceiling load-bearing in
+  `score.py:233`; the only multi-source path (dogpile) is closed.
+  Reaching rung 3 needs cross-source defensive coordination + opening
+  theory + game-phase-aware filter tuning — a different agent, not
+  an extension.
+
+### PI additions
+
+> "Nothing to add — proceed"
+
+### Promotion candidates (this verification pass)
+
+PI did not ratify either candidate (no-preference at wrap-up). Both
+remain drafted-only below; not added to `improvements.md`. Revisit
+if either pattern recurs.
+
+- **Candidate A — `gate-score-claim-needs-saved-artifact`.** Any
+  commit message claiming a gate / panel / A/B score must reference
+  a checked-in artifact path (e.g. `audit/probe-results/YYYY-MM-DD-
+  <slug>.out`) so the claim is independently verifiable. Sub-clause
+  of Rule 38. Cost evidence: this session lost ~25 min re-running
+  the rung-1 gate to discover the 14/16 → 9/16 discrepancy that an
+  attached artifact would have surfaced instantly.
+- **Candidate B — `same-session-pi-note-amendment-on-axis-closure`.**
+  When a session closes a design axis under Rule 37 (or otherwise
+  falsifies a mechanism), and that axis was the subject of a
+  same-session PI direction note, the wrap-up must amend the note
+  inline rather than silently leaving the recommendation. Cost
+  evidence: the rung-3 dogpile recommendation in
+  `multi-source-dogpile-next.md` is still live despite same-session
+  falsification.
+
+### Framework version at this verification
+
+- Branch: `claude/session-EqJuT` HEAD `ce70160` (unchanged from
+  prior postmortem; verification added no source files).
+- New tracked artifacts: `audit/probe-results/2026-05-23-rung{1,2,3}-
+  *-n16.out`, `knowledge-base/thoughts/2026-05-23-lagrange-simple-
+  rung-verification.md`, friction.md appends.

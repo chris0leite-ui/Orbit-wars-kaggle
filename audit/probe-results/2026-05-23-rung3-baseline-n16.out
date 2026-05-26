@@ -1,0 +1,20 @@
+== random-elim-gate focal=main.py  opp=/home/user/Orbit-wars-kaggle/agents/baseline/main.py  n=16  workers=4 ==
+   seed= 29266  seat=P1  LOSS        steps=151  my_planets=0  opp_planets=20  wall=139.6s
+   seed= 15613  seat=P1  LOSS        steps=171  my_planets=0  opp_planets=31  wall=250.8s
+   seed= 75047  seat=P1  LOSS        steps=324  my_planets=0  opp_planets=20  wall=269.2s
+   seed= 65865  seat=P0  LOSS        steps=194  my_planets=0  opp_planets=32  wall=295.3s
+   seed= 98438  seat=P1  LOSS        steps=254  my_planets=0  opp_planets=36  wall=297.5s
+   seed= 80504  seat=P0  LOSS        steps=167  my_planets=0  opp_planets=35  wall=247.3s
+   seed=  1505  seat=P1  LOSS        steps=462  my_planets=0  opp_planets=24  wall=151.5s
+   seed= 12851  seat=P1  LOSS        steps=183  my_planets=0  opp_planets=28  wall=259.0s
+   seed= 89048  seat=P1  LOSS        steps=179  my_planets=0  opp_planets=23  wall=95.6s
+   seed= 27554  seat=P1  LOSS        steps=143  my_planets=0  opp_planets=24  wall=108.6s
+   seed= 31448  seat=P0  LOSS        steps=500  my_planets=2  opp_planets=34  wall=584.5s
+   seed= 14514  seat=P1  LOSS        steps=461  my_planets=0  opp_planets=34  wall=541.1s
+   seed= 32966  seat=P1  LOSS        steps=128  my_planets=0  opp_planets=18  wall=68.5s
+   seed= 94779  seat=P1  LOSS        steps=115  my_planets=0  opp_planets=27  wall=140.9s
+   seed= 46745  seat=P1  LOSS        steps=363  my_planets=0  opp_planets=38  wall=398.1s
+   seed= 97775  seat=P0  LOSS        steps=496  my_planets=0  opp_planets=28  wall=533.6s
+
+   wins=0/16  (elim=0, by_score=0)  losses=16  draws=0  errs=0  elapsed=1381s
+   ❌ GATE FAIL — 16 games not won by elimination
