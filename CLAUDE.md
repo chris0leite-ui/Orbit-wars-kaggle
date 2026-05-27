@@ -306,6 +306,11 @@ Process docs (read once / on trigger):
 
 - `knowledge-base/` — PI second-brain (permanent; Rules 35-36).
   Subdirs: `thoughts/`, `concepts/`, `friction/`, `flags/`, `questions/`.
+- `knowledge-base/concepts/reach-frontier-doctrine.md` — mathematical
+  framing: game = production-time integral `S_i ≈ S_i(0) + Σ p̃·τ`;
+  reach-time-frontier chooser as framework REPLACEMENT for the
+  saturated K=10 rollout. Decision gates inside doc §9; status:
+  doctrine documented, empirical verification queued.
 
 Skills:
 - `.claude/skills/postmortem/SKILL.md`, `.claude/skills/kaggle-comp/`.
