@@ -49,6 +49,14 @@ audit/live-episodes/*/episode-*.json
 audit/live-episodes/*/postmortem/postmortem-*.json
 !audit/live-episodes/*/postmortem/roll-up.json
 
+# Local A/B replay dumps from `fast.py eval --save-replays` and
+# `fast.py play --save-replays` (Rule 48 production-share gating).
+# Same shape as live-episodes JSONs; large (1-4 MB each). Keep the
+# aggregate .md/.json output from `scripts/measure_hold_times.py` but
+# not the raw per-game replays.
+audit/*-rf-v1-*/episode-*.json
+audit/*-rf-v1-*/seed_*.json
+
 # Parallel-branch agents extracted via `git show` for cross-architecture
 # A/B comparisons (see audit/2026-05-11-v3-snipe-critical-review.md §6.5).
 # Source of truth lives on its own branch; we don't track a copy here.

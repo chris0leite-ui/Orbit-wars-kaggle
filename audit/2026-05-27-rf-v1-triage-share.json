@@ -1,0 +1,2070 @@
+{
+  "sub_ids": [
+    "2026-05-27-rf-v1-triage"
+  ],
+  "team": "reach_frontier",
+  "aggregate": {
+    "n_games": 20,
+    "n_wins": 0,
+    "n_losses": 20,
+    "wins_median_hold_fraction": null,
+    "loss_median_hold_fraction": 0.3894992032007595,
+    "n_captures_win_games": 0,
+    "n_captures_loss_games": 150,
+    "wins_median_share_focal": null,
+    "loss_median_share_focal": 0.16647439541600184,
+    "share_separation": -0.16647439541600184,
+    "by_size": {
+      "2": {
+        "n_wins_captures": 0,
+        "n_loss_captures": 150,
+        "wins_median_hold_fraction": null,
+        "loss_median_hold_fraction": 0.3894992032007595
+      }
+    },
+    "by_sub": {
+      "2026-05-27-rf-v1-triage": {
+        "n_wins_captures": 0,
+        "n_loss_captures": 150,
+        "wins_median_hold_fraction": null,
+        "loss_median_hold_fraction": 0.3894992032007595
+      }
+    },
+    "gate_verdict": {
+      "verdict": "no_data",
+      "rationale": "insufficient captures."
+    }
+  },
+  "games": [
+    {
+      "episode": "episode-seed0-p0_baseline-vs-p1_reach_frontier",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        1
+      ],
+      "won": false,
+      "T_end": 500,
+      "n_focal_segments": 15,
+      "n_opp_segments": 39,
+      "focal_hold_fraction_median": 0.28542094455852157,
+      "focal_weighted_hold_total": 3804.0,
+      "opp_weighted_hold_total": 16062.0,
+      "share_focal": 0.19148293566898217,
+      "segments": [
+        {
+          "planet_id": 32,
+          "t_capture": 61,
+          "t_end": 84,
+          "end_reason": "planet_vanished",
+          "T_end": 500,
+          "production": 1.0,
+          "hold_time": 23,
+          "hold_fraction": 0.05239179954441914,
+          "weighted_hold": 23.0
+        },
+        {
+          "planet_id": 33,
+          "t_capture": 72,
+          "t_end": 84,
+          "end_reason": "planet_vanished",
+          "T_end": 500,
+          "production": 1.0,
+          "hold_time": 12,
+          "hold_fraction": 0.028037383177570093,
+          "weighted_hold": 12.0
+        },
+        {
+          "planet_id": 34,
+          "t_capture": 58,
+          "t_end": 84,
+          "end_reason": "planet_vanished",
+          "T_end": 500,
+          "production": 1.0,
+          "hold_time": 26,
+          "hold_fraction": 0.058823529411764705,
+          "weighted_hold": 26.0
+        },
+        {
+          "planet_id": 35,
+          "t_capture": 73,
+          "t_end": 84,
+          "end_reason": "planet_vanished",
+          "T_end": 500,
+          "production": 1.0,
+          "hold_time": 11,
+          "hold_fraction": 0.02576112412177986,
+          "weighted_hold": 11.0
+        },
+        {
+          "planet_id": 19,
+          "t_capture": 40,
+          "t_end": 92,
+          "end_reason": "flipped_to_opp",
+          "T_end": 500,
+          "production": 1.0,
+          "hold_time": 52,
+          "hold_fraction": 0.11304347826086956,
+          "weighted_hold": 52.0
+        },
+        {
+          "planet_id": 15,
+          "t_capture": 0,
+          "t_end": 103,
+          "end_reason": "flipped_to_opp",
+          "T_end": 500,
+          "production": 1.0,
+          "hold_time": 103,
+          "hold_fraction": 0.206,
+          "weighted_hold": 103.0
+        },
+        {
+          "planet_id": 23,
+          "t_capture": 80,
+          "t_end": 131,
+          "end_reason": "flipped_to_opp",
+          "T_end": 500,
+          "production": 3.0,
+          "hold_time": 51,
+          "hold_fraction": 0.12142857142857143,
+          "weighted_hold": 153.0
+        },
+        {
+          "planet_id": 17,
+          "t_capture": 13,
+          "t_end": 152,
+          "end_reason": "flipped_to_opp",
+          "T_end": 500,
+          "production": 1.0,
+          "hold_time": 139,
+          "hold_fraction": 0.28542094455852157,
+          "weighted_hold": 139.0
+        },
+        {
+          "planet_id": 13,
+          "t_capture": 23,
+          "t_end": 198,
+          "end_reason": "flipped_to_opp",
+          "T_end": 500,
+          "production": 1.0,
+          "hold_time": 175,
+          "hold_fraction": 0.3668763102725367,
+          "weighted_hold": 175.0
+        },
+        {
+          "planet_id": 21,
+          "t_capture": 36,
+          "t_end": 211,
+          "end_reason": "flipped_to_opp",
+          "T_end": 500,
+          "production": 3.0,
+          "hold_time": 175,
+          "hold_fraction": 0.3771551724137931,
+          "weighted_hold": 525.0
+        },
+        {
+          "planet_id": 29,
+          "t_capture": 72,
+          "t_end": 245,
+          "end_reason": "flipped_to_opp",
+          "T_end": 500,
+          "production": 1.0,
+          "hold_time": 173,
+          "hold_fraction": 0.40420560747663553,
+          "weighted_hold": 173.0
+        },
+        {
+          "planet_id": 16,
+          "t_capture": 46,
+          "t_end": 350,
+          "end_reason": "flipped_to_opp",
+          "T_end": 500,
+          "production": 1.0,
+          "hold_time": 304,
+          "hold_fraction": 0.6696035242290749,
+          "weighted_hold": 304.0
+        },
+        {
+          "planet_id": 12,
+          "t_capture": 52,
+          "t_end": 459,
+          "end_reason": "flipped_to_opp",
+          "T_end": 500,
+          "production": 1.0,
+          "hold_time": 407,
+          "hold_fraction": 0.9084821428571429,
+          "weighted_hold": 407.0
+        },
+        {
+          "planet_id": 28,
+          "t_capture": 76,
+          "t_end": 466,
+          "end_reason": "flipped_to_opp",
+          "T_end": 500,
+          "production": 1.0,
+          "hold_time": 390,
+          "hold_fraction": 0.9198113207547169,
+          "weighted_hold": 390.0
+        },
+        {
+          "planet_id": 20,
+          "t_capture": 63,
+          "t_end": 500,
+          "end_reason": "game_end",
+          "T_end": 500,
+          "production": 3.0,
+          "hold_time": 437,
+          "hold_fraction": 1.0,
+          "weighted_hold": 1311.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed0-p0_reach_frontier-vs-p1_baseline",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        0
+      ],
+      "won": false,
+      "T_end": 265,
+      "n_focal_segments": 10,
+      "n_opp_segments": 30,
+      "focal_hold_fraction_median": 0.24829290206648696,
+      "focal_weighted_hold_total": 1271.0,
+      "opp_weighted_hold_total": 7872.0,
+      "share_focal": 0.13901345291479822,
+      "segments": [
+        {
+          "planet_id": 16,
+          "t_capture": 40,
+          "t_end": 64,
+          "end_reason": "flipped_to_opp",
+          "T_end": 265,
+          "production": 1.0,
+          "hold_time": 24,
+          "hold_fraction": 0.10666666666666667,
+          "weighted_hold": 24.0
+        },
+        {
+          "planet_id": 32,
+          "t_capture": 75,
+          "t_end": 84,
+          "end_reason": "planet_vanished",
+          "T_end": 265,
+          "production": 1.0,
+          "hold_time": 9,
+          "hold_fraction": 0.04736842105263158,
+          "weighted_hold": 9.0
+        },
+        {
+          "planet_id": 33,
+          "t_capture": 55,
+          "t_end": 84,
+          "end_reason": "planet_vanished",
+          "T_end": 265,
+          "production": 1.0,
+          "hold_time": 29,
+          "hold_fraction": 0.1380952380952381,
+          "weighted_hold": 29.0
+        },
+        {
+          "planet_id": 34,
+          "t_capture": 69,
+          "t_end": 84,
+          "end_reason": "planet_vanished",
+          "T_end": 265,
+          "production": 1.0,
+          "hold_time": 15,
+          "hold_fraction": 0.07653061224489796,
+          "weighted_hold": 15.0
+        },
+        {
+          "planet_id": 35,
+          "t_capture": 60,
+          "t_end": 84,
+          "end_reason": "planet_vanished",
+          "T_end": 265,
+          "production": 1.0,
+          "hold_time": 24,
+          "hold_fraction": 0.11707317073170732,
+          "weighted_hold": 24.0
+        },
+        {
+          "planet_id": 12,
+          "t_capture": 0,
+          "t_end": 95,
+          "end_reason": "flipped_to_opp",
+          "T_end": 265,
+          "production": 1.0,
+          "hold_time": 95,
+          "hold_fraction": 0.3584905660377358,
+          "weighted_hold": 95.0
+        },
+        {
+          "planet_id": 18,
+          "t_capture": 13,
+          "t_end": 135,
+          "end_reason": "flipped_to_opp",
+          "T_end": 265,
+          "production": 1.0,
+          "hold_time": 122,
+          "hold_fraction": 0.48412698412698413,
+          "weighted_hold": 122.0
+        },
+        {
+          "planet_id": 30,
+          "t_capture": 49,
+          "t_end": 168,
+          "end_reason": "flipped_to_opp",
+          "T_end": 265,
+          "production": 1.0,
+          "hold_time": 119,
+          "hold_fraction": 0.5509259259259259,
+          "weighted_hold": 119.0
+        },
+        {
+          "planet_id": 14,
+          "t_capture": 23,
+          "t_end": 173,
+          "end_reason": "flipped_to_opp",
+          "T_end": 265,
+          "production": 1.0,
+          "hold_time": 150,
+          "hold_fraction": 0.6198347107438017,
+          "weighted_hold": 150.0
+        },
+        {
+          "planet_id": 22,
+          "t_capture": 36,
+          "t_end": 264,
+          "end_reason": "flipped_to_opp",
+          "T_end": 265,
+          "production": 3.0,
+          "hold_time": 228,
+          "hold_fraction": 0.9956331877729258,
+          "weighted_hold": 684.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed1-p0_baseline-vs-p1_reach_frontier",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        1
+      ],
+      "won": false,
+      "T_end": 124,
+      "n_focal_segments": 3,
+      "n_opp_segments": 18,
+      "focal_hold_fraction_median": 0.9435483870967742,
+      "focal_weighted_hold_total": 697.0,
+      "opp_weighted_hold_total": 3096.0,
+      "share_focal": 0.18375955707882943,
+      "segments": [
+        {
+          "planet_id": 22,
+          "t_capture": 57,
+          "t_end": 76,
+          "end_reason": "flipped_to_opp",
+          "T_end": 124,
+          "production": 1.0,
+          "hold_time": 19,
+          "hold_fraction": 0.2835820895522388,
+          "weighted_hold": 19.0
+        },
+        {
+          "planet_id": 15,
+          "t_capture": 0,
+          "t_end": 117,
+          "end_reason": "flipped_to_opp",
+          "T_end": 124,
+          "production": 3.0,
+          "hold_time": 117,
+          "hold_fraction": 0.9435483870967742,
+          "weighted_hold": 351.0
+        },
+        {
+          "planet_id": 13,
+          "t_capture": 14,
+          "t_end": 123,
+          "end_reason": "flipped_to_opp",
+          "T_end": 124,
+          "production": 3.0,
+          "hold_time": 109,
+          "hold_fraction": 0.990909090909091,
+          "weighted_hold": 327.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed1-p0_reach_frontier-vs-p1_baseline",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        0
+      ],
+      "won": false,
+      "T_end": 181,
+      "n_focal_segments": 3,
+      "n_opp_segments": 21,
+      "focal_hold_fraction_median": 0.7016574585635359,
+      "focal_weighted_hold_total": 904.0,
+      "opp_weighted_hold_total": 6595.0,
+      "share_focal": 0.12054940658754501,
+      "segments": [
+        {
+          "planet_id": 21,
+          "t_capture": 57,
+          "t_end": 82,
+          "end_reason": "planet_vanished",
+          "T_end": 181,
+          "production": 1.0,
+          "hold_time": 25,
+          "hold_fraction": 0.20161290322580644,
+          "weighted_hold": 25.0
+        },
+        {
+          "planet_id": 12,
+          "t_capture": 0,
+          "t_end": 127,
+          "end_reason": "flipped_to_opp",
+          "T_end": 181,
+          "production": 3.0,
+          "hold_time": 127,
+          "hold_fraction": 0.7016574585635359,
+          "weighted_hold": 381.0
+        },
+        {
+          "planet_id": 14,
+          "t_capture": 14,
+          "t_end": 180,
+          "end_reason": "flipped_to_opp",
+          "T_end": 181,
+          "production": 3.0,
+          "hold_time": 166,
+          "hold_fraction": 0.9940119760479041,
+          "weighted_hold": 498.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed10-p0_reach_frontier-vs-p1_baseline",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        0
+      ],
+      "won": false,
+      "T_end": 117,
+      "n_focal_segments": 6,
+      "n_opp_segments": 34,
+      "focal_hold_fraction_median": 0.6702654867256637,
+      "focal_weighted_hold_total": 1316.0,
+      "opp_weighted_hold_total": 6879.0,
+      "share_focal": 0.16058572300183038,
+      "segments": [
+        {
+          "planet_id": 16,
+          "t_capture": 0,
+          "t_end": 25,
+          "end_reason": "flipped_to_opp",
+          "T_end": 117,
+          "production": 5.0,
+          "hold_time": 25,
+          "hold_fraction": 0.21367521367521367,
+          "weighted_hold": 125.0
+        },
+        {
+          "planet_id": 20,
+          "t_capture": 30,
+          "t_end": 34,
+          "end_reason": "flipped_to_opp",
+          "T_end": 117,
+          "production": 3.0,
+          "hold_time": 4,
+          "hold_fraction": 0.04597701149425287,
+          "weighted_hold": 12.0
+        },
+        {
+          "planet_id": 28,
+          "t_capture": 4,
+          "t_end": 47,
+          "end_reason": "flipped_to_opp",
+          "T_end": 117,
+          "production": 3.0,
+          "hold_time": 43,
+          "hold_fraction": 0.3805309734513274,
+          "weighted_hold": 129.0
+        },
+        {
+          "planet_id": 18,
+          "t_capture": 17,
+          "t_end": 113,
+          "end_reason": "flipped_to_opp",
+          "T_end": 117,
+          "production": 5.0,
+          "hold_time": 96,
+          "hold_fraction": 0.96,
+          "weighted_hold": 480.0
+        },
+        {
+          "planet_id": 30,
+          "t_capture": 20,
+          "t_end": 115,
+          "end_reason": "flipped_to_opp",
+          "T_end": 117,
+          "production": 3.0,
+          "hold_time": 95,
+          "hold_fraction": 0.979381443298969,
+          "weighted_hold": 285.0
+        },
+        {
+          "planet_id": 22,
+          "t_capture": 21,
+          "t_end": 116,
+          "end_reason": "flipped_to_opp",
+          "T_end": 117,
+          "production": 3.0,
+          "hold_time": 95,
+          "hold_fraction": 0.9895833333333334,
+          "weighted_hold": 285.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed2-p0_baseline-vs-p1_reach_frontier",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        1
+      ],
+      "won": false,
+      "T_end": 235,
+      "n_focal_segments": 5,
+      "n_opp_segments": 21,
+      "focal_hold_fraction_median": 0.31221719457013575,
+      "focal_weighted_hold_total": 2403.0,
+      "opp_weighted_hold_total": 11374.0,
+      "share_focal": 0.1744211366770705,
+      "segments": [
+        {
+          "planet_id": 22,
+          "t_capture": 53,
+          "t_end": 80,
+          "end_reason": "planet_vanished",
+          "T_end": 235,
+          "production": 1.0,
+          "hold_time": 27,
+          "hold_fraction": 0.14835164835164835,
+          "weighted_hold": 27.0
+        },
+        {
+          "planet_id": 15,
+          "t_capture": 14,
+          "t_end": 83,
+          "end_reason": "flipped_to_opp",
+          "T_end": 235,
+          "production": 5.0,
+          "hold_time": 69,
+          "hold_fraction": 0.31221719457013575,
+          "weighted_hold": 345.0
+        },
+        {
+          "planet_id": 13,
+          "t_capture": 25,
+          "t_end": 86,
+          "end_reason": "flipped_to_opp",
+          "T_end": 235,
+          "production": 5.0,
+          "hold_time": 61,
+          "hold_fraction": 0.2904761904761905,
+          "weighted_hold": 305.0
+        },
+        {
+          "planet_id": 19,
+          "t_capture": 0,
+          "t_end": 224,
+          "end_reason": "flipped_to_opp",
+          "T_end": 235,
+          "production": 5.0,
+          "hold_time": 224,
+          "hold_fraction": 0.9531914893617022,
+          "weighted_hold": 1120.0
+        },
+        {
+          "planet_id": 7,
+          "t_capture": 32,
+          "t_end": 234,
+          "end_reason": "flipped_to_opp",
+          "T_end": 235,
+          "production": 3.0,
+          "hold_time": 202,
+          "hold_fraction": 0.9950738916256158,
+          "weighted_hold": 606.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed2-p0_reach_frontier-vs-p1_baseline",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        0
+      ],
+      "won": false,
+      "T_end": 213,
+      "n_focal_segments": 5,
+      "n_opp_segments": 23,
+      "focal_hold_fraction_median": 0.5628140703517588,
+      "focal_weighted_hold_total": 2353.0,
+      "opp_weighted_hold_total": 9996.0,
+      "share_focal": 0.19054174427079115,
+      "segments": [
+        {
+          "planet_id": 21,
+          "t_capture": 51,
+          "t_end": 80,
+          "end_reason": "planet_vanished",
+          "T_end": 213,
+          "production": 1.0,
+          "hold_time": 29,
+          "hold_fraction": 0.17901234567901234,
+          "weighted_hold": 29.0
+        },
+        {
+          "planet_id": 14,
+          "t_capture": 27,
+          "t_end": 88,
+          "end_reason": "flipped_to_opp",
+          "T_end": 213,
+          "production": 5.0,
+          "hold_time": 61,
+          "hold_fraction": 0.3279569892473118,
+          "weighted_hold": 305.0
+        },
+        {
+          "planet_id": 12,
+          "t_capture": 14,
+          "t_end": 126,
+          "end_reason": "flipped_to_opp",
+          "T_end": 213,
+          "production": 5.0,
+          "hold_time": 112,
+          "hold_fraction": 0.5628140703517588,
+          "weighted_hold": 560.0
+        },
+        {
+          "planet_id": 4,
+          "t_capture": 50,
+          "t_end": 183,
+          "end_reason": "flipped_to_opp",
+          "T_end": 213,
+          "production": 3.0,
+          "hold_time": 133,
+          "hold_fraction": 0.8159509202453987,
+          "weighted_hold": 399.0
+        },
+        {
+          "planet_id": 16,
+          "t_capture": 0,
+          "t_end": 212,
+          "end_reason": "flipped_to_opp",
+          "T_end": 213,
+          "production": 5.0,
+          "hold_time": 212,
+          "hold_fraction": 0.9953051643192489,
+          "weighted_hold": 1060.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed3-p0_baseline-vs-p1_reach_frontier",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        1
+      ],
+      "won": false,
+      "T_end": 140,
+      "n_focal_segments": 8,
+      "n_opp_segments": 27,
+      "focal_hold_fraction_median": 0.5404761904761904,
+      "focal_weighted_hold_total": 1067.0,
+      "opp_weighted_hold_total": 6342.0,
+      "share_focal": 0.14401403698204887,
+      "segments": [
+        {
+          "planet_id": 19,
+          "t_capture": 14,
+          "t_end": 71,
+          "end_reason": "flipped_to_opp",
+          "T_end": 140,
+          "production": 5.0,
+          "hold_time": 57,
+          "hold_fraction": 0.4523809523809524,
+          "weighted_hold": 285.0
+        },
+        {
+          "planet_id": 35,
+          "t_capture": 21,
+          "t_end": 74,
+          "end_reason": "flipped_to_opp",
+          "T_end": 140,
+          "production": 1.0,
+          "hold_time": 53,
+          "hold_fraction": 0.44537815126050423,
+          "weighted_hold": 53.0
+        },
+        {
+          "planet_id": 36,
+          "t_capture": 56,
+          "t_end": 81,
+          "end_reason": "planet_vanished",
+          "T_end": 140,
+          "production": 1.0,
+          "hold_time": 25,
+          "hold_fraction": 0.2976190476190476,
+          "weighted_hold": 25.0
+        },
+        {
+          "planet_id": 39,
+          "t_capture": 75,
+          "t_end": 81,
+          "end_reason": "planet_vanished",
+          "T_end": 140,
+          "production": 1.0,
+          "hold_time": 6,
+          "hold_fraction": 0.09230769230769231,
+          "weighted_hold": 6.0
+        },
+        {
+          "planet_id": 15,
+          "t_capture": 0,
+          "t_end": 88,
+          "end_reason": "flipped_to_opp",
+          "T_end": 140,
+          "production": 1.0,
+          "hold_time": 88,
+          "hold_fraction": 0.6285714285714286,
+          "weighted_hold": 88.0
+        },
+        {
+          "planet_id": 17,
+          "t_capture": 46,
+          "t_end": 130,
+          "end_reason": "flipped_to_opp",
+          "T_end": 140,
+          "production": 5.0,
+          "hold_time": 84,
+          "hold_fraction": 0.8936170212765957,
+          "weighted_hold": 420.0
+        },
+        {
+          "planet_id": 33,
+          "t_capture": 34,
+          "t_end": 134,
+          "end_reason": "flipped_to_opp",
+          "T_end": 140,
+          "production": 1.0,
+          "hold_time": 100,
+          "hold_fraction": 0.9433962264150944,
+          "weighted_hold": 100.0
+        },
+        {
+          "planet_id": 13,
+          "t_capture": 49,
+          "t_end": 139,
+          "end_reason": "flipped_to_opp",
+          "T_end": 140,
+          "production": 1.0,
+          "hold_time": 90,
+          "hold_fraction": 0.989010989010989,
+          "weighted_hold": 90.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed3-p0_reach_frontier-vs-p1_baseline",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        0
+      ],
+      "won": false,
+      "T_end": 360,
+      "n_focal_segments": 7,
+      "n_opp_segments": 44,
+      "focal_hold_fraction_median": 0.24444444444444444,
+      "focal_weighted_hold_total": 1254.0,
+      "opp_weighted_hold_total": 27184.0,
+      "share_focal": 0.0440959279836838,
+      "segments": [
+        {
+          "planet_id": 16,
+          "t_capture": 14,
+          "t_end": 71,
+          "end_reason": "flipped_to_opp",
+          "T_end": 360,
+          "production": 5.0,
+          "hold_time": 57,
+          "hold_fraction": 0.16473988439306358,
+          "weighted_hold": 285.0
+        },
+        {
+          "planet_id": 32,
+          "t_capture": 21,
+          "t_end": 79,
+          "end_reason": "flipped_to_opp",
+          "T_end": 360,
+          "production": 1.0,
+          "hold_time": 58,
+          "hold_fraction": 0.1710914454277286,
+          "weighted_hold": 58.0
+        },
+        {
+          "planet_id": 36,
+          "t_capture": 76,
+          "t_end": 81,
+          "end_reason": "planet_vanished",
+          "T_end": 360,
+          "production": 1.0,
+          "hold_time": 5,
+          "hold_fraction": 0.017605633802816902,
+          "weighted_hold": 5.0
+        },
+        {
+          "planet_id": 12,
+          "t_capture": 0,
+          "t_end": 88,
+          "end_reason": "flipped_to_opp",
+          "T_end": 360,
+          "production": 1.0,
+          "hold_time": 88,
+          "hold_fraction": 0.24444444444444444,
+          "weighted_hold": 88.0
+        },
+        {
+          "planet_id": 34,
+          "t_capture": 34,
+          "t_end": 126,
+          "end_reason": "flipped_to_opp",
+          "T_end": 360,
+          "production": 1.0,
+          "hold_time": 92,
+          "hold_fraction": 0.2822085889570552,
+          "weighted_hold": 92.0
+        },
+        {
+          "planet_id": 18,
+          "t_capture": 47,
+          "t_end": 131,
+          "end_reason": "flipped_to_opp",
+          "T_end": 360,
+          "production": 5.0,
+          "hold_time": 84,
+          "hold_fraction": 0.268370607028754,
+          "weighted_hold": 420.0
+        },
+        {
+          "planet_id": 14,
+          "t_capture": 53,
+          "t_end": 359,
+          "end_reason": "flipped_to_opp",
+          "T_end": 360,
+          "production": 1.0,
+          "hold_time": 306,
+          "hold_fraction": 0.996742671009772,
+          "weighted_hold": 306.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed4-p0_baseline-vs-p1_reach_frontier",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        1
+      ],
+      "won": false,
+      "T_end": 98,
+      "n_focal_segments": 6,
+      "n_opp_segments": 21,
+      "focal_hold_fraction_median": 0.6608922638822972,
+      "focal_weighted_hold_total": 757.0,
+      "opp_weighted_hold_total": 3041.0,
+      "share_focal": 0.19931542917324907,
+      "segments": [
+        {
+          "planet_id": 16,
+          "t_capture": 39,
+          "t_end": 40,
+          "end_reason": "flipped_to_opp",
+          "T_end": 98,
+          "production": 4.0,
+          "hold_time": 1,
+          "hold_fraction": 0.01694915254237288,
+          "weighted_hold": 4.0
+        },
+        {
+          "planet_id": 16,
+          "t_capture": 41,
+          "t_end": 44,
+          "end_reason": "flipped_to_opp",
+          "T_end": 98,
+          "production": 4.0,
+          "hold_time": 3,
+          "hold_fraction": 0.05263157894736842,
+          "weighted_hold": 12.0
+        },
+        {
+          "planet_id": 11,
+          "t_capture": 0,
+          "t_end": 68,
+          "end_reason": "flipped_to_opp",
+          "T_end": 98,
+          "production": 3.0,
+          "hold_time": 68,
+          "hold_fraction": 0.6938775510204082,
+          "weighted_hold": 204.0
+        },
+        {
+          "planet_id": 22,
+          "t_capture": 55,
+          "t_end": 82,
+          "end_reason": "planet_vanished",
+          "T_end": 98,
+          "production": 1.0,
+          "hold_time": 27,
+          "hold_fraction": 0.627906976744186,
+          "weighted_hold": 27.0
+        },
+        {
+          "planet_id": 13,
+          "t_capture": 25,
+          "t_end": 83,
+          "end_reason": "flipped_to_opp",
+          "T_end": 98,
+          "production": 3.0,
+          "hold_time": 58,
+          "hold_fraction": 0.7945205479452054,
+          "weighted_hold": 174.0
+        },
+        {
+          "planet_id": 17,
+          "t_capture": 13,
+          "t_end": 97,
+          "end_reason": "flipped_to_opp",
+          "T_end": 98,
+          "production": 4.0,
+          "hold_time": 84,
+          "hold_fraction": 0.9882352941176471,
+          "weighted_hold": 336.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed4-p0_reach_frontier-vs-p1_baseline",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        0
+      ],
+      "won": false,
+      "T_end": 92,
+      "n_focal_segments": 6,
+      "n_opp_segments": 21,
+      "focal_hold_fraction_median": 0.7398648648648649,
+      "focal_weighted_hold_total": 732.0,
+      "opp_weighted_hold_total": 2703.0,
+      "share_focal": 0.2131004366812227,
+      "segments": [
+        {
+          "planet_id": 19,
+          "t_capture": 39,
+          "t_end": 40,
+          "end_reason": "flipped_to_opp",
+          "T_end": 92,
+          "production": 4.0,
+          "hold_time": 1,
+          "hold_fraction": 0.018867924528301886,
+          "weighted_hold": 4.0
+        },
+        {
+          "planet_id": 19,
+          "t_capture": 41,
+          "t_end": 44,
+          "end_reason": "flipped_to_opp",
+          "T_end": 92,
+          "production": 4.0,
+          "hold_time": 3,
+          "hold_fraction": 0.058823529411764705,
+          "weighted_hold": 12.0
+        },
+        {
+          "planet_id": 8,
+          "t_capture": 0,
+          "t_end": 69,
+          "end_reason": "flipped_to_opp",
+          "T_end": 92,
+          "production": 3.0,
+          "hold_time": 69,
+          "hold_fraction": 0.75,
+          "weighted_hold": 207.0
+        },
+        {
+          "planet_id": 21,
+          "t_capture": 55,
+          "t_end": 82,
+          "end_reason": "planet_vanished",
+          "T_end": 92,
+          "production": 1.0,
+          "hold_time": 27,
+          "hold_fraction": 0.7297297297297297,
+          "weighted_hold": 27.0
+        },
+        {
+          "planet_id": 18,
+          "t_capture": 13,
+          "t_end": 84,
+          "end_reason": "flipped_to_opp",
+          "T_end": 92,
+          "production": 4.0,
+          "hold_time": 71,
+          "hold_fraction": 0.8987341772151899,
+          "weighted_hold": 284.0
+        },
+        {
+          "planet_id": 14,
+          "t_capture": 25,
+          "t_end": 91,
+          "end_reason": "flipped_to_opp",
+          "T_end": 92,
+          "production": 3.0,
+          "hold_time": 66,
+          "hold_fraction": 0.9850746268656716,
+          "weighted_hold": 198.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed5-p0_baseline-vs-p1_reach_frontier",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        1
+      ],
+      "won": false,
+      "T_end": 135,
+      "n_focal_segments": 11,
+      "n_opp_segments": 38,
+      "focal_hold_fraction_median": 0.2972972972972973,
+      "focal_weighted_hold_total": 884.0,
+      "opp_weighted_hold_total": 4066.0,
+      "share_focal": 0.1785858585858586,
+      "segments": [
+        {
+          "planet_id": 14,
+          "t_capture": 34,
+          "t_end": 44,
+          "end_reason": "flipped_to_opp",
+          "T_end": 135,
+          "production": 1.0,
+          "hold_time": 10,
+          "hold_fraction": 0.09900990099009901,
+          "weighted_hold": 10.0
+        },
+        {
+          "planet_id": 14,
+          "t_capture": 48,
+          "t_end": 50,
+          "end_reason": "flipped_to_opp",
+          "T_end": 135,
+          "production": 1.0,
+          "hold_time": 2,
+          "hold_fraction": 0.022988505747126436,
+          "weighted_hold": 2.0
+        },
+        {
+          "planet_id": 35,
+          "t_capture": 39,
+          "t_end": 61,
+          "end_reason": "flipped_to_opp",
+          "T_end": 135,
+          "production": 1.0,
+          "hold_time": 22,
+          "hold_fraction": 0.22916666666666666,
+          "weighted_hold": 22.0
+        },
+        {
+          "planet_id": 15,
+          "t_capture": 4,
+          "t_end": 80,
+          "end_reason": "flipped_to_opp",
+          "T_end": 135,
+          "production": 1.0,
+          "hold_time": 76,
+          "hold_fraction": 0.5801526717557252,
+          "weighted_hold": 76.0
+        },
+        {
+          "planet_id": 36,
+          "t_capture": 79,
+          "t_end": 83,
+          "end_reason": "planet_vanished",
+          "T_end": 135,
+          "production": 1.0,
+          "hold_time": 4,
+          "hold_fraction": 0.07142857142857142,
+          "weighted_hold": 4.0
+        },
+        {
+          "planet_id": 37,
+          "t_capture": 61,
+          "t_end": 83,
+          "end_reason": "planet_vanished",
+          "T_end": 135,
+          "production": 1.0,
+          "hold_time": 22,
+          "hold_fraction": 0.2972972972972973,
+          "weighted_hold": 22.0
+        },
+        {
+          "planet_id": 39,
+          "t_capture": 76,
+          "t_end": 83,
+          "end_reason": "planet_vanished",
+          "T_end": 135,
+          "production": 1.0,
+          "hold_time": 7,
+          "hold_fraction": 0.11864406779661017,
+          "weighted_hold": 7.0
+        },
+        {
+          "planet_id": 33,
+          "t_capture": 33,
+          "t_end": 108,
+          "end_reason": "flipped_to_opp",
+          "T_end": 135,
+          "production": 1.0,
+          "hold_time": 75,
+          "hold_fraction": 0.7352941176470589,
+          "weighted_hold": 75.0
+        },
+        {
+          "planet_id": 19,
+          "t_capture": 0,
+          "t_end": 115,
+          "end_reason": "flipped_to_opp",
+          "T_end": 135,
+          "production": 3.0,
+          "hold_time": 115,
+          "hold_fraction": 0.8518518518518519,
+          "weighted_hold": 345.0
+        },
+        {
+          "planet_id": 17,
+          "t_capture": 54,
+          "t_end": 132,
+          "end_reason": "flipped_to_opp",
+          "T_end": 135,
+          "production": 3.0,
+          "hold_time": 78,
+          "hold_fraction": 0.9629629629629629,
+          "weighted_hold": 234.0
+        },
+        {
+          "planet_id": 13,
+          "t_capture": 47,
+          "t_end": 134,
+          "end_reason": "flipped_to_opp",
+          "T_end": 135,
+          "production": 1.0,
+          "hold_time": 87,
+          "hold_fraction": 0.9886363636363636,
+          "weighted_hold": 87.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed5-p0_reach_frontier-vs-p1_baseline",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        0
+      ],
+      "won": false,
+      "T_end": 182,
+      "n_focal_segments": 10,
+      "n_opp_segments": 40,
+      "focal_hold_fraction_median": 0.38474823137744485,
+      "focal_weighted_hold_total": 1203.0,
+      "opp_weighted_hold_total": 6925.0,
+      "share_focal": 0.14800688976377951,
+      "segments": [
+        {
+          "planet_id": 13,
+          "t_capture": 34,
+          "t_end": 35,
+          "end_reason": "flipped_to_opp",
+          "T_end": 182,
+          "production": 1.0,
+          "hold_time": 1,
+          "hold_fraction": 0.006756756756756757,
+          "weighted_hold": 1.0
+        },
+        {
+          "planet_id": 12,
+          "t_capture": 4,
+          "t_end": 79,
+          "end_reason": "flipped_to_opp",
+          "T_end": 182,
+          "production": 1.0,
+          "hold_time": 75,
+          "hold_fraction": 0.42134831460674155,
+          "weighted_hold": 75.0
+        },
+        {
+          "planet_id": 36,
+          "t_capture": 66,
+          "t_end": 83,
+          "end_reason": "planet_vanished",
+          "T_end": 182,
+          "production": 1.0,
+          "hold_time": 17,
+          "hold_fraction": 0.14655172413793102,
+          "weighted_hold": 17.0
+        },
+        {
+          "planet_id": 37,
+          "t_capture": 56,
+          "t_end": 83,
+          "end_reason": "planet_vanished",
+          "T_end": 182,
+          "production": 1.0,
+          "hold_time": 27,
+          "hold_fraction": 0.21428571428571427,
+          "weighted_hold": 27.0
+        },
+        {
+          "planet_id": 39,
+          "t_capture": 55,
+          "t_end": 83,
+          "end_reason": "planet_vanished",
+          "T_end": 182,
+          "production": 1.0,
+          "hold_time": 28,
+          "hold_fraction": 0.2204724409448819,
+          "weighted_hold": 28.0
+        },
+        {
+          "planet_id": 34,
+          "t_capture": 47,
+          "t_end": 94,
+          "end_reason": "flipped_to_opp",
+          "T_end": 182,
+          "production": 1.0,
+          "hold_time": 47,
+          "hold_fraction": 0.34814814814814815,
+          "weighted_hold": 47.0
+        },
+        {
+          "planet_id": 18,
+          "t_capture": 31,
+          "t_end": 127,
+          "end_reason": "flipped_to_opp",
+          "T_end": 182,
+          "production": 3.0,
+          "hold_time": 96,
+          "hold_fraction": 0.6357615894039735,
+          "weighted_hold": 288.0
+        },
+        {
+          "planet_id": 14,
+          "t_capture": 35,
+          "t_end": 130,
+          "end_reason": "flipped_to_opp",
+          "T_end": 182,
+          "production": 1.0,
+          "hold_time": 95,
+          "hold_fraction": 0.6462585034013606,
+          "weighted_hold": 95.0
+        },
+        {
+          "planet_id": 16,
+          "t_capture": 0,
+          "t_end": 160,
+          "end_reason": "flipped_to_opp",
+          "T_end": 182,
+          "production": 3.0,
+          "hold_time": 160,
+          "hold_fraction": 0.8791208791208791,
+          "weighted_hold": 480.0
+        },
+        {
+          "planet_id": 32,
+          "t_capture": 36,
+          "t_end": 181,
+          "end_reason": "flipped_to_opp",
+          "T_end": 182,
+          "production": 1.0,
+          "hold_time": 145,
+          "hold_fraction": 0.9931506849315068,
+          "weighted_hold": 145.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed6-p0_baseline-vs-p1_reach_frontier",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        1
+      ],
+      "won": false,
+      "T_end": 189,
+      "n_focal_segments": 7,
+      "n_opp_segments": 24,
+      "focal_hold_fraction_median": 0.3544973544973545,
+      "focal_weighted_hold_total": 1630.0,
+      "opp_weighted_hold_total": 8087.0,
+      "share_focal": 0.1677472470927241,
+      "segments": [
+        {
+          "planet_id": 11,
+          "t_capture": 0,
+          "t_end": 67,
+          "end_reason": "flipped_to_opp",
+          "T_end": 189,
+          "production": 1.0,
+          "hold_time": 67,
+          "hold_fraction": 0.3544973544973545,
+          "weighted_hold": 67.0
+        },
+        {
+          "planet_id": 20,
+          "t_capture": 57,
+          "t_end": 82,
+          "end_reason": "planet_vanished",
+          "T_end": 189,
+          "production": 1.0,
+          "hold_time": 25,
+          "hold_fraction": 0.1893939393939394,
+          "weighted_hold": 25.0
+        },
+        {
+          "planet_id": 22,
+          "t_capture": 81,
+          "t_end": 82,
+          "end_reason": "planet_vanished",
+          "T_end": 189,
+          "production": 1.0,
+          "hold_time": 1,
+          "hold_fraction": 0.009259259259259259,
+          "weighted_hold": 1.0
+        },
+        {
+          "planet_id": 15,
+          "t_capture": 42,
+          "t_end": 89,
+          "end_reason": "flipped_to_opp",
+          "T_end": 189,
+          "production": 5.0,
+          "hold_time": 47,
+          "hold_fraction": 0.3197278911564626,
+          "weighted_hold": 235.0
+        },
+        {
+          "planet_id": 19,
+          "t_capture": 16,
+          "t_end": 113,
+          "end_reason": "flipped_to_opp",
+          "T_end": 189,
+          "production": 3.0,
+          "hold_time": 97,
+          "hold_fraction": 0.5606936416184971,
+          "weighted_hold": 291.0
+        },
+        {
+          "planet_id": 13,
+          "t_capture": 41,
+          "t_end": 149,
+          "end_reason": "flipped_to_opp",
+          "T_end": 189,
+          "production": 5.0,
+          "hold_time": 108,
+          "hold_fraction": 0.7297297297297297,
+          "weighted_hold": 540.0
+        },
+        {
+          "planet_id": 17,
+          "t_capture": 31,
+          "t_end": 188,
+          "end_reason": "flipped_to_opp",
+          "T_end": 189,
+          "production": 3.0,
+          "hold_time": 157,
+          "hold_fraction": 0.9936708860759493,
+          "weighted_hold": 471.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed6-p0_reach_frontier-vs-p1_baseline",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        0
+      ],
+      "won": false,
+      "T_end": 168,
+      "n_focal_segments": 6,
+      "n_opp_segments": 23,
+      "focal_hold_fraction_median": 0.424812030075188,
+      "focal_weighted_hold_total": 1576.0,
+      "opp_weighted_hold_total": 6904.0,
+      "share_focal": 0.18584905660377357,
+      "segments": [
+        {
+          "planet_id": 8,
+          "t_capture": 0,
+          "t_end": 72,
+          "end_reason": "flipped_to_opp",
+          "T_end": 168,
+          "production": 1.0,
+          "hold_time": 72,
+          "hold_fraction": 0.42857142857142855,
+          "weighted_hold": 72.0
+        },
+        {
+          "planet_id": 16,
+          "t_capture": 16,
+          "t_end": 80,
+          "end_reason": "flipped_to_opp",
+          "T_end": 168,
+          "production": 3.0,
+          "hold_time": 64,
+          "hold_fraction": 0.42105263157894735,
+          "weighted_hold": 192.0
+        },
+        {
+          "planet_id": 23,
+          "t_capture": 58,
+          "t_end": 82,
+          "end_reason": "planet_vanished",
+          "T_end": 168,
+          "production": 1.0,
+          "hold_time": 24,
+          "hold_fraction": 0.21818181818181817,
+          "weighted_hold": 24.0
+        },
+        {
+          "planet_id": 12,
+          "t_capture": 43,
+          "t_end": 95,
+          "end_reason": "flipped_to_opp",
+          "T_end": 168,
+          "production": 5.0,
+          "hold_time": 52,
+          "hold_fraction": 0.416,
+          "weighted_hold": 260.0
+        },
+        {
+          "planet_id": 14,
+          "t_capture": 41,
+          "t_end": 165,
+          "end_reason": "flipped_to_opp",
+          "T_end": 168,
+          "production": 5.0,
+          "hold_time": 124,
+          "hold_fraction": 0.9763779527559056,
+          "weighted_hold": 620.0
+        },
+        {
+          "planet_id": 18,
+          "t_capture": 31,
+          "t_end": 167,
+          "end_reason": "flipped_to_opp",
+          "T_end": 168,
+          "production": 3.0,
+          "hold_time": 136,
+          "hold_fraction": 0.9927007299270073,
+          "weighted_hold": 408.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed7-p0_baseline-vs-p1_reach_frontier",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        1
+      ],
+      "won": false,
+      "T_end": 188,
+      "n_focal_segments": 6,
+      "n_opp_segments": 29,
+      "focal_hold_fraction_median": 0.6431601272534464,
+      "focal_weighted_hold_total": 2283.0,
+      "opp_weighted_hold_total": 8427.0,
+      "share_focal": 0.21316526610644257,
+      "segments": [
+        {
+          "planet_id": 3,
+          "t_capture": 0,
+          "t_end": 75,
+          "end_reason": "flipped_to_opp",
+          "T_end": 188,
+          "production": 4.0,
+          "hold_time": 75,
+          "hold_fraction": 0.39893617021276595,
+          "weighted_hold": 300.0
+        },
+        {
+          "planet_id": 26,
+          "t_capture": 55,
+          "t_end": 82,
+          "end_reason": "planet_vanished",
+          "T_end": 188,
+          "production": 1.0,
+          "hold_time": 27,
+          "hold_fraction": 0.20300751879699247,
+          "weighted_hold": 27.0
+        },
+        {
+          "planet_id": 13,
+          "t_capture": 24,
+          "t_end": 128,
+          "end_reason": "flipped_to_opp",
+          "T_end": 188,
+          "production": 4.0,
+          "hold_time": 104,
+          "hold_fraction": 0.6341463414634146,
+          "weighted_hold": 416.0
+        },
+        {
+          "planet_id": 17,
+          "t_capture": 27,
+          "t_end": 132,
+          "end_reason": "flipped_to_opp",
+          "T_end": 188,
+          "production": 3.0,
+          "hold_time": 105,
+          "hold_fraction": 0.6521739130434783,
+          "weighted_hold": 315.0
+        },
+        {
+          "planet_id": 19,
+          "t_capture": 17,
+          "t_end": 184,
+          "end_reason": "flipped_to_opp",
+          "T_end": 188,
+          "production": 3.0,
+          "hold_time": 167,
+          "hold_fraction": 0.9766081871345029,
+          "weighted_hold": 501.0
+        },
+        {
+          "planet_id": 15,
+          "t_capture": 6,
+          "t_end": 187,
+          "end_reason": "flipped_to_opp",
+          "T_end": 188,
+          "production": 4.0,
+          "hold_time": 181,
+          "hold_fraction": 0.9945054945054945,
+          "weighted_hold": 724.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed7-p0_reach_frontier-vs-p1_baseline",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        0
+      ],
+      "won": false,
+      "T_end": 261,
+      "n_focal_segments": 6,
+      "n_opp_segments": 35,
+      "focal_hold_fraction_median": 0.33409421041709897,
+      "focal_weighted_hold_total": 1909.0,
+      "opp_weighted_hold_total": 13937.0,
+      "share_focal": 0.12047204341789726,
+      "segments": [
+        {
+          "planet_id": 12,
+          "t_capture": 6,
+          "t_end": 60,
+          "end_reason": "flipped_to_opp",
+          "T_end": 261,
+          "production": 4.0,
+          "hold_time": 54,
+          "hold_fraction": 0.21176470588235294,
+          "weighted_hold": 216.0
+        },
+        {
+          "planet_id": 25,
+          "t_capture": 56,
+          "t_end": 82,
+          "end_reason": "planet_vanished",
+          "T_end": 261,
+          "production": 1.0,
+          "hold_time": 26,
+          "hold_fraction": 0.12682926829268293,
+          "weighted_hold": 26.0
+        },
+        {
+          "planet_id": 14,
+          "t_capture": 24,
+          "t_end": 93,
+          "end_reason": "flipped_to_opp",
+          "T_end": 261,
+          "production": 4.0,
+          "hold_time": 69,
+          "hold_fraction": 0.2911392405063291,
+          "weighted_hold": 276.0
+        },
+        {
+          "planet_id": 0,
+          "t_capture": 0,
+          "t_end": 104,
+          "end_reason": "flipped_to_opp",
+          "T_end": 261,
+          "production": 4.0,
+          "hold_time": 104,
+          "hold_fraction": 0.39846743295019155,
+          "weighted_hold": 416.0
+        },
+        {
+          "planet_id": 16,
+          "t_capture": 17,
+          "t_end": 109,
+          "end_reason": "flipped_to_opp",
+          "T_end": 261,
+          "production": 3.0,
+          "hold_time": 92,
+          "hold_fraction": 0.3770491803278688,
+          "weighted_hold": 276.0
+        },
+        {
+          "planet_id": 18,
+          "t_capture": 27,
+          "t_end": 260,
+          "end_reason": "flipped_to_opp",
+          "T_end": 261,
+          "production": 3.0,
+          "hold_time": 233,
+          "hold_fraction": 0.9957264957264957,
+          "weighted_hold": 699.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed8-p0_reach_frontier-vs-p1_baseline",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        0
+      ],
+      "won": false,
+      "T_end": 146,
+      "n_focal_segments": 8,
+      "n_opp_segments": 30,
+      "focal_hold_fraction_median": 0.4177470469605301,
+      "focal_weighted_hold_total": 1541.0,
+      "opp_weighted_hold_total": 7787.0,
+      "share_focal": 0.1652015437392796,
+      "segments": [
+        {
+          "planet_id": 12,
+          "t_capture": 19,
+          "t_end": 58,
+          "end_reason": "flipped_to_opp",
+          "T_end": 146,
+          "production": 3.0,
+          "hold_time": 39,
+          "hold_fraction": 0.30708661417322836,
+          "weighted_hold": 117.0
+        },
+        {
+          "planet_id": 24,
+          "t_capture": 48,
+          "t_end": 60,
+          "end_reason": "flipped_to_opp",
+          "T_end": 146,
+          "production": 2.0,
+          "hold_time": 12,
+          "hold_fraction": 0.12244897959183673,
+          "weighted_hold": 24.0
+        },
+        {
+          "planet_id": 29,
+          "t_capture": 55,
+          "t_end": 82,
+          "end_reason": "planet_vanished",
+          "T_end": 146,
+          "production": 1.0,
+          "hold_time": 27,
+          "hold_fraction": 0.2967032967032967,
+          "weighted_hold": 27.0
+        },
+        {
+          "planet_id": 14,
+          "t_capture": 29,
+          "t_end": 86,
+          "end_reason": "flipped_to_opp",
+          "T_end": 146,
+          "production": 3.0,
+          "hold_time": 57,
+          "hold_fraction": 0.48717948717948717,
+          "weighted_hold": 171.0
+        },
+        {
+          "planet_id": 20,
+          "t_capture": 57,
+          "t_end": 88,
+          "end_reason": "flipped_to_opp",
+          "T_end": 146,
+          "production": 5.0,
+          "hold_time": 31,
+          "hold_fraction": 0.34831460674157305,
+          "weighted_hold": 155.0
+        },
+        {
+          "planet_id": 26,
+          "t_capture": 37,
+          "t_end": 97,
+          "end_reason": "flipped_to_opp",
+          "T_end": 146,
+          "production": 2.0,
+          "hold_time": 60,
+          "hold_fraction": 0.5504587155963303,
+          "weighted_hold": 120.0
+        },
+        {
+          "planet_id": 8,
+          "t_capture": 0,
+          "t_end": 98,
+          "end_reason": "flipped_to_opp",
+          "T_end": 146,
+          "production": 4.0,
+          "hold_time": 98,
+          "hold_fraction": 0.6712328767123288,
+          "weighted_hold": 392.0
+        },
+        {
+          "planet_id": 22,
+          "t_capture": 38,
+          "t_end": 145,
+          "end_reason": "flipped_to_opp",
+          "T_end": 146,
+          "production": 5.0,
+          "hold_time": 107,
+          "hold_fraction": 0.9907407407407407,
+          "weighted_hold": 535.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed9-p0_baseline-vs-p1_reach_frontier",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        1
+      ],
+      "won": false,
+      "T_end": 180,
+      "n_focal_segments": 11,
+      "n_opp_segments": 35,
+      "focal_hold_fraction_median": 0.2857142857142857,
+      "focal_weighted_hold_total": 927.0,
+      "opp_weighted_hold_total": 8317.0,
+      "share_focal": 0.10028126352228472,
+      "segments": [
+        {
+          "planet_id": 25,
+          "t_capture": 43,
+          "t_end": 62,
+          "end_reason": "flipped_to_opp",
+          "T_end": 180,
+          "production": 1.0,
+          "hold_time": 19,
+          "hold_fraction": 0.1386861313868613,
+          "weighted_hold": 19.0
+        },
+        {
+          "planet_id": 28,
+          "t_capture": 54,
+          "t_end": 83,
+          "end_reason": "planet_vanished",
+          "T_end": 180,
+          "production": 1.0,
+          "hold_time": 29,
+          "hold_fraction": 0.23015873015873015,
+          "weighted_hold": 29.0
+        },
+        {
+          "planet_id": 30,
+          "t_capture": 54,
+          "t_end": 83,
+          "end_reason": "planet_vanished",
+          "T_end": 180,
+          "production": 1.0,
+          "hold_time": 29,
+          "hold_fraction": 0.23015873015873015,
+          "weighted_hold": 29.0
+        },
+        {
+          "planet_id": 31,
+          "t_capture": 75,
+          "t_end": 83,
+          "end_reason": "planet_vanished",
+          "T_end": 180,
+          "production": 1.0,
+          "hold_time": 8,
+          "hold_fraction": 0.0761904761904762,
+          "weighted_hold": 8.0
+        },
+        {
+          "planet_id": 15,
+          "t_capture": 0,
+          "t_end": 87,
+          "end_reason": "flipped_to_opp",
+          "T_end": 180,
+          "production": 2.0,
+          "hold_time": 87,
+          "hold_fraction": 0.48333333333333334,
+          "weighted_hold": 174.0
+        },
+        {
+          "planet_id": 13,
+          "t_capture": 63,
+          "t_end": 88,
+          "end_reason": "flipped_to_opp",
+          "T_end": 180,
+          "production": 2.0,
+          "hold_time": 25,
+          "hold_fraction": 0.21367521367521367,
+          "weighted_hold": 50.0
+        },
+        {
+          "planet_id": 23,
+          "t_capture": 13,
+          "t_end": 94,
+          "end_reason": "flipped_to_opp",
+          "T_end": 180,
+          "production": 2.0,
+          "hold_time": 81,
+          "hold_fraction": 0.48502994011976047,
+          "weighted_hold": 162.0
+        },
+        {
+          "planet_id": 19,
+          "t_capture": 38,
+          "t_end": 96,
+          "end_reason": "flipped_to_opp",
+          "T_end": 180,
+          "production": 1.0,
+          "hold_time": 58,
+          "hold_fraction": 0.4084507042253521,
+          "weighted_hold": 58.0
+        },
+        {
+          "planet_id": 27,
+          "t_capture": 28,
+          "t_end": 98,
+          "end_reason": "flipped_to_opp",
+          "T_end": 180,
+          "production": 1.0,
+          "hold_time": 70,
+          "hold_fraction": 0.4605263157894737,
+          "weighted_hold": 70.0
+        },
+        {
+          "planet_id": 25,
+          "t_capture": 68,
+          "t_end": 100,
+          "end_reason": "flipped_to_opp",
+          "T_end": 180,
+          "production": 1.0,
+          "hold_time": 32,
+          "hold_fraction": 0.2857142857142857,
+          "weighted_hold": 32.0
+        },
+        {
+          "planet_id": 21,
+          "t_capture": 31,
+          "t_end": 179,
+          "end_reason": "flipped_to_opp",
+          "T_end": 180,
+          "production": 2.0,
+          "hold_time": 148,
+          "hold_fraction": 0.9932885906040269,
+          "weighted_hold": 296.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    },
+    {
+      "episode": "episode-seed9-p0_reach_frontier-vs-p1_baseline",
+      "size": 2,
+      "team_name": "reach_frontier",
+      "focal_seats": [
+        0
+      ],
+      "won": false,
+      "T_end": 137,
+      "n_focal_segments": 11,
+      "n_opp_segments": 30,
+      "focal_hold_fraction_median": 0.375,
+      "focal_weighted_hold_total": 707.0,
+      "opp_weighted_hold_total": 5597.0,
+      "share_focal": 0.1121510152284264,
+      "segments": [
+        {
+          "planet_id": 14,
+          "t_capture": 52,
+          "t_end": 57,
+          "end_reason": "flipped_to_opp",
+          "T_end": 137,
+          "production": 2.0,
+          "hold_time": 5,
+          "hold_fraction": 0.058823529411764705,
+          "weighted_hold": 10.0
+        },
+        {
+          "planet_id": 14,
+          "t_capture": 58,
+          "t_end": 66,
+          "end_reason": "flipped_to_opp",
+          "T_end": 137,
+          "production": 2.0,
+          "hold_time": 8,
+          "hold_fraction": 0.10126582278481013,
+          "weighted_hold": 16.0
+        },
+        {
+          "planet_id": 20,
+          "t_capture": 13,
+          "t_end": 67,
+          "end_reason": "flipped_to_opp",
+          "T_end": 137,
+          "production": 2.0,
+          "hold_time": 54,
+          "hold_fraction": 0.43548387096774194,
+          "weighted_hold": 108.0
+        },
+        {
+          "planet_id": 24,
+          "t_capture": 33,
+          "t_end": 72,
+          "end_reason": "flipped_to_opp",
+          "T_end": 137,
+          "production": 1.0,
+          "hold_time": 39,
+          "hold_fraction": 0.375,
+          "weighted_hold": 39.0
+        },
+        {
+          "planet_id": 16,
+          "t_capture": 44,
+          "t_end": 74,
+          "end_reason": "flipped_to_opp",
+          "T_end": 137,
+          "production": 1.0,
+          "hold_time": 30,
+          "hold_fraction": 0.3225806451612903,
+          "weighted_hold": 30.0
+        },
+        {
+          "planet_id": 22,
+          "t_capture": 30,
+          "t_end": 80,
+          "end_reason": "flipped_to_opp",
+          "T_end": 137,
+          "production": 2.0,
+          "hold_time": 50,
+          "hold_fraction": 0.4672897196261682,
+          "weighted_hold": 100.0
+        },
+        {
+          "planet_id": 12,
+          "t_capture": 0,
+          "t_end": 82,
+          "end_reason": "flipped_to_opp",
+          "T_end": 137,
+          "production": 2.0,
+          "hold_time": 82,
+          "hold_fraction": 0.5985401459854015,
+          "weighted_hold": 164.0
+        },
+        {
+          "planet_id": 30,
+          "t_capture": 67,
+          "t_end": 83,
+          "end_reason": "planet_vanished",
+          "T_end": 137,
+          "production": 1.0,
+          "hold_time": 16,
+          "hold_fraction": 0.22857142857142856,
+          "weighted_hold": 16.0
+        },
+        {
+          "planet_id": 31,
+          "t_capture": 56,
+          "t_end": 83,
+          "end_reason": "planet_vanished",
+          "T_end": 137,
+          "production": 1.0,
+          "hold_time": 27,
+          "hold_fraction": 0.3333333333333333,
+          "weighted_hold": 27.0
+        },
+        {
+          "planet_id": 26,
+          "t_capture": 47,
+          "t_end": 108,
+          "end_reason": "flipped_to_opp",
+          "T_end": 137,
+          "production": 1.0,
+          "hold_time": 61,
+          "hold_fraction": 0.6777777777777778,
+          "weighted_hold": 61.0
+        },
+        {
+          "planet_id": 14,
+          "t_capture": 68,
+          "t_end": 136,
+          "end_reason": "flipped_to_opp",
+          "T_end": 137,
+          "production": 2.0,
+          "hold_time": 68,
+          "hold_fraction": 0.9855072463768116,
+          "weighted_hold": 136.0
+        }
+      ],
+      "sub_id": "2026-05-27-rf-v1-triage"
+    }
+  ]
+}
