@@ -15,6 +15,28 @@
 > Last rotation: 2026-05-14 (claude/audit-workflow-friction-XD56a).
 > Full prior history at `audit/friction-archive-2026-05-14.md`.
 
+## 2026-05-27 (claude/agent-design-exploration-Q0q9T — spearhead A/B triage)
+
+- `tag: chooser-bonus-double-counts-favor-direction` — spearhead Cell D
+  (relay off + chooser-side directional bonus β=8) regressed 40 pp
+  below Cell A reference (2/5 vs 4/5 at n=5 vs joint_aggr); composition
+  Cell E worst at 1/5. Root cause: the favor leaf in
+  `agents/baseline/value.py` already encodes direction implicitly via
+  per-step ownership accrual (front-line targets hold longer = produce
+  more = higher favor delta). Adding an explicit
+  `cos(angle_src→tgt, angle_src→opp) × tgt.prod` bonus to delta double-
+  counts; shifts target selection toward distance-from-self-toward-opp
+  without re-checking force-sufficiency, exactly the failure mode Rule
+  40 warns about. **Fix:** before adding an "X-aware" bonus to any
+  score, audit what dimensions the leaf / favor function / rollout
+  already implicitly captures. Promotion candidate.
+- `tag: ab-quick-runtime-250-step-not-natural-win` — initial estimate
+  put one ab_quick cell at ~4 min based on the smoke test's natural-
+  end-game wallclock (50s × 5 games). Actual was 13-15 min because
+  games against strong opps run to the 250-step cap, not the typical
+  128-step natural win. **Fix:** estimate ab_quick at 5 × 250s ≈ 13-21
+  min/cell upper bound.
+
 ## Just-landed fixes (claude/audit-workflow-friction-XD56a — 2026-05-14)
 
 These patterns recurred multiple times; the fix is now in source. If
