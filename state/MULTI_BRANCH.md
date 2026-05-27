@@ -73,11 +73,11 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
 - **Sibling (closed):** `claude/phase7-btjek-chain-bonus` — chain-bonus axis exhausted (Rule 37) on 2026-05-20.
 - **Lineage:** v8_scavenge → v15_banded → trajectory v4 → composite head 2P + A2 4P → comet-aim+reactor → hold-feasibility solo. Peak μ=1149.2 (sub 52744856, EVICTED).
 - **Status:** live champion lineage. v16-v20 chooser axis falsified (Rule 37). Chain-bonus axis exhausted (Rule 37). Current pivot to physics-driven mechanisms.
-- **Latest finding (btjeK, 2026-05-20 PM):** H44 corrected — landing-capture failures are **65% fleet-destroyed-in-flight** (`audit/2026-05-21-h44-phase1-CORRECTED.md`). Substantive new physics-driven mechanism candidate.
+- **Latest finding (btjeK, 2026-05-20 PM):** H44 corrected — the original "65% fleet-destroyed-in-flight" claim was a **false positive** (F-flag over-fired because fleets always vanish at combat resolution; spot-check of 5 F-flagged launches found all arrived with miss-distance < target radius). Corrected diagnosis (`audit/2026-05-21-h44-phase1-CORRECTION.md`, btjeK branch): in lost episodes, **A + D = 46%** are chooser ship-sizing failures — D under-delivered (24%, sent too few, lost combat) + A source lost pre-landing (22%, over-drained source, opp took it before our fleet landed). C third-party flip = 17%. Mechanism candidate is chooser sizing recalibration + in-flight opp-fleet ledger, NOT aim/`predict_fleet_fate`.
 - **EpMVP latest:** Phase 4 (defensive migrations, gated off) + Phase 6 (chain-capture bonus, Claws relay pattern) landed 2026-05-20. Phases 0-6 individually env-var gated. Bundler upgraded for inline agent submodules + explicit-name imports.
 - **Next moves:**
   1. Hold-feasibility solo validation (btjeK Phase B in HANDOVER).
-  2. H44 physics-driven defensive mechanism design (btjeK).
+  2. H44 chooser ship-sizing mechanism design — balance "deliver enough to capture" vs "leave enough to defend source" (btjeK).
   3. EpMVP individual phase commissioning behind env vars.
 - **Best-evidenced asset:** `agents/baseline/` modular re-impl + `agents/baseline/chooser.py` trajectory chooser (production default).
 

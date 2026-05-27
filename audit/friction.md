@@ -14,6 +14,34 @@
 >
 > Last rotation: 2026-05-14 (claude/audit-workflow-friction-XD56a).
 
+## 2026-05-27 (claude/session-EqJuT — H44 staleness fix + wrap)
+
+- `tag: stale-claim-propagated-across-branches-via-labeled-correction`
+  — PI asked for status; my summary cited "H44 corrected: 65%
+  fleet-destroyed-in-flight" sourced from `state/MULTI_BRANCH.md`
+  and `state/mechanism-ledger.md`. PI challenged with a physics
+  intuition ("fleets don't fight in flight"). Investigation: the
+  65% claim was a false positive that **PI themselves had caught
+  and corrected on 2026-05-20 on btjeK** (commit `9994b62`,
+  `audit/2026-05-21-h44-phase1-CORRECTION.md`) — F-flag over-fired
+  on normal arrival+lose-combat. The correction was filed in audit/
+  on btjeK, but the headline number lived on under a "corrected"
+  label in 4 aggregation docs on this branch + HANDOVER.md. Same
+  PI catch made twice on the same finding. **Fix:** when a finding
+  is corrected, the headline claim must be updated wherever cited
+  across all branches' state docs, not just a new audit file filed.
+  Promotion candidate (write-side complement to Rule 44).
+- `tag: summary-cites-audit-doc-without-reading-it` — Same incident,
+  related angle. My summary lifted "65% fleet-destroyed-in-flight"
+  verbatim from the Explore subagent output without cross-checking
+  against the cited `audit/2026-05-21-h44-phase1-CORRECTED.md`
+  (which doesn't exist on this branch; actual filename is
+  `CORRECTION.md` on btjeK). Reading the audit file would have
+  surfaced the mismatch instantly. **Fix:** any claim attached to
+  an audit-doc citation must be cross-checked against file content
+  before being relayed to PI. Promotion candidate (read-side
+  sub-clause of Rule 44).
+
 ## 2026-05-23 (claude/session-EqJuT — simplest Lagrangian agent)
 
 ### Verification follow-up (later same day, no source changes)

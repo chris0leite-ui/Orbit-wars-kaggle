@@ -196,7 +196,7 @@ branches. No code changed. New / edited docs:
 | Track | Lead branch | Best result | Status | Next action |
 |---|---|---|---|---|
 | **A — Analytical chooser** | `strategy-framework-design-OyoYR-rebased` | μ 829.1 (sub 52854094) — both live pushes regressed | knowledge-base 5/20: "axis closed (10 slices, 0 lift)"; architectural bind: analytical needs multi-turn glue OR must replace rollout entirely | Decide: park, or pivot to analytical-leaf-inside-rollout |
-| **B — Hybrid-sim production** | `audit-workflow-performance-btjeK` (production) + `analyze-game-strategy-EpMVP` (phases) | μ 1149.2 (EVICTED) | Live champion lineage. H44 finding 5/20: 65% fleet-destroyed-in-flight — new physics-driven mechanism candidate | (i) hold-feasibility solo validation (btjeK Phase B); (ii) H44 defensive mechanism design; (iii) EpMVP Phase 4/6 commissioning |
+| **B — Hybrid-sim production** | `audit-workflow-performance-btjeK` (production) + `analyze-game-strategy-EpMVP` (phases) | μ 1149.2 (EVICTED) | Live champion lineage. H44 CORRECTED 5/20: original "65% destroyed-in-flight" was a false positive; real diagnosis is A+D=46% chooser ship-sizing in lost episodes (D under-delivered + A source over-drained) | (i) hold-feasibility solo validation (btjeK Phase B); (ii) H44 chooser-sizing mechanism design; (iii) EpMVP Phase 4/6 commissioning |
 | **C — Verify-first + Goal-directed** | `ml-competition-strategy-PFhzM` (+ `precision-physics-engine-ymJkA` substrate) | Phase A Test 3 PASS; wrap-baseline 12/32 = 37.5% (only positive signal vs production) | greedy_expand (60 LOC) tied goal_planner (500 LOC); chooser axis confirmed neutral | Decide: is wrap-baseline-as-veto a viable design? Or is Track-C work substrate-only? |
 
 ## Next-session first actions (ranked by EV / cost)
@@ -231,13 +231,19 @@ of being strong:
 itself need to clear Rule 42 (claim board) and Rule 43 (panel + h2h)
 before submit. Do NOT push without explicit PI sign-off.
 
-### Priority 3 — Track-B physics mechanism design
+### Priority 3 — Track-B chooser ship-sizing mechanism design
 
-H44 finding: 65% of landing-capture failures are fleet-destroyed-in-flight.
-This is a substrate-level signal that the trajectory chooser's
-fleet-safety filter is not catching. Design a defensive mechanism
-(NOT a restriction-tuning constant bump — Rule 40) that emerges from
-the underlying physics.
+H44 CORRECTED diagnosis (btjeK `audit/2026-05-21-h44-phase1-CORRECTION.md`):
+the original "65% destroyed-in-flight" claim was a false positive (F-flag
+over-fired on normal arrival+lose-combat; spot-check of 5 launches found
+all arrived with miss-distance < target radius). Real failure breakdown
+on lost episodes: D under-delivered (24%, sent too few, lost combat) +
+A source over-drained (22%, opp captured source before our fleet landed)
+= A+D=46%. C third-party flip = 17%. These are NOT aim/`predict_fleet_fate`
+issues — they are chooser sizing failures. Design a chooser sizing
+mechanism (NOT a constant bump — Rule 40) that emerges from a correct
+balance of "deliver enough to capture" vs "leave enough to defend source",
+plus an in-flight opp-fleet ledger to catch C-mode races.
 
 ## Pointers
 

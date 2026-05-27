@@ -56,7 +56,7 @@ A/B answers "whether," single-game tracing answers "why." When an A/B disagrees 
 | `scripts/orbit_prediction_check.py` | Orbit-prediction parity vs `env.steps[N]` | seed |
 | `scripts/probe_emits_via_fate.py` *(branch: PFhzM)* | Per-emit physics-waste classification (sun / OOB / comet) | replay |
 | `scripts/inspect_goal_planner_game.py` *(branch: PFhzM)* | Turn-by-turn goal_planner state tracing | seed |
-| `scripts/h44_landing_capture_diagnostic.py` *(branch: btjeK, 360 LOC)* | Fleet-fate tracing for landing-capture failures. Source of the 65% fleet-destroyed-in-flight finding | episode |
+| `scripts/h44_landing_capture_diagnostic.py` *(branch: btjeK, 360 LOC)* | Fleet-fate tracing for landing-capture failures. Original F-flag claim (65% destroyed-in-flight) was a false positive; corrected diagnosis is A+D=46% chooser ship-sizing in lost episodes (see `audit/2026-05-21-h44-phase1-CORRECTION.md` on btjeK) | episode |
 | `scripts/one-game-close-read-for-chain-bonus-mechanism.py` *(branch: phase7)* | Chain-relay trace (negative-result archived) | seed |
 | `scripts/replay_mine.py` (370 LOC) | Extract event streams from replay JSON | replay file |
 | `scripts/classify_losses.py` (337 LOC) | Root-cause tag per loss (comet snipe / planet overrun) | replays |
@@ -67,7 +67,7 @@ A/B answers "whether," single-game tracing answers "why." When an A/B disagrees 
 | `scripts/bench_fast_sim.py` | `fast_sim.step` vs `env.clone+step` speedup ratio | microbench |
 | `scripts/jax_path_search.py` (333 LOC, WIP) | Trajectory pathfinding diagnostic | seed |
 
-The btjeK H44 finding (65% fleet-destroyed-in-flight) came from exactly this loop — A/B suggested a chooser change should help, single-game tracing showed the failures were physics, not strategy.
+The btjeK H44 investigation came from exactly this loop — A/B suggested a chooser change should help, single-game tracing initially pointed at physics, then a PI-prompted spot-check of 5 supposedly-destroyed fleets showed all arrived correctly (F-flag was over-firing on normal arrival+lose-combat). Corrected diagnosis: A+D=46% chooser ship-sizing failures in lost episodes. Lesson: any diagnostic claiming a dominant failure mode must include 3 hand-traced examples that match the diagnosis.
 
 ---
 
