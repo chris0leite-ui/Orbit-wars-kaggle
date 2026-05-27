@@ -479,6 +479,44 @@ class WorldModel:
 
         return best
 
+    def predicted_threat_force(self, planet_id: int, my_id: int,
+                                world, lookahead: int) -> int:
+        """Sum of enemy ship counts that can arrive at `planet_id`
+        within `lookahead` steps. Layers:
+          (a) in-flight ledger arrivals with 0 < eta <= lookahead.
+          (b) potential launches from each stationary enemy planet
+              whose travel ETA from current position <= lookahead.
+        (b) contributes `p.ships` only (current garrison). Adding
+        `p.production * eta` would triple-count the speculative chain
+        opp-grows × opp-spends × opp-aims-here; legacy threat_force in
+        `_source_survives_launch_legacy` also sums ledger only.
+        Companion to `time_to_enemy_threat` (which returns the EARLIEST
+        such arrival) — surfaces the FORCE for garrison-reserve sizing.
+        """
+        total = 0
+        for (eta, owner, sh) in self.ledger.get(planet_id, []):
+            if owner != my_id and 0 < eta <= lookahead and sh > 0:
+                total += int(sh)
+        src_planet = world.planets_by_id.get(planet_id)
+        if src_planet is None:
+            return total
+        omega = float(getattr(world, "omega", 0.0))
+        sx, sy = _position_at(src_planet, omega, 0)
+        for p in world.planets_by_id.values():
+            if p.id == planet_id or p.owner == my_id or p.owner == -1:
+                continue
+            if p.ships <= 0:
+                continue
+            px, py = _position_at(p, omega, 0)
+            dist = ((sx - px) ** 2 + (sy - py) ** 2) ** 0.5
+            v = fleet_speed(int(p.ships))
+            if v <= 0:
+                continue
+            eta_travel = int(math.ceil(dist / v))
+            if eta_travel <= lookahead:
+                total += int(p.ships)
+        return total
+
 
 # ---------------------------------------------------------------------------
 # Comet lifetime — public helper used by ROI scoring sites

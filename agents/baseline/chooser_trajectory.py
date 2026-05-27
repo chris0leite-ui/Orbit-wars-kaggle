@@ -87,6 +87,16 @@ FOLLOWON_RADIUS: float = float(
     os.environ.get("BASELINE_FOLLOWON_RADIUS", "35.0"),
 )
 
+# Score floor for emit (2026-05-27 — concentration knob). Today every
+# candidate with `score > 0.0` fires; in midgame this scatters small
+# marginal launches across every owned planet. `MIN_DELTA` raises the
+# floor so only candidates above a tunable threshold survive — natural
+# concentration without an arbitrary count-cap. Default 0.0 preserves
+# byte-for-byte legacy (strict `> 0.0`); positive values install a
+# strict `>=` floor. Units are PV-discounted delta (see
+# `score_candidate_v4`); tune via local A/B.
+MIN_DELTA: float = float(os.environ.get("BASELINE_MIN_DELTA", "0.0"))
+
 
 def _leader_owner_from_world(world, me: int) -> int | None:
     """Return the player id (other than `me`) with the highest total
@@ -853,7 +863,11 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 wait_N=int(wait_N),
                 model=model,
             )
-            if status == "scored" and score > 0.0:
+            passes = (
+                score > MIN_DELTA if MIN_DELTA == 0.0
+                else score >= MIN_DELTA
+            )
+            if status == "scored" and passes:
                 scored.append((score, src, tgt, ships, angle, wait_N))
                 # Track sources with viable solo (for joint gating).
                 solo_winners.add(int(src.id))
@@ -931,7 +945,11 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         horizon=jh, skip_admissibility=skip_filter,
                     )
                     joint_count += 1
-                    if j_status == "scored" and j_score > 0.0:
+                    j_passes = (
+                        j_score > MIN_DELTA if MIN_DELTA == 0.0
+                        else j_score >= MIN_DELTA
+                    )
+                    if j_status == "scored" and j_passes:
                         scored.append((j_score, "joint", launches))
 
     if not scored:

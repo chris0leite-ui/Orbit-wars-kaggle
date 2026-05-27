@@ -50,6 +50,21 @@ STRATEGIC_STOCKPILE_TICKS = 5 # buffer = N ticks × planet's production
 SAFETY_MARGIN_DRAIN = 1.3      # stricter margin under threat
 STOCKPILE_PROD_MULT = 5        # `floor = N × source production`
 
+# Predicted-threat garrison reserve (2026-05-27). When ALPHA > 0, the
+# source must retain `ceil(ALPHA × predicted_threat_force(src, WINDOW))`
+# ships after the launch. `predicted_threat_force` (lib/world_model.py)
+# sums both in-flight ledger arrivals AND potential launches from
+# stationary opp planets that can reach `src` within WINDOW steps —
+# i.e., the rotating-opp wave that the legacy ledger-only force misses.
+# Default ALPHA=0.0 (clause skipped, no-op). WINDOW=30 matches the
+# 30-tick threat horizon convention used elsewhere in this file.
+THREAT_RESERVE_ALPHA = float(
+    os.environ.get("BASELINE_THREAT_RESERVE_ALPHA", "0.0"),
+)
+THREAT_RESERVE_WINDOW = int(
+    os.environ.get("BASELINE_THREAT_RESERVE_WINDOW", "30"),
+)
+
 # Backward wait grid (2026-05-18): anchored on min_wait_affordable.
 # Replaces forward WAIT_EXTRA_SURPLUS = (0, 5, 12) grid that caused
 # under-emission. Diagnosis: at Roman game (76941081) step 90 with 454
@@ -482,6 +497,23 @@ def _source_survives_launch_legacy(
     the harden-larger→smaller variant regressed live (sub 53083109,
     μ=842.8 vs anchor 1144-1165). Kept as the DEFAULT path; opt in to
     the hardened variant via `BASELINE_DRAIN_HARDEN=1`."""
+    # Predicted-threat garrison reserve (opt-in via env var; default
+    # ALPHA=0.0 → block skipped, legacy decision byte-for-byte). Fires
+    # independent of in-flight ledger force so the clause catches
+    # rotating-opp waves the legacy `threat_force` sum misses.
+    if THREAT_RESERVE_ALPHA > 0.0:
+        growth_during_wait = int(src.production) * int(wait_N)
+        residue_after_launch = (
+            int(src.ships) + growth_during_wait - int(ships)
+        )
+        if residue_after_launch < 0:
+            return False
+        predicted = model.predicted_threat_force(
+            int(src.id), me, world, THREAT_RESERVE_WINDOW,
+        )
+        reserve = int(math.ceil(THREAT_RESERVE_ALPHA * predicted))
+        if residue_after_launch < reserve:
+            return False
     threat_eta = model.time_to_enemy_threat(int(src.id), me, world)
     if threat_eta is None:
         return True
