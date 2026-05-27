@@ -1,12 +1,13 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-20 PM by `claude/review-skills-improvements-moKOR`
-> (n=8 iteration loop attempt; no candidate found, structural-change
-> pivot queued).
-> Prior PM session on this branch (cross-branch consolidation pass)
-> notes preserved under "What just landed (2026-05-20, this session)".
-> Prior writers (per-branch, now superseded): `kaggle-baseline-strategy-lO4mm`,
-> `audit-workflow-performance-btjeK`, `strategy-framework-design-OyoYR-rebased`,
+> Last written: 2026-05-27 by `claude/heuristics-agent-physics-ZvZIm`
+> — Phase 3 (source-defense reservation) shipped, four Phase 4
+> variants falsified, PI ratified hand-back. See `## Day-N
+> 2026-05-27 heuristics-agent-physics-ZvZIm` below.
+> Prior writers (per-branch): `extract-physics-trajectory-Vjaz9`
+> (2026-05-22), `review-skills-improvements-moKOR` (2026-05-20 PM),
+> `kaggle-baseline-strategy-lO4mm`, `audit-workflow-performance-btjeK`,
+> `strategy-framework-design-OyoYR-rebased`,
 > `ml-competition-strategy-PFhzM`, `analyze-game-strategy-EpMVP`.
 
 ## Read order (Rule 44 — mandatory)
@@ -32,6 +33,74 @@
   origin of new Rule 42 (pre-submit cross-branch coordination gate).
 - **Daily submission budget:** 5/day. 5/20 used: 2. 3 slots remain.
 - **Floor-at-risk flag:** **TRUE** — rolling pair is 320 μ below team peak.
+
+## Day-N 2026-05-27 heuristics-agent-physics-ZvZIm
+
+**Session shape:** small-phase greedy-ROI heuristic, iterate-fast.
+PI directive at session start: build a physics-grounded heuristic
+on top of `lib/`, iterate in small phases. PI directive mid-session:
+"think hard, advance on your own, ask before submitting." PI
+directive at session end: "Stop, document, hand over."
+
+**What landed (3 commits ahead of origin/main):**
+
+- `fa7a8ba` — v0 + Phase 2a — physics-grounded greedy ROI + defensive
+  reinforcement of own planets predicted to flip.
+- `0525a14` — Phase 2b — hold-aware ship sizing (pre-fund post-capture
+  defense against the next in-flight enemy wave, net of own production).
+- `d564ae4` — Phase 3 — source-defense reservation (Rule 40 modeling
+  fix). Per-source sendable cap = floor(min predicted post-combat
+  garrison) − 1; doomed sources dump all ships; no-threat sources
+  keep 1 ship behind so a 1-ship snipe can't walk in. Also: tests
+  for the agent end-to-end (`tests/test_heuristic_agent.py`, 3
+  green), single-game tracer (`scripts/trace_heuristic.py`,
+  module-import fix for bundled `@dataclass` opponents), per-step
+  candidate-enumeration dumper (`scripts/debug_heuristic_t98.py`).
+
+**Result:** vs v7_0 at n=32, 5/32 (v0+2a+2b) → 7-8/32 (Phase 3),
+~+5–10pp directional. Not confirmed lift per Rule 45 (Wilson-lo
+0.09–0.13). Projected μ ≈ 800–900 vs rolling pair floor μ=1078
+→ Rule 42 blocks any submission.
+
+**Falsified this session (in the agent docstring; do NOT re-add
+without n=64+ evidence):**
+
+- 2-source joint capture aligned at the LATER eta of the two
+  sources (4/32; opportunity cost of double-committing sources).
+- Multi-wave `time_to_hold` cap via in-flight ledger sim (6/32;
+  over-discounts captures the agent could reinforce later).
+- Idle drain — forward leftover ships to the most-frontier own
+  planet (0/32; recipient often itself threatened, ships land
+  into a doomed garrison).
+- keep-0-ships-behind on no-threat sources (5/32 regression of
+  Phase 3 baseline).
+
+**Pattern (recorded in docstring):** modeling fixes that PREVENT
+bad launches (source reservation, hold-aware sizing) work;
+modeling fixes that ENABLE more launches (joint, drain, multi-wave)
+self-harm in this agent's design.
+
+**Rule 37 triggered:** the four Phase 4 variants above all live on
+the "modeling fix that enables more launches" axis. Axis cap hit.
+
+**Next-session first action if anyone resumes this branch:** the
+heuristic axis here is *capped*. Pivot direction (per session-end
+options offered to PI; PI declined all in favour of hand-back):
+depth-1 lookahead (different axis, biggest expected lift),
+opp-launch reactive snipe (novel axis), or merge Phase 3's source-
+reservation idea into Track B's production lineage as an opt-in
+chooser predicate.
+
+**Files added this session:**
+
+- `agents/heuristic/main.py` (rewritten across 3 commits — ~370 LOC).
+- `agents/heuristic/__init__.py` (empty marker).
+- `tests/test_heuristic_agent.py` (3 tests, all green).
+- `scripts/trace_heuristic.py` (per-turn single-game tracer).
+- `scripts/debug_heuristic_t98.py` (per-step candidate dump).
+- `audit/2026-05-27-postmortem-heuristics-agent-physics-ZvZIm.md`
+  (decision-quality postmortem; 3 promotion candidates drafted,
+  PI ratified "promote none" this cycle).
 
 ## Day-N PM extract-physics-trajectory-Vjaz9 (2026-05-22)
 
