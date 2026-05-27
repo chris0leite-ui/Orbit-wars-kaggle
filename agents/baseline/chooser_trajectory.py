@@ -72,6 +72,21 @@ NEUTRAL_BONUS_WEIGHT: float = float(os.environ.get("BASELINE_NEUTRAL_BONUS", "1.
 NEUTRAL_EARLY_HORIZON: int = int(os.environ.get("BASELINE_NEUTRAL_EARLY_HORIZON", "50"))
 NEUTRAL_EARLY_EXTRA: float = float(os.environ.get("BASELINE_NEUTRAL_EARLY_EXTRA", "1.0"))
 
+# Follow-on hold bonus (Fix 2b — 2026-05-27 plan). Opt-in scoring
+# bonus on captures that enable a profitable follow-on launch from the
+# newly-captured base. Surfaces the B3/B4 modeling-correct snipe
+# helpers (`_best_followon` / `_followon_hold_estimate` in
+# `lib/missions/snipe.py`) into the live trajectory chooser path —
+# previously B3/B4 were in dead code from this agent's perspective.
+# Default 0.0 (no-op); bundle wrapper opts in once local A/B confirms
+# lift. Calibrated against `CAPTURE_REWARD_WEIGHT=0.05`.
+FOLLOWON_BONUS_WEIGHT: float = float(
+    os.environ.get("BASELINE_FOLLOWON_BONUS", "0.0"),
+)
+FOLLOWON_RADIUS: float = float(
+    os.environ.get("BASELINE_FOLLOWON_RADIUS", "35.0"),
+)
+
 
 def _leader_owner_from_world(world, me: int) -> int | None:
     """Return the player id (other than `me`) with the highest total
@@ -247,104 +262,6 @@ JOINT_LIFT_USED_TGTS: bool = (
 )
 
 
-def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
-                    me: int, world, ledger: dict,
-                    ) -> tuple[float, str, int | None]:
-    """Score a single candidate launch.
-
-    Returns `(score, status, fate_step)`:
-        `status` ∈ {'captured', 'reinforced', 'bounced', 'sun', 'oob',
-                    'timeout', 'comet_collision', 'comet_expired',
-                    'path_blocked'}
-        `fate_step` = the tick of the resolving event (None if dropped pre-flight).
-    """
-    fate = predict_fleet_fate(src, tgt, angle, ships, world)
-
-    if fate.outcome == "sun":
-        return (float("-inf"), "sun", fate.step)
-    if fate.outcome == "oob":
-        return (float("-inf"), "oob", fate.step)
-    if fate.outcome == "timeout":
-        return (float("-inf"), "timeout", fate.step)
-    if fate.outcome == "planet":
-        # Hit a non-target planet first. Could be a comet collision
-        # (engine treats comets as planets) — distinguish via comet_ids.
-        if fate.hit_planet_id in world.comet_ids:
-            return (float("-inf"), "comet_collision", fate.step)
-        return (float("-inf"), "path_blocked", fate.step)
-
-    # outcome == "target": fleet reaches the intended planet at fate.step.
-    eta = int(fate.step)
-
-    # Comet-expired guard: if the target IS a comet and runs out of
-    # path at/before our arrival, the planet won't exist for capture.
-    if int(tgt.id) in world.comet_ids:
-        life = comet_remaining_lifetime(int(tgt.id), world)
-        if life is None or life <= eta:
-            return (float("-inf"), "comet_expired", eta)
-
-    # Sparse single-tick combat prediction. Include our hypothetical
-    # arrival in the ledger so resolve_arrivals handles same-tick
-    # combat correctly with any other fleets due that tick.
-    base_arrivals = list(ledger.get(int(tgt.id), []))
-    our_arrival = (eta, int(me), int(ships))
-    pred_owner, _pred_garrison = predict_garrison_at(
-        tgt, eta, base_arrivals + [our_arrival],
-    )
-
-    if pred_owner != me:
-        # We didn't end up holding the planet — bounce / under-sized.
-        return (-WASTE_WEIGHT * ships, "bounced", eta)
-
-    # Leader-focus bonus: 4P-only (in 2P _leader_owner_from_world returns None).
-    bonus = 1.0
-    if LEADER_FOCUS_WEIGHT != 1.0:
-        leader = _leader_owner_from_world(world, me)
-        if leader is not None and int(tgt.owner) == int(leader):
-            bonus = LEADER_FOCUS_WEIGHT
-
-    # Neutral-capture bonus: applies when the target is currently neutral
-    # (tgt.owner == -1). Optional opening-phase extra multiplier for the
-    # first NEUTRAL_EARLY_HORIZON steps to accelerate territorial grab.
-    if NEUTRAL_BONUS_WEIGHT != 1.0 and int(tgt.owner) == -1:
-        bonus *= NEUTRAL_BONUS_WEIGHT
-        if int(world.step) < NEUTRAL_EARLY_HORIZON:
-            bonus *= NEUTRAL_EARLY_EXTRA
-
-    # We hold the planet at eta. Was it ours before our arrival?
-    # If the planet was already me (with no enemy interference), this
-    # is reinforcement — no extra credit. Otherwise it's a capture.
-    if int(tgt.owner) == me:
-        # Check whether anything would flip it away from us between now
-        # and eta-1 (in which case our arrival is a recapture).
-        pred_owner_without_us, _ = predict_garrison_at(
-            tgt, eta, base_arrivals,
-        )
-        if pred_owner_without_us == me:
-            # Still ours without us — pure reinforcement.
-            return (0.0, "reinforced", eta)
-        # We recaptured a planet that would otherwise have been lost.
-        # Credit the recapture like a fresh capture (production × time).
-        time_remaining = max(0, EPISODE_STEPS_TOTAL - int(world.step) - eta)
-        held = time_remaining
-        if int(tgt.id) in world.comet_ids:
-            life = comet_remaining_lifetime(int(tgt.id), world)
-            if life is not None:
-                held = min(held, max(0, life - eta))
-        return (CAPTURE_REWARD_WEIGHT * float(tgt.production) * float(held) * bonus,
-                "captured", eta)
-
-    # Fresh capture (planet was not ours).
-    time_remaining = max(0, EPISODE_STEPS_TOTAL - int(world.step) - eta)
-    held = time_remaining
-    if int(tgt.id) in world.comet_ids:
-        life = comet_remaining_lifetime(int(tgt.id), world)
-        if life is not None:
-            held = min(held, max(0, life - eta))
-    return (CAPTURE_REWARD_WEIGHT * float(tgt.production) * float(held) * bonus,
-            "captured", eta)
-
-
 def score_candidate_dyn(snap_base, src, tgt, ships: int, angle: float,
                         me: int, num_seats: int, world,
                         settle_turns: int = SETTLE_TURNS,
@@ -506,6 +423,7 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                        horizon: int,
                        skip_admissibility: bool = False,
                        wait_N: int = 0,
+                       model=None,
                        ) -> tuple[float, str, int | None]:
     """v4 scoring: same admissibility filter + fast_sim rollout as v3,
     but the leaf is `favor_fn` instead of a binary owner-check, and the
@@ -584,6 +502,51 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
     delta = leaf - baseline_favors[horizon]
+
+    # Plumb NEUTRAL_BONUS + LEADER_FOCUS into the live scoring path.
+    # The earlier dead-code path (`score_candidate`, v2 static-garrison
+    # scorer) read these env vars but was never called; v4 ignored them.
+    # Multiply POSITIVE deltas only — the bonus is a tilt toward
+    # preferred targets, not a punishment for bad candidates that
+    # happen to be neutral/leader. See plan
+    # `/root/.claude/plans/fix-one-and-two-cuddly-dewdrop.md` Fix 1.
+    if delta > 0.0:
+        bonus = 1.0
+        if NEUTRAL_BONUS_WEIGHT != 1.0 and int(tgt.owner) == -1:
+            bonus *= NEUTRAL_BONUS_WEIGHT
+            if int(world.step) < NEUTRAL_EARLY_HORIZON:
+                bonus *= NEUTRAL_EARLY_EXTRA
+        if LEADER_FOCUS_WEIGHT != 1.0:
+            leader = _leader_owner_from_world(world, me)
+            if leader is not None and int(tgt.owner) == int(leader):
+                bonus *= LEADER_FOCUS_WEIGHT
+        delta *= bonus
+
+    # Follow-on hold bonus (Fix 2b — opt-in, env-gated). Surfaces the
+    # B3/B4 modeling-correct snipe helpers (`_best_followon` predicts
+    # follow-on + target positions at our arrival). Off by default
+    # (`BASELINE_FOLLOWON_BONUS=0.0`); the bundle wrapper opts in once
+    # the A/B confirms lift. Restricted to fresh captures
+    # (`tgt.owner != me`) and positive-delta candidates so the bonus
+    # only sweetens already-attractive captures.
+    if (FOLLOWON_BONUS_WEIGHT > 0.0 and delta > 0.0
+            and int(tgt.owner) != me):
+        try:
+            from lib.missions.snipe import _best_followon  # local: heavy import
+            foothold = _best_followon(
+                tgt, world, model, me, FOLLOWON_RADIUS,
+                arrival_eta=int(eta),
+            )
+        except Exception:
+            foothold = None
+        if foothold is not None:
+            _f_target, _f_cost, _f_eta_from_t, f_hold = foothold
+            delta += (
+                FOLLOWON_BONUS_WEIGHT
+                * float(_f_target.production)
+                * float(f_hold)
+            )
+
     return (delta, "scored", eta)
 
 
@@ -661,7 +624,26 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         snap = fs_step(snap, actions, in_place=True)
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
-    return (leaf - baseline_favors[horizon], "scored")
+    delta = leaf - baseline_favors[horizon]
+
+    # NEUTRAL_BONUS / LEADER_FOCUS for joints: apply when EVERY leg
+    # targets the preferred owner. This keeps the joint Δ unitary
+    # without per-leg attribution (the joint EV is one shared rollout).
+    if delta > 0.0 and launches:
+        bonus = 1.0
+        if NEUTRAL_BONUS_WEIGHT != 1.0:
+            if all(int(L[1].owner) == -1 for L in launches):
+                bonus *= NEUTRAL_BONUS_WEIGHT
+                if int(world.step) < NEUTRAL_EARLY_HORIZON:
+                    bonus *= NEUTRAL_EARLY_EXTRA
+        if LEADER_FOCUS_WEIGHT != 1.0:
+            leader = _leader_owner_from_world(world, me)
+            if (leader is not None
+                    and all(int(L[1].owner) == int(leader) for L in launches)):
+                bonus *= LEADER_FOCUS_WEIGHT
+        delta *= bonus
+
+    return (delta, "scored")
 
 
 def predict_opp_responses(world, me: int, num_seats: int,
@@ -869,6 +851,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 horizon=int(prop_horizon),
                 skip_admissibility=skip_filter,
                 wait_N=int(wait_N),
+                model=model,
             )
             if status == "scored" and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))

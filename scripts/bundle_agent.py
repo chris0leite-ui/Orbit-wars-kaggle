@@ -48,6 +48,11 @@ DEFAULT_LIB_ORDER = [
     "combat",
     "world_model",
     "intent",
+    # Lazy-imported from lib/trajectory.py inside `_table_window_or_none`
+    # when `_kinematic_table_enabled()`. Static import-scan in the
+    # bundler treats it as required. Must precede `trajectory` so its
+    # symbols are in scope before trajectory references it.
+    "kinematic_table",
     "trajectory",
     "mechanism",
     "mission",
