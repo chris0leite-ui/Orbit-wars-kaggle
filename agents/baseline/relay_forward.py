@@ -124,14 +124,7 @@ def emit_relay_forward(moves, planets, my_id: int, world, model) -> list:
             continue
         if fleet_speed(ships_to_send) < min_speed:
             continue
-        # Source-survival: in-flight check + potential-counter walk.
-        # Was `incoming_enemy_eta is not None` (in-flight only).
-        from agents.baseline.threat_model import (
-            source_safe_against_potential_counter,
-        )
-        if not source_safe_against_potential_counter(
-            src, ships_to_send, 0, world, model, my_id,
-        ):
+        if model.incoming_enemy_eta(int(src.id), my_id) is not None:
             continue
 
         best_total_eta = None

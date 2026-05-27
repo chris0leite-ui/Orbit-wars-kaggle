@@ -56,17 +56,6 @@ os.environ.setdefault("BASELINE_JOINT", "1")
 os.environ.setdefault("BASELINE_MAX_ETA", "20")
 os.environ.setdefault("BASELINE_MIN_SHIPS_LAUNCH", "10")
 
-# Orbital safety (B1-B7 series, shipped in sub 52912707 μ=1165.4 — peak).
-# Activates arrival-position-aware distance math in
-# _target_holdable_after_capture (proposer.py), _target_cost_parity_ok,
-# time_to_enemy_threat (lib/world_model.py), and _followon_hold_estimate
-# (lib/missions/snipe.py). Without this, "is the captured target
-# holdable?" measures opp->target distance using CURRENT positions —
-# orbiting targets that rotate INTO opp range by arrival get false
-# "holdable" verdicts and we capture into a recapture. Same shipped-but-
-# never-enabled pattern as the speed-discipline filter.
-os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
-
 # Pass-2 relay / forward-staging (2026-05-27). After all 5 existing post-
 # passes (threat_reinforcements / drain_idle_rear / drain_stagnant_rear /
 # drain_combat_stack / sniper_strikes) run, sweep remaining idle planets
@@ -212,7 +201,6 @@ from lib.world_model import WorldModel
 from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS
 from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON
 from agents.baseline.relay_forward import emit_relay_forward
-from agents.baseline.threat_model import source_safe_against_potential_counter
 
 
 _PARITY_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
@@ -650,6 +638,9 @@ def drain_stagnant_rear(moves, planets, my_id: int, world, model) -> list:
             break
         if int(src.id) in used_srcs:
             continue
+        # Hard gate: zero inbound enemy fleet ETAs.
+        if model.incoming_enemy_eta(int(src.id), my_id) is not None:
+            continue
         prod = int(src.production)
         expected_reserve = max(prod * STAGNANT_RESERVE_MULT,
                                STAGNANT_RESERVE_FLOOR)
@@ -672,14 +663,6 @@ def drain_stagnant_rear(moves, planets, my_id: int, world, model) -> list:
         target = candidates[0][1]
         ships_to_send = int(src.ships) - expected_reserve
         if ships_to_send < 1:
-            continue
-        # Source-survival: in-flight check + potential-counter walk.
-        # Was `incoming_enemy_eta is not None` (in-flight only); the new
-        # check projects opp counter-launch force at arrival of the
-        # cheapest potential counter, then asks "can src defend?".
-        if not source_safe_against_potential_counter(
-            src, ships_to_send, 0, world, model, my_id,
-        ):
             continue
         angle = math.atan2(float(target.y) - float(src.y),
                            float(target.x) - float(src.x))
@@ -738,16 +721,14 @@ def drain_combat_stack(moves, planets, my_id: int, world, model) -> list:
             break
         if int(src.id) in used_srcs:
             continue
+        if model.incoming_enemy_eta(int(src.id), my_id) is not None:
+            continue
         prod = int(src.production)
         reserve = max(prod * STAGNANT_RESERVE_MULT, STAGNANT_RESERVE_FLOOR)
         if int(src.ships) <= STAGNANT_THRESHOLD_MULT * reserve:
             continue
         ships_to_send = int(src.ships) - reserve
         if ships_to_send < 1:
-            continue
-        if not source_safe_against_potential_counter(
-            src, ships_to_send, 0, world, model, my_id,
-        ):
             continue
         target = min(
             contested,
@@ -828,13 +809,11 @@ def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
                 continue
             if int(src.ships) < SNIPER_MIN_SOURCE_SHIPS:
                 continue
+            if model.incoming_enemy_eta(int(src.id), my_id) is not None:
+                continue
             src_reserve = max(int(src.production) * 5, 10)
             available = int(src.ships) - src_reserve
             if available < SNIPER_MIN_SOURCE_SHIPS:
-                continue
-            if not source_safe_against_potential_counter(
-                src, available, 0, world, model, my_id,
-            ):
                 continue
             angle = math.atan2(float(tgt.y) - float(src.y),
                                float(tgt.x) - float(src.x))
