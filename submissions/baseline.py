@@ -9771,41 +9771,58 @@ def wait_band(wait_N: int) -> int:
     return 1 if wait_N <= 7 else 2
 
 
-def _source_survives_launch(
+def _source_survives_launch_legacy(
+    src, ships: int, wait_N: int, world, model, me: int,
+) -> bool:
+    """Pre-2026-05-27 source-drain predicate. Restored verbatim because
+    the harden-larger→smaller variant regressed live (sub 53083109,
+    μ=842.8 vs anchor 1144-1165). Kept as the DEFAULT path; opt in to
+    the hardened variant via `BASELINE_DRAIN_HARDEN=1`."""
+    threat_eta = model.time_to_enemy_threat(int(src.id), me, world)
+    if threat_eta is None:
+        return True
+    threat_force = sum(
+        sh
+        for (eta_arr, owner, sh) in model.ledger.get(int(src.id), [])
+        if owner != me and eta_arr <= int(threat_eta) + WAVE_LOOKAHEAD
+    )
+    if threat_force <= 0:
+        return True
+    if int(wait_N) >= int(threat_eta):
+        return False
+    growth_during_wait = int(src.production) * int(wait_N)
+    residue_after_launch = int(src.ships) + growth_during_wait - int(ships)
+    if residue_after_launch < 0:
+        return False
+    growth_after_launch_to_threat = (
+        int(src.production) * (int(threat_eta) - int(wait_N))
+    )
+    garrison_at_threat = residue_after_launch + growth_after_launch_to_threat
+    return garrison_at_threat >= int(threat_force) + 1
+
+
+def _source_survives_launch_hardened(
     src, ships: int, wait_N: int, world, model, me: int,
     tgt=None,
 ) -> bool:
-    """Source-drain protection. Returns True if `src` survives sending
-    `ships` ships at step `wait_N`.
+    """Source-drain protection with larger→smaller hardening
+    (2026-05-27, PI direction). Three extra clauses when
+    `src.production > tgt.production`:
 
-    Base predicate (pre-2026-05-27): True when no inbound threat, OR
-    threat is potential-only (let the rollout handle), OR the residue
-    + production accrual covers the in-flight threat force + 1.
+      Clause A (stockpile floor). `residue >= STOCKPILE_PROD_MULT
+        × src.production` even with no inbound threat.
 
-    Larger→smaller hardening (2026-05-27, PI direction). When
-    `tgt is not None` AND `src.production > tgt.production` — i.e.
-    we'd be sending a fleet from a higher-prod planet to a lower-prod
-    one — three extra clauses fire to prevent losing the more
-    valuable source:
-
-      Clause A (stockpile floor). Regardless of threat, residue must
-        cover `STOCKPILE_PROD_MULT × src.production` ships. Catches
-        the "drain home to capture a tiny neutral" case where there's
-        no inbound threat in the ledger today.
-
-      Clause B (stricter margin). Under threat, require
-        `SAFETY_MARGIN_DRAIN × threat_force` residue, not just
+      Clause B (stricter margin). Under threat,
+        `SAFETY_MARGIN_DRAIN × threat_force` instead of
         `threat_force + 1`.
 
-      Clause C (potential-launch coverage). When the ledger has no
-        in-flight threat but `time_to_enemy_threat` (which considers
-        potential launches) returned a non-None eta, fold in the
-        biggest single opp's ship count as a conservative
-        potential-threat estimate.
+      Clause C (potential-launch coverage). Folds 50% of the biggest
+        single opp's garrison into threat_force when ledger has no
+        in-flight threat but `time_to_enemy_threat` flagged a potential.
 
-    Anchored on the PI directive 2026-05-27: "we never lose a large
-    important planet because we send ships somewhere when there is
-    an opponent that could capture us after we lower our garrison."
+    Live A/B 2026-05-27: this variant lost 2/32 vs the legacy
+    predicate (sub 53083109 μ=842.8 vs peer 1144-1165). DEFAULT OFF.
+    Opt in via `BASELINE_DRAIN_HARDEN=1` once a finer tuning is found.
     """
     threat_eta = model.time_to_enemy_threat(int(src.id), me, world)
     growth_during_wait = int(src.production) * int(wait_N)
@@ -9836,13 +9853,10 @@ def _source_survives_launch(
     # Clause C: potential-launch protection for larger→smaller.
     if threat_force <= 0:
         if not is_larger_to_smaller:
-            # Original behaviour: let the rollout score potential-only.
             return True
         potential = _largest_opp_potential_force(src, world, me)
         if potential <= 0:
             return True
-        # 0.5× because the biggest single opp launching everything is a
-        # worst-case bound; the realistic threat is roughly half of that.
         threat_force = int(0.5 * potential)
         if threat_force <= 0:
             return True
@@ -9862,6 +9876,22 @@ def _source_survives_launch(
     return garrison_at_threat >= required
 
 
+def _source_survives_launch(
+    src, ships: int, wait_N: int, world, model, me: int,
+    tgt=None,
+) -> bool:
+    """Dispatch — legacy by default, hardened when
+    `BASELINE_DRAIN_HARDEN=1`. Default-legacy because the hardened
+    variant regressed live (sub 53083109)."""
+    if os.environ.get("BASELINE_DRAIN_HARDEN", "0").strip() == "1":
+        return _source_survives_launch_hardened(
+            src, ships, wait_N, world, model, me, tgt=tgt,
+        )
+    return _source_survives_launch_legacy(
+        src, ships, wait_N, world, model, me,
+    )
+
+
 def _largest_opp_potential_force(src, world, me: int) -> int:
     """Largest single-opp garrison currently held — a conservative
     single-opp bound on the worst-case potential launch at `src`.
@@ -9878,36 +9908,104 @@ def _largest_opp_potential_force(src, world, me: int) -> int:
     return best
 
 
-def _target_holdable_after_capture(
+def _target_holdable_after_capture_legacy(
     src, tgt, ships: int, wait_N: int, eta: int, world, model, me: int,
 ) -> bool:
-    """Tier 2 hold-feasibility filter.
+    """Pre-2026-05-27 nearest-opp predicate. Restored verbatim — the
+    v2 all-opp variant shipped with sub 53083109 (μ=842.8 vs anchor
+    1144-1165) was net negative. DEFAULT path; opt in to v2 via
+    `BASELINE_HOLDABILITY_V2=1`."""
+    if int(tgt.owner) == me:
+        return True
 
-    "Will the target stay ours after the cheapest opp recapture?"
-    Iterates EVERY opp with `ships >= MIN_COUNTER_SHIPS` (not just the
-    nearest), computes each opp's true recapture cost via a small
-    fixed-point on `(opp_needed, opp_speed, t_op)`, and rejects the
-    candidate if ANY opp can both afford and overwhelm our
-    garrison-at-recapture.
+    arrival_step = int(wait_N) + int(eta)
+    if int(tgt.owner) == -1:
+        tgt_def_at_arrival = int(tgt.ships)
+    else:
+        tgt_def_at_arrival = int(tgt.ships) + int(tgt.production) * arrival_step
 
-    Three correctness fixes vs the pre-2026-05-27 nearest-only
-    version:
+    delivered = int(ships) - tgt_def_at_arrival
+    if delivered < 1:
+        return True
 
-    (1) ALL opps iterated. Previously picked `nearest_opp` purely by
-        distance — a stronger but slightly-further opp was silently
-        ignored.
+    MIN_COUNTER_SHIPS = 20
+    SAFETY_MARGIN = 1.5
 
-    (2) `opp_speed` computed from `opp_needed` (the ships opp would
-        actually launch), not from `opp.ships` (full garrison).
-        `fleet_speed` is monotone increasing in ships; using the
-        garrison overestimated launch speed → underestimated `t_op`
-        → underestimated `garrison_at_recapture` → mis-modeled the
-        opp.
+    orbital_safety = os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1"
+    omega = float(getattr(world, "omega", 0.0))
+    use_predict = orbital_safety and omega != 0.0 and arrival_step > 0
+    if use_predict:
+        tgt_x, tgt_y = _position_at(tgt, omega, arrival_step)
+    else:
+        tgt_x, tgt_y = float(tgt.x), float(tgt.y)
 
-    (3) B7-style fixed-point on `t_op` for orbiting targets. The
-        target rotates during opp's transit; the rendezvous point
-        shifts. Mirrors `lib/world_model.time_to_enemy_threat`
-        :464-474.
+    nearest_opp = None
+    nearest_opp_dist = float("inf")
+    for opp in world.planets_by_id.values():
+        if int(opp.owner) == me or int(opp.owner) == -1:
+            continue
+        if int(opp.id) == int(tgt.id):
+            continue
+        if int(opp.ships) < MIN_COUNTER_SHIPS:
+            continue
+        if use_predict:
+            ox, oy = _position_at(opp, omega, arrival_step)
+        else:
+            ox, oy = float(opp.x), float(opp.y)
+        d = math.hypot(ox - tgt_x, oy - tgt_y)
+        if d < nearest_opp_dist:
+            nearest_opp_dist = d
+            nearest_opp = opp
+    if nearest_opp is None:
+        return True
+
+    nearest_us_dist = float("inf")
+    for ally in world.planets_by_id.values():
+        if int(ally.owner) != me:
+            continue
+        if int(ally.id) == int(tgt.id):
+            continue
+        if use_predict:
+            ax, ay = _position_at(ally, omega, arrival_step)
+        else:
+            ax, ay = float(ally.x), float(ally.y)
+        d = math.hypot(ax - tgt_x, ay - tgt_y)
+        if d < nearest_us_dist:
+            nearest_us_dist = d
+    if nearest_us_dist <= nearest_opp_dist:
+        return True
+
+    flight = (
+        nearest_opp_dist - float(nearest_opp.radius)
+        - float(tgt.radius) - 0.1
+    )
+    if flight <= 0:
+        return True
+    opp_speed = fleet_speed(int(nearest_opp.ships))
+    if opp_speed <= 0:
+        return True
+    t_op = int(math.ceil(flight / opp_speed))
+    garrison_at_recapture = delivered + int(tgt.production) * t_op
+    counter_force = (
+        int(nearest_opp.ships)
+        + int(nearest_opp.production) * (arrival_step + t_op)
+    )
+    if counter_force >= SAFETY_MARGIN * garrison_at_recapture + 1:
+        return False
+    return True
+
+
+def _target_holdable_after_capture_v2(
+    src, tgt, ships: int, wait_N: int, eta: int, world, model, me: int,
+) -> bool:
+    """v2 hold-feasibility filter — iterates EVERY opp with ships >=
+    MIN_COUNTER_SHIPS, computes recapture cost via fixed-point on
+    `(opp_needed, opp_speed, t_op)`, B7-style orbital fixed-point.
+
+    Lost A/B vs the legacy predicate (sub 53083109 panel 2/32 vs
+    anchor). Kept available behind `BASELINE_HOLDABILITY_V2=1` for
+    future re-tuning (over-rejected too many marginal captures —
+    needs lower SAFETY_MARGIN or smarter affordability check).
     """
     if int(tgt.owner) == me:
         return True
@@ -10028,6 +10126,21 @@ def _target_holdable_after_capture(
     return True
 
 
+def _target_holdable_after_capture(
+    src, tgt, ships: int, wait_N: int, eta: int, world, model, me: int,
+) -> bool:
+    """Dispatch — legacy by default, v2 (all-opp + fixed-point) when
+    `BASELINE_HOLDABILITY_V2=1`. Default-legacy because v2 regressed
+    live (sub 53083109 panel: 2/32 wins vs anchor, Wlo=0.017)."""
+    if os.environ.get("BASELINE_HOLDABILITY_V2", "0").strip() == "1":
+        return _target_holdable_after_capture_v2(
+            src, tgt, ships, wait_N, eta, world, model, me,
+        )
+    return _target_holdable_after_capture_legacy(
+        src, tgt, ships, wait_N, eta, world, model, me,
+    )
+
+
 def _cost_parity_margin() -> float:
     """Read COST_PARITY_MARGIN from env, falling back to the default constant."""
     raw = os.environ.get("COST_PARITY_MARGIN", "")
@@ -10126,34 +10239,45 @@ def _target_cost_parity_ok(
         flight = d - float(opp.radius) - float(tgt.radius) - 0.1
         if flight <= 0:
             continue
-        # Fixed-point on opp_needed (matches `_target_holdable_after_capture`):
-        # speed estimated from the ships opp actually launches, not from
-        # the full garrison. Otherwise `fleet_speed(opp.ships)` (monotone
-        # increasing) inflated launch speed and underestimated cost.
-        opp_needed = MIN_FLEET_SIZE
-        for _ in range(3):
-            opp_speed = fleet_speed(opp_needed)
-            if opp_speed <= 0:
-                break
-            opp_eta_after_landing = int(math.ceil(flight / opp_speed))
-            if use_predict and opp_eta_after_landing > 0:
-                for _ in range(3):
-                    tx_k, ty_k = _position_at(
-                        tgt, omega, arrival_step + opp_eta_after_landing,
-                    )
-                    dist_k = math.hypot(tx_k - ox, ty_k - oy)
-                    new_eta = int(math.ceil(dist_k / opp_speed))
-                    if abs(new_eta - opp_eta_after_landing) <= 1:
+        # Default (LEGACY): `fleet_speed(opp.ships)` — pre-fix shape.
+        # Restored after the v2 fixed-point version regressed live
+        # (sub 53083109 panel 2/32 vs anchor). Opt in to v2 via
+        # `BASELINE_HOLDABILITY_V2=1` (shared env with the holdability
+        # filter — they were co-shipped).
+        if os.environ.get("BASELINE_HOLDABILITY_V2", "0").strip() == "1":
+            opp_needed = MIN_FLEET_SIZE
+            for _ in range(3):
+                opp_speed = fleet_speed(opp_needed)
+                if opp_speed <= 0:
+                    break
+                opp_eta_after_landing = int(math.ceil(flight / opp_speed))
+                if use_predict and opp_eta_after_landing > 0:
+                    for _ in range(3):
+                        tx_k, ty_k = _position_at(
+                            tgt, omega, arrival_step + opp_eta_after_landing,
+                        )
+                        dist_k = math.hypot(tx_k - ox, ty_k - oy)
+                        new_eta = int(math.ceil(dist_k / opp_speed))
+                        if abs(new_eta - opp_eta_after_landing) <= 1:
+                            opp_eta_after_landing = new_eta
+                            break
                         opp_eta_after_landing = new_eta
-                        break
-                    opp_eta_after_landing = new_eta
+                garrison_at_recapture = (
+                    delivered + int(tgt.production) * opp_eta_after_landing
+                )
+                new_opp_needed = int(math.ceil(garrison_at_recapture)) + 1
+                if new_opp_needed == opp_needed:
+                    break
+                opp_needed = new_opp_needed
+        else:
+            opp_speed = fleet_speed(int(opp.ships))
+            if opp_speed <= 0:
+                continue
+            opp_eta_after_landing = int(math.ceil(flight / opp_speed))
             garrison_at_recapture = (
                 delivered + int(tgt.production) * opp_eta_after_landing
             )
-            new_opp_needed = int(math.ceil(garrison_at_recapture)) + 1
-            if new_opp_needed == opp_needed:
-                break
-            opp_needed = new_opp_needed
+            opp_needed = int(math.ceil(garrison_at_recapture)) + 1
         opp_launch_budget = (
             int(opp.ships) + int(opp.production) * arrival_step
         )

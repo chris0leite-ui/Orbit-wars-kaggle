@@ -48,9 +48,13 @@ def _world(planets, my_id=0):
 
 
 @pytest.fixture(autouse=True)
-def _orbital_safety_off(monkeypatch):
-    # Keep these tests focused on the multi-opp + speed-fixed-point
-    # fix; orbital safety is covered separately.
+def _opt_in_to_v2_holdability(monkeypatch):
+    # `_target_holdable_after_capture` defaults to the legacy nearest-
+    # only predicate (2026-05-27 revert after sub 53083109 panel FAIL).
+    # These tests exercise the v2 all-opp + fixed-point variant —
+    # opt-in via BASELINE_HOLDABILITY_V2=1.
+    monkeypatch.setenv("BASELINE_HOLDABILITY_V2", "1")
+    # Keep orbital safety off — tested separately.
     monkeypatch.setenv("BASELINE_ORBITAL_SAFETY", "0")
 
 

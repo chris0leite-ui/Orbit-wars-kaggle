@@ -27,6 +27,15 @@ from lib.intent import World
 from lib.world_model import WorldModel
 
 
+@pytest.fixture(autouse=True)
+def _opt_in_to_drain_harden(monkeypatch):
+    # `_source_survives_launch` defaults to legacy (2026-05-27 revert
+    # after sub 53083109 panel FAIL). These tests exercise the
+    # larger→smaller hardened variant — opt-in via
+    # BASELINE_DRAIN_HARDEN=1.
+    monkeypatch.setenv("BASELINE_DRAIN_HARDEN", "1")
+
+
 def _planet(pid, owner, x, y, *, ships=20, production=2, radius=1.5):
     return SimpleNamespace(
         id=pid, owner=owner, x=x, y=y, radius=radius,
