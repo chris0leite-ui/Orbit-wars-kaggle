@@ -26,8 +26,10 @@ from lib.world_model import WorldModel, fleet_target_planet
 
 def load_opp(path: str):
     if path.endswith(".py"):
-        spec = importlib.util.spec_from_file_location("opp_mod", path)
+        name = f"_traceopp_{os.path.splitext(os.path.basename(path))[0]}"
+        spec = importlib.util.spec_from_file_location(name, path)
         mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod  # register before exec for @dataclass bundles
         spec.loader.exec_module(mod)
         return mod.agent
     raise ValueError("only .py opponents")

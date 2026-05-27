@@ -2,40 +2,55 @@
 
 Pipeline (per turn, deterministic):
   1. World.from_obs + WorldModel — board snapshot + per-planet arrival ledger.
-  2. Enumerate candidate launches:
-       OFFENSE: (my_src, enemy_or_neutral_tgt) — capture if ROI > 0.
-       DEFENSE: (my_src, my_threatened_planet) — reinforce if predicted to
-                flip within DEFEND_HORIZON turns and we can plug the deficit
-                before the flip step.
-     Each candidate:
+  2. Enumerate candidate launches as (roi, tgt_id, fleets) tuples, where
+     `fleets` is a list of (src_id, angle, ships) describing one or more
+     fleets that together effect the action. Candidate kinds:
+       OFFENSE : 1 fleet to a non-owned planet, if any single source can
+                 afford the predicted garrison + hold margin.
+       DEFENSE : 1 fleet to a threatened own planet, sized to plug the
+                 deficit at the predicted flip step.
+     Common pipeline per fleet:
        a. Aim — aim_orbiting (static/rotating, fixed-point lead) or aim_comet.
        b. ETA from the converged aim.
        c. ships_needed:
-            offense: ceil(WorldModel.ships_at(tgt, eta)) + 1   (outnumber).
+            offense: ceil(WorldModel.ships_at(tgt, eta)) + 1 + hold_margin.
             defense: ceil(deficit_at_first_enemy_arrival) + 1.
        d. Physics gate: predict_fleet_fate.outcome == "target" (Rule 47 —
           no launch we can't verify lands).
-       e. ROI = (production × time_to_hold × bonus) / ships_needed.
+       e. ROI = (production × time_to_hold × bonus) / total_ships.
           OFFENSE: bonus = ENEMY_DENIAL_BONUS for enemy-owned, 1 for neutral.
           DEFENSE: no bonus (planet is already ours, we just keep it).
           Comets: time_to_hold clamped by remaining lifetime.
-  3. Sort candidates by ROI desc, allocate greedy per source. One fleet per
-     target per turn (combat rule 1 stacks same-owner same-step arrivals).
+  3. Sort candidates by ROI desc, allocate greedily per source budget.
+     Per-target lock prevents over-commit to the same target.
 
 Phases shipped so far:
   v0        — offense-only greedy ROI with physics gate.
   Phase 2a  — defensive reinforcement of own planets predicted to flip.
   Phase 2b  — hold-aware ship sizing (pre-fund the post-capture defense
               against the next in-flight enemy wave, net of own production).
+  Phase 3   — source-defense reservation (Rule 40): per-source sendable cap
+              bounded by predicted timeline so a launch can't strip a planet
+              that's about to be hit by an inbound enemy wave.
 
 Falsified (do not re-add without n=64+ evidence):
   - Static-opening / rotation-factor ROI biases (regressed 12.5% -> 6-9%).
   - Expand-toward-opponent-centroid ROI bias (regressed 12.5% -> 0%).
-  Lesson: multiplicative biases on the base ROI distort what was already
-  weak vs v7_0; structural / modeling improvements (Rule 40) work better.
+  - keep-0-ships-behind for no-threat sources (regressed Phase 3 baseline).
+  - 2-source joint capture with later-eta alignment (no lift at n=32;
+    likely opportunity-cost of double-committing two sources).
+  - Multi-wave time_to_hold cap via in-flight ledger sim (no lift at n=32;
+    likely over-discounts captures the agent could reinforce later).
+  - Idle drain (forward leftover ships to the most-frontier own planet)
+    regressed 18.8% -> 0% — recipient is often itself threatened and the
+    in-flight stack lands into a doomed garrison.
+  Lesson: modeling fixes that PREVENT bad launches (source reservation,
+  hold-aware sizing) work; modeling fixes that ENABLE more launches
+  (joint, drain) are easy to over-extend into self-harm.
 
-Not yet shipped: multi-source coordination on single capture, comet-
-specialised sizing, idle-drain.
+Not yet shipped: comet-specialised sizing, opp-launch reactive capture
+(track depleted source post-launch), safer idle-drain (reservation-aware
+recipient selection).
 """
 
 from __future__ import annotations
@@ -54,6 +69,7 @@ MIN_SHIPS_TO_LAUNCH = 2      # fleets of 1 ship are speed=1.0 and rarely worth i
 ENEMY_DENIAL_BONUS = 2.0     # ROI multiplier for capturing enemy planets
 DEFEND_HORIZON = 30          # how far ahead to look for predicted flips of own planets
 DEFEND_BUFFER = 1            # ships above the deficit so we survive combat
+SOURCE_RESERVE_HORIZON = 30  # how far ahead to project src safety when reserving
 
 
 def _aim(src, tgt, ships, world):
@@ -80,6 +96,51 @@ def _aim(src, tgt, ships, world):
 
     # Orbiting planet — fixed-point lead with safe-intercept fallback.
     return aim_orbiting(src_xy, src.radius, tgt_tuple, tgt.radius, ships, world.omega)
+
+
+def _max_sendable(p, wm, my_id, horizon=SOURCE_RESERVE_HORIZON):
+    """Max ships we can ship off `p` without making it flip in [1..horizon].
+
+    Reasoning (Rule 40 modeling fix):
+      `wm.ships_at(p, K)` is post-combat garrison at step K under the
+      no-action timeline. If we ship X off now, every garrison in the
+      timeline shifts down by X — UNTIL the first combat that flips on
+      account of the reduced ships. The linear approximation breaks
+      when we cross zero; up to that point, the bound is
+          X < min_{K in 1..H} ships_at(p, K),
+      so we can ship up to floor(min - 1) and still retain on every
+      pre-projected wave.
+
+      If owner_at(p, K) != my_id for any K in 1..H, we'll lose p anyway
+      under the no-action timeline → ship everything (a doomed garrison
+      is wasted in place; better to spend it where it does work).
+
+      No-threat case: cap at p.ships - 1 (keep 1 garrison so a single
+      enemy snipe doesn't walk in for free).
+    """
+    has_threat = False
+    min_post_combat = float("inf")
+    for K in range(1, int(horizon) + 1):
+        owner_K = wm.owner_at(p.id, K)
+        if owner_K is None:
+            break
+        if owner_K != my_id:
+            return int(p.ships)  # doomed — ship everything
+        ships_K = wm.ships_at(p.id, K)
+        if ships_K is None:
+            break
+        if ships_K < min_post_combat:
+            min_post_combat = ships_K
+        # detect actual enemy pressure on the timeline
+        for (eta, owner, ships) in wm.ledger.get(p.id, []):
+            if owner != my_id and ships > 0 and int(math.ceil(eta)) == K:
+                has_threat = True
+                break
+    if not has_threat:
+        return max(0, int(p.ships) - 1)  # no inbound enemy — keep 1 ship behind
+    if min_post_combat == float("inf"):
+        return max(0, int(p.ships) - 1)
+    return max(0, int(math.floor(min_post_combat - 1)))
 
 
 def _ships_for_capture(predicted_garrison):
@@ -116,7 +177,7 @@ def _hold_margin(target_id, target_production, our_eta, wm, my_id):
     return max(0, int(math.ceil(deficit)))
 
 
-def _roi(src, tgt, eta_float, ships_needed, world, my_id):
+def _roi(src, tgt, eta_float, ships_needed, world, my_id, wm=None):
     """ROI = (prod * time_to_hold * bonus) / ships_needed. None if invalid."""
     eta_int = max(1, int(math.ceil(eta_float)))
     time_to_hold = EPISODE_STEPS - world.step - eta_int
@@ -146,7 +207,7 @@ def _earliest_flip(planet_id, wm, my_id, horizon):
     return None
 
 
-def _defense_candidate(src, own_planet, world, wm, my_id):
+def _defense_candidate(src, own_planet, world, wm, my_id, src_sendable):
     """If `own_planet` is predicted to flip soon, find a reinforcement from
     `src` that arrives BEFORE the flip with enough ships to hold. Returns
     (roi, ships, angle, eta_int) or None.
@@ -181,7 +242,7 @@ def _defense_candidate(src, own_planet, world, wm, my_id):
     ships = int(math.ceil(deficit)) + DEFEND_BUFFER
     if ships < MIN_SHIPS_TO_LAUNCH:
         ships = MIN_SHIPS_TO_LAUNCH
-    if ships > src.ships:
+    if ships > src_sendable:
         return None
 
     # Re-aim with the correct ship count (speed depends on ships).
@@ -205,6 +266,42 @@ def _defense_candidate(src, own_planet, world, wm, my_id):
     return roi, ships, angle, eta_int2
 
 
+def _solo_offense_candidate(src, tgt, world, wm, my_id, src_sendable):
+    """Single-source offensive capture. Returns (roi, ships, angle, eta_int)
+    or None if infeasible.
+    """
+    guess = max(MIN_SHIPS_TO_LAUNCH, int(tgt.ships) + GARRISON_BUFFER)
+    aim = _aim(src, tgt, guess, world)
+    if aim is None:
+        return None
+    _, _, eta_float = aim
+    eta_int = max(1, int(math.ceil(eta_float)))
+
+    pred_owner = wm.owner_at(tgt.id, eta_int)
+    pred_garrison = wm.ships_at(tgt.id, eta_int)
+    if pred_owner == my_id:
+        return None  # will already be ours by arrival
+    ships = _ships_for_capture(pred_garrison if pred_garrison is not None else tgt.ships)
+    ships += _hold_margin(tgt.id, tgt.production, eta_int, wm, my_id)
+    if ships > src_sendable:
+        return None
+
+    aim = _aim(src, tgt, ships, world)
+    if aim is None:
+        return None
+    angle, _, eta_float = aim
+    eta_int = max(1, int(math.ceil(eta_float)))
+
+    fate = predict_fleet_fate(src, tgt, angle, ships, world)
+    if fate.outcome != "target" or fate.hit_planet_id != tgt.id:
+        return None
+
+    roi = _roi(src, tgt, eta_float, ships, world, my_id, wm)
+    if roi is None or roi <= 0:
+        return None
+    return roi, ships, angle, eta_int
+
+
 def agent(obs):
     world = World.from_obs(obs)
     wm = WorldModel.from_world(world)
@@ -217,70 +314,52 @@ def agent(obs):
     threatened = [p for p in my_planets
                   if _earliest_flip(p.id, wm, my_id, DEFEND_HORIZON) is not None]
 
-    candidates = []  # (roi, src_id, tgt_id, ships, angle)
+    # Source-defense reservation: per-source cap so a launch can't strip
+    # a planet that's about to be hit by an inbound enemy wave.
+    sendable = {p.id: _max_sendable(p, wm, my_id) for p in my_planets}
+
+    # Each candidate: (roi, tgt_id, fleets) with fleets = [(src_id, angle, ships), ...].
+    candidates: list[tuple[float, int, list[tuple[int, float, int]]]] = []
+    solo_targets: set[int] = set()
+
     for src in my_planets:
-        if src.ships < MIN_SHIPS_TO_LAUNCH:
+        if sendable[src.id] < MIN_SHIPS_TO_LAUNCH:
             continue
 
         # Defensive reinforcement: src -> own threatened planet.
         for own in threatened:
             if own.id == src.id:
                 continue
-            res = _defense_candidate(src, own, world, wm, my_id)
+            res = _defense_candidate(src, own, world, wm, my_id, sendable[src.id])
             if res is None:
                 continue
             droi, dships, dangle, _ = res
-            candidates.append((droi, src.id, own.id, dships, dangle))
+            candidates.append((droi, own.id, [(src.id, dangle, dships)]))
 
         for tgt in all_planets:
             if tgt.id == src.id or tgt.owner == my_id:
                 continue
-
-            # First aim pass with a ship-count guess so speed is approx right.
-            guess = max(MIN_SHIPS_TO_LAUNCH, int(tgt.ships) + GARRISON_BUFFER)
-            aim = _aim(src, tgt, guess, world)
-            if aim is None:
+            res = _solo_offense_candidate(src, tgt, world, wm, my_id, sendable[src.id])
+            if res is None:
                 continue
-            _, _, eta_float = aim
-            eta_int = max(1, int(math.ceil(eta_float)))
-
-            pred_owner = wm.owner_at(tgt.id, eta_int)
-            pred_garrison = wm.ships_at(tgt.id, eta_int)
-            if pred_owner == my_id:
-                continue  # will already be ours by arrival
-            ships = _ships_for_capture(pred_garrison if pred_garrison is not None else tgt.ships)
-            ships += _hold_margin(tgt.id, tgt.production, eta_int, wm, my_id)
-            if ships > src.ships:
-                continue
-
-            # Re-aim with the actual ship count (speed depends on ship count).
-            aim = _aim(src, tgt, ships, world)
-            if aim is None:
-                continue
-            angle, _, eta_float = aim
-
-            # Rule 47 physics gate: refuse any launch we can't predict lands.
-            fate = predict_fleet_fate(src, tgt, angle, ships, world)
-            if fate.outcome != "target" or fate.hit_planet_id != tgt.id:
-                continue
-
-            roi = _roi(src, tgt, eta_float, ships, world, my_id)
-            if roi is None or roi <= 0:
-                continue
-            candidates.append((roi, src.id, tgt.id, ships, angle))
+            roi, ships, angle, _ = res
+            candidates.append((roi, tgt.id, [(src.id, angle, ships)]))
+            solo_targets.add(tgt.id)
 
     candidates.sort(key=lambda c: -c[0])
 
-    src_ships = {p.id: p.ships for p in my_planets}
+    src_budget = dict(sendable)
     used_targets: set[int] = set()
     moves = []
-    for roi, src_id, tgt_id, ships, angle in candidates:
+    for roi, tgt_id, fleets in candidates:
         if tgt_id in used_targets:
             continue
-        if src_ships.get(src_id, 0) < ships:
+        if any(src_budget.get(sid, 0) < sh for sid, _, sh in fleets):
             continue
-        src_ships[src_id] -= ships
+        for sid, _, sh in fleets:
+            src_budget[sid] -= sh
         used_targets.add(tgt_id)
-        moves.append([src_id, angle, ships])
+        for sid, ang, sh in fleets:
+            moves.append([sid, ang, sh])
 
     return moves
