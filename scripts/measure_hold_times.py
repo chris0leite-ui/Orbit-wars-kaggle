@@ -512,8 +512,16 @@ def render_report(agg: dict, sub_ids: list[str], team: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Measure focal hold_fraction on Kaggle live replays.")
-    ap.add_argument("--sub-ids", nargs="+", required=True,
-                    help="submission ids to aggregate")
+    ap.add_argument("--sub-ids", nargs="+", default=None,
+                    help="submission ids to aggregate (mutually exclusive "
+                         "with --replay-dir)")
+    ap.add_argument("--replay-dir", default=None,
+                    help="directory of local replay JSONs to aggregate "
+                         "instead of Kaggle submissions. Reads any "
+                         "`episode-*-replay.json` in the directory; the file "
+                         "schema matches `fast.py eval --save-replays`. "
+                         "Use for Rule 48 production-share gating on local "
+                         "A/B output before any submission.")
     ap.add_argument("--team", default="ChrisLeiteScha",
                     help="focal team name as it appears in TeamNames")
     ap.add_argument("--pull", action="store_true",
@@ -533,33 +541,61 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
 
+    if args.replay_dir is not None and args.sub_ids:
+        print("ERROR: --replay-dir and --sub-ids are mutually exclusive.",
+              file=sys.stderr)
+        return 2
+    if args.replay_dir is None and not args.sub_ids:
+        print("ERROR: pass either --sub-ids <id ...> or --replay-dir <path>.",
+              file=sys.stderr)
+        return 2
+
     games: list[dict] = []
-    for sub in args.sub_ids:
-        if args.pull:
-            n_pulled = pull_replays(sub, args.max_pulls_per_sub)
-            print(f"[{sub}] pulled {n_pulled} new replays")
-        files = replay_files(sub)
-        print(f"[{sub}] {len(files)} replays on disk")
-        for f in files:
+    sub_ids_label: list[str]
+    if args.replay_dir is not None:
+        local_dir = Path(args.replay_dir)
+        if not local_dir.is_dir():
+            print(f"ERROR: --replay-dir not found: {local_dir}",
+                  file=sys.stderr)
+            return 3
+        local_files = sorted(local_dir.glob("episode-*-replay.json"))
+        label = local_dir.name or "local"
+        print(f"[{label}] {len(local_files)} replays in {local_dir}")
+        for f in local_files:
             rec = game_record(f, args.team)
             if rec is None:
                 continue
-            rec["sub_id"] = sub
+            rec["sub_id"] = label
             games.append(rec)
+        sub_ids_label = [label]
+    else:
+        for sub in args.sub_ids:
+            if args.pull:
+                n_pulled = pull_replays(sub, args.max_pulls_per_sub)
+                print(f"[{sub}] pulled {n_pulled} new replays")
+            files = replay_files(sub)
+            print(f"[{sub}] {len(files)} replays on disk")
+            for f in files:
+                rec = game_record(f, args.team)
+                if rec is None:
+                    continue
+                rec["sub_id"] = sub
+                games.append(rec)
+        sub_ids_label = list(args.sub_ids)
 
     if not games:
         print("ERROR: no valid games found.", file=sys.stderr)
         return 3
 
     agg = aggregate_games(games)
-    report = render_report(agg, args.sub_ids, args.team)
+    report = render_report(agg, sub_ids_label, args.team)
 
     md_path = REPO / f"{args.out}.md"
     json_path = REPO / f"{args.out}.json"
     md_path.parent.mkdir(parents=True, exist_ok=True)
     md_path.write_text(report)
     json_path.write_text(json.dumps({
-        "sub_ids": args.sub_ids,
+        "sub_ids": sub_ids_label,
         "team": args.team,
         "aggregate": agg,
         "games": games,

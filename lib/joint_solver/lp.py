@@ -34,9 +34,41 @@ except ImportError:
     LinearConstraint = None  # type: ignore[assignment]
     Bounds = None  # type: ignore[assignment]
 
-from agents.baseline.strategic_lp import _greedy_assignment
-_greedy_assign = _greedy_assignment
 from lib.joint_solver.columns import Column
+
+
+def _greedy_assign(cost_matrix: list[list[float]]) -> tuple[list[int], list[int]]:
+    """Pure-Python greedy fallback for `solve_assignment` when scipy is absent.
+
+    Walks (row, col) cells in ascending-cost order, claiming each row +
+    column at most once. Not optimal — but matches the chooser_lp greedy
+    fallback. Used only on Kaggle sandboxes without scipy; production
+    path goes through `scipy.optimize.linear_sum_assignment`.
+    """
+    n_rows = len(cost_matrix)
+    if n_rows == 0:
+        return [], []
+    n_cols = len(cost_matrix[0])
+    cells = [
+        (cost_matrix[r][c], r, c)
+        for r in range(n_rows) for c in range(n_cols)
+    ]
+    cells.sort()
+    used_rows: set[int] = set()
+    used_cols: set[int] = set()
+    pairs: list[tuple[int, int]] = []
+    for _cost, r, c in cells:
+        if r in used_rows or c in used_cols:
+            continue
+        used_rows.add(r)
+        used_cols.add(c)
+        pairs.append((r, c))
+        if len(pairs) >= n_rows:
+            break
+    pairs.sort(key=lambda rc: rc[0])
+    row_ind = [r for r, _c in pairs]
+    col_ind = [c for _r, c in pairs]
+    return row_ind, col_ind
 
 
 # Sentinel costs (mirror chooser_lp.py:50-54).
