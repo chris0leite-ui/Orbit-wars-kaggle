@@ -333,6 +333,10 @@ Process docs (read once / on trigger):
   cell n thresholds, 4P "winners-capture-later" prediction gate, and the
   open within-band-vs-between-band question to answer before the chooser
   ships.
+- `knowledge-base/concepts/reach-frontier-chooser-design.md` —
+  implementation spec for the v1 chooser (2P-first, ~400 LOC, 6-step
+  build sequence with hard exit conditions). Designed but not yet
+  implemented; PI review-gated.
 
 Skills:
 - `.claude/skills/postmortem/SKILL.md`, `.claude/skills/kaggle-comp/`.
