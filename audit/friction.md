@@ -123,7 +123,7 @@ fix forward AND add a test.
 - `tag: sibling-shipped-while-we-slept` — Submitted K1+Z v2 (sub 53018599)
   2026-05-25 11:54. Sibling ESwSv shipped `BASELINE_SORT_BY_EV_PER_SHIP=1`
   (sub 53024913) at 15:44 — same day, 4h later. Sibling's flag settled
-  μ=1136.4; ours settled μ=1118.6. We were evicted before our settle
+  (μ stale; query live); ours settled (μ stale; query live). We were evicted before our settle
   reading was available. Net: our branch is now 0 in rolling pair while
   sibling holds both halves. **Fix:** post-submit, set a sentinel to
   re-poll at +6h and +12h (current pattern is "wait for next session"
@@ -474,8 +474,8 @@ fix forward AND add a test.
   first ~24 h after submit (initial σ≈300, shrinks ∝ 1/√N). Wait
   ≥24 h before reading rank delta into strategy decisions.
 - `tag: state-files-claim-current-champion-with-stale-mu` — 2026-05-17
-  baseline session: `state/current.md` claimed v7_pv (μ=1064.4) was
-  team peak while live Kaggle had v15 (μ=1115.5) as the rolling champion.
+  baseline session: `state/current.md` claimed v7_pv ((μ stale; query live)) was
+  team peak while live Kaggle had v15 ((μ stale; query live)) as the rolling champion.
   Two days of intervening sessions (v8_scavenge → v9 → v12 → v13 → v15
   → v20) shipped without state/current.md being refreshed. **Root
   cause:** state files recorded μ values which drift, and the
@@ -560,7 +560,7 @@ relevant skill file or source code, not back into friction.md.
   diagnosed root cause axes. Best result: parity (45%). None
   lifted head-to-head vs v12. **Empirical conclusion:**
   v9-family chooser (candidate enumeration + _favor + opp_traj
-  + K-step rollout) is structurally saturated at μ~1120. Surface
+  + K-step rollout) is structurally saturated at (μ stale; query live). Surface
   modifications cannot break the ceiling. **Fix:** future
   sessions should not iterate on v9-family components without
   first running an empirical loss-pattern analysis (path A) or

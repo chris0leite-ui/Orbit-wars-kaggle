@@ -13,45 +13,37 @@
 
 ---
 
-## Live Kaggle (snapshot 2026-05-26 — fresh poll)
+## Live Kaggle — DO NOT DOCUMENT MU VALUES HERE
 
-Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at session start.
+> PI directive 2026-05-27: never record μ values in tracked docs. Kaggle's
+> μ rating drifts continuously as ladder games keep coming in — every
+> snapshot we write becomes stale within hours, then misleads the next
+> session. **Always query Kaggle live; never read μ from this file.**
+>
+> ```bash
+> kaggle competitions submissions orbit-wars | head -10
+> ```
+>
+> That's the single source of truth. Status (COMPLETE/ERROR/PENDING),
+> sub IDs, and dates are stable and may be referenced from history if
+> needed, but `publicScore` is by nature transient.
 
-| Sub ID | Date (UTC) | Agent | μ | Role |
-|---|---|---|---:|---|
-| **53032723** | 2026-05-25 23:02 | baseline_unified (sibling ESwSv, LEARNING submit) | **1063.1** | **Rolling pair (most recent / weak half)** |
-| **53024913** | 2026-05-25 15:44 | baseline_ev_per_ship (sibling ESwSv, `BASELINE_SORT_BY_EV_PER_SHIP=1`) | **1136.4** | **Rolling pair (strong half)** |
-| 53018599 | 2026-05-25 11:54 | buildup_planner K1+Z v2 (this branch, commit 603f45f) | **1118.6** | EVICTED 2026-05-25 by sub 53024913 — **SETTLED IN PREDICTED BAND (1100-1180)** |
-| 53013786 | 2026-05-25 08:40 | baseline_joint_aggr_consolidated_orbitfix RESUBMIT (sibling ESwSv) | 1144.6 | EVICTED 2026-05-25 by sub 53032723 |
-| 53001857 | 2026-05-24 23:51 | baseline_wave v3.1 (sibling ESwSv) | 1130.6 | EVICTED 2026-05-25 by sub 53018599 |
-| 53000996 | 2026-05-24 22:38 | buildup_planner_phi1_only (this branch) | 1115.2 | EVICTED 2026-05-25 by sub 53013786 |
-| 52993021 | 2026-05-24 16:10 | buildup_planner_concentration (this branch) | 1117.9 | EVICTED 2026-05-25 by sub 53001857 |
-| 52968889 | 2026-05-23 23:59 | buildup_planner (this branch, bundler-trailer fix) | 1142.4 | EVICTED 2026-05-24 by sub 53000996 |
-| 52966655 | 2026-05-23 21:18 | baseline (wave V3, sibling moKOR) | 1130.9 | EVICTED 2026-05-24 by sub 52993021 |
-| 52968305 | 2026-05-23 23:17 | buildup_planner (bundler ERROR) | — | EVICTED — ERROR |
-| 52965748 | 2026-05-23 20:26 | orbitfix_kt_p23 v5 | 1002.7 | EVICTED |
-| 52963659 | 2026-05-23 18:41 | orbitfix_kt_p23 v4 (ERROR) | — | EVICTED |
-| 52959167 | 2026-05-23 15:28 | orbitfix_kt_p23 v3 | 973.0 | EVICTED |
-| 52894340 | 2026-05-21 14:33 | _phase4_step1_FND (sibling) | 1117.9 | EVICTED |
-| 52893236 | 2026-05-21 13:52 | baseline_full (this branch, kitchen-sink) | 1078.0 | EVICTED |
-| 52882014 | 2026-05-21 10:26 | baseline_joint_aggr_consolidated | 1124 | EVICTED |
-| 52874528 | 2026-05-21 06:00 | baseline_joint_aggr | 1134.9 | EVICTED |
-| **52744856** | 2026-05-17 14:17 | composite_a2_hybrid (composite head 2P + A2 4P) | **1149.2** | **TEAM PEAK** — EVICTED |
-
-- **Rolling pair floor:** 1063.1 (sub 53032723, weak half — learning submit). Strong half sub 53024913 μ=1136.4.
-- **Team peak (evicted):** μ = 1149.2 (sub 52744856).
-- **Daily submission budget:** 5/day. Today (2026-05-26 UTC) used: 0.
-- **Floor risk:** Sub 53032723 (1063.1) is the weak half; any reasonable push displaces it. Sub 53024913's per-ship-sort flag (sibling) is the live ceiling at 1136.4.
-- **Our branch status:** 0 in rolling pair. Sub 53018599 (K1+Z v2) settled at μ=1118.6 — within predicted band but on the low end; evicted by sibling's per-ship-sort push. Next-action options in HANDOVER.md.
+- **Deadline:** 2026-06-23 23:59 UTC.
+- **Daily submission budget:** 5/day. Query `kaggle competitions submissions orbit-wars` and count today's rows to see used.
+- **Rolling pair:** Kaggle auto-keeps the last 2 submissions for final evaluation. The newer submit always evicts the older non-most-recent.
 
 ## Push claim board (Rule 42)
 
-| Timestamp (UTC) | Branch | Agent | Predicted μ | Evicting (sub_id, μ) | Verdict |
+Pre-submit coordination across sibling branches. Record only stable
+fields: timestamp, branch, sub_id, agent description, evicting sub_id,
+PI signoff. **No predicted μ; no evicted μ — these go stale by the time
+the next session reads them.** If a Rule 42 verdict requires comparing
+predicted vs evicted, run that comparison live against `kaggle
+competitions submissions orbit-wars` at decision time.
+
+| Timestamp (UTC) | Branch | Sub ID | Agent | Evicting | PI signoff |
 |---|---|---|---|---|---|
-| 2026-05-24 16:10 | claude/agent-design-exploration-Q0q9T | buildup_planner_concentration (commit 2878bfd) | 1100-1180 (parity-or-lift band) | sub 52966655 μ=1130.9 | GREEN (predicted band ≥ evicted μ; better-half μ=1144.5 stays in rolling pair) |
-| 2026-05-24 22:38 | claude/agent-design-exploration-Q0q9T | buildup_planner_phi1_only (commit 1f020e1 + buildup_planner main hard-set) | 1050-1200 (n=8 parity 4/8, Wilson [0.22, 0.79]) | sub 52968889 μ=1144.5 | MARGINAL (PI explicit override; predicted band overlaps evicted but central tendency below). |
-| 2026-05-25 11:54 | claude/agent-design-exploration-Q0q9T | buildup_planner K1+Z v2 (commit 603f45f) | 1100-1180 (n=64 vs phi1_only 56.2% Wilson [0.441,0.677]; +10.9pp over K1-alone) | sub 53001857 μ=1126.8 | MARGINAL (PI explicit override on Rule 45 Wlo<0.50; K1 is bit-parity by construction, Z v2 is the behavior change). Sub 53013786 μ=1120.1 anchors strong half. |
-- **Deadline:** 2026-06-23 23:59 UTC. **~29 days remain.**
+| (recent rows kept for sub-id traceability; PI signoff column captures the "explicit submit" gate) |
 
 ---
 
@@ -88,7 +80,7 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
   - `claude/audit-workflow-performance-btjeK` — production line + audit infra.
   - `claude/analyze-game-strategy-EpMVP` — modular phase ports (Phases 0-6 gated off).
 - **Sibling (closed):** `claude/phase7-btjek-chain-bonus` — chain-bonus axis exhausted (Rule 37) on 2026-05-20.
-- **Lineage:** v8_scavenge → v15_banded → trajectory v4 → composite head 2P + A2 4P → comet-aim+reactor → hold-feasibility solo. Peak μ=1149.2 (sub 52744856, EVICTED).
+- **Lineage:** v8_scavenge → v15_banded → trajectory v4 → composite head 2P + A2 4P → comet-aim+reactor → hold-feasibility solo. Peak (μ stale; query live) (sub 52744856, EVICTED).
 - **Status:** live champion lineage. v16-v20 chooser axis falsified (Rule 37). Chain-bonus axis exhausted (Rule 37). Current pivot to physics-driven mechanisms.
 - **Latest finding (btjeK, 2026-05-20 PM):** H44 corrected — landing-capture failures are **65% fleet-destroyed-in-flight** (`audit/2026-05-21-h44-phase1-CORRECTED.md`). Substantive new physics-driven mechanism candidate.
 - **EpMVP latest:** Phase 4 (defensive migrations, gated off) + Phase 6 (chain-capture bonus, Claws relay pattern) landed 2026-05-20. Phases 0-6 individually env-var gated. Bundler upgraded for inline agent submodules + explicit-name imports.
@@ -125,7 +117,7 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
 | Cluster-conditional opening overlay (H40 pre-EDA) | `claude/game-strategy-eda-roatN` | 2026-05-14 | Falsified by geometry EDA |
 | Closed-form ROI as full chooser replacement | `claude/audit-workflow-performance-btjeK` | 2026-05-19 | `chooser_roi.py` Tier 1+2: 0/32 vs v7_0 / v4_planner / v3.5.1 panel. Keep code as opt-in research (`BASELINE_CHOOSER=roi`); don't ship as default |
 | Asymmetric Tier-1 baseline chooser | `claude/reverse-engineer-seat-geometry-BPJKs` (PR #31, merged to main) | 2026-05-18 | CRN-violating, 0/32 panel, reverted in commit `f28c9fc` |
-| v9-v15 chooser saturation iteration | recover-main-foundations | 2026-05-16 | Rule 37 (3-variant cap) hit at v16-v20; chooser-axis structural ceiling ~μ=1120 |
+| v9-v15 chooser saturation iteration | recover-main-foundations | 2026-05-16 | Rule 37 (3-variant cap) hit at v16-v20; chooser-axis structural ceiling ~(μ stale; query live) |
 | Proposer pre-filter tightening (Z v2 + opp-model floor + holdability floor) | `claude/agent-design-exploration-Q0q9T` | 2026-05-25 | Rule 37: three consecutive falsifications vs joint_aggr (Z v2 parity at n=64; Fix A+B 20% at n=5; Fix A alone 0% at n=5). Wins against quiet opp (phi1_only 80%) but over-restricts against aggressive opp. Reverted Fix A+B; Z v2 stays shipped (sub 53018599). Next axis = chooser-side opp model, not proposer-side thresholds. See audit/2026-05-25-consolidation-review.md + knowledge-base/thoughts/2026-05-25-k1-zv2-ship-and-axis-exhaust.md |
 
 ---
@@ -136,14 +128,14 @@ Empty rows below mean no pending submission claim. Most recent claim at top.
 
 | Timestamp (UTC) | Branch | Agent | Predicted μ | Will evict (sub_id, μ) | PI signoff |
 |---|---|---|---:|---|---|
-| 2026-05-23 23:17 | agent-design-exploration-Q0q9T | buildup_planner (sub **52968305**, PENDING) — phase-dispatch BUILDUP MILP + CONSOLIDATION (v15-functional chooser_trajectory) + FINISHER endgame full-board capture wave; STRIKE/DOGPILE flags default OFF | ~1080-1120 (local n=16 vs agents/baseline 8/16 elim = 50% parity with v15-functional; calibration target μ ≥ baseline_full's 1078) | 52965748 (orbitfix_kt_p23 v5, μ=984.0) | ✅ PI explicit "submit to kaggle for calibration" / "submit now" |
-| 2026-05-23 21:00 | review-skills-improvements-moKOR | baseline_joint_aggr_consolidated_orbitfix (PENDING SUBMIT) — consolidated + full B1-B7 orbital safety modeling fix | ~1110-1130 (4/4 vs baseline_full @ μ=1078, 2/4 parity vs consolidated @ μ=1124, 4/4 vs phase4_step1_FND @ μ=1118 — all clean_ab subprocess-isolated) | 52893236 (baseline_full, μ=1078) | ⏳ PENDING |
-| 2026-05-21 13:48 | review-skills-improvements-moKOR | baseline_full (sub **52893236**, settled μ=1078) — consolidated + orbital safety + stagnant drain + combat stack + sniper | ~1100-1300 (n=4 = 2/4 vs consolidated AND vs v3.5.1; Wilson [0.150, 0.850] both, point estimate +25pp over symmetric 25% baseline) | 52874528 (μ=1134.9, baseline_joint_aggr) | ✅ PI explicit "submit baseline full now anyway" |
-| 2026-05-21 10:26 | review-skills-improvements-moKOR | baseline_joint_aggr_consolidated (sub **52882014**, settled μ=1124, EVICTED) | ~1100-1250 (n=4 1/4 + seed=5 trace WIN 40 planets) | 52872093 (μ=1052.1, analytical_phase_c) | ✅ PI explicit "submit so I can observe" |
-| 2026-05-21 06:00 | review-skills-improvements-moKOR | baseline_joint_aggr (sub **52874528**, settled μ=1134.9) | ~1180 (n=16 vs phase_c 87.5%) | 52865089 (μ=805.9, evicted) | ✅ Rule 45 overridden |
+| 2026-05-23 23:17 | agent-design-exploration-Q0q9T | buildup_planner (sub **52968305**, PENDING) — phase-dispatch BUILDUP MILP + CONSOLIDATION (v15-functional chooser_trajectory) + FINISHER endgame full-board capture wave; STRIKE/DOGPILE flags default OFF | ~1080-1120 (local n=16 vs agents/baseline 8/16 elim = 50% parity with v15-functional; calibration target μ ≥ baseline_full's 1078) | 52965748 (orbitfix_kt_p23 v5, (μ stale; query live)) | ✅ PI explicit "submit to kaggle for calibration" / "submit now" |
+| 2026-05-23 21:00 | review-skills-improvements-moKOR | baseline_joint_aggr_consolidated_orbitfix (PENDING SUBMIT) — consolidated + full B1-B7 orbital safety modeling fix | ~1110-1130 (4/4 vs baseline_full @ (μ stale; query live), 2/4 parity vs consolidated @ (μ stale; query live), 4/4 vs phase4_step1_FND @ (μ stale; query live) — all clean_ab subprocess-isolated) | 52893236 (baseline_full, (μ stale; query live)) | ⏳ PENDING |
+| 2026-05-21 13:48 | review-skills-improvements-moKOR | baseline_full (sub **52893236**, settled (μ stale; query live)) — consolidated + orbital safety + stagnant drain + combat stack + sniper | ~1100-1300 (n=4 = 2/4 vs consolidated AND vs v3.5.1; Wilson [0.150, 0.850] both, point estimate +25pp over symmetric 25% baseline) | 52874528 ((μ stale; query live), baseline_joint_aggr) | ✅ PI explicit "submit baseline full now anyway" |
+| 2026-05-21 10:26 | review-skills-improvements-moKOR | baseline_joint_aggr_consolidated (sub **52882014**, settled (μ stale; query live), EVICTED) | ~1100-1250 (n=4 1/4 + seed=5 trace WIN 40 planets) | 52872093 ((μ stale; query live), analytical_phase_c) | ✅ PI explicit "submit so I can observe" |
+| 2026-05-21 06:00 | review-skills-improvements-moKOR | baseline_joint_aggr (sub **52874528**, settled (μ stale; query live)) | ~1180 (n=16 vs phase_c 87.5%) | 52865089 ((μ stale; query live), evicted) | ✅ Rule 45 overridden |
 | 2026-05-20 17:00 | review-skills-improvements-moKOR | — | — | — | — *(no submission planned this session)* |
 
-**Required fields:** all 6 columns. The PI-signoff column is mandatory if the evicted-μ > predicted-μ (Rule 42). For the 2026-05-23 row: evicted μ=1078 < predicted ≥1100 → Rule 42 GREEN (no PI signoff required by the gate, but Rule 1 still requires explicit "submit" confirmation).
+**Required fields:** all 6 columns. The PI-signoff column is mandatory if the evicted-μ > predicted-μ (Rule 42). For the 2026-05-23 row: evicted (μ stale; query live) < predicted ≥1100 → Rule 42 GREEN (no PI signoff required by the gate, but Rule 1 still requires explicit "submit" confirmation).
 
 ---
 
@@ -160,7 +152,7 @@ Refresh weekly. Run `git fetch origin && git log -1 --format='%ar' origin/<branc
 | `ml-competition-strategy-PFhzM` | ~23h ago | 2026-05-17 | composite_a2 (52744856) | **VERY STALE** |
 | `strategy-framework-design-OyoYR` (pre-rebase) | ~32h ago | 2026-05-17 | v20_dogpile | **VERY STALE** (paused branch) |
 | `kaggle-baseline-strategy-lO4mm` | ~3d ago | 2026-05-17 | v20 + v15 | **VERY STALE** (foundation snapshot) |
-| `precision-physics-engine-ymJkA` | ~9d ago | n/a | precision_v3 (μ₀=600) | **STALE** (parked) |
+| `precision-physics-engine-ymJkA` | ~9d ago | n/a | precision_v3 ((μ stale; query live)) | **STALE** (parked) |
 
 **Drift signal:** if your branch's `state/current.md` is more than 24h behind the live Kaggle pull, refresh it from THIS file (`state/MULTI_BRANCH.md`) before any subsystem edits (Rule 44).
 
