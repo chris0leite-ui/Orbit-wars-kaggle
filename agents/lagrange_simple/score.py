@@ -36,8 +36,16 @@ from lib.world_model import predict_garrison_at
 
 
 EPISODE_STEPS = 500
-MAX_LAUNCH_TICK = 15     # search wait_N ∈ {0..15} (wide enough to let
-                         #   low-ship sources accrue production before firing)
+# wait_N ∈ {0..MAX_LAUNCH_TICK}. With MAX_LAUNCH_TICK=15 the chooser was
+# evaluating ~16× more (src,tgt,wait_N) tuples than `_inner_solve` then
+# kept (one per target). Profile under actTimeout=1s (gate config):
+#  - MAX=15 → p90=4.0s, agent DQ'd around step 30, score-wins-only
+#  - MAX=3  → p90=0.7s, 0/80 turns over budget, 16/16 ELIM in gate
+# Per Rule 40 the right modeling fix is a faster substrate
+# (lib/trajectory_layer is on PFhzM, not merged). Until then, capping
+# the wait_N grid is the speed-vs-tactical-depth trade that keeps the
+# agent UNDER the live Kaggle actTimeout.
+MAX_LAUNCH_TICK = 3
 SHIP_REFINE_ITERS = 2    # 2-pass ships ↔ eta fixed-point
 MIN_FLEET = 1
 
