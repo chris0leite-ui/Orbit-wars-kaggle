@@ -9771,6 +9771,762 @@ def is_winning_state_if_owned(world: World, my_id: int, opp_id: int,
         return False
     return adv * rem > op
 
+# === inlined: agents/baseline/threat_model.py ===
+"""Potential-counter threat model.
+
+The proposer's `_source_survives_launch` and the 5 post-passes / relay all
+gate launches on `incoming_enemy_eta is not None` (in-flight enemy fleet
+already committed). That fails open on the much more common pattern: an
+opp planet has a strong garrison nearby and hasn't launched YET, but
+will once we strip ourselves. This module supplies the missing predictor.
+
+Exports:
+  cheapest_potential_counter — low-level walk; returns
+    `(opp, t_op, force_at_arrival)` for the worst-gap opp counter-launch,
+    or None if no qualifying opp exists.
+  source_safe_against_potential_counter — high-level verdict; checks
+    whether `src` can defend itself against the worst-gap counter after
+    launching `ships` at `wait_N`.
+
+Differences from `_target_holdable_after_capture` (proposer.py:601):
+  - No SAFETY_MARGIN multiplier; source-survival uses the stricter `+1`
+    margin (matches the in-flight branch of `_source_survives_launch`).
+  - Worst-gap tiebreak (not nearest-ETA). A far-strong opp can dominate
+    a near-weak one; nearest-by-ETA would miss it.
+  - `min_counter_ships=10` (vs 20 in `_target_holdable`): a 10-15 ship
+    adjacent opp is still a real counter against a stripped source.
+"""
+
+
+import math
+import os
+
+# from lib.fleet import speed as fleet_speed  # inlined by bundle_agent.py
+fleet_speed = speed
+# from lib.world_model import _position_at  # inlined by bundle_agent.py
+
+
+DEFAULT_MIN_COUNTER_SHIPS = 20
+
+
+def _use_predict(world) -> bool:
+    """Orbital safety gate — mirrors the convention in proposer.py:648."""
+    if os.environ.get("BASELINE_ORBITAL_SAFETY", "0") != "1":
+        return False
+    omega = float(getattr(world, "omega", 0.0) or 0.0)
+    return omega != 0.0
+
+
+def cheapest_potential_counter(
+    target,
+    world,
+    me: int,
+    arrival_step: int,
+    *,
+    use_predict: bool | None = None,
+    min_counter_ships: int = DEFAULT_MIN_COUNTER_SHIPS,
+):
+    """Return the worst-gap opp counter against `target` at `arrival_step`.
+
+    `arrival_step` is the turn (relative to now) at which `target` is
+    vulnerable — for a source, this is `wait_N`; for a captured target,
+    it's `wait_N + eta`. The opp launches from its current position at
+    turn 0 (worst case for us); counter arrives at `arrival_step + t_op`.
+
+    Returns `(opp_planet, t_op, force_at_arrival)` for the opp with the
+    largest gap between counter-force and a baseline defender (target's
+    own production accrual over the counter-flight window). Returns
+    `None` if no opp qualifies.
+    """
+    if use_predict is None:
+        use_predict = _use_predict(world)
+    omega = float(getattr(world, "omega", 0.0) or 0.0)
+    if use_predict and omega != 0.0 and arrival_step > 0:
+        tx, ty = _position_at(target, omega, arrival_step)
+    else:
+        tx, ty = float(target.x), float(target.y)
+
+    target_id = int(target.id)
+    target_radius = float(target.radius)
+    target_prod = int(target.production)
+
+    best = None  # (gap, opp, t_op, force)
+    for opp in world.planets_by_id.values():
+        if int(opp.owner) == me or int(opp.owner) == -1:
+            continue
+        if int(opp.id) == target_id:
+            continue
+        if int(opp.ships) < int(min_counter_ships):
+            continue
+        if use_predict and omega != 0.0 and arrival_step > 0:
+            ox, oy = _position_at(opp, omega, arrival_step)
+        else:
+            ox, oy = float(opp.x), float(opp.y)
+        d = math.hypot(ox - tx, oy - ty)
+        flight = d - float(opp.radius) - target_radius - 0.1
+        if flight <= 0:
+            # Already overlapping at arrival — treat as immediate threat.
+            t_op = 0
+        else:
+            opp_speed = fleet_speed(int(opp.ships))
+            if opp_speed <= 0:
+                continue
+            t_op = int(math.ceil(flight / opp_speed))
+        # Counter force = opp.ships at launch time. Production accruing
+        # during flight stays on the opp's home planet — it cannot join
+        # an already-departed fleet. arrival_step accrual models opp
+        # WAITING until our vulnerability moment, then launching with
+        # the larger stockpile. For post-passes with wait_N=0 this
+        # reduces to opp.ships (current garrison). Matches the realistic-
+        # case model in chooser_roi.py:_cheapest_opp_counter (which uses
+        # opp_eta accrual — slightly more pessimistic — but our use case
+        # already filters via min_counter_ships).
+        force = int(opp.ships) + int(opp.production) * int(arrival_step)
+        baseline_defense = max(0, target_prod * t_op)
+        gap = force - baseline_defense
+        if best is None or gap > best[0]:
+            best = (gap, opp, t_op, force)
+    if best is None:
+        return None
+    _, opp, t_op, force = best
+    return (opp, int(t_op), int(force))
+
+
+def source_safe_against_potential_counter(
+    src,
+    ships: int,
+    wait_N: int,
+    world,
+    model,
+    me: int,
+) -> bool:
+    """Could `src` defend itself against the worst-gap potential counter
+    after launching `ships` ships at `wait_N`?
+
+    Math (parallels the in-flight branch of `_source_survives_launch`):
+      counter arrives at turn `wait_N + t_op`
+      residue_after_launch = src.ships - ships + src.production * wait_N
+      growth_after = src.production * max(0, t_op)
+      garrison_at_counter = residue + growth_after
+      return garrison_at_counter >= counter_force + 1
+
+    Opt-out via `BASELINE_POTENTIAL_COUNTER=0`. When the env var is "0",
+    falls back to the old in-flight-only check (parity with the gates
+    being replaced).
+    """
+    if os.environ.get("BASELINE_POTENTIAL_COUNTER", "1") == "0":
+        return model.incoming_enemy_eta(int(src.id), me) is None
+    counter = cheapest_potential_counter(src, world, me, int(wait_N))
+    if counter is None:
+        return True
+    _opp, t_op, counter_force = counter
+    residue = int(src.ships) - int(ships) + int(src.production) * int(wait_N)
+    if residue < 0:
+        return False
+    growth_after = int(src.production) * max(0, int(t_op))
+    garrison_at_counter = residue + growth_after
+    return garrison_at_counter >= int(counter_force) + 1
+
+# Namespace alias so `from agents.baseline import threat_model` callers still see `threat_model.<name>`.
+from types import SimpleNamespace as _SimpleNamespace_threat_model
+threat_model = _SimpleNamespace_threat_model(
+    DEFAULT_MIN_COUNTER_SHIPS=DEFAULT_MIN_COUNTER_SHIPS,
+    cheapest_potential_counter=cheapest_potential_counter,
+    source_safe_against_potential_counter=source_safe_against_potential_counter,
+)
+
+# === inlined: agents/baseline/value.py ===
+"""Leaf value function: F1 + F2 favor with PV-discounted production.
+
+F1 = my_ships - opp_ships_agg          (in-flight + on-planet)
+F2 = (my_prod - opp_prod_agg) * pv     (pv = pv_horizon discount)
+
+PV-discount keeps F2 on a comparable scale to F1; without it the future-
+production term over-weights captures by ~100x in late game and the
+chooser stops valuing ship preservation. opp aggregation is max-of-opps
+in 2P (unchanged from baseline) and weighted-sum-of-opps in 4P
+(weakest opp 1.5x).
+
+A2 (4P weakness exploitation) derives from
+romantamrazov/orbit-star-wars-lb-max-1224 (peak LB μ=1224, +109 above
+our v15 ceiling).
+
+  - 4P: 1.5x bias on the WEAKEST opponent's contribution; other opps
+    unweighted. Biases leaf valuation toward states that further
+    weaken (or eliminate) them.
+  - Elimination bonus: +55 when weakest's strength (ships + 15*prod)
+    <= 110 AND my_strength >= 0.9 * weakest's (only fire when WE can
+    finish — no elim-then-die bias). 4P only.
+
+History — 2P bias was tested and rolled back: a uniform 1.25x
+multiplier on the single opp regressed h2h vs v15 in 2P (25/64,
+39.1%, Wlo=0.281, Whi=0.513 INCONCLUSIVE) because v15 is well-tuned
+and biasing the chooser toward attacks degrades its calibration.
+The "weakness exploitation" thesis is 4P-specific (per-weakest, not
+uniform); the 2P path is unchanged from the original baseline.
+
+Opt-in alternative head: `BASELINE_VALUE_HEAD=composite` switches the
+chooser to `lib.value_heads.composite_capture_value` (waste +
+capture-aware per-fleet credit). 2P-only — composite does not
+distinguish opp identity in 4P. Default remains `favor` with A2.
+"""
+
+
+import math
+import os
+
+# from lib.scoring import pv_horizon  # inlined by bundle_agent.py
+
+EPISODE_STEPS = 500
+DEFAULT_GAMMA = 0.99
+
+ELIMINATION_BONUS = 55.0
+WEAK_ENEMY_THRESHOLD = 110.0
+WEAKEST_ENEMY_MULT_4P = 1.5
+ELIMINATION_GATE_RATIO = 0.9
+STRENGTH_PROD_WEIGHT = 15.0
+
+# Phi-1 (holistic refactor, 2026-05-25): leaf value derived from the
+# discounted production-advantage integral, with the 2P elimination
+# bonus the current `favor` is missing. The 4P branch has
+# ELIMINATION_BONUS=55 (line 46); the 2P branch returns 0. Phi-1 closes
+# that gap. Defaults below; all overridable via env var.
+#
+# Why 250 horizon: matches PI's 2026-05-24 fast-elim target (eliminate
+# within 250 turns) and the truncated A/B protocol added the same day.
+# Why 300 elim bonus: full-game outcome scale; in 2P this is the entire
+# game's worth of production-advantage being awarded for crossing the
+# elimination threshold. Tune down to ~55 if too aggressive.
+PHI_HORIZON = int(os.environ.get("PHI_HORIZON", "250"))
+PHI_GAMMA = float(os.environ.get("PHI_GAMMA", "0.99"))
+PHI_ELIM_BONUS = float(os.environ.get("PHI_ELIM_BONUS", "300.0"))
+
+# Spatial leaf params (favor_hybrid_spatial only).
+# Idle-trajectory audit 2026-05-17 on submission 52754310 (mu=1271.8)
+# showed 43.8% of our ship-turns were on planets >50 units from any
+# non-our planet. Spatial term rewards positioning ships near
+# capturable targets so the chooser naturally drains rear/isolated
+# garrisons forward.
+SPATIAL_WEIGHT = float(os.environ.get("BASELINE_SPATIAL_WEIGHT", "0.5"))
+SPATIAL_DECAY = float(os.environ.get("BASELINE_SPATIAL_DECAY", "30.0"))
+
+
+def _read(obs, attr, default):
+    if hasattr(obs, attr):
+        return getattr(obs, attr)
+    return obs.get(attr, default) if isinstance(obs, dict) else default
+
+
+def favor(obs, me: int, num_seats: int = 2, gamma: float = DEFAULT_GAMMA) -> float:
+    planets = _read(obs, "planets", []) or []
+    fleets = _read(obs, "fleets", []) or []
+    step = int(_read(obs, "step", 0))
+
+    ships_by_owner: dict[int, float] = {}
+    prod_by_owner: dict[int, float] = {}
+    for p in planets:
+        owner = int(p[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(p[5])
+        prod_by_owner[owner] = prod_by_owner.get(owner, 0.0) + float(p[6])
+    for f in fleets:
+        owner = int(f[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(f[6])
+
+    my_ships = ships_by_owner.get(me, 0.0)
+    my_prod = prod_by_owner.get(me, 0.0)
+
+    opps = sorted(
+        o for o in (set(ships_by_owner) | set(prod_by_owner))
+        if o != me and o >= 0
+    )
+
+    elim_bonus = 0.0
+    if num_seats <= 2 or len(opps) < 2:
+        # 2P (or degenerate <=1 opp survives): UNCHANGED from baseline —
+        # max-of-opps, no bias, no bonus. The 2P uniform bias was tested
+        # and rolled back (regresses vs v15).
+        opp_ships = max((ships_by_owner.get(o, 0.0) for o in opps), default=0.0)
+        opp_prod = max((prod_by_owner.get(o, 0.0) for o in opps), default=0.0)
+    else:
+        # 4P: weighted sum (weakest 1.5x) + elim bonus when we can finish.
+        opp_strengths = {
+            o: ships_by_owner.get(o, 0.0)
+               + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT
+            for o in opps
+        }
+        weakest = min(opps, key=lambda o: opp_strengths[o])
+        weakest_str = opp_strengths[weakest]
+        opp_ships = sum(
+            ships_by_owner.get(o, 0.0)
+            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
+            for o in opps
+        )
+        opp_prod = sum(
+            prod_by_owner.get(o, 0.0)
+            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
+            for o in opps
+        )
+        my_strength = my_ships + my_prod * STRENGTH_PROD_WEIGHT
+        if (weakest_str <= WEAK_ENEMY_THRESHOLD
+                and my_strength >= ELIMINATION_GATE_RATIO * weakest_str):
+            elim_bonus = ELIMINATION_BONUS
+
+    pv = pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS)
+    return (my_ships - opp_ships) + (my_prod - opp_prod) * pv + elim_bonus
+
+
+def favor_phi(obs, me: int, num_seats: int = 2,
+              gamma: float = DEFAULT_GAMMA) -> float:
+    """Phi-1 leaf value (2026-05-25). Same shape as `favor` but:
+
+      - PV horizon is PHI_HORIZON (default 250) instead of EPISODE_STEPS=500.
+        Aligns the leaf with PI's fast-elim target.
+      - 2P gets an elimination bonus on the same trigger as 4P
+        (opp_strength <= WEAK_ENEMY_THRESHOLD AND
+         my_strength >= ELIMINATION_GATE_RATIO * opp_strength). Current
+        `favor` has elim_bonus=0 in 2P — the team peak mu=1149 (sub
+        52744856, composite_a2_hybrid) had its own 2P-aware capture
+        mechanic in the composite head; favor_phi closes the same gap
+        in the standard favor head, without depending on composite's
+        fragility (the PV-augmentation in composite regressed and is
+        currently OFF via COMPOSITE_PRODUCTION_PV=0).
+      - 2P uses PHI_ELIM_BONUS (default 300) for the elim trigger;
+        4P uses the original ELIMINATION_BONUS=55. Different scales
+        because eliminating the LAST opp in 2P wins the game outright,
+        while eliminating ONE OF FOUR in 4P leaves three threats alive.
+
+    Default gamma argument honored if PHI_GAMMA env var unset; otherwise
+    PHI_GAMMA overrides (so opt-in via env var changes both horizon AND
+    discount rate atomically). Wire via BASELINE_VALUE_HEAD=phi.
+    """
+    planets = _read(obs, "planets", []) or []
+    fleets = _read(obs, "fleets", []) or []
+    step = int(_read(obs, "step", 0))
+
+    ships_by_owner: dict[int, float] = {}
+    prod_by_owner: dict[int, float] = {}
+    for p in planets:
+        owner = int(p[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(p[5])
+        prod_by_owner[owner] = prod_by_owner.get(owner, 0.0) + float(p[6])
+    for f in fleets:
+        owner = int(f[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(f[6])
+
+    my_ships = ships_by_owner.get(me, 0.0)
+    my_prod = prod_by_owner.get(me, 0.0)
+    my_strength = my_ships + my_prod * STRENGTH_PROD_WEIGHT
+
+    opps = sorted(
+        o for o in (set(ships_by_owner) | set(prod_by_owner))
+        if o != me and o >= 0
+    )
+
+    elim_bonus = 0.0
+    if num_seats <= 2 or len(opps) < 2:
+        # 2P: max-of-opps aggregation (same as favor) + NEW 2P elim bonus.
+        opp_ships = max((ships_by_owner.get(o, 0.0) for o in opps), default=0.0)
+        opp_prod = max((prod_by_owner.get(o, 0.0) for o in opps), default=0.0)
+        # 2P elim trigger: the only opp is weak AND we dominate.
+        opp_strength = opp_ships + opp_prod * STRENGTH_PROD_WEIGHT
+        if (opps
+                and opp_strength <= WEAK_ENEMY_THRESHOLD
+                and my_strength >= ELIMINATION_GATE_RATIO * opp_strength):
+            elim_bonus = PHI_ELIM_BONUS
+    else:
+        # 4P: identical to favor — weighted sum (weakest 1.5x) + ELIM_BONUS=55.
+        opp_strengths = {
+            o: ships_by_owner.get(o, 0.0)
+               + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT
+            for o in opps
+        }
+        weakest = min(opps, key=lambda o: opp_strengths[o])
+        weakest_str = opp_strengths[weakest]
+        opp_ships = sum(
+            ships_by_owner.get(o, 0.0)
+            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
+            for o in opps
+        )
+        opp_prod = sum(
+            prod_by_owner.get(o, 0.0)
+            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
+            for o in opps
+        )
+        if (weakest_str <= WEAK_ENEMY_THRESHOLD
+                and my_strength >= ELIMINATION_GATE_RATIO * weakest_str):
+            elim_bonus = ELIMINATION_BONUS
+
+    # Honor PHI_GAMMA env var if set; else use the caller's gamma arg.
+    g = PHI_GAMMA if os.environ.get("PHI_GAMMA") else gamma
+    pv = pv_horizon(step, 0, gamma=g, t_total=PHI_HORIZON)
+    return (my_ships - opp_ships) + (my_prod - opp_prod) * pv + elim_bonus
+
+
+def favor_composite(obs, me: int, num_seats: int = 2,
+                    gamma: float = DEFAULT_GAMMA) -> float:
+    """`composite_capture_value` adapted to the (obs, me, num_seats, gamma)
+    signature `chooser` expects. `gamma` is intentionally ignored —
+    composite uses linear time-remaining weighting instead of γ-discount.
+    `num_seats` is ignored — composite doesn't differentiate opps.
+
+    Prior live evidence (iter_v1 sub 52661990, 2026-05-14):
+    composite head on the v7_0 chooser → ladder μ 1034.7 (vs v15 1108.4).
+    Wire only as an opt-in A/B; do NOT default this on. The clean
+    baseline value is `favor` (with A2 4P-weakness exploitation).
+    """
+    # from lib.value_heads import composite_capture_value  # inlined by bundle_agent.py
+    return composite_capture_value(obs, me)
+
+
+def _positional_ship_value(obs, me: int) -> float:
+    """Sum over my ships (on-planet + in-flight) of
+    1.0 / (1.0 + d_min / SPATIAL_DECAY), where d_min = distance to
+    nearest non-our planet. Value ranges 0..1 per ship:
+    1.0 when adjacent (d=0), 0.5 at d=SPATIAL_DECAY, ~0.2 at d=120.
+
+    Returns 0.0 if no non-our planet remains (degenerate end-state).
+    """
+    planets = _read(obs, "planets", []) or []
+    fleets = _read(obs, "fleets", []) or []
+    non_our = [(float(p[2]), float(p[3])) for p in planets if int(p[1]) != me]
+    if not non_our:
+        return 0.0
+    total = 0.0
+    for p in planets:
+        if int(p[1]) != me:
+            continue
+        x, y = float(p[2]), float(p[3])
+        d_min = min(math.hypot(x - tx, y - ty) for tx, ty in non_our)
+        weight = 1.0 / (1.0 + d_min / SPATIAL_DECAY)
+        total += float(p[5]) * weight
+    for f in fleets:
+        if int(f[1]) != me:
+            continue
+        x, y = float(f[2]), float(f[3])
+        d_min = min(math.hypot(x - tx, y - ty) for tx, ty in non_our)
+        weight = 1.0 / (1.0 + d_min / SPATIAL_DECAY)
+        total += float(f[6]) * weight
+    return total
+
+
+def favor_hybrid_spatial(obs, me: int, num_seats: int = 2,
+                         gamma: float = DEFAULT_GAMMA) -> float:
+    """favor_hybrid + positional pull toward non-our planets (2P only).
+
+    Layered on top of the validated hybrid head (composite in 2P,
+    A2-favor in 4P). The spatial term is applied ONLY in 2P games —
+    in 4P, the A2 weakness-exploitation already biases toward the
+    weakest opp's positions, and the bv33jlzwj A/B (3/32 first-place,
+    max=1503ms) showed spatial regresses 4P substantially. 2P-only
+    keeps the validated A2-4P path identical to favor_hybrid.
+
+    The spatial term is purely additive — when SPATIAL_WEIGHT=0 or
+    num_seats > 2 it equals favor_hybrid exactly.
+    """
+    base = favor_hybrid(obs, me, num_seats, gamma)
+    if SPATIAL_WEIGHT == 0.0 or num_seats > 2:
+        return base
+    return base + SPATIAL_WEIGHT * _positional_ship_value(obs, me)
+
+
+def favor_hybrid(obs, me: int, num_seats: int = 2,
+                 gamma: float = DEFAULT_GAMMA) -> float:
+    """2P uses composite (waste-aware, validated by audit-workflow A/B:
+    93.8% vs v9_scavenge, 67.2% vs v15). 4P uses `favor` with A2
+    4P-weakness exploitation. Domains are disjoint by construction —
+    composite has no 4P opp aggregation (`composite-value-head-2p-only.md`
+    flag), and A2's per-weakest multiplier + elim bonus only fire when
+    num_seats > 2.
+    """
+    if num_seats <= 2:
+        return favor_composite(obs, me, num_seats, gamma)
+    return favor(obs, me, num_seats, gamma)
+
+
+def select_favor_fn():
+    """Pick the leaf value function.
+
+    Env var `BASELINE_VALUE_HEAD`:
+      - unset / anything else -> `favor` (default, v15 baseline + A2 4P).
+      - "composite"           -> `favor_composite` (2P waste-aware,
+                                  composite_capture_value head).
+      - "hybrid"              -> `favor_hybrid` (composite in 2P,
+                                  A2-favor in 4P).
+
+    The chooser uses the same function for both `build_idle_baseline` and
+    `score_action` so the Δ stays well-defined.
+    """
+    choice = os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower()
+    if choice == "composite":
+        return favor_composite
+    if choice == "hybrid":
+        return favor_hybrid
+    if choice == "hybrid_spatial":
+        return favor_hybrid_spatial
+    if choice == "phi":
+        return favor_phi
+    return favor
+
+# Namespace alias so `from agents.baseline import value` callers still see `value.<name>`.
+from types import SimpleNamespace as _SimpleNamespace_value
+value = _SimpleNamespace_value(
+    EPISODE_STEPS=EPISODE_STEPS,
+    DEFAULT_GAMMA=DEFAULT_GAMMA,
+    ELIMINATION_BONUS=ELIMINATION_BONUS,
+    WEAK_ENEMY_THRESHOLD=WEAK_ENEMY_THRESHOLD,
+    WEAKEST_ENEMY_MULT_4P=WEAKEST_ENEMY_MULT_4P,
+    ELIMINATION_GATE_RATIO=ELIMINATION_GATE_RATIO,
+    STRENGTH_PROD_WEIGHT=STRENGTH_PROD_WEIGHT,
+    PHI_HORIZON=PHI_HORIZON,
+    PHI_GAMMA=PHI_GAMMA,
+    PHI_ELIM_BONUS=PHI_ELIM_BONUS,
+    SPATIAL_WEIGHT=SPATIAL_WEIGHT,
+    SPATIAL_DECAY=SPATIAL_DECAY,
+    favor=favor,
+    favor_phi=favor_phi,
+    favor_composite=favor_composite,
+    favor_hybrid_spatial=favor_hybrid_spatial,
+    favor_hybrid=favor_hybrid,
+    select_favor_fn=select_favor_fn,
+)
+
+# === inlined: agents/baseline/chooser.py ===
+"""Chooser: reactive idle baseline + per-candidate Δ, emit greedy non-dogpile.
+
+Pipeline:
+  baseline[h] = favor at horizon h with me idle + opp reactive
+  candidate Δ = favor(me_action @ wait_N + opp reactive) - baseline[h]
+  emit       = candidates with Δ>0, greedy by Δ desc,
+               1 launch per source AND 1 per target per turn.
+               wait_N>0 winners RESERVE source+target but emit nothing.
+
+Opp seats play lib.opp_model.lite_greedy_policy reactively inside every
+rollout (not a precomputed trajectory), so my captures trigger opp
+counter-launches and fragile leaves are correctly penalised.
+"""
+
+
+import os
+import time
+
+# from lib.fast_sim import clone as fs_clone  # inlined by bundle_agent.py
+fs_clone = clone
+# from lib.fast_sim import step as fs_step  # inlined by bundle_agent.py
+fs_step = step
+# from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy  # inlined by bundle_agent.py
+
+# from agents.baseline.value import select_favor_fn  # inlined by bundle_agent.py
+
+WALLCLOCK_BUDGET_MS = 600.0
+N_VALIDATE = 60
+PER_CANDIDATE_SAFETY = 1.5
+RESERVED_OVERHEAD_MS = 50.0
+
+
+def _select_opp_policy():
+    """Tier 3 (2026-05-18 PM): asymmetric opp model selection.
+
+    BASELINE_OPP_TIER env var:
+      - "0" or unset → lite_greedy_policy (default, ~1-2ms/call).
+      - "1" → top_tier_mirror_policy (~5-10ms/call; ladder-realistic
+              opp using v3.5.1 aggressive snipe pipeline). Bench gate
+              FIRST before A/B — per-call cost is 5-10× lite_greedy.
+
+    Per-call selection (not cached at import time) so env-var overrides
+    inside test fixtures take effect without re-importing the module.
+    """
+    return (
+        top_tier_mirror_policy
+        if os.environ.get("BASELINE_OPP_TIER", "0").strip() == "1"
+        else lite_greedy_policy
+    )
+
+
+def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
+    """One reactive opp action set per non-me seat. Opp policy is
+    selected via BASELINE_OPP_TIER — see `_select_opp_policy`."""
+    opp_policy = _select_opp_policy()
+    actions: list[list] = [[] for _ in range(num_seats)]
+    for opp_id in range(num_seats):
+        if opp_id == me:
+            continue
+        try:
+            actions[opp_id] = opp_policy(snap.state[opp_id].observation) or []
+        except Exception:
+            actions[opp_id] = []
+    return actions
+
+
+def build_idle_baseline(snap_base, me: int, num_seats: int,
+                        max_horizon: int, gamma: float) -> list[float]:
+    """favor at every horizon 0..max_horizon under (me-idle, opp-reactive)."""
+    favor_fn = select_favor_fn()
+    snap = fs_clone(snap_base)
+    out = [favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)]
+    for _ in range(max_horizon):
+        if snap.fake_env.done:
+            out.append(out[-1])
+            continue
+        actions = opp_actions_for_snap(snap, me, num_seats)
+        snap = fs_step(snap, actions, in_place=True)
+        out.append(favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma))
+    return out
+
+
+def score_action(snap_base, me: int, num_seats: int,
+                 src_id: int, angle: float, ships: int,
+                 horizon: int, baseline_favors: list[float],
+                 wait_N: int, gamma: float) -> float:
+    """Δ favor at horizon = leaf(my_action@wait_N) − baseline."""
+    favor_fn = select_favor_fn()
+    snap = fs_clone(snap_base)
+    for step_i in range(horizon):
+        if snap.fake_env.done:
+            break
+        actions = opp_actions_for_snap(snap, me, num_seats)
+        if step_i == int(wait_N):
+            actions[me] = [[int(src_id), float(angle), int(ships)]]
+        snap = fs_step(snap, actions, in_place=True)
+    leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
+    return leaf - baseline_favors[horizon]
+
+
+def affordable_validate_cap(snap_base, me: int, num_seats: int,
+                            max_horizon: int, wallclock_ms: float,
+                            min_horizon: int, gamma: float,
+                            ) -> tuple[int, float]:
+    """Probe per-step + per-leaf cost on the current board, derive a
+    safe candidate cap and the per-candidate cost estimate.
+
+    Returns `(cap, per_cand_ms)`. `cap` is bounded below by 8. The
+    `per_cand_ms` value is used by `choose()` to pre-bail before
+    entering a candidate that would push past the deadline.
+
+    Probing per-leaf cost matters because the leaf eval cost varies
+    by ~50x between value heads (favor ~100µs vs composite_capture_value
+    ~2-5ms — it builds a World + ray-casts every fleet). Without the
+    leaf probe the cap stayed sized for favor and composite blew the
+    1000ms env budget on heavy turns (max 1292ms vs v15 / v9_scavenge,
+    2026-05-17 A/B).
+    """
+    favor_fn = select_favor_fn()
+    t0 = time.perf_counter()
+    probe = fs_clone(snap_base)
+    probe = fs_step(probe, [[] for _ in range(num_seats)], in_place=True)
+    per_step_ms = max(0.05, (time.perf_counter() - t0) * 1000.0)
+
+    t0 = time.perf_counter()
+    favor_fn(probe.state[me].observation, me, num_seats, gamma=gamma)
+    per_leaf_ms = max(0.05, (time.perf_counter() - t0) * 1000.0)
+
+    avg_K = (min_horizon + max_horizon) / 2.0
+    per_cand_ms = (per_step_ms * avg_K + per_leaf_ms) * PER_CANDIDATE_SAFETY
+    budget = wallclock_ms - RESERVED_OVERHEAD_MS
+    cap = max(8, int(budget / per_cand_ms))
+    return cap, per_cand_ms
+
+
+def choose(snap_base, prerank, baseline_favors: list[float],
+           me: int, num_seats: int, wallclock_ms: float,
+           min_horizon: int, max_horizon: int, gamma: float,
+           world=None,
+           reserved_srcs: set[int] | None = None,
+           reserved_for_new_commits: set[int] | None = None,
+           ) -> tuple[list[list], list[dict]]:
+    """Validate top candidates with fast_sim, emit greedy non-dogpile moves.
+
+    Returns `(moves, commits)`. See `chooser_trajectory.choose_trajectory`
+    for the full ledger-aware contract; this is the parallel composite
+    implementation (default chooser is trajectory).
+    """
+    if reserved_srcs is None:
+        reserved_srcs = set()
+    if reserved_for_new_commits is None:
+        reserved_for_new_commits = reserved_srcs
+    if not prerank:
+        return [], []
+
+    n_aff, per_cand_ms = affordable_validate_cap(
+        snap_base, me, num_seats, max_horizon, wallclock_ms,
+        min_horizon, gamma,
+    )
+    top = prerank[: min(N_VALIDATE, n_aff)]
+
+    deadline = time.perf_counter() + wallclock_ms / 1000.0
+    # Pre-bail headroom: don't ENTER a candidate that would push us past
+    # the deadline. score_action is uninterruptible (runs the full K-step
+    # rollout once entered), so checking AT the deadline is too late.
+    # Closes the long-tail max-turn-ms overrun seen in the 2026-05-17 A/B.
+    safe_deadline = deadline - (per_cand_ms / 1000.0)
+    validated: list[tuple] = []
+    for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
+        if time.perf_counter() > safe_deadline:
+            break
+        sid_ = int(src.id)
+        if int(wait_N) > 0:
+            if sid_ in reserved_for_new_commits:
+                continue
+        else:
+            if sid_ in reserved_srcs:
+                continue
+        delta = score_action(
+            snap_base, me, num_seats,
+            int(src.id), float(angle), int(ships),
+            int(horizon), baseline_favors, int(wait_N), gamma,
+        )
+        if delta > 0:
+            validated.append((delta, src, tgt, ships, angle, wait_N))
+
+    if not validated:
+        return [], []
+
+    validated.sort(key=lambda c: -c[0])
+    used_srcs: set[int] = set()
+    used_tgts: set[int] = set()
+    moves: list[list] = []
+    commits: list[dict] = []
+    commit_step = int(world.step) if world is not None else 0
+    for _delta, src, tgt, ships, angle, wait_N in validated:
+        sid, tid = int(src.id), int(tgt.id)
+        if sid in used_srcs or tid in used_tgts:
+            continue
+        used_srcs.add(sid)
+        used_tgts.add(tid)
+        if int(wait_N) == 0:
+            moves.append([sid, float(angle), int(ships)])
+        else:
+            commits.append({
+                "src_id": sid,
+                "tgt_id": tid,
+                "ships_planned": int(ships),
+                "angle_original": float(angle),
+                "wait_remaining": int(wait_N),
+                "commit_step": commit_step,
+            })
+    return moves, commits
+
+# Namespace alias so `from agents.baseline import chooser` callers still see `chooser.<name>`.
+from types import SimpleNamespace as _SimpleNamespace_chooser
+chooser = _SimpleNamespace_chooser(
+    WALLCLOCK_BUDGET_MS=WALLCLOCK_BUDGET_MS,
+    N_VALIDATE=N_VALIDATE,
+    PER_CANDIDATE_SAFETY=PER_CANDIDATE_SAFETY,
+    RESERVED_OVERHEAD_MS=RESERVED_OVERHEAD_MS,
+    opp_actions_for_snap=opp_actions_for_snap,
+    build_idle_baseline=build_idle_baseline,
+    score_action=score_action,
+    affordable_validate_cap=affordable_validate_cap,
+    choose=choose,
+)
+
 # === inlined: agents/baseline/proposer.py ===
 """Candidate proposer: fire-now + multi-wait-grid, cheap-ranked, banded-deduped.
 
@@ -10353,10 +11109,16 @@ def _source_survives_launch(
         if owner != me and eta_arr <= int(threat_eta) + WAVE_LOOKAHEAD
     )
     if threat_force <= 0:
-        # Potential-launch threats only; let the chooser's rollout
-        # handle the assessment. The pre-cut is for in-flight cases
-        # where the trajectory is already committed.
-        return True
+        # No in-flight enemy fleet — but a nearby strong opp planet
+        # could counter-launch once we strip. Was a fail-open ("let
+        # the chooser's rollout handle it"); the trajectory chooser's
+        # horizon-25 rollout doesn't see threats landing past tick 25.
+        # Now: explicit potential-counter check via the worst-gap opp
+        # walk in agents/baseline/threat_model.py.
+        # from agents.baseline.threat_model import (  # inlined by bundle_agent.py
+        return source_safe_against_potential_counter(
+            src, int(ships), int(wait_N), world, model, me,
+        )
     if int(wait_N) >= int(threat_eta):
         # Launch would happen AT or AFTER the threat lands — the
         # source has already fallen by the time we'd fire. Drop.
@@ -11046,6 +11808,12 @@ RESERVE_FLOOR = 10
 # Env-overridable via BASELINE_RELAY_K_RELAYS.
 DEFAULT_K_NEAREST_RELAYS = 5
 
+# Relay-specific fleet-speed floor. Relay-staged fleets travel two legs;
+# leg-1 must move fast enough that R hasn't moved on by arrival. 2.5
+# board units/turn requires ~30 ships. Stops production-2 sources from
+# shipping 4-5 ship fleets at speed ~1.5 that lose force-sufficiency.
+DEFAULT_MIN_RELAY_SPEED = 2.5
+
 
 def _segment_distance_to_center(ax: float, ay: float,
                                 bx: float, by: float) -> float:
@@ -11075,6 +11843,8 @@ def emit_relay_forward(moves, planets, my_id: int, world, model) -> list:
     min_ships = int(os.environ.get("BASELINE_MIN_SHIPS_LAUNCH", "2"))
     k_relays = int(os.environ.get("BASELINE_RELAY_K_RELAYS",
                                   str(DEFAULT_K_NEAREST_RELAYS)))
+    min_speed = float(os.environ.get("BASELINE_RELAY_MIN_SPEED",
+                                     str(DEFAULT_MIN_RELAY_SPEED)))
 
     used_srcs: set[int] = set()
     for m in moves:
@@ -11101,7 +11871,14 @@ def emit_relay_forward(moves, planets, my_id: int, world, model) -> list:
         ships_to_send = int(src.ships) - reserve
         if ships_to_send < min_ships:
             continue
-        if model.incoming_enemy_eta(int(src.id), my_id) is not None:
+        if fleet_speed(ships_to_send) < min_speed:
+            continue
+        # Source-survival: in-flight check + potential-counter walk.
+        # Was `incoming_enemy_eta is not None` (in-flight only).
+        # from agents.baseline.threat_model import (  # inlined by bundle_agent.py
+        if not source_safe_against_potential_counter(
+            src, ships_to_send, 0, world, model, my_id,
+        ):
             continue
 
         best_total_eta = None
@@ -11226,599 +12003,8 @@ relay_forward = _SimpleNamespace_relay_forward(
     RESERVE_MULT=RESERVE_MULT,
     RESERVE_FLOOR=RESERVE_FLOOR,
     DEFAULT_K_NEAREST_RELAYS=DEFAULT_K_NEAREST_RELAYS,
+    DEFAULT_MIN_RELAY_SPEED=DEFAULT_MIN_RELAY_SPEED,
     emit_relay_forward=emit_relay_forward,
-)
-
-# === inlined: agents/baseline/value.py ===
-"""Leaf value function: F1 + F2 favor with PV-discounted production.
-
-F1 = my_ships - opp_ships_agg          (in-flight + on-planet)
-F2 = (my_prod - opp_prod_agg) * pv     (pv = pv_horizon discount)
-
-PV-discount keeps F2 on a comparable scale to F1; without it the future-
-production term over-weights captures by ~100x in late game and the
-chooser stops valuing ship preservation. opp aggregation is max-of-opps
-in 2P (unchanged from baseline) and weighted-sum-of-opps in 4P
-(weakest opp 1.5x).
-
-A2 (4P weakness exploitation) derives from
-romantamrazov/orbit-star-wars-lb-max-1224 (peak LB μ=1224, +109 above
-our v15 ceiling).
-
-  - 4P: 1.5x bias on the WEAKEST opponent's contribution; other opps
-    unweighted. Biases leaf valuation toward states that further
-    weaken (or eliminate) them.
-  - Elimination bonus: +55 when weakest's strength (ships + 15*prod)
-    <= 110 AND my_strength >= 0.9 * weakest's (only fire when WE can
-    finish — no elim-then-die bias). 4P only.
-
-History — 2P bias was tested and rolled back: a uniform 1.25x
-multiplier on the single opp regressed h2h vs v15 in 2P (25/64,
-39.1%, Wlo=0.281, Whi=0.513 INCONCLUSIVE) because v15 is well-tuned
-and biasing the chooser toward attacks degrades its calibration.
-The "weakness exploitation" thesis is 4P-specific (per-weakest, not
-uniform); the 2P path is unchanged from the original baseline.
-
-Opt-in alternative head: `BASELINE_VALUE_HEAD=composite` switches the
-chooser to `lib.value_heads.composite_capture_value` (waste +
-capture-aware per-fleet credit). 2P-only — composite does not
-distinguish opp identity in 4P. Default remains `favor` with A2.
-"""
-
-
-import math
-import os
-
-# from lib.scoring import pv_horizon  # inlined by bundle_agent.py
-
-EPISODE_STEPS = 500
-DEFAULT_GAMMA = 0.99
-
-ELIMINATION_BONUS = 55.0
-WEAK_ENEMY_THRESHOLD = 110.0
-WEAKEST_ENEMY_MULT_4P = 1.5
-ELIMINATION_GATE_RATIO = 0.9
-STRENGTH_PROD_WEIGHT = 15.0
-
-# Phi-1 (holistic refactor, 2026-05-25): leaf value derived from the
-# discounted production-advantage integral, with the 2P elimination
-# bonus the current `favor` is missing. The 4P branch has
-# ELIMINATION_BONUS=55 (line 46); the 2P branch returns 0. Phi-1 closes
-# that gap. Defaults below; all overridable via env var.
-#
-# Why 250 horizon: matches PI's 2026-05-24 fast-elim target (eliminate
-# within 250 turns) and the truncated A/B protocol added the same day.
-# Why 300 elim bonus: full-game outcome scale; in 2P this is the entire
-# game's worth of production-advantage being awarded for crossing the
-# elimination threshold. Tune down to ~55 if too aggressive.
-PHI_HORIZON = int(os.environ.get("PHI_HORIZON", "250"))
-PHI_GAMMA = float(os.environ.get("PHI_GAMMA", "0.99"))
-PHI_ELIM_BONUS = float(os.environ.get("PHI_ELIM_BONUS", "300.0"))
-
-# Spatial leaf params (favor_hybrid_spatial only).
-# Idle-trajectory audit 2026-05-17 on submission 52754310 (mu=1271.8)
-# showed 43.8% of our ship-turns were on planets >50 units from any
-# non-our planet. Spatial term rewards positioning ships near
-# capturable targets so the chooser naturally drains rear/isolated
-# garrisons forward.
-SPATIAL_WEIGHT = float(os.environ.get("BASELINE_SPATIAL_WEIGHT", "0.5"))
-SPATIAL_DECAY = float(os.environ.get("BASELINE_SPATIAL_DECAY", "30.0"))
-
-
-def _read(obs, attr, default):
-    if hasattr(obs, attr):
-        return getattr(obs, attr)
-    return obs.get(attr, default) if isinstance(obs, dict) else default
-
-
-def favor(obs, me: int, num_seats: int = 2, gamma: float = DEFAULT_GAMMA) -> float:
-    planets = _read(obs, "planets", []) or []
-    fleets = _read(obs, "fleets", []) or []
-    step = int(_read(obs, "step", 0))
-
-    ships_by_owner: dict[int, float] = {}
-    prod_by_owner: dict[int, float] = {}
-    for p in planets:
-        owner = int(p[1])
-        if owner < 0:
-            continue
-        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(p[5])
-        prod_by_owner[owner] = prod_by_owner.get(owner, 0.0) + float(p[6])
-    for f in fleets:
-        owner = int(f[1])
-        if owner < 0:
-            continue
-        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(f[6])
-
-    my_ships = ships_by_owner.get(me, 0.0)
-    my_prod = prod_by_owner.get(me, 0.0)
-
-    opps = sorted(
-        o for o in (set(ships_by_owner) | set(prod_by_owner))
-        if o != me and o >= 0
-    )
-
-    elim_bonus = 0.0
-    if num_seats <= 2 or len(opps) < 2:
-        # 2P (or degenerate <=1 opp survives): UNCHANGED from baseline —
-        # max-of-opps, no bias, no bonus. The 2P uniform bias was tested
-        # and rolled back (regresses vs v15).
-        opp_ships = max((ships_by_owner.get(o, 0.0) for o in opps), default=0.0)
-        opp_prod = max((prod_by_owner.get(o, 0.0) for o in opps), default=0.0)
-    else:
-        # 4P: weighted sum (weakest 1.5x) + elim bonus when we can finish.
-        opp_strengths = {
-            o: ships_by_owner.get(o, 0.0)
-               + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT
-            for o in opps
-        }
-        weakest = min(opps, key=lambda o: opp_strengths[o])
-        weakest_str = opp_strengths[weakest]
-        opp_ships = sum(
-            ships_by_owner.get(o, 0.0)
-            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
-            for o in opps
-        )
-        opp_prod = sum(
-            prod_by_owner.get(o, 0.0)
-            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
-            for o in opps
-        )
-        my_strength = my_ships + my_prod * STRENGTH_PROD_WEIGHT
-        if (weakest_str <= WEAK_ENEMY_THRESHOLD
-                and my_strength >= ELIMINATION_GATE_RATIO * weakest_str):
-            elim_bonus = ELIMINATION_BONUS
-
-    pv = pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS)
-    return (my_ships - opp_ships) + (my_prod - opp_prod) * pv + elim_bonus
-
-
-def favor_phi(obs, me: int, num_seats: int = 2,
-              gamma: float = DEFAULT_GAMMA) -> float:
-    """Phi-1 leaf value (2026-05-25). Same shape as `favor` but:
-
-      - PV horizon is PHI_HORIZON (default 250) instead of EPISODE_STEPS=500.
-        Aligns the leaf with PI's fast-elim target.
-      - 2P gets an elimination bonus on the same trigger as 4P
-        (opp_strength <= WEAK_ENEMY_THRESHOLD AND
-         my_strength >= ELIMINATION_GATE_RATIO * opp_strength). Current
-        `favor` has elim_bonus=0 in 2P — the team peak mu=1149 (sub
-        52744856, composite_a2_hybrid) had its own 2P-aware capture
-        mechanic in the composite head; favor_phi closes the same gap
-        in the standard favor head, without depending on composite's
-        fragility (the PV-augmentation in composite regressed and is
-        currently OFF via COMPOSITE_PRODUCTION_PV=0).
-      - 2P uses PHI_ELIM_BONUS (default 300) for the elim trigger;
-        4P uses the original ELIMINATION_BONUS=55. Different scales
-        because eliminating the LAST opp in 2P wins the game outright,
-        while eliminating ONE OF FOUR in 4P leaves three threats alive.
-
-    Default gamma argument honored if PHI_GAMMA env var unset; otherwise
-    PHI_GAMMA overrides (so opt-in via env var changes both horizon AND
-    discount rate atomically). Wire via BASELINE_VALUE_HEAD=phi.
-    """
-    planets = _read(obs, "planets", []) or []
-    fleets = _read(obs, "fleets", []) or []
-    step = int(_read(obs, "step", 0))
-
-    ships_by_owner: dict[int, float] = {}
-    prod_by_owner: dict[int, float] = {}
-    for p in planets:
-        owner = int(p[1])
-        if owner < 0:
-            continue
-        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(p[5])
-        prod_by_owner[owner] = prod_by_owner.get(owner, 0.0) + float(p[6])
-    for f in fleets:
-        owner = int(f[1])
-        if owner < 0:
-            continue
-        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(f[6])
-
-    my_ships = ships_by_owner.get(me, 0.0)
-    my_prod = prod_by_owner.get(me, 0.0)
-    my_strength = my_ships + my_prod * STRENGTH_PROD_WEIGHT
-
-    opps = sorted(
-        o for o in (set(ships_by_owner) | set(prod_by_owner))
-        if o != me and o >= 0
-    )
-
-    elim_bonus = 0.0
-    if num_seats <= 2 or len(opps) < 2:
-        # 2P: max-of-opps aggregation (same as favor) + NEW 2P elim bonus.
-        opp_ships = max((ships_by_owner.get(o, 0.0) for o in opps), default=0.0)
-        opp_prod = max((prod_by_owner.get(o, 0.0) for o in opps), default=0.0)
-        # 2P elim trigger: the only opp is weak AND we dominate.
-        opp_strength = opp_ships + opp_prod * STRENGTH_PROD_WEIGHT
-        if (opps
-                and opp_strength <= WEAK_ENEMY_THRESHOLD
-                and my_strength >= ELIMINATION_GATE_RATIO * opp_strength):
-            elim_bonus = PHI_ELIM_BONUS
-    else:
-        # 4P: identical to favor — weighted sum (weakest 1.5x) + ELIM_BONUS=55.
-        opp_strengths = {
-            o: ships_by_owner.get(o, 0.0)
-               + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT
-            for o in opps
-        }
-        weakest = min(opps, key=lambda o: opp_strengths[o])
-        weakest_str = opp_strengths[weakest]
-        opp_ships = sum(
-            ships_by_owner.get(o, 0.0)
-            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
-            for o in opps
-        )
-        opp_prod = sum(
-            prod_by_owner.get(o, 0.0)
-            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
-            for o in opps
-        )
-        if (weakest_str <= WEAK_ENEMY_THRESHOLD
-                and my_strength >= ELIMINATION_GATE_RATIO * weakest_str):
-            elim_bonus = ELIMINATION_BONUS
-
-    # Honor PHI_GAMMA env var if set; else use the caller's gamma arg.
-    g = PHI_GAMMA if os.environ.get("PHI_GAMMA") else gamma
-    pv = pv_horizon(step, 0, gamma=g, t_total=PHI_HORIZON)
-    return (my_ships - opp_ships) + (my_prod - opp_prod) * pv + elim_bonus
-
-
-def favor_composite(obs, me: int, num_seats: int = 2,
-                    gamma: float = DEFAULT_GAMMA) -> float:
-    """`composite_capture_value` adapted to the (obs, me, num_seats, gamma)
-    signature `chooser` expects. `gamma` is intentionally ignored —
-    composite uses linear time-remaining weighting instead of γ-discount.
-    `num_seats` is ignored — composite doesn't differentiate opps.
-
-    Prior live evidence (iter_v1 sub 52661990, 2026-05-14):
-    composite head on the v7_0 chooser → ladder μ 1034.7 (vs v15 1108.4).
-    Wire only as an opt-in A/B; do NOT default this on. The clean
-    baseline value is `favor` (with A2 4P-weakness exploitation).
-    """
-    # from lib.value_heads import composite_capture_value  # inlined by bundle_agent.py
-    return composite_capture_value(obs, me)
-
-
-def _positional_ship_value(obs, me: int) -> float:
-    """Sum over my ships (on-planet + in-flight) of
-    1.0 / (1.0 + d_min / SPATIAL_DECAY), where d_min = distance to
-    nearest non-our planet. Value ranges 0..1 per ship:
-    1.0 when adjacent (d=0), 0.5 at d=SPATIAL_DECAY, ~0.2 at d=120.
-
-    Returns 0.0 if no non-our planet remains (degenerate end-state).
-    """
-    planets = _read(obs, "planets", []) or []
-    fleets = _read(obs, "fleets", []) or []
-    non_our = [(float(p[2]), float(p[3])) for p in planets if int(p[1]) != me]
-    if not non_our:
-        return 0.0
-    total = 0.0
-    for p in planets:
-        if int(p[1]) != me:
-            continue
-        x, y = float(p[2]), float(p[3])
-        d_min = min(math.hypot(x - tx, y - ty) for tx, ty in non_our)
-        weight = 1.0 / (1.0 + d_min / SPATIAL_DECAY)
-        total += float(p[5]) * weight
-    for f in fleets:
-        if int(f[1]) != me:
-            continue
-        x, y = float(f[2]), float(f[3])
-        d_min = min(math.hypot(x - tx, y - ty) for tx, ty in non_our)
-        weight = 1.0 / (1.0 + d_min / SPATIAL_DECAY)
-        total += float(f[6]) * weight
-    return total
-
-
-def favor_hybrid_spatial(obs, me: int, num_seats: int = 2,
-                         gamma: float = DEFAULT_GAMMA) -> float:
-    """favor_hybrid + positional pull toward non-our planets (2P only).
-
-    Layered on top of the validated hybrid head (composite in 2P,
-    A2-favor in 4P). The spatial term is applied ONLY in 2P games —
-    in 4P, the A2 weakness-exploitation already biases toward the
-    weakest opp's positions, and the bv33jlzwj A/B (3/32 first-place,
-    max=1503ms) showed spatial regresses 4P substantially. 2P-only
-    keeps the validated A2-4P path identical to favor_hybrid.
-
-    The spatial term is purely additive — when SPATIAL_WEIGHT=0 or
-    num_seats > 2 it equals favor_hybrid exactly.
-    """
-    base = favor_hybrid(obs, me, num_seats, gamma)
-    if SPATIAL_WEIGHT == 0.0 or num_seats > 2:
-        return base
-    return base + SPATIAL_WEIGHT * _positional_ship_value(obs, me)
-
-
-def favor_hybrid(obs, me: int, num_seats: int = 2,
-                 gamma: float = DEFAULT_GAMMA) -> float:
-    """2P uses composite (waste-aware, validated by audit-workflow A/B:
-    93.8% vs v9_scavenge, 67.2% vs v15). 4P uses `favor` with A2
-    4P-weakness exploitation. Domains are disjoint by construction —
-    composite has no 4P opp aggregation (`composite-value-head-2p-only.md`
-    flag), and A2's per-weakest multiplier + elim bonus only fire when
-    num_seats > 2.
-    """
-    if num_seats <= 2:
-        return favor_composite(obs, me, num_seats, gamma)
-    return favor(obs, me, num_seats, gamma)
-
-
-def select_favor_fn():
-    """Pick the leaf value function.
-
-    Env var `BASELINE_VALUE_HEAD`:
-      - unset / anything else -> `favor` (default, v15 baseline + A2 4P).
-      - "composite"           -> `favor_composite` (2P waste-aware,
-                                  composite_capture_value head).
-      - "hybrid"              -> `favor_hybrid` (composite in 2P,
-                                  A2-favor in 4P).
-
-    The chooser uses the same function for both `build_idle_baseline` and
-    `score_action` so the Δ stays well-defined.
-    """
-    choice = os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower()
-    if choice == "composite":
-        return favor_composite
-    if choice == "hybrid":
-        return favor_hybrid
-    if choice == "hybrid_spatial":
-        return favor_hybrid_spatial
-    if choice == "phi":
-        return favor_phi
-    return favor
-
-# Namespace alias so `from agents.baseline import value` callers still see `value.<name>`.
-from types import SimpleNamespace as _SimpleNamespace_value
-value = _SimpleNamespace_value(
-    EPISODE_STEPS=EPISODE_STEPS,
-    DEFAULT_GAMMA=DEFAULT_GAMMA,
-    ELIMINATION_BONUS=ELIMINATION_BONUS,
-    WEAK_ENEMY_THRESHOLD=WEAK_ENEMY_THRESHOLD,
-    WEAKEST_ENEMY_MULT_4P=WEAKEST_ENEMY_MULT_4P,
-    ELIMINATION_GATE_RATIO=ELIMINATION_GATE_RATIO,
-    STRENGTH_PROD_WEIGHT=STRENGTH_PROD_WEIGHT,
-    PHI_HORIZON=PHI_HORIZON,
-    PHI_GAMMA=PHI_GAMMA,
-    PHI_ELIM_BONUS=PHI_ELIM_BONUS,
-    SPATIAL_WEIGHT=SPATIAL_WEIGHT,
-    SPATIAL_DECAY=SPATIAL_DECAY,
-    favor=favor,
-    favor_phi=favor_phi,
-    favor_composite=favor_composite,
-    favor_hybrid_spatial=favor_hybrid_spatial,
-    favor_hybrid=favor_hybrid,
-    select_favor_fn=select_favor_fn,
-)
-
-# === inlined: agents/baseline/chooser.py ===
-"""Chooser: reactive idle baseline + per-candidate Δ, emit greedy non-dogpile.
-
-Pipeline:
-  baseline[h] = favor at horizon h with me idle + opp reactive
-  candidate Δ = favor(me_action @ wait_N + opp reactive) - baseline[h]
-  emit       = candidates with Δ>0, greedy by Δ desc,
-               1 launch per source AND 1 per target per turn.
-               wait_N>0 winners RESERVE source+target but emit nothing.
-
-Opp seats play lib.opp_model.lite_greedy_policy reactively inside every
-rollout (not a precomputed trajectory), so my captures trigger opp
-counter-launches and fragile leaves are correctly penalised.
-"""
-
-
-import os
-import time
-
-# from lib.fast_sim import clone as fs_clone  # inlined by bundle_agent.py
-fs_clone = clone
-# from lib.fast_sim import step as fs_step  # inlined by bundle_agent.py
-fs_step = step
-# from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy  # inlined by bundle_agent.py
-
-# from agents.baseline.value import select_favor_fn  # inlined by bundle_agent.py
-
-WALLCLOCK_BUDGET_MS = 600.0
-N_VALIDATE = 60
-PER_CANDIDATE_SAFETY = 1.5
-RESERVED_OVERHEAD_MS = 50.0
-
-
-def _select_opp_policy():
-    """Tier 3 (2026-05-18 PM): asymmetric opp model selection.
-
-    BASELINE_OPP_TIER env var:
-      - "0" or unset → lite_greedy_policy (default, ~1-2ms/call).
-      - "1" → top_tier_mirror_policy (~5-10ms/call; ladder-realistic
-              opp using v3.5.1 aggressive snipe pipeline). Bench gate
-              FIRST before A/B — per-call cost is 5-10× lite_greedy.
-
-    Per-call selection (not cached at import time) so env-var overrides
-    inside test fixtures take effect without re-importing the module.
-    """
-    return (
-        top_tier_mirror_policy
-        if os.environ.get("BASELINE_OPP_TIER", "0").strip() == "1"
-        else lite_greedy_policy
-    )
-
-
-def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
-    """One reactive opp action set per non-me seat. Opp policy is
-    selected via BASELINE_OPP_TIER — see `_select_opp_policy`."""
-    opp_policy = _select_opp_policy()
-    actions: list[list] = [[] for _ in range(num_seats)]
-    for opp_id in range(num_seats):
-        if opp_id == me:
-            continue
-        try:
-            actions[opp_id] = opp_policy(snap.state[opp_id].observation) or []
-        except Exception:
-            actions[opp_id] = []
-    return actions
-
-
-def build_idle_baseline(snap_base, me: int, num_seats: int,
-                        max_horizon: int, gamma: float) -> list[float]:
-    """favor at every horizon 0..max_horizon under (me-idle, opp-reactive)."""
-    favor_fn = select_favor_fn()
-    snap = fs_clone(snap_base)
-    out = [favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)]
-    for _ in range(max_horizon):
-        if snap.fake_env.done:
-            out.append(out[-1])
-            continue
-        actions = opp_actions_for_snap(snap, me, num_seats)
-        snap = fs_step(snap, actions, in_place=True)
-        out.append(favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma))
-    return out
-
-
-def score_action(snap_base, me: int, num_seats: int,
-                 src_id: int, angle: float, ships: int,
-                 horizon: int, baseline_favors: list[float],
-                 wait_N: int, gamma: float) -> float:
-    """Δ favor at horizon = leaf(my_action@wait_N) − baseline."""
-    favor_fn = select_favor_fn()
-    snap = fs_clone(snap_base)
-    for step_i in range(horizon):
-        if snap.fake_env.done:
-            break
-        actions = opp_actions_for_snap(snap, me, num_seats)
-        if step_i == int(wait_N):
-            actions[me] = [[int(src_id), float(angle), int(ships)]]
-        snap = fs_step(snap, actions, in_place=True)
-    leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
-    return leaf - baseline_favors[horizon]
-
-
-def affordable_validate_cap(snap_base, me: int, num_seats: int,
-                            max_horizon: int, wallclock_ms: float,
-                            min_horizon: int, gamma: float,
-                            ) -> tuple[int, float]:
-    """Probe per-step + per-leaf cost on the current board, derive a
-    safe candidate cap and the per-candidate cost estimate.
-
-    Returns `(cap, per_cand_ms)`. `cap` is bounded below by 8. The
-    `per_cand_ms` value is used by `choose()` to pre-bail before
-    entering a candidate that would push past the deadline.
-
-    Probing per-leaf cost matters because the leaf eval cost varies
-    by ~50x between value heads (favor ~100µs vs composite_capture_value
-    ~2-5ms — it builds a World + ray-casts every fleet). Without the
-    leaf probe the cap stayed sized for favor and composite blew the
-    1000ms env budget on heavy turns (max 1292ms vs v15 / v9_scavenge,
-    2026-05-17 A/B).
-    """
-    favor_fn = select_favor_fn()
-    t0 = time.perf_counter()
-    probe = fs_clone(snap_base)
-    probe = fs_step(probe, [[] for _ in range(num_seats)], in_place=True)
-    per_step_ms = max(0.05, (time.perf_counter() - t0) * 1000.0)
-
-    t0 = time.perf_counter()
-    favor_fn(probe.state[me].observation, me, num_seats, gamma=gamma)
-    per_leaf_ms = max(0.05, (time.perf_counter() - t0) * 1000.0)
-
-    avg_K = (min_horizon + max_horizon) / 2.0
-    per_cand_ms = (per_step_ms * avg_K + per_leaf_ms) * PER_CANDIDATE_SAFETY
-    budget = wallclock_ms - RESERVED_OVERHEAD_MS
-    cap = max(8, int(budget / per_cand_ms))
-    return cap, per_cand_ms
-
-
-def choose(snap_base, prerank, baseline_favors: list[float],
-           me: int, num_seats: int, wallclock_ms: float,
-           min_horizon: int, max_horizon: int, gamma: float,
-           world=None,
-           reserved_srcs: set[int] | None = None,
-           reserved_for_new_commits: set[int] | None = None,
-           ) -> tuple[list[list], list[dict]]:
-    """Validate top candidates with fast_sim, emit greedy non-dogpile moves.
-
-    Returns `(moves, commits)`. See `chooser_trajectory.choose_trajectory`
-    for the full ledger-aware contract; this is the parallel composite
-    implementation (default chooser is trajectory).
-    """
-    if reserved_srcs is None:
-        reserved_srcs = set()
-    if reserved_for_new_commits is None:
-        reserved_for_new_commits = reserved_srcs
-    if not prerank:
-        return [], []
-
-    n_aff, per_cand_ms = affordable_validate_cap(
-        snap_base, me, num_seats, max_horizon, wallclock_ms,
-        min_horizon, gamma,
-    )
-    top = prerank[: min(N_VALIDATE, n_aff)]
-
-    deadline = time.perf_counter() + wallclock_ms / 1000.0
-    # Pre-bail headroom: don't ENTER a candidate that would push us past
-    # the deadline. score_action is uninterruptible (runs the full K-step
-    # rollout once entered), so checking AT the deadline is too late.
-    # Closes the long-tail max-turn-ms overrun seen in the 2026-05-17 A/B.
-    safe_deadline = deadline - (per_cand_ms / 1000.0)
-    validated: list[tuple] = []
-    for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
-        if time.perf_counter() > safe_deadline:
-            break
-        sid_ = int(src.id)
-        if int(wait_N) > 0:
-            if sid_ in reserved_for_new_commits:
-                continue
-        else:
-            if sid_ in reserved_srcs:
-                continue
-        delta = score_action(
-            snap_base, me, num_seats,
-            int(src.id), float(angle), int(ships),
-            int(horizon), baseline_favors, int(wait_N), gamma,
-        )
-        if delta > 0:
-            validated.append((delta, src, tgt, ships, angle, wait_N))
-
-    if not validated:
-        return [], []
-
-    validated.sort(key=lambda c: -c[0])
-    used_srcs: set[int] = set()
-    used_tgts: set[int] = set()
-    moves: list[list] = []
-    commits: list[dict] = []
-    commit_step = int(world.step) if world is not None else 0
-    for _delta, src, tgt, ships, angle, wait_N in validated:
-        sid, tid = int(src.id), int(tgt.id)
-        if sid in used_srcs or tid in used_tgts:
-            continue
-        used_srcs.add(sid)
-        used_tgts.add(tid)
-        if int(wait_N) == 0:
-            moves.append([sid, float(angle), int(ships)])
-        else:
-            commits.append({
-                "src_id": sid,
-                "tgt_id": tid,
-                "ships_planned": int(ships),
-                "angle_original": float(angle),
-                "wait_remaining": int(wait_N),
-                "commit_step": commit_step,
-            })
-    return moves, commits
-
-# Namespace alias so `from agents.baseline import chooser` callers still see `chooser.<name>`.
-from types import SimpleNamespace as _SimpleNamespace_chooser
-chooser = _SimpleNamespace_chooser(
-    WALLCLOCK_BUDGET_MS=WALLCLOCK_BUDGET_MS,
-    N_VALIDATE=N_VALIDATE,
-    PER_CANDIDATE_SAFETY=PER_CANDIDATE_SAFETY,
-    RESERVED_OVERHEAD_MS=RESERVED_OVERHEAD_MS,
-    opp_actions_for_snap=opp_actions_for_snap,
-    build_idle_baseline=build_idle_baseline,
-    score_action=score_action,
-    affordable_validate_cap=affordable_validate_cap,
-    choose=choose,
 )
 
 # === inlined: agents/baseline/chooser_roi.py ===
@@ -13866,6 +14052,28 @@ os.environ.setdefault("BASELINE_CHOOSER", "trajectory")
 # p95=703ms, zero >1000ms. Set BASELINE_JOINT=0 to disable.
 os.environ.setdefault("BASELINE_JOINT", "1")
 
+# Speed-discipline filter (commit 3359fe2). Matches buildup_planner's
+# live defaults. Without these, the proposer + relay default to
+# MIN_FLEET_SIZE=2 / MAX_HORIZON=40, so 4-5 ship fleets at speed ~1.5
+# clear every gate and arrive 2-3x slower than the chooser's force-
+# sufficiency math assumed. Rule 40: the right substrate is fleet
+# speed, but in production those reduce to "send at least 10 ships"
+# (speed ~2.0) and "arrive within 20 ticks" (max-speed reach ~120
+# board units).
+os.environ.setdefault("BASELINE_MAX_ETA", "20")
+os.environ.setdefault("BASELINE_MIN_SHIPS_LAUNCH", "10")
+
+# Orbital safety (B1-B7 series, shipped in sub 52912707 μ=1165.4 — peak).
+# Activates arrival-position-aware distance math in
+# _target_holdable_after_capture (proposer.py), _target_cost_parity_ok,
+# time_to_enemy_threat (lib/world_model.py), and _followon_hold_estimate
+# (lib/missions/snipe.py). Without this, "is the captured target
+# holdable?" measures opp->target distance using CURRENT positions —
+# orbiting targets that rotate INTO opp range by arrival get false
+# "holdable" verdicts and we capture into a recapture. Same shipped-but-
+# never-enabled pattern as the speed-discipline filter.
+os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
+
 # Pass-2 relay / forward-staging (2026-05-27). After all 5 existing post-
 # passes (threat_reinforcements / drain_idle_rear / drain_stagnant_rear /
 # drain_combat_stack / sniper_strikes) run, sweep remaining idle planets
@@ -14013,6 +14221,7 @@ fleet_speed = speed
 # from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS  # inlined by bundle_agent.py
 # from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON  # inlined by bundle_agent.py
 # from agents.baseline.relay_forward import emit_relay_forward  # inlined by bundle_agent.py
+# from agents.baseline.threat_model import source_safe_against_potential_counter  # inlined by bundle_agent.py
 
 
 _PARITY_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
@@ -14451,9 +14660,6 @@ def drain_stagnant_rear(moves, planets, my_id: int, world, model) -> list:
             break
         if int(src.id) in used_srcs:
             continue
-        # Hard gate: zero inbound enemy fleet ETAs.
-        if model.incoming_enemy_eta(int(src.id), my_id) is not None:
-            continue
         prod = int(src.production)
         expected_reserve = max(prod * STAGNANT_RESERVE_MULT,
                                STAGNANT_RESERVE_FLOOR)
@@ -14476,6 +14682,14 @@ def drain_stagnant_rear(moves, planets, my_id: int, world, model) -> list:
         target = candidates[0][1]
         ships_to_send = int(src.ships) - expected_reserve
         if ships_to_send < 1:
+            continue
+        # Source-survival: in-flight check + potential-counter walk.
+        # Was `incoming_enemy_eta is not None` (in-flight only); the new
+        # check projects opp counter-launch force at arrival of the
+        # cheapest potential counter, then asks "can src defend?".
+        if not source_safe_against_potential_counter(
+            src, ships_to_send, 0, world, model, my_id,
+        ):
             continue
         angle = math.atan2(float(target.y) - float(src.y),
                            float(target.x) - float(src.x))
@@ -14534,14 +14748,16 @@ def drain_combat_stack(moves, planets, my_id: int, world, model) -> list:
             break
         if int(src.id) in used_srcs:
             continue
-        if model.incoming_enemy_eta(int(src.id), my_id) is not None:
-            continue
         prod = int(src.production)
         reserve = max(prod * STAGNANT_RESERVE_MULT, STAGNANT_RESERVE_FLOOR)
         if int(src.ships) <= STAGNANT_THRESHOLD_MULT * reserve:
             continue
         ships_to_send = int(src.ships) - reserve
         if ships_to_send < 1:
+            continue
+        if not source_safe_against_potential_counter(
+            src, ships_to_send, 0, world, model, my_id,
+        ):
             continue
         target = min(
             contested,
@@ -14622,11 +14838,13 @@ def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
                 continue
             if int(src.ships) < SNIPER_MIN_SOURCE_SHIPS:
                 continue
-            if model.incoming_enemy_eta(int(src.id), my_id) is not None:
-                continue
             src_reserve = max(int(src.production) * 5, 10)
             available = int(src.ships) - src_reserve
             if available < SNIPER_MIN_SOURCE_SHIPS:
+                continue
+            if not source_safe_against_potential_counter(
+                src, available, 0, world, model, my_id,
+            ):
                 continue
             angle = math.atan2(float(tgt.y) - float(src.y),
                                float(tgt.x) - float(src.x))
