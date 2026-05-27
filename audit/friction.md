@@ -42,6 +42,37 @@
   before being relayed to PI. Promotion candidate (read-side
   sub-clause of Rule 44).
 
+## 2026-05-27 (claude/session-EqJuT — timeout-DQ root cause + wave-attacks null)
+
+- `tag: claimed-optimisation-silently-absent` — session trace of the
+  two "stuck" random-ELIM seeds in `lagrange_simple`. The agent
+  `main.py:14-17` sets `os.environ.setdefault("KINEMATIC_TABLE_
+  ENABLED", "1")` and tries `from lib.kinematic_table import
+  begin_turn` inside a try/except. `lib/kinematic_table.py` **does
+  not exist on this branch** (PFhzM-only); the ImportError is
+  silently swallowed. The accompanying comment claims a "~50-100 ms
+  / turn cache." That speedup never existed. Masked the real
+  per-turn cost (`predict_fleet_fate` × 518 calls × 7 ms = 3.6 s)
+  that was triggering Kaggle's 1 s actTimeout DQ for several days.
+  **Fix:** when an agent depends on a try/except-wrapped optional
+  optimisation, the startup path must log a single line stating
+  whether the optimisation IS active. Silent absence + a comment
+  claiming a perf budget that the absent code was supposed to
+  provide is a load-bearing lie. Drafted as a Rule-48 promotion
+  candidate; PI did not promote (revisit on recurrence).
+- `tag: postmortem-narrative-taken-as-diagnosis` — Same session.
+  I treated the prior commit (`ce70160`) message's narrative
+  ("opp pocket no single source can match — the structural ceiling
+  that motivated the dogpile axis") as the *diagnosis* for the two
+  stuck random-ELIM seeds, then proposed strategic axes (wave
+  attacks) on that basis. Actual root cause was timeout-DQ; ~30 min
+  of fresh trace work surfaced it. **Fix:** treat commit-message
+  diagnoses as hypotheses, not findings; before designing a fix from
+  a postmortem-narrative claim, run a fresh trace to confirm. Rule
+  38 (fix-verification reproduces failure state) already implies
+  this for fix-verification; the diagnostic-verification sub-case
+  was deemed covered by existing rules. PI did not promote.
+
 ## 2026-05-23 (claude/session-EqJuT — simplest Lagrangian agent)
 
 ### Verification follow-up (later same day, no source changes)
