@@ -2,9 +2,11 @@
 
 Pipeline (per turn):
   1. parse obs (dict-or-attr), detect 2P/4P from max owner id
-  2. proposer.propose       fire-now capture-size + overcommit per (src, tgt)
-  3. chooser.choose         idle-baseline + Δ rollout against reactive opp,
-                            greedy non-dogpile-by-source emit
+  2. WorldModel.from_world → predict per-planet threat ETAs
+  3. proposer.propose       attack candidates (capture-size) plus
+                            reinforce candidates for threatened-mine planets
+  4. chooser.choose         idle-baseline + Δ rollout against reactive opp,
+                            greedy per-source emit (Δ > 0 only)
 
 Designed as a foundation to swap pieces against (value / proposer /
 chooser / opp_model). Same agent(obs, configuration) entry contract
@@ -16,6 +18,8 @@ from __future__ import annotations
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from lib.fast_sim import from_obs as fs_from_obs
+from lib.intent import World
+from lib.world_model import WorldModel
 
 from agents.minimal import chooser, proposer
 
@@ -28,6 +32,9 @@ def _as_dict(obs) -> dict:
         "step": getattr(obs, "step", 0),
         "planets": list(getattr(obs, "planets", []) or []),
         "fleets": list(getattr(obs, "fleets", []) or []),
+        "comets": list(getattr(obs, "comets", []) or []),
+        "comet_planet_ids": list(getattr(obs, "comet_planet_ids", []) or []),
+        "angular_velocity": float(getattr(obs, "angular_velocity", 0.0)),
     }
 
 
@@ -58,7 +65,18 @@ def agent(obs, configuration=None):
         return []
 
     num_seats = _num_seats(planets, fleets)
-    cands = proposer.propose(my_planets, enemy_planets)
+
+    world = World.from_obs(obs_d)
+    model = WorldModel.from_world(world)
+    threatened_mine = [
+        p for p in my_planets
+        if model.time_to_enemy_threat(int(p.id), me, world) is not None
+    ]
+
+    cands = proposer.propose(
+        my_planets, enemy_planets,
+        threatened_mine=threatened_mine, model=model, me=me, world=world,
+    )
     if not cands:
         return []
 
