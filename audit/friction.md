@@ -118,6 +118,36 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-27 (claude/competitive-programming-ab-test-BZknl — A/B + cross-branch verify)
+
+- `tag: identified-fix-never-shipped` — multi-day session diagnosed
+  that orbitfix bundle fails the candidate Rule 48 nearest-elim gate
+  (14/16) due to the documented `midgame-filter-overrejects-in-
+  dominant-endgame` bug. Located the exact fix (commit 68c24be on
+  `claude/session-EqJuT`, ~5 LOC on `agents/baseline/proposer.py`).
+  Did not cherry-pick. Default behaviour when an audit identifies a
+  small concrete fix should be "make it in the same session and
+  re-test"; instead I asked PI for direction and they wrapped up
+  before the fix could ride. **Fix:** session-end checklist gains a
+  "did this session identify a low-risk fix it did not ship?"
+  prompt. Not promoted by PI this session.
+
+- `tag: tail-poll-instead-of-monitor` — recurrence of the tag
+  promoted in session-EqJuT 2026-05-23. Set up Monitor twice this
+  session, but also fired ~50+ `cat /tmp/*.log` calls during heavy
+  A/B waits. Rule existed and was applicable; not applied
+  consistently. **Fix (candidate, PI declined):** Bash-hook warning
+  when `cat /tmp/*.log` fires >3× per 5min during a known
+  long-running background task.
+
+- `tag: cross-branch-verify-after-ship-lag` — Vjaz9 shipped v8 at
+  22:57 UTC; verification (6/16 ELIM vs random, 11W/5L vs nearest)
+  landed at 23:30. By then they were iterating further. Single-branch
+  verify-after-ship loop only catches problems already on the ladder.
+  **Fix:** none clean at single-branch level; partial mitigation is
+  to file findings into `state/MULTI_BRANCH.md` (done) so the next
+  agent on either branch can read it. Not promoted.
+
 ## 2026-05-20 (claude/review-skills-improvements-moKOR — cross-branch consolidation)
 
 - `tag: inventory-as-categorical-summary-not-itemized` — first draft
