@@ -112,26 +112,32 @@ step 4 in both formats is not yet 4P-correct.
 This is a *prediction* the eval harness should check, not a free
 parameter to tune.
 
-## Within-band vs between-band — an open question for the next pass
+## Within-band vs between-band — partial answer, directional positive
 
-The 92-game study was entirely within-band: it measured winners-vs-
-losers among our own ladder play in the μ=900-1150 band. It did *not*
-measure top-10 (μ≈1500+). The implicit assumption is that the within-
-band discriminator (share-of-integral) also separates us from top-10.
+The 92-game study was within-band: winners-vs-losers among our own
+ladder play in the μ=900-1150 band. The follow-up
+`audit/2026-05-27-between-band-stratification.md` re-extracted share-
+of-integral for every seat in those 92 replays, joined to the public
+leaderboard CSV, and bucketed by opponent μ:
 
-If it does, closing the μ gap is "more of the same signal."
+| Bucket | n seat-games | Median share |
+|---|---:|---:|
+| μ 1200-1400 | 28 | 0.463 |
+| μ 1000-1200 | 58 | 0.260 |
+| us (μ=1119) | 92 | 0.276 |
 
-If it doesn't — if top-10 also have share ≈ 0.66 in 4P wins, same as
-us — then the difference between μ=1150 and μ=1500 is a *different*
-discriminator entirely, and a chooser that maximises share-of-integral
-will saturate at our band, not break through.
+The trend is monotonic and substantial through μ=1400. **The chooser
+build is justified by this signal: a chooser that targets share-of-
+integral should plausibly lift us into the 1200-1400 band.**
 
-**This is the most important open question and should be answered
-before the chooser ships.** Cost: ~20 top-10 replays pulled, ~5 min
-wallclock, no code changes — re-run `scripts/measure_hold_times.py`
-with `--team bowwowforeach` (or whichever top-10 team has public
-replays) on a sub_id known to contain top-10 self-play games. The
-answer reshapes the chooser-build priority.
+The break-through-to-top-10 question (μ ≥ 1500) is still open — we
+have zero seat-games against any team at that μ, because we so
+rarely match them. The Kaggle CLI does not expose other teams'
+submission IDs, so a clean top-10 self-play pull requires manual sub-
+ID discovery via the Kaggle web UI. ~30 min of PI time, then ~10
+min of wallclock to pull and measure. That answer reshapes the
+**chooser ceiling expectation** but does not invalidate the chooser
+build itself.
 
 ## References
 
