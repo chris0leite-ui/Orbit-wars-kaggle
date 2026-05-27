@@ -32,6 +32,25 @@ LAMBDA_RISK_DEFAULT: float = 50.0
 # v1.1 calibration axis if v1 clears the eval gate.
 LAMBDA_LOSS_DEFAULT: float = 0.1
 
+# Minimum hold-time floor for FEASIBLE capture candidates (those that
+# survived the `target_owner_at_arrival != me` and `k > expected_garrison`
+# pre-filter in `assignment._columns_from_reach`). Origin:
+# `audit/2026-05-27-rf-v1-root-cause.md` Bug 1 — `WorldModel.time_to_enemy_threat`
+# returns a worst-case opp reach that systematically dominates our ρ_me
+# mid-game, collapsing `max(0, ρ_opp − ρ_me)` to 0 for every reachable
+# target. The chooser then prices every launch at `−λ_loss · expected_garrison`
+# (negative) and the diagonal noop column at cost 0 wins every Hungarian
+# row, producing 87 % silence and a 0/20 loss to baseline.
+#
+# Justification: feasibility-filtered candidates ARE captures we can
+# physically make against the predicted garrison-at-arrival. Even when
+# `time_to_enemy_threat` says opp COULD reach the planet 8 ticks from
+# now, in practice opp has competing demands (2P with many targets, 4P
+# with three opps competing). The 30-tick floor models the empirical
+# "opp recapture rarely happens inside one orbital period" prior. Tuned
+# in B5 iteration; flagged for v1.1 calibration if B5 clears.
+MIN_HOLD_FLOOR_DEFAULT: float = 30.0
+
 
 def compute_hold_times(
     world,
@@ -41,8 +60,17 @@ def compute_hold_times(
     step_now: int,
     *,
     game_horizon: int = 500,
+    min_hold_floor: float = MIN_HOLD_FLOOR_DEFAULT,
 ) -> dict[int, float]:
     """Per-target hold_time, capped at remaining game ticks.
+
+    For capture targets that pass the upstream feasibility filter,
+    hold is floored at `min_hold_floor` (see comment on the constant
+    above — fixes the Bug 1 silent-87% spiral identified in
+    `audit/2026-05-27-rf-v1-root-cause.md`). Defensive holds (mine
+    planets) are NOT floored; their hold is the time until opp
+    threatens, and 0 means "already under threat, no positive value
+    from holding."
 
     Returns `target_id -> hold_time` (float). 0.0 for targets we can't
     reach. The map is keyed on every planet we observe (not just
@@ -51,6 +79,7 @@ def compute_hold_times(
     """
     me_id = int(me)
     remaining = float(max(0, int(game_horizon) - int(step_now)))
+    floor = float(min_hold_floor)
 
     # Pre-index my_reach by target_id for the cheapest entry per target.
     cheapest_me: dict[int, float] = {}
@@ -67,18 +96,26 @@ def compute_hold_times(
         tid = int(tgt_id)
         rho_opp = opp_reach.get(tid, float("inf"))
         if int(p.owner) == me_id:
+            # Defensive (own planet): no floor. 0 = "under immediate threat."
             if rho_opp == float("inf"):
                 hold = remaining
             else:
                 hold = max(0.0, float(rho_opp))
         else:
+            # Capture: floor at `min_hold_floor` for reachable candidates.
+            # The feasibility filter in `_columns_from_reach` ensures we
+            # only reward candidates that physically can flip the
+            # planet, so the floor is safe — every floored candidate is
+            # a real capture with at least min_hold_floor ticks of
+            # production integral before opp's worst-case recapture.
             rho_me = cheapest_me.get(tid)
             if rho_me is None:
+                # Unreachable — no candidate, no need to floor.
                 hold = 0.0
             elif rho_opp == float("inf"):
-                hold = max(0.0, remaining - float(rho_me))
+                hold = max(floor, remaining - float(rho_me))
             else:
-                hold = max(0.0, float(rho_opp) - float(rho_me))
+                hold = max(floor, float(rho_opp) - float(rho_me))
         out[tid] = min(hold, remaining)
     return out
 
