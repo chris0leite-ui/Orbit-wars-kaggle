@@ -97,6 +97,18 @@ FOLLOWON_RADIUS: float = float(
 # `score_candidate_v4`); tune via local A/B.
 MIN_DELTA: float = float(os.environ.get("BASELINE_MIN_DELTA", "0.0"))
 
+# Ship-turn opportunity-cost penalty (2026-05-27 Step 2B). Today the
+# leaf `favor` returns ~297-340 for any positive-prod capture regardless
+# of eta — pv_horizon(leaf_step, 0) ≈ 99 for any leaf_step in 25..50
+# with γ=0.99, t_total=500. Result: slow captures (eta=40) score ~88%
+# of fast captures (eta=10) when in reality they tie up ships 4x
+# longer. Penalty subtracts κ × ships × (wait_N + eta) from delta to
+# price the time the ships are committed and unable to defend/redirect.
+# Default 0.0 preserves byte-for-byte legacy. Tune via local A/B.
+SHIP_TURN_KAPPA: float = float(
+    os.environ.get("BASELINE_SHIP_TURN_KAPPA", "0.0"),
+)
+
 
 def _leader_owner_from_world(world, me: int) -> int | None:
     """Return the player id (other than `me`) with the highest total
@@ -557,6 +569,9 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                 * float(f_hold)
             )
 
+    if SHIP_TURN_KAPPA > 0.0:
+        delta -= SHIP_TURN_KAPPA * float(ships) * float(int(wait_N) + int(eta))
+
     return (delta, "scored", eta)
 
 
@@ -583,8 +598,11 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
     (see proposer path in `choose_trajectory`).
     """
     # Per-leg admissibility filter (only meaningful for wait_N==0 legs).
+    # Collect per-leg eta for the ship-turn penalty (skip/wait>0 legs → 0).
+    leg_etas: list[int] = []
     for src, tgt, ships, angle, wait_N in launches:
         if skip_admissibility or int(wait_N) != 0:
+            leg_etas.append(0)
             continue
         fate = predict_fleet_fate(src, tgt, angle, ships, world)
         if fate.outcome == "sun":
@@ -599,6 +617,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
             life = comet_remaining_lifetime(int(tgt.id), world)
             if life is None or life <= int(fate.step):
                 return (float("-inf"), "comet_expired")
+        leg_etas.append(int(fate.step))
 
     # Clamp horizon to baseline length.
     if horizon >= len(baseline_favors):
@@ -652,6 +671,12 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
                     and all(int(L[1].owner) == int(leader) for L in launches)):
                 bonus *= LEADER_FOCUS_WEIGHT
         delta *= bonus
+
+    if SHIP_TURN_KAPPA > 0.0:
+        penalty = 0.0
+        for (src, tgt, ships, angle, wait_N), eta_leg in zip(launches, leg_etas):
+            penalty += float(ships) * float(int(wait_N) + int(eta_leg))
+        delta -= SHIP_TURN_KAPPA * penalty
 
     return (delta, "scored")
 
