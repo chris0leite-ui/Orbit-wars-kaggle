@@ -44,7 +44,7 @@ competitions submissions orbit-wars` at decision time.
 | Timestamp (UTC) | Branch | Sub ID | Agent | Evicting | PI signoff |
 |---|---|---|---|---|---|
 | (recent rows kept for sub-id traceability; PI signoff column captures the "explicit submit" gate) |
-| 2026-05-27 ~01:30 | claude/agent-design-exploration-Q0q9T | TBD | baseline.py — Pass-2 relay/forward-staging on top of buildup_planner scaffolding (K-nearest pre-filter=5; bundle sha256 14c1602e). 2-game local 250-step truncated test vs random + nearest both p0_win; bundled max-turn-ms=1045 (single spike), p95<1000. A/B against 53065150 buildup_planner (the previous submit on this branch). | 53063161 (sa_online_v5.py, sibling branch — far below floor) | PI explicit submit |
+| 2026-05-27 ~01:30 | claude/agent-design-exploration-Q0q9T | 53067354 | baseline.py — Pass-2 relay/forward-staging on top of buildup_planner scaffolding (K-nearest pre-filter=5; bundle sha256 14c1602e). 2-game local 250-step truncated test vs random + nearest both p0_win; bundled max-turn-ms=1045 (single spike), p95<1000. A/B against 53065150 buildup_planner (the previous submit on this branch). | 53063161 (sa_online_v5.py, sibling branch — far below floor) | PI explicit submit |
 
 ---
 
