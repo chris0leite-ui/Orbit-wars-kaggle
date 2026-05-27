@@ -45,6 +45,17 @@ os.environ.setdefault("BASELINE_CHOOSER", "trajectory")
 # p95=703ms, zero >1000ms. Set BASELINE_JOINT=0 to disable.
 os.environ.setdefault("BASELINE_JOINT", "1")
 
+# Speed-discipline filter (commit 3359fe2). Matches buildup_planner's
+# live defaults. Without these, the proposer + relay default to
+# MIN_FLEET_SIZE=2 / MAX_HORIZON=40, so 4-5 ship fleets at speed ~1.5
+# clear every gate and arrive 2-3x slower than the chooser's force-
+# sufficiency math assumed. Rule 40: the right substrate is fleet
+# speed, but in production those reduce to "send at least 10 ships"
+# (speed ~2.0) and "arrive within 20 ticks" (max-speed reach ~120
+# board units).
+os.environ.setdefault("BASELINE_MAX_ETA", "20")
+os.environ.setdefault("BASELINE_MIN_SHIPS_LAUNCH", "10")
+
 # Pass-2 relay / forward-staging (2026-05-27). After all 5 existing post-
 # passes (threat_reinforcements / drain_idle_rear / drain_stagnant_rear /
 # drain_combat_stack / sniper_strikes) run, sweep remaining idle planets

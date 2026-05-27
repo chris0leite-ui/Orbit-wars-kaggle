@@ -59,6 +59,12 @@ RESERVE_FLOOR = 10
 # Env-overridable via BASELINE_RELAY_K_RELAYS.
 DEFAULT_K_NEAREST_RELAYS = 5
 
+# Relay-specific fleet-speed floor. Relay-staged fleets travel two legs;
+# leg-1 must move fast enough that R hasn't moved on by arrival. 2.5
+# board units/turn requires ~30 ships. Stops production-2 sources from
+# shipping 4-5 ship fleets at speed ~1.5 that lose force-sufficiency.
+DEFAULT_MIN_RELAY_SPEED = 2.5
+
 
 def _segment_distance_to_center(ax: float, ay: float,
                                 bx: float, by: float) -> float:
@@ -88,6 +94,8 @@ def emit_relay_forward(moves, planets, my_id: int, world, model) -> list:
     min_ships = int(os.environ.get("BASELINE_MIN_SHIPS_LAUNCH", "2"))
     k_relays = int(os.environ.get("BASELINE_RELAY_K_RELAYS",
                                   str(DEFAULT_K_NEAREST_RELAYS)))
+    min_speed = float(os.environ.get("BASELINE_RELAY_MIN_SPEED",
+                                     str(DEFAULT_MIN_RELAY_SPEED)))
 
     used_srcs: set[int] = set()
     for m in moves:
@@ -113,6 +121,8 @@ def emit_relay_forward(moves, planets, my_id: int, world, model) -> list:
         reserve = max(prod * RESERVE_MULT, RESERVE_FLOOR)
         ships_to_send = int(src.ships) - reserve
         if ships_to_send < min_ships:
+            continue
+        if fleet_speed(ships_to_send) < min_speed:
             continue
         if model.incoming_enemy_eta(int(src.id), my_id) is not None:
             continue
