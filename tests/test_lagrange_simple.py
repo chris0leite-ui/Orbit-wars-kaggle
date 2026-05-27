@@ -148,6 +148,62 @@ def test_dual_time_indexed_rejects_combined_overdraw_at_early_tick():
     assert picked[0].value == 100.0  # higher V/ship kept
 
 
+def test_dual_wave_attacks_keep_two_picks_per_target_when_env_on(monkeypatch):
+    """With LAGRANGE_SIMPLE_WAVES=1, two candidates targeting the same
+    planet at DIFFERENT launch_ticks both get picked (up to
+    MAX_WAVES_PER_TARGET=2) — provided per-source budget allows it and
+    both have positive shadow-price-adjusted score.
+    """
+    monkeypatch.setenv("LAGRANGE_SIMPLE_WAVES", "1")
+    import importlib
+    from agents.lagrange_simple import dual as dual_mod
+    importlib.reload(dual_mod)
+    try:
+        cands = [
+            dual_mod.Candidate(src_id=0, tgt_id=5, launch_tick=0,
+                               angle=0.0, ships=4, eta=10,
+                               arrival_step=10, value=100.0),
+            dual_mod.Candidate(src_id=0, tgt_id=5, launch_tick=3,
+                               angle=0.0, ships=4, eta=10,
+                               arrival_step=13, value=90.0),
+        ]
+        # Source budget 20 + prod 5 → cumulative at t=3 is 4+4=8 ≤ 5+5·3=20.
+        picked = dual_mod.solve(cands, {0: 20}, {0: 5})
+        assert len(picked) == 2
+        assert {int(c.launch_tick) for c in picked} == {0, 3}
+        assert all(int(c.tgt_id) == 5 for c in picked)
+    finally:
+        # Reload back to default-off so subsequent tests are unaffected.
+        monkeypatch.delenv("LAGRANGE_SIMPLE_WAVES", raising=False)
+        importlib.reload(dual_mod)
+
+
+def test_dual_wave_attacks_distinct_tick_rule_rejects_same_tick_duplicates(monkeypatch):
+    """When two candidates share both tgt and launch_tick, wave-mode still
+    picks only ONE (the higher-scoring) — the distinct-tick rule prevents
+    same-tick dogpile (Rule-37 closed axis).
+    """
+    monkeypatch.setenv("LAGRANGE_SIMPLE_WAVES", "1")
+    import importlib
+    from agents.lagrange_simple import dual as dual_mod
+    importlib.reload(dual_mod)
+    try:
+        cands = [
+            dual_mod.Candidate(src_id=0, tgt_id=5, launch_tick=0,
+                               angle=0.0, ships=4, eta=10,
+                               arrival_step=10, value=100.0),
+            dual_mod.Candidate(src_id=1, tgt_id=5, launch_tick=0,
+                               angle=0.0, ships=4, eta=10,
+                               arrival_step=10, value=90.0),
+        ]
+        picked = dual_mod.solve(cands, {0: 20, 1: 20}, {0: 5, 1: 5})
+        assert len(picked) == 1
+        assert picked[0].value == 100.0
+    finally:
+        monkeypatch.delenv("LAGRANGE_SIMPLE_WAVES", raising=False)
+        importlib.reload(dual_mod)
+
+
 # ---------------------------------------------------------------------------
 # Score — Candidate enumeration on a real game state.
 # ---------------------------------------------------------------------------

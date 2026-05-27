@@ -47,6 +47,17 @@ DOGPILE_ENABLED = os.environ.get(
 ).strip().lower() in ("1", "true", "on", "yes")
 
 
+# Wave attacks: allow ≤ MAX_WAVES_PER_TARGET picks per target at DISTINCT
+# launch_ticks. Structurally distinct from dogpile (which is same-tick
+# multi-source, Rule-37 closed): wave-1 drains opp's garrison, wave-2
+# (after our source's production accrues) walks in to capture.
+# Off by default until the rung-3 A/B confirms no regression on rungs 1-2.
+WAVES_ENABLED = os.environ.get(
+    "LAGRANGE_SIMPLE_WAVES", "0",
+).strip().lower() in ("1", "true", "on", "yes")
+MAX_WAVES_PER_TARGET = 2
+
+
 DEFAULT_SWEEPS = 3
 DEFAULT_STEP = 1.0
 
@@ -55,9 +66,19 @@ def _inner_solve(candidates: list[Candidate],
                  lam: dict[int, float]) -> list[Candidate]:
     """Per-target argmax under shadow-price-adjusted score.
 
-    Each target keeps the single SOLO candidate with the highest positive
-    score; "do nothing" (score 0) is always an option. Partial candidates
-    are skipped here — they only contribute via `_dogpile_pass`.
+    Default: each target keeps the single SOLO candidate with the highest
+    positive score; "do nothing" (score 0) is always an option. Partial
+    candidates are skipped here — they only contribute via `_dogpile_pass`.
+
+    When `WAVES_ENABLED`: each target keeps up to `MAX_WAVES_PER_TARGET`
+    SOLO candidates at distinct `launch_tick` values (greedy top-K by
+    λ-adjusted score, distinct-tick rule). The per-source time-indexed
+    budget is enforced by `_run_time_indexed_fixup` after this pass, and
+    the shadow-price update naturally raises λ_s for sources whose waves
+    over-commit. Known limitation: `_source_defensive_ok` is computed at
+    enumerate-time per-candidate against a single ledger snapshot, so
+    wave-2 from the same src doesn't see wave-1's ship subtraction;
+    follow-up would plumb the enriched ledger through `solve()`.
     """
     by_target: dict[int, list[Candidate]] = defaultdict(list)
     for c in candidates:
@@ -66,15 +87,34 @@ def _inner_solve(candidates: list[Candidate],
         by_target[int(c.tgt_id)].append(c)
     picked: list[Candidate] = []
     for cands_t in by_target.values():
-        best = None
-        best_score = 0.0
-        for c in cands_t:
-            score = c.value - lam.get(int(c.src_id), 0.0) * float(c.ships)
-            if score > best_score:
-                best_score = score
-                best = c
-        if best is not None:
-            picked.append(best)
+        if not WAVES_ENABLED:
+            best = None
+            best_score = 0.0
+            for c in cands_t:
+                score = c.value - lam.get(int(c.src_id), 0.0) * float(c.ships)
+                if score > best_score:
+                    best_score = score
+                    best = c
+            if best is not None:
+                picked.append(best)
+            continue
+        scored = [
+            (c.value - lam.get(int(c.src_id), 0.0) * float(c.ships), c)
+            for c in cands_t
+        ]
+        scored.sort(key=lambda sc: sc[0], reverse=True)
+        seen_ticks: set[int] = set()
+        n_waves = 0
+        for score, c in scored:
+            if score <= 0.0:
+                break
+            if int(c.launch_tick) in seen_ticks:
+                continue
+            picked.append(c)
+            seen_ticks.add(int(c.launch_tick))
+            n_waves += 1
+            if n_waves >= MAX_WAVES_PER_TARGET:
+                break
     return picked
 
 
