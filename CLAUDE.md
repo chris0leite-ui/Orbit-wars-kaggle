@@ -258,6 +258,20 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
     6.8% physics waste before discovering `predict_fleet_fate`
     was never imported. The failure mode is invisible until you
     look at single-game trajectories.
+48. **Production-share is the primary metric for production-integral
+    agents; hold_fraction is secondary, bimodal, format-split.**
+    When evaluating any agent in the reach-frontier family — or any
+    future agent whose value function targets `Σ p̃·τ_p^me` — the
+    primary panel metric is the per-game production-weighted share
+    `Σp̃·τ_me / (Σp̃·τ_me + Σp̃·τ_opp)`, NOT the per-capture
+    hold_fraction. Hold_fraction is bimodal (sticky vs trade
+    populations) and collapses under 4P-volume dilution; the per-
+    capture median underreports 4P-correct agents. Always cut the
+    table by 2P / 4P / 3P separately (Rule 41 confound discipline);
+    report quartiles + frac_sticky (hf≥0.9) + frac_trade (hf≤0.1)
+    alongside the median. Origin: 2026-05-27 hold-time empirical
+    study — see `knowledge-base/concepts/evaluation-metrics.md` for
+    the full per-cell rationale and minimum-n thresholds.
 
 ## Defaults from prior-comp postmortem
 
@@ -313,6 +327,12 @@ Process docs (read once / on trigger):
   empirical verification STRONG combined (n=92 games, wins-median
   hf=0.881 vs losses 0.169) with 2P-clean / 4P-directional split — see
   `audit/2026-05-27-hold-time-empirical.md`.
+- `knowledge-base/concepts/evaluation-metrics.md` — operational eval
+  protocol for any production-integral agent (Rule 48): production-share
+  primary, hold_fraction secondary + bimodal, mandatory 2P/4P cut, per-
+  cell n thresholds, 4P "winners-capture-later" prediction gate, and the
+  open within-band-vs-between-band question to answer before the chooser
+  ships.
 
 Skills:
 - `.claude/skills/postmortem/SKILL.md`, `.claude/skills/kaggle-comp/`.

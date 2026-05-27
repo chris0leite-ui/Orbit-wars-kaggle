@@ -102,7 +102,7 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
 
 | Branch | State | Evidence | Next |
 |---|---|---|---|
-| `claude/game-theory-winning-strategy-SEU7P` | Doctrine documented + premise empirically verified | `knowledge-base/concepts/reach-frontier-doctrine.md` + `audit/2026-05-27-hold-time-empirical.md` (n=92 games, wins-median hold_fraction 0.881 vs losses 0.169 — STRONG combined; 2P-clean / 4P-directional split) | Chooser build queued; 4P kingmaker mitigation (doctrine §8.3) is open. Awaiting PI sign-off before coding `agents/reach_frontier/`. |
+| `claude/game-theory-winning-strategy-SEU7P` | Doctrine + empirical study + eval-protocol all documented | (a) `knowledge-base/concepts/reach-frontier-doctrine.md`; (b) `audit/2026-05-27-hold-time-empirical.md` (n=92 games, share-of-integral separation 0.488 wins vs losses, STRONG); (c) `knowledge-base/concepts/evaluation-metrics.md` (production-share is primary, hold_fraction secondary — Rule 48 binds this for any future production-integral agent) | (1) Pull ~20 top-10 replays to answer the within-band-vs-between-band question; (2) THEN decide chooser priority — if share separates us from top-10, build the 2P-priority chooser; if not, the chooser is structurally limited to our band and we need a different lever. Both paths require PI sign-off. |
 
 ---
 
