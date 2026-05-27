@@ -35,6 +35,7 @@ from __future__ import annotations
 import math
 import os
 
+from agents.baseline.spearhead import SpearheadContext, cos_alignment
 from lib.fleet import speed as fleet_speed
 from lib.geometry import BOARD_SIZE, CENTER, SUN_RADIUS
 from lib.orbit import is_orbiting, predict_relative
@@ -80,12 +81,19 @@ def _segment_distance_to_center(ax: float, ay: float,
     return math.hypot(px - CENTER, py - CENTER)
 
 
-def emit_relay_forward(moves, planets, my_id: int, world, model) -> list:
+def emit_relay_forward(moves, planets, my_id: int, world, model,
+                       ctx: SpearheadContext | None = None) -> list:
     """Append two-leg relay launches for idle sources with a downstream
     target. Returns moves + new launches.
 
     Each move is `[src_id, angle, ships]`. Idempotent: re-derives
     `used_srcs` from `moves` so it doesn't double-ship.
+
+    `ctx` (optional): SpearheadContext from `agents.baseline.spearhead`.
+    When provided and BASELINE_RELAY_SPEARHEAD=1, the R-selection
+    tiebreak gets a directional bonus that prefers large relays aligned
+    with each source's nearest-opponent direction. Default fall-through
+    matches the legacy min-total-eta tiebreak.
     """
     if os.environ.get("BASELINE_RELAY", "0") != "1":
         return moves
@@ -96,6 +104,13 @@ def emit_relay_forward(moves, planets, my_id: int, world, model) -> list:
                                   str(DEFAULT_K_NEAREST_RELAYS)))
     min_speed = float(os.environ.get("BASELINE_RELAY_MIN_SPEED",
                                      str(DEFAULT_MIN_RELAY_SPEED)))
+    spearhead_on = (
+        ctx is not None
+        and os.environ.get("BASELINE_RELAY_SPEARHEAD", "0") == "1"
+    )
+    spearhead_alpha = float(os.environ.get(
+        "BASELINE_RELAY_SPEARHEAD_ALPHA", "1.5",
+    ))
 
     used_srcs: set[int] = set()
     for m in moves:
@@ -127,9 +142,10 @@ def emit_relay_forward(moves, planets, my_id: int, world, model) -> list:
         if model.incoming_enemy_eta(int(src.id), my_id) is not None:
             continue
 
-        best_total_eta = None
+        best_score = None
         best_relay = None
         best_angle = None
+        src_opp_xy = ctx.nearest_opp_xy.get(int(src.id)) if spearhead_on else None
 
         # K-nearest pre-filter: rank friendly relay candidates by distance,
         # keep the closest k_relays. Cuts the expensive predict_fleet_fate
@@ -186,6 +202,20 @@ def emit_relay_forward(moves, planets, my_id: int, world, model) -> list:
             if speed_rt <= 0:
                 continue
 
+            # Spearhead front-bonus: per-(src, relay), constant across
+            # this relay's target loop. Rewards picking a high-production
+            # relay aligned with src's nearest-opp direction. Rectified
+            # cosine: rear relays get no bonus (not a penalty — ETA
+            # already penalises them).
+            front_bonus = 0.0
+            if spearhead_on and src_opp_xy is not None:
+                front_bonus = spearhead_alpha * float(relay.production) * \
+                    cos_alignment(
+                        float(src.x), float(src.y),
+                        r_arr_x, r_arr_y,
+                        src_opp_xy[0], src_opp_xy[1],
+                    )
+
             for tgt in foreign_planets:
                 # First-pass leg-2 ETA from T's current position.
                 d_rt0 = math.hypot(float(tgt.x) - r_arr_x,
@@ -206,7 +236,8 @@ def emit_relay_forward(moves, planets, my_id: int, world, model) -> list:
                 if leg2_eta <= 0:
                     continue
                 total_eta = leg1_eta + leg2_eta
-                if best_total_eta is not None and total_eta >= best_total_eta:
+                score = float(total_eta) - front_bonus
+                if best_score is not None and score >= best_score:
                     continue
 
                 # Cheap sun-crossing rejection for leg-2.
@@ -230,7 +261,7 @@ def emit_relay_forward(moves, planets, my_id: int, world, model) -> list:
                 if merged_force <= float(t_def):
                     continue
 
-                best_total_eta = total_eta
+                best_score = score
                 best_relay = relay
                 best_angle = angle_sr
 

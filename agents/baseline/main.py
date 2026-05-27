@@ -201,6 +201,7 @@ from lib.world_model import WorldModel
 from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS
 from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON
 from agents.baseline.relay_forward import emit_relay_forward
+from agents.baseline.spearhead import build_spearhead_context
 
 
 _PARITY_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
@@ -909,6 +910,16 @@ def agent(obs, configuration=None):
     omega = float(obs_d.get("angular_velocity", 0.0))
     num_seats = _num_seats(planets, fleets)
     gamma = _gamma()
+
+    # Spearhead directional context: per-source nearest-opp position used
+    # by relay R-selection (BASELINE_RELAY_SPEARHEAD=1) and chooser-side
+    # target-alignment bonus (BASELINE_DIRECTIONAL_BONUS=1). Built only
+    # when at least one flag is on; otherwise None (call sites short-
+    # circuit, zero cost). Cheap to build (O(N^2) at N<=30 planets).
+    spearhead_ctx = None
+    if (os.environ.get("BASELINE_RELAY_SPEARHEAD", "0") == "1"
+            or os.environ.get("BASELINE_DIRECTIONAL_BONUS", "0") == "1"):
+        spearhead_ctx = build_spearhead_context(planets, me)
     wallclock_ms = _wallclock_ms()
 
     threatened_mine = [
@@ -1001,6 +1012,7 @@ def agent(obs, configuration=None):
             world, model,
             reserved_srcs=reserved_srcs,
             reserved_for_new_commits=reserved_for_new_commits,
+            ctx=spearhead_ctx,
         )
 
         # 2. Persist updated ledger (surviving + new commits) when on.
@@ -1018,7 +1030,7 @@ def agent(obs, configuration=None):
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
         moves = emit_sniper_strikes(moves, planets, me, world, model)
-        return emit_relay_forward(moves, planets, me, world, model)
+        return emit_relay_forward(moves, planets, me, world, model, ctx=spearhead_ctx)
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
     # coalition + opp-modifier posterior; no fast_sim rollout. See
@@ -1042,7 +1054,7 @@ def agent(obs, configuration=None):
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
         moves = emit_sniper_strikes(moves, planets, me, world, model)
-        return emit_relay_forward(moves, planets, me, world, model)
+        return emit_relay_forward(moves, planets, me, world, model, ctx=spearhead_ctx)
 
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
@@ -1090,4 +1102,4 @@ def agent(obs, configuration=None):
     moves = drain_stagnant_rear(moves, planets, me, world, model)
     moves = drain_combat_stack(moves, planets, me, world, model)
     moves = emit_sniper_strikes(moves, planets, me, world, model)
-    return emit_relay_forward(moves, planets, me, world, model)
+    return emit_relay_forward(moves, planets, me, world, model, ctx=spearhead_ctx)

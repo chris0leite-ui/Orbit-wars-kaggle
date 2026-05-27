@@ -39,6 +39,7 @@ import os
 import time
 
 from agents.baseline.chooser import affordable_validate_cap, opp_actions_for_snap
+from agents.baseline.spearhead import SpearheadContext, cos_alignment
 from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
@@ -46,6 +47,12 @@ from lib.opp_model import lite_greedy_policy as _me_policy
 from lib.opp_model import me_defensive_action as _me_defends_policy
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import comet_remaining_lifetime, predict_garrison_at
+
+# Episode length used for the chooser's directional-bonus time-decay.
+# Matches the env's actEpisodeSteps default (500). The bonus fades to
+# zero by end-of-game so late-game (when every surviving target is
+# trivially front-line) reverts to the raw favor delta.
+EPISODE_STEPS_TOTAL = 500
 
 
 EPISODE_STEPS_TOTAL: int = 500
@@ -515,6 +522,8 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                        horizon: int,
                        skip_admissibility: bool = False,
                        wait_N: int = 0,
+                       ctx: SpearheadContext | None = None,
+                       directional_beta: float = 0.0,
                        ) -> tuple[float, str, int | None]:
     """v4 scoring: same admissibility filter + fast_sim rollout as v3,
     but the leaf is `favor_fn` instead of a binary owner-check, and the
@@ -592,7 +601,27 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
         snap = fs_step(snap, actions, in_place=True)
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
-    delta = leaf - baseline_favors[horizon]
+    # Spearhead directional bonus: reward target alignment with src's
+    # nearest-opp direction. Rectified cosine + production weight +
+    # time-decay so late-game reverts to neutral. Beta=0 short-circuits
+    # the whole branch with no env reads or dict lookups.
+    bonus = 0.0
+    if directional_beta > 0.0 and ctx is not None:
+        opp_xy = ctx.nearest_opp_xy.get(int(src.id))
+        if opp_xy is not None:
+            cos_th = cos_alignment(
+                float(src.x), float(src.y),
+                float(tgt.x), float(tgt.y),
+                opp_xy[0], opp_xy[1],
+            )
+            if cos_th > 0.0:
+                step_now = int(getattr(world, "step", 0))
+                time_scale = max(
+                    0.0,
+                    (EPISODE_STEPS_TOTAL - step_now) / float(EPISODE_STEPS_TOTAL),
+                )
+                bonus = directional_beta * float(tgt.production) * cos_th * time_scale
+    delta = (leaf - baseline_favors[horizon]) + bonus
     return (delta, "scored", eta)
 
 
@@ -602,6 +631,8 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
                               favor_fn, gamma: float,
                               horizon: int,
                               skip_admissibility: bool = False,
+                              ctx: SpearheadContext | None = None,
+                              directional_beta: float = 0.0,
                               ) -> tuple[float, str]:
     """Direction B: score a JOINT candidate of multiple launches in one
     fast_sim rollout. `launches` is a list of
@@ -670,7 +701,30 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         snap = fs_step(snap, actions, in_place=True)
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
-    return (leaf - baseline_favors[horizon], "scored")
+    # Spearhead bonus summed over legs — each (src, tgt) leg gets its
+    # own directional bonus contribution, matching the per-leg shape of
+    # the solo scorer.
+    bonus = 0.0
+    if directional_beta > 0.0 and ctx is not None:
+        step_now = int(getattr(world, "step", 0))
+        time_scale = max(
+            0.0,
+            (EPISODE_STEPS_TOTAL - step_now) / float(EPISODE_STEPS_TOTAL),
+        )
+        if time_scale > 0.0:
+            for src, tgt, _ships, _angle, _wait_N in launches:
+                opp_xy = ctx.nearest_opp_xy.get(int(src.id))
+                if opp_xy is None:
+                    continue
+                cos_th = cos_alignment(
+                    float(src.x), float(src.y),
+                    float(tgt.x), float(tgt.y),
+                    opp_xy[0], opp_xy[1],
+                )
+                if cos_th > 0.0:
+                    bonus += directional_beta * float(tgt.production) * \
+                        cos_th * time_scale
+    return ((leaf - baseline_favors[horizon]) + bonus, "scored")
 
 
 def predict_opp_responses(world, me: int, num_seats: int,
@@ -743,6 +797,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                       world, model,
                       reserved_srcs: set[int] | None = None,
                       reserved_for_new_commits: set[int] | None = None,
+                      ctx: SpearheadContext | None = None,
                       ) -> tuple[list[list], list[dict]]:
     """Drop-in alternative to `chooser.choose`.
 
@@ -803,6 +858,17 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         == "on"
     )
     favor_fn = select_favor_fn()  # honours BASELINE_VALUE_HEAD env var
+
+    # Spearhead chooser-side directional bonus (call-time env read for
+    # bundle-order safety, same convention as BASELINE_SORT_BY_EV_PER_SHIP
+    # at line 254). Beta=0 when disabled OR when ctx is unavailable;
+    # downstream scorers short-circuit on beta == 0 with no extra cost.
+    directional_beta = 0.0
+    if (ctx is not None
+            and os.environ.get("BASELINE_DIRECTIONAL_BONUS", "0") == "1"):
+        directional_beta = float(os.environ.get(
+            "BASELINE_DIRECTIONAL_BONUS_BETA", "8.0",
+        ))
 
     # Pre-pass: find the largest horizon we'll need so the baseline runs
     # deep enough for every candidate (including wait_N>0, whose proposer
@@ -878,6 +944,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 horizon=int(prop_horizon),
                 skip_admissibility=skip_filter,
                 wait_N=int(wait_N),
+                ctx=ctx,
+                directional_beta=directional_beta,
             )
             if status == "scored" and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))
@@ -955,6 +1023,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         snap_base, launches, me, num_seats, world,
                         baseline_favors, favor_fn, gamma,
                         horizon=jh, skip_admissibility=skip_filter,
+                        ctx=ctx,
+                        directional_beta=directional_beta,
                     )
                     joint_count += 1
                     if j_status == "scored" and j_score > 0.0:
