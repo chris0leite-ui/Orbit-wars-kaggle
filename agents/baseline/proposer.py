@@ -579,10 +579,18 @@ def _source_survives_launch(
         if owner != me and eta_arr <= int(threat_eta) + WAVE_LOOKAHEAD
     )
     if threat_force <= 0:
-        # Potential-launch threats only; let the chooser's rollout
-        # handle the assessment. The pre-cut is for in-flight cases
-        # where the trajectory is already committed.
-        return True
+        # No in-flight enemy fleet — but a nearby strong opp planet
+        # could counter-launch once we strip. Was a fail-open ("let
+        # the chooser's rollout handle it"); the trajectory chooser's
+        # horizon-25 rollout doesn't see threats landing past tick 25.
+        # Now: explicit potential-counter check via the worst-gap opp
+        # walk in agents/baseline/threat_model.py.
+        from agents.baseline.threat_model import (
+            source_safe_against_potential_counter,
+        )
+        return source_safe_against_potential_counter(
+            src, int(ships), int(wait_N), world, model, me,
+        )
     if int(wait_N) >= int(threat_eta):
         # Launch would happen AT or AFTER the threat lands — the
         # source has already fallen by the time we'd fire. Drop.
