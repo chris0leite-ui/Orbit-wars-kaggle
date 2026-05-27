@@ -98,6 +98,14 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
 
 ---
 
+## Open track — reach-frontier doctrine (2026-05-27)
+
+| Branch | State | Evidence | Next |
+|---|---|---|---|
+| `claude/game-theory-winning-strategy-SEU7P` | Doctrine documented + premise empirically verified | `knowledge-base/concepts/reach-frontier-doctrine.md` + `audit/2026-05-27-hold-time-empirical.md` (n=92 games, wins-median hold_fraction 0.881 vs losses 0.169 — STRONG combined; 2P-clean / 4P-directional split) | Chooser build queued; 4P kingmaker mitigation (doctrine §8.3) is open. Awaiting PI sign-off before coding `agents/reach_frontier/`. |
+
+---
+
 ## Closed tracks — falsified knowledge, do NOT iterate
 
 | Axis | Branch | Verdict date | Evidence |

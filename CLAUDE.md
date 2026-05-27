@@ -309,8 +309,10 @@ Process docs (read once / on trigger):
 - `knowledge-base/concepts/reach-frontier-doctrine.md` — mathematical
   framing: game = production-time integral `S_i ≈ S_i(0) + Σ p̃·τ`;
   reach-time-frontier chooser as framework REPLACEMENT for the
-  saturated K=10 rollout. Decision gates inside doc §9; status:
-  doctrine documented, empirical verification queued.
+  saturated K=10 rollout. Decision gates inside doc §9; status: 2026-05-27
+  empirical verification STRONG combined (n=92 games, wins-median
+  hf=0.881 vs losses 0.169) with 2P-clean / 4P-directional split — see
+  `audit/2026-05-27-hold-time-empirical.md`.
 
 Skills:
 - `.claude/skills/postmortem/SKILL.md`, `.claude/skills/kaggle-comp/`.
