@@ -13,7 +13,7 @@ _orbitfix_os.environ.setdefault("BASELINE_NEUTRAL_BONUS", "2.0")
 _orbitfix_os.environ.setdefault("BASELINE_NEUTRAL_EARLY_EXTRA", "1.5")
 _orbitfix_os.environ.setdefault("BASELINE_NEUTRAL_EARLY_HORIZON", "50")
 _orbitfix_os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
-
+_orbitfix_os.environ.setdefault("BASELINE_SHIP_TURN_KAPPA", "0.02")
 
 # === inlined: lib/geometry.py ===
 
@@ -996,6 +996,47 @@ class WorldModel:
                 best = threat_arrival
 
         return best
+
+    def predicted_threat_force(self, planet_id: int, my_id: int,
+                                world, lookahead: int) -> int:
+        """Force of the WORST single threat vector at `planet_id`
+        within `lookahead` steps:
+          - all in-flight ledger arrivals with 0 < eta <= lookahead
+            (these are committed; sum is correct — they ARE all coming),
+          - PLUS the MAX single stationary enemy planet's garrison
+            among opps whose travel ETA from current position <= lookahead.
+        Mental model: at most one opp can mount a coordinated wave in
+        the relevant window; sizing reserve against the SUM of every
+        opp's garrison (initial design 2026-05-27 AM) treated all opps
+        as a single coalition and bricked launches (0/32 vs HEAD anchor
+        smoke). MAX-single + committed-in-flight matches the legacy
+        `threat_force` mental model in `_source_survives_launch_legacy`
+        (sums in-flight ledger only).
+        """
+        committed = 0
+        for (eta, owner, sh) in self.ledger.get(planet_id, []):
+            if owner != my_id and 0 < eta <= lookahead and sh > 0:
+                committed += int(sh)
+        src_planet = world.planets_by_id.get(planet_id)
+        if src_planet is None:
+            return committed
+        omega = float(getattr(world, "omega", 0.0))
+        sx, sy = _position_at(src_planet, omega, 0)
+        worst_potential = 0
+        for p in world.planets_by_id.values():
+            if p.id == planet_id or p.owner == my_id or p.owner == -1:
+                continue
+            if p.ships <= 0:
+                continue
+            px, py = _position_at(p, omega, 0)
+            dist = ((sx - px) ** 2 + (sy - py) ** 2) ** 0.5
+            v = fleet_speed(int(p.ships))
+            if v <= 0:
+                continue
+            eta_travel = int(math.ceil(dist / v))
+            if eta_travel <= lookahead and int(p.ships) > worst_potential:
+                worst_potential = int(p.ships)
+        return committed + worst_potential
 
 
 # ---------------------------------------------------------------------------
@@ -9358,6 +9399,21 @@ STRATEGIC_STOCKPILE_TICKS = 5 # buffer = N ticks × planet's production
 SAFETY_MARGIN_DRAIN = 1.3      # stricter margin under threat
 STOCKPILE_PROD_MULT = 5        # `floor = N × source production`
 
+# Predicted-threat garrison reserve (2026-05-27). When ALPHA > 0, the
+# source must retain `ceil(ALPHA × predicted_threat_force(src, WINDOW))`
+# ships after the launch. `predicted_threat_force` (lib/world_model.py)
+# sums both in-flight ledger arrivals AND potential launches from
+# stationary opp planets that can reach `src` within WINDOW steps —
+# i.e., the rotating-opp wave that the legacy ledger-only force misses.
+# Default ALPHA=0.0 (clause skipped, no-op). WINDOW=30 matches the
+# 30-tick threat horizon convention used elsewhere in this file.
+THREAT_RESERVE_ALPHA = float(
+    os.environ.get("BASELINE_THREAT_RESERVE_ALPHA", "0.0"),
+)
+THREAT_RESERVE_WINDOW = int(
+    os.environ.get("BASELINE_THREAT_RESERVE_WINDOW", "30"),
+)
+
 # Backward wait grid (2026-05-18): anchored on min_wait_affordable.
 # Replaces forward WAIT_EXTRA_SURPLUS = (0, 5, 12) grid that caused
 # under-emission. Diagnosis: at Roman game (76941081) step 90 with 454
@@ -9790,6 +9846,23 @@ def _source_survives_launch_legacy(
     the harden-larger→smaller variant regressed live (sub 53083109,
     μ=842.8 vs anchor 1144-1165). Kept as the DEFAULT path; opt in to
     the hardened variant via `BASELINE_DRAIN_HARDEN=1`."""
+    # Predicted-threat garrison reserve (opt-in via env var; default
+    # ALPHA=0.0 → block skipped, legacy decision byte-for-byte). Fires
+    # independent of in-flight ledger force so the clause catches
+    # rotating-opp waves the legacy `threat_force` sum misses.
+    if THREAT_RESERVE_ALPHA > 0.0:
+        growth_during_wait = int(src.production) * int(wait_N)
+        residue_after_launch = (
+            int(src.ships) + growth_during_wait - int(ships)
+        )
+        if residue_after_launch < 0:
+            return False
+        predicted = model.predicted_threat_force(
+            int(src.id), me, world, THREAT_RESERVE_WINDOW,
+        )
+        reserve = int(math.ceil(THREAT_RESERVE_ALPHA * predicted))
+        if residue_after_launch < reserve:
+            return False
     threat_eta = model.time_to_enemy_threat(int(src.id), me, world)
     if threat_eta is None:
         return True
@@ -12070,6 +12143,28 @@ FOLLOWON_RADIUS: float = float(
     os.environ.get("BASELINE_FOLLOWON_RADIUS", "35.0"),
 )
 
+# Score floor for emit (2026-05-27 — concentration knob). Today every
+# candidate with `score > 0.0` fires; in midgame this scatters small
+# marginal launches across every owned planet. `MIN_DELTA` raises the
+# floor so only candidates above a tunable threshold survive — natural
+# concentration without an arbitrary count-cap. Default 0.0 preserves
+# byte-for-byte legacy (strict `> 0.0`); positive values install a
+# strict `>=` floor. Units are PV-discounted delta (see
+# `score_candidate_v4`); tune via local A/B.
+MIN_DELTA: float = float(os.environ.get("BASELINE_MIN_DELTA", "0.0"))
+
+# Ship-turn opportunity-cost penalty (2026-05-27 Step 2B). Today the
+# leaf `favor` returns ~297-340 for any positive-prod capture regardless
+# of eta — pv_horizon(leaf_step, 0) ≈ 99 for any leaf_step in 25..50
+# with γ=0.99, t_total=500. Result: slow captures (eta=40) score ~88%
+# of fast captures (eta=10) when in reality they tie up ships 4x
+# longer. Penalty subtracts κ × ships × (wait_N + eta) from delta to
+# price the time the ships are committed and unable to defend/redirect.
+# Default 0.0 preserves byte-for-byte legacy. Tune via local A/B.
+SHIP_TURN_KAPPA: float = float(
+    os.environ.get("BASELINE_SHIP_TURN_KAPPA", "0.0"),
+)
+
 
 def _leader_owner_from_world(world, me: int) -> int | None:
     """Return the player id (other than `me`) with the highest total
@@ -12530,6 +12625,9 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                 * float(f_hold)
             )
 
+    if SHIP_TURN_KAPPA > 0.0:
+        delta -= SHIP_TURN_KAPPA * float(ships) * float(int(wait_N) + int(eta))
+
     return (delta, "scored", eta)
 
 
@@ -12556,8 +12654,11 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
     (see proposer path in `choose_trajectory`).
     """
     # Per-leg admissibility filter (only meaningful for wait_N==0 legs).
+    # Collect per-leg eta for the ship-turn penalty (skip/wait>0 legs → 0).
+    leg_etas: list[int] = []
     for src, tgt, ships, angle, wait_N in launches:
         if skip_admissibility or int(wait_N) != 0:
+            leg_etas.append(0)
             continue
         fate = predict_fleet_fate(src, tgt, angle, ships, world)
         if fate.outcome == "sun":
@@ -12572,6 +12673,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
             life = comet_remaining_lifetime(int(tgt.id), world)
             if life is None or life <= int(fate.step):
                 return (float("-inf"), "comet_expired")
+        leg_etas.append(int(fate.step))
 
     # Clamp horizon to baseline length.
     if horizon >= len(baseline_favors):
@@ -12625,6 +12727,12 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
                     and all(int(L[1].owner) == int(leader) for L in launches)):
                 bonus *= LEADER_FOCUS_WEIGHT
         delta *= bonus
+
+    if SHIP_TURN_KAPPA > 0.0:
+        penalty = 0.0
+        for (src, tgt, ships, angle, wait_N), eta_leg in zip(launches, leg_etas):
+            penalty += float(ships) * float(int(wait_N) + int(eta_leg))
+        delta -= SHIP_TURN_KAPPA * penalty
 
     return (delta, "scored")
 
@@ -12836,7 +12944,11 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 wait_N=int(wait_N),
                 model=model,
             )
-            if status == "scored" and score > 0.0:
+            passes = (
+                score > MIN_DELTA if MIN_DELTA == 0.0
+                else score >= MIN_DELTA
+            )
+            if status == "scored" and passes:
                 scored.append((score, src, tgt, ships, angle, wait_N))
                 # Track sources with viable solo (for joint gating).
                 solo_winners.add(int(src.id))
@@ -12914,7 +13026,11 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         horizon=jh, skip_admissibility=skip_filter,
                     )
                     joint_count += 1
-                    if j_status == "scored" and j_score > 0.0:
+                    j_passes = (
+                        j_score > MIN_DELTA if MIN_DELTA == 0.0
+                        else j_score >= MIN_DELTA
+                    )
+                    if j_status == "scored" and j_passes:
                         scored.append((j_score, "joint", launches))
 
     if not scored:
