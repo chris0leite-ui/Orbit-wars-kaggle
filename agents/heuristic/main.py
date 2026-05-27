@@ -23,11 +23,19 @@ Pipeline (per turn, deterministic):
      target per turn (combat rule 1 stacks same-owner same-step arrivals).
 
 Phases shipped so far:
-  v0      — offense-only greedy ROI with physics gate.
-  Phase 2a — defensive reinforcement of own planets predicted to flip.
+  v0        — offense-only greedy ROI with physics gate.
+  Phase 2a  — defensive reinforcement of own planets predicted to flip.
+  Phase 2b  — hold-aware ship sizing (pre-fund the post-capture defense
+              against the next in-flight enemy wave, net of own production).
 
-Not yet shipped: opening planner against rotation, expansion bias toward
-opponent centroid, multi-source coordination on single capture.
+Falsified (do not re-add without n=64+ evidence):
+  - Static-opening / rotation-factor ROI biases (regressed 12.5% -> 6-9%).
+  - Expand-toward-opponent-centroid ROI bias (regressed 12.5% -> 0%).
+  Lesson: multiplicative biases on the base ROI distort what was already
+  weak vs v7_0; structural / modeling improvements (Rule 40) work better.
+
+Not yet shipped: multi-source coordination on single capture, comet-
+specialised sizing, idle-drain.
 """
 
 from __future__ import annotations
@@ -78,6 +86,34 @@ def _ships_for_capture(predicted_garrison):
     """Ships needed to flip on arrival: ceil(garrison) + 1 (outnumber)."""
     g = math.ceil(max(0.0, float(predicted_garrison)))
     return max(MIN_SHIPS_TO_LAUNCH, int(g) + GARRISON_BUFFER)
+
+
+def _hold_margin(target_id, target_production, our_eta, wm, my_id):
+    """Extra ships needed to hold the target past the next enemy arrival.
+
+    After we capture at `our_eta`, the planet starts producing for us. Any
+    enemy fleet in-flight that arrives at step `E > our_eta` will hit us
+    with `enemy_ships_at_E` against our post-capture garrison (which started
+    at GARRISON_BUFFER and grew by `production * (E - our_eta)`).
+
+    Returns ceil(max(0, enemy_ships_at_E - production_growth)). When there
+    is no inbound enemy fleet post-capture the margin is 0.
+
+    This is Rule 40-aligned: a modeling fix, not a constant bump. Captures
+    that v0 made with bare-minimum ships often instantly got re-flipped by
+    the next enemy wave; sizing here pre-funds the hold.
+    """
+    next_enemy = wm.incoming_enemy_eta_after(target_id, my_id, our_eta)
+    if next_enemy is None:
+        return 0
+    arrivals = wm.ledger.get(target_id, [])
+    enemy_ships = sum(s for (e, o, s) in arrivals
+                      if o != my_id and int(math.ceil(e)) == next_enemy and s > 0)
+    if enemy_ships <= 0:
+        return 0
+    growth = target_production * max(0, next_enemy - our_eta)
+    deficit = enemy_ships - growth
+    return max(0, int(math.ceil(deficit)))
 
 
 def _roi(src, tgt, eta_float, ships_needed, world, my_id):
@@ -213,6 +249,7 @@ def agent(obs):
             if pred_owner == my_id:
                 continue  # will already be ours by arrival
             ships = _ships_for_capture(pred_garrison if pred_garrison is not None else tgt.ships)
+            ships += _hold_margin(tgt.id, tgt.production, eta_int, wm, my_id)
             if ships > src.ships:
                 continue
 
