@@ -45,6 +45,22 @@ os.environ.setdefault("BASELINE_CHOOSER", "trajectory")
 # p95=703ms, zero >1000ms. Set BASELINE_JOINT=0 to disable.
 os.environ.setdefault("BASELINE_JOINT", "1")
 
+# Pass-2 relay / forward-staging (2026-05-27). After all 5 existing post-
+# passes (threat_reinforcements / drain_idle_rear / drain_stagnant_rear /
+# drain_combat_stack / sniper_strikes) run, sweep remaining idle planets
+# for a two-leg path S -> R -> T where R is one of our planets and T is
+# an opp/neutral target. Emits only leg-1 (S -> R); R re-evaluates
+# leg-2 organically on its future turn. Gates: speed-discipline filters
+# (BASELINE_MAX_ETA, BASELINE_MIN_SHIPS_LAUNCH), production-scaled
+# reserve floor, full predict_fleet_fate validation on leg-1, sun-
+# avoidance on leg-2 segment, and force-sufficiency at T at arrival.
+# K-nearest relay pre-filter (BASELINE_RELAY_K_RELAYS=5 default) caps
+# the expensive fate calls per turn so the env wallclock holds.
+# Local 250-step single-game tests vs random and nearest pass; vs
+# nearest the relay fires ~5-6 launches/turn against a default-off
+# baseline that was producing zero rear mobilisation.
+os.environ.setdefault("BASELINE_RELAY", "1")
+
 # H1 — post-chooser idle drain (2026-05-18) — DISABLED BY DEFAULT.
 # Audit `audit/replays/idle-trajectory-2026-05-17.md` measured 43.8pct
 # isolated ship-turns in trajectory champion (mu=1271.8). H1 attempted
@@ -173,6 +189,7 @@ from lib.world_model import WorldModel
 # `bundler-modular-agent-namespace-access-breaks-bundle` (2026-05-17).
 from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS
 from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON
+from agents.baseline.relay_forward import emit_relay_forward
 
 
 _PARITY_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
@@ -989,7 +1006,8 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
-        return emit_sniper_strikes(moves, planets, me, world, model)
+        moves = emit_sniper_strikes(moves, planets, me, world, model)
+        return emit_relay_forward(moves, planets, me, world, model)
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
     # coalition + opp-modifier posterior; no fast_sim rollout. See
@@ -1012,7 +1030,8 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
-        return emit_sniper_strikes(moves, planets, me, world, model)
+        moves = emit_sniper_strikes(moves, planets, me, world, model)
+        return emit_relay_forward(moves, planets, me, world, model)
 
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
@@ -1059,4 +1078,5 @@ def agent(obs, configuration=None):
     moves = drain_idle_rear(moves, planets, me, world, model)
     moves = drain_stagnant_rear(moves, planets, me, world, model)
     moves = drain_combat_stack(moves, planets, me, world, model)
-    return emit_sniper_strikes(moves, planets, me, world, model)
+    moves = emit_sniper_strikes(moves, planets, me, world, model)
+    return emit_relay_forward(moves, planets, me, world, model)

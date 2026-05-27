@@ -712,7 +712,8 @@ def cmd_play(args: argparse.Namespace) -> int:
         p0_path, p0_name = focal_path, focal_name
         p1_path, p1_name = opp_path, opp_name
     t0 = time.perf_counter()
-    result = play_one(args.seed, p0_path, p1_path)
+    result = play_one(args.seed, p0_path, p1_path,
+                      episode_steps=args.max_steps)
     elapsed = time.perf_counter() - t0
     winner = {"p0_win": p0_name, "p1_win": p1_name,
               "draw": "(draw)", "error": "(error)"}[result.outcome]
@@ -962,6 +963,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("agent")
     sp.add_argument("--vs", default=DEFAULT_BASELINE)
     sp.add_argument("--seed", type=int, default=0)
+    sp.add_argument("--max-steps", type=int, default=None,
+                    help="truncate game at N env steps (default: 500)")
     sp.add_argument("--swap", action="store_true",
                     help="play focal as P1 instead of P0")
     sp.set_defaults(func=cmd_play)

@@ -1,4 +1,4 @@
-# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner}.
+# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,fleet,orbit,kinematic_table,aim,combat,world_model,intent,trajectory,mechanism,mission,scoring,reliability,drop_one,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner,joint_solver/predicate}.
 # Single-file Kaggle submission for Orbit Wars.
 
 from __future__ import annotations
@@ -187,6 +187,40 @@ def predict_relative(current_planet, angular_velocity: float, lead_turns: float)
     )
 
 
+def predict_relative_cached(current_planet, angular_velocity: float,
+                            lead_turns: float, *, table=None) -> Point:
+    """Lookup-aware wrapper around `predict_relative`.
+
+    When `table` is provided and the planet is in the table's current
+    obs snapshot, returns the cached lookup (O(1), no trig). On any
+    miss — `table is None`, planet pid not in table, lookup past
+    `max_lead` — falls through to the slow-path `predict_relative` call.
+
+    Bit-parity guarantee: the cached path is bit-identical to the
+    fallback IFF `planet` is the same instance from
+    `world.planets_by_id` that `table.begin_turn(world)` saw. Synthetic
+    or predicted planet states (e.g. inside an aim-orbiting fixed-point
+    loop where the "planet" position is a hypothetical future tick)
+    MUST pass `table=None` to force the slow path.
+    """
+    if table is None:
+        return predict_relative(current_planet, angular_velocity, lead_turns)
+    pid_obj = None
+    try:
+        pid_obj = getattr(current_planet, "id", None)
+        if pid_obj is None:
+            pid_obj = current_planet[0]
+        pid = int(pid_obj)
+    except (TypeError, IndexError, KeyError):
+        return predict_relative(current_planet, angular_velocity, lead_turns)
+    if not table.has(pid):
+        return predict_relative(current_planet, angular_velocity, lead_turns)
+    try:
+        return table.lookup_relative(pid, lead_turns)
+    except (IndexError, KeyError):
+        return predict_relative(current_planet, angular_velocity, lead_turns)
+
+
 def predict_absolute(initial_planet, angular_velocity: float, env_step_n: int) -> Point:
     """Predict (x, y) at `env.steps[env_step_n]` from `initial_planets`.
 
@@ -205,6 +239,406 @@ def predict_absolute(initial_planet, angular_velocity: float, env_step_n: int) -
         CENTER + orb_r * math.cos(cur_angle),
         CENTER + orb_r * math.sin(cur_angle),
     )
+
+# === inlined: lib/kinematic_table.py ===
+
+
+from dataclasses import dataclass
+from typing import Any, Iterable, Optional
+
+import math
+
+
+
+# Sentinel reused from `lib/trajectory.py:127`; we DO NOT import to avoid
+# a circular dependency with the call site we'll later modify.
+OFF_BOARD: tuple[float, float] = (-1e6, -1e6)
+
+# Default lookup window. predict_fleet_fate uses `max_steps=200` as the
+# ray-cast horizon; callers may also pass wait_N (fire-offset) up to ~50.
+# 500 gives generous headroom (covers wait_N up to ~300 + max_steps=200)
+# at ~250 KB total memory cost — negligible. Phase γ relies on this
+# default being large enough that the table covers any predict_fleet_fate
+# call without falling through to the slow path.
+DEFAULT_MAX_LEAD: int = 500
+
+
+# ---------------------------------------------------------------------------
+# Class — per-instance container; tests instantiate directly.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _PlanetEntry:
+    """Per-planet position cache for one turn."""
+
+    pid: int
+    kind: str  # "static" | "orbital" | "comet"
+    # For static: positions == None, static_pos holds the constant.
+    static_pos: Optional[tuple[float, float]] = None
+    # For orbital + comet: positions[t] is (x, y) at `lead = t` from
+    # current obs; len(positions) == max_lead + 1.
+    positions: Optional[list[tuple[float, float]]] = None
+    # For comets only: the raw path + path_index from obs["comets"],
+    # surfaced via `comet_paths_view` for callers replacing
+    # `lib.world_model._comet_paths_by_id`.
+    comet_path: Optional[list] = None
+    comet_path_index: Optional[int] = None
+
+
+class KinematicTable:
+    """Per-instance kinematic position cache.
+
+    One instance is held as a module-level singleton; tests can create
+    isolated instances for parity assertions. Lifecycle:
+
+        table.begin_turn(world)           # rebuild from current obs
+        table.lookup_relative(pid, lead)  # (x, y) at `lead` ticks ahead
+        table.window(pids, off, n)        # dict of position lists
+
+    `begin_turn` is idempotent within a turn: if the (step, omega,
+    planets) fingerprint matches the last build, no rebuild happens.
+    """
+
+    def __init__(self, max_lead: int = DEFAULT_MAX_LEAD) -> None:
+        self._entries: dict[int, _PlanetEntry] = {}
+        self._fingerprint: Any = None
+        self._omega: float = 0.0
+        self._step: int = -1
+        self._max_lead: int = int(max_lead)
+
+    # ---- lifecycle ----
+
+    def reset(self) -> None:
+        """Drop all state. Tests use this; production callers shouldn't."""
+        self._entries = {}
+        self._fingerprint = None
+        self._omega = 0.0
+        self._step = -1
+
+    def begin_turn(self, world, *, max_lead: Optional[int] = None) -> bool:
+        """Rebuild the table from `world` if the turn fingerprint changed.
+
+        Returns True iff a rebuild fired (caller can log this for
+        observability). Fingerprint:
+
+            (step, omega, n_planets, sorted-tuple of (pid, id(planet_obj)))
+
+        The `id(planet_obj)` term cheaply detects the per-turn obs
+        rebuild — `World.from_obs` constructs fresh `Planet` instances
+        every turn, so identities never repeat. On game boundary
+        (`step` drops to 0 with different planet ids), fingerprint
+        differs and we wipe.
+        """
+        if max_lead is not None and int(max_lead) != self._max_lead:
+            # max_lead change forces rebuild even if obs is unchanged.
+            self._max_lead = int(max_lead)
+            self._fingerprint = None
+
+        new_fp = self._build_fingerprint(world)
+        if self._fingerprint == new_fp:
+            return False
+        self._rebuild(world)
+        self._fingerprint = new_fp
+        return True
+
+    @staticmethod
+    def _build_fingerprint(world) -> tuple:
+        planets = world.planets_by_id
+        pid_ids = tuple(sorted((int(pid), id(p)) for pid, p in planets.items()))
+        return (int(world.step), float(world.omega), len(planets), pid_ids)
+
+    def _rebuild(self, world) -> None:
+        """Materialise per-planet position lists from `world`.
+
+        For orbital planets, calls `predict_relative` per lead-tick — the
+        SAME function `predict_fleet_fate`'s inner loop calls, with the
+        SAME planet tuple shape, so bit-parity is guaranteed by
+        construction. Static planets store a single constant; comets
+        consult the obs path array with the off-board sentinel.
+        """
+        self._entries = {}
+        self._omega = float(world.omega)
+        self._step = int(world.step)
+        comet_paths = _extract_comet_paths(world)
+        max_lead = self._max_lead
+
+        for pid, p in world.planets_by_id.items():
+            pid_i = int(pid)
+            if pid_i in comet_paths:
+                path, path_index = comet_paths[pid_i]
+                positions: list[tuple[float, float]] = []
+                for t in range(max_lead + 1):
+                    path_t = int(path_index) + t
+                    if 0 <= path_t < len(path):
+                        pt = path[path_t]
+                        positions.append((float(pt[0]), float(pt[1])))
+                    else:
+                        positions.append(OFF_BOARD)
+                self._entries[pid_i] = _PlanetEntry(
+                    pid=pid_i, kind="comet",
+                    positions=positions,
+                    comet_path=path,
+                    comet_path_index=int(path_index),
+                )
+                continue
+
+            p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
+            if is_orbiting(p_tuple) and self._omega != 0.0:
+                # Orbital. Per-lead call to predict_relative — identical
+                # arithmetic path to the inline call site (scalar
+                # math.cos/sin under the hood). Bit-parity by
+                # construction.
+                positions = [
+                    predict_relative(p_tuple, self._omega, t)
+                    for t in range(max_lead + 1)
+                ]
+                self._entries[pid_i] = _PlanetEntry(
+                    pid=pid_i, kind="orbital",
+                    positions=positions,
+                )
+            else:
+                # Static (outer planet OR omega == 0). Single constant.
+                self._entries[pid_i] = _PlanetEntry(
+                    pid=pid_i, kind="static",
+                    static_pos=(float(p.x), float(p.y)),
+                )
+
+    # ---- queries ----
+
+    def has(self, pid: int) -> bool:
+        return int(pid) in self._entries
+
+    @property
+    def max_lead(self) -> int:
+        """Maximum `lead` value the table can answer without falling
+        through. Use this to gate calls that need a large window."""
+        return self._max_lead
+
+    @property
+    def step(self) -> int:
+        """The absolute env step the table was last built for."""
+        return self._step
+
+    @property
+    def n_planets(self) -> int:
+        return len(self._entries)
+
+    def covers(self, pids, max_needed_lead: int) -> bool:
+        """Return True iff every pid is in the table AND the table's
+        max_lead is >= max_needed_lead. Cheap pre-flight for the Phase γ
+        predict_fleet_fate swap — on False, caller falls through to the
+        slow inline build."""
+        if max_needed_lead > self._max_lead:
+            return False
+        entries = self._entries
+        for pid in pids:
+            if int(pid) not in entries:
+                return False
+        return True
+
+    def kind(self, pid: int) -> Optional[str]:
+        entry = self._entries.get(int(pid))
+        return entry.kind if entry is not None else None
+
+    def lookup_relative(self, pid: int, lead: int) -> tuple[float, float]:
+        """Return (x, y) at `lead` ticks after current obs.
+
+        Bit-identical to
+        `predict_relative(world.planets_by_id[pid], world.omega, lead)`
+        for orbital planets, and to `(p.x, p.y)` for static planets.
+        For comets, returns `path[path_index + lead]` if in range, else
+        `OFF_BOARD`. Raises KeyError if `pid` is not in the table.
+        """
+        entry = self._entries.get(int(pid))
+        if entry is None:
+            raise KeyError(f"kinematic_table: pid={pid} not in current obs")
+        if entry.kind == "static":
+            return entry.static_pos  # type: ignore[return-value]
+        positions = entry.positions
+        if positions is None:
+            raise RuntimeError(f"kinematic_table: pid={pid} has no positions cache")
+        n = len(positions)
+        i = int(lead)
+        if 0 <= i < n:
+            return positions[i]
+        # Beyond the precomputed window: for orbital, this is a usage
+        # bug (caller asked past max_lead). For comet, this is a real
+        # case — the path may extend beyond max_lead. We fall through
+        # to a slow-path computation that matches the inline behaviour.
+        if entry.kind == "comet":
+            path = entry.comet_path
+            path_index = entry.comet_path_index
+            assert path is not None and path_index is not None
+            path_t = int(path_index) + i
+            if 0 <= path_t < len(path):
+                pt = path[path_t]
+                return (float(pt[0]), float(pt[1]))
+            return OFF_BOARD
+        # Orbital out-of-range: compute on demand (bit-parity preserved
+        # because we use the same predict_relative call).
+        # Caller is asking past max_lead — re-derive from omega + the
+        # stored first-position. We don't store the source `p_tuple`,
+        # so we reconstruct from positions[0] which is the obs-step
+        # position. NOTE: positions[0] == predict_relative(p_tuple, omega, 0)
+        # which for static omega=0 case returns (p.x, p.y) exactly, and
+        # for orbital case may differ from the raw obs (p.x, p.y) by ULPs
+        # because of the atan2(cos(.), sin(.)) round-trip. To preserve
+        # bit-parity we instead raise — out-of-range orbital lookups are
+        # a contract violation and we want them surfaced, not silently
+        # answered with possibly-drifted floats.
+        raise IndexError(
+            f"kinematic_table: lead={i} past max_lead={n - 1} for orbital "
+            f"pid={pid}; increase max_lead at begin_turn"
+        )
+
+    def window(
+        self,
+        pids: Iterable[int],
+        start_offset: int,
+        length: int,
+    ) -> dict[int, list[tuple[float, float]]]:
+        """Return {pid: [position at lead=start_offset+t for t in range(length)]}.
+
+        Mirrors the `planet_positions` dict built inline at
+        `lib/trajectory.py:137-159`. Use the SAME `length = max_steps + 1`
+        the inline code uses; `start_offset = wait_N` for the predict-
+        fleet-fate use case.
+        """
+        out: dict[int, list[tuple[float, float]]] = {}
+        for pid in pids:
+            pid_i = int(pid)
+            entry = self._entries.get(pid_i)
+            if entry is None:
+                # Match the inline behaviour: missing planet → skip
+                # (callers iterate over world.planets_by_id, so this
+                # shouldn't fire in practice).
+                continue
+            if entry.kind == "static":
+                pos = entry.static_pos  # type: ignore[assignment]
+                out[pid_i] = [pos] * int(length)
+                continue
+            assert entry.positions is not None
+            positions = entry.positions
+            n = len(positions)
+            row: list[tuple[float, float]] = []
+            for t in range(int(length)):
+                k = int(start_offset) + t
+                if 0 <= k < n:
+                    row.append(positions[k])
+                elif entry.kind == "comet":
+                    # Slow-path lookup past max_lead.
+                    path = entry.comet_path
+                    path_index = entry.comet_path_index
+                    assert path is not None and path_index is not None
+                    path_t = int(path_index) + k
+                    if 0 <= path_t < len(path):
+                        pt = path[path_t]
+                        row.append((float(pt[0]), float(pt[1])))
+                    else:
+                        row.append(OFF_BOARD)
+                else:
+                    # Orbital past max_lead — see note in lookup_relative.
+                    raise IndexError(
+                        f"kinematic_table: start_offset+t={k} past "
+                        f"max_lead={n - 1} for orbital pid={pid_i}"
+                    )
+            out[pid_i] = row
+        return out
+
+    def comet_paths_view(self) -> dict[int, tuple[list, int]]:
+        """{pid: (path, path_index)} for every comet in the current obs.
+
+        Schema-identical to `lib/world_model._comet_paths_by_id(world)`;
+        the integration in Phase γ swaps that function's body to read
+        from here when the table is populated.
+        """
+        out: dict[int, tuple[list, int]] = {}
+        for pid, entry in self._entries.items():
+            if entry.kind == "comet":
+                assert entry.comet_path is not None and entry.comet_path_index is not None
+                out[pid] = (entry.comet_path, entry.comet_path_index)
+        return out
+
+    # ---- diagnostics ----
+
+    def stats(self) -> dict:
+        kinds = {"static": 0, "orbital": 0, "comet": 0}
+        for e in self._entries.values():
+            kinds[e.kind] = kinds.get(e.kind, 0) + 1
+        return {
+            "n_planets": len(self._entries),
+            "kinds": kinds,
+            "step": self._step,
+            "omega": self._omega,
+            "max_lead": self._max_lead,
+        }
+
+
+def _extract_comet_paths(world) -> dict[int, tuple[list, int]]:
+    """Inline copy of `lib.world_model._comet_paths_by_id`'s body.
+
+    Duplicated here to avoid a circular import at module-load time;
+    Phase γ reverses this by having `_comet_paths_by_id` consult the
+    table when populated.
+    """
+    raw = getattr(world, "obs_raw", None)
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        comets = raw.get("comets", [])
+    else:
+        comets = getattr(raw, "comets", [])
+    out: dict[int, tuple[list, int]] = {}
+    for group in comets or []:
+        if hasattr(group, "keys"):
+            planet_ids = list(group["planet_ids"])
+            paths = list(group["paths"])
+            path_index = int(group["path_index"])
+        else:
+            planet_ids = list(group.planet_ids)
+            paths = list(group.paths)
+            path_index = int(group.path_index)
+        for idx, pid in enumerate(planet_ids):
+            out[int(pid)] = (paths[idx], path_index)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Module-level singleton + thin function wrappers.
+# ---------------------------------------------------------------------------
+
+_DEFAULT = KinematicTable()
+
+
+def clear() -> None:
+    """Reset the module-level singleton (tests + the legacy entry point)."""
+    _DEFAULT.reset()
+
+
+def begin_turn(world, *, max_lead: Optional[int] = None) -> bool:
+    return _DEFAULT.begin_turn(world, max_lead=max_lead)
+
+
+def lookup_relative(pid: int, lead: int) -> tuple[float, float]:
+    return _DEFAULT.lookup_relative(pid, lead)
+
+
+def window(
+    pids: Iterable[int],
+    start_offset: int,
+    length: int,
+) -> dict[int, list[tuple[float, float]]]:
+    return _DEFAULT.window(pids, start_offset, length)
+
+
+def comet_paths_view() -> dict[int, tuple[list, int]]:
+    return _DEFAULT.comet_paths_view()
+
+
+def get_default() -> KinematicTable:
+    """Accessor for the module-level singleton."""
+    return _DEFAULT
 
 # === inlined: lib/aim.py ===
 
@@ -1157,9 +1591,22 @@ def realize(intents, obs, *, mechanisms, model=None, reasons=None) -> list[list]
 
 
 import math
+import os
 from dataclasses import dataclass
 
 fleet_speed = speed
+
+
+def _kinematic_table_enabled() -> bool:
+    """Phase γ opt-in: when `KINEMATIC_TABLE_ENABLED=1` AND the
+    module-level singleton has been primed via begin_turn(world) AND
+    its window is large enough, predict_fleet_fate's position build
+    uses the cached lookup instead of re-computing predict_relative
+    per (planet, step).
+    """
+    return os.environ.get("KINEMATIC_TABLE_ENABLED", "").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
 
 # Max steps we simulate before giving up. A 1-ship fleet at speed 1.0
 # can cross the 141.4-unit board diagonal in 142 steps; 200 covers
@@ -1247,7 +1694,6 @@ def predict_fleet_fate(
     # past the path's end, mark the comet as "gone" with sentinel
     # positions far outside the board so swept_pair_hit can't match.
     OFF_BOARD = (-1e6, -1e6)  # sentinel for "comet has left the board"
-    comet_paths = _comet_paths_by_id(world) if world.comet_ids else {}
     # Env semantics (verified against
     # kaggle_environments/envs/orbit_wars/orbit_wars.py lines 480-595):
     # at env step T+1's fleet-movement check, the planet's old_pos is
@@ -1256,29 +1702,38 @@ def predict_fleet_fate(
     # (path[path_index] for comets; predict_relative(.., 0) for orbital);
     # positions[1] is the obs-T+1 position. With wait_N>0 the fleet
     # appears at env step T+1+wait_N and positions[0] = obs-T+wait_N.
-    planet_positions: dict[int, list[tuple[float, float]]] = {}
-    for pid, p in world.planets_by_id.items():
-        if int(pid) in comet_paths:
-            # Comet: use its discrete path.
-            path, path_index = comet_paths[int(pid)]
-            positions: list[tuple[float, float]] = []
-            for t in range(max_steps + 1):
-                path_t = int(path_index) + int(wait_N) + t
-                if 0 <= path_t < len(path):
-                    pt = path[path_t]
-                    positions.append((float(pt[0]), float(pt[1])))
-                else:
-                    positions.append(OFF_BOARD)
-            planet_positions[pid] = positions
-            continue
-        p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
-        if is_orbiting(p_tuple) and omega != 0.0:
-            planet_positions[pid] = [
-                predict_relative(p_tuple, omega, wait_N + t)
-                for t in range(max_steps + 1)
-            ]
-        else:
-            planet_positions[pid] = [(p.x, p.y)] * (max_steps + 1)
+    #
+    # Phase γ — when KINEMATIC_TABLE_ENABLED=1 and the table is primed
+    # for this world AND covers our (wait_N + max_steps) window, the
+    # `planet_positions` dict comes from a one-call lookup into the
+    # table's per-turn cache. On any miss — env-var off, table not
+    # primed, max_lead too small — fall through to the inline build.
+    planet_positions = _table_window_or_none(world, wait_N, max_steps + 1)
+    if planet_positions is None:
+        comet_paths = _comet_paths_by_id(world) if world.comet_ids else {}
+        planet_positions = {}
+        for pid, p in world.planets_by_id.items():
+            if int(pid) in comet_paths:
+                # Comet: use its discrete path.
+                path, path_index = comet_paths[int(pid)]
+                positions: list[tuple[float, float]] = []
+                for t in range(max_steps + 1):
+                    path_t = int(path_index) + int(wait_N) + t
+                    if 0 <= path_t < len(path):
+                        pt = path[path_t]
+                        positions.append((float(pt[0]), float(pt[1])))
+                    else:
+                        positions.append(OFF_BOARD)
+                planet_positions[pid] = positions
+                continue
+            p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
+            if is_orbiting(p_tuple) and omega != 0.0:
+                planet_positions[pid] = [
+                    predict_relative(p_tuple, omega, wait_N + t)
+                    for t in range(max_steps + 1)
+                ]
+            else:
+                planet_positions[pid] = [(p.x, p.y)] * (max_steps + 1)
 
     target_id = target.id
     src_id = src.id
@@ -1360,6 +1815,32 @@ def _segment_to_point_distance(a, b, p) -> float:
     cx = ax + t * dx
     cy = ay + t * dy
     return math.hypot(px - cx, py - cy)
+
+
+def _table_window_or_none(world, wait_N: int, length: int):
+    """Phase γ: pull positions from the kinematic table when enabled
+    and primed for this world. Returns the planet_positions dict the
+    inline build would have produced, or None to signal "fall through
+    to inline build".
+
+    Bit-parity contract: the table is rebuilt every turn from
+    `world.planets_by_id` using the SAME `predict_relative` calls the
+    inline build makes (orbital), the SAME `(p.x, p.y)` constants
+    (static), and the SAME path lookups (comets).
+    """
+    if not _kinematic_table_enabled():
+        return None
+    # Lazy import keeps default-path module-load time unchanged.
+    table = get_default()
+    pids = list(world.planets_by_id.keys())
+    if not pids:
+        return None
+    needed_lead = int(wait_N) + int(length) - 1
+    if not table.covers(pids, needed_lead):
+        return None
+    # Sanity: the table must be primed for THIS turn's obs. Trust
+    # begin_turn fingerprinting to keep this fresh.
+    return table.window(pids, start_offset=int(wait_N), length=int(length))
 
 # === inlined: lib/mechanism.py ===
 
@@ -2379,6 +2860,206 @@ __all__ = [
     "expected_hold",
     "margin_multiplier",
 ]
+
+# === inlined: lib/reliability.py ===
+
+import math
+import os
+from typing import Optional
+
+
+# Env vars (all defaults are no-op when reliability is gated off).
+_TAU_ETA = float(os.environ.get("RELIABILITY_ETA_SCALE", "20"))
+_TAU_WAIT = float(os.environ.get("RELIABILITY_WAIT_SCALE", "10"))
+_OPP_REACT = float(os.environ.get("RELIABILITY_OPP_REACT", "0.4"))
+_OPP_REACH_LAG = int(os.environ.get("RELIABILITY_OPP_REACH_LAG", "4"))
+_MIN_OPP_SOURCE = int(os.environ.get("RELIABILITY_MIN_OPP_SOURCE", "3"))
+
+
+def _opp_reachable_ships(tgt, arrival_step: int, world, my_id: int) -> int:
+    """Strongest single enemy planet that can reach `tgt` within
+    `arrival_step + OPP_REACH_LAG`. Returns 0 if none."""
+    best = 0
+    for p in world.planets_by_id.values():
+        owner = int(p.owner)
+        if owner == int(my_id) or owner < 0:
+            continue
+        ships_avail = int(p.ships)
+        if ships_avail < _MIN_OPP_SOURCE:
+            continue
+        dx = float(p.x) - float(tgt.x)
+        dy = float(p.y) - float(tgt.y)
+        d = math.hypot(dx, dy)
+        v = fleet_speed(ships_avail)
+        if v <= 0:
+            continue
+        eta = int(math.ceil(d / v))
+        if eta <= int(arrival_step) + _OPP_REACH_LAG:
+            if ships_avail > best:
+                best = ships_avail
+    return best
+
+
+def reliability(
+    tgt,
+    ships: int,
+    eta: int,
+    wait_N: int,
+    world,
+    my_id: int,
+    *,
+    tau_eta: Optional[float] = None,
+    tau_wait: Optional[float] = None,
+    opp_react: Optional[float] = None,
+) -> float:
+    """Probability the predicted-future state at our arrival matches
+    reality enough that nominal value is realizable. Returns [0, 1].
+
+    Parameters:
+      tgt       — target planet (any object with .x, .y, .production).
+      ships     — launch size.
+      eta       — flight time (post-wait), in ticks.
+      wait_N    — wait ticks before fire.
+      world     — World; needs `planets_by_id` for opp reachability scan.
+      my_id     — player id (so we know which planets are 'opp').
+      tau_eta, tau_wait, opp_react — optional overrides of env-var defaults.
+    """
+    te = float(_TAU_ETA if tau_eta is None else tau_eta)
+    tw = float(_TAU_WAIT if tau_wait is None else tau_wait)
+    rxn = float(_OPP_REACT if opp_react is None else opp_react)
+
+    eta_rel = math.exp(-float(eta) / max(1.0, te))
+    wait_rel = math.exp(-float(wait_N) / max(1.0, tw))
+
+    opp_reach = _opp_reachable_ships(tgt, int(eta) + int(wait_N), world, my_id)
+    pessimistic = (
+        float(ships)
+        - float(tgt.production) * float(eta)
+        - rxn * float(opp_reach)
+    )
+    landing_rel = max(0.0, pessimistic) / max(1.0, float(ships))
+
+    return eta_rel * wait_rel * landing_rel
+
+
+# Module-level toggle for the wiring sites. Same env var pattern as Layer Z.
+RELIABILITY_PRICING_ENABLED = (
+    os.environ.get("BASELINE_RELIABILITY_PRICING", "0") == "1"
+)
+
+# === inlined: lib/drop_one.py ===
+
+import os
+from typing import Any, Iterable
+
+
+# Default plan-value horizon — match PI's fast-elim target (Rule 48 + the
+# 2026-05-24 truncated-A/B protocol). Tunable via env var.
+_PLAN_VALUE_HORIZON = int(os.environ.get("DROP_ONE_HORIZON", "250"))
+
+DROP_ONE_ENABLED = os.environ.get("BASELINE_DROP_ONE_VALIDATE", "0") == "1"
+SAFETY_MARGIN = float(os.environ.get("BASELINE_DROP_ONE_SAFETY", "30.0"))
+
+
+def _fleet_outcome(src, angle: float, ships: int, world):
+    """Trace a fleet from src at `angle` with `ships` and return
+    (hit_planet_id, eta_step) for the first planet collision, or
+    (None, None) for sun/oob/timeout."""
+    try:
+        # Use src as the dummy target; we read hit_planet_id directly
+        # (predict_fleet_fate sets it for any planet collision, regardless
+        # of whether outcome is "target" or "planet").
+        fate = predict_fleet_fate(src, src, angle, ships, world, wait_N=0)
+    except Exception:
+        return None, None
+    if fate is None or fate.hit_planet_id is None:
+        return None, None
+    return int(fate.hit_planet_id), int(fate.step)
+
+
+def plan_production_advantage(moves, world, model, my_id: int) -> float:
+    """Closed-form estimate of total production swing this plan delivers
+    over the next DROP_ONE_HORIZON ticks.
+
+    For each unique target a launch successfully captures, adds
+    `target.production · remaining_turns_after_arrival` to the total.
+
+    Bounces, reinforces (target already ours), and duplicate-target legs
+    (only the fastest counts as the unique capture) contribute zero.
+    """
+    captured = {}  # tgt_id -> (eta, ships_delivered)
+    step = int(getattr(world, "step", 0))
+    for m in moves:
+        try:
+            src_id = int(m[0])
+            angle = float(m[1])
+            ships = int(m[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        src = world.planets_by_id.get(src_id)
+        if src is None:
+            continue
+        hit_id, eta = _fleet_outcome(src, angle, ships, world)
+        if hit_id is None or eta is None:
+            continue
+        # Reinforce check: target already ours at arrival → not a capture.
+        try:
+            pred_owner = model.owner_at(int(hit_id), int(eta))
+        except Exception:
+            pred_owner = None
+        if pred_owner == int(my_id):
+            continue
+        # Bounce check: ships ≤ garrison-at-arrival → no capture.
+        try:
+            pred_ships = float(model.ships_at(int(hit_id), int(eta)) or 0.0)
+        except Exception:
+            pred_ships = 0.0
+        if ships <= pred_ships:
+            continue
+        # Successful capture; keep only the fastest-arriving capture per target.
+        prev = captured.get(hit_id)
+        if prev is None or eta < prev[0]:
+            captured[hit_id] = (eta, ships)
+
+    total = 0.0
+    for hit_id, (eta, _) in captured.items():
+        tgt = world.planets_by_id.get(hit_id)
+        if tgt is None:
+            continue
+        remaining = max(0, _PLAN_VALUE_HORIZON - step - eta)
+        total += float(tgt.production) * float(remaining)
+    return total
+
+
+def drop_one_validate(
+    moves, world, model, my_id: int, *,
+    safety_margin: float | None = None,
+) -> list:
+    """Prune legs whose marginal contribution to plan value is below
+    `safety_margin` (default: env var BASELINE_DROP_ONE_SAFETY = 30.0
+    production-ticks, ~one prod=3 planet captured for 10 turns).
+
+    O(N+1) plan-value evaluations where N = len(moves).
+    Idempotent on no-op (≤1 moves, or all marginal).
+    """
+    if not DROP_ONE_ENABLED:
+        return list(moves)
+    if len(moves) <= 1:
+        return list(moves)
+    margin = SAFETY_MARGIN if safety_margin is None else float(safety_margin)
+
+    full_value = plan_production_advantage(moves, world, model, my_id)
+    keep = []
+    for i, move in enumerate(moves):
+        without_i = list(moves[:i]) + list(moves[i+1:])
+        value_without = plan_production_advantage(
+            without_i, world, model, my_id,
+        )
+        marginal = full_value - value_without
+        if marginal >= margin:
+            keep.append(move)
+        # else: this leg contributes < safety_margin marginal -> DROP
+    return keep
 
 # === inlined: lib/missions/snipe.py ===
 
@@ -8163,6 +8844,7 @@ def composite_capture_value(
 
 
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -8214,6 +8896,82 @@ OPENING_VALUE_GAMMA = 0.95  # per-tick discount applied to candidate value
 OPP_RESPONSE_LAG = 4        # ticks of slack added to opp's optimal eta
                             # when checking whether opp can plausibly
                             # contest our arrival. Fix 4 (Modeling gap D).
+
+# Concentration knobs (Tier-1 A+B, 2026-05-24). All four default to no-op
+# so the gated rollout is opt-in via env var per submission bundle.
+#
+#   OPENING_SHIP_ALPHA — super-linear ship-value exponent. Multiplier is
+#       (needed / OPENING_SHIP_REF) ** (alpha - 1). At alpha=1.0 the
+#       multiplier is identically 1.0 (no-op). At alpha=1.5 with REF=10:
+#       a 5-ship capture gets 0.707x; a 20-ship capture gets 1.414x.
+#       Captures the convexity of net effective landing (n - prod·d/sqrt(n))
+#       and the sqrt(n) fleet-speed scaling.
+#   OPENING_LAUNCH_COST — per-launch fixed cost in value units (same
+#       scale as `value`, typically O(10-30)). Subtracted AFTER the ROI
+#       gate so it cannot silently nuke the gate's semantics; only enters
+#       the MILP objective.
+#   OPENING_SHIP_REF — reference ship count for the alpha normalization.
+#       Anchored on typical opening-source garrison (~10 ships at t=0..10)
+#       so default-alpha=1.0 keeps the value scale identical to today.
+OPENING_SHIP_ALPHA = float(os.environ.get("OPENING_SHIP_ALPHA", "1.0"))
+OPENING_LAUNCH_COST = float(os.environ.get("OPENING_LAUNCH_COST", "0.0"))
+OPENING_SHIP_REF = float(os.environ.get("OPENING_SHIP_REF", "10.0"))
+
+# Layer V1 — value-per-ship MILP objective (2026-05-25). Default OFF.
+#
+# Default behaviour ranks candidates by absolute `value` (prod × hold ×
+# γ^t × bonus), which prefers expensive nearby captures to cheap distant
+# ones even when the latter have 3× the per-ship production ROI. Concrete
+# failure mode: seed 1622482326 schedules a 56-ship launch at a gar=55
+# prod=4 neutral while skipping reachable, uncontested gar=19 prod=5
+# captures (per-ship ROI 13 vs 43.5; scripts/probe_seed_1622482326.py).
+#
+# When OPENING_VALUE_PER_SHIP=1 the objective coefficient becomes
+# `-(value / ships)` instead of `-value`, which is the LP-relaxation
+# (fractional knapsack) ranking. The integer MILP closely tracks the LP
+# when the ship budget binds across heterogeneous ship costs.
+#
+# The greedy fallback uses the same sort key for consistency.
+OPENING_VALUE_PER_SHIP = (
+    os.environ.get("OPENING_VALUE_PER_SHIP", "0") == "1"
+)
+
+# Layer V3 — full-horizon hold for un-overwhelmed captures (2026-05-25).
+# Default OFF.
+#
+# Default `_expected_hold_duration` caps midline captures at `3 * delta`
+# ticks where `delta` is the post-arrival opp recapture-race margin.
+# For symmetric (equidistant) targets this collapses to 15-20 ticks even
+# when the capture is genuinely defensible. At seed 1622482326 the
+# uncontested gar=19 neutrals get hold_dur=18 (vs full-horizon ~171),
+# which makes their value 5*18=90 instead of 5*171=855 — losing the MILP
+# ranking to a 56-ship gar=55 capture (hold_dur=182) by a factor of 3.
+#
+# When OPENING_FULL_HORIZON_HOLD=1, Stage 2B's tight-race scaling is
+# bypassed: as long as Stage 1 (ship-count overwhelm) and Stage 2A
+# (opp current-launch race-to-planet) both pass, we credit the full
+# `OPENING_T_END - arrival` horizon. Trades defensive realism (opp can
+# recapture rotated targets in some games) for opening-aggression
+# realism (we won't refuse a cheap distant capture on a
+# 6-tick-delta-scared model when we can clearly hold it for 100+ ticks).
+#
+# Pairs with Layer V1: V1 needs ships ranked by per-ship ROI; V3 ensures
+# the value-per-ship for cheap-distant captures isn't artificially
+# collapsed before the per-ship division runs.
+OPENING_FULL_HORIZON_HOLD = (
+    os.environ.get("OPENING_FULL_HORIZON_HOLD", "0") == "1"
+)
+
+# Layer Z — hard physics prune (2026-05-25). See identical block in
+# agents/baseline/proposer.py for rationale. Default OFF so the gate is
+# opt-in per submission. SAFETY_MARGIN is in ship units (effective
+# landing after production-bleed during flight).
+OPENING_EFFECTIVE_LANDING_PRUNE_ENABLED = (
+    os.environ.get("BASELINE_EFFECTIVE_LANDING_PRUNE", "0") == "1"
+)
+OPENING_EFFECTIVE_LANDING_MARGIN = float(
+    os.environ.get("BASELINE_EFFECTIVE_LANDING_MARGIN", "1.0")
+)
 
 
 # ---------------------------------------------------------------------------
@@ -8360,14 +9118,49 @@ def _expected_hold_duration(tgt, arrival: int, capture_residual: int,
     if opp_force >= int(capture_residual) + 3:
         return 0
 
-    # Stage 2: eta-delta check (legacy).
+    # Stage 2A: race-to-planet gate (opp's CURRENT-launch capability).
+    # arrival_eta=0: returns opp's earliest arrival if they launch NOW
+    # from current positions. If that's at-or-before our arrival, the
+    # capture is contested — hold=0. This semantic is REQUIRED here;
+    # arrival_eta=arrival would make the gate a no-op (sub 52968305-
+    # era 2026-05-24 elim-sweep 6/16 regression, see commit f590c22).
     try:
-        opp_threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
+        threat_now = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
     except Exception:
-        opp_threat_eta = None
-    if opp_threat_eta is None:
+        threat_now = None
+    if threat_now is not None and int(threat_now) <= arrival:
+        return 0
+
+    # Layer V3 — full-horizon hold for un-overwhelmed captures. After
+    # clearing Stage 1 (ship-count) and Stage 2A (race-to-planet), the
+    # capture is well-defined as "we get there first and aren't
+    # outnumbered." Under V3 we credit the full residual horizon
+    # without the rotated-geometry 3*delta penalty. See module-level
+    # docstring on OPENING_FULL_HORIZON_HOLD.
+    if OPENING_FULL_HORIZON_HOLD:
         return max(0, OPENING_T_END - arrival)
-    delta = int(opp_threat_eta) - arrival
+
+    # Stage 2B: hold-horizon scaling — post-capture recapture race.
+    # Under BASELINE_ORBITAL_SAFETY=1, use opp's post-our-arrival ETA
+    # (arrival_eta=arrival) so the scaling reflects opp's RECAPTURE
+    # capability from rotated geometry. Catches the "target rotates
+    # into opp's quadrant during our flight" case where threat_now
+    # was None or far away but the rotated geometry is hostile.
+    # Without the gate, use threat_now (legacy semantic).
+    threat_for_scaling: int | None
+    if os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1":
+        try:
+            threat_for_scaling = model.time_to_enemy_threat(
+                int(tgt.id), int(my_id), world, arrival_eta=int(arrival),
+            )
+        except Exception:
+            threat_for_scaling = threat_now
+    else:
+        threat_for_scaling = threat_now
+
+    if threat_for_scaling is None:
+        return max(0, OPENING_T_END - arrival)
+    delta = int(threat_for_scaling) - arrival
     if delta <= 0:
         return 0
     if delta >= OPENING_HOLD_WINDOW:
@@ -8408,7 +9201,12 @@ def _is_minimally_holdable(tgt, arrival: int, capture_residual: int,
 
     Anything beyond this is handled by the value-weighting in
     `_expected_hold_duration`, so the MILP picks captures with the best
-    production-over-hold-window."""
+    production-over-hold-window.
+
+    arrival_eta=0 is INTENTIONAL — see the matching note on the eta-delta
+    gate in `_expected_hold_duration` above. The race-to-planet gate
+    needs opp's CURRENT-launch capability. Reverted from the 2026-05-24
+    arrival_eta=arrival attempt that turned this gate into a no-op."""
     try:
         opp_threat_eta = model.time_to_enemy_threat(int(tgt.id), int(my_id), world)
     except Exception:
@@ -8547,6 +9345,15 @@ def _build_candidates(world, model, my_id: int, num_seats: int,
                 if capture_residual < 1:
                     continue
 
+                # Layer Z gate dropped here in v2 (2026-05-25). `needed`
+                # is already the ships-required-AT-ARRIVAL, computed from
+                # `gar_at_arr` which encodes regrowth during BOTH the wait
+                # and the flight. Running the prune on `needed - prod·eta`
+                # double-counts the flight-time regrowth. The proposer-side
+                # Layer Z v2 (`agents/baseline/proposer.py:516`) handles the
+                # equivalent CONSOLIDATION-phase prune correctly using
+                # `pred_ships`.
+
                 # Value = production × hold_window × opp_bonus, where
                 # hold_window is the expected ticks we hold post-capture
                 # before opp could plausibly recapture. Indefensible
@@ -8569,13 +9376,34 @@ def _build_candidates(world, model, my_id: int, num_seats: int,
                 discount = OPENING_VALUE_GAMMA ** float(time_to_capture)
                 value = (float(int(tgt.production)) * float(hold_dur)
                          * float(opp_bonus) * float(discount))
+                # Layer R reliability multiplier — risk-adjust by epistemic-
+                # uncertainty factor in [0, 1]. Default OFF; opt-in via
+                # BASELINE_RELIABILITY_PRICING=1. Same env vars as the
+                # proposer site so a single submission gates both layers.
+                if RELIABILITY_PRICING_ENABLED:
+                    value = value * reliability(
+                        tgt, int(needed), int(eta_flight), int(offset),
+                        world, int(my_id),
+                    )
+                # Patch A (concentration): super-linear in ship count.
+                # alpha=1.0 (default) -> multiplier identically 1.0.
+                if OPENING_SHIP_ALPHA != 1.0:
+                    ref = max(1.0, OPENING_SHIP_REF)
+                    value = value * (float(needed) / ref) ** (OPENING_SHIP_ALPHA - 1.0)
                 # Per-launch ROI filter — gentler than 1:1 to match the
                 # baseline's aggressive opening throughput. Even half-ROI
                 # captures contribute to the production base once held.
+                # Runs BEFORE Patch B so the gate's value-per-ship semantics
+                # are unchanged when OPENING_LAUNCH_COST=0.0.
                 if value < ROI_THRESHOLD * float(needed):
                     waterfall.setdefault("dropped_low_roi", 0)
                     waterfall["dropped_low_roi"] += 1
                     continue
+                # Patch B (concentration): per-launch fixed cost. Applied
+                # AFTER the ROI gate so a mis-tuned C cannot silently nuke
+                # the gate. Negative post-cost values are passed through;
+                # the MILP minimises -value so they will not be selected.
+                value = value - OPENING_LAUNCH_COST
 
                 src_ids_in_use.add(int(src.id))
                 tgt_ids_in_use.add(int(tgt.id))
@@ -8659,7 +9487,12 @@ def _greedy_fallback(candidates: list[_Candidate], world, my_id: int,
     chosen: list[_Candidate] = []
     obj = 0.0
 
-    for c in sorted(candidates, key=lambda x: x.value, reverse=True):
+    def _greedy_key(x: _Candidate) -> float:
+        if OPENING_VALUE_PER_SHIP and x.ships > 0:
+            return x.value / x.ships
+        return x.value
+
+    for c in sorted(candidates, key=_greedy_key, reverse=True):
         if tgt_count.get(c.tgt_id, 0) >= MAX_CONTESTERS_PER_TARGET:
             continue
         # Source budget check: cumulative emissions up to c.fire_step ≤ available.
@@ -8710,9 +9543,19 @@ def _solve_milp(candidates: list[_Candidate], world, my_id: int,
     tgt_ids = sorted({c.tgt_id for c in candidates})
 
     # Objective: minimize -value (with lex tie-breaker for stability).
-    c_vec = np.array(
-        [-(c.value - 1e-6 * c.column_id) for c in candidates], dtype=float,
-    )
+    # Layer V1 (OPENING_VALUE_PER_SHIP=1): rank by value-per-ship rather
+    # than absolute value. LP-relaxation = fractional knapsack on
+    # value/ships. The integer MILP tracks this when the budget binds
+    # across heterogeneous ship costs. See module-level docstring.
+    if OPENING_VALUE_PER_SHIP:
+        c_vec = np.array(
+            [-(c.value / max(1, c.ships) - 1e-6 * c.column_id) for c in candidates],
+            dtype=float,
+        )
+    else:
+        c_vec = np.array(
+            [-(c.value - 1e-6 * c.column_id) for c in candidates], dtype=float,
+        )
 
     A_rows: list[list[float]] = []
     b_ub: list[float] = []
@@ -8812,6 +9655,122 @@ def opening_plan(world, model, my_id: int, num_seats: int,
         status=str(status), pruning_waterfall=waterfall,
     )
 
+# === inlined: lib/joint_solver/predicate.py ===
+
+
+from typing import Any, Iterable
+
+
+
+EPISODE_STEPS = 500
+
+
+def _iter_fleets(world: World) -> Iterable[Any]:
+    """Read the fleet list off world.obs_raw (dict or Struct)."""
+    obs = world.obs_raw
+    if isinstance(obs, dict):
+        return obs.get("fleets", []) or []
+    return getattr(obs, "fleets", []) or []
+
+
+def _fleet_owner(fleet) -> int:
+    if isinstance(fleet, (list, tuple)):
+        return int(fleet[1])
+    return int(getattr(fleet, "owner", -1))
+
+
+def _fleet_ships(fleet) -> int:
+    if isinstance(fleet, (list, tuple)):
+        return int(fleet[6])
+    return int(getattr(fleet, "ships", 0))
+
+
+def prod_advantage(world: World, my_id: int, opp_id: int) -> int:
+    """Sum of my production minus sum of opp production.
+
+    Neutrals contribute 0."""
+    my_prod = 0
+    opp_prod = 0
+    for p in world.planets_by_id.values():
+        if p.owner == my_id:
+            my_prod += int(p.production)
+        elif p.owner == opp_id:
+            opp_prod += int(p.production)
+    return my_prod - opp_prod
+
+
+def remaining_turns(world: World, episode_steps: int = EPISODE_STEPS) -> int:
+    """Turns left until episode end (>= 0)."""
+    return max(0, int(episode_steps) - int(world.step))
+
+
+def opp_pool(world: World, opp_id: int,
+             episode_steps: int = EPISODE_STEPS) -> int:
+    """Opp's total recovery capacity through end of game.
+
+    = (ships on opp planets) + (ships in opp in-flight fleets)
+      + (opp production × remaining_turns).
+    """
+    ships_on_planets = 0
+    opp_prod = 0
+    for p in world.planets_by_id.values():
+        if p.owner == opp_id:
+            ships_on_planets += int(p.ships)
+            opp_prod += int(p.production)
+    ships_in_flight = sum(
+        _fleet_ships(f) for f in _iter_fleets(world)
+        if _fleet_owner(f) == opp_id
+    )
+    rem = remaining_turns(world, episode_steps)
+    return ships_on_planets + ships_in_flight + opp_prod * rem
+
+
+def is_winning_state(world: World, my_id: int, opp_id: int,
+                     episode_steps: int = EPISODE_STEPS) -> bool:
+    """`prod_advantage × remaining_turns > opp_pool`.
+
+    Edge cases:
+      - prod_advantage <= 0: False (no edge to accumulate).
+      - remaining_turns == 0: prod_advantage·0 = 0, so always False
+        when opp_pool > 0 (which it usually is).
+    """
+    adv = prod_advantage(world, my_id, opp_id)
+    if adv <= 0:
+        return False
+    return adv * remaining_turns(world, episode_steps) > opp_pool(
+        world, opp_id, episode_steps
+    )
+
+
+def is_winning_state_if_owned(world: World, my_id: int, opp_id: int,
+                              extra_planet_ids: set[int],
+                              episode_steps: int = EPISODE_STEPS) -> bool:
+    """Hypothetical: would `is_winning_state` hold if I ALSO owned
+    `extra_planet_ids`?
+
+    Re-attributes each extra planet's production from its current owner
+    to me, and removes opp's ships/production from `opp_pool` for any
+    extra planet currently held by opp.
+
+    Caller is responsible for passing ids that aren't already mine.
+    """
+    adv = prod_advantage(world, my_id, opp_id)
+    op = opp_pool(world, opp_id, episode_steps)
+    rem = remaining_turns(world, episode_steps)
+    for pid in extra_planet_ids:
+        p = world.planets_by_id.get(pid)
+        if p is None or p.owner == my_id:
+            continue
+        prod = int(p.production)
+        if p.owner == opp_id:
+            adv += 2 * prod
+            op -= int(p.ships) + prod * rem
+        else:
+            adv += prod
+    if adv <= 0:
+        return False
+    return adv * rem > op
+
 # === inlined: agents/baseline/proposer.py ===
 """Candidate proposer: fire-now + multi-wait-grid, cheap-ranked, banded-deduped.
 
@@ -8834,6 +9793,7 @@ import os
 # from lib.fleet import speed as fleet_speed  # inlined by bundle_agent.py
 fleet_speed = speed
 # from lib.orbit import is_orbiting, predict_relative  # inlined by bundle_agent.py
+# from lib.reliability import RELIABILITY_PRICING_ENABLED, reliability  # inlined by bundle_agent.py
 # from lib.scoring import pv_horizon  # inlined by bundle_agent.py
 # from lib.trajectory import predict_fleet_fate  # inlined by bundle_agent.py
 # from lib.world_model import _comet_paths_by_id, _position_at, comet_remaining_lifetime  # inlined by bundle_agent.py
@@ -8867,6 +9827,37 @@ STRATEGIC_STOCKPILE_TICKS = 5 # buffer = N ticks × planet's production
 # NO wait variants; chooser only sees fire-now → emits.
 WAIT_GRID_MODE = os.environ.get("BASELINE_WAIT_GRID", "backward").strip().lower()
 WAIT_BUFFER_OFFSET = 3   # backward grid emits {min_w, min_w + 3}
+
+# Concentration knobs (Tier-1 A+B, 2026-05-24). Apply to the CAPTURE and
+# REINFORCE-with-threat branches of cheap_marginal_value. All three default
+# to no-op; opt-in per submission via env var. See lib/joint_solver/
+# opening_planner.py for the matching opening-planner patch.
+#
+#   BASELINE_LAUNCH_SHIP_ALPHA — exponent on (ships / REF)^(alpha-1).
+#       alpha=1.0 (default) -> multiplier identically 1.0.
+#   BASELINE_LAUNCH_FIXED_COST — subtracted from the capture cheap-delta.
+#       Units: cheap-delta scale (typical capture ~0.14).
+#   BASELINE_LAUNCH_SHIP_REF — reference fleet size for the alpha
+#       normalization. Anchored on typical proposer capture size.
+LAUNCH_SHIP_ALPHA = float(os.environ.get("BASELINE_LAUNCH_SHIP_ALPHA", "1.0"))
+LAUNCH_FIXED_COST = float(os.environ.get("BASELINE_LAUNCH_FIXED_COST", "0.0"))
+LAUNCH_SHIP_REF = float(os.environ.get("BASELINE_LAUNCH_SHIP_REF", "10.0"))
+
+# Layer Z — hard physics prune (2026-05-25). A launch is useful iff
+# `ships - prod_target * eta >= SAFETY_MARGIN`. Captures the closed-form
+# waste pattern: tiny fleets traveling far take fleet_speed=max(2,√n)
+# turns to arrive, during which the target produces prod*eta extra ships.
+# Effective landing must clear a safety margin. Default OFF so the gate
+# can be A/B-tested per submission via env var.
+#
+#   BASELINE_EFFECTIVE_LANDING_PRUNE — "1" enables the filter.
+#   BASELINE_EFFECTIVE_LANDING_MARGIN — min ships after production-bleed.
+EFFECTIVE_LANDING_PRUNE_ENABLED = (
+    os.environ.get("BASELINE_EFFECTIVE_LANDING_PRUNE", "0") == "1"
+)
+EFFECTIVE_LANDING_MARGIN = float(
+    os.environ.get("BASELINE_EFFECTIVE_LANDING_MARGIN", "1.0")
+)
 
 # Bug #12 window constant — promoted to `lib/world_model.py` so both
 # this proposer and the in-rollout defensive policy
@@ -9248,6 +10239,23 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
     pred_owner = model.owner_at(int(tgt.id), arrival_step)
     pred_ships = float(model.ships_at(int(tgt.id), arrival_step) or 0.0)
 
+    # Patch A multiplier (concentration): ships^alpha normalized to REF
+    # so alpha=1.0 collapses to 1.0 (no-op). Applied to both capture and
+    # threatened-reinforce branches below.
+    if LAUNCH_SHIP_ALPHA != 1.0:
+        ref = max(1.0, LAUNCH_SHIP_REF)
+        ship_factor = (float(ships) / ref) ** (LAUNCH_SHIP_ALPHA - 1.0)
+    else:
+        ship_factor = 1.0
+
+    # Layer R reliability multiplier — risk-adjust by epistemic-uncertainty
+    # factor in [0, 1]. Decays with eta + wait_N + opp counter-launch reach.
+    # Default OFF; opt-in via BASELINE_RELIABILITY_PRICING=1.
+    if RELIABILITY_PRICING_ENABLED:
+        rel = reliability(tgt, int(ships), int(eta), int(wait_N), world, int(me))
+    else:
+        rel = 1.0
+
     if pred_owner == me:
         # PI 2026-05-21 fix — gate on BASELINE_ORBITAL_SAFETY=1, pass
         # arrival_eta so an orbiting target's position at our arrival
@@ -9265,12 +10273,42 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
             return 0.0
         pv = pv_horizon(int(world.step), int(t_to_threat),
                         gamma=GAMMA, t_total=EPISODE_STEPS)
-        return 0.05 * float(tgt.production) * float(pv)
+        # Patch A+B: scale by ship_factor, subtract fixed launch cost.
+        # Layer R: multiply by reliability.
+        return (
+            0.05 * float(tgt.production) * float(pv) * ship_factor * rel
+            - LAUNCH_FIXED_COST
+        )
 
     if ships > pred_ships:
+        # Layer Z v2 — physics-correct effective-landing prune
+        # (2026-05-25). Reject the launch if our headroom above the
+        # predicted garrison can't absorb production-bleed during flight:
+        #
+        #     (ships − pred_ships) − prod·eta  <  MARGIN  →  REJECT
+        #
+        # v1 (commit 109c01a, 2026-05-24) used `ships − prod·eta`,
+        # omitting the pred_ships subtraction. That gave defended
+        # targets a hidden ship-count credit equal to their predicted
+        # garrison — too permissive on contested cohorts. `eta` is the
+        # post-wait flight time and already fleet-speed-aware via
+        # `aim_and_eta` → `fleet_speed(ships)`; `pred_ships` already
+        # encodes wait_N production accrual at the launch tick.
+        if EFFECTIVE_LANDING_PRUNE_ENABLED:
+            effective_landing = (
+                (float(ships) - float(pred_ships))
+                - float(tgt.production) * float(eta)
+            )
+            if effective_landing < EFFECTIVE_LANDING_MARGIN:
+                return CHEAP_REJECT_THRESHOLD - 1.0  # below reject gate
         pv = pv_horizon(int(world.step), int(arrival_step),
                         gamma=GAMMA, t_total=EPISODE_STEPS)
-        return 0.05 * float(tgt.production) * float(pv)
+        # Patch A+B: scale by ship_factor, subtract fixed launch cost.
+        # Layer R: multiply by reliability.
+        return (
+            0.05 * float(tgt.production) * float(pv) * ship_factor * rel
+            - LAUNCH_FIXED_COST
+        )
 
     return -0.5 * float(ships)
 
@@ -9723,6 +10761,20 @@ def propose(my_planets, target_pool, world, model, me: int,
         (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N)
     sorted by cheap_delta descending.
     """
+    # Speed-discipline filters (Rule 40 — modeling-correctness). Slow
+    # fleets to far targets waste production during flight; small fleets
+    # to near targets also crawl at log-speed and arrive after the
+    # garrison regrows. Two env knobs, both call-time so the bundle
+    # picks them up regardless of inline order:
+    #   - BASELINE_MAX_ETA: max flight ticks (defaults to MAX_HORIZON
+    #     for backward compat).
+    #   - BASELINE_MIN_SHIPS_LAUNCH: min ship count per launch (defaults
+    #     to MIN_FLEET_SIZE for backward compat).
+    # buildup_planner sets MAX_ETA=20 and MIN_SHIPS_LAUNCH=10.
+    _max_eta = int(os.environ.get("BASELINE_MAX_ETA", str(MAX_HORIZON)))
+    _min_ships_launch = int(
+        os.environ.get("BASELINE_MIN_SHIPS_LAUNCH", str(MIN_FLEET_SIZE))
+    )
     prerank = []
     for src in my_planets:
         if int(src.ships) < MIN_FLEET_SIZE:
@@ -9734,7 +10786,11 @@ def propose(my_planets, target_pool, world, model, me: int,
             for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
+                if ships < _min_ships_launch:
+                    continue
                 angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
+                if eta > _max_eta:
+                    continue
                 horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if horizon >= baseline_len:
                     horizon = baseline_len - 1
@@ -9749,6 +10805,10 @@ def propose(my_planets, target_pool, world, model, me: int,
             for w_ships, w_wait, w_angle, w_eta in wait_then_fire_variants(
                 src, tgt, model, omega, me, world=world,
             ):
+                if w_ships < _min_ships_launch:
+                    continue
+                if w_eta > _max_eta:
+                    continue
                 w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if w_horizon >= baseline_len:
                     continue
@@ -9887,6 +10947,288 @@ def propose(my_planets, target_pool, world, model, me: int,
     deduped.sort(key=lambda e: -e[0])
     return deduped
 
+# Namespace alias so `from agents.baseline import proposer` callers still see `proposer.<name>`.
+from types import SimpleNamespace as _SimpleNamespace_proposer
+proposer = _SimpleNamespace_proposer(
+    NUM_TARGETS_PER_SOURCE=NUM_TARGETS_PER_SOURCE,
+    MIN_FLEET_SIZE=MIN_FLEET_SIZE,
+    SIM_SETTLE_TURNS=SIM_SETTLE_TURNS,
+    MIN_HORIZON=MIN_HORIZON,
+    MAX_HORIZON=MAX_HORIZON,
+    WAIT_EXTRA_SURPLUS=WAIT_EXTRA_SURPLUS,
+    CHEAP_REJECT_THRESHOLD=CHEAP_REJECT_THRESHOLD,
+    EPISODE_STEPS=EPISODE_STEPS,
+    GAMMA=GAMMA,
+    STRATEGIC_DEFENSE_PROD=STRATEGIC_DEFENSE_PROD,
+    STRATEGIC_STOCKPILE_TICKS=STRATEGIC_STOCKPILE_TICKS,
+    WAIT_GRID_MODE=WAIT_GRID_MODE,
+    WAIT_BUFFER_OFFSET=WAIT_BUFFER_OFFSET,
+    LAUNCH_SHIP_ALPHA=LAUNCH_SHIP_ALPHA,
+    LAUNCH_FIXED_COST=LAUNCH_FIXED_COST,
+    LAUNCH_SHIP_REF=LAUNCH_SHIP_REF,
+    EFFECTIVE_LANDING_PRUNE_ENABLED=EFFECTIVE_LANDING_PRUNE_ENABLED,
+    EFFECTIVE_LANDING_MARGIN=EFFECTIVE_LANDING_MARGIN,
+    COST_PARITY_MARGIN_DEFAULT=COST_PARITY_MARGIN_DEFAULT,
+    MIN_REACTOR_SHIPS=MIN_REACTOR_SHIPS,
+    MAX_REACTOR_CANDIDATES_PER_TURN=MAX_REACTOR_CANDIDATES_PER_TURN,
+    REACTOR_TOP_K_SOURCES_PER_TARGET=REACTOR_TOP_K_SOURCES_PER_TARGET,
+    aim_and_eta=aim_and_eta,
+    nearest_k=nearest_k,
+    capture_size=capture_size,
+    enumerate_ship_counts=enumerate_ship_counts,
+    wait_then_fire_variants_forward=wait_then_fire_variants_forward,
+    min_wait_affordable=min_wait_affordable,
+    wait_then_fire_variants=wait_then_fire_variants,
+    cheap_marginal_value=cheap_marginal_value,
+    wait_band=wait_band,
+    propose=propose,
+)
+
+# === inlined: agents/baseline/relay_forward.py ===
+"""Post-chooser relay / forward-staging pass (Pass-2).
+
+For each of MY planets that didn't fire this turn but holds a real
+garrison, find the (relay R, target T) pair with the shortest
+**two-leg** path S → R → T where:
+
+  * R is one of MY planets (the waypoint)
+  * T is an opponent or neutral planet (the eventual capture)
+
+S launches at R now; R is expected to launch at T on a later turn
+once the merged garrison can clear T's defender. Pass-2 only commits
+leg-1; leg-2 is rediscovered organically on R's future turn.
+
+Gates (Phase A — no explicit EV gate, force-sufficiency only):
+  * S not in `used_srcs` (pass-1 / earlier post-passes didn't claim it).
+  * S.ships > production-scaled reserve (same convention as the
+    existing drain passes — `max(production*5, 10)`).
+  * ships_to_send >= BASELINE_MIN_SHIPS_LAUNCH (env-var read at call).
+  * leg-1 cheap ETA <= BASELINE_MAX_ETA (env-var read at call).
+  * leg-1 fate passes `predict_fleet_fate` (outcome="target",
+    hit_planet_id == R.id — no sun / OOB / wrong-planet hits).
+  * R is predicted to still be mine at leg-1 arrival
+    (`model.owner_at(R.id, leg1_eta) == my_id`).
+  * Leg-2 segment doesn't pass through the sun (cheap segment-to-
+    centre distance check; full fate not needed because R re-validates
+    on its future turn).
+  * Force-sufficiency: merged garrison at R after leg-1 arrival must
+    exceed T's predicted defender at total_eta.
+
+Disabled by default; opt-in via `BASELINE_RELAY=1` env var.
+"""
+
+
+import math
+import os
+
+# from lib.fleet import speed as fleet_speed  # inlined by bundle_agent.py
+fleet_speed = speed
+# from lib.geometry import BOARD_SIZE, CENTER, SUN_RADIUS  # inlined by bundle_agent.py
+# from lib.orbit import is_orbiting, predict_relative  # inlined by bundle_agent.py
+# from lib.trajectory import predict_fleet_fate  # inlined by bundle_agent.py
+
+
+# Float cushion around the sun for the cheap leg-2 segment check. Leg-1
+# is validated by full predict_fleet_fate; leg-2 only needs a rough
+# "don't pick a path that obviously hits the sun" filter because R will
+# re-validate on its future turn.
+LEG2_SUN_CUSHION = 2.0
+
+# Reserve floor matches drain_stagnant_rear / emit_sniper_strikes:
+# leave behind enough to defend a few production cycles.
+RESERVE_MULT = 5
+RESERVE_FLOOR = 10
+
+# Limit fate-validated candidate relays per source. Empirically, the
+# nearest few friendly planets dominate the "shortest 2-leg path"
+# optimum — including all N-1 friendlies would N² scale the expensive
+# predict_fleet_fate calls and blow the 1000ms env wallclock cap.
+# Env-overridable via BASELINE_RELAY_K_RELAYS.
+DEFAULT_K_NEAREST_RELAYS = 5
+
+
+def _segment_distance_to_center(ax: float, ay: float,
+                                bx: float, by: float) -> float:
+    """Shortest distance from segment (ax,ay)->(bx,by) to (CENTER, CENTER)."""
+    dx, dy = bx - ax, by - ay
+    seg_sq = dx * dx + dy * dy
+    if seg_sq <= 0.0:
+        return math.hypot(ax - CENTER, ay - CENTER)
+    t = ((CENTER - ax) * dx + (CENTER - ay) * dy) / seg_sq
+    t = max(0.0, min(1.0, t))
+    px = ax + t * dx
+    py = ay + t * dy
+    return math.hypot(px - CENTER, py - CENTER)
+
+
+def emit_relay_forward(moves, planets, my_id: int, world, model) -> list:
+    """Append two-leg relay launches for idle sources with a downstream
+    target. Returns moves + new launches.
+
+    Each move is `[src_id, angle, ships]`. Idempotent: re-derives
+    `used_srcs` from `moves` so it doesn't double-ship.
+    """
+    if os.environ.get("BASELINE_RELAY", "0") != "1":
+        return moves
+
+    max_eta = int(os.environ.get("BASELINE_MAX_ETA", "40"))
+    min_ships = int(os.environ.get("BASELINE_MIN_SHIPS_LAUNCH", "2"))
+    k_relays = int(os.environ.get("BASELINE_RELAY_K_RELAYS",
+                                  str(DEFAULT_K_NEAREST_RELAYS)))
+
+    used_srcs: set[int] = set()
+    for m in moves:
+        try:
+            used_srcs.add(int(m[0]))
+        except (TypeError, IndexError):
+            pass
+
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    if len(my_planets) < 2:
+        return moves  # need at least one relay candidate distinct from S
+    foreign_planets = [p for p in planets if int(p.owner) != my_id]
+    if not foreign_planets:
+        return moves  # no target → nothing to relay toward
+
+    omega = float(getattr(world, "omega", 0.0) or 0.0)
+
+    extras = []
+    for src in my_planets:
+        if int(src.id) in used_srcs:
+            continue
+        prod = int(src.production)
+        reserve = max(prod * RESERVE_MULT, RESERVE_FLOOR)
+        ships_to_send = int(src.ships) - reserve
+        if ships_to_send < min_ships:
+            continue
+        if model.incoming_enemy_eta(int(src.id), my_id) is not None:
+            continue
+
+        best_total_eta = None
+        best_relay = None
+        best_angle = None
+
+        # K-nearest pre-filter: rank friendly relay candidates by distance,
+        # keep the closest k_relays. Cuts the expensive predict_fleet_fate
+        # cost by a factor relative to iterating all my_planets.
+        speed_sr = fleet_speed(ships_to_send)
+        relay_candidates: list[tuple[float, object, int]] = []
+        for relay in my_planets:
+            if int(relay.id) == int(src.id):
+                continue
+            d_sr = math.hypot(float(relay.x) - float(src.x),
+                              float(relay.y) - float(src.y))
+            cheap_eta1 = int(math.ceil(d_sr / speed_sr)) if speed_sr > 0 else 999
+            if cheap_eta1 > max_eta:
+                continue
+            relay_candidates.append((d_sr, relay, cheap_eta1))
+        relay_candidates.sort(key=lambda t: t[0])
+        relay_candidates = relay_candidates[:k_relays]
+
+        for d_sr, relay, cheap_eta1 in relay_candidates:
+            angle_sr = math.atan2(float(relay.y) - float(src.y),
+                                  float(relay.x) - float(src.x))
+            try:
+                fate1 = predict_fleet_fate(src, relay, angle_sr,
+                                           ships_to_send, world)
+            except Exception:
+                continue
+            if fate1.outcome != "target" or fate1.hit_planet_id != relay.id:
+                continue
+            leg1_eta = int(fate1.step)
+            if leg1_eta > max_eta:
+                continue
+
+            # R must still be mine at arrival.
+            relay_owner = model.owner_at(int(relay.id), leg1_eta)
+            if relay_owner is not None and relay_owner != my_id:
+                continue
+
+            # Predicted garrison at R when our ships arrive (same owner →
+            # ships merge). Fallback if model is None outside its horizon.
+            r_garrison = model.ships_at(int(relay.id), leg1_eta)
+            if r_garrison is None:
+                r_garrison = float(relay.ships) + leg1_eta * float(relay.production)
+            merged_force = float(r_garrison) + float(ships_to_send)
+
+            # R's position at our leg-1 arrival (used as leg-2 origin).
+            r_tuple = [relay.id, relay.owner, relay.x, relay.y,
+                       relay.radius, relay.ships, relay.production]
+            if is_orbiting(r_tuple) and omega != 0.0 and leg1_eta > 0:
+                r_arr_x, r_arr_y = predict_relative(r_tuple, omega, leg1_eta)
+            else:
+                r_arr_x, r_arr_y = float(relay.x), float(relay.y)
+
+            speed_rt = fleet_speed(int(round(merged_force)))
+            if speed_rt <= 0:
+                continue
+
+            for tgt in foreign_planets:
+                # First-pass leg-2 ETA from T's current position.
+                d_rt0 = math.hypot(float(tgt.x) - r_arr_x,
+                                   float(tgt.y) - r_arr_y)
+                approx_eta2 = int(math.ceil(d_rt0 / speed_rt))
+
+                # Refine using T's position at total ETA (single iteration).
+                t_tuple = [tgt.id, tgt.owner, tgt.x, tgt.y,
+                           tgt.radius, tgt.ships, tgt.production]
+                if is_orbiting(t_tuple) and omega != 0.0:
+                    t_arr_x, t_arr_y = predict_relative(
+                        t_tuple, omega, leg1_eta + approx_eta2,
+                    )
+                else:
+                    t_arr_x, t_arr_y = float(tgt.x), float(tgt.y)
+                d_rt = math.hypot(t_arr_x - r_arr_x, t_arr_y - r_arr_y)
+                leg2_eta = int(math.ceil(d_rt / speed_rt))
+                if leg2_eta <= 0:
+                    continue
+                total_eta = leg1_eta + leg2_eta
+                if best_total_eta is not None and total_eta >= best_total_eta:
+                    continue
+
+                # Cheap sun-crossing rejection for leg-2.
+                sun_d = _segment_distance_to_center(
+                    r_arr_x, r_arr_y, t_arr_x, t_arr_y,
+                )
+                if sun_d < SUN_RADIUS + LEG2_SUN_CUSHION:
+                    continue
+                # OOB rejection (target outside board → bad relay choice).
+                if (t_arr_x < 0.0 or t_arr_x > BOARD_SIZE
+                        or t_arr_y < 0.0 or t_arr_y > BOARD_SIZE):
+                    continue
+
+                # Force-sufficiency at T at total_eta.
+                t_def = model.ships_at(int(tgt.id), total_eta)
+                if t_def is None:
+                    if int(tgt.owner) == -1:
+                        t_def = float(tgt.ships)
+                    else:
+                        t_def = float(tgt.ships) + total_eta * float(tgt.production)
+                if merged_force <= float(t_def):
+                    continue
+
+                best_total_eta = total_eta
+                best_relay = relay
+                best_angle = angle_sr
+
+        if best_relay is None:
+            continue
+
+        extras.append([int(src.id), float(best_angle), int(ships_to_send)])
+        used_srcs.add(int(src.id))
+
+    return list(moves) + extras
+
+# Namespace alias so `from agents.baseline import relay_forward` callers still see `relay_forward.<name>`.
+from types import SimpleNamespace as _SimpleNamespace_relay_forward
+relay_forward = _SimpleNamespace_relay_forward(
+    LEG2_SUN_CUSHION=LEG2_SUN_CUSHION,
+    RESERVE_MULT=RESERVE_MULT,
+    RESERVE_FLOOR=RESERVE_FLOOR,
+    DEFAULT_K_NEAREST_RELAYS=DEFAULT_K_NEAREST_RELAYS,
+    emit_relay_forward=emit_relay_forward,
+)
+
 # === inlined: agents/baseline/value.py ===
 """Leaf value function: F1 + F2 favor with PV-discounted production.
 
@@ -9937,6 +11279,21 @@ WEAK_ENEMY_THRESHOLD = 110.0
 WEAKEST_ENEMY_MULT_4P = 1.5
 ELIMINATION_GATE_RATIO = 0.9
 STRENGTH_PROD_WEIGHT = 15.0
+
+# Phi-1 (holistic refactor, 2026-05-25): leaf value derived from the
+# discounted production-advantage integral, with the 2P elimination
+# bonus the current `favor` is missing. The 4P branch has
+# ELIMINATION_BONUS=55 (line 46); the 2P branch returns 0. Phi-1 closes
+# that gap. Defaults below; all overridable via env var.
+#
+# Why 250 horizon: matches PI's 2026-05-24 fast-elim target (eliminate
+# within 250 turns) and the truncated A/B protocol added the same day.
+# Why 300 elim bonus: full-game outcome scale; in 2P this is the entire
+# game's worth of production-advantage being awarded for crossing the
+# elimination threshold. Tune down to ~55 if too aggressive.
+PHI_HORIZON = int(os.environ.get("PHI_HORIZON", "250"))
+PHI_GAMMA = float(os.environ.get("PHI_GAMMA", "0.99"))
+PHI_ELIM_BONUS = float(os.environ.get("PHI_ELIM_BONUS", "300.0"))
 
 # Spatial leaf params (favor_hybrid_spatial only).
 # Idle-trajectory audit 2026-05-17 on submission 52754310 (mu=1271.8)
@@ -10013,6 +11370,97 @@ def favor(obs, me: int, num_seats: int = 2, gamma: float = DEFAULT_GAMMA) -> flo
             elim_bonus = ELIMINATION_BONUS
 
     pv = pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS)
+    return (my_ships - opp_ships) + (my_prod - opp_prod) * pv + elim_bonus
+
+
+def favor_phi(obs, me: int, num_seats: int = 2,
+              gamma: float = DEFAULT_GAMMA) -> float:
+    """Phi-1 leaf value (2026-05-25). Same shape as `favor` but:
+
+      - PV horizon is PHI_HORIZON (default 250) instead of EPISODE_STEPS=500.
+        Aligns the leaf with PI's fast-elim target.
+      - 2P gets an elimination bonus on the same trigger as 4P
+        (opp_strength <= WEAK_ENEMY_THRESHOLD AND
+         my_strength >= ELIMINATION_GATE_RATIO * opp_strength). Current
+        `favor` has elim_bonus=0 in 2P — the team peak mu=1149 (sub
+        52744856, composite_a2_hybrid) had its own 2P-aware capture
+        mechanic in the composite head; favor_phi closes the same gap
+        in the standard favor head, without depending on composite's
+        fragility (the PV-augmentation in composite regressed and is
+        currently OFF via COMPOSITE_PRODUCTION_PV=0).
+      - 2P uses PHI_ELIM_BONUS (default 300) for the elim trigger;
+        4P uses the original ELIMINATION_BONUS=55. Different scales
+        because eliminating the LAST opp in 2P wins the game outright,
+        while eliminating ONE OF FOUR in 4P leaves three threats alive.
+
+    Default gamma argument honored if PHI_GAMMA env var unset; otherwise
+    PHI_GAMMA overrides (so opt-in via env var changes both horizon AND
+    discount rate atomically). Wire via BASELINE_VALUE_HEAD=phi.
+    """
+    planets = _read(obs, "planets", []) or []
+    fleets = _read(obs, "fleets", []) or []
+    step = int(_read(obs, "step", 0))
+
+    ships_by_owner: dict[int, float] = {}
+    prod_by_owner: dict[int, float] = {}
+    for p in planets:
+        owner = int(p[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(p[5])
+        prod_by_owner[owner] = prod_by_owner.get(owner, 0.0) + float(p[6])
+    for f in fleets:
+        owner = int(f[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(f[6])
+
+    my_ships = ships_by_owner.get(me, 0.0)
+    my_prod = prod_by_owner.get(me, 0.0)
+    my_strength = my_ships + my_prod * STRENGTH_PROD_WEIGHT
+
+    opps = sorted(
+        o for o in (set(ships_by_owner) | set(prod_by_owner))
+        if o != me and o >= 0
+    )
+
+    elim_bonus = 0.0
+    if num_seats <= 2 or len(opps) < 2:
+        # 2P: max-of-opps aggregation (same as favor) + NEW 2P elim bonus.
+        opp_ships = max((ships_by_owner.get(o, 0.0) for o in opps), default=0.0)
+        opp_prod = max((prod_by_owner.get(o, 0.0) for o in opps), default=0.0)
+        # 2P elim trigger: the only opp is weak AND we dominate.
+        opp_strength = opp_ships + opp_prod * STRENGTH_PROD_WEIGHT
+        if (opps
+                and opp_strength <= WEAK_ENEMY_THRESHOLD
+                and my_strength >= ELIMINATION_GATE_RATIO * opp_strength):
+            elim_bonus = PHI_ELIM_BONUS
+    else:
+        # 4P: identical to favor — weighted sum (weakest 1.5x) + ELIM_BONUS=55.
+        opp_strengths = {
+            o: ships_by_owner.get(o, 0.0)
+               + prod_by_owner.get(o, 0.0) * STRENGTH_PROD_WEIGHT
+            for o in opps
+        }
+        weakest = min(opps, key=lambda o: opp_strengths[o])
+        weakest_str = opp_strengths[weakest]
+        opp_ships = sum(
+            ships_by_owner.get(o, 0.0)
+            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
+            for o in opps
+        )
+        opp_prod = sum(
+            prod_by_owner.get(o, 0.0)
+            * (WEAKEST_ENEMY_MULT_4P if o == weakest else 1.0)
+            for o in opps
+        )
+        if (weakest_str <= WEAK_ENEMY_THRESHOLD
+                and my_strength >= ELIMINATION_GATE_RATIO * weakest_str):
+            elim_bonus = ELIMINATION_BONUS
+
+    # Honor PHI_GAMMA env var if set; else use the caller's gamma arg.
+    g = PHI_GAMMA if os.environ.get("PHI_GAMMA") else gamma
+    pv = pv_horizon(step, 0, gamma=g, t_total=PHI_HORIZON)
     return (my_ships - opp_ships) + (my_prod - opp_prod) * pv + elim_bonus
 
 
@@ -10117,7 +11565,32 @@ def select_favor_fn():
         return favor_hybrid
     if choice == "hybrid_spatial":
         return favor_hybrid_spatial
+    if choice == "phi":
+        return favor_phi
     return favor
+
+# Namespace alias so `from agents.baseline import value` callers still see `value.<name>`.
+from types import SimpleNamespace as _SimpleNamespace_value
+value = _SimpleNamespace_value(
+    EPISODE_STEPS=EPISODE_STEPS,
+    DEFAULT_GAMMA=DEFAULT_GAMMA,
+    ELIMINATION_BONUS=ELIMINATION_BONUS,
+    WEAK_ENEMY_THRESHOLD=WEAK_ENEMY_THRESHOLD,
+    WEAKEST_ENEMY_MULT_4P=WEAKEST_ENEMY_MULT_4P,
+    ELIMINATION_GATE_RATIO=ELIMINATION_GATE_RATIO,
+    STRENGTH_PROD_WEIGHT=STRENGTH_PROD_WEIGHT,
+    PHI_HORIZON=PHI_HORIZON,
+    PHI_GAMMA=PHI_GAMMA,
+    PHI_ELIM_BONUS=PHI_ELIM_BONUS,
+    SPATIAL_WEIGHT=SPATIAL_WEIGHT,
+    SPATIAL_DECAY=SPATIAL_DECAY,
+    favor=favor,
+    favor_phi=favor_phi,
+    favor_composite=favor_composite,
+    favor_hybrid_spatial=favor_hybrid_spatial,
+    favor_hybrid=favor_hybrid,
+    select_favor_fn=select_favor_fn,
+)
 
 # === inlined: agents/baseline/chooser.py ===
 """Chooser: reactive idle baseline + per-candidate Δ, emit greedy non-dogpile.
@@ -10333,6 +11806,20 @@ def choose(snap_base, prerank, baseline_favors: list[float],
                 "commit_step": commit_step,
             })
     return moves, commits
+
+# Namespace alias so `from agents.baseline import chooser` callers still see `chooser.<name>`.
+from types import SimpleNamespace as _SimpleNamespace_chooser
+chooser = _SimpleNamespace_chooser(
+    WALLCLOCK_BUDGET_MS=WALLCLOCK_BUDGET_MS,
+    N_VALIDATE=N_VALIDATE,
+    PER_CANDIDATE_SAFETY=PER_CANDIDATE_SAFETY,
+    RESERVED_OVERHEAD_MS=RESERVED_OVERHEAD_MS,
+    opp_actions_for_snap=opp_actions_for_snap,
+    build_idle_baseline=build_idle_baseline,
+    score_action=score_action,
+    affordable_validate_cap=affordable_validate_cap,
+    choose=choose,
+)
 
 # === inlined: agents/baseline/chooser_roi.py ===
 """chooser_roi — ROI-prior + opp-modifier chooser.
@@ -11241,6 +12728,28 @@ def choose_roi(
 
     return moves
 
+# Namespace alias so `from agents.baseline import chooser_roi` callers still see `chooser_roi.<name>`.
+from types import SimpleNamespace as _SimpleNamespace_chooser_roi
+chooser_roi = _SimpleNamespace_chooser_roi(
+    SHIP_COST_COEF=SHIP_COST_COEF,
+    WAIT_COST_COEF=WAIT_COST_COEF,
+    COALITION_MAX_SOURCES=COALITION_MAX_SOURCES,
+    COALITION_SLACK=COALITION_SLACK,
+    MIN_COALITION_RESIDUE=MIN_COALITION_RESIDUE,
+    MIN_LEG_SHIPS=MIN_LEG_SHIPS,
+    MIN_SOLO_RESIDUE=MIN_SOLO_RESIDUE,
+    OPP_MODIFIER_ENABLED=OPP_MODIFIER_ENABLED,
+    VULN_MIN_OPP_SHIPS=VULN_MIN_OPP_SHIPS,
+    ENDGAME_BONUS_ENABLED=ENDGAME_BONUS_ENABLED,
+    DEFENSIVE_COALITION_ENABLED=DEFENSIVE_COALITION_ENABLED,
+    TIER2_ROLLOUT_ENABLED=TIER2_ROLLOUT_ENABLED,
+    TIER2_ROLLOUT_K=TIER2_ROLLOUT_K,
+    TIER2_TOP_K_SOLOS=TIER2_TOP_K_SOLOS,
+    solo_roi=solo_roi,
+    coalition_roi=coalition_roi,
+    choose_roi=choose_roi,
+)
+
 # === inlined: agents/baseline/chooser_trajectory.py ===
 """Trajectory-first chooser — drop-in alternative to `chooser.choose`.
 
@@ -11491,6 +13000,15 @@ JOINT_MAX_PAIRS: int = int(
 )
 JOINT_LIFT_USED_TGTS: bool = (
     os.environ.get("BASELINE_JOINT_AGGR", "0").strip() == "1"
+)
+
+# EV-per-ship sort-key probe (2026-05-25). When on, the final candidate
+# sort uses score/ships instead of score, so each source's most efficient
+# candidate wins the per-source dedup race rather than the highest total
+# score. Probe; default OFF preserves orbitfix's emit ordering byte-for-
+# byte. See plan /root/.claude/plans/go-1-compressed-hummingbird.md.
+SORT_BY_EV_PER_SHIP: bool = (
+    os.environ.get("BASELINE_SORT_BY_EV_PER_SHIP", "0").strip() == "1"
 )
 
 
@@ -12201,7 +13719,25 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     if not scored:
         return [], []
 
-    scored.sort(key=lambda c: -c[0])
+    # Call-time env read (was module-level cache). Required for the bundle
+    # to honor BASELINE_SORT_BY_EV_PER_SHIP=1 set in the primary agent's
+    # main.py — chooser_trajectory.py is inlined BEFORE the primary agent
+    # in cross-agent bundles, so the module-level read fired with default
+    # "0" and never noticed the primary agent's env override. Call-time
+    # read closes that timing gap.
+    if os.environ.get("BASELINE_SORT_BY_EV_PER_SHIP", "0").strip() == "1":
+        def _ev_per_ship_key(c):
+            score = c[0]
+            if len(c) == 3 and c[1] == "joint":
+                total_ships = sum(int(L[2]) for L in c[2])
+            else:
+                total_ships = int(c[3])
+            if total_ships <= 0:
+                return 0.0
+            return -score / total_ships
+        scored.sort(key=_ev_per_ship_key)
+    else:
+        scored.sort(key=lambda c: -c[0])
 
     # Emit logic — match composite chooser (`agents/baseline/chooser.choose`)
     # for parity. 1 launch per source per turn, 1 per target. For joints
@@ -12252,6 +13788,37 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             })
     return moves, commits
 
+# Namespace alias so `from agents.baseline import chooser_trajectory` callers still see `chooser_trajectory.<name>`.
+from types import SimpleNamespace as _SimpleNamespace_chooser_trajectory
+chooser_trajectory = _SimpleNamespace_chooser_trajectory(
+    EPISODE_STEPS_TOTAL=EPISODE_STEPS_TOTAL,
+    WASTE_WEIGHT=WASTE_WEIGHT,
+    CAPTURE_REWARD_WEIGHT=CAPTURE_REWARD_WEIGHT,
+    LEADER_FOCUS_WEIGHT=LEADER_FOCUS_WEIGHT,
+    NEUTRAL_BONUS_WEIGHT=NEUTRAL_BONUS_WEIGHT,
+    NEUTRAL_EARLY_HORIZON=NEUTRAL_EARLY_HORIZON,
+    NEUTRAL_EARLY_EXTRA=NEUTRAL_EARLY_EXTRA,
+    SETTLE_TURNS=SETTLE_TURNS,
+    MIN_SOURCE_RESERVE=MIN_SOURCE_RESERVE,
+    OPP_NEAREST_K=OPP_NEAREST_K,
+    OPP_SHIP_FRACTION=OPP_SHIP_FRACTION,
+    OPP_MIN_SHIPS=OPP_MIN_SHIPS,
+    N_VALIDATE=N_VALIDATE,
+    RESERVED_OVERHEAD_MS=RESERVED_OVERHEAD_MS,
+    JOINT_TOP_K_PER_TARGET=JOINT_TOP_K_PER_TARGET,
+    JOINT_MAX_PAIRS=JOINT_MAX_PAIRS,
+    JOINT_LIFT_USED_TGTS=JOINT_LIFT_USED_TGTS,
+    SORT_BY_EV_PER_SHIP=SORT_BY_EV_PER_SHIP,
+    score_candidate=score_candidate,
+    score_candidate_dyn=score_candidate_dyn,
+    build_trajectory_baseline=build_trajectory_baseline,
+    score_candidate_v4=score_candidate_v4,
+    score_candidate_v4_joint=score_candidate_v4_joint,
+    predict_opp_responses=predict_opp_responses,
+    merge_ledgers=merge_ledgers,
+    choose_trajectory=choose_trajectory,
+)
+
 # === agent ===
 """baseline — clean modular re-implementation of v15 (live champion μ=1115.5).
 
@@ -12298,6 +13865,22 @@ os.environ.setdefault("BASELINE_CHOOSER", "trajectory")
 # gate at 12.5pct first-place). Wallclock OK: bench max=891ms,
 # p95=703ms, zero >1000ms. Set BASELINE_JOINT=0 to disable.
 os.environ.setdefault("BASELINE_JOINT", "1")
+
+# Pass-2 relay / forward-staging (2026-05-27). After all 5 existing post-
+# passes (threat_reinforcements / drain_idle_rear / drain_stagnant_rear /
+# drain_combat_stack / sniper_strikes) run, sweep remaining idle planets
+# for a two-leg path S -> R -> T where R is one of our planets and T is
+# an opp/neutral target. Emits only leg-1 (S -> R); R re-evaluates
+# leg-2 organically on its future turn. Gates: speed-discipline filters
+# (BASELINE_MAX_ETA, BASELINE_MIN_SHIPS_LAUNCH), production-scaled
+# reserve floor, full predict_fleet_fate validation on leg-1, sun-
+# avoidance on leg-2 segment, and force-sufficiency at T at arrival.
+# K-nearest relay pre-filter (BASELINE_RELAY_K_RELAYS=5 default) caps
+# the expensive fate calls per turn so the env wallclock holds.
+# Local 250-step single-game tests vs random and nearest pass; vs
+# nearest the relay fires ~5-6 launches/turn against a default-off
+# baseline that was producing zero rear mobilisation.
+os.environ.setdefault("BASELINE_RELAY", "1")
 
 # H1 — post-chooser idle drain (2026-05-18) — DISABLED BY DEFAULT.
 # Audit `audit/replays/idle-trajectory-2026-05-17.md` measured 43.8pct
@@ -12410,6 +13993,7 @@ OPENING_MILP_ENABLED = os.environ.get("BASELINE_OPENING_MILP", "0") == "1"
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
+# from lib.drop_one import DROP_ONE_ENABLED, drop_one_validate  # inlined by bundle_agent.py
 # from lib.fast_sim import from_obs as fs_from_obs  # inlined by bundle_agent.py
 fs_from_obs = from_obs
 # from lib.fleet import speed as fleet_speed  # inlined by bundle_agent.py
@@ -12428,6 +14012,7 @@ fleet_speed = speed
 # `bundler-modular-agent-namespace-access-breaks-bundle` (2026-05-17).
 # from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS  # inlined by bundle_agent.py
 # from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON  # inlined by bundle_agent.py
+# from agents.baseline.relay_forward import emit_relay_forward  # inlined by bundle_agent.py
 
 
 _PARITY_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
@@ -13116,6 +14701,24 @@ def agent(obs, configuration=None):
         return []
 
     world = World.from_obs(obs_d)
+
+    # Phase γ kinematic_table priming (ported from sibling-branch commit
+    # 923852e on 2026-05-25). When KINEMATIC_TABLE_ENABLED=1, build the
+    # per-turn position cache that lib/trajectory._table_window_or_none
+    # consumes inside predict_fleet_fate's inner loop. Bit-parity by
+    # construction (564 byte-identical FleetFate assertions + 2 full-game
+    # parity gate, see c48e143). Documented saving: 47-114 ms/step.
+    # try/except: hot path must not crash if obs is malformed.
+    if os.environ.get("KINEMATIC_TABLE_ENABLED", "").strip().lower() in (
+        "1", "true", "on", "yes",
+    ):
+        try:
+            # from lib import kinematic_table as _kt  # inlined by bundle_agent.py
+            _kt = kinematic_table
+            _kt.begin_turn(world)
+        except Exception:
+            pass
+
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
     num_seats = _num_seats(planets, fleets)
@@ -13219,11 +14822,17 @@ def agent(obs, configuration=None):
             _PENDING_LAUNCHES[me] = surviving_pending + new_commits
 
         moves = due_moves + moves
+        # Layer D plan-level drop-one validator (default OFF). Runs BEFORE
+        # post-passes so it only prunes the chooser's own picks; post-pass
+        # launches (drains, sniper) are heavily gated already and exempt.
+        if DROP_ONE_ENABLED:
+            moves = drop_one_validate(moves, world, model, me)
         moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
-        return emit_sniper_strikes(moves, planets, me, world, model)
+        moves = emit_sniper_strikes(moves, planets, me, world, model)
+        return emit_relay_forward(moves, planets, me, world, model)
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
     # coalition + opp-modifier posterior; no fast_sim rollout. See
@@ -13246,7 +14855,8 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
-        return emit_sniper_strikes(moves, planets, me, world, model)
+        moves = emit_sniper_strikes(moves, planets, me, world, model)
+        return emit_relay_forward(moves, planets, me, world, model)
 
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
@@ -13293,4 +14903,9 @@ def agent(obs, configuration=None):
     moves = drain_idle_rear(moves, planets, me, world, model)
     moves = drain_stagnant_rear(moves, planets, me, world, model)
     moves = drain_combat_stack(moves, planets, me, world, model)
-    return emit_sniper_strikes(moves, planets, me, world, model)
+    moves = emit_sniper_strikes(moves, planets, me, world, model)
+    return emit_relay_forward(moves, planets, me, world, model)
+
+# === kaggle entrypoint trailer (bundle_agent.py) ===
+def _kaggle_orbit_wars_entrypoint(observation, configuration=None):
+    return agent(observation, configuration)
