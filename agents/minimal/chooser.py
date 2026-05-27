@@ -21,7 +21,7 @@ from lib.opp_model import lite_greedy_policy as opp_policy
 
 from agents.minimal.value import favor
 
-HORIZON = 20
+HORIZON = 40
 N_VALIDATE = 48
 
 
