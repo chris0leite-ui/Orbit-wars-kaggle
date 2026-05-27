@@ -68,13 +68,12 @@ def test_sums_inflight_within_window():
 
 def test_includes_stationary_within_eta():
     """A near opp (distance ~10, default fleet_speed) is reachable
-    within window → its garrison contributes. A far opp (distance
-    ~500) is not → ignored."""
+    within window → its garrison contributes (as MAX single threat).
+    A far opp (distance ~60) is not → ignored. Big window: both
+    reachable but only the MAX-garrison opp counts (mental model: at
+    most one opp mounts a coordinated wave in the window)."""
     src = _planet(0, 0, 50.0, 50.0, ships=30, production=2)
-    # Within reach: ~10 units away, 50 ships.
     near_opp = _planet(1, 1, 60.0, 50.0, ships=50, production=2)
-    # Far opp: keep coordinates inside the 100-unit world but place at
-    # a distance that fleet_speed(20) cannot cover within window=5.
     far_opp = _planet(2, 1, 90.0, 99.0, ships=20, production=2)
     world = _world([src, near_opp, far_opp])
     model = WorldModel.from_world(world)
@@ -85,9 +84,9 @@ def test_includes_stationary_within_eta():
         "near_opp at distance 10 should be reachable within window=5, "
         "but far_opp at distance ~60 should not."
     )
-    # Big window: both included.
+    # Big window: both reachable → MAX single = 50 (near_opp), not 70.
     force_big = model.predicted_threat_force(0, 0, world, lookahead=500)
-    assert force_big == 70
+    assert force_big == 50
 
 
 def test_excludes_own_and_neutral():

@@ -481,27 +481,30 @@ class WorldModel:
 
     def predicted_threat_force(self, planet_id: int, my_id: int,
                                 world, lookahead: int) -> int:
-        """Sum of enemy ship counts that can arrive at `planet_id`
-        within `lookahead` steps. Layers:
-          (a) in-flight ledger arrivals with 0 < eta <= lookahead.
-          (b) potential launches from each stationary enemy planet
-              whose travel ETA from current position <= lookahead.
-        (b) contributes `p.ships` only (current garrison). Adding
-        `p.production * eta` would triple-count the speculative chain
-        opp-grows × opp-spends × opp-aims-here; legacy threat_force in
-        `_source_survives_launch_legacy` also sums ledger only.
-        Companion to `time_to_enemy_threat` (which returns the EARLIEST
-        such arrival) — surfaces the FORCE for garrison-reserve sizing.
+        """Force of the WORST single threat vector at `planet_id`
+        within `lookahead` steps:
+          - all in-flight ledger arrivals with 0 < eta <= lookahead
+            (these are committed; sum is correct — they ARE all coming),
+          - PLUS the MAX single stationary enemy planet's garrison
+            among opps whose travel ETA from current position <= lookahead.
+        Mental model: at most one opp can mount a coordinated wave in
+        the relevant window; sizing reserve against the SUM of every
+        opp's garrison (initial design 2026-05-27 AM) treated all opps
+        as a single coalition and bricked launches (0/32 vs HEAD anchor
+        smoke). MAX-single + committed-in-flight matches the legacy
+        `threat_force` mental model in `_source_survives_launch_legacy`
+        (sums in-flight ledger only).
         """
-        total = 0
+        committed = 0
         for (eta, owner, sh) in self.ledger.get(planet_id, []):
             if owner != my_id and 0 < eta <= lookahead and sh > 0:
-                total += int(sh)
+                committed += int(sh)
         src_planet = world.planets_by_id.get(planet_id)
         if src_planet is None:
-            return total
+            return committed
         omega = float(getattr(world, "omega", 0.0))
         sx, sy = _position_at(src_planet, omega, 0)
+        worst_potential = 0
         for p in world.planets_by_id.values():
             if p.id == planet_id or p.owner == my_id or p.owner == -1:
                 continue
@@ -513,9 +516,9 @@ class WorldModel:
             if v <= 0:
                 continue
             eta_travel = int(math.ceil(dist / v))
-            if eta_travel <= lookahead:
-                total += int(p.ships)
-        return total
+            if eta_travel <= lookahead and int(p.ships) > worst_potential:
+                worst_potential = int(p.ships)
+        return committed + worst_potential
 
 
 # ---------------------------------------------------------------------------
