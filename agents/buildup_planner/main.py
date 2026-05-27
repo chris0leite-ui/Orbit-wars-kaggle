@@ -87,6 +87,22 @@ os.environ["BASELINE_VALUE_HEAD"] = "phi"
 # in the bundle for this key.
 os.environ.setdefault("BASELINE_SORT_BY_EV_PER_SHIP", "1")
 
+# Speed-discipline filters (Rule 40 — modeling-correctness, 2026-05-27).
+# PI observed self-play with small fleets launched at far targets that
+# crawl across the board. Speed-vs-ships is
+# `1 + (max-1)·(log(n)/log(1000))^1.5`, so a 2-ship fleet moves at
+# ~1.16 units/tick (board span 100), taking 30+ turns to land — by which
+# point the source paused production and the target garrison regrew.
+# Two filters wired into agents/baseline/proposer.py:
+#   - BASELINE_MAX_ETA=20 → reject any candidate whose flight > 20 ticks.
+#   - BASELINE_MIN_SHIPS_LAUNCH=10 → reject any candidate of < 10 ships
+#     (10 ships moves at speed ~2.0; 5-ship fleets are barely faster
+#     than planet rotation).
+# Both default-OFF in the proposer (fall through to existing MAX_HORIZON /
+# MIN_FLEET_SIZE), so the filters only bite for buildup_planner.
+os.environ.setdefault("BASELINE_MAX_ETA", "20")
+os.environ.setdefault("BASELINE_MIN_SHIPS_LAUNCH", "10")
+
 from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
 
 from lib.intent import World

@@ -987,6 +987,20 @@ def propose(my_planets, target_pool, world, model, me: int,
         (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N)
     sorted by cheap_delta descending.
     """
+    # Speed-discipline filters (Rule 40 — modeling-correctness). Slow
+    # fleets to far targets waste production during flight; small fleets
+    # to near targets also crawl at log-speed and arrive after the
+    # garrison regrows. Two env knobs, both call-time so the bundle
+    # picks them up regardless of inline order:
+    #   - BASELINE_MAX_ETA: max flight ticks (defaults to MAX_HORIZON
+    #     for backward compat).
+    #   - BASELINE_MIN_SHIPS_LAUNCH: min ship count per launch (defaults
+    #     to MIN_FLEET_SIZE for backward compat).
+    # buildup_planner sets MAX_ETA=20 and MIN_SHIPS_LAUNCH=10.
+    _max_eta = int(os.environ.get("BASELINE_MAX_ETA", str(MAX_HORIZON)))
+    _min_ships_launch = int(
+        os.environ.get("BASELINE_MIN_SHIPS_LAUNCH", str(MIN_FLEET_SIZE))
+    )
     prerank = []
     for src in my_planets:
         if int(src.ships) < MIN_FLEET_SIZE:
@@ -998,7 +1012,11 @@ def propose(my_planets, target_pool, world, model, me: int,
             for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
+                if ships < _min_ships_launch:
+                    continue
                 angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
+                if eta > _max_eta:
+                    continue
                 horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if horizon >= baseline_len:
                     horizon = baseline_len - 1
@@ -1013,6 +1031,10 @@ def propose(my_planets, target_pool, world, model, me: int,
             for w_ships, w_wait, w_angle, w_eta in wait_then_fire_variants(
                 src, tgt, model, omega, me, world=world,
             ):
+                if w_ships < _min_ships_launch:
+                    continue
+                if w_eta > _max_eta:
+                    continue
                 w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if w_horizon >= baseline_len:
                     continue
