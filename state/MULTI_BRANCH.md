@@ -102,7 +102,7 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
 
 | Branch | State | Evidence | Next |
 |---|---|---|---|
-| `claude/game-theory-winning-strategy-SEU7P` | v1 chooser implemented (B1-B4 of the build sequence); B5 triage A/B + Rule 48 share check in progress | Doctrine + empirical study + eval-protocol + between-band + chooser implementation spec all documented; v1 code at `agents/reach_frontier/` (5 modules, ~600 LOC). Bundle parity + self-play tests GREEN in `tests/test_bundle.py`. Smoke: 8/8 vs random, 0/8 vs nearest (single-launch-shaped reward — expected from a conservative λ_loss=0.1 default). Enabler tooling: `fast.py --save-replays` flag and `scripts/measure_hold_times.py --replay-dir` flag for Rule 48 production-share gating against local A/B replay output. Bundler fixed: `lib/joint_solver/lp.py` broken `agents.baseline.strategic_lp` import inlined as 30-LOC greedy fallback; DEFAULT_LIB_ORDER updated for `kinematic_table` + `joint_solver/columns` + `joint_solver/lp`. | B5 result + Rule 48 share-of-integral check on the saved replays. If both clear: B6 full panel (`--vs-panel default --require-h2h baseline`) at n=32 + per-archetype breakdown + share check. Only after B6 clears is the agent eligible for submit (Rule 1 single-shot PI-approved; Rule 42 cross-branch coordination via push-claim row). |
+| (closed 2026-05-28 — moved to Closed tracks below) | — | — | — |
 
 ---
 
@@ -110,6 +110,7 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
 
 | Axis | Branch | Verdict date | Evidence |
 |---|---|---|---|
+| Reach-frontier doctrine (closed-form ρ as prescription) | `claude/game-theory-winning-strategy-SEU7P` | 2026-05-28 | Rule 37 exhausted across 3 operationalisations: v1 chooser 0/20 (`audit/2026-05-27-rf-v1-b5-triage.md`), v2 chooser hold-floor+gang-up 0/32 (`audit/2026-05-27-rf-v2-b5-triage.md`), 4P delayed-launch cushion 4/32 vs baseline's 26/32 (`audit/2026-05-28-4p-cushion-falsified.md`). Doctrine MATH (production-time integral as score, n=92 share-separation 0.488) remains sound and is durable knowledge; doctrine PRESCRIPTIONS empirically falsified on our μ-band. Durable artefacts that ship despite the null: `fast.py --save-replays`, `scripts/measure_hold_times.py --replay-dir` (Rule 48 measurement substrate), bundler DEFAULT_LIB_ORDER fix (`kinematic_table`, `joint_solver/columns`, `joint_solver/lp`), `lib/joint_solver/lp.py` greedy-fallback unbreak. Doctrine + chooser-design + evaluation-metrics docs stay in tree as reference for what's been tried. |
 | Chain-capture bonus | `claude/phase7-btjek-chain-bonus` | 2026-05-20 | Rule 37 exhausted (Phases 7-9 all tested, impact ≤ noise floor) |
 | Value-head aggregators (projected_sum / favor) | `claude/strategy-framework-design-OyoYR` | 2026-05-19 | 4P A/B projected_sum vs favor = TIE; axis exhausted |
 | Pure trajectory_roi (no physics primitives) | `claude/ml-competition-strategy-PFhzM` v1-v3 | 2026-05-19 | 0-1/32 vs baseline; dominated by wrap-baseline (12/32). Root cause: never imported `lib.trajectory.predict_fleet_fate` (6.8% physics waste) |
