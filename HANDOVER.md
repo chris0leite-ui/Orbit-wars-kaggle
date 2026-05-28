@@ -440,6 +440,77 @@ Full write-up: `knowledge-base/thoughts/2026-05-28-pm4-validator-mvp-results-and
 - `baseline_leaf_pv_2p.py` — μ=1105.4 (just submitted; bottom of rolling pair)
 - `baseline_peak_1165_anchor.py` — peak μ=1149 reference
 
+### PM5 — Phase 2 Stage 2 (F2 only) executed; PI redirected next session to kitchen-sink + GBT + 17-opp mix (2026-05-28 night)
+
+Commits this session: `5c5cfc9` (F2 + bump FEATURE_DIM 24→25), `5199c78` (re-embed 25-d weights + tighten no-weights smoke test).
+
+**What landed in PM5:**
+
+| Change | File |
+|---|---|
+| F2 `combat_margin_at_arrival` (production-walk approx; ignores in-flight defenders) | `lib/shot_features.py` |
+| `FEATURE_DIM` 24 → 25 | `lib/shot_features.py`, `scripts/train_validator.py` |
+| Schema bumped to v2 + name appended | `data/shot_validator/schema.json` |
+| Embedder reads `FEATURE_DIM` dynamically | `scripts/embed_validator_weights.py` |
+| Smoke test fixed: now actually blanks `_WEIGHTS_B64` to exercise no-weights path (was previously only resetting in-memory cache, which the embedded blob immediately re-populated) | `tests/test_validator_smoke.py` |
+| Corpus regen on same 3-opp mix as MVP (5370 shots, pos_rate 0.512) | `data/shot_validator/labels.jsonl` |
+| Retrained 3-MLP ensemble | `data/shot_validator/validator_ensemble_weights.npz` |
+
+**Stage 2 training results (single-feature add):**
+
+| Metric | MVP (24-d) | Stage 2 (25-d + F2) |
+|---|---|---|
+| val_acc @ 0.5 | 0.777 | **0.816** (+3.9 pp) |
+| Brier | 0.147 | **0.121** (better calibration) |
+| Precision @ thr=0.30 | 0.72 | 0.671 |
+| Recall @ thr=0.30 | 0.89 | **0.947** (+5.7 pp) |
+
+**A/Bs (`BASELINE_WALLCLOCK_MS=100`):**
+
+| Opponent | n | Win rate | Wilson lo | Wilson hi |
+|---|---|---|---|---|
+| `agents/baseline` | 10 | 40 % | 0.168 | 0.687 |
+| `v7_0` | 10 | 60 % | 0.313 | 0.832 |
+| `v4_planner` | 10 | 80 % | 0.490 | 0.943 |
+| `v3.5.1` | 10 | 90 % | 0.596 | 0.982 |
+| **`baseline_pv_eta`** (live μ=1154.8) | **32** | **53.1 %** | **0.364** | 0.691 |
+
+- Validator clears 3 of 4 panel opps but **loses vs unwrapped `baseline` at n=10** — small-n noise vs real regression unclear at this n (Rule 45: n=10 is sub-triage).
+- vs live champion at n=32: 53 % is directionally above parity but **Wilson-lo 0.364 << 0.50** (Rule 43 submission gate). Not submittable as-is.
+- Latency: focal p50 ≈ 190-230 ms, p95 ≈ 280-370 ms vs the 1000 ms env cap → **~70 % of per-turn budget unused**. This is the headroom PI flagged.
+
+### Next session — Phase 2 v2 (PI-directed in PM5 conversation)
+
+Three changes from PM4's original Phase 2 spec (which is still below for substrate reference but superseded as a plan):
+
+1. **Switch model from MLP ensemble to gradient boosted trees (GBT).** A 7.5k-param MLP on 5k labeled shots is under-capacity for the planned ~40-d input. konbu17's reference notebook itself used LightGBM; we'd been on MLPs only because base64-npz embedding was operationally trivial. Decision: switch to GBT (LightGBM or XGBoost — choose during scoping based on inference-side packaging cost). Tabular features at 5-30k rows are GBT's home territory; the existing val_acc ceiling at 0.816 likely reflects model capacity, not feature insufficiency alone.
+2. **Kitchen-sink the features (Rule 20).** Add all Tier 1 (F6, F3, F10, F8, F4 — 5 features, ~+9 dims net) AND all Tier 2 (F11, F7, F13, F9 — 4 features, ~+5 dims) from PM4's deep-dive. Target ~39 d input. Defer Tier 3 (F5/F12/F14/comet/mission-tag) only because the last two need chooser-side instrumentation. All Tier 1+2 substrate lives in `lib/world_model.py` / `lib/trajectory.py` / `lib/scoring.py` and is parity-tested; encoder calls are 3-5 lines each.
+3. **17-opp training mix across 4 tiers** (Axis B from PM4 — spec'd then but PM5 skipped to F2-only). 5 games per cell × 17 cells = 85 games, ~16-20k labeled shots (~3-4× PM5 corpus). Cells:
+   - Weak (3): `agents/simple`, `agents/geo`, `agents/v1_orbitfix`
+   - Moderate (3): `agents/analytical`, `agents/v3.5.1`, `agents/v3_snipe`
+   - Strong (7): `agents/baseline` (self-play), `agents/baseline_full`, `agents/baseline_joint_aggr_consolidated_orbitfix`, `submissions/baseline_hybrid.py`, `submissions/baseline_favor.py`, `submissions/baseline_learned.py`, `submissions/v7_minimax.py`
+   - Live (3): `submissions/_imported/baseline_pv_eta.py`, `submissions/_imported/baseline_leaf_pv_2p.py`, `submissions/_imported/baseline_peak_1165_anchor.py`
+
+**Sequencing for next session (~5-7 h projected):**
+
+| Stage | Time | Output | Gate |
+|---|---|---|---|
+| 1. Implement Tier 1+2 features (9 features, +14d) | ~2 h | `lib/shot_features.py` v3 (~39 d), schema v3, smoke updated | All smoke tests green; one single-game trace through `lib.trajectory.predict_fleet_fate` confirms sun / OOB / comet-expiry waste <2% (Rule 47) |
+| 2. GBT inference-side scaffolding | ~1 h | tree predictor in `agents/baseline_validated/main.py` (LightGBM `model_to_string` + pure-python eval OR XGBoost dump + numpy walker) | Inference parity with the trained sklearn-side model (decision-equivalence on ≥100 random rows) |
+| 3. Expanded corpus gen (17 cells × 5 games) | ~20-30 min | regen `data/shot_validator/labels.jsonl` | Per-cell pos_rate in [0.40, 0.85] — rebalance if weak opps inflate it |
+| 4. Train GBT | ~5-10 min | model artifact | val_acc ≥ 0.85 (vs current MLP 0.816) |
+| 5. Embed + smoke + bundle parity | ~30 min | `agents/baseline_validated/main.py` with new model embedded | `pytest tests/test_validator_smoke.py` GREEN + `fast.py play submissions/baseline_validated.py` clean (Rule 46) |
+| 6. A/B vs `agents/baseline` n=32 | ~25 min | adaptive eval | Wilson-lo ≥ 0.50 |
+| 7. A/B vs `baseline_pv_eta` n=32 | ~25 min | only if step 6 cleared | Wilson-lo ≥ 0.50 (Rule 43) |
+| 8. Pre-submit gates (Rules 42/43/45/46) | ~30 min | submittable bundle | PI sign-off (Rule 1) |
+
+**Risks:**
+
+- **GBT inference-side packaging.** LightGBM `model_to_string` + pure-python predictor is ~300 LOC; XGBoost `dump_model` is similar. The Kaggle single-file constraint matters — decide early between (a) raw text-format model embedded + custom tree walker, (b) base64-pickle + `lightgbm.Booster.predict` (needs lightgbm in submission env — check Kaggle env), (c) `m2cgen` or similar transpilation. Smoke-test packaging on PM5's existing 25-d corpus before re-corpus-genning.
+- **17-opp pos_rate rebalancing.** Weak opps (simple/geo) likely inflate pos_rate above 0.85; trainer aborts (`gen_validator_corpus.py` checks). If so, drop weak count or oversample mid/strong.
+- **Tier 2 feature substrate verification.** F11/F7/F13/F9 substrate exists in `lib/world_model.py:333-480` per PM4 audit but hasn't been exercised from `shot_features` yet. Rule 47: do a single-game trace before committing to full training run.
+- **Bundle wrapper-style packaging (carried from PM4).** Still unsolved. `scripts/bundle_agent.py`'s `_INTRA_IMPORT_RE` strips `from agents.baseline.main import agent as _inner_agent` and topo-sort doesn't cross agent packages. Either write `scripts/bundle_validator.py` (one-off wrapper bundler, ~50 LOC outlined in `/root/.claude/plans/go-with-phase-2-snappy-frost.md`), or generalise `bundle_agent.py` with a `--wrap` flag. Required before Stage 8 submission.
+
 ### Phase 2 — feature expansion + opponent diversity (NEXT SESSION)
 
 **Axis A — feature expansion (24 d → ~30 d).** Deep-dive research (PM4 evening) found that every high-EV per-shot feature from Halite IV / Planet Wars 2010 / Lux winners has a substrate function ALREADY IMPLEMENTED in our `lib/`. The encoder just doesn't call them. Top 6 to add (priority-ranked):
