@@ -118,6 +118,62 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-27 / 2026-05-28 (claude/kaggle-submission-review-gZsCu — Step 2B + peak restore + foundation)
+
+- `tag: paper-math-calibration-trap` — Step 2B plan tuned `BASELINE_SHIP_TURN_KAPPA`
+  on paper-math estimate of "typical Δ ≈ 300". Live instrumented trace showed
+  real Δ scale was 3-50 (10x off). At κ=0.02 the penalty suppressed 97.7% of
+  positive-Δ candidates. Sub 53099001 settled μ=680.0 (-445 vs anchor 1125.2).
+  Root cause: numeric constant tuned to estimated distribution, never observed.
+  **Fix:** before tuning any suppression/admission constant against a candidate
+  distribution, run a single-game instrumented trace and measure the real
+  distribution shape FIRST. 20-minute investment would have changed κ sweep
+  from {0.5, 1.0, 2.0} to {0.001, 0.005, 0.02}.
+
+- `tag: dormant-env-var-wiring-suspected-regression` — `BASELINE_NEUTRAL_BONUS=2.0`
+  set in the orbitfix wrapper since the peak bundle (5/22) but read only by dead
+  `score_candidate` v2 scorer. Sub 53083109 (5/27 AM) "fixed" the dead-code path
+  by wiring `NEUTRAL_BONUS_WEIGHT` into live `score_candidate_v4` + `_v4_joint`.
+  Settled μ=921 (regression). REVERT (sub 53088099) kept the wiring active,
+  settled μ=1125.2 — ~20μ residual gap vs peak (1144.6). The "no-op cleanup"
+  was actually a behavior change. **Fix:** when a future change wires a
+  previously-dormant env var into live code, isolated n≥32 panel A/B against
+  the un-wired byte-identical bundle is mandatory BEFORE the wiring ships in
+  any submission. Documented as canonical anti-pattern in state/PEAK_BASELINE.md.
+
+- `tag: n8-local-ab-vs-anchor-doesnt-predict-ladder` — Recurrence of
+  `local-AB-not-calibrated-to-live-ladder` (Rule 43 origin). Sub 53099001:
+  6W-2L vs head_anchor at n=8 (Wilson-lo 0.349) predicted μ band 1080-1170;
+  actual μ=680. Sub 53083109 (yesterday): 48/64 vs v7_0 (75% Wlo=0.632)
+  predicted strong; actual 2/32 vs peer-anchor (Wlo=0.017), μ=921. Two
+  consecutive same-shape failures. **Fix:** Rule 45 n≥32 floor and Rule 43
+  panel are not bureaucratic gates — they are calibration sentinels because
+  n=8 vs one opponent has near-zero predictive value for ladder μ. No new
+  rule required; the recurrence reinforces enforcement of existing ones.
+
+- `tag: bundler-namespace-collision-on-load` — `scripts/bundle_agent.py` parity
+  gate failed on `agents/baseline` source because `importlib.util.spec_from_file_location`
+  loaded `agents/baseline/main.py` and triggered `from lib.joint_solver.opening_planner
+  import opening_plan` → `from agents.baseline.proposer import aim_and_eta` →
+  collided with `kaggle_environments.envs.lux_ai_s3.agents` (the `agents` package
+  name is shared). Bundler created the file successfully (576KB) then DELETED it
+  on parity-gate failure. **Fix:** bundle with `--skip-parity-gate` and verify
+  manually via `pytest tests/test_bundle.py` + `python fast.py play <bundle>`;
+  document in PEAK_BASELINE.md build-on-top protocol (already done in step 5).
+  Same root cause as 5/22 `bundle-agent-doesnt-inline-from-baseline-main` —
+  the cross-agent wrapper pattern needs hand-rebundling.
+
+- `tag: scatter-symptom-survives-peak` — PI observed sub 53099429 (peak restore)
+  STILL launches 2-ship fleets on 40-turn paths. Investigation confirmed: the
+  peak bundle has NO mechanism preventing this — `favor.pv_horizon(leaf_step,
+  eta=0)` returns ~99 regardless of fleet eta, so capturing a 1-prod neutral
+  at eta=40 contributes the same +99 to the leaf as eta=10. Peak achieves
+  μ=1144-1165 IN SPITE OF scatter, not because it avoids it. **Fix:** the
+  clean structural fix is `pv_horizon(leaf_step, eta=fleet_eta)` — discount
+  production by γ^eta. Currently `pv_horizon` supports this in its signature
+  but `favor` passes eta=0. Documented in state/PEAK_BASELINE.md "open
+  questions" + the three "what the right fix looks like" options.
+
 ## 2026-05-22 (claude/review-skills-improvements-moKOR — orbital safety completion + ship)
 
 - `tag: bundle-agent-doesnt-inline-from-baseline-main` — bundling
