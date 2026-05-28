@@ -1,11 +1,12 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-20 PM by `claude/review-skills-improvements-moKOR`
-> (n=8 iteration loop attempt; no candidate found, structural-change
-> pivot queued).
-> Prior PM session on this branch (cross-branch consolidation pass)
-> notes preserved under "What just landed (2026-05-20, this session)".
-> Prior writers (per-branch, now superseded): `kaggle-baseline-strategy-lO4mm`,
+> Last written: 2026-05-28 PM by `claude/competition-objective-alignment-hqNVM`
+> (Phase A learned-value-head distillation cycle PASSED;
+> Phase B greenlit with roadmap below).
+> Prior writers preserved: `extract-physics-trajectory-Vjaz9` (5/22),
+> `review-skills-improvements-moKOR` (5/20), and the cross-branch
+> consolidation pass under "What just landed (2026-05-20, this session)".
+> Older per-branch writers (now superseded): `kaggle-baseline-strategy-lO4mm`,
 > `audit-workflow-performance-btjeK`, `strategy-framework-design-OyoYR-rebased`,
 > `ml-competition-strategy-PFhzM`, `analyze-game-strategy-EpMVP`.
 
@@ -32,6 +33,159 @@
   origin of new Rule 42 (pre-submit cross-branch coordination gate).
 - **Daily submission budget:** 5/day. 5/20 used: 2. 3 slots remain.
 - **Floor-at-risk flag:** **TRUE** — rolling pair is 320 μ below team peak.
+
+## Day-N PM competition-objective-alignment-hqNVM (2026-05-28)
+
+**Session shape:** Phase A of the learned-value-head cycle. Goal was a
+binary diagnostic — does the chooser-with-learned-head wiring work at
+all, or was the previous failure (v1) doomed by architecture?
+**Method:** distill a known-strong scalar value function (`favor_hybrid`,
+the head behind the EVICTED team peak at μ=1149) into the 21889-param
+MLP from 40 hand-crafted features, then A/B vs `favor_hybrid` itself.
+
+### What landed (5 commits this branch line)
+
+| Commit | Change |
+|---|---|
+| `9008010` | MVP learned value head infra + GPU training kernel |
+| `0157bf0` | A/B variant maker + end-to-end cycle script |
+| `132fa2b` | embed first trained value-head weights + canonical bundle |
+| `26138b8` | Phase A distillation infra (favor_hybrid label mode) |
+| `fb74d22` | Phase A distillation cycle — wiring verified |
+
+Phase A artifacts:
+- `data/value_head_distill/training.npz` — distillation corpus.
+- `data/value_head_distill/value_head_weights.npz` — trained weights.
+- `data/value_head_distill/training_history.json` — `val_rmse 48.4`
+  vs `y_std ≈ 1029` ⇒ ~99.8 % variance explained.
+- `submissions/baseline.py` — re-bundled with distilled head embedded.
+
+### Load-bearing findings
+
+1. **WIRING IS SOUND.** `baseline_learned` (chooser + distilled head)
+   vs `baseline_hybrid` (chooser + `favor_hybrid`), `n=32` (harness
+   auto-bumped from 16), `BASELINE_WALLCLOCK_MS=100`:
+   **14/32 = 43.8 % wins, Wilson 95 % CI [0.282, 0.607]** — near-parity,
+   formally INCONCLUSIVE. v1 was 2/32 = 6.2 % vs plain `favor` on the
+   same harness.
+2. **40-dim feature set is mostly sufficient.** Distillation R² is
+   high (~99.8 %); no major feature-insufficiency diagnostic fired.
+   The ~6 pp gap to 50 % parity is consistent with normal distillation
+   loss — RMSE 48 is small absolute but ~10× the typical close-call
+   action-Δ, so a small fraction of close decisions flip.
+3. **Latency budget holds under the chooser hot path.** p50 = 164 ms,
+   p95 = 240 ms, max = 459 ms per turn (env actTimeout 1000 ms).
+4. **v1's failure was target + data, not wiring.** Margin-on-
+   lite_greedy-self-play (the v1 setup) produced 43 % val variance
+   explained; favor_hybrid distillation produced 99.8 %. The signal
+   is just better when the teacher is competent.
+
+### Falsified or weakened this session
+
+- **"v1 architecture is broken."** Falsified — same architecture
+  with a competent teacher near-parities the teacher. The proposer +
+  chooser + 40-feature MLP substrate is fine.
+- **"Distillation will fall to 70-80 % R² because the features can't
+  recover favor_hybrid."** Falsified — 99.8 % R².
+
+### NOT yet known (open against Phase B)
+
+- **Live ladder calibration.** A/B was vs the EVICTED μ=1149 agent,
+  not vs the current rolling pair (μ=806 / μ=829). We have not
+  measured whether `baseline_learned` would beat the current floor.
+  Rule 43 (multi-opponent panel) + Rule 45 (n≥32 vs rolling champion)
+  must clear before any submission.
+- **Does the distilled head add anything new?** A learned head that
+  faithfully mimics a hand-coded head is an inference-cost regression
+  with no upside. Phase A is a substrate test, not a candidate. The
+  upside has to come from Phase B's richer training signal.
+
+## Roadmap — Phase B and beyond
+
+The learned-value-head program. Sequenced so each phase is its own
+diagnostic; a phase only ships if its predecessor cleared.
+
+### Phase B — richer training signal (next session, greenlit)
+
+The Phase A result frees us to invest in the parts that actually
+matter for headroom. Four changes, expected order of impact:
+
+1. **Advantage head with Common Random Numbers (CRN).**
+   - Train `A(s, a) = margin_action − margin_idle` against the SAME
+     opp-model RNG seed for both legs (so the opp noise cancels in
+     the difference).
+   - Expected: 50–95 % variance reduction on the Δ signal that the
+     chooser actually uses. The chooser doesn't care about V(s)
+     accuracy — it cares about argmax_a (V(s,a) − V(s,a')).
+   - Direct fix for the "RMSE 48 ≫ action-Δ" failure mode that caps
+     Phase A at parity.
+2. **Multi-horizon target (KataGo-style auxiliary heads).**
+   - Outputs: final-margin, K-turn margin (K = 10), win-probability.
+   - Weighted loss; auxiliaries regularise. Won't change rank order
+     much on its own but stabilises training.
+3. **Strong heterogeneous opponent pool.**
+   - Pool: `composite_a2_hybrid` (μ=1149), `trajectory_v4_wait_N`
+     (μ=1143), `hold_feasibility_solo` (μ=1135), `favor_hybrid`,
+     `favor`. ~200 μ spread.
+   - Why: v1's single-opponent (`lite_greedy`) self-play gave the
+     head no signal for what beats a competent opponent. The Phase A
+     fix was a better TARGET (favor_hybrid scalar); the Phase B fix
+     is better DATA (decisions that matter against strong opp).
+4. **Kaggle GPU training.**
+   - Local 5-fold > 1 h on this corpus size ⇒ GPU per Rule 13.
+   - Use existing kernel template (`machine_shape: GpuT4x2`, Rule 30).
+   - Two-tier smoke before production push (Rule 2 GPU clause):
+     (i) local CPU single-state with JIT compile + memory recorded,
+     (ii) small-scale GPU ≤4 games × ≤50 turns inside 10 min.
+
+**Phase B decision rule.** Each addition is gated by an A/B vs
+favor_hybrid at `n ≥ 32` with `BASELINE_WALLCLOCK_MS=100`:
+- B-1 (CRN advantage only): need Wilson-lo ≥ 0.50 (parity-or-better).
+  If we don't beat parity here, decompose CRN failure before piling on.
+- B-2 (+ multi-horizon): need ≥ B-1 with delta within noise (Wilson
+  CIs overlap) OR clearer lift.
+- B-3 (+ strong pool): the candidate move. Need Wilson-lo ≥ 0.55 vs
+  favor_hybrid AND Wilson-lo ≥ 0.50 vs the current rolling-pair
+  champion (Rule 43 + Rule 45).
+
+### Pre-submit checklist when Phase B clears
+
+Apply in this exact order to avoid Rule 42 / 43 / 46 violations:
+
+1. `kaggle competitions submissions orbit-wars | head -5` — read
+   rolling-last-2 state.
+2. `python scripts/bundle_agent.py agents/baseline` — bundle.
+3. `pytest tests/test_bundle.py` + `python fast.py play <bundle>` —
+   parity + crash-free game (Rule 46).
+4. `fast.py eval <bundle> --vs-panel` — Wilson-lo ≥ 0.55 per opponent.
+5. `fast.py eval <bundle> --vs <rolling_champion>` at n ≥ 32 —
+   Wilson-lo ≥ 0.50 (Rule 45).
+6. Append claim row to `state/MULTI_BRANCH.md` push board (Rule 42);
+   verify evicted-μ < predicted candidate μ.
+7. PI sign-off (Rule 1).
+
+### Phase C — only if Phase B clears (speculative)
+
+- **Population-based self-play.** Train multiple heads against a
+  shifting opponent league (each Phase B agent enters the pool).
+  Risk: many-day compute investment for a marginal lift; not
+  scheduled until Phase B is on the ladder.
+- **Search over the chooser's candidate set.** Replace the scalar
+  ranking with a 1-ply beam search using the advantage head's
+  variance estimate to prune. Touches the chooser, not just the
+  head — higher integration risk.
+
+### Falsified-or-dead so this isn't re-explored
+
+- **Margin-on-lite_greedy-self-play as the value-head target.** v1
+  result: 2/32 = 6 %. Target was too noisy AND the opp was too weak.
+  Do NOT revisit this combination.
+- **40-feature insufficiency.** Falsified by Phase A's 99.8 % R²
+  distillation result. If Phase B underperforms, blame the data /
+  target, not the feature pipeline. Expanding feature count is NOT
+  the move.
+
+---
 
 ## Day-N PM extract-physics-trajectory-Vjaz9 (2026-05-22)
 
@@ -289,8 +443,11 @@ the underlying physics.
 - `audit/2026-05-20-postmortem-strategy-framework-design-OyoYR-rebased.md` — analytical axis closure.
 - `audit/2026-05-19-postmortem-PFhzM-physics-gate-and-mvp-confirmation.md` — Track-C verdict.
 - `audit/2026-05-21-n8-iter1-reactor-ablation.md` (this branch, filename off by one UTC day) — Iter 1 ablation results + the parallel/serial contention finding.
-- `audit/2026-05-22-extract-physics-trajectory.md` (this session) — physics substrate extraction.
+- `audit/2026-05-22-extract-physics-trajectory.md` (Vjaz9) — physics substrate extraction.
+- `audit/2026-05-28-postmortem-competition-objective-alignment-hqNVM.md` — Phase A wrap.
+- `knowledge-base/thoughts/2026-05-28-value-head-phase-a-distillation-passes.md` — Phase A debrief + Phase B framing.
 - `/root/.claude/plans/go-effervescent-mochi.md` — full iteration-loop plan including the structural-change pivot list.
+- `/root/.claude/plans/let-s-do-it-um-cozy-peach.md` — original value-head Phase A/B plan (this branch).
 
 ## Rule reminders (most relevant this session)
 

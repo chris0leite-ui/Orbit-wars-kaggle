@@ -118,7 +118,31 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
-## 2026-05-22 (claude/review-skills-improvements-moKOR — orbital safety completion + ship)
+## 2026-05-28 (claude/competition-objective-alignment-hqNVM — value-head Phase A)
+
+- `tag: phase-a-bench-vs-evicted-not-rolling-pair` — Phase A A/B
+  evaluated `baseline_learned` against `favor_hybrid` (the head behind
+  the EVICTED μ=1149 team peak), not against the live rolling-last-2
+  (μ=806 / μ=829). Verdict "wiring sound" is calibrated to a strong
+  but absent opponent, not to what Kaggle will judge against. Risk: a
+  future Phase B candidate could match favor_hybrid (good) yet still
+  regress vs the actual rolling-pair baselines, because the rolling
+  pair has its own quirks the head was never optimised against.
+  **Root cause:** Phase A was scoped as a substrate-only diagnostic
+  (wiring/feature-sufficiency); live-ladder calibration was correctly
+  deferred to Phase B. **Fix forward:** before any Phase B submit,
+  Rule 43 panel + Rule 45 n≥32 vs rolling champion are mandatory; no
+  Phase A artifact gets pushed on its own.
+
+- `tag: n32-inconclusive-still-a-pass-for-diagnostic` — Phase A
+  result was 14/32, Wilson [0.282, 0.607], a Wilson-CI-crosses-50%
+  INCONCLUSIVE verdict. We called it a Phase A "pass" anyway, on the
+  strength of the 38pp jump from v1's 6/32. **Not a real friction**
+  but worth tagging: for a SUBSTRATE diagnostic (does the wiring
+  work?), a magnitude jump from "clearly broken" to "near-parity" IS
+  the answer; statistical certainty isn't required because we're not
+  shipping the artifact. For a SUBMISSION decision, n=32 + crosses-50%
+  is a hard fail (Rule 45). The two thresholds are not the same.
 
 - `tag: bundle-agent-doesnt-inline-from-baseline-main` — bundling
   `agents/baseline_joint_aggr_consolidated_orbitfix/main.py` (a wrapper
