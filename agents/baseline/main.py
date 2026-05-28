@@ -45,6 +45,16 @@ os.environ.setdefault("BASELINE_CHOOSER", "trajectory")
 # p95=703ms, zero >1000ms. Set BASELINE_JOINT=0 to disable.
 os.environ.setdefault("BASELINE_JOINT", "1")
 
+# Phase γ — kinematic-table singleton. With begin_turn(world) primed in
+# agent() below, every predict_fleet_fate call inside the chooser hits the
+# cached per-planet position window (O(1) dict lookup) instead of rebuilding
+# it inline. lib/trajectory._table_window_or_none early-exits to the table
+# iff KINEMATIC_TABLE_ENABLED is truthy AND the singleton covers the
+# requested pids + lead; if either precondition misses, the inline list-comp
+# (vectorised since lib/trajectory.py b4f885d) is the fallback. Reference
+# wiring: agents/reach_frontier/main.py:85.
+os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
+
 # H1 — post-chooser idle drain (2026-05-18) — DISABLED BY DEFAULT.
 # Audit `audit/replays/idle-trajectory-2026-05-17.md` measured 43.8pct
 # isolated ship-turns in trajectory champion (mu=1271.8). H1 attempted
@@ -161,6 +171,7 @@ from lib.fleet import speed as fleet_speed
 from lib.intent import World
 from lib.joint_solver.opening_planner import OPENING_HORIZON, opening_plan
 from lib.missions.reinforce import propose_reinforce_missions
+from lib.kinematic_table import begin_turn as kt_begin_turn
 from lib.orbit import predict_relative
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import WorldModel
@@ -859,6 +870,7 @@ def agent(obs, configuration=None):
         return []
 
     world = World.from_obs(obs_d)
+    kt_begin_turn(world)  # idempotent within turn; primes the singleton table.
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
     num_seats = _num_seats(planets, fleets)
