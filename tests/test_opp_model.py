@@ -145,3 +145,155 @@ def test_predict_opponent_action_default_tier_is_1():
     default = opp_model.predict_opponent_action(obs)
     explicit = opp_model.predict_opponent_action(obs, tier=1)
     assert _normalize_action(default) == _normalize_action(explicit)
+
+
+# ---------------------------------------------------------------------------
+# Top-K launch-budget tests for `lite_greedy_policy` (Fix A, 2026-05-28 PM4).
+# ---------------------------------------------------------------------------
+
+
+def _viable_lite_greedy_candidates(obs):
+    """Replica of `lite_greedy_policy`'s per-source affordability+ROI scan,
+    returning (src_id, roi_score) for every source that would emit a
+    launch at K=0. Used as the ROI ground-truth oracle in K=1/K=2 tests.
+    """
+    import math as _m
+    from lib.fleet import speed as _fs
+
+    player = obs.get("player", 0) if isinstance(obs, dict) else getattr(obs, "player", 0)
+    planets = obs.get("planets") if isinstance(obs, dict) else getattr(obs, "planets", None)
+    if not planets:
+        return []
+    targets = [p for p in planets if p[1] != player]
+    out: list[tuple[int, float]] = []
+    for src in planets:
+        if src[1] != player or src[5] < 10:
+            continue
+        best = None
+        best_score = -1.0
+        sx = src[2]; sy = src[3]
+        for t in targets:
+            if t[0] == src[0]:
+                continue
+            dx = t[2] - sx; dy = t[3] - sy
+            d = _m.sqrt(dx * dx + dy * dy)
+            if d < 1e-6:
+                continue
+            score = float(t[6]) / (d + 1.0)
+            if score > best_score:
+                best_score = score
+                best = t
+        if best is None:
+            continue
+        budget = int(src[5])
+        agg_ships = max(5, int(budget * 0.7))
+        if agg_ships > budget:
+            agg_ships = budget
+        spd = _fs(agg_ships)
+        if spd <= 0:
+            continue
+        dx = best[2] - sx; dy = best[3] - sy
+        d = _m.sqrt(dx * dx + dy * dy)
+        flight = max(0.0, d - float(src[4]) - float(best[4]) - 0.1)
+        eta = max(1, int(_m.ceil(flight / spd)))
+        if int(best[1]) == -1:
+            defenders_at_eta = float(best[5])
+        else:
+            defenders_at_eta = float(best[5]) + float(best[6]) * eta
+        needed = int(_m.ceil(defenders_at_eta)) + 1
+        if needed > budget:
+            continue
+        ships = max(agg_ships, needed)
+        if ships > budget:
+            ships = budget
+        if ships < 5:
+            continue
+        out.append((int(src[0]), float(best_score)))
+    return out
+
+
+def test_lite_greedy_default_unlimited_byte_parity(monkeypatch):
+    """K=0 (default) must emit IDENTICAL list to current behavior — no
+    sort, no slice, planet-walk order preserved."""
+    monkeypatch.setattr(opp_model, "OPP_MAX_LAUNCHES", 0)
+    obs = _self_play_obs(warmup_turns=10)
+    got = opp_model.lite_greedy_policy(obs)
+    # Recompute the K=0 output by re-running the policy under the same
+    # patched constant. Idempotent oracle: two K=0 calls must agree.
+    again = opp_model.lite_greedy_policy(obs)
+    assert got == again
+    # And the source-id order must match the per-source viable scan
+    # (planet-walk order, NOT ROI-desc order).
+    viable_src_ids = [sid for sid, _roi in _viable_lite_greedy_candidates(obs)]
+    emitted_src_ids = [int(m[0]) for m in got]
+    assert emitted_src_ids == viable_src_ids
+
+
+def test_lite_greedy_max_launches_k1(monkeypatch):
+    """K=1 emits <=1 launch and (when 1) it's the highest-ROI viable source."""
+    monkeypatch.setattr(opp_model, "OPP_MAX_LAUNCHES", 1)
+    obs = _self_play_obs(warmup_turns=10)
+    got = opp_model.lite_greedy_policy(obs)
+    assert len(got) <= 1
+    viable = _viable_lite_greedy_candidates(obs)
+    if not viable:
+        assert got == []
+        return
+    assert len(got) == 1
+    top_src_id = max(viable, key=lambda t: t[1])[0]
+    assert int(got[0][0]) == top_src_id
+
+
+def test_lite_greedy_max_launches_k2(monkeypatch):
+    """K=2 emits <=2 launches; emitted set equals top-2 by ROI; order is
+    ROI-descending."""
+    monkeypatch.setattr(opp_model, "OPP_MAX_LAUNCHES", 2)
+    obs = _self_play_obs(warmup_turns=10)
+    got = opp_model.lite_greedy_policy(obs)
+    assert len(got) <= 2
+    viable = _viable_lite_greedy_candidates(obs)
+    expected = sorted(viable, key=lambda t: -t[1])[:2]
+    expected_ids = [sid for sid, _ in expected]
+    emitted_ids = [int(m[0]) for m in got]
+    assert emitted_ids == expected_ids
+
+
+def test_lite_greedy_k_above_viable_count_is_clamped(monkeypatch):
+    """K=10 with fewer viable sources emits exactly viable-count launches
+    (set-equality with the K=0 oracle; ordering not required)."""
+    obs = _self_play_obs(warmup_turns=10)
+    monkeypatch.setattr(opp_model, "OPP_MAX_LAUNCHES", 0)
+    k0 = opp_model.lite_greedy_policy(obs)
+    k0_ids = sorted(int(m[0]) for m in k0)
+
+    monkeypatch.setattr(opp_model, "OPP_MAX_LAUNCHES", 10)
+    k10 = opp_model.lite_greedy_policy(obs)
+    k10_ids = sorted(int(m[0]) for m in k10)
+    assert len(k10) == len(k0)
+    assert k10_ids == k0_ids
+
+
+def test_lite_greedy_k1_respects_affordability(monkeypatch):
+    """Hand-crafted obs: one viable opp planet (ships=20, neutral target
+    with 5 defenders) and one unaffordable opp planet (ships=10, target
+    needs 30 to capture). K=1 must NOT emit the unaffordable source."""
+    monkeypatch.setattr(opp_model, "OPP_MAX_LAUNCHES", 1)
+    # Planet tuple shape: (id, owner, x, y, radius, ships, production).
+    # Owner 0 = opp seat we're simulating; owner -1 = neutral.
+    obs = {
+        "player": 0,
+        "planets": [
+            # Viable opp source: 20 ships, target needs ~5 to capture.
+            [0, 0, 0.0, 0.0, 1.0, 20, 0],
+            # Easy-capture neutral: 5 defenders, prod 1.
+            [1, -1, 10.0, 0.0, 1.0, 5, 1],
+            # Unaffordable opp source: 10 ships, needs >10 to capture
+            # its nearest target (defenders=30 on the neutral below).
+            [2, 0, 0.0, 50.0, 1.0, 10, 0],
+            [3, -1, 10.0, 50.0, 1.0, 30, 1],
+        ],
+    }
+    got = opp_model.lite_greedy_policy(obs)
+    assert len(got) <= 1
+    if got:
+        assert int(got[0][0]) == 0  # the viable source, never source-id 2

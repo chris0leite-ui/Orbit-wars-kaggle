@@ -41,6 +41,7 @@ the knowledge-base.
 from __future__ import annotations
 
 import math
+import os
 from typing import Any, Callable
 
 from lib.fleet import speed as _fleet_speed
@@ -53,6 +54,19 @@ from lib.world_model import WorldModel
 
 
 Policy = Callable[[Any], list]
+
+# Global per-tick launch budget for `lite_greedy_policy` (2026-05-28 PM4).
+# The current policy lets every owned planet emit a 0.7x ships launch every
+# tick. With ~5 owned planets x eta=10 rollout, that's ~50 simulated launches
+# per candidate, vs realised top-mu ladder rate ~1.3 launches/turn globally
+# (knowledge-base/concepts/top-performer-strategies.md). At K>0 the policy
+# keeps only the top-K candidates by ROI (`prod/(d+1)`) per call; K=0
+# (default) preserves byte-for-byte legacy. Calibration variants K=1/2/3.
+# Intended for OPP seats; do not combine with BASELINE_ME_REACTS=1 (would
+# throttle ME-side reactive launches too).
+OPP_MAX_LAUNCHES: int = int(
+    os.environ.get("BASELINE_OPP_MAX_LAUNCHES", "0")
+)
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +189,13 @@ def lite_greedy_policy(obs: Any) -> list:
         return []
     targets = [p for p in planets if p[1] != player]
     moves: list = []
+    # Top-K mode: collect (-roi, seq_idx, move) for stable descending-ROI
+    # sort with planet-walk tie-break. seq_idx tracks emission order so
+    # ties resolve deterministically. K<=0 (default) skips the entire
+    # candidates path and appends directly to `moves` for byte-parity.
+    k_cap = OPP_MAX_LAUNCHES
+    candidates: list[tuple[float, int, list]] = []
+    seq_idx = 0
     for src in planets:
         if src[1] != player or src[5] < 10:
             continue
@@ -229,7 +250,15 @@ def lite_greedy_policy(obs: Any) -> list:
         if ships < 5:
             continue
         angle = math.atan2(best[3] - sy, best[2] - sx)
-        moves.append([src[0], angle, ships])
+        move = [src[0], angle, ships]
+        if k_cap <= 0:
+            moves.append(move)
+        else:
+            candidates.append((-best_score, seq_idx, move))
+            seq_idx += 1
+    if k_cap > 0 and candidates:
+        candidates.sort()
+        moves = [c[2] for c in candidates[:k_cap]]
     return moves
 
 
