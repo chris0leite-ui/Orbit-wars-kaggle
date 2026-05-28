@@ -358,6 +358,56 @@ Neither uses "global features → direct argmax" (which is what Phase A built). 
 - **"Phase A's 99.8% R² implies features carry rank info."** Falsified by Stage 1+2; the R² is a property of a degenerate target.
 - **"Rank-aware loss alone (RankNet/CRN) will save the existing feature set."** Falsified by Stage 2; rank-aware loss on same features = +5 pp at most.
 
+### Post-diagnostic re-refinement #3 (2026-05-28 PM3 — H14 recipe locked from konbu17 + cross-comp synthesis)
+
+Full write-up at `knowledge-base/thoughts/2026-05-28-pm3-h14-recipe-locked-from-konbu17.md`.
+
+PM2 pointed at konbu17-style filter as Direction 1. PM3 did the depth research on (a) konbu17's actual notebook code and (b) cross-comp simulation winners (Halite III/IV ttvand/teccles/0Zeta/mlomb, Lux S1 Toad Brigade, Planet Wars 2010 oddshrimp/zvold, Hungry Geese GeeseZero). Three findings re-shape the next session:
+
+1. **The 24-d feature schema in `data/shot_validator/schema.json` matches konbu17 verbatim.** This branch already has H14 scaffolded (label pipeline + schema + README); only training + embed + A/B was deferred. ~70% of the build is in-place.
+
+2. **Cross-comp unanimous architecture pattern.** Every Halite/Planet Wars winner that had a "pick from N candidates" pattern used per-candidate features (closed-form or learned classifier), never pooled-state scalar. The two Orbit Wars LB ≥ 1000 learned-component agents either:
+   - Embed per-candidate features directly (konbu17 — 24-d per-shot, BCE filter, +19 pp)
+   - Use per-state features inside a 1-ply minimax over forward-simulated terminal states (AidenSong — GBC over 16-d state, sim handles the sibling-distinction problem)
+   Direct-argmax over pooled-state-scalar (what Phase A built) never appears as a winning architecture.
+
+3. **konbu17 recipe is now mechanically pinned, not stylistic.**
+   - Arch: 3-MLP ensemble (seeds [42, 100, 7]) of `Linear(24,64)→ReLU→Linear(64,32)→ReLU→Linear(32,1)`, BCEWithLogitsLoss, Adam lr=1e-3, 40 epochs, batch 512.
+   - **Pos_rate calibration is THE load-bearing decision.** Exclude self-reinforcement shots ENTIRELY (target already owned by side) — drops pos_rate from ~0.96 to ~0.71. Then mix opponent strengths to keep filtered pos_rate in 0.50-0.75. Without this, BCE `pos_weight = (1-p)/p` collapses, validator outputs uniform low, threshold rejects everything, topk1 sends nothing.
+   - Game-level 80/20 split (NOT row-level — shots within a game correlate, leaks 15-20 pp val acc).
+   - Threshold 0.30 with ensemble (0.40 single-model). topk1 (keep largest-ship survivor per turn).
+   - Strict-improvement FILTER, not re-ranker. Cannot regress vs proposer alone.
+
+### Sequencing for next session
+
+1. **Smoke the label pipeline.** 4-8 wallclock-capped self-play games → `audit/external/replays/`, then `python -m scripts.label_shot_outcomes`. Sanity-check filtered pos_rate ≈ 0.5-0.8. (Previous smoke run timed out at 180s with full-wallclock baseline self-play — needs `BASELINE_WALLCLOCK_MS=100` and worker parallelism.)
+2. **Generate corpus.** ~140 games with adapted konbu17 mix:
+   - vs `baseline_favor` (weak), vs `baseline_full` (moderate), vs `baseline_joint_aggr_consolidated_orbitfix` (strong), vs `baseline_pv_eta` (live champ at μ=1154.8), self-vs-self.
+   - Tune mix to keep filtered pos_rate ≈ 0.6.
+   - Compute: ~30 min on 8 workers with WALLCLOCK_MS=100.
+3. **Train 3-model ensemble.** Seconds on CPU (3.5k params, 20k examples, 40 epochs).
+4. **Embed via `scripts/bundle_agent.py`** (base64 npz pattern, no numpy/torch at submit time — konbu17 uses pure-Python forward with numpy `@` + manual sigmoid).
+5. **Bundle parity + Rule 46 smoke** (`pytest tests/test_bundle.py` + `python fast.py play <bundle>`).
+6. **A/B vs production** (`baseline` no validator vs `baseline` w/ validator) at n=32. Wilson-lo ≥ 0.50.
+7. **A/B vs `baseline_pv_eta`** at n=32 if step 6 cleared. Wilson-lo ≥ 0.50 to gate submission.
+8. **Push (Rules 1, 42, 43, 46, 47 checklist)** — coordinate with sibling-branch push board.
+
+### Cost re-estimate
+
+Original H14 estimate in `top-performer-strategies.md`: "high EV, ML, ~15 days". With (a) existing scaffold (label pipeline + schema + README in `data/shot_validator/`), (b) mechanically-pinned konbu17 recipe, and (c) per-candidate architecture validated by 6 cross-comp winners — **realistic cost is ~1 session** (overnight corpus-gen + morning train/embed/A/B). The "15 days" predates both the scaffold and the recipe being pinned.
+
+### Decision rule for next session
+
+Same gates as PM2 Direction 1, sharpened:
+- Step 6 clears (Wilson-lo ≥ 0.50 vs production) → proceed to step 7.
+- Step 7 clears (Wilson-lo ≥ 0.50 vs `baseline_pv_eta`) → Rule 42-43 pre-submit checklist → push.
+- Either fails → diagnose pos_rate calibration first (most common konbu17 failure mode), then opponent mix, then threshold.
+
+### Falsified or weakened by PM3
+
+- **"Direction 2 (per-candidate score head + CRN-paired advantage labels) is the right longer-horizon investment."** Now ambiguous. Cross-comp evidence (TheDuck314's per-action collision classifier in Halite III with "basically no impact on mu", plus 0/5 successful pure-learned RL/IL in Orbit Wars from konbu17's postmortem) suggests per-candidate score head is not a guaranteed step up from per-candidate filter. Re-evaluate only after Direction 1 ships.
+- **The "15-day" sizing estimate on H14.** With scaffold + locked recipe, ~1 session.
+
 ### Pre-submit checklist when Phase B clears
 
 Apply in this exact order to avoid Rule 42 / 43 / 46 violations:
