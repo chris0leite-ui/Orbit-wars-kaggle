@@ -182,3 +182,42 @@ def test_comet_at_path_end_marked_as_exited():
         f"expected target (planet 99) after comet exits; got {fate.outcome} hit_id={fate.hit_planet_id}"
     )
     assert fate.hit_planet_id == 99
+
+
+def test_predict_relative_window_matches_scalar():
+    """Vectorized _predict_relative_window agrees with scalar predict_relative
+    within 1e-12 over 50 random (planet, omega, wait_N, lead) triples.
+
+    ULP delta between scalar math.{cos,sin} and numpy array cos/sin is
+    typically ~1e-15; the 1e-12 tolerance gives 1000× headroom while still
+    catching any actual mathematical bug.
+    """
+    import random
+    from lib.orbit import predict_relative
+    from lib.trajectory import _predict_relative_window
+
+    rng = random.Random(42)
+    for _ in range(50):
+        px = rng.uniform(10.0, 90.0)
+        py = rng.uniform(10.0, 90.0)
+        # Keep within rotation limit so is_orbiting would return True,
+        # though the helper doesn't check that itself.
+        omega = rng.uniform(0.025, 0.05)
+        wait_N = rng.randint(0, 50)
+        length = rng.randint(1, 201)
+        p_tuple = [0, 0, px, py, 1.5, 10, 2]
+
+        vec = _predict_relative_window(p_tuple, omega, wait_N, length)
+        assert len(vec) == length
+        for t in range(length):
+            sx, sy = predict_relative(p_tuple, omega, wait_N + t)
+            vx, vy = vec[t]
+            assert isinstance(vx, float) and isinstance(vy, float), (
+                f"non-float in vec[{t}]: types {type(vx)}, {type(vy)}"
+            )
+            assert abs(vx - sx) < 1e-12, (
+                f"x mismatch at t={t}: vec={vx!r} scalar={sx!r} diff={vx - sx!r}"
+            )
+            assert abs(vy - sy) < 1e-12, (
+                f"y mismatch at t={t}: vec={vy!r} scalar={sy!r} diff={vy - sy!r}"
+            )

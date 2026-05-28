@@ -34,6 +34,8 @@ import math
 import os
 from dataclasses import dataclass
 
+import numpy as np
+
 from lib.aim import swept_pair_hit
 from lib.fleet import speed as fleet_speed
 from lib.geometry import BOARD_SIZE, CENTER, SUN_RADIUS
@@ -56,6 +58,44 @@ def _kinematic_table_enabled() -> bool:
 # can cross the 141.4-unit board diagonal in 142 steps; 200 covers
 # every realistic case with comfortable margin.
 DEFAULT_MAX_STEPS = 200
+
+# Reusable lead-index buffer: callers requesting `length <= len(_LEAD_INDEX_DEFAULT)`
+# get a zero-alloc view; longer windows fall through to a fresh np.arange.
+_LEAD_INDEX_DEFAULT = np.arange(DEFAULT_MAX_STEPS + 2, dtype=np.float64)
+
+
+def _predict_relative_window(p_tuple, omega: float, wait_N: int,
+                             length: int) -> list[tuple[float, float]]:
+    """Batched orbital-position window for one planet.
+
+    Replaces the scalar list-comp
+        [predict_relative(p_tuple, omega, wait_N + t) for t in range(length)]
+    with one numpy-vectorised computation: scalar hypot/atan2 + array cos/sin.
+    For a single planet × `length=201` window this collapses 201 Python
+    function dispatches + 201 math.{cos,sin} calls into ~5 numpy calls.
+
+    Returns list[tuple[float, float]] of native Python floats (via .tolist()),
+    matching the scalar path's downstream contract: callers index
+    positions[step][0] / positions[step][1] and pass slices to swept_pair_hit.
+
+    FP delta vs scalar predict_relative is ULP-level (~1e-15). Parity audit
+    in audit/ + the new test_predict_relative_window_matches_scalar pin show
+    this is below every existing tolerance (test_orbit abs=1e-9; test_trajectory
+    asserts symbolic outcomes only; test_kinematic_table_parity pins table
+    ↔ scalar predict_relative, both unchanged).
+    """
+    px, py = p_tuple[2], p_tuple[3]
+    dx, dy = px - CENTER, py - CENTER
+    orb_r = math.hypot(dx, dy)
+    cur_angle = math.atan2(dy, dx)
+    if length <= _LEAD_INDEX_DEFAULT.shape[0]:
+        leads = _LEAD_INDEX_DEFAULT[:length]
+    else:
+        leads = np.arange(length, dtype=np.float64)
+    angles = cur_angle + omega * (wait_N + leads)
+    xs = (CENTER + orb_r * np.cos(angles)).tolist()
+    ys = (CENTER + orb_r * np.sin(angles)).tolist()
+    return list(zip(xs, ys))
 
 # Safety margin around the sun (units). The env's sun-check uses
 # point-to-segment distance < SUN_RADIUS strict; we MUST match exactly
@@ -172,10 +212,9 @@ def predict_fleet_fate(
                 continue
             p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
             if is_orbiting(p_tuple) and omega != 0.0:
-                planet_positions[pid] = [
-                    predict_relative(p_tuple, omega, wait_N + t)
-                    for t in range(max_steps + 1)
-                ]
+                planet_positions[pid] = _predict_relative_window(
+                    p_tuple, omega, wait_N, max_steps + 1
+                )
             else:
                 planet_positions[pid] = [(p.x, p.y)] * (max_steps + 1)
 
