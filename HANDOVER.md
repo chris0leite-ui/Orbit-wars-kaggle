@@ -408,6 +408,99 @@ Same gates as PM2 Direction 1, sharpened:
 - **"Direction 2 (per-candidate score head + CRN-paired advantage labels) is the right longer-horizon investment."** Now ambiguous. Cross-comp evidence (TheDuck314's per-action collision classifier in Halite III with "basically no impact on mu", plus 0/5 successful pure-learned RL/IL in Orbit Wars from konbu17's postmortem) suggests per-candidate score head is not a guaranteed step up from per-candidate filter. Re-evaluate only after Direction 1 ships.
 - **The "15-day" sizing estimate on H14.** With scaffold + locked recipe, ~1 session.
 
+### PM4 — H14 MVP executed end-to-end (2026-05-28 evening)
+
+Full write-up: `knowledge-base/thoughts/2026-05-28-pm4-validator-mvp-results-and-roadmap.md`. Commits this session: `9d20d19` (infrastructure), `e72ea9e` (embedded weights).
+
+**What landed:**
+
+| File | Purpose |
+|---|---|
+| `lib/shot_features.py` | 24-d per-shot feature encoder (matches `data/shot_validator/schema.json` verbatim) |
+| `scripts/gen_validator_corpus.py` | End-to-end mixed-opp corpus generator; labels both seats inline; self-reinforce-filtered |
+| `scripts/train_validator.py` | 3-MLP ensemble training with BCE + pos_weight calibration; aborts if pos_rate out-of-band |
+| `agents/baseline_validated/main.py` | Filter wrapper; weights embedded as base64; no topk1 (preserves multi-source coord) |
+| `scripts/embed_validator_weights.py` | Patches base64-npz into the wrapper |
+| `tests/test_validator_smoke.py` | 6 smoke tests, all green |
+| `scripts/bundle_agent.py` | Added `shot_features` to DEFAULT_LIB_ORDER |
+
+**MVP results:**
+
+- Corpus: 30 games × 3 opp pairings = **5,366 labeled shots**, pos_rate **0.529** (in healthy [0.40, 0.85])
+- Per-pair pos_rate: baseline-self 0.502 / vs baseline_full 0.459 / vs v3_snipe 0.680
+- Training: 3-MLP ensemble (seeds 42, 100, 7), val_acc **0.777**, Brier 0.147; precision 0.72 / recall 0.89 at threshold 0.30
+- A/B vs `agents/baseline` at n=64: **39/64 = 60.9 %**, Wilson 95 % CI [**0.487**, **0.719**]
+- Tier breakdown: t1 n=32 was 50.0 %, t2 n=32 was 71.9 % — the lift is real but variance is high at this n
+- Verdict: **INCONCLUSIVE by Wilson-lo ≥ 0.50 gate** (lo = 0.487, 0.013 short) but **+10.9 pp directional lift**
+- Latency: focal p50 = 185 ms, p95 = 282 ms, max = 692 ms (env actTimeout 1000 ms; comfortable)
+
+**Pulled from sibling branch this session** (`origin/claude/kaggle-submission-review-gZsCu`, `submissions/_imported/`, gitignored under `submissions/*` — move to `submissions/imported/` and update `.gitignore` to track in Phase 2):
+
+- `baseline_pv_eta.py` — **μ=1154.8 LIVE CHAMPION** (top of rolling pair)
+- `baseline_leaf_pv_2p.py` — μ=1105.4 (just submitted; bottom of rolling pair)
+- `baseline_peak_1165_anchor.py` — peak μ=1149 reference
+
+### Phase 2 — feature expansion + opponent diversity (NEXT SESSION)
+
+**Axis A — feature expansion (24 d → ~32 d).** The MVP's 24 features describe STATE-AT-LAUNCH only; the chooser argmax depends on ARRIVAL-TIME predictions and PATH PHYSICS, neither of which the current features capture. Tier 1 additions:
+
+| Feature | Source / formula |
+|---|---|
+| `tgt_ships_at_arrival` | `lib.world_model.predict_garrison_at(tgt, eta, arrivals).ships` (O(eta), already implemented) |
+| `tgt_owner_at_arrival` (one-hot) | Same call, `.owner` |
+| `combat_margin_predicted` | `shot.ships − tgt_ships_at_arrival` (signed) |
+| `target_value_pv` | `tgt.prod × (γ^eta − γ^horizon) / (1 − γ)`, γ=0.99 = `PV_GAMMA` in `lib/scoring.py` |
+| `path_clears_sun` (binary) | `lib.geometry.path_clears_sun(src_xy, tgt_xy, SUN_RADIUS + 1.5)` |
+| `src_garrison_after_launch` | `max(0, src.ships − shot.ships)` |
+
+Tier 2 (after Tier 1 lands, if budget permits): `src_incoming_threat_eta`, `enemy_fleets_eta_to_tgt`, `n_my_fleets_to_same_tgt`, `mission_type_onehot`.
+
+Tier 3 (defer, exploratory): growth-field, dominance, fleet-destroyed-in-flight model.
+
+**Axis B — expanded opponent pool (3 → 18 opp cells, 90 games).** Full table in PM4 doc; high-level mix:
+- **Weak** (3): `simple`, `geo`, `v1_orbitfix`
+- **Moderate** (5): `analytical` (ANALYTICAL track), `v3.5.1`, `v3_lookahead`, `submissions/v4_planner.py`, `submissions/v7_0_drop_one.py`
+- **Strong** (6): `baseline_full`, `baseline_joint_aggr_consolidated_orbitfix`, `submissions/{baseline_hybrid,baseline_favor,baseline_learned,v7_minimax}.py`
+- **Live** (3): `baseline_pv_eta`, `baseline_leaf_pv_2p`, `baseline_peak_1165_anchor`
+- **Self** (1): baseline self-play
+
+5 games per cell × 18 cells = 90 games. Compute: ~15-20 min on 8 workers with `BASELINE_WALLCLOCK_MS=100`. Both seats labeled ≈ **16-20k labeled shots** (≈3-4× MVP).
+
+**Axis C (defer):** 4P training data, synthetic emit augmentation, per-candidate score head.
+
+### Phase 2 session sequencing
+
+| Stage | Time | Output | Gate |
+|---|---|---|---|
+| 1. Feature expansion code | ~2-3 h | `lib/shot_features.py` v2, schema bump, wrapper update, tests | All tests green |
+| 2. Expanded corpus gen | ~15-20 min | `data/shot_validator/labels_v2.jsonl` | pos_rate in [0.40, 0.85] |
+| 3. Train 3-MLP ensemble | ~1 min | `validator_ensemble_weights_v2.npz` | val_acc ≥ 0.80 |
+| 4. Threshold + topk sweep | ~30 min | held-out per-game eval × 5 cells | Pick best |
+| 5. A/B vs `agents/baseline` | ~30-60 min | n=32 → n=64 adaptive | Wilson-lo ≥ 0.50 |
+| 6. A/B vs `baseline_pv_eta` (live) | ~30-60 min | only if step 5 cleared | Wilson-lo ≥ 0.50 (Rule 43) |
+| 7. Bundle + parity (Rule 46) | ~10 min | submittable bundle | clean imports + crash-free game |
+| 8. Submission gate | depends | PI sign-off | Rule 1 + Rule 42 |
+
+Total: ~5-7 hours. Plan for a single focused session; if Stage 1 (feature code) overruns, ship without Tier 2 features and revisit next session.
+
+### Phase 2 decision branches
+
+- **A/B vs baseline passes Wilson-lo ≥ 0.50:** proceed to live-champ A/B and submission preparation.
+- **A/B vs baseline still inconclusive (Wilson-lo ∈ [0.40, 0.50]):** debug via `--debug-validator` instrumentation flag (log every veto + post-game outcome), eyeball categories, identify what the validator catches that baseline misses. Targeted feature fix.
+- **A/B vs baseline regresses (Wilson-lo < 0.40):** something is wrong with the new features. Roll back to MVP and try a different Tier 1 subset.
+
+### Phase 2 risks
+
+- Feature expansion increases per-turn latency. Bench-verify with `scripts/bench_value_head_inference.py` pattern.
+- Pos_rate spikes outside [0.40, 0.85] from the weak opps. Trainer aborts; adjust opp ratio.
+- Bundle workflow remains unsolved for wrapper-style agents. MVP A/B used non-bundled path (`fast.py eval` loads main.py directly). For Kaggle submission, write a small wrapper bundler that base-bundles `agents/baseline` then appends validator wrapper code with weights inline (deferred; design TBD).
+
+### Falsified / re-opened by PM4
+
+- **"50 % at n=32 ⇒ filter does nothing."** Falsified by tier 2's 71.9 %. The MVP gives a +10.9 pp directional lift; the filter does meaningful work.
+- **"konbu17's +19 pp will transfer to our stack."** Tempered. konbu17 worked vs a weaker rule-base; ours filters most bad shots already. The headroom for our filter is smaller; expect +5-15 pp post-Phase-2, not +19.
+- **"PM2 / PM3 Direction 2 (per-candidate score head with CRN-advantage)" remains deferred.** Direction 1 isn't exhausted yet; Phase 2 carries it further before pivoting.
+
 ### Pre-submit checklist when Phase B clears
 
 Apply in this exact order to avoid Rule 42 / 43 / 46 violations:
