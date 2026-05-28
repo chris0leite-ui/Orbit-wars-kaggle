@@ -498,6 +498,41 @@ relevant skill file or source code, not back into friction.md.
   responsiveness, predicted-outcome-matched, timing headroom).
 
 
+## 2026-05-28 (claude/strategy-framework-design-OyoYR — minimal-agent iteration round)
+
+- `tag: commit-based-on-single-seed-flip` — committed and pushed
+  d1938f1 (HORIZON 20 -> 40) on the strength of one seed (531)
+  flipping from 467 steps to 155 steps in a smoke test. Did NOT
+  await the cohort A/B before pushing. 224-game cohort A/B then
+  showed total winrate dropped 96.4% -> 80.4% (-16 pp) and
+  win-elim-by-step-250 dropped 83.9% -> 26.3% (-57 pp); reverted
+  in ab84775. Same family as `spot-check-too-thin-first-pass`
+  (2026-05-23) — n=1 evidence is sampling noise, not signal.
+  **Fix:** rule promotion candidate — no commit to chooser/proposer/
+  value on smaller than 16-game cohort evidence; smoke is necessary
+  but never sufficient.
+- `tag: single-opponent-misrepresents-strength` — measured agent
+  exclusively vs `nearest` for most of the session, then estimated
+  Kaggle TrueSkill μ at 1050-1100 based on the 96.4% nearest winrate.
+  PI prompted "run one game vs each opponent" — at seed 0 minimal
+  went 4W/7L across 11 opponents, losing systematically to every
+  ROI-family agent (`roi`, `roi_safe`, `roi_dominance_200`) and to
+  every advanced agent (`v3_snipe`, `v7_1_open_drop_comets`,
+  `baseline`) by elimination at step 131-158. Single-opponent panel
+  vastly overstated agent strength; revised estimate ~900-1000 μ.
+  **Fix:** rule promotion candidate — agent-strength claims require
+  ≥3 opponent classes (weak, mid, strong) on the panel; nearest-only
+  panels are calibration-against-floor only.
+- `tag: bolt-on-on-tuned-baseline-repeated` — tried 6 single-component
+  changes (overcommit removal, reinforce-light, opp-strip, no-Δ>0
+  fallback, projected_rank_diff head, self-play-in-rollout) on the
+  254-LOC minimal foundation; 5 of 6 regressed at least one cohort.
+  Audit 2026-05-17 already documented this pattern at the v15
+  foundation; I knew the prior and proceeded anyway. **Fix:** when
+  starting a fresh session against a "tuned baseline" foundation,
+  read the audit warning and design joint multi-component changes
+  from the start, not sequential bolt-ons.
+
 ## 2026-05-23 (claude/strategy-framework-design-OyoYR — leaf-side rerun w/ capture fix)
 
 - `tag: axis-reopened-with-new-fix` — re-tested leaf-side
