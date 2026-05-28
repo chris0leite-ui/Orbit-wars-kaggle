@@ -108,7 +108,7 @@ diagnostic; a phase only ships if its predecessor cleared.
 ### Phase B — richer training signal (next session, greenlit)
 
 The Phase A result frees us to invest in the parts that actually
-matter for headroom. Four changes, expected order of impact:
+matter for headroom. Five changes, expected order of impact:
 
 1. **Advantage head with Common Random Numbers (CRN).**
    - Train `A(s, a) = margin_action − margin_idle` against the SAME
@@ -131,7 +131,30 @@ matter for headroom. Four changes, expected order of impact:
      head no signal for what beats a competent opponent. The Phase A
      fix was a better TARGET (favor_hybrid scalar); the Phase B fix
      is better DATA (decisions that matter against strong opp).
-4. **Kaggle GPU training.**
+4. **Geometry-archetype-stratified self-play generation.**
+   - Use the 32-archetype taxonomy already defined in
+     `data/seed_panel_128.json` (audit/2026-05-18-seed-panel.md) —
+     32 archetypes × 4 seeds = 128 reference geometries.
+   - Generate the training corpus stratified by archetype: M games
+     per archetype × 32 archetypes, rather than M total games
+     sampled from whatever distribution the default seed generator
+     happens to land in.
+   - Optionally inverse-frequency-weight the loss so rare archetypes
+     (3-planet sparse, comet-heavy, tight-orbit clusters) get
+     proportional gradient — otherwise the head fits the modal
+     archetype and miscalibrates at the edges.
+   - Compositional with step 3: each (opponent × archetype) cell
+     gets ≥ ceil(M/32) games. With 5 opponents × 32 archetypes that
+     is 160 cells; a 25 600-game corpus is 160 games/cell.
+   - Why: the same logic that justified the 128-seed eval panel
+     applies to training data. The chooser is asked to handle wildly
+     different geometries; a head trained on a non-stratified
+     distribution will be miscalibrated on archetype edges that
+     happen to come up on the live ladder.
+   - Diagnostic to add: per-archetype val loss breakdown. Catches
+     "all loss is from one archetype" failure modes before they
+     reach the A/B.
+5. **Kaggle GPU training.**
    - Local 5-fold > 1 h on this corpus size ⇒ GPU per Rule 13.
    - Use existing kernel template (`machine_shape: GpuT4x2`, Rule 30).
    - Two-tier smoke before production push (Rule 2 GPU clause):
@@ -144,9 +167,14 @@ favor_hybrid at `n ≥ 32` with `BASELINE_WALLCLOCK_MS=100`:
   If we don't beat parity here, decompose CRN failure before piling on.
 - B-2 (+ multi-horizon): need ≥ B-1 with delta within noise (Wilson
   CIs overlap) OR clearer lift.
-- B-3 (+ strong pool): the candidate move. Need Wilson-lo ≥ 0.55 vs
-  favor_hybrid AND Wilson-lo ≥ 0.50 vs the current rolling-pair
-  champion (Rule 43 + Rule 45).
+- B-3 (+ strong opp pool): need ≥ B-2 with Wilson-lo ≥ 0.50.
+- B-4 (+ archetype-stratified gen): the candidate move. Need
+  Wilson-lo ≥ 0.55 vs favor_hybrid AND Wilson-lo ≥ 0.50 vs the
+  current rolling-pair champion (Rule 43 + Rule 45). Plus the
+  per-archetype A/B from the seed panel
+  (`--vs-panel --by-archetype`) showing no archetype regresses
+  > 10 pp vs the B-3 baseline — catches "we lifted the average by
+  tanking one archetype" failure modes.
 
 ### Pre-submit checklist when Phase B clears
 
