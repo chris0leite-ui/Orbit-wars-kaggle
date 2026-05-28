@@ -84,9 +84,22 @@ Phase A artifacts:
 
 - **"v1 architecture is broken."** Falsified — same architecture
   with a competent teacher near-parities the teacher. The proposer +
-  chooser + 40-feature MLP substrate is fine.
+  chooser + 40-feature MLP substrate is fine **at the consume-the-head
+  level**. PM 2026-05-28 diagnostics narrowed this: the chooser
+  correctly CONSUMES whatever the head emits, but the head's signal
+  quality vs the live ladder is poor (19 % vs `baseline_pv_eta`).
 - **"Distillation will fall to 70-80 % R² because the features can't
-  recover favor_hybrid."** Falsified — 99.8 % R².
+  recover favor_hybrid."** Falsified — 99.8 % R² on scalar.
+  **CAVEAT (PM 2026-05-28):** the 99.8 % R² is on a scalar target and
+  does NOT preserve action-Δ rank order, which is what the chooser
+  actually uses. R² is the wrong gate. See
+  `knowledge-base/thoughts/2026-05-28-pm-distillation-action-rank-collapse.md`.
+- **"40-feature insufficiency."** Previously listed as falsified.
+  **RE-OPENED PM 2026-05-28.** The falsification rested on the same
+  scalar R² that doesn't transfer to action-Δ. Feature sufficiency for
+  rank-order preservation has not been tested. Verdict: unknown until
+  a CRN-advantage head trained on direct action-Δ labels either
+  succeeds or fails.
 
 ### NOT yet known (open against Phase B)
 
@@ -241,6 +254,56 @@ favor_hybrid at `n ≥ 32` with `BASELINE_WALLCLOCK_MS=100`:
   (`--vs-panel --by-archetype`) showing no archetype regresses
   > 10 pp vs the B-3 baseline — catches "we lifted the average by
   tanking one archetype" failure modes.
+
+### Post-diagnostic re-refinement (2026-05-28 PM)
+
+Three PM diagnostics overturned key premises of the morning roadmap.
+Full write-up at
+`knowledge-base/thoughts/2026-05-28-pm-distillation-action-rank-collapse.md`.
+Headline:
+
+| Test | Result |
+|---|---:|
+| weights-load sanity (forward batch on training corpus) | R² = 0.994 — load is clean |
+| `baseline_learned` vs `baseline_favor` n=32 | **9/32 = 28 %** [.16, .45] FAIL |
+| `baseline_hybrid` vs `baseline_favor` n=32 | 15/32 = 47 % [.31, .64] near-parity |
+| `baseline_learned` vs `baseline_pv_eta` (live μ=1154.8) n=32 | **6/32 = 19 %** [.09, .35] FAIL |
+
+Two surviving hypotheses (no weights bug):
+1. Scalar R² does not preserve action-Δ rank order. (The chooser uses
+   `argmax_a`, which depends on rank order, not scalar fit.)
+2. `favor_hybrid` is not meaningfully stronger than `favor` in 2P
+   self-play — i.e. Phase A's "teacher" was at parity with the older
+   head it was supposed to improve on, so the distillation target
+   was the wrong policy to mimic in the first place.
+
+**Plan changes to the morning's roadmap** (refinement #1 from the
+lens-critique pass is invalidated):
+
+- **B-1 merges with B-3.** No version of B-1 that uses `favor_hybrid`
+  as the rollout opp policy makes sense after diagnostic 3. Simplest
+  merged shape: CRN-paired advantage labels generated against
+  `baseline_pv_eta` (single strong opp at live μ=1154.8). Full
+  Phase B-3 strong-opp pool defers to a follow-on (B-3-prime).
+- **Diagnostic A/B target changes from `favor_hybrid` to
+  `baseline_pv_eta`.** Wilson-lo ≥ 0.50 required to declare lift.
+- **Training-time gate added.** Spearman-τ on action-Δ rank order on
+  a held-out set must be meaningfully > 0 before bundling. Phase A
+  would have failed this gate.
+- **Cost re-estimate.** "Hours not days" is wrong. Realistic shape is
+  500-game overnight local (8 workers) → 1500-game Kaggle GPU follow-on.
+  Back-of-envelope in
+  `knowledge-base/concepts/crn-advantage-datagen-sketch.md`.
+- **Option B escape clause added.** If a CRN-advantage head trained
+  against `baseline_pv_eta` still loses to `pv_eta` at < 40 % on n=32,
+  the program pauses and re-scopes (structural rethink: direct policy
+  distillation / search-based chooser / feature expansion / different
+  architecture).
+
+**Data-gen rewrite sketch landed at
+`knowledge-base/concepts/crn-advantage-datagen-sketch.md`** — full
+pseudocode, locked-opp-RNG mechanics, compute budget, "known
+unknowns to verify before code" list, sequenced rollout plan.
 
 ### Pre-submit checklist when Phase B clears
 
