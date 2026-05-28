@@ -14,11 +14,18 @@
 1. **`state/MULTI_BRANCH.md`** — live Kaggle rolling pair, three-track
    registry (Analytical / Hybrid-Sim / Verify-first), closed tracks,
    push claim board.
-2. **`state/TOOLS.md`** — A/B harnesses, single-game diagnostics,
+2. **`state/PEAK_BASELINE.md`** (NEW 2026-05-28) — single source of
+   truth for the strongest historical bundle. Mandatory read before
+   any "build on top of baseline" change. Documents the peak's active
+   vs dormant env-var stack, the frozen anchor at
+   `submissions/baseline_peak_1165_anchor.py`, the 7-step build-on-top
+   protocol, and the recorded anti-patterns from the 2026-05-27
+   regression cascade (subs 53083109→921, 53099001→680).
+3. **`state/TOOLS.md`** — A/B harnesses, single-game diagnostics,
    validation suite, consolidation-merge gate.
-3. **`CLAUDE.md`** — rules 1-47 (rules 41-47 added 2026-05-20).
-4. **This file** — session-start prompt below.
-5. `audit/friction.md` if you're about to touch a fragile path.
+4. **`CLAUDE.md`** — rules 1-47 (rules 41-47 added 2026-05-20).
+5. **This file** — session-start prompt below.
+6. `audit/friction.md` if you're about to touch a fragile path.
 
 ## Where we are (2026-05-20 17:00 UTC)
 

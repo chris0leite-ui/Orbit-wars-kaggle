@@ -4,12 +4,21 @@
 > Replaces the per-branch `state/current.md` divergence. Read this
 > file FIRST every session (Rule 44).
 
+> **2026-05-28 update.** All "build on top of the baseline" work MUST
+> start from [`state/PEAK_BASELINE.md`](PEAK_BASELINE.md) — the canonical
+> reference for the strongest historical bundle (sub 52912707 μ=1165.4 /
+> resubmit 53013786 μ=1144.6, git tag `peak-1165`, bundle SHA `9ec3af83`,
+> frozen anchor at `submissions/baseline_peak_1165_anchor.py`). That
+> file documents the active vs dormant env-var stack, the mandatory
+> build-on-top protocol, and the anti-patterns from two days of regressions.
+
 ## How to use this doc
 
 1. Read the **Live Kaggle** section first; refresh from `kaggle competitions submissions orbit-wars` if any timestamp here is >24h old.
 2. Read the **Track registry** section to find which work-track owns the subsystem you're about to touch.
 3. Read the **Closed tracks** list — if your idea lives there, STOP, the axis is falsified.
 4. Before any `kaggle competitions submit`, fill out the **Push claim board** row (Rule 42).
+5. Before any "build on top of baseline" change, read [`PEAK_BASELINE.md`](PEAK_BASELINE.md) and follow the 7-step protocol there.
 
 ---
 
