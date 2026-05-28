@@ -106,7 +106,17 @@ Cross-link to `audit/friction.md` 2026-05-28 block (just-appended):
   `new-lib-module-silently-broken-bundle` 2026-05-13). Promotion
   candidate: rule the lib-add + bundle-order-add be one commit.
 
-## Promotion candidates (PI ratified: pending)
+## PI additions (from step 4)
+
+PI: "Nothing to add or to promote." (2026-05-28). No frictions missed,
+no decisions to flag, no candidates ratified.
+
+## Promotion candidates (PI ratified: **no** — none promoted)
+
+The three candidates below were drafted but explicitly declined by PI
+in step 4. Left in the postmortem as historical record (so a future
+session sees the same friction logged + already-considered + already-
+declined, rather than re-drafting the same promotions).
 
 ### [ ] CLAUDE.md — Counter-experiment before doctrine operationalisation
 
