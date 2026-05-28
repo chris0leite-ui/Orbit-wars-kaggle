@@ -23,10 +23,12 @@ from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy
 
 from agents.baseline.value import select_favor_fn
 
-WALLCLOCK_BUDGET_MS = 700.0
+WALLCLOCK_BUDGET_MS = 800.0
+WALLCLOCK_HARD_CAP_MS = 920.0
 N_VALIDATE = 60
 PER_CANDIDATE_SAFETY = 1.5
 RESERVED_OVERHEAD_MS = 50.0
+HARDCAP_BAIL_SENTINEL = -1e9
 
 
 def _select_opp_policy():
@@ -82,13 +84,21 @@ def build_idle_baseline(snap_base, me: int, num_seats: int,
 def score_action(snap_base, me: int, num_seats: int,
                  src_id: int, angle: float, ships: int,
                  horizon: int, baseline_favors: list[float],
-                 wait_N: int, gamma: float) -> float:
-    """Δ favor at horizon = leaf(my_action@wait_N) − baseline."""
+                 wait_N: int, gamma: float,
+                 hard_deadline: float | None = None) -> float:
+    """Δ favor at horizon = leaf(my_action@wait_N) − baseline.
+
+    `hard_deadline` (absolute `time.perf_counter()` seconds) bails the
+    rollout mid-flight and returns `HARDCAP_BAIL_SENTINEL`. The caller
+    drops sentinel deltas via the existing `if delta > 0` filter.
+    """
     favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
     for step_i in range(horizon):
         if snap.fake_env.done:
             break
+        if hard_deadline is not None and time.perf_counter() > hard_deadline:
+            return HARDCAP_BAIL_SENTINEL
         actions = opp_actions_for_snap(snap, me, num_seats)
         if step_i == int(wait_N):
             actions[me] = [[int(src_id), float(angle), int(ships)]]
@@ -159,11 +169,14 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     top = prerank[: min(N_VALIDATE, n_aff)]
 
     deadline = time.perf_counter() + wallclock_ms / 1000.0
-    # Pre-bail headroom: don't ENTER a candidate that would push us past
-    # the deadline. score_action is uninterruptible (runs the full K-step
-    # rollout once entered), so checking AT the deadline is too late.
-    # Closes the long-tail max-turn-ms overrun seen in the 2026-05-17 A/B.
+    # Pre-bail headroom: don't ENTER a candidate whose AVERAGE-cost projection
+    # would push us past the deadline. The hard cap below catches fat-tail
+    # candidates whose actual cost exceeds the per_cand_ms estimate.
     safe_deadline = deadline - (per_cand_ms / 1000.0)
+    # Hard cap: forced bail INSIDE the rollout. Returns HARDCAP_BAIL_SENTINEL
+    # so the in-flight candidate is discarded by `delta > 0` rather than
+    # forfeiting the whole turn to the Kaggle actTimeout.
+    hard_deadline = time.perf_counter() + WALLCLOCK_HARD_CAP_MS / 1000.0
     validated: list[tuple] = []
     for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
         if time.perf_counter() > safe_deadline:
@@ -179,6 +192,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
             snap_base, me, num_seats,
             int(src.id), float(angle), int(ships),
             int(horizon), baseline_favors, int(wait_N), gamma,
+            hard_deadline=hard_deadline,
         )
         if delta > 0:
             validated.append((delta, src, tgt, ships, angle, wait_N))

@@ -38,7 +38,7 @@ import math
 import os
 import time
 
-from agents.baseline.chooser import affordable_validate_cap, opp_actions_for_snap
+from agents.baseline.chooser import HARDCAP_BAIL_SENTINEL, WALLCLOCK_HARD_CAP_MS, affordable_validate_cap, opp_actions_for_snap
 from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
@@ -506,6 +506,7 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                        horizon: int,
                        skip_admissibility: bool = False,
                        wait_N: int = 0,
+                       hard_deadline: float | None = None,
                        ) -> tuple[float, str, int | None]:
     """v4 scoring: same admissibility filter + fast_sim rollout as v3,
     but the leaf is `favor_fn` instead of a binary owner-check, and the
@@ -568,6 +569,8 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     for t in range(horizon):
         if snap.fake_env.done:
             break
+        if hard_deadline is not None and time.perf_counter() > hard_deadline:
+            return (HARDCAP_BAIL_SENTINEL, "hardcap_bail", eta)
         actions = opp_actions_for_snap(snap, me, num_seats)
         if t == int(wait_N):
             # Candidate first (the chooser's primary decision), then
@@ -593,6 +596,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
                               favor_fn, gamma: float,
                               horizon: int,
                               skip_admissibility: bool = False,
+                              hard_deadline: float | None = None,
                               ) -> tuple[float, str]:
     """Direction B: score a JOINT candidate of multiple launches in one
     fast_sim rollout. `launches` is a list of
@@ -650,6 +654,8 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
     for t in range(horizon):
         if snap.fake_env.done:
             break
+        if hard_deadline is not None and time.perf_counter() > hard_deadline:
+            return (HARDCAP_BAIL_SENTINEL, "hardcap_bail")
         actions = opp_actions_for_snap(snap, me, num_seats)
         if t in inject_at:
             base_actions = list(inject_at[t])
@@ -826,6 +832,10 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             min_horizon, gamma,
         )
     safe_deadline = deadline - (per_cand_ms / 1000.0)
+    # Hard cap: forced bail INSIDE the rollout. Mirrors chooser.choose;
+    # protects against fat-tail candidates whose per_cand_ms estimate is
+    # wrong (heavy opp response, expensive leaf, deep horizon).
+    hard_deadline = time.perf_counter() + WALLCLOCK_HARD_CAP_MS / 1000.0
 
     scored: list[tuple] = []
     solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0
@@ -869,6 +879,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 horizon=int(prop_horizon),
                 skip_admissibility=skip_filter,
                 wait_N=int(wait_N),
+                hard_deadline=hard_deadline,
             )
             if status == "scored" and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))
@@ -946,6 +957,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         snap_base, launches, me, num_seats, world,
                         baseline_favors, favor_fn, gamma,
                         horizon=jh, skip_admissibility=skip_filter,
+                        hard_deadline=hard_deadline,
                     )
                     joint_count += 1
                     if j_status == "scored" and j_score > 0.0:
