@@ -740,6 +740,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                       world, model,
                       reserved_srcs: set[int] | None = None,
                       reserved_for_new_commits: set[int] | None = None,
+                      agent_deadline: float | None = None,
                       ) -> tuple[list[list], list[dict]]:
     """Drop-in alternative to `chooser.choose`.
 
@@ -834,8 +835,12 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     safe_deadline = deadline - (per_cand_ms / 1000.0)
     # Hard cap: forced bail INSIDE the rollout. Mirrors chooser.choose;
     # protects against fat-tail candidates whose per_cand_ms estimate is
-    # wrong (heavy opp response, expensive leaf, deep horizon).
+    # wrong. The agent-level deadline (if passed) overrides the internal
+    # cap — it accounts for pre/post-chooser overhead the chooser can't see.
     hard_deadline = time.perf_counter() + WALLCLOCK_HARD_CAP_MS / 1000.0
+    if agent_deadline is not None:
+        hard_deadline = min(hard_deadline, agent_deadline)
+        safe_deadline = min(safe_deadline, agent_deadline - per_cand_ms / 1000.0)
 
     scored: list[tuple] = []
     solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0

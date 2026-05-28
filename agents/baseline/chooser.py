@@ -148,6 +148,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
            world=None,
            reserved_srcs: set[int] | None = None,
            reserved_for_new_commits: set[int] | None = None,
+           agent_deadline: float | None = None,
            ) -> tuple[list[list], list[dict]]:
     """Validate top candidates with fast_sim, emit greedy non-dogpile moves.
 
@@ -175,8 +176,13 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     safe_deadline = deadline - (per_cand_ms / 1000.0)
     # Hard cap: forced bail INSIDE the rollout. Returns HARDCAP_BAIL_SENTINEL
     # so the in-flight candidate is discarded by `delta > 0` rather than
-    # forfeiting the whole turn to the Kaggle actTimeout.
+    # forfeiting the whole turn to the Kaggle actTimeout. The agent-level
+    # deadline (if passed) overrides — it accounts for pre-chooser setup
+    # and post-chooser bookkeeping that the chooser-internal cap can't see.
     hard_deadline = time.perf_counter() + WALLCLOCK_HARD_CAP_MS / 1000.0
+    if agent_deadline is not None:
+        hard_deadline = min(hard_deadline, agent_deadline)
+        safe_deadline = min(safe_deadline, agent_deadline - per_cand_ms / 1000.0)
     validated: list[tuple] = []
     for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
         if time.perf_counter() > safe_deadline:

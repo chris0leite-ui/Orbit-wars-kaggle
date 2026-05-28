@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 
 # Production default: hybrid value head (composite in 2P, A2-favor in 4P).
 # `setdefault` lets local A/B drivers (fast.py) override via env var without
@@ -842,6 +843,12 @@ def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
 
 
 def agent(obs, configuration=None):
+    t0_agent = time.perf_counter()
+    # Agent-level deadline: Kaggle actTimeout is 1000 ms; reserve 50 ms
+    # for post-chooser bookkeeping (emit_threat_reinforcements,
+    # drain_*, sniper_strikes) and Python overhead. The chooser will
+    # bail any mid-flight rollout that would push past this.
+    agent_deadline = t0_agent + 0.950
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
     step = int(obs_d.get("step", 0))
@@ -967,6 +974,7 @@ def agent(obs, configuration=None):
             world, model,
             reserved_srcs=reserved_srcs,
             reserved_for_new_commits=reserved_for_new_commits,
+            agent_deadline=agent_deadline,
         )
 
         # 2. Persist updated ledger (surviving + new commits) when on.
@@ -1038,6 +1046,7 @@ def agent(obs, configuration=None):
         world=world,
         reserved_srcs=composite_reserved,
         reserved_for_new_commits=composite_reserved_new,
+        agent_deadline=agent_deadline,
     )
 
     if ledger_on:
