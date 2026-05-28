@@ -21,6 +21,7 @@ import pytest
 
 from lib.shot_features import (
     FEATURE_DIM,
+    SIGNED_INDICES,
     encode_shot_features,
     fleet_speed,
     infer_target_pid,
@@ -62,11 +63,11 @@ def test_encode_shape_and_range():
     assert feats is not None
     assert feats.shape == (FEATURE_DIM,)
     assert feats.dtype == np.float32
-    # ship_diff (idx 21) and combat_margin (idx 24) in [-1, 1];
+    # SIGNED_INDICES (currently 21, 24, 36) sit in [-1, +1];
     # all other features in [0, 1].
     for i, v in enumerate(feats):
-        if i in (21, 24):
-            assert -1.0 <= v <= 1.0
+        if i in SIGNED_INDICES:
+            assert -1.0 <= v <= 1.0, f"signed feat {i}={v} out of [-1,1]"
         else:
             assert 0.0 <= v <= 1.0, f"feat {i}={v} out of [0,1]"
 

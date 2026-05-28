@@ -1,6 +1,6 @@
 {
-  "FEATURE_VERSION": 2,
-  "n_features": 25,
+  "FEATURE_VERSION": 3,
+  "n_features": 39,
   "label_buffer_steps": 10,
   "feature_names": [
     "src_ships",
@@ -9,9 +9,9 @@
     "tgt_ships",
     "tgt_production",
     "tgt_radius",
-    "tgt_owner_mine",
-    "tgt_owner_neutral",
-    "tgt_owner_enemy",
+    "tgt_owner_at_arrival_mine",
+    "tgt_owner_at_arrival_neutral",
+    "tgt_owner_at_arrival_enemy",
     "shot_ships_sent",
     "shot_ship_fraction",
     "shot_distance",
@@ -27,7 +27,21 @@
     "meta_ship_diff",
     "meta_my_planet_count",
     "meta_enemy_planet_count",
-    "combat_margin_at_arrival"
+    "combat_margin_at_arrival",
+    "path_fate_target",
+    "path_fate_planet",
+    "path_fate_sun",
+    "path_fate_oob",
+    "friendly_inflight_count_at_tgt",
+    "friendly_inflight_ships_at_tgt",
+    "src_safe_departure_ratio",
+    "shot_drains_safely",
+    "pv_capture",
+    "joint_arrival_count_at_eta",
+    "intercept_enemy_eta_at_tgt",
+    "target_growth_field_diff",
+    "src_time_to_nearest_enemy_threat",
+    "src_is_frontier"
   ],
   "feature_normalisation_constants": {
     "max_ships": 2000,
@@ -37,7 +51,10 @@
     "max_eta": 200,
     "board_diagonal": 141.42,
     "max_planets": 40,
-    "episode_steps": 500
+    "episode_steps": 500,
+    "max_pv_capture": 500.0,
+    "growth_field_max": 5.0
   },
-  "label_definition": "target planet owned by launching player at step min(launch_step + eta + 10, end_of_game)"
+  "signed_indices": [21, 24, 36],
+  "label_definition": "target planet owned by launching player at step min(launch_step + eta + 10, end_of_game); F3 swap moved tgt owner one-hot from launch-time to arrival-time at the same index slots (6-8); features 25-38 are the 14-dim Tier 1+2 expansion (F6, F10, F8, F4, F11, F7, F13, F9)."
 }

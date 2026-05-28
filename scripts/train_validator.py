@@ -40,7 +40,7 @@ HIDDEN2 = 32
 EPOCHS = 40
 BATCH = 512
 LR = 1e-3
-FEATURE_DIM = 25
+FEATURE_DIM = 39
 
 
 def _load_corpus(path: Path) -> tuple[np.ndarray, np.ndarray, list[str]]:

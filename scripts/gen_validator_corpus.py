@@ -65,13 +65,35 @@ def _load_agent_callable(path: str):
 
 def _label_shots_from_game(steps: list, game_id: str) -> list[dict]:
     """For each (step, seat, emit), encode features + lookup ownership at
-    step + eta + LABEL_BUFFER. Skip self-reinforcement."""
+    step + eta + LABEL_BUFFER. Skip self-reinforcement.
+
+    Phase 2 v2: World + WorldModel are built once per game step and threaded
+    into encode_features so the Tier 1+2 features don't pay the ~5 ms build
+    per emit (~50 emits / turn would eat 250 ms / turn otherwise).
+    """
     rows: list[dict] = []
     n_steps = len(steps)
     if n_steps < 2:
         return rows
 
+    from lib.intent import World  # local import keeps worker boot cheap
+    from lib.world_model import WorldModel
+
     for step_idx, step in enumerate(steps):
+        # Build per-step world view once. Both seats observe the same shared
+        # planets/fleets in orbit_wars; use seat 0's obs as canonical.
+        obs0 = step[0].get("observation", {}) or {}
+        if obs0.get("planets"):
+            try:
+                world = World.from_obs(obs0)
+                world_model = WorldModel.from_world(world)
+            except Exception:
+                world = None
+                world_model = None
+        else:
+            world = None
+            world_model = None
+
         for seat in range(len(step)):
             seat_state = step[seat]
             obs = seat_state.get("observation", {}) or {}
@@ -131,6 +153,7 @@ def _label_shots_from_game(steps: list, game_id: str) -> list[dict]:
                 feats = encode_features(
                     src, target, ships, d, eta, v,
                     planets, fleets, seat, step_idx,
+                    obs=obs, world=world, world_model=world_model,
                 )
                 rows.append({
                     "features": feats,

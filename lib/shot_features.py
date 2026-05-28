@@ -1,26 +1,25 @@
-"""Per-shot feature encoder for the konbu17-style shot validator MLP.
+"""Per-shot feature encoder for the konbu17-style shot validator.
 
-Pure function `encode_shot_features(emit, obs, focal_seat) -> ndarray(25,)`.
+Pure function `encode_shot_features(emit, obs, focal_seat, *, world=None,
+world_model=None) -> ndarray(39,)`.
+
 Lives in `lib/` (not `scripts/`) so:
-
   - the bundler inlines it into the submission once
   - both `scripts/gen_validator_corpus.py` (training-time) and
     `agents/baseline_validated/main.py` (inference-time) share one
     source of truth for the feature schema
 
-The 25-dim output matches `data/shot_validator/schema.json` exactly.
-See `knowledge-base/thoughts/2026-05-28-pm3-h14-recipe-locked-from-konbu17.md`
-for the feature definitions verified against konbu17's notebook cells 8 + 16.
+The 39-dim output matches `data/shot_validator/schema.json` v3.
 
-Feature 24 (`combat_margin_at_arrival`) was added in Stage 2 of PM5
-(2026-05-28): the model-readable form of the binary label. Production-walk
-prediction of the target garrison at ETA (owner's production accrues each
-tick if the planet is owned); margin = (ships_sent - pred) / max(1, pred),
-clamped to [-1, 1]. This approximation ignores in-flight defending fleets;
-F3 (`enemy_defenders_in_range`) will cover that orthogonal signal later.
+Phase 2 v2 (2026-05-29 — PM5 next-session): expanded from 25-d to 39-d
+with 9 new per-shot features (Tier 1 + Tier 2 from the PM4 deep-dive),
+plus F3 swap (arrival-time owner replacing launch-time owner at the
+existing index slots). See HANDOVER.md → "Phase 2 v2".
 
-Normalisation constants are the same `_NORM` dict used by
-`scripts/label_shot_outcomes.py` — both modules import from here now.
+Per-turn `World` + `WorldModel` construction is the caller's
+responsibility (~5 ms/turn at 40 planets). When `world` / `world_model`
+are omitted, the encoder builds them internally — fine for tests, but
+the inference path passes them in to avoid rebuilding per-emit.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ from typing import Any
 
 import numpy as np
 
-FEATURE_DIM = 25
+FEATURE_DIM = 39
 
 NORM = {
     "max_ships": 2000.0,
@@ -41,7 +40,22 @@ NORM = {
     "board_diagonal": 141.42,
     "max_planets": 40.0,
     "episode_steps": 500.0,
+    # F4 pv_capture: γ=0.99 over typical hold horizons gives values
+    # ~ production * 100 = up to 5*100 = 500. Set the norm to 500 so
+    # well-placed captures saturate near 1.0; mis-placed captures
+    # sit well below.
+    "max_pv_capture": 500.0,
+    # F13 target_growth_field_diff: Σ prod/dist² per side. Typical
+    # mid-game balance puts each side's field around 0.5-2.0; the
+    # diff is usually within ±2. Set the norm to 5.0 — bigger headroom
+    # so close-planet clusters don't clip too easily. Re-calibrate
+    # from corpus statistics if F13 saturates often.
+    "growth_field_max": 5.0,
 }
+
+# Indices into the 39-d vector whose natural range is [-1, +1] rather
+# than [0, 1]. Used by tests and downstream sanity checks.
+SIGNED_INDICES = (21, 24, 36)
 
 
 def fleet_speed(ships: float) -> float:
@@ -81,6 +95,23 @@ def infer_target_pid(
     return best_id
 
 
+def _build_world_if_needed(obs: Any, world):
+    """Build `lib.intent.World` lazily when the caller didn't provide one.
+    Inference passes `world` in; tests/back-compat fall through here."""
+    if world is not None:
+        return world
+    from lib.intent import World  # local import keeps cold path cheap
+    return World.from_obs(obs)
+
+
+def _build_model_if_needed(world, world_model):
+    """Build `lib.world_model.WorldModel` lazily."""
+    if world_model is not None:
+        return world_model
+    from lib.world_model import WorldModel
+    return WorldModel.from_world(world)
+
+
 def encode_features(
     src_planet: Any,
     target_planet: Any,
@@ -92,15 +123,25 @@ def encode_features(
     all_fleets: list,
     focal_seat: int,
     step: int,
+    *,
+    obs: Any = None,
+    world: Any = None,
+    world_model: Any = None,
 ) -> list[float]:
-    """Build the 25-dim feature vector. All values normalised to [0, 1]
-    except `ship_diff` (index 21) and `combat_margin` (index 24), both
-    in [-1, 1].
+    """Build the 39-dim feature vector. Values normalised to [0, 1]
+    except SIGNED_INDICES = (21, 24, 36) which sit in [-1, 1].
 
     Tuple indexing follows the kaggle_environments schema:
       Planet = (id=0, owner=1, x=2, y=3, radius=4, ships=5, production=6)
       Fleet  = (id=0, owner=1, x=2, y=3, angle=4, from_planet_id=5, ships=6)
+
+    Tier-2 features (F3, F6, F4, F8, F10, F11, F7, F13, F9) need a
+    pre-built `world` (lib.intent.World) and `world_model`
+    (lib.world_model.WorldModel). When not supplied, they're built
+    here from `obs` — slow path used by tests only; callers in the
+    training + inference paths supply both.
     """
+    # ----- basic per-shot features (existing 25 - 3 dropped for F3 swap) -----
     sps_ships = src_planet[5] / NORM["max_ships"]
     sps_prod = src_planet[6] / NORM["max_production"]
     sps_rad = src_planet[4] / NORM["max_radius"]
@@ -108,11 +149,6 @@ def encode_features(
     tgt_ships = target_planet[5] / NORM["max_ships"]
     tgt_prod = target_planet[6] / NORM["max_production"]
     tgt_rad = target_planet[4] / NORM["max_radius"]
-
-    tgt_owner = int(target_planet[1])
-    owner_mine = 1.0 if tgt_owner == focal_seat else 0.0
-    owner_neutral = 1.0 if tgt_owner == -1 else 0.0
-    owner_enemy = 1.0 if (tgt_owner != -1 and tgt_owner != focal_seat) else 0.0
 
     src_garrison = max(1.0, float(src_planet[5]))
     shot_ships = min(1.0, ships_sent / NORM["max_ships"])
@@ -158,29 +194,208 @@ def encode_features(
     my_pc_n = my_planet_count / NORM["max_planets"]
     enemy_pc_n = enemy_planet_count / NORM["max_planets"]
 
-    # F2 combat_margin_at_arrival: production-walk prediction of the
-    # target's garrison at ETA, then signed margin of ships_sent against
-    # it. Owned planets accrue `production` per tick; neutrals don't.
-    # Ignores in-flight fleets (F3 covers that orthogonal signal). The
-    # raw target tuple's owner / ships / production carry the unnormalised
-    # values we need; encoder receives raw tuples by design.
-    if tgt_owner != -1:
-        pred_garrison = float(target_planet[5]) + float(target_planet[6]) * float(eta)
+    # F2 combat_margin_at_arrival (PM5): production-walk only, ignores
+    # in-flight defenders. Kept as a fast, model-agnostic shape signal;
+    # F3 + the timeline-aware features below pick up the in-flight side.
+    tgt_owner_launch = int(target_planet[1])
+    if tgt_owner_launch != -1:
+        pred_garrison_simple = float(target_planet[5]) + float(target_planet[6]) * float(eta)
     else:
-        pred_garrison = float(target_planet[5])
-    pred_denom = max(1.0, pred_garrison)
-    combat_margin = max(-1.0, min(1.0, (ships_sent - pred_denom) / pred_denom))
+        pred_garrison_simple = float(target_planet[5])
+    pred_denom_simple = max(1.0, pred_garrison_simple)
+    combat_margin = max(-1.0, min(1.0,
+        (ships_sent - pred_denom_simple) / pred_denom_simple))
+
+    # ----- Tier 1 + Tier 2 features (Phase 2 v2 additions) -----
+    # All Tier-2 features need world + world_model. Build lazily when
+    # the caller didn't provide them (tests).
+    world = _build_world_if_needed(obs, world)
+    world_model = _build_model_if_needed(world, world_model)
+
+    src_pid = int(src_planet[0])
+    tgt_pid = int(target_planet[0])
+
+    # F3 owner_at_arrival_one_hot — REPLACES launch-time owner at indices 6-8.
+    # Uses predict_garrison_at against the per-target arrival ledger.
+    from lib.world_model import predict_garrison_at as _pga
+    tgt_planet_obj = world.planets_by_id.get(tgt_pid)
+    if tgt_planet_obj is not None:
+        arrivals_at_tgt = world_model.ledger.get(tgt_pid, [])
+        owner_at_arr, pred_garrison_full = _pga(
+            tgt_planet_obj, int(round(eta)), arrivals_at_tgt
+        )
+    else:
+        owner_at_arr = tgt_owner_launch
+        pred_garrison_full = pred_garrison_simple
+    owner_mine = 1.0 if owner_at_arr == focal_seat else 0.0
+    owner_neutral = 1.0 if owner_at_arr == -1 else 0.0
+    owner_enemy = 1.0 if (owner_at_arr != -1 and owner_at_arr != focal_seat) else 0.0
+
+    # F6 path_fate_one_hot — outcomes from predict_fleet_fate.
+    # The four buckets are mutually exclusive; "timeout" maps to all-zero
+    # (very rare on a 100x100 board).
+    from lib.trajectory import predict_fleet_fate as _pff
+    src_planet_obj = world.planets_by_id.get(src_pid)
+    fate_target = fate_planet = fate_sun = fate_oob = 0.0
+    if src_planet_obj is not None and tgt_planet_obj is not None:
+        # Aim angle comes from the emit's positional argument 1; recompute
+        # from src/tgt geometry to avoid threading another parameter.
+        angle_for_fate = math.atan2(
+            float(tgt_planet_obj.y) - float(src_planet_obj.y),
+            float(tgt_planet_obj.x) - float(src_planet_obj.x),
+        )
+        # max_steps cap: cover the trajectory plus a small slack window
+        # (target may move under us; +20 covers orbital drift cases).
+        max_steps_cap = max(20, int(eta) + 20)
+        fate = _pff(
+            src_planet_obj, tgt_planet_obj, angle_for_fate,
+            int(round(ships_sent)), world, max_steps=max_steps_cap,
+        )
+        if fate.outcome == "target":
+            fate_target = 1.0
+        elif fate.outcome == "planet":
+            fate_planet = 1.0
+        elif fate.outcome == "sun":
+            fate_sun = 1.0
+        elif fate.outcome == "oob":
+            fate_oob = 1.0
+        # "timeout" → all four zero
+
+    # F10 same_target_friendly_inflight {count, ships}.
+    arrivals_at_tgt = world_model.ledger.get(tgt_pid, [])
+    friendly_at_tgt = [
+        (e_, s_) for (e_, o_, s_) in arrivals_at_tgt if o_ == focal_seat
+    ]
+    friendly_inflight_n = min(1.0,
+        len(friendly_at_tgt) / NORM["max_planets"])
+    friendly_inflight_ships = min(1.0,
+        sum(s_ for _, s_ in friendly_at_tgt) / NORM["max_ships"])
+
+    # F8 src_safe_departure_ratio + shot_drains_safely.
+    # safe_dep = src.ships + prod * enemy_eta - inbound_enemy_ships - 1
+    # ratio = min(1, safe_dep / ships_sent); binary version on the side.
+    from lib.world_model import WAVE_LOOKAHEAD as _WAVE
+    enemy_eta_at_src = world_model.incoming_enemy_eta(src_pid, focal_seat)
+    if enemy_eta_at_src is None:
+        # No inbound enemy — source is fully safe. Use a generous horizon.
+        horizon_for_safe = _WAVE
+        inbound_enemy_ships = 0.0
+    else:
+        horizon_for_safe = enemy_eta_at_src
+        arrivals_at_src = world_model.ledger.get(src_pid, [])
+        inbound_enemy_ships = sum(
+            s_ for (e_, o_, s_) in arrivals_at_src
+            if o_ != focal_seat and e_ <= enemy_eta_at_src
+        )
+    src_prod = float(src_planet[6])
+    src_ships_raw = float(src_planet[5])
+    safe_dep_raw = (
+        src_ships_raw + src_prod * float(horizon_for_safe)
+        - inbound_enemy_ships - 1.0
+    )
+    src_safe_dep_ratio = max(0.0, min(1.0,
+        safe_dep_raw / max(1.0, float(ships_sent))))
+    shot_drains_safely = 1.0 if safe_dep_raw >= float(ships_sent) else 0.0
+
+    # F4 pv_capture: γ=0.99 over expected_hold-truncated horizon × target.production.
+    from lib.scoring import pv_horizon as _pvh, expected_hold as _eh
+    if tgt_planet_obj is not None:
+        hold = _eh(tgt_pid, int(round(eta)), world, world_model)
+        t_total_for_pv = int(world.step) + int(round(eta)) + int(hold)
+        pv_raw = _pvh(
+            int(world.step), int(round(eta)),
+            gamma=0.99, t_total=t_total_for_pv,
+        ) * float(tgt_planet_obj.production)
+    else:
+        pv_raw = 0.0
+    pv_capture = min(1.0, pv_raw / NORM["max_pv_capture"])
+
+    # F11 joint_arrival_count_at_eta — ±1-step same-owner stack count.
+    eta_int = int(round(eta))
+    joint_arr_n = sum(
+        1 for (e_, o_, s_) in arrivals_at_tgt
+        if o_ == focal_seat and abs(e_ - eta_int) <= 1
+    )
+    joint_arrival_count = min(1.0, joint_arr_n / NORM["max_planets"])
+
+    # F7 intercept_enemy_eta — earliest enemy arrival at target.
+    # Saturates at 1.0 when no inbound; smaller when enemy is close.
+    intercept_eta = world_model.incoming_enemy_eta_after(
+        tgt_pid, focal_seat, after=0
+    )
+    if intercept_eta is None:
+        intercept_norm = 1.0
+    else:
+        intercept_norm = min(1.0, intercept_eta / NORM["max_eta"])
+
+    # F13 target_growth_field_diff — zvold's electrostatic field.
+    # Σ prod/dist² over my planets minus enemy planets, normalised.
+    # Substrate not in `lib/` — inline impl.
+    if tgt_planet_obj is not None:
+        tx = float(tgt_planet_obj.x)
+        ty = float(tgt_planet_obj.y)
+        field_mine = 0.0
+        field_enemy = 0.0
+        for p_obj in world.planets_by_id.values():
+            if p_obj.id == tgt_pid:
+                continue
+            dx = float(p_obj.x) - tx
+            dy = float(p_obj.y) - ty
+            d_sq = max(0.5, dx * dx + dy * dy)
+            contrib = float(p_obj.production) / d_sq
+            if p_obj.owner == focal_seat:
+                field_mine += contrib
+            elif p_obj.owner != -1:
+                field_enemy += contrib
+        growth_field_diff = max(-1.0, min(1.0,
+            (field_mine - field_enemy) / NORM["growth_field_max"]))
+    else:
+        growth_field_diff = 0.0
+
+    # F9 src_time_to_nearest_enemy_threat + src_is_frontier.
+    # threat == None means saturate (no enemy can plausibly reach src).
+    src_threat = world_model.time_to_enemy_threat(
+        src_pid, focal_seat, world,
+    ) if src_planet_obj is not None else None
+    if src_threat is None:
+        src_threat_norm = 1.0
+        src_is_frontier = 0.0
+    else:
+        src_threat_norm = min(1.0, src_threat / NORM["max_eta"])
+        src_is_frontier = 1.0 if src_threat < 25 else 0.0
 
     return [
+        # 0-5: planet-static features
         sps_ships, sps_prod, sps_rad,
         tgt_ships, tgt_prod, tgt_rad,
+        # 6-8: F3 arrival-time owner one-hot (Phase 2 v2 swap)
         owner_mine, owner_neutral, owner_enemy,
+        # 9-13: shot-static features
         shot_ships, shot_frac, shot_dist, shot_eta, shot_fs,
+        # 14-17: in-flight totals
         in_flight_n_allied, in_flight_ship_allied,
         in_flight_n_enemy, in_flight_ship_enemy,
+        # 18-23: meta
         meta_turn, my_total_ships_n, enemy_total_ships_n,
         ship_diff, my_pc_n, enemy_pc_n,
+        # 24: F2 combat margin (PM5)
         combat_margin,
+        # 25-28: F6 path-fate one-hot
+        fate_target, fate_planet, fate_sun, fate_oob,
+        # 29-30: F10 friendly inflight at target
+        friendly_inflight_n, friendly_inflight_ships,
+        # 31-32: F8 source-drain safety
+        src_safe_dep_ratio, shot_drains_safely,
+        # 33: F4 pv_capture
+        pv_capture,
+        # 34: F11 joint arrival count at eta
+        joint_arrival_count,
+        # 35: F7 intercept enemy eta (norm)
+        intercept_norm,
+        # 36: F13 growth-field diff (signed)
+        growth_field_diff,
+        # 37-38: F9 source-side threat features
+        src_threat_norm, src_is_frontier,
     ]
 
 
@@ -188,12 +403,19 @@ def encode_shot_features(
     emit: list,
     obs: Any,
     focal_seat: int,
+    *,
+    world: Any = None,
+    world_model: Any = None,
 ) -> np.ndarray | None:
     """Inference-time wrapper. Returns None if the emit is malformed or
     cannot be associated with a target planet via ray-cast.
 
     `emit` = [src_pid, angle, ships]
     `obs` exposes `.planets`, `.fleets`, `.step` (dict or Struct).
+
+    Optional `world` and `world_model`: pass pre-built per-turn instances
+    to avoid the ~5 ms per-call build. When omitted, both are built
+    here from `obs` (slow path; fine for tests).
     """
     if not emit or len(emit) < 3:
         return None
@@ -232,6 +454,7 @@ def encode_shot_features(
     feats = encode_features(
         src, target, ships, d, eta, v,
         planets, fleets, focal_seat, step,
+        obs=obs, world=world, world_model=world_model,
     )
     return np.asarray(feats, dtype=np.float32)
 
