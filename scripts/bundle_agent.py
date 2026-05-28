@@ -119,6 +119,12 @@ DEFAULT_LIB_ORDER = [
     # don't enable BASELINE_VALUE_HEAD=learned (the import is gated
     # inside `select_favor_fn`).
     "value_features",
+    # 2026-05-28 PM H14 shot validator. `lib/shot_features.py` is the
+    # 24-dim per-shot feature extractor imported by both the training
+    # script (`scripts/gen_validator_corpus.py`) and the validator
+    # wrapper agent (`agents/baseline_validated/main.py`). Bundle-inert
+    # for agents that don't import it.
+    "shot_features",
 ]
 SUBMISSIONS = REPO / "submissions"
 
