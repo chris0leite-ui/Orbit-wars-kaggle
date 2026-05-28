@@ -42,6 +42,10 @@ REPO = Path(__file__).resolve().parents[1]
 # via pathlib's `/` operator transparently.
 DEFAULT_LIB_ORDER = [
     "geometry",
+    # 2026-05-29: mirror — 180-degree bijection helpers used by
+    # missions/macro (and reusable for any 2P symmetric-board logic).
+    # Pure Python, depends only on geometry.
+    "mirror",
     "fleet",
     "orbit",
     "aim",
@@ -70,6 +74,10 @@ DEFAULT_LIB_ORDER = [
     # opening default 1 to preserve main's intent). Bundles built
     # without flag overrides keep main's v7_1 behaviour.
     "missions/opening",
+    # 2026-05-29: macro mission planner (2P EXPAND/STOCKPILE/STRIKE/DEFEND).
+    # Pure-lib; depends only on geometry + mirror (both already inlined
+    # above). Wired by agents/baseline/main.py behind BASELINE_MACRO=1.
+    "missions/macro",
     "missions/drain",
     "missions/gang_up",
     # v7.3 (2026-05-14): hand-crafted opp archetypes for min-regret /

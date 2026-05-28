@@ -154,12 +154,19 @@ _PENDING_LAUNCHES: dict[int, list[dict]] = {}
 # to standard chooser. Default OFF; opt-in via BASELINE_OPENING_MILP=1.
 OPENING_MILP_ENABLED = os.environ.get("BASELINE_OPENING_MILP", "0") == "1"
 
+# Macro mission planner (2026-05-29). 2P state machine layered ON TOP of
+# the per-move chooser: EXPAND a forward lateral, STOCKPILE, STRIKE with
+# bundled forces, DEFEND when home is about to flip. Default OFF; opt-in
+# via BASELINE_MACRO=1. See lib/missions/macro.py for state semantics.
+MACRO_ENABLED = os.environ.get("BASELINE_MACRO", "0") == "1"
+
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from lib.fast_sim import from_obs as fs_from_obs
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
 from lib.joint_solver.opening_planner import OPENING_HORIZON, opening_plan
+from lib.missions.macro import determine_macro_state
 from lib.missions.reinforce import propose_reinforce_missions
 from lib.orbit import predict_relative
 from lib.trajectory import predict_fleet_fate
@@ -865,6 +872,46 @@ def agent(obs, configuration=None):
     gamma = _gamma()
     wallclock_ms = _wallclock_ms()
 
+    # Macro mission planner (2026-05-29). Runs before chooser. Emits at
+    # most one bundled launch this turn (EXPAND / STRIKE) AND/OR reserves
+    # a chooser source (STOCKPILE — block the chooser from draining the
+    # stockpile lateral). Gated 2P; falls through with no-op in 4P.
+    macro_moves: list[list] = []
+    macro_reserved: set[int] = set()
+    if MACRO_ENABLED and num_seats == 2:
+        from agents.baseline.proposer import aim_and_eta as _macro_aim
+        initial_planets_raw = obs_d.get("initial_planets") or []
+        try:
+            macro_state = determine_macro_state(
+                world, model, me, num_seats, omega, initial_planets_raw,
+            )
+        except Exception:
+            macro_state = None
+        if macro_state is not None:
+            if macro_state.hold_src is not None:
+                macro_reserved.add(int(macro_state.hold_src))
+            emit = macro_state.emit
+            if emit is not None:
+                src = world.planets_by_id.get(int(emit.src_id))
+                tgt = world.planets_by_id.get(int(emit.tgt_id))
+                if src is not None and tgt is not None:
+                    available = int(src.ships)
+                    ships_to_send = min(int(emit.ships), available)
+                    if ships_to_send > 0:
+                        try:
+                            angle, _eta = _macro_aim(
+                                src, tgt, ships_to_send, omega,
+                                wait_N=0, world=world,
+                            )
+                            macro_moves.append(
+                                [int(src.id), float(angle), int(ships_to_send)],
+                            )
+                            # Reserve the macro emit's source so the
+                            # chooser doesn't double-launch from it.
+                            macro_reserved.add(int(src.id))
+                        except Exception:
+                            pass
+
     threatened_mine = [
         p for p in my_planets
         if model.time_to_enemy_threat(int(p.id), me, world) is not None
@@ -948,6 +995,12 @@ def agent(obs, configuration=None):
             reserved_srcs = firing_srcs if mode == "soft" \
                 else firing_srcs | pending_srcs
 
+        # Macro reservations: STOCKPILE hold_src + macro emit src.
+        # Layered on top of any ledger reservations.
+        if macro_reserved:
+            reserved_srcs = reserved_srcs | macro_reserved
+            reserved_for_new_commits = reserved_for_new_commits | macro_reserved
+
         moves, new_commits = choose_trajectory(
             snap_base, prerank, None,
             me, num_seats, wallclock_ms,
@@ -961,7 +1014,7 @@ def agent(obs, configuration=None):
         if ledger_on:
             _PENDING_LAUNCHES[me] = surviving_pending + new_commits
 
-        moves = due_moves + moves
+        moves = due_moves + macro_moves + moves
         moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
@@ -1019,6 +1072,10 @@ def agent(obs, configuration=None):
         composite_reserved = firing_srcs if mode == "soft" \
             else firing_srcs | pending_srcs
 
+    if macro_reserved:
+        composite_reserved = composite_reserved | macro_reserved
+        composite_reserved_new = composite_reserved_new | macro_reserved
+
     moves, new_commits = choose(
         snap_base, prerank, baseline_favors,
         me, num_seats, wallclock_ms,
@@ -1031,7 +1088,7 @@ def agent(obs, configuration=None):
     if ledger_on:
         _PENDING_LAUNCHES[me] = composite_surviving + new_commits
 
-    moves = composite_due + moves
+    moves = composite_due + macro_moves + moves
     moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
     moves = drain_idle_rear(moves, planets, me, world, model)
     moves = drain_stagnant_rear(moves, planets, me, world, model)
