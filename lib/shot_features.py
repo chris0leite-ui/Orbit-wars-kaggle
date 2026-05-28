@@ -127,6 +127,7 @@ def encode_features(
     obs: Any = None,
     world: Any = None,
     world_model: Any = None,
+    aim_angle: float | None = None,
 ) -> list[float]:
     """Build the 39-dim feature vector. Values normalised to [0, 1]
     except SIGNED_INDICES = (21, 24, 36) which sit in [-1, 1].
@@ -238,12 +239,16 @@ def encode_features(
     src_planet_obj = world.planets_by_id.get(src_pid)
     fate_target = fate_planet = fate_sun = fate_oob = 0.0
     if src_planet_obj is not None and tgt_planet_obj is not None:
-        # Aim angle comes from the emit's positional argument 1; recompute
-        # from src/tgt geometry to avoid threading another parameter.
-        angle_for_fate = math.atan2(
-            float(tgt_planet_obj.y) - float(src_planet_obj.y),
-            float(tgt_planet_obj.x) - float(src_planet_obj.x),
-        )
+        # F6 must reflect the AGENT'S actual aim. The centre-to-centre
+        # recomputation was muddying the signal (Rule 47 substrate trace
+        # showed 12.18% waste from naive aim vs ~real-aim ground truth).
+        if aim_angle is not None:
+            angle_for_fate = float(aim_angle)
+        else:
+            angle_for_fate = math.atan2(
+                float(tgt_planet_obj.y) - float(src_planet_obj.y),
+                float(tgt_planet_obj.x) - float(src_planet_obj.x),
+            )
         # max_steps cap: cover the trajectory plus a small slack window
         # (target may move under us; +20 covers orbital drift cases).
         max_steps_cap = max(20, int(eta) + 20)
@@ -455,6 +460,7 @@ def encode_shot_features(
         src, target, ships, d, eta, v,
         planets, fleets, focal_seat, step,
         obs=obs, world=world, world_model=world_model,
+        aim_angle=angle,
     )
     return np.asarray(feats, dtype=np.float32)
 

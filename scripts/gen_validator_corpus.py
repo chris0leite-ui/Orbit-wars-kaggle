@@ -154,6 +154,7 @@ def _label_shots_from_game(steps: list, game_id: str) -> list[dict]:
                     src, target, ships, d, eta, v,
                     planets, fleets, seat, step_idx,
                     obs=obs, world=world, world_model=world_model,
+                    aim_angle=angle,
                 )
                 rows.append({
                     "features": feats,
