@@ -1,160 +1,150 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-28 PM by `claude/kaggle-submission-review-gZsCu`.
-> Prior content archived in
-> `audit/archive-2026-05-28-handover-pre-pv-eta.md` (318 lines of
-> Day-N PM sections from 2026-05-17 → 2026-05-22).
+> Last written: 2026-05-28 PM2 by `claude/kaggle-submission-review-gZsCu`.
+> Supersedes the PM1 (PV_ETA ship) handover written ~5h earlier today.
+> Prior session content remains in
+> `audit/2026-05-28-postmortem-pv-eta-pm-pv-eta-and-silent-turns.md` (PM1)
+> and `audit/2026-05-28-postmortem-pm2-leaf-pv-2p-compute-variance.md` (PM2).
 
 ## Read order (Rule 44 — mandatory)
 
-1. **`state/MULTI_BRANCH.md`** — live Kaggle rolling pair, three-track
-   registry, closed tracks, push claim board. **Refresh from
-   `kaggle competitions submissions orbit-wars` at session start.**
-2. **`state/PEAK_BASELINE.md`** — peak bundle truth, active vs dormant
-   env-var stack, build-on-top protocol. Mandatory before any baseline
-   subsystem edit.
-3. **`CLAUDE.md`** — rules 1-47.
-4. **This file** — next-session first action below.
-5. **`knowledge-base/thoughts/2026-05-28-silent-turns-pre-existing-weakness.md`**
-   — the working theory and probe plan PI directed: "begin in the first
-   session with further investigation and hard thinking."
-6. `audit/2026-05-28-postmortem-pv-eta-pm-pv-eta-and-silent-turns.md`
-   — full session postmortem with promotion candidates pending PI input.
+1. **`state/MULTI_BRANCH.md`** — live Kaggle rolling pair, push-claim
+   board. **Refresh from `kaggle competitions submissions orbit-wars` at
+   session start.**
+2. **`CLAUDE.md`** — rules 1-48. NEW today: Rule 48 (same-day readings
+   are climb snapshots, not verdicts) and Rule 45b (confound check
+   before sub-gate-strength submit).
+3. **`comp-context.md::SCORES DO NOT SETTLE`** block — read before
+   interpreting any sub μ taken < 4h after submit. PI corrected this
+   recurring misread today; the loud block is the durable fix.
+4. **This file** — next-session first action below (strategic direction).
+5. `knowledge-base/flags/2026-05-28-compute-variation-ab-noise.md` —
+   parked compute-variance fix; do not propose shipping until ladder
+   stabilizes on leaf_pv_2p.
 
-## Where we are (2026-05-28 PM UTC)
+## Where we are (2026-05-28 PM2 UTC)
 
 - **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC. **~26 days remain.**
-- **Rolling-last-2 (live, post sub 53111837):**
-  - **53111837** (PV_ETA=1, **μ pending** — predicted 1100-1170, mode 1140).
-  - **53099429** (peak-restore byte-identical, μ=1116.2). Note this is
-    ~30μ below the peak's historical 1144-1165 band — ladder drift in
-    the last 24h re-calibrates expectations downward.
-- **Daily submission budget:** 5/day. 2026-05-28 UTC used: 1 (this).
-  4 slots remain. The 5/27→5/28 batch (revert, peak-restore, κ=0.02,
-  PV_ETA) consumed considerable PI capital.
-- **Open question:** how does sub 53111837 settle? Update calibration
-  ladder when ladder-μ stabilizes (~30 min - few h after submit).
+- **Live rolling pair (snapshot 14:40 UTC — NOT verdicts, see Rule 48):**
+  - **53117942** (LEAF_PV_2P=1, μ=921.3 ~45min after submit, **CLIMBING**).
+  - **53111837** (PV_ETA=1, μ=1163.5 — **NEW LIVE PEAK**, above historical
+    1144-1165 band, stabler read).
+- **Daily submission budget:** 5/day. 2026-05-28 UTC used: 2 (PV_ETA +
+  leaf_pv_2p). UTC midnight resets to 5.
+- **Open question:** where does sub 53117942 stabilize? See
+  `knowledge-base/questions/2026-05-28-leaf-pv-2p-climb-trajectory.md`
+  for the decision tree.
 
-## Today's session — what landed
+## Today's session — what landed (PM1 + PM2)
 
-**Chapter A — ship the `favor` leaf flight-time fix (PV_ETA).**
+**PM1:** PV_ETA shipped (sub 53111837 → live peak μ=1163.5). The
+`γ^(wait_N+eta)` discount supersedes the SHIP_TURN_KAPPA band-aid as the
+modeling-correct present-value pull-back on candidate Δ. 5 unit tests +
+55-test sibling suite green.
 
-- Single env-var-gated change `BASELINE_PV_ETA=1`: multiply candidate
-  Δ by `γ^(wait_N + eta)` in `score_candidate_v4` + `score_candidate_v4_joint`.
-  No new tuning knob (γ is `BASELINE_GAMMA=0.99`). Default OFF preserves
-  byte-identical peak behavior.
-- Commits: `c45cf00` (feature + 5 unit tests), `a65e8b4`+`e65b50a`
-  (new `scripts/ab_quick.py` parallel no-swap step-250 A/B harness),
-  `0d71aa6` (bundle + wrapper), `564b70e` (push-claim row).
-- Sub **53111837** submitted, **μ pending**.
-- Audit: `audit/2026-05-28-postmortem-pv-eta-pm-pv-eta-and-silent-turns.md`.
-
-**Chapter B — diagnose seed=2 panel losses.**
-
-- 5-seed step-250 panel: 4-1 uniformly across 4 opponents (`peak_anchor`,
-  `v7_0`, `v4_planner`, `v3.5.1`); pooled 16-4/20 = 80%, Wilson-lo 0.58.
-- All 4 losses were seed=2. Investigated. **Verdict: PV_ETA is NOT the
-  cause** — peak baseline (PV_ETA=0) ALSO loses seed=2 vs v4_planner.
-  Pre-existing weakness.
-- Smoking-gun: P0 chooser emits zero launches for 13-29 consecutive
-  mid-game turns; opponent emits every-turn-or-near. WIN-case seed=1
-  has mid-game streaks ≤ 8. Knowledge-base entry has the table.
+**PM2:** LEAF_PV_2P shipped (sub 53117942, climbing). Re-enables the 2P
+leaf production-PV term disabled since 2026-05-18 to address PM1's
+silent-turns thesis. Local n=10 vs anchor 7-3, 5-0 mechanism check vs
+v4_planner with seed=2 flip. Compute-variance investigation: same-seed
+step counts drift across A/B runs; cause is wallclock-coupling in
+`affordable_validate_cap()` (`n_aff` is CPU-speed-dependent).
+Confirmation A/B with pinned cores converged 4/4 outcomes. **Fix
+identified but parked** — pinning `n_aff=60` changed outcomes to draws
+in the diagnostic, signaling playstyle change; calibration needed.
 
 ## Falsified-or-killed this session
 
-- **"PV_ETA causes seed=2 losses"** — falsified. Peak loses seed=2 vs
-  v4_planner at step 138; PV_ETA loses at step 145. PV_ETA modestly
-  reduces the worst silent streak (14 → 13).
-- **"`bundle_agent.py agents/baseline --force` parity-gate is fine"** —
-  falsified for 2nd consecutive day; promote to tooling-fix priority.
+- **"PYTHONHASHSEED randomization is the A/B non-determinism source"** —
+  rejected. Hash-fixed runs still drift in step count (218 vs 305).
+- **"Compute variance alone explains 50μ peak-resubmit drift"** —
+  rejected. Opp pool churn + σ shrinkage + scores-still-climbing also
+  contribute. Multi-causal; cannot attribute purely to compute.
 
-## Next-session first action (PI directive: "further investigation and hard thinking")
+## Next-session first action — STRATEGIC DIRECTION (PI-set)
 
-### Priority 1 — silent-turns root-cause investigation (sequential)
+**Diagnosis (PI, end of PM2):** the agent has three observable symptoms —
+fleet sizes too small, rear planets don't mobilize forward, no early
+expansion. Root cause: agent is a per-move local optimizer with no
+macro layer. Every leaf is conservative against opponents-from-anywhere,
+so sum of locally-cautious moves = globally-defensive crouch. The fix
+is to make the agent **commit to a direction**, expand early, and
+mobilize the rear toward the front.
 
-1. **Instrument `score_candidate_v4` on a silent turn.** Replay seed=2
-   vs v4_planner. Intercept the chooser at t=22 (a known silent turn
-   in the PV_ETA=1 trace). Dump every candidate's `(src, tgt, ships,
-   wait_N, eta, raw_delta, post_bonus_delta, post_pv_eta_delta, status)`.
-   This is the diagnostic that **answers the question "are all
-   candidates truly negative, or are some positive-but-below-MIN_DELTA?"**
-   Expected wallclock: 1-2 hours including writing the script. Output
-   should be a CSV in `audit/2026-05-29-silent-turn-trace.csv`.
+### Strategic direction: macro layer on top of the chooser
 
-2. **Conditional on 1.** If candidates are positive-but-tiny: ablate
-   `BASELINE_MIN_DELTA=-5.0` on seed=2; if P0 emits more and panel
-   rate holds, we have a quick lift. Wallclock: 30 min A/B run.
+The mechanisms compose. Ordered by implementation cost (cheapest first):
 
-3. **Conditional on 1.** If candidates are uniformly negative: build
-   the opp-model mixture probe. Swap `lite_greedy_policy` in
-   `opp_actions_for_snap` for a 4-way mixture of {greedy, do-nothing,
-   sniper, defender} weighted by ladder priors. Hypothesis: less-
-   confident rollout opp-model lets our captures look positive-EV at
-   the leaf. Wallclock: half-day build (mixture sampler) + half-day A/B.
+**Item 1 — Attack-axis bonus (FIRST CUT, recommended next-session start)**
+- New scoring term in `score_candidate_v4` / `_v4_joint`:
+  `delta += ATTACK_AXIS_WEIGHT * ships * cos(capture_vector, attack_axis)`
+- `attack_axis = opp_centroid − own_centroid` (recomputed each turn).
+- Effects: rear-to-front launches earn a bonus → mobilizes the rear.
+  Captures *away* from opp deprioritized → no wasted ship-turns behind us.
+  Agent naturally commits to a flank because the bonus reinforces direction.
+- Build: 1 env var (`BASELINE_ATTACK_AXIS=1`, default OFF for byte
+  parity), 5 unit tests (centroid math; cos alignment; env-gating;
+  byte-identical OFF; joint variant). ~½ session.
+- A/B gate: Rule 45 n≥32 with Rule 45b confound check (PYTHONHASHSEED=0
+  + OMP_NUM_THREADS=1 + taskset for the seed re-runs).
+- Acceptance: visible directional behavior in seed traces — agent
+  should *visibly* commit south-east when opp centroid is south-east.
 
-4. **Independent of 1-3.** Track down the cross-process determinism
-   leak. `git grep -nE "time\.time|random\.(random|seed|sample)|id\("
-   agents/baseline lib/`; audit each call site for seed-dependency.
-   If we find unseeded RNG in the hot path, fix it. The leak is
-   poisoning every n=5 A/B currently.
+**Item 2 — Early-expansion mandate (composes with item 1)**
+- For first ~30 turns, increase production-PV weight in the 2P leaf
+  (or add a separate neutral-capture bonus).
+- Pairs with H40 (geometry-conditional opening book) as the lighter
+  first version — no archetype classifier needed yet.
+- Build: ~½ session.
 
-### Priority 2 — tooling fixes
+**Item 3 — Opp-model spatial restriction (deeper mechanism fix)**
+- `lite_greedy_policy` currently assumes opp counter-attacks can come
+  from any opp planet. Restrict to planets where
+  `eta(opp_planet → our_target) < safe_horizon`.
+- Directly addresses PI's "expects opponents from everywhere" diagnosis
+  and PM1's "lite_greedy too aggressive" finding.
+- Build: 1 session.
 
-- **Fix `bundle_agent.py` namespace collision** (2-day recurrence;
-  promotion candidate from postmortem). Either rename the parity-gate
-  subprocess's `agents.*` namespace, or bypass the parity-gate and
-  trust `tests/test_bundle.py`. ~1 hour.
-- **Document `scripts/ab_quick.py` in `state/TOOLS.md`** as the new
-  PI-directed A/B route. 15 min.
+**Item 4 — Fleet-size: commit-to-hold, not commit-to-capture**
+- Replace "min-ships-to-capture under best-case opp response" with
+  "min-ships-to-hold for K turns against most-likely opp recapture."
+- `hold-feasibility` machinery exists; under-weighted in current chooser.
+- Addresses "fleet sizes too small" symptom directly. Build: 1 session.
 
-### Priority 3 — watch sub 53111837 settle
+**H40** (map-archetype opening book) sits inside this frame as the
+informed version of item 2 — once we know the attack axis matters,
+choosing it from board geometry (not just turn-30 centroid) gives a
+stronger seed. Defer until items 1-2 ship.
 
-- After ~30 min, pull settled μ via `kaggle competitions submissions
-  orbit-wars | head -3` and update `state/MULTI_BRANCH.md` push-claim
-  board OUTCOME field + `state/calibration-ladder.md`.
-- If settles ≥1130: PV_ETA validated; build silent-turns fix on top.
-- If 1080-1130: PV_ETA neutral; silent-turns fix is the next axis
-  regardless.
-- If <1080: PV_ETA regressed despite the panel win — investigate
-  what the step-250 truncation masked. Likely candidate: PV_ETA
-  over-discounts long-eta captures that mattered at full game length.
+### Immediate first 5 minutes of next session
+
+1. `kaggle competitions submissions orbit-wars --csv | head -3` — get
+   lifetime μ for sub 53117942 (LEAF_PV_2P). Update
+   `state/MULTI_BRANCH.md` push-claim board OUTCOME field.
+2. Decision per `knowledge-base/questions/2026-05-28-leaf-pv-2p-climb-trajectory.md`:
+   - μ ≥ 1100 → leaf_pv_2p stays in rolling pair; proceed to item 1 build.
+   - μ 950-1100 → revert at next slot (peak-restore resubmit), still
+     proceed to item 1 build on a clean baseline.
+   - μ < 950 → revert immediately; item 1 build on peak baseline.
+3. Then start **item 1 (attack-axis bonus)** build.
 
 ## Pointers (new today)
 
-- `audit/2026-05-28-postmortem-pv-eta-pm-pv-eta-and-silent-turns.md` —
-  session postmortem.
-- `audit/archive-2026-05-28-handover-pre-pv-eta.md` — archived prior
-  HANDOVER content (Day-N PM sections from 5/17-5/22).
-- `knowledge-base/thoughts/2026-05-28-silent-turns-pre-existing-weakness.md`
-  — silent-turns diagnostic + probe plan.
-- `scripts/ab_quick.py` — new A/B route (parallel, 5-seed, step-250,
-  no swap).
-- `submissions/baseline_pv_eta.py` — sub 53111837's bundle (PV_ETA=1).
-- `tests/test_chooser_pv_eta.py` — 5 unit tests pinning PV_ETA semantics.
+- `audit/2026-05-28-postmortem-pm2-leaf-pv-2p-compute-variance.md` —
+  PM2 postmortem (compute-variance investigation, Rule 48 + 45b
+  promotions).
+- `submissions/baseline_leaf_pv_2p.py` — sub 53117942's bundle
+  (LEAF_PV_2P=1 layered on PV_ETA=1).
+- `tests/test_leaf_pv_2p.py` — 4 unit tests pinning leaf PV semantics.
+- `knowledge-base/thoughts/2026-05-28-pm2-compute-variation-and-leaf-pv-2p.md`
+- `knowledge-base/flags/2026-05-28-compute-variation-ab-noise.md`
+- `knowledge-base/questions/2026-05-28-leaf-pv-2p-climb-trajectory.md`
 
-## Open questions for PI (Rule 36)
+## Rule reminders most relevant for next session
 
-1. **Ratify the 3 promotion candidates in the postmortem?** Specifically:
-   (a) Rule 48 cross-run reproducibility check before trusting n≤16
-   A/Bs; (b) bundler namespace fix as top-priority next-session work;
-   (c) `scripts/ab_quick.py` documented in `state/TOOLS.md` as standard.
-2. **Step-250 truncation:** standard for ALL future A/Bs going forward,
-   or specific to today's PV_ETA evidence run?
-3. **Next-session priority order:** the silent-turns Priority 1 chain
-   above, OR pivot if sub 53111837 settles in a way that re-prioritizes?
-
-## Rule reminders most relevant this session
-
-- **Rule 26 (devil's-advocate):** fired correctly pre-submit.
-- **Rule 38 (fix-verification reproduces failure):** new PV_ETA unit
-  test does exactly this.
-- **Rule 40 (modeling-correctness over restriction-tuning):** PV_ETA is
-  modeling-correct; silent-turns fix should also be modeling-side, not
-  a MIN_DELTA constant-tune band-aid.
-- **Rule 42 (push-claim board):** filled out; evicted-μ 1109.9 vs
-  predicted lower-band 1100 was MARGINAL → PI signoff covered.
-- **Rule 43 (multi-opp panel mandatory):** 4-opp panel ran; 4/4 cleared
-  pooled Wilson-lo gate.
-- **Rule 45 (n≥32 minimum for lift claim):** PI overrode to n=5 step-250
-  with explicit signoff. Promotion candidate addresses the underlying
-  evidence-bandwidth gap.
+- **Rule 48 (NEW):** same-day reads are climb snapshots, not verdicts.
+- **Rule 45b (NEW):** confound check (PYTHONHASHSEED=0 + OMP=1 + taskset)
+  before any sub-gate-strength override submit.
+- **Rule 40 (modeling-correctness):** items 1-4 are all modeling-side,
+  not constant-tune band-aids. Reject any bump-a-constant alternative.
+- **Rule 47 (physics-primitive verification):** item 4 (commit-to-hold)
+  needs eta — must go through `lib.trajectory.predict_fleet_fate`.
