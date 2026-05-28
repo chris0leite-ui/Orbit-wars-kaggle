@@ -77,10 +77,16 @@ def _envi(name: str, default: int) -> int:
 
 
 EXPAND_MARGIN = _envi("BASELINE_MACRO_EXPAND_MARGIN", 2)
+# Minimum ships kept at home during EXPAND. The opening is when ladder
+# leaders drain garrisons most aggressively (top-10 median first launch
+# step 4.1 vs midpack 10.5, per knowledge-base/concepts/top-performer-
+# strategies.md). DEFEND state catches concrete threats via owner_at
+# prediction; the home_min sentry is a per-step safety floor, not a
+# strategic reserve. Default 0 = full opening aggression.
+EXPAND_HOME_MIN = _envi("BASELINE_MACRO_EXPAND_HOME_MIN", 0)
 DEFEND_HORIZON = _envi("BASELINE_MACRO_DEFEND_HORIZON", 20)
 STRIKE_RESERVE = _envi("BASELINE_MACRO_STRIKE_RESERVE", 20)
 STRIKE_MARGIN = _envf("BASELINE_MACRO_STRIKE_MARGIN", 1.15)
-HOME_MIN_GARRISON_FALLBACK = _envi("BASELINE_MACRO_HOME_MIN", 25)
 
 
 # ---------------------------------------------------------------------------
@@ -147,33 +153,16 @@ def _pick_forward_lateral(laterals, home):
 def _home_group_ids(initial_planets, home_id: int, bij: dict) -> set[int]:
     """Identify the four-planet symmetric group containing `home`.
 
-    Strategy: starting from home, walk the bijection (180-degree mirror)
-    AND the 4-fold mirror that maps (x, y) -> (BOARD - x, y) (and y-flip).
-    Concretely, for each initial planet, the group is {p, mirror_x(p),
-    mirror_y(p), rotate_180(p)}; we match by initial (x, y) coordinates
-    with a tolerance of 1.0 unit (well below planet spacing).
+    The env (`kaggle_environments/envs/orbit_wars/orbit_wars.py`) places
+    planets via 90-degree rotational symmetry, but allocates ids in
+    contiguous blocks of 4 per symmetric group. So the group of any
+    planet is `(base, base+1, base+2, base+3)` where `base = id // 4
+    * 4`. We additionally verify each candidate id exists in the
+    initial-planets list to guard against truncated obs.
     """
-    by_id = {p[0]: p for p in initial_planets}
-    if home_id not in by_id:
-        return set()
-    hx = float(by_id[home_id][2])
-    hy = float(by_id[home_id][3])
-    targets = [
-        (hx, hy),
-        (BOARD_SIZE - hx, hy),
-        (hx, BOARD_SIZE - hy),
-        (BOARD_SIZE - hx, BOARD_SIZE - hy),
-    ]
-    out: set[int] = set()
-    tol2 = 1.0 * 1.0
-    for (tx, ty) in targets:
-        for p in initial_planets:
-            px = float(p[2])
-            py = float(p[3])
-            if (px - tx) ** 2 + (py - ty) ** 2 <= tol2:
-                out.add(int(p[0]))
-                break
-    return out
+    base = (int(home_id) // 4) * 4
+    by_id = {int(p[0]) for p in initial_planets}
+    return {pid for pid in (base, base + 1, base + 2, base + 3) if pid in by_id}
 
 
 def _identify_home(world, me: int):
@@ -217,22 +206,6 @@ def _identify_opp_home(world, opp_id: int, my_home, bij: dict):
 # ---------------------------------------------------------------------------
 # State logic
 # ---------------------------------------------------------------------------
-
-
-def _home_min_garrison(opp_home, defense_horizon: int = 16) -> int:
-    """Sentry size for the home planet during EXPAND/STOCKPILE.
-
-    Heuristic: opp's worst-case bundle by turn T = opp.ships + opp.prod
-    * T. Halve to account for opp also launching elsewhere.
-    `defense_horizon` ~ home-to-home flight time at speed 5.
-    """
-    if opp_home is None:
-        return HOME_MIN_GARRISON_FALLBACK
-    return max(
-        HOME_MIN_GARRISON_FALLBACK,
-        int(opp_home.ships) // 2
-        + int(opp_home.production) * defense_horizon // 2,
-    )
 
 
 def _will_home_flip(model, my_home_id: int, me: int, horizon: int) -> bool:
@@ -331,12 +304,20 @@ def determine_macro_state(
             reason="home_flip_predicted",
         )
 
-    home_min = _home_min_garrison(opp_home)
-
-    # EXPAND: we don't own the chosen lateral yet.
+    # EXPAND: we don't own the chosen lateral yet. Use EXPAND_HOME_MIN
+    # (opening-aggressive, default 0) — DEFEND state catches concrete
+    # incoming threats; the per-step home_min reserve is a safety floor.
     if int(chosen.owner) != int(me):
-        spare = int(home.ships) - home_min
-        ships_needed = int(chosen.ships) + 1 + EXPAND_MARGIN
+        spare = int(home.ships) - EXPAND_HOME_MIN
+        # Size for PREDICTED garrison at arrival, not current. With
+        # production accumulating during ~10-turn travel, current-garrison
+        # sizing systematically undershoots (lateral grows by prod * eta).
+        # Use the same straight-line eta heuristic as _strike_threshold.
+        dx = float(chosen.x) - float(home.x)
+        dy = float(chosen.y) - float(home.y)
+        eta_est = max(1, int(math.ceil(math.hypot(dx, dy) / 5.0)))
+        predicted_garrison = int(chosen.ships) + int(chosen.production) * eta_est
+        ships_needed = predicted_garrison + 1 + EXPAND_MARGIN
         if spare >= ships_needed:
             # Bundle as much as we safely can while keeping home above min.
             # Cap at 2x the strictly-needed count to avoid over-allocating

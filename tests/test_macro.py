@@ -148,14 +148,13 @@ def test_expand_emits_bundled_launch_when_affordable():
 
 
 def test_expand_accumulates_when_below_threshold():
-    """Home has only 12 ships — below the home_min sentry + ships_needed.
+    """Home has only 3 ships — can't afford lateral's 5+1+2 = 8 needed.
 
-    home_min_garrison fallback default = 25 (BASELINE_MACRO_HOME_MIN), but
-    opp.production=2, opp.ships=20, defense_horizon=16 → opp_prod*16/2 +
-    opp_ships/2 = 16 + 10 = 26 > 25, so home_min ≈ 26. spare = 12 - 26 < 0.
+    With EXPAND_HOME_MIN default = 0 (opening-aggressive), the only
+    constraint is having enough ships for the capture itself.
     """
     planets, world, init = _build_2p_board(
-        home_ships=12, lat_fwd_ships=5, lat_back_ships=5,
+        home_ships=3, lat_fwd_ships=5, lat_back_ships=5,
         opp_home_ships=20,
     )
     model = FakeModel()
