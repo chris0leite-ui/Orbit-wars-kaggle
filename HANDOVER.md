@@ -1,318 +1,160 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-20 PM by `claude/review-skills-improvements-moKOR`
-> (n=8 iteration loop attempt; no candidate found, structural-change
-> pivot queued).
-> Prior PM session on this branch (cross-branch consolidation pass)
-> notes preserved under "What just landed (2026-05-20, this session)".
-> Prior writers (per-branch, now superseded): `kaggle-baseline-strategy-lO4mm`,
-> `audit-workflow-performance-btjeK`, `strategy-framework-design-OyoYR-rebased`,
-> `ml-competition-strategy-PFhzM`, `analyze-game-strategy-EpMVP`.
+> Last written: 2026-05-28 PM by `claude/kaggle-submission-review-gZsCu`.
+> Prior content archived in
+> `audit/archive-2026-05-28-handover-pre-pv-eta.md` (318 lines of
+> Day-N PM sections from 2026-05-17 → 2026-05-22).
 
 ## Read order (Rule 44 — mandatory)
 
 1. **`state/MULTI_BRANCH.md`** — live Kaggle rolling pair, three-track
-   registry (Analytical / Hybrid-Sim / Verify-first), closed tracks,
-   push claim board.
-2. **`state/PEAK_BASELINE.md`** (NEW 2026-05-28) — single source of
-   truth for the strongest historical bundle. Mandatory read before
-   any "build on top of baseline" change. Documents the peak's active
-   vs dormant env-var stack, the frozen anchor at
-   `submissions/baseline_peak_1165_anchor.py`, the 7-step build-on-top
-   protocol, and the recorded anti-patterns from the 2026-05-27
-   regression cascade (subs 53083109→921, 53099001→680).
-3. **`state/TOOLS.md`** — A/B harnesses, single-game diagnostics,
-   validation suite, consolidation-merge gate.
-4. **`CLAUDE.md`** — rules 1-47 (rules 41-47 added 2026-05-20).
-5. **This file** — session-start prompt below.
-6. `audit/friction.md` if you're about to touch a fragile path.
+   registry, closed tracks, push claim board. **Refresh from
+   `kaggle competitions submissions orbit-wars` at session start.**
+2. **`state/PEAK_BASELINE.md`** — peak bundle truth, active vs dormant
+   env-var stack, build-on-top protocol. Mandatory before any baseline
+   subsystem edit.
+3. **`CLAUDE.md`** — rules 1-47.
+4. **This file** — next-session first action below.
+5. **`knowledge-base/thoughts/2026-05-28-silent-turns-pre-existing-weakness.md`**
+   — the working theory and probe plan PI directed: "begin in the first
+   session with further investigation and hard thinking."
+6. `audit/2026-05-28-postmortem-pv-eta-pm-pv-eta-and-silent-turns.md`
+   — full session postmortem with promotion candidates pending PI input.
 
-## Where we are (2026-05-20 17:00 UTC)
+## Where we are (2026-05-28 PM UTC)
 
-- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC. **34 days remain.**
-- **Rolling-last-2 (Kaggle auto-keeps these two):**
-  - 52857903 (μ 806.5) — analytical_wait_N_traj_plus_endgame_play (2026-05-20 16:12)
-  - 52854094 (μ 829.1) — analytical (2026-05-20 13:59)
-- **Team peak (EVICTED):** μ 1149.2 (sub 52744856, composite_a2_hybrid, 2026-05-17).
-- **Floor lost in 24 h:** ~320 μ. The five-step eviction chain that
-  caused this is documented in `state/MULTI_BRANCH.md` and is the
-  origin of new Rule 42 (pre-submit cross-branch coordination gate).
-- **Daily submission budget:** 5/day. 5/20 used: 2. 3 slots remain.
-- **Floor-at-risk flag:** **TRUE** — rolling pair is 320 μ below team peak.
+- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC. **~26 days remain.**
+- **Rolling-last-2 (live, post sub 53111837):**
+  - **53111837** (PV_ETA=1, **μ pending** — predicted 1100-1170, mode 1140).
+  - **53099429** (peak-restore byte-identical, μ=1116.2). Note this is
+    ~30μ below the peak's historical 1144-1165 band — ladder drift in
+    the last 24h re-calibrates expectations downward.
+- **Daily submission budget:** 5/day. 2026-05-28 UTC used: 1 (this).
+  4 slots remain. The 5/27→5/28 batch (revert, peak-restore, κ=0.02,
+  PV_ETA) consumed considerable PI capital.
+- **Open question:** how does sub 53111837 settle? Update calibration
+  ladder when ladder-μ stabilizes (~30 min - few h after submit).
 
-## Day-N PM extract-physics-trajectory-Vjaz9 (2026-05-22)
+## Today's session — what landed
 
-**Session shape:** surgical, additive extraction of physics substrate
-from the sibling Phase η branch (`claude/strategy-axis-decision-3437`).
-No strategy/agent code copied; no experiments; no submissions.
+**Chapter A — ship the `favor` leaf flight-time fix (PV_ETA).**
 
-**What landed (sole commit `72fe45a`):**
+- Single env-var-gated change `BASELINE_PV_ETA=1`: multiply candidate
+  Δ by `γ^(wait_N + eta)` in `score_candidate_v4` + `score_candidate_v4_joint`.
+  No new tuning knob (γ is `BASELINE_GAMMA=0.99`). Default OFF preserves
+  byte-identical peak behavior.
+- Commits: `c45cf00` (feature + 5 unit tests), `a65e8b4`+`e65b50a`
+  (new `scripts/ab_quick.py` parallel no-swap step-250 A/B harness),
+  `0d71aa6` (bundle + wrapper), `564b70e` (push-claim row).
+- Sub **53111837** submitted, **μ pending**.
+- Audit: `audit/2026-05-28-postmortem-pv-eta-pm-pv-eta-and-silent-turns.md`.
 
-- `lib/kinematic_table.py` (NEW, 436 lines) — per-turn precompute of
-  planet positions (static / orbital / comet). Bit-identical to
-  `predict_relative` by construction. Singleton + fingerprint rebuild.
-- `lib/orbit.py` (+37) — `predict_relative_cached(planet, ω, lead, *,
-  table=None)` lookup wrapper; falls through on any miss.
-- `lib/trajectory.py` (+47) — gated behind `KINEMATIC_TABLE_ENABLED=1`
-  env var. When primed AND the table covers the needed window, one
-  `table.window()` replaces the per-step inline build. Default OFF;
-  existing call sites unchanged.
-- `tests/test_kinematic_table_parity.py` (NEW, 621 lines) — `==`
-  parity pins (no tolerance) for every cache type.
+**Chapter B — diagnose seed=2 panel losses.**
 
-**Deliberately skipped:** `lib/joint_solver/trajectory_matrix.py`
-(Phase η.1 opening matrix — couples to `agents.baseline.proposer`,
-not pure physics) and the full-game parity test (imports specific
-agents). Strategy / chooser / pipeline / missions / value heads from
-the sibling branch all left where they are.
+- 5-seed step-250 panel: 4-1 uniformly across 4 opponents (`peak_anchor`,
+  `v7_0`, `v4_planner`, `v3.5.1`); pooled 16-4/20 = 80%, Wilson-lo 0.58.
+- All 4 losses were seed=2. Investigated. **Verdict: PV_ETA is NOT the
+  cause** — peak baseline (PV_ETA=0) ALSO loses seed=2 vs v4_planner.
+  Pre-existing weakness.
+- Smoking-gun: P0 chooser emits zero launches for 13-29 consecutive
+  mid-game turns; opponent emits every-turn-or-near. WIN-case seed=1
+  has mid-game streaks ≤ 8. Knowledge-base entry has the table.
 
-**Verification:** 39/39 unit tests green; 80/80 in the wider
-geometry+orbital-safety+proposer+snipe sweep; end-to-end parity smoke
-on a 2-planet world identical cold vs primed.
+## Falsified-or-killed this session
 
-**Next-session first action:** build a fresh agent on top of this
-substrate. Opt-in protocol + usage example in
-`audit/2026-05-22-extract-physics-trajectory.md`. Default-OFF means
-no existing agent regressed by this commit.
+- **"PV_ETA causes seed=2 losses"** — falsified. Peak loses seed=2 vs
+  v4_planner at step 138; PV_ETA loses at step 145. PV_ETA modestly
+  reduces the worst silent streak (14 → 13).
+- **"`bundle_agent.py agents/baseline --force` parity-gate is fine"** —
+  falsified for 2nd consecutive day; promote to tooling-fix priority.
 
----
+## Next-session first action (PI directive: "further investigation and hard thinking")
 
-## Day-N PM review-skills-improvements-moKOR (2026-05-20 evening)
+### Priority 1 — silent-turns root-cause investigation (sequential)
 
-**Session shape:** n=8-capped A/B iteration loop attempting to beat sub
-52827111 ("comet-aim + reactor-aware", μ=1122). PI directive: no
-submission until a candidate shows significant lift at n=8 (gate
-≥14/16 = Wilson-lo 0.524). Result: no candidate found. Pivot
-direction surfaced at end of session.
+1. **Instrument `score_candidate_v4` on a silent turn.** Replay seed=2
+   vs v4_planner. Intercept the chooser at t=22 (a known silent turn
+   in the PV_ETA=1 trace). Dump every candidate's `(src, tgt, ships,
+   wait_N, eta, raw_delta, post_bonus_delta, post_pv_eta_delta, status)`.
+   This is the diagnostic that **answers the question "are all
+   candidates truly negative, or are some positive-but-below-MIN_DELTA?"**
+   Expected wallclock: 1-2 hours including writing the script. Output
+   should be a CSV in `audit/2026-05-29-silent-turn-trace.csv`.
 
-### What landed (code + docs)
+2. **Conditional on 1.** If candidates are positive-but-tiny: ablate
+   `BASELINE_MIN_DELTA=-5.0` on seed=2; if P0 emits more and panel
+   rate holds, we have a quick lift. Wallclock: 30 min A/B run.
 
-- **Setup (3 commits + bundler fix):** targeted `git checkout` of sub
-  52827111's mechanism source from `claude/audit-workflow-performance-btjeK`
-  onto this branch (`d642593`). Imported files:
-  `agents/baseline/{proposer,chooser,value,main,chooser_trajectory,chooser_roi}.py`,
-  `lib/{world_model,trajectory,aim,opp_model,value_heads}.py`,
-  matching tests, and `scripts/bundle_agent.py` (btjeK upgrade with
-  parity-gate cache).
-  - Bundler indent-preservation fix (`9a45fea`): bundler was breaking
-    function-local intra-package imports by hoisting alias rebinds to
-    column 0 inside function bodies → IndentationError. Fixed at
-    `scripts/bundle_agent.py:268-275`.
-  - `.gitignore` for `audit/bundle-parity-cache.json` (`3f123c3`).
-- **Pinned baseline:** `submissions/iter_baseline.py` = clean re-build
-  of the deployed sub-52827111 bundle (parity-gate green).
-- **Iter 1 audit:** `audit/2026-05-21-n8-iter1-reactor-ablation.md`
-  (filename off by one day vs UTC; content correct). Documents the
-  parallel-vs-serial discrepancy that invalidated the original Iter 1
-  diagnostic.
+3. **Conditional on 1.** If candidates are uniformly negative: build
+   the opp-model mixture probe. Swap `lite_greedy_policy` in
+   `opp_actions_for_snap` for a 4-way mixture of {greedy, do-nothing,
+   sniper, defender} weighted by ladder priors. Hypothesis: less-
+   confident rollout opp-model lets our captures look positive-EV at
+   the leaf. Wallclock: half-day build (mixture sampler) + half-day A/B.
 
-### Load-bearing findings
+4. **Independent of 1-3.** Track down the cross-process determinism
+   leak. `git grep -nE "time\.time|random\.(random|seed|sample)|id\("
+   agents/baseline lib/`; audit each call site for seed-dependency.
+   If we find unseeded RNG in the hot path, fix it. The leak is
+   poisoning every n=5 A/B currently.
 
-1. **CPU-contention contaminates n=8 A/Bs.** Three parallel `fast.py
-   eval` instances (24 worker processes) produced focal p95=1248ms (over
-   the 1000ms env actTimeout). Variant 1b reported 12/16 (75%) under
-   contention; same bundle re-tested serially gave **6/16 (37.5%)**.
-   Variant 1a similarly fell from 11/16 to 7/16 serial. **Mandatory
-   convention going forward: all n=8 A/Bs run serially, no parallel
-   fast.py invocations.**
+### Priority 2 — tooling fixes
 
-2. **No env-var ablation produces ≥14/16 lift over the deployed
-   baseline.** Four serial n=8 runs (all clean wallclock):
+- **Fix `bundle_agent.py` namespace collision** (2-day recurrence;
+  promotion candidate from postmortem). Either rename the parity-gate
+  subprocess's `agents.*` namespace, or bypass the parity-gate and
+  trust `tests/test_bundle.py`. ~1 hour.
+- **Document `scripts/ab_quick.py` in `state/TOOLS.md`** as the new
+  PI-directed A/B route. 15 min.
 
-   | Variant | Δ vs deployed | Wins | Wlo |
-   |---|---|---:|---:|
-   | A1 — comet-aim solo (reactor-aware OFF) | 7/16 (43.8%) | 0.231 |
-   | A2 — Part B (reactor candidates) OFF | 7/16 (43.8%) | 0.231 |
-   | A3 — BASELINE_COMET_AIM=off | 9/16 (56.2%) | 0.332 |
-   | A4 | killed before completion (PI directive — see #3) |
+### Priority 3 — watch sub 53111837 settle
 
-   Three runs all landed at 7/16, A3 at 9/16. All INCONCLUSIVE; no
-   candidate cleared the gate.
+- After ~30 min, pull settled μ via `kaggle competitions submissions
+  orbit-wars | head -3` and update `state/MULTI_BRANCH.md` push-claim
+  board OUTCOME field + `state/calibration-ladder.md`.
+- If settles ≥1130: PV_ETA validated; build silent-turns fix on top.
+- If 1080-1130: PV_ETA neutral; silent-turns fix is the next axis
+  regardless.
+- If <1080: PV_ETA regressed despite the panel win — investigate
+  what the step-250 truncation masked. Likely candidate: PV_ETA
+  over-discounts long-eta captures that mattered at full game length.
 
-3. **PI verdict mid-loop ("your tests are meaningless, we need a big
-   lift"):** env-var ablations tap out at ±5pp which is invisible at
-   n=8 (Wilson CI ~±20pp). To produce a ≥14/16 lift over a near-optimal
-   bundle requires a STRUCTURAL change, not a knob flip. Loop halted
-   at A3 result.
+## Pointers (new today)
 
-4. **Structural-change candidates that are NOT yet new code on this
-   branch:**
-   - **`used_tgts` lock removal in `chooser_trajectory.py:898`.**
-     Currently blocks multi-source-same-target SOLO emits even when
-     JOINT is on; JOINT only fires for pre-paired candidates (capped
-     JOINT_TOP_K_PER_TARGET=3, JOINT_MAX_PAIRS=20).
-   - **JOINT expansion** — raise the per-target / global pair caps by
-     5-10×; remove the lock-checks at `chooser_trajectory.py:885-888`.
-   - **Composite value head + A2 restoration** (the μ=1149 team-peak
-     architecture). `value.py` has `BASELINE_VALUE_HEAD=composite` opt-in;
-     A2 4P-weakness logic also imported.
-   - **New chooser** (MCTS / beam search over candidate set) — 1+
-     day build.
-   - **Increase N_VALIDATE / WALLCLOCK budget** — squeezes the existing
-     chooser only marginally; unlikely to be a "big lift."
+- `audit/2026-05-28-postmortem-pv-eta-pm-pv-eta-and-silent-turns.md` —
+  session postmortem.
+- `audit/archive-2026-05-28-handover-pre-pv-eta.md` — archived prior
+  HANDOVER content (Day-N PM sections from 5/17-5/22).
+- `knowledge-base/thoughts/2026-05-28-silent-turns-pre-existing-weakness.md`
+  — silent-turns diagnostic + probe plan.
+- `scripts/ab_quick.py` — new A/B route (parallel, 5-seed, step-250,
+  no swap).
+- `submissions/baseline_pv_eta.py` — sub 53111837's bundle (PV_ETA=1).
+- `tests/test_chooser_pv_eta.py` — 5 unit tests pinning PV_ETA semantics.
 
-5. **Confirmed already-implemented (not new work):** `BASELINE_LEDGER=on`
-   (wait-N inter-turn commitment memory, the original Iter 4 idea —
-   already in chooser_trajectory.py lines 904-915, gated by env var
-   defaulting to "off"). `BASELINE_JOINT=1` multi-source coalitions
-   (already ON by default, just capped low).
+## Open questions for PI (Rule 36)
 
-### Verified gaps in the current chooser
+1. **Ratify the 3 promotion candidates in the postmortem?** Specifically:
+   (a) Rule 48 cross-run reproducibility check before trusting n≤16
+   A/Bs; (b) bundler namespace fix as top-priority next-session work;
+   (c) `scripts/ab_quick.py` documented in `state/TOOLS.md` as standard.
+2. **Step-250 truncation:** standard for ALL future A/Bs going forward,
+   or specific to today's PV_ETA evidence run?
+3. **Next-session priority order:** the silent-turns Priority 1 chain
+   above, OR pivot if sub 53111837 settles in a way that re-prioritizes?
 
-- **`agents/baseline/proposer.py:926-928`**: wait_N>0 candidates bypass
-  the trajectory filter (`predict_fleet_fate` returns wrong results
-  because it doesn't pre-rotate src/tgt to launch time). This is real
-  H44 surface: filter has zero coverage for the multi-wait grid.
-  Iter 3 (planned, not yet implemented) would extend
-  `predict_fleet_fate` with a `launch_step` arg.
-- **`predict_fleet_fate` does NOT check enemy-fleet intercepts.** This
-  is correct behavior — game rules confirm fleet-vs-fleet collision
-  doesn't exist. Original Iter 3 framing ("add enemy fleet ray-cast")
-  was based on a misread of the game spec.
+## Rule reminders most relevant this session
 
-### Falsified or weakened this session
-
-- **"Part A (cost-parity filter) is the regressor."** Iter 1's
-  parallel-run 12/16 was CPU-contention noise; clean serial gives
-  parity-or-loss (6/16). Cannot blame Part A based on this data.
-- **"Comet-aim is the key lift in sub 52827111."** A3 turned comet-aim
-  OFF and got 9/16 (better than 7/16 from other ablations).
-  Directional signal that comet-aim itself may be neutral-or-mildly-
-  harmful, not the value-add of the push.
-- **Floor-recovery via rebundle of `iter_baseline.py` (== sub 52827111).**
-  PI rejected: "we can learn nothing from that." Path is OFF.
-
-## Next-session first action (this session's pivot)
-
-**Priority 1 — Pick one structural change from the list above and ship
-it (~few hundred LOC, single axis).** Recommend `used_tgts` lock
-removal + JOINT cap expansion in `chooser_trajectory.py` as the
-cheapest structural-shape change: combat rule 1 (same-owner same-step
-arrivals stack) is well-understood; the existing lock literally
-forbids the most powerful combat pattern. Risk: Plan agent flagged
-this as needing n=32 minimum (prior asymmetric chooser attempts
-0/32). Run n=8 serial first; if directional, escalate to n=32.
-
-**Priority 2 — if Priority 1 doesn't clear:** Composite value head +
-A2 restoration (μ=1149 architecture). Code already imported; needs
-the right env-var combo + bundle bake. Significant ladder evidence
-(sub 52744856 live μ=1149).
-
-**Priority 3 — out-of-session-scope:** Konbu17 shot-validator MLP
-(~1 week build, but the only ML attack with empirical precedent
-+19pp panel lift).
-
-**Reading order for the next agent:** this section first, then
-`audit/2026-05-21-n8-iter1-reactor-ablation.md`, then
-`/root/.claude/plans/go-effervescent-mochi.md` for the full
-iteration ladder context.
-
-## What just landed (2026-05-20, this session)
-
-This session was a **doc-only consolidation pass** across 8 active
-branches. No code changed. New / edited docs:
-
-| File | Change |
-|---|---|
-| `state/MULTI_BRANCH.md` | **NEW.** Single source of truth across branches. |
-| `state/TOOLS.md` | **NEW.** Tools registry (A/B + diag + validation). |
-| `CLAUDE.md` | Rules 41-47 appended. Pointers section adds MULTI_BRANCH + TOOLS. |
-| `.claude/skills/kaggle-comp/SKILL.md` | Step 0 "load MULTI_BRANCH + TOOLS first" preamble. |
-| `.claude/skills/kaggle-comp/day-loop.md` | Step 1 amendment for code-comp branch coordination. |
-| `.claude/skills/kaggle-comp/improvements.md` | Rotated: 7 items promoted to rules; 2 superseded. |
-| `.claude/skills/kaggle-comp/improvements-archive-2026-05-20.md` | **NEW.** Rotation archive. |
-| `state/current.md` | Deprecated to pointer-only banner. |
-| `state/mechanism-ledger.md` | Appended 2026-05-18 → 5-20 entries. |
-| `HANDOVER.md` | Rewritten (this file). |
-
-**Rules 41-47 summary (read CLAUDE.md for full text):**
-
-- **41.** Confound-sweep before correlational conclusion (btjeK origin).
-- **42.** Pre-submit cross-branch coordination gate (the ~320 μ loss origin).
-- **43.** Multi-opponent panel mandatory pre-submit (supersedes `--vs-panel` pending item).
-- **44.** State-of-truth read before subsystem edits (supersedes "read state docs" pending item).
-- **45.** n ≥ 32 minimum for A/B lift claims.
-- **46.** Bundle + parity smoke before any submission.
-- **47.** Physics-primitive verification before agent design (PFhzM origin).
-
-## Three parallel tracks — current state
-
-| Track | Lead branch | Best result | Status | Next action |
-|---|---|---|---|---|
-| **A — Analytical chooser** | `strategy-framework-design-OyoYR-rebased` | μ 829.1 (sub 52854094) — both live pushes regressed | knowledge-base 5/20: "axis closed (10 slices, 0 lift)"; architectural bind: analytical needs multi-turn glue OR must replace rollout entirely | Decide: park, or pivot to analytical-leaf-inside-rollout |
-| **B — Hybrid-sim production** | `audit-workflow-performance-btjeK` (production) + `analyze-game-strategy-EpMVP` (phases) | μ 1149.2 (EVICTED) | Live champion lineage. H44 finding 5/20: 65% fleet-destroyed-in-flight — new physics-driven mechanism candidate | (i) hold-feasibility solo validation (btjeK Phase B); (ii) H44 defensive mechanism design; (iii) EpMVP Phase 4/6 commissioning |
-| **C — Verify-first + Goal-directed** | `ml-competition-strategy-PFhzM` (+ `precision-physics-engine-ymJkA` substrate) | Phase A Test 3 PASS; wrap-baseline 12/32 = 37.5% (only positive signal vs production) | greedy_expand (60 LOC) tied goal_planner (500 LOC); chooser axis confirmed neutral | Decide: is wrap-baseline-as-veto a viable design? Or is Track-C work substrate-only? |
-
-## Next-session first actions (ranked by EV / cost)
-
-### Priority 1 — code consolidation pass (start small, parity-tested)
-
-Following the 6-step consolidation-merge gate in `state/TOOLS.md`:
-
-1. **Substrate primitives** (no chooser changes piggy-backed):
-   - Merge `lib/trajectory_layer.py` + `tests/test_trajectory_layer_positions.py` from PFhzM.
-   - Merge `agents/precision/sim.py` + `agents/precision/intercept.py` + `agents/precision/tests/` from precision-physics branch.
-   - Run consolidation gate; expected: GREEN.
-2. **Bundler upgrade** from EpMVP — "inline agent submodules + explicit-name imports."
-3. **Diagnostic scripts** (zero-risk leaf merges):
-   - `scripts/h44_landing_capture_diagnostic.py` (btjeK)
-   - `scripts/probe_emits_via_fate.py` (PFhzM)
-   - `scripts/inspect_goal_planner_game.py` (PFhzM)
-4. **Oracle tests** (test-only, zero-risk):
-   - `tests/test_baseline_replay_regression.py` (EpMVP)
-   - `tests/test_migration_solver.py` (EpMVP)
-
-### Priority 2 — recovery submission planning
-
-The rolling-last-2 is 320 μ below team peak. Three sub-IDs have evidence
-of being strong:
-
-- **52744856** (μ 1149.2, composite_a2_hybrid 2P + A2 4P)
-- **52754310** (μ 1143.7, trajectory v4 + wait_N + wallclock)
-- **52811320** (μ 1135.1, hold-feasibility solo)
-
-**Open PI question:** which lineage to rebundle and push? The push will
-itself need to clear Rule 42 (claim board) and Rule 43 (panel + h2h)
-before submit. Do NOT push without explicit PI sign-off.
-
-### Priority 3 — Track-B physics mechanism design
-
-H44 finding: 65% of landing-capture failures are fleet-destroyed-in-flight.
-This is a substrate-level signal that the trajectory chooser's
-fleet-safety filter is not catching. Design a defensive mechanism
-(NOT a restriction-tuning constant bump — Rule 40) that emerges from
-the underlying physics.
-
-## Pointers
-
-- `state/MULTI_BRANCH.md` — cross-branch state-of-truth.
-- `state/TOOLS.md` — tools registry + consolidation-merge gate.
-- `state/mechanism-ledger.md` — every agent family tried.
-- `state/hypothesis-board.md` — open ideas, killed list.
-- `CLAUDE.md` — rules 1-47 + R-defaults.
-- `audit/friction.md` — current friction summary.
-- `.claude/skills/kaggle-comp/` — skill (now multi-branch-aware).
-- `audit/2026-05-21-h44-phase1-CORRECTED.md` (btjeK) — physics-failure analysis.
-- `audit/2026-05-20-postmortem-strategy-framework-design-OyoYR-rebased.md` — analytical axis closure.
-- `audit/2026-05-19-postmortem-PFhzM-physics-gate-and-mvp-confirmation.md` — Track-C verdict.
-- `audit/2026-05-21-n8-iter1-reactor-ablation.md` (this branch, filename off by one UTC day) — Iter 1 ablation results + the parallel/serial contention finding.
-- `audit/2026-05-22-extract-physics-trajectory.md` (this session) — physics substrate extraction.
-- `/root/.claude/plans/go-effervescent-mochi.md` — full iteration-loop plan including the structural-change pivot list.
-
-## Rule reminders (most relevant this session)
-
-- **Rule 1:** submissions PI-approved, single-shot, no retry loops.
-- **Rule 12:** rolling-last-2; weak late submits unrecoverable for ~24h.
-- **Rule 32:** session-start git fetch; verify rolling pair via Kaggle CLI.
-- **Rule 35-36:** PI thoughts append-only; session-end second-brain update.
-- **Rule 37:** 3-variant axis cap. v9-v15 chooser hit it; chain-bonus hit it; analytical-slice hit it (10/3+).
-- **Rule 40:** prefer modeling-correctness over restriction-tuning.
-- **Rules 41-47 (new today):** see CLAUDE.md.
-
-## Open questions for PI
-
-1. Track A (analytical) — park or pivot to analytical-leaf-inside-rollout?
-2. Track C — wrap-baseline-as-veto, or substrate-only contribution?
-3. Recovery submission — which lineage to rebundle for the next push?
-4. Should the SessionStart hook implementation (improvements.md TOP
-   PRIORITY) get priority over the code consolidation pass?
+- **Rule 26 (devil's-advocate):** fired correctly pre-submit.
+- **Rule 38 (fix-verification reproduces failure):** new PV_ETA unit
+  test does exactly this.
+- **Rule 40 (modeling-correctness over restriction-tuning):** PV_ETA is
+  modeling-correct; silent-turns fix should also be modeling-side, not
+  a MIN_DELTA constant-tune band-aid.
+- **Rule 42 (push-claim board):** filled out; evicted-μ 1109.9 vs
+  predicted lower-band 1100 was MARGINAL → PI signoff covered.
+- **Rule 43 (multi-opp panel mandatory):** 4-opp panel ran; 4/4 cleared
+  pooled Wilson-lo gate.
+- **Rule 45 (n≥32 minimum for lift claim):** PI overrode to n=5 step-250
+  with explicit signoff. Promotion candidate addresses the underlying
+  evidence-bandwidth gap.

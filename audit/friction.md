@@ -118,6 +118,45 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-28 PM (claude/kaggle-submission-review-gZsCu — PV_ETA submission + silent-turns finding)
+
+- `tag: silent-turns-mid-game-pre-existing` — peak baseline (and our
+  PV_ETA=1 variant) emit ZERO launches for 13-29 consecutive mid-game
+  turns on contested-expansion seeds (e.g. seed=2 vs v4_planner). Peak
+  loses seed=2 at step 138; PV_ETA loses at 145; WIN-case seed=1 has
+  mid-game max streak ≤ 8. **Not a PV_ETA regression** — same weakness
+  at peak. Suspected mechanism: `lite_greedy_policy` opp-model inside
+  the rollout is too aggressive at counter-capturing nearby neutrals,
+  so leaf state shows "P1 grabs it first" → Δ ≤ 0 → no emit. Three
+  probes queued for next session (HANDOVER §next-action #1-3): dump
+  candidate Δs on a silent turn, swap opp-model to a mixture, ablate
+  MIN_DELTA=-5. **Fix:** modeling-side; not a band-aid threshold tweak.
+
+- `tag: cross-process-determinism-leak` — same seed (e.g. seed=0,
+  seed=2) gave different outcomes between a single-opp run and a
+  panel run, both PV_ETA=1, both focal-as-P0. Within a single Python
+  process, two sequential games on the same seed ARE identical
+  (verified: seed=2 vs v4_planner → 145 steps, 145 steps). Across
+  ProcessPool worker invocations, outcomes flip. Root cause not
+  diagnosed; candidate sources: `id()`-based ordering, `time.time()`
+  fallback, dict iteration in a non-deterministic init path.
+  **Fix:** triage on next session — `git grep -nE
+  "time\.time|random\.(random|seed|sample)|id\(" agents/baseline lib/`
+  and audit each call site for seed-dependency. If we find unseeded
+  RNG in the hot path, this also explains why n=5 A/Bs swing 20+pp
+  between independent runs.
+
+- `tag: bundler-namespace-collision-on-load` (recurring) — `python
+  scripts/bundle_agent.py agents/baseline --force` crashes in the
+  auto parity-gate with `ImportError: attempted relative import with
+  no known parent package` when `agents.baseline.proposer` resolves
+  to `kaggle_environments.envs.lux_ai_s3.agents` instead. Bundle file
+  itself is produced before the crash. **Fix:** rename or guard the
+  `agents/` import path in the bundler's parity-gate subprocess, OR
+  bypass the parity-gate when bundling agents/baseline and rely on
+  tests/test_bundle.py instead. Recurrence: this fired on 2026-05-28 AM
+  AND PM — moves from "WARN" to "needs a real fix" priority.
+
 ## 2026-05-27 / 2026-05-28 (claude/kaggle-submission-review-gZsCu — Step 2B + peak restore + foundation)
 
 - `tag: paper-math-calibration-trap` — Step 2B plan tuned `BASELINE_SHIP_TURN_KAPPA`
