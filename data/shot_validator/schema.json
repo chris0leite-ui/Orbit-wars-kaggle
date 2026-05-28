@@ -1,6 +1,6 @@
 {
-  "FEATURE_VERSION": 3,
-  "n_features": 39,
+  "FEATURE_VERSION": 4,
+  "n_features": 45,
   "label_buffer_steps": 10,
   "feature_names": [
     "src_ships",
@@ -41,7 +41,13 @@
     "intercept_enemy_eta_at_tgt",
     "target_growth_field_diff",
     "src_time_to_nearest_enemy_threat",
-    "src_is_frontier"
+    "src_is_frontier",
+    "enemy_inflight_count_at_tgt",
+    "enemy_inflight_ships_at_tgt",
+    "post_capture_nearest_enemy_dist",
+    "post_capture_nearest_enemy_prod",
+    "src_is_orbiting",
+    "tgt_is_orbiting"
   ],
   "feature_normalisation_constants": {
     "max_ships": 2000,
@@ -56,5 +62,5 @@
     "growth_field_max": 5.0
   },
   "signed_indices": [21, 24, 36],
-  "label_definition": "target planet owned by launching player at step min(launch_step + eta + 10, end_of_game); F3 swap moved tgt owner one-hot from launch-time to arrival-time at the same index slots (6-8); features 25-38 are the 14-dim Tier 1+2 expansion (F6, F10, F8, F4, F11, F7, F13, F9)."
+  "label_definition": "target planet owned by launching player at step min(launch_step + eta + 10, end_of_game); F3 swap moved tgt owner one-hot from launch-time to arrival-time at the same index slots (6-8); features 25-38 are the 14-dim Tier 1+2 expansion (F6, F10, F8, F4, F11, F7, F13, F9); features 39-44 are Stage 1.5 additions (enemy inbound count/ships, post-capture nearest-enemy distance/production at arrival-time positions, source/target orbital-state flags)."
 }

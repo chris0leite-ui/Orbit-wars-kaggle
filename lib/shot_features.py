@@ -1,7 +1,7 @@
 """Per-shot feature encoder for the konbu17-style shot validator.
 
 Pure function `encode_shot_features(emit, obs, focal_seat, *, world=None,
-world_model=None) -> ndarray(39,)`.
+world_model=None) -> ndarray(45,)`.
 
 Lives in `lib/` (not `scripts/`) so:
   - the bundler inlines it into the submission once
@@ -9,12 +9,15 @@ Lives in `lib/` (not `scripts/`) so:
     `agents/baseline_validated/main.py` (inference-time) share one
     source of truth for the feature schema
 
-The 39-dim output matches `data/shot_validator/schema.json` v3.
+The 45-dim output matches `data/shot_validator/schema.json` v4.
 
 Phase 2 v2 (2026-05-29 — PM5 next-session): expanded from 25-d to 39-d
 with 9 new per-shot features (Tier 1 + Tier 2 from the PM4 deep-dive),
 plus F3 swap (arrival-time owner replacing launch-time owner at the
-existing index slots). See HANDOVER.md → "Phase 2 v2".
+existing index slots). Stage 1.5 (2026-05-29 — PI feature audit) added
+6 more: enemy fleets inbound to target (2), post-capture nearest-enemy
+geometry at arrival time (2), orbital-state flags for source and
+target (2). See HANDOVER.md → "Phase 2 v2".
 
 Per-turn `World` + `WorldModel` construction is the caller's
 responsibility (~5 ms/turn at 40 planets). When `world` / `world_model`
@@ -29,7 +32,7 @@ from typing import Any
 
 import numpy as np
 
-FEATURE_DIM = 39
+FEATURE_DIM = 45
 
 NORM = {
     "max_ships": 2000.0,
@@ -369,6 +372,93 @@ def encode_features(
         src_threat_norm = min(1.0, src_threat / NORM["max_eta"])
         src_is_frontier = 1.0 if src_threat < 25 else 0.0
 
+    # ----- Stage 1.5 additions (PI: post-capture geometry, enemy-inbound,
+    # orbital state). See data/shot_validator/schema.json v4 for index map.
+
+    # Enemy fleets inbound to target — mirror of the friendly side.
+    # Uses the same per-target arrival_ledger slice friendly_at_tgt was
+    # carved out of (`arrivals_at_tgt`).
+    enemy_at_tgt = [
+        (e_, s_) for (e_, o_, s_) in arrivals_at_tgt
+        if o_ != focal_seat and o_ != -1
+    ]
+    enemy_inflight_n = min(1.0,
+        len(enemy_at_tgt) / NORM["max_planets"])
+    enemy_inflight_ships = min(1.0,
+        sum(s_ for _, s_ in enemy_at_tgt) / NORM["max_ships"])
+
+    # Post-capture geometry — where is the nearest enemy planet at
+    # step + eta + LABEL_BUFFER, relative to where the target will be?
+    # Captures the "is this an exposed capture or a safe one" question.
+    # Uses predict_relative for orbiting planets (fine for orbital;
+    # comets fall back to launch-time position which is approximate but
+    # consistent).
+    from lib.orbit import is_orbiting as _is_orb, predict_relative as _pr
+    omega = float(getattr(world, "omega", 0.0) or 0.0)
+    POST_CAPTURE_LEAD = int(round(eta)) + 10  # = LABEL_BUFFER
+
+    if tgt_planet_obj is not None:
+        tgt_tuple_pos = [
+            tgt_pid, int(tgt_planet_obj.owner),
+            float(tgt_planet_obj.x), float(tgt_planet_obj.y),
+            float(tgt_planet_obj.radius), float(tgt_planet_obj.ships),
+            float(tgt_planet_obj.production),
+        ]
+        if _is_orb(tgt_tuple_pos) and omega != 0.0:
+            tx_arr, ty_arr = _pr(tgt_tuple_pos, omega, POST_CAPTURE_LEAD)
+        else:
+            tx_arr, ty_arr = float(tgt_planet_obj.x), float(tgt_planet_obj.y)
+    else:
+        tx_arr = float(target_planet[2])
+        ty_arr = float(target_planet[3])
+
+    nearest_enemy_dist_raw = float("inf")
+    nearest_enemy_prod_raw = 0.0
+    for p_obj in world.planets_by_id.values():
+        if int(p_obj.id) == tgt_pid:
+            continue
+        if int(p_obj.owner) == focal_seat or int(p_obj.owner) == -1:
+            continue
+        p_tuple_pos = [
+            int(p_obj.id), int(p_obj.owner),
+            float(p_obj.x), float(p_obj.y),
+            float(p_obj.radius), float(p_obj.ships),
+            float(p_obj.production),
+        ]
+        if _is_orb(p_tuple_pos) and omega != 0.0:
+            ex, ey = _pr(p_tuple_pos, omega, POST_CAPTURE_LEAD)
+        else:
+            ex, ey = float(p_obj.x), float(p_obj.y)
+        dist = math.hypot(ex - tx_arr, ey - ty_arr)
+        if dist < nearest_enemy_dist_raw:
+            nearest_enemy_dist_raw = dist
+            nearest_enemy_prod_raw = float(p_obj.production)
+    if nearest_enemy_dist_raw == float("inf"):
+        post_capture_nearest_dist = 1.0  # no enemy -> max distance
+        post_capture_nearest_prod = 0.0
+    else:
+        post_capture_nearest_dist = min(1.0,
+            nearest_enemy_dist_raw / NORM["board_diagonal"])
+        post_capture_nearest_prod = min(1.0,
+            nearest_enemy_prod_raw / NORM["max_production"])
+
+    # Orbital state — binary flags. Lets the model distinguish static-
+    # geometry shots from orbital ones (different aim/timing dynamics).
+    src_tuple_pos = [
+        int(src_planet[0]), int(src_planet[1]),
+        float(src_planet[2]), float(src_planet[3]),
+        float(src_planet[4]), float(src_planet[5]),
+        float(src_planet[6]),
+    ]
+    tgt_tuple_pos_basic = [
+        int(target_planet[0]), int(target_planet[1]),
+        float(target_planet[2]), float(target_planet[3]),
+        float(target_planet[4]), float(target_planet[5]),
+        float(target_planet[6]),
+    ]
+    src_is_orbiting_f = 1.0 if _is_orb(src_tuple_pos) else 0.0
+    tgt_is_orbiting_f = 1.0 if _is_orb(tgt_tuple_pos_basic) else 0.0
+
     return [
         # 0-5: planet-static features
         sps_ships, sps_prod, sps_rad,
@@ -401,6 +491,12 @@ def encode_features(
         growth_field_diff,
         # 37-38: F9 source-side threat features
         src_threat_norm, src_is_frontier,
+        # 39-40: enemy fleets inbound to target (Stage 1.5)
+        enemy_inflight_n, enemy_inflight_ships,
+        # 41-42: post-capture geometry — nearest enemy at arrival (Stage 1.5)
+        post_capture_nearest_dist, post_capture_nearest_prod,
+        # 43-44: orbital state flags (Stage 1.5)
+        src_is_orbiting_f, tgt_is_orbiting_f,
     ]
 
 
