@@ -107,16 +107,22 @@ def test_validator_passes_through_when_no_weights():
     """With empty _WEIGHTS_B64, the wrapper must fall through to inner."""
     from agents.baseline_validated import main as bv
 
-    # Force-reset cache to "not yet loaded"
+    # Force-reset cache to "not yet loaded" AND blank the embedded blob
+    # so _load_weights() falls into the "no weights" branch.
+    original_b64 = bv._WEIGHTS_B64
+    original_inner = bv._inner_agent
+    bv._WEIGHTS_B64 = ""
     bv._MODELS = None
     bv._LOAD_FAILED = False
 
     # Stub the inner agent to return a known list.
     sentinel = [[0, 0.0, 10.0]]
-    original = bv._inner_agent
     bv._inner_agent = lambda obs, cfg=None: list(sentinel)
     try:
         out = bv.agent(_synthetic_obs(), None)
         assert out == sentinel
     finally:
-        bv._inner_agent = original
+        bv._inner_agent = original_inner
+        bv._WEIGHTS_B64 = original_b64
+        bv._MODELS = None
+        bv._LOAD_FAILED = False
