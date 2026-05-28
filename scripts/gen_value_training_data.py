@@ -55,6 +55,16 @@ SAMPLES_PER_GAME = 10
 MIN_SAMPLE_TURN = 10  # skip opening fluff
 SEATS = 2  # MVP: 2P only (matches current chooser)
 
+# Label modes:
+#   "final_margin"  -> (V1 default) y = final ship-margin from seat's POV
+#   "favor_hybrid"  -> Phase A distillation: y = favor_hybrid(obs, me)
+#                      (the hand-coded mu=1149 value function from
+#                       agents.baseline.value; tests whether the MLP
+#                       can REPRODUCE the gold-standard scalar from
+#                       our 40-dim features. If yes, wiring is sound
+#                       and v1's failure was target + data, not arch.)
+LABEL_MODES = ("final_margin", "favor_hybrid")
+
 
 # ---------------------------------------------------------------------------
 # Agent specs
@@ -117,18 +127,28 @@ def _run_one_capture_samples(
 ) -> tuple[np.ndarray, np.ndarray, dict]:
     """Worker: run one game, return (X, y, meta).
 
-    `task` is `(p0_spec, p1_spec, seed, samples_per_game, rng_seed)`.
+    `task` is `(p0_spec, p1_spec, seed, samples_per_game, rng_seed,
+                label_mode)`.
+    Label modes:
+      "final_margin" -> y[i] = signed ship-margin from seat i's POV
+      "favor_hybrid" -> y[i] = agents.baseline.value.favor_hybrid(obs, i)
+                        (Phase A distillation target — the hand-coded
+                         mu=1149 scalar value function)
     """
-    p0_spec, p1_spec, seed, samples_per_game, rng_seed = task
+    p0_spec, p1_spec, seed, samples_per_game, rng_seed, label_mode = task
     p0 = _resolve_agent_spec(p0_spec)
     p1 = _resolve_agent_spec(p1_spec)
+
+    if label_mode == "favor_hybrid":
+        from agents.baseline.value import favor_hybrid
 
     env = make("orbit_wars", configuration={"seed": int(seed)}, debug=False)
     env.run([p0, p1])
     final = env.steps[-1]
     n_steps = len(env.steps)
 
-    # Final-margin label (from each seat's perspective).
+    # Final-margin label cache (always computed — also reported in meta
+    # for diagnostics regardless of label_mode).
     final_ships = _final_margin_per_seat(final)
     margin_p0 = float(final_ships.get(0, 0.0) - final_ships.get(1, 0.0))
     margin_per_seat = {0: margin_p0, 1: -margin_p0}
@@ -151,7 +171,10 @@ def _run_one_capture_samples(
         obs_t = env.steps[t][0].observation
         for me in range(SEATS):
             X_rows.append(extract_features(obs_t, me=me, num_seats=SEATS))
-            y_rows.append(margin_per_seat[me])
+            if label_mode == "favor_hybrid":
+                y_rows.append(float(favor_hybrid(obs_t, me, num_seats=SEATS)))
+            else:
+                y_rows.append(margin_per_seat[me])
 
     X = np.stack(X_rows, axis=0).astype(np.float32)
     y = np.asarray(y_rows, dtype=np.float32)
@@ -183,10 +206,12 @@ def _parse_pairing(spec: str) -> tuple[str, str, int]:
 def _run_pairing(
     p0: str, p1: str, count: int, seed_offset: int,
     workers: int, samples_per_game: int, out_path: Path,
+    label_mode: str = "final_margin",
 ) -> dict:
     """Run `count` games in parallel; write X, y to `out_path`."""
     tasks = [
-        (p0, p1, seed_offset + i, samples_per_game, seed_offset + i + 999983)
+        (p0, p1, seed_offset + i, samples_per_game,
+         seed_offset + i + 999983, label_mode)
         for i in range(count)
     ]
 
@@ -310,6 +335,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="merge chunks under this dir into training.npz")
     p.add_argument("--include-validation", action="store_true",
                    help="also run the held-out validation pairing (mvp preset)")
+    p.add_argument("--label-mode", choices=LABEL_MODES, default="final_margin",
+                   help="Phase A distillation: pass 'favor_hybrid' to label "
+                        "each state with the hand-coded value function's "
+                        "scalar output instead of final game margin.")
     return p.parse_args(argv)
 
 
@@ -345,6 +374,7 @@ def main(argv: list[str] | None = None) -> int:
         summary = _run_pairing(
             p0, p1, count, seed_offset,
             args.workers, args.samples_per_game, out_path,
+            label_mode=args.label_mode,
         )
         summaries.append(summary)
         seed_offset += count

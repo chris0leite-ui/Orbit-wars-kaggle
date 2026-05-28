@@ -30,6 +30,11 @@ SOURCE = ROOT / "submissions" / "baseline.py"
 VARIANTS = {
     "baseline_learned": "learned",
     "baseline_favor": "",
+    # `baseline_hybrid` — A/B reference for Phase A distillation. Bakes
+    # in `BASELINE_VALUE_HEAD=hybrid` (the mu=1149 head from
+    # kaggle-baseline-strategy-lO4mm: composite waste-aware in 2P + A2
+    # weakness exploit in 4P; see agents/baseline/value.py:favor_hybrid).
+    "baseline_hybrid": "hybrid",
 }
 
 
