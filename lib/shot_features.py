@@ -1,6 +1,6 @@
 """Per-shot feature encoder for the konbu17-style shot validator MLP.
 
-Pure function `encode_shot_features(emit, obs, focal_seat) -> ndarray(24,)`.
+Pure function `encode_shot_features(emit, obs, focal_seat) -> ndarray(25,)`.
 Lives in `lib/` (not `scripts/`) so:
 
   - the bundler inlines it into the submission once
@@ -8,9 +8,16 @@ Lives in `lib/` (not `scripts/`) so:
     `agents/baseline_validated/main.py` (inference-time) share one
     source of truth for the feature schema
 
-The 24-dim output matches `data/shot_validator/schema.json` exactly.
+The 25-dim output matches `data/shot_validator/schema.json` exactly.
 See `knowledge-base/thoughts/2026-05-28-pm3-h14-recipe-locked-from-konbu17.md`
 for the feature definitions verified against konbu17's notebook cells 8 + 16.
+
+Feature 24 (`combat_margin_at_arrival`) was added in Stage 2 of PM5
+(2026-05-28): the model-readable form of the binary label. Production-walk
+prediction of the target garrison at ETA (owner's production accrues each
+tick if the planet is owned); margin = (ships_sent - pred) / max(1, pred),
+clamped to [-1, 1]. This approximation ignores in-flight defending fleets;
+F3 (`enemy_defenders_in_range`) will cover that orthogonal signal later.
 
 Normalisation constants are the same `_NORM` dict used by
 `scripts/label_shot_outcomes.py` — both modules import from here now.
@@ -23,7 +30,7 @@ from typing import Any
 
 import numpy as np
 
-FEATURE_DIM = 24
+FEATURE_DIM = 25
 
 NORM = {
     "max_ships": 2000.0,
@@ -86,7 +93,9 @@ def encode_features(
     focal_seat: int,
     step: int,
 ) -> list[float]:
-    """Build the 24-dim feature vector. All values normalised to [0, 1].
+    """Build the 25-dim feature vector. All values normalised to [0, 1]
+    except `ship_diff` (index 21) and `combat_margin` (index 24), both
+    in [-1, 1].
 
     Tuple indexing follows the kaggle_environments schema:
       Planet = (id=0, owner=1, x=2, y=3, radius=4, ships=5, production=6)
@@ -149,6 +158,19 @@ def encode_features(
     my_pc_n = my_planet_count / NORM["max_planets"]
     enemy_pc_n = enemy_planet_count / NORM["max_planets"]
 
+    # F2 combat_margin_at_arrival: production-walk prediction of the
+    # target's garrison at ETA, then signed margin of ships_sent against
+    # it. Owned planets accrue `production` per tick; neutrals don't.
+    # Ignores in-flight fleets (F3 covers that orthogonal signal). The
+    # raw target tuple's owner / ships / production carry the unnormalised
+    # values we need; encoder receives raw tuples by design.
+    if tgt_owner != -1:
+        pred_garrison = float(target_planet[5]) + float(target_planet[6]) * float(eta)
+    else:
+        pred_garrison = float(target_planet[5])
+    pred_denom = max(1.0, pred_garrison)
+    combat_margin = max(-1.0, min(1.0, (ships_sent - pred_denom) / pred_denom))
+
     return [
         sps_ships, sps_prod, sps_rad,
         tgt_ships, tgt_prod, tgt_rad,
@@ -158,6 +180,7 @@ def encode_features(
         in_flight_n_enemy, in_flight_ship_enemy,
         meta_turn, my_total_ships_n, enemy_total_ships_n,
         ship_diff, my_pc_n, enemy_pc_n,
+        combat_margin,
     ]
 
 

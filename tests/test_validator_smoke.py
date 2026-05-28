@@ -62,9 +62,10 @@ def test_encode_shape_and_range():
     assert feats is not None
     assert feats.shape == (FEATURE_DIM,)
     assert feats.dtype == np.float32
-    # All non-ship_diff features in [0, 1]; ship_diff in [-1, 1]
+    # ship_diff (idx 21) and combat_margin (idx 24) in [-1, 1];
+    # all other features in [0, 1].
     for i, v in enumerate(feats):
-        if i == 21:
+        if i in (21, 24):
             assert -1.0 <= v <= 1.0
         else:
             assert 0.0 <= v <= 1.0, f"feat {i}={v} out of [0,1]"

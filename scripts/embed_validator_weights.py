@@ -21,6 +21,11 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from lib.shot_features import FEATURE_DIM  # noqa: E402
+
 DEFAULT_NPZ = REPO / "data" / "shot_validator" / "validator_ensemble_weights.npz"
 DEFAULT_AGENT = REPO / "agents" / "baseline_validated" / "main.py"
 
@@ -31,7 +36,7 @@ for i in range(3):
 
 EXPECTED_SHAPES = {}
 for i in range(3):
-    EXPECTED_SHAPES[f"m{i}_W0"] = (24, 64)
+    EXPECTED_SHAPES[f"m{i}_W0"] = (FEATURE_DIM, 64)
     EXPECTED_SHAPES[f"m{i}_b0"] = (64,)
     EXPECTED_SHAPES[f"m{i}_W1"] = (64, 32)
     EXPECTED_SHAPES[f"m{i}_b1"] = (32,)

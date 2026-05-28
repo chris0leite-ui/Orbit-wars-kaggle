@@ -1,6 +1,6 @@
 {
-  "FEATURE_VERSION": 1,
-  "n_features": 24,
+  "FEATURE_VERSION": 2,
+  "n_features": 25,
   "label_buffer_steps": 10,
   "feature_names": [
     "src_ships",
@@ -26,7 +26,8 @@
     "meta_enemy_total_ships",
     "meta_ship_diff",
     "meta_my_planet_count",
-    "meta_enemy_planet_count"
+    "meta_enemy_planet_count",
+    "combat_margin_at_arrival"
   ],
   "feature_normalisation_constants": {
     "max_ships": 2000,
