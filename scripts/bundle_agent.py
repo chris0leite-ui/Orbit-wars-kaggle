@@ -106,6 +106,19 @@ DEFAULT_LIB_ORDER = [
     # lib.fleet/trajectory/world_model — all already in DEFAULT_LIB_ORDER
     # above.
     "joint_solver/opening_planner",
+    # 2026-05-22: physics substrate (kinematic table) extracted from
+    # strategy-axis branch. `lib/trajectory.py` imports from this module
+    # since commit 72fe45a. Must follow `trajectory` in the topo order
+    # so the symbol is bound before trajectory's load-time refs run, but
+    # the inlining is source-text concat so order within the list is
+    # purely lexical — adding it here keeps the bundler check satisfied.
+    "kinematic_table",
+    # 2026-05-28 MVP learned value head wedge. `lib/value_features.py`
+    # is the 40-dim feature extractor imported by
+    # `agents/baseline/value_learned.py`. Bundle-inert for agents that
+    # don't enable BASELINE_VALUE_HEAD=learned (the import is gated
+    # inside `select_favor_fn`).
+    "value_features",
 ]
 SUBMISSIONS = REPO / "submissions"
 

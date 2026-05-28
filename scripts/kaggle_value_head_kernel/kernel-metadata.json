@@ -1,0 +1,13 @@
+{
+  "id": "chrisleitescha/orbit-wars-value-head-train",
+  "title": "Orbit Wars Value Head Training",
+  "code_file": "train.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": false,
+  "competition_sources": [],
+  "dataset_sources": ["chrisleitescha/orbit-wars-value-head-data"],
+  "kernel_sources": []
+}

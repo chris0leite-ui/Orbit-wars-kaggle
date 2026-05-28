@@ -217,6 +217,9 @@ def select_favor_fn():
                                   composite_capture_value head).
       - "hybrid"              -> `favor_hybrid` (composite in 2P,
                                   A2-favor in 4P).
+      - "learned"             -> `favor_learned` (MVP learned-value-head
+                                  wedge; weights embedded in
+                                  `agents/baseline/value_learned.py`).
 
     The chooser uses the same function for both `build_idle_baseline` and
     `score_action` so the Δ stays well-defined.
@@ -228,4 +231,7 @@ def select_favor_fn():
         return favor_hybrid
     if choice == "hybrid_spatial":
         return favor_hybrid_spatial
+    if choice == "learned":
+        from agents.baseline.value_learned import favor_learned
+        return favor_learned
     return favor
