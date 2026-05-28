@@ -442,20 +442,31 @@ Full write-up: `knowledge-base/thoughts/2026-05-28-pm4-validator-mvp-results-and
 
 ### Phase 2 — feature expansion + opponent diversity (NEXT SESSION)
 
-**Axis A — feature expansion (24 d → ~32 d).** The MVP's 24 features describe STATE-AT-LAUNCH only; the chooser argmax depends on ARRIVAL-TIME predictions and PATH PHYSICS, neither of which the current features capture. Tier 1 additions:
+**Axis A — feature expansion (24 d → ~30 d).** Deep-dive research (PM4 evening) found that every high-EV per-shot feature from Halite IV / Planet Wars 2010 / Lux winners has a substrate function ALREADY IMPLEMENTED in our `lib/`. The encoder just doesn't call them. Top 6 to add (priority-ranked):
 
-| Feature | Source / formula |
-|---|---|
-| `tgt_ships_at_arrival` | `lib.world_model.predict_garrison_at(tgt, eta, arrivals).ships` (O(eta), already implemented) |
-| `tgt_owner_at_arrival` (one-hot) | Same call, `.owner` |
-| `combat_margin_predicted` | `shot.ships − tgt_ships_at_arrival` (signed) |
-| `target_value_pv` | `tgt.prod × (γ^eta − γ^horizon) / (1 − γ)`, γ=0.99 = `PV_GAMMA` in `lib/scoring.py` |
-| `path_clears_sun` (binary) | `lib.geometry.path_clears_sun(src_xy, tgt_xy, SUN_RADIUS + 1.5)` |
-| `src_garrison_after_launch` | `max(0, src.ships − shot.ships)` |
+| # | Feature | Formula → existing primitive | Why |
+|---|---|---|---|
+| **F2** | `combat_margin_at_arrival` (1 d) | `(ships_sent − predicted_defenders) / max(1, predicted_defenders)`, clipped [-1, +1], via `lib/world_model.predict_garrison_at(tgt, eta, ledger[tgt.id]).ships` | The single number "did we send enough to beat predicted defenders" — literally the binary label, made explicit. Highest expected lift. |
+| **F6** | `path_fate_one_hot` (4 d) | `lib/trajectory.predict_fleet_fate(src, tgt, angle, ships, world, max_steps=eta+5)`; one-hot over {target, planet-collide, sun, oob} | Encodes H44 finding (65 % fleet-destroyed-in-flight). audit/2026-05-21-h44 directly maps to this feature. |
+| **F3** | `owner_at_arrival_one_hot` (3 d) | `predict_garrison_at(...).owner`, replace current launch-time owner one-hot | Roman/Pilkwang/oddshrimp all gate on arrival-time owner, not launch-time. Free swap — same slot count, more predictive. |
+| **F10** | `same_target_friendly_inflight_{count, ships}` (2 d) | `[(eta, ships) for (eta, owner, ships) in ledger[tgt.id] if owner == focal_seat]` | Closes redundant-swarm failure mode. The pooled in-flight totals in v1 can't see "I already have 200 ships landing here." |
+| **F8** | `src_safe_departure_ratio` + `shot_drains_safely` (2 d) | `safe_dep = src.ships + prod·enemy_eta − inbound − 1` using `WorldModel.incoming_enemy_eta(src.id, focal_seat)` + `ledger[src.id]` + `WAVE_LOOKAHEAD=12` from `lib/world_model.py:53` | Source-emptying discipline is the top-10 differentiator (mean garrison-at-launch 11 vs midpack 22). |
+| **F4** | `pv_capture` (1 d) | `pv_horizon(step, eta, gamma=0.99, t_total=step + eta + expected_hold(tgt.id, eta, world)) × tgt.production` via `lib/scoring.py:89-140` | Late-game scoring asymmetry: γ=0.99 over `expected_hold`-truncated horizon penalises captures we'll lose quickly. Live μ=1064 anchor for un-truncated; truncated form is what HAV-1 was designed for. |
 
-Tier 2 (after Tier 1 lands, if budget permits): `src_incoming_threat_eta`, `enemy_fleets_eta_to_tgt`, `n_my_fleets_to_same_tgt`, `mission_type_onehot`.
+**Total: 24 d → ~30 d** (F3 replaces 3 d, the rest are net adds).
 
-Tier 3 (defer, exploratory): growth-field, dominance, fleet-destroyed-in-flight model.
+**Critical implementation note:** all 6 features are 3-5 line additions to `lib/shot_features.py`. The hard work (predict_garrison_at, predict_fleet_fate, time_to_enemy_threat, expected_hold) is already in lib/ and parity-tested. The feature encoder just needs to call these and normalise.
+
+Tier 2 (slots 7-10 if budget permits): F11 `joint_arrival_count_at_eta` (±1-step same-owner stack count), F7 `intercept_enemy_eta` (earliest enemy arrival at tgt before our eta), F13 `target_growth_field_diff` (zvold's inverse-square electrostatic field), F9 `src_time_to_nearest_enemy_threat` + `src_is_frontier` (Roman ROTATION_LIMIT analogue).
+
+Tier 3 (defer, exploratory): F5 `uncertainty_at_arrival` (0Zeta's drift × eta), F12 `target_indirect_wealth` (oddshrimp's neighbour-growth bonus), F14 `target_dominance_3nn` (3-NN ownership signal), `comet_remaining_lifetime`.
+
+**Sources** (cited in PM4 doc):
+- oddshrimp / melisgl 2010 Planet Wars winners — `safe_departure`, `pv_capture`, `indirect_wealth`
+- zvold — `growth_field`
+- 0Zeta Halite IV 4th — `uncertainty_at_arrival`
+- Pilkwang / Roman / AidenSong Orbit Wars — `arrival-time owner/ships` via `simulate_planet_timeline`
+- konbu17 — original 24-d state-at-launch schema
 
 **Axis B — expanded opponent pool (3 → 18 opp cells, 90 games).** Full table in PM4 doc; high-level mix:
 - **Weak** (3): `simple`, `geo`, `v1_orbitfix`
