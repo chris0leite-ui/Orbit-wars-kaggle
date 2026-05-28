@@ -177,8 +177,21 @@ PRODUCTION_PV_GAMMA: float = 0.99
 # knowledge-base/thoughts/2026-05-18-PV-term-recalibration-debt.md.
 # Default OFF as of 2026-05-18 PM session wrap. Set
 # `COMPOSITE_PRODUCTION_PV=1` to re-enable for A/Bs.
+#
+# 2026-05-28 PM: silent-turns investigation
+# (knowledge-base/thoughts/2026-05-28-silent-turns-pre-existing-weakness.md)
+# attributed mid-game chooser stalls to this term being off — the 2P leaf
+# is dimensionally myopic without it (no credit for future production beyond
+# the rollout horizon). Re-enable behind a namespaced alias env var
+# `BASELINE_LEAF_PV_2P=1`; either var still flips the gate, so the legacy
+# `COMPOSITE_PRODUCTION_PV` knob continues to repro the historical evidence.
+# The 2026-05-18 calibration debt is unresolved — re-enabling without
+# fresh A/B vs the peak anchor still carries the ~-3pp regression risk.
 import os as _os
-_COMPOSITE_PV_ENABLED = _os.environ.get("COMPOSITE_PRODUCTION_PV", "0") != "0"
+_COMPOSITE_PV_ENABLED = (
+    _os.environ.get("COMPOSITE_PRODUCTION_PV", "0") != "0"
+    or _os.environ.get("BASELINE_LEAF_PV_2P", "0") != "0"
+)
 
 
 def composite_capture_value(
