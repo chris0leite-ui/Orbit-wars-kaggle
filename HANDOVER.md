@@ -161,6 +161,72 @@ matter for headroom. Five changes, expected order of impact:
      (i) local CPU single-state with JIT compile + memory recorded,
      (ii) small-scale GPU ≤4 games × ≤50 turns inside 10 min.
 
+### Plan refinements from 2026-05-28 PM lens-critique pass
+
+Three-lens review (mathematician / senior-ML-engineer / sim-game)
+against the 5-step roadmap above. The ladder shape is unchanged;
+five concrete modifications:
+
+1. **B-1 explicitly reuses Phase A's data distribution.** "CRN
+   advantage only" means: same games / opp as Phase A
+   (`favor_hybrid` self-play, single opp), only the LABEL changes
+   to a CRN-paired advantage `A(s, a) = margin_action − margin_idle`
+   with the same opp-RNG seed on both legs. Each Phase A game already
+   yields many (s, idle, a) triples; cost is hours not days. Earns
+   or kills the line cheaply before any strong-opp / archetype
+   corpus is built. Train/val seed-disjointness mandatory to avoid
+   val leakage.
+2. **Pre-B-3 compute-budget gate (back-of-envelope BEFORE the loop).**
+   Before generating the strong-opp + archetype corpus, compute
+   `games × turns × per-turn-ms × N_opps × N_archetypes`. If projected
+   wallclock exceeds the planned compute window (Rule 2 1h CPU cap →
+   Kaggle GPU per Rule 13), revise corpus shape (subsample turns,
+   cache rollouts to harvest many (s, a) labels per game) BEFORE
+   writing the data-gen loop, not after.
+3. **Player-count branching is a roadmap decision, not an
+   afterthought.** Team peak μ=1149.2 (sub 52744856) was
+   `composite_a2_hybrid` — a 2P/4P branched architecture. The one-head
+   Phase B plan must explicitly pick: (a) train two heads (proven by
+   team peak, doubles param count), or (b) one head with
+   `player_count` as a 41st feature AND ensured 4P coverage in the
+   corpus. Decide before B-3 data-gen.
+4. **Latency engineering lands with B-1, not deferred.** Phase A's
+   p50 = 164 ms already exceeds the 100 ms chooser wallclock budget.
+   Per-candidate MLP calls don't scale; the right shape is a single
+   batched MLP forward over the chooser's full candidate set per
+   turn. Deliver alongside B-1.
+5. **Falsification clause needs a chooser-ceiling escape.** Current
+   doc: "if Phase B underperforms, blame data/target, not features."
+   Add a third candidate: *or chooser is the ceiling*. Concrete probe
+   at the end of any failing phase — swap `favor_hybrid` back in as
+   the value function while holding proposer + chooser + bundle
+   constant; if that doesn't beat the learned head either, the head
+   isn't the bottleneck and the head-headroom line should be paused.
+
+**Comparison-baseline decision (2026-05-28 PI):** keep chooser
+unchanged (no PV_ETA layered) during the B-1 / B-2 diagnostic phases,
+so Δ-attribution stays clean. PV_ETA adoption re-opens only at the
+submission gate, after the head itself has been A/B-validated in
+isolation against `favor_hybrid`.
+
+### Live-ladder state correction (2026-05-28 PM)
+
+The "Where we are" section above is from 2026-05-20 and is **stale**.
+Refreshed snapshot for context (do not edit history — use this for
+Phase B baseline-choice only):
+
+| Sub ID | Date (UTC) | Agent | μ | Role |
+|---|---|---|---:|---|
+| 53111837 | 2026-05-28 09:42 | `baseline_pv_eta` (sibling) | **1154.8** | rolling pair (top) |
+| 53099429 | 2026-05-28 00:13 | peak-restore (orbital safety) | 1114.5 | rolling pair (bottom) |
+
+Floor-at-risk flag is **FALSE** (was TRUE in the 5/20 snapshot — the
+five-day intervening work on sibling branches recovered the floor).
+Phase B's submission bar is now **~μ=1155**, not the evicted ~μ=1149
+referenced in the older Phase A debrief. The diagnostic A/B target
+(`favor_hybrid`) is still the right comparison for B-1 / B-2; the
+submission gate must be re-checked against the live rolling top.
+
 **Phase B decision rule.** Each addition is gated by an A/B vs
 favor_hybrid at `n ≥ 32` with `BASELINE_WALLCLOCK_MS=100`:
 - B-1 (CRN advantage only): need Wilson-lo ≥ 0.50 (parity-or-better).
