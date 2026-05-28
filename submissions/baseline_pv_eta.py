@@ -1,7 +1,20 @@
-# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,kinematic_table,trajectory,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner}.
-# Single-file Kaggle submission for Orbit Wars.
+# Bundled by scripts/bundle_agent.py from agents/baseline.
+# Single-file Kaggle submission for Orbit Wars — peak orbitfix preamble + BASELINE_PV_ETA=1.
 
 from __future__ import annotations
+
+import os as _orbitfix_os
+_orbitfix_os.environ.setdefault("BASELINE_JOINT_AGGR", "1")
+_orbitfix_os.environ.setdefault("BASELINE_JOINT_TOP_K", "5")
+_orbitfix_os.environ.setdefault("BASELINE_JOINT_MAX_PAIRS", "60")
+_orbitfix_os.environ.setdefault("BASELINE_REINFORCE_EMIT", "1")
+_orbitfix_os.environ.setdefault("BASELINE_REINFORCE_ANTICIPATE", "1")
+_orbitfix_os.environ.setdefault("BASELINE_NEUTRAL_BONUS", "2.0")
+_orbitfix_os.environ.setdefault("BASELINE_NEUTRAL_EARLY_EXTRA", "1.5")
+_orbitfix_os.environ.setdefault("BASELINE_NEUTRAL_EARLY_HORIZON", "50")
+_orbitfix_os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
+# NEW (2026-05-28): present-value time-discount on candidate Δ.
+_orbitfix_os.environ.setdefault("BASELINE_PV_ETA", "1")
 
 # === inlined: lib/geometry.py ===
 
