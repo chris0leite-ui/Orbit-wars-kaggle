@@ -23,7 +23,7 @@ from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy
 
 from agents.baseline.value import select_favor_fn
 
-WALLCLOCK_BUDGET_MS = 600.0
+WALLCLOCK_BUDGET_MS = 700.0
 N_VALIDATE = 60
 PER_CANDIDATE_SAFETY = 1.5
 RESERVED_OVERHEAD_MS = 50.0
