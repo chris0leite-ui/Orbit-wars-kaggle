@@ -305,6 +305,59 @@ lens-critique pass is invalidated):
 pseudocode, locked-opp-RNG mechanics, compute budget, "known
 unknowns to verify before code" list, sequenced rollout plan.
 
+### Post-diagnostic re-refinement #2 (2026-05-28 PM2 — feature-sufficiency probe)
+
+A second probe ran on the existing Phase A corpus (no fresh rollouts; ≈10 min
+compute) plus a public-notebook scan and literature search. Full write-up at
+`knowledge-base/thoughts/2026-05-28-pm2-feature-sufficiency-probe.md`.
+
+Three stages, all on the existing 10k-example artifact:
+
+| Stage | Diagnostic | Result |
+|---|---|---|
+| 1 | Random-pair P(rank-agree) vs \|Δy\| | Chance (~0.52–0.57) below \|Δy\|=10; 0.87 only above \|Δy\|=50 |
+| 2 | Train RankNet on SAME 40 features | +2–5 pp in close-pair buckets vs MSE — loss is NOT the bottleneck |
+| 3 | Permutation importance on embedded head | **5 of 40 features** carry +2.47 ΔR²; remaining 35 each ΔR² < 0.003 |
+
+**Mechanistic finding.** `favor_hybrid` is essentially `delta_us_minus_them` + small inflight correction. The distilled head correctly learned ship-delta prediction and ignored the rest. The chooser argmax then can't distinguish candidates whose ship totals are conserved (i.e. all legal sibling emits) — formal mechanism behind 28 % h2h vs `baseline_favor`.
+
+**Both axes of Phase B-1 must change, not just the target:**
+
+- *Target:* scalar favor_hybrid → CRN-paired advantage (already planned).
+- *Features:* pooled state-features → per-candidate features (NEW; was assumed sufficient on the basis of Phase A's R²=0.994, which Stage 3 now reveals was illusory).
+
+**Kaggle public precedent (≥70 votes) supports two value-head archetypes that have moved THIS competition's LB:**
+
+| Archetype | Author | Features | Result |
+|---|---|---|---|
+| GBC value head used INSIDE 1-ply search | AidenSong123 | 16 global STATE features | AUC 0.976, LB ≥ 1000 |
+| **MLP shot-validator FILTER on rule-base proposals** | konbu17 | **24 features PER SHOT** | **+19 pp vs rule-base alone, +43 pp vs tier4** |
+| PPO with per-candidate encoder | kashiwaba | self / candidate / global groups | educational |
+
+Neither uses "global features → direct argmax" (which is what Phase A built). The architectures that work either use search to compare scalars across different terminal states, or use per-shot features so candidates differ by construction.
+
+### Phase B-1 amended sequencing (supersedes the morning roadmap on this point)
+
+**Direction 1 — Per-emit MLP filter (konbu17 architecture, evidence-backed, cheapest):**
+
+1. Inventory existing infrastructure for "labelled emits" (self-play replays with per-emit outcome).
+2. Define per-emit 24-feature extractor (src/tgt planet stats, owner one-hot, ETA, fleet-speed, in-flight counts, turn, totals).
+3. Train binary "good emit" MLP filter, embed in bundle, A/B vs production stack n=32.
+4. Decision gate: Wilson-lo ≥ 0.50 vs production stack at n=32 → continue to Direction 2; else iterate filter design.
+
+**Direction 2 — Per-candidate score head + CRN-paired advantage (only if Direction 1 cleared):**
+
+5. CRN-paired advantage rollouts (already designed in `crn-advantage-datagen-sketch.md`) BUT now feeding per-candidate features, not pooled-state features.
+6. Per-candidate score head replaces argmax over pooled-state-score.
+7. Spearman-τ training-time gate.
+8. A/B vs `baseline_pv_eta` n=32.
+
+### Falsified or weakened by PM2
+
+- **"Feature-sufficient" claim is settled-DEAD for pooled 40-feature setup.** Stage 3 permutation importance shows 35/40 are unused. Do not iterate on pooled features.
+- **"Phase A's 99.8% R² implies features carry rank info."** Falsified by Stage 1+2; the R² is a property of a degenerate target.
+- **"Rank-aware loss alone (RankNet/CRN) will save the existing feature set."** Falsified by Stage 2; rank-aware loss on same features = +5 pp at most.
+
 ### Pre-submit checklist when Phase B clears
 
 Apply in this exact order to avoid Rule 42 / 43 / 46 violations:
