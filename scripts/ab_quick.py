@@ -45,10 +45,12 @@ def _play(args: tuple[str, str, int, int]) -> Result:
     """Worker: play one truncated game, focal at P0."""
     focal_path, opp_path, seed, episode_steps = args
     from kaggle_environments import make
-    from fast import _load_callable
+    from fast import _load_callable, resolve_agent_spec
 
-    p0 = _load_callable(focal_path)
-    p1 = _load_callable(opp_path)
+    _, focal_resolved = resolve_agent_spec(focal_path)
+    _, opp_resolved = resolve_agent_spec(opp_path)
+    p0 = _load_callable(focal_resolved)
+    p1 = _load_callable(opp_resolved)
     env = make(
         "orbit_wars",
         configuration={"seed": seed, "episodeSteps": episode_steps},
