@@ -87,9 +87,12 @@ iteration round)`:
   experiments on a foundation an existing audit warned would
   resist exactly this.
 
-## Promotion candidates (PI ratified: pending)
+## Promotion candidates (PI ratified: NOT promoted)
 
-### [ ] CLAUDE.md — add Rule 41 banning single-seed commit evidence
+PI: "Nothing to add or to promote." Both candidates stay in
+`audit/friction.md` for one cycle of grace.
+
+### [ ] CLAUDE.md — add Rule 41 banning single-seed commit evidence — **NOT promoted**
 
 **Tag:** `commit-based-on-single-seed-flip` (recurring across
 2026-05-23 → 2026-05-28; metric was turn-divergences then,
@@ -120,7 +123,7 @@ restriction-tuning) in the numbered operating rules.
 evidence; the same anti-pattern (n=1 as ratification) recurred
 twice within a week on different metrics.
 
-### [ ] CLAUDE.md — add Rule 42 requiring multi-opponent-class panels
+### [ ] CLAUDE.md — add Rule 42 requiring multi-opponent-class panels — **NOT promoted**
 
 **Tag:** `single-opponent-misrepresents-strength` (first occurrence
 this session)
@@ -148,10 +151,9 @@ agent should have caught it.
 
 ## PI additions (from step 4)
 
-PENDING — postmortem committed in draft form because the
-stop-hook blocked an uncommitted working tree before the
-PI-block step could complete. PI to ratify / amend in the
-next message.
+PI: "Nothing to add or to promote." No additions, no promotions.
+Both promotion candidates stay in `audit/friction.md` for one
+cycle of grace per friction.md::Anti-spam convention.
 
 ## Framework version at session-end
 
