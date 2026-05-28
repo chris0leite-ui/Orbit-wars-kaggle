@@ -25,40 +25,148 @@ ladder rated at 1144-1165μ. Do not regenerate it; do not modify it.
 
 ---
 
+## What the agent does (plain English)
+
+This agent plays a "patient capture" game. Each turn it looks at every
+planet it owns and asks "what's the cheapest planet near me worth
+grabbing or defending?" — generating a few hundred candidate launches
+with three sizes each (just enough to capture, double that, or send
+everything). Before doing anything expensive, it filters out launches
+that would obviously fail: paths that crash into the sun, run out of
+bounds, hit the wrong planet, drain a planet that's already under
+attack, capture a target the opponent can easily steal back, or let
+the opponent grab the same planet for cheaper. The survivors get
+rolled forward in a fast simulator for roughly 25-40 ticks each, with
+all opponents reacting greedily, to estimate "how much better off am
+I after this move than if I'd done nothing?" The best-scoring moves
+are emitted, with one important twist: it actively looks for pairs
+of nearby planets that should attack the same target together (joint
+launches) — single planets often can't capture a contested target
+alone, but two coordinated launches usually can. After the main
+decision, a post-pass scans for own planets about to fall and
+patches in defensive reinforcements. In 4-player games it biases
+toward attacking the strongest opponent and toward eliminating the
+weakest one when it can finish them off cheaply. It's not searching
+deep, it's not learning — it's a careful one-step-lookahead engine
+with very good filters that throw away wasteful moves before they
+ever get scored.
+
+---
+
 ## What is ACTIVE at peak (config that drives decisions)
 
-The wrapper preamble at `agents/baseline_joint_aggr_consolidated_orbitfix/main.py`
-sets 9 env vars. Of those, only the following are actually read by live
-code paths:
+The wrapper preamble sets 9 env vars; `agents/baseline/main.py` adds
+a few setdefaults; many proposer/chooser knobs default-on. The full
+live surface:
 
-| env var | value | effect |
+| Env var | Set in | Value | Live call-site |
+|---|---|---|---|
+| `BASELINE_JOINT_AGGR` | wrapper | `1` | `chooser_trajectory.py:246` (`JOINT_LIFT_USED_TGTS`); used at `:894`, `:974`, `:988` to drop `used_tgts` lock in emit |
+| `BASELINE_JOINT_TOP_K` | wrapper | `5` | `chooser_trajectory.py:240` → cap at `:919` |
+| `BASELINE_JOINT_MAX_PAIRS` | wrapper | `60` | `chooser_trajectory.py:243` → cap at `:921`, `:926` |
+| `BASELINE_REINFORCE_EMIT` | wrapper | `1` | `baseline/main.py:72` → gates `emit_threat_reinforcements` body at `:319`, `:340` |
+| `BASELINE_REINFORCE_ANTICIPATE` | wrapper | `1` | `baseline/main.py:82` → gates anticipated-threat branch at `:373` |
+| `BASELINE_ORBITAL_SAFETY` | wrapper | `1` | `proposer.py:443` (`cheap_marginal_value`), `:569` (`_target_holdable_after_capture`), `:683` (`_target_cost_parity_ok`); also threaded into `lib/world_model.time_to_enemy_threat`, `lib/scoring.expected_hold` |
+| `BASELINE_VALUE_HEAD` | `baseline/main.py:28` setdefault | `hybrid` | `value.py:224` → `select_favor_fn` returns `favor_hybrid` (composite in 2P, A2-favor in 4P) |
+| `BASELINE_CHOOSER` | `baseline/main.py:38` setdefault | `trajectory` | `baseline/main.py:903` → dispatches `choose_trajectory` |
+| `BASELINE_JOINT` | `baseline/main.py:46` setdefault | `1` | `chooser_trajectory.py:898` → enables joint enumeration |
+| `BASELINE_GAMMA` | unset → default | `0.99` | `baseline/main.py:220` (`_gamma()`) — threaded everywhere |
+| `BASELINE_WALLCLOCK_MS` | unset → default | `600` | `baseline/main.py:213` (`_wallclock_ms()`) |
+| `PROPOSER_TRAJECTORY_FILTER` | unset → default-on | on | `proposer.py:993` |
+| `PROPOSER_DRAIN_FILTER` | unset → default-on | on | `proposer.py:1022` |
+| `PROPOSER_HOLD_FEASIBILITY` | unset → default-on | on | `proposer.py:1040` |
+| `PROPOSER_COST_PARITY` | unset → default-on | on | `proposer.py:1059` |
+| `PROPOSER_REACTOR_CANDIDATES` | unset → default-on | on | `proposer.py:956` |
+| `BASELINE_COMET_AIM` | unset → default-on | on | `proposer.py:123` (`aim_and_eta`) |
+| `BASELINE_WAIT_GRID` | unset → default | `backward` | `proposer.py:53`, branched at `:378` |
+| `COST_PARITY_MARGIN` | unset → default | `0.7` | `proposer.py:635` |
+
+## What is DORMANT at peak (declared / module-read but inert)
+
+| Env var | Where declared | Why inert |
 |---|---|---|
-| `BASELINE_JOINT_AGGR` | `1` | enable joint-target scoring in chooser |
-| `BASELINE_JOINT_TOP_K` | `5` | top-K candidates per source for joint enumeration |
-| `BASELINE_JOINT_MAX_PAIRS` | `60` | cap on joint pairs scored per turn |
-| `BASELINE_REINFORCE_EMIT` | `1` | proposer emits reinforce candidates |
-| `BASELINE_REINFORCE_ANTICIPATE` | `1` | reinforces respond to anticipated incoming threats |
-| `BASELINE_ORBITAL_SAFETY` | `1` | B1-B7 fix: predict target/opp positions at our arrival |
+| `BASELINE_NEUTRAL_BONUS=2.0` | wrapper line 30 | Read at `chooser_trajectory.py:71` (`NEUTRAL_BONUS_WEIGHT`); used ONLY in the dead v2 scorer `score_candidate` (`:309-312`). Live `score_candidate_v4` (called from `:865`) doesn't touch it. **Recommended live home:** inside `score_candidate_v4` after the leaf Δ, gated on `tgt.owner == -1`. |
+| `BASELINE_NEUTRAL_EARLY_HORIZON=50` | wrapper line 32 | Same — feeds dead v2 (`:72`, used at `:311`). |
+| `BASELINE_NEUTRAL_EARLY_EXTRA=1.5` | wrapper line 31 | Same — feeds dead v2 (`:73`, used at `:312`). |
+| `BASELINE_LEADER_FOCUS` (unset → 1.0) | not set in wrapper | `chooser_trajectory.py:61` → only `score_candidate` v2 reads it. Even if set, no effect on peak. |
+| `BASELINE_ME_REACTS=0`, `BASELINE_ME_DEFENDS=0` | not set | Module-level flags at `:139`, `:170`. Gated branches at `:493`, `:565`, `:581`, `:646`, `:659` never fire. Reproducibility scaffolding only. |
+| `BASELINE_LEDGER` (unset → off) | not set | `baseline/main.py:140`, `:844`. With it off, `_PENDING_LAUNCHES` is dead, `choose_trajectory`'s `commits` return value is discarded, and `wait_N > 0` winners emit nothing this turn AND nothing next turn — wait-grid candidates are effectively pruned. |
+| `BASELINE_LEDGER_MODE=hard` | not set | Only meaningful with `BASELINE_LEDGER=on`. Dead. |
+| `BASELINE_OPENING_MILP=0` | not set | `baseline/main.py:155`, gated branch at `:881` never runs. |
+| `BASELINE_IDLE_DRAIN`, `BASELINE_STAGNANT_DRAIN`, `BASELINE_COMBAT_STACK`, `BASELINE_SNIPER` (and their `*_RESERVE/*_MAX/*_MIN` knobs — ~28 total) | not set | All four post-chooser drain/sniper passes (`baseline/main.py:966-969`) return moves unchanged when `*_ENABLED` is false. |
+| `TRAJECTORY_SKIP_ADMISSIBILITY` | not set | `chooser_trajectory.py:793`. Debug ablation only. |
+| `BASELINE_JOINT_4P` | not set | `chooser_trajectory.py:895`. AGGR=1 already lifts the 4P gate via `JOINT_LIFT_USED_TGTS`, so this is redundant at peak. |
+| `BASELINE_SPATIAL_WEIGHT`, `BASELINE_SPATIAL_DECAY` | not set | `value.py:58-59` → only `favor_hybrid_spatial` uses them; selected only when `BASELINE_VALUE_HEAD=hybrid_spatial`. Peak uses `hybrid`. |
 
-## What is DORMANT at peak (declared but inert)
-
-The wrapper ALSO sets the following — they look active but only feed the
-dead `score_candidate` v2 scorer (line 250 of `chooser_trajectory.py` at
-peak commit). They do NOT affect `score_candidate_v4`/`_v4_joint`, which
-is what the chooser actually calls:
-
-| env var | value | actual effect at peak |
-|---|---|---|
-| `BASELINE_NEUTRAL_BONUS` | `2.0` | **inert** — read only by dead v2 code |
-| `BASELINE_NEUTRAL_EARLY_EXTRA` | `1.5` | **inert** — same |
-| `BASELINE_NEUTRAL_EARLY_HORIZON` | `50` | **inert** — same |
-
-**Critical lesson (2026-05-27).** Sub 53083109 "fixed" this by wiring
-`NEUTRAL_BONUS_WEIGHT` into `score_candidate_v4` + `_v4_joint`. That
+**Critical lesson (2026-05-27).** Sub 53083109 "fixed" the NEUTRAL_BONUS
+family by wiring it into `score_candidate_v4` + `_v4_joint`. That
 "fix" coincided with a ~20μ regression on the ladder (REVERT 53088099
 landed at 1125.2 vs peak 1144.6). **An env var that looks dead may be
 load-bearing precisely because it's dead.** Do not "wire up" dormant
 env vars without an isolated n=32 A/B against the peak anchor first.
+
+---
+
+## Top 5 fragility risks (likelihood × severity)
+
+1. **Silent wait-grid pruning via ledger-off.** `baseline/main.py:140`
+   (`LEDGER_ENABLED=False`) + `chooser_trajectory.py:998-1005`. Any
+   change that increases the proposer's `wait_N > 0` share (e.g.
+   `BASELINE_WAIT_GRID=forward`, or tightening the backward-grid
+   filter) gets the wait winners SILENTLY DISCARDED — they enter
+   `commits`, but `commits` is dropped because the ledger is off.
+   Symptom: chooser emits 0 launches while logs show 200 candidates
+   scored. **Mitigation:** assert at startup that
+   `LEDGER_ENABLED == True` whenever any `wait_N > 0` reaches the
+   chooser, OR in the trajectory branch promote `commits` to
+   `due_moves` next turn unconditionally.
+
+2. **NEUTRAL_BONUS family fakes a "neutral-attack tilt" without
+   applying it.** `agents/baseline_joint_aggr_consolidated_orbitfix/main.py:30-32`
+   + `chooser_trajectory.py:309-312`. The wrapper bundle name and
+   docstring imply neutral-targeting bias; in reality
+   `score_candidate_v4` ignores it. A future iteration that "tunes"
+   the constants will see zero LB movement and conclude neutrals
+   don't matter — wrong conclusion from a dead variable.
+   **Mitigation:** either delete the three setdefaults from the
+   wrapper (zero behavior change), or wire the bonus into
+   `score_candidate_v4` after the leaf Δ (real behavior change —
+   must re-A/B at n=32 panel).
+
+3. **`favor` leaf double-counts production via `pv_horizon`.**
+   `value.py:127` + `lib/scoring.py:118-122`. `pv` is computed at
+   `eta=0` so the production term is weighted by `(1-γ^h)/(1-γ)`. At
+   step=0 that's ≈63 (γ=0.99, h=500); at step=400 it's ≈63→39. Ship
+   term is O(100s). One production point ≈ 39-63 ship-equivalents in
+   late game vs ≈63 early — so `ELIMINATION_BONUS=+55` is one
+   production point's worth of credit, not a strategic threshold.
+   **Mitigation:** none required at peak (calibrated empirically),
+   but any change to `γ`, `t_total`, or `ELIMINATION_BONUS` without
+   re-tuning the others will silently re-weight ship vs production
+   EV. Add a unit test pinning `favor()` outputs at three
+   representative game states.
+
+4. **Asymmetric ME-reacts/defends scaffolding.** `chooser_trajectory.py:481-498`
+   (baseline) vs `:568-583` (candidate rollout). Both legs are
+   ME-idle at peak (`_ME_DEFENDS`/`_ME_REACTS` both off), so
+   `Δ = leaf − baseline` is well-defined. Any future toggle of
+   `BASELINE_ME_DEFENDS=1` flips the candidate leg to inject
+   defensive launches WITHOUT flipping the baseline — Δ will
+   silently change meaning and previously-positive candidates may
+   flip negative. **Mitigation:** if `_ME_DEFENDS` is ever enabled,
+   mirror the change in `build_trajectory_baseline`. Add a contract
+   test.
+
+5. **`_target_holdable_after_capture` and `_target_cost_parity_ok`
+   gate on `omega != 0.0`.** `proposer.py:571`, `:685`. If the
+   engine ever returns `omega=0.0` for a stationary scenario (e.g.
+   comet-only seeds, or a future map variant), all the
+   orbital-safety geometry collapses to current-position math —
+   silently reverting to the pre-`BASELINE_ORBITAL_SAFETY=1`
+   behavior PI flagged as broken. **Mitigation:** assert
+   `world.omega` is non-zero in `WorldModel.from_world`, or treat
+   the `omega==0.0` branch as an explicit different-physics regime
+   rather than a silent fallback.
 
 ---
 
