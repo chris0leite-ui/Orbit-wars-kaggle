@@ -157,6 +157,32 @@ final_evaluation:
   visible_lb: best-scoring of your bots; track all via Submissions page
 ```
 
+### SCORES DO NOT SETTLE — repeated misread, PI corrected 2026-05-28 (and earlier)
+
+**This is the most-recurring agent misreading of the comp mechanic.** Every
+new agent that lands on the ladder enters at μ₀ = 600 and **climbs** as
+it plays games. The score Kaggle shows on the submissions page is a
+**snapshot of the climb**, not a verdict.
+
+Concrete implications:
+- A "just submitted" reading of μ=921 is consistent with EITHER a strong
+  agent still climbing toward 1150+, OR a weak agent topping out at 950.
+  You cannot tell from one reading.
+- σ shrinks with each game, so older submissions have tighter μ estimates.
+  PV_ETA at μ=1163 after 4h has more games behind it than leaf_pv_2p at
+  μ=921 after 30min — the gap may be partially "PV_ETA finished climbing,
+  leaf_pv_2p still climbing."
+- **Don't call an agent "regressed" or "falsified by the ladder" until it
+  has had hours of play.** Same-day verdicts on freshly-pushed agents
+  are systematically biased downward.
+- The right cadence: log the reading, re-check next session, only
+  conclude regression if μ is still low after the agent has had a chance
+  to climb.
+
+This fact was previously noted in σ-shrinkage + matchmaking lines above
+but agents kept missing it. Stated loudly here so future sessions
+inherit it as a settled fact, not a discovery.
+
 ## Execution environment (Kaggle eval, per discussion 700191)
 
 ```yaml

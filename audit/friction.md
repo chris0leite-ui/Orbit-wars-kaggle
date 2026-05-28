@@ -118,6 +118,32 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-28 PM2 (claude/kaggle-submission-review-gZsCu — leaf_pv_2p ship + compute-variance hypothesis)
+
+- `tag: scores-do-not-settle-recurring-misread` — agent treated sub
+  53117942's μ=921 first-hour reading as "regression" / verdict. PI
+  corrected: scores climb from μ₀=600 as games are played; first-hour
+  reads are mid-climb snapshots, not verdicts. PI noted this has been
+  corrected "hundreds of times." **Fix:** promoted to
+  `comp-context.md::SCORES DO NOT SETTLE` block as loud settled-once fact.
+- `tag: local-AB-cpu-variance-coupling` — same-seed A/B step counts drift
+  (seed=3: 218 / 241 / 305 / 359 across 4 runs) and outcomes flip
+  (3W/1L). Root cause: `affordable_validate_cap()` in chooser.py /
+  chooser_trajectory.py measures `per_cand_ms` on live CPU, sets
+  `n_aff = (wallclock_ms - 50) / per_cand_ms` — candidate count is a
+  function of CPU load. Confirmed: with `BASELINE_WALLCLOCK_MS=2000` +
+  `OMP_NUM_THREADS=1` + taskset, outcomes converged 4/4 (range shrank
+  4×). **Fix:** flag raised
+  `knowledge-base/flags/2026-05-28-compute-variation-ab-noise.md` for
+  future Patch 2 (pin n_aff to a calibrated constant). Not shipping now.
+- `tag: n10-submit-when-n32-was-19min-away` — pushed leaf_pv_2p on n=10
+  Wilson-lo 0.40 evidence; n=32 was 19 min of local compute. Same anti-
+  pattern as ship-turn-kappa disaster (sub 53099001). PI override
+  authorized, but the post-submit investigation showed we had a confound
+  (CPU coupling) that should have raised the bar to n=32. **Fix:**
+  remember the compute-variance flag on future "submit on weak local
+  evidence" decisions — wider Wilson interval is the more honest read.
+
 ## 2026-05-28 PM (claude/kaggle-submission-review-gZsCu — PV_ETA submission + silent-turns finding)
 
 - `tag: silent-turns-mid-game-pre-existing` — peak baseline (and our

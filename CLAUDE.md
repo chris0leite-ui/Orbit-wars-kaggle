@@ -236,6 +236,20 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
     NEVER a submit gate. Origin: `n16-falsely-shows-parity` +
     `small-n-ab-noise-misled-panel` — two false-positive lifts
     shipped on n = 8/16 evidence.
+    **45b. Confound check before sub-gate submit.** When
+    considering a submit on local A/B evidence below the n=32
+    Wilson-lo ≥ 0.50 gate (i.e. on a Rule 45 PI override): first
+    run a CONFOUND CHECK — (a) re-run the smoking-gun seed(s) ≥3
+    times with `PYTHONHASHSEED=0`, `OMP_NUM_THREADS=1`, and
+    `taskset -c <core>`; (b) if outcomes diverge, the local
+    Wilson interval understates true noise and the gate
+    threshold should widen by ≥1 tier (n=10 → n=32, n=32 → n=64).
+    Origin: 2026-05-28 PM2 leaf_pv_2p — same-seed A/B step-count
+    drift (218 / 241 / 305 / 359 same seed) was visible
+    pre-submit; post-submit investigation traced it to
+    wallclock-coupling in the chooser. Confound was discoverable
+    in ~15 min and would have widened the implied A/B noise
+    floor. Sub-clause of Rule 45.
 46. **Bundle + parity smoke before any submission.** Every
     submission MUST clear: (a) `python scripts/bundle_agent.py
     <agent>` succeeds; (b) `pytest tests/test_bundle.py` GREEN;
@@ -258,6 +272,18 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
     6.8% physics waste before discovering `predict_fleet_fate`
     was never imported. The failure mode is invisible until you
     look at single-game trajectories.
+48. **Same-day Kaggle ladder readings are climb snapshots, not
+    verdicts.** New submissions enter at μ₀=600 and climb as they
+    play games. Older submissions have stabler reads (σ shrinks
+    with games played). NEVER call a sub "regressed" or "falsified
+    by the ladder" until it has had hours of play — same-day
+    verdicts on freshly-pushed agents are systematically biased
+    downward. Read the `comp-context.md::SCORES DO NOT SETTLE`
+    block before interpreting any sub's μ taken < 4h after submit.
+    Origin: 2026-05-28 PM2 leaf_pv_2p ship — agent misread sub
+    53117942 μ=921 first-hour reading as regression; PI corrected
+    ("hundreds of times" across sessions). Sub-clause of Rule 8
+    (settled-once facts).
 
 ## Defaults from prior-comp postmortem
 
