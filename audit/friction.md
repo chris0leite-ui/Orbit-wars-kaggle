@@ -118,6 +118,43 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-28 PM3 (claude/kaggle-submission-review-gZsCu — macro layer null result)
+
+- `tag: wallclock-ms-exceeds-env-acttimeout` — set
+  `BASELINE_WALLCLOCK_MS=2000` for an A/B harness env, not realising the
+  kaggle env's `actTimeout: 1.0` is a separate HARD cap. Result: 38/64
+  games hit double-TIMEOUT (both agents), invalidating the A/B at
+  n=64 → n=26 usable. Root cause: conflated the soft internal chooser
+  budget with the env's hard turn limit. **Fix:** for A/B harnesses,
+  use `BASELINE_WALLCLOCK_MS ≤ 800` (leaves ~200ms slack for game-env
+  overhead). The 2000ms value is appropriate ONLY for compute-variance
+  diagnostic pinning where TIMEOUT is acceptable, not for evidence-
+  generating A/Bs. Promotion candidate offered, PI declined this
+  session — left as friction one-liner.
+- `tag: background-compute-killed-by-container-reclaim` — launched a
+  2.5h calibration sweep (4 variants × 64 games each) in background
+  ~10 min before container reclaim. Only 1 of 4 variants finished
+  partially (46/64 games); 3 variants never ran. ~2h of intended
+  compute lost. Root cause: Rule 32 (session-start fetch) implies
+  containers reclaim, but the rule covers the symptom (stale state),
+  not the cause (don't launch long-running background compute at
+  session-end). **Fix:** for compute > 30 min within ~30 min of
+  likely session-end, either (a) run foreground, (b) chunk into
+  ≤30 min batches with intermediate state checkpoints to disk, or
+  (c) defer to next session.
+- `tag: macro-layer-functionally-redundant-with-chooser` — built
+  `lib/missions/macro.py` (4-state EXPAND/STOCKPILE/STRIKE/DEFEND)
+  layered on PV_ETA + LEAF_PV_2P. Two A/Bs both centered on 50% vs
+  no-macro control (50.0% n=26, 52.2% n=46). Trace at seed 7 confirmed
+  the state machine fires correctly (lateral captured by step 32,
+  bundled strikes of 70-200 ships at opp_home), but the PV_ETA +
+  LEAF_PV_2P scoring already produces equivalent launches without
+  the macro. Macro CONSTRAINS but doesn't IMPROVE. **Fix:** macro
+  shipped as opt-in (BASELINE_MACRO=1, default OFF — byte-parity
+  preserved). Next direction per PI: pivot to opp-model (handover
+  Item 3, `lite_greedy_policy` spatial restriction) — modeling fix
+  per Rule 40, not another layer.
+
 ## 2026-05-28 PM2 (claude/kaggle-submission-review-gZsCu — leaf_pv_2p ship + compute-variance hypothesis)
 
 - `tag: scores-do-not-settle-recurring-misread` — agent treated sub

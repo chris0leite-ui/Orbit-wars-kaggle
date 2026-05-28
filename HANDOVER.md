@@ -1,10 +1,26 @@
 # HANDOVER.md — next-session brief
 
+> **PM3 ADDENDUM (2026-05-28 PM3):** macro layer (Item 1 below) was
+> built, A/B'd, and SHOWED NO LIFT. See
+> `audit/2026-05-28-postmortem-pm3-macro-layer-null-result.md`.
+> The strategic-direction section below (Item 1 attack-axis bonus,
+> Items 2-4 follow-ons) is **partially stale**: Item 1 is functionally
+> closed (macro is opt-in at default OFF; the chooser already produces
+> equivalent launches via PV_ETA + LEAF_PV_2P scoring). PI's PM3
+> directive: **pivot to the opponent model.** Specifically Item 3
+> below (`lite_greedy_policy` spatial restriction) — diagnostic
+> instrumentation first, see
+> `knowledge-base/questions/2026-05-28-opp-model-spatial-restriction-prior.md`
+> for the cheap 1-2h calibration step (predicted vs actual opp ships)
+> that should run BEFORE the full Item 3 build. Macro code stays
+> shipped but dormant (`BASELINE_MACRO=0` default).
+>
 > Last written: 2026-05-28 PM2 by `claude/kaggle-submission-review-gZsCu`.
 > Supersedes the PM1 (PV_ETA ship) handover written ~5h earlier today.
 > Prior session content remains in
-> `audit/2026-05-28-postmortem-pv-eta-pm-pv-eta-and-silent-turns.md` (PM1)
-> and `audit/2026-05-28-postmortem-pm2-leaf-pv-2p-compute-variance.md` (PM2).
+> `audit/2026-05-28-postmortem-pv-eta-pm-pv-eta-and-silent-turns.md` (PM1),
+> `audit/2026-05-28-postmortem-pm2-leaf-pv-2p-compute-variance.md` (PM2),
+> and `audit/2026-05-28-postmortem-pm3-macro-layer-null-result.md` (PM3).
 
 ## Read order (Rule 44 — mandatory)
 
