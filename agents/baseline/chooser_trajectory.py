@@ -72,6 +72,54 @@ NEUTRAL_BONUS_WEIGHT: float = float(os.environ.get("BASELINE_NEUTRAL_BONUS", "1.
 NEUTRAL_EARLY_HORIZON: int = int(os.environ.get("BASELINE_NEUTRAL_EARLY_HORIZON", "50"))
 NEUTRAL_EARLY_EXTRA: float = float(os.environ.get("BASELINE_NEUTRAL_EARLY_EXTRA", "1.0"))
 
+# Follow-on hold bonus (Fix 2b — 2026-05-27 plan). Opt-in scoring
+# bonus on captures that enable a profitable follow-on launch from the
+# newly-captured base. Surfaces the B3/B4 modeling-correct snipe
+# helpers (`_best_followon` / `_followon_hold_estimate` in
+# `lib/missions/snipe.py`) into the live trajectory chooser path —
+# previously B3/B4 were in dead code from this agent's perspective.
+# Default 0.0 (no-op); bundle wrapper opts in once local A/B confirms
+# lift. Calibrated against `CAPTURE_REWARD_WEIGHT=0.05`.
+FOLLOWON_BONUS_WEIGHT: float = float(
+    os.environ.get("BASELINE_FOLLOWON_BONUS", "0.0"),
+)
+FOLLOWON_RADIUS: float = float(
+    os.environ.get("BASELINE_FOLLOWON_RADIUS", "35.0"),
+)
+
+# Score floor for emit (2026-05-27 — concentration knob). Today every
+# candidate with `score > 0.0` fires; in midgame this scatters small
+# marginal launches across every owned planet. `MIN_DELTA` raises the
+# floor so only candidates above a tunable threshold survive — natural
+# concentration without an arbitrary count-cap. Default 0.0 preserves
+# byte-for-byte legacy (strict `> 0.0`); positive values install a
+# strict `>=` floor. Units are PV-discounted delta (see
+# `score_candidate_v4`); tune via local A/B.
+MIN_DELTA: float = float(os.environ.get("BASELINE_MIN_DELTA", "0.0"))
+
+# Ship-turn opportunity-cost penalty (2026-05-27 Step 2B). Today the
+# leaf `favor` returns ~297-340 for any positive-prod capture regardless
+# of eta — pv_horizon(leaf_step, 0) ≈ 99 for any leaf_step in 25..50
+# with γ=0.99, t_total=500. Result: slow captures (eta=40) score ~88%
+# of fast captures (eta=10) when in reality they tie up ships 4x
+# longer. Penalty subtracts κ × ships × (wait_N + eta) from delta to
+# price the time the ships are committed and unable to defend/redirect.
+# Default 0.0 preserves byte-for-byte legacy. Tune via local A/B.
+SHIP_TURN_KAPPA: float = float(
+    os.environ.get("BASELINE_SHIP_TURN_KAPPA", "0.0"),
+)
+
+# Present-value time-discount on candidate Δ (2026-05-28). The favor
+# leaf computes pv_horizon(step, 0) — eta hardcoded to zero — so a
+# capture arriving in 10 turns is valued ~99% of a capture arriving
+# in 40. This applies γ^(wait_N + eta) to the final Δ, pulling each
+# candidate's payoff back to the current step. No new tuning knob: γ
+# is the existing chooser discount (BASELINE_GAMMA, peak default 0.99).
+# Default OFF preserves byte-for-byte legacy. Tune via local A/B.
+PV_ETA_ENABLED: bool = (
+    os.environ.get("BASELINE_PV_ETA", "0").strip() == "1"
+)
+
 
 def _leader_owner_from_world(world, me: int) -> int | None:
     """Return the player id (other than `me`) with the highest total
@@ -506,6 +554,8 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                        horizon: int,
                        skip_admissibility: bool = False,
                        wait_N: int = 0,
+                       eta_hint: int = 0,
+                       model=None,
                        hard_deadline: float | None = None,
                        ) -> tuple[float, str, int | None]:
     """v4 scoring: same admissibility filter + fast_sim rollout as v3,
@@ -529,7 +579,13 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     candidates, fast_sim's collision resolution catches real sun/oob/
     comet hits inside the rollout.
     """
-    eta = 0
+    # For wait_N==0 candidates, eta is computed below from
+    # predict_fleet_fate. For wait_N>0 candidates, admissibility is
+    # skipped (source orbit drifts between now and the wait point); use
+    # the proposer's eta_hint so the downstream PV-discount sees a
+    # non-zero arrival time. skip_admissibility=True (debug ablation)
+    # keeps the historical eta=0 default to preserve test fixtures.
+    eta = int(eta_hint) if (int(wait_N) > 0 and not skip_admissibility) else 0
     if not skip_admissibility and int(wait_N) == 0:
         fate = predict_fleet_fate(src, tgt, angle, ships, world)
         if fate.outcome == "sun":
@@ -587,6 +643,64 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
     delta = leaf - baseline_favors[horizon]
+
+    # Plumb NEUTRAL_BONUS + LEADER_FOCUS into the live scoring path.
+    # The earlier dead-code path (`score_candidate`, v2 static-garrison
+    # scorer) read these env vars but was never called; v4 ignored them.
+    # Multiply POSITIVE deltas only — the bonus is a tilt toward
+    # preferred targets, not a punishment for bad candidates that
+    # happen to be neutral/leader. See plan
+    # `/root/.claude/plans/fix-one-and-two-cuddly-dewdrop.md` Fix 1.
+    if delta > 0.0:
+        bonus = 1.0
+        if NEUTRAL_BONUS_WEIGHT != 1.0 and int(tgt.owner) == -1:
+            bonus *= NEUTRAL_BONUS_WEIGHT
+            if int(world.step) < NEUTRAL_EARLY_HORIZON:
+                bonus *= NEUTRAL_EARLY_EXTRA
+        if LEADER_FOCUS_WEIGHT != 1.0:
+            leader = _leader_owner_from_world(world, me)
+            if leader is not None and int(tgt.owner) == int(leader):
+                bonus *= LEADER_FOCUS_WEIGHT
+        delta *= bonus
+
+    # Follow-on hold bonus (Fix 2b — opt-in, env-gated). Surfaces the
+    # B3/B4 modeling-correct snipe helpers (`_best_followon` predicts
+    # follow-on + target positions at our arrival). Off by default
+    # (`BASELINE_FOLLOWON_BONUS=0.0`); the bundle wrapper opts in once
+    # the A/B confirms lift. Restricted to fresh captures
+    # (`tgt.owner != me`) and positive-delta candidates so the bonus
+    # only sweetens already-attractive captures.
+    if (FOLLOWON_BONUS_WEIGHT > 0.0 and delta > 0.0
+            and int(tgt.owner) != me):
+        try:
+            from lib.missions.snipe import _best_followon  # local: heavy import
+            foothold = _best_followon(
+                tgt, world, model, me, FOLLOWON_RADIUS,
+                arrival_eta=int(eta),
+            )
+        except Exception:
+            foothold = None
+        if foothold is not None:
+            _f_target, _f_cost, _f_eta_from_t, f_hold = foothold
+            delta += (
+                FOLLOWON_BONUS_WEIGHT
+                * float(_f_target.production)
+                * float(f_hold)
+            )
+
+    if SHIP_TURN_KAPPA > 0.0:
+        delta -= SHIP_TURN_KAPPA * float(ships) * float(int(wait_N) + int(eta))
+
+    # PV time-discount (2026-05-28). Pulls the candidate's final Δ back
+    # to the current step at the already-active γ — captures the fact
+    # that a fleet arriving in `wait_N + eta` turns only starts producing
+    # for us at that time, so its value at step 0 is γ^(wait_N+eta) ×
+    # value-at-arrival. Default OFF; applied LAST so it discounts the
+    # whole Δ together (additive FOLLOWON, multiplicative NEUTRAL/LEADER,
+    # and the SHIP_TURN penalty itself if enabled).
+    if PV_ETA_ENABLED and (int(wait_N) + int(eta)) > 0:
+        delta *= gamma ** (int(wait_N) + int(eta))
+
     return (delta, "scored", eta)
 
 
@@ -614,8 +728,12 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
     (see proposer path in `choose_trajectory`).
     """
     # Per-leg admissibility filter (only meaningful for wait_N==0 legs).
+    # Collect per-leg eta for the ship-turn penalty + PV_ETA discount
+    # (skip/wait>0 legs → 0, the documented v1 simplification).
+    leg_etas: list[int] = []
     for src, tgt, ships, angle, wait_N in launches:
         if skip_admissibility or int(wait_N) != 0:
+            leg_etas.append(0)
             continue
         fate = predict_fleet_fate(src, tgt, angle, ships, world)
         if fate.outcome == "sun":
@@ -630,6 +748,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
             life = comet_remaining_lifetime(int(tgt.id), world)
             if life is None or life <= int(fate.step):
                 return (float("-inf"), "comet_expired")
+        leg_etas.append(int(fate.step))
 
     # Clamp horizon to baseline length.
     if horizon >= len(baseline_favors):
@@ -667,7 +786,45 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         snap = fs_step(snap, actions, in_place=True)
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
-    return (leaf - baseline_favors[horizon], "scored")
+    delta = leaf - baseline_favors[horizon]
+
+    # NEUTRAL_BONUS / LEADER_FOCUS for joints: apply when EVERY leg
+    # targets the preferred owner. This keeps the joint Δ unitary
+    # without per-leg attribution (the joint EV is one shared rollout).
+    if delta > 0.0 and launches:
+        bonus = 1.0
+        if NEUTRAL_BONUS_WEIGHT != 1.0:
+            if all(int(L[1].owner) == -1 for L in launches):
+                bonus *= NEUTRAL_BONUS_WEIGHT
+                if int(world.step) < NEUTRAL_EARLY_HORIZON:
+                    bonus *= NEUTRAL_EARLY_EXTRA
+        if LEADER_FOCUS_WEIGHT != 1.0:
+            leader = _leader_owner_from_world(world, me)
+            if (leader is not None
+                    and all(int(L[1].owner) == int(leader) for L in launches)):
+                bonus *= LEADER_FOCUS_WEIGHT
+        delta *= bonus
+
+    if SHIP_TURN_KAPPA > 0.0:
+        penalty = 0.0
+        for (src, tgt, ships, angle, wait_N), eta_leg in zip(launches, leg_etas):
+            penalty += float(ships) * float(int(wait_N) + int(eta_leg))
+        delta -= SHIP_TURN_KAPPA * penalty
+
+    # PV time-discount (2026-05-28). For joints, use max(wait_N+leg_eta)
+    # over legs — the coalition's effective payoff is gated by the
+    # slowest arrival. leg_etas defaults to 0 for wait_N>0 legs (line
+    # 605), which is the documented v1 simplification — multi-wait
+    # joints aren't enumerated by the proposer.
+    if PV_ETA_ENABLED and launches:
+        max_arrival = max(
+            int(wn) + int(le)
+            for (_, _, _, _, wn), le in zip(launches, leg_etas)
+        )
+        if max_arrival > 0:
+            delta *= gamma ** max_arrival
+
+    return (delta, "scored")
 
 
 def predict_opp_responses(world, me: int, num_seats: int,
@@ -884,9 +1041,15 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 horizon=int(prop_horizon),
                 skip_admissibility=skip_filter,
                 wait_N=int(wait_N),
+                eta_hint=int(eta_hint),
+                model=model,
                 hard_deadline=hard_deadline,
             )
-            if status == "scored" and score > 0.0:
+            passes = (
+                score > MIN_DELTA if MIN_DELTA == 0.0
+                else score >= MIN_DELTA
+            )
+            if status == "scored" and passes:
                 scored.append((score, src, tgt, ships, angle, wait_N))
                 # Track sources with viable solo (for joint gating).
                 solo_winners.add(int(src.id))
