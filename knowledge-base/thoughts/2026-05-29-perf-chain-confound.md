@@ -94,7 +94,12 @@ worth more late, not less.
 ## For next session
 
 Don't pile a sixth knob on this branch's chooser. The chooser-
-axis is saturated. Switch to `btjeK` and engage H44 (65% of
-landing failures are fleets destroyed in flight — physics
-leak, not strategy). That's the highest-EV unfalsified lever
-in the multi-branch state.
+axis is saturated. Switch to `btjeK` and engage H44 (physics-
+waste mechanism — fleets miss their targets due to orbital
+mistiming / sun-route detours / comet expiry; ships survive
+but the capture fails). PI flagged 2026-05-29 that the
+"destroyed-in-flight" phrasing in `state/MULTI_BRANCH.md:76` is
+wrong — fleets cannot be destroyed in flight. Read the actual
+H44 audit on the btjeK branch before quoting any magnitude.
+Still the highest-EV unfalsified lever in the multi-branch
+state, just don't repeat the misquote.

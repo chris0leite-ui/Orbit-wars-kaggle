@@ -132,9 +132,18 @@ PI to ratify; staging only:
 Three of the four "open" strategic candidates I surfaced at the
 "I want us to really improve" pivot have known costs:
 
-- **H44 physics-leak fix** (Track B, `btjeK` branch) — un-tried on
-  this branch, requires switching branches and reading the
-  2026-05-21 corrected audit. Highest EV of the surveyed options.
+- **H44 physics-waste fix** (Track B, `btjeK` branch) — un-tried
+  on this branch, requires switching branches and reading the
+  2026-05-21 corrected audit. The `state/MULTI_BRANCH.md:76`
+  one-liner says "65% fleet-destroyed-in-flight" but PI clarified
+  (2026-05-29) that fleets cannot be destroyed in flight — the
+  mechanism is almost certainly wasted shipping (orbital
+  mistiming, sun-route detour, comet expiry before arrival).
+  Rule 47 phrases it as "sun / OOB / comet-expiry waste." Read
+  the actual H44 audit before quoting the magnitude — the
+  "destroyed-in-flight" framing in MULTI_BRANCH.md should be
+  edited by the btjeK owner. Highest EV of the surveyed options
+  but treat the 65% number as suspect until verified.
 - **Wrap-baseline portfolio veto** (Track C, `PFhzM` branch) —
   37.5% asymmetry was the only positive signal in 10+ iterations
   there. Different paradigm (veto layer on existing chooser, not
