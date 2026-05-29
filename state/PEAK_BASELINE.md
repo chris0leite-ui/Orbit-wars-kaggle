@@ -19,14 +19,20 @@ common starting point and the protocol so the next iteration doesn't.
 **Use the FROZEN anchor for ladder resubmits; use the LIVE bundle as the
 local-A/B reference for new mechanisms on top.**
 
-> **2026-05-29 wait-grid strip.** The `wait_then_fire_variants` /
-> `min_wait_affordable` / `wait_band` / `_PENDING_LAUNCHES` / `_tick_ledger`
-> machinery was deleted: it generated and scored `wait_N>0` candidates
-> that were silently discarded by the off-by-default ledger. PI framing:
-> committing to a future launch is wrong semantics — every turn is a
-> fresh decision. The strip reclaims the wait-N scoring compute for
-> additional fire-now candidates. `choose_trajectory()` and `choose()`
-> now return `moves` only. Locked by `tests/test_no_wait_grid.py`.
+> **2026-05-29 ledger strip + patience preserved.** Only the
+> cross-turn persistence was deleted: `_PENDING_LAUNCHES`,
+> `_tick_ledger`, `LEDGER_ENABLED`, `LEDGER_MODE`, the `(moves,
+> commits)` chooser return, and the `reserved_for_new_commits`
+> parameter. **Wait-N candidate generation and scoring are
+> PRESERVED** — `wait_then_fire_variants`, `min_wait_affordable`,
+> `wait_band`, and `WAIT_GRID_MODE` are still live. When a wait-N
+> candidate wins the chooser's score loop it reserves its src+tgt in
+> `used_srcs` / `used_tgts` (the patience side-effect — "this source's
+> best option is to wait, don't fire-now from it") but emits nothing.
+> No commitment carries to the next turn; each turn is a fresh
+> decision. An earlier 2026-05-29 strip removed the patience too and
+> regressed -25pp at focal-as-P0 vs the frozen anchor; the surgical
+> revert is what shipped. Locked by `tests/test_no_wait_grid.py`.
 
 ### Why this is the peak (not leaf_pv_2p, not peak-1165)
 

@@ -6,7 +6,8 @@ Pipeline per turn:
          emit fire-now candidates at (capture_size, 2*capture, full-budget)
          emit wait-then-fire candidates at extra_surplus in (0, 5, 12)
   2. cheap-rank each candidate by analytic Δ (capture/bounce/reinforce)
-  3. dedup per (src_id, tgt_id) keeping the top cheap-Δ.
+  3. dedup per (src_id, tgt_id, wait_band) keeping the top cheap-Δ
+     — wait_band = {0, 1..7, >=8}; lets the validator compare fire-now
      vs short-wait vs long-wait against the same target.
 """
 
@@ -27,6 +28,7 @@ MIN_FLEET_SIZE = 2
 SIM_SETTLE_TURNS = 2
 MIN_HORIZON = 25
 MAX_HORIZON = 40
+WAIT_EXTRA_SURPLUS = (0, 5, 12)  # legacy forward grid (kept for rollback)
 CHEAP_REJECT_THRESHOLD = -10.0
 EPISODE_STEPS = 500
 GAMMA = 0.99
@@ -62,6 +64,17 @@ THREAT_RESERVE_ALPHA = float(
 THREAT_RESERVE_WINDOW = int(
     os.environ.get("BASELINE_THREAT_RESERVE_WINDOW", "30"),
 )
+
+# Backward wait grid (2026-05-18): anchored on min_wait_affordable.
+# Replaces forward WAIT_EXTRA_SURPLUS = (0, 5, 12) grid that caused
+# under-emission. Diagnosis: at Roman game (76941081) step 90 with 454
+# ships across 9 planets, proposer emitted 18 candidates, 15 of which
+# were wait_N > 0. Chooser picked top-Δ candidate (wait_N=17, fire-now-
+# capable src reserved), emitted 0 launches. Repeat every turn → 59pct
+# idle. With backward grid, already-affordable (src, tgt) pairs emit
+# NO wait variants; chooser only sees fire-now → emits.
+WAIT_GRID_MODE = os.environ.get("BASELINE_WAIT_GRID", "backward").strip().lower()
+WAIT_BUFFER_OFFSET = 3   # backward grid emits {min_w, min_w + 3}
 
 # Bug #12 window constant — promoted to `lib/world_model.py` so both
 # this proposer and the in-rollout defensive policy
@@ -269,6 +282,167 @@ def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list
     return sorted(sizes)
 
 
+def wait_then_fire_variants_forward(src, tgt, model, omega: float, me: int, world=None):
+    """Forward wait-grid (legacy): enumerate fixed WAIT_EXTRA_SURPLUS = (0, 5, 12).
+
+    Kept for rollback via BASELINE_WAIT_GRID=forward. Caused under-emission
+    when src is already armed (always emits wait_N=1 variant that
+    out-scores fire-now in chooser Δ; chooser picks the wait, reserves
+    src+tgt, emits nothing).
+    """
+    if int(tgt.owner) == me:
+        return []
+    prod = int(src.production)
+    if prod <= 0:
+        return []
+
+    initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
+    _a0, eta0 = aim_and_eta(src, tgt, initial, omega, world=world)
+    pred_now = float(model.ships_at(int(tgt.id), eta0) or 0.0)
+    cap_now = max(MIN_FLEET_SIZE, int(math.ceil(pred_now)) + 1)
+
+    variants = []
+    seen: set[tuple[int, int]] = set()
+    for extra_surplus in WAIT_EXTRA_SURPLUS:
+        target_fleet = cap_now + extra_surplus
+        shortfall = target_fleet - int(src.ships)
+        if shortfall <= 0:
+            wait_N = 1  # feasible-now still gets a wait-1 variant
+        else:
+            wait_N = (shortfall + prod - 1) // prod  # ceil
+        if wait_N < 1:
+            continue
+
+        angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N, world=world)
+        pred_at_arr = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
+        cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arr)) + 1)
+        final_fleet = cap_final + extra_surplus
+
+        budget_at_wait = int(src.ships) + prod * wait_N
+        if final_fleet > budget_at_wait:
+            final_fleet = budget_at_wait
+
+        if wait_N + eta + SIM_SETTLE_TURNS > MAX_HORIZON:
+            continue
+
+        key = (wait_N, final_fleet)
+        if key in seen:
+            continue
+        seen.add(key)
+        variants.append((final_fleet, wait_N, angle, eta))
+    return variants
+
+
+def min_wait_affordable(src, tgt, model, omega: float, me: int, world=None) -> int | None:
+    """Smallest wait_N at which src can affordably capture tgt.
+
+    Returns:
+      0   — src can already fire-now (cap_now ≤ src.ships).
+      N>0 — src must accumulate N turns before firing.
+      None — hopeless within MAX_HORIZON (opp accumulates faster than
+             we can; pair never affordable).
+
+    Mirrors the affordability math in `wait_then_fire_variants_forward`
+    so callers get a consistent answer. Used to anchor the backward
+    wait-grid: when min_wait == 0, NO wait variants are emitted (the
+    fire-now path covers it; speculative waits like the old wait_N=1
+    block fire-now from being chosen).
+    """
+    if int(tgt.owner) == me:
+        return None  # reinforce path handled separately
+    if int(src.production) <= 0:
+        return None  # src can't accumulate; wait is pointless
+    prod = int(src.production)
+
+    # Fire-now feasibility check
+    initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
+    _a0, eta0 = aim_and_eta(src, tgt, initial, omega, wait_N=0, world=world)
+    pred_now = float(model.ships_at(int(tgt.id), eta0) or 0.0)
+    cap_now = max(MIN_FLEET_SIZE, int(math.ceil(pred_now)) + 1)
+    if cap_now <= int(src.ships):
+        return 0
+
+    # Iterate wait_N until affordable (no closed form due to
+    # fleet_speed(ships) nonlinearity)
+    for wait_N in range(1, MAX_HORIZON):
+        budget = int(src.ships) + prod * wait_N
+        # Cheap pre-check: even bare capture of current garrison exceeds budget
+        if max(MIN_FLEET_SIZE, int(tgt.ships) + 1) > budget:
+            continue
+        target_fleet = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
+        _angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N, world=world)
+        pred_at_arrival = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
+        cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arrival)) + 1)
+        if cap_final <= budget and wait_N + eta + SIM_SETTLE_TURNS <= MAX_HORIZON:
+            return wait_N
+    return None  # hopeless within MAX_HORIZON
+
+
+def wait_then_fire_variants(src, tgt, model, omega: float, me: int, world=None):
+    """Backward wait grid: anchor on min_wait_affordable.
+
+    Returns list of (ships, wait_N, angle, eta). Behaviour:
+    - Already-armed src (min_wait == 0) → return []. Fire-now path
+      handles this; we don't emit speculative waits that compete with
+      fire-now in chooser Δ ranking.
+    - Hopeless pair (min_wait is None) → return []. Saves chooser
+      cycles; this pair's launches will all bounce.
+    - Otherwise → emit candidates at {min_wait, min_wait + WAIT_BUFFER_OFFSET}
+      × {cap_final, 2×cap_final, budget}. The bare-capture variant gives
+      the chooser a lean option; the budget variant USES the accumulated
+      ships we waited for (instead of leaving them idle on the source —
+      a fix for the 2026-05-18 backward-grid bug where wait_N variants
+      emitted only bare-capture amounts, wasting the accumulation and
+      leaving 1-ship residue on captured planets vulnerable to opp
+      recapture in 4P).
+
+    Forward-mode rollback available via BASELINE_WAIT_GRID=forward.
+    """
+    if WAIT_GRID_MODE == "forward":
+        return wait_then_fire_variants_forward(src, tgt, model, omega, me, world=world)
+    if int(tgt.owner) == me:
+        return []
+    min_w = min_wait_affordable(src, tgt, model, omega, me, world=world)
+    if min_w is None or min_w == 0:
+        return []
+    prod = max(1, int(src.production))
+    variants = []
+    seen: set[tuple[int, int]] = set()
+    for wait_N in (min_w, min_w + WAIT_BUFFER_OFFSET):
+        if wait_N >= MAX_HORIZON:
+            break
+        budget = int(src.ships) + prod * wait_N
+        target_fleet = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
+        if target_fleet > budget:
+            continue
+        angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N, world=world)
+        pred_at_arrival = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
+        cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arrival)) + 1)
+        if cap_final > budget:
+            continue
+        if wait_N + eta + SIM_SETTLE_TURNS > MAX_HORIZON:
+            continue
+        # We waited N turns to accumulate src.ships + prod*N total ships.
+        # USE the accumulation — emit full budget, not bare capture+1.
+        # Banding dedup ((src, tgt, wait_band) key) collapses multiple
+        # ship-counts at the same wait_N to one per band since cheap_delta
+        # is identical for capture-success. So we pick ONE — the budget
+        # variant. This:
+        #   1. Uses ships we waited for (otherwise the wait is wasted).
+        #   2. Leaves residue on the captured planet (budget - defenders),
+        #      defending against opp recapture in 4P (the bare-capture
+        #      variant left 1-ship residue → trivially recaptured).
+        final_fleet = budget
+        if final_fleet < MIN_FLEET_SIZE:
+            continue
+        key = (wait_N, final_fleet)
+        if key in seen:
+            continue
+        seen.add(key)
+        variants.append((final_fleet, wait_N, angle, eta))
+    return variants
+
+
 def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
                          me: int, wait_N: int = 0) -> float:
     """Analytic Δ for Stage-1 ranking. Replaced by fast_sim in Stage-2.
@@ -307,6 +481,13 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
         return 0.05 * float(tgt.production) * float(pv)
 
     return -0.5 * float(ships)
+
+
+def wait_band(wait_N: int) -> int:
+    """Three buckets: fire-now (0), short-wait (1..7), long-wait (>=8)."""
+    if wait_N == 0:
+        return 0
+    return 1 if wait_N <= 7 else 2
 
 
 def _source_survives_launch_legacy(
@@ -859,7 +1040,7 @@ def _enumerate_reactor_candidates(
     For each target T not owned by us that has at least one opp fleet
     in flight, propose our own launches from a nearby source sized to
     recapture T after opp lands. The chooser then ranks these alongside
-    the standard fire-now candidates.
+    the standard fire-now / wait_then_fire candidates.
 
     Output shape matches `propose()`'s prerank tuples:
         (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N).
@@ -871,7 +1052,7 @@ def _enumerate_reactor_candidates(
       - targets with no opp in-flight fleets,
       - targets that opp's fleet does NOT actually capture (post-landing
         owner stays neutral or stays ours — the existing pipeline already
-        handles those cases via fire-now),
+        handles those cases via fire-now / wait_then_fire),
       - sources that can't afford the post-landing recapture even with
         wait accumulation.
     """
@@ -918,7 +1099,7 @@ def _enumerate_reactor_candidates(
         if post_owner == me:
             continue  # we end up holding; no reactor needed
         if int(post_owner) == -1:
-            # Opp's fleet bounces. Existing fire-now
+            # Opp's fleet bounces. Existing wait_then_fire / fire-now
             # variants handle the neutral capture; skip to avoid
             # producing duplicate candidates.
             continue
@@ -995,7 +1176,7 @@ def _enumerate_reactor_candidates(
 def propose(my_planets, target_pool, world, model, me: int,
             omega: float, baseline_len: int):
     """Build the pre-rank list of candidates, then dedup by
-    (src_id, tgt_id) keeping the top cheap-Δ per pair.
+    (src_id, tgt_id, wait_band) keeping the top cheap-Δ per bucket.
 
     Returns: list of tuples
         (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N)
@@ -1024,25 +1205,42 @@ def propose(my_planets, target_pool, world, model, me: int,
                         (cheap, src, tgt, ships, angle, eta, horizon, 0)
                     )
 
+            for w_ships, w_wait, w_angle, w_eta in wait_then_fire_variants(
+                src, tgt, model, omega, me, world=world,
+            ):
+                w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)
+                if w_horizon >= baseline_len:
+                    continue
+                w_cheap = cheap_marginal_value(
+                    src, tgt, w_ships, w_eta, world, model, me, wait_N=w_wait,
+                )
+                if w_cheap > CHEAP_REJECT_THRESHOLD:
+                    prerank.append(
+                        (w_cheap, src, tgt, w_ships, w_angle, w_eta,
+                         w_horizon, w_wait)
+                    )
+
     # Reactor candidate generator (Part B of reactor-aware launch selection,
     # 2026-05-19 PM). For each opp fleet in flight to a non-our target,
     # propose our own launches sized to recapture after opp lands. These
-    # extend the standard prerank list and participate in the per-(src,tgt)
-    # dedup. Opt out via PROPOSER_REACTOR_CANDIDATES=off for ablation A/B.
+    # extend the standard prerank list and participate in the existing
+    # (src, tgt, wait_band) dedup. The chooser then scores them alongside
+    # fire-now / wait_then_fire candidates. Opt out via
+    # PROPOSER_REACTOR_CANDIDATES=off for ablation A/B.
     if os.environ.get("PROPOSER_REACTOR_CANDIDATES", "").strip().lower() != "off":
         prerank.extend(_enumerate_reactor_candidates(
             my_planets, world, model, me, omega, baseline_len,
         ))
 
-    best_per_pair: dict[tuple[int, int], tuple] = {}
+    best_per_band: dict[tuple[int, int, int], tuple] = {}
     for entry in prerank:
-        cheap, src, tgt, _ships, _angle, _eta, _horizon, _w = entry
-        key = (int(src.id), int(tgt.id))
-        prev = best_per_pair.get(key)
+        cheap, src, tgt, _ships, _angle, _eta, _horizon, w = entry
+        key = (int(src.id), int(tgt.id), wait_band(int(w)))
+        prev = best_per_band.get(key)
         if prev is None or cheap > prev[0]:
-            best_per_pair[key] = entry
+            best_per_band[key] = entry
 
-    deduped = list(best_per_pair.values())
+    deduped = list(best_per_band.values())
 
     # Trajectory admissibility filter (opt-in via env var, default off).
     # Drops candidates whose straight-line trajectory hits the sun, OOB,

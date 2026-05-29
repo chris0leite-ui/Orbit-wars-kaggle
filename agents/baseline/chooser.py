@@ -149,8 +149,10 @@ def choose(snap_base, prerank, baseline_favors: list[float],
            ) -> list[list]:
     """Validate top candidates with fast_sim, emit greedy non-dogpile moves.
 
-    Returns `moves` — fire-now action list. Fire-now-only post the
-    2026-05-29 wait-grid strip; every prerank entry has wait_N=0.
+    Returns `moves`. Wait-N (`wait_N > 0`) winners reserve src+tgt
+    (patience side-effect) but emit nothing and persist no future-turn
+    state. See `chooser_trajectory.choose_trajectory` for the same
+    contract on the trajectory path.
     """
     if reserved_srcs is None:
         reserved_srcs = set()
@@ -169,7 +171,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     # rollout once entered), so checking AT the deadline is too late.
     safe_deadline = deadline - (per_cand_ms / 1000.0)
     validated: list[tuple] = []
-    for _cheap, src, tgt, ships, angle, _eta, horizon, _wn in top:
+    for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
         if time.perf_counter() > safe_deadline:
             break
         sid_ = int(src.id)
@@ -178,10 +180,10 @@ def choose(snap_base, prerank, baseline_favors: list[float],
         delta = score_action(
             snap_base, me, num_seats,
             int(src.id), float(angle), int(ships),
-            int(horizon), baseline_favors, 0, gamma,
+            int(horizon), baseline_favors, int(wait_N), gamma,
         )
         if delta > 0:
-            validated.append((delta, src, tgt, ships, angle))
+            validated.append((delta, src, tgt, ships, angle, wait_N))
 
     if not validated:
         return []
@@ -190,11 +192,13 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     used_srcs: set[int] = set()
     used_tgts: set[int] = set()
     moves: list[list] = []
-    for _delta, src, tgt, ships, angle in validated:
+    for _delta, src, tgt, ships, angle, wait_N in validated:
         sid, tid = int(src.id), int(tgt.id)
         if sid in used_srcs or tid in used_tgts:
             continue
         used_srcs.add(sid)
         used_tgts.add(tid)
-        moves.append([sid, float(angle), int(ships)])
+        if int(wait_N) == 0:
+            moves.append([sid, float(angle), int(ships)])
+        # else: PATIENCE — src+tgt reserved above, no emit, no commit.
     return moves
