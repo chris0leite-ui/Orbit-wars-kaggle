@@ -55,7 +55,8 @@ def _load_booster() -> None:
         blob_gz = base64.b64decode(_BOOSTER_B64)
         text = gzip.decompress(blob_gz).decode("utf-8")
         _PARSED = parse_booster_text(text)
-        _THRESHOLD = float(_THRESHOLD_DEFAULT)
+        _override = os.environ.get("BASELINE_VALIDATOR_THRESHOLD")
+        _THRESHOLD = float(_override) if _override else float(_THRESHOLD_DEFAULT)
     except Exception:
         _LOAD_FAILED = True
 
