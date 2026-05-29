@@ -246,6 +246,17 @@ JOINT_LIFT_USED_TGTS: bool = (
     os.environ.get("BASELINE_JOINT_AGGR", "0").strip() == "1"
 )
 
+# pv_eta time-discount (verbatim port from
+# submissions/_imported/baseline_pv_eta.py:12176-12178). When ON, the
+# final candidate Δ is multiplied by γ^(wait_N + eta) — pulls each
+# candidate's payoff back to the current step so a capture arriving in
+# 40 turns isn't valued the same as one arriving in 10. γ is the
+# existing chooser discount (BASELINE_GAMMA). Default OFF preserves
+# byte-for-byte legacy behaviour.
+PV_ETA_ENABLED: bool = (
+    os.environ.get("BASELINE_PV_ETA", "0").strip() == "1"
+)
+
 
 def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
                     me: int, world, ledger: dict,
@@ -584,6 +595,8 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
     delta = leaf - baseline_favors[horizon]
+    if PV_ETA_ENABLED and (int(wait_N) + int(eta)) > 0:
+        delta *= gamma ** (int(wait_N) + int(eta))
     return (delta, "scored", eta)
 
 
@@ -610,8 +623,11 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
     (see proposer path in `choose_trajectory`).
     """
     # Per-leg admissibility filter (only meaningful for wait_N==0 legs).
+    # Collect per-leg eta for the pv_eta discount (skip/wait>0 legs → 0).
+    leg_etas: list[int] = []
     for src, tgt, ships, angle, wait_N in launches:
         if skip_admissibility or int(wait_N) != 0:
+            leg_etas.append(0)
             continue
         fate = predict_fleet_fate(src, tgt, angle, ships, world)
         if fate.outcome == "sun":
@@ -626,6 +642,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
             life = comet_remaining_lifetime(int(tgt.id), world)
             if life is None or life <= int(fate.step):
                 return (float("-inf"), "comet_expired")
+        leg_etas.append(int(fate.step))
 
     # Clamp horizon to baseline length.
     if horizon >= len(baseline_favors):
@@ -661,7 +678,18 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         snap = fs_step(snap, actions, in_place=True)
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
-    return (leaf - baseline_favors[horizon], "scored")
+    delta = leaf - baseline_favors[horizon]
+    # pv_eta time-discount for joints: use max(wait_N + leg_eta) across
+    # legs (the coalition's effective payoff is gated by the slowest
+    # arrival). leg_etas was built defaulting to 0 for skip/wait>0 legs.
+    if PV_ETA_ENABLED and launches:
+        max_arrival = max(
+            int(wn) + int(le)
+            for (_, _, _, _, wn), le in zip(launches, leg_etas)
+        )
+        if max_arrival > 0:
+            delta *= gamma ** max_arrival
+    return (delta, "scored")
 
 
 def predict_opp_responses(world, me: int, num_seats: int,
