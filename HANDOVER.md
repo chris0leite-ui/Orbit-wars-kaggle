@@ -1,12 +1,132 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-29 by `claude/competition-objective-alignment-hqNVM`.
-> Phase 2 v2 LightGBM Booster validator FALSIFIED vs pv_eta (Rule 37
-> axis cap on per-shot-filter family). PI direction at session end:
-> **pv_eta is the new foundation**; all next mechanisms wrap, augment,
-> or replace components of pv_eta. Three reframes (A / B / C) sketched
-> below for next-session pickup.
-> Older session sections preserved in this file unmodified for history.
+> Last written: 2026-05-29 PM2 by `claude/competition-objective-alignment-hqNVM`.
+> **Reframe A FALSIFIED today.** Additive Booster logit on pv_eta
+> chooser regressed at every λ tested (0/32 at λ=4.5, 1/32 at λ=0.5,
+> 0/1 at λ=-0.5 — see `audit/2026-05-29-reframe-a-falsified.md`).
+> The pv_eta source port + bundler + ML pipeline ship working at
+> λ=0 (parity-verified against the bundled live champion at
+> Wilson CI [0.364, 0.691]); the Booster's signal does not transfer
+> to pv_eta's chooser surface.
+> **Next session priority: Reframe B (per-target continuous value
+> head)** — different supervision target, not a re-tune of the
+> falsified per-shot-binary Booster. Older session sections
+> preserved unmodified for history.
+
+## Reframe A — falsified mechanism summary (today's session)
+
+What was tested: a centered-logit additive term inside
+`score_candidate_v4` and `score_candidate_v4_joint`:
+`score = score + λ * (logit(P_success) - logit(0.5))`, where
+P_success is the existing 45-d LightGBM Booster's prediction. λ swept
+in {4.5, 0.5, −0.5} (0.1σ_delta, 0.011σ_delta, and the negative
+mirror). All three regressed catastrophically vs bare pv_eta. Rule 37
+axis closed.
+
+Step-0 probe gates PASSed (σ(P)=0.26, |Spearman ρ|=0.13, median P=0.79)
+but the verdict didn't translate. The Booster's training distribution
+(baseline-proposer emits) doesn't match pv_eta's surfaced candidate
+distribution. The Booster confidently re-ranks pv_eta's argmax in a
+direction that's anti-correlated with game-winning. Even λ=0.5
+(~1% of σ_delta) regressed 31/32 — the destruction happens at
+tie-breaking.
+
+Lessons logged to `audit/2026-05-29-reframe-a-falsified.md`:
+
+- **Probe gates are necessary but not sufficient.** Non-redundant
+  information can still be noise. A 4th gate ("does the ML term
+  correlate with self-play win rate on the chooser's accepted set?")
+  would be needed to catch this upstream, but that gate is itself an
+  A/B.
+- **Wrap-pv_eta architecture is fine** — the pv_eta source port +
+  env-var wrapper + bundler all ship working at λ=0. Reuse for B.
+- **Per-shot binary supervision is closed for this Booster on
+  pv_eta's chooser.** Re-training on pv_eta's emit distribution
+  remains theoretically open, but ceiling is uncertain and cost is
+  similar to Reframe B.
+
+## Infrastructure delivered (carries to Reframe B)
+
+| File | What it does | Reuse for B |
+|---|---|---|
+| `agents/baseline/chooser_trajectory.py` PV_ETA_ENABLED | Source-side pv_eta γ-discount, env-gated (verbatim port from bundled live champion) | Yes — Reframe B wraps pv_eta the same way |
+| `agents/baseline/_ml_logit.py` | Lazy-load Booster, batched featurize + predict, centered-logit term, candidate keying | Adapt the scoring helper shape; swap the model + featurizer |
+| `agents/baseline/_trace_hook.py` + `scripts/probe_ml_logit_signal.py` | Opt-in candidate trace via env var + per-turn σ/ρ/histogram report | Yes — use the trace hook to characterise B's per-target signal before wiring it |
+| `agents/baseline_pv_eta_ml/main.py` | Env-var-only wrapper (peak orbitfix preamble + BASELINE_PV_ETA=1 + BASELINE_ML_LAMBDA) | Template for Reframe B's wrapper |
+| `scripts/bundle_pv_eta_ml.py` | Wrapper bundler — inlines inner baseline, prepends env-var preamble, patches `_BOOSTER_B64`, single-file Kaggle submit | Reuse pattern for B's bundler (swap embedded blob source) |
+| `submissions/baseline_pv_eta_ml.py` | Working 953-KB bundle at λ=0 = bundled pv_eta byte-equivalent | Sanity smoke for any wrap-pv_eta variant |
+
+## Live ladder state (unchanged this session)
+
+- 53131296 — `baseline_validated.py` (PM5 25-d MLP filter) — μ = **1081.3**
+- 53117942 — `baseline_leaf_pv_2p.py` — μ = **1084.5**
+- Historical peak (EVICTED): μ ≈ 1154.8 (sub 53111837, `baseline_pv_eta.py`)
+- Daily submission slots remaining: **5/5** (0 used today — Reframe A produced nothing submittable)
+- Floor-at-risk flag: **TRUE** (rolling pair sits ~70 μ below historical pv_eta peak)
+
+## Next session — read order (Rule 44)
+
+1. `state/MULTI_BRANCH.md` — live Kaggle rolling pair, closed tracks,
+   push claim board.
+2. **`audit/2026-05-29-reframe-a-falsified.md`** — full Reframe A
+   postmortem and what's closed vs open.
+3. This file's "Reframe B" section below.
+4. `state/TOOLS.md` for A/B harness conventions.
+
+## Reframe B — next session priority
+
+Per-target continuous value head. Different supervision target from
+the falsified per-shot binary classifier.
+
+**Supervision unit:** "how many future ship-deltas does owning planet
+T at time T+k earn the focal seat, conditional on a candidate
+mission decision?" Continuous regression label per (state, target,
+horizon) tuple.
+
+**Insertion point:** chooser's leaf-value slot, augmenting (not
+replacing) `predict_garrison_at`. The chooser's hand-coded leaf
+already encodes a strong scalar; B adds a learned per-target
+correction.
+
+**Why this might succeed where A failed:**
+
+- Per-shot binary supervision conflates "lands as intended" with
+  "wins game" — the failure mode of A. Per-target continuous
+  supervision IS game-winning ship-delta.
+- B re-uses pv_eta's chooser unchanged structurally; A was an
+  additive perturbation that fought pv_eta's tuned argmax.
+- The existing scaffolding (`data/value_head/`,
+  `data/value_head_distill/`) has Phase A artefacts that may be
+  adaptable.
+
+**Infrastructure to reuse from Reframe A:**
+
+- `agents/baseline_pv_eta_ml/main.py` → clone as
+  `agents/baseline_pv_eta_vh/main.py`. Same env-var wrapper shape.
+- `scripts/bundle_pv_eta_ml.py` → clone as
+  `scripts/bundle_pv_eta_vh.py`. Same B64 embed pattern with a
+  different blob target.
+- `agents/baseline/_trace_hook.py` → adapt for per-target tracing
+  (key by `(target_id, horizon)` instead of per-shot keys).
+- `scripts/probe_ml_logit_signal.py` → adapt for B's gate
+  characterisation. **Add a 4th gate** beyond σ/ρ/median: a
+  self-play correlation check — does the model's predicted value
+  correlate with the chooser's eventual ship-delta on accepted
+  shots?
+
+**Decision rule (Rule 37 axis):** B is its own axis (per-target
+continuous, not per-shot binary). New 3-variant budget. Failure
+modes to watch: (1) chooser-already-optimal — the hand-coded
+leaf may already capture most of the per-target signal; B adds
+nothing; (2) value-head-distillation-collapse — the model
+learns to mimic the leaf instead of correcting it.
+
+## Reframe C — deferred (after B's verdict)
+
+Opponent-emit predictor inside pv_eta's lookahead. Cost ~5-7 days
+even with the reframe-A scaffolding reuse. Defer to after B.
+
+---
 
 ## Read order (Rule 44 — mandatory)
 
