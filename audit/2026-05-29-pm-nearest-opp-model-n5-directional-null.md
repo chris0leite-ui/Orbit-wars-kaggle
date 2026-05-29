@@ -65,9 +65,53 @@ Same paired-seed protocol, baked bundle path:
 | 1649 | P0 (lite_greedy) |
 
 **Final:** P0 (lite_greedy) wins 5/5, Wilson 95% [0.566, 1.000].
-Lower bound clears 50% — cleanly directional even at n=5. Matches the
-prior-session code-comment intuition that top_tier_mirror is "too
-attack-biased" as a rollout opp model.
+Lower bound clears 50% — cleanly directional even at n=5.
+
+### 3b. Confound check via instrumented re-run of seed=2083
+
+`scripts/verify_mirror_bake.py` re-ran seed=2083 (the first P0 win)
+with per-call instrumentation. The bake wiring is confirmed correct:
+
+- Both bundles have DISTINCT `_select_opp_policy` objects (different
+  ids); each returns the expected policy.
+- P0's chooser called `lite_greedy_policy` exclusively;
+  `top_tier_mirror_policy` invocations = 0.
+- P1's chooser called `top_tier_mirror_policy` exclusively;
+  `lite_greedy_policy` invocations = 0.
+- Result reproduced: P0=1, P1=-1, 127 turns.
+
+But the invocation counts surface a **major confound**:
+
+| Side | Opp-policy invocations | Per-turn mean |
+|---|---|---|
+| P0 (lite_greedy) | 217,448 | 1,712 |
+| P1 (mirror)      | 9,994   | 79     |
+
+P1 evaluates **22× fewer candidates per turn** than P0. The chooser's
+`affordable_validate_cap` shrinks the per-turn search depth when
+the leaf cost rises (mirror is documented 5-10× slower per call).
+Under the 1000ms ladder budget, P1 is **search-starved**, not
+strategy-mispredict-ing.
+
+**Revised interpretation.** The 5-0 isn't "mirror as a belief about
+opp is wrong" — it's "mirror is too slow to run inside the live
+budget; the chooser self-throttles its own search to compensate."
+Two confounded explanations:
+
+1. Mirror's *policy* may be a better predictor of opp behavior
+   (NOT tested — this run can't disentangle).
+2. Mirror's *cost* collapses candidate-set quality via the cap.
+
+Under the current 1000ms compute budget, (2) dominates (1). The
+conclusion "do not use mirror as the rollout opp model at the
+current compute budget" is real and ladder-relevant — but it's
+a budget conclusion, not a strategy conclusion. To test the
+strategy claim independently, mirror would need to be made
+~10× faster or run with a larger wallclock budget.
+
+Rule 41 (confound check before correlational conclusion) applies.
+The nearest result (3.1) is NOT affected — nearest has the same
+per-call cost as lite_greedy (identical loop, simpler scoring).
 
 ## Verdict
 
