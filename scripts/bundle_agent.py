@@ -128,6 +128,11 @@ DEFAULT_LIB_ORDER = [
     # 2026-05-29 Phase 2 v2: pure-Python LightGBM tree-walker for the
     # validator agent. Bundle-inert for agents that don't import it.
     "_validator_tree_walker",
+    # 2026-05-29 Reframe B.2: 14-d per-candidate feature encoder for the
+    # value-head regressor. Imported by `agents.baseline._value_head` +
+    # `agents.baseline._trace_hook` (feature-emit path). Bundle-inert
+    # for agents that don't enable BASELINE_VH_LAMBDA.
+    "value_head_features",
 ]
 SUBMISSIONS = REPO / "submissions"
 

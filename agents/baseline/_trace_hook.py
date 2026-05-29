@@ -38,6 +38,14 @@ _ACCEPTED_ENABLED: bool = bool(_ACCEPTED_PATH)
 _ACCEPTED_FILE = None
 _ACCEPTED_LOAD_FAILED: bool = False
 
+# Reframe B.2 — optional per-accepted feature emit. When set, the
+# trace_accepted writer additionally encodes the value-head's 14-d base
+# feature vector (FEATURE_DIM_BASE; leaf_delta is the 15th, written
+# separately as `delta_pred`). Used by scripts/gen_b2_corpus.py to write
+# training inputs alongside the label-pairing data.
+_VH_TRACE_FEATURES: bool = os.environ.get(
+    "BASELINE_VH_TRACE_FEATURES", "0").strip() == "1"
+
 
 def _ensure_loaded() -> bool:
     """Lazy-open the trace file and lazy-load the Booster. Returns True
@@ -129,17 +137,33 @@ def _ensure_accepted_loaded() -> bool:
     return True
 
 
-def trace_accepted(world: Any, me: int, accepted: list) -> None:
+def trace_accepted(world: Any, world_model: Any, me: int,
+                   accepted: list) -> None:
     """Emit one JSON line per accepted candidate the chooser committed
     this turn. `accepted` is a list of dicts with keys: kind ('solo' or
     'joint'), src_id, tgt_id, ships, angle, wait_N, eta, delta_pred,
     and optionally joint_id (turn-local counter shared across legs of
     the same joint coalition). No-op when BASELINE_ACCEPTED_TRACE is
-    unset."""
+    unset.
+
+    When BASELINE_VH_TRACE_FEATURES=1 is set AND the candidate is solo,
+    the record additionally carries `features` — the 14-d base feature
+    vector from `lib.value_head_features.encode_features` as a list of
+    floats. Joints are not feature-encoded (the head is solo-only;
+    HANDOVER B.2 plan)."""
     if not _ACCEPTED_ENABLED or not _ensure_accepted_loaded():
         return
     try:
         step = int(getattr(world, "step", 0))
+        # Lazy-import the encoder so the no-feature path stays light.
+        encode_features = None
+        if _VH_TRACE_FEATURES and world_model is not None:
+            try:
+                from lib.value_head_features import encode_features as _enc
+                encode_features = _enc
+            except Exception:
+                encode_features = None
+        planets_by_id = getattr(world, "planets_by_id", {}) or {}
         for entry in accepted:
             rec = {
                 "step": step,
@@ -155,6 +179,19 @@ def trace_accepted(world: Any, me: int, accepted: list) -> None:
             }
             if "joint_id" in entry:
                 rec["joint_id"] = int(entry["joint_id"])
+            if (encode_features is not None and str(entry["kind"]) == "solo"):
+                src = planets_by_id.get(int(entry["src_id"]))
+                tgt = planets_by_id.get(int(entry["tgt_id"]))
+                if src is not None and tgt is not None:
+                    try:
+                        feats = encode_features(
+                            src, tgt, int(entry["ships"]),
+                            int(entry["eta"]), int(me),
+                            world, world_model,
+                        )
+                        rec["features"] = [float(v) for v in feats]
+                    except Exception:
+                        pass
             _ACCEPTED_FILE.write(json.dumps(rec) + "\n")
     except Exception:
         pass

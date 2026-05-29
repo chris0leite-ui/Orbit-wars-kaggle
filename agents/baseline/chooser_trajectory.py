@@ -826,6 +826,19 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         except Exception:
             ml_scores = {}
 
+    # Reframe B.2 — value-head additive term. Per-candidate LightGBM
+    # regressor predicting K=10 ship-delta; output is added as
+    # λ_vh · head_output. Featurization runs once over the prerank;
+    # per-candidate prediction happens inside the scoring loop because
+    # leaf_delta (the chooser's score itself) is one of the 15 features.
+    from agents.baseline._value_head import vh_is_enabled, vh_featurize_prerank  # noqa: E501
+    vh_feats: dict = {}
+    if vh_is_enabled():
+        try:
+            vh_feats = vh_featurize_prerank(prerank, world, model)
+        except Exception:
+            vh_feats = {}
+
     deadline = time.perf_counter() + wallclock_ms / 1000.0
 
     # v4 (default, 2026-05-17 PM): Δ-from-idle-baseline scoring with
@@ -934,6 +947,14 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         ml_scores, int(src.id), int(tgt.id),
                         int(ships), float(angle), int(wait_N),
                     )
+                if vh_feats:
+                    from agents.baseline._value_head import vh_get_lambda, vh_predict_one  # noqa: E501
+                    head_out = vh_predict_one(
+                        vh_feats, int(src.id), int(tgt.id),
+                        int(ships), float(angle), int(wait_N),
+                        float(score),  # leaf_delta after ML correction
+                    )
+                    score = score + vh_get_lambda() * head_out
                 if score > 0.0:
                     scored.append((score, src, tgt, ships, angle, wait_N,
                                    int(eta_traced) if eta_traced is not None else 0))
@@ -1124,5 +1145,5 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         })
     if accepted_trace:
         from agents.baseline._trace_hook import trace_accepted
-        trace_accepted(world, me, accepted_trace)
+        trace_accepted(world, model, me, accepted_trace)
     return moves, commits
