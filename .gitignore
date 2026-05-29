@@ -97,3 +97,4 @@ audit/external/
 # products land in audit/<date>-*.json which IS tracked.
 audit/eda-*/
 audit/2026-05-22/*.log
+logs/
