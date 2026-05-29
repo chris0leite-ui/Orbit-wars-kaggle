@@ -67,6 +67,42 @@ Same paired-seed protocol, baked bundle path:
 **Final:** P0 (lite_greedy) wins 5/5, Wilson 95% [0.566, 1.000].
 Lower bound clears 50% — cleanly directional even at n=5.
 
+### 3c. v7_0-as-opp-model — compute-prohibitive (bench result)
+
+60-step bench with `submissions/baseline_pv_eta_v7_0_opp.py` (v7_0's
+agent function wrapped as the rollout opp policy):
+
+| Side | calls | avg ms/call | per-turn calls | per-turn opp-policy time |
+|---|---|---|---|---|
+| P0 (lite_greedy) | 66,331 | 0.010 ms | 1,106 | 12 ms |
+| P1 (v7_0 baked)  | 911    | 101.6 ms | 15    | 1,540 ms |
+
+v7_0's per-call cost is ~10,000× lite_greedy. Per-turn opp-policy
+time alone blows the 1,000 ms env cap. The chooser's
+`affordable_validate_cap` hits its 8-candidate floor and rollouts
+truncate. Net: 72.8× fewer evaluations per turn than the baseline
+(mirror's confound ratio was 22×). The A/B was not run — the bench
+result mechanically determines the outcome (blind chooser loses).
+
+### 3d. Opp-axis compute/quality Pareto
+
+| Opp model | per-call cost | per-turn evals | result vs lite_greedy |
+|---|---|---|---|
+| lite_greedy | 0.01 ms | ~1,100 | baseline |
+| nearest | ~0.01 ms (same loop) | ~1,100 | 3-2 lite_greedy preview-null |
+| top_tier_mirror | ~5-10 ms (5-10× lite_greedy) | ~80 | 5-0 lite_greedy (compute-bound) |
+| v7_0 (full agent) | 101.6 ms (10,000× lite_greedy) | ~15 | not run (bench-falsified) |
+
+Under the 1000 ms ladder turn cap, any opp model >2× lite_greedy's
+per-call cost gets crushed by self-throttling before its strategy
+quality can matter. lite_greedy is Pareto-optimal among feasible
+opp models at current compute.
+
+This reframes the PM3 "opp model is the lever" directive: the lever
+exists, but it's gated behind a compute project (make a v3.5.1-class
+opp policy run at <0.5 ms/call) or a wallclock-budget pad (no room
+at the ladder cap). Neither is a one-session fix.
+
 ### 3b. Confound check via instrumented re-run of seed=2083
 
 `scripts/verify_mirror_bake.py` re-ran seed=2083 (the first P0 win)
