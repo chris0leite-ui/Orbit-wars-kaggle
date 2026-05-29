@@ -22,18 +22,18 @@
 
 ---
 
-## Live Kaggle (snapshot 2026-05-28 14:40 UTC)
+## Live Kaggle (snapshot 2026-05-29 10:12 UTC)
 
 Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at session start.
 **Reminder (comp-context.md::SCORES DO NOT SETTLE):** μ values below are
 snapshots, not verdicts — new submits enter at μ₀=600 and climb. Older
-subs (PV_ETA, PEAK RESTORE) have stabler reads; freshest sub
-(leaf_pv_2p, ~45min old at snapshot) is still mid-climb.
+subs (validator, leaf_pv_2p) have settled reads.
 
-| Sub ID | Date (UTC) | Agent | μ (snapshot) | Role |
+| Sub ID | Date (UTC) | Agent | μ (settled) | Role |
 |---|---|---|---:|---|
-| **53117942** | 2026-05-28 13:55 | baseline_leaf_pv_2p.py (LEAF_PV_2P=1 + PV_ETA=1) | **921.3** | **Rolling pair (most recent) — CLIMBING from μ₀=600, lifetime read unknown** |
-| **53111837** | 2026-05-28 09:42 | baseline_pv_eta.py (PV_ETA=1) | **1163.5** | **Rolling pair (older half) — NEW PEAK, above historical 1144-1165 band** |
+| **53131296** | 2026-05-28 23:22 | baseline_validated.py (3-MLP shot-validator filter) | **1089.2** | **Rolling pair (most recent)** — sibling branch `claude/competition-objective-alignment-hqNVM` |
+| **53117942** | 2026-05-28 13:55 | baseline_leaf_pv_2p.py (LEAF_PV_2P=1 + PV_ETA=1) | **1101.9** | **Rolling pair (older half) — CURRENT CHAMPION** |
+| 53111837 | 2026-05-28 09:42 | baseline_pv_eta.py (PV_ETA=1) | 1163.5 | EVICTED 2026-05-28 23:22 — was new peak; lost to validator submit |
 | 53099429 | 2026-05-28 00:30 | baseline_joint_aggr_consolidated_orbitfix (PEAK RESTORE, byte-identical) | 1114.5 | EVICTED 2026-05-28 13:55 |
 | 53099001 | 2026-05-27 23:56 | baseline_joint_aggr_consolidated_orbitfix + κ=0.02 | 1109.9 | EVICTED — recovered from initial μ=680 disaster |
 | 53088099 | 2026-05-27 14:35 | baseline_joint_aggr_consolidated_orbitfix REVERT | 1125.2 | EVICTED |
@@ -41,11 +41,18 @@ subs (PV_ETA, PEAK RESTORE) have stabler reads; freshest sub
 | 52912707 | 2026-05-22 | baseline_joint_aggr_consolidated_orbitfix (historical peak bundle) | 1165.4 | EVICTED — historical peak |
 | **52744856** | 2026-05-17 14:17 | composite_a2_hybrid (composite head 2P + A2 4P) | **1149.2** | **TEAM PEAK (older)** — EVICTED |
 
-- **Rolling pair ceiling (snapshot):** μ = 1163.5 (PV_ETA — new live peak).
-- **Rolling pair floor (snapshot):** μ = 921.3 (leaf_pv_2p — climbing, lifetime unknown).
-- **Team peak (live, snapshot):** μ = 1163.5 (PV_ETA, sub 53111837).
-- **Daily submission budget:** 5/day. Today (2026-05-28 UTC) used: 2 (PV_ETA + leaf_pv_2p). 3 remain (resets at UTC midnight).
-- **Deadline:** 2026-06-23 23:59 UTC. **~26 days remain.**
+- **Rolling pair ceiling (snapshot):** μ = 1101.9 (leaf_pv_2p — current champion).
+- **Rolling pair floor (snapshot):** μ = 1089.2 (validator — sibling branch sub).
+- **Team peak (live, snapshot):** μ = 1101.9 (leaf_pv_2p, sub 53117942). PV_ETA peak (1163.5) was evicted; not in rolling pair.
+- **Daily submission budget:** 5/day. Today (2026-05-29 UTC) used: 0. 5 remain.
+- **Deadline:** 2026-06-23 23:59 UTC. **~25 days remain.**
+
+**Next push candidate (this branch, pending A/B verdict):**
+`submissions/baseline_opp_mlp_t05.py` — leaf_pv_2p stack + `BASELINE_OPP_MODEL=mlp` +
+`BASELINE_OPP_MLP_THRESHOLD=0.5`. Repurposes the trained 3-MLP shot validator from
+sub 53131296 as a learned opponent policy (filters `lite_greedy_policy`'s candidate
+emits at `P(success) ≥ 0.5` from the opp's seat). A/B in progress vs live champion
+`baseline_leaf_pv_2p.py`; will report below before any push.
 
 ---
 
