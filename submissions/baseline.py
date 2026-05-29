@@ -1,4 +1,4 @@
-# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,kinematic_table,trajectory,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner}.
+# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,mirror,fleet,orbit,aim,combat,world_model,intent,kinematic_table,trajectory,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/macro,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,_validator_weights,_validator_mlp,shot_features,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner}.
 # Single-file Kaggle submission for Orbit Wars.
 
 from __future__ import annotations
@@ -101,6 +101,88 @@ def danger_3nn(
         elif p.owner != -1:
             score -= 1
     return score
+
+# === inlined: lib/mirror.py ===
+
+
+import math
+from typing import Iterable
+
+
+
+def rotate_xy(x: float, y: float) -> tuple[float, float]:
+    """180° rotation through (CENTER, CENTER)."""
+    return (BOARD_SIZE - x, BOARD_SIZE - y)
+
+
+def rotate_angle(theta: float) -> float:
+    """θ → θ + π, normalised to [0, 2π)."""
+    return (theta + math.pi) % (2 * math.pi)
+
+
+def build_bijection(initial_planets, tol: float = 1.0) -> dict[int, int]:
+    """Pair each planet id with its 180°-rotated counterpart by initial xy.
+
+    `initial_planets` is the env-shipped list of [id, owner, x, y, r,
+    ships, prod] tuples captured at t=0. Pairs are mutually exclusive
+    (bijection); any planet without a match within `tol` is omitted.
+    """
+    bij: dict[int, int] = {}
+    items = [(p[0], float(p[2]), float(p[3])) for p in initial_planets]
+    for pid, x, y in items:
+        rx, ry = rotate_xy(x, y)
+        best_id, best_d2 = None, tol * tol
+        for qid, qx, qy in items:
+            if qid == pid:
+                continue
+            d2 = (qx - rx) ** 2 + (qy - ry) ** 2
+            if d2 <= best_d2:
+                best_d2 = d2
+                best_id = qid
+        if best_id is not None:
+            bij[pid] = best_id
+    # Trim to a true bijection: drop any entry whose partner doesn't
+    # point back. (Should not happen with a clean symmetric board, but
+    # cheap insurance.)
+    return {a: b for a, b in bij.items() if bij.get(b) == a}
+
+
+def detect_num_players(planets) -> int:
+    """Count distinct non-neutral owners; reliable on turn 0."""
+    owners = {p[1] for p in planets if p[1] != -1}
+    return len(owners)
+
+
+def diagonal_opponent(my_id: int, num_players: int) -> int:
+    """Return the opponent across the 180° rotation axis from us.
+
+    In 2P this is `1 - my_id`. In 4P, env assigns home `base+j` to
+    player j; base+0 ↔ base+2? No — the symmetry analysis: positions
+    in the group rotate by 90° each step, so base+0 and base+3 are
+    diagonal (180°). Therefore in 4P the diagonal opponent of player 0
+    is player 3, of player 1 is player 2.
+    """
+    if num_players == 2:
+        return 1 - my_id
+    if num_players == 4:
+        # base+0 ↔ base+3, base+1 ↔ base+2 means player 0 ↔ 3, 1 ↔ 2.
+        return {0: 3, 1: 2, 2: 1, 3: 0}[my_id]
+    raise ValueError(f"unsupported num_players={num_players}")
+
+
+def diff_new_fleets(curr_fleets, prev_ids: set[int]) -> list:
+    """Fleets present this turn that weren't present last turn."""
+    return [f for f in curr_fleets if f[0] not in prev_ids]
+
+
+__all__ = [
+    "rotate_xy",
+    "rotate_angle",
+    "build_bijection",
+    "detect_num_players",
+    "diagonal_opponent",
+    "diff_new_fleets",
+]
 
 # === inlined: lib/fleet.py ===
 
@@ -3854,6 +3936,343 @@ def propose_opening_missions(world: World, model: WorldModel) -> list[Mission]:
             ))
     return missions
 
+# === inlined: lib/missions/macro.py ===
+
+
+import math
+import os
+from dataclasses import dataclass
+from typing import Iterable, Optional
+
+
+
+# ---------------------------------------------------------------------------
+# Calibrations — all env-var-tunable. Defaults are conservative first-pass
+# values; A/B-sweep before any submit.
+# ---------------------------------------------------------------------------
+
+def _envf(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _envi(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+EXPAND_MARGIN = _envi("BASELINE_MACRO_EXPAND_MARGIN", 2)
+# Minimum ships kept at home during EXPAND. The opening is when ladder
+# leaders drain garrisons most aggressively (top-10 median first launch
+# step 4.1 vs midpack 10.5, per knowledge-base/concepts/top-performer-
+# strategies.md). DEFEND state catches concrete threats via owner_at
+# prediction; the home_min sentry is a per-step safety floor, not a
+# strategic reserve. Default 0 = full opening aggression.
+EXPAND_HOME_MIN = _envi("BASELINE_MACRO_EXPAND_HOME_MIN", 0)
+DEFEND_HORIZON = _envi("BASELINE_MACRO_DEFEND_HORIZON", 20)
+STRIKE_RESERVE = _envi("BASELINE_MACRO_STRIKE_RESERVE", 20)
+STRIKE_MARGIN = _envf("BASELINE_MACRO_STRIKE_MARGIN", 1.15)
+
+
+# ---------------------------------------------------------------------------
+# Dataclass — what the agent consumes
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MacroEmit:
+    """A planned launch the agent should emit this turn.
+
+    The agent converts (src_id, tgt_id, ships) to a [src_id, angle, ships]
+    move via `proposer.aim_and_eta`, which handles orbital lead-aim and
+    comet path-aim for free.
+    """
+    src_id: int
+    tgt_id: int
+    ships: int
+
+
+@dataclass(frozen=True)
+class MacroState:
+    phase: str                                # one of EXPAND/STOCKPILE/STRIKE/DEFEND/DISABLED
+    home_id: Optional[int] = None
+    chosen_lateral_id: Optional[int] = None
+    opp_home_id: Optional[int] = None
+    hold_src: Optional[int] = None            # source the chooser must NOT launch from
+    emit: Optional[MacroEmit] = None          # at most one launch per turn
+    reason: str = ""                           # tracing
+
+
+# ---------------------------------------------------------------------------
+# Geometric helpers
+# ---------------------------------------------------------------------------
+
+
+def _polar_angle(x: float, y: float) -> float:
+    """Polar angle of (x, y) from the board centre, in [0, 2*pi)."""
+    return math.atan2(y - CENTER, x - CENTER) % (2 * math.pi)
+
+
+def _angular_distance(a: float, b: float) -> float:
+    """Shortest angular distance between two angles."""
+    d = (a - b) % (2 * math.pi)
+    return min(d, 2 * math.pi - d)
+
+
+def _pick_forward_lateral(laterals, home):
+    """Return the lateral whose polar angle is +pi/2 ahead of home.
+
+    `omega > 0` in all games, so `home_angle + pi/2` (mod 2*pi) is the
+    forward direction in rotation. Among the two laterals in the home
+    symmetric group, the forward one is the angular-nearest match.
+    """
+    home_angle = _polar_angle(float(home.x), float(home.y))
+    forward_angle = (home_angle + math.pi / 2) % (2 * math.pi)
+    return min(
+        laterals,
+        key=lambda p: _angular_distance(_polar_angle(float(p.x), float(p.y)),
+                                         forward_angle),
+    )
+
+
+def _home_group_ids(initial_planets, home_id: int, bij: dict) -> set[int]:
+    """Identify the four-planet symmetric group containing `home`.
+
+    The env (`kaggle_environments/envs/orbit_wars/orbit_wars.py`) places
+    planets via 90-degree rotational symmetry, but allocates ids in
+    contiguous blocks of 4 per symmetric group. So the group of any
+    planet is `(base, base+1, base+2, base+3)` where `base = id // 4
+    * 4`. We additionally verify each candidate id exists in the
+    initial-planets list to guard against truncated obs.
+    """
+    base = (int(home_id) // 4) * 4
+    by_id = {int(p[0]) for p in initial_planets}
+    return {pid for pid in (base, base + 1, base + 2, base + 3) if pid in by_id}
+
+
+def _identify_home(world, me: int):
+    """Return our home planet — the one we own with the smallest id at step 0.
+
+    Heuristic: at game start, each player owns exactly one planet (their
+    home). We pick the smallest-id owned planet, which is stable across
+    turns: the home planet keeps its id until captured.
+    """
+    owned = [
+        p for p in world.planets_by_id.values()
+        if int(p.owner) == int(me)
+    ]
+    if not owned:
+        return None
+    return min(owned, key=lambda p: int(p.id))
+
+
+def _identify_opp_home(world, opp_id: int, my_home, bij: dict):
+    """Return opp's home planet using the 180-deg mirror bijection.
+
+    Fallback: opp's smallest-id owned planet at step 0. The bijection
+    method is preferred because it's robust even after the opp's home
+    has been captured (its 180-rotated counterpart is still our home).
+    """
+    if my_home is not None and int(my_home.id) in bij:
+        opp_home_id = bij[int(my_home.id)]
+        p = world.planets_by_id.get(opp_home_id)
+        if p is not None:
+            return p
+    # Fallback: smallest-id planet owned by opp.
+    owned = [
+        p for p in world.planets_by_id.values()
+        if int(p.owner) == int(opp_id)
+    ]
+    if not owned:
+        return None
+    return min(owned, key=lambda p: int(p.id))
+
+
+# ---------------------------------------------------------------------------
+# State logic
+# ---------------------------------------------------------------------------
+
+
+def _will_home_flip(model, my_home_id: int, me: int, horizon: int) -> bool:
+    """Predict whether our home flips to an enemy owner within `horizon`."""
+    for t in range(1, horizon + 1):
+        o = model.owner_at(my_home_id, t)
+        if o is not None and int(o) != int(me) and int(o) != -1:
+            return True
+    return False
+
+
+def _pick_strike_target(world, model, me: int, lateral, opp_home):
+    """Pick opp's weakest reachable planet from our captured lateral.
+
+    First cut: opp_home (deterministic, known). Future iteration: scan
+    opp-owned planets, exclude sun-crossing chords, pick lowest predicted
+    garrison at arrival. For now we route every STRIKE at opp_home.
+    """
+    return opp_home
+
+
+def _strike_threshold(lateral, target, opp_home_production: int = 0) -> int:
+    """Ships required on lateral to STRIKE `target` with margin.
+
+    Predicted target garrison at our arrival = target.ships + target.prod
+    * eta. We pad by `STRIKE_MARGIN` to absorb the trajectory chooser's
+    one-tick combat prediction uncertainty + opp launches we can't see.
+
+    eta estimated from lateral->target straight-line distance at speed 5
+    (typical for a 100+ ship bundle).
+    """
+    dx = float(target.x) - float(lateral.x)
+    dy = float(target.y) - float(lateral.y)
+    dist = math.hypot(dx, dy)
+    eta = max(1, int(math.ceil(dist / 5.0)))
+    predicted_garrison = int(target.ships) + int(target.production) * eta
+    return int(math.ceil(predicted_garrison * STRIKE_MARGIN)) + STRIKE_RESERVE
+
+
+def determine_macro_state(
+    world,
+    model,
+    me: int,
+    num_seats: int,
+    omega: float,
+    initial_planets,
+) -> MacroState:
+    """Top-level macro decision. See module docstring for state semantics."""
+    # Gate 1: 2P only. 4P geometry doesn't reduce to a clean diagonal.
+    if int(num_seats) != 2:
+        return MacroState(phase="DISABLED", reason="num_seats!=2")
+
+    home = _identify_home(world, me)
+    if home is None:
+        return MacroState(phase="DISABLED", reason="no_home")
+
+    # Build mirror bijection from initial planets; needed for opp_home id.
+    try:
+        bij = build_bijection(initial_planets)
+    except Exception:
+        bij = {}
+
+    opp_id = diagonal_opponent(int(me), 2)
+    opp_home = _identify_opp_home(world, opp_id, home, bij)
+    if opp_home is None:
+        return MacroState(phase="DISABLED", home_id=int(home.id),
+                          reason="no_opp_home")
+
+    # Identify the four-planet symmetric group containing home; pick the
+    # two laterals (not home, not opp_home).
+    group_ids = _home_group_ids(initial_planets, int(home.id), bij)
+    if not group_ids:
+        return MacroState(phase="DISABLED", home_id=int(home.id),
+                          opp_home_id=int(opp_home.id),
+                          reason="no_home_group")
+    laterals = [
+        world.planets_by_id[pid]
+        for pid in group_ids
+        if pid != int(home.id) and pid != int(opp_home.id)
+           and pid in world.planets_by_id
+    ]
+    if len(laterals) != 2:
+        return MacroState(phase="DISABLED", home_id=int(home.id),
+                          opp_home_id=int(opp_home.id),
+                          reason=f"bad_laterals_count={len(laterals)}")
+
+    chosen = _pick_forward_lateral(laterals, home)
+
+    # DEFEND gate: overrides every other state if home is about to flip.
+    if _will_home_flip(model, int(home.id), int(me), DEFEND_HORIZON):
+        return MacroState(
+            phase="DEFEND",
+            home_id=int(home.id),
+            chosen_lateral_id=int(chosen.id),
+            opp_home_id=int(opp_home.id),
+            reason="home_flip_predicted",
+        )
+
+    # EXPAND: we don't own the chosen lateral yet. Use EXPAND_HOME_MIN
+    # (opening-aggressive, default 0) — DEFEND state catches concrete
+    # incoming threats; the per-step home_min reserve is a safety floor.
+    if int(chosen.owner) != int(me):
+        spare = int(home.ships) - EXPAND_HOME_MIN
+        # Size for PREDICTED garrison at arrival, not current. With
+        # production accumulating during ~10-turn travel, current-garrison
+        # sizing systematically undershoots (lateral grows by prod * eta).
+        # Use the same straight-line eta heuristic as _strike_threshold.
+        dx = float(chosen.x) - float(home.x)
+        dy = float(chosen.y) - float(home.y)
+        eta_est = max(1, int(math.ceil(math.hypot(dx, dy) / 5.0)))
+        predicted_garrison = int(chosen.ships) + int(chosen.production) * eta_est
+        ships_needed = predicted_garrison + 1 + EXPAND_MARGIN
+        if spare >= ships_needed:
+            # Bundle as much as we safely can while keeping home above min.
+            # Cap at 2x the strictly-needed count to avoid over-allocating
+            # if home has accumulated a huge garrison.
+            send = min(spare, max(ships_needed, ships_needed * 2))
+            emit = MacroEmit(src_id=int(home.id), tgt_id=int(chosen.id),
+                             ships=int(send))
+            return MacroState(
+                phase="EXPAND",
+                home_id=int(home.id),
+                chosen_lateral_id=int(chosen.id),
+                opp_home_id=int(opp_home.id),
+                emit=emit,
+                reason="expand_emit",
+            )
+        return MacroState(
+            phase="EXPAND",
+            home_id=int(home.id),
+            chosen_lateral_id=int(chosen.id),
+            opp_home_id=int(opp_home.id),
+            reason="expand_accumulating",
+        )
+
+    # We own the chosen lateral. STOCKPILE or STRIKE.
+    target = _pick_strike_target(world, model, int(me), chosen, opp_home)
+    if target is None or int(target.owner) == int(me):
+        # No strike target (opp eliminated or we already own it). Hold.
+        return MacroState(
+            phase="STOCKPILE",
+            home_id=int(home.id),
+            chosen_lateral_id=int(chosen.id),
+            opp_home_id=int(opp_home.id),
+            hold_src=int(chosen.id),
+            reason="no_strike_target",
+        )
+
+    threshold = _strike_threshold(chosen, target)
+    if int(chosen.ships) >= threshold:
+        send = max(1, int(chosen.ships) - STRIKE_RESERVE)
+        emit = MacroEmit(src_id=int(chosen.id), tgt_id=int(target.id),
+                         ships=int(send))
+        return MacroState(
+            phase="STRIKE",
+            home_id=int(home.id),
+            chosen_lateral_id=int(chosen.id),
+            opp_home_id=int(opp_home.id),
+            emit=emit,
+            reason=f"strike_emit_threshold={threshold}",
+        )
+
+    return MacroState(
+        phase="STOCKPILE",
+        home_id=int(home.id),
+        chosen_lateral_id=int(chosen.id),
+        opp_home_id=int(opp_home.id),
+        hold_src=int(chosen.id),
+        reason=f"stockpile_threshold={threshold}_ships={int(chosen.ships)}",
+    )
+
+
+__all__ = [
+    "MacroEmit",
+    "MacroState",
+    "determine_macro_state",
+]
+
 # === inlined: lib/missions/drain.py ===
 
 
@@ -5984,16 +6403,348 @@ def rollout(
         snap = step(snap, actions, in_place=True)
     return snap
 
+# === inlined: lib/_validator_weights.py ===
+
+
+_WEIGHTS_B64 = "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/////////wkAFABtMF9iMC5ucHkBABAAgAEAAAAAAACAAQAAAAAAAJNOVU1QWQEAdgB7J2Rlc2NyJzogJzxmNCcsICdmb3J0cmFuX29yZGVyJzogRmFsc2UsICdzaGFwZSc6ICg2NCwpLCB9ICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKKUU7PS6RMT2U7qg8YbjBPQsAyjtVHaw9qipvPOLLkzxey3i7w7kxPTzhrj1q8F27XrldvE4H6Du8q5m9AAAAAIEWjT1Vps48IVjyOzo3wbxpG7o9FtE0PRhWLTrL4IK58tWuvU6aXj1euEW8wNN6PcL8jT3Fd+M7h3fHPdQx0zx6+qQ8fyF2PQAAAABWeK091thkuwdXGz0LCqY9Ss2kPWSkjz2q1Yc9eOa6vNUyHr1m6+k9RNGMPcTCij3fKt476BACvWy3DT23tHS9SYOPPd7kc73Us7o8WIUyPfIAoD1QrAg+lFSXPaIVjr1yChs+BxjVPQAAAAADlpU9UhgbPFBLAwQtAAAAAAAAACEAoMoNiP//////////CQAUAG0wX2IxLm5weQEAEAAAAQAAAAAAAAABAAAAAAAAk05VTVBZAQB2AHsnZGVzY3InOiAnPGY0JywgJ2ZvcnRyYW5fb3JkZXInOiBGYWxzZSwgJ3NoYXBlJzogKDMyLCksIH0gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAqQM2o9l2Y+vbZOiz04Op28EsJmPO+2gD0rh3M9wuQkPfPFrruX12k9E0NkPWN5ZbzX14k7AAAAAASApzzi13s7YRyxPcTFxzxFEhk81WuEPVRraz0Y6iI9vawyPcmWaD1OTj09YcxyPXb2xLveoQo9LJOKvFTzfT23XqA9ezIqPVBLAwQtAAAAAAAAACEA4Ns3aP//////////CQAUAG0wX2IyLm5weQEAEACEAAAAAAAAAIQAAAAAAAAAk05VTVBZAQB2AHsnZGVzY3InOiAnPGY0JywgJ2ZvcnRyYW5fb3JkZXInOiBGYWxzZSwgJ3NoYXBlJzogKDEsKSwgfSAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg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OiBGYWxzZSwgJ3NoYXBlJzogKDEsKSwgfSAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAoXRRi9UEsDBC0AAAAAAAAAIQA9wLC6//////////8MABQAcG9zX3JhdGUubnB5AQAQAIQAAAAAAAAAhAAAAAAAAACTTlVNUFkBAHYAeydkZXNjcic6ICc8ZjQnLCAnZm9ydHJhbl9vcmRlcic6IEZhbHNlLCAnc2hhcGUnOiAoKSwgfSAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCkQZAz9QSwMELQAAAAAAAAAhABFHp2H//////////w0AFAB0aHJlc2hvbGQubnB5AQAQAIQAAAAAAAAAhAAAAAAAAACTTlVNUFkBAHYAeydkZXNjcic6ICc8ZjQnLCAnZm9ydHJhbl9vcmRlcic6IEZhbHNlLCAnc2hhcGUnOiAoKSwgfSAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCpqZmT5QSwECLQMtAAAAAAAAACEA0YW3iIAZAACAGQAACQAAAAAAAAAAAAAAgAEAAAAAbTBfVzAubnB5UEsBAi0DLQAAAAAAAAAhAK6uwSqAIAAAgCAAAAkAAAAAAAAAAAAAAIABuxkAAG0wX1cxLm5weVBLAQItAy0AAAAAAAAAIQAfxzygAAEAAAABAAAJAAAAAAAAAAAAAACAAXY6AABtMF9XMi5ucHlQSwECLQMtAAAAAAAAACEAwUsBCIABAACAAQAACQAAAAAAAAAAAAAAgAGxOwAAbTBfYjAubnB5UEsBAi0DLQAAAAAAAAAhAKDKDYgAAQAAAAEAAAkAAAAAAAAAAAAAAIABbD0AAG0wX2IxLm5weVBLAQItAy0AAAAAAAAAIQDg2zdohAAAAIQAAAAJAAAAAAAAAAAAAACAAac+AABtMF9iMi5ucHlQSwECLQMtAAAAAAAAACEApBWoCYAZAACAGQAACQAAAAAAAAAAAAAAgAFmPwAAbTFfVzAubnB5UEsBAi0DLQAAAAAAAAAhAFDA4NCAIAAAgCAAAAkAAAAAAAAAAAAAAIABIVkAAG0xX1cxLm5weVBLAQItAy0AAAAAAAAAIQCbWj7RAAEAAAABAAAJAAAAAAAAAAAAAACAAdx5AABtMV9XMi5ucHlQSwECLQMtAAAAAAAAACEAjajEGYABAACAAQAACQAAAAAAAAAAAAAAgAEXewAAbTFfYjAubnB5UEsBAi0DLQAAAAAAAAAhAM8SMokAAQAAAAEAAAkAAAAAAAAAAAAAAIAB0nwAAG0xX2IxLm5weVBLAQItAy0AAAAAAAAAIQCv5e2WhAAAAIQAAAAJAAAAAAAAAAAAAACAAQ1+AABtMV9iMi5ucHlQSwECLQMtAAAAAAAAACEARyAhJ4AZAACAGQAACQAAAAAAAAAAAAAAgAHMfgAAbTJfVzAubnB5UEsBAi0DLQAAAAAAAAAhAG9d9xWAIAAAgCAAAAkAAAAAAAAAAAAAAIABh5gAAG0yX1cxLm5weVBLAQItAy0AAAAAAAAAIQCQQWSAAAEAAAABAAAJAAAAAAAAAAAAAACAAUK5AABtMl9XMi5ucHlQSwECLQMtAAAAAAAAACEABNHiyYABAACAAQAACQAAAAAAAAAAAAAAgAF9ugAAbTJfYjAubnB5UEsBAi0DLQAAAAAAAAAhAOUjEMEAAQAAAAEAAAkAAAAAAAAAAAAAAIABOLwAAG0yX2IxLm5weVBLAQItAy0AAAAAAAAAIQBC9OZyhAAAAIQAAAAJAAAAAAAAAAAAAACAAXO9AABtMl9iMi5ucHlQSwECLQMtAAAAAAAAACEAPcCwuoQAAACEAAAADAAAAAAAAAAAAAAAgAEyvgAAcG9zX3JhdGUubnB5UEsBAi0DLQAAAAAAAAAhABFHp2GEAAAAhAAAAA0AAAAAAAAAAAAAAIAB9L4AAHRocmVzaG9sZC5ucHlQSwUGAAAAABQAFABTBAAAt78AAAAA"
+
+# === inlined: lib/_validator_mlp.py ===
+
+
+import base64
+import io
+
+import numpy as np
+
+
+_MODELS: list[dict] | None = None
+_LOAD_FAILED: bool = False
+
+
+def _load_weights() -> None:
+    global _MODELS, _LOAD_FAILED
+    if not _WEIGHTS_B64:
+        _LOAD_FAILED = True
+        return
+    try:
+        blob = base64.b64decode(_WEIGHTS_B64)
+        with np.load(io.BytesIO(blob)) as npz:
+            models: list[dict] = []
+            for i in range(3):
+                P = {}
+                for k in ("W0", "b0", "W1", "b1", "W2", "b2"):
+                    P[k] = np.ascontiguousarray(npz[f"m{i}_{k}"]).astype(np.float32)
+                models.append(P)
+        _MODELS = models
+    except Exception:
+        _LOAD_FAILED = True
+
+
+def is_ready() -> bool:
+    """True once the weights have been parsed; lazy-triggers a load
+    attempt on first call. False if the blob is missing or malformed."""
+    global _MODELS
+    if _MODELS is None and not _LOAD_FAILED:
+        _load_weights()
+    return _MODELS is not None
+
+
+def ensemble_proba(X: np.ndarray) -> np.ndarray:
+    """Average sigmoid across the 3-MLP ensemble.
+
+    X is float32 (B, 25). Returns float32 (B,). Each model: two ReLU
+    hidden layers (25 -> 64 -> 32) and a sigmoid output. Clips the pre-
+    sigmoid logits to [-30, 30] for numerical safety (matches the
+    sibling implementation byte-for-byte).
+    """
+    if not is_ready():
+        raise RuntimeError("validator MLP weights not loaded")
+    out = np.zeros(len(X), dtype=np.float32)
+    for P in _MODELS:  # type: ignore[union-attr]
+        h = np.maximum(0.0, X @ P["W0"] + P["b0"])
+        h = np.maximum(0.0, h @ P["W1"] + P["b1"])
+        s = (h @ P["W2"] + P["b2"]).ravel()
+        out += 1.0 / (1.0 + np.exp(-np.clip(s, -30.0, 30.0)))
+    return out / float(len(_MODELS))  # type: ignore[arg-type]
+
+# === inlined: lib/shot_features.py ===
+
+
+import math
+from typing import Any
+
+import numpy as np
+
+FEATURE_DIM = 25
+
+NORM = {
+    "max_ships": 2000.0,
+    "max_production": 5.0,
+    "max_radius": 3.0,
+    "max_fleet_speed": 6.0,
+    "max_eta": 200.0,
+    "board_diagonal": 141.42,
+    "max_planets": 40.0,
+    "episode_steps": 500.0,
+}
+
+
+def fleet_speed(ships: float) -> float:
+    """Match `lib/fleet.py` and konbu17's per-shot formula."""
+    if ships <= 0:
+        return 0.0
+    return 1.0 + (6.0 - 1.0) * (math.log(ships) / math.log(1000.0)) ** 1.5
+
+
+def infer_target_pid(
+    src_xy: tuple[float, float],
+    angle: float,
+    planets: list,
+) -> int | None:
+    """Project ray from src along `angle`; return planet id with smallest
+    perpendicular distance among forward candidates. Matches
+    `scripts/label_shot_outcomes._infer_target_pid` and
+    `scripts/extended_features._infer_target_pid`."""
+    sx, sy = src_xy
+    dx, dy = math.cos(angle), math.sin(angle)
+    best_id = None
+    best_score = float("inf")
+    for p in planets:
+        pid = int(p[0])
+        px, py = float(p[2]), float(p[3])
+        if abs(px - sx) < 1e-6 and abs(py - sy) < 1e-6:
+            continue
+        rx, ry = px - sx, py - sy
+        fwd = rx * dx + ry * dy
+        if fwd <= 0:
+            continue
+        perp = math.hypot(rx - fwd * dx, ry - fwd * dy)
+        score = perp + 0.001 * fwd
+        if score < best_score:
+            best_score = score
+            best_id = pid
+    return best_id
+
+
+def encode_features(
+    src_planet: Any,
+    target_planet: Any,
+    ships_sent: float,
+    distance: float,
+    eta: float,
+    fs: float,
+    all_planets: list,
+    all_fleets: list,
+    focal_seat: int,
+    step: int,
+) -> list[float]:
+    """Build the 25-dim feature vector. All values normalised to [0, 1]
+    except `ship_diff` (index 21) and `combat_margin` (index 24), both
+    in [-1, 1].
+
+    Tuple indexing follows the kaggle_environments schema:
+      Planet = (id=0, owner=1, x=2, y=3, radius=4, ships=5, production=6)
+      Fleet  = (id=0, owner=1, x=2, y=3, angle=4, from_planet_id=5, ships=6)
+    """
+    sps_ships = src_planet[5] / NORM["max_ships"]
+    sps_prod = src_planet[6] / NORM["max_production"]
+    sps_rad = src_planet[4] / NORM["max_radius"]
+
+    tgt_ships = target_planet[5] / NORM["max_ships"]
+    tgt_prod = target_planet[6] / NORM["max_production"]
+    tgt_rad = target_planet[4] / NORM["max_radius"]
+
+    tgt_owner = int(target_planet[1])
+    owner_mine = 1.0 if tgt_owner == focal_seat else 0.0
+    owner_neutral = 1.0 if tgt_owner == -1 else 0.0
+    owner_enemy = 1.0 if (tgt_owner != -1 and tgt_owner != focal_seat) else 0.0
+
+    src_garrison = max(1.0, float(src_planet[5]))
+    shot_ships = min(1.0, ships_sent / NORM["max_ships"])
+    shot_frac = min(1.0, ships_sent / src_garrison)
+    shot_dist = min(1.0, distance / NORM["board_diagonal"])
+    shot_eta = min(1.0, eta / NORM["max_eta"])
+    shot_fs = min(1.0, fs / NORM["max_fleet_speed"])
+
+    n_allied = 0
+    ship_allied = 0.0
+    n_enemy = 0
+    ship_enemy = 0.0
+    for f in all_fleets:
+        owner = int(f[1])
+        ships = float(f[6])
+        if owner == focal_seat:
+            n_allied += 1
+            ship_allied += ships
+        elif owner != -1:
+            n_enemy += 1
+            ship_enemy += ships
+    in_flight_n_allied = min(1.0, n_allied / NORM["max_planets"])
+    in_flight_n_enemy = min(1.0, n_enemy / NORM["max_planets"])
+    in_flight_ship_allied = min(1.0, ship_allied / NORM["max_ships"])
+    in_flight_ship_enemy = min(1.0, ship_enemy / NORM["max_ships"])
+
+    my_total_ships = sum(
+        float(p[5]) for p in all_planets if int(p[1]) == focal_seat
+    ) + ship_allied
+    enemy_total_ships = sum(
+        float(p[5]) for p in all_planets
+        if int(p[1]) not in (-1, focal_seat)
+    ) + ship_enemy
+    ship_diff = max(-1.0, min(1.0,
+        (my_total_ships - enemy_total_ships) / NORM["max_ships"]))
+    my_total_ships_n = min(1.0, my_total_ships / NORM["max_ships"])
+    enemy_total_ships_n = min(1.0, enemy_total_ships / NORM["max_ships"])
+    meta_turn = step / NORM["episode_steps"]
+    my_planet_count = sum(1 for p in all_planets if int(p[1]) == focal_seat)
+    enemy_planet_count = sum(
+        1 for p in all_planets if int(p[1]) not in (-1, focal_seat)
+    )
+    my_pc_n = my_planet_count / NORM["max_planets"]
+    enemy_pc_n = enemy_planet_count / NORM["max_planets"]
+
+    # F2 combat_margin_at_arrival: production-walk prediction of the
+    # target's garrison at ETA, then signed margin of ships_sent against
+    # it. Owned planets accrue `production` per tick; neutrals don't.
+    # Ignores in-flight fleets (F3 covers that orthogonal signal). The
+    # raw target tuple's owner / ships / production carry the unnormalised
+    # values we need; encoder receives raw tuples by design.
+    if tgt_owner != -1:
+        pred_garrison = float(target_planet[5]) + float(target_planet[6]) * float(eta)
+    else:
+        pred_garrison = float(target_planet[5])
+    pred_denom = max(1.0, pred_garrison)
+    combat_margin = max(-1.0, min(1.0, (ships_sent - pred_denom) / pred_denom))
+
+    return [
+        sps_ships, sps_prod, sps_rad,
+        tgt_ships, tgt_prod, tgt_rad,
+        owner_mine, owner_neutral, owner_enemy,
+        shot_ships, shot_frac, shot_dist, shot_eta, shot_fs,
+        in_flight_n_allied, in_flight_ship_allied,
+        in_flight_n_enemy, in_flight_ship_enemy,
+        meta_turn, my_total_ships_n, enemy_total_ships_n,
+        ship_diff, my_pc_n, enemy_pc_n,
+        combat_margin,
+    ]
+
+
+def encode_shot_features(
+    emit: list,
+    obs: Any,
+    focal_seat: int,
+) -> np.ndarray | None:
+    """Inference-time wrapper. Returns None if the emit is malformed or
+    cannot be associated with a target planet via ray-cast.
+
+    `emit` = [src_pid, angle, ships]
+    `obs` exposes `.planets`, `.fleets`, `.step` (dict or Struct).
+    """
+    if not emit or len(emit) < 3:
+        return None
+    try:
+        src_pid = int(emit[0])
+        angle = float(emit[1])
+        ships = float(emit[2])
+    except (TypeError, ValueError):
+        return None
+
+    planets = list(obs.get("planets", []) if isinstance(obs, dict)
+                   else getattr(obs, "planets", []) or [])
+    fleets = list(obs.get("fleets", []) if isinstance(obs, dict)
+                  else getattr(obs, "fleets", []) or [])
+    step = int(obs.get("step", 0) if isinstance(obs, dict)
+               else getattr(obs, "step", 0) or 0)
+
+    by_id = {int(p[0]): p for p in planets}
+    src = by_id.get(src_pid)
+    if src is None:
+        return None
+    target_pid = infer_target_pid(
+        (float(src[2]), float(src[3])), angle, planets
+    )
+    if target_pid is None:
+        return None
+    target = by_id.get(target_pid)
+    if target is None:
+        return None
+
+    d = math.hypot(float(target[2]) - float(src[2]),
+                   float(target[3]) - float(src[3]))
+    v = fleet_speed(ships)
+    eta = int(math.ceil(d / max(v, 1e-6))) if v > 0 else 0
+
+    feats = encode_features(
+        src, target, ships, d, eta, v,
+        planets, fleets, focal_seat, step,
+    )
+    return np.asarray(feats, dtype=np.float32)
+
+
+def target_owned_by(emit: list, obs: Any, focal_seat: int) -> bool:
+    """Self-reinforcement check: is the emit's ray-cast target already
+    owned by `focal_seat`? Used by the validator agent to bypass filtering
+    on self-reinforce shots (konbu17 design — these are never filtered)."""
+    if not emit or len(emit) < 3:
+        return False
+    try:
+        src_pid = int(emit[0])
+        angle = float(emit[1])
+    except (TypeError, ValueError):
+        return False
+    planets = list(obs.get("planets", []) if isinstance(obs, dict)
+                   else getattr(obs, "planets", []) or [])
+    by_id = {int(p[0]): p for p in planets}
+    src = by_id.get(src_pid)
+    if src is None:
+        return False
+    target_pid = infer_target_pid(
+        (float(src[2]), float(src[3])), angle, planets
+    )
+    if target_pid is None:
+        return False
+    target = by_id.get(target_pid)
+    if target is None:
+        return False
+    return int(target[1]) == focal_seat
+
 # === inlined: lib/opp_model.py ===
 
 
 import math
+import os
 from typing import Any, Callable
 
 _fleet_speed = speed
 
 
 Policy = Callable[[Any], list]
+
+# Global per-tick launch budget for `lite_greedy_policy` (2026-05-28 PM4).
+# The current policy lets every owned planet emit a 0.7x ships launch every
+# tick. With ~5 owned planets x eta=10 rollout, that's ~50 simulated launches
+# per candidate, vs realised top-mu ladder rate ~1.3 launches/turn globally
+# (knowledge-base/concepts/top-performer-strategies.md). At K>0 the policy
+# keeps only the top-K candidates by ROI (`prod/(d+1)`) per call; K=0
+# (default) preserves byte-for-byte legacy. Calibration variants K=1/2/3.
+# Intended for OPP seats; do not combine with BASELINE_ME_REACTS=1 (would
+# throttle ME-side reactive launches too).
+OPP_MAX_LAUNCHES: int = int(
+    os.environ.get("BASELINE_OPP_MAX_LAUNCHES", "0")
+)
+
+
+# MLP-as-opp-model threshold (2026-05-29). Used by `mlp_validated_policy`
+# to filter `lite_greedy_policy`'s candidate emits through the trained
+# 3-MLP shot validator. The MLP returns `P(launch will succeed) in [0, 1]`
+# from the opponent's seat; only candidates with P >= threshold are
+# emitted. Threshold default 0.5 (high-precision, opp fires only when
+# confident); raise to suppress more, lower to emit more. The validator's
+# self-side rejection threshold (0.30) was tuned for high recall on
+# OUR-side filtering and is the wrong knob for OPP-model use.
+OPP_MLP_THRESHOLD: float = float(
+    os.environ.get("BASELINE_OPP_MLP_THRESHOLD", "0.5")
+)
 
 
 # ---------------------------------------------------------------------------
@@ -6116,6 +6867,13 @@ def lite_greedy_policy(obs: Any) -> list:
         return []
     targets = [p for p in planets if p[1] != player]
     moves: list = []
+    # Top-K mode: collect (-roi, seq_idx, move) for stable descending-ROI
+    # sort with planet-walk tie-break. seq_idx tracks emission order so
+    # ties resolve deterministically. K<=0 (default) skips the entire
+    # candidates path and appends directly to `moves` for byte-parity.
+    k_cap = OPP_MAX_LAUNCHES
+    candidates: list[tuple[float, int, list]] = []
+    seq_idx = 0
     for src in planets:
         if src[1] != player or src[5] < 10:
             continue
@@ -6170,8 +6928,97 @@ def lite_greedy_policy(obs: Any) -> list:
         if ships < 5:
             continue
         angle = math.atan2(best[3] - sy, best[2] - sx)
-        moves.append([src[0], angle, ships])
+        move = [src[0], angle, ships]
+        if k_cap <= 0:
+            moves.append(move)
+        else:
+            candidates.append((-best_score, seq_idx, move))
+            seq_idx += 1
+    if k_cap > 0 and candidates:
+        candidates.sort()
+        moves = [c[2] for c in candidates[:k_cap]]
     return moves
+
+
+# ---------------------------------------------------------------------------
+# Tier 3 (2026-05-29) — MLP-filtered lite_greedy
+# ---------------------------------------------------------------------------
+#
+# Pivot from the falsified top-K-by-ROI rate cap (Stage-2 A/B 6/16 vs live).
+# The rate-cap addressed the right symptom (lite_greedy over-fires vs the
+# realised ladder fingerprint) but the wrong axis: the right knob is "fire
+# only when the shot is likely to succeed", not "fire at most K per tick".
+#
+# This tier wraps `lite_greedy_policy`'s candidate emit list with the
+# trained 3-MLP shot validator from sub 53131296. The validator scores
+# `P(launch will succeed | obs, focal_seat)` from the opponent's seat
+# (focal_seat = obs.player when the rollout queries the opp's observation).
+# Only candidates with P >= OPP_MLP_THRESHOLD pass through. Self-reinforce
+# emits (target already owned by focal) bypass the filter — same convention
+# as the validator agent itself.
+#
+# The MLP was trained on per-shot labels from top-10 ladder replays + 10
+# midpack, so the threshold sits closer to the actual ladder-realised
+# launch density than any constant K cap can. Fall-through if the weights
+# fail to load (degrades gracefully to lite_greedy).
+
+
+def mlp_validated_policy(obs: Any) -> list:
+    """Tier 3 opp policy: lite_greedy candidates filtered by trained MLP.
+
+    Pipeline:
+      1. Run `lite_greedy_policy` to propose candidate (src, angle, ships)
+         emits for the focal seat. Cheap; per-tick cost matches lite_greedy.
+      2. For each candidate, encode 25-d features via
+         `lib.shot_features.encode_shot_features` with `focal_seat =
+         obs.player` (the seat the rollout is querying — the opponent
+         from the chooser's perspective).
+      3. Self-reinforce candidates (target already owned by focal seat)
+         bypass the filter, matching `baseline_validated`'s convention.
+      4. Stack remaining feature vectors; one batched ensemble forward.
+      5. Emit those with `p >= OPP_MLP_THRESHOLD`.
+
+    If the MLP weights are missing/malformed (e.g. lib._validator_weights
+    blob empty), returns `lite_greedy_policy` output unfiltered so the
+    rollout still has a viable opponent.
+    """
+    # Single-line imports below: the bundler's per-line import-stripping
+    # regex leaks continuation lines from a parenthesised multi-line
+    # import as indented orphans (IndentationError at runtime). Friction
+    # tag: `bundler-modular-agent-namespace-access-breaks-bundle`.
+
+    candidates = lite_greedy_policy(obs)
+    if not candidates:
+        return []
+    if not is_ready():
+        return candidates
+
+    focal_seat = (
+        obs.get("player", 0) if isinstance(obs, dict)
+        else getattr(obs, "player", 0)
+    )
+
+    survivors: list = []
+    to_score: list[tuple[int, Any]] = []
+    for i, emit in enumerate(candidates):
+        if target_owned_by(emit, obs, focal_seat):
+            survivors.append(emit)
+            continue
+        feats = encode_shot_features(emit, obs, focal_seat)
+        if feats is None or feats.shape[0] != FEATURE_DIM:
+            survivors.append(emit)
+            continue
+        to_score.append((i, feats))
+
+    if to_score:
+        import numpy as np
+        X = np.stack([f for _, f in to_score]).astype(np.float32)
+        probs = ensemble_proba(X)
+        for (idx, _), p in zip(to_score, probs):
+            if p >= OPP_MLP_THRESHOLD:
+                survivors.append(candidates[idx])
+
+    return survivors
 
 
 # ---------------------------------------------------------------------------
@@ -8505,8 +9352,21 @@ PRODUCTION_PV_GAMMA: float = 0.99
 # knowledge-base/thoughts/2026-05-18-PV-term-recalibration-debt.md.
 # Default OFF as of 2026-05-18 PM session wrap. Set
 # `COMPOSITE_PRODUCTION_PV=1` to re-enable for A/Bs.
+#
+# 2026-05-28 PM: silent-turns investigation
+# (knowledge-base/thoughts/2026-05-28-silent-turns-pre-existing-weakness.md)
+# attributed mid-game chooser stalls to this term being off — the 2P leaf
+# is dimensionally myopic without it (no credit for future production beyond
+# the rollout horizon). Re-enable behind a namespaced alias env var
+# `BASELINE_LEAF_PV_2P=1`; either var still flips the gate, so the legacy
+# `COMPOSITE_PRODUCTION_PV` knob continues to repro the historical evidence.
+# The 2026-05-18 calibration debt is unresolved — re-enabling without
+# fresh A/B vs the peak anchor still carries the ~-3pp regression risk.
 import os as _os
-_COMPOSITE_PV_ENABLED = _os.environ.get("COMPOSITE_PRODUCTION_PV", "0") != "0"
+_COMPOSITE_PV_ENABLED = (
+    _os.environ.get("COMPOSITE_PRODUCTION_PV", "0") != "0"
+    or _os.environ.get("BASELINE_LEAF_PV_2P", "0") != "0"
+)
 
 
 def composite_capture_value(
@@ -9343,8 +10203,7 @@ Pipeline per turn:
          emit fire-now candidates at (capture_size, 2*capture, full-budget)
          emit wait-then-fire candidates at extra_surplus in (0, 5, 12)
   2. cheap-rank each candidate by analytic Δ (capture/bounce/reinforce)
-  3. dedup per (src_id, tgt_id, wait_band) keeping the top cheap-Δ
-     — wait_band = {0, 1..7, >=8}; lets the validator compare fire-now
+  3. dedup per (src_id, tgt_id) keeping the top cheap-Δ.
      vs short-wait vs long-wait against the same target.
 """
 
@@ -9365,7 +10224,6 @@ MIN_FLEET_SIZE = 2
 SIM_SETTLE_TURNS = 2
 MIN_HORIZON = 25
 MAX_HORIZON = 40
-WAIT_EXTRA_SURPLUS = (0, 5, 12)  # legacy forward grid (kept for rollback)
 CHEAP_REJECT_THRESHOLD = -10.0
 EPISODE_STEPS = 500
 GAMMA = 0.99
@@ -9401,17 +10259,6 @@ THREAT_RESERVE_ALPHA = float(
 THREAT_RESERVE_WINDOW = int(
     os.environ.get("BASELINE_THREAT_RESERVE_WINDOW", "30"),
 )
-
-# Backward wait grid (2026-05-18): anchored on min_wait_affordable.
-# Replaces forward WAIT_EXTRA_SURPLUS = (0, 5, 12) grid that caused
-# under-emission. Diagnosis: at Roman game (76941081) step 90 with 454
-# ships across 9 planets, proposer emitted 18 candidates, 15 of which
-# were wait_N > 0. Chooser picked top-Δ candidate (wait_N=17, fire-now-
-# capable src reserved), emitted 0 launches. Repeat every turn → 59pct
-# idle. With backward grid, already-affordable (src, tgt) pairs emit
-# NO wait variants; chooser only sees fire-now → emits.
-WAIT_GRID_MODE = os.environ.get("BASELINE_WAIT_GRID", "backward").strip().lower()
-WAIT_BUFFER_OFFSET = 3   # backward grid emits {min_w, min_w + 3}
 
 # Bug #12 window constant — promoted to `lib/world_model.py` so both
 # this proposer and the in-rollout defensive policy
@@ -9619,167 +10466,6 @@ def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list
     return sorted(sizes)
 
 
-def wait_then_fire_variants_forward(src, tgt, model, omega: float, me: int, world=None):
-    """Forward wait-grid (legacy): enumerate fixed WAIT_EXTRA_SURPLUS = (0, 5, 12).
-
-    Kept for rollback via BASELINE_WAIT_GRID=forward. Caused under-emission
-    when src is already armed (always emits wait_N=1 variant that
-    out-scores fire-now in chooser Δ; chooser picks the wait, reserves
-    src+tgt, emits nothing).
-    """
-    if int(tgt.owner) == me:
-        return []
-    prod = int(src.production)
-    if prod <= 0:
-        return []
-
-    initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
-    _a0, eta0 = aim_and_eta(src, tgt, initial, omega, world=world)
-    pred_now = float(model.ships_at(int(tgt.id), eta0) or 0.0)
-    cap_now = max(MIN_FLEET_SIZE, int(math.ceil(pred_now)) + 1)
-
-    variants = []
-    seen: set[tuple[int, int]] = set()
-    for extra_surplus in WAIT_EXTRA_SURPLUS:
-        target_fleet = cap_now + extra_surplus
-        shortfall = target_fleet - int(src.ships)
-        if shortfall <= 0:
-            wait_N = 1  # feasible-now still gets a wait-1 variant
-        else:
-            wait_N = (shortfall + prod - 1) // prod  # ceil
-        if wait_N < 1:
-            continue
-
-        angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N, world=world)
-        pred_at_arr = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
-        cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arr)) + 1)
-        final_fleet = cap_final + extra_surplus
-
-        budget_at_wait = int(src.ships) + prod * wait_N
-        if final_fleet > budget_at_wait:
-            final_fleet = budget_at_wait
-
-        if wait_N + eta + SIM_SETTLE_TURNS > MAX_HORIZON:
-            continue
-
-        key = (wait_N, final_fleet)
-        if key in seen:
-            continue
-        seen.add(key)
-        variants.append((final_fleet, wait_N, angle, eta))
-    return variants
-
-
-def min_wait_affordable(src, tgt, model, omega: float, me: int, world=None) -> int | None:
-    """Smallest wait_N at which src can affordably capture tgt.
-
-    Returns:
-      0   — src can already fire-now (cap_now ≤ src.ships).
-      N>0 — src must accumulate N turns before firing.
-      None — hopeless within MAX_HORIZON (opp accumulates faster than
-             we can; pair never affordable).
-
-    Mirrors the affordability math in `wait_then_fire_variants_forward`
-    so callers get a consistent answer. Used to anchor the backward
-    wait-grid: when min_wait == 0, NO wait variants are emitted (the
-    fire-now path covers it; speculative waits like the old wait_N=1
-    block fire-now from being chosen).
-    """
-    if int(tgt.owner) == me:
-        return None  # reinforce path handled separately
-    if int(src.production) <= 0:
-        return None  # src can't accumulate; wait is pointless
-    prod = int(src.production)
-
-    # Fire-now feasibility check
-    initial = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
-    _a0, eta0 = aim_and_eta(src, tgt, initial, omega, wait_N=0, world=world)
-    pred_now = float(model.ships_at(int(tgt.id), eta0) or 0.0)
-    cap_now = max(MIN_FLEET_SIZE, int(math.ceil(pred_now)) + 1)
-    if cap_now <= int(src.ships):
-        return 0
-
-    # Iterate wait_N until affordable (no closed form due to
-    # fleet_speed(ships) nonlinearity)
-    for wait_N in range(1, MAX_HORIZON):
-        budget = int(src.ships) + prod * wait_N
-        # Cheap pre-check: even bare capture of current garrison exceeds budget
-        if max(MIN_FLEET_SIZE, int(tgt.ships) + 1) > budget:
-            continue
-        target_fleet = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
-        _angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N, world=world)
-        pred_at_arrival = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
-        cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arrival)) + 1)
-        if cap_final <= budget and wait_N + eta + SIM_SETTLE_TURNS <= MAX_HORIZON:
-            return wait_N
-    return None  # hopeless within MAX_HORIZON
-
-
-def wait_then_fire_variants(src, tgt, model, omega: float, me: int, world=None):
-    """Backward wait grid: anchor on min_wait_affordable.
-
-    Returns list of (ships, wait_N, angle, eta). Behaviour:
-    - Already-armed src (min_wait == 0) → return []. Fire-now path
-      handles this; we don't emit speculative waits that compete with
-      fire-now in chooser Δ ranking.
-    - Hopeless pair (min_wait is None) → return []. Saves chooser
-      cycles; this pair's launches will all bounce.
-    - Otherwise → emit candidates at {min_wait, min_wait + WAIT_BUFFER_OFFSET}
-      × {cap_final, 2×cap_final, budget}. The bare-capture variant gives
-      the chooser a lean option; the budget variant USES the accumulated
-      ships we waited for (instead of leaving them idle on the source —
-      a fix for the 2026-05-18 backward-grid bug where wait_N variants
-      emitted only bare-capture amounts, wasting the accumulation and
-      leaving 1-ship residue on captured planets vulnerable to opp
-      recapture in 4P).
-
-    Forward-mode rollback available via BASELINE_WAIT_GRID=forward.
-    """
-    if WAIT_GRID_MODE == "forward":
-        return wait_then_fire_variants_forward(src, tgt, model, omega, me, world=world)
-    if int(tgt.owner) == me:
-        return []
-    min_w = min_wait_affordable(src, tgt, model, omega, me, world=world)
-    if min_w is None or min_w == 0:
-        return []
-    prod = max(1, int(src.production))
-    variants = []
-    seen: set[tuple[int, int]] = set()
-    for wait_N in (min_w, min_w + WAIT_BUFFER_OFFSET):
-        if wait_N >= MAX_HORIZON:
-            break
-        budget = int(src.ships) + prod * wait_N
-        target_fleet = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
-        if target_fleet > budget:
-            continue
-        angle, eta = aim_and_eta(src, tgt, target_fleet, omega, wait_N=wait_N, world=world)
-        pred_at_arrival = float(model.ships_at(int(tgt.id), wait_N + eta) or 0.0)
-        cap_final = max(MIN_FLEET_SIZE, int(math.ceil(pred_at_arrival)) + 1)
-        if cap_final > budget:
-            continue
-        if wait_N + eta + SIM_SETTLE_TURNS > MAX_HORIZON:
-            continue
-        # We waited N turns to accumulate src.ships + prod*N total ships.
-        # USE the accumulation — emit full budget, not bare capture+1.
-        # Banding dedup ((src, tgt, wait_band) key) collapses multiple
-        # ship-counts at the same wait_N to one per band since cheap_delta
-        # is identical for capture-success. So we pick ONE — the budget
-        # variant. This:
-        #   1. Uses ships we waited for (otherwise the wait is wasted).
-        #   2. Leaves residue on the captured planet (budget - defenders),
-        #      defending against opp recapture in 4P (the bare-capture
-        #      variant left 1-ship residue → trivially recaptured).
-        final_fleet = budget
-        if final_fleet < MIN_FLEET_SIZE:
-            continue
-        key = (wait_N, final_fleet)
-        if key in seen:
-            continue
-        seen.add(key)
-        variants.append((final_fleet, wait_N, angle, eta))
-    return variants
-
-
 def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
                          me: int, wait_N: int = 0) -> float:
     """Analytic Δ for Stage-1 ranking. Replaced by fast_sim in Stage-2.
@@ -9818,13 +10504,6 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
         return 0.05 * float(tgt.production) * float(pv)
 
     return -0.5 * float(ships)
-
-
-def wait_band(wait_N: int) -> int:
-    """Three buckets: fire-now (0), short-wait (1..7), long-wait (>=8)."""
-    if wait_N == 0:
-        return 0
-    return 1 if wait_N <= 7 else 2
 
 
 def _source_survives_launch_legacy(
@@ -10377,7 +11056,7 @@ def _enumerate_reactor_candidates(
     For each target T not owned by us that has at least one opp fleet
     in flight, propose our own launches from a nearby source sized to
     recapture T after opp lands. The chooser then ranks these alongside
-    the standard fire-now / wait_then_fire candidates.
+    the standard fire-now candidates.
 
     Output shape matches `propose()`'s prerank tuples:
         (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N).
@@ -10389,7 +11068,7 @@ def _enumerate_reactor_candidates(
       - targets with no opp in-flight fleets,
       - targets that opp's fleet does NOT actually capture (post-landing
         owner stays neutral or stays ours — the existing pipeline already
-        handles those cases via fire-now / wait_then_fire),
+        handles those cases via fire-now),
       - sources that can't afford the post-landing recapture even with
         wait accumulation.
     """
@@ -10436,7 +11115,7 @@ def _enumerate_reactor_candidates(
         if post_owner == me:
             continue  # we end up holding; no reactor needed
         if int(post_owner) == -1:
-            # Opp's fleet bounces. Existing wait_then_fire / fire-now
+            # Opp's fleet bounces. Existing fire-now
             # variants handle the neutral capture; skip to avoid
             # producing duplicate candidates.
             continue
@@ -10513,7 +11192,7 @@ def _enumerate_reactor_candidates(
 def propose(my_planets, target_pool, world, model, me: int,
             omega: float, baseline_len: int):
     """Build the pre-rank list of candidates, then dedup by
-    (src_id, tgt_id, wait_band) keeping the top cheap-Δ per bucket.
+    (src_id, tgt_id) keeping the top cheap-Δ per pair.
 
     Returns: list of tuples
         (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N)
@@ -10542,42 +11221,25 @@ def propose(my_planets, target_pool, world, model, me: int,
                         (cheap, src, tgt, ships, angle, eta, horizon, 0)
                     )
 
-            for w_ships, w_wait, w_angle, w_eta in wait_then_fire_variants(
-                src, tgt, model, omega, me, world=world,
-            ):
-                w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)
-                if w_horizon >= baseline_len:
-                    continue
-                w_cheap = cheap_marginal_value(
-                    src, tgt, w_ships, w_eta, world, model, me, wait_N=w_wait,
-                )
-                if w_cheap > CHEAP_REJECT_THRESHOLD:
-                    prerank.append(
-                        (w_cheap, src, tgt, w_ships, w_angle, w_eta,
-                         w_horizon, w_wait)
-                    )
-
     # Reactor candidate generator (Part B of reactor-aware launch selection,
     # 2026-05-19 PM). For each opp fleet in flight to a non-our target,
     # propose our own launches sized to recapture after opp lands. These
-    # extend the standard prerank list and participate in the existing
-    # (src, tgt, wait_band) dedup. The chooser then scores them alongside
-    # fire-now / wait_then_fire candidates. Opt out via
-    # PROPOSER_REACTOR_CANDIDATES=off for ablation A/B.
+    # extend the standard prerank list and participate in the per-(src,tgt)
+    # dedup. Opt out via PROPOSER_REACTOR_CANDIDATES=off for ablation A/B.
     if os.environ.get("PROPOSER_REACTOR_CANDIDATES", "").strip().lower() != "off":
         prerank.extend(_enumerate_reactor_candidates(
             my_planets, world, model, me, omega, baseline_len,
         ))
 
-    best_per_band: dict[tuple[int, int, int], tuple] = {}
+    best_per_pair: dict[tuple[int, int], tuple] = {}
     for entry in prerank:
-        cheap, src, tgt, _ships, _angle, _eta, _horizon, w = entry
-        key = (int(src.id), int(tgt.id), wait_band(int(w)))
-        prev = best_per_band.get(key)
+        cheap, src, tgt, _ships, _angle, _eta, _horizon, _w = entry
+        key = (int(src.id), int(tgt.id))
+        prev = best_per_pair.get(key)
         if prev is None or cheap > prev[0]:
-            best_per_band[key] = entry
+            best_per_pair[key] = entry
 
-    deduped = list(best_per_band.values())
+    deduped = list(best_per_pair.values())
 
     # Trajectory admissibility filter (opt-in via env var, default off).
     # Drops candidates whose straight-line trajectory hits the sun, OOB,
@@ -10939,7 +11601,7 @@ import time
 fs_clone = clone
 # from lib.fast_sim import step as fs_step  # inlined by bundle_agent.py
 fs_step = step
-# from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy  # inlined by bundle_agent.py
+# from lib.opp_model import lite_greedy_policy, mlp_validated_policy, top_tier_mirror_policy  # inlined by bundle_agent.py
 
 # from agents.baseline.value import select_favor_fn  # inlined by bundle_agent.py
 
@@ -10952,7 +11614,13 @@ RESERVED_OVERHEAD_MS = 50.0
 def _select_opp_policy():
     """Tier 3 (2026-05-18 PM): asymmetric opp model selection.
 
-    BASELINE_OPP_TIER env var:
+    `BASELINE_OPP_MODEL` (newer knob, 2026-05-29) takes precedence:
+      - "lite_greedy" / unset → fall through to BASELINE_OPP_TIER routing.
+      - "mlp" → trained 3-MLP shot-validator filter on lite_greedy
+                candidates. Threshold via `BASELINE_OPP_MLP_THRESHOLD`
+                (default 0.5).
+
+    Legacy `BASELINE_OPP_TIER`:
       - "0" or unset → lite_greedy_policy (default, ~1-2ms/call).
       - "1" → top_tier_mirror_policy (~5-10ms/call; ladder-realistic
               opp using v3.5.1 aggressive snipe pipeline). Bench gate
@@ -10961,6 +11629,9 @@ def _select_opp_policy():
     Per-call selection (not cached at import time) so env-var overrides
     inside test fixtures take effect without re-importing the module.
     """
+    model = os.environ.get("BASELINE_OPP_MODEL", "lite_greedy").strip()
+    if model == "mlp":
+        return mlp_validated_policy
     return (
         top_tier_mirror_policy
         if os.environ.get("BASELINE_OPP_TIER", "0").strip() == "1"
@@ -11057,20 +11728,16 @@ def choose(snap_base, prerank, baseline_favors: list[float],
            min_horizon: int, max_horizon: int, gamma: float,
            world=None,
            reserved_srcs: set[int] | None = None,
-           reserved_for_new_commits: set[int] | None = None,
-           ) -> tuple[list[list], list[dict]]:
+           ) -> list[list]:
     """Validate top candidates with fast_sim, emit greedy non-dogpile moves.
 
-    Returns `(moves, commits)`. See `chooser_trajectory.choose_trajectory`
-    for the full ledger-aware contract; this is the parallel composite
-    implementation (default chooser is trajectory).
+    Returns `moves` — fire-now action list. Fire-now-only post the
+    2026-05-29 wait-grid strip; every prerank entry has wait_N=0.
     """
     if reserved_srcs is None:
         reserved_srcs = set()
-    if reserved_for_new_commits is None:
-        reserved_for_new_commits = reserved_srcs
     if not prerank:
-        return [], []
+        return []
 
     n_aff, per_cand_ms = affordable_validate_cap(
         snap_base, me, num_seats, max_horizon, wallclock_ms,
@@ -11082,54 +11749,37 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     # Pre-bail headroom: don't ENTER a candidate that would push us past
     # the deadline. score_action is uninterruptible (runs the full K-step
     # rollout once entered), so checking AT the deadline is too late.
-    # Closes the long-tail max-turn-ms overrun seen in the 2026-05-17 A/B.
     safe_deadline = deadline - (per_cand_ms / 1000.0)
     validated: list[tuple] = []
-    for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
+    for _cheap, src, tgt, ships, angle, _eta, horizon, _wn in top:
         if time.perf_counter() > safe_deadline:
             break
         sid_ = int(src.id)
-        if int(wait_N) > 0:
-            if sid_ in reserved_for_new_commits:
-                continue
-        else:
-            if sid_ in reserved_srcs:
-                continue
+        if sid_ in reserved_srcs:
+            continue
         delta = score_action(
             snap_base, me, num_seats,
             int(src.id), float(angle), int(ships),
-            int(horizon), baseline_favors, int(wait_N), gamma,
+            int(horizon), baseline_favors, 0, gamma,
         )
         if delta > 0:
-            validated.append((delta, src, tgt, ships, angle, wait_N))
+            validated.append((delta, src, tgt, ships, angle))
 
     if not validated:
-        return [], []
+        return []
 
     validated.sort(key=lambda c: -c[0])
     used_srcs: set[int] = set()
     used_tgts: set[int] = set()
     moves: list[list] = []
-    commits: list[dict] = []
-    commit_step = int(world.step) if world is not None else 0
-    for _delta, src, tgt, ships, angle, wait_N in validated:
+    for _delta, src, tgt, ships, angle in validated:
         sid, tid = int(src.id), int(tgt.id)
         if sid in used_srcs or tid in used_tgts:
             continue
         used_srcs.add(sid)
         used_tgts.add(tid)
-        if int(wait_N) == 0:
-            moves.append([sid, float(angle), int(ships)])
-        else:
-            commits.append({
-                "src_id": sid,
-                "tgt_id": tid,
-                "ships_planned": int(ships),
-                "angle_original": float(angle),
-                "wait_remaining": int(wait_N),
-                "commit_step": commit_step,
-            })
-    return moves, commits
+        moves.append([sid, float(angle), int(ships)])
+    return moves
 
 # === inlined: agents/baseline/chooser_roi.py ===
 """chooser_roi — ROI-prior + opp-modifier chooser.
@@ -12835,50 +13485,21 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                       min_horizon: int, max_horizon: int, gamma: float,
                       world, model,
                       reserved_srcs: set[int] | None = None,
-                      reserved_for_new_commits: set[int] | None = None,
-                      ) -> tuple[list[list], list[dict]]:
+                      ) -> list[list]:
     """Drop-in alternative to `chooser.choose`.
 
-    Returns `(moves, commits)`:
-      `moves`   — fire-now action list `[[src_id, angle, ships], ...]`
-                  to emit this turn.
-      `commits` — `wait_N > 0` winners that the agent should remember
-                  across turns. Each is a dict with keys `src_id`,
-                  `tgt_id`, `ships_planned`, `angle_original`,
-                  `wait_remaining`, `commit_step`. The agent's ledger
-                  (`agents/baseline/main._PENDING_LAUNCHES`) ticks these
-                  down and fires them when `wait_remaining` reaches 0
-                  (gated on `BASELINE_LEDGER=on`). When the ledger is
-                  off, commits are discarded — behaviour identical to
-                  the pre-ledger chooser.
+    Returns `moves` — fire-now action list `[[src_id, angle, ships], ...]`
+    to emit this turn. Fire-now-only post the 2026-05-29 wait-grid strip;
+    every prerank entry has wait_N=0 and there is no commit/ledger path.
 
     `reserved_srcs` — set of source ids that the chooser should not
-    fire-now-emit from this turn (ledger is firing them via due_moves,
-    or hard-ledger blocks them entirely while a commit is in flight).
-    `reserved_for_new_commits` — set of source ids that already have a
-    surviving ledger entry. The chooser must not add a SECOND wait
-    commit for these (stacking causes duplicate emits at fire time).
-    When `None`, defaults to `reserved_srcs` (hard semantics).
-
-    The `snap_base` / `baseline_favors` / `min_horizon` / `max_horizon`
-    / `gamma` args are unused (kept for signature parity with
-    `chooser.choose` so the dispatcher in `main.py` is a simple swap).
-    The trajectory chooser doesn't roll out and doesn't need an idle
-    baseline.
-
-    v2 (2026-05-17 PM):
-    - 1-turn opp lookahead: predict_opp_responses projects each opp
-      source's best launch; ledger merged BEFORE scoring (every
-      predict_garrison_at sees the pessimistic state).
-    - Multi-launch budget: drops "1 launch per source" dedup; tracks
-      ship sub-budget per source.
+    fire-now-emit from this turn (e.g. macro layer has already
+    committed them).
     """
     if reserved_srcs is None:
         reserved_srcs = set()
-    if reserved_for_new_commits is None:
-        reserved_for_new_commits = reserved_srcs
     if not prerank:
-        return [], []
+        return []
 
     deadline = time.perf_counter() + wallclock_ms / 1000.0
 
@@ -12932,37 +13553,22 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     scored: list[tuple] = []
     solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0
     cand_count = 0
-    for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
+    for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, _wait_N in prerank:
         if cand_count >= cap:
             break
         if not use_v3 and time.perf_counter() > safe_deadline:
             break
-        # Skip candidates the ledger has already accounted for. A
-        # wait_N>0 candidate from a src with a surviving commit would
-        # stack a second commit — duplicate emit at fire time. A
-        # wait_N==0 candidate from a reserved src would conflict with
-        # the ledger's fire-now this turn (hard mode) or has no impact
-        # in soft mode (where reserved_srcs only includes srcs firing
-        # this turn).
         sid_ = int(src.id)
-        if int(wait_N) > 0:
-            if sid_ in reserved_for_new_commits:
-                continue
-        else:
-            if sid_ in reserved_srcs:
-                continue
+        if sid_ in reserved_srcs:
+            continue
         cand_count += 1
         if use_v3:
-            # v3 path: fire-now-only (binary leaf doesn't generalise to
-            # wait_N>0 trivially). Skip wait_N>0 in the v3 path.
-            if int(wait_N) != 0:
-                continue
             score, status, _ = score_candidate_dyn(
                 snap_base, src, tgt, int(ships), float(angle),
                 me, num_seats, world,
             )
             if status in ("captured",) and score > 0.0:
-                scored.append((score, src, tgt, ships, angle, wait_N))
+                scored.append((score, src, tgt, ships, angle))
         else:
             score, status, _ = score_candidate_v4(
                 snap_base, src, tgt, int(ships), float(angle),
@@ -12970,7 +13576,6 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 baseline_favors, favor_fn, gamma,
                 horizon=int(prop_horizon),
                 skip_admissibility=skip_filter,
-                wait_N=int(wait_N),
                 eta_hint=int(eta_hint),
                 model=model,
             )
@@ -12979,7 +13584,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 else score >= MIN_DELTA
             )
             if status == "scored" and passes:
-                scored.append((score, src, tgt, ships, angle, wait_N))
+                scored.append((score, src, tgt, ships, angle))
                 # Track sources with viable solo (for joint gating).
                 solo_winners.add(int(src.id))
 
@@ -13011,11 +13616,9 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         # Group prerank by target_id. Take top-K solo candidates per
         # target by cheap_delta; pair-enumerate.
         by_tgt: dict[int, list] = {}
-        for cd, src, tgt, ships, angle, eta_hint, ph, wn in prerank:
-            if int(wn) != 0:
-                continue  # v1: fire-now joints only
+        for cd, src, tgt, ships, angle, eta_hint, ph, _wn in prerank:
             if int(src.id) in reserved_srcs:
-                continue  # ledger is firing from this src this turn
+                continue
             by_tgt.setdefault(int(tgt.id), []).append(
                 (float(cd), src, tgt, int(ships), float(angle), int(ph)),
             )
@@ -13064,19 +13667,18 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         scored.append((j_score, "joint", launches))
 
     if not scored:
-        return [], []
+        return []
 
     scored.sort(key=lambda c: -c[0])
 
     # Emit logic — match composite chooser (`agents/baseline/chooser.choose`)
     # for parity. 1 launch per source per turn, 1 per target. For joints
     # (tagged 'joint' tuples), require ALL of its sources and targets to
-    # be free; commit all legs together.
+    # be free; commit all legs together. Fire-now-only post 2026-05-29
+    # wait-grid strip.
     used_srcs: set[int] = set()
     used_tgts: set[int] = set()
     moves: list[list] = []
-    commits: list[dict] = []
-    commit_step = int(world.step) if world is not None else 0
     for entry in scored:
         # Joint candidates are 3-tuples: (score, 'joint', launches).
         if len(entry) == 3 and entry[1] == "joint":
@@ -13086,14 +13688,13 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             if (not JOINT_LIFT_USED_TGTS
                     and any(int(L[1].id) in used_tgts for L in launches)):
                 continue
-            for src, tgt, ships, angle, wait_N in launches:
+            for src, tgt, ships, angle, _wn in launches:
                 used_srcs.add(int(src.id))
                 used_tgts.add(int(tgt.id))
-                if int(wait_N) == 0:
-                    moves.append([int(src.id), float(angle), int(ships)])
+                moves.append([int(src.id), float(angle), int(ships)])
             continue
-        # Solo: legacy 6-tuple (score, src, tgt, ships, angle, wait_N).
-        _score, src, tgt, ships, angle, wait_N = entry
+        # Solo: 5-tuple (score, src, tgt, ships, angle).
+        _score, src, tgt, ships, angle = entry
         sid, tid = int(src.id), int(tgt.id)
         if sid in used_srcs:
             continue
@@ -13101,28 +13702,15 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             continue
         used_srcs.add(sid)
         used_tgts.add(tid)
-        if int(wait_N) == 0:
-            moves.append([sid, float(angle), int(ships)])
-        else:
-            # Wait-N winner — emit nothing this turn; instead surface
-            # as a commit. The agent's ledger (when BASELINE_LEDGER=on)
-            # will tick this down and fire at wait_N == 0.
-            commits.append({
-                "src_id": sid,
-                "tgt_id": tid,
-                "ships_planned": int(ships),
-                "angle_original": float(angle),
-                "wait_remaining": int(wait_N),
-                "commit_step": commit_step,
-            })
-    return moves, commits
+        moves.append([sid, float(angle), int(ships)])
+    return moves
 
 # === agent ===
 """baseline — clean modular re-implementation of v15 (live champion μ=1115.5).
 
 Pipeline (per turn):
   1. proposer.propose       enumerate fire-now + multi-wait grid, cheap-rank,
-                            dedup by (src, tgt, wait_band).
+                            dedup by (src, tgt).
   2. chooser.build_idle_baseline   precompute favor under (me-idle, opp-reactive).
   3. chooser.choose         validate top candidates with fast_sim K-step rollout,
                             emit greedy non-dogpile moves.
@@ -13245,25 +13833,6 @@ SNIPER_MARGIN = float(os.environ.get("BASELINE_SNIPER_MARGIN", "1.2"))
 SNIPER_MAX_LAUNCHES = int(os.environ.get("BASELINE_SNIPER_MAX_LAUNCHES", "4"))
 SNIPER_RESERVE_FRAC = float(os.environ.get("BASELINE_SNIPER_RESERVE_FRAC", "0.4"))
 
-# Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
-# chooser's wait_N>0 winners are remembered across turns instead of
-# being silently dropped. Each entry ticks down each turn; when
-# wait_remaining hits 0 the agent emits the launch (re-aimed against
-# current src/tgt geometry). See plan
-# /root/.claude/plans/so-now-research-and-zany-widget.md and audit
-# audit/2026-05-20-filter-rejection-trace.md.
-#
-# Module-level state keyed by `obs.player` so independent seats in the
-# same process (eg local A/B harnesses spinning up both seats) don't
-# share commitments. Cleared on `obs.step == 0` (new-match detection).
-LEDGER_ENABLED = os.environ.get("BASELINE_LEDGER", "off").strip().lower() == "on"
-# Mode for the ledger: "hard" (default) reserves the src across the
-# wait, blocking chooser emits from it. "soft" leaves the src free
-# (chooser can fire fire-now from it) and only requires enough ships
-# at emit time. Set via env var BASELINE_LEDGER_MODE.
-LEDGER_MODE = os.environ.get("BASELINE_LEDGER_MODE", "hard").strip().lower()
-_PENDING_LAUNCHES: dict[int, list[dict]] = {}
-
 # Opening override (2026-05-21). Cherry-picked from analytical track
 # (origin/claude/strategy-axis-decision-3437). For step < OPENING_HORIZON
 # (=30), run the one-shot multi-turn MILP `opening_plan` and emit
@@ -13273,6 +13842,12 @@ _PENDING_LAUNCHES: dict[int, list[dict]] = {}
 # to standard chooser. Default OFF; opt-in via BASELINE_OPENING_MILP=1.
 OPENING_MILP_ENABLED = os.environ.get("BASELINE_OPENING_MILP", "0") == "1"
 
+# Macro mission planner (2026-05-29). 2P state machine layered ON TOP of
+# the per-move chooser: EXPAND a forward lateral, STOCKPILE, STRIKE with
+# bundled forces, DEFEND when home is about to flip. Default OFF; opt-in
+# via BASELINE_MACRO=1. See lib/missions/macro.py for state semantics.
+MACRO_ENABLED = os.environ.get("BASELINE_MACRO", "0") == "1"
+
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 # from lib.fast_sim import from_obs as fs_from_obs  # inlined by bundle_agent.py
@@ -13281,6 +13856,7 @@ fs_from_obs = from_obs
 fleet_speed = speed
 # from lib.intent import World  # inlined by bundle_agent.py
 # from lib.joint_solver.opening_planner import OPENING_HORIZON, opening_plan  # inlined by bundle_agent.py
+# from lib.missions.macro import determine_macro_state  # inlined by bundle_agent.py
 # from lib.missions.reinforce import propose_reinforce_missions  # inlined by bundle_agent.py
 # from lib.orbit import predict_relative  # inlined by bundle_agent.py
 # from lib.trajectory import predict_fleet_fate  # inlined by bundle_agent.py
@@ -13341,89 +13917,6 @@ def _gamma() -> float:
         return float(os.environ.get("BASELINE_GAMMA", 0.99))
     except ValueError:
         return 0.99
-
-
-def _tick_ledger(me: int, world, model, omega: float) -> tuple[list[list], list[dict]]:
-    """Tick pending wait commitments for `me`.
-
-    Returns `(due_moves, surviving_pending)`:
-      `due_moves`           — actions to emit this turn (one per due commit
-                              that validated successfully). Re-aimed against
-                              current src/tgt geometry.
-      `surviving_pending`   — entries still in flight (wait_remaining > 0
-                              after the decrement) plus entries whose
-                              wait_remaining hit 0 but failed validation
-                              (NOT included — silently dropped).
-
-    Tick semantics:
-      - Decrement every entry's `wait_remaining` by 1.
-      - If `wait_remaining` reaches 0 (or already <= 0):
-          * Drop if src no longer ours.
-          * Drop if tgt now ours (capture goal moot — chooser may have
-            redirected or another src took it).
-          * Drop if src has 0 ships (nothing to send).
-          * Otherwise re-aim using `proposer.aim_and_eta` and emit
-            `min(ships_planned, src.ships)` toward tgt.
-      - Else: keep entry alive (decrement only).
-
-    Re-aim is essential because planets orbit between commit time and
-    emit time. The proposer's original `angle_original` was correct for
-    geometry at commit time; firing at the same angle N turns later
-    would miss.
-    """
-    pending = _PENDING_LAUNCHES.get(int(me), [])
-    if not pending:
-        return [], []
-
-    # from agents.baseline.proposer import aim_and_eta as _aim_and_eta  # inlined by bundle_agent.py
-    _aim_and_eta = aim_and_eta
-
-    due_moves: list[list] = []
-    survivors: list[dict] = []
-    for entry in pending:
-        entry["wait_remaining"] = int(entry["wait_remaining"]) - 1
-        if entry["wait_remaining"] > 0:
-            survivors.append(entry)
-            continue
-
-        # Time to fire — validate. Record drop reason on the entry for
-        # downstream telemetry (the entry is otherwise discarded after
-        # this loop).
-        sid = int(entry["src_id"])
-        tid = int(entry["tgt_id"])
-        src = world.planets_by_id.get(sid)
-        tgt = world.planets_by_id.get(tid)
-        if src is None or tgt is None:
-            entry["drop_reason"] = "planet_missing"
-            continue
-        if int(src.owner) != int(me):
-            entry["drop_reason"] = "src_lost"
-            continue
-        if int(tgt.owner) == int(me):
-            entry["drop_reason"] = "tgt_now_ours"
-            continue
-        available = int(src.ships)
-        if available <= 0:
-            entry["drop_reason"] = "src_empty"
-            continue
-        ships = min(int(entry["ships_planned"]), available)
-        if ships <= 0:
-            entry["drop_reason"] = "size_zero"
-            continue
-        # Re-aim against the geometry that holds RIGHT NOW (planets
-        # have orbited during the wait). wait_N=0 because we're firing
-        # this turn.
-        try:
-            angle, _eta = _aim_and_eta(src, tgt, ships, omega, wait_N=0,
-                                       world=world)
-        except Exception:
-            entry["drop_reason"] = "aim_failed"
-            continue
-        entry["fired_at_step"] = int(world.step)
-        entry["fired_ships"] = int(ships)
-        due_moves.append([sid, float(angle), int(ships)])
-
-    return due_moves, survivors
 
 
 def emit_threat_reinforcements(
@@ -13957,17 +14450,6 @@ def agent(obs, configuration=None):
     me = int(obs_d.get("player", 0))
     step = int(obs_d.get("step", 0))
 
-    # New-match detection — clear this seat's commit ledger on step 0.
-    # Both `LEDGER_ENABLED` and `BASELINE_LEDGER=on` are checked at call
-    # time so harnesses can flip the env var mid-process without
-    # restarting the agent module.
-    ledger_on = (
-        LEDGER_ENABLED
-        or os.environ.get("BASELINE_LEDGER", "off").strip().lower() == "on"
-    )
-    if ledger_on and step == 0:
-        _PENDING_LAUNCHES.pop(me, None)
-
     raw_planets = obs_d.get("planets", []) or []
     raw_fleets = obs_d.get("fleets", []) or []
     if not raw_planets:
@@ -13986,6 +14468,47 @@ def agent(obs, configuration=None):
     num_seats = _num_seats(planets, fleets)
     gamma = _gamma()
     wallclock_ms = _wallclock_ms()
+
+    # Macro mission planner (2026-05-29). Runs before chooser. Emits at
+    # most one bundled launch this turn (EXPAND / STRIKE) AND/OR reserves
+    # a chooser source (STOCKPILE — block the chooser from draining the
+    # stockpile lateral). Gated 2P; falls through with no-op in 4P.
+    macro_moves: list[list] = []
+    macro_reserved: set[int] = set()
+    if MACRO_ENABLED and num_seats == 2:
+        # from agents.baseline.proposer import aim_and_eta as _macro_aim  # inlined by bundle_agent.py
+        _macro_aim = aim_and_eta
+        initial_planets_raw = obs_d.get("initial_planets") or []
+        try:
+            macro_state = determine_macro_state(
+                world, model, me, num_seats, omega, initial_planets_raw,
+            )
+        except Exception:
+            macro_state = None
+        if macro_state is not None:
+            if macro_state.hold_src is not None:
+                macro_reserved.add(int(macro_state.hold_src))
+            emit = macro_state.emit
+            if emit is not None:
+                src = world.planets_by_id.get(int(emit.src_id))
+                tgt = world.planets_by_id.get(int(emit.tgt_id))
+                if src is not None and tgt is not None:
+                    available = int(src.ships)
+                    ships_to_send = min(int(emit.ships), available)
+                    if ships_to_send > 0:
+                        try:
+                            angle, _eta = _macro_aim(
+                                src, tgt, ships_to_send, omega,
+                                wait_N=0, world=world,
+                            )
+                            macro_moves.append(
+                                [int(src.id), float(angle), int(ships_to_send)],
+                            )
+                            # Reserve the macro emit's source so the
+                            # chooser doesn't double-launch from it.
+                            macro_reserved.add(int(src.id))
+                        except Exception:
+                            pass
 
     threatened_mine = [
         p for p in my_planets
@@ -14039,51 +14562,18 @@ def agent(obs, configuration=None):
         # Mode "hard" (default): reserve src for the whole wait window —
         # chooser cannot emit anything from that src until the commit
         # fires.
-        # Mode "soft": only reserve sources whose commit is FIRING this
-        # turn (so the chooser can't fire-now on top of the commit's
-        # emit). Sources with surviving (in-flight) entries are NOT
-        # reserved, leaving them free to opportunistically fire-now via
-        # the chooser. The pending commit just needs `ships_planned`
-        # ships still available when wait_remaining hits 0; if not
-        # enough remain, the commit drops at emit time.
-        due_moves: list[list] = []
-        surviving_pending: list[dict] = []
-        reserved_srcs: set[int] = set()
-        reserved_for_new_commits: set[int] = set()
-        if ledger_on:
-            due_moves, surviving_pending = _tick_ledger(
-                me, world, model, omega,
-            )
-            mode = os.environ.get("BASELINE_LEDGER_MODE",
-                                  LEDGER_MODE).strip().lower()
-            # Sources firing via the ledger this turn — chooser must not
-            # fire-now on top of those (duplicate-src emit).
-            firing_srcs = {int(m[0]) for m in due_moves}
-            pending_srcs = {int(e["src_id"]) for e in surviving_pending}
-            # Always block stacking a second wait-commit on a src that
-            # already has a surviving commit (regardless of mode).
-            reserved_for_new_commits = firing_srcs | pending_srcs
-            # Hard mode: also block fire-now from pending srcs (preserve
-            # the ship reserve for the future commit). Soft mode: leave
-            # pending srcs free to fire-now (commit drops at emit time
-            # if not enough ships remain).
-            reserved_srcs = firing_srcs if mode == "soft" \
-                else firing_srcs | pending_srcs
+        # Macro reservations: STOCKPILE hold_src + macro emit src.
+        reserved_srcs: set[int] = set(macro_reserved) if macro_reserved else set()
 
-        moves, new_commits = choose_trajectory(
+        moves = choose_trajectory(
             snap_base, prerank, None,
             me, num_seats, wallclock_ms,
             MIN_HORIZON, MAX_HORIZON, gamma,
             world, model,
             reserved_srcs=reserved_srcs,
-            reserved_for_new_commits=reserved_for_new_commits,
         )
 
-        # 2. Persist updated ledger (surviving + new commits) when on.
-        if ledger_on:
-            _PENDING_LAUNCHES[me] = surviving_pending + new_commits
-
-        moves = due_moves + moves
+        moves = macro_moves + moves
         moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
@@ -14122,38 +14612,17 @@ def agent(obs, configuration=None):
         baseline_len=len(baseline_favors),
     )
 
-    # Ledger lifecycle for the composite chooser path (parallel to the
-    # trajectory branch above). Tick first; pass reservation sets;
-    # merge with chooser output.
-    composite_due: list[list] = []
-    composite_surviving: list[dict] = []
-    composite_reserved: set[int] = set()
-    composite_reserved_new: set[int] = set()
-    if ledger_on:
-        composite_due, composite_surviving = _tick_ledger(
-            me, world, model, omega,
-        )
-        mode = os.environ.get("BASELINE_LEDGER_MODE",
-                              LEDGER_MODE).strip().lower()
-        firing_srcs = {int(m[0]) for m in composite_due}
-        pending_srcs = {int(e["src_id"]) for e in composite_surviving}
-        composite_reserved_new = firing_srcs | pending_srcs
-        composite_reserved = firing_srcs if mode == "soft" \
-            else firing_srcs | pending_srcs
+    composite_reserved: set[int] = set(macro_reserved) if macro_reserved else set()
 
-    moves, new_commits = choose(
+    moves = choose(
         snap_base, prerank, baseline_favors,
         me, num_seats, wallclock_ms,
         MIN_HORIZON, MAX_HORIZON, gamma,
         world=world,
         reserved_srcs=composite_reserved,
-        reserved_for_new_commits=composite_reserved_new,
     )
 
-    if ledger_on:
-        _PENDING_LAUNCHES[me] = composite_surviving + new_commits
-
-    moves = composite_due + moves
+    moves = macro_moves + moves
     moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
     moves = drain_idle_rear(moves, planets, me, world, model)
     moves = drain_stagnant_rear(moves, planets, me, world, model)

@@ -72,13 +72,23 @@ def test_anchor_sha_matches_frozen():
     )
 
 
-def test_tracked_twin_matches_anchor_bytes():
-    """baseline_pv_eta.py is the tracked twin; both must be byte-identical."""
+def test_tracked_twin_imports_and_parses():
+    """baseline_pv_eta.py is the live build target; it diverged from the
+    frozen anchor on 2026-05-29 (wait-grid strip). Smoke-check it parses
+    and contains the same 10 active env-var setdefaults the wrapper
+    preamble pins. (Detailed env-var assertions live in the parametrized
+    test below — that test now ALSO runs against the live bundle.)
+    """
+    import ast
     assert ANCHOR_TRACKED_TWIN.exists()
-    assert (
-        hashlib.sha256(ANCHOR_TRACKED_TWIN.read_bytes()).hexdigest()
-        == EXPECTED_SHA
-    ), "baseline_pv_eta.py drifted from the frozen anchor."
+    src = ANCHOR_TRACKED_TWIN.read_text()
+    ast.parse(src)  # SyntaxError if bundle is broken
+    for name, value in REQUIRED_SETDEFAULTS:
+        needle = f'environ.setdefault("{name}", "{value}")'
+        assert needle in src, (
+            f"baseline_pv_eta.py missing `{needle}` — wrapper preamble "
+            "lost a load-bearing env var."
+        )
 
 
 @pytest.mark.parametrize("name,value", REQUIRED_SETDEFAULTS)

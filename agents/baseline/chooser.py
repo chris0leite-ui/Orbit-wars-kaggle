@@ -146,20 +146,16 @@ def choose(snap_base, prerank, baseline_favors: list[float],
            min_horizon: int, max_horizon: int, gamma: float,
            world=None,
            reserved_srcs: set[int] | None = None,
-           reserved_for_new_commits: set[int] | None = None,
-           ) -> tuple[list[list], list[dict]]:
+           ) -> list[list]:
     """Validate top candidates with fast_sim, emit greedy non-dogpile moves.
 
-    Returns `(moves, commits)`. See `chooser_trajectory.choose_trajectory`
-    for the full ledger-aware contract; this is the parallel composite
-    implementation (default chooser is trajectory).
+    Returns `moves` — fire-now action list. Fire-now-only post the
+    2026-05-29 wait-grid strip; every prerank entry has wait_N=0.
     """
     if reserved_srcs is None:
         reserved_srcs = set()
-    if reserved_for_new_commits is None:
-        reserved_for_new_commits = reserved_srcs
     if not prerank:
-        return [], []
+        return []
 
     n_aff, per_cand_ms = affordable_validate_cap(
         snap_base, me, num_seats, max_horizon, wallclock_ms,
@@ -171,51 +167,34 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     # Pre-bail headroom: don't ENTER a candidate that would push us past
     # the deadline. score_action is uninterruptible (runs the full K-step
     # rollout once entered), so checking AT the deadline is too late.
-    # Closes the long-tail max-turn-ms overrun seen in the 2026-05-17 A/B.
     safe_deadline = deadline - (per_cand_ms / 1000.0)
     validated: list[tuple] = []
-    for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
+    for _cheap, src, tgt, ships, angle, _eta, horizon, _wn in top:
         if time.perf_counter() > safe_deadline:
             break
         sid_ = int(src.id)
-        if int(wait_N) > 0:
-            if sid_ in reserved_for_new_commits:
-                continue
-        else:
-            if sid_ in reserved_srcs:
-                continue
+        if sid_ in reserved_srcs:
+            continue
         delta = score_action(
             snap_base, me, num_seats,
             int(src.id), float(angle), int(ships),
-            int(horizon), baseline_favors, int(wait_N), gamma,
+            int(horizon), baseline_favors, 0, gamma,
         )
         if delta > 0:
-            validated.append((delta, src, tgt, ships, angle, wait_N))
+            validated.append((delta, src, tgt, ships, angle))
 
     if not validated:
-        return [], []
+        return []
 
     validated.sort(key=lambda c: -c[0])
     used_srcs: set[int] = set()
     used_tgts: set[int] = set()
     moves: list[list] = []
-    commits: list[dict] = []
-    commit_step = int(world.step) if world is not None else 0
-    for _delta, src, tgt, ships, angle, wait_N in validated:
+    for _delta, src, tgt, ships, angle in validated:
         sid, tid = int(src.id), int(tgt.id)
         if sid in used_srcs or tid in used_tgts:
             continue
         used_srcs.add(sid)
         used_tgts.add(tid)
-        if int(wait_N) == 0:
-            moves.append([sid, float(angle), int(ships)])
-        else:
-            commits.append({
-                "src_id": sid,
-                "tgt_id": tid,
-                "ships_planned": int(ships),
-                "angle_original": float(angle),
-                "wait_remaining": int(wait_N),
-                "commit_step": commit_step,
-            })
-    return moves, commits
+        moves.append([sid, float(angle), int(ships)])
+    return moves

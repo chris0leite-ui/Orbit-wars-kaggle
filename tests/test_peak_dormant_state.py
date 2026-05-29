@@ -23,10 +23,6 @@ import pytest
 
 
 DORMANT_ENV_VARS = (
-    # Wait-grid ledger — Fragility #1: with this off, wait_N>0 winners are
-    # silently discarded. The fact that it stays off at peak is intentional.
-    "BASELINE_LEDGER",
-    "BASELINE_LEDGER_MODE",
     # ME-reacts/defends asymmetric scaffold — Fragility #4.
     "BASELINE_ME_REACTS",
     "BASELINE_ME_DEFENDS",
@@ -54,14 +50,6 @@ def _reload_baseline():
     importlib.reload(ct)
     importlib.reload(bm)
     return bm, ct
-
-
-def test_ledger_disabled_at_default(clean_env):
-    bm, _ = _reload_baseline()
-    assert bm.LEDGER_ENABLED is False, (
-        "BASELINE_LEDGER defaults to 'off'; flipping this on enables the "
-        "wait_N>0 commit-and-resume path. See Fragility #1 in PEAK_BASELINE.md."
-    )
 
 
 def test_me_reacts_and_defends_disabled_at_default(clean_env):

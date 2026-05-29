@@ -11,14 +11,22 @@ common starting point and the protocol so the next iteration doesn't.
 
 | field | value |
 |---|---|
-| Git commit | `0d71aa6` (`bundle: regenerate baseline.py + add baseline_pv_eta.py wrapper`) |
-| Bundle SHA-256 (prefix) | `7964bfa4` (full: `7964bfa4b0ceaef7942c515179fbd549687aec2db1faf1baedb7016a23e6dfff`) |
-| Frozen anchor in tree | [`submissions/baseline_pv_eta_anchor_1163.py`](../submissions/baseline_pv_eta_anchor_1163.py) |
-| Tracked bundle (same bytes) | [`submissions/baseline_pv_eta.py`](../submissions/baseline_pv_eta.py) |
+| Frozen historical anchor | [`submissions/baseline_pv_eta_anchor_1163.py`](../submissions/baseline_pv_eta_anchor_1163.py) — **IMMUTABLE**; backs sub 53111837 (μ=1163.5). SHA `7964bfa4…`. |
 | Submission | [`53111837`](https://www.kaggle.com/competitions/orbit-wars/submissions) (2026-05-28, μ=**1163.5**) — **NEW PEAK** above prior 1144-1165 band |
-| Status on ladder | EVICTED 2026-05-28 23:22 (sibling branch pushed validator on top) — **resubmit-eligible**, byte-identical bundle frozen |
+| Status on ladder | EVICTED 2026-05-28 23:22 (sibling branch pushed validator on top) — **resubmit-eligible** via the frozen anchor file |
+| Live build target | [`submissions/baseline_pv_eta.py`](../submissions/baseline_pv_eta.py) — **diverged from the frozen anchor on 2026-05-29** by the wait-grid strip; rebundle from `agents/baseline` whenever non-strategic code changes |
 
-**Use this anchor for ALL local A/Bs on this branch from 2026-05-29 onward.**
+**Use the FROZEN anchor for ladder resubmits; use the LIVE bundle as the
+local-A/B reference for new mechanisms on top.**
+
+> **2026-05-29 wait-grid strip.** The `wait_then_fire_variants` /
+> `min_wait_affordable` / `wait_band` / `_PENDING_LAUNCHES` / `_tick_ledger`
+> machinery was deleted: it generated and scored `wait_N>0` candidates
+> that were silently discarded by the off-by-default ledger. PI framing:
+> committing to a future launch is wrong semantics — every turn is a
+> fresh decision. The strip reclaims the wait-N scoring compute for
+> additional fire-now candidates. `choose_trajectory()` and `choose()`
+> now return `moves` only. Locked by `tests/test_no_wait_grid.py`.
 
 ### Why this is the peak (not leaf_pv_2p, not peak-1165)
 
@@ -135,21 +143,18 @@ env vars without an isolated n=32 A/B against the peak anchor first.
 
 ---
 
-## Top 5 fragility risks (likelihood × severity)
+## Top fragility risks (likelihood × severity)
 
-1. **Silent wait-grid pruning via ledger-off.** `baseline/main.py:140`
-   (`LEDGER_ENABLED=False`) + `chooser_trajectory.py:998-1005`. Any
-   change that increases the proposer's `wait_N > 0` share (e.g.
-   `BASELINE_WAIT_GRID=forward`, or tightening the backward-grid
-   filter) gets the wait winners SILENTLY DISCARDED — they enter
-   `commits`, but `commits` is dropped because the ledger is off.
-   Symptom: chooser emits 0 launches while logs show 200 candidates
-   scored. **Mitigation:** assert at startup that
-   `LEDGER_ENABLED == True` whenever any `wait_N > 0` reaches the
-   chooser, OR in the trajectory branch promote `commits` to
-   `due_moves` next turn unconditionally.
+> Fragility #1 (silent wait-grid pruning via ledger-off) was REMOVED on
+> 2026-05-29 by the wait-grid strip: `wait_then_fire_variants`,
+> `min_wait_affordable`, `wait_band`, `WAIT_GRID_MODE`,
+> `WAIT_EXTRA_SURPLUS`, the `_PENDING_LAUNCHES` ledger, `_tick_ledger`,
+> and the `commits` return tuple are all gone. `choose_trajectory()` and
+> `choose()` now return `moves` only. The reasoning: wait-N winners
+> were never emitted (ledger off at peak); the scoring cost was pure
+> waste. Locked by `tests/test_no_wait_grid.py`.
 
-2. **NEUTRAL_BONUS family is load-bearing — do not "strip the dormant
+1. **NEUTRAL_BONUS family is load-bearing — do not "strip the dormant
    env vars" without an A/B.** (Updated 2026-05-29 after audit.) The
    three wrapper setdefaults — `BASELINE_NEUTRAL_BONUS=2.0`,
    `BASELINE_NEUTRAL_EARLY_HORIZON=50`, `BASELINE_NEUTRAL_EARLY_EXTRA=1.5`

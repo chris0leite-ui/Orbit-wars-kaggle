@@ -2,7 +2,7 @@
 
 Pipeline (per turn):
   1. proposer.propose       enumerate fire-now + multi-wait grid, cheap-rank,
-                            dedup by (src, tgt, wait_band).
+                            dedup by (src, tgt).
   2. chooser.build_idle_baseline   precompute favor under (me-idle, opp-reactive).
   3. chooser.choose         validate top candidates with fast_sim K-step rollout,
                             emit greedy non-dogpile moves.
@@ -126,25 +126,6 @@ SNIPER_MARGIN = float(os.environ.get("BASELINE_SNIPER_MARGIN", "1.2"))
 SNIPER_MAX_LAUNCHES = int(os.environ.get("BASELINE_SNIPER_MAX_LAUNCHES", "4"))
 SNIPER_RESERVE_FRAC = float(os.environ.get("BASELINE_SNIPER_RESERVE_FRAC", "0.4"))
 
-# Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
-# chooser's wait_N>0 winners are remembered across turns instead of
-# being silently dropped. Each entry ticks down each turn; when
-# wait_remaining hits 0 the agent emits the launch (re-aimed against
-# current src/tgt geometry). See plan
-# /root/.claude/plans/so-now-research-and-zany-widget.md and audit
-# audit/2026-05-20-filter-rejection-trace.md.
-#
-# Module-level state keyed by `obs.player` so independent seats in the
-# same process (eg local A/B harnesses spinning up both seats) don't
-# share commitments. Cleared on `obs.step == 0` (new-match detection).
-LEDGER_ENABLED = os.environ.get("BASELINE_LEDGER", "off").strip().lower() == "on"
-# Mode for the ledger: "hard" (default) reserves the src across the
-# wait, blocking chooser emits from it. "soft" leaves the src free
-# (chooser can fire fire-now from it) and only requires enough ships
-# at emit time. Set via env var BASELINE_LEDGER_MODE.
-LEDGER_MODE = os.environ.get("BASELINE_LEDGER_MODE", "hard").strip().lower()
-_PENDING_LAUNCHES: dict[int, list[dict]] = {}
-
 # Opening override (2026-05-21). Cherry-picked from analytical track
 # (origin/claude/strategy-axis-decision-3437). For step < OPENING_HORIZON
 # (=30), run the one-shot multi-turn MILP `opening_plan` and emit
@@ -227,88 +208,6 @@ def _gamma() -> float:
         return float(os.environ.get("BASELINE_GAMMA", 0.99))
     except ValueError:
         return 0.99
-
-
-def _tick_ledger(me: int, world, model, omega: float) -> tuple[list[list], list[dict]]:
-    """Tick pending wait commitments for `me`.
-
-    Returns `(due_moves, surviving_pending)`:
-      `due_moves`           — actions to emit this turn (one per due commit
-                              that validated successfully). Re-aimed against
-                              current src/tgt geometry.
-      `surviving_pending`   — entries still in flight (wait_remaining > 0
-                              after the decrement) plus entries whose
-                              wait_remaining hit 0 but failed validation
-                              (NOT included — silently dropped).
-
-    Tick semantics:
-      - Decrement every entry's `wait_remaining` by 1.
-      - If `wait_remaining` reaches 0 (or already <= 0):
-          * Drop if src no longer ours.
-          * Drop if tgt now ours (capture goal moot — chooser may have
-            redirected or another src took it).
-          * Drop if src has 0 ships (nothing to send).
-          * Otherwise re-aim using `proposer.aim_and_eta` and emit
-            `min(ships_planned, src.ships)` toward tgt.
-      - Else: keep entry alive (decrement only).
-
-    Re-aim is essential because planets orbit between commit time and
-    emit time. The proposer's original `angle_original` was correct for
-    geometry at commit time; firing at the same angle N turns later
-    would miss.
-    """
-    pending = _PENDING_LAUNCHES.get(int(me), [])
-    if not pending:
-        return [], []
-
-    from agents.baseline.proposer import aim_and_eta as _aim_and_eta
-
-    due_moves: list[list] = []
-    survivors: list[dict] = []
-    for entry in pending:
-        entry["wait_remaining"] = int(entry["wait_remaining"]) - 1
-        if entry["wait_remaining"] > 0:
-            survivors.append(entry)
-            continue
-
-        # Time to fire — validate. Record drop reason on the entry for
-        # downstream telemetry (the entry is otherwise discarded after
-        # this loop).
-        sid = int(entry["src_id"])
-        tid = int(entry["tgt_id"])
-        src = world.planets_by_id.get(sid)
-        tgt = world.planets_by_id.get(tid)
-        if src is None or tgt is None:
-            entry["drop_reason"] = "planet_missing"
-            continue
-        if int(src.owner) != int(me):
-            entry["drop_reason"] = "src_lost"
-            continue
-        if int(tgt.owner) == int(me):
-            entry["drop_reason"] = "tgt_now_ours"
-            continue
-        available = int(src.ships)
-        if available <= 0:
-            entry["drop_reason"] = "src_empty"
-            continue
-        ships = min(int(entry["ships_planned"]), available)
-        if ships <= 0:
-            entry["drop_reason"] = "size_zero"
-            continue
-        # Re-aim against the geometry that holds RIGHT NOW (planets
-        # have orbited during the wait). wait_N=0 because we're firing
-        # this turn.
-        try:
-            angle, _eta = _aim_and_eta(src, tgt, ships, omega, wait_N=0,
-                                       world=world)
-        except Exception:
-            entry["drop_reason"] = "aim_failed"
-            continue
-        entry["fired_at_step"] = int(world.step)
-        entry["fired_ships"] = int(ships)
-        due_moves.append([sid, float(angle), int(ships)])
-
-    return due_moves, survivors
 
 
 def emit_threat_reinforcements(
@@ -842,17 +741,6 @@ def agent(obs, configuration=None):
     me = int(obs_d.get("player", 0))
     step = int(obs_d.get("step", 0))
 
-    # New-match detection — clear this seat's commit ledger on step 0.
-    # Both `LEDGER_ENABLED` and `BASELINE_LEDGER=on` are checked at call
-    # time so harnesses can flip the env var mid-process without
-    # restarting the agent module.
-    ledger_on = (
-        LEDGER_ENABLED
-        or os.environ.get("BASELINE_LEDGER", "off").strip().lower() == "on"
-    )
-    if ledger_on and step == 0:
-        _PENDING_LAUNCHES.pop(me, None)
-
     raw_planets = obs_d.get("planets", []) or []
     raw_fleets = obs_d.get("fleets", []) or []
     if not raw_planets:
@@ -964,57 +852,18 @@ def agent(obs, configuration=None):
         # Mode "hard" (default): reserve src for the whole wait window —
         # chooser cannot emit anything from that src until the commit
         # fires.
-        # Mode "soft": only reserve sources whose commit is FIRING this
-        # turn (so the chooser can't fire-now on top of the commit's
-        # emit). Sources with surviving (in-flight) entries are NOT
-        # reserved, leaving them free to opportunistically fire-now via
-        # the chooser. The pending commit just needs `ships_planned`
-        # ships still available when wait_remaining hits 0; if not
-        # enough remain, the commit drops at emit time.
-        due_moves: list[list] = []
-        surviving_pending: list[dict] = []
-        reserved_srcs: set[int] = set()
-        reserved_for_new_commits: set[int] = set()
-        if ledger_on:
-            due_moves, surviving_pending = _tick_ledger(
-                me, world, model, omega,
-            )
-            mode = os.environ.get("BASELINE_LEDGER_MODE",
-                                  LEDGER_MODE).strip().lower()
-            # Sources firing via the ledger this turn — chooser must not
-            # fire-now on top of those (duplicate-src emit).
-            firing_srcs = {int(m[0]) for m in due_moves}
-            pending_srcs = {int(e["src_id"]) for e in surviving_pending}
-            # Always block stacking a second wait-commit on a src that
-            # already has a surviving commit (regardless of mode).
-            reserved_for_new_commits = firing_srcs | pending_srcs
-            # Hard mode: also block fire-now from pending srcs (preserve
-            # the ship reserve for the future commit). Soft mode: leave
-            # pending srcs free to fire-now (commit drops at emit time
-            # if not enough ships remain).
-            reserved_srcs = firing_srcs if mode == "soft" \
-                else firing_srcs | pending_srcs
-
         # Macro reservations: STOCKPILE hold_src + macro emit src.
-        # Layered on top of any ledger reservations.
-        if macro_reserved:
-            reserved_srcs = reserved_srcs | macro_reserved
-            reserved_for_new_commits = reserved_for_new_commits | macro_reserved
+        reserved_srcs: set[int] = set(macro_reserved) if macro_reserved else set()
 
-        moves, new_commits = choose_trajectory(
+        moves = choose_trajectory(
             snap_base, prerank, None,
             me, num_seats, wallclock_ms,
             MIN_HORIZON, MAX_HORIZON, gamma,
             world, model,
             reserved_srcs=reserved_srcs,
-            reserved_for_new_commits=reserved_for_new_commits,
         )
 
-        # 2. Persist updated ledger (surviving + new commits) when on.
-        if ledger_on:
-            _PENDING_LAUNCHES[me] = surviving_pending + new_commits
-
-        moves = due_moves + macro_moves + moves
+        moves = macro_moves + moves
         moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
@@ -1053,42 +902,17 @@ def agent(obs, configuration=None):
         baseline_len=len(baseline_favors),
     )
 
-    # Ledger lifecycle for the composite chooser path (parallel to the
-    # trajectory branch above). Tick first; pass reservation sets;
-    # merge with chooser output.
-    composite_due: list[list] = []
-    composite_surviving: list[dict] = []
-    composite_reserved: set[int] = set()
-    composite_reserved_new: set[int] = set()
-    if ledger_on:
-        composite_due, composite_surviving = _tick_ledger(
-            me, world, model, omega,
-        )
-        mode = os.environ.get("BASELINE_LEDGER_MODE",
-                              LEDGER_MODE).strip().lower()
-        firing_srcs = {int(m[0]) for m in composite_due}
-        pending_srcs = {int(e["src_id"]) for e in composite_surviving}
-        composite_reserved_new = firing_srcs | pending_srcs
-        composite_reserved = firing_srcs if mode == "soft" \
-            else firing_srcs | pending_srcs
+    composite_reserved: set[int] = set(macro_reserved) if macro_reserved else set()
 
-    if macro_reserved:
-        composite_reserved = composite_reserved | macro_reserved
-        composite_reserved_new = composite_reserved_new | macro_reserved
-
-    moves, new_commits = choose(
+    moves = choose(
         snap_base, prerank, baseline_favors,
         me, num_seats, wallclock_ms,
         MIN_HORIZON, MAX_HORIZON, gamma,
         world=world,
         reserved_srcs=composite_reserved,
-        reserved_for_new_commits=composite_reserved_new,
     )
 
-    if ledger_on:
-        _PENDING_LAUNCHES[me] = composite_surviving + new_commits
-
-    moves = composite_due + macro_moves + moves
+    moves = macro_moves + moves
     moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
     moves = drain_idle_rear(moves, planets, me, world, model)
     moves = drain_stagnant_rear(moves, planets, me, world, model)

@@ -791,50 +791,21 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                       min_horizon: int, max_horizon: int, gamma: float,
                       world, model,
                       reserved_srcs: set[int] | None = None,
-                      reserved_for_new_commits: set[int] | None = None,
-                      ) -> tuple[list[list], list[dict]]:
+                      ) -> list[list]:
     """Drop-in alternative to `chooser.choose`.
 
-    Returns `(moves, commits)`:
-      `moves`   — fire-now action list `[[src_id, angle, ships], ...]`
-                  to emit this turn.
-      `commits` — `wait_N > 0` winners that the agent should remember
-                  across turns. Each is a dict with keys `src_id`,
-                  `tgt_id`, `ships_planned`, `angle_original`,
-                  `wait_remaining`, `commit_step`. The agent's ledger
-                  (`agents/baseline/main._PENDING_LAUNCHES`) ticks these
-                  down and fires them when `wait_remaining` reaches 0
-                  (gated on `BASELINE_LEDGER=on`). When the ledger is
-                  off, commits are discarded — behaviour identical to
-                  the pre-ledger chooser.
+    Returns `moves` — fire-now action list `[[src_id, angle, ships], ...]`
+    to emit this turn. Fire-now-only post the 2026-05-29 wait-grid strip;
+    every prerank entry has wait_N=0 and there is no commit/ledger path.
 
     `reserved_srcs` — set of source ids that the chooser should not
-    fire-now-emit from this turn (ledger is firing them via due_moves,
-    or hard-ledger blocks them entirely while a commit is in flight).
-    `reserved_for_new_commits` — set of source ids that already have a
-    surviving ledger entry. The chooser must not add a SECOND wait
-    commit for these (stacking causes duplicate emits at fire time).
-    When `None`, defaults to `reserved_srcs` (hard semantics).
-
-    The `snap_base` / `baseline_favors` / `min_horizon` / `max_horizon`
-    / `gamma` args are unused (kept for signature parity with
-    `chooser.choose` so the dispatcher in `main.py` is a simple swap).
-    The trajectory chooser doesn't roll out and doesn't need an idle
-    baseline.
-
-    v2 (2026-05-17 PM):
-    - 1-turn opp lookahead: predict_opp_responses projects each opp
-      source's best launch; ledger merged BEFORE scoring (every
-      predict_garrison_at sees the pessimistic state).
-    - Multi-launch budget: drops "1 launch per source" dedup; tracks
-      ship sub-budget per source.
+    fire-now-emit from this turn (e.g. macro layer has already
+    committed them).
     """
     if reserved_srcs is None:
         reserved_srcs = set()
-    if reserved_for_new_commits is None:
-        reserved_for_new_commits = reserved_srcs
     if not prerank:
-        return [], []
+        return []
 
     deadline = time.perf_counter() + wallclock_ms / 1000.0
 
@@ -888,37 +859,22 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     scored: list[tuple] = []
     solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0
     cand_count = 0
-    for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
+    for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, _wait_N in prerank:
         if cand_count >= cap:
             break
         if not use_v3 and time.perf_counter() > safe_deadline:
             break
-        # Skip candidates the ledger has already accounted for. A
-        # wait_N>0 candidate from a src with a surviving commit would
-        # stack a second commit — duplicate emit at fire time. A
-        # wait_N==0 candidate from a reserved src would conflict with
-        # the ledger's fire-now this turn (hard mode) or has no impact
-        # in soft mode (where reserved_srcs only includes srcs firing
-        # this turn).
         sid_ = int(src.id)
-        if int(wait_N) > 0:
-            if sid_ in reserved_for_new_commits:
-                continue
-        else:
-            if sid_ in reserved_srcs:
-                continue
+        if sid_ in reserved_srcs:
+            continue
         cand_count += 1
         if use_v3:
-            # v3 path: fire-now-only (binary leaf doesn't generalise to
-            # wait_N>0 trivially). Skip wait_N>0 in the v3 path.
-            if int(wait_N) != 0:
-                continue
             score, status, _ = score_candidate_dyn(
                 snap_base, src, tgt, int(ships), float(angle),
                 me, num_seats, world,
             )
             if status in ("captured",) and score > 0.0:
-                scored.append((score, src, tgt, ships, angle, wait_N))
+                scored.append((score, src, tgt, ships, angle))
         else:
             score, status, _ = score_candidate_v4(
                 snap_base, src, tgt, int(ships), float(angle),
@@ -926,7 +882,6 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 baseline_favors, favor_fn, gamma,
                 horizon=int(prop_horizon),
                 skip_admissibility=skip_filter,
-                wait_N=int(wait_N),
                 eta_hint=int(eta_hint),
                 model=model,
             )
@@ -935,7 +890,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 else score >= MIN_DELTA
             )
             if status == "scored" and passes:
-                scored.append((score, src, tgt, ships, angle, wait_N))
+                scored.append((score, src, tgt, ships, angle))
                 # Track sources with viable solo (for joint gating).
                 solo_winners.add(int(src.id))
 
@@ -967,11 +922,9 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         # Group prerank by target_id. Take top-K solo candidates per
         # target by cheap_delta; pair-enumerate.
         by_tgt: dict[int, list] = {}
-        for cd, src, tgt, ships, angle, eta_hint, ph, wn in prerank:
-            if int(wn) != 0:
-                continue  # v1: fire-now joints only
+        for cd, src, tgt, ships, angle, eta_hint, ph, _wn in prerank:
             if int(src.id) in reserved_srcs:
-                continue  # ledger is firing from this src this turn
+                continue
             by_tgt.setdefault(int(tgt.id), []).append(
                 (float(cd), src, tgt, int(ships), float(angle), int(ph)),
             )
@@ -1020,19 +973,18 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         scored.append((j_score, "joint", launches))
 
     if not scored:
-        return [], []
+        return []
 
     scored.sort(key=lambda c: -c[0])
 
     # Emit logic — match composite chooser (`agents/baseline/chooser.choose`)
     # for parity. 1 launch per source per turn, 1 per target. For joints
     # (tagged 'joint' tuples), require ALL of its sources and targets to
-    # be free; commit all legs together.
+    # be free; commit all legs together. Fire-now-only post 2026-05-29
+    # wait-grid strip.
     used_srcs: set[int] = set()
     used_tgts: set[int] = set()
     moves: list[list] = []
-    commits: list[dict] = []
-    commit_step = int(world.step) if world is not None else 0
     for entry in scored:
         # Joint candidates are 3-tuples: (score, 'joint', launches).
         if len(entry) == 3 and entry[1] == "joint":
@@ -1042,14 +994,13 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             if (not JOINT_LIFT_USED_TGTS
                     and any(int(L[1].id) in used_tgts for L in launches)):
                 continue
-            for src, tgt, ships, angle, wait_N in launches:
+            for src, tgt, ships, angle, _wn in launches:
                 used_srcs.add(int(src.id))
                 used_tgts.add(int(tgt.id))
-                if int(wait_N) == 0:
-                    moves.append([int(src.id), float(angle), int(ships)])
+                moves.append([int(src.id), float(angle), int(ships)])
             continue
-        # Solo: legacy 6-tuple (score, src, tgt, ships, angle, wait_N).
-        _score, src, tgt, ships, angle, wait_N = entry
+        # Solo: 5-tuple (score, src, tgt, ships, angle).
+        _score, src, tgt, ships, angle = entry
         sid, tid = int(src.id), int(tgt.id)
         if sid in used_srcs:
             continue
@@ -1057,18 +1008,5 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             continue
         used_srcs.add(sid)
         used_tgts.add(tid)
-        if int(wait_N) == 0:
-            moves.append([sid, float(angle), int(ships)])
-        else:
-            # Wait-N winner — emit nothing this turn; instead surface
-            # as a commit. The agent's ledger (when BASELINE_LEDGER=on)
-            # will tick this down and fire at wait_N == 0.
-            commits.append({
-                "src_id": sid,
-                "tgt_id": tid,
-                "ships_planned": int(ships),
-                "angle_original": float(angle),
-                "wait_remaining": int(wait_N),
-                "commit_step": commit_step,
-            })
-    return moves, commits
+        moves.append([sid, float(angle), int(ships)])
+    return moves
