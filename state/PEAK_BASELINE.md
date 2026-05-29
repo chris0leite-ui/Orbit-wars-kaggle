@@ -7,7 +7,37 @@ common starting point and the protocol so the next iteration doesn't.
 
 ---
 
-## What "the peak" is
+## What "the peak" is (2026-05-29 update — supersedes the peak-1165 line below)
+
+| field | value |
+|---|---|
+| Git commit | `0d71aa6` (`bundle: regenerate baseline.py + add baseline_pv_eta.py wrapper`) |
+| Bundle SHA-256 (prefix) | `7964bfa4` (full: `7964bfa4b0ceaef7942c515179fbd549687aec2db1faf1baedb7016a23e6dfff`) |
+| Frozen anchor in tree | [`submissions/baseline_pv_eta_anchor_1163.py`](../submissions/baseline_pv_eta_anchor_1163.py) |
+| Tracked bundle (same bytes) | [`submissions/baseline_pv_eta.py`](../submissions/baseline_pv_eta.py) |
+| Submission | [`53111837`](https://www.kaggle.com/competitions/orbit-wars/submissions) (2026-05-28, μ=**1163.5**) — **NEW PEAK** above prior 1144-1165 band |
+| Status on ladder | EVICTED 2026-05-28 23:22 (sibling branch pushed validator on top) — **resubmit-eligible**, byte-identical bundle frozen |
+
+**Use this anchor for ALL local A/Bs on this branch from 2026-05-29 onward.**
+
+### Why this is the peak (not leaf_pv_2p, not peak-1165)
+
+The original `peak-1165` bundle (μ=1144-1165, sub 52912707 / resubmit 53013786) was
+superseded by `baseline_pv_eta.py` (sub 53111837, μ=1163.5). PV_ETA adds a
+modeling-correct `γ^(wait_N + eta)` present-value pull-back on candidate Δ
+(supersedes the SHIP_TURN_KAPPA band-aid disaster of sub 53099001).
+
+The follow-up `baseline_leaf_pv_2p.py` (sub 53117942, μ=1101.9) was layered on
+top of PV_ETA but **never A/B'd against PV_ETA alone** — the local n=10 7-3
+result that justified the submit was vs `baseline_peak_1165_anchor` (pre-PV_ETA),
+so the marginal effect of LEAF_PV_2P on top of PV_ETA was assumed additive
+but never measured. The ladder confirmed it's -62μ (1101.9 vs 1163.5).
+
+Subsequent "fix the opp model" experiments (K-cap 6/16, MLP-validator 12/32)
+all A/B'd against the regressed leaf_pv_2p — false-negative risk on the
+new mechanisms. **Stop comparing to leaf_pv_2p. Compare to PV_ETA.**
+
+### Historical peak-1165 (kept for cross-comp comparison; do NOT A/B against)
 
 | field | value |
 |---|---|
@@ -17,11 +47,7 @@ common starting point and the protocol so the next iteration doesn't.
 | Frozen anchor in tree | [`submissions/baseline_peak_1165_anchor.py`](../submissions/baseline_peak_1165_anchor.py) |
 | Original submission | [`52912707`](https://www.kaggle.com/competitions/orbit-wars/submissions) (2026-05-22, μ=**1165.4**) |
 | Byte-identical resubmit | `53013786` (2026-05-25, μ=**1144.6**) — same bundle, ~20μ rolling-pair noise |
-| Current peak-restore | `53099429` (2026-05-28, pending) |
-
-The frozen anchor is the **calibration reference** for every local A/B —
-you compare a candidate against the actual byte-identical bundle that the
-ladder rated at 1144-1165μ. Do not regenerate it; do not modify it.
+| Status | superseded by PV_ETA above; kept for sanity reference, NOT the build-on-top anchor |
 
 ---
 

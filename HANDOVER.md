@@ -1,20 +1,78 @@
 # HANDOVER.md — next-session brief
 
-> **2026-05-29 ADDENDUM (claude/kaggle-submission-review-gZsCu):**
-> opp-model rate-cap (top-K-by-ROI) FALSIFIED. K=2 vs live champion
-> `baseline_leaf_pv_2p` lost 6/16 (Wilson [0.185, 0.614]). Below
-> Rule 45 gate; no submission made. **Next-session direction: do
-> NOT iterate K. Pivot to MLP-as-opp-model** — hot-swap the trained
-> 3-MLP ensemble from sub 53131296 (sibling branch
-> `claude/competition-objective-alignment-hqNVM`, MLP commit `4a8e4c0`)
-> into `lib/opp_model.py` as a new tier. Full executable plan with
-> file paths, env vars, gates, and pitfalls is in
-> `audit/2026-05-29-k-cap-falsified-mlp-as-opp-model-plan.md` —
-> **read that file as the next-session brief**, it is self-contained
-> for compaction. K-cap code (`BASELINE_OPP_MAX_LAUNCHES`) stays
-> shipped but default-off; do not delete in case a future ensemble
-> wants per-tick budget as a sub-mechanism. PI thought captured at
-> `knowledge-base/thoughts/2026-05-29-mlp-can-double-as-opp-model.md`.
+> **2026-05-29 PM ADDENDUM (claude/kaggle-submission-review-gZsCu):**
+>
+> **Working anchor changed: build on PV_ETA, not leaf_pv_2p.**
+> `submissions/baseline_pv_eta_anchor_1163.py` is the new working
+> anchor (byte-identical to sub 53111837, μ=1163.5, SHA-256 prefix
+> `7964bfa4`). All future local A/Bs on this branch compare to THIS
+> file, NOT `baseline_leaf_pv_2p.py`. Reasoning in
+> [`state/PEAK_BASELINE.md`](state/PEAK_BASELINE.md) (rewritten today).
+>
+> **Why the anchor changed.** LEAF_PV_2P=1 was layered on top of
+> PV_ETA based on a local n=10 7-3 vs the PRE-PV_ETA peak anchor —
+> the marginal effect on top of PV_ETA was never measured. Ladder
+> showed leaf_pv_2p settled at μ=1101.9, **-62μ below PV_ETA's
+> μ=1163.5**. Every local A/B we ran today (K-cap 6/16, MLP-validator
+> 12/32 at tier 1) was tested against the regressed leaf_pv_2p —
+> we have no idea whether either mechanism would have lifted over
+> PV_ETA. That's the false-negative risk we need to clear.
+>
+> **NEXT-SESSION FIRST ACTION: review the solution carefully.**
+> Before any new mechanism, audit what the agent is actually doing
+> at PV_ETA. Specifically:
+>
+> 1. **Trace 2-3 single games** (PV_ETA anchor vs v7_0, v4_planner)
+>    with full step-by-step instrumentation (use
+>    `scripts/inspect_goal_planner_game.py` as the pattern, or write
+>    a minimal tracer if needed). Watch for: silent turns, fleet-
+>    size patterns, decision quality at high-eta candidates, opp
+>    counter-launches the rollout did vs didn't predict.
+> 2. **Re-run the LEAF_PV_2P A/B properly — vs PV_ETA, n≥32.**
+>    This is the experiment that should have been run before the
+>    leaf_pv_2p submit but wasn't. If LEAF_PV_2P actually lifts vs
+>    PV_ETA, our ladder read is wrong; if it doesn't, we have the
+>    falsification on record and the "silent-turns" thesis is gone.
+> 3. **Re-run the MLP-as-opp-model A/B vs PV_ETA, n=32.** The
+>    candidate code is already shipped (`BASELINE_OPP_MODEL=mlp`,
+>    `BASELINE_OPP_MLP_THRESHOLD=0.5`); just bundle a wrapper from
+>    PV_ETA + the MLP env var and A/B vs PV_ETA. ~30-40 min wallclock
+>    (use OMP_NUM_THREADS=1 to avoid the BLAS-thrash that made
+>    today's run take 39 min for tier 1).
+> 4. **Re-read the chooser_trajectory.py scoring math.** Confirm
+>    that PV_ETA's `delta *= γ^(wait_N + eta)` and LEAF_PV_2P's
+>    `(my_prod - opp_prod) * pv_horizon` term inside
+>    `composite_capture_value` compose the way we expect. The
+>    "double-discount" hypothesis surfaced today does NOT hold up
+>    on a quick read (the prod-PV term cancels in baseline-vs-leaf
+>    Δ except where ownership changed), but the silent-turns
+>    investigation should re-check this against actual traces.
+>
+> **Code shipped today (default OFF — does not affect PV_ETA anchor):**
+>
+> - `lib/shot_features.py`, `lib/_validator_weights.py`,
+>   `lib/_validator_mlp.py` — substrate for the trained MLP.
+> - `lib/opp_model.py::mlp_validated_policy` — Tier-3 opp policy
+>   that filters lite_greedy emits through the MLP at the opp's
+>   seat.
+> - `agents/baseline/chooser.py::_select_opp_policy` — routes via
+>   `BASELINE_OPP_MODEL` env var (default `lite_greedy`).
+> - `tests/test_opp_model_mlp.py` — 6/6 green.
+> - `scripts/bundle_agent.py` — DEFAULT_LIB_ORDER includes the new
+>   substrate.
+> - `submissions/baseline_opp_mlp_t05.py` and `_t06.py` (gitignored
+>   bundles); do not reuse without rebuild against the PV_ETA stack.
+>
+> The K-cap code (`BASELINE_OPP_MAX_LAUNCHES`) and the MLP code
+> both stay shipped, default OFF. Do not delete — they may compose
+> as sub-mechanisms in a future opp-model ensemble.
+>
+> **What we did NOT do today.** No submission. Daily budget 5/5
+> remained for next session.
+>
+> Prior 2026-05-29 AM addendum (K-cap falsification, MLP-as-opp-model
+> plan) is captured in
+> `audit/2026-05-29-k-cap-falsified-mlp-as-opp-model-plan.md`.
 >
 > **PM3 ADDENDUM (2026-05-28 PM3):** macro layer (Item 1 below) was
 > built, A/B'd, and SHOWED NO LIFT. See

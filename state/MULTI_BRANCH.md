@@ -47,12 +47,22 @@ subs (validator, leaf_pv_2p) have settled reads.
 - **Daily submission budget:** 5/day. Today (2026-05-29 UTC) used: 0. 5 remain.
 - **Deadline:** 2026-06-23 23:59 UTC. **~25 days remain.**
 
-**Next push candidate (this branch, pending A/B verdict):**
-`submissions/baseline_opp_mlp_t05.py` — leaf_pv_2p stack + `BASELINE_OPP_MODEL=mlp` +
-`BASELINE_OPP_MLP_THRESHOLD=0.5`. Repurposes the trained 3-MLP shot validator from
-sub 53131296 as a learned opponent policy (filters `lite_greedy_policy`'s candidate
-emits at `P(success) ≥ 0.5` from the opp's seat). A/B in progress vs live champion
-`baseline_leaf_pv_2p.py`; will report below before any push.
+**Working anchor (2026-05-29 PM, this branch — supersedes leaf_pv_2p as baseline):**
+
+`submissions/baseline_pv_eta_anchor_1163.py` (byte-identical to sub 53111837,
+μ=1163.5, SHA-256 prefix `7964bfa4`). **Frozen on branch, will NOT be
+re-bundled.** All future local A/Bs on this branch anchor against this file,
+not against leaf_pv_2p (which is now known to be a -62μ regression vs PV_ETA;
+see [`PEAK_BASELINE.md`](PEAK_BASELINE.md) for the discovery).
+
+**MLP-as-opp-model A/B (today, aborted):** tier-1 read at n=32 vs leaf_pv_2p
+was 12/32 (37.5%, Wilson [0.229, 0.547]) — same magnitude regression as the
+K-cap variant (6/16 = 37.5%). Eval was aborted mid-tier-2 because the
+underlying A/B baseline (leaf_pv_2p) is now known to be the wrong anchor.
+The MLP code remains shipped (default OFF, `BASELINE_OPP_MODEL=mlp` opt-in)
+pending re-test against the PV_ETA anchor next session.
+
+**Status: no submission made today. Daily budget 5/5 fresh.**
 
 ---
 
