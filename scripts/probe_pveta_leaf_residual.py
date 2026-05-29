@@ -231,9 +231,9 @@ def per_k_stats(rows: list[dict], K: int) -> dict:
     f_tgt, n_tgt = _anova_f(residual, tgt_groups)
 
     # Per-bucket residual mean/std for the report tables.
-    def bucket_table(groups: list) -> list[dict]:
+    def bucket_table_for(res_arr: np.ndarray, groups: list) -> list[dict]:
         by: dict = defaultdict(list)
-        for v, g in zip(residual, groups):
+        for v, g in zip(res_arr, groups):
             by[g].append(float(v))
         out = []
         for g, vs in sorted(by.items(), key=lambda kv: (-len(kv[1]), kv[0])):
@@ -245,6 +245,72 @@ def per_k_stats(rows: list[dict], K: int) -> dict:
                 "std": float(arr.std()),
             })
         return out
+
+    def bucket_table(groups: list) -> list[dict]:
+        return bucket_table_for(residual, groups)
+
+    # Within-owner stratification (B.1 follow-up). For each owner cell,
+    # recompute ship_quintiles + top-5 target_ids INSIDE the cell, then
+    # rerun ANOVA on (ship_quintile, eta_bucket, target_id_top5). If
+    # F → 1 in every cell, the leaf's residual is a 3-way constant
+    # offset and a head fed (owner, eta, ships) has no within-category
+    # ranking signal — a fact-check on the B.2 design.
+    anova_within_owner: dict = {}
+    own_idx_by_label: dict = defaultdict(list)
+    for i, lab in enumerate(own_groups):
+        own_idx_by_label[lab].append(i)
+    for own_label, idxs in own_idx_by_label.items():
+        if len(idxs) < 10:
+            anova_within_owner[own_label] = {
+                "n": len(idxs), "degenerate": True}
+            continue
+        cell_residual = residual[idxs]
+        cell_ships_arr = np.asarray([sub[i]["ships"] for i in idxs])
+        cell_eta_groups = [eta_groups[i] for i in idxs]
+        cell_tgt_ids = [sub[i]["tgt_id"] for i in idxs]
+
+        # Recompute ship quintiles within the cell.
+        cell_qs = np.quantile(cell_ships_arr, [0.2, 0.4, 0.6, 0.8]).tolist()
+
+        def cell_ship_bucket(s: int, qs=cell_qs) -> str:
+            for j, q in enumerate(qs):
+                if s < q:
+                    return f"Q{j+1}"
+            return f"Q{len(qs)+1}"
+
+        cell_ship_groups = [cell_ship_bucket(int(s)) for s in cell_ships_arr]
+
+        # Recompute top-5 target_ids within the cell.
+        cell_tgt_counts: dict = defaultdict(int)
+        for t in cell_tgt_ids:
+            cell_tgt_counts[t] += 1
+        cell_top5 = {t for t, _ in sorted(
+            cell_tgt_counts.items(), key=lambda x: -x[1])[:5]}
+        cell_tgt_groups = [
+            f"tgt_{t}" if t in cell_top5 else "other" for t in cell_tgt_ids
+        ]
+
+        f_ship_c, n_ship_c = _anova_f(cell_residual, cell_ship_groups)
+        f_eta_c, n_eta_c = _anova_f(cell_residual, cell_eta_groups)
+        f_tgt_c, n_tgt_c = _anova_f(cell_residual, cell_tgt_groups)
+
+        anova_within_owner[own_label] = {
+            "n": len(idxs),
+            "degenerate": False,
+            "anova": {
+                "ship_quintile": {"F": f_ship_c, "n_groups": n_ship_c},
+                "eta_bucket": {"F": f_eta_c, "n_groups": n_eta_c},
+                "target_id_top5": {"F": f_tgt_c, "n_groups": n_tgt_c},
+            },
+            "tables": {
+                "ship_quintile": bucket_table_for(
+                    cell_residual, cell_ship_groups),
+                "eta_bucket": bucket_table_for(
+                    cell_residual, cell_eta_groups),
+                "target_id_top5": bucket_table_for(
+                    cell_residual, cell_tgt_groups),
+            },
+        }
 
     return {
         "K": K,
@@ -268,6 +334,85 @@ def per_k_stats(rows: list[dict], K: int) -> dict:
             "owner_at_launch": bucket_table(own_groups),
             "target_id_top5": bucket_table(tgt_groups),
         },
+        "anova_within_owner": anova_within_owner,
+    }
+
+
+def evaluate_within_owner_gate(per_k: list[dict],
+                               K_target: int = 10) -> dict:
+    """B.1 follow-up gate: at K=K_target, look at the per-cell F-stats
+    on (ship_quintile, eta_bucket) inside each owner cell.
+
+      GREEN — at least one of {me, enemy} has F > 4 on ship or eta.
+              B.2 features (owner / eta / ships) can rank within
+              the heavy-residual categories. Proceed as specced.
+      AMBER — F clusters in 2–4 in me+enemy. Within-cell signal is
+              real but weak. Consider richer features (combat margin,
+              eta × owner interaction) before training.
+      RED   — all within-owner F < 2 on ship+eta. The residual is a
+              3-way constant offset plus noise; a per-candidate head
+              fed those features would only encode the offset.
+    """
+    target = next(
+        (s for s in per_k
+         if s["K"] == K_target and not s.get("degenerate")),
+        None,
+    )
+    if target is None:
+        return {"verdict": "UNKNOWN (no K=K_target data)",
+                "color": "UNKNOWN"}
+    cells = target.get("anova_within_owner", {}) or {}
+    me_enemy_max_f = 0.0
+    all_max_f = 0.0
+    per_cell: list[dict] = []
+    for own_label in ("me", "neutral", "enemy"):
+        c = cells.get(own_label)
+        if c is None or c.get("degenerate"):
+            continue
+        a = c["anova"]
+        cell_f = max(a["ship_quintile"]["F"], a["eta_bucket"]["F"])
+        all_max_f = max(all_max_f, cell_f)
+        if own_label in ("me", "enemy"):
+            me_enemy_max_f = max(me_enemy_max_f, cell_f)
+        per_cell.append({
+            "owner": own_label, "n": c["n"],
+            "f_ship": a["ship_quintile"]["F"],
+            "f_eta": a["eta_bucket"]["F"],
+            "f_tgt": a["target_id_top5"]["F"],
+        })
+    if me_enemy_max_f > 4.0:
+        color = "GREEN"
+        verdict = (
+            "GREEN — B.2 as specced has within-category signal. "
+            "At least one of {me, enemy} shows ship- or eta-driven "
+            "residual structure (F > 4) inside the cell. Proceed with "
+            "the (owner_at_launch, eta, ships, leaf-Δ) regressor."
+        )
+    elif all_max_f >= 2.0:
+        color = "AMBER"
+        verdict = (
+            "AMBER — within-cell signal weak (F in [2, 4]). The "
+            "categorical residual is real but ship/eta alone may not "
+            "rank candidates within the heavy-residual cells. Before "
+            "training, consider richer features (combat margin at "
+            "arrival, predicted defenders, eta × owner interaction)."
+        )
+    else:
+        color = "RED"
+        verdict = (
+            "RED — within-cell F < 2 across me/enemy on ship+eta. "
+            "The chooser's residual is a 3-way constant offset plus "
+            "noise; B.2 as specced would learn the offset and not "
+            "rank within categories. Pivot to richer features or to "
+            "Reframe C (opponent-emit predictor)."
+        )
+    return {
+        "verdict": verdict,
+        "color": color,
+        "K_target": K_target,
+        "me_enemy_max_f": me_enemy_max_f,
+        "all_max_f": all_max_f,
+        "per_cell": per_cell,
     }
 
 
@@ -299,7 +444,8 @@ def evaluate_gate(per_k: list[dict]) -> dict:
 
 
 def render_report(data_dir: Path, per_k: list[dict], gate: dict,
-                  n_games: int, total_accepted_seat0: int) -> str:
+                  n_games: int, total_accepted_seat0: int,
+                  within_owner_gate: dict | None = None) -> str:
     L = []
     L.append("# Reframe B.1 — pv_eta leaf-residual diagnostic probe")
     L.append("")
@@ -367,6 +513,114 @@ def render_report(data_dir: Path, per_k: list[dict], gate: dict,
                     f"{row['mean']:+.2f} | {row['std']:.2f} |"
                 )
             L.append("")
+    # Within-owner stratification (B.1 follow-up).
+    if within_owner_gate is not None:
+        L.append("## Within-owner stratified ANOVA "
+                 "(B.1 follow-up sanity check)")
+        L.append("")
+        L.append("For each K, the residual is partitioned by "
+                 "`owner_at_launch` (me / neutral / enemy) and the "
+                 "ship-quintile and top-5 target_id buckets are "
+                 "**recomputed inside each cell** so cutpoints reflect "
+                 "the within-cell distribution. F-stat thresholds vs "
+                 "the global pass: small within-cell F means the leaf's "
+                 "errors are dominated by the 3-way owner categorical, "
+                 "and a per-candidate head fed (owner, eta, ships) "
+                 "cannot rank candidates within a category.")
+        L.append("")
+        for s in per_k:
+            if s.get("degenerate"):
+                continue
+            cells = s.get("anova_within_owner") or {}
+            if not cells:
+                continue
+            L.append(f"### K = {s['K']}")
+            L.append("")
+            L.append("| owner | n | F(ship_quintile) | F(eta_bucket) "
+                     "| F(target_id_top5) |")
+            L.append("|---|---:|---:|---:|---:|")
+            for own_label in ("me", "neutral", "enemy"):
+                c = cells.get(own_label)
+                if c is None:
+                    L.append(f"| {own_label} | 0 | — | — | — |")
+                    continue
+                if c.get("degenerate"):
+                    L.append(f"| {own_label} | {c['n']} | — | — | — |")
+                    continue
+                a = c["anova"]
+                L.append(
+                    f"| {own_label} | {c['n']} | "
+                    f"{a['ship_quintile']['F']:.2f} "
+                    f"(g={a['ship_quintile']['n_groups']}) | "
+                    f"{a['eta_bucket']['F']:.2f} "
+                    f"(g={a['eta_bucket']['n_groups']}) | "
+                    f"{a['target_id_top5']['F']:.2f} "
+                    f"(g={a['target_id_top5']['n_groups']}) |"
+                )
+            L.append("")
+
+        # Per-bucket residual summary at K=K_target for cells with F > 4
+        # on any axis, so the eyeball view is right there.
+        K_target = within_owner_gate.get("K_target", 10)
+        target = next(
+            (s for s in per_k
+             if s["K"] == K_target and not s.get("degenerate")),
+            None,
+        )
+        if target is not None:
+            cells = target.get("anova_within_owner") or {}
+            for own_label in ("me", "neutral", "enemy"):
+                c = cells.get(own_label)
+                if c is None or c.get("degenerate"):
+                    continue
+                a = c["anova"]
+                hot_axes = [
+                    name for name in
+                    ("ship_quintile", "eta_bucket", "target_id_top5")
+                    if a[name]["F"] > 4.0
+                ]
+                if not hot_axes:
+                    continue
+                for axis_name in hot_axes:
+                    tbl = c["tables"][axis_name]
+                    L.append(f"## Residual by {axis_name} "
+                             f"(K={K_target}, owner={own_label}, "
+                             f"F={a[axis_name]['F']:.2f})")
+                    L.append("")
+                    L.append("| bucket | n | mean residual | std |")
+                    L.append("|---|---:|---:|---:|")
+                    for row in tbl:
+                        L.append(
+                            f"| {row['bucket']} | {row['n']} | "
+                            f"{row['mean']:+.2f} | {row['std']:.2f} |"
+                        )
+                    L.append("")
+
+        L.append("## B.2 within-owner verdict")
+        L.append("")
+        L.append(f"**{within_owner_gate['verdict']}**")
+        L.append("")
+        L.append(f"At K={within_owner_gate.get('K_target', 10)}: "
+                 f"me+enemy max F (ship/eta) = "
+                 f"{within_owner_gate.get('me_enemy_max_f', 0):.2f}; "
+                 f"across-all max F (ship/eta) = "
+                 f"{within_owner_gate.get('all_max_f', 0):.2f}.")
+        L.append("")
+        per_cell = within_owner_gate.get("per_cell") or []
+        if per_cell:
+            L.append("| owner | n | F(ship) | F(eta) | F(target) |")
+            L.append("|---|---:|---:|---:|---:|")
+            for row in per_cell:
+                L.append(
+                    f"| {row['owner']} | {row['n']} | "
+                    f"{row['f_ship']:.2f} | {row['f_eta']:.2f} | "
+                    f"{row['f_tgt']:.2f} |"
+                )
+            L.append("")
+        L.append("Gate: GREEN if me-or-enemy max(F_ship, F_eta) > 4; "
+                 "AMBER if any cell max(F_ship, F_eta) ≥ 2; else RED.")
+        L.append("")
+
     L.append("## Interpretation")
     L.append("")
     L.append("σ(residual)/σ(actual) measures the fraction of future "
@@ -391,6 +645,8 @@ def main() -> int:
                    help="Optional markdown report destination")
     p.add_argument("--K", default="5,10,20",
                    help="Comma-separated K-horizons (default 5,10,20)")
+    p.add_argument("--K-within-owner", type=int, default=10,
+                   help="K to use for the within-owner verdict (default 10)")
     args = p.parse_args()
 
     ks = tuple(int(x) for x in args.K.split(",") if x.strip())
@@ -420,9 +676,12 @@ def main() -> int:
 
     per_k = [per_k_stats(all_rows, K) for K in ks]
     gate = evaluate_gate(per_k)
+    within_owner_gate = evaluate_within_owner_gate(
+        per_k, K_target=args.K_within_owner)
     report = render_report(args.data_dir, per_k, gate,
                            n_games=len(game_dirs),
-                           total_accepted_seat0=total_accepted_seat0)
+                           total_accepted_seat0=total_accepted_seat0,
+                           within_owner_gate=within_owner_gate)
 
     print(report)
     if args.out:
