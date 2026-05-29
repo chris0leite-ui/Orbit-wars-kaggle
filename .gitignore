@@ -103,3 +103,4 @@ audit/external/
 audit/eda-*/
 audit/2026-05-22/*.log
 logs/
+audit/pv_eta_trace.json
