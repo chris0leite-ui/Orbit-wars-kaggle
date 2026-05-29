@@ -30,6 +30,14 @@ _TRACE_FILE = None
 _PARSED = None
 _LOAD_FAILED: bool = False
 
+# Side-channel for the chooser's ACCEPTED candidate set (Reframe B.1
+# diagnostic probe). Independent of the per-scored-candidate trace
+# above; no Booster dependency. Gated by BASELINE_ACCEPTED_TRACE.
+_ACCEPTED_PATH: str = os.environ.get("BASELINE_ACCEPTED_TRACE", "").strip()
+_ACCEPTED_ENABLED: bool = bool(_ACCEPTED_PATH)
+_ACCEPTED_FILE = None
+_ACCEPTED_LOAD_FAILED: bool = False
+
 
 def _ensure_loaded() -> bool:
     """Lazy-open the trace file and lazy-load the Booster. Returns True
@@ -101,6 +109,53 @@ def trace_solo(world: Any, world_model: Any, me: int,
             "p": p,
         }
         _TRACE_FILE.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+
+
+def _ensure_accepted_loaded() -> bool:
+    """Lazy-open the accepted-trace file. Returns True iff ready. Never
+    raises."""
+    global _ACCEPTED_FILE, _ACCEPTED_LOAD_FAILED
+    if not _ACCEPTED_ENABLED or _ACCEPTED_LOAD_FAILED:
+        return False
+    if _ACCEPTED_FILE is None:
+        try:
+            Path(_ACCEPTED_PATH).parent.mkdir(parents=True, exist_ok=True)
+            _ACCEPTED_FILE = open(_ACCEPTED_PATH, "a", buffering=1)
+        except OSError:
+            _ACCEPTED_LOAD_FAILED = True
+            return False
+    return True
+
+
+def trace_accepted(world: Any, me: int, accepted: list) -> None:
+    """Emit one JSON line per accepted candidate the chooser committed
+    this turn. `accepted` is a list of dicts with keys: kind ('solo' or
+    'joint'), src_id, tgt_id, ships, angle, wait_N, eta, delta_pred,
+    and optionally joint_id (turn-local counter shared across legs of
+    the same joint coalition). No-op when BASELINE_ACCEPTED_TRACE is
+    unset."""
+    if not _ACCEPTED_ENABLED or not _ensure_accepted_loaded():
+        return
+    try:
+        step = int(getattr(world, "step", 0))
+        for entry in accepted:
+            rec = {
+                "step": step,
+                "me": int(me),
+                "kind": str(entry["kind"]),
+                "src_id": int(entry["src_id"]),
+                "tgt_id": int(entry["tgt_id"]),
+                "ships": int(entry["ships"]),
+                "angle": float(entry["angle"]),
+                "wait_N": int(entry["wait_N"]),
+                "eta": int(entry["eta"]),
+                "delta_pred": float(entry["delta_pred"]),
+            }
+            if "joint_id" in entry:
+                rec["joint_id"] = int(entry["joint_id"])
+            _ACCEPTED_FILE.write(json.dumps(rec) + "\n")
     except Exception:
         pass
 

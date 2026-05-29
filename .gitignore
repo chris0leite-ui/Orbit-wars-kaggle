@@ -18,6 +18,11 @@ audit/seed-panel/features.json
 # Bundle parity-gate cache — keyed by bundle sha256, regenerable.
 audit/bundle-parity-cache.json
 
+# Reframe B.1 probe data (replay + accepted JSONL per game). Regenerate
+# via `scripts/probe_pveta_selfplay.py`.
+audit/2026-05-29-pveta-probe-data/
+audit/scratch/
+
 # Submissions / kernel build artifacts
 submissions/*
 !submissions/.gitkeep

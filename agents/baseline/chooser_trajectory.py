@@ -903,12 +903,13 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             # wait_N>0 trivially). Skip wait_N>0 in the v3 path.
             if int(wait_N) != 0:
                 continue
-            score, status, _ = score_candidate_dyn(
+            score, status, eta_dyn = score_candidate_dyn(
                 snap_base, src, tgt, int(ships), float(angle),
                 me, num_seats, world,
             )
             if status in ("captured",) and score > 0.0:
-                scored.append((score, src, tgt, ships, angle, wait_N))
+                scored.append((score, src, tgt, ships, angle, wait_N,
+                               int(eta_dyn) if eta_dyn is not None else 0))
         else:
             score, status, eta_traced = score_candidate_v4(
                 snap_base, src, tgt, int(ships), float(angle),
@@ -934,7 +935,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         int(ships), float(angle), int(wait_N),
                     )
                 if score > 0.0:
-                    scored.append((score, src, tgt, ships, angle, wait_N))
+                    scored.append((score, src, tgt, ships, angle, wait_N,
+                                   int(eta_traced) if eta_traced is not None else 0))
                     # Track sources with viable solo (for joint gating).
                     solo_winners.add(int(src.id))
 
@@ -1030,7 +1032,13 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                             )
                             j_score = j_score + ml_get_lambda() * leg_sum
                         if j_score > 0.0:
-                            scored.append((j_score, "joint", launches))
+                            # 4-tuple for joints (distinguishable from
+                            # solo 7-tuples by length + entry[1] tag).
+                            # leg_eta_hints carries per-leg eta from
+                            # the prerank's eta_hint slot (ca[5]/cb[5]).
+                            leg_eta_hints = [int(ca[5]), int(cb[5])]
+                            scored.append((j_score, "joint", launches,
+                                           leg_eta_hints))
 
     if not scored:
         return [], []
@@ -1045,24 +1053,44 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     used_tgts: set[int] = set()
     moves: list[list] = []
     commits: list[dict] = []
+    accepted_trace: list[dict] = []  # Reframe B.1 probe — populated
+                                     # only when BASELINE_ACCEPTED_TRACE
+                                     # is set; trace_accepted is a no-op
+                                     # otherwise.
+    next_joint_id = 0
     commit_step = int(world.step) if world is not None else 0
     for entry in scored:
-        # Joint candidates are 3-tuples: (score, 'joint', launches).
-        if len(entry) == 3 and entry[1] == "joint":
-            _score, _tag, launches = entry
+        # Joint candidates are 4-tuples: (score, 'joint', launches,
+        # leg_eta_hints).
+        if len(entry) == 4 and entry[1] == "joint":
+            _score, _tag, launches, leg_eta_hints = entry
             if any(int(L[0].id) in used_srcs for L in launches):
                 continue
             if (not JOINT_LIFT_USED_TGTS
                     and any(int(L[1].id) in used_tgts for L in launches)):
                 continue
-            for src, tgt, ships, angle, wait_N in launches:
+            jid = next_joint_id
+            next_joint_id += 1
+            for (src, tgt, ships, angle, wait_N), eta_hint in zip(
+                    launches, leg_eta_hints):
                 used_srcs.add(int(src.id))
                 used_tgts.add(int(tgt.id))
                 if int(wait_N) == 0:
                     moves.append([int(src.id), float(angle), int(ships)])
+                accepted_trace.append({
+                    "kind": "joint",
+                    "src_id": int(src.id),
+                    "tgt_id": int(tgt.id),
+                    "ships": int(ships),
+                    "angle": float(angle),
+                    "wait_N": int(wait_N),
+                    "eta": int(eta_hint),
+                    "delta_pred": float(_score),
+                    "joint_id": int(jid),
+                })
             continue
-        # Solo: legacy 6-tuple (score, src, tgt, ships, angle, wait_N).
-        _score, src, tgt, ships, angle, wait_N = entry
+        # Solo: 7-tuple (score, src, tgt, ships, angle, wait_N, eta).
+        _score, src, tgt, ships, angle, wait_N, eta = entry
         sid, tid = int(src.id), int(tgt.id)
         if sid in used_srcs:
             continue
@@ -1084,4 +1112,17 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 "wait_remaining": int(wait_N),
                 "commit_step": commit_step,
             })
+        accepted_trace.append({
+            "kind": "solo",
+            "src_id": sid,
+            "tgt_id": tid,
+            "ships": int(ships),
+            "angle": float(angle),
+            "wait_N": int(wait_N),
+            "eta": int(eta),
+            "delta_pred": float(_score),
+        })
+    if accepted_trace:
+        from agents.baseline._trace_hook import trace_accepted
+        trace_accepted(world, me, accepted_trace)
     return moves, commits
