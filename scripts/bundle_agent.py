@@ -103,6 +103,18 @@ DEFAULT_LIB_ORDER = [
     # Inlining these is a no-op for non-v7 agents (their agent() never
     # imports from them) — they bloat the bundle by ~35 KB. Acceptable.
     "fast_sim",
+    # 2026-05-29: MLP-as-opp-model substrate (sub 53131296's 3-MLP shot
+    # validator, repurposed as a learned opponent policy via
+    # lib.opp_model.mlp_validated_policy). Inlined unconditionally — bundle
+    # cost ~70 KB (almost all in `_validator_weights`) and the chooser's
+    # opp-policy selector tries to import them lazily when
+    # `BASELINE_OPP_MODEL=mlp`. Order matters: `_validator_weights` ships
+    # the base64 blob; `_validator_mlp` parses it on first call;
+    # `shot_features` encodes the 25-d feature vector. `opp_model` then
+    # imports `shot_features` + `_validator_mlp` inside the new policy.
+    "_validator_weights",
+    "_validator_mlp",
+    "shot_features",
     "opp_model",
     "v7_search",
     # v4_planner brain (2026-05-12 evening): candidate portfolios +

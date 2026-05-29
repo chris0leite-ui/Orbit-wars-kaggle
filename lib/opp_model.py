@@ -69,6 +69,19 @@ OPP_MAX_LAUNCHES: int = int(
 )
 
 
+# MLP-as-opp-model threshold (2026-05-29). Used by `mlp_validated_policy`
+# to filter `lite_greedy_policy`'s candidate emits through the trained
+# 3-MLP shot validator. The MLP returns `P(launch will succeed) in [0, 1]`
+# from the opponent's seat; only candidates with P >= threshold are
+# emitted. Threshold default 0.5 (high-precision, opp fires only when
+# confident); raise to suppress more, lower to emit more. The validator's
+# self-side rejection threshold (0.30) was tuned for high recall on
+# OUR-side filtering and is the wrong knob for OPP-model use.
+OPP_MLP_THRESHOLD: float = float(
+    os.environ.get("BASELINE_OPP_MLP_THRESHOLD", "0.5")
+)
+
+
 # ---------------------------------------------------------------------------
 # Tier 0 — mirror self (= v3_snipe pipeline, aggressive sizing OFF)
 # ---------------------------------------------------------------------------
@@ -260,6 +273,89 @@ def lite_greedy_policy(obs: Any) -> list:
         candidates.sort()
         moves = [c[2] for c in candidates[:k_cap]]
     return moves
+
+
+# ---------------------------------------------------------------------------
+# Tier 3 (2026-05-29) — MLP-filtered lite_greedy
+# ---------------------------------------------------------------------------
+#
+# Pivot from the falsified top-K-by-ROI rate cap (Stage-2 A/B 6/16 vs live).
+# The rate-cap addressed the right symptom (lite_greedy over-fires vs the
+# realised ladder fingerprint) but the wrong axis: the right knob is "fire
+# only when the shot is likely to succeed", not "fire at most K per tick".
+#
+# This tier wraps `lite_greedy_policy`'s candidate emit list with the
+# trained 3-MLP shot validator from sub 53131296. The validator scores
+# `P(launch will succeed | obs, focal_seat)` from the opponent's seat
+# (focal_seat = obs.player when the rollout queries the opp's observation).
+# Only candidates with P >= OPP_MLP_THRESHOLD pass through. Self-reinforce
+# emits (target already owned by focal) bypass the filter — same convention
+# as the validator agent itself.
+#
+# The MLP was trained on per-shot labels from top-10 ladder replays + 10
+# midpack, so the threshold sits closer to the actual ladder-realised
+# launch density than any constant K cap can. Fall-through if the weights
+# fail to load (degrades gracefully to lite_greedy).
+
+
+def mlp_validated_policy(obs: Any) -> list:
+    """Tier 3 opp policy: lite_greedy candidates filtered by trained MLP.
+
+    Pipeline:
+      1. Run `lite_greedy_policy` to propose candidate (src, angle, ships)
+         emits for the focal seat. Cheap; per-tick cost matches lite_greedy.
+      2. For each candidate, encode 25-d features via
+         `lib.shot_features.encode_shot_features` with `focal_seat =
+         obs.player` (the seat the rollout is querying — the opponent
+         from the chooser's perspective).
+      3. Self-reinforce candidates (target already owned by focal seat)
+         bypass the filter, matching `baseline_validated`'s convention.
+      4. Stack remaining feature vectors; one batched ensemble forward.
+      5. Emit those with `p >= OPP_MLP_THRESHOLD`.
+
+    If the MLP weights are missing/malformed (e.g. lib._validator_weights
+    blob empty), returns `lite_greedy_policy` output unfiltered so the
+    rollout still has a viable opponent.
+    """
+    # Single-line imports below: the bundler's per-line import-stripping
+    # regex leaks continuation lines from a parenthesised multi-line
+    # import as indented orphans (IndentationError at runtime). Friction
+    # tag: `bundler-modular-agent-namespace-access-breaks-bundle`.
+    from lib._validator_mlp import ensemble_proba, is_ready
+    from lib.shot_features import FEATURE_DIM, encode_shot_features, target_owned_by
+
+    candidates = lite_greedy_policy(obs)
+    if not candidates:
+        return []
+    if not is_ready():
+        return candidates
+
+    focal_seat = (
+        obs.get("player", 0) if isinstance(obs, dict)
+        else getattr(obs, "player", 0)
+    )
+
+    survivors: list = []
+    to_score: list[tuple[int, Any]] = []
+    for i, emit in enumerate(candidates):
+        if target_owned_by(emit, obs, focal_seat):
+            survivors.append(emit)
+            continue
+        feats = encode_shot_features(emit, obs, focal_seat)
+        if feats is None or feats.shape[0] != FEATURE_DIM:
+            survivors.append(emit)
+            continue
+        to_score.append((i, feats))
+
+    if to_score:
+        import numpy as np
+        X = np.stack([f for _, f in to_score]).astype(np.float32)
+        probs = ensemble_proba(X)
+        for (idx, _), p in zip(to_score, probs):
+            if p >= OPP_MLP_THRESHOLD:
+                survivors.append(candidates[idx])
+
+    return survivors
 
 
 # ---------------------------------------------------------------------------

@@ -19,7 +19,7 @@ import time
 
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
-from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy
+from lib.opp_model import lite_greedy_policy, mlp_validated_policy, top_tier_mirror_policy
 
 from agents.baseline.value import select_favor_fn
 
@@ -32,7 +32,13 @@ RESERVED_OVERHEAD_MS = 50.0
 def _select_opp_policy():
     """Tier 3 (2026-05-18 PM): asymmetric opp model selection.
 
-    BASELINE_OPP_TIER env var:
+    `BASELINE_OPP_MODEL` (newer knob, 2026-05-29) takes precedence:
+      - "lite_greedy" / unset → fall through to BASELINE_OPP_TIER routing.
+      - "mlp" → trained 3-MLP shot-validator filter on lite_greedy
+                candidates. Threshold via `BASELINE_OPP_MLP_THRESHOLD`
+                (default 0.5).
+
+    Legacy `BASELINE_OPP_TIER`:
       - "0" or unset → lite_greedy_policy (default, ~1-2ms/call).
       - "1" → top_tier_mirror_policy (~5-10ms/call; ladder-realistic
               opp using v3.5.1 aggressive snipe pipeline). Bench gate
@@ -41,6 +47,9 @@ def _select_opp_policy():
     Per-call selection (not cached at import time) so env-var overrides
     inside test fixtures take effect without re-importing the module.
     """
+    model = os.environ.get("BASELINE_OPP_MODEL", "lite_greedy").strip()
+    if model == "mlp":
+        return mlp_validated_policy
     return (
         top_tier_mirror_policy
         if os.environ.get("BASELINE_OPP_TIER", "0").strip() == "1"
