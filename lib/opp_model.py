@@ -275,6 +275,84 @@ def lite_greedy_policy(obs: Any) -> list:
     return moves
 
 
+def nearest_opp_policy(obs: Any) -> list:
+    """Cheap opp policy: nearest-target launch picker.
+
+    Same scaffolding as `lite_greedy_policy` (ships >= 10 source gate,
+    capture-size estimate via straight-line ETA + defender prediction,
+    affordability skip, `OPP_MAX_LAUNCHES` top-K dispatch) — the only
+    difference is target selection: pick the geographically closest
+    non-our planet instead of the highest production/distance ratio.
+
+    Hypothesis (2026-05-29 PM): live-ladder opps at near range act more
+    like "grab what's close" than "compute ROI"; using a nearest-pick
+    rollout opp may produce more predictive chooser deltas than
+    lite_greedy's ROI overestimate of opp's far-target ambition.
+    """
+    player = obs.get("player", 0) if isinstance(obs, dict) else getattr(obs, "player", 0)
+    planets = obs.get("planets") if isinstance(obs, dict) else getattr(obs, "planets", None)
+    if not planets:
+        return []
+    targets = [p for p in planets if p[1] != player]
+    moves: list = []
+    k_cap = OPP_MAX_LAUNCHES
+    candidates: list[tuple[float, int, list]] = []
+    seq_idx = 0
+    for src in planets:
+        if src[1] != player or src[5] < 10:
+            continue
+        best = None
+        best_score = -1.0  # max-pick on 1/(d+1) → closer = larger score
+        sx = src[2]; sy = src[3]
+        for t in targets:
+            if t[0] == src[0]:
+                continue
+            dx = t[2] - sx; dy = t[3] - sy
+            d = math.sqrt(dx * dx + dy * dy)
+            if d < 1e-6:
+                continue
+            score = 1.0 / (d + 1.0)  # nearest-pick: max score → min distance
+            if score > best_score:
+                best_score = score
+                best = t
+        if best is None:
+            continue
+        budget = int(src[5])
+        agg_ships = max(5, int(budget * 0.7))
+        if agg_ships > budget:
+            agg_ships = budget
+        spd = _fleet_speed(agg_ships)
+        if spd <= 0:
+            continue
+        dx = best[2] - sx; dy = best[3] - sy
+        d = math.sqrt(dx * dx + dy * dy)
+        flight = max(0.0, d - float(src[4]) - float(best[4]) - 0.1)
+        eta = max(1, int(math.ceil(flight / spd)))
+        if int(best[1]) == -1:
+            defenders_at_eta = float(best[5])
+        else:
+            defenders_at_eta = float(best[5]) + float(best[6]) * eta
+        needed = int(math.ceil(defenders_at_eta)) + 1
+        if needed > budget:
+            continue
+        ships = max(agg_ships, needed)
+        if ships > budget:
+            ships = budget
+        if ships < 5:
+            continue
+        angle = math.atan2(best[3] - sy, best[2] - sx)
+        move = [src[0], angle, ships]
+        if k_cap <= 0:
+            moves.append(move)
+        else:
+            candidates.append((-best_score, seq_idx, move))
+            seq_idx += 1
+    if k_cap > 0 and candidates:
+        candidates.sort()
+        moves = [c[2] for c in candidates[:k_cap]]
+    return moves
+
+
 # ---------------------------------------------------------------------------
 # Tier 3 (2026-05-29) — MLP-filtered lite_greedy
 # ---------------------------------------------------------------------------

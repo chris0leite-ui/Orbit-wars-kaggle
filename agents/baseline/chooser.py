@@ -19,7 +19,7 @@ import time
 
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
-from lib.opp_model import lite_greedy_policy, mlp_validated_policy, top_tier_mirror_policy
+from lib.opp_model import lite_greedy_policy, mlp_validated_policy, nearest_opp_policy, top_tier_mirror_policy
 
 from agents.baseline.value import select_favor_fn
 
@@ -37,6 +37,8 @@ def _select_opp_policy():
       - "mlp" → trained 3-MLP shot-validator filter on lite_greedy
                 candidates. Threshold via `BASELINE_OPP_MLP_THRESHOLD`
                 (default 0.5).
+      - "nearest" → nearest_opp_policy. Same lite_greedy scaffolding,
+                target = closest non-our planet (no ROI weighting).
 
     Legacy `BASELINE_OPP_TIER`:
       - "0" or unset → lite_greedy_policy (default, ~1-2ms/call).
@@ -50,6 +52,8 @@ def _select_opp_policy():
     model = os.environ.get("BASELINE_OPP_MODEL", "lite_greedy").strip()
     if model == "mlp":
         return mlp_validated_policy
+    if model == "nearest":
+        return nearest_opp_policy
     return (
         top_tier_mirror_policy
         if os.environ.get("BASELINE_OPP_TIER", "0").strip() == "1"
