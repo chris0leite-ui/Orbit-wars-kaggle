@@ -21,6 +21,11 @@ audit/bundle-parity-cache.json
 # Submissions / kernel build artifacts
 submissions/*
 !submissions/.gitkeep
+# Anchor copies — frozen byte-identical bundles for known ladder peaks.
+# Whitelisted so future re-bundles can't accidentally clobber them and so
+# they survive a clean clone (the bundler's `--force` overwrite-protection
+# only fires on git-tracked files; anchor copies belong on the branch).
+!submissions/*_anchor_*.py
 
 # External Kaggle kernels pulled for reference
 external/kernels/*/
