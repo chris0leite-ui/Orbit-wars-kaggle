@@ -22,11 +22,31 @@ import math
 import os
 import time
 
-# Production default: hybrid value head (composite in 2P, A2-favor in 4P).
-# `setdefault` lets local A/B drivers (fast.py) override via env var without
-# patching source, while submission-bundle / Kaggle-runner sees hybrid out
-# of the box. See agents/baseline/value.select_favor_fn for the dispatch.
-os.environ.setdefault("BASELINE_VALUE_HEAD", "hybrid")
+# Production default (2026-05-29 PM2): hybrid_spatial value head.
+# In 2P, adds a positional ship-value term (low-d_min planets weighted
+# higher) on top of hybrid; in 4P, falls through to hybrid (no change).
+# Composes with PROPOSER_REDEPLOY / PROPOSER_GANG_UP_SUPPORT below —
+# the spatial term gives the K-step leaf a reason to value own→own
+# redeploys that move ship-mass from interior to frontier.
+# `setdefault` lets local A/B drivers (fast.py) override via env var
+# without patching source, while submission-bundle / Kaggle-runner
+# sees the production default out of the box.
+# See agents/baseline/value.select_favor_fn for the dispatch.
+os.environ.setdefault("BASELINE_VALUE_HEAD", "hybrid_spatial")
+
+# Production default (2026-05-29 PM2): forward-redeploy candidate
+# generator ON. Emits own→own launches from peaceful interior planets
+# to frontier planets. Composes with BASELINE_VALUE_HEAD=hybrid_spatial:
+# the spatial leaf term rewards leaves with more ship-mass on
+# low-d_min planets. Set PROPOSER_REDEPLOY=off to disable.
+os.environ.setdefault("PROPOSER_REDEPLOY", "on")
+
+# Production default (2026-05-29 PM2): gang-up-support candidate
+# generator ON. Emits launches that stack arrival with already-in-flight
+# friendly fleets whose solo arrival would bounce. Reuses existing
+# cheap_marginal_value scoring via timeline-aware model.ships_at.
+# Set PROPOSER_GANG_UP_SUPPORT=off to disable.
+os.environ.setdefault("PROPOSER_GANG_UP_SUPPORT", "on")
 
 # Production default: trajectory chooser. v4 with wait_N>0 + wallclock
 # budgeting hits 42/64 = 65.6pct Wlo=0.534 vs v15 (n=64), point-estimate
