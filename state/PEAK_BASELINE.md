@@ -81,9 +81,9 @@ ever get scored.
 
 ## What is ACTIVE at peak (config that drives decisions)
 
-The wrapper preamble sets 9 env vars; `agents/baseline/main.py` adds
-a few setdefaults; many proposer/chooser knobs default-on. The full
-live surface:
+The PV_ETA wrapper preamble sets **10** env vars; `agents/baseline/main.py`
+adds a few setdefaults; many proposer/chooser knobs default-on. The full
+live surface (refreshed 2026-05-29 against actual code):
 
 | Env var | Set in | Value | Live call-site |
 |---|---|---|---|
@@ -92,10 +92,15 @@ live surface:
 | `BASELINE_JOINT_MAX_PAIRS` | wrapper | `60` | `chooser_trajectory.py:243` → cap at `:921`, `:926` |
 | `BASELINE_REINFORCE_EMIT` | wrapper | `1` | `baseline/main.py:72` → gates `emit_threat_reinforcements` body at `:319`, `:340` |
 | `BASELINE_REINFORCE_ANTICIPATE` | wrapper | `1` | `baseline/main.py:82` → gates anticipated-threat branch at `:373` |
+| **`BASELINE_NEUTRAL_BONUS`** | wrapper | **`2.0`** | `chooser_trajectory.py:71` → multiplied into `score_candidate_v4` at `:555-556` (solo, gated on `tgt.owner == -1`) and `score_candidate_v4_joint` at `:691-693` (joint, all-legs-neutral path). **Load-bearing** — stripping changes behavior. |
+| **`BASELINE_NEUTRAL_EARLY_HORIZON`** | wrapper | **`50`** | `chooser_trajectory.py:72` → gates `:557` (solo) and `:694` (joint) early-game bonus window (`world.step < 50`). |
+| **`BASELINE_NEUTRAL_EARLY_EXTRA`** | wrapper | **`1.5`** | `chooser_trajectory.py:73` → additional multiplier at `:558` (solo) and `:695` (joint) when inside the early-horizon window. Composes with `NEUTRAL_BONUS` → effective 3.0× on neutrals in first 50 turns. |
 | `BASELINE_ORBITAL_SAFETY` | wrapper | `1` | `proposer.py:443` (`cheap_marginal_value`), `:569` (`_target_holdable_after_capture`), `:683` (`_target_cost_parity_ok`); also threaded into `lib/world_model.time_to_enemy_threat`, `lib/scoring.expected_hold` |
+| **`BASELINE_PV_ETA`** | wrapper | **`1`** | `chooser_trajectory.py:119` (`PV_ETA_ENABLED`) → multiplies candidate Δ by `γ^(wait_N+eta)` at `:600` (solo, `score_candidate_v4`) and `:715` (joint, `score_candidate_v4_joint`, using `max(wait_N+leg_eta)` over legs). Modeling-correct PV pull-back; supersedes the `SHIP_TURN_KAPPA` band-aid (sub 53099001 disaster). |
 | `BASELINE_VALUE_HEAD` | `baseline/main.py:28` setdefault | `hybrid` | `value.py:224` → `select_favor_fn` returns `favor_hybrid` (composite in 2P, A2-favor in 4P) |
 | `BASELINE_CHOOSER` | `baseline/main.py:38` setdefault | `trajectory` | `baseline/main.py:903` → dispatches `choose_trajectory` |
 | `BASELINE_JOINT` | `baseline/main.py:46` setdefault | `1` | `chooser_trajectory.py:898` → enables joint enumeration |
+| `BASELINE_LEADER_FOCUS` | unset → default `1.0` (no-op) | `1.0` | `chooser_trajectory.py:61` → multiplied at `:559-562` (solo) and `:696-700` (joint) **when ≠ 1.0**. At default value the multiply is a no-op, but the code path is live — setting the env var DOES take effect (contrast: the doc previously called this inert). |
 | `BASELINE_GAMMA` | unset → default | `0.99` | `baseline/main.py:220` (`_gamma()`) — threaded everywhere |
 | `BASELINE_WALLCLOCK_MS` | unset → default | `600` | `baseline/main.py:213` (`_wallclock_ms()`) |
 | `PROPOSER_TRAJECTORY_FILTER` | unset → default-on | on | `proposer.py:993` |
@@ -111,11 +116,8 @@ live surface:
 
 | Env var | Where declared | Why inert |
 |---|---|---|
-| `BASELINE_NEUTRAL_BONUS=2.0` | wrapper line 30 | Read at `chooser_trajectory.py:71` (`NEUTRAL_BONUS_WEIGHT`); used ONLY in the dead v2 scorer `score_candidate` (`:309-312`). Live `score_candidate_v4` (called from `:865`) doesn't touch it. **Recommended live home:** inside `score_candidate_v4` after the leaf Δ, gated on `tgt.owner == -1`. |
-| `BASELINE_NEUTRAL_EARLY_HORIZON=50` | wrapper line 32 | Same — feeds dead v2 (`:72`, used at `:311`). |
-| `BASELINE_NEUTRAL_EARLY_EXTRA=1.5` | wrapper line 31 | Same — feeds dead v2 (`:73`, used at `:312`). |
-| `BASELINE_LEADER_FOCUS` (unset → 1.0) | not set in wrapper | `chooser_trajectory.py:61` → only `score_candidate` v2 reads it. Even if set, no effect on peak. |
-| `BASELINE_ME_REACTS=0`, `BASELINE_ME_DEFENDS=0` | not set | Module-level flags at `:139`, `:170`. Gated branches at `:493`, `:565`, `:581`, `:646`, `:659` never fire. Reproducibility scaffolding only. |
+| `BASELINE_SHIP_TURN_KAPPA` (unset → 0.0) | `chooser_trajectory.py:108` | `SHIP_TURN_KAPPA > 0.0` gate at `:590` (solo) and `:703` (joint) is false at default. PV_ETA superseded this band-aid (see sub 53099001 disaster); leave at 0.0. |
+| `BASELINE_ME_REACTS=0`, `BASELINE_ME_DEFENDS=0` | not set | Module-level flags at `chooser_trajectory.py:187, 218`. Gated branches at `:443`, `:523-540`, `:666-680` never fire. Reproducibility scaffolding only — and **asymmetric** in the candidate vs baseline rollout if ever enabled (Fragility #4). |
 | `BASELINE_LEDGER` (unset → off) | not set | `baseline/main.py:140`, `:844`. With it off, `_PENDING_LAUNCHES` is dead, `choose_trajectory`'s `commits` return value is discarded, and `wait_N > 0` winners emit nothing this turn AND nothing next turn — wait-grid candidates are effectively pruned. |
 | `BASELINE_LEDGER_MODE=hard` | not set | Only meaningful with `BASELINE_LEDGER=on`. Dead. |
 | `BASELINE_OPENING_MILP=0` | not set | `baseline/main.py:155`, gated branch at `:881` never runs. |
@@ -147,17 +149,21 @@ env vars without an isolated n=32 A/B against the peak anchor first.
    chooser, OR in the trajectory branch promote `commits` to
    `due_moves` next turn unconditionally.
 
-2. **NEUTRAL_BONUS family fakes a "neutral-attack tilt" without
-   applying it.** `agents/baseline_joint_aggr_consolidated_orbitfix/main.py:30-32`
-   + `chooser_trajectory.py:309-312`. The wrapper bundle name and
-   docstring imply neutral-targeting bias; in reality
-   `score_candidate_v4` ignores it. A future iteration that "tunes"
-   the constants will see zero LB movement and conclude neutrals
-   don't matter — wrong conclusion from a dead variable.
-   **Mitigation:** either delete the three setdefaults from the
-   wrapper (zero behavior change), or wire the bonus into
-   `score_candidate_v4` after the leaf Δ (real behavior change —
-   must re-A/B at n=32 panel).
+2. **NEUTRAL_BONUS family is load-bearing — do not "strip the dormant
+   env vars" without an A/B.** (Updated 2026-05-29 after audit.) The
+   three wrapper setdefaults — `BASELINE_NEUTRAL_BONUS=2.0`,
+   `BASELINE_NEUTRAL_EARLY_HORIZON=50`, `BASELINE_NEUTRAL_EARLY_EXTRA=1.5`
+   — are **wired into the live `score_candidate_v4` and `_v4_joint`** at
+   `chooser_trajectory.py:555-558` (solo) and `:691-695` (joint). They
+   double-bonus neutral captures in the first 50 turns (effective 3.0×).
+   The earlier doc warning (was: "feeds dead v2 (`:309-312`)") is
+   **obsolete** — the v2 scorer no longer exists; only v4 is live. The
+   new risk: a future iteration reading the old "DORMANT" classification
+   may delete the wrapper lines as cleanup and silently lose the
+   neutral-tilt that's actively contributing to the peak.
+   **Mitigation:** `tests/test_wrapper_active_env_vars.py` pins the
+   wrapper preamble values; `tests/test_peak_dormant_state.py` pins the
+   active/dormant classification.
 
 3. **`favor` leaf double-counts production via `pv_horizon`.**
    `value.py:127` + `lib/scoring.py:118-122`. `pv` is computed at
