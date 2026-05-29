@@ -908,6 +908,17 @@ def propose(my_planets, target_pool, world, model, me: int,
         (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N)
     sorted by cheap_delta descending.
     """
+    # Rule B early prune (efficiency only — 2026-05-29). When launch
+    # rules are on, an opponent capture arriving beyond the predictability
+    # horizon K is dropped post-emit anyway (agents.baseline.launch_rules);
+    # skip enumerating + rolling-out those fire-now opponent candidates so
+    # the chooser doesn't spend wallclock on doomed launches. NEUTRAL
+    # under-capture is NOT pruned here — same-tick coalitions must survive
+    # to the post-pass for combat evaluation (preserves BASELINE_JOINT).
+    from agents.baseline.launch_rules import capture_horizon_k, launch_rules_enabled
+    _opp_eta_prune = launch_rules_enabled()
+    _k = capture_horizon_k()
+
     prerank = []
     for src in my_planets:
         if int(src.ships) < MIN_FLEET_SIZE:
@@ -920,6 +931,9 @@ def propose(my_planets, target_pool, world, model, me: int,
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
                 angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
+                if (_opp_eta_prune and int(tgt.owner) >= 0
+                        and int(tgt.owner) != me and int(eta) > _k):
+                    continue
                 horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if horizon >= baseline_len:
                     horizon = baseline_len - 1
