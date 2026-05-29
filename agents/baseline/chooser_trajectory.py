@@ -806,6 +806,26 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     if not prerank:
         return [], []
 
+    # Reframe A — additive ML-logit term. When BASELINE_ML_LAMBDA != 0,
+    # featurize every prerank entry once (single batched predict_proba)
+    # and add λ * (logit(P_success) - logit(0.5)) to each candidate's
+    # score AFTER score_candidate_v4 returns (Option B: not γ-discounted;
+    # the Booster's 45-d feature schema already includes shot_eta so the
+    # ML term carries its own time sensitivity). Featurization runs
+    # BEFORE the chooser's wallclock deadline starts (it consumes the
+    # agent's per-turn budget but doesn't eat the scoring loop's
+    # `safe_deadline`, which would force pre-bail). Single-line import:
+    # bundler's per-line strip regex leaks parenthesised multi-line
+    # imports as indented orphans.
+    from agents.baseline._ml_logit import ml_is_enabled, ml_featurize_prerank, ml_score_candidates  # noqa: E501
+    ml_scores: dict = {}
+    if ml_is_enabled():
+        try:
+            feats = ml_featurize_prerank(prerank, world, model)
+            ml_scores = ml_score_candidates(feats)
+        except Exception:
+            ml_scores = {}
+
     deadline = time.perf_counter() + wallclock_ms / 1000.0
 
     # v4 (default, 2026-05-17 PM): Δ-from-idle-baseline scoring with
@@ -822,24 +842,6 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         == "on"
     )
     favor_fn = select_favor_fn()  # honours BASELINE_VALUE_HEAD env var
-
-    # Reframe A — additive ML-logit term. When BASELINE_ML_LAMBDA != 0,
-    # featurize every prerank entry once (single batched predict_proba)
-    # and add λ * (logit(P_success) - logit(0.5)) to each candidate's
-    # score AFTER score_candidate_v4 returns (Option B: not γ-discounted;
-    # the Booster's 45-d feature schema already includes shot_eta so the
-    # ML term carries its own time sensitivity). The ml_* names are
-    # prefixed so they survive bundler import-stripping unambiguously.
-    # Single-line import: bundler's per-line strip regex leaks continuation
-    # lines from a parenthesised multi-line import.
-    from agents.baseline._ml_logit import ml_is_enabled, ml_featurize_prerank, ml_score_candidates  # noqa: E501
-    ml_scores: dict = {}
-    if ml_is_enabled():
-        try:
-            feats = ml_featurize_prerank(prerank, world, model)
-            ml_scores = ml_score_candidates(feats)
-        except Exception:
-            ml_scores = {}
 
     # Pre-pass: find the largest horizon we'll need so the baseline runs
     # deep enough for every candidate (including wait_N>0, whose proposer
