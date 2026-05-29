@@ -823,6 +823,21 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     )
     favor_fn = select_favor_fn()  # honours BASELINE_VALUE_HEAD env var
 
+    # Reframe A — additive ML-logit term. When BASELINE_ML_LAMBDA != 0,
+    # featurize every prerank entry once (single batched predict_proba)
+    # and add λ * (logit(P_success) - logit(0.5)) to each candidate's
+    # score AFTER score_candidate_v4 returns (Option B: not γ-discounted;
+    # the Booster's 45-d feature schema already includes shot_eta so the
+    # ML term carries its own time sensitivity).
+    ml_scores: dict = {}
+    from agents.baseline import _ml_logit as _ml
+    if _ml.is_enabled():
+        try:
+            feats = _ml.featurize_prerank(prerank, world, model)
+            ml_scores = _ml.score_candidates(feats)
+        except Exception:
+            ml_scores = {}
+
     # Pre-pass: find the largest horizon we'll need so the baseline runs
     # deep enough for every candidate (including wait_N>0, whose proposer
     # horizon already accounts for the wait via
@@ -907,6 +922,11 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                     int(eta_traced) if eta_traced is not None else 0,
                     float(score),
                 )
+                if ml_scores:
+                    score = score + _ml.get_lambda() * _ml.lookup(
+                        ml_scores, int(src.id), int(tgt.id),
+                        int(ships), float(angle), int(wait_N),
+                    )
                 if score > 0.0:
                     scored.append((score, src, tgt, ships, angle, wait_N))
                     # Track sources with viable solo (for joint gating).
@@ -989,6 +1009,19 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         from agents.baseline._trace_hook import trace_joint
                         trace_joint(world, model, me, launches,
                                     float(j_score))
+                        if ml_scores:
+                            # Sum-of-logits across legs (independence
+                            # assumption; matches delta being additive
+                            # across legs).
+                            leg_sum = sum(
+                                _ml.lookup(
+                                    ml_scores,
+                                    int(L[0].id), int(L[1].id),
+                                    int(L[2]), float(L[3]), int(L[4]),
+                                )
+                                for L in launches
+                            )
+                            j_score = j_score + _ml.get_lambda() * leg_sum
                         if j_score > 0.0:
                             scored.append((j_score, "joint", launches))
 
