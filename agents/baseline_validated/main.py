@@ -1,8 +1,8 @@
-"""baseline + konbu17-style shot validator filter.
+"""baseline + konbu17-style shot validator filter (Phase 2 v2 — LightGBM).
 
 Wraps `agents.baseline.main.agent`. Calls the inner agent to produce the
-per-turn emit list, then filters out emits whose ensemble-averaged
-P(success) is below threshold (default 0.30).
+per-turn emit list, then filters out emits whose LightGBM-Booster
+P(success) is below threshold.
 
 Self-reinforcement emits (target already owned by us) are passed through
 unfiltered — konbu17 design: these are never filtered at training or
@@ -12,15 +12,16 @@ NO topk1 filter applied (PM3 decision): the production chooser already
 does multi-source coordination; topk1 would destroy that strength. We
 only drop sub-threshold emits.
 
-Weights live in `_WEIGHTS_B64` (base64-encoded npz). The placeholder
-below is empty; `scripts/embed_validator_weights.py` patches it from
-`data/shot_validator/validator_ensemble_weights.npz` after training.
+The booster is embedded as a gzip+base64 LightGBM model_to_string()
+dump in `_BOOSTER_B64`. `scripts/embed_validator_weights.py` patches
+both the blob and the matching `_THRESHOLD_DEFAULT` after training
+(`scripts/train_validator.py`).
 """
 
 from __future__ import annotations
 
 import base64
-import io
+import gzip
 import os
 from typing import Any
 
@@ -32,49 +33,31 @@ from agents.baseline.main import agent as _inner_agent
 # orphans (IndentationError at runtime). Friction tag:
 # `bundler-modular-agent-namespace-access-breaks-bundle`.
 from lib.shot_features import FEATURE_DIM, encode_shot_features, target_owned_by
+from lib._validator_tree_walker import parse_booster_text, predict_proba
 
-# === inlined weights (base64-encoded npz) ===
+# === inlined booster (gzip+base64 of LightGBM model_to_string()) ===
 # Populated by `scripts/embed_validator_weights.py` after training.
-_WEIGHTS_B64 = ""  # blanked during Phase 2 v2 Stage 1; re-embed via scripts/embed_validator_weights.py after Stage 4 retrains
-# === end inlined weights ===
+_BOOSTER_B64 = ""
+_THRESHOLD_DEFAULT = 0.30
+# === end inlined booster ===
 
-# Cached parsed weights (3-model ensemble).
-_MODELS: list[dict] | None = None
+_PARSED = None  # cached ParsedBooster
 _THRESHOLD: float | None = None
 _LOAD_FAILED: bool = False
 
 
-def _load_weights() -> None:
-    global _MODELS, _THRESHOLD, _LOAD_FAILED
-    if not _WEIGHTS_B64:
+def _load_booster() -> None:
+    global _PARSED, _THRESHOLD, _LOAD_FAILED
+    if not _BOOSTER_B64:
         _LOAD_FAILED = True
         return
     try:
-        blob = base64.b64decode(_WEIGHTS_B64)
-        with np.load(io.BytesIO(blob)) as npz:
-            threshold = float(npz["threshold"])
-            models: list[dict] = []
-            for i in range(3):
-                P = {}
-                for k in ("W0", "b0", "W1", "b1", "W2", "b2"):
-                    P[k] = np.ascontiguousarray(npz[f"m{i}_{k}"]).astype(np.float32)
-                models.append(P)
-        _MODELS = models
-        _THRESHOLD = threshold
+        blob_gz = base64.b64decode(_BOOSTER_B64)
+        text = gzip.decompress(blob_gz).decode("utf-8")
+        _PARSED = parse_booster_text(text)
+        _THRESHOLD = float(_THRESHOLD_DEFAULT)
     except Exception:
         _LOAD_FAILED = True
-
-
-def _ensemble_proba(X: np.ndarray) -> np.ndarray:
-    """Average sigmoid across the 3 MLPs. X is (B, 24)."""
-    assert _MODELS is not None
-    out = np.zeros(len(X), dtype=np.float32)
-    for P in _MODELS:
-        h = np.maximum(0.0, X @ P["W0"] + P["b0"])
-        h = np.maximum(0.0, h @ P["W1"] + P["b1"])
-        s = (h @ P["W2"] + P["b2"]).ravel()
-        out += 1.0 / (1.0 + np.exp(-np.clip(s, -30.0, 30.0)))
-    return out / float(len(_MODELS))
 
 
 def _focal_seat_from_obs(obs: Any) -> int:
@@ -89,10 +72,10 @@ def agent(obs: Any, configuration: Any = None) -> list:
     if not inner:
         return []
 
-    if _MODELS is None and not _LOAD_FAILED:
-        _load_weights()
-    # No weights -> pass-through (matches production baseline).
-    if _MODELS is None or _THRESHOLD is None:
+    if _PARSED is None and not _LOAD_FAILED:
+        _load_booster()
+    # No booster -> pass-through (matches production baseline).
+    if _PARSED is None or _THRESHOLD is None:
         return inner
 
     focal_seat = _focal_seat_from_obs(obs)
@@ -101,10 +84,10 @@ def agent(obs: Any, configuration: Any = None) -> list:
     if os.environ.get("BASELINE_VALIDATOR", "1") == "0":
         return inner
 
-    # Build World + WorldModel ONCE per turn. The encoder's Tier 1+2
-    # features each cost ~5 ms on construction; with ~50 emits/turn the
-    # per-emit rebuild would be 250 ms/turn (eats the per-turn budget).
-    # Build failures fall through to None → encoder slow-path builds them
+    # Build World + WorldModel ONCE per turn. The encoder's Tier 1+2 +
+    # Stage 1.5 features each cost ~5 ms on construction; with ~50
+    # emits/turn the per-emit rebuild would be 250 ms/turn. Build
+    # failures fall through to None → encoder slow-path builds them
     # itself (matches synthetic-obs behaviour).
     world = None
     world_model = None
@@ -134,7 +117,7 @@ def agent(obs: Any, configuration: Any = None) -> list:
         return inner
 
     X = np.stack([f for _, f in to_score]).astype(np.float32)
-    probs = _ensemble_proba(X)
+    probs = predict_proba(_PARSED, X)
     for (idx_in_inner, _), p in zip(to_score, probs):
         if p < _THRESHOLD:
             survivors_mask[idx_in_inner] = False

@@ -66,6 +66,10 @@ _STRIP_PATTERNS = (
         r"^\s*from lib\.shot_features\s+import\s+FEATURE_DIM,\s*encode_shot_features,\s*target_owned_by\s*$",
         re.MULTILINE,
     ),
+    re.compile(
+        r"^\s*from lib\._validator_tree_walker\s+import\s+parse_booster_text,\s*predict_proba\s*$",
+        re.MULTILINE,
+    ),
 )
 
 

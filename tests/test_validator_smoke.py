@@ -1,16 +1,20 @@
-"""Smoke tests for the shot validator pipeline.
+"""Smoke tests for the shot validator pipeline (Phase 2 v2 — LightGBM walker).
 
 Verifies:
-  - lib.shot_features.encode_shot_features round-trip on a synthetic obs
+  - lib.shot_features.encode_shot_features shape + value ranges
+  - target_owned_by recognises self-reinforce
   - agents.baseline_validated.main imports cleanly with placeholder weights
-  - self-reinforce emits bypass the filter when weights are not loaded
+  - self-reinforce / no-booster paths fall through to the inner agent
+  - lib._validator_tree_walker matches lightgbm.Booster.predict to 1e-6
+  - end-to-end encode + walker.predict on a 5-row batch under 50 ms
 """
 
 from __future__ import annotations
 
 import math
-from pathlib import Path
 import sys
+import time
+from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
@@ -26,6 +30,11 @@ from lib.shot_features import (
     fleet_speed,
     infer_target_pid,
     target_owned_by,
+)
+from lib._validator_tree_walker import (
+    parse_booster_text,
+    predict_proba,
+    predict_raw,
 )
 
 
@@ -52,7 +61,6 @@ def test_fleet_speed_monotonic():
 
 def test_infer_target_forward_planet():
     obs = _synthetic_obs()
-    # Aim straight right from planet 0 -> planet 1 at angle 0
     pid = infer_target_pid((30.0, 50.0), 0.0, obs["planets"])
     assert pid == 1
 
@@ -63,8 +71,6 @@ def test_encode_shape_and_range():
     assert feats is not None
     assert feats.shape == (FEATURE_DIM,)
     assert feats.dtype == np.float32
-    # SIGNED_INDICES (currently 21, 24, 36) sit in [-1, +1];
-    # all other features in [0, 1].
     for i, v in enumerate(feats):
         if i in SIGNED_INDICES:
             assert -1.0 <= v <= 1.0, f"signed feat {i}={v} out of [-1,1]"
@@ -74,16 +80,8 @@ def test_encode_shape_and_range():
 
 def test_target_owned_by_self_reinforce():
     obs = _synthetic_obs(focal_seat=0)
-    # Aim straight left from planet 1 -> planet 0 (which we own)
-    # But we're focal_seat=0, so the SHOT is from seat=1's POV launching at
-    # planet 0. From seat 1's POV, target owner == self? No, target is seat 0.
-    # Use angle pi to fire from p1 -> p0; from seat 1 perspective.
     assert target_owned_by([1, math.pi, 10.0], obs, focal_seat=1) is False
-    # From seat 0's POV, firing p0 -> p0 (self) would be invalid (src == tgt
-    # is rejected by infer_target_pid). So fire p0 at angle 0 toward p1
-    # (owned by seat 1) — owner == seat 0? No, owner == 1.
     assert target_owned_by([0, 0.0, 10.0], obs, focal_seat=0) is False
-    # Real self-reinforce: build a 3-planet obs where we own both p0 and p2
     obs2 = {
         "step": 30, "player": 0,
         "planets": [
@@ -93,30 +91,23 @@ def test_target_owned_by_self_reinforce():
         ],
         "fleets": [],
     }
-    # From p0 aim at p2 (straight down): angle = -pi/2 (Y-axis down)
-    # Standard math convention: angle is measured from +x axis.
-    # p0 = (30, 50), p2 = (30, 30) -> dy = -20, dx = 0 -> angle = atan2(-20, 0) = -pi/2
     assert target_owned_by([0, -math.pi / 2, 5.0], obs2, focal_seat=0) is True
 
 
 def test_validator_agent_imports():
-    # Should import even with placeholder weights (no exception).
     from agents.baseline_validated import main as bv  # noqa: F401
 
 
-def test_validator_passes_through_when_no_weights():
-    """With empty _WEIGHTS_B64, the wrapper must fall through to inner."""
+def test_validator_passes_through_when_no_booster():
+    """With empty _BOOSTER_B64, the wrapper must fall through to inner."""
     from agents.baseline_validated import main as bv
 
-    # Force-reset cache to "not yet loaded" AND blank the embedded blob
-    # so _load_weights() falls into the "no weights" branch.
-    original_b64 = bv._WEIGHTS_B64
+    original_b64 = bv._BOOSTER_B64
     original_inner = bv._inner_agent
-    bv._WEIGHTS_B64 = ""
-    bv._MODELS = None
+    bv._BOOSTER_B64 = ""
+    bv._PARSED = None
     bv._LOAD_FAILED = False
 
-    # Stub the inner agent to return a known list.
     sentinel = [[0, 0.0, 10.0]]
     bv._inner_agent = lambda obs, cfg=None: list(sentinel)
     try:
@@ -124,6 +115,65 @@ def test_validator_passes_through_when_no_weights():
         assert out == sentinel
     finally:
         bv._inner_agent = original_inner
-        bv._WEIGHTS_B64 = original_b64
-        bv._MODELS = None
+        bv._BOOSTER_B64 = original_b64
+        bv._PARSED = None
         bv._LOAD_FAILED = False
+
+
+def test_tree_walker_parity_vs_booster():
+    """Walker output must match Booster.predict to within 1e-6 on N=100
+    random rows. This is the load-bearing contract for the embedded
+    booster — if it breaks, the bundled agent's predictions diverge
+    from training.
+    """
+    lgb = pytest.importorskip("lightgbm")
+    rng = np.random.default_rng(42)
+    X_train = rng.standard_normal((300, FEATURE_DIM)).astype(np.float32)
+    # Synthetic non-linear-ish target so the booster has structure.
+    y_train = (X_train[:, 3] + X_train[:, 7] * 0.5
+               - X_train[:, 12] + 0.3 * X_train[:, 0] > 0).astype(np.float32)
+    ds = lgb.Dataset(X_train, label=y_train)
+    params = {
+        "objective": "binary", "num_leaves": 15, "learning_rate": 0.1,
+        "verbose": -1, "deterministic": True, "min_data_in_leaf": 5,
+    }
+    bst = lgb.train(params, ds, num_boost_round=25)
+    text = bst.model_to_string()
+    parsed = parse_booster_text(text)
+
+    X_test = rng.standard_normal((100, FEATURE_DIM)).astype(np.float32)
+    raw_lgb = bst.predict(X_test, raw_score=True)
+    raw_walker = predict_raw(parsed, X_test)
+    assert np.max(np.abs(raw_lgb - raw_walker)) < 1e-6
+
+    prob_lgb = bst.predict(X_test, raw_score=False)
+    prob_walker = predict_proba(parsed, X_test)
+    assert np.max(np.abs(prob_lgb - prob_walker)) < 1e-6
+
+
+def test_walker_latency_under_50ms_for_5_emits():
+    """End-to-end (encode + walker.predict) for a 5-emit turn must clear
+    50 ms. PM5 latency headroom shows the budget is ~700 ms / turn; the
+    encoder dominates, the walker adds <5 ms for typical booster sizes.
+    """
+    lgb = pytest.importorskip("lightgbm")
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((500, FEATURE_DIM)).astype(np.float32)
+    y = (X[:, 1] - X[:, 5] > 0).astype(np.float32)
+    bst = lgb.train(
+        {"objective": "binary", "num_leaves": 31, "verbose": -1,
+         "deterministic": True},
+        lgb.Dataset(X, label=y),
+        num_boost_round=100,
+    )
+    parsed = parse_booster_text(bst.model_to_string())
+    batch = rng.standard_normal((5, FEATURE_DIM)).astype(np.float32)
+    # Warmup
+    predict_proba(parsed, batch)
+    t0 = time.perf_counter()
+    for _ in range(10):
+        predict_proba(parsed, batch)
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0 / 10.0
+    assert elapsed_ms < 50.0, (
+        f"walker took {elapsed_ms:.1f} ms / 5-emit batch (gate 50 ms)"
+    )

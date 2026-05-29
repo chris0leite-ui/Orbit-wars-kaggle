@@ -1,17 +1,18 @@
-"""Train the 3-MLP ensemble shot validator.
+"""Train a single LightGBM Booster shot validator (Phase 2 v2).
 
 Loads `data/shot_validator/labels.jsonl` (produced by
-`scripts/gen_validator_corpus.py`), does GAME-LEVEL 80/20 split (row-level
-split leaks ~15pp val acc per konbu17's notebook), trains 3 MLPs with seeds
-[42, 100, 7], and writes ensemble weights to
-`data/shot_validator/validator_ensemble_weights.npz`.
+`scripts/gen_validator_corpus.py`), does a GAME-LEVEL 80/20 split (row-
+level split leaks ~15pp val acc per konbu17's notebook), trains one
+binary-objective Booster with `scale_pos_weight=(1-p)/p`, and writes
+the model text to `data/shot_validator/validator_booster.txt`.
 
-Architecture (konbu17 cell 11 lines 496-505):
-    Linear(24, 64) -> ReLU -> Linear(64, 32) -> ReLU -> Linear(32, 1)
-    BCEWithLogitsLoss(pos_weight=(1-p)/p), Adam lr=1e-3, batch 512, 40 epochs
+Replaces the 3-MLP ensemble that shipped in PM5. Pure-Python inference
+goes through `lib._validator_tree_walker.predict_proba`; the walker is
+parity-tested against `Booster.predict(raw_score=True)` to ~1e-6 in
+`tests/test_validator_smoke.py`.
 
-Pos_rate calibration is the load-bearing decision; aborts if pos_rate is
-outside [0.40, 0.85].
+Pos_rate calibration is the load-bearing decision; aborts if pos_rate
+is outside [0.40, 0.85].
 
 Usage:
     python -m scripts.train_validator
@@ -31,16 +32,29 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 DEFAULT_LABELS = REPO / "data" / "shot_validator" / "labels.jsonl"
-DEFAULT_WEIGHTS = REPO / "data" / "shot_validator" / "validator_ensemble_weights.npz"
+DEFAULT_BOOSTER = REPO / "data" / "shot_validator" / "validator_booster.txt"
 
-SEEDS = (42, 100, 7)
 THRESHOLD = 0.30
-HIDDEN1 = 64
-HIDDEN2 = 32
-EPOCHS = 40
-BATCH = 512
-LR = 1e-3
 FEATURE_DIM = 45
+
+# LightGBM hyperparams — tuned conservatively for ~16-20k labeled rows.
+# Phase 2 v2 plan target: val_acc >= 0.85, Brier <= 0.12.
+NUM_BOOST_ROUND = 400
+EARLY_STOPPING_ROUNDS = 30
+LGB_PARAMS = {
+    "objective": "binary",
+    "metric": ["binary_logloss", "binary_error"],
+    "num_leaves": 31,
+    "learning_rate": 0.05,
+    "feature_fraction": 0.9,
+    "bagging_fraction": 0.9,
+    "bagging_freq": 5,
+    "min_data_in_leaf": 20,
+    "lambda_l1": 0.0,
+    "lambda_l2": 0.1,
+    "verbose": -1,
+    "deterministic": True,
+}
 
 
 def _load_corpus(path: Path) -> tuple[np.ndarray, np.ndarray, list[str]]:
@@ -59,8 +73,8 @@ def _load_corpus(path: Path) -> tuple[np.ndarray, np.ndarray, list[str]]:
 def _game_level_split(
     game_ids: list[str], val_frac: float, rng: np.random.Generator,
 ) -> np.ndarray:
-    """Returns a boolean mask True=train, False=val. Splits at the game
-    level (all examples from a game go to one side or the other)."""
+    """True=train, False=val. Splits at the game level (all examples
+    from one game go to one side)."""
     unique = sorted(set(game_ids))
     rng.shuffle(unique)
     n_val = max(1, int(round(len(unique) * val_frac)))
@@ -68,114 +82,12 @@ def _game_level_split(
     return np.asarray([gid not in val_games for gid in game_ids])
 
 
-def _init_mlp(rng: np.random.Generator) -> dict:
-    He = lambda fi, fo: rng.standard_normal((fi, fo), dtype=np.float32) * np.sqrt(2.0 / fi)
-    return {
-        "W0": He(FEATURE_DIM, HIDDEN1), "b0": np.zeros(HIDDEN1, np.float32),
-        "W1": He(HIDDEN1, HIDDEN2), "b1": np.zeros(HIDDEN2, np.float32),
-        "W2": (rng.standard_normal((HIDDEN2, 1), dtype=np.float32) * np.sqrt(2.0 / HIDDEN2) * 0.1),
-        "b2": np.zeros(1, np.float32),
-    }
-
-
-def _forward(P: dict, X: np.ndarray) -> tuple[np.ndarray, tuple]:
-    z0 = X @ P["W0"] + P["b0"]; a0 = np.maximum(0, z0)
-    z1 = a0 @ P["W1"] + P["b1"]; a1 = np.maximum(0, z1)
-    z2 = (a1 @ P["W2"] + P["b2"]).ravel()
-    return z2, (X, z0, a0, z1, a1)
-
-
-def _bce_with_logits_grad(
-    s: np.ndarray, y: np.ndarray, pos_weight: float,
-) -> np.ndarray:
-    """Gradient of BCEWithLogitsLoss(pos_weight=w) wrt logits.
-
-    BCE_w(s, y) = -[w * y * log σ(s) + (1-y) * log(1-σ(s))]
-    Gradient wrt s = σ(s) * (1 + (w-1) y) - w y
-                   = (1 + (w-1)y) * σ(s) - w y
-
-    Equivalent simpler form when w=1: σ(s) - y.
-    """
-    sig = 1.0 / (1.0 + np.exp(-np.clip(s, -30, 30)))
-    return (1.0 + (pos_weight - 1.0) * y) * sig - pos_weight * y
-
-
-def _backward(
-    P: dict, cache: tuple, s: np.ndarray, y: np.ndarray, pos_weight: float,
-) -> dict:
-    X, z0, a0, z1, a1 = cache
-    n = float(len(y))
-    g = (_bce_with_logits_grad(s, y, pos_weight) / n).reshape(-1, 1)
-    gW2 = a1.T @ g; gb2 = g.sum(axis=0)
-    da1 = g @ P["W2"].T; dz1 = da1 * (z1 > 0)
-    gW1 = a0.T @ dz1; gb1 = dz1.sum(axis=0)
-    da0 = dz1 @ P["W1"].T; dz0 = da0 * (z0 > 0)
-    gW0 = X.T @ dz0; gb0 = dz0.sum(axis=0)
-    return {"W0": gW0, "b0": gb0, "W1": gW1, "b1": gb1, "W2": gW2, "b2": gb2}
-
-
-class _Adam:
-    def __init__(self, P: dict, lr: float = LR):
-        self.lr, self.t = lr, 0
-        self.m = {k: np.zeros_like(v) for k, v in P.items()}
-        self.v = {k: np.zeros_like(v) for k, v in P.items()}
-
-    def step(self, P: dict, G: dict,
-             b1: float = 0.9, b2: float = 0.999, eps: float = 1e-8) -> None:
-        self.t += 1
-        for k in P:
-            self.m[k] = b1 * self.m[k] + (1 - b1) * G[k]
-            self.v[k] = b2 * self.v[k] + (1 - b2) * (G[k] ** 2)
-            mhat = self.m[k] / (1 - b1 ** self.t)
-            vhat = self.v[k] / (1 - b2 ** self.t)
-            P[k] -= self.lr * mhat / (np.sqrt(vhat) + eps)
-
-
-def _train_one(
-    X_tr: np.ndarray, y_tr: np.ndarray, X_va: np.ndarray, y_va: np.ndarray,
-    seed: int, pos_weight: float,
-) -> tuple[dict, dict]:
-    rng = np.random.default_rng(seed)
-    P = _init_mlp(rng)
-    opt = _Adam(P, lr=LR)
-    history = []
-    for ep in range(EPOCHS):
-        idx = rng.permutation(len(X_tr))
-        losses = []
-        for b in range(0, len(X_tr), BATCH):
-            bi = idx[b:b+BATCH]
-            Xb, yb = X_tr[bi], y_tr[bi]
-            s, cache = _forward(P, Xb)
-            sig = 1.0 / (1.0 + np.exp(-np.clip(s, -30, 30)))
-            sig = np.clip(sig, 1e-7, 1 - 1e-7)
-            L = -(pos_weight * yb * np.log(sig) + (1 - yb) * np.log(1 - sig)).mean()
-            losses.append(L)
-            G = _backward(P, cache, s, yb, pos_weight)
-            opt.step(P, G)
-        s_va, _ = _forward(P, X_va)
-        pred_va = (1.0 / (1.0 + np.exp(-np.clip(s_va, -30, 30)))) >= 0.5
-        va_acc = float((pred_va == (y_va >= 0.5)).mean())
-        history.append({"epoch": ep + 1, "train_loss": float(np.mean(losses)),
-                        "val_acc": va_acc})
-        if ep == 0 or (ep + 1) % 10 == 0 or ep == EPOCHS - 1:
-            print(f"    seed={seed} ep={ep+1:>3d} train_L={np.mean(losses):.4f} "
-                  f"val_acc={va_acc:.3f}")
-    return P, {"history": history, "seed": seed}
-
-
-def _ensemble_predict(models: list[dict], X: np.ndarray) -> np.ndarray:
-    """Average sigmoid across the ensemble."""
-    out = np.zeros(len(X), dtype=np.float32)
-    for P in models:
-        s, _ = _forward(P, X)
-        out += 1.0 / (1.0 + np.exp(-np.clip(s, -30, 30)))
-    return out / len(models)
-
-
 def main(argv=None) -> int:
+    import lightgbm as lgb  # heavy import; keep inside main
+
     p = argparse.ArgumentParser()
     p.add_argument("--labels", default=str(DEFAULT_LABELS))
-    p.add_argument("--out", default=str(DEFAULT_WEIGHTS))
+    p.add_argument("--out", default=str(DEFAULT_BOOSTER))
     p.add_argument("--val-frac", type=float, default=0.20)
     args = p.parse_args(argv)
 
@@ -198,8 +110,9 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 2
 
-    pos_weight = (1 - pos_rate) / pos_rate
-    print(f"BCE pos_weight = (1-{pos_rate:.3f})/{pos_rate:.3f} = {pos_weight:.3f}")
+    scale_pos_weight = (1 - pos_rate) / pos_rate
+    print(f"scale_pos_weight = (1-{pos_rate:.3f})/{pos_rate:.3f} = "
+          f"{scale_pos_weight:.3f}")
 
     rng_split = np.random.default_rng(0)
     train_mask = _game_level_split(game_ids, args.val_frac, rng_split)
@@ -208,41 +121,84 @@ def main(argv=None) -> int:
     print(f"split: train_n={len(y_tr)}  val_n={len(y_va)}  "
           f"(val_games={args.val_frac:.0%}, GAME-LEVEL, not row-level)")
 
-    models = []
-    for seed in SEEDS:
-        print(f"\n--- training seed={seed} ---")
-        P, _meta = _train_one(X_tr, y_tr, X_va, y_va, seed, pos_weight)
-        models.append(P)
+    params = dict(LGB_PARAMS)
+    params["scale_pos_weight"] = scale_pos_weight
+    ds_train = lgb.Dataset(X_tr, label=y_tr, free_raw_data=False)
+    ds_val = lgb.Dataset(X_va, label=y_va, reference=ds_train,
+                         free_raw_data=False)
 
-    # Final ensemble val metrics
-    pred_va = _ensemble_predict(models, X_va)
+    callbacks = [
+        lgb.early_stopping(EARLY_STOPPING_ROUNDS, verbose=True),
+        lgb.log_evaluation(period=50),
+    ]
+    bst = lgb.train(
+        params, ds_train,
+        num_boost_round=NUM_BOOST_ROUND,
+        valid_sets=[ds_train, ds_val],
+        valid_names=["train", "val"],
+        callbacks=callbacks,
+    )
+    best_iter = bst.best_iteration
+    print(f"\nbest_iteration = {best_iter}")
+
+    # Val metrics at the deployment threshold
+    pred_va = bst.predict(X_va, num_iteration=best_iter)
     pred_va_bin = (pred_va >= 0.5).astype(np.float32)
     acc = float((pred_va_bin == y_va).mean())
     brier = float(((pred_va - y_va) ** 2).mean())
-    # Accuracy at the deployment threshold
     pred_thr = (pred_va >= THRESHOLD).astype(np.float32)
     acc_thr = float((pred_thr == y_va).mean())
     tp = int(((pred_thr == 1) & (y_va == 1)).sum())
     fp = int(((pred_thr == 1) & (y_va == 0)).sum())
     tn = int(((pred_thr == 0) & (y_va == 0)).sum())
     fn = int(((pred_thr == 0) & (y_va == 1)).sum())
-    print(f"\n=== ensemble val ===")
+    print(f"\n=== val ===")
     print(f"  val_acc@0.5={acc:.3f}  Brier={brier:.4f}")
     print(f"  val_acc@thr={THRESHOLD}={acc_thr:.3f}  "
           f"TP={tp} FP={fp} TN={tn} FN={fn}")
     if tp + fp > 0:
-        print(f"  precision@thr={tp/(tp+fp):.3f}  recall@thr={tp/(tp+fn) if tp+fn else 0:.3f}")
+        prec = tp / (tp + fp)
+        rec = tp / (tp + fn) if tp + fn else 0
+        print(f"  precision@thr={prec:.3f}  recall@thr={rec:.3f}")
 
-    # Pack weights
-    out = {"threshold": np.float32(THRESHOLD), "pos_rate": np.float32(pos_rate)}
-    for i, P in enumerate(models):
-        for k, v in P.items():
-            out[f"m{i}_{k}"] = v.astype(np.float32)
+    # Parity check the walker BEFORE we save — catches any silent format
+    # change in the Booster text that the walker hasn't been updated for.
+    from lib._validator_tree_walker import (
+        parse_booster_text,
+        predict_proba as walker_proba,
+    )
+    text = bst.model_to_string(num_iteration=best_iter)
+    parsed = parse_booster_text(text)
+    pred_walker = walker_proba(parsed, X_va[:200])
+    pred_booster_200 = bst.predict(X_va[:200], num_iteration=best_iter)
+    max_diff = float(np.max(np.abs(pred_walker - pred_booster_200)))
+    print(f"\nwalker parity: max abs diff vs Booster on 200 val rows = "
+          f"{max_diff:.3e}")
+    if max_diff > 1e-5:
+        print(f"ERROR: walker parity exceeds 1e-5 — refusing to save",
+              file=sys.stderr)
+        return 3
+
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(out_path, **out)
-    print(f"\nwrote weights -> {out_path}")
-    return 0 if acc >= 0.65 else 0  # don't abort — let user decide
+    out_path.write_text(text)
+    print(f"\nwrote booster -> {out_path}  ({len(text):,} chars, "
+          f"{len(parsed.trees)} trees)")
+
+    # Also save a small metadata sidecar — threshold + pos_rate the agent
+    # will need at inference time.
+    meta_path = out_path.with_suffix(".meta.json")
+    meta = {
+        "threshold": THRESHOLD,
+        "pos_rate": pos_rate,
+        "best_iteration": int(best_iter),
+        "val_acc_at_half": acc,
+        "val_brier": brier,
+        "feature_dim": FEATURE_DIM,
+    }
+    meta_path.write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"wrote meta    -> {meta_path}")
+    return 0
 
 
 if __name__ == "__main__":

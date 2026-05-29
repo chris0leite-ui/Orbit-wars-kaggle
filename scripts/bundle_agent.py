@@ -120,11 +120,14 @@ DEFAULT_LIB_ORDER = [
     # inside `select_favor_fn`).
     "value_features",
     # 2026-05-28 PM H14 shot validator. `lib/shot_features.py` is the
-    # 24-dim per-shot feature extractor imported by both the training
+    # per-shot feature extractor imported by both the training
     # script (`scripts/gen_validator_corpus.py`) and the validator
     # wrapper agent (`agents/baseline_validated/main.py`). Bundle-inert
     # for agents that don't import it.
     "shot_features",
+    # 2026-05-29 Phase 2 v2: pure-Python LightGBM tree-walker for the
+    # validator agent. Bundle-inert for agents that don't import it.
+    "_validator_tree_walker",
 ]
 SUBMISSIONS = REPO / "submissions"
 
