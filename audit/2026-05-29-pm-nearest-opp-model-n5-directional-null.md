@@ -50,6 +50,25 @@ env var cannot route them asymmetrically.
 
 **Final:** P0 (lite_greedy) wins 3/5, Wilson 95% [0.231, 0.882].
 
+### 3. Asymmetric anchor (lite_greedy) vs anchor (top_tier_mirror) — clean null
+
+Same paired-seed protocol, baked bundle path:
+`submissions/baseline_pv_eta_mirror_opp.py` (gitignored;
+`_select_opp_policy` returning `top_tier_mirror_policy`).
+
+| Seed | Winner |
+|---|---|
+| 2083 | P0 (lite_greedy) |
+| 3493 | P0 (lite_greedy) |
+| 5199 | P0 (lite_greedy) |
+| 3233 | P0 (lite_greedy) |
+| 1649 | P0 (lite_greedy) |
+
+**Final:** P0 (lite_greedy) wins 5/5, Wilson 95% [0.566, 1.000].
+Lower bound clears 50% — cleanly directional even at n=5. Matches the
+prior-session code-comment intuition that top_tier_mirror is "too
+attack-biased" as a rollout opp model.
+
 ## Verdict
 
 **Directional null at n=5.** The point estimate is wrong-direction
