@@ -48,11 +48,11 @@ _LOAD_FAILED: bool = False
 _ANGLE_KEY_DECIMALS: int = 6
 
 
-def is_enabled() -> bool:
+def ml_is_enabled() -> bool:
     return ML_LAMBDA != 0.0
 
 
-def get_lambda() -> float:
+def ml_get_lambda() -> float:
     return ML_LAMBDA
 
 
@@ -99,7 +99,7 @@ def _load_parsed() -> Any | None:
 
 # === Featurization + prediction ============================================
 
-def featurize_prerank(prerank: list, world: Any, world_model: Any,
+def ml_featurize_prerank(prerank: list, world: Any, world_model: Any,
                       ) -> dict[tuple, np.ndarray | None]:
     """Encode features for every prerank entry. Returns dict keyed by
     candidate identity. Entries with None features (encoder rejected
@@ -137,7 +137,7 @@ def featurize_prerank(prerank: list, world: Any, world_model: Any,
     return feats
 
 
-def score_candidates(feats_map: dict[tuple, np.ndarray | None],
+def ml_score_candidates(feats_map: dict[tuple, np.ndarray | None],
                      ) -> dict[tuple, float]:
     """Batched centered-logit prediction. Returns dict[key, logit(P) -
     logit(center)]. None entries are dropped. Returns empty dict if the
@@ -168,7 +168,7 @@ def score_candidates(feats_map: dict[tuple, np.ndarray | None],
     return out
 
 
-def lookup(scores: dict[tuple, float], src_id: int, tgt_id: int,
+def ml_lookup(scores: dict[tuple, float], src_id: int, tgt_id: int,
            ships: int, angle: float, wait_N: int) -> float:
     """Lookup a candidate's centered-logit. Returns 0.0 on key miss
     (treated as no-op for that candidate)."""

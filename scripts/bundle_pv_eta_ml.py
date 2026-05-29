@@ -49,6 +49,14 @@ _WRAPPER_IMPORT_RE = re.compile(
     re.MULTILINE,
 )
 
+# `from __future__` imports must be the first executable statement in
+# a Python module. The wrapper and the inner bundle each have one; we
+# strip both and prepend a single one to the assembled bundle.
+_FUTURE_IMPORT_RE = re.compile(
+    r"^\s*from __future__\s+import\b.*$",
+    re.MULTILINE,
+)
+
 # Patch target inside the inlined _ml_logit body. Must match the literal
 # in agents/baseline/_ml_logit.py exactly.
 _BOOSTER_B64_PATCH_RE = re.compile(
@@ -118,9 +126,14 @@ def build(
     inner_text = _bundle_inner_to_text(inner_dir, lib_modules)
     b64 = _booster_to_b64(booster_path)
     inner_patched = _patch_booster_b64(inner_text, b64)
+    # Strip the inner bundle's `from __future__ import annotations` —
+    # we will re-add a single one at the top of the assembled bundle.
+    inner_stripped = _FUTURE_IMPORT_RE.sub("", inner_patched, count=1)
 
     wrapper_main = wrapper_dir / "main.py"
     wrapper_body = _strip_wrapper_import(wrapper_main.read_text())
+    # Same for the wrapper.
+    wrapper_body = _FUTURE_IMPORT_RE.sub("", wrapper_body, count=1)
 
     header = (
         f"# Bundled by scripts/bundle_pv_eta_ml.py — "
@@ -132,10 +145,11 @@ def build(
 
     parts = [
         header,
+        "from __future__ import annotations\n\n",
         "# === wrapper preamble (env-var defaults) ===\n",
         wrapper_body,
         "\n# === inner bundle ===\n",
-        inner_patched,
+        inner_stripped,
     ]
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("".join(parts))

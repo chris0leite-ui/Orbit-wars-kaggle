@@ -828,13 +828,16 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     # and add λ * (logit(P_success) - logit(0.5)) to each candidate's
     # score AFTER score_candidate_v4 returns (Option B: not γ-discounted;
     # the Booster's 45-d feature schema already includes shot_eta so the
-    # ML term carries its own time sensitivity).
+    # ML term carries its own time sensitivity). The ml_* names are
+    # prefixed so they survive bundler import-stripping unambiguously.
+    # Single-line import: bundler's per-line strip regex leaks continuation
+    # lines from a parenthesised multi-line import.
+    from agents.baseline._ml_logit import ml_is_enabled, ml_featurize_prerank, ml_score_candidates  # noqa: E501
     ml_scores: dict = {}
-    from agents.baseline import _ml_logit as _ml
-    if _ml.is_enabled():
+    if ml_is_enabled():
         try:
-            feats = _ml.featurize_prerank(prerank, world, model)
-            ml_scores = _ml.score_candidates(feats)
+            feats = ml_featurize_prerank(prerank, world, model)
+            ml_scores = ml_score_candidates(feats)
         except Exception:
             ml_scores = {}
 
@@ -923,7 +926,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                     float(score),
                 )
                 if ml_scores:
-                    score = score + _ml.get_lambda() * _ml.lookup(
+                    from agents.baseline._ml_logit import ml_get_lambda, ml_lookup  # noqa: E501
+                    score = score + ml_get_lambda() * ml_lookup(
                         ml_scores, int(src.id), int(tgt.id),
                         int(ships), float(angle), int(wait_N),
                     )
@@ -1013,15 +1017,16 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                             # Sum-of-logits across legs (independence
                             # assumption; matches delta being additive
                             # across legs).
+                            from agents.baseline._ml_logit import ml_get_lambda, ml_lookup  # noqa: E501
                             leg_sum = sum(
-                                _ml.lookup(
+                                ml_lookup(
                                     ml_scores,
                                     int(L[0].id), int(L[1].id),
                                     int(L[2]), float(L[3]), int(L[4]),
                                 )
                                 for L in launches
                             )
-                            j_score = j_score + _ml.get_lambda() * leg_sum
+                            j_score = j_score + ml_get_lambda() * leg_sum
                         if j_score > 0.0:
                             scored.append((j_score, "joint", launches))
 
