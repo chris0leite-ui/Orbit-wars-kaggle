@@ -890,7 +890,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             if status in ("captured",) and score > 0.0:
                 scored.append((score, src, tgt, ships, angle, wait_N))
         else:
-            score, status, _ = score_candidate_v4(
+            score, status, eta_traced = score_candidate_v4(
                 snap_base, src, tgt, int(ships), float(angle),
                 me, num_seats, world,
                 baseline_favors, favor_fn, gamma,
@@ -898,10 +898,19 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 skip_admissibility=skip_filter,
                 wait_N=int(wait_N),
             )
-            if status == "scored" and score > 0.0:
-                scored.append((score, src, tgt, ships, angle, wait_N))
-                # Track sources with viable solo (for joint gating).
-                solo_winners.add(int(src.id))
+            if status == "scored":
+                from agents.baseline._trace_hook import trace_solo
+                trace_solo(
+                    world, model, me,
+                    int(src.id), int(tgt.id), int(ships),
+                    float(angle), int(wait_N),
+                    int(eta_traced) if eta_traced is not None else 0,
+                    float(score),
+                )
+                if score > 0.0:
+                    scored.append((score, src, tgt, ships, angle, wait_N))
+                    # Track sources with viable solo (for joint gating).
+                    solo_winners.add(int(src.id))
 
     # Direction B v3 (2026-05-18 PM): 2P-only gate added after v2's
     # 4P regression (4/32 first-place = 12.5pct in 8-seed × 4-seat
@@ -976,8 +985,12 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         horizon=jh, skip_admissibility=skip_filter,
                     )
                     joint_count += 1
-                    if j_status == "scored" and j_score > 0.0:
-                        scored.append((j_score, "joint", launches))
+                    if j_status == "scored":
+                        from agents.baseline._trace_hook import trace_joint
+                        trace_joint(world, model, me, launches,
+                                    float(j_score))
+                        if j_score > 0.0:
+                            scored.append((j_score, "joint", launches))
 
     if not scored:
         return [], []
