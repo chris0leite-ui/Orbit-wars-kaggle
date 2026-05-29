@@ -128,7 +128,8 @@ def agent(obs: Any, configuration: Any = None) -> list:
         import json as _json
         turn = int(obs.get("step", -1)) if isinstance(obs, dict) else -1
         planets = obs.get("planets", []) if isinstance(obs, dict) else []
-        owners = [int(p.get("owner", -1)) for p in planets]
+        # planets schema: (id, owner, x, y, radius, ships, production) tuples
+        owners = [int(p[1]) for p in planets]
         prob_map = {i: float(p) for (i, _), p in zip(to_score, probs)}
         records = []
         for i, emit in enumerate(inner):
