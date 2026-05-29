@@ -80,6 +80,26 @@ MIN_REACTOR_SHIPS = 8                    # below this an opp planet can't realis
 MAX_REACTOR_CANDIDATES_PER_TURN = 12     # global cap on Part B output
 REACTOR_TOP_K_SOURCES_PER_TARGET = 3     # per-target source enumeration cap
 
+# Forward-redeploy generator (2026-05-29). For each peaceful interior
+# own planet S and each frontier own planet T, propose an own→own
+# launch. Composes with favor_hybrid_spatial: ships at low-d_min T
+# weight more than at high-d_min S → leaf-Δ rewards the move.
+# Default OFF (env var PROPOSER_REDEPLOY=on to enable).
+MAX_REDEPLOY_PER_TURN = int(os.environ.get("BASELINE_MAX_REDEPLOY_PER_TURN", "8"))
+REDEPLOY_TOP_K_TARGETS_PER_SOURCE = 3
+REDEPLOY_MIN_DIST_RATIO = float(os.environ.get("BASELINE_REDEPLOY_DIST_RATIO", "1.5"))
+REDEPLOY_MIN_SHIP_FRACTION = 0.5
+REDEPLOY_SPATIAL_DECAY = float(os.environ.get("BASELINE_SPATIAL_DECAY", "30.0"))
+
+# Gang-up support generator (2026-05-29). For each in-flight friendly
+# fleet F arriving at T where the solo fleet bounces, propose a launch
+# from a third source S sized to stack arrival in [a_T-δ, a_T+δ].
+# Default OFF (env var PROPOSER_GANG_UP_SUPPORT=on to enable).
+MAX_GANG_UP_PER_TURN = int(os.environ.get("BASELINE_MAX_GANG_UP_PER_TURN", "6"))
+GANG_UP_ARRIVAL_BAND = int(os.environ.get("BASELINE_GANG_UP_ARRIVAL_BAND", "2"))
+GANG_UP_TOP_K_SOURCES_PER_EVENT = 3
+GANG_UP_MIN_FLEET_IN_FLIGHT = 5
+
 
 def _comet_path_entry(world, tgt_id):
     """Look up (path, path_index) for a comet target, or None if not a comet.
@@ -458,6 +478,45 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
         return 0.05 * float(tgt.production) * float(pv)
 
     return -0.5 * float(ships)
+
+
+def _d_min_to_non_our(p, world, me: int) -> float | None:
+    """Distance from planet `p` to nearest non-our planet, or None if
+    there are no non-our planets (degenerate end-state). Mirrors the
+    `d_min` used by `_positional_ship_value` in value.py.
+    """
+    if world is None or not getattr(world, "planets_by_id", None):
+        return None
+    best: float | None = None
+    px, py = float(p.x), float(p.y)
+    for q in world.planets_by_id.values():
+        if int(q.id) == int(p.id):
+            continue
+        if int(q.owner) == me:
+            continue
+        d = math.hypot(px - float(q.x), py - float(q.y))
+        if best is None or d < best:
+            best = d
+    return best
+
+
+def cheap_marginal_redeploy(src, tgt, ships: int, world, me: int) -> float:
+    """Analytic Δ for own→own redeploy: spatial-weight gain mirroring
+    `_positional_ship_value`. Returns positive only if `tgt` is closer
+    to the frontier (smaller `d_min`) than `src`. Coefficient 0.05
+    matches `cheap_marginal_value`'s capture-credit shape so redeploy
+    candidates clear `CHEAP_REJECT_THRESHOLD`.
+    """
+    src_d = _d_min_to_non_our(src, world, me)
+    tgt_d = _d_min_to_non_our(tgt, world, me)
+    if src_d is None or tgt_d is None:
+        return 0.0
+    w_src = 1.0 / (1.0 + src_d / REDEPLOY_SPATIAL_DECAY)
+    w_tgt = 1.0 / (1.0 + tgt_d / REDEPLOY_SPATIAL_DECAY)
+    gain = w_tgt - w_src
+    if gain <= 0.0:
+        return 0.0
+    return 0.05 * float(ships) * gain
 
 
 def wait_band(wait_N: int) -> int:
@@ -899,6 +958,203 @@ def _enumerate_reactor_candidates(
     return candidates[:MAX_REACTOR_CANDIDATES_PER_TURN]
 
 
+def _enumerate_redeploy_candidates(
+    my_planets, world, model, me: int, omega: float, baseline_len: int,
+):
+    """Forward-redeploy candidate generator — own→own launches from
+    peaceful interior planets to frontier planets.
+
+    Output shape matches `propose()`'s prerank tuples:
+        (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N).
+    Capped at MAX_REDEPLOY_PER_TURN, top-K by cheap_delta.
+
+    Eligibility:
+      - src is peaceful (no known enemy threat),
+      - tgt is own AND not threatened (lets reinforce path handle threats),
+      - src_d_min >= REDEPLOY_MIN_DIST_RATIO * tgt_d_min (strictly
+        interior→frontier; bounds redeploy-chain risk to 2-3 hops).
+    Per source: K=3 most-frontier eligible tgts. Ship-count enumeration:
+    {half_garrison, full_garrison}. wait_N=0 always (own→own).
+    """
+    if not my_planets:
+        return []
+
+    # Precompute d_min per planet.
+    d_min_by_id: dict[int, float] = {}
+    for p in my_planets:
+        d = _d_min_to_non_our(p, world, me)
+        if d is None:
+            return []  # no non-our planets left; nothing to enumerate
+        d_min_by_id[int(p.id)] = d
+
+    candidates: list = []
+    for src in my_planets:
+        if int(src.ships) < MIN_FLEET_SIZE:
+            continue
+        # src must be peaceful (no known enemy threat).
+        if model.time_to_enemy_threat(int(src.id), me, world) is not None:
+            continue
+        src_d = d_min_by_id[int(src.id)]
+
+        elig: list = []  # (tgt_d, tgt)
+        for tgt in my_planets:
+            if int(tgt.id) == int(src.id):
+                continue
+            # tgt must NOT be threatened (reinforce path owns that case).
+            if model.time_to_enemy_threat(int(tgt.id), me, world) is not None:
+                continue
+            tgt_d = d_min_by_id[int(tgt.id)]
+            # Frontier-ratio gate: src must be strictly more interior.
+            if src_d < REDEPLOY_MIN_DIST_RATIO * tgt_d:
+                continue
+            elig.append((tgt_d, tgt))
+        if not elig:
+            continue
+        elig.sort(key=lambda x: x[0])
+        elig = elig[:REDEPLOY_TOP_K_TARGETS_PER_SOURCE]
+
+        budget = int(src.ships)
+        half = max(MIN_FLEET_SIZE, int(budget * REDEPLOY_MIN_SHIP_FRACTION))
+        sizes = sorted({half, budget})
+
+        for _td, tgt in elig:
+            for ships in sizes:
+                if ships < MIN_FLEET_SIZE or ships > budget:
+                    continue
+                angle, eta = aim_and_eta(
+                    src, tgt, int(ships), omega, wait_N=0, world=world,
+                )
+                horizon = max(int(eta) + SIM_SETTLE_TURNS, MIN_HORIZON)
+                if horizon >= baseline_len:
+                    continue
+                cheap = cheap_marginal_redeploy(src, tgt, int(ships), world, me)
+                if cheap <= CHEAP_REJECT_THRESHOLD:
+                    continue
+                candidates.append(
+                    (cheap, src, tgt, int(ships), float(angle), int(eta),
+                     int(horizon), 0)
+                )
+
+    candidates.sort(key=lambda c: -c[0])
+    return candidates[:MAX_REDEPLOY_PER_TURN]
+
+
+def _enumerate_gang_up_support_candidates(
+    my_planets, world, model, me: int, omega: float, baseline_len: int,
+):
+    """Gang-up support candidate generator — launches from a third source
+    to stack arrival with an already-in-flight friendly fleet whose solo
+    arrival would bounce.
+
+    Output shape matches `propose()`'s prerank tuples:
+        (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N).
+    Capped at MAX_GANG_UP_PER_TURN, top-K by cheap_delta.
+
+    Event detection: walk `model.ledger`. A gang-up event is an entry
+    where owner == me, ships >= GANG_UP_MIN_FLEET_IN_FLIGHT, the target
+    is not ours, AND `model.owner_at(tgt, eta+1) != me` (solo bounces).
+    """
+    if not my_planets:
+        return []
+
+    events: list[tuple[int, int, int]] = []  # (tgt_id, a_T, ships_in_flight)
+    for tgt_id, entries in model.ledger.items():
+        tgt_p = world.planets_by_id.get(int(tgt_id))
+        if tgt_p is None:
+            continue
+        if int(tgt_p.owner) == me:
+            continue  # support is for non-our targets
+        for (eta_arr, owner, ships_arr) in entries:
+            if owner != me:
+                continue
+            if ships_arr < GANG_UP_MIN_FLEET_IN_FLIGHT:
+                continue
+            post_owner = model.owner_at(int(tgt_id), int(eta_arr) + 1)
+            if post_owner is None:
+                continue  # beyond timeline horizon
+            if post_owner == me:
+                continue  # solo already succeeds; no support needed
+            events.append((int(tgt_id), int(eta_arr), int(ships_arr)))
+
+    if not events:
+        return []
+
+    candidates: list = []
+    for tgt_id, a_T, _in_flight in events:
+        tgt = world.planets_by_id.get(int(tgt_id))
+        if tgt is None:
+            continue
+
+        # Top-K closest sources by straight-line distance.
+        src_with_dist: list = []
+        for src in my_planets:
+            if int(src.ships) < MIN_FLEET_SIZE:
+                continue
+            if int(src.id) == int(tgt_id):
+                continue
+            d = math.hypot(
+                float(src.x) - float(tgt.x),
+                float(src.y) - float(tgt.y),
+            )
+            src_with_dist.append((d, src))
+        if not src_with_dist:
+            continue
+        src_with_dist.sort(key=lambda x: x[0])
+        src_with_dist = src_with_dist[:GANG_UP_TOP_K_SOURCES_PER_EVENT]
+
+        for _d, src in src_with_dist:
+            _ap, eta_probe = aim_and_eta(
+                src, tgt, MIN_FLEET_SIZE, omega, wait_N=0, world=world,
+            )
+            wait_N = max(0, int(a_T) - int(eta_probe))
+            arrival_step = wait_N + int(eta_probe)
+            if abs(arrival_step - int(a_T)) > GANG_UP_ARRIVAL_BAND:
+                continue
+            if wait_N + int(eta_probe) + SIM_SETTLE_TURNS > MAX_HORIZON:
+                continue
+
+            # Ship-count needed against the depleted defender (timeline-aware).
+            pred_owner = model.owner_at(int(tgt_id), arrival_step)
+            if pred_owner == me:
+                continue  # someone else takes it first
+            pred_ships = float(
+                model.ships_at(int(tgt_id), arrival_step) or 0.0
+            )
+            needed = max(MIN_FLEET_SIZE, int(math.ceil(pred_ships)) + 1)
+            budget = int(src.ships) + int(src.production) * wait_N
+            if needed > budget:
+                continue
+            sizes = sorted({needed, min(budget, 2 * needed)})
+
+            for ships in sizes:
+                if ships < MIN_FLEET_SIZE or ships > budget:
+                    continue
+                angle, eta = aim_and_eta(
+                    src, tgt, int(ships), omega, wait_N=wait_N, world=world,
+                )
+                if wait_N + int(eta) + SIM_SETTLE_TURNS > MAX_HORIZON:
+                    continue
+                refined_arrival = wait_N + int(eta)
+                if abs(refined_arrival - int(a_T)) > GANG_UP_ARRIVAL_BAND:
+                    continue
+                horizon = max(int(eta) + SIM_SETTLE_TURNS, MIN_HORIZON)
+                if horizon >= baseline_len:
+                    continue
+                cheap = cheap_marginal_value(
+                    src, tgt, int(ships), int(eta), world, model, me,
+                    wait_N=wait_N,
+                )
+                if cheap <= CHEAP_REJECT_THRESHOLD:
+                    continue
+                candidates.append(
+                    (cheap, src, tgt, int(ships), float(angle), int(eta),
+                     int(horizon), int(wait_N))
+                )
+
+    candidates.sort(key=lambda c: -c[0])
+    return candidates[:MAX_GANG_UP_PER_TURN]
+
+
 def propose(my_planets, target_pool, world, model, me: int,
             omega: float, baseline_len: int):
     """Build the pre-rank list of candidates, then dedup by
@@ -955,6 +1211,25 @@ def propose(my_planets, target_pool, world, model, me: int,
     # PROPOSER_REACTOR_CANDIDATES=off for ablation A/B.
     if os.environ.get("PROPOSER_REACTOR_CANDIDATES", "").strip().lower() != "off":
         prerank.extend(_enumerate_reactor_candidates(
+            my_planets, world, model, me, omega, baseline_len,
+        ))
+
+    # Forward-redeploy candidate generator (2026-05-29). Default OFF.
+    # Composes with BASELINE_VALUE_HEAD=hybrid_spatial via the K-step
+    # leaf — the spatial term rewards leaves with more ship-mass on
+    # frontier (low d_min) planets, which is what an own→own redeploy
+    # produces.
+    if os.environ.get("PROPOSER_REDEPLOY", "").strip().lower() == "on":
+        prerank.extend(_enumerate_redeploy_candidates(
+            my_planets, world, model, me, omega, baseline_len,
+        ))
+
+    # Gang-up support candidate generator (2026-05-29). Default OFF.
+    # For each in-flight friendly fleet whose solo arrival would bounce,
+    # propose a launch from another source sized to stack arrival in
+    # [a_T - GANG_UP_ARRIVAL_BAND, a_T + GANG_UP_ARRIVAL_BAND].
+    if os.environ.get("PROPOSER_GANG_UP_SUPPORT", "").strip().lower() == "on":
+        prerank.extend(_enumerate_gang_up_support_candidates(
             my_planets, world, model, me, omega, baseline_len,
         ))
 
