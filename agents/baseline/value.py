@@ -123,7 +123,7 @@ def favor(obs, me: int, num_seats: int = 2, gamma: float = DEFAULT_GAMMA) -> flo
                 and my_strength >= ELIMINATION_GATE_RATIO * weakest_str):
             elim_bonus = ELIMINATION_BONUS
 
-    pv = max(50.0, pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS))
+    pv = pv_horizon(step, 0, gamma=gamma, t_total=EPISODE_STEPS)
     return (my_ships - opp_ships) + (my_prod - opp_prod) * pv + elim_bonus
 
 
