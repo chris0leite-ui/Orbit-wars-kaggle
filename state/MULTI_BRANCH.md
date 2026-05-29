@@ -13,28 +13,27 @@
 
 ---
 
-## Live Kaggle (snapshot 2026-05-23 21:00 UTC)
+## Live Kaggle (snapshot 2026-05-29 14:30 UTC)
 
 Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at session start.
 
 | Sub ID | Date (UTC) | Agent | μ | Role |
 |---|---|---|---:|---|
-| **52894340** | 2026-05-21 14:33 | _phase4_step1_FND (sibling, endgame predicate + f1774a7 orbital safety) | **1117.9** | **Rolling pair (most recent)** |
-| **52893236** | 2026-05-21 13:52 | baseline_full (this branch, kitchen-sink) | **1078.0** | **Rolling pair (older half)** |
-| 52882014 | 2026-05-21 10:26 | baseline_joint_aggr_consolidated | 1124 | EVICTED — best on this branch |
+| **53131296** | 2026-05-28 23:22 | baseline_validated.py (PM5 25-d MLP filter on baseline) | **1081.3** | **Rolling pair (most recent)** |
+| **53117942** | 2026-05-28 13:55 | baseline_leaf_pv_2p.py (PV_ETA + 2P leaf re-enable) | **1084.5** | **Rolling pair (older half)** |
+| 53111837 | 2026-05-28 09:42 | baseline_pv_eta.py (PV_ETA=1 PV-gamma discount) | ~1154 (historical peak) | **EVICTED — foundation lock 2026-05-29** |
+| 52894340 | 2026-05-21 14:33 | _phase4_step1_FND | 1117.9 | EVICTED |
+| 52893236 | 2026-05-21 13:52 | baseline_full | 1078.0 | EVICTED |
+| 52882014 | 2026-05-21 10:26 | baseline_joint_aggr_consolidated | 1124 | EVICTED |
 | 52874528 | 2026-05-21 06:00 | baseline_joint_aggr | 1134.9 | EVICTED |
-| 52857903 | 2026-05-20 16:12 | analytical_wait_N_traj_plus_endgame_play | 806.5 | EVICTED |
-| 52854094 | 2026-05-20 13:59 | analytical (earlier) | 829.1 | EVICTED |
-| 52827111 | 2026-05-19 19:52 | comet-aim + reactor-aware | 1122.0 | EVICTED |
-| 52811320 | 2026-05-19 12:54 | hold-feasibility solo | 1135.1 | EVICTED |
-| **52744856** | 2026-05-17 14:17 | composite_a2_hybrid (composite head 2P + A2 4P) | **1149.2** | **TEAM PEAK** — EVICTED |
+| 52744856 | 2026-05-17 14:17 | composite_a2_hybrid | 1149.2 | EVICTED |
 
-- **Rolling pair floor:** μ = 1078.0 (baseline_full).
-- **Rolling pair ceiling:** μ = 1117.9 (_phase4_step1_FND).
-- **Team peak (evicted):** μ = 1149.2 (sub 52744856).
-- **Floor recovered from 5/20:** previous rolling pair was [829, 806]; current floor 1078 is +249 μ over that.
-- **Daily submission budget:** 5/day. Today (2026-05-23 UTC) used: 0. 5 remaining. Last submit was 5/21.
-- **Deadline:** 2026-06-23 23:59 UTC. **~31 days remain.**
+- **Rolling pair floor:** μ = 1081.3 (baseline_validated, PM5 25-d MLP).
+- **Rolling pair ceiling:** μ = 1084.5 (baseline_leaf_pv_2p).
+- **Historical peak (EVICTED, kept as foundation):** μ ≈ 1154.8 (sub 53111837, baseline_pv_eta.py).
+- **PI direction 2026-05-29:** "We were going to build really on our latest champion on the latest successful submission pv_eta." pv_eta is the inner-agent foundation for all future wrappers. A/B opponent for submit gates is bare pv_eta at n ≥ 32 (Rule 45).
+- **Daily submission budget:** 5/day. Today (2026-05-29 UTC) used: 0. 5 remaining. Last submit was 5/28 23:22.
+- **Deadline:** 2026-06-23 23:59 UTC. **~25 days remain.**
 
 ---
 
@@ -109,6 +108,7 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
 | Closed-form ROI as full chooser replacement | `claude/audit-workflow-performance-btjeK` | 2026-05-19 | `chooser_roi.py` Tier 1+2: 0/32 vs v7_0 / v4_planner / v3.5.1 panel. Keep code as opt-in research (`BASELINE_CHOOSER=roi`); don't ship as default |
 | Asymmetric Tier-1 baseline chooser | `claude/reverse-engineer-seat-geometry-BPJKs` (PR #31, merged to main) | 2026-05-18 | CRN-violating, 0/32 panel, reverted in commit `f28c9fc` |
 | v9-v15 chooser saturation iteration | recover-main-foundations | 2026-05-16 | Rule 37 (3-variant cap) hit at v16-v20; chooser-axis structural ceiling ~μ=1120 |
+| Phase 2 v2 LightGBM Booster per-shot validator FILTER | `claude/competition-objective-alignment-hqNVM` | 2026-05-29 | Threshold sweep 0.30 / 0.10 / 0.05 × corpora 100 ms / 1000 ms × inner = bare baseline OR pv_eta. On pv_eta inner: 1/115 drop rate (no-op + 150 ms overhead). Head-to-head validator-on-baseline vs bare pv_eta pooled n=64 = 24/64 = 37.5 %. Rule 37 axis cap. Booster weights (`data/shot_validator/validator_booster.txt`, val_acc 0.83) preserved as INPUT for the Reframe A chooser-input experiment (see HANDOVER.md "Day-N session 2026-05-29"). |
 
 ---
 

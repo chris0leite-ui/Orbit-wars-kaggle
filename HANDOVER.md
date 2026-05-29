@@ -1,38 +1,176 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-28 PM by `claude/competition-objective-alignment-hqNVM`
-> (Phase A learned-value-head distillation cycle PASSED;
-> Phase B greenlit with roadmap below).
-> Prior writers preserved: `extract-physics-trajectory-Vjaz9` (5/22),
-> `review-skills-improvements-moKOR` (5/20), and the cross-branch
-> consolidation pass under "What just landed (2026-05-20, this session)".
-> Older per-branch writers (now superseded): `kaggle-baseline-strategy-lO4mm`,
-> `audit-workflow-performance-btjeK`, `strategy-framework-design-OyoYR-rebased`,
-> `ml-competition-strategy-PFhzM`, `analyze-game-strategy-EpMVP`.
+> Last written: 2026-05-29 by `claude/competition-objective-alignment-hqNVM`.
+> Phase 2 v2 LightGBM Booster validator FALSIFIED vs pv_eta (Rule 37
+> axis cap on per-shot-filter family). PI direction at session end:
+> **pv_eta is the new foundation**; all next mechanisms wrap, augment,
+> or replace components of pv_eta. Three reframes (A / B / C) sketched
+> below for next-session pickup.
+> Older session sections preserved in this file unmodified for history.
 
 ## Read order (Rule 44 — mandatory)
 
-1. **`state/MULTI_BRANCH.md`** — live Kaggle rolling pair, three-track
-   registry (Analytical / Hybrid-Sim / Verify-first), closed tracks,
-   push claim board.
+1. **`state/MULTI_BRANCH.md`** — live Kaggle rolling pair, closed
+   tracks, push claim board.
 2. **`state/TOOLS.md`** — A/B harnesses, single-game diagnostics,
-   validation suite, consolidation-merge gate.
-3. **`CLAUDE.md`** — rules 1-47 (rules 41-47 added 2026-05-20).
-4. **This file** — session-start prompt below.
-5. `audit/friction.md` if you're about to touch a fragile path.
+   validation suite.
+3. **`CLAUDE.md`** — rules 1-47.
+4. **This file (top section first)** — today's session result + next-
+   session menu of A / B / C.
+5. **`knowledge-base/thoughts/2026-05-29-phase-2-v2-validator-falsified-pv_eta-foundation.md`**
+   — full reasoning for the falsification + foundation lock.
+6. `audit/friction.md` if you're about to touch a fragile path.
 
-## Where we are (2026-05-20 17:00 UTC)
+## Where we are (2026-05-29 14:30 UTC)
 
-- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC. **34 days remain.**
-- **Rolling-last-2 (Kaggle auto-keeps these two):**
-  - 52857903 (μ 806.5) — analytical_wait_N_traj_plus_endgame_play (2026-05-20 16:12)
-  - 52854094 (μ 829.1) — analytical (2026-05-20 13:59)
-- **Team peak (EVICTED):** μ 1149.2 (sub 52744856, composite_a2_hybrid, 2026-05-17).
-- **Floor lost in 24 h:** ~320 μ. The five-step eviction chain that
-  caused this is documented in `state/MULTI_BRANCH.md` and is the
-  origin of new Rule 42 (pre-submit cross-branch coordination gate).
-- **Daily submission budget:** 5/day. 5/20 used: 2. 3 slots remain.
-- **Floor-at-risk flag:** **TRUE** — rolling pair is 320 μ below team peak.
+- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC. **25 days remain.**
+- **Live rolling pair (Kaggle auto-keeps these two):**
+  - 53131296 — `baseline_validated.py` (PM5 25-d MLP filter) — μ = **1081.3**
+  - 53117942 — `baseline_leaf_pv_2p.py` — μ = **1084.5**
+- **Historical peak (EVICTED from rolling pair):** μ ≈ 1154.8
+  (sub 53111837, `baseline_pv_eta.py`, 2026-05-28 09:42).
+- **Daily submission budget:** 5/day. 5/29 used: 0. 5 slots remain.
+- **Floor-at-risk flag:** **TRUE** — both rolling-pair submits sit
+  ~70 μ below the historical pv_eta peak.
+
+## Day-N session 2026-05-29 — Phase 2 v2 Booster falsified; pv_eta locked
+
+### What landed (4 commits)
+
+| Commit | Change |
+|---|---|
+| `04f44d1` | Phase 2 v2 Stages 3-5 — corpus regen, booster train, embed (100 ms wallclock, leftover from PM5) |
+| `8e30f7b` | Re-embed Booster trained on 1000 ms-wallclock corpus (matches eval) |
+| `eafed05` | Per-turn validator trace + drop-analysis diagnostic |
+| `a3d8301` | Fix: planets schema is tuple not dict in trace block |
+| `963dada` | `BASELINE_VALIDATOR_THRESHOLD` env override (no re-embed needed for sweep) |
+
+### Load-bearing findings
+
+1. **Per-shot LightGBM Booster filter is the wrong primitive vs pv_eta.**
+   On bare baseline at threshold 0.05 it adds +34 pp (28 → 62.5 % vs
+   bare baseline). On pv_eta inner at threshold 0.05 it drops 1 of 115
+   scored emits — a no-op + 150 ms overhead drag. Head-to-head
+   validator-on-baseline vs bare pv_eta, pooled n=64: 24/64 = 37.5 %
+   (Wilson-lo 0.267). **Loses to pv_eta by ~12-13 pp.**
+2. **The Booster has real information** (val_acc 0.83, Brier 0.119,
+   recall@0.30 0.90). The model learned. We applied it wrong — as a
+   post-hoc gate instead of a chooser input.
+3. **pv_eta is the strongest agent we have empirically** (peak μ=1154.8
+   historical). Per PI direction, all subsequent mechanisms wrap /
+   augment / replace components of pv_eta.
+4. **Rule 37 axis cap reached on per-shot filter family.** Thresholds
+   0.30 / 0.10 / 0.05 swept across two corpora (100 ms, 1000 ms);
+   wrapping bare baseline vs wrapping pv_eta — all variants fail to
+   improve on pv_eta. Family closed.
+
+### NOT yet known (open against the next session)
+
+- Whether the Booster's information transfers when surfaced inside the
+  chooser's leaf-value (Reframe A below). The val_acc-0.83 signal
+  must have *some* use; the right insertion point is unproven.
+- Whether per-target supervision (Reframe B) makes the model strategically
+  competent rather than per-shot-aware.
+- Whether opponent-emit prediction (Reframe C) is the missing piece
+  pv_eta's chooser is blind to.
+
+## Next-session menu — three reframes, A first
+
+> Full reasoning + open questions in
+> `knowledge-base/thoughts/2026-05-29-phase-2-v2-validator-falsified-pv_eta-foundation.md`.
+
+### Reframe A — Booster P(success) as a chooser input, not a filter (PRIORITY)
+
+Don't filter pv_eta's emits. Expose the existing Booster's per-shot
+P(success) inside `score_candidate_v4` /
+`score_candidate_v4_joint` as an additive term:
+
+```
+candidate_score = ship_delta + production_term + γ * gamma_discount + λ * ML_P_success
+```
+
+Re-uses the booster already on disk
+(`data/shot_validator/validator_booster.txt`, 45-d 1000ms corpus, 111
+trees). No retraining. Implementation surface:
+
+- `agents/baseline/chooser_trajectory.py` — `score_candidate_v4`,
+  `score_candidate_v4_joint`. Accept `ml_score` arg, add `λ * ml_score`
+  to the final Δ.
+- New thin wrapper agent `agents/baseline_pv_eta_ml/main.py` (or env-
+  var-gated extension of `baseline_validated`) that wraps pv_eta and
+  threads ML scores through.
+- λ sweep: 0.05 / 0.10 / 0.20 / 0.50. Heuristic: ML term magnitude
+  ≈ 10-30 % of ship_delta magnitude.
+
+A/B target: focal = ML-augmented pv_eta, opponent = bare pv_eta.
+Gate: Wilson-lo ≥ 0.50 at n ≥ 32 (Rule 45).
+Cost: ~1 day. Lightest path; tests the "signal not gate" hypothesis.
+
+**Decision rule:** if A clears, ship it. If A fails, move to B with
+prior "per-shot information doesn't transfer through chooser surface."
+
+### Reframe B — Per-target value head (medium swing, AFTER A)
+
+Change the supervision unit from per-shot binary to per-target
+continuous: "how many future ship-deltas does owning planet T at
+T+k earn the focal seat?" Continuous regression label. Plugs into the
+chooser's leaf-value slot, augmenting `predict_garrison_at`.
+
+Partial infrastructure already on disk: `data/value_head/`,
+`data/value_head_distill/` from PM Phase A sessions.
+
+Cost: ~3-5 days. Higher ceiling than A; longer path. Do AFTER A's verdict.
+
+### Reframe C — Opponent-emit predictor (big swing, strategic)
+
+pv_eta's chooser assumes a static opponent in `predict_garrison_at`.
+Train an ML predictor: "given state, what will opp send next turn?"
+Feed predicted opp emits into the chooser's lookahead. Restrict
+prediction to top-K target planets per turn for wallclock safety.
+
+Cost: ~5-7 days. Reserve for after A and B verdicts. This is the
+"more strategic, less per-shot" angle PI raised at session end.
+
+### Excluded — full chooser replacement / RL / MCTS
+
+Considered and rejected for the remaining 25 days. Zero existing
+RL/MCTS infrastructure on this branch; building from scratch is too
+speculative at this point. The chooser is the hard-won foundation;
+the leaf-value slot is the right insertion point for ML.
+
+## Next-session first action (concrete)
+
+1. `cat state/MULTI_BRANCH.md` to refresh live ladder state (Rule 44).
+2. Read this file's "Day-N session 2026-05-29" section + the linked
+   2026-05-29 thought.
+3. Implement Reframe A — modify
+   `agents/baseline/chooser_trajectory.py:score_candidate_v4` to take
+   `ml_score: float = 0.0` and add `λ * ml_score` to the final Δ.
+4. Build `agents/baseline_pv_eta_ml/main.py` (or env-var-gated extension
+   of the existing wrapper) that wraps pv_eta and threads booster
+   P(success) into the chooser.
+5. Bundle smoke + parity (Rule 46).
+6. A/B vs bare pv_eta at n=32 (Rule 45 gate). λ sweep 0.05 / 0.10 / 0.20
+   / 0.50 if first λ fails to clear.
+
+## Foundation lock — pv_eta
+
+> PI direction 2026-05-29: "We were going to build really on our latest
+> champion on the latest successful submission pv_eta."
+
+**Inner agent for all future wrappers**: pv_eta logic (env var
+`BASELINE_PV_ETA=1` activates; bundled in
+`submissions/_imported/baseline_pv_eta.py`).
+**A/B opponent for all future submit gates**: bare pv_eta (n ≥ 32,
+Wilson-lo ≥ 0.50, Rule 45).
+**Closed tracks not to be re-explored**:
+
+- Per-shot filter at any threshold / re-rank / corpus — axis cap
+  (Rule 37).
+- Wrapping bare baseline as a deployment target — even +34 pp only
+  reaches pv_eta-equivalent strength.
+
+---
 
 ## Day-N PM competition-objective-alignment-hqNVM (2026-05-28)
 

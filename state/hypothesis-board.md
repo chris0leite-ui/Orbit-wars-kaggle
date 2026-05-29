@@ -447,7 +447,53 @@ I-M = data-driven; K = realism check already cleared.
   documents — see top-performer-strategies.md §6 (within-top-10
   archetypes) and §8 (what unpublished top-10 likely add on top).
 
+## Open — Phase 2 v2 reframes (2026-05-29)
+
+> Phase 2 v2 LightGBM Booster validator-filter family closed (Rule 37
+> axis cap, see Killed below). Three reframes that REUSE the existing
+> booster signal but place it differently. Foundation locked: pv_eta.
+> Full reasoning in
+> `knowledge-base/thoughts/2026-05-29-phase-2-v2-validator-falsified-pv_eta-foundation.md`.
+
+### H-pv_eta-ml-chooser-input — Reframe A (PRIORITY)
+
+Expose Booster P(success) inside `score_candidate_v4` /
+`score_candidate_v4_joint` as a `λ * ML_P_success` additive term, not
+as a post-hoc filter. The chooser uses the ML signal alongside
+ship_delta + production + γ-discount, never drops shots. Re-uses the
+existing 45-d booster; no retraining. Falsification gate: focal =
+ML-augmented pv_eta vs bare pv_eta, Wilson-lo ≥ 0.50 at n ≥ 32. λ
+sweep 0.05 / 0.10 / 0.20 / 0.50. Cost ≈ 1 day.
+
+### H-pv_eta-target-value-head — Reframe B (medium swing, AFTER A)
+
+Retrain supervision: per-target continuous regression — "how many
+future ship-deltas does owning T at T+k earn focal?" Plugs into
+chooser's leaf-value slot, augments `predict_garrison_at`. Partial infra
+on disk: `data/value_head/`, `data/value_head_distill/`. Cost ≈ 3-5 days.
+
+### H-pv_eta-opp-emit-predictor — Reframe C (big swing, AFTER B)
+
+ML predictor for opponent's next-turn emits, threaded into chooser's
+lookahead via `predict_garrison_at`. Currently the chooser plans as if
+opp is static — Reframe C adds adversarial awareness. Restrict to top-K
+targets for wallclock safety. Cost ≈ 5-7 days. Reserve for after A / B
+verdicts.
+
 ## Killed
+
+- **H31-Phase-2-v2-booster-filter (2026-05-29).** Hypothesis: a
+  LightGBM Booster trained on per-shot success labels can filter the
+  inner agent's emits to lift live μ. **Result:** falsified across
+  axes — thresholds 0.30 / 0.10 / 0.05; corpora 100 ms + 1000 ms;
+  inner = bare baseline or pv_eta. Validator-on-baseline @ 0.05 gets
+  +34 pp vs bare baseline (62.5 %) but loses to bare pv_eta 24/64 =
+  37.5 % pooled (Wilson-lo 0.267). Validator-on-pv_eta drops 0.9 % of
+  scored emits — no-op + 150 ms overhead drag. **Diagnosis:** per-shot
+  supervision is the wrong unit; the model competes with the chooser
+  instead of complementing it. Booster preserved at
+  `data/shot_validator/validator_booster.txt` as input for Reframe A.
+  Family closed (Rule 37).
 
 - **H30 — drift-discount Voronoi scoring (2026-05-15, claude/fix-weak-
   game-starts-NhDQ3).** Hypothesis: orbiting captures drift into enemy
