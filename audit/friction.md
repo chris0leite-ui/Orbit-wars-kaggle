@@ -118,6 +118,30 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-29 PM2 (claude/kaggle-submission-review-gZsCu — surgical revert shipped + Rule 47 trace identifies chooser-pricing root cause)
+
+- `tag: rule-47-trace-tool-lived-in-tmp` — wrote
+  `/tmp/trace_rule47.py` to satisfy Rule 47 instrumentation;
+  it produced a decisive answer in <5 min CPU (physics waste
+  0.0%, idle-with-ships 49.1%) that reordered next-session
+  strategy priority from "guess at chooser fix" to "no-action
+  leaf mispricing is the diagnosed root cause." Then I treated
+  it as ephemeral and let it sit in /tmp. PI did not promote
+  to scripts/ this session (deferred to next session). **Fix:**
+  if the trace remains useful next session, copy from /tmp to
+  scripts/trace_rule47.py + add a line to state/TOOLS.md under
+  "Single-game diagnostic tools." Surface as next-session
+  first-action in HANDOVER if it survives the container.
+- `tag: rule-46c-no-max-turn-ms-gate` — Rule 46c ("fast.py play
+  runs without crash") only catches crashes, not per-turn
+  budget drift against the 1000ms env cap. Today's bundle hit
+  max=782ms — safe — but a bundle creeping to 1000+ms in one
+  mid-game turn would silently DQ in live while passing the
+  local smoke. PI declined to promote this session; promotion
+  candidate remains valid for a future wrap-up. **Fix:** if a
+  future submit's fast.py play shows max-turn-ms ≥ 900,
+  re-surface Rule 46c gate-tightening for PI ratification.
+
 ## 2026-05-29 (claude/kaggle-submission-review-gZsCu — opp-model top-K cap falsified, MLP pivot identified)
 
 - `tag: read-multi-branch-md-before-opp-model-design` — proposed
