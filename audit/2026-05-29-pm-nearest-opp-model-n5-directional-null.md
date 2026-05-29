@@ -67,6 +67,44 @@ Same paired-seed protocol, baked bundle path:
 **Final:** P0 (lite_greedy) wins 5/5, Wilson 95% [0.566, 1.000].
 Lower bound clears 50% — cleanly directional even at n=5.
 
+### 3e. No-launch baseline — control experiment, opp-axis IS active
+
+`submissions/baseline_pv_eta_nolaunch_opp.py` — opp policy returns
+`[]` always (~0 µs cost, no confound). Asymmetric paired-seed A/B
+n=4 vs anchor (lite_greedy default):
+
+| Seed | Winner |
+|---|---|
+| 2083 | P0 (lite_greedy) |
+| 1649 | P0 (lite_greedy) |
+| 5199 | P0 (lite_greedy) |
+| 3493 | P1 (no-launch) — ANOMALY |
+
+**Final:** P0 (lite_greedy) wins 3/4, Wilson 95% [0.301, 0.954].
+
+**Reframe of the opp-axis conclusion.** Lite_greedy beats a no-belief
+chooser 3 of 4 seeds — the chooser's belief about opp IS materially
+affecting emit decisions. The "opp-axis might be dead" framing from
+the v7_0 bench result was too strong.
+
+Direct comparison across cheap variants (all n=4-5, paired seeds):
+
+| Variant vs lite_greedy | Result | Wilson 95% |
+|---|---|---|
+| nearest    | 3-2 (60%) | [0.231, 0.882] |
+| no-launch  | 3-1 (75%) | [0.301, 0.954] |
+
+lite_greedy beats no-launch MORE decisively than it beats nearest.
+That positions nearest closer to "real opp model" than to "no model":
+both are doing work, just lite_greedy slightly better.
+
+**Seed 3493 anomaly:** lite_greedy LOST to no-launch here, while it
+WON this seed vs nearest and vs mirror. Plausible mechanism: in this
+specific board geometry, lite_greedy's belief over-predicts opp
+threat, causing the chooser to defensively reserve ships that
+weren't actually needed. A no-belief chooser commits them to
+offense and wins. Worth a trace if we want to characterize.
+
 ### 3c. v7_0-as-opp-model — compute-prohibitive (bench result)
 
 60-step bench with `submissions/baseline_pv_eta_v7_0_opp.py` (v7_0's
