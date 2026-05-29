@@ -32,6 +32,21 @@ from typing import Any
 
 import numpy as np
 
+# Module-level lib imports. Earlier revisions deferred these inside the
+# encoder function body to keep cold-path import cost out of tests, but
+# `scripts/bundle_validator.py`'s strip-and-rebind logic flattens them
+# to col-0, which then IndentationErrors inside the function. Top-level
+# imports are also bundler-safe.
+from lib.intent import World as _World
+from lib.world_model import WorldModel as _WorldModel
+from lib.world_model import predict_garrison_at as _pga
+from lib.world_model import WAVE_LOOKAHEAD as _WAVE
+from lib.trajectory import predict_fleet_fate as _pff
+from lib.scoring import pv_horizon as _pvh
+from lib.scoring import expected_hold as _eh
+from lib.orbit import is_orbiting as _is_orb
+from lib.orbit import predict_relative as _pr
+
 FEATURE_DIM = 45
 
 NORM = {
@@ -103,16 +118,14 @@ def _build_world_if_needed(obs: Any, world):
     Inference passes `world` in; tests/back-compat fall through here."""
     if world is not None:
         return world
-    from lib.intent import World  # local import keeps cold path cheap
-    return World.from_obs(obs)
+    return _World.from_obs(obs)
 
 
 def _build_model_if_needed(world, world_model):
     """Build `lib.world_model.WorldModel` lazily."""
     if world_model is not None:
         return world_model
-    from lib.world_model import WorldModel
-    return WorldModel.from_world(world)
+    return _WorldModel.from_world(world)
 
 
 def encode_features(
@@ -221,7 +234,6 @@ def encode_features(
 
     # F3 owner_at_arrival_one_hot — REPLACES launch-time owner at indices 6-8.
     # Uses predict_garrison_at against the per-target arrival ledger.
-    from lib.world_model import predict_garrison_at as _pga
     tgt_planet_obj = world.planets_by_id.get(tgt_pid)
     if tgt_planet_obj is not None:
         arrivals_at_tgt = world_model.ledger.get(tgt_pid, [])
@@ -238,7 +250,6 @@ def encode_features(
     # F6 path_fate_one_hot — outcomes from predict_fleet_fate.
     # The four buckets are mutually exclusive; "timeout" maps to all-zero
     # (very rare on a 100x100 board).
-    from lib.trajectory import predict_fleet_fate as _pff
     src_planet_obj = world.planets_by_id.get(src_pid)
     fate_target = fate_planet = fate_sun = fate_oob = 0.0
     if src_planet_obj is not None and tgt_planet_obj is not None:
@@ -282,7 +293,6 @@ def encode_features(
     # F8 src_safe_departure_ratio + shot_drains_safely.
     # safe_dep = src.ships + prod * enemy_eta - inbound_enemy_ships - 1
     # ratio = min(1, safe_dep / ships_sent); binary version on the side.
-    from lib.world_model import WAVE_LOOKAHEAD as _WAVE
     enemy_eta_at_src = world_model.incoming_enemy_eta(src_pid, focal_seat)
     if enemy_eta_at_src is None:
         # No inbound enemy — source is fully safe. Use a generous horizon.
@@ -306,7 +316,6 @@ def encode_features(
     shot_drains_safely = 1.0 if safe_dep_raw >= float(ships_sent) else 0.0
 
     # F4 pv_capture: γ=0.99 over expected_hold-truncated horizon × target.production.
-    from lib.scoring import pv_horizon as _pvh, expected_hold as _eh
     if tgt_planet_obj is not None:
         hold = _eh(tgt_pid, int(round(eta)), world, world_model)
         t_total_for_pv = int(world.step) + int(round(eta)) + int(hold)
@@ -393,7 +402,6 @@ def encode_features(
     # Uses predict_relative for orbiting planets (fine for orbital;
     # comets fall back to launch-time position which is approximate but
     # consistent).
-    from lib.orbit import is_orbiting as _is_orb, predict_relative as _pr
     omega = float(getattr(world, "omega", 0.0) or 0.0)
     POST_CAPTURE_LEAD = int(round(eta)) + 10  # = LABEL_BUFFER
 
