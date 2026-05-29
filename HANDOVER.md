@@ -1,5 +1,21 @@
 # HANDOVER.md — next-session brief
 
+> **2026-05-29 ADDENDUM (claude/kaggle-submission-review-gZsCu):**
+> opp-model rate-cap (top-K-by-ROI) FALSIFIED. K=2 vs live champion
+> `baseline_leaf_pv_2p` lost 6/16 (Wilson [0.185, 0.614]). Below
+> Rule 45 gate; no submission made. **Next-session direction: do
+> NOT iterate K. Pivot to MLP-as-opp-model** — hot-swap the trained
+> 3-MLP ensemble from sub 53131296 (sibling branch
+> `claude/competition-objective-alignment-hqNVM`, MLP commit `4a8e4c0`)
+> into `lib/opp_model.py` as a new tier. Full executable plan with
+> file paths, env vars, gates, and pitfalls is in
+> `audit/2026-05-29-k-cap-falsified-mlp-as-opp-model-plan.md` —
+> **read that file as the next-session brief**, it is self-contained
+> for compaction. K-cap code (`BASELINE_OPP_MAX_LAUNCHES`) stays
+> shipped but default-off; do not delete in case a future ensemble
+> wants per-tick budget as a sub-mechanism. PI thought captured at
+> `knowledge-base/thoughts/2026-05-29-mlp-can-double-as-opp-model.md`.
+>
 > **PM3 ADDENDUM (2026-05-28 PM3):** macro layer (Item 1 below) was
 > built, A/B'd, and SHOWED NO LIFT. See
 > `audit/2026-05-28-postmortem-pm3-macro-layer-null-result.md`.
@@ -145,6 +161,16 @@ stronger seed. Defer until items 1-2 ship.
 
 ## Pointers (new today)
 
+- `audit/2026-05-29-k-cap-falsified-mlp-as-opp-model-plan.md` —
+  **2026-05-29 wrap + next-session plan, self-contained**.
+  K-cap A/B results + MLP-as-opp-model implementation plan with
+  file paths, commit SHAs, env vars, and gates.
+- `knowledge-base/thoughts/2026-05-29-mlp-can-double-as-opp-model.md` —
+  PI insight that re-routed the session.
+- `submissions/baseline_opp_launches_k{0,1,2,3}.py` — built and
+  tested today; K=0 control, K=1/2/3 rate-limited. K=2 failed vs
+  live (6/16). Bundles retained for reference.
+- `tests/test_opp_model_max_launches.py` — 5 unit tests for the K-cap.
 - `audit/2026-05-28-postmortem-pm2-leaf-pv-2p-compute-variance.md` —
   PM2 postmortem (compute-variance investigation, Rule 48 + 45b
   promotions).

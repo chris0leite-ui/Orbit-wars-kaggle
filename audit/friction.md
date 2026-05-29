@@ -118,6 +118,58 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
+## 2026-05-29 (claude/kaggle-submission-review-gZsCu — opp-model top-K cap falsified, MLP pivot identified)
+
+- `tag: read-multi-branch-md-before-opp-model-design` — proposed
+  K-cap rate-limit on `lite_greedy_policy` without first checking
+  what the sibling branch had shipped. PI surfaced (via direct
+  challenge "check kaggle directly, the last submission is an MLP")
+  that sub 53131296 already deploys a 3-MLP per-shot validator —
+  exactly the substrate the K-cap was approximating with a hand-
+  coded number. Rule 44 (state-of-truth read before subsystem
+  edits) covers this — but `state/MULTI_BRANCH.md` does not include
+  the sibling branch's MLP work in its "closed tracks" or "live
+  ladder pair" callouts cleanly enough. **Fix:** add an entry to
+  `state/MULTI_BRANCH.md` describing the validator MLP substrate
+  and its live μ; future agents must read it before designing any
+  opp-model variant. Friction is half-Rule-44, half "state file
+  is incomplete."
+- `tag: filesystem-mistaken-for-source-of-truth-on-latest-sub` —
+  treated `ls -lt submissions/*.py` as the answer to "what is the
+  latest submission?" The answer was on this branch's filesystem
+  (`baseline_leaf_pv_2p.py`), but the actual latest Kaggle sub came
+  from a sibling branch (`baseline_validated.py`). Cost: ~30 min of
+  the session built on the wrong premise; PI had to redirect.
+  **Fix:** make `kaggle competitions submissions orbit-wars | head`
+  the FIRST command of any opp-model / submission-strategy turn.
+  Add as a sub-clause of Rule 44.
+- `tag: v4-planner-anchor-is-dead-for-opp-model-ab` — Stage 1 smoke
+  of K=0/1/2/3 against `v4_planner` produced 15-16/16 across the
+  board. K=0 (control, same code as live champion at this layer)
+  also hit the ceiling, so the test was non-discriminating from the
+  start. Wasted ~60 min wallclock + a daily compute-attention slot.
+  **Fix:** when evaluating any change to the opp-model layer, the
+  smoke opponent MUST be at least as strong as the current rolling
+  champion. `v4_planner` is now a confirmed ceiling-anchor for
+  opp-model A/Bs; document this in `state/TOOLS.md::eval anchors`.
+- `tag: timeout-fired-before-eval-prints-batch-results` — first K=2
+  vs live run was launched with `timeout 3600` and `--workers 2`
+  (CPU shared with K=0 control). The Wilson-stop loop did not get
+  to print per-seed verdicts before the 60-min wall fired; entire
+  60 min produced ZERO useful output. Relaunch at `--workers 4`
+  no-contention finished cleanly in 17 min. **Fix:** when running
+  fast.py eval vs a strong opponent (per-game ~8 min), do NOT
+  share CPU with another concurrent eval. Sequentialise. Also
+  consider patching fast.py to flush per-batch results on partial
+  completion (one-time backlog).
+- `tag: container-reclaim-during-overnight-compute` — earlier
+  K=0-vs-v4 run was killed by container reclaim (mid-PM compute).
+  Result for that run was lost; relaunch consumed budget. Same
+  pattern as PM3's `background-compute-killed-by-container-reclaim`.
+  **Fix:** for any compute > 20 min, expect reclaim; commit
+  intermediate results aggressively, prefer foreground runs over
+  background+long-sleep patterns.
+
 ## 2026-05-28 PM3 (claude/kaggle-submission-review-gZsCu — macro layer null result)
 
 - `tag: wallclock-ms-exceeds-env-acttimeout` — set
