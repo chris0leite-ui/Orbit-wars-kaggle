@@ -122,5 +122,31 @@ def agent(obs: Any, configuration: Any = None) -> list:
         if p < _THRESHOLD:
             survivors_mask[idx_in_inner] = False
 
+    # Optional trace for diagnostic: per-turn (emit, P(success), dropped).
+    _trace_path = os.environ.get("BASELINE_VALIDATOR_TRACE")
+    if _trace_path:
+        import json as _json
+        turn = int(obs.get("step", -1)) if isinstance(obs, dict) else -1
+        planets = obs.get("planets", []) if isinstance(obs, dict) else []
+        owners = [int(p.get("owner", -1)) for p in planets]
+        prob_map = {i: float(p) for (i, _), p in zip(to_score, probs)}
+        records = []
+        for i, emit in enumerate(inner):
+            src = int(emit[0]) if len(emit) > 0 else -1
+            tgt = int(emit[1]) if len(emit) > 1 else -1
+            ships = int(emit[2]) if len(emit) > 2 else -1
+            self_reinf = target_owned_by(emit, obs, focal_seat)
+            records.append({
+                "src": src, "tgt": tgt, "ships": ships,
+                "p": prob_map.get(i, None),
+                "dropped": (not survivors_mask[i]),
+                "self_reinf": self_reinf,
+            })
+        with open(_trace_path, "a") as _f:
+            _f.write(_json.dumps({
+                "turn": turn, "focal_seat": focal_seat,
+                "owners": owners, "emits": records,
+            }) + "\n")
+
     filtered = [emit for emit, keep in zip(inner, survivors_mask) if keep]
     return filtered
