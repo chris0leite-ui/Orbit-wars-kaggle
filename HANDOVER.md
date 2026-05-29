@@ -1,21 +1,103 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-29 PM3 (resume) by `claude/competition-objective-alignment-hqNVM`.
-> Previous session (PM2) **falsified Reframe A** end-to-end and
-> shipped the wrap-pv_eta infrastructure at λ=0 (parity). This
-> resume note refreshes live-ladder state, locks the first-action
-> checklist for Reframe B, and inherits all PM2 content below.
+> Last written: 2026-05-29 PM4 (B.1 verdict) by `claude/competition-objective-alignment-hqNVM`.
+> **Reframe B.1 diagnostic probe ran end-to-end and GREENLIT B.2.**
+> Inherits the PM3 resume / PM2 falsification content below.
 
 ## Start here — first 30 min of work
 
 1. **Refresh state-of-truth** (Rule 44).
    - `cat state/MULTI_BRANCH.md` for cross-branch live status.
    - `kaggle competitions submissions orbit-wars | head -5` for the
-     rolling pair. (Confirmed 17:53 UTC today — see numbers below.)
-2. **Read the Reframe A postmortem.**
-   - `audit/2026-05-29-reframe-a-falsified.md` — what's closed, what
-     carries forward.
-3. **Pick one of two Reframe B opening moves** (decision below).
+     rolling pair.
+2. **Read the B.1 probe report.**
+   - `audit/2026-05-29-pveta-leaf-residual-probe.md` — full per-K and
+     per-stratification tables.
+3. **Move into Reframe B.2 design** — concrete next steps below.
+
+## B.1 verdict (refreshed 2026-05-29 PM4)
+
+16 games of pv_eta self-play; 3002 seat-0 accepted candidates analysed.
+
+| K | n | σ(actual) | σ(pred) | σ(residual)/σ(actual) | R² | Spearman ρ |
+|--:|--:|--:|--:|--:|--:|--:|
+| 5 | 2995 | 327.2 | 224.9 | **1.242** | 0.003 | 0.007 |
+| 10 | 2976 | 501.9 | 225.5 | **1.126** | 0.006 | −0.036 |
+| 20 | 2895 | 699.5 | 228.1 | **1.070** | 0.004 | −0.023 |
+
+**The pv_eta chooser's leaf-Δ explains essentially zero variance of
+future seat-0 ship-delta** (R² ≈ 0.005 across all K). σ(residual) >
+σ(actual) at every horizon — the leaf is worse than the unconditional
+mean as a predictor of game-winning ship-delta on the chooser's own
+accepted set.
+
+ANOVA F-stats on the residual:
+
+| K | ship_quintile | eta_bucket | owner_at_launch | top-5 tgt |
+|--:|--:|--:|--:|--:|
+| 5 | 6.4 | 10.9 | **43.2** | 1.6 |
+| 10 | 7.1 | 11.5 | **35.9** | 3.3 |
+| 20 | 8.0 | 14.5 | **43.7** | 4.1 |
+
+The dominant axis is **target ownership at launch** (F = 35-43 across
+K). Residual means (K=5):
+
+- launching at MY OWN planets: residual −83 (overpredicted by ~83 ships)
+- launching at NEUTRAL planets: residual +5 (near-perfect calibration)
+- launching at ENEMY planets: residual −201 (overpredicted by ~201 ships)
+- eta-bucket [0] (already-at-target): residual +16, std 53 (well-calibrated;
+  longer-eta buckets show 6-9× larger spreads)
+
+Mechanistic read: the chooser's leaf overestimates the ship payoff of
+captures, especially enemy captures (which the opponent contests), and
+the [0]-eta near-term snapshot is the ONLY regime where it's calibrated.
+**The chooser is value-blind beyond 1 turn.** This is structured
+headroom a per-target value head with `owner_at_launch` × `eta` features
+can plausibly exploit.
+
+**Decision: GREENLIT Reframe B.2.**
+
+## Reframe B.2 — next-session concrete moves
+
+Design implications from B.1:
+
+1. **Supervision target:** per-(state, target, K=10) seat-0 ship-delta
+   over the next 10 turns. K=10 has the cleanest signal/cost trade-off
+   in B.1 (similar F-stats to K=5 and K=20 but larger σ(actual) so the
+   labels carry more signal than K=5; less truncation than K=20).
+2. **Features that MUST be in the head's input (B.1-evidenced):**
+   - `owner_at_launch` one-hot (me / enemy / neutral) — F=43.
+   - `eta` (raw integer) — F=11-15.
+   - `ships` sent (raw integer) — F=6-8.
+   - Plus the existing pv_eta chooser leaf-Δ as a feature (so the head
+     learns the *residual* against the strong baseline, not from
+     scratch).
+3. **Don't waste capacity on per-`target_id` features.** F-stat 1.6-4.1
+   is borderline. The signal is in the SEMANTIC features (ownership /
+   eta / ships), not in target identity.
+4. **Insertion point:** chooser leaf-Δ + λ · head_output as the chooser's
+   ranking score. λ is a sweep (start with λ = σ(leaf-Δ)/σ(head-out)
+   such that contributions are comparable).
+5. **Reframe-A lesson applied:** the additive form was right; what
+   killed Reframe A was that the per-shot Booster's `P_success` doesn't
+   correlate with game-winning. B.1 confirms that ship-delta-over-K *is*
+   what we want to predict.
+
+**Cost estimate:** ~2-3 sessions. Stage 1 = corpus regen using the
+B.1 runner pattern (`scripts/probe_pveta_selfplay.py` already writes the
+right format). Stage 2 = train a small regressor (GBT or MLP) on the
+per-candidate features → K=10 ship-delta. Stage 3 = embed in a wrapper
+agent + bundle + A/B vs pv_eta.
+
+## Reuse from B.1 infrastructure
+
+| File | What it does | Status |
+|---|---|---|
+| `agents/baseline/_trace_hook.py:trace_accepted` | Per-turn accepted-candidate JSONL writer | Reuse as-is for B.2 corpus gen |
+| `agents/baseline/chooser_trajectory.py` (emit loop) | Emits delta_pred + eta per accepted candidate | Reuse as-is |
+| `agents/baseline_pv_eta_probe/main.py` | Probe wrapper (BASELINE_PV_ETA=1, λ=0) | Reuse for corpus gen; B.2 will need a sibling wrapper that loads the head + adds λ·head_out |
+| `scripts/probe_pveta_selfplay.py` | ProcessPool runner with `maxtasksperchild=1` | Reuse as the B.2 corpus generator |
+| `scripts/probe_pveta_leaf_residual.py` | Residual analyser | Adapt for held-out val-set evaluation of the trained head |
 
 ## Live ladder state (refreshed 2026-05-29 17:53 UTC)
 
@@ -25,12 +107,39 @@
 | 53117942 | `baseline_leaf_pv_2p.py`          | **1091.9** | rolling pair (bot) |
 | 53111837 | `baseline_pv_eta.py` (EVICTED)    | 1154.8   | historical peak    |
 
-- Daily submission slots: **5/5 free** (PM2 did not push).
+- Daily submission slots: **5/5 free** (PM4 did not push).
 - Deadline: 2026-06-23 (25 days).
-- Team count: 3450 (was 3435 PM1 → +15 entries since).
+- Team count: 3451.
 - Floor-at-risk: **MODERATE** (rolling pair ~58 μ below evicted
-  pv_eta peak — down from 70 μ at PM2 start; both rolling pair
-  μ tickled up over the day).
+  pv_eta peak).
+
+## Sample size note
+
+Plan called for 25 games. Container resumes between sessions kept
+killing the long-running sweep; PM4 settled on 16 games run in the
+foreground (~8 min) because the verdict was unambiguous (F = 35-43
+already at this n; further games would tighten CIs but not change
+the call). If B.2 corpus gen needs more, increase `--games` and break
+it into multiple foreground runs.
+
+---
+
+## PM3 resume (2026-05-29 evening) — Reframe A → B handoff
+
+The PM3-resume content below documents the Reframe-A falsification +
+the B.1 vs B.2 fork before B.1 ran. Now superseded by the verdict
+above; kept for traceability.
+
+### Start here — first 30 min of work (HISTORICAL)
+
+1. **Refresh state-of-truth** (Rule 44).
+   - `cat state/MULTI_BRANCH.md` for cross-branch live status.
+   - `kaggle competitions submissions orbit-wars | head -5` for the
+     rolling pair. (Confirmed 17:53 UTC today — see numbers below.)
+2. **Read the Reframe A postmortem.**
+   - `audit/2026-05-29-reframe-a-falsified.md` — what's closed, what
+     carries forward.
+3. **Pick one of two Reframe B opening moves** (decision below).
 
 ## Reframe B — concrete opening move (PICK ONE)
 
