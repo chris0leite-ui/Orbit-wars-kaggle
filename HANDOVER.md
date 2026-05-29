@@ -1,19 +1,103 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-29 PM2 by `claude/competition-objective-alignment-hqNVM`.
-> **Reframe A FALSIFIED today.** Additive Booster logit on pv_eta
-> chooser regressed at every λ tested (0/32 at λ=4.5, 1/32 at λ=0.5,
-> 0/1 at λ=-0.5 — see `audit/2026-05-29-reframe-a-falsified.md`).
-> The pv_eta source port + bundler + ML pipeline ship working at
-> λ=0 (parity-verified against the bundled live champion at
-> Wilson CI [0.364, 0.691]); the Booster's signal does not transfer
-> to pv_eta's chooser surface.
-> **Next session priority: Reframe B (per-target continuous value
-> head)** — different supervision target, not a re-tune of the
-> falsified per-shot-binary Booster. Older session sections
-> preserved unmodified for history.
+> Last written: 2026-05-29 PM3 (resume) by `claude/competition-objective-alignment-hqNVM`.
+> Previous session (PM2) **falsified Reframe A** end-to-end and
+> shipped the wrap-pv_eta infrastructure at λ=0 (parity). This
+> resume note refreshes live-ladder state, locks the first-action
+> checklist for Reframe B, and inherits all PM2 content below.
 
-## Reframe A — falsified mechanism summary (today's session)
+## Start here — first 30 min of work
+
+1. **Refresh state-of-truth** (Rule 44).
+   - `cat state/MULTI_BRANCH.md` for cross-branch live status.
+   - `kaggle competitions submissions orbit-wars | head -5` for the
+     rolling pair. (Confirmed 17:53 UTC today — see numbers below.)
+2. **Read the Reframe A postmortem.**
+   - `audit/2026-05-29-reframe-a-falsified.md` — what's closed, what
+     carries forward.
+3. **Pick one of two Reframe B opening moves** (decision below).
+
+## Live ladder state (refreshed 2026-05-29 17:53 UTC)
+
+| Sub ID   | Agent                             | μ        | Role               |
+|----------|-----------------------------------|---------:|--------------------|
+| 53131296 | `baseline_validated.py` (PM5 MLP) | **1096.9** | rolling pair (top) |
+| 53117942 | `baseline_leaf_pv_2p.py`          | **1091.9** | rolling pair (bot) |
+| 53111837 | `baseline_pv_eta.py` (EVICTED)    | 1154.8   | historical peak    |
+
+- Daily submission slots: **5/5 free** (PM2 did not push).
+- Deadline: 2026-06-23 (25 days).
+- Team count: 3450 (was 3435 PM1 → +15 entries since).
+- Floor-at-risk: **MODERATE** (rolling pair ~58 μ below evicted
+  pv_eta peak — down from 70 μ at PM2 start; both rolling pair
+  μ tickled up over the day).
+
+## Reframe B — concrete opening move (PICK ONE)
+
+The Plan-agent's Reframe B spec is "per-target continuous value
+head: how many future ship-deltas does owning planet T at T+k earn
+the focal seat?" That's a multi-stage program. Two viable openers
+fit in a single session:
+
+### B.1 — Diagnostic probe FIRST (recommended)
+
+Before training any model, characterize where pv_eta's chooser
+leaves value on the table. Concrete:
+
+1. Reuse the trace hook (`agents/baseline/_trace_hook.py`) to log
+   **(state hash, candidate emit, chooser's leaf value at horizon,
+   ACTUAL ship-delta on the focal seat over the next K turns)** for
+   every accepted candidate, in pv_eta self-play. K ∈ {5, 10, 20}.
+2. Analyze the residual: `actual_delta − chooser_leaf`. If
+   residual variance is high AND the residual correlates with
+   identifiable features (target_id, ship-count, eta), there's
+   headroom for a per-target value head.
+3. If residual variance is LOW, pv_eta's chooser is already
+   value-optimal at its accepted set → Reframe B has no ceiling →
+   pivot to **Reframe C** (opponent-emit predictor) instead.
+
+Cost: ~2 h. Output: `audit/<date>-pveta-leaf-residual-probe.md`.
+Decision-grade evidence before committing to multi-day training.
+This is the Reframe-A lesson applied: probe the GAME-WINNING
+correlation, not just the model's signal quality.
+
+### B.2 — Reuse existing distilled head, swap the target
+
+`data/value_head_distill/` has a Phase-A distilled head fit to
+`favor_hybrid` (scalar, val_acc R²≈0.998). The Phase-A finding was
+that the head's high R² didn't preserve action-Δ rank order (knowledge-base/thoughts/2026-05-28-pm-distillation-action-rank-collapse.md).
+If the distillation infrastructure still works, regenerate with a
+per-target ship-delta target instead. Cost: ~4 h training + bundle
++ A/B. Higher risk — re-uses the failed Phase-A architecture.
+
+### Recommendation: do B.1 first.
+
+B.1's verdict either greenlights B.2 (or a richer Reframe B
+training run) with calibrated expectations, OR redirects to
+Reframe C BEFORE we burn a multi-day training cycle.
+
+## Infrastructure already on disk (carry-forward from PM2)
+
+| File | What it does | Status |
+|---|---|---|
+| `agents/baseline/chooser_trajectory.py` `PV_ETA_ENABLED` | Source-side pv_eta γ-discount | Verified parity vs bundled live champion (Wilson CI [0.364, 0.691]) |
+| `agents/baseline/_ml_logit.py` | Lazy-load LightGBM, batched featurize + predict, centered-logit term | Working at λ=0; **do not use** at λ≠0 (Reframe A falsified) |
+| `agents/baseline/_trace_hook.py` + `scripts/probe_ml_logit_signal.py` | Opt-in candidate trace + per-turn σ/ρ/histogram | **Reuse** for B.1: change the keying and the analysis script |
+| `agents/baseline_pv_eta_ml/main.py` | Env-var wrapper template | Template for `agents/baseline_pv_eta_vh/main.py` |
+| `scripts/bundle_pv_eta_ml.py` | Wrapper bundler with `_BOOSTER_B64` patch | Pattern for `scripts/bundle_pv_eta_vh.py` |
+| `submissions/baseline_pv_eta_ml.py` | 953-KB single-file bundle, λ=0 = byte-equivalent to bundled pv_eta | Available as a clean wrap-pv_eta starting point |
+
+## What's CLOSED — do not re-explore
+
+- **Per-shot binary Booster (45-d, 1000ms training corpus) as ANY
+  additive term on pv_eta's chooser.** λ ∈ {4.5, 0.5, −0.5}
+  catastrophic FAIL. Rule 37 axis closed.
+- Per-shot Booster as a hard FILTER on pv_eta (closed PM5).
+- Wrapping bare baseline as a deployment target (PM5).
+
+---
+
+## Reframe A — falsified mechanism summary (PM2 session)
 
 What was tested: a centered-logit additive term inside
 `score_candidate_v4` and `score_candidate_v4_joint`:
