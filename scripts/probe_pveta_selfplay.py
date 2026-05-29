@@ -158,7 +158,11 @@ def main(argv=None) -> int:
         results_iter = (_run_one_game(t) for t in tasks)
     else:
         ctx = get_context("spawn")
-        pool = ctx.Pool(processes=args.workers)
+        # maxtasksperchild=1 — trace_hook module-level state (env var
+        # cached at module load, file handle cached on first write)
+        # would otherwise leak the first game's accepted-trace path
+        # across all subsequent games handled by the same worker.
+        pool = ctx.Pool(processes=args.workers, maxtasksperchild=1)
         results_iter = pool.imap_unordered(_run_one_game, tasks, chunksize=1)
 
     total_accepted = 0
