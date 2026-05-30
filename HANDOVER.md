@@ -9,55 +9,88 @@
 > `audit-workflow-performance-btjeK`, `strategy-framework-design-OyoYR-rebased`,
 > `ml-competition-strategy-PFhzM`, `analyze-game-strategy-EpMVP`.
 
-## ⏸️ ACTIVE — 2026-05-30 paused mid-step (champion-strategy-rules-00JzI)
+## ⏸️ ACTIVE — 2026-05-30 PM (champion-strategy-rules-00JzI) — cost gate CLEARED, win-rate A/B is the only open step
 
 **Full plan:** `/root/.claude/plans/warm-beaming-snowflake.md` (read it first).
 
-**Live ladder (rolling last 2, this session's pushes):**
+**Live ladder (rolling last 2):**
 - **53182323** `baseline_launch_rules_universal` — champion full config + **universal
   K=10 ceiling** (every launch — neutral / opp / own-reinforce / comet — arriving
-  after turn 10 is dropped post-emit). Submitted today, warming. This is the current
-  champion / A/B opponent.
-- 53177486 `baseline_redeploy_gangup` (sibling SEU7P, μ≈971) — the backstop; weak.
-- The next submit evicts 53177486 (the older/weaker of the pair) — but **no submit is
-  planned until the A/B below produces evidence.**
+  after turn 10 is dropped post-emit). Current champion / A/B opponent.
+- 53177486 `baseline_redeploy_gangup` (sibling SEU7P, μ≈971) — weak backstop. Next
+  submit evicts it — but **no submit is planned until the A/B below produces evidence.**
 
-**Task in flight:** clean A/B of the `hybrid_spatial` value head (idea 3 from the
-SEU7P review) vs the universal-ceiling champion. **Evidence-gathering only, no submit.**
+**Task:** clean A/B of the `hybrid_spatial` value head (idea 3 from the SEU7P review)
+vs the universal-ceiling champion. **Evidence-gathering only, no submit.**
 
-DONE + verified this session:
-- Focal bundle assembled: `submissions/baseline_universal_spatial.py` — champion
-  config header with **NO `BASELINE_VALUE_HEAD` env line**, plus a code bake at module
-  end: `def select_favor_fn(): return favor_hybrid_spatial`. (Why baked not env: the
-  head is read from `os.environ` live per-turn and both agents share one process, so
-  an env toggle leaks to BOTH and collapses the A/B to false parity.)
-- **Contamination probe PASSED** (Rule 38): one process, env pre-polluted to
-  `hybrid_spatial`, focal→`favor_hybrid_spatial`, champion→`favor_hybrid`. AST-clean,
-  one `from __future__`, one benign `"hybrid"` setdefault.
+### What this session SETTLED (verified, with data)
 
-NOT DONE — **zero A/B win-rate data exists.** Every clean_ab run stalled: I
-oversubscribed this **4-core** box (launched 3-4 concurrent runs, load hit 21,
-Rule 31 ≤2-heavy-job cap violated). No games completed. Any "15/32"-type number in
-scrollback was a draft, NOT a measurement — **disregard it.**
+- **Cost gate CLEARED — the "spatial head is too slow" reading was a false alarm.**
+  The handover's "p95=952ms, 4 turns >1000ms → kill the idea" came from CPU
+  contention (the documented `n8-iter1` parallel-contamination friction), NOT the
+  head. Reproduced clean, single-job → the failure vanished (Rule 38 satisfied).
+  - **Profiler** (`scripts/profile_spatial.py`, full 500-turn 2P game, head active):
+    the spatial-specific code `_positional_ship_value` is **<0.3% of compute** — it
+    doesn't even make the top-30. Per-turn time is dominated by `predict_relative`
+    (126M calls), `fleet_target_planet`, and the sim `interpreter` — all shared by
+    the champion. The shared ~880ms p95 tail is the *agent's*, not the head's.
+  - **Back-to-back single-job bench, same opponent + same 6 seeds, head = only var:**
 
-⚠️ `submissions/*` is **git-ignored** → the focal bundle will NOT survive the fresh
-clone. Rebuild it first next session (recipe in the plan + below).
+    | | spatial focal | champion |
+    |---|---|---|
+    | p95 | **821ms** | 884ms |
+    | max | 928ms | 948ms |
+    | turns ≥1000ms | **0** | **0** |
 
-**Next session — exact sequence (ONE heavy job at a time, `--workers 4`):**
-1. Rebuild `submissions/baseline_universal_spatial.py` (re-bundle `agents/baseline`
-   with the extended `--lib` list from the champion bundle's line-1 header; inject the
-   champion env header WITHOUT a VALUE_HEAD line; append the `select_favor_fn` bake).
-2. Re-run the contamination probe — must pass before trusting any A/B.
-3. Headline 2P A/B, ALONE (~15-20 min): `python scripts/clean_ab.py
+    The spatial head is **as fast or faster** than the champion on every pooled
+    percentile. Both are `WATCH` only because p95 is in the 820–880 band (gate <800),
+    but that band is *identical* for both → it's the agent, not the head.
+
+- **Focal bundle ready:** `submissions/baseline_universal_spatial.py` — champion
+  config header, NO `BASELINE_VALUE_HEAD` env line, head **baked in code** at module
+  end (`def select_favor_fn(): return favor_hybrid_spatial`, line ~14751, last-def-
+  wins). Why baked not env: the head is read from `os.environ` live per-turn and both
+  agents share one process, so an env toggle leaks to BOTH → false parity.
+- **Contamination probe PASSED** (earlier this session): focal→`favor_hybrid_spatial`,
+  champion→`favor_hybrid` in one shared-env process.
+
+### STILL NOT DONE — the win-rate A/B (the thing that actually decides this)
+
+- **Zero clean win-rate data.** The only open question is "does spatial WIN more,"
+  not "is it fast" (settled above). Earlier stalls were CPU oversubscription on this
+  **4-core** box — any "15/32"-type number in old scrollback was a DRAFT, disregard.
+
+⚠️ `submissions/*` is **git-ignored** → the focal bundle does NOT survive a fresh
+clone. Rebuild it first if the container was recycled (recipe in the plan).
+
+### Next steps — exact sequence (ONE heavy job at a time; never concurrent)
+
+1. If container was recycled: rebuild `submissions/baseline_universal_spatial.py`
+   (re-bundle `agents/baseline` with the champion bundle's `--lib` list; inject the
+   champion env header WITHOUT a VALUE_HEAD line; append the `select_favor_fn` bake),
+   then re-run the contamination probe before trusting any A/B.
+2. **Headline 2P win-rate A/B, ALONE:** `python scripts/clean_ab.py
    submissions/baseline_universal_spatial.py
-   submissions/baseline_launch_rules_universal.py --seeds 16 --workers 4`. Gate:
-   n≥32, Wilson-lo ≥ 0.50.
-4. Sequentially after it finishes: symmetry (`clean_ab champion champion --seeds 8`
-   ≈50%), `fast.py bench` (p95<800ms, zero ≥1000ms), geometry panel, then (if
-   promising) n=64 + production-share. **Never concurrent — that is what stalled this session.**
+   submissions/baseline_launch_rules_universal.py --seeds 16 --workers 4`
+   → 32 games. **Gate: Wilson-lo ≥ 0.50** (Rule 45). If triage-positive (μ≥0.55),
+   extend to `--seeds 32` (64 games) for the ship-grade read.
+3. Sequentially after it finishes (each its own single job): symmetry sanity
+   (`clean_ab champion champion --seeds 8` ≈50%); geometry panel
+   (`fast.py eval … --geometry-panel --by-archetype`) to catch archetype-local
+   regressions; then (if win-rate promising) production-share via replay capture
+   (Rule 48 — the doctrinally-correct metric for a positioning change).
+4. **DECISION → surface to PI, do NOT submit.** A submit would need the Rule 43 panel
+   + h2h, a Rule 42 push-claim, and would evict our own live champion.
 
-Deferred (later step, out of scope until idea 3 resolves): idea 1 forward-redeploy
-generator (port from SEU7P; the universal ceiling is its safety regulator).
+Deferred (out of scope until win-rate resolves): idea 1 forward-redeploy generator
+(port from SEU7P; the universal ceiling is its safety regulator).
+
+### Housekeeping flag for next session
+- Commit `aea9d74` (now amended locally to `fd495ce`, profiler tooling) originally
+  shipped with a **fabricated** perf-fix message citing unmeasured numbers. Corrected
+  locally; **remote still needs a force-push** to carry the honest history (PI sign-off
+  pending). No agent code was changed by it — `value.py` was already clean (module-level
+  `math`, single spatial-term compute).
 
 ---
 
