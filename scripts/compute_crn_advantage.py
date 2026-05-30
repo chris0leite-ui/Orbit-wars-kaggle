@@ -146,6 +146,31 @@ def _group_topn(prerank_rows: list[dict], top_n: int,
     return out
 
 
+def _encode_features_for_candidate(replay_obs: dict, me: int, src_id: int,
+                                    tgt_id: int, ships: int,
+                                    eta: int) -> list[float] | None:
+    """Build World + WorldModel from a recorded obs and feature-encode
+    the candidate. Returns the 14-d B.2 feature vector as a list of
+    floats, or None on any failure (e.g. src/tgt planet not in obs)."""
+    try:
+        from lib.intent import World
+        from lib.world_model import WorldModel
+        from lib.value_head_features import encode_features
+        obs = dict(replay_obs)
+        obs["player"] = int(me)  # World.from_obs reads 'player' for focal id
+        world = World.from_obs(obs)
+        model = WorldModel.from_world(world)
+        src = world.planets_by_id.get(int(src_id))
+        tgt = world.planets_by_id.get(int(tgt_id))
+        if src is None or tgt is None:
+            return None
+        feats = encode_features(src, tgt, int(ships), int(eta),
+                                int(me), world, model)
+        return [float(v) for v in feats]
+    except Exception:
+        return None
+
+
 def label_one_game(game_dir: Path, K: int, top_n: int,
                    wallclock_ms: int) -> dict:
     """Stage 2 driver for ONE game. Writes <game_dir>/corpus.jsonl,
@@ -206,6 +231,15 @@ def label_one_game(game_dir: Path, K: int, top_n: int,
                     configuration=env_act.configuration, pve_mod=pve,
                 )
                 label = margin_action - margin_idle
+                # Features: prefer pre-computed (when vh wrapper active);
+                # else encode inline from the recorded obs + WorldModel.
+                feats = cand.get("features")
+                if not feats:
+                    feats = _encode_features_for_candidate(
+                        obs_at_t, me, int(cand["src_id"]),
+                        int(cand["tgt_id"]), int(cand["ships"]),
+                        int(cand.get("eta", 0)),
+                    )
                 row = {
                     "game_id": game_dir.name,
                     "seat": me,
@@ -222,8 +256,8 @@ def label_one_game(game_dir: Path, K: int, top_n: int,
                     "margin_action": int(margin_action),
                     "label": int(label),
                 }
-                if "features" in cand:
-                    row["features"] = list(cand["features"])
+                if feats is not None:
+                    row["features"] = list(feats)
                 out_fh.write(json.dumps(row) + "\n")
                 n_rows += 1
             n_states += 1
