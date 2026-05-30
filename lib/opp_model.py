@@ -121,23 +121,139 @@ def top_tier_mirror_policy(obs: Any) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Tier 2 — placeholder for the trained launch-decision classifier
+# Tier 2 — shot-validator-filtered Tier 1 (Tier 2 opp emit predictor,
+# 2026-05-31). Architecture: PI-ratified filter-on-Tier-1 design. Runs
+# `top_tier_mirror_policy`'s candidate generation (aggressive snipe +
+# reinforce) and drops each non-self-reinforce emit whose 45-d shot-
+# validator booster P(success) is below `BASELINE_OPP_FILTER_THRESHOLD`
+# (default 0.30 — PM5 value). Self-reinforce passes through (konbu17
+# design). Fall back to Tier 1 on any load/scoring failure so the rollout
+# never crashes on a corrupt artifact.
 # ---------------------------------------------------------------------------
 
 
+# Bundler patches _OPP_BOOSTER_B64 to a gzip+base64 LightGBM
+# `model_to_string()` dump (binary classifier). In source mode (empty
+# blob), we fall back to `data/shot_validator/validator_booster.txt`.
+_OPP_BOOSTER_B64: str = ""
+
+_OPP_PARSED = None
+_OPP_LOAD_FAILED: bool = False
+_OPP_THRESHOLD: float | None = None
+
+
+def _load_opp_booster():
+    """Lazy-load the shot-validator booster + threshold for Tier 2.
+
+    Returns the parsed booster (or None on any failure — caller falls
+    back to Tier 1)."""
+    global _OPP_PARSED, _OPP_LOAD_FAILED, _OPP_THRESHOLD
+    if _OPP_PARSED is not None or _OPP_LOAD_FAILED:
+        return _OPP_PARSED
+    try:
+        # Single-line imports per the bundler's per-line strip regex —
+        # parenthesised multi-line imports leak as indented orphans.
+        from lib._validator_tree_walker import parse_booster_text
+        import os as _os
+        if _OPP_BOOSTER_B64:
+            import base64
+            import gzip
+            text = gzip.decompress(
+                base64.b64decode(_OPP_BOOSTER_B64)
+            ).decode()
+        else:
+            from pathlib import Path as _Path
+            booster_path = (
+                _Path(__file__).resolve().parents[1]
+                / "data" / "shot_validator" / "validator_booster.txt"
+            )
+            text = booster_path.read_text()
+        _OPP_PARSED = parse_booster_text(text)
+        _override = _os.environ.get("BASELINE_OPP_FILTER_THRESHOLD")
+        _OPP_THRESHOLD = float(_override) if _override else 0.30
+        return _OPP_PARSED
+    except Exception:
+        _OPP_LOAD_FAILED = True
+        return None
+
+
 def trained_logreg_policy(obs: Any) -> list:
-    """Reserved for the trained launch-decision classifier.
+    """Tier 2: Tier-1 candidates filtered by the shot-validator booster.
 
-    Will read a model artifact (≤200-float logistic regression weights)
-    from a fixed path under the submission bundle, score each candidate
-    mission with the 24-dim feature schema at
-    `data/shot_validator/schema.json`, and emit the argmax-launch set.
+    Runs `top_tier_mirror_policy`'s prelude (World/WorldModel build →
+    aggressive snipe + reinforce missions → settle → realize) to produce
+    a candidate emit set. Then per-emit:
 
-    Not implemented in this branch — see plan section "Deliverable 2 /
-    Tier 2". Fallback to Tier 1 so downstream consumers can wire it up
-    without crashing.
+    - Self-reinforce (target already owned by us): pass-through unfiltered.
+    - Other: encode 45-d shot features, score with the booster, drop if
+      P(success) < `BASELINE_OPP_FILTER_THRESHOLD` (default 0.30).
+
+    Failure modes (model load fail, encoder failure on a given emit,
+    booster scoring failure): pass through unfiltered for that step /
+    emit. Worst case the policy degrades to Tier 1 — never emits novel
+    garbage launches.
     """
-    return top_tier_mirror_policy(obs)
+    parsed = _load_opp_booster()
+    if parsed is None or _OPP_THRESHOLD is None:
+        return top_tier_mirror_policy(obs)
+
+    world = World.from_obs(obs)
+    if not world.planets_by_id:
+        return []
+    cached = getattr(obs, "_shared_world_model", None)
+    model = cached if cached is not None else WorldModel.from_world(world)
+    missions = (
+        propose_snipe_missions(world, model, aggressive=True)
+        + propose_reinforce_missions(world, model)
+    )
+    intents = settle_plan(missions, world, model)
+    emits = realize(intents, obs, mechanisms=DEFAULT_MECHANISMS, model=model)
+    if not emits:
+        return []
+
+    me = int(
+        obs.get("player", 0) if isinstance(obs, dict)
+        else getattr(obs, "player", 0)
+    )
+
+    try:
+        from lib.shot_features import FEATURE_DIM
+        from lib.shot_features import encode_shot_features
+        from lib.shot_features import target_owned_by
+        from lib._validator_tree_walker import predict_proba
+        import numpy as _np
+    except Exception:
+        return emits  # missing deps → pass-through
+
+    to_score: list[tuple[int, Any]] = []
+    survivors = [True] * len(emits)
+    for i, emit in enumerate(emits):
+        if target_owned_by(emit, obs, me):
+            continue  # self-reinforce — konbu17 pass-through
+        try:
+            feats = encode_shot_features(
+                emit, obs, me, world=world, world_model=model,
+            )
+        except Exception:
+            feats = None
+        if feats is None or feats.shape[0] != FEATURE_DIM:
+            continue  # malformed — safer to pass through than drop
+        to_score.append((i, feats))
+
+    if not to_score:
+        return emits
+
+    try:
+        X = _np.stack([f for _, f in to_score]).astype(_np.float32)
+        probs = predict_proba(parsed, X)
+    except Exception:
+        return emits
+
+    for (idx, _), p in zip(to_score, probs):
+        if float(p) < _OPP_THRESHOLD:
+            survivors[idx] = False
+
+    return [e for e, keep in zip(emits, survivors) if keep]
 
 
 # ---------------------------------------------------------------------------

@@ -19,7 +19,7 @@ import time
 
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
-from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy
+from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy, trained_logreg_policy
 
 from agents.baseline.value import select_favor_fn
 
@@ -37,15 +37,20 @@ def _select_opp_policy():
       - "1" → top_tier_mirror_policy (~5-10ms/call; ladder-realistic
               opp using v3.5.1 aggressive snipe pipeline). Bench gate
               FIRST before A/B — per-call cost is 5-10× lite_greedy.
+      - "2" → trained_logreg_policy (Tier 2, 2026-05-31): Tier-1
+              candidate set filtered by the shot-validator booster
+              (`data/shot_validator/validator_booster.txt`). Threshold
+              tunable via `BASELINE_OPP_FILTER_THRESHOLD` (default 0.30).
 
     Per-call selection (not cached at import time) so env-var overrides
     inside test fixtures take effect without re-importing the module.
     """
-    return (
-        top_tier_mirror_policy
-        if os.environ.get("BASELINE_OPP_TIER", "0").strip() == "1"
-        else lite_greedy_policy
-    )
+    tier = os.environ.get("BASELINE_OPP_TIER", "0").strip()
+    if tier == "2":
+        return trained_logreg_policy
+    if tier == "1":
+        return top_tier_mirror_policy
+    return lite_greedy_policy
 
 
 def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
@@ -118,7 +123,13 @@ def affordable_validate_cap(snap_base, me: int, num_seats: int,
     favor_fn = select_favor_fn()
     t0 = time.perf_counter()
     probe = fs_clone(snap_base)
-    probe = fs_step(probe, [[] for _ in range(num_seats)], in_place=True)
+    # Probe with REAL opp actions so per_step_ms captures Tier-1/Tier-2
+    # opp policy cost (~5-6 ms/call) on top of fast_sim step (~0.5 ms).
+    # Without this, with BASELINE_OPP_TIER=2 the cap is undersized ~10×
+    # and per-turn wallclock blows past the 1000 ms env cap. With Tier 0
+    # (lite_greedy, ~0.01 ms/call) the probe is unchanged.
+    probe_opp = opp_actions_for_snap(probe, me, num_seats)
+    probe = fs_step(probe, probe_opp, in_place=True)
     per_step_ms = max(0.05, (time.perf_counter() - t0) * 1000.0)
 
     t0 = time.perf_counter()
