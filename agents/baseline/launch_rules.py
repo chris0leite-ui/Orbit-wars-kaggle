@@ -11,6 +11,13 @@ Two rules the champion must GUARANTEE, not merely encourage:
     OPPONENT planet if the fleet arrives within K turns (K = the horizon
     of predictability, default 10). Drop captures arriving later than K.
 
+  Universal K ceiling (PI 2026-05-30) — K bounds EVERY launch, not just
+    opponent captures: any launch whose fleet arrives after K turns is
+    dropped, including neutral captures and reinforcements of our own
+    planets (and comet-sourced launches). Beyond K the board state is
+    unpredictable, so a far launch routinely lands at a flipped/contested
+    planet and loses its (often small) fleet.
+
 This runs as the LAST pass over the fully-assembled move list in
 `agents/baseline/main.agent()`, AFTER the chooser, the commit ledger,
 threat reinforcements, the three rear-drain helpers and sniper strikes —
@@ -83,9 +90,10 @@ def enforce_launch_rules(moves, planets, me, world, model, k=None):
     list preserving input order. No-op (returns ``moves`` unchanged) when
     the gate is off or there are no moves.
 
-    Out of scope (kept unchanged): reinforcements of our own planets, and
-    fleets whose trajectory ends in sun / out-of-bounds / timeout (a
-    different waste class the chooser's trajectory filter already prunes).
+    Out of scope (kept unchanged): fleets whose trajectory ends in sun /
+    out-of-bounds / timeout (a different waste class the chooser's
+    trajectory filter already prunes). Reinforcements of our own planets
+    are kept WITHIN the K horizon but dropped beyond it (universal ceiling).
     """
     if not launch_rules_enabled() or not moves:
         return moves
@@ -147,15 +155,20 @@ def enforce_launch_rules(moves, planets, me, world, model, k=None):
         if hit_pid is None or owner is None:
             out.append(mv)            # sun / oob / timeout / unknown src
             continue
-        if owner == me:
-            out.append(mv)            # reinforcement — exempt
+        # Universal predictability ceiling (PI 2026-05-30): NOTHING travels
+        # beyond K. Applies to opponent captures, neutral captures, AND
+        # reinforcement of our own planets (incl. comet-sourced) — a fleet
+        # that arrives after the horizon is betting on an unpredictable board
+        # and routinely lands at a flipped/contested planet and loses.
+        if step > k:
             continue
-        if owner == -1:               # Rule A
+        if owner == me:
+            out.append(mv)            # reinforcement within horizon
+            continue
+        if owner == -1:               # Rule A (within horizon)
             if neutral_keep.get((hit_pid, step), False):
                 out.append(mv)
             continue                  # non-capturing neutral launch — drop
-        # owner is an opponent — Rule B ceiling.
-        if step <= k:
-            out.append(mv)
-        # arrival beyond the predictability horizon — drop
+        # opponent within horizon — keep
+        out.append(mv)
     return out

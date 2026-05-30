@@ -157,11 +157,28 @@ def test_opponent_horizon_is_configurable(monkeypatch):
     assert enforce_launch_rules(moves, _p, 0, world, model) == []
 
 
-def test_own_reinforcement_always_kept():
-    # Target is ours; far arrival; exempt from both rules.
+def test_near_reinforcement_kept():
+    # Reinforcement of our own planet WITHIN the K horizon is kept.
     _p, world, model = _setup(_planet(3, 0, ships=1, production=2))
-    moves = [[1, _aim(3, 40), 30]]
+    moves = [[1, _aim(3, 8), 30]]  # arrival 8 <= K=10
     assert enforce_launch_rules(moves, _p, 0, world, model) == moves
+
+
+def test_far_reinforcement_dropped():
+    # Universal K ceiling (PI 2026-05-30): even reinforcement of our own
+    # planet is dropped when the fleet arrives beyond K (the slow fleet
+    # bets on an unpredictable board and often lands at a contested planet).
+    _p, world, model = _setup(_planet(3, 0, ships=1, production=2))
+    moves = [[1, _aim(3, 40), 30]]  # arrival 40 > K=10
+    assert enforce_launch_rules(moves, _p, 0, world, model) == []
+
+
+def test_far_neutral_capture_dropped_by_ceiling():
+    # A neutral the model says we'd capture, but arriving beyond K → the
+    # universal ceiling drops it before the Rule A capture check.
+    _p, world, model = _setup(_planet(5, -1, ships=8))
+    moves = [[1, _aim(5, 25), 12]]  # would capture (12 > 8) but arrival 25 > K
+    assert enforce_launch_rules(moves, _p, 0, world, model) == []
 
 
 def test_sun_death_out_of_scope_kept():
@@ -178,24 +195,27 @@ def test_gate_off_is_noop(monkeypatch):
 
 
 def test_mixed_full_scope_filters_only_violators():
-    # One capturing neutral (kept), one bouncing neutral (dropped), one
-    # in-horizon opponent (kept), one out-of-horizon opponent (dropped),
-    # one reinforcement (kept). Verifies order preservation + selectivity.
+    # One capturing neutral within K (kept), one bouncing neutral (dropped),
+    # one in-horizon opponent (kept), one out-of-horizon opponent (dropped),
+    # one near reinforcement (kept), one FAR reinforcement (dropped by the
+    # universal ceiling). Verifies order preservation + selectivity.
     planets = [
         _planet(1, 0, ships=400, production=5),
-        _planet(5, -1, ships=8),    # capture
+        _planet(5, -1, ships=8),    # capture (within K)
         _planet(6, -1, ships=30),   # bounce
         _planet(7, 1, ships=5),     # opp in-horizon
         _planet(8, 1, ships=5),     # opp out-of-horizon
-        _planet(9, 0, ships=1),     # reinforce
+        _planet(9, 0, ships=1),     # reinforce near
+        _planet(10, 0, ships=1),    # reinforce far
     ]
     world, model = _World(planets), _Model()
     keep1 = [1, _aim(5, 4), 12]
     drop1 = [1, _aim(6, 4), 10]
     keep2 = [1, _aim(7, 9), 40]
     drop2 = [1, _aim(8, 11), 40]
-    keep3 = [1, _aim(9, 20), 5]
-    moves = [keep1, drop1, keep2, drop2, keep3]
+    keep3 = [1, _aim(9, 8), 5]
+    drop3 = [1, _aim(10, 20), 5]
+    moves = [keep1, drop1, keep2, drop2, keep3, drop3]
     assert enforce_launch_rules(moves, planets, 0, world, model) == [
         keep1, keep2, keep3,
     ]
