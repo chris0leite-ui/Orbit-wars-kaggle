@@ -62,7 +62,13 @@ LGB_PARAMS = {
 }
 
 # Decision gates.
-LABEL_SIGMA_MIN = 200.0
+# B.2 absolute-delta scale: σ(K=10 ship-delta) lands ~600-1000 ships.
+# B.3 CRN-paired advantage is much smaller (rollouts cancel most of the
+# absolute drift): σ(label) ~ 10-60 ships on 14k smoke. Band widened
+# accordingly. Failing the band still aborts (catches game-end
+# truncation or seat-accounting bugs); the band must just admit both
+# label scales.
+LABEL_SIGMA_MIN = 5.0
 LABEL_SIGMA_MAX = 1500.0
 SPEARMAN_RHO_MIN = 0.10
 
@@ -75,7 +81,15 @@ def _load_corpus(path: Path) -> tuple[np.ndarray, np.ndarray, list[str]]:
             if not line:
                 continue
             r = json.loads(line)
-            feats.append(r["features"])
+            f = list(r["features"])
+            # B.2 corpus writes features as the full 15-d vector with
+            # leaf_delta (a.k.a. delta_pred) already appended at index
+            # 14. B.3 corpus writes only the 14-d base features and
+            # carries leaf_delta as a separate field; append it here so
+            # the trainer sees the same 15-d schema in both cases.
+            if len(f) == FEATURE_DIM - 1 and "leaf_delta" in r:
+                f.append(float(r["leaf_delta"]))
+            feats.append(f)
             labels.append(r["label"])
             game_ids.append(r["game_id"])
     if not feats:
