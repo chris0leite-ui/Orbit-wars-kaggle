@@ -1,12 +1,116 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-30 AM (B.2 falsified, B.3 plan locked) by
+> Last written: 2026-05-30 PM (B.3 head built + A/B'd + DECISION:
+> hold the bundle, move to Tier 2 opp model) by
 > `claude/competition-objective-alignment-hqNVM`.
-> **Reframe B.2 first cut FAILED catastrophically (0/32 at λ=1.0 AND
-> at λ=0.1).** Diagnosis: selection bias on observational labels.
-> **Next session: Reframe B.3 — CRN-paired advantage labels.**
-> Inherits the B.1 verdict + PM3 resume / PM2 falsification content
-> below.
+> **B.3 bundle built and clean A/B'd; lift is marginal (18/32 =
+> 56.2%, Wilson-lo 0.393 — FAILS Rule 43b 0.50 submit gate). PI
+> decision: HOLD the B.3 bundle, do NOT push, advance to Tier 2 opp
+> model as the next lift source.**
+> Inherits the B.2 / B.3-plan / PM3 / PM2 content below.
+
+## 2026-05-30 PM session — B.3 built, A/B'd, DECISION = HOLD + advance
+
+### What happened
+
+1. **B.3 head trained + bundled.** Wrapper agent
+   `agents/baseline_pv_eta_vh/` loads a small regressor that adds a
+   λ-weighted residual to the pv_eta chooser's leaf score, trained
+   on CRN-paired advantage labels (counterfactual A(s,a) =
+   focal_margin(after a, K=10) − focal_margin(after idle, K=10)).
+   Bundle: `submissions/baseline_pv_eta_vh_b3smoke.py` (773 KB).
+   All Rule 46 gates clear: `pytest tests/test_bundle.py` 10/10
+   GREEN; `python fast.py play <bundle>` runs a full game without
+   crash.
+2. **Kinematic-table substrate bug discovered + fixed.** Local A/Bs
+   were running in a shared process where a sibling bundle's
+   `os.environ.setdefault('KINEMATIC_TABLE_ENABLED', '1')` activated
+   a buggy trajectory cache for BOTH agents. Fix: prepend
+   `os.environ['KINEMATIC_TABLE_ENABLED'] = '0'` (hard set, not
+   setdefault) to every bundled wrapper. Verified by reproducing
+   the propagation: opponent bundle loads first → sets var to "1";
+   B.3 bundle loads second → forces to "0";
+   `_kinematic_table_enabled()` returns False. Commit `5bc88f8`.
+3. **Clean A/B vs `launch_rules_universal` (Tier 1 rolling-pair
+   top), n=32, P0-only, kinematic table OFF for both:**
+
+   | Batch | Wins | % | Wilson 95% CI |
+   |---|---|---|---|
+   | Seeds 0-15 | 11/16 | 68.8% | [0.444, 0.858] |
+   | Seeds 16-31 | 7/16 | 43.8% | [0.231, 0.668] |
+   | **Combined n=32** | **18/32** | **56.2%** | **[0.393, 0.718]** |
+
+   First batch was an upward sampling fluctuation; pooled rate
+   sits at ~56% with Wilson-lo 0.393 — **FAILS Rule 43b**
+   (lo ≥ 0.50) and is too noisy to claim lift under Rule 45.
+   Timing improved (max 934 ms < 1000 ms cap; was 1154 ms with
+   the buggy cache active).
+
+### PI decision (2026-05-30 PM)
+
+**HOLD the B.3 bundle. Do NOT submit. Advance to Tier 2 opp model
+as the next lift source.**
+
+Rationale:
+- Local 56% point estimate over a μ=1173 opponent doesn't justify
+  a slot spend — the
+  `local-AB-not-calibrated-to-live-ladder` friction (0/16 local →
+  μ=711 live) shows small-sample local lift can lie.
+- Rolling pair is healthy (μ=1173 + μ=1017); the μ=1017 floor
+  isn't desperate, so we can afford to invest one more session
+  in the upstream fix instead of probing the ladder with a
+  marginal head.
+- The B.3 head's chooser is being fed pv_eta's STATIC opp model
+  (assumes opponent does nothing in lookahead). Replacing that
+  with a learned/adaptive opp model (Tier 2) is the larger
+  lever; the current B.3 lift is plausibly capped by that.
+
+### Next-session priority — Tier 2 opp model
+
+Build an opp-emit predictor that pv_eta's chooser consumes inside
+its lookahead, replacing the static "opponent does nothing"
+assumption in `predict_garrison_at`. This is the Reframe-C
+direction from the older PM3 menu, surfaced earlier because B.3
+(Reframe B) shows a ceiling consistent with chooser-blindness to
+opp action.
+
+Concrete first moves (sketch — flesh out at session start):
+
+1. **Define the prediction unit.** Per (state, top-K target
+   planets) → predicted opp emit (ships sent / target / eta).
+   Top-K to keep wallclock safe (start K=5).
+2. **Corpus.** Reuse B.3's CRN self-play traces (already on disk)
+   with a second pass: extract the opponent's actual emits from
+   each state, write `(state_features, target_id, opp_emit)`
+   tuples.
+3. **Model.** Small classifier per target — does opp send? If
+   yes, regress ships. Same featurizer family as the B.3 head,
+   no GPU needed at first cut.
+4. **Insertion.** `agents/baseline/chooser_trajectory.py:
+   predict_garrison_at` — replace the static "opp does nothing"
+   prior with the predictor's expected emit. Env-gated
+   (`BASELINE_OPP_MODEL=1`) for clean A/B against the B.3 head
+   as ground.
+5. **A/B gate.** vs `launch_rules_universal`, n=32 minimum
+   (Rule 45), Wilson-lo ≥ 0.50 (Rule 43b) to clear for submit.
+
+### Carry-forward artifacts
+
+| File | Status |
+|---|---|
+| `submissions/baseline_pv_eta_vh_b3smoke.py` | B.3 bundle, 773 KB, smoke + parity clean, HOLD — do NOT push |
+| `agents/baseline_pv_eta_vh/main.py` | B.3 wrapper (kinematic-table override at top) — pattern for Tier 2 wrapper |
+| `scripts/bundle_pv_eta_vh.py` | Bundler — adapt for Tier 2 (different blob payload) |
+| `scripts/train_value_head.py` | Accepts B.3 14-d corpus schema — adapt featurizer for opp-emit labels |
+| `audit/2026-05-30-reframe-b3-smoke.md` | B.3 head smoke + early A/B + panel results |
+
+### What's CLOSED — do not re-explore (this session's addition)
+
+- **B.3 head as a deployment candidate at current λ on current
+  opp-model.** 18/32 = 56.2% (Wilson-lo 0.393) vs
+  `launch_rules_universal`. NOT closing the wrap-pv_eta + head
+  family — Tier 2 opp model may re-open this at a higher lift.
+  Closing only "ship the current B.3 bundle as-is."
 
 ## Start here — first 30 min of work
 
