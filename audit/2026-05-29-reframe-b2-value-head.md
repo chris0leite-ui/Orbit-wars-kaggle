@@ -105,35 +105,81 @@ Verifications passing this commit:
 - Bundle plays a clean game vs random (smoke iteration earlier).
 - Walker parity 0.000e+00 on 500 val rows.
 
-## A/B vs bare pv_eta (Rule 43, Rule 45)
+## A/B vs bare pv_eta (Rule 43, Rule 45) — CATASTROPHIC FAIL
 
-```
-python fast.py eval submissions/baseline_pv_eta_vh.py \
-  --vs submissions/_imported/baseline_pv_eta.py \
-  --max-seeds 32 --gate 0.50 --workers 4
-```
+| λ | Wins | n | Win rate | Wilson 95% CI | Verdict |
+|---:|---:|---:|---:|---|---|
+| 1.0 (default) | 0 | 32 | 0.0 % | [0.000, 0.107] | **FAIL** |
+| 0.1 (sweep) | 0 | 32 | 0.0 % | [0.000, 0.107] | **FAIL** |
 
-| Field | Value |
-|---|---|
-| n | TBD (adaptive Wilson; up to 32) |
-| Wins | TBD |
-| Win rate | TBD |
-| Wilson 95% CI | TBD |
-| Gate | TBD |
-| Verdict | TBD |
+Single-game sanity (seed=99): VH at λ=1.0 as P0 lost to bare pv_eta
+P1 over a clean 500-turn game (both DONE, no crashes). Latency healthy:
+λ=1.0 p50=238ms / p95=691ms; λ=0.1 p50=423ms / p95=714ms (head's
+per-candidate predict adds ~200ms p50). All within the 1000ms env cap.
+
+Both seats lost universally — `fast.py eval` uses balanced focal
+rotation so VH played P0 half the seeds and P1 half. 0/32 isn't a
+seat-asymmetry artifact.
+
+## Diagnosis — selection bias on observational labels
+
+The Spearman ρ = +0.359 gate at training time was a false positive.
+Mechanically:
+
+- The training trace `trace_accepted` only emits features for
+  candidates the chooser **accepted**. The training distribution is
+  `{candidates pv_eta picks}`.
+- Labels are observational K=10 ship-delta — "what happened in the
+  game where this candidate was picked", not "what would have happened
+  if a different candidate had been picked."
+- At inference, the chooser uses `head_out` to re-rank **all** prerank
+  candidates, including ones pv_eta would have rejected. The head's
+  predictions on rejected candidates are unconstrained LightGBM
+  extrapolation.
+- Even at λ=0.1 (head perturbation = ~10 ships per candidate), those
+  out-of-distribution predictions flip the chooser's argmax to
+  systematically losing actions.
+
+This is the **PM3 distillation-collapse failure mode** in operational
+form (see `knowledge-base/thoughts/2026-05-28-pm-distillation-action-
+rank-collapse.md`). High val Spearman ρ within the training
+distribution does NOT imply rank-order preservation on the deployment
+distribution.
+
+## What's closed (Rule 37 axis cap)
+
+The **observational-label additive-term head on pv_eta's chooser** axis
+is falsified. Both verdict directions (λ=1.0 high, λ=0.1 low) hit the
+same 0/32 floor — the bottleneck is the **label semantics**, not the
+model's coefficient. Do not re-run with:
+
+- Adjusted λ (any value)
+- Different K horizon (5, 20) with the same observational target
+- Different feature subsets
+- A bigger corpus of the same data shape
+
+All four would reproduce 0/32 by the same selection-bias mechanism.
 
 ## Submission decision
 
-TBD pending A/B verdict. If Wilson-lo ≥ 0.50:
-- Pre-submit checklist: Rules 42 (push claim board) / 43 (panel) / 45
-  (n ≥ 32) / 46 (bundle smoke).
-- Rolling pair bot half (μ=1091.9, `baseline_leaf_pv_2p`) will be
-  evicted; predicted μ should clear that floor.
+**No push.** Both rolling-pair slots stay (sub 53131296 at μ=1097 and
+sub 53117942 at μ=1092). Predicted-μ for the VH bundle would be
+catastrophically below either — evicting a rolling-pair slot here
+would be a Rule 42 violation.
 
-If Wilson-lo < 0.50:
-- λ sweep {0.5, 2.0} before declaring the axis falsified (within Rule
-  37: B.2 is a new axis distinct from Reframe A's per-shot binary
-  classifier).
+## Next session — Reframe B.3
+
+See `audit/2026-05-30-reframe-b3-crn-advantage-plan.md` for the
+full plan. Headline: replace observational labels with **CRN-paired
+advantage** `A(s, a) = focal_margin(action) − focal_margin(idle)`
+over K=10 steps. The full B.2 infrastructure (encoder, value-head
+loader, wrapper, bundler, A/B harness) is reused unchanged — only the
+labels are wrong.
+
+Critical-path: verify `lib/fast_sim.rollout` works with pv_eta as a
+policy callback BEFORE building stage 2 corpus infrastructure. If
+fast_sim works, B.3 stage 2 fits in ~7.5 h CPU on a 4-worker box.
+If not, fallback to env.clone+step blows the cost up ~20×.
 
 ## What this run does NOT do
 

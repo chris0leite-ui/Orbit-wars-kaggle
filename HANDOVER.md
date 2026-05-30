@@ -1,15 +1,106 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-29 PM4 (B.1 verdict) by `claude/competition-objective-alignment-hqNVM`.
-> **Reframe B.1 diagnostic probe ran end-to-end and GREENLIT B.2.**
-> Inherits the PM3 resume / PM2 falsification content below.
+> Last written: 2026-05-30 AM (B.2 falsified, B.3 plan locked) by
+> `claude/competition-objective-alignment-hqNVM`.
+> **Reframe B.2 first cut FAILED catastrophically (0/32 at λ=1.0 AND
+> at λ=0.1).** Diagnosis: selection bias on observational labels.
+> **Next session: Reframe B.3 — CRN-paired advantage labels.**
+> Inherits the B.1 verdict + PM3 resume / PM2 falsification content
+> below.
 
 ## Start here — first 30 min of work
 
 1. **Refresh state-of-truth** (Rule 44).
    - `cat state/MULTI_BRANCH.md` for cross-branch live status.
    - `kaggle competitions submissions orbit-wars | head -5` for the
-     rolling pair.
+     rolling pair (snapshot 2026-05-30 09:58 UTC: sub 53131296
+     `baseline_validated` μ=1097 + sub 53117942 `baseline_leaf_pv_2p`
+     μ=1092; both rolling-pair slots preserved — B.2 pushed nothing).
+2. **Read the B.2 closure + B.3 plan.**
+   - `audit/2026-05-29-reframe-b2-value-head.md` — full B.2 result
+     including the 0/32 verdict + selection-bias diagnosis.
+   - `audit/2026-05-30-reframe-b3-crn-advantage-plan.md` — the B.3
+     handover plan. Concrete next moves, file-by-file change list,
+     verification gates, cost estimate.
+3. **Run Step 0 fast_sim verification (~1 h).** Three small benches
+   that decide whether B.3 stage 2 cost is 7.5 h CPU (feasible) or
+   150 h CPU (untenable). Details in the B.3 plan §V0.
+
+## B.2 verdict (2026-05-30 AM session)
+
+| λ | Wins | n | Win rate | Wilson 95 % CI | Verdict |
+|---:|---:|---:|---:|---|---|
+| 1.0 (default) | 0 | 32 | 0.0 % | [0.000, 0.107] | **FAIL** |
+| 0.1 (sweep) | 0 | 32 | 0.0 % | [0.000, 0.107] | **FAIL** |
+
+Training-time gates all passed (Spearman ρ=+0.359 on val, walker
+parity 0.000e+00, latency p95=691 ms inside cap), but the head's
+predictions on **out-of-distribution candidates** (those pv_eta would
+have rejected) drive the chooser to systematically losing actions.
+The `trace_accepted` training trace only sees accepted candidates;
+that's the **selection bias** that closes this axis.
+
+**Closed under Rule 37**: observational-label additive-term head on
+pv_eta's chooser. Do NOT re-iterate with adjusted λ, different K, or
+different feature subsets — the bottleneck is the **label semantics**.
+
+## Reframe B.3 — CRN-paired advantage (next session priority)
+
+Replace observational labels with **counterfactual** ones:
+
+```
+A(s, a) = focal_margin(s after action a, K=10)
+        − focal_margin(s after idle, K=10)
+```
+
+Both rollouts use pv_eta as the focal-seat policy from step 2 onward
+AND as the opp policy throughout. The label is "the advantage this
+candidate buys you vs doing nothing." Coverage is **all top-N
+prerank candidates per state**, not just accepted ones — eliminates
+B.2's selection bias.
+
+**All B.2 infrastructure reused unchanged** — `lib/value_head_features.py`,
+`agents/baseline/_value_head.py`, `agents/baseline_pv_eta_vh/main.py`,
+`scripts/bundle_pv_eta_vh.py`, `scripts/train_value_head.py`,
+`scripts/inspect_value_head_corpus.py`. Only the **labels** are wrong.
+
+**New components**:
+- `trace_prerank()` in `_trace_hook.py` (env var `BASELINE_PRERANK_TRACE`)
+- `scripts/compute_crn_advantage.py` (advantage labelling driver)
+- `scripts/gen_b3_corpus.py` (3-stage pipeline runner)
+- `lib/fast_sim_pv_eta.py` (pv_eta-as-policy wrappers for fast_sim)
+
+**Critical path**: `lib/fast_sim.py` lines 464-494 — `rollout(snap, K,
+policies)` accepts agent callbacks. Step 0 verification (~1 h) tests
+whether pv_eta works as a fast_sim policy without state leakage, at
+<100 ms per K=10 rollout, with parity vs env.clone+step. If yes,
+stage 2 cost is ~7.5 h; if no, fallback is ~150 h.
+
+**Cost estimate**: ~13 h total in the best case (1 h V0 + 4 h stage 1
+self-play + 7.5 h stage 2 advantage labelling + 5 min train + 30 min
+bundle/A/B). Stage 2 is the dominant cost; reducible via top-N=5
+instead of 10 (halves) or K=5 instead of 10 (halves again).
+
+**Open design questions for PI to resolve at session start** (full
+list in §"Open design questions" of the B.3 plan):
+
+1. Top-N candidates per state: 10 (richer, 2× cost) or 5 (cheaper)?
+2. Rollout horizon K: 10 or 5?
+3. Stage 2 compute: local CPU or Kaggle parallel notebooks?
+4. Combine with focal-wins-only filter as bias correction?
+
+## What's CLOSED — do not re-explore
+
+- **Per-shot binary Booster (Reframe A) as additive term in pv_eta
+  chooser** — λ ∈ {4.5, 0.5, −0.5} catastrophic FAIL. Rule 37 axis
+  closed 2026-05-29.
+- **Per-shot Booster as hard FILTER on pv_eta** — closed PM5.
+- **Wrapping bare baseline as deployment target** — closed PM5.
+- **Observational K=10 ship-delta value head additive term on
+  pv_eta** — λ ∈ {1.0, 0.1} both 0/32. Rule 37 axis closed
+  **2026-05-30**. Bottleneck is label semantics, not λ.
+
+
 2. **Read the B.1 probe report.**
    - `audit/2026-05-29-pveta-leaf-residual-probe.md` — full per-K and
      per-stratification tables.
