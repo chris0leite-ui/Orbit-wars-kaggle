@@ -9,7 +9,19 @@
 > `audit-workflow-performance-btjeK`, `strategy-framework-design-OyoYR-rebased`,
 > `ml-competition-strategy-PFhzM`, `analyze-game-strategy-EpMVP`.
 
-## ⏸️ ACTIVE — 2026-05-30 PM (champion-strategy-rules-00JzI) — cost gate CLEARED, win-rate A/B is the only open step
+## ⏸️ ACTIVE — 2026-05-30 PM (champion-strategy-rules-00JzI) — spatial head left UNMEASURED by PI choice; 2-hop redeploy redesign is the forward path
+
+**Latest (2026-05-30 PM2):** PI elected NOT to run the spatial win-rate
+A/B. The head is **unmeasured on win-rate** (cost gate cleared only) —
+"spatial is dead" is an UNCONFIRMED premise, recorded in
+`audit/2026-05-30-spatial-head-unmeasured.md`. Forward-redeploy was
+re-examined: it **cannot be decoupled** from the spatial head (own→own
+captures nothing → rollout-leaf Δ≤0 under plain `hybrid`; only the
+spatial term ever selects it). The SEU7P port (deferred "idea 1") is
+**superseded** by a redesign that values the redeploy through the
+*capture it unlocks*: `knowledge-base/concepts/redeploy-2hop-capture-
+design.md` (commit `727e1bf`). That is the next build candidate, behind
+its own Rule-47 horizon gate + Rule-37/43/45 A/B gates.
 
 **Full plan:** `/root/.claude/plans/warm-beaming-snowflake.md` (read it first).
 
@@ -82,8 +94,11 @@ clone. Rebuild it first if the container was recycled (recipe in the plan).
 4. **DECISION → surface to PI, do NOT submit.** A submit would need the Rule 43 panel
    + h2h, a Rule 42 push-claim, and would evict our own live champion.
 
-Deferred (out of scope until win-rate resolves): idea 1 forward-redeploy generator
-(port from SEU7P; the universal ceiling is its safety regulator).
+Deferred → SUPERSEDED (2026-05-30 PM2): idea 1 forward-redeploy generator.
+Do NOT port the SEU7P spatial-coupled version (it cannot stand without the
+spatial head). Replacement design: `knowledge-base/concepts/redeploy-2hop-
+capture-design.md` — values the redeploy via the capture it unlocks, so it
+stands alone under the plain head.
 
 ### Housekeeping flag for next session
 - Commit `aea9d74` (now amended locally to `fd495ce`, profiler tooling) originally
