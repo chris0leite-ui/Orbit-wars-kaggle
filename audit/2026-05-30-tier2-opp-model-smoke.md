@@ -65,13 +65,85 @@ Tier 2 is ~600× slower than Tier 0 — load-bearing for chooser cap.
 | Run | Wallclock budget | Probe fix | Outcome | p50 turn-ms | p95 | max |
 |---|---:|:---:|---|---:|---:|---:|
 | Pre-fix, seed=0, BASELINE_WALLCLOCK_MS=50 | 50 ms | no | p1_win (Tier 2 lost) | 172 | 535 | 922 |
-| Post-fix, seed=0, default 1000 ms | 1000 ms | yes | _running_ | — | — | — |
+| Post-fix, seed=0, default 1000 ms | 1000 ms | yes | p1_win (Tier 2 lost) | 473 | 812 | 939 |
 
 Pre-fix turn cost averaged 3.4× the wallclock budget — confirms the
-chooser cap was undersized with Tier 2 active. p95=535 ms, max=922 ms
-at a 50 ms budget meant the chooser was validating far more candidates
-than budget allowed. Post-fix should normalise (cap shrinks with the
-correct per-step probe).
+chooser cap was undersized with Tier 2 active. Post-fix the budget is
+respected on this single short game (n_steps=197, p95=812 < 1000).
+But see A/B result below for the n=32 picture, which tells a different
+story.
+
+### A/B result vs `launch_rules_universal` (n=32, default 1000 ms)
+
+| n | wins | % | Wilson 95 % CI | verdict | focal turn-ms p50 / p95 / max |
+|--:|--:|--:|---|---|---|
+| **32** | **0/32** | **0.0 %** | **[0.000, 0.107]** | **FAIL (Whi<0.5 — adaptive early-stop)** | 549 / **1621** / **3015** |
+
+**Decisive falsification.** 0/32 vs the rolling-pair champion. Wilson
+upper bound (0.107) is below the 0.50 gate, so the adaptive harness
+early-stopped at n=32 (Wilson confidence the lift is < 0 is high). No
+seed produced a win.
+
+**Two failure modes overlap:**
+
+1. **Latency regression (load-bearing).** p95=1621 ms and max=3015 ms
+   blow past the 1000 ms env cap — ~40 % of turns over budget. In a
+   Kaggle live game this would trigger turn-forfeit penalties; in the
+   local harness it just means the chooser is using more wallclock
+   than budgeted (the harness doesn't enforce the cap, only reports
+   it). Either way, this is a non-starter for submission.
+   - The chooser cap probe was fixed to include opp-policy cost
+     (commit 05aa624), but Tier 2 cost is non-uniform per-turn
+     (high-emit-count turns dominate). The single-state probe sets
+     the cap based on a typical state; pathological turns blow past.
+2. **Policy quality (also fatal).** 0/32 is unambiguous — even if
+   timing were in cap, the filter is making the chooser strictly worse.
+   Likely cause: the booster was trained on focal-seat-emit
+   distribution (PM5 mixed-opponent corpus); when applied to the
+   opponent's emit distribution inside the chooser's fast_sim
+   rollouts, it under-predicts strong opp candidates → fast_sim opp
+   policy emits less than reality → leaf state under-rates opp threat
+   → focal chooser becomes over-confident → loses every game.
+
+### Falsified design + Rule 37 axis status
+
+PM5-booster-as-opp-filter, threshold 0.30, no retrain: **FALSIFIED
+1st-of-3 on this axis.** Two more variants are nominally allowed
+before Rule 37 axis cap, but the failure modes above suggest both
+of the remaining variants in the planned sweep would also fail:
+
+- **Threshold sweep (0.20 / 0.40)**: addresses neither failure mode.
+  Lower threshold filters fewer candidates (less timing relief);
+  higher threshold filters more (more timing relief but worse policy
+  quality — booster's signal is already misaligned).
+- **Retrain on B.3-style opp-specific corpus**: addresses failure
+  mode #2 (policy quality) but not #1 (latency). Adds ~3-4 h of
+  corpus-gen + training. Worth pursuing only if PI rules the
+  latency fix is tractable.
+
+**Recommended PI escalation (Rule 26):** the design as conceived
+(filter Tier 1 candidates with a focal-trained booster, run inside
+every chooser-rollout step) appears structurally mismatched. Two
+architecturally distinct alternatives to consider:
+
+A. **Cache the opp policy output for the turn.** Compute Tier 2 opp
+   action set ONCE per real-game turn at the actual game obs, and
+   replay that constant action set inside every chooser rollout step.
+   Eliminates the K×N_candidates inflation. Loses the "opp reacts to
+   our hypothetical move" signal, but that signal is weak anyway given
+   the rule-base + 1-step lookahead.
+
+B. **Tier 2 augments leaf scoring, not opp rollouts.** Score the
+   reachable leaf states with the booster's "P(this shot succeeds)"
+   over the focal seat's own candidates — same architecture as the
+   PM5 baseline_validated wrapper that PI explicitly approved a
+   submit override on (60.9 % vs baseline). This is the original
+   konbu17 filter on FOCAL, not OPP. Reuses every piece of the
+   architecture except where the booster's output gets multiplied in.
+   But this is closer to Reframe A (additive logit term on focal),
+   which was falsified at λ=0.5. So it's likely a dead end.
+
+### Pre-existing test_bundle.py environment failure (flagged)
 
 ### Pre-existing test_bundle.py environment failure (flagged)
 
@@ -83,30 +155,43 @@ load `kaggle_environments` correctly (smoke import OK on the new
 bundle). Rule 46 in spirit verified via the bundler's own smoke; the
 pytest harness needs a separate friction fix. **Not blocking Tier-2 A/B.**
 
-## What's next (next agent / session)
+## What's next — PI escalation
 
-1. **Confirm post-fix timing.** Wait for the in-flight single-game
-   smoke at default 1000 ms wallclock. p95 < 1000 ms required for
-   submit viability.
-2. **A/B vs `launch_rules_universal` at n=32** (Rule 45, gate 0.50):
-   ```
-   python fast.py eval submissions/baseline_pv_eta_vh_opp.py \
-       --vs submissions/baseline_launch_rules_universal_local.py \
-       --max-seeds 32 --workers 8 --gate 0.50
-   ```
-3. **A/B multi-opponent panel (Rule 43, gate 0.55)** — only if step 2
-   clears:
-   ```
-   python fast.py eval submissions/baseline_pv_eta_vh_opp.py \
-       --vs-panel default \
-       --require-h2h submissions/baseline_launch_rules_universal_local.py \
-       --max-seeds 32 --workers 8 --gate 0.55
-   ```
-4. **If both clear** → Rule 42 pre-submit checklist + PI sign-off.
-5. **If h2h fails** → diagnose latency first (verify cap didn't shrink
-   below the chooser's useful floor of 8 candidates per turn), then
-   threshold sweep (0.20 / 0.30 / 0.40), then retrain corpus on B.3-style
-   opp-specific replays if all thresholds fail.
+A/B FAILED at n=32 with 0 wins. The current architecture (PM5
+focal-trained booster as opp filter inside chooser rollouts) is
+both latency-broken (p95 > env cap) AND quality-broken (0/32
+even ignoring timing). The remaining sweeps in the original plan
+(threshold 0.20/0.40, B.3-corpus retrain) don't address both
+failure modes; the structural alternatives (cache opp output
+per real turn; augment focal leaf scoring instead of opp policy)
+need PI ratification before this session burns more compute.
+
+**Recommended next session start (Rule 44 — read first):**
+
+1. `state/MULTI_BRANCH.md` for live rolling-pair.
+2. This audit's "A/B result" + "Falsified design" sections.
+3. Decide one of:
+   - Alternative A (cache opp output per real turn): probably the
+     fastest fix; restores Tier 1 timing while keeping Tier 2's
+     filtered candidate set.
+   - Pivot away from Tier 2 entirely and re-open a different
+     candidate from the closed-tracks list at the right level of
+     sophistication (e.g. re-examine the B.3 head at λ=0.5 not 1.0;
+     or revisit the chooser-side ML logit at λ=0.1 with the better
+     understanding of opp-side asymmetry we now have).
+   - Pause head-headroom work and ship a different candidate from the
+     existing carry-forward set (`baseline_pv_eta_vh_b3smoke.py`
+     bundle is on disk and clean — could be a calibration probe at
+     PI's discretion despite Wilson-lo 0.39 vs launch_rules_universal).
+
+**Carry-forward state:**
+
+| Item | Status |
+|---|---|
+| `lib/opp_model.py` Tier 2 implementation | Working, falsified at n=32 |
+| `agents/baseline/chooser.py` probe fix | KEEP — strict improvement; no behavior change at Tier 0 |
+| `submissions/baseline_pv_eta_vh_opp.py` | Built, 982 KB, but DO NOT SUBMIT (FAIL gate) |
+| `agents/baseline_pv_eta_vh_opp/main.py` + bundler | Preserved as Tier-2 wrapper template for any architecture variant |
 
 ## Carry-forward artifacts
 
