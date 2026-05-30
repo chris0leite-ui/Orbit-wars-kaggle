@@ -9,6 +9,58 @@
 > `audit-workflow-performance-btjeK`, `strategy-framework-design-OyoYR-rebased`,
 > `ml-competition-strategy-PFhzM`, `analyze-game-strategy-EpMVP`.
 
+## ⏸️ ACTIVE — 2026-05-30 paused mid-step (champion-strategy-rules-00JzI)
+
+**Full plan:** `/root/.claude/plans/warm-beaming-snowflake.md` (read it first).
+
+**Live ladder (rolling last 2, this session's pushes):**
+- **53182323** `baseline_launch_rules_universal` — champion full config + **universal
+  K=10 ceiling** (every launch — neutral / opp / own-reinforce / comet — arriving
+  after turn 10 is dropped post-emit). Submitted today, warming. This is the current
+  champion / A/B opponent.
+- 53177486 `baseline_redeploy_gangup` (sibling SEU7P, μ≈971) — the backstop; weak.
+- The next submit evicts 53177486 (the older/weaker of the pair) — but **no submit is
+  planned until the A/B below produces evidence.**
+
+**Task in flight:** clean A/B of the `hybrid_spatial` value head (idea 3 from the
+SEU7P review) vs the universal-ceiling champion. **Evidence-gathering only, no submit.**
+
+DONE + verified this session:
+- Focal bundle assembled: `submissions/baseline_universal_spatial.py` — champion
+  config header with **NO `BASELINE_VALUE_HEAD` env line**, plus a code bake at module
+  end: `def select_favor_fn(): return favor_hybrid_spatial`. (Why baked not env: the
+  head is read from `os.environ` live per-turn and both agents share one process, so
+  an env toggle leaks to BOTH and collapses the A/B to false parity.)
+- **Contamination probe PASSED** (Rule 38): one process, env pre-polluted to
+  `hybrid_spatial`, focal→`favor_hybrid_spatial`, champion→`favor_hybrid`. AST-clean,
+  one `from __future__`, one benign `"hybrid"` setdefault.
+
+NOT DONE — **zero A/B win-rate data exists.** Every clean_ab run stalled: I
+oversubscribed this **4-core** box (launched 3-4 concurrent runs, load hit 21,
+Rule 31 ≤2-heavy-job cap violated). No games completed. Any "15/32"-type number in
+scrollback was a draft, NOT a measurement — **disregard it.**
+
+⚠️ `submissions/*` is **git-ignored** → the focal bundle will NOT survive the fresh
+clone. Rebuild it first next session (recipe in the plan + below).
+
+**Next session — exact sequence (ONE heavy job at a time, `--workers 4`):**
+1. Rebuild `submissions/baseline_universal_spatial.py` (re-bundle `agents/baseline`
+   with the extended `--lib` list from the champion bundle's line-1 header; inject the
+   champion env header WITHOUT a VALUE_HEAD line; append the `select_favor_fn` bake).
+2. Re-run the contamination probe — must pass before trusting any A/B.
+3. Headline 2P A/B, ALONE (~15-20 min): `python scripts/clean_ab.py
+   submissions/baseline_universal_spatial.py
+   submissions/baseline_launch_rules_universal.py --seeds 16 --workers 4`. Gate:
+   n≥32, Wilson-lo ≥ 0.50.
+4. Sequentially after it finishes: symmetry (`clean_ab champion champion --seeds 8`
+   ≈50%), `fast.py bench` (p95<800ms, zero ≥1000ms), geometry panel, then (if
+   promising) n=64 + production-share. **Never concurrent — that is what stalled this session.**
+
+Deferred (later step, out of scope until idea 3 resolves): idea 1 forward-redeploy
+generator (port from SEU7P; the universal ceiling is its safety regulator).
+
+---
+
 ## Read order (Rule 44 — mandatory)
 
 1. **`state/MULTI_BRANCH.md`** — live Kaggle rolling pair, three-track
