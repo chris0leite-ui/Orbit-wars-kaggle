@@ -851,7 +851,14 @@ def agent(obs, configuration=None):
         LEDGER_ENABLED
         or os.environ.get("BASELINE_LEDGER", "off").strip().lower() == "on"
     )
-    if ledger_on and step == 0:
+    # Synchronized-arrival JOINT coalitions (BASELINE_JOINT_SYNC) need their
+    # waiting leg to fire across turns. They ride the SAME _PENDING_LAUNCHES
+    # ledger + _tick_ledger machinery, but we keep the (deliberately-off)
+    # general wait-grid dormant: when the general ledger is off, only
+    # commits tagged sync_joint are persisted/ticked (see persist below).
+    sync_on = os.environ.get("BASELINE_JOINT_SYNC", "0").strip() == "1"
+    ledger_active = ledger_on or sync_on
+    if ledger_active and step == 0:
         _PENDING_LAUNCHES.pop(me, None)
 
     raw_planets = obs_d.get("planets", []) or []
@@ -938,7 +945,7 @@ def agent(obs, configuration=None):
         surviving_pending: list[dict] = []
         reserved_srcs: set[int] = set()
         reserved_for_new_commits: set[int] = set()
-        if ledger_on:
+        if ledger_active:
             due_moves, surviving_pending = _tick_ledger(
                 me, world, model, omega,
             )
@@ -968,9 +975,16 @@ def agent(obs, configuration=None):
             agent_deadline=agent_deadline,
         )
 
-        # 2. Persist updated ledger (surviving + new commits) when on.
+        # 2. Persist updated ledger (surviving + new commits). When the
+        #    general ledger is on, persist all commits. When it is OFF but
+        #    sync coalitions are on, persist ONLY sync_joint commits so the
+        #    deliberately-disabled general wait-grid stays dormant (its
+        #    solo wait_N>0 commits are discarded exactly as in the champion).
         if ledger_on:
             _PENDING_LAUNCHES[me] = surviving_pending + new_commits
+        elif sync_on:
+            sync_new = [c for c in new_commits if c.get("sync_joint")]
+            _PENDING_LAUNCHES[me] = surviving_pending + sync_new
 
         moves = due_moves + moves
         moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
