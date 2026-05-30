@@ -60,12 +60,13 @@ Both perf-chain pieces are equal-magnitude regressors. Each costs ~25pp in isola
 
 **Implication:** the champion's +30pp universal-rules lift was measured on the SAME regressed substrate ours had. So porting universal-rules onto our FIXED foundation should give a CLEANER lift than what the champion shows.
 
-**5. Head-to-head A/B (our fix + redeploy + hybrid_spatial vs champion bundle), n=12 partial before container reclaim:**
-- 4W / 8L = 33.3%, Wilson [0.14, 0.61]
-- True-seed signal: 0 focal-friendly, 2 anchor-friendly (champion), 4 split → **0/2 = 0% directional**
-- Confirms: universal-rules > our additions stack (foundation-fix + redeploy + hybrid_spatial alone is NOT enough)
-- A/B restarted as background `bwo248dc8` at session end; log `/tmp/ab_logs/h2h_champion.log`
-- Both bundle files at `submissions/baseline_fix_redeploy_spatial.py` (ours) and `submissions/champion_launch_rules.py` (champion HEAD-rebuilt) — both untracked, likely lost on container reclaim; rebuild via `python scripts/bundle_agent.py agents/baseline --force --skip-parity-gate` from each branch's HEAD
+**5. Head-to-head A/B (our fix + redeploy + hybrid_spatial vs champion bundle) FINAL: 9/16 = 56.2%, Wilson [0.332, 0.769].**
+- Per-seed: 3 focal-friendly (0, 4, 6), 2 anchor-friendly (2, 3), 3 split (1, 5, 7). **True-seed signal 3/5 = 60% focal.**
+- **Strong seat asymmetry:** P0 = 3/8 (37.5%), P1 = 6/8 (75%). Our bundle plays much better as P1 than P0 against champion. Could be hybrid_spatial value head valuing geometry differently per seat, or panel artifact at n=16. Worth investigating at n=32+ in next session.
+- **Verdict:** our additions stack on the fixed foundation is **roughly at parity with champion locally**, with directional positive lift (point estimate 56%, Wilson-lo 0.33 — does NOT clear Rule 45's 0.50 gate).
+- **Implication:** universal-rules (+30pp local in champion's own A/B) and our additions (~+30pp local from foundation-fix recovery + redeploy + hybrid_spatial) are **roughly equal-magnitude levers**. Composite plan (port universal-rules on top of our fix + additions) should yield additive lift if compositions don't step on each other.
+- Log: `/tmp/ab_logs/h2h_champion.log` (lost on container reclaim).
+- Both bundle files at `submissions/baseline_fix_redeploy_spatial.py` (ours) and `submissions/champion_launch_rules.py` (champion HEAD-rebuilt) — both untracked, lost on container reclaim; rebuild via `python scripts/bundle_agent.py agents/baseline --force --skip-parity-gate` from each branch's HEAD.
 
 ### Pre-conditions (status)
 
