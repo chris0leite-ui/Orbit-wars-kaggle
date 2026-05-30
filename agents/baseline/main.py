@@ -46,7 +46,7 @@ os.environ.setdefault("PROPOSER_REDEPLOY", "on")
 # friendly fleets whose solo arrival would bounce. Reuses existing
 # cheap_marginal_value scoring via timeline-aware model.ships_at.
 # Set PROPOSER_GANG_UP_SUPPORT=off to disable.
-os.environ.setdefault("PROPOSER_GANG_UP_SUPPORT", "on")
+os.environ.setdefault("PROPOSER_GANG_UP_SUPPORT", "off")
 
 # Production default: trajectory chooser. v4 with wait_N>0 + wallclock
 # budgeting hits 42/64 = 65.6pct Wlo=0.534 vs v15 (n=64), point-estimate
@@ -74,7 +74,7 @@ os.environ.setdefault("BASELINE_JOINT", "1")
 # requested pids + lead; if either precondition misses, the inline list-comp
 # (vectorised since lib/trajectory.py b4f885d) is the fallback. Reference
 # wiring: agents/reach_frontier/main.py:85.
-os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
+os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "0")
 
 # H1 — post-chooser idle drain (2026-05-18) — DISABLED BY DEFAULT.
 # Audit `audit/replays/idle-trajectory-2026-05-17.md` measured 43.8pct
