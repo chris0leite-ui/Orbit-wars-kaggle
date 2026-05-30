@@ -118,7 +118,55 @@ fix forward AND add a test.
   to a default policy beyond p90 distance) from day 1, not after
   a failed sweep.
 
-## 2026-05-29 PM2 (claude/kaggle-submission-review-gZsCu — surgical revert shipped + Rule 47 trace identifies chooser-pricing root cause)
+## 2026-05-30 (claude/kaggle-submission-review-gZsCu — opp-axis Pareto exploration via paired-seed asymmetric A/Bs)
+
+- `tag: anchor-self-play-symmetric-when-env-var-shared` — designed
+  the first nearest-vs-lite_greedy A/B as anchor self-play with the
+  parent shell setting `BASELINE_OPP_MODEL`. Both seats share
+  `os.environ` so both run the same policy → structurally symmetric
+  game → expected winrate ~50% by construction → impossible to
+  detect a real opp-model difference. PI caught this before the
+  run finished; ~12 min compute and one bad mental model averted.
+  Root cause: I described the design as "cleanest for the chooser-
+  belief hypothesis" in the plan file, knowing it was symmetric,
+  without working out that symmetric-rules-on-both-sides ≠ rule-A-
+  on-our-side-only. **Fix:** before any "anchor vs anchor" A/B,
+  one-line test: "is there any way the two seats end up running
+  the same code path?" If yes, bake the asymmetry into one of the
+  two bundles, do not rely on env vars.
+- `tag: opp-model-confound-search-starvation` — top_tier_mirror
+  baked into anchor lost 5-0 to lite_greedy at n=5; I almost
+  reported as "mirror's strategy is too attack-biased" (echoing
+  the prior-session code comments). PI prompted "diagnose closely
+  to make sure there's no bug." Instrumented re-run revealed the
+  REAL mechanism: mirror is 5-10× slower per call → chooser's
+  `affordable_validate_cap` shrinks per-turn candidate count to
+  ~80 (vs ~1100 for lite_greedy) → 22× fewer evaluations → P1
+  is search-starved, not strategy-mispredicting. **Fix:** for ANY
+  opp-model variant where per-call cost differs from lite_greedy
+  by >2×, log per-turn invocation count alongside winrate. If
+  ratio >2×, the result is compute-confounded; report the budget
+  conclusion, not the strategy one.
+- `tag: skip-the-bench-when-cost-is-the-answer` — almost ran a
+  20-40 min n=5 A/B for v7_0-as-opp-model after a successful 5-step
+  smoke. The bench (60-step, instrumented) showed P1 making 15
+  calls/turn vs P0's 1106 — 72.8× ratio, worse than mirror. Result
+  was mechanically determined ("blind chooser loses") before the
+  A/B even started; the bench WAS the experiment. Saved 20-40 min
+  of compute. **Fix:** for any opp-model variant where the per-call
+  cost is documented or visibly heavier (full-agent wrappers,
+  WorldModel-rebuilding policies), run a per-turn invocation
+  benchmark FIRST. Decide A/B-or-not based on the ratio, not the
+  smoke success.
+- `tag: stale-monitor-spam` — long-lived `tail -F ... | grep` Monitor
+  invocations stayed armed past their A/B completion, emitting
+  "timed out" notifications hours later that needed muting. Cosmetic
+  but adds chat-noise during the wrap. **Fix:** use `until ! ps -ef
+  | grep ...; do sleep 5; done` pattern for terminating monitors,
+  or set Monitor timeout to ~1.5× expected wallclock, not the safe
+  upper bound.
+
+
 
 - `tag: rule-47-trace-tool-lived-in-tmp` — wrote
   `/tmp/trace_rule47.py` to satisfy Rule 47 instrumentation;
