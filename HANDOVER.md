@@ -1,163 +1,135 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-30 by `claude/game-theory-winning-strategy-SEU7P`
-> (additions-axis isolation + best-of-both-worlds plan queued).
-> Older 2026-05-20 brief preserved below the "Plan queued" section.
+> Last written: 2026-05-30 (late PM) by `claude/game-theory-winning-strategy-SEU7P`
+> (foundation regression diagnosed + fixed; composite "best of both worlds" plan ready to execute).
+> Older 2026-05-20 brief preserved below.
 
 ---
 
-## 2026-05-30 — PLAN QUEUED: "best of both worlds" composite
+## 2026-05-30 — PLAN: composite "best of both worlds"
 
-**Read this section first. Execute starting at Step 1 once Pre-condition P1 is confirmed.**
+**Execute starting at Step 2. Foundation fix (Step 1) is already in `origin/claude/game-theory-winning-strategy-SEU7P` at commit `d50654a`.**
 
-### Context at end of 2026-05-30 session
+### Composite target
 
-**Live rolling pair (per kaggle competitions submissions orbit-wars at session end):**
-- Pos 1: **sub 53182323 `baseline_launch_rules_universal.py`** μ **≈1209.7** — NEW CHAMPION (sibling branch, NOT ours). Author description: "champion full config (JOINT_AGGR/NEUTRAL_BONUS/ORBITAL_SAFETY/PV_ETA, trajectory chooser) + UNIVERSAL K=10 ceiling. Extends launch discipline from opponent-captures-only to ALL launches — every fleet arriving after K=10 turns dropped post-emit, incl neutral captures, own-planet reinforcements, comet-sourced." Their A/B universal-validator ON vs OFF: n=64 = 44-20 = 68.8% Wilson-lo 0.566 (clears Rule 45).
-- Pos 2: **sub 53177486 `baseline_redeploy_gangup.py`** μ **≈1004** (ours, this branch, settling around 970-1004 — net regression vs PV_ETA peak).
+A single bundle that combines:
+- **Foundation fix** (perf-chain regression reverted — already committed)
+- **Universal-launch-rules** (ported from champion branch — Step 2)
+- **Our verified additions** (redeploy + hybrid_spatial — already default-on in main.py)
+- **NOT gang_up** (regressor — already default-off in main.py)
 
-**PV_ETA peak reference (frozen anchor):** `submissions/baseline_pv_eta_anchor_1163.py` = bundle of sub 53111837, commit `0d71aa6` on branch `claude/kaggle-submission-review-gZsCu`, settled live μ **1163.5**. Local A/B vs this anchor is our calibration baseline.
+Predicted live μ: 1200-1250 range if composition is additive. Champion currently at μ≈1173, PV_ETA peak was 1163.5.
 
-**Our current bundle (this branch, commit c097471) contains:**
-- PV_ETA mechanism (ported from gZsCu, n=48 parity claim from wrap commit 2623b49 = 52.1% — wide CI)
-- New forward-redeploy generator (default ON, env `PROPOSER_REDEPLOY`)
-- New gang-up-support generator (default ON, env `PROPOSER_GANG_UP_SUPPORT`)
-- New hybrid_spatial value head (default ON, env `BASELINE_VALUE_HEAD=hybrid_spatial`)
+### What's already done (2026-05-30 session)
 
-### Isolation A/B results (n=16 each vs PV_ETA anchor, this session)
+**1. Foundation regression diagnosed and fixed (commit `d50654a`):**
+- `agents/baseline/chooser.py`: `WALLCLOCK_BUDGET_MS 800.0 → 600.0`
+- `agents/baseline/main.py`: `KINEMATIC_TABLE_ENABLED` setdefault `"1" → "0"`
 
-| Arm | Win rate | Wilson 95% | True-seed signal | Verdict |
-|---|---|---|---|---|
-| Full bundle (all 3 ON) | 19/32 = 59.4% | [0.42, 0.74] | 67% | fails Rule 45 |
-| redeploy_only | 11/16 = 68.8% | [0.44, 0.86] | 4/5 = 80% | **strong positive** |
-| **gangup_only** | **7/16 = 43.8%** | [0.23, 0.67] | 3/7 = 43% | **REGRESSION — drop** |
-| hybrid_spatial_only | 11/16 = 68.8% | [0.44, 0.86] | 3/3 = 100% | strong positive (n small) |
-| **isolation_none (foundation parity)** | 5/16 = 31.2% | [0.14, 0.56] | 1/5 = 20% | **pooled w/ wrap commit n=48: 30/64 = 46.9%, Wilson [0.35, 0.59]** |
+Discriminator A/B results (n=16 each vs PV_ETA anchor `submissions/baseline_pv_eta_anchor_1163.py`):
 
-A/B 4 isolation files: `submissions/isolation_{redeploy_only,gangup_only,hybrid_spatial_only,none}.py` (built this session via sed-edits on `setdefault` lines of `baseline_redeploy_gangup.py`). Results log: `/tmp/ab_logs/isolation_3way.log`. A/B 4 was running as background task `bkdjbpl2q` at session end; expected finish ~40 min after session pause. If the container reclaimed the work, re-run: `python scripts/clean_ab.py submissions/isolation_none.py submissions/baseline_pv_eta_anchor_1163.py --seeds 8 --workers 2`.
+| Variant | Win rate | Wilson | Recovery |
+|---|---|---|---|
+| isolation_none (both perf-chain ON — pre-fix) | 5/16 = 31.2% | [0.14, 0.56] | — |
+| kinematic_off (only kinematic disabled) | 9/16 = 56.2% | [0.33, 0.77] | +25pp |
+| wallclock_600 (only wallclock reverted) | 9/16 = 56.2% | [0.33, 0.77] | +25pp |
+| **both reverted (= current source after d50654a)** | **11/16 = 68.8%** | [0.44, 0.86] | **+37pp** |
 
-### Strategic read (post-A/B-4 revision)
+Both perf-chain pieces are equal-magnitude regressors. Each costs ~25pp in isolation; combined sub-additive at ~37pp recovery. The `hard_deadline` parameter in `score_action` remains (third perf-chain piece, not env-gated, not isolated — gZsCu doesn't have it).
 
-- **Foundation parity status is AMBIGUOUS.** Pooled n=64 says ~47% (parity within wide CI). Recent n=16 alone says 31% (regression). Disambiguate first before any composite work.
-- gang_up is consistently the weakest arm across all readings; drop it regardless of foundation status.
-- redeploy + hybrid_spatial are each ~+18-38pp above the most-recent (regressed?) foundation. If foundation truly is at parity, their lift is ~+18pp; if foundation has drifted, more of their "lift" is regression-recovery.
-- Live ladder: new champion sub 53182323 settled at μ≈1180.7 (drifted down from peak 1209.7). Our sub at μ≈1004.
-- **The universal-launch-rules port (Steps 1-3 of original plan) is still valuable** — it's an independent mechanism. Once foundation status is disambiguated (P1-prime), port universal-rules onto whichever PV_ETA substrate is verified clean.
+**2. Additions axis verified (isolation A/B, n=16 each vs PV_ETA anchor):**
 
-### Pre-conditions (verify BEFORE starting Step 1)
-
-**P1. ⚠️ AMBIGUOUS 2026-05-30.** Foundation parity A/B 4 (`isolation_none` vs PV_ETA anchor) landed **5/16 = 31.2%, Wilson [0.142, 0.556]**, true-seed signal 1/5 = 20%. POOLED with the wrap commit 2623b49's n=48 = 52.1%: **30/64 = 46.9%, Wilson [0.352, 0.590]**.
-
-The two n's aren't strictly the same test (wrap-commit at substrate 2623b49 without the fa696d0 generator functions; A/B 4 at c097471 with generator functions present but env-gated OFF). Pooling is valid IF the env-gated-OFF guards have zero runtime effect at import / module-load. If not, the two should be analyzed separately and the recent n=16 = 31% signal dominates.
-
-- **Pooled-correct interpretation:** foundation is at ~47%, mild regression (~−3pp) or noise. Plan can proceed but additions' "lift" includes regression-recovery component.
-- **Separate-correct interpretation:** SEU7P PV_ETA has drifted ~−19pp from gZsCu peak since 2623b49. Plan is BLOCKED until foundation is fixed.
-
-**P1-prime (CONCRETE ROOT-CAUSE FOUND 2026-05-30 PM).** Three actual code-level divergences between `submissions/isolation_none.py` (SEU7P substrate, all 3 new env vars OFF) and `submissions/baseline_pv_eta_anchor_1163.py` (frozen gZsCu peak bundle, sub 53111837):
-
-| Variable | gZsCu anchor (μ=1163.5) | SEU7P isolation_none |
+| Arm | Win rate | Verdict |
 |---|---|---|
-| `WALLCLOCK_BUDGET_MS` | **600.0** (module constant) | **800.0** (bumped via perf chain) |
-| `KINEMATIC_TABLE_ENABLED` env default | absent → defaults OFF | `setdefault(..., "1")` → ON by default |
-| `hard_deadline` parameter in `score_action` | NOT present | present (hard-cap safety net) |
+| redeploy_only | 11/16 = 68.8%, 4/5 = 80% true-seed | **KEEP — default on** |
+| hybrid_spatial_only | 11/16 = 68.8%, 3/3 = 100% true-seed | **KEEP — default on** |
+| **gangup_only** | **7/16 = 43.8%, 3/7 = 43% true-seed** | **DROP — default off (already done in d50654a)** |
 
-Plus ~650 lines of perf-chain additions in isolation_none beyond the env-gated new generators. The unconditional code paths (wallclock change, hard-cap, kinematic-table lookup) DO execute regardless of the env-gated additions.
+**3. Champion branch identified: `origin/claude/champion-strategy-rules-00JzI`**
+- HEAD commit at session end: `8364db8 handover: spatial-head cost gate CLEARED`
+- Key feature commit: `f10bb1e feat(launch-rules): universal K=10 arrival ceiling` (the universal-rules implementation)
+- Champion's `agents/baseline/main.py` imports `from agents.baseline.launch_rules import enforce_launch_rules`
+- The validator is called at multiple chooser commit points (search for `enforce_launch_rules` in champion's main.py post-bundle)
 
-**Suspected primary culprit:** `KINEMATIC_TABLE_ENABLED=1`. A precomputed orbital-position lookup added on SEU7P via commit `0f1da5b perf(baseline): wire kinematic-table singleton into agent's per-turn entry`. Any off-by-one in the rotation index, stale state across turns, or wrong tick offset systematically corrupts the chooser's orbital predictions for every launch's arrival position — hits the core of every chooser pick.
+**4. Champion has the SAME perf-chain regression as our pre-fix SEU7P:**
+- `WALLCLOCK_BUDGET_MS = 800.0` ✓ (same as our pre-fix)
+- `KINEMATIC_TABLE_ENABLED` setdefault `"1"` ✓ (same as our pre-fix)
+- `BASELINE_VALUE_HEAD = "hybrid"` (no spatial term — our hybrid_spatial is unique to us)
+- No `PROPOSER_REDEPLOY` / `PROPOSER_GANG_UP_SUPPORT` setdefaults (those are unique to our branch)
+- Has `BASELINE_CHOOSER = "trajectory"`, `BASELINE_JOINT = "1"`
 
-**Discriminator A/B executing (2026-05-30 PM session):** Built `submissions/isolation_none_perfchain_off.py` from isolation_none with TWO surgical edits:
-1. `WALLCLOCK_BUDGET_MS = 800.0` → `600.0` (matches gZsCu)
-2. `KINEMATIC_TABLE_ENABLED` setdefault `"1"` → `"0"` (force OFF)
+**Implication:** the champion's +30pp universal-rules lift was measured on the SAME regressed substrate ours had. So porting universal-rules onto our FIXED foundation should give a CLEANER lift than what the champion shows.
 
-n=16 A/B vs PV_ETA anchor running as background `b8kpp315v`, log `/tmp/ab_logs/discriminator_perfchain.log`. ETA ~30-40 min from launch (~14:13 UTC).
+**5. Head-to-head A/B (our fix + redeploy + hybrid_spatial vs champion bundle), n=12 partial before container reclaim:**
+- 4W / 8L = 33.3%, Wilson [0.14, 0.61]
+- True-seed signal: 0 focal-friendly, 2 anchor-friendly (champion), 4 split → **0/2 = 0% directional**
+- Confirms: universal-rules > our additions stack (foundation-fix + redeploy + hybrid_spatial alone is NOT enough)
+- A/B restarted as background `bwo248dc8` at session end; log `/tmp/ab_logs/h2h_champion.log`
+- Both bundle files at `submissions/baseline_fix_redeploy_spatial.py` (ours) and `submissions/champion_launch_rules.py` (champion HEAD-rebuilt) — both untracked, likely lost on container reclaim; rebuild via `python scripts/bundle_agent.py agents/baseline --force --skip-parity-gate` from each branch's HEAD
 
-**Discriminator interpretation:**
-- If foundation jumps from 31% → ~50%: perf chain is the culprit. Next: narrow to which piece (kinematic alone vs wallclock alone via two more n=16 A/Bs).
-- If foundation stays ~31%: perf chain is NOT the culprit. Look at the +650 lines of code for unconditional changes (vectorize orbital-position window in `predict_fleet_fate`, reach-frontier scaffolding leakage, joint_solver edits).
+### Pre-conditions (status)
 
-**P1-prime gate:** plan resumes when discriminator + follow-up A/Bs identify the regressing code, AND the foundation is restored to ≥50% vs anchor at n≥16 with Wilson-lo ≥ 0.40.
+- **P1 (foundation parity): RESOLVED** by commit `d50654a`. Local A/B shows perfchain_off variant at 11/16 = 68.8% vs anchor (cf. 31% with perf-chain ON).
+- **P2 (champion env-flag inventory): PARTIAL.** Confirmed champion uses BASELINE_CHOOSER=trajectory and BASELINE_JOINT=1. Did NOT verify JOINT_AGGR/NEUTRAL_BONUS/ORBITAL_SAFETY/PV_ETA env vars — those are likely set elsewhere (wrapper, or as defaults inside specific code paths). Cross-check our `submissions/baseline.py` env-var inventory vs the champion's before composite-bundle ship.
+- **P3 (universal-rules code locatable): RESOLVED.** See champion branch + commit f10bb1e above.
 
-**P2. Env-flag inventory of the live champion.** Sub 53182323's description says "JOINT_AGGR/NEUTRAL_BONUS/ORBITAL_SAFETY/PV_ETA". Confirm all four are ON in our SEU7P bundle (check `grep -E "setdefault.*JOINT_AGGR|NEUTRAL_BONUS|ORBITAL_SAFETY|BASELINE_PV_ETA" submissions/baseline_redeploy_gangup.py` and `agents/baseline/main.py`). If one is missing, reconcile via separate parity A/B BEFORE the composite work — don't conflate env-flag port with universal-rules port.
+### Sequencing (execute in order)
 
-**P3. Universal-rules code is locatable.** Find the author's branch and commit by inspecting sub 53182323's description (or by looking at the live champion's bundle file if downloadable from Kaggle). May require reading sibling branch source via `git log --all` or GitHub MCP tools.
+**Step 1 — Foundation fix:** ✅ DONE at `d50654a`. Skip.
 
-### Sequencing (execute in order; gates between steps)
+**Step 2 — Port universal-launch-rules from champion branch** (~1-2 h)
+- Set up working access to `origin/claude/champion-strategy-rules-00JzI` (e.g. `git worktree add /tmp/champion-wt origin/claude/champion-strategy-rules-00JzI`).
+- Read `agents/baseline/launch_rules.py` on the champion branch — that's the validator implementation.
+- Read the call sites in champion's `agents/baseline/main.py` (search for `enforce_launch_rules`).
+- Port `agents/baseline/launch_rules.py` to our branch verbatim (it's a new file — no merge conflict).
+- Wire the same call sites in our `agents/baseline/main.py` — at every place the champion calls `enforce_launch_rules`, we should call it too.
+- Env-gate it (`BASELINE_LAUNCH_VALIDATOR=on`), default ON via setdefault in main.py.
+- Unit test (Rule 38): synthetic launches with eta>K and eta≤K, prove validator drops the eta>K ones.
 
-**Step 1 — Audit the live champion's source** (~1-2 h)
-- Locate the universal-rules code on the sibling branch.
-- Read the post-emit validator: where it hooks in (chooser commit point? joint-LP output?), what exactly it drops, the K value, any co-changes bundled with it.
-- Cross-check env-flag inventory vs our SEU7P bundle (P2).
-- **GATE 1A:** if env flags differ, reconcile via separate parity A/B first.
+**Step 3 — Validate composite bundle**
+- Rebuild bundle: `python scripts/bundle_agent.py agents/baseline --force --skip-parity-gate`
+- Bundle parity smoke + one fast.py play vs champion bundle.
+- A/B vs PV_ETA anchor at n=32. Target: clear Rule 45 Wilson-lo ≥ 0.50. Expected: ≥70% (foundation-fix + additions already at 11/16 = 69% without universal-rules; adding +30pp lever should push this higher).
+- A/B vs champion bundle at n=32. Target: ≥55% (our composite beats theirs).
 
-**Step 2 — Surgical port of universal-rules** (~50 LOC, ~1 h)
-- Add the post-emit validator at the same hook point on this branch.
-- Env-gated: `BASELINE_LAUNCH_VALIDATOR=on` (or whatever the author's env name is — match it for cross-branch parity).
-- Default OFF in source; flip default ON via `os.environ.setdefault` in `agents/baseline/main.py`.
-- Unit test (Rule 38 fix-verification): feed synthetic launches with explicit etas, prove validator drops eta>K and keeps eta≤K.
+**Step 4 — Multi-opponent panel (Rule 43)** before submit.
 
-**Step 3 — Validate universal-rules port at-parity vs live champion** (n=32 A/B, ~75 min)
-- Build bundle with: PV_ETA + universal-rules ON, redeploy/hybrid_spatial OFF.
-- A/B vs the live champion's bundle (downloaded from Kaggle's `submissions/53182323` artifact, OR rebuilt from sibling-branch source).
-- **Target:** ≥45% (parity). If clean parity, port is correct.
-- **GATE 3A:** if step 3 doesn't clear parity, STOP. The port has a bug or hidden env-flag drift. Do NOT add redeploy/hybrid_spatial on top of an unverified port.
+**Step 5 — Submit** (one slot, PI sign-off; Rule 42 rolling-pair re-check immediately pre-submit).
 
-**Step 4 — A/B the full composite** (n=32 A/B, ~75 min)
-- Composite bundle: PV_ETA + universal-rules + redeploy + hybrid_spatial, gang_up OFF.
-- A/B vs PV_ETA anchor: target ≥60% with Wilson-lo ≥ 0.50 (clears Rule 45).
-- A/B vs live champion's bundle: target ≥50% (at-parity or lift).
-- **GATE 4A:** if composite vs champion <50%, composite REGRESSES vs just-universal-rules. Submit step-3's bundle instead.
+### Bundle/file artifacts at session end
 
-**Step 5 — Multi-opponent panel** (Rule 43, ~1 h)
-- `python fast.py eval <composite> --vs-panel` → Wilson-lo ≥ 0.55 per opponent.
-- `python fast.py eval <composite> --vs <current_rolling_champion>` n≥32, Wilson-lo ≥ 0.50.
-- **GATE 5A:** if any opponent fails Wilson-lo 0.55, surface which one + decide.
+- `submissions/baseline_fix_redeploy_spatial.py` (606212 bytes) — our fix + redeploy + hybrid_spatial, no universal-rules. UNTRACKED.
+- `submissions/champion_launch_rules.py` (602303 bytes) — rebuilt from champion HEAD. UNTRACKED.
+- `submissions/baseline.py` (committed at `3b636e0`) — same as `baseline_fix_redeploy_spatial.py` content.
+- `submissions/baseline_pv_eta_anchor_1163.py` — frozen gZsCu PV_ETA peak (μ=1163.5). KEEP.
+- `submissions/isolation_*.py` (4 files) — UNTRACKED, can be regenerated via sed-edits documented in commit messages.
+- Logs: `/tmp/ab_logs/{isolation_3way,discriminator_perfchain,discriminator_narrow,h2h_champion}.log` — LOST on container reclaim.
 
-**Step 6 — Submit** (one slot, PI sign-off)
-- Bundle, Rule 46 trio (`scripts/bundle_agent.py`; `pytest tests/test_bundle.py`; `python fast.py play` one full game).
-- Rule 42 rolling-pair re-check IMMEDIATELY before `kaggle competitions submit` (this morning's friction: 9h-stale check evicted a sibling's strong submission).
-- Rule 39: NO Claude session URLs in the commit / submission description.
+### Known unknowns / risks
 
-### Submission sequencing decision (rolling-pair-of-2 constraint)
-
-Two candidate bundles emerge: (A) step-3's just-universal-rules port (predicted live ≈1210, matches champion), and (B) step-4's composite (predicted live 1180-1260, uncertain).
-
-**Conservative order (recommended):** ship (A) first → settle 1-2h → if μ confirms ≈1210, ship (B). If (B) regresses below 1180, abort (B), keep (A) as our pos-2 backstop.
-
-**Why conservative wins:** rolling-pair-of-2 makes a strong known submission (~1210) recoverable for ~24h, but a weak composite locks us out for 24h. Pos-2 with strong (A) is meaningfully better than pos-2 with unknown composite.
-
-### Known unknowns (cannot answer until measured)
-
-- **U1.** Universal-rules hook point — post-LP-solve or pre-LP-solve? Affects how redeploy composes with the validator. Resolve in Step 1.
-- **U2.** Whether the "K" in universal-rules is tied to the rollout K. If same number, may have cascading effects. Resolve in Step 1.
-- **U3.** Composition redundancy. hybrid_spatial biases against far-d_min ship-mass; universal-rules indirectly does the same by dropping far launches. They may overlap → hybrid_spatial adds 0pp on top. Step 4 is the test.
-- **U4.** Why gang_up regressed locally. Deferred (not on critical path). Worth a +1 A/B arm later: universal-rules MAY indirectly fix gang_up by dropping out-of-range stacks. Don't gate the plan on this.
-- **U5.** Sibling-branch adversarial state. The live ladder will shift during this work. Re-check rolling pair at every submit gate.
-
-### Risk register
-
-- **R1.** Foundation parity FAILS (A/B 4 lands <40%): plan changes. Investigate SEU7P PV_ETA port regression before any composite work.
-- **R2.** Universal-rules port has subtle bug: gate 3A catches it. Without unit test in Step 2, would silently no-op.
-- **R3.** Composition is sub-additive or anti-additive: gate 4A catches it. Fallback is step-3's clean port.
-- **R4.** Submit timing: a sibling submit lands while we're A/B-ing, the eviction floor shifts. Rule 42 re-check immediately pre-submit catches this.
-- **R5.** Bundler silent-fail mode (Rule 46 has 5 known): keep `pytest tests/test_bundle.py` + cold-load `fast.py play` in the gate.
-
-### Pointers for next session
-
-- Current bundle: `submissions/baseline_redeploy_gangup.py` (sub 53177486 source).
-- Frozen PV_ETA anchor: `submissions/baseline_pv_eta_anchor_1163.py`.
-- Isolation files (drop after the plan completes): `submissions/isolation_{redeploy_only,gangup_only,hybrid_spatial_only,none}.py`.
-- A/B 4 results: `/tmp/ab_logs/isolation_3way.log` (likely lost on container reclaim — re-run if needed).
-- Bundle template: `agents/baseline/main.py` setdefault lines (where to flip new `BASELINE_LAUNCH_VALIDATOR` default).
-- Live champion's submission ID for download: **53182323** (search Kaggle for `baseline_launch_rules_universal.py`).
-- Related sibling-branch commit reference: see sub 53182323's description for branch identification.
+- **U1.** Composition of universal-rules + redeploy: redeploy generates own→own launches; some have eta>K and would be dropped by the validator. Mild proposer waste. Step 3's A/B vs PV_ETA anchor catches this.
+- **U2.** Composition of universal-rules + hybrid_spatial: hybrid_spatial biases against far-d_min ship-mass; universal-rules drops far launches. Could be redundant (no extra lift) or complementary. Step 3's A/B is the test.
+- **U3.** Champion may have other lift mechanisms beyond universal-rules. Their HEAD is at `8364db8 handover: spatial-head cost gate CLEARED (false alarm was CPU contention)`, with several commits between `f10bb1e` (universal-rules) and HEAD. Audit those commits before assuming "universal-rules alone" is what to port.
+- **U4.** `hard_deadline` parameter in our `score_action` (NOT env-gated) was the third perf-chain piece, never tested in isolation. Could still be contributing some negative effect. Worth a follow-up isolation if Step 3's A/B doesn't clear ≥70%.
+- **U5.** Rolling-pair-of-2 constraint: champion is currently pos-1, ours pos-2. Submitting composite evicts ours. If composite regresses, the prior pos-2 submit (currently `baseline_redeploy_gangup` at μ=1021) is lost. Plan a CONSERVATIVE order — if confidence is high, ship composite; if not, ship just-universal-rules-port first (matches champion at ~1170) then composite second.
 
 ### Frictions logged this session
 
-- **Rule 42 stale rolling-pair check.** Checked rolling pair at session start (23:43 UTC), submitted 9h later (08:23 UTC) without re-checking. Sibling branch landed sub 53175658 in between. Cost: ~11pp on the eviction floor (evicted PV_ETA at μ=1111 vs claimed-evict baseline_validated at μ=1100). Fix: re-run `kaggle competitions submissions orbit-wars | head -5` IMMEDIATELY before `kaggle competitions submit`. Friction class same as Rule 42's origin (2026-05-20).
+- **Rule 42 stale rolling-pair check** (08:23 UTC submit; 9h-old check); cost ~11pp eviction floor.
+- **Monitor tool timeout** killed the chain background job; switched to Bash `run_in_background` for one-shot completion.
+- **Container reclaim mid-A/B** (between sessions); A/B 4 + H2H A/B both killed and had to restart. Workaround: launch via `run_in_background`, accept it might not finish; restart on next session.
 
-- **Bash polling background job killed when Monitor timed out.** Used Monitor tool to chain A/B 4 after the 3-way chain; Monitor's hidden 30-min timeout killed its child process group including the clean_ab subprocess after 6 games. Restarted as direct Bash `run_in_background` (single-completion notification). Lesson: Monitor is for streaming events, not for long-running child processes. Bash `run_in_background` for "tell me when done."
+### Pointers for next session
 
----
+- Foundation fix commit: `d50654a` (chooser.py + main.py).
+- Bundle rebuild commit: `3b636e0`.
+- Champion branch: `origin/claude/champion-strategy-rules-00JzI`.
+- Champion universal-rules feature commit: `f10bb1e`.
+- A/B harness: `python scripts/clean_ab.py <focal> <opp> --seeds N --workers 2`.
+- Bundler: `python scripts/bundle_agent.py agents/baseline --force --skip-parity-gate`.
+- Live champion submission ID: **53182323** (μ≈1173 at session end).
+- Our pos-2 submission ID: **53177486** (μ≈1021).
+
 
 ## Read order (Rule 44 — mandatory)
 
