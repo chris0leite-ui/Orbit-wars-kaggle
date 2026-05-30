@@ -53,9 +53,9 @@ def test_reach_frontier_emits_env_shape_moves(reach_frontier_agent):
 def test_reach_frontier_per_turn_within_budget(reach_frontier_agent):
     """Per-turn cost should comfortably clear the env's 1 s timeout.
 
-    Hits the kinematic-table fast-path + pre-filter optimisations from
-    reach.py and the design's §9 budgeting. A regression past the 800 ms
-    soft gate signals a substrate change (Rule 47-adjacent).
+    Exercises reach.py's pre-filter optimisations and the design's §9
+    budgeting on the plain closed-form trajectory path. A regression past
+    the 800 ms soft gate signals a substrate change (Rule 47-adjacent).
     """
     from kaggle_environments import make
 

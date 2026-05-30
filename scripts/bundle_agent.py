@@ -48,14 +48,6 @@ DEFAULT_LIB_ORDER = [
     "combat",
     "world_model",
     "intent",
-    # 2026-05-27: kinematic_table is lazily imported by lib/trajectory.py
-    # (line 278, inside `_table_window_or_none`, gated by env var
-    # KINEMATIC_TABLE_ENABLED=1). When env var is unset the function-local
-    # import line gets stripped by the bundler and never executes; when
-    # set, the inlined module must be available. Must precede `trajectory`
-    # so the symbols are in scope at parse time. Dependencies (geometry,
-    # orbit) are already listed above.
-    "kinematic_table",
     "trajectory",
     "mechanism",
     "mission",

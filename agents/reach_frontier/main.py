@@ -25,16 +25,6 @@ from __future__ import annotations
 
 import os
 
-# Per design §9 mitigation (b): the kinematic-table fast path is required
-# for the closed-form ρ-table sweep + physics-validate-each-candidate flow
-# to fit the 1 s/turn budget. Set BEFORE importing lib.trajectory so the
-# env-var gate `_kinematic_table_enabled()` returns True. The bundler
-# strips this os.environ.setdefault line as a no-op (it doesn't match the
-# intra-package import regex). Setdefault means an external A/B harness
-# (fast.py, A/B drivers, scripts that pre-set the var) wins.
-os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
-
-from lib.kinematic_table import begin_turn
 from lib.intent import World
 from lib.world_model import WorldModel
 
@@ -76,13 +66,6 @@ def agent(obs, configuration=None):
     targets = [p for p in planets if int(p.owner) != me]
     if not my_sources or not targets:
         return []
-
-    # Prime the kinematic-table singleton for this turn so every
-    # predict_fleet_fate call inside build_reach_table + pick_actions
-    # uses the cached planet positions instead of rebuilding inline.
-    # Idempotent per-turn (fingerprint-keyed); first call rebuilds,
-    # subsequent calls within the same obs are O(1).
-    begin_turn(world)
 
     world_model = WorldModel.from_world(world)
 

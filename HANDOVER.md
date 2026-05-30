@@ -25,12 +25,14 @@ its own Rule-47 horizon gate + Rule-37/43/45 A/B gates.
 
 **Full plan:** `/root/.claude/plans/warm-beaming-snowflake.md` (read it first).
 
-**Live ladder (rolling last 2):**
-- **53182323** `baseline_launch_rules_universal` — champion full config + **universal
-  K=10 ceiling** (every launch — neutral / opp / own-reinforce / comet — arriving
-  after turn 10 is dropped post-emit). Current champion / A/B opponent.
-- 53177486 `baseline_redeploy_gangup` (sibling SEU7P, μ≈971) — weak backstop. Next
-  submit evicts it — but **no submit is planned until the A/B below produces evidence.**
+**Live ladder (rolling last 2): read it directly — `kaggle competitions
+submissions orbit-wars`.** Scores are never transcribed here (they go stale in
+hours). The current champion / A/B opponent is `baseline_launch_rules_universal`
+— champion full config + **universal K=10 ceiling** (every launch — neutral /
+opp / own-reinforce / comet — arriving after turn 10 is dropped post-emit). The
+backstop (older half of the pair) is the SEU7P `baseline_redeploy_gangup`; the
+next submit evicts it — but **no submit is planned until the A/B below produces
+evidence.** Confirm which two are live from the CLI before acting.
 
 **Task:** clean A/B of the `hybrid_spatial` value head (idea 3 from the SEU7P review)
 vs the universal-ceiling champion. **Evidence-gathering only, no submit.**
@@ -122,16 +124,16 @@ stands alone under the plain head.
 
 ## Where we are (2026-05-20 17:00 UTC)
 
-- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC. **34 days remain.**
-- **Rolling-last-2 (Kaggle auto-keeps these two):**
-  - 52857903 (μ 806.5) — analytical_wait_N_traj_plus_endgame_play (2026-05-20 16:12)
-  - 52854094 (μ 829.1) — analytical (2026-05-20 13:59)
-- **Team peak (EVICTED):** μ 1149.2 (sub 52744856, composite_a2_hybrid, 2026-05-17).
-- **Floor lost in 24 h:** ~320 μ. The five-step eviction chain that
-  caused this is documented in `state/MULTI_BRANCH.md` and is the
-  origin of new Rule 42 (pre-submit cross-branch coordination gate).
-- **Daily submission budget:** 5/day. 5/20 used: 2. 3 slots remain.
-- **Floor-at-risk flag:** **TRUE** — rolling pair is 320 μ below team peak.
+> NOTE: this is a dated 2026-05-20 snapshot kept for narrative continuity;
+> it is superseded by the ACTIVE section at the top. Live scores were removed —
+> read the ladder directly (`kaggle competitions submissions orbit-wars`).
+
+- **Comp:** Orbit Wars. Deadline 2026-06-23 23:59 UTC.
+- **Rolling-last-2 (Kaggle auto-keeps the two most-recent):** read from the CLI.
+- **Rule 42 origin:** on 2026-05-20 a five-step eviction chain from one branch
+  dropped the rolling-pair floor by ~320 μ in 24 h (the founding story of Rule 42,
+  the pre-submit cross-branch coordination gate). Kept as rule context.
+- **Daily submission budget:** 5/day — check today's usage from the CLI.
 
 ## Day-N PM extract-physics-trajectory-Vjaz9 (2026-05-22)
 

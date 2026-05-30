@@ -13,28 +13,23 @@
 
 ---
 
-## Live Kaggle (snapshot 2026-05-23 21:00 UTC)
+## Live Kaggle — READ IT DIRECTLY, never transcribed here
 
-Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at session start.
+**Scores (μ) and the rolling pair are NEVER written into this file** — they go
+stale within hours and have repeatedly misled sessions into acting on dead
+numbers. The leaderboard is the single source of truth. Read it on demand:
 
-| Sub ID | Date (UTC) | Agent | μ | Role |
-|---|---|---|---:|---|
-| **52894340** | 2026-05-21 14:33 | _phase4_step1_FND (sibling, endgame predicate + f1774a7 orbital safety) | **1117.9** | **Rolling pair (most recent)** |
-| **52893236** | 2026-05-21 13:52 | baseline_full (this branch, kitchen-sink) | **1078.0** | **Rolling pair (older half)** |
-| 52882014 | 2026-05-21 10:26 | baseline_joint_aggr_consolidated | 1124 | EVICTED — best on this branch |
-| 52874528 | 2026-05-21 06:00 | baseline_joint_aggr | 1134.9 | EVICTED |
-| 52857903 | 2026-05-20 16:12 | analytical_wait_N_traj_plus_endgame_play | 806.5 | EVICTED |
-| 52854094 | 2026-05-20 13:59 | analytical (earlier) | 829.1 | EVICTED |
-| 52827111 | 2026-05-19 19:52 | comet-aim + reactor-aware | 1122.0 | EVICTED |
-| 52811320 | 2026-05-19 12:54 | hold-feasibility solo | 1135.1 | EVICTED |
-| **52744856** | 2026-05-17 14:17 | composite_a2_hybrid (composite head 2P + A2 4P) | **1149.2** | **TEAM PEAK** — EVICTED |
+```
+kaggle competitions submissions orbit-wars
+```
 
-- **Rolling pair floor:** μ = 1078.0 (baseline_full).
-- **Rolling pair ceiling:** μ = 1117.9 (_phase4_step1_FND).
-- **Team peak (evicted):** μ = 1149.2 (sub 52744856).
-- **Floor recovered from 5/20:** previous rolling pair was [829, 806]; current floor 1078 is +249 μ over that.
-- **Daily submission budget:** 5/day. Today (2026-05-23 UTC) used: 0. 5 remaining. Last submit was 5/21.
-- **Deadline:** 2026-06-23 23:59 UTC. **~31 days remain.**
+- **Rolling pair** = the **two most-recent** submissions in that list (Kaggle
+  auto-keeps exactly these two for final evaluation — not PI-selected; Rule 12).
+- **Daily submission budget:** 5/day. Check today's usage from the same list.
+- **Deadline:** 2026-06-23 23:59 UTC (fixed).
+
+Before any submit, fill the **Push claim board** below (Rule 42) using the
+freshly-read pair — do not rely on any number cached in prose.
 
 ---
 

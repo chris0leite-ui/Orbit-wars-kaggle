@@ -26,7 +26,6 @@ os.environ.setdefault("ORBITAL_SAFETY", "1")
 os.environ.setdefault("PV_ETA", "1")
 os.environ.setdefault("LAUNCH_RULES", "1")
 os.environ.setdefault("CAPTURE_HORIZON_K", "10")
-os.environ.setdefault("KINEMATIC_TABLE_ENABLED", "1")
 
 import fast
 
