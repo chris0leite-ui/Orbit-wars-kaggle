@@ -32,20 +32,39 @@
 | redeploy_only | 11/16 = 68.8% | [0.44, 0.86] | 4/5 = 80% | **strong positive** |
 | **gangup_only** | **7/16 = 43.8%** | [0.23, 0.67] | 3/7 = 43% | **REGRESSION — drop** |
 | hybrid_spatial_only | 11/16 = 68.8% | [0.44, 0.86] | 3/3 = 100% | strong positive (n small) |
-| isolation_none (foundation parity) | **PENDING — A/B 4 running** | — | — | answers P1 |
+| **isolation_none (foundation parity)** | 5/16 = 31.2% | [0.14, 0.56] | 1/5 = 20% | **pooled w/ wrap commit n=48: 30/64 = 46.9%, Wilson [0.35, 0.59]** |
 
 A/B 4 isolation files: `submissions/isolation_{redeploy_only,gangup_only,hybrid_spatial_only,none}.py` (built this session via sed-edits on `setdefault` lines of `baseline_redeploy_gangup.py`). Results log: `/tmp/ab_logs/isolation_3way.log`. A/B 4 was running as background task `bkdjbpl2q` at session end; expected finish ~40 min after session pause. If the container reclaimed the work, re-run: `python scripts/clean_ab.py submissions/isolation_none.py submissions/baseline_pv_eta_anchor_1163.py --seeds 8 --workers 2`.
 
-### Strategic read
+### Strategic read (post-A/B-4 revision)
 
-- gang_up is the load-bearing regressor in our additions axis — drop it.
-- redeploy + hybrid_spatial show clean local lift but live ladder says ~−200pp vs new champion regardless.
-- The universal-launch-rules mechanism (sibling-branch lift) is a MUCH bigger lever (+~50pp above PV_ETA peak) than our additions axis (+10-20pp locally, unproven live).
-- "Best of both worlds" hypothesis: PV_ETA + universal-rules (foundation lift) + redeploy + hybrid_spatial (composition lift) → predicted live μ 1180-1260. UNKNOWN composition behavior.
+- **Foundation parity status is AMBIGUOUS.** Pooled n=64 says ~47% (parity within wide CI). Recent n=16 alone says 31% (regression). Disambiguate first before any composite work.
+- gang_up is consistently the weakest arm across all readings; drop it regardless of foundation status.
+- redeploy + hybrid_spatial are each ~+18-38pp above the most-recent (regressed?) foundation. If foundation truly is at parity, their lift is ~+18pp; if foundation has drifted, more of their "lift" is regression-recovery.
+- Live ladder: new champion sub 53182323 settled at μ≈1180.7 (drifted down from peak 1209.7). Our sub at μ≈1004.
+- **The universal-launch-rules port (Steps 1-3 of original plan) is still valuable** — it's an independent mechanism. Once foundation status is disambiguated (P1-prime), port universal-rules onto whichever PV_ETA substrate is verified clean.
 
 ### Pre-conditions (verify BEFORE starting Step 1)
 
-**P1. Foundation parity confirmed.** Read final result of A/B 4 (`isolation_none` vs PV_ETA anchor). If 50% ± Wilson [0.40, 0.60], proceed. If meaningfully <50% (e.g., <40% with Wilson-lo <0.30), foundation has drifted negative since wrap commit 2623b49 — the isolation arm rates are inflated and PV_ETA needs re-validation before adding new code.
+**P1. ⚠️ AMBIGUOUS 2026-05-30.** Foundation parity A/B 4 (`isolation_none` vs PV_ETA anchor) landed **5/16 = 31.2%, Wilson [0.142, 0.556]**, true-seed signal 1/5 = 20%. POOLED with the wrap commit 2623b49's n=48 = 52.1%: **30/64 = 46.9%, Wilson [0.352, 0.590]**.
+
+The two n's aren't strictly the same test (wrap-commit at substrate 2623b49 without the fa696d0 generator functions; A/B 4 at c097471 with generator functions present but env-gated OFF). Pooling is valid IF the env-gated-OFF guards have zero runtime effect at import / module-load. If not, the two should be analyzed separately and the recent n=16 = 31% signal dominates.
+
+- **Pooled-correct interpretation:** foundation is at ~47%, mild regression (~−3pp) or noise. Plan can proceed but additions' "lift" includes regression-recovery component.
+- **Separate-correct interpretation:** SEU7P PV_ETA has drifted ~−19pp from gZsCu peak since 2623b49. Plan is BLOCKED until foundation is fixed.
+
+**P1-prime (disambiguation). Run n=32 extension of A/B 4 in next session** (~75 min compute). New pooled n=80 = (30 + new_wins)/(64 + 32 — wait, this is wrong; the A/B 4 already counts as 16 of the 32 new games. Or run fresh n=32 to compare against A/B 4 alone).
+
+Cleanest: run a FRESH n=32 isolation_none vs anchor. Interpret:
+- New n=32 lands at 45-55%: pooled with wrap commit = parity at ~50%. Plan proceeds.
+- New n=32 lands at 30-40%: foundation has regressed. Investigate fa696d0 collateral effects before plan proceeds.
+
+**Additional pre-A/B diagnostics (cheap, run before the n=32):**
+1. **Verify isolation_none.py is a clean 3-line edit.** `diff submissions/isolation_none.py submissions/baseline_redeploy_gangup.py` — expected exactly 3 lines differ (the 3 setdefaults). If more differ, sed edits had collateral damage; rebuild isolation_none.py with surgical Edit instead.
+2. **Bundler determinism.** Rebuild `submissions/baseline.py` from current source via `python scripts/bundle_agent.py baseline` and diff against `submissions/baseline_redeploy_gangup.py` (after stripping the bundler comment header). If bundler output drifted between sessions, the bundle is not source-equivalent and the foundation regression may be a BUNDLER bug rather than a SOURCE regression.
+3. **Code diff scan.** `git diff 2623b49..c097471 -- agents/baseline/ lib/`. Look for: (a) shared-module changes that affect runtime even with env vars OFF; (b) module-load-order side effects in the bundler; (c) accidental edits to scoring / chooser / proposer paths not documented in the commit messages.
+
+**Diagnostic order:** (1) → (2) → (3) [if 1/2 find nothing] → n=32 A/B 4 extension. ~2h total. Plan resumes if foundation is confirmed at-parity OR after the regression is fixed.
 
 **P2. Env-flag inventory of the live champion.** Sub 53182323's description says "JOINT_AGGR/NEUTRAL_BONUS/ORBITAL_SAFETY/PV_ETA". Confirm all four are ON in our SEU7P bundle (check `grep -E "setdefault.*JOINT_AGGR|NEUTRAL_BONUS|ORBITAL_SAFETY|BASELINE_PV_ETA" submissions/baseline_redeploy_gangup.py` and `agents/baseline/main.py`). If one is missing, reconcile via separate parity A/B BEFORE the composite work — don't conflate env-flag port with universal-rules port.
 
