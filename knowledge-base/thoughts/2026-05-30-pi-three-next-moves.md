@@ -100,3 +100,71 @@ Rule 12 + Rule 42, hold off pushing the B.3 bundle until either:
 
 For track #1 — where's the kinematics bug? Specific symptom or
 audit note pointer?
+
+---
+
+## PI's ratified sequence (added 2026-05-30 ~20:50 UTC)
+
+PI confirmed alignment with my ranking and added a submission step
+between fix and opp-model work:
+
+1. **Fix the kinematics bug**
+2. **Submit the B.3 head bundle WITH the bug fix applied**
+3. **Train the Tier 2 opp model** (highest-leverage architectural lift)
+4. **Iterate** — stronger ML-supported agent on the better foundation
+
+PI pointer for the fix: `claude/game-theory-winning-strategy-SEU7P`.
+
+### Bug location + magnitude (post-investigation)
+
+The bug is in `lib/kinematic_table.py` — a module-global singleton
+position cache whose mutable state leaks across seats in any in-process
+play (both agents run in the same Python process per `env.run`). Two
+parallel fixes exist:
+
+| Branch | Commit | Approach |
+|---|---|---|
+| `claude/game-theory-winning-strategy-SEU7P` | `d50654a` | Sets `KINEMATIC_TABLE_ENABLED` env-var default `"1" → "0"` (disables, leaves code in tree) |
+| `claude/champion-strategy-rules-00JzI` | `232307c` | Deletes `lib/kinematic_table.py` + 2 test files entirely (~436 LOC removed) |
+
+n=16 isolation A/B (per d50654a commit body) showed **+25 pp recovery
+(31% → 56%)** — the kinematic-table singleton was silently regressing
+pv_eta's own win rate by ~25 percentage points in any in-process A/B.
+
+### Implication for the existing B.3 bundle
+
+The B.3 head's CRN-paired corpus was generated with the bug active
+(both seats running pv_eta in one process per self-play game) — so
+every label was computed against corrupted leaf scores. The head
+learned to predict the corrupted advantage, not the true one.
+
+Three possible interactions with the fix:
+1. **Net help** — the head's corrections partially compensated for the
+   bug; with the bug gone, the underlying pv_eta is +25 pp stronger and
+   the head's lift compounds.
+2. **Net hurt slightly** — the head learned to exploit the bug's
+   predictable wrongness; with the bug gone, some corrections misfire.
+3. **No interaction** — bug + head touch orthogonal regions of the
+   action space.
+
+Verification path: rebuild the B.3 bundle with the fix, re-run the
+n=16/32 A/B vs launch_rules_universal. If the head's 62.5% holds or
+climbs → ship. If it collapses → retrain the head on a corpus
+generated with the fix applied (~3 h smoke + decision point).
+
+### Concrete next-step plan for my branch
+
+| Step | Action | Cost |
+|---|---|---|
+| 1.1 | Cherry-pick `d50654a` (env-var flip — minimal) OR `232307c` (full removal — cleaner) onto `claude/competition-objective-alignment-hqNVM` | 15 min + parity tests |
+| 1.2 | Rebuild `submissions/baseline_pv_eta_vh_b3smoke.py` with fix applied | 5 min |
+| 1.3 | Rule 46: `pytest tests/test_bundle.py` + `fast.py play` | 5 min |
+| 1.4 | n=16 A/B vs launch_rules_universal (focal=P0, fresh seeds 16-31 to avoid prior contamination) | ~17 min |
+| 1.5 | If clear lift (point ≥ 70%, Wlo ≥ 0.50) → submit; else n=32 confirmation | depends |
+| 2 | Submit (Rule 42 push-claim → Rule 46 gate) | 5 min |
+| 3 | Tier 2 opp model first cut | 1 session |
+| 4 | Re-train B.3 on improved foundation | 1-2 sessions |
+
+Holding for PI go-ahead on whether to use d50654a (smaller diff) or
+232307c (clean removal) before executing.
+
