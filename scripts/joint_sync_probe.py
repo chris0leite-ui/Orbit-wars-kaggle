@@ -26,7 +26,14 @@ for k, v in {
 }.items():
     os.environ.setdefault(k, v)
 
+# Proven order (cf. scripts/capture_probe.py): import kaggle_environments,
+# THEN prepend the repo root so our top-level `agents` package wins over
+# kaggle_environments' lux_ai_s3 env agents, THEN import agents.baseline.*.
+from pathlib import Path  # noqa: E402
 from kaggle_environments import make  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import agents.baseline.chooser_trajectory as ct  # noqa: E402
 import agents.baseline.main as M  # noqa: E402
 
