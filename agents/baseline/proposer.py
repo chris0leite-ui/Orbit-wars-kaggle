@@ -80,6 +80,19 @@ MIN_REACTOR_SHIPS = 8                    # below this an opp planet can't realis
 MAX_REACTOR_CANDIDATES_PER_TURN = 12     # global cap on Part B output
 REACTOR_TOP_K_SOURCES_PER_TARGET = 3     # per-target source enumeration cap
 
+# 2-hop redeploy-enables-capture generator (PROPOSER_REDEPLOY_2HOP, default
+# OFF). An interior planet I reinforces a frontier planet F so F can fund a
+# capture C that neither I nor F could make alone in time. Scored by the
+# REAL capture it unlocks (cheap_marginal_redeploy_2hop), not by spatial
+# drift — so it emits nothing unless a capture is genuinely funded, and
+# therefore stands alone under the plain value head (unlike the falsified
+# SEU7P spatial-coupled redeploy). Design:
+# knowledge-base/concepts/redeploy-2hop-capture-design.md.
+REDEPLOY_2HOP_MAX_CANDIDATES = 12     # global per-turn cap
+REDEPLOY_2HOP_TOP_K_FRONTIERS = 3     # F enumeration cap per capture target C
+REDEPLOY_2HOP_TOP_K_INTERIORS = 3     # I enumeration cap per (C, F)
+REDEPLOY_2HOP_MIN_RELAY_GAP = 1       # ticks I-direct must be slower than F-relay
+
 
 def _comet_path_entry(world, tgt_id):
     """Look up (path, path_index) for a comet target, or None if not a comet.
@@ -458,6 +471,35 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
         return 0.05 * float(tgt.production) * float(pv)
 
     return -0.5 * float(ships)
+
+
+def cheap_marginal_redeploy_2hop(
+    I, F, C, redeploy_ships: int, eta_redeploy: int,
+    capture_ships: int, eta_capture_from_F: int,
+    world, model, me: int,
+) -> float:
+    """Analytic Δ for a 2-hop redeploy I→F-relay-→C, ranked at prerank.
+
+    Values the redeploy by the CAPTURE it unlocks (same capture-credit
+    shape as `cheap_marginal_value`'s capture branch) minus the in-flight
+    exposure cost of the I→F leg. The capture C lands at
+    `eta_redeploy + eta_capture_from_F` ticks from now (relay then launch).
+
+    Key property: this is only ever called once a fundable capture C has
+    been found, so a no-capture state produces NO candidate (the generator
+    returns nothing) — the "stands alone without the spatial head"
+    guarantee. The exposure term scales with relay length so longer,
+    riskier relays are penalised, but never dominates a real capture
+    credit.
+    """
+    arrival_step = int(eta_redeploy) + int(eta_capture_from_F)
+    pv = pv_horizon(int(world.step), arrival_step, gamma=GAMMA,
+                    t_total=EPISODE_STEPS)
+    credit = 0.05 * float(C.production) * float(pv)
+    exposure = -0.5 * float(redeploy_ships) * (
+        float(eta_redeploy) / float(MAX_HORIZON)
+    )
+    return credit + exposure
 
 
 def wait_band(wait_N: int) -> int:
@@ -899,6 +941,122 @@ def _enumerate_reactor_candidates(
     return candidates[:MAX_REACTOR_CANDIDATES_PER_TURN]
 
 
+def _enumerate_redeploy_2hop_candidates(
+    my_planets, target_pool, world, model, me: int, omega: float,
+    baseline_len: int,
+):
+    """2-hop redeploy-enables-capture generator (PROPOSER_REDEPLOY_2HOP).
+
+    Capture-FIRST (reverses the falsified SEU7P enumerate-redeploys-and-
+    hope order): for each capture target C we can't currently fund/reach,
+    find a frontier F that could capture C if reinforced, and an interior
+    I whose redeploy I→F funds that capture in time. Emits the I→F relay
+    leg as this turn's candidate; the capture C follows next turn (once the
+    relay is in the ledger) and/or is seen by the leaf when both legs fit
+    the rollout horizon.
+
+    Output shape matches `propose()`'s prerank tuples:
+        (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N)
+    with src=I, tgt=F (own planet), wait_N=0. Capped globally at
+    REDEPLOY_2HOP_MAX_CANDIDATES, top-K by cheap_delta.
+
+    NOTE on the model API: `model.ships_at(F, t)` reflects only fleets
+    ALREADY in the obs ledger — it does NOT include this proposed redeploy.
+    So the funding check adds `redeploy_ships` to F's projected garrison
+    analytically; trusting ships_at to show our own relay would silently
+    under-emit.
+    """
+    if not my_planets:
+        return []
+
+    candidates: list = []
+    for C in target_pool:
+        if int(C.owner) == me:
+            continue  # only capture targets (neutral / opp)
+
+        # Frontier planets F closest to C that could host the capture leg.
+        frontiers = [
+            p for p in my_planets if int(p.id) != int(C.id)
+        ]
+        frontiers = nearest_k(frontiers, C, REDEPLOY_2HOP_TOP_K_FRONTIERS)
+        for F in frontiers:
+            cap_from_F = capture_size(F, C, model, omega, me, world)
+            if cap_from_F < MIN_FLEET_SIZE:
+                continue
+            # F-can't-fund-now gate: if F already has the ships, this is a
+            # plain capture the standard fire-now path owns.
+            if cap_from_F <= int(F.ships):
+                continue
+            _a_cap, eta_cap = aim_and_eta(F, C, cap_from_F, omega, world=world)
+            if int(eta_cap) <= 0:
+                continue
+            # Target-safety on F (computed once per F): if F is itself
+            # threatened, the reinforce path owns that case.
+            f_threat_eta = model.time_to_enemy_threat(int(F.id), me, world)
+
+            interiors = [
+                p for p in my_planets
+                if int(p.id) not in (int(F.id), int(C.id))
+                and int(p.ships) >= MIN_FLEET_SIZE
+            ]
+            interiors = nearest_k(interiors, F, REDEPLOY_2HOP_TOP_K_INTERIORS)
+            for I in interiors:
+                # Probe relay eta at MIN_FLEET_SIZE (slowest), then refine.
+                _a_probe, eta_relay_probe = aim_and_eta(
+                    I, F, MIN_FLEET_SIZE, omega, world=world,
+                )
+                f_at_relay = float(model.ships_at(int(F.id), int(eta_relay_probe)) or 0.0)
+                shortfall = float(cap_from_F) - f_at_relay
+                redeploy_ships = max(MIN_FLEET_SIZE, int(math.ceil(shortfall)))
+                if redeploy_ships > int(I.ships):
+                    continue
+                # Refine relay eta at the actual ship count.
+                angle_relay, eta_relay = aim_and_eta(
+                    I, F, redeploy_ships, omega, world=world,
+                )
+                eta_relay = int(eta_relay)
+                # Re-check funding at the refined relay arrival: F's garrison
+                # then PLUS our redeploy must cover the capture cost.
+                f_at_relay = float(model.ships_at(int(F.id), eta_relay) or 0.0)
+                if f_at_relay + float(redeploy_ships) < float(cap_from_F):
+                    continue
+                # Target-safety: F must survive until the relay completes.
+                if f_threat_eta is not None and int(f_threat_eta) <= eta_relay:
+                    continue
+                # Reachability gate — the precise "I couldn't reach C in
+                # time alone" condition (replaces SEU7P's spatial ratio).
+                _a_dir, eta_I_direct = aim_and_eta(
+                    I, C, cap_from_F, omega, world=world,
+                )
+                if int(eta_I_direct) <= eta_relay + int(eta_cap) + REDEPLOY_2HOP_MIN_RELAY_GAP:
+                    continue  # just launch I→C directly; no relay needed
+                # Source-safety: don't drain an exposed interior.
+                if not _source_survives_launch(I, redeploy_ships, 0, world, model, me):
+                    continue
+                # Horizon gate (Rule 47): the leaf must be able to see both
+                # legs accrue, else Δ collapses to the in-flight penalty.
+                if eta_relay + int(eta_cap) + SIM_SETTLE_TURNS > MAX_HORIZON:
+                    continue
+                cheap = cheap_marginal_redeploy_2hop(
+                    I, F, C, redeploy_ships, eta_relay,
+                    cap_from_F, int(eta_cap), world, model, me,
+                )
+                if cheap <= CHEAP_REJECT_THRESHOLD:
+                    continue
+                # Emit the I→F relay; horizon covers BOTH legs (unlike every
+                # other generator, whose horizon is the single launch's eta).
+                horizon = max(eta_relay + int(eta_cap) + SIM_SETTLE_TURNS, MIN_HORIZON)
+                if horizon >= baseline_len:
+                    horizon = baseline_len - 1
+                candidates.append(
+                    (cheap, I, F, redeploy_ships, float(angle_relay),
+                     eta_relay, horizon, 0)
+                )
+
+    candidates.sort(key=lambda c: -c[0])
+    return candidates[:REDEPLOY_2HOP_MAX_CANDIDATES]
+
+
 def propose(my_planets, target_pool, world, model, me: int,
             omega: float, baseline_len: int):
     """Build the pre-rank list of candidates, then dedup by
@@ -970,6 +1128,15 @@ def propose(my_planets, target_pool, world, model, me: int,
     if os.environ.get("PROPOSER_REACTOR_CANDIDATES", "").strip().lower() != "off":
         prerank.extend(_enumerate_reactor_candidates(
             my_planets, world, model, me, omega, baseline_len,
+        ))
+
+    # 2-hop redeploy-enables-capture generator (2026-05-30). DEFAULT OFF —
+    # opt in via PROPOSER_REDEPLOY_2HOP=1. Emits an interior→frontier relay
+    # only when it funds a capture the frontier can't make alone in time;
+    # scored by that capture, so it emits nothing on no-capture states.
+    if os.environ.get("PROPOSER_REDEPLOY_2HOP", "").strip().lower() in ("1", "on", "true"):
+        prerank.extend(_enumerate_redeploy_2hop_candidates(
+            my_planets, target_pool, world, model, me, omega, baseline_len,
         ))
 
     best_per_band: dict[tuple[int, int, int], tuple] = {}
