@@ -75,6 +75,10 @@ def _run_one_game(task: tuple) -> dict:
     # module-load gates pick them up.
     os.environ["BASELINE_WALLCLOCK_MS"] = str(int(wallclock_ms))
     os.environ["BASELINE_ACCEPTED_TRACE"] = str(game_dir / "accepted.jsonl")
+    # B.3 prerank trace — opt-in via PRERANK_TRACE_ON. One row per
+    # SCORED prerank candidate; corpus assembly filters to top-N.
+    if os.environ.get("PRERANK_TRACE_ON", "") == "1":
+        os.environ["BASELINE_PRERANK_TRACE"] = str(game_dir / "prerank.jsonl")
     # The probe wrapper sets BASELINE_PV_ETA / BASELINE_ML_LAMBDA /
     # peak orbitfix preamble via setdefault — already correct, no
     # override needed here.
@@ -109,6 +113,22 @@ def _run_one_game(task: tuple) -> dict:
                 "planets": [list(p) for p in planets],
                 "fleets": [list(f) for f in fleets],
             }
+            # B.3 — extend the per-step record with the FULL obs fields
+            # `env_from_obs` needs (corpus stage 2 uses them). Backward-
+            # compatible: B.2 readers only touch the fields above.
+            for k in ("comets", "comet_planet_ids", "initial_planets",
+                      "angular_velocity", "next_fleet_id",
+                      "remainingOverageTime"):
+                if k in obs:
+                    rec[k] = obs[k] if not isinstance(obs[k], list) else [
+                        list(x) if isinstance(x, (list, tuple)) else x
+                        for x in obs[k]
+                    ]
+            # Action taken THIS tick (for action-replay stage 2 path).
+            rec["actions"] = [
+                list(step_seats[i].get("action") or [])
+                for i in range(min(2, len(step_seats)))
+            ]
             fh.write(json.dumps(rec) + "\n")
             n_steps_written += 1
 

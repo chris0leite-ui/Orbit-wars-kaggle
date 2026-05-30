@@ -46,6 +46,15 @@ _ACCEPTED_LOAD_FAILED: bool = False
 _VH_TRACE_FEATURES: bool = os.environ.get(
     "BASELINE_VH_TRACE_FEATURES", "0").strip() == "1"
 
+# Reframe B.3 — per-(state, prerank-candidate) trace with leaf_delta +
+# features. One row per SCORED prerank candidate (so we have leaf_delta).
+# Top-N filtering happens at corpus-assembly time (cheaper than threading
+# top-N into the chooser).
+_PRERANK_PATH: str = os.environ.get("BASELINE_PRERANK_TRACE", "").strip()
+_PRERANK_ENABLED: bool = bool(_PRERANK_PATH)
+_PRERANK_FILE = None
+_PRERANK_LOAD_FAILED: bool = False
+
 
 def _ensure_loaded() -> bool:
     """Lazy-open the trace file and lazy-load the Booster. Returns True
@@ -193,6 +202,58 @@ def trace_accepted(world: Any, world_model: Any, me: int,
                     except Exception:
                         pass
             _ACCEPTED_FILE.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+
+
+def _ensure_prerank_loaded() -> bool:
+    """Lazy-open the prerank-trace file. Returns True iff ready. Never
+    raises."""
+    global _PRERANK_FILE, _PRERANK_LOAD_FAILED
+    if not _PRERANK_ENABLED or _PRERANK_LOAD_FAILED:
+        return False
+    if _PRERANK_FILE is None:
+        try:
+            Path(_PRERANK_PATH).parent.mkdir(parents=True, exist_ok=True)
+            _PRERANK_FILE = open(_PRERANK_PATH, "a", buffering=1)
+        except OSError:
+            _PRERANK_LOAD_FAILED = True
+            return False
+    return True
+
+
+def trace_prerank(world: Any, world_model: Any, me: int,
+                  src_id: int, tgt_id: int, ships: int, angle: float,
+                  wait_N: int, eta: int, cheap_delta: float,
+                  leaf_delta: float, features: list | None = None) -> None:
+    """Emit one JSON line for a scored prerank candidate (B.3 corpus).
+
+    `cheap_delta` is the proposer's pre-scoring rank metric;
+    `leaf_delta` is the chooser's score_candidate_v4 output (before any
+    ML / VH adjustments — pristine baseline value).
+    `features` is the 14-d B.2/B.3 feature vector if pre-computed by
+    `vh_featurize_prerank`; None when the value-head wrapper is not
+    active (corpus assembly recomputes them at label time).
+
+    No-op when BASELINE_PRERANK_TRACE is unset."""
+    if not _PRERANK_ENABLED or not _ensure_prerank_loaded():
+        return
+    try:
+        rec = {
+            "step": int(getattr(world, "step", 0)),
+            "me": int(me),
+            "src_id": int(src_id),
+            "tgt_id": int(tgt_id),
+            "ships": int(ships),
+            "angle": float(angle),
+            "wait_N": int(wait_N),
+            "eta": int(eta),
+            "cheap_delta": float(cheap_delta),
+            "leaf_delta": float(leaf_delta),
+        }
+        if features is not None:
+            rec["features"] = [float(v) for v in features]
+        _PRERANK_FILE.write(json.dumps(rec) + "\n")
     except Exception:
         pass
 

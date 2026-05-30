@@ -933,13 +933,33 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 wait_N=int(wait_N),
             )
             if status == "scored":
-                from agents.baseline._trace_hook import trace_solo
+                from agents.baseline._trace_hook import trace_solo, trace_prerank
                 trace_solo(
                     world, model, me,
                     int(src.id), int(tgt.id), int(ships),
                     float(angle), int(wait_N),
                     int(eta_traced) if eta_traced is not None else 0,
                     float(score),
+                )
+                # B.3 prerank trace — pristine leaf_delta + features
+                # (features are pre-computed by vh_featurize_prerank when
+                # the value-head wrapper is active; otherwise None and
+                # corpus assembly recomputes them).
+                _feats = None
+                if vh_feats:
+                    from agents.baseline._value_head import _candidate_key  # noqa: E501
+                    _feats = vh_feats.get(_candidate_key(
+                        int(src.id), int(tgt.id), int(ships),
+                        float(angle), int(wait_N),
+                    ))
+                trace_prerank(
+                    world, model, me,
+                    int(src.id), int(tgt.id), int(ships),
+                    float(angle), int(wait_N),
+                    int(eta_traced) if eta_traced is not None else 0,
+                    float(cheap_delta),
+                    float(score),
+                    _feats,
                 )
                 if ml_scores:
                     from agents.baseline._ml_logit import ml_get_lambda, ml_lookup  # noqa: E501
