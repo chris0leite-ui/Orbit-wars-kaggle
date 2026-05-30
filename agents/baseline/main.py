@@ -58,6 +58,18 @@ os.environ.setdefault("PROPOSER_GANG_UP_SUPPORT", "off")
 # any value other than "trajectory" (e.g. "composite").
 os.environ.setdefault("BASELINE_CHOOSER", "trajectory")
 
+# Production default (2026-05-30): universal launch-rules validator ON.
+# Ported from champion branch (claude/champion-strategy-rules-00JzI commit
+# f10bb1e). Two rules — Rule A: never send to a neutral planet unless the
+# arrival captures it (same-tick coalitions atomic, staggered pokes
+# dropped). Rule B: any launch (opp capture, neutral capture, own
+# reinforcement) whose fleet arrives after K turns is dropped — beyond
+# K the board is unpredictable. K via BASELINE_CAPTURE_HORIZON_K
+# (default 10). See agents/baseline/launch_rules.py + tests/
+# test_launch_rules.py. Disable with BASELINE_LAUNCH_RULES=0.
+os.environ.setdefault("BASELINE_LAUNCH_RULES", "1")
+os.environ.setdefault("BASELINE_CAPTURE_HORIZON_K", "10")
+
 # Direction B v3 (2026-05-18 PM): joint candidate enumeration enabled
 # by default. 2P A/B: joint vs hybrid = 38/64 = 59.4pct, Wlo=0.471,
 # Whi=0.705 (INCONCLUSIVE-but-positive). 2P-only gate in chooser
@@ -203,6 +215,7 @@ from lib.world_model import WorldModel
 # continuation lines as indented orphans. Friction tag
 # `bundler-modular-agent-namespace-access-breaks-bundle` (2026-05-17).
 from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS
+from agents.baseline.launch_rules import enforce_launch_rules
 from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON
 
 
@@ -929,7 +942,9 @@ def agent(obs, configuration=None):
             ]
             if opening_moves:
                 # Case (a): MILP has fire-now entries — emit and return.
-                return opening_moves
+                return enforce_launch_rules(
+                    opening_moves, planets, me, world, model,
+                )
             # Cases (b) and (c) fall through.
 
     snap_base = fs_from_obs(obs, num_seats=num_seats)
@@ -1006,7 +1021,8 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
-        return emit_sniper_strikes(moves, planets, me, world, model)
+        moves = emit_sniper_strikes(moves, planets, me, world, model)
+        return enforce_launch_rules(moves, planets, me, world, model)
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
     # coalition + opp-modifier posterior; no fast_sim rollout. See
@@ -1029,7 +1045,8 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
-        return emit_sniper_strikes(moves, planets, me, world, model)
+        moves = emit_sniper_strikes(moves, planets, me, world, model)
+        return enforce_launch_rules(moves, planets, me, world, model)
 
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
@@ -1077,4 +1094,5 @@ def agent(obs, configuration=None):
     moves = drain_idle_rear(moves, planets, me, world, model)
     moves = drain_stagnant_rear(moves, planets, me, world, model)
     moves = drain_combat_stack(moves, planets, me, world, model)
-    return emit_sniper_strikes(moves, planets, me, world, model)
+    moves = emit_sniper_strikes(moves, planets, me, world, model)
+    return enforce_launch_rules(moves, planets, me, world, model)

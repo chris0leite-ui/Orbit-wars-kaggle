@@ -1164,6 +1164,15 @@ def propose(my_planets, target_pool, world, model, me: int,
         (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N)
     sorted by cheap_delta descending.
     """
+    # Universal K-ceiling early prune (ported from champion f10bb1e).
+    # When BASELINE_LAUNCH_RULES is on, drop fire-now candidates whose
+    # arrival exceeds K turns before they enter the chooser's scoring
+    # path. Pure efficiency — the post-emit validator in main.py is the
+    # correctness chokepoint; this just spares the chooser cycles spent
+    # scoring candidates that would be filtered out.
+    from agents.baseline.launch_rules import capture_horizon_k, launch_rules_enabled
+    _eta_prune = launch_rules_enabled()
+    _k = capture_horizon_k()
     prerank = []
     for src in my_planets:
         if int(src.ships) < MIN_FLEET_SIZE:
@@ -1176,6 +1185,8 @@ def propose(my_planets, target_pool, world, model, me: int,
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
                 angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
+                if _eta_prune and int(eta) > _k:
+                    continue
                 horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if horizon >= baseline_len:
                     horizon = baseline_len - 1
