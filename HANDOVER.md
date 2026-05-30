@@ -53,18 +53,29 @@ The two n's aren't strictly the same test (wrap-commit at substrate 2623b49 with
 - **Pooled-correct interpretation:** foundation is at ~47%, mild regression (~−3pp) or noise. Plan can proceed but additions' "lift" includes regression-recovery component.
 - **Separate-correct interpretation:** SEU7P PV_ETA has drifted ~−19pp from gZsCu peak since 2623b49. Plan is BLOCKED until foundation is fixed.
 
-**P1-prime (disambiguation). Run n=32 extension of A/B 4 in next session** (~75 min compute). New pooled n=80 = (30 + new_wins)/(64 + 32 — wait, this is wrong; the A/B 4 already counts as 16 of the 32 new games. Or run fresh n=32 to compare against A/B 4 alone).
+**P1-prime (CONCRETE ROOT-CAUSE FOUND 2026-05-30 PM).** Three actual code-level divergences between `submissions/isolation_none.py` (SEU7P substrate, all 3 new env vars OFF) and `submissions/baseline_pv_eta_anchor_1163.py` (frozen gZsCu peak bundle, sub 53111837):
 
-Cleanest: run a FRESH n=32 isolation_none vs anchor. Interpret:
-- New n=32 lands at 45-55%: pooled with wrap commit = parity at ~50%. Plan proceeds.
-- New n=32 lands at 30-40%: foundation has regressed. Investigate fa696d0 collateral effects before plan proceeds.
+| Variable | gZsCu anchor (μ=1163.5) | SEU7P isolation_none |
+|---|---|---|
+| `WALLCLOCK_BUDGET_MS` | **600.0** (module constant) | **800.0** (bumped via perf chain) |
+| `KINEMATIC_TABLE_ENABLED` env default | absent → defaults OFF | `setdefault(..., "1")` → ON by default |
+| `hard_deadline` parameter in `score_action` | NOT present | present (hard-cap safety net) |
 
-**Additional pre-A/B diagnostics (cheap, run before the n=32):**
-1. **Verify isolation_none.py is a clean 3-line edit.** `diff submissions/isolation_none.py submissions/baseline_redeploy_gangup.py` — expected exactly 3 lines differ (the 3 setdefaults). If more differ, sed edits had collateral damage; rebuild isolation_none.py with surgical Edit instead.
-2. **Bundler determinism.** Rebuild `submissions/baseline.py` from current source via `python scripts/bundle_agent.py baseline` and diff against `submissions/baseline_redeploy_gangup.py` (after stripping the bundler comment header). If bundler output drifted between sessions, the bundle is not source-equivalent and the foundation regression may be a BUNDLER bug rather than a SOURCE regression.
-3. **Code diff scan.** `git diff 2623b49..c097471 -- agents/baseline/ lib/`. Look for: (a) shared-module changes that affect runtime even with env vars OFF; (b) module-load-order side effects in the bundler; (c) accidental edits to scoring / chooser / proposer paths not documented in the commit messages.
+Plus ~650 lines of perf-chain additions in isolation_none beyond the env-gated new generators. The unconditional code paths (wallclock change, hard-cap, kinematic-table lookup) DO execute regardless of the env-gated additions.
 
-**Diagnostic order:** (1) → (2) → (3) [if 1/2 find nothing] → n=32 A/B 4 extension. ~2h total. Plan resumes if foundation is confirmed at-parity OR after the regression is fixed.
+**Suspected primary culprit:** `KINEMATIC_TABLE_ENABLED=1`. A precomputed orbital-position lookup added on SEU7P via commit `0f1da5b perf(baseline): wire kinematic-table singleton into agent's per-turn entry`. Any off-by-one in the rotation index, stale state across turns, or wrong tick offset systematically corrupts the chooser's orbital predictions for every launch's arrival position — hits the core of every chooser pick.
+
+**Discriminator A/B executing (2026-05-30 PM session):** Built `submissions/isolation_none_perfchain_off.py` from isolation_none with TWO surgical edits:
+1. `WALLCLOCK_BUDGET_MS = 800.0` → `600.0` (matches gZsCu)
+2. `KINEMATIC_TABLE_ENABLED` setdefault `"1"` → `"0"` (force OFF)
+
+n=16 A/B vs PV_ETA anchor running as background `b8kpp315v`, log `/tmp/ab_logs/discriminator_perfchain.log`. ETA ~30-40 min from launch (~14:13 UTC).
+
+**Discriminator interpretation:**
+- If foundation jumps from 31% → ~50%: perf chain is the culprit. Next: narrow to which piece (kinematic alone vs wallclock alone via two more n=16 A/Bs).
+- If foundation stays ~31%: perf chain is NOT the culprit. Look at the +650 lines of code for unconditional changes (vectorize orbital-position window in `predict_fleet_fate`, reach-frontier scaffolding leakage, joint_solver edits).
+
+**P1-prime gate:** plan resumes when discriminator + follow-up A/Bs identify the regressing code, AND the foundation is restored to ≥50% vs anchor at n≥16 with Wilson-lo ≥ 0.40.
 
 **P2. Env-flag inventory of the live champion.** Sub 53182323's description says "JOINT_AGGR/NEUTRAL_BONUS/ORBITAL_SAFETY/PV_ETA". Confirm all four are ON in our SEU7P bundle (check `grep -E "setdefault.*JOINT_AGGR|NEUTRAL_BONUS|ORBITAL_SAFETY|BASELINE_PV_ETA" submissions/baseline_redeploy_gangup.py` and `agents/baseline/main.py`). If one is missing, reconcile via separate parity A/B BEFORE the composite work — don't conflate env-flag port with universal-rules port.
 
