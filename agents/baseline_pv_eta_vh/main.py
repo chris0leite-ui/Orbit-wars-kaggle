@@ -45,5 +45,15 @@ _os.environ.setdefault("BASELINE_PV_ETA", "1")
 # parity check vs bare pv_eta.
 _os.environ.setdefault("BASELINE_VH_LAMBDA", "1.0")
 
+# Kinematic-table bug fix (d50654a / 232307c). The table
+# (lib/kinematic_table.py) is a module-global singleton whose mutable
+# state leaks across seats in any in-process play, silently regressing
+# winrate ~25 pp per the SEU7P isolation A/B (31% -> 56%). This wrapper
+# never enables it, but opponent bundles in local A/Bs may setdefault
+# it to "1" in the shared process — that wins because we never set it.
+# Explicit set (not setdefault) overrides any opponent-side setdefault.
+# No-op on Kaggle (agents run in isolated processes).
+_os.environ["KINEMATIC_TABLE_ENABLED"] = "0"
+
 # Re-export top-level agent.
 from agents.baseline.main import agent  # noqa: E402,F401

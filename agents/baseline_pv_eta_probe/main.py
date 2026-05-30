@@ -37,5 +37,12 @@ _os.environ.setdefault("BASELINE_PV_ETA", "1")
 # Lambda-0 invariant: never enable ML for the probe.
 _os.environ.setdefault("BASELINE_ML_LAMBDA", "0.0")
 
+# Kinematic-table bug fix (d50654a / 232307c). Explicit hard override
+# guards local A/Bs where the opponent bundle setdefault-enables the
+# table — opponent's setdefault wins by default because we don't set
+# the var. Explicit assignment ensures it's "0" regardless of opponent
+# behavior. No-op on Kaggle (isolated processes).
+_os.environ["KINEMATIC_TABLE_ENABLED"] = "0"
+
 # Re-export top-level agent.
 from agents.baseline.main import agent  # noqa: E402,F401
