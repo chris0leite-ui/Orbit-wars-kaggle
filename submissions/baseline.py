@@ -1,4 +1,4 @@
-# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,kinematic_table,trajectory,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner,joint_solver/columns,joint_solver/lp}.
+# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,mirror,fleet,orbit,aim,combat,world_model,intent,kinematic_table,trajectory,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner,joint_solver/columns,joint_solver/lp}.
 # Single-file Kaggle submission for Orbit Wars.
 
 from __future__ import annotations
@@ -101,6 +101,88 @@ def danger_3nn(
         elif p.owner != -1:
             score -= 1
     return score
+
+# === inlined: lib/mirror.py ===
+
+
+import math
+from typing import Iterable
+
+
+
+def rotate_xy(x: float, y: float) -> tuple[float, float]:
+    """180° rotation through (CENTER, CENTER)."""
+    return (BOARD_SIZE - x, BOARD_SIZE - y)
+
+
+def rotate_angle(theta: float) -> float:
+    """θ → θ + π, normalised to [0, 2π)."""
+    return (theta + math.pi) % (2 * math.pi)
+
+
+def build_bijection(initial_planets, tol: float = 1.0) -> dict[int, int]:
+    """Pair each planet id with its 180°-rotated counterpart by initial xy.
+
+    `initial_planets` is the env-shipped list of [id, owner, x, y, r,
+    ships, prod] tuples captured at t=0. Pairs are mutually exclusive
+    (bijection); any planet without a match within `tol` is omitted.
+    """
+    bij: dict[int, int] = {}
+    items = [(p[0], float(p[2]), float(p[3])) for p in initial_planets]
+    for pid, x, y in items:
+        rx, ry = rotate_xy(x, y)
+        best_id, best_d2 = None, tol * tol
+        for qid, qx, qy in items:
+            if qid == pid:
+                continue
+            d2 = (qx - rx) ** 2 + (qy - ry) ** 2
+            if d2 <= best_d2:
+                best_d2 = d2
+                best_id = qid
+        if best_id is not None:
+            bij[pid] = best_id
+    # Trim to a true bijection: drop any entry whose partner doesn't
+    # point back. (Should not happen with a clean symmetric board, but
+    # cheap insurance.)
+    return {a: b for a, b in bij.items() if bij.get(b) == a}
+
+
+def detect_num_players(planets) -> int:
+    """Count distinct non-neutral owners; reliable on turn 0."""
+    owners = {p[1] for p in planets if p[1] != -1}
+    return len(owners)
+
+
+def diagonal_opponent(my_id: int, num_players: int) -> int:
+    """Return the opponent across the 180° rotation axis from us.
+
+    In 2P this is `1 - my_id`. In 4P, env assigns home `base+j` to
+    player j; base+0 ↔ base+2? No — the symmetry analysis: positions
+    in the group rotate by 90° each step, so base+0 and base+3 are
+    diagonal (180°). Therefore in 4P the diagonal opponent of player 0
+    is player 3, of player 1 is player 2.
+    """
+    if num_players == 2:
+        return 1 - my_id
+    if num_players == 4:
+        # base+0 ↔ base+3, base+1 ↔ base+2 means player 0 ↔ 3, 1 ↔ 2.
+        return {0: 3, 1: 2, 2: 1, 3: 0}[my_id]
+    raise ValueError(f"unsupported num_players={num_players}")
+
+
+def diff_new_fleets(curr_fleets, prev_ids: set[int]) -> list:
+    """Fleets present this turn that weren't present last turn."""
+    return [f for f in curr_fleets if f[0] not in prev_ids]
+
+
+__all__ = [
+    "rotate_xy",
+    "rotate_angle",
+    "build_bijection",
+    "detect_num_players",
+    "diagonal_opponent",
+    "diff_new_fleets",
+]
 
 # === inlined: lib/fleet.py ===
 
@@ -14138,6 +14220,9 @@ fleet_speed = speed
 # from lib.missions.reinforce import propose_reinforce_missions  # inlined by bundle_agent.py
 # from lib.kinematic_table import begin_turn as kt_begin_turn  # inlined by bundle_agent.py
 kt_begin_turn = begin_turn
+# from lib.mirror import rotate_angle as _rotate_angle, rotate_xy as _rotate_xy  # inlined by bundle_agent.py
+_rotate_angle = rotate_angle
+_rotate_xy = rotate_xy
 # from lib.orbit import predict_relative  # inlined by bundle_agent.py
 # from lib.trajectory import predict_fleet_fate  # inlined by bundle_agent.py
 # from lib.world_model import WorldModel  # inlined by bundle_agent.py
@@ -14166,7 +14251,57 @@ def _as_dict(obs) -> dict:
         "comets": list(getattr(obs, "comets", []) or []),
         "comet_planet_ids": list(getattr(obs, "comet_planet_ids", []) or []),
         "angular_velocity": float(getattr(obs, "angular_velocity", 0.0)),
+        "initial_planets": list(getattr(obs, "initial_planets", []) or []),
+        "next_fleet_id": int(getattr(obs, "next_fleet_id", 0) or 0),
     }
+
+
+def _rotate_obs(obs_d: dict) -> dict:
+    """180°-rotated view of obs_d. Positions and angles rotated; ids,
+    ownership, ship counts, production, angular_velocity unchanged.
+
+    Seat-symmetry: Orbit Wars has D4 board symmetry; 2P homes sit at the
+    180°-rotation pair (base+0 ↔ base+3). Feeding the chooser a rotated
+    P1-view that's geometrically isomorphic to the P0-view eliminates the
+    structural seat asymmetry (chaotic amplification of id-tiebreak /
+    floating-point order) that caused self-play to converge to P0 wins
+    30:1. See knowledge-base/concepts/seat-symmetry-fix.md (if added).
+    """
+    rotated = dict(obs_d)
+    rotated["planets"] = [
+        [p[0], p[1], *_rotate_xy(float(p[2]), float(p[3])), p[4], p[5], p[6]]
+        for p in obs_d.get("planets", [])
+    ]
+    rotated["fleets"] = [
+        [f[0], f[1], *_rotate_xy(float(f[2]), float(f[3])),
+         _rotate_angle(float(f[4])), f[5], f[6]]
+        for f in obs_d.get("fleets", [])
+    ]
+    if "initial_planets" in obs_d:
+        rotated["initial_planets"] = [
+            [p[0], p[1], *_rotate_xy(float(p[2]), float(p[3])), p[4], p[5], p[6]]
+            for p in obs_d["initial_planets"]
+        ]
+    # Comet groups carry future-position paths used by world_model for
+    # predict-fleet-fate and similar; rotate each (x, y) in every path.
+    comets = obs_d.get("comets", []) or []
+    if comets:
+        rotated["comets"] = []
+        for c in comets:
+            rc = dict(c) if isinstance(c, dict) else c
+            if isinstance(rc, dict) and "paths" in rc:
+                rc["paths"] = [
+                    [list(_rotate_xy(float(pt[0]), float(pt[1]))) for pt in path]
+                    for path in rc["paths"]
+                ]
+            rotated["comets"].append(rc)
+    return rotated
+
+
+def _unrotate_actions(actions: list) -> list:
+    """Apply 180° angle-rotation to each emitted action. Src id and ship
+    count are angle-independent and pass through unchanged."""
+    return [[a[0], _rotate_angle(float(a[1])), a[2]] for a in actions]
 
 
 def _num_seats(planets, fleets) -> int:
@@ -14836,6 +14971,23 @@ def agent(obs, configuration=None):
     if not raw_planets:
         return []
 
+    # Canonical-frame seat symmetrization (2P only). When we're seat 1,
+    # rotate the obs by 180° through board center so the chooser sees a
+    # board geometrically identical to what P0 sees. All downstream
+    # code (proposer, scoring, rollout, validator) runs in the rotated
+    # frame; output angles are unrotated at every return site below.
+    # Eliminates the structural seat asymmetry that caused self-play to
+    # converge to P0=30, P1=1 on seed 0 despite identical bundles.
+    canonical_rotated = False
+    is_2p = all(int(p[1]) < 2 for p in raw_planets) and all(
+        int(f[1]) < 2 for f in raw_fleets
+    )
+    if me == 1 and is_2p:
+        obs_d = _rotate_obs(obs_d)
+        raw_planets = obs_d.get("planets", []) or []
+        raw_fleets = obs_d.get("fleets", []) or []
+        canonical_rotated = True
+
     planets = [Planet(*p) for p in raw_planets]
     fleets = [Fleet(*f) for f in raw_fleets]
     my_planets = [p for p in planets if int(p.owner) == me]
@@ -14876,9 +15028,10 @@ def agent(obs, configuration=None):
             ]
             if opening_moves:
                 # Case (a): MILP has fire-now entries — emit and return.
-                return enforce_launch_rules(
+                _emit = enforce_launch_rules(
                     opening_moves, planets, me, world, model,
                 )
+                return _unrotate_actions(_emit) if canonical_rotated else _emit
             # Cases (b) and (c) fall through.
 
     snap_base = fs_from_obs(obs, num_seats=num_seats)
@@ -14956,7 +15109,8 @@ def agent(obs, configuration=None):
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
         moves = emit_sniper_strikes(moves, planets, me, world, model)
-        return enforce_launch_rules(moves, planets, me, world, model)
+        _emit = enforce_launch_rules(moves, planets, me, world, model)
+        return _unrotate_actions(_emit) if canonical_rotated else _emit
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
     # coalition + opp-modifier posterior; no fast_sim rollout. See
@@ -14980,7 +15134,8 @@ def agent(obs, configuration=None):
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
         moves = emit_sniper_strikes(moves, planets, me, world, model)
-        return enforce_launch_rules(moves, planets, me, world, model)
+        _emit = enforce_launch_rules(moves, planets, me, world, model)
+        return _unrotate_actions(_emit) if canonical_rotated else _emit
 
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
@@ -15029,4 +15184,5 @@ def agent(obs, configuration=None):
     moves = drain_stagnant_rear(moves, planets, me, world, model)
     moves = drain_combat_stack(moves, planets, me, world, model)
     moves = emit_sniper_strikes(moves, planets, me, world, model)
-    return enforce_launch_rules(moves, planets, me, world, model)
+    _emit = enforce_launch_rules(moves, planets, me, world, model)
+    return _unrotate_actions(_emit) if canonical_rotated else _emit

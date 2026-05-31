@@ -42,6 +42,10 @@ REPO = Path(__file__).resolve().parents[1]
 # via pathlib's `/` operator transparently.
 DEFAULT_LIB_ORDER = [
     "geometry",
+    # mirror — seat-symmetry primitives (rotate_xy, rotate_angle).
+    # Used by agents/baseline/main.py for the canonical-frame transform
+    # (2026-05-31). Depends only on geometry (BOARD_SIZE, CENTER).
+    "mirror",
     "fleet",
     "orbit",
     "aim",
