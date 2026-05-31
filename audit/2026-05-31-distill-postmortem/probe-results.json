@@ -1,0 +1,76 @@
+{
+  "state": {
+    "replay": "audit/2026-05-31-distill-postmortem/episode-78324838-replay.json",
+    "step": 120,
+    "seat": 0,
+    "my_planets": 10,
+    "opp_planets": 14,
+    "my_garrison": 33.0,
+    "opp_garrison": 31.0,
+    "my_inflight": 0,
+    "opp_inflight": 0
+  },
+  "results": [
+    {
+      "moves": [],
+      "n_moves": 0,
+      "wallclock_ms": 674.9557640000035,
+      "name": "bare_dist",
+      "env": {
+        "BASELINE_OPP_TIER": "2",
+        "BASELINE_VH_LAMBDA": "0.0",
+        "BASELINE_OPP_FILTER_THRESHOLD": "0.15",
+        "BASELINE_PV_ETA": "1",
+        "KINEMATIC_TABLE_ENABLED": "0"
+      }
+    },
+    {
+      "moves": [
+        [
+          5,
+          0.2867487649203734,
+          25
+        ],
+        [
+          12,
+          -2.856653881767488,
+          25
+        ]
+      ],
+      "n_moves": 2,
+      "wallclock_ms": 770.8526010000014,
+      "name": "composite_l1",
+      "env": {
+        "BASELINE_OPP_TIER": "2",
+        "BASELINE_VH_LAMBDA": "1.0",
+        "BASELINE_OPP_FILTER_THRESHOLD": "0.15",
+        "BASELINE_PV_ETA": "1",
+        "KINEMATIC_TABLE_ENABLED": "0"
+      }
+    },
+    {
+      "moves": [
+        [
+          5,
+          0.2867487649203734,
+          25
+        ],
+        [
+          12,
+          -2.856653881767488,
+          25
+        ]
+      ],
+      "n_moves": 2,
+      "wallclock_ms": 707.7931439999929,
+      "name": "composite_l2",
+      "env": {
+        "BASELINE_OPP_TIER": "2",
+        "BASELINE_VH_LAMBDA": "2.0",
+        "BASELINE_OPP_FILTER_THRESHOLD": "0.15",
+        "BASELINE_PV_ETA": "1",
+        "KINEMATIC_TABLE_ENABLED": "0"
+      }
+    }
+  ]
+}
