@@ -21,11 +21,14 @@ Firing-rate probe (`scripts/joint_sync_probe.py`, 3 games / 357 turns):
 **0 sync coalitions emitted** — worse than the ~once-per-3-games baseline.
 
 Gate-survival census (1 game, seed 100, 4516 target-considerations):
-- `solo_skip = 4501` (99.7%) — at least one of the two nearest sources can
+- `solo_skip = 4489` (99.4%) — at least one of the two nearest sources can
   already SOLO-capture the target (so no coalition is needed).
 - `gate3 = 15` (0.3%) — even the two nearest COMBINED cannot beat the
   garrison (heavily defended enemy planets needing 3+ sources).
+- `lt2_src = 12` (0.3%) — fewer than 2 eligible (non-reserved) sources.
 - `scored = 0` — zero viable two-source coalitions reached the scorer all game.
+  (`size_fail / eta_eq / horizon / gate1 / solve_none` all 0 — nothing even
+  reached those later gates.)
 
 ## The real lesson
 Prerank starvation was **not** the bottleneck. The bypass worked exactly as
@@ -33,7 +36,7 @@ designed (4516 targets/game evaluated, no upstream filter), and it revealed
 that the addressable regime — "neither of the two nearest sources can solo,
 but together they can, arriving the same tick" — is essentially **empty**.
 When your nearest planet can't solo a target, your second-nearest almost
-never closes the gap: either your nearest CAN solo it (99.7%), or the target
+never closes the gap: either your nearest CAN solo it (99.4%), or the target
 is defended enough that two combined still fall short (0.3%). The "two nearby
 sources must combine for a capture neither can make alone" picture does not
 occur in practice with this geometry/economy.
