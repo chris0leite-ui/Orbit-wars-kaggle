@@ -644,7 +644,45 @@ relevant skill file or source code, not back into friction.md.
   responsiveness, predicted-outcome-matched, timing headroom).
 
 
-```
+## 2026-05-31 (claude/competition-objective-alignment-hqNVM — Tier 2 opp-model falsified for chooser-budget reasons)
+
+- `tag: chooser-probe-fix-overcorrected` — `affordable_validate_cap`
+  probe upgrade (commit 05aa624) captured Tier-2 opp cost in
+  `per_step_ms` correctly, but the chooser's downstream formula
+  `per_cand_ms = (per_step × avg_K=32.5 + per_leaf) × 1.5_safety`
+  multiplies by *max* horizon, not the actual `prop_horizon` (~5-15)
+  used in `score_candidate_v4`. ~5× over-estimate of per-candidate
+  cost → `safe_deadline = deadline - 344 ms` pre-bailed validation
+  after ~3-5 candidates → `scored` list empty → focal emitted nothing
+  most turns → 0/32 vs launch_rules_universal. **Fix:** reverted
+  the probe in commit 7e8c5dc; the proper fix needs `avg_K` to use
+  median prerank `prop_horizon` (or per-tier safety multiplier).
+  Deferred until a chooser-quality session takes this on.
+
+- `tag: chooser-tuned-for-tier0-only` — heavier opp models (Tier 1
+  `top_tier_mirror`, Tier 2 `trained_logreg`) cost ~5-6 ms/call vs
+  Tier 0 `lite_greedy`'s ~0.5 ms/call. In a 1000 ms chooser budget
+  per turn, Tier 0 validates ~1200 candidates per turn, Tier 1/2
+  ~150-200 — an 8× drop. Win rate vs `launch_rules` collapses:
+  pv_eta (Tier 0) = 56% (n=16); pv_eta + Tier 2 = 6% (n=16). Any
+  future RL/IL/distilled opp model > ~1 ms/call hits the same wall.
+  **Fix:** structural (PI ideas captured in
+  `knowledge-base/thoughts/2026-05-31-tier2-root-cause-and-pi-ideas.md`)
+  — event-driven rollout horizon (3 strategic events instead of 10
+  ticks) OR a tiny distilled opp model that runs at lite_greedy
+  speed (~0.5 ms) trained from top-leaderboard Kaggle replays.
+
+- `tag: monitor-spam-on-killed-task` — my Monitor poll script
+  `until both A/Bs have wins=` loop kept re-printing the COMPLETED
+  Tier 0 result every 30 s for the full 30-min timeout, because the
+  Tier 1 A/B was killed by the harness's own 25-min timeout and
+  never wrote a "wins=" line. The exit predicate required both
+  logs to have terminal lines; one was killed silently. Spammed
+  ~10 system-reminder notifications into the chat after the result
+  was already shared. **Fix:** monitor exit predicates must include
+  "process is gone AND file is stable for N seconds", not just
+  "matching line appears". Logged once-only outputs per file via
+  a sentinel-file pattern, not re-emit-on-poll.
 - `tag: <kebab-slug>` — <session context>: <what happened>.
   <Root cause>. **Fix:** <concrete action>.
 ```
