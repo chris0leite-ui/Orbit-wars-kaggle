@@ -40,6 +40,16 @@ DEFAULT_BOOSTER = REPO / "data" / "opp_distill" / "distill_booster.txt"
 THRESHOLD = 0.30
 FEATURE_DIM = 45
 
+# Lite-mode slice: 34 cheap features from the 45-d corpus (match
+# lib.opp_features_lite.LITE_KEEP_INDICES). Drops the 11 expensive
+# WorldModel-dependent features. Re-applied at inference time by the
+# lite encoder so train/inference distributions match.
+LITE_FEATURE_DIM = 34
+# Indices of the 34-d slice that the lite encoder UNDER-APPROXIMATES
+# (returns 0). Zeroing these in training data keeps train/inference
+# distributions matched.
+LITE_UNDERSTATED_INDICES = [21, 22, 23, 24, 28, 29]
+
 NUM_BOOST_ROUND = 400
 EARLY_STOPPING_ROUNDS = 30
 LGB_PARAMS = {
@@ -159,6 +169,12 @@ def main(argv=None) -> int:
         help="Reservoir-sample N×n_pos negatives to bound memory. None=load all "
              "(default: 10.0 → ~600k train rows at 60k positives)",
     )
+    p.add_argument(
+        "--lite", action="store_true",
+        help="Slice corpus to the 34-d cheap feature subset + zero the "
+             "lite-encoder-under-approximated slots. Required when the "
+             "agent uses the vectorized lite encoder at inference time.",
+    )
     args = p.parse_args(argv)
 
     labels_path = Path(args.labels)
@@ -168,6 +184,23 @@ def main(argv=None) -> int:
     print(f"loading corpus from {labels_path} "
           f"(neg_per_pos={args.neg_per_pos}) ...", file=sys.stderr)
     X, y, episodes, splits = _load_corpus(labels_path, neg_per_pos=args.neg_per_pos)
+
+    if args.lite:
+        from lib.opp_features_lite import LITE_KEEP_INDICES
+        X = X[:, LITE_KEEP_INDICES].copy()
+        # NOTE: we DO NOT zero the under-approximated indices here (21-24,
+        # 28-29). The model learns to use them from the full 45-d corpus;
+        # at inference, the lite encoder returns 0 for those slots — the
+        # model gracefully degrades, falling back on the discriminative
+        # cheap features. Empirically, zeroing AT TRAINING TIME killed the
+        # booster (best_iter=2, separation 0.07). Leaving real values
+        # restores separation.
+        print(f"  lite-mode: sliced corpus to {X.shape[1]} dims "
+              f"(retaining true values; lite encoder zeros at inference)",
+              file=sys.stderr)
+        effective_dim = LITE_FEATURE_DIM
+    else:
+        effective_dim = FEATURE_DIM
 
     # Save the post-downsample corpus as compressed npz for the private
     # Kaggle dataset (much smaller than the original JSONL, and skips the
@@ -183,8 +216,8 @@ def main(argv=None) -> int:
         print(f"  saved downsampled corpus → {out_npz} "
               f"({out_npz.stat().st_size / 1e6:.1f} MB)",
               file=sys.stderr)
-    if X.ndim != 2 or X.shape[1] != FEATURE_DIM:
-        print(f"ERROR: expected (_,{FEATURE_DIM}) features, got {X.shape}",
+    if X.ndim != 2 or X.shape[1] != effective_dim:
+        print(f"ERROR: expected (_,{effective_dim}) features, got {X.shape}",
               file=sys.stderr)
         return 1
 
@@ -297,7 +330,8 @@ def main(argv=None) -> int:
         "val_recall_at_thr": rec,
         "pos_pred_mean": pos_pred_mean,
         "neg_pred_mean": neg_pred_mean,
-        "feature_dim": FEATURE_DIM,
+        "feature_dim": effective_dim,
+        "lite_mode": bool(args.lite),
     }
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
     print(f"wrote meta    -> {meta_path}")

@@ -189,8 +189,13 @@ def _load_opp_booster():
 # AGGRESSIVE_FRAC). Changes here must be reflected there to keep
 # train/inference distributions consistent.
 _DIST_MIN_SRC_SHIPS = 5
-_DIST_TOP_K = 2
+_DIST_TOP_K = 8
 _DIST_AGGRESSIVE_FRAC = 0.7
+# Lite encoder: a vectorized 34-d subset of the 45-d shot_features encoder
+# that skips all WorldModel-dependent features (F2/F3/F4/F6/F8). Booster
+# is retrained on `corpus[:, LITE_KEEP_INDICES]` so train/inference match.
+# Speed: ~1 ms median at K=8 vs 24 ms with the slow encoder.
+_DIST_USE_LITE_ENCODER = True
 
 
 def trained_logreg_policy(obs: Any) -> list:
@@ -230,10 +235,16 @@ def trained_logreg_policy(obs: Any) -> list:
         return []
 
     try:
-        from lib.shot_features import FEATURE_DIM
-        from lib.shot_features import encode_shot_features
         from lib._validator_tree_walker import predict_proba
         import numpy as _np
+        if _DIST_USE_LITE_ENCODER:
+            from lib.opp_features_lite import encode_lite_batch
+            from lib.opp_features_lite import planets_to_array
+            from lib.opp_features_lite import fleets_to_array
+            from lib.opp_features_lite import LITE_FEATURE_DIM as _LITE_DIM
+        else:
+            from lib.shot_features import FEATURE_DIM
+            from lib.shot_features import encode_shot_features
     except Exception:
         return lite_greedy_policy(obs)
 
@@ -274,41 +285,63 @@ def trained_logreg_policy(obs: Any) -> list:
     if not candidates:
         return []
 
-    # Encode features. Let encode_shot_features build World+WorldModel
-    # internally — one build amortized across all candidates by passing
-    # the same obs.
-    cached_world = getattr(obs, "_shared_world_model", None)
-    shared_world = None
-    shared_model = None
-    if cached_world is not None:
-        shared_model = cached_world
-    else:
+    # Vectorized feature encoding. Lite encoder produces (N, 34) directly
+    # in numpy — no World+WorldModel build, no per-candidate Tier-2 work.
+    # The booster MUST be trained on the matching 34-d slice of the 45-d
+    # corpus (see `scripts/train_opp_distill.py --lite`).
+    if _DIST_USE_LITE_ENCODER:
         try:
-            shared_world = World.from_obs(obs)
-            shared_model = WorldModel.from_world(shared_world)
-        except Exception:
-            shared_world = None
-            shared_model = None
-
-    to_score: list[tuple[int, int, float, int, Any]] = []
-    for src_pid, tgt_pid, angle, ships in candidates:
-        emit = [src_pid, angle, ships]
-        try:
-            feats = encode_shot_features(
-                emit, obs, player,
-                world=shared_world, world_model=shared_model,
+            planets_arr = planets_to_array(planets)
+            fleets_arr = fleets_to_array(
+                obs.get("fleets") if isinstance(obs, dict)
+                else getattr(obs, "fleets", None)
+            )
+            step = int(obs.get("step", 0) if isinstance(obs, dict)
+                       else getattr(obs, "step", 0) or 0)
+            X = encode_lite_batch(
+                planets_arr, fleets_arr, player, step, candidates,
             )
         except Exception:
-            feats = None
-        if feats is None or feats.shape[0] != FEATURE_DIM:
-            continue
-        to_score.append((src_pid, tgt_pid, angle, ships, feats))
+            return lite_greedy_policy(obs)
+        to_score = [(src_pid, tgt_pid, angle, ships)
+                    for src_pid, tgt_pid, angle, ships in candidates]
+    else:
+        # Legacy slow path (kept for parity testing; not used in production).
+        cached_world = getattr(obs, "_shared_world_model", None)
+        shared_world = None
+        shared_model = None
+        if cached_world is not None:
+            shared_model = cached_world
+        else:
+            try:
+                shared_world = World.from_obs(obs)
+                shared_model = WorldModel.from_world(shared_world)
+            except Exception:
+                shared_world = None
+                shared_model = None
+        feats_list: list = []
+        to_score = []
+        for src_pid, tgt_pid, angle, ships in candidates:
+            emit = [src_pid, angle, ships]
+            try:
+                feats = encode_shot_features(
+                    emit, obs, player,
+                    world=shared_world, world_model=shared_model,
+                )
+            except Exception:
+                feats = None
+            if feats is None or feats.shape[0] != FEATURE_DIM:
+                continue
+            feats_list.append(feats)
+            to_score.append((src_pid, tgt_pid, angle, ships))
+        if not to_score:
+            return []
+        X = _np.stack(feats_list).astype(_np.float32)
 
-    if not to_score:
+    if X.shape[0] == 0:
         return []
 
     try:
-        X = _np.stack([t[4] for t in to_score]).astype(_np.float32)
         probs = predict_proba(parsed, X)
     except Exception:
         return lite_greedy_policy(obs)
@@ -320,7 +353,7 @@ def trained_logreg_policy(obs: Any) -> list:
     )
     moves: list = []
     used_srcs: set[int] = set()
-    for (src_pid, tgt_pid, angle, ships, _), p in ranked:
+    for (src_pid, tgt_pid, angle, ships), p in ranked:
         if float(p) < _OPP_THRESHOLD:
             continue
         if src_pid in used_srcs:
