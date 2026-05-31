@@ -226,3 +226,60 @@ def test_sync_skipped_when_one_source_can_solo(monkeypatch):
     )
     # B alone captures → no synchronized coalition for this target.
     assert not any(c.get("sync_joint") for c in commits)
+
+
+def test_sync_generator_forms_coalition_without_prerank_entry(monkeypatch):
+    """The fix (Phase 4): coalitions are built DIRECTLY from world geometry,
+    NOT from `prerank`. The proposer cheap-rejects the bouncing single-source
+    launches a coalition combines, so prerank often has NO row for the target.
+    Even so, the generator must still assemble A+B→C from the map alone.
+
+    Scorers are stubbed so only a waiting-leg coalition scores positive — this
+    isolates the generator's enumeration (capture correctness is proven by
+    test_neither_solo_captures_but_synchronized_stack_does)."""
+    monkeypatch.setenv("BASELINE_JOINT_SYNC", "1")
+    monkeypatch.setenv("BASELINE_JOINT", "1")
+    import agents.baseline.chooser_trajectory as ct
+    from agents.baseline.proposer import MIN_FLEET_SIZE
+    from lib.world_model import predict_garrison_at
+
+    # No solo scores positive (no solo emits, no source reservation from solos).
+    monkeypatch.setattr(ct, "score_candidate_v4",
+                        lambda *a, **k: (-1.0, "bounced", 1))
+    def _fake_joint(snap_base, launches, *a, **k):
+        if any(int(L[4]) > 0 for L in launches):
+            return (5.0, "scored")
+        return (-1.0, "scored")
+    monkeypatch.setattr(ct, "score_candidate_v4_joint", _fake_joint)
+
+    _obs, snap, world, model, A, B, C = _scenario()
+    _favor_fn, favs = _favors(snap)
+    # prerank carries NO row for C (id 0) — only a single unrelated bounce
+    # (B → opp home id 3), present solely so the `if not prerank` guard passes.
+    opp_home = {int(p.id): p for p in world.planets_by_id.values()}[3]
+    angle_d, eta_d = aim_and_eta(B, opp_home, int(B.ships), world.omega, world=world)
+    prerank = [(-1.0, B, opp_home, int(B.ships), float(angle_d), int(eta_d), HORIZON, 0)]
+    assert not any(int(r[2].id) == 0 for r in prerank)  # bypass premise: no C row
+
+    moves, commits = ct.choose_trajectory(
+        snap, prerank, favs, 0, 2, 2000.0, 5, HORIZON, GAMMA, world, model,
+    )
+    sync_commits = [c for c in commits if c.get("sync_joint")]
+    # Generator built the coalition from world geometry despite the empty-of-C
+    # prerank: A (id=1, nearer) waits; B (id=2) fires now; the target is C.
+    assert len(sync_commits) == 1, (moves, commits)
+    assert sync_commits[0]["src_id"] == 1
+    assert sync_commits[0]["wait_remaining"] > 0
+    assert sync_commits[0]["tgt_id"] == 0
+    fire = [m for m in moves if int(m[0]) == 2]
+    assert fire, (moves, commits)  # B fires now
+
+    # Sizing: minimal but sufficient — both legs real, combined captures.
+    near_ships = int(sync_commits[0]["ships_planned"])
+    far_ships = int(fire[0][2])
+    assert near_ships >= MIN_FLEET_SIZE and far_ships >= MIN_FLEET_SIZE
+    wait_n = int(sync_commits[0]["wait_remaining"])
+    _aw, eta_w = aim_and_eta(A, C, near_ships, world.omega, wait_N=wait_n, world=world)
+    tarr = wait_n + int(eta_w)
+    _o, garr_tarr = predict_garrison_at(C, tarr, model.ledger.get(0, []))
+    assert near_ships + far_ships > garr_tarr  # stack beats arrival garrison
