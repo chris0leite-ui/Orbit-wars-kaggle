@@ -101,6 +101,7 @@ def _run(hold: bool, n_games: int, opp: str):
     else:
         os.environ.pop("BASELINE_JOINT_SYNC_HOLD", None)
     tally = {"emitted": 0, "held": 0, "lost": 0, "never_captured": 0, "wins": 0}
+    label = "HOLD ON " if hold else "HOLD OFF"
     for g in range(n_games):
         COALITIONS.clear()
         env = make("orbit_wars", configuration={"seed": 100 + g}, debug=False)
@@ -118,6 +119,10 @@ def _run(hold: bool, n_games: int, opp: str):
             seen.add(key)
             tally["emitted"] += 1
             tally[_classify(timeline, emit_step, tgt)] += 1
+        print(f"  [{label}] game {g} seed={100+g} done  "
+              f"running emitted={tally['emitted']} held={tally['held']} "
+              f"lost={tally['lost']} never={tally['never_captured']}",
+              flush=True)
     return tally
 
 
