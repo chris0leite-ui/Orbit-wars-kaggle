@@ -12046,6 +12046,10 @@ _aim_and_eta = aim_and_eta
 _capture_size = capture_size
 # from agents.baseline.proposer import nearest_k as _nearest_k  # inlined by bundle_agent.py
 _nearest_k = nearest_k
+# from agents.baseline.launch_rules import capture_horizon_k as _capture_horizon_k  # inlined by bundle_agent.py
+_capture_horizon_k = capture_horizon_k
+# from agents.baseline.launch_rules import launch_rules_enabled as _launch_rules_enabled  # inlined by bundle_agent.py
+_launch_rules_enabled = launch_rules_enabled
 
 
 EPISODE_STEPS_TOTAL: int = 500
@@ -13209,6 +13213,16 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         ]
         # Spend the bounded pair budget on the most valuable captures first.
         sync_targets.sort(key=lambda t: (-int(t.production), int(t.id)))
+        # Effective arrival ceiling. BOTH legs land on the synchronized tick
+        # `tarr`; if `tarr` exceeds the launch-rules capture-horizon K, the
+        # fire-now far leg is silently deleted by enforce_launch_rules
+        # (launch_rules.py:163), leaving the near leg to fire alone and bounce
+        # — a half-fire that wastes both fleets. So when launch rules are on,
+        # only form coalitions whose arrival is within K (Rule 40: align the
+        # generator with the downstream filter, don't loosen the K cap).
+        sync_arrival_cap = max_horizon
+        if _launch_rules_enabled():
+            sync_arrival_cap = min(max_horizon, _capture_horizon_k())
         sync_count = 0
         for tgt0 in sync_targets:
             if (sync_count >= JOINT_SYNC_MAX_PAIRS
@@ -13268,6 +13282,11 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 tarr = eta_n
             # Gate 2 (Rule 47): the leaf must see the stacked capture settle.
             if tarr + JOINT_SYNC_SETTLE > max_horizon:
+                continue
+            # Gate 2b: both legs must arrive within the launch-rules ceiling K,
+            # else the fire-now far leg is deleted downstream and the coalition
+            # half-fires (see sync_arrival_cap above).
+            if tarr > sync_arrival_cap:
                 continue
             _oT, garr_tarr = predict_garrison_at(tgt0, tarr, arrivals)
             # Gate 3: combined force must actually exceed garrison at arrival.
