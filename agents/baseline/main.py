@@ -59,26 +59,6 @@ os.environ.setdefault("PROPOSER_GANG_UP_SUPPORT", "off")
 # any value other than "trajectory" (e.g. "composite").
 os.environ.setdefault("BASELINE_CHOOSER", "trajectory")
 
-# Production default (2026-05-31): post-hoc Δ time-discount. In
-# score_candidate_v4 (chooser_trajectory.py:701), each candidate's leaf-Δ
-# is multiplied by γ^(wait_N + eta), pulling the capture value back to
-# the current step. Without this, the chooser ranks a capture arriving
-# at eta=2 the same as one arriving at eta=20 even though the latter
-# produces for many fewer turns inside the rollout horizon. Champion
-# (sub 53182323 mu=1188.3) ships with this on; we previously ran it off
-# and showed substantial idleness. See chooser_trajectory.py:691-704.
-os.environ.setdefault("BASELINE_PV_ETA", "1")
-
-# Production default (2026-05-31): leaf-level production-stream credit
-# in composite_capture_value (lib/value_heads.py:184). Without this the
-# leaf only sees ship-delta + 2P-pv extras and captures' future
-# production stream (pv_horizon to t_total=500) is invisible — making
-# launches look near-zero-Δ and starving the chooser of positive
-# candidates when reserves are abundant. The pv_horizon helper already
-# integrates production through end-of-game; this gate just turns the
-# term on. Stage 1 of the consistency refactor.
-os.environ.setdefault("COMPOSITE_PRODUCTION_PV", "1")
-
 # Production default (2026-05-30): universal launch-rules validator ON.
 # Ported from champion branch (claude/champion-strategy-rules-00JzI commit
 # f10bb1e). Two rules — Rule A: never send to a neutral planet unless the
