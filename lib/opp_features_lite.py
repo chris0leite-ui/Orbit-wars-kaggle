@@ -47,33 +47,29 @@ from typing import Any
 
 import numpy as np
 
-LITE_FEATURE_DIM = 28
+LITE_FEATURE_DIM = 30
 
-# Slice mapping from the 45-d corpus to the 28-d lite corpus. Used at
+# Slice mapping from the 45-d corpus to the 30-d lite corpus. Used at
 # training time: `X_lite = X_full[:, LITE_KEEP_INDICES]`.
 #
-# Excludes features the lite encoder cannot compute cheaply (would
-# require pre-computing fleet destinations via ray-cast):
-#   45-d input 29, 30 — F10 friendly inflight to target (n, ships)
-#   45-d input 34    — F11 joint arrival count at eta
-#   45-d input 35    — F7 intercept enemy eta
-#   45-d input 39, 40 — enemy inflight to target (n, ships)
-#
-# Initial 34-d lite attempt zeroed these at training too — killed the
-# model (best_iter=2, separation 0.07). Second attempt left them in
-# training but zeroed at inference — caused prediction collapse (model
-# learned to split heavily on F10 indices 21,22 with 17 combined splits,
-# then got zeros at inference). This third design drops them entirely
-# from training: model uses only features it can actually receive.
+# Dropped from the 45-d schema:
+#  - 11 WorldModel-dependent features (F2/F3/F4/F6/F8): same as before.
+#  - F9 src_threat (37, 38): uses world_model.time_to_enemy_threat → WM.
+#  - Post-capture nearest geometry (41, 42): uses world's predict_relative
+#    for orbital planets → also WM.
+# Feature-parity check vs slow encoder showed these had mean-abs-diff
+# 0.1-1.0 (binary frontier flag flipped), unusable at inference.
 LITE_KEEP_INDICES = np.asarray([
-    0, 1, 2, 3, 4, 5,            # planet-static
-    9, 10, 11, 12, 13,           # shot-static
-    14, 15, 16, 17,              # in-flight totals
-    18, 19, 20, 21, 22, 23,      # meta
-    36,                          # F13 growth field diff
-    37, 38,                      # F9 src threat
-    41, 42,                      # post-capture nearest geometry
-    43, 44,                      # orbital flags
+    0, 1, 2, 3, 4, 5,            # planet-static  → 0-5
+    9, 10, 11, 12, 13,           # shot-static    → 6-10
+    14, 15, 16, 17,              # in-flight totals → 11-14
+    18, 19, 20, 21, 22, 23,      # meta           → 15-20
+    29, 30,                      # F10 friendly inflight (n, ships) → 21-22
+    34,                          # F11 joint arrival count at eta   → 23
+    35,                          # F7 intercept enemy eta           → 24
+    36,                          # F13 growth-field diff (signed)   → 25
+    39, 40,                      # enemy inflight to target (n, ships) → 26-27
+    43, 44,                      # orbital flags (src, tgt)         → 28-29
 ], dtype=np.int64)
 
 assert LITE_KEEP_INDICES.size == LITE_FEATURE_DIM, (
@@ -100,14 +96,80 @@ def _fleet_speed(ships: float) -> float:
     return 1.0 + (6.0 - 1.0) * (math.log(ships) / math.log(1000.0)) ** 1.5
 
 
-def _is_orbiting_static(p: tuple) -> bool:
-    """Cheap orbital check: a planet is orbiting iff its initial radius
-    (== current radius for non-comets) differs from its current radius
-    by less than 1e-6 AND it has nonzero angular_velocity. We don't have
-    angular_velocity at encode time, so fall back to radius > 0.9
-    (the static-planet baseline) as a proxy. Matches `lib.orbit.is_orbiting`
-    only loosely; binary flag, training corpus uses the proper test."""
-    return False  # see encode_lite_batch — we re-derive from obs
+def _fleet_destinations(
+    fleets_arr: np.ndarray,
+    planets_arr: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Precompute each fleet's destination planet id + eta to that planet.
+
+    Mirrors `lib.shot_features.infer_target_pid` (ray-cast from fleet
+    position along the fleet's angle, pick the planet with smallest
+    perpendicular distance among forward candidates).
+
+    Args:
+        fleets_arr: (F, 7) [id, owner, x, y, angle, src, ships]
+        planets_arr: (P, 7) [id, owner, x, y, r, ships, prod]
+
+    Returns:
+        dest_pid: (F,) int64 — destination planet id, or -1 if no
+                  forward candidate matched.
+        dest_eta: (F,) float32 — turns until arrival (ceil(d / speed)),
+                  or 0 if dest_pid == -1.
+    """
+    F = fleets_arr.shape[0]
+    if F == 0 or planets_arr.shape[0] == 0:
+        return (np.full(F, -1, dtype=np.int64),
+                np.zeros(F, dtype=np.float32))
+
+    fx = fleets_arr[:, 2].astype(np.float32)
+    fy = fleets_arr[:, 3].astype(np.float32)
+    fang = fleets_arr[:, 4].astype(np.float32)
+    fships = fleets_arr[:, 6].astype(np.float32)
+    cos_a = np.cos(fang)
+    sin_a = np.sin(fang)
+
+    pids = planets_arr[:, 0].astype(np.int64)
+    px = planets_arr[:, 2].astype(np.float32)
+    py = planets_arr[:, 3].astype(np.float32)
+
+    # Pairwise displacements: (F, P)
+    rx = px[None, :] - fx[:, None]
+    ry = py[None, :] - fy[:, None]
+    fwd = rx * cos_a[:, None] + ry * sin_a[:, None]
+    # perpendicular = |r - fwd * d_hat|
+    perp_x = rx - fwd * cos_a[:, None]
+    perp_y = ry - fwd * sin_a[:, None]
+    perp = np.sqrt(perp_x * perp_x + perp_y * perp_y)
+    # Score = perp + 0.001 * fwd (matches lib.shot_features.infer_target_pid)
+    score = perp + 0.001 * fwd
+    # Mask out non-forward candidates (fwd <= 0) AND zero-distance (self).
+    score[fwd <= 0] = np.inf
+    score[(rx ** 2 + ry ** 2) < 1e-12] = np.inf
+
+    # Best target per fleet.
+    best_idx = score.argmin(axis=1)
+    best_score = score[np.arange(F), best_idx]
+    matched = best_score < np.inf
+
+    dest_pid = np.where(matched, pids[best_idx], -1).astype(np.int64)
+
+    # ETA: forward distance from fleet position to chosen target / fleet speed.
+    chosen_rx = rx[np.arange(F), best_idx]
+    chosen_ry = ry[np.arange(F), best_idx]
+    chosen_d = np.sqrt(chosen_rx * chosen_rx + chosen_ry * chosen_ry)
+    # speed = 1 + 5 * (log(ships) / log(1000)) ^ 1.5 ; zero when ships <= 0
+    log_ships = np.log(np.maximum(fships, 1e-6))
+    speed = np.where(
+        fships > 0,
+        1.0 + 5.0 * (log_ships / math.log(1000.0)) ** 1.5,
+        np.zeros(F, dtype=np.float32),
+    ).astype(np.float32)
+    eta = np.where(
+        (speed > 0) & matched,
+        np.ceil(chosen_d / np.maximum(speed, 1e-6)),
+        np.zeros(F, dtype=np.float32),
+    ).astype(np.float32)
+    return dest_pid, eta
 
 
 def encode_lite_batch(
@@ -243,16 +305,63 @@ def encode_lite_batch(
     enemy_pc = int(((p_owner != focal_seat) & (p_owner != -1)).sum())
 
     out[:, 15] = min(1.0, step / _EP_STEPS)
-    out[:, 16] = min(1.0, my_total / (_MAX_SHIPS * 4))
-    out[:, 17] = min(1.0, enemy_total / (_MAX_SHIPS * 4))
+    # Slow encoder uses _MAX_SHIPS=2000 (not *4) for these norms.
+    out[:, 16] = min(1.0, my_total / _MAX_SHIPS)
+    out[:, 17] = min(1.0, enemy_total / _MAX_SHIPS)
     out[:, 18] = max(-1.0, min(1.0,
-        (my_total - enemy_total) / (_MAX_SHIPS * 2)
+        (my_total - enemy_total) / _MAX_SHIPS
     ))
     out[:, 19] = min(1.0, my_pc / _MAX_PLANETS)
     out[:, 20] = min(1.0, enemy_pc / _MAX_PLANETS)
 
-    # 21 F13 growth-field diff — sum prod / dist² over planets per side.
-    # Per-call constant. Compute once, broadcast.
+    # ----- Fleet-destination preprocessing (used by F10, F11, F7, enemy
+    # inflight features). One ray-cast pass over all fleets; results
+    # broadcast to per-candidate aggregates below.
+    if F > 0:
+        fleet_dest_pid, fleet_eta = _fleet_destinations(fleets_arr, planets_arr)
+    else:
+        fleet_dest_pid = np.empty(0, dtype=np.int64)
+        fleet_eta = np.empty(0, dtype=np.float32)
+
+    # 21-22 F10 friendly inflight to target (n, ships).
+    if F > 0:
+        friendly_to_tgt_n = np.zeros(N, dtype=np.float32)
+        friendly_to_tgt_ships = np.zeros(N, dtype=np.float32)
+        for i in range(N):
+            tgt_pid_i = int(tgt_pids[i])
+            mask = (fleet_dest_pid == tgt_pid_i) & allied_mask
+            friendly_to_tgt_n[i] = float(mask.sum())
+            friendly_to_tgt_ships[i] = float(f_ships[mask].sum())
+        out[:, 21] = np.minimum(1.0, friendly_to_tgt_n / _MAX_PLANETS)
+        out[:, 22] = np.minimum(1.0, friendly_to_tgt_ships / _MAX_SHIPS)
+
+    # 23 F11 joint arrival count: number of fleets arriving at target at
+    # the same eta as the candidate emit. Cheap window: |delta_eta| <= 2.
+    if F > 0:
+        joint_arr = np.zeros(N, dtype=np.float32)
+        for i in range(N):
+            tgt_pid_i = int(tgt_pids[i])
+            cand_eta_i = float(eta_vec[i])
+            same_target = fleet_dest_pid == tgt_pid_i
+            close_eta = np.abs(fleet_eta - cand_eta_i) <= 2.0
+            joint_arr[i] = float((same_target & close_eta).sum())
+        out[:, 23] = np.minimum(1.0, joint_arr / _MAX_PLANETS)
+
+    # 24 F7 intercept enemy eta: for enemy fleets heading to the candidate
+    # target, the min arrival eta (normalized). 1.0 if no such fleet.
+    if F > 0:
+        intercept_norm = np.ones(N, dtype=np.float32)
+        for i in range(N):
+            tgt_pid_i = int(tgt_pids[i])
+            mask = (fleet_dest_pid == tgt_pid_i) & enemy_mask
+            if mask.any():
+                min_eta = float(fleet_eta[mask].min())
+                intercept_norm[i] = min(1.0, min_eta / _MAX_ETA)
+        out[:, 24] = intercept_norm
+    else:
+        out[:, 24] = 1.0
+
+    # 25 F13 growth-field diff — per-call constant, broadcast.
     if P > 1:
         px = planets_arr[:, 2].astype(np.float32)
         py = planets_arr[:, 3].astype(np.float32)
@@ -266,60 +375,31 @@ def encode_lite_batch(
             field_per_planet[(p_owner != focal_seat) & (p_owner != -1)].sum()
         )
         diff = (my_field - enemy_field) / _GROWTH_MAX
-        out[:, 21] = max(-1.0, min(1.0, float(diff)))
+        out[:, 25] = max(-1.0, min(1.0, float(diff)))
 
-    # 22-23 F9 source-side threat: enemy fleets nearby src; src is frontier
-    # iff at least one enemy planet is within BOARD_DIAG/4.
+    # 26-27 enemy inflight to target (n, ships).
     if F > 0:
+        enemy_to_tgt_n = np.zeros(N, dtype=np.float32)
+        enemy_to_tgt_ships = np.zeros(N, dtype=np.float32)
         for i in range(N):
-            sxi = float(sx[i])
-            syi = float(sy[i])
-            fxs = fleets_arr[:, 2].astype(np.float32) - sxi
-            fys = fleets_arr[:, 3].astype(np.float32) - syi
-            fd = np.sqrt(fxs * fxs + fys * fys)
-            near = (fd < _BOARD_DIAG / 4) & enemy_mask
-            n_near = int(near.sum())
-            out[i, 22] = min(1.0, n_near / 5.0)
-    enemy_owner_mask_p = (p_owner != focal_seat) & (p_owner != -1)
-    if enemy_owner_mask_p.any():
-        e_px = planets_arr[enemy_owner_mask_p, 2].astype(np.float32)
-        e_py = planets_arr[enemy_owner_mask_p, 3].astype(np.float32)
-        e_pp = planets_arr[enemy_owner_mask_p, 6].astype(np.float32)
-        for i in range(N):
-            sxi = float(sx[i])
-            syi = float(sy[i])
-            dx_e = e_px - sxi
-            dy_e = e_py - syi
-            dmin = float(np.sqrt(dx_e * dx_e + dy_e * dy_e).min())
-            out[i, 23] = 1.0 if dmin < _BOARD_DIAG / 4 else 0.0
+            tgt_pid_i = int(tgt_pids[i])
+            mask = (fleet_dest_pid == tgt_pid_i) & enemy_mask
+            enemy_to_tgt_n[i] = float(mask.sum())
+            enemy_to_tgt_ships[i] = float(f_ships[mask].sum())
+        out[:, 26] = np.minimum(1.0, enemy_to_tgt_n / _MAX_PLANETS)
+        out[:, 27] = np.minimum(1.0, enemy_to_tgt_ships / _MAX_SHIPS)
 
-    # 24-25 post-capture nearest enemy at arrival (geometric, no WM).
-    if enemy_owner_mask_p.any():
-        for i in range(N):
-            txi = float(tx[i])
-            tyi = float(ty[i])
-            dx_e = e_px - txi
-            dy_e = e_py - tyi
-            d_arr = np.sqrt(dx_e * dx_e + dy_e * dy_e)
-            j = int(d_arr.argmin())
-            out[i, 24] = min(1.0, float(d_arr[j]) / _BOARD_DIAG)
-            out[i, 25] = min(1.0, float(e_pp[j]) / _MAX_PROD)
-    else:
-        out[:, 24] = 1.0
-        out[:, 25] = 0.0
-
-    # 26-27 orbital flags. Approximate by comparing planet position to
-    # `initial_planets` (if provided). Without initial_planets the slot
-    # falls back to 0 — coarse, but consistent with training (the corpus
-    # uses the proper `lib.orbit.is_orbiting` test which produces the same
-    # 0/1 signal we approximate here).
+    # 28-29 orbital flags. The slow encoder uses lib.orbit.is_orbiting
+    # which checks the planet's `angular_velocity` (only set for orbital
+    # bodies). When `initial_planets` is provided, position drift is a
+    # reasonable proxy; without it, the slot stays 0.
     if initial_planets is not None and initial_planets.shape[0] == P:
         init_x = initial_planets[:, 2].astype(np.float32)
         init_y = initial_planets[:, 3].astype(np.float32)
         is_orb_per_pid = ((planets_arr[:, 2] - init_x) ** 2 +
                           (planets_arr[:, 3] - init_y) ** 2) > 1e-4
-        out[:, 26] = is_orb_per_pid[src_idx].astype(np.float32)
-        out[:, 27] = is_orb_per_pid[tgt_idx].astype(np.float32)
+        out[:, 28] = is_orb_per_pid[src_idx].astype(np.float32)
+        out[:, 29] = is_orb_per_pid[tgt_idx].astype(np.float32)
 
     return out
 

@@ -40,13 +40,11 @@ DEFAULT_BOOSTER = REPO / "data" / "opp_distill" / "distill_booster.txt"
 THRESHOLD = 0.30
 FEATURE_DIM = 45
 
-# Lite-mode slice: 28 cheap features from the 45-d corpus (matches
-# lib.opp_features_lite.LITE_KEEP_INDICES). Drops the 11 WorldModel-
-# dependent features (F2/F3/F4/F6/F8 from the 45-d schema) plus 6 more
-# (F10/F11/F7/enemy-inflight) that need fleet-destination ray-casts to
-# compute cheaply — leaving them in causes prediction collapse at
-# inference when the encoder zeros them.
-LITE_FEATURE_DIM = 28
+# Lite-mode slice: 30 cheap features from the 45-d corpus (matches
+# lib.opp_features_lite.LITE_KEEP_INDICES). Drops:
+# - 11 WorldModel-dependent features (F2/F3/F4/F6/F8)
+# - F9 src threat (37, 38), post-capture geom (41, 42) — also need WM.
+LITE_FEATURE_DIM = 30
 
 NUM_BOOST_ROUND = 400
 EARLY_STOPPING_ROUNDS = 30
