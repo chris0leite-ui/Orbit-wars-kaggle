@@ -1,13 +1,13 @@
 {
   "threshold": 0.3,
   "pos_rate": 0.0476190485060215,
-  "best_iteration": 6,
+  "best_iteration": 4,
   "val_acc_at_half": 0.9523809523809523,
-  "val_brier": 0.035207572134597354,
-  "val_precision_at_thr": 0.682795067527892,
-  "val_recall_at_thr": 0.582565130260521,
-  "pos_pred_mean": 0.28761453573270745,
-  "neg_pred_mean": 0.0810755545999555,
-  "feature_dim": 34,
+  "val_brier": 0.03618294412121475,
+  "val_precision_at_thr": 0.0,
+  "val_recall_at_thr": 0.0,
+  "pos_pred_mean": 0.2247551897249181,
+  "neg_pred_mean": 0.07216188130406846,
+  "feature_dim": 30,
   "lite_mode": true
 }

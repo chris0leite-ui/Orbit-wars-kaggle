@@ -236,15 +236,10 @@ def trained_logreg_policy(obs: Any) -> list:
 
     try:
         from lib._validator_tree_walker import predict_proba
+        from lib.opp_features_lite import encode_lite_batch
+        from lib.opp_features_lite import planets_to_array
+        from lib.opp_features_lite import fleets_to_array
         import numpy as _np
-        if _DIST_USE_LITE_ENCODER:
-            from lib.opp_features_lite import encode_lite_batch
-            from lib.opp_features_lite import planets_to_array
-            from lib.opp_features_lite import fleets_to_array
-            from lib.opp_features_lite import LITE_FEATURE_DIM as _LITE_DIM
-        else:
-            from lib.shot_features import FEATURE_DIM
-            from lib.shot_features import encode_shot_features
     except Exception:
         return lite_greedy_policy(obs)
 

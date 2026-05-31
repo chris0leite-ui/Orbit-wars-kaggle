@@ -114,7 +114,7 @@ def build(
 ) -> Path:
     lib_modules = lib_modules or DEFAULT_LIB_ORDER
     for required in ("shot_features", "_validator_tree_walker",
-                     "value_head_features"):
+                     "value_head_features", "opp_features_lite"):
         if required not in lib_modules:
             lib_modules = list(lib_modules) + [required]
 
