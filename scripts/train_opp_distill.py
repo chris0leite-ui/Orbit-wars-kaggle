@@ -40,15 +40,13 @@ DEFAULT_BOOSTER = REPO / "data" / "opp_distill" / "distill_booster.txt"
 THRESHOLD = 0.30
 FEATURE_DIM = 45
 
-# Lite-mode slice: 34 cheap features from the 45-d corpus (match
-# lib.opp_features_lite.LITE_KEEP_INDICES). Drops the 11 expensive
-# WorldModel-dependent features. Re-applied at inference time by the
-# lite encoder so train/inference distributions match.
-LITE_FEATURE_DIM = 34
-# Indices of the 34-d slice that the lite encoder UNDER-APPROXIMATES
-# (returns 0). Zeroing these in training data keeps train/inference
-# distributions matched.
-LITE_UNDERSTATED_INDICES = [21, 22, 23, 24, 28, 29]
+# Lite-mode slice: 28 cheap features from the 45-d corpus (matches
+# lib.opp_features_lite.LITE_KEEP_INDICES). Drops the 11 WorldModel-
+# dependent features (F2/F3/F4/F6/F8 from the 45-d schema) plus 6 more
+# (F10/F11/F7/enemy-inflight) that need fleet-destination ray-casts to
+# compute cheaply — leaving them in causes prediction collapse at
+# inference when the encoder zeros them.
+LITE_FEATURE_DIM = 28
 
 NUM_BOOST_ROUND = 400
 EARLY_STOPPING_ROUNDS = 30
@@ -188,15 +186,9 @@ def main(argv=None) -> int:
     if args.lite:
         from lib.opp_features_lite import LITE_KEEP_INDICES
         X = X[:, LITE_KEEP_INDICES].copy()
-        # NOTE: we DO NOT zero the under-approximated indices here (21-24,
-        # 28-29). The model learns to use them from the full 45-d corpus;
-        # at inference, the lite encoder returns 0 for those slots — the
-        # model gracefully degrades, falling back on the discriminative
-        # cheap features. Empirically, zeroing AT TRAINING TIME killed the
-        # booster (best_iter=2, separation 0.07). Leaving real values
-        # restores separation.
         print(f"  lite-mode: sliced corpus to {X.shape[1]} dims "
-              f"(retaining true values; lite encoder zeros at inference)",
+              f"(28-d cheap-features-only schema; model never sees the "
+              f"WM-dependent or ray-cast-dependent features)",
               file=sys.stderr)
         effective_dim = LITE_FEATURE_DIM
     else:
