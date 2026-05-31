@@ -60,11 +60,16 @@ def _find_world(args):
 
 def _counting_choose(*a, **k):
     moves, commits = _orig_choose(*a, **k)
-    world = _find_world(a)
-    step = int(getattr(world, "step", 0)) if world is not None else 0
-    for c in commits:
-        if c.get("sync_joint"):
-            COALITIONS.append((step, int(c["tgt_id"])))
+    # arg index 3 is `me` (the seat). In self-play both seats call this patched
+    # fn; only record OUR (player 0) coalitions so the census matches the
+    # ownership timeline (classified for ME).
+    seat = int(a[3]) if len(a) > 3 else ME
+    if seat == ME:
+        world = _find_world(a)
+        step = int(getattr(world, "step", 0)) if world is not None else 0
+        for c in commits:
+            if c.get("sync_joint"):
+                COALITIONS.append((step, int(c["tgt_id"])))
     return moves, commits
 
 
@@ -129,9 +134,13 @@ def _run(hold: bool, n_games: int, opp: str):
 def main() -> int:
     n_games = int(sys.argv[1]) if len(sys.argv) > 1 else 4
     opp = sys.argv[2] if len(sys.argv) > 2 else "submissions/v7_0_drop_one.py"
+    # "self" runs M.agent on BOTH seats (the strong counter-attacker the leak
+    # was originally observed against). Note: env is process-global, so HOLD
+    # applies to both seats in self-play.
+    opp_agent = M.agent if opp == "self" else opp
     print(f"opponent={opp}  games={n_games}  hold_window={HOLD_WINDOW}\n")
     for hold in (False, True):
-        t = _run(hold, n_games, opp)
+        t = _run(hold, n_games, opp_agent)
         label = "HOLD ON " if hold else "HOLD OFF"
         cap = t["held"] + t["lost"]
         lost_frac = (t["lost"] / cap) if cap else 0.0
