@@ -47,10 +47,16 @@ def _kinematic_table_enabled() -> bool:
     its window is large enough, predict_fleet_fate's position build
     uses the cached lookup instead of re-computing predict_relative
     per (planet, step).
+
+    DISABLED 2026-05-31 (PI directive): the kinematic table is
+    reported buggy — module-global mutable state leaks across seats in
+    shared-process play, regressing winrate ~25 pp (SEU7P isolation
+    A/B, May-30 friction). Hard-coded to False so the buggy path is
+    dead regardless of env-var racing between wrappers. To re-enable
+    after the bug is fixed, restore the env-var check and audit the
+    singleton reset logic.
     """
-    return os.environ.get("KINEMATIC_TABLE_ENABLED", "").strip().lower() in (
-        "1", "true", "on", "yes",
-    )
+    return False
 
 # Max steps we simulate before giving up. A 1-ship fleet at speed 1.0
 # can cross the 141.4-unit board diagonal in 142 steps; 200 covers
