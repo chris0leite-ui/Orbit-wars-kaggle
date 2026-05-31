@@ -121,20 +121,27 @@ def top_tier_mirror_policy(obs: Any) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Tier 2 — shot-validator-filtered Tier 1 (Tier 2 opp emit predictor,
-# 2026-05-31). Architecture: PI-ratified filter-on-Tier-1 design. Runs
-# `top_tier_mirror_policy`'s candidate generation (aggressive snipe +
-# reinforce) and drops each non-self-reinforce emit whose 45-d shot-
-# validator booster P(success) is below `BASELINE_OPP_FILTER_THRESHOLD`
-# (default 0.30 — PM5 value). Self-reinforce passes through (konbu17
-# design). Fall back to Tier 1 on any load/scoring failure so the rollout
-# never crashes on a corrupt artifact.
+# Tier 2 — distilled-ladder opp predictor (REPLACED 2026-05-31 v2).
+# Architecture: directly enumerate cheap (src, tgt) candidates from obs
+# (lite_greedy-style pruning, no WorldModel rebuild on the candidate
+# enumeration), score each with a LightGBM booster trained on top-10%
+# Kaggle ladder 2P replays (`data/opp_distill/distill_booster.txt`),
+# emit those above `BASELINE_OPP_FILTER_THRESHOLD` (default 0.30).
+#
+# Speed target: ≤1 ms median per call vs Tier 1's 5-10 ms. The old
+# filter-on-Tier-1 design (`top_tier_mirror_policy` + booster veto)
+# was falsified 2026-05-31 — it inherited Tier 1's full cost, starving
+# the chooser's candidate-validation budget to ~155/turn vs Tier 0's
+# ~1200/turn (audit/2026-05-31-postmortem-tier2-falsification.md).
+#
+# Fallback: any load/scoring failure → returns `lite_greedy_policy(obs)`
+# for that step. Never silent garbage launches.
 # ---------------------------------------------------------------------------
 
 
 # Bundler patches _OPP_BOOSTER_B64 to a gzip+base64 LightGBM
 # `model_to_string()` dump (binary classifier). In source mode (empty
-# blob), we fall back to `data/shot_validator/validator_booster.txt`.
+# blob), we fall back to `data/opp_distill/distill_booster.txt`.
 _OPP_BOOSTER_B64: str = ""
 
 _OPP_PARSED = None
@@ -143,10 +150,10 @@ _OPP_THRESHOLD: float | None = None
 
 
 def _load_opp_booster():
-    """Lazy-load the shot-validator booster + threshold for Tier 2.
+    """Lazy-load the distilled-ladder booster + threshold for Tier 2.
 
     Returns the parsed booster (or None on any failure — caller falls
-    back to Tier 1)."""
+    back to Tier 0 lite_greedy)."""
     global _OPP_PARSED, _OPP_LOAD_FAILED, _OPP_THRESHOLD
     if _OPP_PARSED is not None or _OPP_LOAD_FAILED:
         return _OPP_PARSED
@@ -165,7 +172,7 @@ def _load_opp_booster():
             from pathlib import Path as _Path
             booster_path = (
                 _Path(__file__).resolve().parents[1]
-                / "data" / "shot_validator" / "validator_booster.txt"
+                / "data" / "opp_distill" / "distill_booster.txt"
             )
             text = booster_path.read_text()
         _OPP_PARSED = parse_booster_text(text)
@@ -177,83 +184,150 @@ def _load_opp_booster():
         return None
 
 
+# Knobs for the distilled-ladder enumeration. Match training-time defaults
+# in `scripts/decode_replays_to_labels.py` (MIN_SRC_SHIPS / TOP_K_TARGETS /
+# AGGRESSIVE_FRAC). Changes here must be reflected there to keep
+# train/inference distributions consistent.
+_DIST_MIN_SRC_SHIPS = 5
+_DIST_TOP_K = 8
+_DIST_AGGRESSIVE_FRAC = 0.7
+
+
 def trained_logreg_policy(obs: Any) -> list:
-    """Tier 2: Tier-1 candidates filtered by the shot-validator booster.
+    """Tier 2 v2 (2026-05-31): distilled-ladder opp predictor.
 
-    Runs `top_tier_mirror_policy`'s prelude (World/WorldModel build →
-    aggressive snipe + reinforce missions → settle → realize) to produce
-    a candidate emit set. Then per-emit:
+    Mirror's `lite_greedy_policy`'s structure (raw-obs only, no
+    WorldModel rebuild) for sub-ms per-call cost. Per call:
 
-    - Self-reinforce (target already owned by us): pass-through unfiltered.
-    - Other: encode 45-d shot features, score with the booster, drop if
-      P(success) < `BASELINE_OPP_FILTER_THRESHOLD` (default 0.30).
+      1. Enumerate candidates: owned planets with ships >=
+         _DIST_MIN_SRC_SHIPS  ×  top-K=8 targets by closed-form
+         ROI (production / distance). Affordability-filtered same as
+         lite_greedy (`defenders_at_eta + 1 <= budget`).
+      2. Encode each candidate via `lib.shot_features.encode_shot_features`
+         (single World+WorldModel build, shared across candidates).
+      3. Score with the booster; emit any candidate with
+         P > `BASELINE_OPP_FILTER_THRESHOLD` (default 0.30), capped at
+         one emit per source per turn (highest-prob wins per source).
 
-    Failure modes (model load fail, encoder failure on a given emit,
-    booster scoring failure): pass through unfiltered for that step /
-    emit. Worst case the policy degrades to Tier 1 — never emits novel
+    Failure modes (model load fail, encoder failure, scoring failure):
+    return `lite_greedy_policy(obs)` for that step. Never emits novel
     garbage launches.
     """
     parsed = _load_opp_booster()
     if parsed is None or _OPP_THRESHOLD is None:
-        return top_tier_mirror_policy(obs)
+        return lite_greedy_policy(obs)
 
-    world = World.from_obs(obs)
-    if not world.planets_by_id:
-        return []
-    cached = getattr(obs, "_shared_world_model", None)
-    model = cached if cached is not None else WorldModel.from_world(world)
-    missions = (
-        propose_snipe_missions(world, model, aggressive=True)
-        + propose_reinforce_missions(world, model)
-    )
-    intents = settle_plan(missions, world, model)
-    emits = realize(intents, obs, mechanisms=DEFAULT_MECHANISMS, model=model)
-    if not emits:
-        return []
-
-    me = int(
+    player_raw = (
         obs.get("player", 0) if isinstance(obs, dict)
         else getattr(obs, "player", 0)
     )
+    player = int(player_raw or 0)
+    planets = (
+        obs.get("planets") if isinstance(obs, dict)
+        else getattr(obs, "planets", None)
+    )
+    if not planets:
+        return []
 
     try:
         from lib.shot_features import FEATURE_DIM
         from lib.shot_features import encode_shot_features
-        from lib.shot_features import target_owned_by
         from lib._validator_tree_walker import predict_proba
         import numpy as _np
     except Exception:
-        return emits  # missing deps → pass-through
+        return lite_greedy_policy(obs)
 
-    to_score: list[tuple[int, Any]] = []
-    survivors = [True] * len(emits)
-    for i, emit in enumerate(emits):
-        if target_owned_by(emit, obs, me):
-            continue  # self-reinforce — konbu17 pass-through
+    # Build candidate list. MUST match `scripts/decode_replays_to_labels.py:
+    # enumerate_candidates` exactly so train and inference see the same
+    # distribution — no affordability/budget pre-filter here (the booster
+    # learns which (src, tgt) pairs real opps fire on, including snipe/
+    # reinforce shots that lite_greedy would skip).
+    candidates: list[tuple[int, int, float, int]] = []
+    for src in planets:
+        if int(src[1]) != player or int(src[5]) < _DIST_MIN_SRC_SHIPS:
+            continue
+        src_pid = int(src[0])
+        sx, sy = float(src[2]), float(src[3])
+        budget = int(src[5])
+        # Synthetic ships matches `AGGRESSIVE_FRAC * src.ships` from the
+        # decoder's labeling. The booster's F2 combat_margin feature was
+        # computed on these synthetic ships at label time.
+        ships = max(_DIST_MIN_SRC_SHIPS, int(round(_DIST_AGGRESSIVE_FRAC * budget)))
+        if ships > budget:
+            ships = budget
+        scored: list[tuple[float, int, float, float, float, Any]] = []
+        for tgt in planets:
+            tgt_pid = int(tgt[0])
+            if tgt_pid == src_pid:
+                continue
+            dx, dy = float(tgt[2]) - sx, float(tgt[3]) - sy
+            d = math.sqrt(dx * dx + dy * dy)
+            if d < 1e-6:
+                continue
+            roi = float(tgt[6]) / (d + 1.0)
+            scored.append((roi, tgt_pid, dx, dy, d, tgt))
+        scored.sort(key=lambda t: -t[0])
+        for _, tgt_pid, dx, dy, _d, tgt in scored[:_DIST_TOP_K]:
+            angle = math.atan2(dy, dx)
+            candidates.append((src_pid, tgt_pid, angle, ships))
+
+    if not candidates:
+        return []
+
+    # Encode features. Let encode_shot_features build World+WorldModel
+    # internally — one build amortized across all candidates by passing
+    # the same obs.
+    cached_world = getattr(obs, "_shared_world_model", None)
+    shared_world = None
+    shared_model = None
+    if cached_world is not None:
+        shared_model = cached_world
+    else:
+        try:
+            shared_world = World.from_obs(obs)
+            shared_model = WorldModel.from_world(shared_world)
+        except Exception:
+            shared_world = None
+            shared_model = None
+
+    to_score: list[tuple[int, int, float, int, Any]] = []
+    for src_pid, tgt_pid, angle, ships in candidates:
+        emit = [src_pid, angle, ships]
         try:
             feats = encode_shot_features(
-                emit, obs, me, world=world, world_model=model,
+                emit, obs, player,
+                world=shared_world, world_model=shared_model,
             )
         except Exception:
             feats = None
         if feats is None or feats.shape[0] != FEATURE_DIM:
-            continue  # malformed — safer to pass through than drop
-        to_score.append((i, feats))
+            continue
+        to_score.append((src_pid, tgt_pid, angle, ships, feats))
 
     if not to_score:
-        return emits
+        return []
 
     try:
-        X = _np.stack([f for _, f in to_score]).astype(_np.float32)
+        X = _np.stack([t[4] for t in to_score]).astype(_np.float32)
         probs = predict_proba(parsed, X)
     except Exception:
-        return emits
+        return lite_greedy_policy(obs)
 
-    for (idx, _), p in zip(to_score, probs):
+    # Rank by probability descending; emit one per source above threshold.
+    ranked = sorted(
+        zip(to_score, probs),
+        key=lambda x: -float(x[1]),
+    )
+    moves: list = []
+    used_srcs: set[int] = set()
+    for (src_pid, tgt_pid, angle, ships, _), p in ranked:
         if float(p) < _OPP_THRESHOLD:
-            survivors[idx] = False
-
-    return [e for e, keep in zip(emits, survivors) if keep]
+            continue
+        if src_pid in used_srcs:
+            continue
+        used_srcs.add(src_pid)
+        moves.append([src_pid, angle, ships])
+    return moves
 
 
 # ---------------------------------------------------------------------------

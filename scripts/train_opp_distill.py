@@ -1,0 +1,216 @@
+"""Train a LightGBM binary classifier for the distilled-ladder opp policy.
+
+Loads `data/opp_distill/labels.jsonl` (produced by
+`scripts/decode_replays_to_labels.py`), uses the `split` field already in
+the data for train/val partition (already game-disjoint), trains one
+binary-objective Booster with `is_unbalance=True`, writes the model text to
+`data/opp_distill/distill_booster.txt`.
+
+Differences vs `train_validator.py`:
+  - Schema: rows have keys `feat` (45 floats), `label`, `episode`, `split`
+    (not `features` / `label` / `game_id`).
+  - Split: already in the data; no resplit needed.
+  - pos_rate gate is loose: real opp emits are sparse (~0.5–2%) because we
+    enumerate all (src, tgt) candidates including idle-turn ones. Gate at
+    [0.002, 0.50].
+  - Uses `is_unbalance=True` for class weighting (handles extreme imbalance).
+
+Output:
+  - `distill_booster.txt` — LightGBM `model_to_string()` dump.
+  - `distill_booster.meta.json` — threshold, pos_rate, val metrics.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+
+REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+DEFAULT_LABELS = REPO / "data" / "opp_distill" / "labels.jsonl"
+DEFAULT_BOOSTER = REPO / "data" / "opp_distill" / "distill_booster.txt"
+
+THRESHOLD = 0.30
+FEATURE_DIM = 45
+
+NUM_BOOST_ROUND = 400
+EARLY_STOPPING_ROUNDS = 30
+LGB_PARAMS = {
+    "objective": "binary",
+    "metric": ["binary_logloss", "binary_error"],
+    "num_leaves": 31,
+    "learning_rate": 0.05,
+    "feature_fraction": 0.9,
+    "bagging_fraction": 0.9,
+    "bagging_freq": 5,
+    "min_data_in_leaf": 50,
+    "lambda_l1": 0.0,
+    "lambda_l2": 0.1,
+    "is_unbalance": True,
+    "verbose": -1,
+    "deterministic": True,
+}
+
+
+def _load_corpus(path: Path) -> tuple[np.ndarray, np.ndarray, list[str], list[str]]:
+    feats, labels, episodes, splits = [], [], [], []
+    with path.open() as fh:
+        for line in fh:
+            r = json.loads(line)
+            feats.append(r["feat"])
+            labels.append(r["label"])
+            episodes.append(r["episode"])
+            splits.append(r["split"])
+    X = np.asarray(feats, dtype=np.float32)
+    y = np.asarray(labels, dtype=np.float32)
+    return X, y, episodes, splits
+
+
+def main(argv=None) -> int:
+    import lightgbm as lgb
+
+    p = argparse.ArgumentParser()
+    p.add_argument("--labels", default=str(DEFAULT_LABELS))
+    p.add_argument("--out", default=str(DEFAULT_BOOSTER))
+    p.add_argument(
+        "--min-pos-rate", type=float, default=0.002,
+        help="Lower bound on pos_rate; abort below this. Real opp emits "
+             "are sparse — default 0.002 = 1 emit per 500 candidates",
+    )
+    p.add_argument("--max-pos-rate", type=float, default=0.50)
+    args = p.parse_args(argv)
+
+    labels_path = Path(args.labels)
+    if not labels_path.is_file():
+        print(f"ERROR: labels not found: {labels_path}", file=sys.stderr)
+        return 1
+    X, y, episodes, splits = _load_corpus(labels_path)
+    if X.ndim != 2 or X.shape[1] != FEATURE_DIM:
+        print(f"ERROR: expected (_,{FEATURE_DIM}) features, got {X.shape}",
+              file=sys.stderr)
+        return 1
+
+    pos_rate = float(y.mean())
+    n_pos = int(y.sum())
+    n_neg = len(y) - n_pos
+    n_eps = len(set(episodes))
+    print(f"corpus: n={len(y)}  pos={n_pos}  neg={n_neg}  "
+          f"pos_rate={pos_rate:.4f}  unique_episodes={n_eps}")
+    if not (args.min_pos_rate <= pos_rate <= args.max_pos_rate):
+        print(f"ERROR: pos_rate {pos_rate:.4f} outside "
+              f"[{args.min_pos_rate}, {args.max_pos_rate}] — "
+              f"adjust top_k or label-match logic",
+              file=sys.stderr)
+        return 2
+
+    split_arr = np.asarray(splits)
+    train_mask = split_arr == "train"
+    val_mask = split_arr == "val"
+    X_tr, y_tr = X[train_mask], y[train_mask]
+    X_va, y_va = X[val_mask], y[val_mask]
+    print(f"split: train_n={len(y_tr)} (pos={int(y_tr.sum())}) "
+          f"val_n={len(y_va)} (pos={int(y_va.sum())})")
+    if len(y_tr) == 0 or len(y_va) == 0:
+        print("ERROR: train or val set is empty", file=sys.stderr)
+        return 1
+    if int(y_va.sum()) == 0:
+        print("ERROR: zero positives in val — split is unworkable",
+              file=sys.stderr)
+        return 1
+
+    params = dict(LGB_PARAMS)
+    ds_train = lgb.Dataset(X_tr, label=y_tr, free_raw_data=False)
+    ds_val = lgb.Dataset(X_va, label=y_va, reference=ds_train,
+                         free_raw_data=False)
+
+    callbacks = [
+        lgb.early_stopping(EARLY_STOPPING_ROUNDS, verbose=True),
+        lgb.log_evaluation(period=50),
+    ]
+    bst = lgb.train(
+        params, ds_train,
+        num_boost_round=NUM_BOOST_ROUND,
+        valid_sets=[ds_train, ds_val],
+        valid_names=["train", "val"],
+        callbacks=callbacks,
+    )
+    best_iter = bst.best_iteration
+    print(f"\nbest_iteration = {best_iter}")
+
+    pred_va = bst.predict(X_va, num_iteration=best_iter)
+    pred_va_bin = (pred_va >= 0.5).astype(np.float32)
+    acc = float((pred_va_bin == y_va).mean())
+    brier = float(((pred_va - y_va) ** 2).mean())
+    pred_thr = (pred_va >= THRESHOLD).astype(np.float32)
+    acc_thr = float((pred_thr == y_va).mean())
+    tp = int(((pred_thr == 1) & (y_va == 1)).sum())
+    fp = int(((pred_thr == 1) & (y_va == 0)).sum())
+    tn = int(((pred_thr == 0) & (y_va == 0)).sum())
+    fn = int(((pred_thr == 0) & (y_va == 1)).sum())
+    prec = tp / max(1, tp + fp)
+    rec = tp / max(1, tp + fn)
+    # AUC-style: separate distribution of positive vs negative predictions
+    if y_va.sum() > 0 and (1 - y_va).sum() > 0:
+        pos_pred_mean = float(pred_va[y_va == 1].mean())
+        neg_pred_mean = float(pred_va[y_va == 0].mean())
+    else:
+        pos_pred_mean = neg_pred_mean = float("nan")
+
+    print(f"\n=== val ===")
+    print(f"  val_acc@0.5={acc:.3f}  Brier={brier:.4f}")
+    print(f"  val_acc@thr={THRESHOLD}={acc_thr:.3f}  "
+          f"TP={tp} FP={fp} TN={tn} FN={fn}")
+    print(f"  precision@thr={prec:.3f}  recall@thr={rec:.3f}")
+    print(f"  E[pred|y=1]={pos_pred_mean:.4f}  "
+          f"E[pred|y=0]={neg_pred_mean:.4f}  "
+          f"separation={pos_pred_mean - neg_pred_mean:+.4f}")
+
+    # Walker parity gate — same as train_validator
+    from lib._validator_tree_walker import (
+        parse_booster_text,
+        predict_proba as walker_proba,
+    )
+    text = bst.model_to_string(num_iteration=best_iter)
+    parsed = parse_booster_text(text)
+    pred_walker = walker_proba(parsed, X_va[:200])
+    pred_booster_200 = bst.predict(X_va[:200], num_iteration=best_iter)
+    max_diff = float(np.max(np.abs(pred_walker - pred_booster_200)))
+    print(f"\nwalker parity: max abs diff vs Booster on 200 val rows = "
+          f"{max_diff:.3e}")
+    if max_diff > 1e-5:
+        print(f"ERROR: walker parity exceeds 1e-5 — refusing to save",
+              file=sys.stderr)
+        return 3
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(text)
+    print(f"\nwrote booster -> {out_path}  ({len(text):,} chars, "
+          f"{len(parsed.trees)} trees)")
+
+    meta_path = out_path.with_suffix(".meta.json")
+    meta = {
+        "threshold": THRESHOLD,
+        "pos_rate": pos_rate,
+        "best_iteration": int(best_iter),
+        "val_acc_at_half": acc,
+        "val_brier": brier,
+        "val_precision_at_thr": prec,
+        "val_recall_at_thr": rec,
+        "pos_pred_mean": pos_pred_mean,
+        "neg_pred_mean": neg_pred_mean,
+        "feature_dim": FEATURE_DIM,
+    }
+    meta_path.write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"wrote meta    -> {meta_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -9,6 +9,15 @@ data/*
 data/shot_validator/*
 !data/shot_validator/README.md
 !data/shot_validator/schema.json
+# Opp-distill corpus: ship the trained booster + manifest (small), not
+# the ~60MB labels.jsonl (lives in private Kaggle dataset
+# chris0leite/orbit-wars-opp-distill-corpus).
+!data/opp_distill
+data/opp_distill/*
+!data/opp_distill/distill_booster.txt
+!data/opp_distill/distill_booster.meta.json
+!data/opp_distill/manifest.json
+!data/opp_distill/README.md
 # Seed panel manifest — small, hand-built artifact consumed by lib/seed_panel.py.
 !data/seed_panel_128.json
 
