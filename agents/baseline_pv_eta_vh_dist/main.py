@@ -55,7 +55,11 @@ _os.environ.setdefault("BASELINE_PV_ETA", "1")
 # Predictor: `lib.opp_model.trained_logreg_policy` (rewritten 2026-05-31).
 # Booster: `data/opp_distill/distill_booster.txt`.
 _os.environ.setdefault("BASELINE_OPP_TIER", "2")
-_os.environ.setdefault("BASELINE_OPP_FILTER_THRESHOLD", "0.30")
+# Threshold 0.15 (not the 0.30 used by the falsified v1 design): the
+# 30-d lite booster trained on the parity-verified schema has
+# pos_pred_mean = 0.22 (below 0.30 → no emits). At 0.15 the policy
+# emits ~3.6/call (top-player avg ~5), zero_call_rate ~20%.
+_os.environ.setdefault("BASELINE_OPP_FILTER_THRESHOLD", "0.15")
 
 # Value head OFF for clean Tier-2 attribution. Phase 6c composes this
 # wrapper's distilled opp WITH the B.3 head (flip lambda to 1.0).

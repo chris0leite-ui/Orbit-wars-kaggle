@@ -46,7 +46,8 @@ _os.environ.setdefault("BASELINE_PV_ETA", "1")
 
 # Composite layer 1: distilled-ladder opp model (Tier 2 v2).
 _os.environ.setdefault("BASELINE_OPP_TIER", "2")
-_os.environ.setdefault("BASELINE_OPP_FILTER_THRESHOLD", "0.30")
+# See agents/baseline_pv_eta_vh_dist/main.py for the 0.15 rationale.
+_os.environ.setdefault("BASELINE_OPP_FILTER_THRESHOLD", "0.15")
 
 # Composite layer 2: B.3 CRN-advantage value head.
 _os.environ.setdefault("BASELINE_VH_LAMBDA", "1.0")
