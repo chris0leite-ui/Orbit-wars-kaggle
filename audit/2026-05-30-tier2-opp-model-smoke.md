@@ -107,6 +107,66 @@ seed produced a win.
 
 ### Falsified design + Rule 37 axis status
 
+**Root cause re-diagnosis (2026-05-31, after PI flagged 0/32 was
+suspect).** The 0/32 was NOT (primarily) policy quality. It was a
+**self-inflicted chooser bug introduced by my "fix" in commit 05aa624**.
+
+Diagnostic chain:
+1. Single-turn instrumentation: focal under `BASELINE_OPP_TIER=2`
+   emitted **3 moves / 100 turns** vs Tier 0's **36 moves / 100 turns**.
+2. Per-turn chooser trace: prerank=11-65 candidates available,
+   `moves emitted = 0` on most turns, `commits = 0-2` per turn.
+3. `score_candidate_v4` call count: Tier 0 = 671 across 30 turns
+   (~22/turn) vs Tier 2 = **115 across 30 turns (~4/turn)**.
+4. `per_cand_ms` measurement under Tier 2 with my probe fix: median
+   **255 ms**, max 390 ms.
+
+The formula in `affordable_validate_cap`:
+
+    per_cand_ms = (per_step_ms × avg_K + per_leaf_ms) × 1.5_safety
+    safe_deadline = deadline - per_cand_ms
+
+uses `avg_K = (MIN_HORIZON + MAX_HORIZON) / 2 = (25 + 40) / 2 = 32.5`
+— but actual `score_candidate_v4` rollouts use `prop_horizon` from the
+prerank entry, which is typically eta+settle ~= 5-15 ticks, NOT 32.5.
+
+With my probe fix capturing `per_step_ms ≈ 7 ms` (Tier 2 cost included),
+`per_cand_ms = (7 × 32.5 + 1) × 1.5 = ~344 ms` — but actual per-candidate
+cost is `~7ms × 10 = ~70 ms`. The estimate is **~5× too conservative**.
+
+`safe_deadline = deadline - 344 ms` then aggressively bails the
+validation loop after ~3-5 candidates, leaving most of the 60-candidate
+prerank unscored. With `scored` mostly empty and no Δ>0 fallback,
+`chooser_trajectory.py:1084 if not scored: return [], []` fires —
+focal emits NOTHING most turns → focal does nothing all game → loses
+0/32.
+
+**The "policy quality" theory in the previous version of this audit
+was wrong.** Tier 2's filter alone (drops ~32% of Tier 1 emits in the
+rollout) is NOT enough to cause 0/32. The chooser's own bail-out was.
+
+### Action taken
+
+Reverted the probe fix in `agents/baseline/chooser.py` (single line:
+back to empty-actions probe). Tier 2 now restores normal emit rate
+(~half of Tier 0, comparable to Tier 1).
+
+Post-revert single-game smoke at seed=7, default 1000 ms wallclock:
+turn-ms **p50=200 p95=813 max=1107** (vs my-fix version p50=549
+p95=1621 max=3015 — 3× faster, mostly in cap). Outcome p1_win at n=1
+(no signal — single game).
+
+The probe fix WAS the right idea (capture true opp-policy cost) but
+the per_cand_ms formula needs a smaller `avg_K` to be useful — the
+formula was sized for Tier-0 / `lite_greedy_policy` where the
+per-step cost is ~0.5 ms and the formula's over-estimate didn't hurt.
+
+Tier 2's actual viability is now an open question — needs n≥8 A/B at
+the reverted state. The n=4 A/B I tried timed out at 10 min, so the
+local harness needs a longer per-game budget for Tier 2 work.
+
+### Falsified design + Rule 37 axis status (unchanged)
+
 PM5-booster-as-opp-filter, threshold 0.30, no retrain: **FALSIFIED
 1st-of-3 on this axis.** Two more variants are nominally allowed
 before Rule 37 axis cap, but the failure modes above suggest both

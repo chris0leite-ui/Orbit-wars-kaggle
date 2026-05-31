@@ -123,13 +123,7 @@ def affordable_validate_cap(snap_base, me: int, num_seats: int,
     favor_fn = select_favor_fn()
     t0 = time.perf_counter()
     probe = fs_clone(snap_base)
-    # Probe with REAL opp actions so per_step_ms captures Tier-1/Tier-2
-    # opp policy cost (~5-6 ms/call) on top of fast_sim step (~0.5 ms).
-    # Without this, with BASELINE_OPP_TIER=2 the cap is undersized ~10×
-    # and per-turn wallclock blows past the 1000 ms env cap. With Tier 0
-    # (lite_greedy, ~0.01 ms/call) the probe is unchanged.
-    probe_opp = opp_actions_for_snap(probe, me, num_seats)
-    probe = fs_step(probe, probe_opp, in_place=True)
+    probe = fs_step(probe, [[] for _ in range(num_seats)], in_place=True)
     per_step_ms = max(0.05, (time.perf_counter() - t0) * 1000.0)
 
     t0 = time.perf_counter()
