@@ -315,8 +315,16 @@ def _decode_serial(episodes: list[Path], top_k: int, out_path: Path) -> None:
 
 
 def _decode_parallel(episodes: list[Path], top_k: int,
-                     out_path: Path, workers: int) -> None:
-    from concurrent.futures import ProcessPoolExecutor, as_completed
+                     out_path: Path, workers: int,
+                     chunk_size: int = 24) -> None:
+    """Chunked parallel decode — bounds main-process memory.
+
+    Submitting all 940 futures upfront caused main-process RSS to climb
+    to 11+ GB because completed-future row lists pile up faster than the
+    serial JSONL writer drains them. Processing in chunks of `chunk_size`
+    keeps peak rows-in-flight bounded.
+    """
+    from concurrent.futures import ProcessPoolExecutor
 
     n_rows = 0
     n_pos = 0
@@ -325,25 +333,22 @@ def _decode_parallel(episodes: list[Path], top_k: int,
     t_start = time.time()
     work = [(str(p), top_k) for p in episodes]
     with out_path.open("w") as f_out, ProcessPoolExecutor(workers) as ex:
-        # Submit all and process as they complete; ordering doesn't matter
-        # because the train/val split is encoded in each row's `split` field.
-        futures = [ex.submit(_process_episode, w) for w in work]
-        for fi, fut in enumerate(as_completed(futures)):
-            try:
-                n, p, rows = fut.result()
-            except Exception as exc:
-                print(f"  worker error: {exc}", file=sys.stderr)
-                continue
-            for r in rows:
-                f_out.write(json.dumps(r) + "\n")
-            n_rows += n
-            n_pos += p
-            n_eps_decoded += 1
-            if p > 0:
-                n_eps_with_positives += 1
-            if (fi + 1) % 50 == 0 or (fi + 1) == len(futures):
-                _progress(fi + 1, len(futures), n_rows, n_pos,
-                          n_eps_with_positives, n_eps_decoded, t_start)
+        for chunk_start in range(0, len(work), chunk_size):
+            chunk = work[chunk_start : chunk_start + chunk_size]
+            # `map` preserves order and drains each result before the next
+            # is requested — bounds in-flight memory naturally.
+            for result in ex.map(_process_episode, chunk, chunksize=1):
+                n, p, rows = result
+                for r in rows:
+                    f_out.write(json.dumps(r) + "\n")
+                n_rows += n
+                n_pos += p
+                n_eps_decoded += 1
+                if p > 0:
+                    n_eps_with_positives += 1
+                if n_eps_decoded % 50 == 0 or n_eps_decoded == len(work):
+                    _progress(n_eps_decoded, len(work), n_rows, n_pos,
+                              n_eps_with_positives, n_eps_decoded, t_start)
     _write_summary(out_path, n_rows, n_pos, n_eps_decoded, 0,
                    n_eps_with_positives, top_k)
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 from pathlib import Path
 
@@ -58,15 +59,84 @@ LGB_PARAMS = {
 }
 
 
-def _load_corpus(path: Path) -> tuple[np.ndarray, np.ndarray, list[str], list[str]]:
-    feats, labels, episodes, splits = [], [], [], []
+def _load_corpus(
+    path: Path, neg_per_pos: float | None = None, seed: int = 0,
+) -> tuple[np.ndarray, np.ndarray, list[str], list[str]]:
+    """Load JSONL rows; optionally reservoir-sample negatives to bound memory.
+
+    If `neg_per_pos` is set, walks the file once, keeps ALL positives, and
+    reservoir-samples enough negatives to hit the target ratio. Avoids
+    loading 12M rows into memory when only ~60k are positive.
+
+    Reservoir sampling is split-aware (separate reservoirs for train/val) so
+    val pos_rate matches train pos_rate after sampling.
+    """
+    if neg_per_pos is None:
+        feats, labels, episodes, splits = [], [], [], []
+        with path.open() as fh:
+            for line in fh:
+                r = json.loads(line)
+                feats.append(r["feat"])
+                labels.append(r["label"])
+                episodes.append(r["episode"])
+                splits.append(r["split"])
+        X = np.asarray(feats, dtype=np.float32)
+        y = np.asarray(labels, dtype=np.float32)
+        return X, y, episodes, splits
+
+    # Two-pass approach: count positives per split first, then size the
+    # negative reservoir.
+    n_pos_per_split: dict[str, int] = {}
     with path.open() as fh:
         for line in fh:
             r = json.loads(line)
-            feats.append(r["feat"])
-            labels.append(r["label"])
-            episodes.append(r["episode"])
-            splits.append(r["split"])
+            if int(r["label"]) == 1:
+                n_pos_per_split[r["split"]] = n_pos_per_split.get(r["split"], 0) + 1
+    print(f"  positives per split: {n_pos_per_split}", file=sys.stderr)
+
+    neg_quota_per_split: dict[str, int] = {
+        s: int(n * neg_per_pos) for s, n in n_pos_per_split.items()
+    }
+    print(f"  neg quota per split (ratio={neg_per_pos}): {neg_quota_per_split}",
+          file=sys.stderr)
+
+    rng = random.Random(seed)
+    # Reservoirs per split for negatives. Positives kept in full.
+    pos_rows: list[dict] = []
+    neg_reservoirs: dict[str, list[dict]] = {s: [] for s in n_pos_per_split}
+    neg_seen_per_split: dict[str, int] = {s: 0 for s in n_pos_per_split}
+    n_lines = 0
+    with path.open() as fh:
+        for line in fh:
+            n_lines += 1
+            r = json.loads(line)
+            if int(r["label"]) == 1:
+                pos_rows.append(r)
+                continue
+            split = r["split"]
+            quota = neg_quota_per_split.get(split, 0)
+            if quota <= 0:
+                continue
+            seen = neg_seen_per_split[split]
+            res = neg_reservoirs[split]
+            if len(res) < quota:
+                res.append(r)
+            else:
+                j = rng.randint(0, seen)  # 0..seen inclusive
+                if j < quota:
+                    res[j] = r
+            neg_seen_per_split[split] = seen + 1
+            if n_lines % 1_000_000 == 0:
+                print(f"  scanned {n_lines:,} rows ...", file=sys.stderr)
+
+    print(f"  scanned {n_lines:,} rows total", file=sys.stderr)
+    rows = pos_rows + [r for res in neg_reservoirs.values() for r in res]
+    rng.shuffle(rows)
+
+    feats = [r["feat"] for r in rows]
+    labels = [r["label"] for r in rows]
+    episodes = [r["episode"] for r in rows]
+    splits = [r["split"] for r in rows]
     X = np.asarray(feats, dtype=np.float32)
     y = np.asarray(labels, dtype=np.float32)
     return X, y, episodes, splits
@@ -84,13 +154,35 @@ def main(argv=None) -> int:
              "are sparse — default 0.002 = 1 emit per 500 candidates",
     )
     p.add_argument("--max-pos-rate", type=float, default=0.50)
+    p.add_argument(
+        "--neg-per-pos", type=float, default=10.0,
+        help="Reservoir-sample N×n_pos negatives to bound memory. None=load all "
+             "(default: 10.0 → ~600k train rows at 60k positives)",
+    )
     args = p.parse_args(argv)
 
     labels_path = Path(args.labels)
     if not labels_path.is_file():
         print(f"ERROR: labels not found: {labels_path}", file=sys.stderr)
         return 1
-    X, y, episodes, splits = _load_corpus(labels_path)
+    print(f"loading corpus from {labels_path} "
+          f"(neg_per_pos={args.neg_per_pos}) ...", file=sys.stderr)
+    X, y, episodes, splits = _load_corpus(labels_path, neg_per_pos=args.neg_per_pos)
+
+    # Save the post-downsample corpus as compressed npz for the private
+    # Kaggle dataset (much smaller than the original JSONL, and skips the
+    # 10-min JSONL parse on cross-session reload).
+    if args.neg_per_pos is not None:
+        out_npz = labels_path.with_suffix(".downsampled.npz")
+        np.savez_compressed(
+            out_npz,
+            X=X, y=y,
+            episodes=np.asarray(episodes),
+            splits=np.asarray(splits),
+        )
+        print(f"  saved downsampled corpus → {out_npz} "
+              f"({out_npz.stat().st_size / 1e6:.1f} MB)",
+              file=sys.stderr)
     if X.ndim != 2 or X.shape[1] != FEATURE_DIM:
         print(f"ERROR: expected (_,{FEATURE_DIM}) features, got {X.shape}",
               file=sys.stderr)
