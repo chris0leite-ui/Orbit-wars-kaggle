@@ -49,6 +49,7 @@ from lib.world_model import comet_remaining_lifetime, predict_garrison_at
 from agents.baseline.proposer import MIN_FLEET_SIZE
 from agents.baseline.proposer import aim_and_eta as _aim_and_eta
 from agents.baseline.proposer import capture_size as _capture_size
+from agents.baseline.proposer import hold_need
 from agents.baseline.proposer import nearest_k as _nearest_k
 from agents.baseline.launch_rules import capture_horizon_k as _capture_horizon_k
 from agents.baseline.launch_rules import launch_rules_enabled as _launch_rules_enabled
@@ -1250,9 +1251,23 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 s_near, tgt0, int(s_near.ships), world.omega, wait_N=0, world=world)
             _af, eta_far_full = _aim_and_eta(
                 s_far, tgt0, int(s_far.ships), world.omega, wait_N=0, world=world)
+            provisional_arrival_step = max(int(eta_near_full), int(eta_far_full))
             _oTp, garr_Tp = predict_garrison_at(
-                tgt0, max(int(eta_near_full), int(eta_far_full)), arrivals)
-            need = int(garr_Tp) + 1  # smallest integer strictly above garrison
+                tgt0, provisional_arrival_step, arrivals)
+            capture_need = int(garr_Tp) + 1  # smallest int strictly above garrison
+            # Lever 1 (size-to-hold): when BASELINE_JOINT_SYNC_HOLD is on, size
+            # the stack to SURVIVE the predicted opp counter-recapture, not just
+            # to flip the planet. Inverts the _target_holdable_after_capture
+            # inequality via hold_need (same counter model — Rule 40). Read at
+            # call-time like BASELINE_JOINT_SYNC above, not a module constant.
+            sync_hold = (
+                os.environ.get("BASELINE_JOINT_SYNC_HOLD", "0").strip() == "1"
+            )
+            if sync_hold:
+                need = hold_need(
+                    tgt0, provisional_arrival_step, world, me, capture_need)
+            else:
+                need = capture_need
             # Minimal sizing: far leg commits ships now, near leg tops up.
             far_ships = min(int(s_far.ships), need)
             near_ships = min(int(s_near.ships), need - far_ships)
@@ -1295,9 +1310,13 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             if fire_ships + wait_ships <= garr_tarr:
                 continue
             # Gate 1 (neither solo, post-sizing): neither leg alone may capture
-            # at its own arrival tick.
+            # at its own arrival tick. SKIPPED when SYNC_HOLD inflates per-leg
+            # counts purely to survive the counter (not to solo-capture): the
+            # regime is already enforced PRE-sizing at the _capture_size gate
+            # above, and comparing hold-inflated counts here would spuriously
+            # drop wanted coalitions (an inflated leg ~always exceeds garrison).
             _ow, garr_wait = predict_garrison_at(tgt0, wait_eta, arrivals)
-            if fire_ships > garr_tarr or wait_ships > garr_wait:
+            if not sync_hold and (fire_ships > garr_tarr or wait_ships > garr_wait):
                 continue
             # The closer (waiting) leg waits so it arrives exactly at tarr.
             solved = _solve_sync_wait(

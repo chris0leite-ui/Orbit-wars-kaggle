@@ -283,3 +283,110 @@ def test_sync_generator_forms_coalition_without_prerank_entry(monkeypatch):
     tarr = wait_n + int(eta_w)
     _o, garr_tarr = predict_garrison_at(C, tarr, model.ledger.get(0, []))
     assert near_ships + far_ships > garr_tarr  # stack beats arrival garrison
+
+
+# --------------------------------------------------------------------------
+# Lever 1 — size-to-hold (BASELINE_JOINT_SYNC_HOLD)
+#
+# hold_need inverts the _target_holdable_after_capture inequality to return the
+# minimum total delivered ships that SURVIVES the predicted opp counter-attack
+# (not just flips the planet). The core correctness pins below assert the
+# self-consistency invariant: a hold_need-sized stack PASSES the very filter it
+# is sized against, while a capture-only (garrison+1) stack FAILS it. The
+# generator-side wiring (gate-skip under inflation) is exercised by the
+# single-game trace; the OFF path is covered byte-identically by every test
+# above (none set BASELINE_JOINT_SYNC_HOLD).
+# --------------------------------------------------------------------------
+
+from agents.baseline.proposer import (  # noqa: E402
+    _target_holdable_after_capture,
+    hold_need,
+)
+
+
+def _hold_world(*, c_ships=10, opp_ships=40, opp_prod=2, opp_near=True):
+    """A 2P world where a small flip of neutral C is recapturable by a strong,
+    nearby opp, and our only source is FAR (so the opp is the nearest planet to
+    C → a counter is viable). With opp_near=False the strong opp is removed, so
+    no viable counter exists. Returns (world, model, C)."""
+    # C target (neutral) at (85,15); strong opp right next to it at (80,15);
+    # our source far away at (20,15) — farther from C than the opp.
+    planets = [
+        [0, -1, 85.0, 15.0, 1.5, c_ships, 1],          # C: neutral target
+        [1, 0, 20.0, 15.0, 1.5, 80, 1],                # our source (far)
+    ]
+    if opp_near:
+        planets.append([2, 1, 80.0, 15.0, 1.5, opp_ships, opp_prod])  # strong opp, close
+    else:
+        # weak/no viable counter: a sub-threshold opp far away
+        planets.append([2, 1, 15.0, 80.0, 1.5, 5, 1])
+    obs = {
+        "player": 0, "planets": planets, "fleets": [],
+        "angular_velocity": 0.0, "comet_planet_ids": [], "step": 0,
+    }
+    world = World.from_obs(obs)
+    model = WorldModel.from_world(world)
+    C = {int(p.id): p for p in world.planets_by_id.values()}[0]
+    src = {int(p.id): p for p in world.planets_by_id.values()}[1]
+    return world, model, C, src
+
+
+def test_hold_need_sizes_above_capture_to_survive_counter():
+    """Core invariant: in a geometry where capture-only sizing gets recaptured,
+    hold_need sizes UP, and a hold_need-sized stack is self-consistently
+    HOLDABLE while the capture-only stack is NOT."""
+    world, model, C, src = _hold_world()
+    arrival_step = 10
+    capture_need = int(C.ships) + 1  # neutral → garrison+1 flip threshold
+
+    need = hold_need(C, arrival_step, world, 0, capture_need)
+    assert need > capture_need, (need, capture_need)
+
+    # A hold_need-sized stack survives the predicted counter (filter says True).
+    assert _target_holdable_after_capture(
+        src, C, need, 0, arrival_step, world, model, 0) is True
+    # A capture-only stack does NOT (filter says False → it would be recaptured).
+    assert _target_holdable_after_capture(
+        src, C, capture_need, 0, arrival_step, world, model, 0) is False
+
+
+def test_hold_need_returns_capture_when_no_counter():
+    """With no viable counter in range, hold_need is a no-op = capture_need."""
+    world, _model, C, _src = _hold_world(opp_near=False)
+    capture_need = int(C.ships) + 1
+    assert hold_need(C, 10, world, 0, capture_need) == capture_need
+
+
+def test_sync_hold_on_does_not_break_emit(monkeypatch):
+    """Wiring guard: with BASELINE_JOINT_SYNC_HOLD=1 in the standard scenario
+    (where our sources are closer to C than the opp → no counter → no
+    inflation), the coalition still emits exactly as with HOLD off. Proves the
+    new import + env read + sizing branch + gate-skip don't crash or regress
+    the ON path."""
+    monkeypatch.setenv("BASELINE_JOINT_SYNC", "1")
+    monkeypatch.setenv("BASELINE_JOINT_SYNC_HOLD", "1")
+    monkeypatch.setenv("BASELINE_JOINT", "1")
+    import agents.baseline.chooser_trajectory as ct
+    monkeypatch.setattr(ct, "score_candidate_v4",
+                        lambda *a, **k: (-1.0, "bounced", 1))
+
+    def _fake_joint(snap_base, launches, *a, **k):
+        if any(int(L[4]) > 0 for L in launches):
+            return (5.0, "scored")
+        return (-1.0, "scored")
+    monkeypatch.setattr(ct, "score_candidate_v4_joint", _fake_joint)
+
+    _obs, snap, world, model, A, B, C = _scenario()
+    _favor_fn, favs = _favors(snap)
+    angle_a, eta_a = aim_and_eta(A, C, 25, world.omega, world=world)
+    angle_b, eta_b = aim_and_eta(B, C, 25, world.omega, world=world)
+    prerank = [
+        (-1.0, A, C, 25, float(angle_a), int(eta_a), HORIZON, 0),
+        (-1.0, B, C, 25, float(angle_b), int(eta_b), HORIZON, 0),
+    ]
+    _moves, commits = ct.choose_trajectory(
+        snap, prerank, favs, 0, 2, 2000.0, 5, HORIZON, GAMMA, world, model,
+    )
+    sync_commits = [c for c in commits if c.get("sync_joint")]
+    assert len(sync_commits) == 1, (_moves, commits)
+    assert sync_commits[0]["tgt_id"] == 0

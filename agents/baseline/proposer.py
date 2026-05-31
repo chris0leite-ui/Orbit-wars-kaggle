@@ -519,6 +519,91 @@ def _source_survives_launch(
     return garrison_at_threat >= int(threat_force) + 1
 
 
+# Shared constants for the hold FILTER (_target_holdable_after_capture) and
+# the hold SIZER (hold_need). They MUST stay identical, or a hold_need-sized
+# stack could fail the very filter it is sized to pass. Promoted from
+# function-local to module scope 2026-05-31 (size-to-hold / Lever 1).
+HOLD_MIN_COUNTER_SHIPS = 20
+HOLD_SAFETY_MARGIN = 1.5
+
+
+def _counter_attack_estimate(tgt, arrival_step: int, world, me: int):
+    """Pure counter-force estimate shared by the hold FILTER
+    (`_target_holdable_after_capture`) and the hold SIZER (`hold_need`).
+
+    Given we capture `tgt` at `arrival_step`, returns the cheapest viable
+    opponent recapture as ``(counter_force:int, t_op:int)``, or ``None`` when
+    no counter is viable: no strong opp in range, an ally is closer than every
+    opp, non-positive flight distance, or zero opp speed. Does NOT depend on
+    how many ships WE deliver — the delivered-ship terms stay in the callers,
+    so the filter's ``delivered < 1`` short-circuit is unaffected.
+
+    Honors BASELINE_ORBITAL_SAFETY (B1, PI 2026-05-21 / completed 2026-05-22):
+    when on, the target and each opp/ally rotate to their arrival-step
+    positions, so an orbiting target far from opp NOW but close at arrival
+    is not falsely scored holdable.
+    """
+    orbital_safety = os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1"
+    omega = float(getattr(world, "omega", 0.0))
+    use_predict = orbital_safety and omega != 0.0 and arrival_step > 0
+    if use_predict:
+        tgt_x, tgt_y = _position_at(tgt, omega, arrival_step)
+    else:
+        tgt_x, tgt_y = float(tgt.x), float(tgt.y)
+
+    nearest_opp = None
+    nearest_opp_dist = float("inf")
+    for opp in world.planets_by_id.values():
+        if int(opp.owner) == me or int(opp.owner) == -1:
+            continue
+        if int(opp.id) == int(tgt.id):
+            continue
+        if int(opp.ships) < HOLD_MIN_COUNTER_SHIPS:
+            continue
+        if use_predict:
+            ox, oy = _position_at(opp, omega, arrival_step)
+        else:
+            ox, oy = float(opp.x), float(opp.y)
+        d = math.hypot(ox - tgt_x, oy - tgt_y)
+        if d < nearest_opp_dist:
+            nearest_opp_dist = d
+            nearest_opp = opp
+    if nearest_opp is None:
+        return None
+
+    nearest_us_dist = float("inf")
+    for ally in world.planets_by_id.values():
+        if int(ally.owner) != me:
+            continue
+        if int(ally.id) == int(tgt.id):
+            continue
+        if use_predict:
+            ax, ay = _position_at(ally, omega, arrival_step)
+        else:
+            ax, ay = float(ally.x), float(ally.y)
+        d = math.hypot(ax - tgt_x, ay - tgt_y)
+        if d < nearest_us_dist:
+            nearest_us_dist = d
+    if nearest_us_dist <= nearest_opp_dist:
+        return None
+
+    flight = (
+        nearest_opp_dist - float(nearest_opp.radius)
+        - float(tgt.radius) - 0.1
+    )
+    if flight <= 0:
+        return None
+    opp_speed = fleet_speed(int(nearest_opp.ships))
+    if opp_speed <= 0:
+        return None
+    t_op = int(math.ceil(flight / opp_speed))
+    counter_force = (
+        int(nearest_opp.ships)
+        + int(nearest_opp.production) * (arrival_step + t_op)
+    )
+    return counter_force, t_op
+
+
 def _target_holdable_after_capture(
     src, tgt, ships: int, wait_N: int, eta: int, world, model, me: int,
 ) -> bool:
@@ -543,7 +628,8 @@ def _target_holdable_after_capture(
     Returns True (hold-feasible) for: reinforcing our own planets,
     captures with no opp planet within plausible counter-range,
     captures where our delivered force + production accrual beats
-    every opp's counter-force.
+    every opp's counter-force. The counter estimate is shared with the
+    SIZER via `_counter_attack_estimate`.
     """
     if int(tgt.owner) == me:
         return True
@@ -558,76 +644,46 @@ def _target_holdable_after_capture(
     if delivered < 1:
         return True
 
-    MIN_COUNTER_SHIPS = 20
-    SAFETY_MARGIN = 1.5
-
-    # B1 (PI 2026-05-21 / completed 2026-05-22) — when BASELINE_ORBITAL_SAFETY=1,
-    # the target and each opp/ally rotate to a different position by our
-    # arrival. Without this, an orbiting target far from opp NOW but close
-    # at arrival_step gets a falsely-HOLDABLE verdict and we capture into
-    # a recapture. Sibling fix to f1774a7 in `time_to_enemy_threat`.
-    orbital_safety = os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1"
-    omega = float(getattr(world, "omega", 0.0))
-    use_predict = orbital_safety and omega != 0.0 and arrival_step > 0
-    if use_predict:
-        tgt_x, tgt_y = _position_at(tgt, omega, arrival_step)
-    else:
-        tgt_x, tgt_y = float(tgt.x), float(tgt.y)
-
-    nearest_opp = None
-    nearest_opp_dist = float("inf")
-    for opp in world.planets_by_id.values():
-        if int(opp.owner) == me or int(opp.owner) == -1:
-            continue
-        if int(opp.id) == int(tgt.id):
-            continue
-        if int(opp.ships) < MIN_COUNTER_SHIPS:
-            continue
-        if use_predict:
-            ox, oy = _position_at(opp, omega, arrival_step)
-        else:
-            ox, oy = float(opp.x), float(opp.y)
-        d = math.hypot(ox - tgt_x, oy - tgt_y)
-        if d < nearest_opp_dist:
-            nearest_opp_dist = d
-            nearest_opp = opp
-    if nearest_opp is None:
+    est = _counter_attack_estimate(tgt, arrival_step, world, me)
+    if est is None:
         return True
-
-    nearest_us_dist = float("inf")
-    for ally in world.planets_by_id.values():
-        if int(ally.owner) != me:
-            continue
-        if int(ally.id) == int(tgt.id):
-            continue
-        if use_predict:
-            ax, ay = _position_at(ally, omega, arrival_step)
-        else:
-            ax, ay = float(ally.x), float(ally.y)
-        d = math.hypot(ax - tgt_x, ay - tgt_y)
-        if d < nearest_us_dist:
-            nearest_us_dist = d
-    if nearest_us_dist <= nearest_opp_dist:
-        return True
-
-    flight = (
-        nearest_opp_dist - float(nearest_opp.radius)
-        - float(tgt.radius) - 0.1
-    )
-    if flight <= 0:
-        return True
-    opp_speed = fleet_speed(int(nearest_opp.ships))
-    if opp_speed <= 0:
-        return True
-    t_op = int(math.ceil(flight / opp_speed))
+    counter_force, t_op = est
     garrison_at_recapture = delivered + int(tgt.production) * t_op
-    counter_force = (
-        int(nearest_opp.ships)
-        + int(nearest_opp.production) * (arrival_step + t_op)
-    )
-    if counter_force >= SAFETY_MARGIN * garrison_at_recapture + 1:
+    if counter_force >= HOLD_SAFETY_MARGIN * garrison_at_recapture + 1:
         return False
     return True
+
+
+def hold_need(tgt, arrival_step: int, world, me: int, capture_need: int) -> int:
+    """Minimum total delivered ships so the post-capture garrison SURVIVES the
+    cheapest opp counter-recapture — the inverse of the inequality in
+    `_target_holdable_after_capture`.
+
+    The filter HOLDS iff
+        counter_force < HOLD_SAFETY_MARGIN * garrison_at_recapture + 1
+    Solving for the smallest integer garrison that holds:
+        garrison_at_recapture > (counter_force - 1) / HOLD_SAFETY_MARGIN
+        g_min = floor((counter_force - 1) / HOLD_SAFETY_MARGIN) + 1
+    where garrison_at_recapture = delivered + tgt.production * t_op, so
+        delivered_needed = g_min - tgt.production * t_op
+        ships_needed     = delivered_needed + tgt_def_at_arrival
+    Returns max(capture_need, ceil(ships_needed)). If no viable counter,
+    returns capture_need unchanged (nothing to out-size). The max() floors at
+    the flip minimum when the counter is weak/distant (or when production
+    accrual during the counter's flight already exceeds g_min).
+    """
+    est = _counter_attack_estimate(tgt, arrival_step, world, me)
+    if est is None:
+        return int(capture_need)
+    counter_force, t_op = est
+    if int(tgt.owner) == -1:
+        tgt_def_at_arrival = int(tgt.ships)
+    else:
+        tgt_def_at_arrival = int(tgt.ships) + int(tgt.production) * arrival_step
+    g_min = math.floor((counter_force - 1) / HOLD_SAFETY_MARGIN) + 1
+    delivered_needed = g_min - int(tgt.production) * t_op
+    ships_needed = delivered_needed + tgt_def_at_arrival
+    return max(int(capture_need), int(math.ceil(ships_needed)))
 
 
 def _cost_parity_margin() -> float:
