@@ -1,77 +1,110 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-31 by `claude/champion-strategy-rules-00JzI`
-> (sync-coalition K-gate bug fix + confirmation panel launched).
-> Prior active section (2026-05-30 spatial head) demoted below; still
-> valid but not the current thread.
+> Last written: 2026-05-31 PM by `claude/champion-strategy-rules-00JzI`
+> (sync-coalition panel CONFIRMED; Lever 1 size-to-hold NULL; sync-only
+> agent SUBMITTED as calibration probe). Prior 2026-05-31 AM + 2026-05-30
+> spatial-head sections demoted below.
 
-## ⏸️ ACTIVE — 2026-05-31 (champion-strategy-rules-00JzI) — sync-coalition K-gate FIXED; confirming, then build "size-to-hold" (Lever 1)
+## 🟢 ACTIVE — 2026-05-31 PM (champion-strategy-rules-00JzI) — sync agent SUBMITTED (probe); size-to-hold is NULL; next session = READ THE LADDER, then branch
 
 **One-line state:** the synchronized two-source team-up ("sync coalition")
-had a real bug that made it *self-sabotage*; we fixed it (commit `8d94989`),
-the A/B moved **+10 pts (46% → 56%)** vs the no-sync champion, but the
-margin is **not yet confirmed** — a breadth panel is running. Next build
-after confirmation is **Lever 1: size-to-hold**. Nothing submitted; nothing queued.
+is confirmed strong vs the calibration panel (88–94%), so we **submitted it
+to Kaggle as a calibration probe** (sub `53223160`, 2026-05-31 15:17).
+The "size-to-hold" refinement (Lever 1) we built this session is a **NULL**
+(7/7 tie) — shelved, code stays default-OFF. The single most important
+next action is to **read sub 53223160's settled μ** — that answers the open
+question "is sync actually a ladder gain over the champion, or only vs our
+panel?"
 
 ### What we did this session (verified, with data)
 
-- **The bug:** the sync generator gated coalition arrival on `MAX_HORIZON`
-  (tick 40), but `enforce_launch_rules` deletes any launch arriving after
-  the capture-horizon **K (champion K=10)**. Both legs land on the same
-  synchronized tick `tarr`; when `tarr > K` the fire-now far leg was
-  **silently deleted** while the waiting near leg fired alone, undersized,
-  and bounced — a half-fire that wastes *both* fleets, strictly worse than
-  not attempting. Census (1 game, pre-fix): **24/26 coalitions (92%) had
-  `tarr > K`**, median `tarr`=15.
-- **The fix (commit `8d94989`, Rule 40 — align generator with downstream
-  filter, do NOT loosen K):** in `agents/baseline/chooser_trajectory.py`,
-  when launch rules are on, cap sync arrival at `min(MAX_HORIZON, K)` via
-  `sync_arrival_cap` + "Gate 2b". Post-fix census: **0/9 deleted**, all
-  arrive within K (median `tarr`=7). Single-game trace (seed 100, a WIN):
-  4 coalitions committed, **4/4 fired both legs**, 2/4 captured-and-held
-  through +8 turns. Default-OFF unchanged; `test_joint_sync` +
-  `test_baseline_proposer` + `test_chooser_pv_eta` + `test_bundle` = 57 GREEN.
-- **The A/B (clean_ab, subprocess-isolated, seeds 4–19, n=32):** focal
-  `submissions/baseline_joint_sync_focal.py` (sync ON + fix) vs opponent
-  `submissions/baseline_launch_rules_universal.py` (**no sync code at all**
-  → clean "mechanism vs no-mechanism" comparison). Pre-fix 22/48=45.8%
-  Wilson[0.33,0.60]; **post-fix 18/32=56.2% Wilson[0.39,0.72]**. +10 pts,
-  right direction, but Wilson-lo 0.39 < the 0.50 h2h gate (Rule 45/43).
+- **Confirmation panel PASSED (Rule 43a).** Sync focal vs the three
+  calibration opponents: **v7_0 90.6%, v4_planner 93.8%, v3.5.1 87.5%**,
+  every Wilson-lo ≥ 0.72 (well above the 0.55 gate). No A>B>C>A loop —
+  sync is a broad, decisive winner vs the panel.
+- **Built Lever 1 "size-to-hold"** (commit `69755b1`, default-OFF env
+  `BASELINE_JOINT_SYNC_HOLD`): size each coalition to survive the
+  predicted counter-attack, not just to flip. Reused the existing
+  counter-attack estimator in `proposer.py` (factored into a shared
+  `hold_need` helper, byte-identical refactor — old filter tests
+  unchanged), so it's a modeling fix not a constant bump (Rule 40).
+  3 new tests green incl. the key one (a hold-sized stack survives the
+  counter that recaptures a garrison+1 stack).
+- **Capture-stickiness trace (`scripts/sync_hold_trace.py`, NEW):** the
+  recapture leak is **opponent-specific**. Vs weak `v7_0`: 0% recaptured
+  either way (no leak; hold-on merely declined a held-able capture →
+  mild regression). Vs the **champion** (strong counter-attacker): hold-off
+  recaptured **40%** (2/5), hold-on **0%** (2/2) — so the mechanism *does*
+  fix the leak, but it's conservative (made 2 coalitions vs 6).
+- **Lever 1 A/B (`scripts/_run_hold_ab.sh`, NEW; isolation = our agent vs
+  champion, same 8 seeds, only hold off↔on differs because the champion
+  has no sync code → immune to the env):** hold-off **7/16 = 43.8%**,
+  hold-on **7/16 = 43.8%** — exact TIE. 4 games flipped but symmetrically
+  (2 to wins, 2 to losses). **Verdict: NULL.** The stickiness gain and the
+  added conservatism cancel. Not promoted to n=32 (a 7/7 tie is not a
+  triage-positive). Size-to-hold axis = explored, neutral (Rule 37: one
+  variant; a *less pessimistic* counter model is the only un-tried variant).
 
-### IN FLIGHT — confirmation panel (started end of session)
+### What we SUBMITTED (sub 53223160 — calibration probe, PI-authorized)
 
-- Background job ran `scripts/_run_sync_panel.sh` → **`/tmp/sync_panel.log`**
-  (NOTE: `/tmp` does NOT survive container recycling — if the log is gone,
-  just re-run the script; it's ~75 min). Focal vs each calibration-panel
-  opponent (`v7_0`, `v4_planner`, `v3.5.1`) at triage n=16 (32 games each).
-  **Read first on resume:** `grep -E 'OPP|focal_wins' /tmp/sync_panel.log`.
+- **Artifact:** `submissions/baseline_joint_sync_submit.py` (bundle sha256
+  `dc82f6d4`, 600792 bytes). = fresh bundle of `agents/baseline` (src commit
+  `3e547aa`) **+ a baked top-of-file config header**. Sync-only (hold OFF).
+- **⚠️ THE BUNDLE-BAKING GOTCHA (load-bearing lesson):** Kaggle runs the
+  agent with **NO environment variables**, so every `BASELINE_*` toggle
+  falls back to its code DEFAULT — and sync, pv_eta, orbital_safety,
+  launch_rules all default OFF. The local-A/B "focal" bundles
+  (`baseline_joint_sync_focal.py` etc.) do **NOT** bake config → submitting
+  one would have run a near-vanilla agent. The fix: prepend an
+  `os.environ.setdefault(...)` header (the full tested env block) **above
+  the first inlined module**, because modules read their constants at
+  import. Verified with a clean-env smoke (scrub all `BASELINE_*`, import
+  the bundle, assert the baked values took, run one full game). Always do
+  this before any code-comp submit.
+- **Rule 43b is FAILED** (champion h2h 44–56%, Wilson-lo 0.39 < 0.50) —
+  this is explicitly a "submit to observe" calibration probe (PI override),
+  same profile as the last several submits (incl. today's AM 53212044).
+- **Rolling pair now:** `53223160` (sync, **settling**) + `53212044`
+  (baseline_pv_eta_vh, μ=1139.6 backstop). Evicted `53197142`
+  (composite_universal, 1086.9 — our weakest recent; Rule 42 GREEN).
 
-### RESUME PLAN (PI chose "confirm first, then push the mechanism")
+### RESUME PLAN — fresh session, ranked
 
-1. **Read the panel result.** Per Rule 43, each opponent needs Wilson-lo ≥ 0.55
-   and the champion h2h needs Wilson-lo ≥ 0.50 at n≥32. n=16 is **triage only**
-   (Rule 45) — promote any cell that looks ≥0.55 to n=32 via `clean_ab … --seeds 16
-   --seed-start 16` (pools to n=32). The champion h2h is currently n=32 / lo=0.39
-   and likely needs n≈100+ to clear 0.50 if the true edge is only ~56%.
-2. **If confirmation is marginal (likely):** the honest read is a 56% edge is
-   expensive to confirm — that's the argument for **Lever 1** (a bigger edge is
-   cheaper to prove than a marginal one is to confirm).
-3. **Build Lever 1 — "size-to-hold" (the next mechanism push).** The trace showed
-   2/4 coalitions capture-but-DON'T-hold: we send garrison+1, plant ~1 ship, get
-   recaptured. Fix = size each coalition to survive the **predicted counter-attack**
-   (opponent-response model already exists), not just to flip. Rule 40 (model the
-   hold, don't bump a constant), Rule 37 (≤3 variants on this axis), default-OFF,
-   re-bundle (single-line imports — Rule 46), single-game trace to confirm captures
-   STICK, then n=16→n=32 A/B, then panel. Full lever list (size-to-hold,
-   reinforcement leg, don't-strip-frontline, hold-value target ranking, de-sync
-   cleanup) is in this session's chat + below.
-4. **Do NOT submit** without explicit PI sign-off (Rule 12/42); current evidence
-   does not clear the gate anyway.
+1. **READ THE LADDER FIRST.** `kaggle competitions submissions orbit-wars`
+   — get sub **53223160**'s settled μ. This is the calibration data point
+   the whole submit was for. Interpret:
+   - **μ ≥ ~1140 (near/above the 1183 evicted champion):** sync IS a real
+     ladder asset, not just a panel-beater → make sync the production base;
+     decide whether to lock it (Rule 12 rolling-pair) and/or iterate.
+   - **μ ≤ ~1100:** sync wins the panel but NOT the live field → the panel
+     opponents are unrepresentative of our μ-band. Pivot (step 3).
+   - **In between / still settling:** run the deferred cheap disambiguator
+     (step 2).
+2. **Deferred cheap check (~30 min) — is sync > champion vs the FIELD?**
+   Run the *champion* (`baseline_launch_rules_universal`) against the SAME
+   three panel opponents sync scored 88–94% on. If the champion also scores
+   ~90%, sync is not a gain over what's already strong; if clearly lower,
+   sync is the upgrade. (We never ran this — it's the missing control.)
+3. **If pivoting to a NEW mechanism** (sync flat vs field): two scoped
+   candidates, pick by trace evidence of the agent's actual weakness —
+   (a) **fleet-survival defense** — H44 finding: **65% of failed captures
+   are fleets destroyed in-flight** (`audit/2026-05-21-h44-phase1-CORRECTED.md`);
+   (b) **2-hop redeploy** — values a redeploy via the capture it unlocks
+   (`knowledge-base/concepts/redeploy-2hop-capture-design.md`). Both are
+   default-OFF builds behind Rule-47 horizon + Rule-43/45 gates.
+4. **Size-to-hold:** DONE/NULL. Do not re-litigate unless step 1 shows sync
+   is the base AND you want the only un-tried variant (a probabilistic, less
+   pessimistic counter model — only decline a capture when a counter is
+   *likely*, not worst-case).
 
-**Reproduce env for any sync A/B / trace:** the full `BASELINE_*` export block is
-at the top of `scripts/_run_sync_panel.sh`. Focal = `baseline_joint_sync_focal.py`
-(gitignored local artifact; regenerate via `python scripts/bundle_agent.py
-agents/baseline --out-dir submissions --force` then copy `baseline.py`).
+**Reproduce the submitted agent:** `python scripts/bundle_agent.py
+agents/baseline --out-dir submissions --force --skip-parity-gate` (the
+internal parity gate breaks in this container — `agents` namespace collides
+with `kaggle_environments.lux_ai_s3`; verify via structural `test_bundle.py`
++ the clean-env smoke instead), then splice the baked header from the top of
+`submissions/baseline_joint_sync_submit.py` (the `_sync_os.environ.setdefault`
+block) after the `from __future__` line. Full tested env block is also at the
+top of `scripts/_run_hold_ab.sh`.
 
 ---
 
