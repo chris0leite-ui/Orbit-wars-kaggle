@@ -12039,8 +12039,13 @@ _me_policy = lite_greedy_policy
 _me_defends_policy = me_defensive_action
 # from lib.trajectory import predict_fleet_fate  # inlined by bundle_agent.py
 # from lib.world_model import comet_remaining_lifetime, predict_garrison_at  # inlined by bundle_agent.py
+# from agents.baseline.proposer import MIN_FLEET_SIZE  # inlined by bundle_agent.py
 # from agents.baseline.proposer import aim_and_eta as _aim_and_eta  # inlined by bundle_agent.py
 _aim_and_eta = aim_and_eta
+# from agents.baseline.proposer import capture_size as _capture_size  # inlined by bundle_agent.py
+_capture_size = capture_size
+# from agents.baseline.proposer import nearest_k as _nearest_k  # inlined by bundle_agent.py
+_nearest_k = nearest_k
 
 
 EPISODE_STEPS_TOTAL: int = 500
@@ -12306,6 +12311,10 @@ JOINT_SYNC_MAX_PAIRS: int = int(
     os.environ.get("BASELINE_JOINT_SYNC_MAX_PAIRS", "30")
 )
 JOINT_SYNC_SETTLE: int = 2  # ticks past arrival the leaf must see (Rule 47)
+JOINT_SYNC_SRC_K: int = int(
+    os.environ.get("BASELINE_JOINT_SYNC_SRC_K", "3")
+)  # nearest friendly sources pulled per target (2 nearest form the pair;
+#    the 3rd is headroom for a future 3-source extension, not built yet)
 
 
 def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
@@ -13181,82 +13190,116 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     if (os.environ.get("BASELINE_JOINT_SYNC", "0").strip() == "1"
             and joint_enabled and not use_v3
             and time.perf_counter() <= safe_deadline):
-        sync_by_tgt: dict[int, list] = {}
-        for cd, src, tgt, ships, angle, eta_hint, ph, wn in prerank:
-            if int(wn) != 0:
-                continue  # sync is built from fire-now geometry
-            if int(src.id) in reserved_srcs:
-                continue
-            sync_by_tgt.setdefault(int(tgt.id), []).append(
-                (float(cd), src, tgt, int(ships), float(angle), int(eta_hint)),
-            )
+        # Build synchronized two-source coalitions DIRECTLY from world geometry
+        # — NOT from `prerank`, which cheap-rejects the bouncing single-source
+        # launches a coalition combines (proposer CHEAP_REJECT_THRESHOLD drops
+        # any ~20+ ship bounce before the chooser sees it). For each defended
+        # planet no single source can take, pull the 2 nearest friendly sources
+        # and assemble a MINIMALLY-sized stacked strike: minimal ships-in-flight
+        # gives the best chance of clearing the value head's in-flight penalty.
+        my_sources = [
+            p for p in world.planets_by_id.values()
+            if int(p.owner) == me
+            and int(p.id) not in reserved_srcs
+            and int(p.id) not in reserved_for_new_commits
+            and int(p.ships) >= MIN_FLEET_SIZE
+        ]
+        sync_targets = [
+            p for p in world.planets_by_id.values() if int(p.owner) != me
+        ]
+        # Spend the bounded pair budget on the most valuable captures first.
+        sync_targets.sort(key=lambda t: (-int(t.production), int(t.id)))
         sync_count = 0
-        for tgt_id, cands in sync_by_tgt.items():
-            if len(cands) < 2:
+        for tgt0 in sync_targets:
+            if (sync_count >= JOINT_SYNC_MAX_PAIRS
+                    or time.perf_counter() > safe_deadline):
+                break
+            if len(my_sources) < 2:
+                break
+            cand_srcs = _nearest_k(my_sources, tgt0, JOINT_SYNC_SRC_K)
+            if len(cand_srcs) < 2:
                 continue
-            tgt0 = cands[0][2]
-            if int(tgt0.owner) == me:
-                continue  # only capture targets stack-synchronize
-            arrivals = model.ledger.get(int(tgt_id), [])
-            cands.sort(key=lambda c: -c[0])
-            top = cands[:JOINT_TOP_K_PER_TARGET]
-            for i in range(len(top)):
-                if (sync_count >= JOINT_SYNC_MAX_PAIRS
-                        or time.perf_counter() > safe_deadline):
-                    break
-                for j in range(i + 1, len(top)):
-                    if (sync_count >= JOINT_SYNC_MAX_PAIRS
-                            or time.perf_counter() > safe_deadline):
-                        break
-                    ca, cb = top[i], top[j]
-                    if int(ca[1].id) == int(cb[1].id):
-                        continue
-                    eta_a, eta_b = int(ca[5]), int(cb[5])
-                    if eta_a == eta_b:
-                        continue  # already synchronized → the fire-now joint owns it
-                    ships_a, ships_b = int(ca[3]), int(cb[3])
-                    # Gate 1: neither source may solo-capture C (else the
-                    # solo / fire-now-joint path owns it — sync is only for
-                    # the "neither alone can take it" case).
-                    _oa, garr_a = predict_garrison_at(tgt0, eta_a, arrivals)
-                    _ob, garr_b = predict_garrison_at(tgt0, eta_b, arrivals)
-                    if ships_a > garr_a or ships_b > garr_b:
-                        continue
-                    # Common arrival = the farther leg's fire-now eta.
-                    T = max(eta_a, eta_b)
-                    # Gate 2 (Rule 47): the leaf must see the stacked capture.
-                    if T + JOINT_SYNC_SETTLE > max_horizon:
-                        continue
-                    # Gate 3: combined force must actually capture at T.
-                    _oT, garr_T = predict_garrison_at(tgt0, T, arrivals)
-                    if ships_a + ships_b <= garr_T:
-                        continue
-                    # The closer leg waits so it arrives exactly at T.
-                    if eta_a < eta_b:
-                        near, far = ca, cb
-                    else:
-                        near, far = cb, ca
-                    solved = _solve_sync_wait(
-                        near[1], near[2], int(near[3]), world.omega, world,
-                        target_arrival=T,
-                    )
-                    if solved is None:
-                        continue  # can't cleanly synchronize this pair
-                    wait_near, angle_near = solved
-                    launches = [
-                        (far[1], far[2], int(far[3]), far[4], 0),
-                        (near[1], near[2], int(near[3]), angle_near, int(wait_near)),
-                    ]
-                    jh = min(T + JOINT_SYNC_SETTLE, len(baseline_favors) - 1)
-                    j_score, j_status = score_candidate_v4_joint(
-                        snap_base, launches, me, num_seats, world,
-                        baseline_favors, favor_fn, gamma,
-                        horizon=jh, skip_admissibility=skip_filter,
-                        hard_deadline=hard_deadline,
-                    )
-                    sync_count += 1
-                    if j_status == "scored" and j_score > 0.0:
-                        scored.append((j_score, "joint_sync", launches))
+            s_near, s_far = cand_srcs[0], cand_srcs[1]  # distance-sorted
+            # Solo-capture skip: if EITHER nearest source can take tgt0 alone,
+            # the solo / fire-now-joint path owns it — sync is strictly for the
+            # "neither alone can take it" regime.
+            if (int(s_near.ships)
+                    >= _capture_size(s_near, tgt0, model, world.omega, me, world)
+                    or int(s_far.ships)
+                    >= _capture_size(s_far, tgt0, model, world.omega, me, world)):
+                continue
+            arrivals = model.ledger.get(int(tgt0.id), [])
+            # Provisional arrival from full-ship etas → garrison there → `need`.
+            _an, eta_near_full = _aim_and_eta(
+                s_near, tgt0, int(s_near.ships), world.omega, wait_N=0, world=world)
+            _af, eta_far_full = _aim_and_eta(
+                s_far, tgt0, int(s_far.ships), world.omega, wait_N=0, world=world)
+            _oTp, garr_Tp = predict_garrison_at(
+                tgt0, max(int(eta_near_full), int(eta_far_full)), arrivals)
+            need = int(garr_Tp) + 1  # smallest integer strictly above garrison
+            # Minimal sizing: far leg commits ships now, near leg tops up.
+            far_ships = min(int(s_far.ships), need)
+            near_ships = min(int(s_near.ships), need - far_ships)
+            if far_ships + near_ships < need:
+                # far too small to lead — load the larger (near) budget first.
+                near_ships = min(int(s_near.ships), need)
+                far_ships = min(int(s_far.ships), need - near_ships)
+            if far_ships + near_ships < need:
+                continue  # combined budget can't take tgt0
+            if far_ships < MIN_FLEET_SIZE or near_ships < MIN_FLEET_SIZE:
+                continue
+            # Re-derive arrival from the ASSIGNED counts (fleet speed rises with
+            # ship count, so a smaller leg flies slower → arrives later). The
+            # leg with the larger eta fires now; the other waits to match it.
+            angle_n, eta_n = _aim_and_eta(
+                s_near, tgt0, near_ships, world.omega, wait_N=0, world=world)
+            angle_f, eta_f = _aim_and_eta(
+                s_far, tgt0, far_ships, world.omega, wait_N=0, world=world)
+            eta_n, eta_f = int(eta_n), int(eta_f)
+            if eta_n == eta_f:
+                continue  # already synchronized → the fire-now joint owns it
+            if eta_f >= eta_n:
+                fire_pl, fire_ships, fire_angle = s_far, far_ships, angle_f
+                wait_pl, wait_ships, wait_eta = s_near, near_ships, eta_n
+                tarr = eta_f
+            else:
+                fire_pl, fire_ships, fire_angle = s_near, near_ships, angle_n
+                wait_pl, wait_ships, wait_eta = s_far, far_ships, eta_f
+                tarr = eta_n
+            # Gate 2 (Rule 47): the leaf must see the stacked capture settle.
+            if tarr + JOINT_SYNC_SETTLE > max_horizon:
+                continue
+            _oT, garr_tarr = predict_garrison_at(tgt0, tarr, arrivals)
+            # Gate 3: combined force must actually exceed garrison at arrival.
+            if fire_ships + wait_ships <= garr_tarr:
+                continue
+            # Gate 1 (neither solo, post-sizing): neither leg alone may capture
+            # at its own arrival tick.
+            _ow, garr_wait = predict_garrison_at(tgt0, wait_eta, arrivals)
+            if fire_ships > garr_tarr or wait_ships > garr_wait:
+                continue
+            # The closer (waiting) leg waits so it arrives exactly at tarr.
+            solved = _solve_sync_wait(
+                wait_pl, tgt0, wait_ships, world.omega, world,
+                target_arrival=tarr,
+            )
+            if solved is None:
+                continue  # can't cleanly synchronize this pair
+            wait_n, angle_wait = solved
+            launches = [
+                (fire_pl, tgt0, fire_ships, fire_angle, 0),
+                (wait_pl, tgt0, wait_ships, angle_wait, int(wait_n)),
+            ]
+            jh = min(tarr + JOINT_SYNC_SETTLE, len(baseline_favors) - 1)
+            j_score, j_status = score_candidate_v4_joint(
+                snap_base, launches, me, num_seats, world,
+                baseline_favors, favor_fn, gamma,
+                horizon=jh, skip_admissibility=skip_filter,
+                hard_deadline=hard_deadline,
+            )
+            sync_count += 1
+            if j_status == "scored" and j_score > 0.0:
+                scored.append((j_score, "joint_sync", launches))
 
     if not scored:
         return [], []
