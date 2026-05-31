@@ -101,6 +101,16 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
 
 ---
 
+## Open work — sync coalition (2026-05-31, `champion-strategy-rules-00JzI`)
+
+Synchronized two-source team-up on `agents/baseline/chooser_trajectory.py`
+(env `BASELINE_JOINT_SYNC=1`, default OFF). **Owns:** the sync-coalition
+generator inside the trajectory chooser — coordinate before touching it.
+
+| State | Evidence | Next |
+|---|---|---|
+| **K-gate bug FIXED** (commit `8d94989`). Generator gated arrival on MAX_HORIZON(40) but `enforce_launch_rules` deletes launches arriving after K(=10) → 92% of coalitions half-fired (far leg deleted, near leg bounces alone). Fix: `sync_arrival_cap = min(MAX_HORIZON, K)` + Gate 2b. | Census 24/26→0/9 deleted. A/B vs no-sync champion: pre-fix 22/48=45.8%, **post-fix 18/32=56.2% Wilson[0.39,0.72]** (clean_ab, seeds 4–19). 57 tests GREEN. Single-game trace: 4/4 legs fired, 2/4 captured-and-held. | **(1)** Read confirmation panel `/tmp/sync_panel.log` (3 opp × n=16, started 2026-05-31; re-run `scripts/_run_sync_panel.sh` if /tmp recycled). **(2)** Wilson-lo 0.39 < 0.50 gate → not yet shippable. **(3)** Build **Lever 1 size-to-hold** (size to survive predicted counter, not just flip) — see HANDOVER resume plan. |
+
 ## Closed tracks — falsified knowledge, do NOT iterate
 
 | Axis | Branch | Verdict date | Evidence |

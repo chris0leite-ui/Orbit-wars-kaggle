@@ -1,15 +1,86 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-20 PM by `claude/review-skills-improvements-moKOR`
-> (n=8 iteration loop attempt; no candidate found, structural-change
-> pivot queued).
-> Prior PM session on this branch (cross-branch consolidation pass)
-> notes preserved under "What just landed (2026-05-20, this session)".
+> Last written: 2026-05-31 by `claude/champion-strategy-rules-00JzI`
+> (sync-coalition K-gate bug fix + confirmation panel launched).
+> Prior active section (2026-05-30 spatial head) demoted below; still
+> valid but not the current thread.
+
+## ⏸️ ACTIVE — 2026-05-31 (champion-strategy-rules-00JzI) — sync-coalition K-gate FIXED; confirming, then build "size-to-hold" (Lever 1)
+
+**One-line state:** the synchronized two-source team-up ("sync coalition")
+had a real bug that made it *self-sabotage*; we fixed it (commit `8d94989`),
+the A/B moved **+10 pts (46% → 56%)** vs the no-sync champion, but the
+margin is **not yet confirmed** — a breadth panel is running. Next build
+after confirmation is **Lever 1: size-to-hold**. Nothing submitted; nothing queued.
+
+### What we did this session (verified, with data)
+
+- **The bug:** the sync generator gated coalition arrival on `MAX_HORIZON`
+  (tick 40), but `enforce_launch_rules` deletes any launch arriving after
+  the capture-horizon **K (champion K=10)**. Both legs land on the same
+  synchronized tick `tarr`; when `tarr > K` the fire-now far leg was
+  **silently deleted** while the waiting near leg fired alone, undersized,
+  and bounced — a half-fire that wastes *both* fleets, strictly worse than
+  not attempting. Census (1 game, pre-fix): **24/26 coalitions (92%) had
+  `tarr > K`**, median `tarr`=15.
+- **The fix (commit `8d94989`, Rule 40 — align generator with downstream
+  filter, do NOT loosen K):** in `agents/baseline/chooser_trajectory.py`,
+  when launch rules are on, cap sync arrival at `min(MAX_HORIZON, K)` via
+  `sync_arrival_cap` + "Gate 2b". Post-fix census: **0/9 deleted**, all
+  arrive within K (median `tarr`=7). Single-game trace (seed 100, a WIN):
+  4 coalitions committed, **4/4 fired both legs**, 2/4 captured-and-held
+  through +8 turns. Default-OFF unchanged; `test_joint_sync` +
+  `test_baseline_proposer` + `test_chooser_pv_eta` + `test_bundle` = 57 GREEN.
+- **The A/B (clean_ab, subprocess-isolated, seeds 4–19, n=32):** focal
+  `submissions/baseline_joint_sync_focal.py` (sync ON + fix) vs opponent
+  `submissions/baseline_launch_rules_universal.py` (**no sync code at all**
+  → clean "mechanism vs no-mechanism" comparison). Pre-fix 22/48=45.8%
+  Wilson[0.33,0.60]; **post-fix 18/32=56.2% Wilson[0.39,0.72]**. +10 pts,
+  right direction, but Wilson-lo 0.39 < the 0.50 h2h gate (Rule 45/43).
+
+### IN FLIGHT — confirmation panel (started end of session)
+
+- Background job ran `scripts/_run_sync_panel.sh` → **`/tmp/sync_panel.log`**
+  (NOTE: `/tmp` does NOT survive container recycling — if the log is gone,
+  just re-run the script; it's ~75 min). Focal vs each calibration-panel
+  opponent (`v7_0`, `v4_planner`, `v3.5.1`) at triage n=16 (32 games each).
+  **Read first on resume:** `grep -E 'OPP|focal_wins' /tmp/sync_panel.log`.
+
+### RESUME PLAN (PI chose "confirm first, then push the mechanism")
+
+1. **Read the panel result.** Per Rule 43, each opponent needs Wilson-lo ≥ 0.55
+   and the champion h2h needs Wilson-lo ≥ 0.50 at n≥32. n=16 is **triage only**
+   (Rule 45) — promote any cell that looks ≥0.55 to n=32 via `clean_ab … --seeds 16
+   --seed-start 16` (pools to n=32). The champion h2h is currently n=32 / lo=0.39
+   and likely needs n≈100+ to clear 0.50 if the true edge is only ~56%.
+2. **If confirmation is marginal (likely):** the honest read is a 56% edge is
+   expensive to confirm — that's the argument for **Lever 1** (a bigger edge is
+   cheaper to prove than a marginal one is to confirm).
+3. **Build Lever 1 — "size-to-hold" (the next mechanism push).** The trace showed
+   2/4 coalitions capture-but-DON'T-hold: we send garrison+1, plant ~1 ship, get
+   recaptured. Fix = size each coalition to survive the **predicted counter-attack**
+   (opponent-response model already exists), not just to flip. Rule 40 (model the
+   hold, don't bump a constant), Rule 37 (≤3 variants on this axis), default-OFF,
+   re-bundle (single-line imports — Rule 46), single-game trace to confirm captures
+   STICK, then n=16→n=32 A/B, then panel. Full lever list (size-to-hold,
+   reinforcement leg, don't-strip-frontline, hold-value target ranking, de-sync
+   cleanup) is in this session's chat + below.
+4. **Do NOT submit** without explicit PI sign-off (Rule 12/42); current evidence
+   does not clear the gate anyway.
+
+**Reproduce env for any sync A/B / trace:** the full `BASELINE_*` export block is
+at the top of `scripts/_run_sync_panel.sh`. Focal = `baseline_joint_sync_focal.py`
+(gitignored local artifact; regenerate via `python scripts/bundle_agent.py
+agents/baseline --out-dir submissions --force` then copy `baseline.py`).
+
+---
+
 > Prior writers (per-branch, now superseded): `kaggle-baseline-strategy-lO4mm`,
 > `audit-workflow-performance-btjeK`, `strategy-framework-design-OyoYR-rebased`,
-> `ml-competition-strategy-PFhzM`, `analyze-game-strategy-EpMVP`.
+> `ml-competition-strategy-PFhzM`, `analyze-game-strategy-EpMVP`,
+> `review-skills-improvements-moKOR`.
 
-## ⏸️ ACTIVE — 2026-05-30 PM (champion-strategy-rules-00JzI) — spatial head left UNMEASURED by PI choice; 2-hop redeploy redesign is the forward path
+## 🗂️ PRIOR (demoted 2026-05-31) — 2026-05-30 PM — spatial head left UNMEASURED by PI choice; 2-hop redeploy redesign is the forward path
 
 **Latest (2026-05-30 PM2):** PI elected NOT to run the spatial win-rate
 A/B. The head is **unmeasured on win-rate** (cost gate cleared only) —
