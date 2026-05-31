@@ -189,7 +189,7 @@ def _load_opp_booster():
 # AGGRESSIVE_FRAC). Changes here must be reflected there to keep
 # train/inference distributions consistent.
 _DIST_MIN_SRC_SHIPS = 5
-_DIST_TOP_K = 8
+_DIST_TOP_K = 2
 _DIST_AGGRESSIVE_FRAC = 0.7
 
 

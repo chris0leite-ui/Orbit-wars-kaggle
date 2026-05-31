@@ -1,0 +1,12 @@
+{
+  "threshold": 0.3,
+  "pos_rate": 0.0476190485060215,
+  "best_iteration": 6,
+  "val_acc_at_half": 0.9523809523809523,
+  "val_brier": 0.03497931526752536,
+  "val_precision_at_thr": 0.7215995924605196,
+  "val_recall_at_thr": 0.5677354709418838,
+  "pos_pred_mean": 0.28830372381528574,
+  "neg_pred_mean": 0.0805356257034738,
+  "feature_dim": 45
+}
