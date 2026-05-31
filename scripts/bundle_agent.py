@@ -128,6 +128,12 @@ DEFAULT_LIB_ORDER = [
     # 2026-05-29 Phase 2 v2: pure-Python LightGBM tree-walker for the
     # validator agent. Bundle-inert for agents that don't import it.
     "_validator_tree_walker",
+    # 2026-05-31 distilled-Tier-2: 30-d vectorized lite feature encoder
+    # for `lib.opp_model.trained_logreg_policy`. Bundle-inert for agents
+    # that don't enable `BASELINE_OPP_TIER=2` — but always required in the
+    # default lib order because `lib/opp_model.py` imports it unconditionally
+    # inside the Tier-2 hot path.
+    "opp_features_lite",
     # 2026-05-29 Reframe B.2: 14-d per-candidate feature encoder for the
     # value-head regressor. Imported by `agents.baseline._value_head` +
     # `agents.baseline._trace_hook` (feature-emit path). Bundle-inert
