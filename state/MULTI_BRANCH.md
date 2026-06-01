@@ -101,15 +101,20 @@ Every track sits on top of one of these tiers. Tools registry (`state/TOOLS.md`)
 
 ---
 
-## Open work — sync coalition (2026-05-31, `champion-strategy-rules-00JzI`)
+## Open work — adaptive horizon K + loss-mode re-diagnosis (2026-06-01, `champion-strategy-rules-00JzI`)
 
-Synchronized two-source team-up on `agents/baseline/chooser_trajectory.py`
-(env `BASELINE_JOINT_SYNC=1`, default OFF). **Owns:** the sync-coalition
-generator inside the trajectory chooser — coordinate before touching it.
+**Owns:** `launch_rules.capture_horizon_k()` and its three readers (launch
+gate, proposer prune, sync cap) — coordinate before touching the K horizon.
 
 | State | Evidence | Next |
 |---|---|---|
-| **K-gate bug FIXED** (commit `8d94989`) → **panel CONFIRMED** → **SUBMITTED** (sub `53223160`, calibration probe). Sync coalition is a broad panel winner; **Lever 1 size-to-hold is NULL** (7/7 tie, shelved, default-OFF). | Panel (Rule 43a PASS): v7_0 90.6% / v4_planner 93.8% / v3.5.1 87.5%, Wilson-lo ≥0.72. Champion h2h 44–56% Wilson-lo 0.39 (Rule 43b FAIL → probe). Lever 1 A/B (`_run_hold_ab.sh`): hold-off 7/16 = hold-on 7/16 = 43.8% vs champion, symmetric 2W/2L flip. Trace: recapture leak is opponent-specific (champion 40%→0% with hold; v7_0 0% either way). | **(1) READ sub 53223160 settled μ** — is sync a ladder gain or only a panel-beater? **(2)** Deferred control: run *champion* vs the same 3-opp panel (~30 min) to disambiguate. **(3)** If sync flat vs field → pivot to new mechanism (H44 fleet-survival defense or 2-hop redeploy). Size-to-hold = closed (only un-tried variant: probabilistic/less-pessimistic counter model). See HANDOVER. |
+| **Loss mode re-diagnosed: NOT ship-hoarding.** We out-*launch* but under-*capture* (conversion gap, not volume). **Adaptive-K v1 built** (step-decay, default OFF, commit `9985e98`); A/B in flight. PI redirected K to **state-driven**. | `audit/2026-06-01-loss-mode-diagnosis.md`: champion's 121 live games — opening planet-gap≈0, midgame capture rate halves in losses (25→12, 2P), defense ~equal; higher in-flight fraction in losses. PI corrections: selection bias (win/loss confounded by opp strength); **fleets don't die in flight** (H44 lever dropped); opening tempo real. Paired positioning = NULL (US 39.2 vs OPP 39.2 dist-to-enemy). v1 A/B (ON vs immune `baseline_champion_nokt.py`, CRN): interim 12W/6L. | **(1)** Read v1 A/B verdict. If non-negative → build **state-driven K** (per-target predictability horizon, K doc §8). **(2)** Build **contest-urgency** (timing/race half of conversion — sizing alone already failed). **(3)** Recover soft rolling pair via champion KT-OFF push(es). |
+
+### Prior (sync coalition — closed/parked)
+Synchronized two-source team-up (`BASELINE_JOINT_SYNC=1`, default OFF):
+panel winner (v7_0 90.6% / v4_planner 93.8% / v3.5.1 87.5%) but live
+**μ=1150.2** (sub 53223160) — below the 1183 champion, so a panel-beater not
+a ladder gain. Size-to-hold lever = NULL (7/7 tie). Code stays default-OFF.
 
 ## Closed tracks — falsified knowledge, do NOT iterate
 

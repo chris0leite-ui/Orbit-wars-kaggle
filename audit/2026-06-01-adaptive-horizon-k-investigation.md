@@ -1,9 +1,21 @@
 # Adaptive horizon K — investigation (2026-06-01, champion-strategy-rules-00JzI)
 
+> **REVISED 2026-06-01 PM** after the empirical loss-mode diagnosis
+> (`audit/2026-06-01-loss-mode-diagnosis.md`) and PI corrections. Two
+> changes bind everything below: (1) the H44 "fleets die in flight" risk in
+> §6 is **dropped** — fleets do not collide in air; (2) the step-decay
+> schedule in §5 is **superseded** by a **state-driven** horizon (PI
+> direction) — see §8. The §3 reachability data stands; the §4 "opening is
+> where we lose" thesis is **weakened** (the opening is roughly even — the
+> visible divergence is midgame). A v1 step-schedule was built and is in
+> A/B (§8); the redesign is what ships if it pays.
+
 PI directive: *"explore and think hard about an adaptive horizon K. In the
 beginning it should be feasible and allow faster expansion. With the
 increased horizon, also planets farther away should be feasible. It needs
-to be adopted consistently across agent functionality."*
+to be adopted consistently across agent functionality."* Later refined:
+*"it should scale according to our capabilities and the current game-state
+complexity, not to a fixed schedule necessarily."*
 
 This is the "opening / dynamic-lookahead" axis from the 2026-06-01 AM
 handover, reframed precisely: the lever is the **universal launch ceiling
@@ -72,11 +84,15 @@ Probe: 10 fresh 2P openings (step 0), min-ETA per neutral over my sources
 
 **The static K=10 hides ~75% of the opening map.** Only the nearest ring
 (ETA≤10, ~5 planets) is considered; the median target (ETA 22) is
-forbidden. This is the structural mechanism behind the diagnosed loss mode
-("we had ≥ ships but FEWER planets; opponents spread + snowballed" —
-`audit/2026-06-01-live-replay-diagnosis.md`). If opponents grab the ETA
-15-30 ring in the opening and we are capped at 10, we lose the planet race
-before midgame.
+forbidden. K=10 is geometrically very restrictive in the opening.
+
+> **CAVEAT (revised):** this was originally pitched as "the structural
+> mechanism behind ship-hoarding." That loss-mode framing is now refuted
+> (`audit/2026-06-01-loss-mode-diagnosis.md`): we are not behind on opening
+> planet *count*. Reachability being restricted is a real fact; that it is
+> *the* loss lever is not established. The opening still matters via tempo
+> ("we open too slowly") and the snowball, but as a chain into the midgame,
+> not as an opening planet-count deficit.
 
 ## 4. Why "adaptive" and not just "bigger" (the thesis)
 
@@ -116,30 +132,56 @@ the schedule axis (K_OPEN magnitude, T_SETTLE length, driver step-vs-entity).
 
 ## 6. Risks / open questions
 
-- **Wallclock:** bigger K early → proposer enumerates more candidates (2-4×
-  targets) → more rollouts. Opening has time headroom (fewer entities), but
-  must verify p95 stays < the 1000ms actTimeout (Rule 2 two-tier smoke).
-- **Far-capture survival (H44):** even in the opening, 65% of *failed*
-  captures historically die in-flight. Need to confirm opening far-launches
-  actually land (single-game trajectory trace, Rule 47) — if they die, the
-  reachability gain is illusory and this collapses to the flat-expand-credit
-  regression.
-- **Does reachability convert to wins?** §3 is geometry only. The A/B
-  (Rules 43/45) is the real test. Gate: vs-panel Wilson-lo ≥ 0.55 per
-  opponent AND vs current champion n≥32 Wilson-lo ≥ 0.50, evaluated
-  against **aggressive expanders** (not the champion mirror — the
-  flat-credit lesson: a hoarder-vs-hoarder mirror can't see expansion
-  value).
+- **Wallclock:** bigger K → proposer enumerates more candidates (2-4×
+  targets) → more rollouts. *Verified OK so far:* single-game smoke (ON vs
+  v7_0) p95=283ms, max=337ms — far under the 1000ms actTimeout, even under
+  concurrent-A/B contention. Re-check under the state-driven version, which
+  can raise K in busier midgame states.
+- **Wrong phase (the big one).** The step-decay version raises K only in
+  steps 0-30. The loss-mode diagnosis shows the opening is roughly even and
+  the divergence is **midgame (50-150)** — where this schedule has already
+  decayed K back to 10. So the v1 schedule may target the wrong phase. This
+  is the §8 redesign motivation; the running A/B (§8) measures it directly.
+- **Does it convert to wins?** §3 is geometry only — it shows what becomes
+  *reachable*, not what becomes *held*. The A/B is the real test. Gate:
+  champion h2h n≥32 Wilson-lo ≥ 0.50, then vs-panel Wilson-lo ≥ 0.55 per
+  opponent (Rules 43/45). (No "far launches die" risk — fleets don't
+  collide in air; the only flight deaths are sun/OOB, already filtered.)
 
-## 7. Next-step plan (not yet built)
+## 7. What was built (v1, committed `9985e98`)
 
-1. Implement `capture_horizon_k(step)` adaptive schedule behind
-   `BASELINE_ADAPTIVE_K` (default OFF); thread `world.step` to the 3 call
-   sites. ~40 LOC, single function + 3 one-line call-site edits.
-2. Parity test: ADAPTIVE_K off → byte-identical to champion (move-parity).
-3. Two-tier wallclock smoke (Rule 2): opening p95 < 1000ms.
-4. Single-game opening trajectory trace (Rule 47): far opening launches
-   land (sun/oob/flip waste < 2%).
-5. A/B vs aggressive-expander panel + champion h2h, n≥32 (Rules 43/45),
-   sweeping K_OPEN ∈ {15,20,25} and T_SETTLE ∈ {30,40} (Rule 21).
-</content>
+`capture_horizon_k(step)` step-decay behind `BASELINE_ADAPTIVE_K` (default
+OFF); `world.step` threaded to the 3 call sites (gate, proposer prune, sync
+cap). `K(step)=max(10, round(K_OPEN - (K_OPEN-10)·step/T_SETTLE))`,
+defaults `K_OPEN=20`, `T_SETTLE=30`. Verified: OFF → flat 10 = byte-identical
+champion; 19 launch-rules tests green; fires in the champion's default
+composite path; wallclock smoke clean (§6).
+
+## 8. Redesign: state-driven horizon (PI direction — the version that ships)
+
+The step-schedule is the wrong shape. K is a *predictability horizon*, so it
+should equal **how far ahead the board is actually predictable**, driven by
+state + capability, not the clock:
+
+- **Board complexity** — few in-flight fleets / uncontested target
+  neighbourhood → predictable → large K; churning board → small K.
+- **Per-target** — `K_target ≈ time until an enemy fleet could interfere at
+  this target`, clamped `[K_floor, K_ceil]`. A far but uncontested planet
+  is safe to commit to; a near but contested one is not.
+- **Compute headroom** — fewer entities → cheaper rollouts → we can *afford*
+  a deeper horizon (ties "our capabilities").
+
+This naturally raises the horizon early **and** in midgame lulls — exactly
+the phase the step-schedule misses. Build only if the v1 A/B is non-negative
+(evidence the lever has signal) **or** if it is neutral *and* the diagnosis
+holds that the schedule shape is the reason.
+
+### Status
+
+- v1 step-schedule A/B (ON vs immune champion, CRN, n=32): **in flight**.
+  Interim n=18 = 12W/6L (67%) — leaning positive, not yet conclusive.
+- Earlier ON-vs-OFF A/B was **discarded** (contamination: the OFF bundle has
+  the live env-read code, so the ON bundle's baked `ADAPTIVE_K=1` leaked into
+  the shared process and turned OFF adaptive too). Valid A/Bs use the
+  pre-edit `baseline_champion_nokt.py` as the immune opponent.
+
