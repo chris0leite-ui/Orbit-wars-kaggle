@@ -26,7 +26,7 @@ Enumerator modes (one variant per mode):
 - `"combined"`     — union of every mode that passed its gate (the
                      final-form variant assembled by run_v7_ablation).
 
-The scorer signature (`score_candidate`) is identical across modes —
+The scorer signature (`_v7_score_candidate`) is identical across modes —
 the variation lives in `enumerate_candidates`.
 """
 
@@ -735,7 +735,7 @@ def _infer_num_seats(world: World) -> int:
     return max_owner + 1 if max_owner >= 0 else 1
 
 
-def score_candidate(
+def _v7_score_candidate(
     snap: Snapshot,
     action: list[list],
     *,
@@ -766,7 +766,7 @@ def score_candidate(
     multi-candidate search.
     """
     if snap.num_seats != 2:
-        raise ValueError(f"v7 score_candidate is 2P only (got {snap.num_seats})")
+        raise ValueError(f"v7 _v7_score_candidate is 2P only (got {snap.num_seats})")
     clone = fs_clone(snap)
     opp_id = 1 - my_id
 
@@ -821,7 +821,7 @@ def score_candidate_symmetric(
     K: int = 10,
     opp_tier: int = 1,
 ) -> float:
-    """Seat-symmetric variant of `score_candidate`.
+    """Seat-symmetric variant of `_v7_score_candidate`.
 
     Runs the rollout twice — once with us at seat 0 (opp at seat 1)
     and once with us at seat 1 (opp at seat 0) — and averages the
@@ -833,10 +833,10 @@ def score_candidate_symmetric(
     `origin/claude/game-theory-strategy-analysis-0oH4N` but adapted
     to operate on Snapshots (so we keep fast_sim's 183× speedup).
 
-    Cost: 2× score_candidate.
+    Cost: 2× _v7_score_candidate.
     """
-    a = score_candidate(snap, action, my_id=0, K=K, opp_tier=opp_tier)
-    b = score_candidate(snap, action, my_id=1, K=K, opp_tier=opp_tier)
+    a = _v7_score_candidate(snap, action, my_id=0, K=K, opp_tier=opp_tier)
+    b = _v7_score_candidate(snap, action, my_id=1, K=K, opp_tier=opp_tier)
     return (a + b) / 2.0
 
 
@@ -1218,7 +1218,7 @@ def choose_simple_2p(
         if elapsed_ms > wallclock_ms:
             break
         try:
-            score = score_candidate(
+            score = _v7_score_candidate(
                 snap, cand, my_id=my_id, K=K, opp_tier=1, value_fn=value_fn,
             )
         except Exception:
@@ -1845,7 +1845,7 @@ def choose(
         # tier (the v7_0 default) min-of-one is just the score itself.
         per_tier = []
         for tier in opp_tiers:
-            s = score_candidate(
+            s = _v7_score_candidate(
                 snap, cand, my_id=my_id, K=K,
                 opp_tier=tier, value_fn=value_fn,
                 followup_policy=followup_policy,
