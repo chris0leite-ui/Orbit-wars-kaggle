@@ -1010,6 +1010,46 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         _reserved.sort(key=lambda e: -e[0])
         prerank = _reserved
 
+    # Surplus-aggression bias (BASELINE_SURPLUS_AGGRESSION). When ON and our
+    # total ships exceed RATIO * max opp seat ships, multiply attack-class
+    # candidate scores by BOOST before they enter `scored`. Lets the chooser
+    # take risky-EV attacks while we have ship surplus to absorb bounces —
+    # "accepting risks" half of systematic-attack design (PI 2026-06-01).
+    # Computed ONCE per call. Default OFF preserves byte parity (Rule 46).
+    _surplus_active = False
+    _surplus_boost = 1.0
+    if os.environ.get("BASELINE_SURPLUS_AGGRESSION", "0").strip() == "1":
+        try:
+            _surplus_boost = float(
+                os.environ.get("BASELINE_SURPLUS_BOOST", "1.5"))
+        except ValueError:
+            _surplus_boost = 1.5
+        _surplus_boost = max(1.0, min(3.0, _surplus_boost))
+        try:
+            _surplus_ratio = float(
+                os.environ.get("BASELINE_SURPLUS_RATIO", "1.3"))
+        except ValueError:
+            _surplus_ratio = 1.3
+        _surplus_ratio = max(1.05, min(3.0, _surplus_ratio))
+        # Total ships per seat = planets + in-flight friendlies. Reuse the
+        # idiom from main.py:753 + ledger entries from model.ledger.
+        _seat_ships: dict[int, int] = {}
+        for _p in world.planets_by_id.values():
+            _o = int(_p.owner)
+            if _o >= 0:
+                _seat_ships[_o] = _seat_ships.get(_o, 0) + int(_p.ships)
+        # In-flight: model.ledger stores (eta, owner, ships) triples by tgt.
+        for _entries in model.ledger.values():
+            for _eta, _o, _sh in _entries:
+                _io = int(_o)
+                if _io >= 0:
+                    _seat_ships[_io] = _seat_ships.get(_io, 0) + int(_sh)
+        _my = int(_seat_ships.get(me, 0))
+        _max_opp = max(
+            (int(v) for s, v in _seat_ships.items() if s != me), default=0)
+        if _max_opp > 0 and _my > _surplus_ratio * _max_opp:
+            _surplus_active = True
+
     scored: list[tuple] = []
     solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0
     cand_count = 0
@@ -1097,6 +1137,12 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         float(score),  # leaf_delta after ML correction
                     )
                     score = score + vh_get_lambda() * head_out
+                # Surplus-aggression bias: boost attack-class candidate
+                # scores so the chooser stops vetoing risky attacks while
+                # we're rich. Rides on top of ML/VH corrections so it
+                # composes orthogonally with the composite stack.
+                if _surplus_active and _classify_target(tgt, me) == "attack":
+                    score *= _surplus_boost
                 if score > 0.0:
                     scored.append((score, src, tgt, ships, angle, wait_N,
                                    int(eta_traced) if eta_traced is not None else 0))

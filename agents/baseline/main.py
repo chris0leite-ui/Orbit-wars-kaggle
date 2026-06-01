@@ -145,6 +145,13 @@ LEDGER_ENABLED = os.environ.get("BASELINE_LEDGER", "off").strip().lower() == "on
 LEDGER_MODE = os.environ.get("BASELINE_LEDGER_MODE", "hard").strip().lower()
 _PENDING_LAUNCHES: dict[int, list[dict]] = {}
 
+# Persistent attack target state (BASELINE_PERSISTENT_ATTACK). Sticky top-K
+# enemy-by-production targets, recomputed at step 0 and every 50 steps.
+# `emit_persistent_attack` reads/updates this dict; default-OFF preserves
+# byte parity (Rule 46). PI 2026-06-01: "systematic attack accepting risks"
+# — campaign value of repeated pressure justifies per-turn negative leaf-EV.
+_PRIORITY_TARGETS: dict[int, tuple[list[int], int]] = {}  # me -> (tgt_ids, set_step)
+
 # Opening override (2026-05-21). Cherry-picked from analytical track
 # (origin/claude/strategy-axis-decision-3437). For step < OPENING_HORIZON
 # (=30), run the one-shot multi-turn MILP `opening_plan` and emit
@@ -173,6 +180,7 @@ from lib.world_model import WorldModel
 # `bundler-modular-agent-namespace-access-breaks-bundle` (2026-05-17).
 from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS
 from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON
+from agents.baseline.proposer import MIN_FLEET_SIZE as _PA_MIN_FLEET_SIZE, aim_and_eta as _pa_aim_and_eta, capture_floor_arrival as _pa_capture_floor_arrival, source_keep_floor as _pa_source_keep_floor, _source_survives_launch as _pa_source_survives_launch
 
 
 _PARITY_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
@@ -831,6 +839,156 @@ def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
     return list(moves) + extras
 
 
+_PA_STICKY_PERIOD: int = 50
+_PA_AIM_TOLERANCE: float = 0.1  # rad
+
+
+def emit_persistent_attack(moves, planets, my_id: int, world, model,
+                           step_now: int) -> list:
+    """Inject one capture-sized launch per turn at the highest-priority
+    uncovered enemy target. "Systematic attack accepting risks" half of
+    the 2026-06-01 design (PI): the chooser's per-turn leaf-EV scoring
+    correctly rejects negative-EV attacks, but the CAMPAIGN value of
+    repeated pressure on a sticky target is positive (3 x 30% capture
+    odds = 66% campaign success, plus drained defender reserves).
+
+    Mechanism: pick top-K enemy planets by production (sticky across
+    `_PA_STICKY_PERIOD` steps), check coverage of each by the moves
+    already emitted (aim within ±`_PA_AIM_TOLERANCE` rad of any source's
+    aim toward that target), and for each uncovered priority target
+    select the nearest surviving source and emit a SIZE_BALANCE
+    arrival-correct capture-sized launch.
+
+    Default OFF preserves byte parity (Rule 46).
+    """
+    if os.environ.get("BASELINE_PERSISTENT_ATTACK", "0").strip() != "1":
+        return moves
+    try:
+        max_inject = int(
+            os.environ.get("BASELINE_PERSISTENT_ATTACK_MAX_INJECT", "1"))
+    except ValueError:
+        max_inject = 1
+    max_inject = max(0, min(3, max_inject))
+    if max_inject <= 0:
+        return moves
+
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    enemy_planets = [
+        p for p in planets
+        if int(p.owner) != my_id and int(p.owner) != -1
+    ]
+    if not my_planets or not enemy_planets:
+        return moves
+
+    # Sticky priority targets — top-K enemy planets by production. Recompute
+    # at step 0 and every _PA_STICKY_PERIOD steps; otherwise reuse cache.
+    cached = _PRIORITY_TARGETS.get(my_id)
+    need_recompute = (
+        cached is None
+        or step_now == 0
+        or (step_now - int(cached[1])) >= _PA_STICKY_PERIOD
+    )
+    if need_recompute:
+        ranked = sorted(
+            enemy_planets, key=lambda p: (-int(p.production), int(p.id)),
+        )
+        tgt_ids = [int(p.id) for p in ranked[:max_inject]]
+        _PRIORITY_TARGETS[my_id] = (tgt_ids, int(step_now))
+    else:
+        tgt_ids = list(cached[0])
+
+    # Filter cached ids to those still enemy-owned (cheaper than re-rank).
+    planets_by_id = {int(p.id): p for p in planets}
+    priority_targets = []
+    for tid in tgt_ids:
+        p = planets_by_id.get(tid)
+        if p is None:
+            continue
+        if int(p.owner) == my_id or int(p.owner) == -1:
+            continue
+        priority_targets.append(p)
+    if not priority_targets:
+        return moves
+
+    used_srcs: set[int] = set()
+    for m in moves:
+        try:
+            used_srcs.add(int(m[0]))
+        except (TypeError, IndexError):
+            pass
+    omega = float(getattr(world, "omega", 0.0))
+
+    # Coverage: a target is covered if any existing move (src, angle) aims
+    # toward it within ±_PA_AIM_TOLERANCE rad of the source's aim_and_eta
+    # toward that target.
+    def _is_covered(tgt) -> bool:
+        for m in moves:
+            try:
+                m_src_id = int(m[0]); m_angle = float(m[1])
+            except (TypeError, IndexError, ValueError):
+                continue
+            src = planets_by_id.get(m_src_id)
+            if src is None or int(src.owner) != my_id:
+                continue
+            try:
+                a_aim, _eta = _pa_aim_and_eta(
+                    src, tgt, max(1, int(m[2])), omega,
+                    wait_N=0, world=world)
+            except Exception:
+                continue
+            if abs(float(a_aim) - m_angle) <= _PA_AIM_TOLERANCE:
+                return True
+        return False
+
+    extras = []
+    injected = 0
+    for tgt in priority_targets:
+        if injected >= max_inject:
+            break
+        if _is_covered(tgt):
+            continue
+        # Build candidate sources: not already firing, min ships, survives,
+        # within launch budget after source_keep_floor clamp.
+        candidates = []
+        for src in my_planets:
+            if int(src.id) in used_srcs:
+                continue
+            if int(src.ships) < _PA_MIN_FLEET_SIZE:
+                continue
+            try:
+                cap_arr = _pa_capture_floor_arrival(
+                    src, tgt, model, omega, my_id, world)
+            except Exception:
+                continue
+            try:
+                keep = _pa_source_keep_floor(src, 0, world, model, my_id)
+            except Exception:
+                keep = 0
+            if cap_arr > int(src.ships) - int(keep):
+                continue
+            try:
+                if not _pa_source_survives_launch(
+                        src, int(cap_arr), 0, world, model, my_id):
+                    continue
+            except Exception:
+                continue
+            try:
+                angle, eta = _pa_aim_and_eta(
+                    src, tgt, int(cap_arr), omega, wait_N=0, world=world)
+            except Exception:
+                continue
+            candidates.append((int(eta), src, float(angle), int(cap_arr)))
+        if not candidates:
+            continue
+        candidates.sort(key=lambda c: c[0])
+        _eta, src, angle, cap_arr = candidates[0]
+        extras.append([int(src.id), float(angle), int(cap_arr)])
+        used_srcs.add(int(src.id))
+        injected += 1
+
+    return list(moves) + extras
+
+
 def agent(obs, configuration=None):
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
@@ -983,6 +1141,7 @@ def agent(obs, configuration=None):
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
         moves = emit_sniper_strikes(moves, planets, me, world, model)
+        moves = emit_persistent_attack(moves, planets, me, world, model, step)
         return enforce_launch_rules(moves, planets, me, world, model)
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
@@ -1007,6 +1166,7 @@ def agent(obs, configuration=None):
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
         moves = emit_sniper_strikes(moves, planets, me, world, model)
+        moves = emit_persistent_attack(moves, planets, me, world, model, step)
         return enforce_launch_rules(moves, planets, me, world, model)
 
     baseline_favors = build_idle_baseline(
@@ -1055,4 +1215,5 @@ def agent(obs, configuration=None):
     moves = drain_stagnant_rear(moves, planets, me, world, model)
     moves = drain_combat_stack(moves, planets, me, world, model)
     moves = emit_sniper_strikes(moves, planets, me, world, model)
+    moves = emit_persistent_attack(moves, planets, me, world, model, step)
     return enforce_launch_rules(moves, planets, me, world, model)

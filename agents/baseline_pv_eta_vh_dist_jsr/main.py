@@ -69,21 +69,21 @@ _os.environ.setdefault("BASELINE_ORBITAL_SAFETY", "1")
 # Foundation: pv_eta time-discount.
 _os.environ.setdefault("BASELINE_PV_ETA", "1")
 
-# Composite layers DISABLED — the composite stack (distilled opp Tier 2 +
-# B.3 head VH_LAMBDA=1.0) settled mu=526.3 live (sub 53239342), well below
-# the launch_rules_universal champion mu=1183.7 and 00JzI's size_balance
-# mu=1097.0. Strip back to pv_eta + champion mechanism (launch_rules) +
-# attack fixes (slot_res + size_balance) which is the proven recipe.
-# _os.environ.setdefault("BASELINE_OPP_TIER", "2")
-# _os.environ.setdefault("BASELINE_OPP_FILTER_THRESHOLD", "0.15")
-# _os.environ.setdefault("BASELINE_VH_LAMBDA", "1.0")
+# Composite layer 1: distilled-ladder opp model (Tier 2 v2).
+# PI 2026-06-01: reverted the temporary strip. The composite is the
+# defensive foundation that holds planets and accumulates production
+# (PI's "solid fundamental behavior"). The 2026-06-01 strip chased one
+# unreliable local-A/B verdict (friction: local-AB-not-calibrated-to-live-ladder).
+_os.environ.setdefault("BASELINE_OPP_TIER", "2")
+_os.environ.setdefault("BASELINE_OPP_FILTER_THRESHOLD", "0.15")
+
+# Composite layer 2: B.3 CRN-advantage value head.
+_os.environ.setdefault("BASELINE_VH_LAMBDA", "1.0")
 
 # Attack fix 1: per-class scoring slots (attack starvation fix).
 _os.environ.setdefault("BASELINE_SLOT_RESERVATION", "3/2/2")
 
 # Attack fix 2: synchronized multi-source coalitions.
-# With composite stripped, max turn-ms dropped from ~1050 to ~480 — joint_sync
-# fits cleanly at 15 pairs / src_k=2. THIS IS THE ATTACK MECHANISM PI asked for.
 _os.environ.setdefault("BASELINE_JOINT_SYNC", "1")
 _os.environ.setdefault("BASELINE_JOINT_SYNC_MAX_PAIRS", "15")
 _os.environ.setdefault("BASELINE_JOINT_SYNC_SRC_K", "2")
@@ -92,12 +92,22 @@ _os.environ.setdefault("BASELINE_JOINT_SYNC_SRC_K", "2")
 _os.environ.setdefault("BASELINE_SIZE_BALANCE", "1")
 
 # Champion mechanism: universal K=10 launch-discipline validator.
-# All-time champion (sub 53182323 mu=1183.7) was named launch_rules_universal
-# because this is its key mechanism. Drops launches whose fleets arrive
-# after K=10 ticks (beyond the predictability horizon — far launches
-# routinely land at flipped/contested planets and waste ships).
 _os.environ.setdefault("BASELINE_LAUNCH_RULES", "1")
 _os.environ.setdefault("BASELINE_CAPTURE_HORIZON_K", "10")
+
+# Systematic attack feature A — surplus-aggression bias on v4 leaf-delta.
+# When our total ships > RATIO x max(opp ships), multiply attack-class
+# candidate scores by BOOST so the chooser stops vetoing risky attacks
+# while we're rich. "Accepting risks" half of the systematic-attack design.
+_os.environ.setdefault("BASELINE_SURPLUS_AGGRESSION", "1")
+_os.environ.setdefault("BASELINE_SURPLUS_BOOST", "1.5")
+_os.environ.setdefault("BASELINE_SURPLUS_RATIO", "1.3")
+
+# Systematic attack feature B — persistent attack target injection.
+# Sticky top-K enemy-by-production targets; inject one capture-sized launch
+# per turn at the highest-priority uncovered target. "Systematic" half.
+_os.environ.setdefault("BASELINE_PERSISTENT_ATTACK", "1")
+_os.environ.setdefault("BASELINE_PERSISTENT_ATTACK_MAX_INJECT", "1")
 
 # Kinematic-table bug fix (May-30; non-negotiable).
 _os.environ["KINEMATIC_TABLE_ENABLED"] = "0"
