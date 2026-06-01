@@ -1273,7 +1273,9 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         # generator with the downstream filter, don't loosen the K cap).
         sync_arrival_cap = max_horizon
         if _launch_rules_enabled():
-            sync_arrival_cap = min(max_horizon, _capture_horizon_k())
+            sync_arrival_cap = min(
+                max_horizon, _capture_horizon_k(getattr(world, "step", None))
+            )
         sync_count = 0
         for tgt0 in sync_targets:
             if (sync_count >= JOINT_SYNC_MAX_PAIRS

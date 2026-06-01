@@ -1085,7 +1085,7 @@ def propose(my_planets, target_pool, world, model, me: int,
     # post-pass for combat evaluation (preserves BASELINE_JOINT).
     from agents.baseline.launch_rules import capture_horizon_k, launch_rules_enabled
     _eta_prune = launch_rules_enabled()
-    _k = capture_horizon_k()
+    _k = capture_horizon_k(getattr(world, "step", None))
 
     prerank = []
     for src in my_planets:
