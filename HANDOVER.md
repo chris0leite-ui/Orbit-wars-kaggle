@@ -1,6 +1,7 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-06-01 07:35 UTC (sub 53243763 slotres settled μ=815.8;
+> Last written: 2026-06-01 07:35 UTC (sub 53243763 slotres still climbing
+> from μ=600 prior — last seen μ=792-815, oscillating, NOT settled;
 > integration plan with 00JzI ready to execute) by
 > `claude/competition-objective-alignment-hqNVM`.
 
@@ -30,10 +31,13 @@
    - Expansion candidates +29.4 and +20.7 — now scored
    - Action distribution: defense 47%, attack 26%, expansion 27%
    - n=1 vs v7_0 WIN 106 steps
-3. **Live calibration is weak.** Sub 53243763 settled μ=**815.8** — only
-   +14 over the evicted dist μ=801.8. The slot-reservation mechanism
-   works directionally but doesn't restore the joint_sync μ=1147 floor
-   we lost two submits ago.
+3. **Live calibration still in flux.** Sub 53243763 started at the
+   Kaggle Elo prior μ=600, climbed up through the 700s, last seen
+   μ=792-815 oscillating. **NOT settled — needs more games (typically
+   12-24 hours after submit for the rating to stabilize).** The
+   trajectory is upward overall, but the final value is unknown.
+   Re-check `kaggle competitions submissions orbit-wars | head -5` at
+   session start before any planning decisions depend on this number.
 4. **00JzI has compounding work.** Their `BASELINE_JOINT_SYNC` shipped
    live as μ=1147; their `BASELINE_SIZE_BALANCE` passed n=16 75% local
    today (not yet submitted). Combined with our slot reservation, the
@@ -44,7 +48,7 @@
 
 | Sub ID | Agent | μ | Role |
 |---|---|---:|---|
-| **53243763** | baseline_pv_eta_vh_dist_slotres | **815.8** | Rolling pair (newest) |
+| **53243763** | baseline_pv_eta_vh_dist_slotres | **792-815 (climbing)** | Rolling pair (newest) |
 | **53239342** | baseline_pv_eta_vh_dist_composite | **537.7** | Rolling pair (oldest) |
 | 53227546 | baseline_pv_eta_vh_dist (EVICTED) | 801.1 | historical |
 | 53223160 | baseline_joint_sync_submit (EVICTED) | ~1147 | 00JzI's best |
@@ -71,9 +75,12 @@ then execute Step 1 (branch creation) and Step 2 (cherry-pick).
   Reverted in `cbb862d`. The composite already uses ~885 ms p95; there
   is no safe headroom for a wallclock bump in this chooser.
 - **Slot reservation as a standalone agent at 3/2/2 against the existing
-  composite stack** — sub 53243763 settled μ=815.8, +14 over the prior
-  bundle. The mechanism works but isn't enough alone. Integration with
-  joint_sync + size_balance is the next axis.
+  composite stack** — sub 53243763 climbed from μ=600 prior into the
+  792-815 range and is still settling. **Trajectory is upward but
+  final μ unknown.** Mechanism works directionally; whether it alone
+  is enough vs the historical joint_sync μ=1147 floor depends on where
+  the rating settles. Integration with joint_sync + size_balance is
+  the next axis regardless.
 
 ## 2026-05-30 PM session — B.3 built, A/B'd, DECISION = HOLD + advance
 

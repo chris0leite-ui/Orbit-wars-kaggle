@@ -17,7 +17,7 @@
 
 | Sub ID | Date (UTC) | Agent | μ | Role |
 |---|---|---|---:|---|
-| **53243763** | 2026-06-01 06:51 | baseline_pv_eta_vh_dist_slotres (composite + per-class slot reservation) | **815.8** | **Rolling pair (newest)** |
+| **53243763** | 2026-06-01 06:51 | baseline_pv_eta_vh_dist_slotres (composite + per-class slot reservation) | **792-815 (climbing from μ=600, NOT settled)** | **Rolling pair (newest)** |
 | **53239342** | 2026-06-01 04:08 | baseline_pv_eta_vh_dist_composite (dist + B.3 head λ=1.0) | **537.7** | **Rolling pair (oldest)** |
 | 53227546 | 2026-05-31 17:46 | baseline_pv_eta_vh_dist (distilled-Tier-2 opp only) | 801.1 | EVICTED |
 | 53223160 | 2026-05-31 15:17 | baseline_joint_sync_submit (00JzI joint coalitions) | ~1147 | EVICTED — 00JzI's best |
@@ -26,7 +26,8 @@
 | 53182323 | 2026-05-30 11:26 | baseline_launch_rules_universal | 1183.7 | EVICTED — peak this week |
 
 - **Rolling-pair floor:** μ = 537.7 (composite oldest).
-- **Rolling-pair ceiling:** μ = 815.8 (slotres newest).
+- **Rolling-pair ceiling:** μ ≈ 792-815 (slotres newest, **still climbing — NOT settled**, started from μ=600 prior).
+- **Refresh before any planning decisions**: `kaggle competitions submissions orbit-wars | head -5`.
 - **Historical peak (recent week):** μ = 1183.7 (launch_rules_universal).
 - **Floor-at-risk:** **TRUE** — rolling pair sits 330+ μ below the
   evicted-pair peak.

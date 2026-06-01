@@ -10,17 +10,19 @@ submission to beat the current best evidence (00JzI's joint_sync at
 
 | Sub ID | Agent | μ | Branch |
 |---|---|---:|---|
-| 53243763 | baseline_pv_eta_vh_dist_slotres (PENDING→815.8) | **815.8** | hqNVM (ours) — position 1 |
+| 53243763 | baseline_pv_eta_vh_dist_slotres (NOT settled) | **792-815, climbing** from μ=600 prior | hqNVM (ours) — position 1 |
 | 53239342 | baseline_pv_eta_vh_dist_composite | 537.7 | hqNVM (ours) — position 2 |
 | 53227546 | baseline_pv_eta_vh_dist | 801.1 (evicted) | hqNVM (ours) |
 | 53223160 | baseline_joint_sync_submit | ~1147 (evicted) | 00JzI |
 | 53212044 | baseline_pv_eta_vh_b3smoke | ~1142 (evicted) | hqNVM (ours) |
 | 53182323 | baseline_launch_rules_universal | 1183.7 (evicted) | live champion |
 
-**Slotres at μ=815.8 is +14 over evicted dist** — the slot-reservation
-mechanism works directionally but the lift is small. The proven peak on
-either branch is joint_sync at μ~1147-1156. Integration target is to
-get back above that floor.
+**Slotres has not settled.** Kaggle Elo starts each new submit at the
+prior μ=600 and climbs/falls per game. Sub 53243763 is in the upward
+arc — last seen 792-815, oscillating. Final settled μ unknown for
+~12-24 hours after submit. **Re-check before any decisions that depend
+on slotres's number.** The proven peak on either branch (joint_sync
+~1147) is still the integration target.
 
 ### Branch surface
 
@@ -137,9 +139,7 @@ sits after it.
    - Defense% should drop further toward ~30-40%
 
 10. **Submit decision (Rule 42):**
-    - Eviction target: whatever is in position 2 at the time. If
-      composite μ=537.7 is still there, safe eviction. If slotres
-      μ=815.8 is in position 2, we'd evict our own lift.
+    - **Refresh first**: `kaggle competitions submissions orbit-wars | head -5`. The slotres μ should be settled by next session (12-24h after this submit). If slotres is in position 2 by then, pushing the integrated bundle evicts our own lift — Rule 42 requires PI sign-off if the integrated bundle's predicted μ is uncertain vs the settled slotres μ.
     - PI sign-off required.
     - Push-claim board entry in `state/MULTI_BRANCH.md` before submit.
 
@@ -151,7 +151,7 @@ sits after it.
 | Cherry-pick conflicts in chooser_trajectory.py are bigger than expected (their 426 LOC includes many `os.environ.get` reads near where we added ours) | Resolve by accepting both blocks; the patches are semantically independent. If structurally tangled, manually re-apply our 70 LOC block on top. |
 | Their `SIZE_BALANCE` changes proposer's `cheap_marginal_value` outputs in a way that violates our slot-reservation's assumption about per-class cheap_delta distributions | Re-run the probe step 5 to verify slot res still surfaces attack candidates. If size_balance makes attacks have HIGHER cheap_delta (which is the whole point of size_balance), our slot reservation becomes redundant for attacks — could disable it for attacks (`3/2/2` → `0/2/2`) and rely on size_balance. |
 | `BASELINE_JOINT_SYNC` candidates target enemy planets (good for slot res's "attack" class) BUT joint-sync entries are added to prerank by a different code path that bypasses our slot reservation | Verify by reading their joint-sync generator (chooser_trajectory.py around `BASELINE_JOINT_SYNC` block). If joint-sync candidates are added to `scored` directly rather than going through `prerank`, our slot reservation never sees them — which is fine, they're already added. |
-| Live μ < 815.8 (worse than slot-res alone) | Falsifies the compounding hypothesis. Pivot: pick the single strongest individual feature (likely joint_sync alone) and submit that. |
+| Live μ < settled slotres (whatever that turns out to be) | Falsifies the compounding hypothesis. Pivot: pick the single strongest individual feature (likely joint_sync alone) and submit that. |
 | Live μ > 1000 but < 1147 | Partial lift; reasonable. Frees us to iterate further. |
 | Live μ > 1147 | Strongest agent on either branch. Becomes the new floor. |
 
