@@ -989,6 +989,55 @@ def emit_persistent_attack(moves, planets, my_id: int, world, model,
     return list(moves) + extras
 
 
+def _resolve_chooser_for_turn(world, model, me: int) -> str:
+    """Per-turn chooser selection with optional ship-advantage override.
+
+    BASELINE_CHOOSER provides the buildup-mode default. When
+    BASELINE_ROI_SWITCH_ENABLED=1 and our total ships exceed
+    BASELINE_ROI_SWITCH_RATIO * max opponent seat's total ships,
+    return 'roi' to hand off to the closed-form ROI chooser this
+    turn. Static 'roi' selection always returns 'roi'.
+    """
+    static = os.environ.get("BASELINE_CHOOSER", "").strip().lower()
+    if static == "roi":
+        return "roi"
+    if os.environ.get("BASELINE_ROI_SWITCH_ENABLED", "0").strip() != "1":
+        return static
+    my_ships = 0
+    opp_by_seat: dict[int, int] = {}
+    for p in world.planets_by_id.values():
+        o = int(p.owner)
+        if o < 0:
+            continue
+        if o == int(me):
+            my_ships += int(p.ships)
+        else:
+            opp_by_seat[o] = opp_by_seat.get(o, 0) + int(p.ships)
+    for entries in model.ledger.values():
+        for _eta, owner, ships in entries:
+            o = int(owner)
+            if o < 0:
+                continue
+            if o == int(me):
+                my_ships += int(ships)
+            else:
+                opp_by_seat[o] = opp_by_seat.get(o, 0) + int(ships)
+    if not opp_by_seat:
+        return "roi"
+    max_opp = max(opp_by_seat.values())
+    if max_opp <= 0:
+        return "roi"
+    ratio = float(os.environ.get("BASELINE_ROI_SWITCH_RATIO", "1.5"))
+    if my_ships > ratio * max_opp:
+        if os.environ.get("BASELINE_ROI_SWITCH_DEBUG", "0").strip() == "1":
+            import sys as _sys
+            print(f"[roi-switch] FIRED  my={my_ships} max_opp={max_opp} "
+                  f"ratio={my_ships/max_opp:.2f}>thr={ratio}",
+                  file=_sys.stderr, flush=True)
+        return "roi"
+    return static
+
+
 def agent(obs, configuration=None):
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
@@ -1068,7 +1117,8 @@ def agent(obs, configuration=None):
     # no leaf-value approximation. See knowledge-base/concepts/
     # trajectory-first-architecture.md. Default chooser remains the
     # K-step rollout for backward compat with the v15-line A/B baseline.
-    if os.environ.get("BASELINE_CHOOSER", "").strip().lower() == "trajectory":
+    _resolved_chooser = _resolve_chooser_for_turn(world, model, me)
+    if _resolved_chooser == "trajectory":
         # Trajectory chooser doesn't need baseline_favors (no idle baseline);
         # propose still wants a baseline_len for shape but value doesn't
         # affect the trajectory chooser's scoring.
@@ -1148,7 +1198,7 @@ def agent(obs, configuration=None):
     # coalition + opp-modifier posterior; no fast_sim rollout. See
     # agents/baseline/chooser_roi.py and the plan at
     # /root/.claude/plans/okay-we-can-do-elegant-lampson.md.
-    if os.environ.get("BASELINE_CHOOSER", "").strip().lower() == "roi":
+    if _resolved_chooser == "roi":
         prerank = propose(
             my_planets, target_pool, world, model, me, omega,
             baseline_len=MAX_HORIZON + 1,
