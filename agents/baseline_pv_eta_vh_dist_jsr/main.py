@@ -80,9 +80,12 @@ _os.environ.setdefault("BASELINE_VH_LAMBDA", "1.0")
 _os.environ.setdefault("BASELINE_SLOT_RESERVATION", "3/2/2")
 
 # Attack fix 2: synchronized multi-source coalitions.
+# Tight pair budget (5) preserves the mechanism while keeping single-turn
+# joint_sync work bounded — vs the original 30 which overran 1000ms on
+# planet-rich states.
 _os.environ.setdefault("BASELINE_JOINT_SYNC", "1")
-_os.environ.setdefault("BASELINE_JOINT_SYNC_MAX_PAIRS", "30")
-_os.environ.setdefault("BASELINE_JOINT_SYNC_SRC_K", "3")
+_os.environ.setdefault("BASELINE_JOINT_SYNC_MAX_PAIRS", "5")
+_os.environ.setdefault("BASELINE_JOINT_SYNC_SRC_K", "2")
 
 # Attack fix 3: arrival-correct + source-safe sizing (proposer).
 _os.environ.setdefault("BASELINE_SIZE_BALANCE", "1")
