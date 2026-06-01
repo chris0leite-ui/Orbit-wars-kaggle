@@ -61,9 +61,14 @@ _os.environ.setdefault("BASELINE_OPP_FILTER_THRESHOLD", "0.15")
 # Composite layer 2: B.3 CRN-advantage value head.
 _os.environ.setdefault("BASELINE_VH_LAMBDA", "1.0")
 
-# New 2026-06-01: per-class scoring slots and wallclock bump.
+# New 2026-06-01: per-class scoring slots. Wallclock kept at the 600ms
+# default — single-game smoke with BASELINE_WALLCLOCK_MS=800 showed
+# max=1195ms (over the 1000ms env cap), p95=1025ms (also over). The
+# slot reservation doesn't change wallclock; it changes WHICH
+# candidates get scored within the existing budget. The probe showed
+# attacks + expansions get scored even at default wallclock — the
+# bump was secondary and not load-bearing.
 _os.environ.setdefault("BASELINE_SLOT_RESERVATION", "3/2/2")
-_os.environ.setdefault("BASELINE_WALLCLOCK_MS", "800")
 
 # Kinematic-table bug fix (May-30; non-negotiable).
 _os.environ["KINEMATIC_TABLE_ENABLED"] = "0"
