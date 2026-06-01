@@ -1,11 +1,59 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-31 PM by `claude/champion-strategy-rules-00JzI`
-> (sync-coalition panel CONFIRMED; Lever 1 size-to-hold NULL; sync-only
-> agent SUBMITTED as calibration probe). Prior 2026-05-31 AM + 2026-05-30
-> spatial-head sections demoted below.
+> Last written: 2026-06-01 PM by `claude/champion-strategy-rules-00JzI`
+> (hoarding root-caused + default-OFF expansion credit built; flat credit is
+> a non-gain; kinematic table confirmed neutral; NEXT = opening / dynamic
+> lookahead per PI). Prior 2026-05-31 sections demoted below.
 
-## 🟢 ACTIVE — 2026-05-31 PM (champion-strategy-rules-00JzI) — sync agent SUBMITTED (probe); size-to-hold is NULL; next session = READ THE LADDER, then branch
+## 🟢 ACTIVE — 2026-06-01 PM (champion-strategy-rules-00JzI) — hoarding diagnosed & fixed (default-OFF); flat credit a non-gain; NEXT = opening via dynamic lookahead
+
+**One-line state:** dominant live loss mode is **ship-hoarding / under-
+expansion** — root-caused to the chooser valuing fresh captures ≤0 (a
++916-production neutral scored −0.99). Built a default-OFF expansion credit
+(commit `9a19221`) that fixes the *behavior*, but a **flat** credit is a
+**non-gain** (40% vs champion, live μ ~1086). Kinematic table confirmed
+neutral (50.0%, no measurement leak). **Next session = work on the OPENING
+via a dynamic depth-adaptive lookahead (PI direction).**
+
+### What we did (verified, with data)
+- **Replay-mined 48 live games** (sub 53248277): 59% of fleets are defensive
+  reinforcement, only 25% capture; all 3 watched losses (istinetz ×2, xdddd)
+  = we had ≥ as many ships but FEWER planets — opponents spread + snowballed.
+  `audit/2026-06-01-live-replay-diagnosis.md`.
+- **Root cause:** `score_candidate_v4` scores a launch as rollout-delta vs a
+  passive-self baseline → fresh captures net ≤0; NEUTRAL/FOLLOWON bonuses are
+  gated on `delta>0` so cannot fix it; v4 dropped v2's held-production term.
+  Step-39 istinetz trace: 0 launches on 115 idle ships.
+- **Fix** `BASELINE_EXPAND_CREDIT` (default OFF, `9a19221`): restores the
+  held-production credit un-gated; flips hoarding→spending; +10ms latency.
+- **Submissions:** `53248277` (size-balance, ~1138) and `53259633`
+  (size-balance + expand-credit, ~1086) — both below the ~1183 champion
+  (PI-directed calibration probes).
+- **Kinematic A/B:** KT-OFF vs KT-ON = **50.0%** (n=36) + 66/66 move-parity →
+  behaviorally neutral AND not corrupting in-process measurement (leak
+  hypothesis refuted). The KT-off rebuild is the clean champion base.
+
+### Falsified / non-gain today
+- **Flat expansion credit** — non-gain vs the champion mirror (WRONG
+  instrument: both are hoarders, can't differentiate; expansion only helps vs
+  aggressive expanders). The right shape is **opponent/state-aware**, not flat.
+- **Size-balance (A+D)** — mild regression (~1138 vs 1183); the n=16 +31pp
+  triage did NOT replicate (clean A/B 40.6%).
+
+### Next-session first action (PI-directed, ranked)
+1. **Opening via dynamic depth-adaptive lookahead** (PI: "in the beginning
+   there is not as much going on… we might afford farther lookahead"). Deeper
+   early, gated by entity count / wallclock headroom. Read
+   `agents/baseline/main.py:896-911` + `lib/joint_solver/opening_planner.py`
+   first. **Fresh axis** (not the falsified chooser/value axis). EV high — the
+   snowball is set in the opening (gap opened by ~step 49 in every loss).
+2. **Opponent-aware expansion** — gate the expansion credit on the opponent
+   out-expanding us; evaluate vs AGGRESSIVE opponents, NOT the champion mirror.
+3. **Housekeeping** — archive HANDOVER (517→≤150 lines, WRAPUP step 5).
+
+Full notes: `knowledge-base/thoughts/2026-06-01-opening-lookahead-and-expansion-diagnosis.md`.
+
+## 2026-05-31 PM (champion-strategy-rules-00JzI) — sync agent SUBMITTED (probe); size-to-hold is NULL; next session = READ THE LADDER, then branch
 
 **One-line state:** the synchronized two-source team-up ("sync coalition")
 is confirmed strong vs the calibration panel (88–94%), so we **submitted it

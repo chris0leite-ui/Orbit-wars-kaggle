@@ -672,3 +672,9 @@ relevant skill file or source code, not back into friction.md.
 
 If something is worth a paragraph, it's not friction. It's a real
 postmortem.
+
+## 2026-06-01
+- `tag: n16-triage-misleads-again` — size-balance session: an n=16 single-opponent triage showed fix-ON 75% vs OFF 44% (+31pp) and was submitted under PI override; the clean n=64 geometry-stratified A/B settled at 40.6% vs champion and live μ at ~1136 (mild regression). The n=16 result was cohort-favorable noise. **Fix:** n=16 is a TRIAGE verdict only, never a submit gate, even when the lift looks large (Rule 45 reaffirmed); go straight to n≥32 + multi-opponent before any submit-relevant claim.
+- `tag: wrong-ab-instrument-champion-mirror` — A/B'd the expansion-credit fix vs the champion bundle and got a flat 40% / INCONCLUSIVE; the champion is itself a hoarder, so an expansion fix cannot differentiate in a mirror. **Fix:** evaluate expansion/opening fixes vs AGGRESSIVE opponents (the live istinetz/xdddd field, or an aggressive local panel), not the champion mirror (Rule 41 confound family — opponent-type confound).
+- `tag: bg-jobs-killed-by-container-restart` — long A/Bs (~30–50 min) were repeatedly killed by container reclaim across idle windows; one completed result was nearly lost when a relaunch's `: > LOG` truncated it. **Fix:** keep runs ≤~25 min, write incremental checkpoint lines so a partial run still reads, launch detached (nohup), and verify no run is mid-flight before relaunching to the same log path.
+- `tag: submitted-on-weak-evidence-twice` — both submissions today (size-balance, expand-credit) went out with no completed winrate A/B (PI-directed calibration probes); both settled below the prior backstop. **Fix:** when submitting on weak evidence, treat strictly as calibration probes, log the no-evidence state on the claim board (done), and prefer restoring a proven floor over speculative pushes when the rolling pair is soft.
