@@ -84,9 +84,15 @@ _os.environ.setdefault("BASELINE_VH_LAMBDA", "1.0")
 _os.environ.setdefault("BASELINE_SLOT_RESERVATION", "3/2/2")
 
 # Attack fix 2: synchronized multi-source coalitions.
+# Tightened from max_pairs=15/k=2 to 5/1 (2026-06-01): with composite layers
+# re-enabled the chooser is heavier (~600 ms p50 on seed 0) and joint_sync
+# at 15/2 pushed max past 1153 ms — over the 1000 ms Kaggle cap. Since the
+# new persistent_attack + surplus_boost features ARE the systematic-attack
+# mechanism PI asked for, joint_sync is now a secondary contributor that
+# should fit cheaply rather than dominate the turn-budget.
 _os.environ.setdefault("BASELINE_JOINT_SYNC", "1")
-_os.environ.setdefault("BASELINE_JOINT_SYNC_MAX_PAIRS", "15")
-_os.environ.setdefault("BASELINE_JOINT_SYNC_SRC_K", "2")
+_os.environ.setdefault("BASELINE_JOINT_SYNC_MAX_PAIRS", "5")
+_os.environ.setdefault("BASELINE_JOINT_SYNC_SRC_K", "1")
 
 # Attack fix 3: arrival-correct + source-safe sizing (proposer).
 _os.environ.setdefault("BASELINE_SIZE_BALANCE", "1")
