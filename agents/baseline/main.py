@@ -1003,6 +1003,13 @@ def _resolve_chooser_for_turn(world, model, me: int) -> str:
         return "roi"
     if os.environ.get("BASELINE_ROI_SWITCH_ENABLED", "0").strip() != "1":
         return static
+    # Count planet ships only. In-flight ledger ships are committed:
+    # our outgoing attacks are NOT available reserve, and counting them
+    # inflates my_ships into a death spiral (each ROI launch boosts the
+    # apparent advantage further while real reserves drain). Origin:
+    # seed=0 modeswitch-vs-jsr diagnostic 2026-06-01 — turn 56 logged
+    # my=196 but real planet reserves were ~120; opp counter-attacks
+    # landed turn 60-65 and ratio collapsed 1.54 → 0.53.
     my_ships = 0
     opp_by_seat: dict[int, int] = {}
     for p in world.planets_by_id.values():
@@ -1013,15 +1020,6 @@ def _resolve_chooser_for_turn(world, model, me: int) -> str:
             my_ships += int(p.ships)
         else:
             opp_by_seat[o] = opp_by_seat.get(o, 0) + int(p.ships)
-    for entries in model.ledger.values():
-        for _eta, owner, ships in entries:
-            o = int(owner)
-            if o < 0:
-                continue
-            if o == int(me):
-                my_ships += int(ships)
-            else:
-                opp_by_seat[o] = opp_by_seat.get(o, 0) + int(ships)
     if not opp_by_seat:
         return "roi"
     max_opp = max(opp_by_seat.values())
