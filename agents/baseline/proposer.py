@@ -233,6 +233,42 @@ def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
     return max(MIN_FLEET_SIZE, int(math.ceil(pred)) + 1)
 
 
+# Combat-resolution slack for the arrival-correct capture floor: the
+# interpreter resolves arrivals as "largest minus second-largest, ties
+# destroy all", so a defender+1 fleet that ties or loses by integer
+# rounding bounces. MARGIN=2 is a modeling slack for that discrete rule
+# plus a thin co-arrival cushion — NOT an overcommit multiplier
+# (Rule 40; H19-H21 falsified blind multipliers).
+SIZE_BALANCE_CAPTURE_MARGIN = 2
+
+
+def capture_floor_arrival(src, tgt, model, omega: float, me: int, world) -> int:
+    """Arrival-correct minimum ships to capture a NON-owned `tgt` from `src`.
+
+    Fixes under-delivery (failure mode D — 36% of lost-episode capture
+    failures on champion 53182323, audit 2026-06-01). `capture_size` sizes
+    the defender garrison at the eta of the SLOWEST probe fleet
+    (`tgt.ships + 1`); the real launched count flies faster, so the
+    garrison is mis-sampled and the emitted `cap` can bounce. This re-aims
+    at the REAL launched count via a bounded fixed point (mirrors the eta
+    fixed point in `world_model.time_to_enemy_threat`), and adds
+    `SIZE_BALANCE_CAPTURE_MARGIN` slack for the integer combat rule.
+
+    Non-owned targets only; the reinforce path keeps `capture_size`.
+    """
+    ships = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
+    for _ in range(3):
+        _angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
+        pred = float(model.ships_at(int(tgt.id), eta) or 0.0)
+        need = max(
+            MIN_FLEET_SIZE, int(math.ceil(pred)) + SIZE_BALANCE_CAPTURE_MARGIN
+        )
+        if need == ships:
+            break
+        ships = need
+    return ships
+
+
 def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list[int]:
     """Fire-now ship-count set: capture-size, 2x capture-size, full budget.
 
@@ -249,6 +285,31 @@ def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list
     budget = int(src.ships)
     if cap == 0:
         return []  # reinforce-targets with no threat
+
+    # Unified arrival-correct + source-safe fire-now sizing (failure
+    # modes D + A; gate 2026-06-01 = 58.3% of lost-episode capture
+    # failures). Default OFF → byte-identical to the pre-fix set below.
+    # Read at call time (not a module constant) so A/B subprocesses pick
+    # it up regardless of import order — matches BASELINE_JOINT_SYNC.
+    if (
+        os.environ.get("BASELINE_SIZE_BALANCE", "0").strip() == "1"
+        and int(tgt.owner) != me
+    ):
+        keep = source_keep_floor(src, 0, world, model, me)
+        max_sendable = budget - int(keep)
+        cap_arr = capture_floor_arrival(src, tgt, model, omega, me, world)
+        # Infeasible: can't both win at arrival (D) AND keep the source
+        # safe (A). Emit no fire-now column — the candidate is correctly
+        # invalid (the DROP filter at dedup is a belt-and-braces backstop).
+        if cap_arr > max_sendable:
+            return []
+        balanced = set()
+        if MIN_FLEET_SIZE <= cap_arr <= max_sendable:
+            balanced.add(cap_arr)            # lean, arrival-correct (D)
+        if max_sendable >= MIN_FLEET_SIZE:
+            balanced.add(max_sendable)        # full send, source-keep clamped (A)
+        return sorted(balanced)
+
     sizes = set()
     if MIN_FLEET_SIZE <= cap <= budget:
         sizes.add(cap)
@@ -467,6 +528,57 @@ def wait_band(wait_N: int) -> int:
     return 1 if wait_N <= 7 else 2
 
 
+def _keep_floor_from_threat(
+    threat_force: int, threat_eta: int, production: int, wait_N: int,
+) -> int:
+    """Shared residue-floor arithmetic for the source-keep FILTER
+    (`_source_survives_launch`) and the source-keep SIZER
+    (`source_keep_floor`). MUST stay the single formula, or a sized
+    launch could fail the very filter it is sized to pass — same
+    shared-formula discipline as HOLD_MIN_COUNTER_SHIPS / HOLD_SAFETY_MARGIN.
+
+    Minimum residue ships that, plus production accrual up to `threat_eta`,
+    cover `threat_force + 1`:
+
+        residue >= threat_force + 1 - production*(threat_eta - wait_N)
+
+    clamped at 0.
+    """
+    growth_after_launch_to_threat = (
+        int(production) * (int(threat_eta) - int(wait_N))
+    )
+    return max(0, int(threat_force) + 1 - growth_after_launch_to_threat)
+
+
+def source_keep_floor(src, wait_N: int, world, model, me: int) -> int:
+    """Minimum residue `src` must retain after a `wait_N` launch to still
+    defend itself against the earliest known IN-FLIGHT threat.
+
+    Returns 0 when there is no in-flight threat (none inbound, or
+    potential-launch-only with nothing in the ledger — the chooser's
+    rollout scores that case better). Does NOT encode the
+    `wait_N >= threat_eta` "source already fallen" case: that is an
+    unconditional drop handled in `_source_survives_launch`, because no
+    residue can rescue a source that has fallen by fire time.
+
+    Used by the SIZE_BALANCE sizer (failure mode A, source over-drain) so
+    the fire-now budget column never drains a source below this floor.
+    """
+    threat_eta = model.time_to_enemy_threat(int(src.id), me, world)
+    if threat_eta is None:
+        return 0
+    threat_force = sum(
+        sh
+        for (eta_arr, owner, sh) in model.ledger.get(int(src.id), [])
+        if owner != me and eta_arr <= int(threat_eta) + WAVE_LOOKAHEAD
+    )
+    if threat_force <= 0:
+        return 0
+    return _keep_floor_from_threat(
+        int(threat_force), int(threat_eta), int(src.production), int(wait_N),
+    )
+
+
 def _source_survives_launch(
     src, ships: int, wait_N: int, world, model, me: int,
 ) -> bool:
@@ -512,11 +624,10 @@ def _source_survives_launch(
     residue_after_launch = int(src.ships) + growth_during_wait - int(ships)
     if residue_after_launch < 0:
         return False  # nonsensical sizing; guard
-    growth_after_launch_to_threat = (
-        int(src.production) * (int(threat_eta) - int(wait_N))
+    # Shared residue-floor formula (also drives the SIZE_BALANCE sizer).
+    return residue_after_launch >= _keep_floor_from_threat(
+        int(threat_force), int(threat_eta), int(src.production), int(wait_N),
     )
-    garrison_at_threat = residue_after_launch + growth_after_launch_to_threat
-    return garrison_at_threat >= int(threat_force) + 1
 
 
 # Shared constants for the hold FILTER (_target_holdable_after_capture) and
