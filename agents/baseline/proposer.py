@@ -21,7 +21,12 @@ from lib.fleet import speed as fleet_speed
 from lib.orbit import is_orbiting, predict_relative
 from lib.scoring import pv_horizon
 from lib.trajectory import predict_fleet_fate
-from lib.world_model import _comet_paths_by_id, _position_at, comet_remaining_lifetime
+from lib.world_model import (
+    _comet_paths_by_id,
+    _position_at,
+    comet_remaining_lifetime,
+    predict_arrival_contest,
+)
 
 NUM_TARGETS_PER_SOURCE = 8
 MIN_FLEET_SIZE = 2
@@ -481,6 +486,39 @@ def wait_then_fire_variants(src, tgt, model, omega: float, me: int, world=None):
     return variants
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _contest_urgency_enabled() -> bool:
+    """Lever 2 master gate (default OFF → byte-identical champion)."""
+    return os.environ.get("BASELINE_CONTEST_URGENCY", "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
+def _contest_hold_margin() -> int:
+    return int(_env_float("BASELINE_CONTEST_HOLD_MARGIN", 2.0))
+
+
+def _urgency_mult(race_class: str) -> float:
+    """Contest-urgency multiplier on a capture's Stage-1 value (design §3
+    Lever 2). A race-loss capture won't hold, so its value is genuinely
+    lower — a modelling down-weight, not a hard cap (Rule 40). The
+    race-loss multiplier is the key swept hyperparameter (Rules 21/37)."""
+    if race_class == "race_win":
+        return _env_float("BASELINE_CONTEST_RACEWIN_MULT", 1.5)
+    if race_class == "race_loss":
+        return _env_float("BASELINE_CONTEST_RACELOSS_MULT", 0.2)
+    return _env_float("BASELINE_CONTEST_BANKABLE_MULT", 1.0)  # bankable
+
+
 def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
                          me: int, wait_N: int = 0) -> float:
     """Analytic Δ for Stage-1 ranking. Replaced by fast_sim in Stage-2.
@@ -516,7 +554,17 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
     if ships > pred_ships:
         pv = pv_horizon(int(world.step), int(arrival_step),
                         gamma=GAMMA, t_total=EPISODE_STEPS)
-        return 0.05 * float(tgt.production) * float(pv)
+        base = 0.05 * float(tgt.production) * float(pv)
+        # Lever 2 — contest-urgency. Down-weight captures we'd lose the
+        # race for (won't hold) and boost the ones we win; default OFF
+        # leaves `base` unchanged (Rule 40 modelling down-weight, not a cap).
+        if _contest_urgency_enabled():
+            contest = predict_arrival_contest(
+                model, world, int(tgt.id), int(arrival_step), me,
+                hold_margin=_contest_hold_margin(),
+            )
+            base *= _urgency_mult(contest.race_class)
+        return base
 
     return -0.5 * float(ships)
 
@@ -1085,7 +1133,7 @@ def propose(my_planets, target_pool, world, model, me: int,
     # post-pass for combat evaluation (preserves BASELINE_JOINT).
     from agents.baseline.launch_rules import capture_horizon_k, launch_rules_enabled
     _eta_prune = launch_rules_enabled()
-    _k = capture_horizon_k(getattr(world, "step", None))
+    _world_step = getattr(world, "step", None)
 
     prerank = []
     for src in my_planets:
@@ -1095,11 +1143,20 @@ def propose(my_planets, target_pool, world, model, me: int,
             if int(tgt.id) == int(src.id):
                 continue
 
+            # Per-target predictability ceiling. Identical to the old global
+            # `capture_horizon_k(step)` (floor) when the state-driven lever is
+            # OFF; when ON, an uncontested far target gets a higher K so its
+            # safe long launches survive the prune (they were being dropped at
+            # the floor and never reached the chooser — the freed-grab path).
+            _k_tgt = capture_horizon_k(
+                _world_step, tgt_id=int(tgt.id), world=world, model=model, me=me,
+            )
+
             for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
                 angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
-                if _eta_prune and int(eta) > _k:
+                if _eta_prune and int(eta) > _k_tgt:
                     continue
                 horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if horizon >= baseline_len:

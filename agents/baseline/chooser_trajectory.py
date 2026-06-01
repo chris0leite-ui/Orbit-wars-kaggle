@@ -53,6 +53,7 @@ from agents.baseline.proposer import hold_need
 from agents.baseline.proposer import nearest_k as _nearest_k
 from agents.baseline.launch_rules import capture_horizon_k as _capture_horizon_k
 from agents.baseline.launch_rules import launch_rules_enabled as _launch_rules_enabled
+from agents.baseline.launch_rules import state_driven_k_enabled as _state_driven_k_enabled
 
 
 EPISODE_STEPS_TOTAL: int = 500
@@ -1272,10 +1273,14 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         # only form coalitions whose arrival is within K (Rule 40: align the
         # generator with the downstream filter, don't loosen the K cap).
         sync_arrival_cap = max_horizon
+        _per_target_sync_cap = False
         if _launch_rules_enabled():
             sync_arrival_cap = min(
                 max_horizon, _capture_horizon_k(getattr(world, "step", None))
             )
+            # State-driven lever: the cap is the predictability of the
+            # coalition's own target (computed per tgt0 at Gate 2b below).
+            _per_target_sync_cap = _state_driven_k_enabled()
         sync_count = 0
         for tgt0 in sync_targets:
             if (sync_count >= JOINT_SYNC_MAX_PAIRS
@@ -1353,7 +1358,12 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             # Gate 2b: both legs must arrive within the launch-rules ceiling K,
             # else the fire-now far leg is deleted downstream and the coalition
             # half-fires (see sync_arrival_cap above).
-            if tarr > sync_arrival_cap:
+            _cap = sync_arrival_cap
+            if _per_target_sync_cap:
+                _cap = min(max_horizon, _capture_horizon_k(
+                    getattr(world, "step", None), tgt_id=int(tgt0.id),
+                    world=world, model=model, me=me))
+            if tarr > _cap:
                 continue
             _oT, garr_tarr = predict_garrison_at(tgt0, tarr, arrivals)
             # Gate 3: combined force must actually exceed garrison at arrival.

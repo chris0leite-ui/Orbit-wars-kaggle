@@ -39,9 +39,15 @@ import os
 from types import SimpleNamespace
 
 from lib.trajectory import predict_fleet_fate
-from lib.world_model import predict_garrison_at
+from lib.world_model import opp_contest_tick, predict_garrison_at
 
 DEFAULT_CAPTURE_HORIZON_K = 10
+
+# State-driven-K ceiling: the farthest-out arrival a launch may target when
+# the lever admits an uncontested planet (design §3 Lever A). K is clamped
+# to [floor, this] so the lever can only ever RAISE K above the champion's
+# floor for safe targets — never lower it — keeping the change monotone.
+DEFAULT_STATE_K_CEIL = 30
 
 # Sentinel target whose id never matches a real planet, so
 # predict_fleet_fate reports the FIRST planet actually struck as
@@ -72,6 +78,12 @@ def _adaptive_k_enabled() -> bool:
     )
 
 
+def state_driven_k_enabled() -> bool:
+    return os.environ.get("BASELINE_STATE_DRIVEN_K", "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
 def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name, "").strip()
     if not raw:
@@ -82,15 +94,30 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def capture_horizon_k(step=None) -> int:
+def capture_horizon_k(step=None, *, tgt_id=None, world=None, model=None,
+                      me=None) -> int:
     """Predictability ceiling K (launches arriving after K are dropped).
 
     Static (default, byte-identical champion): returns the floor (env
     ``BASELINE_CAPTURE_HORIZON_K`` or ``DEFAULT_CAPTURE_HORIZON_K`` = 10),
-    ignoring ``step``.
+    ignoring every argument.
 
-    Adaptive (``BASELINE_ADAPTIVE_K=1``): K is LARGE early and decays
-    linearly to the floor by ``T_SETTLE``. The opening is predictable
+    State-driven (``BASELINE_STATE_DRIVEN_K=1``): K becomes the predictability
+    of the *specific target* rather than a clock —
+    ``K_target = clamp(floor, ceil, opp_earliest_contest_tick)``. An
+    uncontested target (no enemy can reach it) → ceil (commit long); a target
+    the opponent can contest at tick T → K=T (don't commit a fleet that lands
+    after the board there changes). Clamped to ``[floor, ceil]`` so the lever
+    can only RAISE K above the champion's floor for safe/far targets, never
+    lower it — a monotone extension. Requires ``tgt_id`` + ``world`` +
+    ``model`` + ``me``; a target-less call (efficiency/global sites) returns
+    the ceil so it never pre-drops a launch the per-target gate would admit.
+    Ceil via ``BASELINE_STATE_K_CEIL`` (default 30). This is the principled
+    form of the adaptive step-schedule below — design §3 Lever A,
+    knowledge-base/concepts/contest-aware-conversion-design.md.
+
+    Adaptive step-schedule (``BASELINE_ADAPTIVE_K=1``): K is LARGE early and
+    decays linearly to the floor by ``T_SETTLE``. The opening is predictable
     (few in-flight fleets, planets at known positions) so a far launch is
     safe there; as the board fills, K returns to the champion's disciplined
     floor. Empirically the static floor=10 hides ~75% of the opening
@@ -105,6 +132,18 @@ def capture_horizon_k(step=None) -> int:
     returned (preserves every existing caller + the static champion).
     """
     floor = _capture_horizon_floor()
+
+    if state_driven_k_enabled():
+        ceil = _env_int("BASELINE_STATE_K_CEIL", DEFAULT_STATE_K_CEIL)
+        if ceil < floor:
+            ceil = floor
+        if tgt_id is None or world is None or model is None or me is None:
+            return ceil  # global/efficiency call — permissive; gate is per-target
+        opp_tick = opp_contest_tick(model, world, int(tgt_id), int(me))
+        if opp_tick is None:
+            return ceil  # uncontested target → safe to commit long
+        return max(floor, min(ceil, int(opp_tick)))
+
     if step is None or not _adaptive_k_enabled():
         return floor
     k_open = _env_int("BASELINE_ADAPTIVE_K_OPEN", 20)
@@ -146,8 +185,13 @@ def enforce_launch_rules(moves, planets, me, world, model, k=None):
     """
     if not launch_rules_enabled() or not moves:
         return moves
+    world_step = getattr(world, "step", None)
+    # When K is auto-computed (k is None) and the state-driven lever is on,
+    # the ceiling K is enforced PER TARGET in Pass 3 below; an explicit k
+    # override (tests / callers) is respected as a fixed ceiling.
+    per_target_k = (k is None) and state_driven_k_enabled()
     if k is None:
-        k = capture_horizon_k(getattr(world, "step", None))
+        k = capture_horizon_k(world_step)
     me = int(me)
 
     by_id = world.planets_by_id
@@ -209,7 +253,13 @@ def enforce_launch_rules(moves, planets, me, world, model, k=None):
         # reinforcement of our own planets (incl. comet-sourced) — a fleet
         # that arrives after the horizon is betting on an unpredictable board
         # and routinely lands at a flipped/contested planet and loses.
-        if step > k:
+        # State-driven lever: K is the predictability of THIS target.
+        k_eff = k
+        if per_target_k:
+            k_eff = capture_horizon_k(
+                world_step, tgt_id=hit_pid, world=world, model=model, me=me,
+            )
+        if step > k_eff:
             continue
         if owner == me:
             out.append(mv)            # reinforcement within horizon

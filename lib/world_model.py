@@ -560,3 +560,86 @@ def comet_position_at(planet_id: int, world, lead_turns: int) -> tuple[float, fl
         return None
     point = path[idx]
     return float(point[0]), float(point[1])
+
+
+# ---------------------------------------------------------------------------
+# Contest-aware conversion — shared primitive (design:
+# knowledge-base/concepts/contest-aware-conversion-design.md §2).
+#
+# Because fleets cannot die in flight, every failed capture is a
+# prediction/timing error: we arrived under-strength, too late, or at a
+# planet that flipped en route. `predict_arrival_contest` answers, for one
+# candidate launch, *who reaches this target first and with what state* —
+# the shared brain the urgency / state-K / sizing / staging levers derive
+# from. v1 reuses only existing primitives (Rule 47, no new physics):
+# `WorldModel.time_to_enemy_threat` (opp earliest contest), `owner_at` /
+# `ships_at` (predicted arrival state). Lever 3 later enriches the garrison
+# with opponent reinforcement; the dataclass field is the seam for that.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ArrivalContest:
+    """Predicted state of a launch's target at our arrival tick."""
+
+    my_arrival_tick: int
+    predicted_owner: int | None
+    predicted_garrison: float
+    opp_earliest_contest_tick: int | None
+    race_class: str  # "race_win" | "bankable" | "race_loss"
+
+
+# Per-step memo of `opp_earliest_contest_tick`. It is independent of our
+# fleet size, so caching it per (step, tgt) keeps the per-candidate cost
+# off `time_to_enemy_threat` (O(enemy planets) + a 5-iter fixed point for
+# orbiting targets) — the cost-critical reuse (Rule 2 / design §6). Keyed
+# by tgt_id; flushed whenever the observed step changes (covers both the
+# normal increment and a reset-to-0 at the start of a fresh game in the
+# same process).
+_contest_cache_step: int | None = None
+_contest_cache: dict[int, int | None] = {}
+
+
+def opp_contest_tick(model, world, tgt_id: int, me: int) -> int | None:
+    """`time_to_enemy_threat`, memoised per (world.step, tgt_id).
+
+    The opponent's earliest contest tick is independent of our fleet size,
+    so caching it per (step, tgt) keeps the per-candidate cost off
+    `time_to_enemy_threat` — the cost-critical reuse shared by the
+    contest-urgency lever and the state-driven horizon K."""
+    global _contest_cache_step
+    step = int(getattr(world, "step", 0) or 0)
+    if step != _contest_cache_step:
+        _contest_cache_step = step
+        _contest_cache.clear()
+    if tgt_id not in _contest_cache:
+        _contest_cache[tgt_id] = model.time_to_enemy_threat(int(tgt_id), int(me), world)
+    return _contest_cache[tgt_id]
+
+
+def predict_arrival_contest(model, world, tgt_id: int, my_arrival_tick: int,
+                            me: int, *, hold_margin: int = 2) -> ArrivalContest:
+    """Predict the target's contest state at our arrival; classify the race.
+
+    Race classes (design §3 Lever 2):
+      - ``bankable``  — opponent cannot contest at all (defer, can't be lost);
+      - ``race_win``  — we land and can hold the counter
+                        (``my_arrival + hold_margin < opp_contest``);
+      - ``race_loss`` — we'd arrive at/after the opponent can contest, so the
+                        capture won't hold (``my_arrival >= opp_contest``).
+    """
+    arrival = int(my_arrival_tick)
+    opp_tick = opp_contest_tick(model, world, int(tgt_id), int(me))
+    if opp_tick is None:
+        race = "bankable"
+    elif arrival + int(hold_margin) < int(opp_tick):
+        race = "race_win"
+    else:
+        race = "race_loss"
+    return ArrivalContest(
+        my_arrival_tick=arrival,
+        predicted_owner=model.owner_at(int(tgt_id), arrival),
+        predicted_garrison=float(model.ships_at(int(tgt_id), arrival) or 0.0),
+        opp_earliest_contest_tick=opp_tick,
+        race_class=race,
+    )
