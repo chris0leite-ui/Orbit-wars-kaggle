@@ -77,11 +77,12 @@ timing)**.
    has real signal → build the **state-driven** redesign (K doc §8: per-target
    `K ≈ time-until-enemy-interference`, clamped) on top of it; the step
    schedule is just the crude v1 that already shows lift.
-2. **Contest-urgency (top build candidate).** Conversion = sizing+timing+race.
-   Sizing alone failed (size-balance regressed); the untested half is
-   **timing/race** — prioritise captures we *narrowly win* the race for,
-   defer bankable ones. Value the opponent's reachability of each target.
-   Evaluate vs *aggressive* opponents, not the champion mirror.
+2. **Build the contest-aware conversion design** (the integrated forward
+   plan): `knowledge-base/concepts/contest-aware-conversion-design.md`. One
+   primitive (`predict_arrival_contest`) → four levers (state-driven K,
+   contest-urgency, opp-reinforcement-in-garrison, forward staging). Sequence
+   Lever 2 (urgency) → 1 (state-driven K) → 3 → 4; each default-OFF + its own
+   A/B; validate paired / vs-aggressive, never the champion mirror.
 3. **Recover the rolling pair.** It's soft (1059+1142). Push champion KT-OFF
    (`submissions/baseline_champion_nokt.py`, ready, config baked) — needs two
    pushes to fully clear; surface the Rule-42 claim each time.

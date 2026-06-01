@@ -1,5 +1,24 @@
 # state/hypothesis-board.md — open agent-design hypotheses
 
+## Open — Contest-aware conversion (2026-06-01, `champion-strategy-rules-00JzI`)
+
+> Integrated design: `knowledge-base/concepts/contest-aware-conversion-design.md`.
+> Root: the loss mode is **conversion** (launch a lot, capture little), and
+> since fleets can't die in flight, every failed capture is a
+> prediction/timing error (`audit/2026-06-01-loss-mode-diagnosis.md`).
+
+**One primitive, four levers.** `predict_arrival_contest(src,tgt,fire_step)`
+predicts a target's owner+garrison at our arrival *including the opponent's
+likely reinforcement*; from it derive: **(1)** state-driven horizon K
+(`K_target = opp_earliest_contest_tick`, the principled form of the shipped
+step-schedule v1); **(2)** contest-urgency value (prioritise race-wins,
+defer bankable, suppress race-loss launches); **(3)** opponent reinforcement
+folded into the arrival garrison (modelling-correct sizing — why naive
+size-balance failed); **(4)** forward staging (one-hop redeploy valued by
+the race-win it unlocks). Build incrementally, each default-OFF + its own
+A/B; sequence Lever 2 → 1 → 3 → 4. Validate paired / vs-aggressive, never
+the champion mirror (Rule 41). Falsify per Rules 21/37.
+
 ## Open — Geometry-conditional EDA (2026-05-14)
 
 > Five-mine EDA on 60 top-10 replays + (in-progress) ~500 self-play games.
