@@ -29,7 +29,7 @@ Decision-quality basis, not outcome basis.
 - `bg-jobs-killed-by-container-restart`
 - `submitted-on-weak-evidence-twice`
 
-## Promotion candidates (PI ratified: PENDING — not yet applied to improvements.md)
+## Promotion candidates (PI ratified: NO — none promoted; improvements.md untouched)
 
 ### [ ] CLAUDE.md / guardrails — A/B opponent must exercise the mechanism under test
 **Tag:** `wrong-ab-instrument-champion-mirror` (expansion fix A/B'd vs a hoarder mirror → false null)
@@ -60,7 +60,7 @@ the third small-n false-positive lift this comp.
 **Why:** Rule 45 already exists but recurred; cost = rolling-pair slot drift.
 
 ## PI additions (from step 4)
-- PENDING — postmortem questions posed; PI wrapping up. To be filled if PI replies.
+- Nothing to add; no candidates promoted (PI, 2026-06-01).
 
 ## Framework version at session-end
 - Commit SHA: (this commit)
