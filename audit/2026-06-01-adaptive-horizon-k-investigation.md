@@ -178,8 +178,15 @@ holds that the schedule shape is the reason.
 
 ### Status
 
-- v1 step-schedule A/B (ON vs immune champion, CRN, n=32): **in flight**.
-  Interim n=18 = 12W/6L (67%) — leaning positive, not yet conclusive.
+- v1 step-schedule A/B (ON vs immune champion, CRN, n=32): **DONE = 21/32 =
+  65.6%, Wilson [0.483, 0.796]**, 0 timeouts. Triage-POSITIVE (point well
+  above 50%) but **misses the Rule 43b gate** (Wilson-lo 0.483 < 0.50) — and
+  single-opponent only (Rule 43a panel not run). Beat the "wrong-phase →
+  neutral" prediction: the horizon lever has real signal even as a crude step
+  schedule. Confirm before any submit: extend champion h2h to n=64
+  (tighten Wilson-lo ≥ 0.50) + multi-opp panel (v7_0/v4_planner/v3.5.1,
+  Wilson-lo ≥ 0.55 each). The state-driven redesign remains the better shape
+  to build *on top of* this confirmed signal.
 - Earlier ON-vs-OFF A/B was **discarded** (contamination: the OFF bundle has
   the live env-read code, so the ON bundle's baked `ADAPTIVE_K=1` leaked into
   the shared process and turned OFF adaptive too). Valid A/Bs use the

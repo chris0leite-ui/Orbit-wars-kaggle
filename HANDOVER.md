@@ -70,13 +70,13 @@ timing)**.
 
 ### Next-session first actions (ranked)
 
-1. **Read the v1 adaptive-K A/B verdict** (`/tmp/adaptiveK_vs_champ_ab.txt`
-   or re-run `clean_ab champ_adaptiveK_on.py baseline_champion_nokt.py
-   --seeds 16`). Interim was 12W/6L. If non-negative → the horizon lever has
-   signal; build the **state-driven** redesign (§8 of the K doc): per-target
-   `K ≈ time-until-enemy-interference`, clamped — raises horizon in midgame
-   lulls, which the step-schedule misses. If clearly negative → the lever is
-   dead, pivot to contest-urgency.
+1. **Adaptive-K v1 A/B is DONE: 21/32 = 65.6% vs champion** (Wilson
+   [0.483, 0.796]). Triage-positive but misses Rule 43b (Wilson-lo 0.483 <
+   0.50) and is single-opponent. **Confirm before submit:** champion h2h to
+   n=64 (tighten Wilson-lo) + multi-opp panel (Rule 43a). The horizon lever
+   has real signal → build the **state-driven** redesign (K doc §8: per-target
+   `K ≈ time-until-enemy-interference`, clamped) on top of it; the step
+   schedule is just the crude v1 that already shows lift.
 2. **Contest-urgency (top build candidate).** Conversion = sizing+timing+race.
    Sizing alone failed (size-balance regressed); the untested half is
    **timing/race** — prioritise captures we *narrowly win* the race for,
