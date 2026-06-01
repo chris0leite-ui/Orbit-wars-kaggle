@@ -1,0 +1,107 @@
+{
+  "submission_id": "53239342",
+  "generated_utc": "2026-06-01T04:36:43Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 4,
+  "n_played": 4,
+  "wins_total": 1,
+  "winrate_total": 0.25,
+  "by_size": {
+    "2": {
+      "n": 1,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "4": {
+      "n": 3,
+      "wins": 1,
+      "winrate": 0.3333333333333333
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 2,
+    "1": 1,
+    "2": 2,
+    "3": 2
+  },
+  "episode_length_steps": {
+    "n": 4,
+    "min": 218,
+    "q1": 246,
+    "median": 500,
+    "q3": 500,
+    "max": 500,
+    "mean": 366
+  },
+  "opponents": [
+    {
+      "name": "ghost613",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Bunheng Try",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "RKQ",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Yaotong Niu",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Mehdi Boumiza",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Sarthak Ganbote",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Tuncay Ayd\u0131n",
+      "seen": 1,
+      "beat_us": 0
+    }
+  ],
+  "losses": [
+    {
+      "episode": "episode-78367315",
+      "size": 4,
+      "opponents": [
+        "ghost613",
+        "Bunheng Try",
+        "RKQ"
+      ],
+      "winner": "ghost613",
+      "steps": 218
+    },
+    {
+      "episode": "episode-78367540",
+      "size": 2,
+      "opponents": [
+        "Yaotong Niu"
+      ],
+      "winner": "Yaotong Niu",
+      "steps": 500
+    },
+    {
+      "episode": "episode-78367890",
+      "size": 4,
+      "opponents": [
+        "Mehdi Boumiza",
+        "Sarthak Ganbote",
+        "Tuncay Ayd\u0131n"
+      ],
+      "winner": "Mehdi Boumiza",
+      "steps": 246
+    }
+  ]
+}
