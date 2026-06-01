@@ -1028,12 +1028,17 @@ def _resolve_chooser_for_turn(world, model, me: int) -> str:
     if max_opp <= 0:
         return "roi"
     ratio = float(os.environ.get("BASELINE_ROI_SWITCH_RATIO", "1.5"))
-    if my_ships > ratio * max_opp:
-        if os.environ.get("BASELINE_ROI_SWITCH_DEBUG", "0").strip() == "1":
-            import sys as _sys
-            print(f"[roi-switch] FIRED  my={my_ships} max_opp={max_opp} "
-                  f"ratio={my_ships/max_opp:.2f}>thr={ratio}",
-                  file=_sys.stderr, flush=True)
+    fired = my_ships > ratio * max_opp
+    _dbg = os.environ.get("BASELINE_ROI_SWITCH_DEBUG", "").strip()
+    if _dbg:
+        try:
+            with open(_dbg, "a") as _f:
+                _f.write(f"{'FIRED' if fired else 'skip'} "
+                         f"my={my_ships} max_opp={max_opp} "
+                         f"r={my_ships/max(max_opp,1):.2f} thr={ratio}\n")
+        except OSError:
+            pass
+    if fired:
         return "roi"
     return static
 
