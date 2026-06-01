@@ -1863,3 +1863,12 @@ def choose(
             best_score = score
             best_action = list(cand)
     return best_action
+
+
+# Bundle-safe alias: agents/baseline/chooser.py also defines `choose`,
+# inlined after lib/v7_search.py in the bundler — its def-statement
+# rebinds the bare name `choose` in the bundle's global namespace. This
+# alias captures a reference to v7_search.choose at module-import time
+# so it survives the rebind. Import as
+# `from lib.v7_search import v7_search_choose`.
+v7_search_choose = choose

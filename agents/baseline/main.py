@@ -1230,7 +1230,11 @@ def agent(obs, configuration=None):
     # ground — structurally protected from greedy over-commit (the
     # failure mode of the closed-form ROI handoff).
     if _resolved_chooser == "v7_add_one":
-        from lib.v7_search import choose as v7_choose
+        # NB: must import via `v7_search_choose` alias, not `choose`.
+        # Both lib/v7_search.py and agents/baseline/chooser.py define
+        # `choose`; in the bundle the chooser.py def wins. The alias
+        # captures v7_search.choose at module-load time.
+        from lib.v7_search import v7_search_choose as v7_choose
         wc = float(os.environ.get("BASELINE_V7_WALLCLOCK_MS", "500.0"))
         _v7_dbg = os.environ.get("BASELINE_V7_DEBUG", "").strip()
         try:
