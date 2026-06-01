@@ -1021,10 +1021,10 @@ def _resolve_chooser_for_turn(world, model, me: int) -> str:
         else:
             opp_by_seat[o] = opp_by_seat.get(o, 0) + int(p.ships)
     if not opp_by_seat:
-        return "roi"
+        return os.environ.get("BASELINE_AGGRESSION_CHOOSER", "roi")
     max_opp = max(opp_by_seat.values())
     if max_opp <= 0:
-        return "roi"
+        return os.environ.get("BASELINE_AGGRESSION_CHOOSER", "roi")
     ratio = float(os.environ.get("BASELINE_ROI_SWITCH_RATIO", "1.5"))
     fired = my_ships > ratio * max_opp
     _dbg = os.environ.get("BASELINE_ROI_SWITCH_DEBUG", "").strip()
@@ -1037,7 +1037,7 @@ def _resolve_chooser_for_turn(world, model, me: int) -> str:
         except OSError:
             pass
     if fired:
-        return "roi"
+        return os.environ.get("BASELINE_AGGRESSION_CHOOSER", "roi")
     return static
 
 
@@ -1213,6 +1213,32 @@ def agent(obs, configuration=None):
             me, num_seats, wallclock_ms,
             MIN_HORIZON, MAX_HORIZON, gamma,
             world, model, step,
+        )
+        moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
+        moves = drain_idle_rear(moves, planets, me, world, model)
+        moves = drain_stagnant_rear(moves, planets, me, world, model)
+        moves = drain_combat_stack(moves, planets, me, world, model)
+        moves = emit_sniper_strikes(moves, planets, me, world, model)
+        moves = emit_persistent_attack(moves, planets, me, world, model, step)
+        return enforce_launch_rules(moves, planets, me, world, model)
+
+    # v7_search add_one chooser opt-in (2026-06-01). Aggression-mode
+    # handoff from trajectory: when ship advantage crosses the switch
+    # ratio, v7_search.choose extends jsr's snipe+reinforce+drain
+    # incumbent by ONE more launch from an idle source, then K=10 rolls
+    # each variant out. Parity floor refuses to add anything that loses
+    # ground — structurally protected from greedy over-commit (the
+    # failure mode of the closed-form ROI handoff).
+    if _resolved_chooser == "v7_add_one":
+        from lib.v7_search import choose as v7_choose
+        step = int(obs_d.get("step", 0))
+        wc = float(os.environ.get("BASELINE_V7_WALLCLOCK_MS", "500.0"))
+        moves = v7_choose(
+            obs, configuration,
+            enumerator_mode="add_one",
+            K=int(os.environ.get("BASELINE_V7_K", "10")),
+            wallclock_ms=wc,
+            my_id=me,
         )
         moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
         moves = drain_idle_rear(moves, planets, me, world, model)
