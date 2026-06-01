@@ -1232,19 +1232,35 @@ def agent(obs, configuration=None):
     if _resolved_chooser == "v7_add_one":
         from lib.v7_search import choose as v7_choose
         wc = float(os.environ.get("BASELINE_V7_WALLCLOCK_MS", "500.0"))
-        moves = v7_choose(
-            obs, configuration,
-            enumerator_mode="add_one",
-            K=int(os.environ.get("BASELINE_V7_K", "10")),
-            wallclock_ms=wc,
-            my_id=me,
-        )
+        _v7_dbg = os.environ.get("BASELINE_V7_DEBUG", "").strip()
+        try:
+            moves = v7_choose(
+                obs, configuration,
+                enumerator_mode="add_one",
+                K=int(os.environ.get("BASELINE_V7_K", "10")),
+                wallclock_ms=wc,
+                my_id=me,
+            )
+            if _v7_dbg:
+                try:
+                    with open(_v7_dbg, "a") as _f:
+                        _f.write(f"OK moves={len(moves)} "
+                                 f"sample={moves[:2] if moves else '[]'}\n")
+                except OSError:
+                    pass
+        except Exception as _e:
+            if _v7_dbg:
+                import traceback as _tb
+                try:
+                    with open(_v7_dbg, "a") as _f:
+                        _f.write(f"EXC {type(_e).__name__}: {_e}\n")
+                        _f.write(_tb.format_exc())
+                except OSError:
+                    pass
+            moves = []
         # SKIP trajectory decorators (snipe / drain / persistent_attack /
         # threat_reinforce). v7_search.choose's _build_incumbent_intents
         # already runs aggressive snipe + reinforce + drain + gang_up.
-        # Origin: first integration attempted decorator chain → 0/16 vs
-        # jsr (catastrophic duplicate-source emit). Per pre-implementation
-        # exploration warning (2026-06-01) the chain must be skipped.
         # Only launch_rules applied for universal validation.
         if os.environ.get("BASELINE_LAUNCH_RULES", "0").strip() == "1":
             moves = enforce_launch_rules(moves, planets, me, world, model)
