@@ -94,6 +94,26 @@ FOLLOWON_RADIUS: float = float(
     os.environ.get("BASELINE_FOLLOWON_RADIUS", "35.0"),
 )
 
+# Expansion credit (2026-06-01) — restore the held-production term v4 dropped.
+# v4 scores a candidate purely as the rollout delta `leaf − baseline`, on the
+# (proven-false) assumption that `favor_fn` implicitly encodes capture value.
+# It does not: the rollout drives ME passively after the launch while every
+# opponent reacts each tick, so a freshly captured planet is "eaten" by the
+# leaf and delta nets <=0. Result = the hoarding pathology (the agent refuses
+# to spend idle ships on free neutrals; see
+# audit/2026-06-01-live-replay-diagnosis.md and the step-39 istinetz trace —
+# a +916-production neutral scored -0.99). This restores the v2 static
+# scorer's additive credit `CAPTURE_REWARD_WEIGHT × production × held` for
+# FRESH captures, applied UN-gated (NOT conditional on delta>0, unlike
+# NEUTRAL/FOLLOWON which can only amplify already-positive deltas). The
+# rollout delta then remains as the recapture-risk CORRECTION on top: good
+# expansions clear, captures the rollout shows get eaten still net negative.
+# Default 0.0 (OFF, byte-for-byte legacy). 1.0 = full v2-equivalent credit;
+# tune the fraction via proper n>=32 + panel A/B (NOT n=16).
+EXPAND_CREDIT_WEIGHT: float = float(
+    os.environ.get("BASELINE_EXPAND_CREDIT", "0.0"),
+)
+
 # Score floor for emit (2026-05-27 — concentration knob). Today every
 # candidate with `score > 0.0` fires; in midgame this scatters small
 # marginal launches across every owned planet. `MIN_DELTA` raises the
@@ -716,6 +736,34 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                 * float(_f_target.production)
                 * float(f_hold)
             )
+
+    # Expansion credit (2026-06-01, default OFF) — see EXPAND_CREDIT_WEIGHT.
+    # Add the held-production value of a FRESH capture additively and
+    # UN-gated, so the rollout's structural passive-self pessimism can no
+    # longer zero out expansion. Confirm the candidate actually flips the
+    # target to us at eta (predict_garrison_at, same single-tick math the v2
+    # scorer used); under-sized launches that don't capture get no credit
+    # (the rollout already penalises them). Added BEFORE the PV_ETA discount
+    # so it is correctly pulled back to step 0 by γ^(wait_N+eta).
+    if EXPAND_CREDIT_WEIGHT > 0.0 and int(wait_N) == 0 and int(tgt.owner) != me:
+        our_arrival = (int(eta), int(me), int(ships))
+        cap_owner, _cap_g = predict_garrison_at(tgt, int(eta), [our_arrival])
+        if cap_owner == me:
+            time_remaining = max(0, EPISODE_STEPS_TOTAL - int(world.step) - int(eta))
+            held = time_remaining
+            if int(tgt.id) in world.comet_ids:
+                life = comet_remaining_lifetime(int(tgt.id), world)
+                if life is not None:
+                    held = min(held, max(0, life - int(eta)))
+            cap_credit = (CAPTURE_REWARD_WEIGHT * float(tgt.production)
+                          * float(held) * EXPAND_CREDIT_WEIGHT)
+            # Reuse the neutral early-grab tilt so the credit prefers the
+            # same targets the (gated) NEUTRAL_BONUS would have.
+            if NEUTRAL_BONUS_WEIGHT != 1.0 and int(tgt.owner) == -1:
+                cap_credit *= NEUTRAL_BONUS_WEIGHT
+                if int(world.step) < NEUTRAL_EARLY_HORIZON:
+                    cap_credit *= NEUTRAL_EARLY_EXTRA
+            delta += cap_credit
 
     if SHIP_TURN_KAPPA > 0.0:
         delta -= SHIP_TURN_KAPPA * float(ships) * float(int(wait_N) + int(eta))
