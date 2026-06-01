@@ -258,6 +258,48 @@ PV_ETA_ENABLED: bool = (
 )
 
 
+def _parse_slot_reservation(raw: str) -> tuple[int, int, int] | None:
+    """Parse `BASELINE_SLOT_RESERVATION` env value into (atk, exp, def)
+    slot counts. Returns None when unset / "0" / "off" — caller falls
+    back to original prerank iteration (byte-identical to legacy).
+
+    Format: "<atk>/<exp>/<def>" e.g. "3/2/2". Whitespace OK.
+    """
+    s = (raw or "").strip().lower()
+    if not s or s == "0" or s == "off":
+        return None
+    parts = s.replace(",", "/").split("/")
+    if len(parts) != 3:
+        return None
+    try:
+        atk, exp, dfn = int(parts[0]), int(parts[1]), int(parts[2])
+    except ValueError:
+        return None
+    if min(atk, exp, dfn) < 0:
+        return None
+    return (atk, exp, dfn)
+
+
+def _classify_target(tgt, me: int) -> str:
+    """Classify a prerank candidate's target by ownership.
+
+    Returns 'attack' (enemy-owned), 'expand' (neutral), or 'defend'
+    (our planet — only proposed when threatened, see proposer.py:872
+    `target_pool = other_planets + threatened_mine`).
+    """
+    try:
+        o = int(tgt.owner)
+    except AttributeError:
+        # Defensive: if tgt lacks .owner, treat as expansion so we
+        # never starve the rarest class.
+        return "expand"
+    if o == me:
+        return "defend"
+    if o < 0:
+        return "expand"
+    return "attack"
+
+
 def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
                     me: int, world, ledger: dict,
                     ) -> tuple[float, str, int | None]:
@@ -887,6 +929,34 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             min_horizon, gamma,
         )
     safe_deadline = deadline - (per_cand_ms / 1000.0)
+
+    # Slot reservation per target class (BASELINE_SLOT_RESERVATION).
+    # When set to "<atk>/<exp>/<def>" e.g. "3/2/2", partition the
+    # prerank by target ownership and take top-K per class. Within each
+    # class the prerank's cheap_delta ordering is preserved; the union
+    # is re-sorted by cheap_delta desc so the chooser still tries the
+    # heuristically-strongest candidates first.
+    #
+    # Origin: 2026-06-01 sub 53239342 (composite) settled μ=460 because
+    # `time_to_enemy_threat` over-fired (11/11 own planets flagged),
+    # `cheap_marginal_value` ranked defense candidates +12 median vs
+    # attack -1 median, and the wallclock cap let the chooser score
+    # only ~5 candidates — all defenses. Attacks never got scored.
+    # Slot reservation forces a per-class slice of the scoring budget.
+    _slots = _parse_slot_reservation(os.environ.get("BASELINE_SLOT_RESERVATION", ""))
+    if _slots is not None:
+        k_atk, k_exp, k_def = _slots
+        _by_cls: dict[str, list] = {"attack": [], "expand": [], "defend": []}
+        for _entry in prerank:
+            _tgt = _entry[2]
+            _by_cls[_classify_target(_tgt, me)].append(_entry)
+        _reserved = (
+            _by_cls["attack"][:k_atk]
+            + _by_cls["expand"][:k_exp]
+            + _by_cls["defend"][:k_def]
+        )
+        _reserved.sort(key=lambda e: -e[0])
+        prerank = _reserved
 
     scored: list[tuple] = []
     solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0
