@@ -1231,7 +1231,6 @@ def agent(obs, configuration=None):
     # failure mode of the closed-form ROI handoff).
     if _resolved_chooser == "v7_add_one":
         from lib.v7_search import choose as v7_choose
-        step = int(obs_d.get("step", 0))
         wc = float(os.environ.get("BASELINE_V7_WALLCLOCK_MS", "500.0"))
         moves = v7_choose(
             obs, configuration,
@@ -1240,13 +1239,16 @@ def agent(obs, configuration=None):
             wallclock_ms=wc,
             my_id=me,
         )
-        moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
-        moves = drain_idle_rear(moves, planets, me, world, model)
-        moves = drain_stagnant_rear(moves, planets, me, world, model)
-        moves = drain_combat_stack(moves, planets, me, world, model)
-        moves = emit_sniper_strikes(moves, planets, me, world, model)
-        moves = emit_persistent_attack(moves, planets, me, world, model, step)
-        return enforce_launch_rules(moves, planets, me, world, model)
+        # SKIP trajectory decorators (snipe / drain / persistent_attack /
+        # threat_reinforce). v7_search.choose's _build_incumbent_intents
+        # already runs aggressive snipe + reinforce + drain + gang_up.
+        # Origin: first integration attempted decorator chain → 0/16 vs
+        # jsr (catastrophic duplicate-source emit). Per pre-implementation
+        # exploration warning (2026-06-01) the chain must be skipped.
+        # Only launch_rules applied for universal validation.
+        if os.environ.get("BASELINE_LAUNCH_RULES", "0").strip() == "1":
+            moves = enforce_launch_rules(moves, planets, me, world, model)
+        return moves
 
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
