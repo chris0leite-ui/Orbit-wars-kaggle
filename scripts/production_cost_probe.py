@@ -42,11 +42,34 @@ from kaggle_environments import make
 import lib.fast_sim as fast_sim
 from agents.baseline.main import agent as baseline_agent
 
+# Loader for non-baseline opponents (bundled .py files in submissions/).
+import importlib.util
+
+
+def _load_callable_from_path(path: str):
+    """Mirror fast.py's _load_callable for bundled .py agents.
+
+    Register the loaded module in sys.modules under a unique name so
+    bundles using @dataclass work (dataclass walks sys.modules to
+    resolve forward references).
+    """
+    mod_name = f"_opp_bundle_{os.path.basename(path).replace('.', '_')}"
+    spec = importlib.util.spec_from_file_location(mod_name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = mod
+    spec.loader.exec_module(mod)
+    for name in ("agent", "main", "act"):
+        fn = getattr(mod, name, None)
+        if callable(fn):
+            return fn
+    raise RuntimeError(f"no callable agent/main/act in {path}")
+
 
 # Per-turn counters. The monkey-patched step/clone functions append into
 # the lists keyed by the CURRENT turn — set by the agent wrapper.
 _per_turn: list[dict] = []
 _current_turn_record: dict | None = None
+_FOCAL_SEAT = 0  # set in main(); only timing for the focal agent is reported in mixed-opp games
 
 
 def _install_monkeypatches() -> None:
@@ -157,20 +180,46 @@ def _report(rows: list[dict], label: str) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--seeds", default=None, help="comma list, overrides --seed (e.g. 7,13,99,42,3)")
+    ap.add_argument("--opp", default=None, help="opponent path or builtin (e.g. submissions/v7_0_drop_one.py)")
+    ap.add_argument("--focal-seat", type=int, default=0, choices=[0, 1])
     ap.add_argument("--turns", type=int, default=500, help="episodeSteps cap")
     ap.add_argument("--audit", default=None, help="audit doc output path")
     args = ap.parse_args()
 
+    global _FOCAL_SEAT, _per_turn
+    _FOCAL_SEAT = args.focal_seat
     _install_monkeypatches()
 
-    env = make("orbit_wars", configuration={"seed": args.seed, "episodeSteps": args.turns})
-    env.reset(num_agents=2)
+    if args.opp is not None:
+        opp_agent = _load_callable_from_path(args.opp)
+        agents_pair = [None, None]
+        agents_pair[args.focal_seat] = _instrumented_agent
+        agents_pair[1 - args.focal_seat] = opp_agent
+        setup_label = f"focal=baseline (seat {args.focal_seat}) vs opp={args.opp}"
+    else:
+        agents_pair = [_instrumented_agent, _instrumented_agent]
+        setup_label = "baseline-vs-baseline (both seats timed)"
 
-    print(f"Running 1 game, seed={args.seed}, episodeSteps={args.turns}, baseline-vs-baseline...")
-    t_game = time.perf_counter()
-    env.run([_instrumented_agent, _instrumented_agent])
-    t_game = time.perf_counter() - t_game
-    print(f"Game complete in {t_game:.1f}s ({len(_per_turn)} agent calls).\n")
+    seeds = [int(s) for s in args.seeds.split(",")] if args.seeds else [args.seed]
+
+    print(f"Setup: {setup_label}")
+    for seed in seeds:
+        env = make("orbit_wars", configuration={"seed": seed, "episodeSteps": args.turns})
+        env.reset(num_agents=2)
+        before = len(_per_turn)
+        print(f"  seed={seed} ...", end=" ", flush=True)
+        t_game = time.perf_counter()
+        env.run(agents_pair)
+        t_game = time.perf_counter() - t_game
+        added = len(_per_turn) - before
+        print(f"{t_game:.1f}s ({added} agent calls)")
+    print(f"All games complete ({len(_per_turn)} agent calls total).\n")
+
+    # Filter to focal seat only when in a mixed-opponent game; if it's
+    # baseline-vs-baseline we want both seats.
+    if args.opp is not None:
+        _per_turn = [r for r in _per_turn if r["seat"] == args.focal_seat]
 
     # Phase buckets
     by_bucket: dict[str, list[dict]] = {"early": [], "mid": [], "late": []}
