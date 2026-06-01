@@ -1,13 +1,79 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-05-30 PM (B.3 head built + A/B'd + DECISION:
-> hold the bundle, move to Tier 2 opp model) by
+> Last written: 2026-06-01 07:35 UTC (sub 53243763 slotres settled μ=815.8;
+> integration plan with 00JzI ready to execute) by
 > `claude/competition-objective-alignment-hqNVM`.
-> **B.3 bundle built and clean A/B'd; lift is marginal (18/32 =
-> 56.2%, Wilson-lo 0.393 — FAILS Rule 43b 0.50 submit gate). PI
-> decision: HOLD the B.3 bundle, do NOT push, advance to Tier 2 opp
-> model as the next lift source.**
-> Inherits the B.2 / B.3-plan / PM3 / PM2 content below.
+
+## 2026-06-01 session summary — slot reservation diagnosed + shipped + integration plan
+
+### What landed (5 commits this session)
+
+| Commit | Change |
+|---|---|
+| `ec43cac` | postmortem(composite): sub 53239342 settled μ=460 (later 545 then 537) — opposite pathology diagnosed |
+| `6549eeb` | probe(candidate-distribution): dump per-candidate leaf_delta by target class |
+| `097b474` | feat(chooser): per-class slot reservation (env-var gated, default OFF) — fix for the diagnosed bottleneck |
+| `cbb862d` | fix(slotres): drop wallclock bump (was over 1000 ms env cap) |
+| `3045e18` | submit(slotres): sub 53243763 — slot reservation + composite, PI submit |
+
+### Load-bearing findings
+
+1. **The chooser literally never scored attacks or expansions** in the
+   composite (sub 53239342). Direct evidence from ep 78367540 step 100:
+   - `time_to_enemy_threat` flagged 11/11 of our planets as threatened
+   - Proposer surfaced 63 candidates (32 defense / 24 expansion / 7 attack)
+   - Cheap_delta ranked defenses +12.5 median, attacks −1.0 median
+   - Chooser's wallclock allowed only top ~5 by cheap_delta → all defenses
+   - Action-distribution check on full game: defense 87%, attack 6%
+2. **Slot reservation fixes it.** Same state, with `BASELINE_SLOT_RESERVATION=3/2/2`:
+   - Attack candidate src=21→tgt=29 leaf_delta=**+40.3** — now scored
+   - Expansion candidates +29.4 and +20.7 — now scored
+   - Action distribution: defense 47%, attack 26%, expansion 27%
+   - n=1 vs v7_0 WIN 106 steps
+3. **Live calibration is weak.** Sub 53243763 settled μ=**815.8** — only
+   +14 over the evicted dist μ=801.8. The slot-reservation mechanism
+   works directionally but doesn't restore the joint_sync μ=1147 floor
+   we lost two submits ago.
+4. **00JzI has compounding work.** Their `BASELINE_JOINT_SYNC` shipped
+   live as μ=1147; their `BASELINE_SIZE_BALANCE` passed n=16 75% local
+   today (not yet submitted). Combined with our slot reservation, the
+   three fixes are orthogonal and should compound. **Integration plan
+   at `audit/2026-06-01-integration-plan/README.md`.**
+
+### Live ladder state (2026-06-01 07:35 UTC)
+
+| Sub ID | Agent | μ | Role |
+|---|---|---:|---|
+| **53243763** | baseline_pv_eta_vh_dist_slotres | **815.8** | Rolling pair (newest) |
+| **53239342** | baseline_pv_eta_vh_dist_composite | **537.7** | Rolling pair (oldest) |
+| 53227546 | baseline_pv_eta_vh_dist (EVICTED) | 801.1 | historical |
+| 53223160 | baseline_joint_sync_submit (EVICTED) | ~1147 | 00JzI's best |
+| 53212044 | baseline_pv_eta_vh_b3smoke (EVICTED) | ~1142 | hqNVM's best |
+| 53182323 | baseline_launch_rules_universal (EVICTED) | 1183.7 | live champion |
+
+- **Daily submission budget**: 3/5 used today. 2 slots remain.
+- **Floor-at-risk**: TRUE — rolling pair sits 330+ μ below the
+  evicted-pair peak.
+
+### Next-session priority — execute the integration plan
+
+**Read first:** `audit/2026-06-01-integration-plan/README.md`. Self-contained
+step-by-step plan for combining slot-reservation (ours) with joint_sync +
+size_balance (00JzI's) into a single bundle. ~3-4 hours of focused work.
+
+Concrete first action: `cat audit/2026-06-01-integration-plan/README.md`,
+then execute Step 1 (branch creation) and Step 2 (cherry-pick).
+
+### What's CLOSED — do not re-explore (this session's addition)
+
+- **Bumping `BASELINE_WALLCLOCK_MS` from 600 → 800 ms.** Single-game
+  smoke went over the 1000 ms env cap (max=1195 ms / p95=1025 ms).
+  Reverted in `cbb862d`. The composite already uses ~885 ms p95; there
+  is no safe headroom for a wallclock bump in this chooser.
+- **Slot reservation as a standalone agent at 3/2/2 against the existing
+  composite stack** — sub 53243763 settled μ=815.8, +14 over the prior
+  bundle. The mechanism works but isn't enough alone. Integration with
+  joint_sync + size_balance is the next axis.
 
 ## 2026-05-30 PM session — B.3 built, A/B'd, DECISION = HOLD + advance
 

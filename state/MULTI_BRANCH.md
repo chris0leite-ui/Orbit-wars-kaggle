@@ -13,7 +13,28 @@
 
 ---
 
-## Live Kaggle (snapshot 2026-05-29 14:30 UTC)
+## Live Kaggle (snapshot 2026-06-01 07:35 UTC)
+
+| Sub ID | Date (UTC) | Agent | μ | Role |
+|---|---|---|---:|---|
+| **53243763** | 2026-06-01 06:51 | baseline_pv_eta_vh_dist_slotres (composite + per-class slot reservation) | **815.8** | **Rolling pair (newest)** |
+| **53239342** | 2026-06-01 04:08 | baseline_pv_eta_vh_dist_composite (dist + B.3 head λ=1.0) | **537.7** | **Rolling pair (oldest)** |
+| 53227546 | 2026-05-31 17:46 | baseline_pv_eta_vh_dist (distilled-Tier-2 opp only) | 801.1 | EVICTED |
+| 53223160 | 2026-05-31 15:17 | baseline_joint_sync_submit (00JzI joint coalitions) | ~1147 | EVICTED — 00JzI's best |
+| 53212044 | 2026-05-31 09:21 | baseline_pv_eta_vh_b3smoke (B.3 head λ=1.0) | ~1142 | EVICTED |
+| 53197142 | 2026-05-30 22:17 | composite_universal_submit | 1083.0 | EVICTED |
+| 53182323 | 2026-05-30 11:26 | baseline_launch_rules_universal | 1183.7 | EVICTED — peak this week |
+
+- **Rolling-pair floor:** μ = 537.7 (composite oldest).
+- **Rolling-pair ceiling:** μ = 815.8 (slotres newest).
+- **Historical peak (recent week):** μ = 1183.7 (launch_rules_universal).
+- **Floor-at-risk:** **TRUE** — rolling pair sits 330+ μ below the
+  evicted-pair peak.
+- **Daily submission budget:** 5/day. 2026-06-01 used: 3 (composite + slotres + the bridging probes). 2 remaining.
+- **Deadline:** 2026-06-23 23:59 UTC. **22 days remain.**
+- **Next-session priority:** execute `audit/2026-06-01-integration-plan/README.md` — integrate slot reservation (ours) with joint_sync + size_balance (00JzI).
+
+### Historical (pre-2026-06-01)
 
 Pulled fresh; refresh via `kaggle competitions submissions orbit-wars` at session start.
 
