@@ -67,8 +67,9 @@ def choose_refine(snap_base, prerank, baseline_favors,
     start = time.perf_counter()
     champ_frac = float(_envint("BASELINE_REFINE_CHAMP_PCT", 70)) / 100.0
     overhead_ms = float(_envint("BASELINE_REFINE_OVERHEAD_MS", 60))
-    refine_h = min(max_horizon, max(1, _envint("BASELINE_REFINE_HORIZON", 40)))
+    refine_h = min(max_horizon, max(1, _envint("BASELINE_REFINE_HORIZON", 20)))
     max_add = _envint("BASELINE_REFINE_MAX_ADD", 4)
+    atom_cap = _envint("BASELINE_REFINE_MAX_EVAL", 8)
     do_drop = _envflag("BASELINE_REFINE_DROP", "0")
     floor = MIN_DELTA
 
@@ -137,39 +138,36 @@ def choose_refine(snap_base, prerank, baseline_favors,
     else:
         return moves, commits
 
-    # --- 2b. TEAMWORK-ADD: pick positive-marginal coalitions greedily. ---
-    added: list[dict] = []
-    while atoms and len(added) < max_add:
+    # --- 2b. TEAMWORK-ADD: score each atom ONCE over the champion base
+    # (1 + ≤atom_cap rollouts, not max_add×n) and greedily add the
+    # highest-gain non-conflicting ones. The marginal is first-order over the
+    # champion bundle — atoms sit on distinct sources/targets, so cross-atom
+    # interaction is second-order and not worth the n×picks rollout blowup
+    # that made the full game un-runnable. ---
+    scored_atoms: list = []  # (gain, atom)
+    for a in atoms[:atom_cap]:
         if time.perf_counter() > safe_deadline:
             break
-        best = None  # (gain, d_union, atom)
-        for a in atoms:
-            if a["srcs"] & used_srcs:
-                continue
-            if tgt_locked and (a["tgts"] & used_tgts):
-                continue
-            if time.perf_counter() > safe_deadline:
-                break
-            d_union, st = _delta(snap_base, S_launches + list(a["launches"]),
-                                 me, num_seats, world, favs, favor_fn, gamma,
-                                 refine_h, hard_deadline)
-            if st != "scored":
-                best = None
-                break
-            gain = d_union - delta_S
-            if best is None or gain > best[0]:
-                best = (gain, d_union, a)
-        if best is None or best[0] <= floor:
+        d_union, st = _delta(snap_base, S_launches + list(a["launches"]),
+                             me, num_seats, world, favs, favor_fn, gamma,
+                             refine_h, hard_deadline)
+        if st != "scored":
             break
-        _gain, d_union, a = best
-        S_launches = S_launches + list(a["launches"])
-        delta_S = d_union
+        gain = d_union - delta_S
+        if gain > floor:
+            scored_atoms.append((gain, a))
+    scored_atoms.sort(key=lambda t: t[0], reverse=True)
+    added: list[dict] = []
+    for _gain, a in scored_atoms:
+        if len(added) >= max_add:
+            break
+        if a["srcs"] & used_srcs:
+            continue
+        if tgt_locked and (a["tgts"] & used_tgts):
+            continue
         used_srcs |= a["srcs"]
         used_tgts |= a["tgts"]
         added.append(a)
-        atoms = [x for x in atoms
-                 if not (x["srcs"] & used_srcs)
-                 and not (tgt_locked and (x["tgts"] & used_tgts))]
 
     # Append the added coalitions' legs to the champion's emit (no rebuild,
     # so the no-add case is byte-identical to the champion).
