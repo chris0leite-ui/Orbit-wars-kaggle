@@ -1,4 +1,4 @@
-# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,mirror,fleet,orbit,aim,combat,world_model,intent,kinematic_table,trajectory,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner,joint_solver/columns,joint_solver/lp}.
+# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,mirror,fleet,orbit,aim,combat,world_model,intent,kinematic_table,trajectory,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,opp_marco,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner,joint_solver/columns,joint_solver/lp}.
 # Single-file Kaggle submission for Orbit Wars.
 
 from __future__ import annotations
@@ -1634,7 +1634,53 @@ def _extract_comet_paths(world) -> dict[int, tuple[list, int]]:
 
 
 # ---------------------------------------------------------------------------
+# Per-World attachment — the safe path. Each `World` owns its own
+# `KinematicTable` via a lazy attribute slot. Eliminates the singleton
+# contamination that broke in-process A/B harnesses
+# (audit/2026-05-29-postmortem-three-abs-headroom-empty.md).
+# ---------------------------------------------------------------------------
+
+_WORLD_ATTR = "_kinematic_table"
+
+
+def attach(world, *, max_lead: Optional[int] = None) -> KinematicTable:
+    """Get-or-create the `KinematicTable` owned by `world`.
+
+    Stable across repeated calls — returns the SAME instance for the
+    same `world`. Per-World ownership is what makes this safe in
+    in-process A/B harnesses (`fast.py eval`, `quick_ab.py`, pytest):
+    seat A's world and seat B's world are distinct Python objects, so
+    they get distinct tables — no cross-seat contamination.
+
+    Live Kaggle ladder is unchanged: one process per seat, one world
+    per turn, one attached table.
+    """
+    table = getattr(world, _WORLD_ATTR, None)
+    if table is None:
+        table = KinematicTable(max_lead=max_lead or DEFAULT_MAX_LEAD)
+        setattr(world, _WORLD_ATTR, table)
+    return table
+
+
+def for_world(world) -> Optional[KinematicTable]:
+    """Return the World's attached `KinematicTable`, or `None` if the
+    world hasn't been primed yet.
+
+    Callers that get `None` MUST take the inline fallback path. Never
+    fall back to the module-global singleton — that's the contamination
+    source this refactor exists to eliminate.
+    """
+    return getattr(world, _WORLD_ATTR, None)
+
+
+# ---------------------------------------------------------------------------
 # Module-level singleton + thin function wrappers.
+#
+# LEGACY: the singleton path is incorrect in multi-seat in-process A/Bs
+# (two seats share one `_DEFAULT`). Kept transitionally so the existing
+# wiring test (`tests/test_kinematic_table_baseline_wiring.py`) and the
+# `test_module_singleton_wraps_class` parity test stay green. New code
+# should use `attach(world)` / `for_world(world)` instead.
 # ---------------------------------------------------------------------------
 
 _DEFAULT = KinematicTable()
@@ -1646,7 +1692,23 @@ def clear() -> None:
 
 
 def begin_turn(world, *, max_lead: Optional[int] = None) -> bool:
-    return _DEFAULT.begin_turn(world, max_lead=max_lead)
+    """Prime the per-World table; ALSO prime the legacy singleton
+    transitionally so existing callers that still read `get_default()`
+    continue to work.
+
+    The per-World priming is the load-bearing call — it's what makes
+    `for_world(world)` return a fresh, isolated table for this seat.
+    The `_DEFAULT` prime is a back-compat shim and should go away once
+    `tests/test_kinematic_table_baseline_wiring.py` migrates to read
+    via `for_world(world)`.
+    """
+    table = attach(world, max_lead=max_lead)
+    rebuilt = table.begin_turn(world, max_lead=max_lead)
+    # TODO(rule-50): remove once test_kinematic_table_baseline_wiring
+    # migrates off `get_default()`. The singleton path is incorrect in
+    # multi-seat in-process A/Bs.
+    _DEFAULT.begin_turn(world, max_lead=max_lead)
+    return rebuilt
 
 
 def lookup_relative(pid: int, lead: int) -> tuple[float, float]:
@@ -1666,7 +1728,11 @@ def comet_paths_view() -> dict[int, tuple[list, int]]:
 
 
 def get_default() -> KinematicTable:
-    """Accessor for the module-level singleton."""
+    """Accessor for the module-level singleton.
+
+    LEGACY: prefer `for_world(world)` in new code. The singleton is
+    shared process-wide and contaminates in-process A/Bs.
+    """
     return _DEFAULT
 
 # === inlined: lib/trajectory.py ===
@@ -1944,6 +2010,13 @@ def _table_window_or_none(world, wait_N: int, length: int):
     inline build would have produced, or None to signal "fall through
     to inline build".
 
+    Reads the PER-WORLD table (`lib.kinematic_table.for_world(world)`).
+    Returns None — and lets the caller take the inline fallback — when
+    the world has not been primed via `kt.begin_turn(world)`. Does NOT
+    fall back to the legacy module-global singleton: that path is the
+    contamination source we eliminated in this refactor
+    (audit/2026-05-29-postmortem-three-abs-headroom-empty.md).
+
     Bit-parity contract: the table is rebuilt every turn from
     `world.planets_by_id` using the SAME `predict_relative` calls the
     inline build makes (orbital), the SAME `(p.x, p.y)` constants
@@ -1952,7 +2025,11 @@ def _table_window_or_none(world, wait_N: int, length: int):
     if not _kinematic_table_enabled():
         return None
     # Lazy import keeps default-path module-load time unchanged.
-    table = get_default()
+    table = for_world(world)
+    if table is None:
+        # World wasn't primed for this seat — take the inline fallback
+        # at the call site. Never reach for the singleton here.
+        return None
     pids = list(world.planets_by_id.keys())
     if not pids:
         return None
@@ -6064,6 +6141,450 @@ def rollout(
         snap = step(snap, actions, in_place=True)
     return snap
 
+# === inlined: lib/opp_marco.py ===
+
+
+import math
+import time
+from collections import namedtuple
+from dataclasses import dataclass
+from typing import Any
+
+from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
+
+fleet_speed = speed
+
+
+# Marco's EAM constants — source kernel lines 2202-2208.
+PLAN_DEPTH: int = 5
+PLAN_BEAM_WIDTH: int = 8
+PLAN_MAX_EXTRA_WAIT: int = 15
+EAM_OPENING_LIMIT: int = 50
+EAM_MAX_MY_PLANETS: int = 6
+EAM_DEFENSE_LOOKAHEAD: int = 15
+
+EPISODE_STEPS_TOTAL: int = 500
+ARRIVAL_HORIZON: int = 250  # matches lib.world_model.DEFAULT_HORIZON
+
+
+Commit = namedtuple("Commit", ["src_id", "tgt_id", "t_launch", "fleet", "eta"])
+
+
+@dataclass
+class _MarcoView:
+    """View of the world from `player`'s seat — the shape marco's planner
+    reads (subset of fields actually used by `_plan_best_launch`,
+    `_plan_evaluate`, `_plan_beam_search`, `eam_choose_moves`).
+
+    Built once per `predict_marco_plan` call from an obs + opp_seat.
+    """
+    player: int
+    step: int
+    remaining_steps: int
+    omega: float  # angular velocity; matches marco's `ang_vel`
+    is_four_player: bool
+    planets: list  # list[Planet]
+    planet_by_id: dict[int, Any]
+    my_planets: list  # list[Planet]
+    arrivals_by_planet: dict[int, list[tuple[int, int, int]]]
+    fall_turn_map: dict[int, int | None]
+
+
+def _is_static(planet) -> bool:
+    """Match marco's `is_static_planet`: orbital_radius + planet.radius
+    >= ROTATION_LIMIT.
+
+    Our `lib.orbit.is_orbiting` returns the inverse; this helper exists so
+    the port reads the same way as the source kernel.
+    """
+    dx = float(planet.x) - CENTER
+    dy = float(planet.y) - CENTER
+    orb_r = math.hypot(dx, dy)
+    return (orb_r + float(planet.radius)) >= ROTATION_RADIUS_LIMIT
+
+
+def _predict_position(planet, omega: float, turns: float) -> tuple[float, float]:
+    """Substitute for marco's `predict_planet_position`. Bit-equivalent
+    for orbital planets because orbital radius is conserved during play
+    (so `r` from initial == `r` from current); static planets short-circuit
+    to current (x, y).
+    """
+    if _is_static(planet):
+        return float(planet.x), float(planet.y)
+    p_tuple = [planet.id, planet.owner, planet.x, planet.y, planet.radius,
+               planet.ships, planet.production]
+    return predict_relative(p_tuple, omega, turns)
+
+
+def _marco_dist(ax: float, ay: float, bx: float, by: float) -> float:
+    return math.hypot(ax - bx, ay - by)
+
+
+# ---------------------------------------------------------------------------
+# Beam planner — port of marco-dg-v3-3.py lines 2210-2437
+# ---------------------------------------------------------------------------
+
+
+def _plan_best_launch(src_id, src_planet, ref_ships, ref_prod, ref_time,
+                      target, view: _MarcoView, R):
+    """Port of marco's `_plan_best_launch` (line 2210). Find optimal launch
+    time minimising capture_time for this (source, target) pair.
+
+    Source planet has `ref_ships` at `ref_time` and produces `ref_prod`/turn.
+    Returns dict(t_launch, fleet, eta, cap_t) or None if infeasible within R.
+    """
+    G = int(target.ships)
+    if ref_prod <= 0 and ref_ships < G + 1:
+        return None
+    if ref_ships >= G + 1:
+        t_min = ref_time
+    else:
+        need = G + 1 - ref_ships
+        t_min = ref_time + int(math.ceil(need / max(1, ref_prod)))
+    best = None
+    src_static = _is_static(src_planet)
+    tgt_static = _is_static(target)
+
+    for extra in range(0, PLAN_MAX_EXTRA_WAIT + 1):
+        t = t_min + extra
+        if t >= R:
+            break
+        fleet = ref_ships + ref_prod * (t - ref_time)
+        if fleet < G + 1:
+            continue
+        speed = fleet_speed(fleet)
+        if src_static or t == 0:
+            sx, sy = float(src_planet.x), float(src_planet.y)
+        else:
+            sx, sy = _predict_position(src_planet, view.omega, t)
+        if tgt_static:
+            eta = _marco_dist(sx, sy, float(target.x), float(target.y)) / speed
+        else:
+            eta = _marco_dist(sx, sy, float(target.x), float(target.y)) / speed
+            for _ in range(8):
+                px, py = _predict_position(target, view.omega, t + eta)
+                new_eta = _marco_dist(sx, sy, px, py) / speed
+                if abs(new_eta - eta) < 0.05:
+                    eta = new_eta
+                    break
+                eta = new_eta
+        cap_t = t + eta
+        if cap_t >= R:
+            continue
+        if best is None or cap_t < best["cap_t"]:
+            best = {"t_launch": t, "fleet": int(fleet), "eta": eta, "cap_t": cap_t}
+        if extra > 5 and cap_t > best["cap_t"] + 1.0:
+            break
+    return best
+
+
+def _enemy_earliest_capture(target, view: _MarcoView):
+    """Smallest time (in turns from now) for any enemy of `view.player` to
+    capture target. Port of marco's `_enemy_earliest_capture` (line 2263)."""
+    best = float("inf")
+    G = int(target.ships)
+    for src in view.planets:
+        if src.owner == view.player or src.owner == -1:
+            continue
+        S = int(src.ships)
+        p_rate = int(src.production)
+        for W in range(0, 40):
+            fleet = S + p_rate * W
+            if fleet < G + 1:
+                continue
+            speed = fleet_speed(fleet)
+            if _is_static(target):
+                eta = _marco_dist(float(src.x), float(src.y),
+                            float(target.x), float(target.y)) / speed
+            else:
+                tx, ty = float(target.x), float(target.y)
+                eta = _marco_dist(float(src.x), float(src.y), tx, ty) / speed
+                for _ in range(2):
+                    px, py = _predict_position(target, view.omega, W + eta)
+                    eta = _marco_dist(float(src.x), float(src.y), px, py) / speed
+            t = W + eta
+            if t < best:
+                best = t
+            if W > 5 and t > best:
+                break
+    return best
+
+
+def _plan_evaluate(plan, view: _MarcoView, enemy_earliest=None):
+    """Simulate a plan of (src_id, tgt_id) commitments.
+
+    Returns dict(V, moves) or None if plan is infeasible.
+    Port of marco-dg-v3-3.py line 2296.
+    """
+    R = view.remaining_steps
+    sources = {}
+    for planet in view.my_planets:
+        sources[planet.id] = (int(planet.ships), int(planet.production), 0)
+
+    # Pre-populate planets being captured by in-flight friendly fleets
+    # (marco line 2310-2331). The same logic transfers from the seat:
+    # arrivals_by_planet is global, but we only credit friendlies (owner
+    # == view.player) and only on planets the seat doesn't already own.
+    in_flight_captures: set = set()
+    for pid, arrivals in view.arrivals_by_planet.items():
+        planet = view.planet_by_id.get(pid)
+        if planet is None or planet.owner == view.player:
+            continue
+        friendly = sorted(
+            [(eta, ships) for eta, owner, ships in arrivals if owner == view.player],
+            key=lambda x: x[0],
+        )
+        if not friendly:
+            continue
+        garrison = int(planet.ships)
+        cumulative = 0
+        for eta, ships in friendly:
+            cumulative += ships
+            if cumulative > garrison:
+                residual = cumulative - garrison
+                sources[pid] = (residual, int(planet.production), eta)
+                in_flight_captures.add(pid)
+                break
+
+    V = 0.0
+    moves = []
+    for src_id, tgt_id in plan:
+        if src_id not in sources:
+            return None
+        if tgt_id == src_id:
+            return None
+        ref_ships, ref_prod, ref_t = sources[src_id]
+        src_planet = view.planet_by_id[src_id]
+        target = view.planet_by_id[tgt_id]
+        already_captured_in_plan = {t for _, t in plan[:len(moves)]}
+        if target.owner == view.player and tgt_id not in already_captured_in_plan:
+            return None
+        if tgt_id in in_flight_captures and tgt_id not in already_captured_in_plan:
+            return None
+        launch = _plan_best_launch(src_id, src_planet, ref_ships, ref_prod,
+                                   ref_t, target, view, R)
+        if launch is None:
+            return None
+
+        if enemy_earliest is not None and tgt_id in enemy_earliest:
+            if enemy_earliest[tgt_id] < launch["cap_t"] - 0.5:
+                return None
+
+        V += int(target.production) * (R - launch["cap_t"])
+        moves.append({
+            "src_id": src_id,
+            "tgt_id": tgt_id,
+            "t_launch": launch["t_launch"],
+            "fleet": launch["fleet"],
+            "eta": launch["eta"],
+            "cap_t": launch["cap_t"],
+            "production": int(target.production),
+        })
+        sources[src_id] = (0, ref_prod, launch["t_launch"])
+        residual = max(0, launch["fleet"] - int(target.ships))
+        sources[tgt_id] = (residual, int(target.production), launch["cap_t"])
+    return {"V": V, "moves": moves}
+
+
+def _plan_beam_search(view: _MarcoView, depth: int, beam_width: int,
+                      deadline: float | None) -> dict | None:
+    """Beam search over plans. Port of marco line 2375."""
+    player = view.player
+    all_targets = [p for p in view.planets if p.owner != player]
+    if not all_targets:
+        return None
+
+    enemy_earliest = {t.id: _enemy_earliest_capture(t, view) for t in all_targets}
+
+    initial_sources = {p.id for p in view.my_planets}
+    plans = [{"plan": [], "V": 0.0, "moves": []}]
+
+    for _ in range(depth):
+        if deadline is not None and time.perf_counter() >= deadline:
+            break
+        new_plans = []
+        for entry in plans:
+            if deadline is not None and time.perf_counter() >= deadline:
+                break
+            prev_plan = entry["plan"]
+            used_tgts = {tid for _, tid in prev_plan}
+            avail_sources = set(initial_sources) | used_tgts
+            for src_id in avail_sources:
+                for tgt in all_targets:
+                    if tgt.id in used_tgts:
+                        continue
+                    if tgt.id == src_id:
+                        continue
+                    new_plan = prev_plan + [(src_id, tgt.id)]
+                    res = _plan_evaluate(new_plan, view, enemy_earliest=enemy_earliest)
+                    if res is None:
+                        continue
+                    new_plans.append({
+                        "plan": new_plan,
+                        "V": res["V"],
+                        "moves": res["moves"],
+                    })
+        if not new_plans:
+            break
+        seen = {}
+        for p in new_plans:
+            key = tuple(p["plan"])
+            if key not in seen or p["V"] > seen[key]["V"]:
+                seen[key] = p
+        candidates = sorted(seen.values(), key=lambda x: -x["V"])
+        plans = candidates[:beam_width]
+
+    if not plans:
+        return None
+    return max(plans, key=lambda x: x["V"])
+
+
+# ---------------------------------------------------------------------------
+# View construction
+# ---------------------------------------------------------------------------
+
+
+def _obs_field(obs: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obs, dict):
+        return obs.get(key, default)
+    return getattr(obs, key, default)
+
+
+def _build_view(obs: Any, opp_seat: int) -> _MarcoView | None:
+    """Construct a `_MarcoView` from any observation, viewed from
+    `opp_seat`. Returns None if the obs is empty (no planets).
+    """
+    raw_planets = _obs_field(obs, "planets", []) or []
+    raw_fleets = _obs_field(obs, "fleets", []) or []
+    if not raw_planets:
+        return None
+    omega = float(_obs_field(obs, "angular_velocity", 0.0) or 0.0)
+    step = int(_obs_field(obs, "step", 0) or 0)
+
+    planets = [Planet(*p) for p in raw_planets]
+    fleets = [Fleet(*f) for f in raw_fleets]
+    planet_by_id = {int(p.id): p for p in planets}
+    my_planets = [p for p in planets if int(p.owner) == int(opp_seat)]
+
+    arrivals_by_planet = build_arrival_ledger(fleets, planets, omega,
+                                              horizon=ARRIVAL_HORIZON)
+
+    # fall_turn_map: walk each planet's timeline (predict_garrison_at-style)
+    # and record the first turn its owner flips off opp_seat. None if it
+    # holds for the full ARRIVAL_HORIZON. Used by eam_choose_moves to skip
+    # the EAM gate when any of opp's planets is about to fall.
+    fall_turn_map: dict[int, int | None] = {}
+    for p in planets:
+        if int(p.owner) != int(opp_seat):
+            fall_turn_map[int(p.id)] = None
+            continue
+        tl = simulate_planet_timeline(p, arrivals_by_planet[int(p.id)],
+                                      horizon=ARRIVAL_HORIZON)
+        owners = tl["owner_at"]
+        fall = None
+        for t in range(1, int(tl["horizon"]) + 1):
+            if owners.get(t, int(opp_seat)) != int(opp_seat):
+                fall = t
+                break
+        fall_turn_map[int(p.id)] = fall
+
+    # num_players: count distinct seat ids that own any planet or fleet
+    # (matches marco's count_players). Excludes neutral (-1).
+    seats: set[int] = set()
+    for p in planets:
+        if int(p.owner) >= 0:
+            seats.add(int(p.owner))
+    for f in fleets:
+        if int(f.owner) >= 0:
+            seats.add(int(f.owner))
+    num_players = len(seats)
+
+    return _MarcoView(
+        player=int(opp_seat),
+        step=step,
+        remaining_steps=max(1, EPISODE_STEPS_TOTAL - step),
+        omega=omega,
+        is_four_player=(num_players >= 4),
+        planets=planets,
+        planet_by_id=planet_by_id,
+        my_planets=my_planets,
+        arrivals_by_planet=arrivals_by_planet,
+        fall_turn_map=fall_turn_map,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def predict_marco_plan(obs: Any, opp_seat: int,
+                       time_budget_ms: float = 30.0,
+                       ) -> list[Commit] | None:
+    """Predict the first ≤5 captures a marco-v3-3 fork would commit to
+    from this observation, viewed from `opp_seat`.
+
+    Returns a list of `Commit` records (one per planned capture), or
+    `None` when the EAM gate falls through:
+      - `obs` empty;
+      - step >= EAM_OPENING_LIMIT (50);
+      - opp owns > EAM_MAX_MY_PLANETS (6) planets;
+      - 4P game (marco's EAM is 2P-only);
+      - one of opp's planets is about to fall within EAM_DEFENSE_LOOKAHEAD;
+      - `time_budget_ms` expired;
+      - no feasible plan found.
+
+    The caller treats `None` as "no marco-specific opp prediction; fall
+    through to Tier 0/1 mirror".
+
+    `time_budget_ms` defaults to 30 ms. Empirically the planner takes a
+    few ms in the opening (small planet sets); the deadline guards against
+    pathological inputs and the late-window 5-depth × 8-width blow-up.
+    """
+    view = _build_view(obs, opp_seat)
+    if view is None:
+        return None
+    if not view.my_planets:
+        return None
+    if view.step >= EAM_OPENING_LIMIT:
+        return None
+    if view.is_four_player:
+        return None
+    if len(view.my_planets) > EAM_MAX_MY_PLANETS:
+        return None
+    for p in view.my_planets:
+        fall = view.fall_turn_map.get(int(p.id))
+        if fall is not None and fall < EAM_DEFENSE_LOOKAHEAD:
+            return None
+
+    # Marco's adaptive depth (line 2456-2465).
+    n = len(view.my_planets)
+    if n == 1:
+        depth = 5
+    elif n == 2:
+        depth = 4
+    elif n <= 4:
+        depth = 3
+    else:
+        depth = 2
+
+    deadline = time.perf_counter() + time_budget_ms / 1000.0
+    best = _plan_beam_search(view, depth=depth, beam_width=PLAN_BEAM_WIDTH,
+                             deadline=deadline)
+    if best is None or not best.get("moves"):
+        return None
+
+    out: list[Commit] = []
+    for commit in best["moves"]:
+        out.append(Commit(
+            src_id=int(commit["src_id"]),
+            tgt_id=int(commit["tgt_id"]),
+            t_launch=int(commit["t_launch"]),
+            fleet=int(commit["fleet"]),
+            eta=float(commit["eta"]),
+        ))
+    return out
+
 # === inlined: lib/opp_model.py ===
 
 
@@ -6159,6 +6680,159 @@ def trained_logreg_policy(obs: Any) -> list:
     without crashing.
     """
     return top_tier_mirror_policy(obs)
+
+
+# ---------------------------------------------------------------------------
+# Tier 3 — marco-v3-3 EAM opening planner (cached per episode/seat)
+# ---------------------------------------------------------------------------
+
+
+def _initial_planets_fingerprint(obs: Any) -> tuple:
+    """Cheapest invariant identifying an episode: a tuple of the initial
+    planet positions. Stable across all turns of the same episode."""
+    if isinstance(obs, dict):
+        ip = obs.get("initial_planets", []) or []
+    else:
+        ip = getattr(obs, "initial_planets", []) or []
+    return tuple(tuple(p) for p in ip)
+
+
+def _obs_step(obs: Any) -> int:
+    if isinstance(obs, dict):
+        return int(obs.get("step", 0) or 0)
+    return int(getattr(obs, "step", 0) or 0)
+
+
+def _obs_planets(obs: Any) -> list:
+    if isinstance(obs, dict):
+        return obs.get("planets", []) or []
+    return getattr(obs, "planets", []) or []
+
+
+def _emit_marco_commit(commit, obs: Any, my_id: int) -> list | None:
+    """Translate one marco-port Commit into an env-format launch
+    [src_id, angle, ships] using the CURRENT obs (so source position is
+    re-read at the actual launch step, not the t=0 position).
+
+    Returns None if the source no longer exists, is not owned by my_id,
+    or has too few ships.
+    """
+    from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
+
+    raw_planets = _obs_planets(obs)
+    if not raw_planets:
+        return None
+    by_id = {int(p[0]): p for p in raw_planets}
+    src = by_id.get(int(commit.src_id))
+    tgt = by_id.get(int(commit.tgt_id))
+    if src is None or tgt is None:
+        return None
+    if int(src[1]) != int(my_id):
+        return None
+    ships = int(commit.fleet)
+    if ships <= 0 or ships > int(src[5]):
+        ships = min(int(commit.fleet), int(src[5]))
+    if ships < 1:
+        return None
+
+    omega = float(
+        obs.get("angular_velocity", 0.0) if isinstance(obs, dict)
+        else getattr(obs, "angular_velocity", 0.0) or 0.0
+    )
+    tgt_planet = Planet(*tgt)
+    src_planet = Planet(*src)
+    if is_orbiting(list(tgt)) and omega != 0.0:
+        aim_res = aim_orbiting(
+            (float(src_planet.x), float(src_planet.y)),
+            float(src_planet.radius),
+            tuple(tgt),
+            float(tgt_planet.radius),
+            int(ships),
+            float(omega),
+        )
+        if aim_res is None:
+            angle = math.atan2(
+                float(tgt_planet.y) - float(src_planet.y),
+                float(tgt_planet.x) - float(src_planet.x),
+            )
+        else:
+            angle = float(aim_res[0])
+    else:
+        angle = math.atan2(
+            float(tgt_planet.y) - float(src_planet.y),
+            float(tgt_planet.x) - float(src_planet.x),
+        )
+    return [int(src_planet.id), float(angle), int(ships)]
+
+
+def _make_marco_tier3_policy(opp_seat: int | None = None,
+                             fork: str = "marco_v33",
+                             time_budget_ms: float = 200.0) -> Policy:
+    """Build a Tier-3 policy. The returned callable carries a per-instance
+    cache so different rollouts / different opp seats / different episodes
+    don't share state.
+
+    Behaviour:
+      - On first call for a (episode_fingerprint, opp_seat) pair, runs
+        `predict_marco_plan` once and caches the result + the obs.step
+        at which planning happened (the "plan epoch").
+      - On each subsequent call, walks the cached commits and emits any
+        whose relative `t_launch == obs.step - plan_epoch`. Consumed
+        commits are removed from the cache so they fire once.
+      - If `predict_marco_plan` returned None initially (EAM gate fell
+        through — 4P, opp owns > 6, step >= 50, fall_turn risk), the
+        policy permanently falls through to `top_tier_mirror_policy`
+        for the rest of that episode.
+
+    `opp_seat=None` means "read seat from obs.player at each call" — a
+    simpler signature for callers that don't carry the seat explicitly.
+    """
+    if fork != "marco_v33":
+        raise ValueError(f"Tier 3 fork {fork!r} not implemented; "
+                         "only 'marco_v33' is shipped today.")
+
+    cache: dict[tuple, dict] = {}
+
+    def _policy(obs: Any) -> list:
+        # Resolve seat: explicit override > obs.player.
+        if opp_seat is not None:
+            seat = int(opp_seat)
+        else:
+            seat = int(obs.get("player", 0) if isinstance(obs, dict)
+                      else getattr(obs, "player", 0))
+        key = (_initial_planets_fingerprint(obs), seat)
+        entry = cache.get(key)
+        step = _obs_step(obs)
+        if entry is None:
+            # First call this episode for this seat — plan once.
+            plan = predict_marco_plan(obs, opp_seat=seat,
+                                      time_budget_ms=time_budget_ms)
+            entry = {
+                "plan": list(plan) if plan is not None else None,
+                "epoch": step,
+            }
+            cache[key] = entry
+
+        if entry["plan"] is None:
+            # Gate fell through — defer to Tier 1 for the rest of the episode.
+            return top_tier_mirror_policy(obs)
+
+        # Emit any commits whose relative launch tick has now been reached.
+        rel = step - int(entry["epoch"])
+        emits: list = []
+        remaining = []
+        for c in entry["plan"]:
+            if int(c.t_launch) <= rel:
+                emit = _emit_marco_commit(c, obs, seat)
+                if emit is not None:
+                    emits.append(emit)
+                # consumed either way (don't retry on next tick)
+            else:
+                remaining.append(c)
+        entry["plan"] = remaining
+        return emits
+
+    return _policy
 
 
 # ---------------------------------------------------------------------------
@@ -6462,14 +7136,25 @@ def me_defensive_action(obs: Any, me: int) -> list:
     return moves
 
 
-def make_opp_policy(tier: int = 1) -> Policy:
+def make_opp_policy(tier: int = 1, *,
+                    fork: str = "marco_v33",
+                    opp_seat: int | None = None,
+                    time_budget_ms: float = 200.0) -> Policy:
     """Return a `Callable(obs) -> action` for the given tier.
 
     Tier defaults to 1 (top-tier mirror) because that's the better
     proxy for the average ladder opponent above μ1100; downgrade to
     Tier 0 in unit tests / parity replays where the legacy Phase 2
     behavior is wanted.
+
+    Tier 3 builds a per-instance marco-EAM cached policy (see
+    `_make_marco_tier3_policy`). `fork`, `opp_seat`, and
+    `time_budget_ms` are Tier-3-only; they're ignored at Tiers 0/1/2.
     """
+    if tier == 3:
+        return _make_marco_tier3_policy(
+            opp_seat=opp_seat, fork=fork, time_budget_ms=time_budget_ms,
+        )
     if tier not in _TIER_REGISTRY:
         raise ValueError(f"unknown opp_model tier: {tier}")
     return _TIER_REGISTRY[tier]
@@ -12944,6 +13629,30 @@ PV_ETA_ENABLED: bool = (
     os.environ.get("BASELINE_PV_ETA", "0").strip() == "1"
 )
 
+# Marco-EAM opp model + adversarial re-rank (2026-06-02). Both default OFF
+# so the live champion is byte-identical with flags unset. See plan at
+# audit/2026-06-02-marco-lineage-reference/PLAN.md.
+#
+# BASELINE_OPP_MARCO=1 — pre-compute predict_marco_plan once per turn per
+#   opp seat, cache the predicted launches into a dict the rerank reads.
+# BASELINE_ADVERSARIAL_RERANK=1 — re-score the top-3 candidates by
+#   running a small fast_sim rollout where opp's moves come from the
+#   marco-cached plan instead of lite_greedy. If a top-3 candidate beats
+#   top-1 under the marco-opp rollout, promote it to top-1 emit.
+# Both gates AND opening-window gate (step < ADV_RERANK_LIMIT) must
+# hold; otherwise the rerank is a no-op identical to today's behaviour.
+BASELINE_OPP_MARCO_ENABLED: bool = (
+    os.environ.get("BASELINE_OPP_MARCO", "0").strip() == "1"
+)
+BASELINE_ADV_RERANK_ENABLED: bool = (
+    os.environ.get("BASELINE_ADVERSARIAL_RERANK", "0").strip() == "1"
+)
+ADV_RERANK_LIMIT: int = int(os.environ.get("BASELINE_ADV_RERANK_LIMIT", "50"))
+ADV_RERANK_MARCO_BUDGET_MS: float = float(
+    os.environ.get("BASELINE_ADV_RERANK_MARCO_BUDGET_MS", "150.0"),
+)
+ADV_RERANK_TOP_K: int = int(os.environ.get("BASELINE_ADV_RERANK_TOP_K", "3"))
+
 
 def _leader_owner_from_world(world, me: int) -> int | None:
     """Return the player id (other than `me`) with the highest total
@@ -13715,6 +14424,222 @@ def merge_ledgers(base: dict, projected: list[tuple[int, int, int, int]],
     return out
 
 
+# ---------------------------------------------------------------------------
+# Adversarial re-rank — one-ply rollout vs marco-predicted opp launches
+# ---------------------------------------------------------------------------
+
+
+def _build_opp_marco_plans(snap_base, me: int, num_seats: int,
+                           world) -> dict[int, list]:
+    """For each opp seat in a 2P game, call predict_marco_plan on opp's
+    own observation and store the returned plan keyed by opp_seat.
+
+    Returns an empty dict when:
+      - 4P (marco's EAM gate excludes 4P);
+      - step >= ADV_RERANK_LIMIT (outside the opening window we re-rank);
+      - the marco port returns None for every opp (gate fell through).
+
+    Cost: one `predict_marco_plan` call per opp per turn (= 1 in 2P).
+    Budget defaults to 150 ms; the planner typically returns in 30-80 ms
+    on opening obs.
+    """
+    plans: dict[int, list] = {}
+    if int(num_seats) > 2:
+        return plans
+    if world is None or int(getattr(world, "step", 0)) >= ADV_RERANK_LIMIT:
+        return plans
+    # Local import keeps default-path module-load time unchanged.
+    # from lib.opp_marco import predict_marco_plan  # inlined by bundle_agent.py
+    for opp_id in range(int(num_seats)):
+        if int(opp_id) == int(me):
+            continue
+        opp_obs = snap_base.state[opp_id].observation
+        plan = predict_marco_plan(opp_obs, opp_seat=int(opp_id),
+                                  time_budget_ms=ADV_RERANK_MARCO_BUDGET_MS)
+        if plan is not None:
+            plans[int(opp_id)] = list(plan)
+    return plans
+
+
+def _marco_actions_at_tick(plans: dict[int, list], snap, t: int,
+                           num_seats: int) -> dict[int, list]:
+    """For each opp seat, emit env-format launches whose relative
+    t_launch equals `t` (using the seat's current obs for orbital-aim
+    correction). Returns a dict {seat -> [launches]} for opp seats that
+    have launches due THIS tick; seats not in the dict are handled by
+    the rollout's existing default (lite_greedy).
+
+    This is the one-ply opp model: each opp executes the deterministic
+    marco plan we predicted at t=0.
+    """
+    # from lib.opp_model import _emit_marco_commit  # inlined by bundle_agent.py
+    out: dict[int, list] = {}
+    for opp_seat, plan in list(plans.items()):
+        if not plan:
+            continue
+        obs = snap.state[opp_seat].observation
+        emits: list = []
+        remaining = []
+        for c in plan:
+            if int(c.t_launch) == int(t):
+                emit = _emit_marco_commit(c, obs, opp_seat)
+                if emit is not None:
+                    emits.append(emit)
+                # consumed either way
+            elif int(c.t_launch) > int(t):
+                remaining.append(c)
+        plans[opp_seat] = remaining
+        if emits:
+            out[opp_seat] = emits
+    return out
+
+
+def _opp_actions_with_marco(snap, me: int, num_seats: int,
+                            marco_per_tick: dict[int, list]) -> list:
+    """Build the per-seat action list for one fast_sim tick: marco
+    launches override lite_greedy for any seat present in
+    `marco_per_tick`; absent seats get the default lite_greedy + me=[].
+    """
+    actions = opp_actions_for_snap(snap, me, num_seats)
+    for opp_seat, emits in marco_per_tick.items():
+        actions[opp_seat] = emits
+    return actions
+
+
+def _score_candidate_vs_marco(snap_base, src, tgt, ships: int, angle: float,
+                              me: int, num_seats: int, world,
+                              opp_marco_plans: dict[int, list],
+                              baseline_favors: list[float],
+                              favor_fn, gamma: float, horizon: int,
+                              wait_N: int, eta_hint: int,
+                              hard_deadline: float | None,
+                              ) -> tuple[float, str]:
+    """Adversarial-rerank scorer: identical pipeline to score_candidate_v4
+    EXCEPT opp seats are driven by the marco-predicted plan on every tick
+    they have a commit due (otherwise lite_greedy). Same favor leaf, same
+    baseline_favors[horizon] subtraction.
+
+    Returns `(delta, status)` matching score_candidate_v4's contract.
+    """
+    # Admissibility filter — only meaningful for wait_N==0 (same as
+    # score_candidate_v4).
+    eta = int(eta_hint) if int(wait_N) > 0 else 0
+    if int(wait_N) == 0:
+        fate = predict_fleet_fate(src, tgt, angle, ships, world)
+        if fate.outcome == "sun":
+            return (float("-inf"), "sun")
+        if fate.outcome == "oob":
+            return (float("-inf"), "oob")
+        if fate.outcome == "timeout":
+            return (float("-inf"), "timeout")
+        if fate.outcome == "planet":
+            if fate.hit_planet_id in world.comet_ids:
+                return (float("-inf"), "comet_collision")
+            return (float("-inf"), "path_blocked")
+        eta = int(fate.step)
+        if int(tgt.id) in world.comet_ids:
+            life = comet_remaining_lifetime(int(tgt.id), world)
+            if life is None or life <= eta:
+                return (float("-inf"), "comet_expired")
+
+    # Clamp horizon to baseline.
+    if horizon >= len(baseline_favors):
+        horizon = len(baseline_favors) - 1
+
+    # Make a per-rollout copy of the marco plans so consumed commits in
+    # one candidate's rollout don't affect another candidate's rollout.
+    plans_copy: dict[int, list] = {
+        seat: list(commits) for seat, commits in opp_marco_plans.items()
+    }
+    snap = fs_clone(snap_base)
+    for t in range(horizon):
+        if snap.fake_env.done:
+            break
+        if hard_deadline is not None and time.perf_counter() > hard_deadline:
+            return (HARDCAP_BAIL_SENTINEL, "hardcap_bail")
+        marco_per_tick = _marco_actions_at_tick(plans_copy, snap, t, num_seats)
+        actions = _opp_actions_with_marco(snap, me, num_seats, marco_per_tick)
+        if t == int(wait_N):
+            actions[me] = [[int(src.id), float(angle), int(ships)]]
+        snap = fs_step(snap, actions, in_place=True)
+
+    leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
+    delta = leaf - baseline_favors[horizon]
+
+    # Same bonus math as score_candidate_v4 (NEUTRAL / LEADER / SHIP_TURN
+    # / PV_ETA) so rerank deltas are comparable to top-1's score and a
+    # promotion is meaningful.
+    if delta > 0.0:
+        bonus = 1.0
+        if NEUTRAL_BONUS_WEIGHT != 1.0 and int(tgt.owner) == -1:
+            bonus *= NEUTRAL_BONUS_WEIGHT
+            if int(world.step) < NEUTRAL_EARLY_HORIZON:
+                bonus *= NEUTRAL_EARLY_EXTRA
+        if LEADER_FOCUS_WEIGHT != 1.0:
+            leader = _leader_owner_from_world(world, me)
+            if leader is not None and int(tgt.owner) == int(leader):
+                bonus *= LEADER_FOCUS_WEIGHT
+        delta *= bonus
+    if SHIP_TURN_KAPPA > 0.0:
+        delta -= SHIP_TURN_KAPPA * float(ships) * float(int(wait_N) + int(eta))
+    if PV_ETA_ENABLED and (int(wait_N) + int(eta)) > 0:
+        delta *= gamma ** (int(wait_N) + int(eta))
+    return (delta, "scored")
+
+
+def _adversarial_rerank_opening(snap_base, scored_top_k: list,
+                                opp_marco_plans: dict[int, list],
+                                me: int, num_seats: int, world, model,
+                                baseline_favors: list[float],
+                                favor_fn, gamma: float,
+                                hard_deadline: float | None,
+                                ) -> int | None:
+    """Re-score the top-K solo candidates from `scored_top_k` against the
+    marco-predicted opp plan. Returns the index (into scored_top_k) of
+    the new winner, or None to keep the existing top-1.
+
+    `scored_top_k` is the prefix of `scored` (sorted by score desc) we
+    consider for promotion. Each entry is the 6-tuple
+    `(score, src, tgt, ships, angle, wait_N)` from the solo path —
+    joint candidates are skipped.
+
+    A promotion happens iff one of the alternatives' adversarial-delta
+    exceeds the current top's adversarial-delta. Otherwise the function
+    returns None and the chooser keeps its original ranking.
+    """
+    if not scored_top_k:
+        return None
+    deltas: list[float] = []
+    for entry in scored_top_k:
+        # Skip joints — the rerank is solo-only for v1.
+        if len(entry) == 3 and entry[1] == "joint":
+            deltas.append(float("-inf"))
+            continue
+        _orig_score, src, tgt, ships, angle, wait_N = entry
+        eta_hint = max(1, int(_orig_score) if _orig_score > 0 else 1)
+        delta, _status = _score_candidate_vs_marco(
+            snap_base, src, tgt, int(ships), float(angle),
+            me, num_seats, world,
+            opp_marco_plans,
+            baseline_favors, favor_fn, gamma,
+            horizon=len(baseline_favors) - 1,
+            wait_N=int(wait_N), eta_hint=eta_hint,
+            hard_deadline=hard_deadline,
+        )
+        deltas.append(delta)
+    if not deltas:
+        return None
+    best_idx = max(range(len(deltas)), key=lambda i: deltas[i])
+    # Only promote if the new top differs from index 0 AND is finite.
+    if best_idx == 0:
+        return None
+    if not math.isfinite(deltas[best_idx]):
+        return None
+    if deltas[best_idx] <= deltas[0]:
+        return None
+    return best_idx
+
+
 def choose_trajectory(snap_base, prerank, baseline_favors,
                       me: int, num_seats: int, wallclock_ms: float,
                       min_horizon: int, max_horizon: int, gamma: float,
@@ -13959,6 +14884,37 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         return [], []
 
     scored.sort(key=lambda c: -c[0])
+
+    # Adversarial re-rank (PLAN.md phase 3 — 2026-06-02). Default OFF.
+    # Both BASELINE_OPP_MARCO and BASELINE_ADVERSARIAL_RERANK must be on,
+    # AND we must be in the opening window, AND marco's planner must
+    # have produced a non-None plan for at least one opp seat. When ALL
+    # of those hold, re-score the top-K solo candidates against the
+    # marco-predicted opp launches; if a different candidate wins, swap
+    # it to index 0 so the existing emit loop picks it up.
+    #
+    # Worst case: rerank picks the same top-1 → no-op. Cannot introduce
+    # new candidates beyond what scoring already found (Rule 40 — the
+    # modeling fix lives in the OPP MODEL, not in candidate generation).
+    if (BASELINE_OPP_MARCO_ENABLED and BASELINE_ADV_RERANK_ENABLED
+            and not use_v3
+            and world is not None
+            and int(world.step) < ADV_RERANK_LIMIT
+            and time.perf_counter() <= safe_deadline):
+        opp_marco_plans = _build_opp_marco_plans(
+            snap_base, me, num_seats, world,
+        )
+        if opp_marco_plans:
+            top_k = scored[:ADV_RERANK_TOP_K]
+            promoted_idx = _adversarial_rerank_opening(
+                snap_base, top_k, opp_marco_plans,
+                me, num_seats, world, model,
+                baseline_favors, favor_fn, gamma,
+                hard_deadline,
+            )
+            if promoted_idx is not None and 0 < promoted_idx < len(top_k):
+                winner = scored.pop(promoted_idx)
+                scored.insert(0, winner)
 
     # Emit logic — match composite chooser (`agents/baseline/chooser.choose`)
     # for parity. 1 launch per source per turn, 1 per target. For joints

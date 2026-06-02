@@ -35,6 +35,10 @@ INJECTION_ON = """\
 import os as _os
 _os.environ["BASELINE_OPP_MARCO"] = "1"
 _os.environ["BASELINE_ADVERSARIAL_RERANK"] = "1"
+# Faster planner budget keeps per-turn wallclock under control. 100ms
+# is still well above the 50ms parity-failure floor (84.6% match at
+# 250-800ms; partial-plan returns below 50ms).
+_os.environ["BASELINE_ADV_RERANK_MARCO_BUDGET_MS"] = "100.0"
 # === end marco override ===
 """
 

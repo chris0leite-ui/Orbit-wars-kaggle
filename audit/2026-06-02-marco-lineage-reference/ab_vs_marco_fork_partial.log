@@ -1,0 +1,14 @@
+== clean_ab focal=baseline_marco_on.py  opp=romantamrazov.py  seeds=8 (×2 seats = 16 games)  workers=4 ==
+   seed=   1  seat=P1     LOSS  steps=74  wall=5.9s
+   seed=   1  seat=P0      WIN  steps=283  wall=44.3s
+   seed=   2  seat=P1     LOSS  steps=108  wall=10.5s
+   seed=   0  seat=P1     LOSS  steps=223  wall=59.3s
+   seed=   3  seat=P1     LOSS  steps=90  wall=17.4s
+   seed=   2  seat=P0      WIN  steps=461  wall=116.2s
+   seed=   4  seat=P1     LOSS  steps=82  wall=7.5s
+   seed=   4  seat=P0      WIN  steps=269  wall=54.8s
+   seed=   0  seat=P0      WIN  steps=365  wall=145.0s
+   seed=   6  seat=P0      WIN  steps=155  wall=36.9s
+   seed=   6  seat=P1     LOSS  steps=102  wall=6.7s
+   seed=   5  seat=P1     LOSS  steps=213  wall=68.6s
+   seed=   7  seat=P1     LOSS  steps=127  wall=30.3s
