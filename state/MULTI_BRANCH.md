@@ -110,6 +110,16 @@ gate, proposer prune, sync cap) — coordinate before touching the K horizon.
 |---|---|---|
 | **Loss mode re-diagnosed: NOT ship-hoarding.** We out-*launch* but under-*capture* (conversion gap, not volume). **Adaptive-K v1 built** (step-decay, default OFF, commit `9985e98`); A/B in flight. PI redirected K to **state-driven**. | `audit/2026-06-01-loss-mode-diagnosis.md`: champion's 121 live games — opening planet-gap≈0, midgame capture rate halves in losses (25→12, 2P), defense ~equal; higher in-flight fraction in losses. PI corrections: selection bias (win/loss confounded by opp strength); **fleets don't die in flight** (H44 lever dropped); opening tempo real. Paired positioning = NULL (US 39.2 vs OPP 39.2 dist-to-enemy). v1 A/B (ON vs immune `baseline_champion_nokt.py`, CRN): interim 12W/6L. | **(1)** Read v1 A/B verdict. If non-negative → build **state-driven K** (per-target predictability horizon, K doc §8). **(2)** Build **contest-urgency** (timing/race half of conversion — sizing alone already failed). **(3)** Recover soft rolling pair via champion KT-OFF push(es). |
 
+## Open track — joint-coordination planner (2026-06-02, `champion-strategy-rules-00JzI`)
+
+**Owns:** new `agents/baseline/chooser_greedy.py` + the extracted
+`generate_sync_coalitions` in `chooser_trajectory.py`. Coordinate before
+touching the sync-coalition generator or the chooser dispatch in `main.py`.
+
+| State | Evidence | Next |
+|---|---|---|
+| **Framing ratified by PI as a multi-session thrust** (Rule 49). Champion scores each launch in its own solo rollout → the turn it plays is never simulated whole → overcounts shared-benefit launches (waste) + blind to teamwork captures. Fix = sequential-greedy planner scoring each launch CONDITIONAL on the set already chosen, with coalition atoms + shallow/deep horizon. Framed as combinatorial maximization with a deterministic sim oracle (exact marginal gains). | Full framing + 5-rung build sequence: `knowledge-base/concepts/joint-coordination-planner.md`. Reuses tested `score_candidate_v4_joint` (set rollout) + deterministic `fast_sim`. NOT the closed sync-coalition operationalisation — this is a new joint *search*. | Build Rungs 1–4 default-OFF (`BASELINE_CHOOSER=greedy`): Commit 0b extract `generate_sync_coalitions`; micro-bench → set shallow_h/pool_cap; Rung1 conditional greedy → Rung2 CELF → Rung3 atoms → Rung4 deep-confirm. End-of-session n=8 smoke A/B vs champion (triage only). Promotion needs Rule 43/45. |
+
 ### Prior (sync coalition — closed/parked)
 Synchronized two-source team-up (`BASELINE_JOINT_SYNC=1`, default OFF):
 panel winner (v7_0 90.6% / v4_planner 93.8% / v3.5.1 87.5%) but live

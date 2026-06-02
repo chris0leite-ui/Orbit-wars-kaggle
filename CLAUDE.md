@@ -272,6 +272,22 @@ for cross-comp rule-number stability. Rule bodies are preserved verbatim.
     alongside the median. Origin: 2026-05-27 hold-time empirical
     study — see `knowledge-base/concepts/evaluation-metrics.md` for
     the full per-cell rationale and minimum-n thresholds.
+49. **Joint-coordination planner is the active multi-session thrust.**
+    The champion scores each launch in its own solo rollout, then emits
+    a deconflicted subset — so the turn it plays is never simulated as a
+    whole. This overcounts shared-benefit launches (waste) and is blind
+    to teamwork captures (two fleets that only win together). The fix is
+    a sequential-greedy planner that scores each launch CONDITIONAL on
+    the set already chosen, seeds coalitions as atomic candidates, and
+    uses a shallow-search / deep-confirm split — framed as combinatorial
+    maximization with a deterministic simulation oracle (so marginal
+    gains are exact). Five rungs (greedy → CELF lazy → coalition atoms →
+    multi-resolution horizon → Hungarian/beam). Full framing + build
+    sequence: `knowledge-base/concepts/joint-coordination-planner.md`.
+    Ships default OFF (`BASELINE_CHOOSER=greedy`); promotion needs the
+    Rule 43/45 gates. This is a NEW joint *search*, distinct from the
+    sync-coalition operationalisation that underperformed live — not a
+    closed track.
 
 ## Defaults from prior-comp postmortem
 
@@ -337,6 +353,12 @@ Process docs (read once / on trigger):
   implementation spec for the v1 chooser (2P-first, ~400 LOC, 6-step
   build sequence with hard exit conditions). Designed but not yet
   implemented; PI review-gated.
+- `knowledge-base/concepts/joint-coordination-planner.md` — **active
+  multi-session thrust (Rule 49).** Per-turn action selection reframed
+  as combinatorial maximization with a deterministic simulation oracle;
+  sequential-greedy + CELF + coalition atoms + shallow/deep horizon
+  planner that scores launches conditional on the set already chosen.
+  Five-rung build sequence; ships default OFF (`BASELINE_CHOOSER=greedy`).
 
 Skills:
 - `.claude/skills/postmortem/SKILL.md`, `.claude/skills/kaggle-comp/`.
