@@ -858,7 +858,15 @@ def agent(obs, configuration=None):
     # general wait-grid dormant: when the general ledger is off, only
     # commits tagged sync_joint are persisted/ticked (see persist below).
     sync_on = os.environ.get("BASELINE_JOINT_SYNC", "0").strip() == "1"
-    ledger_active = ledger_on or sync_on
+    # Greedy chooser (Rule 49) emits sync_joint commits from coalition atoms;
+    # they ride the same _PENDING_LAUNCHES ledger so their waiting legs fire
+    # across turns. Off for every other chooser (trajectory path unchanged).
+    _greedy_sync = (
+        os.environ.get("BASELINE_CHOOSER", "").strip().lower() == "greedy"
+        and os.environ.get("BASELINE_GREEDY_COALITIONS", "1").strip().lower()
+        in ("1", "true", "on", "yes")
+    )
+    ledger_active = ledger_on or sync_on or _greedy_sync
     if ledger_active and step == 0:
         _PENDING_LAUNCHES.pop(me, None)
 
@@ -931,15 +939,23 @@ def agent(obs, configuration=None):
     # no leaf-value approximation. See knowledge-base/concepts/
     # trajectory-first-architecture.md. Default chooser remains the
     # K-step rollout for backward compat with the v15-line A/B baseline.
-    if os.environ.get("BASELINE_CHOOSER", "").strip().lower() == "trajectory":
-        # Trajectory chooser doesn't need baseline_favors (no idle baseline);
-        # propose still wants a baseline_len for shape but value doesn't
-        # affect the trajectory chooser's scoring.
+    _chooser_sel = os.environ.get("BASELINE_CHOOSER", "").strip().lower()
+    if _chooser_sel in ("trajectory", "greedy"):
+        # Trajectory/greedy choosers don't need baseline_favors (they build
+        # their own); propose still wants a baseline_len for shape but value
+        # doesn't affect their scoring. The greedy chooser (Rule 49) is a
+        # drop-in with the identical signature + (moves, commits) contract,
+        # selected by BASELINE_CHOOSER=greedy. trajectory path is unchanged.
         prerank = propose(
             my_planets, target_pool, world, model, me, omega,
             baseline_len=MAX_HORIZON + 1,
         )
-        from agents.baseline.chooser_trajectory import choose_trajectory
+        if _chooser_sel == "greedy":
+            from agents.baseline.chooser_greedy import choose_greedy as _chooser
+        else:
+            from agents.baseline.chooser_trajectory import (
+                choose_trajectory as _chooser,
+            )
 
         # 1. Tick + emit the ledger's due commitments (if any). Build
         #    the reserved-srcs set so the chooser doesn't double-commit
@@ -979,7 +995,7 @@ def agent(obs, configuration=None):
             reserved_srcs = firing_srcs if mode == "soft" \
                 else firing_srcs | pending_srcs
 
-        moves, new_commits = choose_trajectory(
+        moves, new_commits = _chooser(
             snap_base, prerank, None,
             me, num_seats, wallclock_ms,
             MIN_HORIZON, MAX_HORIZON, gamma,
@@ -996,7 +1012,7 @@ def agent(obs, configuration=None):
         #    solo wait_N>0 commits are discarded exactly as in the champion).
         if ledger_on:
             _PENDING_LAUNCHES[me] = surviving_pending + new_commits
-        elif sync_on:
+        elif sync_on or _greedy_sync:
             sync_new = [c for c in new_commits if c.get("sync_joint")]
             _PENDING_LAUNCHES[me] = surviving_pending + sync_new
 
