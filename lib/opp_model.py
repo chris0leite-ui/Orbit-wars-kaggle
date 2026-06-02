@@ -141,6 +141,162 @@ def trained_logreg_policy(obs: Any) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Tier 3 — marco-v3-3 EAM opening planner (cached per episode/seat)
+# ---------------------------------------------------------------------------
+
+
+def _initial_planets_fingerprint(obs: Any) -> tuple:
+    """Cheapest invariant identifying an episode: a tuple of the initial
+    planet positions. Stable across all turns of the same episode."""
+    if isinstance(obs, dict):
+        ip = obs.get("initial_planets", []) or []
+    else:
+        ip = getattr(obs, "initial_planets", []) or []
+    return tuple(tuple(p) for p in ip)
+
+
+def _obs_step(obs: Any) -> int:
+    if isinstance(obs, dict):
+        return int(obs.get("step", 0) or 0)
+    return int(getattr(obs, "step", 0) or 0)
+
+
+def _obs_planets(obs: Any) -> list:
+    if isinstance(obs, dict):
+        return obs.get("planets", []) or []
+    return getattr(obs, "planets", []) or []
+
+
+def _emit_marco_commit(commit, obs: Any, my_id: int) -> list | None:
+    """Translate one marco-port Commit into an env-format launch
+    [src_id, angle, ships] using the CURRENT obs (so source position is
+    re-read at the actual launch step, not the t=0 position).
+
+    Returns None if the source no longer exists, is not owned by my_id,
+    or has too few ships.
+    """
+    from lib.aim import aim_orbiting
+    from lib.orbit import is_orbiting
+    from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
+
+    raw_planets = _obs_planets(obs)
+    if not raw_planets:
+        return None
+    by_id = {int(p[0]): p for p in raw_planets}
+    src = by_id.get(int(commit.src_id))
+    tgt = by_id.get(int(commit.tgt_id))
+    if src is None or tgt is None:
+        return None
+    if int(src[1]) != int(my_id):
+        return None
+    ships = int(commit.fleet)
+    if ships <= 0 or ships > int(src[5]):
+        ships = min(int(commit.fleet), int(src[5]))
+    if ships < 1:
+        return None
+
+    omega = float(
+        obs.get("angular_velocity", 0.0) if isinstance(obs, dict)
+        else getattr(obs, "angular_velocity", 0.0) or 0.0
+    )
+    tgt_planet = Planet(*tgt)
+    src_planet = Planet(*src)
+    if is_orbiting(list(tgt)) and omega != 0.0:
+        aim_res = aim_orbiting(
+            (float(src_planet.x), float(src_planet.y)),
+            float(src_planet.radius),
+            tuple(tgt),
+            float(tgt_planet.radius),
+            int(ships),
+            float(omega),
+        )
+        if aim_res is None:
+            angle = math.atan2(
+                float(tgt_planet.y) - float(src_planet.y),
+                float(tgt_planet.x) - float(src_planet.x),
+            )
+        else:
+            angle = float(aim_res[0])
+    else:
+        angle = math.atan2(
+            float(tgt_planet.y) - float(src_planet.y),
+            float(tgt_planet.x) - float(src_planet.x),
+        )
+    return [int(src_planet.id), float(angle), int(ships)]
+
+
+def _make_marco_tier3_policy(opp_seat: int | None = None,
+                             fork: str = "marco_v33",
+                             time_budget_ms: float = 200.0) -> Policy:
+    """Build a Tier-3 policy. The returned callable carries a per-instance
+    cache so different rollouts / different opp seats / different episodes
+    don't share state.
+
+    Behaviour:
+      - On first call for a (episode_fingerprint, opp_seat) pair, runs
+        `predict_marco_plan` once and caches the result + the obs.step
+        at which planning happened (the "plan epoch").
+      - On each subsequent call, walks the cached commits and emits any
+        whose relative `t_launch == obs.step - plan_epoch`. Consumed
+        commits are removed from the cache so they fire once.
+      - If `predict_marco_plan` returned None initially (EAM gate fell
+        through — 4P, opp owns > 6, step >= 50, fall_turn risk), the
+        policy permanently falls through to `top_tier_mirror_policy`
+        for the rest of that episode.
+
+    `opp_seat=None` means "read seat from obs.player at each call" — a
+    simpler signature for callers that don't carry the seat explicitly.
+    """
+    if fork != "marco_v33":
+        raise ValueError(f"Tier 3 fork {fork!r} not implemented; "
+                         "only 'marco_v33' is shipped today.")
+
+    cache: dict[tuple, dict] = {}
+
+    def _policy(obs: Any) -> list:
+        # Resolve seat: explicit override > obs.player.
+        if opp_seat is not None:
+            seat = int(opp_seat)
+        else:
+            seat = int(obs.get("player", 0) if isinstance(obs, dict)
+                      else getattr(obs, "player", 0))
+        key = (_initial_planets_fingerprint(obs), seat)
+        entry = cache.get(key)
+        step = _obs_step(obs)
+        if entry is None:
+            # First call this episode for this seat — plan once.
+            from lib.opp_marco import predict_marco_plan
+            plan = predict_marco_plan(obs, opp_seat=seat,
+                                      time_budget_ms=time_budget_ms)
+            entry = {
+                "plan": list(plan) if plan is not None else None,
+                "epoch": step,
+            }
+            cache[key] = entry
+
+        if entry["plan"] is None:
+            # Gate fell through — defer to Tier 1 for the rest of the episode.
+            return top_tier_mirror_policy(obs)
+
+        # Emit any commits whose relative launch tick has now been reached.
+        rel = step - int(entry["epoch"])
+        emits: list = []
+        remaining = []
+        for c in entry["plan"]:
+            if int(c.t_launch) <= rel:
+                emit = _emit_marco_commit(c, obs, seat)
+                if emit is not None:
+                    emits.append(emit)
+                # consumed either way (don't retry on next tick)
+            else:
+                remaining.append(c)
+        entry["plan"] = remaining
+        return emits
+
+    return _policy
+
+
+# ---------------------------------------------------------------------------
 # Selector
 # ---------------------------------------------------------------------------
 
@@ -444,14 +600,25 @@ def me_defensive_action(obs: Any, me: int) -> list:
     return moves
 
 
-def make_opp_policy(tier: int = 1) -> Policy:
+def make_opp_policy(tier: int = 1, *,
+                    fork: str = "marco_v33",
+                    opp_seat: int | None = None,
+                    time_budget_ms: float = 200.0) -> Policy:
     """Return a `Callable(obs) -> action` for the given tier.
 
     Tier defaults to 1 (top-tier mirror) because that's the better
     proxy for the average ladder opponent above μ1100; downgrade to
     Tier 0 in unit tests / parity replays where the legacy Phase 2
     behavior is wanted.
+
+    Tier 3 builds a per-instance marco-EAM cached policy (see
+    `_make_marco_tier3_policy`). `fork`, `opp_seat`, and
+    `time_budget_ms` are Tier-3-only; they're ignored at Tiers 0/1/2.
     """
+    if tier == 3:
+        return _make_marco_tier3_policy(
+            opp_seat=opp_seat, fork=fork, time_budget_ms=time_budget_ms,
+        )
     if tier not in _TIER_REGISTRY:
         raise ValueError(f"unknown opp_model tier: {tier}")
     return _TIER_REGISTRY[tier]
