@@ -157,6 +157,13 @@ def choose_refine(snap_base, prerank, baseline_favors,
         if gain > floor:
             scored_atoms.append((gain, a))
     scored_atoms.sort(key=lambda t: t[0], reverse=True)
+    if os.environ.get("BASELINE_REFINE_DEBUG", "").strip() == "1" and atoms:
+        import sys
+        best_gain = scored_atoms[0][0] if scored_atoms else float("-inf")
+        print(f"[refine] step={int(world.step) if world else -1} "
+              f"feasible_atoms={len(atoms)} eval={min(len(atoms), atom_cap)} "
+              f"best_gain={best_gain:.4f} floor={floor:.4f} "
+              f"pass_floor={len(scored_atoms)}", file=sys.stderr)
     added: list[dict] = []
     for _gain, a in scored_atoms:
         if len(added) >= max_add:
