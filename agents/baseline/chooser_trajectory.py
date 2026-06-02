@@ -1197,13 +1197,17 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             # cached features by candidate-key and adds λ_vh · head_output
             # to `score`. At λ=0 vh_feats is empty → branch is skipped.
             if vh_feats:
-                from agents.baseline._value_head import vh_get_lambda, vh_predict_one  # noqa: E501
+                from agents.baseline._value_head import vh_get_bias, vh_get_lambda, vh_predict_one  # noqa: E501
                 head_out = vh_predict_one(
                     vh_feats, int(src.id), int(tgt.id),
                     int(ships), float(angle), int(wait_N),
                     float(score),  # leaf_delta input
                 )
-                score = score + vh_get_lambda() * head_out
+                # Subtract BIAS so the boost is mean-zero (shipped VH
+                # is trained on accepted moves; head_out has +102 bias
+                # that swamps base score at λ=1.0). At BIAS=0.0 (default)
+                # this is byte-equivalent to the pre-fix behavior.
+                score = score + vh_get_lambda() * (head_out - vh_get_bias())
             passes = (
                 score > MIN_DELTA if MIN_DELTA == 0.0
                 else score >= MIN_DELTA
@@ -1304,7 +1308,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                     # collapse on state-driven-K base.
                     if (vh_feats and os.environ.get(
                             "BASELINE_VH_JOINT", "1").strip() == "1"):
-                        from agents.baseline._value_head import vh_get_lambda, vh_predict_one  # noqa: E501
+                        from agents.baseline._value_head import vh_get_bias, vh_get_lambda, vh_predict_one  # noqa: E501
                         joint_prerank = [
                             (0.0, launches[k][0], launches[k][1],
                              launches[k][2], launches[k][3],
@@ -1314,13 +1318,14 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         joint_feats = vh_featurize_prerank(
                             joint_prerank, world, model,
                         )
+                        bias = vh_get_bias()
                         leg_sum = 0.0
                         for ln in launches:
                             leg_sum += vh_predict_one(
                                 joint_feats, int(ln[0].id), int(ln[1].id),
                                 int(ln[2]), float(ln[3]), int(ln[4]),
                                 float(j_score),
-                            )
+                            ) - bias
                         j_score = j_score + vh_get_lambda() * leg_sum
                     if j_status == "scored" and j_score > 0.0:
                         scored.append((j_score, "joint", launches))

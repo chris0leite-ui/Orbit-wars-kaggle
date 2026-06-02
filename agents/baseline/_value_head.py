@@ -43,6 +43,18 @@ import numpy as np
 
 VH_LAMBDA: float = float(os.environ.get("BASELINE_VH_LAMBDA", "0.0"))
 
+# Empirical-mean centering. The shipped VH was trained on a corpus of
+# ACCEPTED candidates (regression target = K=10 ship-delta); since
+# accepted moves are positive-EV in expectation, the head learned a
+# heavy positive bias. Probe (2026-06-02, 500 random feature rows):
+# mean(head_out) = +102, std = 78. Adding raw head_out at λ=1.0 swamps
+# the chooser's base score (O(10-100)) — every candidate gets a
+# +90..+225 boost, blowing past the emit gate. Subtract BIAS before
+# scaling so the centered correction is mean-zero. Default 0.0
+# preserves the pre-fix behavior; set BASELINE_VH_BIAS=102.0 (or
+# game-measured value) to activate centering.
+VH_BIAS: float = float(os.environ.get("BASELINE_VH_BIAS", "0.0"))
+
 # Bundler patches `_VH_MODEL_B64` to a gzip+base64 LightGBM
 # `model_to_string()` dump (regression objective). In source mode (empty
 # blob), we fall back to reading `data/value_head/value_head_model.txt`
@@ -64,6 +76,10 @@ def vh_is_enabled() -> bool:
 
 def vh_get_lambda() -> float:
     return VH_LAMBDA
+
+
+def vh_get_bias() -> float:
+    return VH_BIAS
 
 
 def _candidate_key(src_id: int, tgt_id: int, ships: int,
