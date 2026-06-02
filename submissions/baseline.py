@@ -1,4 +1,4 @@
-# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner,joint_solver/columns,joint_solver/lp}.
+# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,kinematic_table,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner,joint_solver/columns,joint_solver/lp}.
 # Single-file Kaggle submission for Orbit Wars.
 
 from __future__ import annotations
@@ -1033,6 +1033,89 @@ def comet_position_at(planet_id: int, world, lead_turns: int) -> tuple[float, fl
     point = path[idx]
     return float(point[0]), float(point[1])
 
+
+# ---------------------------------------------------------------------------
+# Contest-aware conversion — shared primitive (design:
+# knowledge-base/concepts/contest-aware-conversion-design.md §2).
+#
+# Because fleets cannot die in flight, every failed capture is a
+# prediction/timing error: we arrived under-strength, too late, or at a
+# planet that flipped en route. `predict_arrival_contest` answers, for one
+# candidate launch, *who reaches this target first and with what state* —
+# the shared brain the urgency / state-K / sizing / staging levers derive
+# from. v1 reuses only existing primitives (Rule 47, no new physics):
+# `WorldModel.time_to_enemy_threat` (opp earliest contest), `owner_at` /
+# `ships_at` (predicted arrival state). Lever 3 later enriches the garrison
+# with opponent reinforcement; the dataclass field is the seam for that.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ArrivalContest:
+    """Predicted state of a launch's target at our arrival tick."""
+
+    my_arrival_tick: int
+    predicted_owner: int | None
+    predicted_garrison: float
+    opp_earliest_contest_tick: int | None
+    race_class: str  # "race_win" | "bankable" | "race_loss"
+
+
+# Per-step memo of `opp_earliest_contest_tick`. It is independent of our
+# fleet size, so caching it per (step, tgt) keeps the per-candidate cost
+# off `time_to_enemy_threat` (O(enemy planets) + a 5-iter fixed point for
+# orbiting targets) — the cost-critical reuse (Rule 2 / design §6). Keyed
+# by tgt_id; flushed whenever the observed step changes (covers both the
+# normal increment and a reset-to-0 at the start of a fresh game in the
+# same process).
+_contest_cache_step: int | None = None
+_contest_cache: dict[int, int | None] = {}
+
+
+def opp_contest_tick(model, world, tgt_id: int, me: int) -> int | None:
+    """`time_to_enemy_threat`, memoised per (world.step, tgt_id).
+
+    The opponent's earliest contest tick is independent of our fleet size,
+    so caching it per (step, tgt) keeps the per-candidate cost off
+    `time_to_enemy_threat` — the cost-critical reuse shared by the
+    contest-urgency lever and the state-driven horizon K."""
+    global _contest_cache_step
+    step = int(getattr(world, "step", 0) or 0)
+    if step != _contest_cache_step:
+        _contest_cache_step = step
+        _contest_cache.clear()
+    if tgt_id not in _contest_cache:
+        _contest_cache[tgt_id] = model.time_to_enemy_threat(int(tgt_id), int(me), world)
+    return _contest_cache[tgt_id]
+
+
+def predict_arrival_contest(model, world, tgt_id: int, my_arrival_tick: int,
+                            me: int, *, hold_margin: int = 2) -> ArrivalContest:
+    """Predict the target's contest state at our arrival; classify the race.
+
+    Race classes (design §3 Lever 2):
+      - ``bankable``  — opponent cannot contest at all (defer, can't be lost);
+      - ``race_win``  — we land and can hold the counter
+                        (``my_arrival + hold_margin < opp_contest``);
+      - ``race_loss`` — we'd arrive at/after the opponent can contest, so the
+                        capture won't hold (``my_arrival >= opp_contest``).
+    """
+    arrival = int(my_arrival_tick)
+    opp_tick = opp_contest_tick(model, world, int(tgt_id), int(me))
+    if opp_tick is None:
+        race = "bankable"
+    elif arrival + int(hold_margin) < int(opp_tick):
+        race = "race_win"
+    else:
+        race = "race_loss"
+    return ArrivalContest(
+        my_arrival_tick=arrival,
+        predicted_owner=model.owner_at(int(tgt_id), arrival),
+        predicted_garrison=float(model.ships_at(int(tgt_id), arrival) or 0.0),
+        opp_earliest_contest_tick=opp_tick,
+        race_class=race,
+    )
+
 # === inlined: lib/intent.py ===
 
 
@@ -1296,32 +1379,43 @@ def predict_fleet_fate(
     # positions[1] is the obs-T+1 position. With wait_N>0 the fleet
     # appears at env step T+1+wait_N and positions[0] = obs-T+wait_N.
     #
-    # Build the planet-position window for (wait_N + max_steps): comets use
-    # their discrete path, orbital planets use the vectorized predict_relative
-    # window, static planets stay put.
-    comet_paths = _comet_paths_by_id(world) if world.comet_ids else {}
-    planet_positions = {}
-    for pid, p in world.planets_by_id.items():
-        if int(pid) in comet_paths:
-            # Comet: use its discrete path.
-            path, path_index = comet_paths[int(pid)]
-            positions: list[tuple[float, float]] = []
-            for t in range(max_steps + 1):
-                path_t = int(path_index) + int(wait_N) + t
-                if 0 <= path_t < len(path):
-                    pt = path[path_t]
-                    positions.append((float(pt[0]), float(pt[1])))
-                else:
-                    positions.append(OFF_BOARD)
-            planet_positions[pid] = positions
-            continue
-        p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
-        if is_orbiting(p_tuple) and omega != 0.0:
-            planet_positions[pid] = _predict_relative_window(
-                p_tuple, omega, wait_N, max_steps + 1
-            )
-        else:
-            planet_positions[pid] = [(p.x, p.y)] * (max_steps + 1)
+    # Phase γ (de-singletonized 2026-06-02) — when the agent has attached a
+    # per-turn KinematicTable to `world._kt` AND it covers our
+    # (wait_N + max_steps) window, `planet_positions` comes from a one-call
+    # lookup into that per-turn cache. The table lives on the world INSTANCE
+    # (fresh per seat per turn), so there is no cross-seat singleton
+    # corruption (the reason the old module-global cache was removed). On any
+    # miss — no table, not primed, window too small — fall through to the
+    # self-sufficient inline build, which is bit-identical to the table.
+    _kt = getattr(world, "_kt", None)
+    planet_positions = _table_window_or_none(_kt, world, wait_N, max_steps + 1)
+    if planet_positions is None:
+        # Build the window for (wait_N + max_steps): comets use their discrete
+        # path, orbital planets use the vectorized predict_relative window,
+        # static planets stay put.
+        comet_paths = _comet_paths_by_id(world) if world.comet_ids else {}
+        planet_positions = {}
+        for pid, p in world.planets_by_id.items():
+            if int(pid) in comet_paths:
+                # Comet: use its discrete path.
+                path, path_index = comet_paths[int(pid)]
+                positions: list[tuple[float, float]] = []
+                for t in range(max_steps + 1):
+                    path_t = int(path_index) + int(wait_N) + t
+                    if 0 <= path_t < len(path):
+                        pt = path[path_t]
+                        positions.append((float(pt[0]), float(pt[1])))
+                    else:
+                        positions.append(OFF_BOARD)
+                planet_positions[pid] = positions
+                continue
+            p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
+            if is_orbiting(p_tuple) and omega != 0.0:
+                planet_positions[pid] = _predict_relative_window(
+                    p_tuple, omega, wait_N, max_steps + 1
+                )
+            else:
+                planet_positions[pid] = [(p.x, p.y)] * (max_steps + 1)
 
     target_id = target.id
     src_id = src.id
@@ -1403,6 +1497,393 @@ def _segment_to_point_distance(a, b, p) -> float:
     cx = ax + t * dx
     cy = ay + t * dy
     return math.hypot(px - cx, py - cy)
+
+
+def _table_window_or_none(table, world, wait_N: int, length: int):
+    """Pull the planet-position window from a per-turn KinematicTable when
+    one is attached and primed for THIS world, else return None to signal
+    "fall through to the inline build".
+
+    `table` is the per-turn `world._kt` instance (or None). De-singletonized
+    (2026-06-02): the table is passed in / read off the world instance rather
+    than a module-global singleton, so two seats sharing one process never
+    clobber each other's cache. Bit-parity contract: the table is rebuilt
+    every turn from `world.planets_by_id` using the SAME `predict_relative`
+    calls (orbital), the SAME `(p.x, p.y)` constants (static), and the SAME
+    path lookups (comets) as the inline build.
+    """
+    if table is None:
+        return None
+    pids = list(world.planets_by_id.keys())
+    if not pids:
+        return None
+    needed_lead = int(wait_N) + int(length) - 1
+    if not table.covers(pids, needed_lead):
+        return None
+    return table.window(pids, start_offset=int(wait_N), length=int(length))
+
+# === inlined: lib/kinematic_table.py ===
+
+
+from dataclasses import dataclass
+from typing import Any, Iterable, Optional
+
+import math
+
+
+
+# Sentinel reused from `lib/trajectory.py:127`; we DO NOT import to avoid
+# a circular dependency with the call site we'll later modify.
+OFF_BOARD: tuple[float, float] = (-1e6, -1e6)
+
+# Default lookup window. predict_fleet_fate uses `max_steps=200` as the
+# ray-cast horizon; callers may also pass wait_N (fire-offset) up to ~50.
+# 500 gives generous headroom (covers wait_N up to ~300 + max_steps=200)
+# at ~250 KB total memory cost — negligible. Phase γ relies on this
+# default being large enough that the table covers any predict_fleet_fate
+# call without falling through to the slow path.
+DEFAULT_MAX_LEAD: int = 500
+
+
+# ---------------------------------------------------------------------------
+# Class — per-instance container; tests instantiate directly.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _PlanetEntry:
+    """Per-planet position cache for one turn."""
+
+    pid: int
+    kind: str  # "static" | "orbital" | "comet"
+    # For static: positions == None, static_pos holds the constant.
+    static_pos: Optional[tuple[float, float]] = None
+    # For orbital + comet: positions[t] is (x, y) at `lead = t` from
+    # current obs; len(positions) == max_lead + 1.
+    positions: Optional[list[tuple[float, float]]] = None
+    # For comets only: the raw path + path_index from obs["comets"],
+    # surfaced via `comet_paths_view` for callers replacing
+    # `lib.world_model._comet_paths_by_id`.
+    comet_path: Optional[list] = None
+    comet_path_index: Optional[int] = None
+
+
+class KinematicTable:
+    """Per-instance kinematic position cache.
+
+    One instance is held as a module-level singleton; tests can create
+    isolated instances for parity assertions. Lifecycle:
+
+        table.begin_turn(world)           # rebuild from current obs
+        table.lookup_relative(pid, lead)  # (x, y) at `lead` ticks ahead
+        table.window(pids, off, n)        # dict of position lists
+
+    `begin_turn` is idempotent within a turn: if the (step, omega,
+    planets) fingerprint matches the last build, no rebuild happens.
+    """
+
+    def __init__(self, max_lead: int = DEFAULT_MAX_LEAD) -> None:
+        self._entries: dict[int, _PlanetEntry] = {}
+        self._fingerprint: Any = None
+        self._omega: float = 0.0
+        self._step: int = -1
+        self._max_lead: int = int(max_lead)
+
+    # ---- lifecycle ----
+
+    def reset(self) -> None:
+        """Drop all state. Tests use this; production callers shouldn't."""
+        self._entries = {}
+        self._fingerprint = None
+        self._omega = 0.0
+        self._step = -1
+
+    def begin_turn(self, world, *, max_lead: Optional[int] = None) -> bool:
+        """Rebuild the table from `world` if the turn fingerprint changed.
+
+        Returns True iff a rebuild fired (caller can log this for
+        observability). Fingerprint:
+
+            (step, omega, n_planets, sorted-tuple of (pid, id(planet_obj)))
+
+        The `id(planet_obj)` term cheaply detects the per-turn obs
+        rebuild — `World.from_obs` constructs fresh `Planet` instances
+        every turn, so identities never repeat. On game boundary
+        (`step` drops to 0 with different planet ids), fingerprint
+        differs and we wipe.
+        """
+        if max_lead is not None and int(max_lead) != self._max_lead:
+            # max_lead change forces rebuild even if obs is unchanged.
+            self._max_lead = int(max_lead)
+            self._fingerprint = None
+
+        new_fp = self._build_fingerprint(world)
+        if self._fingerprint == new_fp:
+            return False
+        self._rebuild(world)
+        self._fingerprint = new_fp
+        return True
+
+    @staticmethod
+    def _build_fingerprint(world) -> tuple:
+        planets = world.planets_by_id
+        pid_ids = tuple(sorted((int(pid), id(p)) for pid, p in planets.items()))
+        return (int(world.step), float(world.omega), len(planets), pid_ids)
+
+    def _rebuild(self, world) -> None:
+        """Materialise per-planet position lists from `world`.
+
+        For orbital planets, calls `predict_relative` per lead-tick — the
+        SAME function `predict_fleet_fate`'s inner loop calls, with the
+        SAME planet tuple shape, so bit-parity is guaranteed by
+        construction. Static planets store a single constant; comets
+        consult the obs path array with the off-board sentinel.
+        """
+        self._entries = {}
+        self._omega = float(world.omega)
+        self._step = int(world.step)
+        comet_paths = _extract_comet_paths(world)
+        max_lead = self._max_lead
+
+        for pid, p in world.planets_by_id.items():
+            pid_i = int(pid)
+            if pid_i in comet_paths:
+                path, path_index = comet_paths[pid_i]
+                positions: list[tuple[float, float]] = []
+                for t in range(max_lead + 1):
+                    path_t = int(path_index) + t
+                    if 0 <= path_t < len(path):
+                        pt = path[path_t]
+                        positions.append((float(pt[0]), float(pt[1])))
+                    else:
+                        positions.append(OFF_BOARD)
+                self._entries[pid_i] = _PlanetEntry(
+                    pid=pid_i, kind="comet",
+                    positions=positions,
+                    comet_path=path,
+                    comet_path_index=int(path_index),
+                )
+                continue
+
+            p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
+            if is_orbiting(p_tuple) and self._omega != 0.0:
+                # Orbital. Per-lead call to predict_relative — identical
+                # arithmetic path to the inline call site (scalar
+                # math.cos/sin under the hood). Bit-parity by
+                # construction.
+                positions = [
+                    predict_relative(p_tuple, self._omega, t)
+                    for t in range(max_lead + 1)
+                ]
+                self._entries[pid_i] = _PlanetEntry(
+                    pid=pid_i, kind="orbital",
+                    positions=positions,
+                )
+            else:
+                # Static (outer planet OR omega == 0). Single constant.
+                self._entries[pid_i] = _PlanetEntry(
+                    pid=pid_i, kind="static",
+                    static_pos=(float(p.x), float(p.y)),
+                )
+
+    # ---- queries ----
+
+    def has(self, pid: int) -> bool:
+        return int(pid) in self._entries
+
+    @property
+    def max_lead(self) -> int:
+        """Maximum `lead` value the table can answer without falling
+        through. Use this to gate calls that need a large window."""
+        return self._max_lead
+
+    @property
+    def step(self) -> int:
+        """The absolute env step the table was last built for."""
+        return self._step
+
+    @property
+    def n_planets(self) -> int:
+        return len(self._entries)
+
+    def covers(self, pids, max_needed_lead: int) -> bool:
+        """Return True iff every pid is in the table AND the table's
+        max_lead is >= max_needed_lead. Cheap pre-flight for the Phase γ
+        predict_fleet_fate swap — on False, caller falls through to the
+        slow inline build."""
+        if max_needed_lead > self._max_lead:
+            return False
+        entries = self._entries
+        for pid in pids:
+            if int(pid) not in entries:
+                return False
+        return True
+
+    def kind(self, pid: int) -> Optional[str]:
+        entry = self._entries.get(int(pid))
+        return entry.kind if entry is not None else None
+
+    def lookup_relative(self, pid: int, lead: int) -> tuple[float, float]:
+        """Return (x, y) at `lead` ticks after current obs.
+
+        Bit-identical to
+        `predict_relative(world.planets_by_id[pid], world.omega, lead)`
+        for orbital planets, and to `(p.x, p.y)` for static planets.
+        For comets, returns `path[path_index + lead]` if in range, else
+        `OFF_BOARD`. Raises KeyError if `pid` is not in the table.
+        """
+        entry = self._entries.get(int(pid))
+        if entry is None:
+            raise KeyError(f"kinematic_table: pid={pid} not in current obs")
+        if entry.kind == "static":
+            return entry.static_pos  # type: ignore[return-value]
+        positions = entry.positions
+        if positions is None:
+            raise RuntimeError(f"kinematic_table: pid={pid} has no positions cache")
+        n = len(positions)
+        i = int(lead)
+        if 0 <= i < n:
+            return positions[i]
+        # Beyond the precomputed window: for orbital, this is a usage
+        # bug (caller asked past max_lead). For comet, this is a real
+        # case — the path may extend beyond max_lead. We fall through
+        # to a slow-path computation that matches the inline behaviour.
+        if entry.kind == "comet":
+            path = entry.comet_path
+            path_index = entry.comet_path_index
+            assert path is not None and path_index is not None
+            path_t = int(path_index) + i
+            if 0 <= path_t < len(path):
+                pt = path[path_t]
+                return (float(pt[0]), float(pt[1]))
+            return OFF_BOARD
+        # Orbital out-of-range: compute on demand (bit-parity preserved
+        # because we use the same predict_relative call).
+        # Caller is asking past max_lead — re-derive from omega + the
+        # stored first-position. We don't store the source `p_tuple`,
+        # so we reconstruct from positions[0] which is the obs-step
+        # position. NOTE: positions[0] == predict_relative(p_tuple, omega, 0)
+        # which for static omega=0 case returns (p.x, p.y) exactly, and
+        # for orbital case may differ from the raw obs (p.x, p.y) by ULPs
+        # because of the atan2(cos(.), sin(.)) round-trip. To preserve
+        # bit-parity we instead raise — out-of-range orbital lookups are
+        # a contract violation and we want them surfaced, not silently
+        # answered with possibly-drifted floats.
+        raise IndexError(
+            f"kinematic_table: lead={i} past max_lead={n - 1} for orbital "
+            f"pid={pid}; increase max_lead at begin_turn"
+        )
+
+    def window(
+        self,
+        pids: Iterable[int],
+        start_offset: int,
+        length: int,
+    ) -> dict[int, list[tuple[float, float]]]:
+        """Return {pid: [position at lead=start_offset+t for t in range(length)]}.
+
+        Mirrors the `planet_positions` dict built inline at
+        `lib/trajectory.py:137-159`. Use the SAME `length = max_steps + 1`
+        the inline code uses; `start_offset = wait_N` for the predict-
+        fleet-fate use case.
+        """
+        out: dict[int, list[tuple[float, float]]] = {}
+        for pid in pids:
+            pid_i = int(pid)
+            entry = self._entries.get(pid_i)
+            if entry is None:
+                # Match the inline behaviour: missing planet → skip
+                # (callers iterate over world.planets_by_id, so this
+                # shouldn't fire in practice).
+                continue
+            if entry.kind == "static":
+                pos = entry.static_pos  # type: ignore[assignment]
+                out[pid_i] = [pos] * int(length)
+                continue
+            assert entry.positions is not None
+            positions = entry.positions
+            n = len(positions)
+            row: list[tuple[float, float]] = []
+            for t in range(int(length)):
+                k = int(start_offset) + t
+                if 0 <= k < n:
+                    row.append(positions[k])
+                elif entry.kind == "comet":
+                    # Slow-path lookup past max_lead.
+                    path = entry.comet_path
+                    path_index = entry.comet_path_index
+                    assert path is not None and path_index is not None
+                    path_t = int(path_index) + k
+                    if 0 <= path_t < len(path):
+                        pt = path[path_t]
+                        row.append((float(pt[0]), float(pt[1])))
+                    else:
+                        row.append(OFF_BOARD)
+                else:
+                    # Orbital past max_lead — see note in lookup_relative.
+                    raise IndexError(
+                        f"kinematic_table: start_offset+t={k} past "
+                        f"max_lead={n - 1} for orbital pid={pid_i}"
+                    )
+            out[pid_i] = row
+        return out
+
+    def comet_paths_view(self) -> dict[int, tuple[list, int]]:
+        """{pid: (path, path_index)} for every comet in the current obs.
+
+        Schema-identical to `lib/world_model._comet_paths_by_id(world)`;
+        the integration in Phase γ swaps that function's body to read
+        from here when the table is populated.
+        """
+        out: dict[int, tuple[list, int]] = {}
+        for pid, entry in self._entries.items():
+            if entry.kind == "comet":
+                assert entry.comet_path is not None and entry.comet_path_index is not None
+                out[pid] = (entry.comet_path, entry.comet_path_index)
+        return out
+
+    # ---- diagnostics ----
+
+    def stats(self) -> dict:
+        kinds = {"static": 0, "orbital": 0, "comet": 0}
+        for e in self._entries.values():
+            kinds[e.kind] = kinds.get(e.kind, 0) + 1
+        return {
+            "n_planets": len(self._entries),
+            "kinds": kinds,
+            "step": self._step,
+            "omega": self._omega,
+            "max_lead": self._max_lead,
+        }
+
+
+def _extract_comet_paths(world) -> dict[int, tuple[list, int]]:
+    """Inline copy of `lib.world_model._comet_paths_by_id`'s body.
+
+    Duplicated here to avoid a circular import at module-load time;
+    Phase γ reverses this by having `_comet_paths_by_id` consult the
+    table when populated.
+    """
+    raw = getattr(world, "obs_raw", None)
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        comets = raw.get("comets", [])
+    else:
+        comets = getattr(raw, "comets", [])
+    out: dict[int, tuple[list, int]] = {}
+    for group in comets or []:
+        if hasattr(group, "keys"):
+            planet_ids = list(group["planet_ids"])
+            paths = list(group["paths"])
+            path_index = int(group["path_index"])
+        else:
+            planet_ids = list(group.planet_ids)
+            paths = list(group.paths)
+            path_index = int(group.path_index)
+        for idx, pid in enumerate(planet_ids):
+            out[int(pid)] = (paths[idx], path_index)
+    return out
 
 # === inlined: lib/mechanism.py ===
 
@@ -9390,9 +9871,15 @@ import os
 from types import SimpleNamespace
 
 # from lib.trajectory import predict_fleet_fate  # inlined by bundle_agent.py
-# from lib.world_model import predict_garrison_at  # inlined by bundle_agent.py
+# from lib.world_model import opp_contest_tick, predict_garrison_at  # inlined by bundle_agent.py
 
 DEFAULT_CAPTURE_HORIZON_K = 10
+
+# State-driven-K ceiling: the farthest-out arrival a launch may target when
+# the lever admits an uncontested planet (design §3 Lever A). K is clamped
+# to [floor, this] so the lever can only ever RAISE K above the champion's
+# floor for safe targets — never lower it — keeping the change monotone.
+DEFAULT_STATE_K_CEIL = 30
 
 # Sentinel target whose id never matches a real planet, so
 # predict_fleet_fate reports the FIRST planet actually struck as
@@ -9407,7 +9894,7 @@ def launch_rules_enabled() -> bool:
     )
 
 
-def capture_horizon_k() -> int:
+def _capture_horizon_floor() -> int:
     raw = os.environ.get("BASELINE_CAPTURE_HORIZON_K", "").strip()
     if not raw:
         return DEFAULT_CAPTURE_HORIZON_K
@@ -9415,6 +9902,88 @@ def capture_horizon_k() -> int:
         return int(raw)
     except ValueError:
         return DEFAULT_CAPTURE_HORIZON_K
+
+
+def _adaptive_k_enabled() -> bool:
+    return os.environ.get("BASELINE_ADAPTIVE_K", "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
+def state_driven_k_enabled() -> bool:
+    return os.environ.get("BASELINE_STATE_DRIVEN_K", "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def capture_horizon_k(step=None, *, tgt_id=None, world=None, model=None,
+                      me=None) -> int:
+    """Predictability ceiling K (launches arriving after K are dropped).
+
+    Static (default, byte-identical champion): returns the floor (env
+    ``BASELINE_CAPTURE_HORIZON_K`` or ``DEFAULT_CAPTURE_HORIZON_K`` = 10),
+    ignoring every argument.
+
+    State-driven (``BASELINE_STATE_DRIVEN_K=1``): K becomes the predictability
+    of the *specific target* rather than a clock —
+    ``K_target = clamp(floor, ceil, opp_earliest_contest_tick)``. An
+    uncontested target (no enemy can reach it) → ceil (commit long); a target
+    the opponent can contest at tick T → K=T (don't commit a fleet that lands
+    after the board there changes). Clamped to ``[floor, ceil]`` so the lever
+    can only RAISE K above the champion's floor for safe/far targets, never
+    lower it — a monotone extension. Requires ``tgt_id`` + ``world`` +
+    ``model`` + ``me``; a target-less call (efficiency/global sites) returns
+    the ceil so it never pre-drops a launch the per-target gate would admit.
+    Ceil via ``BASELINE_STATE_K_CEIL`` (default 30). This is the principled
+    form of the adaptive step-schedule below — design §3 Lever A,
+    knowledge-base/concepts/contest-aware-conversion-design.md.
+
+    Adaptive step-schedule (``BASELINE_ADAPTIVE_K=1``): K is LARGE early and
+    decays linearly to the floor by ``T_SETTLE``. The opening is predictable
+    (few in-flight fleets, planets at known positions) so a far launch is
+    safe there; as the board fills, K returns to the champion's disciplined
+    floor. Empirically the static floor=10 hides ~75% of the opening
+    expansion map (median neutral ETA 22) — see
+    audit/2026-06-01-adaptive-horizon-k-investigation.md.
+
+      K(step) = max(floor, round(K_OPEN - (K_OPEN-floor)*step/T_SETTLE))
+
+    Tunables (for the A/B sweep): ``BASELINE_ADAPTIVE_K_OPEN`` (default 20),
+    ``BASELINE_ADAPTIVE_K_TSETTLE`` (default 30). ``step`` is the current
+    game step (``world.step``); when ``None`` or adaptive-off, the floor is
+    returned (preserves every existing caller + the static champion).
+    """
+    floor = _capture_horizon_floor()
+
+    if state_driven_k_enabled():
+        ceil = _env_int("BASELINE_STATE_K_CEIL", DEFAULT_STATE_K_CEIL)
+        if ceil < floor:
+            ceil = floor
+        if tgt_id is None or world is None or model is None or me is None:
+            return ceil  # global/efficiency call — permissive; gate is per-target
+        opp_tick = opp_contest_tick(model, world, int(tgt_id), int(me))
+        if opp_tick is None:
+            return ceil  # uncontested target → safe to commit long
+        return max(floor, min(ceil, int(opp_tick)))
+
+    if step is None or not _adaptive_k_enabled():
+        return floor
+    k_open = _env_int("BASELINE_ADAPTIVE_K_OPEN", 20)
+    t_settle = _env_int("BASELINE_ADAPTIVE_K_TSETTLE", 30)
+    if t_settle <= 0 or int(step) >= t_settle or k_open <= floor:
+        return floor
+    decayed = k_open - (k_open - floor) * int(step) / float(t_settle)
+    return max(floor, int(round(decayed)))
 
 
 def resolve_launch_target(src, angle, ships, world):
@@ -9448,8 +10017,13 @@ def enforce_launch_rules(moves, planets, me, world, model, k=None):
     """
     if not launch_rules_enabled() or not moves:
         return moves
+    world_step = getattr(world, "step", None)
+    # When K is auto-computed (k is None) and the state-driven lever is on,
+    # the ceiling K is enforced PER TARGET in Pass 3 below; an explicit k
+    # override (tests / callers) is respected as a fixed ceiling.
+    per_target_k = (k is None) and state_driven_k_enabled()
     if k is None:
-        k = capture_horizon_k()
+        k = capture_horizon_k(world_step)
     me = int(me)
 
     by_id = world.planets_by_id
@@ -9511,7 +10085,13 @@ def enforce_launch_rules(moves, planets, me, world, model, k=None):
         # reinforcement of our own planets (incl. comet-sourced) — a fleet
         # that arrives after the horizon is betting on an unpredictable board
         # and routinely lands at a flipped/contested planet and loses.
-        if step > k:
+        # State-driven lever: K is the predictability of THIS target.
+        k_eff = k
+        if per_target_k:
+            k_eff = capture_horizon_k(
+                world_step, tgt_id=hit_pid, world=world, model=model, me=me,
+            )
+        if step > k_eff:
             continue
         if owner == me:
             out.append(mv)            # reinforcement within horizon
@@ -10015,7 +10595,7 @@ fleet_speed = speed
 # from lib.orbit import is_orbiting, predict_relative  # inlined by bundle_agent.py
 # from lib.scoring import pv_horizon  # inlined by bundle_agent.py
 # from lib.trajectory import predict_fleet_fate  # inlined by bundle_agent.py
-# from lib.world_model import _comet_paths_by_id, _position_at, comet_remaining_lifetime  # inlined by bundle_agent.py
+# from lib.world_model import _comet_paths_by_id, _position_at, comet_remaining_lifetime, predict_arrival_contest  # noqa: E501 (single line: bundler can't strip multi-line imports)  # inlined by bundle_agent.py
 
 NUM_TARGETS_PER_SOURCE = 8
 MIN_FLEET_SIZE = 2
@@ -10227,6 +10807,42 @@ def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
     return max(MIN_FLEET_SIZE, int(math.ceil(pred)) + 1)
 
 
+# Combat-resolution slack for the arrival-correct capture floor: the
+# interpreter resolves arrivals as "largest minus second-largest, ties
+# destroy all", so a defender+1 fleet that ties or loses by integer
+# rounding bounces. MARGIN=2 is a modeling slack for that discrete rule
+# plus a thin co-arrival cushion — NOT an overcommit multiplier
+# (Rule 40; H19-H21 falsified blind multipliers).
+SIZE_BALANCE_CAPTURE_MARGIN = 2
+
+
+def capture_floor_arrival(src, tgt, model, omega: float, me: int, world) -> int:
+    """Arrival-correct minimum ships to capture a NON-owned `tgt` from `src`.
+
+    Fixes under-delivery (failure mode D — 36% of lost-episode capture
+    failures on champion 53182323, audit 2026-06-01). `capture_size` sizes
+    the defender garrison at the eta of the SLOWEST probe fleet
+    (`tgt.ships + 1`); the real launched count flies faster, so the
+    garrison is mis-sampled and the emitted `cap` can bounce. This re-aims
+    at the REAL launched count via a bounded fixed point (mirrors the eta
+    fixed point in `world_model.time_to_enemy_threat`), and adds
+    `SIZE_BALANCE_CAPTURE_MARGIN` slack for the integer combat rule.
+
+    Non-owned targets only; the reinforce path keeps `capture_size`.
+    """
+    ships = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
+    for _ in range(3):
+        _angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
+        pred = float(model.ships_at(int(tgt.id), eta) or 0.0)
+        need = max(
+            MIN_FLEET_SIZE, int(math.ceil(pred)) + SIZE_BALANCE_CAPTURE_MARGIN
+        )
+        if need == ships:
+            break
+        ships = need
+    return ships
+
+
 def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list[int]:
     """Fire-now ship-count set: capture-size, 2x capture-size, full budget.
 
@@ -10243,6 +10859,31 @@ def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list
     budget = int(src.ships)
     if cap == 0:
         return []  # reinforce-targets with no threat
+
+    # Unified arrival-correct + source-safe fire-now sizing (failure
+    # modes D + A; gate 2026-06-01 = 58.3% of lost-episode capture
+    # failures). Default OFF → byte-identical to the pre-fix set below.
+    # Read at call time (not a module constant) so A/B subprocesses pick
+    # it up regardless of import order — matches BASELINE_JOINT_SYNC.
+    if (
+        os.environ.get("BASELINE_SIZE_BALANCE", "0").strip() == "1"
+        and int(tgt.owner) != me
+    ):
+        keep = source_keep_floor(src, 0, world, model, me)
+        max_sendable = budget - int(keep)
+        cap_arr = capture_floor_arrival(src, tgt, model, omega, me, world)
+        # Infeasible: can't both win at arrival (D) AND keep the source
+        # safe (A). Emit no fire-now column — the candidate is correctly
+        # invalid (the DROP filter at dedup is a belt-and-braces backstop).
+        if cap_arr > max_sendable:
+            return []
+        balanced = set()
+        if MIN_FLEET_SIZE <= cap_arr <= max_sendable:
+            balanced.add(cap_arr)            # lean, arrival-correct (D)
+        if max_sendable >= MIN_FLEET_SIZE:
+            balanced.add(max_sendable)        # full send, source-keep clamped (A)
+        return sorted(balanced)
+
     sizes = set()
     if MIN_FLEET_SIZE <= cap <= budget:
         sizes.add(cap)
@@ -10414,6 +11055,39 @@ def wait_then_fire_variants(src, tgt, model, omega: float, me: int, world=None):
     return variants
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _contest_urgency_enabled() -> bool:
+    """Lever 2 master gate (default OFF → byte-identical champion)."""
+    return os.environ.get("BASELINE_CONTEST_URGENCY", "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
+def _contest_hold_margin() -> int:
+    return int(_env_float("BASELINE_CONTEST_HOLD_MARGIN", 2.0))
+
+
+def _urgency_mult(race_class: str) -> float:
+    """Contest-urgency multiplier on a capture's Stage-1 value (design §3
+    Lever 2). A race-loss capture won't hold, so its value is genuinely
+    lower — a modelling down-weight, not a hard cap (Rule 40). The
+    race-loss multiplier is the key swept hyperparameter (Rules 21/37)."""
+    if race_class == "race_win":
+        return _env_float("BASELINE_CONTEST_RACEWIN_MULT", 1.5)
+    if race_class == "race_loss":
+        return _env_float("BASELINE_CONTEST_RACELOSS_MULT", 0.2)
+    return _env_float("BASELINE_CONTEST_BANKABLE_MULT", 1.0)  # bankable
+
+
 def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
                          me: int, wait_N: int = 0) -> float:
     """Analytic Δ for Stage-1 ranking. Replaced by fast_sim in Stage-2.
@@ -10449,7 +11123,17 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
     if ships > pred_ships:
         pv = pv_horizon(int(world.step), int(arrival_step),
                         gamma=GAMMA, t_total=EPISODE_STEPS)
-        return 0.05 * float(tgt.production) * float(pv)
+        base = 0.05 * float(tgt.production) * float(pv)
+        # Lever 2 — contest-urgency. Down-weight captures we'd lose the
+        # race for (won't hold) and boost the ones we win; default OFF
+        # leaves `base` unchanged (Rule 40 modelling down-weight, not a cap).
+        if _contest_urgency_enabled():
+            contest = predict_arrival_contest(
+                model, world, int(tgt.id), int(arrival_step), me,
+                hold_margin=_contest_hold_margin(),
+            )
+            base *= _urgency_mult(contest.race_class)
+        return base
 
     return -0.5 * float(ships)
 
@@ -10459,6 +11143,57 @@ def wait_band(wait_N: int) -> int:
     if wait_N == 0:
         return 0
     return 1 if wait_N <= 7 else 2
+
+
+def _keep_floor_from_threat(
+    threat_force: int, threat_eta: int, production: int, wait_N: int,
+) -> int:
+    """Shared residue-floor arithmetic for the source-keep FILTER
+    (`_source_survives_launch`) and the source-keep SIZER
+    (`source_keep_floor`). MUST stay the single formula, or a sized
+    launch could fail the very filter it is sized to pass — same
+    shared-formula discipline as HOLD_MIN_COUNTER_SHIPS / HOLD_SAFETY_MARGIN.
+
+    Minimum residue ships that, plus production accrual up to `threat_eta`,
+    cover `threat_force + 1`:
+
+        residue >= threat_force + 1 - production*(threat_eta - wait_N)
+
+    clamped at 0.
+    """
+    growth_after_launch_to_threat = (
+        int(production) * (int(threat_eta) - int(wait_N))
+    )
+    return max(0, int(threat_force) + 1 - growth_after_launch_to_threat)
+
+
+def source_keep_floor(src, wait_N: int, world, model, me: int) -> int:
+    """Minimum residue `src` must retain after a `wait_N` launch to still
+    defend itself against the earliest known IN-FLIGHT threat.
+
+    Returns 0 when there is no in-flight threat (none inbound, or
+    potential-launch-only with nothing in the ledger — the chooser's
+    rollout scores that case better). Does NOT encode the
+    `wait_N >= threat_eta` "source already fallen" case: that is an
+    unconditional drop handled in `_source_survives_launch`, because no
+    residue can rescue a source that has fallen by fire time.
+
+    Used by the SIZE_BALANCE sizer (failure mode A, source over-drain) so
+    the fire-now budget column never drains a source below this floor.
+    """
+    threat_eta = model.time_to_enemy_threat(int(src.id), me, world)
+    if threat_eta is None:
+        return 0
+    threat_force = sum(
+        sh
+        for (eta_arr, owner, sh) in model.ledger.get(int(src.id), [])
+        if owner != me and eta_arr <= int(threat_eta) + WAVE_LOOKAHEAD
+    )
+    if threat_force <= 0:
+        return 0
+    return _keep_floor_from_threat(
+        int(threat_force), int(threat_eta), int(src.production), int(wait_N),
+    )
 
 
 def _source_survives_launch(
@@ -10506,11 +11241,10 @@ def _source_survives_launch(
     residue_after_launch = int(src.ships) + growth_during_wait - int(ships)
     if residue_after_launch < 0:
         return False  # nonsensical sizing; guard
-    growth_after_launch_to_threat = (
-        int(src.production) * (int(threat_eta) - int(wait_N))
+    # Shared residue-floor formula (also drives the SIZE_BALANCE sizer).
+    return residue_after_launch >= _keep_floor_from_threat(
+        int(threat_force), int(threat_eta), int(src.production), int(wait_N),
     )
-    garrison_at_threat = residue_after_launch + growth_after_launch_to_threat
-    return garrison_at_threat >= int(threat_force) + 1
 
 
 # Shared constants for the hold FILTER (_target_holdable_after_capture) and
@@ -10968,7 +11702,7 @@ def propose(my_planets, target_pool, world, model, me: int,
     # post-pass for combat evaluation (preserves BASELINE_JOINT).
     # from agents.baseline.launch_rules import capture_horizon_k, launch_rules_enabled  # inlined by bundle_agent.py
     _eta_prune = launch_rules_enabled()
-    _k = capture_horizon_k()
+    _world_step = getattr(world, "step", None)
 
     prerank = []
     for src in my_planets:
@@ -10978,11 +11712,20 @@ def propose(my_planets, target_pool, world, model, me: int,
             if int(tgt.id) == int(src.id):
                 continue
 
+            # Per-target predictability ceiling. Identical to the old global
+            # `capture_horizon_k(step)` (floor) when the state-driven lever is
+            # OFF; when ON, an uncontested far target gets a higher K so its
+            # safe long launches survive the prune (they were being dropped at
+            # the floor and never reached the chooser — the freed-grab path).
+            _k_tgt = capture_horizon_k(
+                _world_step, tgt_id=int(tgt.id), world=world, model=model, me=me,
+            )
+
             for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
                 angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
-                if _eta_prune and int(eta) > _k:
+                if _eta_prune and int(eta) > _k_tgt:
                     continue
                 horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if horizon >= baseline_len:
@@ -12107,6 +12850,8 @@ _nearest_k = nearest_k
 _capture_horizon_k = capture_horizon_k
 # from agents.baseline.launch_rules import launch_rules_enabled as _launch_rules_enabled  # inlined by bundle_agent.py
 _launch_rules_enabled = launch_rules_enabled
+# from agents.baseline.launch_rules import state_driven_k_enabled as _state_driven_k_enabled  # inlined by bundle_agent.py
+_state_driven_k_enabled = state_driven_k_enabled
 
 
 EPISODE_STEPS_TOTAL: int = 500
@@ -12146,6 +12891,26 @@ FOLLOWON_BONUS_WEIGHT: float = float(
 )
 FOLLOWON_RADIUS: float = float(
     os.environ.get("BASELINE_FOLLOWON_RADIUS", "35.0"),
+)
+
+# Expansion credit (2026-06-01) — restore the held-production term v4 dropped.
+# v4 scores a candidate purely as the rollout delta `leaf − baseline`, on the
+# (proven-false) assumption that `favor_fn` implicitly encodes capture value.
+# It does not: the rollout drives ME passively after the launch while every
+# opponent reacts each tick, so a freshly captured planet is "eaten" by the
+# leaf and delta nets <=0. Result = the hoarding pathology (the agent refuses
+# to spend idle ships on free neutrals; see
+# audit/2026-06-01-live-replay-diagnosis.md and the step-39 istinetz trace —
+# a +916-production neutral scored -0.99). This restores the v2 static
+# scorer's additive credit `CAPTURE_REWARD_WEIGHT × production × held` for
+# FRESH captures, applied UN-gated (NOT conditional on delta>0, unlike
+# NEUTRAL/FOLLOWON which can only amplify already-positive deltas). The
+# rollout delta then remains as the recapture-risk CORRECTION on top: good
+# expansions clear, captures the rollout shows get eaten still net negative.
+# Default 0.0 (OFF, byte-for-byte legacy). 1.0 = full v2-equivalent credit;
+# tune the fraction via proper n>=32 + panel A/B (NOT n=16).
+EXPAND_CREDIT_WEIGHT: float = float(
+    os.environ.get("BASELINE_EXPAND_CREDIT", "0.0"),
 )
 
 # Score floor for emit (2026-05-27 — concentration knob). Today every
@@ -12771,6 +13536,34 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                 * float(f_hold)
             )
 
+    # Expansion credit (2026-06-01, default OFF) — see EXPAND_CREDIT_WEIGHT.
+    # Add the held-production value of a FRESH capture additively and
+    # UN-gated, so the rollout's structural passive-self pessimism can no
+    # longer zero out expansion. Confirm the candidate actually flips the
+    # target to us at eta (predict_garrison_at, same single-tick math the v2
+    # scorer used); under-sized launches that don't capture get no credit
+    # (the rollout already penalises them). Added BEFORE the PV_ETA discount
+    # so it is correctly pulled back to step 0 by γ^(wait_N+eta).
+    if EXPAND_CREDIT_WEIGHT > 0.0 and int(wait_N) == 0 and int(tgt.owner) != me:
+        our_arrival = (int(eta), int(me), int(ships))
+        cap_owner, _cap_g = predict_garrison_at(tgt, int(eta), [our_arrival])
+        if cap_owner == me:
+            time_remaining = max(0, EPISODE_STEPS_TOTAL - int(world.step) - int(eta))
+            held = time_remaining
+            if int(tgt.id) in world.comet_ids:
+                life = comet_remaining_lifetime(int(tgt.id), world)
+                if life is not None:
+                    held = min(held, max(0, life - int(eta)))
+            cap_credit = (CAPTURE_REWARD_WEIGHT * float(tgt.production)
+                          * float(held) * EXPAND_CREDIT_WEIGHT)
+            # Reuse the neutral early-grab tilt so the credit prefers the
+            # same targets the (gated) NEUTRAL_BONUS would have.
+            if NEUTRAL_BONUS_WEIGHT != 1.0 and int(tgt.owner) == -1:
+                cap_credit *= NEUTRAL_BONUS_WEIGHT
+                if int(world.step) < NEUTRAL_EARLY_HORIZON:
+                    cap_credit *= NEUTRAL_EARLY_EXTRA
+            delta += cap_credit
+
     if SHIP_TURN_KAPPA > 0.0:
         delta -= SHIP_TURN_KAPPA * float(ships) * float(int(wait_N) + int(eta))
 
@@ -13278,8 +14071,14 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         # only form coalitions whose arrival is within K (Rule 40: align the
         # generator with the downstream filter, don't loosen the K cap).
         sync_arrival_cap = max_horizon
+        _per_target_sync_cap = False
         if _launch_rules_enabled():
-            sync_arrival_cap = min(max_horizon, _capture_horizon_k())
+            sync_arrival_cap = min(
+                max_horizon, _capture_horizon_k(getattr(world, "step", None))
+            )
+            # State-driven lever: the cap is the predictability of the
+            # coalition's own target (computed per tgt0 at Gate 2b below).
+            _per_target_sync_cap = _state_driven_k_enabled()
         sync_count = 0
         for tgt0 in sync_targets:
             if (sync_count >= JOINT_SYNC_MAX_PAIRS
@@ -13357,7 +14156,12 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             # Gate 2b: both legs must arrive within the launch-rules ceiling K,
             # else the fire-now far leg is deleted downstream and the coalition
             # half-fires (see sync_arrival_cap above).
-            if tarr > sync_arrival_cap:
+            _cap = sync_arrival_cap
+            if _per_target_sync_cap:
+                _cap = min(max_horizon, _capture_horizon_k(
+                    getattr(world, "step", None), tgt_id=int(tgt0.id),
+                    world=world, model=model, me=me))
+            if tarr > _cap:
                 continue
             _oT, garr_tarr = predict_garrison_at(tgt0, tarr, arrivals)
             # Gate 3: combined force must actually exceed garrison at arrival.
@@ -13641,6 +14445,7 @@ fs_from_obs = from_obs
 # from lib.fleet import speed as fleet_speed  # inlined by bundle_agent.py
 fleet_speed = speed
 # from lib.intent import World  # inlined by bundle_agent.py
+# from lib.kinematic_table import KinematicTable  # inlined by bundle_agent.py
 # from lib.joint_solver.opening_planner import OPENING_HORIZON, opening_plan  # inlined by bundle_agent.py
 # from lib.missions.reinforce import propose_reinforce_missions  # inlined by bundle_agent.py
 # from agents.baseline.launch_rules import enforce_launch_rules  # inlined by bundle_agent.py
@@ -14356,6 +15161,19 @@ def agent(obs, configuration=None):
         return []
 
     world = World.from_obs(obs_d)
+    # Per-turn kinematic position-cache, attached to THIS world instance
+    # (de-singletonized 2026-06-02 — fresh per seat per turn, so in-process
+    # A/Bs no longer corrupt each other). predict_fleet_fate reads world._kt
+    # and falls back to the bit-identical inline build on any miss. Default
+    # ON (the live-peak champion ran with it); BASELINE_KINEMATIC_TABLE=0
+    # disables it for parity A/Bs. begin_turn cost is amortized over the
+    # ~250 predict_fleet_fate calls/turn; it buys back candidates at the
+    # 950ms deadline in dense late-game (audit 2026-06-02).
+    if os.environ.get("BASELINE_KINEMATIC_TABLE", "1").strip().lower() not in (
+        "0", "off", "false", "no",
+    ):
+        world._kt = KinematicTable()
+        world._kt.begin_turn(world)
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
     num_seats = _num_seats(planets, fleets)
