@@ -49,8 +49,14 @@ os.environ.setdefault("BASELINE_STATE_DRIVEN_K", "1")
 os.environ.setdefault("BASELINE_STATE_K_CEIL", "30")
 
 # Calibrated VH: attenuated and centered.
+# BIAS=75.5 = empirical mean(head_out) measured on a real game's prerank
+# rows (4042 vh_predict_one calls vs launch_rules_universal, seed=0).
+# Centered head_out then has mean ~0, std ~56; at lambda=0.1 the VH
+# contribution is mean-zero with std ~5.6, comparable to base j_score
+# noise. (Initial guess of 102 from random-gaussian features was off
+# by ~26; re-measured against real game-state features and updated.)
 os.environ.setdefault("BASELINE_VH_LAMBDA", "0.1")
-os.environ.setdefault("BASELINE_VH_BIAS", "102.0")
+os.environ.setdefault("BASELINE_VH_BIAS", "75.5")
 # Phase A joint VH stays on — the bug is integration, not the joint
 # fix. With centering+attenuation, joint and solo paths are parity.
 
