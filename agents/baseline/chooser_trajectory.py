@@ -672,11 +672,24 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     if _ME_DEFENDS_ENABLED:
         me_defense_emits = _me_defensive_action(snap, me)
 
+    _last_step_s = 0.0
     for t in range(horizon):
         if snap.fake_env.done:
             break
-        if hard_deadline is not None and time.perf_counter() > hard_deadline:
+        # Predictive deadline guard: bail if the NEXT rollout step is
+        # projected to cross the hard cap, rather than reacting after a step
+        # has already overshot. `opp_actions_for_snap` + `fs_step` is an
+        # uninterruptible chunk whose cost scales with board density; at
+        # state-driven-K's horizon (ceil 30) a single step in a dense
+        # late-game state can run ~250ms, so the old react-after check
+        # overshot the 1000ms env cap (observed max=1208ms). Projecting one
+        # step ahead self-tunes to the measured per-step cost and never
+        # starts a step that would blow the deadline. Modeling-correct: the
+        # rollout spends exactly the time it has, then stops cleanly.
+        if hard_deadline is not None and \
+                time.perf_counter() + _last_step_s > hard_deadline:
             return (HARDCAP_BAIL_SENTINEL, "hardcap_bail", eta)
+        _step_t0 = time.perf_counter()
         actions = opp_actions_for_snap(snap, me, num_seats)
         if t == int(wait_N):
             # Candidate first (the chooser's primary decision), then
@@ -690,6 +703,7 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
         elif _ME_REACTS_ENABLED:
             actions[me] = _me_reactive_action(snap, me)
         snap = fs_step(snap, actions, in_place=True)
+        _last_step_s = time.perf_counter() - _step_t0
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
     delta = leaf - baseline_favors[horizon]
@@ -848,11 +862,16 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         me_defense_emits = _me_defensive_action(snap, me)
     earliest_inject_t = min(inject_at.keys()) if inject_at else -1
 
+    _last_step_s = 0.0
     for t in range(horizon):
         if snap.fake_env.done:
             break
-        if hard_deadline is not None and time.perf_counter() > hard_deadline:
+        # Predictive deadline guard (see score_candidate_v4): bail before a
+        # step projected to cross the cap, not after it overshot.
+        if hard_deadline is not None and \
+                time.perf_counter() + _last_step_s > hard_deadline:
             return (HARDCAP_BAIL_SENTINEL, "hardcap_bail")
+        _step_t0 = time.perf_counter()
         actions = opp_actions_for_snap(snap, me, num_seats)
         if t in inject_at:
             base_actions = list(inject_at[t])
@@ -862,6 +881,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         elif _ME_REACTS_ENABLED:
             actions[me] = _me_reactive_action(snap, me)
         snap = fs_step(snap, actions, in_place=True)
+        _last_step_s = time.perf_counter() - _step_t0
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
     delta = leaf - baseline_favors[horizon]
