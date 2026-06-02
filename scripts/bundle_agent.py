@@ -49,6 +49,7 @@ DEFAULT_LIB_ORDER = [
     "world_model",
     "intent",
     "trajectory",
+    "kinematic_table",
     "mechanism",
     "mission",
     # `scoring` exposes `pv_horizon` + `PV_GAMMA` used by missions/snipe

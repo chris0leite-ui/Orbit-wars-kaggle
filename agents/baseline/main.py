@@ -160,6 +160,7 @@ from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 from lib.fast_sim import from_obs as fs_from_obs
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
+from lib.kinematic_table import KinematicTable
 from lib.joint_solver.opening_planner import OPENING_HORIZON, opening_plan
 from lib.missions.reinforce import propose_reinforce_missions
 from agents.baseline.launch_rules import enforce_launch_rules
@@ -874,6 +875,19 @@ def agent(obs, configuration=None):
         return []
 
     world = World.from_obs(obs_d)
+    # Per-turn kinematic position-cache, attached to THIS world instance
+    # (de-singletonized 2026-06-02 — fresh per seat per turn, so in-process
+    # A/Bs no longer corrupt each other). predict_fleet_fate reads world._kt
+    # and falls back to the bit-identical inline build on any miss. Default
+    # ON (the live-peak champion ran with it); BASELINE_KINEMATIC_TABLE=0
+    # disables it for parity A/Bs. begin_turn cost is amortized over the
+    # ~250 predict_fleet_fate calls/turn; it buys back candidates at the
+    # 950ms deadline in dense late-game (audit 2026-06-02).
+    if os.environ.get("BASELINE_KINEMATIC_TABLE", "1").strip().lower() not in (
+        "0", "off", "false", "no",
+    ):
+        world._kt = KinematicTable()
+        world._kt.begin_turn(world)
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
     num_seats = _num_seats(planets, fleets)
