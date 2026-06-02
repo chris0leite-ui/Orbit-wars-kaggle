@@ -1,0 +1,10 @@
+{
+  "best_iteration": 231,
+  "rmse": 376.9894468494241,
+  "mae": 204.81982263298644,
+  "r2": 0.03225759498771075,
+  "spearman_rho": 0.35858100901837076,
+  "sigma_label": 458.4520263671875,
+  "feature_dim": 15,
+  "objective": "regression_l1"
+}

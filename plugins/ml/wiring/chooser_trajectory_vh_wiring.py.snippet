@@ -1,0 +1,76 @@
+# ============================================================================
+# Value-head wiring blocks for a target chooser_trajectory.py
+# ----------------------------------------------------------------------------
+# These two code blocks plug the B.3 advantage value head into a chooser's
+# candidate-scoring loop. Both must be added; only one (B) actually modifies
+# the candidate score. Block A is a one-time prerank featurization.
+#
+# Bundler invariant (Rule 46): VH must round-trip the bundler. Imports MUST
+# be single-line — the bundler's per-line strip regex leaks parenthesised
+# multi-line imports as indented orphans (same constraint as `_ml_logit`).
+#
+# At BASELINE_VH_LAMBDA=0.0 (the module default), `vh_is_enabled()` returns
+# False and Block A is a no-op (vh_feats stays {}), so Block B's
+# `if vh_feats:` branch is skipped. The agent is then byte-equivalent to the
+# pre-port chooser — same parity invariant as ML logit (Reframe A).
+# ============================================================================
+
+
+# ----------------------------------------------------------------------------
+# BLOCK A — prerank-init (insert ONCE per chooser turn, AFTER prerank list
+# is built and BEFORE the deadline loop starts). On hqNVM this lives at
+# chooser_trajectory.py lines 923-935, immediately after the ml_score_candidates
+# init block.
+# ----------------------------------------------------------------------------
+
+    # Reframe B.2 — value-head additive term. Per-candidate LightGBM
+    # regressor predicting K=10 ship-delta; output is added as
+    # λ_vh · head_output. Featurization runs once over the prerank;
+    # per-candidate prediction happens inside the scoring loop because
+    # leaf_delta (the chooser's score itself) is one of the 15 features.
+    from agents.baseline._value_head import vh_is_enabled, vh_featurize_prerank  # noqa: E501
+    vh_feats: dict = {}
+    if vh_is_enabled():
+        try:
+            vh_feats = vh_featurize_prerank(prerank, world, model)
+        except Exception:
+            vh_feats = {}
+
+
+# ----------------------------------------------------------------------------
+# BLOCK B — per-candidate scoring (insert INSIDE the chooser's candidate
+# scoring loop, AFTER the leaf_delta `score` is computed and AFTER any
+# ml-logit correction, BEFORE any class-specific multipliers like
+# `_surplus_boost` or `aim_boost`).
+#
+# On hqNVM this lives at chooser_trajectory.py lines 1133-1140. The
+# variable names assumed:
+#   - `vh_feats`: dict from Block A
+#   - `src`, `tgt`: prerank's src/tgt planet objects (have .id)
+#   - `ships`: int
+#   - `angle`: float
+#   - `wait_N`: int (the prerank's wait_N column)
+#   - `score`: float (the running score AFTER leaf_delta + ML correction)
+# ----------------------------------------------------------------------------
+
+                if vh_feats:
+                    from agents.baseline._value_head import vh_get_lambda, vh_predict_one  # noqa: E501
+                    head_out = vh_predict_one(
+                        vh_feats, int(src.id), int(tgt.id),
+                        int(ships), float(angle), int(wait_N),
+                        float(score),  # leaf_delta after ML correction
+                    )
+                    score = score + vh_get_lambda() * head_out
+
+
+# ============================================================================
+# ENV-VAR WIRING (target's `agents/baseline_<name>/main.py` wrapper)
+# ----------------------------------------------------------------------------
+# Set `BASELINE_VH_LAMBDA=1.0` to enable the term at the head's natural scale
+# (the regressor predicts in ship units; λ=1.0 ships one ship-equivalent of
+# extra credit per unit head_out). Set to "0" or unset for byte-equivalent
+# parity vs the un-ported chooser.
+#
+#   _os.environ.setdefault("BASELINE_VH_LAMBDA", "1.0")
+#
+# ============================================================================
