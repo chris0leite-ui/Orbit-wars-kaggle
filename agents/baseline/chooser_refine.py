@@ -100,10 +100,12 @@ def choose_refine(snap_base, prerank, baseline_favors,
     # overhead — so a turn the refiner can't improve costs nothing over the
     # champion (the slowness fix + the degrade-to-champion guarantee). ---
     atoms = []
+    _raw = 0
     for launches, _tarr in generate_sync_coalitions(
             world, model, me, max_horizon,
             reserved_srcs, reserved_for_new_commits,
             max_pairs=JOINT_SYNC_MAX_PAIRS):
+        _raw += 1
         srcs = frozenset(int(L[0].id) for L in launches)
         tgts = frozenset(int(L[1].id) for L in launches)
         if srcs & used_srcs:
@@ -111,6 +113,13 @@ def choose_refine(snap_base, prerank, baseline_favors,
         if tgt_locked and (tgts & used_tgts):
             continue
         atoms.append({"launches": launches, "srcs": srcs, "tgts": tgts})
+    if _raw and os.environ.get("BASELINE_REFINE_DEBUG", "").strip() == "1":
+        import sys
+        champ_waitlegs = sum(1 for L in champ_launches if int(L[4]) > 0)
+        print(f"[refine-raw] step={int(world.step) if world else -1} "
+              f"raw_coalitions={_raw} feasible={len(atoms)} "
+              f"champ_launches={len(champ_launches)} champ_waitlegs={champ_waitlegs} "
+              f"used_srcs={len(used_srcs)}", file=sys.stderr)
     if not atoms and not do_drop:
         return moves, commits
 
