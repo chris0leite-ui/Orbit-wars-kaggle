@@ -306,6 +306,13 @@ def _table_window_or_none(world, wait_N: int, length: int):
     inline build would have produced, or None to signal "fall through
     to inline build".
 
+    Reads the PER-WORLD table (`lib.kinematic_table.for_world(world)`).
+    Returns None — and lets the caller take the inline fallback — when
+    the world has not been primed via `kt.begin_turn(world)`. Does NOT
+    fall back to the legacy module-global singleton: that path is the
+    contamination source we eliminated in this refactor
+    (audit/2026-05-29-postmortem-three-abs-headroom-empty.md).
+
     Bit-parity contract: the table is rebuilt every turn from
     `world.planets_by_id` using the SAME `predict_relative` calls the
     inline build makes (orbital), the SAME `(p.x, p.y)` constants
@@ -314,8 +321,12 @@ def _table_window_or_none(world, wait_N: int, length: int):
     if not _kinematic_table_enabled():
         return None
     # Lazy import keeps default-path module-load time unchanged.
-    from lib.kinematic_table import get_default
-    table = get_default()
+    from lib.kinematic_table import for_world
+    table = for_world(world)
+    if table is None:
+        # World wasn't primed for this seat — take the inline fallback
+        # at the call site. Never reach for the singleton here.
+        return None
     pids = list(world.planets_by_id.keys())
     if not pids:
         return None

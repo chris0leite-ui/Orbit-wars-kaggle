@@ -400,7 +400,53 @@ def _extract_comet_paths(world) -> dict[int, tuple[list, int]]:
 
 
 # ---------------------------------------------------------------------------
+# Per-World attachment — the safe path. Each `World` owns its own
+# `KinematicTable` via a lazy attribute slot. Eliminates the singleton
+# contamination that broke in-process A/B harnesses
+# (audit/2026-05-29-postmortem-three-abs-headroom-empty.md).
+# ---------------------------------------------------------------------------
+
+_WORLD_ATTR = "_kinematic_table"
+
+
+def attach(world, *, max_lead: Optional[int] = None) -> KinematicTable:
+    """Get-or-create the `KinematicTable` owned by `world`.
+
+    Stable across repeated calls — returns the SAME instance for the
+    same `world`. Per-World ownership is what makes this safe in
+    in-process A/B harnesses (`fast.py eval`, `quick_ab.py`, pytest):
+    seat A's world and seat B's world are distinct Python objects, so
+    they get distinct tables — no cross-seat contamination.
+
+    Live Kaggle ladder is unchanged: one process per seat, one world
+    per turn, one attached table.
+    """
+    table = getattr(world, _WORLD_ATTR, None)
+    if table is None:
+        table = KinematicTable(max_lead=max_lead or DEFAULT_MAX_LEAD)
+        setattr(world, _WORLD_ATTR, table)
+    return table
+
+
+def for_world(world) -> Optional[KinematicTable]:
+    """Return the World's attached `KinematicTable`, or `None` if the
+    world hasn't been primed yet.
+
+    Callers that get `None` MUST take the inline fallback path. Never
+    fall back to the module-global singleton — that's the contamination
+    source this refactor exists to eliminate.
+    """
+    return getattr(world, _WORLD_ATTR, None)
+
+
+# ---------------------------------------------------------------------------
 # Module-level singleton + thin function wrappers.
+#
+# LEGACY: the singleton path is incorrect in multi-seat in-process A/Bs
+# (two seats share one `_DEFAULT`). Kept transitionally so the existing
+# wiring test (`tests/test_kinematic_table_baseline_wiring.py`) and the
+# `test_module_singleton_wraps_class` parity test stay green. New code
+# should use `attach(world)` / `for_world(world)` instead.
 # ---------------------------------------------------------------------------
 
 _DEFAULT = KinematicTable()
@@ -412,7 +458,23 @@ def clear() -> None:
 
 
 def begin_turn(world, *, max_lead: Optional[int] = None) -> bool:
-    return _DEFAULT.begin_turn(world, max_lead=max_lead)
+    """Prime the per-World table; ALSO prime the legacy singleton
+    transitionally so existing callers that still read `get_default()`
+    continue to work.
+
+    The per-World priming is the load-bearing call — it's what makes
+    `for_world(world)` return a fresh, isolated table for this seat.
+    The `_DEFAULT` prime is a back-compat shim and should go away once
+    `tests/test_kinematic_table_baseline_wiring.py` migrates to read
+    via `for_world(world)`.
+    """
+    table = attach(world, max_lead=max_lead)
+    rebuilt = table.begin_turn(world, max_lead=max_lead)
+    # TODO(rule-50): remove once test_kinematic_table_baseline_wiring
+    # migrates off `get_default()`. The singleton path is incorrect in
+    # multi-seat in-process A/Bs.
+    _DEFAULT.begin_turn(world, max_lead=max_lead)
+    return rebuilt
 
 
 def lookup_relative(pid: int, lead: int) -> tuple[float, float]:
@@ -432,5 +494,9 @@ def comet_paths_view() -> dict[int, tuple[list, int]]:
 
 
 def get_default() -> KinematicTable:
-    """Accessor for the module-level singleton."""
+    """Accessor for the module-level singleton.
+
+    LEGACY: prefer `for_world(world)` in new code. The singleton is
+    shared process-wide and contaminates in-process A/Bs.
+    """
     return _DEFAULT
