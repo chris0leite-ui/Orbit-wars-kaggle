@@ -1,4 +1,4 @@
-# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,kinematic_table,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner,joint_solver/columns,joint_solver/lp}.
+# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,kinematic_table,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,_validator_tree_walker,opp_features_lite,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner,joint_solver/columns,joint_solver/lp}.
 # Single-file Kaggle submission for Orbit Wars.
 
 from __future__ import annotations
@@ -5986,6 +5986,554 @@ def rollout(
         snap = step(snap, actions, in_place=True)
     return snap
 
+# === inlined: lib/_validator_tree_walker.py ===
+
+
+import re
+from dataclasses import dataclass
+
+import numpy as np
+
+
+@dataclass(frozen=True)
+class _Tree:
+    """A single boosted tree's load-bearing arrays."""
+    split_feature: np.ndarray  # int32, length = num_internal_nodes
+    threshold: np.ndarray      # float64
+    decision_type: np.ndarray  # uint8
+    left_child: np.ndarray     # int32
+    right_child: np.ndarray    # int32
+    leaf_value: np.ndarray     # float64, length = num_leaves
+
+
+@dataclass(frozen=True)
+class ParsedBooster:
+    trees: list  # list[_Tree]
+    num_features: int  # max_feature_idx + 1
+    sigmoid_scale: float  # 1.0 unless `sigmoid:N` in objective
+    objective: str  # "binary" expected
+    average_output: bool  # boost_from_average=1 (we treat baseline as
+                          # baked into the leaf values; raw-score parity
+                          # against Booster.predict(raw_score=True) is
+                          # the contract that confirms it)
+
+
+_TREE_HEADER_RE = re.compile(r"^Tree=(\d+)\s*$", re.MULTILINE)
+_KEY_RE = re.compile(r"^([A-Za-z_]+)=(.*)$")
+
+
+def _parse_floats(s: str) -> np.ndarray:
+    return np.fromstring(s.strip(), sep=" ", dtype=np.float64)
+
+
+def _parse_ints(s: str) -> np.ndarray:
+    return np.fromstring(s.strip(), sep=" ", dtype=np.int64)
+
+
+def _parse_tree_block(block: str) -> _Tree:
+    """Parse the body of one `Tree=K` block (without the header line).
+
+    Each line is `key=values`. We pull the six fields we need; others
+    (split_gain, leaf_weight, internal_value, internal_count, shrinkage,
+    leaf_count) are ignored — they don't affect inference.
+    """
+    fields: dict[str, str] = {}
+    for line in block.splitlines():
+        m = _KEY_RE.match(line.strip())
+        if m:
+            fields[m.group(1)] = m.group(2)
+    return _Tree(
+        split_feature=_parse_ints(fields["split_feature"]).astype(np.int32),
+        threshold=_parse_floats(fields["threshold"]),
+        decision_type=_parse_ints(fields["decision_type"]).astype(np.uint8),
+        left_child=_parse_ints(fields["left_child"]).astype(np.int32),
+        right_child=_parse_ints(fields["right_child"]).astype(np.int32),
+        leaf_value=_parse_floats(fields["leaf_value"]),
+    )
+
+
+def parse_booster_text(text: str) -> ParsedBooster:
+    """Parse a LightGBM model_to_string() dump into a ParsedBooster."""
+    # ---- header (key=value lines before the first `Tree=` block) ----
+    header_end = text.find("\nTree=")
+    if header_end < 0:
+        raise ValueError("no Tree= block in booster text")
+    header = text[:header_end]
+    header_kv: dict[str, str] = {}
+    for line in header.splitlines():
+        m = _KEY_RE.match(line.strip())
+        if m:
+            header_kv[m.group(1)] = m.group(2)
+
+    objective_raw = header_kv.get("objective", "")
+    # objective looks like "binary sigmoid:1" — split into kind + flags.
+    objective_kind = objective_raw.split()[0] if objective_raw else "binary"
+    sigmoid_scale = 1.0
+    m_sig = re.search(r"sigmoid:(\d+(?:\.\d+)?)", objective_raw)
+    if m_sig:
+        sigmoid_scale = float(m_sig.group(1))
+    num_features = int(header_kv["max_feature_idx"]) + 1
+    average_output = header_kv.get("boost_from_average", "0").strip() == "1"
+
+    # ---- find every Tree=K block boundary ----
+    headers = list(_TREE_HEADER_RE.finditer(text))
+    if not headers:
+        raise ValueError("no Tree=K block headers")
+
+    # The "end of trees" marker terminates the last block; if missing,
+    # the parameters section header `\n[label_column:` does.
+    end_marker = text.find("\nend of trees")
+    if end_marker < 0:
+        end_marker = text.find("\n[label_column:")
+    if end_marker < 0:
+        end_marker = len(text)
+
+    trees: list = []
+    for i, h in enumerate(headers):
+        body_start = h.end()
+        body_end = headers[i + 1].start() if i + 1 < len(headers) else end_marker
+        body = text[body_start:body_end]
+        trees.append(_parse_tree_block(body))
+
+    return ParsedBooster(
+        trees=trees,
+        num_features=num_features,
+        sigmoid_scale=sigmoid_scale,
+        objective=objective_kind,
+        average_output=average_output,
+    )
+
+
+def _walk_one(tree: _Tree, x: np.ndarray) -> float:
+    """Walk a single tree for a single row x → leaf_value.
+
+    `left_child[i] >= 0` means child is an internal-node index (we
+    recurse there). `< 0` means child is a leaf; leaf_index = -(value+1).
+    decision_type bit 0 = 0 means numerical; bit 2 = 0 means "<="
+    (the only forms our trainer produces).
+    """
+    node = 0
+    sf = tree.split_feature
+    th = tree.threshold
+    lc = tree.left_child
+    rc = tree.right_child
+    while True:
+        thr = th[node]
+        feat = sf[node]
+        # "<=" — matches decision_type bit 2 = 0 (LightGBM default).
+        if x[feat] <= thr:
+            child = lc[node]
+        else:
+            child = rc[node]
+        if child < 0:
+            return float(tree.leaf_value[-(child + 1)])
+        node = int(child)
+
+
+def predict_raw(parsed: ParsedBooster, X: np.ndarray) -> np.ndarray:
+    """Sum of leaf_values across all trees for each row.
+
+    Matches `Booster.predict(X, raw_score=True)` to ~1e-6.
+    """
+    if X.ndim == 1:
+        X = X.reshape(1, -1)
+    if X.shape[1] < parsed.num_features:
+        raise ValueError(
+            f"X has {X.shape[1]} cols but booster expects "
+            f">= {parsed.num_features}"
+        )
+    n = X.shape[0]
+    out = np.zeros(n, dtype=np.float64)
+    for tree in parsed.trees:
+        for i in range(n):
+            out[i] += _walk_one(tree, X[i])
+    return out
+
+
+def predict_proba(parsed: ParsedBooster, X: np.ndarray) -> np.ndarray:
+    """sigmoid(predict_raw * sigmoid_scale). Matches `Booster.predict(X)`."""
+    raw = predict_raw(parsed, X)
+    s = parsed.sigmoid_scale
+    return 1.0 / (1.0 + np.exp(-np.clip(raw * s, -30.0, 30.0)))
+
+# === inlined: lib/opp_features_lite.py ===
+
+
+import math
+from typing import Any
+
+import numpy as np
+
+LITE_FEATURE_DIM = 30
+
+# Slice mapping from the 45-d corpus to the 30-d lite corpus. Used at
+# training time: `X_lite = X_full[:, LITE_KEEP_INDICES]`.
+#
+# Dropped from the 45-d schema:
+#  - 11 WorldModel-dependent features (F2/F3/F4/F6/F8): same as before.
+#  - F9 src_threat (37, 38): uses world_model.time_to_enemy_threat → WM.
+#  - Post-capture nearest geometry (41, 42): uses world's predict_relative
+#    for orbital planets → also WM.
+# Feature-parity check vs slow encoder showed these had mean-abs-diff
+# 0.1-1.0 (binary frontier flag flipped), unusable at inference.
+LITE_KEEP_INDICES = np.asarray([
+    0, 1, 2, 3, 4, 5,            # planet-static  → 0-5
+    9, 10, 11, 12, 13,           # shot-static    → 6-10
+    14, 15, 16, 17,              # in-flight totals → 11-14
+    18, 19, 20, 21, 22, 23,      # meta           → 15-20
+    29, 30,                      # F10 friendly inflight (n, ships) → 21-22
+    34,                          # F11 joint arrival count at eta   → 23
+    35,                          # F7 intercept enemy eta           → 24
+    36,                          # F13 growth-field diff (signed)   → 25
+    39, 40,                      # enemy inflight to target (n, ships) → 26-27
+    43, 44,                      # orbital flags (src, tgt)         → 28-29
+], dtype=np.int64)
+
+assert LITE_KEEP_INDICES.size == LITE_FEATURE_DIM, (
+    f"LITE_KEEP_INDICES has {LITE_KEEP_INDICES.size} entries, expected {LITE_FEATURE_DIM}"
+)
+
+# Normalization constants — must match `lib.shot_features.NORM` exactly so
+# the slice from the existing corpus is comparable to lite-encoded inputs.
+_MAX_SHIPS = 2000.0
+_MAX_PROD = 5.0
+_MAX_RADIUS = 3.0
+_MAX_FLEET_SPEED = 6.0
+_MAX_ETA = 200.0
+_BOARD_DIAG = 141.42
+_MAX_PLANETS = 40.0
+_EP_STEPS = 500.0
+_GROWTH_MAX = 5.0
+
+
+def _fleet_speed(ships: float) -> float:
+    """Mirror `lib.fleet.fleet_speed`."""
+    if ships <= 0:
+        return 0.0
+    return 1.0 + (6.0 - 1.0) * (math.log(ships) / math.log(1000.0)) ** 1.5
+
+
+def _fleet_destinations(
+    fleets_arr: np.ndarray,
+    planets_arr: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Precompute each fleet's destination planet id + eta to that planet.
+
+    Mirrors `lib.shot_features.infer_target_pid` (ray-cast from fleet
+    position along the fleet's angle, pick the planet with smallest
+    perpendicular distance among forward candidates).
+
+    Args:
+        fleets_arr: (F, 7) [id, owner, x, y, angle, src, ships]
+        planets_arr: (P, 7) [id, owner, x, y, r, ships, prod]
+
+    Returns:
+        dest_pid: (F,) int64 — destination planet id, or -1 if no
+                  forward candidate matched.
+        dest_eta: (F,) float32 — turns until arrival (ceil(d / speed)),
+                  or 0 if dest_pid == -1.
+    """
+    F = fleets_arr.shape[0]
+    if F == 0 or planets_arr.shape[0] == 0:
+        return (np.full(F, -1, dtype=np.int64),
+                np.zeros(F, dtype=np.float32))
+
+    fx = fleets_arr[:, 2].astype(np.float32)
+    fy = fleets_arr[:, 3].astype(np.float32)
+    fang = fleets_arr[:, 4].astype(np.float32)
+    fships = fleets_arr[:, 6].astype(np.float32)
+    cos_a = np.cos(fang)
+    sin_a = np.sin(fang)
+
+    pids = planets_arr[:, 0].astype(np.int64)
+    px = planets_arr[:, 2].astype(np.float32)
+    py = planets_arr[:, 3].astype(np.float32)
+
+    # Pairwise displacements: (F, P)
+    rx = px[None, :] - fx[:, None]
+    ry = py[None, :] - fy[:, None]
+    fwd = rx * cos_a[:, None] + ry * sin_a[:, None]
+    # perpendicular = |r - fwd * d_hat|
+    perp_x = rx - fwd * cos_a[:, None]
+    perp_y = ry - fwd * sin_a[:, None]
+    perp = np.sqrt(perp_x * perp_x + perp_y * perp_y)
+    # Score = perp + 0.001 * fwd (matches lib.shot_features.infer_target_pid)
+    score = perp + 0.001 * fwd
+    # Mask out non-forward candidates (fwd <= 0) AND zero-distance (self).
+    score[fwd <= 0] = np.inf
+    score[(rx ** 2 + ry ** 2) < 1e-12] = np.inf
+
+    # Best target per fleet.
+    best_idx = score.argmin(axis=1)
+    best_score = score[np.arange(F), best_idx]
+    matched = best_score < np.inf
+
+    dest_pid = np.where(matched, pids[best_idx], -1).astype(np.int64)
+
+    # ETA: forward distance from fleet position to chosen target / fleet speed.
+    chosen_rx = rx[np.arange(F), best_idx]
+    chosen_ry = ry[np.arange(F), best_idx]
+    chosen_d = np.sqrt(chosen_rx * chosen_rx + chosen_ry * chosen_ry)
+    # speed = 1 + 5 * (log(ships) / log(1000)) ^ 1.5 ; zero when ships <= 0
+    log_ships = np.log(np.maximum(fships, 1e-6))
+    speed = np.where(
+        fships > 0,
+        1.0 + 5.0 * (log_ships / math.log(1000.0)) ** 1.5,
+        np.zeros(F, dtype=np.float32),
+    ).astype(np.float32)
+    eta = np.where(
+        (speed > 0) & matched,
+        np.ceil(chosen_d / np.maximum(speed, 1e-6)),
+        np.zeros(F, dtype=np.float32),
+    ).astype(np.float32)
+    return dest_pid, eta
+
+
+def encode_lite_batch(
+    planets_arr: np.ndarray,
+    fleets_arr: np.ndarray,
+    focal_seat: int,
+    step: int,
+    candidates: list[tuple[int, int, float, int]],
+    *,
+    angular_velocity: float = 0.0,
+    initial_planets: np.ndarray | None = None,
+) -> np.ndarray:
+    """Vectorized per-candidate feature batch encoder.
+
+    Args:
+        planets_arr: (P, 7) np.ndarray of [id, owner, x, y, r, ships, prod]
+        fleets_arr: (F, 7) np.ndarray of [id, owner, x, y, angle, src, ships]
+                    or empty (0, 7) array.
+        focal_seat: int — the seat the opp policy is acting on behalf of.
+        step: int — current game step (for `meta_turn`).
+        candidates: list of (src_pid, tgt_pid, angle, ships) tuples.
+        angular_velocity: optional, for orbital flag computation.
+        initial_planets: optional (P, 7), for orbital flag detection.
+
+    Returns:
+        (N, LITE_FEATURE_DIM) float32 array. N = len(candidates).
+    """
+    N = len(candidates)
+    out = np.zeros((N, LITE_FEATURE_DIM), dtype=np.float32)
+    if N == 0:
+        return out
+
+    P = planets_arr.shape[0]
+    F = fleets_arr.shape[0] if fleets_arr.size else 0
+
+    # Build pid → row-index dict for indexing candidates.
+    by_id = {int(planets_arr[i, 0]): i for i in range(P)}
+
+    # Per-candidate index arrays (vectorized lookup into planets_arr).
+    src_pids = np.fromiter((c[0] for c in candidates), dtype=np.int64, count=N)
+    tgt_pids = np.fromiter((c[1] for c in candidates), dtype=np.int64, count=N)
+    cand_ships = np.fromiter(
+        (c[3] for c in candidates), dtype=np.float32, count=N,
+    )
+    # `angle` from the candidate (straight-line aim) is currently unused
+    # in the lite feature set; the encoder relies on (src, tgt) positions
+    # instead of explicit angle. Kept in the signature for symmetry with
+    # the training-time enumerate_candidates which propagates angle to
+    # the bundler's policy call.
+
+    src_idx = np.fromiter(
+        (by_id.get(int(p), 0) for p in src_pids), dtype=np.int64, count=N,
+    )
+    tgt_idx = np.fromiter(
+        (by_id.get(int(p), 0) for p in tgt_pids), dtype=np.int64, count=N,
+    )
+
+    src_rows = planets_arr[src_idx]   # (N, 7)
+    tgt_rows = planets_arr[tgt_idx]   # (N, 7)
+
+    sx = src_rows[:, 2].astype(np.float32)
+    sy = src_rows[:, 3].astype(np.float32)
+    tx = tgt_rows[:, 2].astype(np.float32)
+    ty = tgt_rows[:, 3].astype(np.float32)
+    s_rad = src_rows[:, 4].astype(np.float32)
+    t_rad = tgt_rows[:, 4].astype(np.float32)
+    s_ships = src_rows[:, 5].astype(np.float32)
+    s_prod = src_rows[:, 6].astype(np.float32)
+    t_ships = tgt_rows[:, 5].astype(np.float32)
+    t_prod = tgt_rows[:, 6].astype(np.float32)
+    t_owner = tgt_rows[:, 1].astype(np.float32)
+
+    # 0-5 planet-static
+    out[:, 0] = s_ships / _MAX_SHIPS
+    out[:, 1] = s_prod / _MAX_PROD
+    out[:, 2] = s_rad / _MAX_RADIUS
+    out[:, 3] = t_ships / _MAX_SHIPS
+    out[:, 4] = t_prod / _MAX_PROD
+    out[:, 5] = t_rad / _MAX_RADIUS
+
+    # 6-10 shot-static
+    src_garrison = np.maximum(1.0, s_ships)
+    out[:, 6] = np.minimum(1.0, cand_ships / _MAX_SHIPS)
+    out[:, 7] = np.minimum(1.0, cand_ships / src_garrison)
+    dx = tx - sx
+    dy = ty - sy
+    dist = np.sqrt(dx * dx + dy * dy)
+    out[:, 8] = np.minimum(1.0, dist / _BOARD_DIAG)
+    # fleet_speed is per-candidate, vectorize
+    fs_vec = np.zeros(N, dtype=np.float32)
+    positive_mask = cand_ships > 0
+    if positive_mask.any():
+        log_ships = np.log(np.maximum(cand_ships[positive_mask], 1e-6))
+        fs_vec[positive_mask] = (
+            1.0 + 5.0 * (log_ships / math.log(1000.0)) ** 1.5
+        )
+    eta_vec = np.where(
+        fs_vec > 0,
+        np.ceil(dist / np.maximum(fs_vec, 1e-6)).astype(np.float32),
+        np.zeros(N, dtype=np.float32),
+    )
+    out[:, 9] = np.minimum(1.0, eta_vec / _MAX_ETA)
+    out[:, 10] = np.minimum(1.0, fs_vec / _MAX_FLEET_SPEED)
+
+    # 11-14 in-flight totals (per-call constants, broadcast)
+    if F > 0:
+        f_owner = fleets_arr[:, 1].astype(np.int64)
+        f_ships = fleets_arr[:, 6].astype(np.float32)
+        allied_mask = f_owner == focal_seat
+        enemy_mask = (f_owner != focal_seat) & (f_owner != -1)
+        n_allied = int(allied_mask.sum())
+        n_enemy = int(enemy_mask.sum())
+        ship_allied = float(f_ships[allied_mask].sum())
+        ship_enemy = float(f_ships[enemy_mask].sum())
+    else:
+        n_allied = n_enemy = 0
+        ship_allied = ship_enemy = 0.0
+        f_owner = np.empty(0, dtype=np.int64)
+        f_ships = np.empty(0, dtype=np.float32)
+    out[:, 11] = min(1.0, n_allied / _MAX_PLANETS)
+    out[:, 12] = min(1.0, ship_allied / _MAX_SHIPS)
+    out[:, 13] = min(1.0, n_enemy / _MAX_PLANETS)
+    out[:, 14] = min(1.0, ship_enemy / _MAX_SHIPS)
+
+    # 15-20 meta — partly per-call (constants), one per-candidate slot (turn)
+    p_owner = planets_arr[:, 1].astype(np.int64)
+    p_ships = planets_arr[:, 5].astype(np.float32)
+    my_planet_ships = float(p_ships[p_owner == focal_seat].sum())
+    enemy_planet_ships = float(p_ships[(p_owner != focal_seat) & (p_owner != -1)].sum())
+    my_total = my_planet_ships + ship_allied
+    enemy_total = enemy_planet_ships + ship_enemy
+    my_pc = int((p_owner == focal_seat).sum())
+    enemy_pc = int(((p_owner != focal_seat) & (p_owner != -1)).sum())
+
+    out[:, 15] = min(1.0, step / _EP_STEPS)
+    # Slow encoder uses _MAX_SHIPS=2000 (not *4) for these norms.
+    out[:, 16] = min(1.0, my_total / _MAX_SHIPS)
+    out[:, 17] = min(1.0, enemy_total / _MAX_SHIPS)
+    out[:, 18] = max(-1.0, min(1.0,
+        (my_total - enemy_total) / _MAX_SHIPS
+    ))
+    out[:, 19] = min(1.0, my_pc / _MAX_PLANETS)
+    out[:, 20] = min(1.0, enemy_pc / _MAX_PLANETS)
+
+    # ----- Fleet-destination preprocessing (used by F10, F11, F7, enemy
+    # inflight features). One ray-cast pass over all fleets; results
+    # broadcast to per-candidate aggregates below.
+    if F > 0:
+        fleet_dest_pid, fleet_eta = _fleet_destinations(fleets_arr, planets_arr)
+    else:
+        fleet_dest_pid = np.empty(0, dtype=np.int64)
+        fleet_eta = np.empty(0, dtype=np.float32)
+
+    # 21-22 F10 friendly inflight to target (n, ships).
+    if F > 0:
+        friendly_to_tgt_n = np.zeros(N, dtype=np.float32)
+        friendly_to_tgt_ships = np.zeros(N, dtype=np.float32)
+        for i in range(N):
+            tgt_pid_i = int(tgt_pids[i])
+            mask = (fleet_dest_pid == tgt_pid_i) & allied_mask
+            friendly_to_tgt_n[i] = float(mask.sum())
+            friendly_to_tgt_ships[i] = float(f_ships[mask].sum())
+        out[:, 21] = np.minimum(1.0, friendly_to_tgt_n / _MAX_PLANETS)
+        out[:, 22] = np.minimum(1.0, friendly_to_tgt_ships / _MAX_SHIPS)
+
+    # 23 F11 joint arrival count: number of fleets arriving at target at
+    # the same eta as the candidate emit. Cheap window: |delta_eta| <= 2.
+    if F > 0:
+        joint_arr = np.zeros(N, dtype=np.float32)
+        for i in range(N):
+            tgt_pid_i = int(tgt_pids[i])
+            cand_eta_i = float(eta_vec[i])
+            same_target = fleet_dest_pid == tgt_pid_i
+            close_eta = np.abs(fleet_eta - cand_eta_i) <= 2.0
+            joint_arr[i] = float((same_target & close_eta).sum())
+        out[:, 23] = np.minimum(1.0, joint_arr / _MAX_PLANETS)
+
+    # 24 F7 intercept enemy eta: for enemy fleets heading to the candidate
+    # target, the min arrival eta (normalized). 1.0 if no such fleet.
+    if F > 0:
+        intercept_norm = np.ones(N, dtype=np.float32)
+        for i in range(N):
+            tgt_pid_i = int(tgt_pids[i])
+            mask = (fleet_dest_pid == tgt_pid_i) & enemy_mask
+            if mask.any():
+                min_eta = float(fleet_eta[mask].min())
+                intercept_norm[i] = min(1.0, min_eta / _MAX_ETA)
+        out[:, 24] = intercept_norm
+    else:
+        out[:, 24] = 1.0
+
+    # 25 F13 growth-field diff — per-call constant, broadcast.
+    if P > 1:
+        px = planets_arr[:, 2].astype(np.float32)
+        py = planets_arr[:, 3].astype(np.float32)
+        pp = planets_arr[:, 6].astype(np.float32)
+        dx_pp = px[:, None] - px[None, :]
+        dy_pp = py[:, None] - py[None, :]
+        d2 = dx_pp * dx_pp + dy_pp * dy_pp + 1.0
+        field_per_planet = (pp[None, :] / d2).sum(axis=1) - pp / 1.0
+        my_field = float(field_per_planet[p_owner == focal_seat].sum())
+        enemy_field = float(
+            field_per_planet[(p_owner != focal_seat) & (p_owner != -1)].sum()
+        )
+        diff = (my_field - enemy_field) / _GROWTH_MAX
+        out[:, 25] = max(-1.0, min(1.0, float(diff)))
+
+    # 26-27 enemy inflight to target (n, ships).
+    if F > 0:
+        enemy_to_tgt_n = np.zeros(N, dtype=np.float32)
+        enemy_to_tgt_ships = np.zeros(N, dtype=np.float32)
+        for i in range(N):
+            tgt_pid_i = int(tgt_pids[i])
+            mask = (fleet_dest_pid == tgt_pid_i) & enemy_mask
+            enemy_to_tgt_n[i] = float(mask.sum())
+            enemy_to_tgt_ships[i] = float(f_ships[mask].sum())
+        out[:, 26] = np.minimum(1.0, enemy_to_tgt_n / _MAX_PLANETS)
+        out[:, 27] = np.minimum(1.0, enemy_to_tgt_ships / _MAX_SHIPS)
+
+    # 28-29 orbital flags. The slow encoder uses lib.orbit.is_orbiting
+    # which checks the planet's `angular_velocity` (only set for orbital
+    # bodies). When `initial_planets` is provided, position drift is a
+    # reasonable proxy; without it, the slot stays 0.
+    if initial_planets is not None and initial_planets.shape[0] == P:
+        init_x = initial_planets[:, 2].astype(np.float32)
+        init_y = initial_planets[:, 3].astype(np.float32)
+        is_orb_per_pid = ((planets_arr[:, 2] - init_x) ** 2 +
+                          (planets_arr[:, 3] - init_y) ** 2) > 1e-4
+        out[:, 28] = is_orb_per_pid[src_idx].astype(np.float32)
+        out[:, 29] = is_orb_per_pid[tgt_idx].astype(np.float32)
+
+    return out
+
+
+def planets_to_array(planets: list) -> np.ndarray:
+    """Convert obs.planets (list of 7-tuples) to (P, 7) float32 numpy."""
+    if not planets:
+        return np.zeros((0, 7), dtype=np.float32)
+    return np.asarray(planets, dtype=np.float32)
+
+
+def fleets_to_array(fleets: list) -> np.ndarray:
+    """Convert obs.fleets (list of 7-tuples) to (F, 7) float32 numpy."""
+    if not fleets:
+        return np.zeros((0, 7), dtype=np.float32)
+    return np.asarray(fleets, dtype=np.float32)
+
 # === inlined: lib/opp_model.py ===
 
 
@@ -6063,24 +6611,236 @@ def top_tier_mirror_policy(obs: Any) -> list:
     return realize(intents, obs, mechanisms=DEFAULT_MECHANISMS, model=model)
 
 
+# Tier 2 — distilled-ladder opp predictor (REPLACED 2026-05-31 v2).
+# Architecture: directly enumerate cheap (src, tgt) candidates from obs
+# (lite_greedy-style pruning, no WorldModel rebuild on the candidate
+# enumeration), score each with a LightGBM booster trained on top-10%
+# Kaggle ladder 2P replays (`data/opp_distill/distill_booster.txt`),
+# emit those above `BASELINE_OPP_FILTER_THRESHOLD` (default 0.30).
+#
+# Speed target: ≤1 ms median per call vs Tier 1's 5-10 ms. The old
+# filter-on-Tier-1 design (`top_tier_mirror_policy` + booster veto)
+# was falsified 2026-05-31 — it inherited Tier 1's full cost, starving
+# the chooser's candidate-validation budget to ~155/turn vs Tier 0's
+# ~1200/turn (audit/2026-05-31-postmortem-tier2-falsification.md).
+#
+# Fallback: any load/scoring failure → returns `lite_greedy_policy(obs)`
+# for that step. Never silent garbage launches.
 # ---------------------------------------------------------------------------
-# Tier 2 — placeholder for the trained launch-decision classifier
-# ---------------------------------------------------------------------------
+
+
+# Bundler patches _OPP_BOOSTER_B64 to a gzip+base64 LightGBM
+# `model_to_string()` dump (binary classifier). In source mode (empty
+# blob), we fall back to `data/opp_distill/distill_booster.txt`.
+_OPP_BOOSTER_B64: str = ""
+
+_OPP_PARSED = None
+_OPP_LOAD_FAILED: bool = False
+_OPP_THRESHOLD: float | None = None
+
+
+def _load_opp_booster():
+    """Lazy-load the distilled-ladder booster + threshold for Tier 2.
+
+    Returns the parsed booster (or None on any failure — caller falls
+    back to Tier 0 lite_greedy)."""
+    global _OPP_PARSED, _OPP_LOAD_FAILED, _OPP_THRESHOLD
+    if _OPP_PARSED is not None or _OPP_LOAD_FAILED:
+        return _OPP_PARSED
+    try:
+        # Single-line imports per the bundler's per-line strip regex —
+        # parenthesised multi-line imports leak as indented orphans.
+        import os as _os
+        if _OPP_BOOSTER_B64:
+            import base64
+            import gzip
+            text = gzip.decompress(
+                base64.b64decode(_OPP_BOOSTER_B64)
+            ).decode()
+        else:
+            from pathlib import Path as _Path
+            booster_path = (
+                _Path(__file__).resolve().parents[1]
+                / "data" / "opp_distill" / "distill_booster.txt"
+            )
+            text = booster_path.read_text()
+        _OPP_PARSED = parse_booster_text(text)
+        _override = _os.environ.get("BASELINE_OPP_FILTER_THRESHOLD")
+        _OPP_THRESHOLD = float(_override) if _override else 0.30
+        return _OPP_PARSED
+    except Exception:
+        _OPP_LOAD_FAILED = True
+        return None
+
+
+# Knobs for the distilled-ladder enumeration. Match training-time defaults
+# in `scripts/decode_replays_to_labels.py` (MIN_SRC_SHIPS / TOP_K_TARGETS /
+# AGGRESSIVE_FRAC). Changes here must be reflected there to keep
+# train/inference distributions consistent.
+_DIST_MIN_SRC_SHIPS = 5
+_DIST_TOP_K = 8
+_DIST_AGGRESSIVE_FRAC = 0.7
+# Lite encoder: a vectorized 34-d subset of the 45-d shot_features encoder
+# that skips all WorldModel-dependent features (F2/F3/F4/F6/F8). Booster
+# is retrained on `corpus[:, LITE_KEEP_INDICES]` so train/inference match.
+# Speed: ~1 ms median at K=8 vs 24 ms with the slow encoder.
+_DIST_USE_LITE_ENCODER = True
 
 
 def trained_logreg_policy(obs: Any) -> list:
-    """Reserved for the trained launch-decision classifier.
+    """Tier 2 v2 (2026-05-31): distilled-ladder opp predictor.
 
-    Will read a model artifact (≤200-float logistic regression weights)
-    from a fixed path under the submission bundle, score each candidate
-    mission with the 24-dim feature schema at
-    `data/shot_validator/schema.json`, and emit the argmax-launch set.
+    Mirror's `lite_greedy_policy`'s structure (raw-obs only, no
+    WorldModel rebuild) for sub-ms per-call cost. Per call:
 
-    Not implemented in this branch — see plan section "Deliverable 2 /
-    Tier 2". Fallback to Tier 1 so downstream consumers can wire it up
-    without crashing.
+      1. Enumerate candidates: owned planets with ships >=
+         _DIST_MIN_SRC_SHIPS  ×  top-K=8 targets by closed-form
+         ROI (production / distance). Affordability-filtered same as
+         lite_greedy (`defenders_at_eta + 1 <= budget`).
+      2. Encode each candidate via `lib.shot_features.encode_shot_features`
+         (single World+WorldModel build, shared across candidates).
+      3. Score with the booster; emit any candidate with
+         P > `BASELINE_OPP_FILTER_THRESHOLD` (default 0.30), capped at
+         one emit per source per turn (highest-prob wins per source).
+
+    Failure modes (model load fail, encoder failure, scoring failure):
+    return `lite_greedy_policy(obs)` for that step. Never emits novel
+    garbage launches.
     """
-    return top_tier_mirror_policy(obs)
+    parsed = _load_opp_booster()
+    if parsed is None or _OPP_THRESHOLD is None:
+        return lite_greedy_policy(obs)
+
+    player_raw = (
+        obs.get("player", 0) if isinstance(obs, dict)
+        else getattr(obs, "player", 0)
+    )
+    player = int(player_raw or 0)
+    planets = (
+        obs.get("planets") if isinstance(obs, dict)
+        else getattr(obs, "planets", None)
+    )
+    if not planets:
+        return []
+
+    try:
+        import numpy as _np
+    except Exception:
+        return lite_greedy_policy(obs)
+
+    # Build candidate list. MUST match `scripts/decode_replays_to_labels.py:
+    # enumerate_candidates` exactly so train and inference see the same
+    # distribution — no affordability/budget pre-filter here (the booster
+    # learns which (src, tgt) pairs real opps fire on, including snipe/
+    # reinforce shots that lite_greedy would skip).
+    candidates: list[tuple[int, int, float, int]] = []
+    for src in planets:
+        if int(src[1]) != player or int(src[5]) < _DIST_MIN_SRC_SHIPS:
+            continue
+        src_pid = int(src[0])
+        sx, sy = float(src[2]), float(src[3])
+        budget = int(src[5])
+        # Synthetic ships matches `AGGRESSIVE_FRAC * src.ships` from the
+        # decoder's labeling. The booster's F2 combat_margin feature was
+        # computed on these synthetic ships at label time.
+        ships = max(_DIST_MIN_SRC_SHIPS, int(round(_DIST_AGGRESSIVE_FRAC * budget)))
+        if ships > budget:
+            ships = budget
+        scored: list[tuple[float, int, float, float, float, Any]] = []
+        for tgt in planets:
+            tgt_pid = int(tgt[0])
+            if tgt_pid == src_pid:
+                continue
+            dx, dy = float(tgt[2]) - sx, float(tgt[3]) - sy
+            d = math.sqrt(dx * dx + dy * dy)
+            if d < 1e-6:
+                continue
+            roi = float(tgt[6]) / (d + 1.0)
+            scored.append((roi, tgt_pid, dx, dy, d, tgt))
+        scored.sort(key=lambda t: -t[0])
+        for _, tgt_pid, dx, dy, _d, tgt in scored[:_DIST_TOP_K]:
+            angle = math.atan2(dy, dx)
+            candidates.append((src_pid, tgt_pid, angle, ships))
+
+    if not candidates:
+        return []
+
+    # Vectorized feature encoding. Lite encoder produces (N, 34) directly
+    # in numpy — no World+WorldModel build, no per-candidate Tier-2 work.
+    # The booster MUST be trained on the matching 34-d slice of the 45-d
+    # corpus (see `scripts/train_opp_distill.py --lite`).
+    if _DIST_USE_LITE_ENCODER:
+        try:
+            planets_arr = planets_to_array(planets)
+            fleets_arr = fleets_to_array(
+                obs.get("fleets") if isinstance(obs, dict)
+                else getattr(obs, "fleets", None)
+            )
+            step = int(obs.get("step", 0) if isinstance(obs, dict)
+                       else getattr(obs, "step", 0) or 0)
+            X = encode_lite_batch(
+                planets_arr, fleets_arr, player, step, candidates,
+            )
+        except Exception:
+            return lite_greedy_policy(obs)
+        to_score = [(src_pid, tgt_pid, angle, ships)
+                    for src_pid, tgt_pid, angle, ships in candidates]
+    else:
+        # Legacy slow path (kept for parity testing; not used in production).
+        cached_world = getattr(obs, "_shared_world_model", None)
+        shared_world = None
+        shared_model = None
+        if cached_world is not None:
+            shared_model = cached_world
+        else:
+            try:
+                shared_world = World.from_obs(obs)
+                shared_model = WorldModel.from_world(shared_world)
+            except Exception:
+                shared_world = None
+                shared_model = None
+        feats_list: list = []
+        to_score = []
+        for src_pid, tgt_pid, angle, ships in candidates:
+            emit = [src_pid, angle, ships]
+            try:
+                feats = encode_shot_features(
+                    emit, obs, player,
+                    world=shared_world, world_model=shared_model,
+                )
+            except Exception:
+                feats = None
+            if feats is None or feats.shape[0] != FEATURE_DIM:
+                continue
+            feats_list.append(feats)
+            to_score.append((src_pid, tgt_pid, angle, ships))
+        if not to_score:
+            return []
+        X = _np.stack(feats_list).astype(_np.float32)
+
+    if X.shape[0] == 0:
+        return []
+
+    try:
+        probs = predict_proba(parsed, X)
+    except Exception:
+        return lite_greedy_policy(obs)
+
+    # Rank by probability descending; emit one per source above threshold.
+    ranked = sorted(
+        zip(to_score, probs),
+        key=lambda x: -float(x[1]),
+    )
+    moves: list = []
+    used_srcs: set[int] = set()
+    for (src_pid, tgt_pid, angle, ships), p in ranked:
+        if float(p) < _OPP_THRESHOLD:
+            continue
+        if src_pid in used_srcs:
+            continue
+        used_srcs.add(src_pid)
+        moves.append([src_pid, angle, ships])
+    return moves
 
 
 # ---------------------------------------------------------------------------
@@ -9830,6 +10590,174 @@ def solve_multi_turn(
         n_vars=n, n_constraints=len(A_rows),
     )
 
+# === inlined: agents/baseline/_value_head.py ===
+"""Value-head additive term — Reframe B.2.
+
+Per-candidate LightGBM regressor predicting seat-0 ship-delta over the
+next K=10 turns conditional on the candidate decision. The chooser adds
+`λ * head_output` to each candidate's scalar score.
+
+Public API:
+- `vh_is_enabled() -> bool` — `BASELINE_VH_LAMBDA != 0.0`.
+- `vh_get_lambda() -> float` — the additive coefficient.
+- `vh_featurize_prerank(prerank, world, world_model)` — batch-encode
+  the 14-d base feature vector per candidate; returns dict keyed by
+  candidate identity. Skips the per-candidate leaf_delta (column 14)
+  because that's only known inside the chooser's scoring loop.
+- `vh_predict_one(feats_map, src_id, tgt_id, ships, angle, wait_N,
+  leaf_delta) -> float` — inject leaf_delta into the cached feature
+  vector and return the raw regressor output. Returns 0.0 on key miss,
+  encoder failure, or model load fail (i.e. no-op for that candidate).
+
+At λ=0 (default), this module is bypassed entirely — byte-identical to
+bare pv_eta. Submit-time inference uses the pure-Python tree walker; no
+lightgbm dependency at submit time.
+
+Distinct from `agents/baseline/_ml_logit.py` (Reframe A — falsified):
+  - ML: per-shot BINARY classifier on landing success, centered-logit
+    additive term. Falsified 2026-05-29.
+  - VH (this file): per-candidate REGRESSION on K=10 ship-delta, raw
+    output × λ additive term. Uses leaf_delta as one input feature.
+
+Coexists additively with ML in the chooser: solo score updates are
+`score = leaf_Δ + λ_ml · ml_logit + λ_vh · vh_output`. Both default to
+λ=0; we ship VH at λ=1.0 (head's natural scale).
+"""
+
+
+import os
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+# === Constants and lazy state =============================================
+
+VH_LAMBDA: float = float(os.environ.get("BASELINE_VH_LAMBDA", "0.0"))
+
+# Bundler patches `_VH_MODEL_B64` to a gzip+base64 LightGBM
+# `model_to_string()` dump (regression objective). In source mode (empty
+# blob), we fall back to reading `data/value_head/value_head_model.txt`
+# from disk.
+_VH_MODEL_B64: str = ""
+
+_PARSED = None
+_LOAD_FAILED: bool = False
+
+# Candidate-key precision: prerank angles are floats. Two candidates
+# differing only in the 7th decimal of angle would key-collide; this is
+# vanishingly rare. Misses fall through to vh_output=0 (no-op).
+_ANGLE_KEY_DECIMALS: int = 6
+
+
+def vh_is_enabled() -> bool:
+    return VH_LAMBDA != 0.0
+
+
+def vh_get_lambda() -> float:
+    return VH_LAMBDA
+
+
+def _candidate_key(src_id: int, tgt_id: int, ships: int,
+                   angle: float, wait_N: int) -> tuple:
+    return (
+        int(src_id), int(tgt_id), int(ships),
+        round(float(angle), _ANGLE_KEY_DECIMALS),
+        int(wait_N),
+    )
+
+
+# === Model load ===========================================================
+
+def _load_parsed() -> Any | None:
+    """Lazy-load the parsed regressor. Returns None on any failure
+    (caller treats this as VH disabled for the run)."""
+    global _PARSED, _LOAD_FAILED
+    if _PARSED is not None or _LOAD_FAILED:
+        return _PARSED
+    try:
+        # from lib._validator_tree_walker import parse_booster_text  # inlined by bundle_agent.py
+        if _VH_MODEL_B64:
+            import base64
+            import gzip
+            text = gzip.decompress(base64.b64decode(_VH_MODEL_B64)).decode()
+        else:
+            model_path = (
+                Path(__file__).resolve().parents[2]
+                / "data" / "value_head" / "value_head_model.txt"
+            )
+            text = model_path.read_text()
+        _PARSED = parse_booster_text(text)
+        return _PARSED
+    except Exception:
+        _LOAD_FAILED = True
+        return None
+
+
+# === Featurization + prediction ===========================================
+
+def vh_featurize_prerank(prerank: list, world: Any, world_model: Any,
+                         ) -> dict[tuple, np.ndarray | None]:
+    """Encode the 14-d base feature vector for every prerank entry.
+    Returns dict keyed by candidate identity. Entries with None features
+    (encoder rejected the emit) are stored as None — `vh_predict_one`
+    will skip them.
+
+    `prerank` rows: `(cheap_delta, src, tgt, ships, angle, eta_hint,
+    prop_horizon, wait_N)`. `src` and `tgt` are Planet objects with
+    `.id`, `.owner`, `.x`, `.y`, `.ships`, `.production`.
+
+    Single-line import; bundler's per-line strip regex leaks
+    parenthesised multi-line imports as indented orphans (same
+    constraint as `_ml_logit.ml_featurize_prerank`).
+    """
+    # from lib.value_head_features import encode_features  # inlined by bundle_agent.py
+    me = int(getattr(world, "my_id", 0))
+    feats: dict[tuple, np.ndarray | None] = {}
+    for row in prerank:
+        if len(row) < 8:
+            continue
+        _, src, tgt, ships, angle, eta_hint, _, wait_N = row
+        key = _candidate_key(int(src.id), int(tgt.id), int(ships),
+                             float(angle), int(wait_N))
+        if key in feats:
+            continue
+        try:
+            arr = encode_features(
+                src, tgt, int(ships), int(eta_hint),
+                me, world, world_model,
+            )
+        except Exception:
+            arr = None
+        feats[key] = arr
+    return feats
+
+
+def vh_predict_one(feats_map: dict[tuple, np.ndarray | None],
+                   src_id: int, tgt_id: int, ships: int,
+                   angle: float, wait_N: int,
+                   leaf_delta: float) -> float:
+    """Per-candidate prediction. Inject `leaf_delta` at feats[14] and
+    run a single forward pass through the regressor. Returns the raw
+    head output (interpreted as predicted K=10 ship-delta), or 0.0 on
+    any failure (no-op for that candidate)."""
+    parsed = _load_parsed()
+    if parsed is None:
+        return 0.0
+    key = _candidate_key(src_id, tgt_id, ships, angle, wait_N)
+    base = feats_map.get(key)
+    if base is None:
+        return 0.0
+    try:
+        # from lib._validator_tree_walker import predict_raw  # inlined by bundle_agent.py
+        full = np.empty(15, dtype=np.float32)
+        full[:14] = base
+        full[14] = float(leaf_delta)
+        X = full.reshape(1, -1)
+        return float(predict_raw(parsed, X)[0])
+    except Exception:
+        return 0.0
+
 # === inlined: agents/baseline/launch_rules.py ===
 """Post-emit launch-discipline validator (PI rules, 2026-05-29).
 
@@ -10359,7 +11287,7 @@ import time
 fs_clone = clone
 # from lib.fast_sim import step as fs_step  # inlined by bundle_agent.py
 fs_step = step
-# from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy  # inlined by bundle_agent.py
+# from lib.opp_model import lite_greedy_policy, make_opp_policy, top_tier_mirror_policy  # inlined by bundle_agent.py
 
 # from agents.baseline.value import select_favor_fn  # inlined by bundle_agent.py
 
@@ -10372,22 +11300,19 @@ HARDCAP_BAIL_SENTINEL = -1e9
 
 
 def _select_opp_policy():
-    """Tier 3 (2026-05-18 PM): asymmetric opp model selection.
+    """Asymmetric opp-model selection driven by BASELINE_OPP_TIER.
 
-    BASELINE_OPP_TIER env var:
-      - "0" or unset → lite_greedy_policy (default, ~1-2ms/call).
-      - "1" → top_tier_mirror_policy (~5-10ms/call; ladder-realistic
-              opp using v3.5.1 aggressive snipe pipeline). Bench gate
-              FIRST before A/B — per-call cost is 5-10× lite_greedy.
-
-    Per-call selection (not cached at import time) so env-var overrides
-    inside test fixtures take effect without re-importing the module.
+    Routes through `lib.opp_model.make_opp_policy(tier)` so the chooser
+    sees every registered tier (0=mirror_self, 1=top_tier_mirror,
+    2=trained_logreg). Default "0" or unset → lite_greedy_policy (cheap
+    rollout opp, ~1-2 ms/call). Per-call selection (not cached at import
+    time) so env-var overrides inside test fixtures take effect without
+    re-importing the module.
     """
-    return (
-        top_tier_mirror_policy
-        if os.environ.get("BASELINE_OPP_TIER", "0").strip() == "1"
-        else lite_greedy_policy
-    )
+    raw = os.environ.get("BASELINE_OPP_TIER", "0").strip()
+    if raw == "0" or raw == "":
+        return lite_greedy_policy
+    return make_opp_policy(int(raw))
 
 
 def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
@@ -13926,6 +14851,30 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     scored: list[tuple] = []
     solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0
     cand_count = 0
+
+    # Value-head additive term (B.3 / Reframe B.2). Per-candidate
+    # LightGBM regressor predicting K=10 ship-delta; output is added
+    # as λ_vh · head_output. Featurization runs once over the prerank;
+    # per-candidate prediction happens inside the loop below because
+    # leaf_delta (the score itself) is one of the 15 features.
+    # At λ=0 (default), vh_is_enabled() is False → vh_feats stays {}
+    # and the loop's `if vh_feats:` is skipped — byte-equivalent to
+    # the un-ported chooser.
+    # NOTE: vh_feats is keyed by SOLO prerank rows only. Joint paths
+    # at score_candidate_v4_joint(...) currently emit j_score without
+    # VH correction (look-up would miss because joint legs differ in
+    # ships/wait_N from prerank entries). Documented bias when
+    # BASELINE_VH_LAMBDA > 0: solo candidates get VH boost, joints
+    # don't. First submission ships VH at λ=0 so this is dead code;
+    # revisit when VH is retrained on joint-aggr self-play.
+    # from agents.baseline._value_head import vh_is_enabled, vh_featurize_prerank  # noqa: E501  # inlined by bundle_agent.py
+    vh_feats: dict = {}
+    if vh_is_enabled():
+        try:
+            vh_feats = vh_featurize_prerank(prerank, world, model)
+        except Exception:
+            vh_feats = {}
+
     for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
         if cand_count >= cap:
             break
@@ -13969,6 +14918,17 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 model=model,
                 hard_deadline=hard_deadline,
             )
+            # Value-head additive term (Block B, solo path). Looks up
+            # cached features by candidate-key and adds λ_vh · head_output
+            # to `score`. At λ=0 vh_feats is empty → branch is skipped.
+            if vh_feats:
+                # from agents.baseline._value_head import vh_get_lambda, vh_predict_one  # noqa: E501  # inlined by bundle_agent.py
+                head_out = vh_predict_one(
+                    vh_feats, int(src.id), int(tgt.id),
+                    int(ships), float(angle), int(wait_N),
+                    float(score),  # leaf_delta input
+                )
+                score = score + vh_get_lambda() * head_out
             passes = (
                 score > MIN_DELTA if MIN_DELTA == 0.0
                 else score >= MIN_DELTA
