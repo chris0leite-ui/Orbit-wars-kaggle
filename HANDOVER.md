@@ -1,131 +1,74 @@
 # HANDOVER.md — next-session brief
 
-> Last written: 2026-06-01 PM by `claude/champion-strategy-rules-00JzI`.
-> Stale dated sections (2026-05-20 … 2026-05-31) were removed this session
-> per PI cleanup request — they live in git history. Durable knowledge moved
-> to `audit/` docs and `state/MULTI_BRANCH.md`.
+_Refreshed 2026-06-02. Read this first (Rule 15). Also read `state/MULTI_BRANCH.md`
+(live rolling pair / track registry) per Rule 44._
 
-## Read order (Rule 44 — mandatory)
+## This session's outcome (the unlock)
 
-1. **`state/MULTI_BRANCH.md`** — live Kaggle rolling pair, track registry,
-   closed tracks (falsified knowledge), push claim board.
-2. **`state/TOOLS.md`** — A/B harnesses, diagnostics, validation suite.
-3. **`CLAUDE.md`** — rules 1-48.
-4. **This file.**
-5. `audit/friction.md` before touching a fragile path.
+The **kinematics table** (per-turn planet-position cache → lets the time-adaptive
+search score more candidates inside the 1 s/turn budget → better moves) was proven
+to be a real ~20 μ lever and **re-enabled, de-singletonized** (`world._kt`,
+per-turn/per-seat — no more shared-state A/B corruption). It had been removed
+2026-05-30; the live peak μ=1183.7 was from the brief window it was active. It is
+bit-identical to the inline path (`scripts/kt_position_parity_check.py`: 0/32
+mismatches) and prevents real timeouts.
 
-## Live ladder — read it directly, never transcribed
+Also this session:
+- **Submitted** `baseline_state_driven_k` (state-driven horizon-K **+** table). Live
+  rolling pair now = `baseline_state_driven_k` + `baseline_launch_rules_universal`
+  (table-ON champion). Both warming up. **Adaptive-K (μ≈1170) was evicted** — if
+  state-K under-converges, re-submit adaptive-K (`champ_adaptiveK_on.py`); 5
+  submits/day, deadline 2026-06-23.
+- **Timeout fixed:** predictive per-step deadline bail (`1e3234c`). Bundle bench
+  (separate-process = live): **max 944 ms, 0 over cap**. In-process `fast.py eval`
+  can show false one-off highs from GC/cold-import — judge timing with `fast.py
+  bench`, not eval.
+- **Loss diagnosis (selection-bias-free, vs weaker opponents):** we lose by **losing
+  the step-50→100 planet-expansion race** in certain maps (seed 2 loses from both
+  seats) — NOT conversion/waste, NOT timeouts. Fleet-outcome mix is identical in
+  wins and losses; only the planet-lead trajectory differs (wins +9 by step 100,
+  losses −5). Tooling: `scripts/analyze_local_losses.py`.
 
-`kaggle competitions submissions orbit-wars`. Rolling pair = the two
-**most-recent** submissions (Kaggle auto-keeps exactly these for final
-eval; Rule 12). Deadline **2026-06-23 23:59 UTC**. Budget 5/day.
+## NEXT-SESSION PLAN — re-test 3 shelved features WITH THE TABLE ON
 
-As of 2026-06-01 PM (will go stale — re-read): champion
-`baseline_launch_rules_universal` (sub 53182323) **μ=1183.7**, our best ever,
-**evicted**. Sync coalition (53223160) μ=1150.2, evicted. **Rolling pair is
-soft:** expand_credit (53259633, **1059.4**, newest) + size_balance
-(53248277, 1142.0). Recovering it needs *two* champion-class pushes (the
-newest weak one survives the first push). 4/5 submits used 2026-06-01.
+**Why:** these were judged "null/parity" under a handicapped agent — either tested
+table-OFF (less search) or via the old singleton-corrupted in-process A/B. Both
+confounds are gone. Two of them (#1, #2) directly target the expansion-race loss
+mode we diagnosed. **All three are already in the code behind env flags —
+flag-flip, not rebuild** (verified 2026-06-02).
 
-## 🟢 ACTIVE — 2026-06-01 PM: loss mode re-diagnosed (NOT hoarding); adaptive-K built (v1 in A/B); redesign = state-driven horizon
+| Feature (plain language) | Enable flag | Prior (confounded) result |
+|---|---|---|
+| **1. Team-up attacks** — 2+ fleets from different planets arrive at one target on the same turn, sized to take *and hold* it | `BASELINE_JOINT_SYNC=1` (+ size-to-hold, `chooser_trajectory.py:325`) | "size-to-hold NULL", sync probe μ≈1150 — table OFF |
+| **2. Optimized opening** — solve the first ~50 turns as an optimization (which planets, what order) instead of hand-rules | `BASELINE_OPENING_MILP=1` (`lib/joint_solver/opening_planner.py`) | parity 4/8 (n=8) — table OFF |
+| **3. Smart position score** — value a position by *where* things are on the map, not just counts | `BASELINE_VALUE_HEAD=composite` (`lib/value_heads.py`) | never measured (runs stalled) |
 
-**One-line state:** the "ship-hoarding / under-expansion" loss-mode framing
-is **refuted** — we launch plenty (more in losses). Built a v1 step-schedule
-adaptive horizon K (default OFF, committed `9985e98`); its A/B is in flight
-(interim 67%). PI redirected K to be **state-driven, not a fixed schedule**.
-Top build candidate going forward: **contest-urgency (win the race / arrival
-timing)**.
+**Execution (one lever at a time — Rule 37):**
+0. Baseline = current source, table ON + state-K (the table-ON champion). Re-confirm
+   the live rolling pair before any submit (Rule 42).
+1. For each feature, default-OFF → ON in isolation on top of the champion:
+   (a) parity smoke (OFF byte-identical), (b) cost smoke `fast.py bench`
+   separate-process — **max < 1000 ms WITH the table**, (c) `clean_ab.py` **n≥32**
+   table-ON vs the table-ON champion, (d) compare to the prior table-OFF result —
+   the delta is the table-confound size.
+2. **Stack winners:** any lever clearing Wilson-lo ≥ 0.50 stays ON; re-baseline and
+   add the next on top; re-A/B the stack (a solo win can regress when stacked).
+3. **Order:** #1 team-up → #2 opening → #3 position score.
+4. Each lever adds compute — re-check `fast.py bench` max < 1000 ms after each
+   stack. If a strong lever blows budget, tune horizon, don't drop it (Rule 40).
+5. Submit only on Rule 46 + 43a panel + 45 (n≥32) + 42 (eviction).
 
-### What this session established (with data + caveats)
+**Deferred — reassess WITH THE PI after the three above (do NOT start this session):**
+- **2-hop redeploy** (shuffle forward so a follow-up can capture) — reverted
+  (`5ec6a0d`); needs rebuild from spec `727e1bf`.
+- **Reach-frontier chooser** (from-scratch value chooser) — separate agent
+  (`agents/reach_frontier/`), had a hold=0 bug; it *replaces* the chooser, so
+  evaluate whole-agent after the fix, don't stack.
+- Cheap re-checks: H41 pv_horizon floor (`9ebd311`), PV_ETA tuning.
 
-- **Loss mode is NOT hoarding** (`audit/2026-06-01-loss-mode-diagnosis.md`).
-  Champion's own 121 live games: opening planet-gap ≈ 0 (we're not behind
-  early); the split is **midgame capture *rate*** (2P: wins capture 25 vs
-  losses 12) while defense is ~equal. In losses we carry a *higher* in-flight
-  ship fraction — we out-*launch* but under-*capture*. So it's a **conversion
-  gap, not a volume gap.** This explains the flat-expand-credit regression
-  (−124μ: added volume to a non-volume problem).
-- **PI corrections (load-bearing):** (1) **selection bias** — win/loss is
-  confounded by opponent strength, so the conversion gap is *not* proven as a
-  fixable mechanism; (2) **fleets do NOT die in flight** (no air collisions)
-  → the H44 "destroyed in-flight" lever is **dropped**; conversion =
-  sizing + timing + winning the race, never survival; (3) opening *tempo* is
-  real ("we open too slowly") and chains into the midgame.
-- **Paired positioning check is a NULL** — within-game (selection-bias-free),
-  our ships are no more "rear" than the opponent's (US 39.2 vs OPP 39.2 mean
-  dist to enemy; 56% vs 55% rear). The "ships stuck in the rear" hypothesis
-  doesn't hold on the field average; if real it's opponent-specific or a
-  tempo/rate effect a snapshot can't see.
-- **Adaptive horizon K built** (`audit/2026-06-01-adaptive-horizon-k-
-  investigation.md`). Single lever: `launch_rules.capture_horizon_k(step)` is
-  read by the launch gate + proposer prune + sync cap, so phase-awareness
-  propagates consistently; value head already sees horizon ~40. v1 =
-  step-decay K_OPEN=20→floor 10 by step 30 (default OFF → byte-identical
-  champion, 19 tests green, wallclock smoke clean p95≈283ms).
-- **A/B contamination caught:** ON-vs-OFF of the *same* bundle is invalid —
-  `capture_horizon_k` reads env live, `env.run` shares one process, so the ON
-  bundle's baked `ADAPTIVE_K=1` leaks and turns OFF adaptive too. Valid A/Bs
-  use the pre-edit `submissions/baseline_champion_nokt.py` as the **immune**
-  opponent (0 refs to the new env).
+**Do NOT re-open** (dead for non-table reasons): H44 "fleets die in flight" (false —
+sun/OOB only), 4p-cushion (4/32), b5 reward-axis (0/32), flat expansion-credit
+(targeted the hoarding loss mode we refuted; real loss mode is the expansion race).
 
-### Next-session first actions (ranked)
-
-1. **Adaptive-K v1 A/B is DONE: 21/32 = 65.6% vs champion** (Wilson
-   [0.483, 0.796]). Triage-positive but misses Rule 43b (Wilson-lo 0.483 <
-   0.50) and is single-opponent. **Confirm before submit:** champion h2h to
-   n=64 (tighten Wilson-lo) + multi-opp panel (Rule 43a). The horizon lever
-   has real signal → build the **state-driven** redesign (K doc §8: per-target
-   `K ≈ time-until-enemy-interference`, clamped) on top of it; the step
-   schedule is just the crude v1 that already shows lift.
-2. **Build the contest-aware conversion design** (the integrated forward
-   plan): `knowledge-base/concepts/contest-aware-conversion-design.md`. One
-   primitive (`predict_arrival_contest`) → four levers (state-driven K,
-   contest-urgency, opp-reinforcement-in-garrison, forward staging). Sequence
-   Lever 2 (urgency) → 1 (state-driven K) → 3 → 4; each default-OFF + its own
-   A/B; validate paired / vs-aggressive, never the champion mirror.
-3. **Recover the rolling pair.** It's soft (1059+1142). Push champion KT-OFF
-   (`submissions/baseline_champion_nokt.py`, ready, config baked) — needs two
-   pushes to fully clear; surface the Rule-42 claim each time.
-
-### Submission discipline reminders for this branch
-
-- **Bundle-baking gotcha (load-bearing):** Kaggle runs with **no env vars**,
-  so every `BASELINE_*` toggle falls to its code default (sync, pv_eta,
-  launch_rules all default OFF). Bake the full tested config as an
-  `os.environ.setdefault(...)` header **above the first inlined module**
-  (constants are read at import). Verify with a clean-env smoke.
-- **Rebuild recipe:** `python scripts/bundle_agent.py agents/baseline
-  --out-dir submissions --force --skip-parity-gate` (internal parity gate
-  breaks in-container — `agents` collides with `kaggle_environments.lux_ai_s3`;
-  verify via `test_bundle.py` + clean-env smoke), then splice the baked
-  header after the `from __future__` line.
-- `submissions/*` is git-ignored → bundles do NOT survive a fresh clone.
-  Rebuild before trusting any A/B.
-
-## Pointers (durable)
-
-- `audit/2026-06-01-loss-mode-diagnosis.md` — the not-hoarding diagnosis +
-  PI corrections + positioning null.
-- `audit/2026-06-01-adaptive-horizon-k-investigation.md` — K lever map,
-  reachability data, v1 build, state-driven redesign (§8).
-- `audit/2026-06-01-live-replay-diagnosis.md` — the *prior* hoarding
-  diagnosis (now superseded; kept for the fleet-outcome distribution).
-- `state/mechanism-ledger.md` — every agent family tried.
-- `state/hypothesis-board.md` — open ideas, killed list.
-- `knowledge-base/concepts/evaluation-metrics.md` — Rule 48 eval protocol.
-- `audit/2026-05-18-seed-panel.md` — 128-seed geometry panel for A/B.
-
-## Rule reminders (most relevant)
-
-- **1 / 12 / 42:** submissions PI-approved single-shot; rolling-last-2; fill
-  the push claim board before any submit.
-- **40:** prefer modeling-correctness over restriction-tuning.
-- **41:** confound-sweep before correlational conclusion (the selection-bias
-  point above is exactly this).
-- **43 / 45:** multi-opponent panel + champion h2h, n≥32, before submit.
-- **47:** physics-primitive verification before agent design.
-
-> Prior writers (superseded, per-branch): `kaggle-baseline-strategy-lO4mm`,
-> `audit-workflow-performance-btjeK`, `strategy-framework-design-OyoYR(-rebased)`,
-> `ml-competition-strategy-PFhzM`, `analyze-game-strategy-EpMVP`,
-> `review-skills-improvements-moKOR`.
+Full provenance (commit hashes per feature, the two confound mechanisms, deferred
+detail) is in the session plan, mirrored into git history of this file.
