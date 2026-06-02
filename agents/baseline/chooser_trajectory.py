@@ -1128,6 +1128,30 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     scored: list[tuple] = []
     solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0
     cand_count = 0
+
+    # Value-head additive term (B.3 / Reframe B.2). Per-candidate
+    # LightGBM regressor predicting K=10 ship-delta; output is added
+    # as λ_vh · head_output. Featurization runs once over the prerank;
+    # per-candidate prediction happens inside the loop below because
+    # leaf_delta (the score itself) is one of the 15 features.
+    # At λ=0 (default), vh_is_enabled() is False → vh_feats stays {}
+    # and the loop's `if vh_feats:` is skipped — byte-equivalent to
+    # the un-ported chooser.
+    # NOTE: vh_feats is keyed by SOLO prerank rows only. Joint paths
+    # at score_candidate_v4_joint(...) currently emit j_score without
+    # VH correction (look-up would miss because joint legs differ in
+    # ships/wait_N from prerank entries). Documented bias when
+    # BASELINE_VH_LAMBDA > 0: solo candidates get VH boost, joints
+    # don't. First submission ships VH at λ=0 so this is dead code;
+    # revisit when VH is retrained on joint-aggr self-play.
+    from agents.baseline._value_head import vh_is_enabled, vh_featurize_prerank  # noqa: E501
+    vh_feats: dict = {}
+    if vh_is_enabled():
+        try:
+            vh_feats = vh_featurize_prerank(prerank, world, model)
+        except Exception:
+            vh_feats = {}
+
     for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
         if cand_count >= cap:
             break
@@ -1171,6 +1195,17 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 model=model,
                 hard_deadline=hard_deadline,
             )
+            # Value-head additive term (Block B, solo path). Looks up
+            # cached features by candidate-key and adds λ_vh · head_output
+            # to `score`. At λ=0 vh_feats is empty → branch is skipped.
+            if vh_feats:
+                from agents.baseline._value_head import vh_get_lambda, vh_predict_one  # noqa: E501
+                head_out = vh_predict_one(
+                    vh_feats, int(src.id), int(tgt.id),
+                    int(ships), float(angle), int(wait_N),
+                    float(score),  # leaf_delta input
+                )
+                score = score + vh_get_lambda() * head_out
             passes = (
                 score > MIN_DELTA if MIN_DELTA == 0.0
                 else score >= MIN_DELTA
