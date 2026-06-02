@@ -120,6 +120,30 @@ PV_ETA_ENABLED: bool = (
     os.environ.get("BASELINE_PV_ETA", "0").strip() == "1"
 )
 
+# Marco-EAM opp model + adversarial re-rank (2026-06-02). Both default OFF
+# so the live champion is byte-identical with flags unset. See plan at
+# audit/2026-06-02-marco-lineage-reference/PLAN.md.
+#
+# BASELINE_OPP_MARCO=1 — pre-compute predict_marco_plan once per turn per
+#   opp seat, cache the predicted launches into a dict the rerank reads.
+# BASELINE_ADVERSARIAL_RERANK=1 — re-score the top-3 candidates by
+#   running a small fast_sim rollout where opp's moves come from the
+#   marco-cached plan instead of lite_greedy. If a top-3 candidate beats
+#   top-1 under the marco-opp rollout, promote it to top-1 emit.
+# Both gates AND opening-window gate (step < ADV_RERANK_LIMIT) must
+# hold; otherwise the rerank is a no-op identical to today's behaviour.
+BASELINE_OPP_MARCO_ENABLED: bool = (
+    os.environ.get("BASELINE_OPP_MARCO", "0").strip() == "1"
+)
+BASELINE_ADV_RERANK_ENABLED: bool = (
+    os.environ.get("BASELINE_ADVERSARIAL_RERANK", "0").strip() == "1"
+)
+ADV_RERANK_LIMIT: int = int(os.environ.get("BASELINE_ADV_RERANK_LIMIT", "50"))
+ADV_RERANK_MARCO_BUDGET_MS: float = float(
+    os.environ.get("BASELINE_ADV_RERANK_MARCO_BUDGET_MS", "150.0"),
+)
+ADV_RERANK_TOP_K: int = int(os.environ.get("BASELINE_ADV_RERANK_TOP_K", "3"))
+
 
 def _leader_owner_from_world(world, me: int) -> int | None:
     """Return the player id (other than `me`) with the highest total
@@ -891,6 +915,222 @@ def merge_ledgers(base: dict, projected: list[tuple[int, int, int, int]],
     return out
 
 
+# ---------------------------------------------------------------------------
+# Adversarial re-rank — one-ply rollout vs marco-predicted opp launches
+# ---------------------------------------------------------------------------
+
+
+def _build_opp_marco_plans(snap_base, me: int, num_seats: int,
+                           world) -> dict[int, list]:
+    """For each opp seat in a 2P game, call predict_marco_plan on opp's
+    own observation and store the returned plan keyed by opp_seat.
+
+    Returns an empty dict when:
+      - 4P (marco's EAM gate excludes 4P);
+      - step >= ADV_RERANK_LIMIT (outside the opening window we re-rank);
+      - the marco port returns None for every opp (gate fell through).
+
+    Cost: one `predict_marco_plan` call per opp per turn (= 1 in 2P).
+    Budget defaults to 150 ms; the planner typically returns in 30-80 ms
+    on opening obs.
+    """
+    plans: dict[int, list] = {}
+    if int(num_seats) > 2:
+        return plans
+    if world is None or int(getattr(world, "step", 0)) >= ADV_RERANK_LIMIT:
+        return plans
+    # Local import keeps default-path module-load time unchanged.
+    from lib.opp_marco import predict_marco_plan
+    for opp_id in range(int(num_seats)):
+        if int(opp_id) == int(me):
+            continue
+        opp_obs = snap_base.state[opp_id].observation
+        plan = predict_marco_plan(opp_obs, opp_seat=int(opp_id),
+                                  time_budget_ms=ADV_RERANK_MARCO_BUDGET_MS)
+        if plan is not None:
+            plans[int(opp_id)] = list(plan)
+    return plans
+
+
+def _marco_actions_at_tick(plans: dict[int, list], snap, t: int,
+                           num_seats: int) -> dict[int, list]:
+    """For each opp seat, emit env-format launches whose relative
+    t_launch equals `t` (using the seat's current obs for orbital-aim
+    correction). Returns a dict {seat -> [launches]} for opp seats that
+    have launches due THIS tick; seats not in the dict are handled by
+    the rollout's existing default (lite_greedy).
+
+    This is the one-ply opp model: each opp executes the deterministic
+    marco plan we predicted at t=0.
+    """
+    from lib.opp_model import _emit_marco_commit
+    out: dict[int, list] = {}
+    for opp_seat, plan in list(plans.items()):
+        if not plan:
+            continue
+        obs = snap.state[opp_seat].observation
+        emits: list = []
+        remaining = []
+        for c in plan:
+            if int(c.t_launch) == int(t):
+                emit = _emit_marco_commit(c, obs, opp_seat)
+                if emit is not None:
+                    emits.append(emit)
+                # consumed either way
+            elif int(c.t_launch) > int(t):
+                remaining.append(c)
+        plans[opp_seat] = remaining
+        if emits:
+            out[opp_seat] = emits
+    return out
+
+
+def _opp_actions_with_marco(snap, me: int, num_seats: int,
+                            marco_per_tick: dict[int, list]) -> list:
+    """Build the per-seat action list for one fast_sim tick: marco
+    launches override lite_greedy for any seat present in
+    `marco_per_tick`; absent seats get the default lite_greedy + me=[].
+    """
+    actions = opp_actions_for_snap(snap, me, num_seats)
+    for opp_seat, emits in marco_per_tick.items():
+        actions[opp_seat] = emits
+    return actions
+
+
+def _score_candidate_vs_marco(snap_base, src, tgt, ships: int, angle: float,
+                              me: int, num_seats: int, world,
+                              opp_marco_plans: dict[int, list],
+                              baseline_favors: list[float],
+                              favor_fn, gamma: float, horizon: int,
+                              wait_N: int, eta_hint: int,
+                              hard_deadline: float | None,
+                              ) -> tuple[float, str]:
+    """Adversarial-rerank scorer: identical pipeline to score_candidate_v4
+    EXCEPT opp seats are driven by the marco-predicted plan on every tick
+    they have a commit due (otherwise lite_greedy). Same favor leaf, same
+    baseline_favors[horizon] subtraction.
+
+    Returns `(delta, status)` matching score_candidate_v4's contract.
+    """
+    # Admissibility filter — only meaningful for wait_N==0 (same as
+    # score_candidate_v4).
+    eta = int(eta_hint) if int(wait_N) > 0 else 0
+    if int(wait_N) == 0:
+        fate = predict_fleet_fate(src, tgt, angle, ships, world)
+        if fate.outcome == "sun":
+            return (float("-inf"), "sun")
+        if fate.outcome == "oob":
+            return (float("-inf"), "oob")
+        if fate.outcome == "timeout":
+            return (float("-inf"), "timeout")
+        if fate.outcome == "planet":
+            if fate.hit_planet_id in world.comet_ids:
+                return (float("-inf"), "comet_collision")
+            return (float("-inf"), "path_blocked")
+        eta = int(fate.step)
+        if int(tgt.id) in world.comet_ids:
+            life = comet_remaining_lifetime(int(tgt.id), world)
+            if life is None or life <= eta:
+                return (float("-inf"), "comet_expired")
+
+    # Clamp horizon to baseline.
+    if horizon >= len(baseline_favors):
+        horizon = len(baseline_favors) - 1
+
+    # Make a per-rollout copy of the marco plans so consumed commits in
+    # one candidate's rollout don't affect another candidate's rollout.
+    plans_copy: dict[int, list] = {
+        seat: list(commits) for seat, commits in opp_marco_plans.items()
+    }
+    snap = fs_clone(snap_base)
+    for t in range(horizon):
+        if snap.fake_env.done:
+            break
+        if hard_deadline is not None and time.perf_counter() > hard_deadline:
+            return (HARDCAP_BAIL_SENTINEL, "hardcap_bail")
+        marco_per_tick = _marco_actions_at_tick(plans_copy, snap, t, num_seats)
+        actions = _opp_actions_with_marco(snap, me, num_seats, marco_per_tick)
+        if t == int(wait_N):
+            actions[me] = [[int(src.id), float(angle), int(ships)]]
+        snap = fs_step(snap, actions, in_place=True)
+
+    leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
+    delta = leaf - baseline_favors[horizon]
+
+    # Same bonus math as score_candidate_v4 (NEUTRAL / LEADER / SHIP_TURN
+    # / PV_ETA) so rerank deltas are comparable to top-1's score and a
+    # promotion is meaningful.
+    if delta > 0.0:
+        bonus = 1.0
+        if NEUTRAL_BONUS_WEIGHT != 1.0 and int(tgt.owner) == -1:
+            bonus *= NEUTRAL_BONUS_WEIGHT
+            if int(world.step) < NEUTRAL_EARLY_HORIZON:
+                bonus *= NEUTRAL_EARLY_EXTRA
+        if LEADER_FOCUS_WEIGHT != 1.0:
+            leader = _leader_owner_from_world(world, me)
+            if leader is not None and int(tgt.owner) == int(leader):
+                bonus *= LEADER_FOCUS_WEIGHT
+        delta *= bonus
+    if SHIP_TURN_KAPPA > 0.0:
+        delta -= SHIP_TURN_KAPPA * float(ships) * float(int(wait_N) + int(eta))
+    if PV_ETA_ENABLED and (int(wait_N) + int(eta)) > 0:
+        delta *= gamma ** (int(wait_N) + int(eta))
+    return (delta, "scored")
+
+
+def _adversarial_rerank_opening(snap_base, scored_top_k: list,
+                                opp_marco_plans: dict[int, list],
+                                me: int, num_seats: int, world, model,
+                                baseline_favors: list[float],
+                                favor_fn, gamma: float,
+                                hard_deadline: float | None,
+                                ) -> int | None:
+    """Re-score the top-K solo candidates from `scored_top_k` against the
+    marco-predicted opp plan. Returns the index (into scored_top_k) of
+    the new winner, or None to keep the existing top-1.
+
+    `scored_top_k` is the prefix of `scored` (sorted by score desc) we
+    consider for promotion. Each entry is the 6-tuple
+    `(score, src, tgt, ships, angle, wait_N)` from the solo path —
+    joint candidates are skipped.
+
+    A promotion happens iff one of the alternatives' adversarial-delta
+    exceeds the current top's adversarial-delta. Otherwise the function
+    returns None and the chooser keeps its original ranking.
+    """
+    if not scored_top_k:
+        return None
+    deltas: list[float] = []
+    for entry in scored_top_k:
+        # Skip joints — the rerank is solo-only for v1.
+        if len(entry) == 3 and entry[1] == "joint":
+            deltas.append(float("-inf"))
+            continue
+        _orig_score, src, tgt, ships, angle, wait_N = entry
+        eta_hint = max(1, int(_orig_score) if _orig_score > 0 else 1)
+        delta, _status = _score_candidate_vs_marco(
+            snap_base, src, tgt, int(ships), float(angle),
+            me, num_seats, world,
+            opp_marco_plans,
+            baseline_favors, favor_fn, gamma,
+            horizon=len(baseline_favors) - 1,
+            wait_N=int(wait_N), eta_hint=eta_hint,
+            hard_deadline=hard_deadline,
+        )
+        deltas.append(delta)
+    if not deltas:
+        return None
+    best_idx = max(range(len(deltas)), key=lambda i: deltas[i])
+    # Only promote if the new top differs from index 0 AND is finite.
+    if best_idx == 0:
+        return None
+    if not math.isfinite(deltas[best_idx]):
+        return None
+    if deltas[best_idx] <= deltas[0]:
+        return None
+    return best_idx
+
+
 def choose_trajectory(snap_base, prerank, baseline_favors,
                       me: int, num_seats: int, wallclock_ms: float,
                       min_horizon: int, max_horizon: int, gamma: float,
@@ -1135,6 +1375,37 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
         return [], []
 
     scored.sort(key=lambda c: -c[0])
+
+    # Adversarial re-rank (PLAN.md phase 3 — 2026-06-02). Default OFF.
+    # Both BASELINE_OPP_MARCO and BASELINE_ADVERSARIAL_RERANK must be on,
+    # AND we must be in the opening window, AND marco's planner must
+    # have produced a non-None plan for at least one opp seat. When ALL
+    # of those hold, re-score the top-K solo candidates against the
+    # marco-predicted opp launches; if a different candidate wins, swap
+    # it to index 0 so the existing emit loop picks it up.
+    #
+    # Worst case: rerank picks the same top-1 → no-op. Cannot introduce
+    # new candidates beyond what scoring already found (Rule 40 — the
+    # modeling fix lives in the OPP MODEL, not in candidate generation).
+    if (BASELINE_OPP_MARCO_ENABLED and BASELINE_ADV_RERANK_ENABLED
+            and not use_v3
+            and world is not None
+            and int(world.step) < ADV_RERANK_LIMIT
+            and time.perf_counter() <= safe_deadline):
+        opp_marco_plans = _build_opp_marco_plans(
+            snap_base, me, num_seats, world,
+        )
+        if opp_marco_plans:
+            top_k = scored[:ADV_RERANK_TOP_K]
+            promoted_idx = _adversarial_rerank_opening(
+                snap_base, top_k, opp_marco_plans,
+                me, num_seats, world, model,
+                baseline_favors, favor_fn, gamma,
+                hard_deadline,
+            )
+            if promoted_idx is not None and 0 < promoted_idx < len(top_k):
+                winner = scored.pop(promoted_idx)
+                scored.insert(0, winner)
 
     # Emit logic — match composite chooser (`agents/baseline/chooser.choose`)
     # for parity. 1 launch per source per turn, 1 per target. For joints
