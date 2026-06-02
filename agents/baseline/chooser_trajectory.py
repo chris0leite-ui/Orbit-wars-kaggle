@@ -1222,8 +1222,16 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                       reserved_srcs: set[int] | None = None,
                       reserved_for_new_commits: set[int] | None = None,
                       agent_deadline: float | None = None,
+                      out_chosen: list | None = None,
                       ) -> tuple[list[list], list[dict]]:
     """Drop-in alternative to `chooser.choose`.
+
+    `out_chosen` (opt-in; default None ⇒ path byte-identical): when a list is
+    passed, every launch tuple the champion actually commits this turn —
+    fire-now AND wait — is appended as `(src, tgt, ships, angle, wait_N)`.
+    The refine chooser (`chooser_refine`) uses this to feed the champion's
+    bundle to the exact deterministic oracle without reconstructing it from
+    the (moves, commits) contract.
 
     Returns `(moves, commits)`:
       `moves`   — fire-now action list `[[src_id, angle, ships], ...]`
@@ -1515,6 +1523,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             for src, tgt, ships, angle, wait_N in launches:
                 used_srcs.add(int(src.id))
                 used_tgts.add(int(tgt.id))
+                if out_chosen is not None:
+                    out_chosen.append((src, tgt, int(ships), float(angle), int(wait_N)))
                 if int(wait_N) == 0:
                     moves.append([int(src.id), float(angle), int(ships)])
                 else:
@@ -1539,6 +1549,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             for src, tgt, ships, angle, wait_N in launches:
                 used_srcs.add(int(src.id))
                 used_tgts.add(int(tgt.id))
+                if out_chosen is not None:
+                    out_chosen.append((src, tgt, int(ships), float(angle), int(wait_N)))
                 if int(wait_N) == 0:
                     moves.append([int(src.id), float(angle), int(ships)])
             continue
@@ -1551,6 +1563,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             continue
         used_srcs.add(sid)
         used_tgts.add(tid)
+        if out_chosen is not None:
+            out_chosen.append((src, tgt, int(ships), float(angle), int(wait_N)))
         if int(wait_N) == 0:
             moves.append([sid, float(angle), int(ships)])
         else:

@@ -858,14 +858,16 @@ def agent(obs, configuration=None):
     # general wait-grid dormant: when the general ledger is off, only
     # commits tagged sync_joint are persisted/ticked (see persist below).
     sync_on = os.environ.get("BASELINE_JOINT_SYNC", "0").strip() == "1"
-    # Greedy chooser (Rule 49) emits sync_joint commits from coalition atoms;
-    # they ride the same _PENDING_LAUNCHES ledger so their waiting legs fire
-    # across turns. Off for every other chooser (trajectory path unchanged).
+    # Greedy chooser (Rule 49) and the refine chooser (augment-not-replace)
+    # both emit sync_joint commits from coalition atoms; they ride the same
+    # _PENDING_LAUNCHES ledger so their waiting legs fire across turns. Off for
+    # every other chooser (trajectory path unchanged).
+    _chooser_now = os.environ.get("BASELINE_CHOOSER", "").strip().lower()
     _greedy_sync = (
-        os.environ.get("BASELINE_CHOOSER", "").strip().lower() == "greedy"
+        _chooser_now == "greedy"
         and os.environ.get("BASELINE_GREEDY_COALITIONS", "1").strip().lower()
         in ("1", "true", "on", "yes")
-    )
+    ) or _chooser_now == "refine"
     ledger_active = ledger_on or sync_on or _greedy_sync
     if ledger_active and step == 0:
         _PENDING_LAUNCHES.pop(me, None)
@@ -940,18 +942,21 @@ def agent(obs, configuration=None):
     # trajectory-first-architecture.md. Default chooser remains the
     # K-step rollout for backward compat with the v15-line A/B baseline.
     _chooser_sel = os.environ.get("BASELINE_CHOOSER", "").strip().lower()
-    if _chooser_sel in ("trajectory", "greedy"):
-        # Trajectory/greedy choosers don't need baseline_favors (they build
-        # their own); propose still wants a baseline_len for shape but value
-        # doesn't affect their scoring. The greedy chooser (Rule 49) is a
-        # drop-in with the identical signature + (moves, commits) contract,
-        # selected by BASELINE_CHOOSER=greedy. trajectory path is unchanged.
+    if _chooser_sel in ("trajectory", "greedy", "refine"):
+        # Trajectory/greedy/refine choosers don't need baseline_favors (they
+        # build their own); propose still wants a baseline_len for shape but
+        # value doesn't affect their scoring. The greedy chooser (Rule 49) and
+        # the refine chooser (augment-not-replace: champion + exact-oracle
+        # teamwork-add) are drop-ins with the identical signature + (moves,
+        # commits) contract. trajectory path is unchanged.
         prerank = propose(
             my_planets, target_pool, world, model, me, omega,
             baseline_len=MAX_HORIZON + 1,
         )
         if _chooser_sel == "greedy":
             from agents.baseline.chooser_greedy import choose_greedy as _chooser
+        elif _chooser_sel == "refine":
+            from agents.baseline.chooser_refine import choose_refine as _chooser
         else:
             from agents.baseline.chooser_trajectory import (
                 choose_trajectory as _chooser,
