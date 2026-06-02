@@ -14462,20 +14462,32 @@ def _build_opp_marco_plans(snap_base, me: int, num_seats: int,
 
 
 def _marco_actions_at_tick(plans: dict[int, list], snap, t: int,
-                           num_seats: int) -> dict[int, list]:
-    """For each opp seat, emit env-format launches whose relative
-    t_launch equals `t` (using the seat's current obs for orbital-aim
-    correction). Returns a dict {seat -> [launches]} for opp seats that
-    have launches due THIS tick; seats not in the dict are handled by
-    the rollout's existing default (lite_greedy).
+                           num_seats: int) -> tuple[dict[int, list], set[int]]:
+    """For each opp seat WITH AN ACTIVE PLAN, emit env-format launches
+    whose t_launch equals `t` (using the seat's current obs for
+    orbital-aim correction). Returns `(per_seat_emits, controlled)`:
 
-    This is the one-ply opp model: each opp executes the deterministic
-    marco plan we predicted at t=0.
+      - per_seat_emits[seat] : list of [src, angle, ships] launches for
+        commits whose t_launch == t. EMPTY LIST when the seat has an
+        active plan but no commit fires this tick — marco's planner is
+        intentionally waiting, the rollout must NOT fall through to a
+        more aggressive default opp model (that was the bug fixed
+        2026-06-02 PM).
+      - controlled : set of seats marco currently controls (i.e. the
+        seat's plan still has remaining commits OR fires this tick).
+        Seats whose plan is FULLY exhausted after this tick drop out
+        so subsequent ticks can fall through to lite_greedy — once
+        marco's plan is spent we have no more information about what
+        opp will do.
+
+    Mutates `plans` in-place by popping consumed / past-due commits.
     """
     # from lib.opp_model import _emit_marco_commit  # inlined by bundle_agent.py
-    out: dict[int, list] = {}
+    per_seat_emits: dict[int, list] = {}
+    controlled: set[int] = set()
     for opp_seat, plan in list(plans.items()):
         if not plan:
+            # Plan exhausted on a prior tick — drop the seat.
             continue
         obs = snap.state[opp_seat].observation
         emits: list = []
@@ -14488,21 +14500,28 @@ def _marco_actions_at_tick(plans: dict[int, list], snap, t: int,
                 # consumed either way
             elif int(c.t_launch) > int(t):
                 remaining.append(c)
+            # else: c.t_launch < t — stale (this tick is past it), drop.
         plans[opp_seat] = remaining
-        if emits:
-            out[opp_seat] = emits
-    return out
+        per_seat_emits[opp_seat] = emits  # empty list = intentional wait
+        if remaining or emits:
+            controlled.add(opp_seat)
+    return per_seat_emits, controlled
 
 
 def _opp_actions_with_marco(snap, me: int, num_seats: int,
-                            marco_per_tick: dict[int, list]) -> list:
-    """Build the per-seat action list for one fast_sim tick: marco
-    launches override lite_greedy for any seat present in
-    `marco_per_tick`; absent seats get the default lite_greedy + me=[].
+                            per_seat_emits: dict[int, list],
+                            controlled: set[int]) -> list:
+    """Build the per-seat action list for one fast_sim tick.
+
+    Seats in `controlled` are driven by marco — they emit
+    `per_seat_emits[seat]` exactly (empty list = intentional wait).
+    Seats NOT in `controlled` (marco never had a plan for them, OR
+    marco's plan exhausted on a prior tick) fall through to
+    `opp_actions_for_snap` (lite_greedy).
     """
     actions = opp_actions_for_snap(snap, me, num_seats)
-    for opp_seat, emits in marco_per_tick.items():
-        actions[opp_seat] = emits
+    for opp_seat in controlled:
+        actions[opp_seat] = per_seat_emits.get(opp_seat, [])
     return actions
 
 
@@ -14557,8 +14576,12 @@ def _score_candidate_vs_marco(snap_base, src, tgt, ships: int, angle: float,
             break
         if hard_deadline is not None and time.perf_counter() > hard_deadline:
             return (HARDCAP_BAIL_SENTINEL, "hardcap_bail")
-        marco_per_tick = _marco_actions_at_tick(plans_copy, snap, t, num_seats)
-        actions = _opp_actions_with_marco(snap, me, num_seats, marco_per_tick)
+        per_seat_emits, controlled = _marco_actions_at_tick(
+            plans_copy, snap, t, num_seats,
+        )
+        actions = _opp_actions_with_marco(
+            snap, me, num_seats, per_seat_emits, controlled,
+        )
         if t == int(wait_N):
             actions[me] = [[int(src.id), float(angle), int(ships)]]
         snap = fs_step(snap, actions, in_place=True)
@@ -14592,6 +14615,7 @@ def _adversarial_rerank_opening(snap_base, scored_top_k: list,
                                 me: int, num_seats: int, world, model,
                                 baseline_favors: list[float],
                                 favor_fn, gamma: float,
+                                min_horizon: int,
                                 hard_deadline: float | None,
                                 ) -> int | None:
     """Re-score the top-K solo candidates from `scored_top_k` against the
@@ -14603,12 +14627,27 @@ def _adversarial_rerank_opening(snap_base, scored_top_k: list,
     `(score, src, tgt, ships, angle, wait_N)` from the solo path —
     joint candidates are skipped.
 
+    Horizon for the rerank rollout is `min_horizon` (=25 by default),
+    matching the chooser's short-horizon settling window. Using
+    `len(baseline_favors) - 1` (full max horizon, ~70 ticks) was a bug
+    found 2026-06-02 PM: leaf at 70 ticks reads opp's free-play after
+    the candidate is fully settled, systematically PROMOTING long-eta
+    candidates that haven't paid off yet over short-eta captures that
+    already would have. Average prop_horizon across candidates is
+    ~25-40, so min_horizon is a reasonable lower-bound compromise that
+    avoids the horizon-leak.
+
     A promotion happens iff one of the alternatives' adversarial-delta
     exceeds the current top's adversarial-delta. Otherwise the function
     returns None and the chooser keeps its original ranking.
     """
     if not scored_top_k:
         return None
+    # Clamp the rerank horizon to a settled-window length matching the
+    # chooser's MIN_HORIZON (=25 by default). This is the binding fix
+    # for the horizon-scale-mismatch bug.
+    rerank_horizon = max(1, min(int(min_horizon),
+                                len(baseline_favors) - 1))
     deltas: list[float] = []
     for entry in scored_top_k:
         # Skip joints — the rerank is solo-only for v1.
@@ -14616,14 +14655,19 @@ def _adversarial_rerank_opening(snap_base, scored_top_k: list,
             deltas.append(float("-inf"))
             continue
         _orig_score, src, tgt, ships, angle, wait_N = entry
-        eta_hint = max(1, int(_orig_score) if _orig_score > 0 else 1)
+        # eta_hint only matters for wait_N>0 (the wait_N==0 path
+        # recomputes eta from predict_fleet_fate). Using `_orig_score`
+        # as an eta hint was a leftover bug — that value is a leaf
+        # delta, not a turn count. Pass 0 instead; the PV / ship-turn
+        # penalties become trivially small for wait_N>0 candidates,
+        # which is acceptable for the rerank's argmax decision.
         delta, _status = _score_candidate_vs_marco(
             snap_base, src, tgt, int(ships), float(angle),
             me, num_seats, world,
             opp_marco_plans,
             baseline_favors, favor_fn, gamma,
-            horizon=len(baseline_favors) - 1,
-            wait_N=int(wait_N), eta_hint=eta_hint,
+            horizon=rerank_horizon,
+            wait_N=int(wait_N), eta_hint=0,
             hard_deadline=hard_deadline,
         )
         deltas.append(delta)
@@ -14910,6 +14954,7 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 snap_base, top_k, opp_marco_plans,
                 me, num_seats, world, model,
                 baseline_favors, favor_fn, gamma,
+                int(min_horizon),
                 hard_deadline,
             )
             if promoted_idx is not None and 0 < promoted_idx < len(top_k):

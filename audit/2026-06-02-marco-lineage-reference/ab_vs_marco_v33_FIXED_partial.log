@@ -1,0 +1,10 @@
+== clean_ab focal=baseline_marco_on.py  opp=marco-dg-v3-3.py  seeds=16 (×2 seats = 32 games)  workers=4 ==
+   seed=   1  seat=P1     LOSS  steps=111  wall=11.7s
+   seed=   1  seat=P0      WIN  steps=167  wall=31.8s
+   seed=   2  seat=P1     LOSS  steps=101  wall=14.7s
+   seed=   0  seat=P1     LOSS  steps=157  wall=49.7s
+   seed=   3  seat=P1     LOSS  steps=73  wall=25.2s
+   seed=   4  seat=P0      WIN  steps=166  wall=44.2s
+   seed=   2  seat=P0      WIN  steps=499  wall=123.6s
+   seed=   4  seat=P1     LOSS  steps=90  wall=12.4s
+   seed=   5  seat=P1     LOSS  steps=158  wall=49.0s
