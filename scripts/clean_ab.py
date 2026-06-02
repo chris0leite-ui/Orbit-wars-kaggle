@@ -29,11 +29,32 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 
-def _worker_play(args: tuple[int, str, str, bool]) -> dict:
-    """Spawn a fresh subprocess that plays ONE game, returns its JSON result."""
-    seed, focal_path, opp_path, focal_is_p0 = args
+def _worker_play(args: tuple[int, str, str, bool, str | None]) -> dict:
+    """Spawn a fresh subprocess that plays ONE game, returns its JSON result.
+
+    When ``save_dir`` is set, the subprocess also dumps a Kaggle-replay-shaped
+    JSON ({steps, rewards, info.TeamNames}) so scripts/analyze_local_losses.py
+    and the frontier diagnosis can mine the same isolated games — one A/B batch
+    serves both the winrate verdict AND the loss-replay corpus. Additive: with
+    no --save-replays the code path is identical to before.
+    """
+    seed, focal_path, opp_path, focal_is_p0, save_dir = args
     p0_path, p1_path = (focal_path, opp_path) if focal_is_p0 else (opp_path, focal_path)
-    code = (
+    p0_name, p1_name = Path(p0_path).name, Path(p1_path).name
+    save_clause = ""
+    if save_dir:
+        seat_tag = "focalP0" if focal_is_p0 else "focalP1"
+        fname = "episode-seed%d-%s.json" % (int(seed), seat_tag)
+        # Pre-formatted here so it carries no %-placeholders into the
+        # outer `prefix % (...)` below (paths/JSON must pass through verbatim).
+        save_clause = (
+            "import os;"
+            "os.makedirs(%r, exist_ok=True);"
+            "open(os.path.join(%r, %r), 'w').write("
+            "json.dumps({'steps': env.steps, 'rewards': [r0, r1], "
+            "'info': {'TeamNames': [%r, %r]}}, default=str));"
+        ) % (save_dir, save_dir, fname, p0_name, p1_name)
+    prefix = (
         "import json, sys, time;"
         "sys.path.insert(0, %r);"
         "from kaggle_environments import make;"
@@ -43,8 +64,9 @@ def _worker_play(args: tuple[int, str, str, bool]) -> dict:
         "wall = time.perf_counter() - t0;"
         "final = env.steps[-1];"
         "r0 = final[0]['reward']; r1 = final[1]['reward'];"
-        "print(json.dumps({'r0': r0, 'r1': r1, 'n_steps': len(env.steps), 'wall': wall}))"
     ) % (str(REPO), int(seed), str(p0_path), str(p1_path))
+    suffix = "print(json.dumps({'r0': r0, 'r1': r1, 'n_steps': len(env.steps), 'wall': wall}))"
+    code = prefix + save_clause + suffix
     try:
         proc = subprocess.run(
             [sys.executable, "-c", code],
@@ -108,6 +130,10 @@ def main() -> int:
                     help="first seed (offset); use to run a NON-overlapping seed "
                          "range for pooling with an earlier run")
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--save-replays", default=None, metavar="DIR",
+                    help="Also dump per-game Kaggle-replay-shaped JSON to DIR "
+                         "(for analyze_local_losses.py / frontier diagnosis). "
+                         "Off by default; isolation/winrate path is unchanged.")
     args = ap.parse_args()
     focal = str(Path(args.focal).resolve())
     opp = str(Path(args.opp).resolve())
@@ -119,10 +145,13 @@ def main() -> int:
     print(f"== clean_ab focal={Path(focal).name}  opp={Path(opp).name}  "
           f"seeds={args.seeds} (×2 seats = {2*args.seeds} games)  workers={args.workers} ==")
 
-    tasks: list[tuple[int, str, str, bool]] = []
+    save_dir = str(Path(args.save_replays).resolve()) if args.save_replays else None
+    if save_dir:
+        print(f"   (saving replays -> {save_dir})")
+    tasks: list[tuple[int, str, str, bool, str | None]] = []
     for s in range(args.seed_start, args.seed_start + args.seeds):
-        tasks.append((s, focal, opp, True))   # focal as P0
-        tasks.append((s, focal, opp, False))  # focal as P1
+        tasks.append((s, focal, opp, True, save_dir))   # focal as P0
+        tasks.append((s, focal, opp, False, save_dir))  # focal as P1
     t0 = time.perf_counter()
     results: list[dict] = []
     with ProcessPoolExecutor(max_workers=args.workers) as ex:
