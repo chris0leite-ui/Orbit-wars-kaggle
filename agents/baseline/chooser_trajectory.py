@@ -1297,7 +1297,13 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                     # correct per-leg eta_hint) and apply
                     # λ * sum(per-leg head_outs) to j_score so joint
                     # and solo candidates get parity treatment.
-                    if vh_feats:
+                    # Diagnostic gate (2026-06-03): BASELINE_VH_JOINT=0
+                    # reverts to the pre-Phase-A behavior (solo VH only,
+                    # joint legs get no VH boost) — used to A/B whether
+                    # the joint aggregation is the source of the VH
+                    # collapse on state-driven-K base.
+                    if (vh_feats and os.environ.get(
+                            "BASELINE_VH_JOINT", "1").strip() == "1"):
                         from agents.baseline._value_head import vh_get_lambda, vh_predict_one  # noqa: E501
                         joint_prerank = [
                             (0.0, launches[k][0], launches[k][1],
