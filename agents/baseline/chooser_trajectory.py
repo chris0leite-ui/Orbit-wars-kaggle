@@ -903,6 +903,51 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
                 bonus *= LEADER_FOCUS_WEIGHT
         delta *= bonus
 
+    # Expansion credit for joints (mirrors score_candidate_v4:755-781; default
+    # OFF via EXPAND_CREDIT_WEIGHT=0 ⇒ trajectory joint path byte-identical).
+    # The joint leaf (passive-self rollout) under-credits captures the same way
+    # the solo leaf did — and the greedy chooser (Rule 49) scores ONLY through
+    # this joint path, so without this it gets zero capture credit and
+    # under-expands. Credit each DISTINCT non-me target the set actually
+    # captures, ONCE: sum ships per target (synchronized coalition legs land
+    # the same tick) and check the combined capture at the group's fire-now
+    # arrival via predict_garrison_at (same single-tick math + our-arrival-only
+    # simplification the solo block uses). In the greedy marginal gain
+    # δ(S∪{c}) − δ(S) the credit for S's targets cancels, leaving c's marginal
+    # capture credit.
+    if EXPAND_CREDIT_WEIGHT > 0.0 and launches:
+        by_tgt: dict[int, dict] = {}
+        for (src, tgt, ships, angle, wait_N), leg_eta in zip(launches, leg_etas):
+            if int(tgt.owner) == me:
+                continue
+            g = by_tgt.setdefault(int(tgt.id), {"tgt": tgt, "ships": 0, "arr": 0})
+            g["ships"] += int(ships)
+            if int(wait_N) == 0:
+                g["arr"] = max(int(g["arr"]), int(leg_eta))
+        cap_credit_total = 0.0
+        for g in by_tgt.values():
+            tgt = g["tgt"]
+            arr = int(g["arr"])
+            if arr <= 0:
+                continue  # no fire-now leg defines a landing tick
+            cap_owner, _cap_g = predict_garrison_at(
+                tgt, arr, [(arr, int(me), int(g["ships"]))])
+            if cap_owner != me:
+                continue
+            held = max(0, EPISODE_STEPS_TOTAL - int(world.step) - arr)
+            if int(tgt.id) in world.comet_ids:
+                life = comet_remaining_lifetime(int(tgt.id), world)
+                if life is not None:
+                    held = min(held, max(0, life - arr))
+            c = (CAPTURE_REWARD_WEIGHT * float(tgt.production)
+                 * float(held) * EXPAND_CREDIT_WEIGHT)
+            if NEUTRAL_BONUS_WEIGHT != 1.0 and int(tgt.owner) == -1:
+                c *= NEUTRAL_BONUS_WEIGHT
+                if int(world.step) < NEUTRAL_EARLY_HORIZON:
+                    c *= NEUTRAL_EARLY_EXTRA
+            cap_credit_total += c
+        delta += cap_credit_total
+
     if SHIP_TURN_KAPPA > 0.0:
         penalty = 0.0
         for (src, tgt, ships, angle, wait_N), eta_leg in zip(launches, leg_etas):

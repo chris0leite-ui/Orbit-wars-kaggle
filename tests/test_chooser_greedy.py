@@ -168,6 +168,38 @@ def _aim_targets(move, world, tgt):
 
 
 # ---------------------------------------------------------------------------
+# (b2) Joint-scorer capture credit (the under-commit fix): a real capture
+#      scores strictly higher with EXPAND_CREDIT on; a bounce gets nothing.
+#      EXPAND_CREDIT_WEIGHT is read at import, so patch the module attribute.
+# ---------------------------------------------------------------------------
+
+def test_joint_scorer_capture_credit_raises_capturing_delta(monkeypatch):
+    import agents.baseline.chooser_trajectory as ct
+    from agents.baseline.chooser_trajectory import (
+        build_trajectory_baseline, score_candidate_v4_joint, select_favor_fn)
+    snap, world, model, S1, _S2, T = _redundant_scenario()
+    favor_fn = select_favor_fn()
+    favs = build_trajectory_baseline(snap, 0, 2, 20, favor_fn, GAMMA)
+    angle, _eta = aim_and_eta(S1, T, 20, world.omega, world=world)
+    cap = [(S1, T, 20, float(angle), 0)]          # 20 ships vs 5 → captures
+    bounce = [(S1, T, 3, float(angle), 0)]         # 3 ships vs 5 → no capture
+
+    monkeypatch.setattr(ct, "EXPAND_CREDIT_WEIGHT", 0.0)
+    cap_off, _ = score_candidate_v4_joint(snap, cap, 0, 2, world, favs,
+                                          favor_fn, GAMMA, horizon=20)
+    bounce_off, _ = score_candidate_v4_joint(snap, bounce, 0, 2, world, favs,
+                                             favor_fn, GAMMA, horizon=20)
+    monkeypatch.setattr(ct, "EXPAND_CREDIT_WEIGHT", 1.0)
+    cap_on, _ = score_candidate_v4_joint(snap, cap, 0, 2, world, favs,
+                                         favor_fn, GAMMA, horizon=20)
+    bounce_on, _ = score_candidate_v4_joint(snap, bounce, 0, 2, world, favs,
+                                            favor_fn, GAMMA, horizon=20)
+
+    assert cap_on > cap_off, (cap_on, cap_off)        # real capture → credit
+    assert bounce_on == bounce_off                    # bounce → no credit
+
+
+# ---------------------------------------------------------------------------
 # (c) Determinism + lazy/exact equivalence on a non-superadditive board.
 # ---------------------------------------------------------------------------
 
