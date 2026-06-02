@@ -1138,12 +1138,10 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     # and the loop's `if vh_feats:` is skipped — byte-equivalent to
     # the un-ported chooser.
     # NOTE: vh_feats is keyed by SOLO prerank rows only. Joint paths
-    # at score_candidate_v4_joint(...) currently emit j_score without
-    # VH correction (look-up would miss because joint legs differ in
-    # ships/wait_N from prerank entries). Documented bias when
-    # BASELINE_VH_LAMBDA > 0: solo candidates get VH boost, joints
-    # don't. First submission ships VH at λ=0 so this is dead code;
-    # revisit when VH is retrained on joint-aggr self-play.
+    # at score_candidate_v4_joint(...) build their own per-call
+    # feats_map at the joint-loop call site (see Phase A patch
+    # 2026-06-03), so joint and solo candidates both receive the
+    # VH boost when BASELINE_VH_LAMBDA > 0.
     from agents.baseline._value_head import vh_is_enabled, vh_featurize_prerank  # noqa: E501
     vh_feats: dict = {}
     if vh_is_enabled():
@@ -1249,7 +1247,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             if int(src.id) in reserved_srcs:
                 continue  # ledger is firing from this src this turn
             by_tgt.setdefault(int(tgt.id), []).append(
-                (float(cd), src, tgt, int(ships), float(angle), int(ph)),
+                (float(cd), src, tgt, int(ships), float(angle),
+                 int(eta_hint), int(ph)),
             )
         joint_count = 0
         for tgt_id, cands in by_tgt.items():
@@ -1281,7 +1280,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         (ca[1], ca[2], ca[3], ca[4], 0),
                         (cb[1], cb[2], cb[3], cb[4], 0),
                     ]
-                    jh = max(int(ca[5]), int(cb[5]))
+                    leg_etas = (int(ca[5]), int(cb[5]))
+                    jh = max(int(ca[6]), int(cb[6]))
                     j_score, j_status = score_candidate_v4_joint(
                         snap_base, launches, me, num_seats, world,
                         baseline_favors, favor_fn, gamma,
@@ -1289,6 +1289,33 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         hard_deadline=hard_deadline,
                     )
                     joint_count += 1
+                    # Phase A (2026-06-03): VH correction on joint legs.
+                    # Pre-fix, joints emitted j_score without VH boost
+                    # because vh_feats was keyed by SOLO prerank rows
+                    # only — joint legs miss the cache entirely. Build
+                    # a per-call feats_map for the legs (with the
+                    # correct per-leg eta_hint) and apply
+                    # λ * sum(per-leg head_outs) to j_score so joint
+                    # and solo candidates get parity treatment.
+                    if vh_feats:
+                        from agents.baseline._value_head import vh_get_lambda, vh_predict_one  # noqa: E501
+                        joint_prerank = [
+                            (0.0, launches[k][0], launches[k][1],
+                             launches[k][2], launches[k][3],
+                             leg_etas[k], jh, launches[k][4])
+                            for k in (0, 1)
+                        ]
+                        joint_feats = vh_featurize_prerank(
+                            joint_prerank, world, model,
+                        )
+                        leg_sum = 0.0
+                        for ln in launches:
+                            leg_sum += vh_predict_one(
+                                joint_feats, int(ln[0].id), int(ln[1].id),
+                                int(ln[2]), float(ln[3]), int(ln[4]),
+                                float(j_score),
+                            )
+                        j_score = j_score + vh_get_lambda() * leg_sum
                     if j_status == "scored" and j_score > 0.0:
                         scored.append((j_score, "joint", launches))
 
