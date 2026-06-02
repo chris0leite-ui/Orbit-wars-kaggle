@@ -21,12 +21,7 @@ from lib.fleet import speed as fleet_speed
 from lib.orbit import is_orbiting, predict_relative
 from lib.scoring import pv_horizon
 from lib.trajectory import predict_fleet_fate
-from lib.world_model import (
-    _comet_paths_by_id,
-    _position_at,
-    comet_remaining_lifetime,
-    predict_arrival_contest,
-)
+from lib.world_model import _comet_paths_by_id, _position_at, comet_remaining_lifetime, predict_arrival_contest  # noqa: E501 (single line: bundler can't strip multi-line imports)
 
 NUM_TARGETS_PER_SOURCE = 8
 MIN_FLEET_SIZE = 2
