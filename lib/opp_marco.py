@@ -106,7 +106,7 @@ def _predict_position(planet, omega: float, turns: float) -> tuple[float, float]
     return predict_relative(p_tuple, omega, turns)
 
 
-def _dist(ax: float, ay: float, bx: float, by: float) -> float:
+def _marco_dist(ax: float, ay: float, bx: float, by: float) -> float:
     return math.hypot(ax - bx, ay - by)
 
 
@@ -148,12 +148,12 @@ def _plan_best_launch(src_id, src_planet, ref_ships, ref_prod, ref_time,
         else:
             sx, sy = _predict_position(src_planet, view.omega, t)
         if tgt_static:
-            eta = _dist(sx, sy, float(target.x), float(target.y)) / speed
+            eta = _marco_dist(sx, sy, float(target.x), float(target.y)) / speed
         else:
-            eta = _dist(sx, sy, float(target.x), float(target.y)) / speed
+            eta = _marco_dist(sx, sy, float(target.x), float(target.y)) / speed
             for _ in range(8):
                 px, py = _predict_position(target, view.omega, t + eta)
-                new_eta = _dist(sx, sy, px, py) / speed
+                new_eta = _marco_dist(sx, sy, px, py) / speed
                 if abs(new_eta - eta) < 0.05:
                     eta = new_eta
                     break
@@ -184,14 +184,14 @@ def _enemy_earliest_capture(target, view: _MarcoView):
                 continue
             speed = fleet_speed(fleet)
             if _is_static(target):
-                eta = _dist(float(src.x), float(src.y),
+                eta = _marco_dist(float(src.x), float(src.y),
                             float(target.x), float(target.y)) / speed
             else:
                 tx, ty = float(target.x), float(target.y)
-                eta = _dist(float(src.x), float(src.y), tx, ty) / speed
+                eta = _marco_dist(float(src.x), float(src.y), tx, ty) / speed
                 for _ in range(2):
                     px, py = _predict_position(target, view.omega, W + eta)
-                    eta = _dist(float(src.x), float(src.y), px, py) / speed
+                    eta = _marco_dist(float(src.x), float(src.y), px, py) / speed
             t = W + eta
             if t < best:
                 best = t

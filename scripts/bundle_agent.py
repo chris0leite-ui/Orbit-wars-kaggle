@@ -102,6 +102,12 @@ DEFAULT_LIB_ORDER = [
     # Inlining these is a no-op for non-v7 agents (their agent() never
     # imports from them) — they bloat the bundle by ~35 KB. Acceptable.
     "fast_sim",
+    # opp_marco — marco-v3-3 EAM port (2026-06-02). Imported by
+    # `lib.opp_model._make_marco_tier3_policy` (local import) AND by
+    # `agents.baseline.chooser_trajectory._build_opp_marco_plans` (local
+    # import). Default-OFF; symbol must be in-scope when the gated paths
+    # fire. Deps: geometry, fleet, orbit, world_model — all above.
+    "opp_marco",
     "opp_model",
     "v7_search",
     # v4_planner brain (2026-05-12 evening): candidate portfolios +
