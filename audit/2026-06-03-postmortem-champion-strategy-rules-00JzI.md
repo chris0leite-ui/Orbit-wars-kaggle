@@ -69,3 +69,64 @@ inconclusive/negative locals the instrument could not have shown as lifts.
 - Commit SHA: 609e1c3 (pre-wrap; wrap commit follows)
 - Active rules: CLAUDE.md Rules 0–49.
 - Loaded skills this session: Plan, Explore agents; postmortem (this).
+
+---
+
+# Postmortem (PM session) — 2026-06-03 champion-strategy-rules-00JzI
+
+Second session this day on this branch. PI greenlit building a
+consolidation/massed-strike proposer for `holdgrab`; recon flipped it into a
+pre-registered inert-check first. See
+`audit/2026-06-03-mass-to-hold-consolidation-step1.md`.
+
+## What went wrong
+- **Minor decision-quality miss:** the first census smoke used holdgrab's
+  full-rollout focal (~800ms/turn) when the measured quantity (opportunity rate)
+  is rollout-independent. I had the throughput prior (`config.py` rollout budget
+  800ms) and should have reasoned about it before launch. Caught and fixed inside
+  one 4-game smoke (→ closed-form focal, ~20×). Low cost; logged.
+- **Stale-rule (framework gap, not a session error):** CLAUDE.md Rule 49 still
+  presents joint-coordination as "the active multi-session thrust," but its main
+  sub-axis (capture-coalition) was closed 2026-06-02. A fresh session reading
+  Rule 49 would contradict the closed-tracks list. Surfaced as candidate A.
+- **PI-overrides:** none. Direction was delegated ("[No preference]"); no
+  mid-session correction.
+- **Rule-bypass:** none. Rules 44 (closed-tracks check), 37/47 (inert-check
+  before build), 26 (surfaced the contradiction via AskUserQuestion) all applied
+  — that discipline is what converted a multi-day build into a 4-game gate.
+
+## What went right (decision quality)
+- Recon-before-build caught a 24-hour-old falsification of the same axis, and the
+  inert-check-first reframing means the worst case is one committed enumerator,
+  not a built-then-falsified mechanism (the 2026-06-02 failure mode).
+
+## Frictions logged this session
+- `census-focal-rollout-too-slow` (audit/friction.md 2026-06-03) — instrument
+  harness drove the production agent instead of the cheapest faithful policy;
+  fixed same-session (Rule 29). Recurs with this morning's
+  `heavy-vs-heavy-ab-throughput-wall` — a standing throughput theme.
+
+## Promotion candidates (PI ratified: NONE — declined this session)
+- **A — Fix Rule 49 staleness** (CLAUDE.md): note capture-coalition sub-axis
+  closed; only mass-to-HOLD residual live. *Not promoted.*
+- **B — Inert-check before exploit-build** on falsified-adjacent axes: cheap
+  opportunity-census with pre-registered GO/NO-GO before the mechanism. *Not
+  promoted.*
+- **C — Instrument uses cheapest faithful policy** when the measured quantity is
+  policy-independent. *Not promoted.*
+  (Recorded for the record; PI selected "none" on the promotion question.)
+
+## PI additions (from step 4)
+- None ("." = nothing to add).
+
+## Census disposition
+- Full 192-game panel census was in-flight at the prior wrap; the session
+  resumed across a boundary and the `/tmp` census output was lost (job did not
+  finish). Early 4-game read = NO-GO (0.33% of turns, median 0/game). Tool is
+  committed + reproducible; next session re-runs `python
+  scripts/probe_consolidation.py` for the frozen verdict.
+
+## Framework version at session-end
+- Commit SHA: 2195b0b (pre-wrap; wrap commit follows)
+- Active rules: CLAUDE.md Rules 0–49.
+- Loaded skills this session: Explore + Plan agents; postmortem (this).
