@@ -230,6 +230,30 @@ def _strip_module_docstring(src: str) -> str:
     return "".join(lines[:i] + lines[j + 1 :])
 
 
+def _intra_import_span(lines: list[str], i: int) -> int:
+    """Number of physical lines the intra-import statement at `lines[i]`
+    spans (>= 1).
+
+    A single-line import spans 1. A parenthesized import
+    (`from x import (\\n a,\\n b,\\n)`) spans until the parens balance; a
+    backslash-continued import spans until the trailing `\\` stops. This is
+    what lets the cleaners strip the WHOLE statement — commenting only the
+    first physical line leaves the continuation lines dangling and indented,
+    an `unexpected indent` SyntaxError in the bundle (Rule 46 multi-line-import
+    failure mode; the long-lived `bundler-multiline-import` friction).
+    """
+    first = lines[i]
+    depth = first.count("(") - first.count(")")
+    cont = first.rstrip("\n").endswith("\\")
+    n = 1
+    while (depth > 0 or cont) and (i + n) < len(lines):
+        nxt = lines[i + n]
+        depth += nxt.count("(") - nxt.count(")")
+        cont = nxt.rstrip("\n").endswith("\\")
+        n += 1
+    return n
+
+
 def _clean_lib_source(src: str) -> str:
     """Drop intra-package imports and `from __future__` lines from a lib module,
     but emit alias rebindings for any aliased intra-imports.
@@ -239,15 +263,23 @@ def _clean_lib_source(src: str) -> str:
     NameError at runtime, swallowed by kaggle_environments' try/except. The
     parity gate catches it but only on integration; cheaper to rebind here.
     """
+    lines = src.splitlines(keepends=True)
     out: list[str] = []
-    for line in src.splitlines(keepends=True):
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         if _FUTURE_IMPORT_RE.match(line):
+            i += 1
             continue
         if _INTRA_IMPORT_RE.match(line):
-            for asname, original in _extract_aliases(line):
+            span = _intra_import_span(lines, i)
+            stmt = "".join(lines[i:i + span])
+            for asname, original in _extract_aliases(stmt):
                 out.append(f"{asname} = {original}\n")
+            i += span
             continue
         out.append(line)
+        i += 1
     return _strip_module_docstring("".join(out))
 
 
@@ -276,18 +308,30 @@ def _clean_agent_source(src: str) -> str:
     intra-lib imports — comment out the import and emit alias rebindings so
     `from lib.fleet import speed as fleet_speed` keeps working.
     """
+    lines = src.splitlines(keepends=True)
     out: list[str] = []
-    for line in src.splitlines(keepends=True):
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         if _FUTURE_IMPORT_RE.match(line):
+            i += 1
             continue
         if _INTRA_IMPORT_RE.match(line):
+            span = _intra_import_span(lines, i)
+            stmt = "".join(lines[i:i + span])
             indent = line[: len(line) - len(line.lstrip())]
-            stripped = line.strip()
-            out.append(f"{indent}# {stripped}  # inlined by bundle_agent.py\n")
-            for asname, original in _extract_aliases(line):
+            # Comment out EVERY physical line of the statement (not just the
+            # first) so a multi-line `from agents.x import (\n a,\n)` leaves no
+            # dangling indented continuation.
+            for sl in lines[i:i + span]:
+                sind = sl[: len(sl) - len(sl.lstrip())]
+                out.append(f"{sind}# {sl.strip()}  # inlined by bundle_agent.py\n")
+            for asname, original in _extract_aliases(stmt):
                 out.append(f"{indent}{asname} = {original}\n")
-        else:
-            out.append(line)
+            i += span
+            continue
+        out.append(line)
+        i += 1
     return "".join(out)
 
 

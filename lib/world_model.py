@@ -372,7 +372,8 @@ class WorldModel:
         return min(candidates)
 
     def time_to_enemy_threat(self, planet_id: int, my_id: int, world,
-                              arrival_eta: int = 0) -> int | None:
+                              arrival_eta: int = 0, *,
+                              lead_now: bool = False) -> int | None:
         """Earliest turn at which an enemy could have a fleet at
         `planet_id`. Considers BOTH (a) in-flight enemy fleets
         currently inbound, and (b) potential launches from every
@@ -411,8 +412,17 @@ class WorldModel:
             return None
 
         omega = float(getattr(world, "omega", 0.0))
+        # `lead_now` (2026-06 horizon fix): keep the CONSERVATIVE launch
+        # timing (enemy may launch NOW, arrival_eta stays 0) but still run
+        # the orbital-lead fixed-point so the enemy aims at where the target
+        # WILL be at intercept, not its current position. The shipped
+        # state-K used arrival_eta=0 with NO lead, which mis-estimates the
+        # intercept distance for orbiting targets (too timid when the target
+        # rotates away from the enemy, unsafe when it rotates toward). This
+        # mode fixes only the geometry; it does NOT adopt the optimistic
+        # "enemy launches at our arrival" timing that arrival_eta>0 implies.
         target_is_orbital = (
-            arrival_eta > 0 and omega != 0.0
+            (arrival_eta > 0 or lead_now) and omega != 0.0
             and is_orbiting([target.id, target.owner, target.x, target.y,
                              target.radius, target.ships, target.production])
         )
@@ -597,24 +607,32 @@ class ArrivalContest:
 # normal increment and a reset-to-0 at the start of a fresh game in the
 # same process).
 _contest_cache_step: int | None = None
-_contest_cache: dict[int, int | None] = {}
+_contest_cache: dict[tuple[int, bool], int | None] = {}
 
 
-def opp_contest_tick(model, world, tgt_id: int, me: int) -> int | None:
-    """`time_to_enemy_threat`, memoised per (world.step, tgt_id).
+def opp_contest_tick(model, world, tgt_id: int, me: int, *,
+                     lead_now: bool = False) -> int | None:
+    """`time_to_enemy_threat`, memoised per (world.step, tgt_id, lead_now).
 
     The opponent's earliest contest tick is independent of our fleet size,
     so caching it per (step, tgt) keeps the per-candidate cost off
     `time_to_enemy_threat` — the cost-critical reuse shared by the
-    contest-urgency lever and the state-driven horizon K."""
+    contest-urgency lever and the state-driven horizon K.
+
+    `lead_now` selects the orbital-lead horizon model (launch-now timing,
+    intercept geometry against the target's future position); cached
+    separately so the default (no-lead) callers are unaffected."""
     global _contest_cache_step
     step = int(getattr(world, "step", 0) or 0)
     if step != _contest_cache_step:
         _contest_cache_step = step
         _contest_cache.clear()
-    if tgt_id not in _contest_cache:
-        _contest_cache[tgt_id] = model.time_to_enemy_threat(int(tgt_id), int(me), world)
-    return _contest_cache[tgt_id]
+    key = (int(tgt_id), bool(lead_now))
+    if key not in _contest_cache:
+        _contest_cache[key] = model.time_to_enemy_threat(
+            int(tgt_id), int(me), world, lead_now=bool(lead_now),
+        )
+    return _contest_cache[key]
 
 
 def predict_arrival_contest(model, world, tgt_id: int, my_arrival_tick: int,

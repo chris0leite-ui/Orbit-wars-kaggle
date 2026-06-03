@@ -299,3 +299,63 @@ def test_b7_skips_iteration_when_arrival_eta_zero():
     # arrival_eta=0 → legacy path, current positions only.
     threat = wm.time_to_enemy_threat(target.id, my_id=0, world=world)
     assert threat is not None and threat > 0
+
+
+# ---------------------------------------------------------------------------
+# lead_now horizon model (2026-06 state-K orbital-lead fix)
+# ---------------------------------------------------------------------------
+#
+# Rule 38 reproduction. The shipped state-driven K calls
+# `time_to_enemy_threat(arrival_eta=0)`, which aims the enemy at the
+# target's CURRENT position — for an orbiting target it mis-estimates the
+# intercept distance (too timid when the target rotates away from the
+# enemy, unsafe when it rotates toward). `lead_now=True` keeps the
+# conservative launch-now timing but runs the orbital-lead fixed-point so
+# the enemy aims at the intercept (future) position.
+
+
+def test_lead_now_changes_tick_for_orbital_target():
+    """Reproduces the defect: shipped (no-lead) vs lead_now must differ for
+    a fast-rotating inner target reached by a slow enemy fleet."""
+    omega = 0.05
+    target = _planet(1, -1, 60.0, 50.0, ships=5, radius=1.0)  # orbital_radius 10
+    enemy = _planet(2, 1, 5.0, 50.0, ships=20, radius=6.0)    # slow fleet
+    mine = _planet(0, 0, 5.0, 5.0, ships=100, radius=1.0)
+    world = _world([mine, target, enemy], omega=omega)
+    wm = WorldModel.from_world(world)
+    shipped = wm.time_to_enemy_threat(target.id, my_id=0, world=world)
+    lead = wm.time_to_enemy_threat(target.id, my_id=0, world=world, lead_now=True)
+    assert shipped is not None and lead is not None
+    assert lead != shipped  # the orbital lead changes the contest tick
+
+
+def test_lead_now_noop_on_static_target():
+    """lead_now is inert when the target cannot orbit (omega=0): the fix
+    only corrects orbital geometry, so static-board state-K is identical."""
+    omega = 0.0
+    target = _planet(1, -1, 60.0, 50.0, ships=5, radius=1.0)
+    enemy = _planet(2, 1, 5.0, 50.0, ships=20, radius=6.0)
+    mine = _planet(0, 0, 5.0, 5.0, ships=100, radius=1.0)
+    world = _world([mine, target, enemy], omega=omega)
+    wm = WorldModel.from_world(world)
+    shipped = wm.time_to_enemy_threat(target.id, my_id=0, world=world)
+    lead = wm.time_to_enemy_threat(target.id, my_id=0, world=world, lead_now=True)
+    assert lead == shipped
+
+
+def test_lead_now_keeps_launch_now_timing_not_arrival_delayed():
+    """lead_now must NOT adopt the optimistic arrival_eta timing (which adds
+    arrival_eta up front and inflates the tick). It is a launch-NOW horizon:
+    below the arrival_eta=20 variant for the same target."""
+    omega = 0.05
+    target = _planet(1, -1, 60.0, 50.0, ships=5, radius=1.0)
+    enemy = _planet(2, 1, 5.0, 50.0, ships=20, radius=6.0)
+    mine = _planet(0, 0, 5.0, 5.0, ships=100, radius=1.0)
+    world = _world([mine, target, enemy], omega=omega)
+    wm = WorldModel.from_world(world)
+    lead = wm.time_to_enemy_threat(target.id, my_id=0, world=world, lead_now=True)
+    arrival = wm.time_to_enemy_threat(
+        target.id, my_id=0, world=world, arrival_eta=20,
+    )
+    assert lead is not None and arrival is not None
+    assert lead < arrival  # launch-now horizon, not arrival-delayed (+20)

@@ -84,6 +84,18 @@ def state_driven_k_enabled() -> bool:
     )
 
 
+def _state_k_orbital_lead_enabled() -> bool:
+    """Orbital-lead horizon model for the state-driven contest tick.
+
+    When on, the per-target contest tick aims the enemy at the target's
+    FUTURE (intercept) position instead of its current one — fixing the
+    shipped state-K's mis-estimate for orbiting targets — while keeping the
+    conservative launch-now timing. Default OFF (byte-identical state-K)."""
+    return os.environ.get("BASELINE_STATE_K_ORBITAL_LEAD", "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
 def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name, "").strip()
     if not raw:
@@ -139,7 +151,10 @@ def capture_horizon_k(step=None, *, tgt_id=None, world=None, model=None,
             ceil = floor
         if tgt_id is None or world is None or model is None or me is None:
             return ceil  # global/efficiency call — permissive; gate is per-target
-        opp_tick = opp_contest_tick(model, world, int(tgt_id), int(me))
+        opp_tick = opp_contest_tick(
+            model, world, int(tgt_id), int(me),
+            lead_now=_state_k_orbital_lead_enabled(),
+        )
         if opp_tick is None:
             return ceil  # uncontested target → safe to commit long
         return max(floor, min(ceil, int(opp_tick)))
