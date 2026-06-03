@@ -37,10 +37,13 @@ class Config:
                                        # (not hypothetical) is the guard against the
                                        # rf over-pessimism turtle (audit 2026-05-27).
 
-    # --- value ---
-    enemy_capture_weight: float = 2.0  # taking an enemy planet gains us P/turn AND
-                                       # denies them P/turn (zero-sum) -> double.
-    neutral_capture_weight: float = 1.0
+    # --- value (denial-centric: optimize the differential, not own production) ---
+    denial_weight: float = 1.0         # weight on the "production DENIED to the
+                                       # opponent" term vs the "production GAINED"
+                                       # term. 1.0 = the true differential swing
+                                       # (enemy capture = 2x hold; contested
+                                       # neutral rewarded for out-holding; safe
+                                       # deep neutral = pure self-growth).
 
     # --- 4-player ---
     weakest_opp_bias: float = 0.30     # multiplicative boost on captures from the

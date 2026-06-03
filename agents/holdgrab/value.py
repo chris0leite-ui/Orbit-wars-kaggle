@@ -28,21 +28,39 @@ def _weakest_seat(view):
     return min(view.opp_strength, key=view.opp_strength.get)
 
 
-def planet_value(view, tgt, hold_ticks, cfg) -> float:
-    """Production-time-integral value of capturing ``tgt`` and holding it for
-    ``hold_ticks`` turns: ``owner_mult * weakest_mult * production * hold_ticks``.
+def planet_value(view, tgt, my_hold, eta, opp_reach, cfg) -> float:
+    """Differential value of capturing ``tgt``: what I GAIN plus what I DENY the
+    opponent, in production x time. ``value = production * (my_hold + denial)``.
 
-    ``hold_ticks`` is the caller's estimate of how long we keep it — the full
-    remaining game for a hold-guaranteed capture, or a short denial window for
-    a pressure capture we can't fully hold. Capturing an enemy planet earns the
-    enemy_capture_weight (gain + denial double-count); a 4P weakest-target gets
-    an extra bias.
+    The game is won by the differential ``my_ships - opp_ships``, not by our own
+    production — so a capture is worth my gain over the hold PLUS the production
+    it takes away from what would otherwise be the opponent's control:
+
+      - ENEMY tgt: they own it now, so every turn I hold displaces them ->
+        ``denial = my_hold`` (the principled, time-exact version of an enemy
+        double-count). Holdable enemy planets are top value -> suppression.
+      - CONTESTED neutral (``opp_reach`` not None): they'd take it at
+        ``opp_reach`` regardless, so I only deny them for the turns I hold PAST
+        that -> ``denial = max(0, min(my_hold, remaining) - max(0, opp_reach -
+        eta))``. Nonzero only if I out-HOLD their reach (bring enough force);
+        a brief pressure-grab denies ~nothing (they take it at opp_reach anyway).
+      - SAFE deep neutral (``opp_reach is None``): ``denial = 0`` -> pure
+        self-growth, ranked last.
+
+    ``denial_weight`` (cfg) scales the denial term (1.0 = the true differential).
     """
     owner = int(tgt.owner)
-    if owner == view.me or hold_ticks <= 0:
+    if owner == view.me or my_hold <= 0:
         return 0.0
 
-    owner_mult = cfg.enemy_capture_weight if owner != -1 else cfg.neutral_capture_weight
+    remaining = max(0, cfg.game_horizon - view.step - int(eta))
+    if owner == -1:
+        if opp_reach is None:
+            denial = 0.0
+        else:
+            denial = float(max(0, min(int(my_hold), remaining) - max(0, int(opp_reach) - int(eta))))
+    else:
+        denial = float(my_hold)
 
     weakest_mult = 1.0
     if view.num_seats == 4 and owner != -1:
@@ -50,15 +68,15 @@ def planet_value(view, tgt, hold_ticks, cfg) -> float:
         if weakest is not None and owner == weakest:
             weakest_mult = 1.0 + cfg.weakest_opp_bias
 
-    return owner_mult * weakest_mult * float(tgt.production) * float(hold_ticks)
+    return weakest_mult * float(tgt.production) * (float(my_hold) + cfg.denial_weight * denial)
 
 
 def preserve_value(view, planet, fall_turn, cfg) -> float:
-    """Production *preserved* by reinforcing one of my planets that the timeline
-    says falls at ``fall_turn`` — the stream from the fall to game-end that we'd
-    otherwise lose. Same ``production x time`` units as a capture's *gained*
-    value, so defense and offense compete on one scale (owner-weight 1.0: it's
-    our own production, no denial double-count).
+    """Differential value of reinforcing one of my planets the timeline says
+    falls at ``fall_turn``. Losing it to the opponent is a DOUBLE swing (they
+    gain the stream, I lose it), so preventing the fall is worth ``production *
+    (remaining - fall_turn) * (1 + denial_weight)`` — defense competes with
+    offense on the same differential scale.
     """
     keep = max(0, cfg.game_horizon - view.step - int(fall_turn))
-    return float(planet.production) * float(keep)
+    return float(planet.production) * float(keep) * (1.0 + cfg.denial_weight)

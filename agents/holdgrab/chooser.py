@@ -109,17 +109,17 @@ def _capture_candidates(view, cfg, spendable) -> list:
                 garrison, f_contest, float(tgt.production), cfg.contest_window,
             )
             need_cap = ships_to_capture(garrison)
+            opp = opp_reach_tick(view, int(tgt.id), eta)
             if b >= need_hold:
                 ships = need_hold
                 hold_ticks = remaining
             elif b >= need_cap:
                 ships = need_cap
-                opp = opp_reach_tick(view, int(tgt.id), eta)
                 hold_ticks = remaining if opp is None else max(1, min(remaining, int(opp) - eta))
             else:
                 continue
 
-            v = planet_value(view, tgt, hold_ticks, cfg)
+            v = planet_value(view, tgt, hold_ticks, eta, opp, cfg)
             if v <= 0:
                 continue
             out.append(Cand(float(v), int(ships), int(eta), int(src.id), int(tgt.id), "capture"))

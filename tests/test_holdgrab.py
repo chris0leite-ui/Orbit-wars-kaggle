@@ -69,28 +69,54 @@ def test_production_can_fully_cover_follow_on():
 # value — production-time integral
 # --------------------------------------------------------------------------
 
-def test_value_scales_with_production_and_hold():
+def test_safe_neutral_is_pure_self_growth():
+    # opp can't reach (opp_reach None) -> denial 0 -> value = production * hold.
     v = _view([[0, 0, 50.0, 50.0, 1.5, 50, 1], [1, -1, 55.0, 50.0, 1.5, 5, 3]])
     tgt = _tgt(v, 1)
-    assert planet_value(v, tgt, 100, DEFAULT) == 1.0 * 3.0 * 100
-    # zero hold -> zero value (can't keep it -> worthless).
-    assert planet_value(v, tgt, 0, DEFAULT) == 0.0
+    assert planet_value(v, tgt, 100, eta=5, opp_reach=None, cfg=DEFAULT) == 3.0 * 100
+    assert planet_value(v, tgt, 0, 5, None, DEFAULT) == 0.0
 
 
-def test_enemy_capture_double_counts_vs_neutral():
+def test_enemy_capture_is_double_a_safe_neutral():
+    # enemy: they hold it now -> every held turn denies them -> value = 2x.
     v = _view([
         [0, 0, 50.0, 50.0, 1.5, 50, 1],
-        [1, -1, 55.0, 50.0, 1.5, 5, 2],   # neutral, prod 2
-        [2, 1, 45.0, 50.0, 1.5, 5, 2],    # enemy, prod 2
+        [1, -1, 55.0, 50.0, 1.5, 5, 2],   # neutral prod 2 (safe)
+        [2, 1, 45.0, 50.0, 1.5, 5, 2],    # enemy prod 2
     ])
-    neutral = planet_value(v, _tgt(v, 1), 100, DEFAULT)
-    enemy = planet_value(v, _tgt(v, 2), 100, DEFAULT)
-    assert enemy == 2.0 * neutral  # enemy weight 2.0 vs neutral 1.0
+    neutral = planet_value(v, _tgt(v, 1), 100, 5, None, DEFAULT)
+    enemy = planet_value(v, _tgt(v, 2), 100, 5, 2, DEFAULT)
+    assert enemy == 2.0 * neutral
+
+
+def test_contested_neutral_beats_safe_neutral_of_equal_production():
+    # the whole point of the reframe: a planet the opponent wants is worth more.
+    v = _view([
+        [0, 0, 50.0, 50.0, 1.5, 50, 1],
+        [1, -1, 55.0, 50.0, 1.5, 5, 2],   # contested prod 2
+        [2, -1, 60.0, 50.0, 1.5, 5, 2],   # safe prod 2
+    ])
+    contested = planet_value(v, _tgt(v, 1), 300, eta=5, opp_reach=20, cfg=DEFAULT)
+    safe = planet_value(v, _tgt(v, 2), 300, eta=5, opp_reach=None, cfg=DEFAULT)
+    assert contested > safe
+
+
+def test_pressure_grab_of_contested_neutral_denies_nothing():
+    # if I only hold until the opponent could take it, I displace them 0 turns.
+    v = _view([[0, 0, 50.0, 50.0, 1.5, 50, 1], [1, -1, 55.0, 50.0, 1.5, 5, 2]])
+    # my_hold == opp_reach - eta == 15 -> denial 0 -> value = production * my_hold.
+    val = planet_value(v, _tgt(v, 1), 15, eta=5, opp_reach=20, cfg=DEFAULT)
+    assert val == 2.0 * 15
+
+
+def test_preserve_value_is_doubled():
+    from agents.holdgrab.value import preserve_value
+    v = _view([[0, 0, 50.0, 50.0, 1.5, 50, 3]])   # my planet, prod 3
+    # falls at turn 100, step 0 -> keep 400 -> double swing -> 3 * 400 * 2.
+    assert preserve_value(v, _tgt(v, 0), 100, DEFAULT) == 3.0 * 400 * 2
 
 
 def test_4p_weakest_opponent_bias():
-    # seats 1 (strong) and 2 (weak) present -> 4P. Equal planets, weaker seat
-    # gets the bias multiplier.
     planets = [
         [0, 0, 50.0, 50.0, 1.5, 50, 1],
         [1, 1, 40.0, 50.0, 1.5, 99, 1],   # strong enemy
@@ -100,8 +126,8 @@ def test_4p_weakest_opponent_bias():
     ]
     v = _view(planets)
     assert v.num_seats == 4
-    weak = planet_value(v, _tgt(v, 3), 100, DEFAULT)
-    strong = planet_value(v, _tgt(v, 4), 100, DEFAULT)
+    weak = planet_value(v, _tgt(v, 3), 100, 5, 2, DEFAULT)
+    strong = planet_value(v, _tgt(v, 4), 100, 5, 2, DEFAULT)
     assert weak > strong
 
 
