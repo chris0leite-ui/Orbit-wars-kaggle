@@ -127,6 +127,17 @@ panel winner (v7_0 90.6% / v4_planner 93.8% / v3.5.1 87.5%) but live
 **μ=1150.2** (sub 53223160) — below the 1183 champion, so a panel-beater not
 a ladder gain. Size-to-hold lever = NULL (7/7 tie). Code stays default-OFF.
 
+## Open track — region/chunk-aware MVP (2026-06-03, `claude/region-mvp`)
+
+**Owns:** new `lib/region.py`; the `BASELINE_REGION` bias hook + advance pass
+in `agents/baseline/main.py` (trajectory branch); the `min_horizon` param on
+`proposer.propose()` (`BASELINE_HORIZON_DECAY`). Coordinate before touching
+region clustering or the proposer horizon param.
+
+| State | Evidence | Next |
+|---|---|---|
+| **Region MVP BUILT + committed + pushed, default OFF** (commit 788af05 on `claude/region-mvp`, off champion HEAD). Decision unit = region (orbital-param cluster), not planet. Three verbs: bias candidates toward high-value *predictable* contested regions (HOLD/skip-unpredictable), advance idle mass to the frontier (own→own redeploy, generalizes `drain_stagnant_rear`), GAIN scaffolded behind `BASELINE_REGION_TAKE` (empty stub). Separate `BASELINE_HORIZON_DECAY` (rollout-depth floor decays deep-early→champion-late). Feed-the-rollout, never replace (per reach-frontier/analytical-slice closure). **PARITY:** region-only 15/32=46.9% [0.31,0.64]; region+horizon 7/16=43.8% [0.23,0.67] vs champion-control — both INCONCLUSIVE. Off-is-identical proven (216-call replay + 80-state proposer parity, 0 mismatch). Timing clean (max 929ms). | Region layer fires (47/186 turns diverge, grows with phase) but nets ~neutral. **Why:** chooser selects by ROLLOUT score, not cheap-delta — so the bias only reorders *which* candidates get validated under the cap; it can't override the rollout. Advance pass is net-neutral. Idle-source probe: champion ~90% planets idle/turn even in close mid-game (refutes the joint-coordination "source-saturated" premise). | **Next lever (untried):** add region value as an additive TERM in the chooser's final score (not candidate reordering) — "feed the rollout" at the scoring layer. Then re-A/B at n≥32. Horizon-decay never tested in isolation. Do NOT submit at parity (Rule 42/43). |
+
 ## Closed tracks — falsified knowledge, do NOT iterate
 
 | Axis | Branch | Verdict date | Evidence |
