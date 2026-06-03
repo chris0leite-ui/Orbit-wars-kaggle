@@ -1507,6 +1507,20 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     used_tgts: set[int] = set()
     moves: list[list] = []
     commits: list[dict] = []
+    # Reframe B.2 / Phase D — solo-only accepted trace. Populated only
+    # when BASELINE_ACCEPTED_TRACE env var is set; trace_accepted is a
+    # no-op otherwise. Solo-only by design — VH training corpus drops
+    # joints (joints aren't VH-corrected by the head).
+    accepted_trace: list[dict] = []
+    # eta_by_key: map (src_id, tgt_id, ships, angle, wait_N) → eta_hint
+    # from the prerank so the emit loop can attach eta to each accepted
+    # solo record. Round angle to match _candidate_key precision in
+    # _value_head._candidate_key.
+    eta_by_key: dict[tuple, int] = {}
+    for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
+        key = (int(src.id), int(tgt.id), int(ships),
+               round(float(angle), 6), int(wait_N))
+        eta_by_key.setdefault(key, int(eta_hint))
     commit_step = int(world.step) if world is not None else 0
     for entry in scored:
         # Synchronized joint (3-tuple, tag 'joint_sync'): far leg fires now,
@@ -1574,4 +1588,18 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 "wait_remaining": int(wait_N),
                 "commit_step": commit_step,
             })
+        key = (sid, tid, int(ships), round(float(angle), 6), int(wait_N))
+        accepted_trace.append({
+            "kind": "solo",
+            "src_id": sid,
+            "tgt_id": tid,
+            "ships": int(ships),
+            "angle": float(angle),
+            "wait_N": int(wait_N),
+            "eta": int(eta_by_key.get(key, 0)),
+            "delta_pred": float(_score),
+        })
+    if accepted_trace:
+        from agents.baseline._trace_hook import trace_accepted
+        trace_accepted(world, model, me, accepted_trace)
     return moves, commits
