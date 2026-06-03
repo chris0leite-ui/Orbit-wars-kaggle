@@ -176,6 +176,14 @@ REGION_CONSOLIDATION_H = int(os.environ.get("BASELINE_REGION_CONSOLIDATION_H", "
 REGION_ADVANCE_MAX_LAUNCHES = int(os.environ.get("BASELINE_REGION_ADVANCE_MAX", "4"))
 REGION_LOG = os.environ.get("BASELINE_REGION_LOG", "").strip()
 
+# Region-value score term (2026-06-03). Default OFF => byte-identical champion.
+# Independent of BASELINE_REGION so the score term A/Bs in isolation (Rule 37).
+# When ON, the chooser adds a per-target region desirability to each candidate's
+# POST-rollout score (a tie-breaker at near-equal Δ, not an override) -- the
+# "feed the rollout at the scoring layer" lever the MVP parity diagnosis named.
+REGION_SCORE_ENABLED = os.environ.get("BASELINE_REGION_SCORE", "0") == "1"
+REGION_SCORE_WEIGHT = float(os.environ.get("BASELINE_REGION_SCORE_WEIGHT", "0.10"))
+
 # Forecast-horizon decay adapter (2026-06-03). Default OFF => byte-identical
 # champion. When ON, the K-step rollout DEPTH (the MIN_HORIZON floor on each
 # candidate's forecast) starts deep early-game (board open, far states
@@ -911,6 +919,72 @@ def _log_region_state(annotated, tags, front_key, world, me):
         pass
 
 
+def _region_view(planets, world, model, me):
+    """Cluster + annotate + classify regions once and return the shared view
+    `(annotated, tags, front_key, vmax)` used by BOTH the bias hook and the
+    score term, so the two layers compute desirability from identical inputs.
+    """
+    regions = cluster_regions(
+        planets, n_bands=REGION_N_BANDS, n_sectors=REGION_N_SECTORS,
+    )
+    annotated = annotate_regions(
+        regions, model, world, me, consolidation_horizon=REGION_CONSOLIDATION_H,
+    )
+    tags = classify_regions(annotated, me)
+    front = frontier_region(annotated, tags)
+    front_key = front.key if front is not None else None
+    vals = [r.value for r in annotated.values()]
+    vmax = max(vals) if vals else 1.0
+    if vmax <= 0.0:
+        vmax = 1.0
+    return annotated, tags, front_key, vmax
+
+
+def _region_factor(reg, tag, rkey, front_key, vmax) -> float:
+    """Per-target region multiplier in [REGION_BIAS_MIN, REGION_BIAS_MAX].
+
+    The single desirability function shared by the bias hook (multiplies
+    cheap_delta by `factor`) and the score term (adds `factor − 1.0` to the
+    post-rollout score). Boost high-value predictable contested regions
+    (frontier gets the cap), damp unpredictable deep enemy pushes, leave
+    own/neutral neutral.
+    """
+    factor = 1.0
+    if reg is not None:
+        norm = reg.value / vmax  # [0, 1]
+        if tag == "contested" and reg.predictable:
+            # HOLD / ADVANCE bias: prefer the high-value predictable frontier.
+            factor = 1.0 + (REGION_BIAS_MAX - 1.0) * norm
+            if rkey == front_key:
+                factor = REGION_BIAS_MAX
+        elif tag == "enemy" and not reg.predictable:
+            # discourage unpredictable deep pushes
+            factor = REGION_BIAS_MIN
+    # Clamp; positive factor preserves sign and never zeros a candidate.
+    return max(REGION_BIAS_MIN, min(REGION_BIAS_MAX, factor))
+
+
+def _region_desirability_by_id(planets, world, model, me) -> dict:
+    """Signed per-planet region desirability = bias-hook `factor − 1.0`.
+
+    Keyed by int(planet.id); range ~[REGION_BIAS_MIN−1, REGION_BIAS_MAX−1]
+    (≈ [−0.3, +0.5] at defaults), 0.0 for own/neutral regions. Fed to the
+    chooser's additive score term (REGION_SCORE_*). Reuses _region_view +
+    _region_factor so it agrees exactly with the bias hook's desirability.
+    """
+    annotated, tags, front_key, vmax = _region_view(planets, world, model, me)
+    out: dict = {}
+    for p in planets:
+        rkey = planet_to_region_key(
+            p, n_bands=REGION_N_BANDS, n_sectors=REGION_N_SECTORS,
+        )
+        reg = annotated.get(rkey)
+        out[int(p.id)] = _region_factor(
+            reg, tags.get(rkey), rkey, front_key, vmax,
+        ) - 1.0
+    return out
+
+
 def _apply_region_layer(prerank, my_planets, planets, world, model, me, omega):
     """Region-aware re-weighting of the prerank candidate list (the bias hook).
 
@@ -922,20 +996,7 @@ def _apply_region_layer(prerank, my_planets, planets, world, model, me, omega):
     candidate, so a mis-ranked bias is caught downstream -- this layer cannot
     emit a move on its own (the reach-frontier guardrail).
     """
-    regions = cluster_regions(
-        planets, n_bands=REGION_N_BANDS, n_sectors=REGION_N_SECTORS,
-    )
-    annotated = annotate_regions(
-        regions, model, world, me, consolidation_horizon=REGION_CONSOLIDATION_H,
-    )
-    tags = classify_regions(annotated, me)
-    front = frontier_region(annotated, tags)
-    front_key = front.key if front is not None else None
-
-    vals = [r.value for r in annotated.values()]
-    vmax = max(vals) if vals else 1.0
-    if vmax <= 0.0:
-        vmax = 1.0
+    annotated, tags, front_key, vmax = _region_view(planets, world, model, me)
 
     biased = []
     for entry in prerank:
@@ -944,20 +1005,7 @@ def _apply_region_layer(prerank, my_planets, planets, world, model, me, omega):
             tgt, n_bands=REGION_N_BANDS, n_sectors=REGION_N_SECTORS,
         )
         reg = annotated.get(rkey)
-        factor = 1.0
-        if reg is not None:
-            tag = tags.get(rkey)
-            norm = reg.value / vmax  # [0, 1]
-            if tag == "contested" and reg.predictable:
-                # HOLD / ADVANCE bias: prefer the high-value predictable frontier.
-                factor = 1.0 + (REGION_BIAS_MAX - 1.0) * norm
-                if rkey == front_key:
-                    factor = REGION_BIAS_MAX
-            elif tag == "enemy" and not reg.predictable:
-                # discourage unpredictable deep pushes
-                factor = REGION_BIAS_MIN
-        # Clamp; positive factor preserves sign and never zeros a candidate.
-        factor = max(REGION_BIAS_MIN, min(REGION_BIAS_MAX, factor))
+        factor = _region_factor(reg, tags.get(rkey), rkey, front_key, vmax)
         biased.append(
             (cheap * factor, src, tgt, ships, angle, eta, horizon, wait_N)
         )
@@ -1204,6 +1252,19 @@ def agent(obs, configuration=None):
                 choose_trajectory as _chooser,
             )
 
+        # Region-value score term (default OFF => empty kwargs => byte-identical).
+        # Only the trajectory chooser accepts these; greedy/refine get nothing.
+        # Computed once per turn here (single clustering) and fed to the chooser,
+        # which adds it to the POST-rollout score as a near-equal-Δ tie-breaker.
+        _region_score_kwargs: dict = {}
+        if REGION_SCORE_ENABLED and _chooser_sel not in ("greedy", "refine"):
+            _region_score_kwargs = {
+                "region_norm_by_id": _region_desirability_by_id(
+                    planets, world, model, me,
+                ),
+                "region_score_weight": REGION_SCORE_WEIGHT,
+            }
+
         # 1. Tick + emit the ledger's due commitments (if any). Build
         #    the reserved-srcs set so the chooser doesn't double-commit
         #    on srcs we've already scheduled.
@@ -1250,6 +1311,7 @@ def agent(obs, configuration=None):
             reserved_srcs=reserved_srcs,
             reserved_for_new_commits=reserved_for_new_commits,
             agent_deadline=agent_deadline,
+            **_region_score_kwargs,
         )
 
         # 2. Persist updated ledger (surviving + new commits). When the

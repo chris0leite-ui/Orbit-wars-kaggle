@@ -1223,6 +1223,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                       reserved_for_new_commits: set[int] | None = None,
                       agent_deadline: float | None = None,
                       out_chosen: list | None = None,
+                      region_norm_by_id: dict[int, float] | None = None,
+                      region_score_weight: float = 0.0,
                       ) -> tuple[list[list], list[dict]]:
     """Drop-in alternative to `chooser.choose`.
 
@@ -1495,6 +1497,38 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
 
     if not scored:
         return [], []
+
+    # Region-value score term (default OFF ⇒ map None ⇒ byte-identical). Adds a
+    # per-target region desirability to each candidate's POST-rollout score,
+    # scaled to this turn's typical move strength (mean Δ over scored, all > 0).
+    # This is a tie-breaker at near-equal rollout Δ, not an override: only
+    # candidates already in `scored` (status 'scored', Δ>0) are re-ranked, so the
+    # term can never emit a move the rollout rejected (reach-frontier guardrail).
+    # The desirability is the bias hook's `factor − 1.0`, applied additively at
+    # the scoring layer instead of multiplicatively at the enumeration layer.
+    if region_norm_by_id and region_score_weight != 0.0:
+        scale = sum(c[0] for c in scored) / len(scored)
+        if scale > 0.0:
+            adj: list[tuple] = []
+            for entry in scored:
+                if len(entry) == 3 and entry[1] in ("joint", "joint_sync"):
+                    _s, _tag, launches = entry
+                    desir = max(
+                        (region_norm_by_id.get(int(L[1].id), 0.0)
+                         for L in launches),
+                        default=0.0,
+                    )
+                    adj.append(
+                        (_s + region_score_weight * desir * scale, _tag, launches)
+                    )
+                else:
+                    _s, src, tgt, ships, angle, wait_N = entry
+                    desir = region_norm_by_id.get(int(tgt.id), 0.0)
+                    adj.append((
+                        _s + region_score_weight * desir * scale,
+                        src, tgt, ships, angle, wait_N,
+                    ))
+            scored = adj
 
     scored.sort(key=lambda c: -c[0])
 

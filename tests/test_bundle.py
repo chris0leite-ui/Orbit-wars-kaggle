@@ -229,6 +229,80 @@ def test_region_bundle_self_play_validation_gate(bundled_region):
 
 
 # ---------------------------------------------------------------------------
+# End-to-end bundle of the region-value SCORE TERM (BASELINE_REGION_SCORE=1).
+# Separate from the bias hook (BASELINE_REGION); the score term adds region
+# value to the chooser's post-rollout score. Rule 46: compile, expose `agent`,
+# run full self-play to DONE before it is submission-eligible.
+# ---------------------------------------------------------------------------
+
+# 13 champion setdefaults + the score term ON at a representative weight.
+_REGION_SCORE_HEADER = (
+    "\nimport os as _cfg_os\n"
+    "for _k, _v in {\n"
+    '    "BASELINE_JOINT_AGGR":"1","BASELINE_JOINT_TOP_K":"5","BASELINE_JOINT_MAX_PAIRS":"60",\n'
+    '    "BASELINE_REINFORCE_EMIT":"1","BASELINE_REINFORCE_ANTICIPATE":"1","BASELINE_NEUTRAL_BONUS":"2.0",\n'
+    '    "BASELINE_NEUTRAL_EARLY_EXTRA":"1.5","BASELINE_NEUTRAL_EARLY_HORIZON":"50","BASELINE_ORBITAL_SAFETY":"1",\n'
+    '    "BASELINE_PV_ETA":"1","BASELINE_VALUE_HEAD":"hybrid","BASELINE_CHOOSER":"trajectory",\n'
+    '    "BASELINE_JOINT":"1","PV_GAMMA":"0.99",\n'
+    "}.items():\n"
+    "    _cfg_os.environ.setdefault(_k, _v)\n"
+    '_cfg_os.environ["BASELINE_REGION_SCORE"] = "1"\n'
+    '_cfg_os.environ["BASELINE_REGION_SCORE_WEIGHT"] = "0.10"\n\n'
+)
+
+
+@pytest.fixture(scope="module")
+def bundled_region_score(tmp_path_factory):
+    """Build the region-value score-term submission and return (path, module)."""
+    out_dir = tmp_path_factory.mktemp("submissions_rs")
+    base_path = bundle_agent.bundle(
+        REPO / "agents" / "baseline",
+        lib_modules=bundle_agent.DEFAULT_LIB_ORDER,
+        out_dir=out_dir,
+        force=True,
+    )
+    anchor = "from __future__ import annotations\n"
+    src = base_path.read_text()
+    assert anchor in src
+    score_src = src.replace(anchor, anchor + _REGION_SCORE_HEADER, 1)
+    path = out_dir / "baseline_region_score.py"
+    path.write_text(score_src)
+    mod = _load_module("bundled_region_score_for_tests", path)
+    return path, mod
+
+
+def test_region_score_bundle_compiles(bundled_region_score):
+    path, _ = bundled_region_score
+    compile(path.read_text(), str(path), "exec")
+
+
+def test_region_score_bundle_exposes_agent_callable(bundled_region_score):
+    _, mod = bundled_region_score
+    assert callable(getattr(mod, "agent", None))
+
+
+def test_region_score_bundle_bakes_flag(bundled_region_score):
+    """The score-term flag must be baked ON and the chooser term inlined."""
+    path, _ = bundled_region_score
+    src = path.read_text()
+    assert '"BASELINE_REGION_SCORE"] = "1"' in src, "score flag not baked ON"
+    assert "region_score_weight" in src, "chooser score term missing from bundle"
+    assert "_region_desirability_by_id" in src, "desirability helper missing"
+
+
+def test_region_score_bundle_self_play_validation_gate(bundled_region_score):
+    """Rule 46: full self-play to DONE on 3 seeds before submission-eligible."""
+    from kaggle_environments import make
+
+    _, bundled = bundled_region_score
+    for seed in (1000, 1001, 1002):
+        env = make("orbit_wars", configuration={"seed": seed}, debug=False)
+        env.run([bundled.agent, bundled.agent])
+        statuses = [s.status for s in env.steps[-1]]
+        assert all(s == "DONE" for s in statuses), f"seed={seed}: {statuses}"
+
+
+# ---------------------------------------------------------------------------
 # End-to-end bundle of reach_frontier
 #
 # Mirrors the bundled_v1 fixture pattern; covers the reach-frontier doctrine
