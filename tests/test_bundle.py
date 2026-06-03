@@ -147,6 +147,88 @@ def test_bundle_self_play_validation_gate(bundled_v1):
 
 
 # ---------------------------------------------------------------------------
+# End-to-end bundle of baseline_region (region/chunk-aware augmentation ON)
+# ---------------------------------------------------------------------------
+
+
+# The region submission is built the same way the champion config-variants are:
+# bundle agents/baseline (which defines `agent` + inlines its submodules and
+# lib/region.py via DEFAULT_LIB_ORDER), then inject the config header (the 13
+# champion setdefaults + BASELINE_REGION=1) after the `from __future__` line.
+# A thin `from agents.baseline.main import agent` wrapper cannot be bundled
+# directly (the bundler strips the cross-package import without inlining the
+# body), so header-injection is the canonical config-variant submission path.
+_REGION_HEADER = (
+    "\nimport os as _cfg_os\n"
+    "for _k, _v in {\n"
+    '    "BASELINE_JOINT_AGGR":"1","BASELINE_JOINT_TOP_K":"5","BASELINE_JOINT_MAX_PAIRS":"60",\n'
+    '    "BASELINE_REINFORCE_EMIT":"1","BASELINE_REINFORCE_ANTICIPATE":"1","BASELINE_NEUTRAL_BONUS":"2.0",\n'
+    '    "BASELINE_NEUTRAL_EARLY_EXTRA":"1.5","BASELINE_NEUTRAL_EARLY_HORIZON":"50","BASELINE_ORBITAL_SAFETY":"1",\n'
+    '    "BASELINE_PV_ETA":"1","BASELINE_VALUE_HEAD":"hybrid","BASELINE_CHOOSER":"trajectory",\n'
+    '    "BASELINE_JOINT":"1","PV_GAMMA":"0.99","BASELINE_REGION":"1",\n'
+    "}.items():\n"
+    "    _cfg_os.environ.setdefault(_k, _v)\n\n"
+)
+
+
+@pytest.fixture(scope="module")
+def bundled_region(tmp_path_factory):
+    """Build the region submission (champion config + BASELINE_REGION=1) and
+    return (path, imported module). Exercises lib/region.py being inlined via
+    DEFAULT_LIB_ORDER and the region hooks in agents/baseline/main.py. Rule 46:
+    a region submission must compile, expose `agent`, and run a full game.
+    """
+    out_dir = tmp_path_factory.mktemp("submissions")
+    base_path = bundle_agent.bundle(
+        REPO / "agents" / "baseline",
+        lib_modules=bundle_agent.DEFAULT_LIB_ORDER,
+        out_dir=out_dir,
+        force=True,
+    )
+    anchor = "from __future__ import annotations\n"
+    src = base_path.read_text()
+    assert anchor in src
+    region_src = src.replace(anchor, anchor + _REGION_HEADER, 1)
+    path = out_dir / "baseline_region.py"
+    path.write_text(region_src)
+    mod = _load_module("bundled_region_for_tests", path)
+    return path, mod
+
+
+def test_region_bundle_compiles(bundled_region):
+    path, _ = bundled_region
+    compile(path.read_text(), str(path), "exec")
+
+
+def test_region_bundle_exposes_agent_callable(bundled_region):
+    _, mod = bundled_region
+    assert callable(getattr(mod, "agent", None))
+
+
+def test_region_bundle_inlines_region_module(bundled_region):
+    """lib/region.py must be inlined (DEFAULT_LIB_ORDER drift guard) and the
+    region flag baked ON in the header."""
+    path, _ = bundled_region
+    src = path.read_text()
+    assert "def cluster_regions(" in src, "lib/region.py not inlined"
+    assert "_apply_region_layer" in src, "region bias hook missing from bundle"
+    assert '"BASELINE_REGION":"1"' in src, "region flag not baked ON"
+
+
+def test_region_bundle_self_play_validation_gate(bundled_region):
+    """Rule 46: the region bundle must run full self-play games to DONE
+    (3 seeds, smoke budget) before it is submission-eligible."""
+    from kaggle_environments import make
+
+    _, bundled = bundled_region
+    for seed in (1000, 1001, 1002):
+        env = make("orbit_wars", configuration={"seed": seed}, debug=False)
+        env.run([bundled.agent, bundled.agent])
+        statuses = [s.status for s in env.steps[-1]]
+        assert all(s == "DONE" for s in statuses), f"seed={seed}: {statuses}"
+
+
+# ---------------------------------------------------------------------------
 # End-to-end bundle of reach_frontier
 #
 # Mirrors the bundled_v1 fixture pattern; covers the reach-frontier doctrine

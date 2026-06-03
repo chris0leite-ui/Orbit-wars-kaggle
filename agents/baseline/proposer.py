@@ -970,6 +970,7 @@ def _target_cost_parity_ok(
 
 def _enumerate_reactor_candidates(
     my_planets, world, model, me: int, omega: float, baseline_len: int,
+    min_horizon: int | None = None,
 ):
     """Reactor candidate generator — Part B of reactor-aware launch selection.
 
@@ -1093,7 +1094,8 @@ def _enumerate_reactor_candidates(
             needed = max(MIN_FLEET_SIZE, int(math.ceil(refined_ships)) + 1)
             if needed > budget:
                 continue
-            horizon = max(int(eta) + SIM_SETTLE_TURNS, MIN_HORIZON)
+            _mn = MIN_HORIZON if min_horizon is None else int(min_horizon)
+            horizon = max(int(eta) + SIM_SETTLE_TURNS, _mn)
             if horizon >= baseline_len:
                 continue
             cheap = cheap_marginal_value(
@@ -1110,14 +1112,21 @@ def _enumerate_reactor_candidates(
 
 
 def propose(my_planets, target_pool, world, model, me: int,
-            omega: float, baseline_len: int):
+            omega: float, baseline_len: int, min_horizon: int | None = None):
     """Build the pre-rank list of candidates, then dedup by
     (src_id, tgt_id, wait_band) keeping the top cheap-Δ per bucket.
 
     Returns: list of tuples
         (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N)
     sorted by cheap_delta descending.
+
+    `min_horizon` overrides the module MIN_HORIZON floor on the per-candidate
+    rollout depth (the forecast-horizon decay adapter passes a higher value
+    early-game, scaling down over time). None => MIN_HORIZON (byte-identical).
+    The caller must size `baseline_len` to accommodate the override, else the
+    deeper horizons clamp back here.
     """
+    _mn = MIN_HORIZON if min_horizon is None else int(min_horizon)
     # K-ceiling early prune (efficiency only — 2026-05-29, universalised
     # 2026-05-30). When launch rules are on, ANY fire-now candidate
     # arriving beyond the predictability horizon K is dropped post-emit
@@ -1153,7 +1162,7 @@ def propose(my_planets, target_pool, world, model, me: int,
                 angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
                 if _eta_prune and int(eta) > _k_tgt:
                     continue
-                horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
+                horizon = max(eta + SIM_SETTLE_TURNS, _mn)
                 if horizon >= baseline_len:
                     horizon = baseline_len - 1
                 cheap = cheap_marginal_value(
@@ -1167,7 +1176,7 @@ def propose(my_planets, target_pool, world, model, me: int,
             for w_ships, w_wait, w_angle, w_eta in wait_then_fire_variants(
                 src, tgt, model, omega, me, world=world,
             ):
-                w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, MIN_HORIZON)
+                w_horizon = max(w_wait + w_eta + SIM_SETTLE_TURNS, _mn)
                 if w_horizon >= baseline_len:
                     continue
                 w_cheap = cheap_marginal_value(
@@ -1189,6 +1198,7 @@ def propose(my_planets, target_pool, world, model, me: int,
     if os.environ.get("PROPOSER_REACTOR_CANDIDATES", "").strip().lower() != "off":
         prerank.extend(_enumerate_reactor_candidates(
             my_planets, world, model, me, omega, baseline_len,
+            min_horizon=min_horizon,
         ))
 
     best_per_band: dict[tuple[int, int, int], tuple] = {}

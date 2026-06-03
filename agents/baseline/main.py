@@ -155,6 +155,40 @@ _PENDING_LAUNCHES: dict[int, list[dict]] = {}
 # to standard chooser. Default OFF; opt-in via BASELINE_OPENING_MILP=1.
 OPENING_MILP_ENABLED = os.environ.get("BASELINE_OPENING_MILP", "0") == "1"
 
+# Region/chunk-aware augmentation (2026-06-03). Default OFF =>
+# byte-identical champion (the floor is champion-parity). When ON, the
+# region layer reasons about CLUSTERS of planets: it BIASES the existing
+# per-launch candidates toward high-value, *predictable* contested regions
+# (hold / skip-the-unpredictable) and ADVANCES idle rear mass toward the
+# frontier region. It only re-weights / appends candidates the K-step
+# rollout chooser still validates and emits -- it never emits a move
+# itself, so it cannot reproduce the falsified reach-frontier failure.
+# GAIN(region) is scaffolded behind a SEPARATE sub-flag (default OFF) with
+# an empty body, so the competitive floor is double-protected.
+# See lib/region.py + plan delightful-beaming-cosmos.md.
+REGION_ENABLED = os.environ.get("BASELINE_REGION", "0") == "1"
+REGION_TAKE_ENABLED = os.environ.get("BASELINE_REGION_TAKE", "0") == "1"
+REGION_N_BANDS = int(os.environ.get("BASELINE_REGION_BANDS", "3"))
+REGION_N_SECTORS = int(os.environ.get("BASELINE_REGION_SECTORS", "6"))
+REGION_BIAS_MAX = float(os.environ.get("BASELINE_REGION_BIAS_MAX", "1.5"))
+REGION_BIAS_MIN = float(os.environ.get("BASELINE_REGION_BIAS_MIN", "0.7"))
+REGION_CONSOLIDATION_H = int(os.environ.get("BASELINE_REGION_CONSOLIDATION_H", "25"))
+REGION_ADVANCE_MAX_LAUNCHES = int(os.environ.get("BASELINE_REGION_ADVANCE_MAX", "4"))
+REGION_LOG = os.environ.get("BASELINE_REGION_LOG", "").strip()
+
+# Forecast-horizon decay adapter (2026-06-03). Default OFF => byte-identical
+# champion. When ON, the K-step rollout DEPTH (the MIN_HORIZON floor on each
+# candidate's forecast) starts deep early-game (board open, far states
+# predictable) and scales linearly down to the champion's MIN_HORIZON over
+# DECAY_SPAN turns. Cheap early (few planets) and shrinks as the board gets
+# dense, so it's budget-friendly. Separate flag from BASELINE_REGION so the
+# two levers A/B independently. Threaded through propose(min_horizon=) +
+# choose_trajectory(min/max_horizon) -- no module-global mutation (bundle-safe).
+HORIZON_DECAY_ENABLED = os.environ.get("BASELINE_HORIZON_DECAY", "0") == "1"
+HORIZON_DECAY_START = int(os.environ.get("BASELINE_HORIZON_DECAY_START", "40"))
+HORIZON_DECAY_END = int(os.environ.get("BASELINE_HORIZON_DECAY_END", "25"))
+HORIZON_DECAY_SPAN = int(os.environ.get("BASELINE_HORIZON_DECAY_SPAN", "250"))
+
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 from lib.fast_sim import from_obs as fs_from_obs
@@ -167,6 +201,7 @@ from agents.baseline.launch_rules import enforce_launch_rules
 from lib.orbit import predict_relative
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import WorldModel
+from lib.region import cluster_regions, annotate_regions, classify_regions, frontier_region, planet_to_region_key
 
 # Import by explicit names so the bundler's per-line import-stripping regex
 # can handle them. Single-line form is mandatory — the regex matches one
@@ -833,6 +868,199 @@ def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
     return list(moves) + extras
 
 
+def _decayed_min_horizon(step: int) -> int:
+    """Forecast-horizon decay schedule: linear from HORIZON_DECAY_START (deep,
+    early) down to HORIZON_DECAY_END (= champion MIN_HORIZON) over
+    HORIZON_DECAY_SPAN turns, then flat. Returns the rollout depth floor for
+    this turn. Only consulted when HORIZON_DECAY_ENABLED."""
+    span = max(1, HORIZON_DECAY_SPAN)
+    frac = min(1.0, max(0.0, float(step) / span))
+    val = HORIZON_DECAY_START + (HORIZON_DECAY_END - HORIZON_DECAY_START) * frac
+    return max(1, int(round(val)))
+
+
+def _propose_region_gain(annotated, tags, my_planets, world, model, me, omega):
+    """SCAFFOLD for GAIN(region), gated behind BASELINE_REGION_TAKE (default
+    OFF). When filled, returns prerank-shaped capture candidates into the
+    highest-value PREDICTABLE enemy/neutral regions for the rollout chooser to
+    validate (GAIN never bypasses the rollout). MVP body is intentionally a
+    no-op ([]) -- only the flag, call site and signature ship now, so the
+    competitive floor stays champion-parity even with the sub-flag on. The
+    GAIN verb is the one structurally closest to the falsified "expand more",
+    so it is filled in a deliberate follow-up, not blind."""
+    return []
+
+
+def _log_region_state(annotated, tags, front_key, world, me):
+    """Read-only jsonl dump of the per-turn region state (gated on REGION_LOG).
+    Used only for A/B diagnostics; never affects behaviour."""
+    try:
+        import json as _json
+        rows = []
+        for k in sorted(annotated.keys()):
+            r = annotated[k]
+            rows.append({
+                "key": list(k), "tag": tags.get(k), "value": round(r.value, 2),
+                "contest": r.contest_tick, "predictable": r.predictable,
+                "n_mine": r.n_mine, "n_enemy": r.n_enemy, "n_neu": r.n_neutral,
+                "frontier": (k == front_key),
+            })
+        with open(REGION_LOG, "a") as fh:
+            fh.write(_json.dumps({"me": int(me), "regions": rows}) + "\n")
+    except Exception:
+        pass
+
+
+def _apply_region_layer(prerank, my_planets, planets, world, model, me, omega):
+    """Region-aware re-weighting of the prerank candidate list (the bias hook).
+
+    Multiplies each candidate's cheap_delta by a per-target region factor
+    (clamped to [REGION_BIAS_MIN, REGION_BIAS_MAX]), optionally appends GAIN
+    candidates (gated), then re-sorts by cheap_delta. NON-DESTRUCTIVE: runs
+    AFTER propose()'s dedup + filters, so it only re-weights survivors and
+    never resurrects a dropped candidate. The chooser still rolls out every
+    candidate, so a mis-ranked bias is caught downstream -- this layer cannot
+    emit a move on its own (the reach-frontier guardrail).
+    """
+    regions = cluster_regions(
+        planets, n_bands=REGION_N_BANDS, n_sectors=REGION_N_SECTORS,
+    )
+    annotated = annotate_regions(
+        regions, model, world, me, consolidation_horizon=REGION_CONSOLIDATION_H,
+    )
+    tags = classify_regions(annotated, me)
+    front = frontier_region(annotated, tags)
+    front_key = front.key if front is not None else None
+
+    vals = [r.value for r in annotated.values()]
+    vmax = max(vals) if vals else 1.0
+    if vmax <= 0.0:
+        vmax = 1.0
+
+    biased = []
+    for entry in prerank:
+        cheap, src, tgt, ships, angle, eta, horizon, wait_N = entry
+        rkey = planet_to_region_key(
+            tgt, n_bands=REGION_N_BANDS, n_sectors=REGION_N_SECTORS,
+        )
+        reg = annotated.get(rkey)
+        factor = 1.0
+        if reg is not None:
+            tag = tags.get(rkey)
+            norm = reg.value / vmax  # [0, 1]
+            if tag == "contested" and reg.predictable:
+                # HOLD / ADVANCE bias: prefer the high-value predictable frontier.
+                factor = 1.0 + (REGION_BIAS_MAX - 1.0) * norm
+                if rkey == front_key:
+                    factor = REGION_BIAS_MAX
+            elif tag == "enemy" and not reg.predictable:
+                # discourage unpredictable deep pushes
+                factor = REGION_BIAS_MIN
+        # Clamp; positive factor preserves sign and never zeros a candidate.
+        factor = max(REGION_BIAS_MIN, min(REGION_BIAS_MAX, factor))
+        biased.append(
+            (cheap * factor, src, tgt, ships, angle, eta, horizon, wait_N)
+        )
+
+    if REGION_TAKE_ENABLED:
+        biased.extend(_propose_region_gain(
+            annotated, tags, my_planets, world, model, me, omega,
+        ))
+
+    biased.sort(key=lambda e: -e[0])  # mirror propose()'s final sort
+
+    if REGION_LOG:
+        _log_region_state(annotated, tags, front_key, world, me)
+    return biased
+
+
+def region_advance_pass(moves, planets, my_id: int, world, model, omega) -> list:
+    """ADVANCE the idle mass toward the frontier region.
+
+    Generalizes drain_stagnant_rear (copied skeleton, NOT edited in place --
+    wrapper agents depend on that function byte-for-byte): same hard gates
+    (zero inbound enemy, production-scaled reserve, predict_fleet_fate
+    validation, per-turn launch cap), but the redeploy target is the friendly
+    planet CLOSEST to the highest-value predictable contested region's
+    centroid (planets INSIDE that region are the preferred destination), not
+    merely "closer to any enemy". Own->own launches merge into the garrison.
+    """
+    used_srcs = set()
+    for m in moves:
+        try:
+            used_srcs.add(int(m[0]))
+        except (TypeError, IndexError):
+            pass
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    other_planets = [p for p in planets if int(p.owner) != my_id]
+    if len(my_planets) < 2 or not other_planets:
+        return moves
+
+    regions = cluster_regions(
+        planets, n_bands=REGION_N_BANDS, n_sectors=REGION_N_SECTORS,
+    )
+    annotated = annotate_regions(
+        regions, model, world, my_id, consolidation_horizon=REGION_CONSOLIDATION_H,
+    )
+    tags = classify_regions(annotated, my_id)
+    front = frontier_region(annotated, tags)
+    if front is None:
+        return moves  # no predictable contested region -> nothing to advance to
+    fx, fy = front.centroid
+    front_ids = set(front.planet_ids)
+
+    def d_front(p):
+        return math.hypot(float(p.x) - fx, float(p.y) - fy)
+
+    extras = []
+    fired = 0
+    for src in sorted(my_planets, key=lambda q: int(q.id)):  # deterministic
+        if fired >= REGION_ADVANCE_MAX_LAUNCHES:
+            break
+        if int(src.id) in used_srcs:
+            continue
+        # Hard gate: source must have zero inbound enemy fleets.
+        if model.incoming_enemy_eta(int(src.id), my_id) is not None:
+            continue
+        prod = int(src.production)
+        reserve = max(prod * STAGNANT_RESERVE_MULT, STAGNANT_RESERVE_FLOOR)
+        if int(src.ships) <= STAGNANT_THRESHOLD_MULT * reserve:
+            continue
+        src_d = d_front(src)
+        # Destination: a friendly strictly closer to the frontier (planets IN
+        # the frontier region are the destination). Lowest-ships tie-break.
+        candidates = []
+        for q in my_planets:
+            if int(q.id) == int(src.id):
+                continue
+            if int(q.id) in front_ids:
+                qd = -1.0
+            else:
+                qd = d_front(q)
+                if src_d - qd < STAGNANT_MIN_IMPROVEMENT:
+                    continue
+            candidates.append((qd, int(q.ships), int(q.id), q))
+        if not candidates:
+            continue
+        candidates.sort(key=lambda x: (x[0], x[1], x[2]))
+        target = candidates[0][3]
+        ships_to_send = int(src.ships) - reserve
+        if ships_to_send < 1:
+            continue
+        angle = math.atan2(float(target.y) - float(src.y),
+                           float(target.x) - float(src.x))
+        try:
+            fate = predict_fleet_fate(src, target, angle, ships_to_send, world)
+            if fate.outcome != "target":
+                continue
+        except Exception:
+            continue  # stricter than drain_stagnant_rear's pass (documented)
+        extras.append([int(src.id), float(angle), int(ships_to_send)])
+        used_srcs.add(int(src.id))
+        fired += 1
+    return list(moves) + extras
+
+
 def agent(obs, configuration=None):
     t0_agent = time.perf_counter()
     # Agent-level deadline: Kaggle actTimeout is 1000 ms; reserve 50 ms
@@ -949,10 +1177,24 @@ def agent(obs, configuration=None):
         # the refine chooser (augment-not-replace: champion + exact-oracle
         # teamwork-add) are drop-ins with the identical signature + (moves,
         # commits) contract. trajectory path is unchanged.
+        # Forecast-horizon decay (default OFF => champion MIN/MAX_HORIZON =>
+        # byte-identical). When ON, deepen the rollout floor early, scaling down.
+        if HORIZON_DECAY_ENABLED:
+            _eff_min = _decayed_min_horizon(step)
+            _eff_max = max(MAX_HORIZON, _eff_min)
+        else:
+            _eff_min, _eff_max = MIN_HORIZON, MAX_HORIZON
         prerank = propose(
             my_planets, target_pool, world, model, me, omega,
-            baseline_len=MAX_HORIZON + 1,
+            baseline_len=_eff_max + 1,
+            min_horizon=(_eff_min if HORIZON_DECAY_ENABLED else None),
         )
+        # Region layer (default OFF => prerank untouched => byte-identical).
+        # Re-weights/append candidates; the chooser below still validates each.
+        if REGION_ENABLED:
+            prerank = _apply_region_layer(
+                prerank, my_planets, planets, world, model, me, omega,
+            )
         if _chooser_sel == "greedy":
             from agents.baseline.chooser_greedy import choose_greedy as _chooser
         elif _chooser_sel == "refine":
@@ -1003,7 +1245,7 @@ def agent(obs, configuration=None):
         moves, new_commits = _chooser(
             snap_base, prerank, None,
             me, num_seats, wallclock_ms,
-            MIN_HORIZON, MAX_HORIZON, gamma,
+            _eff_min, _eff_max, gamma,
             world, model,
             reserved_srcs=reserved_srcs,
             reserved_for_new_commits=reserved_for_new_commits,
@@ -1022,9 +1264,45 @@ def agent(obs, configuration=None):
             _PENDING_LAUNCHES[me] = surviving_pending + sync_new
 
         moves = due_moves + moves
+        # --- idle-source probe (read-only; gated on BASELINE_IDLE_PROBE). ---
+        # Measures whether the OFFENSIVE chooser leaves owned sources
+        # uncommitted, segmented by game closeness. The coordination axis was
+        # closed (MULTI_BRANCH.md L113-122) on the claim "source-saturated => no
+        # idle sources for teamwork", but that null was measured only vs weak
+        # opponents the champion blows out. This re-tests the claim in the
+        # close-game regime where teamwork could actually fire.
+        _idle_probe_path = os.environ.get("BASELINE_IDLE_PROBE", "").strip()
+        if _idle_probe_path:
+            try:
+                import json as _json
+                _elig = [p for p in my_planets if int(p.ships) >= 2]
+                _used = {int(m[0]) for m in moves}
+                _idle = [int(p.id) for p in _elig if int(p.id) not in _used]
+                _my_pl = len(my_planets)
+                _opp_pl = len(other_planets)
+                _my_ships = sum(int(p.ships) for p in my_planets) + sum(
+                    int(f.ships) for f in fleets if int(f.owner) == me)
+                _opp_ships = sum(int(p.ships) for p in other_planets) + sum(
+                    int(f.ships) for f in fleets if int(f.owner) != me)
+                _row = {
+                    "me": me, "step": step, "seats": num_seats,
+                    "elig_src": len(_elig), "used_src": len(_used),
+                    "idle_src": len(_idle),
+                    "my_pl": _my_pl, "opp_pl": _opp_pl,
+                    "my_ships": _my_ships, "opp_ships": _opp_ships,
+                }
+                with open(_idle_probe_path, "a") as _fh:
+                    _fh.write(_json.dumps(_row) + "\n")
+            except Exception:
+                pass
+        # --- end idle-source probe ---
         moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
+        # Region ADVANCE: push idle rear mass toward the frontier region
+        # (default OFF => moves untouched => byte-identical).
+        if REGION_ENABLED:
+            moves = region_advance_pass(moves, planets, me, world, model, omega)
         moves = drain_combat_stack(moves, planets, me, world, model)
         moves = emit_sniper_strikes(moves, planets, me, world, model)
         return enforce_launch_rules(moves, planets, me, world, model)

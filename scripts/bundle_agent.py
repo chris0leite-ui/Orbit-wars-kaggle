@@ -47,6 +47,7 @@ DEFAULT_LIB_ORDER = [
     "aim",
     "combat",
     "world_model",
+    "region",
     "intent",
     "trajectory",
     "kinematic_table",
