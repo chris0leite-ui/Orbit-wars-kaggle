@@ -1,4 +1,4 @@
-# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,kinematic_table,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,_validator_tree_walker,opp_features_lite,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner,joint_solver/columns,joint_solver/lp}.
+# Bundled by scripts/bundle_agent.py from agents/baseline + lib/{geometry,fleet,orbit,aim,combat,world_model,intent,trajectory,kinematic_table,mechanism,mission,scoring,missions/snipe,missions/reinforce,missions/recapture,missions/opening,missions/drain,missions/gang_up,missions/opp_archetypes,planner,lookahead,lookahead_planner,game/interpreter,fast_sim,_validator_tree_walker,opp_features_lite,value_head_features,opp_model,v7_search,candidate_portfolios,value_heads,joint_solver/opening_planner,joint_solver/columns,joint_solver/lp}.
 # Single-file Kaggle submission for Orbit Wars.
 
 from __future__ import annotations
@@ -6534,6 +6534,159 @@ def fleets_to_array(fleets: list) -> np.ndarray:
         return np.zeros((0, 7), dtype=np.float32)
     return np.asarray(fleets, dtype=np.float32)
 
+# === inlined: lib/value_head_features.py ===
+
+
+import math
+from typing import Any
+
+import numpy as np
+
+_is_orb = is_orbiting
+_pr = predict_relative
+_pga = predict_garrison_at
+
+# Sun position. Matches lib/geometry.CENTER = 50.0; duplicated here to
+# avoid a cross-module dep just for one constant.
+SUN_CENTER = 50.0
+
+FEATURE_NAMES = [
+    "ships_sent",                          # 0
+    "eta",                                 # 1
+    "owner_at_launch_me",                  # 2
+    "owner_at_launch_neutral",             # 3
+    "owner_at_launch_enemy",               # 4
+    "owner_at_arrival_me",                 # 5
+    "owner_at_arrival_neutral",            # 6
+    "owner_at_arrival_enemy",              # 7
+    "combat_margin_at_arrival",            # 8
+    "src_production",                      # 9
+    "tgt_production",                      # 10
+    "src_distance_to_sun",                 # 11
+    "tgt_distance_to_sun_at_eta",          # 12
+    "tgt_distance_to_opp_centroid_at_eta", # 13
+    "leaf_delta",                          # 14 — injected at predict time
+]
+FEATURE_DIM_BASE = 14   # encoder fills feats[0..13]
+FEATURE_DIM_FULL = 15   # caller fills feats[14]
+
+
+def _owner_one_hot(planet_owner: int, focal_seat: int,
+                   ) -> tuple[float, float, float]:
+    """Return (me, neutral, enemy). neutral encodes planet_owner == -1;
+    enemy encodes any non-focal non-neutral owner (covers 2P and 4P)."""
+    if planet_owner == -1:
+        return (0.0, 1.0, 0.0)
+    if planet_owner == focal_seat:
+        return (1.0, 0.0, 0.0)
+    return (0.0, 0.0, 1.0)
+
+
+def _planet_position_at(planet, omega: float,
+                        lead_turns: int) -> tuple[float, float]:
+    """Return (x, y) at `lead_turns` from now. Orbital planets use
+    `lib.orbit.predict_relative`; static planets return current (x, y)."""
+    if lead_turns == 0:
+        return float(planet.x), float(planet.y)
+    if _is_orb(planet):
+        return _pr(planet, omega, lead_turns)
+    return float(planet.x), float(planet.y)
+
+
+def _opp_centroid_at_launch(world, focal_seat: int,
+                            ) -> tuple[float, float] | None:
+    """Production-weighted mean of non-focal, non-neutral planets at the
+    current step. Returns None when no such planets exist.
+
+    For 4P games this lumps all opponents into one centroid — coarser
+    than per-opponent centroids but matches the 2P feature shape. 4P
+    refinement is deferred (see HANDOVER B.2 plan, out-of-scope §)."""
+    total_w = 0.0
+    sx = 0.0
+    sy = 0.0
+    for p in world.planets_by_id.values():
+        if p.owner == focal_seat or p.owner == -1:
+            continue
+        w = float(p.production)
+        if w <= 0:
+            continue
+        total_w += w
+        sx += w * float(p.x)
+        sy += w * float(p.y)
+    if total_w <= 0:
+        return None
+    return (sx / total_w, sy / total_w)
+
+
+def encode_features(
+    src,                # Planet at launch (namedtuple-like with .id, .owner, .x, .y, .ships, .production)
+    tgt,                # Planet at launch
+    ships: int,
+    eta: int,
+    me: int,            # focal seat
+    world,              # lib.intent.World (provides planets_by_id, omega, step)
+    world_model,        # lib.world_model.WorldModel (provides ledger)
+) -> np.ndarray:
+    """Encode the FEATURE_DIM_BASE-d candidate feature vector. Pure
+    function — no env vars, no I/O. Caller appends leaf_delta at index
+    14 before model predict."""
+    feats = np.zeros(FEATURE_DIM_BASE, dtype=np.float32)
+
+    feats[0] = float(ships)
+    feats[1] = float(eta)
+
+    # Owner at launch (raw target owner now).
+    me_l, n_l, e_l = _owner_one_hot(int(tgt.owner), int(me))
+    feats[2] = me_l
+    feats[3] = n_l
+    feats[4] = e_l
+
+    # Predicted owner + garrison at arrival.
+    arrivals = (world_model.ledger.get(int(tgt.id)) or []) if world_model is not None else []
+    try:
+        arr_owner, arr_garrison = _pga(tgt, int(eta), arrivals)
+    except Exception:
+        # Fall back to launch state if the prediction fails.
+        arr_owner = int(tgt.owner)
+        arr_garrison = float(tgt.ships)
+    me_a, n_a, e_a = _owner_one_hot(int(arr_owner), int(me))
+    feats[5] = me_a
+    feats[6] = n_a
+    feats[7] = e_a
+
+    # Combat margin at arrival, clipped [-1, +1].
+    denom = max(1.0, float(arr_garrison))
+    margin = (float(ships) - float(arr_garrison)) / denom
+    if margin < -1.0:
+        margin = -1.0
+    elif margin > 1.0:
+        margin = 1.0
+    feats[8] = float(margin)
+
+    # Per-planet covariates.
+    feats[9] = float(src.production)
+    feats[10] = float(tgt.production)
+
+    # Distance to sun: src now, tgt at eta (orbital planets move).
+    omega = float(getattr(world, "omega", 0.0))
+    feats[11] = math.hypot(float(src.x) - SUN_CENTER,
+                           float(src.y) - SUN_CENTER)
+    tgt_x_at, tgt_y_at = _planet_position_at(tgt, omega, int(eta))
+    feats[12] = math.hypot(tgt_x_at - SUN_CENTER,
+                           tgt_y_at - SUN_CENTER)
+
+    # Distance to opponent centroid (at-launch centroid, target position
+    # at-arrival — the natural geometric question is "where will I land
+    # relative to where the opponent's mass currently is").
+    centroid = _opp_centroid_at_launch(world, int(me))
+    if centroid is None:
+        feats[13] = 0.0
+    else:
+        feats[13] = math.hypot(tgt_x_at - centroid[0],
+                               tgt_y_at - centroid[1])
+
+    return feats
+
 # === inlined: lib/opp_model.py ===
 
 
@@ -10590,6 +10743,114 @@ def solve_multi_turn(
         n_vars=n, n_constraints=len(A_rows),
     )
 
+# === inlined: agents/baseline/_trace_hook.py ===
+"""Opt-in accepted-candidate trace for the trajectory chooser.
+
+Gated by `BASELINE_ACCEPTED_TRACE=<jsonl_path>`. When set, the chooser
+calls `trace_accepted(world, world_model, me, accepted)` at end-of-turn
+with the list of candidates it actually committed (solo `moves` and
+solo wait-N `commits`; joints are NOT included — VH training is
+solo-only per the B.2 design).
+
+When `BASELINE_VH_TRACE_FEATURES=1` is ALSO set, each accepted-solo
+record additionally carries `features` — the 14-d base feature vector
+from `lib.value_head_features.encode_features`. The 15th feature
+(leaf_delta) lives in the `delta_pred` field of the same record.
+
+Used by `scripts/gen_b2_corpus.py` (stage 1 self-play emission). At
+default env (both vars unset), `trace_accepted` is a no-op — no file
+I/O, no encoder import, no module-level side effects beyond env-var
+parsing on import.
+
+Ported from `claude/competition-objective-alignment-hqNVM` commit
+9d32066 with trace_solo / trace_joint removed (those depend on the
+shot_validator booster, which the value-head trainer doesn't need).
+"""
+
+
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+_ACCEPTED_PATH: str = os.environ.get("BASELINE_ACCEPTED_TRACE", "").strip()
+_ACCEPTED_ENABLED: bool = bool(_ACCEPTED_PATH)
+_ACCEPTED_FILE = None
+_ACCEPTED_LOAD_FAILED: bool = False
+
+_VH_TRACE_FEATURES: bool = os.environ.get(
+    "BASELINE_VH_TRACE_FEATURES", "0").strip() == "1"
+
+
+def _ensure_accepted_loaded() -> bool:
+    global _ACCEPTED_FILE, _ACCEPTED_LOAD_FAILED
+    if not _ACCEPTED_ENABLED or _ACCEPTED_LOAD_FAILED:
+        return False
+    if _ACCEPTED_FILE is None:
+        try:
+            Path(_ACCEPTED_PATH).parent.mkdir(parents=True, exist_ok=True)
+            _ACCEPTED_FILE = open(_ACCEPTED_PATH, "a", buffering=1)
+        except OSError:
+            _ACCEPTED_LOAD_FAILED = True
+            return False
+    return True
+
+
+def trace_accepted(world: Any, world_model: Any, me: int,
+                   accepted: list) -> None:
+    """Emit one JSON line per accepted candidate the chooser committed
+    this turn. `accepted` is a list of dicts with keys: kind ('solo'),
+    src_id, tgt_id, ships, angle, wait_N, eta, delta_pred. Joints are
+    not included by caller (solo-only training).
+
+    When BASELINE_VH_TRACE_FEATURES=1 is set, also emit the 14-d feature
+    vector from lib.value_head_features.encode_features as `features`.
+
+    No-op when BASELINE_ACCEPTED_TRACE is unset."""
+    if not _ACCEPTED_ENABLED or not _ensure_accepted_loaded():
+        return
+    try:
+        step = int(getattr(world, "step", 0))
+        encode_features = None
+        if _VH_TRACE_FEATURES and world_model is not None:
+            try:
+                # from lib.value_head_features import encode_features as _enc  # inlined by bundle_agent.py
+                _enc = encode_features
+                encode_features = _enc
+            except Exception:
+                encode_features = None
+        planets_by_id = getattr(world, "planets_by_id", {}) or {}
+        for entry in accepted:
+            rec = {
+                "step": step,
+                "me": int(me),
+                "kind": str(entry["kind"]),
+                "src_id": int(entry["src_id"]),
+                "tgt_id": int(entry["tgt_id"]),
+                "ships": int(entry["ships"]),
+                "angle": float(entry["angle"]),
+                "wait_N": int(entry["wait_N"]),
+                "eta": int(entry["eta"]),
+                "delta_pred": float(entry["delta_pred"]),
+            }
+            if (encode_features is not None
+                    and str(entry["kind"]) == "solo"):
+                src = planets_by_id.get(int(entry["src_id"]))
+                tgt = planets_by_id.get(int(entry["tgt_id"]))
+                if src is not None and tgt is not None:
+                    try:
+                        feats = encode_features(
+                            src, tgt, int(entry["ships"]),
+                            int(entry["eta"]), int(me),
+                            world, world_model,
+                        )
+                        rec["features"] = [float(v) for v in feats]
+                    except Exception:
+                        pass
+            _ACCEPTED_FILE.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+
 # === inlined: agents/baseline/_value_head.py ===
 """Value-head additive term — Reframe B.2.
 
@@ -10635,6 +10896,29 @@ import numpy as np
 
 VH_LAMBDA: float = float(os.environ.get("BASELINE_VH_LAMBDA", "0.0"))
 
+# Empirical-mean centering. The shipped VH was trained on a corpus of
+# ACCEPTED candidates (regression target = K=10 ship-delta); since
+# accepted moves are positive-EV in expectation, the head learned a
+# heavy positive bias. Probe (2026-06-02, 500 random feature rows):
+# mean(head_out) = +102, std = 78. Adding raw head_out at λ=1.0 swamps
+# the chooser's base score (O(10-100)) — every candidate gets a
+# +90..+225 boost, blowing past the emit gate. Subtract BIAS before
+# scaling so the centered correction is mean-zero. Default 0.0
+# preserves the pre-fix behavior; set BASELINE_VH_BIAS=102.0 (or
+# game-measured value) to activate centering.
+VH_BIAS: float = float(os.environ.get("BASELINE_VH_BIAS", "0.0"))
+
+# Rerank mode (2026-06-03 Phase H — Option C). When > 0, the chooser
+# does NOT add λ·head_out to candidate scores. Instead, it takes the
+# top-K solo candidates by base score and re-sorts them by VH head
+# output (descending). Joints unaffected. Base score is preserved on
+# each tuple — only the order changes. Sidesteps the magnitude-swamp
+# failure mode that closed the VH-additive axis (5 falsifications,
+# Rule 37). Consumes the model's verified Spearman ρ=+0.386 rank
+# signal without letting the head's prediction magnitude touch the
+# emit gate.
+VH_RERANK_K: int = int(os.environ.get("BASELINE_VH_RERANK_K", "0"))
+
 # Bundler patches `_VH_MODEL_B64` to a gzip+base64 LightGBM
 # `model_to_string()` dump (regression objective). In source mode (empty
 # blob), we fall back to reading `data/value_head/value_head_model.txt`
@@ -10651,11 +10935,20 @@ _ANGLE_KEY_DECIMALS: int = 6
 
 
 def vh_is_enabled() -> bool:
-    return VH_LAMBDA != 0.0
+    # True if EITHER additive or rerank consumption is active.
+    return VH_LAMBDA != 0.0 or VH_RERANK_K > 0
 
 
 def vh_get_lambda() -> float:
     return VH_LAMBDA
+
+
+def vh_get_bias() -> float:
+    return VH_BIAS
+
+
+def vh_rerank_k() -> int:
+    return VH_RERANK_K
 
 
 def _candidate_key(src_id: int, tgt_id: int, ships: int,
@@ -10844,6 +11137,20 @@ def state_driven_k_enabled() -> bool:
     )
 
 
+def _compute_by_ships_enabled() -> bool:
+    """Per-source compute concentration lever (PI observation 2026-06-03).
+
+    When ON, both per-source enumeration breadth (proposer) and per-source
+    K-ceiling (capture_horizon_k) scale with the source's ship surplus.
+    The compound addresses high-ship rear planets idling: more options AND
+    more of them surviving the launch-discipline gate. Floor preserved —
+    K can only ever be raised above the champion's floor, never lowered.
+    """
+    return os.environ.get("BASELINE_COMPUTE_BY_SHIPS", "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
 def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name, "").strip()
     if not raw:
@@ -10854,8 +11161,33 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _apply_src_ratio_bonus(base_k: int, src_ratio) -> int:
+    """Per-source K bonus when source has ship surplus (compute_by_ships).
+
+    Inactive (returns base_k) when:
+      - the compute_by_ships lever is OFF, or
+      - src_ratio is None (caller has no source info), or
+      - src_ratio <= 1.0 (source is not above-average — no surplus).
+
+    Otherwise applies a log-scaled bonus capped at +50% of base_k:
+        bonus = min(base_k * 0.5, round(base_k * 0.3 * log2(src_ratio)))
+    """
+    if src_ratio is None or src_ratio <= 1.0:
+        return int(base_k)
+    if not _compute_by_ships_enabled():
+        return int(base_k)
+    import math
+    bonus = int(round(base_k * 0.3 * math.log2(float(src_ratio))))
+    cap = int(base_k * 0.5)
+    if bonus > cap:
+        bonus = cap
+    if bonus < 0:
+        bonus = 0
+    return int(base_k) + bonus
+
+
 def capture_horizon_k(step=None, *, tgt_id=None, world=None, model=None,
-                      me=None) -> int:
+                      me=None, src_ratio=None) -> int:
     """Predictability ceiling K (launches arriving after K are dropped).
 
     Static (default, byte-identical champion): returns the floor (env
@@ -10898,20 +11230,24 @@ def capture_horizon_k(step=None, *, tgt_id=None, world=None, model=None,
         if ceil < floor:
             ceil = floor
         if tgt_id is None or world is None or model is None or me is None:
-            return ceil  # global/efficiency call — permissive; gate is per-target
-        opp_tick = opp_contest_tick(model, world, int(tgt_id), int(me))
-        if opp_tick is None:
-            return ceil  # uncontested target → safe to commit long
-        return max(floor, min(ceil, int(opp_tick)))
+            base_k = ceil  # global/efficiency call — permissive; gate is per-target
+        else:
+            opp_tick = opp_contest_tick(model, world, int(tgt_id), int(me))
+            if opp_tick is None:
+                base_k = ceil  # uncontested target → safe to commit long
+            else:
+                base_k = max(floor, min(ceil, int(opp_tick)))
+        return _apply_src_ratio_bonus(base_k, src_ratio)
 
     if step is None or not _adaptive_k_enabled():
-        return floor
+        return _apply_src_ratio_bonus(floor, src_ratio)
     k_open = _env_int("BASELINE_ADAPTIVE_K_OPEN", 20)
     t_settle = _env_int("BASELINE_ADAPTIVE_K_TSETTLE", 30)
     if t_settle <= 0 or int(step) >= t_settle or k_open <= floor:
-        return floor
+        return _apply_src_ratio_bonus(floor, src_ratio)
     decayed = k_open - (k_open - floor) * int(step) / float(t_settle)
-    return max(floor, int(round(decayed)))
+    base_k = max(floor, int(round(decayed)))
+    return _apply_src_ratio_bonus(base_k, src_ratio)
 
 
 def resolve_launch_target(src, angle, ships, world):
@@ -10946,15 +11282,28 @@ def enforce_launch_rules(moves, planets, me, world, model, k=None):
     if not launch_rules_enabled() or not moves:
         return moves
     world_step = getattr(world, "step", None)
-    # When K is auto-computed (k is None) and the state-driven lever is on,
-    # the ceiling K is enforced PER TARGET in Pass 3 below; an explicit k
-    # override (tests / callers) is respected as a fixed ceiling.
+    # When K is auto-computed (k is None) and a per-source/per-target lever is
+    # ON, the ceiling K is enforced PER MOVE in Pass 3 below (capture_horizon_k
+    # called with tgt_id and/or src_ratio); an explicit k override (tests /
+    # callers) is respected as a fixed ceiling and skips per-move scaling.
     per_target_k = (k is None) and state_driven_k_enabled()
+    per_source_k = (k is None) and _compute_by_ships_enabled()
     if k is None:
         k = capture_horizon_k(world_step)
     me = int(me)
 
     by_id = world.planets_by_id
+
+    # avg_my_ships once per turn — used to compute the source ship surplus
+    # ratio for Lever 2 (compute_by_ships). Falls back to 0 (no bonus path) if
+    # we have no planets visible.
+    avg_my_ships = 0.0
+    if per_source_k:
+        my_planet_ships = [
+            int(p.ships) for p in planets if int(p.owner) == me
+        ]
+        if my_planet_ships:
+            avg_my_ships = sum(my_planet_ships) / float(len(my_planet_ships))
 
     # Pass 1 — resolve every move's destination + arrival tick once.
     resolved = []  # (move, hit_pid|None, step|None, owner|None)
@@ -11014,10 +11363,17 @@ def enforce_launch_rules(moves, planets, me, world, model, k=None):
         # that arrives after the horizon is betting on an unpredictable board
         # and routinely lands at a flipped/contested planet and loses.
         # State-driven lever: K is the predictability of THIS target.
+        # Compute-by-ships lever: K is bumped for sources with ship surplus.
         k_eff = k
-        if per_target_k:
+        if per_target_k or per_source_k:
+            src_ratio = None
+            if per_source_k and avg_my_ships > 0.0:
+                src = by_id.get(int(mv[0]))
+                if src is not None:
+                    src_ratio = float(src.ships) / avg_my_ships
             k_eff = capture_horizon_k(
                 world_step, tgt_id=hit_pid, world=world, model=model, me=me,
+                src_ratio=src_ratio,
             )
         if step > k_eff:
             continue
@@ -11531,6 +11887,15 @@ WAIT_EXTRA_SURPLUS = (0, 5, 12)  # legacy forward grid (kept for rollback)
 CHEAP_REJECT_THRESHOLD = -10.0
 EPISODE_STEPS = 500
 GAMMA = 0.99
+
+# Per-source enumeration breadth scaling (compute_by_ships lever, PI 2026-06-03):
+# clamp the per-source target enumeration count between FLOOR and CEIL, scaled
+# log of (src.ships / avg_my_ships). NUM_TARGETS_PER_SOURCE remains the
+# default for an average-ship planet. FLOOR ensures small planets are never
+# starved; CEIL prevents one mega-planet from exploding the candidate set.
+COMPUTE_BY_SHIPS_TARGETS_FLOOR = 4
+COMPUTE_BY_SHIPS_TARGETS_CEIL = 16
+COMPUTE_BY_SHIPS_TARGETS_LOG_COEF = 0.4
 # Fix (strategic defense, 2026-05-21): for high-prod own planets,
 # floor the reinforce target to a preemptive stockpile so the LP can
 # see strategic defense before shortfall materialises. Without this,
@@ -11672,6 +12037,31 @@ def nearest_k(targets, src, k: int):
         targets,
         key=lambda t: math.hypot(src.x - t.x, src.y - t.y),
     )[:k]
+
+
+def _targets_for_src(src, avg_my_ships: float, enabled: bool) -> int:
+    """Per-source enumeration breadth (compute_by_ships Lever 1).
+
+    When the lever is OFF or we lack a meaningful average, returns
+    NUM_TARGETS_PER_SOURCE (8) — byte-identical to champion. Otherwise scales
+    log of (src.ships / avg_my_ships), clamped to [FLOOR, CEIL]. Floor (4)
+    protects small planets from being silenced; CEIL (16) prevents one
+    mega-planet from blowing up the candidate set.
+    """
+    if not enabled or avg_my_ships <= 0.0:
+        return NUM_TARGETS_PER_SOURCE
+    ratio = float(src.ships) / avg_my_ships
+    if ratio <= 0.5:
+        return COMPUTE_BY_SHIPS_TARGETS_FLOOR
+    scaled = NUM_TARGETS_PER_SOURCE * (
+        1.0 + COMPUTE_BY_SHIPS_TARGETS_LOG_COEF * math.log2(ratio)
+    )
+    n = int(round(scaled))
+    if n < COMPUTE_BY_SHIPS_TARGETS_FLOOR:
+        n = COMPUTE_BY_SHIPS_TARGETS_FLOOR
+    if n > COMPUTE_BY_SHIPS_TARGETS_CEIL:
+        n = COMPUTE_BY_SHIPS_TARGETS_CEIL
+    return n
 
 
 def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
@@ -12625,15 +13015,26 @@ def propose(my_planets, target_pool, world, model, me: int,
     # spend wallclock on doomed launches. NEUTRAL under-capture (eta <= K)
     # is NOT pruned here — same-tick coalitions must survive to the
     # post-pass for combat evaluation (preserves BASELINE_JOINT).
-    # from agents.baseline.launch_rules import capture_horizon_k, launch_rules_enabled  # inlined by bundle_agent.py
+    # from agents.baseline.launch_rules import _compute_by_ships_enabled, capture_horizon_k, launch_rules_enabled  # noqa: E501  # inlined by bundle_agent.py
     _eta_prune = launch_rules_enabled()
     _world_step = getattr(world, "step", None)
+
+    # Compute-by-ships lever (PI 2026-06-03): per-source enumeration breadth +
+    # per-source K bonus scale with the source's ship surplus. Both default OFF.
+    _compute_by_ships = _compute_by_ships_enabled()
+    _avg_my_ships = 0.0
+    if _compute_by_ships and my_planets:
+        _avg_my_ships = sum(int(p.ships) for p in my_planets) / float(len(my_planets))
 
     prerank = []
     for src in my_planets:
         if int(src.ships) < MIN_FLEET_SIZE:
             continue
-        for tgt in nearest_k(target_pool, src, NUM_TARGETS_PER_SOURCE):
+        _src_ratio = None
+        if _compute_by_ships and _avg_my_ships > 0.0:
+            _src_ratio = float(src.ships) / _avg_my_ships
+        _n_targets = _targets_for_src(src, _avg_my_ships, _compute_by_ships)
+        for tgt in nearest_k(target_pool, src, _n_targets):
             if int(tgt.id) == int(src.id):
                 continue
 
@@ -12642,8 +13043,10 @@ def propose(my_planets, target_pool, world, model, me: int,
             # OFF; when ON, an uncontested far target gets a higher K so its
             # safe long launches survive the prune (they were being dropped at
             # the floor and never reached the chooser — the freed-grab path).
+            # Compute-by-ships: high-ship sources get an additional K bonus.
             _k_tgt = capture_horizon_k(
                 _world_step, tgt_id=int(tgt.id), world=world, model=model, me=me,
+                src_ratio=_src_ratio,
             )
 
             for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
@@ -14861,12 +15264,10 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     # and the loop's `if vh_feats:` is skipped — byte-equivalent to
     # the un-ported chooser.
     # NOTE: vh_feats is keyed by SOLO prerank rows only. Joint paths
-    # at score_candidate_v4_joint(...) currently emit j_score without
-    # VH correction (look-up would miss because joint legs differ in
-    # ships/wait_N from prerank entries). Documented bias when
-    # BASELINE_VH_LAMBDA > 0: solo candidates get VH boost, joints
-    # don't. First submission ships VH at λ=0 so this is dead code;
-    # revisit when VH is retrained on joint-aggr self-play.
+    # at score_candidate_v4_joint(...) build their own per-call
+    # feats_map at the joint-loop call site (see Phase A patch
+    # 2026-06-03), so joint and solo candidates both receive the
+    # VH boost when BASELINE_VH_LAMBDA > 0.
     # from agents.baseline._value_head import vh_is_enabled, vh_featurize_prerank  # noqa: E501  # inlined by bundle_agent.py
     vh_feats: dict = {}
     if vh_is_enabled():
@@ -14922,13 +15323,17 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             # cached features by candidate-key and adds λ_vh · head_output
             # to `score`. At λ=0 vh_feats is empty → branch is skipped.
             if vh_feats:
-                # from agents.baseline._value_head import vh_get_lambda, vh_predict_one  # noqa: E501  # inlined by bundle_agent.py
+                # from agents.baseline._value_head import vh_get_bias, vh_get_lambda, vh_predict_one  # noqa: E501  # inlined by bundle_agent.py
                 head_out = vh_predict_one(
                     vh_feats, int(src.id), int(tgt.id),
                     int(ships), float(angle), int(wait_N),
                     float(score),  # leaf_delta input
                 )
-                score = score + vh_get_lambda() * head_out
+                # Subtract BIAS so the boost is mean-zero (shipped VH
+                # is trained on accepted moves; head_out has +102 bias
+                # that swamps base score at λ=1.0). At BIAS=0.0 (default)
+                # this is byte-equivalent to the pre-fix behavior.
+                score = score + vh_get_lambda() * (head_out - vh_get_bias())
             passes = (
                 score > MIN_DELTA if MIN_DELTA == 0.0
                 else score >= MIN_DELTA
@@ -14972,7 +15377,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             if int(src.id) in reserved_srcs:
                 continue  # ledger is firing from this src this turn
             by_tgt.setdefault(int(tgt.id), []).append(
-                (float(cd), src, tgt, int(ships), float(angle), int(ph)),
+                (float(cd), src, tgt, int(ships), float(angle),
+                 int(eta_hint), int(ph)),
             )
         joint_count = 0
         for tgt_id, cands in by_tgt.items():
@@ -15004,7 +15410,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         (ca[1], ca[2], ca[3], ca[4], 0),
                         (cb[1], cb[2], cb[3], cb[4], 0),
                     ]
-                    jh = max(int(ca[5]), int(cb[5]))
+                    leg_etas = (int(ca[5]), int(cb[5]))
+                    jh = max(int(ca[6]), int(cb[6]))
                     j_score, j_status = score_candidate_v4_joint(
                         snap_base, launches, me, num_seats, world,
                         baseline_favors, favor_fn, gamma,
@@ -15012,6 +15419,40 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         hard_deadline=hard_deadline,
                     )
                     joint_count += 1
+                    # Phase A (2026-06-03): VH correction on joint legs.
+                    # Pre-fix, joints emitted j_score without VH boost
+                    # because vh_feats was keyed by SOLO prerank rows
+                    # only — joint legs miss the cache entirely. Build
+                    # a per-call feats_map for the legs (with the
+                    # correct per-leg eta_hint) and apply
+                    # λ * sum(per-leg head_outs) to j_score so joint
+                    # and solo candidates get parity treatment.
+                    # Diagnostic gate (2026-06-03): BASELINE_VH_JOINT=0
+                    # reverts to the pre-Phase-A behavior (solo VH only,
+                    # joint legs get no VH boost) — used to A/B whether
+                    # the joint aggregation is the source of the VH
+                    # collapse on state-driven-K base.
+                    if (vh_feats and os.environ.get(
+                            "BASELINE_VH_JOINT", "1").strip() == "1"):
+                        # from agents.baseline._value_head import vh_get_bias, vh_get_lambda, vh_predict_one  # noqa: E501  # inlined by bundle_agent.py
+                        joint_prerank = [
+                            (0.0, launches[k][0], launches[k][1],
+                             launches[k][2], launches[k][3],
+                             leg_etas[k], jh, launches[k][4])
+                            for k in (0, 1)
+                        ]
+                        joint_feats = vh_featurize_prerank(
+                            joint_prerank, world, model,
+                        )
+                        bias = vh_get_bias()
+                        leg_sum = 0.0
+                        for ln in launches:
+                            leg_sum += vh_predict_one(
+                                joint_feats, int(ln[0].id), int(ln[1].id),
+                                int(ln[2]), float(ln[3]), int(ln[4]),
+                                float(j_score),
+                            ) - bias
+                        j_score = j_score + vh_get_lambda() * leg_sum
                     if j_status == "scored" and j_score > 0.0:
                         scored.append((j_score, "joint", launches))
 
@@ -15184,6 +15625,42 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
 
     scored.sort(key=lambda c: -c[0])
 
+    # Phase H — value-head rerank (Option C, 2026-06-03). When
+    # BASELINE_VH_RERANK_K > 0, take the top-K solo entries (in the
+    # current base-score-sorted order), re-rank them by vh_predict_one
+    # output, and put them back in the same K slots. Base scores are
+    # preserved on each tuple — only the order changes. Joints and
+    # joint_sync entries are untouched. Sidesteps the magnitude-swamp
+    # that closed the VH-additive axis (Rule 37 n=5); consumes the
+    # model's verified Spearman ρ=+0.386 rank signal as RANK, not
+    # magnitude. At BASELINE_VH_RERANK_K=0 (default) this block is
+    # skipped entirely — byte-equivalent to the un-VH chooser.
+    if vh_feats:
+        # from agents.baseline._value_head import vh_rerank_k  # inlined by bundle_agent.py
+        K = vh_rerank_k()
+        if K > 0:
+            # from agents.baseline._value_head import vh_predict_one  # inlined by bundle_agent.py
+            solo_slots: list[int] = []
+            for i, entry in enumerate(scored):
+                if (len(entry) == 6
+                        and not (isinstance(entry[1], str))):
+                    solo_slots.append(i)
+                    if len(solo_slots) >= K:
+                        break
+            if len(solo_slots) >= 2:
+                solos = [scored[i] for i in solo_slots]
+                vh_scores = []
+                for (base_score, src, tgt, ships, angle, wait_N) in solos:
+                    head_out = vh_predict_one(
+                        vh_feats, int(src.id), int(tgt.id),
+                        int(ships), float(angle), int(wait_N),
+                        float(base_score),
+                    )
+                    vh_scores.append(head_out)
+                order = sorted(range(len(solos)), key=lambda k: -vh_scores[k])
+                for new_pos, old_pos in enumerate(order):
+                    scored[solo_slots[new_pos]] = solos[old_pos]
+
     # Emit logic — match composite chooser (`agents/baseline/chooser.choose`)
     # for parity. 1 launch per source per turn, 1 per target. For joints
     # (tagged 'joint' tuples), require ALL of its sources and targets to
@@ -15192,6 +15669,20 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     used_tgts: set[int] = set()
     moves: list[list] = []
     commits: list[dict] = []
+    # Reframe B.2 / Phase D — solo-only accepted trace. Populated only
+    # when BASELINE_ACCEPTED_TRACE env var is set; trace_accepted is a
+    # no-op otherwise. Solo-only by design — VH training corpus drops
+    # joints (joints aren't VH-corrected by the head).
+    accepted_trace: list[dict] = []
+    # eta_by_key: map (src_id, tgt_id, ships, angle, wait_N) → eta_hint
+    # from the prerank so the emit loop can attach eta to each accepted
+    # solo record. Round angle to match _candidate_key precision in
+    # _value_head._candidate_key.
+    eta_by_key: dict[tuple, int] = {}
+    for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
+        key = (int(src.id), int(tgt.id), int(ships),
+               round(float(angle), 6), int(wait_N))
+        eta_by_key.setdefault(key, int(eta_hint))
     commit_step = int(world.step) if world is not None else 0
     for entry in scored:
         # Synchronized joint (3-tuple, tag 'joint_sync'): far leg fires now,
@@ -15259,6 +15750,20 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 "wait_remaining": int(wait_N),
                 "commit_step": commit_step,
             })
+        key = (sid, tid, int(ships), round(float(angle), 6), int(wait_N))
+        accepted_trace.append({
+            "kind": "solo",
+            "src_id": sid,
+            "tgt_id": tid,
+            "ships": int(ships),
+            "angle": float(angle),
+            "wait_N": int(wait_N),
+            "eta": int(eta_by_key.get(key, 0)),
+            "delta_pred": float(_score),
+        })
+    if accepted_trace:
+        # from agents.baseline._trace_hook import trace_accepted  # inlined by bundle_agent.py
+        trace_accepted(world, model, me, accepted_trace)
     return moves, commits
 
 # === agent ===

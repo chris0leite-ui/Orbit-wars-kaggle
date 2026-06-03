@@ -32,6 +32,15 @@ WAIT_EXTRA_SURPLUS = (0, 5, 12)  # legacy forward grid (kept for rollback)
 CHEAP_REJECT_THRESHOLD = -10.0
 EPISODE_STEPS = 500
 GAMMA = 0.99
+
+# Per-source enumeration breadth scaling (compute_by_ships lever, PI 2026-06-03):
+# clamp the per-source target enumeration count between FLOOR and CEIL, scaled
+# log of (src.ships / avg_my_ships). NUM_TARGETS_PER_SOURCE remains the
+# default for an average-ship planet. FLOOR ensures small planets are never
+# starved; CEIL prevents one mega-planet from exploding the candidate set.
+COMPUTE_BY_SHIPS_TARGETS_FLOOR = 4
+COMPUTE_BY_SHIPS_TARGETS_CEIL = 16
+COMPUTE_BY_SHIPS_TARGETS_LOG_COEF = 0.4
 # Fix (strategic defense, 2026-05-21): for high-prod own planets,
 # floor the reinforce target to a preemptive stockpile so the LP can
 # see strategic defense before shortfall materialises. Without this,
@@ -173,6 +182,31 @@ def nearest_k(targets, src, k: int):
         targets,
         key=lambda t: math.hypot(src.x - t.x, src.y - t.y),
     )[:k]
+
+
+def _targets_for_src(src, avg_my_ships: float, enabled: bool) -> int:
+    """Per-source enumeration breadth (compute_by_ships Lever 1).
+
+    When the lever is OFF or we lack a meaningful average, returns
+    NUM_TARGETS_PER_SOURCE (8) — byte-identical to champion. Otherwise scales
+    log of (src.ships / avg_my_ships), clamped to [FLOOR, CEIL]. Floor (4)
+    protects small planets from being silenced; CEIL (16) prevents one
+    mega-planet from blowing up the candidate set.
+    """
+    if not enabled or avg_my_ships <= 0.0:
+        return NUM_TARGETS_PER_SOURCE
+    ratio = float(src.ships) / avg_my_ships
+    if ratio <= 0.5:
+        return COMPUTE_BY_SHIPS_TARGETS_FLOOR
+    scaled = NUM_TARGETS_PER_SOURCE * (
+        1.0 + COMPUTE_BY_SHIPS_TARGETS_LOG_COEF * math.log2(ratio)
+    )
+    n = int(round(scaled))
+    if n < COMPUTE_BY_SHIPS_TARGETS_FLOOR:
+        n = COMPUTE_BY_SHIPS_TARGETS_FLOOR
+    if n > COMPUTE_BY_SHIPS_TARGETS_CEIL:
+        n = COMPUTE_BY_SHIPS_TARGETS_CEIL
+    return n
 
 
 def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
@@ -1126,15 +1160,26 @@ def propose(my_planets, target_pool, world, model, me: int,
     # spend wallclock on doomed launches. NEUTRAL under-capture (eta <= K)
     # is NOT pruned here — same-tick coalitions must survive to the
     # post-pass for combat evaluation (preserves BASELINE_JOINT).
-    from agents.baseline.launch_rules import capture_horizon_k, launch_rules_enabled
+    from agents.baseline.launch_rules import _compute_by_ships_enabled, capture_horizon_k, launch_rules_enabled  # noqa: E501
     _eta_prune = launch_rules_enabled()
     _world_step = getattr(world, "step", None)
+
+    # Compute-by-ships lever (PI 2026-06-03): per-source enumeration breadth +
+    # per-source K bonus scale with the source's ship surplus. Both default OFF.
+    _compute_by_ships = _compute_by_ships_enabled()
+    _avg_my_ships = 0.0
+    if _compute_by_ships and my_planets:
+        _avg_my_ships = sum(int(p.ships) for p in my_planets) / float(len(my_planets))
 
     prerank = []
     for src in my_planets:
         if int(src.ships) < MIN_FLEET_SIZE:
             continue
-        for tgt in nearest_k(target_pool, src, NUM_TARGETS_PER_SOURCE):
+        _src_ratio = None
+        if _compute_by_ships and _avg_my_ships > 0.0:
+            _src_ratio = float(src.ships) / _avg_my_ships
+        _n_targets = _targets_for_src(src, _avg_my_ships, _compute_by_ships)
+        for tgt in nearest_k(target_pool, src, _n_targets):
             if int(tgt.id) == int(src.id):
                 continue
 
@@ -1143,8 +1188,10 @@ def propose(my_planets, target_pool, world, model, me: int,
             # OFF; when ON, an uncontested far target gets a higher K so its
             # safe long launches survive the prune (they were being dropped at
             # the floor and never reached the chooser — the freed-grab path).
+            # Compute-by-ships: high-ship sources get an additional K bonus.
             _k_tgt = capture_horizon_k(
                 _world_step, tgt_id=int(tgt.id), world=world, model=model, me=me,
+                src_ratio=_src_ratio,
             )
 
             for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):

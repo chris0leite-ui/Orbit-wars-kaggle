@@ -84,6 +84,20 @@ def state_driven_k_enabled() -> bool:
     )
 
 
+def _compute_by_ships_enabled() -> bool:
+    """Per-source compute concentration lever (PI observation 2026-06-03).
+
+    When ON, both per-source enumeration breadth (proposer) and per-source
+    K-ceiling (capture_horizon_k) scale with the source's ship surplus.
+    The compound addresses high-ship rear planets idling: more options AND
+    more of them surviving the launch-discipline gate. Floor preserved —
+    K can only ever be raised above the champion's floor, never lowered.
+    """
+    return os.environ.get("BASELINE_COMPUTE_BY_SHIPS", "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
 def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name, "").strip()
     if not raw:
@@ -94,8 +108,33 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _apply_src_ratio_bonus(base_k: int, src_ratio) -> int:
+    """Per-source K bonus when source has ship surplus (compute_by_ships).
+
+    Inactive (returns base_k) when:
+      - the compute_by_ships lever is OFF, or
+      - src_ratio is None (caller has no source info), or
+      - src_ratio <= 1.0 (source is not above-average — no surplus).
+
+    Otherwise applies a log-scaled bonus capped at +50% of base_k:
+        bonus = min(base_k * 0.5, round(base_k * 0.3 * log2(src_ratio)))
+    """
+    if src_ratio is None or src_ratio <= 1.0:
+        return int(base_k)
+    if not _compute_by_ships_enabled():
+        return int(base_k)
+    import math
+    bonus = int(round(base_k * 0.3 * math.log2(float(src_ratio))))
+    cap = int(base_k * 0.5)
+    if bonus > cap:
+        bonus = cap
+    if bonus < 0:
+        bonus = 0
+    return int(base_k) + bonus
+
+
 def capture_horizon_k(step=None, *, tgt_id=None, world=None, model=None,
-                      me=None) -> int:
+                      me=None, src_ratio=None) -> int:
     """Predictability ceiling K (launches arriving after K are dropped).
 
     Static (default, byte-identical champion): returns the floor (env
@@ -138,20 +177,24 @@ def capture_horizon_k(step=None, *, tgt_id=None, world=None, model=None,
         if ceil < floor:
             ceil = floor
         if tgt_id is None or world is None or model is None or me is None:
-            return ceil  # global/efficiency call — permissive; gate is per-target
-        opp_tick = opp_contest_tick(model, world, int(tgt_id), int(me))
-        if opp_tick is None:
-            return ceil  # uncontested target → safe to commit long
-        return max(floor, min(ceil, int(opp_tick)))
+            base_k = ceil  # global/efficiency call — permissive; gate is per-target
+        else:
+            opp_tick = opp_contest_tick(model, world, int(tgt_id), int(me))
+            if opp_tick is None:
+                base_k = ceil  # uncontested target → safe to commit long
+            else:
+                base_k = max(floor, min(ceil, int(opp_tick)))
+        return _apply_src_ratio_bonus(base_k, src_ratio)
 
     if step is None or not _adaptive_k_enabled():
-        return floor
+        return _apply_src_ratio_bonus(floor, src_ratio)
     k_open = _env_int("BASELINE_ADAPTIVE_K_OPEN", 20)
     t_settle = _env_int("BASELINE_ADAPTIVE_K_TSETTLE", 30)
     if t_settle <= 0 or int(step) >= t_settle or k_open <= floor:
-        return floor
+        return _apply_src_ratio_bonus(floor, src_ratio)
     decayed = k_open - (k_open - floor) * int(step) / float(t_settle)
-    return max(floor, int(round(decayed)))
+    base_k = max(floor, int(round(decayed)))
+    return _apply_src_ratio_bonus(base_k, src_ratio)
 
 
 def resolve_launch_target(src, angle, ships, world):
@@ -186,15 +229,28 @@ def enforce_launch_rules(moves, planets, me, world, model, k=None):
     if not launch_rules_enabled() or not moves:
         return moves
     world_step = getattr(world, "step", None)
-    # When K is auto-computed (k is None) and the state-driven lever is on,
-    # the ceiling K is enforced PER TARGET in Pass 3 below; an explicit k
-    # override (tests / callers) is respected as a fixed ceiling.
+    # When K is auto-computed (k is None) and a per-source/per-target lever is
+    # ON, the ceiling K is enforced PER MOVE in Pass 3 below (capture_horizon_k
+    # called with tgt_id and/or src_ratio); an explicit k override (tests /
+    # callers) is respected as a fixed ceiling and skips per-move scaling.
     per_target_k = (k is None) and state_driven_k_enabled()
+    per_source_k = (k is None) and _compute_by_ships_enabled()
     if k is None:
         k = capture_horizon_k(world_step)
     me = int(me)
 
     by_id = world.planets_by_id
+
+    # avg_my_ships once per turn — used to compute the source ship surplus
+    # ratio for Lever 2 (compute_by_ships). Falls back to 0 (no bonus path) if
+    # we have no planets visible.
+    avg_my_ships = 0.0
+    if per_source_k:
+        my_planet_ships = [
+            int(p.ships) for p in planets if int(p.owner) == me
+        ]
+        if my_planet_ships:
+            avg_my_ships = sum(my_planet_ships) / float(len(my_planet_ships))
 
     # Pass 1 — resolve every move's destination + arrival tick once.
     resolved = []  # (move, hit_pid|None, step|None, owner|None)
@@ -254,10 +310,17 @@ def enforce_launch_rules(moves, planets, me, world, model, k=None):
         # that arrives after the horizon is betting on an unpredictable board
         # and routinely lands at a flipped/contested planet and loses.
         # State-driven lever: K is the predictability of THIS target.
+        # Compute-by-ships lever: K is bumped for sources with ship surplus.
         k_eff = k
-        if per_target_k:
+        if per_target_k or per_source_k:
+            src_ratio = None
+            if per_source_k and avg_my_ships > 0.0:
+                src = by_id.get(int(mv[0]))
+                if src is not None:
+                    src_ratio = float(src.ships) / avg_my_ships
             k_eff = capture_horizon_k(
                 world_step, tgt_id=hit_pid, world=world, model=model, me=me,
+                src_ratio=src_ratio,
             )
         if step > k_eff:
             continue
