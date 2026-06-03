@@ -1,62 +1,63 @@
 # HANDOVER.md — next-session brief
 
-_Refreshed 2026-06-02. Read this first (Rule 15). Also read `state/MULTI_BRANCH.md`
-(live rolling pair / track registry) per Rule 44._
+_Refreshed 2026-06-03. Read this first (Rule 15). Also read `state/MULTI_BRANCH.md`
+(live rolling pair / track registry / region-mvp open track) per Rule 44._
 
-## This session's outcome (the unlock)
+## This session's outcome — region/chunk-aware MVP (parity, banked)
 
-The **kinematics table** (per-turn planet-position cache → lets the time-adaptive
-search score more candidates inside the 1 s/turn budget → better moves) was proven
-to be a real ~20 μ lever and **re-enabled, de-singletonized** (`world._kt`,
-per-turn/per-seat — no more shared-state A/B corruption). It had been removed
-2026-05-30; the live peak μ=1183.7 was from the brief window it was active. It is
-bit-identical to the inline path (`scripts/kt_position_parity_check.py`: 0/32
-mismatches) and prevents real timeouts.
+Branch **`claude/region-mvp`** (off champion HEAD; commits `788af05` code +
+`929ff94` docs, both pushed). Built and validated a region/chunk-aware agent: the
+decision unit becomes a **cluster of planets** (orbital-parameter buckets), not a
+single planet. Three verbs behind `BASELINE_REGION` (default OFF, byte-identical
+champion): **bias** candidates toward high-value *predictable* contested regions,
+**advance** idle rear mass to the frontier region (own→own redeploy), and a gated
+**GAIN** stub. Plus a separate `BASELINE_HORIZON_DECAY` adapter (rollout-depth
+floor deep early → champion-late). Design law obeyed (from the reach-frontier /
+analytical-slice closures): **feed the rollout, never replace it.**
 
-Also this session:
-- **Submitted** `baseline_state_driven_k` (state-driven horizon-K **+** table). Live
-  rolling pair now = `baseline_state_driven_k` + `baseline_launch_rules_universal`
-  (table-ON champion). Both warming up. **Adaptive-K (μ≈1170) was evicted** — if
-  state-K under-converges, re-submit adaptive-K (`champ_adaptiveK_on.py`); 5
-  submits/day, deadline 2026-06-23.
-- **Timeout fixed:** predictive per-step deadline bail (`1e3234c`). Bundle bench
-  (separate-process = live): **max 944 ms, 0 over cap**. In-process `fast.py eval`
-  can show false one-off highs from GC/cold-import — judge timing with `fast.py
-  bench`, not eval.
-- **Loss diagnosis (selection-bias-free, vs weaker opponents):** we lose by **losing
-  the step-50→100 planet-expansion race** in certain maps (seed 2 loses from both
-  seats) — NOT conversion/waste, NOT timeouts. Fleet-outcome mix is identical in
-  wins and losses; only the planet-lead trajectory differs (wins +9 by step 100,
-  losses −5). Tooling: `scripts/analyze_local_losses.py`.
+**Result: PARITY with the champion** — region-only 15/32=46.9% [0.31,0.64];
+region+horizon 7/16=43.8% [0.23,0.67]; both INCONCLUSIVE. Timing clean
+(region max 929 ms < champion's own 1084). Off-is-identical proven twice
+(216-call replay + 80-state proposer-default parity, 0 mismatch). **No submission**
+(parity isn't worth a rolling-pair slot, Rule 42/43).
 
-## NEXT-SESSION PLAN — re-test 3 shelved features WITH THE TABLE ON
+**Why it's only parity (the structural diagnosis):** the chooser selects by its
+**rollout score**, not by candidate cheap-delta — so biasing candidate *order*
+only changes which candidates get validated under the cap; it cannot override the
+rollout. The bias is gentle by construction; the advance pass moves ships
+net-neutrally.
 
-**Why:** these were judged "null/parity" under a handicapped agent — either tested
-table-OFF (less search) or via the old singleton-corrupted in-process A/B. Both
-confounds are gone. Two of them (#1, #2) directly target the expansion-race loss
-mode we diagnosed. **All three are already in the code behind env flags —
-flag-flip, not rebuild** (verified 2026-06-02).
+**Bonus finding (banked):** idle-source probe (`scripts/probe_idle_sources.py`,
+1922 rows) — the champion fires ~1 of ~13 eligible planets/turn (**~90% idle**)
+even in close mid-game. This **refutes the "source-saturated" premise** that
+closed the joint-coordination axis on 2026-06-02 (that null was only measured in
+blowout wins). The idle capacity is real; whether deploying it is correct
+(hoarding) or a conversion gap is still open.
 
-| Feature (plain language) | Enable flag | Prior (confounded) result |
-|---|---|---|
-| **1. Team-up attacks** — 2+ fleets from different planets arrive at one target on the same turn, sized to take *and hold* it | `BASELINE_JOINT_SYNC=1` (+ size-to-hold, `chooser_trajectory.py:325`) | "size-to-hold NULL", sync probe μ≈1150 — table OFF |
-| **2. Optimized opening** — solve the first ~50 turns as an optimization (which planets, what order) instead of hand-rules | `BASELINE_OPENING_MILP=1` (`lib/joint_solver/opening_planner.py`) | parity 4/8 (n=8) — table OFF |
-| **3. Smart position score** — value a position by *where* things are on the map, not just counts | `BASELINE_VALUE_HEAD=composite` (`lib/value_heads.py`) | never measured (runs stalled) |
+## NEXT-SESSION PLAN
 
-**Execution (one lever at a time — Rule 37):**
-0. Baseline = current source, table ON + state-K (the table-ON champion). Re-confirm
-   the live rolling pair before any submit (Rule 42).
-1. For each feature, default-OFF → ON in isolation on top of the champion:
-   (a) parity smoke (OFF byte-identical), (b) cost smoke `fast.py bench`
-   separate-process — **max < 1000 ms WITH the table**, (c) `clean_ab.py` **n≥32**
-   table-ON vs the table-ON champion, (d) compare to the prior table-OFF result —
-   the delta is the table-confound size.
-2. **Stack winners:** any lever clearing Wilson-lo ≥ 0.50 stays ON; re-baseline and
-   add the next on top; re-A/B the stack (a solo win can regress when stacked).
-3. **Order:** #1 team-up → #2 opening → #3 position score.
-4. Each lever adds compute — re-check `fast.py bench` max < 1000 ms after each
-   stack. If a strong lever blows budget, tune horizon, don't drop it (Rule 40).
-5. Submit only on Rule 46 + 43a panel + 45 (n≥32) + 42 (eviction).
+**Top lever (the one this session's diagnosis points to):** add region value as an
+additive **term in the chooser's final score** (`chooser_trajectory.score_candidate_v4`
+leaf/delta), so a high-value-region capture is preferred at equal rollout delta —
+"feed the rollout" at the *scoring* layer instead of candidate reordering. This is
+the most likely path from parity to lift; ~1-hour experiment. Gate behind a new
+flag, off-is-identical, single-variable A/B at n≥32 vs the table-ON champion using
+**bundle-vs-bundle** (self-contained modules avoid the `clean_ab`/module-constant
+contamination — see the session's harness notes).
+
+**Secondary, if the score-term lever is null:**
+- Tune the **advance pass** aggressiveness (reserve thresholds, max launches,
+  improvement floor in `region_advance_pass`) — it's the real behavioral lever.
+- A/B **horizon-decay in isolation** (never tested alone; only stacked → parity).
+- The three shelved features from the prior handover (team-up `BASELINE_JOINT_SYNC`,
+  opening MILP `BASELINE_OPENING_MILP`, composite value head) remain flag-flip
+  candidates **with the table ON**.
+
+**Method reminders:** one lever at a time (Rule 37); A/B bundle-vs-bundle to avoid
+in-process env contamination; `fast.py bench` (not eval) for timing; champion
+control = identical config minus the new flag; submit only on Wilson-lo ≥ 0.55
+panel + n≥32 h2h + Rule 42 eviction check.
+
 
 **Deferred — reassess WITH THE PI after the three above (do NOT start this session):**
 - **2-hop redeploy** (shuffle forward so a follow-up can capture) — reverted
