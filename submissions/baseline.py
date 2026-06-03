@@ -15895,6 +15895,22 @@ SNIPER_MARGIN = float(os.environ.get("BASELINE_SNIPER_MARGIN", "1.2"))
 SNIPER_MAX_LAUNCHES = int(os.environ.get("BASELINE_SNIPER_MAX_LAUNCHES", "4"))
 SNIPER_RESERVE_FRAC = float(os.environ.get("BASELINE_SNIPER_RESERVE_FRAC", "0.4"))
 
+# Large-idle-stockpile spend-down (PI 2026-06-03). Geometry-adaptive threshold:
+# a planet qualifies as a stockpile when its ship count is > REL_MULT * avg of
+# my planets OR > SHARE_OF_TOTAL * sum of my ships. After the normal pipeline
+# (proposer + chooser + enforce_launch_rules) settles, any qualifying source
+# with no launch this turn AND no inbound enemy fleet emits one forced launch
+# at an opponent (positive-EV preferred — capture mechanically feasible per
+# predict_garrison_at; nearest-opp fallback for pure-pressure when no
+# positive-EV target exists). K-eta cap bypassed by post-enforce slotting.
+IDLE_STOCKPILE_DRAIN_ENABLED = os.environ.get("BASELINE_IDLE_STOCKPILE_DRAIN", "0") == "1"
+IDLE_STOCKPILE_REL_MULT = float(os.environ.get("BASELINE_IDLE_STOCKPILE_REL_MULT", "3.0"))
+IDLE_STOCKPILE_SHARE_OF_TOTAL = float(os.environ.get("BASELINE_IDLE_STOCKPILE_SHARE", "0.25"))
+IDLE_STOCKPILE_ABS_FLOOR = int(os.environ.get("BASELINE_IDLE_STOCKPILE_FLOOR", "30"))
+IDLE_STOCKPILE_GARRISON = int(os.environ.get("BASELINE_IDLE_STOCKPILE_GARRISON", "5"))
+IDLE_STOCKPILE_MIN_SEND = int(os.environ.get("BASELINE_IDLE_STOCKPILE_MIN_SEND", "25"))
+IDLE_STOCKPILE_MAX_PER_TURN = int(os.environ.get("BASELINE_IDLE_STOCKPILE_MAX", "4"))
+
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
 # chooser's wait_N>0 winners are remembered across turns instead of
 # being silently dropped. Each entry ticks down each turn; when
@@ -15936,7 +15952,7 @@ fleet_speed = speed
 # from agents.baseline.launch_rules import enforce_launch_rules  # inlined by bundle_agent.py
 # from lib.orbit import predict_relative  # inlined by bundle_agent.py
 # from lib.trajectory import predict_fleet_fate  # inlined by bundle_agent.py
-# from lib.world_model import WorldModel  # inlined by bundle_agent.py
+# from lib.world_model import WorldModel, predict_garrison_at  # inlined by bundle_agent.py
 
 # Import by explicit names so the bundler's per-line import-stripping regex
 # can handle them. Single-line form is mandatory — the regex matches one
@@ -15944,7 +15960,7 @@ fleet_speed = speed
 # continuation lines as indented orphans. Friction tag
 # `bundler-modular-agent-namespace-access-breaks-bundle` (2026-05-17).
 # from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS  # inlined by bundle_agent.py
-# from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON  # inlined by bundle_agent.py
+# from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON, aim_and_eta  # inlined by bundle_agent.py
 
 
 _PARITY_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
@@ -16494,6 +16510,124 @@ def drain_combat_stack(moves, planets, my_id: int, world, model) -> list:
     return list(moves) + extras
 
 
+def _pick_idle_stockpile_target(src, send: int, planets, my_id: int,
+                                world, model, omega: float):
+    """Pick a target for a forced idle-stockpile launch.
+
+    Strategy: prefer the highest positive-EV target (capture mechanically
+    feasible per `predict_garrison_at`) among opponents + neutrals. If none
+    exists, fall back to the nearest opponent-owned planet for a
+    pure-pressure punch (PI 2026-06-03: 'force them to defend, attracts
+    attention, might capture something'). Returns
+    `(tgt, angle, eta)` or `(None, None, None)` when no valid target exists.
+    """
+    candidates = [p for p in planets if int(p.owner) != my_id]
+    if not candidates:
+        return None, None, None
+
+    best_positive = None  # (margin, eta, tgt, angle)
+    for tgt in candidates:
+        try:
+            angle, eta = aim_and_eta(src, tgt, send, omega, world=world)
+        except Exception:
+            continue
+        arrivals = model.ledger.get(int(tgt.id), [])
+        try:
+            _, garrison = predict_garrison_at(tgt, int(eta), arrivals)
+        except Exception:
+            continue
+        margin = float(send) - float(garrison)
+        if margin <= 0.0:
+            continue
+        # Higher margin wins; tie-break shorter eta.
+        key = (margin, -int(eta))
+        if best_positive is None or key > best_positive[0]:
+            best_positive = (key, tgt, float(angle), int(eta))
+
+    if best_positive is not None:
+        _, tgt, angle, eta = best_positive
+        return tgt, angle, eta
+
+    # Pure-pressure fallback: nearest opponent-owned planet by euclidean dist.
+    opp_only = [p for p in planets
+                if int(p.owner) != my_id and int(p.owner) != -1]
+    if not opp_only:
+        return None, None, None
+    nearest = min(
+        opp_only,
+        key=lambda p: math.hypot(float(p.x) - float(src.x),
+                                 float(p.y) - float(src.y)),
+    )
+    try:
+        angle, eta = aim_and_eta(src, nearest, send, omega, world=world)
+    except Exception:
+        return None, None, None
+    return nearest, float(angle), int(eta)
+
+
+def drain_idle_stockpile_to_opp(moves, planets, my_id: int, world, model,
+                                omega: float) -> list:
+    """Force one launch from each large idle stockpile toward an opponent.
+
+    Runs AFTER `enforce_launch_rules` so launches bypass the K-eta cap.
+    Gate (ALL must hold):
+      - source is one of MY planets AND not already in `moves`
+      - source.ships >= IDLE_STOCKPILE_ABS_FLOOR
+      - source.ships > REL_MULT * avg_my_ships
+        OR source.ships > SHARE_OF_TOTAL * sum_my_ships
+      - model.incoming_enemy_eta(src, my_id) is None (no inbound threat)
+      - send-size = source.ships - GARRISON >= MIN_SEND
+      - a valid target exists (positive-EV or fallback nearest-opp)
+
+    Bounded by IDLE_STOCKPILE_MAX_PER_TURN per turn (wallclock guard).
+    Idempotent on the input moves list.
+    """
+    if not IDLE_STOCKPILE_DRAIN_ENABLED:
+        return moves
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    if not my_planets:
+        return moves
+    used_srcs = set()
+    for m in moves:
+        try:
+            used_srcs.add(int(m[0]))
+        except (TypeError, IndexError):
+            pass
+
+    avg_my = sum(int(p.ships) for p in my_planets) / float(len(my_planets))
+    tot_my = sum(int(p.ships) for p in my_planets)
+    extras = []
+    fired = 0
+    for src in my_planets:
+        if fired >= IDLE_STOCKPILE_MAX_PER_TURN:
+            break
+        if int(src.id) in used_srcs:
+            continue
+        if int(src.ships) < IDLE_STOCKPILE_ABS_FLOOR:
+            continue
+        is_stockpile = (
+            float(src.ships) > IDLE_STOCKPILE_REL_MULT * avg_my
+            or (tot_my > 0
+                and float(src.ships) > IDLE_STOCKPILE_SHARE_OF_TOTAL * tot_my)
+        )
+        if not is_stockpile:
+            continue
+        if model.incoming_enemy_eta(int(src.id), my_id) is not None:
+            continue
+        send = int(src.ships) - IDLE_STOCKPILE_GARRISON
+        if send < IDLE_STOCKPILE_MIN_SEND:
+            continue
+        tgt, angle, _eta = _pick_idle_stockpile_target(
+            src, send, planets, my_id, world, model, omega,
+        )
+        if tgt is None:
+            continue
+        extras.append([int(src.id), float(angle), int(send)])
+        used_srcs.add(int(src.id))
+        fired += 1
+    return list(moves) + extras
+
+
 def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
     """One-shot decisive strike at high-value enemy planets from idle reserves.
 
@@ -16777,7 +16911,10 @@ def agent(obs, configuration=None):
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
         moves = emit_sniper_strikes(moves, planets, me, world, model)
-        return enforce_launch_rules(moves, planets, me, world, model)
+        moves = enforce_launch_rules(moves, planets, me, world, model)
+        return drain_idle_stockpile_to_opp(
+            moves, planets, me, world, model, omega,
+        )
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
     # coalition + opp-modifier posterior; no fast_sim rollout. See
@@ -16801,7 +16938,10 @@ def agent(obs, configuration=None):
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
         moves = emit_sniper_strikes(moves, planets, me, world, model)
-        return enforce_launch_rules(moves, planets, me, world, model)
+        moves = enforce_launch_rules(moves, planets, me, world, model)
+        return drain_idle_stockpile_to_opp(
+            moves, planets, me, world, model, omega,
+        )
 
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
@@ -16850,4 +16990,7 @@ def agent(obs, configuration=None):
     moves = drain_stagnant_rear(moves, planets, me, world, model)
     moves = drain_combat_stack(moves, planets, me, world, model)
     moves = emit_sniper_strikes(moves, planets, me, world, model)
-    return enforce_launch_rules(moves, planets, me, world, model)
+    moves = enforce_launch_rules(moves, planets, me, world, model)
+    return drain_idle_stockpile_to_opp(
+        moves, planets, me, world, model, omega,
+    )
