@@ -31,7 +31,12 @@ os.environ.setdefault("BASELINE_LAUNCH_RULES", "1")
 os.environ.setdefault("BASELINE_STATE_DRIVEN_K", "1")
 os.environ.setdefault("BASELINE_STATE_K_ORBITAL_LEAD", "1")
 
-from agents.baseline.proposer import MIN_FLEET_SIZE, aim_and_eta  # noqa: E402
+from agents.baseline.proposer import (  # noqa: E402
+    MIN_FLEET_SIZE,
+    aim_and_eta,
+    capture_size,
+    hold_need,
+)
 from agents.baseline.launch_rules import (  # noqa: E402
     capture_horizon_k,
     resolve_launch_target,
@@ -105,6 +110,9 @@ def analyze(path):
     # Of race_loss captures we HELD: were they actually attacked (intent), or
     # never contested at all (capability>>intent — the opponent-behaviour gap)?
     rl_held_attacked = [0, 0]  # [attacked, total_held]
+    # Feasibility of contest-aware sizing on the captures we LOST: would the
+    # hold-size (hold_need) have been affordable from the launching source?
+    lost_sizing = {"affordable_hold": 0, "unaffordable": 0, "total_lost": 0}
     actual_total = 0
     unlocked_race_wins = 0          # race-win opps with eta > current K
     unlocked_prod = 0               # production summed over those opps
@@ -195,6 +203,19 @@ def analyze(path):
                         prev = float(pl[5])
                     if attacked:
                         rl_held_attacked[0] += 1
+                # For captures we LOST: was a holding-size fleet affordable from
+                # the source at launch? (would contest-aware sizing have helped)
+                if owner_then != seat:
+                    lost_sizing["total_lost"] += 1
+                    try:
+                        cap_need = capture_size(src, tgt, model, omega, seat, world)
+                        need_hold = hold_need(tgt, int(step), world, seat, cap_need)
+                        if need_hold <= int(src.ships):
+                            lost_sizing["affordable_hold"] += 1
+                        else:
+                            lost_sizing["unaffordable"] += 1
+                    except Exception:
+                        pass
 
         # (2) race-win opportunities the current K would drop.
         if not do_scan:
@@ -237,6 +258,12 @@ def analyze(path):
           f"<- Lever 3: want race_loss hold-rate LOW & separated")
     print(f"  race_loss-but-HELD captures actually attacked: {_hr(rl_held_attacked)} "
           f"<- low = opponent COULD contest but didn't (intent gap)")
+    tl = lost_sizing["total_lost"]
+    if tl:
+        aff = lost_sizing["affordable_hold"]
+        print(f"  captures we LOST where a HOLD-size fleet was affordable: "
+              f"{aff}/{tl} ({100*aff/tl:.0f}%)  <- high = contest-aware sizing "
+              f"would have helped; low = we were out-resourced (tempo problem)")
 
 
 def main():
