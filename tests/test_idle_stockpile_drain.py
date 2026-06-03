@@ -50,16 +50,29 @@ def _planet(pid, owner, x, y, ships, production=2, radius=2.0):
 
 
 class _StubModel:
-    """Minimal model stub. Exposes ledger (dict of planet_id -> list of
-    (eta, owner, ships)) and incoming_enemy_eta (returns None unless we
-    explicitly mark a planet as threatened)."""
+    """Minimal model stub. `threatened` planet ids return non-None from both
+    incoming_enemy_eta and time_to_enemy_threat (mimicking either an in-flight
+    enemy fleet OR a stationary opp planet that could plausibly launch at us).
+    `flipping` planet ids return a non-my owner from owner_at (mimicking a
+    multi-wave attack in the ledger that flips the planet)."""
 
-    def __init__(self, ledger=None, threatened=None):
+    def __init__(self, ledger=None, threatened=None, flipping=None,
+                 flip_owner=1):
         self.ledger = ledger or {}
         self._threatened = threatened or set()
+        self._flipping = flipping or set()
+        self._flip_owner = flip_owner
 
     def incoming_enemy_eta(self, planet_id, my_id):
         return 7 if int(planet_id) in self._threatened else None
+
+    def time_to_enemy_threat(self, planet_id, my_id, world, arrival_eta=0):
+        return 7 if int(planet_id) in self._threatened else None
+
+    def owner_at(self, planet_id, step):
+        if int(planet_id) in self._flipping:
+            return self._flip_owner
+        return None  # unknown -> caller treats as safe
 
 
 class _StubWorld:
@@ -233,6 +246,28 @@ def test_drain_skips_threatened_source(monkeypatch):
     )
     src_launches = [m for m in result if int(m[0]) == 0]
     assert src_launches == [], "must not drain a threatened source"
+
+
+def test_drain_skips_source_that_flips_at_lookahead(monkeypatch):
+    """Belt-and-suspenders gate: even with no current threat, a source
+    predicted to belong to opp at horizon K (multi-wave attack visible
+    in the ledger) must not be drained."""
+    monkeypatch.setenv("BASELINE_IDLE_STOCKPILE_DRAIN", "1")
+    from agents.baseline.main import drain_idle_stockpile_to_opp
+
+    stockpile = _planet(0, 0, 0.0, 0.0, 200)
+    smalls = [_planet(i, 0, float(i), 0.0, 20) for i in (1, 2, 3)]
+    weak_opp = _planet(4, 1, 40.0, 0.0, 15, production=2)
+    planets = [stockpile] + smalls + [weak_opp]
+    # No CURRENT threat, but the ledger predicts the planet flips to opp.
+    model = _StubModel(flipping={0}, flip_owner=1)
+    world = _StubWorld()
+
+    result = drain_idle_stockpile_to_opp(
+        [], planets, my_id=0, world=world, model=model, omega=0.0,
+    )
+    src_launches = [m for m in result if int(m[0]) == 0]
+    assert src_launches == [], "must not drain a source predicted to flip"
 
 
 def test_drain_skips_source_already_in_moves(monkeypatch):

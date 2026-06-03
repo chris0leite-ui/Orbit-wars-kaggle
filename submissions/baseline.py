@@ -15910,6 +15910,9 @@ IDLE_STOCKPILE_ABS_FLOOR = int(os.environ.get("BASELINE_IDLE_STOCKPILE_FLOOR", "
 IDLE_STOCKPILE_GARRISON = int(os.environ.get("BASELINE_IDLE_STOCKPILE_GARRISON", "5"))
 IDLE_STOCKPILE_MIN_SEND = int(os.environ.get("BASELINE_IDLE_STOCKPILE_MIN_SEND", "25"))
 IDLE_STOCKPILE_MAX_PER_TURN = int(os.environ.get("BASELINE_IDLE_STOCKPILE_MAX", "4"))
+# How far into the future the source must still be predicted-ours given the
+# known ledger (multi-wave fleets that incoming_enemy_eta would have missed).
+IDLE_STOCKPILE_OWNER_LOOKAHEAD = int(os.environ.get("BASELINE_IDLE_STOCKPILE_OWNER_LOOKAHEAD", "20"))
 
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
 # chooser's wait_N>0 winners are remembered across turns instead of
@@ -16612,7 +16615,26 @@ def drain_idle_stockpile_to_opp(moves, planets, my_id: int, world, model,
         )
         if not is_stockpile:
             continue
-        if model.incoming_enemy_eta(int(src.id), my_id) is not None:
+        # Strict safety gate (PI 2026-06-03 falsification fix #1):
+        # `incoming_enemy_eta` only sees the EARLIEST in-flight fleet, missing
+        # (a) opponents that may launch this same turn — same-turn launches are
+        # invisible to model.ledger which was built at start-of-turn — and
+        # (b) multi-wave attacks where a later wave is the real threat.
+        # `time_to_enemy_threat` covers BOTH: it considers in-flight fleets
+        # PLUS potential launches from every stationary opp planet at its
+        # present garrison. Mirrors drain_idle_rear's safety gate.
+        if model.time_to_enemy_threat(int(src.id), my_id, world) is not None:
+            continue
+        # Belt-and-suspenders: even if no opp can plausibly threaten us today,
+        # verify the source planet is still predicted to be OURS at horizon K
+        # given known fleets in the ledger.
+        try:
+            predicted = model.owner_at(
+                int(src.id), IDLE_STOCKPILE_OWNER_LOOKAHEAD,
+            )
+        except Exception:
+            predicted = None
+        if predicted is not None and int(predicted) != my_id:
             continue
         send = int(src.ships) - IDLE_STOCKPILE_GARRISON
         if send < IDLE_STOCKPILE_MIN_SEND:
