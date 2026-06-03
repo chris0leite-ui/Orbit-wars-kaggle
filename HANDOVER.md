@@ -14,9 +14,12 @@ Read `state/STRATEGY.md` first thing every session.
 
 ## Live status
 
-- **Latest submission:** `champ_adaptiveK_on.py`, sub **53324164** (2026-06-03
-  10:37 UTC), bundle sha256 `6c0419dc20`. Predicted μ ≈ 1170 based on prior
-  live settle of the identical agent (sub 53265480, μ = 1170.4).
+- **Latest submission (#1):** `champ_computeByShips_on.py`, sub **53332500**
+  (2026-06-03 15:11 UTC), bundle sha256 `53bf813b...`, 697 927 B. Adaptive K
+  + compute_by_ships lever both ON. Predicted μ ≈ 1170 (parity with sibling
+  per local n=16 A/B).
+- **Backstop (#2):** `champ_adaptiveK_on.py`, sub **53324164**, live
+  **μ = 1185.2** (our anchor — stays in the rolling pair).
 - **TrueSkill warm-up reminder:** starts at μ ≈ 600 and climbs over ~24 h. Do
   not interpret the first few hours of leaderboard data.
 - Read the rolling pair on demand:
@@ -24,8 +27,12 @@ Read `state/STRATEGY.md` first thing every session.
 
 ## Next action
 
-Wait for the PI's first observation. Then run the loop in `state/STRATEGY.md` §
-"Iteration protocol — observation-driven".
+**Next mechanism is queued:** large-idle-fleet spend-down — force a launch
+from any planet exceeding ~200 ships, K-cap bypassed, nearest opp target.
+Spec-only at this point; see `state/STRATEGY.md` § "Next mechanism" for the
+design. Wait for compute_by_ships's live μ to settle (~24 h from submit)
+before starting implementation, so we have data on whether compute_by_ships
+moved the needle.
 
 ## Pointers
 
