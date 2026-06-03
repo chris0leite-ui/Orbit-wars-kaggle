@@ -320,3 +320,76 @@ def test_rules_on_emits_zero_violations():
                 f"seed {seed}: agent emitted a rule-violating launch with "
                 f"the gate on: {moves}"
             )
+
+
+# --------------------------------------------------------------------------
+# Value-driven horizon admission (2026-06-03) — race_win / bankable captures
+# past the K ceiling are ADMITTED (monotone relaxation), but race_loss and
+# own-planet reinforcement past K stay dropped. Rule 38: gate OFF reproduces
+# the drop; gate ON shows the capture survives. Race class is controlled by
+# faking predict_arrival_contest so the admission LOGIC is tested in isolation.
+# --------------------------------------------------------------------------
+
+def _fake_contest(race_class):
+    def _f(model, world, tgt_id, my_arrival_tick, me, *, hold_margin=2):
+        return SimpleNamespace(
+            my_arrival_tick=int(my_arrival_tick),
+            predicted_owner=None,
+            predicted_garrison=0.0,
+            opp_earliest_contest_tick=None,
+            race_class=race_class,
+        )
+    return _f
+
+
+def test_value_horizon_off_drops_far_opponent_capture():
+    # Opponent target (owner 1), arrival 20 > K=10. Default (lever OFF) drops.
+    _p, world, model = _setup(_planet(5, 1, ships=30))
+    moves = [[1, _aim(5, 20), 50]]
+    assert enforce_launch_rules(moves, _p, 0, world, model) == []
+
+
+def test_value_horizon_admits_far_race_win(monkeypatch):
+    monkeypatch.setenv("BASELINE_VALUE_HORIZON", "1")
+    monkeypatch.setattr(LR, "predict_arrival_contest", _fake_contest("race_win"))
+    _p, world, model = _setup(_planet(5, 1, ships=30))
+    moves = [[1, _aim(5, 20), 50]]  # arrival 20 > K=10 but race_win
+    assert enforce_launch_rules(moves, _p, 0, world, model) == moves
+
+
+def test_value_horizon_admits_far_bankable(monkeypatch):
+    monkeypatch.setenv("BASELINE_VALUE_HORIZON", "1")
+    monkeypatch.setattr(LR, "predict_arrival_contest", _fake_contest("bankable"))
+    _p, world, model = _setup(_planet(5, 1, ships=30))
+    moves = [[1, _aim(5, 20), 50]]
+    assert enforce_launch_rules(moves, _p, 0, world, model) == moves
+
+
+def test_value_horizon_still_drops_race_loss(monkeypatch):
+    # race_loss past K is NOT admitted (the falsified hard-gate stays a drop).
+    monkeypatch.setenv("BASELINE_VALUE_HORIZON", "1")
+    monkeypatch.setattr(LR, "predict_arrival_contest", _fake_contest("race_loss"))
+    _p, world, model = _setup(_planet(5, 1, ships=30))
+    moves = [[1, _aim(5, 20), 50]]
+    assert enforce_launch_rules(moves, _p, 0, world, model) == []
+
+
+def test_value_horizon_respects_max_cap(monkeypatch):
+    # A race_win beyond the value-horizon cap is still dropped.
+    monkeypatch.setenv("BASELINE_VALUE_HORIZON", "1")
+    monkeypatch.setenv("BASELINE_VALUE_HORIZON_MAX", "30")
+    monkeypatch.setattr(LR, "predict_arrival_contest", _fake_contest("race_win"))
+    _p, world, model = _setup(_planet(5, 1, ships=30))
+    moves = [[1, _aim(5, 35), 50]]  # arrival 35 > cap 30 → drop
+    assert enforce_launch_rules(moves, _p, 0, world, model) == []
+
+
+def test_value_horizon_does_not_admit_own_reinforcement(monkeypatch):
+    # Own-planet reinforcement past K stays dropped even when race_win is faked
+    # (admission is for captures only; owner == me is excluded before the call).
+    monkeypatch.setenv("BASELINE_VALUE_HORIZON", "1")
+    monkeypatch.setattr(LR, "predict_arrival_contest", _fake_contest("race_win"))
+    planets = [_planet(1, 0, ships=200, production=5), _planet(7, 0, ships=5)]
+    world, model = _World(planets), _Model()
+    moves = [[1, _aim(7, 20), 50]]  # reinforce our own planet 7, arrival 20 > K
+    assert enforce_launch_rules(moves, planets, 0, world, model) == []

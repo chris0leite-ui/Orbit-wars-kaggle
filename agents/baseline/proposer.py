@@ -1126,8 +1126,16 @@ def propose(my_planets, target_pool, world, model, me: int,
     # spend wallclock on doomed launches. NEUTRAL under-capture (eta <= K)
     # is NOT pruned here — same-tick coalitions must survive to the
     # post-pass for combat evaluation (preserves BASELINE_JOINT).
-    from agents.baseline.launch_rules import capture_horizon_k, launch_rules_enabled
+    from agents.baseline.launch_rules import (
+        _value_horizon_enabled,
+        _value_horizon_max,
+        capture_horizon_k,
+        launch_rules_enabled,
+    )
+    from lib.world_model import predict_arrival_contest
     _eta_prune = launch_rules_enabled()
+    _value_horizon = _value_horizon_enabled()
+    _vh_max = _value_horizon_max()
     _world_step = getattr(world, "step", None)
 
     prerank = []
@@ -1152,7 +1160,21 @@ def propose(my_planets, target_pool, world, model, me: int,
                     continue
                 angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
                 if _eta_prune and int(eta) > _k_tgt:
-                    continue
+                    # Value-driven admission (mirror of launch_rules Pass 3):
+                    # let a winnable / uncontestable capture past the ceiling
+                    # reach the chooser, capped at _vh_max. Monotone — only
+                    # rescues candidates the prune would otherwise drop.
+                    if not (_value_horizon and int(tgt.owner) != me
+                            and int(eta) <= _vh_max):
+                        continue
+                    try:
+                        ac = predict_arrival_contest(
+                            model, world, int(tgt.id), int(eta), me,
+                        )
+                    except Exception:
+                        continue
+                    if ac.race_class not in ("race_win", "bankable"):
+                        continue
                 horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if horizon >= baseline_len:
                     horizon = baseline_len - 1

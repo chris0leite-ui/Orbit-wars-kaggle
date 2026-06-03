@@ -39,9 +39,24 @@ import os
 from types import SimpleNamespace
 
 from lib.trajectory import predict_fleet_fate
-from lib.world_model import opp_contest_tick, predict_garrison_at
+from lib.world_model import (
+    opp_contest_tick,
+    predict_arrival_contest,
+    predict_garrison_at,
+)
 
 DEFAULT_CAPTURE_HORIZON_K = 10
+
+# Value-driven horizon (2026-06-03): the universal-K ceiling spends the LEAST
+# horizon on the most valuable, most-contested planets — so winnable far
+# captures get dropped (replay pre-check: ~88 race-win captures dropped in a
+# single 2P game). This lever ADMITS captures past K when we win the race
+# (race_win) or the target cannot be contested at all (bankable), capped at
+# DEFAULT_VALUE_HORIZON_MAX. It only ever RELAXES the ceiling (monotone): a
+# launch K already keeps stays kept; nothing K admits is newly dropped. The
+# falsified hard race_loss->drop gate is NOT here — race_loss simply keeps the
+# existing K behaviour. Default OFF (byte-identical champion).
+DEFAULT_VALUE_HORIZON_MAX = 40
 
 # State-driven-K ceiling: the farthest-out arrival a launch may target when
 # the lever admits an uncontested planet (design §3 Lever A). K is clamped
@@ -94,6 +109,19 @@ def _state_k_orbital_lead_enabled() -> bool:
     return os.environ.get("BASELINE_STATE_K_ORBITAL_LEAD", "0").strip().lower() in (
         "1", "true", "on", "yes",
     )
+
+
+def _value_horizon_enabled() -> bool:
+    """Value-driven horizon: admit race_win / bankable captures past the K
+    ceiling (up to DEFAULT_VALUE_HORIZON_MAX). Only relaxes K; never tightens
+    it. Default OFF (byte-identical champion)."""
+    return os.environ.get("BASELINE_VALUE_HORIZON", "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
+def _value_horizon_max() -> int:
+    return _env_int("BASELINE_VALUE_HORIZON_MAX", DEFAULT_VALUE_HORIZON_MAX)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -275,7 +303,25 @@ def enforce_launch_rules(moves, planets, me, world, model, k=None):
                 world_step, tgt_id=hit_pid, world=world, model=model, me=me,
             )
         if step > k_eff:
-            continue
+            # Value-driven admission: a launch past the ceiling is kept only if
+            # it is a winnable race (race_win) or uncontestable (bankable) for a
+            # CAPTURE (opponent/neutral, not own-planet reinforcement), within
+            # the value-horizon cap. Monotone: this can only ADD survivors.
+            if not (_value_horizon_enabled()
+                    and model is not None
+                    and owner != me
+                    and int(step) <= _value_horizon_max()):
+                continue
+            try:
+                ac = predict_arrival_contest(
+                    model, world, int(hit_pid), int(step), me,
+                )
+            except Exception:
+                continue
+            if ac.race_class not in ("race_win", "bankable"):
+                continue
+            # fall through to the owner-based emit (neutral still needs its
+            # same-tick capture check via neutral_keep below).
         if owner == me:
             out.append(mv)            # reinforcement within horizon
             continue
