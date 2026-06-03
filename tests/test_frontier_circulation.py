@@ -1,33 +1,54 @@
-"""Tests for the frontier-circulation post-pass (PI 2026-06-03).
+"""Tests for the frontier-circulation post-pass v2 (PI 2026-06-03 + Biel).
 
-Mechanism: from each of MY planets, send everything-minus-garrison to the
-euclidean-closest friendly planet whose distance to the opponent centroid
-is STRICTLY SMALLER than the source's. Destination depends only on
-positions -> DAG -> loop-proof.
+v2 mechanism: per-friendly-planet enemy pressure = distance-decayed enemy
+ship mass. Ships flow UP the pressure gradient. Launches fire only when
+destination pressure exceeds source pressure by DELTA_MIN AND destination
+is reachable within ETA_CAP turns.
 
-These unit tests verify the helpers + the post-pass under controlled
-synthetic worlds. End-to-end (replay reproduces failure state) verification
-is done via a fast.py play smoke + a diagnostic probe — Rule 38.
+v1 (centroid-based) failed two ways at n=16: 5/16 wins AND turn-ms blowup
+(p95=1452 > 1000ms cap). v2's short ETA cap caps the in-flight friendly
+fleet population, fixing the wallclock cascade.
+
+End-to-end verification (replay reproduces failure state) is done via a
+fast.py play smoke + a diagnostic probe — Rule 38.
 """
 
 from __future__ import annotations
+
+import math
 
 import pytest
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
 
 
+def _reload_main():
+    import importlib
+    import agents.baseline.main as main_mod
+    importlib.reload(main_mod)
+    return main_mod
+
+
 @pytest.fixture(autouse=True)
 def reset_env(monkeypatch):
     for var in (
         "BASELINE_FRONTIER_CIRCULATION",
+        "BASELINE_CIRCULATION_PRESSURE_HORIZON",
+        "BASELINE_CIRCULATION_PRESSURE_DELTA_MIN",
+        "BASELINE_CIRCULATION_ETA_CAP",
         "BASELINE_CIRCULATION_GARRISON",
         "BASELINE_CIRCULATION_TRIGGER_MIN",
         "BASELINE_CIRCULATION_MIN_SEND",
         "BASELINE_CIRCULATION_MAX",
+        "BASELINE_CIRCULATION_MIN_THREAT_ETA",
         "BASELINE_LAUNCH_RULES",
     ):
         monkeypatch.delenv(var, raising=False)
+    yield
+    # Teardown: previous tests may have reloaded the module while their env
+    # overrides were set; reload again on the way out to leave a clean
+    # module for the next test.
+    _reload_main()
 
 
 def _planet(pid, owner, x, y, ships, production=2, radius=2.0):
@@ -37,10 +58,6 @@ def _planet(pid, owner, x, y, ships, production=2, radius=2.0):
 
 class _StubModel:
     def __init__(self, threatened=None, threat_eta=7):
-        """`threatened` -> set of planet ids returning `threat_eta` from
-        time_to_enemy_threat. Default ETA=7 (below CIRCULATION_MIN_THREAT_ETA
-        default of 15, so the source is skipped). Pass `threat_eta=30` to
-        simulate a distant threat (above the threshold => source qualifies)."""
         self.ledger = {}
         self._threatened = threatened or set()
         self._threat_eta = threat_eta
@@ -55,18 +72,87 @@ class _StubWorld:
         self.obs_raw = {"angular_velocity": 0.0}
 
 
-def test_circulation_skips_frontier_most_planet(monkeypatch):
-    """The planet with the smallest distance-to-opp-centroid has NO forward
-    friendly and therefore must never be a source."""
-    monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
-    from agents.baseline.main import emit_frontier_circulation
+# ---------------------------------------------------------------------------
+# Pressure-field unit tests
+# ---------------------------------------------------------------------------
 
-    # Linear geometry: rear (x=-50), middle (x=0), front (x=20). Opp at x=100.
-    rear = _planet(0, 0, -50.0, 0.0, 100)
-    middle = _planet(1, 0, 0.0, 0.0, 100)
-    front = _planet(2, 0, 20.0, 0.0, 100)
-    opp = _planet(3, 1, 100.0, 0.0, 50)
-    planets = [rear, middle, front, opp]
+
+def test_pressure_zero_with_no_enemies():
+    from agents.baseline.main import _compute_enemy_pressure
+    my = [_planet(0, 0, 0.0, 0.0, 50), _planet(1, 0, 5.0, 0.0, 50)]
+    out = _compute_enemy_pressure(my, [], horizon=18)
+    assert all(v == 0.0 for v in out.values())
+
+
+def test_pressure_concentrates_near_enemies():
+    """A friendly near a strong enemy has much higher pressure than a
+    friendly far from any enemy."""
+    from agents.baseline.main import _compute_enemy_pressure
+
+    near = _planet(0, 0, 10.0, 0.0, 50)   # close to enemy at x=20
+    far = _planet(1, 0, -200.0, 0.0, 50)  # far from enemy
+    enemy = _planet(2, 1, 20.0, 0.0, 100)
+    pressure = _compute_enemy_pressure([near, far], [enemy], horizon=18)
+    assert pressure[0] > 0.0, "near friendly must have positive pressure"
+    assert pressure[0] > pressure[1]
+    # Decay verification: at d=10, reach = fleet_speed(100) * 18 (big), so
+    # pressure(near) ≈ ships * (1 - 10/reach), strictly less than ships.
+    assert pressure[0] < 100.0
+
+
+def test_pressure_drops_outside_reach():
+    """An enemy too far to plausibly reach contributes zero pressure."""
+    from agents.baseline.main import _compute_enemy_pressure
+
+    my = [_planet(0, 0, 0.0, 0.0, 50)]
+    # fleet_speed of 1 ship is 1.0; reach at H=1 is 1.0. Enemy at d=100
+    # is far outside reach -> contribution 0.
+    far_enemy = _planet(1, 1, 100.0, 0.0, 1)
+    out = _compute_enemy_pressure(my, [far_enemy], horizon=1)
+    assert out[0] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# emit_frontier_circulation behavior
+# ---------------------------------------------------------------------------
+
+
+def test_fires_toward_higher_pressure_friendly(monkeypatch):
+    """src -> dst when dst has strictly higher pressure (it's nearer the
+    enemy) AND dst is reachable within ETA_CAP."""
+    monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
+    main_mod = _reload_main()
+
+    rear = _planet(0, 0, 0.0, 0.0, 100)
+    front = _planet(1, 0, 20.0, 0.0, 30)
+    enemy = _planet(2, 1, 30.0, 0.0, 200)
+    planets = [rear, front, enemy]
+    model = _StubModel()
+    world = _StubWorld()
+
+    result = main_mod.emit_frontier_circulation(
+        [], planets, my_id=0, world=world, model=model, omega=0.0,
+    )
+    src_launches = [m for m in result if int(m[0]) == 0]
+    assert len(src_launches) == 1, \
+        f"expected 1 launch from rear, got {len(src_launches)}"
+    _, angle, ships = src_launches[0]
+    # Launch must aim at +x (toward front planet).
+    assert abs(angle) < 0.1
+    assert int(ships) == 100 - 5  # everything minus garrison
+
+
+def test_skips_when_no_higher_pressure_destination(monkeypatch):
+    """Front planet (highest pressure) must NOT fire — no forward friendly
+    has strictly higher pressure."""
+    monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
+    main_mod = _reload_main()
+    emit_frontier_circulation = main_mod.emit_frontier_circulation
+
+    rear = _planet(0, 0, 0.0, 0.0, 100)
+    front = _planet(1, 0, 20.0, 0.0, 100)
+    enemy = _planet(2, 1, 30.0, 0.0, 200)
+    planets = [rear, front, enemy]
     model = _StubModel()
     world = _StubWorld()
 
@@ -74,88 +160,68 @@ def test_circulation_skips_frontier_most_planet(monkeypatch):
         [], planets, my_id=0, world=world, model=model, omega=0.0,
     )
     src_ids = {int(m[0]) for m in result}
-    assert int(front.id) not in src_ids, \
-        "front planet (smallest frontier-dist) must never be a source"
-    # rear and middle should both fire.
-    assert int(rear.id) in src_ids and int(middle.id) in src_ids
+    assert int(front.id) not in src_ids
 
 
-def test_circulation_picks_euclidean_closest_forward_friendly(monkeypatch):
+def test_skips_when_destination_outside_eta_cap(monkeypatch):
+    """A higher-pressure friendly that is too FAR (eta > ETA_CAP) must
+    not be picked as destination. This is the wallclock-safety mechanism."""
     monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
-    from agents.baseline.main import emit_frontier_circulation
+    monkeypatch.setenv("BASELINE_CIRCULATION_ETA_CAP", "5")
+    import importlib
+    import agents.baseline.main as main_mod
+    importlib.reload(main_mod)
 
-    # Source at (0,0). Opp centroid at (100,0). Two forward friendlies:
-    # near_forward at (20,0) (close), far_forward at (80,0) (farther).
-    # Both are strictly closer to centroid than source. Mechanism must
-    # pick near_forward (smaller euclidean distance from source).
-    src = _planet(0, 0, 0.0, 0.0, 100)
-    near_forward = _planet(1, 0, 20.0, 0.0, 30)
-    far_forward = _planet(2, 0, 80.0, 5.0, 30)
-    opp = _planet(3, 1, 100.0, 0.0, 50)
-    planets = [src, near_forward, far_forward, opp]
-    model = _StubModel()
+    rear = _planet(0, 0, 0.0, 0.0, 100)
+    # Forward friendly is 500 units away — ETA easily > 5.
+    far_front = _planet(1, 0, 500.0, 0.0, 30)
+    # Enemy near the far friendly: gives the far friendly high pressure.
+    enemy = _planet(2, 1, 510.0, 0.0, 200)
+    planets = [rear, far_front, enemy]
+    model = main_mod_StubModel = _StubModel()
     world = _StubWorld()
 
-    result = emit_frontier_circulation(
+    result = main_mod.emit_frontier_circulation(
         [], planets, my_id=0, world=world, model=model, omega=0.0,
     )
     src_launches = [m for m in result if int(m[0]) == 0]
-    assert len(src_launches) == 1
-    _, angle, ships = src_launches[0]
-    # Aim must be toward near_forward (angle ~0, i.e. +x direction).
-    import math
-    assert abs(angle) < 0.1, f"angle {angle} should aim at near_forward (+x)"
-    assert int(ships) == 100 - 5  # everything minus garrison
+    assert src_launches == [], \
+        "ETA-out-of-range destination must NOT fire (wallclock guard)"
 
 
-def test_circulation_dag_is_monotone_in_frontier_dist(monkeypatch):
-    """For every emitted edge (src, dst), frontier_dist(dst) must be
-    STRICTLY LESS than frontier_dist(src). This is the loop-proof invariant."""
+def test_pressure_delta_gate_blocks_marginal_trips(monkeypatch):
+    """If dst_pressure - src_pressure < DELTA_MIN the launch is blocked.
+    Set DELTA_MIN very high so even genuine deltas don't clear."""
     monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
-    from agents.baseline.main import emit_frontier_circulation
+    monkeypatch.setenv("BASELINE_CIRCULATION_PRESSURE_DELTA_MIN", "1e9")
+    import importlib
+    import agents.baseline.main as main_mod
+    importlib.reload(main_mod)
 
-    import math
-
-    # 5 friendly planets in a diagonal line, opp centroid far away.
-    my_planets = [
-        _planet(i, 0, float(i * 10), 0.0, 50, production=2) for i in range(5)
-    ]
-    # Opp at (200, 0) → centroid (200, 0).
-    opp = _planet(99, 1, 200.0, 0.0, 50)
-    planets = my_planets + [opp]
+    rear = _planet(0, 0, 0.0, 0.0, 100)
+    front = _planet(1, 0, 20.0, 0.0, 30)
+    enemy = _planet(2, 1, 30.0, 0.0, 200)
+    planets = [rear, front, enemy]
     model = _StubModel()
     world = _StubWorld()
 
-    result = emit_frontier_circulation(
+    result = main_mod.emit_frontier_circulation(
         [], planets, my_id=0, world=world, model=model, omega=0.0,
     )
-
-    by_id = {int(p.id): p for p in my_planets}
-    def fd(p): return math.hypot(p.x - 200.0, p.y - 0.0)
-
-    for mv in result:
-        src_id, angle, ships = int(mv[0]), float(mv[1]), int(mv[2])
-        src = by_id[src_id]
-        # Reconstruct destination from emitted angle: walk along the angle
-        # and find which forward friendly it aims at. Since geometry is
-        # linear and destinations are friendly planets at integer x, the
-        # nearest forward friendly along the +x ray is the destination.
-        # Simpler: just verify that the src has at least one forward friendly
-        # whose frontier_dist is strictly less.
-        forward = [q for q in my_planets if fd(q) < fd(src) - 0.5]
-        assert forward, f"src {src_id} should have ≥1 forward friendly"
+    assert result == [], "huge DELTA_MIN must block all launches"
 
 
-def test_circulation_skips_imminent_threat_source(monkeypatch):
-    """Imminent threat (ETA below CIRCULATION_MIN_THREAT_ETA) blocks drain."""
+def test_skips_imminent_threat_source(monkeypatch):
+    """Source-safety: planet whose threat ETA is < MIN_THREAT_ETA must
+    not be drained, preserving local defence."""
     monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
-    from agents.baseline.main import emit_frontier_circulation
+    main_mod = _reload_main()
+    emit_frontier_circulation = main_mod.emit_frontier_circulation
 
-    rear = _planet(0, 0, -50.0, 0.0, 100)
-    front = _planet(1, 0, 20.0, 0.0, 100)
-    opp = _planet(2, 1, 100.0, 0.0, 50)
-    planets = [rear, front, opp]
-    # Rear has threat ETA=7 (default), below MIN_THREAT_ETA=15 -> blocked.
+    rear = _planet(0, 0, 0.0, 0.0, 100)
+    front = _planet(1, 0, 20.0, 0.0, 30)
+    enemy = _planet(2, 1, 30.0, 0.0, 200)
+    planets = [rear, front, enemy]
     model = _StubModel(threatened={0}, threat_eta=7)
     world = _StubWorld()
 
@@ -166,42 +232,38 @@ def test_circulation_skips_imminent_threat_source(monkeypatch):
     assert 0 not in src_ids
 
 
-def test_circulation_fires_when_threat_is_distant(monkeypatch):
-    """Distant threat (ETA above MIN_THREAT_ETA) does NOT block drain.
-    Verifies the gate is looser than `is None`: real games have threats
-    that exist in principle but are far in time. This is the fix for the
-    too-strict-gate bug observed in the first probe."""
+def test_fires_when_threat_is_distant(monkeypatch):
     monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
-    from agents.baseline.main import emit_frontier_circulation
+    main_mod = _reload_main()
+    emit_frontier_circulation = main_mod.emit_frontier_circulation
 
-    rear = _planet(0, 0, -50.0, 0.0, 100)
-    front = _planet(1, 0, 20.0, 0.0, 100)
-    opp = _planet(2, 1, 100.0, 0.0, 50)
-    planets = [rear, front, opp]
-    # Rear has threat ETA=30, above MIN_THREAT_ETA=15 -> qualifies.
-    model = _StubModel(threatened={0}, threat_eta=30)
+    rear = _planet(0, 0, 0.0, 0.0, 100)
+    front = _planet(1, 0, 20.0, 0.0, 30)
+    enemy = _planet(2, 1, 30.0, 0.0, 200)
+    planets = [rear, front, enemy]
+    model = _StubModel(threatened={0}, threat_eta=30)  # 30 >= 15 default
     world = _StubWorld()
 
     result = emit_frontier_circulation(
         [], planets, my_id=0, world=world, model=model, omega=0.0,
     )
     src_ids = {int(m[0]) for m in result}
-    assert 0 in src_ids, \
-        "rear with distant threat ETA=30 must qualify (gate >=15)"
+    assert 0 in src_ids
 
 
-def test_circulation_skips_source_already_in_moves(monkeypatch):
+def test_skips_source_already_in_moves(monkeypatch):
     monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
-    from agents.baseline.main import emit_frontier_circulation
+    main_mod = _reload_main()
+    emit_frontier_circulation = main_mod.emit_frontier_circulation
 
-    rear = _planet(0, 0, -50.0, 0.0, 100)
-    front = _planet(1, 0, 20.0, 0.0, 100)
-    opp = _planet(2, 1, 100.0, 0.0, 50)
-    planets = [rear, front, opp]
+    rear = _planet(0, 0, 0.0, 0.0, 100)
+    front = _planet(1, 0, 20.0, 0.0, 30)
+    enemy = _planet(2, 1, 30.0, 0.0, 200)
+    planets = [rear, front, enemy]
     model = _StubModel()
     world = _StubWorld()
 
-    pre_moves = [[0, 0.0, 50]]  # chooser already fired src 0
+    pre_moves = [[0, 0.0, 50]]
     result = emit_frontier_circulation(
         pre_moves, planets, my_id=0, world=world, model=model, omega=0.0,
     )
@@ -209,16 +271,37 @@ def test_circulation_skips_source_already_in_moves(monkeypatch):
     assert all(int(m[0]) != 0 for m in extras)
 
 
-def test_circulation_is_noop_when_disabled():
-    """Default-OFF byte-parity: with env unset, the call passes through."""
+def test_respects_max_per_turn(monkeypatch):
+    monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
+    monkeypatch.setenv("BASELINE_CIRCULATION_MAX", "2")
+    import importlib
+    import agents.baseline.main as main_mod
+    importlib.reload(main_mod)
+    emit_frontier_circulation = main_mod.emit_frontier_circulation
+
+    # 5 rear planets in a column, 1 forward friendly near the enemy.
+    rears = [_planet(i, 0, 0.0, float(i * 2), 50) for i in range(5)]
+    front = _planet(99, 0, 20.0, 0.0, 30)
+    enemy = _planet(100, 1, 30.0, 0.0, 200)
+    planets = rears + [front, enemy]
+    model = _StubModel()
+    world = _StubWorld()
+
+    result = emit_frontier_circulation(
+        [], planets, my_id=0, world=world, model=model, omega=0.0,
+    )
+    assert len(result) <= 2
+
+
+def test_noop_when_disabled():
     import importlib
     import agents.baseline.main as main_mod
     importlib.reload(main_mod)
 
-    rear = _planet(0, 0, -50.0, 0.0, 100)
-    front = _planet(1, 0, 20.0, 0.0, 100)
-    opp = _planet(2, 1, 100.0, 0.0, 50)
-    planets = [rear, front, opp]
+    rear = _planet(0, 0, 0.0, 0.0, 100)
+    front = _planet(1, 0, 20.0, 0.0, 30)
+    enemy = _planet(2, 1, 30.0, 0.0, 200)
+    planets = [rear, front, enemy]
     model = _StubModel()
     world = _StubWorld()
 
@@ -228,42 +311,19 @@ def test_circulation_is_noop_when_disabled():
     assert result == []
 
 
-def test_circulation_respects_max_per_turn(monkeypatch):
+def test_noop_with_no_opponents(monkeypatch):
     monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
-    monkeypatch.setenv("BASELINE_CIRCULATION_MAX", "2")
-    import importlib
-    import agents.baseline.main as main_mod
-    importlib.reload(main_mod)
+    main_mod = _reload_main()
     emit_frontier_circulation = main_mod.emit_frontier_circulation
 
-    # 5 rear planets all able to fire toward front
-    my_planets = [
-        _planet(i, 0, -50.0 + float(i), 0.0, 50, production=2) for i in range(5)
-    ]
-    front = _planet(99, 0, 20.0, 0.0, 30)
-    opp = _planet(100, 1, 100.0, 0.0, 50)
-    planets = my_planets + [front, opp]
+    rear = _planet(0, 0, 0.0, 0.0, 100)
+    front = _planet(1, 0, 20.0, 0.0, 30)
+    neutral = _planet(2, -1, 30.0, 0.0, 200)
+    planets = [rear, front, neutral]
     model = _StubModel()
     world = _StubWorld()
 
     result = emit_frontier_circulation(
         [], planets, my_id=0, world=world, model=model, omega=0.0,
     )
-    assert len(result) <= 2, f"MAX=2 must cap launches, got {len(result)}"
-
-
-def test_circulation_noop_with_no_opponents(monkeypatch):
-    monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
-    from agents.baseline.main import emit_frontier_circulation
-
-    rear = _planet(0, 0, -50.0, 0.0, 100)
-    front = _planet(1, 0, 20.0, 0.0, 100)
-    neutral = _planet(2, -1, 100.0, 0.0, 50)
-    planets = [rear, front, neutral]  # no opponents at all
-    model = _StubModel()
-    world = _StubWorld()
-
-    result = emit_frontier_circulation(
-        [], planets, my_id=0, world=world, model=model, omega=0.0,
-    )
-    assert result == [], "without opponents the centroid is undefined; noop"
+    assert result == []

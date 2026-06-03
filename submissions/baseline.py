@@ -15914,21 +15914,24 @@ IDLE_STOCKPILE_MAX_PER_TURN = int(os.environ.get("BASELINE_IDLE_STOCKPILE_MAX", 
 # known ledger (multi-wave fleets that incoming_enemy_eta would have missed).
 IDLE_STOCKPILE_OWNER_LOOKAHEAD = int(os.environ.get("BASELINE_IDLE_STOCKPILE_OWNER_LOOKAHEAD", "20"))
 
-# Frontier-circulation post-pass (PI 2026-06-03). Geometric rear-to-front
-# flow: from each non-frontier-most planet, send excess ships to the
-# euclidean-closest friendly planet that is STRICTLY CLOSER to the opponent
-# centroid. Pure-geometry destination = stable scalar function of positions
-# = DAG = loop-proof by construction. Default OFF.
+# Frontier-circulation post-pass v2 (PI 2026-06-03 + Biel pressure gradient).
+# Per-friendly-planet enemy pressure = sum of distance-decayed enemy mass:
+#   pressure(p) = sum over enemy s of: ships(s) * max(0, 1 - dist(s, p)
+#                                                       / (fleet_speed(s) * H))
+# Ships flow UP the gradient (from low-pressure rear -> higher-pressure front).
+# Two key gates over v1 (centroid):
+#   - Destination pressure must exceed source by DELTA_MIN (Biel's 0.25-style).
+#   - Destination must be reachable within ETA_CAP turns (kills wallclock
+#     cascade caused by long-flight in-flight friendly fleets in v1).
+# Default OFF.
 FRONTIER_CIRCULATION_ENABLED = os.environ.get("BASELINE_FRONTIER_CIRCULATION", "0") == "1"
+CIRCULATION_PRESSURE_HORIZON = int(os.environ.get("BASELINE_CIRCULATION_PRESSURE_HORIZON", "18"))
+CIRCULATION_PRESSURE_DELTA_MIN = float(os.environ.get("BASELINE_CIRCULATION_PRESSURE_DELTA_MIN", "1.0"))
+CIRCULATION_ETA_CAP = int(os.environ.get("BASELINE_CIRCULATION_ETA_CAP", "10"))
 CIRCULATION_GARRISON = int(os.environ.get("BASELINE_CIRCULATION_GARRISON", "5"))
 CIRCULATION_TRIGGER_MIN = int(os.environ.get("BASELINE_CIRCULATION_TRIGGER_MIN", "15"))
 CIRCULATION_MIN_SEND = int(os.environ.get("BASELINE_CIRCULATION_MIN_SEND", "10"))
-CIRCULATION_MAX_PER_TURN = int(os.environ.get("BASELINE_CIRCULATION_MAX", "6"))
-# Safety gate: the source's earliest plausible enemy-threat ETA must be
-# >= this value for it to qualify as "rear" / "safe to drain". Looser than
-# idle_stockpile's `is None` gate because in-flight ships still reach the
-# friendly destination even if the source flips — only the source planet
-# is briefly at risk, the ships in transit are NOT lost.
+CIRCULATION_MAX_PER_TURN = int(os.environ.get("BASELINE_CIRCULATION_MAX", "1"))
 CIRCULATION_MIN_THREAT_ETA = int(os.environ.get("BASELINE_CIRCULATION_MIN_THREAT_ETA", "15"))
 
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
@@ -16667,22 +16670,54 @@ def drain_idle_stockpile_to_opp(moves, planets, my_id: int, world, model,
     return list(moves) + extras
 
 
+def _compute_enemy_pressure(my_planets, opp_planets, horizon: int) -> dict:
+    """Per-friendly-planet enemy pressure (Biel "Producer" scalar field).
+
+    pressure(p) = sum over enemy s of:
+                    ships(s) * max(0, 1 - dist(s, p) / (fleet_speed(s) * H))
+
+    Returns a dict keyed by my-planet id -> float pressure value.
+    Cost: O(|my| * |opp|) trivial-math ops per call.
+    """
+    out = {int(p.id): 0.0 for p in my_planets}
+    H = float(horizon)
+    if H <= 0.0:
+        return out
+    for s in opp_planets:
+        s_ships = float(s.ships)
+        if s_ships <= 0.0:
+            continue
+        reach = float(fleet_speed(s_ships)) * H
+        if reach <= 0.0:
+            continue
+        sx, sy = float(s.x), float(s.y)
+        for t in my_planets:
+            d = math.hypot(float(t.x) - sx, float(t.y) - sy)
+            if d >= reach:
+                continue
+            out[int(t.id)] += s_ships * (1.0 - d / reach)
+    return out
+
+
 def emit_frontier_circulation(moves, planets, my_id: int, world, model,
                               omega: float) -> list:
-    """Geometric rear-to-front ship flow (PI 2026-06-03).
+    """Pressure-gradient rear-to-front ship flow (PI 2026-06-03, v2).
 
-    For each of MY planets that the chooser didn't already use this turn,
-    pick the friendly destination that is STRICTLY CLOSER to the opponent
-    centroid AND euclidean-closest to the source. Send everything except a
-    small garrison.
+    Borrows Biel's "Producer" pressure-field idea: each friendly planet
+    gets a scalar pressure = distance-decayed enemy ship mass that can
+    plausibly reach it within HORIZON turns. Ships flow UP the gradient:
+    a launch fires only when destination pressure exceeds source pressure
+    by DELTA_MIN AND the destination is reachable within ETA_CAP turns.
 
-    The destination depends only on PLANET POSITIONS, never on ship counts,
-    so the resulting `src -> dst` edges form a DAG ordered by
-    `distance-to-opp-centroid`. Loops are mathematically impossible.
+    The short ETA cap is the wallclock-safety mechanism: v1 generated
+    long-flight in-flight friendly fleets that ballooned the world model's
+    per-fleet hot paths (ledger scans, time_to_enemy_threat); v2 keeps
+    every regroup launch short-range so the in-flight population stays
+    bounded.
 
-    Composes cleanly with `drain_idle_stockpile_to_opp` (runs post-enforce):
-    circulation pushes ships forward; if the front-most planet still piles
-    up beyond stockpile threshold, the spend-down lever fires it at opp.
+    Composes cleanly with `drain_idle_stockpile_to_opp` (post-enforce):
+    circulation pushes ships forward; if a front planet still piles up
+    beyond the stockpile threshold, the spend-down lever fires it at opp.
     """
     if not FRONTIER_CIRCULATION_ENABLED:
         return moves
@@ -16692,11 +16727,9 @@ def emit_frontier_circulation(moves, planets, my_id: int, world, model,
     if len(my_planets) < 2 or not opp_planets:
         return moves
 
-    cx = sum(float(p.x) for p in opp_planets) / len(opp_planets)
-    cy = sum(float(p.y) for p in opp_planets) / len(opp_planets)
-
-    def frontier_dist(p):
-        return math.hypot(float(p.x) - cx, float(p.y) - cy)
+    pressure = _compute_enemy_pressure(
+        my_planets, opp_planets, CIRCULATION_PRESSURE_HORIZON,
+    )
 
     used_srcs = set()
     for m in moves:
@@ -16717,21 +16750,46 @@ def emit_frontier_circulation(moves, planets, my_id: int, world, model,
         threat_eta = model.time_to_enemy_threat(int(src.id), my_id, world)
         if threat_eta is not None and int(threat_eta) < CIRCULATION_MIN_THREAT_ETA:
             continue
-        src_fd = frontier_dist(src)
-        forward = [q for q in my_planets if frontier_dist(q) < src_fd - 0.5]
-        if not forward:
-            continue
-        dst = min(
-            forward,
-            key=lambda q: math.hypot(
-                float(q.x) - float(src.x), float(q.y) - float(src.y),
-            ),
-        )
         send = int(src.ships) - CIRCULATION_GARRISON
         if send < CIRCULATION_MIN_SEND:
             continue
+        src_p = pressure[int(src.id)]
+
+        # Cheap reach proxy: straight-line distance / fleet_speed(send).
+        # Skips full aim_and_eta (orbital prediction math) for dst candidates
+        # that obviously cannot reach in time. Cuts post-pass turn-ms ~3x.
+        send_speed = float(fleet_speed(float(send)))
+        reach = send_speed * float(CIRCULATION_ETA_CAP)
+
+        best = None
+        best_score = None
+        for dst in my_planets:
+            if int(dst.id) == int(src.id):
+                continue
+            dst_p = pressure[int(dst.id)]
+            delta = dst_p - src_p
+            if delta < CIRCULATION_PRESSURE_DELTA_MIN:
+                continue
+            d = math.hypot(
+                float(dst.x) - float(src.x),
+                float(dst.y) - float(src.y),
+            )
+            if d > reach:
+                continue
+            # Cheap eta proxy is sufficient since both planets co-rotate;
+            # exact orbital eta varies <~1 turn from this estimate for the
+            # short flights we care about.
+            cheap_eta = int(math.ceil(d / max(send_speed, 1e-6)))
+            score = (delta, -cheap_eta)
+            if best_score is None or score > best_score:
+                best = dst
+                best_score = score
+        if best is None:
+            continue
+
         angle = math.atan2(
-            float(dst.y) - float(src.y), float(dst.x) - float(src.x),
+            float(best.y) - float(src.y),
+            float(best.x) - float(src.x),
         )
         extras.append([int(src.id), float(angle), int(send)])
         used_srcs.add(int(src.id))
