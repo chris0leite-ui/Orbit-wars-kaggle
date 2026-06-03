@@ -146,6 +146,17 @@ IDLE_STOCKPILE_MAX_PER_TURN = int(os.environ.get("BASELINE_IDLE_STOCKPILE_MAX", 
 # known ledger (multi-wave fleets that incoming_enemy_eta would have missed).
 IDLE_STOCKPILE_OWNER_LOOKAHEAD = int(os.environ.get("BASELINE_IDLE_STOCKPILE_OWNER_LOOKAHEAD", "20"))
 
+# Frontier-circulation post-pass (PI 2026-06-03). Geometric rear-to-front
+# flow: from each non-frontier-most planet, send excess ships to the
+# euclidean-closest friendly planet that is STRICTLY CLOSER to the opponent
+# centroid. Pure-geometry destination = stable scalar function of positions
+# = DAG = loop-proof by construction. Default OFF.
+FRONTIER_CIRCULATION_ENABLED = os.environ.get("BASELINE_FRONTIER_CIRCULATION", "0") == "1"
+CIRCULATION_GARRISON = int(os.environ.get("BASELINE_CIRCULATION_GARRISON", "5"))
+CIRCULATION_TRIGGER_MIN = int(os.environ.get("BASELINE_CIRCULATION_TRIGGER_MIN", "15"))
+CIRCULATION_MIN_SEND = int(os.environ.get("BASELINE_CIRCULATION_MIN_SEND", "10"))
+CIRCULATION_MAX_PER_TURN = int(os.environ.get("BASELINE_CIRCULATION_MAX", "6"))
+
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
 # chooser's wait_N>0 winners are remembered across turns instead of
 # being silently dropped. Each entry ticks down each turn; when
@@ -879,6 +890,77 @@ def drain_idle_stockpile_to_opp(moves, planets, my_id: int, world, model,
     return list(moves) + extras
 
 
+def emit_frontier_circulation(moves, planets, my_id: int, world, model,
+                              omega: float) -> list:
+    """Geometric rear-to-front ship flow (PI 2026-06-03).
+
+    For each of MY planets that the chooser didn't already use this turn,
+    pick the friendly destination that is STRICTLY CLOSER to the opponent
+    centroid AND euclidean-closest to the source. Send everything except a
+    small garrison.
+
+    The destination depends only on PLANET POSITIONS, never on ship counts,
+    so the resulting `src -> dst` edges form a DAG ordered by
+    `distance-to-opp-centroid`. Loops are mathematically impossible.
+
+    Composes cleanly with `drain_idle_stockpile_to_opp` (runs post-enforce):
+    circulation pushes ships forward; if the front-most planet still piles
+    up beyond stockpile threshold, the spend-down lever fires it at opp.
+    """
+    if not FRONTIER_CIRCULATION_ENABLED:
+        return moves
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    opp_planets = [p for p in planets
+                   if int(p.owner) != my_id and int(p.owner) != -1]
+    if len(my_planets) < 2 or not opp_planets:
+        return moves
+
+    cx = sum(float(p.x) for p in opp_planets) / len(opp_planets)
+    cy = sum(float(p.y) for p in opp_planets) / len(opp_planets)
+
+    def frontier_dist(p):
+        return math.hypot(float(p.x) - cx, float(p.y) - cy)
+
+    used_srcs = set()
+    for m in moves:
+        try:
+            used_srcs.add(int(m[0]))
+        except (TypeError, IndexError):
+            pass
+
+    extras = []
+    fired = 0
+    for src in my_planets:
+        if fired >= CIRCULATION_MAX_PER_TURN:
+            break
+        if int(src.id) in used_srcs:
+            continue
+        if int(src.ships) < CIRCULATION_TRIGGER_MIN:
+            continue
+        if model.time_to_enemy_threat(int(src.id), my_id, world) is not None:
+            continue
+        src_fd = frontier_dist(src)
+        forward = [q for q in my_planets if frontier_dist(q) < src_fd - 0.5]
+        if not forward:
+            continue
+        dst = min(
+            forward,
+            key=lambda q: math.hypot(
+                float(q.x) - float(src.x), float(q.y) - float(src.y),
+            ),
+        )
+        send = int(src.ships) - CIRCULATION_GARRISON
+        if send < CIRCULATION_MIN_SEND:
+            continue
+        angle = math.atan2(
+            float(dst.y) - float(src.y), float(dst.x) - float(src.x),
+        )
+        extras.append([int(src.id), float(angle), int(send)])
+        used_srcs.add(int(src.id))
+        fired += 1
+    return list(moves) + extras
+
+
 def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
     """One-shot decisive strike at high-value enemy planets from idle reserves.
 
@@ -1161,6 +1243,9 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
+        moves = emit_frontier_circulation(
+            moves, planets, me, world, model, omega,
+        )
         moves = emit_sniper_strikes(moves, planets, me, world, model)
         moves = enforce_launch_rules(moves, planets, me, world, model)
         return drain_idle_stockpile_to_opp(
@@ -1188,6 +1273,9 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
+        moves = emit_frontier_circulation(
+            moves, planets, me, world, model, omega,
+        )
         moves = emit_sniper_strikes(moves, planets, me, world, model)
         moves = enforce_launch_rules(moves, planets, me, world, model)
         return drain_idle_stockpile_to_opp(
@@ -1240,6 +1328,9 @@ def agent(obs, configuration=None):
     moves = drain_idle_rear(moves, planets, me, world, model)
     moves = drain_stagnant_rear(moves, planets, me, world, model)
     moves = drain_combat_stack(moves, planets, me, world, model)
+    moves = emit_frontier_circulation(
+        moves, planets, me, world, model, omega,
+    )
     moves = emit_sniper_strikes(moves, planets, me, world, model)
     moves = enforce_launch_rules(moves, planets, me, world, model)
     return drain_idle_stockpile_to_opp(
