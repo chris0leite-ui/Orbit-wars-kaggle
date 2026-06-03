@@ -116,6 +116,46 @@ gate, proposer prune, sync cap) — coordinate before touching the K horizon.
 `generate_sync_coalitions` in `chooser_trajectory.py`. Coordinate before
 touching the sync-coalition generator or the chooser dispatch in `main.py`.
 
+> ### ⏪ REVERSAL — 2026-06-03 (`claude/kaggle-submission-strategy-JzIAr`): the "teamwork doesn't arise / close the axis" closure was a WEAK-OPPONENT CONFOUND (Rule 41). REOPENED + VALIDATED.
+>
+> The 2026-06-02 closure measured `generate_sync_coalitions` yielding **0
+> candidates every turn** and concluded the teamwork structure is empirically
+> absent. That measurement was **only ever run against v7_0 / v7_minimax** —
+> opponents the champion crushes, so it is source-saturated (every planet has
+> enough ships to solo-take its targets ⇒ the "two sources needed" regime
+> never arises). That is a property of a stomp, not of the game.
+>
+> **Re-tested the generator directly on the real boards of champion-vs-strong-
+> opponent games** (`scripts/refine_seam_contested.py`): vs a champion-strength
+> opponent the generator yields **~100+ two-source coalitions per game**
+> (midgame 107 over 780 board-steps across 6 games, up to 8/turn) — driven by
+> the **resource ratio** (coalitions appear when my planets are
+> contested/out-resourced, i.e. my sources ≈ or < defended targets), exactly
+> the regime that decides games. Vs v7_0: still 0 (reproduces the old null).
+>
+> **And exploiting them WINS.** The augment-not-replace refiner
+> (`BASELINE_CHOOSER=refine`) was A/B'd on the REAL champion config
+> (adaptive-K + kinematic-table ON, the live μ~1170 setup) via process-isolated
+> `clean_ab.py`, both choosers on the same 16 seeds (`scripts/_step3b_adaptivek_winrate.sh`):
+> - **Parity** (trajectory vs adaptive-K champion): **16/32 = 50.0%**, Wilson [0.336, 0.664] — clean anchor.
+> - **Refine** (teamwork vs same champion): **25/32 = 78.1%**, Wilson **[0.612, 0.890]** — clears Rule 45 (n=32, Wlo≥0.55) for the h2h.
+> - **Paired (same 16 seeds):** refine GAINED 13 games trajectory lost, BROKE 4 trajectory won, 15 unchanged → **net +9**. Regression tail = 4 long contested seeds (2P1, 9P0, 13P0, 14P0) where it adds a coalition that backfires; worth diagnosing (scoring side, not generator).
+>
+> **NOTE — earlier wrong reads, corrected:** (i) the first refine A/B ran with adaptive-K OFF (fixed horizon 10, non-champion base) — PI caught it; the re-base on adaptive-K is the 78% above. (ii) The kinematic table was ON the whole time on BOTH sides (`main.py:896` defaults `BASELINE_KINEMATIC_TABLE="1"`); the 78% is a fair table-ON-vs-table-ON result.
+>
+> **Status:** submission bundle BUILT — `submissions/champ_refine_adaptivek.py`
+> (`scripts/_build_refine_adaptivek_bundle.sh`; refine + adaptive-K + table baked).
+> Rule 46c GREEN (322-step play smoke, no crash). Rule 2 timing GREEN
+> (`fast.py bench` 880 turns: p95 633 / max 777ms, 0 over 1000ms). **Rule 43
+> multi-opponent panel IN-FLIGHT.** **NOT pushed** — awaits panel clear + PI
+> single-shot go (Rule 1); Rule 42: current rolling pair is computeByShips
+> (53332500) + adaptiveK (53324164, μ~1170) — a 3rd push evicts adaptiveK;
+> candidate predicted μ ≥ 1170 (beats it 78%), so eviction is defensible but the
+> panel must clear first.
+>
+> **Supersedes the State-cell "Strategic conclusion (Rule 37 — close the axis)"
+> below.** The axis is NOT closed; the refiner is the active submission candidate.
+
 | State | Evidence | Next |
 |---|---|---|
 | **Rungs 1–4 BUILT + committed, default OFF** (`BASELINE_CHOOSER=greedy`, `agents/baseline/chooser_greedy.py`). Conditional sequential greedy + CELF + coalition atoms + shallow/deep horizon, on the deterministic `fast_sim` oracle (exact marginal gains). Champion (trajectory) byte-identical. **TUNING NULL/NEGATIVE (2026-06-02 PM):** the under-commit does NOT close with the obvious levers. vs v7_0 n=16: greedy baseline 9/16; **shallow_h=25 = 9/16 (flat null — horizon is not the lever)**; **capture-credit (EXPAND_CREDIT=1.0 mirrored into the joint scorer) = 6/16 WORSE + timing blowup (max turn 1983ms > cap)**. Champion (independent solo-delta scoring + per-turn locks) = 16/16. **Interpretation:** the conditional-greedy *replacement* of independent scoring is worse at our band — its marginal gains are passive-self-pessimistic, so it under-commits good independent launches; flat capture credit over-corrects (over-fires unsupportable fleets that get recaptured, and slows the turn past budget). The coordination *waste* seam the greedy fixes appears small here; the cost of conditional pruning exceeds its benefit. Echoes the divergence-measurement we skipped. | Diagnosis: greedy launches 55 vs champion 84 (seed0); credit raises it to 93 but winrate falls. shallow_h sweep + credit A/Bs above. 7 oracle tests green; capture-credit default-OFF byte-identical (joint_sync/bundle green). Bench was clean at default (max 467ms); credit-on blows it (1983ms). | **2026-06-02 PM (cont.) — AUGMENT-NOT-REPLACE refiner BUILT + pushed, default OFF (`BASELINE_CHOOSER=refine`, `agents/baseline/chooser_refine.py`).** Runs the champion, captures its bundle via the new opt-in `choose_trajectory(out_chosen=...)` (None ⇒ byte-identical), then uses the deterministic oracle to ADD only coalition atoms whose exact marginal joint value > 0 and that don't conflict with the champion's locks (never removes a champion launch ⇒ can't reintroduce the under-commit). Optional exact drop-one waste pass (default OFF). 3 oracle tests green (degrade-to-champion / teamwork-append / drop-waste); greedy + joint_sync green. **Bench PASS** (p50 263 / p95 706 / max 897ms, zero ≥1000). **DECISIVE FINDING: the refiner is COMPLETELY INERT vs v7_0** — 0 coalitions added AND 0 even survive the lock-filter to be scored, across seeds 2 & 3 (clean stderr capture). Cause: vs an opponent the champion crushes 16/16 it is SOURCE-SATURATED (every source committed to a positive-delta solo) ⇒ no idle sources for teamwork ⇒ every generated coalition conflicts with a champion lock. So refine ≡ champion vs v7_0; v7_0 cannot validate it. The teamwork-add can only fire in CLOSE games where the champion leaves sources idle. Arguably a safety property (only activates when not winning, only adds oracle-positive captures), but it means **no local testbed validates it** — v7_0 is too weak, and the env-var design blocks a refine-vs-champion mirror in one process. Also: refine games are slow to A/B at scale (n=16 vs v7_0 timed out at 560s). | choose_refine + out_chosen param + main dispatch/sync-ledger gate. BASELINE_REFINE_DEBUG instrumentation. Commits 3dba01a→01e35cd. | **ROOT CAUSE FOUND — the teamwork structure doesn't arise.** Instrumented raw-coalition count (pre-filter) vs BOTH v7_0 and v7_minimax: `generate_sync_coalitions` yields **0** candidates on every turn. Not "generates but conflicts" — it generates nothing. The generator (chooser_trajectory.py:1124 solo-skip gate) only forms a 2-source coalition for a target NEITHER nearby source can solo-capture but both combined can; in real games my planets accumulate enough ships to solo-take their targets, so that regime is empirically near-absent. **Strategic conclusion (Rule 37 — close the joint-coordination axis):** greedy-replace HURTS (9/16) and the teamwork-add is INERT (no opportunities). The coordination seam (waste + teamwork) is empirically SMALL ⇒ the champion's independent solo-delta scoring + locks is near-optimal vs these opponents; gains lie on OTHER axes, not coordination. Refiner + oracle + out_chosen kept default-OFF as latent capability (free; fires only if the opponent field ever shifts toward heavily-defended-target geometries). |
