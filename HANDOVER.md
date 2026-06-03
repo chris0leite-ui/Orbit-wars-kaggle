@@ -1,74 +1,106 @@
 # HANDOVER.md — next-session brief
 
-_Refreshed 2026-06-02. Read this first (Rule 15). Also read `state/MULTI_BRANCH.md`
-(live rolling pair / track registry) per Rule 44._
+_Refreshed 2026-06-03 (`claude/kaggle-submission-strategy-JzIAr`). Read this first
+(Rule 15). Also read `state/MULTI_BRANCH.md` (live rolling pair / track registry +
+the joint-coordination REVERSAL block) per Rule 44._
 
 ## This session's outcome (the unlock)
 
-The **kinematics table** (per-turn planet-position cache → lets the time-adaptive
-search score more candidates inside the 1 s/turn budget → better moves) was proven
-to be a real ~20 μ lever and **re-enabled, de-singletonized** (`world._kt`,
-per-turn/per-seat — no more shared-state A/B corruption). It had been removed
-2026-05-30; the live peak μ=1183.7 was from the brief window it was active. It is
-bit-identical to the inline path (`scripts/kt_position_parity_check.py`: 0/32
-mismatches) and prevents real timeouts.
+**Reversed the "teamwork doesn't matter" closure and shipped the first agent that
+uses it.** The 2026-06-02 session closed the joint-coordination axis (Rule 37) on
+"the sync-coalition generator produces nothing." That was a **weak-opponent
+confound** (Rule 41): it was only ever measured vs v7_0 / v7_minimax — opponents the
+champion crushes, so every planet is source-saturated and the "two planets needed to
+take one target" regime never arises. (This was the prior handover's NEXT-STEP #1,
+"team-up attacks" — now validated, not null.)
 
-Also this session:
-- **Submitted** `baseline_state_driven_k` (state-driven horizon-K **+** table). Live
-  rolling pair now = `baseline_state_driven_k` + `baseline_launch_rules_universal`
-  (table-ON champion). Both warming up. **Adaptive-K (μ≈1170) was evicted** — if
-  state-K under-converges, re-submit adaptive-K (`champ_adaptiveK_on.py`); 5
-  submits/day, deadline 2026-06-23.
-- **Timeout fixed:** predictive per-step deadline bail (`1e3234c`). Bundle bench
-  (separate-process = live): **max 944 ms, 0 over cap**. In-process `fast.py eval`
-  can show false one-off highs from GC/cold-import — judge timing with `fast.py
-  bench`, not eval.
-- **Loss diagnosis (selection-bias-free, vs weaker opponents):** we lose by **losing
-  the step-50→100 planet-expansion race** in certain maps (seed 2 loses from both
-  seats) — NOT conversion/waste, NOT timeouts. Fleet-outcome mix is identical in
-  wins and losses; only the planet-lead trajectory differs (wins +9 by step 100,
-  losses −5). Tooling: `scripts/analyze_local_losses.py`.
+Re-measured the generator directly on **champion-vs-strong-opponent** boards: it
+yields **~100+ two-source coalitions per game** (driven by the *resource ratio* —
+they appear when my planets are contested / out-resourced, i.e. the games that
+decide the ladder). And **exploiting them wins**: the augment-not-replace refiner
+(`BASELINE_CHOOSER=refine`: run the champion verbatim, then add only oracle-positive
+2-source coalitions that don't conflict with the champion's locks) scored **70.2%
+h2h vs the adaptive-K champion** (n=57, Wilson-lo 0.573; the n=32 read was 78%),
+**paired +13/−4/+9 net** on 16 matched seeds.
 
-## NEXT-SESSION PLAN — re-test 3 shelved features WITH THE TABLE ON
+**SUBMITTED** as sub **`53336920`** (`champ_refine_adaptivek.py` = champion +
+adaptive-K + refiner + kinematic-table, all baked). New rolling pair = `53336920`
+(refine) + `53332500` (computeByShips). **Evicted `53324164` champ_adaptiveK_on
+μ~1170.4** from the rolling window (recoverable by resubmit). Rule 46c + timing GREEN
+(max 777 ms, 0 over cap). Rule 43 weak-opp panel legs were in-flight at submit (PI
+override).
 
-**Why:** these were judged "null/parity" under a handicapped agent — either tested
-table-OFF (less search) or via the old singleton-corrupted in-process A/B. Both
-confounds are gone. Two of them (#1, #2) directly target the expansion-race loss
-mode we diagnosed. **All three are already in the code behind env flags —
-flag-flip, not rebuild** (verified 2026-06-02).
+## ⚠️ FIRST THING NEXT SESSION — does refine settle ≥ 1170?
 
-| Feature (plain language) | Enable flag | Prior (confounded) result |
-|---|---|---|
-| **1. Team-up attacks** — 2+ fleets from different planets arrive at one target on the same turn, sized to take *and hold* it | `BASELINE_JOINT_SYNC=1` (+ size-to-hold, `chooser_trajectory.py:325`) | "size-to-hold NULL", sync probe μ≈1150 — table OFF |
-| **2. Optimized opening** — solve the first ~50 turns as an optimization (which planets, what order) instead of hand-rules | `BASELINE_OPENING_MILP=1` (`lib/joint_solver/opening_planner.py`) | parity 4/8 (n=8) — table OFF |
-| **3. Smart position score** — value a position by *where* things are on the map, not just counts | `BASELINE_VALUE_HEAD=composite` (`lib/value_heads.py`) | never measured (runs stalled) |
+The 70% is **local**; local→live μ is noisy (our notes: 88–94% local → 1150 live).
+TrueSkill warm-up starts ~600 and climbs. Check the settling μ of sub `53336920`:
+- **Settles ≥ 1170** → real gain; proceed to the regression-tail fix (#1 below).
+- **Settles low** → resubmit the adaptive-K champion (`champ_adaptiveK_on`, μ1170,
+  just behind the window — recoverable) and re-diagnose refine before building on it.
 
-**Execution (one lever at a time — Rule 37):**
-0. Baseline = current source, table ON + state-K (the table-ON champion). Re-confirm
-   the live rolling pair before any submit (Rule 42).
-1. For each feature, default-OFF → ON in isolation on top of the champion:
-   (a) parity smoke (OFF byte-identical), (b) cost smoke `fast.py bench`
-   separate-process — **max < 1000 ms WITH the table**, (c) `clean_ab.py` **n≥32**
-   table-ON vs the table-ON champion, (d) compare to the prior table-OFF result —
-   the delta is the table-confound size.
-2. **Stack winners:** any lever clearing Wilson-lo ≥ 0.50 stays ON; re-baseline and
-   add the next on top; re-A/B the stack (a solo win can regress when stacked).
-3. **Order:** #1 team-up → #2 opening → #3 position score.
-4. Each lever adds compute — re-check `fast.py bench` max < 1000 ms after each
-   stack. If a strong lever blows budget, tune horizon, don't drop it (Rule 40).
-5. Submit only on Rule 46 + 43a panel + 45 (n≥32) + 42 (eviction).
+## NEXT STEPS (priority order — PI-noted 2026-06-03)
 
-**Deferred — reassess WITH THE PI after the three above (do NOT start this session):**
-- **2-hop redeploy** (shuffle forward so a follow-up can capture) — reverted
-  (`5ec6a0d`); needs rebuild from spec `727e1bf`.
-- **Reach-frontier chooser** (from-scratch value chooser) — separate agent
-  (`agents/reach_frontier/`), had a hold=0 bug; it *replaces* the chooser, so
-  evaluate whole-agent after the fix, don't stack.
-- Cheap re-checks: H41 pv_horizon floor (`9ebd311`), PV_ETA tuning.
+**1. Regression tail (highest-leverage, most localized).** Refine **broke 4 of 32
+games the champion won** (long contested seeds: 2P1, 9P0, 13P0, 14P0). The
+*generator* is fine — the misfire is in **which coalition the oracle picks** in long
+games. Hypothesis: the marginal-gain horizon is too short to see the downside (the
+teamwork strike commits ships that leave a planet undefended / get recaptured
+later). Fixing this could turn **+9 → +13 net** without touching what works.
+- *Replays were in `/tmp` and the container restart wiped them — step 1 is re-run
+  `scripts/_step3b_adaptivek_winrate.sh` (saves to `/tmp/refine_adaptivek_replays`)
+  to regenerate the 4 broken-seed games, then trace the bad coalition.*
 
-**Do NOT re-open** (dead for non-table reasons): H44 "fleets die in flight" (false —
-sun/OOB only), 4p-cushion (4/32), b5 reward-axis (0/32), flat expansion-credit
-(targeted the hoarding loss mode we refuted; real loss mode is the expansion race).
+**2. compute-by-ships × refine ("best of both worlds").** Full plan in
+`knowledge-base/concepts/refine-x-computebyships-compatibility.md`. Hypothesis:
+*complementary* — compute-by-ships (`BASELINE_COMPUTE_BY_SHIPS=1`, per-source search
+breadth/depth scaled by ship surplus) helps **high-ship** planets solo-expand;
+refine helps **low-ship/contested** planets coordinate. Test: (a) combined wallclock
+re-bench (both add compute), (b) clean_ab combined vs refine-alone (n≥32),
+(c) coalition-count with compute-by-ships on vs off (cannibalization check).
+*Caveat: compute-by-ships was 7/16 standalone — not a guaranteed add.*
 
-Full provenance (commit hashes per feature, the two confound mechanisms, deferred
-detail) is in the session plan, mirrored into git history of this file.
+**3. Finish the Rule 43 panel (cheap loose end).** The weak-opp legs
+(v7_0 / v4_planner / v3.5.1) never completed before the restart. Refine ≈ champion vs
+weak opponents and the champion crushes them → should pass fast. Closes the gate:
+`python fast.py eval submissions/champ_refine_adaptivek.py --vs-panel default --require-h2h submissions/baseline.py --workers 4`
+
+**4. Bigger bets (only if refine settles well):**
+- **Extend the AUGMENT path, not the replace path** (greedy-replace already failed
+  9/16). Add: **3-source coalitions**, **defensive coalitions** (two planets jointly
+  *hold* a threatened target), **wait-coordinated strikes**. Re-justifies the Rule-49
+  planner doctrine via the augment framing.
+- **Resource-ratio as a strategic-mode signal.** Coalitions arise exactly when
+  out-resourced (my sources ≤ defended targets). Detect "I'm being out-resourced"
+  and shift mode (more coordination / defense) — a higher-level lever than per-turn
+  launch scoring.
+
+## Still-untested shelved levers (from 2026-06-02 handover — table-ON re-test owed)
+
+These were judged null/parity under a table-OFF or singleton-corrupted A/B; both
+confounds are gone. Reassess after the refine line above. **Flag-flip, not rebuild.**
+- **Optimized opening** — `BASELINE_OPENING_MILP=1` (`lib/joint_solver/opening_planner.py`); prior parity 4/8 (n=8), table OFF.
+- **Smart position value head** — `BASELINE_VALUE_HEAD=composite` (`lib/value_heads.py`); never cleanly measured.
+- Deferred (reassess WITH PI): 2-hop redeploy (reverted `5ec6a0d`, rebuild from `727e1bf`); reach-frontier chooser (`agents/reach_frontier/`, hold=0 bug, whole-agent eval).
+- **Do NOT re-open:** H44 "fleets die in flight" (false — sun/OOB only), 4p-cushion (4/32), b5 reward-axis (0/32), flat expansion-credit (refuted loss mode).
+
+## Tooling built this session (committed; bundles are gitignored, rebuild via script)
+
+- `scripts/refine_seam_contested.py` — direct sync-coalition generator count on real
+  boards (Step-2; bypasses the kaggle stderr sandbox).
+- `scripts/_step3b_adaptivek_winrate.sh` — refine vs adaptive-K champion, matched-seed
+  paired A/B (the validated 78%/70%). `_step3_refine_winrate.sh` = the wrong-base
+  static version, kept for the lesson.
+- `scripts/_build_refine_adaptivek_bundle.sh` — reproducible build of the submitted bundle.
+
+## Standing gotchas (carry forward)
+
+- **"I didn't set the flag" ≠ "the flag is off."** The kinematic table defaults ON
+  (`main.py:896`, `get(...,"1")`). Check defaults before claiming a config.
+- **A/B on the LIVE champion config, not the repo default.** The first refine A/B ran
+  adaptive-K OFF (non-champion base) and gave a misleading number — PI caught it.
+  Confirm the parity anchor is ~50% before trusting a lift.
+- **Mid-run win-rate is noisy** (called a wash at 58%, finished 68.8%). Hold verdicts
+  to full n (Rule 45).
+- **`clean_ab.py` for any refine A/B** — env-var contamination otherwise (refine and
+  trajectory both read `BASELINE_CHOOSER`); use a frozen-bundle opponent (immune).
+- 5 submits/day, deadline **2026-06-23**.
