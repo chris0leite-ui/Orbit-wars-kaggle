@@ -64,5 +64,18 @@ class Config:
     hard_budget_ms: float = 950.0      # safety break inside the greedy commit loop;
                                        # the closed-form pass fits well under this.
 
+    # --- forward-rollout chooser (Plan v4) ---
+    use_rollout: bool = True           # pick the turn whose SIMULATED end-state
+                                       # wins, vs emitting the raw closed-form set.
+    rollout_K: int = 20                # rollout horizon (ticks) per candidate turn.
+    rollout_prefix_ks: tuple = (0, 1, 2, 3, 5, 8)
+                                       # candidate turns = these prefix lengths of
+                                       # the value-ordered committed launch set
+                                       # (0 = idle .. full = spread). The prefix
+                                       # that simulates best is emitted -> if
+                                       # spreading churns, a short prefix wins.
+    rollout_budget_ms: float = 800.0   # wallclock for the whole rollout pass;
+                                       # falls back to the closed-form set if hit.
+
 
 DEFAULT = Config()

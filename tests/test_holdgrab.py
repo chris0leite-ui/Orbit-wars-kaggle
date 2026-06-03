@@ -247,3 +247,17 @@ def test_select_is_deterministic():
 def test_empty_when_no_targets():
     v = _view([[0, 0, 50.0, 50.0, 1.5, 50, 1]])
     assert select(v, DEFAULT) == []
+
+
+def test_rollout_choose_is_deterministic():
+    # the forward-rollout chooser must be a pure function of obs (bundle parity).
+    from agents.holdgrab.rollout import choose as rollout_choose
+    planets = [
+        [0, 0, 50.0, 50.0, 1.5, 60, 1],
+        [1, -1, 56.0, 50.0, 1.5, 8, 2],
+        [2, 1, 40.0, 40.0, 1.5, 20, 1],
+    ]
+    obs = _obs(planets)
+    a1 = rollout_choose(build_turn_view(obs, DEFAULT), DEFAULT, obs, None)
+    a2 = rollout_choose(build_turn_view(obs, DEFAULT), DEFAULT, obs, None)
+    assert a1 == a2

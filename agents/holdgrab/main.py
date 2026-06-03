@@ -16,6 +16,7 @@ from lib.mechanism import DEFAULT_MECHANISMS
 
 from agents.holdgrab.chooser import select
 from agents.holdgrab.config import DEFAULT
+from agents.holdgrab.rollout import choose as rollout_choose
 from agents.holdgrab.world_view import build_turn_view
 
 
@@ -24,6 +25,8 @@ def agent(obs, configuration=None):
     view = build_turn_view(obs, cfg)
     if not view.my_sources or not view.targets:
         return []
+    if cfg.use_rollout:
+        return rollout_choose(view, cfg, view.world.obs_raw, configuration)
     intents = select(view, cfg)
     return realize(intents, view.world.obs_raw, mechanisms=DEFAULT_MECHANISMS,
                    model=view.model)
