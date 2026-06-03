@@ -15924,6 +15924,12 @@ CIRCULATION_GARRISON = int(os.environ.get("BASELINE_CIRCULATION_GARRISON", "5"))
 CIRCULATION_TRIGGER_MIN = int(os.environ.get("BASELINE_CIRCULATION_TRIGGER_MIN", "15"))
 CIRCULATION_MIN_SEND = int(os.environ.get("BASELINE_CIRCULATION_MIN_SEND", "10"))
 CIRCULATION_MAX_PER_TURN = int(os.environ.get("BASELINE_CIRCULATION_MAX", "6"))
+# Safety gate: the source's earliest plausible enemy-threat ETA must be
+# >= this value for it to qualify as "rear" / "safe to drain". Looser than
+# idle_stockpile's `is None` gate because in-flight ships still reach the
+# friendly destination even if the source flips — only the source planet
+# is briefly at risk, the ships in transit are NOT lost.
+CIRCULATION_MIN_THREAT_ETA = int(os.environ.get("BASELINE_CIRCULATION_MIN_THREAT_ETA", "15"))
 
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
 # chooser's wait_N>0 winners are remembered across turns instead of
@@ -16708,7 +16714,8 @@ def emit_frontier_circulation(moves, planets, my_id: int, world, model,
             continue
         if int(src.ships) < CIRCULATION_TRIGGER_MIN:
             continue
-        if model.time_to_enemy_threat(int(src.id), my_id, world) is not None:
+        threat_eta = model.time_to_enemy_threat(int(src.id), my_id, world)
+        if threat_eta is not None and int(threat_eta) < CIRCULATION_MIN_THREAT_ETA:
             continue
         src_fd = frontier_dist(src)
         forward = [q for q in my_planets if frontier_dist(q) < src_fd - 0.5]

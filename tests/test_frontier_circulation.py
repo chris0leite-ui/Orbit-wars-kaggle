@@ -36,12 +36,17 @@ def _planet(pid, owner, x, y, ships, production=2, radius=2.0):
 
 
 class _StubModel:
-    def __init__(self, threatened=None):
+    def __init__(self, threatened=None, threat_eta=7):
+        """`threatened` -> set of planet ids returning `threat_eta` from
+        time_to_enemy_threat. Default ETA=7 (below CIRCULATION_MIN_THREAT_ETA
+        default of 15, so the source is skipped). Pass `threat_eta=30` to
+        simulate a distant threat (above the threshold => source qualifies)."""
         self.ledger = {}
         self._threatened = threatened or set()
+        self._threat_eta = threat_eta
 
     def time_to_enemy_threat(self, planet_id, my_id, world, arrival_eta=0):
-        return 7 if int(planet_id) in self._threatened else None
+        return self._threat_eta if int(planet_id) in self._threatened else None
 
 
 class _StubWorld:
@@ -141,7 +146,8 @@ def test_circulation_dag_is_monotone_in_frontier_dist(monkeypatch):
         assert forward, f"src {src_id} should have ≥1 forward friendly"
 
 
-def test_circulation_skips_threatened_source(monkeypatch):
+def test_circulation_skips_imminent_threat_source(monkeypatch):
+    """Imminent threat (ETA below CIRCULATION_MIN_THREAT_ETA) blocks drain."""
     monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
     from agents.baseline.main import emit_frontier_circulation
 
@@ -149,8 +155,8 @@ def test_circulation_skips_threatened_source(monkeypatch):
     front = _planet(1, 0, 20.0, 0.0, 100)
     opp = _planet(2, 1, 100.0, 0.0, 50)
     planets = [rear, front, opp]
-    # Rear is under threat -> must not be drained.
-    model = _StubModel(threatened={0})
+    # Rear has threat ETA=7 (default), below MIN_THREAT_ETA=15 -> blocked.
+    model = _StubModel(threatened={0}, threat_eta=7)
     world = _StubWorld()
 
     result = emit_frontier_circulation(
@@ -158,6 +164,30 @@ def test_circulation_skips_threatened_source(monkeypatch):
     )
     src_ids = {int(m[0]) for m in result}
     assert 0 not in src_ids
+
+
+def test_circulation_fires_when_threat_is_distant(monkeypatch):
+    """Distant threat (ETA above MIN_THREAT_ETA) does NOT block drain.
+    Verifies the gate is looser than `is None`: real games have threats
+    that exist in principle but are far in time. This is the fix for the
+    too-strict-gate bug observed in the first probe."""
+    monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
+    from agents.baseline.main import emit_frontier_circulation
+
+    rear = _planet(0, 0, -50.0, 0.0, 100)
+    front = _planet(1, 0, 20.0, 0.0, 100)
+    opp = _planet(2, 1, 100.0, 0.0, 50)
+    planets = [rear, front, opp]
+    # Rear has threat ETA=30, above MIN_THREAT_ETA=15 -> qualifies.
+    model = _StubModel(threatened={0}, threat_eta=30)
+    world = _StubWorld()
+
+    result = emit_frontier_circulation(
+        [], planets, my_id=0, world=world, model=model, omega=0.0,
+    )
+    src_ids = {int(m[0]) for m in result}
+    assert 0 in src_ids, \
+        "rear with distant threat ETA=30 must qualify (gate >=15)"
 
 
 def test_circulation_skips_source_already_in_moves(monkeypatch):
