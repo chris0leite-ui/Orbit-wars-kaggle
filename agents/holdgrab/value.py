@@ -51,3 +51,14 @@ def planet_value(view, tgt, hold_ticks, cfg) -> float:
             weakest_mult = 1.0 + cfg.weakest_opp_bias
 
     return owner_mult * weakest_mult * float(tgt.production) * float(hold_ticks)
+
+
+def preserve_value(view, planet, fall_turn, cfg) -> float:
+    """Production *preserved* by reinforcing one of my planets that the timeline
+    says falls at ``fall_turn`` — the stream from the fall to game-end that we'd
+    otherwise lose. Same ``production x time`` units as a capture's *gained*
+    value, so defense and offense compete on one scale (owner-weight 1.0: it's
+    our own production, no denial double-count).
+    """
+    keep = max(0, cfg.game_horizon - view.step - int(fall_turn))
+    return float(planet.production) * float(keep)

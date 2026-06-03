@@ -93,32 +93,39 @@ def contest_force(view, target, arrival_eta, window):
     return worst + inflight
 
 
-def defense_follow_on(view, my_planet, window):
-    """Ships to reserve on one of MY planets to survive COMMITTED, in-flight
-    enemy attacks — bocsimacko's "surplus": what is safe to send is bounded
-    by fleets already in space, NOT by every hypothetical future launch.
+def peak_inflight_threat(view, planet, window):
+    """``(force, eta)`` of the strongest COMMITTED in-flight enemy wave on
+    ``planet`` within ``window``, net of the production the planet makes before
+    it lands: ``force`` is the garrison the planet must have by ``eta`` to
+    survive, ``eta`` is when that wave arrives. ``(0.0, 0)`` if none.
 
-    Reserving against hypothetical musters (every nearby enemy planet could
-    launch) is unbounded as the opponent grows and turtles us to death — the
-    rf over-pessimism spiral. Hypothetical launches are handled where they
-    belong: the offense gate refuses to grab contested planets, and per-turn
-    re-solve lets us pull back the instant an enemy actually commits a fleet.
+    In-flight (not hypothetical musters) is bocsimacko's "surplus" bound: what
+    is safe to spend is limited by fleets already in space, not by every
+    nearby enemy that *could* launch — the latter is unbounded as the opponent
+    grows and turtles us to death (the rf over-pessimism spiral). Per-turn
+    re-solve reacts the instant an enemy actually commits a fleet.
 
-    Floor = max over each committed enemy wave of ``wave_ships - production *
-    wave_eta`` (the planet produces while the wave flies, so it only needs to
-    reserve the shortfall). Same-tick enemy fleets sum; sequential waves are
-    each met by the refilled garrison, so we take the per-wave max, not the
-    cumulative sum.
+    Same-tick enemy fleets sum; sequential waves are each met by the refilled
+    garrison, so we take the per-wave max, not a cumulative sum.
     """
     me = int(view.me)
-    prod = float(my_planet.production)
+    prod = float(planet.production)
     by_eta: dict[int, float] = {}
-    for (eta, owner, ships) in view.model.ledger.get(int(my_planet.id), []):
+    for (eta, owner, ships) in view.model.ledger.get(int(planet.id), []):
         if int(owner) != me and int(owner) != -1 and int(eta) <= window:
             by_eta[int(eta)] = by_eta.get(int(eta), 0.0) + float(ships)
-    floor = 0.0
+    best_force = 0.0
+    best_eta = 0
     for eta, ships in by_eta.items():
-        shortfall = ships - prod * float(eta)
-        if shortfall > floor:
-            floor = shortfall
-    return max(0.0, floor)
+        net = ships - prod * float(eta)
+        if net > best_force:
+            best_force = net
+            best_eta = int(eta)
+    return best_force, best_eta
+
+
+def defense_follow_on(view, planet, window):
+    """The ships ``planet`` must hold to survive its strongest committed
+    in-flight threat (the force leg of :func:`peak_inflight_threat`). Used as
+    a source's self-defense first-claim, not a separate reservation."""
+    return peak_inflight_threat(view, planet, window)[0]

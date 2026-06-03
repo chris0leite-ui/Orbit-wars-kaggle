@@ -46,6 +46,11 @@ class Config:
     weakest_opp_bias: float = 0.30     # multiplicative boost on captures from the
                                        # weakest opponent (4P only): attack-weakest.
 
+    # --- selection ---
+    order_by_roi: bool = True          # greedy by value-per-ship (knapsack-
+                                       # correct; what the roi opponent does)
+                                       # rather than raw value.
+
     # --- candidate enumeration ---
     max_targets_per_source: int = 12   # nearest-N target prune per source.
     max_arrival_lead: int = 200        # drop launches whose ETA exceeds this.
