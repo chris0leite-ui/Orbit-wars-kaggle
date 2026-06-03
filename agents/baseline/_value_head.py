@@ -55,6 +55,17 @@ VH_LAMBDA: float = float(os.environ.get("BASELINE_VH_LAMBDA", "0.0"))
 # game-measured value) to activate centering.
 VH_BIAS: float = float(os.environ.get("BASELINE_VH_BIAS", "0.0"))
 
+# Rerank mode (2026-06-03 Phase H — Option C). When > 0, the chooser
+# does NOT add λ·head_out to candidate scores. Instead, it takes the
+# top-K solo candidates by base score and re-sorts them by VH head
+# output (descending). Joints unaffected. Base score is preserved on
+# each tuple — only the order changes. Sidesteps the magnitude-swamp
+# failure mode that closed the VH-additive axis (5 falsifications,
+# Rule 37). Consumes the model's verified Spearman ρ=+0.386 rank
+# signal without letting the head's prediction magnitude touch the
+# emit gate.
+VH_RERANK_K: int = int(os.environ.get("BASELINE_VH_RERANK_K", "0"))
+
 # Bundler patches `_VH_MODEL_B64` to a gzip+base64 LightGBM
 # `model_to_string()` dump (regression objective). In source mode (empty
 # blob), we fall back to reading `data/value_head/value_head_model.txt`
@@ -71,7 +82,8 @@ _ANGLE_KEY_DECIMALS: int = 6
 
 
 def vh_is_enabled() -> bool:
-    return VH_LAMBDA != 0.0
+    # True if EITHER additive or rerank consumption is active.
+    return VH_LAMBDA != 0.0 or VH_RERANK_K > 0
 
 
 def vh_get_lambda() -> float:
@@ -80,6 +92,10 @@ def vh_get_lambda() -> float:
 
 def vh_get_bias() -> float:
     return VH_BIAS
+
+
+def vh_rerank_k() -> int:
+    return VH_RERANK_K
 
 
 def _candidate_key(src_id: int, tgt_id: int, ships: int,

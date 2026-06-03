@@ -44,9 +44,15 @@ os.environ.setdefault("BASELINE_KINEMATIC_TABLE", "1")
 os.environ.setdefault("BASELINE_STATE_DRIVEN_K", "1")
 os.environ.setdefault("BASELINE_STATE_K_CEIL", "30")
 
-# Value head active. Phase A patch (2026-06-03) ensures the boost
-# applies to joint candidates too, not just solo.
-os.environ.setdefault("BASELINE_VH_LAMBDA", "1.0")
+# Value head as RERANK only (Phase H / Option C, 2026-06-03).
+# Take the top-10 solo candidates by base score, re-sort by VH head
+# output. No magnitude added to scores → no swamping of base scoring.
+# Joints unaffected. The fresh Phase D3 model has Spearman ρ=+0.386
+# on val — the rank signal the rerank consumes.
+# (BASELINE_VH_LAMBDA is unset → defaults to 0.0 → no additive term.
+# The previous additive integration failed n=5 calibrations; that axis
+# is closed.)
+os.environ.setdefault("BASELINE_VH_RERANK_K", "10")
 
 # NO Tier-2 (BASELINE_OPP_TIER unset → defaults to "0" → lite_greedy
 # in rollouts). Tier-2-in-rollouts axis is closed (Rule 37) — see

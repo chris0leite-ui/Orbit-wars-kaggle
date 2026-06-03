@@ -1499,6 +1499,42 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
 
     scored.sort(key=lambda c: -c[0])
 
+    # Phase H — value-head rerank (Option C, 2026-06-03). When
+    # BASELINE_VH_RERANK_K > 0, take the top-K solo entries (in the
+    # current base-score-sorted order), re-rank them by vh_predict_one
+    # output, and put them back in the same K slots. Base scores are
+    # preserved on each tuple — only the order changes. Joints and
+    # joint_sync entries are untouched. Sidesteps the magnitude-swamp
+    # that closed the VH-additive axis (Rule 37 n=5); consumes the
+    # model's verified Spearman ρ=+0.386 rank signal as RANK, not
+    # magnitude. At BASELINE_VH_RERANK_K=0 (default) this block is
+    # skipped entirely — byte-equivalent to the un-VH chooser.
+    if vh_feats:
+        from agents.baseline._value_head import vh_rerank_k
+        K = vh_rerank_k()
+        if K > 0:
+            from agents.baseline._value_head import vh_predict_one
+            solo_slots: list[int] = []
+            for i, entry in enumerate(scored):
+                if (len(entry) == 6
+                        and not (isinstance(entry[1], str))):
+                    solo_slots.append(i)
+                    if len(solo_slots) >= K:
+                        break
+            if len(solo_slots) >= 2:
+                solos = [scored[i] for i in solo_slots]
+                vh_scores = []
+                for (base_score, src, tgt, ships, angle, wait_N) in solos:
+                    head_out = vh_predict_one(
+                        vh_feats, int(src.id), int(tgt.id),
+                        int(ships), float(angle), int(wait_N),
+                        float(base_score),
+                    )
+                    vh_scores.append(head_out)
+                order = sorted(range(len(solos)), key=lambda k: -vh_scores[k])
+                for new_pos, old_pos in enumerate(order):
+                    scored[solo_slots[new_pos]] = solos[old_pos]
+
     # Emit logic — match composite chooser (`agents/baseline/chooser.choose`)
     # for parity. 1 launch per source per turn, 1 per target. For joints
     # (tagged 'joint' tuples), require ALL of its sources and targets to
