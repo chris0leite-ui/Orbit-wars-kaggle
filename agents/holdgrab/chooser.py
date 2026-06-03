@@ -47,6 +47,17 @@ class Cand:
     kind: str   # "capture" | "reinforce"
 
 
+@dataclass
+class Coalition:
+    """A mass-to-HOLD candidate: two+ sources pool budget to capture AND HOLD a
+    target neither can hold alone. ``legs`` is ``[(src_id, ships), ...]`` sized
+    to land jointly at ``common_eta`` and clear the hold threshold."""
+    tgt_id: int
+    common_eta: int
+    legs: list          # [(src_id, ships), ...]
+    value: float
+
+
 def _nearest_targets(src, targets, n):
     if len(targets) <= n:
         return list(targets)
@@ -193,3 +204,141 @@ def select(view, cfg) -> list:
             reinforced[c.tgt_id] += int(give)
 
     return intents
+
+
+# ---------------------------------------------------------------------------
+# Mass-to-HOLD consolidation (Plan v5) — shared enumerator used by both the
+# STEP-1 census probe and (when GO) the STEP-3 proposer. Reuses the EXACT
+# sizing primitives _capture_candidates uses, so a coalition's hold threshold
+# matches the per-source proposer's gate.
+# ---------------------------------------------------------------------------
+
+
+def _hold_sizing_at(view, cfg, tgt, eta):
+    """Mirror _capture_candidates' per-(src,tgt) sizing, parameterised on an
+    explicit arrival ``eta`` (the same garrison/contest/opp_reach reads). Returns
+    a dict, or ``None`` if the launch is invalid at that eta (lands on us, too
+    far, or game over)."""
+    me = view.me
+    model = view.model
+    if eta > cfg.max_arrival_lead:
+        return None
+    owner_arr = model.owner_at(int(tgt.id), eta)
+    owner_arr = int(tgt.owner) if owner_arr is None else int(owner_arr)
+    if owner_arr == me:
+        return None
+    garrison = model.ships_at(int(tgt.id), eta)
+    garrison = float(tgt.ships) if garrison is None else float(garrison)
+    remaining = max(0, cfg.game_horizon - view.step - eta)
+    if remaining <= 0:
+        return None
+    f_contest = contest_force(view, tgt, eta, cfg.contest_window)
+    need_hold = ships_to_capture_and_hold(
+        garrison, f_contest, float(tgt.production), cfg.contest_window,
+    )
+    need_cap = ships_to_capture(garrison)
+    opp = opp_reach_tick(view, int(tgt.id), eta)
+    return {
+        "eta": int(eta), "garrison": float(garrison), "need_hold": int(need_hold),
+        "need_cap": int(need_cap), "opp": opp, "remaining": int(remaining),
+    }
+
+
+def _size_legs(legs_src, need_hold_total, spendable):
+    """Split ``need_hold_total`` ships across the chosen sources, proportional to
+    each source's spendable budget, each leg capped by its spendable. Deterministic
+    (largest-remainder by src_id). Returns ``[(src_id, ships), ...]`` or ``None``
+    if the legs can't jointly cover the threshold."""
+    caps = [(sid, int(spendable[sid])) for sid, _hc in legs_src]
+    total_cap = sum(c for _s, c in caps)
+    if total_cap < need_hold_total:
+        return None
+    legs = []
+    assigned = 0
+    for sid, cap in caps:
+        share = int(need_hold_total * cap / total_cap) if total_cap > 0 else 0
+        share = min(share, cap)
+        legs.append([sid, share])
+        assigned += share
+    # distribute the rounding shortfall onto sources with remaining headroom
+    i = 0
+    order = sorted(range(len(legs)), key=lambda j: legs[j][0])
+    while assigned < need_hold_total and i < len(order) * 4:
+        j = order[i % len(order)]
+        sid, cap = caps[j]
+        if legs[j][1] < cap:
+            legs[j][1] += 1
+            assigned += 1
+        i += 1
+    legs = [(sid, ships) for sid, ships in legs if ships > 0]
+    if len(legs) < 2 or assigned < need_hold_total:
+        return None
+    return legs
+
+
+def consolidation_opportunities(view, cfg, spendable) -> list:
+    """Enumerate mass-to-HOLD coalitions: high-value ENEMY targets where NO single
+    source can HOLD (some can only PRESSURE), but the nearest 2..max_legs sources'
+    pooled budget clears the hold threshold at a synchronised arrival. Returns the
+    top-``consolidate_max_targets`` by ``planet_value``. Deterministic."""
+    me = view.me
+    targets = []
+    for tgt in view.targets:
+        owner = int(tgt.owner)
+        if owner != me and owner != -1:
+            targets.append(tgt)               # enemy: double value
+        elif cfg.consolidate_neutral and owner == -1:
+            targets.append(tgt)               # contested neutral (opt-in)
+
+    scored = []
+    for tgt in targets:
+        # per-source single-source sizing (at each source's own straight-line eta)
+        infos = {}
+        for s in view.my_sources:
+            sid = int(s.id)
+            if spendable[sid] <= 0 or sid == int(tgt.id):
+                continue
+            hc = _hold_sizing_at(view, cfg, tgt, _seed_eta(s, tgt))
+            if hc is not None:
+                infos[sid] = hc
+        if len(infos) < 2:
+            continue
+        # (2) no single source can solo-HOLD (else the per-source proposer has it)
+        if any(spendable[sid] >= hc["need_hold"] for sid, hc in infos.items()):
+            continue
+        # (3) at least one source can solo-CAPTURE today (drops to Tier-2 PRESSURE)
+        if not any(spendable[sid] >= hc["need_cap"] for sid, hc in infos.items()):
+            continue
+        # choose the minimal coalition (nearest legs) that clears HOLD in sync
+        ranked = sorted(infos.items(), key=lambda kv: (kv[1]["eta"], kv[0]))
+        coalition = None
+        max_k = min(cfg.consolidate_max_legs, len(ranked))
+        for k in range(2, max_k + 1):
+            legs_src = ranked[:k]
+            etas = [hc["eta"] for _sid, hc in legs_src]
+            common_eta = max(etas)
+            if common_eta - min(etas) > cfg.consolidate_max_eta_gap:
+                continue
+            nh = _hold_sizing_at(view, cfg, tgt, common_eta)
+            if nh is None:
+                continue
+            if sum(spendable[sid] for sid, _hc in legs_src) >= nh["need_hold"]:
+                coalition = (common_eta, legs_src, nh)
+                break
+        if coalition is None:
+            continue
+        common_eta, legs_src, nh = coalition
+        value = planet_value(view, tgt, nh["remaining"], common_eta, nh["opp"], cfg)
+        if value <= 0:
+            continue
+        scored.append((float(value), int(tgt.id), common_eta, legs_src, nh))
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    out = []
+    for value, tgt_id, common_eta, legs_src, nh in scored[: cfg.consolidate_max_targets]:
+        legs = _size_legs(legs_src, nh["need_hold"], spendable)
+        if legs is None:
+            continue
+        out.append(Coalition(tgt_id=tgt_id, common_eta=int(common_eta),
+                             legs=legs, value=float(value)))
+    return out

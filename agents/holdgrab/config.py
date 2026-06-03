@@ -77,5 +77,18 @@ class Config:
     rollout_budget_ms: float = 800.0   # wallclock for the whole rollout pass;
                                        # falls back to the closed-form set if hit.
 
+    # --- mass-to-HOLD consolidation (Plan v5; default OFF = behavior-preserving) ---
+    # Pool ship budget across sources so a double-value ENEMY planet that no
+    # single source can HOLD (only PRESSURE) can be captured-and-held. Linear
+    # Lanchester means there is no concentration bonus -- this is purely
+    # budget-aggregation, so it is a narrow band; the census (Plan v5 STEP 1)
+    # gates whether it arises at all.
+    consolidate_hold: bool = False         # master switch for the proposer.
+    consolidate_max_targets: int = 3       # top-M enemy targets by planet_value.
+    consolidate_max_legs: int = 2          # 2 = pairs only; 3 = allow triples.
+    consolidate_max_eta_gap: int = 3       # faster source throttles to align ETA.
+    consolidate_neutral: bool = False      # also consider contested neutrals.
+    instrument_consolidation: bool = False  # census only; no behavior change.
+
 
 DEFAULT = Config()
