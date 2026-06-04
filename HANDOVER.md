@@ -1,46 +1,50 @@
 # HANDOVER.md — next-session brief
 
-_Refreshed 2026-06-03 (`claude/kaggle-submission-strategy-JzIAr`). Read this first
+_Refreshed 2026-06-04 (`claude/kaggle-submission-strategy-JzIAr`). Read this first
 (Rule 15). Also read `state/MULTI_BRANCH.md` (live rolling pair / track registry +
 the joint-coordination REVERSAL block) per Rule 44._
 
-## This session's outcome (the unlock)
+## 2026-06-04 session outcome — opening-wait diagnostic (the horizon hypothesis is dead)
 
-**Reversed the "teamwork doesn't matter" closure and shipped the first agent that
-uses it.** The 2026-06-02 session closed the joint-coordination axis (Rule 37) on
-"the sync-coalition generator produces nothing." That was a **weak-opponent
-confound** (Rule 41): it was only ever measured vs v7_0 / v7_minimax — opponents the
-champion crushes, so every planet is source-saturated and the "two planets needed to
-take one target" regime never arises. (This was the prior handover's NEXT-STEP #1,
-"team-up attacks" — now validated, not null.)
+PI flagged a live loss (seed **722289020**, perimeter-ring / central-sun map): we
+sit idle early, Merchant API takes the whole ring by step 90. PI's read: sparse map →
+targets out of reach within horizon K → no candidates → idle. **Tested it directly
+(`scripts/opening_starvation.py`) and REFUTED it:**
+- Step-0 scan, 160 seat-boards: **0%** have nearest neutral past K_OPEN=20; 1% past
+  the static floor 10. The map's "sparseness" is cross-map arc distance around the
+  sun — adjacent-ring grabs are cheap (ETA 4–10). The horizon never zeroes candidates.
+- Full opening trace (seed 722289020): **LAUNCHED 4 / WAITED-with-candidates 27 /
+  STARVED-by-horizon 0** over 31 turns. The proposer offered 2–12 candidates *every*
+  turn; the agent declined them. **The lever is the value function's early-expansion
+  appetite, NOT the horizon constant K.** Full record: `audit/2026-06-04-opening-wait-diagnostic.md`.
+- **Caveat (do not over-read):** this is local self-play (waiting is symmetric/even
+  there). Proven: *we* wait 27/31. NOT proven: that it's *why* we lost — needs an
+  aggressive early-expander to show the waiting is exploited. And "launch more early"
+  already regressed — but in self-play, the confounded cohort. No submit this session.
 
-Re-measured the generator directly on **champion-vs-strong-opponent** boards: it
-yields **~100+ two-source coalitions per game** (driven by the *resource ratio* —
-they appear when my planets are contested / out-resourced, i.e. the games that
-decide the ladder). And **exploiting them wins**: the augment-not-replace refiner
-(`BASELINE_CHOOSER=refine`: run the champion verbatim, then add only oracle-positive
-2-source coalitions that don't conflict with the champion's locks) scored **70.2%
-h2h vs the adaptive-K champion** (n=57, Wilson-lo 0.573; the n=32 read was 78%),
-**paired +13/−4/+9 net** on 16 matched seeds.
+## ⚠️ FIRST THING NEXT SESSION — does refine (sub 53336920) settle ≥ 1170?
 
-**SUBMITTED** as sub **`53336920`** (`champ_refine_adaptivek.py` = champion +
-adaptive-K + refiner + kinematic-table, all baked). New rolling pair = `53336920`
-(refine) + `53332500` (computeByShips). **Evicted `53324164` champ_adaptiveK_on
-μ~1170.4** from the rolling window (recoverable by resubmit). Rule 46c + timing GREEN
-(max 777 ms, 0 over cap). Rule 43 weak-opp panel legs were in-flight at submit (PI
-override).
+As of 2026-06-03 18:13 it read public **860** but was only ~20 min old (siblings took
+hours to settle: computeByShips 1177, adaptiveK 1188). **Inconclusive — re-check the
+settled μ before anything else.**
+- **Settles ≥ 1170** → real gain; proceed to refine regression-tail (#2 below).
+- **Settles low** → resubmit `champ_adaptiveK_on` (μ1188, sub 53324164, recoverable —
+  just behind the window) to restore the floor; re-diagnose refine before building.
 
-## ⚠️ FIRST THING NEXT SESSION — does refine settle ≥ 1170?
+## NEXT STEPS (priority order)
 
-The 70% is **local**; local→live μ is noisy (our notes: 88–94% local → 1150 live).
-TrueSkill warm-up starts ~600 and climbs. Check the settling μ of sub `53336920`:
-- **Settles ≥ 1170** → real gain; proceed to the regression-tail fix (#1 below).
-- **Settles low** → resubmit the adaptive-K champion (`champ_adaptiveK_on`, μ1170,
-  just behind the window — recoverable) and re-diagnose refine before building on it.
+**1. Opening-appetite experiment (NEW — the decisive, cheap, no-build test).** Pit
+the agent vs a deliberately **aggressive early-expander** (NOT self-play; build/borrow
+one — the champion mirror cannot differentiate, it's a hoarder too — friction
+`wrong-ab-instrument-champion-mirror`). Measure: (a) opening launch-rate gap, (b)
+territory/production gap by step 30, (c) whether a higher early-launch appetite (lower
+chooser launch threshold OR early-game expansion bonus) **wins vs that class while
+staying neutral in self-play**. Cut the A/B by opponent class (Rule 41) — that splits
+"waiting is exploited" from "launching more overextends," which the prior self-play
+regression conflated. Tool ready: `scripts/opening_starvation.py` (step-0 scan +
+launch overlay). Questions: `knowledge-base/questions/2026-06-04-opening-appetite.md`.
 
-## NEXT STEPS (priority order — PI-noted 2026-06-03)
-
-**1. Regression tail (highest-leverage, most localized).** Refine **broke 4 of 32
+**2. Refine regression tail (only if refine settles well).** Refine **broke 4 of 32
 games the champion won** (long contested seeds: 2P1, 9P0, 13P0, 14P0). The
 *generator* is fine — the misfire is in **which coalition the oracle picks** in long
 games. Hypothesis: the marginal-gain horizon is too short to see the downside (the
@@ -50,7 +54,7 @@ later). Fixing this could turn **+9 → +13 net** without touching what works.
   `scripts/_step3b_adaptivek_winrate.sh` (saves to `/tmp/refine_adaptivek_replays`)
   to regenerate the 4 broken-seed games, then trace the bad coalition.*
 
-**2. compute-by-ships × refine ("best of both worlds").** Full plan in
+**3. compute-by-ships × refine ("best of both worlds").** Full plan in
 `knowledge-base/concepts/refine-x-computebyships-compatibility.md`. Hypothesis:
 *complementary* — compute-by-ships (`BASELINE_COMPUTE_BY_SHIPS=1`, per-source search
 breadth/depth scaled by ship surplus) helps **high-ship** planets solo-expand;
@@ -59,12 +63,12 @@ re-bench (both add compute), (b) clean_ab combined vs refine-alone (n≥32),
 (c) coalition-count with compute-by-ships on vs off (cannibalization check).
 *Caveat: compute-by-ships was 7/16 standalone — not a guaranteed add.*
 
-**3. Finish the Rule 43 panel (cheap loose end).** The weak-opp legs
+**4. Finish the Rule 43 panel (cheap loose end).** The weak-opp legs
 (v7_0 / v4_planner / v3.5.1) never completed before the restart. Refine ≈ champion vs
 weak opponents and the champion crushes them → should pass fast. Closes the gate:
 `python fast.py eval submissions/champ_refine_adaptivek.py --vs-panel default --require-h2h submissions/baseline.py --workers 4`
 
-**4. Bigger bets (only if refine settles well):**
+**5. Bigger bets (only if refine settles well):**
 - **Extend the AUGMENT path, not the replace path** (greedy-replace already failed
   9/16). Add: **3-source coalitions**, **defensive coalitions** (two planets jointly
   *hold* a threatened target), **wait-coordinated strikes**. Re-justifies the Rule-49
@@ -91,6 +95,10 @@ confounds are gone. Reassess after the refine line above. **Flag-flip, not rebui
   paired A/B (the validated 78%/70%). `_step3_refine_winrate.sh` = the wrong-base
   static version, kept for the lesson.
 - `scripts/_build_refine_adaptivek_bundle.sh` — reproducible build of the submitted bundle.
+- `scripts/opening_starvation.py` (2026-06-04) — opening diagnostic: `--scan START N`
+  for the cheap step-0 map-sparsity scan (no game), or `<opp> <seed> <window> <trace_seed>`
+  for the per-turn candidate-availability vs actual-launch overlay. Refuted the
+  horizon-K-starvation hypothesis (`audit/2026-06-04-opening-wait-diagnostic.md`).
 
 ## Standing gotchas (carry forward)
 
