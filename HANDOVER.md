@@ -1,8 +1,25 @@
 # HANDOVER.md — next-session brief
 
-_Refreshed 2026-06-04 (`claude/kaggle-submission-strategy-JzIAr`). Read this first
-(Rule 15). Also read `state/MULTI_BRANCH.md` (live rolling pair / track registry +
-the joint-coordination REVERSAL block) per Rule 44._
+_Refreshed 2026-06-04 (`claude/kaggle-submission-strategy-JzIAr`). **Read
+`state/STRATEGY.md` first** — it is the canonical "what we're running" doc. This file
+is the next-session brief only._
+
+## ⚠️ Docs reorganized 2026-06-04 — single-strategy, observation-driven mode
+
+Merged main's minimal-docs structure into this branch (PI directive): `CLAUDE.md`
+slimmed to ~11 binding rules (full 49-rule set archived at
+`state/_archive/CLAUDE-JzIAr-full-49rules.md`, re-promote on need), and added
+`state/STRATEGY.md` as the read-first canonical doc. Working mode is now one strategy,
+one observation → one mechanism → one push (no multi-axis exploration).
+
+## Live status (2026-06-04)
+
+Rolling pair: `53336920` champ_refine_adaptivek (**μ ≈ 1179**, active) + `53332500`
+champ_computeByShips_on (**μ ≈ 1180**, active). The adaptive-K base `53324164`
+(μ 1188) is **evicted/frozen** — its μ is NOT comparable to the active pair (older,
+weaker field). Refine's local edge (+9 net, 70% h2h, single-opponent) is
+live-uncontradicted but **not yet live-confirmed** — see `state/STRATEGY.md` evidence
+box. To confirm: a same-field resubmit of the base, or a multi-opponent panel.
 
 ## 2026-06-04 session outcome — opening-wait diagnostic (the horizon hypothesis is dead)
 
@@ -21,15 +38,6 @@ targets out of reach within horizon K → no candidates → idle. **Tested it di
   there). Proven: *we* wait 27/31. NOT proven: that it's *why* we lost — needs an
   aggressive early-expander to show the waiting is exploited. And "launch more early"
   already regressed — but in self-play, the confounded cohort. No submit this session.
-
-## ⚠️ FIRST THING NEXT SESSION — does refine (sub 53336920) settle ≥ 1170?
-
-As of 2026-06-03 18:13 it read public **860** but was only ~20 min old (siblings took
-hours to settle: computeByShips 1177, adaptiveK 1188). **Inconclusive — re-check the
-settled μ before anything else.**
-- **Settles ≥ 1170** → real gain; proceed to refine regression-tail (#2 below).
-- **Settles low** → resubmit `champ_adaptiveK_on` (μ1188, sub 53324164, recoverable —
-  just behind the window) to restore the floor; re-diagnose refine before building.
 
 ## NEXT STEPS (priority order)
 
