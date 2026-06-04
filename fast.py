@@ -69,6 +69,10 @@ _BASELINES: dict[str, str] = {
     # Cheap source-tree baselines for smoke triage.
     "nearest":    str(REPO / "agents" / "simple" / "nearest.py"),
     "roi":        str(REPO / "agents" / "simple" / "roi.py"),
+    # Vendored third-party public agent (torch planner). See
+    # agents/producer/PROVENANCE.md. Added 2026-06-04 as a strong,
+    # architecturally-distinct calibration opponent.
+    "producer":   str(REPO / "agents" / "producer" / "producer_agent.py"),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",
@@ -85,7 +89,16 @@ DEFAULT_BASELINE = "v7_0"
 # `local-overpredict-2x` friction: v3.5.1 (5/12) and geo v3.1 (5/14)
 # both passed single-opponent A/Bs vs v7_0 but regressed on the ladder
 # because the panel was a monoculture. Use via `fast.py eval --vs-panel`.
-DEFAULT_PANEL = ["v7_0", "v4_planner", "v3.5.1"]
+DEFAULT_PANEL = ["v7_0", "v4_planner", "v3.5.1", "producer"]
+# NOTE (2026-06-04): "producer" is a vendored third-party public agent that
+# beats our current champion ~81% in n=16 triage (see
+# audit/2026-06-04-producer-eval-observations.md). Because DEFAULT_PANEL
+# feeds the Rule 43 pre-submit gate (Wilson-lo >= 0.55 PER opponent),
+# including it here means --vs-panel will FAIL on the producer cell until
+# we can beat it. That is the intended calibration behaviour, not a bug:
+# the panel is supposed to reflect the live ladder, and the producer is on
+# it. If a non-blocking calibration-only panel is wanted, split this into a
+# separate constant rather than removing the producer.
 
 
 # ---------------------------------------------------------------------------
