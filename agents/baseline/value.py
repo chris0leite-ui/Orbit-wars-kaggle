@@ -127,6 +127,54 @@ def favor(obs, me: int, num_seats: int = 2, gamma: float = DEFAULT_GAMMA) -> flo
     return (my_ships - opp_ships) + (my_prod - opp_prod) * pv + elim_bonus
 
 
+def favor_net_swing(obs, me: int, num_seats: int = 2,
+                    gamma: float = DEFAULT_GAMMA) -> float:
+    """Producer's exact value lens: `my_ships - sum(each opponent's ships)`,
+    counting on-planet AND in-flight ships, with NO production term, NO
+    present-value discount, NO elimination bonus, and NO 4P weakest-enemy
+    weighting.
+
+    Why this is Producer's `competitive_score` (planner_core.py:75-86 in the
+    vendored agent). Producer scores a move by the net-ship swing it causes
+    over a frozen-opponent forward projection: `Δ(produced_me - lost_me)
+    - Σ_opp Δ(produced_opp - lost_opp)`. By ship conservation over the
+    window, `terminal_ships = initial_ships + produced - lost`, so a leaf
+    that reads terminal total ships (on-planet + in-flight), minus the idle
+    baseline leaf, cancels the identical `initial` term and equals exactly
+    that swing. This holds ONLY when the rollout opponent is frozen — i.e.
+    paired with `BASELINE_OPP_PASSIVE=1` — and ONLY when in-flight fleets are
+    counted (they carry the produced-but-not-yet-combat ships). The chooser
+    runs the rollout through the real engine (fast_sim), so this realizes
+    Producer's intended lens at least as faithfully as Producer's own
+    closed-form torch projection. See
+    `knowledge-base/concepts/forward-sim-scorer-into-our-agent.md`.
+
+    Deliberately a PLAIN sum over opponents (matching Producer's
+    `me - (net.sum() - me)`), NOT `favor`'s 4P 1.5x-weakest weighting: the
+    lens is opponent-symmetric.
+    """
+    planets = _read(obs, "planets", []) or []
+    fleets = _read(obs, "fleets", []) or []
+
+    ships_by_owner: dict[int, float] = {}
+    for p in planets:
+        owner = int(p[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(p[5])
+    for f in fleets:
+        owner = int(f[1])
+        if owner < 0:
+            continue
+        ships_by_owner[owner] = ships_by_owner.get(owner, 0.0) + float(f[6])
+
+    my_ships = ships_by_owner.get(me, 0.0)
+    opp_ships = sum(
+        s for o, s in ships_by_owner.items() if o != me and o >= 0
+    )
+    return my_ships - opp_ships
+
+
 def favor_composite(obs, me: int, num_seats: int = 2,
                     gamma: float = DEFAULT_GAMMA) -> float:
     """`composite_capture_value` adapted to the (obs, me, num_seats, gamma)
@@ -228,4 +276,15 @@ def select_favor_fn():
         return favor_hybrid
     if choice == "hybrid_spatial":
         return favor_hybrid_spatial
+    if choice == "net_swing":
+        return favor_net_swing
     return favor
+
+
+def net_swing_active() -> bool:
+    """True iff the net-ship-swing lens (Producer's exact value head) is
+    selected. Read at call time so the chooser can (a) pin the rollout
+    horizon to Producer's window and (b) disable additive post-leaf bonus
+    terms that are tuned to `favor`'s numeric scale and would confound the
+    lens. See `select_favor_fn` and the chooser's score_candidate_v4."""
+    return os.environ.get("BASELINE_VALUE_HEAD", "").strip().lower() == "net_swing"

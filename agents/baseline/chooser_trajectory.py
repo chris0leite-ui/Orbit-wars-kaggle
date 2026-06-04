@@ -39,7 +39,7 @@ import os
 import time
 
 from agents.baseline.chooser import HARDCAP_BAIL_SENTINEL, WALLCLOCK_HARD_CAP_MS, affordable_validate_cap, opp_actions_for_snap
-from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn
+from agents.baseline.value import DEFAULT_GAMMA, net_swing_active, select_favor_fn
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
 from lib.opp_model import lite_greedy_policy as _me_policy
@@ -655,6 +655,12 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
             if life is None or life <= eta:
                 return (float("-inf"), "comet_expired", eta)
 
+    # net_swing lens: pin the rollout to Producer's window (18 in 2P, 13 in
+    # 4P) so the integrated swing matches Producer's `competitive_score`
+    # horizon. Applied to BOTH candidate and baseline (same index below), so
+    # the marginal Δ uses one window. Clamp afterwards to the baseline length.
+    if net_swing_active():
+        horizon = min(int(horizon), 18 if int(num_seats) <= 2 else 13)
     # Clamp horizon to baseline length (caller pre-sized).
     if horizon >= len(baseline_favors):
         horizon = len(baseline_favors) - 1
@@ -707,6 +713,15 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
     delta = leaf - baseline_favors[horizon]
+
+    # net_swing lens: the raw `leaf − baseline` IS Producer's competitive
+    # score (net-ship swing under a frozen opponent). Bypass the entire
+    # favor-tuned post-leaf stack below (NEUTRAL/LEADER tilt, FOLLOWON +
+    # EXPAND_CREDIT + SHIP_TURN additive terms, PV_ETA discount) — none are
+    # part of Producer's lens and they are calibrated to favor's numeric
+    # scale, so applying them here would confound the measurement.
+    if net_swing_active():
+        return (delta, "scored", eta)
 
     # Plumb NEUTRAL_BONUS + LEADER_FOCUS into the live scoring path.
     # The earlier dead-code path (`score_candidate`, v2 static-garrison
@@ -842,6 +857,10 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
                 return (float("-inf"), "comet_expired")
         leg_etas.append(int(fate.step))
 
+    # net_swing lens: pin to Producer's window (18 in 2P, 13 in 4P), same as
+    # the solo scorer, before clamping to baseline length.
+    if net_swing_active():
+        horizon = min(int(horizon), 18 if int(num_seats) <= 2 else 13)
     # Clamp horizon to baseline length.
     if horizon >= len(baseline_favors):
         horizon = len(baseline_favors) - 1
@@ -885,6 +904,12 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
     delta = leaf - baseline_favors[horizon]
+
+    # net_swing lens: raw `leaf − baseline` is the joint coalition's net-ship
+    # swing — Producer's lens. Bypass the favor-tuned post-leaf stack below
+    # (same rationale as the solo scorer).
+    if net_swing_active():
+        return (delta, "scored")
 
     # NEUTRAL_BONUS / LEADER_FOCUS for joints: apply when EVERY leg
     # targets the preferred owner. This keeps the joint Δ unitary
