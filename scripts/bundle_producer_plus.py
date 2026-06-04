@@ -47,7 +47,10 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_ADAPTIVE_K": "1",
     },
     "multi_size": {
-        "PRODUCER_PLUS_ADAPTIVE_K": "1",
+        # Adaptive_K (Step 2) deliberately OFF: 16-game seat-alt A/B
+        # 2026-06-04 showed Step 2+4 regressed to 5/16 vs producer while
+        # Step 4 alone hit 10/16. Adaptive_K is preserved in main.py as
+        # a gated path for future tuning.
         "PRODUCER_PLUS_MULTI_SIZE": "1",
     },
 }
