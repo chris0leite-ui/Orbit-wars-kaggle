@@ -369,11 +369,22 @@ def plan_lite_waves(
     )                                                                            # [C]
     score = torch.where(cand_valid, score, torch.full_like(score, float("-inf")))
 
+    # Cross-wave over-drain guard for multi-size: single-size's accidental
+    # invariant — at-most-one wave per source, because cand_send==drain — does
+    # NOT hold for multi-size, where size_lo<drain lets multiple small launches
+    # from the same source fire across waves and total more than safe_drain.
+    # Cap the source budget at drain so the cumulative sent per source stays
+    # safe. OFF path unchanged to preserve bit-identical OFF parity.
+    source_budget = obs.ships.to(dtype).clone()
+    if _multi_size_enabled():
+        src_planet = source_idx.clamp(0, P - 1)
+        source_budget[src_planet] = torch.minimum(source_budget[src_planet], drain)
+
     wave_entries, leftover = _greedy_select(
         P=P, W=W, device=device, dtype=dtype, score=score,
         cand_src=cand_src, cand_send=cand_send, cand_angle=cand_angle, cand_eta=cand_eta,
         cand_active=cand_active, cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
-        cand_is_def=cand_is_def, source_budget=obs.ships.to(dtype).clone(),
+        cand_is_def=cand_is_def, source_budget=source_budget,
         target_exists=target_exists, roi_threshold=float(config.roi_threshold),
     )
 
