@@ -1,9 +1,15 @@
 """Multi-size-ON variant of ``producer_plus``.
 
-Sets ``PRODUCER_PLUS_MULTI_SIZE=1`` (and ``PRODUCER_PLUS_ADAPTIVE_K=1``
-to carry Step 2) BEFORE loading the producer_plus agent so both env
-gates are picked up at import time. See ``state/MIGRATION_PLAN.md``
-Step 4.
+Sets ``PRODUCER_PLUS_MULTI_SIZE=1`` BEFORE loading the producer_plus
+agent so the env gate is picked up at import time. See
+``state/MIGRATION_PLAN.md`` Step 4.
+
+Adaptive-K (Step 2) is deliberately NOT enabled here: 16-game
+seat-alternated A/B 2026-06-04 showed adaptive_k at exactly 8/16 vs
+vanilla producer (parity, no lift). Keep the adaptive_k code path in
+``main.py`` for future tuning, but stop carrying it by default in the
+multi-size shim until we have evidence it composes positively with
+producer's calibration.
 
 Uses ``importlib`` (rather than ``import``) because fast.py /
 kaggle_environments load agents by file path and do not put their
@@ -13,7 +19,6 @@ fail. Same pattern as ``producer_plus_adaptive_k.py``.
 import os
 import importlib.util
 
-os.environ.setdefault("PRODUCER_PLUS_ADAPTIVE_K", "1")
 os.environ.setdefault("PRODUCER_PLUS_MULTI_SIZE", "1")
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
