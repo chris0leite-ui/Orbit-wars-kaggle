@@ -6,42 +6,62 @@ piece of Producer that actually matters — its forward-simulated value
 function — into our own agent. This notes the diagnosis, the two build
 options, the key composition insight, and next steps._
 
-## The diagnosis — there is only one piece that matters
+## CORRECTION (2026-06-04) — our live champion already forward-simulates
 
-Producer's whole edge is a single thing: its value function **simulates
-combat forward ~18 turns and scores the real net-ship swing** — `my net
-gain − opponents' net gain`, accounting for who-captures-what, cascades,
-and combat timing (`sparse_launch_flow_delta` in
-`agents/producer/orbit_lite/garrison_launch.py`). Every other Producer
-part — hold-reserve sizing (`safe_drain`), capture-floor, target
-shortlists, greedy best-wave-per-target selection — we already have
-equivalents of.
+An earlier version of this note (and the HANDOVER) said our champion uses
+a "static one-shot board score" that "never simulates combat forward."
+**That is wrong for the agent we actually ship**, and the mis-statement
+made the gap to Producer look bigger than it is. The traced truth:
 
-**Proof it is the whole edge:** our `producer_lite` port (`lib/producer_lite.py`)
-kept all the cheap pieces faithfully and only swapped the forward-sim
-scorer for a cheap "production × time-left" proxy. It wins **3%** as an
-attacker where real Producer wins **78%** (`/tmp/transfer2.log`,
-`audit/2026-06-04-producer-lite-build.md`). The ~45 points of win-rate
-ARE the scorer; the cheap heuristics carry almost none of it.
+- The live champion is `BASELINE_CHOOSER=refine` → `choose_refine` →
+  `choose_trajectory`, and its real scorer is `score_candidate_v4`
+  (`agents/baseline/chooser_trajectory.py:600`).
+- For **every** candidate launch it **clones the board and rolls it
+  forward K ticks** through `fast_sim`
+  (`chooser_trajectory.py:676-706`), then scores the leaf with `favor`
+  and subtracts a me-idle baseline (`build_trajectory_baseline`,
+  `chooser_trajectory.py:581`).
+- The "static one-shot `favor`" is only the **leaf** of that rollout —
+  not the scorer. (The composite chooser in `agents/baseline/chooser.py`
+  IS a static-leaf path, but it is NOT the live chooser.)
 
-**The gap, stated exactly:** our champion's value function (`favor` in
-`agents/baseline/value.py`) is a *static one-shot board score* —
-`(my ships − their ships) + (my prod − their prod)×discount`. It never
-simulates combat forward. That is the whole difference between us and
-Producer.
+So we already forward-simulate. The real difference from Producer is
+narrower and lives in **two** places:
 
-## The asset most plans overlook — we already built a forward-sim scorer
+1. **The opponent model.** Our rollout has every opponent seat **actively
+   launching** `lite_greedy_policy` at every tick (`opp_actions_for_snap`,
+   `chooser.py:60`). Producer **freezes** the opponent — they produce and
+   resolve in-flight fleets but launch nothing. This is the opponent-agnostic
+   axis, and it is the lever this note is about.
+2. **The leaf fidelity.** Our leaf is the linear `favor` board score;
+   Producer's is the exact net-ship-swing combat delta
+   (`sparse_launch_flow_delta` in
+   `agents/producer/orbit_lite/garrison_launch.py`). Separate, bigger
+   lever (Option B below).
 
-`lib/v7_search.py` + `lib/fast_sim.py`: enumerate candidate launch
-bundles, roll each forward K turns through our own fast simulator
-(0.12 ms/step) with a reactive opponent model, pick the best `us − them`
-net-ship total at the rollout's terminal state. **Structurally the same
-lens as Producer, pure-Python, no torch.** A dozen `v7_*` agents exist.
+**Proof the scorer is where Producer's edge lives:** our `producer_lite`
+port (`lib/producer_lite.py`) kept all the cheap pieces faithfully and
+only swapped the forward-sim scorer for a cheap "production × time-left"
+proxy. It wins **3%** as an attacker where real Producer wins **78%**
+(`/tmp/transfer2.log`, `audit/2026-06-04-producer-lite-build.md`). The
+~45 points of win-rate ARE the scorer; the cheap heuristics carry almost
+none of it.
 
-It was shelved — but not because the scorer was wrong. Because its
-candidate *enumeration* was too narrow ("drop-one": incumbent minus each
-launch, a strict subset that can't out-score the incumbent). The scoring
-lens was never the problem; the menu it scored was.
+## The opponent model is ONE function — `opp_actions_for_snap`
+
+Every live call to the opponent model funnels through a single function,
+`opp_actions_for_snap` (`agents/baseline/chooser.py:60`), called from
+exactly three live sites:
+- `build_trajectory_baseline` (the idle baseline) — `chooser_trajectory.py:581`
+- `score_candidate_v4` (each solo candidate) — `chooser_trajectory.py:693`
+- `score_candidate_v4_joint` (coalition candidates) — `chooser_trajectory.py:875`
+
+That one chokepoint is the entire opponent-model surface. Making the
+agent opponent-agnostic is therefore a **gate on one function**, not a
+rebuild (see "The spike" below). `lib/v7_search.py` + `lib/fast_sim.py`
+remain a SECOND, heavier forward-sim substrate (terminal `us − them` net
+totals), shelved for narrow drop-one enumeration — useful for Option B,
+but NOT needed to answer the opponent-model question.
 
 ## Two ways forward simulation goes INTO our agent
 
@@ -106,64 +126,75 @@ caught anyway (competitive score subtracts opp passive net gain;
 `safe_drain` bounds overextension without a prediction). We trade a small,
 fragile exploit edge for a large, robust calibration gain.
 
-**Consequence — a simplification, not just a perf change.** Delete the
-opponent model wholesale (`lib/opp_model`, producer_lite-as-rollout-
-opponent). Less code, less cost (no per-tick opp policy), no torch. Then
-feed the robust scorer RICHER candidates than Producer (coalitions,
-wait-then-fire) — which an opponent-agnostic net-ship-swing scorer values
-correctly. Same lens, better menu → plausibly BETTER than Producer.
+**Consequence — a simplification, not just a perf change.** When the
+passive rollout proves out, `lib/opp_model` (`lite_greedy_policy`,
+`top_tier_mirror_policy`) and the producer_lite-as-rollout-opponent
+become dead weight — less code, less cost (no per-tick opp policy
+across every candidate × every tick), no torch. Then feed the robust
+scorer RICHER candidates than Producer (coalitions, wait-then-fire),
+which an opponent-agnostic scorer values correctly. Same lens, better
+menu → plausibly BETTER than Producer.
 
-Mechanically small in our code: `v7_search` already rolls out and scores
-`us − them`; hand its rollout a **no-op opponent policy** instead of
-`lite_greedy`. producer_lite's `_build_projection` is the analytic version
-of the same opponent-passive forecast.
+## The spike — IMPLEMENTED 2026-06-04 (`BASELINE_OPP_PASSIVE`, default OFF)
+
+The opponent model is ONE chokepoint function, so the spike is a gate on
+it, not a v7_search rewire. `opp_actions_for_snap`
+(`agents/baseline/chooser.py:60`) now returns all-empty opponent actions
+when `BASELINE_OPP_PASSIVE=1`:
+
+```python
+if os.environ.get("BASELINE_OPP_PASSIVE", "0").strip() == "1":
+    return [[] for _ in range(num_seats)]
+```
+
+`fs_step` with `[]` for a seat is passive-not-deleted
+(`lib/fast_sim.py:373`): it calls the real env interpreter, so opponents
+still gain production and their in-flight fleets still resolve combat —
+only NEW enemy launches are frozen. Both the candidate rollout
+(`score_candidate_v4`) and the me-idle baseline
+(`build_trajectory_baseline`) read the SAME function, so they switch
+together and the marginal-value framing stays symmetric ("my move's value
+given opponents sit still"). Default OFF ⇒ champion bundle byte-identical.
+
+**Behavioral consequence (the trade):** active `lite_greedy` opponents
+penalize fragile captures (they counter-launch and retake inside the
+window → `favor` drops → delta shrinks). Passive opponents remove that
+recapture correction — exactly Producer's behavior. We give up a
+correction computed against a patsy (`lite_greedy` plays nothing like the
+3,700-team field) for robustness + a real speed win. The one risk —
+overextension into recapture — is guarded by `hold_need` / launch-rules
+discipline (our `safe_drain` equivalent).
 
 ## Probe decision (PI, 2026-06-04): SKIPPED
 
 The v7-vs-Producer triage A/B was NOT run — PI judged it a waste ("the
 strategy will win"). We measure at the real gate instead: n≥32 + Rule 46
-wallclock once the opponent-agnostic hybrid exists. (Kept for the record:
-bare v7 would have confounded the scorer with a weak rollout opponent and
-narrow drop-one enumeration, so a loss would not have refuted the idea
-anyway.)
+wallclock once the opponent-agnostic hybrid exists.
 
-## The target architecture (opponent-agnostic hybrid)
+## Next steps
 
-- **Value head:** opponent-passive forward projection (produce + resolve
-  in-flight fleets, NO enemy launches), scored by `Δnet_me − Σ Δnet_opp`.
-  No opponent model anywhere.
-- **Candidates:** our rich generators (multi-source coalitions, multiple
-  sizes per (src,tgt), wait-then-fire, adaptive-K reach).
-- **Selection:** greedy best-wave-per-target with role-mutex + hold-reserve
-  (`safe_drain`) — Producer's structure, which we already mirror.
-
-Two implementations of the same value head:
-- **Option A (rollout):** `v7_search` re-ranks the top-K candidates by a
-  fast_sim rollout with a **no-op opponent policy**. Lowest new code;
-  cost-capped by top-K. Faithful to exact combat, pricier per candidate.
-- **Option B (analytic):** reimplement Producer's flow-delta on
-  producer_lite's `_build_projection`; cheap enough to score many
-  candidates; numpy, no torch. Higher payoff, higher effort.
-
-## Next steps (no opponent model in any of them)
-
-1. **Switch the rollout to opponent-passive (Option A spike).** Point
-   `v7_search`'s rollout at a no-op opponent policy + competitive net-ship
-   delta score. Smallest change that makes our forward sim match
-   Producer's lens. Sanity-check it plays sensibly (captures, holds).
-2. **Widen the candidate menu** feeding that scorer: our coalitions +
-   capture-floor sizes + adaptive-K reach + wait-then-fire.
-3. **Option B parallel track (bigger bet):** reimplement the analytic
-   flow-delta on producer_lite's projection; unit-test net-ship-swing
-   against `env.step` ground truth before wiring as a value head.
+1. ✅ **DONE — passive-opponent flag** (`BASELINE_OPP_PASSIVE`, above).
+   Sanity smoke confirms it plays a full game (captures, holds, wallclock
+   under budget). It does NOT yet change the leaf.
+2. **Leaf fidelity (Option B, the bigger lever):** the leaf is still the
+   linear `favor` score, not Producer's exact net-ship-swing combat
+   delta. Reimplement the flow-delta on producer_lite's `_build_projection`
+   (`lib/producer_lite.py`); unit-test net-ship-swing against `env.step`
+   ground truth before wiring as a value head.
+3. **Widen the candidate menu** feeding the passive scorer: our coalitions
+   + capture-floor sizes + adaptive-K reach + wait-then-fire.
 4. **Measure at the real gate only** (PI skipped the triage probe): n≥32
    vs Producer + a multi-opponent panel, Rule 46 wallclock < 1000 ms max
-   turn, top-K pre-prune by the cheap leaf before forward-sim re-rank.
-5. **Delete on success:** `lib/opp_model`, producer_lite-as-opponent. The
-   opponent-agnostic scorer makes them dead weight.
+   turn.
+5. **Delete on success:** `lib/opp_model`, producer_lite-as-opponent.
 
 ## Pointers
-- `lib/v7_search.py`, `lib/fast_sim.py` — our forward-sim substrate.
+- `agents/baseline/chooser.py::opp_actions_for_snap` — the one opponent-model
+  chokepoint; gated by `BASELINE_OPP_PASSIVE`.
+- `agents/baseline/chooser_trajectory.py::score_candidate_v4` — the live
+  forward-sim scorer (clones + rolls K ticks + `favor` leaf).
+- `lib/v7_search.py`, `lib/fast_sim.py` — heavier forward-sim substrate
+  (terminal `us − them`), reserve for Option B candidate breadth.
 - `agents/producer/orbit_lite/garrison_launch.py::sparse_launch_flow_delta`
   — Producer's exact scorer (the thing to mirror in Option B).
 - `lib/producer_lite.py::_build_projection` — the projection substrate

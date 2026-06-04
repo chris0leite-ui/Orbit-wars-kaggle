@@ -59,7 +59,24 @@ def _select_opp_policy():
 
 def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
     """One reactive opp action set per non-me seat. Opp policy is
-    selected via BASELINE_OPP_TIER — see `_select_opp_policy`."""
+    selected via BASELINE_OPP_TIER — see `_select_opp_policy`.
+
+    BASELINE_OPP_PASSIVE=1 makes the rollout OPPONENT-AGNOSTIC: every
+    non-me seat launches nothing for the whole rollout window. The world
+    still advances inside `fs_step` (opponents gain production, their
+    in-flight fleets still move + resolve combat) — only NEW enemy
+    launches are frozen. This is exactly the public Producer agent's
+    forward-projection lens: score a move's first-order territory /
+    production value against a do-nothing opponent rather than guessing
+    the opponent's reactions with a (possibly wrong) policy. The flag is
+    read at call time so test fixtures / A-B subprocesses can toggle it
+    without re-importing. Default OFF → byte-identical champion bundle.
+    Removes the recapture-risk correction the active `lite_greedy`
+    rollout applied; the hold-reserve discipline (`hold_need` /
+    launch-rules) still guards against overextension. See
+    `knowledge-base/concepts/forward-sim-scorer-into-our-agent.md`."""
+    if os.environ.get("BASELINE_OPP_PASSIVE", "0").strip() == "1":
+        return [[] for _ in range(num_seats)]
     opp_policy = _select_opp_policy()
     actions: list[list] = [[] for _ in range(num_seats)]
     for opp_id in range(num_seats):
