@@ -104,3 +104,104 @@ PI replied "Nothing to add or to promote."
 - Active rules: 0, 1, 12, 32, 35, 36, 38, 39, 40, 42, 45, 46
   (per `CLAUDE.md`)
 - Loaded skills this session: `postmortem`, `kaggle-comp` (background)
+
+---
+
+# Postmortem — 2026-06-04 (second session, sub 53369848)
+
+This session continued the same branch on top of `b836407`. The
+producer_plus migration host (planned in `state/MIGRATION_PLAN.md`)
+moved from Step 1 (skeleton) through Step 4 (multi-size) and produced
+the first hybrid submission.
+
+## What went wrong
+
+- **Step 4 first revision shipped a silent-crash bug**:
+  `clamp(min=float, max=Tensor)` is invalid PyTorch syntax.
+  `plan_lite_waves` threw, the agent returned `_empty_entries`, and
+  the seat-balanced n=32 came in at 1/64. The only clue was wallclock
+  — p50=14 ms vs vanilla 22 ms (FASTER than vanilla). Unit tests
+  passed (env-gate function pure-Python only); synthetic invocation
+  in a one-game smoke also passed under the same gating. The bug was
+  a tensor-op edge case needing real game state to trigger. Cost:
+  ~45 min A/B compute on what turned out to be a crash, not a
+  regression.
+
+- **n=8 P0-only triage gave 6/8 win rate** which was misleading. The
+  same methodology flaw flagged in the M1/M2/M3 post-mortem
+  (previous session) recurred. Followed up with seat-balanced n=16
+  vs adaptive_k (13/16) which looked great — then n=16 vs vanilla
+  producer came in at 5/16 (regression). Rule 45 was explicitly
+  overridden by PI to submit on n=16.
+
+- **Step 2 (adaptive K) was carried into the multi_size submission
+  without ever being directly validated vs producer.** When PI asked
+  for the validation A/B, it came back at exactly 8/16 (parity).
+  Step 2+4 vs producer was 5/16 (regression); stripping Step 2
+  brought Step 4 alone to 10/16 (62.5%). Adaptive K interfered
+  destructively with multi-size — discovered only at session-end.
+
+- **Cross-wave over-drain bug was caught only by the deep code
+  review.** The PyTorch fix made the agent runnable but greedy's
+  source budget was still uncapped at `obs.ships` (not `drain`).
+  Single-size's invariant (`cand_send == drain` ⇒ at-most-one wave
+  per source) accidentally protected against over-drain; multi-size
+  with smaller variants broke it silently. Without the 9-angle code
+  review, the n=16 vs producer would likely have come back at parity
+  or worse and we'd still be diagnosing.
+
+## Frictions logged this session
+
+See `audit/friction.md` entries dated 2026-06-04 (second session):
+
+- `tag: empty-actions-faster-than-vanilla-is-silent-crash`
+- `tag: migration-step-validate-vs-target-not-just-prior-step`
+- `tag: cross-wave-over-drain-from-shared-budget`
+
+## Promotion candidates (PI ratified: NO)
+
+Three candidates were drafted (wallclock-as-crash-canary,
+migration-step-validate-vs-target, greedy-budget-needs-explicit-cap).
+PI replied "Nothing to add or to promote." All three remain as
+session-frictions only; no entries added to
+`.claude/skills/kaggle-comp/improvements.md`.
+
+## PI additions
+
+PI replied "Nothing to add or to promote."
+
+## What shipped
+
+- **Submission 53369848** — `producer_plus_multi_size_on.py` (commit
+  `4005b19`, 211 011 B). First hybrid from the producer_plus
+  migration track. Step 4 multi-size enumeration on Producer's
+  engine, no Step 2 adaptive K. Local n=16 seat-alt vs vanilla
+  producer: 10/6 (62.5%), Wilson [0.39, 0.81], perfectly
+  seat-balanced (5W/3L on both P0 and P1). Wilson-lo (0.39) does
+  not strictly clear Rule 45's 0.55 gate; PI explicit override.
+- Evicts: 53332500 `champ_computeByShips_on` (μ 1150.6).
+- Backstop in rolling pair: 53336920 `champ_refine_adaptivek`
+  (μ 1148.8).
+- Predicted live μ: ~1200-1250 (rough). Warm-up over ~24 h.
+
+## Next steps for the next session
+
+1. **Read live μ once TrueSkill warms up** (~24 h post-submit).
+2. **If μ ≥ ~1170:** proceed to Step 5 of `state/MIGRATION_PLAN.md`
+   (multi-source coalitions — biggest expected lift, Producer is
+   explicitly single-source).
+3. **If μ < ~1170:** investigate local-vs-live divergence. Possible
+   causes: opponent panel difference (local A/B used producer only;
+   live ladder is a mixed panel), seat-bias artefact, or n=16 was
+   just lucky.
+
+## Framework version at session-end
+
+- Commit SHA: `6896f2b` (`docs: push-claim board + handover updated
+  for sub 53369848`)
+- Branch: `claude/champion-ml-graft-majestic-storm`, ahead 138 of
+  `origin/main`.
+- Active rules: 0, 1, 12, 32, 35, 36, 38, 39, 40, 42, 45, 46
+  (per `CLAUDE.md`).
+- Loaded skills this session: `postmortem`, `code-review`,
+  `kaggle-comp` (background).
