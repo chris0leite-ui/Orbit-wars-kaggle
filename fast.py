@@ -81,6 +81,11 @@ _BASELINES: dict[str, str] = {
     "producer_plus_adaptive_k": str(
         REPO / "agents" / "producer_plus" / "producer_plus_adaptive_k.py"
     ),
+    # Step 3: layers lite-greedy opp projection into the scorer ledger
+    # on top of Step 2's adaptive K (both env gates pre-set).
+    "producer_plus_opp_proj": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_opp_proj.py"
+    ),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",

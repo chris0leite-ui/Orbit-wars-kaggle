@@ -49,6 +49,12 @@ from orbit_lite.planner_core import (
 )
 from orbit_lite.adapter import single_obs_to_tensor, sparse_action_row_to_moves
 
+from opp_projector import (
+    _none_projector,
+    arrivals_tuples_to_buckets_delta,
+    get_projector,
+)
+
 
 # Adaptive candidate-arrival horizon K_eta — ported from champion's
 # capture_horizon_k (agents/baseline/launch_rules.py). Default OFF
@@ -301,6 +307,8 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
     """Full per-turn pipeline: build movement → plan single-size waves + regroup → emit.
 
     ``memory`` must expose a mutable ``movement`` attribute (the rolling cache).
+    Reads ``memory.raw_obs`` for the opponent projector (Step 3); falls back to
+    the no-op projector if absent.
     """
     device = obs_tensors["planets"].device
     obs = parse_obs(obs_tensors)
@@ -316,18 +324,51 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
     memory.movement = movement
     cache = build_distance_cache(movement, max_k=int(config.horizon))
     H = int(config.horizon)
-    status = movement.garrison_status(max_horizon=H)
-    alive_by_step = movement.alive_by_step[: H + 1]
 
-    current_step = int(obs_tensors["step"].max().item())
-    K_eta_override = compute_k_eta_for_step(current_step, H=H)
+    # Opponent projection: augment fleet_buckets with projected opp arrivals
+    # so the scorer sees a non-static opponent. Default (env unset) is
+    # _none_projector → empty delta → bit-identical to vanilla Producer.
+    raw_obs = getattr(memory, "raw_obs", None)
+    projector_name = os.environ.get("PRODUCER_PLUS_OPP_PROJECTOR", "none")
+    projector = get_projector(projector_name)
+    original_buckets = movement.fleet_buckets
+    augmented = False
+    if projector is not _none_projector and raw_obs is not None and original_buckets is not None:
+        try:
+            tuples = projector(
+                raw_obs, my_id=int(obs.player_id),
+                num_seats=int(player_count), horizon=H,
+            )
+        except Exception:
+            tuples = []
+        if tuples:
+            delta = arrivals_tuples_to_buckets_delta(
+                tuples, movement.planet_ids, A=int(original_buckets.shape[-1]),
+                H=int(original_buckets.shape[-2]),
+                device=movement.device, dtype=original_buckets.dtype,
+            )
+            if bool(delta.any()):
+                movement.fleet_buckets = original_buckets + delta
+                movement._mark_garrison_dirty_all(0)
+                augmented = True
 
-    entries = plan_lite_waves(
-        movement=movement, obs=obs, obs_tensors=obs_tensors, cache=cache,
-        garrison_status=status, prod=movement.planet_prod,
-        alive_by_step=alive_by_step, config=config, player_count=int(player_count),
-        K_eta_override=K_eta_override,
-    )
+    try:
+        status = movement.garrison_status(max_horizon=H)
+        alive_by_step = movement.alive_by_step[: H + 1]
+
+        current_step = int(obs_tensors["step"].max().item())
+        K_eta_override = compute_k_eta_for_step(current_step, H=H)
+
+        entries = plan_lite_waves(
+            movement=movement, obs=obs, obs_tensors=obs_tensors, cache=cache,
+            garrison_status=status, prod=movement.planet_prod,
+            alive_by_step=alive_by_step, config=config, player_count=int(player_count),
+            K_eta_override=K_eta_override,
+        )
+    finally:
+        if augmented:
+            movement.fleet_buckets = original_buckets
+            movement._mark_garrison_dirty_all(0)
     entries = disambiguate_duplicate_launches(entries)
     launches = infer_planned_launches_from_entries(
         obs_tensors=obs_tensors, movement=movement, entries=entries, player_id=int(obs.player_id),
@@ -360,11 +401,16 @@ class ProducerLiteMemory:
         self.movement = None
         self.cached_player_count: int | None = None
         self.last_sparse_action_row: dict | None = None
+        # Raw obs dict stashed by ``agent()`` so the opponent projector
+        # (Step 3) can build a champion-style World without re-plumbing
+        # every signature down the call chain.
+        self.raw_obs = None
 
     def reset(self) -> None:
         self.movement = None
         self.cached_player_count = None
         self.last_sparse_action_row = None
+        self.raw_obs = None
 
 
 class ProducerLiteRuntime:
@@ -401,6 +447,7 @@ def agent(obs):
     player = obs.get("player", 0) if isinstance(obs, dict) else obs.player
     player_id = int(player)
     obs_tensors = single_obs_to_tensor(obs, player_id=player_id)
+    _RUNTIME.memory.raw_obs = obs
     with torch.no_grad():
         sparse_row = _RUNTIME.tensor_action(obs_tensors)
     return sparse_action_row_to_moves(sparse_row, obs, player_id=player_id)
