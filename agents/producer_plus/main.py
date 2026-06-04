@@ -292,14 +292,17 @@ def plan_lite_waves(
                 .gather(-1, k_arr_3.unsqueeze(-1)).squeeze(-1)
             )
         else:
+            k_arr_3 = torch.zeros(S, T, N, dtype=torch.long, device=device)
             floor_at_arr_3 = torch.ones(S, T, N, dtype=dtype, device=device)
         clears_floor_3 = sizes_3 >= floor_at_arr_3
         ships_ok_3 = sizes_3 <= source_ships.view(S, 1, 1)
-        valid_3 = (
-            viable_3 & clears_floor_3 & (sizes_3 >= 1.0) & ships_ok_3
+        # Leg-level viability WITHOUT the floor gate (for Fix-A coalitions).
+        viable_only_3 = (
+            viable_3 & (sizes_3 >= 1.0) & ships_ok_3
             & src_neq_tgt.unsqueeze(-1)
             & source_exists.view(S, 1, 1) & target_exists.view(1, T, 1)
         )                                                                         # [S, T, N]
+        valid_3 = viable_only_3 & clears_floor_3                                  # [S, T, N]
 
         # Pack multi-size single-source into [C_ms, L=2] padded.
         C_ms = S * T * N
@@ -320,16 +323,22 @@ def plan_lite_waves(
 
         # ===== Stage B: Step 5 coalitions (safe_drain per contributor) =====
         # Source ranking + per-pair aim use the safe_drain variant (sizes_hi).
-        valid_base = valid_3[..., -1]                                             # [S, T]
+        # Use viable_only_base (not valid_base) for ranking so sources that
+        # CAN'T clear floor alone still enter the coalition pool — those are
+        # the ones a Fix-A coalition actually helps.
+        viable_only_base = viable_only_3[..., -1]                                 # [S, T]
+        clears_floor_base = clears_floor_3[..., -1]                               # [S, T]
         eta_base = eta_3[..., -1]                                                 # [S, T]
         angle_base = angle_3[..., -1]                                             # [S, T]
+        k_arr_base = k_arr_3[..., -1]                                             # [S, T]
+        floor_at_arr_base = floor_at_arr_3[..., -1]                               # [S, T]
 
         K_src = min(_env_int("PRODUCER_PLUS_COALITION_K", 6), int(S))
         K_src = max(0, K_src)
 
         if S >= 2 and K_src >= 2:
             ranked_per_tgt = torch.where(
-                valid_base, -eta_base, torch.full_like(eta_base, float("-inf"))
+                viable_only_base, -eta_base, torch.full_like(eta_base, float("-inf"))
             ).transpose(0, 1)
             top_src_per_tgt = _stable_topk_indices(ranked_per_tgt, K_src)
             pair_idx = torch.triu_indices(K_src, K_src, offset=1, device=device)
@@ -349,12 +358,24 @@ def plan_lite_waves(
             etaB = eta_base[sB, T_idx_pair]
             angleA = angle_base[sA, T_idx_pair]
             angleB = angle_base[sB, T_idx_pair]
-            validA = valid_base[sA, T_idx_pair]
-            validB = valid_base[sB, T_idx_pair]
-            tol = float(_env_int("PRODUCER_PLUS_COALITION_ETA_TOL", 1))
-            eta_close = (etaA - etaB).abs() <= tol
+            viableA = viable_only_base[sA, T_idx_pair]
+            viableB = viable_only_base[sB, T_idx_pair]
+            clearsA = clears_floor_base[sA, T_idx_pair]
+            clearsB = clears_floor_base[sB, T_idx_pair]
+            k_arr_A = k_arr_base[sA, T_idx_pair]
+            k_arr_B = k_arr_base[sB, T_idx_pair]
+            floor_joint = floor_at_arr_base[sA, T_idx_pair]   # == [sB] when k_arr_A==k_arr_B
+
+            # Fix-A gate: coalitions only fire on targets where NEITHER source
+            # clears floor alone, but their joint same-tick arrival does.
+            eta_strict = k_arr_A == k_arr_B
+            neither_alone = ~clearsA & ~clearsB
+            joint_clears = (sizesA + sizesB) >= floor_joint
             distinct_src = sA != sB
-            valid_pair = validA & validB & eta_close & distinct_src              # [T, P_pairs]
+            valid_pair = (
+                viableA & viableB & neither_alone & joint_clears
+                & eta_strict & distinct_src
+            )                                                                    # [T, P_pairs]
 
             C_coal = T * P_pairs
             coal_src = torch.stack(
@@ -421,25 +442,31 @@ def plan_lite_waves(
                 floor.unsqueeze(0).expand(S, T, K).gather(-1, k_arr.unsqueeze(-1)).squeeze(-1)
             )
         else:
+            k_arr = torch.zeros(S, T, dtype=torch.long, device=device)
             floor_at_arr = torch.ones(S, T, dtype=dtype, device=device)
         clears_floor = sizes >= floor_at_arr
-        valid = (
-            viable & clears_floor & (sizes >= 1.0) & src_neq_tgt
+        # Leg-level viability WITHOUT the floor gate. Used by Fix-A coalitions:
+        # a coalition needs both legs to be physically viable (aim works, src
+        # exists, src != tgt, ships >= 1) but is NOT required to clear floor
+        # alone — that's the whole point of overlapping fleets.
+        viable_only = (
+            viable & (sizes >= 1.0) & src_neq_tgt
             & source_exists.view(S, 1) & target_exists.view(1, T)
         )                                                                        # [S, T]
+        valid = viable_only & clears_floor                                       # [S, T]
 
         L = 2
         C_base = S * T
 
-        # Stage 2 — top-K_src valid sources per target, ranked by -eta (fast
-        # arrivers first). Stable across CPU/CUDA via _stable_topk_indices.
+        # Stage 2 — top-K_src viable sources per target, ranked by -eta (fast
+        # arrivers first). Use `viable_only` (not `valid`) so sources that
+        # CAN'T clear floor alone still enter the coalition pool — those are
+        # the ones a coalition actually helps.
         K_src = min(_env_int("PRODUCER_PLUS_COALITION_K", 6), int(S))
         K_src = max(0, K_src)
-        # `top_src_per_tgt` carries S-axis indices, NOT planet slots. Look up
-        # planet slots via `source_idx[...]` downstream.
         if S >= 2 and K_src >= 2:
             ranked_per_tgt = torch.where(
-                valid, -eta, torch.full_like(eta, float("-inf"))
+                viable_only, -eta, torch.full_like(eta, float("-inf"))
             ).transpose(0, 1)                                                    # [T, S]
             top_src_per_tgt = _stable_topk_indices(ranked_per_tgt, K_src)        # [T, K_src]
 
@@ -461,15 +488,26 @@ def plan_lite_waves(
             etaB = eta[sB, T_idx]
             angleA = angle[sA, T_idx]
             angleB = angle[sB, T_idx]
-            validA = valid[sA, T_idx]
-            validB = valid[sB, T_idx]
+            viableA = viable_only[sA, T_idx]
+            viableB = viable_only[sB, T_idx]
+            clearsA = clears_floor[sA, T_idx]
+            clearsB = clears_floor[sB, T_idx]
+            k_arr_A = k_arr[sA, T_idx]
+            k_arr_B = k_arr[sB, T_idx]
+            floor_joint = floor_at_arr[sA, T_idx]   # == floor_at_arr[sB, T_idx] when k_arr_A == k_arr_B
 
-            # Stage 4 — same-arrival-tick filter (engine combat aggregates same-
-            # step arrivals; mismatched arrivals let the first wave die alone).
-            tol = float(_env_int("PRODUCER_PLUS_COALITION_ETA_TOL", 1))
-            eta_close = (etaA - etaB).abs() <= tol
+            # Stage 4 — Fix-A gate: coalitions only cover targets where NEITHER
+            # single source can clear floor alone, but the combined same-tick
+            # arrival can. This makes coalitions a true superset extension
+            # rather than overlap with single-source captures.
+            eta_strict = k_arr_A == k_arr_B
+            neither_alone = ~clearsA & ~clearsB
+            joint_clears = (sizesA + sizesB) >= floor_joint
             distinct_src = sA != sB
-            valid_pair = validA & validB & eta_close & distinct_src              # [T, P_pairs]
+            valid_pair = (
+                viableA & viableB & neither_alone & joint_clears
+                & eta_strict & distinct_src
+            )                                                                    # [T, P_pairs]
 
         # Stage 5 — pack [C_total, L=2]. Single-source candidates pad slot 1
         # with active=False; greedy's `~cand_active` short-circuit + the
