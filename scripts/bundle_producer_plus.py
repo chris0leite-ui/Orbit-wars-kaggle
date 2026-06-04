@@ -60,6 +60,14 @@ ENV_VARIANTS = {
         # as Step 5b later only if both lift independently.
         "PRODUCER_PLUS_COALITIONS": "1",
     },
+    "composed": {
+        # Step 4 + Step 5: BOTH multi_size and coalitions ON. The plan.py
+        # `plan_lite_waves` composed branch packs S*T*N + T*C(K,2) candidates
+        # at L=2. Tests the hypothesis that coalitions only lift when paired
+        # with multi-size single-source variants.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_COALITIONS": "1",
+    },
 }
 
 

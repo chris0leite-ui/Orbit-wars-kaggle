@@ -93,6 +93,12 @@ _BASELINES: dict[str, str] = {
     "producer_plus_coalitions": str(
         REPO / "agents" / "producer_plus" / "producer_plus_coalitions.py"
     ),
+    # Step 4 + 5 composed: BOTH multi_size and coalitions ON. Tests the
+    # hypothesis that coalitions only lift when paired with multi-size
+    # single-source variants (Step 5 standalone fell to 40.6% vs producer).
+    "producer_plus_composed": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_composed.py"
+    ),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",

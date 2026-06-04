@@ -238,7 +238,166 @@ def plan_lite_waves(
 
     src_neq_tgt = source_idx.view(S, 1) != target_idx.view(1, T)
 
-    if _coalitions_enabled():
+    if _multi_size_enabled() and _coalitions_enabled():
+        # --- Step 4 + Step 5 composed: multi-size single-source + L=2 coalitions
+        # Single-source: 3 size variants per (s, t), padded to L=2 with slot 1
+        # inactive. Coalitions: safe_drain per contributor (no size variation
+        # on the coalition side — that's the controlled compose), L=2.
+        # C_total = S*T*N + T*C(K_src, 2). Target mutex blocks losing
+        # variants/coalitions once any candidate wins a target.
+        L = 2
+        N = 3
+
+        # ===== Stage A: Step 4 multi-size variants =====
+        sizes_hi = drain.view(S, 1).expand(S, T).floor()                          # [S, T]
+        active_hi = reachable_mask(
+            movement, source_idx=source_idx, target_idx=target_idx,
+            fleet_sizes=sizes_hi.unsqueeze(-1), eta_cap=eta_cap,
+        ).squeeze(-1)
+        aim_hi = intercept_angle(
+            movement,
+            source_idx.unsqueeze(1), target_idx.unsqueeze(0),
+            sizes_hi, active=active_hi,
+        )
+        eta_hi = aim_hi["eta"]                                                    # [S, T]
+        if K > 0:
+            k_arr_hi = (eta_hi.clamp(min=1.0, max=float(K)).ceil().long() - 1).clamp(0, K - 1)
+            floor_at_arr_hi = (
+                floor.unsqueeze(0).expand(S, T, K).gather(-1, k_arr_hi.unsqueeze(-1)).squeeze(-1)
+            )
+        else:
+            floor_at_arr_hi = torch.ones(S, T, dtype=dtype, device=device)
+
+        sizes_lo = torch.minimum(floor_at_arr_hi.ceil().clamp(min=1.0), sizes_hi)
+        sizes_mid = torch.minimum(2.0 * sizes_lo, sizes_hi)
+        sizes_3 = torch.stack([sizes_lo, sizes_mid, sizes_hi], dim=-1)            # [S, T, N]
+
+        active_3 = reachable_mask(
+            movement, source_idx=source_idx, target_idx=target_idx,
+            fleet_sizes=sizes_3, eta_cap=eta_cap,
+        )
+        aim_3 = intercept_angle(
+            movement,
+            source_idx.view(S, 1, 1), target_idx.view(1, T, 1),
+            sizes_3, active=active_3,
+        )
+        angle_3 = aim_3["angle"]                                                  # [S, T, N]
+        eta_3 = aim_3["eta"]                                                      # [S, T, N]
+        viable_3 = aim_3["viable"] & (eta_3 <= eta_cap.view(1, T, 1))
+
+        if K > 0:
+            k_arr_3 = (eta_3.clamp(min=1.0, max=float(K)).ceil().long() - 1).clamp(0, K - 1)
+            floor_at_arr_3 = (
+                floor.view(1, T, 1, K).expand(S, T, N, K)
+                .gather(-1, k_arr_3.unsqueeze(-1)).squeeze(-1)
+            )
+        else:
+            floor_at_arr_3 = torch.ones(S, T, N, dtype=dtype, device=device)
+        clears_floor_3 = sizes_3 >= floor_at_arr_3
+        ships_ok_3 = sizes_3 <= source_ships.view(S, 1, 1)
+        valid_3 = (
+            viable_3 & clears_floor_3 & (sizes_3 >= 1.0) & ships_ok_3
+            & src_neq_tgt.unsqueeze(-1)
+            & source_exists.view(S, 1, 1) & target_exists.view(1, T, 1)
+        )                                                                         # [S, T, N]
+
+        # Pack multi-size single-source into [C_ms, L=2] padded.
+        C_ms = S * T * N
+        ms_src_planet = source_idx.view(S, 1, 1).expand(S, T, N).reshape(C_ms)
+        ms_src_padded = torch.stack([ms_src_planet, ms_src_planet], dim=-1)       # [C_ms, 2]
+        ms_send_flat = torch.where(valid_3, sizes_3, torch.zeros_like(sizes_3)).reshape(C_ms)
+        ms_send_padded = torch.stack(
+            [ms_send_flat, torch.zeros_like(ms_send_flat)], dim=-1)
+        ms_angle_padded = torch.stack(
+            [angle_3.reshape(C_ms), torch.zeros_like(ms_send_flat)], dim=-1)
+        ms_eta_flat = torch.where(valid_3, eta_3, torch.ones_like(eta_3)).reshape(C_ms)
+        ms_eta_padded = torch.stack([ms_eta_flat, torch.ones_like(ms_eta_flat)], dim=-1)
+        ms_valid_flat = valid_3.reshape(C_ms)                                     # [C_ms]
+        ms_active = torch.stack(
+            [ms_valid_flat, torch.zeros_like(ms_valid_flat)], dim=-1)
+        ms_tgt_slot = target_idx.view(1, T, 1).expand(S, T, N).reshape(C_ms)
+        ms_tgt_short = torch.arange(T, device=device).view(1, T, 1).expand(S, T, N).reshape(C_ms)
+
+        # ===== Stage B: Step 5 coalitions (safe_drain per contributor) =====
+        # Source ranking + per-pair aim use the safe_drain variant (sizes_hi).
+        valid_base = valid_3[..., -1]                                             # [S, T]
+        eta_base = eta_3[..., -1]                                                 # [S, T]
+        angle_base = angle_3[..., -1]                                             # [S, T]
+
+        K_src = min(_env_int("PRODUCER_PLUS_COALITION_K", 6), int(S))
+        K_src = max(0, K_src)
+
+        if S >= 2 and K_src >= 2:
+            ranked_per_tgt = torch.where(
+                valid_base, -eta_base, torch.full_like(eta_base, float("-inf"))
+            ).transpose(0, 1)
+            top_src_per_tgt = _stable_topk_indices(ranked_per_tgt, K_src)
+            pair_idx = torch.triu_indices(K_src, K_src, offset=1, device=device)
+            pair_a = pair_idx[0]
+            pair_b = pair_idx[1]
+            P_pairs = int(pair_a.numel())
+        else:
+            P_pairs = 0
+
+        if P_pairs > 0:
+            T_idx_pair = torch.arange(T, device=device).view(T, 1).expand(T, P_pairs)
+            sA = top_src_per_tgt[:, pair_a]
+            sB = top_src_per_tgt[:, pair_b]
+            sizesA = sizes_hi[sA, T_idx_pair]
+            sizesB = sizes_hi[sB, T_idx_pair]
+            etaA = eta_base[sA, T_idx_pair]
+            etaB = eta_base[sB, T_idx_pair]
+            angleA = angle_base[sA, T_idx_pair]
+            angleB = angle_base[sB, T_idx_pair]
+            validA = valid_base[sA, T_idx_pair]
+            validB = valid_base[sB, T_idx_pair]
+            tol = float(_env_int("PRODUCER_PLUS_COALITION_ETA_TOL", 1))
+            eta_close = (etaA - etaB).abs() <= tol
+            distinct_src = sA != sB
+            valid_pair = validA & validB & eta_close & distinct_src              # [T, P_pairs]
+
+            C_coal = T * P_pairs
+            coal_src = torch.stack(
+                [source_idx[sA].reshape(C_coal), source_idx[sB].reshape(C_coal)],
+                dim=-1,
+            )
+            sendA = torch.where(valid_pair, sizesA, torch.zeros_like(sizesA))
+            sendB = torch.where(valid_pair, sizesB, torch.zeros_like(sizesB))
+            coal_send = torch.stack(
+                [sendA.reshape(C_coal), sendB.reshape(C_coal)], dim=-1)
+            coal_angle = torch.stack(
+                [angleA.reshape(C_coal), angleB.reshape(C_coal)], dim=-1)
+            etaA_safe = torch.where(valid_pair, etaA, torch.ones_like(etaA))
+            etaB_safe = torch.where(valid_pair, etaB, torch.ones_like(etaB))
+            coal_eta = torch.stack(
+                [etaA_safe.reshape(C_coal), etaB_safe.reshape(C_coal)], dim=-1)
+            coal_active = torch.stack(
+                [valid_pair.reshape(C_coal), valid_pair.reshape(C_coal)], dim=-1)
+            coal_tgt_short = torch.arange(T, device=device).view(T, 1).expand(T, P_pairs).reshape(C_coal)
+            coal_tgt_slot = target_idx[coal_tgt_short]
+            coal_valid = valid_pair.reshape(C_coal)
+
+            cand_src = torch.cat([ms_src_padded, coal_src], dim=0)
+            cand_send = torch.cat([ms_send_padded, coal_send], dim=0)
+            cand_angle = torch.cat([ms_angle_padded, coal_angle], dim=0)
+            cand_eta = torch.cat([ms_eta_padded, coal_eta], dim=0)
+            cand_active = torch.cat([ms_active, coal_active], dim=0)
+            cand_tgt_slot = torch.cat([ms_tgt_slot, coal_tgt_slot], dim=0)
+            cand_tgt_short = torch.cat([ms_tgt_short, coal_tgt_short], dim=0)
+            cand_valid = torch.cat([ms_valid_flat, coal_valid], dim=0)
+        else:
+            cand_src = ms_src_padded
+            cand_send = ms_send_padded
+            cand_angle = ms_angle_padded
+            cand_eta = ms_eta_padded
+            cand_active = ms_active
+            cand_tgt_slot = ms_tgt_slot
+            cand_tgt_short = ms_tgt_short
+            cand_valid = ms_valid_flat
+
+        cand_is_def = target_is_mine[cand_tgt_short]
+        C = int(cand_src.shape[0])
+    elif _coalitions_enabled():
         # --- Step 5: single-size base + L=2 multi-source coalitions ------------
         # Stage 1 — per-(s, t) single-size base (mirrors the else: branch).
         sizes = drain.view(S, 1).expand(S, T).floor()                            # [S, T]
