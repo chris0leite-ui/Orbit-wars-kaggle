@@ -55,8 +55,14 @@ from agents.baseline.proposer import (
 
 EPISODE_STEPS = 500
 WIN_FLOOR = 0.10       # winnability never reaches zero -> the field never freezes
-RACE_SCALE = 6.0       # turns; steepness of the reach-race / near-bias falloff
+RACE_SCALE = 6.0       # turns; steepness of the graded reach-race confidence
 REACH_CEIL = 26        # feasibility: no capture whose (wait+eta) exceeds this (no overreach)
+# Per-turn probability that a launched plan survives one turn of opponent action
+# without being invalidated. A fleet in the air for tau turns survives to arrival
+# with probability SURVIVAL_PER_TURN**tau -- this is how the field prices the
+# world drifting (entropy) while the fleet flies. Closer to 1 = more patient/
+# trusting of long flights; lower = sharper near-preference. Calibrated on S4/S5.
+SURVIVAL_PER_TURN = 0.97
 THREAT_ANGLE = 0.45    # rad (~26 deg); enemy fleet "incoming" if heading within this of the bearing
 THREAT_RANGE = 60.0    # board units; only nearby enemy fleets count as a committed threat
 MAX_CONVERGE_TARGETS = 8   # bound the cohort supplement scan
@@ -78,6 +84,14 @@ def get_trace() -> list[dict]:
 
 def get_last_field() -> list[dict]:
     return list(_LAST_FIELD)
+
+
+def _sigmoid(x: float) -> float:
+    if x < -60.0:
+        return 0.0
+    if x > 60.0:
+        return 1.0
+    return 1.0 / (1.0 + math.exp(-x))
 
 
 def _parse_fleets(obs):
@@ -145,15 +159,34 @@ def agent(obs, configuration=None):
     # so it arrives later -> larger `arrival` -> smaller (500 - arrival) -> less
     # value. The old explicit near-bias term is dropped (it would double-count).
     def winnability(t, arrival_turn):
-        race = predict_arrival_contest(
-            model, world, int(t.id), int(arrival_turn), me
-        ).race_class
-        return WIN_FLOOR if race == "race_loss" else 1.0
+        # Probability the action delivers the value we priced. Independent failure
+        # modes multiply:  floor + (1-floor) * time_survival * race_conf * path_clear
+        ac = predict_arrival_contest(model, world, int(t.id), int(arrival_turn), me)
+        # race_conf: graded lead over the opponent's earliest contest turn. A wide
+        # lead -> ~1; arriving at/after the contest -> ~0. This rewards capturing
+        # EARLY (before the garrison grows / before a counter), and folds in target
+        # contestedness ("where we aim") via opp_earliest_contest_tick. None = the
+        # opponent cannot contest at all (uncontestable -> full confidence).
+        opp = ac.opp_earliest_contest_tick
+        if opp is None:
+            race_conf = 1.0
+        else:
+            race_conf = _sigmoid((float(opp) - float(arrival_turn)) / RACE_SCALE)
+        # time_survival: the world drifts while the fleet is in the air; longer
+        # flight = more divergence from this prediction (the entropy term).
+        time_survival = SURVIVAL_PER_TURN ** float(arrival_turn)
+        # path_clear: interception risk from enemy mass near the flight corridor.
+        # DEFERRED (next factor) -- defined here at 1.0 so the structure is in place.
+        path_clear = 1.0
+        return WIN_FLOOR + (1.0 - WIN_FLOOR) * time_survival * race_conf * path_clear
 
     def value(t, arrival_turn):
         owner = int(t.owner)
         mult = 2.0 if owner not in (-1, me) else 1.0
-        horizon = max(0.0, EPISODE_STEPS - float(arrival_turn))
+        # Remaining production turns we collect AFTER arrival: (turns left in the
+        # game) minus the flight time. Uses `remain` (= 500 - step), not the bare
+        # 500, so late-game captures are not over-valued.
+        horizon = max(0.0, float(remain) - float(arrival_turn))
         return mult * int(t.production) * horizon * winnability(t, arrival_turn)
 
     # ============================================================
@@ -181,6 +214,7 @@ def agent(obs, configuration=None):
             "src": int(a["src"].id), "tgt": int(a["tgt"].id), "ships": a["ships"],
             "ttc": round(float(a["wait"]) + float(a["eta"]), 1),
             "imp": round(a["value"], 1),   # wire key kept "imp" so the harness reads it
+            "win": round(winnability(a["tgt"], a["arrive"]), 3),
             "wait": int(a["wait"]),
             "tgt_owner": int(a["tgt"].owner), "prod": int(a["tgt"].production),
         })

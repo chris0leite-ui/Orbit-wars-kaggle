@@ -56,7 +56,8 @@ def show(name, obs, want):
         own = {-1: "neutral"}.get(f["tgt_owner"], f"P{f['tgt_owner']}")
         spd = fleet_speed(f["ships"])
         print(f"    src{f['src']:>2} -> tgt{f['tgt']:>2} [{own:>7} prod={f['prod']}]  "
-              f"ships={f['ships']:>3} speed={spd:.2f}  ttc={f['ttc']:>4}  imp={f['imp']}")
+              f"ships={f['ships']:>3} speed={spd:.2f}  ttc={f['ttc']:>4}  "
+              f"win={f.get('win', '?')}  imp={f['imp']}")
     if not field:
         print("    (field empty)")
     print(f"  EMITTED: {moves if moves else '(hold)'}")
@@ -87,6 +88,13 @@ def main():
     # The field may still SHOW a sub-floor fire-now entry; the test is that the
     # agent does not FIRE it (it holds and accumulates a capturing fleet instead).
     _check("S1", not moves, f"emitted={moves or '(hold)'} (want hold to accumulate)")
+    # This same target appears at several arrival times (fire-now + wait variants),
+    # so it doubles as the winnability-vs-arrival check: later arrival must give
+    # strictly lower winnability (the entropy discount).
+    by_ttc = sorted((f["ttc"], f["win"]) for f in field if f["tgt"] == 1)
+    monotone = all(b[1] < a[1] + 1e-9 for a, b in zip(by_ttc, by_ttc[1:]))
+    _check("S1-win", len(by_ttc) >= 2 and monotone,
+           f"(ttc,win) by ascending time -> {by_ttc}")
 
     # S1b — same target, home has accumulated a real strike force. Now a decisive
     # fast capture is affordable and high-value -> it should fire.
@@ -119,6 +127,25 @@ def main():
          make_obs([home3, juicy_far, enemy_adj]),
          "should NOT send the far losing-race shot")
     _check("S3", not moves, f"emitted={moves or '(hold)'} (want hold)")
+
+    # S4 — WINNABILITY: near-sure vs far-contested. One home with ample ships; a
+    # near uncontested neutral and a far neutral the enemy can reach soon. The
+    # near target's winnability should clearly exceed the far contested one, and
+    # the agent should prefer the near capture.
+    home4 = [0, 0, 15.0, 15.0, radius(3), 40, 3]
+    near_safe = [1, -1, 30.0, 25.0, radius(2), 8, 2]    # dist ~18, no enemy near
+    far_cont = [2, -1, 60.0, 80.0, radius(3), 8, 3]     # dist ~80; enemy adjacent
+    enemy4 = [3, 1, 66.0, 84.0, radius(3), 40, 3]
+    moves, field = show("S4 winnability (near-sure vs far-contested)",
+         make_obs([home4, near_safe, far_cont, enemy4]),
+         "near.win >> far.win; prefer the near capture, not the far gamble")
+    win_near = next((f["win"] for f in field if f["tgt"] == 1), None)
+    win_far = next((f["win"] for f in field if f["tgt"] == 2), None)
+    near_fired = any(int(m[0]) == 0 for m in moves) and not any(
+        lc["tgt"] == 2 for lc in proto.get_trace()[-1]["launches"])
+    _check("S4", win_near is not None and (win_far is None or win_near > win_far)
+           and near_fired,
+           f"win_near={win_near} win_far={win_far} emitted={moves or '(hold)'}")
 
 
 if __name__ == "__main__":
