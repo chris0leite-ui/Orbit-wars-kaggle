@@ -4,3 +4,9 @@ numpy
 pandas
 ipykernel
 pytest
+# torch — required ONLY by the vendored 'Producer' eval opponent (agents/producer/),
+# a DEFAULT_PANEL / Rule 43 gate member. CPU wheel via the pytorch index keeps it
+# small (no CUDA). If this index is ever blocked, producer eval is unavailable but
+# nothing else breaks.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
