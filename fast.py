@@ -86,6 +86,21 @@ _BASELINES: dict[str, str] = {
     "producer_plus_opp_proj": str(
         REPO / "agents" / "producer_plus" / "producer_plus_opp_proj.py"
     ),
+    # Opp-foresight mechanisms (post-Step-3): each ablates a single
+    # mechanism on top of the lite-greedy projector. opp_full stacks
+    # all three for the cumulative A/B.
+    "producer_plus_source_exposure": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_source_exposure.py"
+    ),
+    "producer_plus_race_loss": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_race_loss.py"
+    ),
+    "producer_plus_counter_capture": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_counter_capture.py"
+    ),
+    "producer_plus_opp_full": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_opp_full.py"
+    ),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",
