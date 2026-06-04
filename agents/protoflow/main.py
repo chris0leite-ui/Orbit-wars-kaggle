@@ -198,7 +198,8 @@ def agent(obs, configuration=None):
         cohort, floor = committed
         cohort.sort(key=lambda c: c[2])  # fill nearest-first
         needed = floor
-        for s, angle, _eta in cohort:
+        cohort_arrival = int(math.ceil(cohort[0][2]))
+        for s, angle, eta in cohort:
             if needed <= 0:
                 break
             send = min(spare[s.id], needed)
@@ -207,7 +208,12 @@ def agent(obs, configuration=None):
             if predict_fleet_fate(s, t, angle, int(send), world).outcome != "target":
                 continue  # path blocked (sun / wrong planet / oob) -> drop this leg
             moves.append([s.id, angle, int(send)])
-            launches.append((s.id, t.id, int(send)))
+            launches.append({
+                "src": s.id, "tgt": t.id, "ships": int(send),
+                "eta": round(eta, 1), "arrive_turn": cohort_arrival,
+                "dist": round(math.hypot(t.x - s.x, t.y - s.y), 1),
+                "tgt_owner": t.owner, "kind": kind, "floor": floor,
+            })
             spare[s.id] -= send
             needed -= send
 
@@ -216,5 +222,7 @@ def agent(obs, configuration=None):
         "launches": launches,
         "idle": len(launches) == 0,
         "sources": len(my_planets),
+        "my_planets": len(my_planets),
+        "my_ships": int(sum(p.ships for p in my_planets)),
     })
     return moves

@@ -36,6 +36,7 @@ import agents.protoflow.main as proto  # noqa: E402  (path set above)
 from fast import wilson_ci, _load_callable  # noqa: E402  reuse the repo's loader + Wilson
 
 PROTO_PATH = REPO / "agents" / "protoflow" / "main.py"
+DEFAULT_LITE_GREEDY = "agents/lite_greedy/main.py"   # fastest opponent; clean alignment baseline
 DEFAULT_CHAMP = "submissions/champ_refine_adaptivek.py"
 DEFAULT_PRODUCER = "agents/producer/producer_agent.py"
 
@@ -50,27 +51,44 @@ def load_callable(path: str):
 
 
 def trace_metrics(trace: list[dict]) -> dict:
-    """Per-game convergence / activity metrics from the prototype's turn trace."""
+    """Per-game convergence / activity / waste metrics from the turn trace.
+
+    The "good properties" lens (PI): a sound flow-field should naturally produce
+    aligned, non-wasteful actions. We surface the signals that would expose the
+    opposite: tiny fleets (<3 ships), far shots (dist>50, easy for the opponent
+    to react to), and split cohorts whose legs do NOT share an arrival turn (two
+    small fleets that arrive apart -> they don't sum -> waste).
+    """
     n_turns = len(trace)
-    n_launches = sum(len(t["launches"]) for t in trace)
+    all_launches = [lc for t in trace for lc in t["launches"]]
+    n_launches = len(all_launches)
     idle_turns = sum(1 for t in trace if t["idle"])
     conv_turns = 0
     max_cohort = 0
+    bad_split = 0  # cohort turns where legs to one target span >1 arrival turn
     for t in trace:
-        by_tgt: dict[int, int] = defaultdict(int)
-        for _src, tgt, _ships in t["launches"]:
-            by_tgt[tgt] += 1
-        if by_tgt:
-            biggest = max(by_tgt.values())
-            max_cohort = max(max_cohort, biggest)
-            if biggest >= 2:
+        by_tgt: dict[int, list] = defaultdict(list)
+        for lc in t["launches"]:
+            by_tgt[lc["tgt"]].append(lc)
+        for tgt, legs in by_tgt.items():
+            max_cohort = max(max_cohort, len(legs))
+            if len(legs) >= 2:
                 conv_turns += 1
+                if len({lc["arrive_turn"] for lc in legs}) > 1:
+                    bad_split += 1
+    sizes = [lc["ships"] for lc in all_launches]
+    dists = [lc["dist"] for lc in all_launches]
+    final = trace[-1] if trace else {}
     return {
         "turns": n_turns,
         "launches": n_launches,
         "idle_frac": idle_turns / n_turns if n_turns else 0.0,
         "conv_turns": conv_turns,
         "max_cohort": max_cohort,
+        "tiny_frac": (sum(1 for s in sizes if s < 3) / len(sizes)) if sizes else 0.0,
+        "far_frac": (sum(1 for d in dists if d > 50) / len(dists)) if dists else 0.0,
+        "bad_split": bad_split,
+        "end_planets": final.get("my_planets", 0),
     }
 
 
@@ -110,7 +128,9 @@ def probe_opponent(name: str, opp_path: str, seeds: int, focal):
             res = "WIN " if won else ("LOSS" if won is False else "ERR ")
             print(f"  seed {seed:>3} {seat}  {res}  "
                   f"launches={m['launches']:>4}  idle={m['idle_frac']:.2f}  "
-                  f"conv_turns={m['conv_turns']:>3}  max_cohort={m['max_cohort']}  "
+                  f"conv={m['conv_turns']:>3}  cohort={m['max_cohort']}  "
+                  f"tiny={m['tiny_frac']:.2f}  far={m['far_frac']:.2f}  "
+                  f"bad_split={m['bad_split']:>2}  end_planets={m['end_planets']:>2}  "
                   f"({time.time()-t0:.1f}s)")
             if won is not None:
                 for k, v in m.items():
@@ -119,27 +139,58 @@ def probe_opponent(name: str, opp_path: str, seeds: int, focal):
     games = max(1, n)
     print(f"  --> {name}: {wins}/{n} ({100*wins/games:.1f}%)  Wilson[{lo:.3f}, {hi:.3f}]")
     print(f"      mean/game: launches={agg['launches']/games:.1f}  "
-          f"idle_frac={agg['idle_frac']/games:.2f}  "
-          f"conv_turns={agg['conv_turns']/games:.1f}  "
-          f"max_cohort_seen={int(agg['max_cohort']/games) if games else 0}")
+          f"idle_frac={agg['idle_frac']/games:.2f}  conv_turns={agg['conv_turns']/games:.1f}  "
+          f"tiny_frac={agg['tiny_frac']/games:.2f}  far_frac={agg['far_frac']/games:.2f}  "
+          f"bad_split={agg['bad_split']/games:.1f}/game  end_planets={agg['end_planets']/games:.1f}")
     return wins, n
+
+
+def verbose_game(seed: int, opp_path: str, focal, max_turns: int = 60):
+    """Run one game and dump per-turn launches so we can EYEBALL action quality:
+    are fleets well-sized and concentrated, or tiny / far / split senselessly?"""
+    opp = load_callable(opp_path)
+    print(f"\n=== verbose game: protoflow (P0) vs {Path(opp_path).stem}  seed {seed} ===")
+    won, trace, _seat = run_game(seed, focal, opp, True)
+    for t in trace[:max_turns]:
+        if not t["launches"]:
+            continue
+        by_tgt: dict[int, list] = defaultdict(list)
+        for lc in t["launches"]:
+            by_tgt[lc["tgt"]].append(lc)
+        parts = []
+        for tgt, legs in by_tgt.items():
+            owner = legs[0]["tgt_owner"]
+            tag = "ENEMY" if owner not in (-1,) else "neutral"
+            kind = legs[0]["kind"]
+            srcs = "+".join(f"{lc['src']}({lc['ships']})" for lc in legs)
+            arr = legs[0]["arrive_turn"]
+            dist = legs[0]["dist"]
+            cohort = f" COHORT(arrive@{arr})" if len(legs) >= 2 else ""
+            parts.append(f"->{tgt}[{tag},{kind},d={dist},floor={legs[0]['floor']}] {srcs}{cohort}")
+        print(f"  step {t['step']:>3}  planets={t['my_planets']} ships={t['my_ships']:>3}  " + "  ".join(parts))
+    print(f"  result: {'WIN' if won else 'LOSS'}  (final planets={trace[-1]['my_planets'] if trace else 0})")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--seeds", type=int, default=6, help="seeds per opponent (x2 seats)")
-    ap.add_argument("--opponents", default=f"{DEFAULT_CHAMP},{DEFAULT_PRODUCER}",
-                    help="comma-separated opponent paths")
+    ap.add_argument("--opponents", default=DEFAULT_LITE_GREEDY,
+                    help="comma-separated opponent paths (default: the fast light-greedy agent)")
+    ap.add_argument("--verbose-seed", type=int, default=None,
+                    help="dump per-turn launches for one game vs the first opponent at this seed")
     args = ap.parse_args()
 
     # Use the IMPORTED module's agent (not a fresh _load_callable copy) so the
     # trace we reset/read is the same _TRACE object the running agent writes to.
     focal = proto.agent
+    opps = [o.strip() for o in args.opponents.split(",") if o.strip()]
+
+    if args.verbose_seed is not None:
+        verbose_game(args.verbose_seed, opps[0], focal)
+        return
+
     print(f"protoflow probe — {args.seeds} seeds x 2 seats per opponent")
-    for opp_path in args.opponents.split(","):
-        opp_path = opp_path.strip()
-        if not opp_path:
-            continue
+    for opp_path in opps:
         name = Path(opp_path).stem
         probe_opponent(name, opp_path, args.seeds, focal)
 
