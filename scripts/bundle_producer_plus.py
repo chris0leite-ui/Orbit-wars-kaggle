@@ -53,6 +53,13 @@ ENV_VARIANTS = {
         # a gated path for future tuning.
         "PRODUCER_PLUS_MULTI_SIZE": "1",
     },
+    "coalitions": {
+        # Step 5: L=2 multi-source coalitions packed alongside single-
+        # source candidates. Multi_size (Step 4) deliberately OFF to
+        # avoid the 3-size × C(K,2)-pair candidate explosion — compose
+        # as Step 5b later only if both lift independently.
+        "PRODUCER_PLUS_COALITIONS": "1",
+    },
 }
 
 

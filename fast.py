@@ -87,6 +87,12 @@ _BASELINES: dict[str, str] = {
     "producer_plus_multi_size": str(
         REPO / "agents" / "producer_plus" / "producer_plus_multi_size.py"
     ),
+    # Step 5: producer_plus with PRODUCER_PLUS_COALITIONS=1, so L=2
+    # multi-source coalitions are enumerated alongside single-source
+    # candidates. Step 4 (multi_size) NOT carried — see migration plan.
+    "producer_plus_coalitions": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_coalitions.py"
+    ),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",

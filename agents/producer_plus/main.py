@@ -36,6 +36,7 @@ from orbit_lite.planner_core import (
     _empty_entries,
     _greedy_select,
     _plan_regroup,
+    _stable_topk_indices,
     build_target_shortlist,
     capture_floor,
     empty_action_row,
@@ -66,6 +67,17 @@ def _adaptive_k_enabled() -> bool:
 # behaviour. State/MIGRATION_PLAN.md Step 4.
 def _multi_size_enabled() -> bool:
     return os.environ.get("PRODUCER_PLUS_MULTI_SIZE", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+# Multi-source coalitions: in addition to single-source candidates, emit
+# L=2 pairs that combine two source planets on the same target with
+# (near-)same arrival tick. Producer's planner already handles L>1
+# end-to-end; this step fills the unused L axis. Default OFF preserves
+# bit-identical single-source behaviour. state/MIGRATION_PLAN.md Step 5.
+def _coalitions_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_COALITIONS", "0").strip().lower() in (
         "1", "true", "yes", "on",
     )
 
@@ -226,7 +238,144 @@ def plan_lite_waves(
 
     src_neq_tgt = source_idx.view(S, 1) != target_idx.view(1, T)
 
-    if _multi_size_enabled():
+    if _coalitions_enabled():
+        # --- Step 5: single-size base + L=2 multi-source coalitions ------------
+        # Stage 1 — per-(s, t) single-size base (mirrors the else: branch).
+        sizes = drain.view(S, 1).expand(S, T).floor()                            # [S, T]
+        active = reachable_mask(
+            movement, source_idx=source_idx, target_idx=target_idx,
+            fleet_sizes=sizes.unsqueeze(-1), eta_cap=eta_cap,
+        ).squeeze(-1)                                                            # [S, T]
+        aim = intercept_angle(
+            movement,
+            source_idx.unsqueeze(1),
+            target_idx.unsqueeze(0),
+            sizes,
+            active=active,
+        )
+        angle = aim["angle"]                                                     # [S, T]
+        eta = aim["eta"]                                                         # [S, T]
+        viable = aim["viable"] & (eta <= eta_cap.view(1, T))
+        if K > 0:
+            k_arr = (eta.clamp(min=1.0, max=float(K)).ceil().long() - 1).clamp(0, K - 1)
+            floor_at_arr = (
+                floor.unsqueeze(0).expand(S, T, K).gather(-1, k_arr.unsqueeze(-1)).squeeze(-1)
+            )
+        else:
+            floor_at_arr = torch.ones(S, T, dtype=dtype, device=device)
+        clears_floor = sizes >= floor_at_arr
+        valid = (
+            viable & clears_floor & (sizes >= 1.0) & src_neq_tgt
+            & source_exists.view(S, 1) & target_exists.view(1, T)
+        )                                                                        # [S, T]
+
+        L = 2
+        C_base = S * T
+
+        # Stage 2 — top-K_src valid sources per target, ranked by -eta (fast
+        # arrivers first). Stable across CPU/CUDA via _stable_topk_indices.
+        K_src = min(_env_int("PRODUCER_PLUS_COALITION_K", 6), int(S))
+        K_src = max(0, K_src)
+        # `top_src_per_tgt` carries S-axis indices, NOT planet slots. Look up
+        # planet slots via `source_idx[...]` downstream.
+        if S >= 2 and K_src >= 2:
+            ranked_per_tgt = torch.where(
+                valid, -eta, torch.full_like(eta, float("-inf"))
+            ).transpose(0, 1)                                                    # [T, S]
+            top_src_per_tgt = _stable_topk_indices(ranked_per_tgt, K_src)        # [T, K_src]
+
+            # Stage 3 — enumerate (a < b) pairs across the K_src pool.
+            pair_idx = torch.triu_indices(K_src, K_src, offset=1, device=device) # [2, P_pairs]
+            pair_a = pair_idx[0]
+            pair_b = pair_idx[1]
+            P_pairs = int(pair_a.numel())
+        else:
+            P_pairs = 0
+
+        if P_pairs > 0:
+            T_idx = torch.arange(T, device=device).view(T, 1).expand(T, P_pairs)
+            sA = top_src_per_tgt[:, pair_a]                                      # [T, P_pairs]
+            sB = top_src_per_tgt[:, pair_b]
+            sizesA = sizes[sA, T_idx]                                            # [T, P_pairs]
+            sizesB = sizes[sB, T_idx]
+            etaA = eta[sA, T_idx]
+            etaB = eta[sB, T_idx]
+            angleA = angle[sA, T_idx]
+            angleB = angle[sB, T_idx]
+            validA = valid[sA, T_idx]
+            validB = valid[sB, T_idx]
+
+            # Stage 4 — same-arrival-tick filter (engine combat aggregates same-
+            # step arrivals; mismatched arrivals let the first wave die alone).
+            tol = float(_env_int("PRODUCER_PLUS_COALITION_ETA_TOL", 1))
+            eta_close = (etaA - etaB).abs() <= tol
+            distinct_src = sA != sB
+            valid_pair = validA & validB & eta_close & distinct_src              # [T, P_pairs]
+
+        # Stage 5 — pack [C_total, L=2]. Single-source candidates pad slot 1
+        # with active=False; greedy's `~cand_active` short-circuit + the
+        # send=0 mask make padded slots no-op.
+        base_src_planet = source_idx.view(S, 1).expand(S, T).reshape(C_base)
+        base_src_padded = torch.stack(
+            [base_src_planet, base_src_planet], dim=-1)                          # [C_base, 2]
+        base_send_flat = torch.where(valid, sizes, torch.zeros_like(sizes)).reshape(C_base)
+        base_send_padded = torch.stack(
+            [base_send_flat, torch.zeros_like(base_send_flat)], dim=-1)
+        base_angle_padded = torch.stack(
+            [angle.reshape(C_base), torch.zeros_like(base_send_flat)], dim=-1)
+        base_eta_flat = torch.where(valid, eta, torch.ones_like(eta)).reshape(C_base)
+        base_eta_padded = torch.stack(
+            [base_eta_flat, torch.ones_like(base_eta_flat)], dim=-1)
+        base_valid_flat = valid.reshape(C_base)                                  # [C_base]
+        base_active = torch.stack(
+            [base_valid_flat, torch.zeros_like(base_valid_flat)], dim=-1)
+        base_tgt_slot = target_idx.view(1, T).expand(S, T).reshape(C_base)
+        base_tgt_short = torch.arange(T, device=device).view(1, T).expand(S, T).reshape(C_base)
+
+        if P_pairs > 0:
+            C_coal = T * P_pairs
+            # source_idx maps S-axis index → planet slot.
+            coal_src = torch.stack(
+                [source_idx[sA].reshape(C_coal), source_idx[sB].reshape(C_coal)],
+                dim=-1,
+            )                                                                    # [C_coal, 2]
+            sendA = torch.where(valid_pair, sizesA, torch.zeros_like(sizesA))
+            sendB = torch.where(valid_pair, sizesB, torch.zeros_like(sizesB))
+            coal_send = torch.stack(
+                [sendA.reshape(C_coal), sendB.reshape(C_coal)], dim=-1)
+            coal_angle = torch.stack(
+                [angleA.reshape(C_coal), angleB.reshape(C_coal)], dim=-1)
+            etaA_safe = torch.where(valid_pair, etaA, torch.ones_like(etaA))
+            etaB_safe = torch.where(valid_pair, etaB, torch.ones_like(etaB))
+            coal_eta = torch.stack(
+                [etaA_safe.reshape(C_coal), etaB_safe.reshape(C_coal)], dim=-1)
+            coal_active = torch.stack(
+                [valid_pair.reshape(C_coal), valid_pair.reshape(C_coal)], dim=-1)
+            coal_tgt_short = torch.arange(T, device=device).view(T, 1).expand(T, P_pairs).reshape(C_coal)
+            coal_tgt_slot = target_idx[coal_tgt_short]
+            coal_valid = valid_pair.reshape(C_coal)
+
+            cand_src = torch.cat([base_src_padded, coal_src], dim=0)
+            cand_send = torch.cat([base_send_padded, coal_send], dim=0)
+            cand_angle = torch.cat([base_angle_padded, coal_angle], dim=0)
+            cand_eta = torch.cat([base_eta_padded, coal_eta], dim=0)
+            cand_active = torch.cat([base_active, coal_active], dim=0)
+            cand_tgt_slot = torch.cat([base_tgt_slot, coal_tgt_slot], dim=0)
+            cand_tgt_short = torch.cat([base_tgt_short, coal_tgt_short], dim=0)
+            cand_valid = torch.cat([base_valid_flat, coal_valid], dim=0)
+        else:
+            cand_src = base_src_padded
+            cand_send = base_send_padded
+            cand_angle = base_angle_padded
+            cand_eta = base_eta_padded
+            cand_active = base_active
+            cand_tgt_slot = base_tgt_slot
+            cand_tgt_short = base_tgt_short
+            cand_valid = base_valid_flat
+
+        cand_is_def = target_is_mine[cand_tgt_short]
+        C = int(cand_src.shape[0])
+    elif _multi_size_enabled():
         # --- Three fleet sizes per (source, target): capture_floor, 2× floor,
         # safe_drain. Each variant gets its own aim (fleet speed depends on
         # ships, so eta differs). Packed as [C=S*T*N, L=1] so greedy's target
@@ -376,7 +525,7 @@ def plan_lite_waves(
     # Cap the source budget at drain so the cumulative sent per source stays
     # safe. OFF path unchanged to preserve bit-identical OFF parity.
     source_budget = obs.ships.to(dtype).clone()
-    if _multi_size_enabled():
+    if _multi_size_enabled() or _coalitions_enabled():
         src_planet = source_idx.clamp(0, P - 1)
         source_budget[src_planet] = torch.minimum(source_budget[src_planet], drain)
 

@@ -57,6 +57,52 @@ single-size behaviour bit-identically. Env-on shim:
 `producer_plus_multi_size.py` (also sets `PRODUCER_PLUS_ADAPTIVE_K=1`
 to carry Step 2).
 
+## Step 5 — multi-source coalitions
+
+Producer's planner is structurally single-source: each candidate is
+one `(source, target)` pair with `L = 1` contributor. Producer's
+`LaunchSet` already supports `L > 1` end-to-end (`score_candidates`
+→ `sparse_launch_flow_delta` accumulates via `scatter_add_`;
+`_greedy_select` debits all L contributors via `scatter_add_` and
+gates the wave all-or-nothing on coalition fundability) — what's
+missing is the candidate-generation extension that actually emits
+L=2 coalitions. Step 5 fills it.
+
+For each high-value target, the planner additionally emits up to
+`C(K_src, 2) = 15` (with K_src = 6 by default) two-source coalitions:
+both contributors send `safe_drain[s]` and the pair is admitted only
+when their independent arrival ticks differ by ≤ 1 tick (env knob
+`PRODUCER_PLUS_COALITION_ETA_TOL`, default 1).
+
+The candidate tensor packs single-source rows (padded with
+`active[c, 1] = False`, `ships[c, 1] = 0`) alongside coalition rows
+into a unified `[C_total, L = 2]` tensor:
+
+- `C_total = S × T + T × C(K_src, 2)` (≈ 144 + 180 = 324 candidates
+  in 2P, ≈ 72 + 180 = 252 in 4P).
+- Greedy's all-or-nothing fundability check
+  (`(send ≤ budget) | ~active).all(dim=-1)`) and the per-leg
+  `scatter_add_` debit make padded slots no-op and coalition
+  contributions correct.
+
+Source ranking per target uses `-eta` (fastest arrivers first) under
+the per-`(s, t)` validity mask, ties broken by ascending source slot
+via `_stable_topk_indices` — CPU/CUDA bit-stable.
+
+Multi-size (Step 4) is deliberately NOT carried in the coalitions
+shim: composing 3 size variants × C(K_src, 2) pairs would blow the
+candidate count and the wallclock budget. Step 4 vs Step 5 are
+A/B'd separately; compose later as Step 5b only if both lift.
+
+Cross-wave over-drain guard (introduced in Step 4) is also active
+under coalitions — `source_budget` is capped at `drain` so a source
+that fires in a coalition can't simultaneously fire as a solo wave
+in a later iteration of the greedy loop.
+
+Default OFF (env `PRODUCER_PLUS_COALITIONS` unset) preserves
+single-size behaviour bit-identically. Env-on shim:
+`producer_plus_coalitions.py`.
+
 ## Verification
 
 Bit-identical to Producer at this step. Diff at fixed seed should be
