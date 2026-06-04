@@ -64,6 +64,13 @@ SOURCES_PER_TARGET = 8      # nearest-k own planets considered per target (bound
 CAPTURE_MARGIN = 2          # slack over the defender for integer combat resolution
 COUNTER_WINDOW = WAVE_LOOKAHEAD  # turns after arrival within which enemies can join the counter
 ARRIVAL_PROBE = 16          # representative fleet size for estimating a source's launch-now arrival
+# WAIT GATE (opportunity cost on accumulation): a source fires a cell only if firing
+# now beats HOLDING to fund a strictly-better cell it could afford in a few turns as
+# its production accrues. WAIT_HORIZON bounds how long it may hold (so it can't freeze
+# on a far dream); WAIT_VALUE_MARGIN is how much better the held cell must be before we
+# forgo a sure capture (avoids thrash on near-ties).
+WAIT_HORIZON = 4            # max turns of accumulation a source may wait for a better cell
+WAIT_VALUE_MARGIN = 1.10    # the held cell must beat the fire-now cell by this factor
 # REGROUP: a positional pass that marches idle rear ships up the enemy-pressure
 # gradient toward the frontier, so force concentrates forward for future strikes.
 REGROUP_PRESSURE_HORIZON = 14   # turns; decay reach for the enemy-pressure signal
@@ -269,6 +276,10 @@ def agent(obs, configuration=None):
     # ============================================================
     _LAST_FIELD.clear()
     cells: list[dict] = []
+    # Per-source ASPIRATION: the best wait-discounted value a source could realize by
+    # HOLDING this turn to fund a target it can't quite afford yet. Built below from the
+    # not-yet-fundable targets; consulted by the offense wait gate during assembly.
+    aspiration: dict[int, float] = {int(p.id): 0.0 for p in my_planets}
 
     for t in target_pool:
         srcs = []  # (source, launch_now_arrival)
@@ -306,7 +317,24 @@ def agent(obs, configuration=None):
                 chosen = (A, [sa for sa in srcs[:i + 1]], R)
                 break
         if chosen is None:
-            continue  # can't fund a holdable wave yet -> HOLD and accumulate
+            # Can't fund a holdable wave THIS turn. If a short accumulation would
+            # afford it, record its wait-discounted value as each nearby source's
+            # aspiration -- the opportunity cost they weigh before dribbling a lesser,
+            # affordable-now cell. value() already discounts the later landing turn, so
+            # v_wait is on the same scale as any fundable cell's value.
+            A0 = srcs[0][1]
+            R0 = required_force(t, A0)
+            shortfall = R0 - (friendly_inflight(t, A0)
+                              + sum(spare[int(sj.id)] for sj, _ in srcs))
+            prod_rate = sum(int(sj.production) for sj, _ in srcs)
+            if shortfall > 0 and prod_rate > 0:
+                tau = int(math.ceil(shortfall / prod_rate))
+                if tau <= WAIT_HORIZON:
+                    v_wait = value(t, A0 + tau)
+                    for sj, _ in srcs:
+                        if spare[int(sj.id)] > 0:
+                            aspiration[int(sj.id)] = max(aspiration[int(sj.id)], v_wait)
+            continue  # HOLD and accumulate
         A_rel, chosen_srcs, R = chosen
         if R - friendly_inflight(t, A_rel) <= 0:
             continue  # friendly fleets already en route cover it -> don't double-send
@@ -363,6 +391,12 @@ def agent(obs, configuration=None):
             # land together on the shared turn. Reserve the nearer ones to wait.
             for s, a in sorted(elig, key=lambda x: -x[1]):
                 if a == A_rel and need > 0:
+                    # WAIT GATE: if this source could fund a strictly-better cell by
+                    # holding a few turns, don't dribble it into this lesser one --
+                    # reserve it (it accumulates and fires the better cell once afforded).
+                    if aspiration.get(int(s.id), 0.0) > c["value"] * WAIT_VALUE_MARGIN:
+                        reserved.add(int(s.id))
+                        continue
                     send = min(spare[int(s.id)], need)
                     ang, _eta = aim_and_eta(s, t, send, omega, world=world)
                     if emit(s, t, ang, send, A_rel, "wave", c["R"]):

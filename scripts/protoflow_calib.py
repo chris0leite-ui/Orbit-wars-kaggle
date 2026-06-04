@@ -265,6 +265,32 @@ def main():
     _check("S10", far_fires and near_silent,
            f"launches={l10} (want far0 -> wave_tgt2, near1 silent/reserved)")
 
+    # S11 — WAIT GATE (the opening-tempo dribble, reproduced). One small home in ship
+    # range of BOTH a NEAR high-production neutral it cannot quite afford this turn
+    # (needs ~11, has 8) and a FAR low-production neutral it CAN afford now. The old
+    # field dribbled the cheap far capture (replay step 6: 7 ships at a floor-7 neutral
+    # 62 away). The wait gate must instead HOLD -- the near high-prod capture is one
+    # turn of accumulation away and worth far more. Then, once the home has accrued the
+    # ships, it must FIRE at the near neutral (Rule 38: reproduce the failing state).
+    home11 = [0, 0, 20.0, 30.0, radius(3), 8, 3]
+    near_hi = [1, -1, 33.0, 28.0, radius(5), 9, 5]   # near + high prod; floor ~11 > home's 8
+    far_lo = [2, -1, 20.0, 52.0, radius(2), 5, 2]    # far + low prod; floor ~7, affordable NOW
+    moves, field = show("S11a wait gate: hold for near high-prod, don't dribble far",
+         make_obs([home11, near_hi, far_lo]),
+         "HOLD this turn -- do NOT fire the cheap far neutral")
+    l11a = proto.get_trace()[-1]["launches"]
+    _check("S11a", len(l11a) == 0,
+           f"emitted={moves if moves else '(hold)'} (want hold; no far-neutral dribble)")
+
+    home11_rich = [0, 0, 20.0, 30.0, radius(3), 12, 3]   # accumulated -> can now afford near
+    moves, field = show("S11b after accumulation: fire the near high-prod neutral",
+         make_obs([home11_rich, near_hi, far_lo]),
+         "fire at the NEAR high-prod neutral (target 1)")
+    l11b = proto.get_trace()[-1]["launches"]
+    fires_near = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in l11b)
+    _check("S11b", fires_near,
+           f"launches={l11b} (want a launch at near high-prod neutral 1)")
+
 
 if __name__ == "__main__":
     main()
