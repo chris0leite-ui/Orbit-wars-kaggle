@@ -132,7 +132,9 @@ def main():
                     help="comma-separated opponent paths")
     args = ap.parse_args()
 
-    focal = load_callable(str(PROTO_PATH))
+    # Use the IMPORTED module's agent (not a fresh _load_callable copy) so the
+    # trace we reset/read is the same _TRACE object the running agent writes to.
+    focal = proto.agent
     print(f"protoflow probe — {args.seeds} seeds x 2 seats per opponent")
     for opp_path in args.opponents.split(","):
         opp_path = opp_path.strip()
