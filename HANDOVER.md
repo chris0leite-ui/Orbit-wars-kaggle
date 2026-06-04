@@ -2,89 +2,108 @@
 
 ## Mode
 
-**Migration project**, not single-strategy iteration. We are rebuilding the
-agent: Producer's engine as host, our pieces ported in as candidate-
-generation / scoring extensions (no post-passes). See
-`state/MIGRATION_PLAN.md` for the full plan.
+**Migration project + first live submission.** We are rebuilding the
+agent on Producer's engine. As of 2026-06-04 we have submitted the
+first hybrid: Producer's engine + our Step 4 mechanism (multi-size
+candidate enumeration). The next session's first job is reading the
+live μ once TrueSkill warms up (~24 h).
 
 ## Strategy
 
-Two strategies coexist during the migration:
+Two strategies still coexist:
 
-- **Live**: `baseline_adaptive_k` (`state/STRATEGY.md`) — what is on the
-  Kaggle ladder right now. Stays as backstop in the rolling submission
-  pair until the hybrid agent beats it.
-- **Build**: Producer-engine-host hybrid (`state/MIGRATION_PLAN.md`) —
-  starts implementing next session.
+- **Live anchor**: `baseline_adaptive_k` (`state/STRATEGY.md`).
+  `champ_refine_adaptivek` (sub 53336920) sits as backstop in the
+  rolling pair at live μ 1148.8.
+- **Build / new live**: producer_plus migration host
+  (`state/MIGRATION_PLAN.md`). `producer_plus_multi_size_on` (sub
+  53369848) is the first hybrid on the ladder. Reaches live μ over
+  the TrueSkill warm-up (24 h).
 
-## Live status
+## Live status (after 2026-06-04 17:30 UTC submit)
 
-- **Latest submission (#1):** `champ_computeByShips_on.py`, sub **53332500**
-  (2026-06-03 15:11 UTC), 697 927 B. Adaptive K + compute_by_ships baked.
-  Predicted μ ≈ 1170 (parity with sibling).
-- **Backstop (#2):** `champ_adaptiveK_on.py`, sub **53324164**, live
-  **μ = 1185.2**. Our anchor — stays in the rolling pair until the
-  hybrid agent beats it locally and we submit.
-- **Producer's live μ:** ≈ 1200 (per PI). We will NOT submit Producer.
+- **Newest (#1):** `producer_plus_multi_size_on.py`, sub **53369848**
+  (2026-06-04 17:30 UTC), 211 011 B. Producer's engine + multi-size
+  enumeration (Step 4). **Live μ will warm up from 600 over ~24 h.**
+- **Backstop (#2):** `champ_refine_adaptivek.py`, sub **53336920**,
+  live μ ≈ 1148.8.
+- **Producer's live μ:** ≈ 1200 (per PI).
+- **Evicted by 53369848:** `champ_computeByShips_on` (sub 53332500,
+  μ = 1150.6).
 
 ## Today's progress (2026-06-04)
 
-1. **Frontier_circulation triplet parked — not killed.** Three
-   implementations of pressure-gradient ship circulation as a post-pass
-   over the chooser, all falsified (5/16, 8/16, 5/16). Root cause
-   identified via code review: Producer's regroup composes with his
-   scoring because both use the same scalar; our scoring is per-trade
-   ROI, so pressure-routed ships go to destinations our chooser ignores.
-   See `audit/2026-06-04-postmortem-champion-ml-graft-majestic-storm.md`.
+This session was a deep iteration on the producer_plus migration host
+plus the first submission from that track.
 
-2. **Cherry-picked Producer agent from main** (commit `0cc08da`).
-   Available locally at `agents/producer/`, registered as the `producer`
-   short-name in fast.py and in `DEFAULT_PANEL`. Sparring partner only.
+1. **Step 3 (opp projector) rolled back** (commit `89ce8c7`). M1/M2/M3
+   foresight mechanisms were also rolled back earlier in the session;
+   diagnosis: the lite-greedy projector ex-ante design + Producer's
+   single-size candidate set gave filter mechanisms nowhere to retreat
+   to. See chat / earlier session for the architectural read.
 
-3. **n=32 head-to-head A/B:** our champion vs Producer = **13/32 wins
-   (40.6 %), Wilson [0.255, 0.577]**. Producer wins ~60 % of games.
-   Confirmed at n=32; not noise.
+2. **Step 4 (multi-size enumeration) implemented and shipped** (commits
+   `64e2345` + two fixes `e606a3e` + `7f0a83f`). Three ship-size
+   variants per (source, target): capture_floor, 2×floor, safe_drain,
+   packed along the C axis (`C = S × T × 3, L = 1`). Two bugs caught
+   and fixed during smoke: `clamp(min=float, max=Tensor)` invalid
+   PyTorch syntax → use `torch.minimum`; greedy's source budget was
+   uncapped → cap at `drain` so multi-wave from one source can't sum
+   above safe_drain.
 
-4. **Read of Producer's planner** (`agents/producer/orbit_lite/
-   planner_core.py` + `garrison_launch.py`). Synthesised what each agent
-   does well; designed the migration plan in `state/MIGRATION_PLAN.md`.
+3. **Step 2 (adaptive K) stripped from the multi_size shim** (commit
+   `c235358`). 16-game seat-alt A/B vs vanilla producer was 8/16
+   (exactly parity). Step 2+4 composed to 5/16 (regression);
+   Step 4 alone vs producer landed 10/16 (62.5%).
 
-## Next action — start the migration
+4. **Bundler script + first hybrid submission** (commits `bb77ca3` +
+   `4005b19`). `scripts/bundle_producer_plus.py` produces a
+   single-file Kaggle-submittable .py by concatenating
+   `agents/producer/orbit_lite/*.py` (topologically ordered, internal
+   imports stripped) + `agents/producer_plus/main.py` (orbit_lite
+   imports stripped) + env-var header. Output:
+   `submissions/producer_plus_multi_size_on.py` (211 KB, parses, max
+   per-turn 138 ms at seed 7).
 
-Open `state/MIGRATION_PLAN.md` and execute **Step 1: skeleton
-`agents/producer_plus/`** as a wrap-and-modify of the vendored Producer.
-Confirm bit-identical behaviour before touching anything.
+## Next action
 
-PI sign-off needed at start of next session on:
-- Migration direction still active (no contradicting live observation).
-- `agents/producer_plus/` directory name and wrap-and-modify pattern.
-- Per-step gate threshold (Wilson-lo ≥ 0.55 unless tighter / looser).
+1. **Read the live μ** after TrueSkill warm-up (~24 h post-submit).
+   The leaderboard is the truth, not local estimates.
+2. **If live μ ≥ ~1170:** producer_plus_multi_size is a real lift.
+   Proceed to **Step 5 — multi-source coalitions** per
+   `state/MIGRATION_PLAN.md`. Producer is explicitly single-source;
+   adding `L > 1` same-arrival coalitions is the biggest expected
+   lift in the plan.
+3. **If live μ < ~1170:** producer_plus track may not transfer to
+   the ladder the way the local A/B suggested. Either roll back the
+   submission's slot (let it sit in the rolling pair so we can read
+   it; next submission would evict it), or investigate why local
+   over-predicted live. Possible causes: opponent panel difference
+   (local A/B used producer only; live ladder has v7_0, v4_planner,
+   v3.5.1, etc.), seat-bias artefact, or the n=16 was just lucky.
 
-After Step 1 lands clean, proceed through Steps 2-7 in order, gating each
-on n=32 A/B lift per Rule 45.
+## What did NOT make it into this submission
 
-## Critical constraint — Producer is NOT submittable
+- Step 2 (adaptive K) — gated OFF; preserved in `main.py` for future
+  tuning. We may revisit K_OPEN / floor parameters.
+- Step 5 (multi-source coalitions) — biggest expected lift, deferred
+  to next session.
+- Step 6 (wait-then-fire) — deferred.
 
-`agents/producer/` is Slawek Biel's published work. The vendored copy is
-a sparring partner and engine substrate, NOT a submission target. Only
-the hybrid (`producer_plus` with our extensions) is eligible for
-submission. This is documented in `state/MIGRATION_PLAN.md` § Ethics
-note.
+## Critical constraints reminder
+
+- Producer (`agents/producer/`) is Slawek Biel's published work, MIT
+  licensed. Submit only the hybrid; never wrap Producer directly.
+- Rule 45 was explicitly overridden for this submission (n=16
+  alone). Future submissions should use seat-balanced n=32 unless
+  PI overrides.
 
 ## Pointers
 
-- `state/STRATEGY.md` — current live strategy, build/smoke procedure.
-- `state/MIGRATION_PLAN.md` — Producer-host migration plan (new this session).
+- `state/STRATEGY.md` — canonical strategy doc (`baseline_adaptive_k`).
+- `state/MIGRATION_PLAN.md` — producer_plus migration roadmap.
 - `state/MULTI_BRANCH.md` — push-claim board (Rule 42).
-- `CLAUDE.md` — process rules (lean).
-- `audit/2026-06-04-postmortem-champion-ml-graft-majestic-storm.md` —
-  full postmortem of today's circulation triplet (parked, not killed).
-- `audit/2026-06-04-producer-eval-observations.md` — main's prior n=16
-  observations of Producer vs our agents.
-- `knowledge-base/thoughts/2026-06-04-circulation-family-parked-not-killed.md`
-  — diagnosis and unblock paths (now superseded by migration plan).
-- `knowledge-base/flags/2026-06-04-ship-utilization-still-open.md` —
-  watch flag (now subsumed: migration is the answer).
-- `knowledge-base/questions/2026-06-04-chooser-pressure-port-vs-2hop-targeting.md`
-  — open question resolved: chooser pressure-port wins, via migration
-  plan.
+- `CLAUDE.md` — process rules.
+- `scripts/bundle_producer_plus.py` — reproducible bundler.
+- `agents/producer_plus/main.py` — host with adaptive_K and
+  multi_size gated mechanisms.
