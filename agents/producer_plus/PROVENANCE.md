@@ -40,12 +40,3 @@ for SEED in 7 13 42; do
   diff /tmp/p_$SEED.txt /tmp/pp_$SEED.txt && echo "seed=$SEED IDENTICAL"
 done
 ```
-
-**Note on wallclock differences in the diff:** the bit-identical claim
-covers game outcomes, step counts, and the sequence of launches issued
-— NOT per-turn wallclock numbers. Single-game P50/max timing is
-dominated by host CPU contention and varies run-to-run by 2-4×; the
-diff dump will surface those timing differences even though the two
-agents drove the simulation identically. For perf comparisons run
-several games per agent on a quiescent host and aggregate, rather than
-reading single-game timing lines from the bit-identical dump.
