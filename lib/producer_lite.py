@@ -54,6 +54,7 @@ from typing import Any
 
 from lib.aim import aim_orbiting, estimate_eta
 from lib.fleet import speed as fleet_speed
+from lib.orbit import is_orbiting
 
 # --- Producer config (main.py:53-76 for 2P; :305-312 overrides for 4P) -------
 # 2-player defaults.
@@ -353,12 +354,18 @@ def producer_lite_policy(obs: Any) -> list:
         ships_int = int(size)
         if ships_int < 1:
             continue
+        # Orbital lead ONLY for actually-orbiting targets. Static planets
+        # (orbital_radius + radius >= ROTATION_RADIUS_LIMIT) do not rotate;
+        # leading them via aim_orbiting/predict_relative aims at a bogus
+        # future position and routes the fleet into a wall planet (this was
+        # the opening-capture failure: a static target got over-led 0.5 rad).
+        # Mirrors lib.opp_model.me_defensive_action.
+        target_tuple = (
+            int(planets[j][0]), int(planets[j][1]), tx, ty, tr,
+            int(planets[j][5]), int(planets[j][6]),
+        )
         angle = None
-        if omega != 0.0:
-            target_tuple = (
-                int(planets[j][0]), int(planets[j][1]), tx, ty, tr,
-                int(planets[j][5]), int(planets[j][6]),
-            )
+        if omega != 0.0 and is_orbiting(target_tuple):
             aim = aim_orbiting((sx, sy), sr, target_tuple, tr, ships_int, omega)
             if aim is not None:
                 angle = float(aim[0])
