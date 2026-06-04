@@ -28,6 +28,35 @@ permitted only after our pieces (adaptive K, opponent projection,
 multi-source coalitions, etc.) are added and the resulting hybrid agent
 carries genuine value-add of our own.
 
+## Step 4 — multi-size enumeration per (source, target)
+
+Producer enumerates a single candidate per (source, target) pair, sized
+at `safe_drain` (the max the source can safely send within the protection
+horizon). Step 4 expands this to three sizes per pair:
+
+- `capture_floor` — the minimum ships needed to capture at that arrival
+  tick (read from `capture_floor` in `planner_core.py`).
+- `2 × capture_floor` — clamped to safe_drain so it never exceeds the
+  budget.
+- `safe_drain` — unchanged from single-size.
+
+The three variants are packed along an extra axis so the candidate
+tensor becomes `[C = S × T × 3, L = 1]`. The L axis stays at 1; future
+Step 5 multi-source coalitions will use the L axis for true coalitions.
+Greedy selection's target mutex naturally picks the highest-scoring
+variant per target and blocks the others; the smaller variants matter
+when picking a lighter launch leaves source budget for a second target
+in subsequent waves.
+
+Each variant's `eta` and `angle` are recomputed because `fleet_speed`
+depends on ship count — heavier fleets travel faster, so the same
+geometry yields different arrival ticks per variant.
+
+Default OFF (env `PRODUCER_PLUS_MULTI_SIZE` unset) preserves
+single-size behaviour bit-identically. Env-on shim:
+`producer_plus_multi_size.py` (also sets `PRODUCER_PLUS_ADAPTIVE_K=1`
+to carry Step 2).
+
 ## Verification
 
 Bit-identical to Producer at this step. Diff at fixed seed should be

@@ -81,6 +81,12 @@ _BASELINES: dict[str, str] = {
     "producer_plus_adaptive_k": str(
         REPO / "agents" / "producer_plus" / "producer_plus_adaptive_k.py"
     ),
+    # Step 4: producer_plus with PRODUCER_PLUS_MULTI_SIZE=1 (and adaptive K)
+    # pre-set, so each (source, target) pair emits three ships variants —
+    # capture_floor, 2× floor, safe_drain — instead of one safe_drain.
+    "producer_plus_multi_size": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_multi_size.py"
+    ),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",

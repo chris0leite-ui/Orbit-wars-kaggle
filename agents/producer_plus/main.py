@@ -60,6 +60,16 @@ def _adaptive_k_enabled() -> bool:
     )
 
 
+# Multi-size enumeration per (source, target): emit three ships variants —
+# (capture_floor, 2 × capture_floor, safe_drain) — instead of a single
+# safe_drain candidate. Default OFF preserves bit-identical single-size
+# behaviour. State/MIGRATION_PLAN.md Step 4.
+def _multi_size_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_MULTI_SIZE", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, default))
@@ -214,55 +224,134 @@ def plan_lite_waves(
     )                                                                            # [T, K]
     K = int(floor.shape[-1])
 
-    # --- single fleet size = the max garrison launch (safe_drain) ---------------
-    # Engine needs integer ship counts; floor (never exceed what's available).
-    sizes = drain.view(S, 1).expand(S, T).floor()                                # [S, T]
-
-    # Strict-superset reachability precheck (always on): defers the body screen to
-    # candidates that can physically reach the target in time.
-    active = reachable_mask(
-        movement, source_idx=source_idx, target_idx=target_idx,
-        fleet_sizes=sizes.unsqueeze(-1), eta_cap=eta_cap,
-    ).squeeze(-1)                                                                # [S, T]
-    aim = intercept_angle(
-        movement,
-        source_idx.unsqueeze(1),                                                 # [S, 1]
-        target_idx.unsqueeze(0),                                                 # [1, T]
-        sizes,                                                                    # [S, T]
-        active=active,
-    )
-    angle = aim["angle"]                                                         # [S, T]
-    eta = aim["eta"]
-    viable = aim["viable"] & (eta <= eta_cap.view(1, T))
-
-    # Capture-floor gate at each fleet's arrival turn (defenders grow with k). The
-    # single size must clear the defender it lands on (size >= floor_at_arr). Owned
-    # targets have floor 1 (reinforcement), so any positive send clears.
-    if K > 0:
-        k_arr = (eta.clamp(min=1.0, max=float(K)).ceil().long() - 1).clamp(0, K - 1)  # [S,T]
-        floor_at_arr = floor.unsqueeze(0).expand(S, T, K).gather(-1, k_arr.unsqueeze(-1)).squeeze(-1)
-    else:
-        floor_at_arr = torch.ones(S, T, dtype=dtype, device=device)
-    clears_floor = sizes >= floor_at_arr                                         # [S, T]
-
     src_neq_tgt = source_idx.view(S, 1) != target_idx.view(1, T)
-    valid = (
-        viable & clears_floor & (sizes >= 1.0) & src_neq_tgt
-        & source_exists.view(S, 1) & target_exists.view(1, T)
-    )                                                                            # [S, T]
 
-    # --- pack one candidate per (source, target); contributor axis L = 1 --------
-    L = 1
-    C = S * T
-    cand_src = source_idx.view(S, 1).expand(S, T).reshape(C, L)
-    cand_tgt_slot = target_idx.view(1, T).expand(S, T).reshape(C)
-    cand_tgt_short = torch.arange(T, device=device).view(1, T).expand(S, T).reshape(C)
-    cand_send = torch.where(valid, sizes, torch.zeros_like(sizes)).reshape(C, L)
-    cand_angle = angle.reshape(C, L)
-    cand_eta = torch.where(valid, eta, torch.ones_like(eta)).reshape(C, L)
-    cand_active = valid.reshape(C, L)
-    cand_valid = valid.reshape(C)
-    cand_is_def = target_is_mine[cand_tgt_short]                                  # [C]
+    if _multi_size_enabled():
+        # --- Three fleet sizes per (source, target): capture_floor, 2× floor,
+        # safe_drain. Each variant gets its own aim (fleet speed depends on
+        # ships, so eta differs). Packed as [C=S*T*N, L=1] so greedy's target
+        # mutex blocks losing variants once one wins the wave.
+        N = 3
+        # Step 1 — compute the largest variant (safe_drain) first and use its
+        # eta to read the capture floor; size_lo = floor at that eta.
+        sizes_hi = drain.view(S, 1).expand(S, T).floor()                          # [S, T]
+        active_hi = reachable_mask(
+            movement, source_idx=source_idx, target_idx=target_idx,
+            fleet_sizes=sizes_hi.unsqueeze(-1), eta_cap=eta_cap,
+        ).squeeze(-1)                                                             # [S, T]
+        aim_hi = intercept_angle(
+            movement,
+            source_idx.unsqueeze(1), target_idx.unsqueeze(0),
+            sizes_hi, active=active_hi,
+        )
+        eta_hi = aim_hi["eta"]                                                    # [S, T]
+        if K > 0:
+            k_arr_hi = (eta_hi.clamp(min=1.0, max=float(K)).ceil().long() - 1).clamp(0, K - 1)
+            floor_at_arr_hi = (
+                floor.unsqueeze(0).expand(S, T, K).gather(-1, k_arr_hi.unsqueeze(-1)).squeeze(-1)
+            )                                                                     # [S, T]
+        else:
+            floor_at_arr_hi = torch.ones(S, T, dtype=dtype, device=device)
+
+        sizes_lo = floor_at_arr_hi.ceil().clamp(min=1.0)                          # [S, T]
+        sizes_mid = (2.0 * sizes_lo).clamp(max=sizes_hi)                          # [S, T]
+        sizes_3 = torch.stack([sizes_lo, sizes_mid, sizes_hi], dim=-1)            # [S, T, N]
+
+        # Step 2 — recompute reachability + aim per variant (each variant's eta
+        # depends on its own fleet speed via fleet_speed(ships)).
+        active_3 = reachable_mask(
+            movement, source_idx=source_idx, target_idx=target_idx,
+            fleet_sizes=sizes_3, eta_cap=eta_cap,
+        )                                                                         # [S, T, N]
+        aim_3 = intercept_angle(
+            movement,
+            source_idx.view(S, 1, 1), target_idx.view(1, T, 1),
+            sizes_3, active=active_3,
+        )
+        angle_3 = aim_3["angle"]                                                  # [S, T, N]
+        eta_3 = aim_3["eta"]                                                      # [S, T, N]
+        viable_3 = aim_3["viable"] & (eta_3 <= eta_cap.view(1, T, 1))
+
+        # Step 3 — capture-floor gate at each variant's own arrival turn.
+        if K > 0:
+            k_arr_3 = (eta_3.clamp(min=1.0, max=float(K)).ceil().long() - 1).clamp(0, K - 1)
+            floor_at_arr_3 = (
+                floor.view(1, T, 1, K).expand(S, T, N, K)
+                .gather(-1, k_arr_3.unsqueeze(-1)).squeeze(-1)
+            )                                                                     # [S, T, N]
+        else:
+            floor_at_arr_3 = torch.ones(S, T, N, dtype=dtype, device=device)
+        clears_floor_3 = sizes_3 >= floor_at_arr_3                                # [S, T, N]
+        ships_ok_3 = sizes_3 <= source_ships.view(S, 1, 1)                        # [S, T, N]
+
+        valid_3 = (
+            viable_3 & clears_floor_3 & (sizes_3 >= 1.0) & ships_ok_3
+            & src_neq_tgt.unsqueeze(-1)
+            & source_exists.view(S, 1, 1) & target_exists.view(1, T, 1)
+        )                                                                         # [S, T, N]
+
+        L = 1
+        C = S * T * N
+        cand_src = source_idx.view(S, 1, 1).expand(S, T, N).reshape(C, L)
+        cand_tgt_slot = target_idx.view(1, T, 1).expand(S, T, N).reshape(C)
+        cand_tgt_short = (
+            torch.arange(T, device=device).view(1, T, 1).expand(S, T, N).reshape(C)
+        )
+        cand_send = torch.where(valid_3, sizes_3, torch.zeros_like(sizes_3)).reshape(C, L)
+        cand_angle = angle_3.reshape(C, L)
+        cand_eta = torch.where(valid_3, eta_3, torch.ones_like(eta_3)).reshape(C, L)
+        cand_active = valid_3.reshape(C, L)
+        cand_valid = valid_3.reshape(C)
+        cand_is_def = target_is_mine[cand_tgt_short]                              # [C]
+    else:
+        # --- single fleet size = the max garrison launch (safe_drain) -----------
+        # Engine needs integer ship counts; floor (never exceed what's available).
+        sizes = drain.view(S, 1).expand(S, T).floor()                            # [S, T]
+
+        # Strict-superset reachability precheck (always on): defers the body screen to
+        # candidates that can physically reach the target in time.
+        active = reachable_mask(
+            movement, source_idx=source_idx, target_idx=target_idx,
+            fleet_sizes=sizes.unsqueeze(-1), eta_cap=eta_cap,
+        ).squeeze(-1)                                                            # [S, T]
+        aim = intercept_angle(
+            movement,
+            source_idx.unsqueeze(1),                                             # [S, 1]
+            target_idx.unsqueeze(0),                                             # [1, T]
+            sizes,                                                               # [S, T]
+            active=active,
+        )
+        angle = aim["angle"]                                                     # [S, T]
+        eta = aim["eta"]
+        viable = aim["viable"] & (eta <= eta_cap.view(1, T))
+
+        # Capture-floor gate at each fleet's arrival turn (defenders grow with k). The
+        # single size must clear the defender it lands on (size >= floor_at_arr). Owned
+        # targets have floor 1 (reinforcement), so any positive send clears.
+        if K > 0:
+            k_arr = (eta.clamp(min=1.0, max=float(K)).ceil().long() - 1).clamp(0, K - 1)  # [S,T]
+            floor_at_arr = floor.unsqueeze(0).expand(S, T, K).gather(-1, k_arr.unsqueeze(-1)).squeeze(-1)
+        else:
+            floor_at_arr = torch.ones(S, T, dtype=dtype, device=device)
+        clears_floor = sizes >= floor_at_arr                                     # [S, T]
+
+        valid = (
+            viable & clears_floor & (sizes >= 1.0) & src_neq_tgt
+            & source_exists.view(S, 1) & target_exists.view(1, T)
+        )                                                                        # [S, T]
+
+        # --- pack one candidate per (source, target); contributor axis L = 1 ----
+        L = 1
+        C = S * T
+        cand_src = source_idx.view(S, 1).expand(S, T).reshape(C, L)
+        cand_tgt_slot = target_idx.view(1, T).expand(S, T).reshape(C)
+        cand_tgt_short = torch.arange(T, device=device).view(1, T).expand(S, T).reshape(C)
+        cand_send = torch.where(valid, sizes, torch.zeros_like(sizes)).reshape(C, L)
+        cand_angle = angle.reshape(C, L)
+        cand_eta = torch.where(valid, eta, torch.ones_like(eta)).reshape(C, L)
+        cand_active = valid.reshape(C, L)
+        cand_valid = valid.reshape(C)
+        cand_is_def = target_is_mine[cand_tgt_short]                             # [C]
 
     launches = make_launch_set(
         source_slots=cand_src,
