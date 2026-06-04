@@ -56,6 +56,9 @@ MAX_CONVERGE_TARGETS = 8   # bound the cohort supplement scan
 
 # Per-game trace for the probe runner. Each launch is a dict (see bottom).
 _TRACE: list[dict] = []
+# Last turn's ranked action field, for synthetic-situation calibration.
+# Each entry: {"src","tgt","ships","ttc","imp","tgt_owner","prod"}.
+_LAST_FIELD: list[dict] = []
 
 
 def reset_trace() -> None:
@@ -64,6 +67,10 @@ def reset_trace() -> None:
 
 def get_trace() -> list[dict]:
     return list(_TRACE)
+
+
+def get_last_field() -> list[dict]:
+    return list(_LAST_FIELD)
 
 
 def _sigmoid(x: float) -> float:
@@ -166,6 +173,13 @@ def agent(obs, configuration=None):
             "imp": importance(tgt, ttc),
         })
     actions.sort(key=lambda a: -a["imp"])
+    _LAST_FIELD.clear()
+    for a in actions:
+        _LAST_FIELD.append({
+            "src": int(a["src"].id), "tgt": int(a["tgt"].id), "ships": a["ships"],
+            "ttc": round(float(a["wait"]) + float(a["eta"]), 1), "imp": round(a["imp"], 1),
+            "tgt_owner": int(a["tgt"].owner), "prod": int(a["tgt"].production),
+        })
 
     moves: list[list] = []
     launches: list[dict] = []
