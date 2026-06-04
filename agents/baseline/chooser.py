@@ -32,22 +32,29 @@ HARDCAP_BAIL_SENTINEL = -1e9
 
 
 def _select_opp_policy():
-    """Tier 3 (2026-05-18 PM): asymmetric opp model selection.
+    """Asymmetric opp model selection for the rollout.
 
     BASELINE_OPP_TIER env var:
       - "0" or unset → lite_greedy_policy (default, ~1-2ms/call).
       - "1" → top_tier_mirror_policy (~5-10ms/call; ladder-realistic
               opp using v3.5.1 aggressive snipe pipeline). Bench gate
               FIRST before A/B — per-call cost is 5-10× lite_greedy.
+      - "2" → producer_lite_policy (pure-python port of the public
+              Producer agent's aggressive attack policy; the threat that
+              actually beats our line). Default-OFF; turning it on in a
+              bundle is a separate, gated decision. Imported lazily so the
+              module top-level stays cheap on the rollout hot path.
 
     Per-call selection (not cached at import time) so env-var overrides
     inside test fixtures take effect without re-importing the module.
     """
-    return (
-        top_tier_mirror_policy
-        if os.environ.get("BASELINE_OPP_TIER", "0").strip() == "1"
-        else lite_greedy_policy
-    )
+    tier = os.environ.get("BASELINE_OPP_TIER", "0").strip()
+    if tier == "1":
+        return top_tier_mirror_policy
+    if tier == "2":
+        from lib.producer_lite import producer_lite_policy
+        return producer_lite_policy
+    return lite_greedy_policy
 
 
 def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
