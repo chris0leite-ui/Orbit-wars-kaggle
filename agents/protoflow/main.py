@@ -10,31 +10,30 @@ it; an action field can never contain such a move, because it is not feasible
 or not value-positive.
 
 Build:
-  1. FIELD = the feasible-action set. Reuse the champion's `propose()` — it
-     returns every move we can make this turn, already trajectory-feasible and
-     already sized so each one is a real capture (no 2-ship bouncers, no
-     sun-crossers, no hopeless far shots past the reach ceiling). That kills the
-     waste of the spatial prototype by construction. A same-arrival cohort
-     SUPPLEMENT covers defended targets no single planet can solo-take (combat
-     rule 1 sums same-owner same-turn arrivals — the teamwork-coalition regime).
-  2. HEIGHT = value per action in ONE currency: ships added to the final
-     zero-sum margin = mult * production(target) * (500 - arrival_turn) *
-     winnability. mult=2 for an enemy planet (gain the production stream AND
-     deny it), else 1. (500 - arrival) is the production we collect by holding
-     the target to game end -- and because a smaller fleet is slower (speed
-     law) it arrives later, so slowness is priced automatically and needs no
-     near-bias term. winnability is the engine's floored reach-race class.
-  3. GRADIENT-FOLLOW with a HOLD gate: per (source, target) a fire-now action
-     is admitted only if its value is >= the best wait-then-mass candidate for
-     that pair; if waiting dominates the ships are held. Then greedily take the
-     highest-value admitted actions under a per-source budget (a planet keeps a
-     defensive reserve), and a same-arrival cohort supplement merges legs only
-     when that is what wins a still-uncaptured target.
+  1. FIELD = our OWN feasible-capture set. We enumerate candidates ourselves
+     using HARD feasibility only (the trajectory clears the sun / reaches the
+     target). We do NOT call the champion's `propose()`: its default-ON
+     defensive filters (hold-feasibility / source-survival) DELETE contested
+     captures before the field can judge them (verified: a 40-ship home next to
+     a capturable enemy planet yields zero propose candidates with the filters
+     on). A same-arrival cohort SUPPLEMENT covers defended targets no single
+     planet can solo-take (combat rule 1 sums same-owner same-turn arrivals).
+  2. HEIGHT = TWO-SIDED value in ONE currency: the margin swing in ships =
+     mult * production * (turns_left - arrival) * winnability, where mult = 2
+     when NOT acting cedes the target to the opponent (an enemy planet, OR a
+     neutral the opponent will take -- we gain the stream AND deny it) and 1 for
+     a neutral that would stay neutral. This is what lets the field price the
+     cost of inaction: holding while the opponent expands is now negative-sum,
+     so the agent acts under pressure instead of going inert.
+  3. GRADIENT-FOLLOW with a HOLD gate: per (source, target) a fire-now action is
+     admitted only if its value is >= the best wait-then-mass candidate for that
+     pair; else the ships are held. A separate DEFENSE pass reinforces genuinely
+     threatened own planets first. Then greedily take the highest-value admitted
+     actions under a per-source reserve, plus the cohort supplement.
 
-Probe lens (PI): do the champion's good properties — no wasted ships, no two
-small fleets, no shots so far the opponent reacts easily — EMERGE NATURALLY
-here? `scripts/protoflow_probe.py` reads the per-turn trace below and reports
-tiny-fleet / far-shot / idle / convergence rates plus winrate vs light-greedy.
+Probe lens (PI): does force concentration / sound expansion EMERGE NATURALLY?
+`scripts/protoflow_probe.py` reads the per-turn trace and reports tiny-fleet /
+far-shot / idle / convergence rates plus winrate vs light-greedy and Producer.
 
 Imports lib/* and agents.baseline.* directly (fine for local A/B; NOT bundled).
 """
@@ -44,13 +43,12 @@ import math
 from collections import defaultdict
 
 from lib.intent import World
-from lib.world_model import WorldModel, predict_arrival_contest
+from lib.world_model import WorldModel, WAVE_LOOKAHEAD, predict_arrival_contest
 from lib.kinematic_table import KinematicTable
 from lib.aim import aim_orbiting
-from lib.fleet import travel_time
 from lib.trajectory import predict_fleet_fate
 from agents.baseline.proposer import (
-    propose, capture_size, capture_floor_arrival, aim_and_eta,
+    capture_floor_arrival, aim_and_eta, nearest_k,
 )
 
 EPISODE_STEPS = 500
@@ -63,9 +61,13 @@ REACH_CEIL = 26        # feasibility: no capture whose (wait+eta) exceeds this (
 # world drifting (entropy) while the fleet flies. Closer to 1 = more patient/
 # trusting of long flights; lower = sharper near-preference. Calibrated on S4/S5.
 SURVIVAL_PER_TURN = 0.97
-THREAT_ANGLE = 0.45    # rad (~26 deg); enemy fleet "incoming" if heading within this of the bearing
-THREAT_RANGE = 60.0    # board units; only nearby enemy fleets count as a committed threat
-MAX_CONVERGE_TARGETS = 8   # bound the cohort supplement scan
+# A neutral the opponent can contest within (our_arrival + CONTEST_MARGIN) is
+# treated as one they would take if we did nothing -> doubled value (gain + deny).
+CONTEST_MARGIN = 2
+MIN_FLEET_SIZE = 2          # no sub-2-ship launches
+NUM_TARGETS_PER_SOURCE = 8  # nearest-k targets per source (bounds the generator)
+WAIT_HORIZONS = (2, 4, 8)   # accumulate-then-strike windows for the HOLD comparison
+MAX_CONVERGE_TARGETS = 8    # bound the cohort supplement scan
 
 # Per-game trace for the probe runner. Each launch is a dict (see bottom).
 _TRACE: list[dict] = []
@@ -94,26 +96,6 @@ def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
 
 
-def _parse_fleets(obs):
-    raw = obs.get("fleets", []) if isinstance(obs, dict) else getattr(obs, "fleets", [])
-    return [tuple(f) for f in raw]  # (id, owner, x, y, angle, from_planet_id, ships)
-
-
-def _incoming_threat(planet, enemy_fleets) -> float:
-    """Sum of enemy-fleet ships currently heading at `planet` from within range."""
-    total = 0.0
-    for f in enemy_fleets:
-        fx, fy, fang, fships = f[2], f[3], f[4], f[6]
-        d = math.hypot(planet.x - fx, planet.y - fy)
-        if d > THREAT_RANGE:
-            continue
-        bearing = math.atan2(planet.y - fy, planet.x - fx)
-        diff = abs(((bearing - fang + math.pi) % (2.0 * math.pi)) - math.pi)
-        if diff < THREAT_ANGLE:
-            total += fships
-    return total
-
-
 def agent(obs, configuration=None):
     world = World.from_obs(obs)
     me = world.my_id
@@ -127,86 +109,190 @@ def agent(obs, configuration=None):
 
     planets = list(world.planets_by_id.values())
     my_planets = [p for p in planets if int(p.owner) == me]
-    enemy_planets = [p for p in planets if int(p.owner) not in (-1, me)]
-    enemy_fleets = [f for f in _parse_fleets(obs) if f[1] not in (-1, me)]
     if not my_planets:
         _TRACE.append({"step": step, "launches": [], "idle": True,
                        "sources": 0, "my_planets": 0, "my_ships": 0})
         return []
+    enemy_planets = [p for p in planets if int(p.owner) not in (-1, me)]
+    neutrals = [p for p in planets if int(p.owner) == -1]
+    # OFFENSE targets: enemy planets + neutrals. Own planets are defended by the
+    # separate defense pass below, not ranked as offense (which used to make the
+    # agent trickle ships between its own planets).
+    target_pool = enemy_planets + neutrals
 
-    # OFFENSE field targets only: enemy planets + neutrals. Own planets are NOT
-    # offense targets -- defending them is a separate concern handled by the
-    # per-source reserve below (`spare` already withholds ships to cover committed
-    # incoming threat). Putting own planets in the offense ranking made the agent
-    # trickle 3 ships between its own planets (the friendly-reinforce pollution
-    # seen in the synthetic states).
-    target_pool = enemy_planets + [p for p in planets if int(p.owner) == -1]
+    # --- shared per-turn memo of the opponent's earliest threat to a planet -----
+    _tte_cache: dict[int, object] = {}
 
-    # --- per-source budget: keep enough to cover committed incoming threat ---
-    threat = {p.id: _incoming_threat(p, enemy_fleets) for p in my_planets}
-    spare = {p.id: max(0, int(p.ships) - int(math.ceil(threat[p.id]))) for p in my_planets}
-    planet_by_id = {int(p.id): p for p in planets}
+    def tte(pid: int):
+        if pid not in _tte_cache:
+            _tte_cache[pid] = model.time_to_enemy_threat(int(pid), me, world)
+        return _tte_cache[pid]
 
-    # --- single currency: ships added to the final zero-sum margin -------------
-    # value(target, arrival_turn) = mult * production * (500 - arrival) * winnability
-    #   production * (500 - arrival)  = the production stream we collect by holding
-    #                                   the target for the rest of the game.
-    #   mult = 2 for an enemy planet (we gain the stream AND deny it to the enemy;
-    #          this is the principled origin of the old "enemy = 2x" weight), else 1.
-    #   winnability = floored reach-race probability from the engine's arrival-
-    #          contest classifier (never 0, so the field never freezes).
-    # Slowness needs NO separate penalty: a smaller fleet is slower (speed law),
-    # so it arrives later -> larger `arrival` -> smaller (500 - arrival) -> less
-    # value. The old explicit near-bias term is dropped (it would double-count).
+    # --- per-source reserve: withhold ONLY the ships needed to survive a threat
+    # that can ARRIVE before we could react, crediting our own production. This
+    # replaces the old half-board cone that counted distant fleets and stranded
+    # ships everywhere (a top cause of the inert 0/12 vs the Producer).
+    def reserve(p) -> int:
+        t = tte(int(p.id))
+        if t is None:
+            return 0
+        force = sum(sh for (eta_arr, owner, sh) in model.ledger.get(int(p.id), [])
+                    if owner != me and eta_arr <= t + WAVE_LOOKAHEAD)
+        hold = float(p.ships) + float(p.production) * float(t)
+        return max(0, int(math.ceil(force - hold + 1)))
+
+    spare = {int(p.id): max(0, int(p.ships) - reserve(p)) for p in my_planets}
+
+    floor_cache: dict[tuple[int, int], int] = {}
+
+    def capture_floor(s, t):
+        key = (int(s.id), int(t.id))
+        f = floor_cache.get(key)
+        if f is None:
+            f = capture_floor_arrival(s, t, model, omega, me, world)
+            floor_cache[key] = f
+        return f
+
+    # --- winnability: probability the action delivers the value we priced.
+    # Independent failure modes multiply: floor + (1-floor)*time_survival*race_conf.
     def winnability(t, arrival_turn):
-        # Probability the action delivers the value we priced. Independent failure
-        # modes multiply:  floor + (1-floor) * time_survival * race_conf * path_clear
         ac = predict_arrival_contest(model, world, int(t.id), int(arrival_turn), me)
-        # race_conf: graded lead over the opponent's earliest contest turn. A wide
-        # lead -> ~1; arriving at/after the contest -> ~0. This rewards capturing
-        # EARLY (before the garrison grows / before a counter), and folds in target
-        # contestedness ("where we aim") via opp_earliest_contest_tick. None = the
-        # opponent cannot contest at all (uncontestable -> full confidence).
+        # race_conf: graded lead over the opponent's earliest contest turn. Wide
+        # lead -> ~1; arriving at/after contest -> ~0. Rewards capturing EARLY
+        # (before the garrison grows / a counter lands); folds in target
+        # contestedness ("where we aim"). None = uncontestable -> full confidence.
         opp = ac.opp_earliest_contest_tick
         if opp is None:
             race_conf = 1.0
         else:
             race_conf = _sigmoid((float(opp) - float(arrival_turn)) / RACE_SCALE)
-        # time_survival: the world drifts while the fleet is in the air; longer
-        # flight = more divergence from this prediction (the entropy term).
+        # time_survival: the world drifts while the fleet is in the air (entropy).
         time_survival = SURVIVAL_PER_TURN ** float(arrival_turn)
-        # path_clear: interception risk from enemy mass near the flight corridor.
-        # DEFERRED (next factor) -- defined here at 1.0 so the structure is in place.
-        path_clear = 1.0
+        path_clear = 1.0  # DEFERRED next factor: interception along the corridor.
         return WIN_FLOOR + (1.0 - WIN_FLOOR) * time_survival * race_conf * path_clear
 
-    def value(t, arrival_turn):
-        owner = int(t.owner)
-        mult = 2.0 if owner not in (-1, me) else 1.0
-        # Remaining production turns we collect AFTER arrival: (turns left in the
-        # game) minus the flight time. Uses `remain` (= 500 - step), not the bare
-        # 500, so late-game captures are not over-valued.
-        horizon = max(0.0, float(remain) - float(arrival_turn))
-        return mult * int(t.production) * horizon * winnability(t, arrival_turn)
+    # --- two-sided value: the margin SWING in ships. Doubled when NOT acting
+    # cedes the target to the opponent (an enemy planet, OR a neutral the opponent
+    # will take) -- we gain the production stream AND deny it. This is what prices
+    # the cost of inaction, so the agent acts under pressure instead of going inert.
+    def counterfactual_owner(t, arrive):
+        o = int(t.owner)
+        if o not in (-1, me):
+            return "opp"                      # enemy planet: opp keeps it
+        ac = predict_arrival_contest(model, world, int(t.id), int(arrive), me)
+        po = ac.predicted_owner
+        if po is not None and int(po) not in (-1, me):
+            return "opp"                      # predicted to be enemy at arrival
+        th = tte(int(t.id))
+        if th is not None and th <= arrive + CONTEST_MARGIN:
+            return "opp_likely"               # contested neutral the opp will take
+        return "neutral"
+
+    def value(t, arrive):
+        stream = int(t.production) * max(0.0, float(remain) - float(arrive))
+        mult = 2.0 if counterfactual_owner(t, arrive) in ("opp", "opp_likely") else 1.0
+        return mult * stream * winnability(t, arrive)
+
+    moves: list[list] = []
+    launches: list[dict] = []
+    committed_tgt: set[int] = set()
+
+    def emit(s, t, angle, send, eta, arrive, kind, floor):
+        if send <= 0:
+            return False
+        if predict_fleet_fate(s, t, angle, int(send), world).outcome != "target":
+            return False  # path blocked (sun / wrong planet / oob)
+        moves.append([int(s.id), float(angle), int(send)])
+        launches.append({
+            "src": int(s.id), "tgt": int(t.id), "ships": int(send),
+            "eta": round(float(eta), 1), "arrive_turn": int(arrive),
+            "dist": round(math.hypot(t.x - s.x, t.y - s.y), 1),
+            "tgt_owner": int(t.owner), "kind": kind, "floor": int(floor),
+        })
+        spare[int(s.id)] -= int(send)
+        return True
 
     # ============================================================
-    # FIELD (1): the champion's feasible solo-capture action set.
-    # propose -> (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N)
+    # DEFENSE pass (BEFORE offense consumes the budget). Reinforce a planet only
+    # against a COMMITTED in-flight attack (the ledger) it cannot self-cover --
+    # NOT speculative threats (which would re-create the friendly-reinforce trickle).
+    # Sized to the shortfall, from the nearest surplus source that can arrive in time.
     # ============================================================
-    prerank = propose(my_planets, target_pool, world, model, me, omega,
-                      baseline_len=max(2, remain))
-    # Score each feasible action in the single currency; drop overreach (feasibility).
-    actions = []
-    for _cheap, src, tgt, ships, angle, eta, _hz, wait in prerank:
-        ttc = float(wait) + float(eta)
-        if ttc > REACH_CEIL:
+    def committed_threat(p):
+        incoming = [(int(eta_arr), float(sh))
+                    for (eta_arr, owner, sh) in model.ledger.get(int(p.id), [])
+                    if owner != me]
+        if not incoming:
+            return 0, None
+        deadline = min(e for e, _ in incoming)
+        force = sum(sh for e, sh in incoming if e <= deadline + WAVE_LOOKAHEAD)
+        hold = float(p.ships) + float(p.production) * float(deadline)
+        return max(0, int(math.ceil(force - hold + 1))), deadline
+
+    for p in my_planets:
+        need, deadline = committed_threat(p)
+        if need <= 0:
             continue
-        arrive = int(math.ceil(ttc))
+        srcs = sorted(
+            (s for s in my_planets
+             if int(s.id) != int(p.id) and spare.get(int(s.id), 0) > 0),
+            key=lambda s: math.hypot(s.x - p.x, s.y - p.y),
+        )
+        for s in srcs:
+            if need <= 0:
+                break
+            send = min(spare[int(s.id)], need)
+            if send < MIN_FLEET_SIZE:
+                continue
+            ang, eta = aim_and_eta(s, p, send, omega, world=world)
+            if deadline is not None and eta > deadline:
+                continue  # arrives after the attack lands (same-turn sums, so OK)
+            if emit(s, p, ang, send, eta, int(eta), "def", need):
+                need -= send
+
+    # ============================================================
+    # FIELD (1): OWN candidate generator -- HARD feasibility only (trajectory
+    # clears the sun / reaches the target). We do NOT call the champion's
+    # propose(): its default-ON hold-feasibility / source-survival filters delete
+    # contested captures before the field can judge them. The two-sided value is
+    # the sole judge.
+    # ============================================================
+    actions: list[dict] = []
+
+    def add_candidate(src, tgt, ships, angle, eta, wait):
+        arrive = int(wait) + int(eta)
+        if arrive > REACH_CEIL or int(ships) < MIN_FLEET_SIZE:
+            return
+        # Only fire-now candidates can actually be launched, so only they need the
+        # (costly) trajectory ray-cast; wait candidates exist purely for the HOLD
+        # comparison and are never emitted.
+        if wait == 0 and predict_fleet_fate(
+                src, tgt, angle, int(ships), world).outcome != "target":
+            return
         actions.append({
             "src": src, "tgt": tgt, "ships": int(ships), "angle": float(angle),
             "eta": float(eta), "wait": int(wait), "arrive": arrive,
-            "value": value(tgt, arrive),
+            "floor": int(ships), "value": value(tgt, arrive),
         })
+
+    for src in my_planets:
+        if int(src.ships) < MIN_FLEET_SIZE:
+            continue
+        for tgt in nearest_k(target_pool, src, NUM_TARGETS_PER_SOURCE):
+            if int(tgt.id) == int(src.id):
+                continue
+            floor = capture_floor(src, tgt)
+            # fire-now: a floor-clearing fleet launched this turn.
+            ang, eta = aim_and_eta(src, tgt, floor, omega, world=world)
+            add_candidate(src, tgt, floor, ang, eta, 0)
+            # wait-then-mass: accumulate K turns, then fire. Only the HOLD gate
+            # consumes these (compare fire-now vs waiting); never emitted.
+            for K in WAIT_HORIZONS:
+                if int(src.ships) + int(src.production) * K < floor:
+                    continue
+                wang, weta = aim_and_eta(src, tgt, floor, omega, wait_N=K, world=world)
+                add_candidate(src, tgt, floor, wang, weta, K)
+
     actions.sort(key=lambda a: -a["value"])
     _LAST_FIELD.clear()
     for a in actions:
@@ -221,107 +307,48 @@ def agent(obs, configuration=None):
 
     # ============================================================
     # HOLD vs FIRE: per (src, tgt) admit the fire-now action only if it is worth
-    # at least as much (in currency) as the best wait-then-mass candidate for the
-    # same pair. If waiting strictly dominates we emit nothing for that pair -> the
-    # ships are HELD (stay in spare to accumulate or fund a better target). This is
-    # where "slow launches are improbable" comes from: a slow fire-now fleet that
-    # loses the race (winnability=floor) or lands too late is dominated by a later,
-    # faster, massed fleet -- yet a free-neutral grab has no wait rival (propose
-    # yields none for an armed source vs a bankable target) and so fires now.
+    # at least as much as the best wait-then-mass candidate for that pair; else the
+    # ships are held. A fire-now action also requires the source can afford the
+    # floor (a sub-floor fleet bounces, so it is not a capture).
     # ============================================================
-    floor_cache: dict[tuple[int, int], int] = {}
-
-    def capture_floor(s, t):
-        key = (int(s.id), int(t.id))
-        f = floor_cache.get(key)
-        if f is None:
-            f = capture_floor_arrival(s, t, model, omega, me, world)
-            floor_cache[key] = f
-        return f
-
     best_fire: dict[tuple[int, int], dict] = {}
     best_wait_val: dict[tuple[int, int], float] = {}
     for a in actions:
         sid, tid = int(a["src"].id), int(a["tgt"].id)
         key = (sid, tid)
         if a["wait"] == 0:
-            # A fire-now action is a real capture ONLY if the source can put a
-            # floor-clearing fleet on the target this turn; a sub-floor fleet
-            # reaches the planet but loses the combat (it bounces), so it is not a
-            # capture. We do not trust propose's deduped ship count here -- we
-            # size the emitted fleet to the floor ourselves (below), so the gate
-            # is "can the source afford the floor", not "did propose pick >=floor".
-            # This is what makes a slow/small launch improbable: a source that
-            # cannot field a capturing fleet simply has no fire-now action; the
-            # target waits to mass (its wait candidate) or falls to a cohort.
-            floor = capture_floor(a["src"], a["tgt"])
-            if spare.get(sid, 0) < floor:
+            if spare.get(sid, 0) < a["floor"]:
                 continue
-            a["floor"] = floor
             cur = best_fire.get(key)
             if cur is None or a["value"] > cur["value"]:
                 best_fire[key] = a
         elif a["value"] > best_wait_val.get(key, float("-inf")):
             best_wait_val[key] = a["value"]
-    admitted = [
-        a for key, a in best_fire.items()
-        if a["value"] >= best_wait_val.get(key, float("-inf"))
-    ]
+    admitted = [a for key, a in best_fire.items()
+                if a["value"] >= best_wait_val.get(key, float("-inf"))]
     admitted.sort(key=lambda a: -a["value"])
 
-    moves: list[list] = []
-    launches: list[dict] = []
-    committed_tgt: set[int] = set()
-
-    def emit(s, t, angle, send, eta, arrive, kind, floor):
-        if send <= 0:
-            return False
-        if predict_fleet_fate(s, t, angle, int(send), world).outcome != "target":
-            return False  # path blocked (sun / wrong planet / oob)
-        moves.append([int(s.id), float(angle), int(send)])
-        launches.append({
-            "src": int(s.id), "tgt": int(t.id), "ships": int(send),
-            "eta": round(eta, 1), "arrive_turn": int(arrive),
-            "dist": round(math.hypot(t.x - s.x, t.y - s.y), 1),
-            "tgt_owner": int(t.owner), "kind": kind, "floor": int(floor),
-        })
-        spare[int(s.id)] -= int(send)
-        return True
-
-    # GRADIENT-FOLLOW: take the best admitted (fire-now-wins) actions under budget.
-    # Size each fleet to clear the arrival floor (re-aiming for the real count, so
-    # the fleet actually captures); surplus above the floor is left in spare for
-    # the next-best target rather than padding one capture (full-drain sizing is a
-    # later lever). propose's deduped count is only a lower bound here.
+    # GRADIENT-FOLLOW: take the best admitted fire-now actions under the budget.
     for a in admitted:
         tid, sid = int(a["tgt"].id), int(a["src"].id)
         if tid in committed_tgt:
             continue  # target already won this turn
         floor = int(a["floor"])
         if spare.get(sid, 0) < floor:
-            continue  # can't field a capturing fleet without overdrawing the reserve
-        send = max(int(a["ships"]), floor)
-        send = min(send, spare[sid])
-        angle, eta = aim_and_eta(a["src"], a["tgt"], send, omega, world=world)
-        arrive = int(math.ceil(float(eta)))
-        if emit(a["src"], a["tgt"], angle, send, eta, arrive,
-                "off" if int(a["tgt"].owner) != me else "def", floor):
+            continue
+        send = min(spare[sid], floor)
+        ang, eta = aim_and_eta(a["src"], a["tgt"], send, omega, world=world)
+        if emit(a["src"], a["tgt"], ang, send, eta, int(eta), "off", floor):
             committed_tgt.add(tid)
 
     # ============================================================
-    # FIELD (2): convergence supplement. Defended targets that NO single planet
-    # could solo-fund never appear in propose; assemble a same-arrival cohort
-    # from remaining spare (combat rule 1 sums the legs). This is the only place
-    # multi-stream alignment can arise, and only when it actually wins a target.
+    # FIELD (2): convergence supplement. A defended target no single planet can
+    # solo-fund: assemble a same-arrival cohort from remaining spare (combat rule 1
+    # sums the legs). Only fires when it actually wins the target.
     # ============================================================
-    # A target that appeared in the field but was HELD (fire-now lost to its wait
-    # rival) or simply went unfunded is still eligible here -- the only exclusion
-    # is a target we already won this turn. (Pre-HOLD this used a `solo_tids` set
-    # built from every field entry, which shadowed held targets out of cohorts.)
     extra = [t for t in target_pool
              if int(t.owner) != me and int(t.id) not in committed_tgt]
-    # rank the supplement scan by a cheap value proxy so we bound the cost
-    extra.sort(key=lambda t: -int(t.production))
+    extra.sort(key=lambda t: -int(t.production))  # cheap value proxy to bound cost
     for t in extra[:MAX_CONVERGE_TARGETS]:
         legs = []  # (src, angle, eta)
         for s in my_planets:
@@ -342,7 +369,9 @@ def agent(obs, configuration=None):
             by_turn[int(math.ceil(eta))].append((s, ang, eta))
         for arrive in sorted(by_turn):
             cohort = by_turn[arrive]
-            floor = capture_size(cohort[0][0], t, model, omega, me, world)
+            # Same combat floor as the solo path (was capture_size, which sizes at
+            # a different eta and thinner margin -> tie-and-die under combat rule 4).
+            floor = capture_floor(cohort[0][0], t)
             if sum(spare[int(s.id)] for s, _, _ in cohort) < floor:
                 continue
             cohort.sort(key=lambda c: c[2])  # nearest-first

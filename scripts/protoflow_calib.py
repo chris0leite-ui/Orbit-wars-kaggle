@@ -147,6 +147,36 @@ def main():
            and near_fired,
            f"win_near={win_near} win_far={win_far} emitted={moves or '(hold)'}")
 
+    # S5 — COST OF INACTION (the direct inertia test). A neutral that an enemy is
+    # racing for (an in-flight enemy fleet inbound to it), plus our home that can
+    # win the race. The two-sided value must treat the neutral as a 2x swing (we
+    # gain it AND deny it), so the agent FIRES rather than sitting idle. This is
+    # the behavior that was 0/12 against the Producer.
+    home5 = [0, 0, 22.0, 50.0, radius(3), 40, 3]
+    contested_neutral = [1, -1, 40.0, 50.0, radius(2), 6, 3]   # we can reach in ~7
+    enemy5 = [2, 1, 75.0, 50.0, radius(3), 40, 3]
+    enemy_fleet = [0, 1, 58.0, 50.0, 3.1416, 2, 20]            # 20 ships inbound to the neutral
+    moves, field = show("S5 cost-of-inaction (enemy racing for a neutral we can win)",
+         make_obs([home5, contested_neutral, enemy5], fleets=[enemy_fleet]),
+         "the contested neutral is a 2x swing -> FIRE now, do not sit idle")
+    fired_at_neutral = any(lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
+    mult2 = next((f for f in field if f["tgt"] == 1 and f["imp"] >= 2 * 3 * (500 - 10) * 0.4), None)
+    _check("S5", fired_at_neutral, f"emitted={moves or '(hold)'} (want a launch at the contested neutral)")
+
+    # S6 — DEFENSE on COMMITTED threat. An owned planet with a real enemy fleet
+    # inbound it cannot self-cover, plus a nearby surplus ally. A "def" reinforce
+    # should be emitted, sized to the shortfall. (A far/speculative enemy must NOT
+    # trigger reinforcement -- that was the friendly-reinforce trickle.)
+    threatened = [0, 0, 30.0, 50.0, radius(3), 8, 3]           # only 8 ships
+    ally = [1, 0, 18.0, 50.0, radius(3), 40, 3]                # nearby surplus
+    enemy6 = [2, 1, 80.0, 50.0, radius(3), 40, 3]
+    atk_fleet = [0, 1, 45.0, 50.0, 3.1416, 2, 30]             # 30 ships inbound to the threatened planet
+    moves, field = show("S6 defense on committed threat (reinforce the threatened planet)",
+         make_obs([threatened, ally, enemy6], fleets=[atk_fleet]),
+         "a 'def' reinforce from the ally should be emitted, sized to the shortfall")
+    def_launch = [lc for lc in proto.get_trace()[-1]["launches"] if lc["kind"] == "def" and lc["tgt"] == 0]
+    _check("S6", bool(def_launch), f"def launches={def_launch} emitted={moves or '(hold)'}")
+
 
 if __name__ == "__main__":
     main()
