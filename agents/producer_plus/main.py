@@ -253,8 +253,10 @@ def plan_lite_waves(
         else:
             floor_at_arr_hi = torch.ones(S, T, dtype=dtype, device=device)
 
-        sizes_lo = floor_at_arr_hi.ceil().clamp(min=1.0)                          # [S, T]
-        sizes_mid = (2.0 * sizes_lo).clamp(max=sizes_hi)                          # [S, T]
+        # Floor at hi's eta gives the minimum to capture; cap by drain so a
+        # single launch can never over-drain the source.
+        sizes_lo = torch.minimum(floor_at_arr_hi.ceil().clamp(min=1.0), sizes_hi) # [S, T]
+        sizes_mid = torch.minimum(2.0 * sizes_lo, sizes_hi)                       # [S, T]
         sizes_3 = torch.stack([sizes_lo, sizes_mid, sizes_hi], dim=-1)            # [S, T, N]
 
         # Step 2 — recompute reachability + aim per variant (each variant's eta
