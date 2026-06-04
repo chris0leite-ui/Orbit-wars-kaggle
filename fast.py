@@ -76,6 +76,11 @@ _BASELINES: dict[str, str] = {
     # Producer-engine migration host. Step 1: bit-identical to producer.
     # See agents/producer_plus/PROVENANCE.md and state/MIGRATION_PLAN.md.
     "producer_plus": str(REPO / "agents" / "producer_plus" / "producer_agent.py"),
+    # Step 2: producer_plus with PRODUCER_PLUS_ADAPTIVE_K=1 pre-set, so
+    # the candidate-arrival horizon K shrinks 18 → 10 across steps 0-30.
+    "producer_plus_adaptive_k": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_adaptive_k.py"
+    ),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",

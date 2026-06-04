@@ -50,6 +50,39 @@ from orbit_lite.planner_core import (
 from orbit_lite.adapter import single_obs_to_tensor, sparse_action_row_to_moves
 
 
+# Adaptive candidate-arrival horizon K_eta — ported from champion's
+# capture_horizon_k (agents/baseline/launch_rules.py). Default OFF
+# preserves bit-identical behaviour vs the untouched producer.
+# Clamped to H so capture_floor lookups stay inside garrison_status.
+def _adaptive_k_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_ADAPTIVE_K", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def compute_k_eta_for_step(step: int, *, H: int) -> int:
+    H_int = max(1, int(H))
+    if not _adaptive_k_enabled():
+        return H_int
+    floor = _env_int("PRODUCER_PLUS_ADAPTIVE_K_FLOOR", 10)
+    k_open = _env_int("PRODUCER_PLUS_ADAPTIVE_K_OPEN", 20)
+    t_settle = _env_int("PRODUCER_PLUS_ADAPTIVE_K_TSETTLE", 30)
+    floor = max(1, floor)
+    if t_settle <= 0 or int(step) >= t_settle or k_open <= floor:
+        decayed = floor
+    else:
+        raw = k_open - (k_open - floor) * int(step) / float(t_settle)
+        decayed = max(floor, int(round(raw)))
+    return max(1, min(H_int, decayed))
+
+
 @dataclass(frozen=True)
 class ProducerLiteConfig:
     """Behaviour knobs.  """
@@ -128,6 +161,7 @@ def plan_lite_waves(
     alive_by_step: Tensor,
     config: ProducerLiteConfig,
     player_count: int,
+    K_eta_override: int | None = None,
 ):
     """Single-size, single-source attack planner + regroup.
 
@@ -144,7 +178,8 @@ def plan_lite_waves(
 
     H_axis = int(garrison_status.ships.shape[-1])
     H = max(H_axis - 1, 0)
-    K_eta = max(1, min(int(config.horizon), H))
+    K_eta_raw = int(K_eta_override) if K_eta_override is not None else int(config.horizon)
+    K_eta = max(1, min(K_eta_raw, H))
     W = max(1, int(config.max_waves_per_turn))
 
     source_mask = obs.owned & obs.alive & (obs.ships >= float(config.min_ships_to_launch))
@@ -284,10 +319,14 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
     status = movement.garrison_status(max_horizon=H)
     alive_by_step = movement.alive_by_step[: H + 1]
 
+    current_step = int(obs_tensors["step"].max().item())
+    K_eta_override = compute_k_eta_for_step(current_step, H=H)
+
     entries = plan_lite_waves(
         movement=movement, obs=obs, obs_tensors=obs_tensors, cache=cache,
         garrison_status=status, prod=movement.planet_prod,
         alive_by_step=alive_by_step, config=config, player_count=int(player_count),
+        K_eta_override=K_eta_override,
     )
     entries = disambiguate_duplicate_launches(entries)
     launches = infer_planned_launches_from_entries(
