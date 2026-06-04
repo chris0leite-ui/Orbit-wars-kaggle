@@ -105,149 +105,6 @@ def _invalidate_garrison_cache(movement, *, planet_slots=None) -> None:
         movement._mark_garrison_dirty(planet_slots, 0)
 
 
-# Opp-foresight env gates — mechanisms that LEVERAGE the opp projection.
-# All default OFF; bit-identical to vanilla Producer when unset.
-def _source_exposure_enabled() -> bool:
-    return os.environ.get("PRODUCER_PLUS_SOURCE_EXPOSURE", "0").strip().lower() in (
-        "1", "true", "yes", "on",
-    )
-
-
-def _counter_capture_enabled() -> bool:
-    return os.environ.get("PRODUCER_PLUS_COUNTER_CAPTURE", "0").strip().lower() in (
-        "1", "true", "yes", "on",
-    )
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, default))
-    except (TypeError, ValueError):
-        return default
-
-
-def _opp_owner_mask(*, my_id: int, num_seats: int, device, dtype) -> Tensor:
-    """Bool mask ``[A]`` selecting all seats != ``my_id``.
-
-    Used to slice the opponent axes out of ``fleet_buckets`` and
-    ``garrison_status`` tensors so the foresight mechanisms aggregate
-    threats from every non-self seat (works for 2P and 4P).
-    """
-    A = max(1, int(num_seats))
-    mask = torch.ones(A, dtype=torch.bool, device=device)
-    if 0 <= int(my_id) < A:
-        mask[int(my_id)] = False
-    return mask
-
-
-def _fresh_opp_capture_mask(
-    garrison_status, *, my_id: int, K_eta: int,
-) -> Tensor:
-    """Return ``[P]`` bool: True for planets the opp captures fresh in K_eta.
-
-    A "fresh opp capture" is a planet whose owner at some tick
-    ``k in [1, K_eta]`` is an opponent AND differs from the owner at
-    step 0. Planets the opp already controls at step 0 do not qualify.
-    The defender count after such a capture is ``1 + production`` —
-    very cheap to take back.
-    """
-    owner_tl = garrison_status.owner  # [P, H+1]
-    P = int(owner_tl.shape[0])
-    H_axis = int(owner_tl.shape[-1])
-    K = max(0, min(int(K_eta), H_axis - 1))
-    if K == 0 or P == 0:
-        return torch.zeros(P, dtype=torch.bool, device=owner_tl.device)
-    future = owner_tl[:, 1 : K + 1]                                    # [P, K]
-    initial = owner_tl[:, 0:1]                                         # [P, 1]
-    is_opp = (future >= 0) & (future != int(my_id))
-    is_fresh = future != initial
-    return (is_opp & is_fresh).any(dim=-1)
-
-
-def _append_counter_capture_targets(
-    target_idx: Tensor,
-    target_exists: Tensor,
-    *,
-    fresh_capture_mask: Tensor,
-) -> tuple[Tensor, Tensor]:
-    """Append fresh-opp-capture planet slots to the shortlist.
-
-    Skips planets already present in ``target_idx`` to avoid duplicates.
-    Returns the (possibly-expanded) ``(target_idx, target_exists)``.
-    """
-    if not bool(fresh_capture_mask.any()):
-        return target_idx, target_exists
-    device = target_idx.device
-    capture_slots = torch.nonzero(fresh_capture_mask, as_tuple=False).flatten()
-    if target_idx.numel() > 0:
-        existing = set(target_idx.detach().to("cpu").tolist())
-        new_slots = [int(s) for s in capture_slots.detach().to("cpu").tolist() if int(s) not in existing]
-        if not new_slots:
-            return target_idx, target_exists
-        addition = torch.tensor(new_slots, dtype=target_idx.dtype, device=device)
-    else:
-        addition = capture_slots.to(dtype=target_idx.dtype)
-    new_target_idx = torch.cat([target_idx, addition], dim=0)
-    new_target_exists = torch.cat(
-        [target_exists, torch.ones(addition.shape[0], dtype=target_exists.dtype, device=device)],
-        dim=0,
-    )
-    return new_target_idx, new_target_exists
-
-
-def _apply_source_exposure_penalty(
-    score: Tensor,
-    *,
-    cand_src: Tensor,
-    cand_send: Tensor,
-    cand_eta: Tensor,
-    fleet_buckets: Tensor,
-    opp_owner_mask: Tensor,
-    source_ships_per_planet: Tensor,
-    safety_margin: float,
-) -> Tensor:
-    """Set score to -inf where residual < safety_margin × opp_arrivals_at_src.
-
-    For each candidate ``c``:
-      residual = source_ships[src_c] - ships_sent_c
-      opp_arrivals_at_src = sum over [tick 0..eta_c] and over opp axes
-                            of fleet_buckets[src_c, k, owner]
-    Reject ``c`` (score = -inf) if ``residual < safety_margin × opp_arrivals``.
-
-    Batched: pure tensor gather + masked sum + comparison.
-    """
-    C = int(score.shape[0])
-    L = int(cand_send.shape[-1]) if cand_send.dim() >= 2 else 1
-    if C == 0:
-        return score
-    # Sum ships and eta across the contributor axis to get per-candidate scalars.
-    ships_total = cand_send.reshape(C, L).sum(dim=-1)                  # [C]
-    # Use the LATEST arrival tick across contributors as the exposure window.
-    eta_latest = cand_eta.reshape(C, L).max(dim=-1).values             # [C]
-    # All contributors of a candidate share the same source slot by construction
-    # (single-source per candidate today); take the first.
-    src_slot = cand_src.reshape(C, L)[:, 0]                            # [C], long
-    src_slot = src_slot.clamp(min=0, max=max(int(fleet_buckets.shape[0]) - 1, 0))
-    P, H_buckets, A = int(fleet_buckets.shape[0]), int(fleet_buckets.shape[1]), int(fleet_buckets.shape[2])
-    if P == 0 or H_buckets == 0 or A == 0:
-        return score
-    # eta_latest can be float; convert to bucket-window length (ceil) and clamp to H.
-    window = eta_latest.ceil().long().clamp(min=0, max=H_buckets)      # [C]
-    # Build a [C, H_buckets] mask over the tick axis: True for k < window[c].
-    ks = torch.arange(H_buckets, device=fleet_buckets.device).view(1, H_buckets)
-    tick_mask = ks < window.view(C, 1)                                 # [C, H_buckets]
-    # Sum opp arrivals at src up to eta. Gather [C, H_buckets, A] then mask + sum.
-    arrivals_at_src = fleet_buckets[src_slot]                          # [C, H_buckets, A]
-    opp_axes = opp_owner_mask.view(1, 1, A)
-    opp_at_src = (arrivals_at_src * opp_axes.to(arrivals_at_src.dtype)).sum(dim=-1)  # [C, H_buckets]
-    opp_total = (opp_at_src * tick_mask.to(opp_at_src.dtype)).sum(dim=-1)            # [C]
-    # residual = source_ships[src] - ships_total
-    source_ships_c = source_ships_per_planet[src_slot].to(opp_total.dtype)
-    residual = source_ships_c - ships_total.to(opp_total.dtype)
-    exposed = residual < (float(safety_margin) * opp_total)
-    return torch.where(exposed, torch.full_like(score, float("-inf")), score)
-
-
 @dataclass(frozen=True)
 class ProducerLiteConfig:
     """Behaviour knobs.  """
@@ -357,17 +214,6 @@ def plan_lite_waves(
         obs, obs_tensors, garrison_status, cache,
         config=config, K_eta=K_eta, H=H, prod=prod, source_mask=source_mask,
     )
-    # Mechanism 3 — counter-capture target seeding. APPEND planets that
-    # the opp is projected to capture inside K_eta but that the shortlist
-    # left out. The scorer (now fed augmented buckets) will rank a
-    # recapture against the post-capture defender count (1 + production).
-    if _counter_capture_enabled():
-        fresh_capture_mask = _fresh_opp_capture_mask(
-            garrison_status, my_id=pid, K_eta=K_eta,
-        )
-        target_idx, target_exists = _append_counter_capture_targets(
-            target_idx, target_exists, fresh_capture_mask=fresh_capture_mask,
-        )
     if not bool(target_exists.any()):
         return _empty_entries(device, dtype)
     S = int(source_idx.shape[0])
@@ -453,29 +299,6 @@ def plan_lite_waves(
         player_count=int(player_count), launches=launches, player_id=pid,
     )                                                                            # [C]
     score = torch.where(cand_valid, score, torch.full_like(score, float("-inf")))
-
-    # Mechanism 1 — source-exposure penalty. Hard-reject any candidate
-    # whose launch would strip the source planet below the projected opp
-    # arrival force by the candidate's eta. (Race-loss / Mechanism 2 was
-    # ablated out — redundant in this pipeline because the augmented
-    # scorer already reflects opp captures via the owner timeline; M2
-    # double-penalised candidates the scorer had correctly valued.)
-    if _source_exposure_enabled():
-        opp_mask = _opp_owner_mask(
-            my_id=pid, num_seats=int(player_count),
-            device=movement.device, dtype=dtype,
-        )
-        margin = _env_float("PRODUCER_PLUS_SOURCE_EXPOSURE_MARGIN", 1.0)
-        score = _apply_source_exposure_penalty(
-            score,
-            cand_src=cand_src,
-            cand_send=cand_send,
-            cand_eta=cand_eta,
-            fleet_buckets=movement.fleet_buckets,
-            opp_owner_mask=opp_mask,
-            source_ships_per_planet=obs.ships.to(dtype),
-            safety_margin=margin,
-        )
 
     wave_entries, leftover = _greedy_select(
         P=P, W=W, device=device, dtype=dtype, score=score,
