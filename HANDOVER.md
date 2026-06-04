@@ -2,87 +2,89 @@
 
 ## Mode
 
-**Observation-driven iteration on a single strategy.** No parallel exploration.
-One observation from the PI → one mechanism → one push.
+**Migration project**, not single-strategy iteration. We are rebuilding the
+agent: Producer's engine as host, our pieces ported in as candidate-
+generation / scoring extensions (no post-passes). See
+`state/MIGRATION_PLAN.md` for the full plan.
 
 ## Strategy
 
-`baseline_adaptive_k` — see `state/STRATEGY.md` for the full spec, the build
-script, the smoke procedure, and the iteration protocol.
+Two strategies coexist during the migration:
 
-Read `state/STRATEGY.md` first thing every session.
+- **Live**: `baseline_adaptive_k` (`state/STRATEGY.md`) — what is on the
+  Kaggle ladder right now. Stays as backstop in the rolling submission
+  pair until the hybrid agent beats it.
+- **Build**: Producer-engine-host hybrid (`state/MIGRATION_PLAN.md`) —
+  starts implementing next session.
 
 ## Live status
 
 - **Latest submission (#1):** `champ_computeByShips_on.py`, sub **53332500**
-  (2026-06-03 15:11 UTC), bundle sha256 `53bf813b...`, 697 927 B. Adaptive K
-  + compute_by_ships lever both ON. Predicted μ ≈ 1170 (parity with sibling
-  per local n=16 A/B).
+  (2026-06-03 15:11 UTC), 697 927 B. Adaptive K + compute_by_ships baked.
+  Predicted μ ≈ 1170 (parity with sibling).
 - **Backstop (#2):** `champ_adaptiveK_on.py`, sub **53324164**, live
-  **μ = 1185.2** (our anchor — stays in the rolling pair).
-- **TrueSkill warm-up reminder:** starts at μ ≈ 600 and climbs over ~24 h. Do
-  not interpret the first few hours of leaderboard data.
-- Read the rolling pair on demand:
-  `kaggle competitions submissions orbit-wars | head -5`.
+  **μ = 1185.2**. Our anchor — stays in the rolling pair until the
+  hybrid agent beats it locally and we submit.
+- **Producer's live μ:** ≈ 1200 (per PI). We will NOT submit Producer.
 
-## Today's progress (2026-06-04, session-level)
+## Today's progress (2026-06-04)
 
-**Ship-utilization mechanism family parked — not killed.**
+1. **Frontier_circulation triplet parked — not killed.** Three
+   implementations of pressure-gradient ship circulation as a post-pass
+   over the chooser, all falsified (5/16, 8/16, 5/16). Root cause
+   identified via code review: Producer's regroup composes with his
+   scoring because both use the same scalar; our scoring is per-trade
+   ROI, so pressure-routed ships go to destinations our chooser ignores.
+   See `audit/2026-06-04-postmortem-champion-ml-graft-majestic-storm.md`.
 
-Pursued three implementations of pressure-gradient ship circulation as a
-post-pass over the chooser. All three falsified:
+2. **Cherry-picked Producer agent from main** (commit `0cc08da`).
+   Available locally at `agents/producer/`, registered as the `producer`
+   short-name in fast.py and in `DEFAULT_PANEL`. Sparring partner only.
 
-- v1 (centroid scalar field) — 5/16 wins, wallclock max 2958 ms — `924b44a`
-- v2 (Biel's distance-decayed enemy mass) — 8/16 wins, max 1424 ms — `24ac0d7`
-- v3 (v2 + destination-usefulness filter) — 5/16 wins, max 1396 ms — `b836407`
+3. **n=32 head-to-head A/B:** our champion vs Producer = **13/32 wins
+   (40.6 %), Wilson [0.255, 0.577]**. Producer wins ~60 % of games.
+   Confirmed at n=32; not noise.
 
-**Root cause** (code-review diagnosis after v2): Biel's "Producer" agent on
-Kaggle uses an identical mechanism successfully because his entire planner
-thinks in pressure (same scalar feeds attack scoring AND regroup
-destinations). Our chooser thinks in (source, target) trade scoring with no
-pressure notion → pressure-routed ships land at destinations our chooser
-ignores. Cannot be patched with thin filters.
+4. **Read of Producer's planner** (`agents/producer/orbit_lite/
+   planner_core.py` + `garrison_launch.py`). Synthesised what each agent
+   does well; designed the migration plan in `state/MIGRATION_PLAN.md`.
 
-**PI explicit at session end:** "this is not done yet. Just... we couldn't
-transfer the results to our strategy." The observation — rear stockpiles
-sit idle while front fights — remains real and PI-verified. What we
-falsified is the post-pass mechanism shape, not the underlying need.
+## Next action — start the migration
 
-All code preserved behind `BASELINE_FRONTIER_CIRCULATION=1` (default OFF).
-Champion `champ_computeByShips_on.py` unaffected.
+Open `state/MIGRATION_PLAN.md` and execute **Step 1: skeleton
+`agents/producer_plus/`** as a wrap-and-modify of the vendored Producer.
+Confirm bit-identical behaviour before touching anything.
 
-Earlier in the session (2026-06-03 work, already shipped): compute_by_ships
-parity, idle_stockpile parity-after-gate-tighten — both default-OFF in the
-live champion.
+PI sign-off needed at start of next session on:
+- Migration direction still active (no contradicting live observation).
+- `agents/producer_plus/` directory name and wrap-and-modify pattern.
+- Per-step gate threshold (Wilson-lo ≥ 0.55 unless tighter / looser).
 
-## Next action
+After Step 1 lands clean, proceed through Steps 2-7 in order, gating each
+on n=32 A/B lift per Rule 45.
 
-**Pivot.** Do NOT continue tuning frontier_circulation in v4 form. Two
-non-trivial paths remain for the ship-utilization observation; do NOT
-pursue without first replay-mining 3-5 concrete cases of "rear ships
-could have been used":
+## Critical constraint — Producer is NOT submittable
 
-1. Chooser-internal rewrite — port pressure-aware scoring into
-   `cheap_marginal_value`. Multi-session build. See
-   `knowledge-base/questions/2026-06-04-chooser-pressure-port-vs-2hop-targeting.md`.
-2. Goal-directed 2-hop pre-positioning — identify a concrete (rear →
-   mid-friendly → opp) sequence the chooser is one launch short of, and
-   pre-position only for that play. Smaller; chooser-aware by construction.
-
-For an immediate next-session move that is NOT in this family: wait for
-the next PI observation from live games. The strategy doc's
-observation-driven loop applies.
+`agents/producer/` is Slawek Biel's published work. The vendored copy is
+a sparring partner and engine substrate, NOT a submission target. Only
+the hybrid (`producer_plus` with our extensions) is eligible for
+submission. This is documented in `state/MIGRATION_PLAN.md` § Ethics
+note.
 
 ## Pointers
 
-- `state/STRATEGY.md` — strategy, build, smoke, iteration protocol.
-- `CLAUDE.md` — process rules (lean).
+- `state/STRATEGY.md` — current live strategy, build/smoke procedure.
+- `state/MIGRATION_PLAN.md` — Producer-host migration plan (new this session).
 - `state/MULTI_BRANCH.md` — push-claim board (Rule 42).
-- `audit/2026-06-04-postmortem-champion-ml-graft-majestic-storm.md` — full
-  postmortem of today's circulation triplet.
+- `CLAUDE.md` — process rules (lean).
+- `audit/2026-06-04-postmortem-champion-ml-graft-majestic-storm.md` —
+  full postmortem of today's circulation triplet (parked, not killed).
+- `audit/2026-06-04-producer-eval-observations.md` — main's prior n=16
+  observations of Producer vs our agents.
 - `knowledge-base/thoughts/2026-06-04-circulation-family-parked-not-killed.md`
-  — diagnosis and unblock paths.
-- `knowledge-base/flags/2026-06-04-ship-utilization-still-open.md` — watch
-  flag for future opportunities.
+  — diagnosis and unblock paths (now superseded by migration plan).
+- `knowledge-base/flags/2026-06-04-ship-utilization-still-open.md` —
+  watch flag (now subsumed: migration is the answer).
 - `knowledge-base/questions/2026-06-04-chooser-pressure-port-vs-2hop-targeting.md`
-  — open design question on the two unblock paths.
+  — open question resolved: chooser pressure-port wins, via migration
+  plan.
