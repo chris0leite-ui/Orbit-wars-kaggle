@@ -112,57 +112,77 @@ def _build_projection(planets, fleets_raw, omega, H, me):
     owner = [[0] * (H + 1) for _ in range(P)]
     ships = [[0.0] * (H + 1) for _ in range(P)]
     prod = [float(p[6]) for p in planets]
-    id_to_idx = {int(p[0]): i for i, p in enumerate(planets)}
+    is_mine = [int(p[1]) == me for p in planets]
+    # Cache planet centres/radii once (tuple indexing in tight loops is slow).
+    px = [float(p[2]) for p in planets]
+    py = [float(p[3]) for p in planets]
+    pr = [float(p[4]) for p in planets]
     for i, p in enumerate(planets):
         owner[i][0] = int(p[1])
         ships[i][0] = float(p[5])
 
-    # Attribute each in-flight fleet to (target planet index, arrival turn).
-    # arrivals[t] -> list of (planet_idx, fleet_owner, fleet_ships).
-    arrivals: list[list[tuple[int, int, float]]] = [[] for _ in range(H + 1)]
-    if fleets_raw:
-        # Build env Planet/Fleet objects only for the ray-cast attribution
-        # (fleet_target_planet needs them); the rest of the policy uses raw
-        # tuples. Same approach as lib.opp_model.me_defensive_action.
-        from kaggle_environments.envs.orbit_wars.orbit_wars import Fleet, Planet
-        from lib.world_model import fleet_target_planet
-
-        planet_objs = [Planet(*p) for p in planets]
-        for f in fleets_raw:
-            try:
-                fobj = Fleet(*f)
-            except TypeError:
-                continue
-            target, eta = fleet_target_planet(fobj, planet_objs, omega)
-            if target is None or eta is None:
-                continue
-            ti = id_to_idx.get(int(target.id))
-            if ti is None:
-                continue
-            k = max(1, min(H, int(math.ceil(eta))))
-            arrivals[k].append((ti, int(fobj.owner), float(fobj.ships)))
+    # Attribute each in-flight fleet to (target planet, arrival turn) by a cheap
+    # closed-form straight-line ray-cast — the plan's sanctioned fallback.
+    # world_model.fleet_target_planet does a per-tick orbital scan to
+    # DEFAULT_HORIZON=250 (~2M predict_relative calls/board on dense boards,
+    # 17ms/call); orbital drift over the few turns to arrival is negligible for
+    # an opponent threat estimate, and exact aim is re-applied on fired waves.
+    # arrivals[t] -> {planet_idx: [(fleet_owner, fleet_ships), ...]}.
+    arrivals: list[dict[int, list[tuple[int, float]]]] = [dict() for _ in range(H + 1)]
+    for f in fleets_raw:
+        f_owner = int(f[1])
+        fx = float(f[2]); fy = float(f[3])
+        f_ships = float(f[6])
+        spd = fleet_speed(f_ships)
+        if spd <= 0:
+            continue
+        dir_x = math.cos(float(f[4]))
+        dir_y = math.sin(float(f[4]))
+        best_turns = None
+        best_i = -1
+        for i in range(P):
+            dx = px[i] - fx
+            dy = py[i] - fy
+            proj = dx * dir_x + dy * dir_y
+            if proj < 0.0:
+                continue  # planet is behind the fleet
+            r = pr[i]
+            perp_sq = dx * dx + dy * dy - proj * proj
+            if perp_sq >= r * r:
+                continue  # ray misses the planet disc
+            hit_d = proj - math.sqrt(r * r - perp_sq)
+            if hit_d < 0.0:
+                hit_d = 0.0
+            turns = hit_d / spd
+            if turns <= H and (best_turns is None or turns < best_turns):
+                best_turns = turns
+                best_i = i
+        if best_i < 0:
+            continue
+        k = max(1, min(H, int(math.ceil(best_turns))))
+        arrivals[k].setdefault(best_i, []).append((f_owner, f_ships))
 
     flip_turn: list[int | None] = [None] * P
     for t in range(1, H + 1):
+        arr_t = arrivals[t]
         for i in range(P):
             o = owner[i][t - 1]
             s = ships[i][t - 1]
             if o >= 0:  # player-owned planets produce; neutrals (-1) do not
                 s += prod[i]
-            for (ti, fo, fs) in arrivals[t]:
-                if ti != i:
-                    continue
-                if fo == o:
-                    s += fs  # reinforce
-                elif fs > s:
-                    o = fo
-                    s = fs - s  # captured
-                else:
-                    s -= fs  # repelled
+            inc = arr_t.get(i)
+            if inc:
+                for (fo, fs) in inc:
+                    if fo == o:
+                        s += fs  # reinforce
+                    elif fs > s:
+                        o = fo
+                        s = fs - s  # captured
+                    else:
+                        s -= fs  # repelled
             owner[i][t] = o
             ships[i][t] = s
-            if (flip_turn[i] is None and int(planets[i][1]) == me
-                    and o != me):
+            if flip_turn[i] is None and is_mine[i] and o != me:
                 flip_turn[i] = t
     return owner, ships, flip_turn
 

@@ -23,13 +23,20 @@ from lib.opp_model import lite_greedy_policy
 
 
 def _collect_boards(seeds):
-    """Run baseline-vs-baseline games; return list of (obs-dict) snapshots."""
+    """Run cheap self-play games; return list of (obs-dict) snapshots.
+
+    Board source is the lite_greedy wrapper agent (fast, ~1-2ms/turn) — it
+    produces realistic mid/late-game positions (captured planets, in-flight
+    fleets) without the heavy champion's ~500ms/turn lookahead cost, so the
+    speed gate iterates in seconds, not minutes.
+    """
     from kaggle_environments import make
 
     boards = []
+    agent_path = "agents/lite_greedy/main.py"
     for seed in seeds:
         env = make("orbit_wars", configuration={"seed": int(seed)}, debug=False)
-        env.run(["submissions/baseline.py", "submissions/baseline.py"])
+        env.run([agent_path, agent_path])
         for step in env.steps:
             for seat in (0, 1):
                 obs = step[seat]["observation"]
