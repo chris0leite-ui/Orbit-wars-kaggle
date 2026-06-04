@@ -50,7 +50,9 @@ from orbit_lite.planner_core import (
 from orbit_lite.adapter import single_obs_to_tensor, sparse_action_row_to_moves
 
 from opp_projector import (
+    _debug_log,
     _none_projector,
+    affected_slots,
     arrivals_tuples_to_buckets_delta,
     get_projector,
 )
@@ -87,6 +89,20 @@ def compute_k_eta_for_step(step: int, *, H: int) -> int:
         raw = k_open - (k_open - floor) * int(step) / float(t_settle)
         decayed = max(floor, int(round(raw)))
     return max(1, min(H_int, decayed))
+
+
+def _invalidate_garrison_cache(movement, *, planet_slots=None) -> None:
+    """Single chokepoint for the vendored producer's private invalidation API.
+
+    If ``planet_slots`` is None: invalidate every planet from step 0
+    (full rebuild). Otherwise: invalidate only the named slots. Isolated
+    here so a future re-vendor that renames the underscore-prefixed
+    method is a one-line fix, not a grep across the host.
+    """
+    if planet_slots is None:
+        movement._mark_garrison_dirty_all(0)
+    else:
+        movement._mark_garrison_dirty(planet_slots, 0)
 
 
 @dataclass(frozen=True)
@@ -333,25 +349,35 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
     projector = get_projector(projector_name)
     original_buckets = movement.fleet_buckets
     augmented = False
+    touched_slots = None
     if projector is not _none_projector and raw_obs is not None and original_buckets is not None:
         try:
             tuples = projector(
                 raw_obs, my_id=int(obs.player_id),
                 num_seats=int(player_count), horizon=H,
             )
-        except Exception:
+        except Exception as exc:
+            _debug_log(f"projector={projector_name}", exc)
             tuples = []
         if tuples:
+            A_dim = int(original_buckets.shape[-1])
+            H_dim = int(original_buckets.shape[-2])
             delta = arrivals_tuples_to_buckets_delta(
-                tuples, movement.planet_ids, A=int(original_buckets.shape[-1]),
-                H=int(original_buckets.shape[-2]),
+                tuples, movement.planet_ids, A=A_dim, H=H_dim,
                 device=movement.device, dtype=original_buckets.dtype,
             )
             if bool(delta.any()):
+                slots_cpu = affected_slots(
+                    tuples, movement.planet_ids, H=H_dim, A=A_dim,
+                )
+                touched_slots = slots_cpu.to(movement.device)
                 movement.fleet_buckets = original_buckets + delta
-                movement._mark_garrison_dirty_all(0)
+                _invalidate_garrison_cache(movement, planet_slots=touched_slots)
                 augmented = True
 
+    # Restore fleet_buckets BEFORE apply_private_planned_launches so the
+    # engine's own state-update path (which writes through fleet_buckets)
+    # sees authoritative state, not our scoring augmentation.
     try:
         status = movement.garrison_status(max_horizon=H)
         alive_by_step = movement.alive_by_step[: H + 1]
@@ -368,7 +394,12 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
     finally:
         if augmented:
             movement.fleet_buckets = original_buckets
-            movement._mark_garrison_dirty_all(0)
+            # MUST re-invalidate touched_slots: garrison_status above just
+            # marked them clean, but the cache now reflects AUGMENTED data.
+            # apply_private_planned_launches only dirties launch sources /
+            # targets, so augmented-but-not-launched planets would otherwise
+            # serve stale-augmented data on the next read.
+            _invalidate_garrison_cache(movement, planet_slots=touched_slots)
     entries = disambiguate_duplicate_launches(entries)
     launches = infer_planned_launches_from_entries(
         obs_tensors=obs_tensors, movement=movement, entries=entries, player_id=int(obs.player_id),

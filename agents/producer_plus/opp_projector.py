@@ -15,6 +15,8 @@ Picked at runtime via ``PRODUCER_PLUS_OPP_PROJECTOR`` env var.
 """
 from __future__ import annotations
 
+import os
+import sys
 from typing import Any, Callable, Sequence
 
 import torch
@@ -23,6 +25,25 @@ from torch import Tensor
 
 ArrivalTuple = tuple[int, int, int, int]  # (target_planet_id, eta_abs, owner, ships)
 Projector = Callable[..., list[ArrivalTuple]]
+
+
+def _debug_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_DEBUG", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _debug_log(where: str, exc: BaseException) -> None:
+    """Single-line stderr log gated on ``PRODUCER_PLUS_DEBUG``.
+
+    Silent by default so production runs match today's behaviour. Turning
+    the flag on surfaces genuine bugs that the broad ``except Exception``
+    would otherwise swallow as "no projection".
+    """
+    if _debug_enabled():
+        sys.stderr.write(
+            f"[producer_plus] {where}: {type(exc).__name__}: {exc}\n"
+        )
 
 
 def _none_projector(
@@ -41,7 +62,8 @@ def _lite_greedy_projector(
     ``lib.joint_solver.opp_projection.predict_opp_multi_launch``. Cost is
     ~1-2 ms per turn (one-shot, NOT per candidate). Returns an empty
     list on any failure so a misbehaving projector cannot brick the
-    agent.
+    agent; set ``PRODUCER_PLUS_DEBUG=1`` to surface the swallowed
+    exception on stderr.
     """
     try:
         from lib.intent import World
@@ -51,7 +73,8 @@ def _lite_greedy_projector(
         return predict_opp_multi_launch(
             world, int(my_id), int(num_seats), horizon=int(horizon)
         )
-    except Exception:
+    except Exception as exc:
+        _debug_log("lite_greedy_projector", exc)
         return []
 
 
@@ -118,3 +141,47 @@ def arrivals_tuples_to_buckets_delta(
             continue
         delta[slot, eta_i - 1, owner_i] += ships_f
     return delta
+
+
+def affected_slots(
+    tuples: Sequence[ArrivalTuple],
+    planet_ids: Tensor,
+    *,
+    H: int,
+    A: int,
+) -> Tensor:
+    """Return the unique planet slot indices that ``tuples`` would write to.
+
+    Applies the same skip rules as ``arrivals_tuples_to_buckets_delta``
+    (out-of-window eta, unknown planet, bad owner, non-positive ships)
+    so the returned slots exactly match the planets whose
+    ``fleet_buckets`` rows are mutated by the delta. Used to narrow the
+    garrison-cache invalidation footprint.
+
+    Returns an empty ``long`` tensor on this projector module's CPU
+    when nothing is affected. Caller is responsible for moving the
+    tensor onto the movement device.
+    """
+    if H <= 0 or not tuples:
+        return torch.empty((0,), dtype=torch.long)
+    ids_cpu = planet_ids.detach().to("cpu").tolist()
+    id_to_slot = {int(pid): slot for slot, pid in enumerate(ids_cpu) if int(pid) >= 0}
+    slots: set[int] = set()
+    A_int = int(A)
+    H_int = int(H)
+    for tgt_id, eta, owner, ships in tuples:
+        eta_i = int(eta)
+        if eta_i < 1 or eta_i > H_int:
+            continue
+        owner_i = int(owner)
+        if owner_i < 0 or owner_i >= A_int:
+            continue
+        if float(ships) <= 0.0:
+            continue
+        slot = id_to_slot.get(int(tgt_id))
+        if slot is None:
+            continue
+        slots.add(slot)
+    if not slots:
+        return torch.empty((0,), dtype=torch.long)
+    return torch.tensor(sorted(slots), dtype=torch.long)
