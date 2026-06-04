@@ -14,7 +14,23 @@ import os
 import sys
 import importlib.util
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# `__file__` is undefined when kaggle_environments execs this file as raw
+# source (its agent loader uses `exec(code, {})`). Without this guard the shim
+# raised NameError on load -> the agent failed to load and idled every turn
+# (silently losing every game in env.run / scripts/clean_ab). The loader does
+# append this file's own directory to sys.path before exec, so recover _HERE
+# from the sys.path entry that contains main.py + orbit_lite.
+try:
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _HERE = None
+    for _p in reversed(sys.path):
+        if _p and os.path.isfile(os.path.join(_p, "main.py")) \
+                and os.path.isdir(os.path.join(_p, "orbit_lite")):
+            _HERE = _p
+            break
+    if _HERE is None:
+        _HERE = os.getcwd()
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)  # so main.py can `import orbit_lite`
 

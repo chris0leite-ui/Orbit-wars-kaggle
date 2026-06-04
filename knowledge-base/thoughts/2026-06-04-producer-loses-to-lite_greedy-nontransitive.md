@@ -58,3 +58,33 @@ expander, is the right opponent model to anticipate (a) Producer-like
 aggression, (b) `lite_greedy`-like discipline, or (c) a mix? The whole point of
 the opponent model is to calibrate our defense to the threat that actually beats
 us — and the live field is neither pure Producer nor pure `lite_greedy`.
+
+---
+
+## ⛔ CORRECTION (same day) — the above is WRONG. It was a harness bug.
+
+The PI flagged "this sounds like a bug." It was. The vendored
+`agents/producer/producer_agent.py` shim referenced `__file__` at module level,
+which is **undefined when kaggle_environments execs an agent as raw source**
+(`exec(code, {})`, no `__file__`). So full Producer **failed to load and idled
+every turn** under `env.run` / `scripts/clean_ab` — it never played. The 0/16
+was Producer doing nothing, not Producer losing.
+
+The earlier "full Producer step-0 move" spot-check loaded the agent via
+`importlib` (which DOES define `__file__`), so it looked fine — masking the bug.
+Classic Rule 38: I verified producer_lite's own wrapper ran in the harness but
+**assumed the oracle ran too**. It didn't.
+
+After fixing the shim (recover the dir from `sys.path`, since the loader appends
+the agent's directory before exec), full Producer plays correctly and **beats
+`lite_greedy` decisively** (eliminates it by ~step 80 on seed 1). So:
+
+- The opponent ranking is **NOT** the non-transitive cycle claimed above.
+- The cheap primary fidelity gate's premise (**full Producer trounces
+  `lite_greedy`**) is **restored and valid**.
+- All earlier Producer-vs-X numbers from clean_ab are void; re-run with the
+  fixed shim.
+
+**Lesson:** when an oracle's result is shocking, verify the oracle is actually
+*running* in the exact harness before interpreting — load-by-path (`env.run`)
+and load-by-importlib are not the same; only the latter defines `__file__`.
