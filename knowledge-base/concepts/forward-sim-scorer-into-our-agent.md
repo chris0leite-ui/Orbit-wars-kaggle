@@ -1,5 +1,19 @@
 # Forward-simulation scorer in our own agent (options A & B)
 
+> **STATUS — REFUTED 2026-06-04 (n=32 clean A/Bs). DO NOT re-open as written.**
+> Both levers were built (default-OFF, gated) and measured: the net-ship-swing
+> lens loses to our champion (37.5%) and buys nothing vs Producer (21.9%), and
+> the passive-opponent assumption ALONE loses to the champion (31.2%). The
+> opponent-agnostic *assumption* is the culprit — our rollout's reactive
+> opponent provides a load-bearing recapture penalty; dropping it overextends.
+> Producer wins despite being opponent-passive because of its OTHER machinery,
+> not its lens. Full record + standing "do not delete lib/opp_model"
+> implication: `knowledge-base/thoughts/2026-06-04-opponent-agnostic-refuted.md`.
+> The architecture *correction* below (our champion already forward-simulates)
+> stands regardless. The rest of this doc is the original (pre-result) plan,
+> kept for the reasoning trail.
+
+
 _Branch JzIAr, 2026-06-04. The "different approach from the sister branch"
 the PI asked for: NOT host-on-Producer's-torch-engine, but bring the one
 piece of Producer that actually matters — its forward-simulated value

@@ -4,7 +4,35 @@ _Refreshed 2026-06-04 (`claude/kaggle-submission-strategy-JzIAr`). **Read
 `state/STRATEGY.md` first** — it is the canonical "what we're running" doc. This file
 is the next-session brief only._
 
-## ⭐ NEXT-SESSION FIRST ACTION — build the Producer-lite opponent model
+## ⭐ NEXT-SESSION FIRST ACTION — pick a NEW direction (Producer-lens path is dead)
+
+**The whole "be like Producer / opponent-agnostic scoring" line is REFUTED**
+(2026-06-04, n=32 clean A/Bs). We built two gated levers — `BASELINE_OPP_PASSIVE`
+(frozen-opponent rollout) and `BASELINE_VALUE_HEAD=net_swing` (Producer's exact
+net-ship-swing lens) — and measured them: lens loses to our champion (37.5%) and
+buys nothing vs Producer (21.9%); the passive-opponent assumption ALONE loses to
+the champion (31.2%). **The reactive opponent in our rollout provides a
+load-bearing recapture penalty; dropping it overextends.** Producer wins despite
+being opponent-passive because of its candidate-gen / selection / hold-reserve
+machinery, NOT its value lens. Full record + standing implications (incl. **do
+NOT delete `lib/opp_model`** — it's load-bearing):
+`knowledge-base/thoughts/2026-06-04-opponent-agnostic-refuted.md`.
+
+Both levers remain in-tree, **default-OFF (champion byte-identical), confirmed-
+negative — do NOT bake into a bundle.** If Producer's edge is ever revisited, test
+its *candidate generation / greedy selection / hold-reserve*, not its lens.
+
+The live champion is unchanged (`champ_refine_adaptivek.py`). Next direction is
+open — return to the `state/STRATEGY.md` observation-driven loop: wait for a
+concrete PI observation (replay / leaderboard / opponent trace) → diagnose →
+smallest gated fix. The opening-appetite thread (below) is the best-standing
+open lever.
+
+## (Superseded) earlier first-action — Producer-lite opponent model
+
+_Kept for the trail; the Producer-lens direction above subsumed and then refuted
+this. The producer_lite port exists (`lib/producer_lite.py`) but failed its
+transfer gate (3% as attacker vs Producer's 78%)._
 
 **Plan is written and design-locked:** `knowledge-base/concepts/producer-lite-opponent-model-plan.md`.
 We merged the vendored public **Producer** torch agent (`agents/producer/`, torch
