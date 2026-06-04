@@ -177,6 +177,50 @@ def main():
     def_launch = [lc for lc in proto.get_trace()[-1]["launches"] if lc["kind"] == "def" and lc["tgt"] == 0]
     _check("S6", bool(def_launch), f"def launches={def_launch} emitted={moves or '(hold)'}")
 
+    # S7 — HOLDABLE up-size. The SAME capturable neutral, taken in two worlds. With
+    # a strong enemy planet sitting CLOSER to it than our home (so the enemy can
+    # counter-recapture before we can defend), the capture must be sized to SURVIVE
+    # that counter -- strictly more than the bare flip floor. With no such enemy
+    # there is no counter, so the same neutral is taken at the bare floor. This is
+    # the force concentration that makes a capture hold. (The counter enemy has only
+    # production 1, so it is a far lower-value target than the production-3 neutral
+    # and does not outrank it -- the neutral is the capture under test.)
+    home7 = [0, 0, 15.0, 30.0, radius(3), 90, 3]               # ample ships
+    neutral7 = [1, -1, 33.0, 30.0, radius(2), 6, 3]            # the capture under test
+    counter_enemy = [2, 1, 41.0, 30.0, radius(1), 40, 1]       # closer to the neutral; fast counter
+    # Baseline world FIRST: no enemy, so the neutral is taken at the bare flip floor.
+    moves, field = show("S7b no up-size (same neutral, no counter -> bare floor)",
+         make_obs([home7, neutral7]),
+         "with no enemy to counter, the same neutral is taken at the bare flip floor")
+    flat_l = next((lc for lc in proto.get_trace()[-1]["launches"] if lc["tgt"] == 1), None)
+    _check("S7b", flat_l is not None, f"launch={flat_l} (want a floor-sized capture)")
+    # Counter world: a closer strong enemy can recapture -> the SAME neutral must be
+    # taken with strictly more ships (sized to survive the counter, not just to flip).
+    moves, field = show("S7a holdable up-size (capture next to a strong enemy > floor)",
+         make_obs([home7, neutral7, counter_enemy]),
+         "the SAME neutral is now sized ABOVE the bare floor (to hold the counter)")
+    con_l = next((lc for lc in proto.get_trace()[-1]["launches"] if lc["tgt"] == 1), None)
+    con_up = con_l is not None and flat_l is not None and con_l["ships"] > flat_l["ships"]
+    _check("S7a", con_up,
+           f"counter-world ships={con_l['ships'] if con_l else None} > "
+           f"floor-world ships={flat_l['ships'] if flat_l else None}")
+
+    # S8 — REGROUP forward. Two own planets -- a rear stockpile and a forward planet
+    # nearer the enemy -- and one enemy too strong/far to capture or threaten (so
+    # offense and defense emit nothing). The idle rear ships should march FORWARD to
+    # the higher-pressure planet, not sit, and not flow backward.
+    rear = [0, 0, 15.0, 15.0, radius(3), 40, 3]                # full of idle ships
+    forward = [1, 0, 40.0, 22.0, radius(3), 5, 3]              # closer to the enemy
+    big_enemy = [2, 1, 82.0, 30.0, radius(5), 200, 5]          # uncapturable + far (no threat)
+    moves, field = show("S8 regroup forward (rear idle ships march to the frontier planet)",
+         make_obs([rear, forward, big_enemy]),
+         "a 'regroup' launch from the rear planet to the forward (higher-pressure) one")
+    reg = [lc for lc in proto.get_trace()[-1]["launches"] if lc["kind"] == "regroup"]
+    reg_fwd = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in reg)
+    reg_back = any(lc["src"] == 1 and lc["tgt"] == 0 for lc in reg)
+    _check("S8", reg_fwd and not reg_back,
+           f"regroup launches={reg} (want rear0 -> forward1, not backward)")
+
 
 if __name__ == "__main__":
     main()

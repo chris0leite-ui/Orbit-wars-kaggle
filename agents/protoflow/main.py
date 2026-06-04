@@ -47,8 +47,9 @@ from lib.world_model import WorldModel, WAVE_LOOKAHEAD, predict_arrival_contest
 from lib.kinematic_table import KinematicTable
 from lib.aim import aim_orbiting
 from lib.trajectory import predict_fleet_fate
+from lib.fleet import speed as fleet_speed
 from agents.baseline.proposer import (
-    capture_floor_arrival, aim_and_eta, nearest_k,
+    capture_floor_arrival, aim_and_eta, nearest_k, hold_need,
 )
 
 EPISODE_STEPS = 500
@@ -68,6 +69,14 @@ MIN_FLEET_SIZE = 2          # no sub-2-ship launches
 NUM_TARGETS_PER_SOURCE = 8  # nearest-k targets per source (bounds the generator)
 WAIT_HORIZONS = (2, 4, 8)   # accumulate-then-strike windows for the HOLD comparison
 MAX_CONVERGE_TARGETS = 8    # bound the cohort supplement scan
+# REGROUP: a positional pass that marches idle rear ships up the enemy-pressure
+# gradient toward the frontier, so force concentrates forward for future strikes
+# instead of stranding behind the lines (the Producer does this every turn).
+REGROUP_PRESSURE_HORIZON = 14   # turns; decay reach for the enemy-pressure signal
+REGROUP_MAX_ETA = 12            # don't send ships on long regroup flights
+REGROUP_MIN_SHIPS = 4           # small fleets are slow; don't dribble a regroup
+REGROUP_GAP_MIN = 1.0           # ship-mass; destination must be materially more forward
+REGROUP_ETA_PENALTY = 0.1       # prefer near forward hops over distant ones
 
 # Per-game trace for the probe runner. Each launch is a dict (see bottom).
 _TRACE: list[dict] = []
@@ -152,6 +161,22 @@ def agent(obs, configuration=None):
             f = capture_floor_arrival(s, t, model, omega, me, world)
             floor_cache[key] = f
         return f
+
+    # --- holdable size: the bare flip floor up-sized so the post-capture garrison
+    # survives the cheapest opponent counter (the champion's hold_need, reused). It
+    # is a pure UP-sizer -- it only ever returns >= the floor, and returns the floor
+    # unchanged when no near counter exists, so safe rear expansion stays cheap and
+    # only CONTESTED captures get the up-size. This is the force concentration that
+    # makes a capture actually hold instead of being instantly retaken.
+    hold_cache: dict[tuple[int, int, int], int] = {}
+
+    def holdable(s, t, arrive, base_floor):
+        key = (int(s.id), int(t.id), int(arrive))
+        h = hold_cache.get(key)
+        if h is None:
+            h = int(hold_need(t, int(arrive), world, me, int(base_floor)))
+            hold_cache[key] = h
+        return h
 
     # --- winnability: probability the action delivers the value we priced.
     # Independent failure modes multiply: floor + (1-floor)*time_survival*race_conf.
@@ -282,16 +307,22 @@ def agent(obs, configuration=None):
             if int(tgt.id) == int(src.id):
                 continue
             floor = capture_floor(src, tgt)
-            # fire-now: a floor-clearing fleet launched this turn.
-            ang, eta = aim_and_eta(src, tgt, floor, omega, world=world)
-            add_candidate(src, tgt, floor, ang, eta, 0)
-            # wait-then-mass: accumulate K turns, then fire. Only the HOLD gate
-            # consumes these (compare fire-now vs waiting); never emitted.
+            # Up-size the bare flip floor to a HOLDABLE fleet (survives the counter).
+            # A bigger fleet is faster, so re-aim at the holdable count for the right
+            # intercept of an orbiting target.
+            ang0, eta0 = aim_and_eta(src, tgt, floor, omega, world=world)
+            hold = max(floor, holdable(src, tgt, int(round(eta0)), floor))
+            # fire-now: a holdable fleet launched this turn.
+            ang, eta = aim_and_eta(src, tgt, hold, omega, world=world)
+            add_candidate(src, tgt, hold, ang, eta, 0)
+            # wait-then-mass: accumulate K turns until the HOLDABLE size is
+            # affordable, then fire. Only the HOLD gate consumes these (compare
+            # fire-now vs waiting); never emitted.
             for K in WAIT_HORIZONS:
-                if int(src.ships) + int(src.production) * K < floor:
+                if int(src.ships) + int(src.production) * K < hold:
                     continue
-                wang, weta = aim_and_eta(src, tgt, floor, omega, wait_N=K, world=world)
-                add_candidate(src, tgt, floor, wang, weta, K)
+                wang, weta = aim_and_eta(src, tgt, hold, omega, wait_N=K, world=world)
+                add_candidate(src, tgt, hold, wang, weta, K)
 
     actions.sort(key=lambda a: -a["value"])
     _LAST_FIELD.clear()
@@ -370,8 +401,11 @@ def agent(obs, configuration=None):
         for arrive in sorted(by_turn):
             cohort = by_turn[arrive]
             # Same combat floor as the solo path (was capture_size, which sizes at
-            # a different eta and thinner margin -> tie-and-die under combat rule 4).
+            # a different eta and thinner margin -> tie-and-die under combat rule 4),
+            # then up-sized to a HOLDABLE cohort so the converged capture survives
+            # the counter just like a solo one.
             floor = capture_floor(cohort[0][0], t)
+            floor = max(floor, int(hold_need(t, int(arrive), world, me, int(floor))))
             if sum(spare[int(s.id)] for s, _, _ in cohort) < floor:
                 continue
             cohort.sort(key=lambda c: c[2])  # nearest-first
@@ -384,6 +418,57 @@ def agent(obs, configuration=None):
                     need -= send
             committed_tgt.add(int(t.id))
             break
+
+    # ============================================================
+    # REGROUP: mobilize idle rear ships toward the frontier. The capture field only
+    # values capture/defense, so a ship with no capture this turn never moves and
+    # strands in the rear (idle ~0.50 vs the Producer). This positional pass --
+    # movement WITHOUT capture -- marches leftover spare from low enemy-pressure
+    # planets to the reachable own planet with materially higher pressure, so force
+    # concentrates forward for future strikes. Mirrors the Producer's pressure-
+    # gradient marshalling (cheap_enemy_pressure + _plan_regroup), in plain Python.
+    # ============================================================
+    if enemy_planets:
+        def enemy_pressure(p):
+            # Distance-decayed reachable enemy mass (ship units): nearer/larger
+            # enemy garrisons weigh more. High = frontier; low = safe rear.
+            tot = 0.0
+            for e in enemy_planets:
+                reach = fleet_speed(int(e.ships)) * REGROUP_PRESSURE_HORIZON
+                if reach <= 0.0:
+                    continue
+                decay = 1.0 - math.hypot(e.x - p.x, e.y - p.y) / reach
+                if decay > 0.0:
+                    tot += float(e.ships) * decay
+            return tot
+
+        pressure = {int(p.id): enemy_pressure(p) for p in my_planets}
+        srcs = sorted(
+            (p for p in my_planets if spare.get(int(p.id), 0) >= REGROUP_MIN_SHIPS),
+            key=lambda p: -spare[int(p.id)],
+        )
+        for s in srcs:
+            leftover = spare.get(int(s.id), 0)
+            if leftover < REGROUP_MIN_SHIPS:
+                continue
+            best = None  # (score, dest, angle, eta)
+            for d in my_planets:
+                if int(d.id) == int(s.id):
+                    continue
+                gap = pressure[int(d.id)] - pressure[int(s.id)]
+                if gap <= REGROUP_GAP_MIN:
+                    continue  # only move TOWARD the front (directional -> no oscillation)
+                if committed_threat(d)[0] > 0:
+                    continue  # don't stage into a falling planet (defense pass's job)
+                ang, eta = aim_and_eta(s, d, leftover, omega, world=world)
+                if eta > REGROUP_MAX_ETA:
+                    continue  # near forward hops only -- stay reactive
+                score = gap - REGROUP_ETA_PENALTY * eta
+                if best is None or score > best[0]:
+                    best = (score, d, ang, eta)
+            if best is not None:
+                _score, d, ang, eta = best
+                emit(s, d, ang, leftover, eta, int(eta), "regroup", 0)
 
     _TRACE.append({
         "step": step,

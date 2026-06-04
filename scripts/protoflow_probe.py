@@ -78,6 +78,7 @@ def trace_metrics(trace: list[dict]) -> dict:
                     bad_split += 1
     sizes = [lc["ships"] for lc in all_launches]
     dists = [lc["dist"] for lc in all_launches]
+    regroup = sum(1 for lc in all_launches if lc.get("kind") == "regroup")
     final = trace[-1] if trace else {}
     return {
         "turns": n_turns,
@@ -88,6 +89,7 @@ def trace_metrics(trace: list[dict]) -> dict:
         "tiny_frac": (sum(1 for s in sizes if s < 3) / len(sizes)) if sizes else 0.0,
         "far_frac": (sum(1 for d in dists if d > 50) / len(dists)) if dists else 0.0,
         "bad_split": bad_split,
+        "regroup": regroup,
         "end_planets": final.get("my_planets", 0),
     }
 
@@ -130,8 +132,8 @@ def probe_opponent(name: str, opp_path: str, seeds: int, focal):
                   f"launches={m['launches']:>4}  idle={m['idle_frac']:.2f}  "
                   f"conv={m['conv_turns']:>3}  cohort={m['max_cohort']}  "
                   f"tiny={m['tiny_frac']:.2f}  far={m['far_frac']:.2f}  "
-                  f"bad_split={m['bad_split']:>2}  end_planets={m['end_planets']:>2}  "
-                  f"({time.time()-t0:.1f}s)")
+                  f"bad_split={m['bad_split']:>2}  regroup={m['regroup']:>3}  "
+                  f"end_planets={m['end_planets']:>2}  ({time.time()-t0:.1f}s)")
             if won is not None:
                 for k, v in m.items():
                     agg[k] += v
@@ -141,7 +143,8 @@ def probe_opponent(name: str, opp_path: str, seeds: int, focal):
     print(f"      mean/game: launches={agg['launches']/games:.1f}  "
           f"idle_frac={agg['idle_frac']/games:.2f}  conv_turns={agg['conv_turns']/games:.1f}  "
           f"tiny_frac={agg['tiny_frac']/games:.2f}  far_frac={agg['far_frac']/games:.2f}  "
-          f"bad_split={agg['bad_split']/games:.1f}/game  end_planets={agg['end_planets']/games:.1f}")
+          f"bad_split={agg['bad_split']/games:.1f}/game  regroup={agg['regroup']/games:.1f}/game  "
+          f"end_planets={agg['end_planets']/games:.1f}")
     return wins, n
 
 
