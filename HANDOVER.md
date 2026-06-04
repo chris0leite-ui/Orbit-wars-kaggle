@@ -4,6 +4,20 @@ _Refreshed 2026-06-04 (`claude/kaggle-submission-strategy-JzIAr`). **Read
 `state/STRATEGY.md` first** — it is the canonical "what we're running" doc. This file
 is the next-session brief only._
 
+## ⭐ NEXT-SESSION FIRST ACTION — build the Producer-lite opponent model
+
+**Plan is written and design-locked:** `knowledge-base/concepts/producer-lite-opponent-model-plan.md`.
+We merged the vendored public **Producer** torch agent (`agents/producer/`, torch
+installed + in requirements) — it beats our line **~60%**, *the same rate* for champion
+and refine → a shared, chooser-independent loss mode. Plan: a faithful **pure-python
+port of Producer's attack policy** as a drop-in opponent `Policy` (`lib/producer_lite.py`,
+gated `BASELINE_OPP_TIER=2`), so our chooser rolls out against a Producer-like attacker.
+**Fidelity first** (PI). Licensing: code-reuse-with-attribution cleared. Acceptance gates
+(in the plan): strong vs our `lite_greedy` (cheap primary gate, Wilson-lo ≥ ~0.65),
+winrate-transfer ≈ ~60% vs champion, ≤3 ms/call, and our-agent improvement vs full
+Producer. Start at the plan's "Build sequence" step 1. **Do NOT skip the
+strong-vs-lite_greedy gate — it's the fastest faithfulness check.**
+
 ## ⚠️ Docs reorganized 2026-06-04 — single-strategy, observation-driven mode
 
 Merged main's minimal-docs structure into this branch (PI directive): `CLAUDE.md`

@@ -64,3 +64,14 @@ turn-time readout).
 5. Is the local panel (which A/Bs within our own pilkwang-lineage family)
    systematically uncalibrated against architecturally-distinct opponents
    like the Producer?
+
+---
+
+## Addendum 2026-06-04 (branch claude/kaggle-submission-strategy-JzIAr) — larger-n update
+
+A separate cross-branch measurement found the Producer beats our line in **~60% of
+games** (we win ~40%), at larger n than the n=16 triage above. The triage's 3/16≈81%
+producer-win was small-sample. **Use ~60% as the canonical Producer-vs-us rate** for
+sizing the Producer-lite opponent-model gates (see
+`knowledge-base/concepts/producer-lite-opponent-model-plan.md`). The shared-loss-mode
+signal (champion and refine lose at the same rate) stands.
