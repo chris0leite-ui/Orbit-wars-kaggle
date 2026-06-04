@@ -57,13 +57,24 @@ def _planet(pid, owner, x, y, ships, production=2, radius=2.0):
 
 
 class _StubModel:
-    def __init__(self, threatened=None, threat_eta=7):
+    def __init__(self, threatened=None, threat_eta=7, ships_snapshot=None):
+        """Stub model for circulation tests.
+
+        `ships_snapshot` is an optional dict {planet_id -> ships} consulted by
+        `ships_at(planet_id, eta)`. The v3 destination-usefulness filter calls
+        `capture_floor_arrival`, which calls `model.ships_at(tgt.id, eta)` to
+        predict defender strength at arrival. We return a static snapshot for
+        a no-production / no-in-flight world."""
         self.ledger = {}
         self._threatened = threatened or set()
         self._threat_eta = threat_eta
+        self._ships_snapshot = ships_snapshot or {}
 
     def time_to_enemy_threat(self, planet_id, my_id, world, arrival_eta=0):
         return self._threat_eta if int(planet_id) in self._threatened else None
+
+    def ships_at(self, planet_id, step):
+        return self._ships_snapshot.get(int(planet_id))
 
 
 class _StubWorld:
@@ -119,14 +130,18 @@ def test_pressure_drops_outside_reach():
 
 def test_fires_toward_higher_pressure_friendly(monkeypatch):
     """src -> dst when dst has strictly higher pressure (it's nearer the
-    enemy) AND dst is reachable within ETA_CAP."""
+    enemy) AND dst is reachable within ETA_CAP AND v3 dst can capture an
+    enemy today (weak neutral adjacent to front gives it a target)."""
     monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
     main_mod = _reload_main()
 
     rear = _planet(0, 0, 0.0, 0.0, 100)
     front = _planet(1, 0, 20.0, 0.0, 30)
+    # Strong enemy provides PRESSURE near front.
     enemy = _planet(2, 1, 30.0, 0.0, 200)
-    planets = [rear, front, enemy]
+    # Weak NEUTRAL adjacent to front gives v3 a capture-feasible target.
+    weak_neutral = _planet(3, -1, 22.0, 0.0, 5)
+    planets = [rear, front, enemy, weak_neutral]
     model = _StubModel()
     world = _StubWorld()
 
@@ -240,7 +255,9 @@ def test_fires_when_threat_is_distant(monkeypatch):
     rear = _planet(0, 0, 0.0, 0.0, 100)
     front = _planet(1, 0, 20.0, 0.0, 30)
     enemy = _planet(2, 1, 30.0, 0.0, 200)
-    planets = [rear, front, enemy]
+    # Weak neutral keeps the v3 destination-usefulness filter open.
+    weak_neutral = _planet(3, -1, 22.0, 0.0, 5)
+    planets = [rear, front, enemy, weak_neutral]
     model = _StubModel(threatened={0}, threat_eta=30)  # 30 >= 15 default
     world = _StubWorld()
 
@@ -283,7 +300,9 @@ def test_respects_max_per_turn(monkeypatch):
     rears = [_planet(i, 0, 0.0, float(i * 2), 50) for i in range(5)]
     front = _planet(99, 0, 20.0, 0.0, 30)
     enemy = _planet(100, 1, 30.0, 0.0, 200)
-    planets = rears + [front, enemy]
+    # Weak neutral keeps the v3 destination-usefulness filter open.
+    weak_neutral = _planet(101, -1, 22.0, 0.0, 5)
+    planets = rears + [front, enemy, weak_neutral]
     model = _StubModel()
     world = _StubWorld()
 
@@ -327,3 +346,61 @@ def test_noop_with_no_opponents(monkeypatch):
         [], planets, my_id=0, world=world, model=model, omega=0.0,
     )
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# v3: destination-usefulness filter
+# ---------------------------------------------------------------------------
+
+
+def test_v3_destination_with_capturable_enemy_fires(monkeypatch):
+    """v3: dst with at least one capturable enemy in its 8 nearest
+    qualifies. A high-pressure forward friendly + weak neutral target =>
+    dst can fire today => circulation lands there."""
+    monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
+    main_mod = _reload_main()
+
+    rear = _planet(0, 0, 0.0, 0.0, 100)
+    front = _planet(1, 0, 20.0, 0.0, 30)
+    pressure_enemy = _planet(2, 1, 30.0, 0.0, 200)  # gives front pressure
+    weak_neutral = _planet(3, -1, 22.0, 0.0, 5)     # capturable by front
+    planets = [rear, front, pressure_enemy, weak_neutral]
+    model = _StubModel()
+    world = _StubWorld()
+
+    result = main_mod.emit_frontier_circulation(
+        [], planets, my_id=0, world=world, model=model, omega=0.0,
+    )
+    src_launches = [m for m in result if int(m[0]) == 0]
+    assert len(src_launches) == 1, \
+        "v3: dst with capturable enemy must qualify; circulation fires"
+
+
+def test_v3_destination_without_capturable_enemy_blocks(monkeypatch):
+    """v3: dst whose 8 nearest non-our planets are all UNCAPTURABLE (too
+    strong) must be skipped, even when pressure-delta and ETA gates pass.
+    Ships shouldn't pile up at a forward planet our chooser ignores."""
+    monkeypatch.setenv("BASELINE_FRONTIER_CIRCULATION", "1")
+    main_mod = _reload_main()
+
+    rear = _planet(0, 0, 0.0, 0.0, 100)
+    front = _planet(1, 0, 20.0, 0.0, 30)
+    # Strong enemy gives front high pressure but is uncapturable (200 vs 30).
+    strong_enemy = _planet(2, 1, 30.0, 0.0, 200)
+    # The only neutral nearby is also too strong for front to capture.
+    strong_neutral = _planet(3, -1, 25.0, 0.0, 500)
+    planets = [rear, front, strong_enemy, strong_neutral]
+    # ships_snapshot lets capture_floor_arrival predict defender strength.
+    model = _StubModel(
+        ships_snapshot={2: 200, 3: 500},
+    )
+    world = _StubWorld()
+
+    result = main_mod.emit_frontier_circulation(
+        [], planets, my_id=0, world=world, model=model, omega=0.0,
+    )
+    src_launches = [m for m in result if int(m[0]) == 0]
+    assert src_launches == [], (
+        "v3: dst with no capturable enemy must block circulation; "
+        "we don't pile ships at planets our chooser ignores"
+    )

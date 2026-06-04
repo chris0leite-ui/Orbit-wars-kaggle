@@ -165,6 +165,11 @@ CIRCULATION_TRIGGER_MIN = int(os.environ.get("BASELINE_CIRCULATION_TRIGGER_MIN",
 CIRCULATION_MIN_SEND = int(os.environ.get("BASELINE_CIRCULATION_MIN_SEND", "10"))
 CIRCULATION_MAX_PER_TURN = int(os.environ.get("BASELINE_CIRCULATION_MAX", "1"))
 CIRCULATION_MIN_THREAT_ETA = int(os.environ.get("BASELINE_CIRCULATION_MIN_THREAT_ETA", "15"))
+# Destination usefulness filter (v3, PI 2026-06-04): destination friendly
+# must have at least one of its K nearest non-our planets that it could
+# CAPTURE today with its current ships. Same K as proposer's
+# NUM_TARGETS_PER_SOURCE; mirrors the chooser's per-source planning lens.
+CIRCULATION_DST_USEFUL_K = int(os.environ.get("BASELINE_CIRCULATION_DST_USEFUL_K", "8"))
 
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
 # chooser's wait_N>0 winners are remembered across turns instead of
@@ -213,7 +218,7 @@ from lib.world_model import WorldModel, predict_garrison_at
 # continuation lines as indented orphans. Friction tag
 # `bundler-modular-agent-namespace-access-breaks-bundle` (2026-05-17).
 from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS
-from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON, aim_and_eta
+from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON, aim_and_eta, nearest_k, capture_floor_arrival
 
 
 _PARITY_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
@@ -928,6 +933,44 @@ def _compute_enemy_pressure(my_planets, opp_planets, horizon: int) -> dict:
     return out
 
 
+def _destination_can_fire_today(dst, planets, model, omega: float,
+                                my_id: int, world, K: int) -> bool:
+    """True iff `dst` has at least one of its K nearest non-our planets
+    that it could CAPTURE today with its current ship count.
+
+    Mirrors the proposer's per-source planning lens (K = NUM_TARGETS_PER_SOURCE
+    = 8 by default). Friendlies that pass this filter are the ones our
+    chooser is firing from (or about to fire from); shipping ships there
+    directly extends their firing capacity. v3 alignment fix for the
+    structural mismatch between Biel's pressure-pulled planner and our
+    (source, target)-trade planner.
+    """
+    candidates = [p for p in planets
+                  if int(p.id) != int(dst.id) and int(p.owner) != my_id]
+    if not candidates:
+        return False
+    nearest = nearest_k(candidates, dst, max(1, K))
+    dst_ships = int(dst.ships)
+    for tgt in nearest:
+        if int(tgt.owner) == -1:
+            # Neutral target: capture floor = current garrison + 1
+            # (neutrals don't produce ships).
+            if dst_ships > int(tgt.ships):
+                return True
+        else:
+            # Opp target: arrival-correct floor; accounts for production
+            # and integer-combat slack via the existing proposer primitive.
+            try:
+                floor = capture_floor_arrival(
+                    dst, tgt, model, omega, my_id, world=world,
+                )
+            except Exception:
+                continue
+            if dst_ships >= int(floor):
+                return True
+    return False
+
+
 def emit_frontier_circulation(moves, planets, my_id: int, world, model,
                               omega: float) -> list:
     """Pressure-gradient rear-to-front ship flow (PI 2026-06-03, v2).
@@ -1004,6 +1047,18 @@ def emit_frontier_circulation(moves, planets, my_id: int, world, model,
                 float(dst.y) - float(src.y),
             )
             if d > reach:
+                continue
+            # v3 alignment fix: only consider destinations our chooser
+            # would actually fire from this turn. A high-pressure friendly
+            # that has no capturable enemy within its 8 nearest is one our
+            # chooser ignores -- sending ships there piles them up unused.
+            # Filter runs AFTER pressure-delta and reach checks (cheap
+            # filters first); the capture-floor calls are the most
+            # expensive part of the inner loop.
+            if not _destination_can_fire_today(
+                dst, planets, model, omega, my_id, world,
+                CIRCULATION_DST_USEFUL_K,
+            ):
                 continue
             # Cheap eta proxy is sufficient since both planets co-rotate;
             # exact orbital eta varies <~1 turn from this estimate for the
