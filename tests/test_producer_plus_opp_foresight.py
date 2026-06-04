@@ -1,9 +1,11 @@
 """Unit + integration tests for producer_plus opp-foresight mechanisms.
 
-Three mechanisms layered on top of the lite-greedy opp projection:
+Two mechanisms layered on top of the lite-greedy opp projection:
 - Source-exposure penalty (Mechanism 1)
-- Race-loss penalty (Mechanism 2)
 - Counter-capture target seeding (Mechanism 3)
+
+Mechanism 2 (race-loss) was ablated post-n=8 — redundant with the
+augmented scorer's own race-loss handling.
 
 Each helper is pure-tensor and unit-testable in isolation; one
 integration test verifies the gates wire into run_turn correctly.
@@ -196,75 +198,6 @@ def test_source_exposure_margin_zero_disables(main_module):
 
 
 # ---------------------------------------------------------------------------
-# _apply_race_loss_penalty
-# ---------------------------------------------------------------------------
-
-
-def test_race_loss_no_opp_at_target_unchanged(main_module):
-    fleet_buckets = torch.zeros(2, 4, 2, dtype=torch.float32)  # P=2, H=4, A=2
-    score_in = torch.tensor([3.0], dtype=torch.float32)
-    score_out = main_module._apply_race_loss_penalty(
-        score_in,
-        cand_tgt_slot=torch.tensor([1], dtype=torch.long),
-        cand_send=torch.tensor([[10.0]], dtype=torch.float32),
-        cand_eta=torch.tensor([[2.0]], dtype=torch.float32),
-        fleet_buckets=fleet_buckets,
-        opp_owner_mask=torch.tensor([False, True]),
-        multiplier=0.2,
-    )
-    assert score_out.tolist() == [pytest.approx(3.0)]
-
-
-def test_race_loss_opp_outraces_us_score_multiplied(main_module):
-    # Opp lands 15 ships at planet 1 by tick 2; we send 10. opp >= us → penalty.
-    fleet_buckets = torch.zeros(2, 4, 2, dtype=torch.float32)
-    fleet_buckets[1, 0, 1] = 15.0  # opp arrival at tick 1 (bucket 0)
-    score_in = torch.tensor([3.0], dtype=torch.float32)
-    score_out = main_module._apply_race_loss_penalty(
-        score_in,
-        cand_tgt_slot=torch.tensor([1], dtype=torch.long),
-        cand_send=torch.tensor([[10.0]], dtype=torch.float32),
-        cand_eta=torch.tensor([[2.0]], dtype=torch.float32),
-        fleet_buckets=fleet_buckets,
-        opp_owner_mask=torch.tensor([False, True]),
-        multiplier=0.2,
-    )
-    assert score_out.tolist() == [pytest.approx(0.6)]
-
-
-def test_race_loss_multiplier_one_disables(main_module):
-    fleet_buckets = torch.zeros(2, 4, 2, dtype=torch.float32)
-    fleet_buckets[1, 0, 1] = 99.0
-    score_in = torch.tensor([3.0], dtype=torch.float32)
-    score_out = main_module._apply_race_loss_penalty(
-        score_in,
-        cand_tgt_slot=torch.tensor([1], dtype=torch.long),
-        cand_send=torch.tensor([[1.0]], dtype=torch.float32),
-        cand_eta=torch.tensor([[2.0]], dtype=torch.float32),
-        fleet_buckets=fleet_buckets,
-        opp_owner_mask=torch.tensor([False, True]),
-        multiplier=1.0,
-    )
-    assert score_out.tolist() == [pytest.approx(3.0)]
-
-
-def test_race_loss_minus_inf_stays_minus_inf(main_module):
-    fleet_buckets = torch.zeros(2, 4, 2, dtype=torch.float32)
-    fleet_buckets[1, 0, 1] = 99.0
-    score_in = torch.tensor([float("-inf")], dtype=torch.float32)
-    score_out = main_module._apply_race_loss_penalty(
-        score_in,
-        cand_tgt_slot=torch.tensor([1], dtype=torch.long),
-        cand_send=torch.tensor([[1.0]], dtype=torch.float32),
-        cand_eta=torch.tensor([[2.0]], dtype=torch.float32),
-        fleet_buckets=fleet_buckets,
-        opp_owner_mask=torch.tensor([False, True]),
-        multiplier=0.2,
-    )
-    assert score_out[0].item() == float("-inf")
-
-
-# ---------------------------------------------------------------------------
 # Env gate readers — make sure they default OFF and read truthy strings.
 # ---------------------------------------------------------------------------
 
@@ -280,18 +213,6 @@ def test_source_exposure_env_gate(monkeypatch, main_module, value, expected):
     else:
         monkeypatch.setenv("PRODUCER_PLUS_SOURCE_EXPOSURE", value)
     assert main_module._source_exposure_enabled() is expected
-
-
-@pytest.mark.parametrize(
-    "value,expected",
-    [(None, False), ("0", False), ("1", True), ("on", True)],
-)
-def test_race_loss_env_gate(monkeypatch, main_module, value, expected):
-    if value is None:
-        monkeypatch.delenv("PRODUCER_PLUS_RACE_LOSS", raising=False)
-    else:
-        monkeypatch.setenv("PRODUCER_PLUS_RACE_LOSS", value)
-    assert main_module._race_loss_enabled() is expected
 
 
 @pytest.mark.parametrize(
@@ -320,11 +241,9 @@ def test_all_gates_off_action_matches_vanilla_producer(monkeypatch):
     for var in (
         "PRODUCER_PLUS_OPP_PROJECTOR",
         "PRODUCER_PLUS_SOURCE_EXPOSURE",
-        "PRODUCER_PLUS_RACE_LOSS",
         "PRODUCER_PLUS_COUNTER_CAPTURE",
         "PRODUCER_PLUS_ADAPTIVE_K",
         "PRODUCER_PLUS_SOURCE_EXPOSURE_MARGIN",
-        "PRODUCER_PLUS_RACE_LOSS_MULT",
     ):
         monkeypatch.delenv(var, raising=False)
 

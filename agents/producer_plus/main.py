@@ -113,12 +113,6 @@ def _source_exposure_enabled() -> bool:
     )
 
 
-def _race_loss_enabled() -> bool:
-    return os.environ.get("PRODUCER_PLUS_RACE_LOSS", "0").strip().lower() in (
-        "1", "true", "yes", "on",
-    )
-
-
 def _counter_capture_enabled() -> bool:
     return os.environ.get("PRODUCER_PLUS_COUNTER_CAPTURE", "0").strip().lower() in (
         "1", "true", "yes", "on",
@@ -252,44 +246,6 @@ def _apply_source_exposure_penalty(
     residual = source_ships_c - ships_total.to(opp_total.dtype)
     exposed = residual < (float(safety_margin) * opp_total)
     return torch.where(exposed, torch.full_like(score, float("-inf")), score)
-
-
-def _apply_race_loss_penalty(
-    score: Tensor,
-    *,
-    cand_tgt_slot: Tensor,
-    cand_send: Tensor,
-    cand_eta: Tensor,
-    fleet_buckets: Tensor,
-    opp_owner_mask: Tensor,
-    multiplier: float,
-) -> Tensor:
-    """Multiply score by ``multiplier`` where opp force at tgt by eta >= our ships.
-
-    Penalises candidates that race the opponent into a target and lose
-    (or tie) the race in raw ship count. Champion's tuned value is 0.2×.
-    """
-    C = int(score.shape[0])
-    if C == 0:
-        return score
-    L = int(cand_send.shape[-1]) if cand_send.dim() >= 2 else 1
-    ships_total = cand_send.reshape(C, L).sum(dim=-1)                  # [C]
-    eta_latest = cand_eta.reshape(C, L).max(dim=-1).values             # [C]
-    tgt_slot = cand_tgt_slot.long().clamp(min=0, max=max(int(fleet_buckets.shape[0]) - 1, 0))
-    P, H_buckets, A = int(fleet_buckets.shape[0]), int(fleet_buckets.shape[1]), int(fleet_buckets.shape[2])
-    if P == 0 or H_buckets == 0 or A == 0:
-        return score
-    # Include the eta tick itself: opp arriving on the same tick still races.
-    window = (eta_latest.ceil().long() + 1).clamp(min=0, max=H_buckets)
-    ks = torch.arange(H_buckets, device=fleet_buckets.device).view(1, H_buckets)
-    tick_mask = ks < window.view(C, 1)
-    arrivals_at_tgt = fleet_buckets[tgt_slot]                          # [C, H_buckets, A]
-    opp_axes = opp_owner_mask.view(1, 1, A)
-    opp_at_tgt = (arrivals_at_tgt * opp_axes.to(arrivals_at_tgt.dtype)).sum(dim=-1)
-    opp_total = (opp_at_tgt * tick_mask.to(opp_at_tgt.dtype)).sum(dim=-1)
-    loses_race = opp_total >= ships_total.to(opp_total.dtype)
-    factor = torch.where(loses_race, torch.full_like(score, float(multiplier)), torch.ones_like(score))
-    return score * factor
 
 
 @dataclass(frozen=True)
@@ -498,38 +454,28 @@ def plan_lite_waves(
     )                                                                            # [C]
     score = torch.where(cand_valid, score, torch.full_like(score, float("-inf")))
 
-    # Mechanisms 1 + 2 — opp-foresight penalties. Run BEFORE the -inf mask
-    # for invalid candidates so we can rely on score-finite checks
-    # downstream; the -inf mask above already pinned invalid candidates so
-    # the penalties below leave those at -inf either way.
-    if _source_exposure_enabled() or _race_loss_enabled():
+    # Mechanism 1 — source-exposure penalty. Hard-reject any candidate
+    # whose launch would strip the source planet below the projected opp
+    # arrival force by the candidate's eta. (Race-loss / Mechanism 2 was
+    # ablated out — redundant in this pipeline because the augmented
+    # scorer already reflects opp captures via the owner timeline; M2
+    # double-penalised candidates the scorer had correctly valued.)
+    if _source_exposure_enabled():
         opp_mask = _opp_owner_mask(
             my_id=pid, num_seats=int(player_count),
             device=movement.device, dtype=dtype,
         )
-        if _source_exposure_enabled():
-            margin = _env_float("PRODUCER_PLUS_SOURCE_EXPOSURE_MARGIN", 1.0)
-            score = _apply_source_exposure_penalty(
-                score,
-                cand_src=cand_src,
-                cand_send=cand_send,
-                cand_eta=cand_eta,
-                fleet_buckets=movement.fleet_buckets,
-                opp_owner_mask=opp_mask,
-                source_ships_per_planet=obs.ships.to(dtype),
-                safety_margin=margin,
-            )
-        if _race_loss_enabled():
-            mult = _env_float("PRODUCER_PLUS_RACE_LOSS_MULT", 0.2)
-            score = _apply_race_loss_penalty(
-                score,
-                cand_tgt_slot=cand_tgt_slot,
-                cand_send=cand_send,
-                cand_eta=cand_eta,
-                fleet_buckets=movement.fleet_buckets,
-                opp_owner_mask=opp_mask,
-                multiplier=mult,
-            )
+        margin = _env_float("PRODUCER_PLUS_SOURCE_EXPOSURE_MARGIN", 1.0)
+        score = _apply_source_exposure_penalty(
+            score,
+            cand_src=cand_src,
+            cand_send=cand_send,
+            cand_eta=cand_eta,
+            fleet_buckets=movement.fleet_buckets,
+            opp_owner_mask=opp_mask,
+            source_ships_per_planet=obs.ships.to(dtype),
+            safety_margin=margin,
+        )
 
     wave_entries, leftover = _greedy_select(
         P=P, W=W, device=device, dtype=dtype, score=score,

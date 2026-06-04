@@ -92,9 +92,6 @@ _BASELINES: dict[str, str] = {
     "producer_plus_source_exposure": str(
         REPO / "agents" / "producer_plus" / "producer_plus_source_exposure.py"
     ),
-    "producer_plus_race_loss": str(
-        REPO / "agents" / "producer_plus" / "producer_plus_race_loss.py"
-    ),
     "producer_plus_counter_capture": str(
         REPO / "agents" / "producer_plus" / "producer_plus_counter_capture.py"
     ),

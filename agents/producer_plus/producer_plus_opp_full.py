@@ -1,15 +1,19 @@
 """All-opp-foresight-ON variant of ``producer_plus``.
 
-Sets opp projector + all three mechanisms (source exposure, race loss,
-counter capture). This is the cumulative-stack agent used for the
-n=32 A/B gate. See ``state/MIGRATION_PLAN.md`` opp-foresight plan.
+Currently sets: opp projector + source exposure (M1) + counter capture
+(M3). Race-loss (M2) was ablated after n=8 evidence showed it
+double-penalises candidates the augmented scorer had already correctly
+discounted. M3 stays wired but is currently a NET REGRESSION (2/8 in
+n=8 triage) — keeping the env gate available for the future
+multi-size / wait_N axis port that gives it ETA control. For the
+clean shipping candidate, use ``producer_plus_source_exposure`` (M1
+only). See ``state/MIGRATION_PLAN.md`` opp-foresight plan.
 """
 import os
 import importlib.util
 
 os.environ.setdefault("PRODUCER_PLUS_OPP_PROJECTOR", "lite_greedy")
 os.environ.setdefault("PRODUCER_PLUS_SOURCE_EXPOSURE", "1")
-os.environ.setdefault("PRODUCER_PLUS_RACE_LOSS", "1")
 os.environ.setdefault("PRODUCER_PLUS_COUNTER_CAPTURE", "1")
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
