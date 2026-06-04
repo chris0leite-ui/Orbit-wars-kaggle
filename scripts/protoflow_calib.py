@@ -60,44 +60,65 @@ def show(name, obs, want):
     if not field:
         print("    (field empty)")
     print(f"  EMITTED: {moves if moves else '(hold)'}")
+    return moves, field
+
+
+def _check(name, ok, detail):
+    print(f"  [{'PASS' if ok else 'FAIL'}] {name}: {detail}")
 
 
 def main():
-    # S1 — DRIBBLE vs MASS. One home planet with small spare next to a cheap
-    # neutral. A 2-ship launch is slow (speed ~1.2). Does the field prefer the
-    # slow trickle, or does waiting to mass a faster fleet rank higher / does it
-    # hold? We expect a well-calibrated field to NOT dribble.
-    home = [0, 0, 20.0, 50.0, radius(3), 3, 3]
-    neutral = [1, -1, 33.0, 50.0, radius(2), 2, 2]   # dist 13, cheap
-    far_enemy = [2, 1, 80.0, 50.0, radius(3), 30, 3]
-    show("S1 dribble-vs-mass (home has 3 ships)",
-         make_obs([home, neutral, far_enemy]),
-         "small slow launch should be low-value; ideally hold or send decisively")
+    # NOTE: the sun is at (50,50) with radius 10 and destroys any fleet that
+    # crosses it. All planets below sit well clear of the sun AND have a clear
+    # line of sight to their targets, so trajectories are not silently rejected.
 
-    # Same geometry but home has accumulated a real strike force.
-    home_big = [0, 0, 20.0, 50.0, radius(3), 24, 3]
-    show("S1b same target, home has 24 ships (fast fleet available)",
-         make_obs([home_big, neutral, far_enemy]),
-         "now a decisive fast capture should be high-value and emitted")
+    # S1 — HOLD vs FIRE (the real dribble test). A single home that CANNOT solo-
+    # capture a defended target right now (needs ~26, has 10), with no own planet
+    # nearby to create reinforcement noise. The only field entries are wait-then-
+    # mass candidates (no affordable fire-now capture), so the agent should HOLD
+    # and accumulate -- NOT dribble a doomed 10-ship fleet that bounces. A distant
+    # enemy means the eventual massed strike still wins the race (worth waiting).
+    home = [0, 0, 15.0, 15.0, radius(3), 10, 3]        # 10 ships, prod 3
+    defended = [1, -1, 38.0, 28.0, radius(3), 25, 3]   # garrison 25, dist ~26; floor ~26 > 10
+    far_enemy = [2, 1, 85.0, 85.0, radius(3), 20, 3]   # far -> the held mass still wins the race
+    moves, field = show("S1 hold-vs-fire (home has 10, target needs ~26)",
+         make_obs([home, defended, far_enemy]),
+         "no affordable fire-now capture -> HOLD and accumulate (no dribble)")
+    # The field may still SHOW a sub-floor fire-now entry; the test is that the
+    # agent does not FIRE it (it holds and accumulates a capturing fleet instead).
+    _check("S1", not moves, f"emitted={moves or '(hold)'} (want hold to accumulate)")
+
+    # S1b — same target, home has accumulated a real strike force. Now a decisive
+    # fast capture is affordable and high-value -> it should fire.
+    home_big = [0, 0, 15.0, 15.0, radius(3), 30, 3]    # 30 ships, can solo now
+    moves, field = show("S1b same target, home has 30 ships (decisive fleet ready)",
+         make_obs([home_big, defended, far_enemy]),
+         "now a decisive fast capture is affordable and should be emitted")
+    _check("S1b", bool(moves), f"emitted={moves or '(hold)'}")
 
     # S2 — CONVERGENCE NEEDED. A defended neutral that NO single planet can take
-    # alone, but two planets arriving the same turn can (combat sums them).
-    a = [0, 0, 30.0, 40.0, radius(3), 18, 3]
-    b = [1, 0, 30.0, 60.0, radius(3), 18, 3]
-    defended = [2, -1, 50.0, 50.0, radius(4), 30, 4]   # needs ~31; neither solo (18)
-    enemy = [3, 1, 90.0, 50.0, radius(3), 20, 3]
-    show("S2 convergence-needed (two 18-ship planets vs a 30-garrison target)",
+    # alone, but two planets arriving the same turn can (combat sums them). The
+    # two sources are placed symmetrically so both legs share an arrival turn.
+    a = [0, 0, 15.0, 30.0, radius(3), 18, 3]
+    b = [1, 0, 15.0, 8.0, radius(3), 18, 3]
+    defended = [2, -1, 40.0, 19.0, radius(4), 26, 4]   # floor ~27; neither solo (18), both (36) yes
+    enemy = [3, 1, 88.0, 80.0, radius(3), 20, 3]
+    moves, field = show("S2 convergence-needed (two 18-ship planets vs a 26-garrison target)",
          make_obs([a, b, defended, enemy]),
          "a 2-source same-arrival cohort should form (combat-rule-1 summation)")
+    legs_to_def = [m for m in moves if int(m[0]) in (0, 1)]
+    _check("S2", len(legs_to_def) >= 2,
+           f"emitted={moves or '(hold)'} (want >=2 legs converging on target 2)")
 
-    # S3 — OVERREACH. A juicy target far away that the enemy clearly wins the
-    # race to. The field should not send (low winnability / past reach ceiling).
-    home3 = [0, 0, 10.0, 50.0, radius(3), 40, 3]
-    juicy_far = [1, -1, 92.0, 50.0, radius(5), 5, 5]   # dist 82, enemy adjacent
-    enemy_adj = [2, 1, 88.0, 50.0, radius(5), 40, 5]
-    show("S3 overreach (juicy target far away, enemy adjacent)",
+    # S3 — OVERREACH. A juicy target so far the flight exceeds the reach ceiling
+    # AND the enemy adjacent wins the race. The field should not send it.
+    home3 = [0, 0, 10.0, 80.0, radius(3), 40, 3]
+    juicy_far = [1, -1, 95.0, 80.0, radius(5), 5, 5]   # dist 85 (> reach ceiling), enemy adjacent
+    enemy_adj = [2, 1, 90.0, 80.0, radius(5), 40, 5]
+    moves, field = show("S3 overreach (juicy target far away, enemy adjacent)",
          make_obs([home3, juicy_far, enemy_adj]),
          "should NOT send the far losing-race shot")
+    _check("S3", not moves, f"emitted={moves or '(hold)'} (want hold)")
 
 
 if __name__ == "__main__":
