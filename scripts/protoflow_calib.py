@@ -149,13 +149,14 @@ def main():
 
     # S5 — COST OF INACTION (the direct inertia test). A neutral that an enemy is
     # racing for (an in-flight enemy fleet inbound to it), plus our home that can
-    # win the race. The two-sided value must treat the neutral as a 2x swing (we
-    # gain it AND deny it), so the agent FIRES rather than sitting idle. This is
-    # the behavior that was 0/12 against the Producer.
-    home5 = [0, 0, 22.0, 50.0, radius(3), 40, 3]
-    contested_neutral = [1, -1, 40.0, 50.0, radius(2), 6, 3]   # we can reach in ~7
-    enemy5 = [2, 1, 75.0, 50.0, radius(3), 40, 3]
-    enemy_fleet = [0, 1, 58.0, 50.0, 3.1416, 2, 20]            # 20 ships inbound to the neutral
+    # win the race. The two-sided value treats the neutral as a 2x swing (we gain it
+    # AND deny it), so the agent FIRES rather than sitting idle. The enemy PLANET is
+    # placed out of immediate counter range, so the denial is genuinely HOLDABLE --
+    # cost-of-inaction must fire a denial it can keep, not donate one it can't.
+    home5 = [0, 0, 15.0, 20.0, radius(3), 40, 3]
+    contested_neutral = [1, -1, 33.0, 25.0, radius(2), 6, 3]   # we can reach in ~9
+    enemy5 = [2, 1, 85.0, 80.0, radius(3), 40, 3]             # far -> can't immediately counter
+    enemy_fleet = [0, 1, 45.0, 30.0, -2.747, 2, 20]            # 20 ships inbound to the neutral
     moves, field = show("S5 cost-of-inaction (enemy racing for a neutral we can win)",
          make_obs([home5, contested_neutral, enemy5], fleets=[enemy_fleet]),
          "the contested neutral is a 2x swing -> FIRE now, do not sit idle")
@@ -220,6 +221,49 @@ def main():
     reg_back = any(lc["src"] == 1 and lc["tgt"] == 0 for lc in reg)
     _check("S8", reg_fwd and not reg_back,
            f"regroup launches={reg} (want rear0 -> forward1, not backward)")
+
+    # S9 — COMBINED-counter sizing. The SAME capturable neutral in two worlds. With
+    # ONE enemy planet able to counter, the holdable size is some value; adding a
+    # SECOND counter enemy must raise it (the opponent's real recapture wave is the
+    # SUM of every enemy that can reach the target, not just the nearest). Both
+    # counter enemies are production-1 (low value) so the production-3 neutral stays
+    # the capture under test.
+    home9 = [0, 0, 15.0, 40.0, radius(3), 90, 3]
+    neutral9 = [1, -1, 33.0, 40.0, radius(3), 6, 3]            # the capture under test
+    enemyA = [2, 1, 41.0, 40.0, radius(1), 40, 1]             # counter from the east
+    enemyB = [3, 1, 33.0, 28.0, radius(1), 40, 1]             # counter from the north
+    moves, field = show("S9a one counter (single enemy in recapture range)",
+         make_obs([home9, neutral9, enemyA]),
+         "the neutral is sized to hold against ONE counter")
+    one_l = next((lc for lc in proto.get_trace()[-1]["launches"] if lc["tgt"] == 1), None)
+    _check("S9a", one_l is not None, f"launch={one_l} (want a holdable capture)")
+    moves, field = show("S9b two counters (combined recapture wave is larger)",
+         make_obs([home9, neutral9, enemyA, enemyB]),
+         "with TWO enemies in range, the SAME neutral needs strictly more ships")
+    two_l = next((lc for lc in proto.get_trace()[-1]["launches"] if lc["tgt"] == 1), None)
+    combined = two_l is not None and one_l is not None and two_l["ships"] > one_l["ships"]
+    _check("S9b", combined,
+           f"two-counter ships={two_l['ships'] if two_l else None} > "
+           f"one-counter ships={one_l['ships'] if one_l else None}")
+
+    # S10 — WAVE boundary + anti-dispersion RESERVATION. A defended target that NO
+    # single planet can fund, reachable by a FAR source and a NEAR source; plus a
+    # cheap solo neutral the near source could grab alone. This turn the FAR source
+    # must fire at the wave target (it is the binding leg that must leave now to land
+    # on the shared turn) and the NEAR source must be RESERVED -- emit nothing,
+    # waiting for the wave instead of defecting to the easy solo.
+    far_src = [0, 0, 20.0, 20.0, radius(3), 20, 3]            # far from the target
+    near_src = [1, 0, 55.0, 32.0, radius(3), 20, 3]           # near target AND near the solo (off the far->tgt line)
+    wave_tgt = [2, -1, 70.0, 20.0, radius(4), 30, 4]          # defended; needs both sources
+    solo = [3, -1, 60.0, 42.0, radius(2), 5, 2]              # tempting easy solo for near_src
+    moves, field = show("S10 wave boundary + reservation (far fires, near waits)",
+         make_obs([far_src, near_src, wave_tgt, solo]),
+         "far source fires at the wave target; near source reserved (no solo defect)")
+    l10 = proto.get_trace()[-1]["launches"]
+    far_fires = any(lc["src"] == 0 and lc["tgt"] == 2 and lc["kind"] == "wave" for lc in l10)
+    near_silent = not any(lc["src"] == 1 for lc in l10)
+    _check("S10", far_fires and near_silent,
+           f"launches={l10} (want far0 -> wave_tgt2, near1 silent/reserved)")
 
 
 if __name__ == "__main__":
