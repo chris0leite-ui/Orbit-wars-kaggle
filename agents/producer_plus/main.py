@@ -32,7 +32,7 @@ from orbit_lite.movement_step import (
 from orbit_lite.obs import parse_obs
 from orbit_lite.distance_cache import build_distance_cache
 from orbit_lite.garrison_launch import LaunchSet
-from orbit_lite.opp_projection import predict_opp_multi_launch_lite, MAX_L_OPP
+from orbit_lite.opp_projection import predict_opp_launches_via_mirror, MAX_L_OPP
 from orbit_lite.planner_core import (
     _candidate_indices,
     _empty_entries,
@@ -782,6 +782,39 @@ def plan_lite_waves(
     return concat_launch_entries([wave_entries, regroup_entries])
 
 
+def _score_do_nothing(
+    *,
+    status,
+    prod: Tensor,
+    alive_by_step: Tensor,
+    player_count: int,
+    background: LaunchSet,
+    player_id: int,
+) -> Tensor:
+    """Score of NOT launching anything while opp executes their projected
+    plan. Returns a scalar tensor. Used to renormalize roi_threshold under
+    opp-aware scoring.
+    """
+    L_opp = int(background.source_slots.shape[-1])
+    if L_opp == 0:
+        return torch.tensor(0.0, device=background.source_slots.device)
+    # 1 candidate with the background's L slots, all owner=opp_id, our
+    # contribution = nothing.
+    bg = LaunchSet(
+        source_slots=background.source_slots.unsqueeze(0),
+        target_slots=background.target_slots.unsqueeze(0),
+        ships=background.ships.unsqueeze(0),
+        eta=background.eta.unsqueeze(0),
+        owner=background.owner.unsqueeze(0),
+        valid=background.valid.unsqueeze(0),
+    )
+    score = score_candidates(
+        status, prod=prod, alive_by_step=alive_by_step,
+        player_count=int(player_count), launches=bg, player_id=int(player_id),
+    )
+    return score.flatten()[0]
+
+
 def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int, memory) -> dict:
     """Full per-turn pipeline: build movement → plan single-size waves + regroup → emit.
 
@@ -807,30 +840,44 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
     current_step = int(obs_tensors["step"].max().item())
     K_eta_override = compute_k_eta_for_step(current_step, H=H)
 
-    # Step 3 redux: project opponents' next ~8 ticks of launches once per
-    # turn and pass through as a background LaunchSet for scoring. Default
-    # OFF preserves bit-identical static-opp scoring.
+    # Opponent model: run Producer's own planner from each opp seat with
+    # background=None (one-step best response, opp assumes we do nothing
+    # this turn). Returns the opp's predicted launches for this turn as a
+    # padded LaunchSet that we pass as `background` to our own planner.
+    # Default OFF preserves bit-identical static-opp scoring.
     #
-    # When opp_proj is on, the scorer's competitive_score (me - opp_total)
-    # naturally compresses: opp's projected actions add to opp_total, so my
-    # comparative advantage looks smaller than under the static-opp baseline.
-    # Producer's hardcoded `roi_threshold = 1.5` is tuned for the static-opp
-    # world where capture scores are ~30; under opp_proj the same captures
-    # score ~3. We override config.roi_threshold to 0 (any positive-net action
-    # fires) so the agent doesn't refuse to launch entirely.
+    # The roi_threshold needs a per-turn shift because competitive_score is
+    # measured against a do-nothing-by-everyone baseline (garrison_status).
+    # In the static-opp world, do-nothing-by-me also means do-nothing-by-
+    # opp, so do_nothing_score = 0 and a 1.5 absolute threshold == "1.5
+    # ships of differential gain over not firing." In the opp-aware world,
+    # do-nothing-by-me still leaves opp's projected launches running, so
+    # do_nothing_score = -opp_gain (a per-turn constant, usually < 0).
+    # To preserve the threshold's semantic meaning -- "fire only if you
+    # gain >= roi_threshold ships over doing nothing" -- shift the
+    # absolute threshold by do_nothing_score.
     background = None
     cfg = config
     if _opp_projection_enabled():
         opp_ids = [
             pid for pid in range(int(player_count)) if pid != int(obs.player_id)
         ]
-        background = predict_opp_multi_launch_lite(
-            obs=obs, movement=movement, garrison_status=status, cache=cache,
-            opp_ids=opp_ids,
-            horizon=_env_int("PRODUCER_PLUS_OPP_HORIZON", 8),
+        background = predict_opp_launches_via_mirror(
+            obs_tensors=obs_tensors, movement=movement, cache=cache,
+            garrison_status=status, prod=movement.planet_prod,
+            alive_by_step=alive_by_step,
+            opp_ids=opp_ids, config=config, player_count=int(player_count),
+            K_eta_override=K_eta_override,
             pad_to=_env_int("PRODUCER_PLUS_OPP_MAX_L", MAX_L_OPP),
         )
-        cfg = dataclasses.replace(config, roi_threshold=0.0)
+        do_nothing_score = float(_score_do_nothing(
+            status=status, prod=movement.planet_prod,
+            alive_by_step=alive_by_step, player_count=int(player_count),
+            background=background, player_id=int(obs.player_id),
+        ))
+        cfg = dataclasses.replace(
+            config, roi_threshold=do_nothing_score + float(config.roi_threshold),
+        )
 
     entries = plan_lite_waves(
         movement=movement, obs=obs, obs_tensors=obs_tensors, cache=cache,
