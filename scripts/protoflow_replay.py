@@ -31,7 +31,11 @@ def main() -> None:
     ap.add_argument("--seat", choices=["p0", "p1"], default="p0",
                     help="which seat protoflow plays (p0 = first/top, p1 = second)")
     ap.add_argument("--out", default=None, help="output .html path")
+    ap.add_argument("--simulate-value", action="store_true",
+                    help="use the simulation-based evaluator (proto.SIMULATE_VALUE = True)")
     args = ap.parse_args()
+
+    proto.SIMULATE_VALUE = bool(args.simulate_value)
 
     opp = load_callable(args.opponent)
     env = make("orbit_wars", configuration={"seed": args.seed}, debug=False)
