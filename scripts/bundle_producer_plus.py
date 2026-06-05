@@ -78,6 +78,16 @@ ENV_VARIANTS = {
         # opp-projection mechanism in isolation.
         "PRODUCER_PLUS_OPP_PROJECTION": "1",
     },
+    "multi_opp_def": {
+        # Step 4 (multi_size) + opp_projection (Producer-mirror) + the
+        # opp-aware defensive shortlist augmentation in friendly_flip_targets
+        # (which activates unconditionally when background is non-empty).
+        # Coalitions deliberately OFF — diagnostic at seed 7 showed they
+        # barely fire and actively hurt the kitchen-sink variant (-1 win).
+        # Local n=16: 12/16 wins vs producer (Wilson [50%, 90%]).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+    },
 }
 
 
