@@ -912,7 +912,20 @@ CONFIG_4P = dataclasses.replace(
 
 
 def _config_for(player_count: int) -> ProducerLiteConfig:
-    return CONFIG_4P if int(player_count) >= 4 else ProducerLiteConfig()
+    cfg = CONFIG_4P if int(player_count) >= 4 else ProducerLiteConfig()
+    # Optional override of the scorer's lookahead horizon. Bumping H lets
+    # the scorer see longer-term outcomes (e.g. the recapture leg of an
+    # exchange cycle) and properly value stockpiling vs cyclical attacks.
+    # Cost scales linearly in H; defaults unchanged when env unset.
+    env_h = os.environ.get(
+        "PRODUCER_PLUS_HORIZON_4P" if int(player_count) >= 4 else "PRODUCER_PLUS_HORIZON_2P"
+    )
+    if env_h:
+        try:
+            cfg = dataclasses.replace(cfg, horizon=int(env_h))
+        except ValueError:
+            pass
+    return cfg
 
 
 class ProducerLiteMemory:
