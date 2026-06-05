@@ -104,9 +104,13 @@ def _opp_projection_enabled() -> bool:
 # passed as ``background`` each round. Each round's launches are
 # eta-shifted by +k turns before merging. Default 0/1 preserves the
 # single-pass byte-identical behaviour. Player-count-suffixed knobs
-# override the common one. State knob; only consulted when opp_proj is
-# already ON. See knowledge-base/thoughts/2026-06-05-cycle-stalemate-
-# and-horizon-scaling.md for the structural-defect diagnosis.
+# override the common one; 3P games fall back to the _2P suffix (3P is
+# untested terrain on this comp; tune via the base var if a 3P-specific
+# value is needed). NOTE: multi-tick is silently a no-op when opp_proj
+# is OFF (the value is read only inside the opp_proj-gated branch in
+# run_turn). Set PRODUCER_PLUS_OPP_PROJECTION=1 to activate. See
+# knowledge-base/thoughts/2026-06-05-cycle-stalemate-and-horizon-
+# scaling.md for the structural-defect diagnosis.
 def _multi_tick_opp_k(player_count: int) -> int:
     suffix = "_4P" if int(player_count) >= 4 else "_2P"
     raw = os.environ.get(f"PRODUCER_PLUS_MULTI_TICK_OPP_K{suffix}")

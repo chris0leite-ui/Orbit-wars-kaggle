@@ -159,36 +159,47 @@ def predict_opp_launches_via_mirror(
             dtype=dtype, device=device,
         )
 
-    # K > 1: multi-round projection. Eta cap = scorer horizon H if
-    # provided; otherwise K_eta_override; otherwise no cap. The garrison
-    # status only has entries for ticks <= H, so launches with shifted
-    # eta > H cannot be scored and would corrupt the planner if packed.
+    # K > 1: multi-round projection.
+    #
+    # Eta cap = scorer horizon. The garrison status only has entries for
+    # ticks <= H, so launches with shifted eta > H would index past the
+    # status tensor and be masked-invalid by `sparse_launch_flow_delta`
+    # anyway. Drop them at record time so the final LaunchSet doesn't
+    # carry useless slots that inflate the L axis. Fallback order: caller
+    # H, then K_eta_override, then garrison_status's own horizon (which is
+    # H by construction in main.py).
     if H is not None:
         eta_cap = float(H)
     elif K_eta_override is not None:
         eta_cap = float(K_eta_override)
     else:
-        eta_cap = float("inf")
+        eta_cap = float(max(int(garrison_status.ships.shape[-1]) - 1, 0))
 
-    # NB: the scorer's per-candidate broadcast (plan_lite_waves: concat of
-    # background onto launches' L axis) costs O(C × L_total). Inflating the
-    # background's pad slot count past ``pad_to`` blows up wallclock by ~2x
-    # per doubling for *every* downstream scorer call -- the per-round opp
-    # planner AND the main planner. Cap pad at the original ``pad_to``;
-    # records beyond ``pad_to`` are silently dropped at pack time (matches
-    # the K=1 path's len(records) >= pad_to early break). With K=2 in 2P
-    # and 1 opp at ~3 launches/round, total records ~ 6 — well under cap.
+    # Cache per-opp parsed observations. obs_tensors does not mutate across
+    # rounds (plan_fn touches movement caches, not obs_tensors), so each
+    # opp's parsed view is constant for the K rounds. Saves (K-1) *
+    # len(opp_ids) parse_obs calls per turn.
+    obs_per_opp = {
+        int(oid): parse_obs(obs_tensors, player_id=int(oid)) for oid in opp_ids
+    }
+
+    # Intermediate cumulative_bg (the LaunchSet handed to opp's next-round
+    # planner) is capped at ``pad_to`` to keep the per-round scorer's L axis
+    # bounded -- inflating it would multiply wallclock for every opp
+    # planner call (the broadcast inside plan_lite_waves concatenates
+    # background onto each candidate). The FINAL returned LaunchSet (handed
+    # to OUR main planner once per turn) grows to fit all records; that
+    # single bigger scorer call costs a few percent vs. K-1 cheaper opp
+    # calls.
     records: list[tuple[int, int, float, float, int]] = []
     cumulative_bg: LaunchSet | None = None
-    final_pad = int(pad_to)
     for k in range(K_clamped):
         round_records: list[tuple[int, int, float, float, int]] = []
         for opp_id in opp_ids:
             opp_id = int(opp_id)
-            obs_opp = parse_obs(obs_tensors, player_id=opp_id)
             opp_entries = plan_fn(
                 movement=movement,
-                obs=obs_opp,
+                obs=obs_per_opp[opp_id],
                 obs_tensors=obs_tensors,
                 cache=cache,
                 garrison_status=garrison_status,
@@ -218,14 +229,31 @@ def predict_opp_launches_via_mirror(
                     opp_id,
                 ))
         records.extend(round_records)
-        # Rebuild cumulative bg for the next round (skip on final round).
+        # Rebuild cumulative_bg for round k+1 (skip on the final round).
+        # Convert absolute-frame etas to opp's-frame at game-tick k+1:
+        # opp's next planner thinks "now = 0" but is actually at game-tick
+        # k+1, so a launch with absolute eta E appears to opp as arriving
+        # in E - (k+1) ticks. Launches with E <= k+1 have already arrived
+        # from opp's POV and must not appear in opp's background.
         if k + 1 < K_clamped:
+            next_round = k + 1
+            opp_view_records = [
+                (s, t, sh, et - float(next_round), op)
+                for (s, t, sh, et, op) in records
+                if et - float(next_round) > 0.0
+            ]
             cumulative_bg = _pack_records_to_launch_set(
-                records, pad_to=final_pad,
+                opp_view_records, pad_to=int(pad_to),
                 default_opp_id=int(opp_ids[0]),
                 dtype=dtype, device=device,
             )
 
+    # Final pad fits all accumulated records (typically <= MAX_L_OPP, but
+    # 4P-K3 worst case can produce ~K * n_opps * ~3 ~ 27 records). One
+    # bigger main-planner scoring call is acceptable; round-level cost
+    # stays bounded by ``pad_to`` via the intermediate cumulative_bg cap
+    # above.
+    final_pad = max(int(pad_to), len(records))
     return _pack_records_to_launch_set(
         records, pad_to=final_pad,
         default_opp_id=int(opp_ids[0]),

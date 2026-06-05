@@ -96,6 +96,34 @@ def test_multi_tick_invalid_returns_zero(monkeypatch, producer_plus_main, value)
     assert producer_plus_main._multi_tick_opp_k(2) == 0
 
 
+def test_shim_env_vars_match_bundle_variant():
+    """Drift guard: the shim file's os.environ.setdefault calls must
+    match scripts/bundle_producer_plus.py's ENV_VARIANTS entry for
+    `multi_tick_opp_K3`. If they diverge, local play via the shim runs a
+    different configuration than the bundled submission, and the A/B
+    that gates the submission no longer exercises what ships.
+    """
+    import importlib.util as _il
+    shim_path = os.path.join(PRODUCER_PLUS_DIR, "producer_plus_multi_tick_opp_K3.py")
+    bundler_path = os.path.join(REPO_ROOT, "scripts", "bundle_producer_plus.py")
+    spec_b = _il.spec_from_file_location("bundle_producer_plus_drift_check", bundler_path)
+    mod_b = _il.module_from_spec(spec_b)
+    spec_b.loader.exec_module(mod_b)
+    bundle_vars = mod_b.ENV_VARIANTS["multi_tick_opp_K3"]
+    # Parse the shim's setdefault calls textually -- shim sets vars at
+    # import time and we don't want import side effects in this test.
+    import re
+    src = open(shim_path).read()
+    pattern = re.compile(
+        r'os\.environ\.setdefault\(\s*"([A-Z_0-9]+)"\s*,\s*"([^"]+)"\s*\)'
+    )
+    shim_vars = dict(pattern.findall(src))
+    assert shim_vars == bundle_vars, (
+        f"shim env vars {shim_vars} drift from bundle variant {bundle_vars} -- "
+        f"keep them in sync or local play diverges from the submission"
+    )
+
+
 def _play_one_game(focal_path, opp_path, seed):
     """Run one kaggle_environments game and return the final state and steps."""
     from kaggle_environments import make
@@ -105,7 +133,7 @@ def _play_one_game(focal_path, opp_path, seed):
 
 
 @pytest.mark.slow
-def test_multi_tick_K0_matches_K_unset():
+def test_multi_tick_K0_matches_K_unset(monkeypatch):
     """Rule 38 reproduce-failure test: with opp_projection ON, explicitly
     setting PRODUCER_PLUS_MULTI_TICK_OPP_K=0 must produce the same game
     outcome as leaving the var unset. Both should hit the K_clamped == 1
@@ -114,20 +142,19 @@ def test_multi_tick_K0_matches_K_unset():
     """
     shim = os.path.join(PRODUCER_PLUS_DIR, "producer_plus_opp_proj.py")
     producer = os.path.join(PRODUCER_DIR, "producer_agent.py")
-    # Run A: K unset (defaults to 0 inside the getter).
+    # Run A: K unset (defaults to 0 inside the getter). monkeypatch reverts
+    # at test teardown -- safer than direct os.environ mutation across
+    # sequential slow tests.
     for name in (
         "PRODUCER_PLUS_MULTI_TICK_OPP_K",
         "PRODUCER_PLUS_MULTI_TICK_OPP_K_2P",
         "PRODUCER_PLUS_MULTI_TICK_OPP_K_4P",
     ):
-        os.environ.pop(name, None)
+        monkeypatch.delenv(name, raising=False)
     state_unset, _ = _play_one_game(shim, producer, 7)
     # Run B: K=0 explicit.
-    os.environ["PRODUCER_PLUS_MULTI_TICK_OPP_K"] = "0"
-    try:
-        state_zero, _ = _play_one_game(shim, producer, 7)
-    finally:
-        os.environ.pop("PRODUCER_PLUS_MULTI_TICK_OPP_K", None)
+    monkeypatch.setenv("PRODUCER_PLUS_MULTI_TICK_OPP_K", "0")
+    state_zero, _ = _play_one_game(shim, producer, 7)
     assert state_unset[0]["reward"] == state_zero[0]["reward"], (
         f"K=0 explicit ({state_zero[0]['reward']}) differs from K unset "
         f"({state_unset[0]['reward']}) — the K=0 mapping is mis-routed"
@@ -161,11 +188,10 @@ def test_multi_tick_K3_changes_planner_output():
 
 
 @pytest.mark.slow
-def test_multi_tick_K3_smoke_wallclock_under_60s():
-    """Rule 46 smoke: run one full game with multi-tick K=3 on, assert
-    total wallclock under 60 s as a loose per-turn proxy. K=3 is roughly
-    3x the single-pass opp_proj cost (~20 ms → ~60 ms per turn), well
-    under the 1000 ms cap.
+def test_multi_tick_2p_smoke_wallclock_under_60s():
+    """Rule 46 smoke for the 2P path (shim sets K_2P=2). Asserts total
+    wallclock under 60 s as a loose per-turn proxy. K=2 in 2P is roughly
+    2x the single-pass opp_proj cost.
     """
     shim_path = os.path.join(
         PRODUCER_PLUS_DIR, "producer_plus_multi_tick_opp_K3.py",
@@ -175,7 +201,37 @@ def test_multi_tick_K3_smoke_wallclock_under_60s():
     state, steps = _play_one_game(shim_path, producer_path, seed=7)
     elapsed = time.time() - t0
     assert elapsed < 60.0, (
-        f"multi_tick K=3 game vs producer at seed 7 took {elapsed:.1f}s — "
+        f"multi_tick 2P (K=2) game vs producer at seed 7 took {elapsed:.1f}s — "
         f"per-turn smoke bound suggests wallclock degradation"
+    )
+    assert state[0]["status"] in ("DONE", "INVALID"), state[0]["status"]
+
+
+def _play_one_game_4p(focal_path, seed):
+    """Run one 4P self-match and return final state and steps."""
+    from kaggle_environments import make
+    env = make("orbit_wars", configuration={"seed": int(seed)}, debug=False)
+    env.run([focal_path, focal_path, focal_path, focal_path])
+    return env.state, env.steps
+
+
+@pytest.mark.slow
+def test_multi_tick_4p_smoke_wallclock_under_300s():
+    """Rule 46 smoke for the 4P path (shim sets K_4P=3). The 4P bundle
+    is the wallclock-cap risk: 3 opps * 3 rounds = 9 inner planner calls
+    per turn vs 1 in single-pass. Bound at 300 s total wallclock for the
+    self-match (4 seats * ~500 steps * < 150 ms = 300 s upper bound).
+    Guards against the 4P-K3 configuration breaching the 1000 ms cap
+    that the 2P smoke cannot detect.
+    """
+    shim_path = os.path.join(
+        PRODUCER_PLUS_DIR, "producer_plus_multi_tick_opp_K3.py",
+    )
+    t0 = time.time()
+    state, steps = _play_one_game_4p(shim_path, seed=7)
+    elapsed = time.time() - t0
+    assert elapsed < 300.0, (
+        f"multi_tick 4P-K3 self-match at seed 7 took {elapsed:.1f}s — "
+        f"per-turn cost is probably above the 1000 ms cap under any load"
     )
     assert state[0]["status"] in ("DONE", "INVALID"), state[0]["status"]
