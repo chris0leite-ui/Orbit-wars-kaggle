@@ -154,36 +154,40 @@ def _build_synthetic_fixture(opp_garrison: float):
     Returns the kwargs to pass to ``recapture_penalty``.
     """
     import torch
-    from dataclasses import dataclass
+    from agents.producer.orbit_lite.obs import ParsedObs
+    from agents.producer.orbit_lite.distance_cache import DistanceCache
+    from agents.producer.orbit_lite.movement import PlanetGarrisonStatus
 
     P = 4
     device = torch.device("cpu")
     dtype = torch.float32
+    zP_f = torch.zeros(P, dtype=dtype)
+    zP_b = torch.zeros(P, dtype=torch.bool)
 
-    # --- obs ----------------------------------------------------------------
-    @dataclass
-    class ObsLike:
-        P: int
-        device: torch.device
-        ships: "torch.Tensor"
-        prod: "torch.Tensor"
-        owner_abs: "torch.Tensor"
-        owned: "torch.Tensor"
-        is_enemy: "torch.Tensor"
-        is_neutral: "torch.Tensor"
-        alive: "torch.Tensor"
-
-    obs = ObsLike(
-        P=P, device=device,
+    # Build a real ParsedObs (matches production type contract). Fields not
+    # used by recapture_penalty are zero-filled but still present so future
+    # accesses don't crash.
+    obs = ParsedObs(
+        alive=torch.tensor([True, True, True, True]),
+        x=torch.tensor([0.0, 10.0, 15.0, 100.0], dtype=dtype),
+        y=zP_f.clone(),
+        r=torch.full((P,), 1.0, dtype=dtype),
         ships=torch.tensor([10.0, 5.0, opp_garrison, 0.0], dtype=dtype),
         prod=torch.tensor([1.0, 2.0, 1.0, 1.0], dtype=dtype),
-        # player_id=0; P0 ours, P1 enemy (we're capturing it from owner=1),
-        # P2 enemy too (could recapture P1), P3 neutral.
         owner_abs=torch.tensor([0.0, 1.0, 1.0, -1.0], dtype=dtype),
         owned=torch.tensor([True, False, False, False]),
         is_enemy=torch.tensor([False, True, True, False]),
         is_neutral=torch.tensor([False, False, False, True]),
-        alive=torch.tensor([True, True, True, True]),
+        orb_r=zP_f.clone(), orb_a0=zP_f.clone(), is_orbiting=zP_b.clone(),
+        angvel=torch.zeros(1, dtype=dtype),
+        step=torch.zeros(1, dtype=dtype),
+        f_alive=torch.zeros(0, dtype=torch.bool),
+        f_owner=torch.zeros(0, dtype=dtype),
+        f_x=torch.zeros(0, dtype=dtype),
+        f_y=torch.zeros(0, dtype=dtype),
+        f_angle=torch.zeros(0, dtype=dtype),
+        f_ships=torch.zeros(0, dtype=dtype),
+        player_id=0, P=P, F=0, device=device,
     )
 
     # --- distance cache -----------------------------------------------------
@@ -195,8 +199,6 @@ def _build_synthetic_fixture(opp_garrison: float):
     dx = xs.view(1, P, 1) - xs.view(1, 1, P)
     cross_dist = torch.sqrt((dx * dx).expand(K_cache + 1, -1, -1).clamp(min=0.0))
     alive_by_step = torch.ones(K_cache + 1, P, dtype=torch.bool)
-
-    from agents.producer.orbit_lite.distance_cache import DistanceCache
     cache = DistanceCache(
         cross_dist=cross_dist.to(dtype),
         alive_by_step=alive_by_step,
@@ -208,7 +210,6 @@ def _build_synthetic_fixture(opp_garrison: float):
     H = 18
     owner_traj = torch.tensor([0, 1, 1, 1], dtype=torch.long).view(P, 1).expand(P, H + 1).clone()
     ships_traj = torch.zeros(P, H + 1, dtype=dtype)
-    from agents.producer.orbit_lite.movement import PlanetGarrisonStatus
     garrison_status = PlanetGarrisonStatus(
         owner=owner_traj,
         ships=ships_traj,
@@ -218,15 +219,12 @@ def _build_synthetic_fixture(opp_garrison: float):
     )
 
     # --- single candidate that captures P1 thinly --------------------------
-    C = 1
-    L = 1
     cand_tgt_slot = torch.tensor([1], dtype=torch.long)
-    cand_tgt_short = torch.tensor([0], dtype=torch.long)  # target_idx[0]=P1
+    cand_tgt_short = torch.tensor([0], dtype=torch.long)  # short idx into floor
     cand_send = torch.tensor([[6.0]], dtype=dtype)        # just over floor of 5
     cand_eta = torch.tensor([[3.0]], dtype=dtype)         # arrives at tick 3
     cand_valid = torch.tensor([True])
     cand_is_def = torch.tensor([False])
-    target_idx = torch.tensor([1], dtype=torch.long)
     # capture_floor[T, K]: floor=5 at all k for P1 (defender of 5 ships).
     capture_floor_TK = torch.full((1, 12), 5.0, dtype=dtype)
     prod = obs.prod.clone()
@@ -236,7 +234,7 @@ def _build_synthetic_fixture(opp_garrison: float):
         cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
         cand_send=cand_send, cand_eta=cand_eta,
         cand_valid=cand_valid, cand_is_def=cand_is_def,
-        target_idx=target_idx, capture_floor_TK=capture_floor_TK,
+        capture_floor_TK=capture_floor_TK,
         prod=prod, H=H,
         K_recap=8, K_opp=0,
         safety_reserve=0.0,  # max threat, easier to test
@@ -254,24 +252,6 @@ def test_recapture_penalty_fires_when_opp_can_recapture():
     pen = recapture_penalty(**kw)
     assert pen.shape == (1,)
     assert pen.item() > 0.0, f"expected penalty > 0, got {pen.item()}"
-
-
-def test_recapture_penalty_zero_when_no_threat():
-    """Opp at P2 has 0 ships → no recapture threat → penalty = 0."""
-    from agents.producer.orbit_lite.recapture import recapture_penalty
-    kw = _build_synthetic_fixture(opp_garrison=0.0)
-    pen = recapture_penalty(**kw)
-    assert pen.shape == (1,)
-    # Threat from prod alone (P2 has prod=1, reach_time ~5) = 5 ships, but
-    # safety_reserve=0 still gives total ~ 5 from production. Defender = 1.
-    # Deficit = 4 > 0 → penalty positive. Bump prod to 0 to truly zero
-    # threat.
-    # NOTE: with prod=1 even 0-ship opp accumulates ships in flight. So we
-    # need to also zero prod for this test. Let's update the test
-    # expectation: this checks "no garrison + finite reach" still penalizes
-    # because prod scales the threat. That's actually correct behavior.
-    # Switch the test to: opp UNREACHABLE → penalty = 0.
-    pass
 
 
 def test_recapture_penalty_zero_when_opp_unreachable():
@@ -312,6 +292,16 @@ def test_recapture_penalty_zero_when_send_below_floor():
 
 
 @pytest.mark.parametrize("shim_file,variant_name", [
+    # All currently-shipped producer_plus shim files paired with the
+    # ENV_VARIANTS key whose env-var set they should match. Drift in any
+    # pair means local play diverges from the bundled submission.
+    ("producer_plus_adaptive_k.py", "adaptive_k"),
+    ("producer_plus_multi_size.py", "multi_size"),
+    ("producer_plus_coalitions.py", "coalitions"),
+    ("producer_plus_composed.py", "composed"),
+    ("producer_plus_opp_proj.py", "opp_proj"),
+    ("producer_plus_multi_opp.py", "multi_opp_def"),
+    ("producer_plus_multi_tick_opp_K3.py", "multi_tick_opp_K3"),
     ("producer_plus_recapture_penalty.py", "recapture_penalty"),
     ("producer_plus_multi_tick_recap.py", "multi_tick_recap"),
 ])

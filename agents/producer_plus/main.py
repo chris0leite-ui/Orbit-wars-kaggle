@@ -828,7 +828,7 @@ def plan_lite_waves(
             cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
             cand_send=cand_send, cand_eta=cand_eta,
             cand_valid=cand_valid, cand_is_def=cand_is_def,
-            target_idx=target_idx, capture_floor_TK=floor,
+            capture_floor_TK=floor,
             prod=prod, H=H,
             K_recap=_recapture_k(int(player_count)),
             K_opp=(

@@ -51,12 +51,11 @@ def recapture_penalty(
     cache: DistanceCache,
     garrison_status: PlanetGarrisonStatus,
     cand_tgt_slot: Tensor,       # [C] long — absolute planet index
-    cand_tgt_short: Tensor,      # [C] long — short index into target_idx
+    cand_tgt_short: Tensor,      # [C] long — short index into capture_floor_TK
     cand_send: Tensor,           # [C, L] float — read [:, 0]
     cand_eta: Tensor,            # [C, L] float — read [:, 0]
     cand_valid: Tensor,          # [C] bool
     cand_is_def: Tensor,         # [C] bool — own-planet reinforcement
-    target_idx: Tensor,          # [T] long — short -> absolute slot
     capture_floor_TK: Tensor,    # [T, K] from caller (planner_core.capture_floor)
     prod: Tensor,                # [P] float — per-planet production
     H: int,
@@ -74,9 +73,22 @@ def recapture_penalty(
     if C == 0 or P == 0:
         return torch.zeros(C, dtype=dtype, device=device)
 
+    # Device contract: every input tensor must live on the same device as
+    # obs. The function gathers from garrison_status.owner directly so a
+    # mismatch surfaces as a cryptic CUDA error — assert up front.
+    assert garrison_status.owner.device == device, (
+        f"garrison_status.owner on {garrison_status.owner.device}, "
+        f"expected {device}"
+    )
+
     # Effective recap window: only count ticks past what multi-tick opp_proj
-    # already modeled (the scorer already saw those via the background launchset).
-    K_recap_eff = max(1, int(K_recap) - max(0, int(K_opp)))
+    # already modeled (the scorer already saw those via the background
+    # launchset). Floored at 1 — even when multi-tick covers most of the
+    # window we keep a single-tick signal so the penalty doesn't fully
+    # disappear (collapsing to 0 hides recapture risk against opps whose
+    # multi-tick prediction was wrong). Caller already passes
+    # ``K_opp >= 0`` via the env getter, so no inner clamp.
+    K_recap_eff = max(1, int(K_recap) - int(K_opp))
     K_recap_eff = min(K_recap_eff, int(cache.K))
     if K_recap_eff <= 0:
         return torch.zeros(C, dtype=dtype, device=device)
@@ -87,9 +99,11 @@ def recapture_penalty(
     # underestimates threat → penalty leans safe).
     d_immediate = cache.cross_dist[1].to(dtype)                # [P_src, P_tgt]
     speeds = fleet_speed(obs.ships.clamp(min=1.0)).to(dtype)   # [P]
-    # Reach time = ceil(distance / speed) per (src=p, tgt). At least 1 turn.
+    # Reach time = ceil(distance / speed) per (src=p, tgt). Pre-ceil floor
+    # at 1.0 prevents tiny distances rounding to 0; ceil(>=1.0) is >= 1 so
+    # no second clamp needed.
     reach_pT_f = (d_immediate / speeds.view(P, 1).clamp(min=1e-6)).clamp(min=1.0)
-    reach_pT = torch.ceil(reach_pT_f).clamp(min=1.0)            # [P_src, P_tgt]
+    reach_pT = torch.ceil(reach_pT_f)                           # [P_src, P_tgt]
 
     enemy_alive = (obs.is_enemy & obs.alive).to(device)         # [P]
     self_mask = torch.eye(P, dtype=torch.bool, device=device)
@@ -154,13 +168,10 @@ def recapture_penalty(
 
     # ----- penalty -----
     deficit_c = (threat_c - defender_c).clamp(min=0.0)
-    # When no enemy can reach (reach_recap_c is +inf), turns_lost falls to 0.
+    # When no enemy can reach, reach_recap_c is +inf so H - e - +inf = -inf,
+    # which the clamp(min=0) maps to 0. No separate isfinite guard needed.
     e_eta_ceil = torch.ceil(e_eta)
     turns_lost_c = (float(H) - e_eta_ceil - reach_recap_c).clamp(min=0.0)
-    # Replace +inf*0 = NaN with 0 explicitly.
-    turns_lost_c = torch.where(
-        torch.isfinite(reach_recap_c), turns_lost_c, torch.zeros_like(turns_lost_c)
-    )
 
     deficit_signal = (deficit_c > 0).to(dtype)
     penalty_c = captures_c.to(dtype) * deficit_signal * prod_c * turns_lost_c
