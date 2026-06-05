@@ -262,7 +262,14 @@ def predict_opp_multi_launch_lite(
                 t_slot = int(tgt_slot_cpu[best_t])
                 send = max(float(min_ships), float(ship_fraction) * budget)
                 send = min(send, float(drain_cpu[s_i]), budget)
-                eta_val = max(1.0, float(eta_cpu[s_i][best_t]))
+                # Absolute arrival eta from NOW = projection tick offset +
+                # intercept flight time. Without the offset, opp's launch at
+                # _tick=2 with flight=4 would be reported as eta=4 (arrives at
+                # tick 4) instead of the correct eta=6.
+                eta_val = float(_tick) + max(1.0, float(eta_cpu[s_i][best_t]))
+                # Clamp into the scorer's horizon window.
+                if eta_val > float(horizon_eff):
+                    continue
                 records.append((src_slot, t_slot, send, eta_val, opp_id))
                 budget -= send
                 taken_targets.add(t_slot)
