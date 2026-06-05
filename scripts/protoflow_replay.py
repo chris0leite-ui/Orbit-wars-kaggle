@@ -33,9 +33,12 @@ def main() -> None:
     ap.add_argument("--out", default=None, help="output .html path")
     ap.add_argument("--simulate-value", action="store_true",
                     help="use the simulation-based evaluator (proto.SIMULATE_VALUE = True)")
+    ap.add_argument("--drain-cost", action="store_true",
+                    help="price the source-drain cost in offense values (proto.SIMVALUE_DRAIN_COST = True)")
     args = ap.parse_args()
 
     proto.SIMULATE_VALUE = bool(args.simulate_value)
+    proto.SIMVALUE_DRAIN_COST = bool(args.drain_cost)
 
     opp = load_callable(args.opponent)
     env = make("orbit_wars", configuration={"seed": args.seed}, debug=False)
