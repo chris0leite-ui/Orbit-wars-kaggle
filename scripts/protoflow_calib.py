@@ -516,6 +516,32 @@ def main():
            f"hub_on={hub_on} > out_on={out_on}; hub lift={hub_on-hub_off:.1f} "
            f">> outpost lift={out_on-out_off:.1f}")
 
+    # S18 — SAVE UP for a defended big planet over a long wait (Rule 38; the opening bug).
+    # Home produces 1/turn with ~10 ships (like the real home). A big production-5 planet is
+    # defended (garrison 20), so flipping it needs ~12 turns of accumulation; a cheap
+    # production-1 planet is affordable now; no enemy is in counter range. With the old
+    # 4-turn wait cap we dribble into the cheap planet (what lost us the opening vs the
+    # Producer); with the wait reasoning over the value window we HOLD and save up for the
+    # big one. Waiting is a first-class value choice, not a fixed cap.
+    home18 = [0, 0, 15.0, 15.0, radius(1), 10, 1]
+    big18 = [1, -1, 40.0, 15.0, radius(5), 20, 5]    # high production, defended -> long save-up
+    cheap18 = [2, -1, 15.0, 35.0, radius(1), 5, 1]   # low production, affordable now
+    board18 = [home18, big18, cheap18]
+    proto.WAIT_HORIZON = 4
+    show("S18-short wait cap 4 -> dribble the cheap planet (the opening bug)",
+         make_obs(board18),
+         "with a 4-turn cap we cannot save up, so we fire the cheap production-1")
+    short_cheap = any(lc["tgt"] == 2 for lc in proto.get_trace()[-1]["launches"])
+    proto.WAIT_HORIZON = 18
+    show("S18 wait over the value window -> HOLD and save up for the big planet",
+         make_obs(board18),
+         "with the value-horizon wait we hold for the production-5, no cheap dribble")
+    long_launches = proto.get_trace()[-1]["launches"]
+    held_for_big = not any(lc["tgt"] == 2 for lc in long_launches)
+    _check("S18", short_cheap and held_for_big,
+           f"cap-4 fired cheap={short_cheap}; value-horizon held (no cheap dribble)={held_for_big} "
+           f"(launches={long_launches or '(hold)'})")
+
 
 if __name__ == "__main__":
     main()

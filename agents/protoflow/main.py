@@ -66,10 +66,15 @@ COUNTER_WINDOW = WAVE_LOOKAHEAD  # turns after arrival within which enemies can 
 ARRIVAL_PROBE = 16          # representative fleet size for estimating a source's launch-now arrival
 # WAIT GATE (opportunity cost on accumulation): a source fires a cell only if firing
 # now beats HOLDING to fund a strictly-better cell it could afford in a few turns as
-# its production accrues. WAIT_HORIZON bounds how long it may hold (so it can't freeze
-# on a far dream); WAIT_VALUE_MARGIN is how much better the held cell must be before we
-# forgo a sure capture (avoids thrash on near-ties).
-WAIT_HORIZON = 4            # max turns of accumulation a source may wait for a better cell
+# its production accrues. WAITING IS A FIRST-CLASS ACTION: a "wait" cell, valued by the
+# same value() at its accumulation-arrival, competes in the SAME ranked list as fire-now
+# cells; if it wins it holds back ONLY the ships its future wave needs (surplus still
+# fires now). WAIT_HORIZON bounds how long we may accumulate -- set to the value window so
+# the wait reasons over the SAME future as value (not a short 4-turn slice, which made us
+# grab cheap low-production planets instead of saving up for defended high-production ones).
+# WAIT_VALUE_MARGIN discounts the wait's value so we only hold when the future cell is
+# clearly better (anti-thrash on near-ties).
+WAIT_HORIZON = 18           # max turns of accumulation a wait may span (= VALUE_HORIZON)
 WAIT_VALUE_MARGIN = 1.10    # the held cell must beat the fire-now cell by this factor
 # When True, a threatened planet's hold requirement also covers the enemy's FREE
 # recapture follow-up (not just the launched wave) -- the opponent model applied
@@ -478,10 +483,6 @@ def agent(obs, configuration=None):
     # ============================================================
     _LAST_FIELD.clear()
     cells: list[dict] = []
-    # Per-source ASPIRATION: the best wait-discounted value a source could realize by
-    # HOLDING this turn to fund a target it can't quite afford yet. Built below from the
-    # not-yet-fundable targets; consulted by the offense wait gate during assembly.
-    aspiration: dict[int, float] = {int(p.id): 0.0 for p in my_planets}
 
     for t in target_pool:
         srcs = []  # (source, launch_now_arrival)
@@ -508,6 +509,9 @@ def agent(obs, configuration=None):
                 "tgt_owner": int(t.owner), "prod": int(t.production),
             })
 
+        A0 = srcs[0][1]
+        counter0, t_op0 = combined_counter(t, A0)
+
         # Soonest holdable landing turn: extend the prefix of nearest sources until
         # their spare (plus friendly already in flight) can fund the required force.
         chosen = None
@@ -519,23 +523,25 @@ def agent(obs, configuration=None):
                 chosen = (A, [sa for sa in srcs[:i + 1]], R)
                 break
         if chosen is None:
-            # Can't fund a holdable wave THIS turn. If a short accumulation would
-            # afford it, record its wait-discounted value as each nearby source's
-            # aspiration -- the opportunity cost they weigh before dribbling a lesser,
-            # affordable-now cell. value() already discounts the later landing turn, so
-            # v_wait is on the same scale as any fundable cell's value.
-            A0 = srcs[0][1]
+            # Can't fund a holdable wave THIS turn. If accumulation would afford it within
+            # the value window, build a first-class WAIT cell: holding to fund t once its
+            # production accrues (landing at A0+tau). It is valued by the same value() at
+            # that later arrival (discounted by WAIT_VALUE_MARGIN), so it competes in the
+            # SAME ranked list as every fire-now cell -- "wait vs act" is one argmax. If it
+            # wins, assembly holds back ONLY the ships it needs (surplus still fires now).
+            # GUARD: only WAIT for an UNCONTESTED target (no counter in range). For a
+            # contested one the hold cost R0 balloons and grows while we wait -- the hold is
+            # a mirage; the flip tier (below) deploys NOW (bank + deny) instead.
             R0 = required_force(t, A0)
             shortfall = R0 - (friendly_inflight(t, A0)
                               + sum(spare[int(sj.id)] for sj, _ in srcs))
             prod_rate = sum(int(sj.production) for sj, _ in srcs)
-            if shortfall > 0 and prod_rate > 0:
+            if counter0 <= 0.0 and shortfall > 0 and prod_rate > 0:
                 tau = int(math.ceil(shortfall / prod_rate))
                 if tau <= WAIT_HORIZON:
-                    v_wait = value(t, A0 + tau)
-                    for sj, _ in srcs:
-                        if spare[int(sj.id)] > 0:
-                            aspiration[int(sj.id)] = max(aspiration[int(sj.id)], v_wait)
+                    cells.append({"kind": "wait", "t": t, "A": int(A0 + tau), "R": int(R0),
+                                  "srcs": [sa for sa in srcs],
+                                  "value": value(t, A0 + tau) / WAIT_VALUE_MARGIN})
         else:
             A_rel, chosen_srcs, R = chosen
             if R - friendly_inflight(t, A_rel) > 0:
@@ -549,8 +555,7 @@ def agent(obs, configuration=None):
         # flip cell would be redundant. The full-value hold cell (when it exists) outranks
         # this for the same target, so we still concentrate wherever we can afford to hold.
         if FLIP_TIER:
-            A0 = srcs[0][1]
-            counter, t_op = combined_counter(t, A0)
+            counter, t_op = counter0, t_op0
             if counter > 0.0:
                 fchosen = None
                 for i in range(len(srcs)):
@@ -603,14 +608,37 @@ def agent(obs, configuration=None):
     cells.sort(key=lambda c: -c["value"])
     committed_tgt: set[int] = set()
     reserved: set[int] = set()
+    # HELD: ships a WAIT cell reserves this turn -- NOT emitted, so they accumulate on the
+    # planet for a future wave. avail_spare nets them out so no fire-now cell can spend them.
+    held: dict[int, int] = {}
+
+    def avail_spare(sid: int) -> int:
+        return max(0, spare.get(sid, 0) - held.get(sid, 0))
 
     for c in cells:
         t = c["t"]
         tid = int(t.id)
         if tid in committed_tgt:
             continue
+
+        if c["kind"] == "wait":
+            # Hold back ONLY the ships this future wave needs (soonest sources first), so
+            # they accumulate instead of dribbling into a lower-value fire-now cell. Surplus
+            # beyond the need stays available -- the "fire cheap now AND mass for the big
+            # one" line. Emit nothing this turn.
+            need = c["R"] - friendly_inflight(t, c["A"])
+            for s, a in sorted(c["srcs"], key=lambda x: x[1]):
+                if need <= 0:
+                    break
+                take = min(avail_spare(int(s.id)), need)
+                if take > 0:
+                    held[int(s.id)] = held.get(int(s.id), 0) + take
+                    need -= take
+            committed_tgt.add(tid)
+            continue
+
         elig = [(s, a) for (s, a) in c["srcs"]
-                if int(s.id) not in reserved and spare.get(int(s.id), 0) > 0]
+                if int(s.id) not in reserved and avail_spare(int(s.id)) > 0]
         if not elig:
             continue
 
@@ -620,19 +648,13 @@ def agent(obs, configuration=None):
             if need <= 0:
                 committed_tgt.add(tid)
                 continue
-            if friendly_inflight(t, A_rel) + sum(spare[int(s.id)] for s, _ in elig) < c["R"]:
+            if friendly_inflight(t, A_rel) + sum(avail_spare(int(s.id)) for s, _ in elig) < c["R"]:
                 continue  # a higher cell took our sources -> no longer fundable
             # Fire the boundary (launch-now arrival == landing turn) now; those legs
             # land together on the shared turn. Reserve the nearer ones to wait.
             for s, a in sorted(elig, key=lambda x: -x[1]):
                 if a == A_rel and need > 0:
-                    # WAIT GATE: if this source could fund a strictly-better cell by
-                    # holding a few turns, don't dribble it into this lesser one --
-                    # reserve it (it accumulates and fires the better cell once afforded).
-                    if aspiration.get(int(s.id), 0.0) > c["value"] * WAIT_VALUE_MARGIN:
-                        reserved.add(int(s.id))
-                        continue
-                    send = min(spare[int(s.id)], need)
+                    send = min(avail_spare(int(s.id)), need)
                     ang, _eta = aim_and_eta(s, t, send, omega, world=world)
                     if emit(s, t, ang, send, A_rel, "wave", c["R"]):
                         need -= send
@@ -649,7 +671,7 @@ def agent(obs, configuration=None):
                     break
                 if int(s.id) in reserved:
                     continue
-                send = min(spare[int(s.id)], need)
+                send = min(avail_spare(int(s.id)), need)
                 if send < MIN_FLEET_SIZE:
                     continue
                 ang, _eta = aim_and_eta(s, t, send, omega, world=world)
@@ -677,11 +699,11 @@ def agent(obs, configuration=None):
         pressure = {int(p.id): enemy_pressure(p) for p in my_planets}
         srcs = sorted(
             (p for p in my_planets
-             if int(p.id) not in reserved and spare.get(int(p.id), 0) >= REGROUP_MIN_SHIPS),
-            key=lambda p: -spare[int(p.id)],
+             if int(p.id) not in reserved and avail_spare(int(p.id)) >= REGROUP_MIN_SHIPS),
+            key=lambda p: -avail_spare(int(p.id)),
         )
         for s in srcs:
-            leftover = spare.get(int(s.id), 0)
+            leftover = avail_spare(int(s.id))  # don't regroup ships a wait cell is holding
             if leftover < REGROUP_MIN_SHIPS:
                 continue
             best = None  # (score, dest, angle, eta)
