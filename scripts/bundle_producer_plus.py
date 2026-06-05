@@ -40,6 +40,9 @@ ORBIT_LITE_ORDER = [
     # opp_projection depends on garrison_launch, intercept_aim, movement,
     # obs, planner_core — all above. Must come AFTER planner_core.
     "opp_projection",
+    # recapture imports DistanceCache, fleet_speed, PlanetGarrisonStatus —
+    # all from modules above. No interdependence with opp_projection.
+    "recapture",
 ]
 
 ORBIT_LITE_DIR = REPO / "agents" / "producer" / "orbit_lite"
@@ -103,6 +106,25 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_OPP_PROJECTION": "1",
         "PRODUCER_PLUS_MULTI_TICK_OPP_K_4P": "3",
         "PRODUCER_PLUS_MULTI_TICK_OPP_K_2P": "2",
+    },
+    "recapture_penalty": {
+        # Standalone recapture penalty: per-candidate leaf-scorer discount
+        # for thin captures opp can recapture. Tests the mechanism in
+        # isolation (no multi_size, no opp_proj, no multi-tick). See
+        # agents/producer/orbit_lite/recapture.py for the math.
+        "PRODUCER_PLUS_RECAPTURE_PENALTY": "1",
+    },
+    "multi_tick_recap": {
+        # Composed: multi_size + opp_proj + multi-tick + recapture penalty.
+        # The path that ships if the standalone A/B clears. Recapture
+        # penalty's K_recap_eff = max(1, K_recap - K_opp) clips the
+        # window to past what multi-tick already modeled, avoiding
+        # double-counting.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MULTI_TICK_OPP_K_4P": "3",
+        "PRODUCER_PLUS_MULTI_TICK_OPP_K_2P": "2",
+        "PRODUCER_PLUS_RECAPTURE_PENALTY": "1",
     },
 }
 

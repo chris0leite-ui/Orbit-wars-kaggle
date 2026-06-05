@@ -33,6 +33,7 @@ from orbit_lite.obs import parse_obs
 from orbit_lite.distance_cache import build_distance_cache
 from orbit_lite.garrison_launch import LaunchSet
 from orbit_lite.opp_projection import predict_opp_launches_via_mirror, MAX_L_OPP
+from orbit_lite.recapture import recapture_penalty
 from orbit_lite.planner_core import (
     _candidate_indices,
     _empty_entries,
@@ -120,6 +121,47 @@ def _multi_tick_opp_k(player_count: int) -> int:
         return max(0, int(raw))
     except (TypeError, ValueError):
         return 0
+
+
+# Recapture penalty: per-candidate leaf-scorer discount for thin captures
+# the opponent can plausibly recapture. Composes additively with
+# competitive_score; the term is in ship units so the weight is a pure
+# multiplier. Multi-tick opp_proj already debits for opp launches inside
+# its projection window; to avoid double-counting we clip the recapture
+# window via K_recap_eff = max(1, K_recap - K_opp). Default OFF preserves
+# byte-identical static behaviour. See knowledge-base/thoughts/
+# 2026-06-05-cycle-stalemate-and-horizon-scaling.md for motivation.
+def _recapture_penalty_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_RECAPTURE_PENALTY", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _recapture_penalty_weight() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_RECAPTURE_PENALTY_WEIGHT", "1.0")
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _recapture_k(player_count: int) -> int:
+    suffix = "_4P" if int(player_count) >= 4 else "_2P"
+    raw = os.environ.get(f"PRODUCER_PLUS_RECAPTURE_K{suffix}")
+    if raw is None:
+        raw = os.environ.get("PRODUCER_PLUS_RECAPTURE_K", "8")
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 8
+
+
+def _recapture_safety_reserve() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_RECAPTURE_SAFETY_RESERVE", "0.5")
+    try:
+        return min(1.0, max(0.0, float(raw)))
+    except (TypeError, ValueError):
+        return 0.5
 
 
 def _env_int(name: str, default: int) -> int:
@@ -775,6 +817,27 @@ def plan_lite_waves(
         garrison_status, prod=prod, alive_by_step=alive_by_step,
         player_count=int(player_count), launches=scoring_launches, player_id=pid,
     )                                                                            # [C]
+    if _recapture_penalty_enabled():
+        # Subtract a non-negative recapture discount per candidate. The
+        # penalty is in ship units (prod[T] * turns_lost), additive with
+        # competitive_score. K_opp is read from the multi-tick env knob
+        # only when opp projection is on; otherwise pass 0 so we don't
+        # subtract a window the scorer never modeled.
+        pen = recapture_penalty(
+            obs=obs, cache=cache, garrison_status=garrison_status,
+            cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
+            cand_send=cand_send, cand_eta=cand_eta,
+            cand_valid=cand_valid, cand_is_def=cand_is_def,
+            target_idx=target_idx, capture_floor_TK=floor,
+            prod=prod, H=H,
+            K_recap=_recapture_k(int(player_count)),
+            K_opp=(
+                _multi_tick_opp_k(int(player_count)) if _opp_projection_enabled() else 0
+            ),
+            safety_reserve=_recapture_safety_reserve(),
+            player_id=pid,
+        )
+        score = score - pen * float(_recapture_penalty_weight())
     score = torch.where(cand_valid, score, torch.full_like(score, float("-inf")))
 
     # Cross-wave over-drain guard for multi-size: single-size's accidental
