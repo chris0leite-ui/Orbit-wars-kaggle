@@ -112,6 +112,11 @@ _BASELINES: dict[str, str] = {
     "producer_plus_kitchen_sink": str(
         REPO / "agents" / "producer_plus" / "producer_plus_kitchen_sink.py"
     ),
+    # Multi-size + opp_proj (no coalitions). Isolates opp_proj's lift over
+    # multi_size alone, since diagnostic traces show coalitions barely fire.
+    "producer_plus_multi_opp": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_multi_opp.py"
+    ),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",
