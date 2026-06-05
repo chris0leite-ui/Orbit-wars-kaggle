@@ -112,6 +112,20 @@ SPRINGBOARD_TOPK = 2         # best-K unlocks credited per hop; 0 -> today's unb
 # it (a spear) rather than scattering into neutrals. Replaces the crude x2-for-enemy denial.
 OFFENSIVE_PRESSURE = True     # A/B knob: False -> today's x2-enemy denial, no opp_phi term
 OFFENSE_WEIGHT = 1.0         # weight on the opponent-region-loss term for enemy targets
+# CONCENTRATED SALVO. Combat rule 1 sums only SAME-TURN same-owner arrivals, but the old
+# assembly fired a boundary leg now and deferred nearer legs to later turns -- estimating
+# arrivals with a fixed probe size while real fleet speed depends on ship count. So legs
+# landed on different turns, fought the garrison piecemeal, and BOUNCED (15/19 targets needed
+# multiple attempts; we sent 35 at a floor of 47, 16 at 22). Instead deliver a capture as a
+# SINGLE-TURN synchronized salvo at real leg sizes: fire only co-arriving sources whose summed
+# mass meets the requirement, all launched now -- or wait. Never emit a sub-threshold leg.
+CONCENTRATED_SALVO = True     # A/B knob: False -> old cross-turn boundary/defer (piecemeal)
+# SELF-PROTECTIVE RESERVE. reserve() withheld ships only against enemy fleets ALREADY in
+# flight, blind to the standing threat of a nearby enemy PLANET. So draining a frontier planet
+# to grab a neutral looked free -- the enemy then launched and took our emptied planet. Price
+# the standing threat too (the same combined_counter we size attacks against, from p's seat),
+# so a planet never drains below what keeps it alive.
+RESERVE_THREAT = True         # A/B knob: False -> today's in-flight-only reserve
 # FLIP-vs-HOLD TIERS. The combined-counter hold requirement was a HARD GATE: a contested
 # planet we could flip but not HOLD built no cell at all -> we froze (launches collapsed
 # to ~65/game vs the Producer, idle 0.56, wiped to one planet). The fix: offer each target
@@ -248,26 +262,11 @@ def agent(obs, configuration=None):
             _tte_cache[pid] = model.time_to_enemy_threat(int(pid), me, world)
         return _tte_cache[pid]
 
-    # --- per-source reserve: withhold ONLY the ships needed to survive a threat
-    # that can ARRIVE before we could react, crediting our own production.
-    def reserve(p) -> int:
-        t = tte(int(p.id))
-        if t is None:
-            return 0
-        force = sum(sh for (eta_arr, owner, sh) in model.ledger.get(int(p.id), [])
-                    if owner != me and eta_arr <= t + WAVE_LOOKAHEAD)
-        hold = float(p.ships) + float(p.production) * float(t)
-        return max(0, int(math.ceil(force - hold + 1)))
-
-    spare = {int(p.id): max(0, int(p.ships) - reserve(p)) for p in my_planets}
-
-    # --- enemy FREE force: the mirror of our own reserve(), from the enemy's seat.
-    # An enemy planet must hold back enough to survive OUR reachable force; only the
-    # remainder is free to COUNTER our captures or attack us. A ship pinned defending
-    # its own planet cannot also counter us -- so pressuring the enemy shrinks the
-    # counter, and our captures are sized against what they can actually spare (not
-    # their whole army). time_to_enemy_threat is perspective-symmetric: passing the
-    # enemy's own id asks "soonest WE could threaten e".
+    # --- enemy FREE force: the mirror of our own reserve(), from the enemy's seat. An enemy
+    # planet must hold back enough to survive OUR reachable force; only the remainder is free
+    # to counter our captures or attack us. Defined BEFORE reserve so reserve can price the
+    # standing threat. time_to_enemy_threat is perspective-symmetric (passing e's own id asks
+    # "soonest WE could threaten e").
     _efree_cache: dict[int, float] = {}
 
     def enemy_free(e) -> float:
@@ -295,6 +294,66 @@ def agent(obs, configuration=None):
         _efree_cache[key] = v
         return v
 
+    # --- COMBINED counter: the opponent's real wave on a target -- the SUM over every enemy
+    # planet that can reach it within COUNTER_WINDOW of its FREE force (net of what it must
+    # hold against us), plus in-flight enemy, floored at the nearest enemy's full garrison.
+    # Used both to size our captures (required_force) AND, on our own planet, to price the
+    # standing threat in reserve.
+    def combined_counter(t, A):
+        total = 0.0
+        t_min = None
+        tx, ty, tr = float(t.x), float(t.y), float(t.radius)
+        nearest_full = None
+        nearest_tau = None
+        for e in enemy_planets:
+            flight = math.hypot(float(e.x) - tx, float(e.y) - ty) - float(e.radius) - tr
+            sp = fleet_speed(int(e.ships))
+            tau = 1 if flight <= 0.0 else (int(math.ceil(flight / sp)) if sp > 0 else 999)
+            if tau <= COUNTER_WINDOW:
+                total += enemy_free(e) + float(e.production) * float(A + tau)
+                cand_full = float(e.ships) + float(e.production) * float(A + tau)
+                if nearest_full is None or tau < nearest_tau:
+                    nearest_full, nearest_tau = cand_full, tau
+                t_min = tau if t_min is None else min(t_min, tau)
+        for (eta_arr, owner, sh) in model.ledger.get(int(t.id), []):
+            if owner != me and A < eta_arr <= A + COUNTER_WINDOW:
+                total += float(sh)
+                tau = max(1, int(eta_arr) - int(A))
+                t_min = tau if t_min is None else min(t_min, tau)
+        if nearest_full is not None:
+            total = max(total, nearest_full)
+        return total, (t_min if t_min is not None else 0)
+
+    # --- per-source reserve: withhold the ships needed to survive a threat that can ARRIVE
+    # before we could react, crediting our own production. The threat is enemy fleets already
+    # in flight AND -- when RESERVE_THREAT -- the standing FREE force a nearby enemy PLANET can
+    # launch at p (combined_counter evaluated on p, the same quantity we size our own attacks
+    # against). Without the standing term we drain frontier planets and lose them next turn.
+    def reserve(p) -> int:
+        t = tte(int(p.id))
+        if t is None and not RESERVE_THREAT:
+            return 0
+        inflight = sum(sh for (eta_arr, owner, sh) in model.ledger.get(int(p.id), [])
+                       if owner != me and t is not None and eta_arr <= t + WAVE_LOOKAHEAD)
+        if RESERVE_THREAT:
+            standing, t_op = combined_counter(p, 0)
+            threat = max(float(inflight), standing)
+            if threat <= 0.0:
+                return 0
+            grow_t = t_op if t_op > 0 else (t if t is not None else 0)
+            grow = float(p.production) * float(grow_t)
+            # If we can't survive even by holding EVERYTHING, reserving is futile -- those
+            # ships should deploy (bank + deny) rather than sit and be wiped (the doomed
+            # no-bleed logic). Otherwise keep enough RETAINED ships that, with production
+            # growth, p survives -- NOT crediting the garrison we're about to allocate.
+            if threat > float(p.ships) + grow:
+                return 0
+            return max(0, min(int(p.ships), int(math.ceil(threat - grow))))
+        hold = float(p.ships) + float(p.production) * float(t)
+        return max(0, int(math.ceil(float(inflight) - hold + 1)))
+
+    spare = {int(p.id): max(0, int(p.ships) - reserve(p)) for p in my_planets}
+
     # --- launch-now arrival: the turn a fleet launched THIS turn from s would reach
     # t (a representative probe size; the actual leg is re-aimed at its real count in
     # emit). This is what lets sources at different distances align on one landing
@@ -309,6 +368,21 @@ def agent(obs, configuration=None):
             _ang, eta = aim_and_eta(s, t, ARRIVAL_PROBE, omega, world=world)
             a = int(math.ceil(float(eta)))
             _arr_cache[key] = a
+        return a
+
+    # Real-size launch-now arrival: a fleet's speed RISES with ship count, so a small leg is
+    # slow. Estimating arrival at the ACTUAL send size (not a fixed probe) is what lets the
+    # salvo know which legs truly co-arrive and combine (combat rule 1 sums same-TURN arrivals).
+    _arr_sized_cache: dict[tuple[int, int, int], int] = {}
+
+    def arr_sized(s, t, ships) -> int:
+        ships = max(MIN_FLEET_SIZE, int(ships))
+        key = (int(s.id), int(t.id), ships)
+        a = _arr_sized_cache.get(key)
+        if a is None:
+            _ang, eta = aim_and_eta(s, t, ships, omega, world=world)
+            a = int(math.ceil(float(eta)))
+            _arr_sized_cache[key] = a
         return a
 
     # --- winnability: probability the action delivers the value we priced.
@@ -369,41 +443,6 @@ def agent(obs, configuration=None):
             stream_turns = min(stream_turns, float(tenure))
         stream = int(t.production) * stream_turns
         return mult * stream * winnability(t, arrive)
-
-    # --- COMBINED counter: the opponent's real recapture wave is the SUM over every
-    # enemy planet that can reach t within COUNTER_WINDOW turns after we capture (not
-    # just the nearest one -- that single-planet under-estimate is what let the
-    # Producer out-mass us). In-flight enemy arriving AFTER our capture is added too;
-    # enemy arriving by A is already in ships_at(t, A) (the defender), so no double
-    # count.
-    def combined_counter(t, A):
-        total = 0.0
-        t_min = None
-        tx, ty, tr = float(t.x), float(t.y), float(t.radius)
-        # The opponent's force is FINITE and allocated: each enemy planet can only
-        # spend its FREE force (net of what it must hold against us) on the counter.
-        # Floor the total at the single nearest enemy's FULL contribution, so we are
-        # never recklessly optimistic when an enemy sits right on the target.
-        nearest_full = None
-        nearest_tau = None
-        for e in enemy_planets:
-            flight = math.hypot(float(e.x) - tx, float(e.y) - ty) - float(e.radius) - tr
-            sp = fleet_speed(int(e.ships))
-            tau = 1 if flight <= 0.0 else (int(math.ceil(flight / sp)) if sp > 0 else 999)
-            if tau <= COUNTER_WINDOW:
-                total += enemy_free(e) + float(e.production) * float(A + tau)
-                cand_full = float(e.ships) + float(e.production) * float(A + tau)
-                if nearest_full is None or tau < nearest_tau:
-                    nearest_full, nearest_tau = cand_full, tau
-                t_min = tau if t_min is None else min(t_min, tau)
-        for (eta_arr, owner, sh) in model.ledger.get(int(t.id), []):
-            if owner != me and A < eta_arr <= A + COUNTER_WINDOW:
-                total += float(sh)
-                tau = max(1, int(eta_arr) - int(A))
-                t_min = tau if t_min is None else min(t_min, tau)
-        if nearest_full is not None:
-            total = max(total, nearest_full)
-        return total, (t_min if t_min is not None else 0)
 
     # --- required force at a cell: the flip floor at arrival A, up-sized so the
     # post-capture garrison survives the COMBINED counter (same inequality as the
@@ -484,6 +523,32 @@ def agent(obs, configuration=None):
     _LAST_FIELD.clear()
     cells: list[dict] = []
 
+    def salvo_select(t, threshold_fn):
+        # The soonest landing turn at which a SYNCHRONIZED salvo captures: among sources
+        # launching now (arrival estimated at their REAL send size = current spare), the
+        # co-arriving group on that turn, plus our fleets already in flight arriving then,
+        # must sum to >= the threshold. Returns (A, [(src, arrival)], R) or None. Only same-
+        # turn arrivals combine (combat rule 1), so this never relies on un-synced legs.
+        cand = []
+        for s in nearest_k(my_planets, t, SOURCES_PER_TARGET):
+            if int(s.id) == int(t.id):
+                continue
+            sp = spare.get(int(s.id), 0)
+            if sp <= 0:
+                continue
+            a = arr_sized(s, t, sp)
+            if a <= REACH_CEIL:
+                cand.append((s, a, sp))
+        if not cand:
+            return None
+        for A in sorted({a for _, a, _ in cand}):
+            co = [(s, a, sp) for (s, a, sp) in cand if a == A]
+            deliver = friendly_inflight(t, A) + sum(sp for _, _, sp in co)
+            R = int(threshold_fn(t, A))
+            if deliver >= R:
+                return (A, [(s, a) for (s, a, _sp) in co], R)
+        return None
+
     for t in target_pool:
         srcs = []  # (source, launch_now_arrival)
         for s in nearest_k(my_planets, t, SOURCES_PER_TARGET):
@@ -512,51 +577,66 @@ def agent(obs, configuration=None):
         A0 = srcs[0][1]
         counter0, t_op0 = combined_counter(t, A0)
 
-        # Soonest holdable landing turn: extend the prefix of nearest sources until
-        # their spare (plus friendly already in flight) can fund the required force.
-        chosen = None
-        for i in range(len(srcs)):
-            A = srcs[i][1]
-            R = required_force(t, A)
-            avail = friendly_inflight(t, A) + sum(spare[int(sj.id)] for sj, _ in srcs[:i + 1])
-            if avail >= R:
-                chosen = (A, [sa for sa in srcs[:i + 1]], R)
-                break
-        if chosen is None:
-            # Can't fund a holdable wave THIS turn. If accumulation would afford it within
-            # the value window, build a first-class WAIT cell: holding to fund t once its
-            # production accrues (landing at A0+tau). It is valued by the same value() at
-            # that later arrival (discounted by WAIT_VALUE_MARGIN), so it competes in the
-            # SAME ranked list as every fire-now cell -- "wait vs act" is one argmax. If it
-            # wins, assembly holds back ONLY the ships it needs (surplus still fires now).
-            # GUARD: only WAIT for an UNCONTESTED target (no counter in range). For a
-            # contested one the hold cost R0 balloons and grows while we wait -- the hold is
-            # a mirage; the flip tier (below) deploys NOW (bank + deny) instead.
-            R0 = required_force(t, A0)
-            shortfall = R0 - (friendly_inflight(t, A0)
-                              + sum(spare[int(sj.id)] for sj, _ in srcs))
-            prod_rate = sum(int(sj.production) for sj, _ in srcs)
-            if counter0 <= 0.0 and shortfall > 0 and prod_rate > 0:
-                tau = int(math.ceil(shortfall / prod_rate))
-                if tau <= WAIT_HORIZON:
-                    cells.append({"kind": "wait", "t": t, "A": int(A0 + tau), "R": int(R0),
-                                  "srcs": [sa for sa in srcs],
-                                  "value": value(t, A0 + tau) / WAIT_VALUE_MARGIN})
+        if CONCENTRATED_SALVO:
+            # SALVO: a capture is delivered as a SINGLE-TURN synchronized salvo at real leg
+            # sizes -- only co-arriving sources whose summed mass meets the requirement, all
+            # launched now -- or we wait. salvo_select finds the soonest such landing turn.
+            hold = salvo_select(t, required_force)
+            if hold is not None:
+                A_rel, co_srcs, R = hold
+                if R - friendly_inflight(t, A_rel) > 0:
+                    cells.append({"kind": "off", "t": t, "A": int(A_rel), "R": int(R),
+                                  "srcs": co_srcs, "value": value(t, A_rel)})
+            else:
+                # No salvo meets the hold this turn. WAIT (accumulate at the strongest source)
+                # for an UNCONTESTED target -- a contested target's hold cost balloons while we
+                # wait, so the flip salvo below deploys now instead.
+                R0 = required_force(t, A0)
+                shortfall = R0 - (friendly_inflight(t, A0)
+                                  + sum(spare[int(sj.id)] for sj, _ in srcs))
+                prod_rate = sum(int(sj.production) for sj, _ in srcs)
+                if counter0 <= 0.0 and shortfall > 0 and prod_rate > 0:
+                    tau = int(math.ceil(shortfall / prod_rate))
+                    if tau <= WAIT_HORIZON:
+                        cells.append({"kind": "wait", "t": t, "A": int(A0 + tau), "R": int(R0),
+                                      "srcs": [sa for sa in srcs],
+                                      "value": value(t, A0 + tau) / WAIT_VALUE_MARGIN})
+            # FLIP salvo (contested only): a decisive flip-floor salvo, expected-tenure value.
+            if FLIP_TIER and counter0 > 0.0:
+                fl = salvo_select(t, lambda tt, AA: flip_floor(tt, AA)[0])
+                if fl is not None:
+                    A_f, f_srcs, Rf = fl
+                    if Rf - friendly_inflight(t, A_f) > 0:
+                        cells.append({"kind": "off", "t": t, "A": int(A_f), "R": int(Rf),
+                                      "srcs": f_srcs, "value": value(t, A_f, tenure=t_op0)})
         else:
-            A_rel, chosen_srcs, R = chosen
-            if R - friendly_inflight(t, A_rel) > 0:
-                cells.append({"kind": "off", "t": t, "A": int(A_rel), "R": int(R),
-                              "srcs": chosen_srcs, "value": value(t, A_rel)})
-
-        # FLIP cell (cheap capture, expected-tenure value). Built whether or not the HOLD
-        # cell above was fundable, so a frozen (unholdable) contested target still gets a
-        # deploy option instead of sitting idle. Only meaningful when a counter exists --
-        # with no counter the hold cell already collapses to the flip floor, so a separate
-        # flip cell would be redundant. The full-value hold cell (when it exists) outranks
-        # this for the same target, so we still concentrate wherever we can afford to hold.
-        if FLIP_TIER:
-            counter, t_op = counter0, t_op0
-            if counter > 0.0:
+            # --- OLD cross-turn assembly (A/B baseline): prefix of nearest sources, boundary
+            # fires now and nearer legs defer to later turns (the piecemeal-bounce path).
+            chosen = None
+            for i in range(len(srcs)):
+                A = srcs[i][1]
+                R = required_force(t, A)
+                avail = friendly_inflight(t, A) + sum(spare[int(sj.id)] for sj, _ in srcs[:i + 1])
+                if avail >= R:
+                    chosen = (A, [sa for sa in srcs[:i + 1]], R)
+                    break
+            if chosen is None:
+                R0 = required_force(t, A0)
+                shortfall = R0 - (friendly_inflight(t, A0)
+                                  + sum(spare[int(sj.id)] for sj, _ in srcs))
+                prod_rate = sum(int(sj.production) for sj, _ in srcs)
+                if counter0 <= 0.0 and shortfall > 0 and prod_rate > 0:
+                    tau = int(math.ceil(shortfall / prod_rate))
+                    if tau <= WAIT_HORIZON:
+                        cells.append({"kind": "wait", "t": t, "A": int(A0 + tau), "R": int(R0),
+                                      "srcs": [sa for sa in srcs],
+                                      "value": value(t, A0 + tau) / WAIT_VALUE_MARGIN})
+            else:
+                A_rel, chosen_srcs, R = chosen
+                if R - friendly_inflight(t, A_rel) > 0:
+                    cells.append({"kind": "off", "t": t, "A": int(A_rel), "R": int(R),
+                                  "srcs": chosen_srcs, "value": value(t, A_rel)})
+            if FLIP_TIER and counter0 > 0.0:
                 fchosen = None
                 for i in range(len(srcs)):
                     A = srcs[i][1]
@@ -570,7 +650,7 @@ def agent(obs, configuration=None):
                     A_f, f_srcs, Rf = fchosen
                     if Rf - friendly_inflight(t, A_f) > 0:
                         cells.append({"kind": "off", "t": t, "A": int(A_f), "R": int(Rf),
-                                      "srcs": f_srcs, "value": value(t, A_f, tenure=t_op)})
+                                      "srcs": f_srcs, "value": value(t, A_f, tenure=t_op0)})
 
     for p in my_planets:
         need, deadline = committed_threat(p)
@@ -650,18 +730,30 @@ def agent(obs, configuration=None):
                 continue
             if friendly_inflight(t, A_rel) + sum(avail_spare(int(s.id)) for s, _ in elig) < c["R"]:
                 continue  # a higher cell took our sources -> no longer fundable
-            # Fire the boundary (launch-now arrival == landing turn) now; those legs
-            # land together on the shared turn. Reserve the nearer ones to wait.
-            for s, a in sorted(elig, key=lambda x: -x[1]):
-                if a == A_rel and need > 0:
+            if CONCENTRATED_SALVO:
+                # Fire ALL co-arriving sources NOW (largest first) -- they were selected to
+                # land on the same turn at real size, so they SUM into one decisive mass and
+                # capture on the first attempt. No sub-threshold lone leg (the fundability
+                # check above guarantees the salvo meets the requirement).
+                for s, a in sorted(elig, key=lambda x: -avail_spare(int(x[0].id))):
+                    if need <= 0:
+                        break
                     send = min(avail_spare(int(s.id)), need)
                     ang, _eta = aim_and_eta(s, t, send, omega, world=world)
                     if emit(s, t, ang, send, A_rel, "wave", c["R"]):
                         need -= send
-            if need > 0:
-                for s, a in elig:
-                    if a < A_rel:
-                        reserved.add(int(s.id))  # waits this turn (anti-dispersion)
+            else:
+                # OLD: fire the boundary leg now, reserve nearer ones for later turns.
+                for s, a in sorted(elig, key=lambda x: -x[1]):
+                    if a == A_rel and need > 0:
+                        send = min(avail_spare(int(s.id)), need)
+                        ang, _eta = aim_and_eta(s, t, send, omega, world=world)
+                        if emit(s, t, ang, send, A_rel, "wave", c["R"]):
+                            need -= send
+                if need > 0:
+                    for s, a in elig:
+                        if a < A_rel:
+                            reserved.add(int(s.id))  # waits this turn (anti-dispersion)
             committed_tgt.add(tid)
 
         else:  # defense: get force there by the deadline, soonest-first

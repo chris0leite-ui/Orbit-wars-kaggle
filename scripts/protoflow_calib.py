@@ -241,38 +241,44 @@ def main():
     neutral9 = [1, -1, 33.0, 40.0, radius(3), 6, 3]            # the capture under test
     enemyA = [2, 1, 41.0, 40.0, radius(1), 60, 1]             # strong counter from the east
     enemyB = [3, 1, 33.0, 28.0, radius(1), 60, 1]             # strong counter from the north
+    # We read the REQUIRED FORCE off the field (the sizing under test), not the funded launch:
+    # with self-protective reserve a home flanked by two strong enemies holds ships back, so
+    # the funded launch reflects reserve, not the combined-counter sizing. req_for reads the
+    # required ships the field computed for the cell.
+    def req_for9(field, tgt):
+        es = [f["ships"] for f in field if f["tgt"] == tgt]
+        return max(es) if es else None
     moves, field = show("S9a one counter (single strong enemy in recapture range)",
          make_obs([home9, neutral9, enemyA]),
          "the neutral is sized to hold against ONE free counter")
-    one_l = next((lc for lc in proto.get_trace()[-1]["launches"] if lc["tgt"] == 1), None)
-    _check("S9a", one_l is not None, f"launch={one_l} (want a holdable capture)")
+    one_req = req_for9(field, 1)
+    _check("S9a", one_req is not None, f"required force={one_req} (want a holdable sizing)")
     moves, field = show("S9b two counters (combined free recapture wave is larger)",
          make_obs([home9, neutral9, enemyA, enemyB]),
          "with TWO free counters in range, the SAME neutral needs strictly more ships")
-    two_l = next((lc for lc in proto.get_trace()[-1]["launches"] if lc["tgt"] == 1), None)
-    combined = two_l is not None and one_l is not None and two_l["ships"] > one_l["ships"]
+    two_req = req_for9(field, 1)
+    combined = two_req is not None and one_req is not None and two_req > one_req
     _check("S9b", combined,
-           f"two-counter ships={two_l['ships'] if two_l else None} > "
-           f"one-counter ships={one_l['ships'] if one_l else None}")
+           f"two-counter req={two_req} > one-counter req={one_req}")
 
-    # S10 — WAVE boundary + anti-dispersion RESERVATION. A defended target that NO
-    # single planet can fund, reachable by a FAR source and a NEAR source; plus a
-    # cheap solo neutral the near source could grab alone. This turn the FAR source
-    # must fire at the wave target (it is the binding leg that must leave now to land
-    # on the shared turn) and the NEAR source must be RESERVED -- emit nothing,
-    # waiting for the wave instead of defecting to the easy solo.
+    # S10 — NO SUB-THRESHOLD BOUNCE on a multi-distance target (salvo model). A defended
+    # target NO single planet can fund, reachable by a FAR and a NEAR source at DIFFERENT
+    # distances (so they cannot co-arrive), plus a cheap solo neutral. The OLD design fired a
+    # lone far boundary leg now and deferred the near leg -- the legs landed on different turns
+    # and BOUNCED. Under the salvo model we must NOT send any leg below the floor at the wave
+    # target (it can't be synchronized this turn); we either take a decisive solo or wait.
     far_src = [0, 0, 20.0, 20.0, radius(3), 20, 3]            # far from the target
-    near_src = [1, 0, 55.0, 32.0, radius(3), 20, 3]           # near target AND near the solo (off the far->tgt line)
-    wave_tgt = [2, -1, 70.0, 20.0, radius(4), 30, 4]          # defended; needs both sources
-    solo = [3, -1, 60.0, 42.0, radius(2), 5, 2]              # tempting easy solo for near_src
-    moves, field = show("S10 wave boundary + reservation (far fires, near waits)",
+    near_src = [1, 0, 55.0, 32.0, radius(3), 20, 3]           # near target AND near the solo
+    wave_tgt = [2, -1, 70.0, 20.0, radius(4), 30, 4]          # defended; no single source funds it
+    solo = [3, -1, 60.0, 42.0, radius(2), 5, 2]              # cheap decisive solo
+    moves, field = show("S10 no sub-threshold bounce (multi-distance target can't synchronize)",
          make_obs([far_src, near_src, wave_tgt, solo]),
-         "far source fires at the wave target; near source reserved (no solo defect)")
+         "no lone sub-threshold leg at the wave target; a decisive solo is fine, bouncing is not")
     l10 = proto.get_trace()[-1]["launches"]
-    far_fires = any(lc["src"] == 0 and lc["tgt"] == 2 and lc["kind"] == "wave" for lc in l10)
-    near_silent = not any(lc["src"] == 1 for lc in l10)
-    _check("S10", far_fires and near_silent,
-           f"launches={l10} (want far0 -> wave_tgt2, near1 silent/reserved)")
+    floor_tgt2 = max(proto.MIN_FLEET_SIZE, 30 + proto.CAPTURE_MARGIN)
+    bounce = any(lc["tgt"] == 2 and lc["ships"] < floor_tgt2 for lc in l10)
+    _check("S10", not bounce,
+           f"launches={l10} (want NO sub-threshold leg <{floor_tgt2} at wave target 2)")
 
     # S11 — WAIT GATE (the opening-tempo dribble, reproduced). One small home in ship
     # range of BOTH a NEAR high-production neutral it cannot quite afford this turn
@@ -541,6 +547,49 @@ def main():
     _check("S18", short_cheap and held_for_big,
            f"cap-4 fired cheap={short_cheap}; value-horizon held (no cheap dribble)={held_for_big} "
            f"(launches={long_launches or '(hold)'})")
+
+    # S19 — NO SUB-THRESHOLD BOUNCE (Rule 38; the multi-attempt waste). A defended target that
+    # no single source can fund, reachable by a FAR and a NEAR source at DIFFERENT distances
+    # (so they can't co-arrive this turn) plus a cheap solo. With CONCENTRATED_SALVO off the
+    # old assembly fires a lone far leg below the floor (it bounces; we re-attack later -- the
+    # 15/19 multi-attempt waste). With it on we never emit a sub-threshold leg at that target.
+    far19 = [0, 0, 20.0, 20.0, radius(3), 20, 3]
+    near19 = [1, 0, 55.0, 32.0, radius(3), 20, 3]
+    wave19 = [2, -1, 70.0, 20.0, radius(4), 30, 4]   # floor ~32; no single source funds it
+    solo19 = [3, -1, 60.0, 42.0, radius(2), 5, 2]
+    board19 = [far19, near19, wave19, solo19]
+    floor19 = max(proto.MIN_FLEET_SIZE, 30 + proto.CAPTURE_MARGIN)
+    proto.CONCENTRATED_SALVO = False
+    show("S19-old cross-turn assembly -> sub-threshold leg bounces off the wave target",
+         make_obs(board19), "old: a lone far leg lands below the floor and bounces")
+    sub_off = [lc for lc in proto.get_trace()[-1]["launches"]
+               if lc["tgt"] == 2 and lc["ships"] < floor19]
+    proto.CONCENTRATED_SALVO = True
+    show("S19 salvo -> no sub-threshold leg at the wave target",
+         make_obs(board19), "salvo: never emit a leg below the floor at an un-synchronizable target")
+    sub_on = [lc for lc in proto.get_trace()[-1]["launches"]
+              if lc["tgt"] == 2 and lc["ships"] < floor19]
+    _check("S19", bool(sub_off) and not sub_on,
+           f"old emitted sub-threshold leg={sub_off}; salvo emitted none={not sub_on}")
+
+    # S20 — SELF-PROTECTION (Rule 38; the suicidal drain). A frontier planet next to a strong
+    # enemy it CAN survive by holding, plus a tempting neutral. With RESERVE_THREAT off we
+    # drain the frontier to grab the neutral and leave it open; with it on we keep enough
+    # (retained + growth) to hold, so the drain is no longer admissible. (Clear of the sun.)
+    frontier20 = [0, 0, 30.0, 20.0, radius(3), 30, 3]
+    enemy20 = [1, 1, 47.0, 20.0, radius(3), 40, 1]    # strong, but frontier+growth can survive it
+    neutral20 = [2, -1, 15.0, 20.0, radius(2), 6, 2]  # tempting capture on the far side
+    board20 = [frontier20, enemy20, neutral20]
+    proto.RESERVE_THREAT = False
+    show("S20-off drain the frontier to grab the neutral (self-exposure)",
+         make_obs(board20), "without the standing-threat reserve we drain and expose the frontier")
+    drain_off = any(lc["src"] == 0 and lc["tgt"] == 2 for lc in proto.get_trace()[-1]["launches"])
+    proto.RESERVE_THREAT = True
+    show("S20 keep enough to hold the frontier (no suicidal drain)",
+         make_obs(board20), "with the standing-threat reserve the frontier is not drained open")
+    drain_on = any(lc["src"] == 0 and lc["tgt"] == 2 for lc in proto.get_trace()[-1]["launches"])
+    _check("S20", drain_off and not drain_on,
+           f"off drained the frontier={drain_off}; on protected it (no drain)={not drain_on}")
 
 
 if __name__ == "__main__":
