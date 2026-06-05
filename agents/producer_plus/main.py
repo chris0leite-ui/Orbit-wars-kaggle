@@ -864,6 +864,7 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
             pid for pid in range(int(player_count)) if pid != int(obs.player_id)
         ]
         background = predict_opp_launches_via_mirror(
+            plan_fn=plan_lite_waves,
             obs_tensors=obs_tensors, movement=movement, cache=cache,
             garrison_status=status, prod=movement.planet_prod,
             alive_by_step=alive_by_step,

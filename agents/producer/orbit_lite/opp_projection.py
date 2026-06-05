@@ -62,6 +62,7 @@ def _pack_records_to_launch_set(
 
 def predict_opp_launches_via_mirror(
     *,
+    plan_fn,
     obs_tensors: dict,
     movement: PlanetMovement,
     cache,
@@ -74,15 +75,15 @@ def predict_opp_launches_via_mirror(
     K_eta_override: int | None = None,
     pad_to: int = MAX_L_OPP,
 ) -> LaunchSet:
-    """For each opponent seat, run Producer's own planner with the seat
-    swapped to their POV and ``background=None`` (one-step best response,
-    opp assumes we do nothing this turn). Pack the resulting launches into
-    a padded `LaunchSet` with ``owner = opp_id`` per slot.
-    """
-    # Local import: opp_projection is imported by main, so importing main
-    # at module load would be circular.
-    from agents.producer_plus.main import plan_lite_waves
+    """For each opponent seat, run ``plan_fn`` (Producer's planner) with
+    the seat swapped to their POV and ``background=None`` (one-step best
+    response, opp assumes we do nothing this turn). Pack the resulting
+    launches into a padded `LaunchSet` with ``owner = opp_id`` per slot.
 
+    ``plan_fn`` is passed as a callback (rather than imported) so this
+    module has no cross-package dependency -- works the same in the source
+    tree and in the bundled submission.
+    """
     device = obs_tensors["planets"].device
     # Ships dtype matches obs.ships used inside plan_lite_waves; obs.ships is
     # derived from obs_tensors["planets"] in parse_obs.
@@ -99,7 +100,7 @@ def predict_opp_launches_via_mirror(
     for opp_id in opp_ids:
         opp_id = int(opp_id)
         obs_opp = parse_obs(obs_tensors, player_id=opp_id)
-        opp_entries = plan_lite_waves(
+        opp_entries = plan_fn(
             movement=movement,
             obs=obs_opp,
             obs_tensors=obs_tensors,
