@@ -91,6 +91,22 @@ VALUE_DISCOUNT = 0.9         # per-turn discount d; d**VALUE_HORIZON ~ 0.15
 POTENTIAL_HOPS = 3           # sequential captures looked ahead (~18 turns / ~6 turns/hop)
 EXPANSION_COUPLING = 0.6     # weight on each successive hop (keeps the series bounded)
 ENEMY_REACH_DISCOUNT = 0.5   # enemy production is harder springboard mass than neutral
+# SPRINGBOARD SATURATION FIX. Summing the springboard over EVERY reachable planet made it
+# grow with the COUNT of neighbours, so on a dense board it saturated to a near-uniform
+# "how central am I" number (88-98% of every planet's value) that drowned own production --
+# we ranked by centrality, not economy, and undervalued big planets. Credit only the BEST
+# few unlocks per hop instead: quality, not count; bounded and density-stable. A stepping
+# stone that opens a big planet still scores; loitering next to many small planets does not.
+SPRINGBOARD_TOPK = 2         # best-K unlocks credited per hop; 0 -> today's unbounded sum (A/B)
+# OFFENSIVE PRESSURE (two-sided potential). An enemy planet is worth not just its own
+# production (denied) but the productive REGION it anchors for the opponent -- the snowball
+# that collapses when we take it. We compute the SAME potential from the opponent's seat
+# (opp_phi) and add the region we destroy to an enemy target's value. This is the Producer's
+# competitive objective ("my production minus theirs") as a field property: the most valuable
+# enemy target becomes their keystone hub, and the coalition machinery concentrates force on
+# it (a spear) rather than scattering into neutrals. Replaces the crude x2-for-enemy denial.
+OFFENSIVE_PRESSURE = True     # A/B knob: False -> today's x2-enemy denial, no opp_phi term
+OFFENSE_WEIGHT = 1.0         # weight on the opponent-region-loss term for enemy targets
 # FLIP-vs-HOLD TIERS. The combined-counter hold requirement was a HARD GATE: a contested
 # planet we could flip but not HOLD built no cell at all -> we froze (launches collapsed
 # to ~65/game vs the Producer, idle 0.56, wiped to one planet). The fix: offer each target
@@ -160,25 +176,19 @@ def agent(obs, configuration=None):
     neutrals = [p for p in planets if int(p.owner) == -1]
     target_pool = enemy_planets + neutrals
 
-    # --- FARSIGHTED VALUE-TO-GO: each planet's expansion potential phi. phi[t] = the
-    # windowed production of holding t PLUS the travel-discounted production it can spring
-    # to, summed over a few capture-hops (a truncated value-to-go). This makes the
-    # snowball -- early/central captures open up more production -- an intrinsic property
-    # of the field rather than a per-planet isolated reward. Recomputed each turn; no
-    # rollout, no opponent tree.
-    phi: dict[int, float] = {}
-    if EXPANSION_POTENTIAL:
+    # --- TWO-SIDED VALUE-TO-GO. A potential phi[t] = the windowed production of holding t
+    # PLUS the travel-discounted production it can spring to over a few capture-hops (a
+    # truncated value-to-go). Computed from a SEAT's perspective via `getmass` (which planets
+    # are capturable NEW mass for that seat). `phi` is our gain; `opp_phi` is the opponent's
+    # region we collapse by taking an enemy planet. Recomputed each turn; no rollout, no tree.
+    W = sum(VALUE_DISCOUNT ** tau for tau in range(win_turns + 1)) if EXPANSION_POTENTIAL else 0.0
+
+    def compute_potential(getmass: dict[int, float]) -> dict[int, float]:
         rep_speed = fleet_speed(ARRIVAL_PROBE)
-        W = sum(VALUE_DISCOUNT ** tau for tau in range(win_turns + 1))
         ids = [int(p.id) for p in planets]
         prize = {int(p.id): float(p.production) * W for p in planets}
-        # getmass routes value only toward NEW capturable mass: own planets are already
-        # ours (0), enemy mass is harder to chain through (discounted), neutrals full.
-        getmass = {int(p.id): (1.0 if int(p.owner) == -1
-                               else (0.0 if int(p.owner) == me else ENEMY_REACH_DISCOUNT))
-                   for p in planets}
         # reach[a] = [(b, d**travel(a->b) * getmass(b)), ...] -- travel-discounted edges.
-        reach: dict[int, list[tuple[int, float]]] = {int(p.id): [] for p in planets}
+        reach: dict[int, list[float]] = {aid: [] for aid in ids}
         for a in planets:
             ax, ay, aid = float(a.x), float(a.y), int(a.id)
             for b in planets:
@@ -190,15 +200,40 @@ def agent(obs, configuration=None):
                 w = (VALUE_DISCOUNT ** travel) * getmass[bid]
                 if w > 1e-3:
                     reach[aid].append((bid, w))
-        # phi = prize + sum_{hop=1..HOPS} COUPLING^hop * (R^hop prize)  (truncated series)
+        # phi = prize + sum_{hop=1..HOPS} COUPLING^hop * (best-K of R^hop prize). Crediting
+        # only the top-K unlocks per hop keeps the springboard quality-driven and bounded
+        # (it can't grow with the raw neighbour count), so own production stays the lead term.
         phi = dict(prize)
         term = dict(prize)
         for _ in range(POTENTIAL_HOPS):
-            nxt = {aid: EXPANSION_COUPLING * sum(w * term[bid] for (bid, w) in reach[aid])
-                   for aid in ids}
+            nxt = {}
+            for aid in ids:
+                contribs = [w * term[bid] for (bid, w) in reach[aid]]
+                if SPRINGBOARD_TOPK > 0 and len(contribs) > SPRINGBOARD_TOPK:
+                    contribs = sorted(contribs, reverse=True)[:SPRINGBOARD_TOPK]
+                nxt[aid] = EXPANSION_COUPLING * sum(contribs)
             for aid in ids:
                 phi[aid] += nxt[aid]
             term = nxt
+        return phi
+
+    phi: dict[int, float] = {}
+    opp_phi: dict[int, float] = {}
+    if EXPANSION_POTENTIAL:
+        # Our seat: neutrals are NEW mass (1.0), our planets already ours (0), enemy mass is
+        # harder to chain through (discounted).
+        getmass_me = {int(p.id): (1.0 if int(p.owner) == -1
+                                  else (0.0 if int(p.owner) == me else ENEMY_REACH_DISCOUNT))
+                      for p in planets}
+        phi = compute_potential(getmass_me)
+        if OFFENSIVE_PRESSURE:
+            # Opponent's seat (mirror): neutrals NEW mass for them (1.0), OUR planets are
+            # their springboard mass (discounted), their own planets already theirs (0). In
+            # 2P this is the single opponent; in 4P it lumps all opponents (follow-up).
+            getmass_opp = {int(p.id): (1.0 if int(p.owner) == -1
+                                       else (ENEMY_REACH_DISCOUNT if int(p.owner) == me else 0.0))
+                           for p in planets}
+            opp_phi = compute_potential(getmass_opp)
 
     # --- shared per-turn memo of the opponent's earliest threat to a planet -----
     _tte_cache: dict[int, object] = {}
@@ -306,11 +341,18 @@ def agent(obs, configuration=None):
         if arrive >= remain:  # capture would land after the game ends
             return 0.0
         mult = 2.0 if counterfactual_owner(t, arrive) in ("opp", "opp_likely") else 1.0
+        is_enemy = int(t.owner) not in (-1, me)
         if EXPANSION_POTENTIAL:
             if tenure is None:
                 # farsighted: the prize is the reachable productive region (phi). Arrival
                 # timing is carried by winnability (0.97**arrive + the race).
                 base = phi.get(int(t.id), 0.0)
+                # OFFENSIVE PRESSURE: taking an enemy planet also COLLAPSES the region it
+                # anchors for the opponent (opp_phi). Add that loss explicitly and drop the
+                # crude x2-for-enemy denial (the doubling is now the real region term).
+                if OFFENSIVE_PRESSURE and is_enemy:
+                    mult = 1.0
+                    base = base + OFFENSE_WEIGHT * opp_phi.get(int(t.id), 0.0)
             else:
                 # flip: own production discounted over the tenure window only.
                 ten = max(0, min(int(tenure), win_turns))

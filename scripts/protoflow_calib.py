@@ -366,10 +366,14 @@ def main():
          make_obs(board14),
          "the cluster-adjacent neutral (2) outscores the isolated one (1) and is fired")
     imp_iso, imp_clus = imp_for(field, 1), imp_for(field, 2)
-    fired_clus = any(lc["tgt"] == 2 for lc in proto.get_trace()[-1]["launches"])
+    # The cluster-adjacent planets are 2,3,4,5 (clus + the cluster members c1/c2/c3, which
+    # are themselves cluster-adjacent); the isolated one is 1. We require the cluster value
+    # to beat the isolated value AND that we fire at SOME cluster planet, not the isolated.
+    fired_clus = any(lc["tgt"] in (2, 3, 4, 5) for lc in proto.get_trace()[-1]["launches"])
+    fired_iso = any(lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
     _check("S14", imp_clus is not None and imp_iso is not None
-           and imp_clus > imp_iso and fired_clus,
-           f"cluster imp={imp_clus} > isolated imp={imp_iso}; fired cluster={fired_clus}")
+           and imp_clus > imp_iso and fired_clus and not fired_iso,
+           f"cluster imp={imp_clus} > isolated imp={imp_iso}; fired cluster={fired_clus}, iso={fired_iso}")
     # baseline cross-check: with the potential OFF, equal prod + equal distance -> tie.
     proto.EXPANSION_POTENTIAL = False
     _m, field_base = show("S14b baseline tie (potential OFF -> equal value)",
@@ -428,6 +432,83 @@ def main():
     bare = max(proto.MIN_FLEET_SIZE, 6 + proto.CAPTURE_MARGIN)  # flip floor for a 6-garrison neutral
     _check("S15b", l15b is not None and l15b["ships"] > bare,
            f"launched ships={l15b['ships'] if l15b else None} > flip floor={bare} (paid for the hold)")
+
+    # S16 — PRODUCTION LEADS on a dense board (Rule 38). A big isolated planet (prod 5) vs a
+    # small planet (prod 1) embedded in a dense cluster of other small neutrals, at equal
+    # distance from home. With the springboard summed over ALL neighbours (SPRINGBOARD_TOPK=0,
+    # the old behaviour) the clustered small planet's connectivity outscores the big one -- we
+    # chase centrality. With the bounded top-K springboard, own production leads and the big
+    # planet wins. We read values off the field (fundability-independent) and toggle the knob.
+    home16 = [0, 0, 8.0, 50.0, radius(3), 40, 3]
+    big16 = [1, -1, 33.0, 50.0, radius(5), 6, 5]    # isolated, high production
+    small16 = [2, -1, 8.0, 78.0, radius(1), 6, 1]   # low production, but in a dense cluster
+    cl16 = [[3, -1, 20.0, 80.0, radius(1), 6, 1], [4, -1, 2.0, 88.0, radius(1), 6, 1],
+            [5, -1, 18.0, 70.0, radius(1), 6, 1], [6, -1, 2.0, 68.0, radius(1), 6, 1],
+            [7, -1, 22.0, 72.0, radius(1), 6, 1], [8, -1, 12.0, 90.0, radius(1), 6, 1],
+            [9, -1, 28.0, 84.0, radius(1), 6, 1]]
+    board16 = [home16, big16, small16] + cl16
+    proto.SPRINGBOARD_TOPK = 0
+    _m, f16_sum = show("S16-sum dense board, springboard summed (clustered small wins -- the bug)",
+         make_obs(board16),
+         "with the unbounded sum the clustered small planet outscores the big one")
+    big_sum, small_sum = imp_for(f16_sum, 1), imp_for(f16_sum, 2)
+    proto.SPRINGBOARD_TOPK = 2
+    _m, f16 = show("S16 dense board, bounded springboard (big planet leads)",
+         make_obs(board16),
+         "with the bounded top-K the big planet outscores the clustered small one")
+    big_b, small_b = imp_for(f16, 1), imp_for(f16, 2)
+    _check("S16",
+           None not in (big_sum, small_sum, big_b, small_b)
+           and small_sum > big_sum and big_b > small_b,
+           f"summed: small={small_sum} > big={big_sum}; bounded: big={big_b} > small={small_b}")
+
+    # S16b — STEPPING-STONE still rewarded under bounding. Two equal small planets at equal
+    # distance from home: A unlocks a BIG planet one hop beyond; B unlocks only a small one.
+    # The bounded springboard must still prefer the stepping stone that opens the big planet.
+    homeS = [0, 0, 15.0, 50.0, radius(3), 14, 3]
+    A16 = [1, -1, 30.0, 30.0, radius(1), 6, 1]
+    big_beyond = [2, -1, 42.0, 22.0, radius(5), 6, 5]
+    B16 = [3, -1, 30.0, 70.0, radius(1), 6, 1]
+    small_beyond = [4, -1, 42.0, 78.0, radius(1), 6, 1]
+    _m, f16b = show("S16b stepping-stone to big still beats stepping-stone to small",
+         make_obs([homeS, A16, big_beyond, B16, small_beyond]),
+         "the stepping stone that unlocks a BIG planet outvalues the one that unlocks a small")
+    vA, vB = imp_for(f16b, 1), imp_for(f16b, 3)
+    _check("S16b", vA is not None and vB is not None and vA > vB,
+           f"stepping-to-big A={vA} > stepping-to-small B={vB}")
+
+    # S17 — GO FOR THE HUB (offensive pressure, Rule 38). Two enemy planets of equal
+    # production at equal distance from home: a HUB adjacent to a cluster of OUR planets (the
+    # region the opponent can press into -- opp_phi credits our planets, our own phi ignores
+    # them) and an isolated OUTPOST. With OFFENSIVE_PRESSURE on, taking the hub collapses more
+    # of the opponent's reachable region, so the offense term lifts the hub far more than the
+    # outpost. (Off=False already favours the hub a little via the reach race; the test is the
+    # offense-induced LIFT, which is large for the hub and negligible for the outpost.)
+    homeH = [0, 0, 10.0, 50.0, radius(3), 60, 3]
+    hub = [1, 1, 35.0, 50.0, radius(3), 10, 3]
+    outpost = [2, 1, 10.0, 80.0, radius(3), 10, 3]
+    mine_near_hub = [[3, 0, 48.0, 42.0, radius(3), 20, 3], [4, 0, 48.0, 58.0, radius(3), 20, 3],
+                     [5, 0, 55.0, 50.0, radius(3), 20, 3]]
+    boardH = [homeH, hub, outpost] + mine_near_hub
+
+    def hub_out_vals():
+        proto.reset_trace(); proto.agent(make_obs(boardH))
+        f = proto.get_last_field()
+        return imp_for(f, 1), imp_for(f, 2)
+
+    proto.OFFENSIVE_PRESSURE = True
+    hub_on, out_on = hub_out_vals()
+    proto.OFFENSIVE_PRESSURE = False
+    hub_off, out_off = hub_out_vals()
+    proto.OFFENSIVE_PRESSURE = True
+    _m, _f = show("S17 offensive pressure (collapse the opponent's hub, not a lone outpost)",
+         make_obs(boardH),
+         "offense lifts the region-anchoring hub far more than the isolated outpost")
+    s17_ok = (None not in (hub_on, out_on, hub_off, out_off)
+              and hub_on > out_on and (hub_on - hub_off) > (out_on - out_off))
+    _check("S17", s17_ok,
+           f"hub_on={hub_on} > out_on={out_on}; hub lift={hub_on-hub_off:.1f} "
+           f">> outpost lift={out_on-out_off:.1f}")
 
 
 if __name__ == "__main__":
