@@ -713,6 +713,42 @@ def main():
     _check("SD1", drain_off_sd and not drain_on_sd,
            f"off drained the frontier={drain_off_sd}; drain-cost held it={not drain_on_sd}")
 
+    # SA1 — DON'T DRAIN INTO A LOSS AGAINST A STANDING ENEMY (the safe_drain discipline, emergent).
+    # The CONTRAST with SD1: here the threat is a strong enemy PLANET sitting near the frontier with
+    # NO fleet in the air. The in-flight-only drain cost (SD1's mechanism) sees nothing -- the drained
+    # source merely grows in the do-nothing baseline -> the gut looks free and fires. The ANTICIPATORY
+    # drain cost injects the source's standing counter (combined_counter, the PROTECT quantity) into
+    # the re-roll, so the drained frontier falls and the gut is charged its loss -> we hold instead.
+    # (SIMULATE_VALUE + SIMVALUE_DRAIN_COST stay on for both arms; only SIMVALUE_DRAIN_ANTICIPATORY
+    # toggles.)
+    proto.SIMULATE_VALUE = True
+    proto.SIMVALUE_DRAIN_COST = True
+    frontier_sa = [0, 0, 30.0, 50.0, radius(3), 30, 3]    # survives the standing counter iff it keeps its ships
+    neutral_sa = [1, -1, 30.0, 74.0, radius(2), 25, 4]    # tempting (prod 4); capturing it drains ~27 off the frontier
+    enemy_sa = [2, 1, 30.0, 20.0, radius(3), 30, 1]       # STRONG and CLOSE -- a standing counter, but NO fleet in the air
+    board_sa = [frontier_sa, neutral_sa, enemy_sa]
+    proto.SIMVALUE_DRAIN_ANTICIPATORY = False
+    show("SA1-off drain the frontier to grab the neutral (in-flight-only drain cost)",
+         make_obs(board_sa), "the standing enemy has not launched -> the gut looks free")
+    drain_off_sa = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
+    proto.SIMVALUE_DRAIN_ANTICIPATORY = True
+    show("SA1 hold the frontier (the anticipated standing counter prices the gut)",
+         make_obs(board_sa), "reserving against the enemy it can SEE, we do not drain the frontier open")
+    drain_on_sa = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
+    _check("SA1", drain_off_sa and not drain_on_sa,
+           f"off drained the frontier={drain_off_sa}; anticipatory held it={not drain_on_sa}")
+    proto.SIMVALUE_DRAIN_ANTICIPATORY = False
+
+    # SD1 (in-flight drain) and SV1 must stay green with the anticipatory flag ON (it generalizes,
+    # not replaces, the in-flight cost).
+    proto.SIMVALUE_DRAIN_ANTICIPATORY = True
+    show("SD1+anticipatory re-check (in-flight drain still held)",
+         make_obs(board_sd, fleets=[wave_sd]), "the in-flight drain cost still fires with anticipatory on")
+    drain_on_sd_ant = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
+    _check("SD1+anticipatory", not drain_on_sd_ant,
+           f"in-flight drain still held with anticipatory on={not drain_on_sd_ant}")
+    proto.SIMVALUE_DRAIN_ANTICIPATORY = False
+
     # SV1-SV4 must remain green with the drain cost ON (they involve no over-draining -> cost ~0).
     proto.SIMVALUE_DRAIN_COST = True
     _, field = show("SV1+cost re-check (drain cost on; big still > small)",

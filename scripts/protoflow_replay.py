@@ -35,10 +35,13 @@ def main() -> None:
                     help="use the simulation-based evaluator (proto.SIMULATE_VALUE = True)")
     ap.add_argument("--drain-cost", action="store_true",
                     help="price the source-drain cost in offense values (proto.SIMVALUE_DRAIN_COST = True)")
+    ap.add_argument("--drain-anticipatory", action="store_true",
+                    help="charge the drain against the source's anticipated standing counter (proto.SIMVALUE_DRAIN_ANTICIPATORY = True)")
     args = ap.parse_args()
 
     proto.SIMULATE_VALUE = bool(args.simulate_value)
     proto.SIMVALUE_DRAIN_COST = bool(args.drain_cost)
+    proto.SIMVALUE_DRAIN_ANTICIPATORY = bool(args.drain_anticipatory)
 
     opp = load_callable(args.opponent)
     env = make("orbit_wars", configuration={"seed": args.seed}, debug=False)

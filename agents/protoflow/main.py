@@ -176,6 +176,17 @@ SIMULATE_VALUE = False
 # planets don't interact. Applies to offense cells only (wait launches nothing; protect/def HOLD
 # ships). No-op unless SIMULATE_VALUE is also on. Default False; the A/B flips it via proto attr.
 SIMVALUE_DRAIN_COST = False
+# ANTICIPATORY DRAIN (the Producer's safe_drain discipline, expressed as value). The drain cost above
+# re-rolls a drained source against only the IN-FLIGHT ledger -- so a frontier source with a strong
+# enemy NEARBY but not yet launched merely grows in that baseline, and draining it costs ZERO. We gut
+# exposed frontier planets for free, then lose them (the seed-0 collapse). The Producer never does:
+# its safe_drain reserves the garrison a planet needs to survive on every held turn. We give the same
+# discipline emergently -- inject the source's anticipatory standing+in-flight counter (the SAME
+# combined_counter the PROTECT branch sizes against) into both the full and the drained re-roll, so a
+# drain that drops a source below holdable against the enemy it can SEE is charged its projected loss.
+# A safe rear source (no enemy in range -> counter 0) still drains free. No-op unless SIMULATE_VALUE
+# and SIMVALUE_DRAIN_COST are also on. Default False; the A/B flips it via proto attr.
+SIMVALUE_DRAIN_ANTICIPATORY = False
 # REGROUP: a positional pass that marches idle rear ships up the enemy-pressure
 # gradient toward the frontier, so force concentrates forward for future strikes.
 REGROUP_PRESSURE_HORIZON = 14   # turns; decay reach for the enemy-pressure signal
@@ -589,13 +600,30 @@ def agent(obs, configuration=None):
         if q <= 0:
             return 0.0
         sid = int(s.id)
+        H = int(win_turns)
+        arr = model.ledger.get(sid, [])
         base_tl = model.timelines.get(sid)
+        # ANTICIPATORY DRAIN: the in-flight ledger alone misses a STANDING enemy that has not launched
+        # yet, so a drained frontier source merely grows in the baseline and the gut costs nothing.
+        # Mirror the PROTECT branch (combined_counter): inject the source's standing+in-flight counter
+        # into BOTH the full and drained re-rolls, so a drain that drops the source below holdable
+        # against the enemy it can SEE is charged. Both sides must face the SAME counter, so the full
+        # baseline is re-rolled here (not model.timelines, which is counter-free).
+        if SIMVALUE_DRAIN_ANTICIPATORY and enemy_planets:
+            threat, t_thr = combined_counter(s, 0)
+            if threat > 0.0:
+                atk_owner = int(min(enemy_planets,
+                                    key=lambda e: math.hypot(float(e.x) - float(s.x),
+                                                             float(e.y) - float(s.y))).owner)
+                arr = arr + [(int(t_thr), atk_owner, int(math.ceil(threat)))]
+                base_tl = simulate_planet_timeline(
+                    types.SimpleNamespace(owner=s.owner, ships=float(s.ships), production=s.production),
+                    arr, horizon=H)
         if base_tl is None:
             return 0.0
-        H = int(win_turns)
         shim = types.SimpleNamespace(owner=s.owner, ships=max(0.0, float(s.ships) - q),
                                      production=s.production)
-        drained = simulate_planet_timeline(shim, model.ledger.get(sid, []), horizon=H)
+        drained = simulate_planet_timeline(shim, arr, horizon=H)
         loss = 0
         for turn in range(1, H + 1):
             loss += _margin_owner(base_tl["owner_at"][turn]) - _margin_owner(drained["owner_at"][turn])

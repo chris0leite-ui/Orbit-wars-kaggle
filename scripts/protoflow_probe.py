@@ -189,12 +189,16 @@ def main():
                     help="use the simulation-based evaluator (proto.SIMULATE_VALUE = True) for this run")
     ap.add_argument("--drain-cost", action="store_true",
                     help="price the source-drain cost in offense values (proto.SIMVALUE_DRAIN_COST = True)")
+    ap.add_argument("--drain-anticipatory", action="store_true",
+                    help="charge the drain against the source's anticipated standing counter (proto.SIMVALUE_DRAIN_ANTICIPATORY = True)")
     args = ap.parse_args()
 
     # Evaluator A/B toggles: flip the probe agent's module-level flags before any game runs.
     proto.SIMULATE_VALUE = bool(args.simulate_value)
     proto.SIMVALUE_DRAIN_COST = bool(args.drain_cost)
-    print(f"SIMULATE_VALUE = {proto.SIMULATE_VALUE}  SIMVALUE_DRAIN_COST = {proto.SIMVALUE_DRAIN_COST}")
+    proto.SIMVALUE_DRAIN_ANTICIPATORY = bool(args.drain_anticipatory)
+    print(f"SIMULATE_VALUE = {proto.SIMULATE_VALUE}  SIMVALUE_DRAIN_COST = {proto.SIMVALUE_DRAIN_COST}  "
+          f"SIMVALUE_DRAIN_ANTICIPATORY = {proto.SIMVALUE_DRAIN_ANTICIPATORY}")
 
     # Use the IMPORTED module's agent (not a fresh _load_callable copy) so the
     # trace we reset/read is the same _TRACE object the running agent writes to.
