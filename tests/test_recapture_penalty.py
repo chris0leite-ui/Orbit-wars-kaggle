@@ -304,6 +304,9 @@ def test_recapture_penalty_zero_when_send_below_floor():
     ("producer_plus_multi_tick_opp_K3.py", "multi_tick_opp_K3"),
     ("producer_plus_recapture_penalty.py", "recapture_penalty"),
     ("producer_plus_multi_tick_recap.py", "multi_tick_recap"),
+    ("producer_plus_force_concentration.py", "force_concentration"),
+    ("producer_plus_multi_tick_force_concentration.py", "multi_tick_force_concentration"),
+    ("producer_plus_lean_force_concentration.py", "lean_force_concentration"),
 ])
 def test_shim_env_vars_match_bundle_variant(shim_file, variant_name):
     """Drift guard: each shim's `os.environ.setdefault` calls must match

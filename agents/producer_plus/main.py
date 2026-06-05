@@ -222,6 +222,28 @@ def _game_length_est() -> int:
         return 200
 
 
+# Force-concentration: relax the target mutex inside _greedy_select so up to
+# ``max_waves_per_target`` waves can land on the same target per turn. Between
+# waves we re-score candidates with the just-fired wave appended to the
+# scoring LaunchSet (owner=pid) so wave 2 sees wave 1's capture/reinforcement
+# and does NOT double-count. Default OFF preserves byte-identical single-wave
+# behaviour (no rescore closure built, max_waves_per_target=1 passed through).
+# See knowledge-base for the architectural diagnosis: scorer tuning can never
+# reach candidates the chooser refuses to enumerate.
+def _force_concentration_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_FORCE_CONCENTRATION", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _force_concentration_max_waves() -> int:
+    raw = os.environ.get("PRODUCER_PLUS_FORCE_CONCENTRATION_MAX_WAVES", "2")
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 2
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, default))
@@ -325,6 +347,7 @@ def plan_lite_waves(
     player_count: int,
     K_eta_override: int | None = None,
     background: LaunchSet | None = None,
+    force_concentration: bool | None = None,
 ):
     """Single-size, single-source attack planner + regroup.
 
@@ -875,6 +898,18 @@ def plan_lite_waves(
         garrison_status, prod=prod, alive_by_step=alive_by_step,
         player_count=int(player_count), launches=scoring_launches, player_id=pid,
     )                                                                            # [C]
+    # Capture the base competitive score before additive terms so the
+    # force-concentration rescore can re-derive the addon contribution per
+    # iteration without recomputing recapture/denial/opening. Only allocated
+    # when force-concentration is ON — OFF path is byte-identical. The kwarg
+    # override lets the opp-projection inner calls disable FC explicitly so
+    # the rescore closure doesn't run inside K-round opponent simulation
+    # (where the K_opp x num_opps multiplier would blow up wallclock).
+    if force_concentration is None:
+        _fc_enabled = _force_concentration_enabled()
+    else:
+        _fc_enabled = bool(force_concentration)
+    _fc_base_score = score.clone() if _fc_enabled else None
     if _recapture_penalty_enabled():
         # Subtract a non-negative recapture discount per candidate. The
         # penalty is in ship units (prod[T] * turns_lost), additive with
@@ -934,6 +969,57 @@ def plan_lite_waves(
                 player_id=pid,
             )
             score = score + o_bonus
+    # Force-concentration rescore closure: between greedy waves, re-score
+    # every candidate against the just-fired waves so wave 2 at a target sees
+    # wave 1's commitment (no double-counting). Uses the same `scoring_launches`
+    # the initial score saw, plus the committed waves appended to the L axis
+    # owner=pid. Add-on terms (recapture/denial/opening) depend only on
+    # per-candidate state, so we precompute their offset once and add it back.
+    _fc_rescore_fn = None
+    _fc_max_waves = 1
+    if _fc_enabled:
+        _fc_addon_offset = score - _fc_base_score
+        _fc_max_waves = _force_concentration_max_waves()
+        _fc_C = int(cand_src.shape[0])
+        _fc_scoring_launches = scoring_launches
+
+        def _fc_rescore(c_src, c_send, c_eta, c_tgt, c_active):
+            flat_src = c_src.reshape(-1)
+            flat_send = c_send.reshape(-1)
+            flat_eta = c_eta.reshape(-1)
+            flat_tgt = c_tgt.reshape(-1)
+            flat_active = c_active.reshape(-1)
+            L_done = int(flat_src.shape[0])
+            if L_done == 0:
+                _new = _fc_base_score + _fc_addon_offset
+                return torch.where(cand_valid, _new, torch.full_like(_new, float("-inf")))
+            flat_owner = torch.full(
+                (L_done,), int(pid), dtype=torch.long, device=device,
+            )
+
+            def _bc(t):
+                return t.unsqueeze(0).expand(_fc_C, -1)
+
+            merged = LaunchSet(
+                source_slots=torch.cat(
+                    [_fc_scoring_launches.source_slots, _bc(flat_src)], dim=-1,
+                ),
+                target_slots=torch.cat(
+                    [_fc_scoring_launches.target_slots, _bc(flat_tgt)], dim=-1,
+                ),
+                ships=torch.cat([_fc_scoring_launches.ships, _bc(flat_send)], dim=-1),
+                eta=torch.cat([_fc_scoring_launches.eta, _bc(flat_eta)], dim=-1),
+                owner=torch.cat([_fc_scoring_launches.owner, _bc(flat_owner)], dim=-1),
+                valid=torch.cat([_fc_scoring_launches.valid, _bc(flat_active)], dim=-1),
+            )
+            new_base = score_candidates(
+                garrison_status, prod=prod, alive_by_step=alive_by_step,
+                player_count=int(player_count), launches=merged, player_id=pid,
+            )
+            _new = new_base + _fc_addon_offset
+            return torch.where(cand_valid, _new, torch.full_like(_new, float("-inf")))
+
+        _fc_rescore_fn = _fc_rescore
     score = torch.where(cand_valid, score, torch.full_like(score, float("-inf")))
 
     # Cross-wave over-drain guard for multi-size: single-size's accidental
@@ -953,6 +1039,7 @@ def plan_lite_waves(
         cand_active=cand_active, cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
         cand_is_def=cand_is_def, source_budget=source_budget,
         target_exists=target_exists, roi_threshold=float(config.roi_threshold),
+        rescore_fn=_fc_rescore_fn, max_waves_per_target=_fc_max_waves,
     )
 
     if not bool(config.enable_regroup):

@@ -159,6 +159,40 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_DENIAL_BONUS": "1",
         "PRODUCER_PLUS_OPENING_BONUS": "1",
     },
+    "force_concentration": {
+        # Standalone force-concentration: relax the one-wave-per-target mutex
+        # in _greedy_select to allow up to MAX_WAVES (default 2). Between
+        # waves the candidates are re-scored against the committed waves so
+        # wave 2 to a target sees wave 1's reinforcement (no double-count).
+        # Tests the chooser-architecture lever in isolation against vanilla
+        # producer; no opp_proj / multi-tick / scorer-term stack.
+        "PRODUCER_PLUS_FORCE_CONCENTRATION": "1",
+    },
+    "multi_tick_force_concentration": {
+        # Composed: multi_size + opp_proj + multi-tick + recap + force-
+        # concentration. The path that ships if the standalone A/B clears.
+        # Force-concentration relaxes the chooser's one-wave-per-target mutex
+        # on top of the multi_tick_recap stack so high-value targets can be
+        # reinforced rather than left under-funded while ships scatter.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MULTI_TICK_OPP_K_4P": "3",
+        "PRODUCER_PLUS_MULTI_TICK_OPP_K_2P": "2",
+        "PRODUCER_PLUS_RECAPTURE_PENALTY": "1",
+        "PRODUCER_PLUS_FORCE_CONCENTRATION": "1",
+    },
+    "lean_force_concentration": {
+        # Same scorer stack as multi_tick_force_concentration MINUS the
+        # opp-projection mechanism (and the multi-tick K-round expansion of
+        # it). Tests "does the producer-mirror opp model still pull its
+        # weight once force-concentration stops the source-scatter that the
+        # opp_proj defensive shortlist was patching?" If parity-or-better
+        # vs the with-opp variant, the opp model is dead weight and the
+        # cheaper variant ships.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_RECAPTURE_PENALTY": "1",
+        "PRODUCER_PLUS_FORCE_CONCENTRATION": "1",
+    },
 }
 
 

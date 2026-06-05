@@ -407,12 +407,30 @@ def _greedy_select(
     *, P, W, device, dtype, score, cand_src, cand_send, cand_angle, cand_eta,
     cand_active, cand_tgt_slot, cand_tgt_short, cand_is_def, source_budget,
     target_exists, roi_threshold,
+    rescore_fn=None, max_waves_per_target: int = 1,
 ) -> LaunchEntries:
     """Masking-only greedy over [C, L] candidates: pick the best wave each iter,
-    one per target, source-budget aware across all L contributors. Enforces the
-    role mutex: a reinforced planet can't also be a source, and vice-versa."""
+    up to ``max_waves_per_target`` waves per target, source-budget aware across
+    all L contributors. Enforces the role mutex: a reinforced planet can't also
+    be a source, and vice-versa.
+
+    Force-concentration: when ``max_waves_per_target > 1`` AND ``rescore_fn`` is
+    provided, the second-best candidate at an already-hit target is NOT scored
+    against the same garrison as the first (which would double-count the
+    capture). After each wave fires, ``rescore_fn(w_src[:w+1], w_send[:w+1],
+    w_eta[:w+1], w_tgt[:w+1], w_active[:w+1])`` returns a fresh ``[C]`` score
+    that the next iteration's mask uses. Default ``rescore_fn=None`` +
+    ``max_waves_per_target=1`` is the legacy single-wave-per-target path.
+    """
     C, L = int(cand_src.shape[0]), int(cand_src.shape[1])
-    target_taken = ~target_exists.clone()                                        # [T]
+    cap_per_tgt = max(1, int(max_waves_per_target))
+    # Per-shortlist-target wave counter; slots where target_exists is False
+    # start at the cap so they're masked out (mirrors the legacy bool init).
+    waves_per_target = torch.where(
+        target_exists,
+        torch.zeros_like(target_exists, dtype=torch.long),
+        torch.full_like(target_exists, cap_per_tgt, dtype=torch.long),
+    )
     defended = torch.zeros(P, dtype=torch.bool, device=device)                   # reinforced this turn
     used_src = torch.zeros(P, dtype=torch.bool, device=device)                   # contributed this turn
 
@@ -424,7 +442,7 @@ def _greedy_select(
     w_active = torch.zeros(W, L, dtype=torch.bool, device=device)
 
     for w in range(W):
-        taken_cand = target_taken[cand_tgt_short]                               # [C]
+        taken_cand = waves_per_target[cand_tgt_short] >= cap_per_tgt            # [C]
         budget_at = source_budget[cand_src]                                     # [C, L]
         can_fund = ((cand_send <= budget_at) | ~cand_active).all(dim=-1)        # [C]
         # role mutex: target not already drained as a source; no contributor is a
@@ -453,8 +471,8 @@ def _greedy_select(
         debit = torch.zeros_like(source_budget)
         debit.scatter_add_(0, sel_src, torch.where(sel_active, sel_send, torch.zeros_like(sel_send)))
         source_budget = (source_budget - debit).clamp(min=0.0)
-        # mark target taken (one wave per target).
-        target_taken[cand_tgt_short[best_c]] = True
+        # increment wave count for this target (cap_per_tgt=1 mirrors legacy taken-bool).
+        waves_per_target[cand_tgt_short[best_c]] += 1
         # role mutex bookkeeping: mark contributors used; mark reinforced targets
         # defended. Sum active marks per planet (order-independent) and OR them in.
         src_mark = torch.zeros(P, dtype=torch.long, device=device)
@@ -463,6 +481,17 @@ def _greedy_select(
         sel_tgt = cand_tgt_slot[best_c]
         sel_is_def = bool(cand_is_def[best_c])
         defended[sel_tgt] = defended[sel_tgt] | sel_is_def
+
+        # Force-concentration: re-score candidates against the already-fired
+        # waves before the next iteration's argmax. Without this, wave 2 to a
+        # target picks the second-best send blindly, double-counting wave 1's
+        # capture/reinforcement. Skipped on the last wave (no next iter) and
+        # whenever cap_per_tgt==1 (legacy behaviour, byte-identical).
+        if rescore_fn is not None and cap_per_tgt > 1 and (w + 1) < W:
+            score = rescore_fn(
+                w_src[: w + 1], w_send[: w + 1], w_eta[: w + 1],
+                w_tgt[: w + 1], w_active[: w + 1],
+            )
 
     # Flatten waves x contributors into a LaunchEntries table.
     WL = W * L

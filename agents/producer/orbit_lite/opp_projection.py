@@ -131,6 +131,11 @@ def predict_opp_launches_via_mirror(
                 player_count=int(player_count),
                 K_eta_override=K_eta_override,
                 background=None,
+                # Disable force-concentration in opp simulation: the rescore
+                # closure's per-wave score_candidates blows up when
+                # K_opp x num_opps inner planner calls each carry their own
+                # rescore. Opp is modeled with the cheap single-wave chooser.
+                force_concentration=False,
             )
             # Walk the flat [L] entry table; emit one record per valid slot.
             src_cpu = opp_entries.source_slots.cpu().tolist()
@@ -209,6 +214,10 @@ def predict_opp_launches_via_mirror(
                 player_count=int(player_count),
                 K_eta_override=K_eta_override,
                 background=cumulative_bg,
+                # See K=1 path: opp planner runs cheap single-wave chooser
+                # so multi-tick's K_opp x num_opps inner calls don't compound
+                # the rescore closure cost.
+                force_concentration=False,
             )
             src_cpu = opp_entries.source_slots.cpu().tolist()
             tgt_cpu = opp_entries.target_slots.cpu().tolist()
