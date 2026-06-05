@@ -29,6 +29,12 @@ from lib.fleet import speed as fleet_speed
 def make_obs(planets, fleets=None, player=0, step=20, omega=0.0):
     """planets: list of [id, owner, x, y, radius, ships, production].
     fleets:  list of [id, owner, x, y, angle, from_planet_id, ships]."""
+    # Sanity guard: a planet may never sit inside the sun (radius 10 at the centre) -- such a
+    # board is physically impossible and silently breaks trajectories (fleets to/from it cross
+    # the sun and die), so any scenario built that way is invalid. Catch it loudly.
+    for p in planets:
+        if math.hypot(float(p[2]) - 50.0, float(p[3]) - 50.0) < 10.0:
+            raise ValueError(f"planet {p[0]} at ({p[2]},{p[3]}) is inside the sun (r=10 @ (50,50))")
     return {
         "player": player,
         "planets": [list(p) for p in planets],
@@ -484,11 +490,11 @@ def main():
     # of the opponent's reachable region, so the offense term lifts the hub far more than the
     # outpost. (Off=False already favours the hub a little via the reach race; the test is the
     # offense-induced LIFT, which is large for the hub and negligible for the outpost.)
-    homeH = [0, 0, 10.0, 50.0, radius(3), 60, 3]
-    hub = [1, 1, 35.0, 50.0, radius(3), 10, 3]
-    outpost = [2, 1, 10.0, 80.0, radius(3), 10, 3]
-    mine_near_hub = [[3, 0, 48.0, 42.0, radius(3), 20, 3], [4, 0, 48.0, 58.0, radius(3), 20, 3],
-                     [5, 0, 55.0, 50.0, radius(3), 20, 3]]
+    homeH = [0, 0, 15.0, 15.0, radius(3), 60, 3]
+    hub = [1, 1, 15.0, 45.0, radius(3), 10, 3]      # enemy adjacent to our cluster (their reach into us)
+    outpost = [2, 1, 45.0, 15.0, radius(3), 10, 3]  # isolated enemy, equal distance from home
+    mine_near_hub = [[3, 0, 5.0, 55.0, radius(3), 20, 3], [4, 0, 8.0, 33.0, radius(3), 20, 3],
+                     [5, 0, 26.0, 52.0, radius(3), 20, 3]]  # all clear of the sun
     boardH = [homeH, hub, outpost] + mine_near_hub
 
     def hub_out_vals():

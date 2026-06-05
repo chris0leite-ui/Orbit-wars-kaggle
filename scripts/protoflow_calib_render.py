@@ -34,6 +34,9 @@ KIND_COLOR = {"wave": "#1a9850", "flip": "#f1a340", "def": "#7b3294",
 
 
 def make_obs(planets, fleets=None, player=0, step=20, omega=0.0):
+    for p in planets:  # no planet may sit inside the sun (r=10 @ (50,50))
+        if math.hypot(float(p[2]) - 50.0, float(p[3]) - 50.0) < 10.0:
+            raise ValueError(f"planet {p[0]} at ({p[2]},{p[3]}) is inside the sun")
     return {"player": player, "planets": [list(p) for p in planets],
             "fleets": [list(f) for f in (fleets or [])], "angular_velocity": omega,
             "comet_planet_ids": [], "comets": [], "step": step, "remainingOverageTime": 60.0}
@@ -113,13 +116,13 @@ def main():
            "/tmp/calib_S16b_stepping.png")
 
     # --- S17: offensive pressure -- hub vs outpost, offense off vs on ---
-    b17 = [[0,0,10,50,radius(3),60,3],[1,1,35,50,radius(3),10,3],[2,1,10,80,radius(3),10,3],
-           [3,0,48,42,radius(3),20,3],[4,0,48,58,radius(3),20,3],[5,0,55,50,radius(3),20,3]]
-    render("S17 offense OFF (enemy = doubled neutral)", b17,
-           "without offense, enemy hub #1 and outpost #2 priced alike",
+    b17 = [[0,0,15,15,radius(3),60,3],[1,1,15,45,radius(3),10,3],[2,1,45,15,radius(3),10,3],
+           [3,0,5,55,radius(3),20,3],[4,0,8,33,radius(3),20,3],[5,0,26,52,radius(3),20,3]]
+    render("S17 offense OFF", b17,
+           "cluster #3/#4 already coalition-attack the hub #1; hub value ~46",
            "/tmp/calib_S17a_off.png", flags={"OFFENSIVE_PRESSURE": False})
-    render("S17 offense ON (collapse the hub)", b17,
-           "with offense, force aims at the keystone enemy hub #1 (near our cluster)",
+    render("S17 offense ON (collapse the opponent's reach)", b17,
+           "same attack, but hub value lifted to ~56 (denying the opponent's region into us)",
            "/tmp/calib_S17b_on.png", flags={"OFFENSIVE_PRESSURE": True})
 
     # --- S2: convergence -- two sources form a coalition on one target ---
