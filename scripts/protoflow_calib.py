@@ -345,6 +345,42 @@ def main():
     _check("S13", not def13,
            f"def launches to doomed planet={def13} (want none -- no bleed)")
 
+    # S14 — EXPANSION POTENTIAL (the snowball, Rule 38). Two neutrals of EQUAL production
+    # and EQUAL distance from home (hence equal winnability), both affordable: one
+    # ISOLATED, one ADJACENT to a cluster of other capturable neutrals. The farsighted
+    # field values the cluster-adjacent one far higher (capturing it springs to more
+    # production) and fires it. The old isolated-stream field valued them equally -- the
+    # EXPANSION_POTENTIAL=False cross-check confirms the lift comes from the potential,
+    # not the geometry.
+    def imp_for(field, tgt):
+        es = [f["imp"] for f in field if f["tgt"] == tgt]
+        return max(es) if es else None
+    home14 = [0, 0, 15.0, 15.0, radius(3), 14, 3]
+    iso = [1, -1, 15.0, 40.0, radius(3), 6, 3]          # isolated neutral (north), dist 25
+    clus = [2, -1, 40.0, 15.0, radius(3), 6, 3]         # cluster-adjacent neutral (east), dist 25
+    c1 = [3, -1, 58.0, 15.0, radius(3), 6, 3]           # cluster around `clus`, away from home/iso
+    c2 = [4, -1, 50.0, 6.0, radius(3), 6, 3]
+    c3 = [5, -1, 40.0, 4.0, radius(3), 6, 3]
+    board14 = [home14, iso, clus, c1, c2, c3]
+    moves, field = show("S14 expansion potential (cluster-adjacent beats isolated)",
+         make_obs(board14),
+         "the cluster-adjacent neutral (2) outscores the isolated one (1) and is fired")
+    imp_iso, imp_clus = imp_for(field, 1), imp_for(field, 2)
+    fired_clus = any(lc["tgt"] == 2 for lc in proto.get_trace()[-1]["launches"])
+    _check("S14", imp_clus is not None and imp_iso is not None
+           and imp_clus > imp_iso and fired_clus,
+           f"cluster imp={imp_clus} > isolated imp={imp_iso}; fired cluster={fired_clus}")
+    # baseline cross-check: with the potential OFF, equal prod + equal distance -> tie.
+    proto.EXPANSION_POTENTIAL = False
+    _m, field_base = show("S14b baseline tie (potential OFF -> equal value)",
+         make_obs(board14),
+         "without the potential the two neutrals tie (lift comes from phi, not geometry)")
+    proto.EXPANSION_POTENTIAL = True
+    bi, bc = imp_for(field_base, 1), imp_for(field_base, 2)
+    tie = (bi is not None and bc is not None
+           and abs(bi - bc) <= 0.01 * max(bi, bc))
+    _check("S14b", tie, f"baseline isolated={bi} ~= cluster={bc} (tie within 1%)")
+
 
 if __name__ == "__main__":
     main()

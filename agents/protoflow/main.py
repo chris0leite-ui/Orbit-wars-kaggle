@@ -78,6 +78,19 @@ WAIT_VALUE_MARGIN = 1.10    # the held cell must beat the fire-now cell by this 
 # (reinforce-then-lose 2.5 vs 3.8) -- the "no bleed" goal -- so it is the default. Kept
 # as a knob: it raises the hold bar and can over-abandon a massing opponent's frontier.
 DEFENSE_FOLLOWUP = True
+# FARSIGHTED VALUE (value-to-go expansion potential). The myopic field scored a planet
+# by its OWN production stream in isolation -- blind to the snowball (a capture frees
+# ships that take more planets). The Producer beats us by scoring the production a move
+# UNLOCKS over an ~18-turn window. We make that a field property: each planet's value is
+# its windowed production PLUS the travel-discounted production it can spring to, summed
+# over a few expansion hops (a truncated value-to-go). No rollout, no opponent tree --
+# recomputed each turn from the board.
+EXPANSION_POTENTIAL = True   # A/B knob: False -> exact pre-farsight value (own stream)
+VALUE_HORIZON = 18           # tempo window in turns (matches the Producer's planning H)
+VALUE_DISCOUNT = 0.9         # per-turn discount d; d**VALUE_HORIZON ~ 0.15
+POTENTIAL_HOPS = 3           # sequential captures looked ahead (~18 turns / ~6 turns/hop)
+EXPANSION_COUPLING = 0.6     # weight on each successive hop (keeps the series bounded)
+ENEMY_REACH_DISCOUNT = 0.5   # enemy production is harder springboard mass than neutral
 # REGROUP: a positional pass that marches idle rear ships up the enemy-pressure
 # gradient toward the frontier, so force concentrates forward for future strikes.
 REGROUP_PRESSURE_HORIZON = 14   # turns; decay reach for the enemy-pressure signal
@@ -133,6 +146,47 @@ def agent(obs, configuration=None):
     enemy_planets = [p for p in planets if int(p.owner) not in (-1, me)]
     neutrals = [p for p in planets if int(p.owner) == -1]
     target_pool = enemy_planets + neutrals
+
+    # --- FARSIGHTED VALUE-TO-GO: each planet's expansion potential phi. phi[t] = the
+    # windowed production of holding t PLUS the travel-discounted production it can spring
+    # to, summed over a few capture-hops (a truncated value-to-go). This makes the
+    # snowball -- early/central captures open up more production -- an intrinsic property
+    # of the field rather than a per-planet isolated reward. Recomputed each turn; no
+    # rollout, no opponent tree.
+    phi: dict[int, float] = {}
+    if EXPANSION_POTENTIAL:
+        rep_speed = fleet_speed(ARRIVAL_PROBE)
+        win_turns = min(VALUE_HORIZON, int(remain))
+        W = sum(VALUE_DISCOUNT ** tau for tau in range(win_turns + 1))
+        ids = [int(p.id) for p in planets]
+        prize = {int(p.id): float(p.production) * W for p in planets}
+        # getmass routes value only toward NEW capturable mass: own planets are already
+        # ours (0), enemy mass is harder to chain through (discounted), neutrals full.
+        getmass = {int(p.id): (1.0 if int(p.owner) == -1
+                               else (0.0 if int(p.owner) == me else ENEMY_REACH_DISCOUNT))
+                   for p in planets}
+        # reach[a] = [(b, d**travel(a->b) * getmass(b)), ...] -- travel-discounted edges.
+        reach: dict[int, list[tuple[int, float]]] = {int(p.id): [] for p in planets}
+        for a in planets:
+            ax, ay, aid = float(a.x), float(a.y), int(a.id)
+            for b in planets:
+                bid = int(b.id)
+                if bid == aid or getmass[bid] <= 0.0:
+                    continue
+                travel = math.hypot(float(b.x) - ax, float(b.y) - ay) / rep_speed \
+                    if rep_speed > 0 else 999.0
+                w = (VALUE_DISCOUNT ** travel) * getmass[bid]
+                if w > 1e-3:
+                    reach[aid].append((bid, w))
+        # phi = prize + sum_{hop=1..HOPS} COUPLING^hop * (R^hop prize)  (truncated series)
+        phi = dict(prize)
+        term = dict(prize)
+        for _ in range(POTENTIAL_HOPS):
+            nxt = {aid: EXPANSION_COUPLING * sum(w * term[bid] for (bid, w) in reach[aid])
+                   for aid in ids}
+            for aid in ids:
+                phi[aid] += nxt[aid]
+            term = nxt
 
     # --- shared per-turn memo of the opponent's earliest threat to a planet -----
     _tte_cache: dict[int, object] = {}
@@ -233,8 +287,15 @@ def agent(obs, configuration=None):
         return "neutral"
 
     def value(t, arrive):
-        stream = int(t.production) * max(0.0, float(remain) - float(arrive))
+        if arrive >= remain:  # capture would land after the game ends
+            return 0.0
         mult = 2.0 if counterfactual_owner(t, arrive) in ("opp", "opp_likely") else 1.0
+        if EXPANSION_POTENTIAL:
+            # farsighted: the prize is the reachable productive region (phi), not the
+            # planet's own stream. Arrival timing is carried by winnability (0.97**arrive
+            # + the race), which was always the dominant arrival term.
+            return mult * winnability(t, arrive) * phi.get(int(t.id), 0.0)
+        stream = int(t.production) * max(0.0, float(remain) - float(arrive))
         return mult * stream * winnability(t, arrive)
 
     # --- COMBINED counter: the opponent's real recapture wave is the SUM over every
