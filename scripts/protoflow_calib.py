@@ -35,6 +35,13 @@ def make_obs(planets, fleets=None, player=0, step=20, omega=0.0):
     for p in planets:
         if math.hypot(float(p[2]) - 50.0, float(p[3]) - 50.0) < 10.0:
             raise ValueError(f"planet {p[0]} at ({p[2]},{p[3]}) is inside the sun (r=10 @ (50,50))")
+    # Harness hygiene: lib.world_model._contest_cache is keyed by planet id and only cleared
+    # when the STEP changes. Our scenarios reuse ids 0,1,2 at the same default step, so without
+    # this reset a prior board's contest predictions leak into the next. (Real games are immune:
+    # fresh process per episode, ids stable.) Reset it so each synthetic board starts clean.
+    import lib.world_model as _wm
+    _wm._contest_cache.clear()
+    _wm._contest_cache_step = None
     return {
         "player": player,
         "planets": [list(p) for p in planets],
@@ -572,24 +579,47 @@ def main():
     _check("S19", bool(sub_off) and not sub_on,
            f"old emitted sub-threshold leg={sub_off}; salvo emitted none={not sub_on}")
 
-    # S20 — SELF-PROTECTION (Rule 38; the suicidal drain). A frontier planet next to a strong
-    # enemy it CAN survive by holding, plus a tempting neutral. With RESERVE_THREAT off we
-    # drain the frontier to grab the neutral and leave it open; with it on we keep enough
-    # (retained + growth) to hold, so the drain is no longer admissible. (Clear of the sun.)
+    # S20 / S21 — DON'T DRAIN A VALUABLE THREATENED PLANET (Rule 38; the core leak: 14/19
+    # losses were planets we drained to <=5 ships). A frontier planet next to a strong enemy it
+    # CAN survive by holding, plus a tempting neutral. With all protection OFF we drain the
+    # frontier to grab the neutral and leave it open; with VALUE_HELD on its PROTECT cell holds
+    # its own ships (the region at stake outvalues the marginal capture) and we do not drain it.
     frontier20 = [0, 0, 30.0, 20.0, radius(3), 30, 3]
     enemy20 = [1, 1, 47.0, 20.0, radius(3), 40, 1]    # strong, but frontier+growth can survive it
     neutral20 = [2, -1, 15.0, 20.0, radius(2), 6, 2]  # tempting capture on the far side
     board20 = [frontier20, enemy20, neutral20]
+    proto.VALUE_HELD = False
     proto.RESERVE_THREAT = False
-    show("S20-off drain the frontier to grab the neutral (self-exposure)",
-         make_obs(board20), "without the standing-threat reserve we drain and expose the frontier")
+    show("S21-off drain the frontier to grab the neutral (self-exposure)",
+         make_obs(board20), "with no held-value, draining the frontier looks free")
     drain_off = any(lc["src"] == 0 and lc["tgt"] == 2 for lc in proto.get_trace()[-1]["launches"])
     proto.RESERVE_THREAT = True
-    show("S20 keep enough to hold the frontier (no suicidal drain)",
-         make_obs(board20), "with the standing-threat reserve the frontier is not drained open")
+    proto.VALUE_HELD = True
+    show("S21 hold the frontier (its protect cell outvalues the marginal capture)",
+         make_obs(board20), "valuing the held region, the frontier is not drained open")
     drain_on = any(lc["src"] == 0 and lc["tgt"] == 2 for lc in proto.get_trace()[-1]["launches"])
-    _check("S20", drain_off and not drain_on,
-           f"off drained the frontier={drain_off}; on protected it (no drain)={not drain_on}")
+    _check("S21", drain_off and not drain_on,
+           f"off drained the frontier={drain_off}; held-value protected it={not drain_on}")
+
+    # S22 — ANTICIPATORY REINFORCEMENT (Rule 38; "see the attack coming"). A threatened planet
+    # facing a STANDING enemy threat with NO in-flight fleet yet, plus a surplus ally. The old
+    # reactive defense (committed_threat) does nothing -- there is no in-flight fleet to react
+    # to. Valuing the held region, we reinforce/hold from the standing threat BEFORE it lands.
+    threatened22 = [0, 0, 30.0, 80.0, radius(3), 6, 3]   # weak garrison, no in-flight attacker yet
+    ally22 = [1, 0, 25.0, 80.0, radius(3), 40, 3]         # close surplus (can reinforce in time)
+    enemy22 = [2, 1, 46.0, 80.0, radius(3), 40, 1]        # standing threat, has NOT launched
+    board22 = [threatened22, ally22, enemy22]
+    proto.VALUE_HELD = False
+    show("S22-off reactive defense does nothing (no in-flight fleet to react to)",
+         make_obs(board22), "the old def path waits for a launched fleet -- it never comes in time")
+    react_def = [lc for lc in proto.get_trace()[-1]["launches"] if lc["kind"] == "def" and lc["tgt"] == 0]
+    proto.VALUE_HELD = True
+    show("S22 anticipatory protect from the standing threat",
+         make_obs(board22), "valuing the held planet, we reinforce/hold before the attack lands")
+    l22 = proto.get_trace()[-1]["launches"]
+    protect_act = any(lc["tgt"] == 0 and lc["kind"] == "def" for lc in l22)
+    _check("S22", (not react_def) and protect_act,
+           f"reactive def fired={bool(react_def)} (want none); anticipatory reinforce={protect_act}")
 
 
 if __name__ == "__main__":

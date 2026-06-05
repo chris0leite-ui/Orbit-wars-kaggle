@@ -127,6 +127,16 @@ CONCENTRATED_SALVO = True     # A/B knob: False -> old cross-turn boundary/defer
 # so a planet never drains below what keeps it alive.
 RESERVE_THREAT = True         # A/B knob: False -> today's in-flight-only reserve
 IGNORE_COMETS = True          # don't target comets (fleeting, moving) -- skip them as targets/mass
+# VALUE HELD PRODUCTION (two-sided value, completed). The field priced only ACQUIRING targets;
+# an owned planet was worth 0 (not a target, springboard mass 0), so losing it cost 0 and
+# reinforcing it gained 0 -- the field was blind to attacks (4 def launches/game, 14/19 losses
+# were planets we drained to <=5 ships and abandoned). Price the region we HOLD at risk: each
+# threatened owned planet gets a first-class PROTECT cell valued by value(p) (the region it
+# anchors, x2 deny), competing in the SAME ranked list as offense. It holds the planet's own
+# ships before a lower-value capture can drain them (drain-cost emerges) and pulls anticipatory
+# reinforcement from the STANDING threat (not just in-flight). Replaces the reactive def cell +
+# the value-blind reserve threshold; defense falls out of the objective, not a patch.
+VALUE_HELD = True             # A/B knob: False -> today's reactive def + threshold reserve
 # FLIP-vs-HOLD TIERS. The combined-counter hold requirement was a HARD GATE: a contested
 # planet we could flip but not HOLD built no cell at all -> we froze (launches collapsed
 # to ~65/game vs the Producer, idle 0.56, wiped to one planet). The fix: offer each target
@@ -337,6 +347,8 @@ def agent(obs, configuration=None):
     # launch at p (combined_counter evaluated on p, the same quantity we size our own attacks
     # against). Without the standing term we drain frontier planets and lose them next turn.
     def reserve(p) -> int:
+        if VALUE_HELD:
+            return 0  # defensive holding is now a value-ranked PROTECT cell, not a pre-pass cap
         t = tte(int(p.id))
         if t is None and not RESERVE_THREAT:
             return 0
@@ -660,30 +672,45 @@ def agent(obs, configuration=None):
                                       "srcs": f_srcs, "value": value(t, A_f, tenure=t_op0)})
 
     for p in my_planets:
-        need, deadline = committed_threat(p)
-        if need <= 0 or deadline is None:
-            continue
-        d_srcs = []
-        for s in nearest_k(my_planets, p, SOURCES_PER_TARGET):
-            if int(s.id) == int(p.id):
+        if VALUE_HELD:
+            # PROTECT cell: price the region this owned planet anchors against its STANDING
+            # threat (anticipatory, not just in-flight). It holds the planet's OWN ships (so a
+            # lower-value capture can't drain them) and pulls ally reinforcement, valued by the
+            # SAME value() as offense -- defense competes head-to-head, no separate subsystem.
+            threat, t_op = combined_counter(p, 0)
+            if threat <= 0.0:
                 continue
-            a = arr(s, p)
-            if a <= int(deadline):  # arriving by the deadline reinforces in time
-                d_srcs.append((s, a))
-        if not d_srcs:
-            continue
-        # FUNDABILITY GATE: a doomed planet -- one whose reachable reinforcement can't
-        # meet the shortfall by the deadline -- builds NO cell, exactly as an offensive
-        # target that can't fund a holdable wave this turn builds none. Those ships are
-        # freed for offense/consolidation instead of bleeding into a planet that falls
-        # anyway (kills the thrash; lets offense win budget slots -> initiative).
-        if sum(spare[int(s.id)] for s, _ in d_srcs) < need:
-            continue
-        # Same currency as offense: value(p, deadline). counterfactual_owner already
-        # returns "opp_likely" for a threatened own planet (tte <= deadline) -> mult=2;
-        # winnability discounts a shaky hold. No more special-case 2*prod*remain.
-        cells.append({"kind": "def", "t": p, "A": int(deadline), "R": int(need),
-                      "srcs": d_srcs, "value": value(p, int(deadline))})
+            grow = float(p.production) * float(t_op)
+            need_hold = int(math.ceil(threat - grow))
+            if need_hold <= 0:
+                continue  # production growth alone holds it -> nothing at risk this turn
+            d_srcs = [(p, 0)]  # p holds its own ships (arrival 0)
+            for s in nearest_k(my_planets, p, SOURCES_PER_TARGET):
+                if int(s.id) == int(p.id):
+                    continue
+                a = arr(s, p)
+                if a <= int(t_op):  # an ally arriving by the threat reinforces in time
+                    d_srcs.append((s, a))
+            cells.append({"kind": "protect", "t": p, "A": int(t_op), "R": int(need_hold),
+                          "srcs": d_srcs, "value": value(p, int(t_op))})
+        else:
+            need, deadline = committed_threat(p)
+            if need <= 0 or deadline is None:
+                continue
+            d_srcs = []
+            for s in nearest_k(my_planets, p, SOURCES_PER_TARGET):
+                if int(s.id) == int(p.id):
+                    continue
+                a = arr(s, p)
+                if a <= int(deadline):  # arriving by the deadline reinforces in time
+                    d_srcs.append((s, a))
+            if not d_srcs:
+                continue
+            # FUNDABILITY GATE: a doomed planet builds NO cell -> ships freed for offense.
+            if sum(spare[int(s.id)] for s, _ in d_srcs) < need:
+                continue
+            cells.append({"kind": "def", "t": p, "A": int(deadline), "R": int(need),
+                          "srcs": d_srcs, "value": value(p, int(deadline))})
 
     # ============================================================
     # ASSEMBLE. Rank cells by value; fund each wave under one global budget. Offense
@@ -722,6 +749,40 @@ def agent(obs, configuration=None):
                     held[int(s.id)] = held.get(int(s.id), 0) + take
                     need -= take
             committed_tgt.add(tid)
+            continue
+
+        if c["kind"] == "protect":
+            # Keep an owned planet alive: HOLD its own ships (so a lower-value capture can't
+            # drain them) then pull ally reinforcement arriving by the threat. NO-BLEED: if we
+            # can't actually meet the hold requirement, hold nothing -- free the ships for
+            # offense rather than feed a planet that falls anyway.
+            pid = tid
+            need = c["R"] - friendly_inflight(t, c["A"])
+            if need <= 0:
+                committed_tgt.add(pid)
+                continue
+            total_avail = sum(avail_spare(int(s.id)) for s, _ in c["srcs"]
+                              if int(s.id) == pid or int(s.id) not in reserved)
+            if total_avail < need:
+                committed_tgt.add(pid)  # unsavable -> no bleed
+                continue
+            hold_own = min(avail_spare(pid), need)
+            if hold_own > 0:
+                held[pid] = held.get(pid, 0) + hold_own
+                need -= hold_own
+            for s, a in sorted((sa for sa in c["srcs"] if int(sa[0].id) != pid),
+                               key=lambda x: x[1]):
+                if need <= 0:
+                    break
+                if int(s.id) in reserved:
+                    continue
+                send = min(avail_spare(int(s.id)), need)
+                if send < MIN_FLEET_SIZE:
+                    continue
+                ang, _eta = aim_and_eta(s, t, send, omega, world=world)
+                if emit(s, t, ang, send, a, "def", c["R"]):
+                    need -= send
+            committed_tgt.add(pid)
             continue
 
         elig = [(s, a) for (s, a) in c["srcs"]
