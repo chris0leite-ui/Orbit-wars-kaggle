@@ -185,7 +185,13 @@ def main():
                     help="comma-separated opponent paths (default: the fast light-greedy agent)")
     ap.add_argument("--verbose-seed", type=int, default=None,
                     help="dump per-turn launches for one game vs the first opponent at this seed")
+    ap.add_argument("--simulate-value", action="store_true",
+                    help="use the simulation-based evaluator (proto.SIMULATE_VALUE = True) for this run")
     args = ap.parse_args()
+
+    # Evaluator A/B toggle: flip the probe agent's module-level flag before any game runs.
+    proto.SIMULATE_VALUE = bool(args.simulate_value)
+    print(f"SIMULATE_VALUE = {proto.SIMULATE_VALUE}")
 
     # Use the IMPORTED module's agent (not a fresh _load_callable copy) so the
     # trace we reset/read is the same _TRACE object the running agent writes to.

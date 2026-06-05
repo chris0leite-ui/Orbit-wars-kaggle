@@ -42,7 +42,9 @@ from __future__ import annotations
 import math
 
 from lib.intent import World
-from lib.world_model import WorldModel, WAVE_LOOKAHEAD, predict_arrival_contest
+from lib.world_model import (
+    WorldModel, WAVE_LOOKAHEAD, predict_arrival_contest, simulate_planet_timeline,
+)
 from lib.kinematic_table import KinematicTable
 from lib.trajectory import predict_fleet_fate
 from lib.fleet import speed as fleet_speed
@@ -147,6 +149,23 @@ VALUE_HELD = True             # A/B knob: False -> today's reactive def + thresh
 # hold is unaffordable, banking production instead of freezing. Holdability becomes a choice
 # the field makes, not a gate it enforces.
 FLIP_TIER = True             # A/B knob: False -> today's hold-only gate (no flip cell)
+# SIMULATE-AND-SCORE EVALUATOR (probe, phase 1). The closed-form value field (phi/opp_phi
+# springboard potential + winnability sigmoids + counterfactual_owner deny multiplier) is a
+# hand-derived stand-in for the real objective, with ~12 unvalidated shape parameters. The
+# Producer beats us 0/12 with NO value field: it rolls the real board forward ~18 turns and
+# scores each candidate by the change it causes in (my projected production - opponents'),
+# then fires the best few. This flag swaps ONLY the evaluator: a cell's value becomes the
+# marginal competitive flow-diff -- inject the cell's real sized arrival into the target's
+# per-planet timeline and diff (my-opp) projected ownership against the do-nothing baseline,
+# integrated to the horizon. The two-sided denial (enemy->me = +2/turn, neutral->me = +1,
+# hold-vs-lose = +2) and the in-flight race fall out of the projection; no springboard term
+# (parallel expansion is meant to come from the assembler firing many cells, not a potential).
+# The coalition assembler and ALL sizing mechanics (required_force/flip_floor/combined_counter/
+# salvo_select/reserve) are UNCHANGED. PHASE 1 IS GAIN-ONLY: the source-drain downside is left
+# to reserve()/PROTECT (drain-cost already emerges there); a phase-2 cost term would
+# double-count against them. Default False so existing calibration stays green; the A/B and the
+# new SV checks flip it via proto.SIMULATE_VALUE = True.
+SIMULATE_VALUE = False
 # REGROUP: a positional pass that marches idle rear ships up the enemy-pressure
 # gradient toward the frontier, so force concentrates forward for future strikes.
 REGROUP_PRESSURE_HORIZON = 14   # turns; decay reach for the enemy-pressure signal
@@ -487,6 +506,69 @@ def agent(obs, configuration=None):
         return sum(sh for (eta_arr, owner, sh) in model.ledger.get(int(t.id), [])
                    if owner == me and abs(int(eta_arr) - int(A)) <= 1)
 
+    # --- SIMULATION value (SIMULATE_VALUE): the marginal competitive flow-diff for
+    # capturing/holding `t` landing at `arrive`. We inject the cell's REAL sized arrival into
+    # the target's per-planet timeline and diff (my - opponents') projected ownership against
+    # the do-nothing baseline (model.timelines), integrated to the horizon. Combat resolution
+    # inside the timeline decides whether the capture actually holds against IN-FLIGHT enemy
+    # fleets (subsumes winnability's race); the race against enemy PLANET launches is already
+    # baked into the sized force via combined_counter (a mechanic). The +1/0/-1 owner sign makes
+    # the two-sided denial emerge: enemy->me swings +2/turn, neutral->me +1, hold-vs-lose +2.
+    def _margin_owner(o):
+        if o == me:
+            return 1
+        if o == -1 or o is None:
+            return 0
+        return -1  # an enemy holds it
+
+    def sim_value(t, arrive, tenure=None):
+        arrive = int(arrive)
+        if arrive >= remain:           # capture lands after the game ends
+            return 0.0
+        H = int(win_turns)
+        if arrive > H:                 # arrival past the projection window -> no measurable swing
+            return 0.0
+        tid = int(t.id)
+        ledger_t = model.ledger.get(tid, [])
+        if int(t.owner) == me:
+            # PROTECT evaluation. The counterfactual of NOT holding `t` is it facing its threat
+            # UNREINFORCED. The real in-flight ledger alone misses a STANDING enemy that has not
+            # launched yet, so the baseline models the combined standing+in-flight counter as the
+            # attack (the same quantity required_force sizes against) -- this is what makes
+            # anticipatory defense ("see the attack coming") emerge instead of only reacting to
+            # fleets already in the air. injected = that same attack PLUS our reinforcement.
+            threat, t_thr = combined_counter(t, 0)
+            if threat <= 0.0 or not enemy_planets:
+                return 0.0
+            atk_owner = int(min(enemy_planets,
+                                key=lambda e: math.hypot(float(e.x) - float(t.x),
+                                                         float(e.y) - float(t.y))).owner)
+            base_arr = ledger_t + [(int(t_thr), atk_owner, int(math.ceil(threat)))]
+            inj_arr = base_arr + [(arrive, me, int(required_force(t, arrive)))]
+            base_line = simulate_planet_timeline(t, base_arr, horizon=H)
+        else:
+            # OFFENSE evaluation. Baseline = the target's natural timeline (do nothing). Inject the
+            # SAME force this cell would deliver, so combat decides if the capture actually holds
+            # against in-flight enemy fleets (subsumes winnability's in-flight race). Flip cells
+            # inject the bare flip floor; hold cells the full combined-counter-holdable force.
+            R_eff = int(flip_floor(t, arrive)[0]) if tenure is not None else int(required_force(t, arrive))
+            inj_arr = ledger_t + [(arrive, me, R_eff)]
+            base_line = model.timelines.get(tid)
+            if base_line is None:
+                return 0.0
+        injected = simulate_planet_timeline(t, inj_arr, horizon=H)
+        # A flip we only hold ~tenure turns realizes only its tenure-window swing (the projection
+        # window replaces today's tenure discount series).
+        upper = H if tenure is None else min(H, arrive + int(tenure))
+        swing = 0
+        for turn in range(arrive, upper + 1):
+            swing += _margin_owner(injected["owner_at"][turn]) - _margin_owner(base_line["owner_at"][turn])
+        return float(t.production) * float(swing)
+
+    def cell_value(t, arrive, tenure=None):
+        # Dispatch the cell's RANKING value: the simulation evaluator or the analytic field.
+        return sim_value(t, arrive, tenure) if SIMULATE_VALUE else value(t, arrive, tenure)
+
     moves: list[list] = []
     launches: list[dict] = []
 
@@ -589,7 +671,7 @@ def agent(obs, configuration=None):
             _LAST_FIELD.append({
                 "src": int(srcs[0][0].id), "tgt": int(t.id),
                 "ships": int(required_force(t, A)), "ttc": int(A),
-                "imp": round(value(t, A), 1), "win": round(winnability(t, A), 3),
+                "imp": round(cell_value(t, A), 1), "win": round(winnability(t, A), 3),
                 "tgt_owner": int(t.owner), "prod": int(t.production),
             })
 
@@ -605,7 +687,7 @@ def agent(obs, configuration=None):
                 A_rel, co_srcs, R = hold
                 if R - friendly_inflight(t, A_rel) > 0:
                     cells.append({"kind": "off", "t": t, "A": int(A_rel), "R": int(R),
-                                  "srcs": co_srcs, "value": value(t, A_rel)})
+                                  "srcs": co_srcs, "value": cell_value(t, A_rel)})
             else:
                 # No salvo meets the hold this turn. WAIT (accumulate at the strongest source)
                 # for an UNCONTESTED target -- a contested target's hold cost balloons while we
@@ -619,7 +701,7 @@ def agent(obs, configuration=None):
                     if tau <= WAIT_HORIZON:
                         cells.append({"kind": "wait", "t": t, "A": int(A0 + tau), "R": int(R0),
                                       "srcs": [sa for sa in srcs],
-                                      "value": value(t, A0 + tau) / WAIT_VALUE_MARGIN})
+                                      "value": cell_value(t, A0 + tau) / WAIT_VALUE_MARGIN})
             # FLIP salvo (contested only): a decisive flip-floor salvo, expected-tenure value.
             if FLIP_TIER and counter0 > 0.0:
                 fl = salvo_select(t, lambda tt, AA: flip_floor(tt, AA)[0])
@@ -627,7 +709,7 @@ def agent(obs, configuration=None):
                     A_f, f_srcs, Rf = fl
                     if Rf - friendly_inflight(t, A_f) > 0:
                         cells.append({"kind": "off", "t": t, "A": int(A_f), "R": int(Rf),
-                                      "srcs": f_srcs, "value": value(t, A_f, tenure=t_op0)})
+                                      "srcs": f_srcs, "value": cell_value(t, A_f, tenure=t_op0)})
         else:
             # --- OLD cross-turn assembly (A/B baseline): prefix of nearest sources, boundary
             # fires now and nearer legs defer to later turns (the piecemeal-bounce path).
@@ -649,12 +731,12 @@ def agent(obs, configuration=None):
                     if tau <= WAIT_HORIZON:
                         cells.append({"kind": "wait", "t": t, "A": int(A0 + tau), "R": int(R0),
                                       "srcs": [sa for sa in srcs],
-                                      "value": value(t, A0 + tau) / WAIT_VALUE_MARGIN})
+                                      "value": cell_value(t, A0 + tau) / WAIT_VALUE_MARGIN})
             else:
                 A_rel, chosen_srcs, R = chosen
                 if R - friendly_inflight(t, A_rel) > 0:
                     cells.append({"kind": "off", "t": t, "A": int(A_rel), "R": int(R),
-                                  "srcs": chosen_srcs, "value": value(t, A_rel)})
+                                  "srcs": chosen_srcs, "value": cell_value(t, A_rel)})
             if FLIP_TIER and counter0 > 0.0:
                 fchosen = None
                 for i in range(len(srcs)):
@@ -669,7 +751,7 @@ def agent(obs, configuration=None):
                     A_f, f_srcs, Rf = fchosen
                     if Rf - friendly_inflight(t, A_f) > 0:
                         cells.append({"kind": "off", "t": t, "A": int(A_f), "R": int(Rf),
-                                      "srcs": f_srcs, "value": value(t, A_f, tenure=t_op0)})
+                                      "srcs": f_srcs, "value": cell_value(t, A_f, tenure=t_op0)})
 
     for p in my_planets:
         if VALUE_HELD:
@@ -692,7 +774,7 @@ def agent(obs, configuration=None):
                 if a <= int(t_op):  # an ally arriving by the threat reinforces in time
                     d_srcs.append((s, a))
             cells.append({"kind": "protect", "t": p, "A": int(t_op), "R": int(need_hold),
-                          "srcs": d_srcs, "value": value(p, int(t_op))})
+                          "srcs": d_srcs, "value": cell_value(p, int(t_op))})
         else:
             need, deadline = committed_threat(p)
             if need <= 0 or deadline is None:
@@ -710,7 +792,7 @@ def agent(obs, configuration=None):
             if sum(spare[int(s.id)] for s, _ in d_srcs) < need:
                 continue
             cells.append({"kind": "def", "t": p, "A": int(deadline), "R": int(need),
-                          "srcs": d_srcs, "value": value(p, int(deadline))})
+                          "srcs": d_srcs, "value": cell_value(p, int(deadline))})
 
     # ============================================================
     # ASSEMBLE. Rank cells by value; fund each wave under one global budget. Offense

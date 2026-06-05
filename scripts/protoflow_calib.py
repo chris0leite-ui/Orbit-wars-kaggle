@@ -621,6 +621,76 @@ def main():
     _check("S22", (not react_def) and protect_act,
            f"reactive def fired={bool(react_def)} (want none); anticipatory reinforce={protect_act}")
 
+    # =====================================================================================
+    # SIMULATE_VALUE — the simulation-based evaluator (forward-projection competitive flow-diff)
+    # replaces the analytic phi/winnability field. These checks (Rule 38) reproduce the states
+    # the analytic field MISVALUES and assert the simulated value gets them right. Each runs with
+    # proto.SIMULATE_VALUE = True; the flag is restored to False after the block so the rest of
+    # the default suite is unaffected. (The springboard checks S14/S16/S17 are NOT re-asserted
+    # here -- the simulation evaluator deliberately has no springboard, so cluster-adjacency gives
+    # no lift; that is the intended difference, not a regression.)
+    # =====================================================================================
+    def _imp(field, tgt):
+        vals = [f["imp"] for f in field if f["tgt"] == tgt]
+        return max(vals) if vals else None
+
+    proto.SIMULATE_VALUE = True
+
+    # SV1 — value scales with production (basic ordering). Two affordable, uncontested neutrals,
+    # production 5 vs 1; the integrated production swing must rank the big one above the small.
+    home_sv = [0, 0, 15.0, 50.0, radius(3), 60, 3]
+    big_sv = [1, -1, 40.0, 30.0, radius(5), 6, 5]
+    small_sv = [2, -1, 40.0, 70.0, radius(1), 6, 1]
+    moves, field = show("SV1 simulated value scales with production (big prod5 > small prod1)",
+         make_obs([home_sv, big_sv, small_sv]),
+         "the integrated production swing ranks the production-5 neutral above the production-1")
+    imp_big, imp_small = _imp(field, 1), _imp(field, 2)
+    fired_big = any(lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
+    _check("SV1", imp_big is not None and imp_small is not None and imp_big > imp_small and fired_big,
+           f"imp(big prod5)={imp_big} > imp(small prod1)={imp_small}; fired big={fired_big}")
+
+    # SV2 — two-sided denial emerges from the owner SIGN (no counterfactual multiplier). Capturing
+    # an ENEMY planet flips a held owner from -1 to +1 (a swing of 2 per turn); capturing a NEUTRAL
+    # of the same production flips 0 to +1 (a swing of 1). So an equal-production, equidistant enemy
+    # target must score about TWICE the neutral -- the deny doubling falls out of the integral, not
+    # a bolted-on x2. A single, non-adjacent enemy keeps the sizing comparable for both.
+    home_d = [0, 0, 15.0, 50.0, radius(3), 90, 3]
+    neutral_d = [1, -1, 38.0, 35.0, radius(3), 6, 3]
+    enemy_d = [2, 1, 38.0, 65.0, radius(3), 6, 3]   # same production, ~same distance as the neutral
+    moves, field = show("SV2 two-sided denial from the owner sign (enemy ~2x an equal neutral)",
+         make_obs([home_d, neutral_d, enemy_d]),
+         "an equal-production enemy target scores ~2x the neutral (deny doubling emerges)")
+    imp_neutral_d, imp_enemy_d = _imp(field, 1), _imp(field, 2)
+    _check("SV2", imp_neutral_d is not None and imp_enemy_d is not None
+           and imp_enemy_d > 1.5 * imp_neutral_d,
+           f"imp(enemy prod3)={imp_enemy_d} ~2x imp(neutral prod3)={imp_neutral_d} (denial from sign)")
+
+    # SV3 — protecting a valuable planet about to fall scores high enough to act. The S22 board (a
+    # threatened planet under a STANDING enemy threat, no in-flight fleet yet, plus a surplus
+    # ally). The simulation's protect baseline models that standing threat -> the planet falls
+    # unreinforced -> the held region is a +2/turn swing -> we reinforce anticipatorily.
+    moves, field = show("SV3 anticipatory protect under the simulation evaluator",
+         make_obs(board22), "the simulated protect value (planet falls unreinforced) drives a hold/reinforce")
+    l_sv3 = proto.get_trace()[-1]["launches"]
+    protect_sv3 = any(lc["tgt"] == 0 and lc["kind"] == "def" for lc in l_sv3)
+    _check("SV3", protect_sv3,
+           f"anticipatory reinforce under simulation={protect_sv3} (sees the standing attack)")
+
+    # SV4 — a neutral the projection ALREADY gives us is worth ~0 (marginal value, no double-pay).
+    # A neutral with our own larger fleet already inbound that captures it regardless: the baseline
+    # timeline already shows it as ours, so any cell on it adds ~no swing.
+    home_f = [0, 0, 15.0, 50.0, radius(3), 60, 3]
+    free_n = [1, -1, 40.0, 50.0, radius(3), 6, 3]
+    own_fleet = [0, 0, 30.0, 50.0, 0.0, 0, 40]   # 40 of OUR ships already inbound, capture it soon
+    moves, field = show("SV4 a neutral we already get scores ~0 (marginal value)",
+         make_obs([home_f, free_n], fleets=[own_fleet]),
+         "baseline already shows the neutral as ours -> the cell adds ~no competitive swing")
+    imp_free = _imp(field, 1)
+    _check("SV4", imp_free is not None and imp_free <= 3.0,
+           f"imp(already-ours neutral)={imp_free} ~= 0 (no double-paying for an inevitable capture)")
+
+    proto.SIMULATE_VALUE = False
+
 
 if __name__ == "__main__":
     main()
