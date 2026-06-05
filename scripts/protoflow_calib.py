@@ -222,24 +222,27 @@ def main():
     _check("S8", reg_fwd and not reg_back,
            f"regroup launches={reg} (want rear0 -> forward1, not backward)")
 
-    # S9 — COMBINED-counter sizing. The SAME capturable neutral in two worlds. With
-    # ONE enemy planet able to counter, the holdable size is some value; adding a
-    # SECOND counter enemy must raise it (the opponent's real recapture wave is the
-    # SUM of every enemy that can reach the target, not just the nearest). Both
-    # counter enemies are production-1 (low value) so the production-3 neutral stays
-    # the capture under test.
-    home9 = [0, 0, 15.0, 40.0, radius(3), 90, 3]
+    # S9 — COMBINED-counter sizing over FREE force. The SAME capturable neutral in
+    # two worlds. With ONE enemy able to counter, the holdable size is some value;
+    # adding a SECOND counter enemy must raise it. Under the finite-force opponent
+    # model the counter sums each enemy's FREE force (net of what it must hold against
+    # us), floored at the nearest enemy's full garrison. The counter enemies are made
+    # STRONG (60 ships) so they retain free force even while our home pressures them
+    # -- a weak enemy near the captured neutral would be fully pinned (free->0) and the
+    # "two counters sum" property would be invisible. Both are production-1 (low value)
+    # so the production-3 neutral stays the capture under test.
+    home9 = [0, 0, 15.0, 40.0, radius(3), 80, 3]
     neutral9 = [1, -1, 33.0, 40.0, radius(3), 6, 3]            # the capture under test
-    enemyA = [2, 1, 41.0, 40.0, radius(1), 40, 1]             # counter from the east
-    enemyB = [3, 1, 33.0, 28.0, radius(1), 40, 1]             # counter from the north
-    moves, field = show("S9a one counter (single enemy in recapture range)",
+    enemyA = [2, 1, 41.0, 40.0, radius(1), 60, 1]             # strong counter from the east
+    enemyB = [3, 1, 33.0, 28.0, radius(1), 60, 1]             # strong counter from the north
+    moves, field = show("S9a one counter (single strong enemy in recapture range)",
          make_obs([home9, neutral9, enemyA]),
-         "the neutral is sized to hold against ONE counter")
+         "the neutral is sized to hold against ONE free counter")
     one_l = next((lc for lc in proto.get_trace()[-1]["launches"] if lc["tgt"] == 1), None)
     _check("S9a", one_l is not None, f"launch={one_l} (want a holdable capture)")
-    moves, field = show("S9b two counters (combined recapture wave is larger)",
+    moves, field = show("S9b two counters (combined free recapture wave is larger)",
          make_obs([home9, neutral9, enemyA, enemyB]),
-         "with TWO enemies in range, the SAME neutral needs strictly more ships")
+         "with TWO free counters in range, the SAME neutral needs strictly more ships")
     two_l = next((lc for lc in proto.get_trace()[-1]["launches"] if lc["tgt"] == 1), None)
     combined = two_l is not None and one_l is not None and two_l["ships"] > one_l["ships"]
     _check("S9b", combined,
@@ -290,6 +293,57 @@ def main():
     fires_near = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in l11b)
     _check("S11b", fires_near,
            f"launches={l11b} (want a launch at near high-prod neutral 1)")
+
+    # S12 — FREE-FORCE PINNING (the over-conservatism fix, Rule 38). The SAME neutral
+    # with TWO strong counter enemies, in two worlds that differ ONLY by our home's
+    # size. The required force to hold a capture is the COMBINED counter; under the
+    # finite-force model an enemy under our pressure must keep ships home to survive us,
+    # so its FREE counter shrinks. A bigger home pressures the enemies harder -> their
+    # free force drops -> the combined counter falls to the nearest-full floor -> the
+    # SAME neutral is sized with STRICTLY FEWER ships. The old "sum of every enemy's
+    # full garrison" model computed the same large counter in both worlds (no free-force
+    # concept) and over-sized always; this reproduces and fixes that. We read the
+    # required force directly off the field (independent of our sourcing).
+    def req_for(field, tgt):
+        es = [f["ships"] for f in field if f["tgt"] == tgt]
+        return max(es) if es else None
+    enemyA12 = [2, 1, 41.0, 40.0, radius(1), 50, 1]
+    enemyB12 = [3, 1, 33.0, 28.0, radius(1), 50, 1]
+    neutral12 = [1, -1, 33.0, 40.0, radius(3), 6, 3]
+    home_weak = [0, 0, 15.0, 40.0, radius(3), 40, 3]   # too small to pressure -> enemies free
+    _m, field_weak = show("S12a small home: enemies free -> large combined counter",
+         make_obs([home_weak, neutral12, enemyA12, enemyB12]),
+         "required force is high (both enemies contribute full free counter)")
+    req_weak = req_for(field_weak, 1)
+    home_strong = [0, 0, 15.0, 40.0, radius(3), 95, 3]  # pressures both enemies -> free shrinks
+    _m, field_strong = show("S12b strong home: enemies pinned -> smaller combined counter",
+         make_obs([home_strong, neutral12, enemyA12, enemyB12]),
+         "required force DROPS (our pressure cuts the enemies' free counter)")
+    req_strong = req_for(field_strong, 1)
+    pinned_cheaper = (req_weak is not None and req_strong is not None
+                      and req_strong < req_weak)
+    _check("S12", pinned_cheaper,
+           f"required force pinned={req_strong} < unpressured={req_weak} "
+           f"(pressure shrinks the enemy's free counter)")
+
+    # S13 — DOOMED DEFENSE: no bleed (Rule 38). An owned planet under an overwhelming
+    # committed wave it cannot be saved from (the only reachable ally can field far less
+    # than the shortfall by the deadline). Defense is now scored in the SAME currency as
+    # offense and GATED by fundability, so an unholdable planet builds NO cell -> we send
+    # NOTHING into it (the old hardcoded 2*prod*remain made it max-priority and we bled
+    # ships into a planet that falls anyway -- the ~38% thrash). The doomed planet's ally
+    # keeps its ships for offense/consolidation instead.
+    doomed = [0, 0, 30.0, 50.0, radius(2), 5, 2]              # tiny garrison
+    far_ally = [1, 0, 18.0, 50.0, radius(3), 12, 3]           # only 12 ships -- can't cover the wave
+    enemy13 = [2, 1, 85.0, 50.0, radius(3), 40, 3]            # far -> no free follow-up in window
+    big_wave = [0, 1, 40.0, 50.0, 3.1416, 2, 90]             # 90 ships inbound -> shortfall ~80 >> 12
+    moves, field = show("S13 doomed defense (overwhelming wave, ally can't cover)",
+         make_obs([doomed, far_ally, enemy13], fleets=[big_wave]),
+         "no 'def' launch into the doomed planet -- ships are not bled in")
+    def13 = [lc for lc in proto.get_trace()[-1]["launches"]
+             if lc["kind"] == "def" and lc["tgt"] == 0]
+    _check("S13", not def13,
+           f"def launches to doomed planet={def13} (want none -- no bleed)")
 
 
 if __name__ == "__main__":

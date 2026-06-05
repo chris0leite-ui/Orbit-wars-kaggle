@@ -71,6 +71,13 @@ ARRIVAL_PROBE = 16          # representative fleet size for estimating a source'
 # forgo a sure capture (avoids thrash on near-ties).
 WAIT_HORIZON = 4            # max turns of accumulation a source may wait for a better cell
 WAIT_VALUE_MARGIN = 1.10    # the held cell must beat the fire-now cell by this factor
+# When True, a threatened planet's hold requirement also covers the enemy's FREE
+# recapture follow-up (not just the launched wave) -- the opponent model applied
+# symmetrically to defense. A/B (n=4 vs Producer): ON vs OFF is a wash on win/loss
+# (both lose to the Producer, both 8/8 vs light-greedy), but ON gives cleaner thrash
+# (reinforce-then-lose 2.5 vs 3.8) -- the "no bleed" goal -- so it is the default. Kept
+# as a knob: it raises the hold bar and can over-abandon a massing opponent's frontier.
+DEFENSE_FOLLOWUP = True
 # REGROUP: a positional pass that marches idle rear ships up the enemy-pressure
 # gradient toward the frontier, so force concentrates forward for future strikes.
 REGROUP_PRESSURE_HORIZON = 14   # turns; decay reach for the enemy-pressure signal
@@ -148,6 +155,40 @@ def agent(obs, configuration=None):
 
     spare = {int(p.id): max(0, int(p.ships) - reserve(p)) for p in my_planets}
 
+    # --- enemy FREE force: the mirror of our own reserve(), from the enemy's seat.
+    # An enemy planet must hold back enough to survive OUR reachable force; only the
+    # remainder is free to COUNTER our captures or attack us. A ship pinned defending
+    # its own planet cannot also counter us -- so pressuring the enemy shrinks the
+    # counter, and our captures are sized against what they can actually spare (not
+    # their whole army). time_to_enemy_threat is perspective-symmetric: passing the
+    # enemy's own id asks "soonest WE could threaten e".
+    _efree_cache: dict[int, float] = {}
+
+    def enemy_free(e) -> float:
+        key = int(e.id)
+        v = _efree_cache.get(key)
+        if v is not None:
+            return v
+        t_us = model.time_to_enemy_threat(int(e.id), int(e.owner), world)
+        if t_us is None:
+            reserve_e = 0.0  # we pose no threat -> all of e's force is free to counter
+        else:
+            horizon = int(t_us) + WAVE_LOOKAHEAD
+            ex, ey, er = float(e.x), float(e.y), float(e.radius)
+            ours = sum(sh for (eta_arr, owner, sh) in model.ledger.get(int(e.id), [])
+                       if owner == me)
+            for f in my_planets:
+                flight = math.hypot(float(f.x) - ex, float(f.y) - ey) - float(f.radius) - er
+                sp = fleet_speed(int(f.ships))
+                tau = 1 if flight <= 0.0 else (int(math.ceil(flight / sp)) if sp > 0 else 999)
+                if tau <= horizon:
+                    ours += float(f.ships)
+            hold = float(e.ships) + float(e.production) * float(t_us)
+            reserve_e = max(0.0, ours - hold)
+        v = max(0.0, float(e.ships) - reserve_e)
+        _efree_cache[key] = v
+        return v
+
     # --- launch-now arrival: the turn a fleet launched THIS turn from s would reach
     # t (a representative probe size; the actual leg is re-aimed at its real count in
     # emit). This is what lets sources at different distances align on one landing
@@ -206,18 +247,29 @@ def agent(obs, configuration=None):
         total = 0.0
         t_min = None
         tx, ty, tr = float(t.x), float(t.y), float(t.radius)
+        # The opponent's force is FINITE and allocated: each enemy planet can only
+        # spend its FREE force (net of what it must hold against us) on the counter.
+        # Floor the total at the single nearest enemy's FULL contribution, so we are
+        # never recklessly optimistic when an enemy sits right on the target.
+        nearest_full = None
+        nearest_tau = None
         for e in enemy_planets:
             flight = math.hypot(float(e.x) - tx, float(e.y) - ty) - float(e.radius) - tr
             sp = fleet_speed(int(e.ships))
             tau = 1 if flight <= 0.0 else (int(math.ceil(flight / sp)) if sp > 0 else 999)
             if tau <= COUNTER_WINDOW:
-                total += float(e.ships) + float(e.production) * float(A + tau)
+                total += enemy_free(e) + float(e.production) * float(A + tau)
+                cand_full = float(e.ships) + float(e.production) * float(A + tau)
+                if nearest_full is None or tau < nearest_tau:
+                    nearest_full, nearest_tau = cand_full, tau
                 t_min = tau if t_min is None else min(t_min, tau)
         for (eta_arr, owner, sh) in model.ledger.get(int(t.id), []):
             if owner != me and A < eta_arr <= A + COUNTER_WINDOW:
                 total += float(sh)
                 tau = max(1, int(eta_arr) - int(A))
                 t_min = tau if t_min is None else min(t_min, tau)
+        if nearest_full is not None:
+            total = max(total, nearest_full)
         return total, (t_min if t_min is not None else 0)
 
     # --- required force at a cell: the flip floor at arrival A, up-sized so the
@@ -266,7 +318,24 @@ def agent(obs, configuration=None):
         deadline = min(e for e, _ in incoming)
         force = sum(sh for e, sh in incoming if e <= deadline + WAVE_LOOKAHEAD)
         hold = float(p.ships) + float(p.production) * float(deadline)
-        return max(0, int(math.ceil(force - hold + 1))), deadline
+        base = float(force) - hold + 1.0  # reinforcement to WIN the landing wave
+        # FOLLOW-UP (opponent model, symmetric with offense): after we win the wave,
+        # our garrison must survive the enemy's FREE recapture force launched from
+        # their PLANETS. Only planet launches -- the in-flight wave is already in
+        # `force`, so excluding it here avoids a double count. Same hold inequality
+        # as required_force. A planet facing a wave AND an unanswerable follow-up is
+        # genuinely doomed; the bigger `need` makes the fundability gate abandon it
+        # rather than bleed ships in.
+        follow = 0.0
+        px, py, pr = float(p.x), float(p.y), float(p.radius)
+        for e in enemy_planets:
+            flight = math.hypot(float(e.x) - px, float(e.y) - py) - float(e.radius) - pr
+            sp = fleet_speed(int(e.ships))
+            tau = 1 if flight <= 0.0 else (int(math.ceil(flight / sp)) if sp > 0 else 999)
+            if tau <= COUNTER_WINDOW:
+                follow += enemy_free(e) + float(e.production) * float(int(deadline) + tau)
+        need = base + (follow / HOLD_SAFETY_MARGIN if follow > 0.0 and DEFENSE_FOLLOWUP else 0.0)
+        return max(0, int(math.ceil(need))), deadline
 
     # ============================================================
     # BUILD CELLS. Offense: for each enemy/neutral target, find the soonest landing
@@ -354,9 +423,18 @@ def agent(obs, configuration=None):
                 d_srcs.append((s, a))
         if not d_srcs:
             continue
-        # Losing a planet is a 2x swing (our stream lost + the enemy gains it).
+        # FUNDABILITY GATE: a doomed planet -- one whose reachable reinforcement can't
+        # meet the shortfall by the deadline -- builds NO cell, exactly as an offensive
+        # target that can't fund a holdable wave this turn builds none. Those ships are
+        # freed for offense/consolidation instead of bleeding into a planet that falls
+        # anyway (kills the thrash; lets offense win budget slots -> initiative).
+        if sum(spare[int(s.id)] for s, _ in d_srcs) < need:
+            continue
+        # Same currency as offense: value(p, deadline). counterfactual_owner already
+        # returns "opp_likely" for a threatened own planet (tte <= deadline) -> mult=2;
+        # winnability discounts a shaky hold. No more special-case 2*prod*remain.
         cells.append({"kind": "def", "t": p, "A": int(deadline), "R": int(need),
-                      "srcs": d_srcs, "value": 2.0 * int(p.production) * float(remain)})
+                      "srcs": d_srcs, "value": value(p, int(deadline))})
 
     # ============================================================
     # ASSEMBLE. Rank cells by value; fund each wave under one global budget. Offense
