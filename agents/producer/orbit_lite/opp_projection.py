@@ -179,6 +179,8 @@ def predict_opp_multi_launch_lite(
         dist_st = cross0[opp_src_slots][:, opp_tgt_slots]                                # [S_opp, T_opp]
 
         # Per-source safe_drain (max safely-shippable from each opp source over H).
+        # Treated as a HORIZON-TOTAL cap, not a per-launch cap: cumulative sends
+        # from a single source across the projection must not exceed `drain`.
         src_ships = obs.ships[opp_src_slots].to(dtype)                                   # [S_opp]
         H_eff = torch.full((), float(H), dtype=dtype, device=device)
         drain = safe_drain(
@@ -186,8 +188,18 @@ def predict_opp_multi_launch_lite(
             source_ships=src_ships, H_eff=H_eff, player_id=opp_id,
         )                                                                                # [S_opp]
 
-        # Batched intercept aim at sizes_hi = drain.floor (one size per pair).
-        sizes = drain.view(S_opp, 1).expand(S_opp, T_opp).floor().clamp(min=1.0)         # [S_opp, T_opp]
+        # Batched intercept aim at the EXPECTED first-launch size
+        # (ship_fraction * src_ships, floored at min_ships). The earlier version
+        # passed `drain.floor()` which can differ materially from the actual
+        # send and produces wrong intercept etas (fleet_speed is non-linear in
+        # ships). Using the typical-first-send size matches actual launch
+        # behaviour for the dominant first launch from each source; subsequent
+        # smaller launches incur a small (~1-tick) eta error that is bounded
+        # by the horizon clamp below.
+        first_send = torch.clamp(
+            float(ship_fraction) * src_ships, min=float(min_ships)
+        )                                                                                # [S_opp]
+        sizes = first_send.view(S_opp, 1).expand(S_opp, T_opp)                           # [S_opp, T_opp]
         aim = intercept_angle(
             movement,
             opp_src_slots.view(S_opp, 1),
@@ -197,21 +209,13 @@ def predict_opp_multi_launch_lite(
         eta_pair = aim["eta"]                                                            # [S_opp, T_opp]
         viable_pair = aim["viable"] & (eta_pair <= float(horizon_eff))                   # [S_opp, T_opp]
 
-        # Capture-floor at arrival tick for the opp's POV.
+        # Capture-floor table over the full horizon, from opp's POV.
+        # Indexed [target, absolute_tick_from_now - 1].
         K_floor = int(horizon_eff)
         floor_opp = capture_floor(
             garrison_status, target_idx=opp_tgt_slots, k_max=K_floor,
             capture_overhead=1.0, player_id=opp_id,
         )                                                                                # [T_opp, K_floor]
-        # eta-bucket index per pair (clamped to [0, K_floor-1]).
-        k_arr = (
-            eta_pair.clamp(min=1.0, max=float(K_floor)).ceil().long() - 1
-        ).clamp(0, K_floor - 1)                                                          # [S_opp, T_opp]
-        # Look up floor[t, k_arr+1] for the "defender grew by one tick" check;
-        # clamp to last index when at horizon edge.
-        k_arr_plus = (k_arr + 1).clamp(0, K_floor - 1)
-        floor_at_arr_plus = floor_opp.unsqueeze(0).expand(S_opp, T_opp, K_floor).gather(
-            -1, k_arr_plus.unsqueeze(-1)).squeeze(-1)                                    # [S_opp, T_opp]
 
         # ROI per (s, t) for greedy target ranking (same proxy as original).
         prod_t_b = prod[opp_tgt_slots].view(1, T_opp).expand(S_opp, T_opp)
@@ -221,7 +225,7 @@ def predict_opp_multi_launch_lite(
         # Pull tensors to CPU once for the small inner loops.
         eta_cpu = eta_pair.cpu().tolist()
         viable_cpu = viable_pair.cpu().tolist()
-        floor_cpu = floor_at_arr_plus.cpu().tolist()
+        floor_cpu = floor_opp.cpu().tolist()                                             # [T_opp][K_floor]
         roi_cpu = roi_st.cpu().tolist()
         drain_cpu = drain.cpu().tolist()
         tgt_slot_cpu = opp_tgt_slots.cpu().tolist()
@@ -231,47 +235,70 @@ def predict_opp_multi_launch_lite(
 
         for s_i in range(S_opp):
             src_slot = int(src_slot_cpu[s_i])
+            # Budget timing: at the START of `_tick`, the source has had
+            # `_tick` periods of production beyond `ships_now`. At `_tick=0`
+            # (launching THIS turn) no extra production has accrued yet.
             budget = float(ships_cpu[src_slot])
             launches_from = 0
+            cumulative_send = 0.0
             for _tick in range(horizon_eff):
-                budget += float(prod_cpu[src_slot])
+                if _tick > 0:
+                    budget += float(prod_cpu[src_slot])
                 if launches_from >= int(max_per_source) or budget < float(min_ships):
+                    continue
+                # Horizon-total safe-drain cap (drain represents total ships the
+                # source can safely shed over H, not a per-launch cap).
+                remaining_drain = float(drain_cpu[s_i]) - cumulative_send
+                if remaining_drain < float(min_ships):
                     continue
                 # Pick best viable, not-taken, capture-clearable target.
                 best_t = -1
                 best_roi = -1.0
+                best_floor = 0.0
                 for t_i in range(T_opp):
                     if not bool(viable_cpu[s_i][t_i]):
                         continue
                     t_slot = int(tgt_slot_cpu[t_i])
                     if t_slot in taken_targets:
                         continue
-                    # Send proposal: max(min, fraction × budget), capped by drain + budget.
+                    # Send proposal: max(min, fraction × budget), capped by
+                    # remaining safe-drain (horizon-total) and current budget.
                     proposal = max(float(min_ships), float(ship_fraction) * budget)
-                    proposal = min(proposal, float(drain_cpu[s_i]), budget)
+                    proposal = min(proposal, remaining_drain, budget)
                     if proposal < float(min_ships):
                         continue
-                    # Defender check at arrival + 1: must clear `floor_at_arr_plus`.
-                    if proposal < float(floor_cpu[s_i][t_i]):
+                    # Defender check at ABSOLUTE arrival + 1: the launch fires
+                    # at _tick and arrives at game-tick (_tick + intercept_eta).
+                    # Defender count at +1 captures the "defender grew by one
+                    # tick" margin used by the original. Index into floor_opp
+                    # at absolute_arrival (clamped to last bucket).
+                    k_local = float(eta_cpu[s_i][t_i])
+                    k_abs_plus = int(float(_tick) + k_local + 1.0)
+                    if k_abs_plus < 1:
+                        k_abs_plus = 1
+                    if k_abs_plus > K_floor:
+                        # Arrival lands past the horizon -- skip.
                         continue
-                    if float(roi_cpu[s_i][t_i]) > best_roi:
-                        best_roi = float(roi_cpu[s_i][t_i])
+                    floor_at = float(floor_cpu[t_i][k_abs_plus - 1])
+                    if proposal < floor_at:
+                        continue
+                    roi_val = float(roi_cpu[s_i][t_i])
+                    if roi_val > best_roi:
+                        best_roi = roi_val
                         best_t = t_i
+                        best_floor = floor_at
                 if best_t < 0:
                     continue
                 t_slot = int(tgt_slot_cpu[best_t])
                 send = max(float(min_ships), float(ship_fraction) * budget)
-                send = min(send, float(drain_cpu[s_i]), budget)
+                send = min(send, remaining_drain, budget)
                 # Absolute arrival eta from NOW = projection tick offset +
-                # intercept flight time. Without the offset, opp's launch at
-                # _tick=2 with flight=4 would be reported as eta=4 (arrives at
-                # tick 4) instead of the correct eta=6.
+                # intercept flight time. Within horizon by the defender-check
+                # guard above.
                 eta_val = float(_tick) + max(1.0, float(eta_cpu[s_i][best_t]))
-                # Clamp into the scorer's horizon window.
-                if eta_val > float(horizon_eff):
-                    continue
                 records.append((src_slot, t_slot, send, eta_val, opp_id))
                 budget -= send
+                cumulative_send += send
                 taken_targets.add(t_slot)
                 launches_from += 1
                 if len(records) >= int(pad_to):
