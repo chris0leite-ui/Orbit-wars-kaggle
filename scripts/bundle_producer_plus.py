@@ -43,6 +43,9 @@ ORBIT_LITE_ORDER = [
     # recapture imports DistanceCache, fleet_speed, PlanetGarrisonStatus —
     # all from modules above. No interdependence with opp_projection.
     "recapture",
+    # strategic_value imports LaunchSet (garrison_launch), PlanetGarrisonStatus
+    # (movement). No interdependence with recapture or opp_projection.
+    "strategic_value",
 ]
 
 ORBIT_LITE_DIR = REPO / "agents" / "producer" / "orbit_lite"
@@ -125,6 +128,36 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_MULTI_TICK_OPP_K_4P": "3",
         "PRODUCER_PLUS_MULTI_TICK_OPP_K_2P": "2",
         "PRODUCER_PLUS_RECAPTURE_PENALTY": "1",
+    },
+    "denial": {
+        # Standalone denial bonus. Requires opp_proj to be ON so opp_intent
+        # in the background LaunchSet contributes; otherwise denial only
+        # fires for already-opp-owned targets (no race-for-neutral
+        # component).
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_DENIAL_BONUS": "1",
+    },
+    "opening": {
+        # Standalone opening bonus. Opp-agnostic, no opp_proj required.
+        "PRODUCER_PLUS_OPENING_BONUS": "1",
+    },
+    "strategic": {
+        # Both new bonuses on, with opp_proj on so denial works fully.
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_DENIAL_BONUS": "1",
+        "PRODUCER_PLUS_OPENING_BONUS": "1",
+    },
+    "multi_tick_strategic": {
+        # Full composed: multi_size + opp_proj + multi-tick + recap +
+        # denial + opening. The path that ships if the strategic A/B
+        # confirms lift.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MULTI_TICK_OPP_K_4P": "3",
+        "PRODUCER_PLUS_MULTI_TICK_OPP_K_2P": "2",
+        "PRODUCER_PLUS_RECAPTURE_PENALTY": "1",
+        "PRODUCER_PLUS_DENIAL_BONUS": "1",
+        "PRODUCER_PLUS_OPENING_BONUS": "1",
     },
 }
 

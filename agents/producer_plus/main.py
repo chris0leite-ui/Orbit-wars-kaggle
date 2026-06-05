@@ -34,6 +34,7 @@ from orbit_lite.distance_cache import build_distance_cache
 from orbit_lite.garrison_launch import LaunchSet
 from orbit_lite.opp_projection import predict_opp_launches_via_mirror, MAX_L_OPP
 from orbit_lite.recapture import recapture_penalty
+from orbit_lite.strategic_value import denial_bonus, opening_bonus
 from orbit_lite.planner_core import (
     _candidate_indices,
     _empty_entries,
@@ -162,6 +163,63 @@ def _recapture_safety_reserve() -> float:
         return min(1.0, max(0.0, float(raw)))
     except (TypeError, ValueError):
         return 0.5
+
+
+# Strategic-value bonuses: per-candidate scorer credits for the
+# production we'd accrue past the scorer horizon (H=18 in 2P / 13 in 4P).
+#
+# Two opt-in mechanisms, each in ship units so the weight is a pure
+# multiplier:
+#   denial_bonus  — captures of targets the opponent values (currently
+#                   owns OR predicted to attack via opp_proj's
+#                   background LaunchSet). Encodes "block the opponent's
+#                   biggest bet."  Opp-aware: depends on opp_proj.
+#   opening_bonus — captures during the early-game phase, linearly
+#                   decaying to zero at ``opening_window``. Opp-agnostic.
+# Both default OFF preserves byte-identical static behaviour. Share the
+# game-length estimate knob (``PRODUCER_PLUS_GAME_LENGTH_EST``).
+def _denial_bonus_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_DENIAL_BONUS", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _denial_bonus_weight() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_DENIAL_WEIGHT", "0.1")
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.1
+
+
+def _opening_bonus_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_OPENING_BONUS", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _opening_bonus_weight() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_OPENING_WEIGHT", "0.1")
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.1
+
+
+def _opening_window() -> int:
+    raw = os.environ.get("PRODUCER_PLUS_OPENING_WINDOW", "30")
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 30
+
+
+def _game_length_est() -> int:
+    raw = os.environ.get("PRODUCER_PLUS_GAME_LENGTH_EST", "200")
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 200
 
 
 def _env_int(name: str, default: int) -> int:
@@ -838,6 +896,44 @@ def plan_lite_waves(
             player_id=pid,
         )
         score = score - pen * float(_recapture_penalty_weight())
+    if _denial_bonus_enabled() or _opening_bonus_enabled():
+        # Resolve current_step once (cheap) for both bonuses.
+        _cur_step = int(obs_tensors["step"].max().item())
+        if _denial_bonus_enabled():
+            # Rewards captures of targets opp values (currently owns OR
+            # opp_proj's background launches target it). Encodes
+            # "blocking the opponent's biggest bet."
+            d_bonus = denial_bonus(
+                obs=obs, background=background,
+                cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
+                cand_send=cand_send, cand_eta=cand_eta,
+                cand_valid=cand_valid, cand_is_def=cand_is_def,
+                capture_floor_TK=floor, prod=prod,
+                garrison_status=garrison_status,
+                H=H, current_step=_cur_step,
+                game_length_est=_game_length_est(),
+                weight=_denial_bonus_weight(),
+                player_id=pid,
+            )
+            score = score + d_bonus
+        if _opening_bonus_enabled():
+            # Opp-agnostic early-game boost: linearly decays from full at
+            # step 0 to zero at ``opening_window`` (default 30). Encodes
+            # the horizon-too-short defect during the opening expansion.
+            o_bonus = opening_bonus(
+                obs=obs,
+                cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
+                cand_send=cand_send, cand_eta=cand_eta,
+                cand_valid=cand_valid, cand_is_def=cand_is_def,
+                capture_floor_TK=floor, prod=prod,
+                garrison_status=garrison_status,
+                H=H, current_step=_cur_step,
+                game_length_est=_game_length_est(),
+                opening_window=_opening_window(),
+                weight=_opening_bonus_weight(),
+                player_id=pid,
+            )
+            score = score + o_bonus
     score = torch.where(cand_valid, score, torch.full_like(score, float("-inf")))
 
     # Cross-wave over-drain guard for multi-size: single-size's accidental
