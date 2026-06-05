@@ -119,24 +119,27 @@ def probe_opponent(name: str, opp_path: str, seeds: int, focal):
     n = 0
     agg = defaultdict(float)
     print(f"\n=== vs {name}  ({opp_path}) ===")
+    # One INDEPENDENT game per seed (a fresh board each time). Seats are balanced
+    # ACROSS seeds (even seed -> we play p0, odd -> p1) rather than playing both seats
+    # of the SAME seed -- p0/p1 on one seed are mirror games, not independent samples.
     for seed in range(seeds):
-        for focal_is_p0 in (True, False):
-            t0 = time.time()
-            won, trace, seat = run_game(seed, focal, opp, focal_is_p0)
-            m = trace_metrics(trace)
-            n += 1
-            if won is True:
-                wins += 1
-            res = "WIN " if won else ("LOSS" if won is False else "ERR ")
-            print(f"  seed {seed:>3} {seat}  {res}  "
-                  f"launches={m['launches']:>4}  idle={m['idle_frac']:.2f}  "
-                  f"conv={m['conv_turns']:>3}  cohort={m['max_cohort']}  "
-                  f"tiny={m['tiny_frac']:.2f}  far={m['far_frac']:.2f}  "
-                  f"bad_split={m['bad_split']:>2}  regroup={m['regroup']:>3}  "
-                  f"end_planets={m['end_planets']:>2}  ({time.time()-t0:.1f}s)")
-            if won is not None:
-                for k, v in m.items():
-                    agg[k] += v
+        focal_is_p0 = (seed % 2 == 0)
+        t0 = time.time()
+        won, trace, seat = run_game(seed, focal, opp, focal_is_p0)
+        m = trace_metrics(trace)
+        n += 1
+        if won is True:
+            wins += 1
+        res = "WIN " if won else ("LOSS" if won is False else "ERR ")
+        print(f"  seed {seed:>3} {seat}  {res}  "
+              f"launches={m['launches']:>4}  idle={m['idle_frac']:.2f}  "
+              f"conv={m['conv_turns']:>3}  cohort={m['max_cohort']}  "
+              f"tiny={m['tiny_frac']:.2f}  far={m['far_frac']:.2f}  "
+              f"bad_split={m['bad_split']:>2}  regroup={m['regroup']:>3}  "
+              f"end_planets={m['end_planets']:>2}  ({time.time()-t0:.1f}s)")
+        if won is not None:
+            for k, v in m.items():
+                agg[k] += v
     lo, hi = wilson_ci(wins, n)
     games = max(1, n)
     print(f"  --> {name}: {wins}/{n} ({100*wins/games:.1f}%)  Wilson[{lo:.3f}, {hi:.3f}]")
@@ -176,7 +179,8 @@ def verbose_game(seed: int, opp_path: str, focal, max_turns: int = 60):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--seeds", type=int, default=6, help="seeds per opponent (x2 seats)")
+    ap.add_argument("--seeds", type=int, default=6,
+                    help="independent games per opponent (one per seed; seats balanced across seeds)")
     ap.add_argument("--opponents", default=DEFAULT_LITE_GREEDY,
                     help="comma-separated opponent paths (default: the fast light-greedy agent)")
     ap.add_argument("--verbose-seed", type=int, default=None,
@@ -192,7 +196,7 @@ def main():
         verbose_game(args.verbose_seed, opps[0], focal)
         return
 
-    print(f"protoflow probe — {args.seeds} seeds x 2 seats per opponent")
+    print(f"protoflow probe — {args.seeds} independent games per opponent (one per seed, balanced seats)")
     for opp_path in opps:
         name = Path(opp_path).stem
         probe_opponent(name, opp_path, args.seeds, focal)
