@@ -40,6 +40,7 @@ Imports lib/* and agents.baseline.* directly (fine for local A/B; NOT bundled).
 from __future__ import annotations
 
 import math
+import types
 
 from lib.intent import World
 from lib.world_model import (
@@ -161,11 +162,20 @@ FLIP_TIER = True             # A/B knob: False -> today's hold-only gate (no fli
 # hold-vs-lose = +2) and the in-flight race fall out of the projection; no springboard term
 # (parallel expansion is meant to come from the assembler firing many cells, not a potential).
 # The coalition assembler and ALL sizing mechanics (required_force/flip_floor/combined_counter/
-# salvo_select/reserve) are UNCHANGED. PHASE 1 IS GAIN-ONLY: the source-drain downside is left
-# to reserve()/PROTECT (drain-cost already emerges there); a phase-2 cost term would
-# double-count against them. Default False so existing calibration stays green; the A/B and the
-# new SV checks flip it via proto.SIMULATE_VALUE = True.
+# salvo_select/reserve) are UNCHANGED. Default False so existing calibration stays green; the A/B
+# and the new SV checks flip it via proto.SIMULATE_VALUE = True.
 SIMULATE_VALUE = False
+# DRAIN COST (the emergent cost side of the flow-diff). The simulation evaluator above prices a
+# move's PRIZE (the target's margin swing) but not its COST (the source planets it empties). So we
+# expanded then COLLAPSED (peak ~8 planets vs the Producer, then wiped to 0) -- we drained planets
+# we then lost to fund the next capture. Complete the marginal flow-diff: an offense cell's value
+# becomes gain(target) MINUS the projected production we lose when its sources are drained -- each
+# source re-rolled with its ships removed, charged 2*production per turn it now falls. "Don't gut a
+# planet you'll lose" then EMERGES as a value fact (the cell ranks below a safer-funded capture or
+# a hold), not a safe-drain cap. Exact per-planet: the do-nothing rollout has no launches, so
+# planets don't interact. Applies to offense cells only (wait launches nothing; protect/def HOLD
+# ships). No-op unless SIMULATE_VALUE is also on. Default False; the A/B flips it via proto attr.
+SIMVALUE_DRAIN_COST = False
 # REGROUP: a positional pass that marches idle rear ships up the enemy-pressure
 # gradient toward the frontier, so force concentrates forward for future strikes.
 REGROUP_PRESSURE_HORIZON = 14   # turns; decay reach for the enemy-pressure signal
@@ -569,6 +579,48 @@ def agent(obs, configuration=None):
         # Dispatch the cell's RANKING value: the simulation evaluator or the analytic field.
         return sim_value(t, arrive, tenure) if SIMULATE_VALUE else value(t, arrive, tenure)
 
+    # --- DRAIN COST: the cost side of the marginal flow-diff. Removing q ships from a source NOW
+    # may make it fall to an in-flight enemy wave it would otherwise have survived. We re-roll the
+    # source with its garrison reduced by q and charge the production it loses (2*prod per turn it
+    # now falls, by the same owner-sign as the gain). The do-nothing rollout has no launches, so a
+    # source's future is independent of the rest of the board -> this is exact per-planet.
+    def source_loss(s, q):
+        q = int(q)
+        if q <= 0:
+            return 0.0
+        sid = int(s.id)
+        base_tl = model.timelines.get(sid)
+        if base_tl is None:
+            return 0.0
+        H = int(win_turns)
+        shim = types.SimpleNamespace(owner=s.owner, ships=max(0.0, float(s.ships) - q),
+                                     production=s.production)
+        drained = simulate_planet_timeline(shim, model.ledger.get(sid, []), horizon=H)
+        loss = 0
+        for turn in range(1, H + 1):
+            loss += _margin_owner(base_tl["owner_at"][turn]) - _margin_owner(drained["owner_at"][turn])
+        return float(s.production) * float(loss)
+
+    def drain_cost(t, srcs, R, A):
+        # Total projected production this offense cell costs by draining its sources. Allocate the
+        # needed force across the sources largest-first by spare (the assembler's funding order).
+        if not (SIMULATE_VALUE and SIMVALUE_DRAIN_COST):
+            return 0.0
+        need = int(R) - friendly_inflight(t, A)
+        if need <= 0:
+            return 0.0
+        cost = 0.0
+        rem = need
+        for s in sorted((s for s, _ in srcs), key=lambda s: -spare.get(int(s.id), 0)):
+            if rem <= 0:
+                break
+            q = min(int(spare.get(int(s.id), 0)), rem)
+            if q <= 0:
+                continue
+            rem -= q
+            cost += source_loss(s, q)
+        return cost
+
     moves: list[list] = []
     launches: list[dict] = []
 
@@ -687,7 +739,8 @@ def agent(obs, configuration=None):
                 A_rel, co_srcs, R = hold
                 if R - friendly_inflight(t, A_rel) > 0:
                     cells.append({"kind": "off", "t": t, "A": int(A_rel), "R": int(R),
-                                  "srcs": co_srcs, "value": cell_value(t, A_rel)})
+                                  "srcs": co_srcs,
+                                  "value": cell_value(t, A_rel) - drain_cost(t, co_srcs, R, A_rel)})
             else:
                 # No salvo meets the hold this turn. WAIT (accumulate at the strongest source)
                 # for an UNCONTESTED target -- a contested target's hold cost balloons while we
@@ -709,7 +762,8 @@ def agent(obs, configuration=None):
                     A_f, f_srcs, Rf = fl
                     if Rf - friendly_inflight(t, A_f) > 0:
                         cells.append({"kind": "off", "t": t, "A": int(A_f), "R": int(Rf),
-                                      "srcs": f_srcs, "value": cell_value(t, A_f, tenure=t_op0)})
+                                      "srcs": f_srcs,
+                                      "value": cell_value(t, A_f, tenure=t_op0) - drain_cost(t, f_srcs, Rf, A_f)})
         else:
             # --- OLD cross-turn assembly (A/B baseline): prefix of nearest sources, boundary
             # fires now and nearer legs defer to later turns (the piecemeal-bounce path).
@@ -736,7 +790,8 @@ def agent(obs, configuration=None):
                 A_rel, chosen_srcs, R = chosen
                 if R - friendly_inflight(t, A_rel) > 0:
                     cells.append({"kind": "off", "t": t, "A": int(A_rel), "R": int(R),
-                                  "srcs": chosen_srcs, "value": cell_value(t, A_rel)})
+                                  "srcs": chosen_srcs,
+                                  "value": cell_value(t, A_rel) - drain_cost(t, chosen_srcs, R, A_rel)})
             if FLIP_TIER and counter0 > 0.0:
                 fchosen = None
                 for i in range(len(srcs)):
@@ -751,7 +806,8 @@ def agent(obs, configuration=None):
                     A_f, f_srcs, Rf = fchosen
                     if Rf - friendly_inflight(t, A_f) > 0:
                         cells.append({"kind": "off", "t": t, "A": int(A_f), "R": int(Rf),
-                                      "srcs": f_srcs, "value": cell_value(t, A_f, tenure=t_op0)})
+                                      "srcs": f_srcs,
+                                      "value": cell_value(t, A_f, tenure=t_op0) - drain_cost(t, f_srcs, Rf, A_f)})
 
     for p in my_planets:
         if VALUE_HELD:
@@ -873,6 +929,13 @@ def agent(obs, configuration=None):
             continue
 
         if c["kind"] == "off":
+            # A move whose net competitive flow-diff is non-positive is worse than holding the
+            # ships -- once the drain cost is priced in, firing it would gut a source for less
+            # than it costs. HOLDING is the value-0 alternative, so skip it (the cost VETOes a
+            # self-defeating drain, not just lowers its rank). Gated with the drain-cost mechanism.
+            if SIMVALUE_DRAIN_COST and c["value"] <= 0.0:
+                committed_tgt.add(tid)
+                continue
             A_rel = c["A"]
             need = c["R"] - friendly_inflight(t, A_rel)
             if need <= 0:

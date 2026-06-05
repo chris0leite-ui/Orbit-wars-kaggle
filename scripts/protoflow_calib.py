@@ -689,6 +689,39 @@ def main():
     _check("SV4", imp_free is not None and imp_free <= 3.0,
            f"imp(already-ours neutral)={imp_free} ~= 0 (no double-paying for an inevitable capture)")
 
+    # SD1 — DON'T DRAIN A PLANET INTO A LOSS (the cost side of the flow-diff; the peak-then-collapse
+    # in miniature). A frontier planet that survives an in-flight enemy wave ONLY if it keeps its
+    # ships -- so undrained it is safe and builds NO protect cell (this isolates the drain COST from
+    # the protect mechanic) -- plus a tempting neutral reachable only by draining the frontier below
+    # survival. With the drain cost OFF the offense cell that drains the frontier keeps full value
+    # and the drain fires; with it ON that cell's value is cut by the frontier's projected loss, so
+    # we do NOT gut the frontier to grab the neutral. (SIMULATE_VALUE stays on for both arms.)
+    proto.SIMULATE_VALUE = True
+    frontier_sd = [0, 0, 30.0, 50.0, radius(3), 30, 3]    # survives the wave iff it keeps its ships
+    neutral_sd = [1, -1, 30.0, 74.0, radius(2), 25, 2]    # defended -> capturing it drains ~27 ships off the frontier
+    enemy_sd = [2, 1, 85.0, 15.0, radius(3), 40, 1]       # distant -- not a standing counter to the frontier
+    wave_sd = [0, 1, 18.0, 50.0, 0.0, 2, 20]              # 20 ships in-flight at the frontier (survivable if held, fatal if drained)
+    board_sd = [frontier_sd, neutral_sd, enemy_sd]
+    proto.SIMVALUE_DRAIN_COST = False
+    show("SD1-off drain the frontier to grab the neutral (no drain cost)",
+         make_obs(board_sd, fleets=[wave_sd]), "without the cost, draining the frontier looks free")
+    drain_off_sd = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
+    proto.SIMVALUE_DRAIN_COST = True
+    show("SD1 hold the frontier (the drain cost outweighs the marginal capture)",
+         make_obs(board_sd, fleets=[wave_sd]), "pricing the lost frontier, we do not drain it open")
+    drain_on_sd = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
+    _check("SD1", drain_off_sd and not drain_on_sd,
+           f"off drained the frontier={drain_off_sd}; drain-cost held it={not drain_on_sd}")
+
+    # SV1-SV4 must remain green with the drain cost ON (they involve no over-draining -> cost ~0).
+    proto.SIMVALUE_DRAIN_COST = True
+    _, field = show("SV1+cost re-check (drain cost on; big still > small)",
+         make_obs([home_sv, big_sv, small_sv]), "the drain cost is ~0 here -> ordering unchanged")
+    imp_big2, imp_small2 = _imp(field, 1), _imp(field, 2)
+    _check("SV1+cost", imp_big2 is not None and imp_small2 is not None and imp_big2 > imp_small2,
+           f"imp(big)={imp_big2} > imp(small)={imp_small2} with drain cost on")
+    proto.SIMVALUE_DRAIN_COST = False
+
     proto.SIMULATE_VALUE = False
 
 
