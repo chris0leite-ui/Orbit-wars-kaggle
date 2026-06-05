@@ -126,6 +126,7 @@ CONCENTRATED_SALVO = True     # A/B knob: False -> old cross-turn boundary/defer
 # the standing threat too (the same combined_counter we size attacks against, from p's seat),
 # so a planet never drains below what keeps it alive.
 RESERVE_THREAT = True         # A/B knob: False -> today's in-flight-only reserve
+IGNORE_COMETS = True          # don't target comets (fleeting, moving) -- skip them as targets/mass
 # FLIP-vs-HOLD TIERS. The combined-counter hold requirement was a HARD GATE: a contested
 # planet we could flip but not HOLD built no cell at all -> we froze (launches collapsed
 # to ~65/game vs the Producer, idle 0.56, wiped to one planet). The fix: offer each target
@@ -193,7 +194,11 @@ def agent(obs, configuration=None):
         return []
     enemy_planets = [p for p in planets if int(p.owner) not in (-1, me)]
     neutrals = [p for p in planets if int(p.owner) == -1]
-    target_pool = enemy_planets + neutrals
+    # Comets are short-lived moving bodies (production 1, removed when they leave the board).
+    # For now we do NOT target them: capturing one is fleeting value and it drags fleets off
+    # course. Exclude them from the target pool and from the springboard mass below.
+    comet_ids = world.comet_ids if IGNORE_COMETS else frozenset()
+    target_pool = [p for p in (enemy_planets + neutrals) if int(p.id) not in comet_ids]
 
     # --- TWO-SIDED VALUE-TO-GO. A potential phi[t] = the windowed production of holding t
     # PLUS the travel-discounted production it can spring to over a few capture-hops (a
@@ -241,16 +246,18 @@ def agent(obs, configuration=None):
     if EXPANSION_POTENTIAL:
         # Our seat: neutrals are NEW mass (1.0), our planets already ours (0), enemy mass is
         # harder to chain through (discounted).
-        getmass_me = {int(p.id): (1.0 if int(p.owner) == -1
-                                  else (0.0 if int(p.owner) == me else ENEMY_REACH_DISCOUNT))
+        getmass_me = {int(p.id): (0.0 if int(p.id) in comet_ids
+                                  else (1.0 if int(p.owner) == -1
+                                        else (0.0 if int(p.owner) == me else ENEMY_REACH_DISCOUNT)))
                       for p in planets}
         phi = compute_potential(getmass_me)
         if OFFENSIVE_PRESSURE:
             # Opponent's seat (mirror): neutrals NEW mass for them (1.0), OUR planets are
             # their springboard mass (discounted), their own planets already theirs (0). In
             # 2P this is the single opponent; in 4P it lumps all opponents (follow-up).
-            getmass_opp = {int(p.id): (1.0 if int(p.owner) == -1
-                                       else (ENEMY_REACH_DISCOUNT if int(p.owner) == me else 0.0))
+            getmass_opp = {int(p.id): (0.0 if int(p.id) in comet_ids
+                                       else (1.0 if int(p.owner) == -1
+                                             else (ENEMY_REACH_DISCOUNT if int(p.owner) == me else 0.0)))
                            for p in planets}
             opp_phi = compute_potential(getmass_opp)
 
