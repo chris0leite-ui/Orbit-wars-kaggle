@@ -230,6 +230,7 @@ def plan_lite_waves(
     target_idx, target_exists = build_target_shortlist(
         obs, obs_tensors, garrison_status, cache,
         config=config, K_eta=K_eta, H=H, prod=prod, source_mask=source_mask,
+        background=background,
     )
     if not bool(target_exists.any()):
         return _empty_entries(device, dtype)

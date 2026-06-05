@@ -243,12 +243,24 @@ def attack_target_mask(obs, obs_tensors: dict) -> Tensor:
 
 def friendly_flip_targets(
     obs, garrison_status: PlanetGarrisonStatus, *, H: int, prod: Tensor,
+    background: LaunchSet | None = None,
 ) -> tuple[Tensor, Tensor]:
-    """Own planets the do-nothing projection shows flipping within H.
+    """Own planets projected to flip within H -- with optional opp-aware
+    augmentation from a background LaunchSet of opp's predicted launches.
+
+    Without ``background``: identical to the historical behaviour, scanning
+    only ``garrison_status.owner`` (fleets already in flight under the
+    static-opp projection).
+
+    With ``background``: also marks a planet as flipping at tick ``ceil(eta)``
+    if a valid opp launch in the background targets it (currently mine) with
+    enough ships to crack the projected defender count
+    (``ships > defender + 1.0``, matching ``capture_floor``'s overhead). The
+    earlier of the two flip ticks wins per planet.
 
     Returns ``(mask [P] bool, urgency [P] float)``. ``urgency`` ≈ projected
-    ships lost if unaddressed = ``prod·(H − flip_turn) + garrison_now`` — same ship
-    units as the ROI, used to fill the reserved defensive sub-quota.
+    ships lost if unaddressed = ``prod·(H − flip_turn) + garrison_now`` — same
+    ship units as the ROI, used to fill the reserved defensive sub-quota.
     """
     P = obs.P
     device = obs.device
@@ -258,6 +270,29 @@ def friendly_flip_targets(
         return torch.zeros(P, dtype=torch.bool, device=device), z
     owner_h = garrison_status.owner[..., 1:]                     # [P, H]
     flips = obs.owned.unsqueeze(-1) & (owner_h != pid)           # currently mine, not mine at some k
+
+    # Opp-aware augmentation: opp_proj's predicted captures of MY planets
+    # show up here, so the defensive shortlist can enumerate reinforcement
+    # candidates against them.
+    if background is not None and int(background.source_slots.shape[-1]) > 0:
+        valid = background.valid
+        tgt = background.target_slots.clamp(0, max(P - 1, 0))
+        eta = background.eta
+        ships_bg = background.ships
+        owned_tgt = obs.owned[tgt]
+        # arrival absolute tick from now (1..H); clamp into [1, H] for index safety.
+        arr_tick = torch.ceil(eta).long().clamp(1, H)
+        # gather defender count at the arrival tick from the static-opp projection
+        # via paired advanced indexing: defender[l] = garrison_status.ships[tgt[l], arr_tick[l]].
+        defender = garrison_status.ships[tgt, arr_tick]
+        captures = ships_bg > (defender + 1.0)
+        contributes = valid & owned_tgt & captures
+        if bool(contributes.any()):
+            sel_tgt = tgt[contributes]
+            sel_idx = arr_tick[contributes] - 1
+            flips = flips.clone()
+            flips[sel_tgt, sel_idx] = True
+
     any_flip = flips.any(dim=-1)                                 # [P]
     # earliest flip turn (lowest-index True); _stable_argmax instead of raw argmax
     # so the tie among post-flip turns resolves identically on CPU and CUDA.
@@ -270,11 +305,17 @@ def friendly_flip_targets(
 
 def build_target_shortlist(
     obs, obs_tensors, garrison_status, cache, *, config, K_eta, H, prod, source_mask,
+    background: LaunchSet | None = None,
 ):
     """Single unified shortlist: ``max_offensive_targets`` enemy/neutral targets by
     proximity ∪ ``max_defensive_targets`` friendly-flip targets by urgency., The
     two caps are independent (shortlist width == offensive + defensive), so each can
-    be swept on its own. Returns ``(target_idx, target_exists)``."""
+    be swept on its own. Returns ``(target_idx, target_exists)``.
+
+    The optional ``background`` LaunchSet (opp_proj's predicted launches) is
+    forwarded to ``friendly_flip_targets`` so the defensive lane can react to
+    opp's new launches, not just to fleets already in flight.
+    """
     P = obs.P
     device = obs.device
     n_attack = max(1, min(int(config.max_offensive_targets), P))
@@ -286,7 +327,9 @@ def build_target_shortlist(
     atk_idx, atk_exists = _candidate_indices(attack_pref, attack_mask, n_attack)
 
     if R > 0:
-        flip_mask, urgency = friendly_flip_targets(obs, garrison_status, H=H, prod=prod)
+        flip_mask, urgency = friendly_flip_targets(
+            obs, garrison_status, H=H, prod=prod, background=background,
+        )
         def_idx, def_exists = _candidate_indices(urgency, flip_mask, R)
         target_idx = torch.cat([atk_idx, def_idx], dim=0)
         target_exists = torch.cat([atk_exists, def_exists], dim=0)
