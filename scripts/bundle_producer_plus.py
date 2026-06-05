@@ -88,6 +88,22 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_MULTI_SIZE": "1",
         "PRODUCER_PLUS_OPP_PROJECTION": "1",
     },
+    "multi_tick_opp_K3": {
+        # Multi_opp_def + K-round opp projection. Opp's planner runs K
+        # successive rounds, each round seeing prior rounds' projected
+        # launches as `background`; per-round launches are eta-shifted by
+        # +k before merging. Addresses the cycle stalemate diagnosis
+        # (knowledge-base/thoughts/2026-06-05-cycle-stalemate-and-horizon-
+        # scaling.md): scorer was blind past tick ~8 because opp_proj only
+        # projected one tick. 4P stalemate is the target pathology; 2P
+        # gets K=2 so the 2P A/B harness can still detect breakage.
+        # Horizon bump intentionally NOT baked here — separate A/B once
+        # this variant lands.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MULTI_TICK_OPP_K_4P": "3",
+        "PRODUCER_PLUS_MULTI_TICK_OPP_K_2P": "2",
+    },
 }
 
 

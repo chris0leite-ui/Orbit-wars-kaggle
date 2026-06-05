@@ -98,6 +98,26 @@ def _opp_projection_enabled() -> bool:
     )
 
 
+# Multi-tick opp projection: instead of projecting opp's launches at the
+# current tick only, run opp's planner K successive rounds (game-ticks
+# 0, 1, ..., K-1) with the cumulative previously-projected opp launches
+# passed as ``background`` each round. Each round's launches are
+# eta-shifted by +k turns before merging. Default 0/1 preserves the
+# single-pass byte-identical behaviour. Player-count-suffixed knobs
+# override the common one. State knob; only consulted when opp_proj is
+# already ON. See knowledge-base/thoughts/2026-06-05-cycle-stalemate-
+# and-horizon-scaling.md for the structural-defect diagnosis.
+def _multi_tick_opp_k(player_count: int) -> int:
+    suffix = "_4P" if int(player_count) >= 4 else "_2P"
+    raw = os.environ.get(f"PRODUCER_PLUS_MULTI_TICK_OPP_K{suffix}")
+    if raw is None:
+        raw = os.environ.get("PRODUCER_PLUS_MULTI_TICK_OPP_K", "0")
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, default))
@@ -863,6 +883,7 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
         opp_ids = [
             pid for pid in range(int(player_count)) if pid != int(obs.player_id)
         ]
+        K_opp = max(1, _multi_tick_opp_k(int(player_count)))
         background = predict_opp_launches_via_mirror(
             plan_fn=plan_lite_waves,
             obs_tensors=obs_tensors, movement=movement, cache=cache,
@@ -871,6 +892,8 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
             opp_ids=opp_ids, config=config, player_count=int(player_count),
             K_eta_override=K_eta_override,
             pad_to=_env_int("PRODUCER_PLUS_OPP_MAX_L", MAX_L_OPP),
+            K=K_opp,
+            H=H,
         )
         do_nothing_score = float(_score_do_nothing(
             status=status, prod=movement.planet_prod,
