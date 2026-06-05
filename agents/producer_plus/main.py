@@ -31,6 +31,8 @@ from orbit_lite.movement_step import (
 )
 from orbit_lite.obs import parse_obs
 from orbit_lite.distance_cache import build_distance_cache
+from orbit_lite.garrison_launch import LaunchSet
+from orbit_lite.opp_projection import predict_opp_multi_launch_lite, MAX_L_OPP
 from orbit_lite.planner_core import (
     _candidate_indices,
     _empty_entries,
@@ -78,6 +80,20 @@ def _multi_size_enabled() -> bool:
 # bit-identical single-source behaviour. state/MIGRATION_PLAN.md Step 5.
 def _coalitions_enabled() -> bool:
     return os.environ.get("PRODUCER_PLUS_COALITIONS", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+# Opponent multi-launch projection: once per turn, project the opponents'
+# next 8 ticks of launches and inject them as background LaunchSet slots
+# into the per-candidate scorer. The scorer's `sparse_launch_flow_delta`
+# natively handles mixed-owner LaunchSets via per-launch `owner`, so
+# every candidate is now scored against "do my action AND opp does their
+# projected actions" rather than "do my action while opp does nothing".
+# Default OFF preserves bit-identical static-opp scoring. Migration plan
+# Step 3 (redux). See orbit_lite/opp_projection.py.
+def _opp_projection_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_OPP_PROJECTION", "0").strip().lower() in (
         "1", "true", "yes", "on",
     )
 
@@ -184,6 +200,7 @@ def plan_lite_waves(
     config: ProducerLiteConfig,
     player_count: int,
     K_eta_override: int | None = None,
+    background: LaunchSet | None = None,
 ):
     """Single-size, single-source attack planner + regroup.
 
@@ -709,9 +726,29 @@ def plan_lite_waves(
         valid=cand_active & cand_valid.unsqueeze(-1),
         player_id=pid,
     )
+    # If opp_projection is on, broadcast the projected opp launches to the
+    # candidate axis and concat them onto launches' L axis BEFORE scoring.
+    # The scorer's per-launch `owner` + `_per_step_survivor`'s owner-axis
+    # topk handle the mixed-owner combat correctly. Greedy below still
+    # operates on the ORIGINAL [C, L_my] tensors — opp slots never enter
+    # greedy's budget / role-mutex view.
+    scoring_launches = launches
+    if background is not None:
+        L_opp = int(background.source_slots.shape[-1])
+        if L_opp > 0:
+            def _bg(t):
+                return t.unsqueeze(0).expand(C, -1)
+            scoring_launches = LaunchSet(
+                source_slots=torch.cat([launches.source_slots, _bg(background.source_slots)], dim=-1),
+                target_slots=torch.cat([launches.target_slots, _bg(background.target_slots)], dim=-1),
+                ships=torch.cat([launches.ships, _bg(background.ships)], dim=-1),
+                eta=torch.cat([launches.eta, _bg(background.eta)], dim=-1),
+                owner=torch.cat([launches.owner, _bg(background.owner)], dim=-1),
+                valid=torch.cat([launches.valid, _bg(background.valid)], dim=-1),
+            )
     score = score_candidates(
         garrison_status, prod=prod, alive_by_step=alive_by_step,
-        player_count=int(player_count), launches=launches, player_id=pid,
+        player_count=int(player_count), launches=scoring_launches, player_id=pid,
     )                                                                            # [C]
     score = torch.where(cand_valid, score, torch.full_like(score, float("-inf")))
 
@@ -770,11 +807,27 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
     current_step = int(obs_tensors["step"].max().item())
     K_eta_override = compute_k_eta_for_step(current_step, H=H)
 
+    # Step 3 redux: project opponents' next ~8 ticks of launches once per
+    # turn and pass through as a background LaunchSet for scoring. Default
+    # OFF preserves bit-identical static-opp scoring.
+    background = None
+    if _opp_projection_enabled():
+        opp_ids = [
+            pid for pid in range(int(player_count)) if pid != int(obs.player_id)
+        ]
+        background = predict_opp_multi_launch_lite(
+            obs=obs, movement=movement, garrison_status=status, cache=cache,
+            opp_ids=opp_ids,
+            horizon=_env_int("PRODUCER_PLUS_OPP_HORIZON", 8),
+            pad_to=_env_int("PRODUCER_PLUS_OPP_MAX_L", MAX_L_OPP),
+        )
+
     entries = plan_lite_waves(
         movement=movement, obs=obs, obs_tensors=obs_tensors, cache=cache,
         garrison_status=status, prod=movement.planet_prod,
         alive_by_step=alive_by_step, config=config, player_count=int(player_count),
         K_eta_override=K_eta_override,
+        background=background,
     )
     entries = disambiguate_duplicate_launches(entries)
     launches = infer_planned_launches_from_entries(

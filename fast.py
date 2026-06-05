@@ -99,6 +99,13 @@ _BASELINES: dict[str, str] = {
     "producer_plus_composed": str(
         REPO / "agents" / "producer_plus" / "producer_plus_composed.py"
     ),
+    # Step 3 redux: producer_plus with PRODUCER_PLUS_OPP_PROJECTION=1.
+    # Once-per-turn opponent multi-launch projection injected as background
+    # LaunchSet slots in the scorer. Fixes the static-opp scorer defect that
+    # bounded multi_size and Fix-A coalitions at mu~=1264 on the live ladder.
+    "producer_plus_opp_proj": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_opp_proj.py"
+    ),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",

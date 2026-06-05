@@ -37,6 +37,9 @@ ORBIT_LITE_ORDER = [
     "movement_step",
     "adapter",
     "planner_core",
+    # opp_projection depends on garrison_launch, intercept_aim, movement,
+    # obs, planner_core — all above. Must come AFTER planner_core.
+    "opp_projection",
 ]
 
 ORBIT_LITE_DIR = REPO / "agents" / "producer" / "orbit_lite"
@@ -67,6 +70,13 @@ ENV_VARIANTS = {
         # with multi-size single-source variants.
         "PRODUCER_PLUS_MULTI_SIZE": "1",
         "PRODUCER_PLUS_COALITIONS": "1",
+    },
+    "opp_proj": {
+        # Step 3 redux: per-turn opp multi-launch projection injected as
+        # background LaunchSet slots in the scorer. Multi_size and coalitions
+        # deliberately OFF — this is the standalone variant testing the
+        # opp-projection mechanism in isolation.
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
     },
 }
 
