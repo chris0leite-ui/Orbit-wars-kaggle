@@ -91,6 +91,16 @@ VALUE_DISCOUNT = 0.9         # per-turn discount d; d**VALUE_HORIZON ~ 0.15
 POTENTIAL_HOPS = 3           # sequential captures looked ahead (~18 turns / ~6 turns/hop)
 EXPANSION_COUPLING = 0.6     # weight on each successive hop (keeps the series bounded)
 ENEMY_REACH_DISCOUNT = 0.5   # enemy production is harder springboard mass than neutral
+# FLIP-vs-HOLD TIERS. The combined-counter hold requirement was a HARD GATE: a contested
+# planet we could flip but not HOLD built no cell at all -> we froze (launches collapsed
+# to ~65/game vs the Producer, idle 0.56, wiped to one planet). The fix: offer each target
+# a second, CHEAP "flip" cell (sized just to flip, like the Producer's capture_floor),
+# priced by its EXPECTED TENURE -- the own production we bank before the counter retakes it,
+# with no springboard. The full-value HOLD cell always outranks the flip for the same
+# target, so we still concentrate where we can afford to hold; the flip only wins where the
+# hold is unaffordable, banking production instead of freezing. Holdability becomes a choice
+# the field makes, not a gate it enforces.
+FLIP_TIER = True             # A/B knob: False -> today's hold-only gate (no flip cell)
 # REGROUP: a positional pass that marches idle rear ships up the enemy-pressure
 # gradient toward the frontier, so force concentrates forward for future strikes.
 REGROUP_PRESSURE_HORIZON = 14   # turns; decay reach for the enemy-pressure signal
@@ -132,6 +142,9 @@ def agent(obs, configuration=None):
     step = world.step
     omega = world.omega
     remain = max(1, EPISODE_STEPS - step)
+    # Tempo window in turns, capped by what's left of the game. Read by the phi
+    # potential below AND by value()'s tenure discount, so it lives at turn scope.
+    win_turns = min(VALUE_HORIZON, int(remain))
 
     world._kt = KinematicTable()
     world._kt.begin_turn(world)
@@ -156,7 +169,6 @@ def agent(obs, configuration=None):
     phi: dict[int, float] = {}
     if EXPANSION_POTENTIAL:
         rep_speed = fleet_speed(ARRIVAL_PROBE)
-        win_turns = min(VALUE_HORIZON, int(remain))
         W = sum(VALUE_DISCOUNT ** tau for tau in range(win_turns + 1))
         ids = [int(p.id) for p in planets]
         prize = {int(p.id): float(p.production) * W for p in planets}
@@ -286,16 +298,29 @@ def agent(obs, configuration=None):
             return "opp_likely"
         return "neutral"
 
-    def value(t, arrive):
+    def value(t, arrive, tenure=None):
+        # tenure=None -> we expect to HOLD the target (full value-to-go). tenure=k -> we
+        # expect to lose it to the counter in ~k turns (a flip): realize only the target's
+        # OWN production over those k turns -- no springboard, since we don't keep it long
+        # enough to chain off it. mult (deny) and winnability (realizability) are unchanged.
         if arrive >= remain:  # capture would land after the game ends
             return 0.0
         mult = 2.0 if counterfactual_owner(t, arrive) in ("opp", "opp_likely") else 1.0
         if EXPANSION_POTENTIAL:
-            # farsighted: the prize is the reachable productive region (phi), not the
-            # planet's own stream. Arrival timing is carried by winnability (0.97**arrive
-            # + the race), which was always the dominant arrival term.
-            return mult * winnability(t, arrive) * phi.get(int(t.id), 0.0)
-        stream = int(t.production) * max(0.0, float(remain) - float(arrive))
+            if tenure is None:
+                # farsighted: the prize is the reachable productive region (phi). Arrival
+                # timing is carried by winnability (0.97**arrive + the race).
+                base = phi.get(int(t.id), 0.0)
+            else:
+                # flip: own production discounted over the tenure window only.
+                ten = max(0, min(int(tenure), win_turns))
+                W_ten = sum(VALUE_DISCOUNT ** tau for tau in range(ten + 1))
+                base = float(t.production) * W_ten
+            return mult * winnability(t, arrive) * base
+        stream_turns = max(0.0, float(remain) - float(arrive))
+        if tenure is not None:
+            stream_turns = min(stream_turns, float(tenure))
+        stream = int(t.production) * stream_turns
         return mult * stream * winnability(t, arrive)
 
     # --- COMBINED counter: the opponent's real recapture wave is the SUM over every
@@ -337,10 +362,15 @@ def agent(obs, configuration=None):
     # post-capture garrison survives the COMBINED counter (same inequality as the
     # champion's hold_need, but summed). Returns the flip floor when no counter is in
     # range, so safe rear expansion stays cheap.
-    def required_force(t, A):
+    def flip_floor(t, A):
+        # bare force to FLIP the target at arrival A (the Producer's capture_floor):
+        # the defender at arrival + integer-combat margin. Holding is NOT priced in.
         base = model.ships_at(int(t.id), int(A))
         defender = int(math.ceil(base)) if base is not None else int(t.ships)
-        floor = max(MIN_FLEET_SIZE, defender + CAPTURE_MARGIN)
+        return max(MIN_FLEET_SIZE, defender + CAPTURE_MARGIN), defender
+
+    def required_force(t, A):
+        floor, defender = flip_floor(t, A)
         counter, t_op = combined_counter(t, A)
         if counter <= 0.0:
             return floor
@@ -464,12 +494,36 @@ def agent(obs, configuration=None):
                     for sj, _ in srcs:
                         if spare[int(sj.id)] > 0:
                             aspiration[int(sj.id)] = max(aspiration[int(sj.id)], v_wait)
-            continue  # HOLD and accumulate
-        A_rel, chosen_srcs, R = chosen
-        if R - friendly_inflight(t, A_rel) <= 0:
-            continue  # friendly fleets already en route cover it -> don't double-send
-        cells.append({"kind": "off", "t": t, "A": int(A_rel), "R": int(R),
-                      "srcs": chosen_srcs, "value": value(t, A_rel)})
+        else:
+            A_rel, chosen_srcs, R = chosen
+            if R - friendly_inflight(t, A_rel) > 0:
+                cells.append({"kind": "off", "t": t, "A": int(A_rel), "R": int(R),
+                              "srcs": chosen_srcs, "value": value(t, A_rel)})
+
+        # FLIP cell (cheap capture, expected-tenure value). Built whether or not the HOLD
+        # cell above was fundable, so a frozen (unholdable) contested target still gets a
+        # deploy option instead of sitting idle. Only meaningful when a counter exists --
+        # with no counter the hold cell already collapses to the flip floor, so a separate
+        # flip cell would be redundant. The full-value hold cell (when it exists) outranks
+        # this for the same target, so we still concentrate wherever we can afford to hold.
+        if FLIP_TIER:
+            A0 = srcs[0][1]
+            counter, t_op = combined_counter(t, A0)
+            if counter > 0.0:
+                fchosen = None
+                for i in range(len(srcs)):
+                    A = srcs[i][1]
+                    Rf = flip_floor(t, A)[0]
+                    avail = (friendly_inflight(t, A)
+                             + sum(spare[int(sj.id)] for sj, _ in srcs[:i + 1]))
+                    if avail >= Rf:
+                        fchosen = (A, [sa for sa in srcs[:i + 1]], Rf)
+                        break
+                if fchosen is not None:
+                    A_f, f_srcs, Rf = fchosen
+                    if Rf - friendly_inflight(t, A_f) > 0:
+                        cells.append({"kind": "off", "t": t, "A": int(A_f), "R": int(Rf),
+                                      "srcs": f_srcs, "value": value(t, A_f, tenure=t_op)})
 
     for p in my_planets:
         need, deadline = committed_threat(p)

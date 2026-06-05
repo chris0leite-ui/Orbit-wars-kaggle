@@ -381,6 +381,54 @@ def main():
            and abs(bi - bc) <= 0.01 * max(bi, bc))
     _check("S14b", tie, f"baseline isolated={bi} ~= cluster={bc} (tie within 1%)")
 
+    # S15 — FLIP TIER: break the freeze on an UNHOLDABLE contested capture (Rule 38).
+    # Home has ample ships and faces no in-flight threat (reserve ~ 0 -> spare full), but a
+    # strong enemy sits right next to a contested neutral, so the COMBINED-counter hold
+    # force is far more than we can fund. Today's hold-only gate builds NO cell for that
+    # neutral and we freeze -- no launch (this is the 65-launches/game-vs-Producer failure
+    # in miniature). The flip tier offers a cheap flip-floor capture priced by its expected
+    # tenure, so we DEPLOY and bank production instead of sitting idle.
+    # Home can FLIP (floor ~8) but is far short of the HOLD force (~72) -- and far enough
+    # short that even the max wait-gate accumulation (4 turns * prod 3 = 12 ships) can't
+    # close the gap, so the agent does not merely "wait then hold": it freezes outright.
+    home15 = [0, 0, 15.0, 40.0, radius(3), 50, 3]            # can flip, can't hold even after waiting
+    neutral15 = [1, -1, 33.0, 40.0, radius(3), 6, 3]         # contested capture under test
+    strong_enemy15 = [2, 1, 41.0, 40.0, radius(1), 99, 1]    # adjacent -> huge combined counter
+    board15 = [home15, neutral15, strong_enemy15]
+    # FLIP OFF first: reproduce the freeze (no launch at the unholdable neutral).
+    proto.FLIP_TIER = False
+    show("S15a-off freeze (unholdable contested neutral, hold-only gate)",
+         make_obs(board15),
+         "with the flip tier OFF we cannot fund the hold -> NO launch (the freeze)")
+    off_at_neutral = [lc for lc in proto.get_trace()[-1]["launches"] if lc["tgt"] == 1]
+    proto.FLIP_TIER = True
+    _check("S15a-off", not off_at_neutral,
+           f"launches at neutral with flip OFF={off_at_neutral} (want none -- frozen)")
+    # FLIP ON: the same neutral now gets a cheap flip-sized capture (below the hold size).
+    _m, field_on = show("S15a flip tier deploys (cheap flip capture, banks production)",
+         make_obs(board15),
+         "with the flip tier ON we fire a cheap flip-floor capture at the neutral")
+    flip_l = next((lc for lc in proto.get_trace()[-1]["launches"] if lc["tgt"] == 1), None)
+    hold_req = req_for(field_on, 1)  # the displayed hold size (combined counter)
+    _check("S15a", flip_l is not None and hold_req is not None and flip_l["ships"] < hold_req,
+           f"flip launch ships={flip_l['ships'] if flip_l else None} < hold size={hold_req} "
+           f"(deploy a flip we can fund, not the unfundable hold)")
+
+    # S15b — CONCENTRATION preserved: where the hold IS affordable, we pay for it. The flip
+    # tier must not cannibalize a holdable capture into a cheap flip. Ample home + a
+    # contested neutral with a counter enemy it CAN out-fund -> the launched capture must
+    # exceed the bare flip floor (the full-value hold cell outranks the flip and fires).
+    home15b = [0, 0, 15.0, 30.0, radius(3), 90, 3]
+    neutral15b = [1, -1, 33.0, 30.0, radius(2), 6, 3]
+    counter15b = [2, 1, 41.0, 30.0, radius(1), 40, 1]
+    show("S15b concentration preserved (holdable -> pay the hold, not the flip)",
+         make_obs([home15b, neutral15b, counter15b]),
+         "the holdable neutral is taken ABOVE the bare flip floor (hold outranks flip)")
+    l15b = next((lc for lc in proto.get_trace()[-1]["launches"] if lc["tgt"] == 1), None)
+    bare = max(proto.MIN_FLEET_SIZE, 6 + proto.CAPTURE_MARGIN)  # flip floor for a 6-garrison neutral
+    _check("S15b", l15b is not None and l15b["ships"] > bare,
+           f"launched ships={l15b['ships'] if l15b else None} > flip floor={bare} (paid for the hold)")
+
 
 if __name__ == "__main__":
     main()
