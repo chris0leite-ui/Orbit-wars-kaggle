@@ -810,7 +810,16 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
     # Step 3 redux: project opponents' next ~8 ticks of launches once per
     # turn and pass through as a background LaunchSet for scoring. Default
     # OFF preserves bit-identical static-opp scoring.
+    #
+    # When opp_proj is on, the scorer's competitive_score (me - opp_total)
+    # naturally compresses: opp's projected actions add to opp_total, so my
+    # comparative advantage looks smaller than under the static-opp baseline.
+    # Producer's hardcoded `roi_threshold = 1.5` is tuned for the static-opp
+    # world where capture scores are ~30; under opp_proj the same captures
+    # score ~3. We override config.roi_threshold to 0 (any positive-net action
+    # fires) so the agent doesn't refuse to launch entirely.
     background = None
+    cfg = config
     if _opp_projection_enabled():
         opp_ids = [
             pid for pid in range(int(player_count)) if pid != int(obs.player_id)
@@ -821,11 +830,12 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
             horizon=_env_int("PRODUCER_PLUS_OPP_HORIZON", 8),
             pad_to=_env_int("PRODUCER_PLUS_OPP_MAX_L", MAX_L_OPP),
         )
+        cfg = dataclasses.replace(config, roi_threshold=0.0)
 
     entries = plan_lite_waves(
         movement=movement, obs=obs, obs_tensors=obs_tensors, cache=cache,
         garrison_status=status, prod=movement.planet_prod,
-        alive_by_step=alive_by_step, config=config, player_count=int(player_count),
+        alive_by_step=alive_by_step, config=cfg, player_count=int(player_count),
         K_eta_override=K_eta_override,
         background=background,
     )
