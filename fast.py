@@ -106,6 +106,12 @@ _BASELINES: dict[str, str] = {
     "producer_plus_opp_proj": str(
         REPO / "agents" / "producer_plus" / "producer_plus_opp_proj.py"
     ),
+    # Kitchen sink: multi_size + coalitions + opp_proj all enabled. Tests
+    # the original Step 3 hypothesis that opp-aware scoring UNLOCKS the
+    # Step 4 and Step 5 mechanisms.
+    "producer_plus_kitchen_sink": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_kitchen_sink.py"
+    ),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",
