@@ -181,6 +181,17 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_RECAPTURE_PENALTY": "1",
         "PRODUCER_PLUS_FORCE_CONCENTRATION": "1",
     },
+    "opp_def_force_concentration": {
+        # The proven multi_opp_def stack (multi_size + opp_proj, local 24/32
+        # = 75% vs producer, live mu 1263-1285) with force-concentration added
+        # and NOTHING else. Both live/local regressions to date
+        # (multi_tick_recap mu=1099, lean_force_concentration 7/32) carry the
+        # recapture penalty; this variant tests FC on the proven base without
+        # that suspect term and without multi-tick.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_FORCE_CONCENTRATION": "1",
+    },
     "lean_force_concentration": {
         # Same scorer stack as multi_tick_force_concentration MINUS the
         # opp-projection mechanism (and the multi-tick K-round expansion of
