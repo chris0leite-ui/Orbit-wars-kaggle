@@ -70,6 +70,17 @@ def _play_one_game(focal_path, opp_path, seed):
     return env.state, env.steps
 
 
+def _focal_action_stream(steps):
+    """Serialize the focal player's per-step actions for divergence checks.
+
+    Rewards are win/loss (±1) in current kaggle_environments, so reward
+    comparison alone cannot detect planner changes when both variants win.
+    """
+    import json
+    return json.dumps([s[0].get("action") for s in steps], sort_keys=True)
+
+
+
 @pytest.mark.slow
 def test_off_path_bit_identical_to_producer():
     """Rule 38 reproduce-failure test: with PRODUCER_PLUS_MULTI_SIZE unset
@@ -127,14 +138,14 @@ def test_multi_size_on_changes_planner_output():
     plus_on  = os.path.join(PRODUCER_PLUS_DIR, "producer_plus_multi_size.py")
     differs = False
     for seed in (7, 13, 42):
-        state_off, _ = _play_one_game(plus_off, producer_path, seed)
-        state_on,  _ = _play_one_game(plus_on,  producer_path, seed)
-        # Compare final rewards and step counts as a coarse signal — if the
-        # planner is making different choices, at least one seed should
-        # diverge in either ship totals or game length.
+        state_off, steps_off = _play_one_game(plus_off, producer_path, seed)
+        state_on,  steps_on  = _play_one_game(plus_on,  producer_path, seed)
+        # Rewards are win/loss (±1) here, so two variants that both beat
+        # producer read as identical — compare the action stream too.
         if (
             state_off[0]["reward"] != state_on[0]["reward"]
             or state_off[1]["reward"] != state_on[1]["reward"]
+            or _focal_action_stream(steps_off) != _focal_action_stream(steps_on)
         ):
             differs = True
             break

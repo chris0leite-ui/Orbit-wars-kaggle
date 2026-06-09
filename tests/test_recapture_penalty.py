@@ -352,6 +352,17 @@ def _play_one_game(focal_path, opp_path, seed):
     return env.state, env.steps
 
 
+def _focal_action_stream(steps):
+    """Serialize the focal player's per-step actions for divergence checks.
+
+    Rewards are win/loss (±1) in current kaggle_environments, so reward
+    comparison alone cannot detect planner changes when both variants win.
+    """
+    import json
+    return json.dumps([s[0].get("action") for s in steps], sort_keys=True)
+
+
+
 @pytest.mark.slow
 def test_recapture_penalty_off_byte_identical(monkeypatch):
     """Rule 38: gate OFF (explicit "0") must match gate UNSET. Both hit
@@ -390,11 +401,14 @@ def test_recapture_penalty_on_changes_planner_output():
     on_shim = os.path.join(PRODUCER_PLUS_DIR, "producer_plus_multi_tick_recap.py")
     differs = False
     for seed in (7, 13, 42):
-        state_off, _ = _play_one_game(off_shim, producer_path, seed)
-        state_on, _ = _play_one_game(on_shim, producer_path, seed)
+        state_off, steps_off = _play_one_game(off_shim, producer_path, seed)
+        state_on, steps_on = _play_one_game(on_shim, producer_path, seed)
+        # Rewards are win/loss (±1) here, so two variants that both beat
+        # producer read as identical — compare the action stream too.
         if (
             state_off[0]["reward"] != state_on[0]["reward"]
             or state_off[1]["reward"] != state_on[1]["reward"]
+            or _focal_action_stream(steps_off) != _focal_action_stream(steps_on)
         ):
             differs = True
             break
