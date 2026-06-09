@@ -18,16 +18,23 @@ directory on ``sys.path`` — a bare ``import producer_agent`` would
 fail. Same pattern as ``producer_plus_coalitions.py``.
 """
 import os
+import sys
 import importlib.util
 
 os.environ.setdefault("PRODUCER_PLUS_OPP_PROJECTION", "1")
 
 # kaggle_environments loads agent files via exec without setting __file__,
 # so fall back to cwd. Matches the guard in main.py:12-17.
+# kaggle_environments execs agent files without defining __file__, but it
+# appends the agent file's directory to sys.path during the exec — recover
+# our directory from there (else this shim dies and plays None every turn).
 try:
     _HERE = os.path.dirname(os.path.abspath(__file__))
 except NameError:
-    _HERE = os.getcwd()
+    if sys.path and os.path.isfile(os.path.join(sys.path[-1], "producer_agent.py")):
+        _HERE = sys.path[-1]
+    else:
+        _HERE = os.getcwd()
 _spec = importlib.util.spec_from_file_location(
     "producer_plus_opp_proj_inner",
     os.path.join(_HERE, "producer_agent.py"),

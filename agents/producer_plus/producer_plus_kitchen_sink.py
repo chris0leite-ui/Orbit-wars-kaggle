@@ -13,16 +13,23 @@ multi-size, no coalitions) which only validates the projection mechanism
 itself, not the unlock claim. This shim tests the unlock claim directly.
 """
 import os
+import sys
 import importlib.util
 
 os.environ.setdefault("PRODUCER_PLUS_MULTI_SIZE", "1")
 os.environ.setdefault("PRODUCER_PLUS_COALITIONS", "1")
 os.environ.setdefault("PRODUCER_PLUS_OPP_PROJECTION", "1")
 
+# kaggle_environments execs agent files without defining __file__, but it
+# appends the agent file's directory to sys.path during the exec — recover
+# our directory from there (else this shim dies and plays None every turn).
 try:
     _HERE = os.path.dirname(os.path.abspath(__file__))
 except NameError:
-    _HERE = os.getcwd()
+    if sys.path and os.path.isfile(os.path.join(sys.path[-1], "producer_agent.py")):
+        _HERE = sys.path[-1]
+    else:
+        _HERE = os.getcwd()
 _spec = importlib.util.spec_from_file_location(
     "producer_plus_kitchen_sink_inner",
     os.path.join(_HERE, "producer_agent.py"),
