@@ -21,7 +21,7 @@ from lib.fleet import speed as fleet_speed
 from lib.orbit import is_orbiting, predict_relative
 from lib.scoring import pv_horizon
 from lib.trajectory import predict_fleet_fate
-from lib.world_model import _comet_paths_by_id, _position_at, comet_remaining_lifetime
+from lib.world_model import _comet_paths_by_id, _position_at, comet_remaining_lifetime, predict_arrival_contest  # noqa: E501 (single line: bundler can't strip multi-line imports)
 
 NUM_TARGETS_PER_SOURCE = 8
 MIN_FLEET_SIZE = 2
@@ -32,6 +32,15 @@ WAIT_EXTRA_SURPLUS = (0, 5, 12)  # legacy forward grid (kept for rollback)
 CHEAP_REJECT_THRESHOLD = -10.0
 EPISODE_STEPS = 500
 GAMMA = 0.99
+
+# Per-source enumeration breadth scaling (compute_by_ships lever, PI 2026-06-03):
+# clamp the per-source target enumeration count between FLOOR and CEIL, scaled
+# log of (src.ships / avg_my_ships). NUM_TARGETS_PER_SOURCE remains the
+# default for an average-ship planet. FLOOR ensures small planets are never
+# starved; CEIL prevents one mega-planet from exploding the candidate set.
+COMPUTE_BY_SHIPS_TARGETS_FLOOR = 4
+COMPUTE_BY_SHIPS_TARGETS_CEIL = 16
+COMPUTE_BY_SHIPS_TARGETS_LOG_COEF = 0.4
 # Fix (strategic defense, 2026-05-21): for high-prod own planets,
 # floor the reinforce target to a preemptive stockpile so the LP can
 # see strategic defense before shortfall materialises. Without this,
@@ -175,6 +184,31 @@ def nearest_k(targets, src, k: int):
     )[:k]
 
 
+def _targets_for_src(src, avg_my_ships: float, enabled: bool) -> int:
+    """Per-source enumeration breadth (compute_by_ships Lever 1).
+
+    When the lever is OFF or we lack a meaningful average, returns
+    NUM_TARGETS_PER_SOURCE (8) — byte-identical to champion. Otherwise scales
+    log of (src.ships / avg_my_ships), clamped to [FLOOR, CEIL]. Floor (4)
+    protects small planets from being silenced; CEIL (16) prevents one
+    mega-planet from blowing up the candidate set.
+    """
+    if not enabled or avg_my_ships <= 0.0:
+        return NUM_TARGETS_PER_SOURCE
+    ratio = float(src.ships) / avg_my_ships
+    if ratio <= 0.5:
+        return COMPUTE_BY_SHIPS_TARGETS_FLOOR
+    scaled = NUM_TARGETS_PER_SOURCE * (
+        1.0 + COMPUTE_BY_SHIPS_TARGETS_LOG_COEF * math.log2(ratio)
+    )
+    n = int(round(scaled))
+    if n < COMPUTE_BY_SHIPS_TARGETS_FLOOR:
+        n = COMPUTE_BY_SHIPS_TARGETS_FLOOR
+    if n > COMPUTE_BY_SHIPS_TARGETS_CEIL:
+        n = COMPUTE_BY_SHIPS_TARGETS_CEIL
+    return n
+
+
 def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
     """WorldModel-aware minimum size to take (or hold) tgt from src."""
     if int(tgt.owner) == me:
@@ -233,6 +267,42 @@ def capture_size(src, tgt, model, omega: float, me: int, world) -> int:
     return max(MIN_FLEET_SIZE, int(math.ceil(pred)) + 1)
 
 
+# Combat-resolution slack for the arrival-correct capture floor: the
+# interpreter resolves arrivals as "largest minus second-largest, ties
+# destroy all", so a defender+1 fleet that ties or loses by integer
+# rounding bounces. MARGIN=2 is a modeling slack for that discrete rule
+# plus a thin co-arrival cushion — NOT an overcommit multiplier
+# (Rule 40; H19-H21 falsified blind multipliers).
+SIZE_BALANCE_CAPTURE_MARGIN = 2
+
+
+def capture_floor_arrival(src, tgt, model, omega: float, me: int, world) -> int:
+    """Arrival-correct minimum ships to capture a NON-owned `tgt` from `src`.
+
+    Fixes under-delivery (failure mode D — 36% of lost-episode capture
+    failures on champion 53182323, audit 2026-06-01). `capture_size` sizes
+    the defender garrison at the eta of the SLOWEST probe fleet
+    (`tgt.ships + 1`); the real launched count flies faster, so the
+    garrison is mis-sampled and the emitted `cap` can bounce. This re-aims
+    at the REAL launched count via a bounded fixed point (mirrors the eta
+    fixed point in `world_model.time_to_enemy_threat`), and adds
+    `SIZE_BALANCE_CAPTURE_MARGIN` slack for the integer combat rule.
+
+    Non-owned targets only; the reinforce path keeps `capture_size`.
+    """
+    ships = max(MIN_FLEET_SIZE, int(tgt.ships) + 1)
+    for _ in range(3):
+        _angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
+        pred = float(model.ships_at(int(tgt.id), eta) or 0.0)
+        need = max(
+            MIN_FLEET_SIZE, int(math.ceil(pred)) + SIZE_BALANCE_CAPTURE_MARGIN
+        )
+        if need == ships:
+            break
+        ships = need
+    return ships
+
+
 def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list[int]:
     """Fire-now ship-count set: capture-size, 2x capture-size, full budget.
 
@@ -249,6 +319,31 @@ def enumerate_ship_counts(src, tgt, model, omega: float, me: int, world) -> list
     budget = int(src.ships)
     if cap == 0:
         return []  # reinforce-targets with no threat
+
+    # Unified arrival-correct + source-safe fire-now sizing (failure
+    # modes D + A; gate 2026-06-01 = 58.3% of lost-episode capture
+    # failures). Default OFF → byte-identical to the pre-fix set below.
+    # Read at call time (not a module constant) so A/B subprocesses pick
+    # it up regardless of import order — matches BASELINE_JOINT_SYNC.
+    if (
+        os.environ.get("BASELINE_SIZE_BALANCE", "0").strip() == "1"
+        and int(tgt.owner) != me
+    ):
+        keep = source_keep_floor(src, 0, world, model, me)
+        max_sendable = budget - int(keep)
+        cap_arr = capture_floor_arrival(src, tgt, model, omega, me, world)
+        # Infeasible: can't both win at arrival (D) AND keep the source
+        # safe (A). Emit no fire-now column — the candidate is correctly
+        # invalid (the DROP filter at dedup is a belt-and-braces backstop).
+        if cap_arr > max_sendable:
+            return []
+        balanced = set()
+        if MIN_FLEET_SIZE <= cap_arr <= max_sendable:
+            balanced.add(cap_arr)            # lean, arrival-correct (D)
+        if max_sendable >= MIN_FLEET_SIZE:
+            balanced.add(max_sendable)        # full send, source-keep clamped (A)
+        return sorted(balanced)
+
     sizes = set()
     if MIN_FLEET_SIZE <= cap <= budget:
         sizes.add(cap)
@@ -420,6 +515,39 @@ def wait_then_fire_variants(src, tgt, model, omega: float, me: int, world=None):
     return variants
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _contest_urgency_enabled() -> bool:
+    """Lever 2 master gate (default OFF → byte-identical champion)."""
+    return os.environ.get("BASELINE_CONTEST_URGENCY", "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
+def _contest_hold_margin() -> int:
+    return int(_env_float("BASELINE_CONTEST_HOLD_MARGIN", 2.0))
+
+
+def _urgency_mult(race_class: str) -> float:
+    """Contest-urgency multiplier on a capture's Stage-1 value (design §3
+    Lever 2). A race-loss capture won't hold, so its value is genuinely
+    lower — a modelling down-weight, not a hard cap (Rule 40). The
+    race-loss multiplier is the key swept hyperparameter (Rules 21/37)."""
+    if race_class == "race_win":
+        return _env_float("BASELINE_CONTEST_RACEWIN_MULT", 1.5)
+    if race_class == "race_loss":
+        return _env_float("BASELINE_CONTEST_RACELOSS_MULT", 0.2)
+    return _env_float("BASELINE_CONTEST_BANKABLE_MULT", 1.0)  # bankable
+
+
 def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
                          me: int, wait_N: int = 0) -> float:
     """Analytic Δ for Stage-1 ranking. Replaced by fast_sim in Stage-2.
@@ -455,7 +583,17 @@ def cheap_marginal_value(src, tgt, ships: int, eta: int, world, model,
     if ships > pred_ships:
         pv = pv_horizon(int(world.step), int(arrival_step),
                         gamma=GAMMA, t_total=EPISODE_STEPS)
-        return 0.05 * float(tgt.production) * float(pv)
+        base = 0.05 * float(tgt.production) * float(pv)
+        # Lever 2 — contest-urgency. Down-weight captures we'd lose the
+        # race for (won't hold) and boost the ones we win; default OFF
+        # leaves `base` unchanged (Rule 40 modelling down-weight, not a cap).
+        if _contest_urgency_enabled():
+            contest = predict_arrival_contest(
+                model, world, int(tgt.id), int(arrival_step), me,
+                hold_margin=_contest_hold_margin(),
+            )
+            base *= _urgency_mult(contest.race_class)
+        return base
 
     return -0.5 * float(ships)
 
@@ -465,6 +603,57 @@ def wait_band(wait_N: int) -> int:
     if wait_N == 0:
         return 0
     return 1 if wait_N <= 7 else 2
+
+
+def _keep_floor_from_threat(
+    threat_force: int, threat_eta: int, production: int, wait_N: int,
+) -> int:
+    """Shared residue-floor arithmetic for the source-keep FILTER
+    (`_source_survives_launch`) and the source-keep SIZER
+    (`source_keep_floor`). MUST stay the single formula, or a sized
+    launch could fail the very filter it is sized to pass — same
+    shared-formula discipline as HOLD_MIN_COUNTER_SHIPS / HOLD_SAFETY_MARGIN.
+
+    Minimum residue ships that, plus production accrual up to `threat_eta`,
+    cover `threat_force + 1`:
+
+        residue >= threat_force + 1 - production*(threat_eta - wait_N)
+
+    clamped at 0.
+    """
+    growth_after_launch_to_threat = (
+        int(production) * (int(threat_eta) - int(wait_N))
+    )
+    return max(0, int(threat_force) + 1 - growth_after_launch_to_threat)
+
+
+def source_keep_floor(src, wait_N: int, world, model, me: int) -> int:
+    """Minimum residue `src` must retain after a `wait_N` launch to still
+    defend itself against the earliest known IN-FLIGHT threat.
+
+    Returns 0 when there is no in-flight threat (none inbound, or
+    potential-launch-only with nothing in the ledger — the chooser's
+    rollout scores that case better). Does NOT encode the
+    `wait_N >= threat_eta` "source already fallen" case: that is an
+    unconditional drop handled in `_source_survives_launch`, because no
+    residue can rescue a source that has fallen by fire time.
+
+    Used by the SIZE_BALANCE sizer (failure mode A, source over-drain) so
+    the fire-now budget column never drains a source below this floor.
+    """
+    threat_eta = model.time_to_enemy_threat(int(src.id), me, world)
+    if threat_eta is None:
+        return 0
+    threat_force = sum(
+        sh
+        for (eta_arr, owner, sh) in model.ledger.get(int(src.id), [])
+        if owner != me and eta_arr <= int(threat_eta) + WAVE_LOOKAHEAD
+    )
+    if threat_force <= 0:
+        return 0
+    return _keep_floor_from_threat(
+        int(threat_force), int(threat_eta), int(src.production), int(wait_N),
+    )
 
 
 def _source_survives_launch(
@@ -512,11 +701,95 @@ def _source_survives_launch(
     residue_after_launch = int(src.ships) + growth_during_wait - int(ships)
     if residue_after_launch < 0:
         return False  # nonsensical sizing; guard
-    growth_after_launch_to_threat = (
-        int(src.production) * (int(threat_eta) - int(wait_N))
+    # Shared residue-floor formula (also drives the SIZE_BALANCE sizer).
+    return residue_after_launch >= _keep_floor_from_threat(
+        int(threat_force), int(threat_eta), int(src.production), int(wait_N),
     )
-    garrison_at_threat = residue_after_launch + growth_after_launch_to_threat
-    return garrison_at_threat >= int(threat_force) + 1
+
+
+# Shared constants for the hold FILTER (_target_holdable_after_capture) and
+# the hold SIZER (hold_need). They MUST stay identical, or a hold_need-sized
+# stack could fail the very filter it is sized to pass. Promoted from
+# function-local to module scope 2026-05-31 (size-to-hold / Lever 1).
+HOLD_MIN_COUNTER_SHIPS = 20
+HOLD_SAFETY_MARGIN = 1.5
+
+
+def _counter_attack_estimate(tgt, arrival_step: int, world, me: int):
+    """Pure counter-force estimate shared by the hold FILTER
+    (`_target_holdable_after_capture`) and the hold SIZER (`hold_need`).
+
+    Given we capture `tgt` at `arrival_step`, returns the cheapest viable
+    opponent recapture as ``(counter_force:int, t_op:int)``, or ``None`` when
+    no counter is viable: no strong opp in range, an ally is closer than every
+    opp, non-positive flight distance, or zero opp speed. Does NOT depend on
+    how many ships WE deliver — the delivered-ship terms stay in the callers,
+    so the filter's ``delivered < 1`` short-circuit is unaffected.
+
+    Honors BASELINE_ORBITAL_SAFETY (B1, PI 2026-05-21 / completed 2026-05-22):
+    when on, the target and each opp/ally rotate to their arrival-step
+    positions, so an orbiting target far from opp NOW but close at arrival
+    is not falsely scored holdable.
+    """
+    orbital_safety = os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1"
+    omega = float(getattr(world, "omega", 0.0))
+    use_predict = orbital_safety and omega != 0.0 and arrival_step > 0
+    if use_predict:
+        tgt_x, tgt_y = _position_at(tgt, omega, arrival_step)
+    else:
+        tgt_x, tgt_y = float(tgt.x), float(tgt.y)
+
+    nearest_opp = None
+    nearest_opp_dist = float("inf")
+    for opp in world.planets_by_id.values():
+        if int(opp.owner) == me or int(opp.owner) == -1:
+            continue
+        if int(opp.id) == int(tgt.id):
+            continue
+        if int(opp.ships) < HOLD_MIN_COUNTER_SHIPS:
+            continue
+        if use_predict:
+            ox, oy = _position_at(opp, omega, arrival_step)
+        else:
+            ox, oy = float(opp.x), float(opp.y)
+        d = math.hypot(ox - tgt_x, oy - tgt_y)
+        if d < nearest_opp_dist:
+            nearest_opp_dist = d
+            nearest_opp = opp
+    if nearest_opp is None:
+        return None
+
+    nearest_us_dist = float("inf")
+    for ally in world.planets_by_id.values():
+        if int(ally.owner) != me:
+            continue
+        if int(ally.id) == int(tgt.id):
+            continue
+        if use_predict:
+            ax, ay = _position_at(ally, omega, arrival_step)
+        else:
+            ax, ay = float(ally.x), float(ally.y)
+        d = math.hypot(ax - tgt_x, ay - tgt_y)
+        if d < nearest_us_dist:
+            nearest_us_dist = d
+    if nearest_us_dist <= nearest_opp_dist:
+        return None
+
+    flight = (
+        nearest_opp_dist - float(nearest_opp.radius)
+        - float(tgt.radius) - 0.1
+    )
+    if flight <= 0:
+        return None
+    opp_speed = fleet_speed(int(nearest_opp.ships))
+    if opp_speed <= 0:
+        return None
+    t_op = int(math.ceil(flight / opp_speed))
+    counter_force = (
+        int(nearest_opp.ships)
+        + int(nearest_opp.production) * (arrival_step + t_op)
+    )
+    return counter_force, t_op
 
 
 def _target_holdable_after_capture(
@@ -543,7 +816,8 @@ def _target_holdable_after_capture(
     Returns True (hold-feasible) for: reinforcing our own planets,
     captures with no opp planet within plausible counter-range,
     captures where our delivered force + production accrual beats
-    every opp's counter-force.
+    every opp's counter-force. The counter estimate is shared with the
+    SIZER via `_counter_attack_estimate`.
     """
     if int(tgt.owner) == me:
         return True
@@ -558,76 +832,46 @@ def _target_holdable_after_capture(
     if delivered < 1:
         return True
 
-    MIN_COUNTER_SHIPS = 20
-    SAFETY_MARGIN = 1.5
-
-    # B1 (PI 2026-05-21 / completed 2026-05-22) — when BASELINE_ORBITAL_SAFETY=1,
-    # the target and each opp/ally rotate to a different position by our
-    # arrival. Without this, an orbiting target far from opp NOW but close
-    # at arrival_step gets a falsely-HOLDABLE verdict and we capture into
-    # a recapture. Sibling fix to f1774a7 in `time_to_enemy_threat`.
-    orbital_safety = os.environ.get("BASELINE_ORBITAL_SAFETY", "0") == "1"
-    omega = float(getattr(world, "omega", 0.0))
-    use_predict = orbital_safety and omega != 0.0 and arrival_step > 0
-    if use_predict:
-        tgt_x, tgt_y = _position_at(tgt, omega, arrival_step)
-    else:
-        tgt_x, tgt_y = float(tgt.x), float(tgt.y)
-
-    nearest_opp = None
-    nearest_opp_dist = float("inf")
-    for opp in world.planets_by_id.values():
-        if int(opp.owner) == me or int(opp.owner) == -1:
-            continue
-        if int(opp.id) == int(tgt.id):
-            continue
-        if int(opp.ships) < MIN_COUNTER_SHIPS:
-            continue
-        if use_predict:
-            ox, oy = _position_at(opp, omega, arrival_step)
-        else:
-            ox, oy = float(opp.x), float(opp.y)
-        d = math.hypot(ox - tgt_x, oy - tgt_y)
-        if d < nearest_opp_dist:
-            nearest_opp_dist = d
-            nearest_opp = opp
-    if nearest_opp is None:
+    est = _counter_attack_estimate(tgt, arrival_step, world, me)
+    if est is None:
         return True
-
-    nearest_us_dist = float("inf")
-    for ally in world.planets_by_id.values():
-        if int(ally.owner) != me:
-            continue
-        if int(ally.id) == int(tgt.id):
-            continue
-        if use_predict:
-            ax, ay = _position_at(ally, omega, arrival_step)
-        else:
-            ax, ay = float(ally.x), float(ally.y)
-        d = math.hypot(ax - tgt_x, ay - tgt_y)
-        if d < nearest_us_dist:
-            nearest_us_dist = d
-    if nearest_us_dist <= nearest_opp_dist:
-        return True
-
-    flight = (
-        nearest_opp_dist - float(nearest_opp.radius)
-        - float(tgt.radius) - 0.1
-    )
-    if flight <= 0:
-        return True
-    opp_speed = fleet_speed(int(nearest_opp.ships))
-    if opp_speed <= 0:
-        return True
-    t_op = int(math.ceil(flight / opp_speed))
+    counter_force, t_op = est
     garrison_at_recapture = delivered + int(tgt.production) * t_op
-    counter_force = (
-        int(nearest_opp.ships)
-        + int(nearest_opp.production) * (arrival_step + t_op)
-    )
-    if counter_force >= SAFETY_MARGIN * garrison_at_recapture + 1:
+    if counter_force >= HOLD_SAFETY_MARGIN * garrison_at_recapture + 1:
         return False
     return True
+
+
+def hold_need(tgt, arrival_step: int, world, me: int, capture_need: int) -> int:
+    """Minimum total delivered ships so the post-capture garrison SURVIVES the
+    cheapest opp counter-recapture — the inverse of the inequality in
+    `_target_holdable_after_capture`.
+
+    The filter HOLDS iff
+        counter_force < HOLD_SAFETY_MARGIN * garrison_at_recapture + 1
+    Solving for the smallest integer garrison that holds:
+        garrison_at_recapture > (counter_force - 1) / HOLD_SAFETY_MARGIN
+        g_min = floor((counter_force - 1) / HOLD_SAFETY_MARGIN) + 1
+    where garrison_at_recapture = delivered + tgt.production * t_op, so
+        delivered_needed = g_min - tgt.production * t_op
+        ships_needed     = delivered_needed + tgt_def_at_arrival
+    Returns max(capture_need, ceil(ships_needed)). If no viable counter,
+    returns capture_need unchanged (nothing to out-size). The max() floors at
+    the flip minimum when the counter is weak/distant (or when production
+    accrual during the counter's flight already exceeds g_min).
+    """
+    est = _counter_attack_estimate(tgt, arrival_step, world, me)
+    if est is None:
+        return int(capture_need)
+    counter_force, t_op = est
+    if int(tgt.owner) == -1:
+        tgt_def_at_arrival = int(tgt.ships)
+    else:
+        tgt_def_at_arrival = int(tgt.ships) + int(tgt.production) * arrival_step
+    g_min = math.floor((counter_force - 1) / HOLD_SAFETY_MARGIN) + 1
+    delivered_needed = g_min - int(tgt.production) * t_op
+    ships_needed = delivered_needed + tgt_def_at_arrival
+    return max(int(capture_need), int(math.ceil(ships_needed)))
 
 
 def _cost_parity_margin() -> float:
@@ -908,18 +1152,54 @@ def propose(my_planets, target_pool, world, model, me: int,
         (cheap_delta, src, tgt, ships, angle, eta, horizon, wait_N)
     sorted by cheap_delta descending.
     """
+    # K-ceiling early prune (efficiency only — 2026-05-29, universalised
+    # 2026-05-30). When launch rules are on, ANY fire-now candidate
+    # arriving beyond the predictability horizon K is dropped post-emit
+    # anyway (agents.baseline.launch_rules universal ceiling); skip
+    # enumerating + rolling-out those candidates so the chooser doesn't
+    # spend wallclock on doomed launches. NEUTRAL under-capture (eta <= K)
+    # is NOT pruned here — same-tick coalitions must survive to the
+    # post-pass for combat evaluation (preserves BASELINE_JOINT).
+    from agents.baseline.launch_rules import _compute_by_ships_enabled, capture_horizon_k, launch_rules_enabled  # noqa: E501
+    _eta_prune = launch_rules_enabled()
+    _world_step = getattr(world, "step", None)
+
+    # Compute-by-ships lever (PI 2026-06-03): per-source enumeration breadth +
+    # per-source K bonus scale with the source's ship surplus. Both default OFF.
+    _compute_by_ships = _compute_by_ships_enabled()
+    _avg_my_ships = 0.0
+    if _compute_by_ships and my_planets:
+        _avg_my_ships = sum(int(p.ships) for p in my_planets) / float(len(my_planets))
+
     prerank = []
     for src in my_planets:
         if int(src.ships) < MIN_FLEET_SIZE:
             continue
-        for tgt in nearest_k(target_pool, src, NUM_TARGETS_PER_SOURCE):
+        _src_ratio = None
+        if _compute_by_ships and _avg_my_ships > 0.0:
+            _src_ratio = float(src.ships) / _avg_my_ships
+        _n_targets = _targets_for_src(src, _avg_my_ships, _compute_by_ships)
+        for tgt in nearest_k(target_pool, src, _n_targets):
             if int(tgt.id) == int(src.id):
                 continue
+
+            # Per-target predictability ceiling. Identical to the old global
+            # `capture_horizon_k(step)` (floor) when the state-driven lever is
+            # OFF; when ON, an uncontested far target gets a higher K so its
+            # safe long launches survive the prune (they were being dropped at
+            # the floor and never reached the chooser — the freed-grab path).
+            # Compute-by-ships: high-ship sources get an additional K bonus.
+            _k_tgt = capture_horizon_k(
+                _world_step, tgt_id=int(tgt.id), world=world, model=model, me=me,
+                src_ratio=_src_ratio,
+            )
 
             for ships in enumerate_ship_counts(src, tgt, model, omega, me, world):
                 if ships < MIN_FLEET_SIZE or ships > int(src.ships):
                     continue
                 angle, eta = aim_and_eta(src, tgt, ships, omega, world=world)
+                if _eta_prune and int(eta) > _k_tgt:
+                    continue
                 horizon = max(eta + SIM_SETTLE_TURNS, MIN_HORIZON)
                 if horizon >= baseline_len:
                     horizon = baseline_len - 1

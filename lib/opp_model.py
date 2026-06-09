@@ -120,24 +120,241 @@ def top_tier_mirror_policy(obs: Any) -> list:
     return realize(intents, obs, mechanisms=DEFAULT_MECHANISMS, model=model)
 
 
+# Tier 2 — distilled-ladder opp predictor (REPLACED 2026-05-31 v2).
+# Architecture: directly enumerate cheap (src, tgt) candidates from obs
+# (lite_greedy-style pruning, no WorldModel rebuild on the candidate
+# enumeration), score each with a LightGBM booster trained on top-10%
+# Kaggle ladder 2P replays (`data/opp_distill/distill_booster.txt`),
+# emit those above `BASELINE_OPP_FILTER_THRESHOLD` (default 0.30).
+#
+# Speed target: ≤1 ms median per call vs Tier 1's 5-10 ms. The old
+# filter-on-Tier-1 design (`top_tier_mirror_policy` + booster veto)
+# was falsified 2026-05-31 — it inherited Tier 1's full cost, starving
+# the chooser's candidate-validation budget to ~155/turn vs Tier 0's
+# ~1200/turn (audit/2026-05-31-postmortem-tier2-falsification.md).
+#
+# Fallback: any load/scoring failure → returns `lite_greedy_policy(obs)`
+# for that step. Never silent garbage launches.
 # ---------------------------------------------------------------------------
-# Tier 2 — placeholder for the trained launch-decision classifier
-# ---------------------------------------------------------------------------
+
+
+# Bundler patches _OPP_BOOSTER_B64 to a gzip+base64 LightGBM
+# `model_to_string()` dump (binary classifier). In source mode (empty
+# blob), we fall back to `data/opp_distill/distill_booster.txt`.
+_OPP_BOOSTER_B64: str = ""
+
+_OPP_PARSED = None
+_OPP_LOAD_FAILED: bool = False
+_OPP_THRESHOLD: float | None = None
+
+
+def _load_opp_booster():
+    """Lazy-load the distilled-ladder booster + threshold for Tier 2.
+
+    Returns the parsed booster (or None on any failure — caller falls
+    back to Tier 0 lite_greedy)."""
+    global _OPP_PARSED, _OPP_LOAD_FAILED, _OPP_THRESHOLD
+    if _OPP_PARSED is not None or _OPP_LOAD_FAILED:
+        return _OPP_PARSED
+    try:
+        # Single-line imports per the bundler's per-line strip regex —
+        # parenthesised multi-line imports leak as indented orphans.
+        from lib._validator_tree_walker import parse_booster_text
+        import os as _os
+        if _OPP_BOOSTER_B64:
+            import base64
+            import gzip
+            text = gzip.decompress(
+                base64.b64decode(_OPP_BOOSTER_B64)
+            ).decode()
+        else:
+            from pathlib import Path as _Path
+            booster_path = (
+                _Path(__file__).resolve().parents[1]
+                / "data" / "opp_distill" / "distill_booster.txt"
+            )
+            text = booster_path.read_text()
+        _OPP_PARSED = parse_booster_text(text)
+        _override = _os.environ.get("BASELINE_OPP_FILTER_THRESHOLD")
+        _OPP_THRESHOLD = float(_override) if _override else 0.30
+        return _OPP_PARSED
+    except Exception:
+        _OPP_LOAD_FAILED = True
+        return None
+
+
+# Knobs for the distilled-ladder enumeration. Match training-time defaults
+# in `scripts/decode_replays_to_labels.py` (MIN_SRC_SHIPS / TOP_K_TARGETS /
+# AGGRESSIVE_FRAC). Changes here must be reflected there to keep
+# train/inference distributions consistent.
+_DIST_MIN_SRC_SHIPS = 5
+_DIST_TOP_K = 8
+_DIST_AGGRESSIVE_FRAC = 0.7
+# Lite encoder: a vectorized 34-d subset of the 45-d shot_features encoder
+# that skips all WorldModel-dependent features (F2/F3/F4/F6/F8). Booster
+# is retrained on `corpus[:, LITE_KEEP_INDICES]` so train/inference match.
+# Speed: ~1 ms median at K=8 vs 24 ms with the slow encoder.
+_DIST_USE_LITE_ENCODER = True
 
 
 def trained_logreg_policy(obs: Any) -> list:
-    """Reserved for the trained launch-decision classifier.
+    """Tier 2 v2 (2026-05-31): distilled-ladder opp predictor.
 
-    Will read a model artifact (≤200-float logistic regression weights)
-    from a fixed path under the submission bundle, score each candidate
-    mission with the 24-dim feature schema at
-    `data/shot_validator/schema.json`, and emit the argmax-launch set.
+    Mirror's `lite_greedy_policy`'s structure (raw-obs only, no
+    WorldModel rebuild) for sub-ms per-call cost. Per call:
 
-    Not implemented in this branch — see plan section "Deliverable 2 /
-    Tier 2". Fallback to Tier 1 so downstream consumers can wire it up
-    without crashing.
+      1. Enumerate candidates: owned planets with ships >=
+         _DIST_MIN_SRC_SHIPS  ×  top-K=8 targets by closed-form
+         ROI (production / distance). Affordability-filtered same as
+         lite_greedy (`defenders_at_eta + 1 <= budget`).
+      2. Encode each candidate via `lib.shot_features.encode_shot_features`
+         (single World+WorldModel build, shared across candidates).
+      3. Score with the booster; emit any candidate with
+         P > `BASELINE_OPP_FILTER_THRESHOLD` (default 0.30), capped at
+         one emit per source per turn (highest-prob wins per source).
+
+    Failure modes (model load fail, encoder failure, scoring failure):
+    return `lite_greedy_policy(obs)` for that step. Never emits novel
+    garbage launches.
     """
-    return top_tier_mirror_policy(obs)
+    parsed = _load_opp_booster()
+    if parsed is None or _OPP_THRESHOLD is None:
+        return lite_greedy_policy(obs)
+
+    player_raw = (
+        obs.get("player", 0) if isinstance(obs, dict)
+        else getattr(obs, "player", 0)
+    )
+    player = int(player_raw or 0)
+    planets = (
+        obs.get("planets") if isinstance(obs, dict)
+        else getattr(obs, "planets", None)
+    )
+    if not planets:
+        return []
+
+    try:
+        from lib._validator_tree_walker import predict_proba
+        from lib.opp_features_lite import encode_lite_batch
+        from lib.opp_features_lite import planets_to_array
+        from lib.opp_features_lite import fleets_to_array
+        import numpy as _np
+    except Exception:
+        return lite_greedy_policy(obs)
+
+    # Build candidate list. MUST match `scripts/decode_replays_to_labels.py:
+    # enumerate_candidates` exactly so train and inference see the same
+    # distribution — no affordability/budget pre-filter here (the booster
+    # learns which (src, tgt) pairs real opps fire on, including snipe/
+    # reinforce shots that lite_greedy would skip).
+    candidates: list[tuple[int, int, float, int]] = []
+    for src in planets:
+        if int(src[1]) != player or int(src[5]) < _DIST_MIN_SRC_SHIPS:
+            continue
+        src_pid = int(src[0])
+        sx, sy = float(src[2]), float(src[3])
+        budget = int(src[5])
+        # Synthetic ships matches `AGGRESSIVE_FRAC * src.ships` from the
+        # decoder's labeling. The booster's F2 combat_margin feature was
+        # computed on these synthetic ships at label time.
+        ships = max(_DIST_MIN_SRC_SHIPS, int(round(_DIST_AGGRESSIVE_FRAC * budget)))
+        if ships > budget:
+            ships = budget
+        scored: list[tuple[float, int, float, float, float, Any]] = []
+        for tgt in planets:
+            tgt_pid = int(tgt[0])
+            if tgt_pid == src_pid:
+                continue
+            dx, dy = float(tgt[2]) - sx, float(tgt[3]) - sy
+            d = math.sqrt(dx * dx + dy * dy)
+            if d < 1e-6:
+                continue
+            roi = float(tgt[6]) / (d + 1.0)
+            scored.append((roi, tgt_pid, dx, dy, d, tgt))
+        scored.sort(key=lambda t: -t[0])
+        for _, tgt_pid, dx, dy, _d, tgt in scored[:_DIST_TOP_K]:
+            angle = math.atan2(dy, dx)
+            candidates.append((src_pid, tgt_pid, angle, ships))
+
+    if not candidates:
+        return []
+
+    # Vectorized feature encoding. Lite encoder produces (N, 34) directly
+    # in numpy — no World+WorldModel build, no per-candidate Tier-2 work.
+    # The booster MUST be trained on the matching 34-d slice of the 45-d
+    # corpus (see `scripts/train_opp_distill.py --lite`).
+    if _DIST_USE_LITE_ENCODER:
+        try:
+            planets_arr = planets_to_array(planets)
+            fleets_arr = fleets_to_array(
+                obs.get("fleets") if isinstance(obs, dict)
+                else getattr(obs, "fleets", None)
+            )
+            step = int(obs.get("step", 0) if isinstance(obs, dict)
+                       else getattr(obs, "step", 0) or 0)
+            X = encode_lite_batch(
+                planets_arr, fleets_arr, player, step, candidates,
+            )
+        except Exception:
+            return lite_greedy_policy(obs)
+        to_score = [(src_pid, tgt_pid, angle, ships)
+                    for src_pid, tgt_pid, angle, ships in candidates]
+    else:
+        # Legacy slow path (kept for parity testing; not used in production).
+        cached_world = getattr(obs, "_shared_world_model", None)
+        shared_world = None
+        shared_model = None
+        if cached_world is not None:
+            shared_model = cached_world
+        else:
+            try:
+                shared_world = World.from_obs(obs)
+                shared_model = WorldModel.from_world(shared_world)
+            except Exception:
+                shared_world = None
+                shared_model = None
+        feats_list: list = []
+        to_score = []
+        for src_pid, tgt_pid, angle, ships in candidates:
+            emit = [src_pid, angle, ships]
+            try:
+                feats = encode_shot_features(
+                    emit, obs, player,
+                    world=shared_world, world_model=shared_model,
+                )
+            except Exception:
+                feats = None
+            if feats is None or feats.shape[0] != FEATURE_DIM:
+                continue
+            feats_list.append(feats)
+            to_score.append((src_pid, tgt_pid, angle, ships))
+        if not to_score:
+            return []
+        X = _np.stack(feats_list).astype(_np.float32)
+
+    if X.shape[0] == 0:
+        return []
+
+    try:
+        probs = predict_proba(parsed, X)
+    except Exception:
+        return lite_greedy_policy(obs)
+
+    # Rank by probability descending; emit one per source above threshold.
+    ranked = sorted(
+        zip(to_score, probs),
+        key=lambda x: -float(x[1]),
+    )
+    moves: list = []
+    used_srcs: set[int] = set()
+    for (src_pid, tgt_pid, angle, ships), p in ranked:
+        if float(p) < _OPP_THRESHOLD:
+            continue
+        if src_pid in used_srcs:
+            continue
+        used_srcs.add(src_pid)
+        moves.append([src_pid, angle, ships])
+    return moves
 
 
 # ---------------------------------------------------------------------------

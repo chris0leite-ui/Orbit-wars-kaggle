@@ -37,7 +37,9 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import math
+import re
 import statistics
 import sys
 import time
@@ -71,6 +73,50 @@ _BASELINES: dict[str, str] = {
     # agents/producer/PROVENANCE.md. Added 2026-06-04 as a strong,
     # architecturally-distinct calibration opponent.
     "producer":   str(REPO / "agents" / "producer" / "producer_agent.py"),
+    # Producer-engine migration host. Step 1: bit-identical to producer.
+    # See agents/producer_plus/PROVENANCE.md and state/MIGRATION_PLAN.md.
+    "producer_plus": str(REPO / "agents" / "producer_plus" / "producer_agent.py"),
+    # Step 2: producer_plus with PRODUCER_PLUS_ADAPTIVE_K=1 pre-set, so
+    # the candidate-arrival horizon K shrinks 18 → 10 across steps 0-30.
+    "producer_plus_adaptive_k": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_adaptive_k.py"
+    ),
+    # Step 4: producer_plus with PRODUCER_PLUS_MULTI_SIZE=1 (and adaptive K)
+    # pre-set, so each (source, target) pair emits three ships variants —
+    # capture_floor, 2× floor, safe_drain — instead of one safe_drain.
+    "producer_plus_multi_size": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_multi_size.py"
+    ),
+    # Step 5: producer_plus with PRODUCER_PLUS_COALITIONS=1, so L=2
+    # multi-source coalitions are enumerated alongside single-source
+    # candidates. Step 4 (multi_size) NOT carried — see migration plan.
+    "producer_plus_coalitions": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_coalitions.py"
+    ),
+    # Step 4 + 5 composed: BOTH multi_size and coalitions ON. Tests the
+    # hypothesis that coalitions only lift when paired with multi-size
+    # single-source variants (Step 5 standalone fell to 40.6% vs producer).
+    "producer_plus_composed": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_composed.py"
+    ),
+    # Step 3 redux: producer_plus with PRODUCER_PLUS_OPP_PROJECTION=1.
+    # Once-per-turn opponent multi-launch projection injected as background
+    # LaunchSet slots in the scorer. Fixes the static-opp scorer defect that
+    # bounded multi_size and Fix-A coalitions at mu~=1264 on the live ladder.
+    "producer_plus_opp_proj": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_opp_proj.py"
+    ),
+    # Kitchen sink: multi_size + coalitions + opp_proj all enabled. Tests
+    # the original Step 3 hypothesis that opp-aware scoring UNLOCKS the
+    # Step 4 and Step 5 mechanisms.
+    "producer_plus_kitchen_sink": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_kitchen_sink.py"
+    ),
+    # Multi-size + opp_proj (no coalitions). Isolates opp_proj's lift over
+    # multi_size alone, since diagnostic traces show coalitions barely fire.
+    "producer_plus_multi_opp": str(
+        REPO / "agents" / "producer_plus" / "producer_plus_multi_opp.py"
+    ),
     # kaggle_environments builtins (passed as strings to env.run).
     "random":     "random",
     "starter":    "starter",
@@ -246,9 +292,61 @@ def _classify(rewards: tuple) -> str:
     return "draw"
 
 
+_NAME_SLUG_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def _slug(name: str) -> str:
+    """Filesystem-safe slug for an agent display name."""
+    s = _NAME_SLUG_RE.sub("-", str(name)).strip("-")
+    return s or "agent"
+
+
+def _seat_field(seat, key: str):
+    """Read a field from a kaggle env step seat — dict or attr-style object."""
+    if isinstance(seat, dict):
+        return seat.get(key)
+    return getattr(seat, key, None)
+
+
+def _save_replay(env, save_dir: str, seed: int,
+                 p0_name: str, p1_name: str) -> None:
+    """Write a replay JSON whose schema matches scripts/measure_hold_times.py.
+
+    The format mirrors Kaggle's live-replay envelope so the same downstream
+    tooling reads both:
+      {"info": {"TeamNames": [p0, p1]}, "rewards": [...], "steps": env.steps}
+    """
+    final = env.steps[-1] if env.steps else []
+    rewards = [
+        _seat_field(final[0], "reward") if len(final) > 0 else None,
+        _seat_field(final[1], "reward") if len(final) > 1 else None,
+    ]
+    payload = {
+        "info": {"TeamNames": [p0_name, p1_name]},
+        "rewards": rewards,
+        "steps": env.steps,
+    }
+    fname = (
+        f"episode-seed{seed}-p0_{_slug(p0_name)}"
+        f"-vs-p1_{_slug(p1_name)}-replay.json"
+    )
+    out_dir = Path(save_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / fname).write_text(json.dumps(payload, default=str))
+
+
 def play_one(seed: int, p0_path: str, p1_path: str, *,
-             record_timing: bool = True) -> GameResult:
-    """Play a single 2P game and return outcome + per-turn timing."""
+             record_timing: bool = True,
+             save_dir: str | None = None,
+             p0_name: str | None = None,
+             p1_name: str | None = None) -> GameResult:
+    """Play a single 2P game and return outcome + per-turn timing.
+
+    When `save_dir` is set, also writes a Kaggle-replay-shaped JSON to
+    `<save_dir>/episode-seed<N>-p0_<p0_name>-vs-p1_<p1_name>-replay.json`
+    so `scripts/measure_hold_times.py --replay-dir <save_dir>` can compute
+    production-share-of-integral (Rule 48 primary metric).
+    """
     # Late import: kaggle_environments is slow to import; defer to worker.
     from kaggle_environments import make
 
@@ -274,6 +372,10 @@ def play_one(seed: int, p0_path: str, p1_path: str, *,
         )
     final = env.steps[-1]
     rewards = (final[0].reward, final[1].reward)
+    if save_dir is not None:
+        _save_replay(env, save_dir, seed,
+                     p0_name or Path(p0_path).stem,
+                     p1_name or Path(p1_path).stem)
     return GameResult(
         seed=seed,
         outcome=_classify(rewards),
@@ -286,9 +388,15 @@ def play_one(seed: int, p0_path: str, p1_path: str, *,
 
 # Picklable worker for ProcessPoolExecutor. Tuple args (not kwargs) to keep
 # the multiprocessing call site simple.
-def _play_one_task(args: tuple[int, str, str]) -> GameResult:
-    seed, p0_path, p1_path = args
-    return play_one(seed, p0_path, p1_path)
+def _play_one_task(args: tuple) -> GameResult:
+    # Backward-compatible: 3-tuple == seed, p0, p1; 6-tuple adds save_dir,
+    # p0_name, p1_name (used when --save-replays is set).
+    if len(args) == 3:
+        seed, p0_path, p1_path = args
+        return play_one(seed, p0_path, p1_path)
+    seed, p0_path, p1_path, save_dir, p0_name, p1_name = args
+    return play_one(seed, p0_path, p1_path,
+                    save_dir=save_dir, p0_name=p0_name, p1_name=p1_name)
 
 
 # ---------------------------------------------------------------------------
@@ -358,19 +466,33 @@ def _balanced_pairs(seeds: Sequence[int], focal_path: str, opp_path: str
 
 def play_panel(focal_path: str, focal_name: str,
                opp_path: str, opp_name: str,
-               seeds: Sequence[int], workers: int) -> PanelStat:
-    """Run focal vs opp on all seeds, both seats, in parallel."""
+               seeds: Sequence[int], workers: int,
+               *, save_dir: str | None = None) -> PanelStat:
+    """Run focal vs opp on all seeds, both seats, in parallel.
+
+    `save_dir` (optional): if set, every game writes a replay JSON named
+    by seed and seat ordering so production-share gates (Rule 48) can
+    re-aggregate.
+    """
     stat = PanelStat(focal=focal_name, opp=opp_name)
     pairs = _balanced_pairs(seeds, focal_path, opp_path)
     t0 = time.perf_counter()
+
+    def _args_for(seed: int, p0: str, p1: str, focal_is_p0: bool) -> tuple:
+        if save_dir is None:
+            return (seed, p0, p1)
+        if focal_is_p0:
+            return (seed, p0, p1, save_dir, focal_name, opp_name)
+        return (seed, p0, p1, save_dir, opp_name, focal_name)
+
     if workers <= 1:
         for seed, p0, p1, focal_is_p0 in pairs:
-            r = _play_one_task((seed, p0, p1))
+            r = _play_one_task(_args_for(seed, p0, p1, focal_is_p0))
             _absorb(stat, r, focal_is_p0)
     else:
         with ProcessPoolExecutor(max_workers=workers) as ex:
             futs = {
-                ex.submit(_play_one_task, (seed, p0, p1)): focal_is_p0
+                ex.submit(_play_one_task, _args_for(seed, p0, p1, focal_is_p0)): focal_is_p0
                 for seed, p0, p1, focal_is_p0 in pairs
             }
             for fut in as_completed(futs):
@@ -423,6 +545,7 @@ def _eval_vs_one(focal_path: str, focal_name: str,
                  max_seeds: int, gate: float, workers: int,
                  seed_pool: Sequence[int] | None = None,
                  full_panel: bool = False,
+                 save_dir: str | None = None,
                  ) -> tuple[str, float, float, int, int, list[float], float, list[tuple[int, bool]]]:
     """Run the adaptive Wilson-gated A/B vs a single opponent.
 
@@ -468,7 +591,7 @@ def _eval_vs_one(focal_path: str, focal_name: str,
         if not new_seeds:
             continue
         stat = play_panel(focal_path, focal_name, opp_path, opp_name,
-                          new_seeds, workers)
+                          new_seeds, workers, save_dir=save_dir)
         per_game.extend(stat.per_game)
         cumulative_wins += stat.focal_wins
         cumulative_n += stat.n
@@ -622,6 +745,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
             args.max_seeds, gate, args.workers,
             seed_pool=seed_pool,
             full_panel=getattr(args, "full_panel", False),
+            save_dir=getattr(args, "save_replays", None),
         )
         per_opponent_results.append((opp_name, verdict, lo, hi, wins, n))
         overall_times.extend(times)
@@ -676,7 +800,10 @@ def cmd_play(args: argparse.Namespace) -> int:
         p0_path, p0_name = focal_path, focal_name
         p1_path, p1_name = opp_path, opp_name
     t0 = time.perf_counter()
-    result = play_one(args.seed, p0_path, p1_path)
+    save_dir = getattr(args, "save_replays", None)
+    result = play_one(args.seed, p0_path, p1_path,
+                      save_dir=save_dir,
+                      p0_name=p0_name, p1_name=p1_name)
     elapsed = time.perf_counter() - t0
     winner = {"p0_win": p0_name, "p1_win": p1_name,
               "draw": "(draw)", "error": "(error)"}[result.outcome]
@@ -800,6 +927,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "FAIL-stop) and run every seed in --max-seeds / the "
                          "geometry panel. Use when you care about full "
                          "per-archetype coverage, not the gate verdict.")
+    sp.add_argument("--save-replays", default=None, metavar="DIR",
+                    help="Save per-game replay JSONs to DIR (Kaggle replay "
+                         "envelope shape). Consumed by "
+                         "`scripts/measure_hold_times.py --replay-dir DIR` for "
+                         "Rule 48 production-share-of-integral checks.")
     sp.set_defaults(func=cmd_eval)
 
     sp = sub.add_parser("play", help="single game, verbose")
@@ -808,6 +940,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--seed", type=int, default=0)
     sp.add_argument("--swap", action="store_true",
                     help="play focal as P1 instead of P0")
+    sp.add_argument("--save-replays", default=None, metavar="DIR",
+                    help="Save the replay JSON to DIR (Kaggle envelope shape; "
+                         "Rule 48 / Rule 47 trace workflow).")
     sp.set_defaults(func=cmd_play)
 
     sp = sub.add_parser("bench", help="per-turn ms vs 1000ms budget")

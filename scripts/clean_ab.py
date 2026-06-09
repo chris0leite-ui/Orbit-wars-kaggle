@@ -104,6 +104,9 @@ def main() -> int:
     ap.add_argument("focal")
     ap.add_argument("opp")
     ap.add_argument("--seeds", type=int, default=8, help="N seeds; each played twice (both seats)")
+    ap.add_argument("--seed-start", type=int, default=0,
+                    help="first seed (offset); use to run a NON-overlapping seed "
+                         "range for pooling with an earlier run")
     ap.add_argument("--workers", type=int, default=4)
     args = ap.parse_args()
     focal = str(Path(args.focal).resolve())
@@ -117,7 +120,7 @@ def main() -> int:
           f"seeds={args.seeds} (×2 seats = {2*args.seeds} games)  workers={args.workers} ==")
 
     tasks: list[tuple[int, str, str, bool]] = []
-    for s in range(args.seeds):
+    for s in range(args.seed_start, args.seed_start + args.seeds):
         tasks.append((s, focal, opp, True))   # focal as P0
         tasks.append((s, focal, opp, False))  # focal as P1
     t0 = time.perf_counter()

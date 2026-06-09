@@ -38,7 +38,7 @@ import math
 import os
 import time
 
-from agents.baseline.chooser import affordable_validate_cap, opp_actions_for_snap
+from agents.baseline.chooser import HARDCAP_BAIL_SENTINEL, WALLCLOCK_HARD_CAP_MS, affordable_validate_cap, opp_actions_for_snap
 from agents.baseline.value import DEFAULT_GAMMA, select_favor_fn
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
@@ -46,6 +46,14 @@ from lib.opp_model import lite_greedy_policy as _me_policy
 from lib.opp_model import me_defensive_action as _me_defends_policy
 from lib.trajectory import predict_fleet_fate
 from lib.world_model import comet_remaining_lifetime, predict_garrison_at
+from agents.baseline.proposer import MIN_FLEET_SIZE
+from agents.baseline.proposer import aim_and_eta as _aim_and_eta
+from agents.baseline.proposer import capture_size as _capture_size
+from agents.baseline.proposer import hold_need
+from agents.baseline.proposer import nearest_k as _nearest_k
+from agents.baseline.launch_rules import capture_horizon_k as _capture_horizon_k
+from agents.baseline.launch_rules import launch_rules_enabled as _launch_rules_enabled
+from agents.baseline.launch_rules import state_driven_k_enabled as _state_driven_k_enabled
 
 
 EPISODE_STEPS_TOTAL: int = 500
@@ -71,6 +79,74 @@ LEADER_FOCUS_WEIGHT: float = float(os.environ.get("BASELINE_LEADER_FOCUS", "1.0"
 NEUTRAL_BONUS_WEIGHT: float = float(os.environ.get("BASELINE_NEUTRAL_BONUS", "1.0"))
 NEUTRAL_EARLY_HORIZON: int = int(os.environ.get("BASELINE_NEUTRAL_EARLY_HORIZON", "50"))
 NEUTRAL_EARLY_EXTRA: float = float(os.environ.get("BASELINE_NEUTRAL_EARLY_EXTRA", "1.0"))
+
+# Follow-on hold bonus (Fix 2b — 2026-05-27 plan). Opt-in scoring
+# bonus on captures that enable a profitable follow-on launch from the
+# newly-captured base. Surfaces the B3/B4 modeling-correct snipe
+# helpers (`_best_followon` / `_followon_hold_estimate` in
+# `lib/missions/snipe.py`) into the live trajectory chooser path —
+# previously B3/B4 were in dead code from this agent's perspective.
+# Default 0.0 (no-op); bundle wrapper opts in once local A/B confirms
+# lift. Calibrated against `CAPTURE_REWARD_WEIGHT=0.05`.
+FOLLOWON_BONUS_WEIGHT: float = float(
+    os.environ.get("BASELINE_FOLLOWON_BONUS", "0.0"),
+)
+FOLLOWON_RADIUS: float = float(
+    os.environ.get("BASELINE_FOLLOWON_RADIUS", "35.0"),
+)
+
+# Expansion credit (2026-06-01) — restore the held-production term v4 dropped.
+# v4 scores a candidate purely as the rollout delta `leaf − baseline`, on the
+# (proven-false) assumption that `favor_fn` implicitly encodes capture value.
+# It does not: the rollout drives ME passively after the launch while every
+# opponent reacts each tick, so a freshly captured planet is "eaten" by the
+# leaf and delta nets <=0. Result = the hoarding pathology (the agent refuses
+# to spend idle ships on free neutrals; see
+# audit/2026-06-01-live-replay-diagnosis.md and the step-39 istinetz trace —
+# a +916-production neutral scored -0.99). This restores the v2 static
+# scorer's additive credit `CAPTURE_REWARD_WEIGHT × production × held` for
+# FRESH captures, applied UN-gated (NOT conditional on delta>0, unlike
+# NEUTRAL/FOLLOWON which can only amplify already-positive deltas). The
+# rollout delta then remains as the recapture-risk CORRECTION on top: good
+# expansions clear, captures the rollout shows get eaten still net negative.
+# Default 0.0 (OFF, byte-for-byte legacy). 1.0 = full v2-equivalent credit;
+# tune the fraction via proper n>=32 + panel A/B (NOT n=16).
+EXPAND_CREDIT_WEIGHT: float = float(
+    os.environ.get("BASELINE_EXPAND_CREDIT", "0.0"),
+)
+
+# Score floor for emit (2026-05-27 — concentration knob). Today every
+# candidate with `score > 0.0` fires; in midgame this scatters small
+# marginal launches across every owned planet. `MIN_DELTA` raises the
+# floor so only candidates above a tunable threshold survive — natural
+# concentration without an arbitrary count-cap. Default 0.0 preserves
+# byte-for-byte legacy (strict `> 0.0`); positive values install a
+# strict `>=` floor. Units are PV-discounted delta (see
+# `score_candidate_v4`); tune via local A/B.
+MIN_DELTA: float = float(os.environ.get("BASELINE_MIN_DELTA", "0.0"))
+
+# Ship-turn opportunity-cost penalty (2026-05-27 Step 2B). Today the
+# leaf `favor` returns ~297-340 for any positive-prod capture regardless
+# of eta — pv_horizon(leaf_step, 0) ≈ 99 for any leaf_step in 25..50
+# with γ=0.99, t_total=500. Result: slow captures (eta=40) score ~88%
+# of fast captures (eta=10) when in reality they tie up ships 4x
+# longer. Penalty subtracts κ × ships × (wait_N + eta) from delta to
+# price the time the ships are committed and unable to defend/redirect.
+# Default 0.0 preserves byte-for-byte legacy. Tune via local A/B.
+SHIP_TURN_KAPPA: float = float(
+    os.environ.get("BASELINE_SHIP_TURN_KAPPA", "0.0"),
+)
+
+# Present-value time-discount on candidate Δ (2026-05-28). The favor
+# leaf computes pv_horizon(step, 0) — eta hardcoded to zero — so a
+# capture arriving in 10 turns is valued ~99% of a capture arriving
+# in 40. This applies γ^(wait_N + eta) to the final Δ, pulling each
+# candidate's payoff back to the current step. No new tuning knob: γ
+# is the existing chooser discount (BASELINE_GAMMA, peak default 0.99).
+# Default OFF preserves byte-for-byte legacy. Tune via local A/B.
+PV_ETA_ENABLED: bool = (
+    os.environ.get("BASELINE_PV_ETA", "0").strip() == "1"
+)
 
 
 def _leader_owner_from_world(world, me: int) -> int | None:
@@ -245,6 +321,28 @@ JOINT_MAX_PAIRS: int = int(
 JOINT_LIFT_USED_TGTS: bool = (
     os.environ.get("BASELINE_JOINT_AGGR", "0").strip() == "1"
 )
+
+# Synchronized-arrival JOINT coalitions (2026-05-30, BASELINE_JOINT_SYNC,
+# DEFAULT OFF). The existing fire-now joint launches both legs at wait_N=0,
+# so sources at different distances arrive on DIFFERENT ticks and never
+# stack. This adds coalitions where the closer source WAITS so all legs
+# land the same tick and combine forces (combat rule 1, interpreter.py),
+# capturing a planet neither source could take alone. Scored by the same
+# score_candidate_v4_joint rollout (reactive-opp, so the old v15 dogpile
+# falsification — which had no reactive opp — does not transfer). The
+# waiting leg fires via the self-contained sync-joint tick in main.py
+# (gated on BASELINE_JOINT_SYNC=1; does NOT touch the general ledger).
+JOINT_SYNC_ENABLED: bool = (
+    os.environ.get("BASELINE_JOINT_SYNC", "0").strip() == "1"
+)
+JOINT_SYNC_MAX_PAIRS: int = int(
+    os.environ.get("BASELINE_JOINT_SYNC_MAX_PAIRS", "30")
+)
+JOINT_SYNC_SETTLE: int = 2  # ticks past arrival the leaf must see (Rule 47)
+JOINT_SYNC_SRC_K: int = int(
+    os.environ.get("BASELINE_JOINT_SYNC_SRC_K", "3")
+)  # nearest friendly sources pulled per target (2 nearest form the pair;
+#    the 3rd is headroom for a future 3-source extension, not built yet)
 
 
 def score_candidate(src, tgt, ships: int, angle: float, eta_hint: int,
@@ -506,6 +604,9 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
                        horizon: int,
                        skip_admissibility: bool = False,
                        wait_N: int = 0,
+                       eta_hint: int = 0,
+                       model=None,
+                       hard_deadline: float | None = None,
                        ) -> tuple[float, str, int | None]:
     """v4 scoring: same admissibility filter + fast_sim rollout as v3,
     but the leaf is `favor_fn` instead of a binary owner-check, and the
@@ -528,7 +629,13 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     candidates, fast_sim's collision resolution catches real sun/oob/
     comet hits inside the rollout.
     """
-    eta = 0
+    # For wait_N==0 candidates, eta is computed below from
+    # predict_fleet_fate. For wait_N>0 candidates, admissibility is
+    # skipped (source orbit drifts between now and the wait point); use
+    # the proposer's eta_hint so the downstream PV-discount sees a
+    # non-zero arrival time. skip_admissibility=True (debug ablation)
+    # keeps the historical eta=0 default to preserve test fixtures.
+    eta = int(eta_hint) if (int(wait_N) > 0 and not skip_admissibility) else 0
     if not skip_admissibility and int(wait_N) == 0:
         fate = predict_fleet_fate(src, tgt, angle, ships, world)
         if fate.outcome == "sun":
@@ -565,9 +672,24 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
     if _ME_DEFENDS_ENABLED:
         me_defense_emits = _me_defensive_action(snap, me)
 
+    _last_step_s = 0.0
     for t in range(horizon):
         if snap.fake_env.done:
             break
+        # Predictive deadline guard: bail if the NEXT rollout step is
+        # projected to cross the hard cap, rather than reacting after a step
+        # has already overshot. `opp_actions_for_snap` + `fs_step` is an
+        # uninterruptible chunk whose cost scales with board density; at
+        # state-driven-K's horizon (ceil 30) a single step in a dense
+        # late-game state can run ~250ms, so the old react-after check
+        # overshot the 1000ms env cap (observed max=1208ms). Projecting one
+        # step ahead self-tunes to the measured per-step cost and never
+        # starts a step that would blow the deadline. Modeling-correct: the
+        # rollout spends exactly the time it has, then stops cleanly.
+        if hard_deadline is not None and \
+                time.perf_counter() + _last_step_s > hard_deadline:
+            return (HARDCAP_BAIL_SENTINEL, "hardcap_bail", eta)
+        _step_t0 = time.perf_counter()
         actions = opp_actions_for_snap(snap, me, num_seats)
         if t == int(wait_N):
             # Candidate first (the chooser's primary decision), then
@@ -581,9 +703,96 @@ def score_candidate_v4(snap_base, src, tgt, ships: int, angle: float,
         elif _ME_REACTS_ENABLED:
             actions[me] = _me_reactive_action(snap, me)
         snap = fs_step(snap, actions, in_place=True)
+        _last_step_s = time.perf_counter() - _step_t0
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
     delta = leaf - baseline_favors[horizon]
+
+    # Plumb NEUTRAL_BONUS + LEADER_FOCUS into the live scoring path.
+    # The earlier dead-code path (`score_candidate`, v2 static-garrison
+    # scorer) read these env vars but was never called; v4 ignored them.
+    # Multiply POSITIVE deltas only — the bonus is a tilt toward
+    # preferred targets, not a punishment for bad candidates that
+    # happen to be neutral/leader. See plan
+    # `/root/.claude/plans/fix-one-and-two-cuddly-dewdrop.md` Fix 1.
+    if delta > 0.0:
+        bonus = 1.0
+        if NEUTRAL_BONUS_WEIGHT != 1.0 and int(tgt.owner) == -1:
+            bonus *= NEUTRAL_BONUS_WEIGHT
+            if int(world.step) < NEUTRAL_EARLY_HORIZON:
+                bonus *= NEUTRAL_EARLY_EXTRA
+        if LEADER_FOCUS_WEIGHT != 1.0:
+            leader = _leader_owner_from_world(world, me)
+            if leader is not None and int(tgt.owner) == int(leader):
+                bonus *= LEADER_FOCUS_WEIGHT
+        delta *= bonus
+
+    # Follow-on hold bonus (Fix 2b — opt-in, env-gated). Surfaces the
+    # B3/B4 modeling-correct snipe helpers (`_best_followon` predicts
+    # follow-on + target positions at our arrival). Off by default
+    # (`BASELINE_FOLLOWON_BONUS=0.0`); the bundle wrapper opts in once
+    # the A/B confirms lift. Restricted to fresh captures
+    # (`tgt.owner != me`) and positive-delta candidates so the bonus
+    # only sweetens already-attractive captures.
+    if (FOLLOWON_BONUS_WEIGHT > 0.0 and delta > 0.0
+            and int(tgt.owner) != me):
+        try:
+            from lib.missions.snipe import _best_followon  # local: heavy import
+            foothold = _best_followon(
+                tgt, world, model, me, FOLLOWON_RADIUS,
+                arrival_eta=int(eta),
+            )
+        except Exception:
+            foothold = None
+        if foothold is not None:
+            _f_target, _f_cost, _f_eta_from_t, f_hold = foothold
+            delta += (
+                FOLLOWON_BONUS_WEIGHT
+                * float(_f_target.production)
+                * float(f_hold)
+            )
+
+    # Expansion credit (2026-06-01, default OFF) — see EXPAND_CREDIT_WEIGHT.
+    # Add the held-production value of a FRESH capture additively and
+    # UN-gated, so the rollout's structural passive-self pessimism can no
+    # longer zero out expansion. Confirm the candidate actually flips the
+    # target to us at eta (predict_garrison_at, same single-tick math the v2
+    # scorer used); under-sized launches that don't capture get no credit
+    # (the rollout already penalises them). Added BEFORE the PV_ETA discount
+    # so it is correctly pulled back to step 0 by γ^(wait_N+eta).
+    if EXPAND_CREDIT_WEIGHT > 0.0 and int(wait_N) == 0 and int(tgt.owner) != me:
+        our_arrival = (int(eta), int(me), int(ships))
+        cap_owner, _cap_g = predict_garrison_at(tgt, int(eta), [our_arrival])
+        if cap_owner == me:
+            time_remaining = max(0, EPISODE_STEPS_TOTAL - int(world.step) - int(eta))
+            held = time_remaining
+            if int(tgt.id) in world.comet_ids:
+                life = comet_remaining_lifetime(int(tgt.id), world)
+                if life is not None:
+                    held = min(held, max(0, life - int(eta)))
+            cap_credit = (CAPTURE_REWARD_WEIGHT * float(tgt.production)
+                          * float(held) * EXPAND_CREDIT_WEIGHT)
+            # Reuse the neutral early-grab tilt so the credit prefers the
+            # same targets the (gated) NEUTRAL_BONUS would have.
+            if NEUTRAL_BONUS_WEIGHT != 1.0 and int(tgt.owner) == -1:
+                cap_credit *= NEUTRAL_BONUS_WEIGHT
+                if int(world.step) < NEUTRAL_EARLY_HORIZON:
+                    cap_credit *= NEUTRAL_EARLY_EXTRA
+            delta += cap_credit
+
+    if SHIP_TURN_KAPPA > 0.0:
+        delta -= SHIP_TURN_KAPPA * float(ships) * float(int(wait_N) + int(eta))
+
+    # PV time-discount (2026-05-28). Pulls the candidate's final Δ back
+    # to the current step at the already-active γ — captures the fact
+    # that a fleet arriving in `wait_N + eta` turns only starts producing
+    # for us at that time, so its value at step 0 is γ^(wait_N+eta) ×
+    # value-at-arrival. Default OFF; applied LAST so it discounts the
+    # whole Δ together (additive FOLLOWON, multiplicative NEUTRAL/LEADER,
+    # and the SHIP_TURN penalty itself if enabled).
+    if PV_ETA_ENABLED and (int(wait_N) + int(eta)) > 0:
+        delta *= gamma ** (int(wait_N) + int(eta))
+
     return (delta, "scored", eta)
 
 
@@ -593,6 +802,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
                               favor_fn, gamma: float,
                               horizon: int,
                               skip_admissibility: bool = False,
+                              hard_deadline: float | None = None,
                               ) -> tuple[float, str]:
     """Direction B: score a JOINT candidate of multiple launches in one
     fast_sim rollout. `launches` is a list of
@@ -610,8 +820,12 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
     (see proposer path in `choose_trajectory`).
     """
     # Per-leg admissibility filter (only meaningful for wait_N==0 legs).
+    # Collect per-leg eta for the ship-turn penalty + PV_ETA discount
+    # (skip/wait>0 legs → 0, the documented v1 simplification).
+    leg_etas: list[int] = []
     for src, tgt, ships, angle, wait_N in launches:
         if skip_admissibility or int(wait_N) != 0:
+            leg_etas.append(0)
             continue
         fate = predict_fleet_fate(src, tgt, angle, ships, world)
         if fate.outcome == "sun":
@@ -626,6 +840,7 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
             life = comet_remaining_lifetime(int(tgt.id), world)
             if life is None or life <= int(fate.step):
                 return (float("-inf"), "comet_expired")
+        leg_etas.append(int(fate.step))
 
     # Clamp horizon to baseline length.
     if horizon >= len(baseline_favors):
@@ -647,9 +862,16 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         me_defense_emits = _me_defensive_action(snap, me)
     earliest_inject_t = min(inject_at.keys()) if inject_at else -1
 
+    _last_step_s = 0.0
     for t in range(horizon):
         if snap.fake_env.done:
             break
+        # Predictive deadline guard (see score_candidate_v4): bail before a
+        # step projected to cross the cap, not after it overshot.
+        if hard_deadline is not None and \
+                time.perf_counter() + _last_step_s > hard_deadline:
+            return (HARDCAP_BAIL_SENTINEL, "hardcap_bail")
+        _step_t0 = time.perf_counter()
         actions = opp_actions_for_snap(snap, me, num_seats)
         if t in inject_at:
             base_actions = list(inject_at[t])
@@ -659,9 +881,48 @@ def score_candidate_v4_joint(snap_base, launches, me: int, num_seats: int,
         elif _ME_REACTS_ENABLED:
             actions[me] = _me_reactive_action(snap, me)
         snap = fs_step(snap, actions, in_place=True)
+        _last_step_s = time.perf_counter() - _step_t0
 
     leaf = favor_fn(snap.state[me].observation, me, num_seats, gamma=gamma)
-    return (leaf - baseline_favors[horizon], "scored")
+    delta = leaf - baseline_favors[horizon]
+
+    # NEUTRAL_BONUS / LEADER_FOCUS for joints: apply when EVERY leg
+    # targets the preferred owner. This keeps the joint Δ unitary
+    # without per-leg attribution (the joint EV is one shared rollout).
+    if delta > 0.0 and launches:
+        bonus = 1.0
+        if NEUTRAL_BONUS_WEIGHT != 1.0:
+            if all(int(L[1].owner) == -1 for L in launches):
+                bonus *= NEUTRAL_BONUS_WEIGHT
+                if int(world.step) < NEUTRAL_EARLY_HORIZON:
+                    bonus *= NEUTRAL_EARLY_EXTRA
+        if LEADER_FOCUS_WEIGHT != 1.0:
+            leader = _leader_owner_from_world(world, me)
+            if (leader is not None
+                    and all(int(L[1].owner) == int(leader) for L in launches)):
+                bonus *= LEADER_FOCUS_WEIGHT
+        delta *= bonus
+
+    if SHIP_TURN_KAPPA > 0.0:
+        penalty = 0.0
+        for (src, tgt, ships, angle, wait_N), eta_leg in zip(launches, leg_etas):
+            penalty += float(ships) * float(int(wait_N) + int(eta_leg))
+        delta -= SHIP_TURN_KAPPA * penalty
+
+    # PV time-discount (2026-05-28). For joints, use max(wait_N+leg_eta)
+    # over legs — the coalition's effective payoff is gated by the
+    # slowest arrival. leg_etas defaults to 0 for wait_N>0 legs (line
+    # 605), which is the documented v1 simplification — multi-wait
+    # joints aren't enumerated by the proposer.
+    if PV_ETA_ENABLED and launches:
+        max_arrival = max(
+            int(wn) + int(le)
+            for (_, _, _, _, wn), le in zip(launches, leg_etas)
+        )
+        if max_arrival > 0:
+            delta *= gamma ** max_arrival
+
+    return (delta, "scored")
 
 
 def predict_opp_responses(world, me: int, num_seats: int,
@@ -728,12 +989,41 @@ def merge_ledgers(base: dict, projected: list[tuple[int, int, int, int]],
     return out
 
 
+def _solve_sync_wait(src, tgt, ships: int, omega: float, world,
+                     target_arrival: int):
+    """Smallest wait_N (≥0) such that the closer leg, launched after
+    waiting, ARRIVES exactly on `target_arrival` (so it stacks with the
+    far leg that fired now). Returns `(wait_N, angle)` or None if no
+    integer-tick match converges within 3 fixpoint steps.
+
+    Waiting shifts the geometry (orbital planets move), so eta at the
+    waited fire time differs from the fire-now eta — we re-aim at each
+    step and adjust the wait by the arrival error. None means this pair
+    cannot be cleanly synchronized (e.g. fast orbital drift); the caller
+    skips it (conservative — the rollout never sees a mis-synced stack).
+    """
+    _a0, eta0 = _aim_and_eta(src, tgt, ships, omega, wait_N=0, world=world)
+    w = int(target_arrival) - int(eta0)
+    if w < 0:
+        return None
+    for _ in range(3):
+        angle, eta_w = _aim_and_eta(src, tgt, ships, omega, wait_N=w, world=world)
+        arrival = w + int(eta_w)
+        if arrival == int(target_arrival):
+            return w, float(angle)
+        w += int(target_arrival) - arrival
+        if w < 0:
+            return None
+    return None
+
+
 def choose_trajectory(snap_base, prerank, baseline_favors,
                       me: int, num_seats: int, wallclock_ms: float,
                       min_horizon: int, max_horizon: int, gamma: float,
                       world, model,
                       reserved_srcs: set[int] | None = None,
                       reserved_for_new_commits: set[int] | None = None,
+                      agent_deadline: float | None = None,
                       ) -> tuple[list[list], list[dict]]:
     """Drop-in alternative to `chooser.choose`.
 
@@ -826,10 +1116,40 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             min_horizon, gamma,
         )
     safe_deadline = deadline - (per_cand_ms / 1000.0)
+    # Hard cap: forced bail INSIDE the rollout. Mirrors chooser.choose;
+    # protects against fat-tail candidates whose per_cand_ms estimate is
+    # wrong. The agent-level deadline (if passed) overrides the internal
+    # cap — it accounts for pre/post-chooser overhead the chooser can't see.
+    hard_deadline = time.perf_counter() + WALLCLOCK_HARD_CAP_MS / 1000.0
+    if agent_deadline is not None:
+        hard_deadline = min(hard_deadline, agent_deadline)
+        safe_deadline = min(safe_deadline, agent_deadline - per_cand_ms / 1000.0)
 
     scored: list[tuple] = []
     solo_winners: set[int] = set()  # src_ids whose solo scored Δ>0
     cand_count = 0
+
+    # Value-head additive term (B.3 / Reframe B.2). Per-candidate
+    # LightGBM regressor predicting K=10 ship-delta; output is added
+    # as λ_vh · head_output. Featurization runs once over the prerank;
+    # per-candidate prediction happens inside the loop below because
+    # leaf_delta (the score itself) is one of the 15 features.
+    # At λ=0 (default), vh_is_enabled() is False → vh_feats stays {}
+    # and the loop's `if vh_feats:` is skipped — byte-equivalent to
+    # the un-ported chooser.
+    # NOTE: vh_feats is keyed by SOLO prerank rows only. Joint paths
+    # at score_candidate_v4_joint(...) build their own per-call
+    # feats_map at the joint-loop call site (see Phase A patch
+    # 2026-06-03), so joint and solo candidates both receive the
+    # VH boost when BASELINE_VH_LAMBDA > 0.
+    from agents.baseline._value_head import vh_is_enabled, vh_featurize_prerank  # noqa: E501
+    vh_feats: dict = {}
+    if vh_is_enabled():
+        try:
+            vh_feats = vh_featurize_prerank(prerank, world, model)
+        except Exception:
+            vh_feats = {}
+
     for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
         if cand_count >= cap:
             break
@@ -869,8 +1189,30 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 horizon=int(prop_horizon),
                 skip_admissibility=skip_filter,
                 wait_N=int(wait_N),
+                eta_hint=int(eta_hint),
+                model=model,
+                hard_deadline=hard_deadline,
             )
-            if status == "scored" and score > 0.0:
+            # Value-head additive term (Block B, solo path). Looks up
+            # cached features by candidate-key and adds λ_vh · head_output
+            # to `score`. At λ=0 vh_feats is empty → branch is skipped.
+            if vh_feats:
+                from agents.baseline._value_head import vh_get_bias, vh_get_lambda, vh_predict_one  # noqa: E501
+                head_out = vh_predict_one(
+                    vh_feats, int(src.id), int(tgt.id),
+                    int(ships), float(angle), int(wait_N),
+                    float(score),  # leaf_delta input
+                )
+                # Subtract BIAS so the boost is mean-zero (shipped VH
+                # is trained on accepted moves; head_out has +102 bias
+                # that swamps base score at λ=1.0). At BIAS=0.0 (default)
+                # this is byte-equivalent to the pre-fix behavior.
+                score = score + vh_get_lambda() * (head_out - vh_get_bias())
+            passes = (
+                score > MIN_DELTA if MIN_DELTA == 0.0
+                else score >= MIN_DELTA
+            )
+            if status == "scored" and passes:
                 scored.append((score, src, tgt, ships, angle, wait_N))
                 # Track sources with viable solo (for joint gating).
                 solo_winners.add(int(src.id))
@@ -909,7 +1251,8 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
             if int(src.id) in reserved_srcs:
                 continue  # ledger is firing from this src this turn
             by_tgt.setdefault(int(tgt.id), []).append(
-                (float(cd), src, tgt, int(ships), float(angle), int(ph)),
+                (float(cd), src, tgt, int(ships), float(angle),
+                 int(eta_hint), int(ph)),
             )
         joint_count = 0
         for tgt_id, cands in by_tgt.items():
@@ -941,20 +1284,256 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                         (ca[1], ca[2], ca[3], ca[4], 0),
                         (cb[1], cb[2], cb[3], cb[4], 0),
                     ]
-                    jh = max(int(ca[5]), int(cb[5]))
+                    leg_etas = (int(ca[5]), int(cb[5]))
+                    jh = max(int(ca[6]), int(cb[6]))
                     j_score, j_status = score_candidate_v4_joint(
                         snap_base, launches, me, num_seats, world,
                         baseline_favors, favor_fn, gamma,
                         horizon=jh, skip_admissibility=skip_filter,
+                        hard_deadline=hard_deadline,
                     )
                     joint_count += 1
+                    # Phase A (2026-06-03): VH correction on joint legs.
+                    # Pre-fix, joints emitted j_score without VH boost
+                    # because vh_feats was keyed by SOLO prerank rows
+                    # only — joint legs miss the cache entirely. Build
+                    # a per-call feats_map for the legs (with the
+                    # correct per-leg eta_hint) and apply
+                    # λ * sum(per-leg head_outs) to j_score so joint
+                    # and solo candidates get parity treatment.
+                    # Diagnostic gate (2026-06-03): BASELINE_VH_JOINT=0
+                    # reverts to the pre-Phase-A behavior (solo VH only,
+                    # joint legs get no VH boost) — used to A/B whether
+                    # the joint aggregation is the source of the VH
+                    # collapse on state-driven-K base.
+                    if (vh_feats and os.environ.get(
+                            "BASELINE_VH_JOINT", "1").strip() == "1"):
+                        from agents.baseline._value_head import vh_get_bias, vh_get_lambda, vh_predict_one  # noqa: E501
+                        joint_prerank = [
+                            (0.0, launches[k][0], launches[k][1],
+                             launches[k][2], launches[k][3],
+                             leg_etas[k], jh, launches[k][4])
+                            for k in (0, 1)
+                        ]
+                        joint_feats = vh_featurize_prerank(
+                            joint_prerank, world, model,
+                        )
+                        bias = vh_get_bias()
+                        leg_sum = 0.0
+                        for ln in launches:
+                            leg_sum += vh_predict_one(
+                                joint_feats, int(ln[0].id), int(ln[1].id),
+                                int(ln[2]), float(ln[3]), int(ln[4]),
+                                float(j_score),
+                            ) - bias
+                        j_score = j_score + vh_get_lambda() * leg_sum
                     if j_status == "scored" and j_score > 0.0:
                         scored.append((j_score, "joint", launches))
+
+    # Synchronized-arrival JOINT coalitions (BASELINE_JOINT_SYNC). Separate,
+    # isolated from the fire-now loop above so the OFF path is untouched.
+    # For a capture target NO single source can take alone, make the closer
+    # source WAIT so all legs land the same tick and STACK. Gate re-read at
+    # call time (not the module constant) so the env toggle works regardless
+    # of import order in tests / A/B subprocesses.
+    if (os.environ.get("BASELINE_JOINT_SYNC", "0").strip() == "1"
+            and joint_enabled and not use_v3
+            and time.perf_counter() <= safe_deadline):
+        # Build synchronized two-source coalitions DIRECTLY from world geometry
+        # — NOT from `prerank`, which cheap-rejects the bouncing single-source
+        # launches a coalition combines (proposer CHEAP_REJECT_THRESHOLD drops
+        # any ~20+ ship bounce before the chooser sees it). For each defended
+        # planet no single source can take, pull the 2 nearest friendly sources
+        # and assemble a MINIMALLY-sized stacked strike: minimal ships-in-flight
+        # gives the best chance of clearing the value head's in-flight penalty.
+        my_sources = [
+            p for p in world.planets_by_id.values()
+            if int(p.owner) == me
+            and int(p.id) not in reserved_srcs
+            and int(p.id) not in reserved_for_new_commits
+            and int(p.ships) >= MIN_FLEET_SIZE
+        ]
+        sync_targets = [
+            p for p in world.planets_by_id.values() if int(p.owner) != me
+        ]
+        # Spend the bounded pair budget on the most valuable captures first.
+        sync_targets.sort(key=lambda t: (-int(t.production), int(t.id)))
+        # Effective arrival ceiling. BOTH legs land on the synchronized tick
+        # `tarr`; if `tarr` exceeds the launch-rules capture-horizon K, the
+        # fire-now far leg is silently deleted by enforce_launch_rules
+        # (launch_rules.py:163), leaving the near leg to fire alone and bounce
+        # — a half-fire that wastes both fleets. So when launch rules are on,
+        # only form coalitions whose arrival is within K (Rule 40: align the
+        # generator with the downstream filter, don't loosen the K cap).
+        sync_arrival_cap = max_horizon
+        _per_target_sync_cap = False
+        if _launch_rules_enabled():
+            sync_arrival_cap = min(
+                max_horizon, _capture_horizon_k(getattr(world, "step", None))
+            )
+            # State-driven lever: the cap is the predictability of the
+            # coalition's own target (computed per tgt0 at Gate 2b below).
+            _per_target_sync_cap = _state_driven_k_enabled()
+        sync_count = 0
+        for tgt0 in sync_targets:
+            if (sync_count >= JOINT_SYNC_MAX_PAIRS
+                    or time.perf_counter() > safe_deadline):
+                break
+            if len(my_sources) < 2:
+                break
+            cand_srcs = _nearest_k(my_sources, tgt0, JOINT_SYNC_SRC_K)
+            if len(cand_srcs) < 2:
+                continue
+            s_near, s_far = cand_srcs[0], cand_srcs[1]  # distance-sorted
+            # Solo-capture skip: if EITHER nearest source can take tgt0 alone,
+            # the solo / fire-now-joint path owns it — sync is strictly for the
+            # "neither alone can take it" regime.
+            if (int(s_near.ships)
+                    >= _capture_size(s_near, tgt0, model, world.omega, me, world)
+                    or int(s_far.ships)
+                    >= _capture_size(s_far, tgt0, model, world.omega, me, world)):
+                continue
+            arrivals = model.ledger.get(int(tgt0.id), [])
+            # Provisional arrival from full-ship etas → garrison there → `need`.
+            _an, eta_near_full = _aim_and_eta(
+                s_near, tgt0, int(s_near.ships), world.omega, wait_N=0, world=world)
+            _af, eta_far_full = _aim_and_eta(
+                s_far, tgt0, int(s_far.ships), world.omega, wait_N=0, world=world)
+            provisional_arrival_step = max(int(eta_near_full), int(eta_far_full))
+            _oTp, garr_Tp = predict_garrison_at(
+                tgt0, provisional_arrival_step, arrivals)
+            capture_need = int(garr_Tp) + 1  # smallest int strictly above garrison
+            # Lever 1 (size-to-hold): when BASELINE_JOINT_SYNC_HOLD is on, size
+            # the stack to SURVIVE the predicted opp counter-recapture, not just
+            # to flip the planet. Inverts the _target_holdable_after_capture
+            # inequality via hold_need (same counter model — Rule 40). Read at
+            # call-time like BASELINE_JOINT_SYNC above, not a module constant.
+            sync_hold = (
+                os.environ.get("BASELINE_JOINT_SYNC_HOLD", "0").strip() == "1"
+            )
+            if sync_hold:
+                need = hold_need(
+                    tgt0, provisional_arrival_step, world, me, capture_need)
+            else:
+                need = capture_need
+            # Minimal sizing: far leg commits ships now, near leg tops up.
+            far_ships = min(int(s_far.ships), need)
+            near_ships = min(int(s_near.ships), need - far_ships)
+            if far_ships + near_ships < need:
+                # far too small to lead — load the larger (near) budget first.
+                near_ships = min(int(s_near.ships), need)
+                far_ships = min(int(s_far.ships), need - near_ships)
+            if far_ships + near_ships < need:
+                continue  # combined budget can't take tgt0
+            if far_ships < MIN_FLEET_SIZE or near_ships < MIN_FLEET_SIZE:
+                continue
+            # Re-derive arrival from the ASSIGNED counts (fleet speed rises with
+            # ship count, so a smaller leg flies slower → arrives later). The
+            # leg with the larger eta fires now; the other waits to match it.
+            angle_n, eta_n = _aim_and_eta(
+                s_near, tgt0, near_ships, world.omega, wait_N=0, world=world)
+            angle_f, eta_f = _aim_and_eta(
+                s_far, tgt0, far_ships, world.omega, wait_N=0, world=world)
+            eta_n, eta_f = int(eta_n), int(eta_f)
+            if eta_n == eta_f:
+                continue  # already synchronized → the fire-now joint owns it
+            if eta_f >= eta_n:
+                fire_pl, fire_ships, fire_angle = s_far, far_ships, angle_f
+                wait_pl, wait_ships, wait_eta = s_near, near_ships, eta_n
+                tarr = eta_f
+            else:
+                fire_pl, fire_ships, fire_angle = s_near, near_ships, angle_n
+                wait_pl, wait_ships, wait_eta = s_far, far_ships, eta_f
+                tarr = eta_n
+            # Gate 2 (Rule 47): the leaf must see the stacked capture settle.
+            if tarr + JOINT_SYNC_SETTLE > max_horizon:
+                continue
+            # Gate 2b: both legs must arrive within the launch-rules ceiling K,
+            # else the fire-now far leg is deleted downstream and the coalition
+            # half-fires (see sync_arrival_cap above).
+            _cap = sync_arrival_cap
+            if _per_target_sync_cap:
+                _cap = min(max_horizon, _capture_horizon_k(
+                    getattr(world, "step", None), tgt_id=int(tgt0.id),
+                    world=world, model=model, me=me))
+            if tarr > _cap:
+                continue
+            _oT, garr_tarr = predict_garrison_at(tgt0, tarr, arrivals)
+            # Gate 3: combined force must actually exceed garrison at arrival.
+            if fire_ships + wait_ships <= garr_tarr:
+                continue
+            # Gate 1 (neither solo, post-sizing): neither leg alone may capture
+            # at its own arrival tick. SKIPPED when SYNC_HOLD inflates per-leg
+            # counts purely to survive the counter (not to solo-capture): the
+            # regime is already enforced PRE-sizing at the _capture_size gate
+            # above, and comparing hold-inflated counts here would spuriously
+            # drop wanted coalitions (an inflated leg ~always exceeds garrison).
+            _ow, garr_wait = predict_garrison_at(tgt0, wait_eta, arrivals)
+            if not sync_hold and (fire_ships > garr_tarr or wait_ships > garr_wait):
+                continue
+            # The closer (waiting) leg waits so it arrives exactly at tarr.
+            solved = _solve_sync_wait(
+                wait_pl, tgt0, wait_ships, world.omega, world,
+                target_arrival=tarr,
+            )
+            if solved is None:
+                continue  # can't cleanly synchronize this pair
+            wait_n, angle_wait = solved
+            launches = [
+                (fire_pl, tgt0, fire_ships, fire_angle, 0),
+                (wait_pl, tgt0, wait_ships, angle_wait, int(wait_n)),
+            ]
+            jh = min(tarr + JOINT_SYNC_SETTLE, len(baseline_favors) - 1)
+            j_score, j_status = score_candidate_v4_joint(
+                snap_base, launches, me, num_seats, world,
+                baseline_favors, favor_fn, gamma,
+                horizon=jh, skip_admissibility=skip_filter,
+                hard_deadline=hard_deadline,
+            )
+            sync_count += 1
+            if j_status == "scored" and j_score > 0.0:
+                scored.append((j_score, "joint_sync", launches))
 
     if not scored:
         return [], []
 
     scored.sort(key=lambda c: -c[0])
+
+    # Phase H — value-head rerank (Option C, 2026-06-03). When
+    # BASELINE_VH_RERANK_K > 0, take the top-K solo entries (in the
+    # current base-score-sorted order), re-rank them by vh_predict_one
+    # output, and put them back in the same K slots. Base scores are
+    # preserved on each tuple — only the order changes. Joints and
+    # joint_sync entries are untouched. Sidesteps the magnitude-swamp
+    # that closed the VH-additive axis (Rule 37 n=5); consumes the
+    # model's verified Spearman ρ=+0.386 rank signal as RANK, not
+    # magnitude. At BASELINE_VH_RERANK_K=0 (default) this block is
+    # skipped entirely — byte-equivalent to the un-VH chooser.
+    if vh_feats:
+        from agents.baseline._value_head import vh_rerank_k
+        K = vh_rerank_k()
+        if K > 0:
+            from agents.baseline._value_head import vh_predict_one
+            solo_slots: list[int] = []
+            for i, entry in enumerate(scored):
+                if (len(entry) == 6
+                        and not (isinstance(entry[1], str))):
+                    solo_slots.append(i)
+                    if len(solo_slots) >= K:
+                        break
+            if len(solo_slots) >= 2:
+                solos = [scored[i] for i in solo_slots]
+                vh_scores = []
+                for (base_score, src, tgt, ships, angle, wait_N) in solos:
+                    head_out = vh_predict_one(
+                        vh_feats, int(src.id), int(tgt.id),
+                        int(ships), float(angle), int(wait_N),
+                        float(base_score),
+                    )
+                    vh_scores.append(head_out)
+                order = sorted(range(len(solos)), key=lambda k: -vh_scores[k])
+                for new_pos, old_pos in enumerate(order):
+                    scored[solo_slots[new_pos]] = solos[old_pos]
 
     # Emit logic — match composite chooser (`agents/baseline/chooser.choose`)
     # for parity. 1 launch per source per turn, 1 per target. For joints
@@ -964,8 +1543,50 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
     used_tgts: set[int] = set()
     moves: list[list] = []
     commits: list[dict] = []
+    # Reframe B.2 / Phase D — solo-only accepted trace. Populated only
+    # when BASELINE_ACCEPTED_TRACE env var is set; trace_accepted is a
+    # no-op otherwise. Solo-only by design — VH training corpus drops
+    # joints (joints aren't VH-corrected by the head).
+    accepted_trace: list[dict] = []
+    # eta_by_key: map (src_id, tgt_id, ships, angle, wait_N) → eta_hint
+    # from the prerank so the emit loop can attach eta to each accepted
+    # solo record. Round angle to match _candidate_key precision in
+    # _value_head._candidate_key.
+    eta_by_key: dict[tuple, int] = {}
+    for cheap_delta, src, tgt, ships, angle, eta_hint, prop_horizon, wait_N in prerank:
+        key = (int(src.id), int(tgt.id), int(ships),
+               round(float(angle), 6), int(wait_N))
+        eta_by_key.setdefault(key, int(eta_hint))
     commit_step = int(world.step) if world is not None else 0
     for entry in scored:
+        # Synchronized joint (3-tuple, tag 'joint_sync'): far leg fires now,
+        # closer leg(s) wait so all arrive the same tick. The waiting leg is
+        # surfaced as a commit carrying sync_joint=True; the self-contained
+        # sync-joint tick in main.py (gated on BASELINE_JOINT_SYNC=1) fires
+        # it when wait_remaining hits 0, independent of the general ledger.
+        if len(entry) == 3 and entry[1] == "joint_sync":
+            _score, _tag, launches = entry
+            if any(int(L[0].id) in used_srcs for L in launches):
+                continue
+            if (not JOINT_LIFT_USED_TGTS
+                    and any(int(L[1].id) in used_tgts for L in launches)):
+                continue
+            for src, tgt, ships, angle, wait_N in launches:
+                used_srcs.add(int(src.id))
+                used_tgts.add(int(tgt.id))
+                if int(wait_N) == 0:
+                    moves.append([int(src.id), float(angle), int(ships)])
+                else:
+                    commits.append({
+                        "src_id": int(src.id),
+                        "tgt_id": int(tgt.id),
+                        "ships_planned": int(ships),
+                        "angle_original": float(angle),
+                        "wait_remaining": int(wait_N),
+                        "commit_step": commit_step,
+                        "sync_joint": True,
+                    })
+            continue
         # Joint candidates are 3-tuples: (score, 'joint', launches).
         if len(entry) == 3 and entry[1] == "joint":
             _score, _tag, launches = entry
@@ -1003,4 +1624,18 @@ def choose_trajectory(snap_base, prerank, baseline_favors,
                 "wait_remaining": int(wait_N),
                 "commit_step": commit_step,
             })
+        key = (sid, tid, int(ships), round(float(angle), 6), int(wait_N))
+        accepted_trace.append({
+            "kind": "solo",
+            "src_id": sid,
+            "tgt_id": tid,
+            "ships": int(ships),
+            "angle": float(angle),
+            "wait_N": int(wait_N),
+            "eta": int(eta_by_key.get(key, 0)),
+            "delta_pred": float(_score),
+        })
+    if accepted_trace:
+        from agents.baseline._trace_hook import trace_accepted
+        trace_accepted(world, model, me, accepted_trace)
     return moves, commits

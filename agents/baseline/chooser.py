@@ -19,33 +19,32 @@ import time
 
 from lib.fast_sim import clone as fs_clone
 from lib.fast_sim import step as fs_step
-from lib.opp_model import lite_greedy_policy, top_tier_mirror_policy
+from lib.opp_model import lite_greedy_policy, make_opp_policy, top_tier_mirror_policy
 
 from agents.baseline.value import select_favor_fn
 
-WALLCLOCK_BUDGET_MS = 600.0
+WALLCLOCK_BUDGET_MS = 800.0
+WALLCLOCK_HARD_CAP_MS = 920.0
 N_VALIDATE = 60
 PER_CANDIDATE_SAFETY = 1.5
 RESERVED_OVERHEAD_MS = 50.0
+HARDCAP_BAIL_SENTINEL = -1e9
 
 
 def _select_opp_policy():
-    """Tier 3 (2026-05-18 PM): asymmetric opp model selection.
+    """Asymmetric opp-model selection driven by BASELINE_OPP_TIER.
 
-    BASELINE_OPP_TIER env var:
-      - "0" or unset → lite_greedy_policy (default, ~1-2ms/call).
-      - "1" → top_tier_mirror_policy (~5-10ms/call; ladder-realistic
-              opp using v3.5.1 aggressive snipe pipeline). Bench gate
-              FIRST before A/B — per-call cost is 5-10× lite_greedy.
-
-    Per-call selection (not cached at import time) so env-var overrides
-    inside test fixtures take effect without re-importing the module.
+    Routes through `lib.opp_model.make_opp_policy(tier)` so the chooser
+    sees every registered tier (0=mirror_self, 1=top_tier_mirror,
+    2=trained_logreg). Default "0" or unset → lite_greedy_policy (cheap
+    rollout opp, ~1-2 ms/call). Per-call selection (not cached at import
+    time) so env-var overrides inside test fixtures take effect without
+    re-importing the module.
     """
-    return (
-        top_tier_mirror_policy
-        if os.environ.get("BASELINE_OPP_TIER", "0").strip() == "1"
-        else lite_greedy_policy
-    )
+    raw = os.environ.get("BASELINE_OPP_TIER", "0").strip()
+    if raw == "0" or raw == "":
+        return lite_greedy_policy
+    return make_opp_policy(int(raw))
 
 
 def opp_actions_for_snap(snap, me: int, num_seats: int) -> list[list]:
@@ -82,13 +81,21 @@ def build_idle_baseline(snap_base, me: int, num_seats: int,
 def score_action(snap_base, me: int, num_seats: int,
                  src_id: int, angle: float, ships: int,
                  horizon: int, baseline_favors: list[float],
-                 wait_N: int, gamma: float) -> float:
-    """Δ favor at horizon = leaf(my_action@wait_N) − baseline."""
+                 wait_N: int, gamma: float,
+                 hard_deadline: float | None = None) -> float:
+    """Δ favor at horizon = leaf(my_action@wait_N) − baseline.
+
+    `hard_deadline` (absolute `time.perf_counter()` seconds) bails the
+    rollout mid-flight and returns `HARDCAP_BAIL_SENTINEL`. The caller
+    drops sentinel deltas via the existing `if delta > 0` filter.
+    """
     favor_fn = select_favor_fn()
     snap = fs_clone(snap_base)
     for step_i in range(horizon):
         if snap.fake_env.done:
             break
+        if hard_deadline is not None and time.perf_counter() > hard_deadline:
+            return HARDCAP_BAIL_SENTINEL
         actions = opp_actions_for_snap(snap, me, num_seats)
         if step_i == int(wait_N):
             actions[me] = [[int(src_id), float(angle), int(ships)]]
@@ -138,6 +145,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
            world=None,
            reserved_srcs: set[int] | None = None,
            reserved_for_new_commits: set[int] | None = None,
+           agent_deadline: float | None = None,
            ) -> tuple[list[list], list[dict]]:
     """Validate top candidates with fast_sim, emit greedy non-dogpile moves.
 
@@ -159,11 +167,19 @@ def choose(snap_base, prerank, baseline_favors: list[float],
     top = prerank[: min(N_VALIDATE, n_aff)]
 
     deadline = time.perf_counter() + wallclock_ms / 1000.0
-    # Pre-bail headroom: don't ENTER a candidate that would push us past
-    # the deadline. score_action is uninterruptible (runs the full K-step
-    # rollout once entered), so checking AT the deadline is too late.
-    # Closes the long-tail max-turn-ms overrun seen in the 2026-05-17 A/B.
+    # Pre-bail headroom: don't ENTER a candidate whose AVERAGE-cost projection
+    # would push us past the deadline. The hard cap below catches fat-tail
+    # candidates whose actual cost exceeds the per_cand_ms estimate.
     safe_deadline = deadline - (per_cand_ms / 1000.0)
+    # Hard cap: forced bail INSIDE the rollout. Returns HARDCAP_BAIL_SENTINEL
+    # so the in-flight candidate is discarded by `delta > 0` rather than
+    # forfeiting the whole turn to the Kaggle actTimeout. The agent-level
+    # deadline (if passed) overrides — it accounts for pre-chooser setup
+    # and post-chooser bookkeeping that the chooser-internal cap can't see.
+    hard_deadline = time.perf_counter() + WALLCLOCK_HARD_CAP_MS / 1000.0
+    if agent_deadline is not None:
+        hard_deadline = min(hard_deadline, agent_deadline)
+        safe_deadline = min(safe_deadline, agent_deadline - per_cand_ms / 1000.0)
     validated: list[tuple] = []
     for _cheap, src, tgt, ships, angle, _eta, horizon, wait_N in top:
         if time.perf_counter() > safe_deadline:
@@ -179,6 +195,7 @@ def choose(snap_base, prerank, baseline_favors: list[float],
             snap_base, me, num_seats,
             int(src.id), float(angle), int(ships),
             int(horizon), baseline_favors, int(wait_N), gamma,
+            hard_deadline=hard_deadline,
         )
         if delta > 0:
             validated.append((delta, src, tgt, ships, angle, wait_N))

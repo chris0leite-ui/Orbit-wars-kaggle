@@ -5,10 +5,30 @@
 
 ## The strategy: `baseline_adaptive_k`
 
-**Source of truth:** commit `9985e98` on branch `claude/champion-strategy-rules-00JzI`.
-**Reproducible build:** `scripts/_build_adaptive_k_bundle.sh` (worktree-safe; mirrors the `size_balance` template).
-**Live submission:** `champ_adaptiveK_on.py`, sub **53324164** (2026-06-03 10:37 UTC), bundle sha256 `6c0419dc20`, 608 844 B.
-**Prior live μ of identical agent:** sub 53265480 settled at **μ = 1170.4**.
+**Source of truth:** commit `0025c67` on branch `claude/champion-ml-graft-majestic-storm` (adds the compute_by_ships lever on top of the adaptive_k baseline).
+**Reproducible build:** `scripts/_build_compute_by_ships_bundle.sh` (uses the bundler's `DEFAULT_LIB_ORDER`; mirrors the `_build_adaptive_k_bundle.sh` template).
+**Live submission #1 (most-recent):** `champ_computeByShips_on.py`, sub **53332500** (2026-06-03 15:11 UTC), bundle sha256 `53bf813b...`, 697 927 B. Adaptive K + per-source compute_by_ships lever both baked ON.
+**Live submission #2 (backstop):** `champ_adaptiveK_on.py`, sub **53324164** (2026-06-03 10:37 UTC), live **μ = 1185.2** — anchor / safety net.
+**Local A/B of compute_by_ships:** 16-game CRN vs same-source lever-off sibling = 7/16 wins, Wilson [0.231, 0.668] — INCONCLUSIVE (parity ± noise). Predicted live μ ≈ 1170.
+
+### Next mechanism — large-idle-fleet spend-down
+
+PI observation 2026-06-03: live games show planets accumulating > 200 ships and
+sitting idle when no opponent is within K-eta reach. Even a "wasted" launch
+from a 200-ship planet has positive expected value: it forces opponent
+defense, may capture, and the ships are otherwise contributing zero.
+
+The mechanism we're going to build next (after compute_by_ships's live result
+lands): **threshold-triggered forced launch**. Any planet whose ship count
+exceeds a threshold (PI mentioned 200) MUST emit at least one launch this
+turn, targeted at the nearest opponent-owned planet, with the K-eta cap
+BYPASSED for this specific launch class. Single launch per source per turn
+(chooser's existing rule already enforces this); self-regulating (planet
+fires until below threshold). No reposition to ally → no back-and-forth-loop
+pathology. Compose-clean with adaptive K and compute_by_ships.
+
+Not implemented yet. Spec-only until compute_by_ships's live μ comes in
+(~24 h from 2026-06-03 15:11 UTC TrueSkill warm-up).
 
 ### What it is in one sentence
 

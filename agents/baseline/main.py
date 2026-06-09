@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 
 # Production default: hybrid value head (composite in 2P, A2-favor in 4P).
 # `setdefault` lets local A/B drivers (fast.py) override via env var without
@@ -126,6 +127,50 @@ SNIPER_MARGIN = float(os.environ.get("BASELINE_SNIPER_MARGIN", "1.2"))
 SNIPER_MAX_LAUNCHES = int(os.environ.get("BASELINE_SNIPER_MAX_LAUNCHES", "4"))
 SNIPER_RESERVE_FRAC = float(os.environ.get("BASELINE_SNIPER_RESERVE_FRAC", "0.4"))
 
+# Large-idle-stockpile spend-down (PI 2026-06-03). Geometry-adaptive threshold:
+# a planet qualifies as a stockpile when its ship count is > REL_MULT * avg of
+# my planets OR > SHARE_OF_TOTAL * sum of my ships. After the normal pipeline
+# (proposer + chooser + enforce_launch_rules) settles, any qualifying source
+# with no launch this turn AND no inbound enemy fleet emits one forced launch
+# at an opponent (positive-EV preferred — capture mechanically feasible per
+# predict_garrison_at; nearest-opp fallback for pure-pressure when no
+# positive-EV target exists). K-eta cap bypassed by post-enforce slotting.
+IDLE_STOCKPILE_DRAIN_ENABLED = os.environ.get("BASELINE_IDLE_STOCKPILE_DRAIN", "0") == "1"
+IDLE_STOCKPILE_REL_MULT = float(os.environ.get("BASELINE_IDLE_STOCKPILE_REL_MULT", "3.0"))
+IDLE_STOCKPILE_SHARE_OF_TOTAL = float(os.environ.get("BASELINE_IDLE_STOCKPILE_SHARE", "0.25"))
+IDLE_STOCKPILE_ABS_FLOOR = int(os.environ.get("BASELINE_IDLE_STOCKPILE_FLOOR", "30"))
+IDLE_STOCKPILE_GARRISON = int(os.environ.get("BASELINE_IDLE_STOCKPILE_GARRISON", "5"))
+IDLE_STOCKPILE_MIN_SEND = int(os.environ.get("BASELINE_IDLE_STOCKPILE_MIN_SEND", "25"))
+IDLE_STOCKPILE_MAX_PER_TURN = int(os.environ.get("BASELINE_IDLE_STOCKPILE_MAX", "4"))
+# How far into the future the source must still be predicted-ours given the
+# known ledger (multi-wave fleets that incoming_enemy_eta would have missed).
+IDLE_STOCKPILE_OWNER_LOOKAHEAD = int(os.environ.get("BASELINE_IDLE_STOCKPILE_OWNER_LOOKAHEAD", "20"))
+
+# Frontier-circulation post-pass v2 (PI 2026-06-03 + Biel pressure gradient).
+# Per-friendly-planet enemy pressure = sum of distance-decayed enemy mass:
+#   pressure(p) = sum over enemy s of: ships(s) * max(0, 1 - dist(s, p)
+#                                                       / (fleet_speed(s) * H))
+# Ships flow UP the gradient (from low-pressure rear -> higher-pressure front).
+# Two key gates over v1 (centroid):
+#   - Destination pressure must exceed source by DELTA_MIN (Biel's 0.25-style).
+#   - Destination must be reachable within ETA_CAP turns (kills wallclock
+#     cascade caused by long-flight in-flight friendly fleets in v1).
+# Default OFF.
+FRONTIER_CIRCULATION_ENABLED = os.environ.get("BASELINE_FRONTIER_CIRCULATION", "0") == "1"
+CIRCULATION_PRESSURE_HORIZON = int(os.environ.get("BASELINE_CIRCULATION_PRESSURE_HORIZON", "18"))
+CIRCULATION_PRESSURE_DELTA_MIN = float(os.environ.get("BASELINE_CIRCULATION_PRESSURE_DELTA_MIN", "1.0"))
+CIRCULATION_ETA_CAP = int(os.environ.get("BASELINE_CIRCULATION_ETA_CAP", "10"))
+CIRCULATION_GARRISON = int(os.environ.get("BASELINE_CIRCULATION_GARRISON", "5"))
+CIRCULATION_TRIGGER_MIN = int(os.environ.get("BASELINE_CIRCULATION_TRIGGER_MIN", "15"))
+CIRCULATION_MIN_SEND = int(os.environ.get("BASELINE_CIRCULATION_MIN_SEND", "10"))
+CIRCULATION_MAX_PER_TURN = int(os.environ.get("BASELINE_CIRCULATION_MAX", "1"))
+CIRCULATION_MIN_THREAT_ETA = int(os.environ.get("BASELINE_CIRCULATION_MIN_THREAT_ETA", "15"))
+# Destination usefulness filter (v3, PI 2026-06-04): destination friendly
+# must have at least one of its K nearest non-our planets that it could
+# CAPTURE today with its current ships. Same K as proposer's
+# NUM_TARGETS_PER_SOURCE; mirrors the chooser's per-source planning lens.
+CIRCULATION_DST_USEFUL_K = int(os.environ.get("BASELINE_CIRCULATION_DST_USEFUL_K", "8"))
+
 # Stateful commit ledger (2026-05-20). When `BASELINE_LEDGER=on`, the
 # chooser's wait_N>0 winners are remembered across turns instead of
 # being silently dropped. Each entry ticks down each turn; when
@@ -159,11 +204,13 @@ from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 from lib.fast_sim import from_obs as fs_from_obs
 from lib.fleet import speed as fleet_speed
 from lib.intent import World
+from lib.kinematic_table import KinematicTable
 from lib.joint_solver.opening_planner import OPENING_HORIZON, opening_plan
 from lib.missions.reinforce import propose_reinforce_missions
+from agents.baseline.launch_rules import enforce_launch_rules
 from lib.orbit import predict_relative
 from lib.trajectory import predict_fleet_fate
-from lib.world_model import WorldModel
+from lib.world_model import WorldModel, predict_garrison_at
 
 # Import by explicit names so the bundler's per-line import-stripping regex
 # can handle them. Single-line form is mandatory — the regex matches one
@@ -171,7 +218,7 @@ from lib.world_model import WorldModel
 # continuation lines as indented orphans. Friction tag
 # `bundler-modular-agent-namespace-access-breaks-bundle` (2026-05-17).
 from agents.baseline.chooser import build_idle_baseline, choose, WALLCLOCK_BUDGET_MS
-from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON
+from agents.baseline.proposer import propose, MAX_HORIZON, MIN_HORIZON, aim_and_eta, nearest_k, capture_floor_arrival
 
 
 _PARITY_ENV_VAR = "ORBIT_WARS_PARITY_WALLCLOCK_MS"
@@ -720,6 +767,320 @@ def drain_combat_stack(moves, planets, my_id: int, world, model) -> list:
     return list(moves) + extras
 
 
+def _pick_idle_stockpile_target(src, send: int, planets, my_id: int,
+                                world, model, omega: float):
+    """Pick a target for a forced idle-stockpile launch.
+
+    Strategy: prefer the highest positive-EV target (capture mechanically
+    feasible per `predict_garrison_at`) among opponents + neutrals. If none
+    exists, fall back to the nearest opponent-owned planet for a
+    pure-pressure punch (PI 2026-06-03: 'force them to defend, attracts
+    attention, might capture something'). Returns
+    `(tgt, angle, eta)` or `(None, None, None)` when no valid target exists.
+    """
+    candidates = [p for p in planets if int(p.owner) != my_id]
+    if not candidates:
+        return None, None, None
+
+    best_positive = None  # (margin, eta, tgt, angle)
+    for tgt in candidates:
+        try:
+            angle, eta = aim_and_eta(src, tgt, send, omega, world=world)
+        except Exception:
+            continue
+        arrivals = model.ledger.get(int(tgt.id), [])
+        try:
+            _, garrison = predict_garrison_at(tgt, int(eta), arrivals)
+        except Exception:
+            continue
+        margin = float(send) - float(garrison)
+        if margin <= 0.0:
+            continue
+        # Higher margin wins; tie-break shorter eta.
+        key = (margin, -int(eta))
+        if best_positive is None or key > best_positive[0]:
+            best_positive = (key, tgt, float(angle), int(eta))
+
+    if best_positive is not None:
+        _, tgt, angle, eta = best_positive
+        return tgt, angle, eta
+
+    # Pure-pressure fallback: nearest opponent-owned planet by euclidean dist.
+    opp_only = [p for p in planets
+                if int(p.owner) != my_id and int(p.owner) != -1]
+    if not opp_only:
+        return None, None, None
+    nearest = min(
+        opp_only,
+        key=lambda p: math.hypot(float(p.x) - float(src.x),
+                                 float(p.y) - float(src.y)),
+    )
+    try:
+        angle, eta = aim_and_eta(src, nearest, send, omega, world=world)
+    except Exception:
+        return None, None, None
+    return nearest, float(angle), int(eta)
+
+
+def drain_idle_stockpile_to_opp(moves, planets, my_id: int, world, model,
+                                omega: float) -> list:
+    """Force one launch from each large idle stockpile toward an opponent.
+
+    Runs AFTER `enforce_launch_rules` so launches bypass the K-eta cap.
+    Gate (ALL must hold):
+      - source is one of MY planets AND not already in `moves`
+      - source.ships >= IDLE_STOCKPILE_ABS_FLOOR
+      - source.ships > REL_MULT * avg_my_ships
+        OR source.ships > SHARE_OF_TOTAL * sum_my_ships
+      - model.incoming_enemy_eta(src, my_id) is None (no inbound threat)
+      - send-size = source.ships - GARRISON >= MIN_SEND
+      - a valid target exists (positive-EV or fallback nearest-opp)
+
+    Bounded by IDLE_STOCKPILE_MAX_PER_TURN per turn (wallclock guard).
+    Idempotent on the input moves list.
+    """
+    if not IDLE_STOCKPILE_DRAIN_ENABLED:
+        return moves
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    if not my_planets:
+        return moves
+    used_srcs = set()
+    for m in moves:
+        try:
+            used_srcs.add(int(m[0]))
+        except (TypeError, IndexError):
+            pass
+
+    avg_my = sum(int(p.ships) for p in my_planets) / float(len(my_planets))
+    tot_my = sum(int(p.ships) for p in my_planets)
+    extras = []
+    fired = 0
+    for src in my_planets:
+        if fired >= IDLE_STOCKPILE_MAX_PER_TURN:
+            break
+        if int(src.id) in used_srcs:
+            continue
+        if int(src.ships) < IDLE_STOCKPILE_ABS_FLOOR:
+            continue
+        is_stockpile = (
+            float(src.ships) > IDLE_STOCKPILE_REL_MULT * avg_my
+            or (tot_my > 0
+                and float(src.ships) > IDLE_STOCKPILE_SHARE_OF_TOTAL * tot_my)
+        )
+        if not is_stockpile:
+            continue
+        # Strict safety gate (PI 2026-06-03 falsification fix #1):
+        # `incoming_enemy_eta` only sees the EARLIEST in-flight fleet, missing
+        # (a) opponents that may launch this same turn — same-turn launches are
+        # invisible to model.ledger which was built at start-of-turn — and
+        # (b) multi-wave attacks where a later wave is the real threat.
+        # `time_to_enemy_threat` covers BOTH: it considers in-flight fleets
+        # PLUS potential launches from every stationary opp planet at its
+        # present garrison. Mirrors drain_idle_rear's safety gate.
+        if model.time_to_enemy_threat(int(src.id), my_id, world) is not None:
+            continue
+        # Belt-and-suspenders: even if no opp can plausibly threaten us today,
+        # verify the source planet is still predicted to be OURS at horizon K
+        # given known fleets in the ledger.
+        try:
+            predicted = model.owner_at(
+                int(src.id), IDLE_STOCKPILE_OWNER_LOOKAHEAD,
+            )
+        except Exception:
+            predicted = None
+        if predicted is not None and int(predicted) != my_id:
+            continue
+        send = int(src.ships) - IDLE_STOCKPILE_GARRISON
+        if send < IDLE_STOCKPILE_MIN_SEND:
+            continue
+        tgt, angle, _eta = _pick_idle_stockpile_target(
+            src, send, planets, my_id, world, model, omega,
+        )
+        if tgt is None:
+            continue
+        extras.append([int(src.id), float(angle), int(send)])
+        used_srcs.add(int(src.id))
+        fired += 1
+    return list(moves) + extras
+
+
+def _compute_enemy_pressure(my_planets, opp_planets, horizon: int) -> dict:
+    """Per-friendly-planet enemy pressure (Biel "Producer" scalar field).
+
+    pressure(p) = sum over enemy s of:
+                    ships(s) * max(0, 1 - dist(s, p) / (fleet_speed(s) * H))
+
+    Returns a dict keyed by my-planet id -> float pressure value.
+    Cost: O(|my| * |opp|) trivial-math ops per call.
+    """
+    out = {int(p.id): 0.0 for p in my_planets}
+    H = float(horizon)
+    if H <= 0.0:
+        return out
+    for s in opp_planets:
+        s_ships = float(s.ships)
+        if s_ships <= 0.0:
+            continue
+        reach = float(fleet_speed(s_ships)) * H
+        if reach <= 0.0:
+            continue
+        sx, sy = float(s.x), float(s.y)
+        for t in my_planets:
+            d = math.hypot(float(t.x) - sx, float(t.y) - sy)
+            if d >= reach:
+                continue
+            out[int(t.id)] += s_ships * (1.0 - d / reach)
+    return out
+
+
+def _destination_can_fire_today(dst, planets, model, omega: float,
+                                my_id: int, world, K: int) -> bool:
+    """True iff `dst` has at least one of its K nearest non-our planets
+    that it could CAPTURE today with its current ship count.
+
+    Mirrors the proposer's per-source planning lens (K = NUM_TARGETS_PER_SOURCE
+    = 8 by default). Friendlies that pass this filter are the ones our
+    chooser is firing from (or about to fire from); shipping ships there
+    directly extends their firing capacity. v3 alignment fix for the
+    structural mismatch between Biel's pressure-pulled planner and our
+    (source, target)-trade planner.
+    """
+    candidates = [p for p in planets
+                  if int(p.id) != int(dst.id) and int(p.owner) != my_id]
+    if not candidates:
+        return False
+    nearest = nearest_k(candidates, dst, max(1, K))
+    dst_ships = int(dst.ships)
+    for tgt in nearest:
+        if int(tgt.owner) == -1:
+            # Neutral target: capture floor = current garrison + 1
+            # (neutrals don't produce ships).
+            if dst_ships > int(tgt.ships):
+                return True
+        else:
+            # Opp target: arrival-correct floor; accounts for production
+            # and integer-combat slack via the existing proposer primitive.
+            try:
+                floor = capture_floor_arrival(
+                    dst, tgt, model, omega, my_id, world=world,
+                )
+            except Exception:
+                continue
+            if dst_ships >= int(floor):
+                return True
+    return False
+
+
+def emit_frontier_circulation(moves, planets, my_id: int, world, model,
+                              omega: float) -> list:
+    """Pressure-gradient rear-to-front ship flow (PI 2026-06-03, v2).
+
+    Borrows Biel's "Producer" pressure-field idea: each friendly planet
+    gets a scalar pressure = distance-decayed enemy ship mass that can
+    plausibly reach it within HORIZON turns. Ships flow UP the gradient:
+    a launch fires only when destination pressure exceeds source pressure
+    by DELTA_MIN AND the destination is reachable within ETA_CAP turns.
+
+    The short ETA cap is the wallclock-safety mechanism: v1 generated
+    long-flight in-flight friendly fleets that ballooned the world model's
+    per-fleet hot paths (ledger scans, time_to_enemy_threat); v2 keeps
+    every regroup launch short-range so the in-flight population stays
+    bounded.
+
+    Composes cleanly with `drain_idle_stockpile_to_opp` (post-enforce):
+    circulation pushes ships forward; if a front planet still piles up
+    beyond the stockpile threshold, the spend-down lever fires it at opp.
+    """
+    if not FRONTIER_CIRCULATION_ENABLED:
+        return moves
+    my_planets = [p for p in planets if int(p.owner) == my_id]
+    opp_planets = [p for p in planets
+                   if int(p.owner) != my_id and int(p.owner) != -1]
+    if len(my_planets) < 2 or not opp_planets:
+        return moves
+
+    pressure = _compute_enemy_pressure(
+        my_planets, opp_planets, CIRCULATION_PRESSURE_HORIZON,
+    )
+
+    used_srcs = set()
+    for m in moves:
+        try:
+            used_srcs.add(int(m[0]))
+        except (TypeError, IndexError):
+            pass
+
+    extras = []
+    fired = 0
+    for src in my_planets:
+        if fired >= CIRCULATION_MAX_PER_TURN:
+            break
+        if int(src.id) in used_srcs:
+            continue
+        if int(src.ships) < CIRCULATION_TRIGGER_MIN:
+            continue
+        threat_eta = model.time_to_enemy_threat(int(src.id), my_id, world)
+        if threat_eta is not None and int(threat_eta) < CIRCULATION_MIN_THREAT_ETA:
+            continue
+        send = int(src.ships) - CIRCULATION_GARRISON
+        if send < CIRCULATION_MIN_SEND:
+            continue
+        src_p = pressure[int(src.id)]
+
+        # Cheap reach proxy: straight-line distance / fleet_speed(send).
+        # Skips full aim_and_eta (orbital prediction math) for dst candidates
+        # that obviously cannot reach in time. Cuts post-pass turn-ms ~3x.
+        send_speed = float(fleet_speed(float(send)))
+        reach = send_speed * float(CIRCULATION_ETA_CAP)
+
+        best = None
+        best_score = None
+        for dst in my_planets:
+            if int(dst.id) == int(src.id):
+                continue
+            dst_p = pressure[int(dst.id)]
+            delta = dst_p - src_p
+            if delta < CIRCULATION_PRESSURE_DELTA_MIN:
+                continue
+            d = math.hypot(
+                float(dst.x) - float(src.x),
+                float(dst.y) - float(src.y),
+            )
+            if d > reach:
+                continue
+            # v3 alignment fix: only consider destinations our chooser
+            # would actually fire from this turn. A high-pressure friendly
+            # that has no capturable enemy within its 8 nearest is one our
+            # chooser ignores -- sending ships there piles them up unused.
+            # Filter runs AFTER pressure-delta and reach checks (cheap
+            # filters first); the capture-floor calls are the most
+            # expensive part of the inner loop.
+            if not _destination_can_fire_today(
+                dst, planets, model, omega, my_id, world,
+                CIRCULATION_DST_USEFUL_K,
+            ):
+                continue
+            # Cheap eta proxy is sufficient since both planets co-rotate;
+            # exact orbital eta varies <~1 turn from this estimate for the
+            # short flights we care about.
+            cheap_eta = int(math.ceil(d / max(send_speed, 1e-6)))
+            score = (delta, -cheap_eta)
+            if best_score is None or score > best_score:
+                best = dst
+                best_score = score
+        if best is None:
+            continue
+
+        angle = math.atan2(
+            float(best.y) - float(src.y),
+            float(best.x) - float(src.x),
+        )
+        extras.append([int(src.id), float(angle), int(send)])
+        used_srcs.add(int(src.id))
+        fired += 1
+    return list(moves) + extras
+
+
 def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
     """One-shot decisive strike at high-value enemy planets from idle reserves.
 
@@ -831,6 +1192,12 @@ def emit_sniper_strikes(moves, planets, my_id: int, world, model) -> list:
 
 
 def agent(obs, configuration=None):
+    t0_agent = time.perf_counter()
+    # Agent-level deadline: Kaggle actTimeout is 1000 ms; reserve 50 ms
+    # for post-chooser bookkeeping (emit_threat_reinforcements,
+    # drain_*, sniper_strikes) and Python overhead. The chooser will
+    # bail any mid-flight rollout that would push past this.
+    agent_deadline = t0_agent + 0.950
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
     step = int(obs_d.get("step", 0))
@@ -843,7 +1210,14 @@ def agent(obs, configuration=None):
         LEDGER_ENABLED
         or os.environ.get("BASELINE_LEDGER", "off").strip().lower() == "on"
     )
-    if ledger_on and step == 0:
+    # Synchronized-arrival JOINT coalitions (BASELINE_JOINT_SYNC) need their
+    # waiting leg to fire across turns. They ride the SAME _PENDING_LAUNCHES
+    # ledger + _tick_ledger machinery, but we keep the (deliberately-off)
+    # general wait-grid dormant: when the general ledger is off, only
+    # commits tagged sync_joint are persisted/ticked (see persist below).
+    sync_on = os.environ.get("BASELINE_JOINT_SYNC", "0").strip() == "1"
+    ledger_active = ledger_on or sync_on
+    if ledger_active and step == 0:
         _PENDING_LAUNCHES.pop(me, None)
 
     raw_planets = obs_d.get("planets", []) or []
@@ -859,6 +1233,19 @@ def agent(obs, configuration=None):
         return []
 
     world = World.from_obs(obs_d)
+    # Per-turn kinematic position-cache, attached to THIS world instance
+    # (de-singletonized 2026-06-02 — fresh per seat per turn, so in-process
+    # A/Bs no longer corrupt each other). predict_fleet_fate reads world._kt
+    # and falls back to the bit-identical inline build on any miss. Default
+    # ON (the live-peak champion ran with it); BASELINE_KINEMATIC_TABLE=0
+    # disables it for parity A/Bs. begin_turn cost is amortized over the
+    # ~250 predict_fleet_fate calls/turn; it buys back candidates at the
+    # 950ms deadline in dense late-game (audit 2026-06-02).
+    if os.environ.get("BASELINE_KINEMATIC_TABLE", "1").strip().lower() not in (
+        "0", "off", "false", "no",
+    ):
+        world._kt = KinematicTable()
+        world._kt.begin_turn(world)
     model = WorldModel.from_world(world)
     omega = float(obs_d.get("angular_velocity", 0.0))
     num_seats = _num_seats(planets, fleets)
@@ -890,7 +1277,9 @@ def agent(obs, configuration=None):
             ]
             if opening_moves:
                 # Case (a): MILP has fire-now entries — emit and return.
-                return opening_moves
+                return enforce_launch_rules(
+                    opening_moves, planets, me, world, model,
+                )
             # Cases (b) and (c) fall through.
 
     snap_base = fs_from_obs(obs, num_seats=num_seats)
@@ -928,7 +1317,7 @@ def agent(obs, configuration=None):
         surviving_pending: list[dict] = []
         reserved_srcs: set[int] = set()
         reserved_for_new_commits: set[int] = set()
-        if ledger_on:
+        if ledger_active:
             due_moves, surviving_pending = _tick_ledger(
                 me, world, model, omega,
             )
@@ -955,18 +1344,33 @@ def agent(obs, configuration=None):
             world, model,
             reserved_srcs=reserved_srcs,
             reserved_for_new_commits=reserved_for_new_commits,
+            agent_deadline=agent_deadline,
         )
 
-        # 2. Persist updated ledger (surviving + new commits) when on.
+        # 2. Persist updated ledger (surviving + new commits). When the
+        #    general ledger is on, persist all commits. When it is OFF but
+        #    sync coalitions are on, persist ONLY sync_joint commits so the
+        #    deliberately-disabled general wait-grid stays dormant (its
+        #    solo wait_N>0 commits are discarded exactly as in the champion).
         if ledger_on:
             _PENDING_LAUNCHES[me] = surviving_pending + new_commits
+        elif sync_on:
+            sync_new = [c for c in new_commits if c.get("sync_joint")]
+            _PENDING_LAUNCHES[me] = surviving_pending + sync_new
 
         moves = due_moves + moves
         moves = emit_threat_reinforcements(moves, planets, me, world, model, omega)
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
-        return emit_sniper_strikes(moves, planets, me, world, model)
+        moves = emit_frontier_circulation(
+            moves, planets, me, world, model, omega,
+        )
+        moves = emit_sniper_strikes(moves, planets, me, world, model)
+        moves = enforce_launch_rules(moves, planets, me, world, model)
+        return drain_idle_stockpile_to_opp(
+            moves, planets, me, world, model, omega,
+        )
 
     # ROI chooser opt-in (2026-05-19). Closed-form ROI prior + N-way
     # coalition + opp-modifier posterior; no fast_sim rollout. See
@@ -989,7 +1393,14 @@ def agent(obs, configuration=None):
         moves = drain_idle_rear(moves, planets, me, world, model)
         moves = drain_stagnant_rear(moves, planets, me, world, model)
         moves = drain_combat_stack(moves, planets, me, world, model)
-        return emit_sniper_strikes(moves, planets, me, world, model)
+        moves = emit_frontier_circulation(
+            moves, planets, me, world, model, omega,
+        )
+        moves = emit_sniper_strikes(moves, planets, me, world, model)
+        moves = enforce_launch_rules(moves, planets, me, world, model)
+        return drain_idle_stockpile_to_opp(
+            moves, planets, me, world, model, omega,
+        )
 
     baseline_favors = build_idle_baseline(
         snap_base, me, num_seats, MAX_HORIZON, gamma,
@@ -1026,6 +1437,7 @@ def agent(obs, configuration=None):
         world=world,
         reserved_srcs=composite_reserved,
         reserved_for_new_commits=composite_reserved_new,
+        agent_deadline=agent_deadline,
     )
 
     if ledger_on:
@@ -1036,4 +1448,11 @@ def agent(obs, configuration=None):
     moves = drain_idle_rear(moves, planets, me, world, model)
     moves = drain_stagnant_rear(moves, planets, me, world, model)
     moves = drain_combat_stack(moves, planets, me, world, model)
-    return emit_sniper_strikes(moves, planets, me, world, model)
+    moves = emit_frontier_circulation(
+        moves, planets, me, world, model, omega,
+    )
+    moves = emit_sniper_strikes(moves, planets, me, world, model)
+    moves = enforce_launch_rules(moves, planets, me, world, model)
+    return drain_idle_stockpile_to_opp(
+        moves, planets, me, world, model, omega,
+    )

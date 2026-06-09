@@ -31,8 +31,9 @@ Public API:
 from __future__ import annotations
 
 import math
-import os
 from dataclasses import dataclass
+
+import numpy as np
 
 from lib.aim import swept_pair_hit
 from lib.fleet import speed as fleet_speed
@@ -41,21 +42,47 @@ from lib.orbit import is_orbiting, predict_relative
 from lib.world_model import _comet_paths_by_id
 
 
-def _kinematic_table_enabled() -> bool:
-    """Phase γ opt-in: when `KINEMATIC_TABLE_ENABLED=1` AND the
-    module-level singleton has been primed via begin_turn(world) AND
-    its window is large enough, predict_fleet_fate's position build
-    uses the cached lookup instead of re-computing predict_relative
-    per (planet, step).
-    """
-    return os.environ.get("KINEMATIC_TABLE_ENABLED", "").strip().lower() in (
-        "1", "true", "on", "yes",
-    )
-
 # Max steps we simulate before giving up. A 1-ship fleet at speed 1.0
 # can cross the 141.4-unit board diagonal in 142 steps; 200 covers
 # every realistic case with comfortable margin.
 DEFAULT_MAX_STEPS = 200
+
+# Reusable lead-index buffer: callers requesting `length <= len(_LEAD_INDEX_DEFAULT)`
+# get a zero-alloc view; longer windows fall through to a fresh np.arange.
+_LEAD_INDEX_DEFAULT = np.arange(DEFAULT_MAX_STEPS + 2, dtype=np.float64)
+
+
+def _predict_relative_window(p_tuple, omega: float, wait_N: int,
+                             length: int) -> list[tuple[float, float]]:
+    """Batched orbital-position window for one planet.
+
+    Replaces the scalar list-comp
+        [predict_relative(p_tuple, omega, wait_N + t) for t in range(length)]
+    with one numpy-vectorised computation: scalar hypot/atan2 + array cos/sin.
+    For a single planet × `length=201` window this collapses 201 Python
+    function dispatches + 201 math.{cos,sin} calls into ~5 numpy calls.
+
+    Returns list[tuple[float, float]] of native Python floats (via .tolist()),
+    matching the scalar path's downstream contract: callers index
+    positions[step][0] / positions[step][1] and pass slices to swept_pair_hit.
+
+    FP delta vs scalar predict_relative is ULP-level (~1e-15). Parity audit
+    in audit/ + the new test_predict_relative_window_matches_scalar pin show
+    this is below every existing tolerance (test_orbit abs=1e-9; test_trajectory
+    asserts symbolic outcomes only).
+    """
+    px, py = p_tuple[2], p_tuple[3]
+    dx, dy = px - CENTER, py - CENTER
+    orb_r = math.hypot(dx, dy)
+    cur_angle = math.atan2(dy, dx)
+    if length <= _LEAD_INDEX_DEFAULT.shape[0]:
+        leads = _LEAD_INDEX_DEFAULT[:length]
+    else:
+        leads = np.arange(length, dtype=np.float64)
+    angles = cur_angle + omega * (wait_N + leads)
+    xs = (CENTER + orb_r * np.cos(angles)).tolist()
+    ys = (CENTER + orb_r * np.sin(angles)).tolist()
+    return list(zip(xs, ys))
 
 # Safety margin around the sun (units). The env's sun-check uses
 # point-to-segment distance < SUN_RADIUS strict; we MUST match exactly
@@ -147,13 +174,20 @@ def predict_fleet_fate(
     # positions[1] is the obs-T+1 position. With wait_N>0 the fleet
     # appears at env step T+1+wait_N and positions[0] = obs-T+wait_N.
     #
-    # Phase γ — when KINEMATIC_TABLE_ENABLED=1 and the table is primed
-    # for this world AND covers our (wait_N + max_steps) window, the
-    # `planet_positions` dict comes from a one-call lookup into the
-    # table's per-turn cache. On any miss — env-var off, table not
-    # primed, max_lead too small — fall through to the inline build.
-    planet_positions = _table_window_or_none(world, wait_N, max_steps + 1)
+    # Phase γ (de-singletonized 2026-06-02) — when the agent has attached a
+    # per-turn KinematicTable to `world._kt` AND it covers our
+    # (wait_N + max_steps) window, `planet_positions` comes from a one-call
+    # lookup into that per-turn cache. The table lives on the world INSTANCE
+    # (fresh per seat per turn), so there is no cross-seat singleton
+    # corruption (the reason the old module-global cache was removed). On any
+    # miss — no table, not primed, window too small — fall through to the
+    # self-sufficient inline build, which is bit-identical to the table.
+    _kt = getattr(world, "_kt", None)
+    planet_positions = _table_window_or_none(_kt, world, wait_N, max_steps + 1)
     if planet_positions is None:
+        # Build the window for (wait_N + max_steps): comets use their discrete
+        # path, orbital planets use the vectorized predict_relative window,
+        # static planets stay put.
         comet_paths = _comet_paths_by_id(world) if world.comet_ids else {}
         planet_positions = {}
         for pid, p in world.planets_by_id.items():
@@ -172,10 +206,9 @@ def predict_fleet_fate(
                 continue
             p_tuple = [p.id, p.owner, p.x, p.y, p.radius, p.ships, p.production]
             if is_orbiting(p_tuple) and omega != 0.0:
-                planet_positions[pid] = [
-                    predict_relative(p_tuple, omega, wait_N + t)
-                    for t in range(max_steps + 1)
-                ]
+                planet_positions[pid] = _predict_relative_window(
+                    p_tuple, omega, wait_N, max_steps + 1
+                )
             else:
                 planet_positions[pid] = [(p.x, p.y)] * (max_steps + 1)
 
@@ -261,28 +294,25 @@ def _segment_to_point_distance(a, b, p) -> float:
     return math.hypot(px - cx, py - cy)
 
 
-def _table_window_or_none(world, wait_N: int, length: int):
-    """Phase γ: pull positions from the kinematic table when enabled
-    and primed for this world. Returns the planet_positions dict the
-    inline build would have produced, or None to signal "fall through
-    to inline build".
+def _table_window_or_none(table, world, wait_N: int, length: int):
+    """Pull the planet-position window from a per-turn KinematicTable when
+    one is attached and primed for THIS world, else return None to signal
+    "fall through to the inline build".
 
-    Bit-parity contract: the table is rebuilt every turn from
-    `world.planets_by_id` using the SAME `predict_relative` calls the
-    inline build makes (orbital), the SAME `(p.x, p.y)` constants
-    (static), and the SAME path lookups (comets).
+    `table` is the per-turn `world._kt` instance (or None). De-singletonized
+    (2026-06-02): the table is passed in / read off the world instance rather
+    than a module-global singleton, so two seats sharing one process never
+    clobber each other's cache. Bit-parity contract: the table is rebuilt
+    every turn from `world.planets_by_id` using the SAME `predict_relative`
+    calls (orbital), the SAME `(p.x, p.y)` constants (static), and the SAME
+    path lookups (comets) as the inline build.
     """
-    if not _kinematic_table_enabled():
+    if table is None:
         return None
-    # Lazy import keeps default-path module-load time unchanged.
-    from lib.kinematic_table import get_default
-    table = get_default()
     pids = list(world.planets_by_id.keys())
     if not pids:
         return None
     needed_lead = int(wait_N) + int(length) - 1
     if not table.covers(pids, needed_lead):
         return None
-    # Sanity: the table must be primed for THIS turn's obs. Trust
-    # begin_turn fingerprinting to keep this fresh.
     return table.window(pids, start_offset=int(wait_N), length=int(length))

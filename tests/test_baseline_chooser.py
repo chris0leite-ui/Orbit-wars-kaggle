@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from kaggle_environments import make
 
+import time
+
 from agents.baseline.chooser import (
+    HARDCAP_BAIL_SENTINEL,
     affordable_validate_cap,
     build_idle_baseline,
     choose,
@@ -71,6 +74,29 @@ def test_choose_empty_prerank_returns_empty():
         me=0, num_seats=2, wallclock_ms=600.0,
         min_horizon=5, max_horizon=10, gamma=0.99,
     ) == []
+
+
+def test_score_action_hardcap_bail_returns_sentinel_fast():
+    """Rule 38 fix-verification: with hard_deadline already in the past,
+    score_action must return HARDCAP_BAIL_SENTINEL before completing any
+    rollout step. Reproduces the failure state (rollout runs to
+    completion past deadline) and verifies the fix engages."""
+    _obs, snap = _snapshot_from_seed(7)
+    favs = build_idle_baseline(snap, me=0, num_seats=2, max_horizon=10, gamma=0.99)
+
+    t0 = time.perf_counter()
+    delta = score_action(
+        snap, me=0, num_seats=2,
+        src_id=0, angle=0.0, ships=1,
+        horizon=10, baseline_favors=favs, wait_N=0, gamma=0.99,
+        hard_deadline=time.perf_counter() - 1.0,  # already past
+    )
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+    assert delta == HARDCAP_BAIL_SENTINEL
+    assert elapsed_ms < 5.0, (
+        f"hardcap bail took {elapsed_ms:.1f}ms — should fire on first iter"
+    )
 
 
 def test_choose_emit_format_is_env_action_shape():

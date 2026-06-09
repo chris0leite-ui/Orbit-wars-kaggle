@@ -49,6 +49,7 @@ DEFAULT_LIB_ORDER = [
     "world_model",
     "intent",
     "trajectory",
+    "kinematic_table",
     "mechanism",
     "mission",
     # `scoring` exposes `pv_horizon` + `PV_GAMMA` used by missions/snipe
@@ -90,6 +91,16 @@ DEFAULT_LIB_ORDER = [
     # Inlining these is a no-op for non-v7 agents (their agent() never
     # imports from them) — they bloat the bundle by ~35 KB. Acceptable.
     "fast_sim",
+    # ML stack ported from hqNVM (2026-06-02): three new pure-Python
+    # modules. The patched opp_model.py (Tier-2 trained_logreg_policy)
+    # imports _validator_tree_walker + opp_features_lite at runtime, so
+    # both must precede opp_model in the inline order. value_head_features
+    # is imported by agents/baseline/_value_head.py and is order-independent
+    # vs opp_model, but kept here so all three ML support modules sit
+    # adjacent for readability.
+    "_validator_tree_walker",
+    "opp_features_lite",
+    "value_head_features",
     "opp_model",
     "v7_search",
     # v4_planner brain (2026-05-12 evening): candidate portfolios +
@@ -106,6 +117,14 @@ DEFAULT_LIB_ORDER = [
     # lib.fleet/trajectory/world_model — all already in DEFAULT_LIB_ORDER
     # above.
     "joint_solver/opening_planner",
+    # 2026-05-27: joint_solver columns + lp dataclasses for the
+    # reach-frontier chooser's Hungarian assignment. columns.Column is
+    # the Column dataclass shared across joint_solver modules; lp.py
+    # provides build_assignment_matrix + extract_moves + solve_assignment.
+    # Used by agents/reach_frontier/assignment.py. Must come before any
+    # consumer in agent inlining.
+    "joint_solver/columns",
+    "joint_solver/lp",
 ]
 SUBMISSIONS = REPO / "submissions"
 

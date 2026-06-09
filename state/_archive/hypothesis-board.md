@@ -1,5 +1,51 @@
 # state/hypothesis-board.md — open agent-design hypotheses
 
+## Open — Contest-aware conversion (2026-06-01, `champion-strategy-rules-00JzI`)
+
+> Integrated design: `knowledge-base/concepts/contest-aware-conversion-design.md`.
+> Root: the loss mode is **conversion** (launch a lot, capture little), and
+> since fleets can't die in flight, every failed capture is a
+> prediction/timing error — we arrived (a) under-strength (target reinforced),
+> (b) too late (someone took it first), or (c) at a planet that flipped en
+> route (`audit/2026-06-01-loss-mode-diagnosis.md`). All three = mispredicted
+> the target's state at arrival, or committed at the wrong time.
+
+**One shared primitive, four levers.** `predict_arrival_contest(model, world,
+tgt, my_arrival, me)` (BUILT — `lib/world_model.py`) predicts a target's
+owner+garrison at our arrival and the opponent's earliest contest tick; the
+four levers are faces of that one model. Each ships default-OFF + its own A/B;
+validate paired / vs-aggressive, never the champion mirror (Rule 41); falsify
+per Rules 21/37.
+
+- **A — state-driven horizon K (BUILDING FIRST).** The principled form of the
+  shipped step-schedule (65.6% vs champion, sub 53265480 live-pending). K stops
+  being a clock and becomes the target's predictability:
+  `K_target = clamp(10, ~30, opp_earliest_contest_tick)`. Uncontested far
+  planet → high K (commit long); near-but-contested → low K (board changes
+  before arrival). Same single chokepoint `capture_horizon_k()`, fed
+  target+state. Attacks the (c) failure while freeing safe long grabs.
+  Cheap test: A/B vs the step-schedule (per-target better than per-clock?) +
+  the multi-opp panel the step version still owes.
+- **B — contest-urgency value (BUILT, parked default-OFF).** Race-class
+  multiplier on capture value: prioritise race-wins, defer bankable, suppress
+  race-loss launches (the wasted fleets inflating launch count). Implemented in
+  `proposer.cheap_marginal_value`; A/B after A clears. Removes (b)/(c) waste.
+- **C — sharper opponent-arrival prediction (second wave).** Fold the
+  opponent's likely reinforcement of a contested target into
+  `predict_garrison_at` so sizing/timing account for the defence that *will* be
+  there. The Rule-40 modelling fix for the (a) failure; why naive size-balance
+  regressed. Gated on A/B showing the contest model moves win-rate.
+- **D — forward staging (second wave).** One-hop own→own redeploy toward the
+  frontier, valued by the race-win it unlocks next, not its (zero) immediate
+  gain. The *tempo* form of "move ships to the front" (the static snapshot was
+  null). Cheap test: paired launch-ETA to contested targets, ours vs theirs.
+
+**Sequencing (PI 2026-06-01):** read 53265480's settled μ → build **A** (the
+confirmed lever's proper form, same chokepoint, smallest surface) → then **B**
+(independent conversion face) → **C/D** second-wave, gated on A/B moving
+win-rate. A, B, D are all conversion-via-opponent-awareness — the half of the
+game we've under-invested in.
+
 ## Open — Geometry-conditional EDA (2026-05-14)
 
 > Five-mine EDA on 60 top-10 replays + (in-progress) ~500 self-play games.

@@ -144,3 +144,84 @@ def test_bundle_self_play_validation_gate(bundled_v1):
         final = env.steps[-1]
         statuses = [s.status for s in final]
         assert all(s == "DONE" for s in statuses), f"seed={seed}: statuses={statuses}"
+
+
+# ---------------------------------------------------------------------------
+# End-to-end bundle of reach_frontier
+#
+# Mirrors the bundled_v1 fixture pattern; covers the reach-frontier doctrine
+# chooser (knowledge-base/concepts/reach-frontier-doctrine.md). Each phase of
+# the build (skeleton -> my-reach -> opp-reach -> assignment) must keep this
+# fixture green per Rule 46 (bundle + parity smoke before submission).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def bundled_reach_frontier(tmp_path_factory):
+    """Build the reach_frontier bundle into a tmpdir; return (path, module)."""
+    out_dir = tmp_path_factory.mktemp("submissions_rf")
+    path = bundle_agent.bundle(
+        REPO / "agents" / "reach_frontier",
+        lib_modules=bundle_agent.DEFAULT_LIB_ORDER,
+        out_dir=out_dir,
+    )
+    mod = _load_module("bundled_reach_frontier_for_tests", path)
+    return path, mod
+
+
+def test_reach_frontier_bundle_compiles(bundled_reach_frontier):
+    path, _ = bundled_reach_frontier
+    src = path.read_text()
+    compile(src, str(path), "exec")
+
+
+def test_reach_frontier_bundle_exposes_agent_callable(bundled_reach_frontier):
+    _, mod = bundled_reach_frontier
+    assert callable(getattr(mod, "agent", None))
+
+
+def test_reach_frontier_bundle_has_only_one_future_import(bundled_reach_frontier):
+    path, _ = bundled_reach_frontier
+    src = path.read_text()
+    count = sum(1 for line in src.splitlines()
+                if line.strip().startswith("from __future__"))
+    assert count == 1
+
+
+def test_reach_frontier_bundle_outcome_matches_original_on_fixed_seeds(
+    bundled_reach_frontier,
+):
+    """Bundling must not change game outcomes vs the unbundled agent."""
+    from kaggle_environments import make
+
+    _, bundled = bundled_reach_frontier
+    orig = _load_module(
+        "orig_reach_frontier_for_tests",
+        REPO / "agents" / "reach_frontier" / "main.py",
+    )
+    baseline = str(REPO / "data" / "main.py")
+    for seed in (42, 1):
+        env_b = make("orbit_wars", configuration={"seed": seed}, debug=False)
+        env_b.run([bundled.agent, baseline])
+        env_o = make("orbit_wars", configuration={"seed": seed}, debug=False)
+        env_o.run([orig.agent, baseline])
+        rb = [s.reward for s in env_b.steps[-1]]
+        ro = [s.reward for s in env_o.steps[-1]]
+        assert rb == ro, (
+            f"seed={seed}: bundled rewards {rb} != orig {ro}"
+        )
+
+
+def test_reach_frontier_bundle_self_play_validation_gate(bundled_reach_frontier):
+    """Self-vs-self DONE-status gate, mirror of E.2 kaggle validation."""
+    from kaggle_environments import make
+
+    _, bundled = bundled_reach_frontier
+    for seed in (1000, 1001, 1002):
+        env = make("orbit_wars", configuration={"seed": seed}, debug=False)
+        env.run([bundled.agent, bundled.agent])
+        final = env.steps[-1]
+        statuses = [s.status for s in final]
+        assert all(s == "DONE" for s in statuses), (
+            f"seed={seed}: statuses={statuses}"
+        )
