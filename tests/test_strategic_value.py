@@ -453,6 +453,12 @@ def test_new_strategic_shims_match_bundle_variant(shim_file, variant_name):
 
 
 def _play_one_game(focal_path, opp_path, seed):
+    # Shims set PRODUCER_PLUS_* via os.environ.setdefault at load; those keys
+    # outlive the game in this process and silently re-gate the NEXT game's
+    # agents (the clean_ab.py env-pollution problem). Start every game from a
+    # clean gate state so ON/OFF comparisons compare what they claim to.
+    for _k in [k for k in os.environ if k.startswith("PRODUCER_PLUS_")]:
+        os.environ.pop(_k)
     from kaggle_environments import make
     env = make("orbit_wars", configuration={"seed": int(seed)}, debug=False)
     env.run([focal_path, opp_path])
