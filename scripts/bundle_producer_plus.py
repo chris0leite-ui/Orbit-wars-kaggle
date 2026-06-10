@@ -425,6 +425,15 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_SCORE": "1",
         "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
     },
+    "veto_upsize": {
+        # "Beat the parry": veto + full-spare-budget retry of killed waves
+        # (aim/eta recomputed for the bigger, faster fleet; the flow scorer
+        # decides if stripping the source is safe).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO_UPSIZE": "1",
+    },
     "mass_veto": {
         # Response veto on the live mass stack: one extra mirror pass with
         # our chosen waves as background -> the opponent's predicted reply;

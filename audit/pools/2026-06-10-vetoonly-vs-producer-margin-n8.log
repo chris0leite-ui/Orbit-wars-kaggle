@@ -3,3 +3,5 @@
    seed=  0 seat=P0  win steps=156 dec= 79  L40= +0.0%  L80= +1.8%  L120=+38.7%  L250=+100.0%
    seed=  1 seat=P0 loss steps=107 dec= 28  L40= -3.5%  L80=-33.7%  L120=-100.0%  L250=-100.0%
    seed=  1 seat=P1 loss steps=107 dec= 28  L40= -3.5%  L80=-33.7%  L120=-100.0%  L250=-100.0%
+   seed=  2 seat=P1  win steps=112 dec= 47  L40= -0.3%  L80=+32.1%  L120=+100.0%  L250=+100.0%
+   seed=  2 seat=P0  win steps=183 dec= 75  L40= -0.3%  L80= +0.3%  L120=+13.0%  L250=+100.0%

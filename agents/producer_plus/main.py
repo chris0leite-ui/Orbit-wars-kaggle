@@ -465,6 +465,16 @@ def _response_veto_active(player_count: int) -> bool:
     )
 
 
+def _response_veto_upsize_enabled() -> bool:
+    """\"Beat the parry\": when the predicted reply kills a wave, retry the
+    same target with the source's full spare budget (new aim/eta for the
+    bigger, faster fleet) before dropping. The flow scorer judges whether
+    over-draining the source is safe — no separate cap."""
+    return os.environ.get("PRODUCER_PLUS_RESPONSE_VETO_UPSIZE", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def _response_veto_margin(default: float) -> float:
     """Veto margin; defaults to the planner's own roi threshold so the wave
     must clear the SAME gain bar under the predicted reply that it cleared
@@ -592,14 +602,73 @@ def _apply_response_veto(
         player_count=int(player_count), background=reply, player_id=pid,
         opp_weights=opp_weights,
     )
-    keep = (scores - dn) >= _response_veto_margin(float(config.roi_threshold))
+    margin = _response_veto_margin(float(config.roi_threshold))
+    keep = (scores - dn) >= margin
     if bool(keep.all()):
         return entries
+
     new_valid = entries.valid.clone()
-    new_valid[idx[~keep]] = False
+    new_ships = entries.ships.clone()
+    new_angle = entries.angle.clone()
+    new_eta = entries.eta.clone()
+    drop = idx[~keep]
+    new_valid[drop] = False
+
+    if _response_veto_upsize_enabled() and movement is not None and int(drop.shape[0]) > 0:
+        # "Beat the parry": retry each killed wave at the source's full
+        # spare budget (everything not already committed by the plan),
+        # with aim/eta recomputed for the bigger — and therefore FASTER —
+        # fleet. The flow scorer judges whether stripping the source is
+        # safe (the debit is part of the diff); only drop when even the
+        # full send fails the margin under the reply.
+        committed = torch.zeros(P, dtype=dtype, device=device)
+        committed.scatter_add_(
+            0, entries.source_slots[sel].clamp(0, P - 1), entries.ships[sel].to(dtype),
+        )
+        D = int(drop.shape[0])
+        d_src = entries.source_slots[drop].clamp(0, P - 1)
+        d_tgt = entries.target_slots[drop].clamp(0, P - 1)
+        spare = (obs.ships.to(dtype)[d_src] - committed[d_src]).clamp(min=0.0).floor()
+        up_size = entries.ships[drop].to(dtype) + spare
+        aim = intercept_angle(movement, d_src, d_tgt, up_size)
+        up_viable = (spare >= 1.0) & aim["viable"] & (aim["eta"] <= float(H))
+        if bool(up_viable.any()):
+            cand_up = make_launch_set(
+                source_slots=d_src.view(D, 1),
+                target_slots=d_tgt.view(D, 1),
+                ships=up_size.view(D, 1),
+                eta=aim["eta"].to(dtype).view(D, 1),
+                valid=up_viable.view(D, 1),
+                player_id=pid,
+            )
+
+            def _bgD(t: Tensor) -> Tensor:
+                return t.unsqueeze(0).expand(D, -1)
+
+            merged_up = LaunchSet(
+                source_slots=torch.cat([cand_up.source_slots, _bgD(reply.source_slots)], dim=-1),
+                target_slots=torch.cat([cand_up.target_slots, _bgD(reply.target_slots)], dim=-1),
+                ships=torch.cat([cand_up.ships, _bgD(reply.ships)], dim=-1),
+                eta=torch.cat([cand_up.eta, _bgD(reply.eta)], dim=-1),
+                owner=torch.cat([cand_up.owner, _bgD(reply.owner)], dim=-1),
+                valid=torch.cat([cand_up.valid, _bgD(reply.valid)], dim=-1),
+            )
+            scores_up = score_candidates(
+                garrison_status, prod=prod, alive_by_step=alive_by_step,
+                player_count=int(player_count), launches=merged_up, player_id=pid,
+                opp_weights=opp_weights, terminal_prod_weight=_terminal_prod_value(),
+            )
+            keep_up = up_viable & ((scores_up - dn) >= margin)
+            if bool(keep_up.any()):
+                ui = drop[keep_up]
+                new_valid[ui] = True
+                new_ships[ui] = up_size[keep_up].to(new_ships.dtype)
+                new_angle[ui] = aim["angle"][keep_up].to(new_angle.dtype)
+                new_eta[ui] = aim["eta"][keep_up].to(new_eta.dtype)
+
     return LaunchEntries(
         source_slots=entries.source_slots, target_slots=entries.target_slots,
-        ships=entries.ships, angle=entries.angle, eta=entries.eta,
+        ships=new_ships, angle=new_angle, eta=new_eta,
         valid=new_valid,
     )
 

@@ -86,6 +86,43 @@ merged into it; main is 166 commits behind that track).
    `audit/top-replays/`, gitignored) and `scripts/behavior_profile.py`
    (behavioral fingerprint of any team from replays).
 
+## Improvement backlog (2026-06-10 evening — do not lose these)
+
+Ordered by evidence strength. Each is a default-OFF gated mechanism +
+margin triage vs the champion AND producer referees (n=8), then n≥32 if
+it clears. NOT vs the mass incumbent (wrong referee, see audit).
+
+1. **Veto upsize — "beat the parry"** (in progress): when the predicted
+   reply kills a wave, retry the same target at the size that beats the
+   parry (source's spare budget, scorer decides if over-draining is
+   safe); only drop if even that fails. Then the structural version:
+   full 1-ply replan (plan → predict reply → re-plan once).
+2. **Opening scheduler** (PI thesis, kb 2026-06-10-pi-opening-game-
+   solvable.md): (a) FIRST measure the optimality gap — offline beam
+   search on the seed panel vs our agent's actual openings; (b)
+   delayed-launch snipe candidates (the planner is now-or-never; it
+   cannot time an arrival to land one tick after the opponent's capture
+   — "let them pay the toll"); (c) full scheduler with worst-case-rush
+   safety envelope.
+3. **Defense sizing re-judge**: reinforce_deficit (built, 10 unit tests)
+   was nulled on the WRONG pool (3×producer). Live hold-rate when
+   reinforcing = 0.59 vs top teams 0.74-0.85. Margin triage vs champion.
+4. **Veto in 4P**: currently 2P-gated and completely unmeasured in 4P —
+   multi-front games are full of anticipatable parries; 4P = 60% of
+   volume. Measure on the clean_ffa 3×producer pool + self-play pool.
+5. **Terminal production value vs the RIGHT referees**: failed only vs
+   the mass duelist; triage vs champion/producer was interrupted —
+   finish it (expansion is the live loss mode: out-expanded 6-vs-7 at
+   step 40). Composes with veto (prunes unsafe expansions).
+6. **Attack-distance discipline**: our strikes launch at eta 7-8 vs the
+   top's 4-5; check whether veto+upsize already shortens it (bigger
+   fleets fly faster) before building anything.
+7. **Lead-gated tempo term**: even trades score 0 in the zero-sum flow
+   but favor whoever is ahead — smallest version of "use the slightest
+   production advantage to roll over" (PI thesis part 3).
+8. **Knob auto-tune overnight**: margin harness as fitness over the
+   sizing/threshold knobs (only after the mechanism queue dries up).
+
 ## Pointers
 
 - `state/STRATEGY.md` — strategy, build, smoke, iteration protocol.
