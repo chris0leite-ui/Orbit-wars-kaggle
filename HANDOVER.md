@@ -50,13 +50,17 @@ merged into it; main is 166 commits behind that track).
 
 ## Next action
 
-1. If the PI signs off: submit `submissions/producer_plus_multi_opp_def_on.py`
-   (claim row already on the board).
-2. Next mechanism candidates, in order of prior evidence: strategic-value
-   bonuses re-tuned to weight ≈ 0.005–0.02 (calibrate against the dumped
-   competitive_score distribution first — see 2026-06-05 handover lesson);
-   diagnose WHY force-concentration regresses (replay a lost game) before
-   any retry.
+1. **Read sub 53523036's settled μ** (submitted 2026-06-10 04:12 UTC with
+   PI sign-off; at 05:15 UTC it was 1035.8 and climbing). Settle ETA
+   ~2026-06-11 04:00 UTC.
+2. **The mechanism deck is exhausted** — 2026-06-10 additions to the null
+   list: strategic bonuses at calibrated weights (16/32, 15/32, 18/32)
+   and scorer horizon 24 (17/32), all vs the base's 24/32. Nine mechanisms
+   measured, nine nulls/regressions. Next lift needs a PI observation from
+   live replays (what loses games on the ladder), not another scorer term.
+3. Candidate diagnostic if no PI observation arrives: pull lost episodes
+   for sub 53523036 via `scripts/live_episode_summary.py` and classify
+   the losses (`scripts/classify_losses.py`).
 
 ## Pointers
 

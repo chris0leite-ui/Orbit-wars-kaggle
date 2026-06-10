@@ -44,8 +44,22 @@ exactly on the rebuilt bundle 2026-06-09. Live settle 1263–1287
   against the dumped competitive_score distribution before retry.
 - **Force-concentration** (relaxed one-wave-per-target mutex), 2026-06-09:
   standalone 6/32, lean 7/32, multi-tick 5/32 vs producer — hard null.
+- **Strategic-value bonuses at CALIBRATED weights** (2026-06-10; denial
+  0.01, opening 0.04 — sized so the median bonus is 5-7% of the median
+  acted-on score, per the calibration probe): denial 16/32, opening
+  15/32, composed 18/32 — all far below the 75% base. The terms are
+  directionally wrong, not mis-weighted. Do not retry by re-tuning.
+- **Scorer horizon 18 → 24** (`PRODUCER_PLUS_HORIZON_2P/4P=24`,
+  2026-06-10): 17/32 — regression; the engine's H=18 is calibrated
+  against its other constants.
 - **Adaptive K on the producer engine**: 8/16 parity (it mattered on our
   old baseline, not on Producer's calibration).
+
+The pattern across nine measured mechanisms: every addition to the
+proven multi_size + opp_projection stack regresses against vanilla
+producer. The engine is at a local optimum; the next lift likely needs a
+live-replay observation (what actually loses games on the ladder), not
+another scorer term.
 
 ### TrueSkill warm-up — DO NOT panic at early μ
 

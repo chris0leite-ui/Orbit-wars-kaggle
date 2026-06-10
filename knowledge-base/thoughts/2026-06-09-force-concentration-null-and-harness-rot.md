@@ -69,3 +69,27 @@ dead-agent layer underneath.
 Rule 46 green (15/15 bundle tests, max turn 89 ms at seed 7), claim row
 on the board predicting ≈1180–1260 vs evicted 1099.3 — awaiting PI
 sign-off to submit (Rule 1).
+
+
+## Addendum (2026-06-10, same session)
+
+After the restore submit (sub 53523036), two more mechanisms measured
+and banked as nulls, n=32 clean A/B vs vanilla producer each:
+
+- **Strategic bonuses at calibrated weights.** Probe first (one full
+  game, 141k candidate scores): median acted-on score 48 ship units;
+  denial at weight 1.0 has median 354, opening 60. Weights 0.01 / 0.04
+  put the bonus at 5-7% of the acted-on median — the prescribed nudge
+  band. Results: denial 16/32, opening 15/32, composed 18/32. A 7%
+  nudge cost ~20-25 points of win rate: the terms point the planner at
+  the wrong captures (racing for contested high-production planets
+  produces thin captures), so the failure is shape, not scale. The
+  2026-06-05 "re-tune to 0.005-0.02" plan is closed — calibration was
+  necessary but not sufficient.
+- **Scorer horizon 18 → 24**: 17/32. H=18 is co-calibrated with the
+  engine's other constants; raising it alone regresses.
+
+Nine mechanisms measured on the producer engine to date; the only
+survivor is multi_size + opp_projection (the live agent). The engine is
+at a local optimum w.r.t. the vs-producer yardstick. Next lift should
+come from live-loss observation, not from another engine-side term.
