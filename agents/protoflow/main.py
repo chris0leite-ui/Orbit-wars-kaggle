@@ -187,6 +187,27 @@ SIMVALUE_DRAIN_COST = False
 # A safe rear source (no enemy in range -> counter 0) still drains free. No-op unless SIMULATE_VALUE
 # and SIMVALUE_DRAIN_COST are also on. Default False; the A/B flips it via proto attr.
 SIMVALUE_DRAIN_ANTICIPATORY = False
+# FLOWDIFF (the single-currency rebuild; supersedes SIMULATE_VALUE + SIMVALUE_DRAIN_COST when on).
+# Diagnosis (panel-measured): the sim/analytic values price what a move GAINS (production-margin
+# swing) but never the ships it SPENDS -- attrition is charged nowhere, so value can't go negative,
+# something always looks worth doing, and we over-launch into neutral walls and collapse. The fix is
+# ONE currency: signed terminal wealth (my garrison positive, enemy negative, neutral zero) at the
+# projection horizon, injected-minus-baseline, MINUS the newly-sent ships at par. Relocation is free
+# (survivors credit back), attrition is charged exactly (the dead are missing from the terminal),
+# denial counts (an enemy terminal removed), and a pyrrhic capture goes NEGATIVE -> the do-nothing
+# alternative (score 0) wins -> discipline emerges. Subsumes the drain cost (the source-side falls
+# are the only extra) and winnability's in-flight race (combat in the rollout decides). Takes
+# precedence over SIMULATE_VALUE in cell_value dispatch. Default False; A/B via proto attr.
+FLOWDIFF_VALUE = False
+# FLOWDIFF TAIL (ownership continuation value). Terminal wealth read at the window edge is myopic:
+# a neutral whose garrison exceeds its in-window repayment is refused even with 400 turns left, so
+# we under-expand while the Producer gobbles the board (seed-0 trace: planet count 5-7 vs 8-13 from
+# turn 61). The do-nothing model actually says the owner at the readout KEEPS the planet to game
+# end; we credit that continuation stream discounted per turn by VALUE_DISCOUNT -- the discount
+# prices the retake the rollout cannot see (a soft ~9-production-turn cap at 0.9), not a hard
+# window cliff. Attrition stays charged, so a truly pyrrhic buy stays negative. No-op unless
+# FLOWDIFF_VALUE is on. Default False; A/B via proto attr.
+FLOWDIFF_TAIL = False
 # REGROUP: a positional pass that marches idle rear ships up the enemy-pressure
 # gradient toward the frontier, so force concentrates forward for future strikes.
 REGROUP_PRESSURE_HORIZON = 14   # turns; decay reach for the enemy-pressure signal
@@ -586,8 +607,72 @@ def agent(obs, configuration=None):
             swing += _margin_owner(injected["owner_at"][turn]) - _margin_owner(base_line["owner_at"][turn])
         return float(t.production) * float(swing)
 
+    # --- FLOWDIFF value (FLOWDIFF_VALUE): the exact single-currency evaluator. Score a candidate
+    # by the SIGNED TERMINAL WEALTH it creates: garrison at the horizon, mine positive / enemy
+    # negative / neutral zero, injected minus baseline, MINUS the newly-sent ships at par. Ships
+    # that merely relocate cancel (they reappear in the terminal garrison); ships that die in
+    # combat are missing from it -> attrition is finally priced, and a pyrrhic capture goes
+    # negative. Special cases become value facts: reinforcing a planet that survives anyway nets
+    # exactly 0 (parked ships = home ships); saving a faller nets the saved garrison plus the
+    # denied enemy terminal; feeding a doomed planet nets negative (no-bleed emerges).
+    def _signed_terminal(tl, turn):
+        return float(_margin_owner(tl["owner_at"][turn])) * float(tl["ships_at"][turn])
+
+    def flow_value(t, arrive, tenure=None):
+        arrive = int(arrive)
+        if arrive >= remain:           # capture lands after the game ends
+            return 0.0
+        H = int(win_turns)
+        if arrive > H:                 # arrival past the projection window -> no measurable swing
+            return 0.0
+        tid = int(t.id)
+        ledger_t = model.ledger.get(tid, [])
+        if int(t.owner) == me:
+            # PROTECT: same anticipatory construction as sim_value (the standing+in-flight
+            # counter is the baseline attack); only the integral changes to terminal wealth.
+            threat, t_thr = combined_counter(t, 0)
+            if threat <= 0.0 or not enemy_planets:
+                return 0.0
+            atk_owner = int(min(enemy_planets,
+                                key=lambda e: math.hypot(float(e.x) - float(t.x),
+                                                         float(e.y) - float(t.y))).owner)
+            base_arr = ledger_t + [(int(t_thr), atk_owner, int(math.ceil(threat)))]
+            q_new = int(required_force(t, arrive))
+            inj_arr = base_arr + [(arrive, me, q_new)]
+            base_line = simulate_planet_timeline(t, base_arr, horizon=H)
+        else:
+            # OFFENSE: inject only the ships we'd NEWLY send (the ledger baseline already
+            # carries the friendly in-flight portion of R; injecting full R would credit
+            # phantom survivors in the terminal).
+            R_eff = int(flip_floor(t, arrive)[0]) if tenure is not None else int(required_force(t, arrive))
+            q_new = max(0, R_eff - friendly_inflight(t, arrive))
+            if q_new <= 0:
+                return 0.0             # in-flight already covers it; nothing new to price
+            inj_arr = ledger_t + [(arrive, me, q_new)]
+            base_line = model.timelines.get(tid)
+            if base_line is None:
+                return 0.0
+        injected = simulate_planet_timeline(t, inj_arr, horizon=H)
+        # A flip we only hold ~tenure turns banks its wealth at the expected-retake turn, not H
+        # (the rollout can't see the standing-counter retake, so an uncapped flip looks permanent).
+        upper = H if tenure is None else min(H, arrive + int(tenure))
+        score = (_signed_terminal(injected, upper) - _signed_terminal(base_line, upper)) - float(q_new)
+        if FLOWDIFF_TAIL and tenure is None:
+            # Ownership continuation beyond the readout: the owner at `upper` keeps producing to
+            # game end under do-nothing; credit it discounted per turn (retake-uncertainty), in
+            # the same ship units. Flips are excluded -- their tenure cap IS their continuation.
+            own_swing = (_margin_owner(injected["owner_at"][upper])
+                         - _margin_owner(base_line["owner_at"][upper]))
+            tail = max(0, int(remain) - int(upper))
+            if own_swing != 0 and tail > 0:
+                d = VALUE_DISCOUNT
+                score += float(own_swing) * float(t.production) * (d * (1.0 - d ** tail) / (1.0 - d))
+        return score
+
     def cell_value(t, arrive, tenure=None):
-        # Dispatch the cell's RANKING value: the simulation evaluator or the analytic field.
+        # Dispatch the cell's RANKING value: flowdiff > simulation evaluator > analytic field.
+        if FLOWDIFF_VALUE:
+            return flow_value(t, arrive, tenure)
         return sim_value(t, arrive, tenure) if SIMULATE_VALUE else value(t, arrive, tenure)
 
     # --- DRAIN COST: the cost side of the marginal flow-diff. Removing q ships from a source NOW
@@ -629,10 +714,35 @@ def agent(obs, configuration=None):
             loss += _margin_owner(base_tl["owner_at"][turn]) - _margin_owner(drained["owner_at"][turn])
         return float(s.production) * float(loss)
 
+    # FLOWDIFF source side: flow_value already charges the sent ships at PAR (relocation). The
+    # only EXTRA cost is a source that now FALLS to an in-flight wave it would have survived:
+    # the terminal diff of the drained re-roll beyond the par prediction, in the same ship units.
+    # A safe source drains at exactly par -> extra 0.
+    def source_loss_flow(s, q):
+        q = int(q)
+        if q <= 0:
+            return 0.0
+        sid = int(s.id)
+        base_tl = model.timelines.get(sid)
+        if base_tl is None:
+            return 0.0
+        H = int(win_turns)
+        shim = types.SimpleNamespace(owner=s.owner, ships=max(0.0, float(s.ships) - q),
+                                     production=s.production)
+        drained = simulate_planet_timeline(shim, model.ledger.get(sid, []), horizon=H)
+        extra = (_signed_terminal(base_tl, H) - _signed_terminal(drained, H)) - float(q)
+        return max(0.0, extra)
+
     def drain_cost(t, srcs, R, A):
-        # Total projected production this offense cell costs by draining its sources. Allocate the
-        # needed force across the sources largest-first by spare (the assembler's funding order).
-        if not (SIMULATE_VALUE and SIMVALUE_DRAIN_COST):
+        # Total source-side cost of this offense cell. Allocate the needed force across the
+        # sources largest-first by spare (the assembler's funding order). Under FLOWDIFF the
+        # per-source charge is the beyond-par fall loss (ship units, always on); under the sim
+        # evaluator it is the gated production-margin source_loss.
+        if FLOWDIFF_VALUE:
+            loss_fn = source_loss_flow
+        elif SIMULATE_VALUE and SIMVALUE_DRAIN_COST:
+            loss_fn = source_loss
+        else:
             return 0.0
         need = int(R) - friendly_inflight(t, A)
         if need <= 0:
@@ -646,7 +756,7 @@ def agent(obs, configuration=None):
             if q <= 0:
                 continue
             rem -= q
-            cost += source_loss(s, q)
+            cost += loss_fn(s, q)
         return cost
 
     moves: list[list] = []
@@ -961,7 +1071,7 @@ def agent(obs, configuration=None):
             # ships -- once the drain cost is priced in, firing it would gut a source for less
             # than it costs. HOLDING is the value-0 alternative, so skip it (the cost VETOes a
             # self-defeating drain, not just lowers its rank). Gated with the drain-cost mechanism.
-            if SIMVALUE_DRAIN_COST and c["value"] <= 0.0:
+            if (FLOWDIFF_VALUE or SIMVALUE_DRAIN_COST) and c["value"] <= 0.0:
                 committed_tgt.add(tid)
                 continue
             A_rel = c["A"]

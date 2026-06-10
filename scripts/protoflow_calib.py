@@ -749,6 +749,36 @@ def main():
            f"in-flight drain still held with anticipatory on={not drain_on_sd_ant}")
     proto.SIMVALUE_DRAIN_ANTICIPATORY = False
 
+    # FW1 — DON'T BUY A PYRRHIC CAPTURE (the root cause of the over-launch collapse, in
+    # miniature). A defended neutral whose garrison costs more ships to kill than its production
+    # repays within the window. The sim evaluator prices only the ownership swing (always
+    # positive, attrition charged nowhere) -> it fires. The flowdiff evaluator charges the dead
+    # ships against the terminal wealth -> the capture is NET NEGATIVE -> holding (score 0) wins.
+    proto.SIMULATE_VALUE = True
+    proto.SIMVALUE_DRAIN_COST = True
+    home_fw = [0, 0, 30.0, 50.0, radius(3), 30, 3]
+    pyrrhic_fw = [1, -1, 30.0, 74.0, radius(1), 26, 1]   # 26 defenders for a prod-1 stream: never repays in-window
+    board_fw = [home_fw, pyrrhic_fw]
+    proto.FLOWDIFF_VALUE = False
+    show("FW1-off buy the pyrrhic neutral (sim evaluator: swing only, attrition free)",
+         make_obs(board_fw), "ownership swing is positive, the 26 dead ships are priced nowhere")
+    fired_off_fw = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
+    proto.FLOWDIFF_VALUE = True
+    show("FW1 hold (flowdiff: the dead ships outweigh the in-window stream)",
+         make_obs(board_fw), "terminal wealth of the capture is negative -> do nothing scores higher")
+    fired_on_fw = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
+    _check("FW1", fired_off_fw and not fired_on_fw,
+           f"sim bought the pyrrhic neutral={fired_off_fw}; flowdiff held={not fired_on_fw}")
+
+    # FW2 — A PROFITABLE CAPTURE STILL FIRES (the timidity guard): a cheap rich neutral repays
+    # its tiny garrison many times over within the window -> flowdiff must still take it.
+    rich_fw = [1, -1, 30.0, 74.0, radius(5), 5, 5]
+    show("FW2 take the rich neutral (flowdiff: stream repays the spend in-window)",
+         make_obs([home_fw, rich_fw]), "5 defenders for a prod-5 stream is strongly net positive")
+    fired_rich_fw = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
+    _check("FW2", fired_rich_fw, f"flowdiff captured the rich neutral={fired_rich_fw}")
+    proto.FLOWDIFF_VALUE = False
+
     # SV1-SV4 must remain green with the drain cost ON (they involve no over-draining -> cost ~0).
     proto.SIMVALUE_DRAIN_COST = True
     _, field = show("SV1+cost re-check (drain cost on; big still > small)",

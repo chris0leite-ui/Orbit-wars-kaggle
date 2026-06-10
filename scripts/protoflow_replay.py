@@ -37,11 +37,17 @@ def main() -> None:
                     help="price the source-drain cost in offense values (proto.SIMVALUE_DRAIN_COST = True)")
     ap.add_argument("--drain-anticipatory", action="store_true",
                     help="charge the drain against the source's anticipated standing counter (proto.SIMVALUE_DRAIN_ANTICIPATORY = True)")
+    ap.add_argument("--flowdiff", action="store_true",
+                    help="single-currency terminal-wealth evaluator (proto.FLOWDIFF_VALUE = True; supersedes the sim evaluator)")
+    ap.add_argument("--flowdiff-tail", action="store_true",
+                    help="ownership continuation credit beyond the window (proto.FLOWDIFF_TAIL = True)")
     args = ap.parse_args()
 
     proto.SIMULATE_VALUE = bool(args.simulate_value)
     proto.SIMVALUE_DRAIN_COST = bool(args.drain_cost)
     proto.SIMVALUE_DRAIN_ANTICIPATORY = bool(args.drain_anticipatory)
+    proto.FLOWDIFF_VALUE = bool(args.flowdiff)
+    proto.FLOWDIFF_TAIL = bool(args.flowdiff_tail)
 
     opp = load_callable(args.opponent)
     env = make("orbit_wars", configuration={"seed": args.seed}, debug=False)

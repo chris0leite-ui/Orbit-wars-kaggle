@@ -191,14 +191,20 @@ def main():
                     help="price the source-drain cost in offense values (proto.SIMVALUE_DRAIN_COST = True)")
     ap.add_argument("--drain-anticipatory", action="store_true",
                     help="charge the drain against the source's anticipated standing counter (proto.SIMVALUE_DRAIN_ANTICIPATORY = True)")
+    ap.add_argument("--flowdiff", action="store_true",
+                    help="single-currency terminal-wealth evaluator (proto.FLOWDIFF_VALUE = True; supersedes the sim evaluator)")
+    ap.add_argument("--flowdiff-tail", action="store_true",
+                    help="ownership continuation credit beyond the window (proto.FLOWDIFF_TAIL = True)")
     args = ap.parse_args()
 
     # Evaluator A/B toggles: flip the probe agent's module-level flags before any game runs.
     proto.SIMULATE_VALUE = bool(args.simulate_value)
     proto.SIMVALUE_DRAIN_COST = bool(args.drain_cost)
     proto.SIMVALUE_DRAIN_ANTICIPATORY = bool(args.drain_anticipatory)
+    proto.FLOWDIFF_VALUE = bool(args.flowdiff)
+    proto.FLOWDIFF_TAIL = bool(args.flowdiff_tail)
     print(f"SIMULATE_VALUE = {proto.SIMULATE_VALUE}  SIMVALUE_DRAIN_COST = {proto.SIMVALUE_DRAIN_COST}  "
-          f"SIMVALUE_DRAIN_ANTICIPATORY = {proto.SIMVALUE_DRAIN_ANTICIPATORY}")
+          f"SIMVALUE_DRAIN_ANTICIPATORY = {proto.SIMVALUE_DRAIN_ANTICIPATORY}  FLOWDIFF_VALUE = {proto.FLOWDIFF_VALUE}")
 
     # Use the IMPORTED module's agent (not a fresh _load_callable copy) so the
     # trace we reset/read is the same _TRACE object the running agent writes to.
