@@ -523,6 +523,30 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
         "PRODUCER_PLUS_REINFORCE_DEFICIT": "1",
     },
+    "vetorf_bgf": {
+        # Background-aware floors on the live stack: the sizing subsystem
+        # (capture floors, defensive shortlist, safe_drain) reads garrison
+        # trajectories with the opponent's PREDICTED launches applied
+        # (exact recurrence), instead of the frozen do-nothing projection.
+        # Unlocks: right-sized attacks through parries, toll-sniping their
+        # captures, not draining planets a predicted strike is about to hit.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_BG_FLOORS": "1",
+    },
+    "bgf_replan_rf": {
+        # The full consistent stack: one-ply replan (pass 2 plans against
+        # the predicted reply) + background-aware floors (pass 2's SIZES
+        # are also reply-aware) + reactive floor + veto verify.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLAN": "1",
+        "PRODUCER_PLUS_BG_FLOORS": "1",
+    },
     "veto_upsize": {
         # "Beat the parry": veto + full-spare-budget retry of killed waves
         # (aim/eta recomputed for the bigger, faster fleet; the flow scorer

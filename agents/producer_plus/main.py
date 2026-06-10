@@ -32,7 +32,8 @@ from orbit_lite.movement_step import (
 )
 from orbit_lite.obs import parse_obs
 from orbit_lite.distance_cache import build_distance_cache, min_distance_to_targets
-from orbit_lite.garrison_launch import LaunchSet
+from orbit_lite.garrison_launch import LaunchSet, _run_exact_recurrence
+from orbit_lite.movement import PlanetGarrisonStatus
 from orbit_lite.opp_projection import predict_opp_launches_via_mirror, MAX_L_OPP
 from orbit_lite.recapture import recapture_penalty
 from orbit_lite.strategic_value import denial_bonus, opening_bonus
@@ -517,6 +518,75 @@ def _replan_2p_only() -> bool:
 def _replan_active(player_count: int) -> bool:
     return _replan_enabled() and (
         (not _replan_2p_only()) or int(player_count) == 2
+    )
+
+
+# --- Background-aware floors -------------------------------------------------
+# The flow SCORER sees the opponent's predicted launches (they're merged into
+# every candidate's diff), but the SIZING subsystem — capture_floor, the
+# defensive shortlist, safe_drain — reads the frozen do-nothing projection.
+# Three measured behaviours trace to that inconsistency: attacks sized for
+# garrisons that get reinforced mid-flight (the scorer then rejects the
+# right-sized wave it was never offered), no toll-sniping of predicted
+# captures (after THEIR fleet annihilates against a neutral, the survivor is
+# cheap — invisible to static floors), and drains/regroups out of planets a
+# predicted strike is about to hit. Fix: re-project the garrison trajectories
+# ONCE with the background launches applied (exact engine recurrence — the
+# same one the scorer trusts) and let the sizing subsystem read that.
+
+
+def _bg_floors_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_BG_FLOORS", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _background_adjusted_status(
+    garrison_status, *, background: LaunchSet, prod: Tensor, alive_by_step: Tensor,
+):
+    """Garrison trajectories with the background launches applied. New status.
+
+    Sources are debited at step 0 (a launch leaves now even if it lands past
+    the horizon); arrivals land at ``ceil(eta)`` like the scorer's hypothesis
+    axis; the exact production→combat recurrence is replayed. ``alive_by_step``
+    is ``[H+1, P]`` (run_turn's orientation).
+    """
+    owner0 = garrison_status.owner[..., 0]                       # [P]
+    ships0 = garrison_status.ships[..., 0]                       # [P]
+    arr = garrison_status.arrivals_by_owner                      # [P, H+1, A]
+    P, H1, A = int(arr.shape[0]), int(arr.shape[1]), int(arr.shape[2])
+    H = H1 - 1
+    fdtype = ships0.dtype if ships0.is_floating_point() else torch.float32
+
+    sel = background.valid
+    src = background.source_slots[sel].clamp(0, max(P - 1, 0))
+    tgt = background.target_slots[sel].clamp(0, max(P - 1, 0))
+    ships = background.ships[sel].to(fdtype)
+    own = background.owner[sel].clamp(0, max(A - 1, 0))
+    tick = background.eta[sel].ceil().long().clamp(min=1)
+
+    init_ships = ships0.to(fdtype).clone()
+    init_ships.index_add_(0, src, -ships)
+    init_ships = init_ships.clamp(min=0.0)
+
+    arr_delta = arr[:, 1:, :].to(fdtype).clone()                  # [P, H, A]
+    in_h = tick <= H
+    if bool(in_h.any()):
+        arr_delta.index_put_(
+            (tgt[in_h], tick[in_h] - 1, own[in_h]), ships[in_h], accumulate=True,
+        )
+
+    owner_t, ships_t, pre_o, pre_s = _run_exact_recurrence(
+        init_owner=owner0.unsqueeze(0),
+        init_ships=init_ships.unsqueeze(0),
+        prod=prod.to(fdtype).unsqueeze(0),
+        alive=alive_by_step.transpose(0, 1).unsqueeze(0),
+        arrivals=arr_delta.unsqueeze(0),
+    )
+    return PlanetGarrisonStatus(
+        owner=owner_t[0], ships=ships_t[0],
+        pre_combat_owner=pre_o[0], pre_combat_ships=pre_s[0],
+        arrivals_by_owner=torch.cat([arr[:, :1, :].to(fdtype), arr_delta], dim=1),
     )
 
 
@@ -1075,10 +1145,27 @@ def plan_lite_waves(
 
     S_cap = max(1, min(int(config.max_sources_per_lane), P))
     source_idx, source_exists = _candidate_indices(obs.ships, source_mask, S_cap)
+    # Background-aware floors: the sizing subsystem (shortlist flips, drain,
+    # capture floors) reads trajectories with the predicted opponent launches
+    # applied; the SCORER below keeps the static baseline because it merges
+    # the background into every candidate's diff itself. ``bg_flip=None``
+    # because the adjusted trajectories already contain the predicted flips.
+    status_sizing = garrison_status
+    bg_flip = background
+    if (
+        _bg_floors_enabled() and background is not None
+        and int(background.source_slots.shape[-1]) > 0
+        and bool(background.valid.any())
+    ):
+        status_sizing = _background_adjusted_status(
+            garrison_status, background=background, prod=prod,
+            alive_by_step=alive_by_step,
+        )
+        bg_flip = None
     target_idx, target_exists = build_target_shortlist(
-        obs, obs_tensors, garrison_status, cache,
+        obs, obs_tensors, status_sizing, cache,
         config=config, K_eta=K_eta, H=H, prod=prod, source_mask=source_mask,
-        background=background,
+        background=bg_flip,
     )
     _nq = _neutral_shortlist_quota()
     if _nq > 0:
@@ -1095,7 +1182,7 @@ def plan_lite_waves(
     source_ships = obs.ships[source_idx.clamp(0, P - 1)].to(dtype)                # [S]
     H_eff = torch.full((), float(H), dtype=dtype, device=device)
     drain = safe_drain(
-        garrison_status, source_idx=source_idx, source_ships=source_ships,
+        status_sizing, source_idx=source_idx, source_ships=source_ships,
         H_eff=H_eff, player_id=pid,
     )                                                                            # [S]
 
@@ -1109,13 +1196,13 @@ def plan_lite_waves(
         ) if _rf_w > 0.0 else None
     )
     floor = capture_floor(
-        garrison_status, target_idx=target_idx, k_max=K_eta,
+        status_sizing, target_idx=target_idx, k_max=K_eta,
         capture_overhead=1.0, player_id=pid,
         reinforcement=_rf_margin,
     )                                                                            # [T, K]
     if _reinforce_deficit_enabled():
         floor = _apply_reinforce_deficit_floor(
-            floor, garrison_status=garrison_status, target_idx=target_idx,
+            floor, garrison_status=status_sizing, target_idx=target_idx,
             player_id=pid, capture_overhead=1.0,
         )
     K = int(floor.shape[-1])
