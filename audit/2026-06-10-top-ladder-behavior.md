@@ -78,5 +78,9 @@ Smoke (seed 7 vs producer): fleets 167→108, fleet p50 28→44, launch rate
   symmetric: 9 of 16 maps won at BOTH seats, 7 lost at both — the
   mechanism's effect dominates seat noise. First mechanism of twelve
   measured that is AHEAD of the champion head-to-head.
-- mass vs vanilla producer (non-regression) n=32: pending.
+- **mass vs vanilla producer (non-regression) n=32: 22/32 (68.8%),
+  Wilson [0.514, 0.820]** — solid winner vs producer (champion's own
+  mark: 24/32). The mass profile costs little against the dribble meta
+  while gaining against the champion.
 - head-to-head extension seeds 16-31: pending.
+- mass 4P (vs 3×producer, seeds 0-31): pending.

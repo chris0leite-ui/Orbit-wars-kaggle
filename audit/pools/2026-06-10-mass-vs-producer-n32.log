@@ -1,0 +1,35 @@
+== clean_ab focal=producer_plus_mass_on.py  opp=main.py  seeds=16 (×2 seats = 32 games)  workers=2 ==
+   seed=   0  seat=P1     LOSS  steps=205  wall=14.9s
+   seed=   0  seat=P0     LOSS  steps=205  wall=15.0s
+   seed=   1  seat=P1      WIN  steps=102  wall=7.6s
+   seed=   1  seat=P0      WIN  steps=102  wall=7.8s
+   seed=   2  seat=P0      WIN  steps=103  wall=7.9s
+   seed=   2  seat=P1      WIN  steps=103  wall=7.8s
+   seed=   3  seat=P0     LOSS  steps=147  wall=11.6s
+   seed=   4  seat=P0      WIN  steps=172  wall=13.2s
+   seed=   3  seat=P1     LOSS  steps=500  wall=38.0s
+   seed=   4  seat=P1      WIN  steps=200  wall=14.6s
+   seed=   5  seat=P0      WIN  steps=224  wall=18.1s
+   seed=   5  seat=P1      WIN  steps=204  wall=15.7s
+   seed=   6  seat=P0     LOSS  steps=115  wall=8.5s
+   seed=   6  seat=P1     LOSS  steps=115  wall=8.6s
+   seed=   7  seat=P0      WIN  steps=116  wall=9.6s
+   seed=   7  seat=P1      WIN  steps=116  wall=8.7s
+   seed=   8  seat=P0      WIN  steps=157  wall=12.9s
+   seed=   8  seat=P1      WIN  steps=156  wall=12.3s
+   seed=   9  seat=P0      WIN  steps=187  wall=14.4s
+   seed=   9  seat=P1      WIN  steps=187  wall=14.2s
+   seed=  10  seat=P0      WIN  steps=105  wall=8.8s
+   seed=  10  seat=P1      WIN  steps=105  wall=8.4s
+   seed=  11  seat=P0     LOSS  steps=500  wall=38.6s
+   seed=  11  seat=P1     LOSS  steps=500  wall=37.5s
+   seed=  12  seat=P1     LOSS  steps=181  wall=13.4s
+   seed=  12  seat=P0      WIN  steps=253  wall=18.5s
+   seed=  13  seat=P0      WIN  steps=126  wall=10.1s
+   seed=  13  seat=P1      WIN  steps=126  wall=10.3s
+   seed=  14  seat=P0      WIN  steps=140  wall=11.4s
+   seed=  14  seat=P1     LOSS  steps=151  wall=12.3s
+   seed=  15  seat=P0      WIN  steps=124  wall=9.4s
+   seed=  15  seat=P1      WIN  steps=124  wall=9.2s
+
+   focal_wins=22/32 (68.8%)  errs/timeouts=0  Wilson[0.514, 0.820]  elapsed=290s
