@@ -2,10 +2,36 @@
 
 > **READ FIRST.** This is the canonical "what are we running" doc. Everything
 > in `CLAUDE.md` and `HANDOVER.md` points back here.
-> Updated 2026-06-09 — the baseline_adaptive_k era doc this replaces is in
-> git history (and its mechanism survives, default-OFF, inside producer_plus).
+> Updated 2026-06-10 — the mass-concentration pivot.
 
-## The strategy: `producer_plus_multi_opp_def`
+## The strategy (2026-06-10): `producer_plus_mass2p_ffa` — the mass pivot
+
+**Live as sub 53529884.** Top-ladder behavioral mining
+(`audit/2026-06-10-top-ladder-behavior.md`) showed the 1600-1750 agents
+play MASS: launch ~half as often as we did with 2-4× the fleet size,
+expand faster, accumulate 2-4× the ships by step 80 — monotone in rating
+on every metric, and our own 2P losses correlate with big-fleet
+opponents. Our agent was a dribbler (71% of launches were 10-30-ship
+own-planet parcels). The vs-vanilla-producer A/B yardstick had been
+steering INTO the dribble meta (producer is one) — which is why eleven
+straight mechanisms measured null on it.
+
+The composite, player-count gated:
+- **2P — mass mechanisms ON** (`PRODUCER_PLUS_MASS_TIEBREAK`,
+  `PRODUCER_PLUS_REGROUP_MIN_SEND=25`, `PRODUCER_PLUS_OVERKILL_FACTOR=2`,
+  gate `PRODUCER_PLUS_MASS_2P_ONLY=1`): beats the previous champion
+  head-to-head **35/64**, holds 22/32 vs vanilla producer.
+- **4P — mass OFF, FFA uniform objective ON**: action-stream-identical
+  to sub 53527125 (champion behavior + the mutual-damage-trade fix).
+  Unrestricted mass measured 7/32 in the 4P pool — the gate is
+  evidence-driven.
+
+Build: `python scripts/bundle_producer_plus.py --variant mass2p_ffa`.
+Measure 2P changes head-to-head vs `submissions/_ns_multi_opp_def.py`
+(namespaced champion) AND vs vanilla producer; 4P only with
+`scripts/clean_ffa.py`.
+
+## The previous strategy: `producer_plus_multi_opp_def`
 
 **Engine:** the vendored third-party "Producer" agent (Slawek Biel, MIT —
 `agents/producer/`, provenance in `agents/producer/PROVENANCE.md`), a

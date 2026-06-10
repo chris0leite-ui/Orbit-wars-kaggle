@@ -19,12 +19,17 @@ python scripts/bundle_producer_plus.py --variant multi_opp_def
 `claude/awesome-clarke-ixy57v` (the majestic-storm producer_plus track is
 merged into it; main is 166 commits behind that track).
 
-## Live status (2026-06-10 ~08:30 UTC)
+## Live status (2026-06-10 ~14:00 UTC)
 
-- **Rolling pair:** sub **53527125** `ffa_uniform` (07:07 UTC, warming —
-  720 at ~1.5 h) and sub **53523036** `multi_opp_def` restore (04:12 UTC,
-  1241.9 near its predicted settle). Identical 2P play by construction —
-  the settled μ gap is a pure live 4P A/B of the FFA objective fix.
+- **Rolling pair:** sub **53529884** `mass2p_ffa` (08:53 UTC, the
+  mass-concentration pivot — see STRATEGY.md) and sub **53527125**
+  `ffa_uniform` (07:07 UTC, 1170 at ~6.5 h and climbing). The pair
+  differs ONLY in 2P behavior → settled gap = clean live 2P A/B of the
+  mass mechanisms.
+- Evicted: sub 53523036 `multi_opp_def` restore froze at ~1214 (9.5 h).
+  The 4P objective-fix verdict ≈ (ffa_uniform settle) vs that frozen
+  1214, read after ~2026-06-11 07:00 UTC.
+- Submissions used today: 3 of 5.
 
 ## What the 2026-06-10 session established
 
@@ -47,27 +52,30 @@ merged into it; main is 166 commits behind that track).
 
 ## Next action
 
-1. **Read the rolling pair's settled μ after ~2026-06-11 07:00 UTC:**
-   sub **53527125** `ffa_uniform` (submitted 06-10 07:07, the 4P objective
-   fix — 2P byte-identical to multi_opp_def, predicted 1230-1330 if the 4P
-   lift translates) and sub **53523036** `multi_opp_def` restore (06-10
-   04:12, backstop). Compare the two settles: identical 2P play means any
-   μ gap between them is pure 4P signal — a free live A/B of the FFA
-   objective.
-2. If ffa_uniform settles ABOVE multi_opp_def: the FFA objective fix is
-   live-validated AND the local 3×producer pool is shown non-predictive
-   (it said parity) — weight the namespaced self-play pool and live A/Bs
-   from then on. Next candidates: strength/uniform weight blend;
-   budget-debited multi-tick (fix the re-spend flaw first);
-   reinforce_deficit composed with ffa_uniform (its standalone pool was
-   within draw-noise, and it's cheap to ride along a future submit after
-   a 2P n=32 A/B clears it).
-3. If ffa_uniform settles AT/BELOW multi_opp_def: pull its live 4P
-   episodes (`scripts/live_episode_summary.py 53527125 --pull`), check
-   the 2P/4P winrate split vs the 29% baseline, and diagnose from the
-   replays before touching the mechanism. The brawl-window finding
-   (audit doc) is the lens: what did the FFA fix change between steps
-   20-80, if anything?
+1. **Read settles after ~2026-06-11 09:00 UTC.** Three readings:
+   (a) 4P objective fix: ffa_uniform (53527125) settle vs frozen
+   multi_opp_def 1214; (b) mass mechanisms: mass2p_ffa (53529884)
+   settle vs ffa_uniform settle — pure 2P signal; (c) absolute level vs
+   rank-100 ≈ 1261+ (field strengthens ~100 μ / 3 days).
+2. **If mass lifts:** push the mass axis further — the top agents are
+   at fleet p50 83 vs our 44 after these changes: sweep
+   REGROUP_MIN_SEND (40?), OVERKILL_FACTOR (3), and attack the second
+   mined gap (expansion: 8 planets by step 40 vs our 6 — they spend
+   their early stockpile; we sit on 46 ships at step 20, top sits on
+   33). Measure 2P head-to-head vs `_ns_multi_opp_def` AND a new
+   namespaced mass partner; vanilla-producer A/B is a non-regression
+   check only, NOT a verdict instrument (it steered us into the dribble
+   meta for a week).
+3. **If mass flat/down:** the 64-game head-to-head said parity-or-
+   better, so a live regression means the 1200-1400 band punishes mass
+   differently than our champion does — pull mass2p_ffa's live 2P
+   losses (`scripts/live_episode_summary.py 53529884 --pull`) and
+   profile the opponents that beat it (behavior_profile.py works on any
+   corpus).
+4. Tools added today: `scripts/crawl_top_replays.py` (walk the public
+   episode graph to any rating level; top-3 team corpora in
+   `audit/top-replays/`, gitignored) and `scripts/behavior_profile.py`
+   (behavioral fingerprint of any team from replays).
 
 ## Pointers
 
