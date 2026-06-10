@@ -43,6 +43,8 @@ def main() -> None:
                     help="ownership continuation credit beyond the window (proto.FLOWDIFF_TAIL = True)")
     ap.add_argument("--flowdiff-reaction", action="store_true",
                     help="inject the defender's standing counter into offense rollouts (proto.FLOWDIFF_REACTION = True)")
+    ap.add_argument("--flowdiff-reaction-adaptive", action="store_true",
+                    help="scale the injected reaction by the opponent's measured reinforcement propensity (proto.FLOWDIFF_REACTION_ADAPTIVE = True)")
     args = ap.parse_args()
 
     proto.SIMULATE_VALUE = bool(args.simulate_value)
@@ -51,6 +53,7 @@ def main() -> None:
     proto.FLOWDIFF_VALUE = bool(args.flowdiff)
     proto.FLOWDIFF_TAIL = bool(args.flowdiff_tail)
     proto.FLOWDIFF_REACTION = bool(args.flowdiff_reaction)
+    proto.FLOWDIFF_REACTION_ADAPTIVE = bool(args.flowdiff_reaction_adaptive)
 
     opp = load_callable(args.opponent)
     env = make("orbit_wars", configuration={"seed": args.seed}, debug=False)

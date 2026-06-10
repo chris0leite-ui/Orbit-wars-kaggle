@@ -197,6 +197,8 @@ def main():
                     help="ownership continuation credit beyond the window (proto.FLOWDIFF_TAIL = True)")
     ap.add_argument("--flowdiff-reaction", action="store_true",
                     help="inject the defender's standing counter into offense rollouts (proto.FLOWDIFF_REACTION = True)")
+    ap.add_argument("--flowdiff-reaction-adaptive", action="store_true",
+                    help="scale the injected reaction by the opponent's measured reinforcement propensity (proto.FLOWDIFF_REACTION_ADAPTIVE = True)")
     args = ap.parse_args()
 
     # Evaluator A/B toggles: flip the probe agent's module-level flags before any game runs.
@@ -206,6 +208,7 @@ def main():
     proto.FLOWDIFF_VALUE = bool(args.flowdiff)
     proto.FLOWDIFF_TAIL = bool(args.flowdiff_tail)
     proto.FLOWDIFF_REACTION = bool(args.flowdiff_reaction)
+    proto.FLOWDIFF_REACTION_ADAPTIVE = bool(args.flowdiff_reaction_adaptive)
     print(f"SIMULATE_VALUE = {proto.SIMULATE_VALUE}  SIMVALUE_DRAIN_COST = {proto.SIMVALUE_DRAIN_COST}  "
           f"SIMVALUE_DRAIN_ANTICIPATORY = {proto.SIMVALUE_DRAIN_ANTICIPATORY}  FLOWDIFF_VALUE = {proto.FLOWDIFF_VALUE}")
 

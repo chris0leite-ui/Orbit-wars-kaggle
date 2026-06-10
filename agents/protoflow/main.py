@@ -230,6 +230,17 @@ FLOWDIFF_REACTION = False
 # in-flight threat, real deadline, fundability against THAT wave) alongside the anticipatory
 # protect cell. No-op unless FLOWDIFF_VALUE is on. Default False; A/B via proto attr.
 FLOWDIFF_COMMITTED_DEFENSE = False
+# ADAPTIVE REACTION (fear is an opponent property; learn it, don't assume it). Panel-measured:
+# the fixed reaction term is right against the Producer (it pools free ships into threatened
+# planets -- our capture rate was 0.42 without the term) and badly wrong against v7 (which does
+# not punish: 5/12 -> 1/12, idle 0.35 -> 0.75 -- fear wasted as tempo). The reinforcement
+# propensity is observable in-game: when our wave lands, did the target hold MORE than the
+# do-nothing model predicted at launch? Track an exponential moving average of that rate and
+# scale the injected standing counter by it -- full fear against a pooling defender, none against
+# a passive one, learned within the first ~10 waves. No-op unless FLOWDIFF_REACTION is also on.
+FLOWDIFF_REACTION_ADAPTIVE = False
+REACTION_EMA_ALPHA = 0.25       # per-landing update weight; ~10 landings to converge
+_REACTION_STATE: dict = {"rate": 0.5, "pending": []}  # prior 0.5; pending: (tgt, abs_turn, pred_ships, pred_owner)
 # REGROUP: a positional pass that marches idle rear ships up the enemy-pressure
 # gradient toward the frontier, so force concentrates forward for future strikes.
 REGROUP_PRESSURE_HORIZON = 14   # turns; decay reach for the enemy-pressure signal
@@ -247,6 +258,8 @@ _LAST_FIELD: list[dict] = []
 
 def reset_trace() -> None:
     _TRACE.clear()
+    _REACTION_STATE["rate"] = 0.5
+    _REACTION_STATE["pending"] = []
 
 
 def get_trace() -> list[dict]:
@@ -280,6 +293,29 @@ def agent(obs, configuration=None):
     model = WorldModel.from_world(world)
 
     planets = list(world.planets_by_id.values())
+
+    # ADAPTIVE REACTION bookkeeping: score every wave whose landing turn has passed. Reinforced
+    # = the target held with more garrison than the do-nothing prediction we stored at launch
+    # implies (post-combat: observed + our wave − predicted > margin). A capture counts as
+    # not-reinforced. EMA-update the opponent's reinforcement propensity.
+    if FLOWDIFF_REACTION_ADAPTIVE and _REACTION_STATE["pending"]:
+        still = []
+        for (tgt_id, abs_turn, pred, wave) in _REACTION_STATE["pending"]:
+            if abs_turn > step:
+                still.append((tgt_id, abs_turn, pred, wave))
+                continue
+            p_obs = world.planets_by_id.get(int(tgt_id))
+            if p_obs is None:
+                continue
+            if int(p_obs.owner) == me:
+                reinforced = 0.0
+            else:
+                margin = max(3.0, 0.15 * float(wave))
+                reinforced = 1.0 if (float(p_obs.ships) + float(wave) - float(pred)) > margin else 0.0
+            _REACTION_STATE["rate"] = ((1.0 - REACTION_EMA_ALPHA) * _REACTION_STATE["rate"]
+                                       + REACTION_EMA_ALPHA * reinforced)
+        _REACTION_STATE["pending"] = still
+
     my_planets = [p for p in planets if int(p.owner) == me]
     if not my_planets:
         _TRACE.append({"step": step, "launches": [], "idle": True,
@@ -676,6 +712,9 @@ def agent(obs, configuration=None):
                 infl = sum(sh for (eta_arr, owner, sh) in ledger_t
                            if owner != me and arrive < eta_arr <= arrive + COUNTER_WINDOW)
                 standing = float(counter) - float(infl)
+                if FLOWDIFF_REACTION_ADAPTIVE:
+                    # Fear scaled by the opponent's MEASURED reinforcement propensity.
+                    standing *= float(_REACTION_STATE["rate"])
                 if standing > 0.0:
                     atk_owner = int(min(enemy_planets,
                                         key=lambda e: math.hypot(float(e.x) - float(t.x),
@@ -808,6 +847,22 @@ def agent(obs, configuration=None):
             "tgt_owner": int(t.owner), "kind": kind, "floor": int(req),
         })
         spare[int(s.id)] -= int(send)
+        if FLOWDIFF_REACTION_ADAPTIVE and kind == "wave" and int(t.owner) != me:
+            # Store the do-nothing landing prediction; scored when the landing turn passes.
+            # Use the REAL landing turn of this leg at its actual size (the planned cell
+            # arrival can be a turn off after re-aiming) and score one turn after resolution
+            # -- a pre-resolution read counts our own wave as phantom reinforcement.
+            _ang2, eta_real = aim_and_eta(s, t, int(send), omega, world=world)
+            real_arr = max(1, int(math.ceil(float(eta_real))))
+            abs_turn = step + real_arr + 1
+            pred = model.ships_at(int(t.id), real_arr)
+            pred = float(t.ships) if pred is None else float(pred)
+            for i, (g, at, pp, w) in enumerate(_REACTION_STATE["pending"]):
+                if g == int(t.id) and at == abs_turn:
+                    _REACTION_STATE["pending"][i] = (g, at, pp, w + int(send))
+                    break
+            else:
+                _REACTION_STATE["pending"].append((int(t.id), abs_turn, pred, int(send)))
         return True
 
     def committed_threat(p):
