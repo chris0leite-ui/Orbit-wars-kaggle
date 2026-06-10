@@ -73,5 +73,10 @@ Smoke (seed 7 vs producer): fleets 167→108, fleet p50 28→44, launch rate
 
 ## Measurements (appended)
 
-- mass vs namespaced champion, head-to-head 2P n=32 (seeds 0-15 both
-  seats): pending.
+- **mass vs namespaced champion, head-to-head 2P, seeds 0-15 both seats:
+  18/32 (56.2%), Wilson [0.393, 0.718].** Wins are perfectly map-
+  symmetric: 9 of 16 maps won at BOTH seats, 7 lost at both — the
+  mechanism's effect dominates seat noise. First mechanism of twelve
+  measured that is AHEAD of the champion head-to-head.
+- mass vs vanilla producer (non-regression) n=32: pending.
+- head-to-head extension seeds 16-31: pending.
