@@ -465,61 +465,82 @@ def _required_ships(world, tgt, arr_dt, hold):
     return n, neutral_killed
 
 
-def _reserve(world, i, budget_hint):
-    """Garrison to keep at my planet i against a feasible enemy first strike.
+def _reserves(world):
+    """Garrison each of my planets must keep against feasible enemy waves.
 
-    For each enemy planet e: if e launched its whole garrison at i right
-    now, it lands at tick eta_e. My cover by then = garrison + production
-    + already-inbound friendly fleets + neighbours' garrisons that could
-    respond after seeing the launch (launch visible next tick, so a helper
-    must have flight time <= eta_e - 1). Reserve the worst-case deficit.
-    Interior planets therefore reserve ~0; frontier planets keep real
-    garrisons. Helpers are counted optimistically (the same helper covers
-    several planets) — first-order just-in-time defense.
+    Threat model: the enemy can synchronize launches from several planets
+    to land together at tick T (each contributor needs eta <= T). For each
+    of my planets and each candidate T, the wave is the sum of enemy
+    garrisons within reach; my cover is production during the flight,
+    friendly fleets already inbound, and ONE assigned helper neighbour
+    (each of my planets backs up only its nearest friendly planet, so the
+    same garrison is never promised to two defenses). Reserve the worst
+    deficit over T. Interior planets reserve ~0; the frontier keeps real
+    garrisons.
+
+    Returns dict planet_index -> reserve. Empty reserves when I am
+    collapsing (defending a lost position parks the bank; all-in is
+    strictly better since combat trades 1:1).
     """
     me = world.me
-    g = world.ships0[i]
-    if g <= 0:
-        return 0
-    ix, iy = world.px[i], world.py[i]
-    ir = world.pr[i]
-    prod = world.prod[i]
-    inbound = 0
-    for dt, slot in world.arrivals[i].items():
-        inbound += slot.get(me, 0)
-    worst = 0
-    for e in range(world.n_planets):
-        o = world.owner0[e]
-        if o < 0 or o == me:
-            continue
-        se = world.ships0[e]
-        if se <= worst:                       # can't beat current worst
-            continue
-        d = math.hypot(world.px[e] - ix, world.py[e] - iy) \
-            - world.pr[e] - ir - 0.1
-        eta_e = max(1, int(math.ceil(max(d, 0.0) / fleet_speed(se))))
-        # cover excludes my garrison: the reserve IS the garrison part
-        cover = prod * eta_e + inbound
-        if cover >= se:
-            continue
-        for j in range(world.n_planets):
-            if j == i or world.owner0[j] != me:
+    n = world.n_planets
+    mine = [i for i in range(n) if world.owner0[i] == me
+            and not world.is_comet[i]]
+    enemies = [e for e in range(n) if world.owner0[e] >= 0
+               and world.owner0[e] != me]
+    if not mine or not enemies:
+        return {i: 0 for i in mine}
+    if len(mine) * 3 < len(enemies):
+        return {i: 0 for i in mine}          # collapsed: all-in mode
+
+    # assign each of my planets as helper to its nearest friendly planet
+    helper_for = {}
+    for j in mine:
+        best = None
+        for i in mine:
+            if i == j:
                 continue
-            gj = world.ships0[j]
-            if gj <= 0:
+            d = math.hypot(world.px[j] - world.px[i],
+                           world.py[j] - world.py[i])
+            if best is None or d < best[0]:
+                best = (d, i)
+        if best is not None:
+            helper_for.setdefault(best[1], []).append((best[0], j))
+
+    T_MAX = 14
+    reserves = {}
+    for i in mine:
+        g = world.ships0[i]
+        ix, iy, ir = world.px[i], world.py[i], world.pr[i]
+        prod = world.prod[i]
+        inbound = 0
+        for dt, slot in world.arrivals[i].items():
+            if dt <= T_MAX:
+                inbound += slot.get(me, 0) - sum(
+                    v for o, v in slot.items() if o != me and o >= 0)
+        helpers = sorted(helper_for.get(i, []))[:2]
+        worst = 0
+        for e in enemies:
+            se = world.ships0[e]
+            if se <= worst:
                 continue
-            dj = math.hypot(world.px[j] - ix, world.py[j] - iy) \
-                - world.pr[j] - ir - 0.1
-            if dj <= 0:
+            d = math.hypot(world.px[e] - ix, world.py[e] - iy) \
+                - world.pr[e] - ir - 0.1
+            eta = max(1, int(math.ceil(max(d, 0.0) / fleet_speed(se))))
+            if eta > T_MAX:
                 continue
-            if math.ceil(dj / fleet_speed(gj)) + 1 <= eta_e:
-                cover += gj
-                if cover >= se:
-                    break
-        deficit = se - cover
-        if deficit > worst:
-            worst = deficit
-    return min(g, max(0, worst))
+            cover = prod * eta + inbound
+            for hd, j in helpers:
+                h_eta = max(1, int(math.ceil(
+                    max(hd - world.pr[j] - ir - 0.1, 0.0)
+                    / fleet_speed(max(1, world.ships0[j])))))
+                if h_eta + 1 <= eta:
+                    cover += world.ships0[j]
+            deficit = se - cover
+            if deficit > worst:
+                worst = deficit
+        reserves[i] = min(g, max(0, worst))
+    return reserves
 
 
 def _enemy_best_eta(world, tgt, size_hint):
@@ -542,6 +563,34 @@ def _enemy_best_eta(world, tgt, size_hint):
     return best
 
 
+def _response_curve(world, tgt):
+    """Enemy mass that can land on tgt by tick t, launched AFTER my fleet
+    becomes visible (launch happens 1 tick after mine). Sorted cumulative
+    [(land_tick, cumulative_mass)]. Conservative: counts each enemy
+    garrison at full strength for every target it could reach."""
+    me = world.me
+    tx, ty, tr = world.px[tgt], world.py[tgt], world.pr[tgt]
+    items = []
+    for e in range(world.n_planets):
+        o = world.owner0[e]
+        if o < 0 or o == me or e == tgt:
+            continue
+        se = world.ships0[e]
+        if se <= 0:
+            continue
+        d = math.hypot(world.px[e] - tx, world.py[e] - ty) \
+            - world.pr[e] - tr - 0.1
+        land = 1 + max(1, int(math.ceil(max(d, 0.0) / fleet_speed(se))))
+        items.append((land, se))
+    items.sort()
+    out = []
+    cum = 0
+    for land, se in items:
+        cum += se
+        out.append((land, cum))
+    return out
+
+
 def agent(obs, configuration=None):
     t0 = time.perf_counter()
     world = World(obs)
@@ -557,11 +606,14 @@ def agent(obs, configuration=None):
 
     # ----- per-source launchable budget (defense reservations baked in)
     budget = {}
+    defense_budget = {}
     doomed = {}
+    reserves = _reserves(world)
     for i in mine:
         avail, is_doomed = _safe_launch(world, i)
+        defense_budget[i] = max(0, avail)   # reserves ARE spendable on defense
         if not is_doomed and avail > 0 and not world.is_comet[i]:
-            avail = min(avail, world.ships0[i] - _reserve(world, i, avail))
+            avail = min(avail, world.ships0[i] - reserves.get(i, 0))
         budget[i] = max(0, avail)
         doomed[i] = is_doomed
 
@@ -620,13 +672,16 @@ def agent(obs, configuration=None):
         saved = False
         helpers = []
         for s in mine:
-            if s == i or budget[s] - committed.get(s, 0) <= 0:
+            if s == i:
+                continue
+            spendable = defense_budget.get(s, 0) - committed.get(s, 0)
+            if spendable <= 0:
                 continue
             d = math.hypot(world.px[s] - world.px[i], world.py[s] - world.py[i])
             helpers.append((d, s))
         helpers.sort()
         for _, s in helpers:
-            cap = budget[s] - committed.get(s, 0)
+            cap = defense_budget[s] - committed.get(s, 0)
             # binary search smallest reinforcement that keeps the planet
             lo, hi = 1, cap
             found = None
@@ -706,21 +761,39 @@ def agent(obs, configuration=None):
         for d, s, tgt in candidates:
             by_target.setdefault(tgt, []).append((d, s))
 
-        def price_target(tgt, arr_dt, n_need, neutral_killed):
+        resp_cache = {}
+
+        def hold_ticks(tgt, arr_dt, surplus):
+            """How long my capture survives the enemy's feasible response:
+            first tick where their landable mass (launched after seeing my
+            fleet) exceeds my surplus + production since capture."""
+            curve = resp_cache.get(tgt)
+            if curve is None:
+                curve = _response_curve(world, tgt)
+                resp_cache[tgt] = curve
+            prod = world.prod[tgt]
+            for land, cum in curve:
+                t = max(land, arr_dt + 1)
+                if cum > surplus + prod * (t - arr_dt):
+                    return max(1, t - arr_dt)
+            return None          # no feasible response: hold to the end
+
+        def price_target(tgt, arr_dt, n_need, neutral_killed, surplus):
             pre_o = world.pre_owner[tgt][arr_dt]
             remaining = max(0, world.remaining - arr_dt)
+            held = hold_ticks(tgt, arr_dt, surplus)
+            flow = remaining if held is None else min(remaining, held)
             if world.is_comet[tgt]:
-                flow = min(remaining,
-                           max(0, world.alive_until[tgt] - arr_dt - 1))
+                flow = min(flow, max(0, world.alive_until[tgt] - arr_dt - 1))
                 value = float(flow) - neutral_killed
             elif pre_o == -1:
-                value = world.prod[tgt] * remaining - float(neutral_killed)
+                value = world.prod[tgt] * flow - float(neutral_killed)
                 race = _enemy_best_eta(world, tgt,
                                        world.pre_ships[tgt][arr_dt] + 1)
                 if race < arr_dt:
                     value *= RACE_DISCOUNT
             else:
-                value = deny_mult * world.prod[tgt] * remaining
+                value = deny_mult * world.prod[tgt] * flow
             value *= GAMMA ** arr_dt
             value -= TRAVEL_EPS * n_need * arr_dt
             return value
@@ -765,7 +838,7 @@ def agent(obs, configuration=None):
                         # unaffordable even all-in: bank toward it if the
                         # garrisons will cover it within a few turns
                         value = price_target(tgt, latest, n_need,
-                                             neutral_killed)
+                                             neutral_killed, 1)
                         growth = sum(world.prod[s] for s, _, _ in group)
                         turns_short = ((n_need - total_spare) /
                                        max(1, growth))
@@ -793,7 +866,7 @@ def agent(obs, configuration=None):
                 if plan is None or left > 0:
                     continue
                 # exact joint check: does this schedule actually take + hold?
-                _, _, qo, _ = world._walk_planet(
+                _, _, qo, qs = world._walk_planet(
                     tgt, world.owner0[tgt], world.ships0[tgt], 0, None, 0,
                     extra_list=sched)
                 arr_dt = max(dt for dt, _, _ in sched)
@@ -801,7 +874,9 @@ def agent(obs, configuration=None):
                 if not all(qo[t] in (me, None) for t in range(arr_dt,
                                                               lastt + 1)):
                     continue
-                value = price_target(tgt, arr_dt, n_need, neutral_killed)
+                surplus = qs[arr_dt] if qo[arr_dt] == me else 1
+                value = price_target(tgt, arr_dt, n_need, neutral_killed,
+                                     surplus)
                 if value <= 0:
                     return None
                 return (value, value / n_need, plan, None)
@@ -815,7 +890,7 @@ def agent(obs, configuration=None):
                 break
             res = plan_attack(tgt)
             if res is not None:
-                order.append((res[1], res[0], tgt))
+                order.append((res[0], res[1], tgt))
         order.sort(reverse=True)
         banked = False
         for _, _, tgt in order:
