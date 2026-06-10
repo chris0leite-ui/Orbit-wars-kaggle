@@ -1,0 +1,5 @@
+== clean_ab focal=producer_plus_mass_termval12_on.py  opp=_ns_mass.py  seeds=16 (×2 seats = 32 games)  workers=2 ==
+   seed=   0  seat=P0     LOSS  steps=108  wall=246.5s
+   seed=   0  seat=P1     LOSS  steps=118  wall=248.2s
+   seed=   1  seat=P0     LOSS  steps=138  wall=176.2s
+   seed=   1  seat=P1     LOSS  steps=138  wall=178.5s
