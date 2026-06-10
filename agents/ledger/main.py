@@ -439,28 +439,12 @@ def _required_ships(world, tgt, arr_dt, hold):
     if pre_o == me:
         return None
     # need: my total strictly tops other arrivals, and the surplus
-    # strictly exceeds the garrison
+    # strictly exceeds the garrison. Holding afterwards is priced, not
+    # required (flow-duration valuation + rollout veto).
     need_total = other_max + pre_s + 1
     n = need_total - mine_already
     if n < 1:
         n = 1
-    # hold check vs already-known later arrivals
-    for _ in range(4):
-        _, _, qo, qs = world._walk_planet(
-            tgt, world.post_owner[tgt][arr_dt - 1] if arr_dt > 0 else world.owner0[tgt],
-            world.post_ships[tgt][arr_dt - 1] if arr_dt > 0 else world.ships0[tgt],
-            me, arr_dt, n, start_dt=arr_dt)
-        end = min(arr_dt + hold, world.horizon)
-        ok = all(qo[t] == me for t in range(arr_dt, end + 1) if qo[t] is not None)
-        if ok:
-            break
-        deficit = 0
-        for t in range(arr_dt, end + 1):
-            if qo[t] is not None and qo[t] != me:
-                deficit = max(deficit, qs[t] + 1)
-        n += max(1, deficit)
-        if n > 4000:
-            return None
     neutral_killed = pre_s if pre_o == -1 else 0
     return n, neutral_killed
 
@@ -561,6 +545,140 @@ def _enemy_best_eta(world, tgt, size_hint):
         if eta < best:
             best = eta
     return best
+
+
+def _rollout_score(world, base_arrivals, extra_landings, K, flow_weight):
+    """Event-driven joint walk of ALL planets K ticks ahead, with a
+    reactive opponent model on BOTH sides (pre-emptive just-in-time
+    reinforcement and re-snipes of fresh captures). Fleet flight reduces
+    to (landing planet, landing tick) because planet motion is
+    action-independent; reactions use clean-path analytic etas.
+
+    base_arrivals: {planet: {dt: {owner: ships}}} known in-flight fleets.
+    extra_landings: [(tgt, dt, ships)] my decision-set under evaluation.
+    Returns my_score - opp_score where score = banked ships + in-flight
+    ships + flow_weight * production.
+    """
+    me = world.me
+    n = world.n_planets
+    owner = list(world.owner0)
+    ships = list(world.ships0)
+    prod = world.prod
+    alive = world.alive_until
+    is_comet = world.is_comet
+    pos = world.pos
+
+    sched = {}                  # dt -> {tgt: {owner: ships}}
+    for i, by_dt in base_arrivals.items():
+        for dt, slot in by_dt.items():
+            if dt <= K + 12:
+                tgt_slot = sched.setdefault(dt, {}).setdefault(i, {})
+                for o, v in slot.items():
+                    tgt_slot[o] = tgt_slot.get(o, 0) + v
+    for tgt, dt, v in extra_landings:
+        if dt <= K + 12:
+            tgt_slot = sched.setdefault(dt, {}).setdefault(tgt, {})
+            tgt_slot[me] = tgt_slot.get(me, 0) + v
+
+    reacted = set()
+
+    def react_launch(side, tgt, need, now, deadline):
+        """Side launches `need` ships at tgt from its nearest able planet,
+        landing by `deadline` if possible. Returns True if launched."""
+        tx, ty = pos[tgt][min(deadline, world.horizon)]
+        best = None
+        for j in range(n):
+            if owner[j] != side or j == tgt:
+                continue
+            avail = ships[j] - 1
+            if avail < need:
+                continue
+            d = math.hypot(pos[j][now][0] - tx, pos[j][now][1] - ty) \
+                - world.pr[j] - world.pr[tgt]
+            eta = max(1, int(math.ceil(max(d, 0.0) / fleet_speed(need))))
+            if now + 1 + eta > deadline:
+                continue
+            if best is None or d < best[0]:
+                best = (d, j, eta)
+        if best is None:
+            return False
+        _, j, eta = best
+        ships[j] -= need
+        land = now + 1 + eta
+        tgt_slot = sched.setdefault(land, {}).setdefault(tgt, {})
+        tgt_slot[side] = tgt_slot.get(side, 0) + need
+        return True
+
+    for dt in range(1, K + 1):
+        for i in range(n):
+            if owner[i] >= 0:
+                ships[i] += prod[i]
+            if is_comet[i] and dt >= alive[i] and owner[i] != -2:
+                owner[i] = -2
+                ships[i] = 0
+        flips = []
+        slot_map = sched.get(dt)
+        if slot_map:
+            for i, by_owner in slot_map.items():
+                if owner[i] == -2:
+                    continue
+                old = owner[i]
+                o2, s2 = _resolve_combat(old, ships[i], by_owner)
+                owner[i] = o2
+                ships[i] = s2
+                if o2 != old and o2 >= 0:
+                    flips.append((i, old, o2))
+        # ---- reactions (both sides)
+        # R2: re-snipe fresh captures
+        for i, old, new in flips:
+            if old < 0:
+                continue
+            key = ("resnipe", i, new)
+            if key in reacted:
+                continue
+            reacted.add(key)
+            need = ships[i] + prod[i] * 4 + 2
+            react_launch(old, i, need, dt, dt + 8)
+        # R1: pre-emptive JIT defense against scheduled hostile arrivals
+        for fdt in range(dt + 1, min(dt + 7, K + 12)):
+            fmap = sched.get(fdt)
+            if not fmap:
+                continue
+            for i, by_owner in fmap.items():
+                d_side = owner[i]
+                if d_side < 0:
+                    continue
+                hostile = sum(v for o, v in by_owner.items() if o != d_side)
+                if hostile <= 0:
+                    continue
+                key = ("jit", i, fdt)
+                if key in reacted:
+                    continue
+                cover = ships[i] + prod[i] * (fdt - dt) \
+                    + by_owner.get(d_side, 0)
+                if hostile <= cover:
+                    continue
+                reacted.add(key)
+                react_launch(d_side, i, hostile - cover + 1, dt, fdt)
+
+    # in-flight ships beyond K still belong to their owner
+    inflight = {}
+    for dt in range(K + 1, K + 13):
+        for i, by_owner in sched.get(dt, {}).items():
+            for o, v in by_owner.items():
+                inflight[o] = inflight.get(o, 0) + v
+    my_score = 0.0
+    opp_score = 0.0
+    for i in range(n):
+        if owner[i] == me:
+            my_score += ships[i] + flow_weight * prod[i]
+        elif owner[i] >= 0:
+            opp_score += ships[i] + flow_weight * prod[i]
+    my_score += inflight.get(me, 0)
+    for o, v in inflight.items():
+        if o != me and o >= 0:
+            opp_score += v
+    return my_score - opp_score
 
 
 def _response_curve(world, tgt):
@@ -723,6 +841,11 @@ def agent(obs, configuration=None):
             doomed[i] = True
 
     # ----- 3. offense: price all (source, target) captures off the ledger
+    offense_start = len(moves)
+    base_arrivals = {i: {dt: dict(slot)
+                         for dt, slot in world.arrivals[i].items()}
+                     for i in range(n)}
+    purchases = []            # [(move list, [(tgt, dt, ships), ...]), ...]
     if time.perf_counter() - t0 < TIME_BUDGET:
         live_enemies = len({world.owner0[i] for i in range(n)
                             if world.owner0[i] >= 0 and world.owner0[i] != me})
@@ -778,11 +901,14 @@ def agent(obs, configuration=None):
                     return max(1, t - arr_dt)
             return None          # no feasible response: hold to the end
 
-        def price_target(tgt, arr_dt, n_need, neutral_killed, surplus):
+        def price_target(tgt, arr_dt, n_need, neutral_killed, surplus,
+                         flow_known=None):
             pre_o = world.pre_owner[tgt][arr_dt]
             remaining = max(0, world.remaining - arr_dt)
             held = hold_ticks(tgt, arr_dt, surplus)
             flow = remaining if held is None else min(remaining, held)
+            if flow_known is not None:
+                flow = min(flow, flow_known)
             if world.is_comet[tgt]:
                 flow = min(flow, max(0, world.alive_until[tgt] - arr_dt - 1))
                 value = float(flow) - neutral_killed
@@ -838,7 +964,7 @@ def agent(obs, configuration=None):
                         # unaffordable even all-in: bank toward it if the
                         # garrisons will cover it within a few turns
                         value = price_target(tgt, latest, n_need,
-                                             neutral_killed, 1)
+                                             neutral_killed, 1, None)
                         growth = sum(world.prod[s] for s, _, _ in group)
                         turns_short = ((n_need - total_spare) /
                                        max(1, growth))
@@ -865,20 +991,24 @@ def agent(obs, configuration=None):
                     left -= take
                 if plan is None or left > 0:
                     continue
-                # exact joint check: does this schedule actually take + hold?
+                # exact joint walk: capture must happen; hold is priced
                 _, _, qo, qs = world._walk_planet(
                     tgt, world.owner0[tgt], world.ships0[tgt], 0, None, 0,
                     extra_list=sched)
                 arr_dt = max(dt for dt, _, _ in sched)
-                lastt = min(arr_dt + HOLD_TICKS, world.horizon)
-                if not all(qo[t] in (me, None) for t in range(arr_dt,
-                                                              lastt + 1)):
-                    continue
-                surplus = qs[arr_dt] if qo[arr_dt] == me else 1
+                if qo[arr_dt] != me:
+                    continue          # capture itself fails (needs more)
+                surplus = qs[arr_dt]
+                # flow limit from KNOWN fleets (ledger walk with my plan)
+                flow_known = None
+                for t in range(arr_dt + 1, world.horizon + 1):
+                    if qo[t] is not None and qo[t] != me:
+                        flow_known = t - arr_dt
+                        break
                 value = price_target(tgt, arr_dt, n_need, neutral_killed,
-                                     surplus)
+                                     surplus, flow_known)
                 if value <= 0:
-                    return None
+                    continue          # a bigger coalition may hold longer
                 return (value, value / n_need, plan, None)
             return None
 
@@ -906,10 +1036,43 @@ def agent(obs, configuration=None):
                     for s in wish:
                         committed[s] = budget[s]    # freeze for this turn
                 continue
+            start = len(moves)
+            landings = []
             for s, angle, take, dt in plan:
                 spend(s, take, angle)
                 slot = world.arrivals[tgt].setdefault(dt, {})
                 slot[me] = slot.get(me, 0) + take
+                landings.append((tgt, dt, take))
+            purchases.append((moves[start:], landings))
+
+    # ----- 4. rollout selection: validate the offense against a reactive
+    # opponent; keep the best of {all, drop-one each, defense-only}
+    if purchases and time.perf_counter() - t0 < TIME_BUDGET:
+        K = 18
+        flow_weight = float(min(world.remaining, 60))
+        variants = [list(range(len(purchases)))]
+        if len(purchases) > 1:
+            for drop in range(len(purchases)):
+                variants.append([k for k in range(len(purchases))
+                                 if k != drop])
+        variants.append([])
+        best_keep = None
+        best_score = None
+        for keep in variants:
+            extra = []
+            for k in keep:
+                extra.extend(purchases[k][1])
+            score = _rollout_score(world, base_arrivals, extra, K,
+                                   flow_weight)
+            if best_score is None or score > best_score + 1e-9:
+                best_score = score
+                best_keep = keep
+            if time.perf_counter() - t0 > TIME_BUDGET:
+                break
+        if best_keep is not None and len(best_keep) < len(purchases):
+            moves = moves[:offense_start]
+            for k in best_keep:
+                moves.extend(purchases[k][0])
 
     # final safety: never exceed the actual garrison
     by_src = {}
