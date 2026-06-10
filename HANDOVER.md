@@ -128,3 +128,16 @@ it clears. NOT vs the mass incumbent (wrong referee, see audit).
 - `state/STRATEGY.md` — strategy, build, smoke, iteration protocol.
 - `state/MULTI_BRANCH.md` — push-claim board (Rule 42).
 - `CLAUDE.md` — process rules.
+
+## Opening-optimum first read (2026-06-10 ~17:05 UTC)
+
+`scripts/opening_optimum.py` (beam-search neutral-capture schedule vs
+actual replay openings): champion's median production-by-40 gap vs the
+single-source neutral-only optimum = **3.6%** (worst +19%, and it BEATS
+the benchmark in games where it captures enemy planets / uses
+multi-source sends — the benchmark is not yet a true upper bound).
+Implication: the raw-scheduling prize is modest; the opening edge in the
+PI's thesis lives in the CONTESTED counters (delayed-launch toll-sniping,
+backlog item 2b) more than in safe-neutral ordering. Benchmark upgrades
+needed before strong claims: multi-source coalition sends, enemy-planet
+captures, integer-step production.

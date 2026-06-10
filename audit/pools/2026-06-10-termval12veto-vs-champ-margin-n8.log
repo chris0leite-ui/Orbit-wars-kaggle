@@ -1,0 +1,3 @@
+== margin_ab focal=producer_plus_mass_termval12_veto_on.py  opp=_ns_multi_opp_def.py  seeds=4 (×2 seats = 8 games)  workers=2 ==
+   seed=  0 seat=P0 loss steps=106 dec= 19  L40=-31.2%  L80=-41.3%  L120=-100.0%  L250=-100.0%
+   seed=  0 seat=P1 loss steps=110 dec= 19  L40=-31.2%  L80=-41.3%  L120=-100.0%  L250=-100.0%

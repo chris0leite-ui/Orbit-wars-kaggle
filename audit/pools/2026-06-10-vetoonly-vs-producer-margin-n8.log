@@ -5,3 +5,12 @@
    seed=  1 seat=P1 loss steps=107 dec= 28  L40= -3.5%  L80=-33.7%  L120=-100.0%  L250=-100.0%
    seed=  2 seat=P1  win steps=112 dec= 47  L40= -0.3%  L80=+32.1%  L120=+100.0%  L250=+100.0%
    seed=  2 seat=P0  win steps=183 dec= 75  L40= -0.3%  L80= +0.3%  L120=+13.0%  L250=+100.0%
+   seed=  3 seat=P0 loss steps=500 dec=275  L40= +0.4%  L80= +0.9%  L120= +6.5%  L250=+15.2%
+   seed=  3 seat=P1  win steps=500 dec= 72  L40= +0.4%  L80= +0.9%  L120=+71.9%  L250=+89.4%
+
+   focal_wins=5/8
+   lead@40 : mean= -0.9%  games-ahead=2/8  paired-mean= -0.9%  seeds-ahead=1/4
+   lead@80 : mean= -3.7%  games-ahead=6/8  paired-mean= -3.7%  seeds-ahead=3/4
+   lead@120: mean= +8.3%  games-ahead=6/8  paired-mean= +8.3%  seeds-ahead=3/4
+   lead@250: mean=+38.1%  games-ahead=6/8  paired-mean=+38.1%  seeds-ahead=3/4
+   decision step: p50=75  max=275  elapsed=771s
