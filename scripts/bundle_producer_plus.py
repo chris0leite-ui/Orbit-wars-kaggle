@@ -337,6 +337,26 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_REGROUP_MIN_SEND": "25",
         "PRODUCER_PLUS_OVERKILL_FACTOR": "2.0",
     },
+    "mass2p_ffa": {
+        # THE COMPOSED CANDIDATE: best-known 2P play + best-known 4P play
+        # in one bundle, by player-count gating.
+        # - 2P: mass mechanisms active (tiebreak + convoy 25 + overkill 2)
+        #   -> beats the champion head-to-head 35/64, holds 22/32 vs
+        #   producer. FFA score inactive in 2P by construction.
+        # - 4P: mass gated OFF (cost first-place rate in the 4P pool),
+        #   FFA uniform objective active -> champion 4P behavior + the
+        #   trade-devaluation fix (live A/B sub 53527125).
+        # Verification is by action-stream parity to the measured bundles
+        # (2P == mass, 4P == ffa_uniform), so both pool results transfer.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MASS_TIEBREAK": "1",
+        "PRODUCER_PLUS_REGROUP_MIN_SEND": "25",
+        "PRODUCER_PLUS_OVERKILL_FACTOR": "2.0",
+        "PRODUCER_PLUS_MASS_2P_ONLY": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
+    },
     "convoy_only": {
         # Regroup convoying alone (attribution variant).
         "PRODUCER_PLUS_MULTI_SIZE": "1",

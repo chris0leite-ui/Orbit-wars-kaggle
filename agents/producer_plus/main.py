@@ -414,6 +414,26 @@ def _regroup_min_send() -> float:
         return 0.0
 
 
+# --- 2P-only gate for the mass mechanisms ------------------------------------
+# Local evidence splits by player count: mass beats the champion head-to-head
+# in 2P (35/64) and holds vs producer (22/32), but costs first-place rate in
+# the 4P pool. With this gate set, MASS_TIEBREAK / REGROUP_MIN_SEND /
+# OVERKILL_FACTOR apply only when player_count == 2; 3+ player games keep
+# champion behavior (and compose with the 4P-only FFA objective fix).
+def _mass_2p_only() -> bool:
+    return os.environ.get("PRODUCER_PLUS_MASS_2P_ONLY", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _mass_active(player_count: int) -> bool:
+    return (not _mass_2p_only()) or int(player_count) == 2
+
+
+def _overkill_factor_for(player_count: int) -> float:
+    return _overkill_factor() if _mass_active(player_count) else 1.0
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, default))
@@ -609,7 +629,7 @@ def plan_lite_waves(
         else:
             floor_at_arr_hi = torch.ones(S, T, dtype=dtype, device=device)
 
-        sizes_lo = torch.minimum((floor_at_arr_hi * _overkill_factor()).ceil().clamp(min=1.0), sizes_hi)
+        sizes_lo = torch.minimum((floor_at_arr_hi * _overkill_factor_for(player_count)).ceil().clamp(min=1.0), sizes_hi)
         sizes_mid = torch.minimum(2.0 * sizes_lo, sizes_hi)
         sizes_3 = torch.stack([sizes_lo, sizes_mid, sizes_hi], dim=-1)            # [S, T, N]
 
@@ -942,7 +962,7 @@ def plan_lite_waves(
 
         # Floor at hi's eta gives the minimum to capture; cap by drain so a
         # single launch can never over-drain the source.
-        sizes_lo = torch.minimum((floor_at_arr_hi * _overkill_factor()).ceil().clamp(min=1.0), sizes_hi) # [S, T]
+        sizes_lo = torch.minimum((floor_at_arr_hi * _overkill_factor_for(player_count)).ceil().clamp(min=1.0), sizes_hi) # [S, T]
         sizes_mid = torch.minimum(2.0 * sizes_lo, sizes_hi)                       # [S, T]
         sizes_3 = torch.stack([sizes_lo, sizes_mid, sizes_hi], dim=-1)            # [S, T, N]
 
@@ -1198,7 +1218,7 @@ def plan_lite_waves(
             return torch.where(cand_valid, _new, torch.full_like(_new, float("-inf")))
 
         _fc_rescore_fn = _fc_rescore
-    if _mass_tiebreak_enabled():
+    if _mass_tiebreak_enabled() and _mass_active(player_count):
         total_send = (cand_send * cand_active.to(cand_send.dtype)).sum(dim=-1)  # [C]
         score = score + 1e-4 * total_send
     score = torch.where(cand_valid, score, torch.full_like(score, float("-inf")))
@@ -1231,7 +1251,7 @@ def plan_lite_waves(
         leftover=leftover, original_ships=obs.ships.to(dtype), pressure=enemy_mass,
         config=config, H=H,
     )
-    _convoy_min = _regroup_min_send()
+    _convoy_min = _regroup_min_send() if _mass_active(player_count) else 0.0
     if _convoy_min > 0.0 and int(regroup_entries.ships.shape[0]) > 0:
         keep = regroup_entries.ships >= _convoy_min
         regroup_entries = LaunchEntries(

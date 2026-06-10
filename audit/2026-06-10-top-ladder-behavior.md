@@ -86,4 +86,16 @@ Smoke (seed 7 vs producer): fleets 167→108, fleet p50 28→44, launch rate
   35/64 (54.7%), Wilson ≈ [0.43, 0.66]**. At worst parity with the
   champion, likely a small edge; 17 of 32 maps won at both seats, 1
   split. Every previous mechanism lost to the champion baseline.
-- mass 4P (vs 3×producer, seeds 0-31): pending.
+- **mass 4P (vs 3×producer, seeds 0-31): 7/32 (21.9%)** vs baseline
+  13/32 — unrestricted mass COSTS 4P first-place rate (the dribble may
+  be load-bearing in 4-front games, or the convoy threshold starves the
+  multi-front defense). Hence `PRODUCER_PLUS_MASS_2P_ONLY`.
+
+## The composed candidate: `mass2p_ffa`
+
+Player-count-gated composition — 2P = mass (head-to-head winner), 4P =
+champion + FFA uniform objective (live sub 53527125's exact behavior).
+Verified by action-stream parity: 2P seed-7 == `mass` bundle hash, 4P
+seed-3 == `ffa_uniform` bundle hash, champion OFF-path seed-13 hash
+unchanged. All measured pool results therefore transfer to this bundle
+exactly. Rule 46 green (test_bundle 15/15; idle smoke max 71 ms).
