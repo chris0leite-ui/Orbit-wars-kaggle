@@ -38,7 +38,10 @@ _GAME_CODE = r"""
 import json, sys, time
 sys.path.insert(0, {repo!r})
 from kaggle_environments import make
-env = make('orbit_wars', configuration={{'seed': {seed}}}, debug=False)
+cfg = {{'seed': {seed}}}
+if {max_steps} > 0:
+    cfg['episodeSteps'] = {max_steps}
+env = make('orbit_wars', configuration=cfg, debug=False)
 t0 = time.perf_counter()
 env.run([{p0!r}, {p1!r}])
 wall = time.perf_counter() - t0
@@ -76,11 +79,11 @@ print(json.dumps({{'r0': final[0]['reward'], 'r1': final[1]['reward'],
 """
 
 
-def _worker_play(args: tuple[int, str, str, bool]) -> dict:
-    seed, focal_path, opp_path, focal_is_p0 = args
+def _worker_play(args: tuple[int, str, str, bool, int]) -> dict:
+    seed, focal_path, opp_path, focal_is_p0, max_steps = args
     p0, p1 = (focal_path, opp_path) if focal_is_p0 else (opp_path, focal_path)
     code = _GAME_CODE.format(repo=str(REPO), seed=int(seed), p0=str(p0), p1=str(p1),
-                             check_steps=tuple(CHECK_STEPS))
+                             check_steps=tuple(CHECK_STEPS), max_steps=int(max_steps))
     try:
         proc = subprocess.run(
             [sys.executable, "-c", code],
@@ -122,6 +125,8 @@ def main() -> int:
     ap.add_argument("--seeds", type=int, default=4, help="N seeds; each played twice (both seats)")
     ap.add_argument("--seed-start", type=int, default=0)
     ap.add_argument("--workers", type=int, default=2)
+    ap.add_argument("--max-steps", type=int, default=0,
+                    help="truncate games at N steps (material verdict; decision step p90<=95 in every mined corpus). 0 = full game")
     args = ap.parse_args()
     focal = str(Path(args.focal).resolve())
     opp = str(Path(args.opp).resolve())
@@ -135,8 +140,8 @@ def main() -> int:
 
     tasks = []
     for s in range(args.seed_start, args.seed_start + args.seeds):
-        tasks.append((s, focal, opp, True))
-        tasks.append((s, focal, opp, False))
+        tasks.append((s, focal, opp, True, args.max_steps))
+        tasks.append((s, focal, opp, False, args.max_steps))
     t0 = time.perf_counter()
     results = []
     with ProcessPoolExecutor(max_workers=args.workers) as ex:
