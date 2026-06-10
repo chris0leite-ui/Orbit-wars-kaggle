@@ -87,6 +87,24 @@ the 3×producer pool (11/32 vs baseline 13/32, 12 paired outcomes
 flipped). Self-play-pool verdict pending; 2P byte-identical by
 construction.
 
+**Loss-anatomy mining (2026-06-10,
+`audit/2026-06-10-4p-loss-anatomy-mining.md`):** 4P losses are decided
+in the step-20..80 brawl window — we are ship-rank 1 at step 20 even in
+losses, production peaks ~step 40 then declines while the eventual
+winner's doubles. NOT the separators: self-drained-then-carved rate
+(60% in wins AND losses), neutral-expansion count (stalls at 3 in
+both), defensive-shortlist width (≥3 planets falling within horizon on
+only 9% of loss steps). Multi-front carving (2+ rivals, 54/85 losses
+vs 6/31 wins) is the end state of an economy already lost.
+
+Measured on the 4P axis (3×producer pool, seeds 0–31, baseline 13/32):
+- `tick4p` (4P-only multi-tick opp projection K=3, 2P byte-identical):
+  **10/32 — null.** The mirror re-spends rival ships across rounds
+  (no budget debit) → phantom aggression. Do not re-ship without the
+  debit fix.
+- `reinforce_deficit` (defense candidate sizing: pre-flip floor =
+  post-flip survivor + 1 instead of 1): pending, see audit doc.
+
 ### TrueSkill warm-up — DO NOT panic at early μ
 
 Kaggle's TrueSkill starts every new submission at μ ≈ 600 and climbs over

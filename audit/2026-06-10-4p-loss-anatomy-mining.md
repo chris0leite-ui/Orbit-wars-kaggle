@@ -62,4 +62,12 @@ Mechanisms aimed at this window, in current priority order:
 
 ## Measurements (appended as they complete)
 
-- tick4p vs 3× vanilla producer, seeds 0–31: see below.
+- **tick4p vs 3× vanilla producer, seeds 0–31: 10/32 (31.2%), Wilson
+  [0.180, 0.486] — NO LIFT** vs baseline 13/32. Per-seed log:
+  `audit/pools/2026-06-10-tick4p-vs-3xproducer-n32.log`. Suspected cause
+  beyond plain null: the multi-round mirror re-plans each round from the
+  same tick-0 board without debiting ships committed in earlier rounds, so
+  rivals are projected attacking with the same ships up to 3×. Phantom
+  aggression → the planner turtles. A budget-debited multi-tick would be a
+  different mechanism; the cheap standalone variant is dead.
+- reinforce_deficit vs 3× vanilla producer, seeds 0–31: see below.
