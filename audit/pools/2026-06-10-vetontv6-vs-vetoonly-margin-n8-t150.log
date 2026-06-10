@@ -1,0 +1,16 @@
+== margin_ab focal=producer_plus_veto_ntv6_on.py  opp=_ns_veto_only.py  seeds=4 (×2 seats = 8 games)  workers=2 ==
+   seed=  0 seat=P0 loss steps=150 dec= 19  L40=-24.3%  L80=-13.8%  L120=-17.7%  L250=-17.7%
+   seed=  0 seat=P1 loss steps=150 dec= 19  L40=-24.3%  L80=-13.8%  L120=-17.7%  L250=-20.9%
+   seed=  1 seat=P0 loss steps=119 dec= 28  L40= -5.2%  L80=-30.2%  L120=-100.0%  L250=-100.0%
+   seed=  1 seat=P1 loss steps=119 dec= 28  L40= -5.2%  L80=-30.2%  L120=-100.0%  L250=-100.0%
+   seed=  2 seat=P1  win steps=133 dec= 47  L40= +1.5%  L80= +8.9%  L120=+69.1%  L250=+100.0%
+   seed=  2 seat=P0  win steps=141 dec= 47  L40= +1.5%  L80= +8.9%  L120=+59.7%  L250=+100.0%
+   seed=  3 seat=P0 loss steps=110 dec= 39  L40= -5.9%  L80=-44.4%  L120=-100.0%  L250=-100.0%
+   seed=  3 seat=P1 loss steps=109 dec= 39  L40= -5.9%  L80=-46.8%  L120=-100.0%  L250=-100.0%
+
+   focal_wins=2/8
+   lead@40 : mean= -8.5%  games-ahead=2/8  paired-mean= -8.5%  seeds-ahead=1/4
+   lead@80 : mean=-20.2%  games-ahead=2/8  paired-mean=-20.2%  seeds-ahead=1/4
+   lead@120: mean=-38.3%  games-ahead=2/8  paired-mean=-38.3%  seeds-ahead=1/4
+   lead@250: mean=-29.8%  games-ahead=2/8  paired-mean=-29.8%  seeds-ahead=1/4
+   decision step: p50=39  max=47  elapsed=1109s
