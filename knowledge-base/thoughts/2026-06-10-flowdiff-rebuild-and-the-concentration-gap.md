@@ -57,6 +57,41 @@ Candidate directions (PI decision pending):
 - Accept the Producer gap for now: the live field is not all Producers, and the rebuild
   already gains vs the v7 lineage.
 
+## Continuation (same session, after PI's "think for yourself, iterate")
+
+Four more mechanisms tested at single-game granularity:
+
+4. **Committed-wave defense** (`FLOWDIFF_COMMITTED_DEFENSE`) — NEGATIVE. Physics said
+   defense is possible (warning windows 9–14 turns, 7/13 falls had a capable ally in
+   reach), and after fixing a re-buy bug (399 ships poured into one planet over four
+   turns because in-flight reinforcements weren't credited) the funded planets DID hold —
+   but total losses were unchanged: the Producer's larger bank just takes a different
+   planet. Whack-a-mole. Defense spend at this scale is a losing allocation.
+5. **Adaptive reaction** (`FLOWDIFF_REACTION_ADAPTIVE`) — KEEP (panel-backed). The fixed
+   reaction term was opponent-dependent: right vs the Producer (pools defense), ruinous
+   vs v7 (doesn't punish; 5/12 → 1/12, idle 0.75). Fear is an observable opponent
+   property: score each landing against the do-nothing prediction stored at launch,
+   EMA the reinforcement rate, scale the injected counter by it. CRITICAL bug class
+   found: score one turn after the REAL landing turn at actual fleet size — scoring at
+   the planned arrival reads our own unresolved wave as phantom reinforcement (spurious
+   fear 0.49–0.69 vs v7; after the fix v7 converges to ~0.0 and part of the Producer's
+   apparent pooling also turned out to be artifact).
+6. **Low fear prior (0.15)** — no gain on a 6-game discriminator; reverted to the
+   panel-backed 0.5. Prior tuning needs panel-grade evidence.
+
+Final panel standings (12 seeds): adaptive composite vs Producer 1/12 / end 2.6 (best yet);
+vs v7 3/12 / 6.9. Plain flowdiff+tail remains v7-best (5/12 / 9.2). The keep-set decision
+between them is a field-mix bet — the adaptive arm is architecturally right (it converges
+to plain-tail behavior against passive opponents) but pays a residual convergence tax.
+
+Two ship-accounting theorems derived and used (worth remembering):
+- **Combat is 1:1, so garrisons always trade fair**: keeping wealth on a doomed planet
+  bleeds the attacker exactly as much as evacuating saves — planets, not ships, are the
+  only real prize. Evacuation mechanisms are currency-neutral; don't build them.
+- **Deterrence-by-garrison cannot work against the Producer**: garrison losses cancel in
+  its competitive score; only fundability gates its captures. Don't build garrison
+  deterrence either.
+
 ## Process notes
 
 - Single-game iteration with decision-level instruments was the right speed: five

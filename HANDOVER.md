@@ -1,10 +1,28 @@
 # HANDOVER.md — next-session brief
 
-_Refreshed 2026-06-04 (`claude/kaggle-submission-strategy-JzIAr`). **Read
+_Refreshed 2026-06-10 (`claude/kaggle-submission-strategy-JzIAr`). **Read
 `state/STRATEGY.md` first** — it is the canonical "what we're running" doc. This file
 is the next-session brief only._
 
-## ⭐ NEXT-SESSION FIRST ACTION — pick a NEW direction (Producer-lens path is dead)
+## ⭐ 2026-06-10 — protoflow single-currency rebuild (probe track; champion untouched)
+
+The protoflow probe's evaluator was rebuilt around ONE currency — signed terminal
+garrison wealth, injected minus baseline, minus newly-sent ships at par — replacing the
+stacked swing-integral + drain-cost terms. Attrition is finally priced; pyrrhic captures
+go negative; no-bleed/doomed/protect-nets-zero emerge as value facts. Three gated keepers
+(`FLOWDIFF_VALUE`, `FLOWDIFF_TAIL`, `FLOWDIFF_REACTION`+`_ADAPTIVE`), two documented
+negatives (`SIMVALUE_DRAIN_ANTICIPATORY`, `FLOWDIFF_COMMITTED_DEFENSE`), all default-OFF.
+Panel (12 seeds): flowdiff+tail is v7-best (5/12, end-planets 9.2 vs control 3/12 / 6.2);
+the adaptive composite is Producer-best (1/12, end 2.6) at some v7 cost (3/12, 6.9).
+Producer remains unbeaten; the measured residual gap is CONCENTRATION (its one bank vs
+our dispersed wealth — ships trade 1:1, planets are the only prize, and the whack-a-mole
+defense measurement says more defense spend cannot fix it). The argued next lever is a
+global offense/defense budget arbiter (sequential-commit assembler, phase 2 of the
+approved flowdiff plan). Instruments built: `scripts/protoflow_game_trace.py` (decision
+narrative + wave outcomes); full evidence trail in
+`knowledge-base/thoughts/2026-06-10-flowdiff-rebuild-and-the-concentration-gap.md`.
+
+## ⭐ 2026-06-04 — pick a NEW direction (Producer-lens path is dead)
 
 **The whole "be like Producer / opponent-agnostic scoring" line is REFUTED**
 (2026-06-04, n=32 clean A/Bs). We built two gated levers — `BASELINE_OPP_PASSIVE`

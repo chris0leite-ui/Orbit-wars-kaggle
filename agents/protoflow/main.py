@@ -240,7 +240,10 @@ FLOWDIFF_COMMITTED_DEFENSE = False
 # a passive one, learned within the first ~10 waves. No-op unless FLOWDIFF_REACTION is also on.
 FLOWDIFF_REACTION_ADAPTIVE = False
 REACTION_EMA_ALPHA = 0.25       # per-landing update weight; ~10 landings to converge
-_REACTION_STATE: dict = {"rate": 0.5, "pending": []}  # prior 0.5; pending: (tgt, abs_turn, pred_ships, pred_owner)
+# Prior 0.5 (panel-backed). A 0.15 "fear must be earned" prior was tried -- no gain on a 6-game
+# discriminator (the residual v7 losses are not fear-driven), so the prior stays at the value the
+# 12-seed panel measured. Re-tune only with panel-grade evidence.
+_REACTION_STATE: dict = {"rate": 0.5, "pending": []}  # pending: (tgt, abs_turn, pred_ships, wave)
 # REGROUP: a positional pass that marches idle rear ships up the enemy-pressure
 # gradient toward the frontier, so force concentrates forward for future strikes.
 REGROUP_PRESSURE_HORIZON = 14   # turns; decay reach for the enemy-pressure signal
