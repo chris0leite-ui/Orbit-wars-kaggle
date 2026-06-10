@@ -50,17 +50,23 @@ merged into it; main is 166 commits behind that track).
 
 ## Next action
 
-1. **Read sub 53523036's settled μ** (submitted 2026-06-10 04:12 UTC with
-   PI sign-off; at 05:15 UTC it was 1035.8 and climbing). Settle ETA
-   ~2026-06-11 04:00 UTC.
-2. **The mechanism deck is exhausted** — 2026-06-10 additions to the null
-   list: strategic bonuses at calibrated weights (16/32, 15/32, 18/32)
-   and scorer horizon 24 (17/32), all vs the base's 24/32. Nine mechanisms
-   measured, nine nulls/regressions. Next lift needs a PI observation from
-   live replays (what loses games on the ladder), not another scorer term.
-3. Candidate diagnostic if no PI observation arrives: pull lost episodes
-   for sub 53523036 via `scripts/live_episode_summary.py` and classify
-   the losses (`scripts/classify_losses.py`).
+1. **Read the rolling pair's settled μ after ~2026-06-11 07:00 UTC:**
+   sub **53527125** `ffa_uniform` (submitted 06-10 07:07, the 4P objective
+   fix — 2P byte-identical to multi_opp_def, predicted 1230-1330 if the 4P
+   lift translates) and sub **53523036** `multi_opp_def` restore (06-10
+   04:12, backstop). Compare the two settles: identical 2P play means any
+   μ gap between them is pure 4P signal — a free live A/B of the FFA
+   objective.
+2. If ffa_uniform settles ABOVE multi_opp_def: the 4P front is open and
+   productive — next candidates on that axis: strength-vs-uniform weight
+   blend, 4P-aware defense (threat-aware garrison floors vs multi-front
+   strikes), vulture timing (the live winners' 3x enemy-capture profile).
+   Measure ONLY with `scripts/clean_ffa.py` 4P pools (producer pool +
+   namespaced our-best pool); the 2P A/B cannot see this axis.
+3. If ffa_uniform settles AT/BELOW multi_opp_def: pull its live 4P
+   episodes (`scripts/live_episode_summary.py 53527125 --pull`), check
+   the 2P/4P winrate split vs the 29% baseline, and diagnose from the
+   replays before touching the mechanism.
 
 ## Pointers
 
