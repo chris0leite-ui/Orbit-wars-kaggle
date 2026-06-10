@@ -495,6 +495,103 @@ def _response_veto_margin(default: float) -> float:
         return float(default)
 
 
+def _replan_enabled() -> bool:
+    """One-ply replan: after our waves are chosen, predict the opponent's
+    reply (same mirror as the veto) and run our WHOLE planner a second time
+    with that reply as background. Where the veto only drops doomed waves
+    (the ships idle), the replan redirects them to the next-best action,
+    plans reinforcements against the predicted counter (the reply feeds the
+    defensive shortlist), and re-judges every wave with the reply's flow
+    consequences in the diff."""
+    return os.environ.get("PRODUCER_PLUS_REPLAN", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _replan_2p_only() -> bool:
+    return os.environ.get("PRODUCER_PLUS_REPLAN_2P_ONLY", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _replan_active(player_count: int) -> bool:
+    return _replan_enabled() and (
+        (not _replan_2p_only()) or int(player_count) == 2
+    )
+
+
+def _entries_to_launch_set(entries, *, pid: int, device, dtype) -> LaunchSet:
+    """Valid rows of a LaunchEntries table as a LaunchSet owned by ``pid``."""
+    sel = entries.valid.nonzero(as_tuple=True)[0]
+    return LaunchSet(
+        source_slots=entries.source_slots[sel].to(torch.long),
+        target_slots=entries.target_slots[sel].to(torch.long),
+        ships=entries.ships[sel].to(dtype),
+        eta=entries.eta[sel].to(dtype),
+        owner=torch.full((int(sel.shape[0]),), pid, dtype=torch.long, device=device),
+        valid=torch.ones(int(sel.shape[0]), dtype=torch.bool, device=device),
+    )
+
+
+def _predict_reply(
+    mine: LaunchSet,
+    *,
+    movement,
+    obs_tensors: dict,
+    cache,
+    garrison_status,
+    prod: Tensor,
+    alive_by_step: Tensor,
+    config,
+    player_count: int,
+    pid: int,
+    K_eta_override,
+    H: int,
+) -> LaunchSet:
+    """Each opponent's predicted reply to OUR launches, merged on the L axis.
+
+    Mirror each opponent seat separately WITH the roi normalization their
+    planner needs: with our waves as background, every opp candidate's
+    flow diff inherits our attacks' damage as a large negative constant,
+    so against the absolute 1.5 threshold the simulated opponent is
+    paralyzed and "replies" with nothing (seed-0 instrumented game: 15
+    predicted reply launches across 107 turns, 0 vetoes). Shift the
+    threshold by THEIR do-nothing score, exactly as run_turn does for us.
+    """
+    opp_ids = [q for q in range(int(player_count)) if q != int(pid)]
+    reply_parts = []
+    pad = _env_int("PRODUCER_PLUS_OPP_MAX_L", MAX_L_OPP)
+    for opp_id in opp_ids:
+        dn_opp = float(_score_do_nothing(
+            status=garrison_status, prod=prod, alive_by_step=alive_by_step,
+            player_count=int(player_count), background=mine,
+            player_id=int(opp_id), opp_weights=None,
+        ))
+        cfg_opp = dataclasses.replace(
+            config, roi_threshold=dn_opp + float(config.roi_threshold),
+        )
+        reply_parts.append(predict_opp_launches_via_mirror(
+            plan_fn=plan_lite_waves,
+            obs_tensors=obs_tensors, movement=movement, cache=cache,
+            garrison_status=garrison_status, prod=prod, alive_by_step=alive_by_step,
+            opp_ids=[int(opp_id)], config=cfg_opp, player_count=int(player_count),
+            K_eta_override=K_eta_override,
+            pad_to=pad,
+            K=1, H=H,
+            base_background=mine,
+        ))
+    if len(reply_parts) == 1:
+        return reply_parts[0]
+    return LaunchSet(
+        source_slots=torch.cat([r.source_slots for r in reply_parts]),
+        target_slots=torch.cat([r.target_slots for r in reply_parts]),
+        ships=torch.cat([r.ships for r in reply_parts]),
+        eta=torch.cat([r.eta for r in reply_parts]),
+        owner=torch.cat([r.owner for r in reply_parts]),
+        valid=torch.cat([r.valid for r in reply_parts]),
+    )
+
+
 def _apply_response_veto(
     entries,
     *,
@@ -527,54 +624,14 @@ def _apply_response_veto(
         return entries
 
     sel = valid.nonzero(as_tuple=True)[0]
-    mine = LaunchSet(
-        source_slots=entries.source_slots[sel].to(torch.long),
-        target_slots=entries.target_slots[sel].to(torch.long),
-        ships=entries.ships[sel].to(dtype),
-        eta=entries.eta[sel].to(dtype),
-        owner=torch.full((int(sel.shape[0]),), pid, dtype=torch.long, device=device),
-        valid=torch.ones(int(sel.shape[0]), dtype=torch.bool, device=device),
+    mine = _entries_to_launch_set(entries, pid=pid, device=device, dtype=dtype)
+    reply = _predict_reply(
+        mine,
+        movement=movement, obs_tensors=obs_tensors, cache=cache,
+        garrison_status=garrison_status, prod=prod, alive_by_step=alive_by_step,
+        config=config, player_count=int(player_count), pid=pid,
+        K_eta_override=K_eta_override, H=H,
     )
-    opp_ids = [q for q in range(int(player_count)) if q != pid]
-    # Mirror each opponent seat separately WITH the roi normalization their
-    # planner needs: with our waves as background, every opp candidate's
-    # flow diff inherits our attacks' damage as a large negative constant,
-    # so against the absolute 1.5 threshold the simulated opponent is
-    # paralyzed and "replies" with nothing (seed-0 instrumented game: 15
-    # predicted reply launches across 107 turns, 0 vetoes). Shift the
-    # threshold by THEIR do-nothing score, exactly as run_turn does for us.
-    reply_parts = []
-    pad = _env_int("PRODUCER_PLUS_OPP_MAX_L", MAX_L_OPP)
-    for opp_id in opp_ids:
-        dn_opp = float(_score_do_nothing(
-            status=garrison_status, prod=prod, alive_by_step=alive_by_step,
-            player_count=int(player_count), background=mine,
-            player_id=int(opp_id), opp_weights=None,
-        ))
-        cfg_opp = dataclasses.replace(
-            config, roi_threshold=dn_opp + float(config.roi_threshold),
-        )
-        reply_parts.append(predict_opp_launches_via_mirror(
-            plan_fn=plan_lite_waves,
-            obs_tensors=obs_tensors, movement=movement, cache=cache,
-            garrison_status=garrison_status, prod=prod, alive_by_step=alive_by_step,
-            opp_ids=[int(opp_id)], config=cfg_opp, player_count=int(player_count),
-            K_eta_override=K_eta_override,
-            pad_to=pad,
-            K=1, H=H,
-            base_background=mine,
-        ))
-    if len(reply_parts) == 1:
-        reply = reply_parts[0]
-    else:
-        reply = LaunchSet(
-            source_slots=torch.cat([r.source_slots for r in reply_parts]),
-            target_slots=torch.cat([r.target_slots for r in reply_parts]),
-            ships=torch.cat([r.ships for r in reply_parts]),
-            eta=torch.cat([r.eta for r in reply_parts]),
-            owner=torch.cat([r.owner for r in reply_parts]),
-            valid=torch.cat([r.valid for r in reply_parts]),
-        )
 
     # Score each attack wave alone under the predicted reply, against the
     # do-nothing-under-reply baseline (same normalization as roi_threshold).
@@ -678,6 +735,69 @@ def _apply_response_veto(
         source_slots=entries.source_slots, target_slots=entries.target_slots,
         ships=new_ships, angle=new_angle, eta=new_eta,
         valid=new_valid,
+    )
+
+
+def _apply_replan(
+    entries,
+    *,
+    movement,
+    obs,
+    obs_tensors: dict,
+    cache,
+    garrison_status,
+    prod: Tensor,
+    alive_by_step: Tensor,
+    config,
+    player_count: int,
+    K_eta_override,
+    H: int,
+    opp_weights,
+):
+    """One-ply replan: re-run the planner with the predicted reply as background.
+
+    Pass 1 (the caller's ``entries``) planned against the opponent's
+    do-nothing-conditioned launches. This pass predicts each opponent's
+    best response to OUR pass-1 waves and plans from scratch against it:
+    waves the reply kills are not just dropped but their ships redirected,
+    reinforcements appear against the predicted counter (the reply feeds
+    ``friendly_flip_targets``), and every candidate's flow diff carries the
+    reply's consequences. The roi threshold is re-normalized by our
+    do-nothing-under-reply score, mirroring run_turn's opp-projection shift.
+
+    Skips (returns pass 1 unchanged) when pass 1 fired nothing — the reply
+    to an empty plan is what pass 1 already planned against — or when the
+    predicted reply is empty (nothing to adapt to).
+    """
+    pid = int(obs.player_id)
+    if int(entries.valid.sum().item()) == 0:
+        return entries
+    device = obs.device
+    dtype = obs.ships.dtype
+    mine = _entries_to_launch_set(entries, pid=pid, device=device, dtype=dtype)
+    reply = _predict_reply(
+        mine,
+        movement=movement, obs_tensors=obs_tensors, cache=cache,
+        garrison_status=garrison_status, prod=prod, alive_by_step=alive_by_step,
+        config=config, player_count=int(player_count), pid=pid,
+        K_eta_override=K_eta_override, H=H,
+    )
+    if int(reply.valid.sum().item()) == 0:
+        return entries
+    dn = float(_score_do_nothing(
+        status=garrison_status, prod=prod, alive_by_step=alive_by_step,
+        player_count=int(player_count), background=reply, player_id=pid,
+        opp_weights=opp_weights,
+    ))
+    cfg2 = dataclasses.replace(
+        config, roi_threshold=dn + float(config.roi_threshold),
+    )
+    return plan_lite_waves(
+        movement=movement, obs=obs, obs_tensors=obs_tensors, cache=cache,
+        garrison_status=garrison_status, prod=prod,
+        alive_by_step=alive_by_step, config=cfg2,
+        player_count=int(player_count), K_eta_override=K_eta_override,
+        background=reply, opp_weights=opp_weights,
     )
 
 
@@ -1885,6 +2005,17 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
         background=background,
         opp_weights=opp_w,
     )
+    if _replan_active(int(player_count)) and _opp_projection_enabled():
+        # Raw config (not the roi-shifted cfg): the replan re-normalizes the
+        # roi threshold itself against its own reply background.
+        entries = _apply_replan(
+            entries,
+            movement=movement, obs=obs, obs_tensors=obs_tensors, cache=cache,
+            garrison_status=status, prod=movement.planet_prod,
+            alive_by_step=alive_by_step, config=config,
+            player_count=int(player_count), K_eta_override=K_eta_override,
+            H=H, opp_weights=opp_w,
+        )
     if _response_veto_active(int(player_count)) and _opp_projection_enabled():
         # Raw config (not the roi-shifted cfg): the reply mirror plans the
         # opponent exactly like the original projection pass did, and the

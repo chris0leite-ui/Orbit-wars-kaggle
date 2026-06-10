@@ -481,6 +481,48 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_RESPONSE_VETO": "1",
         "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
     },
+    "veto_rf_nq": {
+        # Stacking test: the two tournament survivors together. Reactive
+        # floor converted (6/8 wins, +34% @120) but the quota's +31% @80
+        # early-expansion lead leaked away late — hypothesis: floor-aware
+        # strike sizing is what the quota's thin frontier was missing.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_NEUTRAL_SHORTLIST": "6",
+    },
+    "vetorf_replan": {
+        # One-ply replan ON TOP of the current best stack (veto + reactive
+        # floor): pass 1 plans, the mirror predicts the reply, pass 2
+        # re-plans against it (redirecting vetoed ships + planning defenses),
+        # then the veto verifies pass 2 against a fresh reply.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLAN": "1",
+    },
+    "replan_rf": {
+        # Replan WITHOUT the veto: does the full re-plan subsume the
+        # drop-only filter? (Reactive floor kept — orthogonal mechanism.)
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLAN": "1",
+    },
+    "vetorf_deficit": {
+        # Reinforce-deficit re-judge under the CORRECT referees (its only
+        # prior verdict was the failed vs-producer 4P panel): pre-flip
+        # reinforcement floors raised to the hold-the-planet deficit, on
+        # top of the veto + reactive-floor stack. Hold-rate gap vs top
+        # teams: 0.59 ours vs 0.74-0.85 theirs.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REINFORCE_DEFICIT": "1",
+    },
     "veto_upsize": {
         # "Beat the parry": veto + full-spare-budget retry of killed waves
         # (aim/eta recomputed for the bigger, faster fleet; the flow scorer
