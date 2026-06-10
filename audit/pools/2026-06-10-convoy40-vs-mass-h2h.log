@@ -3,3 +3,5 @@
    seed=   0  seat=P1     LOSS  steps=163  wall=369.7s
    seed=   1  seat=P0    error  steps=256  wall=517.7s
    seed=   1  seat=P1    error  steps=252  wall=505.0s
+   seed=   2  seat=P1    error  steps=47  wall=210.1s
+   seed=   2  seat=P0    error  steps=49  wall=217.3s
