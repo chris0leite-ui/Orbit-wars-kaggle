@@ -193,3 +193,15 @@ Lesson (third yardstick failure): local head-to-heads vs producer AND vs
 our own champion both said parity-or-better; the live band disagreed.
 The referee set must include a fast-expander proxy, and the champion
 (live-best 2P, 71%) is the incumbent to beat — NOT the mass agent.
+
+## Terminal production value: REJECTED vs both referees (2026-06-10 evening)
+
+n=8 margin triages: vs mass incumbent −23%@80 (λ=12), 0/8 (λ=6); vs the
+champion referee, composed with the veto: 2/8, −16%@80, −30%@120. The
+unconditional post-horizon production credit over-extends regardless of
+λ or veto pruning. Do not re-ship as-is. The live out-expansion loss mode
+is to be addressed by contested-counter play (snipe-hold / delayed
+launch), not by a bigger expansion appetite.
+
+Veto referee scoreboard for the record: vs champion 5/5 (+51% paired@80);
+vs producer 5/8 (ahead 6/8 games @80-120) — positive on both.
