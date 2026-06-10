@@ -226,6 +226,15 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_OPP_PROJECTION": "1",
         "PRODUCER_PLUS_FFA_SCORE": "1",
     },
+    "ffa_uniform": {
+        # ffa_score with equal weight per living rival instead of strength-
+        # proportional: isolates the trade-devaluation effect from the
+        # hit-the-leader tilt.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
+    },
     "opp_def_h24": {
         # The proven multi_opp_def stack with the scorer horizon lifted from
         # the default 18 to 24 ticks (the 5feabd8 knob, flagged "separate A/B

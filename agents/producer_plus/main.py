@@ -260,8 +260,17 @@ def _ffa_score_enabled() -> bool:
     )
 
 
+def _ffa_weight_mode() -> str:
+    """``strength`` (default): weights ∝ rival planet+fleet ships.
+    ``uniform``: equal weight per living rival — tests whether the
+    trade-devaluation alone helps without the hit-the-leader tilt."""
+    raw = os.environ.get("PRODUCER_PLUS_FFA_WEIGHTS", "strength").strip().lower()
+    return raw if raw in ("strength", "uniform") else "strength"
+
+
 def _ffa_opp_weights(obs_tensors: dict, *, player_id: int, player_count: int):
-    """Per-opponent weights ∝ current total strength (planet + fleet ships).
+    """Per-opponent weights ∝ current total strength (planet + fleet ships),
+    or equal-per-living-rival under ``PRODUCER_PLUS_FFA_WEIGHTS=uniform``.
 
     Returns a ``[player_count]`` float tensor with 0 at ``player_id``,
     summing to 1 over living opponents (all-zero if every opponent is dead).
@@ -281,6 +290,8 @@ def _ffa_opp_weights(obs_tensors: dict, *, player_id: int, player_count: int):
         if bool(f_mask.any()):
             strength.scatter_add_(0, f_owner[f_mask], fleets[f_mask, 6])
     strength[int(player_id)] = 0.0
+    if _ffa_weight_mode() == "uniform":
+        strength = (strength > 0).to(planets.dtype)
     total = float(strength.sum())
     if total <= 0.0:
         return torch.zeros(a, dtype=planets.dtype, device=device)
