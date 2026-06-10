@@ -41,6 +41,8 @@ def main() -> None:
                     help="single-currency terminal-wealth evaluator (proto.FLOWDIFF_VALUE = True; supersedes the sim evaluator)")
     ap.add_argument("--flowdiff-tail", action="store_true",
                     help="ownership continuation credit beyond the window (proto.FLOWDIFF_TAIL = True)")
+    ap.add_argument("--flowdiff-reaction", action="store_true",
+                    help="inject the defender's standing counter into offense rollouts (proto.FLOWDIFF_REACTION = True)")
     args = ap.parse_args()
 
     proto.SIMULATE_VALUE = bool(args.simulate_value)
@@ -48,6 +50,7 @@ def main() -> None:
     proto.SIMVALUE_DRAIN_ANTICIPATORY = bool(args.drain_anticipatory)
     proto.FLOWDIFF_VALUE = bool(args.flowdiff)
     proto.FLOWDIFF_TAIL = bool(args.flowdiff_tail)
+    proto.FLOWDIFF_REACTION = bool(args.flowdiff_reaction)
 
     opp = load_callable(args.opponent)
     env = make("orbit_wars", configuration={"seed": args.seed}, debug=False)

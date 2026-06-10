@@ -50,6 +50,7 @@ def main():
     ap.add_argument("--drain-anticipatory", action="store_true")
     ap.add_argument("--flowdiff", action="store_true")
     ap.add_argument("--flowdiff-tail", action="store_true")
+    ap.add_argument("--flowdiff-reaction", action="store_true")
     args = ap.parse_args()
 
     proto.SIMULATE_VALUE = bool(args.simulate_value)
@@ -57,6 +58,7 @@ def main():
     proto.SIMVALUE_DRAIN_ANTICIPATORY = bool(args.drain_anticipatory)
     proto.FLOWDIFF_VALUE = bool(args.flowdiff)
     proto.FLOWDIFF_TAIL = bool(args.flowdiff_tail)
+    proto.FLOWDIFF_REACTION = bool(args.flowdiff_reaction)
 
     from kaggle_environments import make
 
@@ -87,12 +89,39 @@ def main():
                     for lc in launches)
                 line += "   " + legs
             print(line)
+    # WAVE OUTCOMES: for every offense wave, was the target OURS shortly after the priced
+    # arrival, and was it STILL ours 15 turns later? Measures the do-nothing illusion directly:
+    # a high captured-but-not-held rate means the evaluator buys planets the opponent takes back.
+    owner_curve: dict[int, dict[int, int]] = {}
+    for i, step_frames in enumerate(env.steps):
+        world = World.from_obs(step_frames[0].observation)
+        for p in world.planets_by_id.values():
+            owner_curve.setdefault(int(p.id), {})[i] = int(p.owner)
+
+    def owner_at(pid: int, turn: int):
+        curve = owner_curve.get(pid, {})
+        return curve.get(min(turn, max(curve) if curve else 0))
+
+    n_waves = n_captured = n_held = 0
+    for tr_step, tr_rec in sorted(trace.items()):
+        for lc in tr_rec["launches"]:
+            if lc["kind"] != "wave" or lc["tgt_owner"] == me:
+                continue
+            land = tr_step + lc["arrive_turn"]
+            n_waves += 1
+            if owner_at(lc["tgt"], land + 2) == me:
+                n_captured += 1
+                if owner_at(lc["tgt"], land + 15) == me:
+                    n_held += 1
     final = env.steps[-1]
     r = (final[0].reward, final[1].reward)
     mine_r = r[me] if r[me] is not None else -99
     opp_r = r[1 - me] if r[1 - me] is not None else -99
     print(f"\nRESULT: {'WIN' if mine_r > opp_r else 'LOSS' if mine_r < opp_r else 'TIE'}  "
           f"peak={peak[0]} planets at t{peak[1]}")
+    print(f"WAVES: {n_waves} offense legs -> captured(+2t)={n_captured} -> still ours(+15t)={n_held}"
+          + (f"   capture_rate={n_captured/n_waves:.2f} hold_rate={n_held/max(1,n_captured):.2f}"
+             if n_waves else ""))
 
 
 if __name__ == "__main__":

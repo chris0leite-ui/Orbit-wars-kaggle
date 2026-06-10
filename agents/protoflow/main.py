@@ -208,6 +208,16 @@ FLOWDIFF_VALUE = False
 # window cliff. Attrition stays charged, so a truly pyrrhic buy stays negative. No-op unless
 # FLOWDIFF_VALUE is on. Default False; A/B via proto attr.
 FLOWDIFF_TAIL = False
+# FLOWDIFF REACTION (the defender answers). Measured on seeds 0/2 vs the Producer: only 42-53% of
+# our offense waves even capture at landing, because the defender SEES our fleet for the whole
+# approach and reinforces -- the do-nothing baseline prices the garrison as if blind. Mirror the
+# PROTECT construction onto the gain side: inject the target's standing counter (combined_counter
+# at our arrival, minus its in-flight part which the ledger already carries) into the INJECTED
+# timeline only -- the reaction is caused by our wave, so the do-nothing baseline correctly lacks
+# it. A capture that dies to the reaction then prices negative on its own. (The same idea was
+# inert under the swing-integral evaluator -- the retake landed past the horizon and the integral
+# never saw it; terminal-wealth accounting sees the retake directly.) No-op unless FLOWDIFF_VALUE.
+FLOWDIFF_REACTION = False
 # REGROUP: a positional pass that marches idle rear ships up the enemy-pressure
 # gradient toward the frontier, so force concentrates forward for future strikes.
 REGROUP_PRESSURE_HORIZON = 14   # turns; decay reach for the enemy-pressure signal
@@ -649,6 +659,17 @@ def agent(obs, configuration=None):
             if q_new <= 0:
                 return 0.0             # in-flight already covers it; nothing new to price
             inj_arr = ledger_t + [(arrive, me, q_new)]
+            if FLOWDIFF_REACTION and enemy_planets:
+                counter, t_re = combined_counter(t, arrive)
+                infl = sum(sh for (eta_arr, owner, sh) in ledger_t
+                           if owner != me and arrive < eta_arr <= arrive + COUNTER_WINDOW)
+                standing = float(counter) - float(infl)
+                if standing > 0.0:
+                    atk_owner = int(min(enemy_planets,
+                                        key=lambda e: math.hypot(float(e.x) - float(t.x),
+                                                                 float(e.y) - float(t.y))).owner)
+                    inj_arr = inj_arr + [(arrive + max(1, int(t_re)), atk_owner,
+                                          int(math.ceil(standing)))]
             base_line = model.timelines.get(tid)
             if base_line is None:
                 return 0.0

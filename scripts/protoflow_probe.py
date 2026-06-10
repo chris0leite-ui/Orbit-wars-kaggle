@@ -195,6 +195,8 @@ def main():
                     help="single-currency terminal-wealth evaluator (proto.FLOWDIFF_VALUE = True; supersedes the sim evaluator)")
     ap.add_argument("--flowdiff-tail", action="store_true",
                     help="ownership continuation credit beyond the window (proto.FLOWDIFF_TAIL = True)")
+    ap.add_argument("--flowdiff-reaction", action="store_true",
+                    help="inject the defender's standing counter into offense rollouts (proto.FLOWDIFF_REACTION = True)")
     args = ap.parse_args()
 
     # Evaluator A/B toggles: flip the probe agent's module-level flags before any game runs.
@@ -203,6 +205,7 @@ def main():
     proto.SIMVALUE_DRAIN_ANTICIPATORY = bool(args.drain_anticipatory)
     proto.FLOWDIFF_VALUE = bool(args.flowdiff)
     proto.FLOWDIFF_TAIL = bool(args.flowdiff_tail)
+    proto.FLOWDIFF_REACTION = bool(args.flowdiff_reaction)
     print(f"SIMULATE_VALUE = {proto.SIMULATE_VALUE}  SIMVALUE_DRAIN_COST = {proto.SIMVALUE_DRAIN_COST}  "
           f"SIMVALUE_DRAIN_ANTICIPATORY = {proto.SIMVALUE_DRAIN_ANTICIPATORY}  FLOWDIFF_VALUE = {proto.FLOWDIFF_VALUE}")
 

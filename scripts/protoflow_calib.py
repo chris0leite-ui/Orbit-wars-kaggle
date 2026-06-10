@@ -779,6 +779,38 @@ def main():
     _check("FW2", fired_rich_fw, f"flowdiff captured the rich neutral={fired_rich_fw}")
     proto.FLOWDIFF_VALUE = False
 
+    # FR1 — DON'T BUY A CAPTURE THE DEFENDER'S REACTION UNDOES (the flip-death fix, measured at
+    # 42-53% capture rate vs the Producer). A cheap neutral sits inside a strong standing enemy's
+    # counter umbrella; the hold-sized wave is unfundable, so the flip tier offers a bare-floor
+    # buy. Without the reaction the flip's rollout shows a clean capture -> it fires (and dies in
+    # a real game). With the reaction injected into the flip's own timeline, the retake lands
+    # within the tenure readout -> the flip prices ~0 -> we do not throw the ships away.
+    proto.FLOWDIFF_VALUE = True
+    proto.FLOWDIFF_TAIL = True
+    home_fr = [0, 0, 30.0, 50.0, radius(3), 30, 3]
+    bait_fr = [1, -1, 30.0, 72.0, radius(3), 10, 3]      # cheap to flip, inside the umbrella
+    guard_fr = [2, 1, 30.0, 88.0, radius(1), 40, 1]      # standing counter 16 away from the bait
+    board_fr = [home_fr, bait_fr, guard_fr]
+    proto.FLOWDIFF_REACTION = False
+    show("FR1-off flip the bait under the umbrella (no reaction model)",
+         make_obs(board_fr), "the rollout shows a clean capture; the standing retake is invisible")
+    fired_off_fr = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
+    proto.FLOWDIFF_REACTION = True
+    show("FR1 hold (the injected reaction undoes the flip inside its own readout)",
+         make_obs(board_fr), "pricing the defender's answer, the bait is worth ~0")
+    fired_on_fr = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
+    _check("FR1", fired_off_fr and not fired_on_fr,
+           f"no-reaction bought the bait={fired_off_fr}; reaction held={not fired_on_fr}")
+    # FW2 must stay green with the reaction ON: a rich neutral with NO enemy in range has no
+    # reaction to fear -> still bought (the guard against blanket timidity).
+    show("FW2+reaction re-check (no umbrella -> still bought)",
+         make_obs([home_fw, rich_fw]), "no standing counter in range; the reaction term is 0")
+    fired_rich_fr = any(lc["src"] == 0 and lc["tgt"] == 1 for lc in proto.get_trace()[-1]["launches"])
+    _check("FW2+reaction", fired_rich_fr, f"reaction-on still captured the rich neutral={fired_rich_fr}")
+    proto.FLOWDIFF_REACTION = False
+    proto.FLOWDIFF_TAIL = False
+    proto.FLOWDIFF_VALUE = False
+
     # SV1-SV4 must remain green with the drain cost ON (they involve no over-draining -> cost ~0).
     proto.SIMVALUE_DRAIN_COST = True
     _, field = show("SV1+cost re-check (drain cost on; big still > small)",
