@@ -108,8 +108,6 @@ a real comet-expiry off-by-one during development).
   BINARY (one winner +1, the other three -1, no placement credit), so 4P
   is win-or-nothing; the ledger agent spot-checks at 1/4 wins vs three
   strong family agents = the 25% parity baseline. Acceptable for v1.
-- 4-player posture is rough (1/3 in spot checks after the fix; FFA games
-  end in elimination cascades). Unknown 2P/4P ladder mix.
 - Simultaneous-launch races on neutrals (both players launch the same
   turn) are handled only by a blunt race discount.
 - The Producer sweep says nothing about unseen top-ladder archetypes;
