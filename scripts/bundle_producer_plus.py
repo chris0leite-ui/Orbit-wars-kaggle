@@ -270,6 +270,35 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_RECAPTURE_PENALTY": "1",
         "PRODUCER_PLUS_FORCE_CONCENTRATION": "1",
     },
+    "tick4p": {
+        # The proven multi_opp_def stack + multi-tick opp projection in
+        # 4P ONLY (K_4P=3; no _2P key baked, so 2P falls back to the
+        # common-key default 0 -> K_opp = max(1, 0) = 1 = single-tick =
+        # byte-identical to the live champion in 2P). Motivation
+        # (2026-06-10 economy mining): 4P losses are decided in the
+        # step-20..80 brawl window — production peaks ~step 40 then
+        # declines while the eventual winner's doubles; the planner is
+        # blind to rival launches beyond the current tick, so it neither
+        # anticipates the incoming brawl waves nor times its own. The
+        # earlier multi-tick live regression (sub 53390700, mu 1099) was
+        # measured composed with the recapture penalty AND with K_2P=2
+        # active in the 2P games that dominated that evaluation — multi-
+        # tick standalone in 4P was never measured (clean_ffa did not
+        # exist yet).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MULTI_TICK_OPP_K_4P": "3",
+    },
+    "ffa_uniform_tick4p": {
+        # Composition of the two 4P mechanisms: FFA uniform objective +
+        # 4P-only multi-tick. Build/measure only if tick4p standalone
+        # shows a lift on the 4P pools.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
+        "PRODUCER_PLUS_MULTI_TICK_OPP_K_4P": "3",
+    },
 }
 
 
