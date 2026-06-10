@@ -108,3 +108,4 @@ audit/2026-05-22/*.log
 
 # Transient run logs (summaries go into tracked audit/*.md docs)
 audit/*.log
+audit/top-replays/*/episode-*-replay.json

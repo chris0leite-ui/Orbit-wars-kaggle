@@ -1,0 +1,25 @@
+{
+  "teams": [
+    {
+      "teamId": 15654628,
+      "submissionId": 53402535,
+      "score": 2063.047363335063,
+      "replays": 40,
+      "dir": "audit/top-replays/team-15654628-sub-53402535"
+    },
+    {
+      "teamId": 15649057,
+      "submissionId": 53236656,
+      "score": 1754.3891848353096,
+      "replays": 40,
+      "dir": "audit/top-replays/team-15649057-sub-53236656"
+    },
+    {
+      "teamId": 15719716,
+      "submissionId": 53340181,
+      "score": 1721.5880048985082,
+      "replays": 40,
+      "dir": "audit/top-replays/team-15719716-sub-53340181"
+    }
+  ]
+}
