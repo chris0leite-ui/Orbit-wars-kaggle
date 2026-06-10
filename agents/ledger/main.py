@@ -729,6 +729,15 @@ def _response_curve(world, tgt):
 
 
 def agent(obs, configuration=None):
+    try:
+        return _agent_inner(obs, configuration)
+    except Exception:
+        # never throw a game on an internal error: an empty action is a
+        # legal no-op turn; production continues and we re-plan next tick
+        return []
+
+
+def _agent_inner(obs, configuration=None):
     t0 = time.perf_counter()
     world = World(obs)
     me = world.me
@@ -895,6 +904,10 @@ def agent(obs, configuration=None):
         live_enemies = len({world.owner0[i] for i in range(n)
                             if world.owner0[i] >= 0 and world.owner0[i] != me})
         deny_mult = 1.0 + (1.0 / max(1, live_enemies)) if live_enemies else 1.0
+        # free-for-all: fighting any one opponent is negative-sum for both
+        # of us relative to the bystanders — expand and defend instead,
+        # except for cheap opportunistic snipes
+        ffa = live_enemies >= 2
         candidates = []
         for s in mine:
             cap = budget[s] - committed.get(s, 0)
@@ -965,6 +978,8 @@ def agent(obs, configuration=None):
                     value *= RACE_DISCOUNT
             else:
                 value = deny_mult * world.prod[tgt] * flow
+                if ffa and n_need > 3 * world.prod[tgt] + 6:
+                    value *= 0.3      # FFA: only snipe-cheap player targets
             value *= GAMMA ** arr_dt
             value -= (TRAVEL_EPS + PRESSURE_EPS * pressure) * n_need * arr_dt
             return value
@@ -1075,7 +1090,8 @@ def agent(obs, configuration=None):
                 # fact shared across my simultaneous attacks. Admit
                 # slightly-negative plans — the rollout veto (which spends
                 # enemy garrisons exactly) makes the final call.
-                if value <= -0.15 * n_need:
+                admit_floor = 0.0 if ffa else -0.15 * n_need
+                if value <= admit_floor:
                     continue          # a bigger coalition may hold longer
                 return (value, value / n_need, plan, None)
             return None
