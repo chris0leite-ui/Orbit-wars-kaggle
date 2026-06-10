@@ -1,0 +1,5 @@
+== clean_ab focal=producer_plus_mass_convoy40_on.py  opp=_ns_mass.py  seeds=16 (×2 seats = 32 games)  workers=2 ==
+   seed=   0  seat=P0     LOSS  steps=163  wall=356.2s
+   seed=   0  seat=P1     LOSS  steps=163  wall=369.7s
+   seed=   1  seat=P0    error  steps=256  wall=517.7s
+   seed=   1  seat=P1    error  steps=252  wall=505.0s

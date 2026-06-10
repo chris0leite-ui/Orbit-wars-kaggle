@@ -74,6 +74,7 @@ def make_launch_set(
 
 def competitive_score(
     diff: GarrisonFlowDiff, *, player_id: int, opp_weights: Tensor | None = None,
+    terminal_prod_weight: float = 0.0,
 ) -> Tensor:
     """Competitive score: ``Δnet_me − Σ_opp w_opp · Δnet_opp``.
 
@@ -97,7 +98,22 @@ def competitive_score(
         opp = net.sum(dim=-1) - me
     else:
         opp = (net * opp_weights).sum(dim=-1)
-    return me - opp
+    score = me - opp
+    if terminal_prod_weight != 0.0 and diff.terminal_prod_delta is not None:
+        # Post-horizon production stream: the flow terms truncate a captured
+        # planet's payoff at H, so a neutral whose in-horizon production only
+        # repays its garrison cost scores ~0 and never clears the roi
+        # threshold. Credit the production OWNED at the horizon's final step
+        # for ``terminal_prod_weight`` further steps, same opponent weighting
+        # as the in-horizon flow.
+        term = diff.terminal_prod_delta
+        t_me = term[..., int(player_id)]
+        if opp_weights is None:
+            t_opp = term.sum(dim=-1) - t_me
+        else:
+            t_opp = (term * opp_weights).sum(dim=-1)
+        score = score + float(terminal_prod_weight) * (t_me - t_opp)
+    return score
 
 
 def score_candidates(
@@ -109,11 +125,13 @@ def score_candidates(
     launches: LaunchSet,
     player_id: int,
     opp_weights: Tensor | None = None,
+    terminal_prod_weight: float = 0.0,
 ) -> Tensor:
     """Competitive score per candidate. ``[C]`` (or scalar if no candidate axis).
 
-    Uses the sparse exact flow projector. ``opp_weights`` is forwarded to
-    :func:`competitive_score` (None = legacy equal-weight opponent sum).
+    Uses the sparse exact flow projector. ``opp_weights`` and
+    ``terminal_prod_weight`` are forwarded to :func:`competitive_score`
+    (None / 0.0 = legacy behaviour).
     """
     diff = sparse_launch_flow_delta(
         status,
@@ -123,7 +141,10 @@ def score_candidates(
         launches=launches,
         player_id=int(player_id),
     )
-    return competitive_score(diff, player_id=int(player_id), opp_weights=opp_weights)
+    return competitive_score(
+        diff, player_id=int(player_id), opp_weights=opp_weights,
+        terminal_prod_weight=terminal_prod_weight,
+    )
 
 
 # ---------------------------------------------------------------------------

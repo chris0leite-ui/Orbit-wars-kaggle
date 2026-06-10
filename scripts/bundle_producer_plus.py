@@ -357,6 +357,46 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_SCORE": "1",
         "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
     },
+    "termval12": {
+        # Terminal production value, standalone attribution: the flow scorer
+        # truncates a captured planet's payoff at the horizon, so neutral
+        # captures whose production only repays the garrison cost in-horizon
+        # score ~0 and never clear the roi threshold (seed-7 expansion
+        # probe: dozens of valid neutral candidates per opening turn at
+        # best-score 0..1 while the bank climbed to ~300). Credits the
+        # production owned at the horizon's final step for 12 further steps.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_TERMINAL_PROD_VALUE": "12",
+    },
+    "mass_termval12": {
+        # Mass mechanisms + terminal production value (the expansion fix).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MASS_TIEBREAK": "1",
+        "PRODUCER_PLUS_REGROUP_MIN_SEND": "25",
+        "PRODUCER_PLUS_OVERKILL_FACTOR": "2.0",
+        "PRODUCER_PLUS_TERMINAL_PROD_VALUE": "12",
+    },
+    "mass_convoy40": {
+        # Mass sweep: convoy threshold 40 instead of 25. Top-3 teams'
+        # fleet p50 is 83 vs our ~44 after the first mass pivot — probes
+        # whether a stiffer regroup gate closes more of the gap or
+        # starves the transfer lane.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MASS_TIEBREAK": "1",
+        "PRODUCER_PLUS_REGROUP_MIN_SEND": "40",
+        "PRODUCER_PLUS_OVERKILL_FACTOR": "2.0",
+    },
+    "mass_overkill3": {
+        # Mass sweep: attack sizing 3x instead of 2x, convoy unchanged.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MASS_TIEBREAK": "1",
+        "PRODUCER_PLUS_REGROUP_MIN_SEND": "25",
+        "PRODUCER_PLUS_OVERKILL_FACTOR": "3.0",
+    },
     "convoy_only": {
         # Regroup convoying alone (attribution variant).
         "PRODUCER_PLUS_MULTI_SIZE": "1",

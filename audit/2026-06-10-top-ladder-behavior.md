@@ -99,3 +99,37 @@ Verified by action-stream parity: 2P seed-7 == `mass` bundle hash, 4P
 seed-3 == `ffa_uniform` bundle hash, champion OFF-path seed-13 hash
 unchanged. All measured pool results therefore transfer to this bundle
 exactly. Rule 46 green (test_bundle 15/15; idle smoke max 71 ms).
+
+## The expansion gap, diagnosed (added later on 2026-06-10)
+
+New tool `scripts/expansion_probe.py`: instruments the greedy selector in a
+live game and logs, per focal turn, the candidate counts and best scores by
+target ownership class plus everything fired.
+
+Seed-7 game, mass config vs the namespaced champion
+(`audit/pools/2026-06-10-expansion-probe-seed7.jsonl`): through steps 0–35
+the planner is offered **dozens of valid neutral-capture candidates every
+turn, best score 0.00–1.00** — below the 1.5-ship roi threshold — while the
+bank climbs to ~300 ships. Neutral captures fire almost exclusively on the
+turns where the opponent projection drags the do-nothing baseline negative
+(threshold dips at steps 0, 4, 9, 15, 20, 22, 27, 29, 32, 36–37). Expansion
+is happening by accident, not by valuation.
+
+Diagnosis: **horizon truncation**. The flow scorer credits a captured
+planet's production only inside H (18 steps 2P / 13 4P). A neutral's
+in-horizon production roughly repays its garrison cost → net ≈ 0 → never
+clears the threshold. Everything the planet earns after step H — the entire
+reason the top-ladder agents expand to 8 planets by step 40 — is invisible.
+This also explains why bumping the whole horizon to 24 regressed (it
+rescales every constant), and why the rejected `opening_bonus` pointed the
+right direction with the wrong mechanism (a decaying constant, not a value).
+
+Fix implemented (default OFF): `PRODUCER_PLUS_TERMINAL_PROD_VALUE=λ` — the
+sparse flow diff now also reports production owned at the horizon's final
+step (hypothetical − baseline, per player, exact from the same recurrence),
+and `competitive_score` credits it for λ post-horizon steps with the same
+opponent weighting as the in-horizon flow. Capturing a neutral gains λ·prod;
+taking an enemy planet counts double; holding a planet that would flip is
+valued symmetrically. Unit tests: `tests/test_terminal_prod_value.py` (6
+green, incl. exact synthetic diffs). Bundle variants: `termval12`
+(standalone), `mass_termval12` (composed with the mass mechanisms).

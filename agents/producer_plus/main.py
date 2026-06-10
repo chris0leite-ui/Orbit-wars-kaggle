@@ -414,6 +414,25 @@ def _regroup_min_send() -> float:
         return 0.0
 
 
+# --- Terminal production value -----------------------------------------------
+# The flow scorer truncates a captured planet's payoff at the horizon
+# (H=18 2P / 13 4P), so a neutral whose in-horizon production only repays its
+# garrison cost scores ~0 and never clears the 1.5-ship roi threshold — the
+# seed-7 expansion probe shows the planner offered dozens of valid neutral
+# captures every opening turn at best-score 0..1 while the bank climbed to
+# ~300 ships, expanding only on turns where the opponent projection shifted
+# the do-nothing baseline negative. The weight is the number of post-horizon
+# steps the production owned at the horizon's final step is credited for.
+
+
+def _terminal_prod_value() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_TERMINAL_PROD_VALUE", "0")
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 # --- 2P-only gate for the mass mechanisms ------------------------------------
 # Local evidence splits by player count: mass beats the champion head-to-head
 # in 2P (35/64) and holds vs producer (22/32), but costs first-place rate in
@@ -1094,6 +1113,7 @@ def plan_lite_waves(
         garrison_status, prod=prod, alive_by_step=alive_by_step,
         player_count=int(player_count), launches=scoring_launches, player_id=pid,
         opp_weights=opp_weights,
+        terminal_prod_weight=_terminal_prod_value(),
     )                                                                            # [C]
     # Capture the base competitive score before additive terms so the
     # force-concentration rescore can re-derive the addon contribution per
@@ -1213,6 +1233,7 @@ def plan_lite_waves(
                 garrison_status, prod=prod, alive_by_step=alive_by_step,
                 player_count=int(player_count), launches=merged, player_id=pid,
                 opp_weights=opp_weights,
+                terminal_prod_weight=_terminal_prod_value(),
             )
             _new = new_base + _fc_addon_offset
             return torch.where(cand_valid, _new, torch.full_like(_new, float("-inf")))
@@ -1296,6 +1317,7 @@ def _score_do_nothing(
         status, prod=prod, alive_by_step=alive_by_step,
         player_count=int(player_count), launches=bg, player_id=int(player_id),
         opp_weights=opp_weights,
+        terminal_prod_weight=_terminal_prod_value(),
     )
     return score.flatten()[0]
 
