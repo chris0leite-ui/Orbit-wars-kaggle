@@ -82,5 +82,8 @@ Smoke (seed 7 vs producer): fleets 167→108, fleet p50 28→44, launch rate
   Wilson [0.514, 0.820]** — solid winner vs producer (champion's own
   mark: 24/32). The mass profile costs little against the dribble meta
   while gaining against the champion.
-- head-to-head extension seeds 16-31: pending.
+- head-to-head extension seeds 16-31: 17/32 — **combined head-to-head
+  35/64 (54.7%), Wilson ≈ [0.43, 0.66]**. At worst parity with the
+  champion, likely a small edge; 17 of 32 maps won at both seats, 1
+  split. Every previous mechanism lost to the champion baseline.
 - mass 4P (vs 3×producer, seeds 0-31): pending.
