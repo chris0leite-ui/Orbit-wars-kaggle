@@ -212,6 +212,20 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_OPENING_BONUS": "1",
         "PRODUCER_PLUS_OPENING_WEIGHT": "0.04",
     },
+    "ffa_score": {
+        # The proven multi_opp_def stack + the FFA objective fix: in 3+ player
+        # games the opponent term of competitive_score becomes a strength-
+        # weighted AVERAGE over rivals instead of an equal-weight SUM, so
+        # mutual-damage trades stop scoring positive and damage is valued by
+        # how much it shifts our standing vs the rivals that threaten us.
+        # 2P path is byte-identical by construction (weights only built when
+        # player_count >= 3). Motivated by the 2026-06-10 live-replay
+        # diagnosis: 4P = 60% of ladder games, our 4P winrate 29%, 82/83 4P
+        # losses end eliminated by 2+ opponents carving us mid-game.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+    },
     "opp_def_h24": {
         # The proven multi_opp_def stack with the scorer horizon lifted from
         # the default 18 to 24 ticks (the 5feabd8 knob, flagged "separate A/B

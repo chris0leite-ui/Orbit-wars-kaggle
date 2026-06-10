@@ -244,6 +244,49 @@ def _force_concentration_max_waves() -> int:
         return 2
 
 
+# --- FFA-aware competitive score (4P objective fix) -------------------------
+# Live-replay diagnosis (knowledge-base 2026-06-10): 82 of 83 4P losses end
+# with us ELIMINATED, carved by 2+ opponents mid-game, while the legacy score
+# (my delta minus the SUM of all opponents' deltas) scores mutual-damage
+# trades positive — it optimizes total damage dealt, which in a 4-player
+# free-for-all leaves both fighters weaker relative to the bystanders. The
+# fix weights each opponent's delta by their strength share (weights sum to
+# 1), so trades are valued by how much they shift my standing against the
+# rivals that actually threaten me. 2P is byte-identical: weights are only
+# built when player_count >= 3.
+def _ffa_score_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_FFA_SCORE", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _ffa_opp_weights(obs_tensors: dict, *, player_id: int, player_count: int):
+    """Per-opponent weights ∝ current total strength (planet + fleet ships).
+
+    Returns a ``[player_count]`` float tensor with 0 at ``player_id``,
+    summing to 1 over living opponents (all-zero if every opponent is dead).
+    """
+    planets = obs_tensors["planets"]            # [P, 7]: owner=col1, ships=col5
+    device = planets.device
+    a = int(player_count)
+    strength = torch.zeros(a, dtype=planets.dtype, device=device)
+    p_owner = planets[:, 1].long()
+    p_mask = (planets[:, 0] >= 0) & (p_owner >= 0) & (p_owner < a)
+    if bool(p_mask.any()):
+        strength.scatter_add_(0, p_owner[p_mask], planets[p_mask, 5])
+    fleets = obs_tensors.get("fleets")
+    if fleets is not None and fleets.numel():
+        f_owner = fleets[:, 1].long()           # [F, 7]: owner=col1, ships=col6
+        f_mask = (fleets[:, 0] >= 0) & (f_owner >= 0) & (f_owner < a)
+        if bool(f_mask.any()):
+            strength.scatter_add_(0, f_owner[f_mask], fleets[f_mask, 6])
+    strength[int(player_id)] = 0.0
+    total = float(strength.sum())
+    if total <= 0.0:
+        return torch.zeros(a, dtype=planets.dtype, device=device)
+    return strength / total
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, default))
@@ -348,6 +391,7 @@ def plan_lite_waves(
     K_eta_override: int | None = None,
     background: LaunchSet | None = None,
     force_concentration: bool | None = None,
+    opp_weights: Tensor | None = None,
 ):
     """Single-size, single-source attack planner + regroup.
 
@@ -897,6 +941,7 @@ def plan_lite_waves(
     score = score_candidates(
         garrison_status, prod=prod, alive_by_step=alive_by_step,
         player_count=int(player_count), launches=scoring_launches, player_id=pid,
+        opp_weights=opp_weights,
     )                                                                            # [C]
     # Capture the base competitive score before additive terms so the
     # force-concentration rescore can re-derive the addon contribution per
@@ -1015,6 +1060,7 @@ def plan_lite_waves(
             new_base = score_candidates(
                 garrison_status, prod=prod, alive_by_step=alive_by_step,
                 player_count=int(player_count), launches=merged, player_id=pid,
+                opp_weights=opp_weights,
             )
             _new = new_base + _fc_addon_offset
             return torch.where(cand_valid, _new, torch.full_like(_new, float("-inf")))
@@ -1061,6 +1107,7 @@ def _score_do_nothing(
     player_count: int,
     background: LaunchSet,
     player_id: int,
+    opp_weights: Tensor | None = None,
 ) -> Tensor:
     """Score of NOT launching anything while opp executes their projected
     plan. Returns a scalar tensor. Used to renormalize roi_threshold under
@@ -1082,6 +1129,7 @@ def _score_do_nothing(
     score = score_candidates(
         status, prod=prod, alive_by_step=alive_by_step,
         player_count=int(player_count), launches=bg, player_id=int(player_id),
+        opp_weights=opp_weights,
     )
     return score.flatten()[0]
 
@@ -1129,6 +1177,13 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
     # absolute threshold by do_nothing_score.
     background = None
     cfg = config
+    # FFA objective weights: only built for 3+ player games so the 2P path
+    # stays byte-identical (None -> legacy equal-weight opponent sum).
+    opp_w = None
+    if _ffa_score_enabled() and int(player_count) >= 3:
+        opp_w = _ffa_opp_weights(
+            obs_tensors, player_id=int(obs.player_id), player_count=int(player_count),
+        )
     if _opp_projection_enabled():
         opp_ids = [
             pid for pid in range(int(player_count)) if pid != int(obs.player_id)
@@ -1149,6 +1204,7 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
             status=status, prod=movement.planet_prod,
             alive_by_step=alive_by_step, player_count=int(player_count),
             background=background, player_id=int(obs.player_id),
+            opp_weights=opp_w,
         ))
         cfg = dataclasses.replace(
             config, roi_threshold=do_nothing_score + float(config.roi_threshold),
@@ -1160,6 +1216,7 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
         alive_by_step=alive_by_step, config=cfg, player_count=int(player_count),
         K_eta_override=K_eta_override,
         background=background,
+        opp_weights=opp_w,
     )
     entries = disambiguate_duplicate_launches(entries)
     launches = infer_planned_launches_from_entries(

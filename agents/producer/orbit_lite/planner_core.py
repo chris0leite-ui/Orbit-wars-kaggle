@@ -72,17 +72,31 @@ def make_launch_set(
     )
 
 
-def competitive_score(diff: GarrisonFlowDiff, *, player_id: int) -> Tensor:
-    """Competitive score: ``Δnet_me − Σ_opp Δnet_opp``.
+def competitive_score(
+    diff: GarrisonFlowDiff, *, player_id: int, opp_weights: Tensor | None = None,
+) -> Tensor:
+    """Competitive score: ``Δnet_me − Σ_opp w_opp · Δnet_opp``.
 
     ``diff.net_ship_delta`` is ``[*prefix, A]`` (per-player change in net ships
-    gained = produced − lost-to-combat); returns ``[*prefix]``. The opponent term
-    is the equal-weight sum over rivals, so a launch is worth my net gain minus
-    the opponents' net gain.
+    gained = produced − lost-to-combat); returns ``[*prefix]``.
+
+    Default (``opp_weights=None``): the opponent term is the equal-weight SUM
+    over rivals — correct zero-sum objective for 2P, but in FFA it values
+    total damage dealt, which rewards mutual-destruction trades that leave
+    both fighters weaker relative to the bystanders.
+
+    With ``opp_weights`` (``[A]`` float, 0 at ``player_id``, summing to 1
+    over opponents): the opponent term becomes a weighted AVERAGE, so damage
+    is valued by how much it shifts my standing against the rivals that
+    actually threaten me (weights ∝ rival strength), and an unprofitable
+    trade no longer scores positive just because the victim lost more.
     """
     net = diff.net_ship_delta                       # [*prefix, A]
     me = net[..., int(player_id)]
-    opp = net.sum(dim=-1) - me
+    if opp_weights is None:
+        opp = net.sum(dim=-1) - me
+    else:
+        opp = (net * opp_weights).sum(dim=-1)
     return me - opp
 
 
@@ -94,10 +108,12 @@ def score_candidates(
     player_count: int,
     launches: LaunchSet,
     player_id: int,
+    opp_weights: Tensor | None = None,
 ) -> Tensor:
     """Competitive score per candidate. ``[C]`` (or scalar if no candidate axis).
 
-    Uses the sparse exact flow projector.
+    Uses the sparse exact flow projector. ``opp_weights`` is forwarded to
+    :func:`competitive_score` (None = legacy equal-weight opponent sum).
     """
     diff = sparse_launch_flow_delta(
         status,
@@ -107,7 +123,7 @@ def score_candidates(
         launches=launches,
         player_id=int(player_id),
     )
-    return competitive_score(diff, player_id=int(player_id))
+    return competitive_score(diff, player_id=int(player_id), opp_weights=opp_weights)
 
 
 # ---------------------------------------------------------------------------
