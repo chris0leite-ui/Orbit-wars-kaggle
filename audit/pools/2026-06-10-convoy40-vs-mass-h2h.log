@@ -13,3 +13,23 @@
    seed=   5  seat=P1      WIN  steps=219  wall=431.8s
    seed=   6  seat=P0     LOSS  steps=142  wall=173.5s
    seed=   6  seat=P1     LOSS  steps=142  wall=180.3s
+   seed=   7  seat=P0     LOSS  steps=156  wall=348.5s
+   seed=   7  seat=P1     LOSS  steps=156  wall=328.6s
+   seed=   8  seat=P0      WIN  steps=145  wall=202.7s
+   seed=   8  seat=P1      WIN  steps=145  wall=200.2s
+   seed=   9  seat=P0     LOSS  steps=215  wall=351.0s
+   seed=   9  seat=P1     LOSS  steps=223  wall=348.6s
+   seed=  10  seat=P0      WIN  steps=169  wall=276.4s
+   seed=  10  seat=P1      WIN  steps=169  wall=274.6s
+   seed=  11  seat=P1    error  steps=224  wall=531.4s
+   seed=  11  seat=P0    error  steps=231  wall=539.1s
+   seed=  12  seat=P0     LOSS  steps=168  wall=302.2s
+   seed=  12  seat=P1     LOSS  steps=168  wall=300.4s
+   seed=  13  seat=P0      WIN  steps=117  wall=206.6s
+   seed=  13  seat=P1      WIN  steps=117  wall=212.4s
+   seed=  14  seat=P0     LOSS  steps=112  wall=167.8s
+   seed=  14  seat=P1     LOSS  steps=112  wall=163.0s
+   seed=  15  seat=P0      WIN  steps=187  wall=223.7s
+   seed=  15  seat=P1      WIN  steps=184  wall=219.4s
+
+   focal_wins=12/26 (46.2%)  errs/timeouts=6  Wilson[0.288, 0.645]  elapsed=4999s
