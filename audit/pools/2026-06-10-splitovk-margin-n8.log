@@ -3,3 +3,14 @@
    seed=  0 error: None reward (agent error/timeout in-game)
    seed=  1 seat=P0 loss steps=217 dec=155  L40= +0.0%  L80= +0.0%  L120= +1.1%  L250=-100.0%
    seed=  1 seat=P1 loss steps=217 dec=155  L40= -0.0%  L80= -0.0%  L120= +1.1%  L250=-100.0%
+   seed=  2 seat=P0 draw steps=500 dec=  0  L40= +0.0%  L80= +0.0%  L120= +0.0%  L250= +0.0%
+   seed=  2 seat=P1 draw steps=500 dec=  0  L40= -0.0%  L80= -0.0%  L120= -0.0%  L250= -0.0%
+   seed=  3 error: None reward (agent error/timeout in-game)
+   seed=  3 seat=P1  win steps=340 dec=125  L40= -0.0%  L80= -0.0%  L120= -0.5%  L250=+98.1%
+
+   focal_wins=1/5
+   lead@40 : mean= +0.0%  games-ahead=0/5  paired-mean= +0.0%  seeds-ahead=0/2
+   lead@80 : mean= +0.0%  games-ahead=0/5  paired-mean= +0.0%  seeds-ahead=0/2
+   lead@120: mean= +0.4%  games-ahead=2/5  paired-mean= +0.6%  seeds-ahead=1/2
+   lead@250: mean=-20.4%  games-ahead=1/5  paired-mean=-50.0%  seeds-ahead=0/2
+   decision step: p50=125  max=155  elapsed=2130s
