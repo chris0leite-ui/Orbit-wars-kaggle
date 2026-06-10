@@ -212,6 +212,18 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_OPENING_BONUS": "1",
         "PRODUCER_PLUS_OPENING_WEIGHT": "0.04",
     },
+    "opp_def_h24": {
+        # The proven multi_opp_def stack with the scorer horizon lifted from
+        # the default 18 to 24 ticks (the 5feabd8 knob, flagged "separate A/B
+        # once this variant lands" in the 2026-06-05 wrap and never run).
+        # Motivation: the cycle-stalemate diagnosis — the scorer undervalues
+        # holding/stockpiling because it can't see past H. Cost is linear in
+        # H (multi_opp_def p50 62 ms -> ~85 ms, far under the 1000 ms cap).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_HORIZON_2P": "24",
+        "PRODUCER_PLUS_HORIZON_4P": "24",
+    },
     "opp_def_force_concentration": {
         # The proven multi_opp_def stack (multi_size + opp_proj, local 24/32
         # = 75% vs producer, live mu 1263-1285) with force-concentration added
