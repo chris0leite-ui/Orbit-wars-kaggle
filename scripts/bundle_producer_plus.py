@@ -430,6 +430,23 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_TERMINAL_PROD_VALUE": "12",
         "PRODUCER_PLUS_RESPONSE_VETO": "1",
     },
+    "mass_termval12_recap": {
+        # Holdability-discounted expansion: terminal production value drives
+        # the front-loaded expansion the top ladder shows, and the recapture
+        # penalty discounts captures the opponent can take back — the
+        # missing "only keepable planets" filter (termval alone lost the
+        # n=8 margin triage at every lambda; the 1-ply response veto can't
+        # see the 10-20-turn-later punishment). Recapture penalty was
+        # rejected 2026-06-05 vs the DRIBBLE referee — re-judged here vs
+        # the mass incumbent.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MASS_TIEBREAK": "1",
+        "PRODUCER_PLUS_REGROUP_MIN_SEND": "25",
+        "PRODUCER_PLUS_OVERKILL_FACTOR": "2.0",
+        "PRODUCER_PLUS_TERMINAL_PROD_VALUE": "12",
+        "PRODUCER_PLUS_RECAPTURE_PENALTY": "1",
+    },
     "mass_termval6": {
         # Half-strength terminal production value on the mass stack — the
         # n=8 margin triage of the full master candidate regressed hard
