@@ -447,6 +447,16 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_TERMINAL_PROD_VALUE": "6",
         "PRODUCER_PLUS_TERMINAL_PROD_NEUTRAL_ONLY": "1",
     },
+    "veto_rf": {
+        # Veto + reactive floor (weight 0.5): enemy floors include half the
+        # garrison the defender can route to the target within our flight
+        # (minus a 2-turn reaction lag). Activates capture_floor's dormant
+        # reinforcement hook — the 700-wasted-ships channel vs SiestaGuru.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+    },
     "veto_upsize": {
         # "Beat the parry": veto + full-spare-budget retry of killed waves
         # (aim/eta recomputed for the bigger, faster fleet; the flow scorer

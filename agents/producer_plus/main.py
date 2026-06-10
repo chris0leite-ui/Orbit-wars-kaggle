@@ -681,6 +681,50 @@ def _apply_response_veto(
     )
 
 
+# --- Reactive floor -------------------------------------------------------------
+# capture_floor's `reinforcement` margin hook has been dormant (always None):
+# enemy floors assume the defender's garrison sits still while our fleet
+# flies. SiestaGuru loss anatomy (episode 79438024): 9 capture-sized strikes
+# failed — 700 ships — to defense routed in during our eta-7..8 flights,
+# which the 1-ply response veto cannot see either. This margin adds, per
+# target t and arrival turn k, the garrison the defender can ROUTE to t by
+# k: enemy planets q whose travel q->t fits within (k − reaction lag), at
+# the speed of their full garrison (big fleets fly faster). Weight scales
+# the margin (1.0 = assume full rerouting).
+
+
+def _reactive_floor_weight() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_REACTIVE_FLOOR", "0")
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _reactive_reinforcement_margin(
+    obs, cache, target_idx: Tensor, K: int, *, weight: float, lag: float = 2.0,
+):
+    """``[T, K]`` reroutable enemy support per target/arrival-turn, or None."""
+    enemy = obs.is_enemy & obs.alive
+    q_idx = enemy.nonzero(as_tuple=True)[0]
+    Q = int(q_idx.shape[0])
+    T = int(target_idx.shape[0])
+    if Q == 0 or T == 0 or K <= 0:
+        return None
+    dtype = obs.ships.dtype
+    g_q = obs.ships[q_idx].to(dtype).clamp(min=1.0)                  # [Q]
+    speed_q = fleet_speed(g_q)                                       # [Q]
+    d = cache.cross_dist[0][q_idx][:, target_idx.clamp(0, int(obs.P) - 1)]  # [Q, T]
+    eta_qt = d / speed_q.unsqueeze(-1)                               # [Q, T]
+    k_grid = torch.arange(1, K + 1, device=obs.device, dtype=dtype)  # [K]
+    reach = eta_qt.unsqueeze(-1) <= (k_grid.view(1, 1, K) - float(lag))
+    # The target's own garrison is already the defender — exclude q == t.
+    self_mask = q_idx.view(Q, 1) == target_idx.view(1, T)
+    reach = reach & ~self_mask.unsqueeze(-1)
+    support = (g_q.view(Q, 1, 1) * reach.to(dtype)).sum(dim=0)       # [T, K]
+    return float(weight) * support
+
+
 # --- 2P-only gate for the mass mechanisms ------------------------------------
 # Local evidence splits by player count: mass beats the champion head-to-head
 # in 2P (35/64) and holds vs producer (22/32), but costs first-place rate in
@@ -886,9 +930,16 @@ def plan_lite_waves(
     # Uniform reach cap = K_eta (= horizon).
     eta_cap = torch.full((T,), float(K_eta), dtype=dtype, device=device)          # [T]
 
+    _rf_w = _reactive_floor_weight()
+    _rf_margin = (
+        _reactive_reinforcement_margin(
+            obs, cache, target_idx, int(K_eta), weight=_rf_w,
+        ) if _rf_w > 0.0 else None
+    )
     floor = capture_floor(
         garrison_status, target_idx=target_idx, k_max=K_eta,
         capture_overhead=1.0, player_id=pid,
+        reinforcement=_rf_margin,
     )                                                                            # [T, K]
     if _reinforce_deficit_enabled():
         floor = _apply_reinforce_deficit_floor(
