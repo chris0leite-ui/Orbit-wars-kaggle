@@ -59,3 +59,16 @@ the Rule 46 smoke before any submit).
 6. vetorf_deficit vs veto_rf (attribution)
 
 Two-gate protocol: champion win AND positive attribution vs the live stack.
+
+## Result: survivor stacking (veto+rf+nq), measured 2026-06-10 ~22:30 UTC
+
+- vs champion: **6/8 wins, lead@80 +41.1% (ahead 8/8 games), @120 +54.7%**
+  — strongest champion leg of the night (rf alone: 6/8, +28.3% @80).
+- attribution vs veto_rf: **paired mean 0.0% at every checkpoint, 1 win /
+  2 losses / 2 exact-mirror draws** in 5 clean games (3 games hit in-game
+  timeouts — concurrent bundling/pytest during the leg, lesson re-learned:
+  NOTHING runs alongside a measurement leg, however small it looks).
+- Verdict: **fails gate 2 — not promoted.** The quota's early expansion
+  adds nothing the rf stack wasn't already converting; its champion-leg
+  dominance is another instance of why champion wins alone don't gate
+  (upsize precedent). Revisit only with a late-game conversion fix.
