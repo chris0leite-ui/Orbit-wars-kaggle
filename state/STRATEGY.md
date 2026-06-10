@@ -103,7 +103,13 @@ Measured on the 4P axis (3×producer pool, seeds 0–31, baseline 13/32):
   (no budget debit) → phantom aggression. Do not re-ship without the
   debit fix.
 - `reinforce_deficit` (defense candidate sizing: pre-flip floor =
-  post-flip survivor + 1 instead of 1): pending, see audit doc.
+  post-flip survivor + 1 instead of 1): **9/32, paired 5–1 AGAINST
+  baseline — mild genuine regression on this pool.** The full-drain
+  rescue it displaces buys speed (fleet speed rises with size) and
+  post-hold surplus. Do not ship standalone.
+
+Baseline 13/32 reproduced exactly by deterministic re-run; per-seed
+pool logs now archived under `audit/pools/`.
 
 ### TrueSkill warm-up — DO NOT panic at early μ
 

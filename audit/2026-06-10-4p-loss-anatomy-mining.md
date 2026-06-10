@@ -77,5 +77,17 @@ Mechanisms aimed at this window, in current priority order:
   variants, so the map/seat draw dominates this pool and the variants
   move few games. Per-seed log:
   `audit/pools/2026-06-10-reinforce-deficit-vs-3xproducer-n32.log`.
-  Baseline per-seed reconstruction (deterministic re-run) appended when
-  complete.
+- **Baseline per-seed reconstruction: 13/32 reproduced exactly**
+  (winning seeds 4, 5, 7, 13, 14, 15, 16, 19, 20, 24, 27, 30, 31; log
+  `audit/pools/2026-06-10-baseline-multi-opp-def-vs-3xproducer-n32.log`).
+  Paired verdicts:
+  - reinforce_deficit vs baseline: flipped 5 wins to losses (seeds 4, 7,
+    14, 15, 16), gained 1 (seed 12) → 6 discordant, 5–1 against. A
+    genuine mild regression on this pool, not draw noise. Right-sizing
+    defense keeps budget at the source, but the full-drain rescue it
+    displaces was evidently buying something (bigger fleet = faster
+    arrival + post-hold surplus garrison). Do not ship standalone; only
+    reconsider composed and re-measured.
+  - tick4p vs baseline: lost 7 (4, 5, 7, 14, 15, 19, 30), gained 4 (12,
+    17, 18, 21) → 11 discordant, 7–4 against. Mild negative, closer to
+    noise; the re-spend flaw stands as the modeling explanation.
