@@ -433,6 +433,134 @@ def _terminal_prod_value() -> float:
         return 0.0
 
 
+# --- Response veto -------------------------------------------------------------
+# The opp projection predicts the opponent's plan ASSUMING WE DO NOTHING, so
+# reactive defense to our own waves is invisible to the scorer. Live mining
+# (audit/2026-06-10-top-ladder-behavior.md): 30% of our capture-sized attacks
+# fail to flip, and 65% of those failures die to defense that arrived while
+# our fleet was in flight — ~321 ships/game thrown into parries a
+# producer-like opponent visibly prepares. One extra mirror pass with OUR
+# chosen waves as background yields each opponent's predicted REPLY; attack
+# waves whose flow score under that reply is worse than doing nothing (by
+# more than the margin) are dropped before dispatch.
+
+
+def _response_veto_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_RESPONSE_VETO", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _response_veto_margin(default: float) -> float:
+    """Veto margin; defaults to the planner's own roi threshold so the wave
+    must clear the SAME gain bar under the predicted reply that it cleared
+    without it. (A clean parry is a material-neutral trade — score exactly 0
+    — so a zero margin would never veto it.)"""
+    raw = os.environ.get("PRODUCER_PLUS_RESPONSE_VETO_MARGIN")
+    if raw is None or not raw.strip():
+        return float(default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _apply_response_veto(
+    entries,
+    *,
+    movement,
+    obs,
+    obs_tensors: dict,
+    cache,
+    garrison_status,
+    prod: Tensor,
+    alive_by_step: Tensor,
+    config,
+    player_count: int,
+    K_eta_override,
+    H: int,
+    opp_weights,
+):
+    """Drop attack waves the opponent's predicted reply kills. See gate note."""
+    pid = int(obs.player_id)
+    P = int(obs.P)
+    valid = entries.valid
+    if int(valid.sum().item()) == 0:
+        return entries
+    device = obs.device
+    dtype = obs.ships.dtype
+    tgt_safe = entries.target_slots.clamp(0, P - 1)
+    is_attack = valid & ~obs.owned[tgt_safe]
+    idx = is_attack.nonzero(as_tuple=True)[0]
+    C = int(idx.shape[0])
+    if C == 0:
+        return entries
+
+    sel = valid.nonzero(as_tuple=True)[0]
+    mine = LaunchSet(
+        source_slots=entries.source_slots[sel].to(torch.long),
+        target_slots=entries.target_slots[sel].to(torch.long),
+        ships=entries.ships[sel].to(dtype),
+        eta=entries.eta[sel].to(dtype),
+        owner=torch.full((int(sel.shape[0]),), pid, dtype=torch.long, device=device),
+        valid=torch.ones(int(sel.shape[0]), dtype=torch.bool, device=device),
+    )
+    opp_ids = [q for q in range(int(player_count)) if q != pid]
+    reply = predict_opp_launches_via_mirror(
+        plan_fn=plan_lite_waves,
+        obs_tensors=obs_tensors, movement=movement, cache=cache,
+        garrison_status=garrison_status, prod=prod, alive_by_step=alive_by_step,
+        opp_ids=opp_ids, config=config, player_count=int(player_count),
+        K_eta_override=K_eta_override,
+        pad_to=_env_int("PRODUCER_PLUS_OPP_MAX_L", MAX_L_OPP),
+        K=1, H=H,
+        base_background=mine,
+    )
+
+    # Score each attack wave alone under the predicted reply, against the
+    # do-nothing-under-reply baseline (same normalization as roi_threshold).
+    cand = make_launch_set(
+        source_slots=entries.source_slots[idx].view(C, 1),
+        target_slots=entries.target_slots[idx].view(C, 1),
+        ships=entries.ships[idx].view(C, 1).to(dtype),
+        eta=entries.eta[idx].view(C, 1).to(dtype),
+        valid=torch.ones(C, 1, dtype=torch.bool, device=device),
+        player_id=pid,
+    )
+
+    def _bg(t: Tensor) -> Tensor:
+        return t.unsqueeze(0).expand(C, -1)
+
+    merged = LaunchSet(
+        source_slots=torch.cat([cand.source_slots, _bg(reply.source_slots)], dim=-1),
+        target_slots=torch.cat([cand.target_slots, _bg(reply.target_slots)], dim=-1),
+        ships=torch.cat([cand.ships, _bg(reply.ships)], dim=-1),
+        eta=torch.cat([cand.eta, _bg(reply.eta)], dim=-1),
+        owner=torch.cat([cand.owner, _bg(reply.owner)], dim=-1),
+        valid=torch.cat([cand.valid, _bg(reply.valid)], dim=-1),
+    )
+    scores = score_candidates(
+        garrison_status, prod=prod, alive_by_step=alive_by_step,
+        player_count=int(player_count), launches=merged, player_id=pid,
+        opp_weights=opp_weights, terminal_prod_weight=_terminal_prod_value(),
+    )
+    dn = _score_do_nothing(
+        status=garrison_status, prod=prod, alive_by_step=alive_by_step,
+        player_count=int(player_count), background=reply, player_id=pid,
+        opp_weights=opp_weights,
+    )
+    keep = (scores - dn) >= _response_veto_margin(float(config.roi_threshold))
+    if bool(keep.all()):
+        return entries
+    new_valid = entries.valid.clone()
+    new_valid[idx[~keep]] = False
+    return LaunchEntries(
+        source_slots=entries.source_slots, target_slots=entries.target_slots,
+        ships=entries.ships, angle=entries.angle, eta=entries.eta,
+        valid=new_valid,
+    )
+
+
 # --- 2P-only gate for the mass mechanisms ------------------------------------
 # Local evidence splits by player count: mass beats the champion head-to-head
 # in 2P (35/64) and holds vs producer (22/32), but costs first-place rate in
@@ -1439,6 +1567,18 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
         background=background,
         opp_weights=opp_w,
     )
+    if _response_veto_enabled() and _opp_projection_enabled():
+        # Raw config (not the roi-shifted cfg): the reply mirror plans the
+        # opponent exactly like the original projection pass did, and the
+        # veto margin's do-nothing normalization is computed fresh here.
+        entries = _apply_response_veto(
+            entries,
+            movement=movement, obs=obs, obs_tensors=obs_tensors, cache=cache,
+            garrison_status=status, prod=movement.planet_prod,
+            alive_by_step=alive_by_step, config=config,
+            player_count=int(player_count), K_eta_override=K_eta_override,
+            H=H, opp_weights=opp_w,
+        )
     entries = disambiguate_duplicate_launches(entries)
     launches = infer_planned_launches_from_entries(
         obs_tensors=obs_tensors, movement=movement, entries=entries, player_id=int(obs.player_id),

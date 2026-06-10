@@ -76,13 +76,16 @@ def predict_opp_launches_via_mirror(
     pad_to: int = MAX_L_OPP,
     K: int = 1,
     H: int | None = None,
+    base_background: LaunchSet | None = None,
 ) -> LaunchSet:
     """For each opponent seat, run ``plan_fn`` (Producer's planner) with
     the seat swapped to their POV.
 
-    With ``K=1`` (default), passes ``background=None`` (one-step best
-    response, opp assumes we do nothing this turn). Byte-identical to the
-    original single-pass behaviour.
+    With ``K=1`` (default), passes ``background=base_background`` (default
+    None: one-step best response, opp assumes we do nothing this turn —
+    byte-identical to the original single-pass behaviour). Passing OUR OWN
+    chosen launches as ``base_background`` instead yields each opponent's
+    predicted REPLY to our plan (response projection, K=1 only).
 
     With ``K>1``, runs K successive projection rounds. Round k passes
     ``background=cumulative_bg`` (the union of all previously-projected
@@ -130,7 +133,7 @@ def predict_opp_launches_via_mirror(
                 config=config,
                 player_count=int(player_count),
                 K_eta_override=K_eta_override,
-                background=None,
+                background=base_background,
                 # Disable force-concentration in opp simulation: the rescore
                 # closure's per-wave score_candidates blows up when
                 # K_opp x num_opps inner planner calls each carry their own

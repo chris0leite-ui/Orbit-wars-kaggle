@@ -401,6 +401,20 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_OVERKILL_FACTOR_ENEMY": "4.0",
         "PRODUCER_PLUS_TERMINAL_PROD_VALUE": "12",
     },
+    "mass_veto": {
+        # Response veto on the live mass stack: one extra mirror pass with
+        # our chosen waves as background -> the opponent's predicted reply;
+        # attack waves that no longer clear the roi threshold under that
+        # reply are dropped. Motivated by live mining: 30% of capture-sized
+        # attacks fail, 65% of failures die to in-flight reinforcement
+        # (~321 ships/game thrown into anticipated parries).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MASS_TIEBREAK": "1",
+        "PRODUCER_PLUS_REGROUP_MIN_SEND": "25",
+        "PRODUCER_PLUS_OVERKILL_FACTOR": "2.0",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+    },
     "mass_termval6": {
         # Half-strength terminal production value on the mass stack — the
         # n=8 margin triage of the full master candidate regressed hard
