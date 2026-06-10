@@ -39,6 +39,11 @@ HORIZON = 90               # forecast depth in ticks
 HOLD_TICKS = 8             # captured planet must survive this long vs known fleets
 RACE_DISCOUNT = 0.35       # value multiplier when enemy can reach a neutral first
 TRAVEL_EPS = 0.012         # per-ship-per-tick tempo cost (tie-break toward near)
+PRESSURE_EPS = 0.03        # extra per-ship-per-tick cost scaled by military
+                           # pressure: in-flight ships cannot change course,
+                           # so committed capital is the army you lack when
+                           # the enemy's wave lands — long missions get
+                           # expensive exactly when the war is close
 GAMMA = 0.97               # forecast decay per tick of flight time: the
                            # no-new-launches ledger loses validity with depth
 TIME_BUDGET = 0.70         # seconds per turn before we stop adding missions
@@ -583,30 +588,44 @@ def _rollout_score(world, base_arrivals, extra_landings, K, flow_weight):
     reacted = set()
 
     def react_launch(side, tgt, need, now, deadline):
-        """Side launches `need` ships at tgt from its nearest able planet,
-        landing by `deadline` if possible. Returns True if launched."""
+        """Side launches `need` ships at tgt, landing by `deadline`, from
+        its nearest able planet — or split across the two nearest if no
+        single planet suffices. Returns True if (fully) launched."""
         tx, ty = pos[tgt][min(deadline, world.horizon)]
-        best = None
+        reach = []
         for j in range(n):
             if owner[j] != side or j == tgt:
                 continue
             avail = ships[j] - 1
-            if avail < need:
+            if avail < 1:
                 continue
             d = math.hypot(pos[j][now][0] - tx, pos[j][now][1] - ty) \
                 - world.pr[j] - world.pr[tgt]
-            eta = max(1, int(math.ceil(max(d, 0.0) / fleet_speed(need))))
+            eta = max(1, int(math.ceil(
+                max(d, 0.0) / fleet_speed(max(need, 2)))))
             if now + 1 + eta > deadline:
                 continue
-            if best is None or d < best[0]:
-                best = (d, j, eta)
-        if best is None:
+            reach.append((d, j, avail))
+        if not reach:
             return False
-        _, j, eta = best
-        ships[j] -= need
-        land = now + 1 + eta
+        reach.sort()
+        total = 0
+        used = []
+        for d, j, avail in reach[:2]:
+            take = min(avail, need - total)
+            if take > 0:
+                used.append((j, take))
+                total += take
+            if total >= need:
+                break
+        if total < need:
+            return False
+        land = now + 1 + max(1, int(math.ceil(max(reach[0][0], 0.0)
+                                              / fleet_speed(need))))
+        for j, take in used:
+            ships[j] -= take
         tgt_slot = sched.setdefault(land, {}).setdefault(tgt, {})
-        tgt_slot[side] = tgt_slot.get(side, 0) + need
+        tgt_slot[side] = tgt_slot.get(side, 0) + total
         return True
 
     for dt in range(1, K + 1):
@@ -841,6 +860,32 @@ def agent(obs, configuration=None):
             doomed[i] = True
 
     # ----- 3. offense: price all (source, target) captures off the ledger
+    # military pressure: enemy garrison mass deliverable into my zone within
+    # ~12 ticks, relative to my total garrison
+    my_total = sum(world.ships0[i] for i in mine) + 1
+    near_enemy = 0
+    for e in range(n):
+        o = world.owner0[e]
+        if o < 0 or o == me:
+            continue
+        se = world.ships0[e]
+        if se <= 0:
+            continue
+        v_e = fleet_speed(se)
+        for i in mine:
+            d = math.hypot(world.px[e] - world.px[i],
+                           world.py[e] - world.py[i]) - world.pr[e] - world.pr[i]
+            if d / v_e <= 12.0:
+                near_enemy += se
+                break
+    pressure = near_enemy / my_total
+    my_prod_total = sum(world.prod[i] for i in mine)
+    their_prod_total = sum(world.prod[i] for i in range(n)
+                           if world.owner0[i] >= 0 and world.owner0[i] != me)
+    if my_prod_total < 0.9 * their_prod_total:
+        pressure = 0.0      # production-behind: converting bank into
+                            # production is mandatory; no liquidity tax
+
     offense_start = len(moves)
     base_arrivals = {i: {dt: dict(slot)
                          for dt, slot in world.arrivals[i].items()}
@@ -921,7 +966,7 @@ def agent(obs, configuration=None):
             else:
                 value = deny_mult * world.prod[tgt] * flow
             value *= GAMMA ** arr_dt
-            value -= TRAVEL_EPS * n_need * arr_dt
+            value -= (TRAVEL_EPS + PRESSURE_EPS * pressure) * n_need * arr_dt
             return value
 
         def plan_attack(tgt):
@@ -973,31 +1018,49 @@ def agent(obs, configuration=None):
                                     [s for s, _, _ in group])
                         return None
                     continue      # try a bigger coalition
-                # allocate shares nearest-first, re-verify each at its size
-                plan = []
-                left = n_need
-                sched = []
-                for s, sp, _ in group:
-                    take = min(sp, left)
-                    if take <= 0:
-                        continue
-                    shot = world.verified_shot(s, tgt, take)
-                    if shot is None:
-                        plan = None
+                # allocate shares nearest-first and iterate to consistency:
+                # smaller shares fly slower, land later, face a regrown
+                # garrison — recompute the requirement at the actual
+                # arrival ticks and grow the demand until the joint walk
+                # confirms the capture (or the coalition can't afford it).
+                plan = None
+                sched = None
+                qo = qs = None
+                arr_dt = None
+                demand = n_need
+                for _ in range(3):
+                    trial = []
+                    left = demand
+                    tsched = []
+                    for s, sp, _ in group:
+                        take = min(sp, left)
+                        if take <= 0:
+                            continue
+                        shot = world.verified_shot(s, tgt, take)
+                        if shot is None:
+                            trial = None
+                            break
+                        angle, dt = shot
+                        trial.append((s, angle, take, dt))
+                        tsched.append((dt, me, take))
+                        left -= take
+                    if trial is None or left > 0:
                         break
-                    angle, dt = shot
-                    plan.append((s, angle, take, dt))
-                    sched.append((dt, me, take))
-                    left -= take
-                if plan is None or left > 0:
-                    continue
-                # exact joint walk: capture must happen; hold is priced
-                _, _, qo, qs = world._walk_planet(
-                    tgt, world.owner0[tgt], world.ships0[tgt], 0, None, 0,
-                    extra_list=sched)
-                arr_dt = max(dt for dt, _, _ in sched)
-                if qo[arr_dt] != me:
-                    continue          # capture itself fails (needs more)
+                    _, _, tqo, tqs = world._walk_planet(
+                        tgt, world.owner0[tgt], world.ships0[tgt], 0,
+                        None, 0, extra_list=tsched)
+                    t_arr = max(dt for dt, _, _ in tsched)
+                    if tqo[t_arr] == me:
+                        plan, sched, qo, qs, arr_dt = (
+                            trial, tsched, tqo, tqs, t_arr)
+                        break
+                    # capture failed: grow demand by the observed deficit
+                    demand += max(1, tqs[t_arr] + 1)
+                    if demand > total_spare:
+                        break
+                if plan is None:
+                    continue          # try a bigger coalition
+                n_need = demand
                 surplus = qs[arr_dt]
                 # flow limit from KNOWN fleets (ledger walk with my plan)
                 flow_known = None
@@ -1007,7 +1070,12 @@ def agent(obs, configuration=None):
                         break
                 value = price_target(tgt, arr_dt, n_need, neutral_killed,
                                      surplus, flow_known)
-                if value <= 0:
+                # the analytic response curve assumes the enemy's WHOLE
+                # army answers each target; their response budget is in
+                # fact shared across my simultaneous attacks. Admit
+                # slightly-negative plans — the rollout veto (which spends
+                # enemy garrisons exactly) makes the final call.
+                if value <= -0.15 * n_need:
                     continue          # a bigger coalition may hold longer
                 return (value, value / n_need, plan, None)
             return None
