@@ -378,6 +378,29 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_OVERKILL_FACTOR": "2.0",
         "PRODUCER_PLUS_TERMINAL_PROD_VALUE": "12",
     },
+    "mass_splitovk": {
+        # Class-split overkill from top-3 replay mining: ~1.3x garrison on
+        # neutrals (cheap front-loaded expansion), 4x on enemy planets
+        # (decisive strikes that survive the counter-punch; their median is
+        # 2.6-4.6x with 60-89-ship fleets vs our 40).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MASS_TIEBREAK": "1",
+        "PRODUCER_PLUS_REGROUP_MIN_SEND": "25",
+        "PRODUCER_PLUS_OVERKILL_FACTOR": "1.3",
+        "PRODUCER_PLUS_OVERKILL_FACTOR_ENEMY": "4.0",
+    },
+    "mass_termval12_splitovk": {
+        # The full master-agent candidate: mass + terminal production value
+        # (expansion fix) + class-split overkill (strike sizing fix).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MASS_TIEBREAK": "1",
+        "PRODUCER_PLUS_REGROUP_MIN_SEND": "25",
+        "PRODUCER_PLUS_OVERKILL_FACTOR": "1.3",
+        "PRODUCER_PLUS_OVERKILL_FACTOR_ENEMY": "4.0",
+        "PRODUCER_PLUS_TERMINAL_PROD_VALUE": "12",
+    },
     "mass_convoy40": {
         # Mass sweep: convoy threshold 40 instead of 25. Top-3 teams'
         # fleet p50 is 83 vs our ~44 after the first mass pivot — probes

@@ -133,3 +133,44 @@ taking an enemy planet counts double; holding a planet that would flip is
 valued symmetrically. Unit tests: `tests/test_terminal_prod_value.py` (6
 green, incl. exact synthetic diffs). Bundle variants: `termval12`
 (standalone), `mass_termval12` (composed with the mass mechanisms).
+
+## Decision-rule mining (added later on 2026-06-10, `scripts/mine_decision_rules.py`)
+
+Beyond static profiles: reconstructed every fleet's target (track each fleet
+id to its vanish step, snap last position to the nearest planet) and
+classified attack/defense events. 2P games only.
+
+| | us champ (78 games) | TonyK 1573 | Jake 1657 | Isaiah 2063 |
+|---|---|---|---|---|
+| neutral overkill p50 (size/garrison at launch) | 1.14 | 1.27 | 1.28 | 1.36 |
+| enemy overkill p50 | 3.15 | 2.77 | 2.60 | 4.56 |
+| enemy overkill p75 | 7.10 | 7.50 | 7.50 | 10.0 |
+| enemy fleet size p50 | 40 | 66 | 60 | 89 |
+| attack eta p50 | 7 | 4-5 | 4-5 | 4-6 |
+| enemy flip rate | 0.69 | 0.70 | 0.72 | 0.84 |
+| stick-given-flip (20 steps) | 0.71 | 0.64 | 0.71 | 0.69 |
+| neutral attacks before step 60 | 81% | 67% | 85% | 89% |
+| material decision step p50 / p90 | 54 / 95 | 53 / 74 | 30 / 62 | 36 / 48 |
+| held rate when reinforcing | 0.59 | 0.85 | 0.74 | 0.32* |
+
+*Isaiah's defense stats are against near-peer opponents (2000+ band).
+
+Takeaways:
+
+1. **The material verdict lands by step ~30-54 (p90 <= 95) in EVERY corpus**,
+   including ours. Median top games still run to 500 — wins come from
+   holding a material lead, not elimination. This unlocks margin-based fast
+   triage (`scripts/margin_ab.py`): ship-share lead at steps 40/80/120,
+   seat-paired per seed; n=8-16 games of continuous margin replaces n=32
+   binary wins for triage (NOT for the Rule 45 submit gate).
+2. **Overkill is class-dependent**: ~1.3x on neutrals (and expansion is
+   front-loaded: 67-89% of neutral grabs before step 60), 2.6-4.6x median /
+   7.5-10x p75 on enemy planets. Our ratios are roughly right but our
+   ABSOLUTE enemy strikes are small (fleet p50 40 vs 60-89) and launched
+   from too far (eta 7 vs 4-5) — and big fleets fly faster, compounding.
+   Mechanism: `PRODUCER_PLUS_OVERKILL_FACTOR_ENEMY` (class-split sizing
+   menu; default unset = single-knob path, scalar-multiply identical).
+3. **Our reinforcement under-delivers** (held 0.59 vs 0.74-0.85 at the top)
+   — consistent with the reinforce-deficit direction even though it nulled
+   on the producer pool; re-measure against the new incumbent + margin
+   harness before re-judging.

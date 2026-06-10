@@ -453,6 +453,39 @@ def _overkill_factor_for(player_count: int) -> float:
     return _overkill_factor() if _mass_active(player_count) else 1.0
 
 
+# --- Class-split overkill -----------------------------------------------------
+# Replay mining of the top-3 teams (mine_decision_rules.py, appended to
+# audit/2026-06-10-top-ladder-behavior.md): attack sizing is CLASS-dependent —
+# ~1.3x the garrison on neutral targets (cheap, front-loaded expansion) but
+# 2.6-4.6x at median (7.5-10x at p75) on enemy planets, with 60-89-ship
+# median fleets. A single overkill factor over-sizes neutral grabs and
+# under-sizes enemy strikes. Unset -> the single-knob path, bit-identical.
+
+
+def _overkill_factor_enemy() -> float | None:
+    raw = os.environ.get("PRODUCER_PLUS_OVERKILL_FACTOR_ENEMY")
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return max(1.0, float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def _overkill_for_targets(obs, target_idx: Tensor, player_count: int, dtype):
+    """Scalar (legacy) or per-target ``[T]`` overkill multiplier for sizes_lo."""
+    base = _overkill_factor_for(player_count)
+    enemy = _overkill_factor_enemy() if _mass_active(player_count) else None
+    if enemy is None:
+        return base
+    is_enemy_t = obs.is_enemy[target_idx.clamp(0, int(obs.P) - 1)]
+    return torch.where(
+        is_enemy_t,
+        torch.full_like(is_enemy_t, enemy, dtype=dtype),
+        torch.full_like(is_enemy_t, base, dtype=dtype),
+    )
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, default))
@@ -648,7 +681,7 @@ def plan_lite_waves(
         else:
             floor_at_arr_hi = torch.ones(S, T, dtype=dtype, device=device)
 
-        sizes_lo = torch.minimum((floor_at_arr_hi * _overkill_factor_for(player_count)).ceil().clamp(min=1.0), sizes_hi)
+        sizes_lo = torch.minimum((floor_at_arr_hi * _overkill_for_targets(obs, target_idx, player_count, dtype)).ceil().clamp(min=1.0), sizes_hi)
         sizes_mid = torch.minimum(2.0 * sizes_lo, sizes_hi)
         sizes_3 = torch.stack([sizes_lo, sizes_mid, sizes_hi], dim=-1)            # [S, T, N]
 
@@ -981,7 +1014,7 @@ def plan_lite_waves(
 
         # Floor at hi's eta gives the minimum to capture; cap by drain so a
         # single launch can never over-drain the source.
-        sizes_lo = torch.minimum((floor_at_arr_hi * _overkill_factor_for(player_count)).ceil().clamp(min=1.0), sizes_hi) # [S, T]
+        sizes_lo = torch.minimum((floor_at_arr_hi * _overkill_for_targets(obs, target_idx, player_count, dtype)).ceil().clamp(min=1.0), sizes_hi) # [S, T]
         sizes_mid = torch.minimum(2.0 * sizes_lo, sizes_hi)                       # [S, T]
         sizes_3 = torch.stack([sizes_lo, sizes_mid, sizes_hi], dim=-1)            # [S, T, N]
 

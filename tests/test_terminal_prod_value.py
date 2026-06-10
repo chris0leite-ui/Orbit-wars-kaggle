@@ -165,3 +165,36 @@ def test_enemy_capture_counts_double():
     base = competitive_score(diff, player_id=0)
     lifted = competitive_score(diff, player_id=0, terminal_prod_weight=10.0)
     assert torch.allclose(lifted - base, torch.tensor([40.0]))
+
+
+# ---------------------------------------------------------------------------
+# Class-split overkill (PRODUCER_PLUS_OVERKILL_FACTOR_ENEMY)
+# ---------------------------------------------------------------------------
+
+
+def test_split_overkill_default_scalar(monkeypatch, pp_main):
+    monkeypatch.delenv("PRODUCER_PLUS_OVERKILL_FACTOR_ENEMY", raising=False)
+    monkeypatch.setenv("PRODUCER_PLUS_OVERKILL_FACTOR", "2.0")
+    assert pp_main._overkill_factor_enemy() is None
+
+    class _Obs:
+        P = 3
+        is_enemy = torch.tensor([False, True, False])
+        ships = torch.tensor([1.0, 1.0, 1.0])
+
+    out = pp_main._overkill_for_targets(_Obs(), torch.tensor([0, 1, 2]), 2, torch.float32)
+    assert out == 2.0  # scalar legacy path
+
+
+def test_split_overkill_per_target(monkeypatch, pp_main):
+    monkeypatch.setenv("PRODUCER_PLUS_OVERKILL_FACTOR", "1.3")
+    monkeypatch.setenv("PRODUCER_PLUS_OVERKILL_FACTOR_ENEMY", "4.0")
+    monkeypatch.delenv("PRODUCER_PLUS_MASS_2P_ONLY", raising=False)
+
+    class _Obs:
+        P = 3
+        is_enemy = torch.tensor([False, True, False])  # neutral, enemy, own
+        ships = torch.tensor([1.0, 1.0, 1.0])
+
+    out = pp_main._overkill_for_targets(_Obs(), torch.tensor([0, 1, 2]), 2, torch.float32)
+    assert torch.allclose(out, torch.tensor([1.3, 4.0, 1.3]))

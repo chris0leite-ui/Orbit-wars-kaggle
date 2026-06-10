@@ -5,3 +5,11 @@
    seed=   1  seat=P1    error  steps=252  wall=505.0s
    seed=   2  seat=P1    error  steps=47  wall=210.1s
    seed=   2  seat=P0    error  steps=49  wall=217.3s
+   seed=   3  seat=P1     LOSS  steps=168  wall=382.0s
+   seed=   3  seat=P0     LOSS  steps=185  wall=417.3s
+   seed=   4  seat=P0      WIN  steps=161  wall=198.2s
+   seed=   4  seat=P1      WIN  steps=161  wall=195.0s
+   seed=   5  seat=P0      WIN  steps=219  wall=444.8s
+   seed=   5  seat=P1      WIN  steps=219  wall=431.8s
+   seed=   6  seat=P0     LOSS  steps=142  wall=173.5s
+   seed=   6  seat=P1     LOSS  steps=142  wall=180.3s
