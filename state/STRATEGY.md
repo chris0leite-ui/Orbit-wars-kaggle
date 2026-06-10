@@ -57,9 +57,35 @@ exactly on the rebuilt bundle 2026-06-09. Live settle 1263–1287
 
 The pattern across nine measured mechanisms: every addition to the
 proven multi_size + opp_projection stack regresses against vanilla
-producer. The engine is at a local optimum; the next lift likely needs a
-live-replay observation (what actually loses games on the ladder), not
-another scorer term.
+producer. The engine is at a local optimum w.r.t. the 2P vs-producer
+yardstick.
+
+### The 4P front (opened 2026-06-10 — live-replay diagnosis)
+
+The ladder plays 2P AND 4P; from 195 live episodes of our best sub
+(53384340): **4P is 60% of game volume, our 4P winrate 29% vs 63% in
+2P.** 82 of 83 4P losses end with us ELIMINATED (median step 120),
+carved by 2+ opponents. Winner profile across all 468 seats: same
+first-attack timing as losers but 3× the enemy captures and 3× the
+ships by mid-game — an extermination meta won by whoever wins the
+brawls, not by farming. **Any future 4P mechanism must be measured in
+4P** — the 2P A/B cannot see this axis at all.
+
+Tools for the 4P axis:
+- `scripts/clean_ffa.py` — subprocess-isolated 4P harness (focal + 3
+  background agents, rotating seat, first-place rate).
+- Namespaced bundles (`submissions/_ns_multi_opp_def.py`): replacing
+  the `PRODUCER_PLUS_` env prefix in a bundle copy gives disjoint gate
+  keys, so producer_plus bundles can share a process — enables
+  4P self-play pools and 2P head-to-head vs our own best.
+- First local 4P calibration: multi_opp_def first-place vs 3× vanilla
+  producer = 13/32 (random = 25%).
+
+First mechanism on this axis — `PRODUCER_PLUS_FFA_SCORE` (strength-
+weighted opponent term, kills the mutual-damage-trade bias): no lift vs
+the 3×producer pool (11/32 vs baseline 13/32, 12 paired outcomes
+flipped). Self-play-pool verdict pending; 2P byte-identical by
+construction.
 
 ### TrueSkill warm-up — DO NOT panic at early μ
 
