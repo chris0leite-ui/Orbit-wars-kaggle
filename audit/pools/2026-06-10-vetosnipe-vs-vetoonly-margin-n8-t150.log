@@ -1,1 +1,16 @@
 == margin_ab focal=producer_plus_veto_snipe_on.py  opp=_ns_veto_only.py  seeds=4 (×2 seats = 8 games)  workers=2 ==
+   seed=  0 seat=P1 draw steps=150 dec=  0  L40= -0.0%  L80= -0.0%  L120= -0.0%  L250= -0.0%
+   seed=  0 seat=P0 draw steps=150 dec=  0  L40= +0.0%  L80= +0.0%  L120= +0.0%  L250= +0.0%
+   seed=  1 seat=P0 draw steps=150 dec=  0  L40= +0.0%  L80= +0.0%  L120= +0.0%  L250= +0.0%
+   seed=  1 seat=P1 draw steps=150 dec=  0  L40= -0.0%  L80= -0.0%  L120= -0.0%  L250= -0.0%
+   seed=  2 seat=P0 loss steps=150 dec=  0  L40= +0.0%  L80= +0.0%  L120=-10.8%  L250=-22.8%
+   seed=  2 seat=P1  win steps=150 dec=  0  L40= -0.0%  L80= -0.0%  L120=+10.8%  L250=+22.8%
+   seed=  3 error: None reward (agent error/timeout in-game)
+   seed=  3 seat=P1 loss steps=150 dec= 78  L40= -0.0%  L80= -1.0%  L120=-23.4%  L250= -4.0%
+
+   focal_wins=1/7
+   lead@40 : mean= +0.0%  games-ahead=0/7  paired-mean= +0.0%  seeds-ahead=0/3
+   lead@80 : mean= -0.1%  games-ahead=0/7  paired-mean= +0.0%  seeds-ahead=0/3
+   lead@120: mean= -3.3%  games-ahead=1/7  paired-mean= +0.0%  seeds-ahead=0/3
+   lead@250: mean= -0.6%  games-ahead=1/7  paired-mean= +0.0%  seeds-ahead=0/3
+   decision step: p50=0  max=78  elapsed=1210s

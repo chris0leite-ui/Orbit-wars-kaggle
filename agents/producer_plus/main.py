@@ -736,6 +736,17 @@ def _reactive_floor_weight() -> float:
         return 0.0
 
 
+def _reactive_floor_for(player_count: int) -> float:
+    """Player-count gate (same pattern as the veto's): a composed bundle can
+    run the reactive floor in 2P while keeping 4P byte-identical."""
+    only2p = os.environ.get(
+        "PRODUCER_PLUS_REACTIVE_FLOOR_2P_ONLY", "0").strip().lower() in (
+        "1", "true", "yes", "on")
+    if only2p and int(player_count) != 2:
+        return 0.0
+    return _reactive_floor_weight()
+
+
 def _reactive_reinforcement_margin(
     obs, cache, target_idx: Tensor, K: int, *, weight: float, lag: float = 2.0,
 ):
@@ -971,7 +982,7 @@ def plan_lite_waves(
     # Uniform reach cap = K_eta (= horizon).
     eta_cap = torch.full((T,), float(K_eta), dtype=dtype, device=device)          # [T]
 
-    _rf_w = _reactive_floor_weight()
+    _rf_w = _reactive_floor_for(int(player_count))
     _rf_margin = (
         _reactive_reinforcement_margin(
             obs, cache, target_idx, int(K_eta), weight=_rf_w,

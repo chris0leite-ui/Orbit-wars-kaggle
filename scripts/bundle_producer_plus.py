@@ -457,6 +457,20 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_RESPONSE_VETO": "1",
         "PRODUCER_PLUS_NEUTRAL_SHORTLIST": "6",
     },
+    "vetorf2p_ffa": {
+        # SUBMISSION CANDIDATE (2026-06-10 night): live veto2p_ffa + the
+        # reactive floor (the only mechanism with positive attribution over
+        # plain veto: ahead 7/7 games @80, +21.5% paired @120). 2P-gated;
+        # 4P byte-identical to ffa_uniform / live sub 53542171.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO_2P_ONLY": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REACTIVE_FLOOR_2P_ONLY": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
+    },
     "veto_rf": {
         # Veto + reactive floor (weight 0.5): enemy floors include half the
         # garrison the defender can route to the target within our flight

@@ -1,0 +1,16 @@
+== margin_ab focal=producer_plus_veto_rf_on.py  opp=_ns_veto_only.py  seeds=4 (×2 seats = 8 games)  workers=2 ==
+   seed=  0 seat=P0 loss steps=150 dec=137  L40= +0.0%  L80= +1.2%  L120= -7.6%  L250= -2.5%
+   seed=  0 seat=P1 loss steps=150 dec= 90  L40= -0.0%  L80= +1.2%  L120= -4.4%  L250=-20.1%
+   seed=  1 seat=P0 loss steps=150 dec=101  L40= -5.6%  L80= +2.5%  L120=-10.6%  L250= -1.4%
+   seed=  1 seat=P1 loss steps=150 dec=101  L40= -5.6%  L80= +2.5%  L120=-10.6%  L250= -1.4%
+   seed=  2 seat=P0  win steps=125 dec= 54  L40= +0.0%  L80=+16.8%  L120=+88.5%  L250=+100.0%
+   seed=  2 seat=P1  win steps=136 dec= 54  L40= -0.0%  L80=+17.8%  L120=+73.8%  L250=+100.0%
+   seed=  3 error: None reward (agent error/timeout in-game)
+   seed=  3 seat=P1  win steps=150 dec= 80  L40= -0.0%  L80= +0.4%  L120=+26.5%  L250=+64.8%
+
+   focal_wins=3/7
+   lead@40 : mean= -1.6%  games-ahead=0/7  paired-mean= -1.9%  seeds-ahead=0/3
+   lead@80 : mean= +6.1%  games-ahead=7/7  paired-mean= +7.0%  seeds-ahead=3/3
+   lead@120: mean=+22.2%  games-ahead=3/7  paired-mean=+21.5%  seeds-ahead=1/3
+   lead@250: mean=+34.2%  games-ahead=3/7  paired-mean=+29.1%  seeds-ahead=1/3
+   decision step: p50=90  max=137  elapsed=1187s
