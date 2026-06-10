@@ -87,8 +87,10 @@ not good enough to steer buys; as a veto its bias differences out).
 | nearest sniper | 31/32 | 0.84 | smoke |
 | **v7_0 (production baseline)** | **28/32 (87.5%)** | **0.719** | balanced seats, n=32 |
 | **Producer (public; beats live champ 81%)** | **32/32 (100%)** | **0.893** | balanced seats, n=32 |
-| v4_planner | 7/8 triage | — | n=32 running at write time |
-| v3.5.1 | 8/8 triage | — | n=32 running at write time |
+| v4_planner | 29/32 (91%) | 0.758 | balanced seats, n=32 |
+| v3.5.1 | 27/32 (84%) | 0.682 | balanced seats, n=32 |
+| v7_0, FRESH seeds 100-115 | 14/16 (87.5%) | 0.640 | seeds never used in iteration |
+| Producer, FRESH seeds 100-115 | 16/16 (100%) | 0.806 | Producer total tonight: 48/48 |
 
 Timing: p50 13 ms, p95 46 ms, max 74 ms (budget 1000 ms). Self-play
 validation episode clean (500 steps). Forecast parity test green
@@ -98,8 +100,14 @@ a real comet-expiry off-by-one during development).
 
 ## Caveats / open risks
 
-- The 16-seed confirmation set contains the 6 iteration seeds (mild
-  optimism; the 10 fresh seeds went 100% though).
+- ~~Iteration-seed overlap~~ CLOSED: a fresh-seed sweep (seeds 100-115,
+  never used during iteration) reproduced the strength (v7_0 14/16,
+  Producer 16/16). No overfitting to the iteration seeds.
+- Live-ladder mix measured from our champion's replays: 47 two-player vs
+  22 four-player episodes (~32% are 4P). The engine's 4P reward is
+  BINARY (one winner +1, the other three -1, no placement credit), so 4P
+  is win-or-nothing; the ledger agent spot-checks at 1/4 wins vs three
+  strong family agents = the 25% parity baseline. Acceptable for v1.
 - 4-player posture is rough (1/3 in spot checks after the fix; FFA games
   end in elimination cascades). Unknown 2P/4P ladder mix.
 - Simultaneous-launch races on neutrals (both players launch the same

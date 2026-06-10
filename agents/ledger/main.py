@@ -889,8 +889,14 @@ def _agent_inner(obs, configuration=None):
                 break
     pressure = near_enemy / my_total
     my_prod_total = sum(world.prod[i] for i in mine)
-    their_prod_total = sum(world.prod[i] for i in range(n)
-                           if world.owner0[i] >= 0 and world.owner0[i] != me)
+    prod_by_owner = {}
+    for i in range(n):
+        o = world.owner0[i]
+        if o >= 0 and o != me:
+            prod_by_owner[o] = prod_by_owner.get(o, 0) + world.prod[i]
+    # reference = the strongest single opponent (in 2P this is THE
+    # opponent; in free-for-all ranking against the leader is what counts)
+    their_prod_total = max(prod_by_owner.values()) if prod_by_owner else 0
     if my_prod_total < 0.9 * their_prod_total:
         pressure = 0.0      # production-behind: converting bank into
                             # production is mandatory; no liquidity tax
