@@ -174,3 +174,22 @@ Takeaways:
    — consistent with the reinforce-deficit direction even though it nulled
    on the producer pool; re-measure against the new incumbent + margin
    harness before re-judging.
+
+## LIVE VERDICT (2026-06-10 ~15:30 UTC): the mass mechanisms are a 2P live regression
+
+PI observation: mass2p_ffa ~1100 at 6 h (a good agent passes 1200 in
+hours). Confirmed on the drift-free pair (differs only in 2P):
+mass2p_ffa 1112 @ 7 h vs ffa_uniform ~1203 @ 6.5 h; live 2P winrate 59%
+(20/34) vs 71% (20/28). The 4P halves are hash-identical; ffa_uniform's
+4P = 37% vs champion's historical 29% — the FFA objective fix looks like
+a genuine live improvement.
+
+Live 2P loss anatomy of the mass agent (34 games): wins out-expand
+8-vs-7 planets @40 and out-mass 38-vs-16; losses get OUT-EXPANDED 6-vs-7
+by faster launchers (rate 0.69, fleet 24), and our attack eta crept to 8
+(top ladder 4-5). The band is full of fast expanders, not dribblers.
+
+Lesson (third yardstick failure): local head-to-heads vs producer AND vs
+our own champion both said parity-or-better; the live band disagreed.
+The referee set must include a fast-expander proxy, and the champion
+(live-best 2P, 71%) is the incumbent to beat — NOT the mass agent.
