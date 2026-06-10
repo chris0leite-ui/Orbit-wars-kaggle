@@ -181,6 +181,37 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_RECAPTURE_PENALTY": "1",
         "PRODUCER_PLUS_FORCE_CONCENTRATION": "1",
     },
+    "denial_calibrated": {
+        # Denial bonus on the proven multi_opp_def base, with the weight set
+        # from the 2026-06-10 calibration probe (one full game, 141k candidate
+        # scores): median acted-on competitive_score = 48 ship units; denial
+        # bonus at weight 1.0 has median 354. Weight 0.01 puts the median
+        # bonus at ~3.5 ship units = ~7% of the acted-on median (the 5-15%
+        # nudge band from the 2026-06-05 lesson). The 0.1 default that
+        # regressed 0/4 put it at ~35 = ~74%.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_DENIAL_BONUS": "1",
+        "PRODUCER_PLUS_DENIAL_WEIGHT": "0.01",
+    },
+    "opening_calibrated": {
+        # Opening bonus on the proven multi_opp_def base; same probe: opening
+        # bonus at weight 1.0 has median 60 -> weight 0.04 ~= 2.4 ship units
+        # = ~5% of the acted-on median.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_OPENING_BONUS": "1",
+        "PRODUCER_PLUS_OPENING_WEIGHT": "0.04",
+    },
+    "strategic_calibrated": {
+        # Both calibrated bonuses on the multi_opp_def base.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_DENIAL_BONUS": "1",
+        "PRODUCER_PLUS_DENIAL_WEIGHT": "0.01",
+        "PRODUCER_PLUS_OPENING_BONUS": "1",
+        "PRODUCER_PLUS_OPENING_WEIGHT": "0.04",
+    },
     "opp_def_force_concentration": {
         # The proven multi_opp_def stack (multi_size + opp_proj, local 24/32
         # = 75% vs producer, live mu 1263-1285) with force-concentration added
