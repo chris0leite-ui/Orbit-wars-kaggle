@@ -415,6 +415,21 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_OVERKILL_FACTOR": "2.0",
         "PRODUCER_PLUS_RESPONSE_VETO": "1",
     },
+    "mass_termval12_veto": {
+        # The counterweight composite: terminal production value drives
+        # expansion (it measured NEGATIVE alone vs the mass incumbent —
+        # thin garrisons lose the step-20..50 brawl), and the response veto
+        # kills exactly the over-extensions the opponent's predicted reply
+        # punishes. Hypothesis: veto restores the brawl-window safety while
+        # keeping the expansion the top-ladder profile demands.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MASS_TIEBREAK": "1",
+        "PRODUCER_PLUS_REGROUP_MIN_SEND": "25",
+        "PRODUCER_PLUS_OVERKILL_FACTOR": "2.0",
+        "PRODUCER_PLUS_TERMINAL_PROD_VALUE": "12",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+    },
     "mass_termval6": {
         # Half-strength terminal production value on the mass stack — the
         # n=8 margin triage of the full master candidate regressed hard

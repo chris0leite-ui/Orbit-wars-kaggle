@@ -52,11 +52,20 @@ merged into it; main is 166 commits behind that track).
 
 ## Next action
 
-1. **Read settles after ~2026-06-11 09:00 UTC.** Three readings:
+1. **Read settles after ~2026-06-11 09:00 UTC — DRIFT-ADJUSTED (PI
+   instruction 2026-06-10).** The field strengthens ~100 μ / 3 days
+   (~30-35 μ/day; identical code settled 1282 on 06-04 but 1181 on
+   06-07), so absolute μ comparisons across days are biased AGAINST the
+   later submission. Three readings:
    (a) 4P objective fix: ffa_uniform (53527125) settle vs frozen
-   multi_opp_def 1214; (b) mass mechanisms: mass2p_ffa (53529884)
-   settle vs ffa_uniform settle — pure 2P signal; (c) absolute level vs
-   rank-100 ≈ 1261+ (field strengthens ~100 μ / 3 days).
+   multi_opp_def 1214 **minus ~30-65 μ of drift for the 1-2 day gap** —
+   i.e. ffa_uniform settling anywhere above ~1150-1180 is already
+   parity-or-better in relative terms;
+   (b) mass mechanisms: mass2p_ffa (53529884) settle vs ffa_uniform
+   settle — both submitted within 2 h of each other, so this pair is
+   drift-FREE and is the clean reading;
+   (c) absolute level vs the same-day rank-100 μ (re-query it; do not
+   reuse the 1261 snapshot).
 2. **If mass lifts:** push the mass axis further — the top agents are
    at fleet p50 83 vs our 44 after these changes: sweep
    REGROUP_MIN_SEND (40?), OVERKILL_FACTOR (3), and attack the second

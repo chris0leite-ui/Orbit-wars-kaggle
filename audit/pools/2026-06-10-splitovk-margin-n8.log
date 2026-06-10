@@ -1,1 +1,5 @@
 == margin_ab focal=producer_plus_mass_splitovk_on.py  opp=_ns_mass.py  seeds=4 (×2 seats = 8 games)  workers=2 ==
+   seed=  0 error: None reward (agent error/timeout in-game)
+   seed=  0 error: None reward (agent error/timeout in-game)
+   seed=  1 seat=P0 loss steps=217 dec=155  L40= +0.0%  L80= +0.0%  L120= +1.1%  L250=-100.0%
+   seed=  1 seat=P1 loss steps=217 dec=155  L40= -0.0%  L80= -0.0%  L120= +1.1%  L250=-100.0%
