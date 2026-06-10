@@ -31,7 +31,7 @@ from orbit_lite.movement_step import (
     infer_planned_launches_from_entries,
 )
 from orbit_lite.obs import parse_obs
-from orbit_lite.distance_cache import build_distance_cache
+from orbit_lite.distance_cache import build_distance_cache, min_distance_to_targets
 from orbit_lite.garrison_launch import LaunchSet
 from orbit_lite.opp_projection import predict_opp_launches_via_mirror, MAX_L_OPP
 from orbit_lite.recapture import recapture_penalty
@@ -681,6 +681,41 @@ def _apply_response_veto(
     )
 
 
+# --- Neutral shortlist quota -----------------------------------------------------
+# The offensive shortlist is the N nearest enemy-or-neutral planets with NO
+# class quota: once a frontline forms, the nearest non-owned planets are
+# mostly ENEMY planets and neutral expansion targets are crowded out of the
+# candidate set entirely (seed-7 probe: neutral candidate counts collapse
+# from 20-45 to 0-8 at first contact; SiestaGuru loss: zero neutral captures
+# for 40 steps). A visibility defect independent of valuation — the scorer
+# never sees the option. The quota appends the Q nearest neutral targets not
+# already shortlisted.
+
+
+def _neutral_shortlist_quota() -> int:
+    return max(0, _env_int("PRODUCER_PLUS_NEUTRAL_SHORTLIST", 0))
+
+
+def _append_neutral_quota(
+    target_idx: Tensor, target_exists: Tensor, *, obs, cache, source_mask,
+    K_eta: int, quota: int,
+):
+    """Append the nearest `quota` neutral targets missing from the shortlist."""
+    neutral_mask = obs.is_neutral & obs.alive
+    if not bool(neutral_mask.any()):
+        return target_idx, target_exists
+    proximity = min_distance_to_targets(cache, source_mask, neutral_mask, max_k=int(K_eta))
+    pref = torch.where(
+        neutral_mask, -proximity, torch.full_like(proximity, float("-inf")))
+    n_idx, n_exists = _candidate_indices(pref, neutral_mask, int(quota))
+    dup = (n_idx.view(-1, 1) == target_idx.view(1, -1)).any(dim=-1)
+    n_exists = n_exists & ~dup
+    return (
+        torch.cat([target_idx, n_idx], dim=0),
+        torch.cat([target_exists, n_exists], dim=0),
+    )
+
+
 # --- Reactive floor -------------------------------------------------------------
 # capture_floor's `reinforcement` margin hook has been dormant (always None):
 # enemy floors assume the defender's garrison sits still while our fleet
@@ -914,6 +949,12 @@ def plan_lite_waves(
         config=config, K_eta=K_eta, H=H, prod=prod, source_mask=source_mask,
         background=background,
     )
+    _nq = _neutral_shortlist_quota()
+    if _nq > 0:
+        target_idx, target_exists = _append_neutral_quota(
+            target_idx, target_exists, obs=obs, cache=cache,
+            source_mask=source_mask, K_eta=K_eta, quota=_nq,
+        )
     if not bool(target_exists.any()):
         return _empty_entries(device, dtype)
     S = int(source_idx.shape[0])

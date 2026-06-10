@@ -447,6 +447,16 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_TERMINAL_PROD_VALUE": "6",
         "PRODUCER_PLUS_TERMINAL_PROD_NEUTRAL_ONLY": "1",
     },
+    "veto_nq": {
+        # Veto + neutral shortlist quota (6): fixes the VISIBILITY half of
+        # the expansion stall — once a frontline forms, the proximity
+        # shortlist fills with enemy planets and neutrals are never even
+        # scored (SiestaGuru: zero neutral captures for 40 steps).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_NEUTRAL_SHORTLIST": "6",
+    },
     "veto_rf": {
         # Veto + reactive floor (weight 0.5): enemy floors include half the
         # garrison the defender can route to the target within our flight
