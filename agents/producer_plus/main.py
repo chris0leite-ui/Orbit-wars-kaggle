@@ -1556,7 +1556,99 @@ def plan_lite_waves(
             eta=regroup_entries.eta,
             valid=regroup_entries.valid & keep,
         )
+    if _snipe_hold_enabled():
+        reserved = _snipe_hold_reserved_sources(
+            obs=obs, garrison_status=garrison_status, background=background,
+            wave_entries=wave_entries, H=H, movement=movement,
+        )
+        if reserved is not None and int(regroup_entries.ships.shape[0]) > 0:
+            keep_r = ~reserved[regroup_entries.source_slots.clamp(0, P - 1)]
+            regroup_entries = LaunchEntries(
+                source_slots=regroup_entries.source_slots,
+                target_slots=regroup_entries.target_slots,
+                ships=regroup_entries.ships,
+                angle=regroup_entries.angle,
+                eta=regroup_entries.eta,
+                valid=regroup_entries.valid & keep_r,
+            )
     return concat_launch_entries([wave_entries, regroup_entries])
+
+
+# --- Snipe-hold (toll-sniping reservation) -------------------------------------
+# The planner is now-or-never: when the projection shows an opponent flipping
+# a planet at tick k_f, arriving at k_f+1 costs survivor+1 ships (a fraction
+# of the pre-flip garrison — "let them pay the toll"), but if our fleet would
+# arrive too early there is no way to WAIT, and the regroup lane drains the
+# idle ships away before the window opens. v1: detect flip events, find owned
+# sources that can afford the snipe from ships remaining after this turn's
+# waves and reach the target around k_f+1, and RESERVE them — their regroup
+# entries are filtered this turn. Re-planning fires the actual snipe when the
+# timing lines up (capture_floor at that arrival already reflects the thin
+# survivor). Design: kb/thoughts/2026-06-10-snipe-hold-design.md.
+
+
+def _snipe_hold_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_SNIPE_HOLD", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _snipe_hold_reserved_sources(
+    *, obs, garrison_status, background, wave_entries, H: int, movement,
+):
+    """Mask [P] of sources to hold home for a dated snipe, or None."""
+    P = int(obs.P)
+    pid = int(obs.player_id)
+    device = obs.device
+    dtype = obs.ships.dtype
+    traj = garrison_status.owner                       # [P, H+1]
+    init = traj[:, 0]
+    is_opp = (traj != pid) & (traj >= 0)
+    became_opp = is_opp & (init.unsqueeze(-1) != traj)
+    flips = became_opp & ~obs.owned.unsqueeze(-1)
+    flip_any = flips.any(dim=-1)
+    if not bool(flip_any.any()):
+        return None
+    # First flip tick per planet and the survivor garrison at that tick.
+    k_idx = torch.arange(traj.shape[-1], device=device).expand_as(flips)
+    k_f = torch.where(flips, k_idx, torch.full_like(k_idx, traj.shape[-1])).min(dim=-1).values
+    surv = garrison_status.ships.gather(
+        -1, k_f.clamp(0, traj.shape[-1] - 1).unsqueeze(-1)).squeeze(-1)
+    # Ships left at each source after this turn's committed waves.
+    committed = torch.zeros(P, dtype=dtype, device=device)
+    if int(wave_entries.ships.shape[0]) > 0:
+        v = wave_entries.valid
+        committed.scatter_add_(
+            0, wave_entries.source_slots[v].clamp(0, P - 1), wave_entries.ships[v].to(dtype))
+    remaining = (obs.ships.to(dtype) - committed).clamp(min=0.0)
+    reserved = torch.zeros(P, dtype=torch.bool, device=device)
+    flip_planets = flip_any.nonzero(as_tuple=True)[0]
+    src_planets = (obs.owned & obs.alive).nonzero(as_tuple=True)[0]
+    if int(src_planets.shape[0]) == 0:
+        return None
+    for fp in flip_planets.tolist():
+        kf = int(k_f[fp].item())
+        if kf <= 0 or kf >= H:
+            continue
+        cost = float(surv[fp].item()) + 2.0
+        for sp in src_planets.tolist():
+            if reserved[sp] or float(remaining[sp].item()) < cost:
+                continue
+            aim = intercept_angle(
+                movement,
+                torch.tensor([sp], device=device),
+                torch.tensor([fp], device=device),
+                torch.tensor([cost], dtype=dtype, device=device),
+            )
+            if not bool(aim["viable"][0]):
+                continue
+            eta_now = float(aim["eta"][0].item())
+            # Reserve only when we would arrive EARLY if we launched now —
+            # i.e. waiting is exactly what unlocks the cheap capture.
+            if eta_now < (kf + 1):
+                reserved[sp] = True
+                break
+    return reserved if bool(reserved.any()) else None
 
 
 def _score_do_nothing(

@@ -425,6 +425,15 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_SCORE": "1",
         "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
     },
+    "veto_snipe": {
+        # Veto + snipe-hold: drop parried attacks AND reserve idle ships
+        # that have a dated toll-snipe appointment (opponent flip at k_f ->
+        # arrive k_f+1 for survivor+1) instead of regrouping them away.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_SNIPE_HOLD": "1",
+    },
     "veto_upsize": {
         # "Beat the parry": veto + full-spare-budget retry of killed waves
         # (aim/eta recomputed for the bigger, faster fleet; the flow scorer
