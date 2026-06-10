@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
@@ -26,6 +27,11 @@ PRODUCER_DIR = os.path.join(REPO_ROOT, "agents", "producer")
 for p in (PRODUCER_DIR, PRODUCER_PLUS_DIR):
     if p not in sys.path:
         sys.path.insert(0, p)
+
+
+@dataclass(frozen=True)
+class _Cfg:
+    roi_threshold: float = 1.5
 
 
 @pytest.fixture(scope="module")
@@ -120,7 +126,7 @@ def _run_veto(pp_main, monkeypatch, attack_ships, reply_ships, margin=None):
         entries,
         movement=None, obs=obs, obs_tensors={}, cache=None,
         garrison_status=status, prod=prod, alive_by_step=alive_by_step,
-        config=SimpleNamespace(roi_threshold=1.5), player_count=2,
+        config=_Cfg(), player_count=2,
         K_eta_override=None, H=H, opp_weights=None,
     )
     return out
@@ -162,7 +168,7 @@ def test_own_target_transfers_untouched(monkeypatch, pp_main):
         entries,
         movement=None, obs=obs, obs_tensors={}, cache=None,
         garrison_status=status, prod=prod, alive_by_step=alive_by_step,
-        config=SimpleNamespace(roi_threshold=1.5), player_count=2,
+        config=_Cfg(), player_count=2,
         K_eta_override=None, H=H, opp_weights=None,
     )
     assert out.valid.tolist() == [True]

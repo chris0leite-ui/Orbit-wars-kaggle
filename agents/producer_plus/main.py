@@ -506,16 +506,45 @@ def _apply_response_veto(
         valid=torch.ones(int(sel.shape[0]), dtype=torch.bool, device=device),
     )
     opp_ids = [q for q in range(int(player_count)) if q != pid]
-    reply = predict_opp_launches_via_mirror(
-        plan_fn=plan_lite_waves,
-        obs_tensors=obs_tensors, movement=movement, cache=cache,
-        garrison_status=garrison_status, prod=prod, alive_by_step=alive_by_step,
-        opp_ids=opp_ids, config=config, player_count=int(player_count),
-        K_eta_override=K_eta_override,
-        pad_to=_env_int("PRODUCER_PLUS_OPP_MAX_L", MAX_L_OPP),
-        K=1, H=H,
-        base_background=mine,
-    )
+    # Mirror each opponent seat separately WITH the roi normalization their
+    # planner needs: with our waves as background, every opp candidate's
+    # flow diff inherits our attacks' damage as a large negative constant,
+    # so against the absolute 1.5 threshold the simulated opponent is
+    # paralyzed and "replies" with nothing (seed-0 instrumented game: 15
+    # predicted reply launches across 107 turns, 0 vetoes). Shift the
+    # threshold by THEIR do-nothing score, exactly as run_turn does for us.
+    reply_parts = []
+    pad = _env_int("PRODUCER_PLUS_OPP_MAX_L", MAX_L_OPP)
+    for opp_id in opp_ids:
+        dn_opp = float(_score_do_nothing(
+            status=garrison_status, prod=prod, alive_by_step=alive_by_step,
+            player_count=int(player_count), background=mine,
+            player_id=int(opp_id), opp_weights=None,
+        ))
+        cfg_opp = dataclasses.replace(
+            config, roi_threshold=dn_opp + float(config.roi_threshold),
+        )
+        reply_parts.append(predict_opp_launches_via_mirror(
+            plan_fn=plan_lite_waves,
+            obs_tensors=obs_tensors, movement=movement, cache=cache,
+            garrison_status=garrison_status, prod=prod, alive_by_step=alive_by_step,
+            opp_ids=[int(opp_id)], config=cfg_opp, player_count=int(player_count),
+            K_eta_override=K_eta_override,
+            pad_to=pad,
+            K=1, H=H,
+            base_background=mine,
+        ))
+    if len(reply_parts) == 1:
+        reply = reply_parts[0]
+    else:
+        reply = LaunchSet(
+            source_slots=torch.cat([r.source_slots for r in reply_parts]),
+            target_slots=torch.cat([r.target_slots for r in reply_parts]),
+            ships=torch.cat([r.ships for r in reply_parts]),
+            eta=torch.cat([r.eta for r in reply_parts]),
+            owner=torch.cat([r.owner for r in reply_parts]),
+            valid=torch.cat([r.valid for r in reply_parts]),
+        )
 
     # Score each attack wave alone under the predicted reply, against the
     # do-nothing-under-reply baseline (same normalization as roi_threshold).
