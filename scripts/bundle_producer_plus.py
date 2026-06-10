@@ -303,6 +303,46 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_OPP_PROJECTION": "1",
         "PRODUCER_PLUS_REINFORCE_DEFICIT": "1",
     },
+    "overkill2": {
+        # Mass-concentration attack sizing on the proven multi_opp_def
+        # stack: the lo/mid multi-size variants are sized at 2x/4x the
+        # projected defense (capped by safe_drain) instead of the bare
+        # capture floor. Motivated by top-ladder behavioral mining
+        # (audit/2026-06-10-top-ladder-behavior.md): 1600-1750 agents
+        # launch ~half as often with 2-4x the fleet mass; in our own 2P
+        # losses the opponent's median fleet is ~2x ours. Decisive
+        # captures survive the counter-attack past the scorer horizon;
+        # marginal ones churn.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_OVERKILL_FACTOR": "2.0",
+    },
+    "overkill3": {
+        # Same with factor 3 — brackets the mass knob.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_OVERKILL_FACTOR": "3.0",
+    },
+    "mass": {
+        # Mass-concentration composite on the proven multi_opp_def stack,
+        # from the top-ladder behavioral mining (the 1600-1750 agents
+        # launch ~half as often with 2-4x the fleet mass; our 2P losses
+        # correlate with big-fleet opponents): score near-ties resolve
+        # toward the larger send, the regroup lane convoys (>= 25 ships)
+        # instead of dribbling 10-30-ship parcels, and lo/mid attack
+        # variants are sized at 2x/4x the projected defense.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_MASS_TIEBREAK": "1",
+        "PRODUCER_PLUS_REGROUP_MIN_SEND": "25",
+        "PRODUCER_PLUS_OVERKILL_FACTOR": "2.0",
+    },
+    "convoy_only": {
+        # Regroup convoying alone (attribution variant).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_REGROUP_MIN_SEND": "25",
+    },
     "ffa_uniform_tick4p": {
         # Composition of the two 4P mechanisms: FFA uniform objective +
         # 4P-only multi-tick. Build/measure only if tick4p standalone

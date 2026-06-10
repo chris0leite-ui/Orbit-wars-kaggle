@@ -23,6 +23,7 @@ from orbit_lite.geometry import fleet_speed
 from orbit_lite.intercept_aim import intercept_angle
 from orbit_lite.movement import MovementConfig, PlanetMovement
 from orbit_lite.movement_step import (
+    LaunchEntries,
     apply_private_planned_launches,
     concat_launch_entries,
     disambiguate_duplicate_launches,
@@ -362,6 +363,57 @@ def _apply_reinforce_deficit_floor(
     )
 
 
+# --- Overkill factor (mass-concentration attack sizing) ---------------------
+# Top-ladder behavioral mining (audit/2026-06-10-top-ladder-behavior.md):
+# the 1600-1750 agents launch ~half as often as we do with 2-4x the fleet
+# mass (median 36-83 ships vs our 21), expand faster, and hold 2-4x our ship
+# count by step 80. In our own 2P losses the opponent's median fleet is 30+
+# vs 16 in our wins. The engine's multi-size lo/mid variants are sized at the
+# bare capture floor — the minimal send that flips the planet — which wins
+# the combat but leaves a 1-ship garrison the opponent retakes past the
+# scorer horizon. OVERKILL_FACTOR scales the SIZING of the lo variant
+# (floor*F, capped by safe_drain) so enumerated attacks are decisive instead
+# of marginal. The floor VALIDITY gate is unchanged (a drain-sized send that
+# clears the true floor stays valid), and 1.0 is byte-identical.
+def _overkill_factor() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_OVERKILL_FACTOR", "1.0")
+    try:
+        return max(1.0, float(raw))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+# --- Mass tie-break ----------------------------------------------------------
+# The exact flow scorer values a minimal capture and an overwhelming capture
+# of the same target almost identically (both flip the planet within H; the
+# surplus ships survive either way), and _stable_argmax then resolves the tie
+# toward the LOWEST index — which is the smallest size variant. Retention
+# beyond the horizon favors the larger send (the surplus garrisons the
+# capture against the counter the scorer can't see). Add an epsilon-scale
+# size preference (1e-4 score per ship sent) so near-ties resolve toward
+# mass without distorting genuinely different scores. Default OFF.
+def _mass_tiebreak_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_MASS_TIEBREAK", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+# --- Regroup convoying -------------------------------------------------------
+# 71% of the champion's launches are own-planet transfers at median 18 ships
+# (the regroup lane fires near-continuously), while top-ladder agents move
+# mass in large convoys (their overall fleet median is 36-83 vs our 21).
+# Small parcels are also strictly SLOWER (fleet speed rises with ship
+# count). With a positive threshold, regroup entries below it are dropped —
+# ships stay garrisoned and accumulate until a convoy-sized transfer fires.
+# 0 = OFF, byte-identical.
+def _regroup_min_send() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_REGROUP_MIN_SEND", "0")
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, default))
@@ -557,7 +609,7 @@ def plan_lite_waves(
         else:
             floor_at_arr_hi = torch.ones(S, T, dtype=dtype, device=device)
 
-        sizes_lo = torch.minimum(floor_at_arr_hi.ceil().clamp(min=1.0), sizes_hi)
+        sizes_lo = torch.minimum((floor_at_arr_hi * _overkill_factor()).ceil().clamp(min=1.0), sizes_hi)
         sizes_mid = torch.minimum(2.0 * sizes_lo, sizes_hi)
         sizes_3 = torch.stack([sizes_lo, sizes_mid, sizes_hi], dim=-1)            # [S, T, N]
 
@@ -890,7 +942,7 @@ def plan_lite_waves(
 
         # Floor at hi's eta gives the minimum to capture; cap by drain so a
         # single launch can never over-drain the source.
-        sizes_lo = torch.minimum(floor_at_arr_hi.ceil().clamp(min=1.0), sizes_hi) # [S, T]
+        sizes_lo = torch.minimum((floor_at_arr_hi * _overkill_factor()).ceil().clamp(min=1.0), sizes_hi) # [S, T]
         sizes_mid = torch.minimum(2.0 * sizes_lo, sizes_hi)                       # [S, T]
         sizes_3 = torch.stack([sizes_lo, sizes_mid, sizes_hi], dim=-1)            # [S, T, N]
 
@@ -1146,6 +1198,9 @@ def plan_lite_waves(
             return torch.where(cand_valid, _new, torch.full_like(_new, float("-inf")))
 
         _fc_rescore_fn = _fc_rescore
+    if _mass_tiebreak_enabled():
+        total_send = (cand_send * cand_active.to(cand_send.dtype)).sum(dim=-1)  # [C]
+        score = score + 1e-4 * total_send
     score = torch.where(cand_valid, score, torch.full_like(score, float("-inf")))
 
     # Cross-wave over-drain guard for multi-size: single-size's accidental
@@ -1176,6 +1231,17 @@ def plan_lite_waves(
         leftover=leftover, original_ships=obs.ships.to(dtype), pressure=enemy_mass,
         config=config, H=H,
     )
+    _convoy_min = _regroup_min_send()
+    if _convoy_min > 0.0 and int(regroup_entries.ships.shape[0]) > 0:
+        keep = regroup_entries.ships >= _convoy_min
+        regroup_entries = LaunchEntries(
+            source_slots=regroup_entries.source_slots,
+            target_slots=regroup_entries.target_slots,
+            ships=regroup_entries.ships,
+            angle=regroup_entries.angle,
+            eta=regroup_entries.eta,
+            valid=regroup_entries.valid & keep,
+        )
     return concat_launch_entries([wave_entries, regroup_entries])
 
 
