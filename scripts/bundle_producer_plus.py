@@ -411,6 +411,20 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_OPP_PROJECTION": "1",
         "PRODUCER_PLUS_RESPONSE_VETO": "1",
     },
+    "veto2p_ffa": {
+        # SUBMISSION CANDIDATE (2026-06-10 evening): champion 2P + response
+        # veto, 4P byte-identical to ffa_uniform (sub 53527125 — the live
+        # 4P improvement: 37% vs champion's 29%). Replaces the mass2p_ffa
+        # 2P half (confirmed live regression, 59% vs 71%). The veto stops
+        # attacks into anticipated parries (30% of capture-sized attacks
+        # failed, 65% to in-flight reinforcement, ~321 ships/game).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO_2P_ONLY": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
+    },
     "mass_veto": {
         # Response veto on the live mass stack: one extra mirror pass with
         # our chosen waves as background -> the opponent's predicted reply;

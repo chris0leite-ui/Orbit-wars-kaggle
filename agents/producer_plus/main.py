@@ -451,6 +451,20 @@ def _response_veto_enabled() -> bool:
     )
 
 
+def _response_veto_2p_only() -> bool:
+    """Player-count gate so a composed bundle can run the veto in 2P while
+    keeping the 4P action stream byte-identical to a measured 4P bundle."""
+    return os.environ.get("PRODUCER_PLUS_RESPONSE_VETO_2P_ONLY", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _response_veto_active(player_count: int) -> bool:
+    return _response_veto_enabled() and (
+        (not _response_veto_2p_only()) or int(player_count) == 2
+    )
+
+
 def _response_veto_margin(default: float) -> float:
     """Veto margin; defaults to the planner's own roi threshold so the wave
     must clear the SAME gain bar under the predicted reply that it cleared
@@ -1596,7 +1610,7 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
         background=background,
         opp_weights=opp_w,
     )
-    if _response_veto_enabled() and _opp_projection_enabled():
+    if _response_veto_active(int(player_count)) and _opp_projection_enabled():
         # Raw config (not the roi-shifted cfg): the reply mirror plans the
         # opponent exactly like the original projection pass did, and the
         # veto margin's do-nothing normalization is computed fresh here.

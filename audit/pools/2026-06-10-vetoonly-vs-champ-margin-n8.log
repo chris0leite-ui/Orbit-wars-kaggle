@@ -1,1 +1,8 @@
 == margin_ab focal=producer_plus_veto_only_on.py  opp=_ns_multi_opp_def.py  seeds=4 (×2 seats = 8 games)  workers=2 ==
+   seed=  0 seat=P1  win steps=179 dec= 74  L40= -0.0%  L80= +3.1%  L120=+17.1%  L250=+100.0%
+   seed=  0 error: None reward (agent error/timeout in-game)
+   seed=  1 seat=P0  win steps= 78 dec=  0  L40=+17.9%  L80=+100.0%  L120=+100.0%  L250=+100.0%
+   seed=  1 seat=P1  win steps= 78 dec=  0  L40=+17.9%  L80=+100.0%  L120=+100.0%  L250=+100.0%
+   seed=  2 seat=P0  win steps=136 dec= 50  L40= +0.9%  L80= +1.6%  L120=+54.3%  L250=+100.0%
+   seed=  2 seat=P1  win steps=135 dec= 50  L40= +0.9%  L80= +1.6%  L120=+54.3%  L250=+100.0%
+   seed=  3 error: None reward (agent error/timeout in-game)
