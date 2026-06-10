@@ -92,6 +92,45 @@ Two ship-accounting theorems derived and used (worth remembering):
   its competitive score; only fundability gates its captures. Don't build garrison
   deterrence either.
 
+## Continuation 2 (same session) — the decisive reality check: vs the CHAMPION
+
+I had measured the rebuild against the Producer / v7 / simple agents all session but NEVER
+against `champ_refine_adaptivek` — the live submission it would have to replace. That was the
+gating omission. Measured (16 seeds, both seats):
+
+- **flowdiff+tail vs champion: 2/16 (12.5%)**
+- **full composite (flowdiff+tail+reaction+adaptive, the best-vs-Producer config) vs champion:
+  1/16 (6.2%)** — WORSE.
+
+The track is not a competition vehicle. The clean-economics rebuild made protoflow beat its
+analytic ancestors and gain vs v7 (5–6/16), but it loses ~7/8 to the agent we already submit.
+
+**Why (decision-trace diagnosis, seeds 2 & 6):** through ~turn 30 we keep pace; then the
+champion's ship total diverges 4–9× (t38: 91 vs 427; t80: 84 vs 778) and its planet count
+climbs 4→16 while ours plateaus at ~5. We are not banking and not expanding — we churn ships
+among a fixed ~5 planets in def/regroup shuffles and failed enemy assaults (capture rate 0.33
+with reaction OFF). The champion out-EXPANDS and out-COMPOUNDS in the midgame. **The gap is the
+agent's candidate-generation / expansion / execution machinery, not the per-capture value
+function I spent the session refining.**
+
+**The config tension (generalizable):** the reaction-conservatism that RAISED capture rate and
+helped vs the punishing Producer (0.42→0.87) actively HURTS vs an expanding opponent (champion
+2/16 → 1/16): refusing contested captures cedes expansion to an opponent that never stops taking
+planets. No single static config dominates both styles; the adaptive term converges too slowly
+and over-conserves vs the champion. The one composite WIN (seed 11) was a high-activity game
+(idle 0.27, 28 end-planets) — when we don't go conservative we can win big, but the bar usually
+suppresses that.
+
+**Conclusion.** The flowdiff evaluator work is validated as a modeling-correctness exercise and
+banked real INSIGHTS (single-currency attrition pricing; adaptive, measured opponent-reaction —
+genuinely novel). But protoflow is a research probe far below the champion, and the residual gap
+is architectural, not evaluative. Tuning the evaluator further — or building the
+sequential-commit assembler — cannot close a 7/8 gap to our own champion. Recommended fork (PI):
+(a) bank the insights, stop the protoflow evaluator track, return to champion-direct
+observation-driven iteration per the stated working mode; or (b) scope whether the adaptive
+opponent-reaction idea could port into the champion. More protoflow machinery is the low-value
+path.
+
 ## Process notes
 
 - Single-game iteration with decision-level instruments was the right speed: five
