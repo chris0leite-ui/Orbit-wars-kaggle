@@ -401,6 +401,16 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_OVERKILL_FACTOR_ENEMY": "4.0",
         "PRODUCER_PLUS_TERMINAL_PROD_VALUE": "12",
     },
+    "veto_only": {
+        # Champion stack + response veto, NO mass knobs. The mass knobs are
+        # a confirmed LIVE 2P regression (59% vs champion code's 71% on the
+        # drift-free pair, 2026-06-10); the veto addresses a defect the
+        # champion also has (attacks into anticipated parries: 30% of
+        # capture-sized attacks fail, 65% to in-flight reinforcement).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+    },
     "mass_veto": {
         # Response veto on the live mass stack: one extra mirror pass with
         # our chosen waves as background -> the opponent's predicted reply;
