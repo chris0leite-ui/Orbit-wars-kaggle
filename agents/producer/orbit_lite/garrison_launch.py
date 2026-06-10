@@ -321,6 +321,7 @@ def sparse_launch_flow_delta(
     player_count: int,
     launches: LaunchSet,
     player_id: int = 0,
+    terminal_neutral_only: bool = False,
 ) -> GarrisonFlowDiff:
     """Sparse equivalent of ``diff_garrison_flow(status, apply_launches_exact(...))``.
 
@@ -437,6 +438,12 @@ def sparse_launch_flow_delta(
             (fin_hyp.unsqueeze(-1) == a_oh).to(fdtype)
             - (fin_base.unsqueeze(-1) == a_oh).to(fdtype)
         )                                                               # [N, A]
+        if terminal_neutral_only:
+            # Credit only planets that are NEUTRAL in the do-nothing world at
+            # the horizon: encourages expansion without inflating enemy
+            # strikes (an enemy capture counts double in the competitive
+            # term, which over-drove aggression when credited).
+            d_term = d_term * (fin_base < 0).to(fdtype).unsqueeze(-1)
         terminal_prod_delta.index_put_((c_aff,), d_term, accumulate=True)
 
     produced_current = base_prod.unsqueeze(0)                      # [1, A]

@@ -425,6 +425,12 @@ def _regroup_min_send() -> float:
 # steps the production owned at the horizon's final step is credited for.
 
 
+def _terminal_neutral_only() -> bool:
+    return os.environ.get("PRODUCER_PLUS_TERMINAL_PROD_NEUTRAL_ONLY", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def _terminal_prod_value() -> float:
     raw = os.environ.get("PRODUCER_PLUS_TERMINAL_PROD_VALUE", "0")
     try:
@@ -596,6 +602,7 @@ def _apply_response_veto(
         garrison_status, prod=prod, alive_by_step=alive_by_step,
         player_count=int(player_count), launches=merged, player_id=pid,
         opp_weights=opp_weights, terminal_prod_weight=_terminal_prod_value(),
+        terminal_neutral_only=_terminal_neutral_only(),
     )
     dn = _score_do_nothing(
         status=garrison_status, prod=prod, alive_by_step=alive_by_step,
@@ -657,6 +664,7 @@ def _apply_response_veto(
                 garrison_status, prod=prod, alive_by_step=alive_by_step,
                 player_count=int(player_count), launches=merged_up, player_id=pid,
                 opp_weights=opp_weights, terminal_prod_weight=_terminal_prod_value(),
+        terminal_neutral_only=_terminal_neutral_only(),
             )
             keep_up = up_viable & ((scores_up - dn) >= margin)
             if bool(keep_up.any()):
@@ -1387,6 +1395,7 @@ def plan_lite_waves(
         player_count=int(player_count), launches=scoring_launches, player_id=pid,
         opp_weights=opp_weights,
         terminal_prod_weight=_terminal_prod_value(),
+        terminal_neutral_only=_terminal_neutral_only(),
     )                                                                            # [C]
     # Capture the base competitive score before additive terms so the
     # force-concentration rescore can re-derive the addon contribution per
@@ -1507,6 +1516,7 @@ def plan_lite_waves(
                 player_count=int(player_count), launches=merged, player_id=pid,
                 opp_weights=opp_weights,
                 terminal_prod_weight=_terminal_prod_value(),
+        terminal_neutral_only=_terminal_neutral_only(),
             )
             _new = new_base + _fc_addon_offset
             return torch.where(cand_valid, _new, torch.full_like(_new, float("-inf")))
@@ -1683,6 +1693,7 @@ def _score_do_nothing(
         player_count=int(player_count), launches=bg, player_id=int(player_id),
         opp_weights=opp_weights,
         terminal_prod_weight=_terminal_prod_value(),
+        terminal_neutral_only=_terminal_neutral_only(),
     )
     return score.flatten()[0]
 

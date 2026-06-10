@@ -434,6 +434,19 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_RESPONSE_VETO": "1",
         "PRODUCER_PLUS_SNIPE_HOLD": "1",
     },
+    "veto_ntv6": {
+        # Veto + NEUTRAL-ONLY terminal production value (lambda=6): the
+        # SiestaGuru loss anatomy — zero neutral captures steps 60-100 while
+        # they bought 4 planets, plus 700 ships into failed enemy strikes.
+        # Full termval failed in duels because its enemy-capture credit
+        # counts DOUBLE and amplified doomed aggression; the neutral-only
+        # version encourages expansion without touching strike valuation.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_TERMINAL_PROD_VALUE": "6",
+        "PRODUCER_PLUS_TERMINAL_PROD_NEUTRAL_ONLY": "1",
+    },
     "veto_upsize": {
         # "Beat the parry": veto + full-spare-budget retry of killed waves
         # (aim/eta recomputed for the bigger, faster fleet; the flow scorer

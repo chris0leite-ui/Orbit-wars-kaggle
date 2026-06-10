@@ -198,3 +198,39 @@ def test_split_overkill_per_target(monkeypatch, pp_main):
 
     out = pp_main._overkill_for_targets(_Obs(), torch.tensor([0, 1, 2]), 2, torch.float32)
     assert torch.allclose(out, torch.tensor([1.3, 4.0, 1.3]))
+
+
+def test_neutral_only_zeroes_enemy_credit():
+    """With terminal_neutral_only, an enemy capture earns NO terminal credit
+    (its baseline final owner is a player), while a neutral capture keeps it."""
+    from orbit_lite.movement import PlanetGarrisonStatus
+    from orbit_lite.garrison_launch import sparse_launch_flow_delta
+    from orbit_lite.planner_core import make_launch_set
+
+    P, A, H = 3, 2, 4
+    dtype = torch.float32
+    owner = torch.tensor(
+        [[0] * (H + 1), [-1] * (H + 1), [1] * (H + 1)], dtype=torch.long)
+    ships = torch.tensor(
+        [[40.0] * (H + 1), [5.0] * (H + 1), [5.0] * (H + 1)], dtype=dtype)
+    status = PlanetGarrisonStatus(
+        owner=owner, ships=ships,
+        pre_combat_owner=owner.clone(), pre_combat_ships=ships.clone(),
+        arrivals_by_owner=torch.zeros(P, H + 1, A, dtype=dtype),
+    )
+    prod = torch.tensor([1.0, 2.0, 2.0], dtype=dtype)
+    alive_by_step = torch.ones(H + 1, P, dtype=torch.bool)
+    launches = make_launch_set(
+        source_slots=torch.tensor([[0], [0]]),
+        target_slots=torch.tensor([[1], [2]]),   # cand0: neutral, cand1: enemy
+        ships=torch.tensor([[10.0], [10.0]], dtype=dtype),
+        eta=torch.tensor([[2.0], [2.0]], dtype=dtype),
+        valid=torch.tensor([[True], [True]]),
+        player_id=0,
+    )
+    diff = sparse_launch_flow_delta(
+        status, prod=prod, alive_by_step=alive_by_step,
+        player_count=2, launches=launches, player_id=0,
+        terminal_neutral_only=True,
+    )
+    assert diff.terminal_prod_delta.tolist() == [[2.0, 0.0], [0.0, 0.0]]

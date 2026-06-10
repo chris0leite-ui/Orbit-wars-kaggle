@@ -126,6 +126,7 @@ def score_candidates(
     player_id: int,
     opp_weights: Tensor | None = None,
     terminal_prod_weight: float = 0.0,
+    terminal_neutral_only: bool = False,
 ) -> Tensor:
     """Competitive score per candidate. ``[C]`` (or scalar if no candidate axis).
 
@@ -140,6 +141,7 @@ def score_candidates(
         player_count=int(player_count),
         launches=launches,
         player_id=int(player_id),
+        terminal_neutral_only=terminal_neutral_only,
     )
     return competitive_score(
         diff, player_id=int(player_id), opp_weights=opp_weights,

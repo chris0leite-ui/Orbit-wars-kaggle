@@ -1,0 +1,396 @@
+{
+  "submission_id": "53542171",
+  "generated_utc": "2026-06-10T18:26:06Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 27,
+  "n_played": 27,
+  "wins_total": 16,
+  "winrate_total": 0.5925925925925926,
+  "by_size": {
+    "2": {
+      "n": 14,
+      "wins": 11,
+      "winrate": 0.7857142857142857
+    },
+    "4": {
+      "n": 13,
+      "wins": 5,
+      "winrate": 0.38461538461538464
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 10,
+    "1": 14,
+    "2": 2,
+    "3": 4
+  },
+  "episode_length_steps": {
+    "n": 27,
+    "min": 99,
+    "q1": 138,
+    "median": 150,
+    "q3": 224,
+    "max": 500,
+    "mean": 206.14814814814815
+  },
+  "opponents": [
+    {
+      "name": "Luca",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "Lazy Bandit",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "Eugen Sedlar",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Dmitry Volovikov",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ghost613",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Junlaii",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "jmc",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Srikanth Machiraju",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Goty",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Shyshca",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "currypurin",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Sangram Patil",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "predlast H of S",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "LEEKANG",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "linrock",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "atom",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "IAI-RL-Tlm71",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "kta_jpn",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "F\u00e9lix Truong",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Illedan",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "vkhydras",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Dreame1",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\u5b50\u975e\u79cb\u6708",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Sarthak T",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "w\u2006d\u2006j\u2006y\u2006123456",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "nadhir hasan",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Sidhant Gokulpure",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Dhruv Bansal",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "C404",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Michael Long",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "MauryanTitans",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Tim Krige",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ShunkiKyoya",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "MartinZiserman",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "DONJYARAHOI",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "humble_some1",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mimi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "moriiiiiiiiim",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Dapp",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "kovi",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Sam Scott",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "sary sary",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "dnish",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ender",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "bengle",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Artem",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "SiestaGuru",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Criquet",
+      "seen": 1,
+      "beat_us": 0
+    }
+  ],
+  "losses": [
+    {
+      "episode": "episode-79432413",
+      "size": 4,
+      "opponents": [
+        "Luca",
+        "LEEKANG",
+        "linrock"
+      ],
+      "winner": "linrock",
+      "steps": 160
+    },
+    {
+      "episode": "episode-79433875",
+      "size": 2,
+      "opponents": [
+        "Illedan"
+      ],
+      "winner": "Illedan",
+      "steps": 150
+    },
+    {
+      "episode": "episode-79433937",
+      "size": 2,
+      "opponents": [
+        "vkhydras"
+      ],
+      "winner": "vkhydras",
+      "steps": 500
+    },
+    {
+      "episode": "episode-79435250",
+      "size": 4,
+      "opponents": [
+        "Sarthak T",
+        "w\u2006d\u2006j\u2006y\u2006123456",
+        "nadhir hasan"
+      ],
+      "winner": "Sarthak T",
+      "steps": 109
+    },
+    {
+      "episode": "episode-79435487",
+      "size": 4,
+      "opponents": [
+        "Sidhant Gokulpure",
+        "Dhruv Bansal",
+        "C404"
+      ],
+      "winner": "Sidhant Gokulpure",
+      "steps": 190
+    },
+    {
+      "episode": "episode-79435529",
+      "size": 4,
+      "opponents": [
+        "Lazy Bandit",
+        "Michael Long",
+        "MauryanTitans"
+      ],
+      "winner": "MauryanTitans",
+      "steps": 500
+    },
+    {
+      "episode": "episode-79436748",
+      "size": 4,
+      "opponents": [
+        "Luca",
+        "ShunkiKyoya",
+        "MartinZiserman"
+      ],
+      "winner": "MartinZiserman",
+      "steps": 500
+    },
+    {
+      "episode": "episode-79437467",
+      "size": 4,
+      "opponents": [
+        "moriiiiiiiiim",
+        "Dapp",
+        "kovi"
+      ],
+      "winner": "kovi",
+      "steps": 194
+    },
+    {
+      "episode": "episode-79437758",
+      "size": 4,
+      "opponents": [
+        "Sam Scott",
+        "sary sary",
+        "dnish"
+      ],
+      "winner": "sary sary",
+      "steps": 229
+    },
+    {
+      "episode": "episode-79437830",
+      "size": 4,
+      "opponents": [
+        "Ender",
+        "bengle",
+        "Artem"
+      ],
+      "winner": "Artem",
+      "steps": 160
+    },
+    {
+      "episode": "episode-79438024",
+      "size": 2,
+      "opponents": [
+        "SiestaGuru"
+      ],
+      "winner": "SiestaGuru",
+      "steps": 143
+    }
+  ]
+}
