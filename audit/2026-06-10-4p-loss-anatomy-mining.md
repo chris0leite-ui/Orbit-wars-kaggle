@@ -70,4 +70,12 @@ Mechanisms aimed at this window, in current priority order:
   rivals are projected attacking with the same ships up to 3×. Phantom
   aggression → the planner turtles. A budget-debited multi-tick would be a
   different mechanism; the cheap standalone variant is dead.
-- reinforce_deficit vs 3× vanilla producer, seeds 0–31: see below.
+- **reinforce_deficit vs 3× vanilla producer, seeds 0–31: 9/32 (28.1%),
+  Wilson [0.156, 0.454] — NO LIFT** vs baseline 13/32. Winning seeds
+  5, 12, 13, 19, 20, 24, 27, 30, 31; tick4p's winners were 12, 13, 16,
+  17, 18, 20, 21, 24, 27, 31 — six of the same seeds win under BOTH
+  variants, so the map/seat draw dominates this pool and the variants
+  move few games. Per-seed log:
+  `audit/pools/2026-06-10-reinforce-deficit-vs-3xproducer-n32.log`.
+  Baseline per-seed reconstruction (deterministic re-run) appended when
+  complete.

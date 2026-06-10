@@ -19,34 +19,31 @@ python scripts/bundle_producer_plus.py --variant multi_opp_def
 `claude/awesome-clarke-ixy57v` (the majestic-storm producer_plus track is
 merged into it; main is 166 commits behind that track).
 
-## Live status (2026-06-09 21:30 UTC)
+## Live status (2026-06-10 ~08:30 UTC)
 
-- **Rolling pair:** sub 53450504 `multi_size` (06-07 manual resubmit,
-  settled **μ = 1181.1**) and sub 53390700 `multi_tick_recap` (settled
-  **μ = 1099.3**). Team rank 446 of ~4130; rank 100 needs ≈ 1261.
-- **Best-ever agent** `multi_opp_def` (settled 1263–1287) was **evicted**
-  by the 06-07 resubmit. A restore submission is prepared, Rule 42/45/46
-  GREEN, **awaiting PI sign-off** — see the top row of
-  `state/MULTI_BRANCH.md`.
-- Field drift: identical multi_size code settled 1282 on 06-04 but 1181 on
-  06-07 — the ladder strengthened ~100 μ in 3 days. Expect restored
-  multi_opp_def to settle ≈ 1180–1260, not necessarily 1280.
+- **Rolling pair:** sub **53527125** `ffa_uniform` (07:07 UTC, warming —
+  720 at ~1.5 h) and sub **53523036** `multi_opp_def` restore (04:12 UTC,
+  1241.9 near its predicted settle). Identical 2P play by construction —
+  the settled μ gap is a pure live 4P A/B of the FFA objective fix.
 
-## What the 2026-06-09 session established
+## What the 2026-06-10 session established
 
-1. **Force-concentration is a null (negative) result.** All three variants
-   regressed hard in clean n=32 A/Bs vs vanilla producer: standalone 6/32,
-   lean 7/32, multi-tick stack 5/32. The relaxed one-wave-per-target mutex
-   as implemented hurts; do not ship, do not re-compose without a new
-   mechanism-level diagnosis.
-2. **Rebuilt multi_opp_def re-validated:** 24/32 = 75% vs producer,
-   Wilson [0.579, 0.867] — identical to its 06-05 measurement.
-3. **Harness rot fixed** (current kaggle_environments execs agent files
-   without `__file__` and with ±1 rewards): producer_agent wrappers and all
-   producer_plus shims got a `sys.path[-1]` fallback; tests clear
-   `PRODUCER_PLUS_*` env between in-process games and compare action
-   streams, not just rewards. Before these fixes, shim-based test games
-   silently played None every turn.
+1. **4P loss anatomy** (`audit/2026-06-10-4p-loss-anatomy-mining.md`):
+   losses are decided in the step-20..80 brawl window (production peaks
+   ~40 then declines; rank 1 at step 20 even in losses). NOT separators:
+   drained-then-carved rate, neutral expansion, defensive-shortlist
+   width. Multi-front carving is the end state, not the cause.
+2. **Two more 4P nulls on the 3×producer pool** (baseline 13/32):
+   `tick4p` (4P-only multi-tick mirror, K=3) 10/32 — the mirror re-spends
+   rival ships across rounds (no budget debit), phantom aggression;
+   `reinforce_deficit` (defense candidate sizing fix, default-OFF code in
+   producer_plus/main.py, 10/10 unit tests, OFF-path hash-verified)
+   9/32. Six seeds win under BOTH variants → the pool is dominated by
+   the map/seat draw; treat it as a regression triage, not a verdict
+   instrument. Per-seed logs now archived under `audit/pools/`.
+3. **Fleet speed RISES with size** (log curve to 1000 ships) — big
+   rescue/strike fleets are FASTER. Remember when reasoning about
+   timing mechanisms.
 
 ## Next action
 
@@ -57,16 +54,20 @@ merged into it; main is 166 commits behind that track).
    04:12, backstop). Compare the two settles: identical 2P play means any
    μ gap between them is pure 4P signal — a free live A/B of the FFA
    objective.
-2. If ffa_uniform settles ABOVE multi_opp_def: the 4P front is open and
-   productive — next candidates on that axis: strength-vs-uniform weight
-   blend, 4P-aware defense (threat-aware garrison floors vs multi-front
-   strikes), vulture timing (the live winners' 3x enemy-capture profile).
-   Measure ONLY with `scripts/clean_ffa.py` 4P pools (producer pool +
-   namespaced our-best pool); the 2P A/B cannot see this axis.
+2. If ffa_uniform settles ABOVE multi_opp_def: the FFA objective fix is
+   live-validated AND the local 3×producer pool is shown non-predictive
+   (it said parity) — weight the namespaced self-play pool and live A/Bs
+   from then on. Next candidates: strength/uniform weight blend;
+   budget-debited multi-tick (fix the re-spend flaw first);
+   reinforce_deficit composed with ffa_uniform (its standalone pool was
+   within draw-noise, and it's cheap to ride along a future submit after
+   a 2P n=32 A/B clears it).
 3. If ffa_uniform settles AT/BELOW multi_opp_def: pull its live 4P
    episodes (`scripts/live_episode_summary.py 53527125 --pull`), check
    the 2P/4P winrate split vs the 29% baseline, and diagnose from the
-   replays before touching the mechanism.
+   replays before touching the mechanism. The brawl-window finding
+   (audit doc) is the lens: what did the FFA fix change between steps
+   20-80, if anything?
 
 ## Pointers
 
