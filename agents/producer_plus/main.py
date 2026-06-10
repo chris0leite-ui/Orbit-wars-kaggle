@@ -40,6 +40,7 @@ from orbit_lite.planner_core import (
     _empty_entries,
     _greedy_select,
     _plan_regroup,
+    _stable_argmax,
     _stable_topk_indices,
     build_target_shortlist,
     capture_floor,
@@ -298,6 +299,69 @@ def _ffa_opp_weights(obs_tensors: dict, *, player_id: int, player_count: int):
     return strength / total
 
 
+# --- Reinforcement deficit floor (defense candidate sizing fix) -------------
+# capture_floor returns 1 for targets we own at the arrival tick ("arriving
+# ships add to the garrison, nothing to clear"), so the multi-size enumeration
+# for a defensive target is (1, 2, safe_drain) — the "exactly enough to HOLD
+# the planet" size is never a candidate, and trickle sends below it are junk
+# the greedy must price out one by one. For an owned target the do-nothing
+# projection shows flipping at tick k_f, any reinforcement arriving at k <=
+# k_f holds the planet iff it adds at least the attacker's projected margin,
+# and that margin IS the projection's post-flip ship count at k_f (engine
+# survivor = top1 - top2). This floor replaces 1 with (margin + overhead) on
+# the pre-flip cells, giving the chooser the right-sized defense candidate
+# and invalidating doomed under-sized ones. Default OFF = byte-identical.
+def _reinforce_deficit_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_REINFORCE_DEFICIT", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _apply_reinforce_deficit_floor(
+    floor: Tensor,                  # [T, K] from capture_floor
+    *,
+    garrison_status,
+    target_idx: Tensor,             # [T] long
+    player_id: int,
+    capture_overhead: float = 1.0,
+) -> Tensor:
+    """Raise pre-flip reinforcement floors to the hold-the-planet deficit.
+
+    For each target currently ours whose do-nothing projection flips it at
+    tick ``k_f`` (first ``owner != me`` within the floor's K window), every
+    cell ``k < k_f`` (where the planet is still ours at arrival) gets
+    ``floor = max(1, ceil(ships_at_flip + overhead))`` — ``ships_at_flip``
+    is the projected post-combat survivor of the new owner, i.e. exactly
+    the margin our reinforcement must add to keep the planet. Cells at and
+    after ``k_f`` already carry the retake floor from capture_floor's
+    not-mine branch. Targets with no projected flip are untouched.
+    """
+    T, K = int(floor.shape[0]), int(floor.shape[-1])
+    if T == 0 or K == 0:
+        return floor
+    owner = garrison_status.owner
+    ships = garrison_status.ships
+    P = int(owner.shape[0])
+    pid = int(player_id)
+    tgt = target_idx.clamp(0, max(P - 1, 0))
+    owner_g = owner[tgt]                                    # [T, H+1]
+    ships_g = ships[tgt]
+    mine_now = owner_g[..., 0] == pid                       # [T]
+    not_mine_k = owner_g[..., 1 : K + 1] != pid             # [T, K]
+    any_flip = not_mine_k.any(dim=-1) & mine_now            # [T]
+    # first flip tick (0-based index into k=1..K), device-stable on ties.
+    k_f_idx = _stable_argmax(not_mine_k.to(torch.int64))    # [T]
+    ships_at_flip = ships_g.gather(
+        -1, (k_f_idx + 1).clamp(max=int(ships_g.shape[-1]) - 1).unsqueeze(-1)
+    ).squeeze(-1)                                           # [T]
+    deficit = (ships_at_flip + float(capture_overhead)).clamp(min=1.0).ceil()
+    k_grid = torch.arange(K, device=floor.device).view(1, K)
+    pre_flip = any_flip.view(T, 1) & (k_grid < k_f_idx.view(T, 1))   # [T, K]
+    return torch.where(
+        pre_flip, torch.maximum(floor, deficit.view(T, 1)), floor,
+    )
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, default))
@@ -454,6 +518,11 @@ def plan_lite_waves(
         garrison_status, target_idx=target_idx, k_max=K_eta,
         capture_overhead=1.0, player_id=pid,
     )                                                                            # [T, K]
+    if _reinforce_deficit_enabled():
+        floor = _apply_reinforce_deficit_floor(
+            floor, garrison_status=garrison_status, target_idx=target_idx,
+            player_id=pid, capture_overhead=1.0,
+        )
     K = int(floor.shape[-1])
 
     src_neq_tgt = source_idx.view(S, 1) != target_idx.view(1, T)

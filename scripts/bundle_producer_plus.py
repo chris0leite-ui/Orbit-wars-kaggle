@@ -289,6 +289,20 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_OPP_PROJECTION": "1",
         "PRODUCER_PLUS_MULTI_TICK_OPP_K_4P": "3",
     },
+    "reinforce_deficit": {
+        # The proven multi_opp_def stack + the defense candidate-sizing fix:
+        # owned targets the projection shows flipping at tick k_f get a
+        # pre-flip reinforcement floor of (post-flip survivor + 1) — the
+        # exact minimum send that holds the planet — instead of 1. The
+        # multi-size enumeration then carries a right-sized hold candidate
+        # (instead of junk 1/2-ship sends), and doomed under-sized trickles
+        # are gated invalid. Motivated by the 2026-06-10 loss-anatomy
+        # mining: losses are decided by production retention in the
+        # step-20..80 brawl window.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_REINFORCE_DEFICIT": "1",
+    },
     "ffa_uniform_tick4p": {
         # Composition of the two 4P mechanisms: FFA uniform objective +
         # 4P-only multi-tick. Build/measure only if tick4p standalone
