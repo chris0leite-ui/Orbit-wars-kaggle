@@ -118,7 +118,8 @@ def main() -> int:
             tag = ("WIN" if r.get("focal_won") else
                    "LOSS" if r.get("outcome") == "done" else r.get("outcome", "?"))
             print(f"   seed={r.get('seed','?'):>4}  seat={r.get('focal_seat','-')}  "
-                  f"{tag:>7}  steps={r.get('n_steps','-')}  wall={r.get('wall',0):.0f}s")
+                  f"{tag:>7}  steps={r.get('n_steps','-')}  wall={r.get('wall',0):.0f}s  "
+                  f"rewards={r.get('rewards','-')}")
     wins = sum(1 for r in results if r.get("focal_won"))
     errs = sum(1 for r in results if r.get("outcome") in ("error", "timeout"))
     n = len(results) - errs
