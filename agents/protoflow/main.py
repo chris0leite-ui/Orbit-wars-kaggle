@@ -218,6 +218,18 @@ FLOWDIFF_TAIL = False
 # inert under the swing-integral evaluator -- the retake landed past the horizon and the integral
 # never saw it; terminal-wealth accounting sees the retake directly.) No-op unless FLOWDIFF_VALUE.
 FLOWDIFF_REACTION = False
+# FLOWDIFF COMMITTED DEFENSE. Measured vs the Producer: 24 of 25 lost planets had ZERO defensive
+# response, yet several fell to in-flight waves our nearby ships could have repelled (seed 2:
+# planet 18 fell to a ~66-ship wave with 71 of ours in reach; planet 16 to ~113 with 140 in
+# reach). Cause: the value-ranked protect sizes its save-or-write-off test against the enemy's
+# FULL standing capability (the bank), concludes unsavable, and holds nothing -- so the planet
+# stays cheap prey for the much smaller wave actually launched. Ship combat is 1:1 (a garrison
+# kills its own size regardless), so partial defense is break-even in ships and the PLANET is the
+# only real prize: defense is worth funding exactly when it reaches the committed wave's hold
+# requirement. Under this flag the protect pass ALSO builds a committed-wave defense cell (real
+# in-flight threat, real deadline, fundability against THAT wave) alongside the anticipatory
+# protect cell. No-op unless FLOWDIFF_VALUE is on. Default False; A/B via proto attr.
+FLOWDIFF_COMMITTED_DEFENSE = False
 # REGROUP: a positional pass that marches idle rear ships up the enemy-pressure
 # gradient toward the frontier, so force concentrates forward for future strikes.
 REGROUP_PRESSURE_HORIZON = 14   # turns; decay reach for the enemy-pressure signal
@@ -990,6 +1002,34 @@ def agent(obs, configuration=None):
                     d_srcs.append((s, a))
             cells.append({"kind": "protect", "t": p, "A": int(t_op), "R": int(need_hold),
                           "srcs": d_srcs, "value": cell_value(p, int(t_op))})
+            if FLOWDIFF_VALUE and FLOWDIFF_COMMITTED_DEFENSE:
+                # COMMITTED-WAVE defense: the anticipatory protect above is gated on beating the
+                # standing capability (often hopeless near the enemy bank -> write-off), but the
+                # wave ACTUALLY in flight is usually far smaller and locally repellable. Build a
+                # second cell against the real committed threat with its real deadline; the
+                # assembler's def path funds it soonest-first with no all-or-nothing capability
+                # test beyond this wave's own hold requirement.
+                c_need, c_deadline = committed_threat(p)
+                if c_need > 0 and c_deadline is not None:
+                    # Credit reinforcements ALREADY IN FLIGHT arriving by the deadline --
+                    # without this the cell rebuilds every turn and re-buys the same defense
+                    # (measured: 399 ships poured into one planet over four turns).
+                    c_need -= sum(sh for (eta_arr, owner, sh) in model.ledger.get(int(p.id), [])
+                                  if owner == me and eta_arr <= c_deadline)
+                if c_need > 0 and c_deadline is not None:
+                    # Allies only: committed_threat's requirement already nets out the
+                    # planet's own garrison plus its production growth to the deadline.
+                    c_srcs = []
+                    for s in nearest_k(my_planets, p, SOURCES_PER_TARGET):
+                        if int(s.id) == int(p.id):
+                            continue
+                        a = arr(s, p)
+                        if a <= int(c_deadline):
+                            c_srcs.append((s, a))
+                    if c_srcs and sum(spare[int(s.id)] for s, _ in c_srcs) >= c_need:
+                        cells.append({"kind": "def", "t": p, "A": int(c_deadline),
+                                      "R": int(c_need), "srcs": c_srcs,
+                                      "value": cell_value(p, int(c_deadline))})
         else:
             need, deadline = committed_threat(p)
             if need <= 0 or deadline is None:
@@ -1061,7 +1101,11 @@ def agent(obs, configuration=None):
             total_avail = sum(avail_spare(int(s.id)) for s, _ in c["srcs"]
                               if int(s.id) == pid or int(s.id) not in reserved)
             if total_avail < need:
-                committed_tgt.add(pid)  # unsavable -> no bleed
+                # Unsavable vs the STANDING capability -> no bleed. Under committed defense, do
+                # NOT mark the planet committed: the much smaller wave actually in flight may
+                # still be repellable by the committed-wave def cell ranked below.
+                if not (FLOWDIFF_VALUE and FLOWDIFF_COMMITTED_DEFENSE):
+                    committed_tgt.add(pid)
                 continue
             hold_own = min(avail_spare(pid), need)
             if hold_own > 0:
