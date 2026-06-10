@@ -83,6 +83,24 @@ def test_opp_weights_include_fleets(pp_main):
     assert abs(float(w[2]) - 0.5) < 1e-6
 
 
+def test_opp_weights_uniform_mode(monkeypatch, pp_main):
+    # Same strengths as the proportional test; uniform mode gives the two
+    # living rivals equal weight and the dead one zero.
+    monkeypatch.setenv("PRODUCER_PLUS_FFA_WEIGHTS", "uniform")
+    ot = _obs_tensors(
+        [
+            [0, 0, 10, 10, 1, 99, 2],
+            [1, 1, 20, 20, 1, 30, 2],
+            [2, 2, 30, 30, 1, 10, 2],
+        ],
+        [],
+    )
+    w = pp_main._ffa_opp_weights(ot, player_id=0, player_count=4)
+    assert abs(float(w[1]) - 0.5) < 1e-6
+    assert abs(float(w[2]) - 0.5) < 1e-6
+    assert float(w[3]) == 0.0
+
+
 def test_opp_weights_all_dead(pp_main):
     ot = _obs_tensors([[0, 0, 10, 10, 1, 99, 2]], [])
     w = pp_main._ffa_opp_weights(ot, player_id=0, player_count=4)
