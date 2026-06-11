@@ -188,3 +188,13 @@ not investigating a dead-end bundle.
   @250 dominance where it survives; collapses trace to the same searcher
   defect. Re-judge both windows with the reserve.
 - Forward redistribution (canon port) leg in flight.
+
+## Verdict: forward redistribution — ELIMINATED (1/8, paired -49% @120)
+
+Healthy @40, collapsing after: ships perpetually in flight between own
+planets (per-turn pressure recompute -> chasing, strictly-positive gap
+prevents direct backwash but not cycles). The canon's redistribution lives
+inside Melis's transfer scoring + worst-case surplus; the naive ungate
+buys churn. Converging lesson (with commitment-cost data): in-flight time
+is the underpriced cost. Possible future shape: transfers priced through
+the flow scorer like attacks, not a separate lane.
