@@ -74,3 +74,18 @@ JAX game engine (`lib/game/jax/`):
    through rl/export_agent.py (340 KB single file, kaggle-env verified
    2P + 4P).
 4. GPU quota: ~8.5 h used of 30 h/week after tonight.
+
+## Next strength levers (in order, once the policy is decent)
+
+1. **League continuation** (built): `--league` — snapshots + greedy
+   opponents on half the envs.
+2. **Value-reranked inference**: at eval time, sample k≈6 candidate
+   action-sets from the policy head, roll each 1-5 ticks through the
+   EXACT engine (bundle `lib/game/interpreter.py` + `lib/fast_sim.py`
+   via scripts/bundle_agent.py — fast_sim already adapts obs->state),
+   pick argmax value-head. ~200 ms/turn of the 1000 ms budget. This is
+   a true policy-improvement operator and the likely gap-closer vs the
+   1300-μ search heuristics — but only once the value head is trusted.
+3. **Capacity bump** (d 64→96, layers 3→4) if learning plateaus with
+   GPU headroom.
+4. **Finer fraction head** if captures keep over/under-committing.
