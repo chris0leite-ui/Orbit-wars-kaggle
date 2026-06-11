@@ -521,6 +521,20 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
         "PRODUCER_PLUS_OPENING_SEARCH": "25",
     },
+    "vetorf_rescue": {
+        # Coalition rescue (zero new code): live stack + deficit-sized
+        # defense floors + L=2 coalitions. The hold-rate gap (0.59 vs the
+        # top teams' 0.74-0.85) is killed by avalanche waves one neighbour
+        # can't match; coalitions let two neighbours fund the deficit. The
+        # old anti-coalition verdict predates the floor era and used the
+        # failed vs-producer referee.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REINFORCE_DEFICIT": "1",
+        "PRODUCER_PLUS_COALITIONS": "1",
+    },
     "veto_rf": {
         # Veto + reactive floor (weight 0.5): enemy floors include half the
         # garrison the defender can route to the target within our flight
