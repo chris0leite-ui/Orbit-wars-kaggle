@@ -72,3 +72,48 @@ table; planner knobs: ORACLE_THETA_STATE / ORACLE_PAIR_MIN / ORACLE_REL_KEEP.
   same-turn coalition co-arrival accounting) untested in games.
 - Value net rebuild on the full replay set pending (veto quality).
 - 4P spot-check pending; bundle parity gate pending.
+
+## Addendum — evening session (same day)
+
+### Measured panel evolution (n=16 each, same seeds, liveness-asserted)
+
+| build | v7_0 | ledger | Producer | champion |
+|---|---|---|---|---|
+| round-1 (corrected pairing) | **14/16** | 10/16 | 6/16 | 4/16 |
+| + donation gate/forced defense/burst-4 (3 changes at once) | — | — | 0/10 ABORTED+REVERTED | — |
+| + opponent-threat globals | 11/16 | — | **9/16** | 4/16 |
+
+The threat build trades economist strength for rush defense; net zero
+overall but profile-shifted. The round-1 build is pinned as
+submissions/oracle_round1.py (single file, weights+features consistent
+by construction, reproducible from commit 1e59da8).
+
+Uniform loss anatomy vs the Producer family persists: all losses are
+eliminations t99-189; ALL wins are 500-step economy games — the oracle
+wins every game it survives.
+
+### Router: three trigger designs falsified
+
+1. Opening in-flight fraction (t<=14): all styles open identically
+   (0.7-0.93 for everyone).
+2. Fist concentration + booked-threat peaks (t8-36): degenerate while the
+   opponent holds 1-2 planets (fist = 1.0 trivially).
+3. Cumulative damage under champion-default play (t<=72): the champion's
+   own aggression makes every matchup look like a brawl (economists show
+   100-2000 ships landed).
+
+Binding lesson: behavioral opponent classification from inside a game our
+own agent shapes needs more than hand-picked thresholds; the router code
+stays parked (agents/oracle_router/) without a validated trigger.
+
+### Method violation logged
+
+The donation-gate experiment changed three things in one battery (gate,
+forced defense, MAX_WAVES). The 0/10 verdict could not be attributed.
+Reverted wholesale instead of bisected — three battery-hours lost.
+
+### In flight at write time
+
+Chained same-turn conditioning (commitment features + per-pick re-scoring,
+the PI's "combined actions" direction) — dataset rebuild + retrain
+running; re-panel next.
