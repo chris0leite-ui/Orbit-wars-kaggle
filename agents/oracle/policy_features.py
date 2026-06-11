@@ -16,7 +16,7 @@ from .engine import fleet_speed, required_ships
 # the trailing block of pair features is state-global (identical for every
 # pair of a state); the state-level initiation head trains on exactly this
 # slice, so KEEP IT LAST and update N_GLOBALS when it changes
-N_GLOBALS = 11
+N_GLOBALS = 16
 
 POLICY_FEATURES = [
     # pair geometry / tempo
@@ -35,6 +35,10 @@ POLICY_FEATURES = [
     "step_frac", "n_players", "my_planets", "opp_planets", "my_prod_share",
     "my_score_share", "my_garrison", "opp_garrison", "my_inflight_frac",
     "neutral_left", "frontline_dist",
+    # opponent threat posture (the rush tell: a massed fist + booked
+    # arrivals on my planets — all exact, from garrisons and the ledger)
+    "opp_top1_share", "opp_top3_share", "opp_inflight_frac",
+    "enemy_on_mine_12", "mine_on_enemy_12",
 ]
 N_POLICY_FEATURES = len(POLICY_FEATURES)
 
@@ -72,6 +76,28 @@ class PolicyContext:
                 d = math.hypot(w.px[i] - w.px[j], w.py[i] - w.py[j])
                 if d < fd:
                     fd = d
+        # opponent threat posture: garrison concentration, in-flight share,
+        # and EXACT booked arrivals (ledger) crossing the frontline both ways
+        enemy_garrs = sorted((w.ships0[i] for i in range(n)
+                              if w.owner0[i] >= 0 and w.owner0[i] != me),
+                             reverse=True)
+        eg_tot = sum(enemy_garrs) or 1.0
+        opp_fl = all_fl - my_fl
+        opp_score = opp_g + opp_fl
+        enemy_on_mine = mine_on_enemy = 0.0
+        for i in range(n):
+            own_i = w.owner0[i]
+            for dt, slot in w.arrivals[i].items():
+                if dt > 12:
+                    continue
+                for o, s_ in slot.items():
+                    if o < 0:
+                        continue
+                    if own_i == me and o != me:
+                        enemy_on_mine += s_
+                    elif own_i >= 0 and own_i != me and o == me:
+                        mine_on_enemy += s_
+
         self.globals = [
             w.step / 500.0,
             float(len(players)),
@@ -85,6 +111,11 @@ class PolicyContext:
             float(sum(1 for i in range(n)
                       if w.owner0[i] == -1 and not w.is_comet[i])),
             fd,
+            (enemy_garrs[0] / eg_tot) if enemy_garrs else 0.0,
+            (sum(enemy_garrs[:3]) / eg_tot) if enemy_garrs else 0.0,
+            opp_fl / opp_score if opp_score > 0 else 0.0,
+            float(enemy_on_mine),
+            float(mine_on_enemy),
         ]
         # incoming per planet (mine vs enemy mass within 12 ticks)
         self.inc_mine = [0.0] * n
