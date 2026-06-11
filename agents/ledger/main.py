@@ -24,7 +24,19 @@ Physics is mirrored from the engine (kaggle_environments orbit_wars):
 """
 
 import math
+import os
 import time
+
+# decision introspection; OFF unless LEDGER_DEBUG is set to a file path
+# (never set in production — kaggle runs with a clean env). File append
+# because kaggle_environments runs agents in workers that swallow stderr.
+_DBG = os.environ.get("LEDGER_DEBUG")
+
+
+def _dbg(*a):
+    if _DBG:
+        with open(_DBG, "a") as fh:
+            print(*a, file=fh)
 
 # ---------------------------------------------------------------- constants
 BOARD = 100.0
@@ -287,10 +299,24 @@ class World:
         # opponents do interrupt shopping to defend sometimes; treating
         # them as fully disarmed over-extends (floor 0.2 reshuffled as
         # many games as it fixed in A/B).
-        self.resp_scale = {
-            o: max(0.55, 1.0 - 0.5 * basket.get(o, 0) / max(1, s))
-            for o, s in stock.items()
-        }
+        #
+        # Rolling-archetype correction: an opponent whose mass is IN
+        # FLIGHT is not shopping-committed — a landed stack relaunches
+        # within a tick, so flying mass is response-available with one
+        # hop of delay. Discounting it (stock collapses to the few
+        # ships on the ground -> scale floors) halved the modeled
+        # response exactly when the Producer's stack dominated the
+        # board; fresh-capture churn next to its mass was the result.
+        inflight_o = {}
+        for f in self.fleets:
+            fo = f[1]
+            if fo >= 0 and fo != me:
+                inflight_o[fo] = inflight_o.get(fo, 0) + int(f[6])
+        self.resp_scale = {}
+        for o, s in stock.items():
+            base = max(0.55, 1.0 - 0.5 * basket.get(o, 0) / max(1, s))
+            roll = min(1.0, inflight_o.get(o, 0) / max(1, s))
+            self.resp_scale[o] = base + (1.0 - base) * roll
 
     def _walk_planet(self, i, owner, ships, extra_owner, extra_at, extra_n,
                      start_dt=1, extra_list=None):
@@ -571,7 +597,12 @@ def _reserves(world):
             deficit = se - cover
             if deficit > worst:
                 worst = deficit
-        reserves[i] = min(g, max(0, worst))
+        # don't garrison what cannot be saved: when the worst feasible
+        # wave exceeds the whole garrison, reserving it all still loses
+        # the planet AND freezes the capital — in-flight ships are
+        # invulnerable in this game, so unsavable mass belongs in the air
+        # (missions, redeploy), not on the ground waiting to die
+        reserves[i] = 0 if worst > g else max(0, worst)
     return reserves
 
 
@@ -744,32 +775,119 @@ def _rollout_score(world, base_arrivals, extra_landings, K, flow_weight):
 
 
 def _response_curve(world, tgt):
-    """Enemy mass that can land on tgt by tick t, launched AFTER my fleet
-    becomes visible (launch happens 1 tick after mine). Sorted cumulative
-    [(land_tick, cumulative_mass)]. Conservative: counts each enemy
-    garrison at full strength for every target it could reach."""
+    """Enemy mass that can land on tgt by tick T, launched AFTER my fleet
+    becomes visible (launch happens 1 tick after mine). Returns an array
+    resp[T] for T = 0..horizon (cumulative mass landable by T).
+
+    Time-correct: a responder launching at tick (T - eta) has banked its
+    PRODUCTION until then — pricing the enemy of today made 28-tick
+    missions to deep targets look unanswerable while in truth they land
+    into a 3x bigger future army. resp_scale models their response budget
+    being shared across my simultaneous attacks."""
     me = world.me
     tx, ty, tr = world.px[tgt], world.py[tgt], world.pr[tgt]
     scale = getattr(world, "resp_scale", {})
-    items = []
+    H = world.horizon
+    resp = [0] * (H + 1)
+    # Sources are read from the LEDGER, not the snapshot: a planet counts
+    # at lookahead T if it is enemy-owned at the implied LAUNCH tick with
+    # the garrison the ledger says it has then. This prices the rebound —
+    # a stack landing at planet P makes P a response source one tick
+    # later — and stops counting planets my known fleets will take.
+    #
+    # Production banking only when the planet being answered will be MINE
+    # or theirs (defense/re-snipe of owned planets is near-certain: 1:1,
+    # sink-free, worth delaying for). Racing my grab of a NEUTRAL is
+    # speculative — the racer must commit arrived mass; assuming every
+    # enemy planet banks production to contest every neutral priced all
+    # expansion to zero while the real opponent expanded freely.
+    grow = world.owner0[tgt] != -1 or world.is_comet[tgt]
     for e in range(world.n_planets):
-        o = world.owner0[e]
-        if o < 0 or o == me or e == tgt:
+        if e == tgt or world.is_comet[e]:
             continue
-        se = int(world.ships0[e] * scale.get(o, 1.0))
-        if se <= 0:
+        po_e = world.post_owner[e]
+        ps_e = world.post_ships[e]
+        rep = world.ships0[e] if world.owner0[e] >= 0 \
+            and world.owner0[e] != me else 0
+        if rep <= 0:
+            for t in range(H + 1):
+                oo = po_e[t]
+                if oo is not None and oo >= 0 and oo != me:
+                    rep = max(1, ps_e[t] or 1)
+                    break
+        if rep <= 0:
+            continue          # never an enemy source inside the window
+        d = math.hypot(world.px[e] - tx, world.py[e] - ty) \
+            - world.pr[e] - tr - 0.1
+        eta = max(1, int(math.ceil(max(d, 0.0) / fleet_speed(rep))))
+        pe = world.prod[e]
+        for T in range(1 + eta, H + 1):
+            li = min(max(T - eta - 1, 0), H)   # garrison as of launch
+            oo = po_e[li]
+            if oo is None or oo < 0 or oo == me:
+                continue
+            mass = ps_e[li] or 0
+            if not grow:
+                mass -= pe * (T - eta)
+            if mass > 0:
+                resp[T] += int(mass * scale.get(oo, 1.0))
+    return resp
+
+
+def _pre_arrival_response(world, tgt, arr_dt, owner):
+    """Enemy ships that can land on tgt BEFORE OR WITH my fleet (arr_dt),
+    launched 1 tick after mine becomes visible. The mission sizer was
+    blind to this: missions sized only against the known ledger die on
+    reinforcements that launch after seeing them — measured vs the
+    Producer archetype, HALF of all offensive tonnage landed without
+    sticking (its own figure: 1-2%). owner=None -> worst single enemy
+    (racer at a neutral pays the sink first); else that owner's planets
+    only (defense merges with the garrison). resp_scale models their
+    response budget being shared across my simultaneous attacks."""
+    me = world.me
+    scale = getattr(world, "resp_scale", {})
+    tx, ty, tr = world.px[tgt], world.py[tgt], world.pr[tgt]
+    H = world.horizon
+    per = {}
+    for e in range(world.n_planets):
+        if e == tgt or world.is_comet[e]:
+            continue
+        po_e = world.post_owner[e]
+        ps_e = world.post_ships[e]
+        rep = world.ships0[e] if world.owner0[e] >= 0 \
+            and world.owner0[e] != me else 0
+        if rep <= 0:
+            for t in range(H + 1):
+                oo = po_e[t]
+                if oo is not None and oo >= 0 and oo != me:
+                    rep = max(1, ps_e[t] or 1)
+                    break
+        if rep <= 0:
             continue
         d = math.hypot(world.px[e] - tx, world.py[e] - ty) \
             - world.pr[e] - tr - 0.1
-        land = 1 + max(1, int(math.ceil(max(d, 0.0) / fleet_speed(se))))
-        items.append((land, se))
-    items.sort()
-    out = []
-    cum = 0
-    for land, se in items:
-        cum += se
-        out.append((land, cum))
-    return out
+        eta = max(1, int(math.ceil(max(d, 0.0) / fleet_speed(rep))))
+        if 1 + eta > arr_dt:
+            continue
+        # latest launch that still lands by arr_dt; garrison read from
+        # the LEDGER at that tick (covers stack rebounds; excludes
+        # planets my known fleets will have taken)
+        li = min(max(arr_dt - eta - 1, 0), H)
+        oo = po_e[li]
+        if oo is None or oo < 0 or oo == me:
+            continue
+        if owner is not None and oo != owner:
+            continue
+        mass = ps_e[li] or 0
+        if owner is None:
+            # racing my neutral grab: banked production is speculative,
+            # arrived mass is real
+            mass -= world.prod[e] * (arr_dt - eta)
+        if mass > 0:
+            per[oo] = per.get(oo, 0) + int(mass * scale.get(oo, 1.0))
+    if not per:
+        return 0
+    return max(per.values())
 
 
 def agent(obs, configuration=None):
@@ -806,6 +924,11 @@ def _agent_inner(obs, configuration=None):
             avail = min(avail, world.ships0[i] - reserves.get(i, 0))
         budget[i] = max(0, avail)
         doomed[i] = is_doomed
+    if _DBG:
+        _dbg(f"[t={world.step}] mine="
+             + " ".join(f"p{world.pid[i]}(s={world.ships0[i]},"
+                        f"r={reserves.get(i, 0)},b={budget[i]})"
+                        for i in mine))
 
     moves = []
     committed = {}            # src -> ships committed this turn
@@ -1021,6 +1144,70 @@ def _agent_inner(obs, configuration=None):
         # certain loss; only there is any-value aggression justified
         inflight = sum(f[6] for f in world.fleets)
         stalemate = gambit and inflight < 20
+        # ---- fortress constraint (2P): never let this turn's offense
+        # push home mass below the enemy's deliverable wave. An 18-tick
+        # rollout cannot see deterrence: the stack archetype only stops
+        # eating when every landing is unprofitable, the game freezes at
+        # score parity, and the endgame machinery wins from there
+        # (measured: the accidental fortress beat the Producer 8/10
+        # while every shopping build died in 90-180 ticks). The wave is
+        # read off the LEDGER per my planet: enemy mass that can land on
+        # it within ~10 ticks, with garrisons taken at their launch tick
+        # (covers stack rebounds; their fleets committed to far neutrals
+        # are excluded by construction). When they spend their mass on
+        # expansion, the constraint goes slack and my excess expands.
+        # Gambit/stalemate bypass: deliberate risk.
+        army_cap = float("inf")
+        wave = 0
+        wave_target = None
+        if not ffa:
+            W = 16            # must cover a stack rotation (~12-16
+                              # ticks), else the cap loosens while their
+                              # mass is briefly far and the fortress gets
+                              # spent right before the wave returns
+            H_ = world.horizon
+            for i in mine:
+                tot_i = 0
+                ix, iy, ir = world.px[i], world.py[i], world.pr[i]
+                for e in range(n):
+                    if e == i or world.is_comet[e]:
+                        continue
+                    po_e = world.post_owner[e]
+                    ps_e = world.post_ships[e]
+                    rep = world.ships0[e] if world.owner0[e] >= 0 \
+                        and world.owner0[e] != me else 0
+                    if rep <= 0:
+                        for t2 in range(min(W, H_) + 1):
+                            oo = po_e[t2]
+                            if oo is not None and oo >= 0 and oo != me:
+                                rep = max(1, ps_e[t2] or 1)
+                                break
+                    if rep <= 0:
+                        continue
+                    d_e = math.hypot(world.px[e] - ix, world.py[e] - iy) \
+                        - world.pr[e] - ir - 0.1
+                    eta_e = max(1, int(math.ceil(
+                        max(d_e, 0.0) / fleet_speed(rep))))
+                    if eta_e >= W:
+                        continue
+                    li = min(max(W - eta_e - 1, 0), H_)
+                    oo = po_e[li]
+                    if oo is None or oo < 0 or oo == me:
+                        continue
+                    tot_i += ps_e[li] or 0
+                # the stack already in the air counts most of all: known
+                # hostile arrivals at this planet inside the window
+                for dtt, slot in world.arrivals[i].items():
+                    if dtt <= W:
+                        tot_i += sum(v for o2, v in slot.items()
+                                     if o2 != me and o2 >= 0)
+                if tot_i > wave:
+                    wave = tot_i
+                    wave_target = i
+            army_cap = max(0, (my_total - 1) - wave)
+            _dbg(f"[t={world.step}]  CAP={army_cap} wave={wave} "
+                 f"home={my_total - 1}")
+        committed_offense = 0
         candidates = []
         for s in mine:
             cap = budget[s] - committed.get(s, 0)
@@ -1060,20 +1247,20 @@ def _agent_inner(obs, configuration=None):
         def hold_ticks(tgt, arr_dt, surplus):
             """How long my capture survives the enemy's feasible response:
             first tick where their landable mass (launched after seeing my
-            fleet) exceeds my surplus + production since capture."""
-            curve = resp_cache.get(tgt)
-            if curve is None:
-                curve = _response_curve(world, tgt)
-                resp_cache[tgt] = curve
+            fleet, with production banked until launch) exceeds my surplus
+            + production since capture."""
+            resp = resp_cache.get(tgt)
+            if resp is None:
+                resp = _response_curve(world, tgt)
+                resp_cache[tgt] = resp
             prod = world.prod[tgt]
-            for land, cum in curve:
-                t = max(land, arr_dt + 1)
-                if cum > surplus + prod * (t - arr_dt):
+            for t in range(arr_dt + 1, world.horizon + 1):
+                if resp[t] > surplus + prod * (t - arr_dt):
                     return max(1, t - arr_dt)
-            return None          # no feasible response: hold to the end
+            return None          # no feasible response inside the horizon
 
         def price_target(tgt, arr_dt, n_need, neutral_killed, surplus,
-                         flow_known=None):
+                         flow_known=None, raced_priced=False):
             pre_o = world.pre_owner[tgt][arr_dt]
             remaining = max(0, world.remaining - arr_dt)
             held = hold_ticks(tgt, arr_dt, surplus)
@@ -1087,7 +1274,7 @@ def _agent_inner(obs, configuration=None):
                 value = world.prod[tgt] * flow - float(neutral_killed)
                 race = _enemy_best_eta(world, tgt,
                                        world.pre_ships[tgt][arr_dt] + 1)
-                if race < arr_dt:
+                if race < arr_dt and not raced_priced:
                     value *= RACE_DISCOUNT
             else:
                 value = deny_mult * world.prod[tgt] * flow
@@ -1127,7 +1314,12 @@ def _agent_inner(obs, configuration=None):
                     break
             if not members:
                 return None
-            # try growing coalitions: 1 source, then 2, ... nearest first
+            # grow coalitions FASTEST-ARRIVING first, not nearest: speed
+            # scales with fleet size, so a far planet with 40 ships lands
+            # before a near one with 3 — and the coalition's arrival tick
+            # (its `latest`) is what the enemy response grows against. A
+            # 1-ship member used to drag whole missions out to t+28.
+            members.sort(key=lambda m: m[2][1])
             for k in range(1, len(members) + 1):
                 group = members[:k]
                 total_spare = sum(sp for _, sp, _ in group)
@@ -1136,12 +1328,33 @@ def _agent_inner(obs, configuration=None):
                 if rq is None:
                     return None
                 n_need, neutral_killed = rq
+                # robust sizing: also beat whatever the enemy can land on
+                # the target before/with me, launched after seeing my
+                # fleet. At a neutral the racer pays the sink first, so
+                # only their overshoot counts. Slow coalitions face more
+                # response — the model says so honestly; fast full-spare
+                # variants and banking toward decisive mass are the outs.
+                pre_o_l = world.pre_owner[tgt][latest]
+                pre_s_l = world.pre_ships[tgt][latest]
+                raced_priced = False
+                if pre_o_l == -1:
+                    resp_pre = _pre_arrival_response(world, tgt, latest, None)
+                    if resp_pre > 0:
+                        # racer pays the sink first; beating their landed
+                        # surplus + regrowth is priced EXACTLY, so the
+                        # blunt race discount no longer applies
+                        n_need += max(0, resp_pre - (pre_s_l or 0))
+                        raced_priced = True
+                elif pre_o_l is not None and pre_o_l >= 0 and pre_o_l != me:
+                    n_need += _pre_arrival_response(world, tgt, latest,
+                                                    pre_o_l)
                 if n_need > total_spare:
                     if k == len(members):
                         # unaffordable even all-in: bank toward it if the
                         # garrisons will cover it within a few turns
                         value = price_target(tgt, latest, n_need,
-                                             neutral_killed, 1, None)
+                                             neutral_killed, 1, None,
+                                             raced_priced)
                         growth = sum(world.prod[s] for s, _, _ in group)
                         turns_short = ((n_need - total_spare) /
                                        max(1, growth))
@@ -1201,7 +1414,47 @@ def _agent_inner(obs, configuration=None):
                         flow_known = t - arr_dt
                         break
                 value = price_target(tgt, arr_dt, n_need, neutral_killed,
-                                     surplus, flow_known)
+                                     surplus, flow_known, raced_priced)
+                committed_n = n_need
+                # ---- size axis: the minimum-sized mission is only one
+                # point on a value curve. Bigger fleets fly FASTER (speed
+                # grows with size), land sooner, hold longer (the enemy
+                # response must now beat the surviving surplus), and the
+                # surplus forward-bases at the captured planet where it is
+                # next turn's nearest source. Measured vs the Producer
+                # archetype: min-sized captures land 1-5 surplus, get
+                # re-sniped within ~2 ticks, and follow-ups die into the
+                # re-snipe stack (700-1300 ships/game landing without a
+                # flip). Offer the full-spare variant; keep whichever the
+                # model prices higher.
+                total_spare = sum(sp for _, sp, _ in group)
+                if total_spare > n_need:
+                    fplan, fsched = [], []
+                    for s, sp, _ in group:
+                        shot = world.verified_shot(s, tgt, sp)
+                        if shot is None:
+                            fplan = None
+                            break
+                        fplan.append((s, shot[0], sp, shot[1]))
+                        fsched.append((shot[1], me, sp))
+                    if fplan:
+                        _, _, fqo, fqs = world._walk_planet(
+                            tgt, world.owner0[tgt], world.ships0[tgt], 0,
+                            None, 0, extra_list=fsched)
+                        f_arr = max(dt for dt, _, _ in fsched)
+                        if fqo[f_arr] == me:
+                            f_flow = None
+                            for t2 in range(f_arr + 1, world.horizon + 1):
+                                if fqo[t2] is not None and fqo[t2] != me:
+                                    f_flow = t2 - f_arr
+                                    break
+                            f_value = price_target(
+                                tgt, f_arr, total_spare, neutral_killed,
+                                fqs[f_arr], f_flow, raced_priced)
+                            if f_value > value:
+                                value = f_value
+                                plan = fplan
+                                committed_n = total_spare
                 # the analytic response curve assumes the enemy's WHOLE
                 # army answers each target; their response budget is in
                 # fact shared across my simultaneous attacks. Admit
@@ -1212,14 +1465,17 @@ def _agent_inner(obs, configuration=None):
                     # executable plan; value ordering picks the least-bad
                     admit_floor = -1e18
                 elif gambit and not ffa:
-                    admit_floor = -0.3 * n_need
+                    admit_floor = -min(0.3 * committed_n, 16.0)
                 elif ffa:
                     admit_floor = 0.0
                 else:
-                    admit_floor = -0.15 * n_need
+                    # constant cap: the per-ship allowance predates the
+                    # size axis — scaling it with n admitted 130-ship
+                    # plans at value -20 in the middle of the stack war
+                    admit_floor = -min(0.15 * committed_n, 6.0)
                 if value <= admit_floor:
                     continue          # a bigger coalition may hold longer
-                return (value, value / n_need, plan, None)
+                return (value, value / committed_n, plan, None)
             return None
 
         # price every target, buy best-density first, reprice as we commit;
@@ -1232,6 +1488,10 @@ def _agent_inner(obs, configuration=None):
             if res is not None:
                 order.append((res[0], res[1], tgt))
         order.sort(reverse=True)
+        if _DBG and order:
+            _dbg(f"[t={world.step}]  order top: "
+                 + " ".join(f"p{world.pid[tg]}:{v:.1f}"
+                            for v, _, tg in order[:6]))
         # bank toward the best unaffordable plan ONLY if it clearly
         # dominates the best affordable one — otherwise saving starves the
         # opening on maps where the top target is just out of reach while
@@ -1260,11 +1520,52 @@ def _agent_inner(obs, configuration=None):
                 continue
             value, density, plan, wish = res
             if plan is None:
+                _dbg(f"[t={world.step}]  wish tgt=p{world.pid[tgt]} "
+                     f"v={value:.1f} members={wish} "
+                     f"bank={'Y' if allow_banking and not banked else 'n'}")
                 if allow_banking and not banked and wish:
                     banked = True
+                    # gather-to-strike: freezing capital in place can
+                    # never assemble mass — the coalition stays scattered,
+                    # arrives staggered and slow, and the response curve
+                    # eats it. Ship every member's spare to the member
+                    # nearest the target instead (one big fleet flies
+                    # faster than many small ones); next turn the hub
+                    # affords the strike alone. Only assemble onto a hub
+                    # the ledger says stays mine through every arrival.
+                    hub = min(wish, key=lambda s: math.hypot(
+                        world.px[s] - world.px[tgt],
+                        world.py[s] - world.py[tgt]))
+                    committed[hub] = budget[hub]    # hub capital stays home
                     for s in wish:
-                        committed[s] = budget[s]    # freeze for this turn
+                        if s == hub:
+                            continue
+                        spare_s = budget[s] - committed.get(s, 0)
+                        if spare_s <= 0:
+                            continue
+                        shot = world.verified_shot(s, hub, spare_s)
+                        if shot is None:
+                            committed[s] = budget[s]
+                            continue
+                        angle_h, dt_h = shot
+                        if world.post_owner[hub][min(dt_h, world.horizon)] \
+                                == me:
+                            spend(s, spare_s, angle_h)
+                            slot = world.arrivals[hub].setdefault(dt_h, {})
+                            slot[me] = slot.get(me, 0) + spare_s
+                        else:
+                            committed[s] = budget[s]
                 continue
+            plan_cost = sum(x[2] for x in plan)
+            if not gambit and not stalemate \
+                    and committed_offense + plan_cost > army_cap:
+                _dbg(f"[t={world.step}]  CAP skip tgt=p{world.pid[tgt]} "
+                     f"cost={plan_cost} cap={army_cap} "
+                     f"used={committed_offense}")
+                continue          # fortress: home mass must cover their
+                                  # deliverable wave; cheaper plans may
+                                  # still fit
+            committed_offense += plan_cost
             start = len(moves)
             landings = []
             for s, angle, take, dt in plan:
@@ -1273,20 +1574,64 @@ def _agent_inner(obs, configuration=None):
                 slot[me] = slot.get(me, 0) + take
                 landings.append((tgt, dt, take))
             purchases.append((moves[start:], landings))
+            _dbg(f"[t={world.step}]  BUY tgt=p{world.pid[tgt]} v={value:.1f} "
+                 f"n={sum(x[2] for x in plan)} "
+                 f"from={[(world.pid[s], k) for s, _, k, _ in plan]} "
+                 f"arr={max(x[3] for x in plan)}")
+
+        # ---- fortress consolidation: the cap keeps mass home, but mass
+        # spread 30-per-planet deters nothing — the stack archetype
+        # happily trades 150-vs-30 twelve times (measured: 12 planets
+        # lost in 10 ticks at t80). The unspent capital MASSES at the
+        # planet where the enemy's wave lands hardest; reserves keep the
+        # rest safe. Friendly landings merge — pre-positioning, not a
+        # fight.
+        if not ffa and wave > 0 and wave_target is not None \
+                and not gambit and not stalemate:
+            ft = wave_target
+            if world.post_owner[ft][min(6, world.horizon)] == me:
+                for s in mine:
+                    if s == ft or doomed.get(s) or world.is_comet[s]:
+                        continue
+                    spare_s = budget[s] - committed.get(s, 0)
+                    if spare_s < 8:
+                        continue
+                    shot = world.verified_shot(s, ft, spare_s)
+                    if shot is None or shot[1] > 6:
+                        continue
+                    angle_f, dt_f = shot
+                    if world.post_owner[ft][min(dt_f, world.horizon)] \
+                            != me:
+                        continue
+                    spend(s, spare_s, angle_f)
+                    slot = world.arrivals[ft].setdefault(dt_f, {})
+                    slot[me] = slot.get(me, 0) + spare_s
+                    _dbg(f"[t={world.step}]  FORTIFY p{world.pid[ft]} "
+                         f"+{spare_s} from p{world.pid[s]}")
 
     # ----- 4. rollout selection: validate the offense against a reactive
-    # opponent; keep the best of {all, drop-one each, defense-only}.
+    # opponent; keep the best of {all, value-ordered prefixes, drop-one
+    # each, defense-only}. Purchases are bought best-value-first, so
+    # prefix k = "only the k best plans" — the veto chooses the
+    # PORTFOLIO SIZE. (Discovered by accident: CPU contention truncating
+    # the buy loop played strictly better vs the Producer archetype —
+    # over-shopping drains the fortress and feeds its stacks soft
+    # landings; drop-ONE could never express "drop the worst five".)
     # Skipped in a losing stalemate: an 18-tick lookahead always prefers
     # quiet play, which is exactly the certain loss we must avoid.
     if purchases and not stalemate and time.perf_counter() - t0 < TIME_BUDGET:
         K = 18
         flow_weight = float(min(world.remaining, 60))
-        variants = [list(range(len(purchases)))]
+        variants = [list(range(len(purchases))), []]
+        for kpre in range(1, len(purchases)):
+            variants.append(list(range(kpre)))
         if len(purchases) > 1:
             for drop in range(len(purchases)):
                 variants.append([k for k in range(len(purchases))
                                  if k != drop])
-        variants.append([])
+        seen = set()
+        variants = [v for v in variants
+                    if tuple(v) not in seen and not seen.add(tuple(v))]
         best_keep = None
         best_score = None
         for keep in variants:
@@ -1301,9 +1646,72 @@ def _agent_inner(obs, configuration=None):
             if time.perf_counter() - t0 > TIME_BUDGET:
                 break
         if best_keep is not None and len(best_keep) < len(purchases):
+            _dbg(f"[t={world.step}]  VETO keeps {best_keep} "
+                 f"of {len(purchases)}")
             moves = moves[:offense_start]
             for k in best_keep:
                 moves.extend(purchases[k][0])
+
+    # ----- 5. last-resort redeploy: a doomed garrison is free capital —
+    # it dies with the planet otherwise. Combat trades 1:1, so dying in
+    # place only swaps ships; redeployed ships buy production flow or
+    # thicken a planet that lives. Whatever the buy loop didn't spend
+    # flies to the nearest ledger-verified destination: a friendly planet
+    # that survives, else a neutral this garrison can actually capture.
+    # Die-in-place only when no destination exists.
+    for i in mine:
+        if not doomed.get(i) or world.is_comet[i]:
+            continue
+        fall_t = None
+        for t in range(1, world.horizon + 1):
+            o = world.post_owner[i][t]
+            if o is not None and o != me and o != -2:
+                fall_t = t
+                break
+        if fall_t is None or fall_t > 5:
+            continue              # not imminent; keep producing
+        k = min(world.ships0[i], budget[i]) - committed.get(i, 0)
+        if k < 1:
+            continue
+        if k < 8 and fall_t > 2:
+            continue              # don't dribble: go as one lump, or at
+                                  # the last moment with whatever is left
+        best = None
+        for j in range(n):
+            if j == i or world.is_comet[j]:
+                continue
+            shot = world.verified_shot(i, j, k)
+            if shot is None:
+                continue
+            angle_j, dt_j = shot
+            dest_o = world.post_owner[j][min(dt_j, world.horizon)]
+            if dest_o == me:
+                # destination must actually be defensible after I merge:
+                # ledger-survival only knows launched fleets, and fleeing
+                # into the stack's NEXT hop was measured as a steady
+                # 2-30-ship donation stream
+                own_j = world.post_ships[j][min(dt_j, world.horizon)] or 0
+                threat = _pre_arrival_response(world, j, dt_j + 4, None)
+                margin = own_j + k - threat
+                if margin < 0:
+                    continue
+                pref = 0
+            elif dest_o == -1:
+                _, _, qo_j, _ = world._walk_planet(
+                    j, world.owner0[j], world.ships0[j], 0, None, 0,
+                    extra_list=[(dt_j, me, k)])
+                if qo_j[dt_j] != me:
+                    continue      # cannot take it — landing there is waste
+                pref = 1
+            else:
+                continue
+            key = (pref, dt_j)
+            if best is None or key < best[0]:
+                best = (key, angle_j)
+        if best is not None:
+            _dbg(f"[t={world.step}]  REDEPLOY p{world.pid[i]} k={k} "
+                 f"(falls t+{fall_t})")
+            spend(i, k, best[1])
 
     # final safety: never exceed the actual garrison
     by_src = {}
