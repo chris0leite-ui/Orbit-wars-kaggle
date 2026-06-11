@@ -40,3 +40,32 @@ selection bias (we defend when defense is winnable), so this does NOT
 prove defense > counter-attack causally — but it shows no large untapped
 counter-attack alpha in OUR behavior. The PI may have observed opponents
 using asymmetric attack against US — need the specific replay.
+
+## Diagnosis complete (same day, evening) — it is FEASIBILITY, not valuation or reach
+
+Chain of elimination on "we don't attack the strongest" in 4-player:
+1. Mining artifact removed: the majority of "attack waves" (2,664) were
+   defense/recaptures of our own planets when ownership is sampled at the
+   decision step. Cleaned behind-tick attack-ship share at the leader:
+   69% in wins vs 50% in losses — the dilution signal is real.
+2. Valuation eliminated: strength-weighted free-for-all objective is live
+   and correctly prizes leader damage.
+3. Reach eliminated: at behind-ticks in LOSSES the nearest leader planet
+   is within the 18-tick planning range 91% of the time (median 8.6
+   ticks) — closer than in wins (77%, 12.3).
+4. Remaining cause, supported by decision traces: WAVE-SIZE FEASIBILITY.
+   The leader's planets carry garrison + growth + 0.5 x routable support
+   in our capture floor; no affordable single wave clears them, the
+   candidates die before scoring, and ships flow to whatever is
+   crackable (the weaker neighbor). In wins our local strength keeps
+   leader planets crackable; in losses it doesn't.
+
+Convergence: this is exactly the gap the LIVE coalition experiment
+(sub 53577315, same-tick two-source strikes with joint floors) was built
+to close — two sources can clear floors neither clears alone. The
+ladder read doubles as the verdict on this observation. Endgame
+doomstack hops (1-2 planets left, one big ball) were a contaminating
+specimen class in the mining; excluded.
+
+Watch item for the coalition read: do two-source strikes get aimed at
+LEADER planets when behind, and do those games convert to wins?
