@@ -175,11 +175,72 @@ def main():
         print(f"size-frac MAE on positives: {err.mean():.3f} "
               f"(label mean {frac[te][mpos].mean():.3f})")
 
+    # ---- state-level initiation head --------------------------------
+    # One row per state: the global slice (identical across a state's
+    # pairs, so negative subsampling cannot skew it), label = expert
+    # launched anything this turn. This is what lets the agent INITIATE
+    # from a cold board — the per-pair head is dominated by follow-up
+    # conditioning (fleets already in flight).
+    from agents.oracle.policy_features import N_GLOBALS
+    print("training state-initiation head...")
+    skey = state
+    order_s = np.argsort(skey, kind="stable")
+    sk_o = skey[order_s]
+    first = np.r_[True, np.diff(sk_o) != 0]
+    idx_first = order_s[first]                     # one row index per state
+    G = X[idx_first][:, -N_GLOBALS:]
+    # label: any positive among the state's rows
+    import collections
+    pos_states = set(skey[y > 0.5].tolist())
+    ys_state = np.array([1.0 if k in pos_states else 0.0
+                         for k in skey[idx_first]], dtype=np.float32)
+    folds = (meta[idx_first, 0] % 10)
+    s_tr, s_va = folds <= 7, folds == 8
+    print(f"  states {len(G)}, fire rate {ys_state.mean():.3f}")
+    s_mu = G[s_tr].mean(0)
+    s_sigma = G[s_tr].std(0)
+    s_sigma[s_sigma < 1e-3] = 1e-3
+    Gz = ((G - s_mu) / s_sigma).astype(np.float32)
+
+    class SNet(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.body = nn.Sequential(nn.Linear(N_GLOBALS, 32), nn.ReLU())
+            self.out = nn.Linear(32, 1)
+
+        def forward(self, z):
+            return self.out(self.body(z)).squeeze(-1)
+
+    snet = SNet().to(dev)
+    sopt = torch.optim.AdamW(snet.parameters(), lr=1e-3)
+    Gt = torch.tensor(Gz[s_tr], device=dev)
+    yt_s = torch.tensor(ys_state[s_tr], device=dev)
+    Gv = torch.tensor(Gz[s_va], device=dev)
+    bce_m = nn.BCEWithLogitsLoss()
+    for ep_ in range(60):
+        snet.train()
+        perm = torch.randperm(len(Gt))
+        for k in range(0, len(Gt), 16384):
+            idx = perm[k:k + 16384]
+            loss = bce_m(snet(Gt[idx]), yt_s[idx])
+            sopt.zero_grad()
+            loss.backward()
+            sopt.step()
+    snet.eval()
+    with torch.no_grad():
+        ps = torch.sigmoid(snet(Gv)).cpu().numpy()
+    print(f"  state head val AUC {auc(ys_state[s_va], ps):.4f}, "
+          f"logloss {-np.mean(ys_state[s_va]*np.log(ps+1e-9)+(1-ys_state[s_va])*np.log(1-ps+1e-9)):.4f}")
+    for th in (0.3, 0.4, 0.5, 0.6):
+        print(f"    theta {th}: predicted fire-state rate "
+              f"{(ps > th).mean():.3f} (true {ys_state[s_va].mean():.3f})")
+
     sd = net.state_dict()
     hidden = []
     for k in range(args.layers):
         hidden.append((sd[f"body.{2*k}.weight"].numpy().T,
                        sd[f"body.{2*k}.bias"].numpy()))
+    ssd = snet.state_dict()
     arrays = {
         "mu": mu.astype(np.float32),
         "sigma": sigma.astype(np.float32),
@@ -191,9 +252,25 @@ def main():
     }
     from agents.oracle.value import encode_weights_py
     src = encode_weights_py(arrays, head_names=("FIRE", "FRAC"))
+    # append the state head (own normalization + stack)
+    s_arrays = {
+        "mu": s_mu.astype(np.float32),
+        "sigma": s_sigma.astype(np.float32),
+        "layers": [(ssd["body.0.weight"].numpy().T,
+                    ssd["body.0.bias"].numpy())],
+        "head_state": (ssd["out.weight"].numpy().reshape(-1),
+                       ssd["out.bias"].numpy()),
+    }
+    s_src = encode_weights_py(s_arrays, head_names=("STATE",))
+    s_src = (s_src
+             .replace("MU =", "S_MU =").replace("SIGMA =", "S_SIGMA =")
+             .replace("LAYERS =", "S_LAYERS =")
+             .replace("_W0", "_SW0").replace("_b0", "_Sb0"))
+    s_src = "\n".join(ln for ln in s_src.splitlines()
+                      if not ln.startswith(("# Generated", "import ")))
     with open(args.out, "w") as f:
-        f.write(src)
-    print(f"wrote {args.out} ({len(src)//1024} KB)")
+        f.write(src + "\n# ---- state-initiation head ----\n" + s_src)
+    print(f"wrote {args.out}")
 
 
 if __name__ == "__main__":

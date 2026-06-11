@@ -45,7 +45,16 @@ TRANSFERS_PER_SOURCE = int(_f("ORACLE_TRANSFERS", 5))
 TRANSFER_MAX_D = _f("ORACLE_TRANSFER_MAX_D", 50.0)
 MAX_WAVES = int(_f("ORACLE_MAX_WAVES", 6))
 TIME_BUDGET = _f("ORACLE_TIME_BUDGET", 0.55)
-FIRE_THETA = _f("ORACLE_FIRE_THETA", 0.50)
+# State-gated rank-based firing. Absolute per-pair thresholds are brittle:
+# the pair head's probability mass is dominated by follow-up conditioning
+# (fleets already in flight), so a cold board scores near zero everywhere
+# and a passive agent never leaves the cold region (the BC deadlock found
+# 2026-06-11). The state head decides WHETHER to act; the pair ranking
+# (top-1 accuracy 0.834 on expert states) decides WHAT.
+THETA_STATE = _f("ORACLE_THETA_STATE", 0.50)
+PAIR_ABS_OVERRIDE = _f("ORACLE_PAIR_ABS", 0.50)   # fire regardless of state
+PAIR_MIN = _f("ORACLE_PAIR_MIN", 0.02)            # never fire below this
+REL_KEEP = _f("ORACLE_REL_KEEP", 0.25)            # follow-ups >= 25% of top
 CAPTURE_MARGIN = int(_f("ORACLE_CAPTURE_MARGIN", 2))
 VETO_DELTA = _f("ORACLE_VETO_DELTA", 0.02)
 VETO_ON = os.environ.get("ORACLE_VETO", "1") != "0"
@@ -240,12 +249,25 @@ class Planner:
         pctx = PolicyContext(world, src_states)
         feats = [pctx.pair(s, t, *src_states[s]) for (_k, s, t) in pairs]
         p_fire, frac = self.policy.batch(feats)
+        p_state = self.policy.state_fire_p(feats[0])
 
         order = sorted(range(len(pairs)), key=lambda k: -p_fire[k])
+        top_p = float(p_fire[order[0]])
+        act_now = (p_state >= THETA_STATE) or (top_p >= PAIR_ABS_OVERRIDE)
+        if not act_now:
+            return []
+        floor = max(PAIR_MIN, REL_KEEP * top_p)
         remaining = {i: g for i, (g, s, d) in src_states.items()}
         chosen = []          # (p, launch record)
+        pending = {}         # tgt -> [(arrival_dt, ships)] chosen this turn
+
+        def co_arriving(t, dt):
+            base = world.arrivals[t].get(dt, {}).get(me, 0)
+            return base + sum(sh for (d2, sh) in pending.get(t, ())
+                              if abs(d2 - dt) <= 2)
+
         for k in order:
-            if len(chosen) >= MAX_WAVES or p_fire[k] < FIRE_THETA:
+            if len(chosen) >= MAX_WAVES or p_fire[k] < floor:
                 break
             if (time.time() - t0) > TIME_BUDGET:
                 break
@@ -266,25 +288,24 @@ class Planner:
                     need = req[0] + CAPTURE_MARGIN
                     if size < need <= g_now:
                         size = need
-                    elif size < req[0]:
-                        # cannot capture: only fire if it reinforces a race
-                        slot = world.arrivals[t].get(eta, {})
-                        if slot.get(me, 0) <= 0:
-                            continue
             if size >= 0.9 * g_now:
                 size = g_now
             rec = _shot(world, s, t, size)
             if rec is None:
                 continue
-            # re-verify capture at the TRUE arrival tick
+            # capture sanity at the TRUE arrival tick: fire sub-required
+            # waves only when co-arriving mass (in-flight or co-launched)
+            # completes the capture, or the policy is highly confident
+            # (sequential sieges and races exist in the expert data)
             if kind == "attack":
                 req_at = required_ships(world, t, rec[3], me)
-                if req_at is not None and rec[1] < req_at[0]:
-                    slot = world.arrivals[t].get(rec[3], {})
-                    if slot.get(me, 0) <= 0:
-                        continue
+                if (req_at is not None
+                        and rec[1] + co_arriving(t, rec[3]) < req_at[0]
+                        and p_fire[k] < 0.55):
+                    continue
             chosen.append((float(p_fire[k]), rec))
             remaining[s] = g_now - rec[1]
+            pending.setdefault(t, []).append((rec[3], rec[1]))
 
         if not chosen:
             return []

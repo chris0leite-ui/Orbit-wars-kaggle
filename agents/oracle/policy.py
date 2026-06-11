@@ -10,7 +10,7 @@ fires affordable captures by a simple price rank, never transfers.
 
 import numpy as np
 
-from .policy_features import POLICY_FEATURES
+from .policy_features import POLICY_FEATURES, N_GLOBALS
 
 _I = {n: k for k, n in enumerate(POLICY_FEATURES)}
 
@@ -18,8 +18,13 @@ _I = {n: k for k, n in enumerate(POLICY_FEATURES)}
 class PolicyNet:
     def __init__(self):
         self.loaded = False
+        PW = None
         try:
             from . import policy_weights as PW
+        except Exception:
+            # flattened bundle: the builder injects _POLICY_WEIGHTS
+            PW = globals().get("_POLICY_WEIGHTS")
+        try:
             self.mu = PW.MU
             self.sigma = PW.SIGMA
             self.layers = PW.LAYERS
@@ -28,10 +33,32 @@ class PolicyNet:
             self.loaded = True
         except Exception:
             pass
+        # state-level initiation head (trained on the global feature slice)
+        self.state_loaded = False
+        try:
+            self.s_mu = PW.S_MU
+            self.s_sigma = PW.S_SIGMA
+            self.s_layers = PW.S_LAYERS
+            self.s_head = PW.HEAD_STATE
+            self.state_loaded = True
+        except Exception:
+            pass
+
+    def state_fire_p(self, any_pair_feats):
+        """P(an expert launches anything this turn) from one pair's
+        state-global slice (identical across the state's pairs)."""
+        if not self.state_loaded:
+            return 1.0          # without the head, never block on state
+        g = np.asarray(any_pair_feats[-N_GLOBALS:], dtype=np.float32)
+        z = (g - self.s_mu) / self.s_sigma
+        for W, b in self.s_layers:
+            z = np.maximum(z @ W + b, 0.0)
+        logit = float(z @ self.s_head[0] + self.s_head[1])
+        return 1.0 / (1.0 + np.exp(-logit))
 
     def batch(self, feats_list):
         """-> (p_fire array, size_frac array)."""
-        if not feats_list:
+        if len(feats_list) == 0:
             z = np.zeros(0, dtype=np.float32)
             return z, z
         X = np.asarray(feats_list, dtype=np.float32)

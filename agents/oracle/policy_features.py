@@ -13,6 +13,11 @@ import math
 
 from .engine import fleet_speed, required_ships
 
+# the trailing block of pair features is state-global (identical for every
+# pair of a state); the state-level initiation head trains on exactly this
+# slice, so KEEP IT LAST and update N_GLOBALS when it changes
+N_GLOBALS = 11
+
 POLICY_FEATURES = [
     # pair geometry / tempo
     "dist", "eta_full", "eta_required", "src_to_enemy_d", "tgt_to_enemy_d",

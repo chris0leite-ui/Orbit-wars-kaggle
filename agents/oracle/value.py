@@ -27,8 +27,13 @@ _I_SHARE_PROD_LAST = FEATURE_NAMES.index("share_prod_t32")
 class ValueNet:
     def __init__(self):
         self.loaded = False
+        VW = None
         try:
             from . import value_weights as VW
+        except Exception:
+            # flattened bundle: the builder injects _VALUE_WEIGHTS
+            VW = globals().get("_VALUE_WEIGHTS")
+        try:
             self.mu = VW.MU
             self.sigma = VW.SIGMA
             self.layers = VW.LAYERS          # [(W, b), ...] hidden stack
@@ -40,7 +45,7 @@ class ValueNet:
 
     def batch(self, feats_list):
         """list of feature vectors -> np.array of scalar plan scores."""
-        if not feats_list:
+        if len(feats_list) == 0:
             return np.zeros(0, dtype=np.float32)
         X = np.asarray(feats_list, dtype=np.float32)
         if not self.loaded:
