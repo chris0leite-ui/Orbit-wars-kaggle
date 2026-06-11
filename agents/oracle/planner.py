@@ -45,13 +45,15 @@ TRANSFERS_PER_SOURCE = int(_f("ORACLE_TRANSFERS", 5))
 TRANSFER_MAX_D = _f("ORACLE_TRANSFER_MAX_D", 50.0)
 MAX_WAVES = int(_f("ORACLE_MAX_WAVES", 6))
 TIME_BUDGET = _f("ORACLE_TIME_BUDGET", 0.55)
-# State-gated rank-based firing. Absolute per-pair thresholds are brittle:
-# the pair head's probability mass is dominated by follow-up conditioning
-# (fleets already in flight), so a cold board scores near zero everywhere
-# and a passive agent never leaves the cold region (the BC deadlock found
-# 2026-06-11). The state head decides WHETHER to act; the pair ranking
-# (top-1 accuracy 0.834 on expert states) decides WHAT.
-THETA_STATE = _f("ORACLE_THETA_STATE", 0.50)
+# Rate-integrated state-gated firing. Absolute per-pair thresholds are
+# brittle (the pair head's mass rides on follow-up conditioning, so cold
+# boards score low everywhere), and a hard per-turn threshold on the state
+# head holds forever at p~0.3 although "30% of experts fire NOW" means
+# everyone fires within a few turns. So the state head's probability is
+# treated as a RATE and integrated: fire-debt += p_state each turn, act
+# when debt >= 1 (deterministic rounding of the experts' stochastic
+# policy), reset on act. High-confidence pairs override the gate.
+DEBT_FIRE = _f("ORACLE_DEBT_FIRE", 1.0)
 PAIR_ABS_OVERRIDE = _f("ORACLE_PAIR_ABS", 0.50)   # fire regardless of state
 PAIR_MIN = _f("ORACLE_PAIR_MIN", 0.02)            # never fire below this
 REL_KEEP = _f("ORACLE_REL_KEEP", 0.25)            # follow-ups >= 25% of top
@@ -192,6 +194,8 @@ class Planner:
     def __init__(self):
         self.policy = PolicyNet()
         self.value = ValueNet()
+        self.fire_debt = 0.0
+        self.last_step = -1
 
     # ----------------------------------------------------------- replies
     def _reply_sets(self, world, me, my_recs):
@@ -251,9 +255,14 @@ class Planner:
         p_fire, frac = self.policy.batch(feats)
         p_state = self.policy.state_fire_p(feats[0])
 
+        if world.step <= self.last_step:
+            self.fire_debt = 0.0          # new episode in the same process
+        self.last_step = world.step
+        self.fire_debt = min(2.0, self.fire_debt + float(p_state))
+
         order = sorted(range(len(pairs)), key=lambda k: -p_fire[k])
         top_p = float(p_fire[order[0]])
-        act_now = (p_state >= THETA_STATE) or (top_p >= PAIR_ABS_OVERRIDE)
+        act_now = (self.fire_debt >= DEBT_FIRE) or (top_p >= PAIR_ABS_OVERRIDE)
         if not act_now:
             return []
         floor = max(PAIR_MIN, REL_KEEP * top_p)
@@ -345,4 +354,6 @@ class Planner:
                 return []        # accounting bug guard: launch nothing
         for (_p, (src, ships, angle, dt, tgt)) in chosen:
             moves.append([world.pid[src], float(angle), int(ships)])
+        if moves:
+            self.fire_debt = 0.0
         return moves
