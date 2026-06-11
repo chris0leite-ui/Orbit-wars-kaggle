@@ -96,10 +96,12 @@ def main():
     sigma = X[tr].std(0)
     sigma[sigma < 1e-3] = 1e-3
     Z = ((X - mu) / sigma).astype(np.float32)
+    n_features = X.shape[1]
+    del X, d                      # 23M-row datasets: free aggressively
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     blocks = []
-    d_in = X.shape[1]
+    d_in = n_features
     for _ in range(args.layers):
         blocks += [nn.Linear(d_in, args.hidden), nn.ReLU()]
         d_in = args.hidden
@@ -119,12 +121,12 @@ def main():
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-5)
     bce = nn.BCEWithLogitsLoss(reduction="none")
 
-    Zt = torch.tensor(Z[tr])
+    Zt = torch.from_numpy(Z[tr])
     yt = torch.tensor(y[tr])
     ft = torch.tensor(frac[tr])
     wt = torch.where(yt > 0.5, torch.tensor(1.0),
                      torch.tensor(1.0 / NEG_KEEP))
-    Zv = torch.tensor(Z[va], device=dev)
+    Zv = torch.from_numpy(Z[va]).to(dev)
     n = Zt.shape[0]
 
     best = (1e9, None)
