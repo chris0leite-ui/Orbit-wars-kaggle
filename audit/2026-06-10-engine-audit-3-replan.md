@@ -217,3 +217,16 @@ Fresh seeds 4-9: 5/12, paired +17.2% @250 driven by three +100% blowouts
 vs steady moderate losses; 3/6 seeds ahead. Combined 11-9 over 20 games.
 Same variance-amplifier profile as the expansion lane. eps goes to tuner
 v2 as a knob. Nothing earns a slot today; both held.
+
+## REFUTATION with mechanism: horizon 22 — 2/12, paired -53% @250
+
+The expansion-undervaluation hypothesis predicted longer horizon helps;
+the opposite happened, and the conflation explains it: in this engine the
+horizon sets scoring depth AND the launch-reach cap (K_eta = H). H=22
+licenses longer fleet commitments — the week's convergent disease
+(in-flight capital underpriced). Clean controlled support for the
+reach-discipline thread: tuner hinted H=16; top teams fly eta 4-5 vs our
+7-8. Next (zero-code): isolated H=16, and the shelved ADAPTIVE_K
+(reach 20 -> 10 by step 30; parity on the old stack, untested on
+veto+rf). Opening-gap re-measurement on the new sub's 47 live replays
+queued alongside.
