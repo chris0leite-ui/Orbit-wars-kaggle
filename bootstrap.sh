@@ -129,6 +129,14 @@ ls -lh data/ 2>/dev/null | head -10
 # ---------------------------------------------------------------------------
 # Step 4 — local simulator smoke check
 # ---------------------------------------------------------------------------
+# kaggle_environments imports every env at package init; the werewolf env
+# pulls litellm -> cryptography. The debian-packaged cryptography is broken
+# against the container's cffi (missing _cffi_backend) and cannot be
+# pip-uninstalled (no RECORD). Verified fix (2026-06-11): shadow it with
+# pip-managed wheels via --ignore-installed.
+python - <<'PY' >/dev/null 2>&1 || pip install -q --ignore-installed cffi cryptography
+from cryptography.hazmat.primitives import hashes  # noqa: F401
+PY
 echo "--- smoke: random-vs-random in kaggle_environments ---"
 python - <<'PY' || echo "WARNING: simulator smoke failed; check kaggle-environments install."
 from kaggle_environments import make
