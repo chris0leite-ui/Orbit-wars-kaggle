@@ -1,0 +1,110 @@
+{
+  "submission_id": "53577315",
+  "generated_utc": "2026-06-11T18:16:15Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 7,
+  "n_played": 7,
+  "wins_total": 7,
+  "winrate_total": 1.0,
+  "by_size": {
+    "2": {
+      "n": 2,
+      "wins": 2,
+      "winrate": 1.0
+    },
+    "4": {
+      "n": 5,
+      "wins": 5,
+      "winrate": 1.0
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 5,
+    "1": 2,
+    "2": 2,
+    "3": 1
+  },
+  "episode_length_steps": {
+    "n": 7,
+    "min": 103,
+    "q1": 130,
+    "median": 133,
+    "q3": 151,
+    "max": 321,
+    "mean": 155.71428571428572
+  },
+  "opponents": [
+    {
+      "name": "Tech Hound",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Srujan Kalavagunta",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "aziz EL HIDDIOUI",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Joy Boy",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Daehyeon12",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Salvin Sebastian",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Sab",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Shunsuke Shibata",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "takai380",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "oQoXOdK6",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "EvilCat",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Nandodemo",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "SeaEag1e",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Giba",
+      "seen": 1,
+      "beat_us": 0
+    }
+  ],
+  "losses": []
+}
