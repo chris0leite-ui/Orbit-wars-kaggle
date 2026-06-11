@@ -1,0 +1,52 @@
+{
+  "generated_utc": "20260611T074612Z",
+  "focals": [
+    "submissions/producer_plus_vetorf4p_ffa_on.py",
+    "submissions/producer_plus_ffa_uniform_on.py"
+  ],
+  "background": [
+    "submissions/_ns_ffa_uniform.py",
+    "submissions/_ns_ffa_uniform.py",
+    "submissions/_ns_ffa_uniform.py"
+  ],
+  "players": 4,
+  "seeds": [
+    42,
+    1,
+    7,
+    13
+  ],
+  "rotate_seats": true,
+  "results": [
+    {
+      "focal": "submissions/producer_plus_vetorf4p_ffa_on.py",
+      "focal_spec": "submissions/producer_plus_vetorf4p_ffa_on.py",
+      "background": [
+        "submissions/_ns_ffa_uniform.py",
+        "submissions/_ns_ffa_uniform.py",
+        "submissions/_ns_ffa_uniform.py"
+      ],
+      "n_games": 16,
+      "first_place_count": 1,
+      "first_place_rate": 0.0625,
+      "wilson_lo_95": 0.01111905730833121,
+      "wilson_hi_95": 0.2832926836802987,
+      "p95_focal_turn_ms": 160.75883130042712
+    },
+    {
+      "focal": "submissions/producer_plus_ffa_uniform_on.py",
+      "focal_spec": "submissions/producer_plus_ffa_uniform_on.py",
+      "background": [
+        "submissions/_ns_ffa_uniform.py",
+        "submissions/_ns_ffa_uniform.py",
+        "submissions/_ns_ffa_uniform.py"
+      ],
+      "n_games": 16,
+      "first_place_count": 16,
+      "first_place_rate": 1.0,
+      "wilson_lo_95": 0.8063865817272802,
+      "wilson_hi_95": 1.0,
+      "p95_focal_turn_ms": 90.28796625034374
+    }
+  ]
+}
