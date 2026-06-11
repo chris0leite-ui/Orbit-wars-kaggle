@@ -1,0 +1,112 @@
+{
+  "submission_id": "53558897",
+  "generated_utc": "2026-06-11T06:46:27Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 8,
+  "n_played": 8,
+  "wins_total": 6,
+  "winrate_total": 0.75,
+  "by_size": {
+    "2": {
+      "n": 6,
+      "wins": 4,
+      "winrate": 0.6666666666666666
+    },
+    "4": {
+      "n": 2,
+      "wins": 2,
+      "winrate": 1.0
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 5,
+    "1": 4
+  },
+  "episode_length_steps": {
+    "n": 8,
+    "min": 114,
+    "q1": 139,
+    "median": 214,
+    "q3": 246,
+    "max": 500,
+    "mean": 252.75
+  },
+  "opponents": [
+    {
+      "name": "Carlos Kamaria",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Prakhareshwar",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Phan Tien Dung",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ilya",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Elvis Bui",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Tiandong Wang",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "moriiiiiiiiim",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "GeniusYY",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Prem Shinde",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kohaku",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "KapilSharma0111",
+      "seen": 1,
+      "beat_us": 0
+    }
+  ],
+  "losses": [
+    {
+      "episode": "episode-79496718",
+      "size": 2,
+      "opponents": [
+        "moriiiiiiiiim"
+      ],
+      "winner": "moriiiiiiiiim",
+      "steps": 500
+    },
+    {
+      "episode": "episode-79497145",
+      "size": 2,
+      "opponents": [
+        "GeniusYY"
+      ],
+      "winner": "GeniusYY",
+      "steps": 139
+    }
+  ]
+}
