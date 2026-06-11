@@ -95,15 +95,19 @@ def main() -> None:
     ap.add_argument("--background", required=True,
                     help="namespaced bundle used for the 3 rival seats")
     ap.add_argument("--seeds", type=int, default=4)
+    ap.add_argument("--seed-start", type=int, default=0)
     ap.add_argument("--max-steps", type=int, default=150)
     ap.add_argument("--workers", type=int, default=1)
-    ap.add_argument("--no-rotate-seats", action="store_true")
+    ap.add_argument("--no-rotate-seats", action="store_true",
+                    help="one game per map. Against a self-similar background "
+                    "seats correlate ~1, so maps >> seats per unit of compute")
     args = ap.parse_args()
 
     seats = [0] if args.no_rotate_seats else [0, 1, 2, 3]
     jobs = [
         (seed, args.focal, args.background, seat, args.max_steps)
-        for seed in range(args.seeds) for seat in seats
+        for seed in range(args.seed_start, args.seed_start + args.seeds)
+        for seat in seats
     ]
     print(f"== margin_ffa focal={Path(args.focal).name} bg={Path(args.background).name} "
           f"games={len(jobs)} max_steps={args.max_steps} workers={args.workers} ==",
