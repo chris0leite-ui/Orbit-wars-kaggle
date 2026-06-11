@@ -1,44 +1,84 @@
 {
   "submission_id": "53577315",
-  "generated_utc": "2026-06-11T18:58:30Z",
+  "generated_utc": "2026-06-11T20:29:49Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 16,
-  "n_played": 16,
-  "wins_total": 12,
-  "winrate_total": 0.75,
+  "n_episodes": 42,
+  "n_played": 42,
+  "wins_total": 24,
+  "winrate_total": 0.5714285714285714,
   "by_size": {
     "2": {
-      "n": 7,
-      "wins": 6,
-      "winrate": 0.8571428571428571
+      "n": 18,
+      "wins": 15,
+      "winrate": 0.8333333333333334
     },
     "4": {
-      "n": 9,
-      "wins": 6,
-      "winrate": 0.6666666666666666
+      "n": 24,
+      "wins": 9,
+      "winrate": 0.375
     }
   },
   "self_match_episodes": 1,
   "seat_distribution": {
-    "0": 9,
-    "1": 5,
-    "2": 3,
-    "3": 2
+    "0": 17,
+    "1": 16,
+    "2": 6,
+    "3": 6
   },
   "episode_length_steps": {
-    "n": 16,
-    "min": 103,
-    "q1": 116,
-    "median": 133,
-    "q3": 151,
+    "n": 42,
+    "min": 93,
+    "q1": 125,
+    "median": 153,
+    "q3": 210,
     "max": 500,
-    "mean": 168.0625
+    "mean": 197.54761904761904
   },
   "opponents": [
     {
       "name": "SeaEag1e",
       "seen": 2,
       "beat_us": 0
+    },
+    {
+      "name": "Giba",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "Surabhi veda",
+      "seen": 2,
+      "beat_us": 2
+    },
+    {
+      "name": "Gregor Lied",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "kovi",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "Tommy Barnes",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "aaa",
+      "seen": 2,
+      "beat_us": 2
+    },
+    {
+      "name": "Blu3s",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "Kaiser",
+      "seen": 2,
+      "beat_us": 1
     },
     {
       "name": "Tech Hound",
@@ -101,11 +141,6 @@
       "beat_us": 0
     },
     {
-      "name": "Giba",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "Hu Xingyu",
       "seen": 1,
       "beat_us": 0
@@ -137,11 +172,6 @@
     },
     {
       "name": "Jiri Prudky",
-      "seen": 1,
-      "beat_us": 1
-    },
-    {
-      "name": "Surabhi veda",
       "seen": 1,
       "beat_us": 1
     },
@@ -182,6 +212,216 @@
     },
     {
       "name": "\u53f2\u6c38\u521a",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "To be happy",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Gijs Smit",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "AkiraIshikawa",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "atl132",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "susutem",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "unosss",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Harm Buisman",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "draven",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ShunkiKyoya",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "WuJingjing",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Clawdy Huang (Andy's AI)",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kuni05",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "yuto083",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Illedan",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Shangshang Zhang",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mooegi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "khj1222",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "KoshinM",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Henry Nieves",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Abdurakhmonov Dostonbek",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "LuckyXC",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "MauryanTitans",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mimi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Dmitry Belan",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "forever young",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "mmath2",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "istinetz",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Ezra",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Dreame1",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "XiaokangWang",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Felix M Neumann",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "DONJYARAHOI",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Vincent Schuler",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "madmax0404",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "F\u00e9lix Truong",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Michael Long",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\uc900\ud658",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Gregor Samsa",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Xiangjiang Zhou",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Tomoki Hirose",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "SVOT",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Sam Scott",
       "seen": 1,
       "beat_us": 0
     }
@@ -228,6 +468,156 @@
       ],
       "winner": "uesi",
       "steps": 500
+    },
+    {
+      "episode": "episode-79560372",
+      "size": 4,
+      "opponents": [
+        "Giba",
+        "Surabhi veda",
+        "Gijs Smit"
+      ],
+      "winner": "Surabhi veda",
+      "steps": 140
+    },
+    {
+      "episode": "episode-79560903",
+      "size": 4,
+      "opponents": [
+        "Gregor Lied",
+        "unosss",
+        "kovi"
+      ],
+      "winner": "kovi",
+      "steps": 190
+    },
+    {
+      "episode": "episode-79560969",
+      "size": 4,
+      "opponents": [
+        "Harm Buisman",
+        "draven",
+        "ShunkiKyoya"
+      ],
+      "winner": "ShunkiKyoya",
+      "steps": 154
+    },
+    {
+      "episode": "episode-79561174",
+      "size": 2,
+      "opponents": [
+        "WuJingjing"
+      ],
+      "winner": "WuJingjing",
+      "steps": 500
+    },
+    {
+      "episode": "episode-79561871",
+      "size": 4,
+      "opponents": [
+        "Illedan",
+        "Shangshang Zhang",
+        "Mooegi"
+      ],
+      "winner": "Illedan",
+      "steps": 120
+    },
+    {
+      "episode": "episode-79563655",
+      "size": 4,
+      "opponents": [
+        "Tommy Barnes",
+        "Mimi",
+        "Dmitry Belan"
+      ],
+      "winner": "Tommy Barnes",
+      "steps": 150
+    },
+    {
+      "episode": "episode-79564777",
+      "size": 4,
+      "opponents": [
+        "istinetz",
+        "Ezra",
+        "Dreame1"
+      ],
+      "winner": "istinetz",
+      "steps": 253
+    },
+    {
+      "episode": "episode-79565451",
+      "size": 4,
+      "opponents": [
+        "aaa",
+        "Felix M Neumann",
+        "DONJYARAHOI"
+      ],
+      "winner": "aaa",
+      "steps": 171
+    },
+    {
+      "episode": "episode-79565469",
+      "size": 4,
+      "opponents": [
+        "Vincent Schuler",
+        "madmax0404",
+        "F\u00e9lix Truong"
+      ],
+      "winner": "F\u00e9lix Truong",
+      "steps": 264
+    },
+    {
+      "episode": "episode-79565726",
+      "size": 2,
+      "opponents": [
+        "aaa"
+      ],
+      "winner": "aaa",
+      "steps": 152
+    },
+    {
+      "episode": "episode-79566215",
+      "size": 4,
+      "opponents": [
+        "Michael Long",
+        "kovi",
+        "\uc900\ud658"
+      ],
+      "winner": "\uc900\ud658",
+      "steps": 125
+    },
+    {
+      "episode": "episode-79566423",
+      "size": 4,
+      "opponents": [
+        "Blu3s",
+        "Gregor Samsa",
+        "Kaiser"
+      ],
+      "winner": "Blu3s",
+      "steps": 348
+    },
+    {
+      "episode": "episode-79566677",
+      "size": 4,
+      "opponents": [
+        "Xiangjiang Zhou",
+        "Tomoki Hirose",
+        "Gregor Lied"
+      ],
+      "winner": "Gregor Lied",
+      "steps": 202
+    },
+    {
+      "episode": "episode-79566973",
+      "size": 4,
+      "opponents": [
+        "Tommy Barnes",
+        "Kaiser",
+        "SVOT"
+      ],
+      "winner": "Kaiser",
+      "steps": 181
     }
   ]
 }

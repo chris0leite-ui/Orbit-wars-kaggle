@@ -595,6 +595,23 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_RESPONSE_VETO": "1",
         "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
     },
+    "vetorf4p_sync_garval": {
+        # NIGHT BUILD: live 4P stack + the balance-of-force pair. Garrison
+        # value prices PROACTIVE reinforcement of own planets whose local
+        # balance vs uncommitted enemy reserves is negative (the live war
+        # ledger: 4P winner = whoever reinforces more, 17x gap vs Blu3s);
+        # source safety caps drains by the same model on the push side.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
+        "PRODUCER_PLUS_SYNC": "1",
+        "PRODUCER_PLUS_SOURCE_SAFETY": "0.5",
+        "PRODUCER_PLUS_GARRISON_VALUE": "12",
+    },
     "vetorf_srcsafe": {
         # Source-safety drain cap alone on the live 2P stack. Caps drain by
         # local balance of force (enemy uncommitted reserve vs production

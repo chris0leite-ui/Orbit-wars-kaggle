@@ -352,6 +352,96 @@ def _hold_value_bonus(
         safe, lam * prod_t, torch.zeros(C, dtype=dtype, device=device))
 
 
+# --- Garrison-deficit reinforcement value (PRODUCER_PLUS_GARRISON_VALUE) -------
+# Live war-ledger finding (audit 2026-06-11 night): at the 1300+ band, the
+# 4P winner is whoever reinforces more (our wins: we out-garrison the top
+# rival 58%/33%; our losses: 46%/61%; the Blu3s siege: 15,868 vs 942
+# reinforcement ships, 42/42 vs 31/39 wave success). The flow scorer values
+# reinforcement only when a known IN-FLIGHT wave makes a planet savable —
+# by then the avalanche is launched and no single send parries it. This
+# term prices PROACTIVE garrisoning: an own-target send earns the planet's
+# holding value when the planet's local balance against the enemy's
+# UNCOMMITTED reserve is negative and the send covers the deficit. Same
+# balance-of-force model as the source-safety cap (push side); this is the
+# pull side, chooser-internal per the three-falsifications friction note
+# (thin post-pass regroup lanes land ships the chooser never uses).
+# Default 0 = byte-identical.
+
+
+def _garrison_value() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_GARRISON_VALUE", "0")
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 0.0
+
+
+def _garrison_value_bonus(
+    *,
+    obs,
+    cache,
+    target_idx: Tensor,        # [T] shortlist slots
+    cand_tgt_slot: Tensor,     # [C]
+    cand_tgt_short: Tensor,    # [C]
+    cand_send: Tensor,         # [C, L]
+    cand_eta: Tensor,          # [C, L]
+    cand_valid: Tensor,        # [C]
+    cand_is_def: Tensor,       # [C]
+    prod: Tensor,              # [P]
+    K: int,
+) -> Tensor:
+    """Per-candidate proactive-garrison credit, ``[C]`` (>= 0).
+
+    Deficit of own planet t over the window, judged at/after the send's
+    arrival: D(t) = max_{k >= eta} [ w*threat(t,k) - (g_t + prod_t*k +
+    help(t,k)) ]. A send earns lambda_g * prod_t when D > 0 (the planet is
+    expected to fall to a feasible strike) and the send covers D.
+    """
+    device = cand_send.device
+    dtype = cand_send.dtype
+    C = int(cand_send.shape[0])
+    lam = _garrison_value()
+    w = _source_safety_weight()
+    if lam <= 0.0 or C == 0 or K <= 0:
+        return torch.zeros(C, dtype=dtype, device=device)
+    gate = cand_valid & cand_is_def                                   # [C]
+    if not bool(gate.any()):
+        return torch.zeros(C, dtype=dtype, device=device)
+    threat = _reactive_reinforcement_margin(
+        obs, cache, target_idx, K,
+        weight=(w if w > 0.0 else 1.0), lag=_source_safety_lag(),
+    )                                                                 # [T, K] | None
+    if threat is None:
+        return torch.zeros(C, dtype=dtype, device=device)
+    help_tk = _friendly_support_margin(obs, cache, target_idx, K)
+    if help_tk is None:
+        help_tk = torch.zeros_like(threat)
+    P = int(obs.P)
+    tgt_safe = target_idx.clamp(0, P - 1)
+    k_grid = torch.arange(1, K + 1, device=device, dtype=dtype).view(1, K)
+    base = (
+        obs.ships[tgt_safe].to(dtype).unsqueeze(-1)
+        + prod[tgt_safe].to(dtype).unsqueeze(-1) * k_grid
+        + help_tk
+    )                                                                 # [T, K]
+    deficit_tk = threat - base                                        # [T, K]
+    t_c = cand_tgt_short.clamp(0, deficit_tk.shape[0] - 1)
+    d_c = deficit_tk[t_c]                                             # [C, K]
+    eta_max = cand_eta.max(dim=-1).values                             # [C]
+    k_arr = (eta_max.clamp(min=1.0, max=float(K)).ceil() - 1.0).view(C, 1)
+    at_or_after = (
+        torch.arange(K, device=device, dtype=dtype).view(1, K) >= k_arr
+    )                                                                 # [C, K]
+    neg_fill = torch.full_like(d_c, float("-inf"))
+    D = torch.where(at_or_after, d_c, neg_fill).max(dim=-1).values    # [C]
+    send_tot = cand_send.sum(dim=-1)                                  # [C]
+    covers = (D > 0.0) & (send_tot >= D)
+    prod_t = prod[cand_tgt_slot.clamp(0, P - 1)].to(dtype)
+    return torch.where(
+        gate & covers, lam * prod_t,
+        torch.zeros(C, dtype=dtype, device=device))
+
+
 def _denial_bonus_enabled() -> bool:
     return os.environ.get("PRODUCER_PLUS_DENIAL_BONUS", "0").strip().lower() in (
         "1", "true", "yes", "on",
@@ -2775,6 +2865,16 @@ def plan_lite_waves(
             cand_send=cand_send, cand_eta=cand_eta,
             cand_valid=cand_valid, cand_is_def=cand_is_def,
             capture_floor_TK=floor, prod=prod, K=K,
+        )
+    if _garrison_value() > 0.0:
+        # Proactive-garrison credit: reinforcing an own planet whose local
+        # balance vs the enemy's uncommitted reserve is negative.
+        score = score + _garrison_value_bonus(
+            obs=obs, cache=cache, target_idx=target_idx,
+            cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
+            cand_send=cand_send, cand_eta=cand_eta,
+            cand_valid=cand_valid, cand_is_def=cand_is_def,
+            prod=prod, K=K,
         )
     # Force-concentration rescore closure: between greedy waves, re-score
     # every candidate against the just-fired waves so wave 2 at a target sees
