@@ -595,6 +595,22 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_RESPONSE_VETO": "1",
         "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
     },
+    "vetorf4p_sync": {
+        # LIVE EXPERIMENT candidate: the current live submission's full env
+        # (vetorf4p_seq_strength) + same-tick two-source coalitions
+        # (PRODUCER_PLUS_SYNC, holds off at default DMAX=0). Local evidence:
+        # exact mirror parity (7/12, -0.7%@250) — purpose is ladder
+        # information on whether the multi-source capture capability
+        # matters against the real field.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
+        "PRODUCER_PLUS_SYNC": "1",
+    },
     "vetorf_sync": {
         # Live stack + same-tick two-source coalitions in the multi-size
         # path: pair candidates on targets neither source cracks alone,

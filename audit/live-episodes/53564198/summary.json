@@ -1,38 +1,38 @@
 {
   "submission_id": "53564198",
-  "generated_utc": "2026-06-11T12:42:38Z",
+  "generated_utc": "2026-06-11T16:48:41Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 47,
-  "n_played": 47,
-  "wins_total": 26,
-  "winrate_total": 0.5531914893617021,
+  "n_episodes": 60,
+  "n_played": 60,
+  "wins_total": 31,
+  "winrate_total": 0.5166666666666667,
   "by_size": {
     "2": {
-      "n": 25,
-      "wins": 13,
-      "winrate": 0.52
+      "n": 34,
+      "wins": 17,
+      "winrate": 0.5
     },
     "4": {
-      "n": 22,
-      "wins": 13,
-      "winrate": 0.5909090909090909
+      "n": 26,
+      "wins": 14,
+      "winrate": 0.5384615384615384
     }
   },
   "self_match_episodes": 1,
   "seat_distribution": {
-    "0": 22,
-    "1": 16,
-    "2": 6,
-    "3": 6
+    "0": 24,
+    "1": 24,
+    "2": 8,
+    "3": 7
   },
   "episode_length_steps": {
-    "n": 47,
+    "n": 60,
     "min": 89,
     "q1": 118,
-    "median": 148,
-    "q3": 193,
+    "median": 149,
+    "q3": 185,
     "max": 500,
-    "mean": 183.2340425531915
+    "mean": 182.31666666666666
   },
   "opponents": [
     {
@@ -67,6 +67,11 @@
     },
     {
       "name": "Tagir Analyzes",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "Lucas Boesen",
       "seen": 2,
       "beat_us": 0
     },
@@ -331,11 +336,6 @@
       "beat_us": 1
     },
     {
-      "name": "Lucas Boesen",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "huangshanle",
       "seen": 1,
       "beat_us": 0
@@ -432,6 +432,106 @@
     },
     {
       "name": "SKYisSKYisSKY",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "datnt114",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "SR",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Itong",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Kevin Zhou",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ykhnkf",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "sottnik",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mahmoud Abdelshafy",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "cununn",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Oshbocker",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "CurveCowboy",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "PyJa",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "manaphy24",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "sadbody123",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ImGonnaDie",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Aadi Gupta",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "WuJingjing",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Penguin",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "AI-Cat",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kirderf",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Gregor Lied",
       "seen": 1,
       "beat_us": 1
     }
@@ -642,6 +742,84 @@
         "SKYisSKYisSKY"
       ],
       "winner": "SKYisSKYisSKY",
+      "steps": 135
+    },
+    {
+      "episode": "episode-79528085",
+      "size": 2,
+      "opponents": [
+        "datnt114"
+      ],
+      "winner": "datnt114",
+      "steps": 126
+    },
+    {
+      "episode": "episode-79528784",
+      "size": 2,
+      "opponents": [
+        "SR"
+      ],
+      "winner": "SR",
+      "steps": 109
+    },
+    {
+      "episode": "episode-79529206",
+      "size": 2,
+      "opponents": [
+        "Itong"
+      ],
+      "winner": "Itong",
+      "steps": 145
+    },
+    {
+      "episode": "episode-79532451",
+      "size": 2,
+      "opponents": [
+        "Mahmoud Abdelshafy"
+      ],
+      "winner": "Mahmoud Abdelshafy",
+      "steps": 220
+    },
+    {
+      "episode": "episode-79532736",
+      "size": 4,
+      "opponents": [
+        "Lucas Boesen",
+        "cununn",
+        "Oshbocker"
+      ],
+      "winner": "Oshbocker",
+      "steps": 500
+    },
+    {
+      "episode": "episode-79534901",
+      "size": 4,
+      "opponents": [
+        "CurveCowboy",
+        "PyJa",
+        "manaphy24"
+      ],
+      "winner": "PyJa",
+      "steps": 108
+    },
+    {
+      "episode": "episode-79536466",
+      "size": 4,
+      "opponents": [
+        "sadbody123",
+        "ImGonnaDie",
+        "Aadi Gupta"
+      ],
+      "winner": "Aadi Gupta",
+      "steps": 172
+    },
+    {
+      "episode": "episode-79539331",
+      "size": 2,
+      "opponents": [
+        "Gregor Lied"
+      ],
+      "winner": "Gregor Lied",
       "steps": 135
     }
   ]
