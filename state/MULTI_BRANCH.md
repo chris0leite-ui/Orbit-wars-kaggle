@@ -46,3 +46,4 @@ column is mandatory if evicted-μ > predicted-μ (Rule 42).
 - `state/STRATEGY.md` — the strategy itself.
 - `CLAUDE.md` — process rules (incl. Rule 42 gate semantics).
 | 2026-06-11 ~22:30 UTC | claude/awesome-clarke-ixy57v | vetorf4p_sync (producer_plus_vetorf4p_sync_on.py, sha256 0b9b4b6da72dc4ac) | predicted μ ≈ 1240 (parity-grade vs live stack; info play on multi-source coalitions) | evicts 53558897 ledger_v1_2 (855.3, parallel-branch experiment, 15h old) | Rule 42 GREEN (855 << 1240); PI sign-off: explicit "Submit now" 2026-06-11 |
+| 2026-06-11 ~22:45 UTC | claude/awesome-clarke-ixy57v | CONFIRMED: sub 53577315 vetorf4p_sync accepted 17:44 UTC; rolling pair now 53577315 + 53564198 (1244) | — | ledger_v1_2 evicted as claimed | watch ~24h warm-up before reading μ |
