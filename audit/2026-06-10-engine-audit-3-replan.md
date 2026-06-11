@@ -198,3 +198,15 @@ inside Melis's transfer scoring + worst-case surplus; the naive ungate
 buys churn. Converging lesson (with commitment-cost data): in-flight time
 is the underpriced cost. Possible future shape: transfers priced through
 the flow scorer like attacks, not a separate lane.
+
+## Closing verdict: expansion lane SHELVED (2026-06-11)
+
+Wide panel (fresh seeds 4-9): 6/12, paired +1.8% @250 / -5.5% @120.
+Combined 20 games: 10-10. A coin-flip amplifier — converts even games to
+routs both directions (collapse seeds trace to chaotic 1-ship step-1
+divergences, not a fixable filter; reserve + race margin improved the
+WINNING games' margins but never touched the losing mode). Revisit only
+with an opponent-aware schedule (the searcher plans single-player; the
+greedy's flow-diff at least prices the opponent's static future).
+Iterations spent: 4 (hold filter -> non-binding; worst-case reserve ->
+binding but not the loss mode; race margin -> ditto; wide panel -> parity).
