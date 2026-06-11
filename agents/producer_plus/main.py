@@ -1232,14 +1232,20 @@ def _opening_search_plan(
     if not board.mine:
         return []
     neutrals = []
+    safe_margin = float(_env_int("PRODUCER_PLUS_OPENING_SAFE_MARGIN", 3))
     for n in board.neutrals:
         if n in claimed:
             continue
         g = board.planets[n]["ships"] + 1.0
         ours = min(board.eta(s, n, g, 0) for s in board.mine)
         if board.enemy:
+            # Contested-race guard (canon: safe/contested/unsafe neutrals;
+            # measured: lane losses on collapse seeds are race losses,
+            # 182 wasted ships vs the referee's converging fleets). The
+            # bare ours<=theirs test uses the enemy's CURRENT planets,
+            # but their reach grows as they expand — demand a margin.
             theirs = min(board.eta(s, n, g, 0) for s in board.enemy)
-            if ours > theirs:
+            if ours + safe_margin > theirs:
                 continue
         neutrals.append(n)
     if not neutrals:
