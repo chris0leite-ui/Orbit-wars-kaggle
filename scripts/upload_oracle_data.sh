@@ -67,6 +67,6 @@ echo "--- create or version"
 if kaggle datasets status "${KUSER}/${SLUG}" >/dev/null 2>&1; then
   kaggle datasets version -p "$STAGE" -m "refresh $(date -u +%F_%H%M)" --dir-mode skip
 else
-  kaggle datasets create -p "$STAGE" --private --dir-mode skip
+  kaggle datasets create -p "$STAGE" --dir-mode skip
 fi
 echo "--- done: https://www.kaggle.com/datasets/${KUSER}/${SLUG}"
