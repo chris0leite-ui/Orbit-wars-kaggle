@@ -43,7 +43,7 @@ TARGETS_PER_SOURCE = int(_f("ORACLE_TPS", 10))
 VALUE_TARGETS = int(_f("ORACLE_VALUE_TGTS", 3))
 TRANSFERS_PER_SOURCE = int(_f("ORACLE_TRANSFERS", 5))
 TRANSFER_MAX_D = _f("ORACLE_TRANSFER_MAX_D", 50.0)
-MAX_WAVES = int(_f("ORACLE_MAX_WAVES", 6))
+MAX_WAVES = int(_f("ORACLE_MAX_WAVES", 4))
 TIME_BUDGET = _f("ORACLE_TIME_BUDGET", 0.55)
 # Rate-integrated state-gated firing. Absolute per-pair thresholds are
 # brittle (the pair head's mass rides on follow-up conditioning, so cold
@@ -263,11 +263,39 @@ class Planner:
         order = sorted(range(len(pairs)), key=lambda k: -p_fire[k])
         top_p = float(p_fire[order[0]])
         act_now = (self.fire_debt >= DEBT_FIRE) or (top_p >= PAIR_ABS_OVERRIDE)
-        if not act_now:
+
+        # forced defense: a reinforcement that PROVABLY saves a falling
+        # planet (exact ledger walk with the arrival injected) fires
+        # regardless of the cadence gate — defense of owned production is
+        # sink-free and time-critical
+        forced = []
+        forced_srcs = {}
+        for k, (kind, s, t) in enumerate(pairs):
+            if kind != "defend" or len(forced) >= 2:
+                continue
+            g, safe, doomed = src_states[s]
+            send = safe if safe > 0 else 0
+            if send < 1:
+                continue
+            rec = _shot(world, s, t, send)
+            if rec is None:
+                continue
+            po, ps_, qo, qs = world._walk_planet(
+                t, world.owner0[t], world.ships0[t], me, rec[3], rec[1])
+            end = min(world.horizon, rec[3] + 24)
+            if qo[end] == me and any(
+                    o is not None and o != me and o != -2
+                    for o in world.post_owner[t][:end + 1]):
+                forced.append((1.0, rec))
+                forced_srcs[s] = forced_srcs.get(s, 0) + rec[1]
+
+        if not act_now and not forced:
             return []
         floor = max(PAIR_MIN, REL_KEEP * top_p)
         remaining = {i: g for i, (g, s, d) in src_states.items()}
-        chosen = []          # (p, launch record)
+        chosen = list(forced)        # (p, launch record)
+        for s, used in forced_srcs.items():
+            remaining[s] = remaining.get(s, 0) - used
         pending = {}         # tgt -> [(arrival_dt, ships)] chosen this turn
 
         def co_arriving(t, dt):
@@ -275,7 +303,7 @@ class Planner:
             return base + sum(sh for (d2, sh) in pending.get(t, ())
                               if abs(d2 - dt) <= 2)
 
-        for k in order:
+        for k in (order if act_now else []):
             if len(chosen) >= MAX_WAVES or p_fire[k] < floor:
                 break
             if (time.time() - t0) > TIME_BUDGET:
@@ -311,6 +339,16 @@ class Planner:
                 if (req_at is not None
                         and rec[1] + co_arriving(t, rec[3]) < req_at[0]
                         and p_fire[k] < 0.55):
+                    continue
+            # donation gate: a transfer/reinforcement whose destination
+            # the ledger says ends up enemy-owned anyway is a gift —
+            # walk the target with this arrival injected and require the
+            # destination to be ours at the end of the window
+            if kind in ("transfer", "defend", "evac"):
+                po, ps_, qo, qs = world._walk_planet(
+                    t, world.owner0[t], world.ships0[t], me, rec[3], rec[1])
+                end = min(world.horizon, rec[3] + 24)
+                if qo[end] != me:
                     continue
             chosen.append((float(p_fire[k]), rec))
             remaining[s] = g_now - rec[1]
