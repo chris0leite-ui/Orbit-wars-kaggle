@@ -53,3 +53,18 @@ agents/ledger/main.py restored to the ledger_v1_4 state (the proven
 build: v7_0 ~70-75%, bundle ~75-85%, 4P leader objective 9/16,
 Producer 0/16). The session's diagnostic tooling and the full mechanism
 graveyard are preserved in git history and the audit.
+
+---
+
+## CORRECTION APPENDED SAME DAY (append-only folder — original above
+## kept for the record)
+
+The fortress narrative in this entry was disproven hours after it was
+written. The 8/10 was the Producer timing out under 9-way battery CPU
+contention (torch thread thrashing past the engine's 1 s act
+timeout) — its 220-tick "deterred passivity" was no-op turns, and a
+deliberate defense-only-from-t40 experiment at full compute showed the
+real Producer eats fortress boards faster, not at all deterred (3/3).
+Points 1, 2, 4 of "what we learned" stand; point 3 (the accidental
+fortress) is an artifact. Full proof in
+audit/2026-06-12-concentration-rebuild.md (CORRECTION header).

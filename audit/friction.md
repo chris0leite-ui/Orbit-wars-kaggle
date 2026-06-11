@@ -640,3 +640,40 @@ relevant skill file or source code, not back into friction.md.
 
 If something is worth a paragraph, it's not friction. It's a real
 postmortem.
+
+## 2026-06-12 (session 2: producer hunt)
+
+- `tag: contention-degrades-torch-opponents` — 9-way parallel battery:
+  the Producer's torch thread pools thrashed, pushing its turns past
+  the engine's 1 s act timeout → mid-game no-op turns → a fake 8/10
+  "fortress win condition" that consumed ~half the session before
+  disproof. Total-launch liveness asserts passed (it launched early).
+  Second event of the dead/degraded-opponent class in this campaign.
+  **Fix:** per-phase opponent liveness (launches per ~100-tick window)
+  + worker count ≤3 + torch thread caps in every A/B harness.
+- `tag: wall-clock-budget-makes-strength-load-dependent` — agent's
+  TIME_BUDGET is wall-clock; under battery load it truncates the buy
+  loop → the measured agent differs from the production agent (same
+  seed flipped loss→win battery-vs-solo). **Fix:** solo spot-check
+  every headline seed; keep batteries ≤3 workers; consider CPU-time
+  (process_time) budgets in agents.
+- `tag: mechanism-stack-without-bisection` — 14 mechanisms developed
+  on single-seed iteration and committed as one block; when the clean
+  panel finally ran (v7_0 5/12, bundle 1/8) attribution was
+  impossible in-session. **Fix:** panel after every ≤2 mechanisms;
+  one-mechanism-per-commit when touching pricing.
+- `tag: crash-guard-hides-dead-agent` — a World.__slots__ omission
+  made build_ledger raise; the return-[] crash guard turned the agent
+  into a silent no-op. Caught only by the tracer's liveness asserts.
+  **Fix:** crash guard should write the exception via the LEDGER_DEBUG
+  channel when enabled; parity test + liveness asserts before every
+  measurement run.
+- `tag: snapshot-states-you-might-bisect` — the code state that
+  produced the (later disproven) 8/10 was an uncommitted working tree;
+  when the result became load-bearing the exact state was
+  unrecoverable. **Fix:** commit or stash-tag the working tree before
+  launching any battery whose result might matter.
+- `tag: editing-agent-mid-battery` — recurred once (reserve-release
+  edit mid-battery); caught immediately, batteries killed and
+  restarted clean. Known pattern from the previous session.
+  **Fix:** existing rule held — keep it.
