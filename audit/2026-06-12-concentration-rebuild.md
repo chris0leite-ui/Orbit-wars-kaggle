@@ -143,6 +143,43 @@ vs the Producer. Two conclusions:
    (top-1, top-2, ... all) so the veto chooses the portfolio SIZE.
    This also makes behavior robust to wherever the clock truncates.
 
+## CLEAN VERIFICATION (3 workers, the committed 14-mechanism state)
+
+vs Producer, seeds 300-323: **0/24** — eliminated in 97-169 steps.
+The load-confounded 8/10 does NOT reproduce at honest compute. Given
+full time, the buy loop purchases "individually profitable" missions
+that are collectively suicidal vs the stack archetype.
+
+## Post-battery gate experiments (all reverted — each made solo worse)
+
+Six attempts to encode the truncation policy deterministically, tested
+on solo seeds 300/310/316 (committed state survives 151 on s300):
+
+1. Solo-kill wave filter + 1.5x deterrence margin + production-flow
+   spend bound -> 110-119 steps (throttled the OPENING: in the early
+   game every planet "solo-kills" every other).
+2. Safe-mission cap exemption (target self-defends vs ledger response
+   for 6+ ticks) -> 97-112 (exemptions leak the fortress back into the
+   war).
+3. Hard phase gate (offense fully OFF under a live wave) + gather
+   gated to freeze-in-place -> 101-118 (still throttled openings).
+4. Concentration filter (source must hold >= 30% of its owner's army)
+   -> 103-119.
+5. Landing-classified rolling correction (neutral-bound enemy fleets
+   are committed shopping, not responders) — a genuine model fix to
+   mechanism k, but did not unblock the opening: 103-123.
+6. (During 5: World.__slots__ missed _aggr_fly -> crash guard returned
+   [] silently every turn; liveness asserts caught it. Lesson: the
+   crash guard hides breakage — the parity test + liveness asserts are
+   the only tells.)
+
+Root issue left UNRESOLVED: in the committed build the opening buy
+cadence is already throttled (~15 buys/game vs 60+ in older builds);
+values collapse between the order pass and the buy pass (banked
+sources shrink later coalitions). The truncation policy that won 8/10
+remains unreproduced. Next session: BISECT from c42c9fc — measure each
+mechanism's solo contribution instead of stacking gates on top.
+
 ## Designed next (after prefix veto + ledger response sources)
 
 Opponent-adaptive response propensity: the World already re-derives
