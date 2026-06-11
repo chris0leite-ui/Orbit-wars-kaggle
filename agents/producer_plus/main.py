@@ -1506,6 +1506,25 @@ def _reactive_reinforcement_margin(
     return float(weight) * support
 
 
+# --- Forward redistribution ----------------------------------------------------
+
+
+def _regroup_forward_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_REGROUP_FORWARD", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _regroup_forward_time(default: float) -> float:
+    raw = os.environ.get("PRODUCER_PLUS_REGROUP_FORWARD_TIME")
+    if raw is None or not raw.strip():
+        return max(float(default), 12.0)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return max(float(default), 12.0)
+
+
 # --- 2P-only gate for the mass mechanisms ------------------------------------
 # Local evidence splits by player count: mass beats the champion head-to-head
 # in 2P (35/64) and holds vs producer (22/32), but costs first-place rate in
@@ -2408,10 +2427,24 @@ def plan_lite_waves(
     if not bool(config.enable_regroup):
         return wave_entries
     enemy_mass = cheap_enemy_pressure(obs, cache, horizon=float(K_eta), player_id=pid)  # [P]
+    # Forward redistribution (Planet Wars canon, confirmed by the del Toro
+    # loss: 121 idle rear garrison vs their 39 at step 40): the default
+    # "materially more stressed" gate (delta 0.25) strands leftover ships on
+    # rear planets with no local gradient. The forward gate lowers the delta
+    # to "any strictly forward flow" and extends the flight cap, so rear
+    # garrisons stream toward the frontier turn after turn. Strictly-positive
+    # gap keeps the flow one-directional (no backwash loops).
+    cfg_regroup = config
+    if _regroup_forward_enabled():
+        cfg_regroup = dataclasses.replace(
+            config,
+            regroup_pressure_delta_min=0.0,
+            max_regroup_time=_regroup_forward_time(float(config.max_regroup_time)),
+        )
     regroup_entries = _plan_regroup(
         movement=movement, obs=obs, obs_tensors=obs_tensors, garrison_status=garrison_status,
         leftover=leftover, original_ships=obs.ships.to(dtype), pressure=enemy_mass,
-        config=config, H=H,
+        config=cfg_regroup, H=H,
     )
     _convoy_min = _regroup_min_send() if _mass_active(player_count) else 0.0
     if _convoy_min > 0.0 and int(regroup_entries.ships.shape[0]) > 0:

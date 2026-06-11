@@ -138,3 +138,21 @@ def test_commit_flight_cost_sums_active_legs(pp_main):
     active = torch.tensor([[True, True], [True, False]])
     cost = pp_main._commit_flight_cost(send, eta, active)
     assert cost.tolist() == [50.0, 56.0]      # 10*4+5*2 ; 8*7
+
+
+# ---------------------------------------------------------------------------
+# Forward redistribution (PRODUCER_PLUS_REGROUP_FORWARD) — Planet Wars canon
+# ---------------------------------------------------------------------------
+
+
+def test_regroup_forward_default_off(monkeypatch, pp_main):
+    monkeypatch.delenv("PRODUCER_PLUS_REGROUP_FORWARD", raising=False)
+    assert pp_main._regroup_forward_enabled() is False
+
+
+def test_regroup_forward_time_default_and_override(monkeypatch, pp_main):
+    monkeypatch.delenv("PRODUCER_PLUS_REGROUP_FORWARD_TIME", raising=False)
+    assert pp_main._regroup_forward_time(7.0) == 12.0
+    assert pp_main._regroup_forward_time(15.0) == 15.0
+    monkeypatch.setenv("PRODUCER_PLUS_REGROUP_FORWARD_TIME", "9.5")
+    assert pp_main._regroup_forward_time(7.0) == 9.5

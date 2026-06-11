@@ -572,6 +572,19 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_SCORE": "1",
         "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
     },
+    "vetorf_fwd": {
+        # Forward redistribution (Planet Wars canon + del Toro loss): rear
+        # leftover garrisons stream toward the frontier every turn (pressure
+        # delta gate 0.25 -> 0, flight cap 7 -> 12). Top-2010 lesson:
+        # "reinforcement toward the front: simple-minded but works great";
+        # the winner scored every friendly transfer with a be-near-the-enemy
+        # positional term.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REGROUP_FORWARD": "1",
+    },
     "veto_rf": {
         # Veto + reactive floor (weight 0.5): enemy floors include half the
         # garrison the defender can route to the target within our flight
