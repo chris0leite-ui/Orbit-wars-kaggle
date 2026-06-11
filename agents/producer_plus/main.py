@@ -1727,6 +1727,7 @@ def plan_lite_waves(
     background: LaunchSet | None = None,
     force_concentration: bool | None = None,
     opp_weights: Tensor | None = None,
+    sync_sink: list | None = None,
 ):
     """Single-size, single-source attack planner + regroup.
 
@@ -2229,6 +2230,115 @@ def plan_lite_waves(
         cand_eta = torch.where(valid_3, eta_3, torch.ones_like(eta_3)).reshape(C, L)
         cand_active = valid_3.reshape(C, L)
         cand_valid = valid_3.reshape(C)
+
+        # --- Sync-pair stage (PRODUCER_PLUS_SYNC; only on the REAL planning
+        # pass, sync_sink=None on mirror/replan passes keeps them unchanged).
+        # Two-source candidates on targets NEITHER source cracks alone but a
+        # joint same-tick arrival does: leg sizes = safe_drain, joint floor
+        # read at the LATER leg's arrival tick, the nearer leg scored at the
+        # far leg's eta (its launch is deferred via a memory hold; d=0 pairs
+        # are plain same-tick coalitions and launch immediately).
+        _sy_ksrc = min(_sync_k_src(), S)
+        if sync_sink is not None and K > 0 and _sy_ksrc >= 2:
+            sizes_hi_v = sizes_3[..., -1]                                         # [S, T]
+            eta_hi_v = eta_3[..., -1]
+            angle_hi_v = angle_3[..., -1]
+            k_arr_hi = k_arr_3[..., -1]
+            clears_hi = clears_floor_3[..., -1]
+            viable_only_hi = (
+                viable_3[..., -1] & (sizes_hi_v >= 1.0) & ships_ok_3[..., -1]
+                & src_neq_tgt & source_exists.view(S, 1) & target_exists.view(1, T)
+            )                                                                     # [S, T]
+            ranked = torch.where(
+                viable_only_hi, -eta_hi_v, torch.full_like(eta_hi_v, float("-inf"))
+            ).transpose(0, 1)                                                     # [T, S]
+            top_src = _stable_topk_indices(ranked, _sy_ksrc)                       # [T, Ksrc]
+            pair_idx = torch.triu_indices(_sy_ksrc, _sy_ksrc, offset=1, device=device)
+            pa, pb = pair_idx[0], pair_idx[1]
+            Pp = int(pa.numel())
+            if Pp > 0:
+                Tidx = torch.arange(T, device=device).view(T, 1).expand(T, Pp)
+                sA = top_src[:, pa]                                               # [T, Pp]
+                sB = top_src[:, pb]
+                kA = k_arr_hi[sA, Tidx]
+                kB = k_arr_hi[sB, Tidx]
+                a_is_far = kA >= kB
+                k_sync = torch.maximum(kA, kB)
+                d_gap = (kA - kB).abs()
+                floor_sync = floor.gather(-1, k_sync.clamp(0, K - 1))             # [T, Pp]
+                szA = sizes_hi_v[sA, Tidx]
+                szB = sizes_hi_v[sB, Tidx]
+                valid_pair = (
+                    viable_only_hi[sA, Tidx] & viable_only_hi[sB, Tidx]
+                    & ~clears_hi[sA, Tidx] & ~clears_hi[sB, Tidx]
+                    & ((szA + szB) >= floor_sync)
+                    & (source_idx[sA] != source_idx[sB])
+                    & (d_gap <= _sync_dmax())
+                )                                                                 # [T, Pp]
+                etaA = eta_hi_v[sA, Tidx]
+                etaB = eta_hi_v[sB, Tidx]
+                eta_far = torch.where(a_is_far, etaA, etaB)
+                delayed_a = (~a_is_far) & (d_gap > 0)
+                delayed_b = a_is_far & (d_gap > 0)
+                etaA_eff = torch.where(delayed_a, eta_far, etaA)
+                etaB_eff = torch.where(delayed_b, eta_far, etaB)
+
+                C_sy = T * Pp
+                m = valid_pair
+                zero = torch.zeros_like(szA)
+                one = torch.ones_like(etaA)
+                sy_src = torch.stack(
+                    [source_idx[sA].reshape(C_sy), source_idx[sB].reshape(C_sy)], dim=-1)
+                sy_send = torch.stack(
+                    [torch.where(m, szA, zero).reshape(C_sy),
+                     torch.where(m, szB, zero).reshape(C_sy)], dim=-1)
+                sy_angle = torch.stack(
+                    [angle_hi_v[sA, Tidx].reshape(C_sy),
+                     angle_hi_v[sB, Tidx].reshape(C_sy)], dim=-1)
+                sy_eta = torch.stack(
+                    [torch.where(m, etaA_eff, one).reshape(C_sy),
+                     torch.where(m, etaB_eff, one).reshape(C_sy)], dim=-1)
+                sy_active = torch.stack([m.reshape(C_sy), m.reshape(C_sy)], dim=-1)
+                sy_tgt_short = (
+                    torch.arange(T, device=device).view(T, 1).expand(T, Pp).reshape(C_sy)
+                )
+                sy_tgt_slot = target_idx[sy_tgt_short]
+                sy_valid = m.reshape(C_sy)
+
+                for t_i, p_i in (m & (d_gap > 0)).nonzero(as_tuple=False).tolist():
+                    far_a = bool(a_is_far[t_i, p_i].item())
+                    i_far = int((sA if far_a else sB)[t_i, p_i].item())
+                    i_near = int((sB if far_a else sA)[t_i, p_i].item())
+                    sync_sink.append({
+                        "near_src": int(source_idx[i_near].item()),
+                        "far_src": int(source_idx[i_far].item()),
+                        "tgt": int(target_idx[t_i].item()),
+                        "eta": float(eta_far[t_i, p_i].item()),
+                        "near_ships": float(sizes_hi_v[i_near, t_i].item()),
+                        "far_ships": float(sizes_hi_v[i_far, t_i].item()),
+                        "arrival_dt": int(k_sync[t_i, p_i].item()) + 1,
+                    })
+
+                base0 = cand_src[:, 0]
+                cand_src = torch.cat([torch.stack([base0, base0], dim=-1), sy_src], dim=0)
+                cand_send = torch.cat(
+                    [torch.cat([cand_send, torch.zeros(C, 1, dtype=dtype, device=device)], dim=-1),
+                     sy_send], dim=0)
+                cand_angle = torch.cat(
+                    [torch.cat([cand_angle, torch.zeros(C, 1, dtype=dtype, device=device)], dim=-1),
+                     sy_angle], dim=0)
+                cand_eta = torch.cat(
+                    [torch.cat([cand_eta, torch.ones(C, 1, dtype=dtype, device=device)], dim=-1),
+                     sy_eta], dim=0)
+                cand_active = torch.cat(
+                    [torch.cat([cand_active, torch.zeros(C, 1, dtype=torch.bool, device=device)], dim=-1),
+                     sy_active], dim=0)
+                cand_tgt_slot = torch.cat([cand_tgt_slot, sy_tgt_slot], dim=0)
+                cand_tgt_short = torch.cat([cand_tgt_short, sy_tgt_short], dim=0)
+                cand_valid = torch.cat([cand_valid, sy_valid], dim=0)
+                L = 2
+                C = int(cand_src.shape[0])
+
         cand_is_def = target_is_mine[cand_tgt_short]                              # [C]
     else:
         # --- single fleet size = the max garrison launch (safe_drain) -----------
@@ -2596,6 +2706,176 @@ def _snipe_hold_reserved_sources(
     return reserved if bool(reserved.any()) else None
 
 
+# --- Synchronized multi-source arrivals (delayed launches) ---------------------
+# Planet Wars canon: staggered waves die piecemeal to the 1:1 garrison trade;
+# multi-source SAME-TICK arrivals are the capture mechanism for targets no
+# single source can crack. The planner is now-or-never, so the second half of
+# the mechanism is a HOLD: the nearer source's leg is scored at the far leg's
+# arrival tick (exact under the flow scorer — arrival credit lands at
+# ceil(eta); the tick-0 source debit makes the score conservative, since the
+# held ships actually keep defending home), then diverted post-veto into a
+# memory-held schedule and launched on the last turn that still makes the
+# arrival date (re-aimed fresh, so orbit drift cannot desynchronize it).
+# Default OFF preserves byte-identical behaviour.
+
+
+def _sync_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_SYNC", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _sync_dmax() -> int:
+    """Max hold length in ticks (gap between the pair's natural arrivals)."""
+    return max(1, _env_int("PRODUCER_PLUS_SYNC_DMAX", 6))
+
+
+def _sync_k_src() -> int:
+    """Per-target source pool for pair enumeration (nearest-first)."""
+    return max(2, _env_int("PRODUCER_PLUS_SYNC_K", 6))
+
+
+def _sync_max_holds() -> int:
+    """Cap on concurrently pending holds (commitment-exposure guard)."""
+    return max(1, _env_int("PRODUCER_PLUS_SYNC_MAX_HOLDS", 4))
+
+
+def _sync_entry_key(src_slot: int, tgt_slot: int, eta: float, ships: float):
+    return (int(src_slot), int(tgt_slot), round(float(eta), 4), int(round(float(ships))))
+
+
+def _process_sync_holds(memory, *, obs, obs_tensors: dict, movement, current_step: int):
+    """Advance pending holds one turn. Returns ``(exec_entries, debit)``.
+
+    Per hold: cancel if the source is lost/drained or the target died or
+    flipped to us; launch NOW (fresh aim) if waiting one more turn would miss
+    the arrival date; release if the date became unreachable (orbit drift
+    beyond 1 tick of slack); otherwise keep holding. ``debit`` reserves both
+    kept and just-launched ships against the planner's budget view.
+    """
+    holds = getattr(memory, "sync_holds", None)
+    if current_step == 0 or holds is None:
+        holds = []
+    if not holds:
+        memory.sync_holds = []
+        return None, None
+    device = obs.device
+    dtype = obs.ships.dtype
+    P = int(obs.P)
+    planet_ids = obs_tensors["planets"][..., 0].long()
+    slot_of = {int(planet_ids[i].item()): i for i in range(P)}
+    kept: list = []
+    exec_rows: list = []
+    debit = torch.zeros_like(obs.ships)
+    for h in holds:
+        s = slot_of.get(int(h["src_id"]))
+        t = slot_of.get(int(h["tgt_id"]))
+        if s is None or t is None:
+            continue
+        if not bool(obs.owned[s]) or not bool(obs.alive[s]) or not bool(obs.alive[t]):
+            continue
+        if bool(obs.owned[t]):
+            continue  # captured by other means — release the reserve
+        ships = float(h["ships"])
+        if float(obs.ships[s].item()) < ships:
+            continue  # combat ate the reserve — the sized pair is broken
+        remaining = int(h["arrival_step"]) - current_step
+        aim = intercept_angle(
+            movement,
+            torch.tensor([s], dtype=torch.long, device=device),
+            torch.tensor([t], dtype=torch.long, device=device),
+            torch.tensor([ships], dtype=dtype, device=device),
+        )
+        if not bool(aim["viable"][0]):
+            continue
+        eta_now = float(aim["eta"][0].item())
+        if math.ceil(eta_now) >= remaining:
+            # Last turn that can make the date (1 tick of late slack).
+            if math.ceil(eta_now) <= remaining + 1:
+                exec_rows.append(
+                    (s, t, ships, float(aim["angle"][0].item()), eta_now))
+                debit[s] += ships
+            continue
+        kept.append(h)
+        debit[s] += ships
+    memory.sync_holds = kept
+    entries = None
+    if exec_rows:
+        entries = LaunchEntries(
+            source_slots=torch.tensor([r[0] for r in exec_rows], dtype=torch.long, device=device),
+            target_slots=torch.tensor([r[1] for r in exec_rows], dtype=torch.long, device=device),
+            ships=torch.tensor([r[2] for r in exec_rows], dtype=dtype, device=device),
+            angle=torch.tensor([r[3] for r in exec_rows], dtype=dtype, device=device),
+            eta=torch.tensor([r[4] for r in exec_rows], dtype=dtype, device=device),
+            valid=torch.ones(len(exec_rows), dtype=torch.bool, device=device),
+        )
+    if not bool((debit > 0).any()):
+        debit = None
+    return entries, debit
+
+
+def _divert_sync_entries(entries, *, sink: list, obs_tensors: dict, current_step: int, memory):
+    """Post-veto: convert chosen delayed near-legs into memory holds.
+
+    A near-leg entry is identified by its (source, target, scored eta, ships)
+    signature from the generation sink. It is NEVER launched this turn (its
+    angle/eta describe the future synced flight, not a launch-now one); it
+    becomes a hold only if its far partner survived selection + veto —
+    otherwise it is dropped outright, because its size only makes sense
+    jointly. NOTE: assumes the veto did not resize entries (upsize default
+    OFF); a resized leg simply fails the signature match and launches as-is.
+    """
+    if not sink or int(entries.valid.shape[0]) == 0:
+        return entries
+    by_key: dict = {}
+    for r in sink:
+        by_key.setdefault(
+            _sync_entry_key(r["near_src"], r["tgt"], r["eta"], r["near_ships"]), []
+        ).append(r)
+    E = int(entries.valid.shape[0])
+    sig = set()
+    for j in range(E):
+        if bool(entries.valid[j]):
+            sig.add(_sync_entry_key(
+                entries.source_slots[j], entries.target_slots[j],
+                entries.eta[j], entries.ships[j]))
+    valid = entries.valid.clone()
+    planet_ids = obs_tensors["planets"][..., 0].long()
+    holds = list(getattr(memory, "sync_holds", []) or [])
+    max_h = _sync_max_holds()
+    changed = False
+    for j in range(E):
+        if not bool(valid[j]):
+            continue
+        key = _sync_entry_key(
+            entries.source_slots[j], entries.target_slots[j],
+            entries.eta[j], entries.ships[j])
+        rs = by_key.get(key)
+        if not rs:
+            continue
+        valid[j] = False
+        changed = True
+        partner = next(
+            (r for r in rs if _sync_entry_key(
+                r["far_src"], r["tgt"], r["eta"], r["far_ships"]) in sig),
+            None,
+        )
+        if partner is not None and len(holds) < max_h:
+            holds.append({
+                "src_id": int(planet_ids[int(entries.source_slots[j].item())].item()),
+                "tgt_id": int(planet_ids[int(entries.target_slots[j].item())].item()),
+                "ships": float(entries.ships[j].item()),
+                "arrival_step": current_step + int(partner["arrival_dt"]),
+            })
+    memory.sync_holds = holds
+    if not changed:
+        return entries
+    return LaunchEntries(
+        source_slots=entries.source_slots, target_slots=entries.target_slots,
+        ships=entries.ships, angle=entries.angle, eta=entries.eta, valid=valid,
+    )
+
+
 def _score_do_nothing(
     *,
     status,
@@ -2749,6 +3029,21 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
                 obs, ships=(obs.ships - debit).clamp(min=0.0))
         memory.opening_claimed = claimed
 
+    # Sync holds: advance pending delayed launches (execute / keep / release)
+    # and reserve their ships against the planner's budget view. The sink
+    # collects this turn's delayed-leg signatures for post-veto diversion.
+    sync_sink = None
+    sync_exec_entries = None
+    if _sync_enabled():
+        sync_sink = []
+        sync_exec_entries, sync_debit = _process_sync_holds(
+            memory, obs=obs, obs_tensors=obs_tensors, movement=movement,
+            current_step=current_step,
+        )
+        if sync_debit is not None:
+            obs_for_plan = dataclasses.replace(
+                obs_for_plan, ships=(obs_for_plan.ships - sync_debit).clamp(min=0.0))
+
     entries = plan_lite_waves(
         movement=movement, obs=obs_for_plan, obs_tensors=obs_tensors, cache=cache,
         garrison_status=status, prod=movement.planet_prod,
@@ -2756,7 +3051,10 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
         K_eta_override=K_eta_override,
         background=background,
         opp_weights=opp_w,
+        sync_sink=sync_sink,
     )
+    if sync_exec_entries is not None:
+        entries = concat_launch_entries([sync_exec_entries, entries])
     if opening_entries is not None:
         entries = LaunchEntries(
             source_slots=torch.cat([opening_entries.source_slots, entries.source_slots]),
@@ -2808,6 +3106,14 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
                 player_count=int(player_count), K_eta_override=K_eta_override,
                 H=H, opp_weights=opp_w,
             )
+    if sync_sink:
+        # After all entry filters: chosen delayed legs become memory holds
+        # (or are dropped if their far partner did not survive the veto) —
+        # they must never reach the payload or the private-fleet cache.
+        entries = _divert_sync_entries(
+            entries, sink=sync_sink, obs_tensors=obs_tensors,
+            current_step=current_step, memory=memory,
+        )
     entries = disambiguate_duplicate_launches(entries)
     launches = infer_planned_launches_from_entries(
         obs_tensors=obs_tensors, movement=movement, entries=entries, player_id=int(obs.player_id),
@@ -2857,6 +3163,7 @@ class ProducerLiteMemory:
         self.trust_ema: float | None = None
         self.trust_predictions: list | None = None
         self.trust_fleet_ids: set | None = None
+        self.sync_holds: list | None = None
 
     def reset(self) -> None:
         self.movement = None
@@ -2866,6 +3173,7 @@ class ProducerLiteMemory:
         self.trust_ema = None
         self.trust_predictions = None
         self.trust_fleet_ids = None
+        self.sync_holds = None
 
 
 class ProducerLiteRuntime:
@@ -2883,6 +3191,7 @@ class ProducerLiteRuntime:
             mem.trust_ema = None
             mem.trust_predictions = None
             mem.trust_fleet_ids = None
+            mem.sync_holds = None
         if mem.cached_player_count is None:
             mem.cached_player_count = largest_initial_player_count(obs_tensors)
         config = _config_for(mem.cached_player_count)

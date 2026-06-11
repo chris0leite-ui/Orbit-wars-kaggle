@@ -595,6 +595,17 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_RESPONSE_VETO": "1",
         "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
     },
+    "vetorf_sync": {
+        # Live stack + synchronized multi-source arrivals: two-source pair
+        # candidates on targets neither source cracks alone, joint floor at
+        # the LATER leg's arrival tick; the nearer leg is held in memory and
+        # launched on the last turn that still makes the shared arrival date.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_SYNC": "1",
+    },
     "veto_rf_nq": {
         # Stacking test: the two tournament survivors together. Reactive
         # floor converted (6/8 wins, +34% @120) but the quota's +31% @80
