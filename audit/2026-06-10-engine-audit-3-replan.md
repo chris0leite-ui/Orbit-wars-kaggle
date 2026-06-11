@@ -230,3 +230,21 @@ reach-discipline thread: tuner hinted H=16; top teams fly eta 4-5 vs our
 (reach 20 -> 10 by step 30; parity on the old stack, untested on
 veto+rf). Opening-gap re-measurement on the new sub's 47 live replays
 queued alongside.
+
+## Day close-out finding (2026-06-11 ~14:00): the local optimum may be a MIRROR ARTIFACT
+
+Recorded facts: h22 2/12 (-53%), h16 2/12 (-66%), adaptive reach 0/12
+(-87%) — every horizon/reach perturbation loses massively to the incumbent
+head-to-head. Live opening gap median -6% (we now BEAT the single-source
+benchmark; one 59% tail game). Seven falsifications since the morning
+submission, all measured VS OUR OWN STACK.
+
+Suspicion for the next frame: self-play attribution has a measurement
+moat. Near-identical agents diverge chaotically (observed: exact mirror
+draws, seat-split outcomes, 1-ship step-1 butterflies deciding games), so
+subtle improvements read as coin flips (lane 10-10, cc 11-9) and any
+calibration shift reads as a rout (the whole mechanism stack is co-tuned
+at H=18). Only mirror-DOMINATING mechanisms (veto, rf) ever cleared the
+gate. Historical support: mass won locally vs champion and regressed
+live; ffa_uniform won modestly locally and lifted live. The referee IS
+the bottleneck.
