@@ -640,3 +640,24 @@ relevant skill file or source code, not back into friction.md.
 
 If something is worth a paragraph, it's not friction. It's a real
 postmortem.
+
+## 2026-06-11 — RL-track overnight session (happy-babbage)
+
+- **Session hook gap:** `kaggle_environments` import crashes on broken
+  system `cryptography` (`_cffi_backend` missing). Fix that worked:
+  `pip install --ignore-installed cffi cryptography`. The hook's
+  `--force-reinstall` variant FAILS (debian-owned package, no RECORD).
+  Promote the working fix into bootstrap.sh.
+- **Kernel-output latency:** Kaggle script kernels expose output only
+  after COMPLETE/ERROR — no mid-run checkpoint peeking. Long runs need
+  the in-log eval probe (wr_vs_greedy) as the only live-ish signal,
+  and short validation runs before long ones (this caught both the
+  dataset-layout break and would have caught the OOM at small cost).
+- **Kaggle dataset auto-decompression:** uploaded tar.gz is expanded
+  server-side; kernels must self-locate the code root via glob, not
+  assume the archive path. Cost one kernel round-trip (~10 min).
+- **JAX OOM footgun (T4 16GB):** param-independent feature pipelines
+  (scans/fori loops) inside `value_and_grad` get their activations
+  saved for backward — 14.8GB alloc at batch 256. Featurize outside
+  the grad; bit-identical metrics, ~5x memory drop. Cost: one failed
+  overnight launch (~40 min lost), caught by status monitor.
