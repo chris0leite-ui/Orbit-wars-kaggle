@@ -248,3 +248,34 @@ at H=18). Only mirror-DOMINATING mechanisms (veto, rf) ever cleared the
 gate. Historical support: mass won locally vs champion and regressed
 live; ffa_uniform won modestly locally and lifted live. The referee IS
 the bottleneck.
+
+## Panel re-judgment (2026-06-11 ~15:00): the panel AGREES with the mirror
+
+Fresh perspective test: re-judge the live stack (control) and both shelved
+candidates (expansion lane, commitment tax) against three NON-mirror
+referees, seeds 0-3 both seats, 150-step truncation.
+
+| candidate        | vs v7_0          | vs ledger v1.2    | vs old champion   |
+|------------------|------------------|-------------------|-------------------|
+| live stack (ctl) | 8/8 +88.8%@120   | 8/8 +99.9%@120    | 6/8 +34.4%@120    |
+| expansion lane   | 8/8 +92.5%@120   | 8/8 +99.9%@120    | 5/8 +20.0%@120    |
+| commitment tax   | 8/8 +80.6%@120   | 8/8 +85.6%@120    | 6/8 +30.0%@120    |
+
+Candidate-minus-control deltas: flat on the two saturated referees,
+mildly NEGATIVE on the only discriminating one (lane -14pp@120, cc
+-4pp@120 vs control against the champion). Conclusions:
+
+1. The mirror verdicts were honest — neither shelved mechanism holds
+   hidden panel value. The week's falsifications stand.
+2. Two of three referees SATURATE (everything wins ~100%). The local
+   referee pool tops out below our level; panel-delta measurement cannot
+   find subtle edges any more than the mirror can. The 1400-1700 ladder
+   styles are not reproducible locally.
+3. Therefore the escalation: (a) live submissions are the only honest
+   instrument against the real field (~60 slots to deadline) — local
+   measurement's role shrinks to safety gating + mirror-domination
+   detection; (b) next build is the qualitatively new capability with the
+   most convergent external evidence: DELAYED-LAUNCH / SYNCHRONIZED
+   ARRIVALS (Planet Wars canon "key winning strategy"; unlocks
+   outwaiting, banking, timed snipes; everything this week said holding
+   ships is undervalued).
