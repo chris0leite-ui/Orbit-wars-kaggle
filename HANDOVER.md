@@ -1,49 +1,50 @@
 # HANDOVER.md — next-session brief
 
-## What changed tonight (2026-06-10)
+## Live state (check freshness: `kaggle competitions submissions orbit-wars`)
 
-PI directed a from-scratch rethink ("simplest, yet feasible most
-powerful"). The result is a new agent, **`agents/ledger/main.py`** — a
-single self-contained file (it IS the submission, no bundler) built on
-one mechanism: an engine-exact forecast of every planet's future, with
-all actions priced off it and an event-driven rollout veto. Full story:
-`audit/2026-06-10-ledger-agent-from-first-principles.md`.
+Rolling pair: **sub 53558897** `ledger_v1_2` + **sub 53556728** `ledger_v1`
+(both climbing; v1 was ~1060, v1_2 ~905 mid-warm-up at last read).
+The 1300.9 producer_plus agent was evicted by PI order for live feedback.
 
-**Measured (n=32, balanced seats, local):**
-- vs Producer (public agent that beats our live champion 81%): **32/32**, Wilson-lo 0.893
-- vs v7_0 (production baseline): **28/32 (87.5%)**, Wilson-lo 0.719
-- timing p95 46 ms / max 74 ms against the 1000 ms budget
-- self-play validation clean; forecast-parity test green
+## Unshipped improvements (in `agents/ledger/main.py` = `submissions/ledger_v1_4.py`)
 
-## The candidate
+1. **4-player leader objective** — attack only the projected winner;
+   brawling non-leaders discounts to 0.2. Measured: **9/16 first places
+   vs three strong agents (parity = 4/16, so 2.25x)**. 4P is ~32% of
+   ladder games; this is the biggest unshipped lift.
+2. **Stalemate-gated endgame gambit** — projection-behind + frozen board
+   => admit any plan, bypass the veto (from live loss ep 79496718).
+3. Coalition rescue + shopping-commitment scaling (v1_1/v1_2 — v1_2 is
+   live; v1 lacks both).
 
-`submissions/ledger_v1.py` — ready to submit, **awaiting PI sign-off**
-(CLAUDE.md Rule 1). Suggested submit gate for this artifact (replaces the
-champion-bundle-specific Rule 46 steps):
+Submitting v1_4 evicts ledger_v1 (the older pair half). PI sign-off
+required per submission (Rule 1).
 
-```
-python -m pytest tests/test_ledger_forecast.py -q          # parity green
-python fast.py play submissions/ledger_v1.py --vs v7_0 --seed 7   # smoke
-python fast.py bench submissions/ledger_v1.py              # p95 < 800ms
-kaggle competitions submissions orbit-wars | head -5       # Rule 42 board
-```
+## Plan remainder (designs agreed, not yet built)
 
-## Open questions for the PI
+- **Race modeling on contested neutrals**: replace the flat RACE_DISCOUNT
+  with a ledger walk that injects the opponent's hypothetical
+  garrison+1 launch at their best ETA and prices arriving second (let
+  them pay the sink, snipe the surplus). All machinery exists
+  (`_walk_planet` extra_list).
+- **Wave merge**: when several planned targets cluster, merge budgets
+  into one overwhelming synchronized wave (top-1600 agents launch half
+  as often at 2-4x mass).
+- **Opponent profiling**: NEGATIVE RESULT as built (fleet-launch
+  classifier misreads garrison-holding defenders as passive; both
+  calibrations degraded pools). If revisited: classify by *garrison
+  growth at threatened planets*, not launches. Code in git history at
+  e82fed2^.
+- **Loss loop routine**: `python scripts/live_episode_summary.py <sub> --pull`
+  then read the losses. Both live submissions accumulate episodes.
 
-1. Submit `ledger_v1` now, or run more validation first (geometry panel
-   128 seeds / more fresh seeds)?
-2. STRATEGY.md still describes `baseline_adaptive_k`. Replace it with the
-   ledger agent as the main strategy, or run both live first?
-3. 4-player posture is rough (FFA fix applied, lightly tested). How much
-   do 4P games weigh on the ladder? (`scripts/live_episode_summary.py`
-   on a live submission id can answer.)
+## Verification benchmarks (paired pools, current build)
 
-## Mode
-
-Observation-driven iteration continues to apply: one observation → one
-mechanism → one push (CLAUDE.md). The ledger agent's iteration log in the
-audit file shows the loop working — every fix tonight came from reading a
-specific losing game.
+- live-1300.9 bundle rebuild (`/tmp/latest_live_sub.py`, rebuild recipe in
+  audit 2026-06-10 + sibling branch commit d849637): seeds 600-615 -> 15-16/16
+- v7_0 12-seed pool (700,702,505,508 + 8 winners): 8-9/12
+- 4P panel seeds 1000-1015 vs v7_0/v4_planner/v3.5.1: 9/16
+- `tests/test_ledger_forecast.py` must stay green (engine exactness).
 
 ## Pointers
 
