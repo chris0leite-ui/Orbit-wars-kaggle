@@ -2769,9 +2769,14 @@ def _sync_enabled() -> bool:
 def _sync_dmax() -> int:
     """Max hold length in ticks (gap between the pair's natural arrivals).
 
-    0 = same-tick coalitions only, no holds (ablation knob).
+    Default 0 = same-tick coalitions only, NO holds. Delayed legs (d > 0)
+    measured 3/12 (-46% @250) vs the live stack on 2026-06-11: the far leg
+    telegraphs the attack for the whole hold window and a reply-aware
+    defender reinforces past the pair's joint size, while the d=0 ablation
+    sat at exact mirror parity (7/12, -0.7%). Holds stay opt-in for
+    redemption experiments.
     """
-    return max(0, _env_int("PRODUCER_PLUS_SYNC_DMAX", 6))
+    return max(0, _env_int("PRODUCER_PLUS_SYNC_DMAX", 0))
 
 
 def _sync_k_src() -> int:

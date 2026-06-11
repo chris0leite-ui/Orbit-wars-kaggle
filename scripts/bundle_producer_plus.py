@@ -596,10 +596,11 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
     },
     "vetorf_sync": {
-        # Live stack + synchronized multi-source arrivals: two-source pair
-        # candidates on targets neither source cracks alone, joint floor at
-        # the LATER leg's arrival tick; the nearer leg is held in memory and
-        # launched on the last turn that still makes the shared arrival date.
+        # Live stack + same-tick two-source coalitions in the multi-size
+        # path: pair candidates on targets neither source cracks alone,
+        # floor-proportional sizing. SYNC_DMAX defaults to 0 — the delayed
+        # (hold) variant lost -46% to the mirror (telegraphed far leg);
+        # override PRODUCER_PLUS_SYNC_DMAX>0 to re-enable holds.
         "PRODUCER_PLUS_MULTI_SIZE": "1",
         "PRODUCER_PLUS_OPP_PROJECTION": "1",
         "PRODUCER_PLUS_RESPONSE_VETO": "1",
