@@ -99,10 +99,11 @@ def main():
         if None in rewards:
             continue
         winner = max(range(len(rewards)), key=lambda p: rewards[p])
-        # states where the eventual winner acted
+        # states where the eventual winner acted. Replay convention:
+        # the action stored at index t+1 was decided FROM obs[t].
         cand_ts = [t for t in range(args.min_step,
-                                    min(args.max_step, len(steps) - 1))
-                   if steps[t][winner].get("action")]
+                                    min(args.max_step, len(steps) - 2))
+                   if steps[t + 1][winner].get("action")]
         if not cand_ts:
             continue
         t = rng.choice(cand_ts)
@@ -112,7 +113,7 @@ def main():
         world = World(obs, horizon=48)
         world.build_ledger()
         ctx = FeatureContext(world)
-        moves = steps[t][winner]["action"]
+        moves = steps[t + 1][winner]["action"]
         v_expert = float(net.batch([leaf_for_action(world, ctx, moves, winner)])[0])
         v_null = float(net.batch([ctx.leaf(None, None)])[0])
         v_rands = [float(net.batch(
