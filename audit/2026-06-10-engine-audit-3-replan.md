@@ -368,3 +368,28 @@ reactive floor for SOURCES (drain cap = keep enough garrison to survive
 the opponent's best feasible strike until reinforcement arrives) — note
 it would interact with the same co-tuning that punishes every
 recalibration; needs the live instrument, not the mirror, for a verdict.
+
+## Source-safety drain cap — built, parity, diagnosis REVISED (2026-06-11 eve)
+
+PRODUCER_PLUS_SOURCE_SAFETY: second drain cap, drain <= g_s +
+min_k(prod*k + routable_friendly_help - w*routable_enemy_mass). 7 unit
+tests green; smoke green (max 752 ms — watch: extra [Q,S,K] work runs
+inside every mirror reply).
+
+Fix-verification (Rule 38) FAILED: holdval12 + srcsafe w=0.5 vs
+incumbent mirror = 0/12, same curve as holdval12 alone (-10.7%@40, dec
+p50=29). srcsafe alone vs incumbent = 6/12 exact parity (+0.0%@40, dec
+p50=92): the cap is non-harmful but rarely binds — in balanced
+positions routable help ~ cancels weighted threat.
+
+Replay autopsy (seed 0 rout, saved via fast.py --save-replays) REVISES
+the diagnosis: the expander was WINNING at t=45 (6v4 planets, 7.1v6.2
+prod). Collapse t=51-90 = rolling recaptures of thin planets (lost at
+garrisons 7,4,12,5,3,14...) incl. planet 4: ~45+ ships invested at
+t=56, handed over at t=67. Punishment is NOT source assassination — it
+is overextension: the stack never prices "can I HOLD what I own"
+(capture side: recapture-blind in-window flow; defense side: help is
+routable but never actually concentrated). Note: recapture_penalty
+(orbit_lite) targets exactly the capture side and is NOT in the live
+stack. Next candidate probe (needs PI sign-off): holdval12 +
+recapture_penalty mirror leg.

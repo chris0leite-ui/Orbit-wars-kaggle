@@ -595,6 +595,29 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_RESPONSE_VETO": "1",
         "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
     },
+    "vetorf_srcsafe": {
+        # Source-safety drain cap alone on the live 2P stack. Caps drain by
+        # local balance of force (enemy uncommitted reserve vs production
+        # growth + routable friendly help). Regression leg: must not induce
+        # banker-grade passivity.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_SOURCE_SAFETY": "0.5",
+    },
+    "vetorf_holdval12_srcsafe": {
+        # Rule 38 fix-verification pair: the holding-time capture credit
+        # (routed 0/12 in the mirror via strikes on drained sources) PLUS
+        # the source-safety cap that prices exactly that strike. If the
+        # blindspot diagnosis is right, the rout disappears.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_HOLD_VALUE": "12",
+        "PRODUCER_PLUS_SOURCE_SAFETY": "0.5",
+    },
     "vetorf_holdval12": {
         # FOUNDATION fix v2: holding-time-priced capture credit. Post-
         # horizon production (lambda=12) credited ONLY for captures the

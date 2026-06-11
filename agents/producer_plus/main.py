@@ -196,6 +196,89 @@ def _recapture_safety_reserve() -> float:
 # contested grabs stay priced by raw flow. Default 0 = byte-identical.
 
 
+# --- Source-safety drain cap (PRODUCER_PLUS_SOURCE_SAFETY) ----------------------
+# The economy-credit refutation chain (3 mirror routs, all decided ~step 29)
+# localized the true blindspot: ``safe_drain`` caps drain by the DO-NOTHING
+# projection (in-flight fleets + production), so the enemy's uncommitted
+# standing reserve is invisible — the punisher simply strikes whichever home
+# planet the expander just thinned. Symmetric counterpart of the reactive
+# capture floor, for SOURCES: a source may shed only what keeps it able to
+# survive the enemy's routable mass at every tick of the window, crediting
+# its own production growth and friendly garrisons that can route help in
+# time:  drain ≤ g_s + min_k( prod_s·k + help(s,k) − w·threat(s,k) ).
+# Default 0 = byte-identical.
+
+
+def _source_safety_weight() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_SOURCE_SAFETY", "0")
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 0.0
+
+
+def _source_safety_lag() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_SOURCE_SAFETY_LAG", "0")
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.0
+
+
+def _friendly_support_margin(
+    obs, cache, source_idx: Tensor, K: int, *, lag: float = 0.0,
+):
+    """``[S, K]`` friendly garrison mass routable to each source by tick k.
+
+    Mirror of ``_reactive_reinforcement_margin`` over OUR planets. Each
+    helper keeps 1 ship (can't fully strip a held planet), and the source
+    itself is excluded — its own garrison is already the defender.
+    """
+    mine = obs.owned & obs.alive
+    q_idx = mine.nonzero(as_tuple=True)[0]
+    Q = int(q_idx.shape[0])
+    S = int(source_idx.shape[0])
+    if Q == 0 or S == 0 or K <= 0:
+        return None
+    dtype = obs.ships.dtype
+    g_q = (obs.ships[q_idx].to(dtype) - 1.0).clamp(min=0.0)          # [Q]
+    speed_q = fleet_speed(g_q.clamp(min=1.0))                        # [Q]
+    d = cache.cross_dist[0][q_idx][:, source_idx.clamp(0, int(obs.P) - 1)]  # [Q, S]
+    eta_qs = d / speed_q.unsqueeze(-1)                               # [Q, S]
+    k_grid = torch.arange(1, K + 1, device=obs.device, dtype=dtype)  # [K]
+    reach = eta_qs.unsqueeze(-1) <= (k_grid.view(1, 1, K) - float(lag))
+    self_mask = q_idx.view(Q, 1) == source_idx.view(1, S)
+    reach = reach & ~self_mask.unsqueeze(-1)
+    return (g_q.view(Q, 1, 1) * reach.to(dtype)).sum(dim=0)          # [S, K]
+
+
+def _source_safety_allowance(
+    obs, cache, *, source_idx: Tensor, prod: Tensor, K: int,
+):
+    """``[S]`` max drain that keeps each source locally defensible, or None.
+
+    None means no constraint applies (gate off, no enemies, or empty window).
+    """
+    w = _source_safety_weight()
+    S = int(source_idx.shape[0])
+    if w <= 0.0 or S == 0 or K <= 0:
+        return None
+    threat = _reactive_reinforcement_margin(
+        obs, cache, source_idx, K, weight=w, lag=_source_safety_lag(),
+    )                                                                # [S, K] | None
+    if threat is None:
+        return None
+    dtype = obs.ships.dtype
+    src = source_idx.clamp(0, int(obs.P) - 1)
+    help_sk = _friendly_support_margin(obs, cache, source_idx, K)
+    if help_sk is None:
+        help_sk = torch.zeros_like(threat)
+    k_grid = torch.arange(1, K + 1, device=obs.device, dtype=dtype).view(1, K)
+    slack = prod[src].to(dtype).unsqueeze(-1) * k_grid + help_sk - threat  # [S, K]
+    allowed = obs.ships[src].to(dtype) + slack.min(dim=-1).values    # [S]
+    return allowed.clamp(min=0.0)
+
+
 def _hold_value() -> float:
     raw = os.environ.get("PRODUCER_PLUS_HOLD_VALUE", "0")
     try:
@@ -1911,6 +1994,13 @@ def plan_lite_waves(
         status_sizing, source_idx=source_idx, source_ships=source_ships,
         H_eff=H_eff, player_id=pid,
     )                                                                            # [S]
+    _ss_allow = _source_safety_allowance(
+        obs, cache, source_idx=source_idx, prod=prod, K=int(K_eta),
+    )
+    if _ss_allow is not None:
+        # Second cap: keep every source locally defensible against the
+        # enemy's UNCOMMITTED reserve (safe_drain only sees in-flight).
+        drain = torch.minimum(drain, _ss_allow)
 
     # Uniform reach cap = K_eta (= horizon).
     eta_cap = torch.full((T,), float(K_eta), dtype=dtype, device=device)          # [T]
