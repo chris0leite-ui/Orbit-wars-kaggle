@@ -2,3 +2,4 @@
 {"gen": 0, "cand": 1, "seed0": 0, "knobs": {"rf_weight": 0.482, "rf_lag": 2.157, "overkill_enemy": 1.0, "veto_margin": 0.0, "horizon_2p": 18}, "objective": 0.08533333333333334, "paired120": 0.002, "wins": "5/6"}
 {"gen": 0, "cand": 2, "seed0": 0, "knobs": {"rf_weight": 0.748, "rf_lag": 1.434, "overkill_enemy": 1.05, "veto_margin": 3.969, "horizon_2p": 17}, "objective": 0.2816666666666666, "paired120": 0.24, "wins": "4/6"}
 {"gen": 0, "cand": 3, "seed0": 0, "knobs": {"rf_weight": 0.371, "rf_lag": 4.0, "overkill_enemy": 1.0, "veto_margin": 2.695, "horizon_2p": 14}, "objective": 0.18866666666666665, "paired120": 0.147, "wins": "4/6"}
+{"gen": 0, "cand": 4, "seed0": 0, "knobs": {"rf_weight": 0.351, "rf_lag": 3.316, "overkill_enemy": 2.216, "veto_margin": 0.148, "horizon_2p": 17}, "objective": -0.14666666666666667, "paired120": -0.105, "wins": "2/6"}
