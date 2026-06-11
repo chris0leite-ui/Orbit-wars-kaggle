@@ -471,6 +471,18 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_SCORE": "1",
         "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
     },
+    "vetorf4p_ffa": {
+        # 4P UNGATING measurement: veto + reactive floor active in ALL
+        # player counts (no _2P_ONLY gates) on the FFA-objective stack.
+        # 4P is 60% of ladder volume and every shipped mechanism is
+        # 2P-gated there — the live agent plays 4P as plain ffa_uniform.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
+    },
     "veto_rf": {
         # Veto + reactive floor (weight 0.5): enemy floors include half the
         # garrison the defender can route to the target within our flight

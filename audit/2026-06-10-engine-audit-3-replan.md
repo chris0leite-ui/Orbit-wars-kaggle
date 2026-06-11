@@ -105,3 +105,18 @@ predicted reply in the scorer background) and spend only the freed ships on
 next-best actions. Recovers the idle-ship value the veto leaves on the table
 without reopening pass-1 commitments (no oscillation, no phantom-parry
 suppression of the whole plan).
+
+## Result: redirect (2026-06-11 ~08:15 UTC) — ELIMINATED
+
+2/7 vs the live stack, paired -25.1% @120 / -38.0% @250. Won only seed 0
+(where the full replan lost), collapsed on seeds 1-2 (where the replan won).
+Family conclusion across veto/replan/redirect: the veto's conservatism IS
+the value — holding vetoed ships home beats every measured scheme for
+spending them this turn. One-ply reply-exploitation axis closed at the
+current modeling depth.
+
+## Pivot: 4P ungating measurement (RUNNING)
+
+4P = 60% of ladder volume; every shipped mechanism is 2P-gated there. Panel:
+vetorf4p_ffa (veto + rf active in 4P) vs ffa_uniform control, background
+3 × namespaced ffa_uniform, seeds 4 × 4 seats = 16 games per focal.
