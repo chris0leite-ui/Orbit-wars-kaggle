@@ -17,22 +17,30 @@ v1_2 (live) + 4-player leader objective (9/16 first places vs parity
 4/16) + stalemate-gated endgame gambit. Submitting v1_4 evicts
 ledger_v1; PI sign-off required (Rule 1).
 
-## The Producer matchup (head-on hunt, PI-mandated)
+## The Producer matchup (head-on hunt) — CLOSED AS UNRESOLVED
 
-Status: 0-for-everything at honest compute, BUT the win condition was
-found and measured once (load-truncated build went 8/10): fortress
-freeze -> Producer goes passive at score parity -> stalemate gambit
-dismantles it (it has no freeze-breaking logic). Six deterministic
-encodings of that policy failed (gates either throttle the opening or
-leak the fortress). Key measured facts in the audit: its landed-
-tonnage stick rate 98-99% vs our ~50%; opening economics at parity;
-collapse window t50-80 via 2-3 parallel solo-kill stacks.
+Final record at honest compute: **0 wins in ~45 games across every
+build tried.** The "fortress freeze win condition" (the 8/10 battery)
+was PROVEN to be a measurement artifact: torch thread-thrashing under
+9-way battery contention pushed the Producer's turns past the engine's
+1-second act timeout — its 220-tick "passivity" was timed-out no-ops.
+Proof experiments + the nine failed freeze-gate encodings are in
+audit/2026-06-12-concentration-rebuild.md (read the CORRECTION header
+first). Genuine measured facts that survive: its landed-tonnage stick
+rate is 98-99% vs our ~50%; opening economics are at parity; the
+collapse window is t50-80 via 2-3 parallel stacks.
 
-**Next concrete step: bisect c42c9fc (14 mechanisms) one at a time**
-against a fixed panel {Producer x8, v7_0 x8, bundle x8}, keep only
-mechanisms that don't regress the panel, then revisit the
-opponent-adaptive response propensity design (exact landing
-attribution — design in the audit).
+If the hunt reopens, the un-invalidated directions are: (a) bisect
+c42c9fc's 14 mechanisms one at a time against a fixed 3-opponent
+panel; (b) the opponent-adaptive response propensity design (exact
+landing attribution, in the audit). Do NOT chase freeze gates — nine
+variants are measured dead.
+
+**NEW BINDING A/B RULE: per-phase opponent liveness.** Total-launch
+asserts pass on opponents that degrade mid-game. Run batteries with
+low worker counts, and assert opponent launches per ~100-tick window
+(or log per-turn wall-times). torch opponents thrash under parallel
+batteries.
 
 ## Tooling (new this session, keep)
 

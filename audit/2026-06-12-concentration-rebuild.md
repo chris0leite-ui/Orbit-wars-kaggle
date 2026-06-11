@@ -1,5 +1,21 @@
 # 2026-06-12 — Concentration rebuild vs the Producer archetype (head-on)
 
+> **CORRECTION (added end of session): the "fortress freeze win
+> condition" below is a MEASUREMENT ARTIFACT.** The 8/10 battery ran 9
+> games concurrently; the Producer runs torch with multi-threaded
+> inference, and the thread-pool thrashing pushed its turns past the
+> engine's 1-second act timeout — its 220-tick "deterred passivity"
+> was timed-out no-op turns. Proof, two experiments at honest compute:
+> (1) the Producer needs only 13-21 ms/turn solo (so the freeze was
+> never its value function "going quiet" under normal conditions, but
+> under 9-way contention torch degrades far worse than pure-python
+> agents); (2) forcing our agent defense-only from t40 (recreating the
+> exact fat-garrison board) does NOT freeze the full-compute Producer —
+> it eats the board even faster (91-97 steps, 3/3). Total-launch
+> liveness asserts cannot catch MID-GAME degradation; see the new
+> binding lesson at the end. Read every "fortress/freeze/deterrence"
+> claim below through this correction.
+
 PI directive: "Continue the head-on Producer hunt with the ledger — the
 concentration rebuild." This doc records the measured diagnosis chain and
 each mechanism added. All Producer games run with liveness asserts
@@ -226,3 +242,28 @@ What survives the session unconditionally:
   load-dependent; cap workers at 3 and spot-check solo; (2) the crash
   guard (return []) silently hides breakage — liveness asserts and the
   parity test are the only tells (the __slots__ incident).
+
+## Post-restoration coda: the freeze-gate hunt and the artifact proof
+
+After restoring v1_4, the PI asked whether the fortress finding could
+be turned into a winning strategy. Nine encodings of the phase switch
+were built and measured on solo seeds 300/310/316 (v1_4 baseline:
+163/100/113 steps survived): stack-wave gates with concentration
+filters and maturity guards, realized-wave triggers, airborne-mass
+reserve channels with three landing-classification variants, and a
+hard time-gate. Every one made the seeds worse (85-123) — each either
+throttled the opening (early garrisons/fleets are proportionally as
+"dangerous" as late stacks; only phase separates them) or fired after
+planets were already doomed.
+
+The tenth experiment killed the premise instead: see the CORRECTION at
+the top. The freeze was the opponent timing out, not being deterred.
+Producer matchup record at honest compute after the full campaign:
+0 wins in ~45 games across all builds.
+
+**New binding A/B lesson: per-phase opponent liveness.** Total-launch
+asserts pass on an opponent that degrades mid-game. Batteries must
+either run with torch thread limits + low worker counts AND assert
+opponent launches in every ~100-tick window, or log per-turn agent
+wall-times. (The 8/10 battery passed total-liveness while the opponent
+no-opped from ~t80 on.)
