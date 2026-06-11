@@ -2319,6 +2319,25 @@ def plan_lite_waves(
                 k_sync = torch.maximum(kA_f, kB_f)
                 d_gap = (kA_f - kB_f).abs()
                 valid_pair = valid_pair & (d_gap <= _sync_dmax())
+                if bool((valid_pair & (d_gap > 0)).any()):
+                    # Delayed pairs telegraph: the far leg is visible for the
+                    # whole hold window, so the joint size must clear the
+                    # FULL-reaction floor (reinforcement weight 1.0, no
+                    # reaction lag) at the synced arrival — not the live
+                    # stack's discounted 0.5/lag-2 floor. This is what the
+                    # -46% mirror rout of unconditioned holds was made of.
+                    margin_full = _reactive_reinforcement_margin(
+                        obs, cache, target_idx, int(K_eta), weight=1.0, lag=0.0,
+                    )
+                    if margin_full is not None:
+                        floor_full = capture_floor(
+                            status_sizing, target_idx=target_idx, k_max=K_eta,
+                            capture_overhead=1.0, player_id=pid,
+                            reinforcement=margin_full,
+                        )
+                        ff_sync = floor_full.gather(-1, k_sync.clamp(0, K - 1))
+                        valid_pair = valid_pair & (
+                            (d_gap == 0) | ((szA_f + szB_f) >= ff_sync))
                 eta_far = torch.where(a_is_far, etaA_f, etaB_f)
                 delayed_a = (~a_is_far) & (d_gap > 0)
                 delayed_b = a_is_far & (d_gap > 0)
