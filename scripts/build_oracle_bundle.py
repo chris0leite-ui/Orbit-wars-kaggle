@@ -26,7 +26,8 @@ MODULES = ["engine.py", "features.py", "policy_features.py",
 WEIGHTS = [("value_weights.py", "_VALUE_WEIGHTS",
             ["MU", "SIGMA", "LAYERS", "HEAD_WIN", "HEAD_SHARE"]),
            ("policy_weights.py", "_POLICY_WEIGHTS",
-            ["MU", "SIGMA", "LAYERS", "HEAD_FIRE", "HEAD_FRAC"])]
+            ["MU", "SIGMA", "LAYERS", "HEAD_FIRE", "HEAD_FRAC",
+             "S_MU", "S_SIGMA", "S_LAYERS", "HEAD_STATE"])]
 
 FOOTER = '''
 

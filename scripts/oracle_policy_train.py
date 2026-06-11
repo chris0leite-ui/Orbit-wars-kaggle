@@ -25,6 +25,18 @@ sys.path.insert(0, str(REPO))
 NEG_KEEP = 0.3   # must match the builder's subsampling rate
 
 
+def auc(y, p):
+    order = np.argsort(p)
+    ranks = np.empty_like(order, dtype=np.float64)
+    ranks[order] = np.arange(len(p))
+    pos = y > 0.5
+    n_pos = pos.sum()
+    n_neg = len(y) - n_pos
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+    return (ranks[pos].sum() - n_pos * (n_pos - 1) / 2) / (n_pos * n_neg)
+
+
 def pr_auc(y, p):
     order = np.argsort(-p)
     y_s = y[order]

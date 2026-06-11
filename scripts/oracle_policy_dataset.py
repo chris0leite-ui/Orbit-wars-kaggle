@@ -98,12 +98,20 @@ def process(job):
         X, y, frac, meta = [], [], [], []
         cov_hit = cov_tot = sun_miss = 0
         state_id = 0
-        for t in range(1, len(steps) - 1, stride):
+        # REPLAY CONVENTION (verified empirically 2026-06-11): the action
+        # stored at index t was decided FROM obs[t-1]; its fleets already
+        # fly in obs[t]. So the decision pair is (obs[t], action[t+1]).
+        # Pairing (obs[t], action[t]) labels the aftermath of a launch and
+        # produced the cold-state fire rate of exactly 0.000 that exposed
+        # this. Opening states are sampled densely (stride 2 before t=60).
+        ts = list(range(1, min(60, len(steps) - 1), 2)) \
+            + list(range(61, len(steps) - 1, stride))
+        for t in ts:
             base_obs = steps[t][0].get("observation")
             if not base_obs or not base_obs.get("planets"):
                 continue
             for seat in seats:
-                moves = steps[t][seat].get("action") or []
+                moves = steps[t + 1][seat].get("action") or []
                 obs = dict(base_obs)
                 obs["player"] = seat
                 obs["step"] = t
