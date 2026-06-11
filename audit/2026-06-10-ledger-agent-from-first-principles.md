@@ -113,6 +113,21 @@ a real comet-expiry off-by-one during development).
 - The Producer sweep says nothing about unseen top-ladder archetypes;
   live μ is the only true test.
 
+## Post-submit A/B battery (2026-06-11, the submitted artifact, distinct fresh seeds)
+
+After the dominance-gated banking fix, 32 games each on seeds never used
+anywhere before (one game per seed — seat-swapped reruns mirror exactly
+with deterministic agents, so distinct maps are what buys independence):
+
+| Opponent | Result | Wilson-lo |
+|---|---|---|
+| **LIVE sub 53547475 rebuild (1300.9 on ladder, sha-verified)** | **31/32 (97%)** | **0.843** |
+| vanilla Producer | 32/32 (100%) | 0.893 |
+| v7_0 baseline | 28/32 (88%) | 0.719 |
+
+Submitted as **sub 53556728** (2026-06-11), evicting sub 53542171
+(1244.1); backstop sub 53547475 (1300.9) stays.
+
 ## Status
 
 `submissions/ledger_v1.py` is the ready-to-submit artifact (byte-copy of
