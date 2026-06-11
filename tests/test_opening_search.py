@@ -136,3 +136,19 @@ def test_hold_filter_skips_unaffordable_launches(pp_main):
 
 def test_hold_filter_unknown_source_skipped(pp_main):
     assert pp_main._opening_hold_filter([(9, 5, 3.0)], {}) == []
+
+
+def test_reserve_filter_blocks_strippable_sources(pp_main):
+    # Source 0 has 30 ships, reserve 25: an 11-ship launch would dip to 19
+    # < 25 -> blocked. Source 3 has 30, reserve 5 -> 11-ship launch fine.
+    rows = [(0, 5, 11.0), (3, 7, 11.0)]
+    ships = {0: 30.0, 3: 30.0}
+    reserve = {0: 25.0, 3: 5.0}
+    assert pp_main._opening_reserve_filter(rows, ships, reserve) == [(3, 7, 11.0)]
+
+
+def test_reserve_k_default(monkeypatch, pp_main):
+    monkeypatch.delenv("PRODUCER_PLUS_OPENING_RESERVE_K", raising=False)
+    assert pp_main._opening_reserve_k() == 8
+    monkeypatch.setenv("PRODUCER_PLUS_OPENING_RESERVE_K", "0")
+    assert pp_main._opening_reserve_k() == 0

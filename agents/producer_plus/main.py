@@ -1336,6 +1336,28 @@ def _opening_search_plan(
             if t_launch <= 0.5]
 
 
+def _opening_reserve_k() -> int:
+    """Worst-case reserve window in turns (0 = off). Planet Wars canon
+    (Melis's full-attack future): ships may leave only if the source
+    survives a POSSIBLE strike, not just the fleets already in flight —
+    the do-nothing projection is blind pre-contact, which is exactly when
+    the searcher launches. The reserve = enemy garrison mass that could
+    reach the source within this window (full-garrison fleet speed)."""
+    return max(0, _env_int("PRODUCER_PLUS_OPENING_RESERVE_K", 8))
+
+
+def _opening_reserve_filter(
+    rows: list[tuple[int, int, float]],
+    ships_by_slot: dict[int, float],
+    reserve_by_slot: dict[int, float],
+) -> list[tuple[int, int, float]]:
+    """Drop launches whose source would dip below its worst-case reserve."""
+    return [
+        (s, t, size) for (s, t, size) in rows
+        if ships_by_slot.get(s, 0.0) - size >= reserve_by_slot.get(s, 0.0)
+    ]
+
+
 def _opening_hold_filter(
     rows: list[tuple[int, int, float]], drain_by_slot: dict[int, float],
 ) -> list[tuple[int, int, float]]:
@@ -1356,7 +1378,7 @@ def _opening_hold_filter(
 
 def _emit_opening_entries(
     due: list[tuple[int, int, float]], *, movement, obs, obs_tensors: dict,
-    garrison_status, H: int,
+    garrison_status, H: int, cache=None,
 ):
     """Aim the due launches with the REAL intercept solver. LaunchEntries."""
     device = obs.device
@@ -1387,6 +1409,22 @@ def _emit_opening_entries(
             for i in range(int(src_slots.shape[0]))
         }
         rows = _opening_hold_filter(rows, drain_by_slot)
+    _rk = _opening_reserve_k()
+    if rows and _rk > 0 and cache is not None:
+        src_slots = torch.tensor([r[0] for r in rows], dtype=torch.long, device=device)
+        margin = _reactive_reinforcement_margin(
+            obs, cache, src_slots, _rk, weight=1.0, lag=0.0,
+        )
+        if margin is not None:
+            reserve_by_slot = {
+                int(src_slots[i].item()): float(margin[i, _rk - 1].item())
+                for i in range(int(src_slots.shape[0]))
+            }
+            ships_by_slot = {
+                int(src_slots[i].item()): float(obs.ships[src_slots[i]].item())
+                for i in range(int(src_slots.shape[0]))
+            }
+            rows = _opening_reserve_filter(rows, ships_by_slot, reserve_by_slot)
     if not rows:
         return None
     src = torch.tensor([r[0] for r in rows], dtype=torch.long, device=device)
@@ -2687,7 +2725,7 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
         if due:
             opening_entries = _emit_opening_entries(
                 due, movement=movement, obs=obs, obs_tensors=obs_tensors,
-                garrison_status=status, H=H,
+                garrison_status=status, H=H, cache=cache,
             )
         if opening_entries is not None:
             # Claim targets across turns; debit the planner's budget view so
