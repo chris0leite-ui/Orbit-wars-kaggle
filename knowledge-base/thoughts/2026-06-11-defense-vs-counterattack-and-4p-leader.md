@@ -17,3 +17,26 @@ Two observations, PI verbatim in substance:
 Context links: same session as the holdability autopsy (rolling
 recaptures, expansion-was-winning finding) — all three observations
 circle the attack/defense exchange-rate question.
+
+## Measurement (same day, 33 live 4-player games + 2-player set, both live subs)
+
+**Leader targeting, refined.** We DO attack the strongest rival — 62% of
+all enemy-directed waves, 684 of 1106. The real pattern hiding under the
+impression: ship-share aimed at the leader is 67% in games we WIN but
+52% in games we LOSE (when a rival outranks us). So it is not absence of
+leader focus; it is leader focus DILUTING exactly when the leader
+snowballs — consistent with feasibility, not valuation: the leader's
+garrisons + reactive floors grow past what our waves can clear, the
+leader candidates die in the floor/veto, and the ships go to whoever is
+still attackable. Unproven; needs decision_trace on behind-ticks of a
+live loss.
+
+**Defense vs counter-attack.** Against inbound enemy waves >= 20 ships
+(2,356 events): we already respond with counter-attack 65% of the time
+(1,532), defend only 21% (484). Exchange outcome (our strength minus
+attacker's, launch to arrival+5): defend +120 mean / 63% positive;
+counter-attack +13 / 51%; expand-elsewhere -23; freeze -156. Heavy
+selection bias (we defend when defense is winnable), so this does NOT
+prove defense > counter-attack causally — but it shows no large untapped
+counter-attack alpha in OUR behavior. The PI may have observed opponents
+using asymmetric attack against US — need the specific replay.

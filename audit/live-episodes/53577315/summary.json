@@ -1,40 +1,45 @@
 {
   "submission_id": "53577315",
-  "generated_utc": "2026-06-11T18:16:15Z",
+  "generated_utc": "2026-06-11T18:58:30Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 7,
-  "n_played": 7,
-  "wins_total": 7,
-  "winrate_total": 1.0,
+  "n_episodes": 16,
+  "n_played": 16,
+  "wins_total": 12,
+  "winrate_total": 0.75,
   "by_size": {
     "2": {
-      "n": 2,
-      "wins": 2,
-      "winrate": 1.0
+      "n": 7,
+      "wins": 6,
+      "winrate": 0.8571428571428571
     },
     "4": {
-      "n": 5,
-      "wins": 5,
-      "winrate": 1.0
+      "n": 9,
+      "wins": 6,
+      "winrate": 0.6666666666666666
     }
   },
   "self_match_episodes": 1,
   "seat_distribution": {
-    "0": 5,
-    "1": 2,
-    "2": 2,
-    "3": 1
+    "0": 9,
+    "1": 5,
+    "2": 3,
+    "3": 2
   },
   "episode_length_steps": {
-    "n": 7,
+    "n": 16,
     "min": 103,
-    "q1": 130,
+    "q1": 116,
     "median": 133,
     "q3": 151,
-    "max": 321,
-    "mean": 155.71428571428572
+    "max": 500,
+    "mean": 168.0625
   },
   "opponents": [
+    {
+      "name": "SeaEag1e",
+      "seen": 2,
+      "beat_us": 0
+    },
     {
       "name": "Tech Hound",
       "seen": 1,
@@ -96,15 +101,133 @@
       "beat_us": 0
     },
     {
-      "name": "SeaEag1e",
+      "name": "Giba",
       "seen": 1,
       "beat_us": 0
     },
     {
-      "name": "Giba",
+      "name": "Hu Xingyu",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "SiestaGuru",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "ljx59141421",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Veniamin Nelin",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Alvaro",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "yash bhaskar",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Jiri Prudky",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Surabhi veda",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Lidor Foguel",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "uesi",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Moroz Roman",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "alpaka3",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "chipssy",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Darth Sidious",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "sam_the_rice_cake",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\u53f2\u6c38\u521a",
       "seen": 1,
       "beat_us": 0
     }
   ],
-  "losses": []
+  "losses": [
+    {
+      "episode": "episode-79556865",
+      "size": 4,
+      "opponents": [
+        "SiestaGuru",
+        "ljx59141421",
+        "Veniamin Nelin"
+      ],
+      "winner": "SiestaGuru",
+      "steps": 116
+    },
+    {
+      "episode": "episode-79557392",
+      "size": 4,
+      "opponents": [
+        "Alvaro",
+        "yash bhaskar",
+        "Jiri Prudky"
+      ],
+      "winner": "Jiri Prudky",
+      "steps": 151
+    },
+    {
+      "episode": "episode-79557651",
+      "size": 2,
+      "opponents": [
+        "Surabhi veda"
+      ],
+      "winner": "Surabhi veda",
+      "steps": 116
+    },
+    {
+      "episode": "episode-79558968",
+      "size": 4,
+      "opponents": [
+        "uesi",
+        "Moroz Roman",
+        "alpaka3"
+      ],
+      "winner": "uesi",
+      "steps": 500
+    }
+  ]
 }
