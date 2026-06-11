@@ -708,12 +708,14 @@ def _apply_response_veto(
     H: int,
     opp_weights,
     reply_out: list | None = None,
+    reply_trust: float | None = None,
 ):
     """Drop attack waves the opponent's predicted reply kills. See gate note.
 
     ``reply_out``: optional mutable list; the predicted reply LaunchSet is
     appended when the mirror runs, so a downstream pass (the redirect) can
-    reuse it without a second mirror.
+    reuse it without a second mirror. ``reply_trust``: certainty-equivalent
+    scaling of the reply's ships (None = full trust).
     """
     pid = int(obs.player_id)
     P = int(obs.P)
@@ -738,6 +740,8 @@ def _apply_response_veto(
         config=config, player_count=int(player_count), pid=pid,
         K_eta_override=K_eta_override, H=H,
     )
+    if reply_trust is not None:
+        reply = _scale_launch_set_ships(reply, float(reply_trust))
     if reply_out is not None:
         reply_out.append(reply)
 
@@ -1005,6 +1009,97 @@ def _apply_redirect(
         angle=torch.cat([entries.angle, extra.angle]),
         eta=torch.cat([entries.eta, extra.eta]),
         valid=torch.cat([entries.valid, extra.valid]),
+    )
+
+
+# --- Reply trust --------------------------------------------------------------
+# Everything reply-conditioned (the veto, the projection background) assumes
+# the rivals run our planner. Against producer-derived opponents that mirror
+# is near-exact; against originals it is confidently wrong, and a wrong
+# parry prediction vetoes good attacks. Honest fix: VERIFY the model online.
+# Each turn, check whether last turn's predicted launches materialized as
+# real fleets (matched by source planet + owner, ships within 2x), keep an
+# exponential moving accuracy, and price replies at trust-scaled strength
+# (certainty-equivalent: a reply believed with p=0.4 carries 0.4x ships).
+# Producer-likes: trust stays high, behavior unchanged. Originals: the veto
+# degrades gracefully toward the unconditioned stack instead of parrying
+# ghosts.
+
+
+def _reply_trust_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_REPLY_TRUST", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+_REPLY_TRUST_FLOOR = 0.25
+_REPLY_TRUST_ALPHA = 0.2
+
+
+def _record_reply_prediction(memory, background: LaunchSet | None, obs_tensors: dict) -> None:
+    """Stash this turn's predicted opp launches + current fleet ids for
+    next turn's verification."""
+    fleets = obs_tensors["fleets"]
+    ids = fleets[..., 0].long()
+    memory.trust_fleet_ids = set(int(i) for i in ids.tolist() if int(i) >= 0)
+    preds = []
+    if background is not None and int(background.source_slots.shape[-1]) > 0:
+        planets = obs_tensors["planets"]
+        pid_of_slot = planets[..., 0].long()
+        sel = background.valid.nonzero(as_tuple=True)[0]
+        for i in sel.tolist():
+            src_slot = int(background.source_slots[i].item())
+            preds.append((
+                int(pid_of_slot[src_slot].item()),          # source planet id
+                int(background.owner[i].item()),
+                float(background.ships[i].item()),
+            ))
+    memory.trust_predictions = preds
+
+
+def _update_reply_trust(memory, obs_tensors: dict, *, pid: int) -> float:
+    """EMA prediction recall; returns current trust in [floor, 1]."""
+    trust = getattr(memory, "trust_ema", None)
+    if trust is None:
+        trust = 1.0                       # start trusting (the live behavior)
+    preds = getattr(memory, "trust_predictions", None)
+    known_ids = getattr(memory, "trust_fleet_ids", None)
+    if preds:
+        fleets = obs_tensors["fleets"]
+        new_enemy = []
+        for row in fleets.tolist():
+            fleet_id, owner, _x, _y, _ang, from_id, ships = row[:7]
+            if int(fleet_id) < 0 or int(owner) == int(pid):
+                continue
+            if known_ids is not None and int(fleet_id) in known_ids:
+                continue
+            new_enemy.append((int(from_id), int(owner), float(ships)))
+        matched = 0
+        pool = list(new_enemy)
+        for p_src, p_owner, p_ships in preds:
+            hit = None
+            for j, (f_src, f_owner, f_ships) in enumerate(pool):
+                if f_src == p_src and f_owner == p_owner and (
+                    0.5 * p_ships <= f_ships <= 2.0 * p_ships
+                ):
+                    hit = j
+                    break
+            if hit is not None:
+                matched += 1
+                pool.pop(hit)
+        recall = matched / len(preds)
+        trust = (1.0 - _REPLY_TRUST_ALPHA) * trust + _REPLY_TRUST_ALPHA * recall
+    memory.trust_ema = trust
+    return max(_REPLY_TRUST_FLOOR, min(1.0, trust))
+
+
+def _scale_launch_set_ships(launches: LaunchSet, factor: float) -> LaunchSet:
+    if factor >= 1.0:
+        return launches
+    return LaunchSet(
+        source_slots=launches.source_slots, target_slots=launches.target_slots,
+        ships=launches.ships * float(factor), eta=launches.eta,
+        owner=launches.owner, valid=launches.valid,
     )
 
 
@@ -2440,6 +2535,7 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
     # gain >= roi_threshold ships over doing nothing" -- shift the
     # absolute threshold by do_nothing_score.
     background = None
+    reply_trust = None
     cfg = config
     # FFA objective weights: only built for 3+ player games so the 2P path
     # stays byte-identical (None -> legacy equal-weight opponent sum).
@@ -2464,6 +2560,13 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
             K=K_opp,
             H=H,
         )
+        if _reply_trust_enabled():
+            # Verify last turn's prediction first, then stash this turn's
+            # RAW prediction for next turn, then price at trusted strength.
+            reply_trust = _update_reply_trust(
+                memory, obs_tensors, pid=int(obs.player_id))
+            _record_reply_prediction(memory, background, obs_tensors)
+            background = _scale_launch_set_ships(background, reply_trust)
         do_nothing_score = float(_score_do_nothing(
             status=status, prod=movement.planet_prod,
             alive_by_step=alive_by_step, player_count=int(player_count),
@@ -2547,6 +2650,7 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
             player_count=int(player_count), K_eta_override=K_eta_override,
             H=H, opp_weights=opp_w,
             reply_out=_reply_box,
+            reply_trust=reply_trust,
         )
         # Redirect: only when the veto actually freed budget (waves dropped)
         # — otherwise pass 1 already spent everything it wanted to.
@@ -2609,12 +2713,18 @@ class ProducerLiteMemory:
         self.cached_player_count: int | None = None
         self.last_sparse_action_row: dict | None = None
         self.opening_claimed: set | None = None
+        self.trust_ema: float | None = None
+        self.trust_predictions: list | None = None
+        self.trust_fleet_ids: set | None = None
 
     def reset(self) -> None:
         self.movement = None
         self.cached_player_count = None
         self.last_sparse_action_row = None
         self.opening_claimed = None
+        self.trust_ema = None
+        self.trust_predictions = None
+        self.trust_fleet_ids = None
 
 
 class ProducerLiteRuntime:
@@ -2628,6 +2738,10 @@ class ProducerLiteRuntime:
         mem = self.memory
         if bool((obs_tensors["step"] == 0).all()):
             mem.cached_player_count = None
+            mem.opening_claimed = None
+            mem.trust_ema = None
+            mem.trust_predictions = None
+            mem.trust_fleet_ids = None
         if mem.cached_player_count is None:
             mem.cached_player_count = largest_initial_player_count(obs_tensors)
         config = _config_for(mem.cached_player_count)

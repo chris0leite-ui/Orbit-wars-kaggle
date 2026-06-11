@@ -535,6 +535,17 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_REINFORCE_DEFICIT": "1",
         "PRODUCER_PLUS_COALITIONS": "1",
     },
+    "vetorf_trust": {
+        # Live stack + online opponent-model verification: replies priced
+        # at EMA-recall strength (matched by source planet + owner, ships
+        # within 2x). Producer-likes: trust ~1, unchanged. Originals: the
+        # veto stops parrying ghosts.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_TRUST": "1",
+    },
     "veto_rf": {
         # Veto + reactive floor (weight 0.5): enemy floors include half the
         # garrison the defender can route to the target within our flight
