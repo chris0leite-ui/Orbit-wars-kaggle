@@ -72,3 +72,36 @@ Two-gate protocol: champion win AND positive attribution vs the live stack.
   adds nothing the rf stack wasn't already converting; its champion-leg
   dominance is another instance of why champion wins alone don't gate
   (upsize precedent). Revisit only with a late-game conversion fix.
+
+## Results v2 (2026-06-11 morning, namespaced referee, container restart in between)
+
+First relaunch was VOID — same-process env contamination (both agents ran the
+focal stack; exact mirror draws on seeds 0-1, seat-split results elsewhere).
+Fixed with a PPNSX-namespaced referee copy (_ns_veto_rf.py); seeds 0-1 then
+diverged properly (Rule 38 reproduce-verify). In-game "None reward" errors
+were 4-core box contention, NOT agent defects: solo reruns show replan max
+turn 274 ms (budget 1000 ms).
+
+Attribution vs the live stack (veto + reactive floor), seeds 0-3 paired:
+
+- **replan (one-ply, full)**: truncated leg 4/6 with +19% paired @120 on the
+  clean seeds — but solo FULL games on the two broken seeds were 0/4. Honest
+  read: seeds split 2-2, big margins both directions. decision_diff on a
+  losing seed: UNDER-AGGRESSION — 16 capture-sized launches vs the live
+  stack's 24; pass 2 treats predicted parries as fixed even for attacks it
+  then doesn't make (phantom-parry conservatism). NOT promotable as-is.
+- **background-aware floors**: 3/7, paired -15% @120 / -22% @250 —
+  ELIMINATED (defensive over-caution: predicted strikes feeding safe_drain
+  hold garrisons home / evacuate too eagerly on imperfect predictions).
+- **deficit-sized defense**: 4 wins / 2 draws / 1 loss, paired -0.6% @120 /
+  +8.6% @250; one seed bit-identical (mechanism never fired). Mild,
+  not decisive — candidate passenger for a future composite.
+
+## Next mechanism (from the replan diagnosis): REDIRECT
+
+Keep plan→veto unchanged; when the veto kills waves, run ONE extra planning
+pass with surviving waves committed (sources debited, committed effects +
+predicted reply in the scorer background) and spend only the freed ships on
+next-best actions. Recovers the idle-ship value the veto leaves on the table
+without reopening pass-1 commitments (no oscillation, no phantom-parry
+suppression of the whole plan).
