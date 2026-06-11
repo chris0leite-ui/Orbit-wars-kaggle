@@ -169,3 +169,22 @@ not investigating a dead-end bundle.
   (safe_drain), then re-judge.
 - Ledger-branch ports landed: commitment cost (gated), leader-objective 4P
   variant, dead-seat guards in both harnesses, _ref_ledger_v1_2 referee.
+
+## Verdicts (2026-06-11 mid-day): tuner refuted, searcher defect isolated
+
+- **Tuned knobs (rf 1.2 / margin 3.0 / H 16): 0/16 on fresh seeds 0-7** —
+  the +0.567 tune objective was 3-seed overfit; the confirmation gate
+  worked. Mechanism of failure: hyper-conservatism -> out-expanded ->
+  eliminated (the passivity cliff again). Tuner needs more seeds/eval +
+  smaller steps. SHIPPED CONSTANTS STAND.
+- **Opening v2 hold filter never binds**: games step-identical to v1 (the
+  do-nothing projection is threat-blind pre-contact, so safe_drain is
+  fully permissive exactly when the searcher launches). True defect =
+  missing worst-case reserve (Planet Wars canon: Melis's full-attack
+  future). v3 adds PRODUCER_PLUS_OPENING_RESERVE_K (default 8): launch
+  only if the source survives the enemy garrison mass reachable within K
+  turns (reactive-floor geometry pointed at our own sources).
+- **Expansion lane (window 150) raw power confirmed**: 4/8 with +57/+96%
+  @250 dominance where it survives; collapses trace to the same searcher
+  defect. Re-judge both windows with the reserve.
+- Forward redistribution (canon port) leg in flight.
