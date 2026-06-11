@@ -120,3 +120,34 @@ current modeling depth.
 4P = 60% of ladder volume; every shipped mechanism is 2P-gated there. Panel:
 vetorf4p_ffa (veto + rf active in 4P) vs ffa_uniform control, background
 3 × namespaced ffa_uniform, seeds 4 × 4 seats = 16 games per focal.
+
+## 4P panel resolution (2026-06-11 ~11:00 UTC)
+
+Panel raw: vetorf4p 1/16; ffa_uniform "control" 16/16. The control reading
+is a SCORING ARTIFACT, not contamination (earlier in-chat contamination
+theory retracted): probe C (new-code plain vs 3 namespaced old-code plain,
+clean subprocess) played a PERFECT 4-way mirror — 500 steps, 783.0 ships
+each, rewards [1,1,1,1]. In a material tie the engine gives every seat
+reward 1, and ffa_panel counts reward==1 as first place → 16 mirror
+stalemates scored as 16/16. Tools note: ffa_panel first-place metric is
+inflated by draws for self-similar agents; and never run two env-gated
+bundles as focals in one panel invocation (env leak risk remains real even
+though it wasn't the cause here).
+
+Probe C is also the off-path parity proof for today's refactors in 4P:
+one divergent decision would have broken the bit-perfect mirror.
+
+REAL finding — veto ungated in 4P is genuinely bad: vetorf4p eliminated
+step 198 (probe A), new-code veto_only eliminated step 162 (probe B2),
+panel 1/16. Modeling cause: _predict_reply mirrors each of the 3 opponents
+independently and MERGES all replies into one background — every attack is
+priced as if all three rivals parry it simultaneously (triple-counted
+defense) → chronic passivity → first to be carved in FFA. Correct in 2P
+(one opponent). The 2P gates were protecting us from exactly this.
+
+Fix direction (next mechanism): 4P reply model — select/weight the merged
+reply (nearest/strongest rival only, or 1/(n-1) weighting) before pricing.
+
+Probe B1 (old-code veto_only, 4P): inner python dies silently twice
+(empty stdout, no traceback — native-crash signature). Moot for decisions;
+not investigating a dead-end bundle.
