@@ -2275,26 +2275,67 @@ def plan_lite_waves(
                     & (source_idx[sA] != source_idx[sB])
                     & (d_gap <= _sync_dmax())
                 )                                                                 # [T, Pp]
-                etaA = eta_hi_v[sA, Tidx]
-                etaB = eta_hi_v[sB, Tidx]
-                eta_far = torch.where(a_is_far, etaA, etaB)
+                # --- floor-proportional pair sizing. Full safe_drain per leg
+                # doubles committed capital on one target (the week's known
+                # disease — confirmed by the first mirror leg: 1/12, in-flight
+                # share 67% vs 45%). Right-size the pair to the joint floor ×
+                # overkill, split proportionally to each leg's drain; smaller
+                # fleets fly SLOWER, so re-aim and re-check the floor at the
+                # later arrival. Pairs where the lo sizing fails the re-check
+                # fall back to full drain (the gate proved drain clears).
+                ov_t = _overkill_for_targets(obs, target_idx, player_count, dtype)
+                if not torch.is_tensor(ov_t):   # scalar (legacy) form
+                    ov_t = torch.full((T,), float(ov_t), dtype=dtype, device=device)
+                need = (floor_sync * ov_t.view(T, 1)).ceil().clamp(min=2.0)        # [T, Pp]
+                pair_sum = (szA + szB).clamp(min=1.0)
+                nA = (need * szA / pair_sum).ceil().clamp(min=1.0)
+                nB = (need * szB / pair_sum).ceil().clamp(min=1.0)
+                src_a_slots = source_idx[sA]                                       # [T, Pp]
+                src_b_slots = source_idx[sB]
+                tgt_pp = target_idx.view(T, 1).expand(T, Pp)
+                aim_loA = intercept_angle(movement, src_a_slots, tgt_pp, nA, active=valid_pair)
+                aim_loB = intercept_angle(movement, src_b_slots, tgt_pp, nB, active=valid_pair)
+                etaLA = aim_loA["eta"]
+                etaLB = aim_loB["eta"]
+                kLA = (etaLA.clamp(min=1.0, max=float(K)).ceil().long() - 1).clamp(0, K - 1)
+                kLB = (etaLB.clamp(min=1.0, max=float(K)).ceil().long() - 1).clamp(0, K - 1)
+                k_sync_lo = torch.maximum(kLA, kLB)
+                floor_lo = floor.gather(-1, k_sync_lo)
+                cap_pp = eta_cap.view(T, 1)
+                lo_ok = (
+                    valid_pair & aim_loA["viable"] & aim_loB["viable"]
+                    & (etaLA <= cap_pp) & (etaLB <= cap_pp)
+                    & ((nA + nB) >= floor_lo)
+                )
+                szA_f = torch.where(lo_ok, nA, szA)
+                szB_f = torch.where(lo_ok, nB, szB)
+                etaA_f = torch.where(lo_ok, etaLA, eta_hi_v[sA, Tidx])
+                etaB_f = torch.where(lo_ok, etaLB, eta_hi_v[sB, Tidx])
+                angA_f = torch.where(lo_ok, aim_loA["angle"], angle_hi_v[sA, Tidx])
+                angB_f = torch.where(lo_ok, aim_loB["angle"], angle_hi_v[sB, Tidx])
+                kA_f = torch.where(lo_ok, kLA, kA)
+                kB_f = torch.where(lo_ok, kLB, kB)
+                a_is_far = kA_f >= kB_f
+                k_sync = torch.maximum(kA_f, kB_f)
+                d_gap = (kA_f - kB_f).abs()
+                valid_pair = valid_pair & (d_gap <= _sync_dmax())
+                eta_far = torch.where(a_is_far, etaA_f, etaB_f)
                 delayed_a = (~a_is_far) & (d_gap > 0)
                 delayed_b = a_is_far & (d_gap > 0)
-                etaA_eff = torch.where(delayed_a, eta_far, etaA)
-                etaB_eff = torch.where(delayed_b, eta_far, etaB)
+                etaA_eff = torch.where(delayed_a, eta_far, etaA_f)
+                etaB_eff = torch.where(delayed_b, eta_far, etaB_f)
 
                 C_sy = T * Pp
                 m = valid_pair
                 zero = torch.zeros_like(szA)
-                one = torch.ones_like(etaA)
+                one = torch.ones_like(etaA_f)
                 sy_src = torch.stack(
-                    [source_idx[sA].reshape(C_sy), source_idx[sB].reshape(C_sy)], dim=-1)
+                    [src_a_slots.reshape(C_sy), src_b_slots.reshape(C_sy)], dim=-1)
                 sy_send = torch.stack(
-                    [torch.where(m, szA, zero).reshape(C_sy),
-                     torch.where(m, szB, zero).reshape(C_sy)], dim=-1)
+                    [torch.where(m, szA_f, zero).reshape(C_sy),
+                     torch.where(m, szB_f, zero).reshape(C_sy)], dim=-1)
                 sy_angle = torch.stack(
-                    [angle_hi_v[sA, Tidx].reshape(C_sy),
-                     angle_hi_v[sB, Tidx].reshape(C_sy)], dim=-1)
+                    [angA_f.reshape(C_sy), angB_f.reshape(C_sy)], dim=-1)
                 sy_eta = torch.stack(
                     [torch.where(m, etaA_eff, one).reshape(C_sy),
                      torch.where(m, etaB_eff, one).reshape(C_sy)], dim=-1)
@@ -2307,15 +2348,15 @@ def plan_lite_waves(
 
                 for t_i, p_i in (m & (d_gap > 0)).nonzero(as_tuple=False).tolist():
                     far_a = bool(a_is_far[t_i, p_i].item())
-                    i_far = int((sA if far_a else sB)[t_i, p_i].item())
-                    i_near = int((sB if far_a else sA)[t_i, p_i].item())
+                    sz_far, sz_near = (szA_f, szB_f) if far_a else (szB_f, szA_f)
+                    sl_far, sl_near = (src_a_slots, src_b_slots) if far_a else (src_b_slots, src_a_slots)
                     sync_sink.append({
-                        "near_src": int(source_idx[i_near].item()),
-                        "far_src": int(source_idx[i_far].item()),
+                        "near_src": int(sl_near[t_i, p_i].item()),
+                        "far_src": int(sl_far[t_i, p_i].item()),
                         "tgt": int(target_idx[t_i].item()),
                         "eta": float(eta_far[t_i, p_i].item()),
-                        "near_ships": float(sizes_hi_v[i_near, t_i].item()),
-                        "far_ships": float(sizes_hi_v[i_far, t_i].item()),
+                        "near_ships": float(sz_near[t_i, p_i].item()),
+                        "far_ships": float(sz_far[t_i, p_i].item()),
                         "arrival_dt": int(k_sync[t_i, p_i].item()) + 1,
                     })
 
@@ -2726,8 +2767,11 @@ def _sync_enabled() -> bool:
 
 
 def _sync_dmax() -> int:
-    """Max hold length in ticks (gap between the pair's natural arrivals)."""
-    return max(1, _env_int("PRODUCER_PLUS_SYNC_DMAX", 6))
+    """Max hold length in ticks (gap between the pair's natural arrivals).
+
+    0 = same-tick coalitions only, no holds (ablation knob).
+    """
+    return max(0, _env_int("PRODUCER_PLUS_SYNC_DMAX", 6))
 
 
 def _sync_k_src() -> int:

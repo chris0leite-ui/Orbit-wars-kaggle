@@ -56,9 +56,19 @@ def main() -> None:
     max_concurrent = 0
     prev_holds: list = []
 
+    crashes = []
+
     def focal(obs):
         nonlocal holds_created, holds_seen_steps, max_concurrent, prev_holds
-        action = agent_mod.agent(obs)
+        # The env swallows agent exceptions and keeps playing (silent
+        # forfeit-by-passivity) — surface them explicitly.
+        try:
+            action = agent_mod.agent(obs)
+        except Exception:
+            import traceback
+            crashes.append(int(obs["step"]))
+            sys.stderr.write(traceback.format_exc())
+            raise
         holds = list(getattr(mem, "sync_holds", None) or [])
         if holds:
             holds_seen_steps += 1
@@ -82,6 +92,8 @@ def main() -> None:
     print(f"holds created: {holds_created}  executed: {len(execs)}  "
           f"steps with pending holds: {holds_seen_steps}  "
           f"max concurrent: {max_concurrent}")
+    if crashes:
+        print(f"AGENT CRASHED at steps {crashes} — result is a forfeit, not a verdict")
 
 
 if __name__ == "__main__":
