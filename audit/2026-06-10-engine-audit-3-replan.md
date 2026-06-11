@@ -151,3 +151,21 @@ reply (nearest/strongest rival only, or 1/(n-1) weighting) before pricing.
 Probe B1 (old-code veto_only, 4P): inner python dies silently twice
 (empty stdout, no traceback — native-crash signature). Moot for decisions;
 not investigating a dead-end bundle.
+
+## Build-day verdicts (2026-06-11 afternoon, fast harnesses + dead-seat guards)
+
+- **4P reply fix (sequential conditioning): CONFIRMED on 16 maps.** Fresh
+  12: final share 44.2% (even=25%), mean rank 1.83, rank1 6/12, eliminated
+  1/12. The broken merge was eliminated by ~step 200 on essentially every
+  map. 4P submission case now live.
+- **Coalition rescue (coalitions + deficit floors, zero new code): 7/8 vs
+  the live stack, paired +21.9% @250, ahead 4/4 seeds @250.** Late-growing
+  margin = defenses holding. Strongest 2P attribution since the reactive
+  floor. Confirmation on fresh seeds queued.
+- **Opening searcher: ELIMINATED as-built** (3/8, -27% @120; seed-1
+  collapse dec=14). Root cause: the scheduler's keep-1-home rule is a
+  single-player safety model — it strips sources; a real opponent punishes.
+  Backlog: cap scheduler sends by the planner's own hold discipline
+  (safe_drain), then re-judge.
+- Ledger-branch ports landed: commitment cost (gated), leader-objective 4P
+  variant, dead-seat guards in both harnesses, _ref_ledger_v1_2 referee.
