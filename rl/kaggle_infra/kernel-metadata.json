@@ -1,0 +1,15 @@
+{
+  "id": "chrisleitescha/orbitwars-rl-train",
+  "title": "orbitwars-rl-train",
+  "code_file": "train_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "false",
+  "dataset_sources": ["chrisleitescha/orbitwars-rl-code"],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}
