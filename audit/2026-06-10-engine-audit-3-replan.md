@@ -343,3 +343,28 @@ Next iteration (not built): holding-time-priced credit — terminal value
 per target = production x expected HOLDING time given the opponent's
 feasible retake (the ledger branch's capture pricing), instead of a flat
 constant. The paralysis defect is real; the fix must price counter-safety.
+
+## Holding-time credit — built, veto-consistent, still routed (2026-06-11 night)
+
+PRODUCER_PLUS_HOLD_VALUE: post-horizon production credited only for
+captures whose projected garrison (survivors + production) beats the
+enemy's FULL routable mass at every later tick. Veto re-score includes
+the credit (without it the veto dropped all 4 enabled waves on the
+Gregor trace; with it 4/4 survive and the paralysis position mobilizes
+164/176 idle ships). 8 unit tests green; smoke max 208 ms.
+
+Mirror: **0/12, -10.7%@40 / -100%@250, decision p50=29** — worse than
+flat termval (2/12). Mechanism extracted from the rout shape: the safety
+gate protects the TARGET, but the banker's punishment lands on the
+SOURCES. The expander drains home garrisons to fund captures;
+safe_drain prices only projected in-flight threats, not the standing
+threat of an uncommitted enemy reserve within reach. Nothing in the
+engine prices source exposure — the true home-defense blindspot.
+
+Economy-credit verdict chain (one observation, three mechanisms, all
+refuted): flat lambda 2/12 | neutral-only 0/12 | holding-time 0/12.
+STOP per discipline. Open mechanism for a future session: symmetric
+reactive floor for SOURCES (drain cap = keep enough garrison to survive
+the opponent's best feasible strike until reinforcement arrives) — note
+it would interact with the same co-tuning that punishes every
+recalibration; needs the live instrument, not the mirror, for a verdict.
