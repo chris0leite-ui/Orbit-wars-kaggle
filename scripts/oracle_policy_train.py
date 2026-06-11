@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -66,6 +67,13 @@ def main():
 
     d = np.load(args.ds)
     X, y, frac, meta = d["X"], d["y"], d["frac"], d["meta"]
+    max_rows = int(os.environ.get("ORACLE_TRAIN_MAX_ROWS", "0"))
+    if max_rows and len(X) > max_rows:
+        # deterministic thinning that keeps whole states together
+        state_key = meta[:, 0] * 100000 + meta[:, 3]
+        keep = (state_key % 1000) < int(1000 * max_rows / len(X))
+        X, y, frac, meta = X[keep], y[keep], frac[keep], meta[keep]
+        print(f"thinned to {len(X)} rows (ORACLE_TRAIN_MAX_ROWS={max_rows})")
     ep = meta[:, 0]
     state = meta[:, 0] * 100000 + meta[:, 3]      # unique state key
     fold = ep % 10
