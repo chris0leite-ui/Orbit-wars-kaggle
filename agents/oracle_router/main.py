@@ -51,21 +51,26 @@ def _load_brains():
         return
     import importlib.util
     try:
-        op = os.path.join(_REPO, "agents", "oracle", "main.py")
+        # the routed oracle is the PINNED round-1 single-file bundle: its
+        # weights match its feature code by construction, independent of
+        # the live agents/oracle (which carries the threat-build weights —
+        # better vs rushers, but the router only hands the oracle
+        # economist games, where round-1 measures stronger: 14/16 vs 11/16
+        # on the v7_0 battery)
+        op = os.environ.get(
+            "ROUTER_ORACLE_PATH",
+            os.path.join(_REPO, "submissions", "oracle_round1.py"))
         spec = importlib.util.spec_from_file_location("oracle_brain", op)
         m = importlib.util.module_from_spec(spec)
         sys.modules["oracle_brain"] = m
         spec.loader.exec_module(m)
         _ORACLE = m
-        _ENGINE = sys.modules.get("oracle.engine")
-        if _ENGINE is None:
-            ep = os.path.join(_REPO, "agents", "oracle", "engine.py")
-            spec_e = importlib.util.spec_from_file_location(
-                "router_engine", ep)
-            me_ = importlib.util.module_from_spec(spec_e)
-            sys.modules["router_engine"] = me_
-            spec_e.loader.exec_module(me_)
-            _ENGINE = me_
+        ep = os.path.join(_REPO, "agents", "oracle", "engine.py")
+        spec_e = importlib.util.spec_from_file_location("router_engine", ep)
+        me_ = importlib.util.module_from_spec(spec_e)
+        sys.modules["router_engine"] = me_
+        spec_e.loader.exec_module(me_)
+        _ENGINE = me_
         cp = os.environ.get(
             "ROUTER_CHAMPION_PATH",
             os.path.join(_REPO, "data", "external", "live_vetorf_1291.py"))

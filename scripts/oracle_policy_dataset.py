@@ -133,14 +133,30 @@ def process(job):
                 pctx = PolicyContext(w, sp)
                 state_id += 1
                 rng = (ep_id * 1000003 + t * 131 + seat)
+                # chained same-turn conditioning: order the expert's
+                # launches biggest-first; positive k sees launches 0..k-1
+                # as already committed; negatives split between the empty
+                # and the full commitment context (the runtime asks both)
+                fired_list = sorted(((s, tt, sh)
+                                     for (s, tt), sh in expert.items()),
+                                    key=lambda x: -x[2])
+                fired_pos = {(s, tt): i
+                             for i, (s, tt, sh) in enumerate(fired_list)}
                 for kn, (kind, s, tt) in enumerate(pairs):
                     g, safe, doomed = sp.get(s, (0, 0, False))
-                    fired = (s, tt) in expert
+                    fi = fired_pos.get((s, tt))
+                    fired = fi is not None
                     # negative subsampling (deterministic): keep all
                     # positives + ~30% of negatives with weight 1/0.3
                     if not fired and ((rng + kn * 7919) % 10) >= 3:
                         continue
-                    X.append(pctx.pair(s, tt, g, safe, doomed))
+                    if fired:
+                        committed = fired_list[:fi]
+                    elif (rng + kn) % 2 == 0:
+                        committed = []
+                    else:
+                        committed = fired_list
+                    X.append(pctx.pair(s, tt, g, safe, doomed, committed))
                     y.append(1.0 if fired else 0.0)
                     frac.append(min(1.0, expert[(s, tt)] / max(1.0, g))
                                 if fired else -1.0)

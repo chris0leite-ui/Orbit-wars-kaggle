@@ -31,6 +31,11 @@ POLICY_FEATURES = [
     "tgt_required_frac_spare", "tgt_is_comet", "tgt_comet_ttl",
     "tgt_falls_to_enemy", "tgt_flips_to_me", "tgt_incoming_mine",
     "tgt_incoming_enemy", "tgt_nearest_enemy_eta", "race_margin",
+    # same-turn commitment (chained selection: launches already chosen
+    # THIS turn before this candidate is considered — lets the net express
+    # combined actions: coalitions, attack-with-cover, splits)
+    "committed_from_src", "committed_to_tgt", "committed_total",
+    "committed_n",
     # global context
     "step_frac", "n_players", "my_planets", "opp_planets", "my_prod_share",
     "my_score_share", "my_garrison", "opp_garrison", "my_inflight_frac",
@@ -41,6 +46,23 @@ POLICY_FEATURES = [
     "enemy_on_mine_12", "mine_on_enemy_12",
 ]
 N_POLICY_FEATURES = len(POLICY_FEATURES)
+
+
+def _committed_block(committed, src, tgt):
+    """(from_src, to_tgt, total, n) for launches already chosen this turn.
+
+    `committed`: list of (src_idx, tgt_idx, ships) or None.
+    """
+    if not committed:
+        return (0.0, 0.0, 0.0, 0.0)
+    from_src = to_tgt = total = 0.0
+    for (s, t, ships) in committed:
+        total += ships
+        if s == src:
+            from_src += ships
+        if t == tgt:
+            to_tgt += ships
+    return (from_src, to_tgt, total, float(len(committed)))
 
 
 class PolicyContext:
@@ -145,8 +167,13 @@ class PolicyContext:
                 if d < self.near_mine_d[i]:
                     self.near_mine_d[i] = d
 
-    def pair(self, src, tgt, garrison, safe, doomed):
-        """Feature vector for candidate (src -> tgt)."""
+    def pair(self, src, tgt, garrison, safe, doomed, committed=None):
+        """Feature vector for candidate (src -> tgt).
+
+        `committed`: {planet_idx_or_key: ...} summary of launches already
+        chosen this turn as (from_src, to_tgt, total, n) — chained
+        same-turn selection. None means nothing committed yet.
+        """
         w = self.world
         me = w.me
         H = w.horizon
@@ -214,4 +241,5 @@ class PolicyContext:
             falls, flips_me,
             self.inc_mine[tgt], self.inc_enemy[tgt],
             best_e, race,
+            *_committed_block(committed, src, tgt),
         ] + self.globals

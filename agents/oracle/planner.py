@@ -275,16 +275,35 @@ class Planner:
             return base + sum(sh for (d2, sh) in pending.get(t, ())
                               if abs(d2 - dt) <= 2)
 
-        for k in order:
-            if len(chosen) >= MAX_WAVES or p_fire[k] < floor:
-                break
+        # chained same-turn selection: after each accepted launch, the
+        # remaining candidates are RE-SCORED with the running commitment
+        # (the net was trained with the same conditioning), so combined
+        # actions — coalitions, attack-with-cover — are expressed by the
+        # policy itself rather than assembled by bookkeeping alone.
+        committed_summary = []          # [(src, tgt, ships)]
+        cur_p, cur_frac = p_fire, frac
+        cur_order = order
+        skipped = set()
+        while len(chosen) < MAX_WAVES:
             if (time.time() - t0) > TIME_BUDGET:
                 break
+            pick = None
+            for k in cur_order:
+                if k in skipped:
+                    continue
+                if cur_p[k] < floor:
+                    break
+                pick = k
+                break
+            if pick is None:
+                break
+            k = pick
+            skipped.add(k)
             kind, s, t = pairs[k]
             g_now = remaining.get(s, 0)
             if g_now < 1:
                 continue
-            size = int(round(float(frac[k]) * src_states[s][0]))
+            size = int(round(float(cur_frac[k]) * src_states[s][0]))
             size = max(1, min(size, g_now))
             # exact-engine snapping for capture attempts
             if kind == "attack":
@@ -310,11 +329,18 @@ class Planner:
                 req_at = required_ships(world, t, rec[3], me)
                 if (req_at is not None
                         and rec[1] + co_arriving(t, rec[3]) < req_at[0]
-                        and p_fire[k] < 0.55):
+                        and cur_p[k] < 0.55):
                     continue
-            chosen.append((float(p_fire[k]), rec))
+            chosen.append((float(cur_p[k]), rec))
             remaining[s] = g_now - rec[1]
             pending.setdefault(t, []).append((rec[3], rec[1]))
+            committed_summary.append((s, t, rec[1]))
+            # re-score the remaining pairs under the new commitment
+            feats2 = [pctx.pair(s2, t2, *src_states[s2],
+                                committed=committed_summary)
+                      for (_k2, s2, t2) in pairs]
+            cur_p, cur_frac = self.policy.batch(feats2)
+            cur_order = sorted(range(len(pairs)), key=lambda k2: -cur_p[k2])
 
         if not chosen:
             return []
