@@ -22,3 +22,4 @@
 {"gen": 3, "cand": 3, "seed0": 18, "knobs": {"rf_weight": 1.14, "rf_lag": 3.202, "overkill_enemy": 1.0, "veto_margin": 3.438, "horizon_2p": 14}, "objective": -0.10066666666666668, "paired120": -0.059000000000000004, "wins": "2/6"}
 {"gen": 3, "cand": 4, "seed0": 18, "knobs": {"rf_weight": 1.2, "rf_lag": 4.0, "overkill_enemy": 1.226, "veto_margin": 3.517, "horizon_2p": 18}, "objective": 0.22066666666666665, "paired120": 0.179, "wins": "4/6"}
 {"gen": 3, "cand": 5, "seed0": 18, "knobs": {"rf_weight": 0.863, "rf_lag": 2.738, "overkill_enemy": 1.063, "veto_margin": 2.964, "horizon_2p": 14}, "objective": -0.26166666666666666, "paired120": -0.22, "wins": "2/6"}
+{"gen": 4, "cand": 0, "seed0": 24, "knobs": {"rf_weight": 1.092, "rf_lag": 2.618, "overkill_enemy": 1.0, "veto_margin": 3.98, "horizon_2p": 20}, "objective": 0.037000000000000005, "paired120": 0.037000000000000005, "wins": "3/6"}
