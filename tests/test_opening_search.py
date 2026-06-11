@@ -123,3 +123,16 @@ def test_prefers_high_production_when_competing(pp_main):
     )
     assert due
     assert due[0][1] == 2          # the prod-4 neutral
+
+
+def test_hold_filter_skips_unaffordable_launches(pp_main):
+    # A capture wave is all-or-nothing: sources whose safe drain can't fund
+    # the full size are skipped, never clamped.
+    rows = [(0, 5, 11.0), (2, 6, 20.0), (3, 7, 8.0)]
+    drain = {0: 15.0, 2: 12.0, 3: 8.0}
+    kept = pp_main._opening_hold_filter(rows, drain)
+    assert kept == [(0, 5, 11.0), (3, 7, 8.0)]
+
+
+def test_hold_filter_unknown_source_skipped(pp_main):
+    assert pp_main._opening_hold_filter([(9, 5, 3.0)], {}) == []

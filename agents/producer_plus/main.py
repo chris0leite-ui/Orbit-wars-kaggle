@@ -1336,12 +1336,32 @@ def _opening_search_plan(
             if t_launch <= 0.5]
 
 
+def _opening_hold_filter(
+    rows: list[tuple[int, int, float]], drain_by_slot: dict[int, float],
+) -> list[tuple[int, int, float]]:
+    """Drop scheduled launches the source can't afford under hold discipline.
+
+    The searcher's keep-1-home rule is a single-player safety model — its
+    first measured composition stripped sources bare and was punished
+    (attribution leg: -27% @120, one map dead by step 115). A capture wave
+    is all-or-nothing: clamping below the garrison floor just annihilates,
+    so unaffordable launches are SKIPPED (the per-turn re-plan retries when
+    the garrison has grown).
+    """
+    return [
+        (s, t, size) for (s, t, size) in rows
+        if size <= drain_by_slot.get(s, 0.0)
+    ]
+
+
 def _emit_opening_entries(
     due: list[tuple[int, int, float]], *, movement, obs, obs_tensors: dict,
+    garrison_status, H: int,
 ):
     """Aim the due launches with the REAL intercept solver. LaunchEntries."""
     device = obs.device
     dtype = obs.ships.dtype
+    pid = int(obs.player_id)
     planet_ids = obs_tensors["planets"][..., 0].long()
     P = int(obs.P)
     slot_of = {int(planet_ids[i].item()): i for i in range(P)}
@@ -1354,6 +1374,19 @@ def _emit_opening_entries(
         if size < 1.0:
             continue
         rows.append((s, t, size))
+    if rows:
+        src_slots = torch.tensor([r[0] for r in rows], dtype=torch.long, device=device)
+        drains = safe_drain(
+            garrison_status, source_idx=src_slots,
+            source_ships=obs.ships[src_slots].to(dtype),
+            H_eff=torch.full((), float(H), dtype=dtype, device=device),
+            player_id=pid,
+        )
+        drain_by_slot = {
+            int(src_slots[i].item()): float(drains[i].item())
+            for i in range(int(src_slots.shape[0]))
+        }
+        rows = _opening_hold_filter(rows, drain_by_slot)
     if not rows:
         return None
     src = torch.tensor([r[0] for r in rows], dtype=torch.long, device=device)
@@ -2621,6 +2654,7 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
         if due:
             opening_entries = _emit_opening_entries(
                 due, movement=movement, obs=obs, obs_tensors=obs_tensors,
+                garrison_status=status, H=H,
             )
         if opening_entries is not None:
             # Claim targets across turns; debit the planner's budget view so
