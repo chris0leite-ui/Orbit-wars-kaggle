@@ -58,6 +58,9 @@ PAIR_ABS_OVERRIDE = _f("ORACLE_PAIR_ABS", 0.50)   # fire regardless of state
 PAIR_MIN = _f("ORACLE_PAIR_MIN", 0.02)            # never fire below this
 REL_KEEP = _f("ORACLE_REL_KEEP", 0.25)            # follow-ups >= 25% of top
 CAPTURE_MARGIN = int(_f("ORACLE_CAPTURE_MARGIN", 2))
+# no-chain mode: single-pass selection, commitment features stay zero —
+# must match weights trained with ORACLE_ZERO_COMMIT=1
+NO_CHAIN = os.environ.get("ORACLE_NO_CHAIN", "0") != "0"
 VETO_DELTA = _f("ORACLE_VETO_DELTA", 0.02)
 VETO_ON = os.environ.get("ORACLE_VETO", "1") != "0"
 MIN_GARRISON_SRC = 2
@@ -334,6 +337,8 @@ class Planner:
             chosen.append((float(cur_p[k]), rec))
             remaining[s] = g_now - rec[1]
             pending.setdefault(t, []).append((rec[3], rec[1]))
+            if NO_CHAIN:
+                continue          # single-pass: keep the original scores
             committed_summary.append((s, t, rec[1]))
             # re-score the remaining pairs under the new commitment
             feats2 = [pctx.pair(s2, t2, *src_states[s2],

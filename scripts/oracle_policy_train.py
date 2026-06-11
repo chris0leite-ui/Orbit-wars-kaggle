@@ -67,6 +67,17 @@ def main():
 
     d = np.load(args.ds)
     X, y, frac, meta = d["X"], d["y"], d["frac"], d["meta"]
+    if os.environ.get("ORACLE_ZERO_COMMIT"):
+        # no-chain variant: train with the same-turn commitment features
+        # neutralized (runtime must then pass committed=None and skip
+        # re-scoring — ORACLE_NO_CHAIN=1 in the planner)
+        from agents.oracle.policy_features import POLICY_FEATURES
+        idx = [POLICY_FEATURES.index(n) for n in
+               ("committed_from_src", "committed_to_tgt",
+                "committed_total", "committed_n")]
+        X = X.copy()
+        X[:, idx] = 0.0
+        print("commitment features ZEROED (no-chain variant)")
     max_rows = int(os.environ.get("ORACLE_TRAIN_MAX_ROWS", "0"))
     if max_rows and len(X) > max_rows:
         # deterministic thinning that keeps whole states together
