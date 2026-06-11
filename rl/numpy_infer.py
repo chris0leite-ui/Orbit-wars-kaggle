@@ -403,6 +403,7 @@ class RLAgent:
         self.params = {k: np.asarray(v, dtype=np.float64)
                        for k, v in params.items()}
         self.num_agents = None
+        self.last_step = None
 
     def act(self, obs):
         a = obs_to_arrays(obs)
@@ -410,6 +411,11 @@ class RLAgent:
             me = int(obs["player"])
         except (KeyError, TypeError, IndexError):
             me = int(getattr(obs, "player", 0))
+        # New-episode detection for in-process multi-game harnesses
+        # (step counter resets); Kaggle eval is fresh-process anyway.
+        if self.last_step is not None and a["step"] <= self.last_step:
+            self.num_agents = None
+        self.last_step = a["step"]
         if self.num_agents is None:
             owners = set(int(o) for o in a["owner"][a["alive"]] if o >= 0)
             self.num_agents = 4 if len(owners) > 2 or me > 1 else 2

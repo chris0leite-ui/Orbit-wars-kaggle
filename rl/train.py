@@ -108,11 +108,23 @@ def main():
     ap.add_argument("--ckpt-every-min", type=float, default=20.0)
     ap.add_argument("--eval-every", type=int, default=50)
     ap.add_argument("--eval-envs", type=int, default=32)
+    ap.add_argument("--entropy-coef", type=float, default=0.01)
+    ap.add_argument("--league", action="store_true",
+                    help="half the envs train vs frozen snapshots/greedy")
+    ap.add_argument("--snapshot-every", type=int, default=150)
+    ap.add_argument("--snapshot-cap", type=int, default=12)
+    ap.add_argument("--greedy-frac", type=float, default=0.15)
+    ap.add_argument("--opp-refresh", type=int, default=16)
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
     log_path = os.path.join(args.out_dir, "train_log.jsonl")
     logf = open(log_path, "a")
+
+    cache_dir = os.path.join(args.out_dir, "jax_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    jax.config.update("jax_compilation_cache_dir", cache_dir)
+    jax.config.update("jax_persistent_cache_min_compile_time_secs", 1.0)
 
     print(f"devices: {jax.devices()}")
     pool = to_device_pool(load_pool(args.pool))
@@ -133,14 +145,27 @@ def main():
     optimizer = make_optimizer(args.lr)
     opt_state = optimizer.init(params)
 
-    # Initial env states: sample from pool.
-    key, ks = jax.random.split(key)
-    idx = jax.random.randint(ks, (args.batch,), 0, n_pool)
+    # Initial env states: sample from pool. With --league, the batch is
+    # split into a mirror half and a league half (persistent groups).
+    B_league = args.batch // 2 if args.league else 0
+    B_mirror = args.batch - B_league
+    key, ks, ks2 = jax.random.split(key, 3)
+    idx = jax.random.randint(ks, (B_mirror,), 0, n_pool)
     state = jax.tree.map(lambda x: x[idx], pool)
+    state_lg = None
+    if B_league:
+        idx2 = jax.random.randint(ks2, (B_league,), 0, n_pool)
+        state_lg = jax.tree.map(lambda x: x[idx2], pool)
 
-    rollout_jit = jax.jit(rollout_chunk, static_argnames=("n_steps",))
+    rollout_jit = jax.jit(rollout_chunk,
+                          static_argnames=("n_steps", "opp_kind"))
     bootstrap_jit = jax.jit(bootstrap_values)
     eval_jit = jax.jit(eval_vs_greedy, static_argnames=("n_envs", "n_steps"))
+
+    snapshots = []  # league opponents: list of params pytrees (device)
+    opp_pick = None
+    opp_kind = "greedy"
+    learner_seats = None
 
     t_start = time.time()
     t_last_ckpt = t_start
@@ -153,19 +178,47 @@ def main():
         if not args.iters and (time.time() - t_start) > args.hours * 3600:
             break
 
-        key, k_roll, k_upd = jax.random.split(key, 3)
+        key, k_roll, k_upd, k_lg = jax.random.split(key, 4)
         t0 = time.time()
         state, traj = rollout_jit(k_roll, params, state, pool,
                                   n_steps=args.rollout_steps)
+        if B_league:
+            if opp_pick is None or it % args.opp_refresh == 0:
+                key, k1, k2 = jax.random.split(key, 3)
+                use_greedy = (not snapshots or
+                              float(jax.random.uniform(k1)) < args.greedy_frac)
+                if use_greedy:
+                    opp_kind, opp_pick = "greedy", params  # placeholder
+                else:
+                    opp_kind = "net"
+                    j = int(jax.random.randint(k2, (), 0, len(snapshots)))
+                    opp_pick = snapshots[j]
+                key, k3 = jax.random.split(key)
+                learner_seats = jax.random.randint(k3, (B_league,), 0, 2)
+            state_lg, traj_lg = rollout_jit(
+                k_lg, params, state_lg, pool,
+                n_steps=args.rollout_steps, opp_params=opp_pick,
+                learner_seats=learner_seats, opp_kind=opp_kind)
+            traj = jax.tree.map(
+                lambda a, b: jnp.concatenate([a, b], axis=1), traj, traj_lg)
         boot = bootstrap_jit(params, state)
+        if B_league:
+            boot_lg = bootstrap_jit(params, state_lg)
+            boot = jnp.concatenate([boot, boot_lg], axis=0)
         t_roll = time.time() - t0
 
         t0 = time.time()
         params, opt_state, metrics = ppo_update(
             k_upd, params, opt_state, args.lr, traj, boot,
-            n_minibatch=args.minibatches, n_epochs=args.epochs)
+            n_minibatch=args.minibatches, n_epochs=args.epochs,
+            entropy_coef=args.entropy_coef)
         metrics = jax.tree.map(float, metrics)
         t_upd = time.time() - t0
+
+        if args.league and it % args.snapshot_every == 0:
+            snapshots.append(jax.tree.map(jnp.copy, params))
+            if len(snapshots) > args.snapshot_cap:
+                snapshots.pop(1 if len(snapshots) > 2 else 0)
 
         env_steps += args.batch * args.rollout_steps
         ep_done = float(jnp.sum(traj["done"].astype(jnp.int32)))

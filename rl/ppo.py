@@ -45,20 +45,35 @@ def compute_gae(traj, bootstrap_v):
     return advs, returns
 
 
-def _loss_one_envstep(params, state, tgt, frac, old_logp, adv, ret, active):
-    """Loss pieces for one stored env-step (all seats).
-
-    state: single GameState; tgt/frac (A,P); old_logp/adv/ret/active (A,).
-    """
+def featurize_envstep(state):
+    """All-seat features for one stored env-step. Param-independent —
+    MUST run outside value_and_grad so the backward pass never
+    differentiates through the arrival scan / aim solve (that was a
+    14.8 GB OOM at batch 256 on a T4)."""
     tables = state_tables(state)
 
     def per_seat(seat):
-        nodes, edges, globals_, src_mask, tgt_mask = seat_features(
-            state, tables, seat)
+        return seat_features(state, tables, seat)
+
+    nodes, edges, globals_, src_mask, tgt_mask = jax.vmap(per_seat)(
+        jnp.arange(MAX_AGENTS))
+    return {
+        "nodes": nodes, "edges": edges, "globals": globals_,
+        "src_mask": src_mask, "tgt_mask": tgt_mask,
+        "alive": state.planets_alive,
+    }
+
+
+def _loss_one_envstep(params, f, tgt, frac, old_logp, adv, ret, active):
+    """Loss pieces for one env-step from precomputed features `f`."""
+
+    def per_seat(seat):
         logp, value, entropy = net.action_logp_value(
-            params, nodes, edges, globals_, state.planets_alive,
-            src_mask, tgt_mask, tgt[seat], frac[seat])
-        n_src = jnp.maximum(jnp.sum(src_mask.astype(jnp.float32)), 1.0)
+            params, f["nodes"][seat], f["edges"][seat], f["globals"][seat],
+            f["alive"], f["src_mask"][seat], f["tgt_mask"][seat],
+            tgt[seat], frac[seat])
+        n_src = jnp.maximum(
+            jnp.sum(f["src_mask"][seat].astype(jnp.float32)), 1.0)
         return logp, value, entropy / n_src
 
     logp, value, entropy = jax.vmap(per_seat)(jnp.arange(MAX_AGENTS))
@@ -78,15 +93,15 @@ def _loss_one_envstep(params, state, tgt, frac, old_logp, adv, ret, active):
     }
 
 
-def ppo_loss(params, batch):
+def ppo_loss(params, feats, batch, entropy_coef=ENTROPY_COEF):
     out = jax.vmap(_loss_one_envstep, in_axes=(None, 0, 0, 0, 0, 0, 0, 0))(
-        params, batch["state"], batch["tgt"], batch["frac"],
+        params, feats, batch["tgt"], batch["frac"],
         batch["logp"], batch["adv"], batch["ret"], batch["active"])
     n = jnp.maximum(jnp.sum(out["n"]), 1.0)
     pg = jnp.sum(out["pg"]) / n
     v = jnp.sum(out["v"]) / n
     ent = jnp.sum(out["ent"]) / n
-    loss = pg + VALUE_COEF * v - ENTROPY_COEF * ent
+    loss = pg + VALUE_COEF * v - entropy_coef * ent
     metrics = {
         "loss": loss, "pg_loss": pg, "v_loss": v, "entropy": ent,
         "approx_kl": jnp.sum(out["kl"]) / n,
@@ -104,7 +119,8 @@ def make_optimizer(lr: float = 3e-4):
 
 @partial(jax.jit, static_argnames=("n_minibatch", "n_epochs"))
 def ppo_update(key, params, opt_state, optimizer_lr, traj, bootstrap_v,
-               n_minibatch: int = 8, n_epochs: int = 2):
+               n_minibatch: int = 8, n_epochs: int = 2,
+               entropy_coef: float = ENTROPY_COEF):
     """Full PPO update over one rollout chunk. Returns new params/opt
     state + averaged metrics."""
     optimizer = make_optimizer(optimizer_lr)
@@ -141,8 +157,11 @@ def ppo_update(key, params, opt_state, optimizer_lr, traj, bootstrap_v,
             params, opt_state = carry2
             idx = jax.lax.dynamic_slice_in_dim(perm, i * mb_size, mb_size)
             batch = jax.tree.map(lambda x: x[idx], flat)
+            # Featurize OUTSIDE the grad: param-independent, and keeps
+            # the arrival-scan/aim-solve out of the backward pass.
+            feats = jax.vmap(featurize_envstep)(batch["state"])
             (loss, metrics), grads = jax.value_and_grad(
-                ppo_loss, has_aux=True)(params, batch)
+                ppo_loss, has_aux=True)(params, feats, batch, entropy_coef)
             updates, opt_state = optimizer.update(grads, opt_state, params)
             params = optax.apply_updates(params, updates)
             return (params, opt_state), metrics

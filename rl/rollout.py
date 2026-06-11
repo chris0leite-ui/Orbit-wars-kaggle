@@ -72,10 +72,56 @@ def policy_act(key, params, state: GameState):
     return outs, src_masks  # leaves have leading (A,) axis
 
 
+def policy_act_vs_opp(key, params, opp_params, learner_seat,
+                      state: GameState, opp_kind: str):
+    """Like policy_act, but seats != learner_seat act under a frozen
+    opponent: `opp_kind` = "net" (opp_params) or "greedy" (scripted).
+
+    Learner-seat outputs are the only on-policy ones; the caller masks
+    the rest out of the PPO loss.
+    """
+    from rl.scripted import greedy_policy
+
+    tables = state_tables(state)
+    seat_keys = jax.random.split(key, MAX_AGENTS)
+
+    def per_seat(seat, k):
+        nodes, edges, globals_, src_mask, tgt_mask = seat_features(
+            state, tables, seat)
+        out_cur = net.sample_actions(
+            k, params, nodes, edges, globals_, state.planets_alive,
+            src_mask, tgt_mask)
+        if opp_kind == "net":
+            out_opp = net.sample_actions(
+                k, opp_params, nodes, edges, globals_, state.planets_alive,
+                src_mask, tgt_mask)
+        else:  # greedy scripted
+            g_tgt, g_frac, _ = greedy_policy(state, tables, seat)
+            out_opp = {
+                "tgt": g_tgt, "frac": g_frac,
+                "logp": jnp.float32(0.0), "value": jnp.float32(0.0),
+                "entropy": jnp.float32(0.0),
+            }
+        is_learner = seat == learner_seat
+        out = jax.tree.map(
+            lambda c, o: jnp.where(is_learner, c, o), out_cur, out_opp)
+        return out, src_mask
+
+    outs, src_masks = jax.vmap(per_seat)(jnp.arange(MAX_AGENTS), seat_keys)
+    return outs, src_masks
+
+
 def rollout_chunk(key, params, state: GameState, pool: GameState,
-                  n_steps: int):
+                  n_steps: int, opp_params=None, learner_seats=None,
+                  opp_kind: str = "mirror"):
     """Run `n_steps` of batched self-play. state/pool are batched
     GameStates (leading axes B / N_pool).
+
+    opp_kind:
+      "mirror" — all seats act under `params`; all active seats learn.
+      "net"    — seats != learner_seats[b] act under `opp_params`;
+                 only the learner seat is marked active for PPO.
+      "greedy" — same, opponents are the scripted greedy bot.
 
     Returns (final_state, traj) where traj fields have leading (T, B).
     """
@@ -86,8 +132,14 @@ def rollout_chunk(key, params, state: GameState, pool: GameState,
         st = carry
         k_act, k_reset = jax.random.split(k)
         act_keys = jax.random.split(k_act, B)
-        outs, src_masks = jax.vmap(policy_act, in_axes=(0, None, 0))(
-            act_keys, params, st)
+        if opp_kind == "mirror":
+            outs, src_masks = jax.vmap(policy_act, in_axes=(0, None, 0))(
+                act_keys, params, st)
+        else:
+            outs, src_masks = jax.vmap(
+                policy_act_vs_opp,
+                in_axes=(0, None, None, 0, 0, None),
+            )(act_keys, params, opp_params, learner_seats, st, opp_kind)
 
         pids, angles, ships = jax.vmap(actions_to_launch_tensors)(
             st, outs["tgt"], outs["frac"], src_masks)
@@ -108,6 +160,9 @@ def rollout_chunk(key, params, state: GameState, pool: GameState,
 
         seat_ids = jnp.arange(MAX_AGENTS)
         active = seat_ids[None, :] < st.num_agents[:, None]  # (B, A)
+        if opp_kind != "mirror":
+            # Only the learner seat's experience is on-policy.
+            active = active & (seat_ids[None, :] == learner_seats[:, None])
 
         # Auto-reset done envs from the pool.
         ridx = jax.random.randint(k_reset, (B,), 0, n_pool)

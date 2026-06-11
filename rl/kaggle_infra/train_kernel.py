@@ -38,20 +38,20 @@ pool_hits = glob.glob("/kaggle/input/**/rl_pool_train.npz", recursive=True)
 if not pool_hits:
     raise RuntimeError("rl_pool_train.npz not found under /kaggle/input")
 
-# --- VALIDATION RUN: short, measures GPU compile + throughput ---
+# --- OVERNIGHT RUN ---
 RUN_ARGS = [
     "rl.train",
     "--pool", pool_hits[0],
     "--out-dir", "/kaggle/working",
-    "--batch", "128",
+    "--batch", "256",
     "--rollout-steps", "32",
-    "--minibatches", "8",
+    "--minibatches", "16",
     "--epochs", "2",
     "--lr", "3e-4",
-    "--iters", "12",
-    "--eval-every", "10",
-    "--eval-envs", "32",
-    "--ckpt-every-min", "5",
+    "--hours", "8.2",
+    "--eval-every", "25",
+    "--eval-envs", "64",
+    "--ckpt-every-min", "20",
 ]
 if resume:
     RUN_ARGS += ["--resume", resume]
