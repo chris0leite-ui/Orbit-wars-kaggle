@@ -595,6 +595,22 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_RESPONSE_VETO": "1",
         "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
     },
+    "vetorf_termval12": {
+        # FOUNDATION experiment: live stack + terminal production value
+        # (λ=12 post-horizon steps credited for horizon-end ownership).
+        # Built 2026-06-10 from ladder mining (top agents hold 8 planets by
+        # step 40; in-horizon flow truncates capture payoffs) but never
+        # measured on this stack — only composed with the dead mass lineage.
+        # Independently re-derived 2026-06-11 from live losses of 53564198:
+        # 2P games are decided by the production race at steps 40-70
+        # (wins: prod ahead 16/17 @40; losses: behind 9/17, -8 median @70;
+        # in-flight share NOT discriminative).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_TERMINAL_PROD_VALUE": "12",
+    },
     "vetorf4p_sync": {
         # LIVE EXPERIMENT candidate: the current live submission's full env
         # (vetorf4p_seq_strength) + same-tick two-source coalitions
