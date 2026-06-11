@@ -1,40 +1,75 @@
 {
   "submission_id": "53564198",
-  "generated_utc": "2026-06-11T10:25:17Z",
+  "generated_utc": "2026-06-11T12:42:38Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 11,
-  "n_played": 11,
-  "wins_total": 10,
-  "winrate_total": 0.9090909090909091,
+  "n_episodes": 47,
+  "n_played": 47,
+  "wins_total": 26,
+  "winrate_total": 0.5531914893617021,
   "by_size": {
     "2": {
-      "n": 5,
-      "wins": 4,
-      "winrate": 0.8
+      "n": 25,
+      "wins": 13,
+      "winrate": 0.52
     },
     "4": {
-      "n": 6,
-      "wins": 6,
-      "winrate": 1.0
+      "n": 22,
+      "wins": 13,
+      "winrate": 0.5909090909090909
     }
   },
   "self_match_episodes": 1,
   "seat_distribution": {
-    "0": 5,
-    "1": 5,
-    "2": 2,
-    "3": 2
+    "0": 22,
+    "1": 16,
+    "2": 6,
+    "3": 6
   },
   "episode_length_steps": {
-    "n": 11,
-    "min": 94,
-    "q1": 138,
-    "median": 143,
-    "q3": 168,
-    "max": 403,
-    "mean": 165.72727272727272
+    "n": 47,
+    "min": 89,
+    "q1": 118,
+    "median": 148,
+    "q3": 193,
+    "max": 500,
+    "mean": 183.2340425531915
   },
   "opponents": [
+    {
+      "name": "Gerar Del Toro",
+      "seen": 3,
+      "beat_us": 2
+    },
+    {
+      "name": "Sheeesh---",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "Forrest",
+      "seen": 2,
+      "beat_us": 0
+    },
+    {
+      "name": "Maruichi01",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "Viltrum Empire",
+      "seen": 2,
+      "beat_us": 2
+    },
+    {
+      "name": "Sam Scott",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "Tagir Analyzes",
+      "seen": 2,
+      "beat_us": 0
+    },
     {
       "name": "cgbc12",
       "seen": 1,
@@ -126,14 +161,279 @@
       "beat_us": 0
     },
     {
-      "name": "Gerar Del Toro",
+      "name": "Marcus Vinicius",
       "seen": 1,
-      "beat_us": 1
+      "beat_us": 0
     },
     {
       "name": "webcainiao",
       "seen": 1,
       "beat_us": 0
+    },
+    {
+      "name": "koh",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Yuki Okumura",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "DONJYARAHOI",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Longkun Shi (Candyman)",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "yossi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kaiser",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Vincent Schuler",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Artem",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Audun Ljone Henriksen",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "SiestaGuru",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "atl132",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Hanif Noer Rofiq",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "masha lisafss",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\ud83d\udef0\ufe0f Low-Orbit Losers",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Yusa Aihara",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "takumina",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Herohito",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "kovi",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Blu3s",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Criquet",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Alvaro",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "susutem",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Mathurin Ache",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "XuanxuChem",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Roche Overflow",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Blips and Chitz",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "FOYSAL",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Cornerian Fleet",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Claws",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "atom",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Purpel",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Harm Buisman",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Lucas Boesen",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "huangshanle",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Dapp",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Mimi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "IAI-RL-04",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "iwance",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\u80e1\u8001\u5927",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kevin E R MILLE",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "yuken",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "CPMP",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Gijs Smit",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "insuperabilehart",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Whyme Labs",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Shangshang Zhang",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Felix M Neumann",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "onick_man",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "IAI-RL-IX",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "naveen11@12",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "DJKGHW",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "LuckyXC",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "SKYisSKYisSKY",
+      "seen": 1,
+      "beat_us": 1
     }
   ],
   "losses": [
@@ -145,6 +445,204 @@
       ],
       "winner": "Gerar Del Toro",
       "steps": 113
+    },
+    {
+      "episode": "episode-79515961",
+      "size": 4,
+      "opponents": [
+        "koh",
+        "Sheeesh---",
+        "Yuki Okumura"
+      ],
+      "winner": "Yuki Okumura",
+      "steps": 500
+    },
+    {
+      "episode": "episode-79516518",
+      "size": 4,
+      "opponents": [
+        "Vincent Schuler",
+        "Artem",
+        "Audun Ljone Henriksen"
+      ],
+      "winner": "Vincent Schuler",
+      "steps": 129
+    },
+    {
+      "episode": "episode-79516780",
+      "size": 2,
+      "opponents": [
+        "SiestaGuru"
+      ],
+      "winner": "SiestaGuru",
+      "steps": 93
+    },
+    {
+      "episode": "episode-79517229",
+      "size": 2,
+      "opponents": [
+        "Maruichi01"
+      ],
+      "winner": "Maruichi01",
+      "steps": 131
+    },
+    {
+      "episode": "episode-79517665",
+      "size": 4,
+      "opponents": [
+        "atl132",
+        "Hanif Noer Rofiq",
+        "Viltrum Empire"
+      ],
+      "winner": "Viltrum Empire",
+      "steps": 116
+    },
+    {
+      "episode": "episode-79517937",
+      "size": 4,
+      "opponents": [
+        "masha lisafss",
+        "\ud83d\udef0\ufe0f Low-Orbit Losers",
+        "Yusa Aihara"
+      ],
+      "winner": "\ud83d\udef0\ufe0f Low-Orbit Losers",
+      "steps": 232
+    },
+    {
+      "episode": "episode-79518211",
+      "size": 2,
+      "opponents": [
+        "kovi"
+      ],
+      "winner": "kovi",
+      "steps": 157
+    },
+    {
+      "episode": "episode-79518897",
+      "size": 4,
+      "opponents": [
+        "Alvaro",
+        "susutem",
+        "Mathurin Ache"
+      ],
+      "winner": "susutem",
+      "steps": 184
+    },
+    {
+      "episode": "episode-79519141",
+      "size": 4,
+      "opponents": [
+        "Tagir Analyzes",
+        "XuanxuChem",
+        "Roche Overflow"
+      ],
+      "winner": "XuanxuChem",
+      "steps": 91
+    },
+    {
+      "episode": "episode-79519435",
+      "size": 4,
+      "opponents": [
+        "Claws",
+        "atom",
+        "Purpel"
+      ],
+      "winner": "Claws",
+      "steps": 213
+    },
+    {
+      "episode": "episode-79519594",
+      "size": 2,
+      "opponents": [
+        "Harm Buisman"
+      ],
+      "winner": "Harm Buisman",
+      "steps": 150
+    },
+    {
+      "episode": "episode-79520546",
+      "size": 2,
+      "opponents": [
+        "Dapp"
+      ],
+      "winner": "Dapp",
+      "steps": 89
+    },
+    {
+      "episode": "episode-79521680",
+      "size": 2,
+      "opponents": [
+        "Kevin E R MILLE"
+      ],
+      "winner": "Kevin E R MILLE",
+      "steps": 132
+    },
+    {
+      "episode": "episode-79522517",
+      "size": 2,
+      "opponents": [
+        "CPMP"
+      ],
+      "winner": "CPMP",
+      "steps": 239
+    },
+    {
+      "episode": "episode-79522942",
+      "size": 4,
+      "opponents": [
+        "Sheeesh---",
+        "Gijs Smit",
+        "Gerar Del Toro"
+      ],
+      "winner": "Gijs Smit",
+      "steps": 201
+    },
+    {
+      "episode": "episode-79523485",
+      "size": 4,
+      "opponents": [
+        "Felix M Neumann",
+        "onick_man",
+        "Viltrum Empire"
+      ],
+      "winner": "Viltrum Empire",
+      "steps": 113
+    },
+    {
+      "episode": "episode-79524175",
+      "size": 2,
+      "opponents": [
+        "Sam Scott"
+      ],
+      "winner": "Sam Scott",
+      "steps": 149
+    },
+    {
+      "episode": "episode-79524605",
+      "size": 2,
+      "opponents": [
+        "Gerar Del Toro"
+      ],
+      "winner": "Gerar Del Toro",
+      "steps": 139
+    },
+    {
+      "episode": "episode-79526699",
+      "size": 2,
+      "opponents": [
+        "LuckyXC"
+      ],
+      "winner": "LuckyXC",
+      "steps": 500
+    },
+    {
+      "episode": "episode-79527396",
+      "size": 2,
+      "opponents": [
+        "SKYisSKYisSKY"
+      ],
+      "winner": "SKYisSKYisSKY",
+      "steps": 135
     }
   ]
 }
