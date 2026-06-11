@@ -368,12 +368,32 @@ def _hold_value_bonus(
 # Default 0 = byte-identical.
 
 
+def _living_rival_count(obs) -> int:
+    """Rivals with at least one living planet (planet-only proxy)."""
+    rivals = obs.owner_abs[obs.is_enemy & obs.alive]
+    if rivals.numel() == 0:
+        return 0
+    return int(torch.unique(rivals).numel())
+
+
 def _garrison_value() -> float:
     raw = os.environ.get("PRODUCER_PLUS_GARRISON_VALUE", "0")
     try:
         return max(0.0, float(raw))
     except ValueError:
         return 0.0
+
+
+def _garrison_value_from_step() -> int:
+    """Opening gate: no proactive-garrison credit before this step. The
+    land-grab phase decides production rank (wins are production-ahead@40
+    in 16/17); insurance bought then costs expansion tempo (seed-6 panel
+    wipe: stalled at 3 planets by t=60, dead by 170)."""
+    raw = os.environ.get("PRODUCER_PLUS_GARRISON_VALUE_FROM_STEP", "0")
+    try:
+        return max(0, int(float(raw)))
+    except ValueError:
+        return 0
 
 
 def _garrison_value_bonus(
@@ -425,6 +445,27 @@ def _garrison_value_bonus(
         + help_tk
     )                                                                 # [T, K]
     deficit_tk = threat - base                                        # [T, K]
+    # The enemy reserve is ONE resource per rival — it cannot strike every
+    # deficit simultaneously. Pricing every worst-case deficit as certain
+    # turns the agent into a turtle (seed-6 panel wipe: 36 reinforce
+    # launches vs 4 neutral grabs, stalled at 3 planets while rivals took
+    # 12+). Credit at most R targets per turn (R = living rivals), ranked
+    # by strike attractiveness to the enemy (production of the planet it
+    # could feasibly take).
+    n_rivals = 0
+    owner_alive = obs.is_enemy & obs.alive
+    if bool(owner_alive.any()):
+        n_rivals = max(int(_living_rival_count(obs)), 1)
+    deficit_t = deficit_tk.max(dim=-1).values                         # [T]
+    prod_T = prod[tgt_safe].to(dtype)                                 # [T]
+    attract = torch.where(
+        deficit_t > 0.0, prod_T, torch.full_like(prod_T, float("-inf")))
+    T = int(attract.shape[0])
+    R = min(max(n_rivals, 1), T)
+    top_idx = attract.topk(R).indices
+    eligible_T = torch.zeros(T, dtype=torch.bool, device=device)
+    eligible_T[top_idx] = True
+    eligible_T &= deficit_t > 0.0                                     # [T]
     t_c = cand_tgt_short.clamp(0, deficit_tk.shape[0] - 1)
     d_c = deficit_tk[t_c]                                             # [C, K]
     eta_max = cand_eta.max(dim=-1).values                             # [C]
@@ -435,7 +476,7 @@ def _garrison_value_bonus(
     neg_fill = torch.full_like(d_c, float("-inf"))
     D = torch.where(at_or_after, d_c, neg_fill).max(dim=-1).values    # [C]
     send_tot = cand_send.sum(dim=-1)                                  # [C]
-    covers = (D > 0.0) & (send_tot >= D)
+    covers = (D > 0.0) & (send_tot >= D) & eligible_T[t_c]
     prod_t = prod[cand_tgt_slot.clamp(0, P - 1)].to(dtype)
     return torch.where(
         gate & covers, lam * prod_t,
@@ -2866,7 +2907,9 @@ def plan_lite_waves(
             cand_valid=cand_valid, cand_is_def=cand_is_def,
             capture_floor_TK=floor, prod=prod, K=K,
         )
-    if _garrison_value() > 0.0:
+    if _garrison_value() > 0.0 and (
+        int(obs_tensors["step"].max().item()) >= _garrison_value_from_step()
+    ):
         # Proactive-garrison credit: reinforcing an own planet whose local
         # balance vs the enemy's uncommitted reserve is negative.
         score = score + _garrison_value_bonus(

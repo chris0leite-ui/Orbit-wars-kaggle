@@ -39,10 +39,12 @@ def pp_main():
 def _obs(P, owners, ships):
     owned = torch.tensor([o == "me" for o in owners])
     is_enemy = torch.tensor([o == "enemy" for o in owners])
+    owner_abs = torch.where(owned, 0.0, torch.where(is_enemy, 1.0, -1.0))
     return SimpleNamespace(
         P=P, device=torch.device("cpu"), player_id=0,
         ships=torch.tensor(ships, dtype=torch.float32),
         alive=torch.ones(P, dtype=torch.bool),
+        owner_abs=owner_abs,
         owned=owned, is_enemy=is_enemy, is_neutral=~(owned | is_enemy),
     )
 
