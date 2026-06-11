@@ -183,6 +183,92 @@ def _recapture_safety_reserve() -> float:
 #                   decaying to zero at ``opening_window``. Opp-agnostic.
 # Both default OFF preserves byte-identical static behaviour. Share the
 # game-length estimate knob (``PRODUCER_PLUS_GAME_LENGTH_EST``).
+# --- Holding-time-priced capture credit (PRODUCER_PLUS_HOLD_VALUE) -------------
+# The decision-trace finding (Gregor Lied loss): the in-horizon flow scorer
+# truncates capture payoffs at H, so every expansion scores ~0 against the
+# fire threshold and the agent banks instead (paralysis). A FLAT terminal
+# credit (TERMINAL_PROD_VALUE=12) was refuted on both referee classes — it
+# rewards expansion the opponent punishes before payback. This version
+# credits post-horizon production ONLY for captures the opponent cannot
+# feasibly retake inside the lookahead: project the captured garrison
+# (survivors + production) against the enemy's FULL routable mass at every
+# later tick; any deficit ⇒ no credit. Safe rear expansions unlock;
+# contested grabs stay priced by raw flow. Default 0 = byte-identical.
+
+
+def _hold_value() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_HOLD_VALUE", "0")
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 0.0
+
+
+def _hold_value_lag() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_HOLD_VALUE_LAG", "2.0")
+    try:
+        return float(raw)
+    except ValueError:
+        return 2.0
+
+
+def _hold_value_bonus(
+    *,
+    obs,
+    cache,
+    target_idx: Tensor,        # [T] shortlist slots
+    cand_tgt_slot: Tensor,     # [C]
+    cand_tgt_short: Tensor,    # [C]
+    cand_send: Tensor,         # [C, L]
+    cand_eta: Tensor,          # [C, L]
+    cand_valid: Tensor,        # [C]
+    cand_is_def: Tensor,       # [C]
+    capture_floor_TK: Tensor,  # [T, K]
+    prod: Tensor,              # [P]
+    K: int,
+) -> Tensor:
+    """Per-candidate post-horizon production credit, ``[C]`` (≥ 0)."""
+    device = cand_send.device
+    dtype = cand_send.dtype
+    C = int(cand_send.shape[0])
+    lam = _hold_value()
+    if lam <= 0.0 or C == 0 or K <= 0:
+        return torch.zeros(C, dtype=dtype, device=device)
+    P = int(obs.P)
+    tgt = cand_tgt_slot.clamp(0, P - 1)
+    neutral_now = obs.is_neutral[tgt] & obs.alive[tgt]
+    gate = cand_valid & ~cand_is_def & neutral_now                    # [C]
+    if not bool(gate.any()):
+        return torch.zeros(C, dtype=dtype, device=device)
+
+    send_tot = cand_send.sum(dim=-1)                                  # [C]
+    eta_max = cand_eta.max(dim=-1).values                             # [C]
+    k_arr = (eta_max.clamp(min=1.0, max=float(K)).ceil().long() - 1).clamp(0, K - 1)
+    floor_at_arr = (
+        capture_floor_TK[cand_tgt_short.clamp(0, capture_floor_TK.shape[0] - 1)]
+        .gather(-1, k_arr.unsqueeze(-1)).squeeze(-1)
+    )                                                                 # [C]
+    # capture_floor = defenders + 1 (overhead); conquered garrison =
+    # send − defenders = send − floor + 1.
+    survivors = (send_tot - floor_at_arr + 1.0).clamp(min=1.0)        # [C]
+    prod_t = prod[tgt].to(dtype)                                      # [C]
+
+    margin = _reactive_reinforcement_margin(
+        obs, cache, target_idx, K, weight=1.0, lag=_hold_value_lag(),
+    )                                                                 # [T, K] | None
+    if margin is None:
+        safe = gate
+    else:
+        m_c = margin[cand_tgt_short.clamp(0, margin.shape[0] - 1)].to(dtype)  # [C, K]
+        k_grid = torch.arange(K, device=device, dtype=dtype).view(1, K)
+        dk = k_grid - k_arr.to(dtype).view(C, 1)                      # ticks after arrival
+        garrison = survivors.view(C, 1) + prod_t.view(C, 1) * dk.clamp(min=0.0)
+        threat = (m_c >= garrison) & (dk > 0)                         # [C, K]
+        safe = gate & ~threat.any(dim=-1)
+    return torch.where(
+        safe, lam * prod_t, torch.zeros(C, dtype=dtype, device=device))
+
+
 def _denial_bonus_enabled() -> bool:
     return os.environ.get("PRODUCER_PLUS_DENIAL_BONUS", "0").strip().lower() in (
         "1", "true", "yes", "on",
@@ -800,6 +886,37 @@ def _apply_response_veto(
         opp_weights=opp_weights, terminal_prod_weight=_terminal_prod_value(),
         terminal_neutral_only=_terminal_neutral_only(),
     )
+    if _hold_value() > 0.0:
+        # Price the holding-time capture credit consistently in the veto:
+        # without this the veto re-scores hold-value-justified captures at
+        # their raw ~0 flow and drops every launch the credit enabled
+        # (verified on the Gregor Lied trace: 4 waves pre-veto, 0 post).
+        tgt_e = entries.target_slots[idx].clamp(0, P - 1)
+        K_v = max(1, min(
+            int(K_eta_override) if K_eta_override is not None else int(config.horizon),
+            H,
+        ))
+        _rf_w_v = _reactive_floor_for(int(player_count))
+        _rf_m_v = (
+            _reactive_reinforcement_margin(obs, cache, tgt_e, K_v, weight=_rf_w_v)
+            if _rf_w_v > 0.0 else None
+        )
+        floor_e = capture_floor(
+            garrison_status, target_idx=tgt_e, k_max=K_v,
+            capture_overhead=1.0, player_id=pid, reinforcement=_rf_m_v,
+        )                                                            # [C, K_b]
+        K_b = int(floor_e.shape[-1])
+        if K_b > 0:
+            scores = scores + _hold_value_bonus(
+                obs=obs, cache=cache, target_idx=tgt_e,
+                cand_tgt_slot=tgt_e,
+                cand_tgt_short=torch.arange(C, device=device),
+                cand_send=entries.ships[idx].view(C, 1).to(dtype),
+                cand_eta=entries.eta[idx].view(C, 1).to(dtype),
+                cand_valid=torch.ones(C, dtype=torch.bool, device=device),
+                cand_is_def=obs.owned[tgt_e],
+                capture_floor_TK=floor_e, prod=prod, K=K_b,
+            )
     dn = _score_do_nothing(
         status=garrison_status, prod=prod, alive_by_step=alive_by_step,
         player_count=int(player_count), background=reply, player_id=pid,
@@ -2559,6 +2676,16 @@ def plan_lite_waves(
                 player_id=pid,
             )
             score = score + o_bonus
+    if _hold_value() > 0.0:
+        # Holding-time-priced capture credit: post-horizon production for
+        # captures the opponent cannot feasibly retake within the window.
+        score = score + _hold_value_bonus(
+            obs=obs, cache=cache, target_idx=target_idx,
+            cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
+            cand_send=cand_send, cand_eta=cand_eta,
+            cand_valid=cand_valid, cand_is_def=cand_is_def,
+            capture_floor_TK=floor, prod=prod, K=K,
+        )
     # Force-concentration rescore closure: between greedy waves, re-score
     # every candidate against the just-fired waves so wave 2 at a target sees
     # wave 1's commitment (no double-counting). Uses the same `scoring_launches`

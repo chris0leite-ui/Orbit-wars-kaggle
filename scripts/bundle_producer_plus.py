@@ -595,6 +595,20 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_RESPONSE_VETO": "1",
         "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
     },
+    "vetorf_holdval12": {
+        # FOUNDATION fix v2: holding-time-priced capture credit. Post-
+        # horizon production (lambda=12) credited ONLY for captures the
+        # opponent cannot feasibly retake (projected garrison vs full
+        # routable enemy mass at every later tick). Flat termval12 was
+        # refuted (unsafe expansion punished before payback); this version
+        # unlocks exactly the safe rear expansions the paralysis trace
+        # showed scoring +0.0. Priced consistently in the veto re-score.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_HOLD_VALUE": "12",
+    },
     "vetorf_termval12": {
         # FOUNDATION experiment: live stack + terminal production value
         # (λ=12 post-horizon steps credited for horizon-end ownership).
