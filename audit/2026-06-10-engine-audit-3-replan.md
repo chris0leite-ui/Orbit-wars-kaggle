@@ -279,3 +279,43 @@ mildly NEGATIVE on the only discriminating one (lane -14pp@120, cc
    ARRIVALS (Planet Wars canon "key winning strategy"; unlocks
    outwaiting, banking, timed snipes; everything this week said holding
    ships is undervalued).
+
+## Delayed-launch / synchronized-arrivals build — verdict chain (2026-06-11 evening)
+
+Built PRODUCER_PLUS_SYNC (default OFF): two-source pair candidates on
+targets neither source cracks alone, joint floor at the later leg's
+arrival tick, nearer leg held in memory and fired on the last turn that
+makes the shared arrival date (fresh re-aim). 13 unit tests; in-process
+probe confirms holds create/execute/release in real games.
+
+Mirror legs (vs live stack, 6 seeds x 2 seats, 150-step truncation):
+1. Holds, full-drain legs:        1/12, -37.8%@120 / -44.4%@250
+2. Holds, floor-proportional:     3/12, -34.0%@120 / -45.8%@250
+3. Holds + FULL-reaction floor gate (weight 1.0, lag 0 at sync tick):
+                                  3/12, -25.2%@120 / -37.1%@250
+4. ABLATION SYNC_DMAX=0 (same-tick coalitions only, no holds):
+                                  7/12, -0.6%@120 / -0.7%@250  (parity)
+5. Coalitions vs old champion:    4/8, +25.9%@120 (control 6/8 +34.4% — flat/slightly down)
+
+Mechanism (seed-4 autopsy): the far leg telegraphs the attack for the
+whole hold window; the reply-aware defender reinforces past the pair's
+joint size and counterattacks the frozen near source; a canceled hold
+leaves the far fleet to die alone (hold frozen at step 60 -> collapse
+60->70; our in-flight share 67% vs their 45%). Even the full-reaction
+floor gate doesn't save it -> the refutation is conceptual: freezing
+capital to synchronize against a reactive equal loses on tempo. The 2010
+canon's synchronized attacks worked against non-reply-aware bots; ours
+punishes them.
+
+Also caught: _overkill_for_targets returns a plain float in the legacy
+path; the first lo-sizing draft crashed EVERY turn from step 0 and the
+kaggle env swallowed the exception (silent forfeit-by-passivity, games
+"played" to step 75-200). sync_probe now surfaces agent crashes. Lesson
+for all future in-process measurement: a flipped game outcome with zero
+mechanism activity = suspect a swallowed exception first.
+
+Disposition: vetorf_sync variant = same-tick coalitions only (DMAX
+default 0), mirror-parity, champion-flat — NOT submit-worthy on current
+evidence. Holds opt-in behind SYNC_DMAX>0 for future redemption (e.g.
+against non-reply-aware ladder opponents — but that is exactly what we
+cannot measure locally).
