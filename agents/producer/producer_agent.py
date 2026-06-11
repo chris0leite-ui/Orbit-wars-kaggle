@@ -14,7 +14,22 @@ import os
 import sys
 import importlib.util
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# kaggle_environments' agent loader exec()s this file WITHOUT __file__ in
+# the namespace (importlib loading, e.g. fast.py, does define it). Fall
+# back to locating the vendored directory relative to the repo cwd so the
+# Producer is alive under BOTH loaders — a dead opponent sweeps exactly
+# like a dominated one and silently voids every A/B against it.
+try:
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _HERE = None
+if _HERE is None or not os.path.isfile(os.path.join(_HERE, "main.py")):
+    for _cand in ("agents/producer",
+                  os.path.join(os.getcwd(), "agents", "producer"),
+                  "/home/user/Orbit-wars-kaggle/agents/producer"):
+        if os.path.isfile(os.path.join(_cand, "main.py")):
+            _HERE = os.path.abspath(_cand)
+            break
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)  # so main.py can `import orbit_lite`
 
