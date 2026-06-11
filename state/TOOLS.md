@@ -257,3 +257,10 @@ python scripts/bundle_agent.py agents/v3_snipe --lib geometry fleet orbit aim tr
 | Single-game trace | `fast.py play` | `python fast.py play agents/my_idea --seed <N>` |
 | Episode postmortem | `episode_postmortem.py` | `python scripts/episode_postmortem.py <episode>` |
 | Live ladder summary | `live_episode_summary.py` | `python scripts/live_episode_summary.py <sub_id>` |
+
+## sync_probe.py (2026-06-11)
+`python scripts/sync_probe.py --seed 7 --steps 200 --opp submissions/v7_0_drop_one.py`
+In-process probe for the delayed-launch mechanism: runs the focal agent
+imported in-process (memory inspectable) vs a bundled referee, counts
+holds created / executed / released per game. Agent prints are swallowed
+by the env's log capture — read the counters, not the per-step lines.
