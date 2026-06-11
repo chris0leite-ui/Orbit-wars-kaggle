@@ -181,6 +181,22 @@ def main():
     print(f"states with expert launch: {n_pos_states}; "
           f"expert pair in our top-1: {hit1/n_pos_states:.3f}, "
           f"top-3: {hit3/n_pos_states:.3f}")
+    # defense-state split (meta col 4 = under booked attack)
+    if meta.shape[1] > 4:
+        thr_te = meta[te, 4] > 0
+        for label, mrows in (("THREAT", thr_te), ("calm", ~thr_te)):
+            st_t, y_t, p_t = st_[mrows], yt_[mrows], pt[mrows]
+            o2 = np.argsort(st_t, kind="stable")
+            st_o2, y_o2, p_o2 = st_t[o2], y_t[o2], p_t[o2]
+            b2 = np.flatnonzero(np.diff(st_o2)) + 1
+            h1 = npos = 0
+            for g in np.split(np.arange(len(st_o2)), b2):
+                if y_o2[g].sum() < 1:
+                    continue
+                npos += 1
+                h1 += int(y_o2[g][np.argsort(-p_o2[g])[0]] > 0.5)
+            if npos:
+                print(f"  {label} states: top-1 {h1/npos:.3f} (n={npos})")
     # threshold calibration vs true fire rate (subsampling-corrected)
     w_te = np.where(yt_ > 0.5, 1.0, 1.0 / NEG_KEEP)
     true_rate = np.average(yt_, weights=w_te)

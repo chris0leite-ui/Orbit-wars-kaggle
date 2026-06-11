@@ -104,13 +104,57 @@ def process(job):
         # Pairing (obs[t], action[t]) labels the aftermath of a launch and
         # produced the cold-state fire rate of exactly 0.000 that exposed
         # this. Opening states are sampled densely (stride 2 before t=60).
-        ts = list(range(1, min(60, len(steps) - 1), 2)) \
-            + list(range(61, len(steps) - 1, stride))
-        for t in ts:
+        ts_regular = set(range(1, min(60, len(steps) - 1), 2)) \
+            | set(range(61, len(steps) - 1, stride))
+
+        # DEFENSE-TARGETED PASS: additionally sample EVERY turn where a
+        # qualifying seat is under booked attack (enemy arrivals on its
+        # planets within THREAT_DT ticks of a cheap short-horizon ledger).
+        # Rush survival lives in these states; uniform striding dilutes
+        # them. Capped per seat; meta column 5 flags threat rows.
+        THREAT_DT = 14
+        THREAT_MIN_SHIPS = 8
+        THREAT_CAP = 130
+        threat_ts = {}                    # seat -> set of turns
+        for seat in seats:
+            threat_ts[seat] = set()
+        n_threat = {seat: 0 for seat in seats}
+        for t in range(1, len(steps) - 1):
             base_obs = steps[t][0].get("observation")
             if not base_obs or not base_obs.get("planets"):
                 continue
             for seat in seats:
+                if n_threat[seat] >= THREAT_CAP or t in ts_regular:
+                    continue
+                obs_q = dict(base_obs)
+                obs_q["player"] = seat
+                obs_q["step"] = t
+                wq = World(obs_q, horizon=THREAT_DT + 2)
+                if not any(o == seat for o in wq.owner0):
+                    continue
+                wq.build_ledger()
+                booked = 0
+                for i in range(wq.n_planets):
+                    if wq.owner0[i] != seat:
+                        continue
+                    for dt, slot in wq.arrivals[i].items():
+                        if dt > THREAT_DT:
+                            continue
+                        booked += sum(s for o, s in slot.items()
+                                      if o >= 0 and o != seat)
+                if booked >= THREAT_MIN_SHIPS:
+                    threat_ts[seat].add(t)
+                    n_threat[seat] += 1
+
+        all_ts = sorted(ts_regular | set().union(*threat_ts.values()))
+        for t in all_ts:
+            base_obs = steps[t][0].get("observation")
+            if not base_obs or not base_obs.get("planets"):
+                continue
+            for seat in seats:
+                is_threat_row = t in threat_ts[seat]
+                if t not in ts_regular and not is_threat_row:
+                    continue
                 moves = steps[t + 1][seat].get("action") or []
                 obs = dict(base_obs)
                 obs["player"] = seat
@@ -119,6 +163,15 @@ def process(job):
                 if not any(o == seat for o in w.owner0):
                     continue
                 w.build_ledger()
+                booked = 0
+                for i in range(w.n_planets):
+                    if w.owner0[i] != seat:
+                        continue
+                    for dt, slot in w.arrivals[i].items():
+                        if dt <= THREAT_DT:
+                            booked += sum(s for o, s in slot.items()
+                                          if o >= 0 and o != seat)
+                is_threat_row = booked >= THREAT_MIN_SHIPS
                 sp = source_states(w, seat)
                 pairs = shortlist_pairs(w, sp)
                 if not pairs:
@@ -160,7 +213,8 @@ def process(job):
                     y.append(1.0 if fired else 0.0)
                     frac.append(min(1.0, expert[(s, tt)] / max(1.0, g))
                                 if fired else -1.0)
-                    meta.append((ep_id, seat, t, state_id))
+                    meta.append((ep_id, seat, t, state_id,
+                                 1 if is_threat_row else 0))
         if not X:
             return None
         return (np.asarray(X, np.float32), np.asarray(y, np.float32),
