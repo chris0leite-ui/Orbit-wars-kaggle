@@ -186,13 +186,16 @@ class FeatureContext:
         return [99.0, 99.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
     def _comet_block(self):
+        # fixed window so the feature is identical between the dataset
+        # extraction horizon and the (longer) runtime planning horizon
         w = self.world
         n = w.n_planets
+        win = min(36, w.horizon)
         comets = [i for i in range(n) if w.is_comet[i]
-                  and w.alive_until[i] <= w.horizon]
+                  and w.alive_until[i] <= win]
         return [float(sum(1 for i in range(n) if w.is_comet[i])),
                 (sum(w.alive_until[i] for i in comets) / len(comets))
-                if comets else float(w.horizon)]
+                if comets else float(win)]
 
     # ------------------------------------------------------------- leaf
     def leaf(self, overrides=None, extra_flights=None):

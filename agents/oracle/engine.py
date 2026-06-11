@@ -25,6 +25,11 @@ LOG1000 = math.log(1000.0)
 EPISODE_END = 498          # interpreter flags DONE at step >= episodeSteps-2
 
 DEFAULT_HORIZON = 90
+# Single shared planning/extraction horizon: the policy features clip ETAs
+# and required-ships lookups at world.horizon, so train and serve MUST use
+# the same value (train/serve skew otherwise). 90 keeps slow small fleets
+# attributable (a 1-ship fleet needs ~80 ticks across the board).
+PLAN_HORIZON = 90
 
 
 def fleet_speed(ships):
