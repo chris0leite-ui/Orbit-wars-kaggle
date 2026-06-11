@@ -193,3 +193,36 @@ either/or: worst-case response pricing loses to expanders, optimistic
 pricing loses to re-snipers — only a measured opponent model serves
 both. (Earlier profiling failure misclassified by LAUNCH counts; the
 exact-landing attribution removes that failure mode.)
+
+## FINAL SESSION VERDICT (clean, liveness-checked, 3 workers)
+
+The committed 14-mechanism build (c42c9fc) at honest compute:
+
+| Opponent | c42c9fc | ledger_v1_4 reference |
+|---|---|---|
+| Producer (seeds 300-323) | 0/24 | 0/16 (known) |
+| v7_0 (12-seed pool) | 5/12 | 8-9/12 |
+| live-1300.9 bundle (600-607) | 1/8 | ~75-85% band |
+
+The v7_0/bundle losses are mostly FULL-LENGTH games lost on score:
+the build under-expands against everyone — the same response-pricing
+pessimism that was supposed to stop waste throttles ordinary
+expansion. The session's response-model changes (robust sizing,
+time-correct + ledger-based curves) need per-mechanism bisection, not
+joint shipping.
+
+**Action taken: agents/ledger/main.py restored to the ledger_v1_4
+state (byte-identical to submissions/ledger_v1_4.py, parity green).**
+The 14-mechanism state remains at c42c9fc for bisection.
+
+What survives the session unconditionally:
+- scripts/trace_duel.py (curves, captures, launches, death
+  classification, liveness asserts);
+- LEDGER_DEBUG decision introspection hook (in c42c9fc; re-add on
+  demand — restored v1_4 predates it);
+- the measured doctrine map of the Producer matchup (this document);
+- two binding methodology lessons: (1) A/B under CPU contention is not
+  production behavior — wall-clock TIME_BUDGET makes strength
+  load-dependent; cap workers at 3 and spot-check solo; (2) the crash
+  guard (return []) silently hides breakage — liveness asserts and the
+  parity test are the only tells (the __slots__ incident).
