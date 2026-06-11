@@ -503,6 +503,18 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
         "PRODUCER_PLUS_REPLAN": "1",
     },
+    "vetorf_redirect": {
+        # The replan's fix: keep plan->veto unchanged; when waves are
+        # dropped, ONE extra pass spends only the freed budget (surviving
+        # waves committed: sources debited, effects + reply in background).
+        # No reopened commitments -> no phantom-parry under-aggression
+        # (replan's measured failure: 16 capture-sized launches vs 24).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REDIRECT": "1",
+    },
     "replan_rf": {
         # Replan WITHOUT the veto: does the full re-plan subsume the
         # drop-only filter? (Reactive floor kept — orthogonal mechanism.)

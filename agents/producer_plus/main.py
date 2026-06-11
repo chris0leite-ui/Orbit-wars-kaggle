@@ -662,6 +662,20 @@ def _predict_reply(
     )
 
 
+def _cat_launch_sets(parts: list) -> LaunchSet:
+    """Concatenate LaunchSets along the L axis."""
+    if len(parts) == 1:
+        return parts[0]
+    return LaunchSet(
+        source_slots=torch.cat([r.source_slots for r in parts]),
+        target_slots=torch.cat([r.target_slots for r in parts]),
+        ships=torch.cat([r.ships for r in parts]),
+        eta=torch.cat([r.eta for r in parts]),
+        owner=torch.cat([r.owner for r in parts]),
+        valid=torch.cat([r.valid for r in parts]),
+    )
+
+
 def _apply_response_veto(
     entries,
     *,
@@ -677,8 +691,14 @@ def _apply_response_veto(
     K_eta_override,
     H: int,
     opp_weights,
+    reply_out: list | None = None,
 ):
-    """Drop attack waves the opponent's predicted reply kills. See gate note."""
+    """Drop attack waves the opponent's predicted reply kills. See gate note.
+
+    ``reply_out``: optional mutable list; the predicted reply LaunchSet is
+    appended when the mirror runs, so a downstream pass (the redirect) can
+    reuse it without a second mirror.
+    """
     pid = int(obs.player_id)
     P = int(obs.P)
     valid = entries.valid
@@ -702,6 +722,8 @@ def _apply_response_veto(
         config=config, player_count=int(player_count), pid=pid,
         K_eta_override=K_eta_override, H=H,
     )
+    if reply_out is not None:
+        reply_out.append(reply)
 
     # Score each attack wave alone under the predicted reply, against the
     # do-nothing-under-reply baseline (same normalization as roi_threshold).
@@ -868,6 +890,105 @@ def _apply_replan(
         alive_by_step=alive_by_step, config=cfg2,
         player_count=int(player_count), K_eta_override=K_eta_override,
         background=reply, opp_weights=opp_weights,
+    )
+
+
+# --- Redirect ---------------------------------------------------------------
+# The veto is a filter: when the predicted reply kills a wave, the freed
+# ships idle. The full one-ply replan fixed that but measured 2-2 on paired
+# seeds with a clear failure mode (decision_diff seed 0: 16 capture-sized
+# launches vs the live stack's 24) — pass 2 treats predicted PARRIES as
+# fixed background even for attacks it then doesn't make, so the whole plan
+# goes conservative. The redirect keeps pass 1 + veto untouched and re-plans
+# ONLY the freed budget: surviving waves are committed (sources debited,
+# their effects + the reply in the scorer background), and one extra planner
+# pass spends what the veto freed on next-best actions. No reopened
+# commitments -> no phantom-parry suppression of the plan.
+
+
+def _redirect_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_REDIRECT", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _redirect_2p_only() -> bool:
+    return os.environ.get("PRODUCER_PLUS_REDIRECT_2P_ONLY", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _redirect_active(player_count: int) -> bool:
+    return _redirect_enabled() and (
+        (not _redirect_2p_only()) or int(player_count) == 2
+    )
+
+
+def _apply_redirect(
+    entries,
+    *,
+    reply: LaunchSet,
+    movement,
+    obs,
+    obs_tensors: dict,
+    cache,
+    garrison_status,
+    prod: Tensor,
+    alive_by_step: Tensor,
+    config,
+    player_count: int,
+    K_eta_override,
+    H: int,
+    opp_weights,
+):
+    """Spend the veto-freed budget on next-best actions. Appends new waves.
+
+    ``entries`` is the post-veto table (some rows invalidated). The surviving
+    waves are committed: their sends are debited from the planner's view of
+    our garrisons and their effects ride in the scorer background alongside
+    the predicted ``reply``, so a second wave at an already-attacked target
+    scores ~0 marginal and is naturally suppressed. The roi threshold is
+    re-normalized by the do-nothing score under that combined background.
+    """
+    pid = int(obs.player_id)
+    P = int(obs.P)
+    device = obs.device
+    dtype = obs.ships.dtype
+    committed = _entries_to_launch_set(entries, pid=pid, device=device, dtype=dtype)
+    if int(committed.source_slots.shape[-1]) > 0:
+        debit = torch.zeros_like(obs.ships)
+        debit.scatter_add_(
+            0, committed.source_slots.clamp(0, P - 1), committed.ships.to(obs.ships.dtype),
+        )
+        obs2 = dataclasses.replace(obs, ships=(obs.ships - debit).clamp(min=0.0))
+        bg2 = _cat_launch_sets([reply, committed])
+    else:
+        obs2 = obs
+        bg2 = reply
+    dn = float(_score_do_nothing(
+        status=garrison_status, prod=prod, alive_by_step=alive_by_step,
+        player_count=int(player_count), background=bg2, player_id=pid,
+        opp_weights=opp_weights,
+    ))
+    cfg2 = dataclasses.replace(
+        config, roi_threshold=dn + float(config.roi_threshold),
+    )
+    extra = plan_lite_waves(
+        movement=movement, obs=obs2, obs_tensors=obs_tensors, cache=cache,
+        garrison_status=garrison_status, prod=prod,
+        alive_by_step=alive_by_step, config=cfg2,
+        player_count=int(player_count), K_eta_override=K_eta_override,
+        background=bg2, opp_weights=opp_weights,
+    )
+    if int(extra.valid.sum().item()) == 0:
+        return entries
+    return LaunchEntries(
+        source_slots=torch.cat([entries.source_slots, extra.source_slots]),
+        target_slots=torch.cat([entries.target_slots, extra.target_slots]),
+        ships=torch.cat([entries.ships, extra.ships]),
+        angle=torch.cat([entries.angle, extra.angle]),
+        eta=torch.cat([entries.eta, extra.eta]),
+        valid=torch.cat([entries.valid, extra.valid]),
     )
 
 
@@ -2107,6 +2228,8 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
         # Raw config (not the roi-shifted cfg): the reply mirror plans the
         # opponent exactly like the original projection pass did, and the
         # veto margin's do-nothing normalization is computed fresh here.
+        _reply_box: list = []
+        _valid_before = int(entries.valid.sum().item())
         entries = _apply_response_veto(
             entries,
             movement=movement, obs=obs, obs_tensors=obs_tensors, cache=cache,
@@ -2114,7 +2237,23 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
             alive_by_step=alive_by_step, config=config,
             player_count=int(player_count), K_eta_override=K_eta_override,
             H=H, opp_weights=opp_w,
+            reply_out=_reply_box,
         )
+        # Redirect: only when the veto actually freed budget (waves dropped)
+        # — otherwise pass 1 already spent everything it wanted to.
+        if (
+            _redirect_active(int(player_count)) and _reply_box
+            and int(entries.valid.sum().item()) < _valid_before
+        ):
+            entries = _apply_redirect(
+                entries,
+                reply=_reply_box[0],
+                movement=movement, obs=obs, obs_tensors=obs_tensors, cache=cache,
+                garrison_status=status, prod=movement.planet_prod,
+                alive_by_step=alive_by_step, config=config,
+                player_count=int(player_count), K_eta_override=K_eta_override,
+                H=H, opp_weights=opp_w,
+            )
     entries = disambiguate_duplicate_launches(entries)
     launches = infer_planned_launches_from_entries(
         obs_tensors=obs_tensors, movement=movement, entries=entries, player_id=int(obs.player_id),
