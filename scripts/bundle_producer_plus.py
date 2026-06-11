@@ -546,6 +546,32 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
         "PRODUCER_PLUS_REPLY_TRUST": "1",
     },
+    "vetorf_cc": {
+        # Commitment cost (ledger-branch port): each candidate pays
+        # eps x ships x flight-turns. In-flight capital can't change course;
+        # top teams strike at eta 4-5 vs our 7-8, and the replan family
+        # measured that ships held home beat schemes for spending them.
+        # eps=0.02 ~ a 50-ship 6-turn mission pays 6 ships of score.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_COMMIT_COST": "0.02",
+    },
+    "vetorf4p_seq_strength": {
+        # vetorf4p_seq with STRENGTH-weighted FFA objective (leader focus).
+        # Ledger-branch evidence that survives their dead-opponent
+        # correction: 4P leader objective 9/16 vs 4/16 parity baseline,
+        # and 64% live 4P. Our strength mode = damage valued by rival
+        # strength = focus the leader; zero new code.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
+    },
     "veto_rf": {
         # Veto + reactive floor (weight 0.5): enemy floors include half the
         # garrison the defender can route to the target within our flight

@@ -303,6 +303,33 @@ def _ffa_opp_weights(obs_tensors: dict, *, player_id: int, player_count: int):
     return strength / total
 
 
+# --- Commitment cost ----------------------------------------------------------
+# Ported insight from the ledger branch (audit/2026-06-10-ledger-agent-from-
+# first-principles.md): in-flight ships cannot change course, so committed
+# capital is the army you lack when the opponent's wave lands. Our own
+# evidence agrees from two sides — top teams strike at flight-time 4-5 vs
+# our 7-8, and the replan/redirect family measured that ships held home
+# beat every scheme for spending them. Price it: each candidate pays
+# eps x ships x flight-turns (per contributing leg). Tempo tie-break toward
+# near targets falls out; distant marginal attacks stop clearing the bar.
+
+
+def _commit_cost_eps() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_COMMIT_COST", "0")
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _commit_flight_cost(cand_send: Tensor, cand_eta: Tensor, cand_active: Tensor) -> Tensor:
+    """Σ_legs ships x eta over active legs. ``[C]`` (ship-turn units)."""
+    cost = torch.where(
+        cand_active, cand_send * cand_eta, torch.zeros_like(cand_send),
+    )
+    return cost.sum(dim=-1)
+
+
 # --- Reinforcement deficit floor (defense candidate sizing fix) -------------
 # capture_floor returns 1 for targets we own at the arrival tick ("arriving
 # ships add to the garrison, nothing to clear"), so the multi-size enumeration
@@ -2192,6 +2219,9 @@ def plan_lite_waves(
         terminal_prod_weight=_terminal_prod_value(),
         terminal_neutral_only=_terminal_neutral_only(),
     )                                                                            # [C]
+    _cc = _commit_cost_eps()
+    if _cc > 0.0:
+        score = score - _cc * _commit_flight_cost(cand_send, cand_eta, cand_active)
     # Capture the base competitive score before additive terms so the
     # force-concentration rescore can re-derive the addon contribution per
     # iteration without recomputing recapture/denial/opening. Only allocated

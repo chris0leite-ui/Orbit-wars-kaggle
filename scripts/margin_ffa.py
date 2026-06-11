@@ -42,6 +42,7 @@ wall = time.perf_counter() - t0
 F = {focal_seat}
 shares, ranks = {{}}, {{}}
 totals_by_step = []
+launched = [False]*4
 for s in env.steps:
     obs = s[0]['observation']
     t = [0.0]*4
@@ -53,6 +54,7 @@ for s in env.steps:
         o = int(f[1])
         if 0 <= o < 4:
             t[o] += float(f[6])
+            launched[o] = True
     totals_by_step.append(t)
 last = len(totals_by_step) - 1
 for cs in list({checks!r}) + [last]:
@@ -67,6 +69,7 @@ print(json.dumps({{
     'steps': len(env.steps), 'wall': round(wall, 1),
     'shares': shares, 'ranks': ranks,
     'eliminated': totals_by_step[last][F] <= 0.0,
+    'launched': launched,
 }}))
 """
 
@@ -120,6 +123,14 @@ def main() -> None:
             seed, seat, res = fut.result()
             if "error" in res:
                 print(f"   seed={seed} seat={seat} ERROR: {res['error']}", flush=True)
+                continue
+            launched = res.get("launched")
+            if launched is not None and not all(launched):
+                # Dead-opponent guard (ledger-branch postmortem: a dead seat
+                # sweeps exactly like a dominated one, and in 4P the game
+                # plays on around it). Excluded from aggregates.
+                print(f"   seed={seed} seat={seat} DEAD-SEAT {launched} — "
+                      f"game EXCLUDED", flush=True)
                 continue
             rows.append((seed, seat, res))
             sh, rk = res["shares"], res["ranks"]

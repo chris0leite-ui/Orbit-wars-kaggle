@@ -46,6 +46,7 @@ t0 = time.perf_counter()
 env.run([{p0!r}, {p1!r}])
 wall = time.perf_counter() - t0
 totals = []
+launched = [False, False]
 for s in env.steps:
     obs = s[0]['observation']
     t = [0.0, 0.0]
@@ -57,6 +58,7 @@ for s in env.steps:
         o = int(f[1])
         if 0 <= o <= 1:
             t[o] += float(f[6])
+            launched[o] = True
     totals.append(t)
 decision = 0
 prev = 0
@@ -75,7 +77,8 @@ for cs in {check_steps!r}:
 final = env.steps[-1]
 print(json.dumps({{'r0': final[0]['reward'], 'r1': final[1]['reward'],
                    'n_steps': len(env.steps), 'wall': wall,
-                   'decision': decision, 'leads_p0': leads}}))
+                   'decision': decision, 'leads_p0': leads,
+                   'launched': launched}}))
 """
 
 
@@ -102,6 +105,13 @@ def _worker_play(args: tuple[int, str, str, bool, int]) -> dict:
     if r0 is None or r1 is None:
         return {"seed": seed, "focal_is_p0": focal_is_p0, "outcome": "error",
                 "stderr": "None reward (agent error/timeout in-game)"}
+    launched = data.get("launched")
+    if launched is not None and not all(launched):
+        # Dead-opponent guard (ledger-branch postmortem): a player that
+        # never launched a single fleet was almost certainly dead at load —
+        # its games sweep like a dominated opponent and poison the stats.
+        return {"seed": seed, "focal_is_p0": focal_is_p0, "outcome": "error",
+                "stderr": f"DEAD PLAYER launched={launched} — game excluded"}
     sgn = 1.0 if focal_is_p0 else -1.0
     leads = {int(k): sgn * v for k, v in data["leads_p0"].items()}
     focal_r, opp_r = (r0, r1) if focal_is_p0 else (r1, r0)

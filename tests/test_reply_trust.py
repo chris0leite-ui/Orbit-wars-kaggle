@@ -120,3 +120,21 @@ def test_scaling_is_identity_at_full_trust(pp_main):
     assert pp_main._scale_launch_set_ships(ls, 1.0) is ls
     scaled = pp_main._scale_launch_set_ships(ls, 0.5)
     assert scaled.ships.tolist() == [10.0]
+
+
+# ---------------------------------------------------------------------------
+# Commitment cost (PRODUCER_PLUS_COMMIT_COST) — ledger-branch port
+# ---------------------------------------------------------------------------
+
+
+def test_commit_cost_default_off(monkeypatch, pp_main):
+    monkeypatch.delenv("PRODUCER_PLUS_COMMIT_COST", raising=False)
+    assert pp_main._commit_cost_eps() == 0.0
+
+
+def test_commit_flight_cost_sums_active_legs(pp_main):
+    send = torch.tensor([[10.0, 5.0], [8.0, 0.0]])
+    eta = torch.tensor([[4.0, 2.0], [7.0, 1.0]])
+    active = torch.tensor([[True, True], [True, False]])
+    cost = pp_main._commit_flight_cost(send, eta, active)
+    assert cost.tolist() == [50.0, 56.0]      # 10*4+5*2 ; 8*7
