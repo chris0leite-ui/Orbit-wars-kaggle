@@ -1,40 +1,50 @@
 {
   "submission_id": "53556728",
-  "generated_utc": "2026-06-11T05:25:54Z",
+  "generated_utc": "2026-06-11T07:12:26Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 13,
-  "n_played": 13,
-  "wins_total": 8,
-  "winrate_total": 0.6153846153846154,
+  "n_episodes": 38,
+  "n_played": 38,
+  "wins_total": 18,
+  "winrate_total": 0.47368421052631576,
   "by_size": {
     "2": {
-      "n": 8,
-      "wins": 5,
-      "winrate": 0.625
+      "n": 24,
+      "wins": 9,
+      "winrate": 0.375
     },
     "4": {
-      "n": 5,
-      "wins": 3,
-      "winrate": 0.6
+      "n": 14,
+      "wins": 9,
+      "winrate": 0.6428571428571429
     }
   },
   "self_match_episodes": 1,
   "seat_distribution": {
-    "0": 6,
-    "1": 4,
-    "2": 3,
-    "3": 3
+    "0": 18,
+    "1": 13,
+    "2": 5,
+    "3": 5
   },
   "episode_length_steps": {
-    "n": 13,
-    "min": 96,
-    "q1": 128,
-    "median": 151,
-    "q3": 219,
+    "n": 38,
+    "min": 84,
+    "q1": 139,
+    "median": 164,
+    "q3": 207,
     "max": 500,
-    "mean": 206.30769230769232
+    "mean": 196.76315789473685
   },
   "opponents": [
+    {
+      "name": "Himeno",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "chimaki",
+      "seen": 2,
+      "beat_us": 1
+    },
     {
       "name": "Mehdi Boumiza",
       "seen": 1,
@@ -121,6 +131,21 @@
       "beat_us": 1
     },
     {
+      "name": "Rustam Bazarbayev",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "yukichi0403",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "yanqiangmiffy",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
       "name": "Solo",
       "seen": 1,
       "beat_us": 1
@@ -134,6 +159,186 @@
       "name": "abdelbasset Basto",
       "seen": 1,
       "beat_us": 0
+    },
+    {
+      "name": "JalDharmendrabhaiPatel",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "webjdi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "c-number",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "penguin46",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\u00d6mer Faruk Y\u00fcce",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Tien-Thinh",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Tiandong Wang",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "haocean",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mert Bayraktar",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "khj1222",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "eric",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Takuya Inoue",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "YassY_The_AlchemYst",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Gain John",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Simon R\u00fcba",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "XuanxuChem",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "junseok lee",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "yiyu0716",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kurang Tawu",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Pai",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ova",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Sukjae Cho",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Sliver Legion",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Arnav Kewalram",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "R ht_USTC",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Doug",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "afsaffs",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "\u53f2\u6c38\u521a",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "atsu0905",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "hujile",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "IAI-RL-Checkm8",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "predlast H of S",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "mywind",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Paddington",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "jerryv69",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "OlivierS",
+      "seen": 1,
+      "beat_us": 1
     }
   ],
   "losses": [
@@ -185,6 +390,147 @@
       ],
       "winner": "Solo",
       "steps": 219
+    },
+    {
+      "episode": "episode-79490806",
+      "size": 4,
+      "opponents": [
+        "Himeno",
+        "JalDharmendrabhaiPatel",
+        "webjdi"
+      ],
+      "winner": "Himeno",
+      "steps": 206
+    },
+    {
+      "episode": "episode-79491693",
+      "size": 4,
+      "opponents": [
+        "Tiandong Wang",
+        "haocean",
+        "Mert Bayraktar"
+      ],
+      "winner": "Mert Bayraktar",
+      "steps": 155
+    },
+    {
+      "episode": "episode-79492658",
+      "size": 2,
+      "opponents": [
+        "Gain John"
+      ],
+      "winner": "Gain John",
+      "steps": 130
+    },
+    {
+      "episode": "episode-79493502",
+      "size": 2,
+      "opponents": [
+        "XuanxuChem"
+      ],
+      "winner": "XuanxuChem",
+      "steps": 172
+    },
+    {
+      "episode": "episode-79494200",
+      "size": 2,
+      "opponents": [
+        "Sukjae Cho"
+      ],
+      "winner": "Sukjae Cho",
+      "steps": 151
+    },
+    {
+      "episode": "episode-79494892",
+      "size": 2,
+      "opponents": [
+        "R ht_USTC"
+      ],
+      "winner": "R ht_USTC",
+      "steps": 309
+    },
+    {
+      "episode": "episode-79495323",
+      "size": 4,
+      "opponents": [
+        "Doug",
+        "afsaffs",
+        "\u53f2\u6c38\u521a"
+      ],
+      "winner": "afsaffs",
+      "steps": 500
+    },
+    {
+      "episode": "episode-79495587",
+      "size": 2,
+      "opponents": [
+        "atsu0905"
+      ],
+      "winner": "atsu0905",
+      "steps": 159
+    },
+    {
+      "episode": "episode-79496447",
+      "size": 2,
+      "opponents": [
+        "IAI-RL-Checkm8"
+      ],
+      "winner": "IAI-RL-Checkm8",
+      "steps": 121
+    },
+    {
+      "episode": "episode-79496876",
+      "size": 2,
+      "opponents": [
+        "predlast H of S"
+      ],
+      "winner": "predlast H of S",
+      "steps": 207
+    },
+    {
+      "episode": "episode-79497305",
+      "size": 2,
+      "opponents": [
+        "mywind"
+      ],
+      "winner": "mywind",
+      "steps": 116
+    },
+    {
+      "episode": "episode-79498014",
+      "size": 2,
+      "opponents": [
+        "Paddington"
+      ],
+      "winner": "Paddington",
+      "steps": 234
+    },
+    {
+      "episode": "episode-79498437",
+      "size": 2,
+      "opponents": [
+        "chimaki"
+      ],
+      "winner": "chimaki",
+      "steps": 123
+    },
+    {
+      "episode": "episode-79498861",
+      "size": 2,
+      "opponents": [
+        "jerryv69"
+      ],
+      "winner": "jerryv69",
+      "steps": 154
+    },
+    {
+      "episode": "episode-79499307",
+      "size": 2,
+      "opponents": [
+        "OlivierS"
+      ],
+      "winner": "OlivierS",
+      "steps": 180
     }
   ]
 }

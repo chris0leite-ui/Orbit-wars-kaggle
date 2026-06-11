@@ -1,36 +1,37 @@
 {
   "submission_id": "53558897",
-  "generated_utc": "2026-06-11T06:46:27Z",
+  "generated_utc": "2026-06-11T07:12:35Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 8,
-  "n_played": 8,
-  "wins_total": 6,
-  "winrate_total": 0.75,
+  "n_episodes": 14,
+  "n_played": 14,
+  "wins_total": 8,
+  "winrate_total": 0.5714285714285714,
   "by_size": {
     "2": {
-      "n": 6,
-      "wins": 4,
-      "winrate": 0.6666666666666666
+      "n": 10,
+      "wins": 5,
+      "winrate": 0.5
     },
     "4": {
-      "n": 2,
-      "wins": 2,
-      "winrate": 1.0
+      "n": 4,
+      "wins": 3,
+      "winrate": 0.75
     }
   },
   "self_match_episodes": 1,
   "seat_distribution": {
-    "0": 5,
-    "1": 4
+    "0": 6,
+    "1": 7,
+    "3": 2
   },
   "episode_length_steps": {
-    "n": 8,
+    "n": 14,
     "min": 114,
-    "q1": 139,
+    "q1": 135,
     "median": 214,
-    "q3": 246,
+    "q3": 500,
     "max": 500,
-    "mean": 252.75
+    "mean": 273.2142857142857
   },
   "opponents": [
     {
@@ -87,6 +88,56 @@
       "name": "KapilSharma0111",
       "seen": 1,
       "beat_us": 0
+    },
+    {
+      "name": "CYPHERION",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Biel Escola Rodrigo",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Hermengardo",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Rapha\u00ebl Caloz",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Kyle Smith",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Anton Bazdyrev",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "PruthviVKadam",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "jmorales",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Orb",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\u80e1\u8001\u5927",
+      "seen": 1,
+      "beat_us": 0
     }
   ],
   "losses": [
@@ -107,6 +158,44 @@
       ],
       "winner": "GeniusYY",
       "steps": 139
+    },
+    {
+      "episode": "episode-79498313",
+      "size": 2,
+      "opponents": [
+        "Biel Escola Rodrigo"
+      ],
+      "winner": "Biel Escola Rodrigo",
+      "steps": 117
+    },
+    {
+      "episode": "episode-79498731",
+      "size": 2,
+      "opponents": [
+        "Hermengardo"
+      ],
+      "winner": "Hermengardo",
+      "steps": 183
+    },
+    {
+      "episode": "episode-79499168",
+      "size": 2,
+      "opponents": [
+        "Rapha\u00ebl Caloz"
+      ],
+      "winner": "Rapha\u00ebl Caloz",
+      "steps": 368
+    },
+    {
+      "episode": "episode-79499593",
+      "size": 4,
+      "opponents": [
+        "Kyle Smith",
+        "Anton Bazdyrev",
+        "PruthviVKadam"
+      ],
+      "winner": "PruthviVKadam",
+      "steps": 500
     }
   ]
 }
