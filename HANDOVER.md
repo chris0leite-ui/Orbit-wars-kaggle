@@ -1,34 +1,44 @@
 # HANDOVER.md — next-session brief
 
-## Mode
+## Mode (this branch: claude/happy-babbage-6j46p6)
 
-**Observation-driven iteration on a single strategy.** No parallel exploration.
-One observation from the PI → one mechanism → one push.
+**RL track** — PI directive 2026-06-11: build a top leaderboard agent
+through reinforcement learning, iterating autonomously on Kaggle GPU.
+Full context + morning checklist:
+`knowledge-base/thoughts/2026-06-11-rl-track-kickoff.md`.
 
-## Strategy
+NOTE: the repo-wide docs below this branch (STRATEGY.md etc.) describe
+the older `baseline_adaptive_k` strategy; other branches
+(awesome-clarke producer_plus family, elegant-dijkstra ledger family)
+have since moved the live pair to ~1280 μ. Read
+`kaggle competitions submissions orbit-wars | head -5` for truth.
 
-`baseline_adaptive_k` — see `state/STRATEGY.md` for the full spec, the build
-script, the smoke procedure, and the iteration protocol.
+## Live status (RL track)
 
-Read `state/STRATEGY.md` first thing every session.
+- Kaggle GPU kernel `chrisleitescha/orbitwars-rl-train` v5: 8.2 h PPO
+  mirror self-play run pushed ~22:10 UTC 2026-06-11. Checkpoints land
+  in the kernel output (download with
+  `kaggle kernels output chrisleitescha/orbitwars-rl-train -p <dir>`).
+- Code+pool dataset: `chrisleitescha/orbitwars-rl-code`.
+- Morning command: `bash rl/morning_pipeline.sh` (download → learning
+  curve → panel eval of final checkpoint).
+- Export any checkpoint to a submission file:
+  `python -m rl.export_agent <ckpt.pkl> <out.py>`.
+- League continuation (anti-self-play-collapse) is built and smoked:
+  add `--league` to the kernel args (see
+  `rl/kaggle_infra/train_kernel.py`), include the resume ckpt in the
+  dataset (`RESUME_CKPT=<path> bash rl/kaggle_infra/push_code_dataset.sh
+  version "resume"`).
 
-## Live status
+## Submission discipline (unchanged)
 
-- **Latest submission:** `champ_adaptiveK_on.py`, sub **53324164** (2026-06-03
-  10:37 UTC), bundle sha256 `6c0419dc20`. Predicted μ ≈ 1170 based on prior
-  live settle of the identical agent (sub 53265480, μ = 1170.4).
-- **TrueSkill warm-up reminder:** starts at μ ≈ 600 and climbs over ~24 h. Do
-  not interpret the first few hours of leaderboard data.
-- Read the rolling pair on demand:
-  `kaggle competitions submissions orbit-wars | head -5`.
-
-## Next action
-
-Wait for the PI's first observation. Then run the loop in `state/STRATEGY.md` §
-"Iteration protocol — observation-driven".
+Rules 1/12/42/45/46 in CLAUDE.md still bind. RL agent submits only on
+n≥32 Wilson-lo ≥ 0.50 vs the live-pair rebuild + Rule 42 board claim +
+Rule 46 smoke. 5 submissions/day shared with the other branches.
 
 ## Pointers
 
-- `state/STRATEGY.md` — strategy, build, smoke, iteration protocol.
-- `CLAUDE.md` — process rules (lean).
+- `knowledge-base/thoughts/2026-06-11-rl-track-kickoff.md` — RL track
+  state, hard-won facts, morning checklist.
 - `state/MULTI_BRANCH.md` — push-claim board (Rule 42).
+- `CLAUDE.md` — process rules.
