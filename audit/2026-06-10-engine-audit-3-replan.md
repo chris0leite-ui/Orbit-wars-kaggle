@@ -210,3 +210,10 @@ with an opponent-aware schedule (the searcher plans single-player; the
 greedy's flow-diff at least prices the opponent's static future).
 Iterations spent: 4 (hold filter -> non-binding; worst-case reserve ->
 binding but not the loss mode; race margin -> ditto; wide panel -> parity).
+
+## Verdict: commitment tax — fails confirmation, shelved (2026-06-11 ~13:00)
+
+Fresh seeds 4-9: 5/12, paired +17.2% @250 driven by three +100% blowouts
+vs steady moderate losses; 3/6 seeds ahead. Combined 11-9 over 20 games.
+Same variance-amplifier profile as the expansion lane. eps goes to tuner
+v2 as a knob. Nothing earns a slot today; both held.
