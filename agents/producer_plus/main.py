@@ -1072,10 +1072,23 @@ def _reactive_floor_for(player_count: int) -> float:
     return _reactive_floor_weight()
 
 
+def _reactive_floor_lag() -> float:
+    """Reaction lag in turns before rerouted defense starts counting
+    (PRODUCER_PLUS_REACTIVE_FLOOR_LAG, default 2.0 — the value the floor
+    shipped with; exposed for joint knob tuning)."""
+    raw = os.environ.get("PRODUCER_PLUS_REACTIVE_FLOOR_LAG", "2.0")
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 2.0
+
+
 def _reactive_reinforcement_margin(
-    obs, cache, target_idx: Tensor, K: int, *, weight: float, lag: float = 2.0,
+    obs, cache, target_idx: Tensor, K: int, *, weight: float, lag: float | None = None,
 ):
     """``[T, K]`` reroutable enemy support per target/arrival-turn, or None."""
+    if lag is None:
+        lag = _reactive_floor_lag()
     enemy = obs.is_enemy & obs.alive
     q_idx = enemy.nonzero(as_tuple=True)[0]
     Q = int(q_idx.shape[0])

@@ -801,9 +801,20 @@ def main() -> int:
         default=None,
         help="output path; default submissions/producer_plus_<variant>_on.py",
     )
+    p.add_argument(
+        "--set", action="append", default=[], metavar="KEY=VAL",
+        help="override/add a baked env var on top of the variant "
+             "(repeatable; used by scripts/knob_tune.py)",
+    )
     args = p.parse_args()
     out = args.out or REPO / "submissions" / f"producer_plus_{args.variant}_on.py"
-    build(ENV_VARIANTS[args.variant], out)
+    env = dict(ENV_VARIANTS[args.variant])
+    for kv in args.set:
+        k, _, v = kv.partition("=")
+        if not k or not _:
+            raise SystemExit(f"--set expects KEY=VAL, got {kv!r}")
+        env[k] = v
+    build(env, out)
     return 0
 
 
