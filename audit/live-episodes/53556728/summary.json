@@ -1,0 +1,190 @@
+{
+  "submission_id": "53556728",
+  "generated_utc": "2026-06-11T05:25:54Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 13,
+  "n_played": 13,
+  "wins_total": 8,
+  "winrate_total": 0.6153846153846154,
+  "by_size": {
+    "2": {
+      "n": 8,
+      "wins": 5,
+      "winrate": 0.625
+    },
+    "4": {
+      "n": 5,
+      "wins": 3,
+      "winrate": 0.6
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 6,
+    "1": 4,
+    "2": 3,
+    "3": 3
+  },
+  "episode_length_steps": {
+    "n": 13,
+    "min": 96,
+    "q1": 128,
+    "median": 151,
+    "q3": 219,
+    "max": 500,
+    "mean": 206.30769230769232
+  },
+  "opponents": [
+    {
+      "name": "Mehdi Boumiza",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Gabriel MercierX",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Benaya Trabelsi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mark Turrell",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Grabiel Garcia (G.Garcia)",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ruben Rystedt",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "OrbitX",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Xin Liu",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kujaomega",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "da da",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Vincent Sirius",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Gronk",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "PyCamperos",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Benarg",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "sail",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "CQUPT-HQJ",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Nabid Nur",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Solo",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "SiriusStarRally",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "abdelbasset Basto",
+      "seen": 1,
+      "beat_us": 0
+    }
+  ],
+  "losses": [
+    {
+      "episode": "episode-79488062",
+      "size": 4,
+      "opponents": [
+        "Kujaomega",
+        "da da",
+        "Vincent Sirius"
+      ],
+      "winner": "Vincent Sirius",
+      "steps": 122
+    },
+    {
+      "episode": "episode-79488329",
+      "size": 2,
+      "opponents": [
+        "Gronk"
+      ],
+      "winner": "Gronk",
+      "steps": 128
+    },
+    {
+      "episode": "episode-79490041",
+      "size": 2,
+      "opponents": [
+        "CQUPT-HQJ"
+      ],
+      "winner": "CQUPT-HQJ",
+      "steps": 99
+    },
+    {
+      "episode": "episode-79490067",
+      "size": 2,
+      "opponents": [
+        "Nabid Nur"
+      ],
+      "winner": "Nabid Nur",
+      "steps": 96
+    },
+    {
+      "episode": "episode-79490476",
+      "size": 4,
+      "opponents": [
+        "Solo",
+        "SiriusStarRally",
+        "abdelbasset Basto"
+      ],
+      "winner": "Solo",
+      "steps": 219
+    }
+  ]
+}
