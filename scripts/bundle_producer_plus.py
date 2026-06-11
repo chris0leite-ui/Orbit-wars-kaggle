@@ -510,6 +510,17 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_SCORE": "1",
         "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
     },
+    "vetorf2p_open": {
+        # Live 2P stack + in-agent opening search (beam over neutral-capture
+        # schedules, first 25 steps, ported from opening_optimum.py). The
+        # decision-step finding says opening production IS the game; the
+        # champion measured ~3.6% below the beam benchmark.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_OPENING_SEARCH": "25",
+    },
     "veto_rf": {
         # Veto + reactive floor (weight 0.5): enemy floors include half the
         # garrison the defender can route to the target within our flight

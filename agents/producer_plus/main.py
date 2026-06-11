@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import os
 import sys
+import time
 from dataclasses import dataclass
 
 # Make the sibling ``orbit_lite`` package importable wherever this file runs:
@@ -1003,6 +1005,246 @@ def _apply_redirect(
         angle=torch.cat([entries.angle, extra.angle]),
         eta=torch.cat([entries.eta, extra.eta]),
         valid=torch.cat([entries.valid, extra.valid]),
+    )
+
+
+# --- Opening search ----------------------------------------------------------
+# The pre-contact opening is a deterministic single-player scheduling problem
+# (PI thesis; neutral garrisons are static, planet motion is rigid rotation,
+# production compounds, and the total-ship lead stops changing hands by step
+# 30-54 — so opening production IS the game). The greedy planner expands "by
+# accident" (horizon-truncated capture payoffs). This ports the beam search
+# from scripts/opening_optimum.py in-agent: each turn while step < window,
+# search capture schedules maximizing total production by the opening
+# horizon, and emit the launches due NOW. The rest of the pipeline (defense
+# lane, veto, regroup) runs as usual on the remaining budget. Pure Python,
+# time-boxed; turn budget headroom is ~800 ms.
+
+
+def _opening_search_window() -> int:
+    return max(0, _env_int("PRODUCER_PLUS_OPENING_SEARCH", 0))
+
+
+def _opening_search_horizon() -> int:
+    return max(10, _env_int("PRODUCER_PLUS_OPENING_HORIZON", 40))
+
+
+def _opening_search_beam() -> int:
+    return max(8, _env_int("PRODUCER_PLUS_OPENING_BEAM", 64))
+
+
+_OPENING_TIMEBOX_S = 0.25
+_LOG1000 = math.log(1000.0)
+_BOARD_CENTER = 50.0
+
+
+def _fleet_speed_py(s: float) -> float:
+    if s <= 1:
+        return 1.0
+    return 1.0 + 5.0 * (math.log(min(s, 1000.0)) / _LOG1000) ** 1.5
+
+
+class _OpeningBoard:
+    """Deterministic kinematics + static garrisons from the CURRENT obs.
+
+    t=0 is *now*: angles are taken from current positions, so re-planning
+    every turn stays consistent as planets rotate.
+    """
+
+    def __init__(self, obs_tensors: dict, pid: int):
+        planets = obs_tensors["planets"].detach().cpu()
+        self.angvel = float(obs_tensors["angular_velocity"].flatten()[0].item())
+        self.planets: dict[int, dict] = {}
+        self.mine: list[int] = []
+        self.enemy: list[int] = []
+        self.neutrals: list[int] = []
+        for row in planets.tolist():
+            planet_id, owner, x, y, r, ships, prod = row[:7]
+            planet_id = int(planet_id)
+            if planet_id < 0:
+                continue
+            ox, oy = x - _BOARD_CENTER, y - _BOARD_CENTER
+            orb_r = math.hypot(ox, oy)
+            self.planets[planet_id] = dict(
+                owner=int(owner), r=float(r), ships=float(ships),
+                prod=float(prod), orb_r=orb_r, a0=math.atan2(oy, ox),
+                orbiting=(orb_r + float(r)) < _BOARD_CENTER,
+            )
+            if int(owner) == int(pid):
+                self.mine.append(planet_id)
+            elif int(owner) >= 0:
+                self.enemy.append(planet_id)
+            else:
+                self.neutrals.append(planet_id)
+
+    def pos(self, planet_id: int, t: float):
+        p = self.planets[planet_id]
+        a = p["a0"] + (self.angvel * t if p["orbiting"] else 0.0)
+        return (_BOARD_CENTER + p["orb_r"] * math.cos(a),
+                _BOARD_CENTER + p["orb_r"] * math.sin(a))
+
+    def eta(self, src: int, tgt: int, size: float, t: float) -> int:
+        sp = _fleet_speed_py(size)
+        sx, sy = self.pos(src, t)
+        e = 1.0
+        for _ in range(4):
+            tx, ty = self.pos(tgt, t + e)
+            d = math.hypot(tx - sx, ty - sy) - self.planets[tgt]["r"]
+            e = max(1.0, d / sp)
+        return max(1, math.ceil(e))
+
+
+def _opening_search_plan(
+    obs_tensors: dict, *, pid: int, claimed: set[int],
+    horizon: int, beam_width: int, timebox_s: float = _OPENING_TIMEBOX_S,
+) -> list[tuple[int, int, float]]:
+    """Beam-search the capture schedule; return launches due NOW.
+
+    Returns ``[(src_planet_id, tgt_planet_id, size)]`` for schedule entries
+    with launch time 0. ``claimed`` excludes neutrals already targeted by
+    our in-flight opening waves (they're treated as spoken for).
+    Safe-only filter: only neutrals at least as reachable by us as by any
+    enemy planet (race-losing targets are the midgame planner's problem).
+    """
+    board = _OpeningBoard(obs_tensors, pid)
+    if not board.mine:
+        return []
+    neutrals = []
+    for n in board.neutrals:
+        if n in claimed:
+            continue
+        g = board.planets[n]["ships"] + 1.0
+        ours = min(board.eta(s, n, g, 0) for s in board.mine)
+        if board.enemy:
+            theirs = min(board.eta(s, n, g, 0) for s in board.enemy)
+            if ours > theirs:
+                continue
+        neutrals.append(n)
+    if not neutrals:
+        return []
+
+    t_start = time.perf_counter()
+    # State: (t, owned dict items, captured frozenset, produced, flights, plan)
+    start = (0.0, tuple((p, board.planets[p]["ships"]) for p in board.mine),
+             frozenset(), 0.0, (), ())
+
+    def advance(state, until):
+        t, owned_t, captured, produced, flights, plan = state
+        owned = dict(owned_t)
+        fl = sorted(flights)
+        while t < until:
+            step_to = until
+            if fl and fl[0][0] < step_to:
+                step_to = fl[0][0]
+            dt = step_to - t
+            for p in owned:
+                owned[p] += board.planets[p]["prod"] * dt
+            produced += sum(board.planets[p]["prod"] for p in owned) * dt
+            t = step_to
+            while fl and fl[0][0] <= t:
+                _at, tgt, size = fl.pop(0)
+                g = board.planets[tgt]["ships"]
+                owned[tgt] = max(1.0, size - g)
+                captured = captured | {tgt}
+        return (t, tuple(sorted(owned.items())), captured, produced,
+                tuple(fl), plan)
+
+    def held_value(state):
+        fin = advance(state, float(horizon))
+        return fin[3]
+
+    best_value = held_value(start)
+    best_plan: tuple = ()
+    frontier = [start]
+    for _depth in range(10):
+        if time.perf_counter() - t_start > timebox_s:
+            break
+        nxt = []
+        for state in frontier:
+            t, owned_t, captured, produced, flights, plan = state
+            owned = dict(owned_t)
+            for n in neutrals:
+                if n in captured or n in owned:
+                    continue
+                g = board.planets[n]["ships"] + 1.0
+                for src in owned:
+                    have = owned[src]
+                    prod_src = board.planets[src]["prod"]
+                    need = g + 1.0          # keep 1 ship home
+                    wait = 0.0 if have >= need else (
+                        math.inf if prod_src <= 0
+                        else math.ceil((need - have) / prod_src))
+                    t_launch = t + wait
+                    if t_launch >= horizon:
+                        continue
+                    e = board.eta(src, n, g, t_launch)
+                    if t_launch + e >= horizon + 10:
+                        continue
+                    s2 = advance(state, t_launch)
+                    t2, owned2_t, cap2, prod2, fl2, plan2 = s2
+                    owned2 = dict(owned2_t)
+                    if owned2.get(src, 0.0) < need:
+                        continue
+                    owned2[src] -= g
+                    fl3 = tuple(sorted(fl2 + ((t_launch + e, n, g),)))
+                    plan3 = plan2 + ((t_launch, src, n, g),)
+                    nxt.append((t2, tuple(sorted(owned2.items())), cap2,
+                                prod2, fl3, plan3))
+        if not nxt:
+            break
+
+        def h(s):
+            t, owned_t, _cap, produced, fl, _plan = s
+            rate = sum(board.planets[p]["prod"] for p, _ in owned_t)
+            opt = produced + rate * (horizon - t)
+            for at, tgt, _sz in fl:
+                if at < horizon:
+                    opt += board.planets[tgt]["prod"] * (horizon - at)
+            return opt
+
+        nxt.sort(key=h, reverse=True)
+        frontier = nxt[:beam_width]
+        for state in frontier:
+            v = held_value(state)
+            if v > best_value:
+                best_value = v
+                best_plan = state[5]
+
+    return [(src, tgt, size) for (t_launch, src, tgt, size) in best_plan
+            if t_launch <= 0.5]
+
+
+def _emit_opening_entries(
+    due: list[tuple[int, int, float]], *, movement, obs, obs_tensors: dict,
+):
+    """Aim the due launches with the REAL intercept solver. LaunchEntries."""
+    device = obs.device
+    dtype = obs.ships.dtype
+    planet_ids = obs_tensors["planets"][..., 0].long()
+    P = int(obs.P)
+    slot_of = {int(planet_ids[i].item()): i for i in range(P)}
+    rows = []
+    for src_pid, tgt_pid, size in due:
+        s, t = slot_of.get(src_pid), slot_of.get(tgt_pid)
+        if s is None or t is None:
+            continue
+        size = float(min(size, max(float(obs.ships[s].item()) - 1.0, 0.0)))
+        if size < 1.0:
+            continue
+        rows.append((s, t, size))
+    if not rows:
+        return None
+    src = torch.tensor([r[0] for r in rows], dtype=torch.long, device=device)
+    tgt = torch.tensor([r[1] for r in rows], dtype=torch.long, device=device)
+    ships = torch.tensor([r[2] for r in rows], dtype=dtype, device=device)
+    aim = intercept_angle(movement, src, tgt, ships)
+    ok = aim["viable"]
+    if not bool(ok.any()):
+        return None
+    return LaunchEntries(
+        source_slots=src, target_slots=tgt, ships=ships,
+        angle=aim["angle"].to(dtype), eta=aim["eta"].to(dtype),
+        valid=ok,
     )
 
 
@@ -2232,14 +2474,54 @@ def run_turn(obs_tensors: dict, *, config: ProducerLiteConfig, player_count: int
             config, roi_threshold=do_nothing_score + float(config.roi_threshold),
         )
 
+    opening_entries = None
+    obs_for_plan = obs
+    _osw = _opening_search_window()
+    if _osw > 0 and current_step < _osw:
+        claimed = getattr(memory, "opening_claimed", None)
+        if claimed is None or current_step == 0:
+            claimed = set()
+        due = _opening_search_plan(
+            obs_tensors, pid=int(obs.player_id), claimed=claimed,
+            horizon=_opening_search_horizon(), beam_width=_opening_search_beam(),
+        )
+        if due:
+            opening_entries = _emit_opening_entries(
+                due, movement=movement, obs=obs, obs_tensors=obs_tensors,
+            )
+        if opening_entries is not None:
+            # Claim targets across turns; debit the planner's budget view so
+            # the greedy pass can't double-spend the opening sends.
+            planet_ids_now = obs_tensors["planets"][..., 0].long()
+            sel = opening_entries.valid.nonzero(as_tuple=True)[0]
+            for i in sel.tolist():
+                claimed.add(int(planet_ids_now[int(opening_entries.target_slots[i].item())].item()))
+            debit = torch.zeros_like(obs.ships)
+            debit.scatter_add_(
+                0, opening_entries.source_slots[sel].clamp(0, int(obs.P) - 1),
+                opening_entries.ships[sel].to(obs.ships.dtype),
+            )
+            obs_for_plan = dataclasses.replace(
+                obs, ships=(obs.ships - debit).clamp(min=0.0))
+        memory.opening_claimed = claimed
+
     entries = plan_lite_waves(
-        movement=movement, obs=obs, obs_tensors=obs_tensors, cache=cache,
+        movement=movement, obs=obs_for_plan, obs_tensors=obs_tensors, cache=cache,
         garrison_status=status, prod=movement.planet_prod,
         alive_by_step=alive_by_step, config=cfg, player_count=int(player_count),
         K_eta_override=K_eta_override,
         background=background,
         opp_weights=opp_w,
     )
+    if opening_entries is not None:
+        entries = LaunchEntries(
+            source_slots=torch.cat([opening_entries.source_slots, entries.source_slots]),
+            target_slots=torch.cat([opening_entries.target_slots, entries.target_slots]),
+            ships=torch.cat([opening_entries.ships, entries.ships]),
+            angle=torch.cat([opening_entries.angle, entries.angle]),
+            eta=torch.cat([opening_entries.eta, entries.eta]),
+            valid=torch.cat([opening_entries.valid, entries.valid]),
+        )
     if _replan_active(int(player_count)) and _opp_projection_enabled():
         # Raw config (not the roi-shifted cfg): the replan re-normalizes the
         # roi threshold itself against its own reply background.
@@ -2326,11 +2608,13 @@ class ProducerLiteMemory:
         self.movement = None
         self.cached_player_count: int | None = None
         self.last_sparse_action_row: dict | None = None
+        self.opening_claimed: set | None = None
 
     def reset(self) -> None:
         self.movement = None
         self.cached_player_count = None
         self.last_sparse_action_row = None
+        self.opening_claimed = None
 
 
 class ProducerLiteRuntime:
