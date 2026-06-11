@@ -319,3 +319,27 @@ default 0), mirror-parity, champion-flat — NOT submit-worthy on current
 evidence. Holds opt-in behind SYNC_DMAX>0 for future redemption (e.g.
 against non-reply-aware ladder opponents — but that is exactly what we
 cannot measure locally).
+
+## Terminal production value — confirmed diagnosis, refuted flat fix (2026-06-11 late)
+
+Decision trace on the Gregor Lied live loss (scripts/decision_trace.py,
+steps 16/22/27): all six planets drainable (176 ships), 13 targets
+shortlisted, EVERY capture candidate scores +0.0 against threshold +1.5 —
+three consecutive turns of zero launches. Root cause confirmed: in-horizon
+flow truncates production payoffs at H=18 (the +5 neutral at eta 18 scores
+literally 0). Live-loss mining agrees: wins are production-ahead @40 in
+16/17, losses behind in 9/17 (median -8 @70); in-flight share is NOT
+discriminative (59% in both).
+
+Flat-lambda fix verdicts (TERMINAL_PROD_VALUE=12 on live stack):
+- vs mirror:        2/12, -38%@120 (deficit opens by step 40)
+- neutral-only:     0/12, -99.8%@250 (pure expansion credit = maximal rout)
+- vs old champion:  4/8, +13%@120/+20%@250 — BELOW control (6/8/+34/+51)
+Both instrument classes agree: lambda=12 overshoots into unsafe expansion;
+the banker punishes the invested capital faster than it pays back. NOT a
+mirror artifact.
+
+Next iteration (not built): holding-time-priced credit — terminal value
+per target = production x expected HOLDING time given the opponent's
+feasible retake (the ledger branch's capture pricing), instead of a flat
+constant. The paralysis defect is real; the fix must price counter-safety.
