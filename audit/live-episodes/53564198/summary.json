@@ -1,0 +1,150 @@
+{
+  "submission_id": "53564198",
+  "generated_utc": "2026-06-11T10:25:17Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 11,
+  "n_played": 11,
+  "wins_total": 10,
+  "winrate_total": 0.9090909090909091,
+  "by_size": {
+    "2": {
+      "n": 5,
+      "wins": 4,
+      "winrate": 0.8
+    },
+    "4": {
+      "n": 6,
+      "wins": 6,
+      "winrate": 1.0
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 5,
+    "1": 5,
+    "2": 2,
+    "3": 2
+  },
+  "episode_length_steps": {
+    "n": 11,
+    "min": 94,
+    "q1": 138,
+    "median": 143,
+    "q3": 168,
+    "max": 403,
+    "mean": 165.72727272727272
+  },
+  "opponents": [
+    {
+      "name": "cgbc12",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ayman Knadel",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mason Cao",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ali Afzal",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Charlesm85",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "SOLOMON SHALOM LIJO",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "leo",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ahamed Meyan",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Sam",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Dmitry Kalugin",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Suyash Bajpai",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "junseo lee",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Yuta Tomimasu",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Aatif Fraz",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "xiao long745",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Djenk Ivanov",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "kglctf",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Timmy Juicehouse",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Gerar Del Toro",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "webcainiao",
+      "seen": 1,
+      "beat_us": 0
+    }
+  ],
+  "losses": [
+    {
+      "episode": "episode-79515111",
+      "size": 2,
+      "opponents": [
+        "Gerar Del Toro"
+      ],
+      "winner": "Gerar Del Toro",
+      "steps": 113
+    }
+  ]
+}
