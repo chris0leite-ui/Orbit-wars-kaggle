@@ -208,3 +208,88 @@ def test_all_vetoed_plans_from_full_budget(monkeypatch, pp_main):
     assert kw["obs"].ships.tolist() == [20.0, 5.0, 30.0]
     assert kw["background"].valid.tolist() == [True]
     assert kw["background"].owner.tolist() == [1]
+
+
+# ---------------------------------------------------------------------------
+# Sequential reply conditioning (PRODUCER_PLUS_REPLY_SEQ)
+# ---------------------------------------------------------------------------
+
+
+def test_reply_seq_default_off(monkeypatch, pp_main):
+    monkeypatch.delenv("PRODUCER_PLUS_REPLY_SEQ", raising=False)
+    assert pp_main._reply_seq_enabled() is False
+
+
+def _mine(pp_main):
+    from orbit_lite.garrison_launch import LaunchSet
+    dtype = torch.float32
+    return LaunchSet(
+        source_slots=torch.tensor([0]),
+        target_slots=torch.tensor([1]),
+        ships=torch.tensor([10.0], dtype=dtype),
+        eta=torch.tensor([2.0], dtype=dtype),
+        owner=torch.tensor([0]),
+        valid=torch.tensor([True]),
+    )
+
+
+def _board_3p(pp_main):
+    """P=3, A=3, H=4. Planet 0 mine, planet 1 rival-1, planet 2 rival-2."""
+    from orbit_lite.movement import PlanetGarrisonStatus
+
+    H = 4
+    dtype = torch.float32
+    owner = torch.tensor(
+        [[0] * (H + 1), [1] * (H + 1), [2] * (H + 1)], dtype=torch.long)
+    ships = torch.tensor(
+        [[20.0] * (H + 1), [5.0] * (H + 1), [30.0] * (H + 1)], dtype=dtype)
+    status = PlanetGarrisonStatus(
+        owner=owner, ships=ships,
+        pre_combat_owner=owner.clone(), pre_combat_ships=ships.clone(),
+        arrivals_by_owner=torch.zeros(3, H + 1, 3, dtype=dtype),
+    )
+    prod = torch.tensor([1.0, 2.0, 1.0], dtype=dtype)
+    alive_by_step = torch.ones(H + 1, 3, dtype=torch.bool)
+    return status, prod, alive_by_step, H
+
+
+def _run_predict_reply_3p(pp_main, monkeypatch, seq: bool, calls: list):
+    status, prod, alive_by_step, H = _board_3p(pp_main)
+
+    def _fake_mirror(**kw):
+        calls.append(kw)
+        return _reply(pp_main, ships=5.0 + len(calls), tgt=1)
+
+    monkeypatch.setattr(pp_main, "predict_opp_launches_via_mirror", _fake_mirror)
+    if seq:
+        monkeypatch.setenv("PRODUCER_PLUS_REPLY_SEQ", "1")
+    else:
+        monkeypatch.delenv("PRODUCER_PLUS_REPLY_SEQ", raising=False)
+    return pp_main._predict_reply(
+        _mine(pp_main),
+        movement=None, obs_tensors={}, cache=None,
+        garrison_status=status, prod=prod, alive_by_step=alive_by_step,
+        config=_Cfg(), player_count=3, pid=0,
+        K_eta_override=None, H=H,
+    )
+
+
+def test_independent_merge_when_seq_off(monkeypatch, pp_main):
+    calls = []
+    out = _run_predict_reply_3p(pp_main, monkeypatch, seq=False, calls=calls)
+    assert len(calls) == 2
+    # Both rivals conditioned on OUR waves only (L=1 each).
+    assert int(calls[0]["base_background"].source_slots.shape[-1]) == 1
+    assert int(calls[1]["base_background"].source_slots.shape[-1]) == 1
+    assert int(out.source_slots.shape[-1]) == 2          # merged replies
+
+
+def test_sequential_conditioning_when_seq_on(monkeypatch, pp_main):
+    calls = []
+    out = _run_predict_reply_3p(pp_main, monkeypatch, seq=True, calls=calls)
+    assert len(calls) == 2
+    # Rival 1 sees our waves (L=1); rival 2 sees ours + rival 1's reply (L=2).
+    assert int(calls[0]["base_background"].source_slots.shape[-1]) == 1
+    assert int(calls[1]["base_background"].source_slots.shape[-1]) == 2
+    assert calls[1]["base_background"].ships.tolist() == [10.0, 6.0]
+    assert int(out.source_slots.shape[-1]) == 2          # merged output unchanged

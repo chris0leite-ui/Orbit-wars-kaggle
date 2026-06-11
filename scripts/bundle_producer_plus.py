@@ -483,6 +483,33 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_SCORE": "1",
         "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
     },
+    "vetorf4p_seq": {
+        # 4P ungating attempt #2: vetorf4p_ffa + sequential reply
+        # conditioning. The independent merge triple-counts defense (every
+        # attack priced as if all 3 rivals parry simultaneously) -> chronic
+        # passivity, eliminated ~step 200, panel 1/16. REPLY_SEQ conditions
+        # each rival on earlier rivals' predicted launches.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
+    },
+    "rf4p_ffa": {
+        # 4P ungating, reactive floor ONLY (veto stays 2P-gated): the floor
+        # prices reactive defense into attack sizing — anti-waste without
+        # the veto's passivity risk. 2P behavior identical to the live
+        # vetorf2p_ffa stack.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO_2P_ONLY": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
+    },
     "veto_rf": {
         # Veto + reactive floor (weight 0.5): enemy floors include half the
         # garrison the defender can route to the target within our flight

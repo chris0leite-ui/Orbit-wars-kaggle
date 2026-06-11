@@ -603,6 +603,14 @@ def _entries_to_launch_set(entries, *, pid: int, device, dtype) -> LaunchSet:
     )
 
 
+def _reply_seq_enabled() -> bool:
+    """Sequential multi-rival reply conditioning — see comment in
+    _predict_reply. No-op with a single opponent (2P byte-identical)."""
+    return os.environ.get("PRODUCER_PLUS_REPLY_SEQ", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def _predict_reply(
     mine: LaunchSet,
     *,
@@ -629,18 +637,20 @@ def _predict_reply(
     threshold by THEIR do-nothing score, exactly as run_turn does for us.
     """
     opp_ids = [q for q in range(int(player_count)) if q != int(pid)]
+    seq = _reply_seq_enabled() and len(opp_ids) > 1
     reply_parts = []
     pad = _env_int("PRODUCER_PLUS_OPP_MAX_L", MAX_L_OPP)
+    base = mine
     for opp_id in opp_ids:
         dn_opp = float(_score_do_nothing(
             status=garrison_status, prod=prod, alive_by_step=alive_by_step,
-            player_count=int(player_count), background=mine,
+            player_count=int(player_count), background=base,
             player_id=int(opp_id), opp_weights=None,
         ))
         cfg_opp = dataclasses.replace(
             config, roi_threshold=dn_opp + float(config.roi_threshold),
         )
-        reply_parts.append(predict_opp_launches_via_mirror(
+        part = predict_opp_launches_via_mirror(
             plan_fn=plan_lite_waves,
             obs_tensors=obs_tensors, movement=movement, cache=cache,
             garrison_status=garrison_status, prod=prod, alive_by_step=alive_by_step,
@@ -648,18 +658,22 @@ def _predict_reply(
             K_eta_override=K_eta_override,
             pad_to=pad,
             K=1, H=H,
-            base_background=mine,
-        ))
+            base_background=base,
+        )
+        reply_parts.append(part)
+        if seq:
+            # Sequential conditioning (PRODUCER_PLUS_REPLY_SEQ): later rivals
+            # see earlier rivals' predicted launches, not just ours. The
+            # independent merge prices every attack as if ALL rivals parry
+            # it simultaneously with full attention (defense counted once
+            # per rival) — measured to make the ungated 4P veto chronically
+            # passive (eliminated by step ~200; panel 1/16). Conditioning
+            # divides each rival's attention by the threats already on the
+            # board, like the K-round projection does for one opponent.
+            base = _cat_launch_sets([base, part])
     if len(reply_parts) == 1:
         return reply_parts[0]
-    return LaunchSet(
-        source_slots=torch.cat([r.source_slots for r in reply_parts]),
-        target_slots=torch.cat([r.target_slots for r in reply_parts]),
-        ships=torch.cat([r.ships for r in reply_parts]),
-        eta=torch.cat([r.eta for r in reply_parts]),
-        owner=torch.cat([r.owner for r in reply_parts]),
-        valid=torch.cat([r.valid for r in reply_parts]),
-    )
+    return _cat_launch_sets(reply_parts)
 
 
 def _cat_launch_sets(parts: list) -> LaunchSet:
