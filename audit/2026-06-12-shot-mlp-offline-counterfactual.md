@@ -108,3 +108,20 @@ alter roughly half of all live attack behavior in one step.
 Rule 46 state for the candidate bundle (`pp_sync_shotmlp_on.py`):
 bundler GREEN, `tests/test_shot_mlp.py` 3/3 GREEN, full-game smoke
 GREEN (turn p50 84 ms, max 381 ms < 1000 ms).
+
+## Live probe (appended)
+
+Submitted as **sub 53595717** (2026-06-12 08:43 UTC, threshold 0.15,
+sha256 03ce7fe729ba64a6…, 410 225 B) on PI sign-off, re-confirmed after
+the board change (evicts garval 53588922 mid-warmup; the μ≈1240
+coalition sub was already evicted by oracle_rw 53594710 at 08:12).
+
+**How to read the verdict (next session):**
+1. Settled μ vs the ≈1258 anchor of the identical-base sub 53577315
+   (TrueSkill warm-up: ~600 → settles over ~24 h; do not read early).
+2. The direct mechanism read: pull this sub's episodes
+   (`python -m scripts.live_episode_summary 53595717 --pull`), relabel,
+   and compare against the 53577315 baseline — low-P(<0.15) attack share
+   should collapse from ~16% toward ~0 (vetoed pre-launch), overall
+   attack success should rise from 0.42, and ships-wasted-per-game
+   should drop. That measurement is independent of ladder noise.
