@@ -135,6 +135,18 @@ def main():
     ft = torch.tensor(frac[tr])
     wt = torch.where(yt > 0.5, torch.tensor(1.0),
                      torch.tensor(1.0 / NEG_KEEP))
+    if os.environ.get("ORACLE_REWEIGHT_THREAT") and meta.shape[1] > 4:
+        # the defense-dense builder samples threat states at stride 1 vs
+        # calm at stride 3 (2 in the opening); reweight rows back to the
+        # natural state distribution so cadence calibration survives the
+        # oversampling (the unweighted version collapsed calm judgment)
+        t_col = torch.tensor(meta[tr, 2])
+        thr_col = torch.tensor(meta[tr, 4] > 0)
+        w_nat = torch.where(
+            thr_col, torch.tensor(1.0),
+            torch.where(t_col < 60, torch.tensor(2.0), torch.tensor(3.0)))
+        wt = wt * w_nat
+        print("threat-state importance reweighting ON")
     Zv = torch.from_numpy(Z[va]).to(dev)
     n = Zt.shape[0]
 
@@ -164,6 +176,9 @@ def main():
             lf, _ = net(Zv)
             pv = torch.sigmoid(lf).cpu().numpy()
         wv = np.where(y[va] > 0.5, 1.0, 1.0 / NEG_KEEP)
+        if os.environ.get("ORACLE_REWEIGHT_THREAT") and meta.shape[1] > 4:
+            wv = wv * np.where(meta[va, 4] > 0, 1.0,
+                               np.where(meta[va, 2] < 60, 2.0, 3.0))
         ll = -np.average(y[va] * np.log(pv + 1e-9)
                          + (1 - y[va]) * np.log(1 - pv + 1e-9), weights=wv)
         print(f"epoch {epoch}: train {tot/n:.4f}, val wlogloss {ll:.4f}, "
@@ -272,14 +287,24 @@ def main():
     sopt = torch.optim.AdamW(snet.parameters(), lr=1e-3)
     Gt = torch.tensor(Gz[s_tr], device=dev)
     yt_s = torch.tensor(ys_state[s_tr], device=dev)
+    ws_state = torch.ones_like(yt_s)
+    if os.environ.get("ORACLE_REWEIGHT_THREAT") and meta.shape[1] > 4:
+        # the state head's fire-rate calibration is exactly what the
+        # unweighted defense-dense data broke — reweight to natural
+        thr_s = torch.tensor(meta[idx_first][s_tr, 4] > 0)
+        t_s = torch.tensor(meta[idx_first][s_tr, 2])
+        ws_state = torch.where(
+            thr_s, torch.tensor(1.0),
+            torch.where(t_s < 60, torch.tensor(2.0), torch.tensor(3.0)))
     Gv = torch.tensor(Gz[s_va], device=dev)
-    bce_m = nn.BCEWithLogitsLoss()
+    bce_m = nn.BCEWithLogitsLoss(reduction="none")
     for ep_ in range(60):
         snet.train()
         perm = torch.randperm(len(Gt))
         for k in range(0, len(Gt), 16384):
             idx = perm[k:k + 16384]
-            loss = bce_m(snet(Gt[idx]), yt_s[idx])
+            loss = (bce_m(snet(Gt[idx]), yt_s[idx])
+                    * ws_state[idx]).mean()
             sopt.zero_grad()
             loss.backward()
             sopt.step()
