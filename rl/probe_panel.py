@@ -14,6 +14,7 @@ OPPONENTS = [
     ("producer_plus", "agents/producer_plus/producer_agent.py"),
     ("producer", "agents/producer/producer_agent.py"),
     ("ledger_v1_4", "submissions/ledger_v1_4.py"),
+    ("live_garval", "external/live_garval/live_agent.py"),
 ]
 SEEDS = [101, 202]
 
@@ -74,8 +75,11 @@ def run_game(args):
 
 def main():
     rl_path = sys.argv[1]
+    only = sys.argv[2].split(",") if len(sys.argv) > 2 else None
     jobs = []
     for opp_name, opp_path in OPPONENTS:
+        if only and opp_name not in only:
+            continue
         for seed in SEEDS:
             for rl_seat in (0, 1):
                 jobs.append((opp_name, (rl_path, opp_path, seed, rl_seat)))
@@ -83,7 +87,16 @@ def main():
     # One game per child process: producer and producer_plus both
     # register an `orbit_lite` module with different submodule sets, so
     # they must never share an interpreter.
-    with ProcessPoolExecutor(max_workers=4, max_tasks_per_child=1) as ex:
+    #
+    # Workers default to 1: kaggle_environments enforces the real 1s
+    # turn budget, and parallel CPU contention pushes heavy search
+    # agents over it — live_garval force-idled at workers=4 and "lost"
+    # 4/4 games it actually wins. Kaggle eval gives every agent
+    # dedicated cores; sequential is the faithful local equivalent.
+    import os
+    workers = int(os.environ.get("PROBE_WORKERS", "1"))
+    with ProcessPoolExecutor(max_workers=workers,
+                             max_tasks_per_child=1) as ex:
         results = list(ex.map(run_game, [j[1] for j in jobs]))
 
     by_opp = {}
