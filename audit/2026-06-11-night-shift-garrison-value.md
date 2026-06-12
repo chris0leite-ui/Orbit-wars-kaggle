@@ -49,7 +49,21 @@ Iteration within the night:
    seeds the mechanism dominates (seeds 2-3: 8/8 rank-1 at 94-100%).
 
 ## Final measurement (final bytes: lambda=12, R-cap, no step gate)
-[appended when the final battery completes]
+4P panel n=32 (8 seeds x 4 seats, focal vs 3x live-sub copies):
+final share 36.4% (even 25%), rank-1 14/32 (even 8/32), mean rank 2.03,
+12/32 truncation-eliminations (8 of them the two standoff-mirror seeds).
+2P mirror: 7/12, paired lead +2.6%@80 / +11.7%@120 / +20.2%@250 —
+parity-or-better, the live 2P edge is protected.
+
+## Morning ladder read (06:00 UTC 2026-06-12, n=78)
+Sub 53577315: mu 1258.3 (peaked 1317 at ~3h, sagged as the pool
+strengthened). Overall 38/78 = 48.7%. 2P 29/44 = 65.9% — the coalition
+lift holds at scale. 4P 9/34 = 26.5% vs baseline 53.8% (n=26): NOW
+significant (z ~ -2.2, unlike the n=24 read). The 4P bleed is real at
+the 1260+ band and is exactly the reinforcement-mass war the garrison
+value mechanism targets. Eviction picture for a garval submit: rolling
+pair is 53577315 (1258.3) + 53564198 (1286.8); a new submit evicts
+53564198 = our current best — Rule 42 PI sign-off mandatory.
 
 ## Tests / safety
 22 unit tests green (hold value 8, source safety 7, garrison value 7);

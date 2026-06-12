@@ -1,40 +1,55 @@
 {
   "submission_id": "53577315",
-  "generated_utc": "2026-06-11T20:29:49Z",
+  "generated_utc": "2026-06-12T00:31:21Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 42,
-  "n_played": 42,
-  "wins_total": 24,
-  "winrate_total": 0.5714285714285714,
+  "n_episodes": 78,
+  "n_played": 78,
+  "wins_total": 38,
+  "winrate_total": 0.48717948717948717,
   "by_size": {
     "2": {
-      "n": 18,
-      "wins": 15,
-      "winrate": 0.8333333333333334
+      "n": 44,
+      "wins": 29,
+      "winrate": 0.6590909090909091
     },
     "4": {
-      "n": 24,
+      "n": 34,
       "wins": 9,
-      "winrate": 0.375
+      "winrate": 0.2647058823529412
     }
   },
   "self_match_episodes": 1,
   "seat_distribution": {
-    "0": 17,
-    "1": 16,
+    "0": 34,
+    "1": 32,
     "2": 6,
-    "3": 6
+    "3": 9
   },
   "episode_length_steps": {
-    "n": 42,
-    "min": 93,
-    "q1": 125,
-    "median": 153,
+    "n": 78,
+    "min": 89,
+    "q1": 120,
+    "median": 151,
     "q3": 210,
     "max": 500,
-    "mean": 197.54761904761904
+    "mean": 188.55128205128204
   },
   "opponents": [
+    {
+      "name": "Kaiser",
+      "seen": 4,
+      "beat_us": 2
+    },
+    {
+      "name": "Tommy Barnes",
+      "seen": 3,
+      "beat_us": 2
+    },
+    {
+      "name": "aaa",
+      "seen": 3,
+      "beat_us": 3
+    },
     {
       "name": "SeaEag1e",
       "seen": 2,
@@ -46,9 +61,19 @@
       "beat_us": 0
     },
     {
+      "name": "SiestaGuru",
+      "seen": 2,
+      "beat_us": 2
+    },
+    {
       "name": "Surabhi veda",
       "seen": 2,
       "beat_us": 2
+    },
+    {
+      "name": "susutem",
+      "seen": 2,
+      "beat_us": 0
     },
     {
       "name": "Gregor Lied",
@@ -61,14 +86,24 @@
       "beat_us": 1
     },
     {
-      "name": "Tommy Barnes",
+      "name": "KoshinM",
       "seen": 2,
       "beat_us": 1
     },
     {
-      "name": "aaa",
+      "name": "forever young",
       "seen": 2,
-      "beat_us": 2
+      "beat_us": 0
+    },
+    {
+      "name": "istinetz",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "Felix M Neumann",
+      "seen": 2,
+      "beat_us": 1
     },
     {
       "name": "Blu3s",
@@ -76,7 +111,17 @@
       "beat_us": 1
     },
     {
-      "name": "Kaiser",
+      "name": "nadhir hasan",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "kk.sky.9k",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
+      "name": "Ifeoluwa Adewumi",
       "seen": 2,
       "beat_us": 1
     },
@@ -144,11 +189,6 @@
       "name": "Hu Xingyu",
       "seen": 1,
       "beat_us": 0
-    },
-    {
-      "name": "SiestaGuru",
-      "seen": 1,
-      "beat_us": 1
     },
     {
       "name": "ljx59141421",
@@ -236,11 +276,6 @@
       "beat_us": 0
     },
     {
-      "name": "susutem",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "unosss",
       "seen": 1,
       "beat_us": 0
@@ -301,11 +336,6 @@
       "beat_us": 1
     },
     {
-      "name": "KoshinM",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "Henry Nieves",
       "seen": 1,
       "beat_us": 0
@@ -336,19 +366,9 @@
       "beat_us": 0
     },
     {
-      "name": "forever young",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "mmath2",
       "seen": 1,
       "beat_us": 0
-    },
-    {
-      "name": "istinetz",
-      "seen": 1,
-      "beat_us": 1
     },
     {
       "name": "Ezra",
@@ -362,11 +382,6 @@
     },
     {
       "name": "XiaokangWang",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
-      "name": "Felix M Neumann",
       "seen": 1,
       "beat_us": 0
     },
@@ -424,6 +439,206 @@
       "name": "Sam Scott",
       "seen": 1,
       "beat_us": 0
+    },
+    {
+      "name": "dnish",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ebi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\u6c5f\u4e1c",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "SQLRockstar",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "LMaldaz",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "just need a silver medal",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Maria Triapitsuna",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "yossi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "shim0",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "digimagi",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "simmons1025",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Ichigo_E",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "W & K",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "ra5anchor",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Debatreya Biswas",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Sky kun",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "pantheon of ducks \ud83e\udd86",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "flamepurple",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "CurveCowboy",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Le Trong Hieu",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "HIDEYO CHIBA",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Kun Zhang",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "DJKGHW",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "marsianenergy",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Charismatic Pizza Party\ud83c\udf55",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "saeNeko",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Dnyanesh Bharambe",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "mashen_99",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "IAI-RL-17",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Catcatcher",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Karthik",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "OverfitOracle",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "sary sary",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "linrock",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "dndhukn",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Roche Overflow",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ma name",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Dapp",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\ud83d\udef0\ufe0f Low-Orbit Losers",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "klog",
+      "seen": 1,
+      "beat_us": 1
     }
   ],
   "losses": [
@@ -618,6 +833,224 @@
       ],
       "winner": "Kaiser",
       "steps": 181
+    },
+    {
+      "episode": "episode-79567657",
+      "size": 4,
+      "opponents": [
+        "aaa",
+        "dnish",
+        "Ebi"
+      ],
+      "winner": "aaa",
+      "steps": 168
+    },
+    {
+      "episode": "episode-79567894",
+      "size": 2,
+      "opponents": [
+        "Kaiser"
+      ],
+      "winner": "Kaiser",
+      "steps": 156
+    },
+    {
+      "episode": "episode-79568367",
+      "size": 2,
+      "opponents": [
+        "Tommy Barnes"
+      ],
+      "winner": "Tommy Barnes",
+      "steps": 144
+    },
+    {
+      "episode": "episode-79569176",
+      "size": 4,
+      "opponents": [
+        "SQLRockstar",
+        "LMaldaz",
+        "just need a silver medal"
+      ],
+      "winner": "SQLRockstar",
+      "steps": 125
+    },
+    {
+      "episode": "episode-79569422",
+      "size": 4,
+      "opponents": [
+        "Maria Triapitsuna",
+        "yossi",
+        "shim0"
+      ],
+      "winner": "shim0",
+      "steps": 500
+    },
+    {
+      "episode": "episode-79569698",
+      "size": 2,
+      "opponents": [
+        "nadhir hasan"
+      ],
+      "winner": "nadhir hasan",
+      "steps": 119
+    },
+    {
+      "episode": "episode-79570541",
+      "size": 2,
+      "opponents": [
+        "simmons1025"
+      ],
+      "winner": "simmons1025",
+      "steps": 204
+    },
+    {
+      "episode": "episode-79571478",
+      "size": 2,
+      "opponents": [
+        "kk.sky.9k"
+      ],
+      "winner": "kk.sky.9k",
+      "steps": 224
+    },
+    {
+      "episode": "episode-79571820",
+      "size": 2,
+      "opponents": [
+        "W & K"
+      ],
+      "winner": "W & K",
+      "steps": 189
+    },
+    {
+      "episode": "episode-79573100",
+      "size": 4,
+      "opponents": [
+        "Debatreya Biswas",
+        "Sky kun",
+        "pantheon of ducks \ud83e\udd86"
+      ],
+      "winner": "Sky kun",
+      "steps": 500
+    },
+    {
+      "episode": "episode-79573320",
+      "size": 2,
+      "opponents": [
+        "flamepurple"
+      ],
+      "winner": "flamepurple",
+      "steps": 148
+    },
+    {
+      "episode": "episode-79573795",
+      "size": 2,
+      "opponents": [
+        "CurveCowboy"
+      ],
+      "winner": "CurveCowboy",
+      "steps": 138
+    },
+    {
+      "episode": "episode-79574116",
+      "size": 4,
+      "opponents": [
+        "Le Trong Hieu",
+        "HIDEYO CHIBA",
+        "Kun Zhang"
+      ],
+      "winner": "HIDEYO CHIBA",
+      "steps": 154
+    },
+    {
+      "episode": "episode-79574152",
+      "size": 4,
+      "opponents": [
+        "DJKGHW",
+        "KoshinM",
+        "marsianenergy"
+      ],
+      "winner": "KoshinM",
+      "steps": 212
+    },
+    {
+      "episode": "episode-79574479",
+      "size": 4,
+      "opponents": [
+        "Charismatic Pizza Party\ud83c\udf55",
+        "forever young",
+        "saeNeko"
+      ],
+      "winner": "saeNeko",
+      "steps": 500
+    },
+    {
+      "episode": "episode-79574746",
+      "size": 2,
+      "opponents": [
+        "Dnyanesh Bharambe"
+      ],
+      "winner": "Dnyanesh Bharambe",
+      "steps": 115
+    },
+    {
+      "episode": "episode-79580931",
+      "size": 4,
+      "opponents": [
+        "istinetz",
+        "Roche Overflow",
+        "ma name"
+      ],
+      "winner": "ma name",
+      "steps": 210
+    },
+    {
+      "episode": "episode-79581626",
+      "size": 4,
+      "opponents": [
+        "Dapp",
+        "\ud83d\udef0\ufe0f Low-Orbit Losers",
+        "nadhir hasan"
+      ],
+      "winner": "\ud83d\udef0\ufe0f Low-Orbit Losers",
+      "steps": 213
+    },
+    {
+      "episode": "episode-79581834",
+      "size": 2,
+      "opponents": [
+        "Ifeoluwa Adewumi"
+      ],
+      "winner": "Ifeoluwa Adewumi",
+      "steps": 117
+    },
+    {
+      "episode": "episode-79582288",
+      "size": 2,
+      "opponents": [
+        "SiestaGuru"
+      ],
+      "winner": "SiestaGuru",
+      "steps": 117
+    },
+    {
+      "episode": "episode-79583168",
+      "size": 2,
+      "opponents": [
+        "Felix M Neumann"
+      ],
+      "winner": "Felix M Neumann",
+      "steps": 89
+    },
+    {
+      "episode": "episode-79586412",
+      "size": 4,
+      "opponents": [
+        "klog",
+        "Ifeoluwa Adewumi",
+        "Kaiser"
+      ],
+      "winner": "klog",
+      "steps": 141
     }
   ]
 }
