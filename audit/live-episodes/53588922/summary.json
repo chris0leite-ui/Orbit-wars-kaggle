@@ -1,0 +1,204 @@
+{
+  "submission_id": "53588922",
+  "generated_utc": "2026-06-12T05:19:49Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 13,
+  "n_played": 13,
+  "wins_total": 8,
+  "winrate_total": 0.6153846153846154,
+  "by_size": {
+    "2": {
+      "n": 7,
+      "wins": 6,
+      "winrate": 0.8571428571428571
+    },
+    "4": {
+      "n": 6,
+      "wins": 2,
+      "winrate": 0.3333333333333333
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 4,
+    "1": 6,
+    "2": 5,
+    "3": 1
+  },
+  "episode_length_steps": {
+    "n": 13,
+    "min": 102,
+    "q1": 119,
+    "median": 136,
+    "q3": 207,
+    "max": 500,
+    "mean": 225
+  },
+  "opponents": [
+    {
+      "name": "Alexandre ARNAUD",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "alex chilton",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "APEX",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "YS",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "atom",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "lyhlyh",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "LMaldaz",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "xiaojun hong",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "lailixiang",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kato Jiro",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "IAI-RL-Cherry_11",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mehrdad_LU",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "shash20124",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "monnu",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Maslov Oleg",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Beyond Logic",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Chikuwabu",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Arpit1Bansal",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "RYOTAaaaaa",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "\u5c0f\u677e\u5d0e\u3000\u5927\u4e16",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "lllleeeo",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "yiyu0716",
+      "seen": 1,
+      "beat_us": 1
+    }
+  ],
+  "losses": [
+    {
+      "episode": "episode-79613789",
+      "size": 4,
+      "opponents": [
+        "lyhlyh",
+        "LMaldaz",
+        "xiaojun hong"
+      ],
+      "winner": "lyhlyh",
+      "steps": 201
+    },
+    {
+      "episode": "episode-79614320",
+      "size": 4,
+      "opponents": [
+        "Mehrdad_LU",
+        "shash20124",
+        "monnu"
+      ],
+      "winner": "shash20124",
+      "steps": 136
+    },
+    {
+      "episode": "episode-79614361",
+      "size": 4,
+      "opponents": [
+        "Maslov Oleg",
+        "Beyond Logic",
+        "Chikuwabu"
+      ],
+      "winner": "Beyond Logic",
+      "steps": 123
+    },
+    {
+      "episode": "episode-79615063",
+      "size": 2,
+      "opponents": [
+        "RYOTAaaaaa"
+      ],
+      "winner": "RYOTAaaaaa",
+      "steps": 207
+    },
+    {
+      "episode": "episode-79615495",
+      "size": 4,
+      "opponents": [
+        "\u5c0f\u677e\u5d0e\u3000\u5927\u4e16",
+        "lllleeeo",
+        "yiyu0716"
+      ],
+      "winner": "yiyu0716",
+      "steps": 500
+    }
+  ]
+}
