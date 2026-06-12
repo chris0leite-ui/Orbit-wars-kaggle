@@ -112,6 +112,10 @@ def main():
     ap.add_argument("--eval-envs", type=int, default=32)
     ap.add_argument("--eval-opp", type=str, default="greedy")
     ap.add_argument("--entropy-coef", type=float, default=0.01)
+    ap.add_argument("--bc-npz", type=str, default="",
+                    help="behavior-cloning samples npz (rl/bc_data.py)")
+    ap.add_argument("--bc-coef", type=float, default=0.3)
+    ap.add_argument("--bc-batch", type=int, default=192)
     ap.add_argument("--league", action="store_true",
                     help="half the envs train vs frozen snapshots/greedy")
     ap.add_argument("--snapshot-every", type=int, default=150)
@@ -165,6 +169,17 @@ def main():
     bootstrap_jit = jax.jit(bootstrap_values)
     eval_jit = jax.jit(eval_vs_greedy,
                        static_argnames=("n_envs", "n_steps", "opp_name"))
+
+    bc_data = None
+    if args.bc_npz:
+        from rl.bc_data import load_bc_npz
+        from rl.ppo import bc_update
+        gs_bc, tgt_bc, frac_bc, mask_bc, seat_bc = load_bc_npz(args.bc_npz)
+        gs_bc = jax.tree.map(jnp.asarray, gs_bc)
+        bc_data = (gs_bc, jnp.asarray(tgt_bc), jnp.asarray(frac_bc),
+                   jnp.asarray(mask_bc), jnp.asarray(seat_bc))
+        print(f"BC samples: {int(tgt_bc.shape[0])} "
+              f"(coef {args.bc_coef}, batch {args.bc_batch})")
 
     snapshots = []  # league opponents: list of params pytrees (device)
     opp_pick = None
@@ -220,6 +235,18 @@ def main():
             n_minibatch=args.minibatches, n_epochs=args.epochs,
             entropy_coef=args.entropy_coef)
         metrics = jax.tree.map(float, metrics)
+
+        if bc_data is not None:
+            from rl.ppo import bc_update
+            gs_bc, tgt_bc, frac_bc, mask_bc, seat_bc = bc_data
+            key, kb = jax.random.split(key)
+            n_bc = tgt_bc.shape[0]
+            bidx = jax.random.randint(kb, (args.bc_batch,), 0, n_bc)
+            params, opt_state, bcl = bc_update(
+                params, opt_state, args.lr, args.bc_coef,
+                jax.tree.map(lambda x: x[bidx], gs_bc),
+                tgt_bc[bidx], frac_bc[bidx], mask_bc[bidx], seat_bc[bidx])
+            metrics["bc_ce"] = float(bcl)
         t_upd = time.time() - t0
 
         if args.league and it % args.snapshot_every == 0:
