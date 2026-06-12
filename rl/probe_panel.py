@@ -11,21 +11,42 @@ from concurrent.futures import ProcessPoolExecutor
 
 
 OPPONENTS = [
-    ("producer_plus", "agents/producer_plus/main.py"),
-    ("producer", "agents/producer/main.py"),
+    ("producer_plus", "agents/producer_plus/producer_agent.py"),
+    ("producer", "agents/producer/producer_agent.py"),
     ("ledger_v1_4", "submissions/ledger_v1_4.py"),
 ]
 SEEDS = [101, 202]
 
 
+def _load_agent_callable(path):
+    """Exec a .py agent and return its `agent` callable. Registers the
+    module and adds its directory to sys.path first so package-relative
+    imports (producer's orbit_lite) resolve — bare file paths passed to
+    kaggle_environments silently idle on those."""
+    import importlib.util
+    import os
+    import sys
+    name = "probe_" + os.path.basename(path).replace(".py", "") \
+        + "_" + str(abs(hash(path)) % 10000)
+    d = os.path.dirname(os.path.abspath(path))
+    if d not in sys.path:
+        sys.path.insert(0, d)
+    # producer_plus has no orbit_lite of its own — it shares producer's.
+    prod_dir = os.path.abspath("agents/producer")
+    if "producer_plus" in path and prod_dir not in sys.path:
+        sys.path.append(prod_dir)
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod.agent
+
+
 def run_game(args):
     rl_path, opp_path, seed, rl_seat = args
     from kaggle_environments import make
-    # Load via fast.py's resolver: directory-based agents (producer's
-    # orbit_lite package) silently idle if passed as bare file paths.
-    import fast
-    rl_agent = fast._load_callable(rl_path)
-    opp_agent = fast._load_callable(opp_path)
+    rl_agent = _load_agent_callable(rl_path)
+    opp_agent = _load_agent_callable(opp_path)
     env = make("orbit_wars", configuration={"seed": seed}, debug=False)
     agents = ([rl_agent, opp_agent] if rl_seat == 0
               else [opp_agent, rl_agent])
@@ -59,7 +80,10 @@ def main():
             for rl_seat in (0, 1):
                 jobs.append((opp_name, (rl_path, opp_path, seed, rl_seat)))
 
-    with ProcessPoolExecutor(max_workers=4) as ex:
+    # One game per child process: producer and producer_plus both
+    # register an `orbit_lite` module with different submodule sets, so
+    # they must never share an interpreter.
+    with ProcessPoolExecutor(max_workers=4, max_tasks_per_child=1) as ex:
         results = list(ex.map(run_game, [j[1] for j in jobs]))
 
     by_opp = {}
