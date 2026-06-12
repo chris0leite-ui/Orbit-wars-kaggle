@@ -97,3 +97,9 @@ audit/external/
 # products land in audit/<date>-*.json which IS tracked.
 audit/eda-*/
 audit/2026-05-22/*.log
+
+# Oracle deliverable bundles — version these (weights+code consistent units)
+!submissions/oracle_round1.py
+!submissions/oracle_threat.py
+!submissions/oracle_rw.py
+!submissions/oracle_rw2.py
