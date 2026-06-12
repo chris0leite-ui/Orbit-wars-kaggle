@@ -45,13 +45,23 @@ def count_launches(steps, idx):
     return n
 
 
-def play(focal, opp, seed, swap):
+def play(focal, opp, seed, swap, save_dir=None):
     from kaggle_environments import make
     env = make("orbit_wars", configuration={"seed": seed}, debug=False)
     agents = [opp, focal] if swap else [focal, opp]
     t0 = time.time()
     env.run(agents)
     wall = time.time() - t0
+    if save_dir:
+        import os as _os
+        _os.makedirs(save_dir, exist_ok=True)
+        fname = (f"episode-{seed}{'s' if swap else ''}-"
+                 f"{_os.path.basename(str(agents[0]))[:12]}-"
+                 f"{_os.path.basename(str(agents[1]))[:12]}-replay.json"
+                 ).replace(" ", "")
+        with open(_os.path.join(save_dir, fname), "w") as fh:
+            fh.write(env.toJSON() if isinstance(env.toJSON(), str)
+                     else json.dumps(env.toJSON()))
     steps = env.steps
     fi = 1 if swap else 0
     rewards = [steps[-1][k].reward for k in range(2)]
@@ -74,6 +84,8 @@ def main():
     ap.add_argument("--swap", action="store_true",
                     help="also play the seat-swapped game per seed")
     ap.add_argument("--out", default="")
+    ap.add_argument("--save-replays", default="",
+                    help="directory to dump full replays (self-play data)")
     args = ap.parse_args()
 
     focal = resolve_agent_path(args.focal)
@@ -85,7 +97,8 @@ def main():
     with open(out_path, "w") as f:
         for seed in seeds:
             for swap in ([False, True] if args.swap else [False]):
-                row = play(focal, opp, seed, swap)
+                row = play(focal, opp, seed, swap,
+                           save_dir=args.save_replays or None)
                 alive = (row["launches_opp"] > 0 and row["n_steps"] > 30
                          and row["launches_focal"] > 0)
                 row["alive"] = alive

@@ -61,6 +61,9 @@ CAPTURE_MARGIN = int(_f("ORACLE_CAPTURE_MARGIN", 2))
 # no-chain mode: single-pass selection, commitment features stay zero —
 # must match weights trained with ORACLE_ZERO_COMMIT=1
 NO_CHAIN = os.environ.get("ORACLE_NO_CHAIN", "0") != "0"
+# generation-time exploration: Gumbel-perturbed ranking (0 = exact argmax)
+TEMPERATURE = _f("ORACLE_TEMPERATURE", 0.0)
+CHECKMATE_ON = os.environ.get("ORACLE_CHECKMATE", "1") != "0"
 VETO_DELTA = _f("ORACLE_VETO_DELTA", 0.02)
 VETO_ON = os.environ.get("ORACLE_VETO", "1") != "0"
 MIN_GARRISON_SRC = 2
@@ -269,8 +272,10 @@ class Planner:
         if len(opps) != 1:
             return None
         opp = opps[0]
-        if per_score.get(me, 0) < 4 * per_score[opp] \
-                or per_planets.get(opp, 0) > 4:
+        # strict finisher: premature triggering against a merely-stumbling
+        # opponent froze the policy and lost seed 7 (smoke, 2026-06-12)
+        if per_score.get(me, 0) < 6 * per_score[opp] \
+                or per_planets.get(opp, 0) > 3:
             return None
 
         moves = []
@@ -305,7 +310,9 @@ class Planner:
                 if rec is not None:
                     moves.append([world.pid[s], float(rec[2]), int(rec[1])])
                     spent[s] = spent.get(s, 0) + rec[1]
-        return moves
+        # kill moves dispatch immediately; with everything already inbound
+        # fall through to the normal policy (holding froze defense/economy)
+        return moves if moves else None
 
     # --------------------------------------------------------------- act
     def act(self, obs):
@@ -315,9 +322,10 @@ class Planner:
         me = world.me
 
         src_states = source_states(world, me)
-        kill = self._checkmate(world, me, src_states)
-        if kill is not None:
-            return kill
+        if CHECKMATE_ON:
+            kill = self._checkmate(world, me, src_states)
+            if kill is not None:
+                return kill
         pairs = shortlist_pairs(world, src_states)
         if not pairs:
             return []
@@ -332,8 +340,14 @@ class Planner:
         self.last_step = world.step
         self.fire_debt = min(2.0, self.fire_debt + float(p_state))
 
-        order = sorted(range(len(pairs)), key=lambda k: -p_fire[k])
-        top_p = float(p_fire[order[0]])
+        if TEMPERATURE > 0:
+            import numpy as _np
+            keys = (_np.log(_np.asarray(p_fire) + 1e-9) / TEMPERATURE
+                    + _np.random.gumbel(size=len(p_fire)))
+            order = list(_np.argsort(-keys))
+        else:
+            order = sorted(range(len(pairs)), key=lambda k: -p_fire[k])
+        top_p = float(max(p_fire))
         act_now = (self.fire_debt >= DEBT_FIRE) or (top_p >= PAIR_ABS_OVERRIDE)
         if not act_now:
             return []
