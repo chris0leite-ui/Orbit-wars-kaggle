@@ -1,12 +1,12 @@
 # HANDOVER — morning brief (written 2026-06-12 ~06:30 UTC, end of night shift)
 
-## Decision waiting on PI (Rule 42 sign-off)
-Submit `producer_plus_vetorf4p_sync_garval_on.py` (390,518 B) as the next
-live experiment? Targets the now-significant 4P bleed (26.5% vs 53.8%
-baseline) with the garrison-value mechanism. CAVEAT: the rolling pair is
-53577315 (1258.3) + 53564198 (1286.8); a new submit evicts 53564198 — our
-CURRENT BEST. Options: (a) accept the eviction, (b) burn 2 slots (garval +
-re-anchor the best), (c) hold. Budget fresh: 5 slots today.
+## DONE: garval submitted as sub 53588922 (2026-06-12 ~07:10 UTC)
+PI explicit sign-off "Submit" accepting the eviction of 53564198 (1280.0).
+Rolling pair now: 53577315 (coalitions, 1251.7) + 53588922 (garval,
+warming up ~24h — do not read mu before 2026-06-13 ~07:00). 4 slots left
+today. First read: live_episode_summary 53588922 --pull at ~20 episodes;
+compare 4P winrate vs 53577315's 26.5% and check the garrisoning watch
+items (knowledge-base/questions/2026-06-12-garval-open-questions.md).
 
 ## Live state (06:00 UTC, n=78)
 - 53577315 (coalitions): mu 1258.3 (peak 1317). 2P 65.9% — lift confirmed
