@@ -661,3 +661,15 @@ postmortem.
   saved for backward — 14.8GB alloc at batch 256. Featurize outside
   the grad; bit-identical metrics, ~5x memory drop. Cost: one failed
   overnight launch (~40 min lost), caught by status monitor.
+
+## 2026-06-12 (afternoon) — third eval-validity trap
+
+- `fast.py eval` (worker subprocesses) silently breaks the
+  live_garval/producer_plus stack: 32/32 "wins" at 29 s/game vs an
+  opponent that beats the same agent in `fast.py play` (single
+  process) and in sequential kaggle-env games. Cause in the worker
+  path not yet isolated (torch under fork + module registration are
+  suspects). RULE OF THUMB adopted: any eval where a heavy opponent's
+  measured turn time collapses (<20 ms p50) or games run implausibly
+  fast is VOID; gates vs producer-family run as sequential kaggle-env
+  probes only.
