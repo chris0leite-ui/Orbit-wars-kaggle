@@ -42,6 +42,12 @@ def gen_game(seed: int, out_path: str, agent_path: str):
             "planets": [list(p) for p in obs["planets"]],
             "fleets": [list(f) for f in (obs.get("fleets") or [])],
             "step": int(obs.get("step", i)),
+            "comets": [
+                {"planet_ids": list(g["planet_ids"]),
+                 "path_index": int(g["path_index"]),
+                 "paths": [[list(pt) for pt in p] for p in g["paths"]]}
+                for g in (obs.get("comets") or [])
+            ],
             "actions": [
                 list(nxt[0].action or []),
                 list(nxt[1].action or []),
