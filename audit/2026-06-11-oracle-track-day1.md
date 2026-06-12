@@ -117,3 +117,35 @@ Reverted wholesale instead of bisected — three battery-hours lost.
 Chained same-turn conditioning (commitment features + per-pick re-scoring,
 the PI's "combined actions" direction) — dataset rebuild + retrain
 running; re-panel next.
+
+## Day-2 addendum (2026-06-12) — the live probe verdict + cycle 1
+
+**Live probe (sub 53594710, oracle_rw):** settled ~1004 (25W-35L over 60
+episodes) — below the 1150-1300 prediction band. Loss autopsy on 20
+downloaded replays: **15/20 are early eliminations (t65-190)**, in both
+2P (9) and 4P (6) — the uniform loss law confirmed in production. The
+900-1100 band is Producer-saturated; the agent is gated exactly where
+the population is thickest. The 4P strength (42/64 first-place locally)
+did not outweigh it.
+
+**Checkmate finisher shipped** after the PI's live observation (won game
+dragged 428 turns at 5x superiority): exact-engine forced kills when
+provably won (one opponent, 6x score, <=3 planets). Validated on the
+exact live failing state (fires the kill at t=231 of game 79631502) and
+on the v7 spot battery (7/8, eliminations at t130-168 replacing 500-step
+drags). In submissions/oracle_rw2.py.
+
+**Self-play cycle 1, first attempt flawed and caught:** generation ran
+with exploration temperature 1.0 — Gumbel noise swamped the policy's
+log-probabilities and effectively randomized play (2/30 vs Producer vs
+the sober 8/16). Lesson: noise scale must be validated against sober
+win rates before trusting generated data. Regenerated deterministically
+(board variety supplies diversity); the 20 live-loss replays (real
+ladder winners beating the actual build) joined the lesson pool.
+
+**Bundle versioning hole found:** submissions/* was gitignored; every
+"pinned" bundle existed only on the ephemeral disk while commit messages
+claimed otherwise. Whitelisted and committed (round1, threat, rw, rw2).
+
+Rolling pair after the parallel branch's latest: their shotml 1286 +
+our oracle_rw 1004 (older half -> next submission evicts the cheap probe).
