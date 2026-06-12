@@ -78,6 +78,35 @@ v7_0-class, loses producer-class). Calibration-value case surfaced to
 PI; awaiting their call. 4 slots left today (shared with other
 branches).
 
+## Evening status (15:45 UTC) + v6 results
+
+League day-run (v6, +31M env-steps, 64M total) moved everything:
+producer 0/4→1/4, ledger 2/4→4/4, live_garval 0/4→2/4 on probe seeds;
+the WIDER n=16 sequential triage vs live_garval: **4/16 (25%)** —
+short of the 50% submit gate but a real climb from 0%.
+
+THIRD eval-validity trap: `fast.py eval` worker subprocesses silently
+break the producer/garval stack (32/32 "wins" at 29 s/game, while the
+same opponent wins in `fast.py play` and sequential kaggle-env).
+Producer-family gates run as sequential kaggle-env probes ONLY
+(rl/probe_panel.py, PROBE_SEEDS=... for width).
+
+BC pipeline BUILT and smoked end-to-end:
+- 200-game producer-mirror corpus (regenerated WITH obs.comets);
+- rl/bc_data.py converter (ray-march launches -> target labels);
+- ppo.bc_update interleaved CE (mask-illegal labels dropped — they
+  exploded CE via the -1e9 logits);
+- data/bc_samples.npz conversion queued behind corpus regen.
+
+Kernel v7 (night league, resumed v6) runs until ~23:15 UTC.
+GPU quota ~24.8h/30h used; if the weekly reset doesn't land Saturday,
+v8 (league+BC) gets only ~5h.
+
+Morning checklist v2: (1) v7 down + 12-game probe + n=16/32 sequential
+gate vs live_garval; (2) if gate ≥0.50 Wilson-lo → Rule 42/46 path and
+submission proposal to PI; (3) else launch v8 = league + BC
+(--bc-npz data/bc_samples.npz --bc-coef 0.3) on whatever quota exists.
+
 ## Plan
 
 - v6 league kernel completes ~14:40 UTC → 12-game probe → kernel v7
