@@ -1,48 +1,49 @@
-# HANDOVER — next session brief (written 2026-06-11 ~22:50 UTC)
+# HANDOVER — morning brief (written 2026-06-12 ~06:30 UTC, end of night shift)
 
-## Live state
-- **Sub 53577315** (vetorf4p_sync) submitted 17:44 UTC 2026-06-11 — live
-  experiment: current best stack + same-tick two-source coalitions (holds
-  OFF). TrueSkill warm-up ~24h; do NOT read μ before ~2026-06-12 18:00.
-  Rolling pair: 53577315 + 53564198 (best, settled ~1244-1280 band).
-- Daily budget resets midnight UTC; 2026-06-11 used 4/5 slots
-  (2 parallel-branch ledger subs, our 53564198, our 53577315).
+## Decision waiting on PI (Rule 42 sign-off)
+Submit `producer_plus_vetorf4p_sync_garval_on.py` (390,518 B) as the next
+live experiment? Targets the now-significant 4P bleed (26.5% vs 53.8%
+baseline) with the garrison-value mechanism. CAVEAT: the rolling pair is
+53577315 (1258.3) + 53564198 (1286.8); a new submit evicts 53564198 — our
+CURRENT BEST. Options: (a) accept the eviction, (b) burn 2 slots (garval +
+re-anchor the best), (c) hold. Budget fresh: 5 slots today.
+
+## Live state (06:00 UTC, n=78)
+- 53577315 (coalitions): mu 1258.3 (peak 1317). 2P 65.9% — lift confirmed
+  at scale. 4P 26.5% — significantly below baseline; the 1260-band 4P
+  pool out-reinforces us (war-ledger law: whoever reinforces more wins).
+- 53564198 (backstop best): 1286.8.
+
+## The night's build: PRODUCER_PLUS_GARRISON_VALUE (default OFF)
+Chooser-internal proactive-garrison credit from local balance of force
+(threat from uncommitted enemy reserves vs garrison + production +
+routable help), capped at one credited target per living rival. Variant
+`vetorf4p_sync_garval` = full live stack + SOURCE_SAFETY=0.5 +
+GARRISON_VALUE=12. Final battery (final bytes): 4P panel final share
+36.4% vs 25% even, rank-1 14/32; 2P mirror 7/12, +20.2%@250 paired.
+Panel seeds 6-7 wipes are the standoff-mirror artifact (control: pure
+incumbent 4-mirror plays 25/25/25/25 for 250 steps; deviator gets
+carved) — not extrapolable to the field. 22 unit tests; smoke max 157 ms.
+
+## Other night threads (all in audit/2026-06-11-night-shift-garrison-value.md)
+- 4P leader-avoidance: fully diagnosed = wave-size feasibility vs leader
+  floors (valuation + reach eliminated). Coalitions are the existing bet.
+- Defense vs counter-attack (PI observation): we already counter-attack
+  65% of inbound threats; defended exchanges perform best (+120 mean) but
+  selection-biased. No untapped counter-attack alpha found in our replays.
+- Economy-credit thread CLOSED (3 refutations); superseded by garrison
+  value, which addresses the same holdability defect from the defense side.
+
+## Tools added this session
+- scripts/decision_trace.py usage on live replays (mining workflow:
+  fleet-vanish target attribution; owner sampled at decision step t0-1;
+  endgame doomstack games are a contaminating specimen class).
+- PPNSX namespacing recipe: sed PRODUCER_PLUS_ -> PPNSX_ on a built
+  bundle => submissions/_ns_vetorf4p_sync.py (gitignored, rebuild).
 
 ## First actions next session
-1. Rule 32 git fetch; rebuild gitignored bundles as needed
-   (`python scripts/bundle_producer_plus.py --variant veto_rf` etc. +
-   PPNSX-namespaced referees via sed).
-2. `python scripts/live_episode_summary.py 53577315 --pull` once ~20+
-   episodes exist: compare 2P/4P winrates and coalition-fired games vs
-   53564198's baseline (51.7% overall, 2P 50.0% n=34, 4P 53.8% n=26).
-
-## The build queue (evidence-ranked)
-1. **Holding-time-priced terminal value** — the open foundation fix.
-   Diagnosis PROVEN (decision_trace on the Gregor Lied loss: every capture
-   scores +0.0 vs threshold +1.5 for 3 straight turns; wins are
-   production-ahead @40 in 16/17, losses behind 9/17). Flat λ=12 REFUTED
-   (mirror 2/12; champion 4/8 +20% < control 6/8 +51%) — invested capital
-   gets punished before payback. Build: per-target credit = production ×
-   expected holding time given opponent's feasible retake (see ledger
-   branch's capture pricing, `git show origin/claude/elegant-dijkstra-uae6p0:submissions/ledger_v1_2.py`).
-   Components on hand: recapture_penalty (orbit_lite), reactive margin,
-   capture_floor.
-2. Sync holds redemption (SYNC_DMAX>0) only if a live observation suggests
-   the field doesn't punish telegraphed splits like our mirror does.
-3. Tuner v2 (more seeds, smaller steps, commit-cost eps knob).
-
-## Key tools
-- `scripts/decision_trace.py REPLAY SEAT STEP...` — planner internals on a
-  live episode step (shortlist/floors/scores/veto). Use on every PI replay
-  observation FIRST.
-- `scripts/sync_probe.py` — in-process hold lifecycle probe; surfaces
-  swallowed agent crashes (env plays on after agent exceptions — flipped
-  outcome + zero mechanism activity ⇒ suspect a crash).
-- `scripts/margin_ab.py` / `scripts/margin_ffa.py` — truncated margin
-  triage, dead-seat guards in both.
-
-## Doctrine (unchanged)
-Local referees saturate below our level; mirror punishes any divergence.
-Local measurement = safety gate (crash/timeout/rout detection) + mirror-
-domination detection. The ~55 remaining live slots are the only honest
-instrument vs the 1300+ field. One observation → one mechanism → one push.
+1. Rule 32 fetch; rebuild bundles (vetorf4p_sync_garval, vetorf4p_sync,
+   _ns_ copy via sed).
+2. Get PI verdict on the garval submit + eviction question.
+3. Re-pull 53577315 episodes; check the coalition watch item (leader
+   strikes when behind) on the larger 4P sample.
