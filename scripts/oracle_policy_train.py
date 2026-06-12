@@ -81,14 +81,21 @@ def main():
     max_rows = int(os.environ.get("ORACLE_TRAIN_MAX_ROWS", "0"))
     if max_rows and len(X) > max_rows:
         # deterministic thinning that keeps whole states together
-        state_key = meta[:, 0] * 100000 + meta[:, 3]
-        keep = (state_key % 1000) < int(1000 * max_rows / len(X))
+        state_key = (meta[:, 0] * 100000 + meta[:, 3]).astype(np.uint64)
+        mixed = (state_key * np.uint64(2654435761)) % np.uint64(1 << 32)
+        keep = (mixed % np.uint64(1000)) < np.uint64(
+            int(1000 * max_rows / len(X)))
         X, y, frac, meta = X[keep], y[keep], frac[keep], meta[keep]
         print(f"thinned to {len(X)} rows (ORACLE_TRAIN_MAX_ROWS={max_rows})")
     ep = meta[:, 0]
     state = meta[:, 0] * 100000 + meta[:, 3]      # unique state key
     fold = ep % 10
     tr, va, te = fold <= 7, fold == 8, fold == 9
+    if va.sum() == 0 or te.sum() == 0:
+        print("WARNING: empty val/test fold (tiny dataset) — "
+              "reporting on train rows")
+        va = tr.copy()
+        te = tr.copy()
     print(f"rows {X.shape}, positives {100*y.mean():.2f}%, "
           f"train/val/test {tr.sum()}/{va.sum()}/{te.sum()}")
 
@@ -97,6 +104,8 @@ def main():
     sigma[sigma < 1e-3] = 1e-3
     Z = ((X - mu) / sigma).astype(np.float32)
     n_features = X.shape[1]
+    from agents.oracle.policy_features import N_GLOBALS
+    X_globals = X[:, -N_GLOBALS:].copy()   # state head trains on raw globals
     del X, d                      # 23M-row datasets: free aggressively
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -230,14 +239,13 @@ def main():
     # launched anything this turn. This is what lets the agent INITIATE
     # from a cold board — the per-pair head is dominated by follow-up
     # conditioning (fleets already in flight).
-    from agents.oracle.policy_features import N_GLOBALS
     print("training state-initiation head...")
     skey = state
     order_s = np.argsort(skey, kind="stable")
     sk_o = skey[order_s]
     first = np.r_[True, np.diff(sk_o) != 0]
     idx_first = order_s[first]                     # one row index per state
-    G = X[idx_first][:, -N_GLOBALS:]
+    G = X_globals[idx_first]
     # label: any positive among the state's rows
     import collections
     pos_states = set(skey[y > 0.5].tolist())
