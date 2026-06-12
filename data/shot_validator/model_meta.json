@@ -1,0 +1,18 @@
+{
+  "dims": [
+    24,
+    32,
+    16,
+    8,
+    1
+  ],
+  "val_auc": 0.8711390246487737,
+  "n_examples": 286618,
+  "n_train": 242840,
+  "n_val": 43778,
+  "pos_rate": 0.6004961133003235,
+  "n_episodes": 634,
+  "labels_path": "/home/user/Orbit-wars-kaggle/data/shot_validator/labels.jsonl",
+  "seed": 7,
+  "trained_utc": "2026-06-12T06:47:10"
+}

@@ -48,9 +48,12 @@ LABEL_BUFFER = 10   # steps after eta to check ownership
 
 
 def _fleet_speed(ships):
-    """Lifted from lib/fleet.py to keep this script env-free."""
-    if ships <= 0:
-        return 0.0
+    """Lifted from lib/fleet.py to keep this script env-free (incl. the
+    1-ship floor and the 1000-ship cap — the env clamps fleet speed)."""
+    if ships <= 1:
+        return 1.0
+    if ships >= 1000:
+        return 6.0
     return 1.0 + (6.0 - 1.0) * (math.log(ships) / math.log(1000.0)) ** 1.5
 
 
@@ -150,7 +153,7 @@ def _encode_features(
     ]
 
 
-def _process_replay(path: Path) -> list[dict]:
+def _process_replay(path: Path, all_seats: bool = False) -> list[dict]:
     """Returns a list of {"features": [...], "label": int, "meta": {...}}."""
     try:
         replay = json.loads(path.read_text())
@@ -161,6 +164,17 @@ def _process_replay(path: Path) -> list[dict]:
         return []
     info = replay.get("info", {})
     team_names = info.get("TeamNames", [])
+    if all_seats:
+        # Label every seat's launches (live-episode corpus: filenames carry
+        # no team encoding, and a success-probability model calibrates best
+        # on the full shooter distribution — ours and the field's).
+        n_seats = len(steps[0]) if steps else 0
+        seats = [(i, team_names[i] if i < len(team_names) else f"seat{i}")
+                 for i in range(n_seats)]
+        examples: list[dict] = []
+        for seat, team in seats:
+            examples.extend(_label_seat(path, steps, seat, team))
+        return examples
     # We label the focal seat's launches. For top-10 replays the focal is
     # the player we sampled the replay around (encoded in filename).
     # For midpack replays, focal is "ChrisLeiteScha" (our team).
@@ -188,7 +202,11 @@ def _process_replay(path: Path) -> list[dict]:
                 break
     if focal_seat is None:
         return []
+    return _label_seat(path, steps, focal_seat, focal_team)
 
+
+def _label_seat(path: Path, steps: list, focal_seat: int,
+                focal_team: str) -> list[dict]:
     examples = []
     n_steps = len(steps)
     for step_idx, step in enumerate(steps):
@@ -260,13 +278,21 @@ def main(argv=None):
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--limit", type=int, default=None,
                         help="Process at most this many replay files (debug).")
+    parser.add_argument("--all-seats", action="store_true",
+                        help="Label every seat's launches (live-episode "
+                             "corpus; no filename-based focal team).")
+    parser.add_argument("--recursive", action="store_true",
+                        help="Glob **/*.json under replay-dir (live-episode "
+                             "tree is nested per submission id).")
     args = parser.parse_args(argv)
 
     replay_dir = Path(args.replay_dir)
     if not replay_dir.is_dir():
         print(f"ERROR: replay-dir not found: {replay_dir}", file=sys.stderr)
         return 1
-    files = sorted(replay_dir.glob("*.json"))
+    pattern = "**/*.json" if args.recursive else "*.json"
+    files = sorted(p for p in replay_dir.glob(pattern)
+                   if "replay" in p.name or not args.recursive)
     if args.limit:
         files = files[:args.limit]
     if not files:
@@ -280,7 +306,7 @@ def main(argv=None):
     with out_path.open("w") as fh:
         for f in files:
             try:
-                rows = _process_replay(f)
+                rows = _process_replay(f, all_seats=args.all_seats)
             except Exception as e:
                 print(f"  WARN {f.name}: {e}", file=sys.stderr)
                 continue

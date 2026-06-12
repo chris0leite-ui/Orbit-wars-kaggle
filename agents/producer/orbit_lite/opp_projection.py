@@ -1,0 +1,273 @@
+"""Producer-mirror opponent projection for the producer_plus scorer.
+
+`predict_opp_launches_via_mirror` runs Producer's own planner once per
+opponent seat (with ``background=None`` to avoid recursion) and returns
+the launches that planner would fire this turn as a padded `LaunchSet`,
+ready to inject as background launches in our scorer.
+
+The earlier ROI-greedy projector (ported from
+``lib/joint_solver/opp_projection``) modeled the wrong agent: ROI-greedy
+target selection, ``0.7 * budget`` send size, and up to 3 launches per
+source over 8 ticks. The real opponent distribution is dominated by the
+public Producer agent itself, whose target ranking, send sizes, and
+launch counts differ materially. Using Producer's own planner as the
+opponent model tracks the real opponent automatically.
+"""
+from __future__ import annotations
+
+import torch
+from torch import Tensor
+
+from .garrison_launch import LaunchSet
+from .movement import PlanetMovement, PlanetGarrisonStatus
+from .obs import parse_obs
+
+
+# Padded L axis for the projected opp LaunchSet. Producer typically fires
+# 0-3 launches per turn per seat; 24 slots is generous headroom.
+MAX_L_OPP = 24
+
+
+def _pack_records_to_launch_set(
+    records: list[tuple[int, int, float, float, int]],
+    *,
+    pad_to: int,
+    default_opp_id: int,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> LaunchSet:
+    """Pack ``(src_slot, tgt_slot, ships, eta, opp_id)`` records into a
+    padded `LaunchSet[pad_to]`. Unused slots have ``valid=False``."""
+    L = max(int(pad_to), 0)
+    src = torch.zeros(L, dtype=torch.long, device=device)
+    tgt = torch.zeros(L, dtype=torch.long, device=device)
+    ships = torch.zeros(L, dtype=dtype, device=device)
+    eta = torch.ones(L, dtype=dtype, device=device)
+    owner = torch.full((L,), int(default_opp_id), dtype=torch.long, device=device)
+    valid = torch.zeros(L, dtype=torch.bool, device=device)
+    n = min(len(records), L)
+    for i in range(n):
+        s, t, sh, et, op = records[i]
+        src[i] = int(s)
+        tgt[i] = int(t)
+        ships[i] = float(sh)
+        eta[i] = float(et)
+        owner[i] = int(op)
+        valid[i] = True
+    return LaunchSet(
+        source_slots=src, target_slots=tgt, ships=ships,
+        eta=eta, owner=owner, valid=valid,
+    )
+
+
+def predict_opp_launches_via_mirror(
+    *,
+    plan_fn,
+    obs_tensors: dict,
+    movement: PlanetMovement,
+    cache,
+    garrison_status: PlanetGarrisonStatus,
+    prod: Tensor,
+    alive_by_step: Tensor,
+    opp_ids: list[int],
+    config,
+    player_count: int,
+    K_eta_override: int | None = None,
+    pad_to: int = MAX_L_OPP,
+    K: int = 1,
+    H: int | None = None,
+    base_background: LaunchSet | None = None,
+) -> LaunchSet:
+    """For each opponent seat, run ``plan_fn`` (Producer's planner) with
+    the seat swapped to their POV.
+
+    With ``K=1`` (default), passes ``background=base_background`` (default
+    None: one-step best response, opp assumes we do nothing this turn —
+    byte-identical to the original single-pass behaviour). Passing OUR OWN
+    chosen launches as ``base_background`` instead yields each opponent's
+    predicted REPLY to our plan (response projection, K=1 only).
+
+    With ``K>1``, runs K successive projection rounds. Round k passes
+    ``background=cumulative_bg`` (the union of all previously-projected
+    opp launches, with absolute-frame etas) so opp's planner accounts for
+    its own prior commitments via its internal forward-simulator. Each
+    round's launches have etas shifted by ``+k`` turns before being
+    appended to the cumulative records — round k is conceptually opp's
+    decision at game-tick ``k``, so an eta of ``e`` from round k lands at
+    absolute tick ``k + e``. Launches whose shifted eta exceeds ``H``
+    (the scorer horizon) are dropped — invalid arrivals are worse than
+    no arrivals.
+
+    ``plan_fn`` is passed as a callback (rather than imported) so this
+    module has no cross-package dependency -- works the same in the source
+    tree and in the bundled submission.
+    """
+    device = obs_tensors["planets"].device
+    # Ships dtype matches obs.ships used inside plan_lite_waves; obs.ships is
+    # derived from obs_tensors["planets"] in parse_obs.
+    sample = parse_obs(obs_tensors, player_id=int(opp_ids[0]) if opp_ids else 0)
+    dtype = sample.ships.dtype
+
+    if not opp_ids:
+        return _pack_records_to_launch_set(
+            [], pad_to=pad_to, default_opp_id=0,
+            dtype=dtype, device=device,
+        )
+
+    K_clamped = max(1, int(K))
+
+    if K_clamped == 1:
+        # Single-pass path: bit-identical to the original implementation.
+        records: list[tuple[int, int, float, float, int]] = []
+        for opp_id in opp_ids:
+            opp_id = int(opp_id)
+            obs_opp = parse_obs(obs_tensors, player_id=opp_id)
+            opp_entries = plan_fn(
+                movement=movement,
+                obs=obs_opp,
+                obs_tensors=obs_tensors,
+                cache=cache,
+                garrison_status=garrison_status,
+                prod=prod,
+                alive_by_step=alive_by_step,
+                config=config,
+                player_count=int(player_count),
+                K_eta_override=K_eta_override,
+                background=base_background,
+                # Disable force-concentration in opp simulation: the rescore
+                # closure's per-wave score_candidates blows up when
+                # K_opp x num_opps inner planner calls each carry their own
+                # rescore. Opp is modeled with the cheap single-wave chooser.
+                force_concentration=False,
+            )
+            # Walk the flat [L] entry table; emit one record per valid slot.
+            src_cpu = opp_entries.source_slots.cpu().tolist()
+            tgt_cpu = opp_entries.target_slots.cpu().tolist()
+            ships_cpu = opp_entries.ships.cpu().tolist()
+            eta_cpu = opp_entries.eta.cpu().tolist()
+            valid_cpu = opp_entries.valid.cpu().tolist()
+            for i in range(len(src_cpu)):
+                if not bool(valid_cpu[i]):
+                    continue
+                records.append((
+                    int(src_cpu[i]),
+                    int(tgt_cpu[i]),
+                    float(ships_cpu[i]),
+                    float(eta_cpu[i]),
+                    opp_id,
+                ))
+                if len(records) >= int(pad_to):
+                    break
+            if len(records) >= int(pad_to):
+                break
+
+        return _pack_records_to_launch_set(
+            records, pad_to=pad_to,
+            default_opp_id=int(opp_ids[0]),
+            dtype=dtype, device=device,
+        )
+
+    # K > 1: multi-round projection.
+    #
+    # Eta cap = scorer horizon. The garrison status only has entries for
+    # ticks <= H, so launches with shifted eta > H would index past the
+    # status tensor and be masked-invalid by `sparse_launch_flow_delta`
+    # anyway. Drop them at record time so the final LaunchSet doesn't
+    # carry useless slots that inflate the L axis. Fallback order: caller
+    # H, then K_eta_override, then garrison_status's own horizon (which is
+    # H by construction in main.py).
+    if H is not None:
+        eta_cap = float(H)
+    elif K_eta_override is not None:
+        eta_cap = float(K_eta_override)
+    else:
+        eta_cap = float(max(int(garrison_status.ships.shape[-1]) - 1, 0))
+
+    # Cache per-opp parsed observations. obs_tensors does not mutate across
+    # rounds (plan_fn touches movement caches, not obs_tensors), so each
+    # opp's parsed view is constant for the K rounds. Saves (K-1) *
+    # len(opp_ids) parse_obs calls per turn.
+    obs_per_opp = {
+        int(oid): parse_obs(obs_tensors, player_id=int(oid)) for oid in opp_ids
+    }
+
+    # Intermediate cumulative_bg (the LaunchSet handed to opp's next-round
+    # planner) is capped at ``pad_to`` to keep the per-round scorer's L axis
+    # bounded -- inflating it would multiply wallclock for every opp
+    # planner call (the broadcast inside plan_lite_waves concatenates
+    # background onto each candidate). The FINAL returned LaunchSet (handed
+    # to OUR main planner once per turn) grows to fit all records; that
+    # single bigger scorer call costs a few percent vs. K-1 cheaper opp
+    # calls.
+    records: list[tuple[int, int, float, float, int]] = []
+    cumulative_bg: LaunchSet | None = None
+    for k in range(K_clamped):
+        round_records: list[tuple[int, int, float, float, int]] = []
+        for opp_id in opp_ids:
+            opp_id = int(opp_id)
+            opp_entries = plan_fn(
+                movement=movement,
+                obs=obs_per_opp[opp_id],
+                obs_tensors=obs_tensors,
+                cache=cache,
+                garrison_status=garrison_status,
+                prod=prod,
+                alive_by_step=alive_by_step,
+                config=config,
+                player_count=int(player_count),
+                K_eta_override=K_eta_override,
+                background=cumulative_bg,
+                # See K=1 path: opp planner runs cheap single-wave chooser
+                # so multi-tick's K_opp x num_opps inner calls don't compound
+                # the rescore closure cost.
+                force_concentration=False,
+            )
+            src_cpu = opp_entries.source_slots.cpu().tolist()
+            tgt_cpu = opp_entries.target_slots.cpu().tolist()
+            ships_cpu = opp_entries.ships.cpu().tolist()
+            eta_cpu = opp_entries.eta.cpu().tolist()
+            valid_cpu = opp_entries.valid.cpu().tolist()
+            for i in range(len(src_cpu)):
+                if not bool(valid_cpu[i]):
+                    continue
+                shifted_eta = float(eta_cpu[i]) + float(k)
+                if shifted_eta > eta_cap:
+                    continue
+                round_records.append((
+                    int(src_cpu[i]),
+                    int(tgt_cpu[i]),
+                    float(ships_cpu[i]),
+                    shifted_eta,
+                    opp_id,
+                ))
+        records.extend(round_records)
+        # Rebuild cumulative_bg for round k+1 (skip on the final round).
+        # Convert absolute-frame etas to opp's-frame at game-tick k+1:
+        # opp's next planner thinks "now = 0" but is actually at game-tick
+        # k+1, so a launch with absolute eta E appears to opp as arriving
+        # in E - (k+1) ticks. Launches with E <= k+1 have already arrived
+        # from opp's POV and must not appear in opp's background.
+        if k + 1 < K_clamped:
+            next_round = k + 1
+            opp_view_records = [
+                (s, t, sh, et - float(next_round), op)
+                for (s, t, sh, et, op) in records
+                if et - float(next_round) > 0.0
+            ]
+            cumulative_bg = _pack_records_to_launch_set(
+                opp_view_records, pad_to=int(pad_to),
+                default_opp_id=int(opp_ids[0]),
+                dtype=dtype, device=device,
+            )
+
+    # Final pad fits all accumulated records (typically <= MAX_L_OPP, but
+    # 4P-K3 worst case can produce ~K * n_opps * ~3 ~ 27 records). One
+    # bigger main-planner scoring call is acceptable; round-level cost
+    # stays bounded by ``pad_to`` via the intermediate cumulative_bg cap
+    # above.
+    final_pad = max(int(pad_to), len(records))
+    return _pack_records_to_launch_set(
+        records, pad_to=final_pad,
+        default_opp_id=int(opp_ids[0]),
+        dtype=dtype, device=device,
+    )

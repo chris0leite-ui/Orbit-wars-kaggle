@@ -14,7 +14,16 @@ import os
 import sys
 import importlib.util
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# kaggle_environments execs agent files without defining __file__, but it
+# appends the agent file's directory to sys.path for the duration of the
+# exec — recover our directory from there.
+try:
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    if sys.path and os.path.isfile(os.path.join(sys.path[-1], "main.py")):
+        _HERE = sys.path[-1]
+    else:
+        _HERE = os.getcwd()
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)  # so main.py can `import orbit_lite`
 
