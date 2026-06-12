@@ -149,3 +149,15 @@ claimed otherwise. Whitelisted and committed (round1, threat, rw, rw2).
 
 Rolling pair after the parallel branch's latest: their shotml 1286 +
 our oracle_rw 1004 (older half -> next submission evicts the cheap probe).
+
+### Cycle-1 self-play fine-tune: REJECTED by the frozen-panel gate
+
+Lesson pool: 150 sober sparring games + 20 live-loss replays; winner-side
+extraction (98.5% coverage, 1.24M rows); 70/30 elite/lesson mixture.
+Result: Producer 8/16 -> 4/16, v7 14/16 -> 13/16. Diagnosis: winner-side
+extraction imports the RUSHER'S STYLE when the rusher wins — its
+fire-every-turn cadence shifted our calibrated rhythm into the opponent's
+strength. Naive "learn from whoever won" is style-contaminated; cycle 2
+needs phase- or role-filtered lessons (e.g. winners' decisions only while
+the game was still even, or own-wins-only for consistency). Weights
+restored to the rw2 set (committed state).
