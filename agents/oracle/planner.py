@@ -241,6 +241,72 @@ class Planner:
                                   rec[3] + 1, rec[4])])
         return reps, opp
 
+    # --------------------------------------------------------- checkmate
+    def _checkmate(self, world, me, src_states):
+        """Forced finish in provably-won endgames.
+
+        Expert replays contain no 'overwhelming superiority vs a cripple'
+        states (their opponents die earlier), so the policy is off-manifold
+        there — live sub 53594710 dragged a won game 428 turns (audit
+        2026-06-12). Trigger: exactly one live opponent, my score >= 4x
+        theirs, and they hold <= 4 planets. Action: book exact kills on
+        every enemy planet not already covered by my in-flight arrivals.
+        Returns moves, [] (kills all inbound: hold), or None (not won yet).
+        """
+        n = world.n_planets
+        per_score = {}
+        per_planets = {}
+        for i in range(n):
+            o = world.owner0[i]
+            if o >= 0:
+                per_score[o] = per_score.get(o, 0) + world.ships0[i]
+                per_planets[o] = per_planets.get(o, 0) + 1
+        for f in world.fleets:
+            o = int(f[1])
+            if o >= 0:
+                per_score[o] = per_score.get(o, 0) + int(f[6])
+        opps = [o for o in per_score if o != me and per_score[o] > 0]
+        if len(opps) != 1:
+            return None
+        opp = opps[0]
+        if per_score.get(me, 0) < 4 * per_score[opp] \
+                or per_planets.get(opp, 0) > 4:
+            return None
+
+        moves = []
+        spent = {}
+        for t in range(n):
+            if world.owner0[t] != opp:
+                continue
+            if world.is_comet[t] and world.alive_until[t] <= 10:
+                continue                      # expires on its own
+            # already dying? (ledger includes my in-flight arrivals)
+            po = world.post_owner[t]
+            if any(po[dt] == me for dt in range(1, world.horizon + 1)):
+                continue
+            best = None
+            for s, (g, safe, doomed) in src_states.items():
+                avail = g - spent.get(s, 0)
+                if avail < 4:
+                    continue
+                aim = world.aim_at(s, t, max(4, avail))
+                if aim is None:
+                    continue
+                eta = min(aim[3], world.horizon)
+                req = required_ships(world, t, eta, me)
+                if req is None:
+                    continue
+                need = req[0] + 3 + world.prod[t] * 2
+                if need <= avail and (best is None or eta < best[0]):
+                    best = (eta, s, need)
+            if best is not None and len(moves) < 3:
+                eta, s, need = best
+                rec = _shot(world, s, t, need)
+                if rec is not None:
+                    moves.append([world.pid[s], float(rec[2]), int(rec[1])])
+                    spent[s] = spent.get(s, 0) + rec[1]
+        return moves
+
     # --------------------------------------------------------------- act
     def act(self, obs):
         t0 = time.time()
@@ -249,6 +315,9 @@ class Planner:
         me = world.me
 
         src_states = source_states(world, me)
+        kill = self._checkmate(world, me, src_states)
+        if kill is not None:
+            return kill
         pairs = shortlist_pairs(world, src_states)
         if not pairs:
             return []
