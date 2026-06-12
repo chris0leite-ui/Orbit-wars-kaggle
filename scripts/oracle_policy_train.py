@@ -59,6 +59,10 @@ def main():
     ap.add_argument("--batch", type=int, default=8192)
     ap.add_argument("--out", default=str(
         REPO / "agents" / "oracle" / "policy_weights.py"))
+    ap.add_argument("--extra-ds", default="",
+                    help="second dataset (self-play/live lessons) mixed in")
+    ap.add_argument("--extra-weight", type=float, default=4.6,
+                    help="per-row weight multiplier for the extra dataset")
     args = ap.parse_args()
 
     import torch
@@ -67,6 +71,21 @@ def main():
 
     d = np.load(args.ds)
     X, y, frac, meta = d["X"], d["y"], d["frac"], d["meta"]
+    extra_mask = np.zeros(len(X), dtype=bool)
+    if args.extra_ds:
+        d2 = np.load(args.extra_ds)
+        m2 = d2["meta"]
+        if m2.shape[1] < meta.shape[1]:        # pad missing flag columns
+            pad = np.zeros((len(m2), meta.shape[1] - m2.shape[1]), np.int64)
+            m2 = np.concatenate([m2, pad], axis=1)
+        X = np.concatenate([X, d2["X"]])
+        y = np.concatenate([y, d2["y"]])
+        frac = np.concatenate([frac, d2["frac"]])
+        meta = np.concatenate([meta, m2])
+        extra_mask = np.zeros(len(X), dtype=bool)
+        extra_mask[-len(d2["X"]):] = True
+        print(f"mixed in {len(d2['X'])} extra rows "
+              f"(weight x{args.extra_weight})")
     if os.environ.get("ORACLE_ZERO_COMMIT"):
         # no-chain variant: train with the same-turn commitment features
         # neutralized (runtime must then pass committed=None and skip
@@ -85,7 +104,8 @@ def main():
         mixed = (state_key * np.uint64(2654435761)) % np.uint64(1 << 32)
         keep = (mixed % np.uint64(1000)) < np.uint64(
             int(1000 * max_rows / len(X)))
-        X, y, frac, meta = X[keep], y[keep], frac[keep], meta[keep]
+        X, y, frac, meta, extra_mask = (X[keep], y[keep], frac[keep],
+                                        meta[keep], extra_mask[keep])
         print(f"thinned to {len(X)} rows (ORACLE_TRAIN_MAX_ROWS={max_rows})")
     ep = meta[:, 0]
     state = meta[:, 0] * 100000 + meta[:, 3]      # unique state key
@@ -147,6 +167,10 @@ def main():
             torch.where(t_col < 60, torch.tensor(2.0), torch.tensor(3.0)))
         wt = wt * w_nat
         print("threat-state importance reweighting ON")
+    if args.extra_ds:
+        wt = wt * torch.where(torch.tensor(extra_mask[tr]),
+                              torch.tensor(args.extra_weight),
+                              torch.tensor(1.0))
     Zv = torch.from_numpy(Z[va]).to(dev)
     n = Zt.shape[0]
 
