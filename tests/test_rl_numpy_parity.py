@@ -121,6 +121,73 @@ def test_feature_parity(pool_i, steps):
     assert tm_diff < 0.01, f"tgt_mask diff {tm_diff}"
 
 
+def test_solve_intercept_rows_parity():
+    """Launch-angle path numpy vs JAX — the function whose numpy port
+    silently broke the entire exported agent (IndexError swallowed by
+    the agent() wrapper -> never launched a fleet in any real game)."""
+    from rl.aim import solve_intercept_rows as jax_rows
+
+    gs = _state_with_traffic(0, 60)
+    a = gamestate_to_arrays(gs)
+    rng = np.random.default_rng(0)
+    alive_idx = np.where(np.asarray(gs.planets_alive))[0]
+    # Random targets (include duplicates — the old scatter bug clobbered
+    # shared targets) and random ship counts.
+    tgt = rng.choice(alive_idx, size=MAX_PLANETS, replace=True).astype(np.int64)
+    # Self-targets are masked out of the action space; arctan2 of a
+    # ~zero delta is float-noise-arbitrary, so exclude them here.
+    self_rows = tgt == np.arange(MAX_PLANETS)
+    tgt[self_rows] = alive_idx[0] if alive_idx[0] != 0 else alive_idx[1]
+    tgt[tgt == np.arange(MAX_PLANETS)] = alive_idx[-1]
+    ships = rng.integers(1, 200, MAX_PLANETS)
+
+    j_angle = np.asarray(jax_rows(gs, jnp.asarray(tgt, jnp.int32),
+                                  jnp.asarray(ships, jnp.int32)))
+    n_angle, _ = ni.solve_intercept_rows(a, tgt, ships)
+
+    alive = np.asarray(gs.planets_alive)
+    diff = np.abs(np.angle(np.exp(1j * (j_angle - n_angle))))
+    assert diff[alive].max() < 1e-3, f"angle drift {diff[alive].max()}"
+
+
+def test_exported_agent_launches_in_real_game():
+    """Behavioral gate: a trained/seeded export must EMIT launch actions
+    in a real kaggle-env game (reproduces the night-1 silent-pacifist
+    failure mode end-to-end)."""
+    import subprocess, sys as _sys
+    from kaggle_environments import make
+    from rl import export_agent
+
+    # Use any available checkpoint; fall back to random-init params.
+    import glob as _glob, pickle, tempfile, os
+    cands = (_glob.glob("/tmp/kernel_overnight/ckpt_final.pkl")
+             + _glob.glob("/tmp/rl_smoke/ckpt_final.pkl"))
+    with tempfile.TemporaryDirectory() as td:
+        if not cands:
+            import jax as _jax
+            from rl import net as _net
+            params = _jax.tree.map(np.asarray,
+                                   _net.init_params(_jax.random.PRNGKey(0)))
+            ck = os.path.join(td, "ck.pkl")
+            with open(ck, "wb") as f:
+                pickle.dump({"params": params, "meta": {}}, f)
+            cands = [ck]
+        out = os.path.join(td, "agent.py")
+        export_agent.export(cands[0], out)
+
+        env = make("orbit_wars", configuration={"seed": 77,
+                                                "episodeSteps": 60})
+        env.run([out, "random"])
+        max_fleets = 0
+        for st in env.steps:
+            obs = st[0].observation
+            fl = sum(1 for f in (obs.get("fleets") or []) if f[1] == 0)
+            max_fleets = max(max_fleets, fl)
+        assert max_fleets > 0, (
+            "exported agent never launched a fleet — act() is likely "
+            "throwing and being swallowed by the agent() wrapper")
+
+
 def test_net_forward_parity():
     gs = _state_with_traffic(0, 60)
     seat = 0

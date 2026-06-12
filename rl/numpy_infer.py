@@ -176,29 +176,46 @@ def solve_intercept(a, ships_grid):
     return {"angle": angle, "eta": eta, "sun_hit": sun_hit, "valid": valid}
 
 
+def planet_pos_at_idx(a, idx, t_rel):
+    """Positions of planets `idx` (K,) at per-entry future times t_rel
+    (K,). Per-row mirror of planet_pos_at — no scatter, so sources
+    sharing a target cannot clobber each other's lead times."""
+    idx = np.asarray(idx, dtype=np.int64)
+    t = np.asarray(t_rel, dtype=np.float64)
+    ix = a["ix"][idx]
+    iy = a["iy"][idx]
+    dx = ix - CENTER
+    dy = iy - CENTER
+    r = np.sqrt(dx * dx + dy * dy)
+    theta0 = np.arctan2(dy, dx)
+    abs_step = a["step"] + t - 1.0
+    theta = theta0 + a["omega"] * abs_step
+    radius = a["radius"][idx]
+    is_comet = a["is_comet"][idx]
+    is_rot = (r + radius < ROTATION_RADIUS_LIMIT) & ~is_comet
+    rx = CENTER + r * np.cos(theta)
+    ry = CENTER + r * np.sin(theta)
+    ti = np.clip(t.astype(np.int64), 0, a["comet_pos"].shape[1] - 1)
+    cx = a["comet_pos"][idx, ti, 0]
+    cy = a["comet_pos"][idx, ti, 1]
+    px = np.where(is_comet, cx, np.where(is_rot, rx, a["x"][idx]))
+    py = np.where(is_comet, cy, np.where(is_rot, ry, a["y"][idx]))
+    return np.stack([px, py], axis=-1)
+
+
 def solve_intercept_rows(a, tgt_idx, ships):
     src = np.stack([a["x"], a["y"]], axis=-1)
     speed = fleet_speed(ships)
-    safe_t = np.clip(tgt_idx, 0, MAX_PLANETS - 1)
-
-    def pos_at(idx, t):
-        full = planet_pos_at(a, _scatter_t(idx, t))
-        return full[np.arange(len(idx)), idx]
+    safe_t = np.clip(tgt_idx, 0, MAX_PLANETS - 1).astype(np.int64)
 
     tgt_now = planet_pos_at(a, 0.0)[safe_t]
     eta = np.linalg.norm(tgt_now - src, axis=-1) / speed
     for _ in range(AIM_ITERS):
-        tgt_fut = pos_at(safe_t, eta)
+        tgt_fut = planet_pos_at_idx(a, safe_t, eta)
         eta = np.linalg.norm(tgt_fut - src, axis=-1) / speed
-    tgt_fut = pos_at(safe_t, eta)
+    tgt_fut = planet_pos_at_idx(a, safe_t, eta)
     delta = tgt_fut - src
     return np.arctan2(delta[:, 1], delta[:, 0]), eta
-
-
-def _scatter_t(idx, t):
-    out = np.zeros(MAX_PLANETS)
-    out[idx] = t
-    return out
 
 
 def fleet_arrivals(a):
