@@ -12,6 +12,7 @@ tar czf "$STAGE/code.tar.gz" \
     --exclude='__pycache__' --exclude='*.pyc' \
     lib rl tests/test_rl_aim.py
 cp data/rl_pool_train.npz "$STAGE/" 2>/dev/null || echo "WARN: no train pool"
+cp data/bc_samples.npz "$STAGE/" 2>/dev/null || echo "WARN: no BC samples"
 # Optional: ship a resume checkpoint into the next dataset version.
 if [ -n "${RESUME_CKPT:-}" ] && [ -f "${RESUME_CKPT}" ]; then
     cp "${RESUME_CKPT}" "$STAGE/ckpt_latest.pkl"

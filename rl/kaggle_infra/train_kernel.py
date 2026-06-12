@@ -38,10 +38,8 @@ pool_hits = glob.glob("/kaggle/input/**/rl_pool_train.npz", recursive=True)
 if not pool_hits:
     raise RuntimeError("rl_pool_train.npz not found under /kaggle/input")
 
-# --- NIGHT-2 RUN: league with scripted-pressure anchors ---
-# greedy-frac 0.4 = 40% of league-half opponents are scripted (rusher/
-# greedy uniform), 60% snapshots. Probe opponent: rusher (greedy is
-# saturated at 100%). Resumes from the v6 final checkpoint.
+# --- NIGHT-3 RUN: league + producer behavior cloning ---
+bc_hits = glob.glob("/kaggle/input/**/bc_samples.npz", recursive=True)
 RUN_ARGS = [
     "rl.train",
     "--pool", pool_hits[0],
@@ -61,6 +59,10 @@ RUN_ARGS = [
     "--snapshot-cap", "12",
     "--greedy-frac", "0.4",
 ]
+if bc_hits:
+    RUN_ARGS += ["--bc-npz", bc_hits[0], "--bc-coef", "0.3",
+                 "--bc-batch", "192"]
+    print("BC samples:", bc_hits[0], flush=True)
 if resume:
     RUN_ARGS += ["--resume", resume]
 
