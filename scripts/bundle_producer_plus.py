@@ -611,8 +611,6 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_SYNC": "1",
         "PRODUCER_PLUS_SOURCE_SAFETY": "0.5",
         "PRODUCER_PLUS_GARRISON_VALUE": "12",
-        "PRODUCER_PLUS_GARRISON_VALUE_THREAT_W": "1.0",
-        "PRODUCER_PLUS_ROTATION_AWARE_MARGINS": "1",
     },
     "vetorf_srcsafe": {
         # Source-safety drain cap alone on the live 2P stack. Caps drain by

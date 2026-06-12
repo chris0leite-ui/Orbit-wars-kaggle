@@ -50,3 +50,30 @@ enemy strikes in HIS favored direction at HIS best concentration speed
 (built tonight). Asymmetric counterattack remains situational — we
 counter-attack 65% of inbound threats already, and the RYOTA game shows
 the missing move was pre-positioned defense, not a sharper counter.
+
+## Battery + bisect outcome (same day, late) — the calibration frontier
+
+The full fix chain ROUTED the local battery (4P final share 14.0% vs the
+night-1 build's 36.4%; 2P mirror 2/12, -54%@250): full-weight
+max-concentration threat + rotation-aware floors = over-insurance, the
+turtle again. Bisect isolated the components:
+
+- KEPT (mirror 7/12, +20.2%@250 — identical to night-1 strength):
+  deficit-shortlist appender + attractiveness tie-break + concentration-
+  speed threat at the HALF weight (expected-value massing estimate).
+  This is the current vetorf4p_sync_garval variant config.
+- REFUTED locally: GARRISON_VALUE_THREAT_W=1.0 and
+  ROTATION_AWARE_MARGINS=1 (both stay in the engine, gated default-off).
+
+But the half-weight config does NOT re-fire the RYOTA pre-positioning
+(deficit never crosses). The frontier, stated plainly:
+  half-weight threat  -> mirror-safe, blind to the RYOTA relay-massing kill;
+  full-weight threat  -> RYOTA fixed, mirror-routed.
+The mirror is not the field (doctrine); only a live slot can price the
+middle. Candidate resolutions for a future session: per-player-count
+threat weight (2P opponent concentrates freely -> higher weight);
+adaptive weight from observed enemy massing; or a massing DETECTOR
+(garrison growth rate at enemy forward planets) gating the full weight.
+
+Live state unchanged: 53588922 (night-1 garval) healthy at 61.5%
+overall / 85.7% 2P (n=13, warming). No new submit from this thread.
