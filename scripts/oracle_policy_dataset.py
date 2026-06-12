@@ -89,9 +89,21 @@ def process(job):
         if len(steps) < 60:
             return None
         ep_id = int(d.get("info", {}).get("EpisodeId", 0) or 0)
-        scores = seat_scores().get(ep_id, {})
-        seats = [p for p in range(len(steps[0]))
-                 if scores.get(p, 0.0) >= min_score]
+        if os.environ.get("ORACLE_SELFPLAY_MODE"):
+            # self-play replays: learn from WINNERS (either seat); fold id
+            # derives from the filename so games split deterministically
+            import zlib
+            ep_id = zlib.crc32(os.path.basename(str(path)).encode()) % 10**8
+            rewards = [steps[-1][k].get("reward") for k in
+                       range(len(steps[0]))]
+            rewards = [(-2 if r is None else r) for r in rewards]
+            rmax = max(rewards)
+            seats = [k for k, r in enumerate(rewards)
+                     if r == rmax and rewards.count(rmax) == 1]
+        else:
+            scores = seat_scores().get(ep_id, {})
+            seats = [p for p in range(len(steps[0]))
+                     if scores.get(p, 0.0) >= min_score]
         if not seats:
             return None
 
