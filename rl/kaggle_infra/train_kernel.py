@@ -38,7 +38,7 @@ pool_hits = glob.glob("/kaggle/input/**/rl_pool_train.npz", recursive=True)
 if not pool_hits:
     raise RuntimeError("rl_pool_train.npz not found under /kaggle/input")
 
-# --- OVERNIGHT RUN ---
+# --- DAY RUN: league fine-tune from overnight ckpt ---
 RUN_ARGS = [
     "rl.train",
     "--pool", pool_hits[0],
@@ -52,6 +52,10 @@ RUN_ARGS = [
     "--eval-every", "25",
     "--eval-envs", "64",
     "--ckpt-every-min", "20",
+    "--league",
+    "--snapshot-every", "150",
+    "--snapshot-cap", "12",
+    "--greedy-frac", "0.15",
 ]
 if resume:
     RUN_ARGS += ["--resume", resume]
