@@ -69,7 +69,7 @@ def _args(tgt_slot, send, eta, K=8, prod=(1.0, 1.0, 1.0), valid=True, is_def=Tru
 
 
 def _stub_margins(pp_main, monkeypatch, threat, help_val):
-    def threat_stub(obs, cache, target_idx, K, *, weight, lag=None):
+    def threat_stub(obs, cache, target_idx, K, *, weight, lag=None, **kw):
         if threat is None: return None
         return torch.full((int(target_idx.shape[0]), K), float(threat) * float(weight))
     def help_stub(obs, cache, source_idx, K, *, lag=0.0):

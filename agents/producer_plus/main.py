@@ -243,10 +243,8 @@ def _friendly_support_margin(
     dtype = obs.ships.dtype
     g_q = (obs.ships[q_idx].to(dtype) - 1.0).clamp(min=0.0)          # [Q]
     speed_q = fleet_speed(g_q.clamp(min=1.0))                        # [Q]
-    d = cache.cross_dist[0][q_idx][:, source_idx.clamp(0, int(obs.P) - 1)]  # [Q, S]
-    eta_qs = d / speed_q.unsqueeze(-1)                               # [Q, S]
-    k_grid = torch.arange(1, K + 1, device=obs.device, dtype=dtype)  # [K]
-    reach = eta_qs.unsqueeze(-1) <= (k_grid.view(1, 1, K) - float(lag))
+    reach = _margin_reach(cache, q_idx, source_idx, speed_q, K,
+                          float(lag), int(obs.P))                    # [Q, S, K]
     self_mask = q_idx.view(Q, 1) == source_idx.view(1, S)
     reach = reach & ~self_mask.unsqueeze(-1)
     return (g_q.view(Q, 1, 1) * reach.to(dtype)).sum(dim=0)          # [S, K]
@@ -384,6 +382,24 @@ def _garrison_value() -> float:
         return 0.0
 
 
+def _garrison_value_threat_w() -> float:
+    """Threat weight INSIDE the garrison-value deficit. Default: fall back
+    to the source-safety weight (legacy coupling). The RYOTA loss (seed
+    1493019744): a 135-ship massing was halved to ~67 by the 0.5 coupling
+    and never registered as a deficit at the 96-garrison planet it killed.
+    The rival-cap already guards over-insurance structurally — the threat
+    MAGNITUDE should be what the enemy can actually send. Set 1.0 in the
+    variant."""
+    raw = os.environ.get("PRODUCER_PLUS_GARRISON_VALUE_THREAT_W", "")
+    if not raw.strip():
+        w = _source_safety_weight()
+        return w if w > 0.0 else 1.0
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 1.0
+
+
 def _garrison_value_from_step() -> int:
     """Opening gate: no proactive-garrison credit before this step. The
     land-grab phase decides production rank (wins are production-ahead@40
@@ -421,7 +437,6 @@ def _garrison_value_bonus(
     dtype = cand_send.dtype
     C = int(cand_send.shape[0])
     lam = _garrison_value()
-    w = _source_safety_weight()
     if lam <= 0.0 or C == 0 or K <= 0:
         return torch.zeros(C, dtype=dtype, device=device)
     gate = cand_valid & cand_is_def                                   # [C]
@@ -429,7 +444,8 @@ def _garrison_value_bonus(
         return torch.zeros(C, dtype=dtype, device=device)
     threat = _reactive_reinforcement_margin(
         obs, cache, target_idx, K,
-        weight=(w if w > 0.0 else 1.0), lag=_source_safety_lag(),
+        weight=_garrison_value_threat_w(), lag=_source_safety_lag(),
+        concentration_speed=True,
     )                                                                 # [T, K] | None
     if threat is None:
         return torch.zeros(C, dtype=dtype, device=device)
@@ -458,8 +474,13 @@ def _garrison_value_bonus(
         n_rivals = max(int(_living_rival_count(obs)), 1)
     deficit_t = deficit_tk.max(dim=-1).values                         # [T]
     prod_T = prod[tgt_safe].to(dtype)                                 # [T]
+    # Enemy's pick: production first, then how badly underdefended the
+    # planet is (lexicographic via scaling) — a prod tie must resolve to
+    # the planet the strike actually wins (RYOTA replay: 17 and 19 tie on
+    # prod; 19 was the crushable one).
     attract = torch.where(
-        deficit_t > 0.0, prod_T, torch.full_like(prod_T, float("-inf")))
+        deficit_t > 0.0, prod_T * 1.0e6 + deficit_t,
+        torch.full_like(prod_T, float("-inf")))
     T = int(attract.shape[0])
     R = min(max(n_rivals, 1), T)
     top_idx = attract.topk(R).indices
@@ -1813,6 +1834,59 @@ def _append_neutral_quota(
     )
 
 
+def _append_deficit_targets(
+    target_idx: Tensor, target_exists: Tensor, *, obs, cache, prod, K_eta: int,
+):
+    """Append own planets under STANDING-reserve deficit to the shortlist.
+
+    friendly_flip_targets only admits planets projected to flip from
+    IN-FLIGHT fleets / predicted launches — a planet facing a visibly
+    massing but uncommitted reserve never becomes a candidate, so the
+    garrison-value bonus has nothing to credit and pre-positioning is
+    structurally impossible (RYOTA loss: the 135-massing was watchable for
+    30 ticks; planner had zero defensive candidates for the victim).
+    Appends the top-R (R = living rivals) positive-deficit own planets,
+    ranked by production. Only active when garrison value is on.
+    """
+    own_idx = (obs.owned & obs.alive).nonzero(as_tuple=True)[0]
+    n_own = int(own_idx.shape[0])
+    if n_own == 0:
+        return target_idx, target_exists
+    K = int(K_eta)
+    threat = _reactive_reinforcement_margin(
+        obs, cache, own_idx, K,
+        weight=_garrison_value_threat_w(), lag=_source_safety_lag(),
+        concentration_speed=True,
+    )
+    if threat is None:
+        return target_idx, target_exists
+    dtype = obs.ships.dtype
+    help_tk = _friendly_support_margin(obs, cache, own_idx, K)
+    if help_tk is None:
+        help_tk = torch.zeros_like(threat)
+    k_grid = torch.arange(1, K + 1, device=obs.device, dtype=dtype).view(1, K)
+    base = (
+        obs.ships[own_idx].to(dtype).unsqueeze(-1)
+        + prod[own_idx].to(dtype).unsqueeze(-1) * k_grid
+        + help_tk
+    )
+    deficit = (threat - base).max(dim=-1).values                      # [n_own]
+    R = max(int(_living_rival_count(obs)), 1)
+    pref = torch.where(
+        deficit > 0.0, prod[own_idx].to(dtype) * 1.0e6 + deficit,
+        torch.full_like(deficit, float("-inf")))
+    take = min(R, n_own)
+    top = pref.topk(take)
+    d_idx = own_idx[top.indices]
+    d_exists = top.values > float("-inf")
+    dup = (d_idx.view(-1, 1) == target_idx.view(1, -1)).any(dim=-1)
+    d_exists = d_exists & ~dup
+    return (
+        torch.cat([target_idx, d_idx], dim=0),
+        torch.cat([target_exists, d_exists], dim=0),
+    )
+
+
 # --- Reactive floor -------------------------------------------------------------
 # capture_floor's `reinforcement` margin hook has been dormant (always None):
 # enemy floors assume the defender's garrison sits still while our fleet
@@ -1855,10 +1929,55 @@ def _reactive_floor_lag() -> float:
         return 2.0
 
 
+def _rotation_aware_margins() -> bool:
+    """Gate: margin reach tests use the per-k intercept distance
+    ``cross_dist[k]`` (planet positions rotate; striking the approaching
+    neighbor is ~50% faster at 90-degree separation on a 36-radius ring)
+    instead of the static ``cross_dist[0]``. The static path systematically
+    misjudges who can reach whom in time, in BOTH directions. Default 0 =
+    byte-identical."""
+    return os.environ.get("PRODUCER_PLUS_ROTATION_AWARE_MARGINS", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _margin_reach(cache, q_idx: Tensor, target_idx: Tensor, speed_q: Tensor,
+                  K: int, lag: float, P: int):
+    """``[Q, T, K]`` bool — can q's garrison reach t by arrival turn k.
+
+    Rotation-aware when gated: q reaches t at turn k iff
+    ``dist(q@0, t@k) <= speed * (k - lag)`` using the cache's per-k slices.
+    Static path (default): one distance, one eta, threshold per k.
+    """
+    tgt = target_idx.clamp(0, P - 1)
+    dtype = speed_q.dtype
+    device = speed_q.device
+    k_grid = torch.arange(1, K + 1, device=device, dtype=dtype)      # [K]
+    budget = (k_grid.view(1, 1, K) - float(lag)).clamp(min=0.0) * speed_q.view(-1, 1, 1)
+    if _rotation_aware_margins():
+        K_cache = int(cache.cross_dist.shape[0]) - 1
+        ks = torch.arange(1, K + 1, device=device).clamp(max=K_cache)  # [K]
+        d_k = cache.cross_dist[ks][:, q_idx][:, :, tgt]              # [K, Q, T]
+        return d_k.permute(1, 2, 0) <= budget                        # [Q, T, K]
+    d = cache.cross_dist[0][q_idx][:, tgt]                           # [Q, T]
+    return d.unsqueeze(-1) <= budget
+
+
 def _reactive_reinforcement_margin(
     obs, cache, target_idx: Tensor, K: int, *, weight: float, lag: float | None = None,
+    concentration_speed: bool = False,
 ):
-    """``[T, K]`` reroutable enemy support per target/arrival-turn, or None."""
+    """``[T, K]`` reroutable enemy support per target/arrival-turn, or None.
+
+    ``concentration_speed``: price reach at the speed of the enemy's
+    COMBINED strength rather than each garrison's own size. Fleet speed
+    grows with mass, so a relayed concentration (backline -> staging ->
+    strike) flies faster than its components — the RYOTA loss pattern: an
+    84-ship backline garrison was "out of range" at its own speed yet
+    arrived inside the window after merging into a 135-stack. Used by the
+    garrison-value deficit (a planet must be defensible against what the
+    enemy CAN concentrate, not what currently sits in range).
+    """
     if lag is None:
         lag = _reactive_floor_lag()
     enemy = obs.is_enemy & obs.alive
@@ -1869,11 +1988,12 @@ def _reactive_reinforcement_margin(
         return None
     dtype = obs.ships.dtype
     g_q = obs.ships[q_idx].to(dtype).clamp(min=1.0)                  # [Q]
-    speed_q = fleet_speed(g_q)                                       # [Q]
-    d = cache.cross_dist[0][q_idx][:, target_idx.clamp(0, int(obs.P) - 1)]  # [Q, T]
-    eta_qt = d / speed_q.unsqueeze(-1)                               # [Q, T]
-    k_grid = torch.arange(1, K + 1, device=obs.device, dtype=dtype)  # [K]
-    reach = eta_qt.unsqueeze(-1) <= (k_grid.view(1, 1, K) - float(lag))
+    if concentration_speed:
+        speed_q = fleet_speed(g_q.sum().clamp(min=1.0).view(1)).expand(Q)
+    else:
+        speed_q = fleet_speed(g_q)                                   # [Q]
+    reach = _margin_reach(cache, q_idx, target_idx, speed_q, K,
+                          float(lag), int(obs.P))                    # [Q, T, K]
     # The target's own garrison is already the defender — exclude q == t.
     self_mask = q_idx.view(Q, 1) == target_idx.view(1, T)
     reach = reach & ~self_mask.unsqueeze(-1)
@@ -2112,6 +2232,13 @@ def plan_lite_waves(
         target_idx, target_exists = _append_neutral_quota(
             target_idx, target_exists, obs=obs, cache=cache,
             source_mask=source_mask, K_eta=K_eta, quota=_nq,
+        )
+    if _garrison_value() > 0.0:
+        # Standing-reserve deficits must be visible as defensive targets,
+        # not just projected flips, or pre-positioning can never fire.
+        target_idx, target_exists = _append_deficit_targets(
+            target_idx, target_exists, obs=obs, cache=cache,
+            prod=prod, K_eta=K_eta,
         )
     if not bool(target_exists.any()):
         return _empty_entries(device, dtype)

@@ -76,7 +76,7 @@ def _args(pp_main, *, tgt_slot, send, eta, K=8, prod=(1.0, 5.0, 2.0),
 
 
 def _margin_stub(value):
-    def stub(obs, cache, target_idx, K, *, weight, lag=None):
+    def stub(obs, cache, target_idx, K, *, weight, lag=None, **kw):
         if value is None:
             return None
         return torch.full((int(target_idx.shape[0]), K), float(value))
