@@ -76,11 +76,14 @@ def run_game(args):
 def main():
     rl_path = sys.argv[1]
     only = sys.argv[2].split(",") if len(sys.argv) > 2 else None
+    import os
+    seeds = ([int(s) for s in os.environ["PROBE_SEEDS"].split(",")]
+             if os.environ.get("PROBE_SEEDS") else SEEDS)
     jobs = []
     for opp_name, opp_path in OPPONENTS:
         if only and opp_name not in only:
             continue
-        for seed in SEEDS:
+        for seed in seeds:
             for rl_seat in (0, 1):
                 jobs.append((opp_name, (rl_path, opp_path, seed, rl_seat)))
 
