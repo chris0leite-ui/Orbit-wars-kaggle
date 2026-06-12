@@ -25,7 +25,6 @@ from rl import net
 from rl.make_pool import load_pool
 from rl.ppo import make_optimizer, ppo_update
 from rl.rollout import bootstrap_values, rollout_chunk
-from rl.scripted import greedy_policy
 from rl.features import seat_features, state_tables
 from rl.aim import solve_intercept_rows
 from rl.rollout import actions_to_launch_tensors
@@ -50,10 +49,13 @@ def load_ckpt(path):
 
 # ---------------- eval vs scripted (progress probe) ----------------
 
-def eval_vs_greedy(key, params, pool, n_envs: int, n_steps: int = 520):
-    """Seat 0 = policy, others = greedy. Returns win rate over envs
-    that finished. 2P envs only make sense here; pool may be mixed —
-    we just report seat-0 reward over finished games."""
+def eval_vs_greedy(key, params, pool, n_envs: int, n_steps: int = 520,
+                   opp_name: str = "greedy"):
+    """Seat 0 = policy, others = a scripted opponent. Returns win rate
+    over envs that finished. Pool may be mixed 2P/4P — we report
+    seat-0 reward over finished games."""
+    from rl.scripted import SCRIPTED_POLICIES
+    opp_fn = SCRIPTED_POLICIES[opp_name]
     n_pool = int(pool.step.shape[0])
     idx = jax.random.randint(key, (n_envs,), 0, n_pool)
     state = jax.tree.map(lambda x: x[idx], pool)
@@ -71,7 +73,7 @@ def eval_vs_greedy(key, params, pool, n_envs: int, n_steps: int = 520):
             fracs = [out["frac"]]
             masks = [sm0]
             for seat in range(1, MAX_AGENTS):
-                tg, fr, sm = greedy_policy(s, tables, seat)
+                tg, fr, sm = opp_fn(s, tables, seat)
                 tgts.append(tg); fracs.append(fr); masks.append(sm)
             return (jnp.stack(tgts), jnp.stack(fracs), jnp.stack(masks))
 
@@ -108,6 +110,7 @@ def main():
     ap.add_argument("--ckpt-every-min", type=float, default=20.0)
     ap.add_argument("--eval-every", type=int, default=50)
     ap.add_argument("--eval-envs", type=int, default=32)
+    ap.add_argument("--eval-opp", type=str, default="greedy")
     ap.add_argument("--entropy-coef", type=float, default=0.01)
     ap.add_argument("--league", action="store_true",
                     help="half the envs train vs frozen snapshots/greedy")
@@ -160,7 +163,8 @@ def main():
     rollout_jit = jax.jit(rollout_chunk,
                           static_argnames=("n_steps", "opp_kind"))
     bootstrap_jit = jax.jit(bootstrap_values)
-    eval_jit = jax.jit(eval_vs_greedy, static_argnames=("n_envs", "n_steps"))
+    eval_jit = jax.jit(eval_vs_greedy,
+                       static_argnames=("n_envs", "n_steps", "opp_name"))
 
     snapshots = []  # league opponents: list of params pytrees (device)
     opp_pick = None
@@ -185,10 +189,13 @@ def main():
         if B_league:
             if opp_pick is None or it % args.opp_refresh == 0:
                 key, k1, k2 = jax.random.split(key, 3)
-                use_greedy = (not snapshots or
-                              float(jax.random.uniform(k1)) < args.greedy_frac)
-                if use_greedy:
-                    opp_kind, opp_pick = "greedy", params  # placeholder
+                use_scripted = (not snapshots or
+                                float(jax.random.uniform(k1)) < args.greedy_frac)
+                if use_scripted:
+                    from rl.scripted import SCRIPTED_POLICIES
+                    names = sorted(SCRIPTED_POLICIES)
+                    j = int(jax.random.randint(k2, (), 0, len(names)))
+                    opp_kind, opp_pick = names[j], params  # placeholder
                 else:
                     opp_kind = "net"
                     j = int(jax.random.randint(k2, (), 0, len(snapshots)))
@@ -233,8 +240,9 @@ def main():
         if args.eval_every and it % args.eval_every == 0:
             key, ke = jax.random.split(key)
             wr, nfin = eval_jit(ke, params, pool,
-                                n_envs=args.eval_envs)
-            rec["wr_vs_greedy"] = round(float(wr), 3)
+                                n_envs=args.eval_envs,
+                                opp_name=args.eval_opp)
+            rec[f"wr_vs_{args.eval_opp}"] = round(float(wr), 3)
             rec["eval_finished"] = int(nfin)
 
         line = json.dumps(rec)

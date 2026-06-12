@@ -75,12 +75,13 @@ def policy_act(key, params, state: GameState):
 def policy_act_vs_opp(key, params, opp_params, learner_seat,
                       state: GameState, opp_kind: str):
     """Like policy_act, but seats != learner_seat act under a frozen
-    opponent: `opp_kind` = "net" (opp_params) or "greedy" (scripted).
+    opponent: `opp_kind` = "net" (opp_params) or a scripted policy name
+    from rl.scripted.SCRIPTED_POLICIES.
 
     Learner-seat outputs are the only on-policy ones; the caller masks
     the rest out of the PPO loss.
     """
-    from rl.scripted import greedy_policy
+    from rl.scripted import SCRIPTED_POLICIES
 
     tables = state_tables(state)
     seat_keys = jax.random.split(key, MAX_AGENTS)
@@ -95,8 +96,9 @@ def policy_act_vs_opp(key, params, opp_params, learner_seat,
             out_opp = net.sample_actions(
                 k, opp_params, nodes, edges, globals_, state.planets_alive,
                 src_mask, tgt_mask)
-        else:  # greedy scripted
-            g_tgt, g_frac, _ = greedy_policy(state, tables, seat)
+        else:  # scripted opponent
+            g_tgt, g_frac, _ = SCRIPTED_POLICIES[opp_kind](
+                state, tables, seat)
             out_opp = {
                 "tgt": g_tgt, "frac": g_frac,
                 "logp": jnp.float32(0.0), "value": jnp.float32(0.0),
