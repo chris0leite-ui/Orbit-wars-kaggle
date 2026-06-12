@@ -38,7 +38,10 @@ pool_hits = glob.glob("/kaggle/input/**/rl_pool_train.npz", recursive=True)
 if not pool_hits:
     raise RuntimeError("rl_pool_train.npz not found under /kaggle/input")
 
-# --- DAY RUN: league fine-tune from overnight ckpt ---
+# --- NIGHT-2 RUN: league with scripted-pressure anchors ---
+# greedy-frac 0.4 = 40% of league-half opponents are scripted (rusher/
+# greedy uniform), 60% snapshots. Probe opponent: rusher (greedy is
+# saturated at 100%). Resumes from the v6 final checkpoint.
 RUN_ARGS = [
     "rl.train",
     "--pool", pool_hits[0],
@@ -51,11 +54,12 @@ RUN_ARGS = [
     "--hours", "8.2",
     "--eval-every", "25",
     "--eval-envs", "64",
+    "--eval-opp", "rusher",
     "--ckpt-every-min", "20",
     "--league",
     "--snapshot-every", "150",
     "--snapshot-cap", "12",
-    "--greedy-frac", "0.15",
+    "--greedy-frac", "0.4",
 ]
 if resume:
     RUN_ARGS += ["--resume", resume]
