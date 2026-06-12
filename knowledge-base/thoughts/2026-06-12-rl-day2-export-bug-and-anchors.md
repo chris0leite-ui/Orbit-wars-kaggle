@@ -49,6 +49,27 @@ either a parity test or a behavioral end-to-end test.
   needs the branch's newer producer orbit_lite → vendored a copy into
   agents/producer_plus/orbit_lite/.
 
+## CPU-contention eval trap (caught before it poisoned decisions)
+
+Parallel kaggle-env probes force-idle heavy opponents: live_garval
+breached the enforced 1s turn budget under 4-way contention and "lost"
+4/4 games it actually wins crushingly (had us at 2 planets by step
+100). Kaggle gives each agent dedicated cores → sequential probes
+(PROBE_WORKERS=1, now the default) are the faithful local read.
+fast.py eval does NOT enforce the budget, so its results are
+contention-safe pure-strength reads.
+
+## Clean night-1 scorecard (sequential / fast.py)
+
+- v7_0: 30/32, Wilson-lo 0.799 (PASS)
+- ledger_v1_4: 24/32, Wilson-lo 0.579 (PASS)
+- producer: 0/4 probe (n=32 running)
+- live_garval (live-pair rebuild, sub 53588922 env config —
+  external/live_garval/): 0/4, eliminated step 172-249
+
+Read: night-1 ≈ v7_0+ class (~1150-1250 live guess); producer-engine
+style is THE wall. Rule 45 gate clearly unmet → no submit on merit.
+
 ## Submission posture (as of ~09:00 UTC)
 
 Rule 42 BLOCKED for an RL submit today without PI sign-off: would
