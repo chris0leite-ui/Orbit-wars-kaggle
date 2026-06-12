@@ -94,3 +94,41 @@ of expert moves (the uncovered tail is far attacks / long transfers).
   snipe / best base wave).
 - 4P behavior rides on the same policy (trained on both 2P and 4P
   states); no dedicated 4P objective yet.
+
+---
+
+## Build inventory (updated 2026-06-12)
+
+Pinned single-file bundles (weights + feature code consistent by
+construction; the live agents/oracle package changes during training):
+
+| bundle | profile (n=16 panels) | provenance |
+|---|---|---|
+| submissions/oracle_round1.py | v7_0 **14/16**, ledger 10/16, Producer 6/16, champion 4/16 | commit 1e59da8 |
+| submissions/oracle_threat.py | v7_0 11/16, Producer **9/16**, champion 4/16 | commit a229168 |
+
+Falsified generations (full evidence in audit/2026-06-11-oracle-track-day1.md
+and the A/B logs): chained conditioning (11/6/3/0 — runtime commitment
+feedback amplifies aggression), defense-dense data unweighted (3/16 both
+with and without chaining — oversampling broke cadence calibration; calm
+top-1 0.677 -> 0.583).
+
+In flight: natural-frequency reweighted training on the defense-dense
+data (no-chain) — the principled version of the defense pass.
+
+## Uniform loss law (holds across ALL generations)
+
+Every loss to the Producer family is an elimination between t99 and t189;
+every win is a 500-step economy game. The oracle wins the long game —
+including against the champion — and the open question is only surviving
+concentrated mid-game pressure.
+
+## Submission posture
+
+The two ladder slots hold the champion family (~1244 settling) and
+ledger_v1_2 (~855). The oracle's true live rating is bracketed, not
+known: local panels cover four opponents; the ladder has 4,000+ teams.
+Next decision for the PI: a probe submission of the best oracle bundle
+(evicting the ledger_v1_2 slot, Rule 42 trivially green) to measure live
+mu and harvest our own loss replays — the highest-value training data
+that exists for the next cycle.
