@@ -1,0 +1,45 @@
+{
+  "submission_id": "53595717",
+  "generated_utc": "2026-06-12T08:59:10Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 2,
+  "n_played": 2,
+  "wins_total": 2,
+  "winrate_total": 1.0,
+  "by_size": {
+    "2": {
+      "n": 1,
+      "wins": 1,
+      "winrate": 1.0
+    },
+    "4": {
+      "n": 1,
+      "wins": 1,
+      "winrate": 1.0
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 1,
+    "1": 2,
+    "2": 1,
+    "3": 1
+  },
+  "episode_length_steps": {
+    "n": 2,
+    "min": 100,
+    "q1": 100,
+    "median": 324,
+    "q3": 324,
+    "max": 324,
+    "mean": 212
+  },
+  "opponents": [
+    {
+      "name": "Ioannis M",
+      "seen": 1,
+      "beat_us": 0
+    }
+  ],
+  "losses": []
+}

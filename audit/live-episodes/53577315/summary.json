@@ -1,11 +1,11 @@
 {
   "submission_id": "53577315",
-  "generated_utc": "2026-06-12T06:37:14Z",
+  "generated_utc": "2026-06-12T08:59:43Z",
   "team_name": "ChrisLeiteScha",
-  "n_episodes": 92,
-  "n_played": 92,
+  "n_episodes": 93,
+  "n_played": 93,
   "wins_total": 42,
-  "winrate_total": 0.45652173913043476,
+  "winrate_total": 0.45161290322580644,
   "by_size": {
     "2": {
       "n": 50,
@@ -13,26 +13,26 @@
       "winrate": 0.64
     },
     "4": {
-      "n": 42,
+      "n": 43,
       "wins": 10,
-      "winrate": 0.23809523809523808
+      "winrate": 0.23255813953488372
     }
   },
   "self_match_episodes": 1,
   "seat_distribution": {
     "0": 40,
-    "1": 36,
+    "1": 37,
     "2": 8,
     "3": 11
   },
   "episode_length_steps": {
-    "n": 92,
+    "n": 93,
     "min": 84,
     "q1": 120,
     "median": 151,
     "q3": 202,
     "max": 500,
-    "mean": 188.47826086956522
+    "mean": 188.41935483870967
   },
   "opponents": [
     {
@@ -151,9 +151,19 @@
       "beat_us": 1
     },
     {
+      "name": "CurveCowboy",
+      "seen": 2,
+      "beat_us": 1
+    },
+    {
       "name": "Ifeoluwa Adewumi",
       "seen": 2,
       "beat_us": 1
+    },
+    {
+      "name": "\uff2d\uff2d\uff2d Abbie",
+      "seen": 2,
+      "beat_us": 0
     },
     {
       "name": "Tech Hound",
@@ -536,11 +546,6 @@
       "beat_us": 1
     },
     {
-      "name": "CurveCowboy",
-      "seen": 1,
-      "beat_us": 1
-    },
-    {
       "name": "Le Trong Hieu",
       "seen": 1,
       "beat_us": 0
@@ -731,11 +736,6 @@
       "beat_us": 1
     },
     {
-      "name": "\uff2d\uff2d\uff2d Abbie",
-      "seen": 1,
-      "beat_us": 0
-    },
-    {
       "name": "IAI-RL-three",
       "seen": 1,
       "beat_us": 0
@@ -749,6 +749,11 @@
       "name": "alanchoo",
       "seen": 1,
       "beat_us": 0
+    },
+    {
+      "name": "Ayodeji",
+      "seen": 1,
+      "beat_us": 1
     }
   ],
   "losses": [
@@ -1265,6 +1270,17 @@
       ],
       "winner": "It's about sending a message",
       "steps": 118
+    },
+    {
+      "episode": "episode-79622773",
+      "size": 4,
+      "opponents": [
+        "CurveCowboy",
+        "\uff2d\uff2d\uff2d Abbie",
+        "Ayodeji"
+      ],
+      "winner": "Ayodeji",
+      "steps": 183
     }
   ]
 }
