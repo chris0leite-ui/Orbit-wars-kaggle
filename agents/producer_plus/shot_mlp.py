@@ -253,6 +253,22 @@ def apply_shot_mlp_veto(entries, *, obs, threshold: float):
               f"dropped {len(drop)} "
               f"(p: {' '.join(f'{float(p):.2f}' for p in proba)})",
               file=sys.stderr)
+    dump_path = os.environ.get("PRODUCER_PLUS_SHOT_MLP_DUMP")
+    if dump_path:
+        # Per-wave serve-time record for the serve-vs-offline encoder audit
+        # (scripts/diag_shot_target_attribution.py). Logs the PLANNER's true
+        # target slot + the emitted angle so the offline ray-cast target can
+        # be compared against it.
+        angle_l = entries.angle.tolist()
+        import json as _json
+        with open(dump_path, "a") as _fh:
+            for e, p in zip(row_entry, proba):
+                _fh.write(_json.dumps({
+                    "step": int(step), "src_slot": int(src_l[e]),
+                    "planner_tgt_slot": int(tgt_l[e]),
+                    "angle": float(angle_l[e]), "ships": float(ships_l[e]),
+                    "serve_p": float(p), "player_id": pid,
+                }) + "\n")
     if not drop:
         return entries
     new_valid = entries.valid.clone()

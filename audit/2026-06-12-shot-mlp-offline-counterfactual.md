@@ -125,3 +125,53 @@ coalition sub was already evicted by oracle_rw 53594710 at 08:12).
    should collapse from ~16% toward ~0 (vetoed pre-launch), overall
    attack success should rise from 0.42, and ships-wasted-per-game
    should drop. That measurement is independent of ladder noise.
+
+## VERDICT — 2026-06-13 (~26 h settled, n=119 field episodes)
+
+**Settled μ:** probe 53595717 = **1263.0**; no-filter anchor 53577315 =
+**1241.6** (+21.4, within ~1σ — not attributable to the filter).
+
+**Mechanism read (the outcome-independent metric):** the filter changed
+nothing about our live launch distribution.
+
+| metric | PROBE 53595717 | BASE 53577315 |
+|---|---|---|
+| field episodes (self-matches excluded) | 119 | 92 |
+| attack launches / episode | **70.7** | 67.7 |
+| attack share model-P<0.15 | **33.4%** | 34.8% |
+| attack success rate | 42.1% | 41.0% |
+| ships lost to failed attacks / ep | 1959 | 1681 |
+
+The intended signature (low-P share collapsing toward 0) did **not**
+happen, and attacks/episode went **up**, not down. (Yesterday's n=1 peek
+showing 3.6% / 87.5% was a single won game — noise, as flagged.)
+
+**Root cause — delay, not prevention.** A reject-only filter in front of
+the producer planner does not remove a bad launch; the planner is
+memoryless across turns, so a wave dropped at turn T is re-proposed at
+T+1, T+2 … until the board drifts enough that the *same* launch clears
+0.15, then it fires (a few turns later, often against a target that has
+moved — hence wasted-ships slightly *worse*). Net behaviour: the low-P
+attacks still happen, just later. This is the same architectural lesson
+as the mechanism-ledger graveyard: stacking a veto in front of a
+re-proposing planner is absorbed by re-proposal.
+
+**Encoder fidelity (ruled out as the cause):**
+`scripts/diag_shot_target_attribution.py` — the offline ray-cast target
+agrees with the planner's true target **84.4%** of the time (45 waves,
+local). The offline metric is mostly faithful; the flat read is real,
+not a measurement artifact. Reconfirmed referee blindness: **0%** of
+locally-scored attacks are below 0.15, so no local A/B can ever move
+this mechanism.
+
+**Disposition:** shot-validator is a **null** as a standalone reject-only
+filter — local AND live. Do **not** escalate to 0.30 (it would delay
+*more* attacks, not prevent them). The probe (1263) is a harmless null
+and is fine to leave in the rolling pair as the high half.
+
+**The only path that could realize the offline counterfactual's promise:**
+pair the MLP veto with **redirect** (`PRODUCER_PLUS_REDIRECT`) so freed
+ships are re-aimed at a target the model likes, instead of re-proposing
+the same bad shot — turning "delay" into "substitute." Unproven, costs a
+live slot (referee blindness), and counter-indicated by the ledger's
+history of front-of-planner stacking. PI decision, not auto-pursued.
