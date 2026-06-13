@@ -112,3 +112,38 @@ submission until it clears):
 Next diagnostic if needed: finer trace of a single loss — do captured
 neutrals flip back (churn) or do our fleets lose the arrival race
 (opponent captures first)? That picks sizing-to-hold vs target-selection.
+
+## Reactive-floor A/B (2026-06-13) — holdability is a SYMPTOM, not the win-lever
+
+Tested the most-directly-implied fix: bump `PRODUCER_PLUS_REACTIVE_FLOOR`
+(sizes captures to beat garrison + reachable enemy reinforcement; confirmed
+applied to neutral captures at main.py:2172). Un-blinded 4P panel
+(`producer,v7_0,nearest`), 8 seeds × 4 seats = 32 games per setting,
+thread-pinned, separate processes (env-leak-safe):
+
+| RF | first-place | material share @100 (win / loss) | @150 |
+|---|---|---|---|
+| 0.5 (live) | 13/32 (40.6%) | 0.487 / 0.160 | 0.718 / 0.089 |
+| 1.0 | 13/32 (40.6%) | **0.588 / 0.190** | 0.790 / 0.149 |
+| 1.5 | 10/32 (31.2%) | 0.558 / 0.182 | 0.707 / 0.112 |
+
+RF=1.0 raised the mid-game material share (the conversion metric) in BOTH
+wins and losses — captures do stick more — yet first-place is **identical**
+(13/32 → 13/32). RF=1.5 over-sizes and regresses. So:
+
+**Holdability sizing is refuted as a win-lever.** Making captures stickier
+moves the mechanism metric but not the outcome — the same "metric up,
+wins flat" pattern as the shot-MLP. We do NOT lose because captures fail to
+stick; capture-and-lose churn and losing are both downstream of a deeper
+cause. The reactive-floor axis is closed (1.0 flat, 1.5 negative); no
+strong-pool regression check needed (nothing to protect).
+
+**Re-pointed diagnosis:** the remaining candidate is target *selection* —
+WHICH neutrals we contest against a strong peer, and whether we lose the
+arrival RACE (opponent captures first) rather than losing the hold. That
+is a proposer/scorer change, not a knob, and should be PI-steered.
+
+Next cheap diagnostic (PI to greenlight): finer trace of loss games — for
+our mid-game neutral launches, did the target end up OURS, ENEMY (lost the
+race), or did we capture-then-lose? Splits target-selection vs the (now
+refuted) sizing story and points to the real lever.
