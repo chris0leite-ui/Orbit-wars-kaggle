@@ -147,3 +147,35 @@ Next cheap diagnostic (PI to greenlight): finer trace of loss games — for
 our mid-game neutral launches, did the target end up OURS, ENEMY (lost the
 race), or did we capture-then-lose? Splits target-selection vs the (now
 refuted) sizing story and points to the real lever.
+
+## Neutral-launch outcome trace (weak signal → target selection)
+
+`scripts/diag_neutral_outcome.py` — step 40–110 NEUTRAL-targeted launches,
+target owner at launch+eta+10 (ray-cast attribution ~84%, directional):
+
+| | ours | enemy | still-neutral |
+|---|---|---|---|
+| WIN (n=274) | 12% | 8% | 81% |
+| LOSS (n=252) | 21% | **22%** | 57% |
+
+In losses, the neutrals we contest end up ENEMY-owned ~2.75× more often
+(22% vs 8%) — we contest neutrals that fall to enemies (lose the race or
+lose them back). Noisy (ray-cast + high still-neutral baseline) so
+directional only, but it agrees with the reactive-floor refutation:
+the lever is **which neutrals we contest vs a strong peer** (target
+selection), not how big we size the captures.
+
+## Session synthesis (2026-06-13)
+
+Two win-levers eliminated with clean evidence, loss mode characterized:
+- shot-MLP reject filter — null (local-2P inert, live null, un-blinded-4P
+  null where it fires).
+- reactive-floor / holdability sizing — null on wins (metric up, wins flat).
+- Loss mode = mid-game (step 50–100) expansion non-conversion vs a strong
+  peer; we lose the neutral-capture RACE, not the opening or the hold.
+
+**Open (PI-steered, proposer-level — Rule 40):** the remaining lever is
+target selection — bias mid-game neutral targeting toward planets we can
+take-and-keep uncontested, away from ones a strong peer wins. This is a
+proposer/scorer change, not a knob; it should be a PI-signed-off proposal,
+and it is now A/B-able on the un-blinded panel before any live slot.
