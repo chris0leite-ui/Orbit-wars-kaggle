@@ -119,23 +119,35 @@ def make_optimizer(lr: float = 3e-4):
 
 # ---------------- behavior-cloning auxiliary update ----------------
 
-def bc_loss(params, gs_batch, tgt, frac, mask, seat):
-    """Cross-entropy on the policy heads vs producer-derived labels.
+def featurize_bc(gs, seat):
+    """Per-sample seat features (param-independent — compute OUTSIDE the
+    grad so the aim solver / arrival scan never enter the backward pass,
+    same OOM/throughput fix as featurize_envstep)."""
+    tables = state_tables(gs)
+    nodes, edges, globals_, src_mask, tgt_mask = seat_features(
+        gs, tables, seat)
+    return {
+        "nodes": nodes, "edges": edges, "globals": globals_,
+        "src_mask": src_mask, "tgt_mask": tgt_mask,
+        "alive": gs.planets_alive,
+    }
 
-    gs_batch: stacked GameState (B, ...); tgt/frac/mask (B, P); seat (B,).
-    Only sources with a label (mask) contribute. Fraction CE only where
-    the label is a launch (tgt < P).
+
+def bc_loss_feats(params, feats, tgt, frac, mask):
+    """Cross-entropy on the policy heads from PRECOMPUTED features.
+
+    feats: vmapped dict from featurize_bc; tgt/frac/mask (B, P).
+    Only sources with a label (mask) and a mask-legal target contribute.
     """
-    def one(gs, tgt_i, frac_i, mask_i, seat_i):
-        tables = state_tables(gs)
-        nodes, edges, globals_, src_mask, tgt_mask = seat_features(
-            gs, tables, seat_i)
+    def one(f, tgt_i, frac_i, mask_i):
         _, logits, emb = net.forward(
-            params, nodes, edges, globals_, gs.planets_alive, tgt_mask)
+            params, f["nodes"], f["edges"], f["globals"], f["alive"],
+            f["tgt_mask"])
         logp_t = jax.nn.log_softmax(logits, axis=-1)
         pick_t = jnp.take_along_axis(
             logp_t, tgt_i[:, None].astype(jnp.int32), axis=1)[:, 0]
-        fl = net.frac_logits_for(params, emb, edges, tgt_i.astype(jnp.int32))
+        fl = net.frac_logits_for(params, emb, f["edges"],
+                                 tgt_i.astype(jnp.int32))
         logp_f = jax.nn.log_softmax(fl, axis=-1)
         pick_f = jnp.take_along_axis(
             logp_f, frac_i[:, None].astype(jnp.int32), axis=1)[:, 0]
@@ -143,13 +155,14 @@ def bc_loss(params, gs_batch, tgt, frac, mask, seat):
         # fires through the sun margin / at pairs our mask forbids;
         # their -1e9 logits explode the CE (observed 1.4e7 spike).
         legal = jnp.take_along_axis(
-            tgt_mask, tgt_i[:, None].astype(jnp.int32), axis=1)[:, 0]
-        w = (mask_i & legal).astype(jnp.float32) * src_mask.astype(jnp.float32)
+            f["tgt_mask"], tgt_i[:, None].astype(jnp.int32), axis=1)[:, 0]
+        w = (mask_i & legal).astype(jnp.float32) \
+            * f["src_mask"].astype(jnp.float32)
         ce_t = -jnp.sum(pick_t * w)
         ce_f = -jnp.sum(pick_f * w)
         return ce_t + 0.5 * ce_f, jnp.sum(w)
 
-    losses, ns = jax.vmap(one)(gs_batch, tgt, frac, mask, seat)
+    losses, ns = jax.vmap(one)(feats, tgt, frac, mask)
     n = jnp.maximum(jnp.sum(ns), 1.0)
     return jnp.sum(losses) / n
 
@@ -158,8 +171,9 @@ def bc_loss(params, gs_batch, tgt, frac, mask, seat):
 def bc_update(params, opt_state, optimizer_lr, bc_coef,
               gs_batch, tgt, frac, mask, seat):
     optimizer = make_optimizer(optimizer_lr)
-    loss, grads = jax.value_and_grad(bc_loss)(
-        params, gs_batch, tgt, frac, mask, seat)
+    feats = jax.vmap(featurize_bc)(gs_batch, seat)
+    loss, grads = jax.value_and_grad(bc_loss_feats)(
+        params, feats, tgt, frac, mask)
     grads = jax.tree.map(lambda g: g * bc_coef, grads)
     updates, opt_state = optimizer.update(grads, opt_state, params)
     params = optax.apply_updates(params, updates)

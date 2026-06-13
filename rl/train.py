@@ -116,6 +116,11 @@ def main():
                     help="behavior-cloning samples npz (rl/bc_data.py)")
     ap.add_argument("--bc-coef", type=float, default=0.3)
     ap.add_argument("--bc-batch", type=int, default=192)
+    ap.add_argument("--bc-opponent", type=str, default="",
+                    help="frozen producer-clone net (rl/train_bc.py) added "
+                         "to the league opponent pool")
+    ap.add_argument("--clone-frac", type=float, default=0.35,
+                    help="fraction of league opponents drawn as the clone")
     ap.add_argument("--league", action="store_true",
                     help="half the envs train vs frozen snapshots/greedy")
     ap.add_argument("--snapshot-every", type=int, default=150)
@@ -181,6 +186,12 @@ def main():
         print(f"BC samples: {int(tgt_bc.shape[0])} "
               f"(coef {args.bc_coef}, batch {args.bc_batch})")
 
+    clone_params = None
+    if args.bc_opponent:
+        clone_params, _ = load_ckpt(args.bc_opponent)
+        print(f"league clone opponent: {args.bc_opponent} "
+              f"(clone-frac {args.clone_frac})")
+
     snapshots = []  # league opponents: list of params pytrees (device)
     opp_pick = None
     opp_kind = "greedy"
@@ -204,17 +215,30 @@ def main():
         if B_league:
             if opp_pick is None or it % args.opp_refresh == 0:
                 key, k1, k2 = jax.random.split(key, 3)
-                use_scripted = (not snapshots or
-                                float(jax.random.uniform(k1)) < args.greedy_frac)
-                if use_scripted:
+                r = float(jax.random.uniform(k1))
+                has_clone = clone_params is not None
+                clone_f = args.clone_frac if has_clone else 0.0
+                # Menu: [0, greedy_frac)=scripted, next clone_frac=clone,
+                # rest=snapshot. Fall back to clone/scripted when the
+                # snapshot bucket is empty early in training.
+                if r < args.greedy_frac or (not snapshots and not has_clone):
                     from rl.scripted import SCRIPTED_POLICIES
                     names = sorted(SCRIPTED_POLICIES)
                     j = int(jax.random.randint(k2, (), 0, len(names)))
                     opp_kind, opp_pick = names[j], params  # placeholder
-                else:
+                elif r < args.greedy_frac + clone_f:
+                    opp_kind, opp_pick = "net", clone_params
+                elif snapshots:
                     opp_kind = "net"
                     j = int(jax.random.randint(k2, (), 0, len(snapshots)))
                     opp_pick = snapshots[j]
+                elif has_clone:
+                    opp_kind, opp_pick = "net", clone_params
+                else:
+                    from rl.scripted import SCRIPTED_POLICIES
+                    names = sorted(SCRIPTED_POLICIES)
+                    j = int(jax.random.randint(k2, (), 0, len(names)))
+                    opp_kind, opp_pick = names[j], params
                 key, k3 = jax.random.split(key)
                 learner_seats = jax.random.randint(k3, (B_league,), 0, 2)
             state_lg, traj_lg = rollout_jit(
