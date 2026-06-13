@@ -51,6 +51,17 @@ Python ~80-400 ms/turn — can't be in the batched loop).
   BC-aux data point.
 - GPU quota fresh (Sat reset); BC (~0.7h) + league (~8h) fit easily.
 
+## v8 negative result (BC-aux refuted, Sat ~10:30 UTC)
+
+v8 = league + BC-aux (coef 0.3), resumed from v7. Sequential probe:
+**0/16 vs producer, 0/16 vs live_garval** — WORSE than v7 (2/16).
+Imitation as an auxiliary loss didn't help and likely HURT: pulling the
+policy toward producer's action distribution diluted the self-play
+strength without teaching it to win. Confirms the thesis — the lever is
+"learn to beat producer" (clone opponent), not "act like producer"
+(BC-aux). v9 keeps BC-aux at only 0.1 (light anchor); the engine is the
+frozen clone in the opponent pool.
+
 ## Fallback levers if the clone-league stalls
 
 1. Stronger/more-diverse clones: pretrain 2-3 clones on different

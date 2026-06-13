@@ -64,12 +64,11 @@ RUN_ARGS = [
     "--greedy-frac", "0.3",
 ]
 if clone_hits:
-    RUN_ARGS += ["--bc-opponent", clone_hits[0], "--clone-frac", "0.35"]
+    RUN_ARGS += ["--bc-opponent", clone_hits[0], "--clone-frac", "0.4"]
     print("clone opponent:", clone_hits[0], flush=True)
-if bc_hits:
-    RUN_ARGS += ["--bc-npz", bc_hits[0], "--bc-coef", "0.1",
-                 "--bc-batch", "192"]
-    print("BC aux:", bc_hits[0], flush=True)
+# NOTE: BC-aux deliberately OFF. v8 (BC-aux coef 0.3) went 0/16 vs
+# producer, worse than v7 (2/16) — imitation pressure diluted RL
+# strength. The clone-as-OPPONENT is the engine; aux imitation is not.
 if resume:
     RUN_ARGS += ["--resume", resume]
 

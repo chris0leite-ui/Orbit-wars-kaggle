@@ -18,6 +18,11 @@ if [ -n "${RESUME_CKPT:-}" ] && [ -f "${RESUME_CKPT}" ]; then
     cp "${RESUME_CKPT}" "$STAGE/ckpt_latest.pkl"
     echo "including resume checkpoint: ${RESUME_CKPT}"
 fi
+# Optional: ship the frozen producer-clone for the league opponent pool.
+if [ -n "${CLONE_CKPT:-}" ] && [ -f "${CLONE_CKPT}" ]; then
+    cp "${CLONE_CKPT}" "$STAGE/bc_net.pkl"
+    echo "including clone opponent: ${CLONE_CKPT}"
+fi
 
 cat > "$STAGE/dataset-metadata.json" <<'EOF'
 {
