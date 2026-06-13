@@ -72,3 +72,43 @@ propose the smallest existing-knob fix that lifts step-50–100 conversion.
 Candidate knobs already in the stack: neutral-expansion reach/horizon,
 capture-floor sizing vs contested neutrals, regroup/convoy thresholds.
 No submission until a fix clears the un-blinded 4P panel.
+
+## Mechanism isolated (2026-06-13) — capture-and-lose, not reach/under-trying
+
+`scripts/diag_midgame_launches.py` over the step 40–110 window, our
+launches by target owner + reach + net planet change:
+
+| window 40–110 | neutral | enemy | own | near | far | ships→neutral | net Δplanets |
+|---|---|---|---|---|---|---|---|
+| 2P WIN | 20.7 | 31.0 | 64.4 | 72.4 | 43.7 | 688 | **+7.7** |
+| 2P LOSS | **23.1** | 24.4 | 54.9 | 61.8 | 40.6 | **675** | **+0.1** |
+| 4P WIN | 11.0 | 22.3 | 35.5 | 47.7 | 21.1 | 513 | +6.8 |
+| 4P LOSS | 8.1 | 19.4 | 32.0 | 43.9 | 15.6 | 306 | +0.1 |
+
+**2P is the smoking gun:** in losses we make MORE neutral-expansion
+launches (23.1 vs 20.7) and send the SAME ships to neutrals (675 vs 688),
+yet net +0.1 planets vs the winner's +7.7. Reach is comparable (far 40.6
+vs 43.7). So the loss is NOT under-expanding and NOT a reach ceiling — it
+is **non-conversion**: our mid-game captures do not stick. Combined with
+the earlier signal (garrison erodes 175→156 while in-flight holds ~200),
+the mode is **capture-and-lose churn** — we take neutrals and lose them
+(or lose the capture race), throwing the same tonnage as winners for zero
+net gain.
+
+This reframes the fix (Rule 40 — model the right thing): improve mid-game
+capture **holdability**, not launch volume. The launches the shot-MLP
+flagged as "won't hold" were real, but rejecting them was a null because
+the fix is to make captures STICK (size to survive the reachable counter;
+prefer neutrals we can defend), not to stop launching.
+
+Candidate existing knobs (PI to steer; A/B on the un-blinded 4P panel, no
+submission until it clears):
+- `PRODUCER_PLUS_REACTIVE_FLOOR` (on at 0.5 live) — sizes captures vs
+  reachable enemy reinforcement; mid-game holds may need it higher, or it
+  may not cover neutral captures. **Most directly implied.**
+- capture-floor sizing vs contested neutrals; hold-feasibility target
+  prefilter (the btjeK Phase-B idea, never solo-validated).
+
+Next diagnostic if needed: finer trace of a single loss — do captured
+neutrals flip back (churn) or do our fleets lose the arrival race
+(opponent captures first)? That picks sizing-to-hold vs target-selection.
