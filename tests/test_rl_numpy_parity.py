@@ -188,6 +188,57 @@ def test_exported_agent_launches_in_real_game():
             "throwing and being swallowed by the agent() wrapper")
 
 
+def test_obs_to_arrays_comet_positions_match_engine():
+    """obs_to_arrays' comet branch (the eval path that the GameState-based
+    parity tests bypass) must predict comet positions the real engine
+    actually produces — including AFTER some comets in a spawn group have
+    expired, when the engine desyncs planet_ids from paths."""
+    from kaggle_environments import make
+
+    K = 4
+
+    def roll(seed, n):
+        e = make("orbit_wars", configuration={"seed": seed}, debug=False)
+        e.reset(num_agents=2)
+        for _ in range(n):
+            e.step([[], []])
+            if e.done:
+                break
+        return e.steps[-1][0].observation
+
+    # Scan seeds/steps for a state with a live comet group (comets spawn
+    # at step 50). Seed-robust so suite ordering can't strand it.
+    checked = 0
+    for seed in (7, 11, 42, 100, 2024):
+        for base in (58, 62, 66):
+            obs = roll(seed, base)
+            a = ni.obs_to_arrays(obs)
+            if int((a["is_comet"] & a["alive"]).sum()) == 0:
+                continue
+            future = roll(seed, base + K)
+            fpos = {int(p[0]): (float(p[2]), float(p[3]))
+                    for p in future["planets"]}
+            for slot in range(MAX_PLANETS):
+                if not (a["is_comet"][slot] and a["alive"][slot]):
+                    continue
+                pid = int(a["pid"][slot])
+                if pid not in fpos:
+                    continue  # comet expired within K — fine
+                pred = ni.planet_pos_at(a, float(K))[slot]
+                ex, ey = fpos[pid]
+                err = ((pred[0] - ex) ** 2 + (pred[1] - ey) ** 2) ** 0.5
+                # The comet branch of obs_to_arrays (bypassed by the
+                # GameState parity tests) must predict the engine's comet
+                # path, not an orbital rotation.
+                assert err < 1.0, (
+                    f"seed {seed} step {base} comet pid {pid}: predicted "
+                    f"{pred} vs engine ({ex},{ey}), err {err:.2f}")
+                checked += 1
+            if checked:
+                return
+    pytest.skip("no live comet positions found across scanned seeds")
+
+
 def test_net_forward_parity():
     gs = _state_with_traffic(0, 60)
     seat = 0

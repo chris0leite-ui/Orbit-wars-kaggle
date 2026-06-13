@@ -194,7 +194,11 @@ def ppo_update(key, params, opt_state, optimizer_lr, traj, bootstrap_v,
     w = active.astype(jnp.float32)
     mean = jnp.sum(adv * w) / jnp.maximum(jnp.sum(w), 1.0)
     var = jnp.sum(((adv - mean) ** 2) * w) / jnp.maximum(jnp.sum(w), 1.0)
-    adv = (adv - mean) / jnp.sqrt(var + 1e-8)
+    # Floor the std (not just +1e-8): in league chunks with few done
+    # episodes the active-seat advantages can be near-constant, and a
+    # ~0 denominator would blow tiny (noise-level) advantage differences
+    # up to ~1e4 and drive every ratio to the clip boundary on noise.
+    adv = (adv - mean) / jnp.maximum(jnp.sqrt(var), 1e-3)
 
     T = traj["done"].shape[0]
     B = traj["done"].shape[1]

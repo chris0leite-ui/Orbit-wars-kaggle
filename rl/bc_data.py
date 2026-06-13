@@ -124,15 +124,22 @@ def _obs_to_gamestate(obs: dict, num_agents: int = 2) -> GameState:
         cs["comet_valid"][k] = True
         cs["comet_spawned"][k] = True
         cs["comet_path_index"][k] = gidx
-        for j, pid in enumerate(g["planet_ids"][:4]):
+        # Re-align paths to surviving planet_ids: the engine filters
+        # planet_ids on expiry but not paths (interpreter.py:570-573).
+        alive_paths = [p for p in g["paths"] if gidx < len(p)]
+        for j, pid in enumerate(g["planet_ids"][:MAX_COMET_PATHS_PER_GROUP]):
             slot = pid_to_idx.get(int(pid))
-            path = g["paths"][j]
+            path = alive_paths[j] if j < len(alive_paths) else g["paths"][j]
             Lp = min(len(path), L)
             cs["comet_paths_len"][k, j] = Lp
             for t in range(Lp):
                 cs["comet_paths_xy"][k, j, t, 0] = path[t][0]
                 cs["comet_paths_xy"][k, j, t, 1] = path[t][1]
             if slot is not None:
+                # The step-0 game-level comet_planet_ids field is empty
+                # (comets spawn mid-game), so is_comet was never set from
+                # it — flag it here where we actually wire the comet.
+                arr["is_comet"][slot] = True
                 arr["planet_comet_spawn"][slot] = k
                 arr["planet_comet_path"][slot] = j
                 cs["comet_planet_idx"][k, j] = slot

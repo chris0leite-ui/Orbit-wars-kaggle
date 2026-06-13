@@ -53,8 +53,13 @@ def export(ckpt_path: str, out_path: str):
         d = pickle.load(f)
     params = {k: np.asarray(v) for k, v in d["params"].items()}
 
+    # fp32, not fp16: a prior review measured fp16 round-trip flipping
+    # the argmax target on ~0.8% of turns (borderline logit gaps) — the
+    # fp64 parity tests never see it. fp32 keeps the exported agent
+    # decision-identical to the trained policy; zlib still gets the file
+    # to ~0.6 MB, far under the Kaggle limit.
     buf = io.BytesIO()
-    np.savez(buf, **{k: v.astype(np.float16) for k, v in params.items()})
+    np.savez(buf, **{k: v.astype(np.float32) for k, v in params.items()})
     blob = zlib.compress(buf.getvalue(), 9)
     b64 = base64.b64encode(blob).decode()
     lines = [f'    "{b64[i:i + 96]}"' for i in range(0, len(b64), 96)]

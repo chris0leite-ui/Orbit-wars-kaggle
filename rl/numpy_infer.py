@@ -91,11 +91,17 @@ def obs_to_arrays(obs) -> dict:
         gids = list(g["planet_ids"]) if hasattr(g, "keys") else list(g.planet_ids)
         gpaths = g["paths"] if hasattr(g, "keys") else g.paths
         gidx = int(g["path_index"]) if hasattr(g, "keys") else int(g.path_index)
+        # The engine drops expired pids from planet_ids but NOT from paths
+        # (interpreter.py:570-573), so planet_ids[j] no longer aligns with
+        # paths[j] once any sibling comet expires. Both keep original
+        # spawn order and a comet expires exactly when gidx >= len(path),
+        # so re-align by filtering paths to the still-alive ones.
+        alive_paths = [p for p in gpaths if gidx < len(p)]
         for j, pid in enumerate(gids):
             slot = pid_to_idx.get(int(pid))
             if slot is None:
                 continue
-            path = gpaths[j]
+            path = alive_paths[j] if j < len(alive_paths) else gpaths[j]
             L = len(path)
             a["comet_remain"][slot] = max(L - 1 - gidx, 0)
             for t in range(TT):
@@ -430,12 +436,17 @@ class RLAgent:
             me = int(getattr(obs, "player", 0))
         # New-episode detection for in-process multi-game harnesses
         # (step counter resets); Kaggle eval is fresh-process anyway.
-        if self.last_step is not None and a["step"] <= self.last_step:
+        if self.last_step is not None and a["step"] < self.last_step:
             self.num_agents = None
         self.last_step = a["step"]
-        if self.num_agents is None:
-            owners = set(int(o) for o in a["owner"][a["alive"]] if o >= 0)
-            self.num_agents = 4 if len(owners) > 2 or me > 1 else 2
+        # Infer player count from the board. In real eval the first act()
+        # is step 0, where every home planet is owned, so this is exact;
+        # make it MONOTONIC (re-evaluate each turn, never downgrade) so a
+        # mid-game first-observation or early elimination can only RAISE
+        # the count, never strand the policy in a too-small seat space.
+        owners = set(int(o) for o in a["owner"][a["alive"]] if o >= 0)
+        inferred = 4 if (len(owners) > 2 or me > 1) else 2
+        self.num_agents = max(self.num_agents or 0, inferred)
 
         nodes, edges, globals_, src_mask, tgt_mask = seat_features(
             a, me, self.num_agents)
@@ -457,7 +468,11 @@ class RLAgent:
 
         angle, _ = solve_intercept_rows(
             a, tgt_choice.astype(np.int64), ships.astype(np.int64))
-        order = np.argsort(-np.where(is_launch, ships, -1))
+        # kind="stable" to match jnp.argsort (stable) in rollout.py: on
+        # tied ship counts both then keep the lowest-index sources, so the
+        # top-MAX_LAUNCH truncation selects the SAME fleets at eval as in
+        # training (default numpy quicksort breaks ties arbitrarily).
+        order = np.argsort(-np.where(is_launch, ships, -1), kind="stable")
         actions = []
         for s in order[:MAX_LAUNCH]:
             if not is_launch[s]:
