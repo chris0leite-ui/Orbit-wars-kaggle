@@ -69,10 +69,13 @@ Stop A/B-ing against a strong-ProducerLite monoculture. Use a
 **heterogeneous 4P panel** that mixes architectures and strengths:
 
 ```
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
 python scripts/play4p.py --focal <candidate> \
     --bg producer,v7_0,nearest --rotate-seats --seeds <list> --workers 4
 ```
 
+The thread-pinning prefix is **mandatory** for `--workers >1` — see the
+harness caveat below (unpinned, the winrate is silently corrupted).
 Recommended backgrounds (rotate seats; both reproduce the ladder's
 launch-quality spread): `producer,v7_0,nearest` and `v7_0,v4_planner,v3.5.1`.
 Registered opponents now include `producer`, `panel_smarter`, `panel_veto`
