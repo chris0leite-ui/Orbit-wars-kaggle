@@ -90,3 +90,22 @@ Registered opponents now include `producer`, `panel_smarter`, `panel_veto`
 - Reusable rule of thumb: our local panel's fidelity is governed by mirror
   misprediction. To surface a weakness, the panel must contain opponents
   the response-veto mirror gets WRONG.
+
+## Harness caveat — torch contention corrupts multi-worker 4P eval
+
+Validating the `play4p` winrate wrapper surfaced a contention trap (same
+class as the elegant-dijkstra "torch thread-thrashing" finding). Same
+config (focal 0.15 bundle, bg `producer,v7_0,nearest`, seed 7, 4 seat
+rotations):
+
+| run | focal turn-ms p50 / p95 / max | over-1000ms turns | result | verdict |
+|---|---|---|---|---|
+| `--workers 4`, threads unpinned | 2083 / 5090 / 6209 | 183 | 0/4 | FAIL-wallclock |
+| `--workers 1` | 39–68 / ~120 / 237 | 0 | 2/4 | PASS |
+| `--workers 4` + `OMP/MKL/OPENBLAS_NUM_THREADS=1` | — / 129 / 152 | 0 | 2/4 | PASS |
+
+Four parallel worker processes each spawn default-thread torch agents and
+oversubscribe the CPU; turns time out and the **winrate itself flips**
+(0/4 → 2/4). Always pin torch threads for multi-worker local eval, or run
+`--workers 1`. The un-blinding measurement above (the low-P attack tables)
+is unaffected — it ran serially in one process, no cross-game contention.

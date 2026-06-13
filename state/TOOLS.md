@@ -33,9 +33,16 @@ Agent resolution: baseline names (`v7_0`, `v4_planner`, `v3.5.1`), path to `.py`
 > `audit/2026-06-13-referee-blindness-diagnosis.md`.
 >
 > ```
+> OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
 > python scripts/play4p.py --focal <candidate> \
 >     --bg producer,v7_0,nearest --rotate-seats --seeds <list> --workers 4
 > ```
+> **MUST pin torch threads** (the env-var prefix). Without it, `--workers
+> >1` oversubscribes CPU with torch agents: turns blow past 1000 ms and
+> the winrate is silently corrupted (measured 0/4 FAIL-wallclock at
+> `--workers 4` unpinned vs 2/4 PASS pinned, same seed). With threads
+> pinned, multi-worker timing is clean (p95 ~130 ms). If unsure, use
+> `--workers 1` (serial, always safe, ~20-40 s/game).
 > Recommended ladder-faithful backgrounds: `producer,v7_0,nearest` or
 > `v7_0,v4_planner,v3.5.1` (mix architectures + strengths). Registered
 > panel opponents: `producer`, `panel_smarter`, `panel_veto` (vendored
