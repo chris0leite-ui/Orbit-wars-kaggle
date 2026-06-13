@@ -175,3 +175,35 @@ ships are re-aimed at a target the model likes, instead of re-proposing
 the same bad shot — turning "delay" into "substitute." Unproven, costs a
 live slot (referee blindness), and counter-indicated by the ledger's
 history of front-of-planner stacking. PI decision, not auto-pursued.
+
+## FINAL — un-blinded 4P panel A/B (2026-06-13, closes the line)
+
+With referee blindness fixed, the filter is testable where it actually
+fires (38% low-P attacks on the heterogeneous 4P panel). Control
+(`vetorf4p_sync`, gate off) vs filter (0.15), 8 seeds × 4 seat rotations
+= 32 games per cell, thread-pinned (clean timing, 0 turns over budget):
+
+| 4P background | control | filter 0.15 |
+|---|---|---|
+| producer,v7_0,nearest | 13/32 (40.6%) | 13/32 (40.6%) |
+| v7_0,v4_planner,v3.5.1 | 23/32 (71.9%) | 20/32 (62.5%) |
+
+Pooled: control 36/64 vs filter 33/64 — **no detectable benefit, slight
+negative trend** (CIs overlap heavily; n=32/cell). The offline
+counterfactual's premise ("25% of launches are doomed, removing them
+should help") is **refuted**: removing them reject-only does not help even
+where the filter fires. The flagged launches are low-cost taps whose
+removal doesn't change first-place, and/or delay-not-prevention nullifies
+the removal (wasted ships went *up* live, consistent).
+
+**Line closed.** Shot-validator as a standalone reject-only filter is a
+null/slight-negative — local-2P (inert), live (null), and now
+un-blinded-4P (null where it fires). The redirect salvage is NOT pursued:
+the base mechanism shows no benefit even when firing, so "substitute
+instead of delay" has no upside to capture, and it is counter-indicated
+by the ledger's front-of-planner-stacking history.
+
+**Meta-win:** this verdict was reached LOCALLY, no live slot spent — which
+is exactly what the referee-blindness fix (`audit/2026-06-13-referee-
+blindness-diagnosis.md`) was built to enable. First successful use of the
+un-blinded panel as a mechanism gate.
