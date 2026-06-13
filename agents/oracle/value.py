@@ -61,6 +61,20 @@ class ValueNet:
         p_win = 1.0 / (1.0 + np.exp(-win_logit))
         return p_win + SHARE_W * np.clip(share, 0.0, 1.0)
 
+    def win_prob(self, feats_list):
+        """P(win) alone — the critic baseline for advantage-weighted RL."""
+        if len(feats_list) == 0:
+            return np.zeros(0, dtype=np.float32)
+        X = np.asarray(feats_list, dtype=np.float32)
+        if not self.loaded:
+            return np.clip(X[:, _I_SHARE_SCORE_LAST], 0.0, 1.0)
+        Z = (X - self.mu) / self.sigma
+        for W, b in self.layers:
+            Z = Z @ W + b
+            np.maximum(Z, 0.0, out=Z)
+        win_logit = Z @ self.head_win[0] + self.head_win[1]
+        return 1.0 / (1.0 + np.exp(-win_logit))
+
 
 def encode_weights_py(arrays: dict, head_names=("WIN", "SHARE")) -> str:
     """Render trained arrays into a *_weights.py module source.

@@ -72,20 +72,25 @@ def main():
     d = np.load(args.ds)
     X, y, frac, meta = d["X"], d["y"], d["frac"], d["meta"]
     extra_mask = np.zeros(len(X), dtype=bool)
+    row_w = np.ones(len(X), dtype=np.float32)
     if args.extra_ds:
         d2 = np.load(args.extra_ds)
         m2 = d2["meta"]
         if m2.shape[1] < meta.shape[1]:        # pad missing flag columns
             pad = np.zeros((len(m2), meta.shape[1] - m2.shape[1]), np.int64)
             m2 = np.concatenate([m2, pad], axis=1)
+        n2 = len(d2["X"])
         X = np.concatenate([X, d2["X"]])
         y = np.concatenate([y, d2["y"]])
         frac = np.concatenate([frac, d2["frac"]])
         meta = np.concatenate([meta, m2])
+        # per-row AWR advantage weights if present, else flat extra-weight
+        rw2 = d2["row_w"] if "row_w" in d2.files else np.ones(n2, np.float32)
+        row_w = np.concatenate([row_w, rw2.astype(np.float32)])
         extra_mask = np.zeros(len(X), dtype=bool)
-        extra_mask[-len(d2["X"]):] = True
-        print(f"mixed in {len(d2['X'])} extra rows "
-              f"(weight x{args.extra_weight})")
+        extra_mask[-n2:] = True
+        kind = "AWR advantage-weighted" if "row_w" in d2.files else "flat"
+        print(f"mixed in {n2} extra rows (x{args.extra_weight}, {kind})")
     if os.environ.get("ORACLE_ZERO_COMMIT"):
         # no-chain variant: train with the same-turn commitment features
         # neutralized (runtime must then pass committed=None and skip
@@ -104,8 +109,9 @@ def main():
         mixed = (state_key * np.uint64(2654435761)) % np.uint64(1 << 32)
         keep = (mixed % np.uint64(1000)) < np.uint64(
             int(1000 * max_rows / len(X)))
-        X, y, frac, meta, extra_mask = (X[keep], y[keep], frac[keep],
-                                        meta[keep], extra_mask[keep])
+        X, y, frac, meta, extra_mask, row_w = (
+            X[keep], y[keep], frac[keep], meta[keep],
+            extra_mask[keep], row_w[keep])
         print(f"thinned to {len(X)} rows (ORACLE_TRAIN_MAX_ROWS={max_rows})")
     ep = meta[:, 0]
     state = meta[:, 0] * 100000 + meta[:, 3]      # unique state key
@@ -168,9 +174,9 @@ def main():
         wt = wt * w_nat
         print("threat-state importance reweighting ON")
     if args.extra_ds:
-        wt = wt * torch.where(torch.tensor(extra_mask[tr]),
-                              torch.tensor(args.extra_weight),
-                              torch.tensor(1.0))
+        ew = np.where(extra_mask[tr],
+                      args.extra_weight * row_w[tr], 1.0).astype(np.float32)
+        wt = wt * torch.from_numpy(ew)
     Zv = torch.from_numpy(Z[va]).to(dev)
     n = Zt.shape[0]
 

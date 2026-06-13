@@ -38,8 +38,19 @@ from agents.oracle.policy_features import (                  # noqa: E402
 REPLAY_DIR = Path(os.environ.get("ORACLE_REPLAY_DIR", str(REPO / "data" / "external" / "replays")))
 EPISODES_PATH = REPO / "data" / "external" / "episodes.jsonl"
 EXTRACT_HORIZON = PLAN_HORIZON
+AWR_BETA = float(os.environ.get("ORACLE_AWR_BETA", "2.0"))
 
 _SEAT_SCORES = None
+_VALUE_NET = None
+
+
+def _value_net():
+    """Lazy per-worker value net — the AWR critic baseline."""
+    global _VALUE_NET
+    if _VALUE_NET is None:
+        from agents.oracle.value import ValueNet
+        _VALUE_NET = ValueNet()
+    return _VALUE_NET
 
 
 def seat_scores():
@@ -89,17 +100,24 @@ def process(job):
         if len(steps) < 60:
             return None
         ep_id = int(d.get("info", {}).get("EpisodeId", 0) or 0)
-        if os.environ.get("ORACLE_SELFPLAY_MODE"):
-            # self-play replays: learn from WINNERS (either seat); fold id
-            # derives from the filename so games split deterministically
+        awr = bool(os.environ.get("ORACLE_AWR_MODE"))
+        rewards = rmax = None
+        if os.environ.get("ORACLE_SELFPLAY_MODE") or awr:
+            # self-play replays: fold id derives from the filename so games
+            # split deterministically. SELFPLAY learns from winners only;
+            # AWR learns from BOTH seats, weighting each decision by how
+            # much its game outcome beat the value-net's expectation.
             import zlib
             ep_id = zlib.crc32(os.path.basename(str(path)).encode()) % 10**8
             rewards = [steps[-1][k].get("reward") for k in
                        range(len(steps[0]))]
             rewards = [(-2 if r is None else r) for r in rewards]
             rmax = max(rewards)
-            seats = [k for k, r in enumerate(rewards)
-                     if r == rmax and rewards.count(rmax) == 1]
+            if awr:
+                seats = list(range(len(steps[0])))
+            else:
+                seats = [k for k, r in enumerate(rewards)
+                         if r == rmax and rewards.count(rmax) == 1]
         else:
             scores = seat_scores().get(ep_id, {})
             seats = [p for p in range(len(steps[0]))
@@ -107,9 +125,10 @@ def process(job):
         if not seats:
             return None
 
-        X, y, frac, meta = [], [], [], []
+        X, y, frac, meta, row_w = [], [], [], [], []
         cov_hit = cov_tot = sun_miss = 0
         state_id = 0
+        import agents.oracle.features as VF
         # REPLAY CONVENTION (verified empirically 2026-06-11): the action
         # stored at index t was decided FROM obs[t-1]; its fleets already
         # fly in obs[t]. So the decision pair is (obs[t], action[t+1]).
@@ -188,6 +207,20 @@ def process(job):
                 pairs = shortlist_pairs(w, sp)
                 if not pairs:
                     continue
+                # advantage weight (AWR): how much did this decision's game
+                # outcome beat the value-net's win-prob estimate of the
+                # state? upweights moves that improved a position, ~zeros
+                # out moves made while already winning/losing — the
+                # principled cure for naive winner-copying.
+                state_w = 1.0
+                if awr:
+                    base = float(_value_net().win_prob([VF.extract(w)])[0])
+                    outcome = (1.0 if (rewards[seat] == rmax
+                                       and rewards.count(rmax) == 1)
+                               else 0.0)
+                    adv = outcome - base
+                    state_w = float(min(10.0, max(0.1,
+                                                  math.exp(AWR_BETA * adv))))
                 expert, misses = attribute_moves(w, moves, seat)
                 sun_miss += misses
                 pair_set = {(s, tt) for (_k, s, tt) in pairs}
@@ -227,10 +260,12 @@ def process(job):
                                 if fired else -1.0)
                     meta.append((ep_id, seat, t, state_id,
                                  1 if is_threat_row else 0))
+                    row_w.append(state_w)
         if not X:
             return None
         return (np.asarray(X, np.float32), np.asarray(y, np.float32),
                 np.asarray(frac, np.float32), np.asarray(meta, np.int64),
+                np.asarray(row_w, np.float32),
                 cov_hit, cov_tot, sun_miss)
     except Exception as e:
         return ("ERR", os.path.basename(str(path)), str(e)[:200])
@@ -254,7 +289,7 @@ def main():
     print(f"{len(jobs)} replays, {args.workers} workers, "
           f"{N_POLICY_FEATURES} policy features")
 
-    Xs, ys, fr, metas = [], [], [], []
+    Xs, ys, fr, metas, rws = [], [], [], [], []
     cov_hit = cov_tot = sun_miss = errs = 0
     with Pool(args.workers) as pool:
         for k, res in enumerate(pool.imap_unordered(process, jobs)):
@@ -265,8 +300,9 @@ def main():
                 if errs <= 5:
                     print("  err:", res[1], res[2])
                 continue
-            X, y, f_, m, ch, ct, sm = res
+            X, y, f_, m, rw, ch, ct, sm = res
             Xs.append(X); ys.append(y); fr.append(f_); metas.append(m)
+            rws.append(rw)
             cov_hit += ch; cov_tot += ct; sun_miss += sm
             if (k + 1) % 100 == 0:
                 print(f"  {k+1}/{len(jobs)} ({sum(x.shape[0] for x in Xs)} rows)")
@@ -274,9 +310,14 @@ def main():
     y = np.concatenate(ys)
     f_ = np.concatenate(fr)
     meta = np.concatenate(metas)
-    np.savez_compressed(args.out, X=X, y=y, frac=f_, meta=meta)
+    row_w = np.concatenate(rws)
+    np.savez_compressed(args.out, X=X, y=y, frac=f_, meta=meta, row_w=row_w)
     print(f"saved {X.shape} -> {args.out} ({errs} errors)")
     print(f"positives: {int(y.sum())} ({100*y.mean():.2f}%)")
+    if (row_w != 1.0).any():
+        print(f"AWR row weights: mean {row_w.mean():.3f}, "
+              f"p10 {np.percentile(row_w,10):.3f}, "
+              f"p90 {np.percentile(row_w,90):.3f}")
     print(f"expert-launch shortlist coverage: {cov_hit}/{cov_tot} "
           f"({100*cov_hit/max(1,cov_tot):.1f}%), "
           f"expert sun/oob misses: {sun_miss}")
