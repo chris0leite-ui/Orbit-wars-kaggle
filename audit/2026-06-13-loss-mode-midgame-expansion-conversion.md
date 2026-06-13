@@ -179,3 +179,51 @@ target selection — bias mid-game neutral targeting toward planets we can
 take-and-keep uncontested, away from ones a strong peer wins. This is a
 proposer/scorer change, not a knob; it should be a PI-signed-off proposal,
 and it is now A/B-able on the un-blinded panel before any live slot.
+
+## STOP before building — proposer-level cause is ambiguous (2026-06-13)
+
+Gating check before building a targeting mechanism: at step 60 in loss
+games, neutrals strictly closer to one of OUR planets than to any enemy
+("winnable@60") and their fate by step 100:
+
+| | winnable@60 | →ours | →enemy | →still-neutral |
+|---|---|---|---|---|
+| WIN (n=29) | 4.7 | 2% | 3% | 68% |
+| LOSS (n=35) | 3.7 | 5% | 15% | 55% |
+
+Two things make this ambiguous (and self-contradictory):
+1. In BOTH win and loss we capture only 2–5% of winnable neutrals by step
+   100 — yet winners double their planet count (4.6→9.3) over that window.
+   So winners' captures come from OUTSIDE the strictly-winnable set —
+   they out-race for contested/farther neutrals.
+2. That points the OPPOSITE way from the neutral-outcome trace's "avoid
+   contested neutrals" read. One says expand MORE aggressively (take
+   contested); the other says avoid contested. Opposite mechanisms.
+
+**Judgment (Rule 40): do NOT build on contradictory evidence.** A
+contest-avoidance scorer term and an expand-aggressively change are
+opposite, both high-risk-of-null on this co-tuned architecture (the
+mechanism-ledger graveyard of scorer-term additions), and my cheap
+aggregate diagnostics (ray-cast targets, strict winnable defn, planet-id
+tracking) have hit their resolution limit.
+
+**Honest synthesis for the PI:**
+- Solid: loss mode = mid-game (50–100) expansion non-conversion vs a
+  strong peer; two cheap levers eliminated (shot-MLP reject, reactive-floor
+  sizing) — both "metric moves, wins don't".
+- Murky: the proposer-level cause is ambiguous (avoid-contested vs
+  expand-more), not separable by aggregate replay stats.
+- This is consistent with the project-long finding that producer_plus /
+  the ProducerLite base is **co-tuned end-to-end** and resists single-knob
+  / single-term changes — we are near a local optimum.
+
+**Two honest options (PI to choose):**
+1. **Deeper investment:** a proper turn-by-turn side-by-side trace (one
+   loss game, us vs the winning peer, step 50–100: where does each
+   capture come from, who reaches first) to disambiguate before any
+   mechanism. Higher effort; uncertain payoff.
+2. **Accept the agent, manage the endgame:** with ~10 days left and the
+   agent near a co-tuned optimum, the highest-EV use of effort may be
+   ensuring the final-eval rolling pair is our two best SETTLED agents
+   (currently dragged by the RL 946 floor — see the endgame flag), not
+   another likely-null mechanism.
