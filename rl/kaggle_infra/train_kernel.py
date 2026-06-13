@@ -38,8 +38,12 @@ pool_hits = glob.glob("/kaggle/input/**/rl_pool_train.npz", recursive=True)
 if not pool_hits:
     raise RuntimeError("rl_pool_train.npz not found under /kaggle/input")
 
-# --- NIGHT-3 RUN: league + producer behavior cloning ---
+# --- RUN: distilled-opponent league ---
+# Frozen producer-CLONE in the opponent pool (the learner trains to BEAT
+# producer-style play), + light BC aux to keep the action distribution
+# near producer-reachable waves. Resumes the best RL checkpoint.
 bc_hits = glob.glob("/kaggle/input/**/bc_samples.npz", recursive=True)
+clone_hits = glob.glob("/kaggle/input/**/bc_net.pkl", recursive=True)
 RUN_ARGS = [
     "rl.train",
     "--pool", pool_hits[0],
@@ -57,12 +61,15 @@ RUN_ARGS = [
     "--league",
     "--snapshot-every", "150",
     "--snapshot-cap", "12",
-    "--greedy-frac", "0.4",
+    "--greedy-frac", "0.3",
 ]
+if clone_hits:
+    RUN_ARGS += ["--bc-opponent", clone_hits[0], "--clone-frac", "0.35"]
+    print("clone opponent:", clone_hits[0], flush=True)
 if bc_hits:
-    RUN_ARGS += ["--bc-npz", bc_hits[0], "--bc-coef", "0.3",
+    RUN_ARGS += ["--bc-npz", bc_hits[0], "--bc-coef", "0.1",
                  "--bc-batch", "192"]
-    print("BC samples:", bc_hits[0], flush=True)
+    print("BC aux:", bc_hits[0], flush=True)
 if resume:
     RUN_ARGS += ["--resume", resume]
 
