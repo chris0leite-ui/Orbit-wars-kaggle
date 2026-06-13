@@ -107,6 +107,60 @@ def test_opp_weights_all_dead(pp_main):
     assert float(w.sum()) == 0.0
 
 
+def test_opp_weights_weakness_mode(monkeypatch, pp_main):
+    # weakness = complement weighting: weakest living rival earns the MOST.
+    # rivals 1:30, 2:10, 3:5 (total 45). complements 15,35,40 -> /90.
+    monkeypatch.setenv("PRODUCER_PLUS_FFA_WEIGHTS", "weakness")
+    ot = _obs_tensors(
+        [
+            [0, 0, 10, 10, 1, 99, 2],
+            [1, 1, 20, 20, 1, 30, 2],
+            [2, 2, 30, 30, 1, 10, 2],
+            [3, 3, 40, 40, 1, 5, 2],
+        ],
+        [],
+    )
+    w = pp_main._ffa_opp_weights(ot, player_id=0, player_count=4)
+    assert abs(float(w.sum()) - 1.0) < 1e-6
+    assert abs(float(w[1]) - 15.0 / 90.0) < 1e-6
+    assert abs(float(w[2]) - 35.0 / 90.0) < 1e-6
+    assert abs(float(w[3]) - 40.0 / 90.0) < 1e-6
+    # the weakest rival outweighs the strongest — the opposite of strength mode
+    assert float(w[3]) > float(w[1])
+
+
+def test_opp_weights_weakness_singleton_duel(monkeypatch, pp_main):
+    # Only one living rival: the complement is identically zero, so the guard
+    # must put full weight on that rival (the endgame duel is still valued),
+    # not null the opponent term.
+    monkeypatch.setenv("PRODUCER_PLUS_FFA_WEIGHTS", "weakness")
+    ot = _obs_tensors(
+        [
+            [0, 0, 10, 10, 1, 50, 2],
+            [2, 2, 30, 30, 1, 40, 2],   # the lone survivor
+        ],
+        [],
+    )
+    w = pp_main._ffa_opp_weights(ot, player_id=0, player_count=4)
+    assert float(w[2]) == pytest.approx(1.0)
+    assert float(w.sum()) == pytest.approx(1.0)
+
+
+def test_opp_weights_unknown_mode_falls_back_to_strength(monkeypatch, pp_main):
+    monkeypatch.setenv("PRODUCER_PLUS_FFA_WEIGHTS", "bogus")
+    ot = _obs_tensors(
+        [
+            [0, 0, 10, 10, 1, 99, 2],
+            [1, 1, 20, 20, 1, 30, 2],
+            [2, 2, 30, 30, 1, 10, 2],
+        ],
+        [],
+    )
+    w = pp_main._ffa_opp_weights(ot, player_id=0, player_count=4)
+    assert abs(float(w[1]) - 0.75) < 1e-6   # strength proportional
+    assert abs(float(w[2]) - 0.25) < 1e-6
+
+
 def test_competitive_score_weighted_semantics():
     """The objective fix itself: mutual-damage trades devalued, profitable
     captures still strongly valued, leader-damage worth more than runt-damage.

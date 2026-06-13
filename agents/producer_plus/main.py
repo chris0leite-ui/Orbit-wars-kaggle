@@ -589,17 +589,30 @@ def _ffa_score_enabled() -> bool:
 def _ffa_weight_mode() -> str:
     """``strength`` (default): weights ∝ rival planet+fleet ships.
     ``uniform``: equal weight per living rival — tests whether the
-    trade-devaluation alone helps without the hit-the-leader tilt."""
+    trade-devaluation alone helps without the hit-the-leader tilt.
+    ``weakness``: weights ∝ (total_rival_strength − this rival's strength),
+    a bounded anti-leader tilt that pays MOST for converting the weakest
+    rival's mass. Motivated by the live kingmaker-tax finding
+    (audit/2026-06-13-kingmaker-tax.md): in 4P losses we capture from the
+    strongest rival (mean ship-rank 1.76) while the eventual winner feeds
+    the weak (rank 2.66); strength-weighting actively pays us to attack the
+    leader's most expensive planets."""
     raw = os.environ.get("PRODUCER_PLUS_FFA_WEIGHTS", "strength").strip().lower()
-    return raw if raw in ("strength", "uniform") else "strength"
+    return raw if raw in ("strength", "uniform", "weakness") else "strength"
 
 
 def _ffa_opp_weights(obs_tensors: dict, *, player_id: int, player_count: int):
-    """Per-opponent weights ∝ current total strength (planet + fleet ships),
-    or equal-per-living-rival under ``PRODUCER_PLUS_FFA_WEIGHTS=uniform``.
+    """Per-opponent weights over living rivals (0 at ``player_id``, summing to
+    1; all-zero if every opponent is dead). Mode (``PRODUCER_PLUS_FFA_WEIGHTS``):
 
-    Returns a ``[player_count]`` float tensor with 0 at ``player_id``,
-    summing to 1 over living opponents (all-zero if every opponent is dead).
+    - ``strength`` (default): weights ∝ rival planet+fleet ships — tilts
+      valuation toward damaging the strongest.
+    - ``uniform``: equal weight per living rival — removes the leader tilt.
+    - ``weakness``: weights ∝ (Σ_living strength − own strength), a bounded
+      complement that leans toward the weakest living rival without the
+      blow-ups of a raw 1/strength inverse.
+
+    Returns a ``[player_count]`` float tensor.
     """
     planets = obs_tensors["planets"]            # [P, 7]: owner=col1, ships=col5
     device = planets.device
@@ -616,12 +629,25 @@ def _ffa_opp_weights(obs_tensors: dict, *, player_id: int, player_count: int):
         if bool(f_mask.any()):
             strength.scatter_add_(0, f_owner[f_mask], fleets[f_mask, 6])
     strength[int(player_id)] = 0.0
-    if _ffa_weight_mode() == "uniform":
-        strength = (strength > 0).to(planets.dtype)
-    total = float(strength.sum())
+    mode = _ffa_weight_mode()
+    if mode == "uniform":
+        weights = (strength > 0).to(planets.dtype)
+    elif mode == "weakness":
+        living = (strength > 0).to(planets.dtype)
+        # complement: total living strength minus each rival's own strength,
+        # masked to living rivals so the weakest survivor earns the most.
+        weights = (float(strength.sum()) - strength) * living
+        # With a single living rival the complement is identically zero;
+        # fall back to full weight on that rival (the endgame duel must
+        # still be valued) rather than nulling the opponent term.
+        if float(weights.sum()) <= 0.0:
+            weights = living
+    else:  # strength
+        weights = strength
+    total = float(weights.sum())
     if total <= 0.0:
         return torch.zeros(a, dtype=planets.dtype, device=device)
-    return strength / total
+    return weights / total
 
 
 # --- Commitment cost ----------------------------------------------------------
