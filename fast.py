@@ -73,6 +73,8 @@ _BASELINES: dict[str, str] = {
     # agents/producer/PROVENANCE.md. Added 2026-06-04 as a strong,
     # architecturally-distinct calibration opponent.
     "producer":   str(REPO / "agents" / "producer" / "producer_agent.py"),
+    "panel_smarter": str(REPO / "agents" / "panel_smarter" / "agent_entry.py"),
+    "panel_veto":   str(REPO / "agents" / "panel_veto" / "agent_entry.py"),
     # Producer-engine migration host. Step 1: bit-identical to producer.
     # See agents/producer_plus/PROVENANCE.md and state/MIGRATION_PLAN.md.
     "producer_plus": str(REPO / "agents" / "producer_plus" / "producer_agent.py"),

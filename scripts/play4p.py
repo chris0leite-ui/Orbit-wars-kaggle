@@ -40,6 +40,10 @@ _BASELINES = {
     "v3.5.1":     str(REPO / "submissions" / "v3.5.1.py"),
     "nearest":    str(REPO / "agents" / "simple" / "nearest.py"),
     "roi":        str(REPO / "agents" / "simple" / "roi.py"),
+    # Vendored public ProducerLite variants (eval-only panel opponents).
+    "producer":   str(REPO / "agents" / "producer" / "producer_agent.py"),
+    "panel_smarter": str(REPO / "agents" / "panel_smarter" / "agent_entry.py"),
+    "panel_veto":   str(REPO / "agents" / "panel_veto" / "agent_entry.py"),
 }
 
 

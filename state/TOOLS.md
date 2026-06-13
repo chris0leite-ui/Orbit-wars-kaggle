@@ -22,6 +22,26 @@ Agent resolution: baseline names (`v7_0`, `v4_planner`, `v3.5.1`), path to `.py`
 
 ## A/B testing tools (pick by question being asked)
 
+> **Referee-blindness warning (2026-06-13).** A strong-ProducerLite-2P A/B
+> (`fast.py eval --vs producer`) is BLIND to any mechanism that targets
+> over-extension/launch-quality: our response-veto mirror models
+> ProducerLite opponents accurately and pre-filters bad attacks, so they
+> never appear locally (0% low-P attacks vs ~33% on the live ladder). To
+> reproduce the ladder, use a **heterogeneous 4P panel** — the low-P
+> launch share scales with mirror misprediction (strong-2P 0% → weak-2P
+> 11% → heterogeneous-4P ~38% ≈ ladder). See
+> `audit/2026-06-13-referee-blindness-diagnosis.md`.
+>
+> ```
+> python scripts/play4p.py --focal <candidate> \
+>     --bg producer,v7_0,nearest --rotate-seats --seeds <list> --workers 4
+> ```
+> Recommended ladder-faithful backgrounds: `producer,v7_0,nearest` or
+> `v7_0,v4_planner,v3.5.1` (mix architectures + strengths). Registered
+> panel opponents: `producer`, `panel_smarter`, `panel_veto` (vendored
+> publics, eval-only) + the non-producer lineage (`v7_0`, `v4_planner`,
+> `v3.5.1`, `nearest`).
+
 | Tool | Question it answers | Sample mode | CRN | Use when |
 |---|---|---|---|---|
 | `fast.py eval <agent>` | Beats v7_0 baseline? | adaptive (Wilson-gated) | yes | First-pass triage |
