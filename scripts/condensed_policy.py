@@ -148,16 +148,16 @@ class CondensedPolicy:
                 if s_sh > AGG_MIN_GARRISON:
                     frac = max(1, int(s_sh * AGG_FRACTION))
                     cap = max(1, int(s_sh) - AGG_RESERVE)
-                    ships = max(target_min, min(frac, cap))
+                    agg = max(target_min, min(frac, cap))
                 else:
-                    ships = target_min
-                if ships > s_sh:
-                    continue
-                eta = max(1, int(math.ceil(dist / fleet_speed(ships))))
-                # cheap garrison projection at arrival
+                    agg = target_min
+                eta = max(1, int(math.ceil(dist / fleet_speed(max(agg, 1)))))
+                # cheap garrison projection at arrival (neutrals don't grow)
                 arr = t_sh + (t_pr * eta if t_owner >= 0 else 0.0)
-                if ships <= arr:
-                    continue  # can't take it
+                needed = int(math.ceil(arr)) + 1
+                if needed > s_sh:
+                    continue  # genuinely can't afford the capture (don't bounce)
+                ships = min(int(s_sh), max(agg, needed))  # send enough to WIN
                 hold = max(1.0, EPISODE_STEPS - step - eta)
                 value = t_pr * hold
                 priority = 1.0
