@@ -59,8 +59,12 @@ def _fleet_target(f, planets, me):
 
 
 class CondensedPolicy:
-    def __init__(self, num_seats: int = 2):
+    def __init__(self, num_seats: int = 2, enable_defense: bool = True,
+                 ledger: bool = True, sun_check: bool = True):
         self.num_seats = num_seats
+        self.enable_defense = enable_defense
+        self.ledger = ledger
+        self.sun_check = sun_check
 
     def __call__(self, obs):
         me = int(_read(obs, "player", 0))
@@ -105,7 +109,7 @@ class CondensedPolicy:
         missions = []  # (score, src_id, tgt_id, ships, eta, angle)
 
         # --- DEFENSE: reinforce planets that will fall ---
-        for d in mine:
+        for d in (mine if self.enable_defense else []):
             inc = sorted(threats.get(int(d[0]), []))
             if not inc:
                 continue
@@ -125,7 +129,7 @@ class CondensedPolicy:
                 eta = max(1, int(math.ceil(dist / fleet_speed(cost))))
                 if eta >= t_loss or cost > float(s[5]):
                     continue
-                if _crosses_sun(float(s[2]), float(s[3]), float(d[2]), float(d[3])):
+                if self.sun_check and _crosses_sun(float(s[2]), float(s[3]), float(d[2]), float(d[3])):
                     continue
                 hold = max(1.0, EPISODE_STEPS - step - eta)
                 score = (prod * hold) / (cost + dist + 1.0)
@@ -140,7 +144,7 @@ class CondensedPolicy:
             sx, sy = float(s[2]), float(s[3])
             for t in targets:
                 tx, ty = float(t[2]), float(t[3])
-                if _crosses_sun(sx, sy, tx, ty):
+                if self.sun_check and _crosses_sun(sx, sy, tx, ty):
                     continue
                 dist = math.hypot(tx - sx, ty - sy)
                 t_sh, t_pr, t_owner = float(t[5]), float(t[6]), int(t[1])
@@ -180,7 +184,7 @@ class CondensedPolicy:
             for m in by_src[sid]:
                 score, src_id, tgt_id, ships, eta, ang = m
                 need = float(pid[tgt_id][5]) + 1.0
-                if pending.get(tgt_id, 0.0) >= need:
+                if self.ledger and pending.get(tgt_id, 0.0) >= need:
                     continue
                 action.append([src_id, float(ang), int(ships)])
                 pending[tgt_id] = pending.get(tgt_id, 0.0) + ships
