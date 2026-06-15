@@ -1,5 +1,16 @@
 # state/STRATEGY.md — current main strategy
 
+> **⚠️ SUPERSEDED 2026-06-15.** The `baseline_adaptive_k` spec below is now
+> HISTORICAL (an old lib-based agent, μ≈1170). **What we actually run is
+> `producer_plus`** — the ~1280 heuristic (`vetorf4p_seq_strength` flag set on
+> the `orbit_lite` engine), improved by **loss-driven grounded fixes tested via
+> ladder A/B.** The live method, the loss landscape (under-expansion #1,
+> collapse #2), the current ladder variants, and the dead-end map are in
+> **`HANDOVER.md`** and
+> **`knowledge-base/thoughts/2026-06-15-loss-mining-grounded-fixes.md`**.
+> producer_plus + its bundler (`scripts/bundle_producer_plus.py`) now live on
+> this branch. The text below is retained for adaptive-K history only.
+
 > **READ FIRST.** This is the canonical "what are we running" doc. Everything
 > in `CLAUDE.md` and `HANDOVER.md` points back here.
 

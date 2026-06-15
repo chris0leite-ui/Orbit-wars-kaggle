@@ -61,6 +61,8 @@ A/B answers "whether," single-game tracing answers "why." When an A/B disagrees 
 | `scripts/replay_mine.py` (370 LOC) | Extract event streams from replay JSON | replay file |
 | `scripts/classify_losses.py` (337 LOC) | Root-cause tag per loss (comet snipe / planet overrun) | replays |
 | `scripts/live_episode_summary.py` (343 LOC) | Aggregate ladder episodes per submission (WR, seat dist) | submission ID |
+| `scripts/bundle_producer_plus.py` | Bundle a producer_plus flag-variant (`seq_strength_<name>` in VARIANTS) into a single submittable .py | `--variant <name> --out` |
+| `scripts/mine_losses.py` | Loss-landscape analyzer over a live-episodes replay dir (expansion gap, far-target neglect, collapse) — the 2026-06-15 method | live-episodes dir |
 | `scripts/label_shot_outcomes.py` | Per-departure tag (capture / snipe / miss) | replays + shot_validator |
 | `scripts/archetype_action_audit.py` (594 LOC) | Per-archetype turn-by-turn action mix (% snipe / defend / settle) | seeds |
 | `scripts/fingerprint_external.py` | Top-ladder submissions' move fingerprints | external replays |
