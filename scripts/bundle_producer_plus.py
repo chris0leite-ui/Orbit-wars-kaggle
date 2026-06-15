@@ -588,6 +588,40 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
         "PRODUCER_PLUS_OPENING_SEARCH": "40",
     },
+    "seq_strength_fc": {
+        # 1280 seq_strength base + force-concentration: relax the chooser's
+        # one-wave-per-target mutex (allow up to MAX_WAVES, re-scored against
+        # committed waves so no double-count). Lets high-value targets be taken
+        # decisively rather than left under-funded while ships scatter -- a real
+        # CHOOSER-ARCHITECTURE change (different action representation), Planet
+        # Wars canon ("concentrate force"). Targets BOTH loss clusters: decisive
+        # early captures (early-death) and winning key economic targets (long
+        # losses). Untested on the strong base.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
+        "PRODUCER_PLUS_FORCE_CONCENTRATION": "1",
+    },
+    "seq_strength_denial": {
+        # 1280 seq_strength base + calibrated denial bonus (weight 0.01, the
+        # 5-15%-nudge band from the 2026-06-10 probe). Values capturing targets
+        # the ENEMY wants (deny their expansion) -- a strategic-posture change,
+        # especially relevant to our weak 4P (46% vs 53% 2P): deny the leader's
+        # economy. Untested on the strong base.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
+        "PRODUCER_PLUS_DENIAL_BONUS": "1",
+        "PRODUCER_PLUS_DENIAL_WEIGHT": "0.01",
+    },
     "vetorf_fwd": {
         # Forward redistribution (Planet Wars canon + del Toro loss): rear
         # leftover garrisons stream toward the frontier every turn (pressure
