@@ -44,7 +44,11 @@ action-stream-identical to the vendored `agents/producer/` (verified, 60 turns).
 | control: static vs static | 2/8 | +0.0 | 0 | seeds 0,1 perfect draws; 2,3 seat-1 decided |
 | inverse_producer (opp_proj, K=1, H18) | 2/8 | +0.0 | 0 | **identical pattern to control** — no edge |
 | inverse_multisize (multi_size + opp_proj) | 0/8 | **-32.2** | 0 | **regression** — max margin +0 (never ahead, even at favourable seat) |
-| inverse_denial (opp_proj + denial w0.01) | TBD | TBD | TBD | exploit the prediction: race contested neutrals |
+| inverse_h24 (opp_proj, shared horizon 24) | 0/8 | **-3.2** | 0 | mild **regression** — max margin +0 |
+| inverse_denial (opp_proj + denial w0.01) | 1/8 | +0.0 | 0 | also ties; turned seed 2 into a perfect draw, amplified seed 3's seat skew |
+
+(inverse_k2 — opponent plans 2 ticks — was started but killed before completing;
+not re-run because the instrument is structurally insensitive here, see below.)
 
 Per-seed structure for control & inverse_producer is **exactly seat-antisymmetric**
 (P0 margin = -P1 margin) and **no agent wins both seats of any seed**: seeds 0,1
@@ -55,10 +59,12 @@ but never flips who wins.
 
 ## Diagnosis — why K=1 inverse ≈ static
 
-Decision-diff (opp_projection ON vs OFF on one shared observation stream, seed 0):
-**the chosen action differed on only ~7% of turns, first difference at turn 48.**
-The opponent model is a literal no-op through the entire opening and fires rarely
-thereafter. Against a mirror producer on a (4-fold-)symmetric board the
+Decision-diff (opp_projection ON vs OFF on one shared observation stream):
+**seed 0 (draw): action differed on 22/199 turns (11%), first at turn 48.
+seed 3 (contested): 35/191 turns (18%), first at turn 41.** Contest raises the
+change rate and pulls the first change a little earlier, but the opponent model
+is a literal no-op through the entire opening (~first 40 turns) and changes the
+chosen action only ~1-in-6 turns even when territories collide. Against a mirror producer on a (4-fold-)symmetric board the
 opponent's predicted launches are almost all on *their own side* — uncontestable
 (we are farther from their neutrals) — and the midline is symmetric, so a
 near-perfect opponent model unlocks **no profitable deviation**. Best-responding
@@ -79,8 +85,33 @@ asymmetric. This is consistent with opp_projection living in the champion (the
 real ladder is producer-like AND asymmetric) while the bare mechanism shows no
 edge in symmetric self-play.
 
-## (pending) Does exploitation help?
+## Does exploitation help? No.
 
-`inverse_denial` tests whether crediting captures of targets the opponent is
-predicted to grab (denial / race-for-contested-neutrals) converts the prediction
-into a winning deviation. [results pending]
+`inverse_denial` (credit captures of targets the opponent is predicted to grab —
+race for contested neutrals) also ties: 1/8, mean +0.0. It stabilised seed 2 into
+a perfect draw and amplified seed 3's seat skew — net zero. So even an explicit
+"exploit the prediction" term does not break the mirror in 200 steps.
+
+## The measurement is structurally insensitive (the real lesson)
+
+The competition boards are 4-fold symmetric by design (fairness). In symmetric
+self-play, head-to-head A-vs-B at both seats is forced toward antisymmetric
+margins (P0 = -P1), so the mean is ~0 unless one agent is strong enough to
+overturn seat geometry within the truncation window — which 200 steps does not
+allow (seeds 0,1 are still balanced draws at step 200). So a 200-step
+inverse-vs-mirror-producer A/B **cannot** surface the opp-model's edge even if it
+exists; it can only catch large regressions (which it did: multisize, h24).
+
+This is consistent with opp_projection being a real contributor on the live
+ladder (it is baked into the 1280 champion `vetorf4p_seq_strength`, and the
+`multi_opp_def` stack measured 24/32 = 75% vs producer in **full** games) while
+showing **no edge** in short symmetric self-play. The mechanism's value is a
+slow-burn against asymmetric opponents, not a short-game mirror advantage.
+
+## Recommendation
+
+To iterate the inverse producer with a sensitive short-game instrument, measure
+vs a **non-mirror** opponent (asymmetric position → non-zero margin), comparing
+inverse-vs-X against static-vs-X. Phase 3 runs exactly this with X = v7_0.
+Pure inverse-vs-static-producer at 200 steps is a null instrument and should not
+be used as the iteration signal.
