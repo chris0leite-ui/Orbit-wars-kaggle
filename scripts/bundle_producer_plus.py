@@ -572,6 +572,22 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_SCORE": "1",
         "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
     },
+    "seq_strength_opening": {
+        # The 1280 seq_strength base + opening beam-search
+        # (PRODUCER_PLUS_OPENING_SEARCH): spend headroom on a beam-64 plan over
+        # the early game. Targets the real early-death loss cluster (~step 100,
+        # ~1/3 of producer_plus's actual ladder losses). Opening search is OFF
+        # in every shipped variant -> never ladder-tested on the strong base.
+        # The wide step (a whole search subsystem, not a knob).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
+        "PRODUCER_PLUS_OPENING_SEARCH": "40",
+    },
     "vetorf_fwd": {
         # Forward redistribution (Planet Wars canon + del Toro loss): rear
         # leftover garrisons stream toward the frontier every turn (pressure
