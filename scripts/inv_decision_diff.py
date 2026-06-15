@@ -35,28 +35,36 @@ ACT_ON = Path("/tmp/inv/act_on.pkl")
 ACT_OFF = Path("/tmp/inv/act_off.pkl")
 
 
-def _load_static_agent():
-    """The static producer (bare producer_plus, opp_projection OFF)."""
+def _load_static_agent(tag: str = "a"):
+    """The static producer (bare producer_plus, opp_projection OFF).
+
+    `tag` namespaces the module so two independent instances can coexist —
+    producer_plus keeps a module-global runtime/memory, so the two seats of a
+    self-play game MUST load under different module names or they share fleet
+    tracking and corrupt the game.
+    """
     import importlib.util
+    name = f"_pp_static_{tag}"
     spec = importlib.util.spec_from_file_location(
-        "_pp_static", str(PLUS / "producer_agent.py"))
+        name, str(PLUS / "producer_agent.py"))
     m = importlib.util.module_from_spec(spec)
-    sys.modules["_pp_static"] = m
+    sys.modules[name] = m
     spec.loader.exec_module(m)
     return m.agent
 
 
 def mode_record(seed: int, steps: int):
     from kaggle_environments import make
-    static = _load_static_agent()
+    static_p0 = _load_static_agent("p0")
+    static_p1 = _load_static_agent("p1")   # independent instance for seat 1
     obs_stream = []
 
     def rec(obs, conf=None):
         # snapshot the dict the agent receives (player 0's view)
         obs_stream.append({k: obs[k] for k in obs.keys()} if hasattr(obs, "keys") else dict(obs))
-        return static(obs)
+        return static_p0(obs)
     env = make("orbit_wars", configuration={"seed": seed, "episodeSteps": steps}, debug=False)
-    env.run([rec, static])
+    env.run([rec, static_p1])
     TRAJ.write_bytes(pickle.dumps(obs_stream))
     print(f"recorded {len(obs_stream)} turns -> {TRAJ}")
 

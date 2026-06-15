@@ -1,0 +1,86 @@
+# Inverse-producer study — short (200-step) games
+
+**Date:** 2026-06-15 (night session, branch `claude/affectionate-newton-19kqrp`)
+**PI ask:** iterate on the "inverse producer" — like our producer, but instead
+of assuming a static opponent it assumes a *producer* opponent that maximises
+its own ships over 18 steps (assuming us static), then we maximise against that
+set of actions. Test only in short 200-step games, 4 seeds.
+
+## What the inverse producer already is
+
+The mechanism already exists: `PRODUCER_PLUS_OPP_PROJECTION=1`
+(`agents/producer/orbit_lite/opp_projection.py`, wired in
+`agents/producer_plus/main.py`). With the single flag on (the bundler's
+`opp_proj` variant), each turn it runs *our own* `plan_lite_waves` from each
+opponent seat with `background=None` (opponent assumes we do nothing) over the
+producer's native horizon (18 in 2P), and injects the opponent's predicted
+launches as mixed-owner background into our per-candidate flow scorer — so every
+candidate is scored against "I do X **and** the opponent does their predicted
+thing." This is exactly the PI's spec. It is also already part of the live 1280
+champion (`vetorf4p_seq_strength`), composed with veto / reactive-floor /
+reply-seq / FFA.
+
+"Our producer" (static-opponent) = producer_plus with all flags OFF, which is
+action-stream-identical to the vendored `agents/producer/` (verified, 60 turns).
+
+## Method
+
+- `scripts/short_margin_ab.py`: caps the episode at 200 steps and scores each
+  truncated game by the competition metric read from the step-200 observation
+  (ships on owned planets + ships in owned fleets). Reports binary outcome AND
+  the continuous margin. Every seed played at both seats (seat-bias control).
+- Matched A/B: `bare` vs `opp_proj` (and variants) bundles from the SAME
+  `producer_plus/main.py` — the only behavioural difference is the opponent
+  model. New `bare` variant added to `scripts/bundle_producer_plus.py`.
+- `scripts/inv_decision_diff.py`: replays one shared observation trajectory
+  through the producer with opp_projection OFF vs ON and counts how often / when
+  the chosen action actually changes (isolates the decision-level effect from
+  trajectory divergence).
+
+## Results (focal vs matched static producer, 200-step, seeds 0-3 x 2 seats = 8 games)
+
+| variant | wins | mean margin | median | notes |
+|---|---|---|---|---|
+| control: static vs static | 2/8 | +0.0 | 0 | seeds 0,1 perfect draws; 2,3 seat-1 decided |
+| inverse_producer (opp_proj, K=1, H18) | 2/8 | +0.0 | 0 | **identical pattern to control** — no edge |
+| inverse_multisize (multi_size + opp_proj) | 0/8 | **-32.2** | 0 | **regression** — max margin +0 (never ahead, even at favourable seat) |
+| inverse_denial (opp_proj + denial w0.01) | TBD | TBD | TBD | exploit the prediction: race contested neutrals |
+
+Per-seed structure for control & inverse_producer is **exactly seat-antisymmetric**
+(P0 margin = -P1 margin) and **no agent wins both seats of any seed**: seeds 0,1
+are perfect producer-vs-producer mirror draws through 200 steps; seeds 2,3 are
+decided by seat geometry regardless of agent. The inverse producer *changes the
+trajectories* (seed 2 became an early-term blowout; seed 3 went blowout→close)
+but never flips who wins.
+
+## Diagnosis — why K=1 inverse ≈ static
+
+Decision-diff (opp_projection ON vs OFF on one shared observation stream, seed 0):
+**the chosen action differed on only ~7% of turns, first difference at turn 48.**
+The opponent model is a literal no-op through the entire opening and fires rarely
+thereafter. Against a mirror producer on a (4-fold-)symmetric board the
+opponent's predicted launches are almost all on *their own side* — uncontestable
+(we are farther from their neutrals) — and the midline is symmetric, so a
+near-perfect opponent model unlocks **no profitable deviation**. Best-responding
+is almost always identical to ignoring the opponent.
+
+The instrument is not blind: it cleanly flagged `inverse_multisize` as a
+regression (the agents differ enough that board symmetry no longer cancels). It
+is specifically that K=1 opp_projection is *too close* to the static producer to
+register.
+
+## The deeper point
+
+Modeling the opponent as a producer is *exactly right* against a producer — but
+against the mirror on symmetric seeds that correctness yields no edge (symmetry),
+and against a non-producer the model is *wrong*. The opponent model only pays off
+in the narrow regime where the opponent is producer-like yet exploitably
+asymmetric. This is consistent with opp_projection living in the champion (the
+real ladder is producer-like AND asymmetric) while the bare mechanism shows no
+edge in symmetric self-play.
+
+## (pending) Does exploitation help?
+
+`inverse_denial` tests whether crediting captures of targets the opponent is
+predicted to grab (denial / race-for-contested-neutrals) converts the prediction
+into a winning deviation. [results pending]
