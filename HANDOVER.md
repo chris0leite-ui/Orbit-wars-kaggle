@@ -3,6 +3,21 @@
 > Refreshed **2026-06-15** (end of the loss-mining session). Supersedes the
 > 2026-06-14 version. ~8 days to the 06-23 deadline. Full session record:
 > `knowledge-base/thoughts/2026-06-15-loss-mining-grounded-fixes.md`.
+>
+> **Update 2026-06-15 (positional-game session, branch
+> `claude/practical-hamilton-oth767`):** built two framework terms on
+> producer_plus, both gated default-OFF, byte-identical when off, unit-tested,
+> NOT submitted: **(1) frontier/gateway value** (reach factor) — reproduction
+> showed it's mismatched to corner-neglect (a candidate-*generation* truncation;
+> frontier is *scoring*), only useful composed with the `expand`/wideshortlist
+> generation fix (accelerates capture 499→95 on seed 641308308); **(2)
+> tenure/durability** (`seq_strength_tenure`) — discounts captures we can't hold,
+> targets the confirmed collapse driver. **Key meta-finding:** both drivers
+> (corner-neglect, collapse) manifest only vs top opponents (~1600+) we can't run
+> locally → local verification is exhausted, the ladder is the only judge. See
+> `audit/2026-06-15-frontier-gateway-value-spec.md`,
+> `audit/2026-06-15-tenure-durability-spec.md`, and the two
+> `knowledge-base/thoughts/2026-06-15-*` entries.
 
 ## State of play
 

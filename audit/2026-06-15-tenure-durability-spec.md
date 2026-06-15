@@ -109,6 +109,35 @@ A/B reference.
 3. **Rule-46 smoke:** bundle builds + parses; full game max turn < 1000 ms.
 4. **Ladder (Rule 45):** A/B `seq_strength_tenure` vs the field at n ≥ 32.
 
+## Verification results (2026-06-15) — read honestly
+
+Passed cleanly:
+- **Unit:** `tests/test_tenure_penalty.py` 6/6 — an unholdable contested capture
+  is penalised; the SAME capture with a friendly reinforcer in reach gets 0
+  (reinforcement closes the exposure — the tenure novelty); no-enemy /
+  no-capture / disabled / zero-window all 0.
+- **Default-OFF parity:** the `vetorf4p_seq_strength` bundle rebuilt with this
+  code present is behaviourally byte-identical (106/98/114 on seeds 7/13/42).
+- **Latency:** full game max turn 139 ms.
+
+Could NOT verify the collapse fix at the game level — and the reason is
+structural:
+- **vs a fixed flag-agnostic opponent (bare `producer`), we have ZERO losses**
+  on the collapse seeds (1506374610, 645691379: peak==final, 0 lost-planet
+  transitions). The opponent is too weak to make us collapse, so tenure has
+  nothing to act on — base and tenure are identical.
+- **the symmetric mirror is confounded**: which side wins a base-vs-base or
+  tenure-vs-tenure game is arbitrary, and it dominates the churn counts (a won
+  377-step game has far more gains/losses than a lost 186-step one), so it
+  cannot isolate tenure's effect on *our* side.
+
+This is the same wall the frontier reproduction hit, now confirmed as a general
+limit: **our remaining loss drivers (corner-neglect, collapse) manifest only
+against top-tier opponents (CPMP ~1600+) that we cannot run locally.** Local
+self-play and our weak local panel cannot reproduce them, so they cannot verify
+fixes for them. The mechanism is unit-correct; whether it *helps* — and whether
+it cedes ground (the key risk below) — only the ladder (Rule 45) can answer.
+
 ## Known risks
 - **Ceding ground.** Down-weighting unholdable captures can tip into *passivity*
   (give up the contested frontier → cede the board → lose differently). This is
