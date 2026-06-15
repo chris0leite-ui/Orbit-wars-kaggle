@@ -641,6 +641,25 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
         "PRODUCER_PLUS_NEUTRAL_SHORTLIST": "20",
     },
+    "seq_strength_expand": {
+        # 1280 base + the GROUNDED early-expansion fix from the 46-loss replay
+        # analysis: we trail on planets by ~step 30 and hold 5-6 vs winners' 8 by
+        # step 60 (under-expansion is the #1 loss driver, 78% of losses). Fix =
+        # deeper horizon + wider neutral shortlist TOGETHER (shortlist surfaces far
+        # targets, horizon values them): on a real loss seed this lifts planets@60
+        # from 6 -> 8 (== winner rate). HORIZON_2P=45 only loads in 2P (lighter);
+        # 4P gets a modest bump + the shortlist. Full-2P-game latency max 397ms.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
+        "PRODUCER_PLUS_NEUTRAL_SHORTLIST": "20",
+        "PRODUCER_PLUS_HORIZON_2P": "45",
+        "PRODUCER_PLUS_HORIZON_4P": "18",
+    },
     "vetorf_fwd": {
         # Forward redistribution (Planet Wars canon + del Toro loss): rear
         # leftover garrisons stream toward the frontier every turn (pressure
