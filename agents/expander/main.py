@@ -39,11 +39,14 @@ def _w(name, d):
 ECON_K = _w("EXP_ECON_K", 25.0)        # turns of production a planet is worth
 ENEMY_MULT = _w("EXP_ENEMY_MULT", 2.0)  # capturing enemy also denies their economy
 ETA_W = _w("EXP_ETA_W", 0.6)           # tempo: prefer sooner arrivals
-ETA_CAP = _w("EXP_ETA_CAP", 45.0)      # ignore targets we can't reach within this
+ETA_CAP = _w("EXP_ETA_CAP", 22.0)      # ignore targets we can't reach within this (tempo)
 RESERVE_D = _w("EXP_RESERVE_D", 20.0)  # enemy fleets within this threaten a planet
+DEF_FRAC = _w("EXP_DEF_FRAC", 0.35)    # hold this share of local enemy strength as garrison
+DEF_D = _w("EXP_DEF_D", 28.0)          # enemy units within this are "local" pressure
+HOLD_W = _w("EXP_HOLD_W", 1.5)         # penalty for capturing a planet the enemy can instantly retake
 MARGIN = _w("EXP_MARGIN", 1.0)         # extra ships over the garrison when capturing
 MIN_SEND = _w("EXP_MIN_SEND", 2.0)
-REINFORCE_FRAC = _w("EXP_REINFORCE_FRAC", 1.0)   # share of rear leftover to push forward
+REINFORCE_FRAC = _w("EXP_REINFORCE_FRAC", 0.0)   # share of rear leftover to push forward (off: it bled)
 
 
 def _g(o, k, d=None):
@@ -116,13 +119,25 @@ def agent(obs, configuration=None):
     targets = [p for p in P if p["owner"] != me and not p["comet"]]
     enemy_xy = [(p["x"], p["y"]) for p in P if p["owner"] >= 0 and p["owner"] != me]
 
-    # 1. minimal defense: reserve only against incoming enemy fleets.
+    # 1. defense: hold against incoming fleets AND a share of the local enemy
+    #    strength (planets + fleets) that could assault the planet. Without this
+    #    the agent expands well then gets overrun (the collapse driver) — a
+    #    strong opponent punishes thin holds, even though aggression beats a weak
+    #    self. Reserve scales with nearby enemy force so the frontier holds.
+    enemy_units = (
+        [(p["x"], p["y"], p["ships"]) for p in P
+         if p["owner"] >= 0 and p["owner"] != me and not p["comet"]]
+        + [(float(f[2]), float(f[3]), float(f[6])) for f in fleets
+           if int(f[1]) != me and int(f[1]) >= 0]
+    )
     reserve = {}
     for p in mine:
-        thr = sum(float(f[6]) for f in fleets
-                  if int(f[1]) != me and int(f[1]) >= 0
-                  and _dist(float(f[2]), float(f[3]), p["x"], p["y"]) < RESERVE_D)
-        reserve[p["id"]] = thr
+        incoming = sum(float(f[6]) for f in fleets
+                       if int(f[1]) != me and int(f[1]) >= 0
+                       and _dist(float(f[2]), float(f[3]), p["x"], p["y"]) < RESERVE_D)
+        local = sum(es for ex, ey, es in enemy_units
+                    if _dist(ex, ey, p["x"], p["y"]) < DEF_D)
+        reserve[p["id"]] = max(incoming, DEF_FRAC * local)
     budget = {p["id"]: max(0.0, p["ships"] - reserve[p["id"]]) for p in mine}
     pos = {p["id"]: p for p in mine}
 
@@ -148,7 +163,12 @@ def agent(obs, configuration=None):
         grow = t["prod"] * math.ceil(eta) if t["owner"] >= 0 else 0.0
         cost = t["ships"] + grow + MARGIN
         mult = ENEMY_MULT if t["owner"] >= 0 else 1.0
-        score = ECON_K * t["prod"] * mult - cost - ETA_W * eta
+        # holdability: enemy force that can instantly retake T beyond what we'd
+        # leave holding it -> deprioritise captures we'd just bleed back.
+        enemy_near = sum(es for ex, ey, es in enemy_units
+                         if _dist(ex, ey, t["x"], t["y"]) < DEF_D)
+        retake = max(0.0, enemy_near - MARGIN)
+        score = ECON_K * t["prod"] * mult - cost - ETA_W * eta - HOLD_W * retake
         scored.append((score, cost, t, s["id"], ang))
 
     scored.sort(key=lambda r: r[0], reverse=True)
