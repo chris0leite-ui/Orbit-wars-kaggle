@@ -159,31 +159,56 @@ What passed cleanly:
 - **Active:** games diverge from base (different step/planet trajectories), so
   the term is wired and firing, not a silent no-op.
 
-What did NOT verify (the important part):
-- **The corner-neglect failure does not reproduce locally.** Against every
-  available opponent (`v7_0_drop_one`, vendored bare `producer`), base **wins
-  every game and already holds 10–19 far planets** — there is no neglected
-  corner to fix. The documented failure was specifically vs the top-ranked
-  CPMP, which we do not have as a runnable opponent. Per Rule 38 we cannot show
-  the fix removes a failure we cannot reproduce.
-- **The target metric did not move the intended way.** On a 4-seed panel vs the
-  strong `producer`, frontier-ON (weight 0.05) gave **lower** `planets@60`
-  (12→10, 14→12, 11→8, 5→5), **identical** far-high-value-neutrals-left, and
-  **higher** `planets@final` on 2/4. Interpretation: at this weight the term
-  redirects early launches toward farther strategic gateways (longer flight),
-  trading *early* breadth for *late* breadth — the opposite of the early-count
-  loss-driver metric, though outcomes vs these (beatable) opponents are
-  unaffected.
+What did NOT verify — and the decisive reproduction (Rule 38):
+After the PI asked to mine a real CPMP loss first, I downloaded the real loss
+replays (`kaggle competitions replay`), pulled their seeds from `info.seed`,
+and ran the symmetric `producer_plus` mirror (flags are global env, so
+asymmetric in-process is impossible — separate-process symmetric self-play is
+the valid tool, as the prior session used).
 
-Verdict: the **mechanism is correct and matches this spec**, but its *benefit
-is unproven and its calibration is open*. This is squarely a "the ladder is the
-only honest A/B" case (HANDOVER): local opponents can't elicit the failure, so
-only the real field can say whether gateway value helps. Two open levers before
-/ during a ladder fire: (a) **weight** — 0.05 may over-concentrate on gateways;
-0.01–0.02 (the denial-bonus nudge band) may surface gateways without slowing
-early breadth (rebuild via `--set PRODUCER_PLUS_FRONTIER_WEIGHT=0.02`); (b)
-**structure** — if the goal is raw early count, the term arguably should bias
-toward *near* gateways (tighter reach budget) rather than the farthest ones.
+On the canonical corner-neglect seed **641308308** the mirror **reproduces the
+failure exactly**: base leaves the two garrison-41, prod-4 corners (planet ids
+5 and 6, distance 63 from centre) neutral at steps 60, 95 **and every step to
+500** — never captured. The four-way comparison:
+
+| agent (mirror, seed 641308308) | corners 5,6 captured? |
+|---|---|
+| base | never (neglected @60/@95/final) |
+| **frontier alone** | **never — identical to base** |
+| wideshortlist (generation fix) | yes, but only by ~step 499 |
+| **frontier + wideshortlist** | yes, by **step 95** (much earlier) |
+
+**Frontier alone does NOT fix corner-neglect.** Root cause, now proven:
+corner-neglect is a candidate-**generation** truncation — the far corner falls
+outside the nearest-K neutral shortlist, so it is never a candidate — while
+`frontier_bonus` is a candidate-**scoring** term that can only boost candidates
+that already exist. A scoring term cannot surface a target that generation
+never proposes. This is a layer mismatch between the term and the failure it
+was meant to fix.
+
+But the reproduction is also **constructive**: once generation surfaces the
+corner (wideshortlist), frontier **accelerates its capture from ~step 499 to
+step 95** — exactly the early-expansion behaviour we want. **Frontier is a
+multiplier on a generation fix, not a standalone fix.**
+
+The other two real CPMP losses confirm the term is aimed at a phenomenon these
+losses don't have: seed **1692894782** (fast 96-step loss) was an expansion-
+*rate* race lost to a stronger CPMP with **no** far-HV-neutral neglect in the
+mirror (p0=9 @60); seed **1506374610** was a pure **collapse** (both sides
+reach 8 planets then die) — the tenure/durability driver, the proposed *second*
+term, not frontier.
+
+Verdict: the **mechanism is correct, fast, and parity-safe**, but **frontier
+alone is the wrong layer for the corner-neglect failure** — it must be composed
+with a generation fix (wideshortlist / the `expand` variant) to bite at all, and
+its standalone value over that generation fix is the open question. Earlier I
+also saw frontier-alone slightly *reduce* `planets@60` vs the bare `producer`
+(12→10, 14→12, 11→8) — consistent with "scoring redirection with no new far
+candidates surfaced." Recommended unit to test next: **`expand + frontier`**
+(generation surfaces far targets; frontier + horizon take them early), ladder
+A/B'd against `expand` alone to isolate whether frontier adds lift on top of
+generation. Lift claims gated to n ≥ 32 (Rule 45); the single-seed step-95-vs-499
+acceleration above is a mechanism demonstration, not a lift claim.
 
 ## Known approximations / risks
 
