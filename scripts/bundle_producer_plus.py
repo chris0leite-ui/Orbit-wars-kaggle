@@ -657,7 +657,7 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_SCORE": "1",
         "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
         "PRODUCER_PLUS_NEUTRAL_SHORTLIST": "20",
-        "PRODUCER_PLUS_HORIZON_2P": "45",
+        "PRODUCER_PLUS_HORIZON_2P": "30",
         "PRODUCER_PLUS_HORIZON_4P": "18",
     },
     "vetorf_fwd": {
