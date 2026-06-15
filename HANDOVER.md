@@ -16,8 +16,15 @@
 > (corner-neglect, collapse) manifest only vs top opponents (~1600+) we can't run
 > locally → local verification is exhausted, the ladder is the only judge. See
 > `audit/2026-06-15-frontier-gateway-value-spec.md`,
-> `audit/2026-06-15-tenure-durability-spec.md`, and the two
-> `knowledge-base/thoughts/2026-06-15-*` entries.
+> `audit/2026-06-15-tenure-durability-spec.md`, and the
+> `knowledge-base/thoughts/2026-06-15-*` entries. **Architecture question
+> settled:** built a clean-room positional `Φ` agent (`agents/phi/`) as an
+> instrument; weight sweep says economy+tempo win, options/reach + caution hurt
+> (so frontier+tenure are the wrong levers). Our **old baseline IS a native `Φ`
+> agent but loses 0–4 to producer** (clean balanced-seat test) — don't revive
+> it. **Producer is the substrate; the one on-thesis untested lever is
+> `hold_value`** (gated post-horizon economy). Refuted/parked: frontier, tenure,
+> baseline revival, clean-`Φ` rewrite.
 
 ## State of play
 
