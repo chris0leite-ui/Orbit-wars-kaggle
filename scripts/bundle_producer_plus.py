@@ -46,6 +46,9 @@ ORBIT_LITE_ORDER = [
     # strategic_value imports LaunchSet (garrison_launch), PlanetGarrisonStatus
     # (movement). No interdependence with recapture or opp_projection.
     "strategic_value",
+    # durability imports DistanceCache, fleet_speed, PlanetGarrisonStatus — all
+    # above. Sibling of recapture; no interdependence with the others.
+    "durability",
 ]
 
 ORBIT_LITE_DIR = REPO / "agents" / "producer" / "orbit_lite"
@@ -682,6 +685,29 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FRONTIER_WEIGHT": "0.05",
         "PRODUCER_PLUS_FRONTIER_REACH": "12",
         "PRODUCER_PLUS_FRONTIER_SPEED": "3.0",
+    },
+    "seq_strength_tenure": {
+        # 1280 seq_strength base + the GROUNDED tenure/durability fix for the
+        # collapse loss driver (#2). Discounts captures we cannot HOLD: enemy
+        # reachable force vs our defender + reinforcement reach. Grounded in
+        # three real CPMP-era collapse replays (seeds 1506374610 / 645691379 /
+        # 2066324996): thin-garrison churn at the contested frontier + being
+        # out-shipped. Capture-SELECTION shaping (don't pour force into captures
+        # we'll lose), NOT global defense (the garval pitfall). Spec:
+        # audit/2026-06-15-tenure-durability-spec.md. From step 0; weight 1.0;
+        # window 8; hold-fraction 0.5. Do NOT compose with recapture_penalty
+        # (double-penalty). Calibration + ceding-ground risk are open -> ladder.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
+        "PRODUCER_PLUS_TENURE_PENALTY": "1",
+        "PRODUCER_PLUS_TENURE_WEIGHT": "1.0",
+        "PRODUCER_PLUS_TENURE_W": "8",
+        "PRODUCER_PLUS_TENURE_HOLD_FRACTION": "0.5",
     },
     "vetorf_fwd": {
         # Forward redistribution (Planet Wars canon + del Toro loss): rear

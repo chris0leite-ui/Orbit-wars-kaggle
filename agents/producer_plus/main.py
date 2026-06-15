@@ -37,6 +37,7 @@ from orbit_lite.distance_cache import build_distance_cache, min_distance_to_targ
 from orbit_lite.garrison_launch import LaunchSet, _run_exact_recurrence
 from orbit_lite.movement import PlanetGarrisonStatus
 from orbit_lite.opp_projection import predict_opp_launches_via_mirror, MAX_L_OPP
+from orbit_lite.durability import tenure_penalty
 from orbit_lite.recapture import recapture_penalty
 from orbit_lite.strategic_value import denial_bonus, frontier_bonus, opening_bonus
 from orbit_lite.planner_core import (
@@ -591,6 +592,44 @@ def _frontier_include_enemy() -> bool:
     return os.environ.get("PRODUCER_PLUS_FRONTIER_INCLUDE_ENEMY", "0").strip().lower() in (
         "1", "true", "yes", "on",
     )
+
+
+def _tenure_penalty_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_TENURE_PENALTY", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _tenure_weight() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_TENURE_WEIGHT", "1.0")
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _tenure_w() -> int:
+    return max(1, _env_int("PRODUCER_PLUS_TENURE_W", 8))
+
+
+def _tenure_hold_fraction() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_TENURE_HOLD_FRACTION", "0.5")
+    try:
+        return max(0.0, min(1.0, float(raw)))
+    except (TypeError, ValueError):
+        return 0.5
+
+
+def _tenure_safety() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_TENURE_SAFETY", "0.5")
+    try:
+        return max(0.0, min(1.0, float(raw)))
+    except (TypeError, ValueError):
+        return 0.5
+
+
+def _tenure_from_step() -> int:
+    return max(0, _env_int("PRODUCER_PLUS_TENURE_FROM_STEP", 0))
 
 
 # Force-concentration: relax the target mutex inside _greedy_select so up to
@@ -3122,6 +3161,24 @@ def plan_lite_waves(
             comet_mask=_fr_comet,
         )
         score = score + fr_bonus
+    if _tenure_penalty_enabled() and int(obs_tensors["step"].max().item()) >= _tenure_from_step():
+        # Tenure/durability: subtract a discount for captures we cannot HOLD —
+        # enemy reachable force > our defender + reinforcement reach. Targets the
+        # collapse/churn loss driver by conserving force away from captures we'll
+        # lose. Capture-selection shaping, not global defense (the garval pitfall).
+        ten_pen = tenure_penalty(
+            obs=obs, cache=cache, garrison_status=garrison_status,
+            cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
+            cand_send=cand_send, cand_eta=cand_eta,
+            cand_valid=cand_valid, cand_is_def=cand_is_def,
+            capture_floor_TK=floor, prod=prod,
+            H=H, W=_tenure_w(),
+            hold_fraction=_tenure_hold_fraction(),
+            safety_reserve=_tenure_safety(),
+            weight=_tenure_weight(),
+            player_id=pid,
+        )
+        score = score - ten_pen
     if _hold_value() > 0.0:
         # Holding-time-priced capture credit: post-horizon production for
         # captures the opponent cannot feasibly retake within the window.
