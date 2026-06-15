@@ -222,6 +222,11 @@ class GarrisonFlowDiff:
     ships_lost_combat_hypothetical: Tensor
     ships_lost_combat_delta: Tensor
     net_ship_delta: Tensor
+    # Production owned at the horizon's final step, hypothetical − current,
+    # per player (``[*prefix, A]``). The flow terms above truncate a captured
+    # planet's payoff at the horizon; this field lets a scorer credit the
+    # post-horizon production stream (None where a path doesn't compute it).
+    terminal_prod_delta: Tensor | None = None
 
     @property
     def player_count(self) -> int:
@@ -316,6 +321,7 @@ def sparse_launch_flow_delta(
     player_count: int,
     launches: LaunchSet,
     player_id: int = 0,
+    terminal_neutral_only: bool = False,
 ) -> GarrisonFlowDiff:
     """Sparse equivalent of ``diff_garrison_flow(status, apply_launches_exact(...))``.
 
@@ -374,6 +380,7 @@ def sparse_launch_flow_delta(
 
     produced_delta = torch.zeros(C, A, dtype=fdtype, device=device)
     combat_delta = torch.zeros(C, A, dtype=fdtype, device=device)
+    terminal_prod_delta = torch.zeros(C, A, dtype=fdtype, device=device)
 
     if bool(affected_mask.any()):
         c_aff, p_aff = affected_mask.nonzero(as_tuple=True)         # [N]
@@ -421,6 +428,24 @@ def sparse_launch_flow_delta(
         produced_delta.index_put_((c_aff,), dprod, accumulate=True)
         combat_delta.index_put_((c_aff,), dcombat, accumulate=True)
 
+        # Owner of each affected planet at the horizon's final step,
+        # hypothetical vs baseline, as per-player production deltas.
+        a_oh = torch.arange(A, device=device)
+        fin_hyp = o_t[:, 0, -1]                                         # [N]
+        fin_base = status.owner[p_aff, -1]                              # [N]
+        alive_fin = alive_aff[:, -1].to(fdtype)                         # [N]
+        d_term = (prod_aff * alive_fin).unsqueeze(-1) * (
+            (fin_hyp.unsqueeze(-1) == a_oh).to(fdtype)
+            - (fin_base.unsqueeze(-1) == a_oh).to(fdtype)
+        )                                                               # [N, A]
+        if terminal_neutral_only:
+            # Credit only planets that are NEUTRAL in the do-nothing world at
+            # the horizon: encourages expansion without inflating enemy
+            # strikes (an enemy capture counts double in the competitive
+            # term, which over-drove aggression when credited).
+            d_term = d_term * (fin_base < 0).to(fdtype).unsqueeze(-1)
+        terminal_prod_delta.index_put_((c_aff,), d_term, accumulate=True)
+
     produced_current = base_prod.unsqueeze(0)                      # [1, A]
     combat_current = base_combat.unsqueeze(0)
     diff = GarrisonFlowDiff(
@@ -432,6 +457,7 @@ def sparse_launch_flow_delta(
         ships_lost_combat_hypothetical=combat_current + combat_delta,
         ships_lost_combat_delta=combat_delta,
         net_ship_delta=produced_delta - combat_delta,
+        terminal_prod_delta=terminal_prod_delta,
     )
     # Squeeze the candidate axis back out for [L] launches (C == 1, no axis).
     if not launches.has_candidate_axis:
@@ -446,5 +472,6 @@ def sparse_launch_flow_delta(
             ships_lost_combat_hypothetical=_sq(diff.ships_lost_combat_hypothetical),
             ships_lost_combat_delta=_sq(diff.ships_lost_combat_delta),
             net_ship_delta=_sq(diff.net_ship_delta),
+            terminal_prod_delta=_sq(diff.terminal_prod_delta),
         )
     return diff
