@@ -108,10 +108,42 @@ ladder (it is baked into the 1280 champion `vetorf4p_seq_strength`, and the
 showing **no edge** in short symmetric self-play. The mechanism's value is a
 slow-burn against asymmetric opponents, not a short-game mirror advantage.
 
-## Recommendation
+## Phase 3 — vs a non-mirror opponent (v7_0), 200-step, 8 games
 
-To iterate the inverse producer with a sensitive short-game instrument, measure
-vs a **non-mirror** opponent (asymmetric position → non-zero margin), comparing
-inverse-vs-X against static-vs-X. Phase 3 runs exactly this with X = v7_0.
-Pure inverse-vs-static-producer at 200 steps is a null instrument and should not
-be used as the iteration signal.
+| | wins | mean margin | median |
+|---|---|---|---|
+| static producer vs v7_0 | 8/8 | +2393.8 | +1577.5 |
+| inverse producer vs v7_0 | 8/8 | **+3250.2** | **+1750.5** |
+
+vs a non-mirror opponent the focal wins BOTH seats (no antisymmetry — strength,
+not seat, decides), so the metric is sensitive here. The inverse producer beats
+v7_0 by a larger margin (+857 mean / +173 median). BUT: both crush v7_0 8/8
+(elimination by ~step 100), the margins are blowout-dominated and noisy, and
+per-seed it is mixed (inverse higher on seeds 0 & 3-P0, lower on seed 1). A faint
+positive hint, not a clean signal — and confounded by v7_0 not being a producer,
+so the opponent model is technically MIS-specified yet still nets positive.
+
+## Bottom line + recommendation
+
+The inverse producer is faithfully implemented (it provably changes 11-18% of
+decisions) but **200-step games cannot measure its marginal value**:
+- vs the mirror producer → symmetric board forces a tie (null instrument);
+- vs anything weaker (v7_0) → ceiling, both win 8/8 by elimination.
+There is no available 200-step instrument where the edge is both present and
+cleanly measurable. The historical evidence for the mechanism's value
+(`multi_opp_def` 24/32 vs producer; opp_projection in the live 1280 champion) is
+all from FULL games, where the slow-burn edge compounds past the symmetric
+opening.
+
+Options to actually evaluate it: (a) full-length games vs the producer (the
+validated instrument — but the PI constrained this study to short games), or
+(b) a strength-matched non-mirror opponent for short games (hard to source; the
+producer is near the top of the field). Recommend surfacing to the PI before
+spending more compute on 200-step mirror A/Bs.
+
+## Latency note (flag)
+
+opp_projection roughly doubles per-turn cost; mid-game max turns hit 1.8-2.6 s
+locally (over the 1 s Kaggle cap) under CPU contention. The live champion carries
+opp_projection within budget on Kaggle hardware, but multi-tick K>1 would be
+riskier. Watch for ladder timeouts on any multi-tick variant.
