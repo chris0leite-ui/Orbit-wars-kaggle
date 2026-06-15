@@ -52,6 +52,13 @@ ORBIT_LITE_DIR = REPO / "agents" / "producer" / "orbit_lite"
 PRODUCER_PLUS_MAIN = REPO / "agents" / "producer_plus" / "main.py"
 
 ENV_VARIANTS = {
+    "bare": {
+        # No flags: the producer_plus engine with every gated mechanism OFF.
+        # Behaviour-identical to the vendored static producer (agents/producer/).
+        # Serves as the MATCHED static-opponent baseline for the inverse-producer
+        # A/B — the only difference vs the opp_proj variant is the opponent model
+        # (static vs producer-mirror), so any margin is attributable to it.
+    },
     "adaptive_k": {
         "PRODUCER_PLUS_ADAPTIVE_K": "1",
     },
