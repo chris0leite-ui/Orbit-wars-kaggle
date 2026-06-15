@@ -14,10 +14,13 @@ Use cases:
 
 Performance:
 Per-planet timeline simulation is O(horizon) per planet. Building the
-ledger from in-flight fleets is O(fleets * planets) for the ray-cast
-target attribution. Whole-snapshot construction is ~O(planets * horizon
-+ fleets * planets); on a typical board (40 planets, <50 in-flight
-fleets, horizon=110) this is well under 5 ms.
+ledger from in-flight fleets attributes each fleet to its first-hit
+planet: static planets via closed-form ray-cast, orbiting planets via the
+ring-crossing reframe in `fleet_target_planet` — solving for the small
+tick window where the fleet is within reach of each orbital ring instead
+of scanning all `horizon` ticks. Measured ledger build on real midgame 4P
+states: ~0.7 ms median (was ~10 ms; pre-reframe the orbital per-tick scan
+dominated, p99 ~170 ms / ~77M predict_relative calls per build).
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from dataclasses import dataclass
 
 from lib.combat import resolve_arrivals
 from lib.fleet import speed as fleet_speed
+from lib.geometry import CENTER
 from lib.orbit import is_orbiting, predict_relative
 
 # Raised 110 → 250 (2026-05-11): reinforce class was firing 0.2
@@ -138,14 +142,40 @@ def fleet_target_planet(fleet, planets, omega: float = 0.0,
             best_turns = turns
             best_planet = p
 
-    # Orbital path: per-tick collision scan.
+    # Orbital path: ring-crossing reframe (2026-06-15). A straight-flying
+    # fleet can only collide with an orbiting planet while it is inside that
+    # planet's orbital ring — i.e. within (R + planet_radius) of the sun,
+    # where R is the planet's orbital radius. The fleet's squared distance
+    # from the sun is a quadratic in t, so we solve for the tick window where
+    # it is within reach of each ring and scan only those ticks; a fleet
+    # aimed away from a ring is rejected in O(1) by the discriminant. The
+    # window is a provable SUPERSET of every collision tick (a hit requires
+    # the fleet within planet_radius of a point on the ring, hence within
+    # R + planet_radius of the sun), scanned in the same ascending order with
+    # the same per-tick logic — so the result is bit-identical to the prior
+    # `range(1, max_horizon + 1)` scan (verified 136/136 across real game
+    # states). This removes the O(fleets * horizon * orbiting) hot path the
+    # profiler flagged (median ~10 ms, p99 ~170 ms, dominated by ~77M
+    # predict_relative calls/build) — see tests/test_world_model_ledger.py.
     if orbiting_planets:
-        # Discretize: check at integer ticks up to max_horizon. We use
-        # the int-ceil semantics that the ledger eventually buckets to,
-        # so checking at integer ticks is sufficient precision.
-        for t in range(1, int(max_horizon) + 1):
-            # Pruning: if we already have a static hit at eta T, no
-            # orbital hit beyond T can win.
+        ex = fleet.x - CENTER
+        ey = fleet.y - CENTER
+        a = spd * spd
+        b = 2.0 * spd * (ex * dir_x + ey * dir_y)
+        c0 = ex * ex + ey * ey
+        candidate_ticks: set[int] = set()
+        for p, _p_tuple in orbiting_planets:
+            reach = math.hypot(p.x - CENTER, p.y - CENTER) + float(p.radius)
+            disc = b * b - 4.0 * a * (c0 - reach * reach)
+            if disc < 0.0:
+                continue  # fleet never comes within reach of this ring
+            sq = math.sqrt(disc)
+            lo = max(1, int(math.floor((-b - sq) / (2.0 * a))))
+            hi = min(int(max_horizon), int(math.ceil((-b + sq) / (2.0 * a))))
+            for t in range(lo, hi + 1):
+                candidate_ticks.add(t)
+        for t in sorted(candidate_ticks):
+            # Pruning: a static hit at eta T pre-empts any later orbital hit.
             if best_turns is not None and t > best_turns:
                 break
             fx = fleet.x + dir_x * spd * t
