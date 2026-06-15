@@ -660,6 +660,29 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_HORIZON_2P": "30",
         "PRODUCER_PLUS_HORIZON_4P": "18",
     },
+    "seq_strength_holdexpand": {
+        # 1280 base + holding-time-priced capture credit (PRODUCER_PLUS_HOLD_VALUE)
+        # + wider shortlist. The positional-frame fix: HOLD_VALUE prices each
+        # capture by how LONG you can hold it (= defensibility / option value) --
+        # it un-paralyzes expansion (the flow scorer truncates payoffs at H, so
+        # captures score ~0 and the agent banks) WHILE preferring holdable
+        # captures (the flat TERMINAL_PROD_VALUE version was refuted for rewarding
+        # expansion the opponent punishes). Directly implements "expand into
+        # DEFENSIBLE clusters" -- the single principle that unifies our two loss
+        # modes (under-expansion + collapse). Cheap scoring term = NO horizon
+        # latency spike (unlike seq_strength_expand). Defensibility is
+        # ladder-only (the mirror saturates), so this is theory-grounded but
+        # ladder-judged.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
+        "PRODUCER_PLUS_HOLD_VALUE": "8",
+        "PRODUCER_PLUS_NEUTRAL_SHORTLIST": "20",
+    },
     "vetorf_fwd": {
         # Forward redistribution (Planet Wars canon + del Toro loss): rear
         # leftover garrisons stream toward the frontier every turn (pressure
