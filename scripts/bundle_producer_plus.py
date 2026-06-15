@@ -622,6 +622,25 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_DENIAL_BONUS": "1",
         "PRODUCER_PLUS_DENIAL_WEIGHT": "0.01",
     },
+    "seq_strength_wideshortlist": {
+        # 1280 seq_strength base + larger neutral target shortlist
+        # (NEUTRAL_SHORTLIST=20). Grounded in a PI replay observation (2P loss
+        # to CPMP, seed 641308308): we left a high-value garrison-41 CORNER
+        # neutral while the opponent took the symmetric one. Diagnosed: the far
+        # corner falls OUTSIDE the nearest-K neutral shortlist, so it is never a
+        # candidate. Verified on that exact seed: baseline leaves 2 garrison-41
+        # corners neutral @step95; NEUTRAL_SHORTLIST=20 grabs both. The wide
+        # step that actually fixes the observed failure (fc/opening/overkill did
+        # not).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
+        "PRODUCER_PLUS_NEUTRAL_SHORTLIST": "20",
+    },
     "vetorf_fwd": {
         # Forward redistribution (Planet Wars canon + del Toro loss): rear
         # leftover garrisons stream toward the frontier every turn (pressure
