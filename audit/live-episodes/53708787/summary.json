@@ -1,0 +1,397 @@
+{
+  "submission_id": "53708787",
+  "generated_utc": "2026-06-15T23:31:50Z",
+  "team_name": "ChrisLeiteScha",
+  "n_episodes": 30,
+  "n_played": 30,
+  "wins_total": 19,
+  "winrate_total": 0.6333333333333333,
+  "by_size": {
+    "2": {
+      "n": 20,
+      "wins": 15,
+      "winrate": 0.75
+    },
+    "4": {
+      "n": 10,
+      "wins": 4,
+      "winrate": 0.4
+    }
+  },
+  "self_match_episodes": 1,
+  "seat_distribution": {
+    "0": 18,
+    "1": 10,
+    "2": 2,
+    "3": 1
+  },
+  "episode_length_steps": {
+    "n": 30,
+    "min": 108,
+    "q1": 122,
+    "median": 160,
+    "q3": 205,
+    "max": 500,
+    "mean": 191.23333333333332
+  },
+  "opponents": [
+    {
+      "name": "josh mathers",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "George",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mark Slavin",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Kushagragoyal060705",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "woosangkim0",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Viljami Paloposki",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "imakn0907",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ken_Ken_Pa",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Anti",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Nandodemo",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Ra'uf Fauzan Rambe",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "[Deleted] d53405f7-6080-465c-9403-7387edd34c15",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Nishant Singh",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "eric",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "konbu17",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Rmy",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "sary sary",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Will",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Zaakcii Ru",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "mercury12512",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Rafiozoo",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Trapeznikov_Mihail",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "\u8424\u706b2018",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "100 mil steps",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "AM",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Yusuf Murtaza",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ShumingFang",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "KoshinM",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "KickStart57",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Roman Nesterov",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "chiikawa&hachiware",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Praxel",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Doug",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Marcus Vinicius",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "less subs",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "ghostiee11",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Himeno",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "PavelLiashkov",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Tomoki Hirose",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Mathemortician",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Alexander Gremyakov",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Hossein",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Nat Bel ML Fun",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Orbit_flexer",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Konstantin Zorin",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Gendaijin",
+      "seen": 1,
+      "beat_us": 1
+    },
+    {
+      "name": "Unalloyed",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "SUN",
+      "seen": 1,
+      "beat_us": 0
+    },
+    {
+      "name": "Cho Royou",
+      "seen": 1,
+      "beat_us": 1
+    }
+  ],
+  "losses": [
+    {
+      "episode": "episode-80030983",
+      "size": 4,
+      "opponents": [
+        "Ken_Ken_Pa",
+        "Anti",
+        "Nandodemo"
+      ],
+      "winner": "Ken_Ken_Pa",
+      "steps": 169
+    },
+    {
+      "episode": "episode-80032426",
+      "size": 4,
+      "opponents": [
+        "Rmy",
+        "sary sary",
+        "Will"
+      ],
+      "winner": "Will",
+      "steps": 137
+    },
+    {
+      "episode": "episode-80033146",
+      "size": 2,
+      "opponents": [
+        "mercury12512"
+      ],
+      "winner": "mercury12512",
+      "steps": 175
+    },
+    {
+      "episode": "episode-80033693",
+      "size": 4,
+      "opponents": [
+        "Rafiozoo",
+        "Trapeznikov_Mihail",
+        "\u8424\u706b2018"
+      ],
+      "winner": "Rafiozoo",
+      "steps": 500
+    },
+    {
+      "episode": "episode-80033877",
+      "size": 2,
+      "opponents": [
+        "100 mil steps"
+      ],
+      "winner": "100 mil steps",
+      "steps": 114
+    },
+    {
+      "episode": "episode-80035244",
+      "size": 4,
+      "opponents": [
+        "chiikawa&hachiware",
+        "Praxel",
+        "Doug"
+      ],
+      "winner": "Praxel",
+      "steps": 230
+    },
+    {
+      "episode": "episode-80036451",
+      "size": 2,
+      "opponents": [
+        "ghostiee11"
+      ],
+      "winner": "ghostiee11",
+      "steps": 108
+    },
+    {
+      "episode": "episode-80037505",
+      "size": 4,
+      "opponents": [
+        "Tomoki Hirose",
+        "Mathemortician",
+        "Alexander Gremyakov"
+      ],
+      "winner": "Alexander Gremyakov",
+      "steps": 500
+    },
+    {
+      "episode": "episode-80037811",
+      "size": 2,
+      "opponents": [
+        "Hossein"
+      ],
+      "winner": "Hossein",
+      "steps": 174
+    },
+    {
+      "episode": "episode-80039190",
+      "size": 4,
+      "opponents": [
+        "Konstantin Zorin",
+        "Gendaijin",
+        "Unalloyed"
+      ],
+      "winner": "Gendaijin",
+      "steps": 205
+    },
+    {
+      "episode": "episode-80039454",
+      "size": 2,
+      "opponents": [
+        "Cho Royou"
+      ],
+      "winner": "Cho Royou",
+      "steps": 121
+    }
+  ]
+}
