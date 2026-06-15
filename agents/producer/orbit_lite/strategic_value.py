@@ -13,8 +13,16 @@ reflecting production value past the scorer's H-tick horizon:
    production from a long-held planet. Linearly decays from full at
    step 0 to zero at the configured opening window.
 
-Both terms ADD to the candidate score (recapture_penalty SUBTRACTS).
-Both gated default-OFF; byte-identical when the gates are unset.
+3. ``frontier_bonus`` — reach/option-aware. Rewards capturing a planet
+   for the *new options it unlocks*: the production-weighted set of
+   neutral planets that become newly reachable (within a turn budget)
+   once we own it and can launch from it. This is the "gateway" value
+   the H-tick own-income scorer cannot see — a far corner is valued for
+   the cluster it opens, not its own production alone. See
+   ``audit/2026-06-15-frontier-gateway-value-spec.md``.
+
+All three bonuses ADD to the candidate score (recapture_penalty
+SUBTRACTS). All gated default-OFF; byte-identical when the gates are unset.
 
 Math, per candidate ``c`` capturing target ``T`` with ``s_c`` ships at
 arrival tick ``e_c``:
@@ -41,6 +49,7 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
+from .distance_cache import DistanceCache
 from .garrison_launch import LaunchSet
 from .movement import PlanetGarrisonStatus
 
@@ -245,5 +254,161 @@ def opening_bonus(
         * float(phase_factor)
         * prod_c
         * float(future_h)
+    )
+    return bonus.clamp(min=0.0)
+
+
+def _reach_eta_matrix(
+    cache: DistanceCache,
+    *,
+    reach_turns: int,
+    nominal_speed: float,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> tuple[Tensor, Tensor]:
+    """Per-(source, target) best arrival tick under a turn budget. ``[P, P]``.
+
+    ``eta[u, v]`` is the smallest ``k in [1, R]`` for which a fleet of nominal
+    speed ``c`` launched from ``u@0`` can intercept ``v@k`` —
+    ``cross_dist[k, u, v] <= c * k`` — with ``v`` alive at tick ``k``; ``+inf``
+    where no such ``k`` exists. ``reach[u, v] = isfinite(eta)``.
+
+    ``R`` is clamped to the distance cache's horizon ``cache.K``. Pure tensor
+    arithmetic over the precomputed cross-time cache → no new geometry, no
+    host/device sync, CPU/CUDA agree. Mirrors the planner's own ``surf/k <=
+    speed`` reachability shape (``planner_core.reachable_mask``).
+    """
+    P = int(cache.P)
+    R = max(1, min(int(reach_turns), int(cache.K)))
+    # cross[k-1, u, v] = dist(u@0, v@k) for k in [1, R].
+    cross = cache.cross_dist[1 : R + 1].to(device=device, dtype=dtype)   # [R, P, P]
+    alive_at_k = cache.alive_by_step[1 : R + 1].to(device=device)        # [R, P]
+    k_grid = torch.arange(1, R + 1, device=device, dtype=dtype).view(R, 1, 1)
+    feasible = cross <= float(nominal_speed) * k_grid                    # [R, P_src, P_tgt]
+    # Target must be alive at the arrival tick (drops departing comets etc.).
+    feasible = feasible & alive_at_k.unsqueeze(1)                        # [R, 1, P_tgt] broadcast
+    inf = torch.full_like(cross, float("inf"))
+    eta_kuv = torch.where(feasible, k_grid.expand_as(cross), inf)        # [R, P, P]
+    eta = eta_kuv.amin(dim=0)                                            # [P_src, P_tgt]
+    reach = torch.isfinite(eta)
+    return eta, reach
+
+
+def frontier_bonus(
+    *,
+    obs,
+    cache: DistanceCache,
+    garrison_status: PlanetGarrisonStatus,
+    cand_tgt_slot: Tensor,
+    cand_tgt_short: Tensor,
+    cand_send: Tensor,
+    cand_eta: Tensor,
+    cand_valid: Tensor,
+    cand_is_def: Tensor,
+    capture_floor_TK: Tensor,
+    prod: Tensor,
+    H: int,
+    current_step: int,
+    game_length_est: int,
+    weight: float,
+    reach_turns: int,
+    nominal_speed: float,
+    contest_weight: float,
+    include_enemy: bool,
+    player_id: int,
+    comet_mask: Tensor | None = None,
+) -> Tensor:
+    """Return ``[C]`` non-negative gateway/option bonus in ship units.
+
+    For each candidate ``c`` that actually captures target ``a`` (its
+    ``cand_tgt_slot``), credit the *new options* owning ``a`` unlocks: the
+    production-weighted set of neutral planets reachable from ``a`` (as a launch
+    base, within ``reach_turns``) that are NOT already reachable from our
+    currently-owned set. Closer-unlocked targets count more (proximity
+    discount); the whole thing is scaled by the post-horizon turns remaining so
+    a gateway is worth most early and zero at game end.
+
+    See ``audit/2026-06-15-frontier-gateway-value-spec.md`` for the full math.
+    """
+    device = obs.device
+    dtype = obs.ships.dtype
+    C = int(cand_send.shape[0])
+    P = int(obs.P)
+    if C == 0 or P == 0 or weight <= 0.0:
+        return torch.zeros(C, dtype=dtype, device=device)
+
+    future_h = _future_value_horizon(current_step, H, game_length_est)
+    if future_h <= 0:
+        return torch.zeros(C, dtype=dtype, device=device)
+
+    capture_info = _compute_captures(
+        cand_send=cand_send, cand_eta=cand_eta,
+        cand_valid=cand_valid, cand_is_def=cand_is_def,
+        cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
+        capture_floor_TK=capture_floor_TK,
+        garrison_status=garrison_status,
+        player_id=player_id, P=P, device=device, dtype=dtype,
+    )
+    if capture_info is None:
+        return torch.zeros(C, dtype=dtype, device=device)
+    captures_c, tgt_abs = capture_info
+
+    # ----- pairwise reach (one [P, P] eta/reach matrix for the turn) -----
+    R = max(1, min(int(reach_turns), int(cache.K)))
+    eta, reach = _reach_eta_matrix(
+        cache, reach_turns=R, nominal_speed=nominal_speed,
+        device=device, dtype=dtype,
+    )                                                                    # [P_src, P_tgt]
+
+    # Frontier targets V: alive neutrals (optionally enemies), non-comet.
+    V = (obs.is_neutral & obs.alive).to(device)
+    if include_enemy:
+        V = V | (obs.is_enemy & obs.alive).to(device)
+    if comet_mask is not None:
+        V = V & ~comet_mask.to(device=device, dtype=torch.bool)
+
+    # reach_from_A[v]: already reachable today from some owned, alive source.
+    A = (obs.owned & obs.alive).to(device)                              # [P]
+    reach_from_A = (reach & A.view(P, 1)).any(dim=0)                    # [P_tgt]
+    newly = reach & (~reach_from_A).view(1, P)                          # [P_src=a, P_tgt=v]
+    # A base is not its own frontier.
+    newly = newly & ~torch.eye(P, dtype=torch.bool, device=device)
+
+    # Proximity discount: 1 when adjacent (eta=1), → 0 at the budget edge.
+    disc = (1.0 - eta / float(R + 1)).clamp(0.0, 1.0)
+    disc = torch.where(reach, disc, torch.zeros_like(disc))             # finite where reach
+
+    # Contest down-weight (default off): a newly-unlocked target an enemy base
+    # reaches no later than `a` is contested → worth less (we may lose the race).
+    contest_w = float(max(0.0, min(1.0, contest_weight)))
+    if contest_w > 0.0:
+        E = (obs.is_enemy & obs.alive).to(device)
+        inf = torch.full_like(eta, float("inf"))
+        eta_enemy = torch.where(E.view(P, 1), eta, inf).amin(dim=0)     # [P_tgt]
+        contested = eta_enemy.view(1, P) <= eta                         # [a, v]
+        contest_factor = torch.where(
+            contested & newly,
+            torch.full_like(eta, 1.0 - contest_w),
+            torch.ones_like(eta),
+        )
+    else:
+        contest_factor = torch.ones_like(eta)
+
+    prod_row = prod.to(device=device, dtype=dtype).view(1, P)           # [1, P_tgt]
+    contrib = (
+        newly.to(dtype)
+        * V.view(1, P).to(dtype)
+        * prod_row
+        * disc
+        * contest_factor
+    )                                                                   # [P_src=a, P_tgt=v]
+    fv_per_base = contrib.sum(dim=1)                                    # [P] value per base
+
+    fv_c = fv_per_base[tgt_abs]                                         # [C]
+    bonus = (
+        captures_c.to(dtype)
+        * float(weight)
+        * float(future_h)
+        * fv_c
     )
     return bonus.clamp(min=0.0)

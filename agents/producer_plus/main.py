@@ -38,7 +38,7 @@ from orbit_lite.garrison_launch import LaunchSet, _run_exact_recurrence
 from orbit_lite.movement import PlanetGarrisonStatus
 from orbit_lite.opp_projection import predict_opp_launches_via_mirror, MAX_L_OPP
 from orbit_lite.recapture import recapture_penalty
-from orbit_lite.strategic_value import denial_bonus, opening_bonus
+from orbit_lite.strategic_value import denial_bonus, frontier_bonus, opening_bonus
 from orbit_lite.planner_core import (
     _candidate_indices,
     _empty_entries,
@@ -50,6 +50,7 @@ from orbit_lite.planner_core import (
     capture_floor,
     empty_action_row,
     entries_to_sparse_payload,
+    is_comet_planet,
     largest_initial_player_count,
     make_launch_set,
     reachable_mask,
@@ -546,6 +547,50 @@ def _game_length_est() -> int:
         return max(1, int(raw))
     except (TypeError, ValueError):
         return 200
+
+
+def _frontier_bonus_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_FRONTIER_BONUS", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _frontier_weight() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_FRONTIER_WEIGHT", "0.05")
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.05
+
+
+def _frontier_reach() -> int:
+    raw = os.environ.get("PRODUCER_PLUS_FRONTIER_REACH", "12")
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 12
+
+
+def _frontier_speed() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_FRONTIER_SPEED", "3.0")
+    try:
+        return max(1.0, float(raw))
+    except (TypeError, ValueError):
+        return 3.0
+
+
+def _frontier_contest() -> float:
+    raw = os.environ.get("PRODUCER_PLUS_FRONTIER_CONTEST", "0.0")
+    try:
+        return max(0.0, min(1.0, float(raw)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _frontier_include_enemy() -> bool:
+    return os.environ.get("PRODUCER_PLUS_FRONTIER_INCLUDE_ENEMY", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
 
 
 # Force-concentration: relax the target mutex inside _greedy_select so up to
@@ -3050,6 +3095,33 @@ def plan_lite_waves(
                 player_id=pid,
             )
             score = score + o_bonus
+    if _frontier_bonus_enabled():
+        # Gateway/option value: credit a capture for the NEW neutral frontier it
+        # unlocks as a launch base (production-weighted, proximity-discounted,
+        # scaled by post-horizon turns remaining). Targets the #1 loss driver
+        # (under-expansion / far-corner neglect) at the model level — a gateway
+        # is valued for the cluster it opens, not its own production alone.
+        # Independent of denial/opening, so resolve current_step + comet mask
+        # locally.
+        _fr_step = int(obs_tensors["step"].max().item())
+        _fr_comet = is_comet_planet(obs_tensors, int(obs.P), obs.device)
+        fr_bonus = frontier_bonus(
+            obs=obs, cache=cache, garrison_status=garrison_status,
+            cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
+            cand_send=cand_send, cand_eta=cand_eta,
+            cand_valid=cand_valid, cand_is_def=cand_is_def,
+            capture_floor_TK=floor, prod=prod,
+            H=H, current_step=_fr_step,
+            game_length_est=_game_length_est(),
+            weight=_frontier_weight(),
+            reach_turns=_frontier_reach(),
+            nominal_speed=_frontier_speed(),
+            contest_weight=_frontier_contest(),
+            include_enemy=_frontier_include_enemy(),
+            player_id=pid,
+            comet_mask=_fr_comet,
+        )
+        score = score + fr_bonus
     if _hold_value() > 0.0:
         # Holding-time-priced capture credit: post-horizon production for
         # captures the opponent cannot feasibly retake within the window.

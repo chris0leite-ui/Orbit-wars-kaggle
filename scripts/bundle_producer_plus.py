@@ -660,6 +660,29 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_HORIZON_2P": "30",
         "PRODUCER_PLUS_HORIZON_4P": "18",
     },
+    "seq_strength_frontier": {
+        # 1280 seq_strength base + the GROUNDED gateway/option-value fix: a
+        # leaf-scorer term that credits a capture for the NEW neutral frontier
+        # it unlocks as a launch base (production-weighted, proximity-discounted,
+        # scaled by post-horizon turns). Attacks the #1 loss driver
+        # (under-expansion / far-corner neglect, ~76% of losses) at the MODEL
+        # level rather than by widening the shortlist / stretching the horizon
+        # (wideshortlist/expand): a far corner is valued for the cluster it
+        # opens, not its own production alone. Spec:
+        # audit/2026-06-15-frontier-gateway-value-spec.md. Weight 0.05 is the
+        # calibration dial; reach 12 turns at nominal speed 3.0; contest off.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
+        "PRODUCER_PLUS_FRONTIER_BONUS": "1",
+        "PRODUCER_PLUS_FRONTIER_WEIGHT": "0.05",
+        "PRODUCER_PLUS_FRONTIER_REACH": "12",
+        "PRODUCER_PLUS_FRONTIER_SPEED": "3.0",
+    },
     "vetorf_fwd": {
         # Forward redistribution (Planet Wars canon + del Toro loss): rear
         # leftover garrisons stream toward the frontier every turn (pressure
