@@ -24,61 +24,76 @@ horizon. Running the Producer once frees the whole budget: measured per-turn
 **p95 ≈ 126 ms, max 278 ms** (Producer ≈ 23 ms/call), so the 18-step horizon
 and a 24-candidate search are nowhere near the 1000 ms cap.
 
-## Result — it ties the Producer (clean negative)
+## ⚠️ RETRACTION — the "50% tie" and the whole "seat asymmetry" were a HARNESS BUG
 
-Balanced both-seats A/B, 1-thread torch (16 seeds × 2 seats):
+My first-pass A/B and the entire seat-asymmetry thread below were **contaminated
+by a bug in my hand-rolled `/tmp` harnesses**, found 2026-06-16 by single-game
+tracing. They are RETRACTED. (The original numbers were: best_response vs
+producer 16/32 with BR 16/16 as P0 and 0/16 as P1; producer-vs-producer 15/0
+P0; producer-vs-nearest 100%/20%. All artifacts — do not cite.)
 
+> **The pitfall (reusable, costly).** `env.state[i].observation` for seats
+> **i ≥ 1 is missing the shared `step` field** (9 keys vs 10). kaggle_environments
+> only merges `step` in when it invokes the agent via `env.run`. Every manual
+> `env.step` loop that fed an agent `env.state[seat].observation` therefore gave
+> the non-zero seat **`step = 0` forever** → the Producer's orbit model froze at
+> the t=0 planet layout → mis-aim → failed captures → an opening **stall**. So
+> "whoever plays seat 1" looked crippled, which masqueraded as a seat asymmetry.
+> **Always feed a complete obs:** use `env.run`, or build
+> `{**dict(env.state[0].observation), "player": seat}` per seat.
+
+**Verified by reproduce-then-fix (Rule 38), seed 0, producer vs idle:**
 ```
-best_response vs producer: 16/32 = 50.0%   (draws=0)
-  BR as P0: 16/16 WINS     BR as P1: 0/16 WINS
-search deviated from the Producer's plan on 936/3404 turns (27%)
+BROKEN feed (env.state[seat].obs):  P0 first-launch t11, 3 planets@40
+                                    P1 first-launch t25, 1 planet@40  (STALL)
+FIXED feed  (complete obs):         P0 t11, 3 planets ; P1 t11, 3 planets  (IDENTICAL)
 ```
 
-The search is genuinely **active** (deviates on 27% of turns — it is not a
-Producer clone), yet the outcome is **100% decided by seat**.
+So **the Producer is seat-symmetric — there is NO producer / `producer_plus`
+seat bug.** Code review agreed independently (engine combat/score ties resolve
+symmetrically; the producer is fully `player_id`-parameterised; all geometry is
+center-relative). The PI's instinct that "something is buggy" was right — the
+bug was in the measurement, not the agent.
 
-**Control — producer vs producer, same seeds:** P0 wins 15/15, P1 wins 0/15.
-So "P0 always wins" is a **pure 2P game artifact** between two mirror-strength
-deterministic agents, not anything about best_response. BR reproduces the
-Producer's seat pattern exactly → **BR is precisely Producer strength**; the
-27% deviation is net-neutral (it changes which moves are played, not who wins).
+**Real head-to-head (correct harness, 24 games, max_steps 300):**
+```
+best_response vs producer:  7/24 = 29.2%   Wilson-lo 0.149   draws 0
+  by seat:  as P0 4/12 (33%) , as P1 3/12 (25%)   <- balanced; seat-lock gone
+  search deviated from the producer's plan on 1490/3796 turns (39%)
+```
+So best_response is **worse** than the bare producer, not equal — the search
+**actively hurts**. It overrides the producer's move 39% of the time, and
+re-ranking with a weaker 18-step rollout evaluator picks worse moves than the
+producer's own scorer. (Sanity: producer-vs-producer on the fixed harness was
+P0 0 / P1 4 / draws 2 over 6 seeds — no P0 sweep.) This is a *stronger* form of
+the documented dead-end: search over the producer doesn't just add nothing, it
+subtracts.
 
-> **Methodology flag (reusable).** A 2P head-to-head between two near-identical
-> strong deterministic agents is **degenerate** — the seat (P0) advantage
-> saturates the signal, every game is seat-locked, and a balanced design nets
-> exactly 50% for *equal-strength* agents. To detect a *small* edge you must
-> use an arena where outcomes aren't seat-locked (4P FFA, or non-mirror
-> opponents). Do not read a 2P-mirror 50% as "no difference in behaviour" — read
-> it as "equal strength."
+## Seat-bias investigation — how the harness bug was caught (don't re-walk)
 
-## Seat-bias investigation (PI: "this is a bug, if it is so seat-depending")
+The PI flagged "this is a bug, if it is so seat-depending." The chase (and three
+wrong intermediate conclusions of mine — "real producer bug" → "float32
+degeneracy" → "real asymmetry") all came from the contaminated harness above.
+What finally localised it, in order, was code review + one game:
+- **Engine is seat-fair** (`lib/game/interpreter.py`): combat exact ties →
+  mutual destruction → neutral; final-score ties → both rewarded; the only
+  ordering is "P0 acts first," which never converts to a win.
+- **Producer is seat-symmetric** (obs parse, `competitive_score`, forecaster,
+  flow projector, aiming): no hardcoded seat; opponent fleets attributed from
+  observed owner; geometry center-relative.
+- **The single-game trace** (`/tmp/trace_game.py`, `/tmp/compare_seats.py`)
+  showed the producer *stalling* as the non-zero seat vs idle — which pointed at
+  the obs, not the logic. `/tmp/obs_check.py` then proved `env.run` passes a
+  complete obs to both seats while `env.state[1].observation` is missing `step`,
+  and `/tmp/compare_seats_fixed.py` confirmed the fix. → harness bug (see the
+  RETRACTION box above). **There is no seat fix to make in the producer.**
 
-Localized it (probe `/tmp/seat_probe.py`):
-- **Not the harness.** `nearest`-vs-`nearest` gives identical outcomes via the
-  official `env.run` and via a manual `env.step` loop.
-- **Not a universal engine seat bias.** `nearest`-vs-`nearest` on a symmetric
-  board mostly **draws** (seeds 0/3/4/5 exactly equal, e.g. 874=874) and splits
-  the rest (seed1→P1, seed2→P0). The engine resolves symmetric play fairly.
-- **The board is symmetric** (seed 0: P0 home (73.4,73.7) ↔ P1 home (26.6,26.3),
-  point-mirror around center).
-- **So the P0 sweep is producer-specific.** Two identical *producer* policies on
-  a symmetric board diverge deterministically in P0's favour and one side
-  dominates by ~step 100. Likely cause: **float32 mirror-breaking** — P0
-  (positive offsets from center) and P1 (negative offsets) compute mirrored
-  decisions whose `atan2`/`floor`/sort-tie rounding isn't sign-symmetric, so the
-  tiny asymmetry compounds. (The bare producer is fully `player_id`-parameterised
-  — no hardcoded seat — so it's not a friend/foe mislabel.)
+## Why the search underperforms the Producer (the diagnosis)
 
-**Open (decisive) test — does it generalise past mirror self-play?** producer
-& best_response vs `nearest`, both seats (`/tmp/seat_vs_nearest.py`):
-- If each wins ~equally from P0 and P1 → the sweep is **only** a mirror artifact,
-  harmless on the ladder (different opponents = no mirror to break); the lesson
-  is just "don't A/B in a 2P mirror."
-- If P1 winrate << P0 winrate vs `nearest` too → a genuine "plays seat 1 worse"
-  bug in the producer **and `producer_plus`** (same engine) that would cost
-  real ladder games — worth a fix. _RESULT PENDING — fill in._
-
-## Why the search adds nothing over its base (the real diagnosis)
+The measured ~29% is the *worse* end of what this analysis predicts: a search
+that overrides a strong policy using a weaker evaluator can only match it (when
+it correctly defers) or hurt it (when the weak evaluator misranks) — never beat
+it. Both mechanisms below push toward "hurt."
 
 1. **My leaf evaluator is weaker than the Producer's own scorer.** The Producer
    is strong *because* of its expensive internal forward projection. My
@@ -119,7 +134,10 @@ the team may already have a position — confirm with the PI.)
 
 ## Artifacts
 - `agents/best_response/` (+ PROVENANCE), `tests/test_best_response.py`.
-- Probes (in `/tmp`, transcribe if we revisit): `ab_br.py` (2P balanced A/B +
-  deviation), `ab_pp.py` (producer seat-split control), `ab_br_4p.py` (4P FFA).
-- 4P FFA vs 3 producers (the prior dead-end's arena, beat => >25%): _RESULT
-  PENDING — fill in._
+- **Correct** A/B harness pattern (`/tmp/ab_fixed.py`): feeds every agent
+  `{**dict(env.state[0].observation), "player": seat}`. Reuse this shape; do NOT
+  reuse the broken `/tmp/ab_br.py` / `ab_pp.py` / `prod_vs_near.py` /
+  `compare_seats.py` (they read `env.state[seat].observation` → missing `step`
+  for seat 1 → contaminated). Or just use `fast.py` (it goes through `env.run`).
+- Bug-hunt trail (kept for the lesson): `/tmp/obs_check.py` (proves the
+  missing-`step` pitfall), `/tmp/compare_seats_fixed.py` (reproduce-then-fix).
