@@ -76,7 +76,6 @@ try:
         sys.path.insert(0, _PRODUCER_DIR)
     import torch as _torch
     from orbit_lite.adapter import single_obs_to_tensor as _single_obs_to_tensor
-    from orbit_lite.adapter import sparse_action_row_to_moves as _sparse_action_row_to_moves
     from orbit_lite.movement import MovementConfig as _MovementConfig
     from orbit_lite.movement_step import ensure_planet_movement as _ensure_planet_movement
     from orbit_lite.planner_core import (
@@ -84,14 +83,6 @@ try:
         score_candidates as _score_candidates,
         largest_initial_player_count as _largest_initial_player_count,
     )
-    # Load the producer's planner module (fresh-memory instances let us predict
-    # an opponent's move without touching the producer's global runtime).
-    import importlib.util as _ilu
-    _pm_spec = _ilu.spec_from_file_location(
-        "_lr_producer_main", os.path.join(_PRODUCER_DIR, "main.py"))
-    _producer_main = _ilu.module_from_spec(_pm_spec)
-    sys.modules["_lr_producer_main"] = _producer_main
-    _pm_spec.loader.exec_module(_producer_main)
     _ORBIT_OK = True
 except Exception:
     _ORBIT_OK = False
@@ -141,19 +132,6 @@ RANK_HINT_SHIPS = 20
 # Fallback (no-torch) evaluator knobs.
 FALLBACK_HORIZON = _i("LR_FALLBACK_HORIZON", 10)
 FORCE_EVAL = os.environ.get("LR_EVAL", "").strip().lower()  # "orbit" | "fallback" | ""
-# Best-response: predict each opponent's move (modelled as the producer) and
-# fold it into the projection my scorer sees, so I best-respond to it while it
-# stays blind to my move. On by default; needs the producer module loaded.
-BEST_RESPONSE = os.environ.get("LR_BESTRESPONSE", "1").strip().lower() in (
-    "1", "true", "on", "yes")
-# Strict-superset portfolio: also compute the producer's own move and play it
-# UNLESS our least-resistance plan is clearly better under the opponent-aware
-# position value. Guarantees we never do worse than the producer (its plan is
-# always an option), with upside when our best-response plan wins. On by
-# default; needs the producer module.
-PORTFOLIO = os.environ.get("LR_PORTFOLIO", "1").strip().lower() in (
-    "1", "true", "on", "yes")
-PORTFOLIO_MARGIN = _f("LR_PORTFOLIO_MARGIN", 2.0)  # ships our plan must beat the producer's by
 
 
 # --------------------------------------------------------------------------
@@ -266,97 +244,6 @@ def _build_orbit_scorer(obs, me):
     return score_units, id2slot
 
 
-def _augment_obs(obs_d, raw_obs, me, extra_fleets):
-    """Obs dict for the scorer: my seat, our fleets + any injected opponent
-    fleets, and `initial_planets` (orbit_lite needs it)."""
-    d = dict(obs_d)
-    d["player"] = int(me)
-    if extra_fleets:
-        d["fleets"] = list(obs_d.get("fleets", []) or []) + list(extra_fleets)
-    ip = (raw_obs.get("initial_planets") if isinstance(raw_obs, dict)
-          else getattr(raw_obs, "initial_planets", None))
-    if ip is not None:
-        d["initial_planets"] = ip
-    return d
-
-
-def _launches_to_fleets(launches, owner, planets_by_id, fid_start):
-    """Convert env-format launches [[src_id, angle, ships], ...] into the
-    obs-format in-flight fleet entries the env would spawn (at the source's
-    surface in the launch direction)."""
-    out = []
-    fid = int(fid_start)
-    for mv in launches:
-        sid = int(mv[0])
-        p = planets_by_id.get(sid)
-        if p is None:
-            continue
-        angle = float(mv[1])
-        ships = int(mv[2])
-        sx = float(p[2]) + (float(p[4]) + 0.1) * math.cos(angle)
-        sy = float(p[3]) + (float(p[4]) + 0.1) * math.sin(angle)
-        out.append([fid, int(owner), sx, sy, angle, sid, ships])
-        fid += 1
-    return out
-
-
-def _producer_move(obs_d, raw_obs, seat):
-    """The producer's chosen launches for `seat` on the current board (fresh
-    memory — equivalent to the producer's real move, no shared-state effect)."""
-    od = dict(obs_d)
-    od["player"] = int(seat)
-    ip = (raw_obs.get("initial_planets") if isinstance(raw_obs, dict)
-          else getattr(raw_obs, "initial_planets", None))
-    if ip is not None:
-        od["initial_planets"] = ip
-    try:
-        ot = _single_obs_to_tensor(od, player_id=int(seat))
-        runtime = _producer_main.ProducerLiteRuntime()
-        with _torch.no_grad():
-            row = runtime.tensor_action(ot)
-        return _sparse_action_row_to_moves(row, od, player_id=int(seat))
-    except Exception:
-        return []
-
-
-def _predict_opponent_fleets(obs_d, raw_obs, me, num_seats):
-    """Predict every opponent's move (modelled as the producer) and return the
-    resulting fleets as obs-format entries to inject into our projection."""
-    planets_by_id = {int(p[0]): p for p in (obs_d.get("planets") or [])}
-    extra = []
-    fid = 1_000_000
-    for opp in range(num_seats):
-        if opp == int(me):
-            continue
-        moves = _producer_move(obs_d, raw_obs, opp)
-        fleets = _launches_to_fleets(moves, opp, planets_by_id, fid)
-        extra.extend(fleets)
-        fid += len(fleets) + 1
-    return extra
-
-
-def _project_value(scorer_obs, me):
-    """Opponent-aware position value: project the board (all in-flight fleets,
-    including any injected this-turn launches from both sides) `H` turns
-    forward and return our garrison advantage (our ships - theirs) at the
-    horizon. This is the producer's own garrison-flow projector used as a
-    state evaluator."""
-    ot = _single_obs_to_tensor(scorer_obs, player_id=int(me))
-    pc = _largest_initial_player_count(ot)
-    H = PROJECT_HORIZON_4P if int(pc) >= 4 else PROJECT_HORIZON_2P
-    cfg = _MovementConfig(
-        movement_horizon=int(H), drift_epsilon=1e-3, track_fleets=True,
-        player_count=int(pc), max_tracked_fleets=128,
-    )
-    mv = _ensure_planet_movement(obs_tensors=ot, expected_cfg=cfg, cached_movement=None)
-    status = mv.garrison_status(max_horizon=int(H))
-    owner = status.owner[:, int(H)]
-    ships = status.ships[:, int(H)].to(_torch.float32)
-    mine = float((ships * (owner == int(me)).to(_torch.float32)).sum())
-    theirs = float((ships * ((owner != int(me)) & (owner >= 0)).to(_torch.float32)).sum())
-    return mine - theirs
-
-
 # --------------------------------------------------------------------------
 # The agent.
 # --------------------------------------------------------------------------
@@ -382,20 +269,9 @@ def agent(obs, configuration=None):
     # ---- choose the evaluator (producer-strength orbit_lite, else fast_sim) ----
     use_orbit = _ORBIT_OK and FORCE_EVAL != "fallback"
     orbit = None
-    extra_fleets = []
     if use_orbit:
         try:
-            # Best-response: predict the opponents' moves (as the producer) and
-            # fold them into the projection my scorer sees, so I best-respond
-            # while the opponent stays blind to my move.
-            if BEST_RESPONSE or PORTFOLIO:
-                try:
-                    extra_fleets = _predict_opponent_fleets(obs_d, obs, me, num_seats)
-                except Exception:
-                    extra_fleets = []
-            scorer_obs = _augment_obs(obs_d, obs, me,
-                                      extra_fleets if BEST_RESPONSE else [])
-            orbit = _build_orbit_scorer(scorer_obs, me)
+            orbit = _build_orbit_scorer(obs, me)
         except Exception:
             orbit = None
     if orbit is None and FORCE_EVAL == "orbit":
@@ -520,8 +396,8 @@ def agent(obs, configuration=None):
                 candidates.append({"emit": emit, "units": units, "srcs": srcs,
                                    "rank": rank, "front": front})
 
-    if not candidates and orbit is None:
-        return []                       # fallback path with nothing to do
+    if not candidates:
+        return []
 
     candidates.sort(key=lambda c: (-c["rank"], c["front"]))
     candidates = candidates[:MAX_CANDIDATES]
@@ -555,30 +431,7 @@ def agent(obs, configuration=None):
             for s, sz in c["srcs"].items():
                 avail[s] = avail.get(s, 0) - sz
 
-    my_plan = committed_emit
-
-    # ---- strict-superset portfolio: play the producer's own move unless our
-    #      plan is clearly better under the opponent-aware position value. The
-    #      producer's plan is always an option, so we never do worse than it.
-    if orbit is not None and PORTFOLIO:
-        planets_raw = obs_d.get("planets") or []
-        pbid = {int(p[0]): p for p in planets_raw}
-
-        def _plan_value(launches):
-            myf = _launches_to_fleets(launches, me, pbid, 2_000_000)
-            aug = _augment_obs(obs_d, obs, me, list(extra_fleets) + myf)
-            try:
-                return _project_value(aug, me)
-            except Exception:
-                return None
-
-        prod_plan = _producer_move(obs_d, obs, me)
-        v_prod = _plan_value(prod_plan)
-        v_mine = _plan_value(my_plan)
-        if v_prod is not None and v_mine is not None:
-            return my_plan if v_mine > v_prod + PORTFOLIO_MARGIN else prod_plan
-
-    return my_plan
+    return committed_emit
 
 
 # --------------------------------------------------------------------------
