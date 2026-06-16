@@ -32,7 +32,10 @@ os.environ["LR_TWOPLY_MS"] = "100000000"
 
 from kaggle_environments import make  # noqa: E402
 
-SEED = int(sys.argv[1]) if len(sys.argv) > 1 else 76670184
+# 4 distinct real-game seeds; focal plays each seat exactly once (seed i -> seat i).
+SEEDS = [76670184, 1492346051, 768065184, 641308308]
+if len(sys.argv) > 1:
+    SEEDS = ([int(x) for x in sys.argv[1:]] + SEEDS)[:4]
 STEPS = 250
 LR = str(REPO / "agents" / "least_resistance" / "main.py")
 BG = str(REPO / "submissions" / "v7_0_drop_one.py")
@@ -90,22 +93,23 @@ def _run_batch(flag: str):
     all_ms: list[float] = []
     total_launches = 0
     lines = []
-    for seat in range(4):
-        win, ms, nsteps, launches, rewards = _run_game(SEED, seat)
+    for i in range(4):
+        seed, seat = SEEDS[i], i
+        win, ms, nsteps, launches, rewards = _run_game(seed, seat)
         wins += int(win)
         all_ms += ms
         total_launches += launches
         mx = max(ms) if ms else 0.0
         lines.append(
-            f"    seat={seat}  {'WIN ' if win else 'loss'}  steps={nsteps}  "
-            f"focal_launches={launches:>4}  max_turn_ms={mx:5.0f}  "
-            f"rewards={rewards}")
+            f"    seed={seed:<11} seat={seat}  {'WIN ' if win else 'loss'}  "
+            f"steps={nsteps}  focal_launches={launches:>4}  "
+            f"max_turn_ms={mx:5.0f}  rewards={rewards}")
     return wins, total_launches, (max(all_ms) if all_ms else 0.0), lines
 
 
 def main() -> int:
-    print(f"seed={SEED}  steps<= {STEPS}  focal=least_resistance  "
-          f"bg=v7_0 x3   (n=4 directional smoke)\n")
+    print(f"seeds={SEEDS}  each seat once  steps<= {STEPS}  "
+          f"focal=least_resistance  bg=v7_0 x3   (n=4 directional)\n")
     summary = []
     for flag, label in (("0", "OFF  gap-to-field (current)"),
                         ("1", "ON   gap-to-strongest (leader-relative 4P)")):
