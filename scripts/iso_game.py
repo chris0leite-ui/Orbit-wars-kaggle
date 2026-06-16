@@ -35,6 +35,27 @@ CONFIGS: dict[str, dict[str, str]] = {
         "PRODUCER_PLUS_FFA_SCORE": "1",
         "PRODUCER_PLUS_FFA_WEIGHTS": "strongest",
     },
+    # Our best submission: the 1280 champion `vetorf4p_seq_strength`.
+    "champion": {
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
+    },
+    # The champion with the new relative-strongest objective swapped in
+    # (FFA_WEIGHTS strength -> strongest). Tests the PI's idea ON the best agent.
+    "champion_strongest": {
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strongest",
+    },
 }
 
 
@@ -84,14 +105,21 @@ def main(argv=None) -> int:
     ap.add_argument("--steps", type=int, default=500)
     ap.add_argument("--focal", default="anti_strongest", choices=list(CONFIGS))
     ap.add_argument("--opp", default="static", choices=list(CONFIGS))
+    ap.add_argument("--swap", action="store_true",
+                    help="place focal at the LAST seat (2P: P1) to control seat bias")
     a = ap.parse_args(argv)
 
     from kaggle_environments import make
     nplayers = 4 if a.mode == "4p" else 2
-    seats = []
-    seats.append(_iso(_load_engine("focal"), CONFIGS[a.focal]))      # P0 = focal
-    for i in range(1, nplayers):
-        seats.append(_iso(_load_engine(f"opp{i}"), CONFIGS[a.opp]))  # P1.. = opp
+    focal_pid = (nplayers - 1) if a.swap else 0
+    seats = [None] * nplayers
+    seats[focal_pid] = _iso(_load_engine("focal"), CONFIGS[a.focal])
+    oi = 0
+    for p in range(nplayers):
+        if p == focal_pid:
+            continue
+        seats[p] = _iso(_load_engine(f"opp{oi}"), CONFIGS[a.opp])
+        oi += 1
 
     env = make("orbit_wars", configuration={"seed": a.seed, "episodeSteps": a.steps}, debug=False)
     env.run(seats)
@@ -101,22 +129,23 @@ def main(argv=None) -> int:
         st = env.steps[t][0]
         return st["observation"] if isinstance(st, dict) else st.observation
 
+    opp_pids = [p for p in range(nplayers) if p != focal_pid]
     of = obs_at(n - 1)
     scores = [_score(of, p) for p in range(nplayers)]
-    focal_s = scores[0]
-    best_opp = max(scores[1:]) if nplayers > 1 else 0.0
-    rank = 1 + sum(1 for s in scores[1:] if s > focal_s)  # focal's rank (1 = best)
+    focal_s = scores[focal_pid]
+    best_opp = max(scores[p] for p in opp_pids)
+    rank = 1 + sum(1 for p in opp_pids if scores[p] > focal_s)  # focal's rank (1 = best)
     # peak focal lead over the strongest opponent across the game (2p insight)
     peak = -1e9
     for t in range(n):
         o = obs_at(t)
-        m = _score(o, 0) - max(_score(o, p) for p in range(1, nplayers))
+        m = _score(o, focal_pid) - max(_score(o, p) for p in opp_pids)
         if m > peak:
             peak = m
     margin = focal_s - best_opp
     won = "Y" if margin > 0 else "."
     early = "*" if n < a.steps else " "
-    print(f"{a.mode} seed {a.seed:>2d}: focal({a.focal})={focal_s:>6.0f} "
+    print(f"{a.mode} seed {a.seed:>2d} P{focal_pid}: focal({a.focal})={focal_s:>6.0f} "
           f"best_opp({a.opp})={best_opp:>6.0f}  margin={margin:>+7.0f}  "
           f"won={won}  rank={rank}/{nplayers}  peak_lead=+{peak:>5.0f}  "
           f"steps={n}{early}  all={[round(s) for s in scores]}")
