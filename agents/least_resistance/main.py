@@ -196,6 +196,30 @@ def _twoply_budget(obs_d):
     return base + extra
 
 
+def _value_commit():
+    """Fundamental gate (default OFF, both modes): commit captures in order of
+    their VALUE under the objective (highest win-equity first) rather than
+    cheapness -- scoring each candidate once with spare compute."""
+    return os.environ.get("LR_VALUE_COMMIT", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
+def _value_budget(obs_d, base):
+    """Budget (ms) for value-ordered commitment, which scores every candidate up
+    front. Draw a self-limiting slice of the overage bank so the extra scoring
+    does not starve the commit pass."""
+    if not _value_commit():
+        return base
+    try:
+        bank_s = float(obs_d.get("remainingOverageTime"))
+    except (TypeError, ValueError):
+        return base
+    spendable = max(0.0, bank_s - _f("LR_ANYTIME_BANK_FLOOR_S", 8.0))
+    extra = min(spendable * 1000.0 * _f("LR_VALUE_BANK_FRAC", 0.02),
+                _f("LR_VALUE_EXTRA_CAP_MS", 700.0))
+    return base + extra
+
+
 # --------------------------------------------------------------------------
 # Obs parsing.
 # --------------------------------------------------------------------------
@@ -626,8 +650,22 @@ def agent(obs, configuration=None):
     else:
         current = value_fallback([])
         floor = 0.5
-    budget_ms = _wallclock_ms()
+    budget_ms = _value_budget(obs_d, _wallclock_ms())
     t0 = time.perf_counter()
+
+    # Fundamental (default OFF, both modes): order captures by their VALUE under
+    # the objective (highest win-equity first) instead of cheapness, spending
+    # spare compute to score each once -- funds the captures that actually win
+    # before scattered cheap neutrals (principled replacement for enemy-boost).
+    if _value_commit() and orbit is not None and len(candidates) > 1:
+        scored = []
+        for c in candidates:
+            if c["units"] is None or (time.perf_counter() - t0) * 1000.0 > budget_ms:
+                scored.append((float("-inf"), c))      # unscored -> keep after scored
+            else:
+                scored.append((score_units(c["units"]), c))
+        scored.sort(key=lambda e: -e[0])               # highest marginal value first
+        candidates = [c for _, c in scored]
 
     for c in candidates:
         if (time.perf_counter() - t0) * 1000.0 > budget_ms:

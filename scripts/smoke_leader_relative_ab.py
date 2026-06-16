@@ -95,9 +95,13 @@ def _run_game(seed: int, focal_seat: int, players: int):
 
 
 def _run_batch(on: bool):
+    # ON = the fundamental stack: win-equity objective (4P-gated, inert in 2P)
+    # + value-ordered commitment (both modes). The enemy-boost/anytime hacks
+    # stay OFF -- value-commit is their principled replacement.
     os.environ["LR_LEADER_RELATIVE_4P"] = "1" if on else "0"
-    os.environ["LR_ENEMY_BOOST"] = "1.5" if on else "1.0"
-    os.environ["LR_ANYTIME"] = "1" if on else "0"
+    os.environ["LR_VALUE_COMMIT"] = "1" if on else "0"
+    os.environ["LR_ENEMY_BOOST"] = "1.0"
+    os.environ["LR_ANYTIME"] = "0"
     wins = 0
     games = 0
     all_ms: list[float] = []
@@ -125,7 +129,7 @@ def main() -> int:
           f"(n={n} per variant, directional)\n")
     summary = []
     for on, label in ((False, "OFF  current (all levers off)"),
-                      (True,  "ON   leader-relative + enemy-focus + anytime")):
+                      (True,  "ON   leader-relative + value-ordered commit")):
         wins, games, launches, mx, lines = _run_batch(on)
         print(f"== {label} ==")
         print("\n".join(lines))
