@@ -900,6 +900,26 @@ def _terminal_prod_value() -> float:
         return 0.0
 
 
+def _terminal_prod_for(player_count: int) -> float:
+    """Player-count-gated terminal-production (positional) weight.
+
+    The positional objective (crediting economy owned at the horizon) HELPS in
+    4P but HURTS in 2P (measured: 4P win 0.44 vs 0.25 baseline; 2P 0.38 vs the
+    ship-flow champion). So allow independent 2P / 4P weights via
+    ``PRODUCER_PLUS_TERMINAL_PROD_VALUE_{2P,4P}``; each falls back to the global
+    ``PRODUCER_PLUS_TERMINAL_PROD_VALUE`` (default 0 -> byte-identical).
+    """
+    key = "PRODUCER_PLUS_TERMINAL_PROD_VALUE_4P" if int(player_count) >= 3 \
+        else "PRODUCER_PLUS_TERMINAL_PROD_VALUE_2P"
+    raw = os.environ.get(key)
+    if raw is None:
+        return _terminal_prod_value()
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return _terminal_prod_value()
+
+
 # --- Response veto -------------------------------------------------------------
 # The opp projection predicts the opponent's plan ASSUMING WE DO NOTHING, so
 # reactive defense to our own waves is invisible to the scorer. Live mining
@@ -1228,7 +1248,7 @@ def _apply_response_veto(
     scores = score_candidates(
         garrison_status, prod=prod, alive_by_step=alive_by_step,
         player_count=int(player_count), launches=merged, player_id=pid,
-        opp_weights=opp_weights, terminal_prod_weight=_terminal_prod_value(),
+        opp_weights=opp_weights, terminal_prod_weight=_terminal_prod_for(int(player_count)),
         terminal_neutral_only=_terminal_neutral_only(),
     )
     if _hold_value() > 0.0:
@@ -1321,7 +1341,7 @@ def _apply_response_veto(
             scores_up = score_candidates(
                 garrison_status, prod=prod, alive_by_step=alive_by_step,
                 player_count=int(player_count), launches=merged_up, player_id=pid,
-                opp_weights=opp_weights, terminal_prod_weight=_terminal_prod_value(),
+                opp_weights=opp_weights, terminal_prod_weight=_terminal_prod_for(int(player_count)),
         terminal_neutral_only=_terminal_neutral_only(),
             )
             keep_up = up_viable & ((scores_up - dn) >= margin)
@@ -3057,7 +3077,7 @@ def plan_lite_waves(
         garrison_status, prod=prod, alive_by_step=alive_by_step,
         player_count=int(player_count), launches=scoring_launches, player_id=pid,
         opp_weights=opp_weights,
-        terminal_prod_weight=_terminal_prod_value(),
+        terminal_prod_weight=_terminal_prod_for(int(player_count)),
         terminal_neutral_only=_terminal_neutral_only(),
     )                                                                            # [C]
     _cc = _commit_cost_eps()
@@ -3248,7 +3268,7 @@ def plan_lite_waves(
                 garrison_status, prod=prod, alive_by_step=alive_by_step,
                 player_count=int(player_count), launches=merged, player_id=pid,
                 opp_weights=opp_weights,
-                terminal_prod_weight=_terminal_prod_value(),
+                terminal_prod_weight=_terminal_prod_for(int(player_count)),
         terminal_neutral_only=_terminal_neutral_only(),
             )
             _new = new_base + _fc_addon_offset
@@ -3617,7 +3637,7 @@ def _score_do_nothing(
         status, prod=prod, alive_by_step=alive_by_step,
         player_count=int(player_count), launches=bg, player_id=int(player_id),
         opp_weights=opp_weights,
-        terminal_prod_weight=_terminal_prod_value(),
+        terminal_prod_weight=_terminal_prod_for(int(player_count)),
         terminal_neutral_only=_terminal_neutral_only(),
     )
     return score.flatten()[0]
