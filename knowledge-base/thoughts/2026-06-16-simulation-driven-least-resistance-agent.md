@@ -232,3 +232,49 @@ what beats a tuned 1-ply agent** — 1-ply best-response and a strict-superset
 portfolio both failed (0% / 18%); the 2-ply succeeded (2P 62%). The remaining
 gap is 4P, where the search works but the *leaf objective* (Σ_opp) isn't
 FFA-aware.
+
+---
+
+## UPDATE 5 — the submission scored 332: a fatal entry-point bug (it idled every turn)
+
+PI observation: "Strategy does nothing on kaggle, only idle." The ladder
+confirmed it — sub 53740037 validated COMPLETE but settled at **publicScore
+332.2** (vs champion_holdval 958, champion_strongest 1069.7). A score that low
+= losing nearly every game = idling.
+
+**Why it validated COMPLETE anyway:** Kaggle's validation episode is
+self-vs-self. An agent that idles every turn still completes the game (both
+sides idle → DONE) → COMPLETE. So COMPLETE never meant "plays moves". My Rule
+46 smoke ran *in-repo* and called `agent()` by name (the in-repo harness picks
+the function named `agent`), so it played real moves and looked fine — a Rule
+38 violation: I never reproduced the *real* environment (the flat tar.gz loaded
+by `kaggle_environments`).
+
+**Root cause (reproduced from the submitted tar):** `kaggle_environments`
+selects an agent from a file via `get_last_callable` —
+`[v for v in env.values() if callable(v)][-1]`, the **last top-level callable
+defined in the module**. In `main.py` the entry function `agent` (line ~359)
+was followed by two helpers — `_ObsRawShim` (a class) and
+`_comet_paths_by_id_safe`. So Kaggle was calling **`_comet_paths_by_id_safe`**
+as the agent. That returns a comet-path *dict* (or `{}`), which the env can't
+parse as moves → silently dropped → **idle every turn, no error**. The agent
+logic was never the problem: calling `mod.agent()` directly on the same
+extracted tar returns real launches and the game ends with a winner.
+
+**Fix:** moved the two helpers *above* `agent`, so `agent` is the last
+top-level callable, and added a header comment forbidding any module-level def
+below it. Also added `scripts/build_least_resistance.sh` for a reproducible,
+cache-free tarball (the prior tar was hand-assembled in ephemeral /tmp).
+
+**Verified in the real environment (Rule 38):** rebuilt tar →
+`get_last_callable` now picks `agent`; `env.run([main, main])` self-play =
+**74/73 active turns**, game ends step 174 (was 0 active / idle to 500), 0
+stderr. Timing through the real loader: module load (torch) 1208 ms < the 2 s
+`agentTimeout`; steady-state per-turn p50 109 / max 208 ms, 0 turns over the
+1 s `actTimeout`.
+
+**Lesson banked (process):** "validates COMPLETE on Kaggle" ≠ "the agent
+plays". For any agent submitted as a file/tarball, the pre-submit smoke MUST
+load it the way Kaggle does — extract the tar, repo OFF `sys.path`, run via
+`kaggle_environments.agent.get_last_callable` / `env.run([file, file])` — and
+assert a non-trivial count of *active* (non-empty) turns, not just DONE.

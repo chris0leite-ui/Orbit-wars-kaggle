@@ -354,7 +354,32 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans):
 
 
 # --------------------------------------------------------------------------
+# Comet-path helper that works off a plain obs dict (no lib.intent World).
+# --------------------------------------------------------------------------
+class _ObsRawShim:
+    """Minimal shim exposing `.obs_raw` for lib.world_model comet helpers."""
+    __slots__ = ("obs_raw",)
+
+    def __init__(self, obs_d):
+        self.obs_raw = obs_d
+
+
+def _comet_paths_by_id_safe(obs_d):
+    try:
+        return _comet_paths_by_id(_ObsRawShim(obs_d))
+    except Exception:
+        return {}
+
+
+# --------------------------------------------------------------------------
 # The agent.
+#
+# IMPORTANT: kaggle_environments loads an agent file by picking the LAST
+# top-level callable in the module (see kaggle_environments/agent.py:
+# `[v for v in env.values() if callable(v)][-1]`). `agent` MUST therefore
+# remain the final def in this file — do NOT add any module-level function or
+# class below it, or that helper becomes the entry point and the agent idles
+# every turn (it returns a non-move value, which the env silently drops).
 # --------------------------------------------------------------------------
 def agent(obs, configuration=None):
     obs_d = _as_dict(obs)
@@ -565,21 +590,3 @@ def agent(obs, configuration=None):
             return committed_emit
 
     return committed_emit
-
-
-# --------------------------------------------------------------------------
-# Comet-path helper that works off a plain obs dict (no lib.intent World).
-# --------------------------------------------------------------------------
-class _ObsRawShim:
-    """Minimal shim exposing `.obs_raw` for lib.world_model comet helpers."""
-    __slots__ = ("obs_raw",)
-
-    def __init__(self, obs_d):
-        self.obs_raw = obs_d
-
-
-def _comet_paths_by_id_safe(obs_d):
-    try:
-        return _comet_paths_by_id(_ObsRawShim(obs_d))
-    except Exception:
-        return {}
