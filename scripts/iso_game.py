@@ -62,6 +62,14 @@ CONFIGS: dict[str, dict[str, str]] = {
         "PRODUCER_PLUS_FFA_SCORE": "1",
         "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
     },
+    # champion + production value (the SUBMITTED sub 53734450) — does the veto
+    # govern the over-expansion that sinks the lean production variants 0/12?
+    "champion_holdval": {
+        "PRODUCER_PLUS_MULTI_SIZE": "1", "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1", "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REPLY_SEQ": "1", "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength", "PRODUCER_PLUS_HOLD_VALUE": "12",
+    },
     # The champion with the new relative-strongest objective swapped in
     # (FFA_WEIGHTS strength -> strongest). Tests the PI's idea ON the best agent.
     "champion_strongest": {
