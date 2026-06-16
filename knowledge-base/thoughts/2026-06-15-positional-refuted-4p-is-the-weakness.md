@@ -44,3 +44,22 @@ or under-expansion specific to 4P crowding.
 - New lead: **fix 4P play.** Mining the 4P losses next.
 - Knob sweep (denial/opening/recapture/veto-upsize toggles vs champion) running
   to confirm they're dead (they're OFF in the champion for a reason).
+
+---
+
+## CORRECTION (2026-06-16) — 4P is NOT a weakness (baseline misread)
+
+I compared 4P winrate (0.40) to 0.50. Wrong baseline: in a 4-player
+free-for-all the average/random winrate is **0.25** (1 of 4), not 0.50.
+Combined live data (n=85): **2P 0.70 (baseline 0.50, +0.20); 4P 0.48
+(baseline 0.25, +0.23).** Relative to baseline, 4P is about as strong as 2P.
+**There is no 4P weakness.** (Third premature-conclusion error of the run —
+single game, then 4P-weakness; discipline: state the baseline before claiming.)
+
+## The actual lead: positional objective is 2P/4P ASYMMETRIC
+
+4P A/B triage (candidate vs 3 champions, >0.25 beats champion), n=16:
+champ 0.25 (sanity ✓), hold12 0.38, **term12 (positional) 0.44**, hold25 0.19.
+So the positional objective that LOSES in 2P (term12: 0.38 there) appears to
+WIN in 4P (0.44). If it holds at n=32, the move is **ship-flow in 2P +
+positional in 4P** (producer has per-player-count config). Confirming now.
