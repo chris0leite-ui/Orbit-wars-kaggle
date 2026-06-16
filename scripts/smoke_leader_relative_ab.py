@@ -38,7 +38,13 @@ if len(sys.argv) > 1:
     SEEDS = ([int(x) for x in sys.argv[1:]] + SEEDS)[:4]
 STEPS = 250
 LR = str(REPO / "agents" / "least_resistance" / "main.py")
-BG = str(REPO / "submissions" / "v7_0_drop_one.py")
+_BG_ALIASES = {
+    "v7_0": str(REPO / "submissions" / "v7_0_drop_one.py"),
+    "producer": str(REPO / "agents" / "producer" / "main.py"),
+}
+_bg_sel = os.environ.get("SMOKE_BG", "v7_0")
+BG = _BG_ALIASES.get(_bg_sel, _bg_sel)
+BG_NAME = _bg_sel if _bg_sel in _BG_ALIASES else Path(_bg_sel).stem
 
 
 def _load_agent(path: str):
@@ -109,7 +115,7 @@ def _run_batch(flag: str):
 
 def main() -> int:
     print(f"seeds={SEEDS}  each seat once  steps<= {STEPS}  "
-          f"focal=least_resistance  bg=v7_0 x3   (n=4 directional)\n")
+          f"focal=least_resistance  bg={BG_NAME} x3   (n=4 directional)\n")
     summary = []
     for flag, label in (("0", "OFF  gap-to-field (current)"),
                         ("1", "ON   gap-to-strongest (leader-relative 4P)")):
