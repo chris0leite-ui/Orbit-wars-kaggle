@@ -57,9 +57,19 @@ Timing: fast — the orbit_lite garrison-flow score is cheaper than per-candidat
 rollouts (single-game max well under the 1s budget).
 
 It sits **between v7_0 and the producer**: it beats our former champion line
-but not the full producer, which also has reactive defense and idle-ship
-regroup that this agent doesn't (yet). Those are the obvious next levers to
-close the producer gap.
+but not the full producer.
+
+**Tried and reverted (negative result, 2026-06-16):** adding the producer's two
+extra features — reactive defense (reinforce planets the projection shows
+flipping) and idle-ship regroup (stream rear excess forward) — did **not** close
+the producer gap (still 0/16) and **regressed v7_0 from 62% to 17%**. The
+unscored regroup over-extends, and the static-projection threat detection
+over-fires defensive reinforcements that drain our offense. So the producer's
+edge is its *whole tuned planner* (multi-size / multi-wave candidates, refined
+shortlists, tuned configs), not those two bolt-ons. Reverted to the clean
+orbit-eval version. Reaching producer-parity would mean reimplementing the
+producer's candidate generation — i.e. largely rebuilding the producer, which
+already exists — so it isn't a good use of effort.
 
 ## Parameters
 

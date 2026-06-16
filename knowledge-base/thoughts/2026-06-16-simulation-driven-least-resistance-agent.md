@@ -134,3 +134,31 @@ Open: producer is STATEFUL (`_RUNTIME` movement cache, resets on step 0) — do
 NOT call `producer.agent` on hypothetical obs as a rollout policy. The scorer
 path (build a fresh movement per turn) is safe. Bundling now needs torch +
 the orbit_lite package → tar.gz submission, not the single-file bundler.
+
+## UPDATE 2 — chasing producer-parity with defense+regroup FAILED (reverted)
+
+PI: "close the producer gap." The producer has two things least_resistance
+lacked: reactive defense (reinforce planets about to flip) and idle-ship
+regroup. Added both (defense as scorer-gated reinforce candidates off the
+orbit_lite flip projection; regroup as an unscored forward-staging overlay).
+
+**Result (n=16/12/8):** vs producer **0/16** (unchanged — didn't close the
+gap), vs v7_0 **2/12 = 17%** (REGRESSED from 62%), vs nearest 8/8. Net-harmful
+→ **reverted** to the clean orbit-eval version (commit 490f68b / revert
+b27a609).
+
+Why it hurt: (a) the **unscored** regroup over-extends — it streams rear excess
+forward every turn with only a reserve/threat guard, so the rear thins and a
+strong opponent (v7_0) punishes it; (b) the **static-opp** flip projection
+marks many of my planets as "flipping" (it assumes the opponent's in-flight
+fleets all land), so defensive reinforcements over-fire and drain the offense
+the orbit scorer would otherwise spend on captures.
+
+Lesson: the producer's edge over "my-candidates + producer-evaluator" is its
+**whole tuned planner** (multi-size + multi-wave candidates, refined
+offensive/defensive shortlists, per-player-count configs), not two bolt-on
+behaviours. Bolting features onto a different candidate generator, validated
+only against a weak/biased projection signal, regressed the strong baseline.
+Producer-parity = reimplement the producer's candidate generation ≈ rebuild
+the producer (which already exists) — not worth it. **Keep least_resistance as
+the orbit-eval agent that beats v7_0 ~62%.**
