@@ -1,105 +1,96 @@
 # least_resistance
 
-A simulation-driven expansion agent. Each turn it builds a coordinated
-launch plan by **forward-simulating every candidate move** and keeping only
-the launches that improve the simulated outcome — rather than scoring moves
-with hand-tuned weights.
+A simulation-driven expansion agent. Each turn it builds a coordinated launch
+plan by **scoring candidate moves with a forward-projecting evaluator** and
+keeping only the launches that improve the projected outcome — not with
+hand-tuned weights.
 
 ## How it decides (plain English)
 
 1. **List the sensible moves.** For every planet we don't own, work out the
    coordinated launch that captures it — from one planet, or several ganging
-   up when one isn't enough — using the exact lead-intercept physics
-   (`lib/aim`), with a cheap `path_clears_sun` pre-filter. Also list "stream
-   idle ships forward" moves. Order the list by the *path of least resistance
-   to production*: most production per turn of travel first, ties broken toward
-   whatever shortens our distance to the nearest opponent. (Full path safety —
-   off-board, wrong-planet, undersized waves — is left to the simulation in
-   step 2, which is the exact ground truth.)
+   up when one can't afford it — using the exact lead-intercept physics
+   (`lib/aim`), with a cheap `path_clears_sun` pre-filter. Order the list by
+   the *path of least resistance to production* (most production per turn of
+   travel), tie-broken toward whatever shortens our distance to the nearest
+   opponent. This ordering is the strategy's *flavour* — which moves we try
+   first.
 
-2. **Decide by simulation.** For each candidate, play the move and roll the
-   game forward ~14 turns with both sides following a fast greedy policy
-   (`lib/fast_sim` + `lib/opp_model.lite_greedy_policy`). Score the result as
-   *our ships minus theirs* at the horizon (`delta_us_minus_them`). Commit a
-   launch only if it improves that score; keep adding launches until nothing
-   helps.
+2. **Decide with a strong evaluator.** Score each candidate plan with the
+   PRODUCER's (`orbit_lite`, our strongest agent) garrison-flow scorer
+   `score_candidates`: it projects every planet's garrison + production +
+   in-flight combat forward ~18 turns and returns the plan's competitive
+   *net ship gain* (ours minus opponents'). Greedily commit a launch only if
+   it improves that projected gain by at least the producer's ROI floor; stop
+   when nothing helps.
 
-This is the same machinery our strongest agents use (`lib/v7_search`, the
-baseline trajectory chooser). The leaf value — ships at the horizon — is the
-self-calibrating "more production" objective, so there are no strategy
-weights to tune.
+The evaluator is production-aware and policy-free, so it doesn't depend on a
+weak rollout policy. Reserves, gang-up-vs-solo, attack-vs-expand, "accumulate
+when nothing pays," and "don't bleed ships" all fall out of the projected
+ship-delta — there are no strategy weights to tune.
 
-## Why this beats the hand-tuned version
+If `orbit_lite` / torch isn't importable, the agent falls back to a
+`lib/fast_sim` rollout under `lite_greedy_policy` with a production-aware leaf
+(`inflight_value`) — weaker, but keeps the agent running anywhere.
 
-The first draft scored moves with weighted terms (production / ETA / frontier
-/ reserve). It beat `random` 100% but lost to the `nearest` sniper ~6%: it
-bled ships on launches that looked good on paper but didn't convert. Replacing
-the weighted score with forward simulation lifted it to ~94% vs `nearest`.
-Reserves, gang-up vs solo, attack-vs-expand, and "don't bleed ships" all fall
-out of the simulation for free.
+## Why the evaluator matters (the story)
 
-## What emerges from the simulation (not coded as rules)
+- **v1 — hand-tuned weighted score:** beat `random` 100% but lost to the
+  `nearest` sniper ~6% (bled ships on launches that looked good on paper).
+- **v2 — fast_sim rollout under `lite_greedy`, ship-delta leaf:** beat
+  `nearest` 94% but lost to v7_0 (**12%**), and a *longer* horizon made it
+  *worse* — proof the ceiling was the weak rollout policy, not foresight.
+- **v3 — orbit_lite `score_candidates` leaf (current):** beats v7_0
+  (**62%**) with the same candidate generation. The evaluator was the
+  bottleneck; swapping in the producer's projector fixed it.
 
-- **Reserves:** draining a planet the rollout shows the opponent then captures
-  lowers our score, so we keep exactly the reserve worth keeping.
-- **Gang-up:** a partial wave that doesn't capture shows no gain; a coordinated
-  wave that does gets committed as a unit.
-- **Attack vs. expand:** whichever simulates to the larger ship advantage.
-- **Accumulate:** if no launch beats doing nothing, we hold and bank
-  production.
+## Standing (2026-06-16)
+
+| opponent | result | notes |
+|---|---|---|
+| `random` | 100% | floor |
+| `nearest` | ~94% | comp baseline |
+| `v7_0` (former champion ~μ1115) | **10/16 = 62%** | n=16, suggestive; n=32 to confirm |
+| `producer` (orbit_lite ~μ1280) | 0/10 | loses to the full producer |
+
+Timing: fast — the orbit_lite garrison-flow score is cheaper than per-candidate
+rollouts (single-game max well under the 1s budget).
+
+It sits **between v7_0 and the producer**: it beats our former champion line
+but not the full producer, which also has reactive defense and idle-ship
+regroup that this agent doesn't (yet). Those are the obvious next levers to
+close the producer gap.
 
 ## Parameters
 
-Only **compute bounds** (not strategy tuning), env-overridable for
-benchmarking:
+Only **compute bounds** + the producer's ROI floor (not strategy weights):
 
 | var | default | meaning |
 |---|---|---|
-| `LR_SIM_HORIZON` | 14 | turns of forward simulation per candidate |
-| `LR_WALLCLOCK_MS` | 700 | per-turn rollout budget (bails the greedy loop) |
-| `LR_MAX_CANDIDATES` | 24 | most candidate moves simulated per turn |
-| `LR_VALUE_EPS` | 1.0 | min simulated ship gain (ships) to commit a launch |
+| `LR_HORIZON_2P` / `LR_HORIZON_4P` | 18 / 13 | orbit_lite projection window |
+| `LR_ROI_FLOOR` | 1.5 | min projected net-ship gain to commit a launch |
+| `LR_MAX_CANDIDATES` | 28 | most candidate moves considered per turn |
+| `LR_WALLCLOCK_MS` | 700 | per-turn budget (bails the greedy loop) |
+| `LR_EVAL` | (auto) | force `orbit` or `fallback` evaluator |
 
 ## Run
 
 ```
-python fast.py smoke agents/least_resistance        # vs random + nearest
-python fast.py bench agents/least_resistance         # per-turn ms
-python fast.py eval  agents/least_resistance --vs-panel
-python fast.py play  agents/least_resistance --seed 7
+python fast.py smoke agents/least_resistance     # vs random + nearest
+python fast.py bench agents/least_resistance      # per-turn ms
+python fast.py play  agents/least_resistance --vs v7_0 --seed 7
 ```
 
-## Bundle (single-file submission)
+## Dependencies & bundling
 
-The shared `DEFAULT_LIB_ORDER` is missing `kinematic_table` (a module
-`lib/trajectory.py` lazily imports), so pass an explicit `--lib` list with it
-added after `orbit`:
+This agent imports the producer's `orbit_lite` package (and `torch`). It adds
+`agents/producer/` to `sys.path` at import time (same mechanism the producer
+uses). torch is available on the Kaggle evaluation runtime but is **not** in
+the local `requirements.txt` — install with
+`pip install torch --index-url https://download.pytorch.org/whl/cpu` to run
+locally.
 
-```
-python scripts/bundle_agent.py agents/least_resistance --skip-parity-gate \
-  --lib geometry fleet orbit kinematic_table aim combat world_model intent \
-        trajectory mechanism mission scoring missions/snipe missions/reinforce \
-        planner game/interpreter fast_sim opp_model
-# -> submissions/least_resistance.py
-```
-
-Parity (source ≡ bundle) is verified with `ORBIT_WARS_PARITY_WALLCLOCK_MS`
-set high so the wallclock bail can't introduce timing nondeterminism (the
-agent reads that override at call time). Built bundle: 34/34 turns matched.
-
-## Standing (2026-06-16)
-
-| opponent | result |
-|---|---|
-| `random` | 32/32 (100%) |
-| `nearest` | 30/32 (94%) |
-| `v7_0` (our tuned champion) | 1/8 (12%); longer horizon K=26 → 0/8 |
-
-Timing (single process): p50=74ms, p95=400ms, max=682ms, zero turns ≥1000ms.
-
-It decisively beats the competition baselines but trails our heavily-tuned
-champion. The longer-horizon-is-worse result shows the ceiling is the rollout
-policy (`lite_greedy`), not foresight: to compete with `v7_0`/producer the
-rollout needs a stronger — but still cheap — evaluator (e.g. a learned value
-head or the producer's `orbit_lite` scorer). That's a larger change, flagged
-for a decision rather than done blind.
+Because it depends on the multi-file `orbit_lite` package, the single-file
+`scripts/bundle_agent.py` path does **not** apply. For submission it would ship
+as a `tar.gz` with `main.py` at root plus the `orbit_lite/` package and the
+needed `lib/` modules — a follow-up, not yet done (we are not submitting).

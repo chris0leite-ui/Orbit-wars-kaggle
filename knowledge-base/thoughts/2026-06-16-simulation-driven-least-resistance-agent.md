@@ -93,3 +93,44 @@ Longer horizon (a compute parameter) is the cheap first thing to test.
 - Time-budgeted agents need `ORBIT_WARS_PARITY_WALLCLOCK_MS` honoured at CALL
   time, or the bundle parity gate fails on timing nondeterminism. Verified the
   bundle 34/34 against source with the override on.
+- **Only one background bash task runs at a time** — starting a new background
+  task SIGTERMs the running one (cost me three killed A/B runs). Run heavy
+  A/Bs as the *sole* background task and read their progress from a file the
+  script flushes itself; never launch a "waiter" task alongside.
+
+## UPDATE (same session) — the orbit_lite evaluator made it competitive
+
+PI: "Build a stronger evaluator" + "install torch if you need it." Findings:
+
+- **torch wasn't installed** (orbit_lite/producer couldn't load). Installed CPU
+  torch (`--index-url https://download.pytorch.org/whl/cpu`).
+- **Diagnosis confirmed by the horizon sweep:** the weak `lite_greedy` rollout
+  was the ceiling. K=14 → 12% vs v7_0; K=26 → **0%** (longer = worse, because
+  more steps of a weak policy compound the error). Foresight wasn't the
+  problem; the evaluator was.
+- **The fix:** swap the leaf from a fast_sim rollout to the producer's
+  `orbit_lite.score_candidates` — a garrison-flow projection (~18 turns) that
+  returns competitive net-ship-delta. Production-aware, policy-free, ~1-2 ms.
+  Keep `least_resistance`'s candidate generation; only the evaluator changed.
+- **Result: vs v7_0 12% → 62%** (n=16), faster than the rollout version
+  (max ~59 ms). vs the full producer: 0/10 (it also has reactive defense +
+  idle-ship regroup we lack — the gap to close next). So the agent now sits
+  between v7_0 (~μ1115) and the producer (~μ1280).
+
+Lesson restated: for a search/eval agent, the **leaf evaluator is the
+strength ceiling.** A cheap-but-strong projector (orbit_lite's garrison flow)
+beats a cheap-but-weak rollout policy decisively, and is cheaper to boot.
+
+Verified APIs that work (torch): `single_obs_to_tensor(obs, player_id)` →
+`ensure_planet_movement(obs_tensors, expected_cfg=MovementConfig(...),
+cached_movement=None)` → `movement.garrison_status(max_horizon=H)`,
+`movement.planet_prod`, `movement.alive_by_step[:H+1]` → `make_launch_set(
+source_slots, target_slots, ships, eta, valid, player_id)` (slots are planet
+ROW INDICES, not ids) → `score_candidates(status, prod=, alive_by_step=,
+player_count=, launches=, player_id=)` → `[C]` net-ship-delta. Smoke checks:
+empty plan = 0; capture of a gar-5/prod-5 planet at eta 8 = 45 = prod·(H−eta)−gar.
+
+Open: producer is STATEFUL (`_RUNTIME` movement cache, resets on step 0) — do
+NOT call `producer.agent` on hypothetical obs as a rollout policy. The scorer
+path (build a fresh movement per turn) is safe. Bundling now needs torch +
+the orbit_lite package → tar.gz submission, not the single-file bundler.
