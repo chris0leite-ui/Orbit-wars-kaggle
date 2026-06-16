@@ -220,6 +220,28 @@ def _value_budget(obs_d, base):
     return base + extra
 
 
+def _rollout_depth():
+    """Deep-search gate (default 0 = OFF -> use the 2-ply pick). A value >= 2
+    turns on the K-turn producer-rollout search (see _deep_pick)."""
+    return _i("LR_ROLLOUT_DEPTH", 0)
+
+
+def _deep_budget(obs_d):
+    """Per-turn budget (ms) for deep rollout search. Draws a self-limiting slice
+    of the episode overage bank (obs.remainingOverageTime) so pivotal turns can
+    search deeper -- this is what finally spends the headroom. Tapers as the
+    bank drains; never exceeds base + cap."""
+    base = _wallclock_ms()
+    try:
+        bank_s = float(obs_d.get("remainingOverageTime"))
+    except (TypeError, ValueError):
+        return base
+    spendable = max(0.0, bank_s - _f("LR_DEEP_BANK_FLOOR_S", 6.0))
+    extra = min(spendable * 1000.0 * _f("LR_DEEP_BANK_FRAC", 0.04),
+                _f("LR_DEEP_EXTRA_CAP_MS", 2500.0))
+    return base + extra
+
+
 # --------------------------------------------------------------------------
 # Obs parsing.
 # --------------------------------------------------------------------------
@@ -444,6 +466,51 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=N
         if best_v is not None and (time.perf_counter() - t0) * 1000.0 > budget_ms:
             break
         v = value(plan)
+        if v is None:
+            continue
+        if best_v is None or v > best_v:
+            best_v, best_plan = v, plan
+    return best_plan
+
+
+def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget_ms=None):
+    """Deeper search vs a fixed-policy opponent (the producer). For each candidate
+    first-move, roll the game out `depth` turns -- turn 1 = my move + each
+    opponent's producer reply; turns 2..depth = EVERY seat (incl. me) plays the
+    producer -- then score with the analytic leaf. Plans are tried in the given
+    (value-ranked) order; best-so-far kept; time-guarded (anytime-safe). Modelling
+    opponents AS the producer is exact for the 'beat the producer' goal, and the
+    producer's own move is always among `candidate_plans` (>=-producer floor)."""
+    if budget_ms is None:
+        budget_ms = TWOPLY_BUDGET_MS
+    snap = from_obs(obs, configuration, num_seats=num_seats)
+    opps = [i for i in range(num_seats) if i != int(me)]
+    opp_now = {i: _producer_move_obs(snap.state[i].observation, i) for i in opps}
+
+    def rollout_value(plan):
+        s = clone(snap)
+        acts = [[] for _ in range(num_seats)]
+        acts[int(me)] = list(plan)
+        for i in opps:
+            acts[i] = list(opp_now[i])
+        step(s, acts, in_place=True)
+        for _ in range(max(0, int(depth) - 1)):
+            if s.fake_env.done:
+                break
+            nxt = [_producer_move_obs(s.state[i].observation, i)
+                   for i in range(num_seats)]
+            step(s, nxt, in_place=True)
+        try:
+            return _project_value(s.state[int(me)].observation, me)
+        except Exception:
+            return None
+
+    best_plan, best_v = candidate_plans[0], None
+    t0 = time.perf_counter()
+    for plan in candidate_plans:
+        if best_v is not None and (time.perf_counter() - t0) * 1000.0 > budget_ms:
+            break
+        v = rollout_value(plan)
         if v is None:
             continue
         if best_v is None or v > best_v:
@@ -709,6 +776,10 @@ def agent(obs, configuration=None):
                 seen.add(key)
                 uniq.append(p)
         try:
+            depth = _rollout_depth()
+            if depth >= 2:
+                return _deep_pick(obs, configuration, me, num_seats, uniq,
+                                  depth, budget_ms=_deep_budget(obs_d))
             return _twoply_pick(obs, configuration, me, num_seats, uniq,
                                 budget_ms=_twoply_budget(obs_d) if anytime_on else None)
         except Exception:
