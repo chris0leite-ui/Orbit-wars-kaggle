@@ -11,3 +11,5 @@ OFF seed=305419896   seat=0 loss steps=183 max_ms= 291 rew=[-1, 1, -1, -1] | OFF
 ON  seed=305419896   seat=0 loss steps=170 max_ms= 930 rew=[-1, -1, 1, -1] | OFF=3/5 ON=3/5
 OFF seed=12648430    seat=1 loss steps=250 max_ms= 392 rew=[-1, -1, 1, -1] | OFF=3/6 ON=3/5
 ON  seed=12648430    seat=1 loss steps=250 max_ms= 666 rew=[-1, -1, 1, -1] | OFF=3/6 ON=3/6
+OFF seed=20240617    seat=2 WIN  steps=250 max_ms= 325 rew=[-1, -1, 1, -1] | OFF=4/7 ON=3/6
+ON  seed=20240617    seat=2 loss steps=228 max_ms= 838 rew=[-1, 1, -1, -1] | OFF=4/7 ON=3/7
