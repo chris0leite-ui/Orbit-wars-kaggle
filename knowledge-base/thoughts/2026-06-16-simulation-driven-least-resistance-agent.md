@@ -278,3 +278,12 @@ plays". For any agent submitted as a file/tarball, the pre-submit smoke MUST
 load it the way Kaggle does — extract the tar, repo OFF `sys.path`, run via
 `kaggle_environments.agent.get_last_callable` / `env.run([file, file])` — and
 assert a non-trivial count of *active* (non-empty) turns, not just DONE.
+
+**Resubmitted (PI "Resubmit fixed agent now", informed):** sub **53741746**
+`lr_submit.tar.gz` (sha256 `95987c17`), evicting `champion_holdval`
+(53734450, μ958.0). This is the **first time this agent actually plays on the
+ladder** — every prior data point for it (incl. sub 53740037's μ332) was an
+idle agent. Rolling pair now `{least_resistance(fixed) 53741746, 53740037
+(332, broken)}`; only 1 submit was left today, so the broken 332 gets cleared
+by tomorrow's 2nd submit (→ `{champion, least_resistance}`). Next strategic
+lever once a real μ is in: the 4P leader-focus leaf objective.
