@@ -598,7 +598,7 @@ def _ffa_weight_mode() -> str:
     the weak (rank 2.66); strength-weighting actively pays us to attack the
     leader's most expensive planets."""
     raw = os.environ.get("PRODUCER_PLUS_FFA_WEIGHTS", "strength").strip().lower()
-    return raw if raw in ("strength", "uniform", "weakness") else "strength"
+    return raw if raw in ("strength", "uniform", "weakness", "strongest") else "strength"
 
 
 def _ffa_opp_weights(obs_tensors: dict, *, player_id: int, player_count: int):
@@ -630,7 +630,19 @@ def _ffa_opp_weights(obs_tensors: dict, *, player_id: int, player_count: int):
             strength.scatter_add_(0, f_owner[f_mask], fleets[f_mask, 6])
     strength[int(player_id)] = 0.0
     mode = _ffa_weight_mode()
-    if mode == "uniform":
+    if mode == "strongest":
+        # One-hot on the single strongest living rival: optimise purely
+        # relative to the current leader ("relative to the strongest opponent,
+        # not only its own ships"). In 2P this gate is never reached (FFA
+        # weights are only built for player_count >= 3) and the objective is
+        # already me - opp; in 4P+ it focuses the leader instead of summing
+        # all rivals, so mutual-damage trades with weak bystanders no longer
+        # score, and the anti-producer's expansion is valued only insofar as
+        # it improves its standing against the one rival that is ahead.
+        weights = torch.zeros(a, dtype=planets.dtype, device=device)
+        if bool((strength > 0).any()):
+            weights[int(torch.argmax(strength).item())] = 1.0
+    elif mode == "uniform":
         weights = (strength > 0).to(planets.dtype)
     elif mode == "weakness":
         living = (strength > 0).to(planets.dtype)

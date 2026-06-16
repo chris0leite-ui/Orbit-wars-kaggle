@@ -98,3 +98,4 @@ audit/external/
 audit/eda-*/
 audit/2026-05-22/*.log
 audit/live-episodes/*/episode-*-replay.json
+submissions/_iso_engine.py
