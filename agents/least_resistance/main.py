@@ -170,6 +170,32 @@ TWOPLY = os.environ.get("LR_TWOPLY", "1").strip().lower() in ("1", "true", "on",
 TWOPLY_BUDGET_MS = _f("LR_TWOPLY_MS", 450.0)
 
 
+def _anytime():
+    """Lever 3 gate (default OFF): spend per-turn / overage-bank headroom by
+    widening the 2-ply plan set and letting the 2-ply budget draw on the bank."""
+    return os.environ.get("LR_ANYTIME", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
+def _twoply_budget(obs_d):
+    """2-ply time budget (ms). Default TWOPLY_BUDGET_MS. With LR_ANYTIME on,
+    draw a slice of the episode overage bank (obs.remainingOverageTime, seconds)
+    so pivotal turns think longer on otherwise-wasted headroom. Self-limiting:
+    spends a fixed fraction of the *spendable* bank (keeping a reserve), so it
+    tapers as the bank drains and never exceeds the cap."""
+    base = TWOPLY_BUDGET_MS
+    if not _anytime():
+        return base
+    try:
+        bank_s = float(obs_d.get("remainingOverageTime"))
+    except (TypeError, ValueError):
+        return base
+    spendable = max(0.0, bank_s - _f("LR_ANYTIME_BANK_FLOOR_S", 8.0))
+    extra = min(spendable * 1000.0 * _f("LR_ANYTIME_BANK_FRAC", 0.03),
+                _f("LR_ANYTIME_EXTRA_CAP_MS", 1200.0))
+    return base + extra
+
+
 # --------------------------------------------------------------------------
 # Obs parsing.
 # --------------------------------------------------------------------------
@@ -354,11 +380,13 @@ def _project_value(obs_any, me):
     return mine - theirs
 
 
-def _twoply_pick(obs, configuration, me, num_seats, candidate_plans):
+def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=None):
     """Pick the candidate full-plan with the best 2-ply value: apply [my plan,
     producer's predicted reply] this turn, then a turn of producer-vs-producer,
     then score the resulting position. `candidate_plans` always includes the
     producer's own move (the >=-producer floor). Returns the chosen plan."""
+    if budget_ms is None:
+        budget_ms = TWOPLY_BUDGET_MS
     snap = from_obs(obs, configuration, num_seats=num_seats)
     opps = [i for i in range(num_seats) if i != int(me)]
     # Every opponent's predicted move this turn (each modelled as the producer);
@@ -389,7 +417,7 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans):
     best_plan, best_v = candidate_plans[0], None
     t0 = time.perf_counter()
     for plan in candidate_plans:
-        if best_v is not None and (time.perf_counter() - t0) * 1000.0 > TWOPLY_BUDGET_MS:
+        if best_v is not None and (time.perf_counter() - t0) * 1000.0 > budget_ms:
             break
         v = value(plan)
         if v is None:
@@ -490,6 +518,9 @@ def agent(obs, configuration=None):
     # each candidate: emit=[[src_id,angle,ships],...], units=[(src_slot,tgt_slot,ships,eta),...],
     #                 srcs={src_id:ships}, rank, front
     candidates = []
+    # Lever 2 (default 1.0 = off): boost enemy-owned targets so denial captures
+    # (taking from opponents) outrank equal-production neutral grabs.
+    enemy_boost = _f("LR_ENEMY_BOOST", 1.0)
 
     def units_for(launch_triples):
         # launch_triples: list of (src_id, tgt_id, ships, eta)
@@ -527,6 +558,8 @@ def agent(obs, configuration=None):
             continue
         shots.sort(key=lambda x: x[0])
         rank = prod / max(1.0, shots[0][0])
+        if is_enemy and enemy_boost != 1.0:
+            rank *= enemy_boost
         front = frontier_eta((float(tgt.x), float(tgt.y)))
 
         # Solo capture from the cheapest affordable source — re-aim at the
@@ -620,8 +653,12 @@ def agent(obs, configuration=None):
         except Exception:
             producer_me = []
         plans = [producer_me, committed_emit, []]   # producer floor first
-        # One milder aggression level of my plan for the lookahead to weigh.
-        if len(committed_emit) > 2:
+        if _anytime():
+            # Lever 3: spend headroom -- offer every aggression level of the
+            # committed plan, so extra compute becomes more plans evaluated.
+            plans.extend(committed_emit[:k] for k in range(1, len(committed_emit)))
+        elif len(committed_emit) > 2:
+            # One milder aggression level of my plan for the lookahead to weigh.
             plans.append(committed_emit[:len(committed_emit) // 2])
         # De-dup (by repr) preserving order.
         seen, uniq = set(), []
@@ -631,7 +668,8 @@ def agent(obs, configuration=None):
                 seen.add(key)
                 uniq.append(p)
         try:
-            return _twoply_pick(obs, configuration, me, num_seats, uniq)
+            return _twoply_pick(obs, configuration, me, num_seats, uniq,
+                                budget_ms=_twoply_budget(obs_d))
         except Exception:
             return committed_emit
 

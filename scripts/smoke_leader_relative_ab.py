@@ -93,8 +93,10 @@ def _run_game(seed: int, focal_seat: int):
     return win, turn_ms, len(env.steps), launches, rewards
 
 
-def _run_batch(flag: str):
-    os.environ["LR_LEADER_RELATIVE_4P"] = flag
+def _run_batch(on: bool):
+    os.environ["LR_LEADER_RELATIVE_4P"] = "1" if on else "0"
+    os.environ["LR_ENEMY_BOOST"] = "1.5" if on else "1.0"
+    os.environ["LR_ANYTIME"] = "1" if on else "0"
     wins = 0
     all_ms: list[float] = []
     total_launches = 0
@@ -117,9 +119,9 @@ def main() -> int:
     print(f"seeds={SEEDS}  each seat once  steps<= {STEPS}  "
           f"focal=least_resistance  bg={BG_NAME} x3   (n=4 directional)\n")
     summary = []
-    for flag, label in (("0", "OFF  gap-to-field (current)"),
-                        ("1", "ON   gap-to-strongest (leader-relative 4P)")):
-        wins, launches, mx, lines = _run_batch(flag)
+    for on, label in ((False, "OFF  current (all levers off)"),
+                      (True,  "ON   leader-relative + enemy-focus + anytime")):
+        wins, launches, mx, lines = _run_batch(on)
         print(f"== {label} ==")
         print("\n".join(lines))
         print(f"  -> first-place {wins}/4   total focal launches {launches}   "
