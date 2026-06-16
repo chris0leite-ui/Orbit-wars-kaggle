@@ -1,1 +1,3 @@
 # panel verify | 4P steps<=250 | background={v3_snipe+geo+v7_minimax} | fair share=25% | seeds=[76670184, 1492346051, 768065184, 641308308, 305419896, 12648430, 20240617, 88888883]
+least_resistance seed=76670184    seat=0 WIN  steps=183 max_ms= 729 rew=[1, -1, -1, -1] | least_resistance=1/1
+least_resistance seed=1492346051  seat=1 loss steps=170 max_ms= 650 rew=[-1, -1, -1, 1] | least_resistance=1/2
