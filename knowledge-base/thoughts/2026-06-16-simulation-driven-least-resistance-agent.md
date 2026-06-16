@@ -162,3 +162,35 @@ only against a weak/biased projection signal, regressed the strong baseline.
 Producer-parity = reimplement the producer's candidate generation ≈ rebuild
 the producer (which already exists) — not worth it. **Keep least_resistance as
 the orbit-eval agent that beats v7_0 ~62%.**
+
+## UPDATE 3 — "beat the producer systematically": two attempts, both FAILED
+
+PI: "Beat the producer systematically." I can call the producer (deterministic
+given a fresh memory), so I tried to out-search it:
+
+1. **Best-response.** Predict the opponent's move by running the producer on
+   its seat, inject those launches as in-flight fleets into the projection my
+   scorer sees → my candidate selection best-responds while the producer (a
+   static-opp projector) stays blind to my move. **Result: 0/14 vs producer.**
+   No help — the gap is candidate generation, not opponent modelling. Better
+   evaluation can't rescue a weaker candidate set.
+
+2. **Strict-superset portfolio.** Also compute the producer's OWN move for my
+   seat; position-value both my plan and the producer's plan under the
+   opponent-aware projection; play the producer's plan UNLESS mine is clearly
+   better (margin). Meant to GUARANTEE ≥ producer (its plan is always an
+   option). **Result: ~2/11 (~18%) vs producer — BELOW the parity floor.** Two
+   causes: (a) the 1-ply position value (fix the opponent's current move,
+   project H turns, do-nothing) systematically over-rates aggressive captures
+   that the producer punishes on the NEXT turn, so the deviations lose; (b) the
+   fresh-memory producer move I play as the "floor" isn't bit-identical to the
+   real warm-cache producer, so even the mirror doesn't hold 50%.
+
+Both reverted (HEAD = 263fbc7, clean orbit-eval). **Conclusion: systematically
+beating the producer is not achievable with a 1-ply evaluator over my
+candidate set.** Reliable improvements over a tuned 1-ply greedy need a deeper,
+accurate multi-ply search (model the producer's *future* responses, not just
+this turn) or a candidate generator that matches/exceeds the producer's — i.e.
+a real research effort, not a wrapper. The standing deliverable remains the
+orbit-eval least_resistance agent: beats random/nearest/v7_0 (~62%), loses to
+the producer.
