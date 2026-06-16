@@ -45,6 +45,7 @@ _BG_ALIASES = {
 _bg_sel = os.environ.get("SMOKE_BG", "v7_0")
 BG = _BG_ALIASES.get(_bg_sel, _bg_sel)
 BG_NAME = _bg_sel if _bg_sel in _BG_ALIASES else Path(_bg_sel).stem
+PLAYERS = int(os.environ.get("SMOKE_PLAYERS", "4"))   # 2 or 4
 
 
 def _load_agent(path: str):
@@ -56,9 +57,9 @@ def _load_agent(path: str):
     return mod.agent
 
 
-def _run_game(seed: int, focal_seat: int):
+def _run_game(seed: int, focal_seat: int, players: int):
     focal = _load_agent(LR)
-    bgs = [_load_agent(BG) for _ in range(3)]
+    bgs = [_load_agent(BG) for _ in range(players - 1)]
     turn_ms: list[float] = []
 
     def timed(obs, cfg=None, _f=focal, _s=turn_ms):
@@ -68,10 +69,10 @@ def _run_game(seed: int, focal_seat: int):
         finally:
             _s.append((time.perf_counter() - t0) * 1000.0)
 
-    seats = [None, None, None, None]
+    seats = [None] * players
     seats[focal_seat] = timed
     j = 0
-    for i in range(4):
+    for i in range(players):
         if i == focal_seat:
             continue
         seats[i] = bgs[j]
@@ -98,38 +99,42 @@ def _run_batch(on: bool):
     os.environ["LR_ENEMY_BOOST"] = "1.5" if on else "1.0"
     os.environ["LR_ANYTIME"] = "1" if on else "0"
     wins = 0
+    games = 0
     all_ms: list[float] = []
     total_launches = 0
     lines = []
-    for i in range(4):
-        seed, seat = SEEDS[i], i
-        win, ms, nsteps, launches, rewards = _run_game(seed, seat)
-        wins += int(win)
-        all_ms += ms
-        total_launches += launches
-        mx = max(ms) if ms else 0.0
-        lines.append(
-            f"    seed={seed:<11} seat={seat}  {'WIN ' if win else 'loss'}  "
-            f"steps={nsteps}  focal_launches={launches:>4}  "
-            f"max_turn_ms={mx:5.0f}  rewards={rewards}")
-    return wins, total_launches, (max(all_ms) if all_ms else 0.0), lines
+    for seed in SEEDS:
+        for seat in range(PLAYERS):
+            win, ms, nsteps, launches, rewards = _run_game(seed, seat, PLAYERS)
+            wins += int(win)
+            games += 1
+            all_ms += ms
+            total_launches += launches
+            mx = max(ms) if ms else 0.0
+            lines.append(
+                f"    seed={seed:<11} seat={seat}  {'WIN ' if win else 'loss'}  "
+                f"steps={nsteps}  focal_launches={launches:>4}  "
+                f"max_turn_ms={mx:5.0f}  rewards={rewards}")
+    return wins, games, total_launches, (max(all_ms) if all_ms else 0.0), lines
 
 
 def main() -> int:
-    print(f"seeds={SEEDS}  each seat once  steps<= {STEPS}  "
-          f"focal=least_resistance  bg={BG_NAME} x3   (n=4 directional)\n")
+    n = PLAYERS * len(SEEDS)
+    print(f"{PLAYERS}P  seeds={SEEDS}  each seat each seed  steps<= {STEPS}  "
+          f"focal=least_resistance  bg={BG_NAME} x{PLAYERS - 1}   "
+          f"(n={n} per variant, directional)\n")
     summary = []
     for on, label in ((False, "OFF  current (all levers off)"),
                       (True,  "ON   leader-relative + enemy-focus + anytime")):
-        wins, launches, mx, lines = _run_batch(on)
+        wins, games, launches, mx, lines = _run_batch(on)
         print(f"== {label} ==")
         print("\n".join(lines))
-        print(f"  -> first-place {wins}/4   total focal launches {launches}   "
-              f"max turn ms {mx:.0f}\n")
-        summary.append((label, wins, launches, mx))
+        print(f"  -> first-place {wins}/{games}   total focal launches "
+              f"{launches}   max turn ms {mx:.0f}\n")
+        summary.append((label, wins, games, launches, mx))
     print("SUMMARY")
-    for label, wins, launches, mx in summary:
-        print(f"  {label:<44}  first={wins}/4  launches={launches:>4}  "
+    for label, wins, games, launches, mx in summary:
+        print(f"  {label:<44}  first={wins}/{games}  launches={launches:>4}  "
               f"max_ms={mx:.0f}")
     return 0
 

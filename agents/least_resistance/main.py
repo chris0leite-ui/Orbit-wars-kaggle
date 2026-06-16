@@ -518,9 +518,10 @@ def agent(obs, configuration=None):
     # each candidate: emit=[[src_id,angle,ships],...], units=[(src_slot,tgt_slot,ships,eta),...],
     #                 srcs={src_id:ships}, rank, front
     candidates = []
-    # Lever 2 (default 1.0 = off): boost enemy-owned targets so denial captures
-    # (taking from opponents) outrank equal-production neutral grabs.
-    enemy_boost = _f("LR_ENEMY_BOOST", 1.0)
+    # Lever 2 (default 1.0 = off; 4P-only -- 2P is already strong and the scorer
+    # focuses the one opponent correctly there): boost enemy-owned targets so
+    # denial captures (taking from opponents) outrank equal-production neutrals.
+    enemy_boost = _f("LR_ENEMY_BOOST", 1.0) if num_seats >= 4 else 1.0
 
     def units_for(launch_triples):
         # launch_triples: list of (src_id, tgt_id, ships, eta)
@@ -652,8 +653,10 @@ def agent(obs, configuration=None):
             producer_me = _producer_move_obs(obs, me)
         except Exception:
             producer_me = []
+        # Levers 2/3 are 4P-only: 2P is our strength and these regress it.
+        anytime_on = _anytime() and num_seats >= 4
         plans = [producer_me, committed_emit, []]   # producer floor first
-        if _anytime():
+        if anytime_on:
             # Lever 3: spend headroom -- offer every aggression level of the
             # committed plan, so extra compute becomes more plans evaluated.
             plans.extend(committed_emit[:k] for k in range(1, len(committed_emit)))
@@ -669,7 +672,7 @@ def agent(obs, configuration=None):
                 uniq.append(p)
         try:
             return _twoply_pick(obs, configuration, me, num_seats, uniq,
-                                budget_ms=_twoply_budget(obs_d))
+                                budget_ms=_twoply_budget(obs_d) if anytime_on else None)
         except Exception:
             return committed_emit
 
