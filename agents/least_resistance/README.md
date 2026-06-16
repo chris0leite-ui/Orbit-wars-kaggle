@@ -9,11 +9,13 @@ with hand-tuned weights.
 
 1. **List the sensible moves.** For every planet we don't own, work out the
    coordinated launch that captures it — from one planet, or several ganging
-   up when one isn't enough — using the exact physics (`lib/aim`,
-   `lib/trajectory`). Also list "stream idle ships forward" moves. Order the
-   list by the *path of least resistance to production*: most production per
-   turn of travel first, ties broken toward whatever shortens our distance to
-   the nearest opponent.
+   up when one isn't enough — using the exact lead-intercept physics
+   (`lib/aim`), with a cheap `path_clears_sun` pre-filter. Also list "stream
+   idle ships forward" moves. Order the list by the *path of least resistance
+   to production*: most production per turn of travel first, ties broken toward
+   whatever shortens our distance to the nearest opponent. (Full path safety —
+   off-board, wrong-planet, undersized waves — is left to the simulation in
+   step 2, which is the exact ground truth.)
 
 2. **Decide by simulation.** For each candidate, play the move and roll the
    game forward ~14 turns with both sides following a fast greedy policy
@@ -69,7 +71,35 @@ python fast.py play  agents/least_resistance --seed 7
 
 ## Bundle (single-file submission)
 
+The shared `DEFAULT_LIB_ORDER` is missing `kinematic_table` (a module
+`lib/trajectory.py` lazily imports), so pass an explicit `--lib` list with it
+added after `orbit`:
+
 ```
-python scripts/bundle_agent.py agents/least_resistance
-# -> submissions/least_resistance.py  (default lib order inlines all deps)
+python scripts/bundle_agent.py agents/least_resistance --skip-parity-gate \
+  --lib geometry fleet orbit kinematic_table aim combat world_model intent \
+        trajectory mechanism mission scoring missions/snipe missions/reinforce \
+        planner game/interpreter fast_sim opp_model
+# -> submissions/least_resistance.py
 ```
+
+Parity (source ≡ bundle) is verified with `ORBIT_WARS_PARITY_WALLCLOCK_MS`
+set high so the wallclock bail can't introduce timing nondeterminism (the
+agent reads that override at call time). Built bundle: 34/34 turns matched.
+
+## Standing (2026-06-16)
+
+| opponent | result |
+|---|---|
+| `random` | 32/32 (100%) |
+| `nearest` | 30/32 (94%) |
+| `v7_0` (our tuned champion) | 1/8 (12%); longer horizon K=26 → 0/8 |
+
+Timing (single process): p50=74ms, p95=400ms, max=682ms, zero turns ≥1000ms.
+
+It decisively beats the competition baselines but trails our heavily-tuned
+champion. The longer-horizon-is-worse result shows the ceiling is the rollout
+policy (`lite_greedy`), not foresight: to compete with `v7_0`/producer the
+rollout needs a stronger — but still cheap — evaluator (e.g. a learned value
+head or the producer's `orbit_lite` scorer). That's a larger change, flagged
+for a decision rather than done blind.

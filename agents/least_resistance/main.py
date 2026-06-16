@@ -44,8 +44,10 @@ Physics + machinery reused
                     + the `delta_us_minus_them` scoring head
   - lib.opp_model   `lite_greedy_policy` — the cheap (~0.02 ms) rollout policy
   - lib.aim         orbit-aware lead intercept (aim_orbiting / aim_comet)
-  - lib.trajectory  exact full-path safety ray-cast (predict_fleet_fate)
-  - lib.fleet/orbit/geometry  speed, ETA, moving-planet prediction
+  - lib.fleet/orbit/geometry  speed, ETA, moving-planet prediction, plus a
+                    cheap `path_clears_sun` pre-filter (full path safety -
+                    off-board / wrong-planet / undersized waves - is left to
+                    the forward simulation, which is the exact ground truth)
   - lib.world_model comet path / lifetime helpers
 
 The only parameters are compute bounds (simulation horizon, candidate cap,
@@ -61,11 +63,10 @@ import time
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
-from lib.geometry import dist
+from lib.geometry import dist, path_clears_sun
 from lib.fleet import speed as fleet_speed
 from lib.orbit import is_orbiting
 from lib.aim import aim_orbiting, aim_comet, estimate_eta
-from lib.trajectory import predict_fleet_fate
 from lib.intent import World
 from lib.world_model import comet_remaining_lifetime, _comet_paths_by_id
 from lib.fast_sim import from_obs, clone, step, delta_us_minus_them
@@ -92,8 +93,23 @@ def _f(name: str, default: float) -> float:
         return default
 
 
+def _wallclock_ms() -> float:
+    """Per-turn rollout budget, read at CALL time.
+
+    Honours `ORBIT_WARS_PARITY_WALLCLOCK_MS` first: the bundle parity gate
+    sets it to a huge value so the greedy loop never bails mid-list, making
+    the agent a pure function of `obs` (timing cannot change the output).
+    """
+    override = os.environ.get("ORBIT_WARS_PARITY_WALLCLOCK_MS")
+    if override:
+        try:
+            return float(override)
+        except ValueError:
+            pass
+    return _f("LR_WALLCLOCK_MS", 700.0)
+
+
 SIM_HORIZON = _i("LR_SIM_HORIZON", 14)        # turns of forward simulation
-WALLCLOCK_MS = _f("LR_WALLCLOCK_MS", 700.0)   # per-turn rollout budget
 MAX_CANDIDATES = _i("LR_MAX_CANDIDATES", 24)  # most candidate moves we simulate
 VALUE_EPS = _f("LR_VALUE_EPS", 1.0)           # min simulated ship gain to commit
 STAGING_MIN_EXCESS = _i("LR_STAGING_MIN_EXCESS", 8)  # don't bother simulating tiny stages
@@ -164,14 +180,18 @@ def _plan_shot(src, tgt, world, comet_paths, omega, ships):
     return angle, max(1, int(math.ceil(eta_f))), arrival_xy
 
 
-def _safe(src, tgt, angle, ships, world) -> bool:
-    """True iff the exact trajectory ray-cast says the fleet reaches `tgt`
-    (not the sun, not off-board, not through a different planet)."""
-    try:
-        fate = predict_fleet_fate(src, tgt, float(angle), int(ships), world)
-    except Exception:
-        return True            # never let a guard error suppress a launch
-    return fate.outcome == "target"
+def _sun_clear(src, arrival_xy) -> bool:
+    """Cheap geometry pre-filter: does the straight path from `src` to the
+    intercept point stay clear of the sun?
+
+    This is the only physics gate we apply up front. Off-board overshoot,
+    collisions with the wrong planet, and undersized waves are all left to
+    the forward simulation to judge — a fleet that dies or bounces simply
+    shows up as a lower horizon ship-delta, so the rollout rejects it. The
+    simulation is the exact ground truth (it runs the env's interpreter), so
+    leaning on it is both simpler and more accurate than a separate ray-cast.
+    """
+    return path_clears_sun((float(src.x), float(src.y)), arrival_xy)
 
 
 # --------------------------------------------------------------------------
@@ -244,7 +264,9 @@ def agent(obs, configuration=None):
             shot = _plan_shot(src, tgt, world, comet_paths, omega, RANK_HINT_SHIPS)
             if shot is None:
                 continue
-            angle, eta, _arr = shot
+            angle, eta, arr = shot
+            if not _sun_clear(src, arr):
+                continue
             if is_comet:
                 life = comet_remaining_lifetime(tid, world)
                 if life is not None and life <= eta:
@@ -265,7 +287,7 @@ def agent(obs, configuration=None):
         # Solo capture from the cheapest affordable source.
         solo = None
         for (eta, size, sid, src, angle) in shots:
-            if available[sid] >= size and _safe(src, tgt, angle, size, world):
+            if available[sid] >= size:
                 solo = {"launches": [[sid, float(angle), size]],
                         "srcs": {sid: size}, "rank": rank, "front": front}
                 break
@@ -281,8 +303,6 @@ def agent(obs, configuration=None):
                 continue
             take = min(available[sid], need - acc)
             if take <= 0:
-                continue
-            if not _safe(src, tgt, float(angle), take, world):
                 continue
             launches.append([sid, float(angle), take])
             srcs[sid] = take
@@ -317,8 +337,8 @@ def agent(obs, configuration=None):
             shot = _plan_shot(src, best, world, comet_paths, omega, excess)
             if shot is None:
                 continue
-            angle, _eta, _arr = shot
-            if not _safe(src, best, angle, excess, world):
+            angle, _eta, arr = shot
+            if not _sun_clear(src, arr):
                 continue
             candidates.append({"launches": [[sid, float(angle), excess]],
                                "srcs": {sid: excess}, "rank": 0.0,
@@ -341,10 +361,11 @@ def agent(obs, configuration=None):
     committed = []
     avail = dict(available)
     current = value([])           # value of doing nothing this turn
+    budget_ms = _wallclock_ms()
     t_start = time.perf_counter()
 
     for c in candidates:
-        if (time.perf_counter() - t_start) * 1000.0 > WALLCLOCK_MS:
+        if (time.perf_counter() - t_start) * 1000.0 > budget_ms:
             break
         if any(avail.get(s, 0) < sz for s, sz in c["srcs"].items()):
             continue
