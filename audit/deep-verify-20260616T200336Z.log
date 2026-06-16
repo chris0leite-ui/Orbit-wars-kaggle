@@ -15,3 +15,4 @@ OFF seed=20240617    seat=2 WIN  steps=250 max_ms= 325 rew=[-1, -1, 1, -1] | OFF
 ON  seed=20240617    seat=2 loss steps=228 max_ms= 838 rew=[-1, 1, -1, -1] | OFF=4/7 ON=3/7
 OFF seed=88888883    seat=3 loss steps=250 max_ms= 247 rew=[-1, -1, 1, -1] | OFF=4/8 ON=3/7
 ON  seed=88888883    seat=3 WIN  steps=250 max_ms= 583 rew=[-1, -1, -1, 1] | OFF=4/8 ON=4/8
+# SUMMARY  OFF=4/8   ON(deep d=4)=4/8   vs producer 4P
