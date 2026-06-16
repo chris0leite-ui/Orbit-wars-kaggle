@@ -314,23 +314,26 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans):
     then score the resulting position. `candidate_plans` always includes the
     producer's own move (the >=-producer floor). Returns the chosen plan."""
     snap = from_obs(obs, configuration, num_seats=num_seats)
-    opp = 1 - int(me)
-    # Producer's predicted move this turn for the opponent seat (shared across
-    # all candidates -- moves are simultaneous, so it doesn't see my plan).
-    opp_now = _producer_move_obs(snap.state[opp].observation, opp)
+    opps = [i for i in range(num_seats) if i != int(me)]
+    # Every opponent's predicted move this turn (each modelled as the producer);
+    # shared across candidates since moves are simultaneous (they don't see my
+    # plan). Works for 2P (one opponent) and 4P (three opponents).
+    opp_now = {i: _producer_move_obs(snap.state[i].observation, i) for i in opps}
 
     def value(plan):
         s = clone(snap)
         acts = [[] for _ in range(num_seats)]
         acts[int(me)] = list(plan)
-        acts[opp] = list(opp_now)
+        for i in opps:
+            acts[i] = list(opp_now[i])
         step(s, acts, in_place=True)
         if not s.fake_env.done:
-            # One more turn of the producer's pressure (opponent replies; we
-            # stay idle -- conservative, and it surfaces the next-turn
-            # punishment the 1-ply scorer misses). One producer call/candidate.
+            # One more turn of the opponents' pressure (each replies; we stay
+            # idle -- conservative, and it surfaces the next-turn punishment the
+            # 1-ply scorer misses).
             nxt = [[] for _ in range(num_seats)]
-            nxt[opp] = _producer_move_obs(s.state[opp].observation, opp)
+            for i in opps:
+                nxt[i] = _producer_move_obs(s.state[i].observation, i)
             step(s, nxt, in_place=True)
         try:
             return _project_value(s.state[int(me)].observation, me)
@@ -540,7 +543,7 @@ def agent(obs, configuration=None):
     # ---- 2-ply lookahead pick (2P only): choose among a few full-plans by
     #      their value AFTER the producer's reply + a producer-vs-producer turn,
     #      so moves the producer punishes next turn are correctly down-rated.
-    if orbit is not None and TWOPLY and num_seats == 2:
+    if orbit is not None and TWOPLY and num_seats >= 2:
         try:
             producer_me = _producer_move_obs(obs, me)
         except Exception:
