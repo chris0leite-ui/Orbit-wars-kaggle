@@ -52,13 +52,35 @@ The one positive flicker: vs the (non-mirror) v7 agent the inverse producer won
 by a bigger margin than the plain producer (+1750 vs +1577 median), but both win
 8/8 and the margins are blowout-noisy — a hint, not proof.
 
-## The full-length verdict (the PI's chosen next step)
+## ⚠️ The "tie" was a bug — the inverse producer actually CRUSHES the static one
 
-Because short games can't separate them, the PI chose to run the full-length
-game (to 500 steps / elimination), where a small per-turn edge can compound and
-break the symmetric tie. Result, inverse vs static producer, 16 seeds × 2 seats:
+Chasing the full-length verdict surfaced a contamination bug that invalidated
+every inverse-vs-static head-to-head. The producer_plus bundles configure
+themselves with `os.environ.setdefault` at import, and `os.environ` is
+process-global and read every turn. The local harness loaded the inverse focal
+(which sets the opponent-model flag) and the "static" opponent in ONE process,
+so the flag leaked — the "static" opponent ran the opponent model too. Every
+"inverse vs static" game was really inverse-vs-inverse, i.e. a mirror, which is
+exactly why it looked like a forced tie (and why the "collapse" appeared — that
+was just one identical agent losing the seat lottery).
 
-> _[VERDICT PENDING — fill from /tmp/inv/full_test.txt]_
+Fixed with per-turn environment isolation (`scripts/iso_game.py`: load the
+engine as separate instances per seat, clear+reapply the flags before each
+seat's turn). Corrected result, inverse vs a genuinely static producer:
+
+> seed 0: **807 - 15**.  seed 1: **673 - 0** (static eliminated by step 102).
+
+So the opponent model is hugely valuable against a predictable (producer)
+opponent — the PI's intuition was right; my earlier "no edge" conclusion was an
+artifact. What still stands (uncontaminated): the static-vs-static control, the
+decision-diff (separate processes), and the v7_0 comparison (v7_0 ignores the
+flags) — and the v7_0 result already pointed the right way (inverse beat v7_0 by
+more than static did).
+
+**Lesson for the second brain:** any local A/B between two env-var-configured
+agents MUST isolate the environment per seat, or the baseline is silently the
+same agent as the focal. `fast.py` and `short_margin_ab.py` share this hazard
+whenever both sides read `PRODUCER_PLUS_*`.
 
 ## Practical notes / flags
 
