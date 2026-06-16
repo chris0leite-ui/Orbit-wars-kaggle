@@ -1,5 +1,14 @@
 """short_margin_ab.py — fast A/B over SHORT (step-capped) games by score margin.
 
+⚠️ CONTAMINATION CAVEAT: this harness loads both agents in ONE process. If the
+two agents are producer_plus bundles with different PRODUCER_PLUS_* env flags,
+the first bundle's `os.environ.setdefault` flags LEAK into the second (os.environ
+is process-global, read per-turn). A "static" opponent then silently runs the
+focal's mechanisms — every inverse-vs-static A/B here was actually
+inverse-vs-inverse. Use scripts/iso_game.py (per-turn env isolation) for any A/B
+between differently-configured producer_plus agents. This harness is only safe
+when the opponent does not read PRODUCER_PLUS_* (e.g. v7_0, nearest).
+
 Why this exists
 ---------------
 The inverse-producer line is iterated in short 200-step games (PI directive).
