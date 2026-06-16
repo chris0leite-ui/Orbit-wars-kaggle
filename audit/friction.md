@@ -640,3 +640,32 @@ relevant skill file or source code, not back into friction.md.
 
 If something is worth a paragraph, it's not friction. It's a real
 postmortem.
+
+## 2026-06-16 (claude/affectionate-newton-19kqrp — inverse/anti-producer + champion_strongest submit)
+
+- `tag: env-leak-local-ab` — local A/B of two producer_plus flag-variants in ONE
+  process silently leaked the focal's `os.environ.setdefault` flags into the
+  "static" opponent (os.environ is process-global, read per-turn), so
+  inverse-vs-static was really inverse-vs-inverse. Reported a WRONG "inverse
+  ties static / collapse" conclusion to PI, then retracted. **Fix:** added
+  `scripts/iso_game.py` (per-turn clear+apply of `PRODUCER_PLUS_*` per seat);
+  warned `short_margin_ab.py`. Corrected result: inverse CRUSHES clean static.
+- `tag: torch-fp-nondeterminism` — parallel local games (xargs -P N) gave
+  different outcomes run-to-run for the heavy champion config (torch CPU FP
+  order under thread contention), faking "champion eliminated by static" and
+  "anti beats champion". Caught via solo-vs-parallel divergence. **Fix:** pin
+  `OMP/MKL/OPENBLAS_NUM_THREADS=1` in `iso_game.py` (one core/process keeps
+  parallel runs reproducible); verified same-seed-twice identical.
+- `tag: rule42-read-timing` — read the rolling pair ~5 min before submit (before
+  the Rule-46 smoke); a concurrent branch's `pp_pos4p` slipped in between, so my
+  submit evicted pp_positional (1062.7) not pp_expand (963.5) as predicted
+  (still Rule 42 green). **Fix:** re-read `kaggle competitions submissions` the
+  moment before `submit`, not before the smoke.
+- `tag: torch-missing-req` — `torch` (producer engine dep) was missing from
+  `requirements.txt`, hand-installed every fresh container. **Fix (done):** added
+  with the pytorch CPU `--extra-index-url`.
+- `tag: short-mirror-insensitive` — 200-step head-to-head on the comp's 4-fold
+  symmetric boards forces antisymmetric (mean-0) margins for equally-strong
+  agents; can't surface a small edge, only big regressions. **Fix:** for
+  self-play A/B use a non-mirror/strength-matched opponent or full length; the
+  200-step mirror is a null instrument for small lifts.
