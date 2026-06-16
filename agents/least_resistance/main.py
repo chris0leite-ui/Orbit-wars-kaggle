@@ -130,6 +130,15 @@ def _f(name, default):
         return default
 
 
+def _leader_relative_4p():
+    """Default-OFF gate. In 4-player games, score a position by the gap to the
+    single STRONGEST opponent (win-equity / overtake-the-leader) instead of the
+    gap to the SUM of all opponents (material / safe-2nd). 2-player is
+    byte-identical (one opponent IS the leader). Read at call time."""
+    return os.environ.get("LR_LEADER_RELATIVE_4P", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _wallclock_ms():
     """Per-turn budget, read at CALL time. The bundle parity gate sets
     ORBIT_WARS_PARITY_WALLCLOCK_MS huge so the greedy loop never bails
@@ -228,6 +237,27 @@ def _sun_clear(src, arrival_xy):
 # --------------------------------------------------------------------------
 # Producer (orbit_lite) leaf scorer — built once per turn.
 # --------------------------------------------------------------------------
+def _strongest_opp_weights(obs_tensors, me, pc):
+    """One-hot ``[pc]`` weight on the strongest opponent by current ship total
+    (0 at ``me``, sums to 1 over opponents) — the scorer's ``opp_weights``
+    contract. Turns the competitive score from "me - sum(opponents)" into
+    "me - strongest_opponent"."""
+    planets = obs_tensors["planets"]                 # [P, 7]; owner col 1, ships col 5
+    owner = planets[:, 1].long()
+    ships = planets[:, 5].to(_torch.float32)
+    best, best_v = None, -1.0
+    for pl in range(int(pc)):
+        if pl == int(me):
+            continue
+        tot = float((ships * (owner == pl).to(_torch.float32)).sum())
+        if tot > best_v:
+            best_v, best = tot, pl
+    w = _torch.zeros(int(pc), dtype=_torch.float32)
+    if best is not None:
+        w[best] = 1.0
+    return w
+
+
 def _build_orbit_scorer(obs, me):
     """Return (score_units_fn, id2slot) or None on any failure.
 
@@ -251,6 +281,11 @@ def _build_orbit_scorer(obs, me):
     ids = obs_tensors["planets"][:, 0].long().tolist()
     id2slot = {int(v): i for i, v in enumerate(ids)}
 
+    # Default-OFF: leader-relative opponent weighting in 4P (gap-to-strongest).
+    opp_w = None
+    if _leader_relative_4p() and int(pc) >= 4:
+        opp_w = _strongest_opp_weights(obs_tensors, me, int(pc))
+
     def score_units(units):
         if not units:
             return 0.0
@@ -265,6 +300,7 @@ def _build_orbit_scorer(obs, me):
             sc = _score_candidates(
                 status, prod=prod, alive_by_step=alive_by_step,
                 player_count=int(pc), launches=ls, player_id=int(me),
+                opp_weights=opp_w,
             )
         return float(sc.reshape(-1)[0])
 
@@ -304,7 +340,17 @@ def _project_value(obs_any, me):
     owner = status.owner[:, int(H)]
     ships = status.ships[:, int(H)].to(_torch.float32)
     mine = float((ships * (owner == int(me)).to(_torch.float32)).sum())
-    theirs = float((ships * ((owner != int(me)) & (owner >= 0)).to(_torch.float32)).sum())
+    if _leader_relative_4p() and int(pc) >= 4:
+        # Win-equity: gap to the single strongest opponent, not the whole field.
+        theirs = 0.0
+        for pl in range(int(pc)):
+            if pl == int(me):
+                continue
+            tot = float((ships * (owner == pl).to(_torch.float32)).sum())
+            if tot > theirs:
+                theirs = tot
+    else:
+        theirs = float((ships * ((owner != int(me)) & (owner >= 0)).to(_torch.float32)).sum())
     return mine - theirs
 
 
