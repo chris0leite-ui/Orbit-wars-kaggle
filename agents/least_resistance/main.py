@@ -68,10 +68,24 @@ from lib.world_model import comet_remaining_lifetime, _comet_paths_by_id
 # --------------------------------------------------------------------------
 _ORBIT_OK = False
 try:
-    _PRODUCER_DIR = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "producer",
-    )
-    _PRODUCER_DIR = os.path.abspath(_PRODUCER_DIR)
+    # Resolve where the orbit_lite engine + the producer entry live. Works in
+    # two layouts: (a) in-repo dev (agents/least_resistance/ with sibling
+    # agents/producer/), and (b) a flat submission tar.gz (orbit_lite/ +
+    # producer_main.py sit next to this file).
+    try:
+        _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+    except NameError:               # kaggle execs agents without __file__
+        _THIS_DIR = (sys.path[-1] if sys.path
+                     and os.path.isfile(os.path.join(sys.path[-1], "main.py"))
+                     else os.getcwd())
+    _dev = os.path.abspath(os.path.join(_THIS_DIR, "..", "producer"))
+    if (os.path.isfile(os.path.join(_dev, "main.py"))
+            and os.path.isdir(os.path.join(_dev, "orbit_lite"))):
+        _PRODUCER_DIR = _dev                                  # dev layout
+        _PRODUCER_MAIN = os.path.join(_dev, "main.py")
+    else:
+        _PRODUCER_DIR = _THIS_DIR                             # flat submission
+        _PRODUCER_MAIN = os.path.join(_THIS_DIR, "producer_main.py")
     if _PRODUCER_DIR not in sys.path:
         sys.path.insert(0, _PRODUCER_DIR)
     import torch as _torch
@@ -85,8 +99,7 @@ try:
         largest_initial_player_count as _largest_initial_player_count,
     )
     import importlib.util as _ilu
-    _pm_spec = _ilu.spec_from_file_location(
-        "_lr_producer_main", os.path.join(_PRODUCER_DIR, "main.py"))
+    _pm_spec = _ilu.spec_from_file_location("_lr_producer_main", _PRODUCER_MAIN)
     _producer_main = _ilu.module_from_spec(_pm_spec)
     sys.modules["_lr_producer_main"] = _producer_main
     _pm_spec.loader.exec_module(_producer_main)
