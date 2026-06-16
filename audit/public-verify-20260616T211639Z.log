@@ -1,3 +1,5 @@
 # PUBLIC panel | 4P steps<=250 | focal=least_resistance | background={konbu17+roman1224+ykhnkf1100} | fair=25% | seeds=[76670184, 1492346051, 768065184, 641308308, 305419896, 12648430, 20240617, 88888883]
 least_resistance seed=76670184    seat=0 WIN  steps=116 max_ms= 600 rew=[1, -1, -1, -1] | 1/1
 least_resistance seed=1492346051  seat=1 WIN  steps=96 max_ms= 430 rew=[-1, 1, -1, -1] | 2/2
+least_resistance seed=768065184   seat=2 WIN  steps=173 max_ms= 552 rew=[-1, -1, 1, -1] | 3/3
+least_resistance seed=641308308   seat=3 WIN  steps=129 max_ms= 588 rew=[-1, -1, -1, 1] | 4/4
