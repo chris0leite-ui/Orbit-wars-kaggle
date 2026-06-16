@@ -3,3 +3,5 @@ least_resistance seed=76670184    seat=0 WIN  steps=116 max_ms= 600 rew=[1, -1, 
 least_resistance seed=1492346051  seat=1 WIN  steps=96 max_ms= 430 rew=[-1, 1, -1, -1] | 2/2
 least_resistance seed=768065184   seat=2 WIN  steps=173 max_ms= 552 rew=[-1, -1, 1, -1] | 3/3
 least_resistance seed=641308308   seat=3 WIN  steps=129 max_ms= 588 rew=[-1, -1, -1, 1] | 4/4
+least_resistance seed=305419896   seat=0 WIN  steps=155 max_ms= 536 rew=[1, -1, -1, -1] | 5/5
+least_resistance seed=12648430    seat=1 WIN  steps=149 max_ms= 526 rew=[-1, 1, -1, -1] | 6/6
