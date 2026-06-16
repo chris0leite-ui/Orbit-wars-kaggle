@@ -17,9 +17,16 @@ reads are then correct because the env.run loop calls seats sequentially.
 """
 from __future__ import annotations
 
+import os
+# Determinism: torch CPU ops are FP-order-sensitive under thread contention, so
+# parallel games (xargs -P N) diverged run-to-run — fatal for a compute-heavy
+# config like the champion. Pin to a single thread BEFORE torch is imported
+# (by the engine); one core per process keeps parallel runs reproducible.
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+
 import argparse
 import importlib.util
-import os
 import sys
 from pathlib import Path
 
