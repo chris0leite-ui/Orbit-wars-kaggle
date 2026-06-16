@@ -129,6 +129,10 @@ ROI_FLOOR = _f("LR_ROI_FLOOR", 1.5)            # min projected net-ship gain to 
 MAX_CANDIDATES = _i("LR_MAX_CANDIDATES", 28)
 FRONTIER_REF_SHIPS = _f("LR_FRONTIER_REF_SHIPS", 30.0)
 RANK_HINT_SHIPS = 20
+# Regroup (forward-streaming of idle rear ships): compute guards, not strategy weights.
+STAGING_RESERVE = _i("LR_STAGING_RESERVE", 4)        # ships kept on a rear source
+STAGING_MIN_EXCESS = _i("LR_STAGING_MIN_EXCESS", 8)  # min excess before streaming
+STAGING_MIN_GAIN = _f("LR_STAGING_MIN_GAIN", 2.0)    # min ETA-to-front improvement (turns)
 # Fallback (no-torch) evaluator knobs.
 FALLBACK_HORIZON = _i("LR_FALLBACK_HORIZON", 10)
 FORCE_EVAL = os.environ.get("LR_EVAL", "").strip().lower()  # "orbit" | "fallback" | ""
@@ -224,6 +228,20 @@ def _build_orbit_scorer(obs, me):
     ids = obs_tensors["planets"][:, 0].long().tolist()
     id2slot = {int(v): i for i, v in enumerate(ids)}
 
+    # Defensive threat map: planets currently mine that the projection shows
+    # flipping away within the horizon -> (earliest_flip_turn, enemy_strength).
+    owner_t = status.owner                              # [P, H+1] long
+    ships_t = status.ships                              # [P, H+1]
+    me_now = owner_t[:, 0] == int(me)
+    not_me_future = owner_t[:, 1: int(H) + 1] != int(me)   # [P, H]
+    flip_any = not_me_future.any(dim=1)
+    first_flip = not_me_future.to(_torch.int64).argmax(dim=1) + 1   # [P]
+    threats = {}
+    for slot in range(int(owner_t.shape[0])):
+        if bool(me_now[slot]) and bool(flip_any[slot]):
+            fk = int(first_flip[slot])
+            threats[slot] = (fk, float(ships_t[slot, fk]))
+
     def score_units(units):
         if not units:
             return 0.0
@@ -241,7 +259,7 @@ def _build_orbit_scorer(obs, me):
             )
         return float(sc.reshape(-1)[0])
 
-    return score_units, id2slot
+    return score_units, id2slot, threats
 
 
 # --------------------------------------------------------------------------
@@ -276,7 +294,10 @@ def agent(obs, configuration=None):
             orbit = None
     if orbit is None and FORCE_EVAL == "orbit":
         return []                       # explicit orbit-only request but unavailable
-    score_units, id2slot = (orbit if orbit is not None else (None, None))
+    if orbit is not None:
+        score_units, id2slot, threats = orbit
+    else:
+        score_units, id2slot, threats = None, None, {}
 
     # Fallback fast_sim scorer (used only when orbit_lite is unavailable).
     fb_snap = None
@@ -396,6 +417,51 @@ def agent(obs, configuration=None):
                 candidates.append({"emit": emit, "units": units, "srcs": srcs,
                                    "rank": rank, "front": front})
 
+    # ---- defensive candidates: reinforce my planets the projection shows
+    #      flipping to an opponent within the horizon. score_candidates values
+    #      keeping a planet's production + garrison, so the greedy fires these
+    #      only when the save beats the alternative uses of those ships.
+    if threats and id2slot is not None:
+        slot2planet = {}
+        for p in planets:
+            sl = id2slot.get(int(p.id))
+            if sl is not None:
+                slot2planet[sl] = p
+        for d_slot, (flip_k, enemy_strength) in threats.items():
+            D = slot2planet.get(d_slot)
+            if D is None or int(D.owner) != me:
+                continue
+            need = int(math.ceil(enemy_strength)) + 2
+            best, best_d = None, None
+            for S in my_planets:
+                sid = int(S.id)
+                if sid == int(D.id) or available.get(sid, 0) <= 0:
+                    continue
+                dd = dist((float(S.x), float(S.y)), (float(D.x), float(D.y)))
+                if best is None or dd < best_d:
+                    best, best_d = S, dd
+            if best is None:
+                continue
+            sid = int(best.id)
+            send = min(available[sid], max(need, 1))
+            if send <= 0:
+                continue
+            shot = _plan_shot(best, D, comet_ids, comet_paths, omega, send)
+            if shot is None:
+                continue
+            a2, eta2, arr = shot
+            if not _sun_clear(best, arr):
+                continue
+            units = units_for([(sid, int(D.id), send, eta2)])
+            if units is None:
+                continue
+            candidates.append({
+                "emit": [[sid, float(a2), send]], "units": units,
+                "srcs": {sid: send},
+                "rank": (float(D.production) + 1.0) * 2.0 / max(1.0, flip_k),
+                "front": frontier_eta((float(D.x), float(D.y))),
+            })
+
     if not candidates:
         return []
 
@@ -430,6 +496,41 @@ def agent(obs, configuration=None):
             current = v
             for s, sz in c["srcs"].items():
                 avail[s] = avail.get(s, 0) - sz
+
+    # ---- regroup: stream leftover idle ships forward toward the front, so our
+    #      whole force keeps shortening its ETA to the nearest opponent (the
+    #      strategy's identity). A positioning move, not a capture, so it isn't
+    #      gated by the net-ship scorer; guarded to safe rear excess only.
+    if opp_xy and len(my_planets) >= 2:
+        threatened_ids = set()
+        if threats and id2slot is not None:
+            inv = {v: k for k, v in id2slot.items()}
+            threatened_ids = {int(inv[s]) for s in threats if s in inv}
+        front = {int(p.id): frontier_eta((float(p.x), float(p.y))) for p in my_planets}
+        for src in my_planets:
+            sid = int(src.id)
+            if sid in comet_ids or sid in threatened_ids:
+                continue
+            excess = avail.get(sid, 0) - STAGING_RESERVE
+            if excess < STAGING_MIN_EXCESS:
+                continue
+            best, best_f = None, front[sid] - STAGING_MIN_GAIN
+            for q in my_planets:
+                qid = int(q.id)
+                if qid == sid or qid in comet_ids:
+                    continue
+                if front[qid] < best_f:
+                    best_f, best = front[qid], q
+            if best is None:
+                continue
+            shot = _plan_shot(src, best, comet_ids, comet_paths, omega, excess)
+            if shot is None:
+                continue
+            a2, _eta, arr = shot
+            if not _sun_clear(src, arr):
+                continue
+            committed_emit.append([sid, float(a2), int(excess)])
+            avail[sid] = avail.get(sid, 0) - excess
 
     return committed_emit
 
