@@ -52,6 +52,15 @@ CONFIGS: dict[str, dict[str, str]] = {
     "multi_opp_snipe": {"PRODUCER_PLUS_OPP_PROJECTION": "1", "PRODUCER_PLUS_MULTI_SIZE": "1",
                         "PRODUCER_PLUS_DENIAL_BONUS": "1", "PRODUCER_PLUS_DENIAL_WEIGHT": "0.01",
                         "PRODUCER_PLUS_SNIPE_HOLD": "1"},
+    # KEEPABLE production (the fundamental fix): production value with the holdability
+    # check priced at the opponent's concentration-speed RECAPTURE reply.
+    "multi_opp_keep": {"PRODUCER_PLUS_OPP_PROJECTION": "1", "PRODUCER_PLUS_MULTI_SIZE": "1",
+                       "PRODUCER_PLUS_HOLD_VALUE": "12", "PRODUCER_PLUS_KEEP_VALUE": "1"},
+    "champion_keep": {"PRODUCER_PLUS_MULTI_SIZE": "1", "PRODUCER_PLUS_OPP_PROJECTION": "1",
+                      "PRODUCER_PLUS_RESPONSE_VETO": "1", "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+                      "PRODUCER_PLUS_REPLY_SEQ": "1", "PRODUCER_PLUS_FFA_SCORE": "1",
+                      "PRODUCER_PLUS_FFA_WEIGHTS": "strength", "PRODUCER_PLUS_HOLD_VALUE": "12",
+                      "PRODUCER_PLUS_KEEP_VALUE": "1"},
     "anti_strongest": {
         "PRODUCER_PLUS_OPP_PROJECTION": "1",
         "PRODUCER_PLUS_FFA_SCORE": "1",

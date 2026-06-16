@@ -293,6 +293,21 @@ def _hold_value_lag() -> float:
         return 2.0
 
 
+# Keepable-production (graduated holding-time credit). The flat HOLD_VALUE credits
+# a "safe" capture the FULL lam*prod (= held forever) and a threatened one 0 — so
+# short-held captures that pass the lenient current-mass threat check are massively
+# over-credited and the agent over-expands into thin captures the producer retakes
+# (measured 0/12 vs the producer). KEEP_VALUE instead credits prod * (turns held
+# before the enemy's routable mass overwhelms the growing garrison), capped at the
+# HOLD_VALUE lambda: rear captures held for ages score ~full, frontline grabs the
+# opponent snipes at tick k score ~prod*k. Set alongside HOLD_VALUE (which supplies
+# lambda + the call-site gate); default OFF keeps the binary behaviour.
+def _keep_value_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_KEEP_VALUE", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def _hold_value_bonus(
     *,
     obs,
@@ -336,6 +351,11 @@ def _hold_value_bonus(
 
     margin = _reactive_reinforcement_margin(
         obs, cache, target_idx, K, weight=1.0, lag=_hold_value_lag(),
+        # KEEP_VALUE: price the opponent's RECAPTURE at concentration speed (it
+        # relays/merges mass to retake), not each garrison's own speed. This is
+        # the opponent's true reply, so a thin frontline grab the producer can
+        # concentrate on no longer passes as "safe" and stops being credited.
+        concentration_speed=_keep_value_enabled(),
     )                                                                 # [T, K] | None
     if margin is None:
         safe = gate
