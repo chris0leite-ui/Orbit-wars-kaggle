@@ -76,6 +76,7 @@ try:
         sys.path.insert(0, _PRODUCER_DIR)
     import torch as _torch
     from orbit_lite.adapter import single_obs_to_tensor as _single_obs_to_tensor
+    from orbit_lite.adapter import sparse_action_row_to_moves as _sparse_action_row_to_moves
     from orbit_lite.movement import MovementConfig as _MovementConfig
     from orbit_lite.movement_step import ensure_planet_movement as _ensure_planet_movement
     from orbit_lite.planner_core import (
@@ -83,6 +84,12 @@ try:
         score_candidates as _score_candidates,
         largest_initial_player_count as _largest_initial_player_count,
     )
+    import importlib.util as _ilu
+    _pm_spec = _ilu.spec_from_file_location(
+        "_lr_producer_main", os.path.join(_PRODUCER_DIR, "main.py"))
+    _producer_main = _ilu.module_from_spec(_pm_spec)
+    sys.modules["_lr_producer_main"] = _producer_main
+    _pm_spec.loader.exec_module(_producer_main)
     _ORBIT_OK = True
 except Exception:
     _ORBIT_OK = False
@@ -132,6 +139,13 @@ RANK_HINT_SHIPS = 20
 # Fallback (no-torch) evaluator knobs.
 FALLBACK_HORIZON = _i("LR_FALLBACK_HORIZON", 10)
 FORCE_EVAL = os.environ.get("LR_EVAL", "").strip().lower()  # "orbit" | "fallback" | ""
+# 2-ply lookahead vs the producer (2P only): evaluate candidate full-plans by
+# applying my move + the producer's predicted reply, then a turn of
+# producer-vs-producer, and scoring the resulting position. Catches moves the
+# producer punishes next turn (which the 1-ply scorer over-rates). The
+# producer's own move is always a candidate, so we never do worse than it.
+TWOPLY = os.environ.get("LR_TWOPLY", "1").strip().lower() in ("1", "true", "on", "yes")
+TWOPLY_BUDGET_MS = _f("LR_TWOPLY_MS", 450.0)
 
 
 # --------------------------------------------------------------------------
@@ -242,6 +256,85 @@ def _build_orbit_scorer(obs, me):
         return float(sc.reshape(-1)[0])
 
     return score_units, id2slot
+
+
+# --------------------------------------------------------------------------
+# 2-ply lookahead vs the producer.
+# --------------------------------------------------------------------------
+def _producer_move_obs(obs_any, seat):
+    """The producer's launches for `seat` given any obs (dict or Struct),
+    using a fresh memory (single-turn prediction, no shared state)."""
+    try:
+        ot = _single_obs_to_tensor(obs_any, player_id=int(seat))
+        runtime = _producer_main.ProducerLiteRuntime()
+        with _torch.no_grad():
+            row = runtime.tensor_action(ot)
+        return _sparse_action_row_to_moves(row, obs_any, player_id=int(seat))
+    except Exception:
+        return []
+
+
+def _project_value(obs_any, me):
+    """Position value: project the board `H` turns forward (all in-flight
+    fleets + production + combat, no new launches) and return our garrison
+    advantage (our ships - opponents') at the horizon. The producer's own
+    garrison-flow projector used as a state evaluator."""
+    ot = _single_obs_to_tensor(obs_any, player_id=int(me))
+    pc = _largest_initial_player_count(ot)
+    H = PROJECT_HORIZON_4P if int(pc) >= 4 else PROJECT_HORIZON_2P
+    cfg = _MovementConfig(
+        movement_horizon=int(H), drift_epsilon=1e-3, track_fleets=True,
+        player_count=int(pc), max_tracked_fleets=128,
+    )
+    mv = _ensure_planet_movement(obs_tensors=ot, expected_cfg=cfg, cached_movement=None)
+    status = mv.garrison_status(max_horizon=int(H))
+    owner = status.owner[:, int(H)]
+    ships = status.ships[:, int(H)].to(_torch.float32)
+    mine = float((ships * (owner == int(me)).to(_torch.float32)).sum())
+    theirs = float((ships * ((owner != int(me)) & (owner >= 0)).to(_torch.float32)).sum())
+    return mine - theirs
+
+
+def _twoply_pick(obs, configuration, me, num_seats, candidate_plans):
+    """Pick the candidate full-plan with the best 2-ply value: apply [my plan,
+    producer's predicted reply] this turn, then a turn of producer-vs-producer,
+    then score the resulting position. `candidate_plans` always includes the
+    producer's own move (the >=-producer floor). Returns the chosen plan."""
+    snap = from_obs(obs, configuration, num_seats=num_seats)
+    opp = 1 - int(me)
+    # Producer's predicted move this turn for the opponent seat (shared across
+    # all candidates -- moves are simultaneous, so it doesn't see my plan).
+    opp_now = _producer_move_obs(snap.state[opp].observation, opp)
+
+    def value(plan):
+        s = clone(snap)
+        acts = [[] for _ in range(num_seats)]
+        acts[int(me)] = list(plan)
+        acts[opp] = list(opp_now)
+        step(s, acts, in_place=True)
+        if not s.fake_env.done:
+            # One more turn of the producer's pressure (opponent replies; we
+            # stay idle -- conservative, and it surfaces the next-turn
+            # punishment the 1-ply scorer misses). One producer call/candidate.
+            nxt = [[] for _ in range(num_seats)]
+            nxt[opp] = _producer_move_obs(s.state[opp].observation, opp)
+            step(s, nxt, in_place=True)
+        try:
+            return _project_value(s.state[int(me)].observation, me)
+        except Exception:
+            return None
+
+    best_plan, best_v = candidate_plans[0], None
+    t0 = time.perf_counter()
+    for plan in candidate_plans:
+        if best_v is not None and (time.perf_counter() - t0) * 1000.0 > TWOPLY_BUDGET_MS:
+            break
+        v = value(plan)
+        if v is None:
+            continue
+        if best_v is None or v > best_v:
+            best_v, best_plan = v, plan
+    return best_plan
 
 
 # --------------------------------------------------------------------------
@@ -430,6 +523,30 @@ def agent(obs, configuration=None):
             current = v
             for s, sz in c["srcs"].items():
                 avail[s] = avail.get(s, 0) - sz
+
+    # ---- 2-ply lookahead pick (2P only): choose among a few full-plans by
+    #      their value AFTER the producer's reply + a producer-vs-producer turn,
+    #      so moves the producer punishes next turn are correctly down-rated.
+    if orbit is not None and TWOPLY and num_seats == 2:
+        try:
+            producer_me = _producer_move_obs(obs, me)
+        except Exception:
+            producer_me = []
+        plans = [producer_me, committed_emit, []]   # producer floor first
+        # One milder aggression level of my plan for the lookahead to weigh.
+        if len(committed_emit) > 2:
+            plans.append(committed_emit[:len(committed_emit) // 2])
+        # De-dup (by repr) preserving order.
+        seen, uniq = set(), []
+        for p in plans:
+            key = repr(p)
+            if key not in seen:
+                seen.add(key)
+                uniq.append(p)
+        try:
+            return _twoply_pick(obs, configuration, me, num_seats, uniq)
+        except Exception:
+            return committed_emit
 
     return committed_emit
 
