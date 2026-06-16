@@ -669,3 +669,11 @@ postmortem.
   agents; can't surface a small edge, only big regressions. **Fix:** for
   self-play A/B use a non-mirror/strength-matched opponent or full length; the
   200-step mirror is a null instrument for small lifts.
+- `tag: submit-single-seed-verify` — shipped `champion_holdval` (production value)
+  on a SINGLE-seed "verification" (the motivating de-idle seed, 6→28 planets);
+  the later multi-seed/multi-opponent sweep showed it's a catastrophic
+  producer-loser (2/12 in 2P, 0/6 in 4P eliminated every game), and the ladder is
+  producer-heavy. The 1-seed result was cherry-picked by construction. **Fix:**
+  before any submit, A/B the candidate vs the DOMINANT ladder opponent (the
+  producer) across ≥6 seeds × both seats with iso_game — never ship on the seed
+  that motivated the change.
