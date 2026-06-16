@@ -82,6 +82,28 @@ agents MUST isolate the environment per seat, or the baseline is silently the
 same agent as the focal. `fast.py` and `short_margin_ab.py` share this hazard
 whenever both sides read `PRODUCER_PLUS_*`.
 
+## The relative-to-strongest-opponent objective (PI directive, 2026-06-16)
+
+Motivated by the (since-corrected) collapse worry: have the anti-producer
+optimise its ships *relative to the strongest opponent*, not just its own. The
+scorer is already `me − opp` (competitive); the opponent term is a SUM over
+rivals by default. Added a `strongest` weighting mode (`FFA_WEIGHTS=strongest`):
+a one-hot weight on the current leader, so the objective becomes
+`me − strongest_opp`. In 2P this is a no-op (the one opponent already is the
+strongest); in 4P it focuses the leader instead of summing all three rivals.
+
+Variant `anti_strongest` = opponent-model + `FFA_SCORE` + `FFA_WEIGHTS=strongest`.
+Smoke (env-isolated, vs clean static producers):
+- 2P seeds 0/1/2: **eliminates the producer** in all three (margins 838 / 673 /
+  1908). NB this is the plain inverse producer — the 2P objective is unchanged.
+- 4P seed 0: **eliminates all three producers** by step 146, finishes 1st
+  (408 vs 0/0/0). This is the genuine test of the strongest-opponent objective.
+
+Caveat: clean static producers are perfectly predictable, so a crush is the
+floor, not proof the relative objective adds value. Isolation A/B (anti_strongest
+vs plain inverse, both vs 3 producers in 4P) is the next measurement; and the
+real question is whether it helps against STRONGER, less predictable opponents.
+
 ## Practical notes / flags
 
 - The opponent model roughly doubles per-turn cost. Mid/late-game turns hit
