@@ -190,7 +190,45 @@ Both reverted (HEAD = 263fbc7, clean orbit-eval). **Conclusion: systematically
 beating the producer is not achievable with a 1-ply evaluator over my
 candidate set.** Reliable improvements over a tuned 1-ply greedy need a deeper,
 accurate multi-ply search (model the producer's *future* responses, not just
-this turn) or a candidate generator that matches/exceeds the producer's — i.e.
-a real research effort, not a wrapper. The standing deliverable remains the
-orbit-eval least_resistance agent: beats random/nearest/v7_0 (~62%), loses to
-the producer.
+this turn) or a candidate generator that matches/exceeds the producer's.
+
+## UPDATE 4 — the 2-ply lookahead WORKED; beats the producer; SUBMITTED
+
+Built the depth-2 search the diagnosis pointed to. Per turn: enumerate a few
+candidate full-plans (the producer's own move as the ≥-producer floor, my
+least-resistance plan, prefixes, empty); for each, apply [my move + each
+opponent's predicted move (run the producer on their seat, fresh memory)],
+then one more turn of the opponents' pressure (they reply, we idle —
+conservative), then score the resulting position with `orbit_lite`'s
+garrison-flow projection (`_project_value`). Play the best. This finally
+out-searches the producer (it does 0-ply opponent modelling; we model its
+reply), so moves it punishes next turn are correctly down-rated.
+
+Results vs the **vanilla producer**: 75% (n=20) — but partly circular (we
+model that exact opponent). vs **v7_0**: 100% (n=12). vs our **champion**
+(`vetorf4p_seq_strength`, clean test — we model it only as the bare producer):
+**2P 62% (10/16)**. Cost-controlled (me-idle at t+1, ≤4 candidates, 450ms
+bail): 2P max ~335ms.
+
+**4P extension** (generalise `_twoply_pick` to all opponents, drop the
+`num_seats==2` gate): lifted 4P from "mediocre 2nd/4, behind champion" to
+**parity-ish** — but vs 3 champions only **2/12 = 17%** (n=12 noisy: seed 0
+2/4, seeds 1-2 0/8), *below* the 25% fair share. So: clearly better in 2P
+(~40% of ladder), slightly worse in 4P (~60%). Net ≈ champion or slightly
+below. 4P timing safe (max 610ms self-play).
+
+**Submitted (PI "Submit anyway", informed of the 4P-below-parity risk):**
+sub **53740037** `lr_submission.tar.gz` (sha256 `fe3ac8df`), evicting
+`champion_strongest` (53733475, μ1068.2). Packaged as a tar.gz (main.py at
+root + lib/ + orbit_lite/ + producer_main.py; dual-layout import shim).
+Rolling pair now `{least_resistance 53740037, champion_holdval 53734450}`.
+**Watch the ladder:** if 4P drags it below the evicted 1068, resubmit a
+both-strong agent (the 4P objective is the open problem — our position-value
+uses simple Σ_opp; the champion's strength-weighted FFA leader-focus is
+likely better in 4P).
+
+Lesson banked: **a deeper, accurate search (model the opponent's reply) is
+what beats a tuned 1-ply agent** — 1-ply best-response and a strict-superset
+portfolio both failed (0% / 18%); the 2-ply succeeded (2P 62%). The remaining
+gap is 4P, where the search works but the *leaf objective* (Σ_opp) isn't
+FFA-aware.
