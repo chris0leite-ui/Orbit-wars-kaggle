@@ -35,8 +35,18 @@ REPO = Path(__file__).resolve().parents[1]
 ENGINE = str(REPO / "submissions" / "_iso_engine.py")
 
 CONFIGS: dict[str, dict[str, str]] = {
-    "static": {},
+    "static": {},  # == the producer (bare engine, action-identical to agents/producer)
     "inverse": {"PRODUCER_PLUS_OPP_PROJECTION": "1"},
+    # Lean anti-producer candidates: opp-model + economy, NO passive veto stack.
+    "inverse_prod": {"PRODUCER_PLUS_OPP_PROJECTION": "1", "PRODUCER_PLUS_HOLD_VALUE": "12"},
+    "multi_opp": {"PRODUCER_PLUS_OPP_PROJECTION": "1", "PRODUCER_PLUS_MULTI_SIZE": "1"},
+    "multi_opp_prod": {"PRODUCER_PLUS_OPP_PROJECTION": "1", "PRODUCER_PLUS_MULTI_SIZE": "1",
+                       "PRODUCER_PLUS_HOLD_VALUE": "12"},
+    # Lean + denial (race for contested neutrals) + snipe-hold (toll the producer's
+    # thin fresh captures) — the aggressive exploit of the producer's predictability.
+    "lean_snipe": {"PRODUCER_PLUS_OPP_PROJECTION": "1", "PRODUCER_PLUS_MULTI_SIZE": "1",
+                   "PRODUCER_PLUS_HOLD_VALUE": "12", "PRODUCER_PLUS_DENIAL_BONUS": "1",
+                   "PRODUCER_PLUS_DENIAL_WEIGHT": "0.01", "PRODUCER_PLUS_SNIPE_HOLD": "1"},
     "anti_strongest": {
         "PRODUCER_PLUS_OPP_PROJECTION": "1",
         "PRODUCER_PLUS_FFA_SCORE": "1",
