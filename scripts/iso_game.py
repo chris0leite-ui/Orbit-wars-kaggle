@@ -47,6 +47,11 @@ CONFIGS: dict[str, dict[str, str]] = {
     "lean_snipe": {"PRODUCER_PLUS_OPP_PROJECTION": "1", "PRODUCER_PLUS_MULTI_SIZE": "1",
                    "PRODUCER_PLUS_HOLD_VALUE": "12", "PRODUCER_PLUS_DENIAL_BONUS": "1",
                    "PRODUCER_PLUS_DENIAL_WEIGHT": "0.01", "PRODUCER_PLUS_SNIPE_HOLD": "1"},
+    # The aggressive exploit WITHOUT the production trap: snipe the producer's thin
+    # fresh captures + deny contested neutrals, multi-size for decisive strikes.
+    "multi_opp_snipe": {"PRODUCER_PLUS_OPP_PROJECTION": "1", "PRODUCER_PLUS_MULTI_SIZE": "1",
+                        "PRODUCER_PLUS_DENIAL_BONUS": "1", "PRODUCER_PLUS_DENIAL_WEIGHT": "0.01",
+                        "PRODUCER_PLUS_SNIPE_HOLD": "1"},
     "anti_strongest": {
         "PRODUCER_PLUS_OPP_PROJECTION": "1",
         "PRODUCER_PLUS_FFA_SCORE": "1",
