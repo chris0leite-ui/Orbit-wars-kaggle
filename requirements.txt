@@ -1,3 +1,9 @@
+# CPU-only PyTorch wheel index. producer / producer_plus depend on torch; the
+# default PyPI wheel drags in ~2 GB of unused CUDA libs. This extra index makes
+# the +cpu build available (resolves to torch-X+cpu, zero nvidia deps) while all
+# other packages still come from PyPI.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 kaggle>=1.6
 kaggle-environments>=1.28.0
 # cffi provides _cffi_backend, which cryptography's Rust binding needs.
@@ -9,3 +15,7 @@ numpy
 pandas
 ipykernel
 pytest
+# producer / producer_plus planner engine (the orbit_lite package). CPU wheel
+# via the --extra-index-url above. Without this, every fresh container must
+# `pip install torch` by hand before any local producer play/eval.
+torch
