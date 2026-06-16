@@ -7,3 +7,4 @@ least_resistance seed=305419896   seat=0 WIN  steps=155 max_ms= 536 rew=[1, -1, 
 least_resistance seed=12648430    seat=1 WIN  steps=149 max_ms= 526 rew=[-1, 1, -1, -1] | 6/6
 least_resistance seed=20240617    seat=2 WIN  steps=140 max_ms= 388 rew=[-1, -1, 1, -1] | 7/7
 least_resistance seed=88888883    seat=3 WIN  steps=137 max_ms= 576 rew=[-1, -1, -1, 1] | 8/8
+# SUMMARY  least_resistance vs {konbu17+roman1224+ykhnkf1100}: 8/8 first-place (fair share 25%)
