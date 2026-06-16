@@ -1,5 +1,22 @@
 # Inverse-producer study — short (200-step) games
 
+> ## ⚠️ CORRECTION (2026-06-16) — the head-to-head results below are INVALID
+> A contamination bug invalidated every inverse-vs-static head-to-head in this
+> doc (the 200-step "tie", the full-game "collapse"). The producer_plus bundles
+> set their flags via `os.environ.setdefault` at import; `os.environ` is
+> process-global and read per-turn, so loading the inverse focal (sets
+> `OPP_PROJECTION=1`) and the "static" opponent in ONE process leaked the flag
+> into the opponent — **both seats ran opp_projection**. So "inverse vs static"
+> was really inverse-vs-inverse → forced mirror draws.
+>
+> **Fixed** with per-turn env isolation (`scripts/iso_game.py`). Corrected
+> result: inverse **crushes** a genuinely static producer (seed 0: 807-15;
+> seed 1: 673-0, static eliminated by step 102) — the opponent model is hugely
+> valuable, as expected. The static-vs-static control, the decision-diff (run in
+> separate processes), and the v7_0 comparison (v7_0 ignores `PRODUCER_PLUS_*`)
+> were NOT contaminated and stand. See the 2026-06-16 kb entry for the corrected
+> write-up.
+
 **Date:** 2026-06-15 (night session, branch `claude/affectionate-newton-19kqrp`)
 **PI ask:** iterate on the "inverse producer" — like our producer, but instead
 of assuming a static opponent it assumes a *producer* opponent that maximises
