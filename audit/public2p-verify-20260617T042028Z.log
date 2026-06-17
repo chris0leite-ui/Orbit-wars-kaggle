@@ -10,3 +10,5 @@ vs konbu17     seed=76670184    seat=0 WIN  steps=115 focal_launch=119 opp_launc
 vs konbu17     seed=76670184    seat=1 WIN  steps=118 focal_launch=112 opp_launch=104 rew=[-1, 1]
 vs konbu17     seed=1492346051  seat=0 WIN  steps=106 focal_launch=38 opp_launch=12 rew=[1, -1]
 vs konbu17     seed=1492346051  seat=1 WIN  steps=106 focal_launch=38 opp_launch=12 rew=[-1, 1]
+vs konbu17     seed=768065184   seat=0 WIN  steps=101 focal_launch=56 opp_launch=88 rew=[1, -1]
+vs konbu17     seed=768065184   seat=1 WIN  steps=101 focal_launch=56 opp_launch=88 rew=[-1, 1]
