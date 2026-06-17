@@ -651,6 +651,7 @@ def _comet_paths_by_id_safe(obs_d):
 # every turn (it returns a non-move value, which the env silently drops).
 # --------------------------------------------------------------------------
 def agent(obs, configuration=None):
+    _turn_t0 = time.perf_counter()      # single per-turn clock shared by all phases
     obs_d = _as_dict(obs)
     me = int(obs_d.get("player", 0))
     raw_planets = obs_d.get("planets", []) or []
@@ -767,10 +768,9 @@ def agent(obs, configuration=None):
             out.append((id2slot[sid], id2slot[tid], int(sh), int(eta)))
         return out
 
-    _gen_t0 = time.perf_counter()
-    _gen_budget = _wallclock_ms()
+    _gen_cap = _wallclock_ms() * 0.6    # leave the rest of the per-turn budget for scoring
     for tgt in targets:
-        if (time.perf_counter() - _gen_t0) * 1000.0 > _gen_budget:
+        if (time.perf_counter() - _turn_t0) * 1000.0 > _gen_cap:
             break                       # bound candidate generation on dense boards
         tid = int(tgt.id)
         is_enemy = int(tgt.owner) != -1
@@ -937,7 +937,9 @@ def agent(obs, configuration=None):
         current = value_fallback([])
         floor = 0.5
     budget_ms = _value_budget(obs_d, _wallclock_ms())
-    t0 = time.perf_counter()
+    # Share the turn clock so candidate-gen + greedy are bounded together by ONE
+    # per-turn budget (not a fresh budget per phase, which summed past 1s).
+    t0 = _turn_t0
 
     # Fundamental (default OFF, both modes): order captures by their VALUE under
     # the objective (highest win-equity first) instead of cheapness, spending
@@ -1022,13 +1024,17 @@ def agent(obs, configuration=None):
             if key not in seen:
                 seen.add(key)
                 uniq.append(p)
+        # Bound the WHOLE turn: the pick gets only the time left under the per-turn
+        # budget, so candidate-gen + greedy + pick <= _wallclock_ms() instead of
+        # three separate budgets that could sum past the 1s actTimeout.
+        _rem = max(80.0, _wallclock_ms() - (time.perf_counter() - _turn_t0) * 1000.0)
         try:
             depth = _rollout_depth()
             if depth >= 2:
                 return _deep_pick(obs, configuration, me, num_seats, uniq,
                                   depth, budget_ms=_deep_budget(obs_d))
             return _twoply_pick(obs, configuration, me, num_seats, uniq,
-                                budget_ms=_twoply_budget(obs_d) if anytime_on else None)
+                                budget_ms=_twoply_budget(obs_d) if anytime_on else _rem)
         except Exception:
             return committed_emit
 
