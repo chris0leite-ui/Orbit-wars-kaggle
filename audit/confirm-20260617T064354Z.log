@@ -1,0 +1,6 @@
+# n>=32 confirmation (independent seeds) | ON=LR_HOLD_MARGIN=0.5,LR_DEFEND=1 | 2026-06-17T06:43:54.777646+00:00
+## 2P block: focal vs 1 opp(s), 32 DISTINCT seeds (one game/seed; seat rotated across seeds) = 32/variant
+2P OFF seed=148836657   seat=0 loss steps=124 fl=194 ol=231 max_ms= 328
+2P ON seed=148836657   seat=0 WIN  steps=149 fl=327 ol=262 max_ms= 316
+2P OFF seed=417780669   seat=1 WIN  steps=164 fl=291 ol=288 max_ms= 236
+2P ON seed=417780669   seat=1 WIN  steps=147 fl=247 ol=233 max_ms= 418
