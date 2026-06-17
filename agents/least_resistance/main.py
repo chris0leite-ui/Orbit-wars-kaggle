@@ -613,6 +613,10 @@ def agent(obs, configuration=None):
     # focuses the one opponent correctly there): boost enemy-owned targets so
     # denial captures (taking from opponents) outrank equal-production neutrals.
     enemy_boost = _f("LR_ENEMY_BOOST", 1.0) if num_seats >= 4 else 1.0
+    # Hold-sizing (default 0.0 = off): size enemy captures to take AND HOLD --
+    # add surplus garrison to survive the opponent's retake. Larger sizes force
+    # source-combining, so fewer / bigger fleets (concentration) emerge naturally.
+    hold_margin = _f("LR_HOLD_MARGIN", 0.0)
 
     def units_for(launch_triples):
         # launch_triples: list of (src_id, tgt_id, ships, eta)
@@ -645,6 +649,8 @@ def agent(obs, configuration=None):
                     continue
             defenders = prod * eta + tgt.ships if is_enemy else tgt.ships
             size = int(math.ceil(defenders)) + 1
+            if is_enemy and hold_margin > 0.0:
+                size += int(math.ceil(hold_margin * defenders))   # surplus to hold
             shots.append((eta, size, int(src.id), src, angle))
         if not shots:
             continue
@@ -700,6 +706,48 @@ def agent(obs, configuration=None):
             if not (units is None and id2slot is not None):
                 candidates.append({"emit": emit, "units": units, "srcs": srcs,
                                    "rank": rank, "front": front})
+
+    # Regroup / defense (default OFF): reinforce our own planets that an enemy
+    # fleet is bearing down on with enough force to flip -- keep HELD production
+    # instead of only ever grabbing new planets (the move we were blind to).
+    if (os.environ.get("LR_DEFEND", "0").strip().lower() in ("1", "true", "on", "yes")
+            and my_planets):
+        defend_range = _f("LR_DEFEND_RANGE", 35.0)
+        enemy_fleets = [f for f in fleets
+                        if int(f.owner) != me and int(f.owner) != -1]
+        for mine in my_planets:
+            mxy = (float(mine.x), float(mine.y))
+            threat = sum(float(f.ships) for f in enemy_fleets
+                         if dist(mxy, (float(f.x), float(f.y))) <= defend_range)
+            if threat <= float(mine.ships):
+                continue                                  # not under real threat
+            deficit = int(math.ceil(threat - float(mine.ships))) + 1
+            donors = sorted((p for p in my_planets if int(p.id) != int(mine.id)),
+                            key=lambda p: dist(mxy, (float(p.x), float(p.y))))
+            d_emit, d_triples, d_srcs, acc = [], [], {}, 0
+            for d in donors:
+                take = min(available.get(int(d.id), 0), deficit - acc)
+                if take <= 0:
+                    continue
+                shot = _plan_shot(d, mine, comet_ids, comet_paths, omega, take)
+                if shot is None:
+                    continue
+                a2, eta2, arr = shot
+                if not _sun_clear(d, arr):
+                    continue
+                d_emit.append([int(d.id), float(a2), take])
+                d_triples.append((int(d.id), int(mine.id), take, eta2))
+                d_srcs[int(d.id)] = take
+                acc += take
+                if acc >= deficit:
+                    break
+            if d_emit:
+                units = units_for(d_triples)
+                if not (units is None and id2slot is not None):
+                    candidates.append({"emit": d_emit, "units": units,
+                                       "srcs": d_srcs,
+                                       "rank": float(mine.production) * 2.0,
+                                       "front": 0.0})
 
     if not candidates:
         return []
