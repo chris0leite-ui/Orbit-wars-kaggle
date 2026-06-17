@@ -158,6 +158,13 @@ ROI_FLOOR = _f("LR_ROI_FLOOR", 1.5)            # min projected net-ship gain to 
 MAX_CANDIDATES = _i("LR_MAX_CANDIDATES", 28)
 FRONTIER_REF_SHIPS = _f("LR_FRONTIER_REF_SHIPS", 30.0)
 RANK_HINT_SHIPS = 20
+# Threat-aware capture sizing (LR_THREAT_SIZE): radius within which an enemy
+# fleet/garrison counts as able to recapture a planet, and how much of a parked
+# garrison to count (opponents won't commit all of it -- doing so empties their
+# own planet). 40 / 0.5 chosen from the recapture analysis (100% of ladder
+# recaptures had threat within 40; in-flight is the dominant term).
+THREAT_RADIUS = _f("LR_THREAT_RADIUS", 40.0)
+STATIONED_DISCOUNT = _f("LR_STATIONED_DISCOUNT", 0.5)
 # Fallback (no-torch) evaluator knobs.
 FALLBACK_HORIZON = _i("LR_FALLBACK_HORIZON", 10)
 FORCE_EVAL = os.environ.get("LR_EVAL", "").strip().lower()  # "orbit" | "fallback" | ""
@@ -235,6 +242,19 @@ def _rollout_eval():
     opponent rollout reproduces ~68% of them. This is where the compute headroom
     finally buys actual lookahead. Set LR_ROLLOUT_EVAL=1 to enable."""
     return os.environ.get("LR_ROLLOUT_EVAL", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
+def _threat_size():
+    """FUNDAMENTAL fix for the 4P recapture churn (default OFF). Size every
+    capture to beat the enemy force ALREADY able to reach that planet (in-flight
+    fleets + discounted parked garrison) instead of minimum force, so a planet we
+    take is one we can HOLD. Unaffordable (truly contested) captures are dropped
+    by the existing affordability check -> we skip the doomed grab and expand
+    elsewhere, rather than churning ships into planets that flip straight back.
+    The threat is 100% foreseeable from the observation (measured), so this is
+    analytic -- no rollout needed. Set LR_THREAT_SIZE=1 to enable."""
+    return os.environ.get("LR_THREAT_SIZE", "0").strip().lower() in (
         "1", "true", "on", "yes")
 
 
@@ -638,6 +658,27 @@ def agent(obs, configuration=None):
     # breadth-first minimum force, which was above fair share). See
     # knowledge-base/thoughts/2026-06-17-take-and-hold-is-a-2P-win-and-a-4P-disaster.md.
     hold_margin = _f("LR_HOLD_MARGIN", 0.5 if num_seats <= 2 else 0.0)
+    threat_size = _threat_size()
+
+    def reachable_threat(tx, ty):
+        """Visible enemy force that can recapture a planet at (tx, ty): in-flight
+        enemy fleets near it (full weight) + nearby parked enemy garrison
+        (discounted). Drives threat-aware capture sizing so we take planets with
+        enough to HOLD against what is already on the board."""
+        t = 0.0
+        for fl in fleets:
+            o = int(fl.owner)
+            if o == me or o == -1:
+                continue
+            if dist((tx, ty), (float(fl.x), float(fl.y))) <= THREAT_RADIUS:
+                t += float(fl.ships)
+        for p in planets:
+            o = int(p.owner)
+            if o == me or o == -1:
+                continue
+            if dist((tx, ty), (float(p.x), float(p.y))) <= THREAT_RADIUS:
+                t += STATIONED_DISCOUNT * float(p.ships)
+        return t
 
     def units_for(launch_triples):
         # launch_triples: list of (src_id, tgt_id, ships, eta)
@@ -655,6 +696,8 @@ def agent(obs, configuration=None):
         is_enemy = int(tgt.owner) != -1
         is_comet = tid in comet_ids
         prod = float(tgt.production)
+        # Threat-aware sizing: the enemy force already able to retake this planet.
+        tgt_threat = reachable_threat(float(tgt.x), float(tgt.y)) if threat_size else 0.0
 
         shots = []   # (eta, size, sid, src, angle)
         for src in my_planets:
@@ -669,9 +712,15 @@ def agent(obs, configuration=None):
                 if life is not None and life <= eta:
                     continue
             defenders = prod * eta + tgt.ships if is_enemy else tgt.ships
-            size = int(math.ceil(defenders)) + 1
-            if is_enemy and hold_margin > 0.0:
-                size += int(math.ceil(hold_margin * defenders))   # surplus to hold
+            if threat_size:
+                # Size to take AND hold against the visible incoming + reachable
+                # threat. Unaffordable (truly contested) captures get dropped by
+                # the affordability check below -> skip the doomed grab.
+                size = int(math.ceil(defenders + tgt_threat)) + 1
+            else:
+                size = int(math.ceil(defenders)) + 1
+                if is_enemy and hold_margin > 0.0:
+                    size += int(math.ceil(hold_margin * defenders))   # surplus to hold
             shots.append((eta, size, int(src.id), src, angle))
         if not shots:
             continue
