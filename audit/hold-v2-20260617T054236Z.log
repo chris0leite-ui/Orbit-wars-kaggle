@@ -14,3 +14,5 @@ ON  vs producerV2  seed=76670184    seat=0 WIN  steps=138 focal_launch=238 opp_l
 ON  vs producerV2  seed=76670184    seat=1 WIN  steps=166 focal_launch=313 opp_launch=321 max_ms= 417 rew=[-1, 1]
 ON  vs producerV2  seed=305419896   seat=0 loss steps=165 focal_launch=187 opp_launch=192 max_ms= 221 rew=[-1, 1]
 ON  vs producerV2  seed=305419896   seat=1 WIN  steps=220 focal_launch=288 opp_launch=273 max_ms= 221 rew=[-1, 1]
+ON  vs producerV2  seed=12648430    seat=0 WIN  steps=110 focal_launch=83 opp_launch=63 max_ms= 311 rew=[1, -1]
+ON  vs producerV2  seed=12648430    seat=1 WIN  steps=117 focal_launch=88 opp_launch=55 max_ms= 323 rew=[-1, 1]
