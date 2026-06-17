@@ -288,6 +288,10 @@ def _recapture_moves(obs_dict, seat, exclude_srcs=()):
     if not mine or not rivals:
         return []
     omega = float(obs_dict.get("angular_velocity", 0.0) or 0.0)
+    # Thread real comet data so a rival-held comet is aimed along its path, not at
+    # its stale current position (it moves each turn).
+    comet_ids = frozenset(int(c) for c in (obs_dict.get("comet_planet_ids", []) or []))
+    comet_paths = _comet_paths_by_id_safe(obs_dict) if comet_ids else {}
     avail = {int(p.id): float(p.ships) for p in mine}
     out, used = [], set()
     for tgt in sorted(rivals, key=lambda p: float(p.ships)):   # cheapest retakes first
@@ -299,7 +303,7 @@ def _recapture_moves(obs_dict, seat, exclude_srcs=()):
                 continue
             if dist((float(src.x), float(src.y)), txy) > RECAP_RANGE:
                 break                                          # nearest is already too far
-            shot = _plan_shot(src, tgt, frozenset(), {}, omega, need)
+            shot = _plan_shot(src, tgt, comet_ids, comet_paths, omega, need)
             if shot is None:
                 continue
             ang, _eta, _arr = shot
@@ -344,12 +348,18 @@ def _as_dict(obs):
 
 
 def _num_seats(planets, fleets):
+    """Seats to model = (highest live seat index + 1), clamped to >= 2. A seat is
+    live if it owns a planet OR has an in-flight fleet, so a fully-eliminated
+    high-index seat is dropped (its slot would only idle) while every seat with
+    any presence is covered. Correct for both the lookahead seat count and the
+    2P-vs-multi-front strategy gate. (Was `4 if max_owner>=2 else 2`, which
+    over-counted a 3-player board as 4 and conflated owner-index with count.)"""
     max_owner = -1
     for p in planets:
         max_owner = max(max_owner, int(p.owner))
     for f in fleets:
         max_owner = max(max_owner, int(f.owner))
-    return 4 if max_owner >= 2 else 2
+    return max(2, max_owner + 1)
 
 
 # --------------------------------------------------------------------------
@@ -555,8 +565,9 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=N
     best_plan, best_v = candidate_plans[0], None
     t0 = time.perf_counter()
     for plan in candidate_plans:
-        if best_v is not None and (time.perf_counter() - t0) * 1000.0 > budget_ms:
-            break
+        if (time.perf_counter() - t0) * 1000.0 > budget_ms:
+            break               # time check is unconditional: a run of None-valued
+            #                     plans must not let the loop ignore the budget
         v = value(plan)
         if v is None:
             continue
@@ -600,8 +611,9 @@ def _deep_pick(obs, configuration, me, num_seats, candidate_plans, depth, budget
     best_plan, best_v = candidate_plans[0], None
     t0 = time.perf_counter()
     for plan in candidate_plans:
-        if best_v is not None and (time.perf_counter() - t0) * 1000.0 > budget_ms:
-            break
+        if (time.perf_counter() - t0) * 1000.0 > budget_ms:
+            break               # time check is unconditional: a run of None-valued
+            #                     plans must not let the loop ignore the budget
         v = rollout_value(plan)
         if v is None:
             continue
@@ -685,7 +697,11 @@ def agent(obs, configuration=None):
         for _ in range(FALLBACK_HORIZON - 1):
             if s.fake_env.done:
                 break
-            acts = [lite_greedy_policy(s.state[i].observation) for i in range(num_seats)]
+            # `me` stays idle after turn 1 (like the 2-ply pick) so the candidate's
+            # first-move signal isn't washed out by an identical greedy continuation
+            # across every candidate; only the opponents apply pressure.
+            acts = [lite_greedy_policy(s.state[i].observation) if i != me else []
+                    for i in range(num_seats)]
             step(s, acts, in_place=True)
         return inflight_value(s.state[me].observation, me)
 
@@ -751,7 +767,11 @@ def agent(obs, configuration=None):
             out.append((id2slot[sid], id2slot[tid], int(sh), int(eta)))
         return out
 
+    _gen_t0 = time.perf_counter()
+    _gen_budget = _wallclock_ms()
     for tgt in targets:
+        if (time.perf_counter() - _gen_t0) * 1000.0 > _gen_budget:
+            break                       # bound candidate generation on dense boards
         tid = int(tgt.id)
         is_enemy = int(tgt.owner) != -1
         is_comet = tid in comet_ids
@@ -811,13 +831,22 @@ def agent(obs, configuration=None):
             candidates.append(solo)
             continue
 
-        # Gang-up the nearest sources when none can solo (neutral attrition or
-        # near-simultaneous enemy wave; the evaluator validates either way).
-        need = shots[0][1]
-        emit, triples, srcs, acc = [], [], {}, 0
+        # Gang-up the nearest sources when none can solo. Provision for the
+        # defenders at the LATEST contributing fleet's ACTUAL arrival: an enemy
+        # keeps producing, and the partial fleets fly slower than the 20-ship
+        # ranking hint -- both make the old "fastest source's size" total too
+        # small, so the wave lands under-strength and the capture flips straight
+        # back. Size against the slowest fleet actually used.
+        def _required(latest_eta):
+            d = (prod * latest_eta + float(tgt.ships)) if is_enemy else float(tgt.ships)
+            return int(math.ceil(d + tgt_threat)) + 1
+        emit, triples, srcs, acc, max_eta = [], [], {}, 0, 0.0
         for (eta, size, sid, src, angle) in shots:
             if sid in srcs:
                 continue
+            need = _required(max(max_eta, float(eta)))
+            if acc >= need:
+                break
             take = min(available[sid], need - acc)
             if take <= 0:
                 continue
@@ -829,9 +858,8 @@ def agent(obs, configuration=None):
             triples.append((sid, tid, take, eta2))
             srcs[sid] = take
             acc += take
-            if acc >= need:
-                break
-        if acc >= need and emit:
+            max_eta = max(max_eta, float(eta2))
+        if emit and acc >= _required(max_eta):
             units = units_for(triples)
             if not (units is None and id2slot is not None):
                 candidates.append({"emit": emit, "units": units, "srcs": srcs,
@@ -849,8 +877,18 @@ def agent(obs, configuration=None):
                         if int(f.owner) != me and int(f.owner) != -1]
         for mine in my_planets:
             mxy = (float(mine.x), float(mine.y))
-            threat = sum(float(f.ships) for f in enemy_fleets
-                         if dist(mxy, (float(f.x), float(f.y))) <= defend_range)
+            threat = 0.0
+            for f in enemy_fleets:
+                fx, fy = float(f.x), float(f.y)
+                if dist(mxy, (fx, fy)) > defend_range:
+                    continue
+                # Only count fleets CLOSING on us -- a fleet within range but
+                # heading away (already past, or aimed elsewhere) is not a real
+                # threat, and reinforcing against it wastes ships (and these
+                # defense candidates outrank captures).
+                if math.cos(float(f.angle) - math.atan2(mxy[1] - fy, mxy[0] - fx)) <= 0.0:
+                    continue
+                threat += float(f.ships)
             if threat <= float(mine.ships):
                 continue                                  # not under real threat
             deficit = int(math.ceil(threat - float(mine.ships))) + 1
@@ -943,12 +981,19 @@ def agent(obs, configuration=None):
         plans = [committed_emit, producer_me, []]
         if len(committed_emit) > 2:
             plans.append(committed_emit[:len(committed_emit) // 2])
-        best, best_v = committed_emit, float("-inf")
+        # Own time budget + timer: the greedy loop above already consumed
+        # `budget_ms` against `t0`, so sharing it would skip this re-rank entirely.
+        # Guard each rollout so one bad terminal state can't crash the turn.
+        t_pick = time.perf_counter()
+        best, best_v = committed_emit, None
         for p in plans:
-            if (time.perf_counter() - t0) * 1000.0 > budget_ms:
+            if best_v is not None and (time.perf_counter() - t_pick) * 1000.0 > TWOPLY_BUDGET_MS:
                 break
-            v = value_fallback(p)
-            if v > best_v:
+            try:
+                v = value_fallback(p)
+            except Exception:
+                continue
+            if best_v is None or v > best_v:
                 best, best_v = p, v
         return best
 
