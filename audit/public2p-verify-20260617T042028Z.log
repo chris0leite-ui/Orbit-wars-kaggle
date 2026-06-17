@@ -24,3 +24,5 @@ vs ykhnkf1100  seed=76670184    seat=0 WIN  steps=101 focal_launch=111 opp_launc
 vs ykhnkf1100  seed=76670184    seat=1 WIN  steps=114 focal_launch=102 opp_launch=74 rew=[-1, 1]
 vs ykhnkf1100  seed=1492346051  seat=0 WIN  steps=106 focal_launch=44 opp_launch=12 rew=[1, -1]
 vs ykhnkf1100  seed=1492346051  seat=1 WIN  steps=106 focal_launch=44 opp_launch=12 rew=[-1, 1]
+vs ykhnkf1100  seed=768065184   seat=0 WIN  steps=94 focal_launch=69 opp_launch=74 rew=[1, -1]
+vs ykhnkf1100  seed=768065184   seat=1 WIN  steps=94 focal_launch=70 opp_launch=74 rew=[-1, 1]
