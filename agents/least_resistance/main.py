@@ -270,6 +270,15 @@ def _arrival_cap():
         "1", "true", "on", "yes")
 
 
+def _hold_neutral():
+    """Default OFF. Apply the hold-margin to NEUTRAL captures too, not just enemy
+    ones. Our captures are neutral-dominated and min-force (median fleet ~20) while
+    V2 consolidates (median ~36) and holds them; the enemy-only margin never moved
+    our sizes. Only bites when hold_margin>0 (i.e. 2P). Set LR_HOLD_NEUTRAL=1."""
+    return os.environ.get("LR_HOLD_NEUTRAL", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _recapture_opp():
     """FUNDAMENTAL fix for the recapture churn (default OFF). The lookahead's
     opponent model (the producer policy) recaptures our thinly-held captures only
@@ -751,6 +760,7 @@ def agent(obs, configuration=None):
     # past the projection horizon -- the evaluator can't see them resolve, so they
     # look free and we over-extend. Per-mode horizon; neutral expansion untouched.
     arrival_cap = _arrival_cap()
+    hold_neutral = _hold_neutral()   # extend hold-margin to neutral captures (2P consolidation)
     horizon_cap = PROJECT_HORIZON_4P if num_seats >= 4 else PROJECT_HORIZON_2P
 
     def reachable_threat(tx, ty):
@@ -817,7 +827,7 @@ def agent(obs, configuration=None):
                 size = int(math.ceil(defenders + tgt_threat)) + 1
             else:
                 size = int(math.ceil(defenders)) + 1
-                if is_enemy and hold_margin > 0.0:
+                if hold_margin > 0.0 and (is_enemy or hold_neutral):
                     size += int(math.ceil(hold_margin * defenders))   # surplus to hold
             shots.append((eta, size, int(src.id), src, angle))
         if not shots:
