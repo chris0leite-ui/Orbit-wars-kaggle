@@ -130,3 +130,4 @@
 4P ON seed=1016262680  seat=2 WIN  steps=186 fl=296 ol=496 max_ms= 418
 4P OFF seed=633645402   seat=3 WIN  steps=143 fl=196 ol=309 max_ms= 452
 4P ON seed=633645402   seat=3 WIN  steps=203 fl=363 ol=441 max_ms= 468
+# 4P RESULT  OFF 18/32  ON 19/32  (idle OFF=0 ON=0; max_ms OFF=547 ON=569)
