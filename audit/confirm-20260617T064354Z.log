@@ -40,3 +40,7 @@
 2P ON seed=94140170    seat=0 WIN  steps=125 fl=59 ol=34 max_ms= 200
 2P OFF seed=1521499859  seat=1 WIN  steps=168 fl=146 ol=138 max_ms= 287
 2P ON seed=1521499859  seat=1 WIN  steps=162 fl=152 ol=134 max_ms= 196
+2P OFF seed=538479253   seat=0 loss steps=176 fl=268 ol=295 max_ms= 347
+2P ON seed=538479253   seat=0 loss steps=143 fl=205 ol=230 max_ms= 333
+2P OFF seed=1221550637  seat=1 WIN  steps=183 fl=33 ol=19 max_ms= 170
+2P ON seed=1221550637  seat=1 WIN  steps=212 fl=33 ol=16 max_ms= 189
