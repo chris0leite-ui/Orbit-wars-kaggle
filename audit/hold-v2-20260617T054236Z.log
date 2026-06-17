@@ -7,3 +7,6 @@ OFF vs producerV2  seed=305419896   seat=0 loss steps=131 focal_launch=111 opp_l
 OFF vs producerV2  seed=305419896   seat=1 loss steps=136 focal_launch=109 opp_launch=153 max_ms= 319 rew=[1, -1]
 OFF vs producerV2  seed=12648430    seat=0 WIN  steps=125 focal_launch=90 opp_launch=64 max_ms= 340 rew=[1, -1]
 OFF vs producerV2  seed=12648430    seat=1 WIN  steps=125 focal_launch=90 opp_launch=64 max_ms= 315 rew=[-1, 1]
+# OFF vs producerV2: 3/8 wins on valid games (0 idle); focal max_ms=408
+ON  vs producerV2  seed=768065184   seat=0 WIN  steps=155 focal_launch=214 opp_launch=186 max_ms= 294 rew=[1, -1]
+ON  vs producerV2  seed=768065184   seat=1 loss steps=148 focal_launch=171 opp_launch=167 max_ms= 298 rew=[1, -1]
