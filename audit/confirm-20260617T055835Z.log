@@ -1,0 +1,6 @@
+# n>=32 confirmation | ON=LR_HOLD_MARGIN=0.5,LR_DEFEND=1 | 2026-06-17T05:58:35.431703+00:00
+## 2P block: focal vs 1 opp(s), 16 seeds x 2 seats = 32/variant
+2P OFF seed=76670184    seat=0 loss steps=118 fl=175 ol=203 max_ms= 325
+2P ON seed=76670184    seat=0 WIN  steps=138 fl=238 ol=237 max_ms= 356
+2P OFF seed=76670184    seat=1 WIN  steps=146 fl=246 ol=245 max_ms= 412
+2P ON seed=76670184    seat=1 WIN  steps=166 fl=313 ol=321 max_ms= 338
