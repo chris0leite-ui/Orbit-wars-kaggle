@@ -19,3 +19,5 @@ ON  vs producerV2  seed=12648430    seat=1 WIN  steps=117 focal_launch=88 opp_la
 # ON  vs producerV2: 6/8 wins on valid games (0 idle); focal max_ms=417
 ON  vs roman1224   seed=768065184   seat=0 WIN  steps=101 focal_launch=58 opp_launch=67 max_ms= 244 rew=[1, -1]
 ON  vs roman1224   seed=768065184   seat=1 WIN  steps=110 focal_launch=66 opp_launch=60 max_ms= 301 rew=[-1, 1]
+ON  vs roman1224   seed=305419896   seat=0 WIN  steps=120 focal_launch=62 opp_launch=80 max_ms= 245 rew=[1, -1]
+ON  vs roman1224   seed=305419896   seat=1 WIN  steps=105 focal_launch=73 opp_launch=79 max_ms= 250 rew=[-1, 1]
