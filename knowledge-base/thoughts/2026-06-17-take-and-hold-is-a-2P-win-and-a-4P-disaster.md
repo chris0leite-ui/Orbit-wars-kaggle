@@ -29,16 +29,54 @@ This also explains why the local n=32 panel missed it: "4P parity" at n=32 was
 too noisy / too favorable a panel to catch a −20pp ladder collapse. The ladder
 is the truth.
 
-## Why we lose 4P (loss trajectories, 17 take-and-hold vs 22 lr-fixed losses)
+## CORRECTION (same day, from PI replay observations): it is RECAPTURE CHURN, not under-expansion
+
+The PI watched 4P replays and pushed back: *"we are not expanding too slowly, we
+are rather too aggressive too early"* and *"we capture a neutral and the opponent
+recaptures it — where is our thinking?"* Measured directly, the PI is right and
+my "under-expand" reading was a symptom, not the cause:
+
+- **~⅓ of opening (steps 0–30) ship-mass is aimed at ENEMY planets** (31%
+  take-and-hold, 32% lr-fixed) instead of uncontested neutrals — genuinely
+  aggressive for a 4P FFA opening, and present in BOTH agents.
+- **The killer metric — recapture churn:** across the 17 take-and-hold 4P
+  losses, of **227 planets captured, 98 (43%) were recaptured within 8 steps**,
+  and **90 of those 98 (92%) had an enemy fleet already inbound with more ships
+  than the garrison we left (median garrison 18).** We capture straight into a
+  *visible* recapture.
+
+So we are not passive — we are HYPERACTIVE and ineffective: we grab tons of
+planets, ~half evaporate immediately, which only *looks* like under-expansion in
+a step-30 planet snapshot. The "collapse 3.8→2.9" above is this churn.
+
+**Modeling cause (the real one):** capture sizing is minimum force (`garrison+1`)
+and the value function credits a captured planet's production *as if we keep it*
+— it is **blind to enemy fleets already in flight toward that planet.** The 2-ply
+lookahead / garrison-flow leaf does not subtract the visible recapture, so a
+planet we will lose in 3 turns scores like one we will hold.
+
+**This supersedes the player-count gate as the fix.** The gate reverts 4P to
+minimum-force captures — i.e. exactly the behavior that churns — so it does not
+address the root cause. Built + bundled (sha `39679a9a`) as a possible interim,
+but shelved.
+
+**The fundamental fix (proposed, awaiting sign-off): recapture-aware capture
+valuation.** Size every capture (neutral AND enemy) to survive the enemy mass
+*already inbound to that specific planet*; if we cannot afford to hold it, do not
+take it (redirect the ships to a holdable target). The "dynamic margin" done
+right — margin = the real visible incoming threat per planet, not a flat 0.5 and
+not a 2P/4P gate. Kills the churn, tempers early aggression, and spends the
+compute headroom (per-candidate threat evaluation). **Verifiable without trusting
+the ladder:** reproduce the 43%/92% recapture rate locally, apply the fix,
+confirm the foreseeable-recapture rate drops (a behavioral check independent of
+local-μ-predicts-ladder-μ).
+
+## (Original, now-superseded framing) under-expand + collapse
 
 - **Under-expand:** take-and-hold holds **3.2 planets @step30** vs lr-fixed
-  **3.8** — fewer opening captures (6.5 vs 7.8 launches in steps 0–30), because
-  ships go into over-sized captures + reinforcing instead of grabbing ground.
+  **3.8** — fewer opening captures (6.5 vs 7.8 launches in steps 0–30).
 - **Then collapse:** take-and-hold falls 3.8 planets @60 → **2.9 @90**;
-  lr-fixed holds steady (4.3 → 4.0). The hold-margin is sized to survive **one**
-  opponent's retake, but in 4P **three** opponents apply pressure, so the margin
-  is wrong and the planet falls anyway. We pay the concentration cost (fewer
-  planets) without the benefit (holding).
+  lr-fixed holds steady (4.3 → 4.0). (Re-read above as recapture churn.)
 
 **Mechanism in one sentence:** concentrate-and-hold is a *duel* strategy. 2P is
 one front — concentrate, overwhelm, hold against the single rival → wins (70%).

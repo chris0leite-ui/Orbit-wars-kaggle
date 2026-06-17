@@ -613,11 +613,16 @@ def agent(obs, configuration=None):
     # focuses the one opponent correctly there): boost enemy-owned targets so
     # denial captures (taking from opponents) outrank equal-production neutrals.
     enemy_boost = _f("LR_ENEMY_BOOST", 1.0) if num_seats >= 4 else 1.0
-    # Hold-sizing (default 0.5; confirmed vs Producer V2): size enemy captures to
-    # take AND HOLD -- add surplus garrison to survive the opponent's retake.
-    # Larger sizes force source-combining, so fewer / bigger fleets (concentration)
-    # emerge naturally. Set LR_HOLD_MARGIN=0 to disable.
-    hold_margin = _f("LR_HOLD_MARGIN", 0.5)
+    # Hold-sizing: size enemy captures to take AND HOLD (surplus garrison to
+    # survive the opponent's retake), which forces source-combining => fewer /
+    # bigger concentrated fleets. This is a DUEL tactic: on the real ladder it is
+    # a 2P WIN (70% vs the breadth-first agent's 61%) but a 4P DISASTER (10.5% vs
+    # 31.2%) -- 4P's three fronts punish concentrate-and-hold (under-expand at
+    # step 30, then collapse by step 90 because a margin sized for ONE opponent
+    # cannot hold against THREE). So default ON in 2P, OFF in 4P (4P falls back to
+    # breadth-first minimum force, which was above fair share). See
+    # knowledge-base/thoughts/2026-06-17-take-and-hold-is-a-2P-win-and-a-4P-disaster.md.
+    hold_margin = _f("LR_HOLD_MARGIN", 0.5 if num_seats <= 2 else 0.0)
 
     def units_for(launch_triples):
         # launch_triples: list of (src_id, tgt_id, ships, eta)
@@ -708,11 +713,12 @@ def agent(obs, configuration=None):
                 candidates.append({"emit": emit, "units": units, "srcs": srcs,
                                    "rank": rank, "front": front})
 
-    # Regroup / defense (default ON; confirmed vs Producer V2): reinforce our own
-    # planets that an enemy fleet is bearing down on with enough force to flip --
-    # keep HELD production instead of only ever grabbing new planets (the move we
-    # were structurally blind to). Set LR_DEFEND=0 to disable.
-    if (os.environ.get("LR_DEFEND", "1").strip().lower() in ("1", "true", "on", "yes")
+    # Regroup / defense: reinforce our own planets an enemy fleet is about to flip
+    # -- keep HELD production instead of only grabbing new planets. Same duel
+    # tactic as hold-sizing, gated the same way: default ON in 2P, OFF in 4P
+    # (in 4P it turtles while three rivals out-expand -- part of the 4P collapse).
+    _defend_on = os.environ.get("LR_DEFEND", "1" if num_seats <= 2 else "0")
+    if (_defend_on.strip().lower() in ("1", "true", "on", "yes")
             and my_planets):
         defend_range = _f("LR_DEFEND_RANGE", 35.0)
         enemy_fleets = [f for f in fleets
