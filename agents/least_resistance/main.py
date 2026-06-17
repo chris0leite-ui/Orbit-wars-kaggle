@@ -165,6 +165,7 @@ RANK_HINT_SHIPS = 20
 # recaptures had threat within 40; in-flight is the dominant term).
 THREAT_RADIUS = _f("LR_THREAT_RADIUS", 40.0)
 STATIONED_DISCOUNT = _f("LR_STATIONED_DISCOUNT", 0.5)
+RECAP_RANGE = _f("LR_RECAP_RANGE", 45.0)   # opponent-model recapture reach (lookahead only)
 # Fallback (no-torch) evaluator knobs.
 FALLBACK_HORIZON = _i("LR_FALLBACK_HORIZON", 10)
 FORCE_EVAL = os.environ.get("LR_EVAL", "").strip().lower()  # "orbit" | "fallback" | ""
@@ -256,6 +257,57 @@ def _threat_size():
     analytic -- no rollout needed. Set LR_THREAT_SIZE=1 to enable."""
     return os.environ.get("LR_THREAT_SIZE", "0").strip().lower() in (
         "1", "true", "on", "yes")
+
+
+def _recapture_opp():
+    """FUNDAMENTAL fix for the recapture churn (default OFF). The lookahead's
+    opponent model (the producer policy) recaptures our thinly-held captures only
+    ~13% of the time, but the real ladder recaptures ~43% -- so the simulation
+    thinks thin captures are safe and the agent makes them. With this on, the
+    opponent's modeled REPLY also launches to retake the weak planets we just took
+    (a competent reactive recapture), so the production-aware flow-leaf terminal
+    correctly penalizes captures that will not hold, and the agent prefers the
+    holdable plan. Selection, not sizing (no over-commit); production-aware (no
+    defeatism). Set LR_RECAP_OPP=1 to enable."""
+    return os.environ.get("LR_RECAP_OPP", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
+def _recapture_moves(obs_dict, seat, exclude_srcs=()):
+    """A competent opponent's reactive recapture, used ONLY inside the lookahead's
+    opponent replies: `seat` launches from its nearest unused source to retake the
+    cheapest weakly-held rival planets within reach (one launch per source). This
+    is what real ladder opponents do and the producer model omits."""
+    raw = obs_dict.get("planets", []) or []
+    if not raw:
+        return []
+    planets = [Planet(*p) for p in raw]
+    mine = [p for p in planets
+            if int(p.owner) == seat and int(p.id) not in exclude_srcs]
+    rivals = [p for p in planets if int(p.owner) != seat and int(p.owner) != -1]
+    if not mine or not rivals:
+        return []
+    omega = float(obs_dict.get("angular_velocity", 0.0) or 0.0)
+    avail = {int(p.id): float(p.ships) for p in mine}
+    out, used = [], set()
+    for tgt in sorted(rivals, key=lambda p: float(p.ships)):   # cheapest retakes first
+        need = int(tgt.ships) + 1
+        txy = (float(tgt.x), float(tgt.y))
+        for src in sorted(mine, key=lambda s: dist((float(s.x), float(s.y)), txy)):
+            sid = int(src.id)
+            if sid in used or avail.get(sid, 0.0) < need:
+                continue
+            if dist((float(src.x), float(src.y)), txy) > RECAP_RANGE:
+                break                                          # nearest is already too far
+            shot = _plan_shot(src, tgt, frozenset(), {}, omega, need)
+            if shot is None:
+                continue
+            ang, _eta, _arr = shot
+            out.append([sid, float(ang), need])
+            used.add(sid)
+            avail[sid] -= need
+            break
+    return out
 
 
 def _deep_budget(obs_d):
@@ -482,10 +534,18 @@ def _twoply_pick(obs, configuration, me, num_seats, candidate_plans, budget_ms=N
         if not s.fake_env.done:
             # One more turn of the opponents' pressure (each replies; we stay
             # idle -- conservative, and it surfaces the next-turn punishment the
-            # 1-ply scorer misses).
+            # 1-ply scorer misses). With LR_RECAP_OPP, each opponent ALSO launches
+            # to retake the weak planets we just took (the reactive recapture the
+            # producer model omits) -- so thin captures get retaken in-sim and the
+            # flow-leaf terminal penalizes them.
+            recap_on = _recapture_opp()
             nxt = [[] for _ in range(num_seats)]
             for i in opps:
-                nxt[i] = _producer_move_obs(s.state[i].observation, i)
+                pm = _producer_move_obs(s.state[i].observation, i)
+                if recap_on:
+                    used = {int(l[0]) for l in pm if isinstance(l, (list, tuple)) and l}
+                    pm = pm + _recapture_moves(s.state[i].observation, i, exclude_srcs=used)
+                nxt[i] = pm
             step(s, nxt, in_place=True)
         try:
             return _project_value(s.state[int(me)].observation, me)
