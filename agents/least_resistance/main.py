@@ -226,6 +226,18 @@ def _rollout_depth():
     return _i("LR_ROLLOUT_DEPTH", 0)
 
 
+def _rollout_eval():
+    """FUNDAMENTAL foresight gate (default OFF). Score candidate plans by a real
+    fast_sim rollout under the producer policy -- where opponents RESPOND, incl.
+    launching at our thinly-held captures -- instead of the orbit_lite garrison-
+    FLOW projection, which is blind to discrete recaptures. A real-state probe
+    over 40 ladder recaptures showed the flow leaf foresees ~0% while a producer-
+    opponent rollout reproduces ~68% of them. This is where the compute headroom
+    finally buys actual lookahead. Set LR_ROLLOUT_EVAL=1 to enable."""
+    return os.environ.get("LR_ROLLOUT_EVAL", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _deep_budget(obs_d):
     """Per-turn budget (ms) for deep rollout search. Draws a self-limiting slice
     of the episode overage bank (obs.remainingOverageTime) so pivotal turns can
@@ -577,9 +589,12 @@ def agent(obs, configuration=None):
         return []                       # explicit orbit-only request but unavailable
     score_units, id2slot = (orbit if orbit is not None else (None, None))
 
-    # Fallback fast_sim scorer (used only when orbit_lite is unavailable).
+    # Rollout scorer. Used as the FALLBACK when orbit_lite is unavailable, and --
+    # when LR_ROLLOUT_EVAL is on -- as the PRIMARY evaluator over the flow leaf,
+    # because a real-engine rollout foresees recaptures the flow projection misses.
+    rollout_eval = _rollout_eval()
     fb_snap = None
-    if orbit is None:
+    if orbit is None or rollout_eval:
         fb_snap = from_obs(obs, configuration, num_seats=num_seats)
 
     def value_fallback(emit_launches):
@@ -767,7 +782,8 @@ def agent(obs, configuration=None):
     committed_emit = []
     committed_units = []
     avail = dict(available)
-    if orbit is not None:
+    use_rollout_score = (orbit is None) or rollout_eval
+    if not use_rollout_score:
         current = 0.0                       # score of the empty plan
         floor = ROI_FLOOR
     else:
@@ -795,16 +811,37 @@ def agent(obs, configuration=None):
             break
         if any(avail.get(s, 0) < sz for s, sz in c["srcs"].items()):
             continue
-        if orbit is not None:
-            v = score_units(committed_units + c["units"])
-        else:
+        if use_rollout_score:
             v = value_fallback(committed_emit + c["emit"])
+        else:
+            v = score_units(committed_units + c["units"])
         if v > current + floor:
             committed_emit = committed_emit + c["emit"]
             committed_units = committed_units + (c["units"] or [])
             current = v
             for s, sz in c["srcs"].items():
                 avail[s] = avail.get(s, 0) - sz
+
+    # ---- rollout-based final pick (LR_ROLLOUT_EVAL): choose among a few full
+    #      plans by their value AFTER opponents respond in the REAL engine, so a
+    #      committed plan whose captures get recaptured is rejected for a milder
+    #      plan or the producer move. Replaces the flow-based 2-ply (blind to it).
+    if use_rollout_score:
+        try:
+            producer_me = _producer_move_obs(obs, me)
+        except Exception:
+            producer_me = []
+        plans = [committed_emit, producer_me, []]
+        if len(committed_emit) > 2:
+            plans.append(committed_emit[:len(committed_emit) // 2])
+        best, best_v = committed_emit, float("-inf")
+        for p in plans:
+            if (time.perf_counter() - t0) * 1000.0 > budget_ms:
+                break
+            v = value_fallback(p)
+            if v > best_v:
+                best, best_v = p, v
+        return best
 
     # ---- 2-ply lookahead pick (2P only): choose among a few full-plans by
     #      their value AFTER the producer's reply + a producer-vs-producer turn,
