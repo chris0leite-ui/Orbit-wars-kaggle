@@ -19,3 +19,6 @@ vs roman1224   seed=1492346051  seat=0 WIN  steps=106 focal_launch=44 opp_launch
 vs roman1224   seed=1492346051  seat=1 WIN  steps=106 focal_launch=44 opp_launch=11 rew=[-1, 1]
 vs roman1224   seed=768065184   seat=0 WIN  steps=101 focal_launch=58 opp_launch=67 rew=[1, -1]
 vs roman1224   seed=768065184   seat=1 WIN  steps=101 focal_launch=58 opp_launch=67 rew=[-1, 1]
+# roman1224: focal 6/6 wins on VALID games (0 invalid/idle of 6)
+vs ykhnkf1100  seed=76670184    seat=0 WIN  steps=101 focal_launch=111 opp_launch=82 rew=[1, -1]
+vs ykhnkf1100  seed=76670184    seat=1 WIN  steps=114 focal_launch=102 opp_launch=74 rew=[-1, 1]
