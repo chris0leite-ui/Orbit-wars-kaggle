@@ -20,6 +20,17 @@
 
 ## Pending — promotion needed
 
+### [x] [CROSS-CUTTING] A/B independence: one game per seed, never reuse a seed across seats
+
+`tag: ab-seat-reuse-breaks-independence` (2026-06-17, PI nag). Running an
+A/B as "N seeds × S seats" replays each MAP S times → those games are
+correlated, not independent. Counting N×S as the sample size makes the
+Wilson CI too narrow and overstates confidence (it manufactured a false 2P
+"lift" that vanished at true n). **Rule: every game uses a fresh distinct
+seed; rotate the SEAT across DIFFERENT seeds for balance, never within a
+seed.** For an A/B, OFF and ON share each seed+seat (a valid *paired* diff);
+independence only has to hold ACROSS seeds. Applied in `scripts/verify_*.py`.
+
 ### [ ] [CROSS-CUTTING] **TOP PRIORITY** SessionStart hook: bootstrap + git fetch
 
 `tag: fix-not-validated-against-real-failing-state` (2026-05-14),

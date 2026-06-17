@@ -1,13 +1,18 @@
 """n>=32 confirmation of take-and-hold (LR_HOLD_MARGIN + LR_DEFEND) vs Producer V2.
 
 OFF = shipped agent.  ON = hold-sizing + reinforce.
-Interleaves OFF/ON per (seed, seat) for a paired read; idle-checked; timed.
 
-  2P block: focal vs Producer V2          | 16 seeds x 2 seats = 32 per variant.
-  4P block: focal vs {V2, Roman1224, konbu17} | 8 seeds x 4 seats = 32 per variant.
+INDEPENDENCE (improvements.md, 2026-06-17): every game uses a FRESH DISTINCT
+seed; the seat is rotated ACROSS different seeds for balance, NEVER within a
+seed (replaying one map from multiple seats produces correlated, non-independent
+games). OFF and ON share each seed+seat -> a valid paired diff; independence
+holds across the 32 distinct seeds per block.
+
+  2P block: focal vs Producer V2              | 32 distinct seeds -> 32/variant.
+  4P block: focal vs {V2, Roman1224, konbu17} | 32 distinct seeds -> 32/variant.
 
 The 4P block is the must-pass regression gate (these levers are NOT mode-gated).
-Checkpointed every 4 games (one seed/seat cell). Runs 2P first.
+Checkpointed every 4 games. Runs 2P first.
 
     python scripts/verify_confirm.py
 """
@@ -15,6 +20,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import random
 import subprocess
 import sys
 import time
@@ -33,8 +39,8 @@ LR = str(REPO / "agents" / "least_resistance" / "main.py")
 V2 = str(EXT / "slawekbiel_the-producer-v2" / "main.py")
 ROMAN = str(EXT / "romantamrazov_orbit-star-wars-lb-max-1224" / "main.py")
 KONBU = str(EXT / "konbu17_orbit-wars-rule-base-ml-shot-validator-hybrid" / "main.py")
-SEEDS = [76670184, 1492346051, 768065184, 641308308, 305419896, 12648430,
-         20240617, 88888883, 13, 42, 777, 2024, 555555, 31337, 9001, 123456789]
+# 64 distinct seeds (reproducible): first 32 for 2P, next 32 for 4P.
+SEEDS = random.Random(20260617).sample(range(1, 2_000_000_000), 64)
 LOG = REPO / "audit" / ("confirm-%s.log"
                         % datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
 
@@ -111,43 +117,44 @@ def _ck(msg):
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def _block(name, opp_paths, seeds, n):
+def _block(name, opp_paths, seeds):
     players = len(opp_paths) + 1
     tally = {"OFF": [0, 0, 0], "ON": [0, 0, 0]}   # wins, valid, idle
     mxall = {"OFF": 0.0, "ON": 0.0}
     games = 0
-    _log("## %s block: focal vs %d opp(s), %d seeds x %d seats = %d/variant"
-         % (name, len(opp_paths), len(seeds), players, len(seeds) * players))
-    for seed in seeds:
-        for seat in range(players):
-            for on, key in ((False, "OFF"), (True, "ON")):
-                win, fl, ol, steps, mx, err = _run(opp_paths, seat, seed, on)
-                games += 1
-                if err is not None:
-                    _log("%s %s seed=%-11d seat=%d ERROR %s" % (name, key, seed, seat, err))
-                    continue
-                mxall[key] = max(mxall[key], mx)
-                idle = (fl == 0) or (ol == 0)
-                tally[key][1 if not idle else 2] += 1
-                if not idle and win:
-                    tally[key][0] += 1
-                tag = "IDLE" if idle else ("WIN " if win else "loss")
-                _log("%s %s seed=%-11d seat=%d %s steps=%d fl=%d ol=%d max_ms=%4.0f"
-                     % (name, key, seed, seat, tag, steps, fl, ol, mx))
-            if games % 4 == 0:
-                _ck("%s checkpoint: OFF %d/%d, ON %d/%d"
-                    % (name, tally["OFF"][0], tally["OFF"][1],
-                       tally["ON"][0], tally["ON"][1]))
+    _log("## %s block: focal vs %d opp(s), %d DISTINCT seeds (one game/seed; "
+         "seat rotated across seeds) = %d/variant"
+         % (name, len(opp_paths), len(seeds), len(seeds)))
+    for i, seed in enumerate(seeds):
+        seat = i % players                         # seat varies ACROSS seeds only
+        for on, key in ((False, "OFF"), (True, "ON")):
+            win, fl, ol, steps, mx, err = _run(opp_paths, seat, seed, on)
+            games += 1
+            if err is not None:
+                _log("%s %s seed=%-11d seat=%d ERROR %s" % (name, key, seed, seat, err))
+                continue
+            mxall[key] = max(mxall[key], mx)
+            idle = (fl == 0) or (ol == 0)
+            tally[key][1 if not idle else 2] += 1
+            if not idle and win:
+                tally[key][0] += 1
+            tag = "IDLE" if idle else ("WIN " if win else "loss")
+            _log("%s %s seed=%-11d seat=%d %s steps=%d fl=%d ol=%d max_ms=%4.0f"
+                 % (name, key, seed, seat, tag, steps, fl, ol, mx))
+        if games % 4 == 0:
+            _ck("%s checkpoint: OFF %d/%d, ON %d/%d"
+                % (name, tally["OFF"][0], tally["OFF"][1],
+                   tally["ON"][0], tally["ON"][1]))
     _log("# %s RESULT  OFF %d/%d  ON %d/%d  (idle OFF=%d ON=%d; max_ms OFF=%.0f ON=%.0f)"
          % (name, tally["OFF"][0], tally["OFF"][1], tally["ON"][0], tally["ON"][1],
             tally["OFF"][2], tally["ON"][2], mxall["OFF"], mxall["ON"]))
 
 
 def main():
-    _log("# n>=32 confirmation | ON=LR_HOLD_MARGIN=0.5,LR_DEFEND=1 | %s"
+    _log("# n>=32 confirmation (independent seeds) | ON=LR_HOLD_MARGIN=0.5,LR_DEFEND=1 | %s"
          % datetime.now(timezone.utc).isoformat())
-    _block("2P", [V2], SEEDS[:16], 32)
-    _block("4P", [V2, ROMAN, KONBU], SEEDS[:8], 32)
+    _block("2P", [V2], SEEDS[:32])
+    _block("4P", [V2, ROMAN, KONBU], SEEDS[32:64])
     _ck("confirm complete")
     return 0
 
