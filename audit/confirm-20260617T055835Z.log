@@ -36,3 +36,7 @@
 2P ON seed=13          seat=0 WIN  steps=146 fl=337 ol=270 max_ms= 410
 2P OFF seed=13          seat=1 loss steps=152 fl=283 ol=310 max_ms= 455
 2P ON seed=13          seat=1 WIN  steps=144 fl=309 ol=245 max_ms= 385
+2P OFF seed=42          seat=0 WIN  steps=185 fl=250 ol=247 max_ms= 196
+2P ON seed=42          seat=0 WIN  steps=160 fl=245 ol=162 max_ms= 334
+2P OFF seed=42          seat=1 WIN  steps=146 fl=168 ol=178 max_ms= 187
+2P ON seed=42          seat=1 loss steps=203 fl=272 ol=289 max_ms= 349
