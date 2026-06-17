@@ -26,3 +26,4 @@ ON  vs konbu17     seed=768065184   seat=0 WIN  steps=104 focal_launch=66 opp_la
 ON  vs konbu17     seed=768065184   seat=1 WIN  steps=92 focal_launch=65 opp_launch=84 max_ms= 290 rew=[-1, 1]
 ON  vs konbu17     seed=305419896   seat=0 WIN  steps=110 focal_launch=37 opp_launch=72 max_ms= 240 rew=[1, -1]
 ON  vs konbu17     seed=305419896   seat=1 WIN  steps=124 focal_launch=58 opp_launch=80 max_ms= 428 rew=[-1, 1]
+# ON  vs konbu17: 4/4 wins on valid games (0 idle); focal max_ms=428
