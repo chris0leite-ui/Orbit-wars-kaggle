@@ -5,3 +5,6 @@ vs producerV2  seed=1492346051  seat=0 WIN  steps=124 focal_launch=167 opp_launc
 vs producerV2  seed=1492346051  seat=1 WIN  steps=128 focal_launch=180 opp_launch=153 rew=[-1, 1]
 vs producerV2  seed=768065184   seat=0 loss steps=118 focal_launch=115 opp_launch=110 rew=[-1, 1]
 vs producerV2  seed=768065184   seat=1 loss steps=128 focal_launch=122 opp_launch=114 rew=[1, -1]
+# producerV2: focal 3/6 wins on VALID games (0 invalid/idle of 6)
+vs konbu17     seed=76670184    seat=0 WIN  steps=115 focal_launch=119 opp_launch=104 rew=[1, -1]
+vs konbu17     seed=76670184    seat=1 WIN  steps=118 focal_launch=112 opp_launch=104 rew=[-1, 1]
