@@ -1,15 +1,18 @@
 # state/STRATEGY.md — current main strategy
 
-> **⚠️ SUPERSEDED 2026-06-15.** The `baseline_adaptive_k` spec below is now
-> HISTORICAL (an old lib-based agent, μ≈1170). **What we actually run is
-> `producer_plus`** — the ~1280 heuristic (`vetorf4p_seq_strength` flag set on
-> the `orbit_lite` engine), improved by **loss-driven grounded fixes tested via
-> ladder A/B.** The live method, the loss landscape (under-expansion #1,
-> collapse #2), the current ladder variants, and the dead-end map are in
-> **`HANDOVER.md`** and
-> **`knowledge-base/thoughts/2026-06-15-loss-mining-grounded-fixes.md`**.
-> producer_plus + its bundler (`scripts/bundle_producer_plus.py`) now live on
-> this branch. The text below is retained for adaptive-K history only.
+> **⚠️ SUPERSEDED 2026-06-17.** Both the `baseline_adaptive_k` spec below AND the
+> 2026-06-15 `producer_plus` line are now HISTORICAL. **What we actually run is
+> `least_resistance`** (`agents/least_resistance/main.py`): the producer's
+> `orbit_lite` garrison-flow scorer + a 2-ply lookahead + **take-and-hold**
+> (`LR_HOLD_MARGIN=0.5` hold-sizing + `LR_DEFEND=1` reinforce, both default-ON,
+> shipped 2026-06-17 as sub **53768768**). Confirmed at n=32 independent seeds:
+> +7 vs Producer V2 in 2P, 4P parity. The benchmark is **Producer V2** (our peer;
+> we crush the rest of the published field). Next lever = **threat-aware dynamic
+> margin**. Live state, the real-public-agent panel, the A/B-independence rule,
+> the refuted-levers map, and the next-task spec are in **`HANDOVER.md`** and
+> **`knowledge-base/thoughts/2026-06-17-take-and-hold-and-threat-aware-margin.md`**.
+> The observation-driven iteration protocol (below) still holds. The rest of this
+> file is retained for adaptive-K history only.
 
 > **READ FIRST.** This is the canonical "what are we running" doc. Everything
 > in `CLAUDE.md` and `HANDOVER.md` points back here.
