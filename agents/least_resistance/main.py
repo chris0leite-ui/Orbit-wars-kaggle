@@ -279,6 +279,16 @@ def _hold_neutral():
         "1", "true", "on", "yes")
 
 
+def _holdability():
+    """Default OFF. The recapture PENALTY (distinct from sizing): in the greedy, a
+    capture whose post-landing garrison can't survive the visible reachable enemy
+    force is penalized by its foregone production, so the greedy SKIPS doomed
+    captures and spends our (scarce) ships on holdable ones instead of churning.
+    Selection, not sizing -- fits a ship-constrained agent. Set LR_HOLDABILITY=1."""
+    return os.environ.get("LR_HOLDABILITY", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _recapture_opp():
     """FUNDAMENTAL fix for the recapture churn (default OFF). The lookahead's
     opponent model (the producer policy) recaptures our thinly-held captures only
@@ -761,6 +771,8 @@ def agent(obs, configuration=None):
     # look free and we over-extend. Per-mode horizon; neutral expansion untouched.
     arrival_cap = _arrival_cap()
     hold_neutral = _hold_neutral()   # extend hold-margin to neutral captures (2P consolidation)
+    holdability = _holdability()     # recapture penalty: skip captures we can't hold
+    recap_k = _f("LR_RECAP_K", 1.0)  # penalty weight (x foregone production)
     horizon_cap = PROJECT_HORIZON_4P if num_seats >= 4 else PROJECT_HORIZON_2P
 
     def reachable_threat(tx, ty):
@@ -803,7 +815,9 @@ def agent(obs, configuration=None):
         is_comet = tid in comet_ids
         prod = float(tgt.production)
         # Threat-aware sizing: the enemy force already able to retake this planet.
-        tgt_threat = reachable_threat(float(tgt.x), float(tgt.y)) if threat_size else 0.0
+        tgt_reach = (reachable_threat(float(tgt.x), float(tgt.y))
+                     if (threat_size or holdability) else 0.0)
+        tgt_threat = tgt_reach if threat_size else 0.0
 
         shots = []   # (eta, size, sid, src, angle)
         for src in my_planets:
@@ -851,9 +865,11 @@ def agent(obs, configuration=None):
                 units = units_for(triples)
                 if units is None and id2slot is not None:
                     continue
+                _surplus = size - ((prod * eta + float(tgt.ships)) if is_enemy else float(tgt.ships))
+                _pen = prod * horizon_cap * recap_k if (holdability and tgt_reach > _surplus) else 0.0
                 solo = {"emit": [[sid, float(a2), size]],
                         "units": units, "srcs": {sid: size},
-                        "rank": rank, "front": front}
+                        "rank": rank, "front": front, "recap_penalty": _pen}
                 break
         if solo is not None:
             candidates.append(solo)
@@ -890,8 +906,10 @@ def agent(obs, configuration=None):
         if emit and acc >= _required(max_eta):
             units = units_for(triples)
             if not (units is None and id2slot is not None):
+                _surplus = acc - ((prod * max_eta + float(tgt.ships)) if is_enemy else float(tgt.ships))
+                _pen = prod * horizon_cap * recap_k if (holdability and tgt_reach > _surplus) else 0.0
                 candidates.append({"emit": emit, "units": units, "srcs": srcs,
-                                   "rank": rank, "front": front})
+                                   "rank": rank, "front": front, "recap_penalty": _pen})
 
     # Regroup / defense: reinforce our own planets an enemy fleet is about to flip
     # -- keep HELD production instead of only grabbing new planets. Same duel
@@ -992,6 +1010,7 @@ def agent(obs, configuration=None):
             v = value_fallback(committed_emit + c["emit"])
         else:
             v = score_units(committed_units + c["units"])
+        v -= c.get("recap_penalty", 0.0)   # holdability: down-rate doomed captures
         if v > current + floor:
             committed_emit = committed_emit + c["emit"]
             committed_units = committed_units + (c["units"] or [])
