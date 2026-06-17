@@ -1,0 +1,3 @@
+# 2P head-to-head | focal=least_resistance (levers OFF) | steps<=250 | seeds=[76670184, 1492346051, 768065184]
+vs producerV2  seed=76670184    seat=0 loss steps=118 focal_launch=175 opp_launch=203 rew=[-1, 1]
+vs producerV2  seed=76670184    seat=1 WIN  steps=146 focal_launch=246 opp_launch=245 rew=[-1, 1]
