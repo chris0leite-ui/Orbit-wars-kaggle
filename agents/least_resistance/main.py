@@ -259,6 +259,17 @@ def _threat_size():
         "1", "true", "on", "yes")
 
 
+def _arrival_cap():
+    """Default OFF. Skip generating ENEMY captures whose ETA exceeds the
+    evaluation horizon -- the garrison-flow leaf scores those with the fleet still
+    in transit (capture unresolved), so far attacks look 'free' and we over-extend
+    (measured: 77% of enemy attacks fly to ETA ~20-25 vs a 13-turn 4P horizon). The
+    champion agent had this launch-arrival ceiling; least_resistance dropped it.
+    Set LR_ARRIVAL_CAP=1 to enable."""
+    return os.environ.get("LR_ARRIVAL_CAP", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def _recapture_opp():
     """FUNDAMENTAL fix for the recapture churn (default OFF). The lookahead's
     opponent model (the producer policy) recaptures our thinly-held captures only
@@ -736,6 +747,11 @@ def agent(obs, configuration=None):
     # knowledge-base/thoughts/2026-06-17-take-and-hold-is-a-2P-win-and-a-4P-disaster.md.
     hold_margin = _f("LR_HOLD_MARGIN", 0.5 if num_seats <= 2 else 0.0)
     threat_size = _threat_size()
+    # Arrival-horizon cap (default OFF): don't generate ENEMY captures whose ETA is
+    # past the projection horizon -- the evaluator can't see them resolve, so they
+    # look free and we over-extend. Per-mode horizon; neutral expansion untouched.
+    arrival_cap = _arrival_cap()
+    horizon_cap = PROJECT_HORIZON_4P if num_seats >= 4 else PROJECT_HORIZON_2P
 
     def reachable_threat(tx, ty):
         """Visible enemy force that can recapture a planet at (tx, ty): in-flight
@@ -787,6 +803,8 @@ def agent(obs, configuration=None):
             angle, eta, arr = shot
             if not _sun_clear(src, arr):
                 continue
+            if arrival_cap and is_enemy and eta > horizon_cap:
+                continue            # don't fling fleets at enemies past the eval horizon
             if is_comet:
                 life = comet_remaining_lifetime(tid, _ObsRawShim(obs_d))
                 if life is not None and life <= eta:
