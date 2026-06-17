@@ -17,3 +17,5 @@ vs roman1224   seed=76670184    seat=0 WIN  steps=102 focal_launch=112 opp_launc
 vs roman1224   seed=76670184    seat=1 WIN  steps=102 focal_launch=112 opp_launch=83 rew=[-1, 1]
 vs roman1224   seed=1492346051  seat=0 WIN  steps=106 focal_launch=44 opp_launch=11 rew=[1, -1]
 vs roman1224   seed=1492346051  seat=1 WIN  steps=106 focal_launch=44 opp_launch=11 rew=[-1, 1]
+vs roman1224   seed=768065184   seat=0 WIN  steps=101 focal_launch=58 opp_launch=67 rew=[1, -1]
+vs roman1224   seed=768065184   seat=1 WIN  steps=101 focal_launch=58 opp_launch=67 rew=[-1, 1]
