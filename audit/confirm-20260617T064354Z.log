@@ -64,3 +64,9 @@
 2P ON seed=1345057046  seat=0 WIN  steps=148 fl=304 ol=331 max_ms= 353
 2P OFF seed=90899134    seat=1 loss steps=130 fl=228 ol=211 max_ms= 324
 2P ON seed=90899134    seat=1 WIN  steps=169 fl=333 ol=322 max_ms= 345
+# 2P RESULT  OFF 14/32  ON 21/32  (idle OFF=0 ON=0; max_ms OFF=423 ON=477)
+## 4P block: focal vs 3 opp(s), 32 DISTINCT seeds (one game/seed; seat rotated across seeds) = 32/variant
+4P OFF seed=1115768738  seat=0 loss steps=184 fl=79 ol=393 max_ms= 495
+4P ON seed=1115768738  seat=0 loss steps=153 fl=85 ol=320 max_ms= 428
+4P OFF seed=805592932   seat=1 loss steps=184 fl=147 ol=293 max_ms= 373
+4P ON seed=805592932   seat=1 loss steps=166 fl=118 ol=354 max_ms= 365
