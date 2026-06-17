@@ -613,10 +613,11 @@ def agent(obs, configuration=None):
     # focuses the one opponent correctly there): boost enemy-owned targets so
     # denial captures (taking from opponents) outrank equal-production neutrals.
     enemy_boost = _f("LR_ENEMY_BOOST", 1.0) if num_seats >= 4 else 1.0
-    # Hold-sizing (default 0.0 = off): size enemy captures to take AND HOLD --
-    # add surplus garrison to survive the opponent's retake. Larger sizes force
-    # source-combining, so fewer / bigger fleets (concentration) emerge naturally.
-    hold_margin = _f("LR_HOLD_MARGIN", 0.0)
+    # Hold-sizing (default 0.5; confirmed vs Producer V2): size enemy captures to
+    # take AND HOLD -- add surplus garrison to survive the opponent's retake.
+    # Larger sizes force source-combining, so fewer / bigger fleets (concentration)
+    # emerge naturally. Set LR_HOLD_MARGIN=0 to disable.
+    hold_margin = _f("LR_HOLD_MARGIN", 0.5)
 
     def units_for(launch_triples):
         # launch_triples: list of (src_id, tgt_id, ships, eta)
@@ -707,10 +708,11 @@ def agent(obs, configuration=None):
                 candidates.append({"emit": emit, "units": units, "srcs": srcs,
                                    "rank": rank, "front": front})
 
-    # Regroup / defense (default OFF): reinforce our own planets that an enemy
-    # fleet is bearing down on with enough force to flip -- keep HELD production
-    # instead of only ever grabbing new planets (the move we were blind to).
-    if (os.environ.get("LR_DEFEND", "0").strip().lower() in ("1", "true", "on", "yes")
+    # Regroup / defense (default ON; confirmed vs Producer V2): reinforce our own
+    # planets that an enemy fleet is bearing down on with enough force to flip --
+    # keep HELD production instead of only ever grabbing new planets (the move we
+    # were structurally blind to). Set LR_DEFEND=0 to disable.
+    if (os.environ.get("LR_DEFEND", "1").strip().lower() in ("1", "true", "on", "yes")
             and my_planets):
         defend_range = _f("LR_DEFEND_RANGE", 35.0)
         enemy_fleets = [f for f in fleets
