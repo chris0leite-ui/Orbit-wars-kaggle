@@ -82,3 +82,7 @@
 4P ON seed=568264604   seat=2 WIN  steps=127 fl=102 ol=191 max_ms= 502
 4P OFF seed=34659584    seat=3 loss steps=201 fl=267 ol=351 max_ms= 439
 4P ON seed=34659584    seat=3 WIN  steps=196 fl=305 ol=337 max_ms= 468
+4P OFF seed=1218117352  seat=0 WIN  steps=115 fl=100 ol=145 max_ms= 410
+4P ON seed=1218117352  seat=0 WIN  steps=106 fl=150 ol=162 max_ms= 433
+4P OFF seed=44791910    seat=1 WIN  steps=158 fl=148 ol=367 max_ms= 411
+4P ON seed=44791910    seat=1 WIN  steps=211 fl=199 ol=465 max_ms= 418
