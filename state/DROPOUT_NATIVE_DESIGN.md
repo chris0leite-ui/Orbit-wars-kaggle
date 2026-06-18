@@ -70,10 +70,28 @@ terminal-prod / hold-value hacks.
 - The seat-independent turn counter in `tensor_action` (already fixed).
 - `scripts/bundle_producer_plus.py` — bundling pattern for a new entry module.
 
+## Build status (2026-06-18)
+- **Phase A forward model BUILT** — `orbit_lite/native_forward.py`:
+  `build_candidate_trajectories` (dense per-candidate trajectory via the trusted
+  `_run_exact_recurrence`), `reachable_enemy_mass` (enemy physically-routable
+  mass by step k from `cross_dist` + `fleet_speed`), `flip_prob` (steep-near-
+  parity contest sigmoid), `hazard_ownership_value` (the value functional).
+  Mean-field, no RNG. Unit tests (`tests/test_native_forward_model.py`): trajectory
+  construction reduces EXACTLY to the engine recurrence with no launches; the
+  core thesis (holdable capture out-values a thin one) holds; monotone in enemy
+  mass; deterministic.
+- **Wired** into producer_plus behind `PRODUCER_PLUS_NATIVE_HAZARD` (default OFF,
+  OFF path byte-identical — verified). Bundles cleanly (cold-load full game vs V2
+  OK). Knobs: `_STEEPNESS` (default 5), `_DISCOUNT` (default 1).
+- **Kill-gate A/B IN PROGRESS** via `scripts/continuous_ab.py --variants
+  base,native,native_s8` (paired continuous margin vs V2, n=40). Result + verdict
+  recorded below when complete.
+
 ## Build phases (each default-OFF where grafted; each A/B-gated vs V2)
 - **Phase A (KILL-GATE): mean-field forward model + value functional**, scoring
   producer's existing shortlist. Beat base 15/28 on the clean wide-map A/B? If
   NO → thesis refuted, stop (keep the cheap bolt-on replacement). If YES → go on.
+  *(Now measured on the continuous paired margin, a far sharper gate than 15/28.)*
 - **Phase B: calibrate λ** to observed flip rates. Real ladder replays are
   gitignored/absent → GENERATE data from local games: instrument every
   (planet, step) flip with its local force balance and the flip/no-flip

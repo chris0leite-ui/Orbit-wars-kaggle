@@ -7,3 +7,130 @@
   [  6/ 96] champion      seed=5002 seat=0  loss  margin=-1.000  steps=202 max_ms=368.2  (eta 1149s)
   [  7/ 96] off           seed=5003 seat=1  loss  margin=-1.000  steps=189 max_ms=374.7  (eta 989s)
   [  8/ 96] champion      seed=5003 seat=1  loss  margin=-1.000  steps=161 max_ms=320.7  (eta 1052s)
+  [  9/ 96] off           seed=5004 seat=0  WIN   margin=+1.000  steps=149 max_ms=279.4  (eta 993s)
+  [ 10/ 96] champion      seed=5004 seat=0  WIN   margin=+1.000  steps=135 max_ms=275.4  (eta 895s)
+  [ 11/ 96] off           seed=5005 seat=1  loss  margin=-1.000  steps=220 max_ms=211.2  (eta 885s)
+  [ 12/ 96] champion      seed=5005 seat=1  loss  margin=-1.000  steps=179 max_ms=292.7  (eta 887s)
+  [ 13/ 96] off           seed=5006 seat=0  WIN   margin=+1.000  steps=161 max_ms=324.5  (eta 865s)
+  [ 14/ 96] champion      seed=5006 seat=0  WIN   margin=+1.000  steps=156 max_ms=307.8  (eta 800s)
+  [ 15/ 96] off           seed=5007 seat=1  WIN   margin=+1.000  steps=121 max_ms=330.9  (eta 749s)
+  [ 16/ 96] champion      seed=5007 seat=1  WIN   margin=+1.000  steps=117 max_ms=346.9  (eta 752s)
+  [ 17/ 96] off           seed=5008 seat=0  loss  margin=-1.000  steps=114 max_ms=292.6  (eta 727s)
+  [ 18/ 96] champion      seed=5008 seat=0  loss  margin=-1.000  steps=132 max_ms=320.6  (eta 692s)
+  [ 19/ 96] champion      seed=5009 seat=1  loss  margin=-1.000  steps=149 max_ms=344.2  (eta 715s)
+  [ 20/ 96] off           seed=5010 seat=0  WIN   margin=+1.000  steps=137 max_ms=261.9  (eta 684s)
+  [ 21/ 96] off           seed=5009 seat=1  loss  margin=-1.000  steps=229 max_ms=313.7  (eta 645s)
+  [ 22/ 96] champion      seed=5010 seat=0  WIN   margin=+1.000  steps=134 max_ms=205.4  (eta 616s)
+  [ 23/ 96] off           seed=5011 seat=1  loss  margin=-1.000  steps=127 max_ms=396.9  (eta 635s)
+  [ 24/ 96] off           seed=5012 seat=0  loss  margin=-1.000  steps=125 max_ms=194.1  (eta 604s)
+  [ 25/ 96] champion      seed=5012 seat=0  loss  margin=-1.000  steps=110 max_ms=199.7  (eta 576s)
+  [ 26/ 96] champion      seed=5011 seat=1  loss  margin=-1.000  steps=145 max_ms=354.2  (eta 553s)
+  [ 27/ 96] off           seed=5013 seat=1  WIN   margin=+1.000  steps=130 max_ms=341.9  (eta 591s)
+  [ 28/ 96] champion      seed=5014 seat=0  WIN   margin=+1.000  steps=123 max_ms=321.7  (eta 564s)
+  [ 29/ 96] off           seed=5014 seat=0  WIN   margin=+1.000  steps=153 max_ms=385.9  (eta 542s)
+  [ 30/ 96] champion      seed=5013 seat=1  WIN   margin=+1.000  steps=140 max_ms=404.8  (eta 516s)
+  [ 31/ 96] off           seed=5015 seat=1  WIN   margin=+1.000  steps=83 max_ms=363.7  (eta 521s)
+  [ 32/ 96] champion      seed=5015 seat=1  WIN   margin=+1.000  steps=85 max_ms=312.4  (eta 497s)
+  [ 33/ 96] off           seed=5016 seat=0  WIN   margin=+1.000  steps=120 max_ms=439.0  (eta 500s)
+  [ 34/ 96] champion      seed=5016 seat=0  WIN   margin=+1.000  steps=131 max_ms=445.0  (eta 483s)
+  [ 35/ 96] off           seed=5017 seat=1  loss  margin=-1.000  steps=160 max_ms=382.8  (eta 490s)
+  [ 36/ 96] off           seed=5018 seat=0  WIN   margin=+1.000  steps=139 max_ms=381.5  (eta 482s)
+  [ 37/ 96] champion      seed=5017 seat=1  WIN   margin=+1.000  steps=209 max_ms=330.3  (eta 464s)
+  [ 38/ 96] champion      seed=5018 seat=0  WIN   margin=+1.000  steps=202 max_ms=320.0  (eta 465s)
+  [ 39/ 96] champion      seed=5019 seat=1  WIN   margin=+1.000  steps=141 max_ms=204.2  (eta 461s)
+  [ 40/ 96] off           seed=5019 seat=1  WIN   margin=+1.000  steps=208 max_ms=348.1  (eta 447s)
+  [ 41/ 96] off           seed=5020 seat=0  WIN   margin=+1.000  steps=162 max_ms=309.6  (eta 439s)
+  [ 42/ 96] off           seed=5021 seat=1  loss  margin=-1.000  steps=148 max_ms=366.1  (eta 444s)
+  [ 43/ 96] champion      seed=5021 seat=1  loss  margin=-1.000  steps=128 max_ms=337.6  (eta 429s)
+  [ 44/ 96] off           seed=5022 seat=0  WIN   margin=+1.000  steps=111 max_ms=286.5  (eta 413s)
+  [ 45/ 96] champion      seed=5020 seat=0  loss  margin=-1.000  steps=224 max_ms=354.4  (eta 403s)
+  [ 46/ 96] champion      seed=5022 seat=0  WIN   margin=+1.000  steps=139 max_ms=395.6  (eta 409s)
+  [ 47/ 96] off           seed=5024 seat=0  loss  margin=-1.000  steps=113 max_ms=327.5  (eta 392s)
+  [ 48/ 96] champion      seed=5023 seat=1  WIN   margin=+1.000  steps=193 max_ms=328.7  (eta 389s)
+  [ 49/ 96] champion      seed=5024 seat=0  WIN   margin=+1.000  steps=123 max_ms=326.2  (eta 385s)
+  [ 50/ 96] off           seed=5023 seat=1  WIN   margin=+1.000  steps=268 max_ms=377.4  (eta 374s)
+  [ 51/ 96] off           seed=5025 seat=1  loss  margin=-1.000  steps=174 max_ms=312.4  (eta 360s)
+  [ 52/ 96] off           seed=5027 seat=1  WIN   margin=+1.000  steps=122 max_ms=223.7  (eta 364s)
+  [ 53/ 96] champion      seed=5025 seat=1  WIN   margin=+1.000  steps=198 max_ms=338.8  (eta 349s)
+  [ 54/ 96] off           seed=5026 seat=0  loss  margin=-1.000  steps=177 max_ms=293.6  (eta 335s)
+  [ 55/ 96] champion      seed=5026 seat=0  loss  margin=-1.000  steps=124 max_ms=378.5  (eta 322s)
+  [ 56/ 96] champion      seed=5028 seat=0  WIN   margin=+1.000  steps=132 max_ms=328.0  (eta 327s)
+  [ 57/ 96] off           seed=5029 seat=1  loss  margin=-1.000  steps=139 max_ms=225.9  (eta 314s)
+  [ 58/ 96] champion      seed=5027 seat=1  loss  margin=-1.000  steps=190 max_ms=380.7  (eta 305s)
+  [ 59/ 96] off           seed=5028 seat=0  WIN   margin=+1.000  steps=189 max_ms=318.4  (eta 294s)
+  [ 60/ 96] off           seed=5030 seat=0  WIN   margin=+1.000  steps=99 max_ms=354.3  (eta 290s)
+  [ 61/ 96] champion      seed=5029 seat=1  loss  margin=-1.000  steps=175 max_ms=224.5  (eta 279s)
+  [ 62/ 96] off           seed=5031 seat=1  WIN   margin=+1.000  steps=139 max_ms=257.9  (eta 270s)
+  [ 63/ 96] champion      seed=5030 seat=0  WIN   margin=+1.000  steps=159 max_ms=373.6  (eta 264s)
+  [ 64/ 96] champion      seed=5031 seat=1  WIN   margin=+1.000  steps=125 max_ms=382.2  (eta 254s)
+  [ 65/ 96] off           seed=5032 seat=0  loss  margin=-1.000  steps=120 max_ms=297.1  (eta 244s)
+  [ 66/ 96] champion      seed=5032 seat=0  WIN   margin=+1.000  steps=120 max_ms=297.2  (eta 236s)
+  [ 67/ 96] champion      seed=5033 seat=1  WIN   margin=+1.000  steps=113 max_ms=399.9  (eta 232s)
+  [ 68/ 96] off           seed=5033 seat=1  loss  margin=-1.000  steps=154 max_ms=327.5  (eta 221s)
+  [ 69/ 96] off           seed=5034 seat=0  WIN   margin=+1.000  steps=199 max_ms=194.3  (eta 213s)
+  [ 70/ 96] champion      seed=5034 seat=0  loss  margin=-1.000  steps=167 max_ms=316.1  (eta 203s)
+  [ 71/ 96] off           seed=5035 seat=1  WIN   margin=+1.000  steps=146 max_ms=328.9  (eta 197s)
+  [ 72/ 96] champion      seed=5035 seat=1  WIN   margin=+1.000  steps=136 max_ms=356.7  (eta 187s)
+  [ 73/ 96] off           seed=5036 seat=0  loss  margin=-1.000  steps=155 max_ms=199.4  (eta 179s)
+  [ 74/ 96] off           seed=5037 seat=1  WIN   margin=+1.000  steps=156 max_ms=306.3  (eta 176s)
+  [ 75/ 96] champion      seed=5037 seat=1  loss  margin=-1.000  steps=185 max_ms=315.5  (eta 166s)
+  [ 76/ 96] champion      seed=5036 seat=0  WIN   margin=+1.000  steps=251 max_ms=230.0  (eta 156s)
+  [ 77/ 96] off           seed=5038 seat=0  WIN   margin=+1.000  steps=150 max_ms=344.9  (eta 149s)
+  [ 78/ 96] champion      seed=5039 seat=1  loss  margin=-1.000  steps=126 max_ms=255.7  (eta 141s)
+  [ 79/ 96] off           seed=5039 seat=1  loss  margin=-1.000  steps=120 max_ms=201.2  (eta 132s)
+  [ 80/ 96] champion      seed=5038 seat=0  WIN   margin=+1.000  steps=171 max_ms=420.9  (eta 126s)
+  [ 81/ 96] off           seed=5041 seat=1  WIN   margin=+1.000  steps=170 max_ms=351.7  (eta 120s)
+  [ 82/ 96] off           seed=5040 seat=0  WIN   margin=+1.000  steps=330 max_ms=346.4  (eta 113s)
+  [ 83/ 96] champion      seed=5041 seat=1  WIN   margin=+1.000  steps=134 max_ms=386.0  (eta 104s)
+  [ 84/ 96] champion      seed=5040 seat=0  WIN   margin=+1.000  steps=305 max_ms=289.0  (eta 95s)
+  [ 85/ 96] off           seed=5043 seat=1  loss  margin=-1.000  steps=158 max_ms=374.7  (eta 90s)
+  [ 86/ 96] champion      seed=5042 seat=0  loss  margin=-1.000  steps=169 max_ms=282.6  (eta 81s)
+  [ 87/ 96] champion      seed=5043 seat=1  loss  margin=-1.000  steps=141 max_ms=346.5  (eta 72s)
+  [ 88/ 96] off           seed=5042 seat=0  loss  margin=-1.000  steps=238 max_ms=400.8  (eta 63s)
+  [ 89/ 96] off           seed=5044 seat=0  loss  margin=-1.000  steps=159 max_ms=341.4  (eta 57s)
+  [ 90/ 96] off           seed=5045 seat=1  WIN   margin=+1.000  steps=201 max_ms=229.8  (eta 49s)
+  [ 91/ 96] champion      seed=5045 seat=1  WIN   margin=+1.000  steps=225 max_ms=315.1  (eta 40s)
+  [ 92/ 96] champion      seed=5044 seat=0  WIN   margin=+1.000  steps=235 max_ms=386.0  (eta 32s)
+  [ 93/ 96] off           seed=5046 seat=0  WIN   margin=+1.000  steps=134 max_ms=317.3  (eta 24s)
+  [ 94/ 96] champion      seed=5046 seat=0  loss  margin=-1.000  steps=155 max_ms=340.8  (eta 16s)
+  [ 95/ 96] off           seed=5047 seat=1  WIN   margin=+1.000  steps=196 max_ms=416.1  (eta 8s)
+  [ 96/ 96] champion      seed=5047 seat=1  WIN   margin=+1.000  steps=185 max_ms=364.8  (eta 0s)
+# run done in 787s -> audit/continuous-ab-champion-v2-n48.jsonl
+(pairing reference = 'off')
+
+============================================================================================
+CONTINUOUS-SCORE A/B  (margin = (focal_ships - rival_ships)/(focal_ships + rival_ships) in [-1,1]; sign = win)
+vs Producer V2
+============================================================================================
+variant            n | wins (Wilson lo-hi) | mean margin [95% CI]   | paired vs base  Δmargin   
+--------------------------------------------------------------------------------------------
+champion          48 |  29/48  (0.46-0.73) | +0.208 [-0.071,+0.488]  | +0.083 [-0.208,+0.375] up/dn=8/6 p=0.79
+off               48 |  27/48  (0.42-0.69) | +0.125 [-0.158,+0.409]  | (reference)
+
+LOSS LANDSCAPE for 'champion' (the headroom): 19 losses, 0 close wins (margin<0.5) of 48 maps
+  losing maps (margin asc) — these are where the work is:
+    seed=5001   margin=-1.000  scores=[3569.0, 0.0] steps=132
+    seed=5002   margin=-1.000  scores=[0.0, 2390.0] steps=202
+    seed=5003   margin=-1.000  scores=[1831.0, 0.0] steps=161
+    seed=5005   margin=-1.000  scores=[1929.0, 0.0] steps=179
+    seed=5008   margin=-1.000  scores=[0.0, 1468.0] steps=132
+    seed=5009   margin=-1.000  scores=[1504.0, 0.0] steps=149
+    seed=5012   margin=-1.000  scores=[0.0, 961.0] steps=110
+    seed=5011   margin=-1.000  scores=[1414.0, 0.0] steps=145
+    seed=5021   margin=-1.000  scores=[1277.0, 0.0] steps=128
+    seed=5020   margin=-1.000  scores=[0.0, 1690.0] steps=224
+    seed=5026   margin=-1.000  scores=[0.0, 1651.0] steps=124
+    seed=5027   margin=-1.000  scores=[2034.0, 0.0] steps=190
+    seed=5029   margin=-1.000  scores=[3086.0, 0.0] steps=175
+    seed=5034   margin=-1.000  scores=[0.0, 1261.0] steps=167
+    seed=5037   margin=-1.000  scores=[3300.0, 0.0] steps=185
+    seed=5039   margin=-1.000  scores=[1282.0, 0.0] steps=126
+    seed=5042   margin=-1.000  scores=[0.0, 1836.0] steps=169
+    seed=5043   margin=-1.000  scores=[1442.0, 0.0] steps=141
+    seed=5046   margin=-1.000  scores=[0.0, 1664.0] steps=155
+
+Reading the paired column:
+  Δmargin>0 = variant dominates base on the same maps; [lo,hi] is the
+  bootstrap 95%% CI on the mean per-map margin shift; up/dn = maps the
+  variant beat / lost to base on margin; '*' = CI excludes 0 (real).
+  Win-rate Wilson CI is the OLD coarse signal, shown for continuity.
