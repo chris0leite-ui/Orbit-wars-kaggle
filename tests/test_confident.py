@@ -92,3 +92,22 @@ def test_drops_reinforcement_of_unthreatened_planet():
     kept = lr._keep_confident_launches(_R_REINFORCE, _R_PLANETS, [],   # no incoming threat
                                        _R_BY_ID, 0, frozenset(), {}, 0.0)
     assert len(kept) == 0, "a reflexive reinforcement of an unthreatened planet must be dropped"
+
+
+def test_drops_far_off_captures_keeps_near():
+    lr = _load()
+    P0 = Planet(0, 0, 15.0, 15.0, 1.0, 200, 1)
+    N_near = Planet(1, -1, 35.0, 15.0, 1.0, 5, 5)   # close, holdable
+    N_far = Planet(2, -1, 90.0, 20.0, 1.0, 5, 5)    # far across the board
+    planets = [P0, N_near, N_far]
+    bid = {int(p.id): p for p in planets}
+    near_eta = lr._plan_shot(P0, N_near, frozenset(), {}, 0.0, 10)[1]
+    far_eta = lr._plan_shot(P0, N_far, frozenset(), {}, 0.0, 10)[1]
+    assert far_eta > near_eta, "test setup: far target must have a longer ETA"
+    move = [[0, math.atan2(15.0 - 15.0, 35.0 - 15.0), 10],   # -> N_near
+            [0, math.atan2(20.0 - 15.0, 90.0 - 15.0), 10]]    # -> N_far
+    # cap at the near ETA: the near grab (eta == cap) survives, the far one is dropped.
+    kept = lr._keep_confident_launches(move, planets, [], bid, 0,
+                                       frozenset(), {}, 0.0, near_eta)
+    assert len(kept) == 1, f"the far-off capture should be dropped, kept {kept}"
+    assert abs(float(kept[0][1]) - math.atan2(0.0, 20.0)) < 1e-6, "the near grab must be the one kept"

@@ -306,6 +306,8 @@ def _recapture_opp():
 def _confident_only():
     """PIVOT (default OFF). Commit only HIGH-CONFIDENCE actions. Of the launches
     we are about to play (usually the producer's move):
+      - TOO FAR OFF: any launch arriving past the evaluation horizon is dropped --
+        a long flight is uncertain (the board changes before it lands).
       - CAPTURE: keep only if we can HOLD the planet -- the garrison we land with
         (ships sent minus the target's defenders) is at least the enemy force that
         can still reach it. Safe grabs (nothing in reach) are kept; thin contested
@@ -748,10 +750,12 @@ def _reinforcement_worthwhile(P, launches, by_id, fleets, me, horizon=25.0):
 
 
 def _keep_confident_launches(move, planets, fleets, by_id, me,
-                             comet_ids, comet_paths, omega):
+                             comet_ids, comet_paths, omega, eta_cap=1e9):
     """Keep only HIGH-CONFIDENCE actions. Launches are grouped by their target
     (matched via the agent's own intercept aim, so a coordinated gang-up is judged
-    as one capture). A capture of an enemy/neutral planet is kept only if the
+    as one capture). First, any launch arriving later than `eta_cap` turns is
+    dropped -- it is too far off to be certain (the board changes over a long
+    flight). Then: a capture of an enemy/neutral planet is kept only if the
     garrison we land with -- (total ships sent) minus the target's current
     defenders -- is at least the enemy force that can still reach it (so we can
     HOLD it). A reinforcement of our own planet is kept only if that planet is
@@ -770,7 +774,7 @@ def _keep_confident_launches(move, planets, fleets, by_id, me,
         if src is None:
             unclassified.append(launch)
             continue
-        best, bd = None, 1e9
+        best, bd, best_eta = None, 1e9, 0.0
         for p in planets:
             if int(p.id) == sid:
                 continue
@@ -780,9 +784,11 @@ def _keep_confident_launches(move, planets, fleets, by_id, me,
             d = abs(shot[0] - ang)
             d = min(d, 2.0 * math.pi - d)
             if d < bd:
-                bd, best = d, p
+                bd, best, best_eta = d, p, shot[1]
         if best is None or bd > 0.10:
             unclassified.append(launch)      # can't classify -> keep
+        elif best_eta > eta_cap:
+            pass                             # too far off -> drop (uncertain)
         else:
             groups.setdefault(int(best.id), []).append(launch)
     kept = list(unclassified)
@@ -889,8 +895,10 @@ def agent(obs, configuration=None):
     def _confident(move):
         if not confident_only:
             return move
+        eta_cap = _f("LR_CONFIDENT_ETA",
+                     PROJECT_HORIZON_4P if num_seats >= 4 else PROJECT_HORIZON_2P)
         return _keep_confident_launches(move, planets, fleets, by_id, me,
-                                        comet_ids, comet_paths, omega)
+                                        comet_ids, comet_paths, omega, eta_cap)
     # each candidate: emit=[[src_id,angle,ships],...], units=[(src_slot,tgt_slot,ships,eta),...],
     #                 srcs={src_id:ships}, rank, front
     candidates = []
