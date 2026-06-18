@@ -304,17 +304,23 @@ def _recapture_opp():
 
 
 def _one_action():
-    """PIVOT (default OFF). Streamline each round into ONE strong coordinated
-    action. If the move we are about to play launches at more than one target,
-    keep only the launches aimed at the single target we commit the most ships to
-    (the main strike) and drop the rest -- those ships stay home as garrison.
-    Stops the "many small fleets all over the place" that fragments our force and
-    leaves us unable to hold a late push (observed in replay: strong to 14 planets,
-    then a scattered collapse). Applied as a post-filter on the FINAL move, so it
-    streamlines the producer-fallback move the agent usually plays, not just our
-    own greedy plan. Set LR_ONE_ACTION=1 to enable."""
+    """PIVOT (default OFF). One strong coordinated strike per round. Instead of
+    dribbling many small fleets, each round we commit ONLY the single best
+    coordinated capture, sized to OVERWHELM its target -- LR_OVERWHELM x
+    (defenders + the visible reachable enemy force) -- massing several sources
+    into one wave. When no target can be overwhelmed with the ships we can field,
+    we launch NOTHING and accumulate for next round. Few big coordinated strikes,
+    not a spray. (PI replay obs: a strong position lost to scattered small fleets
+    and a late collapse.) Set LR_ONE_ACTION=1 to enable."""
     return os.environ.get("LR_ONE_ACTION", "0").strip().lower() in (
         "1", "true", "on", "yes")
+
+
+def _overwhelm_factor():
+    """How overwhelming a one-action strike is: multiplier on (defenders +
+    reachable threat). Default 2.0 (send ~twice the force needed). Read at call
+    time so it can be tuned without a rebuild."""
+    return _f("LR_OVERWHELM", 2.0)
 
 
 def _recapture_moves(obs_dict, seat, exclude_srcs=()):
@@ -762,47 +768,6 @@ def agent(obs, configuration=None):
 
     available = {int(p.id): int(p.ships) for p in my_planets}
     by_id = {int(p.id): p for p in planets}
-
-    one_action = _one_action()
-
-    def _one_action_filter(move):
-        """One coordinated action per round (LR_ONE_ACTION). If `move` launches at
-        more than one target, keep only the launches aimed at the single target we
-        commit the most ships to (the main strike); drop the rest so those ships
-        stay home as garrison. Each launch is mapped to its target by matching the
-        emit angle to the agent's own intercept aim (`_plan_shot`); launches we
-        cannot classify are kept (never silently dropped)."""
-        if not one_action or not move or len(move) <= 1:
-            return move
-        groups, ships, unclassified = {}, {}, []
-        for launch in move:
-            sid = int(launch[0])
-            ang = float(launch[1])
-            sh = launch[2]
-            src = by_id.get(sid)
-            if src is None:
-                unclassified.append(launch)
-                continue
-            best_t, best_d = None, 1e9
-            for p in planets:
-                if int(p.id) == sid:
-                    continue
-                shot = _plan_shot(src, p, comet_ids, comet_paths, omega, max(1, int(sh)))
-                if shot is None:
-                    continue
-                d = abs(shot[0] - ang)
-                d = min(d, 2.0 * math.pi - d)
-                if d < best_d:
-                    best_d, best_t = d, int(p.id)
-            if best_t is None:
-                unclassified.append(launch)
-                continue
-            groups.setdefault(best_t, []).append(launch)
-            ships[best_t] = ships.get(best_t, 0.0) + float(sh)
-        if len(groups) <= 1:
-            return move
-        keep_t = max(ships, key=lambda t: ships[t])   # the main strike (most ships)
-        return groups[keep_t] + unclassified
     # each candidate: emit=[[src_id,angle,ships],...], units=[(src_slot,tgt_slot,ships,eta),...],
     #                 srcs={src_id:ships}, rank, front
     candidates = []
@@ -821,6 +786,8 @@ def agent(obs, configuration=None):
     # knowledge-base/thoughts/2026-06-17-take-and-hold-is-a-2P-win-and-a-4P-disaster.md.
     hold_margin = _f("LR_HOLD_MARGIN", 0.5 if num_seats <= 2 else 0.0)
     threat_size = _threat_size()
+    one_action = _one_action()           # one overwhelming coordinated strike/round
+    overwhelm = _overwhelm_factor()
     # Arrival-horizon cap (default OFF): don't generate ENEMY captures whose ETA is
     # past the projection horizon -- the evaluator can't see them resolve, so they
     # look free and we over-extend. Per-mode horizon; neutral expansion untouched.
@@ -871,8 +838,8 @@ def agent(obs, configuration=None):
         prod = float(tgt.production)
         # Threat-aware sizing: the enemy force already able to retake this planet.
         tgt_reach = (reachable_threat(float(tgt.x), float(tgt.y))
-                     if (threat_size or holdability) else 0.0)
-        tgt_threat = tgt_reach if threat_size else 0.0
+                     if (threat_size or holdability or one_action) else 0.0)
+        tgt_threat = tgt_reach if (threat_size or one_action) else 0.0
 
         shots = []   # (eta, size, sid, src, angle)
         for src in my_planets:
@@ -889,7 +856,12 @@ def agent(obs, configuration=None):
                 if life is not None and life <= eta:
                     continue
             defenders = prod * eta + tgt.ships if is_enemy else tgt.ships
-            if threat_size:
+            if one_action:
+                # OVERWHELM: send ~overwhelm x the force that can defend/retake it,
+                # massing sources. Unaffordable strikes are dropped below -> we hold
+                # and accumulate rather than launch a weak fleet.
+                size = int(math.ceil((defenders + tgt_threat) * overwhelm)) + 1
+            elif threat_size:
                 # Size to take AND hold against the visible incoming + reachable
                 # threat. Unaffordable (truly contested) captures get dropped by
                 # the affordability check below -> skip the doomed grab.
@@ -938,6 +910,8 @@ def agent(obs, configuration=None):
         # back. Size against the slowest fleet actually used.
         def _required(latest_eta):
             d = (prod * latest_eta + float(tgt.ships)) if is_enemy else float(tgt.ships)
+            if one_action:
+                return int(math.ceil((d + tgt_threat) * overwhelm)) + 1
             return int(math.ceil(d + tgt_threat)) + 1
         emit, triples, srcs, acc, max_eta = [], [], {}, 0, 0.0
         for (eta, size, sid, src, angle) in shots:
@@ -1026,6 +1000,14 @@ def agent(obs, configuration=None):
     candidates.sort(key=lambda c: (-c["rank"], c["front"]))
     candidates = candidates[:MAX_CANDIDATES]
 
+    if one_action:
+        # ONE strong coordinated strike per round: play only the single best
+        # (highest-rank) candidate -- already sized to overwhelm and massed from
+        # several sources. If no overwhelming strike was affordable, the empty-
+        # candidates return above already held (accumulate). No greedy stacking
+        # and no producer fallback: this IS the move, so we never dribble.
+        return candidates[0]["emit"]
+
     # ---- greedy plan construction by projected value ----
     committed_emit = []
     committed_units = []
@@ -1099,7 +1081,7 @@ def agent(obs, configuration=None):
                 continue
             if best_v is None or v > best_v:
                 best, best_v = p, v
-        return _one_action_filter(best)
+        return best
 
     # ---- 2-ply lookahead pick (2P only): choose among a few full-plans by
     #      their value AFTER the producer's reply + a producer-vs-producer turn,
@@ -1133,13 +1115,11 @@ def agent(obs, configuration=None):
         try:
             depth = _rollout_depth()
             if depth >= 2:
-                return _one_action_filter(_deep_pick(obs, configuration, me,
-                                          num_seats, uniq, depth,
-                                          budget_ms=_deep_budget(obs_d)))
-            return _one_action_filter(_twoply_pick(obs, configuration, me,
-                                      num_seats, uniq,
-                                      budget_ms=_twoply_budget(obs_d) if anytime_on else _rem))
+                return _deep_pick(obs, configuration, me, num_seats, uniq,
+                                  depth, budget_ms=_deep_budget(obs_d))
+            return _twoply_pick(obs, configuration, me, num_seats, uniq,
+                                budget_ms=_twoply_budget(obs_d) if anytime_on else _rem)
         except Exception:
-            return _one_action_filter(committed_emit)
+            return committed_emit
 
-    return _one_action_filter(committed_emit)
+    return committed_emit

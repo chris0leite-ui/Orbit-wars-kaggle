@@ -2,15 +2,15 @@
 
 Watching a replay, the shipped agent expanded strongly (~14 planets) then
 collapsed because its force was fragmented into many small fleets (measured: 38%
-of active turns launch at >=2 distinct targets). LR_ONE_ACTION post-filters the
-played move: if it launches at more than one target, keep only the launches to
-the single most-committed target (the main strike); the other ships stay home.
+of active turns launch at >=2 distinct targets). LR_ONE_ACTION commits ONLY the
+single best coordinated capture each round (sized to overwhelm), launching nothing
+else -- so the played move targets exactly one planet.
 
 Board: angular_velocity=0 so each launch maps to its target by direction; 100x100
-board, sun at (50,50) r10, planets clear of the sun and non-collinear. The commit
-value-floor is neutralized (LR_ROI_FLOOR very negative, set before import) so the
-agent commits a multi-target move, and the 2-ply is off so the played move is the
-committed plan -- isolating the post-filter.
+board, sun at (50,50) r10, planets clear of the sun and non-collinear. For the OFF
+baseline we neutralize the commit value-floor (LR_ROI_FLOOR very negative) and turn
+the 2-ply off so the shipped greedy commits a multi-target move; the ON path
+bypasses both (it just plays the single best strike).
 """
 import importlib.util
 import math
