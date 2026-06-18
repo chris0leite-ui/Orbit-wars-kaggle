@@ -51,6 +51,48 @@ neutral one. The bolt-on is SATURATED — the binding constraint is the
 producer's one-ply static flow-delta value function, not dropout's drop
 measure. Refining dropout within this architecture has no traction.
 
+## CONTINUOUS-SCORE A/B confirmation (n=40 paired, 2026-06-18)
+Re-ran the same variants with a **continuous outcome** instead of win/loss:
+each game scored by the normalised end-state ship margin
+`(focal − rival)/(focal + rival)` ∈ [−1, 1] — the exact quantity the engine
+argmaxes to decide the winner, so its SIGN reproduces win/loss and its MAGNITUDE
+separates a rout from a squeaker. Every variant runs on the SAME seed+seat as
+base, so variants PAIR by map and the per-map margin shift differences out map
+variance. Harness: `scripts/continuous_ab.py` + `scripts/_continuous_game_worker.py`
+(one game per fresh subprocess; seeds 5000-5039; vs Producer V2).
+
+| variant | wins | mean margin [95% CI] | paired Δmargin vs base [boot CI] | maps changed |
+|---|---|---|---|---|
+| **base (dropout_repl)** | **21/40** | **+0.051 [−0.26, +0.36]** | — | — |
+| more_sims4 (SCENARIOS=4) | 20/40 | +0.000 | −0.051 [−0.15, 0.00] | 2/40 |
+| incentive | 20/40 | +0.001 | −0.050 [−0.15, +0.00] | 3/40 |
+| winprob γ=0.5 | 19/40 | −0.049 | −0.100 [−0.25, +0.00] | 4/40 |
+| winprob γ=1.0 | 19/40 | −0.049 | −0.100 [−0.25, +0.00] | 4/40 (≡ γ=0.5) |
+| deeper_h30 | 9/40 | −0.550 | **−0.601 [−1.00, −0.15]** p=0.01 ✱ | 23/40 |
+
+**Sharpened verdict (the better feedback changed the STORY, not the conclusion):**
+- **The refinements are INERT, not regressions.** Each changes the played game
+  on only **2-4 of 40 maps**; on 90%+ of maps the chosen action is byte-identical
+  to base. winprob γ=0.5 and γ=1.0 are identical on ALL 40 maps — the
+  lead-scaling never crosses a decision boundary. The binary table's
+  "incentive 13 / winprob 12-11" read a 2-map swing as a regression; the paired
+  margins show those variants are within noise of base (every Δ CI brackets 0).
+- **Only deeper-horizon is a statistically REAL effect** — Δmargin −0.60, CI
+  excludes 0 (p=0.01), changes 23/40 maps. Confirms "catastrophic."
+- **Base is at PARITY with V2, not ahead.** Mean margin +0.051 with CI
+  [−0.26, +0.36] straddles 0 → dropout_repl ≈ coin-flip vs V2 (21/40), NOT the
+  "~54% / slightly ahead" the binary probe suggested. This is BELOW the live
+  least_resistance champion (21/32 ≈ 65% vs V2), so fork (a) "ship the cheap
+  replacement" would REGRESS the live agent.
+- **Mechanistic confirmation of saturation:** the perturbation is too thin a
+  layer to express any measure/risk refinement — the refinement washes out
+  before it reaches the one-ply chooser's decision. This is the strongest
+  evidence yet that the binding constraint is the value function, not the drop
+  measure. NB: 37/40 of these wide maps end in elimination (margin ±1), so the
+  continuous signal's variance-reduction was muted here; its payoff was the
+  clean PAIRING (exposing "≤4 maps change") + the deeper-horizon significance.
+  A map set with more step-capped finishes would exercise the margin further.
+
 ## ARCHITECTURE verdict & the fork
 Dropout grafted onto producer_plus is well-suited for exactly one job —
 **cheaply replacing the opponent mirror** (validated: ~54% vs V2 at ~half
