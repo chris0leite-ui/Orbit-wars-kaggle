@@ -20,9 +20,28 @@
   game per seed; do NOT condition on seat (confounds with map); do NOT use
   `fast.py eval` (correlated map-pairs). Run variants SEQUENTIALLY (parallel
   torch OOM-kills heavy variants). Full detail in the thoughts entry.
-- **FIRST THING NEXT SESSION:** read `state/DROPOUT_PLAN.md`; re-pull Producer V2
-  (`kaggle kernels pull slawekbiel/the-producer-v2`); continue at Phase 1b
-  (calibrate flip probability) or finish the Phase 1a A/B.
+- **Clean wide-map A/B (28 maps vs V2):** base 15/28, more-sims 14 (parity),
+  incentive 13, winprob 12/11, deeper(H30) 6. **Nothing beats base** — the
+  bolt-on is SATURATED (producer's one-ply static value function is the
+  ceiling). Two eval bugs found+fixed this session: seat tied to seed parity
+  (a confound, not a seat effect), and a single-process knob env-leak (run one
+  bundle per fresh subprocess).
+
+- **THE FORK (decide next session):**
+  (a) **Ship the cheap replacement** — dropout replacing the opponent mirror is
+      ~54% vs V2 at ~half cost; harden (more maps + opponents) and submit via
+      the Rule 42 gate; OR
+  (b) **Build the dropout-NATIVE agent** — see **`state/DROPOUT_NATIVE_DESIGN.md`**
+      (full build plan): value = expectation/CVaR over an ensemble of stochastic
+      flip-HAZARD rollouts (mean-field v1, deterministic, no RNG), reusing the
+      batched `_run_exact_recurrence` + `_reactive_reinforcement_margin` +
+      producer's shortlist. Phase A is a hard KILL-GATE: a distribution-aware
+      forward model scoring the same candidates must beat base 15/28, else stop.
+  Do NOT keep refining the producer bolt-on — the data says it's done.
+
+- **FIRST THING NEXT SESSION:** read `state/DROPOUT_PLAN.md` then
+  `state/DROPOUT_NATIVE_DESIGN.md`; re-pull Producer V2
+  (`kaggle kernels pull slawekbiel/the-producer-v2`); decide the fork above.
 
 ---
 
