@@ -303,19 +303,6 @@ def _recapture_opp():
         "1", "true", "on", "yes")
 
 
-def _prune_waste():
-    """PIVOT (default OFF). Drop WASTEFUL launches from the move we play. Today
-    that means any launch whose straight path to its target crosses the sun -- the
-    fleet would be destroyed in flight, a total loss. The agent's own candidates
-    are already sun-filtered, but the producer-fallback move it often plays is NOT,
-    so unfiltered sun-bound fleets leak through (measured: up to ~18% of launches on
-    some boards). Dropping them keeps those ships home as garrison; every sound
-    launch is kept -- no cap, no concentration, just pruning dead fleets. Set
-    LR_PRUNE_WASTE=1 to enable."""
-    return os.environ.get("LR_PRUNE_WASTE", "0").strip().lower() in (
-        "1", "true", "on", "yes")
-
-
 def _recapture_moves(obs_dict, seat, exclude_srcs=()):
     """A competent opponent's reactive recapture, used ONLY inside the lookahead's
     opponent replies: `seat` launches from its nearest unused source to retake the
@@ -683,42 +670,6 @@ def _comet_paths_by_id_safe(obs_d):
         return {}
 
 
-def _drop_sun_launches(move, planets, by_id, comet_ids, comet_paths, omega):
-    """Prune launches whose straight path to their target crosses the sun -- the
-    fleet would be destroyed in flight (a total loss). Each launch [src, angle,
-    ships] is mapped to its target by matching the emit angle to the intercept aim
-    (`_plan_shot`); a launch we cannot confidently classify (no match, or the best
-    match is angularly far) is KEPT -- we never drop on a guess. Used to clean the
-    producer-fallback move, whose launches are not sun-filtered. Returns the kept
-    launches (ships of dropped launches stay home as garrison)."""
-    if not move:
-        return move
-    kept = []
-    for launch in move:
-        sid = int(launch[0])
-        ang = float(launch[1])
-        sh = launch[2]
-        src = by_id.get(sid)
-        if src is None:
-            kept.append(launch)
-            continue
-        best, bd, best_arr = None, 1e9, None
-        for p in planets:
-            if int(p.id) == sid:
-                continue
-            shot = _plan_shot(src, p, comet_ids, comet_paths, omega, max(1, int(sh)))
-            if shot is None:
-                continue
-            d = abs(shot[0] - ang)
-            d = min(d, 2.0 * math.pi - d)
-            if d < bd:
-                bd, best, best_arr = d, p, shot[2]
-        if best is None or bd > 0.10 or _sun_clear(src, best_arr):
-            kept.append(launch)
-        # else: confident match whose path crosses the sun -> drop the dead fleet
-    return kept
-
-
 # --------------------------------------------------------------------------
 # The agent.
 #
@@ -797,13 +748,6 @@ def agent(obs, configuration=None):
 
     available = {int(p.id): int(p.ships) for p in my_planets}
     by_id = {int(p.id): p for p in planets}
-
-    prune_waste = _prune_waste()
-
-    def _prune_wasteful(move):
-        if not prune_waste:
-            return move
-        return _drop_sun_launches(move, planets, by_id, comet_ids, comet_paths, omega)
     # each candidate: emit=[[src_id,angle,ships],...], units=[(src_slot,tgt_slot,ships,eta),...],
     #                 srcs={src_id:ships}, rank, front
     candidates = []
@@ -1100,7 +1044,7 @@ def agent(obs, configuration=None):
                 continue
             if best_v is None or v > best_v:
                 best, best_v = p, v
-        return _prune_wasteful(best)
+        return best
 
     # ---- 2-ply lookahead pick (2P only): choose among a few full-plans by
     #      their value AFTER the producer's reply + a producer-vs-producer turn,
@@ -1134,13 +1078,11 @@ def agent(obs, configuration=None):
         try:
             depth = _rollout_depth()
             if depth >= 2:
-                return _prune_wasteful(_deep_pick(obs, configuration, me,
-                                       num_seats, uniq, depth,
-                                       budget_ms=_deep_budget(obs_d)))
-            return _prune_wasteful(_twoply_pick(obs, configuration, me,
-                                   num_seats, uniq,
-                                   budget_ms=_twoply_budget(obs_d) if anytime_on else _rem))
+                return _deep_pick(obs, configuration, me, num_seats, uniq,
+                                  depth, budget_ms=_deep_budget(obs_d))
+            return _twoply_pick(obs, configuration, me, num_seats, uniq,
+                                budget_ms=_twoply_budget(obs_d) if anytime_on else _rem)
         except Exception:
-            return _prune_wasteful(committed_emit)
+            return committed_emit
 
-    return _prune_wasteful(committed_emit)
+    return committed_emit
