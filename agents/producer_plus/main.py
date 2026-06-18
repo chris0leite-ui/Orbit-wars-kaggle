@@ -2323,6 +2323,17 @@ def _dropout_gen_enabled() -> bool:
     )
 
 
+def _dropout_incentive_enabled() -> bool:
+    """Incentive-weighting axis (Phase 1). Rank which held planets drop by the
+    OPPONENT'S incentive to take them — our loss value (production over the
+    remaining horizon + garrison) — instead of raw enemy reachable mass
+    (capability). A best-responding opponent flips the planets that hurt us
+    most, not merely the ones it can reach. Default off = capability ranking."""
+    return os.environ.get("PRODUCER_PLUS_DROPOUT_INCENTIVE", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def _strongest_rival(obs, *, player_count: int, pid: int, dtype, device):
     """Absolute owner id of the strongest living rival (planet ships), or None."""
     enemy = obs.is_enemy & obs.alive
@@ -2452,7 +2463,7 @@ def _dropout_reflip_legs(
 
 def _held_dropout_plan(
     obs, cache, garrison_status, *, K_eta: int, r: int, rival: int, pid: int,
-    device, dtype,
+    device, dtype, prod: Tensor | None = None, H: int = 0,
 ):
     """Top-``r`` most-exposed HELD planets to flip in the pessimist baseline.
 
@@ -2460,10 +2471,11 @@ def _held_dropout_plan(
     droppable if the rival's routable mass beats its projected garrison at some
     tick within ``K_eta`` while we still own it; the flip lands at the earliest
     such tick, sized to the rival's routable mass (proportional to enemy
-    threat). Planets are ranked by that threat magnitude. ``w_held`` is the mean
-    contest ratio over the dropped planets — a proportional measure of how
-    threatened our existing holdings are, used to weight defensive candidates
-    toward the dropped scenario.
+    threat). Planets are ranked either by threat magnitude (capability, default)
+    or — with ``PRODUCER_PLUS_DROPOUT_INCENTIVE`` — by the opponent's incentive
+    to take them = our loss value (``prod·(H−flip_tick) + garrison``); a
+    best-responding opponent flips what hurts us most, not just what it can
+    reach. ``w_held`` is the mean contest ratio over the dropped planets.
     """
     if r <= 0 or int(K_eta) <= 0:
         return None
@@ -2489,7 +2501,16 @@ def _held_dropout_plan(
     g_at = ships_traj.gather(-1, flip_k.unsqueeze(-1)).squeeze(-1)      # [D0]
     thr_at = margin.gather(-1, flip_k.unsqueeze(-1)).squeeze(-1)        # [D0]
     ratio = (thr_at / (thr_at + g_at).clamp(min=1e-6)).clamp(0.0, 1.0)  # [D0]
-    expose = torch.where(any_drop, thr_at, torch.full_like(thr_at, float("-inf")))
+    # Ranking metric: capability (enemy mass) by default; opponent-incentive
+    # (our loss value = production over the remaining horizon + garrison) when
+    # the incentive axis is on — concentrates drops on the planets a smart
+    # rival would actually target.
+    if _dropout_incentive_enabled() and prod is not None and int(H) > 0:
+        rem = (float(H) - (flip_k.to(dtype) + 1.0)).clamp(min=0.0)      # [D0]
+        rank_metric = prod[held_idx].to(dtype) * rem + g_at            # [D0] our loss
+    else:
+        rank_metric = thr_at
+    expose = torch.where(any_drop, rank_metric, torch.full_like(rank_metric, float("-inf")))
     rsel = min(int(r), int(any_drop.sum().item()))
     top = _stable_topk_indices(expose, rsel)                           # [rsel] into D0
     tgt = held_idx[top]
@@ -3349,6 +3370,7 @@ def plan_lite_waves(
                 _held = _held_dropout_plan(
                     obs, cache, garrison_status, K_eta=int(K_eta),
                     r=_r, rival=rival, pid=pid, device=device, dtype=dtype,
+                    prod=prod, H=H,
                 )
                 pess_status = garrison_status
                 if _held is not None:
