@@ -1,5 +1,33 @@
 # HANDOVER.md — next-session brief
 
+> **Refreshed 2026-06-18 (smart-dropout session).** Active line =
+> **smart dropout on `agents/producer_plus`**. Read `state/DROPOUT_PLAN.md`
+> first (the executable roadmap), then
+> `knowledge-base/thoughts/2026-06-18-dropout-and-seat-eval-confound.md`.
+> The take-and-hold / least_resistance brief below is retained for history.
+
+## ⚠️ Dropout session — state of play (2026-06-18)
+- **Smart dropout** (model-free robustness REPLACING opponent modelling) is
+  built on `agents/producer_plus`, all default-OFF, OFF path byte-identical.
+  Variants in `scripts/bundle_producer_plus.py`: `dropout`, `dropout_live`
+  (add-on to the live stack), `dropout_repl` (replaces opp model).
+- **Result:** dropout replaces the opponent model at PARITY for ~half the
+  per-turn cost. Compute axes (deeper/more-sims/naive-gen) don't help — the
+  DROP MEASURE is the lever. Phase 1a incentive-weighting
+  (`PRODUCER_PLUS_DROPOUT_INCENTIVE`) committed default-OFF, A/B in progress.
+- **Eval lesson (load-bearing):** outcome is MAP-determined and seat-invariant;
+  NO first-mover effect, NO seat bias. Evaluate on many DIVERSE map-seeds, one
+  game per seed; do NOT condition on seat (confounds with map); do NOT use
+  `fast.py eval` (correlated map-pairs). Run variants SEQUENTIALLY (parallel
+  torch OOM-kills heavy variants). Full detail in the thoughts entry.
+- **FIRST THING NEXT SESSION:** read `state/DROPOUT_PLAN.md`; re-pull Producer V2
+  (`kaggle kernels pull slawekbiel/the-producer-v2`); continue at Phase 1b
+  (calibrate flip probability) or finish the Phase 1a A/B.
+
+---
+
+## (historical) take-and-hold brief — 2026-06-17
+
 > Refreshed **2026-06-17** (take-and-hold session). Supersedes the 2026-06-15
 > producer_plus brief. ~6 days to the 06-23 deadline. Full session record:
 > `knowledge-base/thoughts/2026-06-17-take-and-hold-and-threat-aware-margin.md`.
