@@ -97,6 +97,14 @@ if [[ -f requirements.txt ]]; then
     # Pre-replace it with a pip-managed copy so `pip install -r ...` succeeds.
     pip install -q --ignore-installed blinker 2>/dev/null || true
     pip install -q -r requirements.txt
+    # The producer line (producer_plus, least_resistance, Producer V2) imports
+    # torch; it is NOT in requirements.txt (the CUDA wheel is huge). Install the
+    # CPU wheel here if torch is missing so agent A/Bs run on a fresh container.
+    if ! python -c "import torch" 2>/dev/null; then
+        echo "--- installing torch (CPU) for the producer/orbit_lite agents ---"
+        pip install -q torch --index-url https://download.pytorch.org/whl/cpu \
+            2>/dev/null || echo "    (torch CPU install failed; producer agents will not run)"
+    fi
 else
     echo "--- (no requirements.txt; skipping pip install) ---"
 fi

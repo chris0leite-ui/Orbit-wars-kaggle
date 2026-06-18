@@ -1,0 +1,5 @@
+# continuous-ab  2026-06-18T21:14:15.929321+00:00  | 2P vs slawekbiel_the-producer-v2 | seeds 5000..5047 (n=48) | variants=off,champion | 96 games to run (0 already done)
+  [  1/ 96] champion      seed=5001 seat=1  loss  margin=-1.000  steps=132 max_ms=362.8  (eta 2816s)
+  [  2/ 96] off           seed=5001 seat=1  loss  margin=-1.000  steps=138 max_ms=364.2  (eta 1439s)
+  [  3/ 96] champion      seed=5000 seat=0  WIN   margin=+1.000  steps=168 max_ms=468.4  (eta 1245s)
+  [  4/ 96] off           seed=5002 seat=0  WIN   margin=+1.000  steps=146 max_ms=356.3  (eta 1424s)
