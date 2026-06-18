@@ -2359,6 +2359,7 @@ def plan_lite_waves(
     force_concentration: bool | None = None,
     opp_weights: Tensor | None = None,
     sync_sink: list | None = None,
+    dropout_ok: bool = True,
 ):
     """Single-size, single-source attack planner + regroup.
 
@@ -3130,7 +3131,7 @@ def plan_lite_waves(
         terminal_prod_weight=_terminal_prod_value(),
         terminal_neutral_only=_terminal_neutral_only(),
     )                                                                            # [C]
-    if _dropout_enabled():
+    if _dropout_enabled() and dropout_ok:
         # Smart dropout: re-score every candidate in a world where the planet
         # it captures is reflipped to the strongest rival a few turns later,
         # then average the held (optimist) and dropped (pessimist) scores. The

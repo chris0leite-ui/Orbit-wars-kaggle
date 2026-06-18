@@ -962,6 +962,26 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
         "PRODUCER_PLUS_MULTI_TICK_OPP_K_4P": "3",
     },
+    "dropout_live": {
+        # Smart dropout AS AN ADD-ON to the proven live 2P stack
+        # (vetorf2p_ffa). The standalone `dropout` variant (which STRIPPED
+        # the opponent-modelling layers) lost 0/8 to Producer V2 while the
+        # live stack wins 6/8 — the veto/opp-projection/reactive-floor are
+        # load-bearing vs the strong peer, so dropout is tested here as
+        # robustness ON TOP of them, not in place of them. Dropout is gated
+        # to OUR real planning pass only (dropout_ok=False inside every
+        # opponent mirror), so it does not distort the opponent model or
+        # multiply the mirror cost.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_OPP_PROJECTION": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO": "1",
+        "PRODUCER_PLUS_RESPONSE_VETO_2P_ONLY": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_REACTIVE_FLOOR_2P_ONLY": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
+        "PRODUCER_PLUS_DROPOUT": "1",
+    },
     "dropout": {
         # Smart dropout (2026-06-18): MODEL-FREE robustness in place of
         # opponent modelling. Each candidate is scored twice — once with its

@@ -139,6 +139,11 @@ def predict_opp_launches_via_mirror(
                 # K_opp x num_opps inner planner calls each carry their own
                 # rescore. Opp is modeled with the cheap single-wave chooser.
                 force_concentration=False,
+                # Smart dropout is OUR robustness perturbation on OUR real
+                # pass only — modelling the opponent as ALSO dropping its own
+                # captures would distort the opponent model and double the
+                # inner-call cost. Off inside every mirror.
+                dropout_ok=False,
             )
             # Walk the flat [L] entry table; emit one record per valid slot.
             src_cpu = opp_entries.source_slots.cpu().tolist()
@@ -221,6 +226,8 @@ def predict_opp_launches_via_mirror(
                 # so multi-tick's K_opp x num_opps inner calls don't compound
                 # the rescore closure cost.
                 force_concentration=False,
+                # Smart dropout stays off inside the opponent mirror (see K=1).
+                dropout_ok=False,
             )
             src_cpu = opp_entries.source_slots.cpu().tolist()
             tgt_cpu = opp_entries.target_slots.cpu().tolist()
