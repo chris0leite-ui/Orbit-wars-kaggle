@@ -53,12 +53,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 WORKER = REPO / "scripts" / "_continuous_game_worker.py"
-FOCAL = REPO / "agents" / "producer_plus" / "main.py"
 V2 = REPO / "audit" / "external" / "agents" / "slawekbiel_the-producer-v2" / "main.py"
 
 # dropout_repl base (the DROPOUT_PLAN A/B baseline) — dropout REPLACING the
 # opponent model: multi_size + reactive_floor + FFA(uniform) + dropout.
-BASE = {
+_DROP_BASE = {
     "PRODUCER_PLUS_MULTI_SIZE": "1",
     "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
     "PRODUCER_PLUS_FFA_SCORE": "1",
@@ -67,21 +66,47 @@ BASE = {
 }
 
 
-def _v(**extra):
-    d = dict(BASE)
+def _v(base, **extra):
+    d = dict(base)
     d.update({k: str(v) for k, v in extra.items()})
     return d
 
 
-# Each refinement layered on the identical base — exactly the DROPOUT_PLAN
-# table, now scored continuously and paired by map.
-VARIANTS = {
-    "base":          _v(),
-    "more_sims4":    _v(PRODUCER_PLUS_DROPOUT_SCENARIOS=4),
-    "incentive":     _v(PRODUCER_PLUS_DROPOUT_INCENTIVE=1),
-    "winprob_g0.5":  _v(PRODUCER_PLUS_DROPOUT_WINPROB=0.5),
-    "winprob_g1.0":  _v(PRODUCER_PLUS_DROPOUT_WINPROB=1.0),
-    "deeper_h30":    _v(PRODUCER_PLUS_HORIZON_2P=30),
+# least_resistance (the LIVE champion). The refuted default-OFF levers are
+# pinned OFF (matching scripts/verify_confirm.py) so OFF/ON isolates exactly the
+# shipped take-and-hold pair. "off" = pre-take-and-hold shipped agent; "champion"
+# = the live default (LR_HOLD_MARGIN=0.5, LR_DEFEND=1). Re-measuring the KNOWN
+# +7/32 take-and-hold lift in MARGIN space is a calibration probe (Rule 45 exempt)
+# AND maps the champion's remaining loss landscape vs V2 (the headroom).
+_LR_OFF = {
+    "LR_LEADER_RELATIVE_4P": "0", "LR_VALUE_COMMIT": "0", "LR_ANYTIME": "0",
+    "LR_ENEMY_BOOST": "1.0", "LR_ROLLOUT_DEPTH": "0",
+}
+
+
+# A variant-set bundles a focal agent with its named knob variants and the
+# pairing reference. Select with --set.
+VARIANT_SETS = {
+    "dropout": {
+        "focal": REPO / "agents" / "producer_plus" / "main.py",
+        "ref": "base",
+        "variants": {
+            "base":         _v(_DROP_BASE),
+            "more_sims4":   _v(_DROP_BASE, PRODUCER_PLUS_DROPOUT_SCENARIOS=4),
+            "incentive":    _v(_DROP_BASE, PRODUCER_PLUS_DROPOUT_INCENTIVE=1),
+            "winprob_g0.5": _v(_DROP_BASE, PRODUCER_PLUS_DROPOUT_WINPROB=0.5),
+            "winprob_g1.0": _v(_DROP_BASE, PRODUCER_PLUS_DROPOUT_WINPROB=1.0),
+            "deeper_h30":   _v(_DROP_BASE, PRODUCER_PLUS_HORIZON_2P=30),
+        },
+    },
+    "champion": {
+        "focal": REPO / "agents" / "least_resistance" / "main.py",
+        "ref": "off",
+        "variants": {
+            "off":      _v(_LR_OFF, LR_HOLD_MARGIN="0.0", LR_DEFEND="0"),
+            "champion": _v(_LR_OFF, LR_HOLD_MARGIN="0.5", LR_DEFEND="1"),
+        },
+    },
 }
 
 
@@ -148,7 +173,7 @@ def sign_test_p(wins: int, losses: int) -> float:
 # --------------------------------------------------------------------------
 
 def _play(variant: str, knobs: dict, seed: int, seat: int, players: int,
-          opps: list[str]) -> dict:
+          opps: list[str], focal: str) -> dict:
     env = dict(os.environ)
     env["OMP_NUM_THREADS"] = "1"
     env["MKL_NUM_THREADS"] = "1"
@@ -156,7 +181,7 @@ def _play(variant: str, knobs: dict, seed: int, seat: int, players: int,
         sys.executable, str(WORKER),
         "--seed", str(seed), "--focal-seat", str(seat),
         "--players", str(players),
-        "--focal", str(FOCAL),
+        "--focal", str(focal),
         "--opps", ",".join(opps),
         "--knobs", json.dumps(knobs),
     ]
@@ -207,12 +232,15 @@ def run(args) -> Path:
                 str(EXT / "romantamrazov_orbit-star-wars-lb-max-1224" / "main.py"),
                 str(EXT / "konbu17_orbit-wars-rule-base-ml-shot-validator-hybrid" / "main.py")]
 
+    vset = VARIANT_SETS[args.set]
+    VARIANTS = vset["variants"]
+    focal = str(args.focal) if args.focal else str(vset["focal"])
     variants = (args.variants.split(",") if args.variants
                 else list(VARIANTS.keys()))
     for v in variants:
         if v not in VARIANTS:
-            raise SystemExit("unknown variant %r; known: %s"
-                             % (v, ", ".join(VARIANTS)))
+            raise SystemExit("unknown variant %r in set %r; known: %s"
+                             % (v, args.set, ", ".join(VARIANTS)))
 
     log = args.log or (REPO / "audit" / ("continuous-ab-%s.jsonl"
             % datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")))
@@ -243,7 +271,7 @@ def run(args) -> Path:
     t0 = time.perf_counter()
     completed = 0
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = {ex.submit(_play, v, knobs, seed, seat, players, opps):
+        futs = {ex.submit(_play, v, knobs, seed, seat, players, opps, focal):
                 (v, seed) for (v, knobs, seed, seat) in tasks}
         for fut in as_completed(futs):
             rec = fut.result()
@@ -269,8 +297,9 @@ def run(args) -> Path:
 # report
 # --------------------------------------------------------------------------
 
-def report(log: Path) -> None:
+def report(log: Path, ref: str | None = None, landscape: str | None = None) -> None:
     rows = []
+    seen_order: list[str] = []
     for line in Path(log).read_text().splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -281,6 +310,8 @@ def report(log: Path) -> None:
             continue
         if "variant" in r and "seed" in r:
             rows.append(r)
+            if r["variant"] not in seen_order:
+                seen_order.append(r["variant"])
 
     # variant -> seed -> record (last wins on dup)
     by_var: dict[str, dict[int, dict]] = {}
@@ -291,16 +322,22 @@ def report(log: Path) -> None:
             continue
         by_var.setdefault(r["variant"], {})[int(r["seed"])] = r
 
-    order = [v for v in VARIANTS if v in by_var] + \
-            [v for v in by_var if v not in VARIANTS]
-    if "base" not in by_var:
-        print("no 'base' variant in log — cannot pair.")
-    base = by_var.get("base", {})
+    order = [v for v in seen_order if v in by_var]
+    # pairing reference: explicit --ref, else "base"/"off" if present, else first.
+    if ref is None:
+        ref = next((c for c in ("base", "off") if c in by_var), order[0] if order else None)
+    if ref not in by_var:
+        print("ref %r not in log — cannot pair." % ref)
+    base = by_var.get(ref, {})
+    print("(pairing reference = %r)" % ref)
 
+    pl5 = next((g for g in by_var.values() if g), {})
+    opp_hint = "Producer V2" if not pl5 or next(iter(pl5.values())).get(
+        "players", 2) == 2 else "the panel"
     print("\n" + "=" * 92)
-    print("CONTINUOUS-SCORE A/B  (focal = producer_plus dropout, vs Producer V2)")
-    print("margin = (focal_ships - rival_ships)/(focal_ships + rival_ships) in [-1,1]; "
-          "sign = win")
+    print("CONTINUOUS-SCORE A/B  (margin = (focal_ships - rival_ships)/"
+          "(focal_ships + rival_ships) in [-1,1]; sign = win)")
+    print("vs %s" % opp_hint)
     print("=" * 92)
     print("%-14s %5s | %-15s | %-22s | %-26s"
           % ("variant", "n", "wins (Wilson lo-hi)", "mean margin [95% CI]",
@@ -317,7 +354,7 @@ def report(log: Path) -> None:
         mm, mlo, mhi = mean_ci(margins)
 
         paired = ""
-        if v != "base" and base:
+        if v != ref and base:
             common = [s for s in seeds if s in base]
             deltas = [games[s]["margin"] - base[s]["margin"] for s in common]
             up = sum(1 for d in deltas if d > 1e-9)
@@ -328,7 +365,7 @@ def report(log: Path) -> None:
             sig = "  *" if (dlo > 0 or dhi < 0) else ""
             paired = ("%+.3f [%+.3f,%+.3f] up/dn=%d/%d p=%.2f%s"
                       % (dmean, blo, bhi, up, dn, p, sig))
-        elif v == "base":
+        elif v == ref:
             paired = "(reference)"
 
         print("%-14s %5d | %3d/%-3d (%.2f-%.2f) | %+.3f [%+.3f,%+.3f]  | %s"
@@ -345,6 +382,24 @@ def report(log: Path) -> None:
             print("   %-13s seed=%s  %s" % (e["variant"], e.get("seed"),
                                             e.get("error", "")[:80]))
 
+    if landscape and landscape in by_var:
+        games = by_var[landscape]
+        items = sorted(games.items(), key=lambda kv: kv[1]["margin"])
+        losses = [(s, r) for s, r in items if not r["win"]]
+        close = [(s, r) for s, r in items if r["win"] and r["margin"] < 0.5]
+        print("\nLOSS LANDSCAPE for %r (the headroom): %d losses, %d close wins "
+              "(margin<0.5) of %d maps" % (landscape, len(losses), len(close),
+                                           len(items)))
+        print("  losing maps (margin asc) — these are where the work is:")
+        for s, r in losses:
+            print("    seed=%-6d margin=%+.3f  scores=%s steps=%d"
+                  % (s, r["margin"], r.get("scores"), r.get("steps", 0)))
+        if close:
+            print("  close wins (could flip):")
+            for s, r in close:
+                print("    seed=%-6d margin=%+.3f  steps=%d"
+                      % (s, r["margin"], r.get("steps", 0)))
+
     print("\nReading the paired column:")
     print("  Δmargin>0 = variant dominates base on the same maps; [lo,hi] is the")
     print("  bootstrap 95%% CI on the mean per-map margin shift; up/dn = maps the")
@@ -356,21 +411,31 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", action="store_true")
     ap.add_argument("--report-only", default=None, metavar="JSONL")
+    ap.add_argument("--set", default="dropout", choices=list(VARIANT_SETS),
+                    help="variant set / focal agent (default: dropout)")
+    ap.add_argument("--focal", default=None,
+                    help="override the set's focal agent path")
+    ap.add_argument("--ref", default=None,
+                    help="pairing reference variant (default: set's ref)")
     ap.add_argument("--seeds", type=int, default=40, help="number of maps (n)")
     ap.add_argument("--seed-start", type=int, default=5000)
     ap.add_argument("--players", type=int, default=2, choices=(2, 4))
     ap.add_argument("--variants", default=None,
-                    help="comma list (default: all). 'base' is always needed for pairing")
+                    help="comma list (default: all in the set)")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--log", default=None)
+    ap.add_argument("--landscape", default=None,
+                    help="print the per-map loss landscape for this variant "
+                         "(the headroom view); e.g. --landscape champion")
     args = ap.parse_args()
 
+    ref = args.ref or VARIANT_SETS[args.set].get("ref")
     if args.report_only:
-        report(Path(args.report_only))
+        report(Path(args.report_only), ref=ref, landscape=args.landscape)
         return 0
     if args.run:
         log = run(args)
-        report(log)
+        report(log, ref=ref, landscape=args.landscape)
         return 0
     ap.print_help()
     return 1
