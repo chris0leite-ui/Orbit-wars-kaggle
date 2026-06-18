@@ -9,3 +9,7 @@
   [  8/120] native        seed=5002 seat=0  WIN   margin=+1.000  steps=139 max_ms=35.9  (eta 616s)
   [  9/120] native_s8     seed=5002 seat=0  WIN   margin=+1.000  steps=139 max_ms=33.5  (eta 579s)
   [ 10/120] base          seed=5003 seat=1  loss  margin=-1.000  steps=153 max_ms=189.9  (eta 568s)
+  [ 11/120] native        seed=5003 seat=1  WIN   margin=+1.000  steps=273 max_ms=53.9  (eta 594s)
+  [ 12/120] base          seed=5004 seat=0  WIN   margin=+1.000  steps=222 max_ms=185.7  (eta 575s)
+  [ 13/120] native_s8     seed=5003 seat=1  WIN   margin=+1.000  steps=273 max_ms=44.0  (eta 531s)
+  [ 14/120] native        seed=5004 seat=0  loss  margin=-1.000  steps=181 max_ms=52.2  (eta 495s)
