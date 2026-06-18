@@ -74,9 +74,30 @@ gets traction — but that's a new agent. Fork for next session: ship the cheap
 replacement vs commit to the ensemble-rollout rebuild. Don't keep refining the
 bolt-on. Full detail: state/DROPOUT_PLAN.md.
 
+## SEARCH DEPTH converts compute->strength (the session's first real lift)
+Built `scripts/eval_panel.py` (panel/margin/fresh-process harness). Compute-
+scaling curve, least_resistance vs V2, 28 maps (one game/seed, P0):
+- depth0 (2-ply): 14/28, margin -379, max 641ms
+- depth2:         13/28, margin -217, max 658ms
+- depth3:         17/28, margin  -56, max 818ms   <- best, beats producer/dropout 15
+- depth2+wide48:  13/28, margin -203 (IDENTICAL W/L to depth2 -> breadth is a NO-OP)
+
+MARGIN improves MONOTONICALLY with depth (-379 -> -217 -> -56). Win-rate noisy
+(14/13/17) but depth3 clearly best. So `LR_ROLLOUT_DEPTH=3` is the first config
+all session to beat the ~15/28 wall, using more of the 1000ms budget. Breadth
+(LR_MAX_CANDIDATES) does nothing (<28 sensible candidates typically).
+Caveat: n=28, depth3 wlo=0.42 -> triage, not yet a confident lift (Rule 45 wants
+n>=32 wlo>=0.5). And LR searches a PRODUCER opponent model while playing V2, so
+this lift is despite model-mismatch (encouraging; the accurate-model curve vs
+producer/self-play should be even cleaner).
+
 ## Open questions / next
-- Decide the fork (ship cheap replacement vs ensemble-rollout rebuild).
-- Phase 1b calibration only matters under the native design.
+- CONFIRM depth3 at n>=32 (margin metric); timing-check depth4 (depth3 already
+  818ms; depth4 may exceed 1000ms -> may need budget cap).
+- Depth-scaling vs producer/self-play (accurate opponent model) + 4P + panel.
+- The compute->strength lever is SEARCH DEPTH on least_resistance, not the
+  producer/dropout bolt-on. This supersedes the "ship cheap replacement vs
+  native rebuild" fork: the cheapest strong path is deeper least_resistance.
 
 ## Flags
 - The seat/`step` fix is default-ON but byte-identical when `step` is present;
