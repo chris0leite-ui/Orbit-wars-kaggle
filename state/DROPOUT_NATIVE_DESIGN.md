@@ -98,10 +98,17 @@ terminal-prod / hold-value hacks.
   base loses** (5002/5003/5018/5026/5029) while losing 7 base wins, and it is
   **faster** (max 223 ms vs 252 ms — no opponent mirror). So the forward model
   has real expressive traction; its v1 instantiation just nets slightly worse.
-  **Caveat (see steepness bracket):** steep 5 ≡ steep 8 byte-for-byte, so the
-  flip-HAZARD term — the thesis core — may be inert, with the 15-map change
-  coming from replacing the tuned `competitive_score` with a plain ownership
-  margin. [bracket conclusion filled in below once the s0.5/s20 run lands.]
+  **Steepness bracket — the flip-HAZARD was INERT:** steepness 0.5, 5, 8, 20 are
+  byte-identical across ALL 40 maps. So Phase-A-v1 never tested the thesis — it
+  tested plain ownership-margin vs the tuned `competitive_score` (which loses 19
+  vs 21); the distribution machinery contributed nothing. CAUSE: the hazard was
+  applied as an INSTANTANEOUS per-step haircut `(1-leak)`, a second-order
+  perturbation dominated by the large deterministic ownership term — the very
+  "thin layer over a coarse value function" failure the bolt-on had.
+  FIX (committed): CUMULATIVE survival `surv = Π_j (1-leak_j)` applied only while
+  I hold the planet, so sustained threat compounds over the horizon and the
+  hazard becomes the primary signal (verified load-bearing: value now responds
+  to steepness). Kill-gate RE-RUN with the cumulative hazard recorded below.
 
 ## Build phases (each default-OFF where grafted; each A/B-gated vs V2)
 - **Phase A (KILL-GATE): mean-field forward model + value functional**, scoring
