@@ -962,6 +962,22 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
         "PRODUCER_PLUS_MULTI_TICK_OPP_K_4P": "3",
     },
+    "dropout": {
+        # Smart dropout (2026-06-18): MODEL-FREE robustness in place of
+        # opponent modelling. Each candidate is scored twice — once with its
+        # capture held, once with that planet reflipped to the strongest rival
+        # a few turns later (sized to the enemy's physically-routable mass) —
+        # and the two scores are averaged (PI: "average, keep optimist").
+        # NO opp_projection / response_veto: dropout REPLACES them. FFA
+        # strength objective kept for the 4P non-regression. multi_size is the
+        # common candidate-generation base. The dropout perturbation flows
+        # through the exact production->combat recurrence the scorer trusts,
+        # so it subsumes the band-aid hold/recapture/source-safety terms.
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "strength",
+        "PRODUCER_PLUS_DROPOUT": "1",
+    },
 }
 
 

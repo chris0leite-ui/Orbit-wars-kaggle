@@ -2189,6 +2189,160 @@ def cheap_enemy_pressure(obs, cache, *, horizon: float, player_id: int) -> Tenso
     return contrib.sum(dim=0)                                            # [P] summed over sources
 
 
+# --- Smart dropout (model-free robustness) ----------------------------------
+# Instead of MODELLING the opponent's launches, perturb our own forward
+# rollout: assume that a planet we CAPTURE this turn is taken back by the
+# opponent a few turns later, garrisoned with the enemy's physically-routable
+# mass. Each candidate is then scored TWICE — once with the capture held
+# (optimist) and once with it dropped — and the two scores are averaged
+# (PI sign-off 2026-06-18: "average, keep optimist"). Captures the opponent
+# could never reach are not dropped, so the perturbation is grounded in
+# reachable enemy mass rather than a guessed constant. This replaces the
+# opponent-modelling layers (opp projection / response veto) with one rollout
+# perturbation that propagates through the exact production->combat recurrence
+# the scorer already trusts. Default OFF preserves byte-identical scoring.
+#
+# Engine mapping: a "drop" is a credit-only enemy arrival injected at the
+# captured planet (no source debit -> source_slots set out of range so the
+# scorer's source-validity gate drops the debit). The minimal flip size
+# (our projected garrison + 1) is used because the competitive penalty is
+# INVARIANT to any larger enemy arrival (surplus enemy ships are relocated,
+# not produced or lost) — minimal sizing flips the planet without
+# over-crediting enemy combat losses.
+def _dropout_enabled() -> bool:
+    return os.environ.get("PRODUCER_PLUS_DROPOUT", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _dropout_weight() -> float:
+    """Weight on the dropped (pessimistic) scenario in the average. 0.5 = the
+    PI's "average, keep optimist": equal weight on hold and drop. 0 reproduces
+    the clean static score; 1 is fully pessimistic (worst-case-ish)."""
+    raw = os.environ.get("PRODUCER_PLUS_DROPOUT_WEIGHT", "0.5")
+    try:
+        return min(1.0, max(0.0, float(raw)))
+    except (TypeError, ValueError):
+        return 0.5
+
+
+def _dropout_lag() -> float:
+    """Turns after our capture-arrival at which the opponent's reflip lands.
+    A short recapture delay; the enemy needs flight time to reach the planet
+    we just took."""
+    raw = os.environ.get("PRODUCER_PLUS_DROPOUT_LAG", "2.0")
+    try:
+        return max(1.0, float(raw))
+    except (TypeError, ValueError):
+        return 2.0
+
+
+def _dropout_reflip_legs(
+    *,
+    obs,
+    cache,
+    prod: Tensor,
+    target_idx: Tensor,        # [T] shortlist slots
+    cand_tgt_slot: Tensor,     # [C] planet slot each candidate targets
+    cand_tgt_short: Tensor,    # [C] index into target_idx
+    cand_send: Tensor,         # [C, L]
+    cand_eta: Tensor,          # [C, L]
+    cand_active: Tensor,       # [C, L] bool
+    cand_is_def: Tensor,       # [C] bool (target is ours = reinforcement)
+    cand_valid: Tensor,        # [C] bool
+    floor: Tensor,             # [T, K] capture_floor (defenders + overhead)
+    K: int,
+    K_eta: int,
+    player_count: int,
+    pid: int,
+    device,
+    dtype,
+):
+    """Per-candidate enemy reflip leg as a ``[C, 1]`` LaunchSet, or ``None``.
+
+    A leg is valid only for candidates that CAPTURE an enemy/neutral planet
+    (not reinforcements of our own) AND where the strongest living rival's
+    physically-routable mass to that planet, by the reflip tick, can beat the
+    garrison we'd be holding there. The leg is credited to the strongest
+    rival's owner id, lands ``_dropout_lag`` turns after our arrival, and is
+    sized to the minimal flip.
+    """
+    C = int(cand_send.shape[0])
+    P = int(obs.P)
+    if C == 0 or K <= 0 or int(K_eta) <= 0:
+        return None
+    A = int(player_count)
+
+    # Strongest living rival -> the owner id the reflip is credited to.
+    enemy = obs.is_enemy & obs.alive
+    if not bool(enemy.any()):
+        return None
+    strength = torch.zeros(A, dtype=dtype, device=device)
+    strength.scatter_add_(
+        0, obs.owner_abs[enemy].long().clamp(0, A - 1), obs.ships[enemy].to(dtype),
+    )
+    strength[int(pid)] = float("-inf")
+    rival = int(torch.argmax(strength).item())
+    if float(strength[rival]) <= 0.0:
+        return None
+
+    # Enemy mass that can physically arrive at each shortlist target by tick k
+    # (no reaction lag — this is the worst-case reachable mass).
+    margin = _reactive_reinforcement_margin(
+        obs, cache, target_idx, int(K_eta), weight=1.0, lag=0.0,
+    )                                                                  # [T, K_eta] | None
+    if margin is None:
+        return None
+    K_marg = int(margin.shape[-1])
+
+    send_tot = (cand_send * cand_active.to(dtype)).sum(dim=-1)         # [C]
+    eta_active = torch.where(cand_active, cand_eta, torch.zeros_like(cand_eta))
+    eta_max = eta_active.max(dim=-1).values                            # [C] our capture arrival
+    k_arr = (eta_max.clamp(min=1.0, max=float(K)).ceil().long() - 1).clamp(0, K - 1)  # [C]
+    floor_at_arr = (
+        floor[cand_tgt_short.clamp(0, floor.shape[0] - 1)]
+        .gather(-1, k_arr.unsqueeze(-1)).squeeze(-1)
+    )                                                                  # [C]
+    # capture_floor = defenders + overhead(1); garrison we hold just after
+    # capture = send - defenders = send - floor + 1.
+    survivors = (send_tot - floor_at_arr + 1.0).clamp(min=1.0)         # [C]
+
+    lag = _dropout_lag()
+    reflip_eta = (eta_max + float(lag)).clamp(min=1.0, max=float(K))   # [C]
+    k_reflip = (reflip_eta.ceil().long() - 1).clamp(0, K - 1)          # [C] 0-based
+    tgt_safe = cand_tgt_slot.clamp(0, P - 1)
+    prod_t = prod[tgt_safe].to(dtype)                                  # [C]
+    dk = (k_reflip - k_arr).clamp(min=0).to(dtype)                     # turns held before reflip
+    garrison_at_reflip = survivors + prod_t * dk                       # [C]
+
+    k_marg = k_reflip.clamp(0, K_marg - 1)
+    enemy_mass = (
+        margin[cand_tgt_short.clamp(0, margin.shape[0] - 1)]
+        .gather(-1, k_marg.unsqueeze(-1)).squeeze(-1).to(dtype)
+    )                                                                  # [C]
+
+    # Only CAPTURES of an enemy/neutral planet are droppable; reinforcements
+    # of our own planets are not (cand_is_def). And only where the rival can
+    # actually overpower the garrison we'd hold.
+    is_capture = cand_valid & ~cand_is_def & ~obs.owned[tgt_safe]       # [C]
+    can_flip = is_capture & (enemy_mass >= garrison_at_reflip + 1.0)    # [C]
+
+    reflip_ships = torch.where(
+        can_flip, garrison_at_reflip + 1.0,
+        torch.zeros(C, dtype=dtype, device=device),
+    )
+    # source_slots = -1 -> the scorer's source-validity gate (src >= 0) drops
+    # the debit, so this is a credit-only flip (no friendly planet is drained).
+    return LaunchSet(
+        source_slots=torch.full((C, 1), -1, dtype=torch.long, device=device),
+        target_slots=tgt_safe.view(C, 1),
+        ships=reflip_ships.view(C, 1),
+        eta=reflip_eta.view(C, 1),
+        owner=torch.full((C, 1), int(rival), dtype=torch.long, device=device),
+        valid=can_flip.view(C, 1),
+    )
+
+
 def plan_lite_waves(
     *,
     movement: PlanetMovement,
@@ -2976,6 +3130,40 @@ def plan_lite_waves(
         terminal_prod_weight=_terminal_prod_value(),
         terminal_neutral_only=_terminal_neutral_only(),
     )                                                                            # [C]
+    if _dropout_enabled():
+        # Smart dropout: re-score every candidate in a world where the planet
+        # it captures is reflipped to the strongest rival a few turns later,
+        # then average the held (optimist) and dropped (pessimist) scores. The
+        # reflip legs are enemy-owned arrivals appended to the candidate's
+        # scoring LaunchSet (exactly how `background` opp launches merge); the
+        # greedy selector below still operates on the clean [C, L] tensors, so
+        # the enemy legs never enter its budget / role-mutex view.
+        _drop = _dropout_reflip_legs(
+            obs=obs, cache=cache, prod=prod, target_idx=target_idx,
+            cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
+            cand_send=cand_send, cand_eta=cand_eta, cand_active=cand_active,
+            cand_is_def=cand_is_def, cand_valid=cand_valid, floor=floor,
+            K=K, K_eta=int(K_eta), player_count=int(player_count), pid=pid,
+            device=device, dtype=dtype,
+        )
+        if _drop is not None and bool(_drop.valid.any()):
+            scoring_drop = LaunchSet(
+                source_slots=torch.cat([scoring_launches.source_slots, _drop.source_slots], dim=-1),
+                target_slots=torch.cat([scoring_launches.target_slots, _drop.target_slots], dim=-1),
+                ships=torch.cat([scoring_launches.ships, _drop.ships], dim=-1),
+                eta=torch.cat([scoring_launches.eta, _drop.eta], dim=-1),
+                owner=torch.cat([scoring_launches.owner, _drop.owner], dim=-1),
+                valid=torch.cat([scoring_launches.valid, _drop.valid], dim=-1),
+            )
+            score_drop = score_candidates(
+                garrison_status, prod=prod, alive_by_step=alive_by_step,
+                player_count=int(player_count), launches=scoring_drop, player_id=pid,
+                opp_weights=opp_weights,
+                terminal_prod_weight=_terminal_prod_value(),
+                terminal_neutral_only=_terminal_neutral_only(),
+            )                                                                    # [C]
+            _w = _dropout_weight()
+            score = (1.0 - _w) * score + _w * score_drop
     _cc = _commit_cost_eps()
     if _cc > 0.0:
         score = score - _cc * _commit_flight_cost(cand_send, cand_eta, cand_active)
