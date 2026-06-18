@@ -304,15 +304,14 @@ def _recapture_opp():
 
 
 def _one_capture():
-    """PIVOT (default OFF). Commit at most ONE capture per turn: the single
-    highest-value capture we can afford to take AND HOLD. The one capture is
-    sized to out-gun the visible enemy force that can reach the target (the
-    can-hold guarantee -- reuses threat-aware sizing), so an affordable candidate
-    is one we expect to keep; among the affordable, holdable captures we commit
-    only the best by projected value, and skip the rest. Defenses are NOT capped:
-    we still reinforce our own threatened planets freely. Concentrates the turn's
-    ships into one planet we hold instead of spraying thin captures that flip
-    straight back (the recapture churn). Set LR_ONE_CAPTURE=1 to enable."""
+    """PIVOT (default OFF). Commit at most ONE contested (enemy) capture per turn
+    -- the single best we can take AND HOLD (sized to out-gun the visible enemy
+    force that can reach it; an unaffordable one is skipped) -- while expanding
+    into FREE NEUTRALS and defending at the normal greedy pace (UNCAPPED).
+    Disciplines the thin enemy grabs that flip straight back (the recapture churn)
+    without starving the opening land-race. (An earlier version capped ALL
+    captures incl. free neutrals: it under-expanded and lost 0/4 in 4P -- see the
+    audit -- so only contested captures are capped now.) Set LR_ONE_CAPTURE=1."""
     return os.environ.get("LR_ONE_CAPTURE", "0").strip().lower() in (
         "1", "true", "on", "yes")
 
@@ -779,10 +778,8 @@ def agent(obs, configuration=None):
     # breadth-first minimum force, which was above fair share). See
     # knowledge-base/thoughts/2026-06-17-take-and-hold-is-a-2P-win-and-a-4P-disaster.md.
     hold_margin = _f("LR_HOLD_MARGIN", 0.5 if num_seats <= 2 else 0.0)
-    one_capture = _one_capture()      # commit <=1 capture/turn (see _one_capture)
-    # One-capture sizes its single grab to take AND hold: reuse threat-aware
-    # sizing so the committed capture out-guns the visible reachable enemy force.
-    threat_size = _threat_size() or one_capture
+    one_capture = _one_capture()      # cap CONTESTED captures to one held grab (see _one_capture)
+    threat_size = _threat_size()
     # Arrival-horizon cap (default OFF): don't generate ENEMY captures whose ETA is
     # past the projection horizon -- the evaluator can't see them resolve, so they
     # look free and we over-extend. Per-mode horizon; neutral expansion untouched.
@@ -832,9 +829,13 @@ def agent(obs, configuration=None):
         is_comet = tid in comet_ids
         prod = float(tgt.production)
         # Threat-aware sizing: the enemy force already able to retake this planet.
+        # One-capture hold-sizes only CONTESTED (enemy) captures -- free neutral
+        # expansion keeps shipped sizing and pace (capping it starved the opening
+        # and lost 0/4 in 4P).
+        hold_size = threat_size or (one_capture and is_enemy)
         tgt_reach = (reachable_threat(float(tgt.x), float(tgt.y))
-                     if (threat_size or holdability) else 0.0)
-        tgt_threat = tgt_reach if threat_size else 0.0
+                     if (hold_size or holdability) else 0.0)
+        tgt_threat = tgt_reach if hold_size else 0.0
 
         shots = []   # (eta, size, sid, src, angle)
         for src in my_planets:
@@ -851,7 +852,7 @@ def agent(obs, configuration=None):
                 if life is not None and life <= eta:
                     continue
             defenders = prod * eta + tgt.ships if is_enemy else tgt.ships
-            if threat_size:
+            if hold_size:
                 # Size to take AND hold against the visible incoming + reachable
                 # threat. Unaffordable (truly contested) captures get dropped by
                 # the affordability check below -> skip the doomed grab.
@@ -887,7 +888,8 @@ def agent(obs, configuration=None):
                 solo = {"emit": [[sid, float(a2), size]],
                         "units": units, "srcs": {sid: size},
                         "rank": rank, "front": front, "recap_penalty": _pen,
-                        "kind": "capture", "surplus": _surplus, "threat": tgt_reach}
+                        "kind": "capture", "surplus": _surplus, "threat": tgt_reach,
+                        "is_enemy": is_enemy}
                 break
         if solo is not None:
             candidates.append(solo)
@@ -929,7 +931,7 @@ def agent(obs, configuration=None):
                 candidates.append({"emit": emit, "units": units, "srcs": srcs,
                                    "rank": rank, "front": front, "recap_penalty": _pen,
                                    "kind": "capture", "surplus": _surplus,
-                                   "threat": tgt_reach})
+                                   "threat": tgt_reach, "is_enemy": is_enemy})
 
     # Regroup / defense: reinforce our own planets an enemy fleet is about to flip
     # -- keep HELD production instead of only grabbing new planets. Same duel
@@ -1027,30 +1029,30 @@ def agent(obs, configuration=None):
                 else score_units(committed_units + extra_units))
 
     if one_capture:
-        # PIVOT (LR_ONE_CAPTURE): commit at most ONE capture this turn -- the
-        # single best capture we can afford to HOLD -- while still reinforcing
-        # freely. (a) Defenses first (holding ground is not capturing and is not
-        # capped); they spend ships before expansion. (b) Then pick the single
-        # highest-value capture that is affordable AND holdable (surplus >= the
-        # reachable enemy force; captures are hold-sized above so an affordable one
-        # clears this) and commit only it. No confident capture -> expand nothing
-        # this turn (bank the ships for a turn we can do it right).
-        defenses = [c for c in candidates if c.get("kind") == "defense"]
-        captures = [c for c in candidates if c.get("kind") != "defense"]
-        for c in defenses:
+        # PIVOT (LR_ONE_CAPTURE, softened). Expand into FREE NEUTRALS and defend at
+        # the shipped greedy pace (UNCAPPED), but commit at most ONE contested
+        # (enemy) capture -- the single best we can take AND hold. Capping neutral
+        # expansion too starved the opening and lost 0/4 in 4P (we were out-expanded
+        # and eliminated by midgame); this keeps the land-race pace and only
+        # disciplines the thin enemy grabs that flip straight back (the churn).
+        free = [c for c in candidates
+                if c.get("kind") == "defense" or not c.get("is_enemy")]
+        enemy = [c for c in candidates
+                 if c.get("kind") != "defense" and c.get("is_enemy")]
+        for c in free:                                   # uncapped, rank order
             if (time.perf_counter() - t0) * 1000.0 > budget_ms:
                 break
             if any(avail.get(s, 0) < sz for s, sz in c["srcs"].items()):
                 continue
-            v = _marginal(c["emit"], c["units"])
+            v = _marginal(c["emit"], c["units"]) - c.get("recap_penalty", 0.0)
             if v > current + floor:
                 committed_emit = committed_emit + c["emit"]
                 committed_units = committed_units + (c["units"] or [])
                 current = v
                 for s, sz in c["srcs"].items():
                     avail[s] = avail.get(s, 0) - sz
-        best_c, best_v = None, None
-        for c in captures:
+        best_c, best_v = None, None                      # at most ONE enemy capture
+        for c in enemy:
             if (time.perf_counter() - t0) * 1000.0 > budget_ms:
                 break
             if any(avail.get(s, 0) < sz for s, sz in c["srcs"].items()):
