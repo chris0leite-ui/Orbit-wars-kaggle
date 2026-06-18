@@ -170,12 +170,21 @@ def hazard_ownership_value(
     garrison = ships.clamp(min=0.0)
     leak = flip_prob(atk, garrison, steepness=steepness)        # [C, P, H+1]
 
-    is_mine = (owner == me)
-    is_opp = (owner >= 0) & (~is_mine)
-    p_mine = is_mine.to(fdtype) * (1.0 - leak)
-    # opponent ownership mass: planets they already hold + the leaked share of
+    is_mine = (owner == me).to(fdtype)
+    is_opp = ((owner >= 0) & (owner != me)).to(fdtype)
+    # CUMULATIVE survival: a planet I hold under sustained threat decays toward
+    # the opponent as the per-step flip hazard COMPOUNDS over the horizon.
+    # `keep = 1 - leak` is applied only on steps I actually hold the planet
+    # (held^... exponent), and `surv = Π_{j<=k} keep` integrates it. This makes
+    # the hazard the primary signal rather than an instantaneous second-order
+    # haircut (the v1-instantaneous form was dominated by the deterministic
+    # ownership term and turned out inert — steepness had zero effect).
+    keep = 1.0 - leak * is_mine                                 # [C, P, H+1]
+    surv = torch.cumprod(keep.clamp(0.0, 1.0), dim=2)          # [C, P, H+1]
+    p_mine = is_mine * surv
+    # opponent gets planets they already hold + the cumulatively-leaked share of
     # mine. (Neutral planets contribute to neither.)
-    p_opp = is_opp.to(fdtype) + is_mine.to(fdtype) * leak
+    p_opp = is_opp + is_mine * (1.0 - surv)
 
     margin = (p_mine - p_opp) * prod.view(1, P, 1)              # [C, P, H+1]
     # discount^k over steps 1..H (step 0 is the present, weight 1).
