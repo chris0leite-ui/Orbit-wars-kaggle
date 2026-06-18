@@ -7,3 +7,5 @@
   [  6/120] native_s20    seed=5001 seat=1  loss  margin=-1.000  steps=140 max_ms=40.2  (eta 716s)
   [  7/120] base          seed=5002 seat=0  loss  margin=-1.000  steps=140 max_ms=64.5  (eta 659s)
   [  8/120] native        seed=5002 seat=0  WIN   margin=+1.000  steps=139 max_ms=34.4  (eta 580s)
+  [  9/120] native_s20    seed=5002 seat=0  WIN   margin=+1.000  steps=139 max_ms=55.1  (eta 591s)
+  [ 10/120] base          seed=5003 seat=1  loss  margin=-1.000  steps=153 max_ms=227.1  (eta 567s)
