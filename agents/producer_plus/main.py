@@ -2334,7 +2334,10 @@ def _strongest_rival(obs, *, player_count: int, pid: int, dtype, device):
         0, obs.owner_abs[enemy].long().clamp(0, A - 1), obs.ships[enemy].to(dtype),
     )
     strength[int(pid)] = float("-inf")
-    rival = int(torch.argmax(strength).item())
+    # Device-stable argmax (lowest index on ties) — raw torch.argmax breaks
+    # ties differently on CPU vs CUDA, which this planner forbids (see
+    # planner_core: "Selection on CPU and CUDA must agree exactly").
+    rival = int(_stable_argmax(strength.view(1, -1))[0].item())
     if float(strength[rival]) <= 0.0:
         return None
     return rival
@@ -3355,7 +3358,7 @@ def plan_lite_waves(
                         alive_by_step=alive_by_step,
                     )
                 elif legs is None or not bool(legs.valid.any()):
-                    continue  # nothing to perturb in this scenario
+                    break  # no held drops AND no captured reflip: nothing perturbs
                 sp = score_candidates(
                     pess_status, prod=prod, alive_by_step=alive_by_step,
                     player_count=int(player_count), launches=scoring_pess, player_id=pid,
@@ -3366,6 +3369,11 @@ def plan_lite_waves(
                 score_pess_sum = sp if score_pess_sum is None else score_pess_sum + sp
                 w_held_sum += float(_held[4]) if _held is not None else 0.0
                 n_scen += 1
+                if _held is None:
+                    # No planet is exposed at all -> _held_dropout_plan returns
+                    # None for every r, so the remaining scenarios are identical
+                    # captured-only re-scores. Score once and stop.
+                    break
             if n_scen > 0:
                 score_pess = score_pess_sum / float(n_scen)
                 w_held = w_held_sum / float(n_scen)
