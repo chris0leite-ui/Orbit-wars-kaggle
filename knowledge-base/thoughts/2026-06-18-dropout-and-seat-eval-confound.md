@@ -41,10 +41,19 @@ Conclusions, now load-bearing for all future eval:
 - Run variants SEQUENTIALLY (5 parallel torch procs OOM-kill the heavy ones —
   `live`/`gen` died silently the first time).
 
+## Phase 1a result (incentive-weighting) — REFUTED
+Wide A/B, 28 diverse map-seeds (5000-5027), one game each vs V2:
+- base (dropout_repl): **15/28 (54%)** — competitive/slightly ahead of V2.
+- +incentive: 13/28 (46%); paired it flipped 2 maps W→L, gained 0.
+So the heuristic "our-loss-value" ranking is a worse drop proxy than raw
+reachable mass — leave `PRODUCER_PLUS_DROPOUT_INCENTIVE` OFF. The principled
+replacement is Phase 1b (calibrate to OBSERVED flip rates), not this proxy.
+Also note: on a proper wide-map sample dropout-as-replacement is ~54% vs V2,
+much better than the earlier confounded 8-seed read (3/8) suggested.
+
 ## Open questions / next
-- Does incentive-weighting (`PRODUCER_PLUS_DROPOUT_INCENTIVE`, Phase 1a) beat
-  base on a wide map-seed set vs V2? (A/B running at session end.)
-- Phase 1b calibration (mine real flip rates) is the biggest remaining lever.
+- Phase 1b calibration (mine real flip rates from replays) is the biggest
+  remaining lever for the drop measure.
 
 ## Flags
 - The seat/`step` fix is default-ON but byte-identical when `step` is present;

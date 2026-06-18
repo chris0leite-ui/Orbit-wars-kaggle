@@ -63,10 +63,15 @@ cause of anything. Kept because it's byte-identical when step is present.
 ### Phase 1 — faithful drop MEASURE (make-or-break) — IN PROGRESS
 - **1a. Incentive-weighting** (`PRODUCER_PLUS_DROPOUT_INCENTIVE`, committed
   default-OFF): rank which held planets drop by the opponent's incentive = our
-  loss value (`prod·(H−flip_tick) + garrison`) instead of raw enemy mass. A
-  best-responding opponent flips what hurts us most. **A/B vs V2 on wide
-  map-seeds is the immediate next gate.** Reuse `orbit_lite/strategic_value.py::
-  denial_bonus` (opponent-valued planets) to refine further.
+  loss value (`prod·(H−flip_tick) + garrison`) instead of raw enemy mass.
+  **REFUTED (leave OFF):** A/B at n=28 diverse maps vs V2 — base 15/28 vs
+  incentive 13/28; paired it flipped 2 maps W→L and gained 0. The heuristic
+  "our-loss-value" ranking is a worse drop proxy than raw reachable mass.
+  The principled replacement is Phase 1b (calibrate to OBSERVED flip rates),
+  not this proxy. (`orbit_lite/strategic_value.py::denial_bonus` remains a
+  reusable opponent-value signal if revisited.)
+  NB baseline finding: dropout_repl (dropout REPLACING the opp model) scores
+  ~54% vs V2 on 28 diverse maps — competitive/slightly ahead, at ~half cost.
 - **1b. Calibrate the flip probability** (not built): mine replays
   (`scripts/replay_mine.py`, `classify_losses.py` over `audit/live-episodes/`)
   for empirical flip frequency vs force-ratio/distance/production/#threateners;
