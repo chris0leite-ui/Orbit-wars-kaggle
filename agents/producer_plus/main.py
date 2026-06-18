@@ -2334,6 +2334,20 @@ def _dropout_incentive_enabled() -> bool:
     )
 
 
+def _dropout_winprob_gamma() -> float:
+    """Win-probability-aligned risk attitude (Phase 2). Scales the dropout blend
+    weight by our lead: a leader minimizes variance (insure — protect the lead),
+    a trailer maximizes it (gamble — over-insuring guarantees a slow loss).
+    ``eff_w = clamp(_dropout_weight() * (1 + gamma*lead), 0, 1)`` with lead in
+    [-1, 1]. gamma=0 (default) = OFF: the weight is state-independent and the
+    OFF path is byte-identical."""
+    raw = os.environ.get("PRODUCER_PLUS_DROPOUT_WINPROB", "0")
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _strongest_rival(obs, *, player_count: int, pid: int, dtype, device):
     """Absolute owner id of the strongest living rival (planet ships), or None."""
     enemy = obs.is_enemy & obs.alive
@@ -3399,13 +3413,24 @@ def plan_lite_waves(
             if n_scen > 0:
                 score_pess = score_pess_sum / float(n_scen)
                 w_held = w_held_sum / float(n_scen)
+                # Win-probability-aligned risk attitude (Phase 2): scale the
+                # blend weight by our lead — insure when ahead (heavier
+                # pessimism), gamble when behind (lighter). gamma=0 keeps it
+                # state-independent (byte-identical OFF path).
+                _gamma = _dropout_winprob_gamma()
+                eff_w = _dropout_weight()
+                if _gamma > 0.0:
+                    _our = obs.ships[obs.owned & obs.alive].to(dtype).sum()
+                    _riv = obs.ships[(obs.owner_abs == int(rival)) & obs.alive].to(dtype).sum()
+                    _lead = ((_our - _riv) / (_our + _riv + 1e-6)).clamp(-1.0, 1.0)
+                    eff_w = float((eff_w * (1.0 + _gamma * _lead)).clamp(0.0, 1.0))
                 # Per-candidate blend weight: how much THIS candidate's world is
                 # under threat. Captures use their own contest ratio; every
                 # candidate also inherits the held-holdings threat level (so
                 # defensive candidates are weighted toward the pessimist world).
                 w_c = torch.maximum(
                     w_cap, torch.full_like(w_cap, w_held),
-                ).clamp(0.0, 1.0) * _dropout_weight()
+                ).clamp(0.0, 1.0) * eff_w
                 score = (1.0 - w_c) * score + w_c * score_pess
     _cc = _commit_cost_eps()
     if _cc > 0.0:
