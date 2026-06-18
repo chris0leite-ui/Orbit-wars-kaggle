@@ -2300,6 +2300,29 @@ def _dropout_held_r() -> int:
         return 3
 
 
+def _dropout_scenarios() -> int:
+    """Number of held-dropout SCENARIOS to average (the 'more simulations'
+    axis). M>1 replaces the single top-r scenario with M scenarios dropping
+    the top-1, top-2, ..., top-M most-exposed held planets, averaging their
+    pessimist scores — a deterministic estimate of the expected outcome over
+    how many of our exposed planets fall at once. 1 = the single-scenario
+    behaviour (drop top-DROPOUT_HELD_R)."""
+    raw = os.environ.get("PRODUCER_PLUS_DROPOUT_SCENARIOS", "1")
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _dropout_gen_enabled() -> bool:
+    """Candidate-generation axis: also enter dropout-exposed held planets into
+    the defensive shortlist so the chooser can fund reinforcements for them
+    (not just re-score existing candidates)."""
+    return os.environ.get("PRODUCER_PLUS_DROPOUT_GEN", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def _strongest_rival(obs, *, player_count: int, pid: int, dtype, device):
     """Absolute owner id of the strongest living rival (planet ships), or None."""
     enemy = obs.is_enemy & obs.alive
@@ -2545,9 +2568,14 @@ def plan_lite_waves(
             target_idx, target_exists, obs=obs, cache=cache,
             source_mask=source_mask, K_eta=K_eta, quota=_nq,
         )
-    if _garrison_value() > 0.0:
+    if _garrison_value() > 0.0 or (
+        _dropout_enabled() and dropout_ok and _dropout_gen_enabled()
+    ):
         # Standing-reserve deficits must be visible as defensive targets,
-        # not just projected flips, or pre-positioning can never fire.
+        # not just projected flips, or pre-positioning can never fire. Smart
+        # dropout's candidate-generation axis (DROPOUT_GEN) reuses this exact
+        # append so the planets dropout believes can fall also become
+        # reinforcement candidates the chooser can actually fund.
         target_idx, target_exists = _append_deficit_targets(
             target_idx, target_exists, obs=obs, cache=cache,
             prod=prod, K_eta=K_eta,
@@ -3288,23 +3316,11 @@ def plan_lite_waves(
                 K=K, K_eta=int(K_eta), rival=rival, pid=pid,
                 device=device, dtype=dtype,
             )
-            _held = _held_dropout_plan(
-                obs, cache, garrison_status, K_eta=int(K_eta),
-                r=_dropout_held_r(), rival=rival, pid=pid, device=device, dtype=dtype,
-            )
             w_cap = _legs[1] if _legs is not None else torch.zeros(C, dtype=dtype, device=device)
             legs = _legs[0] if _legs is not None else None
-            w_held = float(_held[4]) if _held is not None else 0.0
 
-            # Pessimist baseline: flip our most-exposed held planets (credit-only).
-            pess_status = garrison_status
-            if _held is not None:
-                pess_status = _dropout_adjusted_status(
-                    garrison_status, drop_tgt=_held[0], drop_tick=_held[1],
-                    drop_ships=_held[2], drop_owner=_held[3], prod=prod,
-                    alive_by_step=alive_by_step,
-                )
-            # Pessimist launches: append the per-candidate captured-planet reflip.
+            # Pessimist launches: append the per-candidate captured-planet reflip
+            # (same across held-drop scenarios — it depends only on the candidate).
             scoring_pess = scoring_launches
             if legs is not None and bool(legs.valid.any()):
                 scoring_pess = LaunchSet(
@@ -3315,17 +3331,44 @@ def plan_lite_waves(
                     owner=torch.cat([scoring_launches.owner, legs.owner], dim=-1),
                     valid=torch.cat([scoring_launches.valid, legs.valid], dim=-1),
                 )
-            engaged = (_held is not None) or (
-                legs is not None and bool(legs.valid.any())
-            )
-            if engaged:
-                score_pess = score_candidates(
+
+            # 'More simulations' axis: average M held-drop scenarios. M=1 keeps
+            # the single top-r scenario; M>1 drops the top-1..top-M most-exposed
+            # held planets in turn and averages their pessimist scores (expected
+            # outcome over how many of our exposed planets fall at once).
+            M = _dropout_scenarios()
+            held_r = _dropout_held_r()
+            scen_rs = [held_r] if M <= 1 else list(range(1, M + 1))
+            score_pess_sum = None
+            w_held_sum = 0.0
+            n_scen = 0
+            for _r in scen_rs:
+                _held = _held_dropout_plan(
+                    obs, cache, garrison_status, K_eta=int(K_eta),
+                    r=_r, rival=rival, pid=pid, device=device, dtype=dtype,
+                )
+                pess_status = garrison_status
+                if _held is not None:
+                    pess_status = _dropout_adjusted_status(
+                        garrison_status, drop_tgt=_held[0], drop_tick=_held[1],
+                        drop_ships=_held[2], drop_owner=_held[3], prod=prod,
+                        alive_by_step=alive_by_step,
+                    )
+                elif legs is None or not bool(legs.valid.any()):
+                    continue  # nothing to perturb in this scenario
+                sp = score_candidates(
                     pess_status, prod=prod, alive_by_step=alive_by_step,
                     player_count=int(player_count), launches=scoring_pess, player_id=pid,
                     opp_weights=opp_weights,
                     terminal_prod_weight=_terminal_prod_value(),
                     terminal_neutral_only=_terminal_neutral_only(),
                 )                                                                # [C]
+                score_pess_sum = sp if score_pess_sum is None else score_pess_sum + sp
+                w_held_sum += float(_held[4]) if _held is not None else 0.0
+                n_scen += 1
+            if n_scen > 0:
+                score_pess = score_pess_sum / float(n_scen)
+                w_held = w_held_sum / float(n_scen)
                 # Per-candidate blend weight: how much THIS candidate's world is
                 # under threat. Captures use their own contest ratio; every
                 # candidate also inherits the held-holdings threat level (so
