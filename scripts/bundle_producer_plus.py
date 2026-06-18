@@ -962,6 +962,22 @@ ENV_VARIANTS = {
         "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
         "PRODUCER_PLUS_MULTI_TICK_OPP_K_4P": "3",
     },
+    "dropout_repl": {
+        # Smart dropout REPLACING the opponent model (take 2, complete
+        # mechanism). The first replacement attempt used the captured-only
+        # dropout and lost 0/8 to Producer V2; this carries the full mechanism
+        # (captured + held-planet drops, proportional contest-ratio weight).
+        # Drops opp_projection + response_veto (the actual opponent model) but
+        # KEEPS reactive_floor (threat-aware attack sizing -- not a launch
+        # predictor) + the FFA objective, so the only thing swapped out is the
+        # opponent simulation. Measures how much headroom the model-free
+        # robustness leaves vs the live stack (6/8 vs V2 on the 4-seed probe).
+        "PRODUCER_PLUS_MULTI_SIZE": "1",
+        "PRODUCER_PLUS_REACTIVE_FLOOR": "0.5",
+        "PRODUCER_PLUS_FFA_SCORE": "1",
+        "PRODUCER_PLUS_FFA_WEIGHTS": "uniform",
+        "PRODUCER_PLUS_DROPOUT": "1",
+    },
     "dropout_live": {
         # Smart dropout AS AN ADD-ON to the proven live 2P stack
         # (vetorf2p_ffa). The standalone `dropout` variant (which STRIPPED
