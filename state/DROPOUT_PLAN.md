@@ -33,7 +33,52 @@ inside opponent mirrors). Bundler variants in `scripts/bundle_producer_plus.py`:
 - Timing: every variant benches < 1000 ms/turn (the removed opponent mirror
   frees budget).
 
+## CLEAN wide-map A/B results (28 diverse maps 5000-5027, one game/seed vs V2)
+Fresh process per variant (see eval warning below):
+
+| variant | wins | vs base |
+|---|---|---|
+| **base (dropout_repl)** | **15/28** | — |
+| more-sims (DROPOUT_SCENARIOS=4) | 14/28 | parity (neutral) |
+| incentive (Phase 1a) | 13/28 | worse |
+| winprob γ=0.5 (Phase 2) | 12/28 | worse |
+| winprob γ=1.0 (Phase 2) | 11/28 | worse |
+| deeper horizon (HORIZON_2P=30) | 6/28 | catastrophic |
+
+**Verdict: nothing beats base.** Every measure/risk refinement (incentive,
+winprob) regresses; deeper horizon is catastrophic; more-sims is the only
+neutral one. The bolt-on is SATURATED — the binding constraint is the
+producer's one-ply static flow-delta value function, not dropout's drop
+measure. Refining dropout within this architecture has no traction.
+
+## ARCHITECTURE verdict & the fork
+Dropout grafted onto producer_plus is well-suited for exactly one job —
+**cheaply replacing the opponent mirror** (validated: ~54% vs V2 at ~half
+cost). It is NOT a path to surpass the producer, because it collapses "a
+distribution over adversarial futures" into a 2-point blend bolted onto a
+static one-ply scorer; the refinements perturb a thin layer over a coarse value
+function. The plateau (above) is the evidence.
+
+A **dropout-NATIVE** design would be a different agent:
+1. Ensemble of N stochastic rollouts (sampled drop masks), value = mean/CVaR —
+   `_run_exact_recurrence` already has the batch axis to run N at once.
+2. Forward model = per-step flip HAZARD (Markov ownership), not exact-combat +
+   a bolted single reflip — so calibration (1b) and risk (2) get real traction.
+3. Candidate selection driven by the ensemble (robust-action search), not a
+   fixed greedy shortlist; self-consistent drops.
+
+THE FORK for next session: (a) lock in / ship the cheap opp-model replacement
+(what we have), or (b) commit to the ensemble-rollout rebuild if dropout is to
+be a strength engine. Do NOT keep refining the bolt-on — the data says it's done.
+
 ## EVALUATION — how to measure (read before running any A/B)
+- **HARNESS BUG to avoid (learned the hard way):** do NOT exec multiple bundles
+  in ONE python process. Bundles set knobs via `os.environ.setdefault`, so
+  env vars LEAK between variants (the first variant's knobs persist). This
+  silently contaminated a run (H30 leaked into more-sims → false 6/28;
+  winprob γ=0.5 leaked into γ=1.0 → identical results). Run **one bundle per
+  fresh subprocess** (template: `/tmp/run_one_bundle.py` + a subprocess driver,
+  or the original per-variant `indep_one.py`).
 - **Outcome is MAP-determined and seat-invariant.** Verified: 7/8 seeds give the
   identical result at both seats; focal win rate P0 3/8 vs P1 2/8. There is NO
   first-mover effect and NO seat bias.

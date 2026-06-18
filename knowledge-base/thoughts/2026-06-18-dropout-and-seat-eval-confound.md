@@ -51,9 +51,32 @@ replacement is Phase 1b (calibrate to OBSERVED flip rates), not this proxy.
 Also note: on a proper wide-map sample dropout-as-replacement is ~54% vs V2,
 much better than the earlier confounded 8-seed read (3/8) suggested.
 
+## Phase 2 + clean re-test of all axes (28 maps vs V2) — base wins
+Clean (one fresh process per variant): base 15/28, more-sims(M4) 14 (parity),
+incentive 13, winprob γ0.5 12, γ1.0 11, deeper(H30) 6 (catastrophic). NOTHING
+beats base. Phase 2 (win-prob risk) refuted; deeper-horizon catastrophic;
+more-sims neutral.
+
+## Second eval bug (harness env-leak)
+Running multiple bundles in ONE python process leaks knobs via
+`os.environ.setdefault` (first variant's knobs persist). It falsely showed
+more-sims 6/28 (H30 leaked) and made winprob γ0.5/γ1.0 identical. Fix: one
+bundle per fresh subprocess. (The original per-variant `indep_one.py` was
+already correct; my single-process `wide_ab` shortcut introduced the leak.)
+
+## Architecture verdict
+The bolt-on is SATURATED: dropout grafted on producer's static one-ply scorer
+is a good CHEAP REPLACEMENT for the opp-mirror (~54% vs V2, half cost) but not a
+strength engine — every refinement ≤ base. A dropout-NATIVE design (ensemble of
+N stochastic hazard-rollouts on the existing batch axis, value=mean/CVaR,
+ensemble-driven candidate selection) is the only way the theory (Phases 1b/2/3)
+gets traction — but that's a new agent. Fork for next session: ship the cheap
+replacement vs commit to the ensemble-rollout rebuild. Don't keep refining the
+bolt-on. Full detail: state/DROPOUT_PLAN.md.
+
 ## Open questions / next
-- Phase 1b calibration (mine real flip rates from replays) is the biggest
-  remaining lever for the drop measure.
+- Decide the fork (ship cheap replacement vs ensemble-rollout rebuild).
+- Phase 1b calibration only matters under the native design.
 
 ## Flags
 - The seat/`step` fix is default-ON but byte-identical when `step` is present;
