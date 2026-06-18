@@ -305,13 +305,17 @@ def _recapture_opp():
 
 def _confident_only():
     """PIVOT (default OFF). Commit only HIGH-CONFIDENCE actions. Of the launches
-    we are about to play (usually the producer's move), keep a capture only if we
-    can HOLD the planet we take -- the garrison we land with (ships sent minus the
-    target's defenders) is at least the enemy force that can still reach it
-    (in-flight fleets + nearby parked garrison, discounted). Safe grabs (nothing
-    can reach them) and reinforcements of our own planets are always kept; thin
-    contested grabs that would flip straight back are dropped, and those ships stay
-    home. No count cap, no concentration -- just confidence. Set LR_CONFIDENT=1."""
+    we are about to play (usually the producer's move):
+      - CAPTURE: keep only if we can HOLD the planet -- the garrison we land with
+        (ships sent minus the target's defenders) is at least the enemy force that
+        can still reach it. Safe grabs (nothing in reach) are kept; thin contested
+        grabs that flip back are dropped.
+      - REINFORCEMENT (a launch to our own planet): keep only if that planet is
+        really under threat (an enemy fleet is closing and would take it) AND our
+        ships save it in time. Reflexive ship-shuffles -- the bulk of our combat
+        over-acting -- are dropped.
+    Dropped launches' ships stay home. No count cap, no concentration -- just
+    confidence. Set LR_CONFIDENT=1."""
     return os.environ.get("LR_CONFIDENT", "0").strip().lower() in (
         "1", "true", "on", "yes")
 
@@ -704,6 +708,45 @@ def _reachable_enemy_force(tx, ty, tid, planets, fleets, me):
     return t
 
 
+def _reinforcement_worthwhile(P, launches, by_id, fleets, me, horizon=25.0):
+    """A reinforcement of our OWN planet P is high-confidence iff P is really
+    under threat -- an enemy fleet is closing on it (heading toward it, arriving
+    within `horizon` turns) and the incoming force exceeds P's garrison, so
+    unchecked it would fall -- AND our reinforcement actually saves it: garrison +
+    reinforcement >= incoming, and our soonest fleet arrives no later than the
+    soonest incoming enemy. Reflexive shuffles to unthreatened planets and futile
+    too-late ones are NOT worthwhile."""
+    px, py = float(P.x), float(P.y)
+    incoming = 0.0
+    enemy_eta = float("inf")
+    for fl in fleets:
+        o = int(fl.owner)
+        if o == me or o == -1:
+            continue
+        fx, fy = float(fl.x), float(fl.y)
+        sp = fleet_speed(float(fl.ships)) or 1e-6
+        eta = dist((px, py), (fx, fy)) / sp
+        if eta > horizon:
+            continue
+        if math.cos(float(fl.angle) - math.atan2(py - fy, px - fx)) <= 0.0:
+            continue                                  # not heading toward P
+        incoming += float(fl.ships)
+        enemy_eta = min(enemy_eta, eta)
+    if incoming <= float(P.ships):                    # not really threatened
+        return False
+    R = sum(float(l[2]) for l in launches)
+    if float(P.ships) + R < incoming:                 # can't hold even reinforced
+        return False
+    our_eta = float("inf")
+    for l in launches:
+        src = by_id.get(int(l[0]))
+        if src is None:
+            continue
+        sp = fleet_speed(float(l[2])) or 1e-6
+        our_eta = min(our_eta, dist((float(src.x), float(src.y)), (px, py)) / sp)
+    return our_eta <= enemy_eta                        # arrives in time
+
+
 def _keep_confident_launches(move, planets, fleets, by_id, me,
                              comet_ids, comet_paths, omega):
     """Keep only HIGH-CONFIDENCE actions. Launches are grouped by their target
@@ -711,9 +754,10 @@ def _keep_confident_launches(move, planets, fleets, by_id, me,
     as one capture). A capture of an enemy/neutral planet is kept only if the
     garrison we land with -- (total ships sent) minus the target's current
     defenders -- is at least the enemy force that can still reach it (so we can
-    HOLD it). Reinforcements of our own planets are always kept; a launch we cannot
-    confidently classify is kept (never dropped on a guess). Dropped launches'
-    ships stay home. No count cap, no concentration."""
+    HOLD it). A reinforcement of our own planet is kept only if that planet is
+    really threatened and our ships save it in time (see _reinforcement_worthwhile);
+    reflexive shuffles are dropped. A launch we cannot confidently classify is kept
+    (never dropped on a guess). Dropped launches' ships stay home. No count cap."""
     if not move:
         return move
     groups = {}                 # tid -> list of launch indices
@@ -745,7 +789,11 @@ def _keep_confident_launches(move, planets, fleets, by_id, me,
     for tid, launches in groups.items():
         tgt = by_id[tid]
         if int(tgt.owner) == me:
-            kept.extend(launches)            # reinforcing our own planet -> keep
+            # reinforcement: keep only if the planet is really threatened AND our
+            # ships save it in time; drop reflexive/futile shuffles (the bulk of
+            # our over-acting in combat).
+            if _reinforcement_worthwhile(tgt, launches, by_id, fleets, me):
+                kept.extend(launches)
             continue
         total = sum(float(l[2]) for l in launches)
         surplus = total - float(tgt.ships)   # garrison left after taking it

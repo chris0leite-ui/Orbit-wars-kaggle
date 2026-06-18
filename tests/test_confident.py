@@ -14,7 +14,7 @@ import importlib.util
 import math
 import os
 
-from kaggle_environments.envs.orbit_wars.orbit_wars import Planet
+from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
 
 _MAIN = os.path.join(os.path.dirname(__file__), "..", "agents",
                      "least_resistance", "main.py")
@@ -69,9 +69,26 @@ def test_keeps_strong_contested_capture():
     assert len(kept) == 1, "a contested capture sized to hold must be kept"
 
 
-def test_keeps_reinforcement_of_own_planet():
+# Reinforcement board: a weak own planet (P_own), a close strong own source
+# (P_near), and an enemy fleet bearing down on P_own from below.
+_R_PLANETS = [
+    Planet(0, 0, 30.0, 30.0, 1.0,  3, 5),     # P_own -- weak, the threatened planet
+    Planet(1, 0, 35.0, 30.0, 1.0, 50, 1),     # P_near -- close reinforcing source
+]
+_R_BY_ID = {int(p.id): p for p in _R_PLANETS}
+_R_REINFORCE = [[1, math.atan2(30.0 - 30.0, 30.0 - 35.0), 10]]   # P_near -> P_own
+_R_THREAT = Fleet(100, 1, 30.0, 12.0, math.pi / 2, 0, 10)        # closing up on P_own
+
+
+def test_keeps_reinforcement_of_really_threatened_savable_planet():
     lr = _load()
-    P0, P_own = _BY_ID[0], _BY_ID[4]
-    move = [[0, _ang(P0, P_own), 5]]   # reinforce our own planet -> always kept
-    kept = _call(lr, move)
-    assert len(kept) == 1, "reinforcing our own planet is always high-confidence"
+    kept = lr._keep_confident_launches(_R_REINFORCE, _R_PLANETS, [_R_THREAT],
+                                       _R_BY_ID, 0, frozenset(), {}, 0.0)
+    assert len(kept) == 1, "a reinforcement that saves a really-threatened planet in time must be kept"
+
+
+def test_drops_reinforcement_of_unthreatened_planet():
+    lr = _load()
+    kept = lr._keep_confident_launches(_R_REINFORCE, _R_PLANETS, [],   # no incoming threat
+                                       _R_BY_ID, 0, frozenset(), {}, 0.0)
+    assert len(kept) == 0, "a reflexive reinforcement of an unthreatened planet must be dropped"
