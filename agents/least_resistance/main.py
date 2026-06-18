@@ -303,16 +303,17 @@ def _recapture_opp():
         "1", "true", "on", "yes")
 
 
-def _one_capture():
-    """PIVOT (default OFF). Commit at most ONE contested (enemy) capture per turn
-    -- the single best we can take AND HOLD (sized to out-gun the visible enemy
-    force that can reach it; an unaffordable one is skipped) -- while expanding
-    into FREE NEUTRALS and defending at the normal greedy pace (UNCAPPED).
-    Disciplines the thin enemy grabs that flip straight back (the recapture churn)
-    without starving the opening land-race. (An earlier version capped ALL
-    captures incl. free neutrals: it under-expanded and lost 0/4 in 4P -- see the
-    audit -- so only contested captures are capped now.) Set LR_ONE_CAPTURE=1."""
-    return os.environ.get("LR_ONE_CAPTURE", "0").strip().lower() in (
+def _one_action():
+    """PIVOT (default OFF). Streamline each round into ONE strong coordinated
+    action. If the move we are about to play launches at more than one target,
+    keep only the launches aimed at the single target we commit the most ships to
+    (the main strike) and drop the rest -- those ships stay home as garrison.
+    Stops the "many small fleets all over the place" that fragments our force and
+    leaves us unable to hold a late push (observed in replay: strong to 14 planets,
+    then a scattered collapse). Applied as a post-filter on the FINAL move, so it
+    streamlines the producer-fallback move the agent usually plays, not just our
+    own greedy plan. Set LR_ONE_ACTION=1 to enable."""
+    return os.environ.get("LR_ONE_ACTION", "0").strip().lower() in (
         "1", "true", "on", "yes")
 
 
@@ -761,6 +762,47 @@ def agent(obs, configuration=None):
 
     available = {int(p.id): int(p.ships) for p in my_planets}
     by_id = {int(p.id): p for p in planets}
+
+    one_action = _one_action()
+
+    def _one_action_filter(move):
+        """One coordinated action per round (LR_ONE_ACTION). If `move` launches at
+        more than one target, keep only the launches aimed at the single target we
+        commit the most ships to (the main strike); drop the rest so those ships
+        stay home as garrison. Each launch is mapped to its target by matching the
+        emit angle to the agent's own intercept aim (`_plan_shot`); launches we
+        cannot classify are kept (never silently dropped)."""
+        if not one_action or not move or len(move) <= 1:
+            return move
+        groups, ships, unclassified = {}, {}, []
+        for launch in move:
+            sid = int(launch[0])
+            ang = float(launch[1])
+            sh = launch[2]
+            src = by_id.get(sid)
+            if src is None:
+                unclassified.append(launch)
+                continue
+            best_t, best_d = None, 1e9
+            for p in planets:
+                if int(p.id) == sid:
+                    continue
+                shot = _plan_shot(src, p, comet_ids, comet_paths, omega, max(1, int(sh)))
+                if shot is None:
+                    continue
+                d = abs(shot[0] - ang)
+                d = min(d, 2.0 * math.pi - d)
+                if d < best_d:
+                    best_d, best_t = d, int(p.id)
+            if best_t is None:
+                unclassified.append(launch)
+                continue
+            groups.setdefault(best_t, []).append(launch)
+            ships[best_t] = ships.get(best_t, 0.0) + float(sh)
+        if len(groups) <= 1:
+            return move
+        keep_t = max(ships, key=lambda t: ships[t])   # the main strike (most ships)
+        return groups[keep_t] + unclassified
     # each candidate: emit=[[src_id,angle,ships],...], units=[(src_slot,tgt_slot,ships,eta),...],
     #                 srcs={src_id:ships}, rank, front
     candidates = []
@@ -778,7 +820,6 @@ def agent(obs, configuration=None):
     # breadth-first minimum force, which was above fair share). See
     # knowledge-base/thoughts/2026-06-17-take-and-hold-is-a-2P-win-and-a-4P-disaster.md.
     hold_margin = _f("LR_HOLD_MARGIN", 0.5 if num_seats <= 2 else 0.0)
-    one_capture = _one_capture()      # cap CONTESTED captures to one held grab (see _one_capture)
     threat_size = _threat_size()
     # Arrival-horizon cap (default OFF): don't generate ENEMY captures whose ETA is
     # past the projection horizon -- the evaluator can't see them resolve, so they
@@ -829,13 +870,9 @@ def agent(obs, configuration=None):
         is_comet = tid in comet_ids
         prod = float(tgt.production)
         # Threat-aware sizing: the enemy force already able to retake this planet.
-        # One-capture hold-sizes only CONTESTED (enemy) captures -- free neutral
-        # expansion keeps shipped sizing and pace (capping it starved the opening
-        # and lost 0/4 in 4P).
-        hold_size = threat_size or (one_capture and is_enemy)
         tgt_reach = (reachable_threat(float(tgt.x), float(tgt.y))
-                     if (hold_size or holdability) else 0.0)
-        tgt_threat = tgt_reach if hold_size else 0.0
+                     if (threat_size or holdability) else 0.0)
+        tgt_threat = tgt_reach if threat_size else 0.0
 
         shots = []   # (eta, size, sid, src, angle)
         for src in my_planets:
@@ -852,7 +889,7 @@ def agent(obs, configuration=None):
                 if life is not None and life <= eta:
                     continue
             defenders = prod * eta + tgt.ships if is_enemy else tgt.ships
-            if hold_size:
+            if threat_size:
                 # Size to take AND hold against the visible incoming + reachable
                 # threat. Unaffordable (truly contested) captures get dropped by
                 # the affordability check below -> skip the doomed grab.
@@ -887,9 +924,7 @@ def agent(obs, configuration=None):
                 _pen = prod * horizon_cap * recap_k if (holdability and tgt_reach > _surplus) else 0.0
                 solo = {"emit": [[sid, float(a2), size]],
                         "units": units, "srcs": {sid: size},
-                        "rank": rank, "front": front, "recap_penalty": _pen,
-                        "kind": "capture", "surplus": _surplus, "threat": tgt_reach,
-                        "is_enemy": is_enemy}
+                        "rank": rank, "front": front, "recap_penalty": _pen}
                 break
         if solo is not None:
             candidates.append(solo)
@@ -929,9 +964,7 @@ def agent(obs, configuration=None):
                 _surplus = acc - ((prod * max_eta + float(tgt.ships)) if is_enemy else float(tgt.ships))
                 _pen = prod * horizon_cap * recap_k if (holdability and tgt_reach > _surplus) else 0.0
                 candidates.append({"emit": emit, "units": units, "srcs": srcs,
-                                   "rank": rank, "front": front, "recap_penalty": _pen,
-                                   "kind": "capture", "surplus": _surplus,
-                                   "threat": tgt_reach, "is_enemy": is_enemy})
+                                   "rank": rank, "front": front, "recap_penalty": _pen})
 
     # Regroup / defense: reinforce our own planets an enemy fleet is about to flip
     # -- keep HELD production instead of only grabbing new planets. Same duel
@@ -985,7 +1018,7 @@ def agent(obs, configuration=None):
                     candidates.append({"emit": d_emit, "units": units,
                                        "srcs": d_srcs,
                                        "rank": float(mine.production) * 2.0,
-                                       "front": 0.0, "kind": "defense"})
+                                       "front": 0.0})
 
     if not candidates:
         return []
@@ -1023,65 +1056,22 @@ def agent(obs, configuration=None):
         scored.sort(key=lambda e: -e[0])               # highest marginal value first
         candidates = [c for _, c in scored]
 
-    def _marginal(extra_emit, extra_units):
-        """Projected value of adding `extra` to what is already committed."""
-        return (value_fallback(committed_emit + extra_emit) if use_rollout_score
-                else score_units(committed_units + extra_units))
-
-    if one_capture:
-        # PIVOT (LR_ONE_CAPTURE, softened). Expand into FREE NEUTRALS and defend at
-        # the shipped greedy pace (UNCAPPED), but commit at most ONE contested
-        # (enemy) capture -- the single best we can take AND hold. Capping neutral
-        # expansion too starved the opening and lost 0/4 in 4P (we were out-expanded
-        # and eliminated by midgame); this keeps the land-race pace and only
-        # disciplines the thin enemy grabs that flip straight back (the churn).
-        free = [c for c in candidates
-                if c.get("kind") == "defense" or not c.get("is_enemy")]
-        enemy = [c for c in candidates
-                 if c.get("kind") != "defense" and c.get("is_enemy")]
-        for c in free:                                   # uncapped, rank order
-            if (time.perf_counter() - t0) * 1000.0 > budget_ms:
-                break
-            if any(avail.get(s, 0) < sz for s, sz in c["srcs"].items()):
-                continue
-            v = _marginal(c["emit"], c["units"]) - c.get("recap_penalty", 0.0)
-            if v > current + floor:
-                committed_emit = committed_emit + c["emit"]
-                committed_units = committed_units + (c["units"] or [])
-                current = v
-                for s, sz in c["srcs"].items():
-                    avail[s] = avail.get(s, 0) - sz
-        best_c, best_v = None, None                      # at most ONE enemy capture
-        for c in enemy:
-            if (time.perf_counter() - t0) * 1000.0 > budget_ms:
-                break
-            if any(avail.get(s, 0) < sz for s, sz in c["srcs"].items()):
-                continue
-            if c.get("surplus", 0.0) < c.get("threat", 0.0):
-                continue                # can't out-gun the reachable threat -> skip
-            v = _marginal(c["emit"], c["units"]) - c.get("recap_penalty", 0.0)
-            if v > current + floor and (best_v is None or v > best_v):
-                best_v, best_c = v, c
-        if best_c is not None:
-            committed_emit = committed_emit + best_c["emit"]
-            committed_units = committed_units + (best_c["units"] or [])
-    else:
-        for c in candidates:
-            if (time.perf_counter() - t0) * 1000.0 > budget_ms:
-                break
-            if any(avail.get(s, 0) < sz for s, sz in c["srcs"].items()):
-                continue
-            if use_rollout_score:
-                v = value_fallback(committed_emit + c["emit"])
-            else:
-                v = score_units(committed_units + c["units"])
-            v -= c.get("recap_penalty", 0.0)   # holdability: down-rate doomed captures
-            if v > current + floor:
-                committed_emit = committed_emit + c["emit"]
-                committed_units = committed_units + (c["units"] or [])
-                current = v
-                for s, sz in c["srcs"].items():
-                    avail[s] = avail.get(s, 0) - sz
+    for c in candidates:
+        if (time.perf_counter() - t0) * 1000.0 > budget_ms:
+            break
+        if any(avail.get(s, 0) < sz for s, sz in c["srcs"].items()):
+            continue
+        if use_rollout_score:
+            v = value_fallback(committed_emit + c["emit"])
+        else:
+            v = score_units(committed_units + c["units"])
+        v -= c.get("recap_penalty", 0.0)   # holdability: down-rate doomed captures
+        if v > current + floor:
+            committed_emit = committed_emit + c["emit"]
+            committed_units = committed_units + (c["units"] or [])
+            current = v
+            for s, sz in c["srcs"].items():
+                avail[s] = avail.get(s, 0) - sz
 
     # ---- rollout-based final pick (LR_ROLLOUT_EVAL): choose among a few full
     #      plans by their value AFTER opponents respond in the REAL engine, so a
@@ -1089,15 +1079,11 @@ def agent(obs, configuration=None):
     #      plan or the producer move. Replaces the flow-based 2-ply (blind to it).
     if use_rollout_score:
         try:
-            producer_me = [] if one_capture else _producer_move_obs(obs, me)
+            producer_me = _producer_move_obs(obs, me)
         except Exception:
             producer_me = []
-        # Under one-capture the producer's own (multi-capture) move is NOT a floor
-        # -- weighing it would let multi-capture back in; compare our single
-        # capture only against doing nothing.
-        plans = ([committed_emit, []] if one_capture
-                 else [committed_emit, producer_me, []])
-        if not one_capture and len(committed_emit) > 2:
+        plans = [committed_emit, producer_me, []]
+        if len(committed_emit) > 2:
             plans.append(committed_emit[:len(committed_emit) // 2])
         # Own time budget + timer: the greedy loop above already consumed
         # `budget_ms` against `t0`, so sharing it would skip this re-rank entirely.
@@ -1113,31 +1099,26 @@ def agent(obs, configuration=None):
                 continue
             if best_v is None or v > best_v:
                 best, best_v = p, v
-        return best
+        return _one_action_filter(best)
 
     # ---- 2-ply lookahead pick (2P only): choose among a few full-plans by
     #      their value AFTER the producer's reply + a producer-vs-producer turn,
     #      so moves the producer punishes next turn are correctly down-rated.
     if orbit is not None and TWOPLY and num_seats >= 2:
         try:
-            producer_me = [] if one_capture else _producer_move_obs(obs, me)
+            producer_me = _producer_move_obs(obs, me)
         except Exception:
             producer_me = []
         # Levers 2/3 are 4P-only: 2P is our strength and these regress it.
         anytime_on = _anytime() and num_seats >= 4
-        if one_capture:
-            # Producer's multi-capture move is NOT a floor under one-capture;
-            # weigh our single capture only against doing nothing.
-            plans = [committed_emit, []]
-        else:
-            plans = [producer_me, committed_emit, []]   # producer floor first
-            if anytime_on:
-                # Lever 3: spend headroom -- offer every aggression level of the
-                # committed plan, so extra compute becomes more plans evaluated.
-                plans.extend(committed_emit[:k] for k in range(1, len(committed_emit)))
-            elif len(committed_emit) > 2:
-                # One milder aggression level of my plan for the lookahead to weigh.
-                plans.append(committed_emit[:len(committed_emit) // 2])
+        plans = [producer_me, committed_emit, []]   # producer floor first
+        if anytime_on:
+            # Lever 3: spend headroom -- offer every aggression level of the
+            # committed plan, so extra compute becomes more plans evaluated.
+            plans.extend(committed_emit[:k] for k in range(1, len(committed_emit)))
+        elif len(committed_emit) > 2:
+            # One milder aggression level of my plan for the lookahead to weigh.
+            plans.append(committed_emit[:len(committed_emit) // 2])
         # De-dup (by repr) preserving order.
         seen, uniq = set(), []
         for p in plans:
@@ -1152,11 +1133,13 @@ def agent(obs, configuration=None):
         try:
             depth = _rollout_depth()
             if depth >= 2:
-                return _deep_pick(obs, configuration, me, num_seats, uniq,
-                                  depth, budget_ms=_deep_budget(obs_d))
-            return _twoply_pick(obs, configuration, me, num_seats, uniq,
-                                budget_ms=_twoply_budget(obs_d) if anytime_on else _rem)
+                return _one_action_filter(_deep_pick(obs, configuration, me,
+                                          num_seats, uniq, depth,
+                                          budget_ms=_deep_budget(obs_d)))
+            return _one_action_filter(_twoply_pick(obs, configuration, me,
+                                      num_seats, uniq,
+                                      budget_ms=_twoply_budget(obs_d) if anytime_on else _rem))
         except Exception:
-            return committed_emit
+            return _one_action_filter(committed_emit)
 
-    return committed_emit
+    return _one_action_filter(committed_emit)
