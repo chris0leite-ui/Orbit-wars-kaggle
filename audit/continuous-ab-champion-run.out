@@ -3,3 +3,7 @@
   [  2/ 96] off           seed=5001 seat=1  loss  margin=-1.000  steps=138 max_ms=364.2  (eta 1439s)
   [  3/ 96] champion      seed=5000 seat=0  WIN   margin=+1.000  steps=168 max_ms=468.4  (eta 1245s)
   [  4/ 96] off           seed=5002 seat=0  WIN   margin=+1.000  steps=146 max_ms=356.3  (eta 1424s)
+  [  5/ 96] off           seed=5000 seat=0  loss  margin=-0.994  steps=500 max_ms=351.7  (eta 1346s)
+  [  6/ 96] champion      seed=5002 seat=0  loss  margin=-1.000  steps=202 max_ms=368.2  (eta 1149s)
+  [  7/ 96] off           seed=5003 seat=1  loss  margin=-1.000  steps=189 max_ms=374.7  (eta 989s)
+  [  8/ 96] champion      seed=5003 seat=1  loss  margin=-1.000  steps=161 max_ms=320.7  (eta 1052s)
