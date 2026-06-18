@@ -108,7 +108,43 @@ terminal-prod / hold-value hacks.
   FIX (committed): CUMULATIVE survival `surv = Π_j (1-leak_j)` applied only while
   I hold the planet, so sustained threat compounds over the horizon and the
   hazard becomes the primary signal (verified load-bearing: value now responds
-  to steepness). Kill-gate RE-RUN with the cumulative hazard recorded below.
+  to steepness ON SYNTHETIC BOARDS).
+
+- **Kill-gate RE-RUN with the CUMULATIVE hazard (n=40 paired vs V2):** native
+  19/40, Δmargin −0.10 — **BYTE-IDENTICAL to the instantaneous version**, and
+  native ≡ native_s20 on all 40 maps again. So even the load-bearing cumulative
+  hazard is INERT FOR CANDIDATE RANKING in real games: it changes the value
+  MAGNITUDE but never the argmax over candidates.
+  ROOT CAUSE: `atk_reach` is candidate-INDEPENDENT (current enemy ships, same for
+  every candidate), so the hazard discount is a near-constant across candidates
+  that cancels in the argmax; where it IS candidate-dependent (the touched
+  source/target garrisons) it is dominated by the large deterministic ownership
+  term. A distributional layer over a per-candidate DETERMINISTIC trajectory +
+  a FIXED shortlist is dominated by the deterministic core — the SAME failure
+  mode as the bolt-on, one level deeper.
+
+## VERDICT — Phase A kill-gate FAILED (thesis refuted as scoped)
+The mean-field flip-hazard forward model, scoring the producer's existing
+shortlist, does NOT beat the static one-ply scorer (19/40 vs 21/40), and the
+hazard distribution is provably inert for ranking (steepness and
+instantaneous-vs-cumulative change nothing in games). Per this doc's own
+kill-gate ("if a distribution-aware forward model scoring the SAME candidates
+does not beat the static scorer, the thesis is wrong — stop"), the dropout-native
+thesis is refuted **as scoped in Phase A**.
+
+What would be required to make the distribution load-bearing for RANKING (NOT
+funded without a fresh PI decision — these are big builds the doc gated behind a
+Phase A pass that did not happen):
+- **candidate-dependent threat / self-consistency (Phase D):** recompute λ given
+  the chosen policy so a defensive candidate actually lowers its own planets' λ
+  — only then does the hazard reorder candidates;
+- **v2 sampled ensemble + ensemble-driven GENERATION (Phase C/D):** score
+  genuinely different sampled futures AND generate the robust candidates the
+  shortlist doesn't contain.
+Given base itself is only PARITY with V2 (below the live champion), the evidence
+does not justify funding that rebuild. RECOMMENDATION: bank the
+continuous-margin eval harness (the durable win) + this negative result; do not
+pursue the dropout line further unless the PI explicitly wants the speculative v2.
 
 ## Build phases (each default-OFF where grafted; each A/B-gated vs V2)
 - **Phase A (KILL-GATE): mean-field forward model + value functional**, scoring
