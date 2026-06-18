@@ -966,6 +966,53 @@ def _background_adjusted_status(
     )
 
 
+def _dropout_adjusted_status(
+    garrison_status, *, drop_tgt: Tensor, drop_tick: Tensor, drop_ships: Tensor,
+    drop_owner: Tensor, prod: Tensor, alive_by_step: Tensor,
+):
+    """Baseline garrison trajectories with HELD planets flipped to the opponent.
+
+    Credit-only counterpart of :func:`_background_adjusted_status`: each
+    ``(drop_tgt, drop_tick)`` cell receives ``drop_ships`` owned by
+    ``drop_owner`` with NO friendly source debit (the planet just falls — there
+    is no fleet leaving one of our planets). The exact production->combat
+    recurrence is replayed, so a flip propagates correctly (lost production +
+    lost garrison after the drop tick). ``alive_by_step`` is ``[H+1, P]``.
+    """
+    owner0 = garrison_status.owner[..., 0]                       # [P]
+    ships0 = garrison_status.ships[..., 0]                       # [P]
+    arr = garrison_status.arrivals_by_owner                      # [P, H+1, A]
+    P, H1, A = int(arr.shape[0]), int(arr.shape[1]), int(arr.shape[2])
+    H = H1 - 1
+    fdtype = ships0.dtype if ships0.is_floating_point() else torch.float32
+
+    tgt = drop_tgt.clamp(0, max(P - 1, 0))
+    own = drop_owner.clamp(0, max(A - 1, 0))
+    ships = drop_ships.to(fdtype)
+    tick = drop_tick.long().clamp(min=1)
+
+    init_ships = ships0.to(fdtype).clone()                       # NO debit (credit-only)
+    arr_delta = arr[:, 1:, :].to(fdtype).clone()                 # [P, H, A]
+    in_h = tick <= H
+    if bool(in_h.any()):
+        arr_delta.index_put_(
+            (tgt[in_h], tick[in_h] - 1, own[in_h]), ships[in_h], accumulate=True,
+        )
+
+    owner_t, ships_t, pre_o, pre_s = _run_exact_recurrence(
+        init_owner=owner0.unsqueeze(0),
+        init_ships=init_ships.unsqueeze(0),
+        prod=prod.to(fdtype).unsqueeze(0),
+        alive=alive_by_step.transpose(0, 1).unsqueeze(0),
+        arrivals=arr_delta.unsqueeze(0),
+    )
+    return PlanetGarrisonStatus(
+        owner=owner_t[0], ships=ships_t[0],
+        pre_combat_owner=pre_o[0], pre_combat_ships=pre_s[0],
+        arrivals_by_owner=torch.cat([arr[:, :1, :].to(fdtype), arr_delta], dim=1),
+    )
+
+
 def _entries_to_launch_set(entries, *, pid: int, device, dtype) -> LaunchSet:
     """Valid rows of a LaunchEntries table as a LaunchSet owned by ``pid``."""
     sel = entries.valid.nonzero(as_tuple=True)[0]
@@ -2216,9 +2263,14 @@ def _dropout_enabled() -> bool:
 
 
 def _dropout_weight() -> float:
-    """Weight on the dropped (pessimistic) scenario in the average. 0.5 = the
-    PI's "average, keep optimist": equal weight on hold and drop. 0 reproduces
-    the clean static score; 1 is fully pessimistic (worst-case-ish)."""
+    """Tempering multiplier on the per-candidate proportional drop weight.
+
+    The drop weight is a CONTEST RATIO (enemy threat / (enemy threat + our
+    defending ships)) computed per candidate — so a planet is down-weighted
+    toward the dropped scenario in proportion to how outgunned it is. This
+    multiplier scales that ratio (0.5 = "average, keep optimist": even a
+    hopeless planet is only half-believed-lost; 1.0 = trust the ratio fully;
+    0 = clean static score)."""
     raw = os.environ.get("PRODUCER_PLUS_DROPOUT_WEIGHT", "0.5")
     try:
         return min(1.0, max(0.0, float(raw)))
@@ -2237,6 +2289,34 @@ def _dropout_lag() -> float:
         return 2.0
 
 
+def _dropout_held_r() -> int:
+    """How many of our most-exposed HELD planets to flip in the pessimist
+    baseline (the "planets which we have drop out" half). 0 = captured-planet
+    dropout only."""
+    raw = os.environ.get("PRODUCER_PLUS_DROPOUT_HELD_R", "3")
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 3
+
+
+def _strongest_rival(obs, *, player_count: int, pid: int, dtype, device):
+    """Absolute owner id of the strongest living rival (planet ships), or None."""
+    enemy = obs.is_enemy & obs.alive
+    if not bool(enemy.any()):
+        return None
+    A = int(player_count)
+    strength = torch.zeros(A, dtype=dtype, device=device)
+    strength.scatter_add_(
+        0, obs.owner_abs[enemy].long().clamp(0, A - 1), obs.ships[enemy].to(dtype),
+    )
+    strength[int(pid)] = float("-inf")
+    rival = int(torch.argmax(strength).item())
+    if float(strength[rival]) <= 0.0:
+        return None
+    return rival
+
+
 def _dropout_reflip_legs(
     *,
     obs,
@@ -2253,37 +2333,29 @@ def _dropout_reflip_legs(
     floor: Tensor,             # [T, K] capture_floor (defenders + overhead)
     K: int,
     K_eta: int,
-    player_count: int,
+    rival: int,
     pid: int,
     device,
     dtype,
 ):
-    """Per-candidate enemy reflip leg as a ``[C, 1]`` LaunchSet, or ``None``.
+    """Per-candidate enemy reflip leg + per-candidate contest weight.
 
-    A leg is valid only for candidates that CAPTURE an enemy/neutral planet
-    (not reinforcements of our own) AND where the strongest living rival's
-    physically-routable mass to that planet, by the reflip tick, can beat the
-    garrison we'd be holding there. The leg is credited to the strongest
-    rival's owner id, lands ``_dropout_lag`` turns after our arrival, and is
-    sized to the minimal flip.
+    Returns ``(legs, w_cap)`` where ``legs`` is a ``[C, 1]`` credit-only enemy
+    LaunchSet and ``w_cap`` is ``[C]`` in ``[0, 1]``, or ``None``.
+
+    A leg fires only for candidates that CAPTURE an enemy/neutral planet (not
+    reinforcements) where the rival's physically-routable mass to that planet,
+    by the reflip tick, can beat the garrison we'd hold there. The injected
+    enemy mass is the rival's ACTUAL routable mass (proportional to enemy
+    threat); the competitive penalty is invariant to the size beyond the flip,
+    so proportionality is carried by ``w_cap`` = threat / (threat + our
+    garrison) — the planet is believed-lost in proportion to how outgunned it
+    is. ``w_cap`` is 0 on rows with no valid drop.
     """
     C = int(cand_send.shape[0])
     P = int(obs.P)
+    zeros_c = torch.zeros(C, dtype=dtype, device=device)
     if C == 0 or K <= 0 or int(K_eta) <= 0:
-        return None
-    A = int(player_count)
-
-    # Strongest living rival -> the owner id the reflip is credited to.
-    enemy = obs.is_enemy & obs.alive
-    if not bool(enemy.any()):
-        return None
-    strength = torch.zeros(A, dtype=dtype, device=device)
-    strength.scatter_add_(
-        0, obs.owner_abs[enemy].long().clamp(0, A - 1), obs.ships[enemy].to(dtype),
-    )
-    strength[int(pid)] = float("-inf")
-    rival = int(torch.argmax(strength).item())
-    if float(strength[rival]) <= 0.0:
         return None
 
     # Enemy mass that can physically arrive at each shortlist target by tick k
@@ -2327,13 +2399,21 @@ def _dropout_reflip_legs(
     is_capture = cand_valid & ~cand_is_def & ~obs.owned[tgt_safe]       # [C]
     can_flip = is_capture & (enemy_mass >= garrison_at_reflip + 1.0)    # [C]
 
+    # Inject the rival's ACTUAL routable mass (proportional to enemy threat);
+    # min-clamped to a clean flip so the engine resolves the loss.
     reflip_ships = torch.where(
-        can_flip, garrison_at_reflip + 1.0,
-        torch.zeros(C, dtype=dtype, device=device),
+        can_flip, torch.maximum(enemy_mass, garrison_at_reflip + 1.0), zeros_c,
     )
+    # Contest ratio: how outgunned the capture is. Proportional to enemy
+    # threat, inversely to our defending ship count.
+    w_cap = torch.where(
+        can_flip,
+        (enemy_mass / (enemy_mass + garrison_at_reflip).clamp(min=1e-6)).clamp(0.0, 1.0),
+        zeros_c,
+    )                                                                  # [C]
     # source_slots = -1 -> the scorer's source-validity gate (src >= 0) drops
     # the debit, so this is a credit-only flip (no friendly planet is drained).
-    return LaunchSet(
+    legs = LaunchSet(
         source_slots=torch.full((C, 1), -1, dtype=torch.long, device=device),
         target_slots=tgt_safe.view(C, 1),
         ships=reflip_ships.view(C, 1),
@@ -2341,6 +2421,57 @@ def _dropout_reflip_legs(
         owner=torch.full((C, 1), int(rival), dtype=torch.long, device=device),
         valid=can_flip.view(C, 1),
     )
+    return legs, w_cap
+
+
+def _held_dropout_plan(
+    obs, cache, garrison_status, *, K_eta: int, r: int, rival: int, pid: int,
+    device, dtype,
+):
+    """Top-``r`` most-exposed HELD planets to flip in the pessimist baseline.
+
+    Returns ``(tgt, tick, ships, owner, w_held)`` or ``None``. A held planet is
+    droppable if the rival's routable mass beats its projected garrison at some
+    tick within ``K_eta`` while we still own it; the flip lands at the earliest
+    such tick, sized to the rival's routable mass (proportional to enemy
+    threat). Planets are ranked by that threat magnitude. ``w_held`` is the mean
+    contest ratio over the dropped planets — a proportional measure of how
+    threatened our existing holdings are, used to weight defensive candidates
+    toward the dropped scenario.
+    """
+    if r <= 0 or int(K_eta) <= 0:
+        return None
+    held = obs.owned & obs.alive
+    held_idx = held.nonzero(as_tuple=True)[0]
+    if int(held_idx.shape[0]) == 0:
+        return None
+    margin = _reactive_reinforcement_margin(
+        obs, cache, held_idx, int(K_eta), weight=1.0, lag=0.0,
+    )                                                                  # [D0, K] | None
+    if margin is None:
+        return None
+    K = int(margin.shape[-1])
+    margin = margin.to(dtype)
+    owner_traj = garrison_status.owner[held_idx][..., 1 : K + 1]       # [D0, K]
+    ships_traj = garrison_status.ships[held_idx][..., 1 : K + 1].to(dtype)
+    mine = owner_traj == int(pid)
+    beats = (margin >= ships_traj + 1.0) & mine                        # [D0, K]
+    any_drop = beats.any(dim=-1)                                       # [D0]
+    if not bool(any_drop.any()):
+        return None
+    flip_k = _stable_argmax(beats.to(torch.int64))                     # [D0] 0-based
+    g_at = ships_traj.gather(-1, flip_k.unsqueeze(-1)).squeeze(-1)      # [D0]
+    thr_at = margin.gather(-1, flip_k.unsqueeze(-1)).squeeze(-1)        # [D0]
+    ratio = (thr_at / (thr_at + g_at).clamp(min=1e-6)).clamp(0.0, 1.0)  # [D0]
+    expose = torch.where(any_drop, thr_at, torch.full_like(thr_at, float("-inf")))
+    rsel = min(int(r), int(any_drop.sum().item()))
+    top = _stable_topk_indices(expose, rsel)                           # [rsel] into D0
+    tgt = held_idx[top]
+    tick = flip_k[top] + 1
+    ships = thr_at[top]
+    owner = torch.full((rsel,), int(rival), dtype=torch.long, device=device)
+    w_held = float(ratio[top].mean().item())
+    return tgt, tick, ships, owner, w_held
 
 
 def plan_lite_waves(
@@ -3132,39 +3263,77 @@ def plan_lite_waves(
         terminal_neutral_only=_terminal_neutral_only(),
     )                                                                            # [C]
     if _dropout_enabled() and dropout_ok:
-        # Smart dropout: re-score every candidate in a world where the planet
-        # it captures is reflipped to the strongest rival a few turns later,
-        # then average the held (optimist) and dropped (pessimist) scores. The
-        # reflip legs are enemy-owned arrivals appended to the candidate's
-        # scoring LaunchSet (exactly how `background` opp launches merge); the
-        # greedy selector below still operates on the clean [C, L] tensors, so
-        # the enemy legs never enter its budget / role-mutex view.
-        _drop = _dropout_reflip_legs(
-            obs=obs, cache=cache, prod=prod, target_idx=target_idx,
-            cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
-            cand_send=cand_send, cand_eta=cand_eta, cand_active=cand_active,
-            cand_is_def=cand_is_def, cand_valid=cand_valid, floor=floor,
-            K=K, K_eta=int(K_eta), player_count=int(player_count), pid=pid,
-            device=device, dtype=dtype,
+        # Smart dropout: score every candidate a SECOND time in a pessimist
+        # world, then blend per candidate by a CONTEST RATIO (proportional to
+        # enemy threat / our defending ships). The pessimist world has two
+        # parts, both grounded in the rival's physically-routable mass:
+        #   (1) captured-planet reflip — the planet THIS candidate takes is
+        #       reflipped to the rival a few turns later (per-candidate leg);
+        #   (2) held-planet dropout — our most-exposed EXISTING planets fall to
+        #       the rival in the shared baseline, so reinforcing/defending them
+        #       gains value (the half the response-veto can't see).
+        # The reflip legs are enemy-owned arrivals appended to the scoring
+        # LaunchSet (like `background` opp launches); the greedy selector below
+        # still operates on the clean [C, L] tensors, so they never enter its
+        # budget / role-mutex view.
+        rival = _strongest_rival(
+            obs, player_count=int(player_count), pid=pid, dtype=dtype, device=device,
         )
-        if _drop is not None and bool(_drop.valid.any()):
-            scoring_drop = LaunchSet(
-                source_slots=torch.cat([scoring_launches.source_slots, _drop.source_slots], dim=-1),
-                target_slots=torch.cat([scoring_launches.target_slots, _drop.target_slots], dim=-1),
-                ships=torch.cat([scoring_launches.ships, _drop.ships], dim=-1),
-                eta=torch.cat([scoring_launches.eta, _drop.eta], dim=-1),
-                owner=torch.cat([scoring_launches.owner, _drop.owner], dim=-1),
-                valid=torch.cat([scoring_launches.valid, _drop.valid], dim=-1),
+        if rival is not None:
+            _legs = _dropout_reflip_legs(
+                obs=obs, cache=cache, prod=prod, target_idx=target_idx,
+                cand_tgt_slot=cand_tgt_slot, cand_tgt_short=cand_tgt_short,
+                cand_send=cand_send, cand_eta=cand_eta, cand_active=cand_active,
+                cand_is_def=cand_is_def, cand_valid=cand_valid, floor=floor,
+                K=K, K_eta=int(K_eta), rival=rival, pid=pid,
+                device=device, dtype=dtype,
             )
-            score_drop = score_candidates(
-                garrison_status, prod=prod, alive_by_step=alive_by_step,
-                player_count=int(player_count), launches=scoring_drop, player_id=pid,
-                opp_weights=opp_weights,
-                terminal_prod_weight=_terminal_prod_value(),
-                terminal_neutral_only=_terminal_neutral_only(),
-            )                                                                    # [C]
-            _w = _dropout_weight()
-            score = (1.0 - _w) * score + _w * score_drop
+            _held = _held_dropout_plan(
+                obs, cache, garrison_status, K_eta=int(K_eta),
+                r=_dropout_held_r(), rival=rival, pid=pid, device=device, dtype=dtype,
+            )
+            w_cap = _legs[1] if _legs is not None else torch.zeros(C, dtype=dtype, device=device)
+            legs = _legs[0] if _legs is not None else None
+            w_held = float(_held[4]) if _held is not None else 0.0
+
+            # Pessimist baseline: flip our most-exposed held planets (credit-only).
+            pess_status = garrison_status
+            if _held is not None:
+                pess_status = _dropout_adjusted_status(
+                    garrison_status, drop_tgt=_held[0], drop_tick=_held[1],
+                    drop_ships=_held[2], drop_owner=_held[3], prod=prod,
+                    alive_by_step=alive_by_step,
+                )
+            # Pessimist launches: append the per-candidate captured-planet reflip.
+            scoring_pess = scoring_launches
+            if legs is not None and bool(legs.valid.any()):
+                scoring_pess = LaunchSet(
+                    source_slots=torch.cat([scoring_launches.source_slots, legs.source_slots], dim=-1),
+                    target_slots=torch.cat([scoring_launches.target_slots, legs.target_slots], dim=-1),
+                    ships=torch.cat([scoring_launches.ships, legs.ships], dim=-1),
+                    eta=torch.cat([scoring_launches.eta, legs.eta], dim=-1),
+                    owner=torch.cat([scoring_launches.owner, legs.owner], dim=-1),
+                    valid=torch.cat([scoring_launches.valid, legs.valid], dim=-1),
+                )
+            engaged = (_held is not None) or (
+                legs is not None and bool(legs.valid.any())
+            )
+            if engaged:
+                score_pess = score_candidates(
+                    pess_status, prod=prod, alive_by_step=alive_by_step,
+                    player_count=int(player_count), launches=scoring_pess, player_id=pid,
+                    opp_weights=opp_weights,
+                    terminal_prod_weight=_terminal_prod_value(),
+                    terminal_neutral_only=_terminal_neutral_only(),
+                )                                                                # [C]
+                # Per-candidate blend weight: how much THIS candidate's world is
+                # under threat. Captures use their own contest ratio; every
+                # candidate also inherits the held-holdings threat level (so
+                # defensive candidates are weighted toward the pessimist world).
+                w_c = torch.maximum(
+                    w_cap, torch.full_like(w_cap, w_held),
+                ).clamp(0.0, 1.0) * _dropout_weight()
+                score = (1.0 - w_c) * score + w_c * score_pess
     _cc = _commit_cost_eps()
     if _cc > 0.0:
         score = score - _cc * _commit_flight_cost(cand_send, cand_eta, cand_active)
