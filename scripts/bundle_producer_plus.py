@@ -46,6 +46,10 @@ ORBIT_LITE_ORDER = [
     # strategic_value imports LaunchSet (garrison_launch), PlanetGarrisonStatus
     # (movement). No interdependence with recapture or opp_projection.
     "strategic_value",
+    # native_forward (dropout-native Phase A) imports _run_exact_recurrence
+    # (garrison_launch) + fleet_speed (geometry) — both above. Gated OFF by
+    # default in producer_plus.main, so it's inert unless PRODUCER_PLUS_NATIVE_HAZARD.
+    "native_forward",
 ]
 
 ORBIT_LITE_DIR = REPO / "agents" / "producer" / "orbit_lite"

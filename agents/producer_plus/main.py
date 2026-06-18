@@ -39,6 +39,7 @@ from orbit_lite.movement import PlanetGarrisonStatus
 from orbit_lite.opp_projection import predict_opp_launches_via_mirror, MAX_L_OPP
 from orbit_lite.recapture import recapture_penalty
 from orbit_lite.strategic_value import denial_bonus, opening_bonus
+from orbit_lite.native_forward import score_candidates_native
 from orbit_lite.planner_core import (
     _candidate_indices,
     _empty_entries,
@@ -2348,6 +2349,37 @@ def _dropout_winprob_gamma() -> float:
         return 0.0
 
 
+def _native_hazard_enabled() -> bool:
+    """Dropout-NATIVE forward model (state/DROPOUT_NATIVE_DESIGN.md, Phase A).
+    Replaces the static one-ply competitive_score for candidate RANKING with a
+    mean-field flip-hazard ownership value: each candidate's exact trajectory is
+    overlaid with a per-step Markov-ownership probability P(I hold p at k) from
+    local force balance, and valued by the expected production-weighted ownership
+    margin over the horizon. Default off = the producer's static scorer."""
+    return os.environ.get("PRODUCER_PLUS_NATIVE_HAZARD", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _native_steepness() -> float:
+    """Steepness of the flip-hazard contest sigmoid (steeper = sharper
+    near-parity transition). 5.0 is a moderate default."""
+    raw = os.environ.get("PRODUCER_PLUS_NATIVE_STEEPNESS", "5.0")
+    try:
+        return max(0.1, float(raw))
+    except (TypeError, ValueError):
+        return 5.0
+
+
+def _native_discount() -> float:
+    """Per-step horizon discount for the native value functional. 1.0 = uniform."""
+    raw = os.environ.get("PRODUCER_PLUS_NATIVE_DISCOUNT", "1.0")
+    try:
+        return min(1.0, max(0.1, float(raw)))
+    except (TypeError, ValueError):
+        return 1.0
+
+
 def _strongest_rival(obs, *, player_count: int, pid: int, dtype, device):
     """Absolute owner id of the strongest living rival (planet ships), or None."""
     enemy = obs.is_enemy & obs.alive
@@ -3328,6 +3360,34 @@ def plan_lite_waves(
         terminal_prod_weight=_terminal_prod_value(),
         terminal_neutral_only=_terminal_neutral_only(),
     )                                                                            # [C]
+    if _native_hazard_enabled() and dropout_ok:
+        # Dropout-NATIVE Phase A: REPLACE the static one-ply competitive_score
+        # used to RANK candidates with the mean-field flip-hazard ownership value
+        # (orbit_lite.native_forward). Runs only on our real planning pass
+        # (dropout_ok); opponent mirrors keep the producer's own scorer. The
+        # candidate launches are OUR sends (no opp_projection in this variant),
+        # so the hazard overlay IS the opponent model. OFF path is byte-identical.
+        try:
+            _ow = garrison_status.owner[..., 0].to(torch.long)                   # [P]
+            _sh = garrison_status.ships[..., 0].to(dtype)                        # [P]
+            score = score_candidates_native(
+                init_owner=_ow, init_ships=_sh, prod=prod,
+                alive_by_step=alive_by_step,
+                background_arrivals=garrison_status.arrivals_by_owner,
+                src=scoring_launches.source_slots.to(torch.long),
+                tgt=scoring_launches.target_slots.to(torch.long),
+                ships=scoring_launches.ships.to(dtype),
+                eta=scoring_launches.eta.to(dtype),
+                owner=scoring_launches.owner.to(torch.long),
+                valid=scoring_launches.valid.to(torch.bool),
+                cross_dist=cache.cross_dist,
+                cur_ships=obs.ships.to(dtype),
+                is_enemy=obs.is_enemy,
+                me=int(pid), steepness=_native_steepness(),
+                discount=_native_discount(),
+            )
+        except Exception:
+            pass  # any shape/edge failure -> fall back to the static score
     if _dropout_enabled() and dropout_ok:
         # Smart dropout: score every candidate a SECOND time in a pessimist
         # world, then blend per candidate by a CONTEST RATIO (proportional to

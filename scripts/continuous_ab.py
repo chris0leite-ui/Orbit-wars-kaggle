@@ -92,6 +92,17 @@ VARIANT_SETS = {
         "ref": "base",
         "variants": {
             "base":         _v(_DROP_BASE),
+            # Dropout-NATIVE Phase A: same base candidate stack, but the mean-
+            # field flip-hazard ownership value RANKS the candidates instead of
+            # the bolt-on reflip. DROPOUT off (native replaces it). KILL-GATE:
+            # must beat base on the paired continuous margin.
+            "native":       _v({k: v for k, v in _DROP_BASE.items()
+                                if k != "PRODUCER_PLUS_DROPOUT"},
+                               PRODUCER_PLUS_NATIVE_HAZARD=1),
+            "native_s8":    _v({k: v for k, v in _DROP_BASE.items()
+                                if k != "PRODUCER_PLUS_DROPOUT"},
+                               PRODUCER_PLUS_NATIVE_HAZARD=1,
+                               PRODUCER_PLUS_NATIVE_STEEPNESS=8.0),
             "more_sims4":   _v(_DROP_BASE, PRODUCER_PLUS_DROPOUT_SCENARIOS=4),
             "incentive":    _v(_DROP_BASE, PRODUCER_PLUS_DROPOUT_INCENTIVE=1),
             "winprob_g0.5": _v(_DROP_BASE, PRODUCER_PLUS_DROPOUT_WINPROB=0.5),

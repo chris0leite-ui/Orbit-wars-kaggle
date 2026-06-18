@@ -1,0 +1,154 @@
+"""Dropout-native mean-field flip-hazard forward model (Phase A heart).
+
+Pins the load-bearing claims of agents/dropout_native/forward_model.py:
+  1. flip_prob is a steep-near-parity contest curve (monotone right ways).
+  2. reachable_enemy_mass is cumulative in k and counts only enemy mass.
+  3. build_candidate_trajectories reduces EXACTLY to the trusted engine
+     recurrence when no launches are applied (construction parity).
+  4. THE THESIS: a holdable capture (thick garrison vs reachable enemy mass)
+     scores strictly higher than a thin, recapturable one — the property the
+     2-point bolt-on could only approximate.
+  5. Determinism: identical inputs -> identical output (no RNG).
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import torch
+
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "agents" / "producer"))
+sys.path.insert(0, str(REPO))
+
+from orbit_lite.garrison_launch import _run_exact_recurrence  # noqa: E402
+from orbit_lite.native_forward import (  # noqa: E402
+    build_candidate_trajectories,
+    flip_prob,
+    hazard_ownership_value,
+    reachable_enemy_mass,
+    score_candidates_native,
+)
+
+
+def test_flip_prob_monotone_and_parity():
+    deff = torch.tensor([10.0, 10.0, 10.0])
+    atk = torch.tensor([0.0, 10.0, 100.0])
+    f = flip_prob(atk, deff, steepness=5.0)
+    # out-massed -> high flip; parity -> ~0.5; dominant defence -> low flip.
+    assert f[0] < 0.5 < f[2]
+    assert abs(float(f[1]) - 0.5) < 0.05
+    # monotone increasing in attacker mass
+    assert float(f[0]) < float(f[1]) < float(f[2])
+
+
+def test_reachable_mass_cumulative_and_enemy_only():
+    # 3 planets; planet 2 is the only enemy, adjacent to planet 1.
+    P, H = 3, 6
+    big = 1e6  # unreachable
+    # cross_dist[k, s, t]; make planet 2 -> planet 1 reachable from k=1, all else far.
+    cross = torch.full((H + 1, P, P), big)
+    for k in range(H + 1):
+        cross[k, 2, 1] = 0.5  # enemy(2) reaches target(1) immediately
+    ships = torch.tensor([100.0, 5.0, 40.0])
+    is_enemy = torch.tensor([False, False, True])
+    reach = reachable_enemy_mass(cross_dist=cross, ships=ships, is_enemy=is_enemy, H=H)
+    assert reach.shape == (P, H + 1)
+    # planet 1 sees the enemy's 40 from step 1 on; cumulative (non-decreasing).
+    assert float(reach[1, 0]) == 0.0
+    assert float(reach[1, 1]) == 40.0
+    assert torch.all(reach[1, 1:] >= reach[1, :-1] - 1e-6)
+    # planet 0 is unreachable -> zero throughout; my own mass never counts.
+    assert float(reach[0].max()) == 0.0
+
+
+def _board():
+    """p0 mine (huge), p1 neutral target, p2 enemy adjacent to p1."""
+    P, H, A = 3, 8, 2
+    init_owner = torch.tensor([0, -1, 1], dtype=torch.long)
+    init_ships = torch.tensor([500.0, 4.0, 50.0])
+    prod = torch.tensor([1.0, 3.0, 1.0])  # target is productive (worth holding)
+    alive = torch.ones(H + 1, P, dtype=torch.bool)
+    background = torch.zeros(P, H, A)
+    cross = torch.full((H + 1, P, P), 1e6)
+    for k in range(H + 1):
+        cross[k, 2, 1] = 0.5  # enemy(2) can reach target(1)
+    return init_owner, init_ships, prod, alive, background, cross
+
+
+def test_trajectory_parity_with_no_launches():
+    init_owner, init_ships, prod, alive, background, _ = _board()
+    P, H, A = 3, 8, 2
+    # reference: the engine recurrence on the background board directly.
+    ref_owner, ref_ships, _, _ = _run_exact_recurrence(
+        init_owner=init_owner.view(1, P), init_ships=init_ships.view(1, P),
+        prod=prod.view(1, P), alive=alive.permute(1, 0).view(1, P, H + 1),
+        arrivals=background.view(1, P, H, A),
+    )
+    # one all-invalid candidate -> must reproduce the background exactly.
+    z = torch.zeros(1, 1)
+    owner_traj, ships_traj = build_candidate_trajectories(
+        init_owner=init_owner, init_ships=init_ships, prod=prod,
+        alive_by_step=alive, background_arrivals=background,
+        src=torch.tensor([[-1]]), tgt=torch.tensor([[-1]]), ships=z,
+        eta=torch.ones(1, 1), owner=torch.zeros(1, 1, dtype=torch.long),
+        valid=torch.tensor([[False]]),
+    )
+    assert torch.equal(owner_traj, ref_owner)
+    assert torch.allclose(ships_traj, ref_ships)
+
+
+def test_holdable_capture_beats_thin_capture():
+    init_owner, init_ships, prod, alive, background, cross = _board()
+    me = 0
+    # Two candidates capture the SAME neutral target p1 from p0:
+    #   thin    -> send just enough to flip (5 ships; out-massed by the enemy's 50)
+    #   holdable-> send a thick garrison (200 ships; out-masses the enemy)
+    src = torch.tensor([[0], [0]])
+    tgt = torch.tensor([[1], [1]])
+    ships = torch.tensor([[5.0], [200.0]])
+    eta = torch.tensor([[2.0], [2.0]])
+    owner = torch.tensor([[0], [0]])
+    valid = torch.tensor([[True], [True]])
+
+    val = score_candidates_native(
+        init_owner=init_owner, init_ships=init_ships, prod=prod,
+        alive_by_step=alive, background_arrivals=background,
+        src=src, tgt=tgt, ships=ships, eta=eta, owner=owner, valid=valid,
+        cross_dist=cross, cur_ships=init_ships, is_enemy=(init_owner == 1),
+        me=me, steepness=5.0,
+    )
+    # both deterministically capture p1, but the thick garrison is HELD (low
+    # flip) while the thin one leaks to the reachable enemy mass -> lower value.
+    assert val[1] > val[0]
+
+
+def test_deterministic_repeat():
+    init_owner, init_ships, prod, alive, background, cross = _board()
+    args = dict(
+        init_owner=init_owner, init_ships=init_ships, prod=prod,
+        alive_by_step=alive, background_arrivals=background,
+        src=torch.tensor([[0]]), tgt=torch.tensor([[1]]), ships=torch.tensor([[200.0]]),
+        eta=torch.tensor([[2.0]]), owner=torch.tensor([[0]]), valid=torch.tensor([[True]]),
+        cross_dist=cross, cur_ships=init_ships, is_enemy=(init_owner == 1), me=0,
+    )
+    a = score_candidates_native(**args)
+    b = score_candidates_native(**args)
+    assert torch.equal(a, b)
+
+
+def test_value_drops_as_enemy_mass_grows():
+    """Same holdable capture, but a bigger reachable enemy reservoir lowers it."""
+    init_owner, init_ships, prod, alive, background, cross = _board()
+    base = dict(
+        init_owner=init_owner, init_ships=init_ships, prod=prod,
+        alive_by_step=alive, background_arrivals=background,
+        src=torch.tensor([[0]]), tgt=torch.tensor([[1]]), ships=torch.tensor([[60.0]]),
+        eta=torch.tensor([[2.0]]), owner=torch.tensor([[0]]), valid=torch.tensor([[True]]),
+        cross_dist=cross, me=0,
+    )
+    weak = score_candidates_native(cur_ships=torch.tensor([500.0, 4.0, 20.0]),
+                                   is_enemy=(init_owner == 1), **base)
+    strong = score_candidates_native(cur_ships=torch.tensor([500.0, 4.0, 300.0]),
+                                     is_enemy=(init_owner == 1), **base)
+    assert weak[0] > strong[0]
