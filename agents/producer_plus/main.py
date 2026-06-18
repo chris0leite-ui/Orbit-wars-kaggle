@@ -4154,6 +4154,8 @@ class ProducerLiteMemory:
         self.trust_predictions: list | None = None
         self.trust_fleet_ids: set | None = None
         self.sync_holds: list | None = None
+        self.turn: int = 0          # authoritative, seat-independent turn counter
+        self._seen: bool = False    # have we processed any turn yet
 
     def reset(self) -> None:
         self.movement = None
@@ -4164,6 +4166,8 @@ class ProducerLiteMemory:
         self.trust_predictions = None
         self.trust_fleet_ids = None
         self.sync_holds = None
+        self.turn = 0
+        self._seen = False
 
 
 class ProducerLiteRuntime:
@@ -4173,15 +4177,35 @@ class ProducerLiteRuntime:
     def reset(self) -> None:
         self.memory.reset()
 
-    def tensor_action(self, obs_tensors: dict):
+    def tensor_action(self, obs_tensors: dict, raw_step=None):
         mem = self.memory
-        if bool((obs_tensors["step"] == 0).all()):
+        # Authoritative, seat-independent turn count. The orbit_wars interpreter
+        # omits `step` for non-P0 seats, so the adapter defaults it to 0 every
+        # turn — keying the new-game reset off `step` there would wipe memory
+        # each turn and freeze every phase-dependent mechanism at "opening".
+        if raw_step is not None:
+            # Framework supplied a real step (P0, or local where the framework
+            # re-populates it for all seats). Trust it: byte-identical to the
+            # original behaviour (reset at step 0; turn == step).
+            new_game = int(raw_step) == 0
+            mem.turn = int(raw_step)
+        else:
+            # `step` absent (a non-P0 seat on the platform). Each episode runs
+            # in a fresh agent process, so a monotonic per-process counter IS
+            # the true step: turn 0 on the first call, +1 thereafter.
+            new_game = not mem._seen
+            mem.turn = 0 if new_game else int(mem.turn) + 1
+        mem._seen = True
+        if new_game:
             mem.cached_player_count = None
             mem.opening_claimed = None
             mem.trust_ema = None
             mem.trust_predictions = None
             mem.trust_fleet_ids = None
             mem.sync_holds = None
+        # Overwrite step so every downstream consumer (run_turn current_step,
+        # compute_k_eta_for_step, strategic bonuses) sees the correct turn.
+        obs_tensors["step"] = torch.full_like(obs_tensors["step"], int(mem.turn))
         if mem.cached_player_count is None:
             mem.cached_player_count = largest_initial_player_count(obs_tensors)
         config = _config_for(mem.cached_player_count)
@@ -4204,8 +4228,14 @@ def agent(obs):
     """Single-observation entry point for local play and Kaggle."""
     player = obs.get("player", 0) if isinstance(obs, dict) else obs.player
     player_id = int(player)
+    # Capture whether the RAW obs actually carries `step`. The orbit_wars
+    # interpreter omits `step` from non-P0 seats (it copies planets/fleets/etc.
+    # but not step), and the adapter then defaults it to 0 — indistinguishable
+    # downstream from a genuine step 0. Pass presence/value explicitly so the
+    # runtime can keep a correct seat-independent turn count.
+    raw_step = obs.get("step") if isinstance(obs, dict) else getattr(obs, "step", None)
     obs_tensors = single_obs_to_tensor(obs, player_id=player_id)
     with torch.no_grad():
-        sparse_row = _RUNTIME.tensor_action(obs_tensors)
+        sparse_row = _RUNTIME.tensor_action(obs_tensors, raw_step=raw_step)
     return sparse_action_row_to_moves(sparse_row, obs, player_id=player_id)
 
