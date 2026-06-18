@@ -303,26 +303,6 @@ def _recapture_opp():
         "1", "true", "on", "yes")
 
 
-def _one_action():
-    """PIVOT (default OFF). One strong coordinated strike per round. Instead of
-    dribbling many small fleets, each round we commit ONLY the single best
-    coordinated capture, sized to OVERWHELM its target -- LR_OVERWHELM x
-    (defenders + the visible reachable enemy force) -- massing several sources
-    into one wave. When no target can be overwhelmed with the ships we can field,
-    we launch NOTHING and accumulate for next round. Few big coordinated strikes,
-    not a spray. (PI replay obs: a strong position lost to scattered small fleets
-    and a late collapse.) Set LR_ONE_ACTION=1 to enable."""
-    return os.environ.get("LR_ONE_ACTION", "0").strip().lower() in (
-        "1", "true", "on", "yes")
-
-
-def _overwhelm_factor():
-    """How overwhelming a one-action strike is: multiplier on (defenders +
-    reachable threat). Default 2.0 (send ~twice the force needed). Read at call
-    time so it can be tuned without a rebuild."""
-    return _f("LR_OVERWHELM", 2.0)
-
-
 def _recapture_moves(obs_dict, seat, exclude_srcs=()):
     """A competent opponent's reactive recapture, used ONLY inside the lookahead's
     opponent replies: `seat` launches from its nearest unused source to retake the
@@ -786,8 +766,6 @@ def agent(obs, configuration=None):
     # knowledge-base/thoughts/2026-06-17-take-and-hold-is-a-2P-win-and-a-4P-disaster.md.
     hold_margin = _f("LR_HOLD_MARGIN", 0.5 if num_seats <= 2 else 0.0)
     threat_size = _threat_size()
-    one_action = _one_action()           # one overwhelming coordinated strike/round
-    overwhelm = _overwhelm_factor()
     # Arrival-horizon cap (default OFF): don't generate ENEMY captures whose ETA is
     # past the projection horizon -- the evaluator can't see them resolve, so they
     # look free and we over-extend. Per-mode horizon; neutral expansion untouched.
@@ -838,8 +816,8 @@ def agent(obs, configuration=None):
         prod = float(tgt.production)
         # Threat-aware sizing: the enemy force already able to retake this planet.
         tgt_reach = (reachable_threat(float(tgt.x), float(tgt.y))
-                     if (threat_size or holdability or one_action) else 0.0)
-        tgt_threat = tgt_reach if (threat_size or one_action) else 0.0
+                     if (threat_size or holdability) else 0.0)
+        tgt_threat = tgt_reach if threat_size else 0.0
 
         shots = []   # (eta, size, sid, src, angle)
         for src in my_planets:
@@ -856,12 +834,7 @@ def agent(obs, configuration=None):
                 if life is not None and life <= eta:
                     continue
             defenders = prod * eta + tgt.ships if is_enemy else tgt.ships
-            if one_action:
-                # OVERWHELM: send ~overwhelm x the force that can defend/retake it,
-                # massing sources. Unaffordable strikes are dropped below -> we hold
-                # and accumulate rather than launch a weak fleet.
-                size = int(math.ceil((defenders + tgt_threat) * overwhelm)) + 1
-            elif threat_size:
+            if threat_size:
                 # Size to take AND hold against the visible incoming + reachable
                 # threat. Unaffordable (truly contested) captures get dropped by
                 # the affordability check below -> skip the doomed grab.
@@ -910,8 +883,6 @@ def agent(obs, configuration=None):
         # back. Size against the slowest fleet actually used.
         def _required(latest_eta):
             d = (prod * latest_eta + float(tgt.ships)) if is_enemy else float(tgt.ships)
-            if one_action:
-                return int(math.ceil((d + tgt_threat) * overwhelm)) + 1
             return int(math.ceil(d + tgt_threat)) + 1
         emit, triples, srcs, acc, max_eta = [], [], {}, 0, 0.0
         for (eta, size, sid, src, angle) in shots:
@@ -999,14 +970,6 @@ def agent(obs, configuration=None):
 
     candidates.sort(key=lambda c: (-c["rank"], c["front"]))
     candidates = candidates[:MAX_CANDIDATES]
-
-    if one_action:
-        # ONE strong coordinated strike per round: play only the single best
-        # (highest-rank) candidate -- already sized to overwhelm and massed from
-        # several sources. If no overwhelming strike was affordable, the empty-
-        # candidates return above already held (accumulate). No greedy stacking
-        # and no producer fallback: this IS the move, so we never dribble.
-        return candidates[0]["emit"]
 
     # ---- greedy plan construction by projected value ----
     committed_emit = []
